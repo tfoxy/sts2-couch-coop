@@ -142,6 +142,46 @@ await the same frames remain valid under xvfb; functional/correctness legs are a
 gate that grades one lane against another needs a real-display run — ask the operator for a desktop slot
 rather than shipping an xvfb number.
 
+### 2.y Five-player instance bring-up (`scripts/bring-up-five-player-instance.sh`)
+
+One isolated host instance inside a private gamescope compositor, with the mod list pinned for a >4-player
+session, plus a JSON record (`couchcoop-five-player-bringup/1`) a browser-join probe reads. Same shape as
+`bring-up-gamescope-instance.sh` — `--i-hold-the-live-lock` gate, scratch config, pid-file teardown.
+
+```
+scripts/bring-up-five-player-instance.sh --instance mp5 --cache-root /tmp/mp5-cache \
+  --record /tmp/mp5-bringup.json --i-hold-the-live-lock
+scripts/bring-up-five-player-instance.sh --instance mp5 --teardown
+```
+
+The mod configuration is the part that is not obvious:
+- **Never set `game.modLoadout` for this.** The CLI's rewrite keys a map by mod ID, and this box's `mod_list`
+  has `couchcoop` TWICE (`mods_directory` = local dev deploy, `steam_workshop` = published). The rows
+  collapse and both come back `steam_workshop`, so asking the CLI to enable couchcoop can silently run the
+  **Workshop** build. The script leaves `modLoadout` unset — which also means `game launch` does no
+  settings.save rewrite or restore at all — and edits `<userDir>/SlayTheSpire2/steam/<steamid>/settings.save`
+  itself via `scripts/lib/mp5-mod-loadout.py`, keyed on `(id, source)`. It only flips `is_enabled`, never
+  invents a row (the game's ModManager owns discovery), and a missing `sts2unlimited` row is fatal rather
+  than a silent four-seat lobby.
+- **`sts2 game mods settings` seeds the instance user dir without launching or deploying** — it is the only
+  lifecycle command that does. That is what lets the loadout be pinned before the first launch instead of
+  launch → edit → restart. First seed of a fresh instance copies ~780 MB from `~/.local/share/SlayTheSpire2`;
+  re-runs hit the `.spirectl-seeded` sentinel and are instant.
+- **That seed drags in two pieces of the operator's LIVE session**, and both are deleted before launch:
+  `couch-coop/browser-port` (their running game's port *and pid*, so a liveness check passes and you drive
+  their game) and `couch-coop/headless-slots/` (their seat dirs, which would match this record's
+  `seatLogGlob`). The port file is then accepted only once `/proc/<pid>/environ` shows the writer's
+  `XDG_DATA_HOME` is this instance's — identity, not liveness (`scripts/lib/mp5-instance-port.py`).
+- `instances.symlinkUserDataDirs: []`, or the named instance inherits `sts2.local.yaml`'s shared `couch-coop`
+  symlink and clobbers the operator's `browser-port` record.
+- `browserPort` is whatever the mod published, **not** 13337 — the preferred port is a walk.
+- Seat logs land under the INSTANCE user dir, because `HeadlessUserDirSeeder` derives the slot base from the
+  host's `XDG_DATA_HOME`, which `sts2 --instance` has already pointed at `<userDir>`:
+  `<userDir>/SlayTheSpire2/couch-coop/headless-slots/slot-*/SlayTheSpire2/logs/godot.log`.
+
+`--plan` does everything except launch the game (config, compositor, seed, loadout), so the mod
+configuration is provable without the live lock. Helpers are unit-tested by `scripts/test-mp5-bringup.sh`.
+
 ## 3. QA TCP channel (native godot-client)
 
 Full protocol + current verb table: **`godot-client/docs/qa-channel.md`** (read that file — verbs/settings
