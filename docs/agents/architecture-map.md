@@ -1,0 +1,923 @@
+# Architecture map (agent cheat sheet)
+
+Current subsystem map for implementation and QA. Verify a load-bearing claim against current code before using
+it as a contract. All paths are repo-relative unless prefixed `../`.
+
+Configuration and diagnostics are owned where they are consumed. Product settings live in
+`frontend/src/mirror/mirrorSettings.ts`; producer diagnostics and capability controls live in `../spirectl`.
+This map records current contracts, not retired implementation alternatives.
+
+## Browser contracts
+
+- **Loader/hot reload:** published archives compile the loader with `CouchCoopEnableHotReload=false`: normal
+  dynamic implementation loading remains, but the hot-reload protocol, discovery methods, and `hot-reload/`
+  payload are absent. Local developer builds opt in with `true`; their spirectl shell protocol is v0 while the
+  independent CouchCoop implementation contract remains exactly `1`.
+  `src/CouchCoop.Mod.Loader/CouchCoopHotReloadProtocol.cs` rejects a local hot-reload artifact with a different
+  expected contract; do not document or add compatibility versions without deliberately changing that boundary.
+- **WebSocket:** the endpoint is `/ws`. Every connection carries the canonical `0`/`1` selectors
+  `watch`, `staticBg`, `cardFlight`, `handTween`, and `trailDrive`, minted by
+  `frontend/src/mirror/mirrorClient.ts`. `watch=0` suppresses the connect keyframe until the client sends a
+  `watch` message. Recorders, e2e tools, and diagnostic clients must send the complete selector set. The page's
+  retired view selector is not a WebSocket parameter.
+- **Scene transforms:** scene data uses local transforms and local rectangles. Each renderer composes the parent
+  chain; a client must not treat a child transform as stage-global or add a second global conversion.
+- **Resources:** `/res/{path}` receives an unprefixed `res://` path. `raw` is the default and `?format=png` is
+  the only alternate representation. There are no extension-based resource aliases; a `::` sub-resource is
+  raw-only.
+- **Spine clips:** `/spines/` bodies are `SPCL` v1 with encoded image-frame payloads and node-local placement. The sole
+  retry selector is `retry=1`.
+- **Geoclips:** `/geoclips/{scene}?node={path}&anim={name}&file={artifact}` is the browser form. Artifacts use
+  `geoclip/1`; operator files are optional overrides, then the managed
+  `couchcoop-geoclip-cache-v1` store. A failed probe falls back to the spine raster path rather than leaving a
+  blank node.
+- **Static backgrounds and cache:** combat URLs are `/bg/{id}?layers={digest}&v=1`; event and room backgrounds
+  use `/bg/events/{id}?v=1` and `/bg/rooms/{id}?frame={frame}&v=1`. Their codec is named by `Content-Type`.
+  `SpirectlAssetBinaryCache.SchemaVersion` derives from spirectl's asset-payload version; do not hand-bump it.
+- **Repros:** the browser flight recorder writes `repro/1` NDJSON. It records raw wire frames plus viewer input;
+  `scripts/analyze-repro.mjs` and `scripts/replay-repro.mjs` are its consumers.
+
+## Gesture / input
+- Files: `src/CouchCoop.MirrorProtocol/Input/GestureMachine.cs` (1:1 twin `frontend/src/mirror/inputCapture.ts`),
+  classification `src/CouchCoop.MirrorProtocol/Input/TouchTargetScan.cs` (web: `TOUCH_TARGET_TYPES` in
+  `inputCapture.ts`), hand-choice `HandChoiceScan.cs`, wide-input `PointerField.cs` / `NearMiss.cs`,
+  hit-scan `InteractiveRectScan.cs`. Native QA driver: `godot-client/src/Input/DemoInputPlayer.cs`.
+- Mechanism: one classifier walks the wire scene tree to decide tap/drag/right-click/peek targets from a
+  shared allowlist of node types; native and web run the *same* decision tree so touch semantics match
+  pixel-for-pixel. Long-press uses a single armed deadline (`PeekMs`, hand cards) vs a longer right-click leg
+  (non-hand cards) dispatched from `FirePeekIfDue`.
+- Input classification is shared by the native and web implementations; do not introduce a client-specific
+  alternate path.
+- **Stage geometry.** `inputCapture` caches the stage's client rect. `InputCapture.invalidateStageRect()` is the
+  exported seam; MirrorView calls it from `recomputeScale`, and the cache also self-heals on a design-width change.
+- Tests: `tests/CouchCoop.MirrorProtocol.Tests/GestureMachineTests.cs`, `TouchTargetScanTests.cs`,
+  `HandChoiceScanTests.cs`, `PointerFieldTests.cs`, `NearMissTests.cs`, `InteractiveRectScanTests.cs`,
+  `EndTurnScanTests.cs` — run via `dotnet run --project tests/CouchCoop.MirrorProtocol.Tests`. Web:
+  `frontend/src/mirror/__tests__/inputCapture.spec.ts` (or the top-level test dir if moved — `find frontend -iname
+  'inputCapture.spec.ts'` to confirm).
+- Web twin: `frontend/src/mirror/inputCapture.ts` (includes `computeTouchInfo`).
+
+## View scale
+- Files: table `src/CouchCoop.MirrorProtocol/SceneModel/ViewScale.cs`, pure stamp index
+  `ViewScaleStampIndex.cs`, native adapter `godot-client/src/Scene/ViewScaler.cs`, and web layout/input modules
+  `frontend/src/mirror/{viewScaleLayout,viewScale,viewScaleInverse}.ts`.
+- Matching scene identities receive a cosmetic scale stamp. The stamp index is rebuilt per drain and resolved in
+  the single transform fold, with no cross-drain stamp memory. Nested stamps compose through the wire parent frame.
+- Both web backends share `viewScaleLayout.ts`; the canvas draw-list carries the accumulated product instead of
+  folding a scale into a global coordinate. Input is remapped against the corresponding stamped, rendered box.
+  Hidden ancestry is excluded from the input registry, and a gesture freezes its claimed mapping on press.
+- `mirrorSettings.uiScaling` is the viewer-facing readability setting for view scale, tip scale, text scale, and
+  clip-axis outset. Changing it triggers a structural walk and restores or reapplies the stamped base transforms.
+- Tests: `ViewScaleStampIndexTests.cs`, `ViewScaleStampReplayProbe.cs`, and web
+  `viewScale.spec.ts`, `viewScaleInverse.spec.ts`, `viewScaleInputRegistry.spec.ts`, and `inputCapture.spec.ts`.
+
+## HoverTip scale
+- Files: `HoverTipScaleMath.cs`, `godot-client/src/Scene/HoverTipScaler.cs`, and web
+  `hoverTipScaleMath.ts` / `tipScaleLayout.ts`.
+- Tips scale and pivot from their visual owner. Both web stages use the same owner resolve and layout policy;
+  the canvas folds the paint stamp into its draw-list product.
+- Tip scaling is paint-only. The hit product excludes tip stamps, so tooltips do not alter the streamed hit
+  surface of their children.
+- Tests: `HoverTipScaleMathTests.cs`, `hoverTipScaleMath.spec.ts`, and `canvasTipScale.spec.ts`.
+  `dumptips` reports the current owner boxes, spread displacement, and stamp.
+
+## Wide-screen spread algebra
+- Files: `src/CouchCoop.MirrorProtocol/SceneModel/SpreadIndex.cs` (anchor algebra + `ContainerHAlignFactor`),
+  `PaintOrderTables.ClipRenderedAabb` (widened clip widths). Web twin: `visit()` in
+  `frontend/src/mirror/mirrorRenderer.ts` (~L2100+, exact line drifts — grep `ParentDx` / `SpreadRecord`).
+- Mechanism: when the mirror stage is wider than the game's native aspect (F≠1), containers redistribute the
+  extra width; each node gets an absolute rendered `Dx`. Floaters and tips use their owner's `Dx`, not a second
+  parent-chain addition. Full-width/background scene roots use a distinct scene-identity branch.
+- **Identity-scoped centre claims:** a small 0/0-anchored widget the game
+  positions relative to CENTRED content strands at a fixed distance from the stage's left edge, because it is too
+  small for the `fullCanvas` seam (`localRect.width >= parentWidth - 1`). The fix is always a scene-identity match
+  (scene FILE + scene-relative path, behind a cheap NAME pre-filter) forcing the 0.5 claim — NEVER a geometry rule,
+  which would break every legitimate corner widget. Current members: `map_screen.tscn :: DrawingTools`,
+  `main_menu.tscn :: ButtonReticleLeft/Right`.
+- **`ContainerHAlignFactor` only knows BoxContainers** (`hbox-*` / `vbox-*` — the only `containerLayout` values the
+  producer emits). A `FlowContainer`'s children therefore fall through to the plain anchor algebra. The MP lobby's player list is a
+  `Godot.FlowContainer` (`character_select_screen.tscn :: RemotePlayerContainer/Container`, 518x354, anchors 0/1)
+  with `containerLayout: null`, but it is NOT displaced — its parent `RemotePlayerContainer` is 0/0-anchored and
+  hands the whole subtree a zero anchor budget, so every descendant takes the ride-rigidly branch instead.
+- **The rendered box is the box.** An anchored span is laid out at `renderWidthOverride`, not at its
+  streamed 1920-space `localRect.width`, so every read that asks "how wide is this element on screen" must use it:
+  `ninePatch.ts`'s slice bands, `nodeStyles`' clip corner radius, and the plain nine-patch degenerate-margin test
+  all took the streamed width and were fixed to take the rendered one (`nodeStyles.renderedWidth`). The native
+  client was already correct here — `MirrorNodeView.EffectiveNode` hands every drawer a width-adjusted clone.
+- Tests: `SpreadWalkTests.cs`, `SpreadMathTests.cs`. Web: `frontend/src/mirror/__tests__/mirrorRenderer.spec.ts`
+  (floater/spread cases), `ninePatch.spec.ts` + `nodeStyles.spec.ts` (the rendered-width reads).
+- Live capture: use a widened window (~2255×1080 or wider); desktop 16:9 verification is not sufficient.
+
+## Crisp text (native Half render scale)
+- Whole cards: `godot-client/src/Scene/CardLayer.cs` + `src/CouchCoop.MirrorProtocol/SceneModel/CardLayerPlanner.cs`
+  (clip-contains relax under `CARDCLIP_RELAX`; reject order after relax: AncestorEffect/Blend/ZOrder →
+  Invisible → UnknownBounds → Offscreen → MemberDynamic → Pass-B Occluded).
+- Labels: `godot-client/src/Scene/TextOverlay.cs` + `src/CouchCoop.MirrorProtocol/SceneModel/TextOverlayPlanner.cs`
+  (v3 clip relax, blocker-art tightening, tight single-line blocker extents).
+- Debug envs: `TEXTOVL_DEBUG`, `CARDLAYER_DEBUG`, `TEXTRECTS` (reject histograms). `MemberDynamic` gates on
+  `_unsettled` (a view's `TextureSettled`/similar flag). A texture that never resolves must not keep a card
+  `_unsettled` forever; check `TextureStore` failure tracking
+  before assuming a stuck reject is a clip bug.
+- Tests: `CardLayerPlannerTests.cs`, `TextOverlayPlannerTests.cs`, `CrispTargetsProbe.cs`,
+  `TextOverlayPlanProbe.cs`/`TextOverlayPlanBench.cs` (probes, not gating assertions — read before trusting
+  their pass/fail as a contract).
+- Live capture: QA `dumpcrisp` dumps per-card-root + per-text-candidate rejects, occlusion
+  culprits, and unsettled/failed texture urls; QA `state` carries the aggregate reject histograms.
+
+## Text metrics
+- Files: `src/CouchCoop.MirrorProtocol/SceneModel/TextScale.cs` (font-size multiplier table, keyed by
+  `SceneIdentity`, + wrap/line-spacing constants), `godot-client/src/Scene/TextBuilder.cs`
+  (`ConfigureLabel`/`ConfigureRich`, `CenterRichVertically` deferred measure ≤2 retries,
+  `GrowthCenterPlain` = box-top-anchored growth compensation — NEVER use raw `valign=Center` for
+  growth-compensated labels, a documented HP-bar footgun). Web: `frontend/src/mirror/mirrorTextScale.css` (the
+  documented values) + `textScaleClasses.ts` (the table both web backends read: resolved `mirror-ts-*` classes for
+  the DOM, resolved DECLARATIONS for the canvas rasterizer).
+- The readability master setting controls text scaling. The DOM toggles the generated
+  `<style id=mirror-text-scale>` sheet, while the canvas resolves text declarations on the next build.
+- Tests: `TextScaleTests.cs`. Web: `textScaleClasses.spec.ts`, `uiScalingSwitch.spec.ts` (U4, the sheet flip).
+
+## Spine clip pipeline
+- Files: baked clips served at `/spines` (producer, `../spirectl`), keyed
+  node→anim→skin→skeleton→policy→version (absent response = byte-identical to game). Native store:
+  `godot-client/src/Scene/SpineClipStore.cs` (one-shot escalation: `&retry=1` on a collapsed result; loops wrap at
+  `frames[last].StartMs`). Web: `frontend/src/mirror/spineClip.ts`.
+- Still swaps decode a fresh bitmap before replacing the displayed one. `record.spineShownStill` retains the
+  clip an `<img>` is displaying, independently of the requested clip, so cache eviction cannot invalidate it.
+- A spine node with both a still and an effect surface receives `.mirror-spine-promoted` to avoid subtree paint
+  culling on high-DPR browsers.
+- Clip cache: two LRU pools hold decoded clips and encoded still bytes. Terminal animations release earlier
+  clips for that creature; a plain DOM exit does not reclaim a living creature's clip.
+- Tests: `SpineClipTests.cs`, `SpineWireFieldsTests.cs`, `spineClip.spec.ts`, `spineMount.spec.ts`, and
+  `spinePaintCull.spec.ts`. `scripts/probe-spine-still-flicker.mjs` is the live blank-frame probe.
+- Headless hosts freeze Spine and particle simulation; browser clients render from the baked representation,
+  not a live per-frame spine stream.
+- Producer-only diagnostics and capability controls remain owned by `../spirectl`: `SPIRECTL_SPINE_DEBUG`,
+  `SPIRECTL_SPINE_CLIP_SKIN_UNION`, `SPIRECTL_SPINE_CLIP_DOWNSCALE`, and `SPIRECTL_SPINE_SETANIM_HOOK`.
+  They do not create alternate browser wire contracts.
+
+## Particles
+- Files: `godot-client/src/Scene/Effects/ParticleAttachment.cs` and
+  `frontend/src/mirror/particleAttributes.ts`; the web runtime is reconciled by its normalized spec signature,
+  and `_epoch` re-triggers one-shot bursts.
+- Coverage is selected from the shader contract, not inferred from texture alpha. Normalization supplies the
+  required coverage, UV, erosion, and mask fields before the reusable web renderer consumes the spec.
+- Headless hosts may freeze a one-shot while its producer state still appears active. The producer retires the
+  burst at its natural end and the web renderer also expires the frozen one-shot after its active window, without
+  caching a stale static frame. Looping emitters remain producer-owned.
+- Tests: web `frontend/src/mirror/__tests__/particleAttributes.spec.ts`, `particleMount.spec.ts`; gsw
+  `../godot-scene-web/packages/html/test/particles-coverage.test.ts`,
+  `../godot-scene-web/packages/html/test/particles-oneshot-expiry.test.ts`; mod
+  `tests/CouchCoop.Mod.Tests/HeadlessParticleFinishNudgeTests.cs`. Visual gate:
+  `scripts/probe-particle-vfx-replay.mjs` (see qa-recipes §5). Wire probe for latched flags:
+  `scripts/probe-mirror-spine-particles.mjs`.
+
+## Transforms / tweens
+- Files: `godot-client/src/Scene/SceneReconciler.cs` (`LocalXform` holds a node's local transform for
+  already-placed views; composition remains local and has no global-transform fallback; diagnostic `TRANS_DEBUG`),
+  `godot-client/src/Scene/Effects/TweenReplayer.cs` (replays the game's REAL streamed tween hints — this is
+  NOT client-authored interpolation; lever `TWEEN_DEBUG`). Death-VFX composes a 2×
+  supersampled `SubViewport` in the producer.
+- **Godot easing → CSS timing function** lives in `../godot-scene-web/packages/html/src/easing.ts`
+  (`godotEasingToCss`, consumed by `applyTweenHints`) — NOT in this repo. It is the single reason a replayed tween
+  can have the right duration and still feel wrong: the polynomial/trig `trans` family
+  (Sine/Quad/Cubic/Quart/Quint/Circ) fell through to the generic `ease-*` curves, and Godot's QuintOut has covered
+  97% of the travel at the half-way point where CSS `ease-out` has covered 68% (max deviation 0.388 of the
+  distance). The shop's 700ms Quint/Out open slide therefore looked ~2× slower in the mirror than in the game. Each
+  family now maps to its Penner cubic-bezier fit, and an ABSENT `trans` maps to `linear` (Godot's
+  `Tween::default_transition` is `TRANS_LINEAR`; a missing `ease` still selects the in-out column). Bounce/Spring
+  have no cubic-bezier form and keep the `ease-*` fallback. A twin of the same function still lives in
+  `../spirectl/presentation/web/src/render/interactivity.ts` (presentation's own renderer; NOT on the mirror path) —
+  it has not been updated.
+- **A HINT IS ONE-WAY: a producer cancel is NOT a client abort.** A producer cancellation
+  (`CancelTweenSuppression`) collapses the node's suppression window and resumes streaming — that un-pins the
+  PRODUCER. The client keeps replaying the endpoint until its own deadline, because there is no wire field that
+  says "forget the hint I sent you". Two consequences, both load-bearing:
+  - **Client (`pinTween`/`tickTweens`)** — while the pin overrides a streamed transform, the
+    renderer stashes the value it overrode and APPLIES it at the settle (instantly, transition already cleared)
+    instead of dropping it. It only replays a value that CHANGED since the arm: a suppressed node ships no
+    transform at all, so its retained pre-tween matrix must never be mistaken for a fresh pose and replayed —
+    that would teleport the node back to where the approach started. Without this, every delta that landed
+    inside a pin was lost permanently.
+  - **Producer** — a hand batch whose natural duration falls under the publish floor still publishes, at
+    `MinHintMs`, whenever the holder's window is still open (`Sts2HandTweenMath.CorrectiveDurationMs` +
+    `Sts2RuntimeSceneWatcher.HasOpenTransformWindow`). "Publish nothing and cancel" is only safe for a node
+    nobody is pinned to.
+  This preserves a re-focused card and settles it at the game's pose.
+- **A tween endpoint is placed on the wide-screen field at the endpoint's own X.** On a wider-than-16:9 stage a node that claims its own place on the horizontal squeeze field
+  shifts by a function of its own rendered X; the walk stores that shift per node (`record.spreadDx`) from the
+  node's CURRENT pose, and the producer then freezes that pose for the hint's whole window. Composing an endpoint
+  with the stored shift therefore landed a hand approach at `endX + startX·(F−1)` and SNAPPED at the settle
+  re-emit. `spreadDxAtGlobal` re-evaluates the same field formulas (`fieldDxAtOriginX` / `fieldDxAtCenter`, shared
+  verbatim with `computeSpread`) at the endpoint, for the two modes whose claim IS their own X —
+  `record.spreadFieldMode` 1 (pass-through group) and 2 (positional claimer, centre-based, endpoint basis included).
+  Everything else (riders, the anchor algebra, owner-anchored floaters, remote followers) is mode 0 and keeps the
+  walked shift. F = 1 skips the whole composition and is byte-identical.
+- **Focus-change teleports supersede same-frame re-targets of the same channel producer-side (see spirectl
+  `Sts2HandTweenMath`).**
+- **Hand-card parity gauge** (`?handParity=1`, off by default): every transform settle records where the client's
+  replayed tween ended versus where the game says the node is, into `window.__mirrorHandParity` (id, path, dx/dy,
+  drift px, capped with a dropped-count). `scripts/bench-mirror-replay.mjs --hand-parity` turns that into a
+  per-repeat settles/drifted/maxPx line plus the worst offenders — the A/B instrument for "cards jump at the end
+  of a transition". Drift should be 0.00.
+  - **Post-settle snaps** (`postSettles`/`snapped`/`maxSnapPx`, same gauge object and entry cap, entries tagged
+    `kind: "post-settle"`). The drift measure compares the endpoint against what the producer streamed WHILE the
+    pin was up, so a node suppressed for the whole window scores 0 however wrong the endpoint was. Each settle
+    therefore also arms a ~500ms watch, and the FIRST streamed transform to reach `pinTween` after it is compared
+    against the value the element was left at — which is the jump you actually see. A genuine game-initiated move
+    inside the watch counts too, so read it as a trend, not a verdict.
+- Tests: web `frontend/src/mirror/__tests__/mirrorTween.spec.ts`, `viewScaleTweenStamp.spec.ts`;
+  `../godot-scene-web/packages/html/test/easing.test.ts`; producer
+  `../spirectl/bridge-mod/tests/Spirectl.BridgeMod.Tests/Sts2HandTweenMathTests.cs`.
+
+## Producer / wire contracts
+- Producer lives in `../spirectl` (`bridge-mod`), NOT this repo — this repo owns only the CouchCoop-specific
+  DTOs/browser envelope on top of it (see CLAUDE.md architecture rules; do not add reusable-STS2 shims here).
+  Node change classification: `src/CouchCoop.MirrorProtocol/SceneModel/NodeChangeFlags.cs`,
+  `MirrorDelta.cs`. Scene-identity keying: `SceneIdentityCache.cs`. Static-bake pipeline (background
+  flattening): `StaticBakePlanner.cs` / `BandResidencyMachine.cs`.
+- Web parse/apply/reconcile: `frontend/src/mirror/mirrorRenderer.ts` (the reconciler — an incremental
+  structural-walk + hover-memo engine, not a naive full re-walk every drain).
+- Tests: `NodeChangeDifferTests.cs`, `SceneDeltaParseParityTests.cs`, `RecordingReplayTests.cs`,
+  `RoundTripFixtureTests.cs`, `WireDefaultsTests.cs`, `BandFlattenPlannerTests.cs`, `BandOrderingExactTests.cs`,
+  `StaticBakePlannerTests.cs`. Web: `frontend/src/mirror/__tests__/mirrorRendererIncremental.spec.ts`,
+  `roundTripFixture.spec.ts`, `structureDiff.spec.ts`, `wireDefaults.spec.ts`.
+- Perf: see `docs/mirror-combat-bench.md` (record/replay bench, already in this repo) before re-deriving a
+  benchmark methodology from scratch.
+- **Decorative-animator folds (why an "idle" screen is not a quiet screen).** Several always-mounted STS2 nodes
+  run an INFINITE per-frame animator whose only output churns the wire. The producer folds each one ANALYTICALLY
+  (divide the churning channel back out / substitute the loop's own rest value) and the client replays it, either
+  from a static path table (`frontend/src/mirror/animAttributes.ts`'s `nodeAnimBinding` — orb spin, intent bob,
+  flame flicker) or from a per-node `pinnedLoopAnim` token the producer names on the wire (`pinnedLoopBinding` —
+  map pulse, the three top-bar icons, proceed glow, end-turn glow). Producer switches live in `../spirectl`
+  (`SPIRECTL_DECOR_EMIT_SUPPRESS` master + `SPIRECTL_{TOPBAR,PROCEED,MAPPOINT,INTENT_BOB,INTENT_GLYPH,ORB_SPIN,
+  ENDTURN_GLOW}_FOLD`). Do not pin one of these to a first-seen sample: a pre-layout pose can be frozen forever
+  and an unbounded accumulator can strand at a random angle.
+- **A replayed loop must not need a JS wakeup.** The enemy-intent glyph cycle runs on the compositor as an N-cell
+  strip using `translate` and `steps(N)` (see `frontend/src/mirror/intentStrip.ts`). The `<img>` carries the same strip and `steps(N)`
+  animation; the strip is composed and PNG-encoded in the ATLAS BAKE WORKER (a `strip` job = N cells of one page →
+  one blob, `atlasBakeWorker.ts` / `bakeAtlasStripInWorker`) and memoised for the session on the whole set
+  (`atlasStripKey`: animationName|fps, every cell's page+rect, the cell box), so a repeat intent is a pure cache
+  hit. Worker-only by design — a multi-page set or worker failure falls back to the strip
+  CANVAS, because the inline composition IS the mechanism the worker job replaces. After: 0/0/0/0 on the same idle
+  window, with the cycle owned by `ActiveTranslateAnimation`. Gate: `scripts/assert-idle-compositing.mjs`.
+
+## Wire invariant: `orderedIds ⊆ nodes the client holds`
+
+- **The rule.** Every id in a scene delta's paint order must name a node the client actually has state for. Both
+  clients pick a STRUCTURAL walk purely on "the order array reference changed" (`state.orderedIds !== lastOrderedIds`
+  in `mirrorRenderer.reconcile`); an `update` walk never runs `rebuildStructure`. So if an id is already in the order
+  when its node's FIRST upsert arrives, that upsert carries no order change, the node is merged into the retained map
+  and **never placed in the tree** — invisible until something else happens to touch the order. A browser reload
+  "fixed" it because a fresh keyframe carries node + order together.
+- **How it was broken.** The producer registers a subtree born HIDDEN but prunes it from every incremental capture
+  (`if (!full && !read.Visible) skipDepth = …`), so those ids rode `OrderedIds` with no upsert behind them. Two
+  user-visible symptoms, one seam: treasure relics missing after the chest opens, and the targeting arrow's 19
+  segments missing on the first select after a game restart (a restart re-keyframes at the MENU, so the run's
+  hidden-at-birth nodes are never in a keyframe). It also silently disabled the compact order patch — `SceneOrderDiff`
+  self-verification cannot reconstruct an order containing ids the structure index skips, so every structural send
+  fell back to the full ~52KB array.
+- **Three layers hold it:**
+  1. producer — `OrderedIds` carries only ever-emitted nodes AND a node's first emit re-ships the order
+     (`../spirectl` `Sts2RuntimeSceneWatcher`);
+  2. host — `CouchCoopSceneObserver.BuildKeyframeContents` drops order ids the keyframe has no node for
+     . Stubs are not an option: the host doesn't know a never-received id's
+     parent, so a stub would enter as a nameless orphan root;
+  3. client — a delta that INTRODUCES a node id without touching the order re-derives the structure
+     (`sceneTree.applySceneDelta`).
+- **Probe**: `node scripts/probe-keyframe-order-integrity.mjs .sts2/bench/*.ndjson` — offline, asserts the invariant
+  on any recording and exits 1 on violation.
+- Tests: `frontend/src/mirror/__tests__/mirrorLateNode.spec.ts`,
+  `tests/CouchCoop.Mod.Tests/CouchCoopSceneObserverTests.cs` (keyframe self-consistency).
+
+## Spine stills: paused tracks
+
+- A still bake samples the MIDDLE of a clip (`Sts2SpineStillFrame.ChooseSampleTime`; last frame for die/defeat). That
+  is a guess, and it is wrong for a track the game has explicitly PAUSED — the treasure chest's only clip is named
+  `animation` (the lid opening) and a chest that has not been opened is held at its first frame, so a CLOSED chest
+  rendered a half-open lid.
+- The mirror pins `&t=<seconds>` (the streamed `spineTrackTime`) on a still url for a `spinePaused` node, and that
+  time is part of the CLIP IDENTITY — which is also the re-fetch trigger, because opening the chest changes nothing
+  else about the node (same anim/skin/mat/skel). Quantized to 2 decimals on BOTH sides (it is a cache key).
+- Files: `frontend/src/mirror/spineAttributes.ts` (`spineStillTime`), `mirrorRenderer` clip identity,
+  `CouchCoopSpineClipProvider.BuildSpineKey`/`FormatStillTime`, `CouchCoopBrowserServer.TryMintSpineClipKey`,
+  `../spirectl` `Sts2SpineStillFrame` + `SpineClipRequest.StillTime`.
+  Asset-cache invalidation is `SpirectlAssetBinaryCache.SchemaVersion`, derived from
+  `SpirectlSts2Runtime.AssetPayloadVersion`; spirectl owns that version.
+
+## Spine: never present a pose the game did not play
+
+- **A one-shot is never guessed.** `Sts2SpineDefaults.PickDefaultAnimation` returns `null` when every candidate is
+  a one-shot (`DefaultAnimationLoops` false). A node with no applied animation is not a clip node.
+- **A finished lone one-shot RESTS at its end.** `Sts2SpineSchedule.ResolveScheduledAnim` reports a non-looping head
+  with no queued `nextAnim`, past its duration, as PAUSED at `currentDurMsec` — which routes through the
+  paused-still plumbing above with no client change and, because the pinned `&t=` is CONSTANT, mints one stable
+  bake instead of one per tick. `currentDurMsec == 0` remains unpinned because its duration is unresolved.
+- **Unanimated one-shot nodes remain blank.** A node with no applied animation and only one-shot clips must not
+  receive an invented mid-animation still.
+
+## Web mirror twin structure
+- The whole live-tree mirror client lives under `frontend/src/mirror/` (Vue app `MirrorApp.vue`/`MirrorView.vue`,
+  entry `mirrorClient.ts`). It is a from-scratch TS reimplementation that mirrors the native godot-client
+  module-for-module (same file names appear in both "Files" lists above). When fixing one client, check whether
+  the corresponding twin needs the same change.
+- `frontend/src/mirror/nodeStyles.ts` / `sceneTree.ts` / `structureDiff.ts` are the DOM-side equivalents of the
+  native `MirrorNodeView`/`SceneReconciler` pair.
+- Ambient `@spirectl/*` type declarations consumed by the frontend are a HAND-MAINTAINED shim, not
+  auto-generated — a new spirectl export needs a matching hand-added declaration or `vue-tsc` fails TS2305
+  (check the shim file under `frontend/` if a spirectl type import goes red).
+
+## Join state in the page URL (`?name=`)
+
+- Written ONLY by the browser — the host never reads the param (`CouchCoopHttpRequest.Name` is dead code), which
+  is what makes an EMPTY value usable as a client-side marker.
+- THREE states, all of them in `frontend/src/join/joinModel.ts`: absent (`/`) = picker, empty (`/?name=`) = the
+  host player's own browser (a multiplayer direct view), value (`/?name=Ann`) = **seat intent** — auto-join that
+  seat, and until it is granted behave as a player waiting for a game, not a spectator (see the two rules below).
+  `readUrlName` trims the empty form to null, so it CANNOT tell absent from empty — use `hasNameParam` /
+  `readUrlNameState` (and `urlNameStateFor` for a value you are about to write).
+- **Seat intent (`?name=<value>`).** Two consequences, both client-side because the host never sees the
+  param: (1) the stream gate is SHUT until the seat is actually granted (`shouldWatchHostStream`'s `seatIntent`
+  argument — see the watch-gate section); (2) on a screen the host says has no seat, MirrorApp renders
+  `mirror/MirrorHostWaiting.vue` in the picker's place ("Waiting for host to start game" + "Control host"). The
+  screen test is `isNonJoinableMirrorMode(mode)` — true for `main-menu | sp-character-select | singleplayer-run |
+  unsupported`. MirrorApp holds the live answer in `urlSeatName` (a ref) + `urlSeatIntent`
+  (derived), updated through ONE helper (`rememberUrlName`) shared by `setUrlNameParam` and the
+  `onHeadlessRedirect` stamp — drift there = a viewer whose seat ended silently regains the host's stream.
+- `maybeAutoJoin` waits for the FIRST `session` before firing (it used to fire on socket open, which is before
+  anything is known about the host's screen) and re-checks the screen on every one, with the non-joinable guard
+  ABOVE the `autoJoinSent` latch: the guard is "not yet", so the single attempt is still there to spend when the
+  host reaches a multiplayer screen. `maybeRequestDirectView` is suppressed under seat intent — the `directView`
+  grant it asks for is the gate's FIRST branch and would hand a waiting player the host's solo run.
+- "Control host" (`onControlHost`) is the only writer of the empty marker on a NON-multiplayer screen: it pushes
+  `?name=` and forces a reload rather than unwinding in place, because most of this app's setup is URL-keyed and
+  read once. `onDirectView`'s stamp stays multiplayer-only.
+- One writer for both clients: `writeUrlNameParam(value, "push"|"replace", {history, location})`. Everything
+  PUSHES (a join is a navigation the player must be able to reverse); `replace` is only for silently dropping a
+  marker nobody navigated to. Its equality guard is load-bearing — the auto-join path re-stamps the name it just
+  read out of the URL.
+- Callers: `rememberJoinedName` (mirror, on `onHeadlessRedirect`) and MirrorApp's `setUrlNameParam` for the
+  host marker. The marker is stamped only when
+  `isMultiplayerMirrorMode(mirrorMode)` AND no param is present — an existing `?name=<value>` that produced the
+  direct view is left alone (it already reloads to the same view and may be a shared link; e2e `smoke.spec.ts`
+  "preserves join URL usability with query params" is the regression gate).
+- BACK/FORWARD is a full `location.reload()` (`MirrorApp.handlePopState`), fired only when the URL's param state
+  differs from the one the page holds (`shouldReloadForUrlNameChange`) — that inequality IS the loop guard. A
+  reload is the only reset consistent with every module's lazy `window.location` read; do not hot-unwind the
+  joined socket instead. MirrorApp's ONLY prop, `reloadPage`, exists because jsdom cannot stub `location.reload`.
+- On load, an empty `?name=` re-takes the host view itself (`maybeAutoHostView`, the twin of `maybeAutoJoin`):
+  it waits for a multiplayer roster, then submits the [Host] row exactly as a tap would. A multiplayer roster with
+  no host row keeps the marker and stays unlatched: the
+  empty marker is the durable "I am the browser controlling the host", and a host-less roster is usually just one
+  that has not caught up, so deleting it cost the host player their own view for the rest of the session.
+- Tests: `frontend/src/join/__tests__/joinModel.spec.ts` (states, writer, reload matrix, `seatIntent` +
+  `isNonJoinableMirrorMode`), `frontend/src/mirror/__tests__/mirrorJoinUrl.spec.ts` (the wiring, through the real
+  component, including the seat-intent matrix), `frontend/src/mirror/__tests__/mirrorHostWaiting.spec.ts` (the
+  waiting screen's copy + emits). Live:
+  `scripts/probe-join-url-flow.mjs <host|seat|solo>` drives a real host and logs URL + `history.length` + screen
+  state per step.
+
+## A join must fail visibly
+
+A join that goes wrong on the host has to reach the picker. It did not: the mirror client ignores
+`action-result` outright (`mirrorClient.ts` — the host answers a semantic action with one and nothing reads it),
+while the receive loop answers ANY faulted message with exactly that envelope. So a shipped
+`KeyNotFoundException` inside the join handler was delivered, discarded, and the viewer watched "Joining…"
+forever with nothing in `godot.log` either. Three independent defences now, deliberately layered because only
+the first needs the host to cooperate:
+
+1. **Server converts its own throw.** The mirror-join decision block (`CouchCoopWebSocketConnection`, from the
+   headless-manager branch through the secure-port resolution) has its own `try/catch`, filtered on
+   `!cancellationToken.IsCancellationRequested` so shutdown is not reported as a join failure. It logs
+   host-side and sets `joinRejection = "join-failed"` + `JoinRejectionDetail = ex.Message` — the channel the
+   client already treats as TERMINAL. `BrowserStateEnvelopeFactory` drops a detail with no rejection to hang it
+   under, and the pre-existing "a refused join must not also report itself joined" guard covers the new code for
+   free. The outer catch also now reports the INBOUND `requestId` instead of minting a fresh GUID.
+2. **Client `action-result` backstop.** `onActionError` fires only while a join is outstanding (`joinPending`,
+   set by `sendJoin`, cleared by whichever session directive resolves it and on close), so a refused map-node
+   vote can never clear the form. Handled ABOVE the `watching` gate — a viewer on the picker has the scene
+   stream OFF, which is exactly when this must work. This is the layer that makes the whole class of bug
+   non-silent without anyone remembering to convert a new throw.
+
+   **`action-result` has a second reader, and the ordering is load-bearing.** Scroll
+   authority reads a successful `set-scroll-offset` result for the clamped offset it carries (`readScrollAck`).
+   It is placed strictly BELOW this backstop and matches only results with no `code`, so the backstop keeps
+   FIRST REFUSAL on every error-carrying envelope — which is the whole property above. Anything added here
+   later must take the same position: this envelope's error path belongs to the join, and a reader that
+   swallows one is the original bug returning. `scrollAuthorityClient.spec.ts` pins it with a scroll-shaped
+   fault during a pending join.
+3. **90s client timeout** (`JOIN_TIMEOUT_MS`, armed by a `watch` on `pendingName` so all six resolution paths
+   disarm it). Clear of the host's own 60s spawn deadline (`HeadlessClientManager.WaitForReadyAsync`) so a cold
+   seat that is merely slow is never failed; this only catches a host that answers nothing at all.
+
+**A throwing launcher used to leave the slot bound.** `EnsureHeadlessAsync` sets `_sessionToSlot[sessionId]`
+BEFORE `_launcher(slot)`, and only the null-RETURN path undid it — so after a throw the viewer's retry
+short-circuited to `return SlotToPort(slot)` and was redirected to a port with nothing listening, which is worse
+than the failure it retried. The launch is now wrapped so a throw unwinds identically, then rethrows.
+
+Tests: `BrowserServerRouteTests.AssertJoinFaultReachesTheViewerAsync` drives the whole thing over a real socket
+with a throwing launcher (the manager's launcher delegate is the seam, and it is where the real bug lived) —
+including the retry leg, which is what found the slot leak. Plus `AssertJoinRejectionDetailPlumbing` (wire
+fields), `frontend/src/mirror/__tests__/joinFailure.spec.ts` (all three defences through the mounted app) and
+the `mirrorClient` specs in `frontend/src/__tests__/mirror.spec.ts`.
+
+**Real-browser repro:** `dotnet run --project tests/CouchCoop.Mod.Tests -- join-fault-harness <staticRoot> [port]`
+serves the REAL browser server with a throwing launcher, so a browser pointed at it takes the whole path and
+renders the failure. Point `<staticRoot>` at the DEPLOYED SPA (`<game>/mods/couchcoop/frontend`) to photograph
+the shipped bundle. **Gotcha:** it must arm `CouchCoopHeadlessVisualSuspender._baselineMaxFps`/`_baselineCaptured`
+by reflection first — otherwise every `session` build hops to the Godot main thread for the real MaxFps, and in a
+runner with no native Godot that is a **SIGSEGV that kills the process silently on the first WebSocket** (exit
+139, nothing logged). The suite only survives because `HostPerformanceEnvelopeTests` runs first and leaves those
+statics set; any new standalone host of this server needs the same two lines.
+
+## Mirror stream gate (`watch`)
+- Product rule: a viewer must NOT have the host's game streamed (or rendered) behind the join picker while the
+  host has multiplayer active — lobby, saved multiplayer game, or multiplayer run. It streams only once the
+  viewer chose a seat (`joined`) or the host itself (`directView`), or when the host is off the multiplayer
+  screens entirely.
+- The decision is CLIENT-side and shared: `JoinModel.ShouldWatchHostStream` / `shouldWatchHostStream`
+  (`frontend/src/join/joinModel.ts`) — the same predicate both clients use to decide whether to show the scene,
+  so wire and screen can't disagree.
+- **`seatIntent`** ("this page's URL names a seat"; see the `?name=` section) is required in
+  both twins so neither client can forget it, and its POSITION is the contract: strictly BELOW `joined ||
+  directView` (a granted view outranks a URL marker — the URL still names the seat after the host serves it, so an
+  arm above these would black out every joined viewer) and ABOVE everything else (a title-only host screen must no
+  longer open the gate for a viewer that named a seat). The native client has no page URL and passes
+  `seatIntent: false` (`godot-client/src/App/ConnectionCoordinator.cs`, which is NOT in `CouchCoop.sln` — build
+  `godot-client/CouchCoop.GodotClient.csproj` explicitly after touching this signature).
+- Wire: the initial value rides the complete canonical connection query because only the query is known early
+  enough to suppress the host's connect-time keyframe; later flips ride `{"type":"watch","on":bool}`.
+  Tooling must send all five selectors, including `watch`.
+- Host: `CouchCoopWebSocketConnection.SetSceneStreamingAsync` — OFF drops the coalescer (pending upserts AND
+  `_lastSentOrder`; a patch diffed across a gap renders as a scrambled tree, not an obvious failure); ON re-runs
+  the connect sequence in order (reset → open gate → register as streaming → FULL keyframe → release the pump).
+- CPU: `CouchCoopBrowserServer._streamingMirrorConnectionCount` — not the connection count — drives the scene
+  observer, so the producer's whole-tree walk stops while every viewer is on the picker. Conversely a GATED
+  mirror keeps the (cheaper) STATE observer alive, because `RebroadcastSessionsIfRosterChanged` is the only
+  source of `session` re-sends on a mirror-only host — without it the gate would latch shut. The streaming path
+  additionally re-sends sessions on a screen change seen in the scene delta
+  (`ResendSessionsIfSceneScreenChanged`), which is what closes the gate when the host ENTERS a multiplayer screen.
+- Tests: `BrowserServerRouteTests.AssertSceneStreamGateAsync` (+ `AssertMirrorOnlyHostKeepsSessionsLiveAsync`),
+  `SceneDeltaCoalescerTests.ResetDropsPendingAndOrderBaseline`, `JoinModelTests.ShouldWatchHostStreamGate` (incl.
+  the `seatIntent` block), `frontend/src/mirror/__tests__/mirrorClientWatch.spec.ts`, and the seat-intent leg in
+  `frontend/src/mirror/__tests__/mirrorJoinUrl.spec.ts` (asserts what is actually on the wire: the last
+  `{"type":"watch"}` flip, or the connect query when there is none).
+
+## Host transport
+
+A normally-created multiplayer session is the game session, and couch seats ride alongside it.
+
+- **`Session/DualNetHost.cs`** — `internal sealed class DualNetHost : SteamHost`. One `NetHostGameService`
+  drives a Steam lobby AND a parallel ENet host at once. It must derive from `SteamHost` (not `NetHost`) —
+  base it on the plain host type and the in-lobby **Invite** button stops appearing. Sends route by side
+  membership (`ConnectedPeerIds`); an UNKNOWN peer goes to the ENet side, never Steam, because the Steam send
+  path is fatal for a peer it does not know while the ENet one only logs.
+  The inner ENet host gets a `SideHandler` shim so `StopHost` cannot fire `OnDisconnected` twice.
+- **`Session/CouchCoopHostTransport.cs`** — statics (`HostNetId`, `EnetAvailable`, `SteamLobbyId`, `IsDual`) +
+  `StartHostAsync`. Steam OK → dual host; Steam failure → silent fallback to a
+  plain ENet host (logged EResult, no popup). A double failure is never swallowed.
+- **`Patches/CouchCoopHostTransportPatch.cs`** — Harmony PREFIX on `NetHostGameService.StartSteamHost(int)`
+  (a postfix is too late: by then a plain Steam-only host is already up).
+- **Behaviour matrix**: Steam online → friends-only Steam lobby + side ENet host; Steam uninitialized →
+  plain ENet; Steam init-but-offline → silent ENet fallback, and the QR dialog raises a
+  "Steam offline" notice via `CouchCoopHostUiNotices`.
+- Slot cap is REAL: `slotId` is serialized in 2 bits, so 4 players INCLUDING the host, shared between Steam
+  remotes and couch seats (`CouchCoopLobbyParticipation.MayLaunchNewHeadless` carries the free-slot guard).
+
+### Headless seat launch contract (no CLI args)
+
+`HeadlessClientManager.LaunchReal` spawns seats with `--headless` and NOTHING else. Everything travels in the
+environment, and `Patches/CommandLineOverridePatch.cs` re-materializes `fastmp=join` + `clientId` INSIDE the
+seat process (prefixes on `HasArg`, `TryGetValue` and `GetValue`), so the game drives its own join.
+
+Verified live on a running seat (`/proc/<pid>/cmdline` is exactly `SlayTheSpire2 --headless`):
+
+| env var | example | meaning |
+| --- | --- | --- |
+| `COUCHCOOP_HEADLESS_CLIENT` | `1` | turns the override table on; also selects the windowless mod branch |
+| `COUCHCOOP_CLIENT_ID` | `1002` | the seat's netId (1000 + slot) |
+| `COUCHCOOP_HOST_NETID` | `1` | host's real netId; `Patches/HostNetIdPatch.cs` rewrites `ENetClient.HostNetId` when this is not 1, or heartbeat replies would throw every 200ms |
+| `COUCHCOOP_JOIN_HOST` | `127.0.0.1:33771` | explicit direct-connect host, honoured by any modded client |
+| `COUCHCOOP_HEADLESS_SLOT` / `COUCHCOOP_PREFERRED_PORT` | `2` / `13357` | per-slot user dir + browser port |
+
+## Lobby QR host panel
+
+The always-on QR overlay is gone. A game-styled button opens a dialog instead.
+
+- **Files**: `HostUi/CouchCoopQrHostPanel.cs` (single injected root), `CouchCoopModalDialog.cs` (shared
+  modal chrome), `CouchCoopQrDialog.cs`, `CouchCoopHostTransportAlertDialog.cs`, `HostTransportAlert.cs`,
+  `CouchCoopQrHostSelect.cs`, `CouchCoopEventButton.cs` / `CouchCoopSkipButton.cs` (both
+  `CouchCoopTextureButton` → `NButton`), `CouchCoopQrHostPanelController.cs` (0.25s scan + gate),
+  `CouchCoopLobbyHostGate.cs`, `QrHostOptions.cs`, `QrHoverTipCopy.cs` + `CouchCoopQrHoverTips.cs`
+  (per-option hover-tip pair through the game's `NHoverTipSet`), `CouchCoopQrSelectionPreference.cs`
+  (persisted pick, `qr-prefs.json`), `QrRaster.cs`, `CouchCoopStreamSkip.cs`.
+- **Gate**: `ShouldShow(listenerBaseUri, state)` = browser server bound AND
+  `state is { Run: null, CharacterSelect.Lobby.NetGameType: "host" }`. That single predicate covers BOTH
+  `NCharacterSelectScreen` and `NMultiplayerLoadGameScreen`; a singleplayer/client lobby is refused.
+- **Node contract** (what the probes assert): `CouchCoopQrHostPanel` (FullRect, `Ignore`) →
+  `CouchCoopQrButton` (rect **226,732 → 578,868**, design space, on BOTH lobby screens; label
+  "Couch Co-Op QR Code") and `CouchCoopQrDialog` (hidden) → `CouchCoopQrDialogScrim` (`Stop`, closes),
+  `CouchCoopQrDialogPanel` (1000×936 centred, `Stop`, does NOT close) → `CouchCoopQrDialogTitleLabel`,
+  `CouchCoopQrDialogQrTexture` (`Stop`, does NOT close), `CouchCoopQrDialogUrlLabel`,
+  `CouchCoopQrDialogNoticeLabel` (hidden unless Steam-offline), `CouchCoopQrCloseButton`,
+  `CouchCoopQrHostSelect` → `CouchCoopQrHostSelectCurrent` + `CouchCoopQrHostSelectList` (hidden) →
+  `CouchCoopQrHostOption0..N`. Plus, since Aug-15, a sibling `CouchCoopHostTransportAlert` (hidden) →
+  `…Scrim` / `…Panel` → `…TitleLabel`, `…BodyLabel`, `…DismissButton`.
+  **These names are the contract** — `CouchCoopModalDialog` takes them as a `CouchCoopModalNames`
+  parameter precisely so extracting the shared chrome could not rename the QR dialog's four.
+- **Shared modal (`CouchCoopModalDialog`)**: scrim + centred card + one `CouchCoopSkipButton` + Escape
+  binding + focus parking. Subclasses supply the BODY (`InstallBody` / `ApplyBodyLayout` / `LayoutBody`)
+  and the button's wording/size; `OnScrimPressed` returning true swallows a scrim click instead of
+  closing (the QR dialog collapses its open option list first). The card is never a close surface.
+- **Options** (single select — the two link checkboxes are gone, their methods are rows now):
+  `QrHostOptions.Build` orders advertised-override → per-ADAPTER triples (best IPv4 per NIC, adapters
+  tier-sorted ethernet → wifi → other; inside each: plain ipv4 → `sts2-couch.pages.dev/?h=<ip>:<port>` →
+  `https://<dashed-ip>.my.local-ip.co:<securePort>/`) → mDNS `<machine>.local` ALWAYS LAST (the
+  self-check no longer reorders it, it only badges "didn't answer when tested"). Default = first
+  ENABLED row; unavailable methods render disabled with their blocker and stay hoverable. Identity is
+  `SelectionKey` (`method|adapterIp`), never Host — every web row shares the public host. The port is
+  always the port each listener actually bound. The pick persists as `{method, host}` in
+  `qr-prefs.json` (`CouchCoopQrSelectionPreference`).
+- **Hover tips**: hovering/focusing any row (incl. the closed current row and disabled rows) shows a
+  game-native tip PAIR — adapter pros/cons + method pros/cons (`QrHoverTipCopy`, average-gamer
+  register, no protocol jargon; pinned by `QrHoverTipCopyTests`). Titles merge into the game's
+  `static_hover_tips` loc table per show (`SetLanguage` wipes merges); descriptions are raw strings.
+  The created `NHoverTipSet` parents under the GAME's tips container, so `CouchCoopQrHoverTips`
+  stamps it `spirectl_stream_skip` synchronously — the mirror probe scans tip TEXT while a tip is
+  held open to prove it.
+- **The QR is ALWAYS the same size on screen** (`qrDialogExtent`, 592 design units — an exact size, not a
+  budget). It used to be `modules * 4 * K` for the largest whole K that fit, so the plain LAN URL (37
+  modules, K=4, 592) and the secure URL (41 modules, K=3, 492) rendered visibly differently and picking
+  a secure row resized the code. The whole-number rule still holds — a fractional scale resamples the
+  module grid and can make a code unscannable — but it moved into `QrRasterPlan`: every module gets
+  `floor(592 / modules)` source pixels and the leftover becomes **centred white padding**, i.e. extra
+  quiet zone, which is always legal. Result: 592 vs 574 in one fixed 592 box (3%) instead of 592 vs 492
+  (17%). The canvas is 1:1 with the extent, so `QrRaster` writes a byte buffer for one
+  `Image.CreateFromData` — the old per-pixel `Image.SetPixel` loop is why the raster had to stay tiny.
+  Specs: `QrRasterTests` (both real URLs, uniform module pixels, lossless module round-trip, white-only
+  padding, pathological degradation) and `CouchCoopQrLayoutContractTests`.
+- **Steam-offline alert**: on entering the host lobby with `CouchCoopHostUiNotices.HostTransportNote` set,
+  `CouchCoopHostTransportAlertDialog` pops with the note as its BODY (the QR dialog's tip line is
+  invisible to a host who never opens that dialog). **Once per MOUNT**, decided by the pure
+  `HostTransportAlert.Decide(state, mounted, note)` and latched in `_alertState` on the controller's scan
+  — **no persistence of any kind**, so backing out to the menu and returning shows it again. The note is
+  not latched until it is actually shown, so a transport that reports a beat late still gets its alert.
+  Spec: `HostTransportAlertTests`.
+- **Clicks are focus-gated**: the game's lobby buttons ignore a click until the pointer has entered them, so
+  any scripted drive MUST `dev scene hover` first and then click AT THE RETURNED `hoverPosition`.
+- **Mirror exclusion is a SAFETY control, not a bandwidth one**: mirror clients drive the host with real
+  injected input, so a phone that can see the button can press it and open a dialog on the host's TV (the
+  same reason both modals hang off this one root). The
+  panel is stamped `spirectl_stream_skip` BEFORE `AddChild` (a later stamp races a keyframe); spirectl's
+  scene WATCHER honours it (kill-switch `SPIRECTL_SCENE_WATCH_HONOR_STREAM_SKIP=0`). It is deliberately NOT
+  honoured by the dev scene PROVIDER, so `sts2 dev scene ...` can still see and drive the dialog.
+- **`_Ready` is not trusted**: Godot virtual dispatch into the mod assembly is unproven (no Godot source
+  generators here), so the controller calls an idempotent `Install()` explicitly after `AddChild`, and
+  hover/press flow through signal `Callable`s.
+
+### Host connectivity log
+
+A second injected panel on the same lobby screens, rendering what the couch-coop plumbing is doing in
+plain sentences. It exists because every event it shows already went to the console — and `sts2 game launch`
+used to detach stdio to `/dev/null`, so in the field the host's TV said nothing while a phone failed to join.
+**The existing console lines are untouched**; each `Append` sits beside one. (Since 2026-09-04 `game launch`
+also TEES the child's stdio to `.sts2/artifacts/game-launch/`, reachable via `dev logs --source game-stdio`
+and `launch.stdio` — which is the operator's copy. The panel is still the only thing the person on the couch
+can see, and the mod's own lines are on stdout, not stderr.)
+
+- **Files**: `Activity/CouchCoopActivityLog.cs` (the ring), `Activity/CouchCoopActivityMessages.cs` (all
+  copy), `Activity/CouchCoopActivityRender.cs` (bbcode), `Activity/CouchCoopActivityPanelState.cs`
+  (collapse flag), `HostUi/CouchCoopActivityPanel.cs`, `HostUi/CouchCoopActivityLayout.cs`. Specs:
+  `CouchCoopActivityLogTests`, plus narration legs in `HeadlessClientManagerTests`,
+  `MirrorSeatRosterTests` and `BrowserServerRouteTests`.
+- **`Activity/` is NOT in any hot-reload glob, and must not be.** `Diagnostics/`, `Server/` and
+  `Protocol/` are `<Compile Include>`d into `CouchCoop.Mod.HotReload.csproj`, so each generation compiles
+  its own copy — a static ring there would silently split in two on reload. The linked `Server/` sources
+  reach these types through the `ProjectReference` instead, which works only while the API takes BCL
+  types and the enums declared in `Activity/` (the `WireSceneDelta` CS1503 type-identity trap).
+- **Gate is `IsHostLobby`, NOT `ShouldShow`** — the difference is the point. `ShouldShow` additionally
+  requires a bound listener; a host whose browser server failed to bind is exactly who must read
+  "Couldn't start the phone connection service."
+- **Placement**: right-anchored (`AnchorLeft/Right = 1.0`, offsets −584 … −24), `y 96 → 536`, header 44
+  (the collapsed height). Below the game's own version label (`main_menu.tscn :: ReleaseInfo`, y 18–63,
+  which shows through on the lobby). Right-anchored because `project.godot` stretches `canvas_items` with
+  `expand`, so an ultrawide window grows the design width. Known accepted edge: an *open* act-dropdown
+  list (y 75–250) would overlap, but it is not normally visible on these screens.
+- **Node contract** (probe-asserted): `CouchCoopActivityPanel` (FullRect, `Ignore`) →
+  `CouchCoopActivityCard` (`Panel`, `Ignore`) → `CouchCoopActivityHeader` (**`Stop`**, `gui_input`
+  toggles collapse) → `CouchCoopActivityTitleLabel` + `CouchCoopActivityToggleLabel` ("–"/"+"), and
+  `CouchCoopActivityBody` (`Ignore`) → `CouchCoopActivityLogText` (`RichTextLabel`, **`Stop`**). The
+  header is a plain `Control`, not an `NButton` — no hover dance. `ClipContents` on the log is left at
+  its default `true` (correct: it is a scrolling viewport — this is not the bug in
+  [clip-contents-blast-radius.md](clip-contents-blast-radius.md)).
+- **The log node is a subclass (`CouchCoopActivityLogLabel`) purely to be INSPECTABLE.** `append_text`
+  does not update a `RichTextLabel`'s `text` property, so `dev scene node --properties` on the log reads
+  empty and no probe could assert a word of it. The subclass exposes `GetFormattedText()`, which is the
+  first accessor spirectl's text diagnostics reflect for (`GetFormattedText` → `Text` → `BbcodeText`,
+  with a base-type walk that resolves a `Godot.RichTextLabel` subclass), so the markup-stripped log shows
+  up as `properties.text.text` with no extra node.
+- **Sibling order**: installed by `CouchCoopQrHostPanelController.Scan` (one controller, not two — the
+  recursive screen walk is the expensive half of the tick) and then `MoveChild`ed to be the **earlier**
+  sibling of the QR panel, so QR modals and their input-blocking scrims draw over it. `ZIndex = -1` was
+  rejected: it hides the panel behind the lobby's StaticBg.
+- **Rendering is incremental and append-only.** `NewestSequence` doubles as a revision; an unchanged tick
+  costs one lock and a comparison. New entries go through `RichTextLabel.AppendText`, **never `.Text =`**
+  — `set_text` calls `clear()`, which re-arms `scroll_following` (godot 4.5.1) and would yank a
+  scrolled-up reader to the bottom on every event. A ring drop (`SnapshotSince(..., out truncated)`)
+  falls back to a full redraw with an "…earlier events not shown" head.
+- **`EscapeBbcode` is load-bearing**: half the log is a display name typed into a browser, and the label
+  has bbcode enabled. `[` → `[lb]`.
+- **`CouchCoopStreamSkip.Stamp` before `AddChild`**, same race as the QR panel — and here the stake is
+  that the log carries player-chosen NAMES, which must not reach every other phone.
+- **Emission points**: `Session/HeadlessClientManager.cs` S1–S17 (seat lifecycle; the launch trio wraps
+  `_launcher(slot)` in `EnsureHeadlessAsync` rather than living in `LaunchReal`, which no test can
+  reach), `Server/CouchCoopWebSocketConnection.cs` V1–V5, `HostUi/CouchCoopHostUiServices.cs` +
+  `CouchCoopMod.StartHostUiServices` B1–B7, and two transitions in `Session/MirrorSeatDirectory.cs`.
+- **Two curations that are the difference between a log and a feed**: (1) V5 ("… phone disconnected") is
+  suppressed once a viewer was handed off to a seat — the seat channel already says whether their window
+  was closed or kept alive, and `RegisterConnection`/`UnregisterConnection` are never narrated at all
+  (they fire on every page load); (2) `MirrorSeatDirectory` narrates only when it has seen the seat
+  before (`had == true`), or a fresh per-generation directory would re-announce the whole roster on
+  startup and after every hot reload.
+- **A generation swap is not a restart**: nothing in `HotReloadableBrowserServerHost` (or in the
+  standalone `CouchCoopBrowserServer` harness twin) emits. Pinned by
+  `AssertHotReloadableServerHostSwapAsync` asserting the log's revision does not move.
+
+## Suites / build (quick index — full detail in qa-recipes.md)
+- `dotnet run --project tests/CouchCoop.MirrorProtocol.Tests` and `dotnet run --project tests/CouchCoop.Mod.Tests`
+  — custom `Exe` runners, NOT `dotnet test` (suites self-register in each `Program.cs`).
+- `godot-client`: `dotnet build godot-client/CouchCoop.GodotClient.csproj` (Godot's CLI runs the LAST-BUILT
+  assembly — always build immediately before running).
+- `frontend`: `npx vue-tsc --noEmit && npx vitest run` — NEVER `npm run build` inside a worktree (its
+  `vite build` outDir deploys straight to the installed mod dir).
+- `../spirectl`: `scripts/validate.sh bridge-build` / `scripts/validate.sh bridge-tests` — run `bridge-tests`
+  ALONE (a parallel MSBuild race, MSB3030, is a known flake when run alongside other spirectl validate legs).
+
+## Reference repos
+- **`../spirectl`** — reusable STS2 runtime/producer: generic scene watcher, semantic actions, asset
+  extraction, fixtures/scenarios, render snapshots, screenshots/diff, the `sts2` CLI itself. Anything that is
+  useful to ANY STS2 tool (not co-op-specific) belongs there, not here — see CLAUDE.md architecture rules.
+  `scripts/validate.sh` is its test entrypoint; `docs/` there (`ai-tools.md`, `cli.md`, `testing.md`,
+  `known-gaps.md`) covers the CLI surface in depth.
+- **`../sts2-couch-coop-v1`** — the old mod, kept ONLY as a behavior oracle (edge cases, validation rules, UI
+  lessons). Never copy its source wholesale (CLAUDE.md rule).
+- **`../godot-4.5.1-stable`** — Godot engine SOURCE at the exact version this project embeds. Use it for
+  engine-internal questions the docs don't answer precisely enough: `Control` anchor/layout math,
+  `CanvasItem` draw order, `GPUParticles2D` semantics, etc. (There is also a `../godot-4.6.2` checkout on this
+  machine for unrelated work — the project targets 4.5.1, don't cross-reference the wrong version.)
+- **`../godot-docs-4.5`** — the Godot documentation repo, pinned to 4.5. Use for class/API reference lookups
+  without a web fetch (there is also a `../godot-docs-4.6` checkout — same version-pinning caveat as above).
+- **`.sts2/research/`** (this repo, git-ignored, per checkout) — write-ups of findings that CANNOT be
+  committed: game code, scene structure, captured wire payloads, device measurements, plus the
+  read-only probe scripts and raw data behind them. Start at its `INDEX.md`, which also points at the
+  generated local trees the notes were derived from. Note a worktree gets its OWN empty `.sts2/` (a plain
+  directory, not a symlink), so notes written there are invisible to everyone else — always read and write
+  them at the real checkout path. Findings that DO belong in the repo go in `docs/agents/` instead, with
+  the game *code* left behind. Resource paths and node names the mod needs to function may be committed —
+  see CLAUDE.md → Artifact Policy for where the line actually sits. `../spirectl` keeps its own
+  `.sts2/research/` under the same rule.
+
+## Mirror settings panel (web)
+- Files: store `frontend/src/mirror/mirrorSettings.ts` (defaults, the localStorage layer, the server payload),
+  panel `frontend/src/mirror/SettingsPanel.vue`, per-row help `frontend/src/mirror/SettingsHelpTip.vue`, the
+  toggle + fullscreen chrome `frontend/src/components/SettingsGearButton.vue` / `FullscreenButton.vue` (both take
+  a `compact` prop for the browser-space picker placement), wiring `frontend/src/mirror/MirrorApp.vue`.
+- Seeding order (one pass, in `createMirrorSettings`): built-in defaults < device tier floor < localStorage <
+  URL query. URL wins for the SESSION and never writes back; only operating a control in the panel saves, and
+  only that one field (`persistMirrorSetting`). Storage key is versioned: `couchcoop.mirrorSettings.v1`.
+- Never persisted: `freeze*` (host truth, re-seeded per connection from the serving instance), `panelOpen` /
+  `panelAnchorTop`, `effectModePinned`, `spineMode` (dev `?spineMode=` only). `PERSISTED_SETTING_KEYS` +
+  `NEVER_PERSISTED_SETTING_KEYS` must together cover every store key — a spec asserts it.
+- `refreshRate`/`tweenReplay` ARE persisted although they are server-tied: a saved value beats the `session`
+  envelope's baseline and the one-shot push carries it to the game (MirrorApp's `refreshRateSeeded` rule).
+- Effect mode defaults are device-independent: shaders `static`, particles `static`. The quality tier only owns the
+  hard-off lane (`shadersHardOff`/`particlesHardOff` in
+  `render/quality.ts`: the `off` tier from `?debug` / `?quality=off` / a software-WebGL phone). Everything else —
+  marker stamping (`particleAttributes.ts`), runtime construction + effective mode (`shaderResources.ts`), render
+  scale and fps caps (`MirrorView.applyShaderMode/applyParticleMode`) — follows the PANEL.
+- Consequence to preserve: fps caps are 30 on every live tier, and the ½/¼ DYNAMIC modes are 0.5/0.25 on every
+  device — the same panel selection behaves identically on a phone and a desktop.
+- The one device-dependent scale is STATIC's backing store (`quality.ts` `staticShaderScale`/
+  `staticParticleScale`, consumed by `MirrorView.scaleForMode(mode, family)`): mobile = 0.5 shaders / 0.25
+  particles, desktop = 1. Frozen effects still redraw on scene deltas, so backing-store fill cost matters.
+- Tests: `mirrorSettings.spec.ts` (layering + storage), `settingsPanelPersistence.spec.ts` (what a control
+  writes), `settingsPanelHelp.spec.ts` (tips), `effectClampLift.spec.ts` (panel-decides), `pickerChrome.spec.ts`
+  (gear + fullscreen on the picker), `quality.spec.ts`, `mirrorViewEffectModes.spec.ts`.
+
+## Composited-layer count
+
+A phone trace showed most composited layers existing only because of `Overlap`, and three fixes looked obvious.
+All three were measured and all three are wrong. **Read `.sts2/research/overlap-layer-cascade-aug18.md` before
+doing any layer-count work** — it carries the 18-arm lab and the per-animation costs. The short version:
+
+- **Containment cannot work.** Any *transform-family* compositing reason (`will-change: transform`, a `transform`
+  or `translate` animation) makes that layer's overlap rect **unbounded** — everything painted after it that
+  cannot merge is promoted, however far away it is. `contain: paint`/`strict`, `isolation`, `content-visibility`,
+  `opacity: .999`, `filter: blur(0)` all leave the count unchanged; two of them make it worse. Only *opacity*
+  animations have a bounded overlap rect.
+- **Do not infer "this element is animated" from "this element owns a big layer."** An `Overlap` layer is a
+  squash bucket whose bounds are the union of everything it absorbed, so a zero-area or fully transparent element
+  can report a huge layer while having no animation and no compositing reason of its own. Resolve
+  `compositingReasons` per layer first — `bench-mirror-replay.mjs --layer-detail` prints them in paint order.
+- **Raising promoters above their victims is the only mechanism that works, and `z-index` cannot do it here**:
+  every mirror node carries a baked `transform`, so every node is a stacking context. The only implementation is
+  reparenting to a stage-level overlay, which reorders real UI (intents over dragged cards) — a correctness
+  regression, not a perf win.
+
+Tooling: `scripts/bench-mirror-replay.mjs --layer-detail` gives one line per layer in compositor order (= paint
+order) with size/Mpx/paints/draws/reasons/element. The aggregate `--layers` histogram structurally cannot tell you
+*which* promoter opened a cascade; the ordered list can.
+
+## Browser chrome cost (cursor, image warms, atlas bakes)
+
+Three per-session costs that are invisible on a desktop and dominate a phone. All three were measured with
+`scripts/probe-mirror-tap-census.mjs` (offline replay; a before/after is the same recording on two dev servers).
+
+- **Game cursor (`frontend/src/browserCursor.ts`)** — the pressed state is an inline `cursor` on the ONE element
+  under the pointer, never a class on `<html>`. A root-level toggle against the `.game-cursor *` rules invalidates
+  every element's style twice per tap (measured: 133.96ms → 0.29ms of recalc PER TAP, ~5,600 elements, 4× CPU
+  throttle). Every document-wide alternative costs the same — `cursor` is inherited and Blink does not propagate it
+  independently — so the static universal rule is what stops the inherited change at the target and must stay.
+  It also does not install at all on a coarse-pointer-only device (`coarseOnlyPointer`), which has no cursor.
+  Valve: `?gameCursor=off` anywhere, `?gameCursor=on` to force it onto a touch device.
+- **One-shot image handlers** — `textureCache.warmImage` and `atlasBaker.getAtlas` detach their `load`/`error`
+  handlers on settle. They used to stay for the session (one per distinct texture url, each pinning its Image):
+  61 of 115 live listeners on a single map replay, and a live phone session was censused at 381.
+  Spec: `imageListenerHygiene.spec.ts`.
+- **Atlas region bakes (`frontend/src/mirror/atlasBaker.ts`)** — the div/blob mechanism drains ONE region per task
+  on the INLINE path, and the next is scheduled only once the previous SETTLED. A bake is async, so the old 3ms
+  budget measured nothing and poured the queue into one task (3.1s blocked on a phone's map load, 53.3% of that
+  screen's CPU). Each bake is timed end to end.
+  Counters: `window.__mirrorAtlasBakeStats`. Specs: `atlasBakeBudget.spec.ts`, `atlasBakeQueue.spec.ts`.
+
+  **Aug-14 — the encode moved into a WORKER POOL** (`atlasBakePool.ts` + `atlasBakeWorker.ts`). A phone session
+  measured 4,502.6ms of bake wall against 385.3ms of main thread (91.4% off-thread) and still tripped the
+  self-disable 3× — `convertToBlob` encodes as an IDLE TASK and a busy combat main thread starves it, so the
+  switch was firing on the page being busy. Now:
+  - **The worker owns the atlas.** It fetches + decodes the page itself and holds it as raw RGBA, so a job is
+    `{key,url,region}` in and `{key,blob}` out and the main thread never pays the GPU→CPU readback. (The
+    perf-harness's `worker-imagedata` arm — it beat inline encoding even at fan-out 1, 709ms vs 1,238ms.)
+  - **Pool size**: `hardwareConcurrency` ≤2→1, 3-4→2, 5-7→3, ≥8→4, capped again by `navigator.deviceMemory`.
+    Pool sizing is automatic and capped by `navigator.deviceMemory`.
+  - **Residency is budgeted, not assumed** — the pages are big (card_atlas_0 4032×4072 = 62.6MB RGBA; ~136MB for
+    the 9 pages one recorded session touched). A job prefers a worker that already holds its page; a second copy
+    only starts once the page's cost is known AND fits the pool budget (16MB per GB of device memory, clamped to
+    48-128MB); each worker LRU-evicts its own pages past `budget / poolSize`.
+  - **Every failure degrades to the inline path** (no Worker, construction error, worker death, a page that will
+    not load in a worker) — a region is never dropped.
+  - **The self-disable criterion is MAIN-THREAD time** (`BAKE_SLOW_MS` 50ms of `syncMs`, ×3 in a 15s window) with
+    a WALL BACKSTOP (`BAKE_STALL_MS` 2,000ms, ×3) that still catches a genuine GPU/idle-queue stall. Which one
+    fired is in `disabledReason` / `syncTrips` / `stallTrips`. Specs: `atlasBakeWorkers.spec.ts`.
+
+## Phone fullscreen and the opt-in secure origin
+
+Two independent tracks. **Plain HTTP on the LAN stays the default and must keep working with no internet at
+all** (LAN-only play is a hard requirement); everything secure-context is pure opt-in addition.
+
+**Why the split.** A plain-HTTP origin is not a secure context, so Chrome only ever makes a *shortcut* and
+every secure-context API is off. But iPhone never needed HTTPS for this: iOS Add-to-Home-Screen has never
+required a secure context, and iOS 26 opens every added site as a web app by default. So the chromeless path
+is free, and HTTPS buys the *extras* (service worker, wake lock, a real install prompt) on every phone.
+An external HTTPS site reaching the mod via Chrome's Local Network Access was **rejected**: Safari has no
+LNA and blocks mixed content outright, so it excludes the one platform that needs help.
+
+- **Phone chrome (`composables/useFullscreen.ts`)** — the landscape lock hangs off `fullscreenchange`, not
+  off the seat tap, so it rides EVERY entry path (the button included). State is MODULE-scope with a scope
+  refcount, deliberately: `useFullscreen()` runs in up to four live scopes at once (three `FullscreenButton`
+  mounts + the seat-tap caller), so per-instance "the player left on purpose" was broken by construction —
+  one instance recorded the deliberate exit while another instance's handler armed the re-entry and dragged
+  the player back in. Escape counts as deliberate. The automatic paths are gated on `(pointer: coarse)`; the
+  explicit button is not. Valves: `?autoFullscreen=off`, `?orientationLock=off`.
+- **Install/rotate guidance (`join/IosInstallOverlay.vue`, `components/IosInstallButton.vue`,
+  `components/PortraitNagOverlay.vue`, `join/BrowserAdvisory.vue`)** — decisions live as pure predicates in
+  `join/joinModel.ts` (`shouldShowIosInstallOverlay`, `showsOpenAsWebAppToggle`, `shouldRecommendBrowser`) and
+  the components are thin renderers. The overlay fires AFTER the seat tap, not on first paint. The portrait nag
+  infers rotation lock (no API exposes it) at 2.5s, adds the platform line at +4s, and never shows when the
+  orientation lock took. The advisory is Samsung Internet only and never blocks joining.
+  - **The overlay is a two-stage card** (`steps` → `confirm`), not a single screen with two exit buttons: the
+    install path never needs to close it (the Share sheet opens ON TOP), so there is no "Got it" — the only
+    action on `steps` is an escape link that ASKS ("Play in the tab anyway" → `confirm`), and `confirm` is the
+    only stage that can actually leave (`Play in the tab`, or Escape again). The escape link is absent for
+    `escapeDelayMs` (default 3000) after an AUTO open, so a reflex tap has nothing to land on; a MANUAL
+    (pill) open shows it immediately.
+  - **Dismissal is session-only by default** — an in-memory flag, not persisted — so the overlay returns on
+    the next page load. The confirm step's "Don't show this again" checkbox is the ONLY remaining writer of
+    `IOS_INSTALL_DISMISSED_STORAGE_KEY`.
+  - **`components/IosInstallButton.vue`** fills the slot `FullscreenButton` leaves empty on iPhone (no element
+    Fullscreen API there) — `shown = shouldShowIosInstallHint(env) && !readElementFullscreenSupported()`,
+    mutually exclusive with `FullscreenButton` by construction. It is the manual recovery path, so it
+    deliberately ignores BOTH dismissal signals; clicking it bumps a parent-owned `openRequest` tick the
+    overlay watches.
+  - **Dismissing plays a "genie" close**: the confirm card WAAPI-animates (translate + scale, computed by the
+    pure `computeGenieTransform` in `joinModel.ts`) into the re-open pill's measured rect, then pulses the
+    pill. Falls back to an instant close when there is no mounted pill,
+    `prefers-reduced-motion`, or no `Element.animate` (jsdom).
+  - **`?iosInstall=force`** (`isIosInstallForced` in `joinModel.ts`) forces the platform gates open — a
+    canonical iPhone-26 tab, element fullscreen unsupported — and arms the overlay on load, so the whole flow
+    is reproducible on any desktop/Android Chrome. Dismissal storage stays real under the lever.
+- **Secure origin (`Server/SecureBrowserListener.cs`, `SecureOriginProvider.cs`,
+  `SecureOriginCertificates.cs`)** — a TLS twin of the browser server on its own port (`PreferredPortOffset`
+  = +1, chosen NOT to collide with the headless seat ports at base + 10×slot). Certificate comes from a
+  third-party PUBLISHED-private-key wildcard service (`local-ip.co`: `192-168-1-5.my.local-ip.co` resolves
+  publicly to `192.168.1.5`). That key is public by design — this is a secure CONTEXT, not a secure CHANNEL,
+  and anyone on the LAN could MITM it. Acceptable for couch co-op, which is why it is opt-in.
+  **`traefik.me` no longer publishes certs at all** — verify a provider empirically, never from its docs.
+  The provider's published `chain.pem` was a stale Sectigo chain against a now-GlobalSign leaf, so
+  intermediates are accepted only if they actually issue the leaf, else resolved from the leaf's AIA pointer.
+  Everything is best-effort in the `MdnsResponder` style: no cert ⇒ no listener, and the HTTP path is
+  untouched. Kill-switch `COUCHCOOP_SECURE_ORIGIN=0`; cache dir override `COUCHCOOP_SECURE_CERT_CACHE`
+  (per-user app-data, NOT `.sts2/` — a shipped mod runs where no repo exists).
+- **Every option is a ROW of the one select; there is never a second code.** One chokepoint — the
+  selected row — feeds both the texture and the URL label, so the scanned code and the typed fallback
+  cannot disagree. The checkbox era's mode plumbing (`QrCodeMode`, select dimming, offer state) is gone:
+  the secure and web methods are per-adapter rows derived from each ROW's address, not from the
+  machine-picked advertised IPv4. Preference file override: `COUCHCOOP_QR_PREFS`; the persisted shape is
+  `{"selection":{"method","host"}}`.
+- **Web link / Local Network Access (`Server/CouchCoopWebOrigin.cs`, `frontend/pages/`, `src/boot/`)** — the
+  second answer to "how does a phone get a secure context", and the one that does not need public DNS to
+  resolve a private address (the `local-ip.co` dependency that routers with rebinding protection refuse).
+  The client is served from a public HTTPS origin and reaches this PC by literal IPv4 under the browser's
+  Local Network Access permission. **Full detail, including what Chrome does and does not allow — measured,
+  not inferred — is in `docs/agents/local-network-access.md`.** The two facts most likely to bite: the socket
+  must stay `ws:` while the page is `https:` (scheme comes from `@/join/hostBase`, never `location`), and a
+  service worker may serve cache HITS for host URLs but must never `respondWith(fetch(...))` one. Chrome/Edge
+  only — WebKit has not implemented LNA, so iPhones keep the `local-ip.co` and plain-LAN paths.
+- **`ICouchCoopStreamGeneration`** exists because `ICouchCoopHotGeneration.HandleClientAsync` takes a
+  `TcpClient` and calls `GetStream()` itself, which is exactly wrong once TLS has already been negotiated.
+  It is a SEPARATE interface in the server assembly, not a new method on the hot-reload contract, because
+  that contract lives in `CouchCoop.Mod.Contracts` and is bound BY REFLECTION at load time — widening it
+  breaks every previously built hot-reload logic assembly.
+- **Service worker (`frontend/public/sw.js`)** — hand-written, no build plugin. Allowlist-only
+  (`/res/`, `/app/`, `/icons/`); note `assetsDir: "app"`, so `/assets/` is NOT the bundle prefix. Missing
+  asset-like paths receive an ordinary static 404 rather than the SPA shell. Anything unclassified is BYPASSED
+  (no `respondWith`), so the default
+  failure mode is "as if no worker existed". Navigations are **network-only** with the offline page as the
+  failure branch — a cached shell booting against a dead host is just today's never-resolving spinner, since
+  all state arrives over `/ws`. Invalidation is the `/app/index-<hash>.js` build stamp scraped from each
+  navigation (the frontend outDir IS the installed mod dir, so a hash change means the mod was redeployed);
+  FIFO eviction to 64MB/1200 entries. It deliberately does NOT reload on `controllerchange` — with
+  `skipWaiting` that is the classic infinite reload loop. Valves: `?sw=off` (unregisters + wipes
+  `couchcoop-` caches), `?sw=on` (keep it in dev, where it otherwise tears itself down).
+- **Offline page port probe stays on the CURRENT scheme.** An https page probing `http://` would be blocked
+  mixed content, so an offline secure origin can only discover other secure ports. Platform limit, not a bug.
+- **Wake lock (`frontend/src/pwa/wakeLock.ts`)** — acquired while visible, re-acquired on `visibilitychange`, with a one-shot gesture retry on
+  `NotAllowedError`. Needs a secure context, so it is another thing the opt-in origin buys.
+
+## Headless seat memory
+
+A seat measured **1374MB RSS** against the drawing host's 3140MB, and a third of it was texture pixels the
+seat can never draw.
+
+- **Root cause is Godot's dummy renderer, not our code.** `RendererDummy::TextureStorage::texture_2d_initialize`
+  is `t->image = p_image->duplicate();` (godot-4.5.1-stable
+  `servers/rendering/dummy/storage/texture_storage.h:82`) — under `--headless` every texture keeps a full CPU
+  copy of its pixels until its RID is freed, where a real renderer uploads to the GPU and drops it. Measured:
+  **1,491 live `Image` objects / 456MB** in the seat vs **262 / 227MB** in the host. The tell is the format
+  mix — the seat held 170 images (~104MB) in DXT1/DXT5/BPTC, formats the host retained ~none of because they
+  exist only to be handed to a GPU. Second tell: the shared 512x512 RGBA8 buffers carry `CowData` refcount 2 in
+  the seat (game Image + the dummy's duplicate) and 1 in the host.
+- **`HeadlessTextureImageEvictor`** releases them. `Texture2D.GetImage()` in headless returns the dummy's own
+  retained copy BY REFERENCE (`texture_2d_get` hands back `t->image`), so `SetData(1, 1, false, L8, [0])` drops
+  that buffer. Measured A/B on a `--headless` instance at the main menu: **1127.4MB -> 969.6MB** (152 images,
+  159.2MB released), and **945.0MB** with the Phase-1 allocator tuning on top.
+- **Enumeration is `ResourceLoader.ListDirectory` over `res://` + `GetCachedRef` per path**, NOT an ObjectDB id
+  sweep. A Godot instance id is `slot | validator << 24 | is_ref_counted << 63` (`core/object/object.h`), so ids
+  are huge and sparse and every Resource has bit 63 set — walking ids upward from 1 finds nothing. `GetCachedRef`
+  returns only already-loaded resources, so the sweep never pulls a texture off disk. 6,997 texture paths in the
+  shipped pack; discovery runs once, sliced 512/tick.
+- **Only VRAM-compressed formats are evicted, and widening to RGBA8 was MEASURED AND REJECTED (Aug-15).**
+  `ImageTexture` is never evicted at any phase: the dummy's `texture_2d_update` is a no-op, so a runtime texture
+  could not be restored, whereas a `CompressedTexture2D` is still on disk. The RGBA8 tier looked like another
+  ~332MB and is really worth **at most ~55MB**, because `Image::_duplicate` does `data = p_image.data` — a
+  `Vector` assignment, i.e. a **CowData reference share, not a byte copy** (`core/io/image.cpp:4268` ->
+  `_copy_internals_from`, :3152). So a buffer at refcount 2 is ONE allocation the game and the dummy both point
+  at: evicting the dummy's side drops it to 1, frees **zero bytes**, and leaves `GetImage()` answering 1x1
+  forever. On a live seat the histogram was `{1: 577, 2: 216}` — the 216 are the 512x512 RGBA8 tier (217MB), and
+  the host holds the same tier at refcount 1, proving it is game-side retention present with or without a
+  renderer. Only the 577 single-owner images (~55MB, ~49MB of it RGBA8) are dead weight, and nothing available
+  in C# can tell the two apart at eviction time — there is no CowData-refcount API — so a format-only widening
+  would strip both. ~5% of a 1051MB seat for a permanent-1x1 fidelity risk: not taken.
+- **Companion guard, not optional.** `CachedSpirectlAssetHttpAdapter` refuses to EXTRACT on a headless client
+  (disk-or-503, code `asset-extraction-unavailable`, mapped to 503 not 404). Without it an evicted texture
+  extracts as a 1x1 and the write-through persists it into the asset cache the host SHARES — one stray direct
+  fetch would poison a real key for everyone, permanently.
+- Kill-switches: `COUCHCOOP_HEADLESS_TEXTURE_EVICT=0` (off) / `probe` (census only, releases nothing) / `force`
+  (run outside a seat — measurement lever ONLY; never point it at an instance serving `/res`).
+  `COUCHCOOP_HEADLESS_MEM_TUNING=0` drops `MALLOC_ARENA_MAX=2` + `DOTNET_GCConserveMemory=5` from the seat env
+  (`HeadlessClientManager.SeatMemoryTuningEnvironment`, applied only where the launcher's env is silent).
+- **`scripts/headless-memory-census.py <pid>`** attributes a LIVE process from outside — no ptrace attach, no
+  pause. `--regions` (allocator split), `--chunks` (glibc fragmentation), `--images` (the `Image` inventory
+  above). It walks glibc chunk chains and matches `CowData` buffers to their owning `Image` struct; the layout
+  facts it depends on are in its docstring. Needs the target to be ptrace-readable: yama is `ptrace_scope=1`
+  here, and it works on a Steam-launched game because Sentry/crashpad sets `PR_SET_PTRACER_ANY`. An
+  `sts2 game launch` instance is reparented to systemd and is NOT readable — use the in-process
+  `[couch-coop][memory] rss_mb=` line (`COUCHCOOP_HEADLESS_PROFILE=1`) for those.
+- Godot's `Performance.MEMORY_STATIC` reports **0.0** in the shipped release template (tracking is
+  `DEBUG_ENABLED`-only). Do not build a memory claim on it; use `rss_mb` or the census script.
+- **Where a tuned seat's RSS actually sits** (live pair, Aug-15; seat 1051MB / PSS 933MB, host 3527MB):
+  `--regions` gave the seat 409MB glibc main heap (the retained `Image` pixels live here), 303MB CLR/other
+  anonymous, 204MB file-backed (196MB of it `Shared_Clean` — shared with the host, not a per-seat cost), 115MB
+  JIT, 17MB thread arenas. **The Phase-1 allocator tuning is confirmed live**: 5 arena mappings / 16.7MB in the
+  seat vs 65 / 420.8MB in the untuned host, with `MALLOC_ARENA_MAX=2` + `DOTNET_GCConserveMemory=5` readable in
+  the seat's `/proc/<pid>/environ` and absent from the host's. `--regions` runs WITHOUT sudo (maps/smaps/pagemap
+  need only `PTRACE_MODE_READ`); `--chunks`/`--images` read `/proc/<pid>/mem`, need `PTRACE_MODE_ATTACH`, and
+  under `ptrace_scope=1` that means sudo.

@@ -1,0 +1,14 @@
+schemaVersion: spirectl.fixture/v0
+name: act1-silent-survivor
+description: >-
+  Silent in an Act-1 (Overgrowth) combat (SLIMES_NORMAL) with the default starting deck, which includes
+  SURVIVOR ("Gain Block. Discard 1 card."). Used to verify the auto-player resolves the in-hand discard
+  dialog through the browser (select-hand-card -> confirm-hand-selection) instead of getting stuck, and
+  that it claims the combat rewards (gold/cards/relics/potions).
+run:
+  currentActIndex: 0
+  players:
+    - characterId: SILENT
+  currentRoom:
+    combat:
+      encounterId: SLIMES_NORMAL

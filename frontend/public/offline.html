@@ -1,0 +1,330 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover" />
+    <meta name="theme-color" content="#10151a" />
+    <title>Can't find your game host / 找不到游戏主机</title>
+    <!--
+      The service worker's navigation fallback (see public/sw.js `offlineFallback`). It is precached at
+      install and served for the app URL when the host does not answer, so the URL bar still shows the
+      address the home-screen icon captured — which is exactly the address we want to talk about.
+
+      HARD CONSTRAINT: everything is inline. No stylesheet, no script file, no font, no image request.
+      This page's entire job is to render when the network is gone; a single external reference would
+      make it fail in the one situation it exists for.
+
+      WHY IT MATTERS BEYOND "you are offline": the mod's HTTP listener port-walks upward from 13337 when
+      its preferred port is taken (CouchCoopBrowserServer.StartAsync), and a home-screen icon pins the
+      origin it was added from. When the port drifts the icon is simply dead and the player gets the
+      browser's generic error page with no way to reason about it. So this page probes the neighbouring
+      ports and offers the one that answers.
+    -->
+    <style>
+      :root {
+        color-scheme: dark;
+      }
+
+      * {
+        box-sizing: border-box;
+      }
+
+      html,
+      body {
+        margin: 0;
+        height: 100%;
+      }
+
+      body {
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        padding: calc(16px + env(safe-area-inset-top)) calc(16px + env(safe-area-inset-right))
+          calc(16px + env(safe-area-inset-bottom)) calc(16px + env(safe-area-inset-left));
+        background: radial-gradient(120% 120% at 50% 0%, #1b2430 0%, #080b0f 70%);
+        color: #f5f7fa;
+        font-family:
+          Inter,
+          ui-sans-serif,
+          system-ui,
+          -apple-system,
+          BlinkMacSystemFont,
+          "Segoe UI",
+          sans-serif;
+        -webkit-font-smoothing: antialiased;
+      }
+
+      main {
+        width: 100%;
+        max-width: 30rem;
+        text-align: center;
+      }
+
+      .glyph {
+        width: 56px;
+        height: 56px;
+        margin: 0 auto 14px;
+        color: #7cc7ee;
+        opacity: 0.85;
+      }
+
+      h1 {
+        margin: 0 0 10px;
+        font-size: 1.4rem;
+        font-weight: 650;
+        letter-spacing: 0.01em;
+      }
+
+      p {
+        margin: 0 0 14px;
+        color: #b7c2cf;
+        font-size: 0.95rem;
+        line-height: 1.5;
+      }
+
+      .address {
+        display: inline-block;
+        max-width: 100%;
+        padding: 7px 12px;
+        overflow-wrap: anywhere;
+        border: 1px solid rgb(255 255 255 / 12%);
+        border-radius: 8px;
+        background: rgb(255 255 255 / 6%);
+        color: #e6edf5;
+        font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+        font-size: 0.9rem;
+      }
+
+      .actions {
+        display: flex;
+        flex-wrap: wrap;
+        gap: 10px;
+        justify-content: center;
+        margin: 18px 0 0;
+      }
+
+      button,
+      .found-link {
+        display: inline-flex;
+        align-items: center;
+        justify-content: center;
+        min-height: 44px;
+        padding: 0 20px;
+        border: 1px solid rgb(255 255 255 / 16%);
+        border-radius: 10px;
+        background: rgb(255 255 255 / 8%);
+        color: #f5f7fa;
+        font: inherit;
+        font-size: 0.95rem;
+        text-decoration: none;
+        cursor: pointer;
+      }
+
+      button:active,
+      .found-link:active {
+        opacity: 0.6;
+      }
+
+      button:focus-visible,
+      .found-link:focus-visible {
+        outline: 3px solid rgb(124 199 238 / 72%);
+        outline-offset: 2px;
+      }
+
+      .found-link {
+        border-color: rgb(124 199 238 / 55%);
+        background: rgb(124 199 238 / 18%);
+      }
+
+      #probe {
+        min-height: 1.4em;
+        margin: 16px 0 0;
+        color: #8e9bab;
+        font-size: 0.85rem;
+      }
+
+      #found {
+        display: none;
+        margin: 12px 0 0;
+      }
+
+      #found.visible {
+        display: block;
+      }
+
+      ul {
+        margin: 20px 0 0;
+        padding: 0;
+        color: #8e9bab;
+        font-size: 0.82rem;
+        line-height: 1.7;
+        list-style: none;
+        text-align: left;
+      }
+
+      li::before {
+        margin-right: 8px;
+        color: #55637a;
+        content: "•";
+      }
+
+      /* Landscape phones are short: drop the decoration rather than scroll. */
+      @media (max-height: 460px) {
+        .glyph {
+          display: none;
+        }
+
+        ul {
+          display: none;
+        }
+      }
+    </style>
+  </head>
+  <body>
+    <main>
+      <svg class="glyph" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7"
+        stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" focusable="false">
+        <path d="M2 2l20 20" />
+        <path d="M5 12.5a10 10 0 0 1 4.2-2.3" />
+        <path d="M1.5 8.8a15 15 0 0 1 5-3.1" />
+        <path d="M22.5 8.8a15 15 0 0 0-9.9-3.6" />
+        <path d="M19 12.5a10 10 0 0 0-2.6-1.7" />
+        <path d="M8.6 16.1a5 5 0 0 1 6.1-.6" />
+        <circle cx="12" cy="20" r="0.6" fill="currentColor" />
+      </svg>
+
+      <h1 data-i18n="title">Can't find your game host</h1>
+      <p data-i18n="recovery">
+        The Slay the Spire 2 host at this address didn't answer. It may have closed, changed address, or
+        your phone may be on a different Wi-Fi network.
+      </p>
+      <span class="address" id="address" data-i18n="address">this address</span>
+
+      <div class="actions">
+        <button type="button" id="retry" data-i18n="retry">Retry</button>
+      </div>
+
+      <p id="probe"></p>
+      <div id="found"></div>
+
+      <ul>
+        <li data-i18n="running">Slay the Spire 2 needs to be running on the host machine.</li>
+        <li data-i18n="wifi">The phone and the host must be on the same Wi-Fi (not mobile data, not a guest network).</li>
+        <li data-i18n="scan">If the host's address changed, scan the QR code in the game again.</li>
+      </ul>
+    </main>
+
+    <script>
+      (function () {
+        "use strict";
+
+        var addressEl = document.getElementById("address");
+        var probeEl = document.getElementById("probe");
+        var foundEl = document.getElementById("found");
+        var retryEl = document.getElementById("retry");
+        var query = new URLSearchParams(location.search).get("lang");
+        var override = query === "en" || query === "zh-Hans" ? query : null;
+        var tags = override ? [override] : [].concat(navigator.languages || [], navigator.language || []);
+        var zh = false;
+        if (override === "zh-Hans") zh = true;
+        else if (!override) for (var i = 0; i < tags.length; i += 1) {
+          var tag = String(tags[i]).replace(/_/g, "-").toLowerCase();
+          if (tag === "en" || tag.indexOf("en-") === 0) break;
+          if (tag === "zh" || tag === "zh-cn" || tag === "zh-sg" || tag === "zh-hans") { zh = true; break; }
+        }
+        var text = zh ? {
+          title: "找不到游戏主机", retry: "重试", running: "主机电脑上需要正在运行 Slay the Spire 2。",
+          wifi: "手机和主机必须连接到同一个 Wi‑Fi（不要使用移动数据或访客网络）。", scan: "如果主机地址已改变，请重新扫描游戏中的二维码。", address: "此地址",
+          recovery: "此地址上的 Slay the Spire 2 主机没有响应。它可能已关闭、地址已改变，或你的手机连接到了不同的 Wi‑Fi 网络。",
+          open: "打开端口 ", found: "在端口 {port} 找到了主机。", looking: "正在附近端口查找主机…", none: "附近端口未找到主机。"
+        } : {
+          title: "Can't find your game host", retry: "Retry", running: "Slay the Spire 2 needs to be running on the host machine.",
+          wifi: "The phone and the host must be on the same Wi-Fi (not mobile data, not a guest network).", scan: "If the host's address changed, scan the QR code in the game again.", address: "this address",
+          recovery: "The Slay the Spire 2 host at this address didn't answer. It may have closed, changed address, or your phone may be on a different Wi-Fi network.",
+          open: "Open port ", found: "Found a host on port {port}.", looking: "Looking for the host on nearby ports…", none: "No host found on nearby ports."
+        };
+        document.documentElement.lang = zh ? "zh-Hans" : "en";
+        document.title = text.title;
+        document.querySelectorAll("[data-i18n]").forEach(function (el) { el.textContent = text[el.getAttribute("data-i18n")]; });
+
+        // The service worker answers the ORIGINAL request, so `location` is still the address the icon
+        // (or QR) captured — i.e. the last address we knew the host at. That's what to show and retry.
+        var origin = location.origin;
+        addressEl.textContent = origin;
+
+        retryEl.addEventListener("click", function () {
+          location.reload();
+        });
+
+        // ---- port drift recovery -------------------------------------------------------------------
+        // The listener walks UPWARD from its preferred port, so search a short window above the pinned
+        // port (plus a couple below, in case the icon was captured after a walk that has since freed up).
+        //
+        // Same scheme and same host on purpose: an https page probing http:// would be blocked as mixed
+        // content, and we do not know the host's other listener's port range. Staying relative to the
+        // port we were pinned at needs no assumptions at all.
+        var currentPort = Number(location.port) || (location.protocol === "https:" ? 443 : 80);
+        var candidates = [];
+        for (var delta = -2; delta <= 6; delta += 1) {
+          var port = currentPort + delta;
+          if (delta !== 0 && port > 0 && port < 65536) candidates.push(port);
+        }
+
+        function candidateUrl(port) {
+          return location.protocol + "//" + location.hostname + ":" + port + "/";
+        }
+
+        // A `no-cors` GET resolves (opaquely) only if something actually accepted the connection and
+        // answered; a refused connection or a TLS failure rejects. That is exactly the liveness signal
+        // we want, and it needs no CORS headers from the host.
+        function probe(port) {
+          var options = { mode: "no-cors", cache: "no-store", credentials: "omit" };
+          if (typeof AbortSignal !== "undefined" && AbortSignal.timeout) {
+            options.signal = AbortSignal.timeout(2500);
+          }
+          return fetch(candidateUrl(port), options).then(
+            function () {
+              return port;
+            },
+            function () {
+              return null;
+            }
+          );
+        }
+
+        function offerPort(port) {
+          var target = candidateUrl(port).replace(/\/$/, "") + location.pathname + location.search;
+          var link = document.createElement("a");
+          link.className = "found-link";
+          link.href = target;
+          link.textContent = text.open + port;
+          foundEl.appendChild(link);
+          foundEl.className = "visible";
+          probeEl.textContent = text.found.replace("{port}", port);
+        }
+
+        if (typeof fetch !== "function" || !candidates.length) {
+          probeEl.textContent = "";
+          return;
+        }
+
+        probeEl.textContent = text.looking;
+        // Run them together — this is a handful of LAN connections, and a serial scan across a 2.5s
+        // timeout each would take half a minute.
+        Promise.all(candidates.map(probe)).then(function (results) {
+          var hit = null;
+          for (var i = 0; i < results.length; i += 1) {
+            if (results[i] !== null) {
+              hit = results[i];
+              break;
+            }
+          }
+          // Deliberately an offer, not an automatic redirect: an unrelated service on a neighbouring
+          // port would otherwise hijack the player to somewhere confusing.
+          if (hit === null) probeEl.textContent = text.none;
+          else offerPort(hit);
+        });
+      })();
+    </script>
+  </body>
+</html>

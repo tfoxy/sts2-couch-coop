@@ -1,0 +1,50 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <!-- The host also returns this document for nested SPA routes; keep its relative Vite entry under /app/. -->
+    <base href="/" />
+    <!-- viewport-fit=cover lets the page extend under an iPhone notch/home-indicator so the
+         env(safe-area-inset-*) padding on our own letterbox chrome (styles.css) can inset it. -->
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover" />
+    <link rel="icon" href="/favicon.ico" />
+    <!-- Home-screen PWA (the only chromeless path on iPhone Safari — no element Fullscreen API there). -->
+  <link id="couchcoop-manifest" rel="manifest" href="/manifest.webmanifest" />
+  <script>
+    (function () {
+      var query = new URLSearchParams(location.search).get("lang");
+      var supported = ["en", "zh-Hans", "de", "es-419", "fr", "it", "ja", "ko", "pl", "pt-BR", "ru", "es-ES", "th", "tr"];
+      var override = supported.indexOf(query) >= 0 ? query : null;
+      var tags = override ? [override] : [].concat(navigator.languages || [], navigator.language || []);
+      var locale = null;
+      for (var i = 0; i < tags.length; i += 1) {
+        var tag = String(tags[i]).replace(/_/g, "-").toLowerCase();
+        if (tag === "en" || tag.indexOf("en-") === 0) { locale = "en"; break; }
+        if (tag === "zh" || tag === "zh-cn" || tag === "zh-sg" || tag === "zh-hans") { locale = "zh-Hans"; break; }
+        if (/^de(-|$)/.test(tag)) { locale = "de"; break; } if (/^fr(-|$)/.test(tag)) { locale = "fr"; break; }
+        if (/^it(-|$)/.test(tag)) { locale = "it"; break; } if (/^ja(-|$)/.test(tag)) { locale = "ja"; break; }
+        if (/^ko(-|$)/.test(tag)) { locale = "ko"; break; } if (/^pl(-|$)/.test(tag)) { locale = "pl"; break; }
+        if (/^ru(-|$)/.test(tag)) { locale = "ru"; break; } if (/^th(-|$)/.test(tag)) { locale = "th"; break; }
+        if (/^tr(-|$)/.test(tag)) { locale = "tr"; break; } if (tag === "pt" || tag === "pt-br") { locale = "pt-BR"; break; }
+        if (tag === "es-419" || tag === "es-us" || /^es-(ar|bo|cl|co|cr|cu|do|ec|gt|hn|mx|ni|pa|pe|pr|py|sv|uy|ve)$/.test(tag)) { locale = "es-419"; break; }
+        if (tag === "es" || tag === "es-es") { locale = "es-ES"; break; }
+      }
+      locale = override || locale || "en";
+      document.documentElement.lang = locale;
+      if (locale !== "en") document.getElementById("couchcoop-manifest").href = "/manifest." + locale + ".webmanifest";
+    }());
+  </script>
+    <meta name="theme-color" content="#10151a" />
+    <meta name="apple-mobile-web-app-capable" content="yes" />
+    <meta name="apple-mobile-web-app-title" content="STS2 Couch Co-op" />
+    <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
+    <link rel="apple-touch-icon" href="/icons/icon-180.png" />
+    <link rel="preload" as="image" href="/res/images/packed/common_ui/cursor_default.png" />
+    <link rel="preload" as="image" href="/res/images/packed/common_ui/cursor_tilted.png" />
+    <title>STS2 Couch Co-op</title>
+  </head>
+  <body>
+    <div id="app"></div>
+    <script type="module" src="/src/main.ts"></script>
+  </body>
+</html>

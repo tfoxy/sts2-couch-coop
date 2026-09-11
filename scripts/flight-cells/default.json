@@ -1,0 +1,10 @@
+{
+  "comment": "Neutral current renderer baseline. Consumed by scripts/bench-flight-matrix.mjs; schema {name, query, extraArgs?, ns?}.",
+  "cells": [
+    {
+      "name": "base",
+      "query": "",
+      "note": "shipped defaults"
+    }
+  ]
+}

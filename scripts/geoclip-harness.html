@@ -1,0 +1,615 @@
+<!DOCTYPE html>
+<!--
+  geoclip-harness.html — a standalone WebGL2 player for a "geoclip" artifact (per-part baked mesh geometry for
+  one animation), driven frame-by-frame from outside the page.
+
+  WHY THIS EXISTS. A geoclip is a pile of numbers on disk: per-part reference vertices, per-frame transforms or
+  raw vertices, a draw order, per-slot tint, and one or more page textures. Nothing about "did the bake come out
+  right" can be answered by reading that JSON — the only honest answer is a picture. This page is the smallest
+  thing that turns the format into pixels, with NO product code in the loop: no vite, no gsw, no mirror stage, no
+  imports at all. So when a frame looks wrong, the suspects are the artifact and ~300 lines of shader plumbing
+  you can read in one sitting, rather than the whole client.
+
+  It is also deliberately a PLAYER AND NOT AN ANIMATOR. `seek(i)` draws exactly frame `i` and resolves once that
+  frame is on the canvas; nothing advances on its own. A prior round established that screenshotting a live
+  animation buys an RMSE noise floor you then cannot distinguish from a real regression, so the only way to get a
+  picture out of this page is to pin a frame first.
+
+  API (scripts/probe-geoclip-replay.mjs is the reference caller):
+
+    window.__geoclipReady          true once WebGL2 is up (or __geoclipError is set)
+    window.__geoclipError          string, if the page could not start
+    window.__geoclip.load(url)     fetch packed geoclip/1 manifest.json + its page PNGs + verts.bin, build GL
+                                   state.                                               -> Promise<summary>
+    window.__geoclip.seek(i)       draw frame i, resolve AFTER it is drawn.              -> Promise<stats>
+    window.__geoclip.setFit(fit)   {scaleX, scaleY, offsetX, offsetY} (defaults 1,1,0,0)
+    window.__geoclip.setBackground([r,g,b,a])   0..1 floats; default opaque black
+    window.__geoclip.resize(w, h)  size the drawing buffer AND the CSS box to w x h device px
+    window.__geoclip.stats()       last frame's draw census + any load-time warnings
+
+  COORDINATE MAPPING is four parameters on purpose. Skeleton-local space is y-DOWN in the artifact contract, but
+  a real bake's origin and handedness are the rig's, not the canvas's, so the caller needs to be able to place
+  AND flip:  canvasX = localX * scaleX + offsetX ,  canvasY = localY * scaleY + offsetY.
+  A y-flip is therefore `{"scaleY": -1, "offsetY": <canvas height>}` and needs no change here.
+
+  TEXTURING. A part's `uvs` are normalised to its own `srcRect` (a rect in PAGE pixels), so the page texel a uv
+  addresses is `srcRect.xy + uv * srcRect.wh`. That is folded into the static UV buffer at load time rather than
+  done per-fragment: it is a constant per part, and keeping the shader to one `texture()` means a frame that looks
+  wrong cannot be the sampler's fault. Filtering is LINEAR + CLAMP_TO_EDGE, no mips.
+
+  BLENDING. Straight (non-premultiplied) alpha throughout: textures are uploaded with UNPACK_PREMULTIPLY_ALPHA
+  OFF, the context is created with `premultipliedAlpha:false`, and the fragment output is `texel * slotColor`.
+  `blendMode === 1` selects additive (SRC_ALPHA, ONE); every other value, including a missing one, is normal
+  (SRC_ALPHA, ONE_MINUS_SRC_ALPHA). Alpha is blended separately with (ONE, ONE_MINUS_SRC_ALPHA) so the canvas
+  itself accumulates a sane coverage channel when the background is transparent.
+
+  TOLERANCE RULES (the artifact contract says "be tolerant"; these are the specific resolutions):
+    * a slotIndex in `drawOrder` with no entry in `slots`  -> hidden, counted as skipped.missingSlot
+    * `slots[k].part === null`                             -> hidden, counted as skipped.nullPart
+    * a part id that is not in `parts`                     -> hidden, counted as skipped.unknownPart, warned once
+    * no `drawOrder` at all                                -> ascending numeric slot key order
+    * `verts` present and the right length                 -> deforming path, `xform` ignored
+    * `verts` present but the WRONG length                 -> warned, falls back to xform/identity
+    * no `verts` and no `xform`                            -> refVerts drawn as-is
+    * `color` missing                                      -> [1,1,1,1]
+    * a page whose decoded size differs from the manifest's -> the DECODED size wins for uv normalisation (that
+      is what the sampler actually addresses), and the mismatch is warned so the bake can be fixed.
+
+  PACKED GEOCLIP/1 moves two things off the upstream raw bake's JSON: deforming-slot vertices live in a binary
+  side-car (`verts.bin`, u16 pairs quantised against a per-part bbox) and pages are repacked part sheets. Only
+  LOADING changes here — the decode runs once, turns every `vref` back into the raw `verts` array, and the renderer
+  below never learns which representation it is drawing. That is the point of doing it at
+  load time. Upstream raw bakes are producer input to `geoclip-pack.mjs` and the offline oracle; this Couch
+  player deliberately never accepts them.
+-->
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>geoclip-harness</title>
+<style>
+  html, body { margin: 0; padding: 0; background: #000; overflow: hidden; }
+  #gl { display: block; position: absolute; left: 0; top: 0; }
+  /* The HUD overlaps the canvas, and an element screenshot of the canvas would CAPTURE it — so it is off unless
+     ?hud=1 is asked for explicitly (debugging with --keep-open), never during a measured run. */
+  #hud {
+    display: none;
+    position: fixed; left: 0; bottom: 0; right: 0; z-index: 2;
+    font: 11px/1.35 ui-monospace, Menlo, Consolas, monospace;
+    color: #cfe; background: rgba(0,0,0,.6); padding: 3px 5px; white-space: pre-wrap;
+    pointer-events: none;
+  }
+  body.hud #hud { display: block; }
+</style>
+</head>
+<body>
+<canvas id="gl" width="512" height="512"></canvas>
+<div id="hud">geoclip-harness: booting…</div>
+<script>
+"use strict";
+(function () {
+  const canvas = document.getElementById("gl");
+  const hud = document.getElementById("hud");
+  if (new URLSearchParams(location.search).get("hud") === "1") document.body.classList.add("hud");
+
+  window.__geoclipError = null;
+  window.__geoclipLost = null;
+  window.__geoclipReady = false;
+
+  function say(text) { hud.textContent = text; }
+  function bail(message) {
+    window.__geoclipError = message;
+    window.__geoclipReady = true; // "the page has settled"; the caller reads __geoclipError, not this
+    say("geoclip-harness: " + message);
+  }
+
+  // A LOST context does not throw — every later gl call is a silent no-op, so a harness without this listener
+  // screenshots a blank canvas and reports a clean run. Record it; the driver refuses the run.
+  canvas.addEventListener("webglcontextlost", (e) => {
+    e.preventDefault();
+    window.__geoclipLost = { at: performance.now(), msg: e.statusMessage || "" };
+    say("geoclip-harness: CONTEXT LOST at " + Math.round(performance.now()) + "ms");
+  }, false);
+
+  const gl = canvas.getContext("webgl2", {
+    alpha: true,
+    antialias: false,
+    depth: false,
+    stencil: false,
+    // Straight-alpha pipeline end to end (see the header note). With premultipliedAlpha:true the compositor would
+    // re-interpret our un-premultiplied output and every faded part would read too bright in a screenshot.
+    premultipliedAlpha: false,
+    // Screenshots are taken from OUTSIDE the rAF that drew the frame, so the buffer has to survive the compositor
+    // handing the frame off. Without this a `seek()` + screenshot pair is a coin flip.
+    preserveDrawingBuffer: true,
+    powerPreference: "high-performance"
+  });
+  if (!gl) { bail("no webgl2"); return; }
+
+  // ---- program ---------------------------------------------------------------------------------------------
+  const VS = `#version 300 es
+in vec2 aPos;
+in vec2 aUV;
+uniform vec2 uRes;
+uniform vec4 uFit;   // scaleX, scaleY, offsetX, offsetY
+out vec2 vUV;
+void main() {
+  vUV = aUV;
+  vec2 c = vec2(aPos.x * uFit.x + uFit.z, aPos.y * uFit.y + uFit.w);
+  vec2 n = (c / uRes) * 2.0 - 1.0;
+  gl_Position = vec4(n.x, -n.y, 0.0, 1.0);   // canvas space is y-DOWN; clip space is y-up
+}`;
+
+  const FS = `#version 300 es
+precision highp float;
+uniform sampler2D uTex;
+uniform vec4 uColor;
+in vec2 vUV;
+out vec4 outColor;
+void main() {
+  outColor = texture(uTex, vUV) * uColor;    // straight alpha, RGBA multiply
+}`;
+
+  function compile(type, src) {
+    const s = gl.createShader(type);
+    gl.shaderSource(s, src);
+    gl.compileShader(s);
+    if (!gl.getShaderParameter(s, gl.COMPILE_STATUS)) throw new Error("shader: " + gl.getShaderInfoLog(s));
+    return s;
+  }
+  let prog;
+  try {
+    prog = gl.createProgram();
+    gl.attachShader(prog, compile(gl.VERTEX_SHADER, VS));
+    gl.attachShader(prog, compile(gl.FRAGMENT_SHADER, FS));
+    gl.linkProgram(prog);
+    if (!gl.getProgramParameter(prog, gl.LINK_STATUS)) throw new Error("link: " + gl.getProgramInfoLog(prog));
+  } catch (e) { bail(String(e && e.message || e)); return; }
+  gl.useProgram(prog);
+
+  const uRes = gl.getUniformLocation(prog, "uRes");
+  const uFit = gl.getUniformLocation(prog, "uFit");
+  const uColor = gl.getUniformLocation(prog, "uColor");
+  gl.uniform1i(gl.getUniformLocation(prog, "uTex"), 0);
+  const aPos = gl.getAttribLocation(prog, "aPos");
+  const aUV = gl.getAttribLocation(prog, "aUV");
+
+  gl.disable(gl.DEPTH_TEST);
+  gl.disable(gl.CULL_FACE);   // a baked mesh's winding is whatever the rig produced; painter's order is the rule
+  gl.enable(gl.BLEND);
+  gl.pixelStorei(gl.UNPACK_ALIGNMENT, 1);
+
+  // ---- state -----------------------------------------------------------------------------------------------
+  let manifest = null;
+  let pagesById = new Map();     // pageId -> { tex, width, height }
+  let partsById = new Map();     // partId -> { gl buffers + metadata }
+  let frames = [];
+  let fit = { scaleX: 1, scaleY: 1, offsetX: 0, offsetY: 0 };
+  let background = [0, 0, 0, 1];
+  let warnings = [];
+  let last = null;
+
+  function resize(w, h) {
+    const W = Math.max(1, Math.round(w));
+    const H = Math.max(1, Math.round(h));
+    canvas.width = W;
+    canvas.height = H;
+    canvas.style.width = W + "px";
+    canvas.style.height = H + "px";
+    gl.viewport(0, 0, W, H);
+  }
+
+  function setFit(next) {
+    const f = next || {};
+    fit = {
+      scaleX: Number.isFinite(f.scaleX) ? f.scaleX : 1,
+      scaleY: Number.isFinite(f.scaleY) ? f.scaleY : 1,
+      offsetX: Number.isFinite(f.offsetX) ? f.offsetX : 0,
+      offsetY: Number.isFinite(f.offsetY) ? f.offsetY : 0
+    };
+    return fit;
+  }
+
+  function setBackground(rgba) {
+    if (Array.isArray(rgba) && rgba.length >= 3) {
+      background = [Number(rgba[0]) || 0, Number(rgba[1]) || 0, Number(rgba[2]) || 0,
+        rgba.length > 3 && Number.isFinite(Number(rgba[3])) ? Number(rgba[3]) : 1];
+    }
+    // A transparent CLEAR is not a transparent SCREENSHOT: an element screenshot composites the canvas over
+    // whatever is behind it, and the page's own opaque background would silently fill every hole the caller
+    // asked to keep empty. So the page turns transparent exactly when the clear does (the driver pairs this with
+    // `omitBackground`), and stays black otherwise so a --keep-open browser is still readable.
+    const opaque = background[3] >= 1;
+    document.documentElement.style.background = opaque ? "#000" : "transparent";
+    document.body.style.background = opaque ? "#000" : "transparent";
+    return background;
+  }
+
+  function warn(message) {
+    if (warnings.length < 200 && warnings.indexOf(message) < 0) warnings.push(message);
+  }
+
+  function loadImage(url) {
+    return new Promise((resolve, reject) => {
+      const img = new Image();
+      img.crossOrigin = "anonymous";
+      img.onload = () => resolve(img);
+      img.onerror = () => reject(new Error("page texture failed to load: " + url));
+      img.src = url;
+    });
+  }
+
+  function uploadPage(img) {
+    const tex = gl.createTexture();
+    gl.activeTexture(gl.TEXTURE0);
+    gl.bindTexture(gl.TEXTURE_2D, tex);
+    gl.pixelStorei(gl.UNPACK_FLIP_Y_WEBGL, false);
+    gl.pixelStorei(gl.UNPACK_PREMULTIPLY_ALPHA_WEBGL, false);
+    gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA, gl.RGBA, gl.UNSIGNED_BYTE, img);
+    gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MIN_FILTER, gl.LINEAR);
+    gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MAG_FILTER, gl.LINEAR);
+    gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_S, gl.CLAMP_TO_EDGE);
+    gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_T, gl.CLAMP_TO_EDGE);
+    return tex;
+  }
+
+  /**
+   * Packed Couch geoclip/1: turn every `vref` back into the `verts` array the renderer already speaks.
+   *
+   *   record i starts at vertsBin.offsets[i] and is vertCount(part) x 2 little-endian u16, interleaved x,y
+   *   x = minX + q * (maxX - minX) / 65535     (quant box per PART, over the whole clip)
+   *
+   * Plain arrays, not typed ones: the draw path dispatches on `Array.isArray(slot.verts)`, and a decode that
+   * handed back a Float32Array would silently fall through to the xform branch and render a clip that is subtly,
+   * plausibly wrong. Anything that cannot be resolved (short buffer, unknown part, missing quant box) is warned
+   * and left without verts, which the existing tolerance rules then draw through xform / refVerts.
+   */
+  async function decodeVertsBin(manifest, base) {
+    const bin = manifest && manifest.vertsBin;
+    if (!bin || !bin.file) return 0;
+    const url = new URL(bin.file, base).href;
+    const res = await fetch(url, { cache: "no-store" });
+    if (!res.ok) throw new Error("verts.bin fetch " + res.status + " for " + url);
+    const view = new DataView(await res.arrayBuffer());
+
+    const counts = new Map();
+    for (const part of manifest.parts || []) {
+      counts.set(String(part.id), (Array.isArray(part.refVerts) ? part.refVerts.length : 0) >> 1);
+    }
+    const offsets = Array.isArray(bin.offsets) ? bin.offsets : [];
+    const quant = bin.quant || {};
+    let decoded = 0;
+    const frameList = Array.isArray(manifest.frames) ? manifest.frames : [];
+    for (let f = 0; f < frameList.length; f++) {
+      const slots = frameList[f].slots || {};
+      for (const key of Object.keys(slots)) {
+        const slot = slots[key];
+        if (!slot || !Number.isInteger(slot.vref)) continue;
+        const partKey = String(slot.part);
+        const n = counts.get(partKey);
+        const box = quant[partKey];
+        const at = offsets[slot.vref];
+        if (n === undefined || !Array.isArray(box) || box.length < 4 || !Number.isFinite(at)) {
+          warn("frame " + f + " slot " + key + " has vref " + slot.vref + " that cannot be resolved");
+          continue;
+        }
+        if (at + n * 4 > view.byteLength) {
+          warn("frame " + f + " slot " + key + " has vref " + slot.vref + " past the end of " + bin.file);
+          continue;
+        }
+        const verts = new Array(n * 2);
+        for (let i = 0; i < n; i++) {
+          verts[i * 2] = box[0] + (view.getUint16(at + i * 4, true) * (box[2] - box[0])) / 65535;
+          verts[i * 2 + 1] = box[1] + (view.getUint16(at + i * 4 + 2, true) * (box[3] - box[1])) / 65535;
+        }
+        slot.verts = verts;
+        decoded++;
+      }
+    }
+    if (Number.isFinite(bin.records) && bin.records !== offsets.length) {
+      warn("vertsBin declares " + bin.records + " records but carries " + offsets.length + " offsets");
+    }
+    return decoded;
+  }
+
+  /**
+   * This is the Couch boundary, not merely a schema hint.  `geoclip/1` was also the upstream bake's historical
+   * JSON label, so accepting that label alone would quietly make the player accept inline vertex arrays again.
+   * Raw bakes belong to the packer and the offline oracle; a Couch artifact has a literal `verts.bin` sidecar and
+   * refers to it with `vref` records only.
+   */
+  function assertPackedCouchManifest(value) {
+    const schema = value && value.meta && value.meta.schema;
+    if (schema !== "geoclip/1") throw new Error("expected packed geoclip/1 manifest");
+    const bin = value && value.vertsBin;
+    if (!bin || bin.file !== "verts.bin") {
+      throw new Error("expected packed geoclip/1 manifest with verts.bin");
+    }
+    const frameList = Array.isArray(value.frames) ? value.frames : [];
+    for (let f = 0; f < frameList.length; f++) {
+      const slots = frameList[f] && frameList[f].slots;
+      if (!slots || typeof slots !== "object") continue;
+      for (const key of Object.keys(slots)) {
+        const slot = slots[key];
+        if (slot && Array.isArray(slot.verts)) {
+          throw new Error("expected packed geoclip/1: inline verts at frame " + f + " slot " + key);
+        }
+      }
+    }
+  }
+
+  async function load(manifestUrl) {
+    warnings = [];
+    const base = new URL(manifestUrl, location.href).href;
+    const res = await fetch(base, { cache: "no-store" });
+    if (!res.ok) throw new Error("manifest fetch " + res.status + " for " + base);
+    manifest = await res.json();
+
+    assertPackedCouchManifest(manifest);
+    const schema = manifest.meta.schema;
+    const vertsDecoded = await decodeVertsBin(manifest, base);
+
+    // pages
+    for (const [id, p] of pagesById) { void id; gl.deleteTexture(p.tex); }
+    pagesById = new Map();
+    const pages = Array.isArray(manifest.pages) ? manifest.pages : [];
+    for (const page of pages) {
+      const img = await loadImage(new URL(page.file, base).href);
+      const declaredW = Number(page.width);
+      const declaredH = Number(page.height);
+      if (Number.isFinite(declaredW) && declaredW !== img.naturalWidth) {
+        warn("page '" + page.id + "' declares width " + declaredW + " but decoded " + img.naturalWidth);
+      }
+      if (Number.isFinite(declaredH) && declaredH !== img.naturalHeight) {
+        warn("page '" + page.id + "' declares height " + declaredH + " but decoded " + img.naturalHeight);
+      }
+      pagesById.set(String(page.id), {
+        tex: uploadPage(img),
+        // The DECODED size wins: it is what the sampler's normalised coordinates actually address.
+        width: img.naturalWidth,
+        height: img.naturalHeight
+      });
+    }
+
+    // parts
+    for (const [id, part] of partsById) {
+      void id;
+      gl.deleteBuffer(part.posBuf);
+      gl.deleteBuffer(part.uvBuf);
+      gl.deleteBuffer(part.idxBuf);
+    }
+    partsById = new Map();
+    const parts = Array.isArray(manifest.parts) ? manifest.parts : [];
+    for (const raw of parts) {
+      const id = String(raw.id);
+      const page = pagesById.get(String(raw.pageId));
+      if (!page) { warn("part '" + id + "' references unknown pageId '" + raw.pageId + "'"); continue; }
+
+      const refVerts = Float32Array.from(raw.refVerts || []);
+      const uvs = Array.isArray(raw.uvs) ? raw.uvs : [];
+      const vertCount = refVerts.length >> 1;
+      if (vertCount < 3) { warn("part '" + id + "' has " + vertCount + " vertices"); continue; }
+      if (uvs.length !== refVerts.length) {
+        warn("part '" + id + "' has " + (uvs.length >> 1) + " uvs for " + vertCount + " vertices");
+      }
+
+      // uv -> page texel -> normalised texture coordinate, folded once here.
+      const sr = Array.isArray(raw.srcRect) && raw.srcRect.length >= 4
+        ? raw.srcRect.map(Number)
+        : [0, 0, page.width, page.height];
+      const tex = new Float32Array(vertCount * 2);
+      for (let i = 0; i < vertCount; i++) {
+        const u = Number(uvs[i * 2]) || 0;
+        const v = Number(uvs[i * 2 + 1]) || 0;
+        tex[i * 2] = (sr[0] + u * sr[2]) / page.width;
+        tex[i * 2 + 1] = (sr[1] + v * sr[3]) / page.height;
+      }
+
+      const indicesIn = Array.isArray(raw.indices) ? raw.indices : [];
+      if (indicesIn.length === 0 || indicesIn.length % 3 !== 0) {
+        warn("part '" + id + "' has " + indicesIn.length + " indices (not a multiple of 3)");
+      }
+      const wide = vertCount > 65535;
+      const indices = wide ? Uint32Array.from(indicesIn) : Uint16Array.from(indicesIn);
+
+      const posBuf = gl.createBuffer();
+      gl.bindBuffer(gl.ARRAY_BUFFER, posBuf);
+      gl.bufferData(gl.ARRAY_BUFFER, refVerts.byteLength, gl.DYNAMIC_DRAW);
+      const uvBuf = gl.createBuffer();
+      gl.bindBuffer(gl.ARRAY_BUFFER, uvBuf);
+      gl.bufferData(gl.ARRAY_BUFFER, tex, gl.STATIC_DRAW);
+      const idxBuf = gl.createBuffer();
+      gl.bindBuffer(gl.ELEMENT_ARRAY_BUFFER, idxBuf);
+      gl.bufferData(gl.ELEMENT_ARRAY_BUFFER, indices, gl.STATIC_DRAW);
+
+      partsById.set(id, {
+        id,
+        page,
+        refVerts,
+        vertCount,
+        scratch: new Float32Array(refVerts.length),
+        posBuf, uvBuf, idxBuf,
+        indexCount: indices.length,
+        indexType: wide ? gl.UNSIGNED_INT : gl.UNSIGNED_SHORT,
+        rigid: raw.rigid !== false,
+        blendMode: Number(raw.blendMode) || 0,
+        slotIndex: Number(raw.slotIndex),
+        attachmentName: raw.attachmentName == null ? null : String(raw.attachmentName)
+      });
+    }
+
+    frames = Array.isArray(manifest.frames) ? manifest.frames : [];
+    last = null;
+
+    const summary = {
+      schema: schema || null,
+      meta: manifest.meta || null,
+      pages: pagesById.size,
+      parts: partsById.size,
+      frames: frames.length,
+      vertsDecoded,
+      triangles: [...partsById.values()].reduce((n, p) => n + (p.indexCount / 3), 0),
+      warnings: warnings.slice()
+    };
+    say("geoclip-harness LOADED  parts=" + summary.parts + " frames=" + summary.frames +
+      " pages=" + summary.pages + (vertsDecoded ? " vrefs=" + vertsDecoded : "") +
+      (warnings.length ? "  warnings=" + warnings.length : ""));
+    return summary;
+  }
+
+  function positionsFor(part, slot, census) {
+    const out = part.scratch;
+    const ref = part.refVerts;
+    const n = ref.length;
+    if (Array.isArray(slot.verts)) {
+      if (slot.verts.length === n) {
+        for (let i = 0; i < n; i++) out[i] = Number(slot.verts[i]) || 0;
+        census.deforming++;
+        return out;
+      }
+      warn("slot for part '" + part.id + "' carries " + (slot.verts.length >> 1) +
+        " verts for a " + part.vertCount + "-vertex part; falling back to xform");
+    }
+    const x = Array.isArray(slot.xform) && slot.xform.length >= 6 ? slot.xform.map(Number) : null;
+    if (!x) {
+      out.set(ref);
+      census.identity++;
+      return out;
+    }
+    // rigid: x' = a*x + b*y + tx ; y' = c*x + d*y + ty
+    const a = x[0], b = x[1], c = x[2], d = x[3], tx = x[4], ty = x[5];
+    for (let i = 0; i < n; i += 2) {
+      const px = ref[i], py = ref[i + 1];
+      out[i] = a * px + b * py + tx;
+      out[i + 1] = c * px + d * py + ty;
+    }
+    census.rigid++;
+    return out;
+  }
+
+  function drawFrame(index) {
+    const i = index | 0;
+    const census = {
+      frameIndex: i,
+      drawn: 0, triangles: 0, drawCalls: 0,
+      rigid: 0, deforming: 0, identity: 0, additive: 0,
+      skipped: { missingSlot: 0, nullPart: 0, unknownPart: 0, outOfRange: 0 }
+    };
+
+    gl.viewport(0, 0, canvas.width, canvas.height);
+    gl.clearColor(background[0], background[1], background[2], background[3]);
+    gl.clear(gl.COLOR_BUFFER_BIT);
+
+    const frame = frames[i];
+    if (!frame) {
+      census.skipped.outOfRange = 1;
+      last = census;
+      return census;
+    }
+
+    gl.useProgram(prog);
+    gl.uniform2f(uRes, canvas.width, canvas.height);
+    gl.uniform4f(uFit, fit.scaleX, fit.scaleY, fit.offsetX, fit.offsetY);
+    gl.enable(gl.BLEND);
+
+    const slots = frame.slots || {};
+    const order = Array.isArray(frame.drawOrder) && frame.drawOrder.length
+      ? frame.drawOrder
+      : Object.keys(slots).map(Number).filter(Number.isFinite).sort((p, q) => p - q);
+
+    for (const slotIndexRaw of order) {
+      const key = String(slotIndexRaw);
+      const slot = Object.prototype.hasOwnProperty.call(slots, key) ? slots[key] : null;
+      if (!slot) { census.skipped.missingSlot++; continue; }
+      if (slot.part == null) { census.skipped.nullPart++; continue; }
+      const part = partsById.get(String(slot.part));
+      if (!part) {
+        census.skipped.unknownPart++;
+        warn("frame " + i + " slot " + key + " references unknown part '" + slot.part + "'");
+        continue;
+      }
+
+      const positions = positionsFor(part, slot, census);
+      gl.bindBuffer(gl.ARRAY_BUFFER, part.posBuf);
+      gl.bufferSubData(gl.ARRAY_BUFFER, 0, positions);
+      gl.enableVertexAttribArray(aPos);
+      gl.vertexAttribPointer(aPos, 2, gl.FLOAT, false, 0, 0);
+      gl.bindBuffer(gl.ARRAY_BUFFER, part.uvBuf);
+      gl.enableVertexAttribArray(aUV);
+      gl.vertexAttribPointer(aUV, 2, gl.FLOAT, false, 0, 0);
+      gl.bindBuffer(gl.ELEMENT_ARRAY_BUFFER, part.idxBuf);
+
+      const col = Array.isArray(slot.color) && slot.color.length >= 4 ? slot.color.map(Number) : [1, 1, 1, 1];
+      gl.uniform4f(uColor, col[0], col[1], col[2], col[3]);
+
+      // Per-part blend: the artifact carries the mode on the PART (it is a property of the attachment), so it is
+      // set per draw rather than batched. `1` is additive; anything else, including absent, is normal.
+      if (part.blendMode === 1) {
+        gl.blendFuncSeparate(gl.SRC_ALPHA, gl.ONE, gl.ONE, gl.ONE);
+        census.additive++;
+      } else {
+        gl.blendFuncSeparate(gl.SRC_ALPHA, gl.ONE_MINUS_SRC_ALPHA, gl.ONE, gl.ONE_MINUS_SRC_ALPHA);
+      }
+
+      gl.activeTexture(gl.TEXTURE0);
+      gl.bindTexture(gl.TEXTURE_2D, part.page.tex);
+      gl.drawElements(gl.TRIANGLES, part.indexCount, part.indexType, 0);
+      census.drawn++;
+      census.drawCalls++;
+      census.triangles += part.indexCount / 3;
+    }
+
+    const err = gl.getError();
+    census.glError = err === gl.NO_ERROR ? null : err;
+    census.warnings = warnings.slice();
+    census.canvas = { width: canvas.width, height: canvas.height };
+    census.fit = { ...fit };
+    census.contextLost = window.__geoclipLost ? window.__geoclipLost.at : null;
+    last = census;
+    return census;
+  }
+
+  /**
+   * Draw frame `i` and resolve once it is ON the canvas.
+   *
+   * Two animation frames, not one: the first is where the draw happens (so the paint lands inside a real
+   * compositor frame rather than between two), the second is the acknowledgement that that frame was committed.
+   * `preserveDrawingBuffer` then keeps it readable for however long the driver takes to screenshot it.
+   */
+  function seek(index) {
+    return new Promise((resolve) => {
+      requestAnimationFrame(() => {
+        const census = drawFrame(index);
+        gl.finish();
+        say("geoclip-harness  frame " + census.frameIndex + "  drawn=" + census.drawn +
+          "  tris=" + census.triangles + (census.glError ? "  GL ERROR " + census.glError : ""));
+        requestAnimationFrame(() => resolve(census));
+      });
+    });
+  }
+
+  window.__geoclip = {
+    load, seek, setFit, setBackground, resize,
+    stats: () => last,
+    manifest: () => manifest,
+    frameCount: () => frames.length,
+    env: () => {
+      const dbg = gl.getExtension("WEBGL_debug_renderer_info");
+      return {
+        vendor: dbg ? gl.getParameter(dbg.UNMASKED_VENDOR_WEBGL) : gl.getParameter(gl.VENDOR),
+        renderer: dbg ? gl.getParameter(dbg.UNMASKED_RENDERER_WEBGL) : gl.getParameter(gl.RENDERER),
+        glVersion: gl.getParameter(gl.VERSION),
+        maxTextureSize: gl.getParameter(gl.MAX_TEXTURE_SIZE),
+        dpr: window.devicePixelRatio
+      };
+    }
+  };
+
+  gl.clearColor(background[0], background[1], background[2], background[3]);
+  gl.clear(gl.COLOR_BUFFER_BIT);
+  window.__geoclipReady = true;
+  say("geoclip-harness READY — awaiting load()");
+})();
+</script>
+</body>
+</html>

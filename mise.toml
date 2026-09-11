@@ -1,0 +1,52 @@
+[tools]
+android-sdk = "12.0"
+dotnet = "10.0.201"
+godot = "4.5.1-stable-mono"
+java = "temurin-17.0.19"
+node = "24.12.0"
+pnpm = "10.26.0"
+python = "3.14.3"
+
+[env]
+ANDROID_COMPILE_SDK = "35"
+ANDROID_BUILD_TOOLS = "35.0.0"
+
+[tasks.android-webview-setup]
+description = "Install the Android SDK packages needed by the WebView wrapper"
+run = "bash scripts/android-webview-setup.sh"
+
+[tasks.android-webview-build]
+description = "Build the debuggable Android WebView wrapper APK"
+run = "bash scripts/android-webview-build.sh"
+
+[tasks.android-webview-install]
+description = "Install the wrapper APK on the locked live device"
+run = "bash scripts/android-webview-install.sh"
+
+[tasks.android-webview-launch]
+description = "Launch a loopback URL in the wrapper on the locked live device"
+run = "bash scripts/android-webview-launch.sh"
+
+[tasks.android-webview-capture]
+description = "Capture wrapper diagnostics (not Streamline counters) from the locked live device"
+run = "bash scripts/android-webview-capture.sh"
+
+[tasks.android-webview-export]
+description = "Export wrapper diagnostics (not Streamline counters) from the locked live device"
+run = "bash scripts/android-webview-export.sh"
+
+[tasks.android-webview-cleanup]
+description = "Remove only wrapper-owned ADB forwards and reverses"
+run = "bash scripts/android-webview-cleanup.sh"
+
+[tasks.android-webview-profile]
+description = "Capture bounded global Mali counters with wrapper process tracking"
+run = "bash scripts/android-webview-profile.sh"
+
+[tasks.android-webview-profile-export]
+description = "Export a validated Mali timeline CSV from a wrapper APC"
+run = "bash scripts/android-webview-profile-export.sh"
+
+[tasks.android-webview-toolchain]
+description = "Record resolved JDK, SDK, Gradle and APK versions and hashes"
+run = "bash scripts/android-webview-toolchain.sh"

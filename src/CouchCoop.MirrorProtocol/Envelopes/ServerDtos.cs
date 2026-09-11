@@ -1,0 +1,130 @@
+using System.Text.Json.Serialization;
+
+namespace CouchCoop.MirrorProtocol.Envelopes;
+
+// Server-produced wire DTOs shared by the mod (which serializes them) and the native Godot client (which will
+// consume them). Moved here VERBATIM from CouchCoop.Mod so both sides own one definition; the wire bytes are
+// unchanged (System.Text.Json Web camelCase + WhenWritingNull, driven by BrowserJson in the mod). These are pure
+// records over BCL types — no spirectl/server dependency — which is why they were safe to relocate.
+
+// The viewer's own session assignment, serialized into the `session` envelope (produce side of SessionAssignment).
+public sealed record BrowserSessionDto(
+    [property: JsonIgnore(Condition = JsonIgnoreCondition.Never)] string? Name,
+    string Status,
+    bool Joined,
+    [property: JsonIgnore(Condition = JsonIgnoreCondition.Never)] string? PlayerId,
+    int ConnectionCount);
+
+// One roster entry, serialized into the `session` envelope's `players` (produce side of SessionPlayerOption).
+public sealed record BrowserPlayerOption(
+    string PlayerId,
+    string Name,
+    bool IsHost,
+    bool IsRunPlayer,
+    int ConnectionCount,
+    bool Disconnected,
+    // True when this player belongs to the REQUESTING connection's own identity. Stamped per-connection by
+    // BrowserSessionRegistry.MergePlayers (the session envelope is built per-connection), so each device sees only its
+    // OWN players as local. Serialized as `isLocal` (System.Text.Json web camelCase). The STATEFUL roster filter
+    // keeps host + local.
+    bool IsLocal = false,
+    // ---- mirror-seat fields -----------------------------------------------------------------------------
+    // The ENet netId behind this option, parsed from the state-snapshot player id ("p:{netId}"). Null for the
+    // registry's synthetic lobby-only options, whose id is the raw display name rather than a p:N.
+    [property: JsonIgnore(Condition = JsonIgnoreCondition.Never)] ulong? NetId = null,
+    // True when NetId falls in the couch-coop seat guard band (MirrorSeatNetIds) — i.e. this row is a seat the host
+    // can INSTANCE for a phone/browser, as opposed to the host itself or a genuine remote player. The MIRROR roster
+    // filter keeps host + mirror seats; the stateful filter ignores this entirely.
+    bool IsMirrorSeat = false,
+    // Server-derived joinability for a mirror seat (MirrorSeatStatuses): "ready" (tappable — in a lobby that
+    // includes a seat whose headless instance is down, since tapping spawns one bound to this netId), "stuck" (a
+    // live-but-disconnected zombie instance, lobby only) or "offline" (mid-run, no game-connected instance: the
+    // game will not admit it). Both non-ready values render as a genuinely DISABLED row. Non-seat rows are "ready".
+    string SeatStatus = MirrorSeatStatuses.Ready,
+    // Human-readable WHY for a non-ready seat, rendered next to the disabled row. Null when SeatStatus is "ready".
+    [property: JsonIgnore(Condition = JsonIgnoreCondition.Never)] string? SeatStatusReason = null,
+    // R19 WP-2 — the character model id this seat is playing, from the same state snapshot the row's name comes
+    // from (lobby: StateCharacterSelectPlayerSnapshot.CharacterId; run: StateRunPlayerSnapshot.CharacterId). The
+    // mirror picker renders it as the `/models/characters/{id}/icon` PNG left of the name, which is how a viewer
+    // tells four seats apart in a saved-game lobby where several may still be labelled "Player 100x". Null where
+    // the game has no answer yet (a lobby seat with no character picked) and on the registry's browser-only
+    // options — the client then renders no image at all rather than a broken one. Precedent for a character id on
+    // this wire is BrowserLobbyPlayerDto.CharacterId.
+    [property: JsonIgnore(Condition = JsonIgnoreCondition.Never)] string? CharacterId = null);
+
+public sealed record BrowserScreenDto(
+    string Kind,
+    [property: JsonIgnore(Condition = JsonIgnoreCondition.Never)] string? Type,
+    [property: JsonIgnore(Condition = JsonIgnoreCondition.Never)] string? Title,
+    // Mirror-view screen discriminator (ignored by the stateful client): "singleplayer-run" | "mp-run" |
+    // "mp-character-select" | "sp-character-select" | "mp-load-game" | "main-menu" | "unsupported". Rides EVERY
+    // session envelope. The two character-select kinds differ only in whether the host's lobby is joinable at all:
+    // "sp-" is a singleplayer lobby, which nobody can join, so the mirror shows no join form and just watches.
+    // Produced by BrowserAssignmentClassifier.MirrorModeFor; the allowlist that gates it back off the wire is
+    // SessionEnvelope.MirrorScreenKinds (C#) / MIRROR_SCREEN_KINDS (frontend/src/protocol/browserEnvelope.ts).
+    string MirrorMode);
+
+public sealed record BrowserAssignmentNotice(
+    string Code,
+    string Severity,
+    string Message,
+    string? ScreenType = null,
+    string? ScreenTitle = null);
+
+// Echo reply to a client `{type:"ping", t0}` latency probe. `T0` is echoed verbatim so the client computes RTT.
+// `MainThread` is echoed for the "game end-to-end" probe (answered from the game main thread); omitted otherwise.
+public sealed record BrowserPongEnvelope(
+    string Type,
+    double T0,
+    bool? MainThread = null);
+
+// Browser → host runtime settings (the mirror Settings panel). Every field optional; a null field means "leave
+// unchanged". Applied per the receiving (headless) game instance. Parsed from what SettingsMessage serializes.
+public sealed record BrowserSettingsRequestEnvelope(
+    string Type,
+    string? RequestId = null,
+    // Active game frame-rate cap (the mirror "refresh rate").
+    int? RefreshRate = null,
+    // Freeze toggles for the game-side visual sim (particle / spine / decorative animators).
+    bool? FreezeParticles = null,
+    bool? FreezeSpines = null,
+    bool? FreezeDecor = null,
+    // true = producer sends declarative tween hints + suppresses per-frame tweened props (smooth replay);
+    // false = producer streams node properties every frame instead.
+    bool? TweenReplay = null,
+    // Stage-B walk skip: whether THIS viewer displays the host-rendered static combat background image instead of
+    // the live bg subtree (the mirror "Static background" setting, folded with the client's fetch/decode fail-open
+    // state — a client that could not show the image reports false even with the setting on). Per-CONNECTION, not a
+    // process lever: it feeds the server's unanimity aggregate, which stamps the combat bg root out of the producer
+    // walk only when EVERY streaming mirror connection reports true. Null means this partial settings update leaves
+    // the connection's current value unchanged; the required `?staticBg=0|1` selector seeds that value at connect.
+    bool? StaticBg = null,
+    // R14 trail drive: whether THIS viewer drives the card-flight trail ROOT from the declarative flight hint, so
+    // the producer may withhold that root's own transform writes in local emit mode. Per-CONNECTION like StaticBg,
+    // and a CAPABILITY rather than a preference: it feeds the server's unanimity aggregate, which turns the
+    // producer lever on only while EVERY streaming mirror connection reports true. Null means this partial settings
+    // update leaves the connection's current capability unchanged; `?trailDrive=0|1` seeds it at connect.
+    bool? TrailDrive = null);
+
+public sealed record BrowserServerReloadEnvelope(
+    string Type,
+    string RequestId,
+    string Reason);
+
+/// <summary>
+/// The closed set of <see cref="BrowserServerReloadEnvelope.Reason"/> values a CLIENT branches on. The envelope
+/// itself is unchanged (this is a value vocabulary, not a schema change): the default meaning stays "the server is
+/// coming back — reload the page", and only the reasons listed here get special handling.
+/// </summary>
+public static class BrowserServerReloadReasons
+{
+    /// <summary>
+    /// Sent by a HEADLESS mirror instance as its LAST GASP: its ENet connection to the host game is permanently
+    /// gone (the host process died, or dropped it mid-run), so it is about to exit rather than sit forever behind
+    /// STS2's "report a bug" network-error dialog. A viewer that sees this must NOT reload the page against the
+    /// dead headless port — it drops back to the join picker on the ORIGINAL host and reconnects there with
+    /// backoff, so the seat is re-offered (and re-claimed) the moment the host reloads the saved run.
+    /// TS twin: <c>HEADLESS_HOST_DISCONNECTED_REASON</c> in <c>frontend/src/protocol/browserEnvelope.ts</c>.
+    /// </summary>
+    public const string HeadlessHostDisconnected = "headless-host-disconnected";
+}

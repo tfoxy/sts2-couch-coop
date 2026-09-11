@@ -1,0 +1,134 @@
+schemaVersion: spirectl.fixture/v0
+name: deck-view-40
+description: >-
+  Perf fixture for the DECK-VIEW GRID: a 40-card master deck, in the quietest shipped encounter, so a
+  recording can exercise the card grid's own lifecycle — opening the deck view, scrolling a deck long
+  enough to force repeated row recycling, and closing it again.
+
+
+  Why it exists. The R18 DOM-reuse round was measured entirely against `wscrisp-deckdialog.ndjson`, and that
+  recording turned out to contain neither an open nor a close: the grid is present in its keyframe, never
+  toggles `visible`, and simply RE-POPULATES its two materialized rows twice. It also never materializes more
+  than ~10 cards, because `NCardGrid` is virtualized to a bounded row pool. So the case the pool was actually
+  designed for — a large bank of card elements, most of which are not wanted on the next open — has never
+  been measured. This fixture is the deck half of closing that gap.
+
+
+  40 cards is chosen to be several times the materialized band (~2 rows / ~10 cards at the recorded viewport),
+  so scrolling top-to-bottom forces the row pool to recycle repeatedly rather than once, and so a close+reopen
+  has a meaningfully large grid to tear down and rebuild.
+
+
+  The mix is 5 distinct model ids rather than 40 copies of one, so each recycled row pulls a different card
+  portrait — distinct atlas regions, i.e. real texture work — instead of re-using one cached region. A
+  single-id deck would make the grid look far cheaper than it is.
+
+
+  Authoring notes (schema v2, deny_unknown_fields), inherited from `combat-reshuffle-30`: authoring ANY pile
+  wipes ALL piles for the player, so every pile is authored here including the empty ones, and an empty pile
+  is written as the mapping `{ cards: [] }`. Intra-pile order is not preserved on load. `replace: true` clears
+  the starter deck so the master deck — which is what the deck viewer renders — is exactly these 40 cards.
+  The piles sum to the same 40, so the viewer and the piles agree.
+run:
+  seed: fixture-deck-view-40
+  players:
+    - id: "p:1"
+      characterId: IRONCLAD
+      creature: { currentHp: 80, maxHp: 80 }
+      deck:
+        replace: true
+        cards:
+          - { modelId: STRIKE_IRONCLAD }
+          - { modelId: STRIKE_IRONCLAD }
+          - { modelId: STRIKE_IRONCLAD }
+          - { modelId: STRIKE_IRONCLAD }
+          - { modelId: STRIKE_IRONCLAD }
+          - { modelId: STRIKE_IRONCLAD }
+          - { modelId: STRIKE_IRONCLAD }
+          - { modelId: STRIKE_IRONCLAD }
+          - { modelId: STRIKE_IRONCLAD }
+          - { modelId: STRIKE_IRONCLAD }
+          - { modelId: STRIKE_IRONCLAD }
+          - { modelId: STRIKE_IRONCLAD }
+          - { modelId: DEFEND_IRONCLAD }
+          - { modelId: DEFEND_IRONCLAD }
+          - { modelId: DEFEND_IRONCLAD }
+          - { modelId: DEFEND_IRONCLAD }
+          - { modelId: DEFEND_IRONCLAD }
+          - { modelId: DEFEND_IRONCLAD }
+          - { modelId: DEFEND_IRONCLAD }
+          - { modelId: DEFEND_IRONCLAD }
+          - { modelId: DEFEND_IRONCLAD }
+          - { modelId: DEFEND_IRONCLAD }
+          - { modelId: DEFEND_IRONCLAD }
+          - { modelId: DEFEND_IRONCLAD }
+          - { modelId: BASH }
+          - { modelId: BASH }
+          - { modelId: BASH }
+          - { modelId: BASH }
+          - { modelId: BASH }
+          - { modelId: BASH }
+          - { modelId: ANGER }
+          - { modelId: ANGER }
+          - { modelId: ANGER }
+          - { modelId: ANGER }
+          - { modelId: ANGER }
+          - { modelId: IRON_WAVE }
+          - { modelId: IRON_WAVE }
+          - { modelId: IRON_WAVE }
+          - { modelId: IRON_WAVE }
+          - { modelId: IRON_WAVE }
+      combat:
+        hand:
+          cards:
+            - { modelId: STRIKE_IRONCLAD }
+            - { modelId: DEFEND_IRONCLAD }
+            - { modelId: BASH }
+            - { modelId: ANGER }
+            - { modelId: IRON_WAVE }
+        # The remaining 35, so hand + draw = the authored 40-card master deck and nothing reshuffles
+        # mid-recording (a reshuffle would spray card-flight VFX across the window being measured).
+        drawPile:
+          cards:
+            - { modelId: STRIKE_IRONCLAD }
+            - { modelId: STRIKE_IRONCLAD }
+            - { modelId: STRIKE_IRONCLAD }
+            - { modelId: STRIKE_IRONCLAD }
+            - { modelId: STRIKE_IRONCLAD }
+            - { modelId: STRIKE_IRONCLAD }
+            - { modelId: STRIKE_IRONCLAD }
+            - { modelId: STRIKE_IRONCLAD }
+            - { modelId: STRIKE_IRONCLAD }
+            - { modelId: STRIKE_IRONCLAD }
+            - { modelId: STRIKE_IRONCLAD }
+            - { modelId: DEFEND_IRONCLAD }
+            - { modelId: DEFEND_IRONCLAD }
+            - { modelId: DEFEND_IRONCLAD }
+            - { modelId: DEFEND_IRONCLAD }
+            - { modelId: DEFEND_IRONCLAD }
+            - { modelId: DEFEND_IRONCLAD }
+            - { modelId: DEFEND_IRONCLAD }
+            - { modelId: DEFEND_IRONCLAD }
+            - { modelId: DEFEND_IRONCLAD }
+            - { modelId: DEFEND_IRONCLAD }
+            - { modelId: DEFEND_IRONCLAD }
+            - { modelId: BASH }
+            - { modelId: BASH }
+            - { modelId: BASH }
+            - { modelId: BASH }
+            - { modelId: BASH }
+            - { modelId: ANGER }
+            - { modelId: ANGER }
+            - { modelId: ANGER }
+            - { modelId: ANGER }
+            - { modelId: IRON_WAVE }
+            - { modelId: IRON_WAVE }
+            - { modelId: IRON_WAVE }
+            - { modelId: IRON_WAVE }
+        discardPile: { cards: [] }
+        exhaustPile: { cards: [] }
+  currentRoom:
+    combat:
+      # Same choice and reason as `combat-reshuffle-30`: the quietest shipped encounter, so the recording
+      # attributes cost to the deck grid rather than to enemy VFX.
+      encounterId: NIBBITS_WEAK

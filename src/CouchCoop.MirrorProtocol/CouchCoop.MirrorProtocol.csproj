@@ -1,0 +1,15 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup>
+    <!-- net8.0 is the Godot 4.5 .NET base TFM, so a future native Godot client can reference this library
+         directly; the net9.0 mod references it too (a net9.0 project can consume a net8.0 assembly). -->
+    <TargetFramework>net8.0</TargetFramework>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <Nullable>enable</Nullable>
+    <LangVersion>latest</LangVersion>
+    <!-- This is the game-assembly-FREE, Godot-FREE protocol layer: it must build with no sts2.local.yaml
+         present. Opting out here skips the root Directory.Build.targets STS2/Godot reference + validation. -->
+    <CouchCoopRequiresSts2Assemblies>false</CouchCoopRequiresSts2Assemblies>
+  </PropertyGroup>
+
+  <!-- ZERO package/project references. BCL + System.Text.Json (in-box for net8.0) only. -->
+</Project>

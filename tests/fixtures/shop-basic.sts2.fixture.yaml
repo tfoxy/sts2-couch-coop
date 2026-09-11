@@ -1,0 +1,8 @@
+schemaVersion: spirectl.fixture/v0
+name: shop-basic
+description: Merchant shop room with the live generated inventory (static-background QA)
+run:
+  seed: shop-basic
+  players: 1
+  currentRoom:
+    shop: {}

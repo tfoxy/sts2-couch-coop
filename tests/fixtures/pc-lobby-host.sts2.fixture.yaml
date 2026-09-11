@@ -1,0 +1,18 @@
+schemaVersion: spirectl.fixture/v0
+name: pc-lobby-host
+description: >-
+  Start-run multiplayer HOST lobby (NCharacterSelectScreen) for the CouchCoop QR host-panel probes.
+  The live fixture loader materializes this recipe by starting a real NetHostGameService ENet host and
+  pushing the character-select screen via InitializeMultiplayerAsHost, so the lobby reports
+  netGameType "host" -- which is what CouchCoopLobbyHostGate requires before the
+  "Couch Co-Op QR Code" button is installed. Declaring hostPlayerId also fixes the derived
+  localPlayerId, so the probe can address the host seat by a stable id.
+characterSelect:
+  lobby:
+    seed: fixture-pc-lobby-host
+    hostPlayerId: "p:1"
+    players:
+      - id: "p:1"
+        characterId: IRONCLAD
+        isReady: false
+        slotId: 0

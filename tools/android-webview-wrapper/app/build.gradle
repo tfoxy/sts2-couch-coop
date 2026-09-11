@@ -1,0 +1,39 @@
+plugins {
+    id 'com.android.application'
+}
+
+android {
+    namespace 'coop.couch.webview'
+    buildFeatures { buildConfig true }
+    def compileSdkValue = System.getenv('ANDROID_COMPILE_SDK')
+    def buildToolsValue = System.getenv('ANDROID_BUILD_TOOLS')
+    if (compileSdkValue == null || buildToolsValue == null) {
+        throw new GradleException('ANDROID_COMPILE_SDK and ANDROID_BUILD_TOOLS must come from root mise.toml')
+    }
+    compileSdk Integer.parseInt(compileSdkValue)
+    buildToolsVersion buildToolsValue
+
+    defaultConfig {
+        applicationId 'coop.couch.webview'
+        minSdk 29
+        targetSdk 35
+        versionCode 1
+        versionName '1.0.0'
+    }
+
+    buildTypes {
+        profile {
+            initWith debug
+            debuggable true
+            applicationIdSuffix '.profile'
+            matchingFallbacks = ['debug']
+        }
+    }
+
+    sourceSets {
+        profile {
+            manifest.srcFile 'src/debug/AndroidManifest.xml'
+            res.srcDirs 'src/debug/res'
+        }
+    }
+}

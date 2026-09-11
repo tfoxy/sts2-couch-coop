@@ -1,0 +1,15 @@
+<Project>
+  <ItemGroup Condition="'$(MSBuildProjectExtension)' == '.csproj' and '$(IsCrossTargetingBuild)' != 'true' and '$(CouchCoopRequiresSts2Assemblies)' != 'false'">
+    <CouchCoopRequiredSts2Reference Include="$(Sts2AssembliesDir)/GodotSharp.dll" />
+  </ItemGroup>
+
+  <Target Name="ValidateSts2AssembliesDir" BeforeTargets="ResolveReferences" Condition="'$(MSBuildProjectExtension)' == '.csproj' and '$(IsCrossTargetingBuild)' != 'true' and '$(CouchCoopRequiresSts2Assemblies)' != 'false'">
+    <Error Condition="'$(Sts2AssembliesDir)' == ''" Text="Missing required game.assembliesDir in sts2.local.yaml; CouchCoop will not infer assemblies from game.path." />
+    <Error Condition="'$(Sts2AssembliesDir)' != '' and !Exists('$(Sts2AssembliesDir)')" Text="Configured STS2 assemblies directory does not exist: $(Sts2AssembliesDir)" />
+    <Error Condition="'$(Sts2AssembliesDir)' != '' and Exists('$(Sts2AssembliesDir)') and !Exists('%(CouchCoopRequiredSts2Reference.Identity)')" Text="Missing required STS2/Godot assembly: %(CouchCoopRequiredSts2Reference.Identity)" />
+  </Target>
+
+  <Target Name="ValidateCouchCoopLocalModDir" BeforeTargets="PrepareForBuild" Condition="'$(MSBuildProjectName)' == 'CouchCoop.Mod.Loader' and '$(CouchCoopBuildToLocalMods)' == 'true'">
+    <Error Condition="'$(CouchCoopLocalModDir)' == ''" Text="Missing required game.path in sts2.local.yaml; CouchCoop cannot choose the default local mods output directory." />
+  </Target>
+</Project>

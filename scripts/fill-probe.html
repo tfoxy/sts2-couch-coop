@@ -1,0 +1,389 @@
+<!DOCTYPE html>
+<!--
+  fill-probe.html — a standalone WebGL2 fill-rate / state-change probe for the canvas mirror stage.
+
+  WHY THIS EXISTS. The canvas stage (?stage=canvas) replaces ~2,400 composited DOM elements with one WebGL2
+  canvas that the executor paints as a handful of batched draws (the M1 combat profile is ~41 draws / ~150
+  quads, 16 texture slots per batch — see docs/mirror-combat-bench.md). Whether that is CHEAPER on a phone
+  depends on a number nobody had measured: where the device's own ceiling sits, in quads and in pixels, at
+  full devicePixelRatio. A replay bench can only say "the whole app was N ms per frame"; it cannot say whether
+  the budget went on fill, on draw-call overhead, or on everything else the page does. This page isolates the
+  first two.
+
+  WHAT IT MEASURES. Presented frame cadence (rAF-gap sampling — the same currency bench-mirror-replay.mjs
+  reports, so the numbers are directly comparable) while drawing N textured quads per frame at full DPR, across
+  two axes:
+
+    * N            — how many quads.
+    * mode         — how those quads reach the GPU:
+        batch1     one texture, ONE drawArrays for all N quads. The floor: pure fill, no state change.
+        slot16     16 textures bound to 16 units, quads cycle through them, still ONE drawArrays. This is
+                   what the real executor does (batcher.ts MAX_TEXTURE_SLOTS = 16), so the delta from batch1
+                   is what the slot table's shader indirection actually costs on this GPU.
+        naive      one bindTexture + one drawArrays PER QUAD — N draws, N binds. The "no batcher" strawman,
+                   and the axis that says how much the batcher is worth here.
+
+  Plus a dedicated OVERDRAW sweep: L full-screen quads, one draw, so the pixel count is exactly
+  L x viewport px and the fill ceiling can be read in Mpx/frame rather than inferred.
+
+  HONESTY NOTES.
+    * The quads are placed by a SEEDED LCG and re-used across modes, so batch1/slot16/naive at the same N
+      cover exactly the same pixels. Any difference between them is state change, not geometry.
+    * The vertex buffer is uploaded ONCE per cell, before the measured window. Per-frame CPU is the draw
+      call(s) and nothing else, so a cell that goes slow went slow on the GPU or in the compositor.
+    * Blending is ON (premultiplied, the executor's mode). Fill rate with blending is the number the mirror
+      actually needs; an opaque-only figure would flatter the device.
+    * Gaps only exist while rAF is scheduled. A backgrounded Android tab produces none at all, which is why
+      the runner foregrounds its tab and refuses a locked screen.
+-->
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no, viewport-fit=cover" />
+<title>fill-probe</title>
+<style>
+  html, body { margin: 0; padding: 0; background: #101014; overflow: hidden; height: 100%; }
+  #gl { display: block; width: 100vw; height: 100vh; }
+  #hud {
+    position: fixed; left: 0; top: 0; right: 0;
+    font: 12px/1.35 ui-monospace, Menlo, Consolas, monospace;
+    color: #cfe; background: rgba(0,0,0,.55); padding: 4px 6px; white-space: pre-wrap;
+    pointer-events: none;
+  }
+</style>
+</head>
+<body>
+<canvas id="gl"></canvas>
+<div id="hud">fill-probe: booting…</div>
+<script>
+"use strict";
+(function () {
+  const hud = document.getElementById("hud");
+  const canvas = document.getElementById("gl");
+  const MAX_QUADS = 4096;
+  const SLOTS = 16;               // batcher.ts MAX_TEXTURE_SLOTS
+  const FLOATS_PER_VERT = 9;      // pos(2) uv(2) slot(1) rgba(4)
+  const VERTS_PER_QUAD = 6;
+
+  // A LOST context does not throw — every subsequent gl call is a silent no-op and `getParameter` returns
+  // null, so a probe without this listener happily reports a full sweep of vsync-perfect frames that drew
+  // nothing at all. Record it, timestamp it, and let the runner refuse the numbers.
+  window.__fillProbeLost = null;
+  canvas.addEventListener("webglcontextlost", (e) => {
+    e.preventDefault(); // ask for a restore rather than a permanently dead canvas
+    window.__fillProbeLost = { at: performance.now(), msg: e.statusMessage || "" };
+    hud.textContent = `fill-probe: CONTEXT LOST at ${Math.round(performance.now())}ms ${e.statusMessage || ""}`;
+  }, false);
+  canvas.addEventListener("webglcontextrestored", () => {
+    window.__fillProbeRestored = performance.now();
+  }, false);
+
+  const gl = canvas.getContext("webgl2", {
+    alpha: false,
+    antialias: false,
+    depth: false,
+    stencil: false,
+    desynchronized: false,
+    powerPreference: "high-performance",
+    preserveDrawingBuffer: false
+  });
+  if (!gl) {
+    hud.textContent = "fill-probe: NO WEBGL2";
+    window.__fillProbeError = "no webgl2";
+    return;
+  }
+
+  // ---- environment ---------------------------------------------------------------------------------------
+  function envInfo() {
+    const dbg = gl.getExtension("WEBGL_debug_renderer_info");
+    return {
+      ua: navigator.userAgent,
+      dpr: window.devicePixelRatio,
+      cssW: window.innerWidth,
+      cssH: window.innerHeight,
+      drawW: canvas.width,
+      drawH: canvas.height,
+      pixels: canvas.width * canvas.height,
+      vendor: dbg ? gl.getParameter(dbg.UNMASKED_VENDOR_WEBGL) : gl.getParameter(gl.VENDOR),
+      renderer: dbg ? gl.getParameter(dbg.UNMASKED_RENDERER_WEBGL) : gl.getParameter(gl.RENDERER),
+      glVersion: gl.getParameter(gl.VERSION),
+      maxTextureImageUnits: gl.getParameter(gl.MAX_TEXTURE_IMAGE_UNITS),
+      maxTextureSize: gl.getParameter(gl.MAX_TEXTURE_SIZE),
+      hardwareConcurrency: navigator.hardwareConcurrency || null,
+      deviceMemory: navigator.deviceMemory || null
+    };
+  }
+
+  function sizeCanvas() {
+    // FULL DPR on purpose: the whole question is what the panel's real pixel count costs.
+    const dpr = window.devicePixelRatio || 1;
+    const w = Math.max(1, Math.round(window.innerWidth * dpr));
+    const h = Math.max(1, Math.round(window.innerHeight * dpr));
+    if (canvas.width !== w || canvas.height !== h) {
+      canvas.width = w;
+      canvas.height = h;
+    }
+    gl.viewport(0, 0, canvas.width, canvas.height);
+  }
+  sizeCanvas();
+
+  // ---- program -------------------------------------------------------------------------------------------
+  // The sampler-array switch is not a style choice: GLSL ES 3.00 requires a sampler array to be indexed by a
+  // constant expression, so every multi-texture batcher (this one and the real executor's) unrolls the fetch.
+  const samplerSwitch = Array.from({ length: SLOTS }, (_, i) =>
+    `    case ${i}: t = texture(uTex[${i}], vUV); break;`
+  ).join("\n");
+
+  const VS = `#version 300 es
+in vec2 aPos;
+in vec2 aUV;
+in float aSlot;
+in vec4 aColor;
+uniform vec2 uRes;
+out vec2 vUV;
+out vec4 vColor;
+flat out int vSlot;
+void main() {
+  vUV = aUV;
+  vColor = aColor;
+  vSlot = int(aSlot + 0.5);
+  vec2 c = (aPos / uRes) * 2.0 - 1.0;
+  gl_Position = vec4(c.x, -c.y, 0.0, 1.0);
+}`;
+
+  const FS = `#version 300 es
+precision mediump float;
+uniform sampler2D uTex[${SLOTS}];
+in vec2 vUV;
+in vec4 vColor;
+flat in int vSlot;
+out vec4 outColor;
+void main() {
+  vec4 t;
+  switch (vSlot) {
+${samplerSwitch}
+    default: t = vec4(1.0); break;
+  }
+  outColor = t * vColor;
+}`;
+
+  function compile(type, src) {
+    const s = gl.createShader(type);
+    gl.shaderSource(s, src);
+    gl.compileShader(s);
+    if (!gl.getShaderParameter(s, gl.COMPILE_STATUS)) {
+      throw new Error("shader: " + gl.getShaderInfoLog(s));
+    }
+    return s;
+  }
+  const prog = gl.createProgram();
+  gl.attachShader(prog, compile(gl.VERTEX_SHADER, VS));
+  gl.attachShader(prog, compile(gl.FRAGMENT_SHADER, FS));
+  gl.linkProgram(prog);
+  if (!gl.getProgramParameter(prog, gl.LINK_STATUS)) {
+    hud.textContent = "fill-probe: LINK FAIL " + gl.getProgramInfoLog(prog);
+    window.__fillProbeError = "link: " + gl.getProgramInfoLog(prog);
+    return;
+  }
+  gl.useProgram(prog);
+
+  const uRes = gl.getUniformLocation(prog, "uRes");
+  gl.uniform1iv(gl.getUniformLocation(prog, "uTex[0]"), Array.from({ length: SLOTS }, (_, i) => i));
+
+  // ---- textures ------------------------------------------------------------------------------------------
+  // 16 DISTINCT 64x64 textures. Distinct matters: a driver may fast-path re-binding the same object, which
+  // would make `naive` look free and the batcher look worthless.
+  const TEX_SIZE = 64;
+  const textures = [];
+  for (let i = 0; i < SLOTS; i++) {
+    const px = new Uint8Array(TEX_SIZE * TEX_SIZE * 4);
+    for (let y = 0; y < TEX_SIZE; y++) {
+      for (let x = 0; x < TEX_SIZE; x++) {
+        const o = (y * TEX_SIZE + x) * 4;
+        // A per-texture hue plus a checker, so nothing is a flat colour the driver could compress away.
+        const checker = ((x >> 3) + (y >> 3)) & 1 ? 255 : 168;
+        px[o + 0] = (checker * ((i * 37) % 7 + 2) / 8) & 255;
+        px[o + 1] = (checker * ((i * 53) % 5 + 3) / 8) & 255;
+        px[o + 2] = (checker * ((i * 71) % 6 + 2) / 8) & 255;
+        px[o + 3] = 255;
+      }
+    }
+    const t = gl.createTexture();
+    gl.activeTexture(gl.TEXTURE0 + i);
+    gl.bindTexture(gl.TEXTURE_2D, t);
+    gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA, TEX_SIZE, TEX_SIZE, 0, gl.RGBA, gl.UNSIGNED_BYTE, px);
+    gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MIN_FILTER, gl.LINEAR);
+    gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MAG_FILTER, gl.LINEAR);
+    gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_S, gl.CLAMP_TO_EDGE);
+    gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_T, gl.CLAMP_TO_EDGE);
+    textures.push(t);
+  }
+
+  // ---- geometry ------------------------------------------------------------------------------------------
+  const vbo = gl.createBuffer();
+  gl.bindBuffer(gl.ARRAY_BUFFER, vbo);
+  gl.bufferData(gl.ARRAY_BUFFER, MAX_QUADS * VERTS_PER_QUAD * FLOATS_PER_VERT * 4, gl.DYNAMIC_DRAW);
+  const stride = FLOATS_PER_VERT * 4;
+  const bind = (name, size, offsetFloats) => {
+    const loc = gl.getAttribLocation(prog, name);
+    gl.enableVertexAttribArray(loc);
+    gl.vertexAttribPointer(loc, size, gl.FLOAT, false, stride, offsetFloats * 4);
+  };
+  bind("aPos", 2, 0);
+  bind("aUV", 2, 2);
+  bind("aSlot", 1, 4);
+  bind("aColor", 4, 5);
+
+  gl.disable(gl.DEPTH_TEST);
+  gl.enable(gl.BLEND);
+  gl.blendFunc(gl.ONE, gl.ONE_MINUS_SRC_ALPHA); // premultiplied — the executor's mode
+
+  const scratch = new Float32Array(MAX_QUADS * VERTS_PER_QUAD * FLOATS_PER_VERT);
+
+  /** Deterministic LCG, so every mode at a given N covers the SAME pixels. */
+  function lcg(seed) {
+    let s = seed >>> 0;
+    return () => ((s = (s * 1664525 + 1013904223) >>> 0) / 4294967296);
+  }
+
+  /**
+   * Fill the vertex scratch with `n` quads.
+   * @param coverage fraction of the viewport AREA each quad covers (1 => full-screen).
+   * @param alpha    per-quad alpha (premultiplied into rgb).
+   */
+  function buildQuads(n, coverage, mode, alpha) {
+    const W = canvas.width;
+    const H = canvas.height;
+    const rnd = lcg(0x5eed1234);
+    // Keep the card aspect the mirror actually paints (~0.71) unless this is a full-screen overdraw quad.
+    const full = coverage >= 0.999;
+    const area = coverage * W * H;
+    const qh = full ? H : Math.sqrt(area / 0.71);
+    const qw = full ? W : qh * 0.71;
+    let o = 0;
+    for (let i = 0; i < n; i++) {
+      const x = full ? 0 : rnd() * (W - qw);
+      const y = full ? 0 : rnd() * (H - qh);
+      const slot = mode === "batch1" ? 0 : i % SLOTS;
+      const a = alpha;
+      // Premultiplied: rgb carries the alpha.
+      const r = a, g = a, b = a;
+      const x0 = x, y0 = y, x1 = x + qw, y1 = y + qh;
+      const push = (px, py, u, v) => {
+        scratch[o++] = px; scratch[o++] = py;
+        scratch[o++] = u;  scratch[o++] = v;
+        scratch[o++] = slot;
+        scratch[o++] = r;  scratch[o++] = g; scratch[o++] = b; scratch[o++] = a;
+      };
+      push(x0, y0, 0, 0); push(x1, y0, 1, 0); push(x1, y1, 1, 1);
+      push(x0, y0, 0, 0); push(x1, y1, 1, 1); push(x0, y1, 0, 1);
+    }
+    gl.bindBuffer(gl.ARRAY_BUFFER, vbo);
+    gl.bufferSubData(gl.ARRAY_BUFFER, 0, scratch, 0, n * VERTS_PER_QUAD * FLOATS_PER_VERT);
+  }
+
+  // ---- the measured run ----------------------------------------------------------------------------------
+  let running = false;
+
+  /**
+   * Draw `cfg.n` quads every frame for `cfg.ms` ms and return the RAW rAF gap array (warmup excluded).
+   * cfg: { n, mode, coverage, alpha, ms, warmupMs, label }
+   */
+  function runCell(cfg) {
+    if (running) return Promise.reject(new Error("already running"));
+    running = true;
+    sizeCanvas();
+    gl.uniform2f(uRes, canvas.width, canvas.height);
+
+    const n = Math.min(cfg.n | 0, MAX_QUADS);
+    const mode = cfg.mode || "batch1";
+    const coverage = cfg.coverage ?? 0.027;
+    const alpha = cfg.alpha ?? 0.85;
+    const ms = cfg.ms ?? 8000;
+    const warmupMs = cfg.warmupMs ?? 1500;
+    buildQuads(n, coverage, mode, alpha);
+
+    // Draw-call plan, decided ONCE outside the frame loop so the measured frames carry no bookkeeping.
+    const naive = mode === "naive";
+    const drawsPerFrame = naive ? n : 1;
+
+    const gaps = [];
+    let frames = 0;
+    let prev = -1;
+    let t0 = -1;
+    let warmFrames = 0;
+
+    return new Promise((resolve) => {
+      function frame(ts) {
+        if (t0 < 0) t0 = ts;
+        const elapsed = ts - t0;
+        const measuring = elapsed >= warmupMs;
+
+        gl.clearColor(0.06, 0.06, 0.08, 1);
+        gl.clear(gl.COLOR_BUFFER_BIT);
+
+        if (naive) {
+          // One bind + one draw per quad — N state changes, the strawman arm.
+          for (let i = 0; i < n; i++) {
+            gl.activeTexture(gl.TEXTURE0);
+            gl.bindTexture(gl.TEXTURE_2D, textures[i % SLOTS]);
+            gl.drawArrays(gl.TRIANGLES, i * VERTS_PER_QUAD, VERTS_PER_QUAD);
+          }
+          // Restore the slot table for the batched modes.
+          for (let s = 0; s < SLOTS; s++) {
+            gl.activeTexture(gl.TEXTURE0 + s);
+            gl.bindTexture(gl.TEXTURE_2D, textures[s]);
+          }
+        } else {
+          gl.drawArrays(gl.TRIANGLES, 0, n * VERTS_PER_QUAD);
+        }
+
+        if (measuring) {
+          if (prev >= 0) gaps.push(ts - prev);
+          frames++;
+        } else {
+          warmFrames++;
+        }
+        prev = ts;
+
+        if (elapsed >= warmupMs + ms) {
+          running = false;
+          hud.textContent = `fill-probe: ${cfg.label || mode} n=${n} done (${frames} frames)`;
+          resolve({
+            label: cfg.label || `${mode}-n${n}`,
+            mode, n, coverage, alpha,
+            drawsPerFrame,
+            quadPx: null,
+            gaps, frames, warmFrames,
+            durationMs: elapsed - warmupMs,
+            drawW: canvas.width, drawH: canvas.height
+          });
+          return;
+        }
+        hud.textContent = `fill-probe: ${cfg.label || mode} n=${n} mode=${mode} draws/frame=${drawsPerFrame} ` +
+          `${measuring ? "MEASURING" : "warmup"} ${(elapsed / 1000).toFixed(1)}s frames=${frames}`;
+        requestAnimationFrame(frame);
+      }
+      requestAnimationFrame(frame);
+    });
+  }
+
+  window.__fillProbe = { runCell, envInfo, sizeCanvas, SLOTS, MAX_QUADS };
+  window.__fillProbeReady = true;
+  const e = envInfo();
+  hud.textContent =
+    `fill-probe READY\n${e.renderer}\ndpr=${e.dpr} css=${e.cssW}x${e.cssH} draw=${e.drawW}x${e.drawH} ` +
+    `(${(e.pixels / 1e6).toFixed(2)} Mpx) units=${e.maxTextureImageUnits}`;
+
+  // Keep something on screen (and rAF alive) between cells so the tab is visibly the bench's.
+  (function idle() {
+    if (!running) {
+      gl.clearColor(0.06, 0.06, 0.08, 1);
+      gl.clear(gl.COLOR_BUFFER_BIT);
+    }
+    setTimeout(idle, 500);
+  })();
+})();
+</script>
+</body>
+</html>

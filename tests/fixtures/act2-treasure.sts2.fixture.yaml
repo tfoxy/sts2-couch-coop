@@ -1,0 +1,14 @@
+schemaVersion: spirectl.fixture/v0
+name: act2-treasure
+description: >-
+  Singleplayer run dropped directly into an Act 2 (Hive) treasure room. The chest/
+  relic/proceed controls aren't surfaced as clickable browser actions, so the
+  auto-player resolves treasure via the debug-travel handler (open chest, pick the
+  single relic programmatically, proceed). Used to verify that resolution without a
+  full run.
+run:
+  seed: act2-treasure
+  currentActIndex: 1
+  actFloor: 5
+  currentRoom:
+    treasure: {}

@@ -1,0 +1,15 @@
+schemaVersion: spirectl.fixture/v0
+name: act2-ancient-tezcatara
+description: >-
+  Singleplayer run dropped directly INTO the Act 2 (Hive) forced Ancient event
+  room (Tezcatara). Bisection fixture: the act2-start-map fixture proved the
+  Act-2 map room / transition is stable, so the live auto-player hang must be
+  entering/proceeding this Ancient event. Loading straight into it reproduces the
+  hang in seconds instead of a 10-minute full run.
+run:
+  seed: act2-ancient-tezcatara
+  currentActIndex: 1
+  actFloor: 1
+  currentRoom:
+    event:
+      canonicalEventModelId: TEZCATARA

@@ -1,0 +1,15 @@
+; Track F2a — minimal throwaway Godot project whose ONLY purpose is to host the headless
+; ASTC transcoder script (transcode.gd). It is intentionally NOT the godot-client project so
+; the tools editor never tries to build a C#/mono assembly just to run the encoder. The batch
+; driver (scripts/transcode-texture-cache.mjs) invokes:
+;   <tools-editor> --headless --path scripts/transcode-godot --script res://transcode.gd -- --manifest <file>
+; Image.compress(COMPRESS_ASTC, ...) is TOOLS_ENABLED-only, so this MUST run under the editor
+; binary, never an export template.
+
+config_version=5
+
+[application]
+
+config/name="couchcoop-astc-transcode"
+config/features=PackedStringArray("4.5")
+run/main_scene=""

@@ -1,0 +1,43 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup>
+    <TargetFramework>net9.0</TargetFramework>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <Nullable>enable</Nullable>
+    <EnableDynamicLoading>true</EnableDynamicLoading>
+    <GenerateRuntimeConfigurationFiles>false</GenerateRuntimeConfigurationFiles>
+    <GenerateDependencyFile>false</GenerateDependencyFile>
+    <AssemblyName>couchcoop</AssemblyName>
+    <RootNamespace>CouchCoop.Mod.Loader</RootNamespace>
+    <LangVersion>latest</LangVersion>
+    <DisableTransitiveProjectReferences>true</DisableTransitiveProjectReferences>
+    <OutputPath Condition="'$(CouchCoopBuildToLocalMods)' == 'true' and '$(CouchCoopLocalModDir)' != ''">$(CouchCoopLocalModDir)/</OutputPath>
+    <PublishDir Condition="'$(CouchCoopBuildToLocalMods)' == 'true' and '$(CouchCoopLocalModDir)' != ''">$(CouchCoopLocalModDir)/</PublishDir>
+    <AppendTargetFrameworkToOutputPath Condition="'$(CouchCoopBuildToLocalMods)' == 'true' and '$(CouchCoopLocalModDir)' != ''">false</AppendTargetFrameworkToOutputPath>
+    <AppendRuntimeIdentifierToOutputPath Condition="'$(CouchCoopBuildToLocalMods)' == 'true' and '$(CouchCoopLocalModDir)' != ''">false</AppendRuntimeIdentifierToOutputPath>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <Reference Include="sts2">
+      <HintPath>$(Sts2AssembliesDir)/sts2.dll</HintPath>
+      <Private>false</Private>
+    </Reference>
+    <Reference Include="GodotSharp">
+      <HintPath>$(Sts2AssembliesDir)/GodotSharp.dll</HintPath>
+      <Private>false</Private>
+    </Reference>
+  </ItemGroup>
+
+  <ItemGroup>
+    <ProjectReference Include="../CouchCoop.Mod/CouchCoop.Mod.csproj" />
+    <ProjectReference Include="../CouchCoop.Mod.Contracts/CouchCoop.Mod.Contracts.csproj" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <Content Include="couchcoop.json" CopyToOutputDirectory="PreserveNewest" CopyToPublishDirectory="PreserveNewest" />
+  </ItemGroup>
+
+  <ItemGroup Condition="'$(CouchCoopEnableHotReload)' != 'true'">
+    <Compile Remove="CouchCoopHotReloadProtocol.cs" />
+    <Compile Remove="CouchCoopModEntry.HotReload.cs" />
+  </ItemGroup>
+</Project>

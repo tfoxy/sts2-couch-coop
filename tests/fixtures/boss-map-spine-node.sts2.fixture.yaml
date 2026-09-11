@@ -1,0 +1,20 @@
+schemaVersion: spirectl.fixture/v0
+name: boss-map-spine-node
+description: >-
+  A singleplayer map room whose act boss is CEREMONIAL_BEAST_BOSS — one of the encounters that
+  ships a boss MAP-NODE spine
+  (res://animations/map/ceremonial_beast_boss/ceremonial_beast_boss_node_skel_data.tres), so
+  NBossMapPoint takes the runtime-skeleton branch (SetSkeletonDataRes + AddAnimation + the
+  boss_map_point.gdshader normal_material re-tinted per act/travel state) instead of the
+  placeholder-image branch. Use it to validate the shaded boss bake — the clip is addressed via the
+  `&skel=` fallback lane and carries a `&mat=` live-uniform signature.
+  NOTE: the map screen always opens scrolled to the act ENTRANCE, and `actFloor` does not move it
+  (14 and 30 render identically), so the boss node starts off-screen at the top. Scroll to it with
+  the mouse wheel from a mirror client — the wheel is forwarded upstream, so the game and both
+  mirrors stay at the same scroll for a side-by-side.
+run:
+  seed: ws6b
+  currentActIndex: 0
+  actFloor: 1
+  currentRoom:
+    mapRoom: {}

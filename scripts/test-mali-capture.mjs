@@ -1,0 +1,18 @@
+import assert from 'node:assert/strict';
+import { maliMarkerRange, maliWindowCounters } from './analyze-mali-capture.mjs';
+const summary = 'duration: 2 s\nclock monotonic start: 100.000001\n';
+const range = maliMarkerRange(summary, 100500001, 101500001);
+assert.ok(Math.abs(range.start - .5) < 1e-10);
+assert.throws(() => maliMarkerRange(summary, 99900000, 101000000), /outside/);
+assert.throws(() => maliMarkerRange('duration: 2 s', 100500001, 101500001), /Missing/);
+const csv = 'INFO logs\nIndex (s),Mali GPU Cycles:GPU active raw\n0,1000\n0.5,20\n1,40\n1.5,900\n2,700';
+const exactRange = { start: .5, stop: 1.5, durationSeconds: 1 };
+const result = maliWindowCounters(csv, exactRange, 3);
+assert.deepEqual(result.counters['Mali GPU Cycles:GPU active raw'], { total: 60, perPresentedFrame: 20, perSecond: 60 });
+assert.equal(result.boundaryUncertaintySeconds, 1);
+assert.throws(() => maliWindowCounters(csv.replace('1,40', '1,'), exactRange, 3), /Invalid/);
+assert.throws(() => maliWindowCounters(csv.replace('1,40', '0.5,40'), exactRange, 3), /unordered/);
+assert.throws(() => maliWindowCounters(csv, exactRange, 0), /actual presents/);
+assert.throws(() => maliWindowCounters(csv, { start: .5, stop: 4 }, 3), /cover/);
+assert.throws(() => maliWindowCounters(csv.replace('1,40\n', ''), exactRange, 3), /Missing or irregular/);
+console.log('Mali clock, bounds, totals, normalization and missing-data tests passed');

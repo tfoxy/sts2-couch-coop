@@ -1,0 +1,22 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512" role="img" aria-label="STS2 Couch Co-op">
+  <!--
+    Original artwork for the STS2 Couch Co-op home-screen (PWA) icon. Flat 2-color:
+    the SPA's dark shell (#10151a) plus its accent blue (#7cc7ee). A spire peak over a
+    couch = "couch co-op for Slay the Spire 2". Authored for this repo; NOT derived from
+    or containing any official Slay the Spire 2 / Mega Crit asset.
+  -->
+  <rect width="512" height="512" fill="#10151a"/>
+  <g fill="#7cc7ee">
+    <!-- Spire peak -->
+    <path d="M256 84 L306 250 L206 250 Z"/>
+    <!-- Couch: backrest, two armrests, seat base, feet -->
+    <rect x="140" y="300" width="232" height="66" rx="22"/>
+    <rect x="110" y="328" width="52" height="82" rx="22"/>
+    <rect x="350" y="328" width="52" height="82" rx="22"/>
+    <rect x="128" y="356" width="256" height="54" rx="20"/>
+    <rect x="150" y="404" width="18" height="20" rx="4"/>
+    <rect x="344" y="404" width="18" height="20" rx="4"/>
+  </g>
+  <!-- Seat-cushion split as dark negative space -->
+  <rect x="252" y="360" width="8" height="40" rx="4" fill="#10151a"/>
+</svg>

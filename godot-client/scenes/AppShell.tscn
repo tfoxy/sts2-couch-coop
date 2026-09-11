@@ -1,0 +1,10 @@
+; Main scene for the CouchCoop native Godot client. A minimal Node2D root ("AppShell") with the M1b real-stack
+; script attached (AppShell.cs — routes --connect / --replay to the coordinator+store). Opening this in the Godot
+; editor will normalize the file (assign uids, etc.); the committed
+; form only needs to be a loadable format=3 scene referencing the script by res:// path.
+[gd_scene load_steps=2 format=3]
+
+[ext_resource type="Script" path="res://src/App/AppShell.cs" id="1_appshell"]
+
+[node name="AppShell" type="Node2D"]
+script = ExtResource("1_appshell")

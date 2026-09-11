@@ -1,0 +1,26 @@
+{
+  "name": "STS2 Couch Co-op",
+  "short_name": "STS2 CouchCoop",
+  "display": "fullscreen",
+  "orientation": "landscape",
+  "start_url": "/",
+  "id": "/",
+  "scope": "/",
+  "background_color": "#000000",
+  "theme_color": "#10151a",
+  "icons": [
+    {
+      "src": "/icons/icon-192.png",
+      "sizes": "192x192",
+      "type": "image/png",
+      "purpose": "any"
+    },
+    {
+      "src": "/icons/icon-512.png",
+      "sizes": "512x512",
+      "type": "image/png",
+      "purpose": "any"
+    }
+  ],
+  "description": "Coopération locale pour Slay the Spire 2 — rejoignez depuis votre téléphone ou navigateur."
+}

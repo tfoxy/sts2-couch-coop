@@ -1,0 +1,68 @@
+.vscode/
+.agents/
+.claude/
+# Generated Codex CLI config. No trailing slash: an older tool can leave a stray `.codex` FILE, and
+# `.codex/` would not match it (same reason as `.sts2` below).
+.codex
+# MCP has local FS paths
+/.mcp.json
+
+.ai/
+
+# Local STS2 config, generated assets, screenshots, and validation evidence.
+# No trailing slash: in a git worktree these are SYMLINKS to the real checkout's copies, not a
+# directory and a file, and `.sts2/` matches only a real directory — so the symlink was sweepable
+# by `git add -A`.
+.sts2
+sts2.local.yaml
+__sts2_assets__/
+screenshots/
+reports/
+
+# Browser validation artifacts.
+.playwright/
+.playwright-cli/
+
+# Build and package output.
+bin/
+obj/
+dist/
+tools/android-webview-wrapper/.gradle/
+tools/android-webview-wrapper/build/
+tools/android-webview-wrapper/app/build/
+node_modules/
+frontend/dist/
+# Built artifact for the public origin (see scripts/deploy-pages.sh).
+frontend/pages-dist/
+frontend/node_modules/
+frontend/test-results/
+frontend/test-results-matrix/
+frontend/playwright-report/
+frontend/playwright-traces/
+frontend/playwright-videos/
+frontend/playwright-screenshots/
+test-results/
+playwright-report/
+playwright-traces/
+playwright-videos/
+playwright-screenshots/
+
+__pycache__/
+
+*.dll
+*.pdb
+*.deps.json
+*.runtimeconfig.json
+
+.tmp/
+logs/
+*.log
+
+# godot-qa artifacts sometimes wrongly written here at root by AI
+.qa/
+
+# Runtime co-op multiplayer name roster written by HeadlessClientManager (game-native mp_names.json)
+mp_names.json
+
+# Env vars
+.env

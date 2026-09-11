@@ -1,0 +1,112 @@
+schemaVersion: spirectl.fixture/v0
+name: combat-discard-10
+description: >-
+  Perf fixture: 10 in hand, 20 in draw, 0 in discard, 0 exhaust. One end-turn produces a ~10-card PURE
+  hand->discard animation — the largest such burst the mirror can be handed — followed by a quiet 5-card draw off
+  a well-stocked pile. Nothing reshuffles for several turns (20 in draw = 4 turns of draws), so the trace window
+  holds the discard flight and nothing else, against the quietest available encounter. Not a behaviour fixture.
+
+
+  Its sibling `combat-reshuffle-30` gives the COMBINED window (a 5-card hand discard immediately followed by a
+  full 30-card discard->draw reshuffle); run this one when the reshuffle's ~330 spawned VFX nodes would drown out
+  what the discard flight alone costs.
+
+
+  Authoring notes (schema v2, deny_unknown_fields): an empty pile is written `{ cards: [] }` (the documented
+  mapping form), and the empty mapping survives normalization, so `discardPile` really does land empty.
+  Authoring ANY pile wipes ALL piles for the player, so every pile is authored here, including the empty ones.
+  Intra-pile order is not preserved on load (piles are seeded at random positions), which is fine: this fixture
+  only cares about pile SIZES and the model mix. Pile application waits until the opening hand has been dealt, so
+  the authored end-state above (hand 10 / draw 20 / discard 0) is deterministic in every environment — but that
+  ordering requires a bridge at least as new as the R13 fixture-loader fix. On an older bridge the combat-start
+  draw can land AFTER the piles and silently change the scenario. 10 is the maximum safe hand size; do NOT author
+  more than that.
+run:
+  seed: fixture-combat-discard-10
+  players:
+    - id: "p:1"
+      characterId: IRONCLAD
+      creature: { currentHp: 80, maxHp: 80 }
+      deck:
+        # `replace: true` clears the starter deck, so the master deck is exactly these 30 cards — the same
+        # multiset as hand + drawPile, so every later draw stays inside the authored mix and the deck viewer
+        # shows what the piles hold.
+        replace: true
+        cards:
+          - { modelId: STRIKE_IRONCLAD }
+          - { modelId: STRIKE_IRONCLAD }
+          - { modelId: STRIKE_IRONCLAD }
+          - { modelId: STRIKE_IRONCLAD }
+          - { modelId: STRIKE_IRONCLAD }
+          - { modelId: STRIKE_IRONCLAD }
+          - { modelId: STRIKE_IRONCLAD }
+          - { modelId: STRIKE_IRONCLAD }
+          - { modelId: STRIKE_IRONCLAD }
+          - { modelId: STRIKE_IRONCLAD }
+          - { modelId: STRIKE_IRONCLAD }
+          - { modelId: DEFEND_IRONCLAD }
+          - { modelId: DEFEND_IRONCLAD }
+          - { modelId: DEFEND_IRONCLAD }
+          - { modelId: DEFEND_IRONCLAD }
+          - { modelId: DEFEND_IRONCLAD }
+          - { modelId: DEFEND_IRONCLAD }
+          - { modelId: DEFEND_IRONCLAD }
+          - { modelId: DEFEND_IRONCLAD }
+          - { modelId: DEFEND_IRONCLAD }
+          - { modelId: DEFEND_IRONCLAD }
+          - { modelId: DEFEND_IRONCLAD }
+          - { modelId: BASH }
+          - { modelId: BASH }
+          - { modelId: BASH }
+          - { modelId: ANGER }
+          - { modelId: ANGER }
+          - { modelId: ANGER }
+          - { modelId: IRON_WAVE }
+          - { modelId: IRON_WAVE }
+      combat:
+        hand:
+          # 10 cards over the same 5 distinct ids (2 each), so the discard burst flies a representative spread
+          # of card portraits (distinct atlas regions) rather than 10 copies of one.
+          cards:
+            - { modelId: STRIKE_IRONCLAD }
+            - { modelId: STRIKE_IRONCLAD }
+            - { modelId: DEFEND_IRONCLAD }
+            - { modelId: DEFEND_IRONCLAD }
+            - { modelId: BASH }
+            - { modelId: BASH }
+            - { modelId: ANGER }
+            - { modelId: ANGER }
+            - { modelId: IRON_WAVE }
+            - { modelId: IRON_WAVE }
+        drawPile:
+          # The remaining 20 of the 30-card multiset. Deep enough that the next several turns draw without
+          # reshuffling, which is what keeps the measured window a PURE discard.
+          cards:
+            - { modelId: STRIKE_IRONCLAD }
+            - { modelId: STRIKE_IRONCLAD }
+            - { modelId: STRIKE_IRONCLAD }
+            - { modelId: STRIKE_IRONCLAD }
+            - { modelId: STRIKE_IRONCLAD }
+            - { modelId: STRIKE_IRONCLAD }
+            - { modelId: STRIKE_IRONCLAD }
+            - { modelId: STRIKE_IRONCLAD }
+            - { modelId: STRIKE_IRONCLAD }
+            - { modelId: DEFEND_IRONCLAD }
+            - { modelId: DEFEND_IRONCLAD }
+            - { modelId: DEFEND_IRONCLAD }
+            - { modelId: DEFEND_IRONCLAD }
+            - { modelId: DEFEND_IRONCLAD }
+            - { modelId: DEFEND_IRONCLAD }
+            - { modelId: DEFEND_IRONCLAD }
+            - { modelId: DEFEND_IRONCLAD }
+            - { modelId: DEFEND_IRONCLAD }
+            - { modelId: BASH }
+            - { modelId: ANGER }
+        # Empty as a MAPPING with an empty list — the form that reaches the loader as a genuinely empty pile.
+        # Starting at 0 means the post-end-turn discard count reads exactly how many cards flew.
+        discardPile: { cards: [] }
+        exhaustPile: { cards: [] }
+  currentRoom:
+    combat:
+      # The quietest shipped combat encounter — enemy VFX must not be what the trace measures.
+      encounterId: NIBBITS_WEAK

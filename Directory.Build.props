@@ -1,0 +1,23 @@
+<Project>
+  <PropertyGroup>
+    <CouchCoopRepoRoot>$(MSBuildThisFileDirectory)</CouchCoopRepoRoot>
+    <BuildInParallel>false</BuildInParallel>
+    <CouchCoopLocalConfigPath Condition="'$(CouchCoopLocalConfigPath)' == ''">$(CouchCoopRepoRoot)sts2.local.yaml</CouchCoopLocalConfigPath>
+    <CouchCoopLocalConfigText Condition="Exists('$(CouchCoopLocalConfigPath)')">$([System.IO.File]::ReadAllText('$(CouchCoopLocalConfigPath)'))</CouchCoopLocalConfigText>
+    <CouchCoopGamePathPattern>(?m)^\s*path\s*:\s*(?:&quot;(?&lt;value&gt;[^&quot;]*)&quot;|'(?&lt;value&gt;[^']*)'|(?&lt;value&gt;[^#\r\n]+))\s*(?:#.*)?$</CouchCoopGamePathPattern>
+    <CouchCoopModsDirPattern>(?m)^\s*modsDir\s*:\s*(?:&quot;(?&lt;value&gt;[^&quot;]*)&quot;|'(?&lt;value&gt;[^']*)'|(?&lt;value&gt;[^#\r\n]+))\s*(?:#.*)?$</CouchCoopModsDirPattern>
+    <CouchCoopAssembliesDirPattern>(?m)^\s*assembliesDir\s*:\s*(?:&quot;(?&lt;value&gt;[^&quot;]*)&quot;|'(?&lt;value&gt;[^']*)'|(?&lt;value&gt;[^#\r\n]+))\s*(?:#.*)?$</CouchCoopAssembliesDirPattern>
+    <CouchCoopConfigGamePath Condition="'$(CouchCoopLocalConfigText)' != '' and $([System.Text.RegularExpressions.Regex]::IsMatch('$(CouchCoopLocalConfigText)', '$(CouchCoopGamePathPattern)'))">$([System.Text.RegularExpressions.Regex]::Match('$(CouchCoopLocalConfigText)', '$(CouchCoopGamePathPattern)').Groups['value'].Value.Trim())</CouchCoopConfigGamePath>
+    <CouchCoopConfigModsDir Condition="'$(CouchCoopLocalConfigText)' != '' and $([System.Text.RegularExpressions.Regex]::IsMatch('$(CouchCoopLocalConfigText)', '$(CouchCoopModsDirPattern)'))">$([System.Text.RegularExpressions.Regex]::Match('$(CouchCoopLocalConfigText)', '$(CouchCoopModsDirPattern)').Groups['value'].Value.Trim())</CouchCoopConfigModsDir>
+    <CouchCoopConfigAssembliesDir Condition="'$(CouchCoopLocalConfigText)' != '' and $([System.Text.RegularExpressions.Regex]::IsMatch('$(CouchCoopLocalConfigText)', '$(CouchCoopAssembliesDirPattern)'))">$([System.Text.RegularExpressions.Regex]::Match('$(CouchCoopLocalConfigText)', '$(CouchCoopAssembliesDirPattern)').Groups['value'].Value.Trim())</CouchCoopConfigAssembliesDir>
+    <CouchCoopGameModsDir Condition="'$(CouchCoopGameModsDir)' == '' and '$(COUCHCOOP_GAME_MODS_DIR)' != ''">$(COUCHCOOP_GAME_MODS_DIR)</CouchCoopGameModsDir>
+    <CouchCoopGameModsDir Condition="'$(CouchCoopGameModsDir)' == '' and '$(CouchCoopConfigModsDir)' != ''">$(CouchCoopConfigModsDir)</CouchCoopGameModsDir>
+    <CouchCoopGameModsDir Condition="'$(CouchCoopGameModsDir)' == '' and '$(CouchCoopConfigGamePath)' != ''">$(CouchCoopConfigGamePath)/mods</CouchCoopGameModsDir>
+    <CouchCoopLocalModDir Condition="'$(CouchCoopLocalModDir)' == '' and '$(COUCHCOOP_LOCAL_MOD_DIR)' != ''">$(COUCHCOOP_LOCAL_MOD_DIR)</CouchCoopLocalModDir>
+    <CouchCoopLocalModDir Condition="'$(CouchCoopLocalModDir)' == '' and '$(CouchCoopGameModsDir)' != ''">$(CouchCoopGameModsDir)/couchcoop</CouchCoopLocalModDir>
+    <CouchCoopBuildToLocalMods Condition="'$(CouchCoopBuildToLocalMods)' == ''">true</CouchCoopBuildToLocalMods>
+    <CouchCoopEnableHotReload Condition="'$(CouchCoopEnableHotReload)' == ''">true</CouchCoopEnableHotReload>
+    <Sts2AssembliesDir Condition="'$(Sts2AssembliesDir)' == '' and '$(STS2_ASSEMBLIES_DIR)' != ''">$(STS2_ASSEMBLIES_DIR)</Sts2AssembliesDir>
+    <Sts2AssembliesDir Condition="'$(Sts2AssembliesDir)' == '' and '$(CouchCoopConfigAssembliesDir)' != ''">$(CouchCoopConfigAssembliesDir)</Sts2AssembliesDir>
+  </PropertyGroup>
+</Project>

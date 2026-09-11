@@ -1,0 +1,27 @@
+schemaVersion: spirectl.fixture/v0
+name: touch-live-rewards
+description: >-
+  A post-combat reward overlay, for the card-reward half of `scripts/validate-touch-live.mjs`
+  check H8.
+
+  A reward card is the other confirm-tap widget class, and it is the one whose hit box the
+  mirror does NOT read off the game: the card's own root node is 0x0, so the client guards a
+  240x338 nominal box about that origin instead. A nominal is a guess until something measures
+  it against the real thing, which is exactly what this fixture lets the harness do — tap
+  inside the nominal (must arm the confirm button) and tap just outside it (must do nothing).
+run:
+  seed: fixture-touch-live-rewards
+  actFloor: 3
+  players:
+    - id: "p:1"
+      characterId: IRONCLAD
+      creature: { currentHp: 67, maxHp: 80 }
+      overlays:
+        - rewards:
+            roomType: monster
+            items:
+              # A THREE-CARD choice, authored by model id so the row the harness taps is always the
+              # same one and the cards behind it are always the same three. The plain `rewards: {}`
+              # overlay offers gold only, which never opens a card selection screen at all.
+              - card: { modelIds: [ANGER, IRON_WAVE, SHRUG_IT_OFF] }
+              - gold: 30

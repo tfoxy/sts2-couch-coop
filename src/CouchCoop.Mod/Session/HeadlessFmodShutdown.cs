@@ -1,0 +1,217 @@
+using Godot;
+using System;
+using System.Threading.Tasks;
+
+namespace CouchCoop.Mod.Session;
+
+/// <summary>
+/// Headless-only: permanently disables FMOD audio on a spawned co-op mirror client to reclaim the native FMOD
+/// software mixer/DSP thread. That thread mixes the (silent) master bus every audio buffer regardless of whether
+/// any sound plays — it is frame-rate INDEPENDENT, so the idle-fps throttle and <see cref="HeadlessAudioMutePatch"/>
+/// (which only skip the play calls) cannot touch it; only tearing the FMOD system down does. A headless client
+/// never outputs audio (the human hears the host), so the system is pure waste here.
+///
+/// FMOD in STS2 is the <c>utopia-rise/fmod-gdextension</c> exposed as the engine singleton <c>FmodServer</c>,
+/// bootstrapped by a GDScript AUTOLOAD <c>FmodManager</c> (node <c>/root/FmodManager</c>): its <c>_ready</c> inits
+/// the system + loads startup banks, and its <c>_process</c> calls <c>FmodServer.update()</c> EVERY FRAME. The
+/// only exposed lever that removes the mixer thread is <c>FmodServer.shutdown()</c> (mute/pause and the underlying
+/// NRT/mixer-suspend calls are not surfaced by this GDExtension).
+///
+/// CRASH HISTORY / SAFETY INVARIANT: an earlier attempt that called <c>shutdown()</c> alone SIGSEGV'd the process
+/// (fault at +0x50 in <c>libGodotFmod...so</c>) because the <c>FmodManager</c> autoload kept calling
+/// <c>FmodServer.update()</c> on the freed system every frame. The fix here is ORDER: first stop that autoload's
+/// per-frame processing, THEN shut the system down. This class NEVER calls <c>shutdown()</c> unless it has found
+/// <c>/root/FmodManager</c> and disabled its processing first — if the autoload is absent (a future game/addon
+/// change), it aborts without shutting down, so it can't re-trigger the crash. Pair with
+/// <see cref="HeadlessAudioMutePatch"/>, which no-ops every <c>NAudioManager</c>/<c>NRunMusicController</c> forward
+/// so no game code re-enters the torn-down system (notably per-act bank load/unload on act transitions).
+///
+/// Implementation mirrors <see cref="CouchCoopHeadlessVisualSuspender"/> / <see cref="CouchCoopHeadlessCpuProfiler"/>:
+/// the mod has no Godot source generator so a custom <c>Node._Process</c> never fires; a background <see cref="Task"/>
+/// waits for the SceneTree root, then a built-in <see cref="Godot.Timer"/> drives an on-main-thread PROBE that waits
+/// until <c>FmodServer</c> + <c>FmodManager</c> are both ready (plus a short settle for startup banks) and performs
+/// the one-shot teardown. All tree/singleton access happens on the game main thread. Output via
+/// <see cref="CouchCoopLog"/> lands (tagged <c>[INFO]</c>) in the per-slot <c>user://logs/godot.log</c>.
+///
+/// Installed from <see cref="CouchCoopMod"/>.Init's headless branch, after
+/// <see cref="HeadlessAudioMutePatch.Apply"/>.
+/// </summary>
+public static class HeadlessFmodShutdown
+{
+    public const string NodeName = "CouchCoopHeadlessFmodShutdown";
+
+    private const string FmodServerSingleton = "FmodServer";
+    private const string FmodManagerAutoloadPath = "FmodManager"; // autoloads are direct children of /root
+    private const string ShutdownMethod = "shutdown";
+
+    // Probe cadence + bounds (all counted in probe ticks). Poll for readiness up to ~60s, then settle ~2s so the
+    // autoload's startup bank load has finished before we tear the system down.
+    private const double ProbeIntervalSeconds = 0.5;
+    private const int MaxReadinessProbes = 120; // 120 * 0.5s = 60s
+    private const int SettleProbes = 4;         // 4 * 0.5s = 2s after everything is ready
+
+    // Unverified sibling audio-driver nodes some builds may have; disabled defensively if present, NOT load-bearing.
+    // FmodManager is the only CONFIRMED per-frame update() driver — these are best-effort extras.
+    private static readonly string[] SiblingAudioNodePaths =
+    [
+        "Game/FmodBankLoader",
+        "Game/AudioManager/FmodListener2D",
+    ];
+
+    private static readonly object Gate = new();
+    private static bool _started;
+
+    // Main-thread-only state (mutated inside the Timer-driven Probe, which runs on the game main thread).
+    private static bool _done;
+    private static int _readinessProbes;
+    private static int _settleProbes;
+
+    /// <summary>Idempotent.</summary>
+    public static void Install()
+    {
+        lock (Gate)
+        {
+            if (_started)
+            {
+                return;
+            }
+
+            _started = true;
+        }
+
+        Console.Error.WriteLine("[couch-coop][fmod] headless FMOD disable enabling");
+        _ = Task.Run(InstallLoopAsync);
+    }
+
+    // Background poll only for the SceneTree root (exactly like the profiler/suspender). Everything that touches the
+    // tree or the singleton is deferred onto the main thread; nothing races off-thread.
+    private static async Task InstallLoopAsync()
+    {
+        for (var attempt = 0; attempt < 120; attempt++)
+        {
+            try
+            {
+                if (Engine.GetMainLoop() is SceneTree { Root: { } root } && GodotObject.IsInstanceValid(root))
+                {
+                    Callable.From(() => AttachOnMainThread(root)).CallDeferred();
+                    return;
+                }
+            }
+            catch (Exception exception)
+            {
+                Console.Error.WriteLine(
+                    $"[couch-coop][fmod] install attempt failed: {exception.GetType().Name}: {exception.Message}");
+            }
+
+            await Task.Delay(250).ConfigureAwait(false);
+        }
+
+        Console.Error.WriteLine("[couch-coop][fmod] install gave up (SceneTree never became ready)");
+    }
+
+    // Runs on the game main thread (deferred). Attaches a repeating Timer whose Timeout drives the readiness Probe.
+    private static void AttachOnMainThread(Node root)
+    {
+        if (!GodotObject.IsInstanceValid(root) || root.GetNodeOrNull(NodeName) is not null)
+        {
+            return;
+        }
+
+        var timer = new Godot.Timer
+        {
+            Name = NodeName,
+            WaitTime = ProbeIntervalSeconds,
+            OneShot = false,
+            Autostart = true,
+            ProcessMode = Node.ProcessModeEnum.Always, // keep probing even if the tree pauses
+        };
+        timer.Timeout += () => Probe(root, timer);
+        root.AddChild(timer);
+        CouchCoopLog.Info("[couch-coop][fmod] headless FMOD-disable armed; waiting for FmodServer + FmodManager to be ready.");
+    }
+
+    // Runs on the game main thread (Timer.Timeout). Waits until the FmodServer singleton AND the FmodManager autoload
+    // both exist (+ a short settle for startup banks), then performs the one-shot teardown and removes the timer.
+    private static void Probe(Node root, Godot.Timer timer)
+    {
+        if (_done || !GodotObject.IsInstanceValid(root))
+        {
+            CleanupTimer(timer);
+            return;
+        }
+
+        var fmodManager = root.GetNodeOrNull(FmodManagerAutoloadPath);
+        var ready = Engine.HasSingleton(FmodServerSingleton)
+            && fmodManager is not null
+            && GodotObject.IsInstanceValid(fmodManager);
+
+        if (!ready)
+        {
+            if (++_readinessProbes > MaxReadinessProbes)
+            {
+                CouchCoopLog.Info(
+                    "[couch-coop][fmod] gave up waiting for FmodServer/FmodManager — FMOD left running (nothing disabled).");
+                _done = true;
+                CleanupTimer(timer);
+            }
+
+            return;
+        }
+
+        // Ready. Let a couple of probes pass so the autoload's startup bank load finishes before we tear down.
+        if (++_settleProbes < SettleProbes)
+        {
+            return;
+        }
+
+        Teardown(root, fmodManager!);
+        _done = true;
+        CleanupTimer(timer);
+    }
+
+    // Runs on the game main thread. ORDER IS THE SAFETY CONTRACT: stop the per-frame FmodServer.update() driver
+    // BEFORE releasing the system, so nothing calls update() on freed state (the prior SIGSEGV cause). Reached only
+    // when fmodManager is a valid node — the invariant "never shutdown() unless the update() driver was neutralized".
+    private static void Teardown(Node root, Node fmodManager)
+    {
+        // 1) Kill the update() driver: the FmodManager autoload's per-frame _process.
+        fmodManager.SetProcess(false);
+        fmodManager.SetPhysicsProcess(false);
+        fmodManager.ProcessMode = Node.ProcessModeEnum.Disabled;
+        CouchCoopLog.Info("[couch-coop][fmod] disabled /root/FmodManager processing (stops per-frame FmodServer.update()).");
+
+        // Defensive extras (unverified node paths; harmless if absent, not required for correctness).
+        foreach (var path in SiblingAudioNodePaths)
+        {
+            var node = root.GetNodeOrNull(path);
+            if (node is not null && GodotObject.IsInstanceValid(node))
+            {
+                node.ProcessMode = Node.ProcessModeEnum.Disabled;
+                CouchCoopLog.Info($"[couch-coop][fmod] disabled '{path}' processing (defensive).");
+            }
+        }
+
+        // 2) Now safe: release the FMOD system and its mixer/DSP thread.
+        var server = Engine.HasSingleton(FmodServerSingleton) ? Engine.GetSingleton(FmodServerSingleton) : null;
+        if (server is not null && GodotObject.IsInstanceValid(server) && server.HasMethod(ShutdownMethod))
+        {
+            server.Call(ShutdownMethod);
+            CouchCoopLog.Info(
+                "[couch-coop][fmod] FmodServer.shutdown() called — mixer/DSP thread released; headless audio fully off.");
+        }
+        else
+        {
+            CouchCoopLog.Info(
+                "[couch-coop][fmod] FmodServer singleton/shutdown() unavailable at teardown — left running (update() already disabled).");
+        }
+    }
+
+    private static void CleanupTimer(Godot.Timer timer)
+    {
+        if (GodotObject.IsInstanceValid(timer))
+        {
+            timer.Stop();
+            timer.QueueFree();
+        }
+    }
+}

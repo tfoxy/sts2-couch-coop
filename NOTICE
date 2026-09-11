@@ -1,0 +1,22 @@
+CouchCoop (Slay the Spire 2 couch co-op mod)
+Copyright 2026 Tomás Fox
+
+This product is licensed under the Apache License, Version 2.0.
+
+This project is not affiliated with, endorsed by, or sponsored by Mega Crit.
+Slay the Spire and Slay the Spire 2 are trademarks of Mega Crit. Godot is a
+trademark of its respective owners; Spine is a product of Esoteric Software
+LLC; FMOD is a product of Firelight Technologies Pty Ltd. All names are used
+for identification purposes only. This mod ships no game assets, no Spine
+Runtimes code or exported Spine data, and no FMOD code; it reads content at
+runtime exclusively from the user's own legitimately-obtained game
+installation.
+
+The compile-only interoperability declarations under contracts/ refer to
+Slay the Spire 2 identifiers owned by Mega Crit and other respective
+rightsholders. Those identifiers are present solely so CouchCoop can bind to a
+user-supplied, legitimate game installation. They are not relicensed under,
+and are not claimed as part of, CouchCoop's Apache-2.0-licensed original work.
+
+See THIRD_PARTY_NOTICES.md and the license bundle included with binary
+distributions for incorporated open-source components.

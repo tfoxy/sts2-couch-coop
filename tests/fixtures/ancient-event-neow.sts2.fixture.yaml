@@ -1,0 +1,14 @@
+schemaVersion: spirectl.fixture/v0
+name: ancient-event-neow
+description: First floor on multiplayer
+run:
+  seed: ancient-event-neow
+  players: 2
+  currentRoom:
+    event:
+      canonicalEventModelId: NEOW
+      playerStates:
+        - ancient:
+            view:
+              visibleDialogue:
+                dialogueId: NEOW.talk.ANY.4

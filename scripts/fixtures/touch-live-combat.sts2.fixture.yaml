@@ -1,0 +1,71 @@
+schemaVersion: spirectl.fixture/v0
+name: touch-live-combat
+description: >-
+  The combat room `scripts/validate-touch-live.mjs` pins the mirror's hand touch/mouse
+  input against (checks H1-H6). Everything here is chosen for the INPUT geometry, not for
+  the game state:
+
+    * 8 cards in hand — enough that the fan overlaps itself, so seam taps (a point drawn
+      over two cards) exist at all. Below ~6 the fan barely overlaps and every check passes
+      for the wrong reason.
+    * DUPLICATES (four STRIKE_IRONCLAD, three DEFEND_IRONCLAD) — the hover-focus checks
+      assert on holder IDENTITY, and identical-looking neighbours are what make an identity
+      flip visible instead of invisible.
+    * TARGETED attacks (STRIKE_IRONCLAD / BASH) — H3 needs a card whose drag raises the
+      game's targeting arrow; a skill would just drop on release with no arrow to track.
+    * A single enemy encounter — the arrow has exactly one thing to point at, so "the arrow
+      snapped to the enemy" can never be confused for "the arrow tracked the pointer".
+    * Full draw/discard piles so the deck badges render and the bottom-right HUD is populated
+      (the End Turn button neighbours the fan and is a real near-miss offender for edge taps).
+
+  Solo (one player) on purpose: a solo host answers every mirror join with directView, so the
+  harness needs no seat, no lobby and no ENet.
+run:
+  seed: fixture-touch-live-combat
+  players:
+    - id: "p:1"
+      characterId: IRONCLAD
+      creature: { currentHp: 67, maxHp: 80 }
+      deck:
+        replace: true
+        cards:
+          - { modelId: STRIKE_IRONCLAD }
+          - { modelId: STRIKE_IRONCLAD }
+          - { modelId: STRIKE_IRONCLAD }
+          - { modelId: STRIKE_IRONCLAD }
+          - { modelId: DEFEND_IRONCLAD }
+          - { modelId: DEFEND_IRONCLAD }
+          - { modelId: DEFEND_IRONCLAD }
+          - { modelId: DEFEND_IRONCLAD }
+          - { modelId: BASH }
+          - { modelId: ANGER }
+      combat:
+        hand:
+          cards:
+            - { modelId: STRIKE_IRONCLAD }
+            - { modelId: DEFEND_IRONCLAD }
+            - { modelId: STRIKE_IRONCLAD }
+            - { modelId: BASH }
+            - { modelId: DEFEND_IRONCLAD }
+            - { modelId: STRIKE_IRONCLAD }
+            - { modelId: DEFEND_IRONCLAD }
+            - { modelId: STRIKE_IRONCLAD }
+        drawPile:
+          cards:
+            - { modelId: STRIKE_IRONCLAD }
+            - { modelId: DEFEND_IRONCLAD }
+            - { modelId: ANGER }
+            - { modelId: BASH }
+            - { modelId: STRIKE_IRONCLAD }
+            - { modelId: DEFEND_IRONCLAD }
+            - { modelId: IRON_WAVE }
+            - { modelId: SHRUG_IT_OFF }
+        discardPile:
+          cards:
+            - { modelId: STRIKE_IRONCLAD }
+            - { modelId: DEFEND_IRONCLAD }
+            - { modelId: POMMEL_STRIKE }
+            - { modelId: TRUE_GRIT }
+  currentRoom:
+    combat:
+      encounterId: NIBBITS_NORMAL

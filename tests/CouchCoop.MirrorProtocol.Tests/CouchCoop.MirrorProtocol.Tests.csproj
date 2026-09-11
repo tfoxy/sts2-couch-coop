@@ -1,0 +1,18 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup>
+    <OutputType>Exe</OutputType>
+    <!-- Match the library's Godot-base TFM; RollForward lets `dotnet run` use a newer installed runtime. -->
+    <TargetFramework>net8.0</TargetFramework>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <Nullable>enable</Nullable>
+    <LangVersion>latest</LangVersion>
+    <RollForward>Major</RollForward>
+    <!-- Game-assembly-free, like the library under test: builds/runs with no sts2.local.yaml present. -->
+    <CouchCoopRequiresSts2Assemblies>false</CouchCoopRequiresSts2Assemblies>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <!-- References ONLY the library under test. -->
+    <ProjectReference Include="../../src/CouchCoop.MirrorProtocol/CouchCoop.MirrorProtocol.csproj" />
+  </ItemGroup>
+</Project>

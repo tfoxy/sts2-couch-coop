@@ -1,0 +1,14 @@
+schemaVersion: spirectl.fixture/v0
+name: act2-thieving-hopper
+description: >-
+  Singleplayer run dropped directly into the Act 2 (Hive) Thieving Hopper combat
+  (THIEVING_HOPPER_WEAK). The hopper flees after a few turns and normal card play
+  never resolves the fight in the headless host, stalling the auto-player. Used to
+  verify the debug-play-combat force-win fallback (kill survivors + CheckWinCondition).
+run:
+  seed: act2-thieving-hopper
+  currentActIndex: 1
+  actFloor: 2
+  currentRoom:
+    combat:
+      encounterId: THIEVING_HOPPER_WEAK

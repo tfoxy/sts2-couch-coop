@@ -1,0 +1,19 @@
+schemaVersion: spirectl.fixture/v0
+name: touch-live-reward-focus
+description: >-
+  A three-row post-combat reward list for H16 in scripts/validate-touch-live.mjs. Each item is immediately
+  claimable, so one physical touch can prove activation and row removal without opening a nested selection screen.
+run:
+  seed: fixture-touch-live-reward-focus
+  actFloor: 3
+  players:
+    - id: "p:1"
+      characterId: IRONCLAD
+      creature: { currentHp: 67, maxHp: 80 }
+      overlays:
+        - rewards:
+            roomType: monster
+            items:
+              - potion: { modelId: FIRE_POTION }
+              - potion: { modelId: STRENGTH_POTION }
+              - relic: { modelId: ANCHOR }

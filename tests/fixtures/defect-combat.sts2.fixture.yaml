@@ -1,0 +1,10 @@
+schemaVersion: spirectl.fixture/v0
+name: defect-combat
+description: A combat to make sure defect orbs looks fine
+run:
+  seed: defect-combat
+  players:
+    - characterId: DEFECT
+  currentRoom:
+    combat:
+      encounterId: SLIMES_NORMAL

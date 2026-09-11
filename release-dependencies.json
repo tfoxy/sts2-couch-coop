@@ -1,0 +1,13 @@
+{
+  "schemaVersion": 1,
+  "dependencies": {
+    "spirectl": {
+      "repository": "https://github.com/tfoxy/spirectl.git",
+      "commit": "9a430576111ce76c03c81f12827268ae20d90360"
+    },
+    "godot-scene-web": {
+      "repository": "https://github.com/tfoxy/godot-scene-web.git",
+      "commit": "61ae27802ca05d3331ad88a8a6389faf44832931"
+    }
+  }
+}

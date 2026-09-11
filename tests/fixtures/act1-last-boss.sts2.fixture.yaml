@@ -1,0 +1,14 @@
+schemaVersion: spirectl.fixture/v0
+name: act1-last-boss
+description: >-
+  Singleplayer run dropped directly into the Act 1 (Overgrowth) boss combat
+  (VANTOM_BOSS). Bisection fixture: confirms the Act 1 boss fight itself is
+  stable under the embedded mod (the auto-player has beaten it live many times),
+  isolating it from the Act 2 transition / Ancient-event hang.
+run:
+  seed: act1-last-boss
+  currentActIndex: 0
+  actFloor: 16
+  currentRoom:
+    combat:
+      encounterId: VANTOM_BOSS

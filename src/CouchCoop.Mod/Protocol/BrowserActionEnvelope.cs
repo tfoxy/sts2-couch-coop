@@ -1,0 +1,84 @@
+using System.Text.Json;
+
+namespace CouchCoop.Mod.Protocol;
+
+public sealed record BrowserActionRequestEnvelope(
+    string Type,
+    string RequestId,
+    string? ActionRefId = null,
+    string? SnapshotId = null,
+    string? SemanticActionId = null,
+    string? ViewerId = null,
+    string? ViewerPlayerId = null,
+    string? ScreenType = null,
+    // CEL-resolved action arguments (camelCase keys, e.g. { "characterId": "ironclad" }) forwarded by
+    // the browser. The executor coerces these onto the EmbeddableActionRequest's named fields + Values.
+    Dictionary<string, JsonElement>? Args = null);
+
+public sealed record BrowserJoinRequestEnvelope(
+    string Type,
+    string RequestId,
+    string? Name = null,
+    // The SEAT the client picked, as that roster option's state player id ("p:1003"). Sent when the viewer tapped a
+    // roster BUTTON; omitted when they typed a free-text name (adding a new player in MP character-select), which
+    // keeps the name-only resolution path exactly as it was. Seat-accurate because a name is NOT: a saved seat the
+    // host has no remembered name for is labelled with a synthesized "Player 1003", so resolving that label back to
+    // a netId by string match is at best fragile and at worst ambiguous. The netId parsed out of this is what the
+    // netId-bound spawn binds to, and the game gates a rejoin on exactly that netId.
+    string? PlayerId = null);
+
+// Upstream raw-input replay from a controlling mirror client (single-controller foundation). `Kind` selects
+// the injection; element-addressed pointer input carries `ElementId` (+ optional normalized 0..1 offset),
+// while empty-space/cursor input carries a design-space (1920x1080) `CoordX/CoordY`. Keyboard input carries a
+// browser `KeyboardEvent.code` in `Key` (+ comma-separated `Modifiers`, and `Pressed`: down/up, null = a tap).
+public sealed record BrowserInputRequestEnvelope(
+    string Type,
+    string RequestId,
+    string Kind,
+    string? ElementId = null,
+    double? OffsetX = null,
+    double? OffsetY = null,
+    string? Button = null,
+    double? CoordX = null,
+    double? CoordY = null,
+    string? Key = null,
+    string? Modifiers = null,
+    bool? Pressed = null,
+    // R10 WS-E — COALESCED WHEEL TICKS. How many identical ticks this message stands for (wheel buttons only, and
+    // only on a full click — a press/release is an edge, not a quantity). The eager-scroll client folds the wheel
+    // notches it accumulated in one animation frame into ONE message rather than emitting up to a dozen, because the
+    // host injects strictly one input per game-thread turn. Absent (the CLI, the pre-feature browser, `?eagerScroll=off`)
+    // means exactly one tick and a byte-identical wire; the host clamps to 1..20 on the way into spirectl.
+    int? Count = null);
+
+public static class BrowserInputKinds
+{
+    public const string Hover = "hover";
+    public const string Click = "click";
+    public const string Key = "key";
+}
+
+public sealed record BrowserActionResultEnvelope(
+    string Type,
+    string RequestId,
+    string? Code = null,
+    string? Message = null,
+    JsonElement? Result = null,
+    string? ActionRefId = null,
+    string? SnapshotId = null,
+    string? SemanticActionId = null,
+    string? ViewerId = null,
+    string? ScreenType = null);
+
+public static class BrowserActionErrorCodes
+{
+    public const string InvalidMessage = "invalid-action-message";
+    public const string MissingActionId = "missing-action-id";
+    public const string MissingSnapshotId = "missing-snapshot-id";
+    public const string StaleActionRef = "stale-action-ref";
+    public const string WrongPlayer = "wrong-player";
+    public const string WrongScreen = "wrong-screen";
+    public const string DisabledAction = "disabled-action";
+    public const string UnsupportedPerspective = "unsupported-perspective";
+    public const string InternalFailure = "internal-action-failure";
+}

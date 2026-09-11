@@ -1,0 +1,10 @@
+schemaVersion: spirectl.fixture/v0
+name: act3-architect
+description: Act 3 (Glory) boss finale THE_ARCHITECT at floor 48.
+run:
+  seed: act3-architect
+  currentActIndex: 2
+  actFloor: 48
+  currentRoom:
+    event:
+      canonicalEventModelId: THE_ARCHITECT
