@@ -342,6 +342,14 @@ export function resolveTargets({ args, record = null, env = {}, home = homedir()
   return {
     players: args.players,
     seats: args.players - 1,
+    // The tuning knobs belong to the resolved target, not just to argv: joinSeats(), waitForEmbark() and
+    // leg 6 all read them off `targets`. While they were missing here every one of them was `undefined`,
+    // and `targets.seatConcurrency` in particular collapsed mapWithConcurrency's bound to NaN -- see the
+    // note on checkSeatRecords() for what that did to leg 2.
+    seatConcurrency: args.seatConcurrency,
+    seatTimeoutMs: args.seatTimeoutMs,
+    embarkTimeoutMs: args.embarkTimeoutMs,
+    combatTimeoutMs: args.combatTimeoutMs,
     baseUrl,
     browserPort,
     portBases,
@@ -631,9 +639,19 @@ export function buildResult({ legs, targets, args, startedAt, finishedAt, eviden
   };
 }
 
-/** Runs `worker` over `items` with at most `limit` in flight. Results keep input order. */
+/**
+ * Runs `worker` over `items` with at most `limit` in flight. Results keep input order.
+ *
+ * The bound is validated rather than coerced, and the result array is filled rather than left sparse.
+ * Both guard the same failure: a non-numeric `limit` made `Math.min(Math.max(1, limit), …)` NaN, and
+ * `Array.from({length: NaN})` builds ZERO workers, so this returned an array of holes that had never
+ * been written. Holes are invisible to `filter`/`map`/`flatMap`, so the caller saw no failures at all.
+ */
 export async function mapWithConcurrency(items, limit, worker) {
-  const results = new Array(items.length);
+  if (!Number.isInteger(limit) || limit < 1) {
+    throw new TypeError(`mapWithConcurrency needs a positive integer bound; got ${typeof limit} ${String(limit)}`);
+  }
+  const results = new Array(items.length).fill(null);
   let next = 0;
   const workers = Array.from({ length: Math.min(Math.max(1, limit), Math.max(1, items.length)) }, async () => {
     for (;;) {
@@ -649,6 +667,54 @@ export async function mapWithConcurrency(items, limit, worker) {
 
 export function seatNameFor(index) {
   return SEAT_NAMES[index] ?? `Seat${index + 1}`;
+}
+
+/**
+ * Grades leg 2's seat records, and REFUSES to pass on anything short of positive per-seat evidence.
+ * Returns one human-readable problem per seat that cannot be shown to have joined; an empty array is
+ * the only thing that lets the leg pass.
+ *
+ * This exists because leg 2 once reported `pass` in 243 ms with `data: [null,null,null,null]` against a
+ * live game: `targets.seatConcurrency` was undefined, mapWithConcurrency built zero workers and returned
+ * a fully SPARSE array, and every array method skips holes -- `filter` found no failures, `flatMap`
+ * collected no screenshots, and `map(…).join(", ")` rendered four holes as ", , , ". Leg 3 then timed out
+ * on a one-player lobby, which reads exactly like the game dropping four seats and was nothing of the
+ * kind. So the absence of a record is now itself a failure, distinguished from a seat that tried and
+ * failed, and "ok" is not taken at its word without the slot/port and ENet evidence behind it.
+ */
+export function checkSeatRecords(joined, expected) {
+  if (!Array.isArray(joined)) {
+    return [`leg 2 produced ${joined === null ? "null" : typeof joined}, not an array of ${expected} seat records`];
+  }
+  const problems = [];
+  if (joined.length !== expected) {
+    problems.push(`expected ${expected} seat records, got ${joined.length}`);
+  }
+  for (let index = 0; index < Math.max(joined.length, expected); index += 1) {
+    const label = `seat ${index + 1} (${seatNameFor(index)})`;
+    // A HOLE is not the same as a recorded null: it means the join never ran, so say that.
+    if (index >= joined.length || !(index in joined)) {
+      problems.push(`${label}: no record at all -- the join never ran`);
+      continue;
+    }
+    const seat = joined[index];
+    if (seat === null || typeof seat !== "object") {
+      problems.push(`${label}: ${String(seat)} instead of a seat record`);
+      continue;
+    }
+    if (seat.ok !== true) {
+      problems.push(`${label}: ${seat.detail ?? "did not join, and recorded no detail"}`);
+      continue;
+    }
+    if (!Number.isInteger(seat.slot) || !Number.isInteger(seat.port)) {
+      problems.push(`${label}: reported ok but resolved no seat port (slot=${seat.slot}, port=${seat.port})`);
+      continue;
+    }
+    if (!Array.isArray(seat.enetEvidence) || seat.enetEvidence.length === 0) {
+      problems.push(`${label}: reported ok on slot ${seat.slot} but carries no ENet handshake evidence`);
+    }
+  }
+  return problems;
 }
 
 // =================================================================================================
@@ -879,17 +945,18 @@ async function main(argv) {
     // -------------------------------------------------------------------------------------------
     const seatLeg = await leg(2, "seats-join", `${targets.seats} browser seats join and each shows a real ENet handshake in its own godot.log`, async entry => {
       const joined = await joinSeats(targets, evidence);
-      entry.evidence.push(...joined.flatMap(seat => seat.screenshots));
-      // Assigned before the assertion so a partial join still hands the caller every seat record.
+      // Both of these are hole- and null-tolerant on purpose: a partial join must still hand the caller
+      // every screenshot and every seat record it did get, and checkSeatRecords() -- not a TypeError
+      // thrown while formatting -- is what reports the gap.
+      entry.evidence.push(...joined.flatMap(seat => seat?.screenshots ?? []));
       entry.data = joined;
-      const failures = joined.filter(seat => !seat.ok);
-      if (failures.length > 0) {
-        throw new ProbeError(`${failures.length}/${joined.length} seats failed to join: `
-          + failures.map(seat => `${seat.name}: ${seat.detail}`).join(" | "));
+      const problems = checkSeatRecords(joined, targets.seats);
+      if (problems.length > 0) {
+        throw new ProbeError(`${problems.length} of ${targets.seats} seats have no proof they joined: ${problems.join(" | ")}`);
       }
       return { detail: joined.map(seat => `${seat.name}->slot ${seat.slot}/port ${seat.port} (${seat.ms}ms)`).join(", "), data: joined };
     });
-    const seats = Array.isArray(seatLeg.data) ? seatLeg.data.filter(seat => seat.ok) : [];
+    const seats = Array.isArray(seatLeg.data) ? seatLeg.data.filter(seat => seat?.ok) : [];
     const seatsByPlayerId = new Map(seats.filter(seat => seat.playerId).map(seat => [seat.playerId, seat]));
     evidence.seats = seats.map(seat => ({ name: seat.name, slot: seat.slot, port: seat.port, playerId: seat.playerId, logPath: seat.logPath, portBase: seat.portBase }));
     if (seatLeg.verdict === "fail") throw new StopProbe();
