@@ -645,6 +645,46 @@ Gotchas these two encode, all found the hard way:
 - The scenario runner's artifact entries accept only `path` and `kind`; any extra key fails the whole hook
   with "did not return valid JSON".
 
+### Five-player run repro (`tests/scenarios/five-player-run.sts2.yaml`)
+
+```
+sts2 --json test run tests/scenarios/five-player-run.sts2.yaml     # the repro, 5 players
+node scripts/probe-five-player-run.mjs --players 4                 # the CONTROL, must pass on stock
+node scripts/test-probe-five-player-run.mjs                        # game-free self-test of the probe
+```
+
+Reproduces: with the Workshop mod **Unlimited: No Player Limit** (`sts2unlimited`) raising the lobby cap, a
+session of host + 4 browser seats fills the lobby, everybody readies, and the run begins with **only the host
+alive and the in-run player list empty**. Seven legs — setup gate, host lobby (`lobby.maxPlayers >= N` is the
+proof the cap really is raised), seats join, roster, characters+ready, **the gate (leg 5, expected to fail at
+5 today)**, playable turn. Artifacts land in `.sts2/artifacts/five-player-run/`.
+
+| piece | path |
+| --- | --- |
+| probe | `scripts/probe-five-player-run.mjs` |
+| self-test (no game) | `scripts/test-probe-five-player-run.mjs` |
+| hook | `couchcoop.five-player-run-probe` |
+
+Point it at an isolated instance with `--record <bringup.json>` (schema `couchcoop-five-player-bringup/1`) or
+`COUCHCOOP_FIVE_PLAYER_RECORD`; every field in that record is optional-with-fallback, so `--base` alone also
+works. Things worth knowing before reading its output:
+
+- **The evidence is the point.** Around embark it archives the host stdout/stderr and every seat `godot.log`
+  and writes `signals.json`, which grep-scans them for `Embarking on a multiplayer run. Players:`,
+  `[PacketSizePatch] Patched`, `Packet writer is growing from`, `Exception encountered while processing message
+  LobbyBeginRunMessage`, `disconnected, reason:`, `ConnectionFailureReason`, `NetError`, and (seat logs only)
+  `NullReferenceException`. `godot.log` has **no per-line timestamps**, so ordering is answered by line order
+  within a file plus a `phase` stamp relative to a line-count baseline taken before the ready step.
+- **There is no `start-run` verb.** Readying every seat is what embarks.
+- **`run.players[]` has no alive/isDead field** — aliveness is derived from `creature.currentHp > 0`, and a
+  null creature is reported `unknown`, never assumed alive.
+- **Every couch seat has its own bridge** at `/tmp/spirectl-bridge-slot-<N>.sock`. The probe retries a
+  host-refused seat action there and captures each seat's own view of the run, which is what answers "the host
+  says one player — did seat 3 even enter a run?".
+- **Cheap inner loop, not the gate:** `sts2 act join-lobby-player --display-name <name>` builds a 5-player
+  LOBBY inside one process with no browsers and no ENet. Good for bisecting game-side logic fast; it does not
+  exercise the real join path this defect lives on.
+
 ## 7. Gotchas
 
 - **`npm run build` deploys.** Its Vite `outDir` is the installed mod's `frontend/` dir — running it in a
