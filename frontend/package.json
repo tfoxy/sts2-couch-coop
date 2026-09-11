@@ -1,0 +1,38 @@
+{
+  "name": "sts2-couch-coop-frontend",
+  "version": "1.0.0",
+  "license": "Apache-2.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "build": "vue-tsc --noEmit && vite build",
+    "build:watch": "vite build --watch",
+    "dev": "vite --host 127.0.0.1",
+    "test": "vitest run",
+    "bench:mirror": "vitest run --config vitest.bench.config.ts",
+    "test:e2e": "playwright test",
+    "build:pages": "vue-tsc --noEmit && vite build --config vite.pages.config.ts",
+    "preview:pages": "vite preview --config vite.pages.config.ts --host 127.0.0.1 --port 4173"
+  },
+  "dependencies": {
+    "@vue/reactivity": "^3.5.34",
+    "vue": "^3.5.34",
+    "vue-i18n": "^11.4.10"
+  },
+  "devDependencies": {
+    "@playwright/test": "^1.59.1",
+    "@types/node": "^25.6.1",
+    "@vitejs/plugin-vue": "^6.0.6",
+    "@vue/test-utils": "^2.4.10",
+    "jsdom": "^29.1.1",
+    "tsx": "4.22.3",
+    "typescript": "^6.0.3",
+    "vite": "^8.0.11",
+    "vitest": "^4.1.5",
+    "vue-tsc": "^3.2.8"
+  },
+  "overrides": {
+    "nanoid": "3.3.18",
+    "postcss": "8.5.28"
+  }
+}

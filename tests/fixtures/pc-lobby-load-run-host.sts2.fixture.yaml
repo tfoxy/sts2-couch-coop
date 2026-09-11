@@ -1,0 +1,21 @@
+schemaVersion: spirectl.fixture/v0
+name: pc-lobby-load-run-host
+description: >-
+  Load-run twin of pc-lobby-host: a multiplayer HOST lobby on NMultiplayerLoadGameScreen, reached by
+  loading a saved run as the host rather than starting a fresh one. Resuming a saved co-op run is exactly
+  when absent players need to scan back in, so the QR button must appear at the SAME rect on this
+  screen as on character select -- which is what the probe asserts against this fixture.
+characterSelect:
+  kind: load-run
+  lobby:
+    seed: fixture-pc-lobby-load-run-host
+    hostPlayerId: "p:1"
+    players:
+      - id: "p:1"
+        characterId: IRONCLAD
+        isReady: false
+        slotId: 0
+      - id: "p:2"
+        characterId: SILENT
+        isReady: true
+        slotId: 1

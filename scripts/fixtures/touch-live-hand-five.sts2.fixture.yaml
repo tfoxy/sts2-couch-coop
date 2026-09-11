@@ -1,0 +1,36 @@
+schemaVersion: spirectl.fixture/v0
+name: touch-live-hand-five
+description: >-
+  Authored five-card combat hand for H15. Every card is a non-targeted Defend, so the harness can play the fifth
+  visible card without an enemy-targeting branch, then measure the fourth survivor's raised-only upper band after
+  the fan reflows to four. The empty authored draw and discard piles make a selection/stock-opening-hand mistake
+  observable instead of letting it masquerade as the required five-to-four play.
+run:
+  seed: fixture-touch-live-hand-five
+  players:
+    - id: "p:1"
+      characterId: IRONCLAD
+      creature: { currentHp: 67, maxHp: 80 }
+      deck:
+        replace: true
+        cards:
+          - { modelId: DEFEND_IRONCLAD }
+          - { modelId: DEFEND_IRONCLAD }
+          - { modelId: DEFEND_IRONCLAD }
+          - { modelId: DEFEND_IRONCLAD }
+          - { modelId: DEFEND_IRONCLAD }
+      combat:
+        hand:
+          cards:
+            - { modelId: DEFEND_IRONCLAD }
+            - { modelId: DEFEND_IRONCLAD }
+            - { modelId: DEFEND_IRONCLAD }
+            - { modelId: DEFEND_IRONCLAD }
+            - { modelId: DEFEND_IRONCLAD }
+        drawPile:
+          cards: []
+        discardPile:
+          cards: []
+  currentRoom:
+    combat:
+      encounterId: NIBBITS_NORMAL

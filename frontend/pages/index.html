@@ -1,0 +1,95 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover, user-scalable=no" />
+<meta name="theme-color" content="#10151a" />
+<meta name="mobile-web-app-capable" content="yes" />
+<meta name="apple-mobile-web-app-capable" content="yes" />
+<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
+<title>STS2 Couch Co-op</title>
+<link id="couchcoop-manifest" rel="manifest" href="/manifest.webmanifest" />
+<script>
+  (function () {
+    var query = new URLSearchParams(location.search).get("lang");
+    var supported = ["en", "zh-Hans", "de", "es-419", "fr", "it", "ja", "ko", "pl", "pt-BR", "ru", "es-ES", "th", "tr"];
+    var override = supported.indexOf(query) >= 0 ? query : null;
+    var tags = override ? [override] : [].concat(navigator.languages || [], navigator.language || []);
+    var locale = null;
+    for (var i = 0; i < tags.length; i += 1) {
+      var tag = String(tags[i]).replace(/_/g, "-").toLowerCase();
+      if (tag === "en" || tag.indexOf("en-") === 0) { locale = "en"; break; }
+      if (tag === "zh" || tag === "zh-cn" || tag === "zh-sg" || tag === "zh-hans") { locale = "zh-Hans"; break; }
+      if (/^de(-|$)/.test(tag)) { locale = "de"; break; } if (/^fr(-|$)/.test(tag)) { locale = "fr"; break; }
+      if (/^it(-|$)/.test(tag)) { locale = "it"; break; } if (/^ja(-|$)/.test(tag)) { locale = "ja"; break; }
+      if (/^ko(-|$)/.test(tag)) { locale = "ko"; break; } if (/^pl(-|$)/.test(tag)) { locale = "pl"; break; }
+      if (/^ru(-|$)/.test(tag)) { locale = "ru"; break; } if (/^th(-|$)/.test(tag)) { locale = "th"; break; }
+      if (/^tr(-|$)/.test(tag)) { locale = "tr"; break; } if (tag === "pt" || tag === "pt-br") { locale = "pt-BR"; break; }
+      if (tag === "es-419" || tag === "es-us" || /^es-(ar|bo|cl|co|cr|cu|do|ec|gt|hn|mx|ni|pa|pe|pr|py|sv|uy|ve)$/.test(tag)) { locale = "es-419"; break; }
+      if (tag === "es" || tag === "es-es") { locale = "es-ES"; break; }
+    }
+    locale = override || locale || "en";
+    document.documentElement.lang = locale;
+    if (locale !== "en") document.getElementById("couchcoop-manifest").href = "/manifest." + locale + ".webmanifest";
+  }());
+</script>
+<link rel="apple-touch-icon" href="/icons/icon-180.png" />
+<link rel="icon" href="/icons/icon-192.png" />
+<style>
+  :root { color-scheme: dark; }
+  * { box-sizing: border-box; }
+  html, body { height: 100%; margin: 0; }
+  /* THE BODY MUST STAY LAYOUT-NEUTRAL.
+     The app mounts into #app in THIS document and brings its own stylesheet, which letterboxes and scales
+     a 1920x1080 stage against the viewport. Any layout the bootstrap puts on <body> fights that: an
+     earlier version centred with `display:flex` here and flex-centred the stage instead, parking a
+     1920-wide element at x=-570 in a 780-wide viewport — a pure black screen with every asset loaded,
+     every canvas sized and no error anywhere. So background/colour/font only; all boot layout lives on
+     #boot, which is `position: fixed` and removed once the app mounts. */
+  body {
+    background: #10151a; color: #fff6e2;
+    font: 16px/1.5 system-ui, -apple-system, "Segoe UI", sans-serif;
+  }
+  /* The boot chrome sits ON TOP of the (initially empty) app root and is removed once the app mounts,
+     so there is never a moment where both are visible or where neither is. */
+  #boot {
+    position: fixed; inset: 0; z-index: 10;
+    display: flex; flex-direction: column; align-items: center; justify-content: center;
+    background: #10151a; padding: 24px; text-align: center;
+  }
+  #boot > * { max-width: 26rem; width: 100%; }
+  h1 { font-size: 1.25rem; margin: 0 0 .5rem; font-weight: 600; }
+  #detail { opacity: .7; font-size: .9rem; margin: 0 0 1.5rem; min-height: 3em; }
+  button, input {
+    font: inherit; border-radius: 10px; border: 1px solid #6a7a88;
+    background: #1d2730; color: inherit; padding: 12px 20px;
+  }
+  button { width: 100%; cursor: pointer; }
+  button:disabled { opacity: .5; cursor: default; }
+  form { display: flex; gap: 8px; margin-top: 1.5rem; }
+  input { flex: 1; min-width: 0; }
+  form button { width: auto; }
+  [hidden] { display: none !important; }
+</style>
+</head>
+<body>
+<!-- THE APP'S MOUNT POINT. The injected bundle mounts into `#app` (src/main.ts), so the bootstrap
+     document has to provide it — the app's own index.html is never loaded in this mode. -->
+<div id="app"></div>
+<main id="boot">
+  <h1 id="status">Starting…</h1>
+  <p id="detail"></p>
+  <button id="connect" hidden>Connect to the game</button>
+  <!-- The escape hatch for the case no amount of remembering can cover: a brand-new address on a network
+       where mDNS does not resolve and the QR is out of reach. Hidden until something has actually failed,
+       so it never reads as a required step. -->
+  <form id="manual" hidden>
+    <input id="manual-host" inputmode="url" autocomplete="off" autocapitalize="off"
+           spellcheck="false" placeholder="192.168.1.5:13337" aria-label="Game address" />
+    <button type="submit">Go</button>
+  </form>
+</main>
+<!-- Built to /boot.js by vite.pages.config.ts; referenced as source so it type-checks. -->
+<script type="module" src="../src/boot/main.ts"></script>
+</body>
+</html>

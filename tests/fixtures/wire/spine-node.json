@@ -1,0 +1,1 @@
+{"full":true,"screenType":"run","screenInstanceId":"screen:run:live","upserts":[{"id":"spine","name":"Enemy","nodeType":"SpineSprite","spine":{"sceneResPath":"res://scenes/enemy.tscn","nodePath":"Skeleton","animations":["idle","attack"]},"spineCurrentAnim":"attack","spineTrackTime":0.5,"spineLooping":false}],"removedIds":[],"orderedIds":["spine"],"type":"scene-delta"}

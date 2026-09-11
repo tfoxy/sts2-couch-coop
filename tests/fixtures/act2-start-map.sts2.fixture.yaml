@@ -1,0 +1,14 @@
+schemaVersion: spirectl.fixture/v0
+name: act2-start-map
+description: >-
+  Singleplayer run dropped at the start of Act 2 (Hive) in the map room, BEFORE
+  the forced Ancient event. Bisection fixture: if the game is stable here, the
+  Act-2 hang is specifically the Ancient event room (proceed/transition); if it
+  dies just reaching the Act-2 map room, the hang is in the act transition /
+  Act-2 map setup itself.
+run:
+  seed: act2-start-map
+  currentActIndex: 1
+  actFloor: 1
+  currentRoom:
+    mapRoom: {}

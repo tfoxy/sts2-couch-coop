@@ -1,0 +1,55 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup>
+    <TargetFramework>net9.0</TargetFramework>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <Nullable>enable</Nullable>
+    <LangVersion>latest</LangVersion>
+    <DisableTransitiveProjectReferences>true</DisableTransitiveProjectReferences>
+    <NoWarn>$(NoWarn);CS0436</NoWarn>
+    <!-- STS2's ModManager scans the whole mods/couchcoop/ tree and treats ANY non-dot-dir *.json as a mod
+         manifest, erroring on every one that lacks an 'id'. A .deps.json / .runtimeconfig.json next to the
+         deployed hot-reload assembly does exactly that. The assembly is loaded by CouchCoopModEntry through
+         AssemblyLoadContext.LoadFromAssemblyPath + a manual Resolving handler (no AssemblyDependencyResolver),
+         so neither file is read at runtime. Same reason CouchCoop.Mod.Loader.csproj disables them. -->
+    <GenerateDependencyFile>false</GenerateDependencyFile>
+    <GenerateRuntimeConfigurationFiles>false</GenerateRuntimeConfigurationFiles>
+    <OutputPath Condition="'$(HotReloadDeployDir)' != ''">$(HotReloadDeployDir)/</OutputPath>
+    <AppendTargetFrameworkToOutputPath Condition="'$(HotReloadDeployDir)' != ''">false</AppendTargetFrameworkToOutputPath>
+    <AppendRuntimeIdentifierToOutputPath Condition="'$(HotReloadDeployDir)' != ''">false</AppendRuntimeIdentifierToOutputPath>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <ProjectReference Include="../CouchCoop.Mod.Contracts/CouchCoop.Mod.Contracts.csproj" />
+    <ProjectReference Include="../CouchCoop.Mod/CouchCoop.Mod.csproj" />
+    <!-- The linked Protocol/Session sources reference the browser DTOs now in the shared protocol lib; the
+         transitive reference via CouchCoop.Mod isn't flowed (DisableTransitiveProjectReferences), so reference it. -->
+    <ProjectReference Include="../CouchCoop.MirrorProtocol/CouchCoop.MirrorProtocol.csproj" />
+    <Reference Include="CouchCoop.Spirectl">
+      <HintPath>../CouchCoop.Mod/bin/$(Configuration)/net9.0/CouchCoop.Spirectl.dll</HintPath>
+      <Private>true</Private>
+    </Reference>
+    <Reference Include="GodotSharp">
+      <HintPath>$(Sts2AssembliesDir)/GodotSharp.dll</HintPath>
+      <Private>false</Private>
+    </Reference>
+
+    <!-- DO NOT add ../CouchCoop.Mod/Activity/*.cs here. The host connectivity log is a process-wide static
+         ring; glob-linking it would give every hot-reload generation its OWN empty copy, so the panel and
+         the producers would silently stop talking to each other after a reload. The linked Server/ sources
+         reach it through the ProjectReference above instead — which works only while its API takes BCL
+         types and its own enums (the WireSceneDelta note below is the standing counter-example). -->
+    <Compile Include="../CouchCoop.Mod/Protocol/*.cs" Link="Protocol/%(Filename)%(Extension)" />
+    <Compile Include="../CouchCoop.Mod/Server/*.cs" Link="Server/%(Filename)%(Extension)" />
+    <!-- Perf instruments (S9/S10). The linked Protocol/Server sources call into them with LOCALLY compiled DTO
+         types (WireSceneDelta), so the recorders must be compiled here too — referencing the mod assembly's
+         copies would fail on type identity (CS1503) despite the CS0436 suppression above. -->
+    <Compile Include="../CouchCoop.Mod/Diagnostics/*.cs" Link="Diagnostics/%(Filename)%(Extension)" />
+    <!-- Stage-B walk skip: the tracker (Server/, included above) stamps the combat bg root through the shared
+         stream-skip helper, which lives in HostUi/ — include just that file (the Session single-file idiom). -->
+    <Compile Include="../CouchCoop.Mod/HostUi/CouchCoopStreamSkip.cs" Link="HostUi/CouchCoopStreamSkip.cs" />
+    <Compile Remove="../CouchCoop.Mod/Server/HotReloadableBrowserServerHost.cs" />
+    <Compile Include="../CouchCoop.Mod/Session/BrowserAssignmentState.cs" Link="Session/BrowserAssignmentState.cs" />
+    <Compile Include="../CouchCoop.Mod/Session/BrowserSessionRegistry.cs" Link="Session/BrowserSessionRegistry.cs" />
+    <Compile Include="../CouchCoop.Mod/Session/CouchCoopLobbyParticipation.cs" Link="Session/CouchCoopLobbyParticipation.cs" />
+  </ItemGroup>
+</Project>

@@ -1,0 +1,37 @@
+schemaVersion: spirectl.fixture/v0
+name: touch-live-hand-select
+description: >-
+  The same combat as `touch-live-combat`, plus a from-hand CHOICE prompt (Survivor-style
+  "discard 1"), for `scripts/validate-touch-live.mjs` check H7.
+
+  Why it is a separate fixture: readable-hand mode DROPS the cosmetic raise while a hand-choice
+  prompt is up, because the prompt lays the hand out its own way (selected cards lift out of the
+  fan) and raising it both misleads the player and fights the focus ramp. That drop is a rule the
+  harness has to be able to observe, and it can only be observed on a screen where the prompt is
+  actually on top of a full hand — which the plain combat fixture never reaches on its own.
+run:
+  seed: fixture-touch-live-hand-select
+  players:
+    - id: "p:1"
+      characterId: IRONCLAD
+      creature: { currentHp: 67, maxHp: 80 }
+      combat:
+        hand:
+          cards:
+            - { modelId: STRIKE_IRONCLAD }
+            - { modelId: DEFEND_IRONCLAD }
+            - { modelId: STRIKE_IRONCLAD }
+            - { modelId: BASH }
+            - { modelId: DEFEND_IRONCLAD }
+            - { modelId: STRIKE_IRONCLAD }
+            - { modelId: DEFEND_IRONCLAD }
+            - { modelId: STRIKE_IRONCLAD }
+  currentRoom:
+    combat:
+      encounterId: NIBBITS_NORMAL
+  view:
+    handSelection:
+      sourceModelId: SURVIVOR
+      prompt: discard
+      minSelect: 1
+      maxSelect: 1

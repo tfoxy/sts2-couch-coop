@@ -1,0 +1,300 @@
+:root {
+  color: #f5f7fa;
+  background: #000;
+  font-family:
+    Inter,
+    ui-sans-serif,
+    system-ui,
+    -apple-system,
+    BlinkMacSystemFont,
+    "Segoe UI",
+    sans-serif;
+  font-synthesis: none;
+  text-rendering: optimizeLegibility;
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+}
+
+* {
+  box-sizing: border-box;
+}
+
+html,
+body,
+#app {
+  width: 100%;
+  height: 100%;
+  margin: 0;
+  background: #000;
+}
+
+/* The game cursor (`.game-cursor`) is themed entirely from
+   JS: installBrowserCursor injects a `<style id="game-cursor-style">` whose cursor
+   data URLs are trimmed to <=32px at runtime, so the native pointer renders without
+   clipping at the viewport edges (see frontend/src/browserCursor.ts). */
+
+body {
+  display: grid;
+  place-items: center;
+  min-width: 320px;
+  overflow: hidden;
+}
+
+/* #app is the pan scroller for browser zoom: when zoomStableViewport pins the
+   surface to its 100%-zoom size, the overflow scrolls here (inner scrollbars
+   don't change documentElement.clientWidth, so the zoom math can't feed back).
+   Flex + `margin: auto` on the surface is overflow-safe centering — grid
+   `place-items: center` would make the top/left overflow unreachable. */
+#app {
+  display: flex;
+  overflow: auto;
+}
+
+/* Fill the window via the `%` chain on html/body/#app (no vw/vh) at 100% zoom. Under
+   browser zoom, zoomStableViewport sets the `--zoom-stable-*` vars so the surface keeps
+   its 100%-zoom CSS size — gsw's ResizeObserver never refits `--godot-scale` and the
+   zoom renders the game physically larger, panned via #app. The scene itself is fit +
+   letterboxed by the mirror's own stage, so the gradient shows through as the letterbox
+   bars. Non-scene panels (assignment/title) still center via `place-items: center`; the
+   scene surface is 100%×100%, so centered == filled. */
+.game-surface {
+  position: relative;
+  display: grid;
+  flex: none;
+  place-items: center;
+  width: var(--zoom-stable-width, 100%);
+  height: var(--zoom-stable-height, 100%);
+  margin: auto;
+  overflow: hidden;
+  /* Disable double-tap-to-zoom and the legacy ~300ms tap delay so the touch two-phase
+     tap (tap to focus, tap again to press) registers two distinct taps. Pinch-zoom and
+     panning still work (`manipulation` only drops double-tap zoom). */
+  touch-action: manipulation;
+  background: linear-gradient(135deg, #10151a 0%, #1d242b 52%, #121111 100%);
+}
+
+/* MirrorView's opaque, full-bleed `.mirror-frame` covers this surface whenever a scene is mounted. Avoid painting
+   a gradient beneath it; pre-join and loading states retain the backdrop. A class avoids per-frame `:has()` work. */
+.game-surface.surface-covered {
+  background: none;
+}
+
+/* Home-screen PWA (Add-to-Home-Screen) safe-area handling. On a notched iPhone in standalone
+   landscape the page runs edge-to-edge (index.html viewport-fit=cover), so pad CouchCoop's OWN
+   letterbox surface by the device safe-area insets. This keeps our centered join panels AND the
+   letterboxed mirror stage clear of the notch and the home indicator: with `box-sizing:
+   border-box` the padding shrinks the inner content box, so the stage fits the scene into
+   the inset area and `place-items: center` centers the panels within it. This styles CouchCoop's
+   own chrome (the gradient letterbox container), never the godot-scene-web scene DOM inside it. Scoped to the standalone/fullscreen display mode so the normal in-browser experience
+   (desktop, Android tab, iPhone Safari tab) is byte-for-byte unchanged; the insets are 0 anywhere
+   without a display cutout regardless. */
+@media (display-mode: standalone), (display-mode: fullscreen) {
+  .game-surface {
+    padding:
+      env(safe-area-inset-top) env(safe-area-inset-right)
+      env(safe-area-inset-bottom) env(safe-area-inset-left);
+  }
+}
+
+.assignment-panel,
+.title-only-view {
+  min-width: 0;
+}
+
+.assignment-panel {
+  width: min(46rem, 76%);
+  padding: clamp(0.85rem, 3.4cqw, 2rem);
+  border: 1px solid rgb(255 255 255 / 12%);
+  border-radius: 8px;
+  background: rgb(9 13 16 / 78%);
+  box-shadow: 0 18px 48px rgb(0 0 0 / 32%);
+}
+
+.surface-kicker {
+  margin: 0 0 0.45rem;
+  color: #7cc7ee;
+  font-size: clamp(0.72rem, 1.7cqw, 0.95rem);
+  font-weight: 700;
+  letter-spacing: 0;
+  text-transform: uppercase;
+}
+
+h1 {
+  margin: 0;
+  font-size: clamp(1.2rem, 4.6cqw, 2.6rem);
+  line-height: 1.08;
+  letter-spacing: 0;
+}
+
+.notice-list {
+  display: grid;
+  gap: 0.45rem;
+  margin: clamp(0.75rem, 2cqw, 1rem) 0 0;
+  padding: 0;
+  list-style: none;
+}
+
+.notice-list li {
+  display: grid;
+  grid-template-columns: minmax(8rem, 0.45fr) minmax(0, 1fr);
+  gap: 0.75rem;
+  align-items: baseline;
+  min-width: 0;
+  padding: 0.55rem 0.65rem;
+  border: 1px solid rgb(255 209 102 / 32%);
+  border-radius: 6px;
+  background: rgb(255 209 102 / 8%);
+}
+
+.notice-list strong,
+.notice-list span {
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+
+.notice-list strong {
+  color: #ffd166;
+  font-size: clamp(0.68rem, 1.35cqw, 0.78rem);
+  letter-spacing: 0;
+}
+
+.notice-list span {
+  color: #f0dba0;
+  font-size: clamp(0.75rem, 1.6cqw, 0.9rem);
+}
+
+.join-form {
+  display: grid;
+  gap: 0.45rem;
+  margin: clamp(0.8rem, 2.8cqw, 1.25rem) 0 0;
+}
+
+/* R20 — NOTHING ABOVE ME, NOTHING TO CLEAR. The margin above separates the form from a kicker + <h1>, which used to
+   be unconditional; R19 drops both on the steady mirror picker, so on that screen the form leads the panel and its
+   own top margin stacked on the panel's `padding` as dead space. `:first-child` is precisely the predicate "no
+   preceding sibling" — and a Vue `v-if` that did not render leaves only a comment node, which `:first-child`
+   ignores, so it reads the same shape the player sees. All four sides, not just the top: a UA default margin has to
+   be zeroed, not overridden on one edge. */
+.join-form:first-child {
+  margin: 0;
+}
+
+.join-form label {
+  color: #8b98a8;
+  font-size: clamp(0.68rem, 1.35cqw, 0.78rem);
+  font-weight: 700;
+  letter-spacing: 0;
+  text-transform: uppercase;
+}
+
+.join-row {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  gap: 0.5rem;
+}
+
+.join-row input,
+.join-row button {
+  min-height: 2.35rem;
+  border: 1px solid rgb(255 255 255 / 14%);
+  border-radius: 6px;
+  font: inherit;
+}
+
+.join-row input {
+  min-width: 0;
+  padding: 0 0.7rem;
+  color: #f5f7fa;
+  background: rgb(255 255 255 / 7%);
+}
+
+.join-row input:focus-visible,
+.join-row button:focus-visible,
+.player-choice:focus-visible {
+  outline: 3px solid rgb(124 199 238 / 72%);
+  outline-offset: 2px;
+}
+
+.join-row input:disabled,
+.join-row button:disabled {
+  cursor: wait;
+  opacity: 0.68;
+}
+
+.join-row button {
+  padding: 0 0.85rem;
+  color: #071015;
+  background: #7cc7ee;
+  font-weight: 700;
+}
+
+.player-picker {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(9.5rem, 1fr));
+  gap: clamp(0.45rem, 1.7cqw, 0.75rem);
+  margin: clamp(0.75rem, 2.4cqw, 1rem) 0 0;
+}
+
+.player-choice {
+  display: grid;
+  gap: 0.25rem;
+  align-content: center;
+  min-width: 0;
+  min-height: clamp(3.15rem, 8.5cqw, 4.4rem);
+  padding: 0.55rem 0.7rem;
+  border: 1px solid rgb(255 255 255 / 14%);
+  border-radius: 6px;
+  color: #f5f7fa;
+  background: rgb(255 255 255 / 7%);
+  font: inherit;
+  text-align: left;
+}
+
+.player-choice:hover {
+  border-color: rgb(124 199 238 / 62%);
+  background: rgb(124 199 238 / 12%);
+}
+
+.player-choice.disconnected {
+  border-color: rgb(255 196 87 / 72%);
+  background: rgb(255 196 87 / 14%);
+  box-shadow: inset 0 0 0 1px rgb(255 196 87 / 18%);
+}
+
+.player-name {
+  min-width: 0;
+  overflow-wrap: anywhere;
+  font-size: clamp(0.85rem, 2.1cqw, 1.1rem);
+  font-weight: 800;
+  line-height: 1.15;
+}
+
+.connection-count {
+  color: #b6c4cf;
+  font-size: clamp(0.68rem, 1.55cqw, 0.82rem);
+  line-height: 1.2;
+}
+
+.player-choice.disconnected .connection-count {
+  color: #ffdca0;
+}
+
+.title-only-view {
+  width: min(42rem, 80%);
+  text-align: center;
+}
+
+@media (max-width: 720px) {
+  .assignment-panel {
+    width: 84%;
+    padding: 0.75rem;
+  }
+
+  .player-picker {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+
+  .join-row {
+    grid-template-columns: minmax(0, 1fr) minmax(4.75rem, auto);
+  }
+}

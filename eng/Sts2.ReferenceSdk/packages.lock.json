@@ -1,0 +1,19 @@
+{
+  "version": 1,
+  "dependencies": {
+    "net9.0": {
+      "FuYnAloft.Sts2.References": {
+        "type": "Direct",
+        "requested": "[0.107.0-beta, 0.107.0-beta]",
+        "resolved": "0.107.0-beta",
+        "contentHash": "TCGAIrM64/EAXES6eu0f3d+xvDnW+CZIyWO2+vddsoGDMQiFu9wDi1nwgmrqV/Lwh8xio4tYcjY66el7guItnA=="
+      },
+      "GodotSharp": {
+        "type": "Direct",
+        "requested": "[4.5.1, 4.5.1]",
+        "resolved": "4.5.1",
+        "contentHash": "5CFnEHT+FByv5desNHMipz/209SCrWR9CGWFZjGHnXupl1Rw8U8q4nf65/unqZVL97Rx+3J5hskPMoDGaiZL9g=="
+      }
+    }
+  }
+}

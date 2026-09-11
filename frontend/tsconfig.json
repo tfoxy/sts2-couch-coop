@@ -1,0 +1,42 @@
+{
+  "compilerOptions": {
+    "target": "ES2022",
+    "useDefineForClassFields": true,
+    "module": "ESNext",
+    "lib": ["ES2022", "DOM", "DOM.Iterable"],
+    "skipLibCheck": true,
+    "moduleResolution": "Bundler",
+    "allowImportingTsExtensions": true,
+    "ignoreDeprecations": "6.0",
+    "resolveJsonModule": true,
+    "isolatedModules": true,
+    "moduleDetection": "force",
+    "noEmit": true,
+    "jsx": "preserve",
+    "strict": true,
+    "baseUrl": ".",
+    "paths": {
+      "@/*": ["src/*"],
+      "@godot-scene-web/core": ["../../godot-scene-web/packages/core/src/index.ts"],
+      "@godot-scene-web/tscn-parser": ["../../godot-scene-web/packages/tscn-parser/src/index.ts"],
+      "@godot-scene-web/layout": ["../../godot-scene-web/packages/layout/src/index.ts"],
+      "@godot-scene-web/layout/anchors": ["../../godot-scene-web/packages/layout/src/anchor-grammar.ts"],
+      "@godot-scene-web/scene-graph": ["../../godot-scene-web/packages/scene-graph/src/index.ts"],
+      "@godot-scene-web/canvas": ["../../godot-scene-web/packages/canvas/src/index.ts"],
+      "@godot-scene-web/canvas/glyphs": ["../../godot-scene-web/packages/canvas/src/glyph-pass-hbgpu.ts"],
+      "@godot-scene-web/canvas-effects/webgl": ["../../godot-scene-web/packages/canvas-effects/src/webgl.ts"],
+      "@godot-scene-web/canvas-effects/webgpu": ["../../godot-scene-web/packages/canvas-effects/src/webgpu.ts"],
+      "@godot-scene-web/effects": ["../../godot-scene-web/packages/effects/src/index.ts"],
+      "@godot-scene-web/effects/*": ["../../godot-scene-web/packages/effects/src/*/index.ts"],
+      "@godot-scene-web/html": ["../../godot-scene-web/packages/html/src/index.ts"],
+      "@godot-scene-web/html/runtime": ["../../godot-scene-web/packages/html/src/runtime.ts"],
+      "@godot-scene-web/hb-gpu": ["../../godot-scene-web/packages/hb-gpu/src/index.ts"],
+      "@godot-scene-web/hb-gpu/webgl": ["../../godot-scene-web/packages/hb-gpu/src/webgl.ts"],
+      "@godot-scene-web/hb-gpu/vendor/hb-gpu.mjs": ["../../godot-scene-web/packages/hb-gpu/vendor/hb-gpu.d.mts"],
+      "@godot-scene-web/hb-gpu/vendor/hb-gpu.wasm": ["../../godot-scene-web/packages/hb-gpu/vendor/hb-gpu.wasm"]
+    },
+    "types": ["vitest/globals", "vite/client", "node"]
+  },
+  "include": ["src/**/*.ts", "src/**/*.vue", "bench/**/*.ts"],
+  "references": [{ "path": "./tsconfig.node.json" }]
+}

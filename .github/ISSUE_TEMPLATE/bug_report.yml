@@ -1,0 +1,127 @@
+name: Bug report
+description: Report a reproducible problem with CouchCoop
+title: "[Bug]: "
+labels:
+  - bug
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Thanks for helping improve CouchCoop. Please search for an existing report before opening a new one.
+
+        Logs and screenshots may contain names, local paths, network addresses, or other personal information. Review every attachment and remove anything you do not want to publish.
+
+  - type: checkboxes
+    id: checks
+    attributes:
+      label: Before submitting
+      options:
+        - label: I searched the existing issues and did not find the same problem.
+          required: true
+
+  - type: textarea
+    id: summary
+    attributes:
+      label: What happened?
+      description: Describe the problem and when it occurred.
+      placeholder: Tell us what you saw, including any error shown by the game or browser.
+    validations:
+      required: true
+
+  - type: textarea
+    id: reproduction
+    attributes:
+      label: Steps to reproduce
+      description: Give the shortest sequence that reproduces the problem consistently, if known.
+      placeholder: |
+        1. Start or load ...
+        2. Join from ...
+        3. Select ...
+        4. Observe ...
+    validations:
+      required: true
+
+  - type: textarea
+    id: expected
+    attributes:
+      label: Expected behavior
+      description: What did you expect to happen instead?
+    validations:
+      required: true
+
+  - type: input
+    id: game_version
+    attributes:
+      label: Slay the Spire 2 version
+      placeholder: For example, 0.0.0
+    validations:
+      required: true
+
+  - type: input
+    id: mod_version
+    attributes:
+      label: CouchCoop version
+      description: Use the GitHub Release or Steam Workshop version shown for the installed mod.
+      placeholder: For example, 1.0.0
+    validations:
+      required: true
+
+  - type: dropdown
+    id: host_os
+    attributes:
+      label: Host operating system
+      options:
+        - Windows
+        - Linux
+        - macOS
+        - Other
+    validations:
+      required: true
+
+  - type: textarea
+    id: host_hardware
+    attributes:
+      label: Host hardware
+      description: Include the CPU, RAM, and GPU if known.
+      placeholder: CPU, RAM, GPU
+    validations:
+      required: true
+
+  - type: textarea
+    id: client
+    attributes:
+      label: Client device and browser
+      description: Include the device, operating system, browser, and browser version.
+      placeholder: For example, Pixel 6a, Android 16, Chrome 150
+    validations:
+      required: true
+
+  - type: textarea
+    id: session
+    attributes:
+      label: Session and network
+      description: Include the player count, whether the host used Ethernet or Wi-Fi, and the type of Wi-Fi used by the affected client.
+      placeholder: Four players; host on Ethernet; phone on 5 GHz Wi-Fi
+    validations:
+      required: true
+
+  - type: textarea
+    id: mods
+    attributes:
+      label: Other installed mods
+      description: List every other mod enabled for the session, or enter "None."
+    validations:
+      required: true
+
+  - type: textarea
+    id: logs
+    attributes:
+      label: Logs
+      description: Attach the host's godot.log and any relevant headless-client log. Review logs for personal information before uploading them.
+      placeholder: Drag log files here, or paste a short relevant excerpt.
+
+  - type: textarea
+    id: media
+    attributes:
+      label: Screenshots, video, or additional context
+      description: Add anything else that may help explain or reproduce the problem.

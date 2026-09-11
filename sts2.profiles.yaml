@@ -1,0 +1,10 @@
+profiles:
+  couchcoop-hot-reload-build:
+    description: Build reloadable CouchCoop browser server generation logic.
+    steps:
+      - kind: command
+        command: dotnet
+        args:
+          - build
+          - src/CouchCoop.Mod.HotReload/CouchCoop.Mod.HotReload.csproj
+          - -p:HotReloadDeployDir=${profileDir}/.sts2/hot-reload

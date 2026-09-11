@@ -1,0 +1,16 @@
+schemaVersion: spirectl.fixture/v0
+name: act3-doormaker
+description: >-
+  Singleplayer run dropped directly into the Act 3 (Glory) boss combat
+  (DOORMAKER_BOSS). The act + floor are intentionally omitted: bosses sit at the
+  end of their act, so the fixture resolver auto-derives the act/floor from the
+  boss encounter and positions the run on the act's terminal boss map node. That
+  way winning the boss advances to the THE_ARCHITECT finale (act transition)
+  instead of wandering the rest of the generated map and rolling into a fresh
+  run. Used to test the auto-player against Doormaker (which exhausts the
+  player's played cards and whose Door revives) WITHOUT replaying a full run.
+run:
+  seed: act3-doormaker
+  currentRoom:
+    combat:
+      encounterId: DOORMAKER_BOSS

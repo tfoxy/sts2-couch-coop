@@ -1,0 +1,53 @@
+; Engine configuration file for the CouchCoop native Godot client.
+;
+; Godot 4.5 project format (config_version=5). OPENING THIS
+; PROJECT IN THE GODOT EDITOR WILL NORMALIZE / REWRITE THIS FILE (add a uid, reorder keys, etc.).
+; That is expected — the committed version only needs to be a valid, loadable 4.5 project.
+;
+; The engine is pinned to 4.5.1 (the game runs Godot 4.5.1) via config/features below and the
+; Godot.NET.Sdk/4.5.1 pin in CouchCoop.GodotClient.csproj. See README.md "Toolchain pinning".
+
+config_version=5
+
+[application]
+
+config/name="STS2 CouchCoop"
+run/main_scene="res://scenes/AppShell.tscn"
+config/features=PackedStringArray("4.5", "C#")
+config/use_hidpi=true
+; WS-FPS2: target 60 fps explicitly instead of inheriting a 90/120 Hz panel rate.
+run/max_fps=60
+
+[display]
+
+; Design resolution matches the mirror stage (the game presents at 1920x1080).
+window/size/viewport_width=1920
+window/size/viewport_height=1080
+; canvas_items stretch + keep aspect = letterbox to the design size on any device screen.
+window/stretch/mode="canvas_items"
+window/stretch/aspect="keep"
+; allow_hidpi is the Godot 4.5 project setting for the "use hidpi" behaviour the task names
+; application/config/use_hidpi; keep it on so retina/high-density phone panels render crisp.
+window/dpi/allow_hidpi=true
+; WS-FPS: force vsync ENABLED (1) so the phone can't sit at a half-vsync (~30) beat; combined with
+; max_fps the client presents every refresh. (0=Disabled, 1=Enabled, 2=Adaptive, 3=Mailbox.)
+window/vsync/vsync_mode=1
+; Godot 4.5.1's Vulkan implementation has the Swappy mode booleans inverted relative to its labels:
+; mode 0 enables automatic swap-interval/pipeline selection, while mode 2 disables both. Use mode 2
+; so the explicit 60 fps swap interval remains fixed instead of being reclassified as 30/40/45 fps.
+; Frame pacing itself remains enabled. Android-only key; ignored on desktop.
+window/frame_pacing/android/swappy_mode=2
+
+[dotnet]
+
+project/assembly_name="CouchCoop.GodotClient"
+
+[rendering]
+
+textures/vram_compression/import_etc2_astc=true
+; WS-FPS: use the phone-targeted "mobile" renderer on ANDROID only via the per-backend `.mobile`
+; override; the base key stays "forward_plus" so desktop dev / --shot renders exactly as before
+; (same renderer the previous shots used). The mirror is a 2D scene (no 3D / clustered lighting),
+; so the lighter mobile pipeline lifts fill-bound phones off ~30 fps at negligible fidelity risk.
+renderer/rendering_method="forward_plus"
+renderer/rendering_method.mobile="mobile"

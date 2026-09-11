@@ -1,0 +1,23 @@
+name: lobby-actions-remain-available
+description: >-
+  Validates that the CouchCoop QR host panel neither replaces nor blocks the lobby's semantic actions:
+  available -> blocked -> available. With the dialog closed the panel root is inert and raw lobby
+  clicks land; with it open the scrim captures physical input while select-character/ready/unready
+  remain advertised and executable through the bridge; closing it restores raw input.
+
+steps:
+  - game.deploy:
+      path: ../../src/CouchCoop.Mod.Loader
+      build: true
+      restart: true
+      verify: true
+      timeoutMs: 120000
+
+  # The restarted game keeps finishing its own boot flow (logo / FTUE / leaderboard) for several
+  # seconds, and that flow pushes the main menu -- popping any lobby a fixture created in the
+  # meantime. Let it settle before the probe starts driving screens.
+  - dev.delay:
+      ms: 20000
+
+  - project.hook:
+      name: couchcoop.lobby-actions-remain-available-probe

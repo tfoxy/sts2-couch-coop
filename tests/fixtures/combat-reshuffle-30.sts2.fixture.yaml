@@ -1,0 +1,111 @@
+schemaVersion: spirectl.fixture/v0
+name: combat-reshuffle-30
+description: >-
+  Perf fixture: 5 in hand, 25 in discard, 0 in draw, 0 exhaust. One end-turn forces a full 30-card
+  discard->draw reshuffle, which is the mirror's worst per-frame case (60 synthesized trail ribbons plus
+  ~330 spawned VFX nodes in about a second). The encounter is deliberately the quietest available so the
+  trace attributes cost to the reshuffle rather than to enemy VFX. Not a behaviour fixture.
+
+
+  That one end-turn spans BOTH of the animation windows Round 13 benches, back to back. First the 5-card hand
+  is discarded — a small, PURE hand->discard flight burst that takes the discard pile 25 -> 30. Only then does
+  the now-empty draw pile force the 30-card reshuffle. So this fixture is the COMBINED window; its sibling
+  `combat-discard-10` isolates the hand->discard half on its own.
+
+
+  Authoring notes (schema v2, deny_unknown_fields): an empty pile is written `{ cards: [] }` (the documented
+  mapping form), and the empty mapping survives normalization, so `drawPile` really does land empty.
+  Authoring ANY pile wipes ALL piles for the player, so every pile is authored here, including the empty
+  ones. Intra-pile order is not preserved on load (piles are seeded at random positions), which is fine:
+  this fixture only cares about pile SIZES and the model mix. Pile application waits until the game has dealt
+  its opening hand, so the authored end-state above (hand 5 / draw 0 / discard 25) is deterministic in every
+  environment — but that ordering requires a bridge at least as new as the R13 fixture-loader fix. On an older
+  bridge the combat-start draw can land AFTER the piles and silently change the scenario (hand 10 at load, and
+  end-turn degrades to a plain 10-card discard with no reshuffle at all).
+run:
+  seed: fixture-combat-reshuffle-30
+  players:
+    - id: "p:1"
+      characterId: IRONCLAD
+      creature: { currentHp: 80, maxHp: 80 }
+      deck:
+        # `replace: true` clears the starter deck, so the master deck is exactly these 30 cards — the same
+        # multiset as hand + discardPile, so the reshuffle and every later draw stay inside the authored mix
+        # and the deck viewer shows what the piles hold.
+        replace: true
+        cards:
+          - { modelId: STRIKE_IRONCLAD }
+          - { modelId: STRIKE_IRONCLAD }
+          - { modelId: STRIKE_IRONCLAD }
+          - { modelId: STRIKE_IRONCLAD }
+          - { modelId: STRIKE_IRONCLAD }
+          - { modelId: STRIKE_IRONCLAD }
+          - { modelId: STRIKE_IRONCLAD }
+          - { modelId: STRIKE_IRONCLAD }
+          - { modelId: STRIKE_IRONCLAD }
+          - { modelId: STRIKE_IRONCLAD }
+          - { modelId: STRIKE_IRONCLAD }
+          - { modelId: DEFEND_IRONCLAD }
+          - { modelId: DEFEND_IRONCLAD }
+          - { modelId: DEFEND_IRONCLAD }
+          - { modelId: DEFEND_IRONCLAD }
+          - { modelId: DEFEND_IRONCLAD }
+          - { modelId: DEFEND_IRONCLAD }
+          - { modelId: DEFEND_IRONCLAD }
+          - { modelId: DEFEND_IRONCLAD }
+          - { modelId: DEFEND_IRONCLAD }
+          - { modelId: DEFEND_IRONCLAD }
+          - { modelId: DEFEND_IRONCLAD }
+          - { modelId: BASH }
+          - { modelId: BASH }
+          - { modelId: BASH }
+          - { modelId: ANGER }
+          - { modelId: ANGER }
+          - { modelId: ANGER }
+          - { modelId: IRON_WAVE }
+          - { modelId: IRON_WAVE }
+      combat:
+        hand:
+          cards:
+            - { modelId: STRIKE_IRONCLAD }
+            - { modelId: DEFEND_IRONCLAD }
+            - { modelId: BASH }
+            - { modelId: ANGER }
+            - { modelId: IRON_WAVE }
+        # Empty as a MAPPING with an empty list — the form that reaches the loader as a genuinely empty
+        # draw pile. This is the whole point of the fixture: the first draw of the next turn has to reshuffle.
+        drawPile: { cards: [] }
+        discardPile:
+          # 25 cards over 5 distinct ids, so the post-reshuffle draw burst pulls a representative spread of
+          # card portraits (distinct atlas regions) rather than 25 copies of one.
+          cards:
+            - { modelId: STRIKE_IRONCLAD }
+            - { modelId: STRIKE_IRONCLAD }
+            - { modelId: STRIKE_IRONCLAD }
+            - { modelId: STRIKE_IRONCLAD }
+            - { modelId: STRIKE_IRONCLAD }
+            - { modelId: STRIKE_IRONCLAD }
+            - { modelId: STRIKE_IRONCLAD }
+            - { modelId: STRIKE_IRONCLAD }
+            - { modelId: STRIKE_IRONCLAD }
+            - { modelId: STRIKE_IRONCLAD }
+            - { modelId: DEFEND_IRONCLAD }
+            - { modelId: DEFEND_IRONCLAD }
+            - { modelId: DEFEND_IRONCLAD }
+            - { modelId: DEFEND_IRONCLAD }
+            - { modelId: DEFEND_IRONCLAD }
+            - { modelId: DEFEND_IRONCLAD }
+            - { modelId: DEFEND_IRONCLAD }
+            - { modelId: DEFEND_IRONCLAD }
+            - { modelId: DEFEND_IRONCLAD }
+            - { modelId: DEFEND_IRONCLAD }
+            - { modelId: BASH }
+            - { modelId: BASH }
+            - { modelId: ANGER }
+            - { modelId: ANGER }
+            - { modelId: IRON_WAVE }
+        exhaustPile: { cards: [] }
+  currentRoom:
+    combat:
+      # The quietest shipped combat encounter — enemy VFX must not be what the trace measures.
+      encounterId: NIBBITS_WEAK

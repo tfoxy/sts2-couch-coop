@@ -1,0 +1,26 @@
+# Cloudflare Pages response headers.
+#
+# The bootstrap and its script MUST be re-fetchable: they are the only things published here, so a stale
+# copy pinned in a phone's HTTP cache is the one failure this deployment can suffer that a player cannot
+# work around. `no-cache` still allows a conditional request (a 304 is cheap) — it forbids serving without
+# asking, which is the part that matters.
+/
+  Cache-Control: no-cache
+/index.html
+  Cache-Control: no-cache
+/boot.js
+  Cache-Control: no-cache
+/sw.js
+  Cache-Control: no-cache
+/manifest.webmanifest
+  Cache-Control: no-cache
+
+# The icons are content-stable and referenced by the manifest; a long cache here is what makes an
+# installed icon appear instantly.
+/icons/*
+  Cache-Control: public, max-age=604800
+
+# This origin serves no user data and embeds nothing, so the safe defaults are free.
+/*
+  X-Content-Type-Options: nosniff
+  Referrer-Policy: no-referrer

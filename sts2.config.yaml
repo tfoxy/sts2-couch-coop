@@ -1,0 +1,11 @@
+game:
+  # `deployOutputSubdir` is resolved against the deploy step's project path
+  # (`src/CouchCoop.Mod.Loader`), hence the `../../`; `sts2 game deploy --build` substitutes
+  # `{deployOutputDir}` with that same directory, absolute, so it is spelled once, here.
+  deployBuildCommand:
+    - ../../scripts/build-local-mod.sh
+    - --configuration
+    - Debug
+    - --output
+    - "{deployOutputDir}"
+  deployOutputSubdir: ../../dist/couchcoop

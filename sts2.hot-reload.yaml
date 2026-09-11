@@ -1,0 +1,11 @@
+schemaVersion: spirectl.hot-reload-project/v0
+projectId: couchcoop
+shellModId: couchcoop
+shellProject: CouchCoop.Mod.Loader
+logicProject: CouchCoop.Mod.HotReload
+logicBuildProfile: couchcoop-hot-reload-build
+logicArtifactPath: ${profileDir}/.sts2/hot-reload/CouchCoop.Mod.HotReload.dll
+expectedContractVersion: 1
+protocol:
+  id: spirectl.m57.hot-reload-shell
+  version: 0

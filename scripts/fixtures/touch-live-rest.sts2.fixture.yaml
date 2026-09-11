@@ -1,0 +1,45 @@
+schemaVersion: spirectl.fixture/v0
+name: touch-live-rest
+description: >-
+  The rest site `scripts/validate-touch-live.mjs` uses for check H8 (the confirm-tap
+  firewall).
+
+  A rest-site option is an IRREVERSIBLE choice, so on touch it is one of the widgets the
+  mirror's confirm-tap feature takes over: a tap may only ever FOCUS it and a separate
+  client-drawn confirm button is what commits. Two things make this screen the right place
+  to pin that:
+
+    * the option buttons are laid out in a column with their true hit boxes ABOVE their
+      labels, so there is a band of the screen that looks like part of a button and is not
+      one — the classic "tap did something I did not point at" surface;
+    * the choice really is spendable, so a regression here costs a run, not a redraw.
+
+  The Shovel/Meat Cleaver/Girya relics are granted so the campfire shows a full column of
+  options rather than the two-option minimum — more buttons means more label-overhang band
+  to sample, and the column's vertical pitch is what the check's geometry is read off.
+
+  Solo (one player) on purpose, same as the combat fixture: directView, no seat, no ENet.
+run:
+  seed: fixture-touch-live-rest
+  actFloor: 6
+  players:
+    - id: "p:1"
+      characterId: IRONCLAD
+      creature: { currentHp: 52, maxHp: 80 }
+      relics:
+        - modelId: SHOVEL
+        - modelId: MEAT_CLEAVER
+        - modelId: GIRYA
+      deck:
+        replace: true
+        cards:
+          - { modelId: STRIKE_IRONCLAD }
+          - { modelId: STRIKE_IRONCLAD }
+          - { modelId: DEFEND_IRONCLAD }
+          - { modelId: DEFEND_IRONCLAD }
+          - { modelId: BASH }
+          - { modelId: ANGER }
+          - { modelId: IRON_WAVE }
+          - { modelId: SHRUG_IT_OFF }
+  currentRoom:
+    restSite: {}

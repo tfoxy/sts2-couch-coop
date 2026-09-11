@@ -1,0 +1,1 @@
+{"full":true,"screenType":"run","screenInstanceId":"screen:run:live","upserts":[{"id":"R","name":"R","nodeType":"Control"},{"id":"a","parentId":"R","name":"a","nodeType":"Control"},{"id":"b","parentId":"R","name":"b","nodeType":"Control"},{"id":"c","parentId":"R","name":"c","nodeType":"Control"}],"removedIds":[],"orderedIds":["R","a","b","c"],"type":"scene-delta"}

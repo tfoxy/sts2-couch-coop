@@ -1,0 +1,1 @@
+{"full":true,"screenType":"run","screenInstanceId":"screen:run:live","upserts":[{"id":"vfx-bite","name":"SpineSprite","nodeType":"SpineSprite","spine":{"sceneResPath":"res://scenes/vfx/vfx_bite.tscn","nodePath":"SpineSprite","animations":["bite"]},"spineCurrentAnim":"bite","spineTrackTime":0.12,"spineLooping":false}],"removedIds":[],"orderedIds":["vfx-bite"],"type":"scene-delta"}

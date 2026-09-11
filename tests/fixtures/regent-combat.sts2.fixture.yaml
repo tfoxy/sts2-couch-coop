@@ -1,0 +1,19 @@
+schemaVersion: spirectl.fixture/v0
+name: regent-combat
+description: >-
+  Combat fixture: the Regent in an Act-1 (Overgrowth) combat (SLIMES_NORMAL) with the default starting deck.
+  Used as the visual-regression case for two frozen-visual defects that only appear on this character — a weapon
+  spine pair that must stream no animation, and an energy-counter particle cluster that must not latch as
+  permanently emitting.
+
+  A `run:` fixture always loads through the no-ENet singleplayer path, so this is safe to load into an isolated
+  `--headless` instance beside a live host (it never touches the ENet port). `--headless` is also the only
+  environment where the visual suspender under test is installed at all.
+run:
+  seed: regent-combat
+  currentActIndex: 0
+  players:
+    - characterId: REGENT
+  currentRoom:
+    combat:
+      encounterId: SLIMES_NORMAL

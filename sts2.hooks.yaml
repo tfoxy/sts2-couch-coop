@@ -1,0 +1,13 @@
+hooks:
+  couchcoop.lobby-runtime-harness:
+    description: Build the hosted frontend and start the deterministic CouchCoop lobby browser harness on port 13337.
+    command: scripts/start-lobby-harness-hook.sh
+  couchcoop.pc-lobby-qr-overlay-probe:
+    description: Probe the live PC host lobby CouchCoop QR button/dialog contract, input blocking, and mirror exclusion.
+    command: scripts/probe-pc-lobby-qr-overlay.mjs
+  couchcoop.pc-lobby-activity-log-probe:
+    description: Probe the live PC host lobby CouchCoop connectivity-log panel contract, gates, collapse and mirror exclusion.
+    command: scripts/probe-pc-lobby-activity-log.mjs
+  couchcoop.lobby-actions-remain-available-probe:
+    description: Probe live PC host lobby semantic actions across the QR dialog available/blocked/available legs.
+    command: scripts/probe-lobby-actions-remain-available.mjs

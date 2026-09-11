@@ -1,0 +1,64 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup>
+    <TargetFramework>net9.0</TargetFramework>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <Nullable>enable</Nullable>
+    <LangVersion>latest</LangVersion>
+    <EnableSts2LiveHost>true</EnableSts2LiveHost>
+    <CopyLocalLockFileAssemblies>true</CopyLocalLockFileAssemblies>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <PackageReference Include="QRCoder" Version="1.6.0" />
+
+    <EmbeddedResource Include="Localization/Catalogs/couchcoop.en.json">
+      <LogicalName>CouchCoop.Mod.Localization.Catalogs.couchcoop.en.json</LogicalName>
+      <WithCulture>false</WithCulture>
+    </EmbeddedResource>
+    <EmbeddedResource Include="Localization/Catalogs/couchcoop.zhs.json">
+      <LogicalName>CouchCoop.Mod.Localization.Catalogs.couchcoop.zhs.json</LogicalName>
+      <WithCulture>false</WithCulture>
+    </EmbeddedResource>
+    <EmbeddedResource Include="Localization/Catalogs/couchcoop.deu.json" LogicalName="CouchCoop.Mod.Localization.Catalogs.couchcoop.deu.json" WithCulture="false" />
+    <EmbeddedResource Include="Localization/Catalogs/couchcoop.esp.json" LogicalName="CouchCoop.Mod.Localization.Catalogs.couchcoop.esp.json" WithCulture="false" />
+    <EmbeddedResource Include="Localization/Catalogs/couchcoop.fra.json" LogicalName="CouchCoop.Mod.Localization.Catalogs.couchcoop.fra.json" WithCulture="false" />
+    <EmbeddedResource Include="Localization/Catalogs/couchcoop.ita.json" LogicalName="CouchCoop.Mod.Localization.Catalogs.couchcoop.ita.json" WithCulture="false" />
+    <EmbeddedResource Include="Localization/Catalogs/couchcoop.jpn.json" LogicalName="CouchCoop.Mod.Localization.Catalogs.couchcoop.jpn.json" WithCulture="false" />
+    <EmbeddedResource Include="Localization/Catalogs/couchcoop.kor.json" LogicalName="CouchCoop.Mod.Localization.Catalogs.couchcoop.kor.json" WithCulture="false" />
+    <EmbeddedResource Include="Localization/Catalogs/couchcoop.pol.json" LogicalName="CouchCoop.Mod.Localization.Catalogs.couchcoop.pol.json" WithCulture="false" />
+    <EmbeddedResource Include="Localization/Catalogs/couchcoop.ptb.json" LogicalName="CouchCoop.Mod.Localization.Catalogs.couchcoop.ptb.json" WithCulture="false" />
+    <EmbeddedResource Include="Localization/Catalogs/couchcoop.rus.json" LogicalName="CouchCoop.Mod.Localization.Catalogs.couchcoop.rus.json" WithCulture="false" />
+    <EmbeddedResource Include="Localization/Catalogs/couchcoop.spa.json" LogicalName="CouchCoop.Mod.Localization.Catalogs.couchcoop.spa.json" WithCulture="false" />
+    <EmbeddedResource Include="Localization/Catalogs/couchcoop.tha.json" LogicalName="CouchCoop.Mod.Localization.Catalogs.couchcoop.tha.json" WithCulture="false" />
+    <EmbeddedResource Include="Localization/Catalogs/couchcoop.tur.json" LogicalName="CouchCoop.Mod.Localization.Catalogs.couchcoop.tur.json" WithCulture="false" />
+
+    <Reference Include="0Harmony">
+      <HintPath>$(Sts2AssembliesDir)/0Harmony.dll</HintPath>
+      <Private>false</Private>
+    </Reference>
+    <Reference Include="GodotSharp">
+      <HintPath>$(Sts2AssembliesDir)/GodotSharp.dll</HintPath>
+      <Private>false</Private>
+    </Reference>
+    <Reference Include="sts2">
+      <HintPath>$(Sts2AssembliesDir)/sts2.dll</HintPath>
+      <Private>false</Private>
+    </Reference>
+
+    <!--
+      Build the shared spirectl runtime into a private, couch-coop-specific assembly identity
+      (CouchCoop.Spirectl.dll) rather than the default Spirectl.Sts2.dll. The dev-only spirectlbridge
+      mod ships its own Spirectl.Sts2.dll from the same source; the default AssemblyLoadContext
+      resolves by simple name, so two copies of "Spirectl.Sts2" collide and load order decides which
+      wins. Overriding AssemblyName here (passed as an MSBuild global property, which overrides the
+      project's own AssemblyName) gives the mod a distinct identity that coexists with the bridge's
+      copy without conflict. Namespaces are unaffected — the types stay Spirectl.Sts2.*.
+    -->
+    <ProjectReference
+      Include="../../../spirectl/bridge-mod/src/Spirectl.Sts2/Spirectl.Sts2.csproj"
+      AdditionalProperties="EnableSts2LiveHost=true;Sts2AssembliesDir=$(Sts2AssembliesDir);AssemblyName=CouchCoop.Spirectl" />
+    <ProjectReference Include="../CouchCoop.Mod.Contracts/CouchCoop.Mod.Contracts.csproj" />
+    <!-- Shared, game-free wire protocol layer (scene model, envelopes, moved browser DTOs). -->
+    <ProjectReference Include="../CouchCoop.MirrorProtocol/CouchCoop.MirrorProtocol.csproj" />
+  </ItemGroup>
+</Project>

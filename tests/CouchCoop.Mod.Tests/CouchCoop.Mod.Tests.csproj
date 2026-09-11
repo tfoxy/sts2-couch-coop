@@ -1,0 +1,53 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup>
+    <OutputType>Exe</OutputType>
+    <TargetFramework>net9.0</TargetFramework>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <Nullable>enable</Nullable>
+    <LangVersion>latest</LangVersion>
+    <RollForward>Major</RollForward>
+    <DisableTransitiveProjectReferences>true</DisableTransitiveProjectReferences>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <ProjectReference Include="../../src/CouchCoop.Mod/CouchCoop.Mod.csproj" />
+    <ProjectReference Include="../../src/CouchCoop.Mod.Contracts/CouchCoop.Mod.Contracts.csproj" />
+    <!-- Direct reference to the shared protocol lib: DisableTransitiveProjectReferences=true above means the
+         mod's transitive reference isn't flowed to the compiler, and the moved browser DTOs live here. -->
+    <ProjectReference Include="../../src/CouchCoop.MirrorProtocol/CouchCoop.MirrorProtocol.csproj" />
+    <!-- HotReloadInteropTests exercises the concrete reflection control, which now lives in the bridge assembly
+         rather than the game-runtime assembly referenced below. Alias the canonical bridge pair so it cannot
+         collide with CouchCoop's deliberately private CouchCoop.Spirectl copy. -->
+    <ProjectReference Include="../../../spirectl/bridge-mod/src/Spirectl.BridgeMod/Spirectl.BridgeMod.csproj" Aliases="bridge" />
+    <ProjectReference Include="../../../spirectl/bridge-mod/src/Spirectl.Sts2/Spirectl.Sts2.csproj" Aliases="bridgecore" />
+    <ProjectReference
+      Include="../../src/CouchCoop.Mod.HotReload/CouchCoop.Mod.HotReload.csproj"
+      ReferenceOutputAssembly="false"
+      OutputItemType="Content"
+      CopyToOutputDirectory="PreserveNewest" />
+    <ProjectReference Include="../../src/CouchCoop.Mod.Loader/CouchCoop.Mod.Loader.csproj" />
+    <!-- Tests use bridge types (ISpirectlRuntime, CombatWatchEvent, ...) directly. CouchCoop.Mod produces
+         the shared runtime as CouchCoop.Spirectl.dll; reference that output instead of rebuilding the
+         spirectl project with a competing assembly name. -->
+    <Reference Include="CouchCoop.Spirectl">
+      <HintPath>../../src/CouchCoop.Mod/bin/$(Configuration)/net9.0/CouchCoop.Spirectl.dll</HintPath>
+      <Private>true</Private>
+    </Reference>
+    <!-- HeadlessAudioMuteTargetsTests reflects over NAudioManager / NRunMusicController (in sts2.dll, base type
+         from GodotSharp.dll) via HarmonyLib.AccessTools (0Harmony.dll). These are Private=false in CouchCoop.Mod,
+         so copy them into the test output so the reflection resolves at runtime. Pure metadata reflection — no
+         native Godot library is loaded. -->
+    <Reference Include="sts2">
+      <HintPath>$(Sts2AssembliesDir)/sts2.dll</HintPath>
+      <Private>true</Private>
+    </Reference>
+    <Reference Include="GodotSharp">
+      <HintPath>$(Sts2AssembliesDir)/GodotSharp.dll</HintPath>
+      <Private>true</Private>
+    </Reference>
+    <Reference Include="0Harmony">
+      <HintPath>$(Sts2AssembliesDir)/0Harmony.dll</HintPath>
+      <Private>true</Private>
+    </Reference>
+  </ItemGroup>
+</Project>

@@ -1,0 +1,925 @@
+using CouchCoop.Mod.Activity;
+using CouchCoop.Mod.Session;
+using System.Diagnostics;
+
+// Unit checks for HeadlessClientManager's slot bookkeeping: allocation, same-name reuse (the dedup that
+// stops a reconnect duplicating a lobby player), Release teardown (immediate SIGKILL — the game ignores
+// SIGTERM — returning the freed netId so the host can evict the now-dead ENet peer, or null on a no-op /
+// reuse-transfer), and reaping of orphaned/dead headless processes whose Release never ran. A fake
+// IHeadlessProcess + instant readiness probe keep these pure (no real game process, no HTTP server).
+internal static class HeadlessClientManagerTests
+{
+    public static async Task RunAsync()
+    {
+        await AllocatesDistinctSlotsAndPorts();
+        await SameNameReusesSlotWithoutSpawning();
+        await SameNameReuseIsTrimAndCaseInsensitive();
+        await ReleaseHardKillsFreesSlotAndReturnsFreedNetId();
+        await ReleaseReturnsNullWhenNoSession();
+        await ReuseTransfersOwnershipSoOldReleaseIsNoOp();
+        await DeadOrphanIsReapedAndNameFreedOnNextEnsure();
+        await SlotsAreCappedAtThree();
+        await DisposeHardKillsAllLiveProcesses();
+        await MarkDetachedKeepsProcessAliveUntilReap();
+        await DetachedSlotIsReusedLiveOnReconnect();
+        await SlotBindingIsReportedBeforeTheLauncherRuns();
+        await ReconnectReportsSlotBindingOnBothReuseBranches();
+        await NameClaimSurvivesReleaseAndIsDroppedByReap();
+        NetIdToSlotOnlyMapsRealSeats();
+        NetIdToSlotFollowsTheLobbyCap();
+        await RaisingTheLobbyCapOpensMoreSeats();
+        await NetIdBoundJoinTakesTheSeatsSlotNotTheAllocatorsChoice();
+        await NetIdBoundJoinReportsTheBindingAndReusesALiveInstance();
+        await NetIdBoundJoinIsRefusedForANonSeatNetId();
+        await NetIdBoundJoinOnAnUnclaimedSeatObeysAllowNewSlot();
+        await DescribeSeatsReportsClaimsAndLiveness();
+        await ReapSeatKillsTheInstanceAndDropsTheClaim();
+        await DescribeSeatsDoesNotHoldTheLockAcrossTheSeatCapProbe();
+        await EnsureHeadlessDoesNotHoldTheLockAcrossTheSeatCapProbe();
+        await NetIdBoundEnsureDoesNotHoldTheLockAcrossTheSeatCapProbe();
+        WindowsBridgeEndpointUsesNamedPipe();
+        UnixBridgeEndpointUsesSocket();
+        SeatLaunchIsCommandLineFree();
+        SeatEnvironmentCarriesTheJoinContract();
+        SeatIsToldTheSteamHostsNetId();
+        SeatMemoryTuningIsSeparateFromTheJoinContract();
+        SeatMemoryTuningFillsOnlyUnsetKeys();
+
+        // F1 host connectivity log — the SEAT channel (S1..S17). These assert the ORDERED narration a host
+        // reads on the lobby panel, not just that something was logged: the sequence is the product (a
+        // "ready" before a "starting" would be a bug nobody would notice from a set-membership check).
+        //
+        // S8 (no ENet listener for seats) is the one point with no coverage here: it lives in LaunchReal,
+        // which needs a real game executable and is replaced outright by the test launcher. It is covered as
+        // a MESSAGE test in CouchCoopActivityLogTests instead.
+        await LifecycleIsNarratedInOrder();
+        await AFailedLaunchIsNarratedForBothFailureShapes();
+        await AnEarlyExitIsNarratedWithTheClaimedName();
+        await AReconnectRespawnIsNotNarratedAsAReconnect();
+        await ADetachAndRunEndReapAreNarratedSeparately();
+        await AStuckReapIsNarrated();
+        await APoolFullRefusalNamesThePlayer();
+        await ShutdownIsNarratedOnce();
+
+        CouchCoopActivityLog.Reset();
+    }
+
+    // A controllable fake process. RequestGracefulStop optionally "exits" the process (simulating a clean
+    // SIGTERM-driven shutdown) so the manager doesn't escalate to a hard Kill.
+    private sealed class FakeProcess : IHeadlessProcess
+    {
+        private readonly bool _gracefulStopExits;
+
+        public FakeProcess(int slot, bool gracefulStopExits)
+        {
+            Slot = slot;
+            _gracefulStopExits = gracefulStopExits;
+        }
+
+        public int Slot { get; }
+        public bool Exited { get; private set; }
+        public bool GracefulStopRequested { get; private set; }
+        public bool HardKilled { get; private set; }
+        public bool Disposed { get; private set; }
+
+        public int Id => 10000 + Slot;
+        public bool HasExited => Exited;
+        public int ExitCode => 0;
+
+        public void ForceExit() => Exited = true; // simulate an external crash / kill
+
+        public bool RequestGracefulStop()
+        {
+            GracefulStopRequested = true;
+            if (!_gracefulStopExits) return false; // e.g. non-Unix: no graceful signal
+            Exited = true;
+            return true;
+        }
+
+        public void Kill() { HardKilled = true; Exited = true; }
+        public void Dispose() => Disposed = true;
+    }
+
+    private sealed class Harness
+    {
+        public readonly List<FakeProcess> Spawned = [];
+        // Ordered trace of manager side effects ("bind:<netId>:<name>", "launch:<slot>"), so a test can assert that
+        // the name→netId binding is reported BEFORE the headless process is launched — the ordering the host
+        // nameplate fix depends on.
+        public readonly List<string> Events = [];
+        public bool GracefulStopExits = true;
+        public readonly HeadlessClientManager Manager;
+        // The seat capacity the manager probes, standing in for the live lobby's player cap minus the host seat.
+        // Mutable so a test can raise it the way a multiplayer limit mod does mid-session.
+        public int MaxSeats = 3;
+
+        public Harness(int maxSeats = 3)
+        {
+            // The host connectivity log is a process-global ring, so every harness starts from empty. (A
+            // test that builds TWO harnesses therefore clears the first one's narration — none of the
+            // narration tests below do that.)
+            CouchCoopActivityLog.Reset();
+            MaxSeats = maxSeats;
+            Manager = new HeadlessClientManager(
+                launcher: slot =>
+                {
+                    Events.Add($"launch:{slot}");
+                    var p = new FakeProcess(slot, GracefulStopExits);
+                    Spawned.Add(p);
+                    return p;
+                },
+                // Instant "ready" so EnsureHeadlessAsync returns the port without a real HTTP poll.
+                readinessProbe: (_, _) => Task.FromResult(true),
+                maxSeatsProbe: () => MaxSeats);
+        }
+
+        // Records the slot-bound callback into the same ordered trace as the launcher.
+        public Action<ulong, string?> RecordBinding
+            => (netId, name) => Events.Add($"bind:{netId}:{name}");
+    }
+
+    private static async Task AllocatesDistinctSlotsAndPorts()
+    {
+        var h = new Harness();
+        var p1 = await h.Manager.EnsureHeadlessAsync(Guid.NewGuid(), "Ann", default);
+        var p2 = await h.Manager.EnsureHeadlessAsync(Guid.NewGuid(), "Bob", default);
+        Assert(p1 == HeadlessClientManager.SlotToPort(2), "first join takes slot 2's port");
+        Assert(p2 == HeadlessClientManager.SlotToPort(3), "second distinct join takes slot 3's port");
+        Assert(h.Spawned.Count == 2, "two distinct names spawn two processes");
+    }
+
+    private static async Task SameNameReusesSlotWithoutSpawning()
+    {
+        var h = new Harness();
+        var first = await h.Manager.EnsureHeadlessAsync(Guid.NewGuid(), "Ann", default);
+        var second = await h.Manager.EnsureHeadlessAsync(Guid.NewGuid(), "Ann", default);
+        Assert(first == second, "same-name rejoin reuses the same port");
+        Assert(h.Spawned.Count == 1, "same-name rejoin does NOT spawn a second process (no duplicate lobby player)");
+    }
+
+    private static async Task SameNameReuseIsTrimAndCaseInsensitive()
+    {
+        var h = new Harness();
+        var first = await h.Manager.EnsureHeadlessAsync(Guid.NewGuid(), "Ann", default);
+        var second = await h.Manager.EnsureHeadlessAsync(Guid.NewGuid(), "  aNN ", default);
+        Assert(first == second, "name dedup ignores case and surrounding whitespace");
+        Assert(h.Spawned.Count == 1, "case/whitespace variant of a name reuses the slot");
+    }
+
+    private static async Task ReleaseHardKillsFreesSlotAndReturnsFreedNetId()
+    {
+        var h = new Harness();
+        var session = Guid.NewGuid();
+        await h.Manager.EnsureHeadlessAsync(session, "Ann", default);
+        var proc = h.Spawned[0];
+
+        var freed = h.Manager.Release(session);
+        // The game ignores SIGTERM, so Release SIGKILLs immediately (no graceful grace) and returns the freed
+        // netId so the caller can evict that now-dead peer from the host's ENet server.
+        Assert(freed == HeadlessClientManager.SlotToNetId(2), "Release returns the freed netId when it kills the slot's process");
+        Assert(proc.HardKilled, "Release hard-kills immediately (SIGTERM is ignored by the game, so no graceful wait)");
+        Assert(!proc.GracefulStopRequested, "Release no longer attempts a graceful stop");
+        Assert(proc.Disposed, "the process handle is disposed after teardown");
+
+        // Slot 2 KEEPS Ann's name claim (netId 1002 reserved for her mid-run reconnect), so a DIFFERENT name
+        // does NOT steal it while another slot is free — it takes slot 3 instead.
+        var caraPort = await h.Manager.EnsureHeadlessAsync(Guid.NewGuid(), "Cara", default);
+        Assert(caraPort == HeadlessClientManager.SlotToPort(3), "a different name takes a free slot, not the reserved one");
+
+        // Ann's reconnect re-spawns on the SAME slot 2 (same netId 1002) so the host's run-in-progress rejoin
+        // accepts her, and a fresh process is launched (the old one was hard-killed on Release).
+        var spawnedBefore = h.Spawned.Count;
+        var annPort = await h.Manager.EnsureHeadlessAsync(Guid.NewGuid(), "Ann", default);
+        Assert(annPort == HeadlessClientManager.SlotToPort(2), "the same name reconnects to its reserved slot (same netId)");
+        Assert(h.Spawned.Count == spawnedBefore + 1, "the reconnect re-spawns a fresh headless on the reserved slot");
+    }
+
+    private static async Task ReleaseReturnsNullWhenNoSession()
+    {
+        var h = new Harness();
+        // No headless was ever spawned for this session → nothing to kill, no netId freed.
+        var freed = h.Manager.Release(Guid.NewGuid());
+        Assert(freed is null, "Release returns null (no eviction) when the session has no headless instance");
+        Assert(h.Spawned.Count == 0, "a Release with no matching session spawns/kills nothing");
+    }
+
+    private static async Task ReuseTransfersOwnershipSoOldReleaseIsNoOp()
+    {
+        var h = new Harness();
+        var oldSession = Guid.NewGuid();
+        var newSession = Guid.NewGuid();
+        await h.Manager.EnsureHeadlessAsync(oldSession, "Ann", default);
+        await h.Manager.EnsureHeadlessAsync(newSession, "Ann", default); // reconnect transfers slot ownership
+        var proc = h.Spawned[0];
+
+        // The OLD session's socket closes after the reconnect already took over — must NOT kill the live process.
+        var staleFreed = h.Manager.Release(oldSession);
+        Assert(staleFreed is null, "the reuse-transfer (stale old-session) Release returns null — no peer to evict");
+        Assert(!proc.GracefulStopRequested && !proc.HardKilled && !proc.Exited,
+            "stale old-session Release is a no-op once a same-name reconnect owns the slot");
+
+        // The active session still owns it; releasing it does tear down and frees the netId.
+        var freed = h.Manager.Release(newSession);
+        Assert(freed == HeadlessClientManager.SlotToNetId(2), "the active session's Release returns the freed netId");
+        Assert(proc.Exited, "the active session's Release tears the process down");
+    }
+
+    private static async Task DeadOrphanIsReapedAndNameFreedOnNextEnsure()
+    {
+        var h = new Harness();
+        var session = Guid.NewGuid();
+        await h.Manager.EnsureHeadlessAsync(session, "Ann", default);
+        var dead = h.Spawned[0];
+        dead.ForceExit(); // headless crashed / was killed externally; Release never ran (orphaned)
+
+        // A same-name rejoin must NOT reuse the dead instance: it is reaped and a fresh process spawned.
+        var port = await h.Manager.EnsureHeadlessAsync(Guid.NewGuid(), "Ann", default);
+        Assert(h.Spawned.Count == 2, "a same-name rejoin after the headless died spawns a fresh process (no stale reuse)");
+        Assert(dead.Disposed, "the dead orphan's handle is reaped/disposed");
+        Assert(port == HeadlessClientManager.SlotToPort(2), "reaping frees slot 2 for the fresh instance");
+    }
+
+    private static async Task SlotsAreCappedAtThree()
+    {
+        var h = new Harness();
+        await h.Manager.EnsureHeadlessAsync(Guid.NewGuid(), "A", default);
+        await h.Manager.EnsureHeadlessAsync(Guid.NewGuid(), "B", default);
+        await h.Manager.EnsureHeadlessAsync(Guid.NewGuid(), "C", default);
+        var overflow = await h.Manager.EnsureHeadlessAsync(Guid.NewGuid(), "D", default);
+        Assert(overflow is null, "a fourth distinct join is rejected (only slots 2-4 exist)");
+        Assert(h.Spawned.Count == 3, "no process is spawned when all slots are occupied");
+    }
+
+    private static async Task DisposeHardKillsAllLiveProcesses()
+    {
+        var h = new Harness();
+        await h.Manager.EnsureHeadlessAsync(Guid.NewGuid(), "A", default);
+        await h.Manager.EnsureHeadlessAsync(Guid.NewGuid(), "B", default);
+        h.Manager.Dispose();
+        Assert(h.Spawned.TrueForAll(p => p.Exited && p.Disposed), "Dispose tears down every live headless");
+        // After dispose, no further allocation.
+        var after = await h.Manager.EnsureHeadlessAsync(Guid.NewGuid(), "C", default);
+        Assert(after is null, "a disposed manager allocates nothing");
+    }
+
+    // Mid-run disconnect: MarkDetached keeps the headless ALIVE (so the browser can reconnect to the live run);
+    // it's only killed when the run ends, via ReapDetachedSlots (which returns the freed netId for eviction).
+    private static async Task MarkDetachedKeepsProcessAliveUntilReap()
+    {
+        var h = new Harness();
+        var session = Guid.NewGuid();
+        await h.Manager.EnsureHeadlessAsync(session, "Ann", default);
+        var proc = h.Spawned[0];
+
+        h.Manager.MarkDetached(session);
+        Assert(!proc.Exited && !proc.HardKilled, "MarkDetached keeps the headless alive (not killed) mid-run");
+
+        var freed = h.Manager.ReapDetachedSlots();
+        Assert(freed.Count == 1 && freed[0] == HeadlessClientManager.SlotToNetId(2),
+            "ReapDetachedSlots returns the freed netId for the kept-alive slot");
+        Assert(proc.HardKilled && proc.Disposed, "ReapDetachedSlots kills + disposes the detached headless on run-end");
+
+        // Reaping dropped the name claim → the slot is free for a brand-new player.
+        var reused = await h.Manager.EnsureHeadlessAsync(Guid.NewGuid(), "Cara", default);
+        Assert(reused == HeadlessClientManager.SlotToPort(2), "the reaped slot is free for the next player");
+    }
+
+    // A browser that reconnects (same name) BEFORE the run ends re-claims the SAME live headless — no respawn,
+    // and it's no longer detached, so a later reap won't touch it.
+    private static async Task DetachedSlotIsReusedLiveOnReconnect()
+    {
+        var h = new Harness();
+        var first = Guid.NewGuid();
+        await h.Manager.EnsureHeadlessAsync(first, "Ann", default);
+        var proc = h.Spawned[0];
+        h.Manager.MarkDetached(first);
+
+        // Reconnect: same name, new session → reuse the LIVE process (no new spawn).
+        var port = await h.Manager.EnsureHeadlessAsync(Guid.NewGuid(), "Ann", default);
+        Assert(port == HeadlessClientManager.SlotToPort(2), "reconnect re-claims the same live slot");
+        Assert(h.Spawned.Count == 1, "reconnect to a kept-alive headless does NOT spawn a new process");
+
+        // It's re-attached → a run-end reap must NOT kill it.
+        var freed = h.Manager.ReapDetachedSlots();
+        Assert(freed.Count == 0 && !proc.Exited, "a reconnected (re-attached) headless is not reaped on run-end");
+    }
+
+    // THE point of the slot-bound callback: the caller learns this player's netId → display name BEFORE the
+    // headless process is launched, so it can register the SetClientName override while the instance is still
+    // loading. The host writes NRemoteLobbyPlayer's label once, from PlatformUtil.GetPlayerNameRaw, the moment the
+    // headless completes its ENet handshake; a name registered only after the readiness wait (20-60s) always lost
+    // that race and the widget kept the mp_names.json fallback — a name from a PREVIOUS host session.
+    private static async Task SlotBindingIsReportedBeforeTheLauncherRuns()
+    {
+        var h = new Harness();
+        var port = await h.Manager.EnsureHeadlessAsync(Guid.NewGuid(), "Ann", default, onSlotBound: h.RecordBinding);
+
+        Assert(port == HeadlessClientManager.SlotToPort(2), "the join is served on slot 2's port");
+        Assert(h.Events.Count == 2, "a new join reports exactly one binding and one launch");
+        Assert(h.Events[0] == $"bind:{HeadlessClientManager.SlotToNetId(2)}:Ann",
+            "the binding is reported with the slot's netId and the trimmed display name");
+        Assert(h.Events[1] == "launch:2", "the binding is reported BEFORE the headless process is launched");
+    }
+
+    // Both branches that BIND a slot must report it: the reconnect that re-spawns on a claimed-but-dead slot, and
+    // the reuse of a still-live instance (a returning browser whose netId may have lost its name override).
+    private static async Task ReconnectReportsSlotBindingOnBothReuseBranches()
+    {
+        var h = new Harness();
+        var session = Guid.NewGuid();
+        await h.Manager.EnsureHeadlessAsync(session, "Ann", default, onSlotBound: h.RecordBinding);
+        var netId = HeadlessClientManager.SlotToNetId(2);
+
+        // Live instance, new session (second tab / immediate reconnect) → reuse, no spawn, but still reported.
+        h.Events.Clear();
+        var reusedPort = await h.Manager.EnsureHeadlessAsync(Guid.NewGuid(), "Ann", default, onSlotBound: h.RecordBinding);
+        Assert(reusedPort == HeadlessClientManager.SlotToPort(2), "the live instance is reused on the same port");
+        Assert(h.Events.Count == 1 && h.Events[0] == $"bind:{netId}:Ann",
+            "reusing a live instance reports the binding and launches nothing");
+
+        // Now the headless dies and the same name returns → respawn on the SAME slot/netId, reported first.
+        h.Spawned[^1].ForceExit();
+        h.Events.Clear();
+        var respawnPort = await h.Manager.EnsureHeadlessAsync(Guid.NewGuid(), "Ann", default, onSlotBound: h.RecordBinding);
+        Assert(respawnPort == HeadlessClientManager.SlotToPort(2), "the reconnect respawns on the reserved slot");
+        Assert(h.Events.Count == 2 && h.Events[0] == $"bind:{netId}:Ann" && h.Events[1] == "launch:2",
+            "the reconnect respawn reports the binding before re-launching");
+    }
+
+    // Gate for the disconnect-side ClearClientName rule: the name override may only be dropped once NOTHING claims
+    // the netId. Release keeps the claim (the netId stays reserved for a reconnect), so clearing there would fall
+    // the nameplate back to the stale mp_names.json snapshot; only a run-end reap genuinely frees the seat.
+    private static async Task NameClaimSurvivesReleaseAndIsDroppedByReap()
+    {
+        var h = new Harness();
+        var session = Guid.NewGuid();
+        await h.Manager.EnsureHeadlessAsync(session, "Ann", default);
+        var netId = HeadlessClientManager.SlotToNetId(2);
+        Assert(h.Manager.HasClaimForNetId(netId), "a joined player claims their netId");
+        Assert(!h.Manager.HasClaimForNetId(HeadlessClientManager.SlotToNetId(3)), "an unused slot's netId is unclaimed");
+
+        h.Manager.Release(session);
+        Assert(h.Manager.HasClaimForNetId(netId), "a lobby disconnect KEEPS the claim (netId reserved for reconnect)");
+
+        // Mid-run detach also keeps it; only the run-end reap drops the claim.
+        var second = Guid.NewGuid();
+        await h.Manager.EnsureHeadlessAsync(second, "Ann", default);
+        h.Manager.MarkDetached(second);
+        Assert(h.Manager.HasClaimForNetId(netId), "a mid-run detach KEEPS the claim (process stays alive too)");
+
+        h.Manager.ReapDetachedSlots();
+        Assert(!h.Manager.HasClaimForNetId(netId), "the run-end reap drops the claim — the seat is genuinely gone");
+    }
+
+    // ---- netId-BOUND spawn (the rejoin path) -------------------------------------------------------------------
+    //
+    // The game gates a rejoin on netId: the load-run lobby disconnects any client whose netId is not in the loaded
+    // save, and a running RunLobby rejects any peer not already in the run. A headless spawned on a NAME-chosen slot
+    // therefore almost never carries the seat's netId and is bounced on arrival, however the picker labelled it.
+    // These pin that the seat — not the allocator, and not the name — decides the slot.
+
+    private static void NetIdToSlotOnlyMapsRealSeats()
+    {
+        var stock = new Harness().Manager;
+        Assert(stock.TryNetIdToSlot(1002, out var slot2) && slot2 == 2, "1002 → slot 2");
+        Assert(stock.TryNetIdToSlot(1004, out var slot4) && slot4 == 4, "1004 → slot 4");
+        // Everything outside the manager's own slot range is refused rather than clamped: spawning a clamped
+        // instance would impersonate somebody else's peer.
+        Assert(!stock.TryNetIdToSlot(1001, out _), "1001 is below the first slot");
+        Assert(!stock.TryNetIdToSlot(1005, out _), "1005 is past the stock lobby's last slot");
+        Assert(!stock.TryNetIdToSlot(1, out _), "the HOST's netId is not a slot");
+        Assert(!stock.TryNetIdToSlot(1000, out _), "a genuine remote player's netId is not a slot");
+    }
+
+    // The slot range is NOT a constant — it follows the live lobby's player cap, which the multiplayer limit mods
+    // raise. A seat netId that is out of range under the stock four-player lobby must become a real seat once the
+    // lobby says there is room for it, and the guard band must still be the outer wall.
+    private static void NetIdToSlotFollowsTheLobbyCap()
+    {
+        var raised = new Harness(maxSeats: 15).Manager;
+        Assert(raised.TryNetIdToSlot(1005, out var slot5) && slot5 == 5, "1005 is a seat once the lobby holds 16");
+        Assert(raised.TryNetIdToSlot(1016, out var slot16) && slot16 == 16, "1016 → slot 16 (the last of 15 seats)");
+        Assert(!raised.TryNetIdToSlot(1017, out _), "1017 is past the raised cap");
+        Assert(HeadlessClientManager.SlotToPort(5) == 13387, "slot 5 serves its browser on 13387");
+
+        // A cap wider than the couch-seat netId reservation (MirrorSeatNetIds 1001..1099) is clamped to it: past
+        // 1099 a "seat" would be indistinguishable from a genuine remote player to every picker.
+        var absurd = new Harness(maxSeats: 5000).Manager;
+        Assert(absurd.TryNetIdToSlot(1099, out var slot99) && slot99 == 99, "1099 is the last seat in the guard band");
+        Assert(!absurd.TryNetIdToSlot(1100, out _), "1100 is outside the guard band whatever the lobby claims");
+    }
+
+    // A lobby that grows mid-session (Limit Break writes its raised cap from its own join/connect hooks, well
+    // after the host mod is built) must be picked up, not cached from whatever was true at construction.
+    private static async Task RaisingTheLobbyCapOpensMoreSeats()
+    {
+        var h = new Harness(maxSeats: 3);
+        Assert(await h.Manager.EnsureHeadlessAsync(Guid.NewGuid(), "Ann", default) is not null, "seat 1 of 3");
+        Assert(await h.Manager.EnsureHeadlessAsync(Guid.NewGuid(), "Bea", default) is not null, "seat 2 of 3");
+        Assert(await h.Manager.EnsureHeadlessAsync(Guid.NewGuid(), "Cal", default) is not null, "seat 3 of 3");
+        Assert(
+            await h.Manager.EnsureHeadlessAsync(Guid.NewGuid(), "Dee", default) is null,
+            "a fourth player is refused while the lobby only holds four");
+
+        h.MaxSeats = 15;
+        Assert(
+            await h.Manager.EnsureHeadlessAsync(Guid.NewGuid(), "Dee", default) == HeadlessClientManager.SlotToPort(5),
+            "the same player gets slot 5 once the lobby cap is raised");
+    }
+
+    private static async Task NetIdBoundJoinTakesTheSeatsSlotNotTheAllocatorsChoice()
+    {
+        var h = new Harness();
+        // The name-based allocator would hand out slot 2 (the first free one). The seat says 1004 → slot 4.
+        var port = await h.Manager.EnsureHeadlessAsync(
+            Guid.NewGuid(), "Bea", default, onSlotBound: h.RecordBinding, targetNetId: 1004);
+        Assert(port == HeadlessClientManager.SlotToPort(4), "the seat's netId picks slot 4, not the free slot 2");
+        Assert(h.Manager.HasClaimForNetId(1004), "the rejoining name claims the seat it landed on");
+        Assert(!h.Manager.HasClaimForNetId(1002), "…and nothing is claimed on the slot the allocator would have used");
+    }
+
+    private static async Task NetIdBoundJoinReportsTheBindingAndReusesALiveInstance()
+    {
+        var h = new Harness();
+        var port = await h.Manager.EnsureHeadlessAsync(
+            Guid.NewGuid(), "Bea", default, onSlotBound: h.RecordBinding, targetNetId: 1003);
+        Assert(port == HeadlessClientManager.SlotToPort(3), "the netId-bound join is served on slot 3's port");
+        // WS-2's ordering contract holds on this path too: the display name is registered for the netId BEFORE the
+        // process launches, so it beats the host building that peer's nameplate.
+        Assert(h.Events.Count == 2 && h.Events[0] == "bind:1003:Bea" && h.Events[1] == "launch:3",
+            "the binding is reported before the launcher runs");
+
+        // A second device picking the SAME seat shares the live instance instead of respawning it.
+        var reused = await h.Manager.EnsureHeadlessAsync(
+            Guid.NewGuid(), "Bea", default, onSlotBound: h.RecordBinding, targetNetId: 1003);
+        Assert(reused == HeadlessClientManager.SlotToPort(3), "a live instance on the seat is reused");
+        Assert(h.Spawned.Count == 1, "…and no second process is launched");
+    }
+
+    private static async Task NetIdBoundJoinIsRefusedForANonSeatNetId()
+    {
+        var h = new Harness();
+        var host = await h.Manager.EnsureHeadlessAsync(Guid.NewGuid(), "Hosty", default, targetNetId: 1);
+        Assert(host is null, "the host's own netId is never spawned into");
+        var remote = await h.Manager.EnsureHeadlessAsync(Guid.NewGuid(), "Remote", default, targetNetId: 1000);
+        Assert(remote is null, "a genuine remote player's netId is never spawned into");
+        Assert(h.Spawned.Count == 0, "no process is launched for either");
+    }
+
+    private static async Task NetIdBoundJoinOnAnUnclaimedSeatObeysAllowNewSlot()
+    {
+        // allowNewSlot is the caller's spawn window. An UNCLAIMED seat is a fresh instance and respects it; the
+        // caller widens the window itself for a netId that already has a seat in the run/save
+        // (CouchCoopLobbyParticipation.MirrorJoinContext.MayRejoinNetId).
+        var closed = new Harness();
+        var refused = await closed.Manager.EnsureHeadlessAsync(
+            Guid.NewGuid(), "Bea", default, allowNewSlot: false, targetNetId: 1003);
+        Assert(refused is null, "an unclaimed seat is not spawned outside the window");
+        Assert(closed.Spawned.Count == 0, "…and nothing is launched");
+
+        // An ALREADY-CLAIMED seat whose process died is a reconnect, which is always allowed — the same rule the
+        // name-reuse branch has always followed.
+        var h = new Harness();
+        var first = Guid.NewGuid();
+        await h.Manager.EnsureHeadlessAsync(first, "Bea", default, targetNetId: 1003);
+        h.Manager.Release(first); // keeps the claim, kills the process
+        var respawn = await h.Manager.EnsureHeadlessAsync(
+            Guid.NewGuid(), "Bea", default, allowNewSlot: false, targetNetId: 1003);
+        Assert(respawn == HeadlessClientManager.SlotToPort(3), "a claimed seat respawns even with the window shut");
+    }
+
+    private static async Task DescribeSeatsReportsClaimsAndLiveness()
+    {
+        var h = new Harness();
+        var seats = h.Manager.DescribeSeats();
+        Assert(seats.Count == 3, "every slot is described, used or not — an unused seat is still joinable");
+        Assert(seats[0].NetId == 1002 && seats[2].NetId == 1004, "seats are described in slot order");
+        Assert(seats.All(seat => seat.ClaimedName is null && !seat.ProcessLive), "a fresh manager owns nothing");
+
+        var session = Guid.NewGuid();
+        await h.Manager.EnsureHeadlessAsync(session, "Ann", default);
+        var live = h.Manager.DescribeSeats().First(seat => seat.NetId == 1002);
+        Assert(live.ProcessLive && live.ClaimedName == "Ann", "a joined seat reports its live process and claim");
+
+        // An EXITED process is not a live instance, even while the manager still holds the handle (an orphaned or
+        // crashed headless whose Release never ran) — otherwise the seat would look like a zombie forever.
+        h.Spawned[0].ForceExit();
+        var dead = h.Manager.DescribeSeats().First(seat => seat.NetId == 1002);
+        Assert(!dead.ProcessLive, "an exited process does not count as live");
+        Assert(dead.ClaimedName == "Ann", "…but the reconnect claim survives it");
+    }
+
+    private static async Task ReapSeatKillsTheInstanceAndDropsTheClaim()
+    {
+        var h = new Harness();
+        await h.Manager.EnsureHeadlessAsync(Guid.NewGuid(), "Ann", default);
+        Assert(h.Manager.ReapSeat(1002), "reaping a live seat reports that it killed something");
+        Assert(h.Spawned[0].HardKilled, "the zombie is SIGKILLed (the game ignores SIGTERM)");
+        // Unlike Release — which reserves the netId for a reconnect — the reap leaves NOTHING behind, so the next
+        // netId-bound spawn on this seat starts clean instead of being short-circuited into sharing the zombie.
+        Assert(!h.Manager.HasClaimForNetId(1002), "the reap drops the seat's name claim");
+        Assert(!h.Manager.DescribeSeats().First(seat => seat.NetId == 1002).ProcessLive, "the seat reports no instance");
+
+        Assert(!h.Manager.ReapSeat(1002), "reaping again is a no-op");
+        Assert(!h.Manager.ReapSeat(1), "a netId outside the seat range is a no-op");
+
+        var fresh = await h.Manager.EnsureHeadlessAsync(Guid.NewGuid(), "Ann", default, targetNetId: 1002);
+        Assert(fresh == HeadlessClientManager.SlotToPort(2), "a netId-bound spawn re-takes the reaped seat");
+        Assert(h.Spawned.Count == 2, "…with a genuinely new process");
+    }
+
+    // ---- seat-cap probe vs the manager lock --------------------------------------------------------------------
+    //
+    // The max-seats probe is CouchCoopLobbyParticipation.MaxCouchSeats: a state pull that BLOCKS on a marshal to
+    // the game's main thread. The main thread itself takes this manager's lock (DescribeSeats via the screen-change
+    // session resend, Dispose at shutdown), so any entry point that evaluates the probe while holding the lock is
+    // an ABBA deadlock that freezes the whole game — which is exactly what happened on room loads with a mirror
+    // viewer connected (the scene-watcher thread held the lock waiting for the main thread, while the main thread's
+    // own resend waited for the lock). These pin the cure: while the probe is BLOCKED mid-call, another thread must
+    // still be able to enter the manager, i.e. the probe runs before the lock, never under it.
+
+    private static HeadlessClientManager BlockingProbeManager(ManualResetEventSlim probeEntered, ManualResetEventSlim release)
+        => new(
+            launcher: slot => new FakeProcess(slot, gracefulStopExits: true),
+            readinessProbe: (_, _) => Task.FromResult(true),
+            maxSeatsProbe: () =>
+            {
+                probeEntered.Set();
+                release.Wait(TimeSpan.FromSeconds(10));
+                return 3;
+            });
+
+    // Asserts that `entry` reaches the seat-cap probe WITHOUT holding the manager's lock: while the probe is
+    // parked, a lock-taking call (HasNameClaim) from another thread must complete promptly.
+    private static async Task AssertLockFreeWhileProbeBlocked(
+        Func<HeadlessClientManager, Task> entry, string label)
+    {
+        using var probeEntered = new ManualResetEventSlim();
+        using var release = new ManualResetEventSlim();
+        var manager = BlockingProbeManager(probeEntered, release);
+
+        var call = Task.Run(() => entry(manager));
+        Assert(probeEntered.Wait(TimeSpan.FromSeconds(10)), $"{label}: the call reaches the seat-cap probe");
+
+        var lockUser = Task.Run(() => manager.HasNameClaim("ann"));
+        Assert(await Task.WhenAny(lockUser, Task.Delay(TimeSpan.FromSeconds(2))) == lockUser,
+            $"{label}: the manager lock is free while the seat-cap probe runs (held = the room-load freeze)");
+
+        release.Set();
+        await call;
+    }
+
+    private static Task DescribeSeatsDoesNotHoldTheLockAcrossTheSeatCapProbe()
+        => AssertLockFreeWhileProbeBlocked(
+            m => Task.Run(() => Assert(m.DescribeSeats().Count == 3, "describe completes once the probe returns")),
+            "DescribeSeats");
+
+    private static Task EnsureHeadlessDoesNotHoldTheLockAcrossTheSeatCapProbe()
+        => AssertLockFreeWhileProbeBlocked(
+            async m => Assert(
+                await m.EnsureHeadlessAsync(Guid.NewGuid(), "Bea", default) == HeadlessClientManager.SlotToPort(2),
+                "the plain-name join completes once the probe returns"),
+            "EnsureHeadlessAsync (name-allocated)");
+
+    private static Task NetIdBoundEnsureDoesNotHoldTheLockAcrossTheSeatCapProbe()
+        => AssertLockFreeWhileProbeBlocked(
+            async m => Assert(
+                await m.EnsureHeadlessAsync(Guid.NewGuid(), "Bea", default, targetNetId: 1003)
+                    == HeadlessClientManager.SlotToPort(3),
+                "the netId-bound join completes once the probe returns"),
+            "EnsureHeadlessAsync (netId-bound)");
+
+    // WS-1: a seat is launched with NO game CLI args — everything travels in the environment. The launch contract
+    // is what makes a normally-hosted (non -fastmp) session possible, so it is asserted explicitly.
+    private static void SeatLaunchIsCommandLineFree()
+    {
+        Assert(HeadlessClientManager.SeatGameArgs == "--headless",
+            "a seat is launched with --headless ONLY: no -fastmp (which would mark the session as the local-"
+            + "multiplayer test path) and no --clientId (argv is unreliable in the embedded host)");
+    }
+
+    private static void SeatEnvironmentCarriesTheJoinContract()
+    {
+        var env = HeadlessClientManager.SeatLaunchEnvironment(slot: 3, port: 13367, netId: 1003, hostNetId: 1, hostPid: 4242);
+
+        Assert(env["COUCHCOOP_HEADLESS_CLIENT"] == "1", "the seat identifies itself as a headless couch client");
+        Assert(env["COUCHCOOP_HEADLESS_SLOT"] == "3", "the seat carries its slot");
+        Assert(env["COUCHCOOP_PREFERRED_PORT"] == "13367", "the seat carries its browser-server port");
+        Assert(env["COUCHCOOP_HOST_PID"] == "4242", "the seat carries the host pid for its crash-proof self-reaper");
+        // These three replace the old command line.
+        Assert(env["COUCHCOOP_CLIENT_ID"] == "1003",
+            "the seat's netId travels as COUCHCOOP_CLIENT_ID (re-materialized as --clientId inside the seat)");
+        Assert(env["COUCHCOOP_HOST_NETID"] == "1", "the seat is told the host's netId");
+        Assert(env["COUCHCOOP_JOIN_HOST"] == "127.0.0.1:33771",
+            "the seat is told its join target explicitly (the game's own FastMpJoin hardcodes this address)");
+    }
+
+    private static void SeatIsToldTheSteamHostsNetId()
+    {
+        // On a Steam-hosted session the host answers to its SteamID64, NOT 1. A seat that isn't told would echo
+        // every heartbeat to netId 1 and NetClientGameService.SendMessage would throw ~5x a second.
+        const ulong steamId = 76561198000000123UL;
+        var env = HeadlessClientManager.SeatLaunchEnvironment(slot: 2, port: 13357, netId: 1002, hostNetId: steamId, hostPid: 7);
+        Assert(env["COUCHCOOP_HOST_NETID"] == "76561198000000123",
+            "a Steam-hosted session hands the seat the host's real (SteamID64) netId");
+        Assert(env["COUCHCOOP_CLIENT_ID"] == "1002", "…while the seat keeps its own couch netId");
+    }
+
+    // The allocator/GC settings are TUNING, not contract, and the two must not bleed into each other: a seat
+    // launched without the tuning still joins and plays, and a profiling run overrides any of it by exporting
+    // its own value (LaunchReal only fills a key the launching environment left empty). Asserting the split
+    // keeps a future edit from parking a join-critical variable in the overridable bucket.
+    private static void SeatMemoryTuningIsSeparateFromTheJoinContract()
+    {
+        var tuning = HeadlessClientManager.SeatMemoryTuningEnvironment();
+
+        Assert(tuning["MALLOC_ARENA_MAX"] == "2",
+            "seats cap glibc thread arenas (a measured seat spread 283MB over 42 arenas, 62MB of it free slack)");
+        Assert(tuning["DOTNET_GCConserveMemory"] == "5",
+            "seats ask the CLR GC to favour a tighter heap over collection throughput");
+
+        var contract = HeadlessClientManager.SeatLaunchEnvironment(
+            slot: 3, port: 13367, netId: 1003, hostNetId: 1, hostPid: 4242);
+        foreach (var key in tuning.Keys)
+        {
+            Assert(!contract.ContainsKey(key),
+                $"{key} is tuning and must stay out of the join contract (the contract is applied unconditionally, "
+                + "the tuning only where the launching environment is silent)");
+        }
+    }
+
+    // Regression: the fill rule must run against a REAL ProcessStartInfo, not a Dictionary stand-in.
+    // ProcessStartInfo.EnvironmentVariables is typed as StringDictionary (whose indexer returns null for an
+    // absent key) but is actually a StringDictionaryWrapper forwarding to a Dictionary<string, string> — whose
+    // indexer THROWS KeyNotFoundException. A read-and-test "don't clobber" check therefore threw out of
+    // LaunchReal for the ordinary case where the variable is unset, killing seat spawning entirely; the browser
+    // saw `invalid-action-message: The given key 'MALLOC_ARENA_MAX' was not present in the dictionary`.
+    // A mock dictionary would have passed. This asserts against the real type on purpose.
+    private static void SeatMemoryTuningFillsOnlyUnsetKeys()
+    {
+        var tuning = HeadlessClientManager.SeatMemoryTuningEnvironment();
+        var (firstKey, firstDefault) = (tuning.Keys.First(), tuning.Values.First());
+
+        // 1. Every key absent — the case that used to throw.
+        var fresh = new ProcessStartInfo();
+        foreach (var key in tuning.Keys)
+        {
+            fresh.EnvironmentVariables.Remove(key);
+        }
+
+        HeadlessClientManager.ApplyMemoryTuning(fresh);
+        foreach (var (key, value) in tuning)
+        {
+            Assert(fresh.EnvironmentVariables[key] == value,
+                $"an unset {key} is filled with the seat default (and reading it must not throw)");
+        }
+
+        // 2. An inherited value wins — that export is how the tuning is A/B'd.
+        var inherited = new ProcessStartInfo();
+        inherited.EnvironmentVariables[firstKey] = "99";
+        HeadlessClientManager.ApplyMemoryTuning(inherited);
+        Assert(inherited.EnvironmentVariables[firstKey] == "99",
+            $"an inherited {firstKey} is never overwritten by the seat default ({firstDefault})");
+    }
+
+    private static void WindowsBridgeEndpointUsesNamedPipe()
+    {
+        var env = HeadlessClientManager.SpirectlBridgeEndpointEnvironment(2, isWindows: true);
+        Assert(env.TryGetValue("SPIRECTL_BRIDGE_PIPE_NAME", out var pipe) && pipe == "spirectl-bridge-slot-2",
+            "windows headless bridge uses a per-slot named pipe");
+        Assert(env.TryGetValue("SPIRECTL_BRIDGE_SOCKET_PATH", out var socket) && socket is null,
+            "windows headless bridge clears the Unix socket endpoint");
+        Assert(env.TryGetValue("SPIRECTL_BRIDGE_TCP_ADDRESS", out var tcp) && tcp is null,
+            "windows headless bridge clears the TCP endpoint");
+    }
+
+    private static void UnixBridgeEndpointUsesSocket()
+    {
+        var env = HeadlessClientManager.SpirectlBridgeEndpointEnvironment(3, isWindows: false);
+        Assert(env.TryGetValue("SPIRECTL_BRIDGE_SOCKET_PATH", out var socket) && socket == "/tmp/spirectl-bridge-slot-3.sock",
+            "unix headless bridge uses a per-slot Unix socket");
+        Assert(env.TryGetValue("SPIRECTL_BRIDGE_PIPE_NAME", out var pipe) && pipe is null,
+            "unix headless bridge clears the named pipe endpoint");
+        Assert(env.TryGetValue("SPIRECTL_BRIDGE_TCP_ADDRESS", out var tcp) && tcp is null,
+            "unix headless bridge clears the TCP endpoint");
+    }
+
+    // ---- host connectivity log: the seat channel ---------------------------------------------------------
+
+    /// <summary>Every line currently on the host connectivity panel, oldest first.</summary>
+    private static List<string> Narration()
+        => CouchCoopActivityLog.Snapshot().Select(entry => entry.Message).ToList();
+
+    private static void AssertNarration(IReadOnlyList<string> expected, string label)
+    {
+        var actual = Narration();
+        Assert(
+            actual.Count == expected.Count && actual.SequenceEqual(expected),
+            $"{label}: expected [{string.Join(" | ", expected)}] but the panel reads [{string.Join(" | ", actual)}]");
+    }
+
+    private static async Task LifecycleIsNarratedInOrder()
+    {
+        var h = new Harness();
+        var session = Guid.NewGuid();
+        await h.Manager.EnsureHeadlessAsync(session, "Ann", default);
+
+        // S4 comes BEFORE the process exists and S10 after the readiness probe: that ordering is the whole
+        // point of the panel, because the gap between them is the 20-60s a host spends wondering.
+        AssertNarration(
+            [
+                "Starting Ann's game window…",
+                "Ann's game window opened — loading (this takes a moment).",
+                "Ann's game is ready.",
+            ],
+            "a fresh join narrates launch → opened → ready");
+
+        // A second browser on the same name shares the LIVE instance: one line, and no spurious launch pair.
+        CouchCoopActivityLog.Reset();
+        await h.Manager.EnsureHeadlessAsync(Guid.NewGuid(), "Ann", default);
+        AssertNarration(["Ann is back — reconnected to their game."], "reusing a live instance narrates a reconnect only");
+
+        // Neither no-op branch of Release says anything: an unknown session, and a session whose slot a
+        // same-name reconnect has already taken over (the second browser above). Narrating either would put
+        // "Ann left" on the TV while Ann is still playing.
+        CouchCoopActivityLog.Reset();
+        h.Manager.Release(Guid.NewGuid());
+        h.Manager.Release(session);
+        AssertNarration([], "the two no-op Release branches narrate nothing");
+
+        // The real departure: the session that still owns the slot, outside a run.
+        var solo = new Harness();
+        var soloSession = Guid.NewGuid();
+        await solo.Manager.EnsureHeadlessAsync(soloSession, "Ann", default);
+        CouchCoopActivityLog.Reset();
+        solo.Manager.Release(soloSession);
+        AssertNarration(
+            ["Ann left — their game window was closed."],
+            "a lobby-time disconnect closes the window, and the line says so");
+    }
+
+    private static async Task AFailedLaunchIsNarratedForBothFailureShapes()
+    {
+        // A launcher that returns null.
+        CouchCoopActivityLog.Reset();
+        using (var silent = new HeadlessClientManager(
+            launcher: _ => null,
+            readinessProbe: (_, _) => Task.FromResult(true)))
+        {
+            Assert(await silent.EnsureHeadlessAsync(Guid.NewGuid(), "Ann", default) is null, "a null launch yields no port");
+        }
+
+        AssertNarration(
+            ["Starting Ann's game window…", "Couldn't start Ann's game window."],
+            "a null launch narrates the attempt and then the failure");
+
+        // A launcher that throws. Same sentence: the distinction is a developer's, not a player's, and the
+        // Console.Error line beside it still carries the exception.
+        CouchCoopActivityLog.Reset();
+        using (var boom = new HeadlessClientManager(
+            launcher: _ => throw new KeyNotFoundException("boom"),
+            readinessProbe: (_, _) => Task.FromResult(true)))
+        {
+            var threw = false;
+            try
+            {
+                await boom.EnsureHeadlessAsync(Guid.NewGuid(), "Ann", default);
+            }
+            catch (KeyNotFoundException)
+            {
+                threw = true;
+            }
+
+            Assert(threw, "a throwing launcher still propagates (the join handler turns it into a rejection)");
+        }
+
+        AssertNarration(
+            ["Starting Ann's game window…", "Couldn't start Ann's game window."],
+            "a throwing launch narrates identically — and, crucially, is narrated at all despite unwinding");
+    }
+
+    private static async Task AnEarlyExitIsNarratedWithTheClaimedName()
+    {
+        // The process starts and dies before it ever serves: WaitForReadyAsync sees HasExited on its first
+        // pass. The name must be read BEFORE the claim is cleared on the next line, or every host sees
+        // "A player's game window closed while starting up."
+        CouchCoopActivityLog.Reset();
+        using var manager = new HeadlessClientManager(
+            launcher: slot =>
+            {
+                var process = new FakeProcess(slot, gracefulStopExits: true);
+                process.ForceExit();
+                return process;
+            },
+            readinessProbe: (_, _) => Task.FromResult(false));
+
+        Assert(await manager.EnsureHeadlessAsync(Guid.NewGuid(), "Ann", default) is null, "a stillborn instance yields no port");
+        AssertNarration(
+            [
+                "Starting Ann's game window…",
+                "Ann's game window opened — loading (this takes a moment).",
+                "Ann's game window closed while starting up.",
+            ],
+            "an early exit is named, not anonymous");
+    }
+
+    private static async Task AReconnectRespawnIsNotNarratedAsAReconnect()
+    {
+        // The reconnect RESPAWN path deliberately says nothing of its own: "Starting Ann's game window…"
+        // follows immediately, and a "reconnected" line in front of it would double every relaunch. What it
+        // DOES narrate first is the dead handle it reaped (S15).
+        var h = new Harness();
+        await h.Manager.EnsureHeadlessAsync(Guid.NewGuid(), "Ann", default);
+        h.Spawned[0].ForceExit();
+
+        CouchCoopActivityLog.Reset();
+        await h.Manager.EnsureHeadlessAsync(Guid.NewGuid(), "Ann", default);
+        AssertNarration(
+            [
+                "Ann's game window is no longer running.",
+                "Starting Ann's game window…",
+                "Ann's game window opened — loading (this takes a moment).",
+                "Ann's game is ready.",
+            ],
+            "a respawn narrates the dead-orphan reap then a plain relaunch — never a 'reconnected' line");
+    }
+
+    private static async Task ADetachAndRunEndReapAreNarratedSeparately()
+    {
+        var h = new Harness();
+        var session = Guid.NewGuid();
+        await h.Manager.EnsureHeadlessAsync(session, "Ann", default);
+
+        CouchCoopActivityLog.Reset();
+        h.Manager.MarkDetached(session);
+        AssertNarration(
+            ["Ann's phone disconnected — keeping their game open so they can rejoin."],
+            "a mid-run detach must SAY the window is kept, or a host reads it as a player lost");
+
+        CouchCoopActivityLog.Reset();
+        h.Manager.ReapDetachedSlots();
+        AssertNarration(["The run ended — closed Ann's game window."], "the run-end reap is its own line");
+
+        // Reaping again has nothing to say.
+        CouchCoopActivityLog.Reset();
+        h.Manager.ReapDetachedSlots();
+        AssertNarration([], "a second run-end reap narrates nothing");
+    }
+
+    private static async Task AStuckReapIsNarrated()
+    {
+        var h = new Harness();
+        await h.Manager.EnsureHeadlessAsync(Guid.NewGuid(), "Ann", default);
+
+        CouchCoopActivityLog.Reset();
+        Assert(h.Manager.ReapSeat(1002), "the zombie is reaped");
+        AssertNarration(
+            ["Ann's game stopped responding — closing it so they can start again."],
+            "the stuck reap names the remedy, since the seat becomes retryable the moment it completes");
+
+        CouchCoopActivityLog.Reset();
+        Assert(!h.Manager.ReapSeat(1002), "reaping again is a no-op");
+        AssertNarration([], "…and a no-op reap says nothing");
+    }
+
+    private static async Task APoolFullRefusalNamesThePlayer()
+    {
+        var h = new Harness();
+        await h.Manager.EnsureHeadlessAsync(Guid.NewGuid(), "A", default);
+        await h.Manager.EnsureHeadlessAsync(Guid.NewGuid(), "B", default);
+        await h.Manager.EnsureHeadlessAsync(Guid.NewGuid(), "C", default);
+
+        CouchCoopActivityLog.Reset();
+        Assert(await h.Manager.EnsureHeadlessAsync(Guid.NewGuid(), "Dee", default) is null, "the fourth player is refused");
+        AssertNarration(
+            ["Dee couldn't join — every player slot is in use."],
+            "the pool-full refusal is the one a host can act on, so it names who was turned away");
+    }
+
+    private static async Task ShutdownIsNarratedOnce()
+    {
+        var h = new Harness();
+        await h.Manager.EnsureHeadlessAsync(Guid.NewGuid(), "Ann", default);
+        await h.Manager.EnsureHeadlessAsync(Guid.NewGuid(), "Bob", default);
+
+        CouchCoopActivityLog.Reset();
+        h.Manager.Dispose();
+        AssertNarration(
+            ["Closing Couch Co-Op — shutting down all player game windows."],
+            "shutdown is ONE line however many windows are open");
+
+        // A manager with nothing running has nothing to announce.
+        var empty = new Harness();
+        CouchCoopActivityLog.Reset();
+        empty.Manager.Dispose();
+        AssertNarration([], "disposing a manager that never spawned anything narrates nothing");
+    }
+
+    private static void Assert(bool condition, string label)
+    {
+        if (!condition)
+        {
+            throw new Exception($"HeadlessClientManagerTests failed: {label}.");
+        }
+    }
+}

@@ -1,0 +1,34 @@
+schemaVersion: spirectl.fixture/v0
+name: touch-live-shop-removal
+description: >-
+  Deterministic shop for H17 in scripts/validate-touch-live.mjs. The card-removal service starts unused,
+  the player can afford it, and the authored deck leaves several cards eligible for removal. H17 reloads
+  this fixture before every irreversible route and never confirms the game's deck-selection dialog.
+run:
+  seed: fixture-touch-live-shop-removal
+  actFloor: 5
+  players:
+    - id: "p:1"
+      characterId: IRONCLAD
+      creature: { currentHp: 61, maxHp: 80 }
+      gold: 999
+      deck:
+        replace: true
+        cards:
+          - { modelId: STRIKE_IRONCLAD }
+          - { modelId: STRIKE_IRONCLAD }
+          - { modelId: DEFEND_IRONCLAD }
+          - { modelId: DEFEND_IRONCLAD }
+          - { modelId: BASH }
+          - { modelId: ANGER }
+  currentRoom:
+    shop:
+      inventory:
+        characterCardEntries:
+          - card: { modelId: BASH }
+        relicEntries:
+          - modelId: ANCHOR
+        potionEntries:
+          - modelId: FIRE_POTION
+        cardRemovalEntry:
+          used: false

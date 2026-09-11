@@ -1,0 +1,3 @@
+<Project>
+  <!-- Intentionally empty. Shields godot-client from the repo-root Directory.Build.props (Sts2AssembliesDir machinery): MSBuild uses only the NEAREST Directory.Build.props up the tree. Do not add game/spirectl wiring here. -->
+</Project>
