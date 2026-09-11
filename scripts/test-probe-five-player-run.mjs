@@ -8,9 +8,10 @@
 // precedence chain, the live-QA resource set, the seat port/slot algebra, the mod setup gate,
 // character assignment (including the "re-selecting your own character is refused" trap and the
 // five-players/four-characters case), in-run aliveness derivation, the log-signature scanner, the
-// whole evidence pipeline end to end on real temp files, result.json assembly, and bounded
-// concurrency. Plus the wiring checks: the probe still parses, the scenario parses the same way the
-// existing three do, and its hook name resolves to a real hook whose command exists.
+// whole evidence pipeline end to end on real temp files, the evidence self-check, result.json
+// assembly, and bounded concurrency. Plus the wiring checks: the probe still parses, the scenario
+// parses the same way the existing three do, and its hook name resolves to a real hook whose command
+// exists.
 //
 // Log fixtures are SYNTHESIZED here rather than committed: the signature strings themselves are the
 // contract, a captured game log is not ours to commit.
@@ -35,7 +36,7 @@ import {
   slotForPort, seatLogPathFor, seatBridgeSocketFor, seatNameFor,
   evaluateModGate, assignCharacters, runPlayerAliveness,
   scanLogSignatures, splitLogLines, buildResult, mapWithConcurrency, checkSeatRecords,
-  captureLogBaselines, archiveEvidence, waitForLogSignatures
+  captureLogBaselines, archiveEvidence, waitForLogSignatures, checkEvidenceConsistency
 } from "./probe-five-player-run.mjs";
 
 const REPO_ROOT = resolve(dirname(fileURLToPath(import.meta.url)), "..");
@@ -514,6 +515,27 @@ test("splitLogLines does not invent a line for the trailing newline", () => {
   assert.deepEqual(splitLogLines(null), []);
 });
 
+// The zero-hit guard. Every other scanner assertion here reads a hit that was found and checks what
+// was said ABOUT it, so a scanner that matched nothing would fail them with "cannot read properties of
+// undefined" -- true, but it does not name the failure. This one names it, and it covers the window
+// logic as well: `baselineLines` DATES a hit, it must never filter one, so a line that plainly
+// contains a pattern has to be found at every baseline including 0, one past the hit, and past EOF.
+// A scan that returns zero here is reporting "this never happened" about a line that is right there,
+// which is the one failure mode signals.json cannot show on its own.
+test("scanLogSignatures finds a plainly-matching line at every baseline and only dates it", () => {
+  // Mid-line, with a real log's prefix and tail around it: the pattern is a substring, never a prefix.
+  const text = "boot\n[INFO] Embarking on a multiplayer run. Players: Player 1, SILENT. Seed: S3HDMF23VD\ndone\n";
+  for (const [baselineLines, expectedPhase] of [[null, "unknown"], [0, "post-embark"], [1, "post-embark"], [2, "pre-embark"], [999, "pre-embark"]]) {
+    const signals = scanLogSignatures([{ label: "host-stdout", path: "/tmp/host.stdout.log", role: "host-stdout", text, baselineLines }]);
+    const summary = signals.bySignature.embark;
+    assert.equal(summary.total, 1, `baseline ${baselineLines} lost the embark line entirely: ${JSON.stringify(summary)}`);
+    assert.deepEqual(summary.byFile, { "host-stdout": 1 }, `baseline ${baselineLines}`);
+    assert.equal(summary.first.lineNumber, 2, `baseline ${baselineLines}`);
+    assert.equal(signals.files[0].hits.length, 1, `baseline ${baselineLines}`);
+    assert.equal(signals.files[0].hits[0].phase, expectedPhase, `baseline ${baselineLines} dated the hit wrong`);
+  }
+});
+
 test("scanLogSignatures survives a missing log and an unknown baseline", () => {
   const signals = scanLogSignatures([
     { label: "host-stderr", role: "host-stderr", text: "", baselineLines: null },
@@ -612,6 +634,13 @@ test("captureLogBaselines + archiveEvidence produce a signals.json that dates th
 
     const signals = JSON.parse(readFileSync(archived.signalsPath, "utf8"));
     assert.equal(signals.schema, SIGNALS_SCHEMA);
+    // Counts first, and through the REAL path: these lines are in the files this pipeline just copied,
+    // so a scan that reports zero for them has nothing to do with what the game did.
+    assert.equal(signals.bySignature.embark.total, 1, `the embark line is in the archived log, the scan found none: ${JSON.stringify(signals.bySignature.embark)}`);
+    assert.equal(signals.bySignature.packetSizePatch.total, 1, JSON.stringify(signals.bySignature.packetSizePatch));
+    assert.equal(signals.bySignature.disconnect.total, 1, JSON.stringify(signals.bySignature.disconnect));
+    // ...and the archived copy has to be a faithful one, or the line numbers point into nothing.
+    assert.match(readFileSync(join(targets.outDir, "logs/host-stdout.log"), "utf8"), /Embarking on a multiplayer run\. Players: 3/);
     // The patch line was there before the ready step; the embark and the disconnect were not.
     const host = signals.files.find(file => file.label === "host-stdout");
     assert.equal(host.hits.find(hit => hit.signature === "packetSizePatch").phase, "pre-embark");
@@ -634,6 +663,47 @@ test("captureLogBaselines + archiveEvidence produce a signals.json that dates th
 });
 
 // =================================================================================================
+// evidence -- the self-check that says when the archive cannot back the run up
+// =================================================================================================
+
+const signalsOver = text => scanLogSignatures([
+  { label: "host-stdout", path: "/tmp/host.stdout.log", role: "host-stdout", text, baselineLines: 1 }
+]);
+const EMBARKED = { hasRun: true, runPlayers: 5, settled: true };
+
+test("checkEvidenceConsistency stays quiet when the archive corroborates the embark", () => {
+  const signals = signalsOver("boot\n[INFO] Embarking on a multiplayer run. Players: 5\n");
+  assert.deepEqual(checkEvidenceConsistency({ embark: EMBARKED, signals }), []);
+});
+
+// The whole point: a run that reached leg 5 logged that line by definition, so zero hits means the
+// evidence pipeline is scanning something other than this run's logs -- and every other zero in the
+// same file is then worthless. Nothing else in the probe would notice.
+test("checkEvidenceConsistency calls out an embarked run whose archive shows no embark", () => {
+  const signals = signalsOver("boot\nnothing that matches anything\nstill nothing\n");
+  const warnings = checkEvidenceConsistency({ embark: EMBARKED, signals });
+  assert.equal(warnings.length, 1, JSON.stringify(warnings));
+  assert.match(warnings[0], /Embarking on a multiplayer run\. Players:/, warnings[0]);
+  assert.match(warnings[0], /3 scanned lines/, "the reader needs to know the scan DID read a file");
+  assert.match(warnings[0], /signals\.archive/, "and where to look next");
+});
+
+test("checkEvidenceConsistency does not warn about a run that never embarked", () => {
+  const signals = signalsOver("boot\nnothing that matches anything\n");
+  // Leg 4 failing, or the embark timing out, is a leg's verdict to report -- not an evidence gap.
+  assert.deepEqual(checkEvidenceConsistency({ embark: { hasRun: false, runPlayers: 0 }, signals }), []);
+  assert.deepEqual(checkEvidenceConsistency({ embark: null, signals }), []);
+  assert.deepEqual(checkEvidenceConsistency({}), []);
+  assert.deepEqual(checkEvidenceConsistency(), []);
+});
+
+test("checkEvidenceConsistency treats a missing signals.json as the loudest gap of all", () => {
+  const warnings = checkEvidenceConsistency({ embark: EMBARKED, signals: null });
+  assert.equal(warnings.length, 1, JSON.stringify(warnings));
+  assert.match(warnings[0], /NO log evidence/, warnings[0]);
+});
+
+// =================================================================================================
 // result assembly
 // =================================================================================================
 
@@ -652,6 +722,28 @@ test("buildResult reports ok with every leg passing", () => {
   assert.equal(result.failingLeg, null);
   assert.equal(result.control, false);
   assert.equal(result.target.browserPort, 13400);
+});
+
+test("buildResult surfaces the evidence warnings without failing an otherwise-good run", () => {
+  const warned = buildResult({
+    legs: [{ n: 5, name: "run-roster", verdict: "pass" }],
+    targets: targetsFixture(),
+    args: parseProbeArgs([]),
+    startedAt: "a",
+    finishedAt: "b",
+    evidence: { warnings: ["the run embarked but the archive shows no embark line"] }
+  });
+  assert.equal(warned.ok, true, "a thin archive is a loud warning, never a failed leg");
+  assert.deepEqual(warned.warnings, ["the run embarked but the archive shows no embark line"]);
+
+  const quiet = buildResult({
+    legs: [{ n: 5, name: "run-roster", verdict: "pass" }],
+    targets: targetsFixture(),
+    args: parseProbeArgs([]),
+    startedAt: "a",
+    finishedAt: "b"
+  });
+  assert.deepEqual(quiet.warnings, [], "always an array, so a reader can trust `warnings.length`");
 });
 
 test("buildResult names the FIRST failing leg and carries its evidence", () => {

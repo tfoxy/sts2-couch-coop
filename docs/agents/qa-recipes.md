@@ -675,6 +675,12 @@ works. Things worth knowing before reading its output:
   LobbyBeginRunMessage`, `disconnected, reason:`, `ConnectionFailureReason`, `NetError`, and (seat logs only)
   `NullReferenceException`. `godot.log` has **no per-line timestamps**, so ordering is answered by line order
   within a file plus a `phase` stamp relative to a line-count baseline taken before the ready step.
+- **A zero in `bySignature` is two different claims** — "that never happened" and "the scan never saw the
+  file" — so the probe cross-checks the one pairing that can tell them apart: a run that embarked logs
+  `Embarking on a multiplayer run. Players:` by definition, and zero hits for it after `state.run` appeared
+  means the archive is reading logs this run did not write (a stale `hostStdoutPath`/`userDir`) or the wording
+  moved. That lands as a loud `warnings[]` entry in `result.json` and on stderr — never as a failed leg. An
+  empty `warnings` is what makes the other zeros worth reading.
 - **There is no `start-run` verb.** Readying every seat is what embarks.
 - **`run.players[]` has no alive/isDead field** — aliveness is derived from `creature.currentHp > 0`, and a
   null creature is reported `unknown`, never assumed alive.
