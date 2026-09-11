@@ -128,22 +128,26 @@ else
   gh release download "$tag" --repo tfoxy/sts2-couch-coop \
     --pattern "$archive_name" \
     --pattern "couchcoop-${tag}.contents.json" \
+    --pattern "couchcoop-${tag}.build-info.json" \
     --pattern "couchcoop-${tag}.SHA256SUMS" \
     --dir "$stage_dir"
   archive_path="$stage_dir/$archive_name"
 fi
 
 contents_name="couchcoop-${tag}.contents.json"
+build_info_name="couchcoop-${tag}.build-info.json"
 checksums_name="couchcoop-${tag}.SHA256SUMS"
 if [[ -n "$dist_dir" ]]; then
   contents_path="$dist_dir/$contents_name"
+  build_info_path="$dist_dir/$build_info_name"
   checksums_path="$dist_dir/$checksums_name"
 else
   contents_path="$stage_dir/$contents_name"
+  build_info_path="$stage_dir/$build_info_name"
   checksums_path="$stage_dir/$checksums_name"
 fi
 
-for asset in "$archive_path" "$contents_path" "$checksums_path"; do
+for asset in "$archive_path" "$contents_path" "$build_info_path" "$checksums_path"; do
   [[ -f "$asset" ]] || {
     echo "release is missing a required asset: $asset" >&2
     exit 1

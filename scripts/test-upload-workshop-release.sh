@@ -48,7 +48,8 @@ while IFS= read -r -d '' file; do
     '{path: $path, size: $size, sha256: $sha256}' >> "$contents_tmp"
 done < <(find "$payload" -type f -print0 | sort -z)
 jq -s '{schemaVersion: "couchcoop-release-contents/v1", files: .}' "$contents_tmp" > "$assets/couchcoop-v0.1.0.contents.json"
-(cd "$assets" && sha256sum couchcoop-v0.1.0.zip couchcoop-v0.1.0.contents.json > couchcoop-v0.1.0.SHA256SUMS)
+jq -n '{schemaVersion: "couchcoop-release-build-info/v1", version: "0.1.0"}' > "$assets/couchcoop-v0.1.0.build-info.json"
+(cd "$assets" && sha256sum couchcoop-v0.1.0.zip couchcoop-v0.1.0.contents.json couchcoop-v0.1.0.build-info.json > couchcoop-v0.1.0.SHA256SUMS)
 
 uploader_dir="$fixture/uploader"
 workspace="$uploader_dir/Workspace"
