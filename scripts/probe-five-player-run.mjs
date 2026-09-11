@@ -608,6 +608,49 @@ export function scanLogSignatures(files, { capturedAt = new Date().toISOString()
   };
 }
 
+/**
+ * Cross-checks the archive against what the probe itself watched happen.
+ *
+ * Every zero in `bySignature` means one of two very different things -- "that never happened" or "the
+ * scan never saw the file it should have" -- and signals.json cannot tell those apart on its own.
+ * One pairing can: waitForEmbark() watches `state.run` appear, and a run that began logs
+ * "Embarking on a multiplayer run. Players:" by definition. So an embarked run with zero embark hits
+ * means the archive is reading logs this run did not write (a stale hostStdoutPath or userDir -- a
+ * worktree's own `.sts2/` is empty, which is exactly how that goes wrong) or the game's wording has
+ * moved. Either way every OTHER zero in the file is worthless too, and nothing else in the probe would
+ * say so: an all-zero signals.json and a quiet run look identical in the artifact.
+ *
+ * Warnings, never a verdict. A run whose legs all passed is still a good run, and a gap in its evidence
+ * must not be laundered into a leg failure -- the caller prints these and puts them in result.json.
+ */
+export function checkEvidenceConsistency({ embark = null, signals = null } = {}) {
+  const warnings = [];
+  // Nothing to be inconsistent WITH until the run demonstrably began: a probe that never got past
+  // leg 4 is expected to have no embark line anywhere.
+  if (embark?.hasRun !== true) return warnings;
+
+  if (!signals) {
+    warnings.push(
+      "the run embarked but no signals.json was written, so this run has NO log evidence behind it "
+      + "-- archiveEvidence() failed; its reason is on stderr as `evidence archive failed`"
+    );
+    return warnings;
+  }
+
+  const files = Array.isArray(signals.files) ? signals.files : [];
+  const scannedLines = files.reduce((total, file) => total + (Number.isInteger(file?.lines) ? file.lines : 0), 0);
+  if ((signals.bySignature?.embark?.total ?? 0) === 0) {
+    const pattern = LOG_SIGNATURES.find(signature => signature.id === "embark").pattern;
+    warnings.push(
+      `the run embarked (state.run carried ${embark.runPlayers ?? "?"} player(s)) but "${pattern}" is in NONE `
+      + `of the ${files.length} archived log(s), across ${scannedLines} scanned lines. A run that began logs `
+      + "that line, so the archive is reading the wrong files or the game's wording has moved: every other "
+      + "zero in bySignature is untrustworthy until signals.archive[].sourcePath and .mtime are checked."
+    );
+  }
+  return warnings;
+}
+
 /** Assembles result.json. `ok` is false as soon as any leg failed; the FIRST failure is the headline. */
 export function buildResult({ legs, targets, args, startedAt, finishedAt, evidence = {}, error = null }) {
   const failing = legs.find(leg => leg.verdict === "fail") ?? null;
@@ -616,6 +659,10 @@ export function buildResult({ legs, targets, args, startedAt, finishedAt, eviden
     ok: failing === null && error === null,
     failingLeg: failing ? { n: failing.n, name: failing.name, detail: failing.detail, evidence: failing.evidence ?? [] } : null,
     error: error ? { message: error.message, kind: error.kind ?? "probe" } : null,
+    // checkEvidenceConsistency()'s findings, at the top level because they qualify everything below
+    // them: a run can pass every leg and still have handed back an archive that proves none of it.
+    // They never move `ok` -- thin evidence is not a failed leg.
+    warnings: Array.isArray(evidence?.warnings) ? evidence.warnings : [],
     players: targets.players,
     seats: targets.seats,
     control: targets.players === 4,
@@ -1046,6 +1093,11 @@ async function main(argv) {
     evidence.embark = embark;
     const archived = await archiveEvidence(targets, seats, baselines, evidence);
     evidence.signalsPath = archived.signalsPath;
+    // A scan is worth exactly what its inputs are. Say so loudly, here and in result.json, when the
+    // archive cannot corroborate an embark this probe watched happen -- otherwise a signals.json full
+    // of zeros reads as "the game was quiet" when it means "we scanned the wrong files".
+    evidence.warnings = checkEvidenceConsistency({ embark, signals: archived.signals });
+    for (const warning of evidence.warnings) note(`WARNING: ${warning}`);
     if (readyLeg.verdict === "fail") throw new StopProbe();
 
     // -------------------------------------------------------------------------------------------
@@ -1125,9 +1177,18 @@ async function main(argv) {
       ? { ...result.failingLeg, detail: headline(result.failingLeg.detail) }
       : null,
     legs: result.legs.map(entry => ({ n: entry.n, name: entry.name, verdict: entry.verdict, detail: headline(entry.detail) })),
+    // Carried on stdout too: a warning nobody reads is not a warning, and the scenario runner only
+    // ever sees this object.
+    warnings: result.warnings,
     resultPath,
     signalsPath: evidence.signalsPath
   };
+  // Repeated at the tail on purpose: the first print was several legs and minutes ago, and this is
+  // where a human looks after a run that otherwise reported nothing wrong.
+  if (result.warnings.length > 0) {
+    note(`${result.warnings.length} evidence warning(s) -- result.json "warnings" has the full text`);
+  }
+
   // stdout carries exactly one JSON object: the scenario runner parses it, and a human reading a
   // failed run gets the failing leg and its evidence paths from the same place.
   console.log(JSON.stringify({ output, artifacts }));
