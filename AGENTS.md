@@ -14,6 +14,29 @@ This is the clean v2 rewrite of the Slay the Spire 2 Couch Co-op mod.
 - Project memory is `.agents/memory/MEMORY.md` (in a worktree, a symlink to the main checkout's store). Read that
   index before non-trivial work; record what you learn with the `project-memory` skill.
 
+## Commits
+
+Full rules, and the release runbook, in [docs/commit-and-release.md](docs/commit-and-release.md).
+
+- **Commit your finished work** — don't leave it uncommitted or ask whether to. Never `git push`, and
+  never create a tag: both are the maintainer's call.
+- On `main`, `scripts/githooks/commit-msg` enforces the format. **Feature branches are unchecked**,
+  so commit as freely as you like on a round branch; `main` gets one squash commit per change.
+
+  ```
+  type(scope)!: imperative subject, <=72 chars, no trailing period
+
+  Body: what changed and why, wrapped at <=100. Optional.
+
+  Changelog: one sentence a player would read — feat/fix/perf only, or `none`
+  ```
+
+- Types: `feat fix perf refactor docs test build ci chore`. Only the first three need a `Changelog:`
+  trailer, and internal work is almost always one of the other six. Retiring a flag or an experiment
+  is `refactor`, not `cleanup`.
+- `git log priv` is a **frozen pre-publication archive** with an unrelated history and an older mixed
+  style. Never copy its conventions, and never commit to it.
+
 ## Verify What You Touched
 
 Run only the suite(s) covering the files you changed; a coordinator runs full suites once at merge. The full table

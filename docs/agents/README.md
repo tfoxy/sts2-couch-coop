@@ -22,6 +22,7 @@ that answers your question**, not the whole file.
 | changing browser UI copy, locale selection, manifests, or offline-page text | [../browser-localization.md](../browser-localization.md) | — |
 | changing native in-game CouchCoop strings | [../native-localization.md](../native-localization.md) | — |
 | changing a browser-server boundary, resource route, cache, or network limit | [../security.md](../security.md) | — |
+| writing a commit message, merging a branch to `main`, or cutting a release | [../commit-and-release.md](../commit-and-release.md) | `release-notes` skill |
 
 ## Subagents and skills
 
@@ -46,6 +47,7 @@ the gitignored `/.mcp.json` at the main checkout's copy, so both CLIs get the sa
 | `couch-deploy` | the only working deploy path, and proving the install is yours |
 | `couch-worktree` | round worktree setup, with the six gotchas it exists to prevent |
 | `project-memory` | reading and writing `.agents/memory`, the durable store both CLIs share |
+| `release-notes` | turning `Changelog:` trailers into the player-facing `CHANGELOG.md` section |
 
 The installer also links the **sibling-repo** skills, but only when that sibling is checked out next to this
 repo: `spirectl` → [`../../../spirectl/skills/spirectl`](../../../spirectl/skills/spirectl) and `godot-qa` →
@@ -63,6 +65,11 @@ either. Its two-sided self-test is `scripts/test-claude-guard.sh`, which asserts
 
 Codex trusts a hook by **content hash**: run `/hooks` once in its TUI to trust the guard, and again after every
 edit to `scripts/claude-guard-bash.sh`, or it silently will not fire.
+
+The installer also points `core.hooksPath` at `scripts/githooks/`, whose `commit-msg` enforces the commit
+convention ([../commit-and-release.md](../commit-and-release.md)) — on `main` only, so a round branch is never
+blocked. That one is a *git* hook, not a CLI hook: it applies to every tool that commits here, and to every
+worktree, because the configured path is relative. Self-test: `scripts/test-commit-msg-hook.sh`.
 
 ## Sibling repos
 
