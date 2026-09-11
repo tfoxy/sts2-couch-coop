@@ -1,0 +1,35 @@
+name: five-player-run
+description: >-
+  Reproduces the five-player run defect: with the Workshop mod "Unlimited: No Player Limit"
+  (sts2unlimited) raising the lobby cap, a CouchCoop session of host + 4 browser seats fills the lobby,
+  every seat readies, the run begins -- and the in-run multiplayer player list comes back with the host
+  alone. Drives the real ENet join path (four Playwright seats, four headless instances), archives the
+  host and per-seat logs around embark, and scans them for the signatures that discriminate between the
+  candidate root causes. Leg 5 is the gate and is EXPECTED TO FAIL at five players today; run the probe
+  directly with `--players 4` for the control, which must pass on unmodded stock.
+
+steps:
+  # Builds via game.deployBuildCommand into <repo>/dist/couchcoop, deploys that into the game's mods
+  # dir, then restarts and verifies the bridge -- so the probe always runs against the current tree.
+  # This does NOT install the Workshop mod: leg 0 gates on sts2unlimited being enabled AND active and
+  # prints the fix-up if it is not.
+  - game.deploy:
+      path: ../../src/CouchCoop.Mod.Loader
+      build: true
+      restart: true
+      verify: true
+      timeoutMs: 120000
+
+  # The restarted game keeps finishing its own boot flow (logo / FTUE / leaderboard) for several
+  # seconds, and that flow pushes the main menu -- popping any lobby a fixture created in the
+  # meantime. Let it settle before the probe starts driving screens.
+  - dev.delay:
+      ms: 20000
+
+  # `input` is delivered to the hook on stdin; CLI flags in sts2.hooks.yaml would win over it. Point
+  # the probe at a bring-up record by exporting COUCHCOOP_FIVE_PLAYER_RECORD before running the
+  # scenario -- the path is machine-specific and must not be committed here.
+  - project.hook:
+      name: couchcoop.five-player-run-probe
+      input:
+        players: 5
