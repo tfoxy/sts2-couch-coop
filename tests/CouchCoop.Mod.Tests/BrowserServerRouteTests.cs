@@ -72,6 +72,20 @@ if (args is [ManagedCacheProcessTests.ChildVerb, ..])
     Environment.Exit(await ManagedCacheProcessTests.RunChildAsync(args));
 }
 
+// `dotnet run --project tests/CouchCoop.Mod.Tests -- host-guards` runs the WS-1 hosting guards ALONE: the patch
+// TARGET resolution, the composite host's peer routing, and the Harmony ordering + client-cap rules that decide
+// how many players can actually connect. They are pure — no IO, no Harmony install, no live game, no port — which
+// makes them the one slice of this suite that is safe to run on its own, and the way to verify a hosting change
+// when something else in the full run is unhappy. They also run in the normal sequence below.
+if (args is ["host-guards", ..])
+{
+    NetTransportPatchTargetsTests.Run();
+    HostPeerRoutingTests.Run();
+    HostTransportCapacityTests.Run();
+    Console.WriteLine("host guards: ok");
+    return;
+}
+
 // Point the asset binary cache at a throwaway temp root BEFORE any browser-server / host-UI test constructs a
 // SpirectlAssetBinaryCache. Without this, the cache's DefaultRoot() falls through to TryResolveGameDataDir() ->
 // Godot.ProjectSettings.GlobalizePath("user://..."), whose static cctor calls native GodotSharp
@@ -100,6 +114,10 @@ DualNetHostShapeTests.Run();
 SavedRunEnetHostShapeTests.Run();
 SavedRunLoadLobbyIdentityTests.Run();
 HostPeerRoutingTests.Run();
+// WS-1 host capacity: our StartSteamHost prefix REPLACES the method, so it has to be the last prefix or it cuts
+// a multiplayer limit mod's cap raise out of the host start — pinned against Harmony's own patch comparer, since
+// the StartSteamHost path needs a real Steam session and is not reachable from automated QA.
+HostTransportCapacityTests.Run();
 // WS-1: couchcoop.json must keep affects_gameplay=false or JoinFlow's mod-list comparison locks out every
 // vanilla Steam friend — silently, since nothing else in the build would fail.
 ModManifestGameplayRelevanceTests.Run();

@@ -38,6 +38,18 @@ internal static class CouchCoopHostTransportPatch
     internal static MethodInfo? NetIdGetter { get; } =
         AccessTools.PropertyGetter(typeof(NetHostGameService), nameof(NetHostGameService.NetId));
 
+    /// <summary>
+    /// Where every patch here sits in Harmony's ordering unless it asks for something else: the default, which is
+    /// also what Harmony gives a <c>HarmonyMethod</c> whose priority was never set.
+    /// </summary>
+    internal const int DefaultPatchPriority = Priority.Normal;
+
+    /// <summary>
+    /// The ONE ordering that is load-bearing — see the reasoning at the <c>StartSteamHost</c> patch site. Named
+    /// here so the regression guard test can assert it, and assert that nothing else moved off the default.
+    /// </summary>
+    internal const int StartSteamHostPrefixPriority = Priority.Last;
+
     internal static void Apply()
     {
         lock (_sync)
@@ -52,6 +64,23 @@ internal static class CouchCoopHostTransportPatch
             // place the composite-host decision fits.
             // Guarded on the reflection seams: if either is missing we leave the stock method alone rather than
             // hand the game a half-built host.
+            //
+            // Priority.Last, because this prefix REPLACES the implementation rather than adjusting an argument.
+            // Harmony runs prefixes in priority order and stops running the ones that could still affect the
+            // original the moment any prefix returns false — which ours always does. The multiplayer limit mods
+            // are exactly the shape that gets cut off: they raise the client cap by rewriting the maxClients
+            // argument from a prefix on this same method, and none of them claims an ordering. At the default
+            // priority Harmony falls back to registration order, couchcoop loads before the Workshop mods, and so
+            // OUR prefix ran first and theirs never ran at all — the listener was built for the stock cap while
+            // the lobby, created after this call, went on to admit far more. Registering last means we are handed
+            // the argument after everyone else has finished adjusting it, and we size the transport from the value
+            // they produced.
+            //
+            // The trade is that a mod returning false AHEAD of us leaves hosting stock: no composite host, no
+            // couch seats beside a Steam lobby, no Steam-offline fallback. That is the same degradation this patch
+            // already accepts when SeamsResolve is false, and it is the right one — a mod that has claimed this
+            // method outright owns the host flow, and half-installing ourselves over it would be worse than
+            // standing down.
             if (CouchCoopHostTransport.SeamsResolve)
             {
                 Patch(
@@ -59,7 +88,8 @@ internal static class CouchCoopHostTransportPatch
                     typeof(NetHostGameService),
                     "StartSteamHost",
                     [typeof(int)],
-                    prefix: nameof(PrefixStartSteamHost));
+                    prefix: nameof(PrefixStartSteamHost),
+                    prefixPriority: StartSteamHostPrefixPriority);
             }
             else
             {
@@ -109,8 +139,11 @@ internal static class CouchCoopHostTransportPatch
     // Postfix on NetHostGameService.StartENetHost(ushort, int): a plain ENet host is running (the stock -fastmp
     // path, the debug multiplayer screen, or a Steam-uninitialized launch). Host netId is 1 and couch seats can
     // join — unless the port bind failed, which the game reports as a non-null NetErrorInfo.
-    private static void PostfixStartENetHost(NetErrorInfo? __result)
-        => CouchCoopHostTransport.NoteEnetHostStarted(failed: __result.HasValue);
+    // maxClients is taken so this path can state the cap the listener was actually built for, exactly as the
+    // host-start path does. A POSTFIX sees the final value, after any limit mod's prefix rewrote it, so the one
+    // log line answers "how many clients could connect?" on the transport we did not build ourselves either.
+    private static void PostfixStartENetHost(int maxClients, NetErrorInfo? __result)
+        => CouchCoopHostTransport.NoteEnetHostStarted(failed: __result.HasValue, maxClients);
 
     // Postfix on NetHostGameService.Disconnect(NetError, bool): the hosting session is over. Clearing here (rather
     // than only on the next start) matters because the browser server keeps reading these statics — a stale
@@ -143,7 +176,9 @@ internal static class CouchCoopHostTransportPatch
 
         try
         {
-            harmony.Patch(NetIdGetter, prefix: new HarmonyMethod(Local(nameof(PrefixGetNetId))));
+            // Default ordering on purpose: this prefix only reports an identity for one specific service, so it
+            // neither replaces anything nor competes with another mod for the argument.
+            harmony.Patch(NetIdGetter, prefix: new HarmonyMethod(Local(nameof(PrefixGetNetId)), DefaultPatchPriority));
         }
         catch (Exception exception)
         {
@@ -153,14 +188,19 @@ internal static class CouchCoopHostTransportPatch
         }
     }
 
-    /// <summary>Installs one patch; returns whether it is actually live.</summary>
+    /// <summary>
+    /// Installs one patch; returns whether it is actually live. <paramref name="prefixPriority"/> is threaded
+    /// rather than hardcoded per target so exactly one call site has to justify an ordering and every other keeps
+    /// Harmony's default — which is what the guard test asserts.
+    /// </summary>
     private static bool Patch(
         Harmony harmony,
         Type type,
         string name,
         Type[] args,
         string? prefix = null,
-        string? postfix = null)
+        string? postfix = null,
+        int prefixPriority = DefaultPatchPriority)
     {
         var label = $"{type.Name}.{name}({string.Join(", ", Array.ConvertAll(args, a => a.Name))})";
         var target = AccessTools.Method(type, name, args);
@@ -174,8 +214,8 @@ internal static class CouchCoopHostTransportPatch
         {
             harmony.Patch(
                 target,
-                prefix: prefix is null ? null : new HarmonyMethod(Local(prefix)),
-                postfix: postfix is null ? null : new HarmonyMethod(Local(postfix)));
+                prefix: prefix is null ? null : new HarmonyMethod(Local(prefix), prefixPriority),
+                postfix: postfix is null ? null : new HarmonyMethod(Local(postfix), DefaultPatchPriority));
             return true;
         }
         catch (Exception ex)

@@ -49,15 +49,28 @@ internal static class CouchCoopHostTransport
     /// tests), which leaves the incoming <c>maxClients</c> untouched.
     /// <para>
     /// WHY THIS EXISTS RATHER THAN TRUSTING <c>maxClients</c>: both multiplayer limit mods raise the client cap
-    /// with a Harmony PREFIX on <c>NetHostGameService.StartENetHost</c> / <c>StartSteamHost</c>, and neither
-    /// reliably reaches us. The composite path builds its <c>ENetHost</c> directly (see
-    /// <see cref="StartEnetFallback"/>) and never calls <c>StartENetHost</c>, so that patch is bypassed outright; and
-    /// our own <c>StartSteamHost</c> prefix returns false, so whether a mod's prefix on the same method runs
-    /// before ours is a matter of Harmony ordering we do not control. A listener sized for 4 while the lobby
+    /// with a Harmony PREFIX on <c>NetHostGameService.StartENetHost</c> / <c>StartSteamHost</c>, and only one of
+    /// those two can reach us. The composite path builds its <c>ENetHost</c> directly (see
+    /// <see cref="StartEnetFallback"/>) and never calls <c>StartENetHost</c>, so that patch is bypassed outright.
+    /// The <c>StartSteamHost</c> half now does reach us, because our prefix registers last and therefore reads the
+    /// argument those prefixes produced (see <see cref="Patches.CouchCoopHostTransportPatch"/>).
+    /// </para>
+    /// <para>
+    /// It is still not enough on its own, which is why this probe stays. Hosting starts BEFORE the lobby exists,
+    /// so at that moment there is nothing to ask and the probe reports the stock cap — a raise that only ever
+    /// lands on the lobby would be invisible here. This is the backstop for everything that happens later: a cap
+    /// raised after host start, or by a mod that touches the lobby alone. A listener sized for 4 while the lobby
     /// admits 16 refuses the fifth seat at the transport, which is exactly the failure this avoids.
     /// </para>
     /// </summary>
     internal static Func<int>? MaxLobbyPlayersProbe { get; set; }
+
+    /// <summary>
+    /// The client cap the CURRENT hosting session's transports were actually built for, or null when no host
+    /// start has decided one. Recorded rather than recomputed, so the log line, a live probe and the tests all
+    /// read the single number the host was sized from.
+    /// </summary>
+    internal static int? EffectiveMaxClients { get; private set; }
 
     /// <summary>
     /// The netId the LOCAL host answers to — <c>1</c> for an ENet host (the transport hardcodes it), the host's
@@ -123,6 +136,7 @@ internal static class CouchCoopHostTransport
         EnetAvailable = false;
         SteamLobbyId = null;
         IsDual = false;
+        EffectiveMaxClients = null;
         HostUi.CouchCoopHostUiNotices.HostTransportNote = null;
     }
 
@@ -135,9 +149,10 @@ internal static class CouchCoopHostTransport
     /// <summary>
     /// Bookkeeping for a plain <c>StartENetHost</c> that we did NOT drive (the stock path: <c>-fastmp</c>, the
     /// debug multiplayer screen, or a Steam-uninitialized launch). <paramref name="failed"/> is true when the game
-    /// reported a bind error, in which case nothing is joinable.
+    /// reported a bind error, in which case nothing is joinable. <paramref name="maxClients"/> is the cap the game
+    /// built that listener for, observed after the fact so this path states its capacity like every other.
     /// </summary>
-    internal static void NoteEnetHostStarted(bool failed)
+    internal static void NoteEnetHostStarted(bool failed, int maxClients)
     {
         if (failed)
         {
@@ -151,6 +166,8 @@ internal static class CouchCoopHostTransport
         EnetAvailable = true;
         SteamLobbyId = null;
         IsDual = false;
+        EffectiveMaxClients = maxClients;
+        LogEffectiveCapacity(maxClients, maxClients, "stock-enet");
     }
 
     /// <summary>
@@ -172,7 +189,9 @@ internal static class CouchCoopHostTransport
 
         var savedRunHostNetId = ConsumeSavedRunHostNetId();
         ResetTransportState();
-        maxClients = WithLobbyCapacity(maxClients);
+        // Decided ONCE, before the transport branch, so Steam, dual and the ENet fallback below are all sized from
+        // this same number — and the log names it whichever of them ends up running.
+        maxClients = Capacity.Resolve(maxClients);
 
         // The composite host lets remote Steam friends and local couch seats share one lobby.
         var dualHost = new DualNetHost(service);
@@ -214,33 +233,58 @@ internal static class CouchCoopHostTransport
     }
 
     /// <summary>
-    /// Widens <paramref name="maxClients"/> to whatever the live lobby will admit (see
-    /// <see cref="MaxLobbyPlayersProbe"/>). Only ever raises: a caller asking for MORE than the lobby cap is left
-    /// alone, and with no probe (or an unreadable one) the argument passes through untouched — so on the stock
-    /// game, where the probe reports the same 4 the caller already passed, nothing changes at all.
+    /// The host's client-cap decision, in a type of its own for one reason: <c>WithLobbyCapacity</c> is PRIVATE to
+    /// it, and C# does not let an enclosing class reach a nested type's private members. So the only way for
+    /// <see cref="StartHostAsync"/> — or anything added here later — to obtain an effective cap is
+    /// <see cref="Resolve"/>, which states it and records it. "The transport was built with the number we logged"
+    /// is therefore something the compiler keeps true, not a convention the next edit can quietly drop.
     /// </summary>
-    private static int WithLobbyCapacity(int maxClients)
+    internal static class Capacity
     {
-        if (MaxLobbyPlayersProbe is not { } probe)
+        /// <summary>
+        /// Settles the cap this host start sizes every transport for, states it once and records it in
+        /// <see cref="EffectiveMaxClients"/>. <paramref name="requestedMaxClients"/> is whatever actually reached
+        /// our prefix — including a raise another mod's earlier prefix already wrote into the argument.
+        /// </summary>
+        internal static int Resolve(int requestedMaxClients)
         {
-            return maxClients;
+            var effective = WithLobbyCapacity(requestedMaxClients);
+            EffectiveMaxClients = effective;
+            LogEffectiveCapacity(effective, requestedMaxClients, "host-start");
+            return effective;
         }
 
-        int lobbyMax;
-        try { lobbyMax = probe(); }
-        catch (Exception exception)
+        /// <summary>
+        /// Widens <paramref name="maxClients"/> to whatever the live lobby will admit (see
+        /// <see cref="MaxLobbyPlayersProbe"/>). Only ever raises: a caller asking for MORE than the lobby cap is
+        /// left alone, and with no probe (or an unreadable one) the argument passes through untouched — so on the
+        /// stock game, where the probe reports the same 4 the caller already passed, nothing changes at all. That
+        /// one-way contract is what makes it safe to keep running after a limit mod has already raised the
+        /// argument: it can never undo that raise.
+        /// </summary>
+        private static int WithLobbyCapacity(int maxClients)
         {
-            Log($"could not read the lobby player cap ({exception.GetType().Name}: {exception.Message}) — hosting for {maxClients} clients.");
-            return maxClients;
-        }
+            if (MaxLobbyPlayersProbe is not { } probe)
+            {
+                return maxClients;
+            }
 
-        if (lobbyMax <= maxClients)
-        {
-            return maxClients;
-        }
+            int lobbyMax;
+            try { lobbyMax = probe(); }
+            catch (Exception exception)
+            {
+                Log($"could not read the lobby player cap ({exception.GetType().Name}: {exception.Message}) — hosting for {maxClients} clients.");
+                return maxClients;
+            }
 
-        Log($"lobby admits {lobbyMax} players but hosting was asked for {maxClients} — sizing the transport for {lobbyMax} so every seat can connect.");
-        return lobbyMax;
+            if (lobbyMax <= maxClients)
+            {
+                return maxClients;
+            }
+
+            Log($"lobby admits {lobbyMax} players but hosting was asked for {maxClients} — sizing the transport for {lobbyMax} so every seat can connect.");
+            return lobbyMax;
+        }
     }
 
     /// <summary>
@@ -413,6 +457,18 @@ internal static class CouchCoopHostTransport
     private static void SetPlatform(NetHostGameService service, PlatformType platform)
         => (PlatformSetter ?? throw new InvalidOperationException("NetHostGameService.Platform setter is unavailable."))
             .Invoke(service, [platform]);
+
+    /// <summary>
+    /// The one sentence that states what a hosting session's transports were sized for. Emitted on EVERY path that
+    /// brings a listener up — Steam, the composite Steam+ENet host, the Steam-failure ENet fallback, and the stock
+    /// <c>StartENetHost</c> the game drives itself — so a host log answers "how many clients could actually have
+    /// connected?" without inference, whichever path ran and whatever mods adjusted the cap on the way in.
+    /// <para>
+    /// <c>effective maxClients=</c> is the token live probes grep for. Keep it stable.
+    /// </para>
+    /// </summary>
+    private static void LogEffectiveCapacity(int effective, int requested, string source)
+        => Log($"effective maxClients={effective} (requested={requested}, source={source})");
 
     internal static void Log(string message) => Console.Error.WriteLine("[couch-coop] host-transport " + message);
 }
