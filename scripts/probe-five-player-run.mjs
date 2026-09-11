@@ -122,6 +122,10 @@ export const DEFAULT_HOST_PORT = 13337;
  */
 export const LOG_SIGNATURES = Object.freeze([
   { id: "embark", pattern: "Embarking on a multiplayer run. Players:", scope: "any" },
+  // CouchCoopHostTransport.LogEffectiveCapacity -- the cap the listener was ACTUALLY built for, on
+  // whichever host path ran. A seat refused at the transport shows up here as a number lower than the
+  // lobby's, long before any run-start symptom; keep the token in step with that log line.
+  { id: "effectiveMaxClients", pattern: "effective maxClients=", scope: "any" },
   { id: "packetSizePatch", pattern: "[PacketSizePatch] Patched", scope: "any" },
   { id: "packetWriterGrowth", pattern: "Packet writer is growing from", scope: "any" },
   { id: "beginRunMessageThrow", pattern: "Exception encountered while processing message LobbyBeginRunMessage", scope: "any" },
