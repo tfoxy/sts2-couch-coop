@@ -29,7 +29,6 @@
 
 import { reactive } from "vue";
 
-import { coarseOnlyPointer } from "@/browserCursor";
 import { REPRO_UI_ENABLED } from "@/mirror/buildFlags";
 import {
   effectModeOverride,
@@ -143,10 +142,8 @@ export interface MirrorSettings {
   // so a whole hand is readable at a glance. Purely client-side CSS on the mirror's own DOM — the game is never
   // told and no sent coordinate changes (mirrorRenderer's hand-raise pass + raiseInverse.ts).
   //
-  // THE ONE DEVICE-DEPENDENT DEFAULT in this store (see the layering note above): it means the SAME thing
-  // everywhere, but it is only ON by default where the problem exists — a coarse-pointer phone/tablet with no
-  // hover. `?raiseHand=on` / `?raiseHand=off` forces either way; the panel checkbox and the in-game HUD button
-  // both write the same saved field.
+  // Off by default on every device. `?raiseHand=on` / `?raiseHand=off` forces either way; the panel checkbox and
+  // the in-game HUD button both write the same saved field.
   raiseHandCards: boolean;
   // CLIENT layout (browser-only) — READABILITY SCALING, the master switch over every place the mirror draws the
   // game BIGGER than the game does so it reads and taps on a phone. Four families, one checkbox:
@@ -551,20 +548,11 @@ function urlOffFlag(params: URLSearchParams, key: string): boolean | null {
   return params.get(key) !== "off";
 }
 
-// The twin of `urlOffFlag` for a setting whose default is NOT a fixed `true`: `?key=off` disables, anything else
+// The twin of `urlOffFlag` for a setting whose default is not a fixed `true`: `?key=off` disables, anything else
 // (`?key`, `?key=on`, `?key=1`) enables. Same tri-state contract — null when the param is absent, so a URL that
-// says nothing still can't overwrite a saved choice. `urlOffFlag` alone would do, but a device-defaulted setting
-// needs a reader whose name doesn't claim the default is on (see raiseHandCards).
+// says nothing still can't overwrite a saved choice.
 function urlOnOffFlag(params: URLSearchParams, key: string): boolean | null {
   return urlOffFlag(params, key);
-}
-
-// The DEVICE half of `raiseHandCards`'s default (the only device-dependent default in this store — see the field).
-// Reuses the ONE coarse-pointer predicate the app already has (browserCursor's `coarseOnlyPointer`: positively
-// coarse-only, so a touchscreen laptop and a `matchMedia`-less/jsdom environment both read false) rather than
-// growing a second definition of "is this a phone". No `window` ⇒ false, so SSR/tests get the desktop default.
-function touchFirstDevice(): boolean {
-  return typeof window === "undefined" ? false : coarseOnlyPointer(window);
 }
 
 export interface CreateMirrorSettingsOptions {
@@ -603,9 +591,9 @@ export function createMirrorSettings(
     unfocusOnRelease: urlOffFlag(params, "unfocus") ?? saved.unfocusOnRelease ?? true,
     tapToFocus: urlOffFlag(params, "tapFocus") ?? saved.tapToFocus ?? true,
     confirmTap: urlOffFlag(params, "confirmTap") ?? saved.confirmTap ?? true,
-    // READABLE-HAND MODE. Query wins for the session, then the viewer's saved choice, then the DEVICE default:
-    // on where there is no hover to read a hand with (phone/tablet), off on a desktop.
-    raiseHandCards: urlOnOffFlag(params, "raiseHand") ?? saved.raiseHandCards ?? touchFirstDevice(),
+    // READABLE-HAND MODE. Query wins for the session, then the viewer's saved choice, then the product default:
+    // off everywhere until the viewer deliberately enables it.
+    raiseHandCards: urlOnOffFlag(params, "raiseHand") ?? saved.raiseHandCards ?? false,
     // READABILITY SCALING (see the field): ON everywhere by default — the enlargements are what make the mirror
     // playable on a phone, and a desktop viewer comparing against the game turns them off deliberately.
     uiScaling: urlOffFlag(params, "uiScale") ?? saved.uiScaling ?? true,

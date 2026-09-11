@@ -205,6 +205,13 @@ describe("createMirrorSettings — URL overrides", () => {
     expect(build(quality(), "?confirmTap=off").confirmTap).toBe(false);
   });
 
+  it("seeds raise-hand cards OFF on every device, with saved and URL opt-ins preserved", () => {
+    expect(build(quality(), "").raiseHandCards).toBe(false);
+    expect(build(quality(), "?raiseHand=on").raiseHandCards).toBe(true);
+    expect(build(quality(), "", fakeStorage({ raiseHandCards: true })).raiseHandCards).toBe(true);
+    expect(build(quality(), "?raiseHand=off", fakeStorage({ raiseHandCards: true })).raiseHandCards).toBe(false);
+  });
+
   it("seeds the static background ON unless the URL says ?staticBg=off", () => {
     expect(build(quality(), "").staticBgEnabled).toBe(true);
     expect(build(quality(), "?staticBg=on").staticBgEnabled).toBe(true);
