@@ -36,14 +36,37 @@ TMP="$(mktemp -d)" || die "mktemp"
 WT="$TMP/wt"
 WT2="$TMP/wt2"
 WT3="$TMP/wt3"
+
+# The installer now writes git config, and a linked worktree SHARES .git/config with the checkout
+# it was made from — so these keys are saved here and put back on exit. Without that, running this
+# test would quietly reconfigure (or, on a not-yet-installed checkout, leave behind) the real repo.
+GITCFG_KEYS=(core.hooksPath commit.template tag.gpgsign)
+declare -A GITCFG_SAVED=()
+for k in "${GITCFG_KEYS[@]}"; do
+  GITCFG_SAVED[$k]="$(git -C "$REPO" config --local --get "$k" 2>/dev/null || true)"
+done
+
 cleanup() {
   for w in "$WT" "$WT2" "$WT3"; do
     [ -d "$w" ] && git -C "$REPO" worktree remove --force "$w" >/dev/null 2>&1
   done
   git -C "$REPO" worktree prune >/dev/null 2>&1
+  for k in "${GITCFG_KEYS[@]}"; do
+    if [ -n "${GITCFG_SAVED[$k]}" ]; then
+      git -C "$REPO" config --local "$k" "${GITCFG_SAVED[$k]}" >/dev/null 2>&1
+    else
+      git -C "$REPO" config --local --unset-all "$k" >/dev/null 2>&1
+    fi
+  done
   rm -rf "$TMP"
 }
 trap cleanup EXIT
+
+# Start from an unconfigured repo, or "the installer set this" is indistinguishable from "the real
+# checkout already had it" — the worktrees below read the same shared config. Restored by cleanup.
+for k in "${GITCFG_KEYS[@]}"; do
+  git -C "$REPO" config --local --unset-all "$k" >/dev/null 2>&1
+done
 
 git -C "$REPO" worktree add --detach "$WT" HEAD >/dev/null 2>&1 || die "git worktree add"
 for d in scripts agents skills; do
@@ -123,6 +146,26 @@ eq "settings.local.json autoMemoryDirectory" "$MEMORY" \
   "$(jq -r '.autoMemoryDirectory' "$WT/.claude/settings.local.json")"
 eq "settings.local.json preserves pre-existing keys" "Bash(echo:*)" \
   "$(jq -r '.permissions.allow[0]' "$WT/.claude/settings.local.json")"
+
+echo "== git hooks =="
+# Relative, not absolute: the setting lives in the shared .git/config, so an absolute path would
+# point every worktree at the main checkout's hook instead of its own.
+eq "core.hooksPath is set, relative"  "scripts/githooks" "$(git -C "$WT" config --get core.hooksPath)"
+eq "commit.template is set, relative" ".gitmessage"      "$(git -C "$WT" config --get commit.template)"
+ok "the hook it points at exists here"     test -f "$WT/scripts/githooks/commit-msg"
+ok "…and is executable"                    test -x "$WT/scripts/githooks/commit-msg"
+# Both branches, hermetically: the install above ran under a fake HOME with no git identity at all,
+# which is exactly the no-signing-key case. Setting tag.gpgsign there would make `git tag` fail.
+ok "tag.gpgsign is skipped without a signing key" \
+  bash -c '! git -C "$1" config --local --get tag.gpgsign' _ "$WT"
+ok "…and the installer says why"  grep -q 'skipped tag.gpgsign' "$INSTALL_LOG"
+FAKEHOME_SIGN="$TMP/home-signing"
+mkdir -p "$FAKEHOME_SIGN/.claude"
+printf '# user rules\n' > "$FAKEHOME_SIGN/.claude/CLAUDE.md"
+printf '[user]\n\tsigningkey = DEADBEEFDEADBEEF\n' > "$FAKEHOME_SIGN/.gitconfig"
+env HOME="$FAKEHOME_SIGN" bash "$WT/scripts/install-agent-config.sh" > "$TMP/install-signing.log" 2>&1
+eq "tag.gpgsign when a signing key exists" "true" "$(git -C "$WT" config --get tag.gpgsign)"
+git -C "$REPO" config --local --unset-all tag.gpgsign >/dev/null 2>&1
 
 echo "== memory =="
 ok ".agents/memory is a symlink"  test -L "$WT/.agents/memory"

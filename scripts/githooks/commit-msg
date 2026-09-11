@@ -1,0 +1,140 @@
+#!/usr/bin/env bash
+# commit-msg hook: enforce the commit convention documented in docs/commit-and-release.md.
+#
+# Scope is deliberately narrow. It checks ONLY commits on `main`, because that is the history
+# people and agents read and the one a release is cut from. Work on a feature branch is
+# unconstrained — those commits are squashed away when the branch lands, so policing them is pure
+# friction during a round.
+#
+# It checks MECHANICS, never substance: the type is one of nine, the subject fits on a line, the
+# body is readable in `git log`, and a user-visible change carries a `Changelog:` trailer. A
+# one-line `chore(scripts): drop the stale cache path` is a complete, legal commit.
+#
+# Installed by scripts/install-agent-config.sh as `git config core.hooksPath scripts/githooks`.
+# The path is relative on purpose: the setting lives in the shared .git/config, so a relative path
+# resolves to each worktree's own copy of this file rather than the main checkout's.
+#
+# Bypass for a genuine emergency: git commit --no-verify.
+# Self-test: scripts/test-commit-msg-hook.sh
+
+set -uo pipefail
+
+MSG_FILE="${1:?commit-msg hook called without a message file}"
+ENFORCED_BRANCH="main"
+TYPES="feat|fix|perf|refactor|docs|test|build|ci|chore"
+NEEDS_CHANGELOG="feat|fix|perf"   # the three that can be user-visible
+MAX_SUBJECT=72
+MAX_BODY=100
+
+# $COMMIT_HOOK_BRANCH lets the self-test exercise the rules without being on main.
+branch="${COMMIT_HOOK_BRANCH:-$(git symbolic-ref --quiet --short HEAD 2>/dev/null || echo HEAD)}"
+[ "$branch" = "$ENFORCED_BRANCH" ] || exit 0
+
+# Comments and the --verbose diff are not part of the message. Git strips them after this hook
+# runs, so strip them here too or every check would see `# Please enter the commit message…`.
+msg="$(sed -e '/^# \{0,1\}-\{6,\} >8 -\{6,\}/,$d' -e '/^#/d' "$MSG_FILE")"
+# Trim leading and trailing blank lines.
+msg="$(printf '%s\n' "$msg" | sed -e '/./,$!d' | tac | sed -e '/./,$!d' | tac)"
+
+# An empty message is git's error to report, not ours.
+[ -n "${msg//[[:space:]]/}" ] || exit 0
+
+subject="$(printf '%s\n' "$msg" | head -1)"
+
+# Messages git writes or owns itself.
+case "$subject" in
+  Merge\ *|Revert\ *|fixup!\ *|squash!\ *|amend!\ *) exit 0 ;;
+esac
+
+errors=()
+add() { errors+=("$1"); }
+
+# ---------------------------------------------------------------------------------------------
+# Subject line
+# ---------------------------------------------------------------------------------------------
+if ! printf '%s' "$subject" | grep -Eq "^($TYPES)(\([a-z0-9][a-z0-9._/-]*\))?!?: .+"; then
+  found="$(printf '%s' "$subject" | grep -oE '^[A-Za-z]+(\([^)]*\))?!?:' || true)"
+  if [ -n "$found" ]; then
+    add "unknown commit type in '$found' — use one of: ${TYPES//|/ }
+    Folds for the prefixes this history used to carry:
+      cleanup -> refactor      bench -> test (or perf)
+      godot, html, particles, presentation, bridge -> scopes, e.g. fix(bridge): …"
+  else
+    add "subject must start with a type — ${TYPES//|/ }
+    Shape:  type(scope)!: imperative subject
+    Got:    $subject"
+  fi
+fi
+
+if [ "${#subject}" -gt "$MAX_SUBJECT" ]; then
+  add "subject is ${#subject} chars, limit is $MAX_SUBJECT — move the detail into the body
+    $subject"
+fi
+
+case "$subject" in
+  *.) add "subject must not end with a period
+    $subject" ;;
+esac
+
+# ---------------------------------------------------------------------------------------------
+# Body
+# ---------------------------------------------------------------------------------------------
+if [ "$(printf '%s\n' "$msg" | wc -l)" -gt 1 ]; then
+  if [ -n "$(printf '%s\n' "$msg" | sed -n 2p)" ]; then
+    add "line 2 must be blank — a subject and a body are separated by one empty line"
+  fi
+
+  # Long lines make `git log` unreadable at any terminal width. A line with no spaces (a URL, a
+  # path, a command) cannot be wrapped, and fenced blocks are quoted verbatim, so both are exempt.
+  fenced=0
+  n=0
+  while IFS= read -r line; do
+    n=$((n + 1))
+    case "$line" in '```'*) fenced=$((1 - fenced)); continue ;; esac
+    [ "$fenced" -eq 0 ] || continue
+    [ "$n" -gt 1 ] || continue
+    [ "${#line}" -gt "$MAX_BODY" ] || continue
+    case "$line" in *[[:space:]]*) ;; *) continue ;; esac
+    add "line $n is ${#line} chars, limit is $MAX_BODY — wrap the body
+    ${line:0:60}…"
+  done <<< "$msg"
+fi
+
+# ---------------------------------------------------------------------------------------------
+# Changelog trailer
+# ---------------------------------------------------------------------------------------------
+if printf '%s' "$subject" | grep -Eq "^($NEEDS_CHANGELOG)(\(|!|:)"; then
+  if printf '%s\n' "$msg" | grep -Eq '^Changelog:[[:space:]]*[^[:space:]]'; then
+    :
+  elif printf '%s\n' "$msg" | grep -Ei '^change[- ]?log[[:space:]]*:' | grep -qv '^Changelog:'; then
+    add "the trailer is spelled exactly \`Changelog:\` (capital C, one word, no space before the colon)
+    $(printf '%s\n' "$msg" | grep -Ei '^change[- ]?log[[:space:]]*:' | head -1)"
+  else
+    add "a $(printf '%s' "$subject" | cut -d'(' -f1 | cut -d'!' -f1 | cut -d: -f1): commit needs a \`Changelog:\` trailer — it is how the release notes get written
+    Add one sentence in the voice a user would read:
+      Changelog: Raise-hand cards now start off; turn them on in settings.
+    Or say so explicitly when nothing user-visible changed:
+      Changelog: none"
+  fi
+fi
+
+# ---------------------------------------------------------------------------------------------
+[ "${#errors[@]}" -eq 0 ] && exit 0
+
+{
+  printf '\ncommit rejected on %s — %d problem(s):\n\n' "$ENFORCED_BRANCH" "${#errors[@]}"
+  for e in "${errors[@]}"; do printf '  • %s\n\n' "$e"; done
+  cat <<'EOF'
+The convention is docs/commit-and-release.md. In short:
+
+  type(scope)!: imperative subject, <=72 chars, no trailing period
+
+  Body prose saying what changed and why, wrapped at <=100 columns.
+
+  Changelog: one sentence a user would read (feat/fix/perf only, or `none`)
+
+Types: feat fix perf refactor docs test build ci chore
+Feature branches are not checked — only main. Emergency bypass: git commit --no-verify
+EOF
+} >&2
+exit 1

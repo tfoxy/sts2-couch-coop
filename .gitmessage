@@ -1,0 +1,22 @@
+# type(scope)!: imperative subject, <=72 chars, no trailing period
+#
+# Body: what changed and why, wrapped at <=100 columns. Optional — a one-line
+# commit is complete on its own.
+#
+# Changelog: one sentence in the voice a user would read. Required on
+#   feat/fix/perf; write `Changelog: none` when nothing user-visible changed.
+# Refs: spirectl@<sha>   (optional, for work that spans the sibling repos)
+#
+# Types
+#   feat      a capability a user can notice
+#   fix       a defect a user could hit
+#   perf      a measured speed or memory win
+#   refactor  no behaviour change — including retiring a shipped flag or experiment
+#   docs      documentation only
+#   test      tests, benches, harnesses, fixtures
+#   build     build, dependencies, packaging
+#   ci        workflows and release pipeline
+#   chore     everything else
+#
+# Enforced on main only (scripts/githooks/commit-msg). Full rules:
+# docs/commit-and-release.md

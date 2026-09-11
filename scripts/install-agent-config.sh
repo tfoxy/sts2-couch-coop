@@ -10,6 +10,7 @@
 #   Claude Code reads   .claude/agents/*.md, .claude/skills/*, .claude/settings*.json, /.mcp.json
 #   Codex CLI reads     .codex/agents/*.toml, .codex/config.toml, .codex/hooks.json, .agents/skills/*
 #   both read           AGENTS.md (CLAUDE.md is a symlink to it) and scripts/claude-guard-bash.sh
+#   git reads           scripts/githooks/commit-msg and .gitmessage, wired through git config
 #
 # /.mcp.json carries local filesystem paths, so it is gitignored here too and a fresh worktree has
 # none; this script symlinks it to the main checkout's copy, and .codex/config.toml's
@@ -191,6 +192,27 @@ jq --arg guard "$CODEX_GUARD" '
 ' "$HOOKS" > "$tmp" && mv "$tmp" "$HOOKS"
 echo "    .codex/hooks.json  PreToolUse(^Bash$) -> scripts/claude-guard-bash.sh"
 
+# The commit convention (docs/commit-and-release.md) is enforced by git itself rather than by a CLI
+# hook, so it holds for every tool that commits here — both agent CLIs, your terminal, and an agent
+# working in a worktree.
+echo "==> git hooks"
+# RELATIVE on purpose. git config writes to the SHARED .git/config that every linked worktree also
+# reads, and git resolves a relative hooksPath against each working tree's own top level — so this
+# one setting points every worktree at its own copy of the hook. An absolute path would send them
+# all to the main checkout's copy instead.
+git -C "$REPO" config core.hooksPath scripts/githooks
+git -C "$REPO" config commit.template .gitmessage
+echo "    core.hooksPath   scripts/githooks   (commit-msg; enforced on main only)"
+echo "    commit.template  .gitmessage"
+# Tags are what the release workflows trigger on, so they should be annotated and signed. Only
+# claimed when there is a key to sign with: setting it without one makes `git tag` fail outright.
+if [ -n "$(git -C "$REPO" config --get user.signingkey || true)" ]; then
+  git -C "$REPO" config tag.gpgsign true
+  echo "    tag.gpgsign      true               (annotated + signed release tags)"
+else
+  echo "    (skipped tag.gpgsign: no user.signingkey is configured)"
+fi
+
 # --------------------------------------------------------------------------------------------
 # Home-directory mirroring. Read-only unless --user was passed.
 # --------------------------------------------------------------------------------------------
@@ -279,5 +301,6 @@ next steps for Codex:
       [projects."$REPO"]
       trust_level = "trusted"
     to ~/.codex/config.toml.
-verify with: bash scripts/test-claude-guard.sh && bash scripts/test-install-agent-config.sh
+verify with: bash scripts/test-claude-guard.sh && bash scripts/test-install-agent-config.sh \\
+             && bash scripts/test-commit-msg-hook.sh
 EOF

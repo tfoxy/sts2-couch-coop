@@ -36,6 +36,12 @@ jobs:
           ./scripts/verify-sts2-reference-sdk.sh
           ./scripts/test-verify-release-archive.sh
 
+      # Fails the release when CHANGELOG.md has no section for this tag. Release notes are written
+      # by hand from the Changelog: trailers, not generated from commit subjects.
+      - name: Verify release notes exist
+        working-directory: sources/couchcoop
+        run: ./scripts/changelog-section.sh "${{ github.ref_name }}" > "$RUNNER_TEMP/release-notes.md"
+
       - name: Build release archive
         working-directory: sources/couchcoop
         env:
@@ -56,7 +62,7 @@ jobs:
           dist/*
           --repo "${{ github.repository }}"
           --title "CouchCoop ${{ github.ref_name }}"
-          --generate-notes
+          --notes-file "$RUNNER_TEMP/release-notes.md"
 
       - name: Attest release archive
         uses: actions/attest@1e69f48acb82d1966a394da916b4c1698aa569d6 # v4
