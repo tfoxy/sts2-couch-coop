@@ -34,7 +34,7 @@ import {
   parseProbeArgs, parseBringupRecord, resolveTargets, lockResourcesFor,
   slotForPort, seatLogPathFor, seatBridgeSocketFor, seatNameFor,
   evaluateModGate, assignCharacters, runPlayerAliveness,
-  scanLogSignatures, splitLogLines, buildResult, mapWithConcurrency,
+  scanLogSignatures, splitLogLines, buildResult, mapWithConcurrency, checkSeatRecords,
   captureLogBaselines, archiveEvidence, waitForLogSignatures
 } from "./probe-five-player-run.mjs";
 
@@ -175,6 +175,28 @@ test("resolveTargets falls back to the defaults with no record at all", () => {
   assert.equal(targets.hostStderrPath, "/primary/.sts2/artifacts/game-launch/game.stderr.log");
   assert.equal(targets.hasRecord, false);
   assert.deepEqual(targets.portBases, [DEFAULT_HOST_PORT]);
+});
+
+// A live round lost a whole 5-player run to these four being absent from the resolved target: every
+// call site reads them off `targets`, and `targets.seatConcurrency` being undefined made
+// mapWithConcurrency build zero workers, so leg 2 "passed" without joining a single seat.
+test("resolveTargets carries the tuning knobs the seat/embark/combat legs read off it", () => {
+  const defaults = resolveTargets({ args: parseProbeArgs([]), record: null, env: {}, home: "/home/qa" });
+  assert.equal(defaults.seatConcurrency, 2);
+  assert.equal(defaults.seatTimeoutMs, 90_000);
+  assert.equal(defaults.embarkTimeoutMs, 120_000);
+  assert.equal(defaults.combatTimeoutMs, 180_000);
+
+  const tuned = resolveTargets({
+    args: parseProbeArgs(["--seat-concurrency", "4", "--seat-timeout-ms", "1000", "--embark-timeout-ms", "2000", "--combat-timeout-ms", "3000"]),
+    record: null,
+    env: {},
+    home: "/home/qa"
+  });
+  assert.equal(tuned.seatConcurrency, 4);
+  assert.equal(tuned.seatTimeoutMs, 1000);
+  assert.equal(tuned.embarkTimeoutMs, 2000);
+  assert.equal(tuned.combatTimeoutMs, 3000);
 });
 
 test("resolveTargets lets a flag beat the record, and the record beat the env", () => {
@@ -685,6 +707,68 @@ test("mapWithConcurrency keeps input order and respects the bound", () => {
     assert.ok(peak <= 2, `peak concurrency was ${peak}, expected <= 2`);
     assert.deepEqual(await mapWithConcurrency([], 4, async () => "x"), []);
   })();
+});
+
+// The exact shape of the live failure: an undefined bound made `Array.from({length: NaN})` build zero
+// workers, and the sparse array that came back looked empty to filter/map/flatMap.
+test("mapWithConcurrency refuses a bound it cannot honour instead of returning holes", () => {
+  return (async () => {
+    for (const bad of [undefined, null, NaN, 0, -1, 2.5, "2"]) {
+      await assert.rejects(
+        () => mapWithConcurrency([1, 2, 3, 4], bad, async value => value),
+        error => error instanceof TypeError && /positive integer bound/.test(error.message),
+        `bound ${String(bad)} should have been refused`
+      );
+    }
+  })();
+});
+
+// =================================================================================================
+// leg 2 cannot pass without positive per-seat evidence
+// =================================================================================================
+
+const okSeat = (name, slot) => ({
+  name,
+  ok: true,
+  detail: `slot ${slot}, port ${13337 + slot * 10}`,
+  slot,
+  port: 13337 + slot * 10,
+  playerId: `p:${1000 + slot}`,
+  enetEvidence: [{ pattern: "Sending handshake with net ID", lineNumber: 12, text: "…" }],
+  screenshots: [],
+  ms: 24_000
+});
+
+test("checkSeatRecords passes only when every seat carries slot, port and ENet evidence", () => {
+  assert.deepEqual(checkSeatRecords([okSeat("Ann", 2), okSeat("Bo", 3)], 2), []);
+});
+
+test("checkSeatRecords fails a SPARSE array rather than skipping its holes", () => {
+  const sparse = new Array(4);
+  const problems = checkSeatRecords(sparse, 4);
+  assert.equal(problems.length, 4, JSON.stringify(problems));
+  assert.ok(problems.every(problem => /the join never ran/.test(problem)), JSON.stringify(problems));
+  assert.ok(problems[0].includes("Ann"), problems[0]);
+});
+
+test("checkSeatRecords fails recorded nulls, short arrays and non-arrays", () => {
+  assert.ok(checkSeatRecords([null, null, null, null], 4).every(problem => /instead of a seat record/.test(problem)));
+  const short = checkSeatRecords([okSeat("Ann", 2)], 4);
+  assert.ok(short.some(problem => /expected 4 seat records, got 1/.test(problem)), JSON.stringify(short));
+  assert.equal(checkSeatRecords(null, 4).length, 1);
+  assert.ok(/not an array of 4 seat records/.test(checkSeatRecords(undefined, 4)[0]));
+});
+
+test("checkSeatRecords reports a seat that tried and failed with its own detail", () => {
+  const problems = checkSeatRecords([{ name: "Ann", ok: false, detail: "the host refused the join: lobby is full" }], 1);
+  assert.deepEqual(problems, ["seat 1 (Ann): the host refused the join: lobby is full"]);
+});
+
+test("checkSeatRecords does not take ok at its word without slot/port and ENet evidence", () => {
+  const noPort = checkSeatRecords([{ ...okSeat("Ann", 2), slot: null, port: null }], 1);
+  assert.ok(/resolved no seat port/.test(noPort[0]), noPort[0]);
+  const noEnet = checkSeatRecords([{ ...okSeat("Ann", 2), enetEvidence: [] }], 1);
+  assert.ok(/no ENet handshake evidence/.test(noEnet[0]), noEnet[0]);
 });
 
 // =================================================================================================
