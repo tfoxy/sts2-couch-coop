@@ -112,8 +112,17 @@ for assembly in sts2.dll GodotSharp.dll 0Harmony.dll; do
   [[ -f "$sdk_dir/$assembly" ]] || { echo "compile SDK did not produce $assembly" >&2; exit 1; }
 done
 
-corepack pnpm --dir "$source_parent/godot-scene-web" install --frozen-lockfile
-corepack pnpm --dir "$source_parent/spirectl/presentation/web" install --frozen-lockfile
+# Corepack selects a package-manager version before pnpm receives --dir. Run it
+# from each dependency instead, so Corepack finds a dependency's packageManager
+# pin (godot-scene-web currently requires pnpm 10.26.0).
+(
+  cd "$source_parent/godot-scene-web"
+  corepack pnpm install --frozen-lockfile
+)
+(
+  cd "$source_parent/spirectl/presentation/web"
+  corepack pnpm install --frozen-lockfile
+)
 npm --prefix "$repo_root/frontend" ci
 npm --prefix "$repo_root/frontend" audit --omit=dev --audit-level=high
 
