@@ -3,6 +3,8 @@ set -euo pipefail
 
 repo_root="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 script="$repo_root/scripts/upload-workshop-release.sh"
+# shellcheck source=lib/release-lanes.sh
+source "$repo_root/scripts/lib/release-lanes.sh"
 test_root="$(mktemp -d "${TMPDIR:-/tmp}/couchcoop-workshop-upload-tests.XXXXXX")"
 trap 'rm -rf "$test_root"' EXIT
 
@@ -37,7 +39,7 @@ payload="$fixture/payload/couchcoop"
 mkdir -p "$assets" "$payload/frontend/icons" "$payload/frontend/.vite" "$payload/frontend/app" "$payload/licenses/npm"
 
 for file in \
-  LICENSE NOTICE THIRD_PARTY_NOTICES.md couchcoop.json couchcoop.dll \
+  LICENSE NOTICE THIRD_PARTY_NOTICES.md couchcoop.json build-info.txt couchcoop.dll \
   CouchCoop.Mod.dll CouchCoop.Mod.Contracts.dll CouchCoop.MirrorProtocol.dll CouchCoop.Spirectl.dll QRCoder.dll \
   frontend/index.html frontend/app-boot frontend/manifest.webmanifest frontend/icons/icon.svg frontend/.vite/manifest.json \
   licenses/QRCoder-1.6.0-MIT.txt licenses/spirectl-LICENSE licenses/spirectl-NOTICE licenses/godot-scene-web-LICENSE \
@@ -46,18 +48,61 @@ for file in \
   mkdir -p "$(dirname "$payload/$file")"
   printf 'fixture %s\n' "$file" > "$payload/$file"
 done
-jq -n '{id: "couchcoop", version: "0.1.0"}' > "$payload/couchcoop.json"
 
-(cd "$fixture/payload" && zip -X -q -r "$assets/couchcoop-v0.1.0.zip" couchcoop)
-contents_tmp="$fixture/contents.ndjson"
-while IFS= read -r -d '' file; do
-  relative="${file#$fixture/payload/}"
-  jq -cn --arg path "$relative" --arg sha256 "$(sha256sum "$file" | cut -d ' ' -f 1)" --argjson size "$(stat -c %s "$file")" \
-    '{path: $path, size: $size, sha256: $sha256}' >> "$contents_tmp"
-done < <(find "$payload" -type f -print0 | sort -z)
-jq -s '{schemaVersion: "couchcoop-release-contents/v1", files: .}' "$contents_tmp" > "$assets/couchcoop-v0.1.0.contents.json"
-jq -n '{schemaVersion: "couchcoop-release-build-info/v1", version: "0.1.0"}' > "$assets/couchcoop-v0.1.0.build-info.json"
-(cd "$assets" && sha256sum couchcoop-v0.1.0.zip couchcoop-v0.1.0.contents.json couchcoop-v0.1.0.build-info.json > couchcoop-v0.1.0.SHA256SUMS)
+# The build metadata lives INSIDE the payload now (as .txt, because STS2 reads every root-level .json
+# in a mod directory as a manifest), and the verifier holds the manifest's min_game_version to the
+# lane build-info.txt declares. So a lane fixture is a payload, not just a filename.
+write_payload() {
+  local root="$1" lane="$2" min
+  min="$(release_lane_min_game_version "$lane")"
+  if [[ -n "$min" ]]; then
+    jq -n --arg min "$min" '{id: "couchcoop", version: "0.1.0", min_game_version: $min}' > "$root/couchcoop.json"
+  else
+    jq -n '{id: "couchcoop", version: "0.1.0"}' > "$root/couchcoop.json"
+  fi
+  jq -n --arg lane "$lane" '{
+    schemaVersion: "couchcoop-release-build-info/v1",
+    sourceCommit: "0000000000000000000000000000000000000000",
+    tag: "v0.1.0",
+    version: "0.1.0",
+    dependencies: {sts2References: {lane: $lane, id: "FuYnAloft.Sts2.References", version: "0.0.0-fixture"}}
+  }' > "$root/build-info.txt"
+}
+
+# <archive path> <payload parent dir>: one zip plus the one checksum file that still ships with it.
+publish_assets() {
+  local archive="$1" payload_parent="$2"
+  (cd "$payload_parent" && zip -X -q -r "$archive" couchcoop)
+  (cd "$(dirname "$archive")" && sha256sum "$(basename "$archive")" > "${archive%.zip}.SHA256SUMS")
+}
+
+write_payload "$payload" stable
+publish_assets "$assets/couchcoop-v0.1.0.zip" "$fixture/payload"
+
+# The beta lane's archive sits in the same directory, which is the whole hazard: only the --lane flag
+# may decide which of the two is published, never "newest by sort -V".
+beta_payload="$fixture/beta-payload/couchcoop"
+mkdir -p "$(dirname "$beta_payload")"
+cp -a "$payload" "$beta_payload"
+write_payload "$beta_payload" public-beta
+publish_assets "$assets/couchcoop-v0.1.0-public-beta.zip" "$fixture/beta-payload"
+
+# A dist directory holding only the stable lane, for a --lane public-beta run that must not fall back.
+stable_only="$fixture/stable-only"
+mkdir -p "$stable_only"
+cp "$assets/couchcoop-v0.1.0.zip" "$assets/couchcoop-v0.1.0.SHA256SUMS" "$stable_only/"
+
+# A --snapshot build, which is not publishable: a Workshop item copies an archive that exists as a
+# GitHub Release, and a snapshot has no tag.
+snapshot_dist="$fixture/snapshot-dist"
+mkdir -p "$snapshot_dist"
+publish_assets "$snapshot_dist/couchcoop-snapshot-abcdef123456.zip" "$fixture/payload"
+
+# A beta-named archive carrying a stable payload: the name says public-beta, build-info.txt says
+# stable, and the gate must refuse it rather than publish the wrong game branch to the beta item.
+mislabelled="$fixture/mislabelled"
+mkdir -p "$mislabelled"
+publish_assets "$mislabelled/couchcoop-v0.1.0-public-beta.zip" "$fixture/payload"
 
 uploader_dir="$fixture/uploader"
 workspace="$uploader_dir/Workspace"
@@ -249,5 +294,64 @@ bash "$script" --dist "$assets" --workspace "$broken_workspace" 2>"$fixture/brok
 grep -q "smaller than 1 MiB: $broken_workspace/image.png" "$fixture/broken.err" \
   || fail "expected the size error to name the selected workspace: $(cat "$fixture/broken.err")"
 assert_eq "${expected_log%$'\n'}" "$(cat "$fixture/uploader.log")"
+
+# A run that must not reach the uploader: the log stays exactly as it was.
+expect_refused() {
+  local label="$1" needle="$2"
+  shift 2
+  local refused_status=0
+  MOCK_UPLOADER_LOG="$fixture/uploader.log" \
+  COUCHCOOP_WORKSHOP_UPLOADER_DIR="$uploader_dir" \
+  PATH="$blocked_gh_bin:$PATH" \
+  bash "$script" "$@" >"$fixture/$label.out" 2>&1 || refused_status=$?
+  [[ $refused_status -ne 0 ]] || fail "$label should have failed"
+  grep -q -- "$needle" "$fixture/$label.out" \
+    || fail "$label failed, but not for '$needle': $(cat "$fixture/$label.out")"
+  assert_eq "${expected_log%$'\n'}" "$(cat "$fixture/uploader.log")"
+}
+
+# Leg 9: --lane publishes THAT lane's archive out of a directory holding both, and the beta payload
+# carries the manifest floor that makes it refuse an older game.
+MOCK_UPLOADER_LOG="$fixture/uploader.log" \
+COUCHCOOP_WORKSHOP_UPLOADER_DIR="$uploader_dir" \
+PATH="$blocked_gh_bin:$PATH" \
+bash "$script" --dist "$assets" --lane public-beta --workspace "$dev_workspace"
+
+assert_eq public-beta "$(jq -r '.dependencies.sts2References.lane' "$dev_workspace/content/build-info.txt")"
+assert_eq v0.111.0 "$(jq -r '.min_game_version' "$dev_workspace/content/couchcoop.json")"
+assert_eq 'Release v0.1.0 (public-beta)' "$(jq -r '.changeNote' "$dev_workspace/workshop.json")"
+assert_eq unlisted "$(jq -r '.visibility' "$dev_workspace/workshop.json")"
+assert_uploaded "$dev_workspace"
+
+# Leg 10: with both lanes present, the default stays the stable archive — the unsuffixed name the
+# README's verification block and every download link point at — and its payload declares no floor.
+MOCK_UPLOADER_LOG="$fixture/uploader.log" \
+COUCHCOOP_WORKSHOP_UPLOADER_DIR="$uploader_dir" \
+PATH="$blocked_gh_bin:$PATH" \
+bash "$script" --dist "$assets" --workspace "$dev_workspace"
+
+assert_eq stable "$(jq -r '.dependencies.sts2References.lane' "$dev_workspace/content/build-info.txt")"
+assert_eq null "$(jq -r '.min_game_version // "null"' "$dev_workspace/content/couchcoop.json")"
+assert_eq 'Release v0.1.0' "$(jq -r '.changeNote' "$dev_workspace/workshop.json")"
+assert_uploaded "$dev_workspace"
+
+# Leg 11: a lane with no archive in the directory fails; it never falls back to another lane's zip.
+expect_refused missing-lane 'no lane public-beta release archive found' \
+  --dist "$stable_only" --lane public-beta --workspace "$dev_workspace"
+
+# Leg 12: a snapshot build is refused by name, and said so explicitly rather than as "none found".
+expect_refused snapshot-dist 'holds only a snapshot archive for lane stable' \
+  --dist "$snapshot_dist" --workspace "$dev_workspace"
+
+# Leg 13: the lane is verified against the payload's own build-info.txt, so a mislabelled filename
+# cannot publish the stable payload to the beta item.
+expect_refused mislabelled-lane "built for lane 'stable', not the requested 'public-beta'" \
+  --dist "$mislabelled" --lane public-beta --workspace "$dev_workspace"
+
+# Leg 14: an unknown lane is a usage error, not a guess, and so is an ambiguous one.
+expect_refused unknown-lane 'unknown release lane' \
+  --dist "$assets" --lane experimental --workspace "$dev_workspace"
+expect_refused repeated-lane 'may be specified only once' \
+  --dist "$assets" --lane stable --lane public-beta --workspace "$dev_workspace"
 
 echo "test-upload-workshop-release: ok"
