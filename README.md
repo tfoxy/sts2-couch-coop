@@ -11,7 +11,7 @@ Turn phones, tablets, and laptops on your local network into browser-based clien
 
 1. Install CouchCoop on the host computer:
    - **Steam Workshop:** https://steamcommunity.com/sharedfiles/filedetails/?id=3799476240
-   - Alternatively, download the latest ZIP from [GitHub Releases](https://github.com/tfoxy/sts2-couch-coop/releases/latest) and extract it into the game's `mods` folder. Take `couchcoop-<version>.zip` for the normal game, or `couchcoop-<version>-public-beta.zip` if you have opted Slay the Spire 2 into its `public-beta` branch on Steam.
+   - Alternatively, download the latest ZIP from [GitHub Releases](https://github.com/tfoxy/sts2-couch-coop/releases/latest) and extract it into the game's `mods` folder. Take `couchcoop-<version>.zip`. If you have opted Slay the Spire 2 into its `public-beta` branch on Steam and that release also offers a `couchcoop-<version>-public-beta.zip`, take that one instead.
 2. Start or load a multiplayer run.
 3. Select **Couch Co-op QR Code** in the hosted lobby.
 4. On each additional device, scan the QR code or enter the displayed URL.

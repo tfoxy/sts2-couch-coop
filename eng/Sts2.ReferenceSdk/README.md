@@ -92,9 +92,10 @@ and add the lane to `reviewed_lanes` plus its three reviewed-input functions in
 and on two lanes pinning the same package version — the copy-paste that would quietly make one
 lane's release build the other's.
 
-`scripts/package-release.sh` builds the `stable` lane unless `COUCHCOOP_RELEASE_STS2_LANE` names
-another; the lane, its package id, resolved version and content hash are recorded in the release's
-`build-info.json` under `dependencies.sts2References`.
+`scripts/package-release.sh` builds every lane it discovers here unless `COUCHCOOP_RELEASE_STS2_LANE`
+narrows the run; the lane, its package id, resolved version and content hash are recorded **inside
+each payload** as `couchcoop/build-info.txt` under `dependencies.sts2References`, and
+`scripts/verify-release-archive.sh` holds the payload's manifest to the lane declared there.
 
 ---
 
