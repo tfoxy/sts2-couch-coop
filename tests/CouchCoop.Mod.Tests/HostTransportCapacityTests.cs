@@ -187,6 +187,15 @@ internal static class HostTransportCapacityTests
             Assert(log.Contains($"host-transport effective maxClients={Raised} (requested={Raised}, source=host-start)"),
                 $"…and the capacity is STILL stated on that path (got: {log.Trim()})");
         });
+
+        // Hosting starts before any lobby exists, so the probe's honest answer at that moment is "no cap known".
+        // It must read as "leave the request alone", never as a cap of its own — a probe that answered the stock
+        // four here would shrink a limit mod's already-raised argument back to four.
+        WithProbe(() => null, () =>
+        {
+            Assert(CouchCoopHostTransport.Capacity.Resolve(Raised) == Raised,
+                "no lobby to ask leaves the request alone");
+        });
     }
 
     // The only host path reachable without a real Steam session: the game's own StartENetHost, which the lobby
@@ -216,7 +225,7 @@ internal static class HostTransportCapacityTests
         }
     }
 
-    private static void WithProbe(Func<int>? probe, Action body)
+    private static void WithProbe(Func<int?>? probe, Action body)
     {
         var previous = CouchCoopHostTransport.MaxLobbyPlayersProbe;
         CouchCoopHostTransport.MaxLobbyPlayersProbe = probe;

@@ -12,12 +12,20 @@ public sealed class NetworkAdmissionLimiter
     private readonly object _gate = new();
     private readonly Dictionary<IPAddress, int> _httpByAddress = new();
     private readonly Dictionary<TcpClient, Lease> _attachedHttp = new(ReferenceEqualityComparer.Instance);
-    private readonly Func<int> _supportedPlayers;
+    private readonly Func<int?> _supportedPlayers;
     private int _http;
     private int _webSockets;
 
-    public NetworkAdmissionLimiter(Func<int>? supportedPlayers = null)
-        => _supportedPlayers = supportedPlayers ?? (() => 4);
+    /// <summary>
+    /// <paramref name="supportedPlayers"/> reports how many players the live game will admit, or null when that
+    /// is not knowable right now (no lobby, no game state). Unknown falls back to
+    /// <see cref="MinimumWebSocketConnections"/> alone — 32, which at four sockets a player already covers eight
+    /// of them. That is the honest answer for a flood guard, which is all this is: it deliberately does not
+    /// invent a player count, because a fabricated one is the only way this class could refuse a legitimate
+    /// viewer.
+    /// </summary>
+    public NetworkAdmissionLimiter(Func<int?>? supportedPlayers = null)
+        => _supportedPlayers = supportedPlayers ?? (() => null);
 
     public Lease? TryAcquireHttp(IPAddress? address)
     {
@@ -34,7 +42,9 @@ public sealed class NetworkAdmissionLimiter
 
     public Lease? TryAcquireWebSocket()
     {
-        var limit = Math.Max(MinimumWebSocketConnections, 4L * Math.Max(1, _supportedPlayers()));
+        var limit = _supportedPlayers() is { } players
+            ? Math.Max(MinimumWebSocketConnections, 4L * Math.Max(1, players))
+            : MinimumWebSocketConnections;
         lock (_gate)
         {
             if (_webSockets >= limit) return null;

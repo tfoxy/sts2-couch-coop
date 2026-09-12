@@ -75,8 +75,12 @@ internal static class HostPeerRoutingTests
         Assert(CouchCoopLobbyParticipation.HasFreeLobbySlot(4, 0, 16), "a 16-player lobby has room for a fifth");
         Assert(CouchCoopLobbyParticipation.HasFreeLobbySlot(15, 0, 16), "…and for a sixteenth");
         Assert(!CouchCoopLobbyParticipation.HasFreeLobbySlot(16, 0, 16), "but not a seventeenth");
-        // An unreadable cap degrades to the stock four rather than to "no seats at all".
-        Assert(!CouchCoopLobbyParticipation.HasFreeLobbySlot(4, 0, 0), "an unknown cap falls back to the stock four");
+        // An UNKNOWN cap admits and lets the game refuse. This guard only exists to save a joiner ~30s of
+        // starting a seat the lobby will reject on arrival; it is not the admission authority. It used to
+        // substitute the stock four here, which is the one answer the game cannot correct — it refuses a seat a
+        // 5-to-8-player lobby had room for.
+        Assert(CouchCoopLobbyParticipation.HasFreeLobbySlot(4, 0, null), "an unknown cap admits, and the game decides");
+        Assert(CouchCoopLobbyParticipation.HasFreeLobbySlot(7, 1, null), "…however full the lobby already looks");
     }
 
     private static void Assert(bool condition, string label)

@@ -98,14 +98,30 @@ trap 'rm -rf "$work_root"' EXIT
 # Explicit `|| return 1` throughout the functions below: `set -e` is suppressed inside a function
 # called in a condition context, so a failed build would otherwise fall through to the copies and
 # the IL diff and report a confusing failure instead of the real one.
+
+# The API lane (v107 / v111) the sources must compile against for a given game build -- the table is
+# ../spirectl/bridge-mod/Sts2GameApi.props, imported by this repo's root Directory.Build.props, and it is
+# never copied here. A real install carries release_info.json, so MSBuild detects the lane from it and this
+# just reads back what it decided.
+detect_game_api_lane() {
+  local real_sdk="$1" lane
+  lane="$(DOTNET_ROLL_FORWARD=Major dotnet msbuild \
+    "$repo_root/src/CouchCoop.Mod/CouchCoop.Mod.csproj" \
+    -getProperty:Sts2GameApi -p:Sts2AssembliesDir="$real_sdk" 2>/dev/null | tr -d '\r' | tail -n 1)"
+  [[ -n "$lane" ]] || { echo "could not resolve an STS2 API lane for $real_sdk" >&2; return 1; }
+  printf '%s\n' "$lane"
+}
+
 build_consumers() {
   local sdk="$1"
   local output="$2"
+  local game_api="$3"
   DOTNET_ROLL_FORWARD=Major dotnet build \
     "$repo_root/src/CouchCoop.Mod.Loader/CouchCoop.Mod.Loader.csproj" \
     -c Release --no-incremental \
     -p:CouchCoopBuildToLocalMods=false \
     -p:Sts2AssembliesDir="$sdk" \
+    -p:Sts2GameApi="$game_api" \
     -p:EnableSts2LiveHost=true \
     -p:DebugSymbols=false -p:DebugType=None || return 1
   cp "$repo_root/src/CouchCoop.Mod/bin/Release/net9.0/CouchCoop.Mod.dll" "$output/" || return 1
@@ -117,15 +133,23 @@ compare_lane() {
   local lane="$1" real_sdk="$2" work_dir="$3"
   mkdir -p "$work_dir/real" "$work_dir/reference" "$work_dir/reference-sdk" || return 1
 
+  # Both legs must compile the SAME lane's sources, or the comparison is between two different programs
+  # rather than between two ways of declaring one. The reference SDK is a bare directory of assemblies
+  # with no release_info.json, so the lane cannot be detected from it -- it is detected from the game
+  # build this lane is paired with and then passed to both legs explicitly.
+  local game_api
+  game_api="$(detect_game_api_lane "$real_sdk")" || return 1
+  printf 'compare-sts2-reference-builds: lane %s compiles STS2 API lane %s\n' "$lane" "$game_api" >&2
+
   # Compile against the legitimate local game first, then rebuild the exact same sources against
   # the lane's pinned declaration-only NuGet reference SDK. Only consumer assemblies are inspected;
   # sts2.dll itself is never copied into an audit result or release.
-  build_consumers "$real_sdk" "$work_dir/real" || return 1
+  build_consumers "$real_sdk" "$work_dir/real" "$game_api" || return 1
   DOTNET_ROLL_FORWARD=Major dotnet build "$(lane_project "$lane")" \
     -c Release -o "$work_dir/reference-sdk" \
     -p:RestoreLockedMode=true -p:ContinuousIntegrationBuild=true \
     -p:DebugSymbols=false -p:DebugType=None || return 1
-  build_consumers "$work_dir/reference-sdk" "$work_dir/reference" || return 1
+  build_consumers "$work_dir/reference-sdk" "$work_dir/reference" "$game_api" || return 1
 
   local failed=0 dll side raw
   for dll in CouchCoop.Mod.dll couchcoop.dll CouchCoop.Spirectl.dll; do

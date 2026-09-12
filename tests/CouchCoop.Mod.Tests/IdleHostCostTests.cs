@@ -95,7 +95,9 @@ internal static class IdleHostCostTests
     // The reflection guard, same contract as NetTransportPatchTargetsTests: if a game update renames either
     // lobby screen or stops declaring _Ready, this fails the build rather than silently costing the lobby its
     // QR button. Pure metadata reflection — no Harmony install, no live game.
-    private static void MountTargetsResolve()
+    // Internal, not private: the `-- beta-targets` verb runs the four patch-TARGET legs alone against a given
+    // game build, and it must run THIS leg rather than a second copy of it.
+    internal static void MountTargetsResolve()
     {
         Expect(LobbyScreenMountPatch.ScreenTypeNames.Count == 2, "both lobby screens are patch targets");
 

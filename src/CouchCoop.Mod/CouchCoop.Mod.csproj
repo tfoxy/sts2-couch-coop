@@ -44,6 +44,19 @@
       <HintPath>$(Sts2AssembliesDir)/sts2.dll</HintPath>
       <Private>false</Private>
     </Reference>
+    <!--
+      REFERENCE CLOSURE, not a binding of ours: nothing in this project names a Steamworks type. The game's
+      NetErrorInfo carries a Steamworks.EResult, so every source file that mentions NetErrorInfo drags
+      Steamworks.NET into the compile closure, and RAR does not follow a HintPath'd reference's own
+      dependencies into that directory — the result is CS0012 pointing at a type we never wrote.
+      Unconditional because it is harmless on a build that does not need it, and because the class of error it
+      prevents reproduces in Debug and NOT in Release, so a Release-only smoke build would not catch its loss.
+      eng/Sts2.ReferenceSdk/*/ stages Steamworks.NET.dll for the same reason.
+    -->
+    <Reference Include="Steamworks.NET">
+      <HintPath>$(Sts2AssembliesDir)/Steamworks.NET.dll</HintPath>
+      <Private>false</Private>
+    </Reference>
 
     <!--
       Build the shared spirectl runtime into a private, couch-coop-specific assembly identity

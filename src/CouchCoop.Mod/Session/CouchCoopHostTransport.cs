@@ -57,13 +57,13 @@ internal static class CouchCoopHostTransport
     /// </para>
     /// <para>
     /// It is still not enough on its own, which is why this probe stays. Hosting starts BEFORE the lobby exists,
-    /// so at that moment there is nothing to ask and the probe reports the stock cap — a raise that only ever
-    /// lands on the lobby would be invisible here. This is the backstop for everything that happens later: a cap
-    /// raised after host start, or by a mod that touches the lobby alone. A listener sized for 4 while the lobby
-    /// admits 16 refuses the fifth seat at the transport, which is exactly the failure this avoids.
+    /// so at that moment there is nothing to ask and the probe reports null — a raise that only ever lands on the
+    /// lobby would be invisible here. This is the backstop for everything that happens later: a cap raised after
+    /// host start, or by a mod that touches the lobby alone. A listener sized for 4 while the lobby admits 16
+    /// refuses the fifth seat at the transport, which is exactly the failure this avoids.
     /// </para>
     /// </summary>
-    internal static Func<int>? MaxLobbyPlayersProbe { get; set; }
+    internal static Func<int?>? MaxLobbyPlayersProbe { get; set; }
 
     /// <summary>
     /// The client cap the CURRENT hosting session's transports were actually built for, or null when no host
@@ -257,10 +257,11 @@ internal static class CouchCoopHostTransport
         /// <summary>
         /// Widens <paramref name="maxClients"/> to whatever the live lobby will admit (see
         /// <see cref="MaxLobbyPlayersProbe"/>). Only ever raises: a caller asking for MORE than the lobby cap is
-        /// left alone, and with no probe (or an unreadable one) the argument passes through untouched — so on the
-        /// stock game, where the probe reports the same 4 the caller already passed, nothing changes at all. That
-        /// one-way contract is what makes it safe to keep running after a limit mod has already raised the
-        /// argument: it can never undo that raise.
+        /// left alone, and with no probe — or one that reports no cap, which is what "hosting has not built a
+        /// lobby yet" looks like — the argument passes through untouched. So on the stock game, where the probe
+        /// reports the same 4 the caller already passed, nothing changes at all. That one-way contract is what
+        /// makes it safe to keep running after a limit mod has already raised the argument: it can never undo
+        /// that raise, and it never substitutes a cap of its own for one it could not read.
         /// </summary>
         private static int WithLobbyCapacity(int maxClients)
         {
@@ -269,7 +270,7 @@ internal static class CouchCoopHostTransport
                 return maxClients;
             }
 
-            int lobbyMax;
+            int? lobbyMax;
             try { lobbyMax = probe(); }
             catch (Exception exception)
             {
@@ -277,13 +278,13 @@ internal static class CouchCoopHostTransport
                 return maxClients;
             }
 
-            if (lobbyMax <= maxClients)
+            if (lobbyMax is not { } cap || cap <= maxClients)
             {
                 return maxClients;
             }
 
-            Log($"lobby admits {lobbyMax} players but hosting was asked for {maxClients} — sizing the transport for {lobbyMax} so every seat can connect.");
-            return lobbyMax;
+            Log($"lobby admits {cap} players but hosting was asked for {maxClients} — sizing the transport for {cap} so every seat can connect.");
+            return cap;
         }
     }
 

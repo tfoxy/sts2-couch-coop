@@ -19,5 +19,33 @@
     <CouchCoopEnableHotReload Condition="'$(CouchCoopEnableHotReload)' == ''">true</CouchCoopEnableHotReload>
     <Sts2AssembliesDir Condition="'$(Sts2AssembliesDir)' == '' and '$(STS2_ASSEMBLIES_DIR)' != ''">$(STS2_ASSEMBLIES_DIR)</Sts2AssembliesDir>
     <Sts2AssembliesDir Condition="'$(Sts2AssembliesDir)' == '' and '$(CouchCoopConfigAssembliesDir)' != ''">$(CouchCoopConfigAssembliesDir)</Sts2AssembliesDir>
+
+    <CouchCoopSpirectlRoot Condition="'$(CouchCoopSpirectlRoot)' == ''">$([System.IO.Path]::GetFullPath('$(CouchCoopRepoRoot)../spirectl'))</CouchCoopSpirectlRoot>
+    <CouchCoopSts2GameApiProps>$(CouchCoopSpirectlRoot)/bridge-mod/Sts2GameApi.props</CouchCoopSts2GameApiProps>
   </PropertyGroup>
+
+  <!--
+    WHICH GAME BUILD THIS COMPILE IS FOR. A handful of the game members CouchCoop binds to were renamed or
+    reshaped between game builds, so the sources that touch them are `#if`-split by API lane exactly as the
+    bridge's are. The lane table lives in ../spirectl and is imported rather than copied: two copies would
+    disagree the first time a game build is added to one of them.
+
+    Imported AFTER the block above, which is what resolves $(Sts2AssembliesDir) — the lane is detected from the
+    install being compiled against. Outputs $(Sts2GameApi), $(Sts2GameVersion), and one of the STS2_API_V107 /
+    STS2_API_V111 compile constants. Pass -p:Sts2GameApi=<lane> to name a lane for an assemblies directory that
+    carries no release_info.json, which is what the declaration-only reference SDK under eng/ is.
+  -->
+  <Import Project="$(CouchCoopSts2GameApiProps)" Condition="Exists('$(CouchCoopSts2GameApiProps)')" />
+
+  <Target Name="ValidateSts2GameApiTable" BeforeTargets="ResolveReferences">
+    <!--
+      Gated on actually compiling against a game install: the game-free projects (the wire protocol, the
+      reference lanes under eng/) build on a machine that owns neither a game nor a spirectl checkout, and
+      neither needs a lane. Everything else does, and a missing sibling is worth naming here rather than
+      surfacing as a broken ProjectReference path further down.
+    -->
+    <Error
+      Condition="!Exists('$(CouchCoopSts2GameApiProps)') and '$(Sts2AssembliesDir)' != '' and Exists('$(Sts2AssembliesDir)/sts2.dll')"
+      Text="Missing the STS2 API lane table at $(CouchCoopSts2GameApiProps). CouchCoop compiles against ../spirectl as a sibling checkout (scripts/package-release.sh clones it into the same relative position); clone or symlink it there, or point -p:CouchCoopSpirectlRoot at it." />
+  </Target>
 </Project>

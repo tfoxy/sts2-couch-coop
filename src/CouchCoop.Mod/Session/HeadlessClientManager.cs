@@ -60,9 +60,10 @@ public sealed class HeadlessClientManager : IDisposable
     private const int MinSlot = 2;
 
     /// <summary>
-    /// Seats available when nothing can tell us the live lobby's capacity (no probe wired, no game state yet).
-    /// Three — the stock game's four-player lobby minus the host's own seat — so an un-probed manager behaves
-    /// exactly as it did before the cap became dynamic.
+    /// Seats available when NO probe is wired at all (a standalone browser server, a test). Three — the stock
+    /// game's four-player lobby minus the host's own seat — so an un-probed manager behaves exactly as it did
+    /// before the cap became dynamic. A wired probe that reports an unknown cap is a different case; see
+    /// <see cref="MaxSlot"/>.
     /// </summary>
     private const int DefaultSeats = 3;
 
@@ -163,7 +164,7 @@ public sealed class HeadlessClientManager : IDisposable
     // constant, because the cap is not ours to choose: the stock game allows four players, and the multiplayer
     // limit mods raise that — see CouchCoopLobbyParticipation.MaxCouchSeats, which is what the host wires in here.
     // Null in tests / on a headless client instance, which then get DefaultSeats.
-    private readonly Func<int>? _maxSeatsProbe;
+    private readonly Func<int?>? _maxSeatsProbe;
     private readonly string? _gameExe;
     private readonly string? _headlessWrapper;
     private bool _disposed;
@@ -214,19 +215,33 @@ public sealed class HeadlessClientManager : IDisposable
     {
         get
         {
-            var seats = DefaultSeats;
+            // UNPROBED (a standalone server, a test) is a different answer from PROBED-AND-UNKNOWN. With no probe
+            // nothing here has ever known the lobby and the stock three seats are the historical behaviour. A
+            // probe that reports null means there is a host but no lobby to ask RIGHT NOW — mid-run, or on the
+            // main menu — and the stock three would then be a cap we invented: the netId-BOUND respawn path is
+            // live exactly then, so assuming three is how a mid-run rejoin by seat 1005 of an eight-player game
+            // used to be refused as "not a seat". With no cap to apply, the guard band is the only real limit,
+            // which is what it is for. Nothing widens the NEW-peer window, which CouchCoopLobbyParticipation
+            // .MayLaunchNewHeadless still shuts whenever there is no lobby.
+            int? seats = null;
+            var probed = false;
             if (_maxSeatsProbe is not null)
             {
-                try { seats = _maxSeatsProbe(); }
+                try
+                {
+                    seats = _maxSeatsProbe();
+                    probed = true;
+                }
                 catch (Exception ex)
                 {
                     // A cap we cannot read must never cost anyone their seat: fall back to the stock three.
                     Console.Error.WriteLine($"[couch-coop] max-seats probe failed ({ex.GetType().Name}: {ex.Message}) — assuming {DefaultSeats}.");
-                    seats = DefaultSeats;
                 }
             }
 
-            return MinSlot - 1 + Math.Clamp(seats, 1, SlotCeiling - MinSlot + 1);
+            var ceiling = SlotCeiling - MinSlot + 1;
+            var effective = seats ?? (probed ? ceiling : DefaultSeats);
+            return MinSlot - 1 + Math.Clamp(effective, 1, ceiling);
         }
     }
 
@@ -278,7 +293,7 @@ public sealed class HeadlessClientManager : IDisposable
         Func<int, IHeadlessProcess?> launcher,
         Func<int, CancellationToken, Task<bool>>? readinessProbe = null,
         Action<ulong>? evictStalePeer = null,
-        Func<int>? maxSeatsProbe = null)
+        Func<int?>? maxSeatsProbe = null)
     {
         _launcher = launcher ?? throw new ArgumentNullException(nameof(launcher));
         _readinessProbe = readinessProbe ?? DefaultHttpReadinessAsync;
@@ -290,7 +305,7 @@ public sealed class HeadlessClientManager : IDisposable
         string gameExe,
         string? headlessWrapper,
         Action<ulong>? evictStalePeer,
-        Func<int>? maxSeatsProbe)
+        Func<int?>? maxSeatsProbe)
     {
         _gameExe = gameExe;
         _headlessWrapper = string.IsNullOrWhiteSpace(headlessWrapper) ? null : headlessWrapper.Trim();
@@ -305,12 +320,12 @@ public sealed class HeadlessClientManager : IDisposable
     /// Returns null if the current process exe cannot be determined (tests, unusual launchers).
     /// <paramref name="evictStalePeer"/> force-disconnects a stale ENet peer by netId before a reconnect respawn
     /// reuses it (see <see cref="_evictStalePeer"/>); pass null to disable (no host net server).
-    /// <paramref name="maxSeatsProbe"/> reports how many couch seats the live lobby has room for (see
-    /// <see cref="MaxSlot"/>); pass null to keep the stock three.
+    /// <paramref name="maxSeatsProbe"/> reports how many couch seats the live lobby has room for, or null when
+    /// there is no lobby to ask (see <see cref="MaxSlot"/>); pass no probe at all to keep the stock three.
     /// </summary>
     public static HeadlessClientManager? TryCreate(
         Action<ulong>? evictStalePeer = null,
-        Func<int>? maxSeatsProbe = null)
+        Func<int?>? maxSeatsProbe = null)
     {
         var exe = System.Diagnostics.Process.GetCurrentProcess().MainModule?.FileName;
         if (string.IsNullOrEmpty(exe)) return null;

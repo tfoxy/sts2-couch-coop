@@ -1,12 +1,17 @@
 using Godot;
 using CouchCoop.Mod.Localization;
 using MegaCrit.Sts2.Core.Nodes.CommonUi;
+#if STS2_API_V111
+// Aliased rather than imported: the game's enum shares its name with the controller manager's property that
+// carries it, and an unqualified `InputType` in both positions reads as a typo.
+using GameInputType = MegaCrit.Sts2.Core.ControllerInput.InputType;
+#endif
 
 namespace CouchCoop.Mod.HostUi;
 
 /// <summary>
-/// The controller affordance for the lobby QR button: the glyph of the action that opens the dialog,
-/// plus one short line of copy, shown only while a controller is actually in use.
+/// The mouseless affordance for the lobby QR button: the glyph of the action that opens the dialog, plus one
+/// short line of copy, shown only while the game is actually being driven without a mouse.
 /// </summary>
 /// <remarks>
 /// <para>
@@ -17,9 +22,33 @@ namespace CouchCoop.Mod.HostUi;
 /// (see <see cref="CouchCoopQrHostPanel"/>), and a hotkey nobody can see is a hotkey nobody presses.
 /// </para>
 /// <para>
+/// <b>"Without a mouse" is wider than "with a controller", and only on one game build.</b> Game v0.107.1
+/// offers a single boolean, <c>NControllerManager.IsUsingController</c>, so on that build the two questions
+/// are the same question and the hint follows the boolean. v0.111.0 replaces it with
+/// <c>NControllerManager.InputType</c> (<c>MouseAndKeyboard</c> / <c>KeyboardOnlyMode</c> / <c>Controller</c>),
+/// and there the hint shows for BOTH non-mouse modes, because everything the first paragraph says about a
+/// controller is equally true of keyboard-only mode: the mouse is taken away on screen, so there is no hover
+/// fallback and the closed focus ring still cannot reach this button, while the hotkey itself keeps firing
+/// (the hotkey manager dispatches on the input ACTION, and the keyboard is mapped into it). That partition is
+/// the game's own, not ours — its public <c>ShouldShowInputGlyphs</c> and <c>IsUsingDirectionalNavigation</c>
+/// draw the line in the same place. Mapping the boolean to
+/// <c>== Controller</c> would have silently dropped every keyboard-only player, which is a mode v0.111.0
+/// shipped as a feature. The two lanes therefore behave DIFFERENTLY on purpose: v0.107.1 cannot express
+/// keyboard-only mode at all, so there is nothing there to show the hint for.
+/// </para>
+/// <para>
+/// The GLYPH is narrower than the hint. <c>GetHotkeyIcon</c> answers with the action's CONTROLLER button, so a
+/// keyboard-only player would be shown a gamepad button they do not have; the texture is therefore fetched
+/// only in controller mode, which lands keyboard-only mode in the already-designed "copy without an icon"
+/// state below. The game's own hint widget draws the bound KEY NAME there instead; doing the same here is a
+/// worthwhile follow-up and wants a live beta lobby to look at, so it is deliberately not guessed at here.
+/// </para>
+/// <para>
 /// <b>Cheap, and off the tick.</b> The glyph is fetched once on install and then only when the game says
 /// the input picture changed — <c>ControllerDetected</c> / <c>MouseDetected</c> on the controller manager
-/// and <c>InputRebound</c> on the input manager. The 0.25s panel scan never touches this node.
+/// and <c>InputRebound</c> on the input manager. The 0.25s panel scan never touches this node. Those two
+/// signals cover keyboard-only mode too: v0.111.0 announces a switch INTO it as <c>ControllerDetected</c>
+/// and a switch back to the mouse as <c>MouseDetected</c>, so no third connection is needed.
 /// </para>
 /// <para>
 /// <b>Lifecycle.</b> This assembly is built without Godot's C# source generators, so <c>_Ready</c> and
@@ -132,7 +161,34 @@ internal sealed partial class CouchCoopQrHotkeyHint : Control
     }
 
     /// <summary>
-    /// Re-reads whether a controller is in use and which glyph that action currently wears.
+    /// The two facts this hint needs out of the game's input state: whether the player currently has no mouse
+    /// (so the hint belongs on screen at all) and whether they are on a CONTROLLER (so a controller button
+    /// glyph is the right icon). They are the same fact on v0.107.1 and different facts on v0.111.0 — see the
+    /// type's remarks. <see langword="default"/> — no hint — whenever the manager cannot be reached.
+    /// </summary>
+    private readonly record struct InputPicture(bool WithoutMouse, bool OnController);
+
+    private static InputPicture ReadInputPicture()
+    {
+        if (NControllerManager.Instance is not { } controllers)
+        {
+            return default;
+        }
+
+#if STS2_API_V111
+        var inputType = controllers.InputType;
+        return new InputPicture(
+            WithoutMouse: inputType is GameInputType.Controller or GameInputType.KeyboardOnlyMode,
+            OnController: inputType is GameInputType.Controller);
+#else
+        // v0.107.1 has no keyboard-only mode to distinguish, so the one boolean answers both questions.
+        var usingController = controllers.IsUsingController;
+        return new InputPicture(WithoutMouse: usingController, OnController: usingController);
+#endif
+    }
+
+    /// <summary>
+    /// Re-reads whether the game is being driven without a mouse and which glyph that action currently wears.
     /// </summary>
     /// <remarks>
     /// Best-effort throughout: the hint is an affordance, and neither a missing singleton nor a glyph that
@@ -148,17 +204,18 @@ internal sealed partial class CouchCoopQrHotkeyHint : Control
 
         try
         {
-            var usingController = NControllerManager.Instance?.IsUsingController ?? false;
-            Visible = usingController;
-            if (!usingController)
+            var input = ReadInputPicture();
+            Visible = input.WithoutMouse;
+            if (!input.WithoutMouse)
             {
                 return;
             }
 
             // NInputManager, not NControllerManager: it maps the ACTION through the player's (possibly
             // rebound) controller map before asking for the button's glyph, which is what the game's own
-            // buttons and the ascension panel do.
-            var icon = NInputManager.Instance?.GetHotkeyIcon(_action);
+            // buttons and the ascension panel do. Controller mode only — that map answers with a gamepad
+            // button, which is not what a keyboard-only player is holding.
+            var icon = input.OnController ? NInputManager.Instance?.GetHotkeyIcon(_action) : null;
             _glyph.Texture = icon;
             _glyph.Visible = icon is not null;
         }

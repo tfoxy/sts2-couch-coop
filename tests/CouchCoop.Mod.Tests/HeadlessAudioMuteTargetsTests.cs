@@ -11,6 +11,7 @@ internal static class HeadlessAudioMuteTargetsTests
     public static void Run()
     {
         AllPatchTargetsResolve();
+        EveryTargetHasASkipValue();
         CoversBothForwarders();
     }
 
@@ -27,6 +28,26 @@ internal static class HeadlessAudioMuteTargetsTests
 
         Assert(missing.Count == 0,
             $"every HeadlessAudioMutePatch target resolves against the installed STS2 assemblies (missing: {string.Join("; ", missing)})");
+    }
+
+    // Resolving is only half of it: a prefix that skips the original makes the method return `default` for its
+    // return type, so a forward that starts RETURNING something (v0.111.0 turned LoadActBank's void into a
+    // load-succeeded bool) hands its caller a value the patch never decided on. The patch knows a skip value for
+    // void and for bool; anything else must fail here rather than be invented at runtime.
+    private static void EveryTargetHasASkipValue()
+    {
+        var unhandled = new List<string>();
+        foreach (var (type, name, args) in HeadlessAudioMutePatch.Targets)
+        {
+            var target = AccessTools.Method(type, name, args);
+            if (target is not null && target.ReturnType != typeof(void) && target.ReturnType != typeof(bool))
+            {
+                unhandled.Add($"{type.Name}.{name} returns {target.ReturnType.Name}");
+            }
+        }
+
+        Assert(unhandled.Count == 0,
+            $"every HeadlessAudioMutePatch target returns void or bool, the two shapes it can skip (unhandled: {string.Join("; ", unhandled)})");
     }
 
     private static void CoversBothForwarders()
