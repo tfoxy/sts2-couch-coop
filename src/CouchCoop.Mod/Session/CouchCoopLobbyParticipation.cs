@@ -19,6 +19,9 @@ public sealed class CouchCoopLobbyParticipation(CouchCoopRuntimeHost runtimeHost
 {
     private readonly CouchCoopRuntimeHost _runtimeHost = runtimeHost ?? throw new ArgumentNullException(nameof(runtimeHost));
 
+    /// <summary>One-shot latch for <see cref="LobbyCapOf"/>'s notice — the cap is read on every allocation.</summary>
+    private static bool _warnedUnreadableLobbyCap;
+
     /// <summary>
     /// Ensure a live lobby player exists for <paramref name="name"/>, so the joining browser binds
     /// to a real <c>p:N</c> player (and the player appears in the live game). Idempotent — spirectl
@@ -223,30 +226,64 @@ public sealed class CouchCoopLobbyParticipation(CouchCoopRuntimeHost runtimeHost
     /// </summary>
     public bool MayLaunchNewHeadless()
         => CurrentState() is { Run: null, CharacterSelect.Lobby: { NetGameType: "host" } lobby }
-            && HasFreeLobbySlot(lobby.Players.Count, lobby.ConnectingPlayerCount, lobby.MaxPlayers);
+            && HasFreeLobbySlot(lobby.Players.Count, lobby.ConnectingPlayerCount, LobbyCapOf(lobby));
 
     /// <summary>
-    /// How many COUCH SEATS the live lobby has room for: its own player cap minus the host's seat. Asked of the
-    /// game rather than hardcoded — the stock lobby caps at four players, but the multiplayer limit mods raise it
-    /// ("Multiplayer Limit Break" writes 16 onto the lobby; "Unlimited" overrides the cap the lobby is built with),
-    /// and a hardcoded 3 here was what kept a fifth player out of a 16-player lobby.
+    /// How many COUCH SEATS the live lobby has room for: its own player cap minus the host's seat, or
+    /// <see langword="null"/> when there is no lobby to ask (main menu, mid-run, no state capability). Asked of
+    /// the game rather than hardcoded — the stock lobby caps at four players, but the multiplayer limit mods
+    /// raise it ("Multiplayer Limit Break" writes 16 onto the lobby; "Unlimited" overrides the cap the lobby is
+    /// built with), and a hardcoded 3 here was what kept a fifth player out of a 16-player lobby.
     /// <para>
     /// Wired into <see cref="HeadlessClientManager"/> as its max-seats probe, so it is re-read per allocation
     /// rather than sampled once — Limit Break raises the cap lazily, from its own join/connect hooks, well after
-    /// the host mod is constructed. Falls back to the stock three seats whenever there is no lobby to ask
-    /// (main menu, mid-run, no state capability), which is also when nothing is allocating seats anyway.
+    /// the host mod is constructed.
     /// </para>
     /// </summary>
-    public int MaxCouchSeats() => MaxLobbyPlayers() - 1;
+    public int? MaxCouchSeats() => MaxLobbyPlayers() is { } maxLobbyPlayers ? maxLobbyPlayers - 1 : null;
 
     /// <summary>
     /// The live lobby's own player cap, host seat included — <see cref="MaxCouchSeats"/>'s source, and what the
-    /// host transport sizes its ENet listener from. Falls back to the stock cap when there is no lobby to ask.
+    /// host transport sizes its ENet listener from. <see langword="null"/> means UNKNOWN, and every caller has to
+    /// say what it does with that.
     /// </summary>
-    public int MaxLobbyPlayers()
-        => CurrentState()?.CharacterSelect?.Lobby is { MaxPlayers: > 1 } lobby
-            ? lobby.MaxPlayers
-            : StateCharacterSelectLobbyDefaults.MaxPlayers;
+    /// <remarks>
+    /// It used to answer the stock 4 instead, which was the wrong kind of wrong: the whole reason this reads the
+    /// lobby is that a 5-to-8-player game caps at whatever the limit mod wrote, so a fabricated 4 does not
+    /// degrade the feature, it silently revokes it. The value is also no longer OURS to default — the bridge
+    /// lane-pins the member behind it and refuses at startup on a build that does not expose it, so a host that
+    /// is running at all has a real cap whenever it has a lobby, and the honest answer the rest of the time is
+    /// "there is no lobby".
+    /// </remarks>
+    public int? MaxLobbyPlayers()
+        => CurrentState()?.CharacterSelect?.Lobby is { } lobby ? LobbyCapOf(lobby) : null;
+
+    /// <summary>
+    /// One lobby snapshot's player cap, or <see langword="null"/> when the snapshot does not carry a usable one.
+    /// </summary>
+    /// <remarks>
+    /// A snapshot reports 0 when the read behind it failed, and a lobby that admits one player is not a lobby
+    /// anyone can join — either way there is no cap here to size anything by. Unlike "no lobby at all", this IS
+    /// anomalous (the bridge refuses to start without the member), so it says so once per process rather than
+    /// passing for an ordinary absence.
+    /// </remarks>
+    private static int? LobbyCapOf(StateCharacterSelectLobbySnapshot lobby)
+    {
+        if (lobby.MaxPlayers > 1)
+        {
+            return lobby.MaxPlayers;
+        }
+
+        if (!_warnedUnreadableLobbyCap)
+        {
+            _warnedUnreadableLobbyCap = true;
+            Console.Error.WriteLine(
+                $"[couch-coop] the live lobby reports a player cap of {lobby.MaxPlayers} — seat limits, the ENet "
+                + "listener size and browser admission are all running WITHOUT a known cap until it reads back.");
+        }
+
+        return null;
+    }
 
     /// <summary>
     /// Whether a NEW peer could still be admitted. Slots used to be a couch-only resource (three seats beside the
@@ -258,12 +295,18 @@ public sealed class CouchCoopLobbyParticipation(CouchCoopRuntimeHost runtimeHost
     /// of ours. It used to be hardcoded to 4, justified by the slotId being serialized in two bits — but both
     /// multiplayer limit mods rewrite that serialization (Limit Break ships its own lobby codec, Unlimited
     /// transpiles the packed bit widths), so the wire is no longer the limit and the lobby is the only honest
-    /// source. A non-positive value reads as the stock cap.
+    /// source.
+    /// </para>
+    /// <para>
+    /// An UNKNOWN cap (<see langword="null"/>) admits. This check exists to save a joiner the ~30s of starting a
+    /// seat the lobby will refuse on arrival — it is not the admission authority, the game is, and the game
+    /// refuses with a <c>NetError</c> either way. Guessing a low cap here would be the one outcome the game
+    /// cannot correct: it would refuse a seat the lobby had room for, which is exactly how a 5-to-8-player game
+    /// gets capped at four.
     /// </para>
     /// </summary>
-    internal static bool HasFreeLobbySlot(int playerCount, uint connectingPlayerCount, int maxLobbyPlayers)
-        => playerCount + (long)connectingPlayerCount
-            < (maxLobbyPlayers > 0 ? maxLobbyPlayers : StateCharacterSelectLobbyDefaults.MaxPlayers);
+    internal static bool HasFreeLobbySlot(int playerCount, uint connectingPlayerCount, int? maxLobbyPlayers)
+        => maxLobbyPlayers is not { } max || playerCount + (long)connectingPlayerCount < max;
 
     /// <summary>
     /// One-shot snapshot of the inputs the mirror join handler needs to decide DIRECT_VIEW vs SPAWN/REUSE vs REJECT,

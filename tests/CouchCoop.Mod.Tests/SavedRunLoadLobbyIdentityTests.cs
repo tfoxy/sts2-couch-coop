@@ -35,7 +35,7 @@ internal static class SavedRunLoadLobbyIdentityTests
             var lobby = new LoadRunLobby(service, listener, Run(savedSteamHost, 1002UL));
             lobby.AddLocalHostPlayer();
 
-            Assert(lobby.ConnectedPlayerIds.SetEquals([savedSteamHost]),
+            Assert(RegisteredNetIds(lobby).SequenceEqual([savedSteamHost]),
                 "LoadRunLobby registers only the saved Steam host, never ENet id 1");
             Assert(listener.ConnectedPlayerIds.SequenceEqual([savedSteamHost]),
                 "the loaded-lobby listener receives the saved Steam host id");
@@ -61,6 +61,18 @@ internal static class SavedRunLoadLobbyIdentityTests
         Assert(CouchCoopHostTransport.ResolveSavedRunFallbackHostNetId(couchSeatService, couchSeatService.NativeNetId) == 1002UL,
             "an unbound couch-seat identity is never remapped");
     }
+
+    /// <summary>
+    /// Every netId the loaded lobby has registered, in registration order. v0.107.1 exposes them as a
+    /// <c>HashSet</c> (<c>ConnectedPlayerIds</c>); v0.111.0 replaced that with a projection over the new
+    /// per-player records (<c>PlayerIds</c>). One element either way here, so ordering costs this test nothing.
+    /// </summary>
+    private static IReadOnlyList<ulong> RegisteredNetIds(LoadRunLobby lobby)
+#if STS2_API_V111
+        => lobby.PlayerIds.ToList();
+#else
+        => lobby.ConnectedPlayerIds.ToList();
+#endif
 
     private static SerializableRun Run(params ulong[] playerIds) => new()
     {
@@ -107,13 +119,30 @@ internal static class SavedRunLoadLobbyIdentityTests
         public void DisconnectClient(ulong peerId, NetError reason, bool now = false)
             => ClientDisconnected?.Invoke(peerId, new NetErrorInfo(reason, selfInitiated: true));
         public void SetPeerReadyForBroadcasting(ulong peerId) { }
+#if STS2_API_V111
+        // v0.111.0 widened both service interfaces with the peer-version handshake and a connection-FAILED
+        // event (distinct from a disconnect: the peer never got in). Nothing this test asserts goes near them;
+        // they are here so the fake still satisfies the interface on that build.
+        public MegaCrit.Sts2.Core.Multiplayer.PeerVersionInfo LocalVersion => default;
+        public event Action<ulong, NetErrorInfo>? ClientConnectionFailed
+        {
+            add { }
+            remove { }
+        }
+        public MegaCrit.Sts2.Core.Multiplayer.PeerVersionInfo? GetVersionInfoForPeer(ulong peerId) => null;
+#endif
     }
 
     private sealed class RecordingListener : ILoadRunLobbyListener
     {
         public List<ulong> ConnectedPlayerIds { get; } = [];
 
+#if STS2_API_V111
+        // v0.111.0 hands the listener the whole lobby-player record rather than a bare netId.
+        public void PlayerConnected(LoadRunLobbyPlayer player) => ConnectedPlayerIds.Add(player.id);
+#else
         public void PlayerConnected(ulong playerId) => ConnectedPlayerIds.Add(playerId);
+#endif
         public void RemotePlayerDisconnected(ulong playerId) { }
         public Task<bool> ShouldAllowRunToBegin() => Task.FromResult(true);
         public void BeginRun() { }

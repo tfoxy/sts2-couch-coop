@@ -86,6 +86,22 @@ if (args is ["host-guards", ..])
     return;
 }
 
+// `dotnet run --project tests/CouchCoop.Mod.Tests -- seats` runs the seat allocator ALONE: slot/netId
+// allocation and reuse, the lobby-cap-driven slot range (which is what decides whether a fifth-to-eighth player
+// gets a seat at all), the reap/detach bookkeeping, the seat launch contract, and the lock-ordering pins that
+// keep the cap probe off the manager's lock. Pure in the same sense as host-guards — a fake launcher and an
+// instant readiness probe stand in for a real game process and a real HTTP poll — and registered here because
+// the full sequence does not reach it on some machines (see the note above HeadlessAudioMuteTargetsTests), which
+// makes this the only way to verify a change to the seat cap.
+if (args is ["seats", ..])
+{
+    await HeadlessClientManagerTests.RunAsync();
+    // The suite narrates every seat it starts, so say plainly that it finished — an exit code is easy to lose
+    // in that scroll, which is the same reason host-guards prints its own line.
+    Console.WriteLine("seats: ok");
+    return;
+}
+
 // `dotnet run --project tests/CouchCoop.Mod.Tests -- host-ui` runs the pure host-UI decisions ALONE. Same
 // rationale as `host-guards` above — no IO, no Harmony, no Godot engine, no live game — and the same
 // arrangement: they also run in the normal sequence below. This is the reachable way to verify a host-UI
@@ -119,6 +135,46 @@ if (args is ["seat-timeout", ..])
 {
     await SeatReadyTimeoutTests.RunAsync();
     return;
+}
+
+// `dotnet run --project tests/CouchCoop.Mod.Tests -- beta-targets` runs ONLY the Harmony patch-TARGET guards:
+// every game member this mod patches or reflects over, resolved against the STS2 assemblies this build was
+// compiled with. That is the whole per-GAME-BUILD question, which makes it the one-liner to run after a game
+// update or when adding an API lane — point Sts2AssembliesDir at the new build, build, run this. The legs are
+// pure metadata reflection (no Harmony install, no live game, no IO), so like host-guards above they are safe
+// alone, and unlike the full sequence they are reachable: it dies partway through on some machines (see the
+// note above HeadlessAudioMuteTargetsTests) and never reaches most of what is registered after it.
+//
+// Every leg is run even when an earlier one fails, and each is named on its own line: a game update typically
+// breaks several members at once, and stopping at the first would hide the rest behind another build+run cycle.
+if (args is ["beta-targets", ..])
+{
+    var failures = new List<string>();
+    void Leg(string name, Action body)
+    {
+        try
+        {
+            body();
+            Console.WriteLine($"  {name}: ok");
+        }
+        catch (Exception exception)
+        {
+            failures.Add(name);
+            Console.WriteLine($"  {name}: FAILED -- {exception.Message}");
+        }
+    }
+
+    // WS-1 networking/hosting seams, the headless FMOD forwards, the clean-exit popup suppression, and the two
+    // lobby-screen mount points — in the same order the full sequence takes them.
+    Leg(nameof(NetTransportPatchTargetsTests), NetTransportPatchTargetsTests.Run);
+    Leg(nameof(HeadlessAudioMuteTargetsTests), HeadlessAudioMuteTargetsTests.Run);
+    Leg(nameof(HeadlessDisconnectExitTests), () => HeadlessDisconnectExitTests.RunAsync().GetAwaiter().GetResult());
+    Leg("IdleHostCostTests.MountTargets", IdleHostCostTests.MountTargetsResolve);
+
+    Console.WriteLine(failures.Count == 0
+        ? "beta-targets: every patch target resolves"
+        : $"beta-targets: {failures.Count} leg(s) FAILED: {string.Join(", ", failures)}");
+    Environment.Exit(failures.Count == 0 ? 0 : 1);
 }
 
 // Point the asset binary cache at a throwaway temp root BEFORE any browser-server / host-UI test constructs a

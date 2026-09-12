@@ -49,5 +49,20 @@
       <HintPath>$(Sts2AssembliesDir)/0Harmony.dll</HintPath>
       <Private>true</Private>
     </Reference>
+    <!--
+      RUNTIME closure for the reflection above, not a compile reference: game v0.111.0's sts2.dll carries a
+      [ModuleInitializer], so the CLR runs Sentry's Godot auto-init the first time any test touches a game type,
+      and without these two assemblies beside it that is a FileNotFoundException that fails every patch-target leg
+      before it asserts anything. The auto-init itself is a no-op here — it looks for the Sentry GDExtension,
+      which a bare test process does not have, prints one line and returns.
+
+      Copied rather than referenced (nothing compiles against them) and conditional rather than unconditional
+      (v0.107.1 ships neither Sentry.Godot.dll nor a module initializer that wants it).
+    -->
+    <None
+      Include="$(Sts2AssembliesDir)/Sentry.dll;$(Sts2AssembliesDir)/Sentry.Godot.dll"
+      Condition="'$(Sts2AssembliesDir)' != '' and Exists('$(Sts2AssembliesDir)/Sentry.Godot.dll')"
+      CopyToOutputDirectory="PreserveNewest"
+      Visible="false" />
   </ItemGroup>
 </Project>

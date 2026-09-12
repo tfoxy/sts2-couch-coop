@@ -110,10 +110,11 @@ internal static class HeadlessClientManagerTests
         public bool GracefulStopExits = true;
         public readonly HeadlessClientManager Manager;
         // The seat capacity the manager probes, standing in for the live lobby's player cap minus the host seat.
-        // Mutable so a test can raise it the way a multiplayer limit mod does mid-session.
-        public int MaxSeats = 3;
+        // Mutable so a test can raise it the way a multiplayer limit mod does mid-session. NULLABLE because the
+        // real probe reports null when there is no lobby to ask, which is a different answer from any number.
+        public int? MaxSeats = 3;
 
-        public Harness(int maxSeats = 3)
+        public Harness(int? maxSeats = 3)
         {
             // The host connectivity log is a process-global ring, so every harness starts from empty. (A
             // test that builds TWO harnesses therefore clears the first one's narration — none of the
@@ -407,6 +408,19 @@ internal static class HeadlessClientManagerTests
         var absurd = new Harness(maxSeats: 5000).Manager;
         Assert(absurd.TryNetIdToSlot(1099, out var slot99) && slot99 == 99, "1099 is the last seat in the guard band");
         Assert(!absurd.TryNetIdToSlot(1100, out _), "1100 is outside the guard band whatever the lobby claims");
+
+        // A probe that reports NO cap is not the same as no probe at all. It means there IS a host but no lobby
+        // to ask right now — mid-run, or on the main menu — and mid-run is exactly when the netId-BOUND respawn
+        // path runs. Substituting the stock three there refused a rejoin by seat 1005 of an eight-player run as
+        // "not a seat", so an unknown cap leaves the guard band as the only limit, which is the only one that is
+        // really ours. (Nothing here widens the NEW-peer window: MayLaunchNewHeadless still shuts it whenever
+        // there is no lobby.)
+        var unknown = new Harness(maxSeats: null).Manager;
+        Assert(unknown.TryNetIdToSlot(1005, out var unknown5) && unknown5 == 5,
+            "1005 is still a seat while the lobby cap is unknown");
+        Assert(unknown.TryNetIdToSlot(1099, out var unknown99) && unknown99 == 99,
+            "…all the way to the last netId in the guard band");
+        Assert(!unknown.TryNetIdToSlot(1100, out _), "…and never past it");
     }
 
     // A lobby that grows mid-session (Limit Break writes its raised cap from its own join/connect hooks, well

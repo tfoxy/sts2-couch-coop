@@ -37,7 +37,7 @@ public sealed class CouchCoopBrowserServer(
     private readonly BrowserSessionRegistry _sessionRegistry = new();
     private readonly ConcurrentDictionary<Guid, CouchCoopWebSocketConnection> _connections = new();
     private readonly NetworkAdmissionLimiter _admission = admission ?? new NetworkAdmissionLimiter(
-        () => envelopeFactory is null ? 4 : new CouchCoopLobbyParticipation(envelopeFactory.RuntimeHost).MaxLobbyPlayers());
+        () => envelopeFactory is null ? null : new CouchCoopLobbyParticipation(envelopeFactory.RuntimeHost).MaxLobbyPlayers());
     private readonly object _observerGate = new();
     private CouchCoopStateObserver? _observer;
     private CouchCoopSceneObserver? _sceneObserver;
