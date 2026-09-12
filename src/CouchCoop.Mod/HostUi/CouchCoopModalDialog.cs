@@ -18,10 +18,18 @@ internal readonly record struct CouchCoopModalNames(string Root, string Scrim, s
 
 /// <summary>
 /// The mod's shared modal: a click-blocking scrim, a centred card in the browser client's panel
-/// language, one dismiss button, Escape-to-close, and focus parking. Subclasses supply the BODY and the
+/// language, one dismiss button, cancel-to-close, and focus parking. Subclasses supply the BODY and the
 /// button's wording; everything else is fixed.
 /// </summary>
 /// <remarks>
+/// <para>
+/// <b>A controller must be able to get out of it.</b> Three things together are what make that true, and
+/// the Steam Deck leg measured each of them failing: focus parks on the dismiss button while a controller
+/// is in use (<see cref="CouchCoopModalFocusParking"/>) so the select action has something to activate;
+/// directional focus is pinned inside the dialog (<see cref="PinFocusRing"/>) so it cannot escape onto a
+/// lobby control behind the scrim; and the cancel binding is re-taken while the modal is up
+/// (<see cref="ReassertCancelBinding"/>) so B closes the dialog rather than leaving the lobby.
+/// </para>
 /// <para>
 /// <b>Own scrim, not <c>NModalContainer</c>.</b> The game's modal host hard-casts its caller to
 /// <c>IScreenContext</c>, which an injected <c>Control</c> is not, so it is unusable from a mod. The
@@ -50,12 +58,14 @@ internal abstract partial class CouchCoopModalDialog : Control
     private readonly StyleBoxFlat _cardStyle = new();
     private readonly CouchCoopSkipButton _dismiss;
     private readonly Action _closeAction;
+    private readonly Callable _inputModeChanged;
     private readonly Vector2 _cardSize;
     private readonly Vector2 _dismissSize;
 
     private HostLobbyQrOverlayLayout _layout = HostLobbyQrOverlayLayout.Default;
     private Control? _restoreFocus;
-    private bool _escapeBound;
+    private bool _cancelBound;
+    private bool _inputModeWired;
     private bool _installed;
 
     /// <summary>Raised after the dialog hides, so the owning panel can restore its own state.</summary>
@@ -80,6 +90,7 @@ internal abstract partial class CouchCoopModalDialog : Control
         _cardSize = cardSize;
         _dismissSize = dismissSize ?? CouchCoopSkipButton.DesignSize;
         _closeAction = Close;
+        _inputModeChanged = Callable.From(OnInputModeChanged);
 
         Name = names.Root;
         Visible = false;
@@ -105,7 +116,8 @@ internal abstract partial class CouchCoopModalDialog : Control
         _card.OffsetBottom = _cardSize.Y / 2f;
         _card.MouseFilter = MouseFilterEnum.Stop;
         // Focusable so Open() can park keyboard focus here (off the lobby, off the buttons) without
-        // lighting anything up — a Panel draws no focus visual.
+        // lighting anything up — a Panel draws no focus visual. That is the MOUSE parking spot only; a
+        // controller gets the dismiss button instead (see CouchCoopModalFocusParking).
         _card.FocusMode = FocusModeEnum.All;
         _cardStyle.AntiAliasing = true;
         _card.AddThemeStyleboxOverride("panel", _cardStyle);
@@ -144,6 +156,8 @@ internal abstract partial class CouchCoopModalDialog : Control
 
         InstallBody();
         _dismiss.Install();
+        PinFocusRing();
+        WireInputMode();
         // Background clicks. Both are Stop controls, so anything that is NOT a dialog element lands on
         // one of them; the elements consume their own clicks first.
         _scrim.Connect(Control.SignalName.GuiInput, Callable.From<InputEvent>(OnScrimInput));
@@ -168,29 +182,31 @@ internal abstract partial class CouchCoopModalDialog : Control
 
     protected void RefreshDialogFont() => _dismiss.RefreshLocalization();
 
-    /// <summary>Show the modal, parking focus and taking Escape for as long as it is up.</summary>
+    /// <summary>Show the modal, parking focus and taking cancel for as long as it is up.</summary>
     protected void OpenModal()
     {
         Visible = true;
         _restoreFocus = GetViewport()?.GuiGetFocusOwner();
-        // Park keyboard focus on the CARD, not on a button: focus must leave the lobby control behind
-        // the scrim (or ui_accept would activate it through the dialog), but a button that opens already
-        // lit in its focus state reads as pre-selected. A Panel draws no focus visual, and arrow keys
-        // still walk from it to the body controls and the dismiss button.
-        _card.GrabFocus();
-        BindEscape();
+        // Focus must leave the lobby control behind the scrim, or the select action would activate it
+        // straight through the dialog. WHERE it lands depends on the input the host is actually using —
+        // see CouchCoopModalFocusParking for both halves of that rule.
+        ApplyFocusTarget(CouchCoopModalFocusParking.OnOpen(IsUsingController()));
+        BindCancel();
     }
 
     public void Close()
     {
-        if (!Visible)
+        // The hotkey manager invokes its binding through a DEFERRED Callable, so a cancel pressed on the
+        // frame the lobby tore this panel down arrives after the node is gone. The tree_exiting teardown
+        // drops the binding, but a dispatch already in flight cannot be recalled.
+        if (!GodotObject.IsInstanceValid(this) || !Visible)
         {
             return;
         }
 
         OnClosing();
         Visible = false;
-        UnbindEscape();
+        UnbindCancel();
 
         if (_restoreFocus is { } previous && GodotObject.IsInstanceValid(previous))
         {
@@ -294,44 +310,320 @@ internal abstract partial class CouchCoopModalDialog : Control
     private static bool IsLeftPress(InputEvent inputEvent)
         => inputEvent is InputEventMouseButton { ButtonIndex: MouseButton.Left, Pressed: true };
 
-    // Escape/cancel. The hotkey manager dispatches to the LAST-pushed binding for an action, so pushing
-    // on open makes this win over the lobby's own back handler for exactly as long as the dialog is up;
-    // removing on close hands it straight back. Instance is nullable (it hangs off NGame), and the whole
-    // thing is best-effort: failing to bind Escape must not stop the dialog from opening, since the
-    // dismiss button and the click-outside path both still work.
-    private void BindEscape()
-    {
-        if (_escapeBound)
-        {
-            return;
-        }
+    // ---- focus ------------------------------------------------------------------------------------
 
+    /// <summary>
+    /// Keeps directional focus INSIDE the dialog: the card walks to the dismiss button, and the dismiss
+    /// button walks to itself.
+    /// </summary>
+    /// <remarks>
+    /// Without this, Godot's geometric neighbour search runs against every focusable control in the
+    /// viewport and happily hands focus to a LOBBY control behind the scrim — which the select action
+    /// would then activate through the dialog. Pinning a neighbour to the control itself is the game's
+    /// own idiom (the character-select ring pins each button's top/bottom to itself).
+    /// <para>
+    /// Consequence, deliberately accepted: the QR dialog's host-option rows stay unreachable by d-pad,
+    /// exactly as they are today. They have never been controller-reachable, and a modal whose ONE
+    /// affordance can always be reached is worth more than a walk nobody has ever had.
+    /// </para>
+    /// </remarks>
+    private void PinFocusRing()
+    {
         try
         {
-            NHotkeyManager.Instance?.PushHotkeyPressedBinding(MegaInput.cancel, _closeAction);
-            _escapeBound = NHotkeyManager.Instance is not null;
+            var dismiss = _card.GetPathTo(_dismiss);
+            _card.FocusNeighborTop = dismiss;
+            _card.FocusNeighborBottom = dismiss;
+            _card.FocusNeighborLeft = dismiss;
+            _card.FocusNeighborRight = dismiss;
+            _card.FocusNext = dismiss;
+            _card.FocusPrevious = dismiss;
+
+            var self = new NodePath(".");
+            _dismiss.FocusNeighborTop = self;
+            _dismiss.FocusNeighborBottom = self;
+            _dismiss.FocusNeighborLeft = self;
+            _dismiss.FocusNeighborRight = self;
+            _dismiss.FocusNext = self;
+            _dismiss.FocusPrevious = self;
         }
         catch (Exception exception)
         {
-            Console.Error.WriteLine($"[couch-coop] modal escape bind failed name={Name} detail={exception.GetType().Name}: {exception.Message}");
+            Console.Error.WriteLine(
+                $"[couch-coop] modal focus ring failed name={Name} detail={exception.GetType().Name}: {exception.Message}");
         }
     }
 
-    private void UnbindEscape()
+    private void ApplyFocusTarget(CouchCoopModalFocusParking.Target target)
     {
-        if (!_escapeBound)
+        try
+        {
+            switch (target)
+            {
+                case CouchCoopModalFocusParking.Target.Dismiss:
+                    _dismiss.GrabFocus();
+                    break;
+                case CouchCoopModalFocusParking.Target.Card:
+                    _card.GrabFocus();
+                    break;
+            }
+        }
+        catch (Exception exception)
+        {
+            Console.Error.WriteLine(
+                $"[couch-coop] modal focus parking failed name={Name} detail={exception.GetType().Name}: {exception.Message}");
+        }
+    }
+
+    /// <summary>The game's own notion of which input the host is on; false whenever it cannot be read.</summary>
+    private static bool IsUsingController()
+    {
+        try
+        {
+            return NControllerManager.Instance?.IsUsingController ?? false;
+        }
+        catch (Exception exception)
+        {
+            Console.Error.WriteLine(
+                $"[couch-coop] modal input mode read failed detail={exception.GetType().Name}: {exception.Message}");
+            return false;
+        }
+    }
+
+    /// <summary>A pad was picked up (or put down) — re-park focus if this modal is the thing on screen.</summary>
+    private void OnInputModeChanged()
+    {
+        if (!GodotObject.IsInstanceValid(this) || !Visible)
         {
             return;
         }
 
-        _escapeBound = false;
+        ApplyFocusTarget(CouchCoopModalFocusParking.OnInputModeChanged(IsUsingController(), _dismiss.HasFocus()));
+    }
+
+    /// <summary>
+    /// Subscribe to the game's input-mode signals for the life of this node, and arm the teardown.
+    /// </summary>
+    /// <remarks>
+    /// Same lifetime discipline as <see cref="CouchCoopQrHotkeyHint"/>, and for the same reason: a
+    /// <c>Callable.From</c> delegate is owned by no Godot object, so a connection left on the game's
+    /// long-lived managers would outlive this node and be invoked against a freed one — and the panel
+    /// holding these dialogs is built and freed on every trip through the lobby. The unhook hangs off the
+    /// NATIVE <c>tree_exiting</c> signal because <c>_ExitTree</c> is not dispatched into this assembly.
+    /// <para>
+    /// The same teardown drops the cancel binding. That matters more than it looks: the lobby can be torn
+    /// down while a modal is still up (B on the transport alert used to do exactly that), and a binding
+    /// left behind would fire <see cref="Close"/> on a freed node the next time anyone pressed cancel.
+    /// </para>
+    /// </remarks>
+    private void WireInputMode()
+    {
+        if (_inputModeWired)
+        {
+            return;
+        }
+
+        // tree_exiting first: if the Connect below throws, the teardown is already armed for the cancel
+        // binding, which is the half that can outlive this node.
         try
         {
-            NHotkeyManager.Instance?.RemoveHotkeyPressedBinding(MegaInput.cancel, _closeAction);
+            Connect(Node.SignalName.TreeExiting, Callable.From(OnTreeExiting));
         }
         catch (Exception exception)
         {
-            Console.Error.WriteLine($"[couch-coop] modal escape unbind failed name={Name} detail={exception.GetType().Name}: {exception.Message}");
+            Console.Error.WriteLine(
+                $"[couch-coop] modal exit hook failed name={Name} detail={exception.GetType().Name}: {exception.Message}");
+            return;
+        }
+
+        _inputModeWired = true;
+        ConnectInputMode(NControllerManager.SignalName.ControllerDetected);
+        ConnectInputMode(NControllerManager.SignalName.MouseDetected);
+    }
+
+    private void OnTreeExiting()
+    {
+        UnwireInputMode();
+        UnbindCancel();
+    }
+
+    private void UnwireInputMode()
+    {
+        if (!_inputModeWired)
+        {
+            return;
+        }
+
+        _inputModeWired = false;
+        DisconnectInputMode(NControllerManager.SignalName.ControllerDetected);
+        DisconnectInputMode(NControllerManager.SignalName.MouseDetected);
+    }
+
+    private void ConnectInputMode(StringName signal)
+    {
+        var source = NControllerManager.Instance;
+        if (source is null || !GodotObject.IsInstanceValid(source))
+        {
+            return;
+        }
+
+        try
+        {
+            if (!source.IsConnected(signal, _inputModeChanged))
+            {
+                source.Connect(signal, _inputModeChanged);
+            }
+        }
+        catch (Exception exception)
+        {
+            Console.Error.WriteLine(
+                $"[couch-coop] modal input mode connect failed signal={signal} detail={exception.GetType().Name}: {exception.Message}");
+        }
+    }
+
+    private void DisconnectInputMode(StringName signal)
+    {
+        var source = NControllerManager.Instance;
+        if (source is null || !GodotObject.IsInstanceValid(source))
+        {
+            return;
+        }
+
+        try
+        {
+            if (source.IsConnected(signal, _inputModeChanged))
+            {
+                source.Disconnect(signal, _inputModeChanged);
+            }
+        }
+        catch (Exception exception)
+        {
+            Console.Error.WriteLine(
+                $"[couch-coop] modal input mode disconnect failed signal={signal} detail={exception.GetType().Name}: {exception.Message}");
+        }
+    }
+
+    // ---- cancel binding ---------------------------------------------------------------------------
+
+    // Escape / controller B, and the pause action with it. The hotkey manager keeps ONE list per action
+    // and dispatches to the LAST-pushed binding, so pushing on open is what makes cancel close the dialog
+    // instead of reaching the lobby's back button; removing on close hands it straight back. Instance is
+    // nullable (it hangs off NGame), and the whole thing is best-effort: failing to bind must not stop the
+    // dialog from opening, since the dismiss button and the click-outside path both still work.
+    //
+    // pauseAndBack is taken as well, matching the game's own modal screens (NInspectCardScreen and
+    // NInspectRelicScreen both bind cancel AND pauseAndBack to their Close). Before this, Start on a pad
+    // did nothing at all while a modal was up.
+    private void BindCancel()
+    {
+        if (_cancelBound)
+        {
+            return;
+        }
+
+        try
+        {
+            var manager = NHotkeyManager.Instance;
+            if (manager is null)
+            {
+                return;
+            }
+
+            manager.PushHotkeyPressedBinding(MegaInput.cancel, _closeAction);
+            manager.PushHotkeyPressedBinding(MegaInput.pauseAndBack, _closeAction);
+            _cancelBound = true;
+        }
+        catch (Exception exception)
+        {
+            Console.Error.WriteLine($"[couch-coop] modal cancel bind failed name={Name} detail={exception.GetType().Name}: {exception.Message}");
+        }
+    }
+
+    /// <summary>
+    /// The open modal's heartbeat, called from the lobby panel's 0.25s scan: re-take the cancel bindings
+    /// and re-park controller focus. A no-op while no modal is up.
+    /// </summary>
+    /// <remarks>
+    /// Both halves guard against the SAME thing — the lobby screen finishing its own setup after a modal
+    /// that opened by itself. See <see cref="ReassertCancelBinding"/> and
+    /// <see cref="CouchCoopModalFocusParking.OnHeartbeat"/>.
+    /// </remarks>
+    public void ReassertWhileOpen()
+    {
+        if (!GodotObject.IsInstanceValid(this) || !Visible)
+        {
+            return;
+        }
+
+        // Idempotent, and a retry: a bind that could not take at open time (no hotkey manager yet) would
+        // otherwise leave this modal with no cancel at all for as long as it is up.
+        BindCancel();
+        ReassertCancelBinding();
+        ApplyFocusTarget(CouchCoopModalFocusParking.OnHeartbeat(IsUsingController(), _dismiss.HasFocus()));
+    }
+
+    /// <summary>
+    /// Re-take the cancel bindings, if this modal is up, so a binding pushed AFTER ours cannot keep them.
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// Called from the lobby panel's 0.25s scan, and the reason it exists is measured: on a controller,
+    /// B on the host-transport alert backed the player out of the whole lobby instead of dismissing it,
+    /// while B on the QR dialog closed that dialog correctly. The difference is WHEN each opens. The
+    /// lobby's back button pushes its own cancel/pauseAndBack/back handlers from <c>NButton.OnEnable</c>
+    /// and drops them on <c>OnDisable</c>, and the screen runs that enable/disable cycle from its own
+    /// visibility changes — so anything that cycles it after a modal opened puts the back handler back on
+    /// top of ours. A dialog the player opens later, once the lobby has settled, never sees that.
+    /// </para>
+    /// <para>
+    /// Remove-then-push is how a binding moves to the end of the list: the manager de-duplicates by
+    /// delegate, so a bare re-push of an action already in the list does nothing. It is a no-op reorder
+    /// when we are already last, which is the normal case, and it runs only while a modal is visible.
+    /// </para>
+    /// </remarks>
+    private void ReassertCancelBinding()
+    {
+        if (!_cancelBound || !Visible)
+        {
+            return;
+        }
+
+        try
+        {
+            var manager = NHotkeyManager.Instance;
+            if (manager is null)
+            {
+                return;
+            }
+
+            manager.RemoveHotkeyPressedBinding(MegaInput.cancel, _closeAction);
+            manager.PushHotkeyPressedBinding(MegaInput.cancel, _closeAction);
+            manager.RemoveHotkeyPressedBinding(MegaInput.pauseAndBack, _closeAction);
+            manager.PushHotkeyPressedBinding(MegaInput.pauseAndBack, _closeAction);
+        }
+        catch (Exception exception)
+        {
+            Console.Error.WriteLine($"[couch-coop] modal cancel reassert failed name={Name} detail={exception.GetType().Name}: {exception.Message}");
+        }
+    }
+
+    private void UnbindCancel()
+    {
+        if (!_cancelBound)
+        {
+            return;
+        }
+
+        _cancelBound = false;
+        try
+        {
+            var manager = NHotkeyManager.Instance;
+            manager?.RemoveHotkeyPressedBinding(MegaInput.cancel, _closeAction);
+            manager?.RemoveHotkeyPressedBinding(MegaInput.pauseAndBack, _closeAction);
+        }
+        catch (Exception exception)
+        {
+            Console.Error.WriteLine($"[couch-coop] modal cancel unbind failed name={Name} detail={exception.GetType().Name}: {exception.Message}");
         }
     }
 }

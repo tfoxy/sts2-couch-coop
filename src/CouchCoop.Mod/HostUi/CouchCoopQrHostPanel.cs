@@ -152,6 +152,12 @@ internal sealed partial class CouchCoopQrHostPanel : Control
         ArgumentNullException.ThrowIfNull(snapshot);
         _snapshot = snapshot;
         RefreshLocalization();
+        // A no-op unless a modal is actually up. This is the only heartbeat the mod has in a lobby, and a
+        // modal that opens by ITSELF during lobby setup — the transport alert — can lose both its cancel
+        // binding and its controller focus to the screen finishing its own setup afterwards. See
+        // CouchCoopModalDialog.ReassertWhileOpen.
+        _dialog.ReassertWhileOpen();
+        _alert.ReassertWhileOpen();
     }
 
     public void RefreshLocalization(bool force = false)

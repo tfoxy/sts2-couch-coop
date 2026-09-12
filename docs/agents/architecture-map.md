@@ -531,7 +531,7 @@ The always-on QR overlay is gone. A game-styled button opens a dialog instead.
   `IsFocused` (`_isHovered || _isControllerFocused`) never turns on. `CouchCoopQrHostPanel` therefore
   pushes `MegaInput.topPanel` → `OpenDialogFromHotkey` on install and removes it from the native
   `tree_exiting` signal (not `_ExitTree`, which is not dispatched into this assembly), the same
-  push-on-show/remove-on-close shape `CouchCoopModalDialog` uses for Escape. **Why that action**: the
+  push-on-show/remove-on-close shape `CouchCoopModalDialog` uses for cancel. **Why that action**: the
   hotkey manager dispatches to the LAST-pushed binding and marks the event handled, so the pick must be
   free on both lobby screens — between them they already take `cancel`/`pauseAndBack`/`back` (back +
   unready buttons), `select`/`accept` (embark/confirm), `viewDeckAndTabLeft` +
@@ -545,10 +545,33 @@ The always-on QR overlay is gone. A game-styled button opens a dialog instead.
   `NInputManager.GetHotkeyIcon` (which honours a rebind) and refreshes on `ControllerDetected` /
   `MouseDetected` / `InputRebound` — never on the 0.25s scan. The label node is deliberately not named
   `Label`: the probe's `rowLabelText` takes the first descendant with that name.
-- **Shared modal (`CouchCoopModalDialog`)**: scrim + centred card + one `CouchCoopSkipButton` + Escape
+- **Shared modal (`CouchCoopModalDialog`)**: scrim + centred card + one `CouchCoopSkipButton` + cancel
   binding + focus parking. Subclasses supply the BODY (`InstallBody` / `ApplyBodyLayout` / `LayoutBody`)
   and the button's wording/size; `OnScrimPressed` returning true swallows a scrim click instead of
   closing (the QR dialog collapses its open option list first). The card is never a close surface.
+- **Getting OUT of a modal on a pad** — three parts, each one measured failing on a Deck (the transport
+  alert could not be dismissed at all: A, Y, Start and every direction left it up, and B left the lobby):
+  - **Focus parking** (`CouchCoopModalFocusParking`, pure, `-- host-ui`): the card on a mouse (a `Panel`
+    draws no focus visual, so nothing reads as pre-selected), the **dismiss button** whenever
+    `NControllerManager.IsUsingController`. `ControllerDetected` / `MouseDetected` re-park a modal that is
+    already up, so a host who picks up a pad mid-dialog is not stranded. Without this the select-action
+    path from `a6665773` was dead in practice — `CouchCoopButtonActivation.Resolve` gates on `IsFocused`,
+    and no CouchCoop button was controller-focusable anywhere.
+  - **Focus ring pinned inside the dialog**: the card's four neighbours point at the dismiss button, the
+    dismiss button's at itself (the game's own idiom — see `InitCharacterButtons` above). Godot's
+    geometric neighbour search otherwise hands focus to a LOBBY control behind the scrim. Cost: the QR
+    dialog's host rows stay d-pad-unreachable, as they already were.
+  - **`ReassertWhileOpen`**, called from the panel's per-scan `Apply`: re-takes `cancel` +
+    `pauseAndBack` (remove-then-push — the manager de-duplicates by delegate, so a bare re-push is a
+    no-op) while a modal is visible. `NButton.OnEnable` re-pushes the lobby back button's
+    `cancel`/`pauseAndBack`/`back` handlers on every enable, and the screen cycles that from its own
+    visibility changes — so a modal that opens by ITSELF during lobby setup gets out-ranked, while one the
+    player opens later does not. That is the whole difference between B on the alert (left the lobby) and
+    B on the QR dialog (closed it). The same heartbeat re-parks controller focus, because that same late
+    setup calls `Select()` on a character button and takes engine focus. `CouchCoopTextureButton` also
+    `AcceptEvent()`s a select-driven activation so A on a dismiss button cannot ALSO fire the lobby's
+    embark through `_UnhandledInput`. Both the binding and the signal hookups are dropped from the native
+    `tree_exiting` signal, because the lobby can be torn down with a modal still open.
 - **Options** (single select — the two link checkboxes are gone, their methods are rows now):
   `QrHostOptions.Build` orders advertised-override → per-ADAPTER triples (best IPv4 per NIC, adapters
   tier-sorted ethernet → wifi → other; inside each: plain ipv4 → `sts2-couch.pages.dev/?h=<ip>:<port>` →

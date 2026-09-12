@@ -186,8 +186,20 @@ internal abstract partial class CouchCoopTextureButton : NButton
     // without a Godot engine; this half only classifies the event and calls the base's handlers.
     private void OnGuiInputSignal(InputEvent inputEvent)
     {
-        var outcome = CouchCoopButtonActivation.Resolve(
-            Classify(inputEvent), IsEnabled, IsVisibleInTree(), IsFocused);
+        var input = Classify(inputEvent);
+        var outcome = CouchCoopButtonActivation.Resolve(input, IsEnabled, IsVisibleInTree(), IsFocused);
+
+        // Consume an activation that came from the SELECT ACTION, and only that. Godot routes a non-mouse
+        // event to the focused control first and only then to `_unhandled_input`, where the game's hotkey
+        // manager lives — and the lobby screens bind `select` to their embark/confirm button. Without this,
+        // pressing A on a CouchCoop dismiss button would ALSO fire the lobby's embark behind the scrim.
+        // Mouse events are left exactly as they were: the viewport already treats a click on a Stop control
+        // as handled, so accepting one here would change nothing and is not worth the blast radius.
+        if (outcome != CouchCoopButtonActivation.Outcome.None
+            && input is CouchCoopButtonActivation.Input.SelectPress or CouchCoopButtonActivation.Input.SelectRelease)
+        {
+            AcceptEvent();
+        }
 
         switch (outcome)
         {

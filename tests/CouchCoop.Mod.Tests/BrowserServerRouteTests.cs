@@ -110,6 +110,7 @@ if (args is ["seats", ..])
 if (args is ["host-ui", ..])
 {
     CouchCoopButtonActivationTests.Run();
+    CouchCoopModalFocusTests.Run();
     Console.WriteLine("host ui: ok");
     return;
 }
@@ -195,6 +196,9 @@ SpirectlEmbeddedAssemblyBoundaryTests.Run();
 // C# with no Godot types at all, and everything from HeadlessAudioMuteTargetsTests below is currently
 // unreachable on some machines (see the next comment). Also reachable alone as `-- host-ui`.
 CouchCoopButtonActivationTests.Run();
+// Steam Deck follow-up: WHERE a modal parks focus, which is what decides whether that gate can ever pass on
+// a dialog the player did not open with a mouse. Pure C# for the same reason, and in the same verb.
+CouchCoopModalFocusTests.Run();
 
 // Pure suites (no IO) run first so they execute regardless of the network-suite flakiness.
 // CAUTION: "pure" here means no IO, not no Godot — this next suite reflects over game types through
