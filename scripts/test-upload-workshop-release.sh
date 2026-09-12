@@ -354,4 +354,30 @@ expect_refused unknown-lane 'unknown release lane' \
 expect_refused repeated-lane 'may be specified only once' \
   --dist "$assets" --lane stable --lane public-beta --workspace "$dev_workspace"
 
+# Leg 15: a workspace may pin itself to one lane, so the lane and the item cannot be mismatched.
+# Publishing the public-beta payload to the public listing is the worst outcome available here.
+printf 'public-beta\n' > "$dev_workspace/lane.txt"
+expect_refused workspace-lane-mismatch "pinned to lane 'public-beta', but this run publishes lane 'stable'" \
+  --dist "$assets" --workspace "$dev_workspace"
+
+# ...and the matching lane still publishes. lane.txt stays local: the uploader never receives it.
+printf 'stable\n' > "$dev_workspace/lane.txt"
+MOCK_UPLOADER_LOG="$fixture/uploader.log" \
+COUCHCOOP_WORKSHOP_UPLOADER_DIR="$uploader_dir" \
+PATH="$blocked_gh_bin:$PATH" \
+bash "$script" --dist "$assets" --lane stable --workspace "$dev_workspace"
+
+assert_uploaded "$dev_workspace"
+[[ ! -e "$dev_workspace/content/lane.txt" ]] || fail "lane.txt leaked into the uploaded content"
+
+# An unpinned workspace stays unpinned: absent lane.txt must not start refusing anything, or every
+# existing workspace breaks at once.
+rm -f "$dev_workspace/lane.txt"
+MOCK_UPLOADER_LOG="$fixture/uploader.log" \
+COUCHCOOP_WORKSHOP_UPLOADER_DIR="$uploader_dir" \
+PATH="$blocked_gh_bin:$PATH" \
+bash "$script" --dist "$assets" --lane stable --workspace "$dev_workspace"
+
+assert_uploaded "$dev_workspace"
+
 echo "test-upload-workshop-release: ok"

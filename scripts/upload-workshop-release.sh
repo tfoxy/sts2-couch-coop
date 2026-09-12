@@ -149,6 +149,19 @@ config_source="$workspace/workshop.json"
   echo "Workshop primary preview is missing: $workspace/image.png" >&2
   exit 1
 }
+# A workspace may pin itself to one lane by declaring it in lane.txt. Nothing else checks that the
+# lane and the workspace belong together, and getting it wrong is the worst outcome this script has:
+# publishing the public-beta payload to the public listing breaks the mod for every subscriber on the
+# normal game branch. The uploader ignores workspace files it does not know (content/, workshop.json,
+# image.png and previews/ are all it reads), so this stays local and is never sent to Steam.
+if [[ -f "$workspace/lane.txt" ]]; then
+  declared_lane="$(tr -d '[:space:]' < "$workspace/lane.txt")"
+  [[ "$declared_lane" == "$lane" ]] || {
+    echo "workspace $workspace is pinned to lane '$declared_lane', but this run publishes lane '$lane'" >&2
+    echo "Publish that lane's own workspace, or correct --lane." >&2
+    exit 1
+  }
+fi
 [[ $(stat -c %s "$workspace/image.png") -lt 1048576 ]] || {
   echo "Workshop primary preview must be smaller than 1 MiB: $workspace/image.png" >&2
   exit 1
