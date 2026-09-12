@@ -107,10 +107,13 @@ const JOIN_REJECTION_MESSAGES: Record<string, "join.notSession" | "join.noFreeIn
 const rejectionMessage = (code: string): string =>
   JOIN_REJECTION_MESSAGES[code] ? t(JOIN_REJECTION_MESSAGES[code]) : code;
 // The client-side ceiling on a join: how long "Joining…" may run with the host saying NOTHING at all before we
-// give the viewer their form back. Deliberately well clear of the host's own 60s spawn deadline
-// (HeadlessClientManager.WaitForReadyAsync) — a cold seat that is merely slow answers within that and must never
-// be failed here. This only catches a host that never answers, which is the one shape neither the rejection
-// channel nor the action-result backstop can see.
+// give the viewer their form back. Deliberately clear of the host's own spawn deadline — 75s, raised from 60s
+// because a low-power host (a Steam Deck) starts a healthy seat past the old one; see
+// HeadlessClientManager.DefaultSeatReadyTimeoutSeconds, which is chosen against THIS number. A cold seat that is
+// merely slow answers within it and must never be failed here. This only catches a host that never answers,
+// which is the one shape neither the rejection channel nor the action-result backstop can see. (An operator who
+// raises COUCHCOOP_SEAT_READY_TIMEOUT_SECONDS past 90s on a very slow PC gives that relationship up knowingly:
+// the page stops waiting first, and the join fails here instead of being narrated by the host.)
 const JOIN_TIMEOUT_MS = 90_000;
 
 // Self-contained mirror app: owns its own `/ws` connection (the standalone mirror client) and renders the

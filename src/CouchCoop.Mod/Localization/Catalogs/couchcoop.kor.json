@@ -62,6 +62,7 @@
   "couchcoop_activity_seat_stuck_reaped": "{name}님의 게임이 응답을 멈췄습니다. 다시 시작할 수 있도록 게임을 닫으세요.",
   "couchcoop_activity_seat_window_gone": "{name}의 게임 창이 더 이상 실행되지 않습니다.",
   "couchcoop_activity_seat_run_end": "실행이 종료되었습니다. {name}의 게임 창을 닫았습니다.",
+  "couchcoop_activity_seat_still_loading": "{name}의 게임을 아직 불러오는 중입니다. 성능이 낮은 PC에서는 시간이 조금 더 걸릴 수 있습니다.",
   "couchcoop_activity_seats_shutting_down": "Closing Couch Co-Op — 모든 플레이어 게임 창을 종료합니다.",
   "couchcoop_activity_viewer_connected": "{이름}이(가) 연결되었습니다.",
   "couchcoop_activity_viewer_watching": "{name}님이 연결되었습니다. 이 화면을 보고 있습니다.",

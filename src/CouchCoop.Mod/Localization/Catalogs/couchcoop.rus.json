@@ -62,6 +62,7 @@
   "couchcoop_activity_seat_stuck_reaped": "Игра пользователя {name} перестала отвечать на запросы — закрыла ее, чтобы начать заново.",
   "couchcoop_activity_seat_window_gone": "Окно игры {name} больше не работает.",
   "couchcoop_activity_seat_run_end": "Забег завершился — игровое окно пользователя {name} закрыто.",
+  "couchcoop_activity_seat_still_loading": "Игра {name} всё ещё загружается — на медленном компьютере это может занять некоторое время.",
   "couchcoop_activity_seats_shutting_down": "Closeing Couch Co-Op — закрытие всех игровых окон игрока.",
   "couchcoop_activity_viewer_connected": "{имя} подключено.",
   "couchcoop_activity_viewer_watching": "{name} подключен — смотрит этот экран.",

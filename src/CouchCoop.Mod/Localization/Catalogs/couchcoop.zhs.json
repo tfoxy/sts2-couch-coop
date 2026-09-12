@@ -62,6 +62,7 @@
   "couchcoop_activity_seat_stuck_reaped": "{name} 的游戏停止响应——正在关闭以便重新开始。",
   "couchcoop_activity_seat_window_gone": "{name} 的游戏窗口不再运行。",
   "couchcoop_activity_seat_run_end": "本局已结束——已关闭 {name} 的游戏窗口。",
+  "couchcoop_activity_seat_still_loading": "{name} 的游戏仍在加载——在性能较低的电脑上可能需要一些时间。",
   "couchcoop_activity_seats_shutting_down": "正在关闭 Couch Co-Op——正在关闭所有玩家游戏窗口。",
   "couchcoop_activity_viewer_connected": "{name} 已连接。",
   "couchcoop_activity_viewer_watching": "{name} 已连接——正在观看此画面。",
