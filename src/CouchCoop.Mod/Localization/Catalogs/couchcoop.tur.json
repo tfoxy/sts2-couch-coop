@@ -1,5 +1,6 @@
 {
   "couchcoop_qr_button": "Kanepede İşbirliği QR Kodu",
+  "couchcoop_qr_button_hotkey": "QR Kodunu Aç",
   "couchcoop_qr_title": "Couch Co-Op'a katılmak için tarayın",
   "couchcoop_qr_close": "QR Kodunu Kapat",
   "couchcoop_qr_no_address": "Ana bilgisayar adresi yok — başlatılan tarayıcı sunucusunu kontrol edin.",

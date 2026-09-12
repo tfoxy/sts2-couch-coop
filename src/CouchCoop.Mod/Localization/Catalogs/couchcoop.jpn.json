@@ -1,5 +1,6 @@
 {
   "couchcoop_qr_button": "カウチ協力QRコード",
+  "couchcoop_qr_button_hotkey": "QRコードを開く",
   "couchcoop_qr_title": "スキャンしてCouch Co-Opに参加します",
   "couchcoop_qr_close": "QRコードを閉じる",
   "couchcoop_qr_no_address": "利用可能なホスト アドレスがありません — ブラウザ サーバーが起動していることを確認してください。",

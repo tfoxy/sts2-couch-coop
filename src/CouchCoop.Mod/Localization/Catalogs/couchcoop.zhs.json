@@ -1,5 +1,6 @@
 {
   "couchcoop_qr_button": "Couch Co-Op 二维码",
+  "couchcoop_qr_button_hotkey": "打开二维码",
   "couchcoop_qr_title": "扫描二维码加入 Couch Co-Op",
   "couchcoop_qr_close": "关闭二维码",
   "couchcoop_qr_no_address": "没有可用的主机地址——请检查浏览器服务器是否已启动。",

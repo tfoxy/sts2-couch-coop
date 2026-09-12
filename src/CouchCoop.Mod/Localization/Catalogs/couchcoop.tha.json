@@ -1,5 +1,6 @@
 {
   "couchcoop_qr_button": "รหัส QR Couch Co-Op",
+  "couchcoop_qr_button_hotkey": "เปิดคิวอาร์โค้ด",
   "couchcoop_qr_title": "สแกนเพื่อเข้าร่วม Couch Co-Op",
   "couchcoop_qr_close": "ปิดคิวอาร์โค้ด",
   "couchcoop_qr_no_address": "ไม่มีที่อยู่โฮสต์ — ตรวจสอบว่าเซิร์ฟเวอร์เบราว์เซอร์เริ่มต้นแล้ว",
