@@ -58,6 +58,12 @@ Each browser player requires a separate headless game client on the host. In tes
 
 </details>
 
+### Steam Deck
+
+Steam Deck can host CouchCoop, in Game Mode as well as Desktop Mode. The lobby's **Couch Co-op QR Code** button cannot be reached by the controller's normal menu navigation, so it has its own binding: press the west face button (**X** on the Deck) while the lobby is on screen. The button shows that glyph whenever a controller is in use.
+
+The Deck's four cores share a 15 W power budget with the GPU, so plan for one or two browser players rather than four — each one adds a full headless game process (see host resource usage above). A player's game also takes noticeably longer to start there than on a desktop, which is normal; the lobby says so while it waits. Finally, a nearly full storage device leaves less than the managed cache's 2 GiB free-space reserve (see the [security model](docs/security.md)), so newly generated assets fall back to an in-memory or raster path instead of persisting to disk.
+
 ### Client devices
 
 Use an up-to-date version of Chrome, Firefox, or Safari. Devices with at least 4 GB of RAM have been tested, but performance also depends on their GPU, operating system, temperature, and visual settings.
