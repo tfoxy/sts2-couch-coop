@@ -125,21 +125,84 @@ The coordinator writes the squash message, with the whole branch diff in hand.
    git push origin v0.1.2
    ```
 
-`.github/workflows/release.yml` then packages the archive and publishes the GitHub Release with
+`.github/workflows/release.yml` then packages the archives and publishes the GitHub Release with
 `--notes-file` fed by `scripts/changelog-section.sh`, which fails the release if that version has no
 section. Pushing is always explicit — no agent pushes a branch or a tag on its own.
+
+### What a release publishes
+
+One **archive per STS2 reference lane**, each lane named after a game Steam branch
+(`eng/Sts2.ReferenceSdk/<lane>/`, reviewed by `scripts/verify-sts2-reference-sdk.sh`):
+
+| asset | what it is |
+|---|---|
+| `couchcoop-<tag>.zip` | the `stable` lane. **This name is a contract** — the README's `gh attestation verify <zip>` block and every existing download link point at it, so it is never suffixed. |
+| `couchcoop-<tag>.SHA256SUMS` | that archive's checksum, `sha256sum -c`-able offline |
+| `couchcoop-<tag>-<lane>.zip` | every other lane, e.g. `-public-beta` |
+| `couchcoop-<tag>-<lane>.SHA256SUMS` | that archive's checksum |
+
+`scripts/package-release.sh` emits **all lanes in one invocation** — it clones the two pinned sibling
+repositories once and then stages a payload per lane — because the workflow calls it once and
+publishes `dist/*` and attests `dist/*.zip` wholesale. `COUCHCOOP_RELEASE_STS2_LANE` narrows a local
+run to one lane. Lane facts a release depends on live in `scripts/lib/release-lanes.sh`.
+
+Two things used to be published beside each archive and are not any more:
+
+- **The per-file contents manifest.** `scripts/verify-release-archive.sh --archive` recomputes it
+  from the zip, so shipping it added an asset without adding a check. `--emit-contents <file>` writes
+  one locally for anyone who wants it.
+- **`build-info.json`.** The build metadata is the only thing about a release the archive cannot
+  otherwise tell you — with one archive per game branch it is the record of which game API a zip
+  targets — so it moved **inside** the payload, as `couchcoop/build-info.txt`.
+
+  The extension is load-bearing. STS2 lists a mod directory and reads every filename ending in
+  `.json` as a mod manifest, and Godot's hidden-file test is a dot prefix on Unix but
+  `FILE_ATTRIBUTE_HIDDEN` on Windows, which a zip-extracted file never carries. A
+  `.build-info.json` would be skipped on Linux and scanned as a broken manifest on every Windows
+  player's machine. The verifier rejects any second root-level `.json` for that reason; do not
+  "fix" the extension back.
+
+**`SHA256SUMS` stays, deliberately.** A manifest that travels with the payload is a *consistency*
+check, not an *authenticity* one: anyone who rewrites a payload rewrites its manifest in the same
+pass. Authenticity comes from GitHub's per-asset digests and the workflow's `actions/attest`
+signature, and one small checksum file next to them costs nothing while working offline and without
+`gh`. It is not redundant with the in-payload metadata, and it is not a candidate for simplification.
+
+### `min_game_version`, and what it cannot do
+
+A lane built against a newer game's references stamps that game as the payload manifest's
+`min_game_version` (`v0.111.0` for `public-beta`; the `stable` payload declares no floor). The game
+compares it as a semantic version, a leading `v` is accepted and is its own rendering in
+`release_info.json`, and there are two failure modes: `GAME_VERSION_UNSUPPORTED` for a game older
+than the floor, which is the point, and `GAME_VERSION_INVALID` for a value that does not parse —
+**which fails the mod on every build, the right one included**, and is therefore worse than no floor
+at all. So the literal lives in one place, that place refuses to emit anything but
+`vMAJOR.MINOR.PATCH`, and the payload gate re-checks the stamped value independently.
+
+Being a *minimum*, it makes the beta archive refuse an older game loudly, but nothing stops the
+stable archive from loading on a newer game: there is no `max_game_version`, and only the Workshop's
+`maxBranch` scopes downward.
 
 ## Publishing to the Steam Workshop
 
 The GitHub Release is the source of truth; a Workshop item is a copy of an archive that has already
 been published there. `scripts/upload-workshop-release.sh` downloads the latest release (or reads
-`--dist <dir>` for a local one), verifies it against its contents manifest and checksums, replaces
-the workspace's `content/`, writes the `changeNote`, and runs the official uploader:
+`--dist <dir>` for a local one), verifies it against its checksums and its own in-payload
+`build-info.txt`, replaces the workspace's `content/`, writes the `changeNote`, and runs the official
+uploader:
 
 ```bash
 scripts/upload-workshop-release.sh                       # latest GitHub Release → public item
 scripts/upload-workshop-release.sh --dist dist           # a local archive instead
+scripts/upload-workshop-release.sh --lane public-beta \
+  --workspace .sts2/uploader/Workspace.dev               # the beta lane's archive
 ```
+
+`--lane` defaults to `stable` and is the *only* thing that selects a lane. With both lanes' archives
+sitting in one `dist/`, "newest by version" would silently publish one game branch's payload to the
+other branch's item, so the flag is explicit and the gate then re-checks the chosen archive's
+`build-info.txt` against it. A `--snapshot` build is refused by name: a Workshop item copies an
+archive that exists as a GitHub Release, and a snapshot has no tag.
 
 Three properties of that script are load-bearing, and all three exist because of an incident:
 
