@@ -23,7 +23,7 @@ that answers your question**, not the whole file.
 | changing native in-game CouchCoop strings | [../native-localization.md](../native-localization.md) | — |
 | changing a browser-server boundary, resource route, cache, or network limit | [../security.md](../security.md) | — |
 | building, deploying or driving a **second game install** (a beta or older game branch) | [../configuration.md](../configuration.md) "Two game installs on one machine" | `scripts/with-game-branch.sh` — never `sts2 --config` alone |
-| writing a commit message, merging a branch to `main`, or cutting a release | [../commit-and-release.md](../commit-and-release.md) | `release-notes` skill |
+| writing a commit message, merging a branch to `main`, cutting a release, or uploading to the Steam Workshop | [../commit-and-release.md](../commit-and-release.md) | `release-notes` skill |
 
 ## Subagents and skills
 

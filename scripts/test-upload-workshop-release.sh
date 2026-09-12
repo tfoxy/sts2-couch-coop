@@ -19,6 +19,14 @@ assert_eq() {
   [[ "$1" == "$2" ]] || fail "expected '$1', got '$2'"
 }
 
+# The mock uploader appends one line per invocation; every leg asserts the whole log, so the
+# exact argv of every upload so far is checked, including which workspace it was pointed at.
+expected_log=""
+assert_uploaded() {
+  expected_log+="upload -w $1"$'\n'
+  assert_eq "${expected_log%$'\n'}" "$(cat "$fixture/uploader.log")"
+}
+
 for command in jq zip unzip sha256sum; do
   command -v "$command" >/dev/null || fail "missing test prerequisite: $command"
 done
@@ -55,10 +63,12 @@ uploader_dir="$fixture/uploader"
 workspace="$uploader_dir/Workspace"
 mkdir -p "$workspace"
 printf 'primary preview' > "$workspace/image.png"
+# "public" is deliberately NOT the script's default: a run that omits --visibility must leave it
+# alone, so this value is what makes that assertion able to fail.
 jq -n '{
   title: "CouchCoop",
   description: "Fixture source description",
-  visibility: "private",
+  visibility: "public",
   changeNote: "",
   tags: [],
   dependencies: [],
@@ -69,6 +79,23 @@ mkdir -p "$workspace/content"
 printf 'old payload' > "$workspace/content/old.txt"
 mkdir -p "$workspace/previews"
 printf 'old gallery' > "$workspace/previews/old.gif"
+# An already-published item: the first legs update it, they do not create it.
+printf '1234567890\n' > "$workspace/mod_id.txt"
+
+# A second workspace outside the uploader directory, standing in for the unlisted DEV item.
+dev_workspace="$fixture/dev-workspace"
+mkdir -p "$dev_workspace"
+printf 'dev preview' > "$dev_workspace/image.png"
+jq -n '{
+  title: "CouchCoop DEV",
+  description: "Dev fixture description",
+  visibility: "unlisted",
+  changeNote: "",
+  tags: [],
+  dependencies: [],
+  contentDescriptors: []
+}' > "$dev_workspace/workshop.json"
+printf '9999999999\n' > "$dev_workspace/mod_id.txt"
 
 mock_bin="$test_root/bin"
 mkdir -p "$mock_bin"
@@ -113,6 +140,7 @@ exit 99
 EOF
 chmod +x "$blocked_gh_bin/gh"
 
+# Leg 1: a release upload of an already-published item leaves its declared visibility alone.
 MOCK_RELEASE_ASSETS="$assets" \
 MOCK_UPLOADER_LOG="$fixture/uploader.log" \
 COUCHCOOP_WORKSHOP_UPLOADER_DIR="$uploader_dir" \
@@ -124,30 +152,102 @@ assert_file "$workspace/content/couchcoop.json"
 assert_file "$workspace/stale.txt"
 assert_file "$workspace/mod_id.txt"
 assert_file "$workspace/previews/old.gif"
-assert_eq private "$(jq -r '.visibility' "$workspace/workshop.json")"
+assert_eq public "$(jq -r '.visibility' "$workspace/workshop.json")"
 assert_eq 'Release v0.1.0' "$(jq -r '.changeNote' "$workspace/workshop.json")"
 assert_eq CouchCoop "$(jq -r '.title' "$workspace/workshop.json")"
 assert_eq 'Fixture source description' "$(jq -r '.description' "$workspace/workshop.json")"
 assert_eq false "$(jq 'has("minBranch") or has("maxBranch")' "$workspace/workshop.json")"
-assert_eq "upload -w $workspace" "$(cat "$fixture/uploader.log")"
+assert_uploaded "$workspace"
 
+# Leg 2: an explicit --visibility still rewrites it, even for a published item.
 MOCK_RELEASE_ASSETS="$assets" \
 MOCK_UPLOADER_LOG="$fixture/uploader.log" \
 COUCHCOOP_WORKSHOP_UPLOADER_DIR="$uploader_dir" \
 PATH="$mock_bin:$PATH" \
-bash "$script" --visibility public
+bash "$script" --visibility private
 
-assert_eq public "$(jq -r '.visibility' "$workspace/workshop.json")"
+assert_eq private "$(jq -r '.visibility' "$workspace/workshop.json")"
 assert_eq 'Fixture source description' "$(jq -r '.description' "$workspace/workshop.json")"
 assert_eq 1234567890 "$(tr -d '\n' < "$workspace/mod_id.txt")"
-assert_eq "$(printf 'upload -w %s\nupload -w %s' "$workspace" "$workspace")" "$(cat "$fixture/uploader.log")"
+assert_uploaded "$workspace"
 
+# Leg 3: the same, from a local release directory, with gh blocked.
 MOCK_UPLOADER_LOG="$fixture/uploader.log" \
 COUCHCOOP_WORKSHOP_UPLOADER_DIR="$uploader_dir" \
 PATH="$blocked_gh_bin:$PATH" \
 bash "$script" --dist "$assets" --visibility unlisted
 
 assert_eq unlisted "$(jq -r '.visibility' "$workspace/workshop.json")"
-assert_eq "$(printf 'upload -w %s\nupload -w %s\nupload -w %s' "$workspace" "$workspace" "$workspace")" "$(cat "$fixture/uploader.log")"
+assert_uploaded "$workspace"
+
+# Leg 4: a first publish — no mod_id.txt yet — applies the default visibility, over whatever the
+# workspace happened to declare, and the uploader writes the new item ID.
+rm -f "$workspace/mod_id.txt"
+assert_eq unlisted "$(jq -r '.visibility' "$workspace/workshop.json")"
+
+MOCK_UPLOADER_LOG="$fixture/uploader.log" \
+COUCHCOOP_WORKSHOP_UPLOADER_DIR="$uploader_dir" \
+PATH="$blocked_gh_bin:$PATH" \
+bash "$script" --dist "$assets"
+
+assert_eq private "$(jq -r '.visibility' "$workspace/workshop.json")"
+assert_eq 'Release v0.1.0' "$(jq -r '.changeNote' "$workspace/workshop.json")"
+assert_eq 1234567890 "$(tr -d '\n' < "$workspace/mod_id.txt")"
+assert_uploaded "$workspace"
+
+primary_config_before="$(sha256sum < "$workspace/workshop.json")"
+
+# Leg 5: --workspace publishes a second workspace with the same uploader binary, leaves its
+# unlisted visibility alone, and does not touch the default workspace.
+MOCK_UPLOADER_LOG="$fixture/uploader.log" \
+COUCHCOOP_WORKSHOP_UPLOADER_DIR="$uploader_dir" \
+PATH="$blocked_gh_bin:$PATH" \
+bash "$script" --dist "$assets" --workspace "$dev_workspace"
+
+assert_file "$dev_workspace/content/couchcoop.json"
+assert_eq unlisted "$(jq -r '.visibility' "$dev_workspace/workshop.json")"
+assert_eq 'Release v0.1.0' "$(jq -r '.changeNote' "$dev_workspace/workshop.json")"
+assert_eq 'CouchCoop DEV' "$(jq -r '.title' "$dev_workspace/workshop.json")"
+assert_eq 'Dev fixture description' "$(jq -r '.description' "$dev_workspace/workshop.json")"
+assert_eq 9999999999 "$(tr -d '\n' < "$dev_workspace/mod_id.txt")"
+[[ ! -e "$dev_workspace/previews" ]] || fail "--workspace run created a previews directory"
+assert_eq "$primary_config_before" "$(sha256sum < "$workspace/workshop.json")"
+assert_uploaded "$dev_workspace"
+
+# Leg 6: COUCHCOOP_WORKSHOP_WORKSPACE_DIR selects the same workspace without a flag.
+MOCK_UPLOADER_LOG="$fixture/uploader.log" \
+COUCHCOOP_WORKSHOP_UPLOADER_DIR="$uploader_dir" \
+COUCHCOOP_WORKSHOP_WORKSPACE_DIR="$dev_workspace" \
+PATH="$blocked_gh_bin:$PATH" \
+bash "$script" --dist "$assets"
+
+assert_eq unlisted "$(jq -r '.visibility' "$dev_workspace/workshop.json")"
+assert_eq "$primary_config_before" "$(sha256sum < "$workspace/workshop.json")"
+assert_uploaded "$dev_workspace"
+
+# Leg 7: the flag wins over the environment — an unusable env value must not be consulted.
+MOCK_UPLOADER_LOG="$fixture/uploader.log" \
+COUCHCOOP_WORKSHOP_UPLOADER_DIR="$uploader_dir" \
+COUCHCOOP_WORKSHOP_WORKSPACE_DIR="$fixture/no-such-workspace" \
+PATH="$blocked_gh_bin:$PATH" \
+bash "$script" --dist "$assets" --workspace "$dev_workspace"
+
+assert_uploaded "$dev_workspace"
+
+# Leg 8: workspace preconditions apply to the selected workspace, not to the default one.
+broken_workspace="$fixture/broken-workspace"
+mkdir -p "$broken_workspace"
+cp "$dev_workspace/workshop.json" "$broken_workspace/workshop.json"
+head -c 1048576 /dev/zero > "$broken_workspace/image.png"
+
+status=0
+MOCK_UPLOADER_LOG="$fixture/uploader.log" \
+COUCHCOOP_WORKSHOP_UPLOADER_DIR="$uploader_dir" \
+PATH="$blocked_gh_bin:$PATH" \
+bash "$script" --dist "$assets" --workspace "$broken_workspace" 2>"$fixture/broken.err" || status=$?
+[[ $status -eq 1 ]] || fail "oversized preview in the selected workspace should fail, got status $status"
+grep -q "smaller than 1 MiB: $broken_workspace/image.png" "$fixture/broken.err" \
+  || fail "expected the size error to name the selected workspace: $(cat "$fixture/broken.err")"
+assert_eq "${expected_log%$'\n'}" "$(cat "$fixture/uploader.log")"
 
 echo "test-upload-workshop-release: ok"
