@@ -88,6 +88,13 @@ public static class CouchCoopActivityMessages
     /// <summary>S17 — the host game is exiting. Printed once, however many windows are open.</summary>
     public static CouchCoopText SeatsShuttingDown => new("couchcoop_activity_seats_shutting_down");
 
+    /// <summary>
+    /// S18 — the seat is taking its time but nothing is wrong. Emitted ONCE, partway through the readiness
+    /// wait, so a slow host (a Steam Deck, an older PC) reads "still loading" instead of a minute of silence
+    /// between S7 and whatever ends the wait.
+    /// </summary>
+    public static CouchCoopText SeatStillLoading(string? name) => Named("couchcoop_activity_seat_still_loading", name);
+
     // ---- viewers: a browser on the host's own server (V1..V5) --------------------------------------------
 
     /// <summary>V1 — a structured (non-mirror) client joined and is being served by the host directly.</summary>

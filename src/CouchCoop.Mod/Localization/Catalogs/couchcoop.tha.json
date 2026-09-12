@@ -62,6 +62,7 @@
   "couchcoop_activity_seat_stuck_reaped": "เกมของ {name} หยุดตอบสนอง — ปิดเกมเพื่อให้สามารถเริ่มใหม่ได้อีกครั้ง",
   "couchcoop_activity_seat_window_gone": "หน้าต่างเกมของ {name} ไม่ทำงานอีกต่อไป",
   "couchcoop_activity_seat_run_end": "การวิ่งสิ้นสุดลง — ปิดหน้าต่างเกมของ {name}",
+  "couchcoop_activity_seat_still_loading": "เกมของ {name} ยังโหลดอยู่ — บนพีซีที่ช้ากว่าอาจใช้เวลาสักพัก",
   "couchcoop_activity_seats_shutting_down": "Closing Couch Co-Op — ปิดหน้าต่างเกมของผู้เล่นทั้งหมด",
   "couchcoop_activity_viewer_connected": "เชื่อมต่อ {name} แล้ว",
   "couchcoop_activity_viewer_watching": "เชื่อมต่อ {name} แล้ว — กำลังดูหน้าจอนี้",

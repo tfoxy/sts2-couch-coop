@@ -84,6 +84,51 @@ public sealed class HeadlessClientManager : IDisposable
     // short enough that slot reuse on reconnect isn't noticeably delayed.
     private static readonly TimeSpan GracefulStopTimeout = TimeSpan.FromSeconds(3);
 
+    /// <summary>
+    /// TUNING knob for <see cref="SeatReadyTimeout"/>, in seconds. Same polarity as
+    /// <see cref="SeatMemoryTuningEnvironment"/>: an operator value WINS over ours — the default is a guess about
+    /// somebody else's PC, and the person running the host is the only one who can see how slow it actually is.
+    /// Not contract: a seat spawned under any of these values joins and plays identically.
+    /// </summary>
+    internal const string SeatReadyTimeoutEnvironmentVariable = "COUCHCOOP_SEAT_READY_TIMEOUT_SECONDS";
+
+    /// <summary>
+    /// How long a freshly spawned seat gets to start serving its browser port before the host gives up and kills
+    /// it (see <see cref="WaitForReadyAsync"/>).
+    /// <para>
+    /// 75s, and the number is chosen against the BROWSER's budget, not against a stopwatch on a developer's PC.
+    /// The page gives up on a silent host after 90s (<c>JOIN_TIMEOUT_MS</c> in <c>MirrorApp.vue</c>), so anything
+    /// at or past 90 here means the host kills a seat the phone has ALREADY abandoned, and anything well short of
+    /// it — the old 60 — kills seats the phone would still have accepted, which is the bug this replaced: a cold
+    /// seat routinely takes 20-30s on a desktop, and a Steam Deck (4 cores / 8 threads at a 15W TDP shared with
+    /// the GPU, already running the host game) is exactly the machine that runs past it while starting normally.
+    /// The 15s of headroom that is left is not spare: the phone's clock starts at its join message, ahead of ours
+    /// (slot bookkeeping, the roster write, the process spawn), and the S11 timeout line then has to reach the
+    /// panel and the rejection reach the phone while it is still listening. Failing visibly beats failing silently,
+    /// so the host must always lose the race to the browser rather than tie it.
+    /// </para>
+    /// </summary>
+    internal const double DefaultSeatReadyTimeoutSeconds = 75.0;
+
+    /// <summary>
+    /// Clamp band for <see cref="SeatReadyTimeoutEnvironmentVariable"/>. The floor exists so a typo (or a zero)
+    /// cannot turn every join into an instant kill; the ceiling so a fat-fingered value cannot park a viewer on
+    /// "Joining…" for a quarter of an hour. Between them we do as we are told, INCLUDING past the browser's own
+    /// 90s ceiling — an operator debugging a very slow machine with a patched page is a real case, and second-
+    /// guessing them here would just move the argument into the code.
+    /// </summary>
+    internal const double MinSeatReadyTimeoutSeconds = 1.0;
+
+    /// <inheritdoc cref="MinSeatReadyTimeoutSeconds"/>
+    internal const double MaxSeatReadyTimeoutSeconds = 900.0;
+
+    /// <summary>
+    /// The longest a seat may stay quiet before the panel says so once (see <see cref="StillLoadingNoticeAfter"/>).
+    /// 30s is the top of the file's own measured cold-start range, so a seat still silent here is genuinely slow
+    /// rather than merely cold.
+    /// </summary>
+    private static readonly TimeSpan StillLoadingNoticeCeiling = TimeSpan.FromSeconds(30);
+
     // Guards the slot bookkeeping below. ORDERING RULE: nothing may block on the game's main thread while holding
     // this — the main thread takes it too (DescribeSeats on every screen change, Dispose at shutdown), so doing so
     // deadlocks the game. The two known temptations are MaxSlot (its probe marshals to the main thread; snapshot it
@@ -284,7 +329,8 @@ public sealed class HeadlessClientManager : IDisposable
     /// <summary>
     /// Ensures a headless instance exists for <paramref name="sessionId"/> and returns its
     /// browser-server port once it responds to HTTP. Returns null if all slots are occupied
-    /// or if the headless process fails to become ready within 15 seconds.
+    /// or if the headless process fails to become ready within <see cref="DefaultSeatReadyTimeoutSeconds"/>
+    /// (overridable — see <see cref="SeatReadyTimeoutEnvironmentVariable"/>).
     /// <para>
     /// A player's <paramref name="displayName"/> CLAIMS a slot (→ a fixed netId) for the host's lifetime. A
     /// same-name return reuses that slot: if its headless is still live it's shared as-is; if it died (browser
@@ -1368,14 +1414,58 @@ public sealed class HeadlessClientManager : IDisposable
             };
     }
 
+    /// <summary>
+    /// <see cref="SeatReadyTimeoutEnvironmentVariable"/> resolved to a timeout: unset / blank / unparseable ⇒
+    /// <see cref="DefaultSeatReadyTimeoutSeconds"/>; anything else ⇒ that many seconds, clamped into
+    /// <see cref="MinSeatReadyTimeoutSeconds"/>..<see cref="MaxSeatReadyTimeoutSeconds"/>. Anything that does not
+    /// parse as a plain number of seconds — <c>"sixty"</c>, but also <c>"60s"</c> — falls back to the default
+    /// rather than being guessed at: honouring half of a malformed value would silently give the operator a
+    /// deadline they did not ask for. Pure, so the band is testable without a game install.
+    /// </summary>
+    internal static TimeSpan ParseSeatReadyTimeout(string? raw)
+    {
+        if (string.IsNullOrWhiteSpace(raw)
+            || !double.TryParse(raw.Trim(), NumberStyles.Float, CultureInfo.InvariantCulture, out var seconds)
+            || !double.IsFinite(seconds))
+        {
+            return TimeSpan.FromSeconds(DefaultSeatReadyTimeoutSeconds);
+        }
+
+        return TimeSpan.FromSeconds(
+            Math.Clamp(seconds, MinSeatReadyTimeoutSeconds, MaxSeatReadyTimeoutSeconds));
+    }
+
+    /// <summary>
+    /// How far into the wait the one "still loading" line is emitted (S18), given the deadline in force:
+    /// <see cref="StillLoadingNoticeCeiling"/>, or half the deadline when that is sooner. The halving is what
+    /// keeps the notice MEANINGFUL under a shortened deadline — a line that landed at the same moment as the
+    /// timeout that kills the seat would just be noise in front of the failure. Pure, for the same reason as
+    /// <see cref="ParseSeatReadyTimeout"/>.
+    /// </summary>
+    internal static TimeSpan StillLoadingNoticeAfter(TimeSpan readyTimeout)
+        => readyTimeout / 2 < StillLoadingNoticeCeiling ? readyTimeout / 2 : StillLoadingNoticeCeiling;
+
+    // Read per wait rather than cached: it costs one environment lookup per join, and a cached copy would be one
+    // more thing to reason about on the hot-reload path for no gain.
+    private static TimeSpan SeatReadyTimeout
+        => ParseSeatReadyTimeout(Environment.GetEnvironmentVariable(SeatReadyTimeoutEnvironmentVariable));
+
     private async Task<int?> WaitForReadyAsync(int slot, Guid sessionId, CancellationToken ct)
     {
         var port = SlotToPort(slot);
         // The headless ENet-joins, preloads ~770 'Common' assets, builds the lobby scene, and only THEN starts its
         // browser HTTP server. Cold starts (first launch into a freshly isolated user dir, dummy-renderer texture
-        // churn) routinely take 20-30s — and the browser page itself waits up to 90s — so a tight 15s deadline was
-        // killing instances that were still loading normally. 60s gives a cold headless room to finish.
-        var deadline = DateTimeOffset.UtcNow.AddSeconds(60);
+        // churn) routinely take 20-30s, and a low-power host (a Steam Deck's 15W, shared with the GPU, while it is
+        // also running the host game) can run well past that while starting perfectly normally — so the deadline is
+        // set against what the phone will wait for, not against a desktop stopwatch. See
+        // DefaultSeatReadyTimeoutSeconds for the number, and SeatReadyTimeoutEnvironmentVariable to override it.
+        var started = DateTimeOffset.UtcNow;
+        var deadline = started + SeatReadyTimeout;
+        // The one progress line, and the latch that keeps it to one. A seat that is merely slow reports NOTHING
+        // until it serves, so without this the panel sits on S7's "loading" for over a minute and a host with a
+        // slow PC cannot tell a long start from a dead one.
+        var stillLoadingAt = started + StillLoadingNoticeAfter(deadline - started);
+        var stillLoadingNarrated = false;
         while (DateTimeOffset.UtcNow < deadline)
         {
             ct.ThrowIfCancellationRequested();
@@ -1409,6 +1499,18 @@ public sealed class HeadlessClientManager : IDisposable
                 // S10: the end of the long wait S4 announced — the phone is about to be redirected onto it.
                 Narrate(CouchCoopActivitySeverity.Good, CouchCoopActivityMessages.SeatReady(ClaimedNameForSlot(slot)));
                 return port;
+            }
+
+            if (!stillLoadingNarrated && DateTimeOffset.UtcNow >= stillLoadingAt)
+            {
+                stillLoadingNarrated = true;
+                // S18: still nothing wrong — the seat is loading, and the host is told so rather than left to
+                // guess. Emitted OUTSIDE _lock (ClaimedNameForSlot takes it for the read and lets it go), like
+                // S10 beside it: this loop runs on a thread-pool thread and must never hold the slot lock
+                // across anything the game's main thread could be waiting behind.
+                Narrate(
+                    CouchCoopActivitySeverity.Info,
+                    CouchCoopActivityMessages.SeatStillLoading(ClaimedNameForSlot(slot)));
             }
 
             await Task.Delay(250, ct).ConfigureAwait(false);

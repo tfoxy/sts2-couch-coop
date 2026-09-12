@@ -62,6 +62,7 @@
   "couchcoop_activity_seat_stuck_reaped": "Le jeu de {name} ne répond plus : fermez-le pour qu'il puisse recommencer.",
   "couchcoop_activity_seat_window_gone": "La fenêtre de jeu de {name} ne fonctionne plus.",
   "couchcoop_activity_seat_run_end": "La course s'est terminée – la fenêtre de jeu de {name} a été fermée.",
+  "couchcoop_activity_seat_still_loading": "Le jeu de {name} est encore en cours de chargement — cela peut prendre un moment sur un PC plus lent.",
   "couchcoop_activity_seats_shutting_down": "Fermeture de Couch Co-Op – fermeture de toutes les fenêtres de jeu des joueurs.",
   "couchcoop_activity_viewer_connected": "{nom} connecté.",
   "couchcoop_activity_viewer_watching": "{name} connecté – je regarde cet écran.",

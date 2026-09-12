@@ -62,6 +62,7 @@
   "couchcoop_activity_seat_stuck_reaped": "Gra użytkownika {name} przestała odpowiadać — zamykam ją, aby móc zacząć od nowa.",
   "couchcoop_activity_seat_window_gone": "Okno gry {name} nie jest już uruchomione.",
   "couchcoop_activity_seat_run_end": "Bieg dobiegł końca — okno gry {name} zostało zamknięte.",
+  "couchcoop_activity_seat_still_loading": "Gra {name} wciąż się ładuje — na wolniejszym komputerze może to chwilę potrwać.",
   "couchcoop_activity_seats_shutting_down": "Zamykanie trybu współpracy na kanapie — zamknięcie wszystkich okien gry gracza.",
   "couchcoop_activity_viewer_connected": "{imię} połączone.",
   "couchcoop_activity_viewer_watching": "{name} połączony — ogląda ten ekran.",

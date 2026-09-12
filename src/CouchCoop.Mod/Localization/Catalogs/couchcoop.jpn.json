@@ -62,6 +62,7 @@
   "couchcoop_activity_seat_stuck_reaped": "{name} さんのゲームは応答を停止しました。ゲームを閉じて、再び開始できるようにします。",
   "couchcoop_activity_seat_window_gone": "{name} のゲーム ウィンドウはもう実行されていません。",
   "couchcoop_activity_seat_run_end": "実行が終了しました — {name} のゲーム ウィンドウを閉じました。",
+  "couchcoop_activity_seat_still_loading": "{name} のゲームはまだ読み込み中です — 性能の低い PC では少し時間がかかることがあります。",
   "couchcoop_activity_seats_shutting_down": "Couch Co-Op を閉じる — すべてのプレイヤーのゲーム ウィンドウをシャットダウンします。",
   "couchcoop_activity_viewer_connected": "{名前} が接続されました。",
   "couchcoop_activity_viewer_watching": "{name} が接続されています — この画面を見ています。",

@@ -62,6 +62,7 @@
   "couchcoop_activity_seat_stuck_reaped": "{name}'ın oyunu yanıt vermeyi durdurdu; tekrar başlayabilmeleri için oyun kapatıldı.",
   "couchcoop_activity_seat_window_gone": "{name}'ın oyun penceresi artık çalışmıyor.",
   "couchcoop_activity_seat_run_end": "Koşu sona erdi — {name}'in oyun penceresi kapatıldı.",
+  "couchcoop_activity_seat_still_loading": "{name}'in oyunu hâlâ yükleniyor — daha yavaş bir bilgisayarda bu biraz zaman alabilir.",
   "couchcoop_activity_seats_shutting_down": "Couch Co-Op'un kapatılması — tüm oyuncu oyun pencerelerinin kapatılması.",
   "couchcoop_activity_viewer_connected": "{name} bağlandı.",
   "couchcoop_activity_viewer_watching": "{name} bağlandı — bu ekranı izliyor.",

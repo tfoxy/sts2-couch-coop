@@ -98,6 +98,17 @@ if (args is ["host-ui", ..])
     return;
 }
 
+// `dotnet run --project tests/CouchCoop.Mod.Tests -- seat-timeout` runs the seat READINESS deadline alone: the
+// clamp band behind COUCHCOOP_SEAT_READY_TIMEOUT_SECONDS, its relationship to the browser's own join ceiling,
+// the one "still loading" progress line, and the early-exit path that must keep failing fast regardless. Same
+// standing as host-guards above — pure, no IO, no game executable, nothing to race — and it also runs in the
+// normal sequence below. Its two waiting cases take ~2s each against deliberately shortened deadlines.
+if (args is ["seat-timeout", ..])
+{
+    await SeatReadyTimeoutTests.RunAsync();
+    return;
+}
+
 // Point the asset binary cache at a throwaway temp root BEFORE any browser-server / host-UI test constructs a
 // SpirectlAssetBinaryCache. Without this, the cache's DefaultRoot() falls through to TryResolveGameDataDir() ->
 // Godot.ProjectSettings.GlobalizePath("user://..."), whose static cctor calls native GodotSharp
@@ -291,6 +302,8 @@ WalkSkipUnanimityTests.Run();
 var tests = new BrowserServerRouteTests();
 await tests.RunAsync();
 await HeadlessClientManagerTests.RunAsync();
+// The readiness deadline that manager waits on: the clamp band, the progress line, the untouched early exit.
+await SeatReadyTimeoutTests.RunAsync();
 Console.WriteLine("""{"ok":true,"hostedServerRoutes":true}""");
 
 internal sealed class BrowserServerRouteTests

@@ -62,6 +62,7 @@
   "couchcoop_activity_seat_stuck_reaped": "{name}'s game stopped responding — closing it so they can start again.",
   "couchcoop_activity_seat_window_gone": "{name}'s game window is no longer running.",
   "couchcoop_activity_seat_run_end": "The run ended — closed {name}'s game window.",
+  "couchcoop_activity_seat_still_loading": "{name}'s game is still loading — this can take a while on a slower PC.",
   "couchcoop_activity_seats_shutting_down": "Closing Couch Co-Op — shutting down all player game windows.",
   "couchcoop_activity_viewer_connected": "{name} connected.",
   "couchcoop_activity_viewer_watching": "{name} connected — watching this screen.",
