@@ -79,6 +79,13 @@ make_install "$BETA"   v0.108.0 bbbb2222 beta     || die "beta install"
 printf 'game:\n  path: "%s"\n  assembliesDir: "%s/data_sts2_fake_x86_64"\n' "$STABLE" "$STABLE" \
   > "$TREPO/sts2.local.yaml"
 mkdir -p "$SCRATCH"
+# Mirror the real checkout's layout: .sts2/toolchain is a SYMLINK to the sibling spirectl repo's
+# decompile corpus. The shared-corpus checks below compare the symlink path, which is how a branch
+# config would ever spell it; a config naming spirectl's corpus by its real path is not caught, and
+# is not a mistake anybody makes by omission.
+SPIRECTL_CORPUS="$TMP/spirectl-corpus"
+mkdir -p "$SPIRECTL_CORPUS/decompile" "$TREPO/.sts2"
+ln -s "$SPIRECTL_CORPUS" "$TREPO/.sts2/toolchain"
 
 BETA_CFG="$TREPO/.sts2/branches/beta"
 
@@ -113,6 +120,93 @@ ok "pins project.hooksFile at the repo root" \
 ok "leaves instances.symlinkUserDataDirs empty" \
   grep -qE '^[[:space:]]*symlinkUserDataDirs:[[:space:]]*\[\][[:space:]]*$' "$BETA_CFG/sts2.local.yaml"
 ok "…and says why"            grep -q 'asset-cache-v' "$BETA_CFG/sts2.local.yaml"
+
+echo "== the branch corpus is pinned away from the shared one =="
+# `sts2 project recover --kind decompile` rewrites <toolchain.dir>/decompile/, and toolchain.dir
+# DEFAULTS to a relative `.sts2/toolchain` anchored on the directory the CLI picked -- this branch
+# dir under SPIRECTL_CONFIG_DIR, but the WORKING directory under `sts2 --config <file>`, where it
+# lands on spirectl's shared corpus. Verified by running `project recover` against throwaway
+# configs and watching where <toolchain.dir>/manifests appeared.
+ok "the toolchain.dir line is exactly as expected" \
+  grep -qF "  dir: \"$TREPO/.sts2/toolchain-beta\"" "$BETA_CFG/sts2.local.yaml"
+TC="$(awk '/^toolchain:/{b=1;next} /^[^[:space:]#]/{b=0} b && /^[[:space:]]+dir:/{sub(/^[[:space:]]+dir:[[:space:]]*/,"");gsub(/"/,"");print;exit}' "$BETA_CFG/sts2.local.yaml")"
+eq "toolchain.dir is <repo>/.sts2/toolchain-<branch>" "$TREPO/.sts2/toolchain-beta" "$TC"
+ok "…absolute"                           bash -c 'case "$1" in /*) exit 0 ;; *) exit 1 ;; esac' _ "$TC"
+ok "…is NOT .sts2/toolchain"             bash -c '[ "$1" != "$2/.sts2/toolchain" ]' _ "$TC" "$TREPO"
+ok "…is NOT inside .sts2/toolchain"      bash -c 'case "$1" in "$2/.sts2/toolchain/"*) exit 1 ;; *) exit 0 ;; esac' _ "$TC" "$TREPO"
+ok "…is NOT inside the branch directory" bash -c 'case "$1" in "$2"*) exit 1 ;; *) exit 0 ;; esac' _ "$TC" "$BETA_CFG"
+# The repo-root config names no toolchain.dir, so stable resolves to the shared symlink. A branch
+# that resolved to the same path is the expensive mistake this pin exists to prevent.
+ok "…is NOT what the repo-root config resolves to" \
+  bash -c '[ "$1" != "$2/.sts2/toolchain" ]' _ "$TC" "$TREPO"
+ok "…and the file says why it must not be the shared corpus" \
+  grep -q 'spirectl' "$BETA_CFG/sts2.local.yaml"
+ok "setup reports the corpus"            grep -qF "corpus       $TREPO/.sts2/toolchain-beta" "$SETUP_LOG"
+# The generated layout has to match the corpora produced by hand before this script existed
+# (.sts2/toolchain-public, .sts2/toolchain-public-beta), or `setup public-beta` orphans one. Assert
+# it by registering that exact branch name and reading back what the file says.
+PB="$TMP/install-public-beta"
+make_install "$PB" v0.111.0 41cef1ea public-beta || die "public-beta install"
+bash "$WBR" setup public-beta --game-path "$PB" >/dev/null 2>&1 || die "setup public-beta"
+PBTC="$(awk '/^toolchain:/{b=1;next} /^[^[:space:]#]/{b=0} b && /^[[:space:]]+dir:/{sub(/^[[:space:]]+dir:[[:space:]]*/,"");gsub(/"/,"");print;exit}' \
+  "$TREPO/.sts2/branches/public-beta/sts2.local.yaml")"
+eq "setup public-beta names .sts2/toolchain-public-beta" "$TREPO/.sts2/toolchain-public-beta" "$PBTC"
+
+echo "== the corpus warnings =="
+# Not fatal: only `project recover` writes a corpus, and refusing every other command over it would
+# be wrong. But a hand-written branch config that omits toolchain.dir must be told, every run.
+NOTC="$TREPO/.sts2/branches/notc"
+mkdir -p "$NOTC"
+printf 'game:\n  path: "%s"\n  assembliesDir: "%s/data_sts2_fake_x86_64"\n' "$BETA" "$BETA" \
+  > "$NOTC/sts2.local.yaml"
+run notc -- true > /dev/null 2> "$TMP/notc.log"
+eq "a branch with no toolchain.dir still RUNS" 0 "$?"
+ok "…but warns"                        grep -q 'sets no toolchain.dir' "$TMP/notc.log"
+ok "…naming the nested path it would use" grep -qF "$NOTC/.sts2/toolchain" "$TMP/notc.log"
+ok "…and the value to add"              grep -qF "dir: $TREPO/.sts2/toolchain-notc" "$TMP/notc.log"
+# Pointed squarely at spirectl's shared corpus: the expensive mistake, stated as such.
+SHARED="$TREPO/.sts2/branches/shared"
+mkdir -p "$SHARED"
+printf 'game:\n  path: "%s"\n  assembliesDir: "%s/data_sts2_fake_x86_64"\ntoolchain:\n  dir: "%s/.sts2/toolchain"\n' \
+  "$BETA" "$BETA" "$TREPO" > "$SHARED/sts2.local.yaml"
+run shared -- true > /dev/null 2> "$TMP/shared.log"
+eq "a branch pointed at the shared corpus still RUNS" 0 "$?"
+ok "…but warns it is the shared corpus" grep -q 'SHARED with the spirectl repo' "$TMP/shared.log"
+ok "…and offers the right path"         grep -qF "$TREPO/.sts2/toolchain-shared" "$TMP/shared.log"
+# A correctly pinned branch says nothing.
+run beta -- true > /dev/null 2> "$TMP/beta-quiet.log"
+ok "a pinned branch raises no corpus warning" \
+  bash -c '! grep -q "WARNING" "$1"' _ "$TMP/beta-quiet.log"
+ok "…and the banner still reports the corpus" \
+  grep -qF "corpus       $TREPO/.sts2/toolchain-beta" "$TMP/beta-quiet.log"
+
+echo '== the block reader does not confuse another block dir key =='
+# A bare `dir` key is generic; game.dir / project.dir must never be read as toolchain.dir.
+DECOY="$TREPO/.sts2/branches/decoy"
+mkdir -p "$DECOY"
+printf 'game:\n  path: "%s"\n  assembliesDir: "%s/data_sts2_fake_x86_64"\n  dir: /decoy/game\nproject:\n  dir: /decoy/project\ntoolchain:\n  dir: "%s/.sts2/toolchain-decoy"\n' \
+  "$BETA" "$BETA" "$TREPO" > "$DECOY/sts2.local.yaml"
+run decoy -- true > /dev/null 2> "$TMP/decoy.log"
+eq "a decoy dir key does not break the run" 0 "$?"
+ok "the corpus comes from the toolchain block" \
+  grep -qF "corpus       $TREPO/.sts2/toolchain-decoy" "$TMP/decoy.log"
+ok "…and not from game.dir"    bash -c '! grep -q "/decoy/game" "$1"' _ "$TMP/decoy.log"
+ok "…and not from project.dir" bash -c '! grep -q "/decoy/project" "$1"' _ "$TMP/decoy.log"
+
+echo "== --force does not silently drop a hand-set toolchain.dir =="
+HAND="$TREPO/.sts2/branches/hand"
+mkdir -p "$HAND"
+printf 'game:\n  path: "%s"\n  assembliesDir: "%s/data_sts2_fake_x86_64"\ntoolchain:\n  dir: "%s/hand-corpus"\n' \
+  "$BETA" "$BETA" "$TMP" > "$HAND/sts2.local.yaml"
+bash "$WBR" setup hand --game-path "$BETA" --force > "$TMP/hand.log" 2>&1
+eq "setup --force over a hand-written file exits 0" 0 "$?"
+ok "the previous file is kept"          test -f "$HAND/sts2.local.yaml.replaced"
+ok "…with its original toolchain.dir"   grep -qF "$TMP/hand-corpus" "$HAND/sts2.local.yaml.replaced"
+ok "…and setup says where it went"      grep -qF "replaced     $HAND/sts2.local.yaml.replaced" "$TMP/hand.log"
+ok "…and warns that the value changed"  grep -q 'replacing a hand-set toolchain.dir' "$TMP/hand.log"
+ok "…showing both values"               grep -qF "was  $TMP/hand-corpus" "$TMP/hand.log"
+ok "the generated header warns --force loses hand-added keys" \
+  grep -q 'REWRITES IT FROM SCRATCH' "$HAND/sts2.local.yaml"
 
 echo "== setup refusals =="
 no "setup refuses 'stable'"           bash "$WBR" setup stable --game-path "$BETA"
@@ -178,6 +272,13 @@ ok "stable's local config is the repo root's" \
   grep -qxF "CouchCoopLocalConfigPath=$TREPO/sts2.local.yaml" "$SENV"
 ok "stable resolves the stable install" grep -qxF "STS2_ASSEMBLIES_DIR=$STABLE/data_sts2_fake_x86_64" "$SENV"
 ok "stable does NOT set SPIRECTL_INSTANCE" bash -c '! grep -q "^SPIRECTL_INSTANCE=" "$1"' _ "$SENV"
+# Stable IS the shared corpus, and that is correct: it is built from the stable game. Labelled, so
+# nobody reads the branch warnings above and "fixes" this one.
+ok "stable's corpus is the shared .sts2/toolchain" \
+  grep -qF "corpus       $TREPO/.sts2/toolchain" "$TMP/stable.err"
+ok "…labelled as shared and correct" grep -q 'shared with spirectl; correct for stable' "$TMP/stable.err"
+ok "…and stable raises no corpus warning" \
+  bash -c '! grep -q "WARNING" "$1"' _ "$TMP/stable.err"
 ok "'default' is an alias for stable" \
   bash -c 'bash "$1" default -- env 2>/dev/null | grep -qxF "SPIRECTL_CONFIG_DIR=$2"' _ "$WBR" "$TREPO"
 
@@ -306,6 +407,8 @@ ok "…and its build identity"      grep -q 'v0.107.1' "$LIST"
 ok "list shows a registered branch" grep -q '^beta' "$LIST"
 ok "…and its install"             grep -qF "$BETA" "$LIST"
 ok "list names each config dir"   grep -qF "$BETA_CFG" "$LIST"
+ok "list names each corpus"       grep -qF "corpus $TREPO/.sts2/toolchain-beta" "$LIST"
+ok "…including stable's shared one" grep -qF "corpus $TREPO/.sts2/toolchain" "$LIST"
 no "list takes no arguments"      bash "$WBR" list beta
 
 echo "== no sts2 CLI: the sed fallback =="
