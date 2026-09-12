@@ -35,6 +35,104 @@ that project — the browser listener, runtime/session state, the Godot lifecycl
 still needs the normal deploy/restart loop, and the loader reports a `reload_contract_version_mismatch` rather
 than reloading across a contract change.
 
+## Two game installs on one machine (game branches)
+
+Testing against a beta or older game build needs a second install, and the whole difficulty is that
+CouchCoop finds the game **twice**, through two resolvers that never compare notes:
+
+- the `sts2` CLI's config stack — `sts2.config.yaml` + `sts2.local.yaml` read from one directory,
+  chosen by `SPIRECTL_CONFIG_DIR`, by `--config <file>`, or by walking up from the working directory;
+- this repo's own reader — `Directory.Build.props` regex-reads `sts2.local.yaml` for
+  `game.assembliesDir` / `game.modsDir` / `game.path` and honours `$(CouchCoopLocalConfigPath)`,
+  `STS2_ASSEMBLIES_DIR`, `COUCHCOOP_GAME_MODS_DIR` and `COUCHCOOP_LOCAL_MOD_DIR`; plus
+  `scripts/build-local-mod.sh`, which asks the CLI and falls back to its own sed reader.
+
+**`sts2 --config beta.yaml game deploy --build` silently builds the wrong binary.** The deploy exports
+`SPIRECTL_DEPLOY_OUTPUT_DIR`, `SPIRECTL_DEPLOY_PROJECT_ROOT` and `SPIRECTL_DEPLOY_MOD_NAME` to the
+build command and nothing else — never the assemblies dir. So the compile resolves STS2 references
+through the MSBuild reader, which still reads the repo-root `sts2.local.yaml` and hands it the
+**stable** assemblies, and the deploy then installs that binary into the **beta** install's mods dir.
+Build succeeds, deploy succeeds, verify succeeds, and you are measuring a mod compiled against the
+other game version.
+
+`scripts/with-game-branch.sh` is the one switch that feeds both resolvers, and the assertion that the
+install you got is the install you asked for:
+
+```bash
+scripts/with-game-branch.sh list
+scripts/with-game-branch.sh setup beta --game-path /path/to/the/second/install
+scripts/with-game-branch.sh beta -- sts2 game deploy src/CouchCoop.Mod.Loader --build --restart --verify
+```
+
+A branch is a **config directory**, not a config file, because `SPIRECTL_CONFIG_DIR` moves the whole
+stack there and every `sts2` call inside the wrapped command picks it up with no `--config` flag to
+forget. `stable` (or `default`) is the repo root itself — today's behaviour, unchanged. Any other name
+is `.sts2/branches/<name>/`, holding a real `sts2.local.yaml` with that install's paths plus symlinks
+back to the repo root's `sts2.config.yaml`, `sts2.profiles.yaml`, `sts2.hooks.yaml` and
+`sts2.hot-reload.yaml`. `.sts2` is gitignored, so a branch registry is local state only. An
+unregistered name is an error naming the `setup` command to run — it never falls through to stable.
+
+The wrapper exports `SPIRECTL_CONFIG_DIR`, `STS2_ASSEMBLIES_DIR`, `CouchCoopLocalConfigPath` (MSBuild
+surfaces an environment variable as a property, so no `-p:` flag is needed), `COUCHCOOP_LOCAL_MOD_DIR`
+and — for every branch except stable — `SPIRECTL_INSTANCE`. An already-set `SPIRECTL_INSTANCE` wins,
+and so does a scratch `COUCHCOOP_GAME_MODS_DIR`: `COUCHCOOP_LOCAL_MOD_DIR` outranks it in
+`Directory.Build.props`, so deriving the mod output from the install would otherwise defeat the
+scratch-directory valve every worktree build depends on.
+
+### Why the second install cannot live in Steam's directory
+
+Steam keeps exactly one install per appid per library folder, and switching a game's branch rewrites
+that install **in place**. There is no arrangement where Steam holds both branches at once, so the
+second install is a directory Steam does not manage — and it must be a **real copy, never a symlink
+farm**. Godot resolves its own executable through `/proc/self/exe`, which follows symlinks, so a
+symlinked `SlayTheSpire2` makes the game treat the *other* install's directory as its own and load
+that install's `mods/`. The branch then runs a build you did not deploy to it, and nothing in the log
+says so. `SlayTheSpire2.pck` may stay a symlink; the binary may not. The wrapper fails rather than run
+when it finds a symlinked binary.
+
+**`mods/` must never be shared between installs either.** `scripts/build-local-mod.sh` deletes the
+stale top-level DLLs in the output directory and regenerates `hot-reload/` and `frontend/` in place,
+so one shared `mods/` means each deploy silently re-points the other branch at the build it just
+made. The wrapper fails on a symlinked `mods/` too.
+
+An install root also has to satisfy the CLI's own test: a `data_sts2_*` subdirectory holding **both
+`sts2.dll` and `GodotSharp.dll`**. When it does not — a download still in progress looks exactly like
+this — the CLI does not fail. It falls back to **Steam autodiscovery** and quietly resolves the stable
+install instead, which is the same wrong-binary outcome arriving by a different route. The wrapper
+compares the install the CLI resolved against the one the branch configures, refuses a `gamePath` the
+CLI reports as `discovered`, and prints the build identity from `release_info.json` on stderr before
+running, so the operator always sees which build they just drove. `setup` records that identity, and
+the run form warns when it has drifted — that means the branch updated since registration.
+
+### Per-branch runtime state
+
+`SPIRECTL_INSTANCE` is the narrow knob: `sts2 --instance <name>` gives the game its own bridge socket
+and passes its own `--user-dir`, so two branches never share save state. Do **not** reach for
+`XDG_DATA_HOME` instead — it redirects far more than the game's user dir.
+
+`instances.symlinkUserDataDirs: [couch-coop]` in the repo-root `sts2.local.yaml` is deliberately *not*
+inherited by a branch, and must not be copied into one. That setting symlinks the shared
+`user://couch-coop` directory into each instance, and CouchCoop's asset cache lives inside it at
+`couch-coop/assets/couchcoop-asset-cache-v<spirectl AssetPayloadVersion>`. That namespace has **no
+game-version component**, so two branches sharing the directory would serve each other stale bytes
+rendered by the other game build — a rendering bug with no visible cause.
+
+A branch's `sts2.local.yaml` also pins `project.profilesFile` and `project.hooksFile` at absolute
+repo-root paths, which looks redundant next to the symlinks and is not. `sts2` resolves a profile's or
+hook's relative command, its `cwd` and `${profileDir}` against the directory holding the
+profiles/hooks *file* — the branch directory, if that file is reached through the symlink. The hooks
+would load and then resolve `scripts/probe-…` to `.sts2/branches/<name>/scripts/probe-…`, which does
+not exist. Naming the repo-root files outright puts that base directory back where the scripts are.
+
+Nothing else from the repo-root `sts2.local.yaml` layers into a branch: the stack is exactly that
+directory's `sts2.config.yaml` plus its `sts2.local.yaml`. Machine setup the root file carries —
+`game.launchArgs`, `game.disableBackgroundThrottle`, `tools.gdrePath` — has to be copied into the
+branch file by hand if the branch needs it. `setup` will not overwrite a hand-edited branch file
+without `--force`.
+
+Self-test: `scripts/test-with-game-branch.sh`, which builds two synthetic installs in a temp
+directory and needs no real game install.
+
 ## Browser asset and clip contracts
 
 `/res/{path}` is the resource route. It accepts a path relative to `res://`, never a scheme-prefixed key.
@@ -172,6 +270,7 @@ Do not commit `.sts2/`, `sts2.local.yaml`, official STS2 assets, copied game DLL
 Use ignored local paths such as:
 
 - `.sts2/` for generated MSBuild props, validation artifacts, screenshots, baselines, and asset extracts.
+- `.sts2/branches/<name>/` for a registered second game install (see "Two game installs on one machine").
 - `sts2.local.yaml` for machine-specific game paths.
 - `.ai/tool-improvements.md` for later-spec notes about concrete missing or brittle tools.
 
