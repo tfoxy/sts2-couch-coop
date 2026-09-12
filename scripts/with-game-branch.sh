@@ -19,6 +19,12 @@
 # got is the install you asked for -- because when a configured `game.path` is not a valid install
 # root, the CLI silently falls back to Steam autodiscovery and retargets the stable install.
 #
+# It also pins each branch's `toolchain.dir`. `.sts2/toolchain` here is a symlink to spirectl's
+# shared decompile corpus, and `toolchain.dir` defaults to a RELATIVE `.sts2/toolchain` anchored on
+# whichever directory the CLI picked -- which under `sts2 --config <file>` is the working
+# directory. A branch recovery with no explicit value therefore lands on the shared corpus and
+# replaces stable sources with the branch's, invisibly.
+#
 # Docs: docs/configuration.md "Two game installs on one machine".
 # Self-test: scripts/test-with-game-branch.sh
 
@@ -83,6 +89,23 @@ yaml_value() { # yaml_value <file> <key>
     | head -n 1 | sed -E 's/[[:space:]]+$//'
 }
 
+# `toolchain.dir` cannot go through yaml_value: a bare `dir` key is far too generic to match at any
+# indentation, and getting it wrong here points a decompile corpus somewhere expensive. This one
+# reads a key from inside ONE top-level block, and stops at the next top-level key.
+yaml_block_value() { # yaml_block_value <file> <block> <key>
+  [ -f "$1" ] || return 0
+  awk -v block="$2" -v key="$3" '
+    /^[^[:space:]#]/ { inblock = ($0 ~ "^" block "[[:space:]]*:") ; next }
+    inblock && $0 ~ "^[[:space:]]+" key "[[:space:]]*:" {
+      sub("^[[:space:]]+" key "[[:space:]]*:[[:space:]]*", "")
+      sub(/[[:space:]]*#.*$/, "")
+      gsub(/^["'"'"']|["'"'"']$/, "")
+      sub(/[[:space:]]+$/, "")
+      print; exit
+    }
+  ' "$1"
+}
+
 # Flat "key": "value" out of release_info.json. jq when it is there, sed when it is not; this runs
 # on a contributor machine that may have neither jq nor the sts2 CLI installed.
 json_field() { # json_field <file> <key>
@@ -118,6 +141,29 @@ yaml_quote() { # yaml_quote <value> -- a double-quoted YAML scalar; install path
 # ------------------------------------------------------------------------------------------------
 branch_config_dir() { # branch_config_dir <branch>
   if is_stable "$1"; then printf '%s\n' "$repo_root"; else printf '%s/%s\n' "$registry_root" "$1"; fi
+}
+
+# Where a branch's decompile corpus belongs. `.sts2/toolchain` in this checkout is a SYMLINK to
+# `../../spirectl/.sts2/toolchain/` -- a corpus shared with the spirectl repo, built from the stable
+# game -- so it must never be a branch's recovery target. `sts2 project recover` rewrites
+# `<toolchain.dir>/decompile/`, and a corpus carries no game-version marker, so a beta recovery
+# landing there replaces spirectl's stable sources with beta ones invisibly. ~154 MB, ~20 minutes.
+branch_toolchain_dir() { # branch_toolchain_dir <branch>
+  printf '%s/.sts2/toolchain-%s\n' "$repo_root" "$1"
+}
+
+# The corpus root the CLI would use, given a config dir. `toolchain.dir` is anchored on the config
+# directory when it is relative (and its DEFAULT is the relative `.sts2/toolchain`), which is the
+# whole hazard: verified by running `project recover` against throwaway configs and watching where
+# `<toolchain.dir>/manifests` appeared.
+resolved_toolchain_dir() { # resolved_toolchain_dir <config-dir>
+  local configured
+  configured="$(yaml_block_value "$1/sts2.local.yaml" toolchain dir)"
+  if [ -z "$configured" ]; then printf '%s/.sts2/toolchain\n' "$1"; return 0; fi
+  case "$configured" in
+    /*) printf '%s\n' "$configured" ;;
+    *)  printf '%s/%s\n' "$1" "$configured" ;;
+  esac
 }
 
 require_registered() { # require_registered <branch> -- sets nothing, exits on failure
@@ -288,6 +334,32 @@ install's mods/. Copy or hard-link the binary instead (SlayTheSpire2.pck may sta
   elif [ ! -d "$RES_MODS_DIR" ]; then
     note "WARNING  mods directory does not exist yet: $RES_MODS_DIR (a deploy will create it)"
   fi
+
+  # The decompile corpus. Not fatal -- only `project recover` writes one, and refusing every other
+  # command over it would be wrong -- but a branch pointed at the shared corpus is the expensive
+  # mistake, so say so every time rather than once.
+  RES_TOOLCHAIN_DIR="$(resolved_toolchain_dir "$config_dir")"
+  RES_TOOLCHAIN_NOTE=""
+  if is_stable "$branch"; then
+    if [ "$(canonical "$RES_TOOLCHAIN_DIR")" = "$(canonical "$repo_root/.sts2/toolchain")" ]; then
+      RES_TOOLCHAIN_NOTE="  (shared with spirectl; correct for stable)"
+    fi
+  elif [ -z "$(yaml_block_value "$local_config" toolchain dir)" ]; then
+    note "WARNING  branch '$branch' sets no toolchain.dir, so a \`project recover\` for it would
+             write a second decompile corpus at
+               $RES_TOOLCHAIN_DIR
+             -- nested inside the branch registry under SPIRECTL_CONFIG_DIR, and landing on
+             .sts2/toolchain (spirectl's SHARED corpus) under \`sts2 --config <file>\`. Add
+               toolchain:
+                 dir: $(branch_toolchain_dir "$branch")
+             to $local_config, or re-run setup --force."
+  elif [ "$(canonical "$RES_TOOLCHAIN_DIR")" = "$(canonical "$repo_root/.sts2/toolchain")" ]; then
+    note "WARNING  branch '$branch' points toolchain.dir at $RES_TOOLCHAIN_DIR, which is the
+             corpus SHARED with the spirectl repo and built from the stable game. A
+             \`project recover\` here would overwrite it with this branch's sources, with nothing
+             in the output saying which game build produced them. Use
+               $(branch_toolchain_dir "$branch")"
+  fi
 }
 
 check_identity_drift() { # check_identity_drift <config-dir> <game-path>
@@ -332,6 +404,7 @@ cmd_list() {
       printf '%-14s   build (no release_info.json)\n' ""
     fi
     printf '%-14s   config %s\n' "" "$dir"
+    printf '%-14s   corpus %s\n' "" "$(resolved_toolchain_dir "$dir")"
   done <<< "$names"
   if command -v sts2 >/dev/null 2>&1 && command -v jq >/dev/null 2>&1; then
     printf '\nresolver: sts2 --json config resolve\n'
@@ -389,13 +462,31 @@ applies the same test to decide whether $game_path is an install at all."
 Registering a second name for one install gives two names that deploy into the same mods dir."
   fi
 
-  local dir="$registry_root/$branch"
+  local dir="$registry_root/$branch" toolchain_dir
+  toolchain_dir="$(branch_toolchain_dir "$branch")"
+
   if [ -f "$dir/sts2.local.yaml" ] && [ -z "$force" ]; then
     die "branch '$branch' is already registered at $dir.
 Re-run with --force to rewrite it (hand edits to its sts2.local.yaml will be lost)."
   fi
 
   mkdir -p "$dir"
+  # --force rewrites the file from scratch, so a key somebody added by hand -- a different
+  # toolchain.dir above all -- is gone. Keep the old file next to it so the loss is recoverable,
+  # and say so when the value we are about to write disagrees with what was there.
+  local backup=""
+  if [ -f "$dir/sts2.local.yaml" ]; then
+    backup="$dir/sts2.local.yaml.replaced"
+    cp "$dir/sts2.local.yaml" "$backup"
+    local previous_toolchain
+    previous_toolchain="$(yaml_block_value "$dir/sts2.local.yaml" toolchain dir)"
+    if [ -n "$previous_toolchain" ] && [ "$previous_toolchain" != "$toolchain_dir" ]; then
+      note "WARNING  --force is replacing a hand-set toolchain.dir:
+             was  $previous_toolchain
+             now  $toolchain_dir
+             Point --game-path at the install that corpus was built from, or edit the new file."
+    fi
+  fi
   local f
   for f in "${linked_config_files[@]}"; do
     if [ -e "$repo_root/$f" ]; then
@@ -414,10 +505,26 @@ Re-run with --force to rewrite it (hand edits to its sts2.local.yaml will be los
 # <this dir>/sts2.config.yaml + <this dir>/sts2.local.yaml, and sts2.config.yaml here is a symlink
 # back to the committed one. Machine setup the repo root file carries -- game.launchArgs,
 # game.disableBackgroundThrottle, tools.gdrePath -- must be copied into this file if this branch
-# needs it. Hand edits survive: setup refuses to overwrite this file without --force.
+# needs it.
+#
+# Hand edits survive a normal setup: it refuses to overwrite this file without --force. \`--force\`
+# REWRITES IT FROM SCRATCH, so every key added by hand is lost; the previous file is kept beside
+# this one as sts2.local.yaml.replaced.
 game:
   path: $(yaml_quote "$game_path")
   assembliesDir: $(yaml_quote "$assemblies_dir")
+
+toolchain:
+  # ABSOLUTE, and never \`.sts2/toolchain\`. In this checkout \`.sts2/toolchain\` is a SYMLINK to
+  # ../../spirectl/.sts2/toolchain/ -- a decompile corpus shared with the spirectl repo, built from
+  # the STABLE game. \`sts2 project recover --kind decompile\` rewrites <toolchain.dir>/decompile/,
+  # and a corpus records no game version anywhere a reader would notice, so a recovery for this
+  # branch landing there would silently replace spirectl's stable sources with this branch's. It is
+  # ~154 MB and ~20 minutes to regenerate. Relative values (and the default, \`.sts2/toolchain\`)
+  # anchor on whichever directory the CLI picked -- this one under SPIRECTL_CONFIG_DIR, but the
+  # WORKING directory under \`--config <file>\`, where the default lands squarely on the shared
+  # corpus. An absolute path is the only spelling that is right under both.
+  dir: $(yaml_quote "$toolchain_dir")
 
 project:
   # Pinned ABSOLUTE on purpose. sts2 resolves a profile's or hook's relative command, its cwd, and
@@ -436,14 +543,18 @@ instances:
   symlinkUserDataDirs: []
 EOF
 
-  cp "$game_path/release_info.json" "$dir/$recorded_identity_name"
+  # Redirect rather than `cp`: an install's release_info.json can be mode 755, and a recorded
+  # identity that looks executable invites somebody to wonder whether it is.
+  cat "$game_path/release_info.json" > "$dir/$recorded_identity_name"
 
   printf 'registered game branch %s\n' "$branch" >&2
   printf '  config dir   %s\n' "$dir" >&2
   printf '  game path    %s\n' "$game_path" >&2
   printf '  assemblies   %s\n' "$assemblies_dir" >&2
+  printf '  corpus       %s\n' "$toolchain_dir" >&2
   printf '  build        %s\n' "$(identity_line "$dir/$recorded_identity_name")" >&2
   printf '  linked       %s\n' "${linked_config_files[*]}" >&2
+  if [ -n "$backup" ]; then printf '  replaced     %s\n' "$backup" >&2; fi
   printf '\nrun against it with:\n  scripts/with-game-branch.sh %s -- <command...>\n' "$branch" >&2
 }
 
@@ -511,6 +622,7 @@ cmd_run() {
     printf '  assemblies   %s\n' "$RES_ASSEMBLIES_DIR"
     printf '  mods dir     %s\n' "$RES_MODS_DIR"
     printf '  mod output   %s%s\n' "$mod_dir" "$mod_dir_note"
+    printf '  corpus       %s%s\n' "$RES_TOOLCHAIN_DIR" "$RES_TOOLCHAIN_NOTE"
     printf '  instance     %s\n' "$instance_line"
     printf '  build        %s\n' "$(identity_line "$RES_GAME_PATH/release_info.json")"
     printf '  resolved by  %s\n' "$([ "$RES_SOURCE" = "cli" ] && echo 'sts2 --json config resolve' || echo 'sts2.local.yaml (sed fallback; sts2 CLI or jq not installed)')"

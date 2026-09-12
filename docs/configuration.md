@@ -117,6 +117,20 @@ inherited by a branch, and must not be copied into one. That setting symlinks th
 game-version component**, so two branches sharing the directory would serve each other stale bytes
 rendered by the other game build — a rendering bug with no visible cause.
 
+The **decompile corpus** is the other piece of per-branch state, and the one it costs most to get
+wrong. `.sts2/toolchain` in this checkout is a symlink to `../../spirectl/.sts2/toolchain/` — a
+corpus shared with the spirectl repo and built from the stable game — and `sts2 project recover
+--kind decompile` rewrites `<toolchain.dir>/decompile/` wholesale. `toolchain.dir` defaults to a
+*relative* `.sts2/toolchain` anchored on whichever directory the CLI chose, which under
+`sts2 --config <file>` is the **working** directory. So a branch config that simply omits the key
+sends a beta recovery straight into spirectl's stable corpus: 154 MB, twenty minutes to rebuild, and
+nothing in the output names the game build that produced it, so the damage is invisible until
+somebody reads beta sources believing they are stable. `setup` therefore writes an absolute
+`toolchain.dir: <repo>/.sts2/toolchain-<branch>`, matching the `toolchain-public` /
+`toolchain-public-beta` corpora already on disk, and the run form warns on every command when a
+hand-written branch config omits the key or points it at the shared corpus. `stable` keeps
+`.sts2/toolchain` — that corpus *is* the stable game's — and the banner labels it as such.
+
 A branch's `sts2.local.yaml` also pins `project.profilesFile` and `project.hooksFile` at absolute
 repo-root paths, which looks redundant next to the symlinks and is not. `sts2` resolves a profile's or
 hook's relative command, its `cwd` and `${profileDir}` against the directory holding the
@@ -128,9 +142,26 @@ Nothing else from the repo-root `sts2.local.yaml` layers into a branch: the stac
 directory's `sts2.config.yaml` plus its `sts2.local.yaml`. Machine setup the root file carries —
 `game.launchArgs`, `game.disableBackgroundThrottle`, `tools.gdrePath` — has to be copied into the
 branch file by hand if the branch needs it. `setup` will not overwrite a hand-edited branch file
-without `--force`.
+without `--force`, and `--force` rewrites it from scratch — every hand-added key is lost, so the
+previous file is kept beside it as `sts2.local.yaml.replaced` and a replaced `toolchain.dir` is
+called out by name.
 
-Self-test: `scripts/test-with-game-branch.sh`, which builds two synthetic installs in a temp
+**As of the game's v0.111.0 beta the mod does not build against it at all.** The build stops
+upstream, in `../spirectl/bridge-mod`, on a handful of `CS0246`s where the beta split one game type
+apart. Do not read that error count as the size of the port: a declaration-site failure masks every
+downstream project through `MSB4181`, and Roslyn never binds a method body once a declaration has
+failed, so the compiler's list is a lower bound — the measured per-member delta is an order of
+magnitude larger. The `verify-references` entry in
+[`.ai/tool-improvements.md`](../.ai/tool-improvements.md) records how that was actually measured and
+where the numbers live. One CouchCoop Harmony target also changed arity — the per-act audio bank
+load patched in
+[`src/CouchCoop.Mod/Patches/HeadlessAudioMutePatch.cs`](../src/CouchCoop.Mod/Patches/HeadlessAudioMutePatch.cs)
+— and that one fails soft, so it will never stop a build; it will just quietly stop muting. So
+`with-game-branch.sh public-beta -- <any build>` fails at the bridge today, while corpus generation
+and static inspection against the beta work fine — which is what the branch tooling is for until
+that port happens.
+
+Self-test: `scripts/test-with-game-branch.sh`, which builds synthetic installs in a temp
 directory and needs no real game install.
 
 ## Browser asset and clip contracts
