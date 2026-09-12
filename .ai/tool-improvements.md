@@ -200,6 +200,37 @@ Found: QA round for the lobby QR host panel (Aug-8), while rewriting both live l
    comparing a `dev.delay` run against a `waitQuiescentMs` run; if quiescence is genuinely early, the fix
    direction for ../spirectl is that the boot flow's own screen pushes should count as non-quiescent.
 
+## No way to ask whether a built mod assembly's game references still resolve against another game build
+
+Found: standing up a second game install (Steam `public-beta`, Sep-12) and asking whether one deployed DLL can
+serve both game branches.
+
+The question is per-member and mechanical — "of the game types and members these three shipped assemblies
+reference, which are missing or reshaped in that other `data_sts2_*` directory?" — and nothing answers it:
+
+- `sts2 code locate`/`describe`/`refs`/`hooks --assemblies-dir` inspect the GAME side one symbol at a time. They
+  can confirm a suspected member, but you must already know which member to suspect.
+- `scripts/compare-sts2-reference-builds.sh` compares OUR emitted IL between the real game and the pinned
+  reference SDK. It cannot answer this: it has to compile first, which is exactly what fails, and its package is
+  pinned to one game version with no package published for the other.
+- **A compiler error list is a lower bound, not the delta.** Building the solution against the other build
+  reported errors from one project only: the declaration-site failures there masked every downstream project
+  (`MSB4181`), and because the failures were in declarations Roslyn never bound any method body. The real count,
+  recovered by resolving metadata references instead, was an order of magnitude larger.
+
+Workaround used: a throwaway metadata probe that walks each consumer assembly's game TypeRefs/MemberRefs and
+resolves them against a target assemblies dir, with the current game build as a control that must come back
+clean. Counts, per-member verdicts and the re-run recipe are in `.sts2/research/beta-v0111-binding-delta-sep12.md`
+(uncommittable: it names game members).
+
+Fix direction (../spirectl, since this is generic STS2 tooling and any mod hits it on every game update): a
+`sts2 code verify-references <assembly>… --assemblies-dir <dir>` that reports each unresolved or reshaped game
+reference with its referencing site, plus a summary count, and exits nonzero when any break. Two properties make
+it worth having over a compile: it works on a SHIPPED binary with no source and no matching reference package,
+and it does not stop at the first broken project. That turns "does this build still work on that game version?"
+into one command — useful for a beta branch, for a game update landing on the current branch, and for deciding
+whether a release archive is still safe to run.
+
 ## Headless canvas-stage screenshots capture the DOM overlay and none of the stage's pixels
 
 Found: round-4 WS-C (M3 card trails), trying to produce the RMSE gate for the canvas arm's ribbon.
