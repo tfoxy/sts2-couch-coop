@@ -173,11 +173,15 @@ done
 npm --prefix "$repo_root/frontend" ci
 npm --prefix "$repo_root/frontend" audit --omit=dev --audit-level=high
 
+# The bridge resolves its game API lane from the install's release_info.json, and a staged reference
+# SDK has none — so a release build has to say which lane it is, or the bridge refuses to compile.
+game_api_lane="$(release_lane_game_api "$lane")"
 DOTNET_ROLL_FORWARD=Major dotnet publish "$repo_root/src/CouchCoop.Mod.Loader/CouchCoop.Mod.Loader.csproj" \
   -c Release -o "$payload_dir" \
   -p:CouchCoopBuildToLocalMods=false \
   -p:CouchCoopEnableHotReload=false \
   -p:Sts2AssembliesDir="$sdk_dir" \
+  -p:Sts2GameApi="$game_api_lane" \
   -p:EnableSts2LiveHost=true \
   -p:Version="$version" -p:AssemblyVersion="$assembly_version" -p:FileVersion="$assembly_version" \
   -p:InformationalVersion="$version+$source_commit" -p:ContinuousIntegrationBuild=true \
