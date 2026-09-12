@@ -1,5 +1,6 @@
 {
   "couchcoop_qr_button": "Couch Co-Op QR Code",
+  "couchcoop_qr_button_hotkey": "Open QR Code",
   "couchcoop_qr_title": "Scan to join Couch Co-Op",
   "couchcoop_qr_close": "Close QR Code",
   "couchcoop_qr_no_address": "No host address available — check the browser server started.",

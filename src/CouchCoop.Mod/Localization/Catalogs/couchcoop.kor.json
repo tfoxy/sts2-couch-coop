@@ -1,5 +1,6 @@
 {
   "couchcoop_qr_button": "소파 협동 QR 코드",
+  "couchcoop_qr_button_hotkey": "QR 코드 열기",
   "couchcoop_qr_title": "Co-Op에 참여하려면 스캔하세요.",
   "couchcoop_qr_close": "QR 코드 닫기",
   "couchcoop_qr_no_address": "사용 가능한 호스트 주소가 없습니다. 브라우저 서버가 시작되었는지 확인하세요.",

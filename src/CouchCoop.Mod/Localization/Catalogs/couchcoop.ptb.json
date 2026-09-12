@@ -1,5 +1,6 @@
 {
   "couchcoop_qr_button": "Código QR da cooperativa de sofá",
+  "couchcoop_qr_button_hotkey": "Abrir código QR",
   "couchcoop_qr_title": "Digitalize para ingressar no Couch Co-Op",
   "couchcoop_qr_close": "Fechar código QR",
   "couchcoop_qr_no_address": "Nenhum endereço de host disponível — verifique o servidor do navegador iniciado.",

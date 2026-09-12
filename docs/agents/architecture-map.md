@@ -506,7 +506,8 @@ The always-on QR overlay is gone. A game-styled button opens a dialog instead.
 - **Files**: `HostUi/CouchCoopQrHostPanel.cs` (single injected root), `CouchCoopModalDialog.cs` (shared
   modal chrome), `CouchCoopQrDialog.cs`, `CouchCoopHostTransportAlertDialog.cs`, `HostTransportAlert.cs`,
   `CouchCoopQrHostSelect.cs`, `CouchCoopEventButton.cs` / `CouchCoopSkipButton.cs` (both
-  `CouchCoopTextureButton` → `NButton`), `CouchCoopQrHostPanelController.cs` (0.25s scan + gate),
+  `CouchCoopTextureButton` → `NButton`), `CouchCoopQrHotkeyHint.cs` (controller glyph),
+  `CouchCoopQrHostPanelController.cs` (0.25s scan + gate),
   `CouchCoopLobbyHostGate.cs`, `QrHostOptions.cs`, `QrHoverTipCopy.cs` + `CouchCoopQrHoverTips.cs`
   (per-option hover-tip pair through the game's `NHoverTipSet`), `CouchCoopQrSelectionPreference.cs`
   (persisted pick, `qr-prefs.json`), `QrRaster.cs`, `CouchCoopStreamSkip.cs`.
@@ -524,6 +525,26 @@ The always-on QR overlay is gone. A game-styled button opens a dialog instead.
   `…Scrim` / `…Panel` → `…TitleLabel`, `…BodyLabel`, `…DismissButton`.
   **These names are the contract** — `CouchCoopModalDialog` takes them as a `CouchCoopModalNames`
   parameter precisely so extracting the shared chrome could not rename the QR dialog's four.
+- **Controller reach (`mega_top_panel`)**: a controller CANNOT focus the button — `InitCharacterButtons`
+  pins each character button's top/bottom focus neighbour to ITSELF and rings left/right among those
+  buttons alone, so no injected control is reachable, and controller mode warps the mouse off-screen so
+  `IsFocused` (`_isHovered || _isControllerFocused`) never turns on. `CouchCoopQrHostPanel` therefore
+  pushes `MegaInput.topPanel` → `OpenDialogFromHotkey` on install and removes it from the native
+  `tree_exiting` signal (not `_ExitTree`, which is not dispatched into this assembly), the same
+  push-on-show/remove-on-close shape `CouchCoopModalDialog` uses for Escape. **Why that action**: the
+  hotkey manager dispatches to the LAST-pushed binding and marks the event handled, so the pick must be
+  free on both lobby screens — between them they already take `cancel`/`pauseAndBack`/`back` (back +
+  unready buttons), `select`/`accept` (embark/confirm), `viewDeckAndTabLeft` +
+  `viewExhaustPileAndTabRight` (`NAscensionPanel`) and `viewMap` (`NInvitePlayersButton`, inside the
+  remote-player container). `topPanel` is also controller-ONLY — no default key, and absent from the
+  game's remappable-keyboard list — so it cannot swallow a key from a mouse-and-keyboard host. This is
+  the Steam Deck / Game Mode fix; the button's own `Hotkeys` stays empty.
+- **`CouchCoopQrHotkeyHint`**: child of `CouchCoopQrButton`, anchored below it → `Row` →
+  `CouchCoopQrHotkeyGlyph` + `CouchCoopQrHotkeyLabel` (`couchcoop_qr_button_hotkey`). Visible only while
+  `NControllerManager.Instance.IsUsingController`; the glyph comes from
+  `NInputManager.GetHotkeyIcon` (which honours a rebind) and refreshes on `ControllerDetected` /
+  `MouseDetected` / `InputRebound` — never on the 0.25s scan. The label node is deliberately not named
+  `Label`: the probe's `rowLabelText` takes the first descendant with that name.
 - **Shared modal (`CouchCoopModalDialog`)**: scrim + centred card + one `CouchCoopSkipButton` + Escape
   binding + focus parking. Subclasses supply the BODY (`InstallBody` / `ApplyBodyLayout` / `LayoutBody`)
   and the button's wording/size; `OnScrimPressed` returning true swallows a scrim click instead of
