@@ -1,0 +1,69 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <!--
+    Reference lane `public-beta`: the game's `public-beta` Steam branch, game build v0.111.0.
+
+    `-beta` in the package version is NuGet PRERELEASE, not the Steam branch - every published
+    FuYnAloft.Sts2.References version carries it, including the stable lane's 0.107.0-beta. What
+    makes this the beta lane is the version number (0.111.0 pairs with game v0.111.0), not the
+    suffix.
+
+    Lane pairing and the update procedure: ../README.md.
+  -->
+  <PropertyGroup>
+    <!--
+      Deliberately the same assembly name in every lane. scripts/verify-release-archive.sh forbids
+      exactly `CouchCoop.Sts2.ReferenceSdk.dll` in a release payload, so a lane-specific name would
+      walk past that guard. The staged directory is per-lane; the stub inside it is not.
+    -->
+    <AssemblyName>CouchCoop.Sts2.ReferenceSdk</AssemblyName>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <!--
+      Both packages are build inputs only. ExcludeAssets prevents NuGet from importing targets,
+      analyzers, content, or runtime assets into this project; StageSts2ReferenceSdk in
+      ../Sts2.ReferenceSdk.targets copies the reviewed allowlist below into a temporary compile SDK
+      used by the release build.
+    -->
+    <PackageReference
+      Include="FuYnAloft.Sts2.References"
+      Version="[0.111.0-beta]"
+      GeneratePathProperty="true"
+      PrivateAssets="all"
+      ExcludeAssets="all" />
+    <PackageReference
+      Include="GodotSharp"
+      Version="[4.5.1]"
+      GeneratePathProperty="true"
+      PrivateAssets="all"
+      ExcludeAssets="all" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <!--
+      Reviewed compile inputs out of the pinned package's lib/net9.0. GodotSharp.dll comes from the
+      GodotSharp package and is added by the shared target.
+
+      Measured Sep 12 2026: 0.111.0-beta ships exactly the same eight assemblies as 0.107.0-beta, so
+      the two lanes' allowlists are identical today. They are still written out per lane, because a
+      lane's allowlist is a review of one package version, not a shared default.
+
+      One asymmetry to know about: the beta game install ships Sentry.Godot.dll beside Sentry.dll
+      (v0.107.1 does not), and this package's sts2.dll carries a reference to it - but the package
+      does not ship it, so no lane can stage it. Nothing CouchCoop compiles needs a type from it
+      today. If that changes, the reference leg of scripts/compare-sts2-reference-builds.sh fails
+      with CS0012 while the game leg passes, and the fix is a package that ships the assembly - not
+      a local copy out of a game install.
+    -->
+    <Sts2ReferenceSdkPackageAssembly Include="sts2.dll" />
+    <Sts2ReferenceSdkPackageAssembly Include="0Harmony.dll" />
+    <Sts2ReferenceSdkPackageAssembly Include="MonoMod.Backports.dll" />
+    <Sts2ReferenceSdkPackageAssembly Include="MonoMod.ILHelpers.dll" />
+    <Sts2ReferenceSdkPackageAssembly Include="Sentry.dll" />
+    <Sts2ReferenceSdkPackageAssembly Include="SmartFormat.dll" />
+    <Sts2ReferenceSdkPackageAssembly Include="SmartFormat.ZString.dll" />
+    <Sts2ReferenceSdkPackageAssembly Include="Steamworks.NET.dll" />
+  </ItemGroup>
+
+  <Import Project="../Sts2.ReferenceSdk.targets" />
+</Project>

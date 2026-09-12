@@ -1,0 +1,55 @@
+<Project>
+  <!--
+    Shared logic for every STS2 reference lane under this directory.
+
+    A lane project (stable/, public-beta/) holds only three things: its exact package pins, its
+    reviewed assembly allowlist, and its assembly name. Everything mechanical lives here so two
+    lanes cannot drift apart, and so reviewing a new lane means reading a pin list rather than a
+    second copy of a staging target.
+
+    Each lane imports this file EXPLICITLY at the end of its project body. That still lands before
+    the implicit Microsoft.NET.Sdk.targets import, so the properties below are set in time.
+
+    A lane needs its own directory because `RestorePackagesWithLockFile` writes
+    `packages.lock.json` beside the project file: two lanes in one directory would need
+    NuGetLockFilePath gymnastics to keep two locks apart.
+  -->
+  <PropertyGroup>
+    <TargetFramework>net9.0</TargetFramework>
+    <RootNamespace>CouchCoop.Sts2.ReferenceSdk</RootNamespace>
+    <!--
+      Opts this project out of the ValidateSts2AssembliesDir guard in the repo root's
+      Directory.Build.targets. A lane project IS the stand-in for a game install, so requiring one
+      would make a clean checkout (and CI, which owns no game) unable to build it - and because
+      sts2.local.yaml is git-ignored, a developer machine that happens to have one would hide that
+      failure until CI hit it.
+    -->
+    <CouchCoopRequiresSts2Assemblies>false</CouchCoopRequiresSts2Assemblies>
+    <RestorePackagesWithLockFile>true</RestorePackagesWithLockFile>
+    <GenerateDocumentationFile>false</GenerateDocumentationFile>
+  </PropertyGroup>
+
+  <!--
+    Copy the lane's reviewed assembly allowlist into the output directory, which the release build
+    then passes as Sts2AssembliesDir. The lane lists bare file names; this target is the only place
+    that knows they come out of the pinned package's lib/net9.0.
+  -->
+  <Target Name="StageSts2ReferenceSdk" AfterTargets="Build">
+    <ItemGroup>
+      <Sts2ReferenceSdkFile
+        Include="@(Sts2ReferenceSdkPackageAssembly->'$(PkgFuYnAloft_Sts2_References)/lib/net9.0/%(Identity)')" />
+      <Sts2ReferenceSdkFile Include="$(PkgGodotSharp)/lib/net8.0/GodotSharp.dll" />
+    </ItemGroup>
+
+    <Error
+      Condition="'@(Sts2ReferenceSdkPackageAssembly)' == ''"
+      Text="Reference lane $(MSBuildProjectName) declares no reviewed Sts2ReferenceSdkPackageAssembly allowlist." />
+    <Error
+      Condition="!Exists('%(Sts2ReferenceSdkFile.Identity)')"
+      Text="Pinned STS2 reference package is missing reviewed compile input: %(Sts2ReferenceSdkFile.Identity)" />
+    <Copy
+      SourceFiles="@(Sts2ReferenceSdkFile)"
+      DestinationFolder="$(OutputPath)"
+      SkipUnchangedFiles="true" />
+  </Target>
+</Project>

@@ -1,0 +1,55 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <!--
+    Reference lane `stable`: the game's DEFAULT Steam branch (`public`), game build v0.107.1.
+
+    The package version below ends in `-beta` because `FuYnAloft.Sts2.References` ships as a NuGet
+    PRERELEASE. That suffix says nothing about the Steam branch: 0.107.0-beta is this stable lane's
+    pin. The lane name, never the package suffix, is what names the game branch.
+
+    Lane pairing and the update procedure: ../README.md.
+  -->
+  <PropertyGroup>
+    <!--
+      Deliberately the same assembly name in every lane. scripts/verify-release-archive.sh forbids
+      exactly `CouchCoop.Sts2.ReferenceSdk.dll` in a release payload, so a lane-specific name would
+      walk past that guard. The staged directory is per-lane; the stub inside it is not.
+    -->
+    <AssemblyName>CouchCoop.Sts2.ReferenceSdk</AssemblyName>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <!--
+      Both packages are build inputs only. ExcludeAssets prevents NuGet from importing targets,
+      analyzers, content, or runtime assets into this project; StageSts2ReferenceSdk in
+      ../Sts2.ReferenceSdk.targets copies the reviewed allowlist below into a temporary compile SDK
+      used by the release build.
+    -->
+    <PackageReference
+      Include="FuYnAloft.Sts2.References"
+      Version="[0.107.0-beta]"
+      GeneratePathProperty="true"
+      PrivateAssets="all"
+      ExcludeAssets="all" />
+    <PackageReference
+      Include="GodotSharp"
+      Version="[4.5.1]"
+      GeneratePathProperty="true"
+      PrivateAssets="all"
+      ExcludeAssets="all" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <!-- Reviewed compile inputs out of the pinned package's lib/net9.0. GodotSharp.dll comes from
+         the GodotSharp package and is added by the shared target. -->
+    <Sts2ReferenceSdkPackageAssembly Include="sts2.dll" />
+    <Sts2ReferenceSdkPackageAssembly Include="0Harmony.dll" />
+    <Sts2ReferenceSdkPackageAssembly Include="MonoMod.Backports.dll" />
+    <Sts2ReferenceSdkPackageAssembly Include="MonoMod.ILHelpers.dll" />
+    <Sts2ReferenceSdkPackageAssembly Include="Sentry.dll" />
+    <Sts2ReferenceSdkPackageAssembly Include="SmartFormat.dll" />
+    <Sts2ReferenceSdkPackageAssembly Include="SmartFormat.ZString.dll" />
+    <Sts2ReferenceSdkPackageAssembly Include="Steamworks.NET.dll" />
+  </ItemGroup>
+
+  <Import Project="../Sts2.ReferenceSdk.targets" />
+</Project>
