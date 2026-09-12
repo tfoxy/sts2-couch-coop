@@ -74,6 +74,7 @@ body:
         - Windows
         - Linux
         - macOS
+        - Steam Deck (SteamOS)
         - Other
     validations:
       required: true
@@ -112,6 +113,15 @@ body:
       description: List every other mod enabled for the session, or enter "None."
     validations:
       required: true
+
+  - type: textarea
+    id: activity_panel
+    attributes:
+      label: CouchCoop activity panel messages
+      description: If a player's game failed to start or join, the host's in-game CouchCoop activity panel narrates what happened to each seat. Copy any relevant messages here.
+      placeholder: |
+        X's game took too long to start — stopping it.
+        Couldn't start X's game window.
 
   - type: textarea
     id: logs
