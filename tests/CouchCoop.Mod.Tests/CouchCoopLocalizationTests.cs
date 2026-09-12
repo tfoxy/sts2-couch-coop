@@ -9,6 +9,7 @@ internal static class CouchCoopLocalizationTests
     public static void Run()
     {
         CatalogsStayInParityAndUseSafePlaceholders();
+        ShippedCatalogsDoNotTranslateThePlaceholdersThemselves();
         LocaleSelectionFallsBackToEnglish();
         StructuredActivityRerendersAfterLocaleChange();
         NamesRemainBbcodeEscapedAfterResolution();
@@ -66,6 +67,62 @@ internal static class CouchCoopLocalizationTests
             }
         }
     }
+
+    /// <summary>
+    /// The same parity question asked of the catalogs AS SHIPPED, before
+    /// <c>CouchCoopLocalization</c>'s normalizer has been near them.
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// <see cref="CatalogsStayInParityAndUseSafePlaceholders"/> cannot see a translated placeholder, and
+    /// nine catalogs had shipped with one: a translator had localized the TOKEN as well as the prose
+    /// (<c>{nombre}</c>, <c>{名前}</c>, <c>{powód}</c>), which substitutes by English name and so never
+    /// resolves. Both of that test's instruments hide it — it reads the catalog through
+    /// <c>CatalogFor</c>, i.e. already normalized, and its placeholder pattern only matches ASCII names,
+    /// so a non-ASCII token is invisible to it entirely.
+    /// </para>
+    /// <para>
+    /// The normalizer's repair is not a defence either, which is the point of asserting on the raw text.
+    /// It DELETES an unexpected ASCII token and APPENDS the missing one to the end of the string, so the
+    /// line still renders — with the player's name stranded after the full stop — and a non-ASCII token
+    /// it cannot match survives into the panel verbatim, beside the appended name. Silently wrong output
+    /// in nine languages is exactly the failure a parity test is supposed to make loud.
+    /// </para>
+    /// </remarks>
+    private static void ShippedCatalogsDoNotTranslateThePlaceholdersThemselves()
+    {
+        var english = RawCatalog("en");
+        foreach (var language in CatalogFileStems)
+        {
+            var catalog = RawCatalog(language);
+            foreach (var (key, value) in english)
+            {
+                Assert(
+                    AnyPlaceholders(value).SequenceEqual(AnyPlaceholders(catalog[key])),
+                    $"{key} in {language} uses English placeholder names, not translated ones");
+            }
+        }
+    }
+
+    private static IReadOnlyDictionary<string, string> RawCatalog(string stem)
+    {
+        var name = $"CouchCoop.Mod.Localization.Catalogs.couchcoop.{stem}.json";
+        using var stream = typeof(CouchCoopLocalization).Assembly.GetManifestResourceStream(name)
+            ?? throw new InvalidOperationException($"Missing embedded localization catalog '{name}'.");
+        return System.Text.Json.JsonSerializer.Deserialize<Dictionary<string, string>>(stream)
+            ?? throw new InvalidOperationException($"Localization catalog '{name}' was empty.");
+    }
+
+    /// <summary>File stems of every shipped catalog except English, which is the reference.</summary>
+    private static readonly string[] CatalogFileStems =
+        ["zhs", "deu", "esp", "fra", "ita", "jpn", "kor", "pol", "ptb", "rus", "spa", "tha", "tur"];
+
+    /// <summary>
+    /// Every <c>{…}</c> token, whatever alphabet it is written in — unlike <see cref="Placeholders"/>,
+    /// whose ASCII-only pattern is what let the non-Latin cases through.
+    /// </summary>
+    private static IEnumerable<string> AnyPlaceholders(string value)
+        => Regex.Matches(value, "\\{([^\\s{}]+)\\}").Select(match => match.Groups[1].Value).Order();
 
     private static void LocaleSelectionFallsBackToEnglish()
     {
