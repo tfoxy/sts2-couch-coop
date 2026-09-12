@@ -16,6 +16,18 @@ EOF
 }
 
 repo_root="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+
+# Which pinned STS2 reference lane to build against: one lane per game Steam branch, under
+# eng/Sts2.ReferenceSdk/<lane>/. Read in both passes and handed to the staged pass explicitly.
+lane="${COUCHCOOP_RELEASE_STS2_LANE:-stable}"
+sts2_package_id="FuYnAloft.Sts2.References"
+sdk_project="$repo_root/eng/Sts2.ReferenceSdk/$lane/Sts2.ReferenceSdk.$lane.csproj"
+sdk_lockfile="$repo_root/eng/Sts2.ReferenceSdk/$lane/packages.lock.json"
+[[ -f "$sdk_project" && -f "$sdk_lockfile" ]] || {
+  echo "unknown STS2 reference lane: $lane" >&2
+  exit 1
+}
+
 snapshot=0
 if [[ "${1:-}" == "--snapshot" ]]; then
   snapshot=1
@@ -78,6 +90,7 @@ if [[ "${COUCHCOOP_RELEASE_STAGED:-}" != "1" ]]; then
   COUCHCOOP_RELEASE_ASSEMBLY_VERSION="$assembly_version" \
   COUCHCOOP_RELEASE_ARCHIVE_NAME="$archive_name" \
   COUCHCOOP_RELEASE_OUTPUT_DIR="$repo_root/dist" \
+  COUCHCOOP_RELEASE_STS2_LANE="$lane" \
   bash "$source_parent/couchcoop/scripts/package-release.sh"
   exit 0
 fi
@@ -103,8 +116,8 @@ sdk_dir="$work_dir/reference-sdk"
 payload_dir="$work_dir/payload/couchcoop"
 mkdir -p "$sdk_dir" "$payload_dir" "$output_dir"
 
-"$repo_root/scripts/verify-sts2-reference-sdk.sh"
-DOTNET_ROLL_FORWARD=Major dotnet build "$repo_root/eng/Sts2.ReferenceSdk/Sts2.ReferenceSdk.csproj" \
+"$repo_root/scripts/verify-sts2-reference-sdk.sh" "$lane"
+DOTNET_ROLL_FORWARD=Major dotnet build "$sdk_project" \
   -c Release -o "$sdk_dir" -p:RestoreLockedMode=true -p:ContinuousIntegrationBuild=true \
   -p:DebugSymbols=false -p:DebugType=None
 
@@ -198,14 +211,15 @@ jq -n \
   --arg sourceCommit "$source_commit" --arg tag "$tag" --arg version "$version" \
   --arg spirectl "$(jq -r '.dependencies.spirectl.commit' "$deps")" \
   --arg godotSceneWeb "$(jq -r '.dependencies["godot-scene-web"].commit' "$deps")" \
-  --arg sts2ReferenceVersion "$(jq -r '.dependencies["net9.0"]["FuYnAloft.Sts2.References"].resolved' "$repo_root/eng/Sts2.ReferenceSdk/packages.lock.json")" \
-  --arg sts2ReferenceContentHash "$(jq -r '.dependencies["net9.0"]["FuYnAloft.Sts2.References"].contentHash' "$repo_root/eng/Sts2.ReferenceSdk/packages.lock.json")" \
+  --arg sts2Lane "$lane" --arg sts2ReferenceId "$sts2_package_id" \
+  --arg sts2ReferenceVersion "$(jq -er --arg id "$sts2_package_id" '.dependencies["net9.0"][$id].resolved' "$sdk_lockfile")" \
+  --arg sts2ReferenceContentHash "$(jq -er --arg id "$sts2_package_id" '.dependencies["net9.0"][$id].contentHash' "$sdk_lockfile")" \
   --arg dotnet "$(dotnet --version)" --arg node "$(node --version)" --arg pnpm "$(corepack pnpm --version)" \
   --arg frontendLock "$(sha256sum "$repo_root/frontend/package-lock.json" | cut -d ' ' -f 1)" \
-  --arg referenceSdkLock "$(sha256sum "$repo_root/eng/Sts2.ReferenceSdk/packages.lock.json" | cut -d ' ' -f 1)" \
+  --arg referenceSdkLock "$(sha256sum "$sdk_lockfile" | cut -d ' ' -f 1)" \
   --arg spirectlLock "$(sha256sum "$source_parent/spirectl/presentation/web/pnpm-lock.yaml" | cut -d ' ' -f 1)" \
   --arg godotSceneWebLock "$(sha256sum "$source_parent/godot-scene-web/pnpm-lock.yaml" | cut -d ' ' -f 1)" \
-  '{schemaVersion: $schema, sourceCommit: $sourceCommit, tag: ($tag | if length > 0 then . else null end), version: $version, dependencies: {spirectl: $spirectl, godotSceneWeb: $godotSceneWeb, sts2References: {id: "FuYnAloft.Sts2.References", version: $sts2ReferenceVersion, nugetContentHash: $sts2ReferenceContentHash}}, toolchain: {dotnet: $dotnet, node: $node, pnpm: $pnpm}, lockfileSha256: {sts2ReferenceSdkNuGetLock: $referenceSdkLock, frontendPackageLock: $frontendLock, spirectlPresentationPnpmLock: $spirectlLock, godotSceneWebPnpmLock: $godotSceneWebLock}}' > "$build_info"
+  '{schemaVersion: $schema, sourceCommit: $sourceCommit, tag: ($tag | if length > 0 then . else null end), version: $version, dependencies: {spirectl: $spirectl, godotSceneWeb: $godotSceneWeb, sts2References: {lane: $sts2Lane, id: $sts2ReferenceId, version: $sts2ReferenceVersion, nugetContentHash: $sts2ReferenceContentHash}}, toolchain: {dotnet: $dotnet, node: $node, pnpm: $pnpm}, lockfileSha256: {sts2ReferenceSdkNuGetLock: $referenceSdkLock, frontendPackageLock: $frontendLock, spirectlPresentationPnpmLock: $spirectlLock, godotSceneWebPnpmLock: $godotSceneWebLock}}' > "$build_info"
 (cd "$work_dir/payload" && TZ=UTC zip -X -q -r "$archive" couchcoop)
 (cd "$output_dir" && sha256sum "$(basename "$archive")" "$(basename "$contents")" "$(basename "$build_info")" > "$(basename "$checksums")")
 "$repo_root/scripts/verify-release-archive.sh" \
