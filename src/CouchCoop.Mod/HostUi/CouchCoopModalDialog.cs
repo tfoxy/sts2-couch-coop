@@ -26,9 +26,9 @@ internal readonly record struct CouchCoopModalNames(string Root, string Scrim, s
 /// <b>A controller must be able to get out of it.</b> Three things together are what make that true, and
 /// the Steam Deck leg measured each of them failing: focus parks on the dismiss button while a controller
 /// is in use (<see cref="CouchCoopModalFocusParking"/>) so the select action has something to activate;
-/// directional focus is pinned inside the dialog (<see cref="PinFocusRing"/>) so it cannot escape onto a
-/// lobby control behind the scrim; and the cancel binding is re-taken while the modal is up
-/// (<see cref="ReassertCancelBinding"/>) so B closes the dialog rather than leaving the lobby.
+/// directional focus runs a closed vertical chain inside the dialog (<see cref="PinFocusChain"/>) so it
+/// cannot escape onto a lobby control behind the scrim; and the cancel binding is re-taken while the modal
+/// is up (<see cref="ReassertCancelBinding"/>) so B closes the dialog rather than leaving the lobby.
 /// </para>
 /// <para>
 /// <b>Own scrim, not <c>NModalContainer</c>.</b> The game's modal host hard-casts its caller to
@@ -62,11 +62,18 @@ internal abstract partial class CouchCoopModalDialog : Control
     private readonly Vector2 _cardSize;
     private readonly Vector2 _dismissSize;
 
+    // The focus chain, and the scratch list the body declares into. Fields rather than locals because the
+    // chain is rebuilt on every list expand/collapse and option rebuild, and because ApplyFocusTarget has
+    // to be able to find the chain HEAD after the fact.
+    private readonly List<Control> _declared = [];
+    private readonly List<Control> _chain = [];
+
     private HostLobbyQrOverlayLayout _layout = HostLobbyQrOverlayLayout.Default;
     private Control? _restoreFocus;
     private bool _cancelBound;
     private bool _inputModeWired;
     private bool _installed;
+    private bool _closing;
 
     /// <summary>Raised after the dialog hides, so the owning panel can restore its own state.</summary>
     public Action? Closed { get; set; }
@@ -156,7 +163,7 @@ internal abstract partial class CouchCoopModalDialog : Control
 
         InstallBody();
         _dismiss.Install();
-        PinFocusRing();
+        PinFocusChain();
         WireInputMode();
         // Background clicks. Both are Stop controls, so anything that is NOT a dialog element lands on
         // one of them; the elements consume their own clicks first.
@@ -204,7 +211,19 @@ internal abstract partial class CouchCoopModalDialog : Control
             return;
         }
 
-        OnClosing();
+        // OnClosing tears the body down, and a body that collapses a list from there raises a focus-chain
+        // change — which must not grab focus for a dialog that is on its way out, or it would fight the
+        // restore below.
+        _closing = true;
+        try
+        {
+            OnClosing();
+        }
+        finally
+        {
+            _closing = false;
+        }
+
         Visible = false;
         UnbindCancel();
 
@@ -313,44 +332,172 @@ internal abstract partial class CouchCoopModalDialog : Control
     // ---- focus ------------------------------------------------------------------------------------
 
     /// <summary>
-    /// Keeps directional focus INSIDE the dialog: the card walks to the dismiss button, and the dismiss
-    /// button walks to itself.
+    /// Declare the body controls that take part in the focus chain, in top-to-bottom order. The dismiss
+    /// button is appended by the caller and is always last; a dialog that declares nothing gets exactly
+    /// the single self-pinned button it had before chains existed.
+    /// </summary>
+    /// <remarks>
+    /// Only controls that can hold focus RIGHT NOW belong here — a body whose rows are hidden must not
+    /// declare them, because a chain that walks onto a hidden control is a dead end.
+    /// </remarks>
+    protected virtual void CollectFocusChain(List<Control> chain)
+    {
+    }
+
+    /// <summary>
+    /// Re-pin the chain after the body changed its shape, and give a controller somewhere to stand if the
+    /// change left the dialog with no focus owner.
+    /// </summary>
+    /// <remarks>
+    /// Driven by the body — the QR dialog calls this from its option list's expand, collapse and rebuild
+    /// — rather than from a timer, so the pinned neighbours can never describe a set of rows that no
+    /// longer exists. It is cheap and idempotent by design: re-pinning an unchanged chain writes the same
+    /// six paths back onto the same controls.
+    /// </remarks>
+    protected void RefreshFocusChain()
+    {
+        if (!_installed)
+        {
+            // Install() pins once at the end of its own wiring; a body that reports a change while it is
+            // still being built would only be pinned against a half-built tree.
+            return;
+        }
+
+        PinFocusChain();
+
+        if (!Visible || _closing)
+        {
+            return;
+        }
+
+        ApplyFocusTarget(CouchCoopModalFocusParking.OnChainChanged(IsUsingController(), CurrentFocus()));
+    }
+
+    /// <summary>
+    /// Keeps directional focus INSIDE the dialog: every participating control's up and down walk to its
+    /// neighbours in the chain, the ends wrap, and left/right pin to the control itself.
     /// </summary>
     /// <remarks>
     /// Without this, Godot's geometric neighbour search runs against every focusable control in the
     /// viewport and happily hands focus to a LOBBY control behind the scrim — which the select action
     /// would then activate through the dialog. Pinning a neighbour to the control itself is the game's
-    /// own idiom (the character-select ring pins each button's top/bottom to itself).
+    /// own idiom (the character-select ring pins each button's top/bottom to itself), and a one-control
+    /// chain reduces to exactly that.
     /// <para>
-    /// Consequence, deliberately accepted: the QR dialog's host-option rows stay unreachable by d-pad,
-    /// exactly as they are today. They have never been controller-reachable, and a modal whose ONE
-    /// affordance can always be reached is worth more than a walk nobody has ever had.
+    /// The chain is VERTICAL: up and down walk it, left and right stay put. The QR dialog's rows are a
+    /// column, and leaving left/right unpinned would reopen the escape this whole ring exists to close.
     /// </para>
     /// </remarks>
-    private void PinFocusRing()
+    private void PinFocusChain()
     {
         try
         {
-            var dismiss = _card.GetPathTo(_dismiss);
-            _card.FocusNeighborTop = dismiss;
-            _card.FocusNeighborBottom = dismiss;
-            _card.FocusNeighborLeft = dismiss;
-            _card.FocusNeighborRight = dismiss;
-            _card.FocusNext = dismiss;
-            _card.FocusPrevious = dismiss;
+            BuildChain();
 
             var self = new NodePath(".");
-            _dismiss.FocusNeighborTop = self;
-            _dismiss.FocusNeighborBottom = self;
-            _dismiss.FocusNeighborLeft = self;
-            _dismiss.FocusNeighborRight = self;
-            _dismiss.FocusNext = self;
-            _dismiss.FocusPrevious = self;
+            var head = _chain[0];
+            var toHead = _card.GetPathTo(head);
+            _card.FocusNeighborTop = toHead;
+            _card.FocusNeighborBottom = toHead;
+            _card.FocusNeighborLeft = toHead;
+            _card.FocusNeighborRight = toHead;
+            _card.FocusNext = toHead;
+            _card.FocusPrevious = toHead;
+
+            for (var index = 0; index < _chain.Count; index++)
+            {
+                var control = _chain[index];
+                var link = CouchCoopModalFocusChain.Neighbors(index, _chain.Count);
+                var up = PathBetween(control, _chain[link.Previous]);
+                var down = PathBetween(control, _chain[link.Next]);
+
+                control.FocusNeighborTop = up;
+                control.FocusPrevious = up;
+                control.FocusNeighborBottom = down;
+                control.FocusNext = down;
+                control.FocusNeighborLeft = self;
+                control.FocusNeighborRight = self;
+            }
         }
         catch (Exception exception)
         {
             Console.Error.WriteLine(
                 $"[couch-coop] modal focus ring failed name={Name} detail={exception.GetType().Name}: {exception.Message}");
+        }
+    }
+
+    /// <summary>
+    /// Rebuild <see cref="_chain"/> from what the body declares now, dropping anything that cannot hold
+    /// focus. The dismiss button is always last and always kept.
+    /// </summary>
+    private void BuildChain()
+    {
+        _declared.Clear();
+        CollectFocusChain(_declared);
+        _declared.Add(_dismiss);
+
+        var eligibility = new bool[_declared.Count];
+        for (var index = 0; index < _declared.Count; index++)
+        {
+            eligibility[index] = IsChainEligible(_declared[index]);
+        }
+
+        _chain.Clear();
+        foreach (var index in CouchCoopModalFocusChain.Participants(eligibility))
+        {
+            _chain.Add(_declared[index]);
+        }
+    }
+
+    // A freed row, one already queued for deletion, or one the body greyed out (FocusMode None) cannot
+    // hold focus, and a chain that walks onto it is a dead end. Visibility is the DECLARER's business:
+    // the body knows whether its list is expanded, and this runs during Install() when nothing is in the
+    // tree yet.
+    private static bool IsChainEligible(Control control)
+        => GodotObject.IsInstanceValid(control)
+            && !control.IsQueuedForDeletion()
+            && control.FocusMode != FocusModeEnum.None;
+
+    private static NodePath PathBetween(Control from, Control to)
+        => ReferenceEquals(from, to) ? new NodePath(".") : from.GetPathTo(to);
+
+    /// <summary>
+    /// Where engine focus sits, as far as this dialog is concerned. Anything that cannot be read counts
+    /// as "outside", which is the conservative answer: it re-grabs onto the dismiss button, the behaviour
+    /// this had before there was a chain at all.
+    /// </summary>
+    private CouchCoopModalFocusParking.FocusState CurrentFocus()
+    {
+        try
+        {
+            var owner = GetViewport()?.GuiGetFocusOwner();
+            if (owner is null || !GodotObject.IsInstanceValid(owner))
+            {
+                return new CouchCoopModalFocusParking.FocusState(false, false);
+            }
+
+            // IsAncestorOf, not a chain lookup: the body's rows and anything a subclass adds later are
+            // all under this node, so the predicate cannot go stale when the chain changes.
+            //
+            // The CARD is the one descendant that does not count. It is where a mouse parks so that
+            // nothing reads as pre-selected — it draws no focus visual and there is nothing on it to
+            // activate — so a host sitting on it and then picking up a pad is, for every purpose here,
+            // exactly as stranded as one whose focus the lobby stole. Counting it as "inside" would leave
+            // them in the state this whole Deck fix exists to end.
+            //
+            // A HIDDEN owner does not count either, and that is not hypothetical: activating a host row
+            // collapses the list under it. Godot is expected to release focus from a control it has just
+            // hidden, but the activation gate requires IsVisibleInTree() anyway, so a focus owner nobody
+            // can see is a dead end whether the engine let go of it or not. Asking directly means this
+            // does not depend on which way that goes.
+            var inside = !_card.HasFocus() && IsAncestorOf(owner) && owner.IsVisibleInTree();
+            return new CouchCoopModalFocusParking.FocusState(inside, _dismiss.HasFocus());
+        }
+        catch (Exception exception)
+        {
+            Console.Error.WriteLine(
+                $"[couch-coop] modal focus read failed name={Name} detail={exception.GetType().Name}: {exception.Message}");
+            return new CouchCoopModalFocusParking.FocusState(false, false);
         }
     }
 
@@ -365,6 +512,11 @@ internal abstract partial class CouchCoopModalDialog : Control
                     break;
                 case CouchCoopModalFocusParking.Target.Card:
                     _card.GrabFocus();
+                    break;
+                case CouchCoopModalFocusParking.Target.ChainHead:
+                    // The chain always has the dismiss button in it, so the head is never nothing — but
+                    // a modal that has not been Install()ed has not built one yet.
+                    (_chain.Count > 0 ? _chain[0] : _dismiss).GrabFocus();
                     break;
             }
         }
@@ -398,7 +550,7 @@ internal abstract partial class CouchCoopModalDialog : Control
             return;
         }
 
-        ApplyFocusTarget(CouchCoopModalFocusParking.OnInputModeChanged(IsUsingController(), _dismiss.HasFocus()));
+        ApplyFocusTarget(CouchCoopModalFocusParking.OnInputModeChanged(IsUsingController(), CurrentFocus()));
     }
 
     /// <summary>
@@ -559,7 +711,9 @@ internal abstract partial class CouchCoopModalDialog : Control
         // otherwise leave this modal with no cancel at all for as long as it is up.
         BindCancel();
         ReassertCancelBinding();
-        ApplyFocusTarget(CouchCoopModalFocusParking.OnHeartbeat(IsUsingController(), _dismiss.HasFocus()));
+        // The predicate is "focus is somewhere in this dialog", not "the dismiss button has focus": with a
+        // walkable chain the second would drag a player off a host row four times a second.
+        ApplyFocusTarget(CouchCoopModalFocusParking.OnHeartbeat(IsUsingController(), CurrentFocus()));
     }
 
     /// <summary>

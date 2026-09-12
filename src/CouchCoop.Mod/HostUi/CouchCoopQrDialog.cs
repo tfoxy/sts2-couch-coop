@@ -93,6 +93,7 @@ internal sealed partial class CouchCoopQrDialog : CouchCoopModalDialog
         _select.RowHover = OnRowHover;
         _select.SelectorHover = OnSelectorHover;
         _select.OptionsHidden = ClearTips;
+        _select.FocusChainChanged = RefreshFocusChain;
 
         // Nearest filtering plus the raster's whole-pixel module grid is what keeps module edges hard.
         // Stop: the code itself is a dialog ELEMENT, so clicking it must not dismiss the dialog — a
@@ -115,6 +116,19 @@ internal sealed partial class CouchCoopQrDialog : CouchCoopModalDialog
     }
 
     protected override void InstallBody() => _select.Install();
+
+    /// <summary>
+    /// What a d-pad walks in this dialog, top to bottom: the selector's closed row, the selectable option
+    /// rows while the list is expanded, and then (appended by the base) the close button.
+    /// </summary>
+    /// <remarks>
+    /// The rows were always focusable — <c>CouchCoopQrHostSelect</c> gives every selectable one
+    /// <c>FocusMode.All</c> — but before the chain nothing walked to them, so a Deck host could only ever
+    /// scan the default LAN address: no adapter switch, no HTTPS row, no way to reach either without a
+    /// mouse. The list is re-declared, not remembered, so an expand, a collapse or a re-scan that rebuilds
+    /// every row all produce a correct chain by construction.
+    /// </remarks>
+    protected override void CollectFocusChain(List<Control> chain) => _select.AppendFocusChain(chain);
 
     public void RefreshLocalization(CouchCoopHostUiSnapshot snapshot)
     {

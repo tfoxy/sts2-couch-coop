@@ -556,11 +556,17 @@ The always-on QR overlay is gone. A game-styled button opens a dialog instead.
     `NControllerManager.IsUsingController`. `ControllerDetected` / `MouseDetected` re-park a modal that is
     already up, so a host who picks up a pad mid-dialog is not stranded. Without this the select-action
     path from `a6665773` was dead in practice — `CouchCoopButtonActivation.Resolve` gates on `IsFocused`,
-    and no CouchCoop button was controller-focusable anywhere.
-  - **Focus ring pinned inside the dialog**: the card's four neighbours point at the dismiss button, the
-    dismiss button's at itself (the game's own idiom — see `InitCharacterButtons` above). Godot's
-    geometric neighbour search otherwise hands focus to a LOBBY control behind the scrim. Cost: the QR
-    dialog's host rows stay d-pad-unreachable, as they already were.
+    and no CouchCoop button was controller-focusable anywhere. Every re-grab rule asks **"is focus
+    anywhere inside this modal"** (`Node.IsAncestorOf` on the viewport's focus owner), never "is the
+    dismiss button focused" — the second reading drags a player off a dialog row on the next 0.25s scan.
+  - **Closed vertical focus chain inside the dialog** (`CouchCoopModalFocusChain`, pure, `-- host-ui`):
+    the dialog declares its participating controls top-to-bottom via `CollectFocusChain`, the base appends
+    the dismiss button, and up/down wrap end-to-end while left/right pin to the control itself. Godot's
+    geometric neighbour search otherwise hands focus to a LOBBY control behind the scrim. A modal that
+    declares nothing (the transport alert) reduces to the single self-pinned button it had before. The QR
+    dialog declares the select's closed row plus the selectable option rows **while the list is expanded**,
+    and re-pins from `RefreshFocusChain` on every expand, collapse, rebuild and selectability change —
+    driven from where the rows are built, never from the scan, so the pinned paths cannot name a freed row.
   - **`ReassertWhileOpen`**, called from the panel's per-scan `Apply`: re-takes `cancel` +
     `pauseAndBack` (remove-then-push — the manager de-duplicates by delegate, so a bare re-push is a
     no-op) while a modal is visible. `NButton.OnEnable` re-pushes the lobby back button's

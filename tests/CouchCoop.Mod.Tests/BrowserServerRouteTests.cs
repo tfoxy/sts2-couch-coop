@@ -111,6 +111,7 @@ if (args is ["host-ui", ..])
 {
     CouchCoopButtonActivationTests.Run();
     CouchCoopModalFocusTests.Run();
+    CouchCoopModalFocusChainTests.Run();
     Console.WriteLine("host ui: ok");
     return;
 }
@@ -199,6 +200,9 @@ CouchCoopButtonActivationTests.Run();
 // Steam Deck follow-up: WHERE a modal parks focus, which is what decides whether that gate can ever pass on
 // a dialog the player did not open with a mouse. Pure C# for the same reason, and in the same verb.
 CouchCoopModalFocusTests.Run();
+// ...and WHICH controls a d-pad can walk to inside that modal: the closed chain that makes the QR dialog's
+// host-select rows reachable without letting focus escape onto the lobby behind the scrim.
+CouchCoopModalFocusChainTests.Run();
 
 // Pure suites (no IO) run first so they execute regardless of the network-suite flakiness.
 // CAUTION: "pure" here means no IO, not no Godot — this next suite reflects over game types through
