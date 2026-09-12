@@ -86,6 +86,18 @@ if (args is ["host-guards", ..])
     return;
 }
 
+// `dotnet run --project tests/CouchCoop.Mod.Tests -- host-ui` runs the pure host-UI decisions ALONE. Same
+// rationale as `host-guards` above — no IO, no Harmony, no Godot engine, no live game — and the same
+// arrangement: they also run in the normal sequence below. This is the reachable way to verify a host-UI
+// change, because a full run of this Exe currently dies partway through (see the note above
+// HeadlessAudioMuteTargetsTests) and never reaches most of the sequence.
+if (args is ["host-ui", ..])
+{
+    CouchCoopButtonActivationTests.Run();
+    Console.WriteLine("host ui: ok");
+    return;
+}
+
 // Point the asset binary cache at a throwaway temp root BEFORE any browser-server / host-UI test constructs a
 // SpirectlAssetBinaryCache. Without this, the cache's DefaultRoot() falls through to TryResolveGameDataDir() ->
 // Godot.ProjectSettings.GlobalizePath("user://..."), whose static cctor calls native GodotSharp
@@ -99,8 +111,17 @@ Environment.SetEnvironmentVariable(
 
 HotReloadInteropTests.Run();
 SpirectlEmbeddedAssemblyBoundaryTests.Run();
+// Steam Deck: the shared gate that decides whether a gui_input event activates a CouchCoop button, which now
+// answers to the controller's select action as well as to the mouse. Placed up here deliberately — it is pure
+// C# with no Godot types at all, and everything from HeadlessAudioMuteTargetsTests below is currently
+// unreachable on some machines (see the next comment). Also reachable alone as `-- host-ui`.
+CouchCoopButtonActivationTests.Run();
 
 // Pure suites (no IO) run first so they execute regardless of the network-suite flakiness.
+// CAUTION: "pure" here means no IO, not no Godot — this next suite reflects over game types through
+// GodotSharp, and on some machines that SIGSEGVs the whole process (exit 139) with no engine running. When it
+// does, every suite registered after it silently never runs. Verify a change through one of the verbs above
+// rather than reading a truncated full run as green.
 HeadlessAudioMuteTargetsTests.Run();
 // WS-1 networking/hosting: every game member the host-transport / CLI-override / host-netId / save-compat patches
 // bind to must still resolve, including the two private NetHostGameService seams the composite host rewrites.

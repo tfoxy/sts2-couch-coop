@@ -1,4 +1,5 @@
 using Godot;
+using MegaCrit.Sts2.Core.ControllerInput;
 using MegaCrit.Sts2.Core.Nodes.GodotExtensions;
 
 namespace CouchCoop.Mod.HostUi;
@@ -24,12 +25,14 @@ namespace CouchCoop.Mod.HostUi;
 /// both paths together are harmless.
 /// </description></item>
 /// <item><description>
-/// <c>_GuiInput</c> is the load-bearing one: <see cref="NClickableControl"/> gets its clicks from there
-/// and would otherwise be permanently unclickable. Godot emits the NATIVE <c>gui_input</c> SIGNAL for
-/// the same events (the engine emits the signal and then calls the virtual), and a signal reaches a
-/// plain <c>Callable</c> without any script instance. So we connect to the signal and drive
-/// <c>OnPressHandler</c>/<c>OnReleaseHandler</c> ourselves, replicating the base's own gate
-/// (enabled + visible + focused) exactly.
+/// <c>_GuiInput</c> is the load-bearing one: <see cref="NClickableControl"/> gets BOTH its mouse clicks
+/// and its controller/keyboard activations (the <c>MegaInput.select</c> action) from there, and would
+/// otherwise be permanently unactivatable. Godot emits the NATIVE <c>gui_input</c> SIGNAL for the same
+/// events (the engine emits the signal and then calls the virtual), and a signal reaches a plain
+/// <c>Callable</c> without any script instance. So we connect to the signal and drive
+/// <c>OnPressHandler</c>/<c>OnReleaseHandler</c> ourselves, for both input sources, replicating the
+/// base's own gate (enabled + visible + focused) exactly. Missing the action half is what made every
+/// CouchCoop button dead on a Steam Deck in Game Mode, which has no mouse at all.
 /// </description></item>
 /// </list>
 /// <para>
@@ -40,9 +43,11 @@ namespace CouchCoop.Mod.HostUi;
 /// </para>
 /// <para>
 /// Hover/focus need none of this: <c>ConnectSignals()</c> wires them to native <c>mouse_entered</c> /
-/// <c>focus_entered</c> signals, which are already Callable-based. Note the base gates a click on
-/// <c>IsFocused</c>, which is set by <c>mouse_entered</c> — so a synthetic click that never hovered
+/// <c>focus_entered</c> signals, which are already Callable-based. Note the base gates activation on
+/// <c>IsFocused</c>, which is hovered OR controller-focused — so a synthetic click that never hovered
 /// first does nothing. That is the game's behaviour, not ours, and QA drives these by hovering first.
+/// The controller half of the same flag is why <see cref="FocusMode"/> must stay <c>All</c>: engine
+/// focus raises <c>focus_entered</c>, which is what makes the select action's gate passable on a Deck.
 /// </para>
 /// </remarks>
 internal abstract partial class CouchCoopTextureButton : NButton
@@ -175,26 +180,57 @@ internal abstract partial class CouchCoopTextureButton : NButton
 
     public override void _Ready() => Install();
 
-    // The engine-dispatch-free click path. Gated on the same conditions the game's own clickable controls use
-    // (enabled, visible in tree, focused), so a click here behaves identically to one the engine delivered.
+    // The engine-dispatch-free activation path. Gated on the same conditions the game's own clickable controls
+    // use (enabled, visible in tree, focused), so an activation here behaves identically to one the engine
+    // delivered. The gate and the press/release choice live in CouchCoopButtonActivation, which is testable
+    // without a Godot engine; this half only classifies the event and calls the base's handlers.
     private void OnGuiInputSignal(InputEvent inputEvent)
     {
-        if (inputEvent is not InputEventMouseButton { ButtonIndex: MouseButton.Left } mouse
-            || !IsEnabled
-            || !IsVisibleInTree()
-            || !IsFocused)
+        var outcome = CouchCoopButtonActivation.Resolve(
+            Classify(inputEvent), IsEnabled, IsVisibleInTree(), IsFocused);
+
+        switch (outcome)
         {
-            return;
+            case CouchCoopButtonActivation.Outcome.Press:
+                OnPressHandler();
+                break;
+            case CouchCoopButtonActivation.Outcome.Release:
+                OnReleaseHandler();
+                break;
+        }
+    }
+
+    /// <summary>
+    /// The two input sources a CouchCoop button answers to, reduced to the shape the rule takes.
+    /// </summary>
+    /// <remarks>
+    /// The select action is what makes these buttons usable on a Steam Deck in Game Mode, where there is no
+    /// mouse at all: the base activates on <c>MegaInput.select</c> from <c>_GuiInput</c>, which never reaches
+    /// this assembly, so the same two calls are made from the native signal instead. Godot delivers a non-mouse
+    /// event through <c>gui_input</c> to whichever control holds keyboard/controller focus, which is the same
+    /// control the gate requires to be focused.
+    /// <para>
+    /// Left mouse is matched first so the pre-existing click path is untouched, and a doubled activation (if
+    /// script dispatch also runs, or if a device maps both) is absorbed by the idempotent handlers.
+    /// </para>
+    /// </remarks>
+    private static CouchCoopButtonActivation.Input Classify(InputEvent inputEvent)
+    {
+        if (inputEvent is InputEventMouseButton { ButtonIndex: MouseButton.Left } mouse)
+        {
+            return mouse.Pressed
+                ? CouchCoopButtonActivation.Input.MousePress
+                : CouchCoopButtonActivation.Input.MouseRelease;
         }
 
-        if (mouse.Pressed)
+        if (inputEvent.IsActionPressed(MegaInput.select))
         {
-            OnPressHandler();
+            return CouchCoopButtonActivation.Input.SelectPress;
         }
-        else
-        {
-            OnReleaseHandler();
-        }
+
+        return inputEvent.IsActionReleased(MegaInput.select)
+            ? CouchCoopButtonActivation.Input.SelectRelease
+            : CouchCoopButtonActivation.Input.None;
     }
 
     protected override void OnFocus()
