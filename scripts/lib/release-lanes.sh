@@ -28,6 +28,32 @@ release_lane_is_valid_name() {
 # The asymmetry, which is not fixable here: being a minimum, this makes the beta payload refuse an
 # older game loudly, but nothing stops the stable payload loading on a newer game. There is no
 # `max_game_version`; only the Workshop's `maxBranch` scopes downward.
+# The spirectl bridge API lane a release lane compiles against.
+#
+# A release build compiles against the pinned reference SDK, which is a bare assemblies directory
+# with no release_info.json — so the bridge's own lane detection cannot fire and MUST be told. It
+# also cannot be derived: the reference sts2.dll carries no game-version string, and the package
+# version does not track the game's (`0.107.0-beta` pairs with game v0.107.1). Hence one reviewed
+# row here. The authoritative version-to-lane table stays in ../spirectl/bridge-mod/Sts2GameApi.props
+# and rejects an unknown lane, so a wrong value fails the build loudly rather than mis-compiling.
+release_lane_game_api() {
+  local lane="$1" value
+  case "$lane" in
+    stable) value="v107" ;;
+    public-beta) value="v111" ;;
+    *)
+      echo "release-lanes: lane '$lane' has no reviewed bridge API lane; add one to scripts/lib/release-lanes.sh" >&2
+      return 1
+      ;;
+  esac
+  # Same contract as the manifest floor below: a caller can never receive a malformed value.
+  if [[ ! "$value" =~ ^v[0-9]+$ ]]; then
+    echo "release-lanes: bridge API lane for '$lane' is not v<digits>: $value" >&2
+    return 1
+  fi
+  printf '%s\n' "$value"
+}
+
 release_lane_min_game_version() {
   local lane="$1" value
   case "$lane" in
