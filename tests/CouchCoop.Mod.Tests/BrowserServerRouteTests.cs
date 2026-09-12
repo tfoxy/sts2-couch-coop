@@ -98,6 +98,18 @@ if (args is ["host-ui", ..])
     return;
 }
 
+// `dotnet run --project tests/CouchCoop.Mod.Tests -- localization` runs the catalog suite ALONE, and it is
+// registered here rather than only in the normal sequence for a concrete reason: the sequence below does not
+// reach it on some machines, and while it was unreachable nine catalogs shipped with TRANSLATED placeholder
+// tokens ({nombre}, {名前}) that never resolve. Two changes in the same round then added a key each with no
+// gate at all. Catalog parity is cheap to check and expensive to get wrong in a language nobody here reads.
+if (args is ["localization", ..])
+{
+    CouchCoopLocalizationTests.Run();
+    Console.WriteLine("localization: ok");
+    return;
+}
+
 // `dotnet run --project tests/CouchCoop.Mod.Tests -- seat-timeout` runs the seat READINESS deadline alone: the
 // clamp band behind COUCHCOOP_SEAT_READY_TIMEOUT_SECONDS, its relationship to the browser's own join ceiling,
 // the one "still loading" progress line, and the early-exit path that must keep failing fast regardless. Same
