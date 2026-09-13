@@ -601,6 +601,80 @@ IS a whole multiple of 80px proves nothing about quantisation; the equality arm 
 
 Run only the touched suite(s) per implementer; a coordinator/reviewer runs full suites once at merge time.
 
+### A new game build (a beta branch, or an update landing on the current one)
+
+Two gates, and **the second one is not optional**.
+
+```bash
+# 1. METADATA — every member the mod binds to still resolves on that build.
+scripts/with-game-branch.sh public-beta -- dotnet run --project tests/CouchCoop.Mod.Tests -- beta-targets
+scripts/with-game-branch.sh public-beta -- sts2 --json code verify-references \
+  "<install>/mods/couchcoop/CouchCoop.Mod.dll,<install>/mods/couchcoop/couchcoop.dll,<install>/mods/couchcoop/CouchCoop.Spirectl.dll" \
+  --assemblies-dir "<beta install>/data_sts2_linuxbsd_x86_64" \
+  --control-assemblies-dir "<stable install>/data_sts2_linuxbsd_x86_64"
+
+# 2. BEHAVIOURAL — a seat actually joins, over the transport the release uses.
+scripts/with-game-branch.sh public-beta -- sts2 --json test run tests/scenarios/steam-host-join.sts2.yaml
+node scripts/test-probe-steam-host-join.mjs                       # game-free self-test of the probe
+node scripts/probe-steam-host-join.mjs --dry-run                  # what it would drive, touching nothing
+```
+
+**A metadata gate cannot see a protocol step that was ADDED.** `beta-targets`, `code verify-references`
+and spirectl's `Sts2GameApiProbe` all answer one question — "does every member we bind to still
+resolve?" — and a brand-new step the mod does not participate in resolves nothing and reshapes nothing.
+That is not hypothetical: the game's v0.111.0 beta added a transport-level version handshake, **all 43
+CouchCoop patch targets still resolved**, and headless seats could not join a Steam-hosted session at
+all. Every metadata gate was green for the entire life of that break.
+
+The other half of the blind spot was the coverage itself. `-fastmp host_standard` and
+`tests/fixtures/pc-lobby-host.sts2.fixture.yaml` both take the **ENet** host branch, where
+`HostNetIdPatch` is inert because `hostNetId == 1` — so the branch the release actually ships on had
+never had an automated join test. `steam-host-join` is that test. Run it on every new game build, and
+on any change to hosting, seat allocation or the join path.
+
+| piece | path |
+| --- | --- |
+| probe | `scripts/probe-steam-host-join.mjs` (`--help`, `--dry-run`; artifacts under `.sts2/artifacts/steam-host-join/`) |
+| self-test (no game) | `scripts/test-probe-steam-host-join.mjs` |
+| scenario / hook | `tests/scenarios/steam-host-join.sts2.yaml` / `couchcoop.steam-host-join-probe` |
+
+Six legs: preflight (build identity, and a `-fastmp` refusal), menu-host, **steam-branch**, seat-join,
+roster, handshake. What to know before reading its output:
+
+- **Leg 2 is the whole point, and it is fatal.** A gate that silently degrades to ENet is *worse* than
+  no gate, because ENet is the branch that already worked. So the probe grades the host's own
+  `[couch-coop] host-transport` lines rather than its own intent, and only `steam` passes:
+  `source=host-start` says our `StartSteamHost` prefix ran, `source=stock-enet` says the other branch
+  did, and `steam host started lobby=… hostNetId=… couchSeats=ENet:33771` is the proof a real Steam
+  lobby exists. `source=host-start` **alone is not enough** — the Steam-offline fallback runs through
+  the same prefix and then hosts on ENet anyway — and a `hostNetId` of `1` fails too, because
+  `HostNetIdPatch` does nothing at that value. A line-count baseline is taken before the Standard click
+  so an earlier host start in the same process cannot answer for this one.
+- **Reaching the Steam branch is the hard part.** `NMultiplayerHostSubmenu` picks the Steam host only
+  when Steam is initialized AND `-fastmp` is absent, so no fixture can get there. The probe drives
+  Main Menu → Multiplayer → Host → Standard with `dev scene hover` plus a click at `hoverPosition`;
+  hover-before-click is **required**, because `NClickableControl` gates clicks on `IsFocused`. It needs
+  a Steam client that is running and **online**, and a host launched without `-fastmp` — leg 0 refuses
+  that flag up front rather than spending three minutes to report "not the Steam branch" about a host
+  that was never going to be one.
+- **Leg 5 is build-conditional, and defaults to asserting.** A build in `BUILDS_WITHOUT_HANDSHAKE`
+  (`v0.107.1` today) skips it; every other build, **including one the probe has never seen**, must show
+  `[HandshakeManager] Got handshake from sender …` in the seat's own `godot.log` and must not show
+  `not currently in the middle of a handshake`, which is the defect signature. That default is
+  deliberate: a false red is a question, a false green is the bug this probe exists for. `--handshake
+  skip` is the escape hatch; adding a row to `BUILDS_WITHOUT_HANDSHAKE` is the fix. The refused line
+  fails the leg in *every* mode.
+- **`lobby.players[].isConnected` is not a join signal.** A live five-seat Steam-hosted lobby that went
+  on to start a run reported `isConnected: false` for every couch seat. Leg 4 asserts membership plus
+  `connectingPlayerCount == 0`; `isConnected` is recorded as evidence and believed about nothing.
+- **A failed leg does not end the run.** Legs 4 and 5 run whether or not the seat joined, and leg 2 runs
+  whether or not the menu route reached a lobby — a seat that never appeared is the *symptom*, and the
+  reason is in the two logs those legs read. The one early stop is a host that is not on the Steam
+  branch, where continuing would produce a green ENet result.
+- The seat join itself is `joinSeats()` imported from `scripts/probe-five-player-run.mjs` — the same
+  live-proven path, including its per-seat ENet handshake evidence. A second implementation of the seat
+  join would be a second thing to be wrong.
+
 ### Focused connection status checks
 
 Run `dotnet run --project tests/CouchCoop.Connection.Tests` for registry identity/timers, device parsing,

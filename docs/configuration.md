@@ -149,23 +149,47 @@ without `--force`, and `--force` rewrites it from scratch — every hand-added k
 previous file is kept beside it as `sts2.local.yaml.replaced` and a replaced `toolchain.dir` is
 called out by name.
 
-**As of the game's v0.111.0 beta the mod does not build against it at all.** The build stops
-upstream, in `../spirectl/bridge-mod`, on a handful of `CS0246`s where the beta split one game type
-apart. Do not read that error count as the size of the port: a declaration-site failure masks every
-downstream project through `MSB4181`, and Roslyn never binds a method body once a declaration has
-failed, so the compiler's list is a lower bound — the measured per-member delta is an order of
-magnitude larger. The `verify-references` entry in
-[`.ai/tool-improvements.md`](../.ai/tool-improvements.md) records how that was actually measured and
-where the numbers live. One CouchCoop Harmony target also changed arity — the per-act audio bank
-load patched in
-[`src/CouchCoop.Mod/Patches/HeadlessAudioMutePatch.cs`](../src/CouchCoop.Mod/Patches/HeadlessAudioMutePatch.cs)
-— and that one fails soft, so it will never stop a build; it will just quietly stop muting. So
-`with-game-branch.sh public-beta -- <any build>` fails at the bridge today, while corpus generation
-and static inspection against the beta work fine — which is what the branch tooling is for until
-that port happens.
+Self-test for the wrapper itself: `scripts/test-with-game-branch.sh`, which builds synthetic installs
+in a temp directory and needs no real game install.
 
-Self-test: `scripts/test-with-game-branch.sh`, which builds synthetic installs in a temp
-directory and needs no real game install.
+### Building for a branch
+
+**The mod builds, deploys and runs on both supported game builds.** `with-game-branch.sh public-beta
+-- <any build>` works: the API lane table in
+[`../spirectl/bridge-mod/Sts2GameApi.props`](../../spirectl/bridge-mod/Sts2GameApi.props) maps
+`v0.107.1` to lane `v107` and `v0.111.0` to lane `v111`, the repo root's `Directory.Build.props`
+imports that same table so CouchCoop's own sources are `#if`-split by game build exactly as the
+bridge's are, and the lane is **detected from the install being compiled against**, or passed
+explicitly when there is no install to detect from — never guessed. A game build with no row fails the
+build by name rather than compiling against the wrong declarations.
+
+Two consequences worth knowing before you build for a branch:
+
+- The lane follows `Sts2AssembliesDir`, so anything that changes which install you compile against
+  changes the lane with it. That is the whole reason `with-game-branch.sh` exists: `sts2 --config
+  <file>` alone moves the CLI and leaves the MSBuild reader pointing at the other install, and the
+  resulting binary is wrong in a way nothing downstream notices.
+- A **release** build has no install to detect from, so it is told the lane instead. It compiles
+  against a staged reference SDK — a bare assemblies directory with no `release_info.json` — and
+  `scripts/package-release.sh` therefore passes `-p:Sts2GameApi=` from
+  [`release_lane_game_api()`](../scripts/lib/release-lanes.sh). Adding a release lane is therefore two
+  things: a reviewed row in that function, and a pinned reference SDK under
+  [`eng/Sts2.ReferenceSdk/<lane>/`](../eng/Sts2.ReferenceSdk/README.md) (project +
+  `packages.lock.json`, both tracked). Both exist for
+  `public-beta` today — `FuYnAloft.Sts2.References 0.111.0-beta`, lane `v111` — so the beta packages
+  like stable does. A lane with no row fails the release by name rather than publishing an
+  undeclared one.
+
+Some game members do not fail a build when they move. A Harmony target resolved by name, or a
+reflective read with a fallback, compiles clean and then degrades silently at runtime — which is why
+`HeadlessAudioMutePatch` now pins its per-act audio-bank target **per lane** and treats a target the
+lane claims but cannot resolve as a refusal that names it, rather than a log line and a half-muted
+seat. When adding a build, expect that class of change to be the expensive one and gate for it
+deliberately: the metadata gate is `dotnet run --project tests/CouchCoop.Mod.Tests -- beta-targets`
+(every Harmony patch target resolves) plus `sts2 code verify-references` on the shipped DLLs, and the
+behavioural gate is `tests/scenarios/steam-host-join.sts2.yaml`. See
+[`docs/agents/qa-recipes.md`](agents/qa-recipes.md) §6 "A new game build" for why neither one alone is
+enough — a metadata gate cannot see a protocol step that was *added*.
 
 ## Browser asset and clip contracts
 

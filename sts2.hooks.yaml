@@ -17,3 +17,9 @@ hooks:
       begins with only the host alive. Archives the host/seat logs around embark and scans them for the
       signatures that separate the candidate root causes.
     command: scripts/probe-five-player-run.mjs
+  couchcoop.steam-host-join-probe:
+    description: >-
+      Behavioural seat-join gate for the STEAM-hosted transport branch: drive a real Steam lobby through
+      the menus, join one browser seat, and assert a connected roster. Fails if the host did not take the
+      Steam branch, so the gate can never silently pass on ENet.
+    command: scripts/probe-steam-host-join.mjs

@@ -484,6 +484,11 @@ A normally-created multiplayer session is the game session, and couch seats ride
   "Steam offline" notice via `CouchCoopHostUiNotices`.
 - Slot cap is REAL: `slotId` is serialized in 2 bits, so 4 players INCLUDING the host, shared between Steam
   remotes and couch seats (`CouchCoopLobbyParticipation.MayLaunchNewHeadless` carries the free-slot guard).
+- **Tests**: `tests/CouchCoop.Mod.Tests/HostTransportCapacityTests.cs` (the `Priority.Last` ordering and the
+  capacity decision, offline) and `tests/scenarios/steam-host-join.sts2.yaml` (the only automated seat join
+  that takes the **Steam** branch — every other join test takes the ENet one, where `HostNetIdPatch` is inert
+  because `hostNetId == 1`). The probe grades the branch from the `host-transport` log lines below and fails
+  rather than degrade to ENet; see [qa-recipes.md](qa-recipes.md) §6 "A new game build".
 
 ### Headless seat launch contract (no CLI args)
 

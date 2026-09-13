@@ -1310,7 +1310,8 @@ async function chromium() {
   return require("playwright").chromium;
 }
 
-async function closeBrowsers() {
+/** Exported so a focused probe can reuse this live-proven seat join rather than grow a second one. */
+export async function closeBrowsers() {
   for (const context of openContexts.splice(0)) {
     try { await context.close(); } catch { /* already gone */ }
   }
@@ -1320,7 +1321,15 @@ async function closeBrowsers() {
   }
 }
 
-async function joinSeats(targets, evidence) {
+/**
+ * Joins `targets.seats` browser seats, at most `targets.seatConcurrency` at a time.
+ *
+ * Exported (with {@link closeBrowsers}) so `scripts/probe-steam-host-join.mjs` drives the SAME join
+ * path this probe has run live, including its per-seat ENet evidence -- a second implementation of the
+ * seat join is a second thing to be wrong. `targets` needs only
+ * `{seats, seatConcurrency, baseUrl, browserPort, portBases, userDir, seatTimeoutMs, outDir}`.
+ */
+export async function joinSeats(targets, evidence) {
   if (!browser) {
     try {
       browser = await (await chromium()).launch();
