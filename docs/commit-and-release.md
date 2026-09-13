@@ -225,22 +225,6 @@ Three properties of that script are load-bearing, and all three exist because of
 Self-test, with a mock uploader and fixture workspaces — no Steam, no network:
 `bash scripts/test-upload-workshop-release.sh`. Run it after any change to the upload script.
 
-### Branch scoping is set on the web, not in `workshop.json`
-
-The Workshop can scope an item to a range of game branches, and `workshop.json` has `minBranch` /
-`maxBranch` keys for it. **Do not use them.** Measured on the DEV item on 12 Sep 2026: an upload
-carrying either key sits in `k_EItemUpdateStatusCommittingChanges` and then fails
-`k_EResultTimeout` — three runs with the keys failed, and a control run without them, immediately
-afterwards, succeeded. The uploader's own README says the same thing more gently ("seem to have
-weird behavior ... Prefer updating them on the web instead").
-
-So set supported branches in the Steam web UI. `scripts/upload-workshop-release.sh` refuses a
-workspace that declares either key, because the alternative is a ten-minute timeout on every
-release rather than an immediate message.
-
-The game enforces the player's side either way: it asks Steam which branches an item supports and
-raises `STEAM_BRANCH_UNSUPPORTED` rather than half-loading a mod built for another branch.
-
 ### The unlisted DEV item
 
 To put a build in front of real players before the public listing moves, publish it as a **second,
