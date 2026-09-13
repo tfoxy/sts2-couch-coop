@@ -96,7 +96,15 @@ cp "$assets/couchcoop-v0.1.0.zip" "$assets/couchcoop-v0.1.0.SHA256SUMS" "$stable
 # GitHub Release, and a snapshot has no tag.
 snapshot_dist="$fixture/snapshot-dist"
 mkdir -p "$snapshot_dist"
-publish_assets "$snapshot_dist/couchcoop-snapshot-abcdef123456.zip" "$fixture/payload"
+# A snapshot payload declares the version package-release.sh stamps for it, so the gate's
+# archive-name-to-payload-version check is exercised rather than side-stepped.
+snapshot_payload="$fixture/snapshot-payload"
+cp -a "$fixture/payload" "$snapshot_payload"
+for f in couchcoop.json build-info.txt; do
+  jq '.version = "0.0.0-snapshot.abcdef123456"' "$snapshot_payload/couchcoop/$f" > "$snapshot_payload/couchcoop/$f.tmp"
+  mv "$snapshot_payload/couchcoop/$f.tmp" "$snapshot_payload/couchcoop/$f"
+done
+publish_assets "$snapshot_dist/couchcoop-snapshot-abcdef123456.zip" "$snapshot_payload"
 
 # A beta-named archive carrying a stable payload: the name says public-beta, build-info.txt says
 # stable, and the gate must refuse it rather than publish the wrong game branch to the beta item.
@@ -339,8 +347,9 @@ assert_uploaded "$dev_workspace"
 expect_refused missing-lane 'no lane public-beta release archive found' \
   --dist "$stable_only" --lane public-beta --workspace "$dev_workspace"
 
-# Leg 12: a snapshot build is refused by name, and said so explicitly rather than as "none found".
-expect_refused snapshot-dist 'holds only a snapshot archive for lane stable' \
+# Leg 12: a snapshot build is refused by name for an ordinary workspace, and said so explicitly
+# rather than as "none found".
+expect_refused snapshot-dist 'is not a dev channel' \
   --dist "$snapshot_dist" --workspace "$dev_workspace"
 
 # Leg 13: the lane is verified against the payload's own build-info.txt, so a mislabelled filename
@@ -379,5 +388,29 @@ PATH="$blocked_gh_bin:$PATH" \
 bash "$script" --dist "$assets" --lane stable --workspace "$dev_workspace"
 
 assert_uploaded "$dev_workspace"
+
+# Leg 16: a DEV CHANNEL publishes snapshots — that is what one is for. The opt-in is a marker file in
+# the workspace, so it travels with the item and cannot be typed onto the public listing by accident.
+printf '' > "$dev_workspace/dev-channel"
+MOCK_UPLOADER_LOG="$fixture/uploader.log" \
+COUCHCOOP_WORKSHOP_UPLOADER_DIR="$uploader_dir" \
+PATH="$blocked_gh_bin:$PATH" \
+bash "$script" --dist "$snapshot_dist" --workspace "$dev_workspace"
+
+assert_file "$dev_workspace/content/couchcoop.json"
+assert_eq 'Test build 0.0.0-snapshot.abcdef123456' "$(jq -r '.changeNote' "$dev_workspace/workshop.json")"
+assert_uploaded "$dev_workspace"
+[[ ! -e "$dev_workspace/content/dev-channel" ]] || fail "dev-channel marker leaked into the uploaded content"
+
+# ...and the public workspace still refuses one even with a dev channel sitting next to it.
+expect_refused snapshot-public 'is not a dev channel' --dist "$snapshot_dist"
+
+# Two snapshots for one lane cannot be ordered — a snapshot sha carries no version — so refuse rather
+# than pick one by string sort.
+publish_assets "$snapshot_dist/couchcoop-snapshot-fedcba654321.zip" "$snapshot_payload"
+expect_refused snapshot-ambiguous 'carry no orderable version' \
+  --dist "$snapshot_dist" --workspace "$dev_workspace"
+rm -f "$snapshot_dist/couchcoop-snapshot-fedcba654321.zip" "$snapshot_dist/couchcoop-snapshot-fedcba654321.SHA256SUMS"
+rm -f "$dev_workspace/dev-channel"
 
 echo "test-upload-workshop-release: ok"
