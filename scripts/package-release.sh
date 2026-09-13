@@ -157,14 +157,6 @@ if [[ "${COUCHCOOP_RELEASE_STAGED:-}" != "1" ]]; then
   exit 0
 fi
 
-# A tagged release appends the commit as build metadata; a snapshot version already carries its own
-# build metadata, and SemVer allows only one '+' segment.
-if [[ "$version" == *+* ]]; then
-  informational_version="$version"
-else
-  informational_version="$version+$source_commit"
-fi
-
 # The staged pass builds exactly one lane; the outer pass names it.
 lane="${COUCHCOOP_RELEASE_STS2_LANE:?missing STS2 reference lane}"
 sdk_project="$(lane_project "$lane")"
@@ -176,6 +168,15 @@ assembly_version="${COUCHCOOP_RELEASE_ASSEMBLY_VERSION:?missing assembly version
 archive_name="${COUCHCOOP_RELEASE_ARCHIVE_NAME:?missing archive name}"
 output_dir="${COUCHCOOP_RELEASE_OUTPUT_DIR:?missing output directory}"
 source_commit="${COUCHCOOP_RELEASE_SOURCE_COMMIT:?missing source commit}"
+
+# A tagged release appends the commit as build metadata; a snapshot version already carries its own
+# build metadata, and SemVer allows only one '+' segment.
+if [[ "$version" == *+* ]]; then
+  informational_version="$version"
+else
+  informational_version="$version+$source_commit"
+fi
+
 tag="${COUCHCOOP_RELEASE_TAG:-}"
 source_parent="$(cd "$repo_root/.." && pwd)"
 deps="$repo_root/release-dependencies.json"
