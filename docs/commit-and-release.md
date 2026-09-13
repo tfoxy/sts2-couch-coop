@@ -225,6 +225,28 @@ Three properties of that script are load-bearing, and all three exist because of
 Self-test, with a mock uploader and fixture workspaces — no Steam, no network:
 `bash scripts/test-upload-workshop-release.sh`. Run it after any change to the upload script.
 
+### Branch scoping, and a timeout that is not a failure
+
+The Workshop can scope an item to a range of game branches, and `workshop.json` carries it as
+`minBranch` / `maxBranch`. The release script passes them through untouched, like everything else
+the workspace declares.
+
+**The trap is the reporting, not the feature.** An upload carrying either key sits in
+`k_EItemUpdateStatusCommittingChanges` for minutes and then the uploader gives up with
+`k_EResultTimeout` — **while the change commits anyway**. That is the client running out of
+patience, not Steam rejecting the update, so the non-zero exit is not the thing to trust. Measured
+on the DEV item on 12 Sep 2026: the item ended up correctly linked to `public-beta` at both ends
+despite every such run reporting failure.
+
+So when a branch-scoped upload reports `k_EResultTimeout`, **check the item page before retrying** —
+a blind retry just republishes the same content and waits out the same timeout. The script prints a
+note to that effect when it sees the keys. The vendored `Workspace/README.md` says the same thing
+more vaguely ("seem to have weird behavior ... Prefer updating them on the web instead"), and the
+web UI's *Update Linked Game Version* dialog is where to confirm or adjust the range by hand.
+
+The game enforces the player's side regardless: it asks Steam which branches an item supports and
+raises `STEAM_BRANCH_UNSUPPORTED` rather than half-loading a mod built for another branch.
+
 ### The unlisted DEV item
 
 To put a build in front of real players before the public listing moves, publish it as a **second,

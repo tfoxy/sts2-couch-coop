@@ -125,7 +125,9 @@ jq -n '{
   changeNote: "",
   tags: [],
   dependencies: [],
-  contentDescriptors: []
+  contentDescriptors: [],
+  minBranch: "public",
+  maxBranch: "public"
 }' > "$workspace/workshop.json"
 printf 'stale content' > "$workspace/stale.txt"
 mkdir -p "$workspace/content"
@@ -209,7 +211,12 @@ assert_eq public "$(jq -r '.visibility' "$workspace/workshop.json")"
 assert_eq 'Release v0.1.0' "$(jq -r '.changeNote' "$workspace/workshop.json")"
 assert_eq CouchCoop "$(jq -r '.title' "$workspace/workshop.json")"
 assert_eq 'Fixture source description' "$(jq -r '.description' "$workspace/workshop.json")"
-assert_eq false "$(jq 'has("minBranch") or has("maxBranch")' "$workspace/workshop.json")"
+# Branch scoping is the workspace's to declare and the script's to leave alone: it writes the change
+# note and nothing else. An item that says which game branches it supports must keep saying it across
+# every release upload. (The uploader is slow to commit these — see the note in the script — but the
+# change does land, so the keys must survive the round trip.)
+assert_eq public "$(jq -r '.minBranch' "$workspace/workshop.json")"
+assert_eq public "$(jq -r '.maxBranch' "$workspace/workshop.json")"
 assert_uploaded "$workspace"
 
 # Leg 2: an explicit --visibility still rewrites it, even for a published item.
