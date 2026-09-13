@@ -323,7 +323,9 @@ expect_refused() {
   PATH="$blocked_gh_bin:$PATH" \
   bash "$script" "$@" >"$fixture/$label.out" 2>&1 || refused_status=$?
   [[ $refused_status -ne 0 ]] || fail "$label should have failed"
-  grep -q -- "$needle" "$fixture/$label.out" \
+  # -F: these needles are refusal messages, which carry brackets and parentheses that a regex would
+  # read as syntax -- a needle matching the output character for character must not silently fail.
+  grep -qF -- "$needle" "$fixture/$label.out" \
     || fail "$label failed, but not for '$needle': $(cat "$fixture/$label.out")"
   assert_eq "${expected_log%$'\n'}" "$(cat "$fixture/uploader.log")"
 }
@@ -376,11 +378,12 @@ expect_refused repeated-lane 'may be specified only once' \
 # Leg 15: a workspace may pin itself to one lane, so the lane and the item cannot be mismatched.
 # Publishing the public-beta payload to the public listing is the worst outcome available here.
 printf 'public-beta\n' > "$dev_workspace/lane.txt"
-expect_refused workspace-lane-mismatch "pinned to lane 'public-beta', but this run publishes lane 'stable'" \
+expect_refused workspace-lane-mismatch "may publish lane(s) [public-beta], but this run publishes 'stable'" \
   --dist "$assets" --workspace "$dev_workspace"
 
-# ...and the matching lane still publishes. lane.txt stays local: the uploader never receives it.
-printf 'stable\n' > "$dev_workspace/lane.txt"
+# A workspace that carries BOTH lanes names both, which is what one Workshop item serving two
+# branch-linked revisions needs.
+printf 'public-beta\nstable\n' > "$dev_workspace/lane.txt"
 MOCK_UPLOADER_LOG="$fixture/uploader.log" \
 COUCHCOOP_WORKSHOP_UPLOADER_DIR="$uploader_dir" \
 PATH="$blocked_gh_bin:$PATH" \
