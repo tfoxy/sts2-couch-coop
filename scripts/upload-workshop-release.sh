@@ -339,9 +339,14 @@ for lane in ${lanes[@]+"${lanes[@]}"}; do
 
   printf 'Uploading %s (lane %s -> game branch %s) from %s with visibility %s...\n' \
     "$tag" "$lane" "$steam_branch" "$workspace" "$visibility_report"
-  upload_status=0
-  (cd "$uploader_dir" && ./ModUploader upload -w "$workspace") 2>&1 | tee "$stage_dir/upload-$lane.log" || upload_status=$?
-  if [[ ${PIPESTATUS[0]:-$upload_status} -ne 0 ]]; then
+  # `set -e` would abort on the failing pipeline before the status could be read, and PIPESTATUS does
+  # not survive an `|| var=$?`. Disable the trap for exactly this call and read PIPESTATUS on the very
+  # next line, which is the only place it is still the uploader's.
+  set +e
+  (cd "$uploader_dir" && ./ModUploader upload -w "$workspace") 2>&1 | tee "$stage_dir/upload-$lane.log"
+  upload_status=${PIPESTATUS[0]}
+  set -e
+  if [[ "$upload_status" -ne 0 ]]; then
     # MEASURED: an upload whose workshop.json carries a branch range sits in CommittingChanges for
     # minutes and then the uploader gives up with k_EResultTimeout -- while the change commits
     # anyway. That is the client running out of patience, not Steam rejecting the update, so it is
