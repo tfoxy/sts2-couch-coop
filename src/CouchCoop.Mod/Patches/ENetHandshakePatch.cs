@@ -20,20 +20,30 @@ internal static class ENetHandshakePatch
     private static bool _applied;
     private static FieldInfo? _isConnectedField;
 
+    /// <summary>
+    /// The two game members this patch resolves BY NAME, shared with the reflection guard test — the only thing
+    /// that can prove a rename has not quietly turned this patch into a no-op, since <see cref="Apply"/> logs a
+    /// miss and carries on.
+    /// </summary>
+    internal const string UpdateTarget = "ENetClient:Update";
+
+    /// <inheritdoc cref="UpdateTarget"/>
+    internal const string ConnectedFieldName = "_isConnected";
+
     internal static void Apply()
     {
         lock (_sync)
         {
             if (_applied) return;
 
-            var target = AccessTools.Method("ENetClient:Update");
+            var target = AccessTools.Method(UpdateTarget);
             if (target is null)
             {
                 Console.Error.WriteLine("[couch-coop] ENetHandshakePatch: ENetClient.Update not found — handshake patch skipped.");
                 return;
             }
 
-            _isConnectedField = AccessTools.Field(target.DeclaringType!, "_isConnected");
+            _isConnectedField = AccessTools.Field(target.DeclaringType!, ConnectedFieldName);
             if (_isConnectedField is null)
             {
                 Console.Error.WriteLine("[couch-coop] ENetHandshakePatch: ENetClient._isConnected not found — handshake patch skipped.");
