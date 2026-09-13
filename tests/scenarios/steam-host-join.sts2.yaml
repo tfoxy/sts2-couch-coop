@@ -1,0 +1,32 @@
+name: steam-host-join
+description: >-
+  Behavioural seat-join gate for the STEAM-HOSTED transport branch -- the one branch no automated test
+  has ever covered, and the one the game's v0.111.0 beta broke while every metadata gate stayed green.
+  Drives a real Steam-hosted lobby through Main Menu -> Multiplayer -> Host -> Standard, joins one
+  browser seat, and asserts the seat reaches a connected roster. Leg 2 reads the host's own
+  `host-transport` lines and FAILS the run if it did not actually get the Steam branch: a gate that
+  silently degrades to ENet is worse than no gate, because ENet is the branch that already worked.
+  Needs a Steam client that is running and ONLINE, and a host launched WITHOUT `-fastmp`.
+
+steps:
+  # Builds via game.deployBuildCommand into <repo>/dist/couchcoop, deploys that into the game's mods
+  # dir, then restarts and verifies the bridge -- so the probe always runs against the current tree.
+  # For a non-default game branch, run the whole scenario under
+  # `scripts/with-game-branch.sh <branch> -- sts2 --json test run …`, never `sts2 --config` alone.
+  - game.deploy:
+      path: ../../src/CouchCoop.Mod.Loader
+      build: true
+      restart: true
+      verify: true
+      timeoutMs: 120000
+
+  # The restarted game keeps finishing its own boot flow (logo / FTUE / leaderboard) for several
+  # seconds and that flow pushes the main menu. The probe's first step is a main-menu click, so let
+  # the menu settle before it starts driving.
+  - dev.delay:
+      ms: 20000
+
+  - project.hook:
+      name: couchcoop.steam-host-join-probe
+      input:
+        handshake: auto
