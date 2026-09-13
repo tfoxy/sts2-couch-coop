@@ -52,17 +52,33 @@
     <!--
       RUNTIME closure for the reflection above, not a compile reference: game v0.111.0's sts2.dll carries a
       [ModuleInitializer], so the CLR runs Sentry's Godot auto-init the first time any test touches a game type,
-      and without these two assemblies beside it that is a FileNotFoundException that fails every patch-target leg
-      before it asserts anything. The auto-init itself is a no-op here — it looks for the Sentry GDExtension,
-      which a bare test process does not have, prints one line and returns.
+      and without these two assemblies LOADABLE beside it that is a FileNotFoundException that fails every
+      patch-target leg before it asserts anything. The auto-init itself is a no-op here — it looks for the Sentry
+      GDExtension, which a bare test process does not have, prints one line and returns.
 
-      Copied rather than referenced (nothing compiles against them) and conditional rather than unconditional
-      (v0.107.1 ships neither Sentry.Godot.dll nor a module initializer that wants it).
+      `Reference Private=true` and NOT `None CopyToOutputDirectory`, which is what this was and why it did not
+      work: a copied file lands in the output directory but NOT in CouchCoop.Mod.Tests.deps.json, and a
+      framework-dependent app builds its assembly list from that file alone — so the runtime never sees the copy,
+      however many times it is made. MEASURED on v0.111.0: with the `None` spelling, the `beta-targets` verb failed
+      3 of its 4 legs with "Could not load file or assembly 'Sentry.Godot'" while Sentry.Godot.dll sat beside the
+      binary; deleting deps.json (which sends the host back to probing the app directory) made that same build
+      pass. Referencing them puts them in deps.json, which is the thing that was actually missing.
+      (XML comments cannot carry a double hyphen, so the verb is named without its flag dashes above.)
+
+      Conditional rather than unconditional: v0.107.1 ships neither Sentry.Godot.dll nor a module initializer that
+      wants it. Nothing compiles against a Sentry type, so the release payload is unaffected either way.
     -->
-    <None
-      Include="$(Sts2AssembliesDir)/Sentry.dll;$(Sts2AssembliesDir)/Sentry.Godot.dll"
-      Condition="'$(Sts2AssembliesDir)' != '' and Exists('$(Sts2AssembliesDir)/Sentry.Godot.dll')"
-      CopyToOutputDirectory="PreserveNewest"
-      Visible="false" />
+    <Reference
+      Include="Sentry"
+      Condition="'$(Sts2AssembliesDir)' != '' and Exists('$(Sts2AssembliesDir)/Sentry.Godot.dll')">
+      <HintPath>$(Sts2AssembliesDir)/Sentry.dll</HintPath>
+      <Private>true</Private>
+    </Reference>
+    <Reference
+      Include="Sentry.Godot"
+      Condition="'$(Sts2AssembliesDir)' != '' and Exists('$(Sts2AssembliesDir)/Sentry.Godot.dll')">
+      <HintPath>$(Sts2AssembliesDir)/Sentry.Godot.dll</HintPath>
+      <Private>true</Private>
+    </Reference>
   </ItemGroup>
 </Project>
