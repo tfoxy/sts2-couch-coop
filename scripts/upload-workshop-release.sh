@@ -242,14 +242,15 @@ else
   archive_name="$(release_lane_archive_name "couchcoop-${tag}" "$lane")"
   gh release download "$tag" --repo tfoxy/sts2-couch-coop \
     --pattern "$archive_name" \
-    --pattern "${archive_name%.zip}.SHA256SUMS" \
+    --pattern "$(release_checksums_name "$archive_name" "$lane").SHA256SUMS" \
     --dir "$stage_dir"
   archive_path="$stage_dir/$archive_name"
 fi
 
 # Two published assets per lane: the archive and its checksums. The per-file contents manifest is
 # recomputed by the gate, and the build metadata rides inside the payload as build-info.txt.
-checksums_name="${archive_name%.zip}.SHA256SUMS"
+# One checksum file per release, shared by every lane's archive.
+checksums_name="$(release_checksums_name "$archive_name" "$lane").SHA256SUMS"
 if [[ -n "$dist_dir" ]]; then
   checksums_path="$dist_dir/$checksums_name"
 else
