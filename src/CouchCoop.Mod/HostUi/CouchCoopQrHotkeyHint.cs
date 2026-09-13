@@ -1,11 +1,6 @@
 using Godot;
 using CouchCoop.Mod.Localization;
 using MegaCrit.Sts2.Core.Nodes.CommonUi;
-#if STS2_API_V111
-// Aliased rather than imported: the game's enum shares its name with the controller manager's property that
-// carries it, and an unqualified `InputType` in both positions reads as a typo.
-using GameInputType = MegaCrit.Sts2.Core.ControllerInput.InputType;
-#endif
 
 namespace CouchCoop.Mod.HostUi;
 
@@ -161,33 +156,6 @@ internal sealed partial class CouchCoopQrHotkeyHint : Control
     }
 
     /// <summary>
-    /// The two facts this hint needs out of the game's input state: whether the player currently has no mouse
-    /// (so the hint belongs on screen at all) and whether they are on a CONTROLLER (so a controller button
-    /// glyph is the right icon). They are the same fact on v0.107.1 and different facts on v0.111.0 — see the
-    /// type's remarks. <see langword="default"/> — no hint — whenever the manager cannot be reached.
-    /// </summary>
-    private readonly record struct InputPicture(bool WithoutMouse, bool OnController);
-
-    private static InputPicture ReadInputPicture()
-    {
-        if (NControllerManager.Instance is not { } controllers)
-        {
-            return default;
-        }
-
-#if STS2_API_V111
-        var inputType = controllers.InputType;
-        return new InputPicture(
-            WithoutMouse: inputType is GameInputType.Controller or GameInputType.KeyboardOnlyMode,
-            OnController: inputType is GameInputType.Controller);
-#else
-        // v0.107.1 has no keyboard-only mode to distinguish, so the one boolean answers both questions.
-        var usingController = controllers.IsUsingController;
-        return new InputPicture(WithoutMouse: usingController, OnController: usingController);
-#endif
-    }
-
-    /// <summary>
     /// Re-reads whether the game is being driven without a mouse and which glyph that action currently wears.
     /// </summary>
     /// <remarks>
@@ -204,7 +172,7 @@ internal sealed partial class CouchCoopQrHotkeyHint : Control
 
         try
         {
-            var input = ReadInputPicture();
+            var input = CouchCoopHostInputMode.Read();
             Visible = input.WithoutMouse;
             if (!input.WithoutMouse)
             {

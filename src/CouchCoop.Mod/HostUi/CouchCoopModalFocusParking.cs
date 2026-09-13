@@ -72,8 +72,9 @@ internal static class CouchCoopModalFocusParking
     /// lobby control behind the scrim, or the select action would activate it straight through the dialog.
     /// </summary>
     /// <param name="isUsingController">
-    /// <c>NControllerManager.IsUsingController</c> — the game's own notion of which input the host is on,
-    /// the same flag <c>CouchCoopQrHotkeyHint</c> shows its glyph from.
+    /// Whether the host is driving without a mouse, from <c>CouchCoopHostInputMode</c> — which is the one
+    /// place that knows the game reports this differently per build (a single boolean on v0.107.1, a
+    /// three-way <c>InputType</c> on v0.111.0, where keyboard-only mode counts too).
     /// </param>
     internal static Target OnOpen(bool isUsingController)
         => isUsingController ? Target.Dismiss : Target.Card;
