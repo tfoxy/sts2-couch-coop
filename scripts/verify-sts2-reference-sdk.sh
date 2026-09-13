@@ -15,6 +15,8 @@ set -euo pipefail
 # a lane off a package suffix.
 
 repo_root="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+# shellcheck source=lib/release-lanes.sh
+source "$repo_root/scripts/lib/release-lanes.sh"
 sdk_root="$repo_root/eng/Sts2.ReferenceSdk"
 shared_targets="$sdk_root/Sts2.ReferenceSdk.targets"
 
@@ -42,14 +44,6 @@ lane_package_version() {
 lane_godot_version() {
   case "$1" in
     stable|public-beta) echo '4.5.1' ;;
-    *) return 1 ;;
-  esac
-}
-
-lane_game_build() {
-  case "$1" in
-    stable)      echo 'v0.107.1' ;;
-    public-beta) echo 'v0.111.0' ;;
     *) return 1 ;;
   esac
 }
@@ -145,7 +139,7 @@ verify_lane() {
   lockfile="$(lane_lockfile "$lane")"
   package_version="$(lane_package_version "$lane")"
   godot_version="$(lane_godot_version "$lane")"
-  game_build="$(lane_game_build "$lane")"
+  game_build="$(release_lane_game_build "$lane")"
 
   [[ -f "$project" && -f "$lockfile" ]] || {
     echo "STS2 reference lane $lane audit inputs are missing" >&2

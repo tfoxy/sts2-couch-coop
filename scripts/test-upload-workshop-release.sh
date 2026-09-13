@@ -109,7 +109,7 @@ mkdir -p "$snapshot_dist"
 snapshot_payload="$fixture/snapshot-payload"
 cp -a "$fixture/payload" "$snapshot_payload"
 for f in couchcoop.json build-info.txt; do
-  jq '.version = "0.0.0-snapshot.abcdef123456"' "$snapshot_payload/couchcoop/$f" > "$snapshot_payload/couchcoop/$f.tmp"
+  jq '.version = "0.1.1+snapshot.abcdef123456"' "$snapshot_payload/couchcoop/$f" > "$snapshot_payload/couchcoop/$f.tmp"
   mv "$snapshot_payload/couchcoop/$f.tmp" "$snapshot_payload/couchcoop/$f"
 done
 publish_assets "$snapshot_dist/couchcoop-snapshot-abcdef123456.zip" "$snapshot_payload"
@@ -270,7 +270,12 @@ assert_eq public-beta "$(revision 2 .maxBranch)"
 # shows one note per revision and the list should not be duplicated.
 grep -qF 'A fixture change a player would read.' <<<"$(revision 1 .changeNote)" \
   || fail "stable revision does not carry the changelog: $(revision 1 .changeNote)"
-grep -qF 'Release v0.1.0' <<<"$(revision 1 .changeNote)" || fail "stable revision has no heading"
+# A revision's heading has to name the version and the game build: the Steam page shows only a
+# branch chip, so without this a reader cannot tell what a revision even is.
+grep -qF 'Release v0.1.0 — Slay the Spire 2 v0.107.1' <<<"$(revision 1 .changeNote)" \
+  || fail "stable heading lacks the version or the game build: $(revision 1 .changeNote)"
+grep -qF 'Release v0.1.0 (public-beta) — Slay the Spire 2 v0.111.0' <<<"$(revision 2 .changeNote)" \
+  || fail "beta heading lacks the version or the game build: $(revision 2 .changeNote)"
 grep -qF 'A fixture change a player would read.' <<<"$(revision 2 .changeNote)" \
   && fail "beta revision should point at the stable revision, not repeat the list"
 grep -qF 'stable revision' <<<"$(revision 2 .changeNote)" \
@@ -408,7 +413,11 @@ PATH="$blocked_gh_bin:$PATH" \
 bash "$script" --dist "$snapshot_dist" --lane stable --workspace "$dev_workspace"
 assert_uploaded "$dev_workspace"
 [[ ! -e "$dev_workspace/content/dev-channel" ]] || fail "dev-channel marker leaked into the uploaded content"
-grep -qF 'Test build' "$dev_workspace/workshop.json" || fail "a snapshot should not be called a release"
+# A snapshot's filename carries only a commit sha, so a heading built from it says nothing about
+# which version the build is OF. It comes from the payload for exactly that reason.
+grep -qF 'Test build 0.1.1+snapshot.abcdef123456 — Slay the Spire 2 v0.107.1' \
+  <<<"$(jq -r '.changeNote' "$dev_workspace/workshop.json")" \
+  || fail "snapshot heading lost the base version: $(jq -r '.changeNote' "$dev_workspace/workshop.json")"
 
 # ...and the public listing still refuses one even with a dev channel sitting beside it.
 expect_refused snapshot-public 'is not a dev channel' --yes --dist "$snapshot_dist" --lane stable

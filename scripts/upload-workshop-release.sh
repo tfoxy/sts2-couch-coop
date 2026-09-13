@@ -258,14 +258,24 @@ else
   }
 fi
 
+# <lane> <payload version> -> the revision's change note.
+#
+# The heading names the VERSION and the GAME BUILD, because a Steam revision otherwise says neither:
+# the page shows only a branch chip, and the tag is not the version for a snapshot -- a snapshot's
+# filename carries a commit sha while its payload carries `<base version>+snapshot.<sha>`. Taking the
+# version from the payload covers both cases with one rule, and for a tagged release the gate has
+# already held the two equal.
 lane_change_note() {
-  local lane="$1" heading
-  if [[ "$tag" == snapshot-* ]]; then heading="Test build $tag"; else heading="Release $tag"; fi
+  local lane="$1" version="$2" heading game_build
+  game_build="$(release_lane_game_build "$lane")"
+  if [[ "$tag" == snapshot-* ]]; then heading="Test build $version"; else heading="Release v$version"; fi
+  [[ "$lane" == "$RELEASE_LANE_DEFAULT" ]] || heading="$heading ($lane)"
+  heading="$heading — Slay the Spire 2 $game_build"
   if [[ "$lane" == "$RELEASE_LANE_DEFAULT" ]]; then
     printf '%s\n\n%s\n' "$heading" "$release_notes"
   else
-    printf '%s (%s)\n\nBuilt for the %s branch of the game. The list of changes is on this update'"'"'s %s revision.\n' \
-      "$heading" "$lane" "$lane" "$RELEASE_LANE_DEFAULT"
+    printf '%s\n\nBuilt for the %s branch of the game. The list of changes is on this update'"'"'s %s revision.\n' \
+      "$heading" "$lane" "$RELEASE_LANE_DEFAULT"
   fi
 }
 
@@ -314,7 +324,10 @@ for lane in ${lanes[@]+"${lanes[@]}"}; do
   # revision whose linked range covers the game version they are running. They are derived from the
   # lane rather than read from the workspace, because the lane is the thing being published.
   steam_branch="$(release_lane_steam_branch "$lane")"
-  change_note="$(lane_change_note "$lane")"
+  # The payload is the only thing that knows its own version -- a snapshot's filename carries just a
+  # commit sha -- and it has already been held consistent with the manifest by the gate above.
+  payload_version="$(jq -er '.version' "$extract_dir/couchcoop/build-info.txt")"
+  change_note="$(lane_change_note "$lane" "$payload_version")"
   # A published item's visibility is the maintainer's setting, not this script's: it is applied only
   # on a first publish, or when --visibility was passed explicitly. mod_id.txt is what proves the item
   # exists -- workshop.json is required above, so its presence would prove nothing.

@@ -37,10 +37,11 @@ jobs:
           ./scripts/test-verify-release-archive.sh
 
       # Fails the release when CHANGELOG.md has no section for this tag. Release notes are written
-      # by hand from the Changelog: trailers, not generated from commit subjects.
+      # by hand from the Changelog: trailers, not generated from commit subjects. release-body.sh
+      # propagates that failure and appends the table saying which download is for which game.
       - name: Verify release notes exist
         working-directory: sources/couchcoop
-        run: ./scripts/changelog-section.sh "${{ github.ref_name }}" > "$RUNNER_TEMP/release-notes.md"
+        run: ./scripts/release-body.sh "${{ github.ref_name }}" > "$RUNNER_TEMP/release-notes.md"
 
       - name: Build release archive
         working-directory: sources/couchcoop

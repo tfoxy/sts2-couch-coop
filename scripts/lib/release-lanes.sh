@@ -54,6 +54,27 @@ release_lane_game_api() {
   printf '%s\n' "$value"
 }
 
+# The game build a lane's pinned reference package was taken from. This is what a release can honestly
+# say a download was made FOR, and it is NOT the same claim as the manifest floor below: a lane with
+# no floor is built against this version but not limited to it, and will load on newer builds of the
+# same branch. Only a lane that declares a floor actually REQUIRES its version.
+release_lane_game_build() {
+  local lane="$1" value
+  case "$lane" in
+    stable) value="v0.107.1" ;;
+    public-beta) value="v0.111.0" ;;
+    *)
+      echo "release-lanes: lane '$lane' has no reviewed game build; add one to scripts/lib/release-lanes.sh" >&2
+      return 1
+      ;;
+  esac
+  if [[ ! "$value" =~ ^v[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
+    echo "release-lanes: game build for lane '$lane' is not vMAJOR.MINOR.PATCH: $value" >&2
+    return 1
+  fi
+  printf '%s\n' "$value"
+}
+
 release_lane_min_game_version() {
   local lane="$1" value
   case "$lane" in
