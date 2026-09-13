@@ -24,8 +24,13 @@ assert_eq() {
 # The mock uploader appends one line per invocation; every leg asserts the whole log, so the
 # exact argv of every upload so far is checked, including which workspace it was pointed at.
 expected_log=""
+# assert_uploaded <workspace> [count]: a release publishes one upload PER LANE, so a run can add
+# several lines at once; the whole log is asserted after they are all accounted for.
 assert_uploaded() {
-  expected_log+="upload -w $1"$'\n'
+  local workspace="$1" count="${2:-1}" i
+  for (( i = 0; i < count; i++ )); do
+    expected_log+="upload -w $workspace"$'\n'
+  done
   assert_eq "${expected_log%$'\n'}" "$(cat "$fixture/uploader.log")"
 }
 
@@ -155,6 +160,18 @@ jq -n '{
 }' > "$dev_workspace/workshop.json"
 printf '9999999999\n' > "$dev_workspace/mod_id.txt"
 
+changelog="$fixture/CHANGELOG.md"
+cat > "$changelog" <<'EOF'
+# Changelog
+
+## [0.1.0] - 2026-01-01
+
+### Changed
+
+- A fixture change a player would read.
+EOF
+export CHANGELOG_FILE="$changelog"
+
 mock_bin="$test_root/bin"
 mkdir -p "$mock_bin"
 cat > "$mock_bin/gh" <<'EOF'
@@ -178,11 +195,20 @@ fi
 echo "unexpected gh invocation: $*" >&2
 exit 1
 EOF
+# Each upload is one Workshop REVISION, and a release publishes one per lane. The mock records the
+# workshop.json of every invocation so a multi-lane run can be asserted revision by revision -- the
+# workspace file only ever holds the last one.
 cat > "$uploader_dir/ModUploader" <<'EOF'
 #!/usr/bin/env bash
 set -euo pipefail
 printf '%s\n' "$*" >> "$MOCK_UPLOADER_LOG"
 workspace="${@: -1}"
+# nullglob, not ls: under `set -o pipefail` a non-matching glob makes ls exit 2 and takes the
+# whole mock down on the very first upload, when there is nothing to count yet.
+shopt -s nullglob
+existing=( "$(dirname "$MOCK_UPLOADER_LOG")"/revision-*.json )
+index=$(( ${#existing[@]} + 1 ))
+cp "$workspace/workshop.json" "$(dirname "$MOCK_UPLOADER_LOG")/revision-$index.json"
 if [[ ! -f "$workspace/mod_id.txt" ]]; then
   printf '1234567890\n' > "$workspace/mod_id.txt"
 fi
@@ -198,122 +224,6 @@ exit 99
 EOF
 chmod +x "$blocked_gh_bin/gh"
 
-# Leg 1: a release upload of an already-published item leaves its declared visibility alone.
-MOCK_RELEASE_ASSETS="$assets" \
-MOCK_UPLOADER_LOG="$fixture/uploader.log" \
-COUCHCOOP_WORKSHOP_UPLOADER_DIR="$uploader_dir" \
-PATH="$mock_bin:$PATH" \
-bash "$script"
-
-assert_file "$workspace/content/couchcoop.json"
-[[ ! -e "$workspace/content/old.txt" ]] || fail "stale payload survived"
-assert_file "$workspace/stale.txt"
-assert_file "$workspace/mod_id.txt"
-assert_file "$workspace/previews/old.gif"
-assert_eq public "$(jq -r '.visibility' "$workspace/workshop.json")"
-assert_eq 'Release v0.1.0' "$(jq -r '.changeNote' "$workspace/workshop.json")"
-assert_eq CouchCoop "$(jq -r '.title' "$workspace/workshop.json")"
-assert_eq 'Fixture source description' "$(jq -r '.description' "$workspace/workshop.json")"
-# Branch scoping is the workspace's to declare and the script's to leave alone: it writes the change
-# note and nothing else. An item that says which game branches it supports must keep saying it across
-# every release upload. (The uploader is slow to commit these — see the note in the script — but the
-# change does land, so the keys must survive the round trip.)
-assert_eq public "$(jq -r '.minBranch' "$workspace/workshop.json")"
-assert_eq public "$(jq -r '.maxBranch' "$workspace/workshop.json")"
-assert_uploaded "$workspace"
-
-# Leg 2: an explicit --visibility still rewrites it, even for a published item.
-MOCK_RELEASE_ASSETS="$assets" \
-MOCK_UPLOADER_LOG="$fixture/uploader.log" \
-COUCHCOOP_WORKSHOP_UPLOADER_DIR="$uploader_dir" \
-PATH="$mock_bin:$PATH" \
-bash "$script" --visibility private
-
-assert_eq private "$(jq -r '.visibility' "$workspace/workshop.json")"
-assert_eq 'Fixture source description' "$(jq -r '.description' "$workspace/workshop.json")"
-assert_eq 1234567890 "$(tr -d '\n' < "$workspace/mod_id.txt")"
-assert_uploaded "$workspace"
-
-# Leg 3: the same, from a local release directory, with gh blocked.
-MOCK_UPLOADER_LOG="$fixture/uploader.log" \
-COUCHCOOP_WORKSHOP_UPLOADER_DIR="$uploader_dir" \
-PATH="$blocked_gh_bin:$PATH" \
-bash "$script" --dist "$assets" --visibility unlisted
-
-assert_eq unlisted "$(jq -r '.visibility' "$workspace/workshop.json")"
-assert_uploaded "$workspace"
-
-# Leg 4: a first publish — no mod_id.txt yet — applies the default visibility, over whatever the
-# workspace happened to declare, and the uploader writes the new item ID.
-rm -f "$workspace/mod_id.txt"
-assert_eq unlisted "$(jq -r '.visibility' "$workspace/workshop.json")"
-
-MOCK_UPLOADER_LOG="$fixture/uploader.log" \
-COUCHCOOP_WORKSHOP_UPLOADER_DIR="$uploader_dir" \
-PATH="$blocked_gh_bin:$PATH" \
-bash "$script" --dist "$assets"
-
-assert_eq private "$(jq -r '.visibility' "$workspace/workshop.json")"
-assert_eq 'Release v0.1.0' "$(jq -r '.changeNote' "$workspace/workshop.json")"
-assert_eq 1234567890 "$(tr -d '\n' < "$workspace/mod_id.txt")"
-assert_uploaded "$workspace"
-
-primary_config_before="$(sha256sum < "$workspace/workshop.json")"
-
-# Leg 5: --workspace publishes a second workspace with the same uploader binary, leaves its
-# unlisted visibility alone, and does not touch the default workspace.
-MOCK_UPLOADER_LOG="$fixture/uploader.log" \
-COUCHCOOP_WORKSHOP_UPLOADER_DIR="$uploader_dir" \
-PATH="$blocked_gh_bin:$PATH" \
-bash "$script" --dist "$assets" --workspace "$dev_workspace"
-
-assert_file "$dev_workspace/content/couchcoop.json"
-assert_eq unlisted "$(jq -r '.visibility' "$dev_workspace/workshop.json")"
-assert_eq 'Release v0.1.0' "$(jq -r '.changeNote' "$dev_workspace/workshop.json")"
-assert_eq 'CouchCoop DEV' "$(jq -r '.title' "$dev_workspace/workshop.json")"
-assert_eq 'Dev fixture description' "$(jq -r '.description' "$dev_workspace/workshop.json")"
-assert_eq 9999999999 "$(tr -d '\n' < "$dev_workspace/mod_id.txt")"
-[[ ! -e "$dev_workspace/previews" ]] || fail "--workspace run created a previews directory"
-assert_eq "$primary_config_before" "$(sha256sum < "$workspace/workshop.json")"
-assert_uploaded "$dev_workspace"
-
-# Leg 6: COUCHCOOP_WORKSHOP_WORKSPACE_DIR selects the same workspace without a flag.
-MOCK_UPLOADER_LOG="$fixture/uploader.log" \
-COUCHCOOP_WORKSHOP_UPLOADER_DIR="$uploader_dir" \
-COUCHCOOP_WORKSHOP_WORKSPACE_DIR="$dev_workspace" \
-PATH="$blocked_gh_bin:$PATH" \
-bash "$script" --dist "$assets"
-
-assert_eq unlisted "$(jq -r '.visibility' "$dev_workspace/workshop.json")"
-assert_eq "$primary_config_before" "$(sha256sum < "$workspace/workshop.json")"
-assert_uploaded "$dev_workspace"
-
-# Leg 7: the flag wins over the environment — an unusable env value must not be consulted.
-MOCK_UPLOADER_LOG="$fixture/uploader.log" \
-COUCHCOOP_WORKSHOP_UPLOADER_DIR="$uploader_dir" \
-COUCHCOOP_WORKSHOP_WORKSPACE_DIR="$fixture/no-such-workspace" \
-PATH="$blocked_gh_bin:$PATH" \
-bash "$script" --dist "$assets" --workspace "$dev_workspace"
-
-assert_uploaded "$dev_workspace"
-
-# Leg 8: workspace preconditions apply to the selected workspace, not to the default one.
-broken_workspace="$fixture/broken-workspace"
-mkdir -p "$broken_workspace"
-cp "$dev_workspace/workshop.json" "$broken_workspace/workshop.json"
-head -c 1048576 /dev/zero > "$broken_workspace/image.png"
-
-status=0
-MOCK_UPLOADER_LOG="$fixture/uploader.log" \
-COUCHCOOP_WORKSHOP_UPLOADER_DIR="$uploader_dir" \
-PATH="$blocked_gh_bin:$PATH" \
-bash "$script" --dist "$assets" --workspace "$broken_workspace" 2>"$fixture/broken.err" || status=$?
-[[ $status -eq 1 ]] || fail "oversized preview in the selected workspace should fail, got status $status"
-grep -q "smaller than 1 MiB: $broken_workspace/image.png" "$fixture/broken.err" \
-  || fail "expected the size error to name the selected workspace: $(cat "$fixture/broken.err")"
-assert_eq "${expected_log%$'\n'}" "$(cat "$fixture/uploader.log")"
-
-# A run that must not reach the uploader: the log stays exactly as it was.
 expect_refused() {
   local label="$1" needle="$2"
   shift 2
@@ -330,100 +240,178 @@ expect_refused() {
   assert_eq "${expected_log%$'\n'}" "$(cat "$fixture/uploader.log")"
 }
 
-# Leg 9: --lane publishes THAT lane's archive out of a directory holding both, and the beta payload
-# carries the manifest floor that makes it refuse an older game.
+revision() { jq -r "$2" "$fixture/revision-$1.json"; }
+
+# Leg 1: the DEFAULT run -- no arguments beyond the confirmation -- publishes EVERY lane of the
+# latest GitHub Release to the public listing, one revision each, and leaves the item's visibility
+# alone. This is the shape a maintainer actually types.
+MOCK_RELEASE_ASSETS="$assets" \
+MOCK_UPLOADER_LOG="$fixture/uploader.log" \
+COUCHCOOP_WORKSHOP_UPLOADER_DIR="$uploader_dir" \
+PATH="$mock_bin:$PATH" \
+bash "$script" --yes
+
+assert_uploaded "$workspace" 2
+assert_eq public "$(jq -r '.visibility' "$workspace/workshop.json")"
+assert_eq CouchCoop "$(jq -r '.title' "$workspace/workshop.json")"
+assert_eq 'Fixture source description' "$(jq -r '.description' "$workspace/workshop.json")"
+assert_file "$workspace/stale.txt"
+assert_file "$workspace/previews/old.gif"
+[[ ! -e "$workspace/content/old.txt" ]] || fail "stale payload survived"
+
+# Each revision is linked to the game branch its payload was built for -- that is what makes ONE
+# item serve both branches, and it is the whole point of the two-revision shape.
+assert_eq public "$(revision 1 .minBranch)"
+assert_eq public "$(revision 1 .maxBranch)"
+assert_eq public-beta "$(revision 2 .minBranch)"
+assert_eq public-beta "$(revision 2 .maxBranch)"
+
+# The change list rides on the default lane's revision and the other points at it, because Steam
+# shows one note per revision and the list should not be duplicated.
+grep -qF 'A fixture change a player would read.' <<<"$(revision 1 .changeNote)" \
+  || fail "stable revision does not carry the changelog: $(revision 1 .changeNote)"
+grep -qF 'Release v0.1.0' <<<"$(revision 1 .changeNote)" || fail "stable revision has no heading"
+grep -qF 'A fixture change a player would read.' <<<"$(revision 2 .changeNote)" \
+  && fail "beta revision should point at the stable revision, not repeat the list"
+grep -qF 'stable revision' <<<"$(revision 2 .changeNote)" \
+  || fail "beta revision does not point at the stable one: $(revision 2 .changeNote)"
+
+# Leg 2: publishing to the PUBLIC listing is never a by-product of a half-typed command.
+expect_refused no-confirmation 'stdin is not a terminal and --yes was not passed' --dist "$assets"
+
+# Leg 3: an explicit --visibility still rewrites it, even for a published item.
+rm -f "$fixture"/revision-*.json
+MOCK_RELEASE_ASSETS="$assets" \
+MOCK_UPLOADER_LOG="$fixture/uploader.log" \
+COUCHCOOP_WORKSHOP_UPLOADER_DIR="$uploader_dir" \
+PATH="$mock_bin:$PATH" \
+bash "$script" --yes --visibility private --lane stable
+
+assert_uploaded "$workspace"
+assert_eq private "$(jq -r '.visibility' "$workspace/workshop.json")"
+assert_eq 'Fixture source description' "$(jq -r '.description' "$workspace/workshop.json")"
+assert_eq 1234567890 "$(tr -d '\n' < "$workspace/mod_id.txt")"
+
+# Leg 4: --lane narrows a run to one revision.
+assert_eq 1 "$(ls "$fixture"/revision-*.json | wc -l)"
+
+# Leg 5: --dist reads a locally built release, with gh poisoned so it cannot silently fall back.
+MOCK_UPLOADER_LOG="$fixture/uploader.log" \
+COUCHCOOP_WORKSHOP_UPLOADER_DIR="$uploader_dir" \
+PATH="$blocked_gh_bin:$PATH" \
+bash "$script" --yes --dist "$assets" --lane public-beta
+
+assert_uploaded "$workspace"
+assert_eq public-beta "$(jq -r '.minBranch' "$workspace/workshop.json")"
+assert_eq v0.111.0 "$(jq -r '.min_game_version' "$workspace/content/couchcoop.json")"
+
+# Leg 6: a first publish -- no mod_id.txt yet -- applies the default visibility over whatever the
+# workspace declared, and the uploader writes the new item ID.
+rm -f "$workspace/mod_id.txt"
+MOCK_UPLOADER_LOG="$fixture/uploader.log" \
+COUCHCOOP_WORKSHOP_UPLOADER_DIR="$uploader_dir" \
+PATH="$blocked_gh_bin:$PATH" \
+bash "$script" --yes --dist "$assets" --lane stable
+
+assert_uploaded "$workspace"
+assert_eq private "$(jq -r '.visibility' "$workspace/workshop.json")"
+assert_eq 1234567890 "$(tr -d '\n' < "$workspace/mod_id.txt")"
+
+primary_config_before="$(sha256sum < "$workspace/workshop.json")"
+
+# Leg 7: --workspace publishes a second item with the same uploader binary, needs no confirmation
+# (it is not the public listing), and does not touch the default workspace.
 MOCK_UPLOADER_LOG="$fixture/uploader.log" \
 COUCHCOOP_WORKSHOP_UPLOADER_DIR="$uploader_dir" \
 PATH="$blocked_gh_bin:$PATH" \
 bash "$script" --dist "$assets" --lane public-beta --workspace "$dev_workspace"
 
-assert_eq public-beta "$(jq -r '.dependencies.sts2References.lane' "$dev_workspace/content/build-info.txt")"
-assert_eq v0.111.0 "$(jq -r '.min_game_version' "$dev_workspace/content/couchcoop.json")"
-assert_eq 'Release v0.1.0 (public-beta)' "$(jq -r '.changeNote' "$dev_workspace/workshop.json")"
+assert_file "$dev_workspace/content/couchcoop.json"
 assert_eq unlisted "$(jq -r '.visibility' "$dev_workspace/workshop.json")"
+assert_eq 'CouchCoop DEV' "$(jq -r '.title' "$dev_workspace/workshop.json")"
+assert_eq 9999999999 "$(tr -d '\n' < "$dev_workspace/mod_id.txt")"
+[[ ! -e "$dev_workspace/previews" ]] || fail "--workspace run created a previews directory"
+assert_eq "$primary_config_before" "$(sha256sum < "$workspace/workshop.json")"
 assert_uploaded "$dev_workspace"
 
-# Leg 10: with both lanes present, the default stays the stable archive — the unsuffixed name the
-# README's verification block and every download link point at — and its payload declares no floor.
+# Leg 8: the environment selects the same workspace without a flag, and the flag beats an unusable
+# environment value rather than consulting it.
 MOCK_UPLOADER_LOG="$fixture/uploader.log" \
 COUCHCOOP_WORKSHOP_UPLOADER_DIR="$uploader_dir" \
+COUCHCOOP_WORKSHOP_WORKSPACE_DIR="$dev_workspace" \
 PATH="$blocked_gh_bin:$PATH" \
-bash "$script" --dist "$assets" --workspace "$dev_workspace"
+bash "$script" --dist "$assets" --lane stable
+assert_uploaded "$dev_workspace"
+assert_eq "$primary_config_before" "$(sha256sum < "$workspace/workshop.json")"
 
-assert_eq stable "$(jq -r '.dependencies.sts2References.lane' "$dev_workspace/content/build-info.txt")"
-assert_eq null "$(jq -r '.min_game_version // "null"' "$dev_workspace/content/couchcoop.json")"
-assert_eq 'Release v0.1.0' "$(jq -r '.changeNote' "$dev_workspace/workshop.json")"
+MOCK_UPLOADER_LOG="$fixture/uploader.log" \
+COUCHCOOP_WORKSHOP_UPLOADER_DIR="$uploader_dir" \
+COUCHCOOP_WORKSHOP_WORKSPACE_DIR="$fixture/no-such-workspace" \
+PATH="$blocked_gh_bin:$PATH" \
+bash "$script" --dist "$assets" --lane stable --workspace "$dev_workspace"
 assert_uploaded "$dev_workspace"
 
-# Leg 11: a lane with no archive in the directory fails; it never falls back to another lane's zip.
-expect_refused missing-lane 'no lane public-beta release archive found' \
-  --dist "$stable_only" --lane public-beta --workspace "$dev_workspace"
+# Leg 9: workspace preconditions apply to the SELECTED workspace, not the default one.
+broken_workspace="$fixture/broken-workspace"
+mkdir -p "$broken_workspace"
+cp "$dev_workspace/workshop.json" "$broken_workspace/workshop.json"
+head -c 1100000 /dev/zero > "$broken_workspace/image.png"
+expect_refused oversize-preview 'must be smaller than 1 MiB' \
+  --dist "$assets" --workspace "$broken_workspace"
 
-# Leg 12: a snapshot build is refused by name for an ordinary workspace, and said so explicitly
-# rather than as "none found".
-expect_refused snapshot-dist 'is not a dev channel' \
-  --dist "$snapshot_dist" --workspace "$dev_workspace"
+# Leg 10: a dist directory holding TWO releases is refused, not resolved by "newest wins". A stale
+# archive from an earlier build is exactly how the wrong payload reaches an item.
+two_releases="$fixture/two-releases"
+mkdir -p "$two_releases"
+cp "$assets"/couchcoop-v0.1.0* "$two_releases/"
+cp "$assets/couchcoop-v0.1.0.zip" "$two_releases/couchcoop-v0.0.9.zip"
+expect_refused two-releases 'holds 2 different releases' \
+  --dist "$two_releases" --workspace "$dev_workspace"
 
-# Leg 13: the lane is verified against the payload's own build-info.txt, so a mislabelled filename
-# cannot publish the stable payload to the beta item.
+# Leg 11: the lane is verified against the payload's own build-info.txt, so a mislabelled filename
+# cannot publish the stable payload as the beta revision.
 expect_refused mislabelled-lane "built for lane 'stable', not the requested 'public-beta'" \
   --dist "$mislabelled" --lane public-beta --workspace "$dev_workspace"
 
-# Leg 14: an unknown lane is a usage error, not a guess, and so is an ambiguous one.
+# Leg 12: an unknown lane is a usage error, not a guess, and so is an ambiguous one.
 expect_refused unknown-lane 'unknown release lane' \
   --dist "$assets" --lane experimental --workspace "$dev_workspace"
 expect_refused repeated-lane 'may be specified only once' \
   --dist "$assets" --lane stable --lane public-beta --workspace "$dev_workspace"
 
-# Leg 15: a workspace may pin itself to one lane, so the lane and the item cannot be mismatched.
-# Publishing the public-beta payload to the public listing is the worst outcome available here.
+# Leg 13: a workspace may declare which lanes it carries, checked for EVERY lane BEFORE anything is
+# uploaded -- a two-lane run must not publish one and then refuse the other.
 printf 'public-beta\n' > "$dev_workspace/lane.txt"
 expect_refused workspace-lane-mismatch "may publish lane(s) [public-beta], but this run publishes 'stable'" \
   --dist "$assets" --workspace "$dev_workspace"
 
-# A workspace that carries BOTH lanes names both, which is what one Workshop item serving two
-# branch-linked revisions needs.
+# ...and a workspace that carries BOTH names both, which is what one item serving two branch-linked
+# revisions needs. lane.txt stays local: the uploader never receives it.
 printf 'public-beta\nstable\n' > "$dev_workspace/lane.txt"
 MOCK_UPLOADER_LOG="$fixture/uploader.log" \
 COUCHCOOP_WORKSHOP_UPLOADER_DIR="$uploader_dir" \
 PATH="$blocked_gh_bin:$PATH" \
-bash "$script" --dist "$assets" --lane stable --workspace "$dev_workspace"
-
-assert_uploaded "$dev_workspace"
+bash "$script" --dist "$assets" --workspace "$dev_workspace"
+assert_uploaded "$dev_workspace" 2
 [[ ! -e "$dev_workspace/content/lane.txt" ]] || fail "lane.txt leaked into the uploaded content"
-
-# An unpinned workspace stays unpinned: absent lane.txt must not start refusing anything, or every
-# existing workspace breaks at once.
 rm -f "$dev_workspace/lane.txt"
-MOCK_UPLOADER_LOG="$fixture/uploader.log" \
-COUCHCOOP_WORKSHOP_UPLOADER_DIR="$uploader_dir" \
-PATH="$blocked_gh_bin:$PATH" \
-bash "$script" --dist "$assets" --lane stable --workspace "$dev_workspace"
 
-assert_uploaded "$dev_workspace"
+# Leg 14: a snapshot is refused for an ordinary workspace and published by a DEV CHANNEL, which is
+# what one is for. The opt-in is a marker file, so it travels with the item.
+expect_refused snapshot-no-dev-channel 'is not a dev channel' \
+  --dist "$snapshot_dist" --lane stable --workspace "$dev_workspace"
 
-# Leg 16: a DEV CHANNEL publishes snapshots — that is what one is for. The opt-in is a marker file in
-# the workspace, so it travels with the item and cannot be typed onto the public listing by accident.
 printf '' > "$dev_workspace/dev-channel"
 MOCK_UPLOADER_LOG="$fixture/uploader.log" \
 COUCHCOOP_WORKSHOP_UPLOADER_DIR="$uploader_dir" \
 PATH="$blocked_gh_bin:$PATH" \
-bash "$script" --dist "$snapshot_dist" --workspace "$dev_workspace"
-
-assert_file "$dev_workspace/content/couchcoop.json"
-assert_eq 'Test build 0.0.0-snapshot.abcdef123456' "$(jq -r '.changeNote' "$dev_workspace/workshop.json")"
+bash "$script" --dist "$snapshot_dist" --lane stable --workspace "$dev_workspace"
 assert_uploaded "$dev_workspace"
 [[ ! -e "$dev_workspace/content/dev-channel" ]] || fail "dev-channel marker leaked into the uploaded content"
+grep -qF 'Test build' "$dev_workspace/workshop.json" || fail "a snapshot should not be called a release"
 
-# ...and the public workspace still refuses one even with a dev channel sitting next to it.
-expect_refused snapshot-public 'is not a dev channel' --dist "$snapshot_dist"
-
-# Two snapshots for one lane cannot be ordered — a snapshot sha carries no version — so refuse rather
-# than pick one by string sort.
-publish_assets "$snapshot_dist/couchcoop-snapshot-fedcba654321.zip" "$snapshot_payload"
-expect_refused snapshot-ambiguous 'carry no orderable version' \
-  --dist "$snapshot_dist" --workspace "$dev_workspace"
-rm -f "$snapshot_dist/couchcoop-snapshot-fedcba654321.zip" "$snapshot_dist/couchcoop-snapshot-fedcba654321.SHA256SUMS"
+# ...and the public listing still refuses one even with a dev channel sitting beside it.
+expect_refused snapshot-public 'is not a dev channel' --yes --dist "$snapshot_dist" --lane stable
 rm -f "$dev_workspace/dev-channel"
 
 echo "test-upload-workshop-release: ok"

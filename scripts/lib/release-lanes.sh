@@ -124,6 +124,25 @@ release_lane_archive_name() {
   fi
 }
 
+# The Steam game branch a lane's payload is built for. This is what links a Workshop revision to the
+# game version that should receive it: Steam gives a subscriber the revision whose linked range covers
+# the game version they are running, so one item serves both branches through one revision each.
+#
+# The names are Steam's, not ours -- the web UI's version picker shows the default branch as "Latest
+# Version" and names every other branch directly, and `public` is what the API calls the default one.
+release_lane_steam_branch() {
+  local lane="$1" value
+  case "$lane" in
+    stable) value="public" ;;
+    public-beta) value="public-beta" ;;
+    *)
+      echo "release-lanes: lane '$lane' has no reviewed Steam branch; add one to scripts/lib/release-lanes.sh" >&2
+      return 1
+      ;;
+  esac
+  printf '%s\n' "$value"
+}
+
 # <archive filename> <lane> -> the release-wide base name, i.e. the archive name with its .zip and
 # any lane suffix removed. One release publishes one SHA256SUMS covering every lane's archive, so
 # every lane has to arrive at the same name for it.
