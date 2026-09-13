@@ -414,4 +414,44 @@ grep -qF 'Test build' "$dev_workspace/workshop.json" || fail "a snapshot should 
 expect_refused snapshot-public 'is not a dev channel' --yes --dist "$snapshot_dist" --lane stable
 rm -f "$dev_workspace/dev-channel"
 
+# Leg 15: the two ways an upload can end badly are told apart. A k_EResultTimeout is a slow commit
+# that lands, so the run reports it and carries on with a distinct exit code; anything else is a real
+# failure and must stop the release rather than leave it half published.
+real_uploader="$uploader_dir/ModUploader"
+cp "$real_uploader" "$fixture/ModUploader.real"
+
+cat > "$real_uploader" <<'MOCKEOF'
+#!/usr/bin/env bash
+printf '%s\n' "$*" >> "$MOCK_UPLOADER_LOG"
+echo "Error occurred while uploading to the workshop! Result: k_EResultTimeout"
+exit 1
+MOCKEOF
+chmod +x "$real_uploader"
+timeout_status=0
+MOCK_UPLOADER_LOG="$fixture/uploader.log" \
+COUCHCOOP_WORKSHOP_UPLOADER_DIR="$uploader_dir" \
+PATH="$blocked_gh_bin:$PATH" \
+bash "$script" --dist "$assets" --workspace "$dev_workspace" >"$fixture/timeout.out" 2>&1 || timeout_status=$?
+assert_eq 3 "$timeout_status"
+grep -qF 'VERIFY on the item page' "$fixture/timeout.out" || fail "a timeout must tell the operator to verify"
+assert_uploaded "$dev_workspace" 2
+
+cat > "$real_uploader" <<'MOCKEOF'
+#!/usr/bin/env bash
+printf '%s\n' "$*" >> "$MOCK_UPLOADER_LOG"
+echo "something genuinely broke"
+exit 7
+MOCKEOF
+chmod +x "$real_uploader"
+broken_status=0
+MOCK_UPLOADER_LOG="$fixture/uploader.log" \
+COUCHCOOP_WORKSHOP_UPLOADER_DIR="$uploader_dir" \
+PATH="$blocked_gh_bin:$PATH" \
+bash "$script" --dist "$assets" --workspace "$dev_workspace" >"$fixture/broken.out" 2>&1 || broken_status=$?
+assert_eq 1 "$broken_status"
+grep -qF 'failed to upload' "$fixture/broken.out" || fail "a real failure must say so"
+# It stopped at the FIRST lane instead of publishing the second.
+assert_uploaded "$dev_workspace" 1
+cp "$fixture/ModUploader.real" "$real_uploader"
+
 echo "test-upload-workshop-release: ok"
