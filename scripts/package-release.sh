@@ -1,9 +1,12 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-# Build a reviewable release archive without reading sts2.local.yaml, a game
-# installation, or sibling working trees.  The outer invocation creates a clean
-# three-repository workspace; the inner invocation runs only in that workspace.
+# Build a reviewable release archive without reading sts2.local.yaml or a game
+# installation.  The outer invocation creates a clean three-repository workspace; the inner
+# invocation runs only in that workspace.  A tagged release sources spirectl and godot-scene-web
+# by cloning the commit release-dependencies.json pins; a --snapshot instead archives each
+# sibling's current (clean) commit directly from ../spirectl and ../godot-scene-web, so the pin
+# only has to move when preparing a tag release.
 
 usage() {
   cat >&2 <<'EOF'
@@ -13,7 +16,9 @@ At a clean vMAJOR.MINOR.PATCH tag, builds one archive per pinned STS2 reference 
   dist/couchcoop-vMAJOR.MINOR.PATCH.zip              the stable game branch
   dist/couchcoop-vMAJOR.MINOR.PATCH-<lane>.zip       every other lane
 --snapshot permits a clean untagged commit and builds couchcoop-snapshot-<short-sha>[-<lane>].zip
-with version 0.0.0-snapshot.<short-sha>.
+with version 0.0.0-snapshot.<short-sha>. It sources spirectl and godot-scene-web from the sibling
+checkouts beside this repo (../spirectl, ../godot-scene-web) at their current commit -- each must
+have a clean working tree -- rather than from the commits release-dependencies.json pins.
 
 Environment:
   COUCHCOOP_RELEASE_STS2_LANE   build only these lanes (space separated); default: every lane on disk
@@ -109,13 +114,34 @@ if [[ "${COUCHCOOP_RELEASE_STAGED:-}" != "1" ]]; then
   git -C "$repo_root" archive --format=tar "$source_commit" | tar -x -C "$source_parent/couchcoop"
 
   deps="$repo_root/release-dependencies.json"
+  sibling_commit_spirectl=""
+  sibling_commit_godot_scene_web=""
   for name in spirectl godot-scene-web; do
-    url="$(jq -er --arg name "$name" '.dependencies[$name].repository' "$deps")"
-    commit="$(jq -er --arg name "$name" '.dependencies[$name].commit' "$deps")"
-    [[ "$commit" =~ ^[0-9a-f]{40}$ ]] || { echo "invalid locked commit for $name" >&2; exit 1; }
-    git clone --quiet "$url" "$source_parent/$name"
-    git -C "$source_parent/$name" checkout --quiet --detach "$commit"
-    [[ "$(git -C "$source_parent/$name" rev-parse HEAD)" == "$commit" ]] || { echo "locked $name revision did not resolve" >&2; exit 1; }
+    if [[ "$snapshot" == "1" ]]; then
+      # A snapshot is a local dev/QA artifact, not a published release, so each sibling comes
+      # straight from its own checkout beside this repo instead of the commit
+      # release-dependencies.json pins -- that pin only has to move when preparing a tag release.
+      # `git archive HEAD` needs no push and no network, unlike the clone below, and captures the
+      # sibling's tree the same way the block above already captures this repo's own.
+      sibling_repo="$repo_root/../$name"
+      [[ -d "$sibling_repo/.git" ]] || { echo "no sibling checkout at $sibling_repo" >&2; exit 1; }
+      [[ -z "$(git -C "$sibling_repo" status --porcelain)" ]] \
+        || { echo "$name has uncommitted changes; commit before a snapshot build" >&2; exit 1; }
+      commit="$(git -C "$sibling_repo" rev-parse HEAD)"
+      mkdir -p "$source_parent/$name"
+      git -C "$sibling_repo" archive --format=tar HEAD | tar -x -C "$source_parent/$name"
+    else
+      url="$(jq -er --arg name "$name" '.dependencies[$name].repository' "$deps")"
+      commit="$(jq -er --arg name "$name" '.dependencies[$name].commit' "$deps")"
+      [[ "$commit" =~ ^[0-9a-f]{40}$ ]] || { echo "invalid locked commit for $name" >&2; exit 1; }
+      git clone --quiet "$url" "$source_parent/$name"
+      git -C "$source_parent/$name" checkout --quiet --detach "$commit"
+      [[ "$(git -C "$source_parent/$name" rev-parse HEAD)" == "$commit" ]] || { echo "locked $name revision did not resolve" >&2; exit 1; }
+    fi
+    case "$name" in
+      spirectl) sibling_commit_spirectl="$commit" ;;
+      godot-scene-web) sibling_commit_godot_scene_web="$commit" ;;
+    esac
   done
 
   mkdir -p "$repo_root/dist"
@@ -124,6 +150,9 @@ if [[ "${COUCHCOOP_RELEASE_STAGED:-}" != "1" ]]; then
     # another's intermediate output from the shared staged checkout.
     find "$source_parent/couchcoop/src" -type d \( -name obj -o -name bin \) -prune -exec rm -rf {} +
     COUCHCOOP_RELEASE_STAGED=1 \
+    COUCHCOOP_RELEASE_SNAPSHOT="$snapshot" \
+    COUCHCOOP_RELEASE_SPIRECTL_COMMIT="$sibling_commit_spirectl" \
+    COUCHCOOP_RELEASE_GODOT_SCENE_WEB_COMMIT="$sibling_commit_godot_scene_web" \
     COUCHCOOP_RELEASE_SOURCE_COMMIT="$source_commit" \
     COUCHCOOP_RELEASE_TAG="$tag" \
     COUCHCOOP_RELEASE_VERSION="$version" \
@@ -168,6 +197,7 @@ assembly_version="${COUCHCOOP_RELEASE_ASSEMBLY_VERSION:?missing assembly version
 archive_name="${COUCHCOOP_RELEASE_ARCHIVE_NAME:?missing archive name}"
 output_dir="${COUCHCOOP_RELEASE_OUTPUT_DIR:?missing output directory}"
 source_commit="${COUCHCOOP_RELEASE_SOURCE_COMMIT:?missing source commit}"
+snapshot="${COUCHCOOP_RELEASE_SNAPSHOT:?missing snapshot flag}"
 
 # A tagged release appends the commit as build metadata; a snapshot version already carries its own
 # build metadata, and SemVer allows only one '+' segment.
@@ -181,11 +211,15 @@ tag="${COUCHCOOP_RELEASE_TAG:-}"
 source_parent="$(cd "$repo_root/.." && pwd)"
 deps="$repo_root/release-dependencies.json"
 
-for name in spirectl godot-scene-web; do
-  expected="$(jq -er --arg name "$name" '.dependencies[$name].commit' "$deps")"
-  actual="$(git -C "$source_parent/$name" rev-parse HEAD)"
-  [[ "$actual" == "$expected" ]] || { echo "$name does not match release-dependencies.json" >&2; exit 1; }
-done
+if [[ "$snapshot" != "1" ]]; then
+  # A snapshot sources each sibling as a plain archived tree with no .git to check against a pin
+  # (see the outer pass); only a tag release clones and checks out a locked commit here.
+  for name in spirectl godot-scene-web; do
+    expected="$(jq -er --arg name "$name" '.dependencies[$name].commit' "$deps")"
+    actual="$(git -C "$source_parent/$name" rev-parse HEAD)"
+    [[ "$actual" == "$expected" ]] || { echo "$name does not match release-dependencies.json" >&2; exit 1; }
+  done
+fi
 
 work_dir="$(mktemp -d "${TMPDIR:-/tmp}/couchcoop-release-build.XXXXXX")"
 trap 'rm -rf "$work_dir"' EXIT
@@ -301,12 +335,22 @@ archive="$output_dir/$archive_name"
 # FILE_ATTRIBUTE_HIDDEN on Windows, which a zip-extracted file never carries. A `.build-info.json`
 # would therefore be skipped here and scanned as a broken manifest on every Windows player's machine.
 # scripts/verify-release-archive.sh rejects any second root-level .json for the same reason.
+if [[ "$snapshot" == "1" ]]; then
+  # No release-dependencies.json pin applies to a snapshot -- record the sibling commit the outer
+  # pass actually archived (its own clean-tree check already ran).
+  spirectl_commit="${COUCHCOOP_RELEASE_SPIRECTL_COMMIT:?missing spirectl commit}"
+  godot_scene_web_commit="${COUCHCOOP_RELEASE_GODOT_SCENE_WEB_COMMIT:?missing godot-scene-web commit}"
+else
+  spirectl_commit="$(jq -r '.dependencies.spirectl.commit' "$deps")"
+  godot_scene_web_commit="$(jq -r '.dependencies["godot-scene-web"].commit' "$deps")"
+fi
+
 build_info="$payload_dir/build-info.txt"
 jq -n \
   --arg schema "couchcoop-release-build-info/v1" \
   --arg sourceCommit "$source_commit" --arg tag "$tag" --arg version "$version" \
-  --arg spirectl "$(jq -r '.dependencies.spirectl.commit' "$deps")" \
-  --arg godotSceneWeb "$(jq -r '.dependencies["godot-scene-web"].commit' "$deps")" \
+  --arg spirectl "$spirectl_commit" \
+  --arg godotSceneWeb "$godot_scene_web_commit" \
   --arg sts2Lane "$lane" --arg sts2ReferenceId "$sts2_package_id" \
   --arg sts2ReferenceVersion "$(jq -er --arg id "$sts2_package_id" '.dependencies["net9.0"][$id].resolved' "$sdk_lockfile")" \
   --arg sts2ReferenceContentHash "$(jq -er --arg id "$sts2_package_id" '.dependencies["net9.0"][$id].contentHash' "$sdk_lockfile")" \
