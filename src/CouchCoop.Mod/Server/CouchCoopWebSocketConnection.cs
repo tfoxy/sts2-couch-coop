@@ -7,6 +7,7 @@ using System.Text;
 using System.Text.Json;
 using System.Threading.Channels;
 using CouchCoop.Mod.Activity;
+using CouchCoop.Mod.Connections;
 using CouchCoop.Mod.Contracts;
 using CouchCoop.Mod.Protocol;
 using CouchCoop.Mod.Session;
@@ -103,6 +104,7 @@ public sealed class CouchCoopWebSocketConnection
     private readonly BoundedInputQueue _inputQueue = new(256);
     private bool _inputPumpRunning;
     private Task _inputPumpTask = Task.CompletedTask;
+    private readonly ConnectionJoinOperation _joinOperation;
     private readonly MainThreadPingGate _mainThreadPingGate = new();
     internal const int MaxInboundMessageBytes = 256 * 1024;
     private readonly Guid _id = Guid.NewGuid();
@@ -175,6 +177,15 @@ public sealed class CouchCoopWebSocketConnection
         _actionExecutor = new BrowserActionExecutor(envelopeFactory.RuntimeHost);
         _inputExecutor = new BrowserInputExecutor(envelopeFactory.RuntimeHost);
         _lobby = new CouchCoopLobbyParticipation(envelopeFactory.RuntimeHost);
+        _joinOperation = new ConnectionJoinOperation(exception =>
+        {
+            if (_session is { } session)
+                ConnectionRegistry.Shared.Fail(session.Id, "join-failed",
+                    "The host could not finish sending the game connection result.",
+                    "Reconnect this browser. If it repeats, copy the report.", exception.ToString());
+            // End the receive pump so the browser can reconnect and the owned seat is cleaned up.
+            _socket?.Abort();
+        });
     }
 
     /// <summary>
@@ -292,6 +303,13 @@ public sealed class CouchCoopWebSocketConnection
         _socket = socket;
         using var session = _envelopeFactory.CreateSession();
         _session = session;
+        if (CouchCoopMod.IsHeadlessClient) HeadlessConnectionReporter.BrowserOpened();
+        else
+        {
+            ConnectionRegistry.Shared.Connected(session.Id, ConnectionDeviceLabel.FromUserAgent(request.Header("User-Agent")));
+            ConnectionRegistry.Shared.RecordDiagnostic(session.Id, "transport", _isSecure ? "Host WebSocket over TLS" : "Host WebSocket over HTTP");
+            ConnectionRegistry.Shared.RecordDiagnostic(session.Id, "gameVersion", _envelopeFactory.RuntimeHost.Capabilities.GameVersion);
+        }
         _connections[_id] = this;
         try
         {
@@ -303,6 +321,7 @@ public sealed class CouchCoopWebSocketConnection
                 "session",
                 session,
                 cancellationToken: cancellationToken).ConfigureAwait(false)).ConfigureAwait(false);
+            ConnectionRegistry.Shared.Advance(session.Id, ConnectionStage.Choosing);
 
             var cachedSceneObserver = _sceneStreaming ? _getSceneObserver() : null;
             _onConnectionOpened();
@@ -336,8 +355,21 @@ public sealed class CouchCoopWebSocketConnection
 
             await ReceiveLoopAsync(socket, session, cancellationToken).ConfigureAwait(false);
         }
+        catch (WebSocketException exception) when (!cancellationToken.IsCancellationRequested)
+        {
+            ConnectionRegistry.Shared.Fail(session.Id, "browser-transport-lost", "The browser connection ended unexpectedly.",
+                "Check this device's network connection and reload the browser tab.", exception.ToString());
+        }
         finally
         {
+            await _joinOperation.CancelAndWaitAsync().ConfigureAwait(false);
+            _joinOperation.Dispose();
+            if (CouchCoopMod.IsHeadlessClient) HeadlessConnectionReporter.BrowserClosed();
+            else
+            {
+                if (_headlessManager is not null) await _headlessManager.FinishReportedFailureAsync(session.Id).ConfigureAwait(false);
+                ConnectionRegistry.Shared.Disconnected(session.Id);
+            }
             // Every input admitted before disconnect is an edge the game must observe. The bounded queue applies
             // backpressure to the peer; teardown waits for its single ordered drain instead of discarding it.
             Task inputDrain;
@@ -500,6 +532,238 @@ public sealed class CouchCoopWebSocketConnection
         });
     }
 
+    private bool TryStartJoin(BrowserSessionHandle session, BrowserJoinRequestEnvelope join, CancellationToken cancellationToken)
+        => _joinOperation.TryStart(cancellationToken, token => RunJoinAsync(session, join, token));
+
+    private async Task RunJoinAsync(BrowserSessionHandle session, BrowserJoinRequestEnvelope join, CancellationToken cancellationToken)
+    {
+        var requestId = string.IsNullOrWhiteSpace(join.RequestId) ? Guid.NewGuid().ToString("N") : join.RequestId;
+        _viewerName = join.Name;
+        var connectionAttemptId = ConnectionRegistry.Shared.BeginAttempt(session.Id);
+        ConnectionRegistry.Shared.SetDisplayName(session.Id, join.Name);
+        ConnectionRegistry.Shared.RecordDiagnostic(session.Id, "transport", _isSecure ? "Host WebSocket over TLS" : "Host WebSocket over HTTP");
+        ConnectionRegistry.Shared.RecordDiagnostic(session.Id, "gameVersion", _envelopeFactory.RuntimeHost.Capabilities.GameVersion);
+
+        int? headlessPort = null;
+        bool? directView = null;
+        string? joinRejection = null;
+        // Server-fault text carried to the viewer when the block below throws. Null on every ordinary path.
+        string? joinRejectionDetail = null;
+
+        // An unexpected fault in the join decision below must reach the VIEWER, not just the log. Everything
+        // here — the lobby context read, the spawn, the secure-port resolution — used to run bare inside the
+        // receive loop's own try, whose catch answers with an `action-result`; the mirror client does not read
+        // that message type, so a throw was delivered, discarded, and the join screen spun on "Joining…"
+        // forever with nothing in the host log either. Converting it into `joinRejection` puts it on the one
+        // channel the client already treats as TERMINAL, so any future fault here fails visibly by default.
+        try
+        {
+            if (_headlessManager is null)
+            {
+                // No manager (this process IS a headless client, or the host couldn't resolve its exe):
+                // there is nothing to spawn — the current connection already serves a game stream.
+                directView = true;
+            }
+            else
+            {
+                var ctx = _lobby.DescribeMirrorJoinContext();
+                // Publish who the HOST can name (itself — a SteamID64 on a Steam-hosted session — plus
+                // every remote player) to the durable roster BEFORE any spawn decision below, so the
+                // seat we may be about to launch reads a complete mp_names.json at construction and
+                // every ALREADY-RUNNING seat picks the newcomers up on its next name-sync tick. Without
+                // this a seat can only name the couch slots this host allocated, and renders everyone
+                // else — the host included — as a raw netId.
+                if (ctx.RosterNames is { Count: > 0 } rosterNames)
+                {
+                    _headlessManager.PublishRosterNames(rosterNames);
+                }
+
+                var trimmedName = join.Name?.Trim();
+                // A roster BUTTON tap carries the option's player id, so the seat is known exactly; a
+                // free-text name submit carries none and falls through to name resolution as before.
+                // Only a couch-coop SEAT netId is honoured — the host's own id (netId 1) and a genuine
+                // remote player are outside the guard band and must never be spawned into.
+                ulong? targetNetId = null;
+                if (MirrorSeatNetIds.TryParsePlayerId(join.PlayerId?.Trim(), out var pickedNetId)
+                    && MirrorSeatNetIds.IsMirrorSeat(pickedNetId))
+                {
+                    targetNetId = pickedNetId;
+                }
+
+                if (ctx.IsSingleplayerRun)
+                {
+                    // Rule 1: a true singleplayer run — nothing can join it. Enter directly (host stream).
+                    directView = true;
+                }
+                else if (string.IsNullOrWhiteSpace(trimmedName))
+                {
+                    // No selection: reply screen-only so the client shows the picker/name field. No spawn.
+                }
+                else if (ctx.HostName is not null
+                    && string.Equals(trimmedName, ctx.HostName, StringComparison.OrdinalIgnoreCase))
+                {
+                    // Rule 4: the HOST seat was selected — never spawn; watch the host's own stream.
+                    directView = true;
+                }
+                else if (_envelopeFactory.RefuseSeatJoin(targetNetId) is { } seatRejection)
+                {
+                    // Rule 6: the picked SEAT is not joinable right now (mid-run with no game-connected
+                    // instance, or a lobby zombie awaiting its reap — MirrorSeatDirectory's matrix). The
+                    // picker already renders those rows disabled; enforcing it here too means a stale
+                    // roster, a retried request or a hand-crafted client cannot drive a join the picker
+                    // would not offer — which would spawn an instance the game then refuses, i.e. a join
+                    // that silently fails. Only a seat-targeted tap is judged: a free-text name submit
+                    // carries no netId and still falls through to name resolution below.
+                    joinRejection = seatRejection;
+                }
+                else
+                {
+                    // A non-host seat / new remote player. SPAWN only while the host accepts joins
+                    // (allowNewSlot), else REUSE an already-claimed slot (mid-run reconnect). A brand-new
+                    // name with no spawn window / no claim returns null → rejected below.
+                    //
+                    // A picked SEAT widens that window: a netId that already has a seat in the live run
+                    // or in the loaded save is a RESPAWN of an existing peer, which is exactly what the
+                    // game's netId-gated rejoin accepts (see MirrorJoinContext.MayRejoinNetId). Without
+                    // this, a player who dropped out of a run could see their seat and still not take
+                    // it — the roster filter was only half of that defect.
+                    var isSeatRejoin = targetNetId is ulong wantedSeat && ctx.MayRejoinNetId(wantedSeat);
+                    headlessPort = await _headlessManager.EnsureHeadlessAsync(
+                        session.Id,
+                        trimmedName,
+                        cancellationToken,
+                        allowNewSlot: ctx.SpawnAllowed || isSeatRejoin,
+                        // Name the netId the INSTANT its slot is bound — before the headless process even
+                        // starts, and 20-60s before EnsureHeadlessAsync returns (it waits for the instance
+                        // to ENet-join, preload ~770 assets and serve HTTP). The host builds this player's
+                        // NRemoteLobbyPlayer nameplate ONCE, from PlatformUtil.GetPlayerNameRaw, as soon as
+                        // the headless completes its handshake — so naming only after readiness (what the
+                        // post-readiness call below used to be the ONLY source of) always lost that race
+                        // and left the widget showing GetPlayerNameRaw's fallback: the durable
+                        // mp_names.json roster as this host process read it at ITS start, which can name
+                        // an earlier holder of the netId. The override below wins wherever it exists,
+                        // which is why registering it early — not blanking the roster — is the fix.
+                        onSlotBound: RegisterClientNameAtSlotBind,
+                        // Bind the instance to the PICKED seat's netId rather than letting the allocator
+                        // choose by name. Null for a free-text name submit (no seat yet).
+                        targetNetId: targetNetId).ConfigureAwait(false);
+                    if (headlessPort is int readyPort)
+                    {
+                        // The headless's REAL ENet player IS this browser's player. Name that real netId
+                        // so the host lobby AND the per-viewer mirror show the chosen display name instead
+                        // of the raw netId ("1002"). No synthetic host-local seat is added (that produced
+                        // the old "phantom" second lobby player). Redundant with the slot-bound
+                        // registration above and kept deliberately: it is idempotent, costs one action,
+                        // and re-asserts the name if the early attempt was dropped (e.g. the semantic
+                        // action ran before the peer existed).
+                        _lobby.SetClientName(HeadlessClientManager.NetIdForPort(readyPort), trimmedName);
+                    }
+                    else if (ctx.SpawnAllowed || isSeatRejoin)
+                    {
+                        // Spawn window (or an allowed seat rejoin), but no port: the respawn failed, else
+                        // the pool is full. A seat rejoin is a respawn by definition, so it reports
+                        // "spawn-failed" rather than pretending the name was unknown.
+                        var failure = ConnectionRegistry.Shared.Snapshot().Rows
+                            .FirstOrDefault(row => row.Id == session.Id)?.Issue;
+                        joinRejection = failure is not null || isSeatRejoin || _headlessManager.HasNameClaim(trimmedName)
+                            ? "spawn-failed"
+                            : "no-free-instance";
+                        joinRejectionDetail = failure?.Detail ?? failure?.Summary;
+                    }
+                    else
+                    {
+                        // Not a spawn window (a run is active), not a seat that exists here, and no
+                        // existing claim to reuse (rules 2 & 5).
+                        joinRejection = "not-a-session-player";
+                    }
+                }
+            }
+
+            // TLS viewers must be redirected to the headless instance's SECURE port. The client
+            // builds its redirect URL from the PAGE's scheme (buildHeadlessMirrorWebSocketUrl picks
+            // wss: for an https: page) and this port verbatim, so handing an https page the
+            // plain-HTTP port produces `wss://host:<http-port>` — a socket that cannot complete,
+            // which is how a secure-origin viewer could watch but never take a seat.
+            //
+            // FAIL CLOSED. If the instance has no secure port we refuse the join rather than send
+            // the HTTP one: a redirect the browser will block (mixed content) or hang on is a
+            // silent dead end, whereas a rejection reaches the picker with copy the player can act
+            // on. "spawn-failed" is reused deliberately — it is the one existing code whose
+            // frontend copy ("Couldn't start your game view — please try again.") is both honest
+            // and accurate, since a retry moments later usually succeeds once the certificate has
+            // landed. An unrecognised code would render as "That name is not from a session
+            // player", which would be a lie.
+            if (_isSecure && headlessPort is int insecurePort && joinRejection is null)
+            {
+                var securePort = await HeadlessClientManager
+                    .TryResolveSecurePortAsync(insecurePort, SecurePortResolveTimeout, cancellationToken)
+                    .ConfigureAwait(false);
+
+                if (securePort is int resolved)
+                {
+                    headlessPort = resolved;
+                }
+                else
+                {
+                    headlessPort = null;
+                    joinRejection = "spawn-failed";
+                    Console.Error.WriteLine(
+                        "[couch-coop] secure-origin join refused: headless instance on port "
+                        + $"{insecurePort.ToString(System.Globalization.CultureInfo.InvariantCulture)} reported no secure port.");
+                }
+            }
+        }
+        catch (Exception joinException) when (!cancellationToken.IsCancellationRequested)
+        {
+            // Shutdown is excluded by the filter above: a cancelled token means the socket is going away, which
+            // is not a join failure and has no viewer left to tell.
+            headlessPort = null;
+            directView = null;
+            joinRejection = "join-failed";
+            joinRejectionDetail = "The game could not complete the join. Try again.";
+            ConnectionRegistry.Shared.Fail(session.Id, "launch-exception", "The host could not complete the game launch.",
+                "Retry this connection. If it fails again, copy this report.", joinException.ToString());
+            MessageDiagnostics.Write("join-failed",
+                $"[couch-coop] mirror join failed for '{join.Name}': {joinException}");
+        }
+
+        // A close can arrive just after readiness. Do not narrate or reply for a tab that is
+        // already gone; teardown below owns its slot release.
+        cancellationToken.ThrowIfCancellationRequested();
+
+        if (joinRejection is not null)
+        {
+            ConnectionRegistry.Shared.Fail(session.Id, joinRejection,
+                "The game could not complete the connection.", "Try reconnecting this device.", joinRejectionDetail);
+        }
+        else if (headlessPort is not null || directView == true)
+        {
+            if (directView == true) ConnectionRegistry.Shared.UseShortPath(session.Id);
+            ConnectionRegistry.Shared.Advance(session.Id, ConnectionStage.LoadingView);
+            var expectedAttempt = connectionAttemptId;
+            _ = Task.Run(async () =>
+            {
+                await Task.Delay(TimeSpan.FromSeconds(30)).ConfigureAwait(false);
+                ConnectionRegistry.Shared.ForAttempt(session.Id, expectedAttempt, registry => registry.NoticeSlowView(session.Id));
+            });
+        }
+
+        // V2/V3/V4, from the SAME three-way outcome the reply below carries, so the panel can
+        // never disagree with what the viewer was told.
+        NarrateMirrorJoin(join.Name, headlessPort, directView, joinRejection);
+
+        await SendEnvelopeAsync(await _envelopeFactory.CreateSessionEnvelope(
+            join.Name,
+            requestId,
+            session,
+            headlessPort,
+            directView,
+            joinRejection,
+            joinRejectionDetail,
+            connectionAttemptId,
+            cancellationToken).ConfigureAwait(false)).ConfigureAwait(false);
+    }
+
     private async Task ReceiveLoopAsync(WebSocket socket, BrowserSessionHandle session, CancellationToken cancellationToken)
     {
         var buffer = new byte[8192];
@@ -512,6 +776,9 @@ public sealed class CouchCoopWebSocketConnection
                 result = await socket.ReceiveAsync(buffer, cancellationToken).ConfigureAwait(false);
                 if (result.MessageType == WebSocketMessageType.Close)
                 {
+                    if (!CouchCoopMod.IsHeadlessClient && (result.CloseStatus is null or WebSocketCloseStatus.NormalClosure
+                        or WebSocketCloseStatus.EndpointUnavailable or WebSocketCloseStatus.Empty))
+                        ConnectionRegistry.Shared.TransportClosing(session.Id);
                     await CloseBoundedAsync(socket, WebSocketCloseStatus.NormalClosure, "closed", cancellationToken).ConfigureAwait(false);
                     return;
                 }
@@ -575,202 +842,33 @@ public sealed class CouchCoopWebSocketConnection
                         //    host selected, or this process IS a headless client (serves its own stream).
                         //  - HeadlessMirrorPort: SPAWN or REUSE this player's headless; the client redirects to it.
                         //  - JoinRejection: the name isn't servable → client shows the picker with a message.
-                        var requestId = string.IsNullOrWhiteSpace(join.RequestId) ? Guid.NewGuid().ToString("N") : join.RequestId;
-                        _viewerName = join.Name;
-
-                        int? headlessPort = null;
-                        bool? directView = null;
-                        string? joinRejection = null;
-                        // Server-fault text carried to the viewer when the block below throws. Null on every ordinary path.
-                        string? joinRejectionDetail = null;
-
-                        // An unexpected fault in the join decision below must reach the VIEWER, not just the log. Everything
-                        // here — the lobby context read, the spawn, the secure-port resolution — used to run bare inside the
-                        // receive loop's own try, whose catch answers with an `action-result`; the mirror client does not read
-                        // that message type, so a throw was delivered, discarded, and the join screen spun on "Joining…"
-                        // forever with nothing in the host log either. Converting it into `joinRejection` puts it on the one
-                        // channel the client already treats as TERMINAL, so any future fault here fails visibly by default.
-                        try
+                        if (!TryStartJoin(session, join, cancellationToken))
                         {
-                            if (_headlessManager is null)
-                            {
-                                // No manager (this process IS a headless client, or the host couldn't resolve its exe):
-                                // there is nothing to spawn — the current connection already serves a game stream.
-                                directView = true;
-                            }
-                            else
-                            {
-                                var ctx = _lobby.DescribeMirrorJoinContext();
-                                // Publish who the HOST can name (itself — a SteamID64 on a Steam-hosted session — plus
-                                // every remote player) to the durable roster BEFORE any spawn decision below, so the
-                                // seat we may be about to launch reads a complete mp_names.json at construction and
-                                // every ALREADY-RUNNING seat picks the newcomers up on its next name-sync tick. Without
-                                // this a seat can only name the couch slots this host allocated, and renders everyone
-                                // else — the host included — as a raw netId.
-                                if (ctx.RosterNames is { Count: > 0 } rosterNames)
-                                {
-                                    _headlessManager.PublishRosterNames(rosterNames);
-                                }
-
-                                var trimmedName = join.Name?.Trim();
-                                // A roster BUTTON tap carries the option's player id, so the seat is known exactly; a
-                                // free-text name submit carries none and falls through to name resolution as before.
-                                // Only a couch-coop SEAT netId is honoured — the host's own id (netId 1) and a genuine
-                                // remote player are outside the guard band and must never be spawned into.
-                                ulong? targetNetId = null;
-                                if (MirrorSeatNetIds.TryParsePlayerId(join.PlayerId?.Trim(), out var pickedNetId)
-                                    && MirrorSeatNetIds.IsMirrorSeat(pickedNetId))
-                                {
-                                    targetNetId = pickedNetId;
-                                }
-
-                                if (ctx.IsSingleplayerRun)
-                                {
-                                    // Rule 1: a true singleplayer run — nothing can join it. Enter directly (host stream).
-                                    directView = true;
-                                }
-                                else if (string.IsNullOrWhiteSpace(trimmedName))
-                                {
-                                    // No selection: reply screen-only so the client shows the picker/name field. No spawn.
-                                }
-                                else if (ctx.HostName is not null
-                                    && string.Equals(trimmedName, ctx.HostName, StringComparison.OrdinalIgnoreCase))
-                                {
-                                    // Rule 4: the HOST seat was selected — never spawn; watch the host's own stream.
-                                    directView = true;
-                                }
-                                else if (_envelopeFactory.RefuseSeatJoin(targetNetId) is { } seatRejection)
-                                {
-                                    // Rule 6: the picked SEAT is not joinable right now (mid-run with no game-connected
-                                    // instance, or a lobby zombie awaiting its reap — MirrorSeatDirectory's matrix). The
-                                    // picker already renders those rows disabled; enforcing it here too means a stale
-                                    // roster, a retried request or a hand-crafted client cannot drive a join the picker
-                                    // would not offer — which would spawn an instance the game then refuses, i.e. a join
-                                    // that silently fails. Only a seat-targeted tap is judged: a free-text name submit
-                                    // carries no netId and still falls through to name resolution below.
-                                    joinRejection = seatRejection;
-                                }
-                                else
-                                {
-                                    // A non-host seat / new remote player. SPAWN only while the host accepts joins
-                                    // (allowNewSlot), else REUSE an already-claimed slot (mid-run reconnect). A brand-new
-                                    // name with no spawn window / no claim returns null → rejected below.
-                                    //
-                                    // A picked SEAT widens that window: a netId that already has a seat in the live run
-                                    // or in the loaded save is a RESPAWN of an existing peer, which is exactly what the
-                                    // game's netId-gated rejoin accepts (see MirrorJoinContext.MayRejoinNetId). Without
-                                    // this, a player who dropped out of a run could see their seat and still not take
-                                    // it — the roster filter was only half of that defect.
-                                    var isSeatRejoin = targetNetId is ulong wantedSeat && ctx.MayRejoinNetId(wantedSeat);
-                                    headlessPort = await _headlessManager.EnsureHeadlessAsync(
-                                        session.Id,
-                                        trimmedName,
-                                        cancellationToken,
-                                        allowNewSlot: ctx.SpawnAllowed || isSeatRejoin,
-                                        // Name the netId the INSTANT its slot is bound — before the headless process even
-                                        // starts, and 20-60s before EnsureHeadlessAsync returns (it waits for the instance
-                                        // to ENet-join, preload ~770 assets and serve HTTP). The host builds this player's
-                                        // NRemoteLobbyPlayer nameplate ONCE, from PlatformUtil.GetPlayerNameRaw, as soon as
-                                        // the headless completes its handshake — so naming only after readiness (what the
-                                        // post-readiness call below used to be the ONLY source of) always lost that race
-                                        // and left the widget showing GetPlayerNameRaw's fallback: the durable
-                                        // mp_names.json roster as this host process read it at ITS start, which can name
-                                        // an earlier holder of the netId. The override below wins wherever it exists,
-                                        // which is why registering it early — not blanking the roster — is the fix.
-                                        onSlotBound: RegisterClientNameAtSlotBind,
-                                        // Bind the instance to the PICKED seat's netId rather than letting the allocator
-                                        // choose by name. Null for a free-text name submit (no seat yet).
-                                        targetNetId: targetNetId).ConfigureAwait(false);
-                                    if (headlessPort is int readyPort)
-                                    {
-                                        // The headless's REAL ENet player IS this browser's player. Name that real netId
-                                        // so the host lobby AND the per-viewer mirror show the chosen display name instead
-                                        // of the raw netId ("1002"). No synthetic host-local seat is added (that produced
-                                        // the old "phantom" second lobby player). Redundant with the slot-bound
-                                        // registration above and kept deliberately: it is idempotent, costs one action,
-                                        // and re-asserts the name if the early attempt was dropped (e.g. the semantic
-                                        // action ran before the peer existed).
-                                        _lobby.SetClientName(HeadlessClientManager.NetIdForPort(readyPort), trimmedName);
-                                    }
-                                    else if (ctx.SpawnAllowed || isSeatRejoin)
-                                    {
-                                        // Spawn window (or an allowed seat rejoin), but no port: the respawn failed, else
-                                        // the pool is full. A seat rejoin is a respawn by definition, so it reports
-                                        // "spawn-failed" rather than pretending the name was unknown.
-                                        joinRejection = isSeatRejoin || _headlessManager.HasNameClaim(trimmedName)
-                                            ? "spawn-failed"
-                                            : "no-free-instance";
-                                    }
-                                    else
-                                    {
-                                        // Not a spawn window (a run is active), not a seat that exists here, and no
-                                        // existing claim to reuse (rules 2 & 5).
-                                        joinRejection = "not-a-session-player";
-                                    }
-                                }
-                            }
-
-                            // TLS viewers must be redirected to the headless instance's SECURE port. The client
-                            // builds its redirect URL from the PAGE's scheme (buildHeadlessMirrorWebSocketUrl picks
-                            // wss: for an https: page) and this port verbatim, so handing an https page the
-                            // plain-HTTP port produces `wss://host:<http-port>` — a socket that cannot complete,
-                            // which is how a secure-origin viewer could watch but never take a seat.
-                            //
-                            // FAIL CLOSED. If the instance has no secure port we refuse the join rather than send
-                            // the HTTP one: a redirect the browser will block (mixed content) or hang on is a
-                            // silent dead end, whereas a rejection reaches the picker with copy the player can act
-                            // on. "spawn-failed" is reused deliberately — it is the one existing code whose
-                            // frontend copy ("Couldn't start your game view — please try again.") is both honest
-                            // and accurate, since a retry moments later usually succeeds once the certificate has
-                            // landed. An unrecognised code would render as "That name is not from a session
-                            // player", which would be a lie.
-                            if (_isSecure && headlessPort is int insecurePort && joinRejection is null)
-                            {
-                                var securePort = await HeadlessClientManager
-                                    .TryResolveSecurePortAsync(insecurePort, SecurePortResolveTimeout, cancellationToken)
-                                    .ConfigureAwait(false);
-
-                                if (securePort is int resolved)
-                                {
-                                    headlessPort = resolved;
-                                }
-                                else
-                                {
-                                    headlessPort = null;
-                                    joinRejection = "spawn-failed";
-                                    Console.Error.WriteLine(
-                                        "[couch-coop] secure-origin join refused: headless instance on port "
-                                        + $"{insecurePort.ToString(System.Globalization.CultureInfo.InvariantCulture)} reported no secure port.");
-                                }
-                            }
+                            var requestId = string.IsNullOrWhiteSpace(join.RequestId) ? null : join.RequestId;
+                            await SendResultAsync(InvalidMessage(requestId, "A join is already in progress.")).ConfigureAwait(false);
                         }
-                        catch (Exception joinException) when (!cancellationToken.IsCancellationRequested)
-                        {
-                            // Shutdown is excluded by the filter above: a cancelled token means the socket is going away, which
-                            // is not a join failure and has no viewer left to tell.
-                            headlessPort = null;
-                            directView = null;
-                            joinRejection = "join-failed";
-                            joinRejectionDetail = "The game could not complete the join. Try again.";
-                            MessageDiagnostics.Write("join-failed",
-                                $"[couch-coop] mirror join failed for '{join.Name}': {joinException}");
-                        }
-
-                        // V2/V3/V4, from the SAME three-way outcome the reply below carries, so the panel can
-                        // never disagree with what the viewer was told.
-                        NarrateMirrorJoin(join.Name, headlessPort, directView, joinRejection);
-
-                        await SendEnvelopeAsync(await _envelopeFactory.CreateSessionEnvelope(
-                            join.Name,
-                            requestId,
-                            session,
-                            headlessPort,
-                            directView,
-                            joinRejection,
-                            joinRejectionDetail,
-                            cancellationToken).ConfigureAwait(false)).ConfigureAwait(false);
                     }
 
+                    continue;
+                }
+
+                if (string.Equals(type, "client-frame-presented", StringComparison.Ordinal))
+                {
+                    var attemptId = document.RootElement.TryGetProperty("attemptId", out var attempt)
+                        && attempt.ValueKind == JsonValueKind.String ? attempt.GetString() : null;
+                    ConnectionRegistry.Shared.Presented(session.Id, attemptId);
+                    continue;
+                }
+
+                if (string.Equals(type, "client-view-error", StringComparison.Ordinal))
+                {
+                    var attemptId = document.RootElement.TryGetProperty("attemptId", out var attempt)
+                        && attempt.ValueKind == JsonValueKind.String ? attempt.GetString() : null;
+                    var code = document.RootElement.TryGetProperty("code", out var codeElement)
+                        && codeElement.ValueKind == JsonValueKind.String ? codeElement.GetString() : null;
+                    var detail = document.RootElement.TryGetProperty("detail", out var detailElement)
+                        && detailElement.ValueKind == JsonValueKind.String ? detailElement.GetString() : null;
+                    ConnectionRegistry.Shared.ClientViewError(session.Id, attemptId, code, detail);
                     continue;
                 }
 
@@ -790,6 +888,19 @@ public sealed class CouchCoopWebSocketConnection
                     // A malformed/absent `on` is read as false: a client that asks to watch says so explicitly.
                     var on = document.RootElement.TryGetProperty("on", out var onElement)
                         && onElement.ValueKind == JsonValueKind.True;
+                    if (on && !CouchCoopMod.IsHeadlessClient && ConnectionRegistry.Shared.AttemptId(session.Id) is null)
+                    {
+                        var attemptId = ConnectionRegistry.Shared.BeginAttempt(session.Id);
+                        ConnectionRegistry.Shared.ConfigureView(session.Id, requiresChild: false);
+                        ConnectionRegistry.Shared.Advance(session.Id, ConnectionStage.LoadingView);
+                        _ = Task.Run(async () =>
+                        {
+                            await Task.Delay(TimeSpan.FromSeconds(30)).ConfigureAwait(false);
+                            ConnectionRegistry.Shared.ForAttempt(session.Id, attemptId, registry => registry.NoticeSlowView(session.Id));
+                        });
+                        await SendEnvelopeAsync(await _envelopeFactory.CreateSessionEnvelope(_viewerName, "watch", session,
+                            directView: true, connectionAttemptId: attemptId, cancellationToken: cancellationToken).ConfigureAwait(false)).ConfigureAwait(false);
+                    }
                     await SetSceneStreamingAsync(on).ConfigureAwait(false);
                     continue;
                 }
@@ -850,6 +961,7 @@ public sealed class CouchCoopWebSocketConnection
 
                 if (string.Equals(type, "input", StringComparison.Ordinal))
                 {
+                    if (!ConnectionInputAvailability.IsAvailable) continue;
                     if (memory.Length > MaxInputMessageBytes)
                     {
                         await SendResultAsync(new BrowserActionResultEnvelope(
@@ -876,6 +988,7 @@ public sealed class CouchCoopWebSocketConnection
                     continue;
                 }
 
+                if (!ConnectionInputAvailability.IsAvailable) continue;
                 var action = document.Deserialize<BrowserActionRequestEnvelope>(BrowserJson.Options);
                 BrowserActionResultEnvelope response;
                 if (action is null || !string.Equals(action.Type, "action", StringComparison.Ordinal))
@@ -1113,6 +1226,7 @@ public sealed class CouchCoopWebSocketConnection
             {
                 // The slow part (game-thread injection) runs here, OFF the receive loop. Fire-and-forget on
                 // success; surface an injection failure as an input-result so a controller can diagnose.
+                if (!ConnectionInputAvailability.IsAvailable) continue;
                 var inputResult = _inputExecutor.Execute(input);
                 if (inputResult is not null)
                 {

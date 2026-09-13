@@ -10,6 +10,12 @@ file.
 | spirectl | revision pinned in `release-dependencies.json` | Apache-2.0 (including NOTICE) |
 | godot-scene-web | revision pinned in `release-dependencies.json` | MIT |
 | QRCoder | 1.6.0 | MIT |
+| DeviceDetector.NET | 6.5.2 | Apache-2.0 |
+| LiteDB | 5.0.21 | MIT |
+| Microsoft.Extensions.DependencyInjection.Abstractions | 10.0.10 | MIT |
+| Microsoft.Extensions.Logging.Abstractions | 10.0.10 | MIT |
+| System.Diagnostics.DiagnosticSource | 10.0.10 | MIT |
+| YamlDotNet | 18.1.0 | MIT |
 | Vue and `@vue/*` runtime packages | versions pinned in `frontend/package-lock.json` | MIT |
 | vue-i18n and `@intlify/*` runtime packages | versions pinned in `frontend/package-lock.json` | MIT |
 | Other npm production dependencies | versions pinned in `frontend/package-lock.json` | license shown in the lockfile and copied into the release license bundle |

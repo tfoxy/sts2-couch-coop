@@ -64,7 +64,8 @@ public sealed record SessionEnvelope(
     string AssetCacheToken,
     string HostName,
     bool ScrollAction,
-    bool RewardAction)
+    bool RewardAction,
+    string? ConnectionAttemptId = null)
 {
     // Mirror-view screen discriminators (TS MirrorScreenKind).
     private static readonly string[] MirrorScreenKinds =
@@ -140,7 +141,8 @@ public sealed record SessionEnvelope(
             assetCacheToken,
             hostName,
             ScrollAction: true,
-            RewardAction: true);
+            RewardAction: true,
+            ConnectionAttemptId: AsStringOrNull(Get(root, "connectionAttemptId")));
     }
 
     private static SessionAssignment? NormalizeSession(JsonElement? raw)

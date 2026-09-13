@@ -147,7 +147,8 @@ public static class JoinModel
             return false;
         }
 
-        return ComputeMirrorJoinMode(info, pendingJoinName, mirrorMode) == MirrorJoinMode.TitleOnly;
+        // A name-based roster assignment is not a view grant.
+        return mirrorMode is not null and not "mp-character-select" and not "mp-load-game" and not "mp-run";
     }
 
     // ---- roster filter -------------------------------------------------------------------------------------------

@@ -5,6 +5,7 @@ using System.Net.Sockets;
 using System.Text;
 using System.Text.Json;
 using System.Text.Json.Nodes;
+using CouchCoop.Mod.Connections;
 using CouchCoop.Mod.Diagnostics;
 using CouchCoop.Mod.Contracts;
 using CouchCoop.Mod.Protocol;
@@ -110,7 +111,7 @@ public sealed class CouchCoopBrowserServer(
 
         var runtimeHost = envelopeFactory.RuntimeHost;
         return HeadlessClientManager.TryCreate(
-            netId => new CouchCoopLobbyParticipation(runtimeHost).DisconnectClient(netId),
+            netId => new CouchCoopLobbyParticipation(runtimeHost).DisconnectClient(netId, requireSuccess: true),
             // How many seats the live lobby has room for — the stock four-player cap unless a multiplayer
             // limit mod raised it.
             () => new CouchCoopLobbyParticipation(runtimeHost).MaxCouchSeats());
@@ -240,10 +241,10 @@ public sealed class CouchCoopBrowserServer(
                 listener.Start();
                 _listener = listener;
                 _stop = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
-                BaseUri = new Uri($"http://{_bindAddress}:{port}/");
+                BaseUri = new Uri($"http://{_bindAddress}:{((IPEndPoint)listener.LocalEndpoint).Port}/");
                 // …and say which port we actually WALKED TO. `preferredPort` is a preference — the loop above is
                 // the whole reason — so a launcher that only knows the instance name has no other way to find us.
-                BrowserPortFile.Publish(port);
+                BrowserPortFile.Publish(BaseUri.Port);
                 _acceptLoop = AcceptLoopAsync(_stop.Token);
                 return BaseUri;
             }
@@ -997,7 +998,7 @@ public sealed class CouchCoopBrowserServer(
         // must not fail the connection.
         try { client.NoDelay = true; } catch (SocketException) { } catch (ObjectDisposedException) { }
         using var stream = client.GetStream();
-        await ServeCoreAsync(stream, isSecure: false, lease, cancellationToken).ConfigureAwait(false);
+        await ServeCoreAsync(stream, isSecure: false, lease, (client.Client.RemoteEndPoint as IPEndPoint)?.Address ?? IPAddress.None, cancellationToken).ConfigureAwait(false);
     }
 
     /// <summary>
@@ -1030,13 +1031,14 @@ public sealed class CouchCoopBrowserServer(
     {
         using var lease = _admission.TryAcquireHttp(remoteAddress);
         if (lease is null) return;
-        await ServeCoreAsync(stream, isSecure, lease, cancellationToken).ConfigureAwait(false);
+        await ServeCoreAsync(stream, isSecure, lease, remoteAddress, cancellationToken).ConfigureAwait(false);
     }
 
     private async Task ServeCoreAsync(
         Stream stream,
         bool isSecure,
         NetworkAdmissionLimiter.Lease httpLease,
+        IPAddress remoteAddress,
         CancellationToken cancellationToken)
     {
         ArgumentNullException.ThrowIfNull(stream);
@@ -1059,7 +1061,7 @@ public sealed class CouchCoopBrowserServer(
 
             using (webSocketLease)
             {
-                await HandleRequestAsync(stream, request, isSecure, cancellationToken).ConfigureAwait(false);
+                await HandleRequestAsync(stream, request, isSecure, remoteAddress, cancellationToken).ConfigureAwait(false);
             }
         }
         catch (HttpHeaderLimitException)
@@ -1111,6 +1113,7 @@ public sealed class CouchCoopBrowserServer(
         Stream stream,
         CouchCoopHttpRequest? request,
         bool isSecure,
+        IPAddress remoteAddress,
         CancellationToken cancellationToken)
     {
         if (request is null)
@@ -1136,6 +1139,12 @@ public sealed class CouchCoopBrowserServer(
                     ["Access-Control-Max-Age"] = "600",
                 },
                 cancellationToken).ConfigureAwait(false);
+            return;
+        }
+
+        if (string.Equals(request.Path, "/internal/client-status", StringComparison.Ordinal))
+        {
+            await HandleHeadlessClientStatusAsync(stream, request, remoteAddress, cancellationToken).ConfigureAwait(false);
             return;
         }
 
@@ -1711,6 +1720,93 @@ public sealed class CouchCoopBrowserServer(
         }
 
         await HttpResponseWriter.WriteBytesAsync(stream, 200, "OK", file.Bytes, file.ContentType, cancellationToken: cancellationToken).ConfigureAwait(false);
+    }
+
+    private static async Task HandleHeadlessClientStatusAsync(
+        Stream stream,
+        CouchCoopHttpRequest request,
+        IPAddress remoteAddress,
+        CancellationToken cancellationToken)
+    {
+        if (!string.Equals(request.Method, "POST", StringComparison.OrdinalIgnoreCase)
+            || !IPAddress.IsLoopback(remoteAddress))
+        {
+            await HttpResponseWriter.WriteJsonErrorAsync(stream, HttpStatusCode.NotFound, "not-found", "Route was not found.", cancellationToken).ConfigureAwait(false);
+            return;
+        }
+
+        if (!TryBearer(request.Header("Authorization"), out var token)
+            || !long.TryParse(request.Header("X-CouchCoop-Generation"), out var generation))
+        {
+            await HttpResponseWriter.WriteJsonErrorAsync(stream, HttpStatusCode.Unauthorized, "client-status-auth", "Client status authentication failed.", cancellationToken).ConfigureAwait(false);
+            return;
+        }
+
+        if (!int.TryParse(request.Header("Content-Length"), out var length) || length < 0)
+        {
+            await HttpResponseWriter.WriteJsonErrorAsync(stream, HttpStatusCode.BadRequest, "client-status-body", "A valid Content-Length is required.", cancellationToken).ConfigureAwait(false);
+            return;
+        }
+        if (length > 16 * 1024)
+        {
+            await HttpResponseWriter.WriteJsonErrorAsync(stream, HttpStatusCode.RequestEntityTooLarge, "client-status-body", "Client status body exceeds 16 KiB.", cancellationToken).ConfigureAwait(false);
+            return;
+        }
+        using var deadline = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
+        deadline.CancelAfter(TimeSpan.FromSeconds(2));
+        string? body;
+        try { body = await ReadBoundedBodyAsync(stream, length, deadline.Token).ConfigureAwait(false); }
+        catch (OperationCanceledException) when (!cancellationToken.IsCancellationRequested)
+        {
+            await HttpResponseWriter.WriteJsonErrorAsync(stream, HttpStatusCode.RequestTimeout, "client-status-timeout", "Client status body timed out.", cancellationToken).ConfigureAwait(false);
+            return;
+        }
+        if (body is null)
+        {
+            await HttpResponseWriter.WriteJsonErrorAsync(stream, HttpStatusCode.RequestEntityTooLarge, "client-status-body", "Client status body is invalid.", cancellationToken).ConfigureAwait(false);
+            return;
+        }
+
+        HeadlessConnectionStatus? status;
+        try { status = JsonSerializer.Deserialize<HeadlessConnectionStatus>(body); }
+        catch (JsonException) { status = null; }
+        if (status is null || status.ConnectedChildBrowserCount < 0)
+        {
+            await HttpResponseWriter.WriteJsonErrorAsync(stream, HttpStatusCode.BadRequest, "client-status-json", "Client status payload is invalid.", cancellationToken).ConfigureAwait(false);
+            return;
+        }
+
+        var observed = HeadlessConnectionControl.Shared.Observe(token, generation, status);
+        if (!observed.Accepted)
+        {
+            await HttpResponseWriter.WriteJsonErrorAsync(stream, HttpStatusCode.Unauthorized, "client-status-auth", "Client status authentication failed.", cancellationToken).ConfigureAwait(false);
+            return;
+        }
+
+        await HttpResponseWriter.WriteJsonAsync(stream, HttpStatusCode.OK, new { shutdown = observed.ShutdownRequested }, cancellationToken).ConfigureAwait(false);
+    }
+
+    private static bool TryBearer(string? authorization, out string token)
+    {
+        token = string.Empty;
+        const string prefix = "Bearer ";
+        if (authorization is null || !authorization.StartsWith(prefix, StringComparison.OrdinalIgnoreCase)) return false;
+        token = authorization[prefix.Length..].Trim();
+        return token.Length is > 0 and <= 512;
+    }
+
+    private static async Task<string?> ReadBoundedBodyAsync(Stream stream, int length, CancellationToken cancellationToken)
+    {
+        var bytes = new byte[length];
+        var offset = 0;
+        while (offset < length)
+        {
+            var read = await stream.ReadAsync(bytes.AsMemory(offset), cancellationToken).ConfigureAwait(false);
+            if (read == 0) return null;
+            offset += read;
+        }
+
+        return Encoding.UTF8.GetString(bytes);
     }
 
     /// <summary>

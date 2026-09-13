@@ -21,6 +21,7 @@ public sealed class HotReloadableBrowserServerHost : IHotServerHost, IAsyncDispo
     private ICouchCoopHotGeneration? _generation;
     private int _generationNumber;
     private SecureBrowserListener? _secureListener;
+    private CouchCoop.Mod.Connections.ConnectionHostingTracker? _connectionHosting;
     public NetworkAdmissionLimiter Admission { get; }
 
     public HotReloadableBrowserServerHost(
@@ -40,9 +41,11 @@ public sealed class HotReloadableBrowserServerHost : IHotServerHost, IAsyncDispo
         var lobby = new CouchCoopLobbyParticipation(_runtime);
         _headlessManager = CouchCoopMod.IsHeadlessClient
             ? null
-            : HeadlessClientManager.TryCreate(lobby.DisconnectClient, lobby.MaxCouchSeats);
+            : HeadlessClientManager.TryCreate(netId => lobby.DisconnectClient(netId, requireSuccess: true), lobby.MaxCouchSeats);
+        _headlessManager?.ConfigureConnectionMonitoring(lobby.IsGamePlayerConnected, () => BaseUri?.Port ?? 0);
         Admission = new NetworkAdmissionLimiter(() => new CouchCoopLobbyParticipation(_runtime).MaxLobbyPlayers());
         _generation = new BuiltInBrowserServerGeneration(this);
+        if (!IsHeadlessClient) _connectionHosting = new(_runtime, _headlessManager);
     }
 
     public object RuntimeHost => _runtime;
@@ -180,11 +183,11 @@ public sealed class HotReloadableBrowserServerHost : IHotServerHost, IAsyncDispo
                 listener.Start();
                 _listener = listener;
                 _stop = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
-                BaseUri = new Uri($"http://{_bindAddress}:{port}/");
+                BaseUri = new Uri($"http://{_bindAddress}:{((IPEndPoint)listener.LocalEndpoint).Port}/");
                 // …and say which port we actually WALKED TO. THIS is the listener a real game binds — the twin in
                 // `CouchCoopBrowserServer.StartAsync` serves the standalone/test path — so publishing only there
                 // left the file missing on exactly the process anything outside would want to find.
-                BrowserPortFile.Publish(port);
+                BrowserPortFile.Publish(BaseUri.Port);
                 _acceptLoop = AcceptLoopAsync(_stop.Token);
                 return BaseUri;
             }
@@ -255,6 +258,8 @@ public sealed class HotReloadableBrowserServerHost : IHotServerHost, IAsyncDispo
 
     public async ValueTask DisposeAsync()
     {
+        _connectionHosting?.Dispose();
+        _connectionHosting = null;
         if (_secureListener is not null)
         {
             await _secureListener.DisposeAsync().ConfigureAwait(false);

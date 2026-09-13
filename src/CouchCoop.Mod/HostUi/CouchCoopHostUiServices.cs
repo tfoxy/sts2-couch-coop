@@ -122,6 +122,8 @@ public sealed class CouchCoopHostUiServices : IAsyncDisposable
         }
         catch (Exception exception) when (exception is SocketException or InvalidOperationException or IOException or UnauthorizedAccessException)
         {
+            CouchCoop.Mod.Connections.ConnectionRegistry.Shared.ReportHostIssue("host-service-failed",
+                "The browser connection service could not start.", "Restart the game. If the service still fails, copy this report.", exception.ToString());
             AddDiagnostic(BrowserServerUnavailableCode, "The browser server could not be started.", exception.GetType().Name);
             // B3: THE event this whole panel exists for. It is also why the panel's gate is IsHostLobby and
             // not ShouldShow — a host with no listener has no QR either, and would otherwise see nothing at

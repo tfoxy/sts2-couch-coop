@@ -96,6 +96,18 @@ internal static class HeadlessDisconnectExitPatch
         }
     }
 
+    internal static void RequestExit(string reason)
+    {
+        CouchCoop.Mod.Connections.ConnectionInputAvailability.Stop();
+        var sequence = Volatile.Read(ref _sequence);
+        if (sequence is null)
+        {
+            return;
+        }
+
+        _ = Task.Run(() => sequence.StartAsync(string.IsNullOrWhiteSpace(reason) ? "connection-ended" : reason));
+    }
+
     // Production wiring for the sequence: the last gasp goes out over THIS instance's own browser server (the
     // viewers attached to the headless), the clean quit is a deferred SceneTree.Quit(), and the backstop is a
     // SIGKILL. Kept here rather than in the sequence so the sequence stays game-free and testable.
@@ -103,8 +115,11 @@ internal static class HeadlessDisconnectExitPatch
     // machine-readable code both clients branch on (the viewer's copy is client-side, and a raw NetError name
     // would be meaningless to a player anyway).
     private static HeadlessDisconnectExitSequence CreateSequence() => new(
-        notifyViewers: static (_, cancellationToken) =>
-            CouchCoopMod.CloseBrowserConnectionsAsync(BrowserServerReloadReasons.HeadlessHostDisconnected, cancellationToken),
+        notifyViewers: static async (_, cancellationToken) =>
+        {
+            await HeadlessConnectionReporter.FlushAsync(cancellationToken).ConfigureAwait(false);
+            await CouchCoopMod.CloseBrowserConnectionsAsync(BrowserServerReloadReasons.HeadlessHostDisconnected, cancellationToken).ConfigureAwait(false);
+        },
         quit: QuitGameDeferred);
 
     // Ask Godot to shut down on ITS OWN main loop. CallDeferred (not a direct Quit()) because the disconnect can
@@ -166,15 +181,7 @@ internal static class HeadlessDisconnectExitPatch
     // never blocked by the last-gasp send; the sequence is one-shot, so repeat notifications are free.
     private static void PostfixOnDisconnectedFromHost(NetErrorInfo info)
     {
-        var sequence = _sequence;
-        if (sequence is null)
-        {
-            return;
-        }
-
-        // NetErrorInfo.ToString() is the game's own debug rendering (reason + self-initiated flag).
-        var reason = Describe(info);
-        _ = Task.Run(() => sequence.StartAsync(reason));
+        RequestExit(Describe(info));
     }
 
     private static string Describe(NetErrorInfo info)

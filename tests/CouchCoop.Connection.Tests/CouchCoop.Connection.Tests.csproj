@@ -1,0 +1,51 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup>
+    <OutputType>Exe</OutputType>
+    <TargetFramework>net9.0</TargetFramework>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <Nullable>enable</Nullable>
+    <LangVersion>latest</LangVersion>
+    <RollForward>Major</RollForward>
+    <DisableTransitiveProjectReferences>true</DisableTransitiveProjectReferences>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <ProjectReference Include="../../src/CouchCoop.Mod/CouchCoop.Mod.csproj" />
+    <ProjectReference Include="../../src/CouchCoop.Mod.Contracts/CouchCoop.Mod.Contracts.csproj" />
+    <Reference Include="CouchCoop.Spirectl">
+      <HintPath>../../src/CouchCoop.Mod/bin/$(Configuration)/net9.0/CouchCoop.Spirectl.dll</HintPath>
+      <Private>true</Private>
+    </Reference>
+    <Reference Include="sts2">
+      <HintPath>$(Sts2AssembliesDir)/sts2.dll</HintPath>
+      <Private>true</Private>
+    </Reference>
+    <Reference Include="GodotSharp">
+      <HintPath>$(Sts2AssembliesDir)/GodotSharp.dll</HintPath>
+      <Private>true</Private>
+    </Reference>
+    <Reference Include="0Harmony">
+      <HintPath>$(Sts2AssembliesDir)/0Harmony.dll</HintPath>
+      <Private>true</Private>
+    </Reference>
+  </ItemGroup>
+
+  <ItemGroup>
+    <Compile Include="../CouchCoop.Mod.Tests/WebSocketJoinLifecycleTests.cs" Link="WebSocketJoinLifecycleTests.cs" />
+    <Compile Include="../CouchCoop.Mod.Tests/ConnectionRegistryTests.cs" Link="ConnectionRegistryTests.cs" />
+    <Compile Include="../CouchCoop.Mod.Tests/ConnectionDeviceLabelTests.cs" Link="ConnectionDeviceLabelTests.cs" />
+    <Compile Include="../CouchCoop.Mod.Tests/ConnectionReportFormatterTests.cs" Link="ConnectionReportFormatterTests.cs" />
+    <Compile Include="../CouchCoop.Mod.Tests/ConnectionAttemptLogsTests.cs" Link="ConnectionAttemptLogsTests.cs" />
+    <Compile Include="../CouchCoop.Mod.Tests/ConnectionControlTests.cs" Link="ConnectionControlTests.cs" />
+    <Compile Include="../CouchCoop.Mod.Tests/ConnectionControlRouteTests.cs" Link="ConnectionControlRouteTests.cs" />
+    <Compile Include="../CouchCoop.Mod.Tests/ConnectionStatusTests.cs" Link="ConnectionStatusTests.cs" />
+    <Compile Include="../CouchCoop.Mod.Tests/ConnectionUiTests.cs" Link="ConnectionUiTests.cs" />
+    <Compile Include="../CouchCoop.Mod.Tests/HeadlessDisconnectExitTests.cs" Link="HeadlessDisconnectExitTests.cs" />
+    <Compile Include="../CouchCoop.Mod.Tests/HeadlessClientManagerTests.cs" Link="HeadlessClientManagerTests.cs" />
+    <Compile Include="../CouchCoop.Mod.Tests/HeadlessConnectionLifecycleTests.cs" Link="HeadlessConnectionLifecycleTests.cs" />
+    <Compile Include="../CouchCoop.Mod.Tests/CouchCoopButtonActivationTests.cs" Link="CouchCoopButtonActivationTests.cs" />
+    <Compile Include="../CouchCoop.Mod.Tests/CouchCoopModalFocusTests.cs" Link="CouchCoopModalFocusTests.cs" />
+    <Compile Include="../CouchCoop.Mod.Tests/CouchCoopModalFocusChainTests.cs" Link="CouchCoopModalFocusChainTests.cs" />
+    <Compile Include="../CouchCoop.Mod.Tests/CouchCoopLocalizationTests.cs" Link="CouchCoopLocalizationTests.cs" />
+  </ItemGroup>
+</Project>

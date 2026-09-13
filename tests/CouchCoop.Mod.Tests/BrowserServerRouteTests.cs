@@ -6,6 +6,7 @@ using System.Text.Json;
 using CouchCoop.Mod;
 using CouchCoop.Mod.Activity;
 using CouchCoop.Mod.Contracts;
+using CouchCoop.Mod.Tests;
 using CouchCoop.Mod.Diagnostics;
 using CouchCoop.Mod.HostUi;
 using CouchCoop.Mod.Loader;
@@ -99,6 +100,18 @@ if (args is ["seats", ..])
     // The suite narrates every seat it starts, so say plainly that it finished — an exit code is easy to lose
     // in that scroll, which is the same reason host-guards prints its own line.
     Console.WriteLine("seats: ok");
+    return;
+}
+
+if (args is ["connections", ..])
+{
+    ConnectionRegistryTests.Run();
+    ConnectionDeviceLabelTests.Run();
+    await ConnectionReportFormatterTests.Run();
+    await ConnectionAttemptLogsTests.Run();
+    await ConnectionControlTests.RunAsync();
+    await HeadlessConnectionLifecycleTests.RunAsync();
+    Console.WriteLine("connections: ok");
     return;
 }
 
@@ -277,6 +290,12 @@ HeadlessParticleFinishNudgeTests.Run();
 // WS-8: headless clean-exit on a permanent host disconnect — Harmony target resolution (incl. the NErrorPopup.Create
 // overload discrimination) + the exit sequence's arm-backstop-first / one-shot contract.
 await HeadlessDisconnectExitTests.RunAsync();
+ConnectionRegistryTests.Run();
+ConnectionDeviceLabelTests.Run();
+await ConnectionReportFormatterTests.Run();
+await ConnectionAttemptLogsTests.Run();
+await ConnectionControlTests.RunAsync();
+    await HeadlessConnectionLifecycleTests.RunAsync();
 InputMappingTests.Run();
 SceneDeltaCoalescerTests.Run();
 CouchCoopSceneObserverTests.Run();

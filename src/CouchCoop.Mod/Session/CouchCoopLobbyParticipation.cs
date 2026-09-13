@@ -83,10 +83,13 @@ public sealed class CouchCoopLobbyParticipation(CouchCoopRuntimeHost runtimeHost
     /// headless leaves its peer registered, holding the netId, so the next headless reusing it fails its ENet
     /// join). No-op without the semantic-actions capability.
     /// </summary>
-    public void DisconnectClient(ulong netId)
+    public void DisconnectClient(ulong netId) => DisconnectClient(netId, requireSuccess: false);
+
+    public void DisconnectClient(ulong netId, bool requireSuccess)
     {
         if (!_runtimeHost.HasCapability(CouchCoopRuntimeHost.SemanticActionsCapability))
         {
+            if (requireSuccess) throw new InvalidOperationException("Peer cleanup is unavailable: the game action service is not ready.");
             return;
         }
 
@@ -97,7 +100,9 @@ public sealed class CouchCoopLobbyParticipation(CouchCoopRuntimeHost runtimeHost
         // Surface only failures: a stale peer that isn't evicted would block a same-netId rejoin.
         if (!result.Success)
         {
-            Console.Error.WriteLine($"[couch-coop] DisconnectClient({netId}) failed: {result.Result?.Message ?? result.Error?.Message}");
+            var cause = result.Result?.Message ?? result.Error?.Message ?? "No action error detail was supplied.";
+            if (requireSuccess) throw new InvalidOperationException($"Peer cleanup failed for {netId}: {cause}");
+            Console.Error.WriteLine($"[couch-coop] DisconnectClient({netId}) failed: {cause}");
         }
     }
 
@@ -240,6 +245,15 @@ public sealed class CouchCoopLobbyParticipation(CouchCoopRuntimeHost runtimeHost
     /// the host mod is constructed.
     /// </para>
     /// </summary>
+    public bool IsGamePlayerConnected(ulong netId)
+    {
+        var state = CurrentState();
+        return (state?.CharacterSelect?.Lobby?.Players ?? []).Any(player => player.IsConnected
+                && MirrorSeatNetIds.TryParsePlayerId(player.Id, out var id) && id == netId)
+            || (state?.Run?.Players ?? []).Any(player => player.IsConnected
+                && MirrorSeatNetIds.TryParsePlayerId(player.Id, out var id) && id == netId);
+    }
+
     public int? MaxCouchSeats() => MaxLobbyPlayers() is { } maxLobbyPlayers ? maxLobbyPlayers - 1 : null;
 
     /// <summary>

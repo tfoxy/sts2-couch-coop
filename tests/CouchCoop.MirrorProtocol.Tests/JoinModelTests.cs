@@ -100,7 +100,7 @@ internal static class JoinModelTests
             Watch("sp-character-select"),
             true,
             "a singleplayer character select cannot be joined either → mirror it instead of gating it");
-        Check.Equal(Watch(null), true, "a non-multiplayer screen streams the host");
+        Check.Equal(Watch(null), false, "an unknown screen does not grant a host stream");
 
         // Explicit grants win over any screen — this is "the client has chosen to control the host specifically".
         Check.Equal(Watch("mp-run", joined: true), true, "a JOINED viewer streams its own headless instance");
@@ -124,6 +124,10 @@ internal static class JoinModelTests
             JoinModel.ShouldWatchHostStream(JoinModel.JoinInfoFromSession(null, "connected"), null, null, false, true, false),
             true,
             "...unless direct-view was already granted (a reconnect keeps watching)");
+
+        Check.Equal(JoinModel.ShouldWatchHostStream(Info("mp-character-select") with { Joined = true },
+            null, "mp-character-select", false, false, false), false,
+            "a roster assignment is not a multiplayer view grant");
 
         // F3 — SEAT INTENT (`seatIntent`). The WEB client's `?name=Ann` URL: "I am a player waiting for a seat".
         // Such a viewer is not a spectator — until the seat is granted it pulls NO scene bytes, on any screen a

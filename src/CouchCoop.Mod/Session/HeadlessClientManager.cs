@@ -1,3 +1,4 @@
+using CouchCoop.Mod.Connections;
 using System.Diagnostics;
 using System.Globalization;
 using System.IO;
@@ -55,7 +56,7 @@ public interface IHeadlessProcess
 /// is not fixed: the top slot follows the live lobby's player cap (see <see cref="MaxSlot"/>), which the stock
 /// game sets to four players — host + three seats — and the multiplayer limit mods raise.
 /// </summary>
-public sealed class HeadlessClientManager : IDisposable
+public sealed partial class HeadlessClientManager : IDisposable
 {
     private const int MinSlot = 2;
 
@@ -384,7 +385,7 @@ public sealed class HeadlessClientManager : IDisposable
     /// <paramref name="onSlotBound"/> still fires before the launch.
     /// </para>
     /// </summary>
-    public async Task<int?> EnsureHeadlessAsync(
+    private HeadlessAllocation? AllocateHeadless(
         Guid sessionId,
         string? displayName,
         CancellationToken ct,
@@ -404,13 +405,14 @@ public sealed class HeadlessClientManager : IDisposable
         lock (_lock)
         {
             if (_disposed) return null;
+            ReapDeadSlotsLocked();
 
             // Already assigned to this session (e.g. caller re-entered). A netId-BOUND request short-circuits only
             // when the session is already on THAT seat — otherwise the viewer picked a different seat on the same
             // connection and must actually be re-bound, not silently handed their previous instance.
             if (_sessionToSlot.TryGetValue(sessionId, out slot)
                 && (targetNetId is null || SlotToNetId(slot) == targetNetId.Value))
-                return SlotToPort(slot);
+                return new(SlotToPort(slot), NewProcess: false);
 
             // Drop dead PROCESS handles for orphaned/crashed headless (Release never ran). KEEPS each slot's
             // name claim so a same-name reconnect re-spawns on the same slot/netId (see ReapDeadSlotsLocked).
@@ -476,7 +478,7 @@ public sealed class HeadlessClientManager : IDisposable
                     // view this is somebody coming back, not a spawn.
                     Narrate(CouchCoopActivitySeverity.Good, CouchCoopActivityMessages.SeatReconnected(name));
                     ReportSlotBound(onSlotBound, slot, name);
-                    return SlotToPort(slot);
+                    return new(SlotToPort(slot), NewProcess: false);
                 }
 
                 evictNetIdAfterSpawn = SlotToNetId(slot);
@@ -502,7 +504,7 @@ public sealed class HeadlessClientManager : IDisposable
                     // may have lost its name override in the meantime (e.g. a lobby disconnect cleared it), and
                     // re-asserting costs one idempotent action.
                     ReportSlotBound(onSlotBound, slot, name);
-                    return SlotToPort(slot);
+                    return new(SlotToPort(slot), NewProcess: false);
                 }
 
                 // Claimed but the headless died → re-spawn on the SAME slot (same netId) below so the host's
@@ -555,10 +557,14 @@ public sealed class HeadlessClientManager : IDisposable
             Narrate(CouchCoopActivitySeverity.Info, CouchCoopActivityMessages.SeatLaunching(name));
             try
             {
+                PrepareConnectionLocked(slot, sessionId);
                 proc = _launcher(slot);
             }
-            catch
+            catch (Exception launchError)
             {
+                CouchCoop.Mod.Connections.ConnectionRegistry.Shared.Fail(sessionId, "launch-exception",
+                    "The game process could not be launched.", "Check the game installation and retry. Copy this report if it fails again.", launchError.ToString());
+                ForgetConnectionLocked(slot);
                 // S5: a launcher that throws.
                 Narrate(CouchCoopActivitySeverity.Bad, CouchCoopActivityMessages.SeatLaunchFailed(name));
                 // A launcher that THROWS must unwind exactly like one that returns null. Without this the binding
@@ -574,6 +580,10 @@ public sealed class HeadlessClientManager : IDisposable
 
             if (proc is null)
             {
+                CouchCoop.Mod.Connections.ConnectionRegistry.Shared.Fail(sessionId, "launch-refused",
+                    "The game process did not start.", "Make sure the host lobby is accepting couch players, then retry.",
+                    "The process launcher returned no process handle. No further cause is available.");
+                ForgetConnectionLocked(slot);
                 // S6: the launcher declined (no ENet listener, Process.Start failed). Same sentence as S5 —
                 // the distinction between "threw" and "returned null" is a developer's, not a player's.
                 Narrate(CouchCoopActivitySeverity.Bad, CouchCoopActivityMessages.SeatLaunchFailed(name));
@@ -584,6 +594,11 @@ public sealed class HeadlessClientManager : IDisposable
                 return null;
             }
             _processBySlot[slot] = proc;
+            if (_ownedConnections.TryGetValue(slot, out var owned))
+            {
+                owned.Process = proc;
+                CouchCoop.Mod.Connections.ConnectionRegistry.Shared.BindProcess(sessionId, proc.Id, owned.Generation);
+            }
             // S7: the window exists. NOT playable yet — the ~20-30s asset preload starts now — so the copy
             // says "loading" rather than anything that would send a player to look at their phone.
             Narrate(CouchCoopActivitySeverity.Info, CouchCoopActivityMessages.SeatLaunchOpened(name));
@@ -598,7 +613,7 @@ public sealed class HeadlessClientManager : IDisposable
             catch (Exception ex) { Console.Error.WriteLine($"[couch-coop] evict stale peer netId={staleNetId} failed: {ex.GetType().Name}: {ex.Message}"); }
         }
 
-        return await WaitForReadyAsync(slot, sessionId, ct).ConfigureAwait(false);
+        return new(SlotToPort(slot), NewProcess: true);
     }
 
     /// <summary>
@@ -777,10 +792,15 @@ public sealed class HeadlessClientManager : IDisposable
     {
         lock (_lock)
         {
+            _browserAttempts.Remove(sessionId);
             if (!_sessionToSlot.TryGetValue(sessionId, out var slot)) return null;
             _sessionToSlot.Remove(sessionId);
             // Only kill the process if no other session has taken over this slot.
-            if (_sessionToSlot.ContainsValue(slot)) return null;
+            if (_sessionToSlot.ContainsValue(slot))
+            {
+                ConnectionRegistry.Shared.RecordDiagnostic(sessionId, "cleanup", "Healthy game retained for another browser using the same seat.");
+                return null;
+            }
             // KEEP the name→slot claim so the player can reconnect to the SAME netId and land the game's native
             // mid-run rejoin (the host holds their RunState seat keyed by that netId). The claim is reclaimed for
             // a different player only if every slot fills up. We still SIGKILL the process (the game IGNORES
@@ -792,8 +812,11 @@ public sealed class HeadlessClientManager : IDisposable
             Narrate(
                 CouchCoopActivitySeverity.Info,
                 CouchCoopActivityMessages.SeatReleased(ClaimedNameForSlotLocked(slot)));
-            ShutdownSlotLocked(slot, graceful: false);
-            return SlotToNetId(slot);
+            var stopped = ShutdownSlotLocked(slot, graceful: false);
+            ConnectionRegistry.Shared.RecordDiagnostic(sessionId, "cleanup", stopped
+                ? "Owned game terminated after its last lobby browser disconnected."
+                : "Owned game could not be terminated; its seat remains reserved.");
+            return stopped ? SlotToNetId(slot) : null;
         }
     }
 
@@ -808,8 +831,10 @@ public sealed class HeadlessClientManager : IDisposable
     {
         lock (_lock)
         {
+            _browserAttempts.Remove(sessionId);
             if (!_sessionToSlot.TryGetValue(sessionId, out var slot)) return;
             _sessionToSlot.Remove(sessionId);
+            ConnectionRegistry.Shared.RecordDiagnostic(sessionId, "cleanup", "Healthy game retained during the run so this browser can reconnect.");
             // Another live session still owns this slot → it's not detached; leave it owned.
             if (_sessionToSlot.ContainsValue(slot)) return;
             // Keep the process + name claim alive; remember to reap it when the run ends.
@@ -859,6 +884,7 @@ public sealed class HeadlessClientManager : IDisposable
 
     public void Dispose()
     {
+        CouchCoop.Mod.Connections.HeadlessConnectionControl.Shared.StatusChanged -= OnChildStatus;
         lock (_lock)
         {
             if (_disposed) return;
@@ -1165,12 +1191,21 @@ public sealed class HeadlessClientManager : IDisposable
     private bool ShutdownSlotLocked(int slot, bool graceful)
     {
         if (!_processBySlot.TryGetValue(slot, out var proc)) return false;
-        _processBySlot.Remove(slot);
+        if (_ownedConnections.TryGetValue(slot, out var owned) && owned.Quarantined)
+        {
+            // A failed termination or peer eviction leaves this slot unsafe to reuse. Keep its process handle and
+            // identity until a later cleanup proves both sides have been released.
+            return false;
+        }
         try
         {
             bool alreadyExited;
             try { alreadyExited = proc.HasExited; }
-            catch { alreadyExited = true; }
+            catch
+            {
+                if (owned is not null) QuarantineLocked(owned, "The client process could not be inspected during shutdown.");
+                return false;
+            }
 
             if (!alreadyExited && graceful && proc.RequestGracefulStop())
             {
@@ -1187,13 +1222,30 @@ public sealed class HeadlessClientManager : IDisposable
 
             if (!alreadyExited)
             {
-                try { if (!proc.HasExited) proc.Kill(); } catch { }
+                try
+                {
+                    if (!proc.HasExited) proc.Kill();
+                    if (!proc.HasExited)
+                    {
+                        if (owned is not null) QuarantineLocked(owned, "The forced shutdown request did not terminate the client process.");
+                        return false;
+                    }
+                }
+                catch (Exception exception)
+                {
+                    if (owned is not null) QuarantineLocked(owned, $"The forced shutdown request failed: {exception.Message}");
+                    return false;
+                }
             }
         }
-        finally
+        catch
         {
-            proc.Dispose();
+            if (owned is not null) QuarantineLocked(owned, "The client shutdown did not complete.");
+            return false;
         }
+        _processBySlot.Remove(slot);
+        ForgetConnectionLocked(slot);
+        proc.Dispose();
         return true;
     }
 
@@ -1343,6 +1395,7 @@ public sealed class HeadlessClientManager : IDisposable
         {
             psi.EnvironmentVariables[kv.Key] = kv.Value;
         }
+        ApplyConnectionEnvironmentLocked(slot, psi);
         ApplyMemoryTuning(psi);
         // Give each headless its OWN spirectl bridge endpoint so it doesn't steal the host's default endpoint.
         // Unix-like hosts use a Unix socket; Windows uses spirectl's named-pipe transport.
@@ -1371,6 +1424,7 @@ public sealed class HeadlessClientManager : IDisposable
                 psi.EnvironmentVariables[kv.Key] = kv.Value;
             }
         }
+        CaptureConnectionLogsLocked(slot, preparedUserDir?.HostUserDir, preparedUserDir?.SlotUserDir);
         // SHARE THE HOST'S SECURE-ORIGIN CERTIFICATE CACHE. This must come AFTER the user-dir isolation above,
         // because that isolation is exactly what breaks the cache: the seeder repoints XDG_DATA_HOME (Linux) /
         // LOCALAPPDATA (Windows) at a per-slot directory, and the certificate cache defaults to
@@ -1408,7 +1462,7 @@ public sealed class HeadlessClientManager : IDisposable
         catch (Exception ex)
         {
             Console.Error.WriteLine($"[couch-coop] headless launch failed slot={slot}: {ex.GetType().Name}: {ex.Message}");
-            return null;
+            throw;
         }
     }
 
@@ -1677,6 +1731,8 @@ internal sealed class OsHeadlessProcess(Process process) : IHeadlessProcess
     public void Kill()
     {
         if (!process.HasExited) process.Kill(entireProcessTree: true);
+        // Process.Kill sends the signal asynchronously. Confirm its result before releasing the owned seat.
+        process.WaitForExit(1000);
     }
 
     public void Dispose() => process.Dispose();

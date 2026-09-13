@@ -62,13 +62,14 @@ internal sealed partial class CouchCoopQrDialog : CouchCoopModalDialog
     private const float UrlGap = 6f;
     private const float UrlHeight = 32f;
     private const float NoticeGap = 2f;
-    private const float NoticeHeight = 26f;
+    private const float NoticeHeight = 40f;
 
     private readonly Label _title = new() { Name = TitleLabelName };
     private readonly Label _url = new() { Name = UrlLabelName };
     private readonly Label _notice = new() { Name = NoticeLabelName };
     private readonly TextureRect _qr = new() { Name = QrTextureName };
     private readonly CouchCoopQrHostSelect _select = new();
+    private readonly CouchCoopConnectionPanel _connections = new();
 
     private string? _qrCacheKey;
     // The row a live hover-tip set hangs off, if any. Tracked so the set can be taken down on paths
@@ -78,7 +79,7 @@ internal sealed partial class CouchCoopQrDialog : CouchCoopModalDialog
     public CouchCoopQrDialog()
         : base(
             new CouchCoopModalNames(NodeName, ScrimName, PanelName, CouchCoopSkipButton.NodeName),
-            new Vector2(PanelWidth, PanelHeight))
+            new Vector2(PanelWidth, PanelHeight), dismissFontSize: 28)
     {
         DismissText = CloseButtonText;
 
@@ -113,9 +114,17 @@ internal sealed partial class CouchCoopQrDialog : CouchCoopModalDialog
         Card.AddChild(_notice);
         // Added last so the expanded option list draws over the QR rather than under it.
         Card.AddChild(_select);
+        _connections.FocusChainChanged = RefreshFocusChain;
+        // A sibling of the central card, deliberately: its fixed left edge clears the QR card rather
+        // than competing for the QR, URL or close-button vertical budget.
+        AddChild(_connections);
     }
 
-    protected override void InstallBody() => _select.Install();
+    protected override void InstallBody()
+    {
+        _select.Install();
+        _connections.Install();
+    }
 
     /// <summary>
     /// What a d-pad walks in this dialog, top to bottom: the selector's closed row, the selectable option
@@ -128,7 +137,17 @@ internal sealed partial class CouchCoopQrDialog : CouchCoopModalDialog
     /// mouse. The list is re-declared, not remembered, so an expand, a collapse or a re-scan that rebuilds
     /// every row all produce a correct chain by construction.
     /// </remarks>
-    protected override void CollectFocusChain(List<Control> chain) => _select.AppendFocusChain(chain);
+    protected override void CollectFocusChain(List<Control> chain)
+    {
+        _connections.AppendFocusChain(chain);
+        _select.AppendFocusChain(chain);
+    }
+
+    public void RefreshConnections()
+    {
+        _connections.Refresh();
+        ApplyNotice();
+    }
 
     public void RefreshLocalization(CouchCoopHostUiSnapshot snapshot)
     {
@@ -136,7 +155,7 @@ internal sealed partial class CouchCoopQrDialog : CouchCoopModalDialog
         _title.Text = TitleText;
         CouchCoopGameUiTheme.ApplyFont(_title, CouchCoopGameUiTheme.KreonBoldGlyphSpaceOne, Layout.TitleFontSize + 16);
         CouchCoopGameUiTheme.ApplyFont(_url, CouchCoopGameUiTheme.KreonBoldGlyphSpaceOne, Layout.UrlFontSize);
-        CouchCoopGameUiTheme.ApplyFont(_notice, CouchCoopGameUiTheme.KreonBoldGlyphSpaceOne, Math.Max(Layout.UrlFontSize - 4, 8));
+        CouchCoopGameUiTheme.ApplyFont(_notice, CouchCoopGameUiTheme.KreonBoldGlyphSpaceOne, Math.Max(Layout.UrlFontSize - 8, 8));
         RefreshDialogFont();
         if (IsOpen)
         {
@@ -153,7 +172,7 @@ internal sealed partial class CouchCoopQrDialog : CouchCoopModalDialog
     {
         _title.AddThemeFontSizeOverride("font_size", next.TitleFontSize + 16);
         _url.AddThemeFontSizeOverride("font_size", next.UrlFontSize);
-        _notice.AddThemeFontSizeOverride("font_size", Math.Max(next.UrlFontSize - 4, 8));
+        _notice.AddThemeFontSizeOverride("font_size", Math.Max(next.UrlFontSize - 8, 8));
 
         var qrChanged = next.QuietZoneModules != previous.QuietZoneModules
             || Math.Abs(next.ResolvedQrDialogExtent - previous.ResolvedQrDialogExtent) > 0.01f;
@@ -171,6 +190,7 @@ internal sealed partial class CouchCoopQrDialog : CouchCoopModalDialog
         ArgumentNullException.ThrowIfNull(snapshot);
         ApplyLayout();
         RefreshOptions(snapshot);
+        RefreshConnections();
         OpenModal();
     }
 
@@ -304,6 +324,8 @@ internal sealed partial class CouchCoopQrDialog : CouchCoopModalDialog
     private void ApplyNotice()
     {
         var note = CouchCoopHostUiNotices.HostTransportNote?.Resolve();
+        if (string.IsNullOrWhiteSpace(note) && !CouchCoop.Mod.Connections.ConnectionRegistry.Shared.Snapshot().Rows.Any())
+            note = CouchCoopLocalization.Resolve("couchcoop_connection_empty");
         _notice.Text = note ?? string.Empty;
         _notice.Visible = !string.IsNullOrWhiteSpace(note);
     }

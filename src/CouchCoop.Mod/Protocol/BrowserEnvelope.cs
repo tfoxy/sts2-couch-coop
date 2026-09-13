@@ -67,7 +67,8 @@ public sealed record BrowserEnvelope(
     BrowserStaticBackgroundDto? StaticBackground = null,
     // Current hosts accept absolute scroll offsets and element-addressed reward claims.
     bool ScrollAction = true,
-    bool RewardAction = true);
+    bool RewardAction = true,
+    string? ConnectionAttemptId = null);
 
 // The wire shape Stage B also consumes: { "scenePath": "res://scenes/backgrounds/<id>/<id>_background.tscn",
 // "url": "/bg/<id>?layers=<digest>&v=1" } (camelCased by BrowserJson).

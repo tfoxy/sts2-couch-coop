@@ -190,6 +190,11 @@ describe("shouldWatchHostStream", () => {
     expect(watch("mp-run")).toBe(false);
   });
 
+  it("does not treat a roster assignment as a multiplayer view grant", () => {
+    const info = { ...infoFor("mp-character-select"), joined: true };
+    expect(shouldWatchHostStream(info, null, "mp-character-select", false, false, false)).toBe(false);
+  });
+
   it("streams the host when it is not on a multiplayer screen", () => {
     expect(watch("main-menu")).toBe(true);
     expect(watch("singleplayer-run")).toBe(true);

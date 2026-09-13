@@ -125,6 +125,8 @@ export interface BrowserSessionEnvelope extends BrowserEnvelopeBase {
   screen: BrowserScreenSummary;
   // Redirect target: this viewer's own per-player headless game view. The mirror reconnects its socket here.
   headlessMirrorPort?: number | null;
+  // Server-issued join generation on the original host socket; never a child control credential.
+  connectionAttemptId?: string | null;
   // true → watch the HOST's own stream in place (no redirect). Set for a singleplayer run / host selection.
   directView?: boolean;
   // Rejection code when the requested name isn't servable (mirror shows the picker + a mapped message):
@@ -312,6 +314,8 @@ export function parseBrowserEnvelopeValue(raw: unknown): BrowserEnvelope {
       players,
       screen: normalizeScreen(value.screen),
       headlessMirrorPort: typeof value.headlessMirrorPort === "number" ? value.headlessMirrorPort : null,
+      connectionAttemptId: typeof value.connectionAttemptId === "string" && value.connectionAttemptId.length <= 128
+        ? value.connectionAttemptId : null,
       directView: value.directView === true,
       joinRejection: typeof value.joinRejection === "string" ? value.joinRejection : null,
       joinRejectionDetail:

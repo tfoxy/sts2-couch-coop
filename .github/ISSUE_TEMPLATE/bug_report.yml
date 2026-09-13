@@ -115,13 +115,13 @@ body:
       required: true
 
   - type: textarea
-    id: activity_panel
+    id: connection_report
     attributes:
-      label: CouchCoop activity panel messages
-      description: If a player's game failed to start or join, the host's in-game CouchCoop activity panel narrates what happened to each seat. Copy any relevant messages here.
+      label: QR connection report
+      description: Open Couch Co-op QR Code on the host, select the affected browser in the connection list, and use Copy report. Paste it here. A screenshot of that list is useful too, especially if copying fails. No ZIP file is needed. You can also ask for help in the mod’s Steam Workshop Discussions.
       placeholder: |
-        X's game took too long to start — stopping it.
-        Couldn't start X's game window.
+        CouchCoop connection report
+        stage: LoadingView
 
   - type: textarea
     id: logs

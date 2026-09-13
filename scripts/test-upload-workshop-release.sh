@@ -45,9 +45,9 @@ mkdir -p "$assets" "$payload/frontend/icons" "$payload/frontend/.vite" "$payload
 
 for file in \
   LICENSE NOTICE THIRD_PARTY_NOTICES.md couchcoop.json build-info.txt couchcoop.dll \
-  CouchCoop.Mod.dll CouchCoop.Mod.Contracts.dll CouchCoop.MirrorProtocol.dll CouchCoop.Spirectl.dll QRCoder.dll \
+  CouchCoop.Mod.dll CouchCoop.Mod.Contracts.dll CouchCoop.MirrorProtocol.dll CouchCoop.Spirectl.dll QRCoder.dll DeviceDetector.NET.dll LiteDB.dll Microsoft.Extensions.DependencyInjection.Abstractions.dll Microsoft.Extensions.Logging.Abstractions.dll System.Diagnostics.DiagnosticSource.dll YamlDotNet.dll \
   frontend/index.html frontend/app-boot frontend/manifest.webmanifest frontend/icons/icon.svg frontend/.vite/manifest.json \
-  licenses/QRCoder-1.6.0-MIT.txt licenses/spirectl-LICENSE licenses/spirectl-NOTICE licenses/godot-scene-web-LICENSE \
+  licenses/QRCoder-1.6.0-MIT.txt licenses/DeviceDetector.NET-6.5.2-Apache-2.0.txt licenses/LiteDB-5.0.21-MIT.txt licenses/Microsoft.Extensions.DependencyInjection.Abstractions-10.0.10-MIT.txt licenses/Microsoft.Extensions.Logging.Abstractions-10.0.10-MIT.txt licenses/System.Diagnostics.DiagnosticSource-10.0.10-MIT.txt licenses/YamlDotNet-18.1.0-MIT.txt licenses/spirectl-LICENSE licenses/spirectl-NOTICE licenses/godot-scene-web-LICENSE \
   licenses/HarfBuzz-LICENSE licenses/Emscripten-LICENSE licenses/OpenSans-LICENSE licenses/npm-dependencies.tsv \
   licenses/npm/example.LICENSE frontend/app/example.js; do
   mkdir -p "$(dirname "$payload/$file")"

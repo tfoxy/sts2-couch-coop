@@ -29,6 +29,7 @@ internal static class CouchCoopQrLayoutContractTests
         DisplayExtentIsConstant();
         TheCardStillHasRoomForTheConstantExtent();
         ButtonRectMatchesTheAgreedGeometry();
+        ConnectionCompanionClearsTheQrCard();
 
         Console.WriteLine("CouchCoopQrLayoutContractTests: ok");
     }
@@ -186,7 +187,7 @@ internal static class CouchCoopQrLayoutContractTests
         const float designSpaceHeight = 1080f;
         const float panelHeight = 936f;    // CouchCoopQrDialog.PanelHeight
         const float qrTop = 152f;          // CouchCoopQrDialog.QrTop
-        const float urlGap = 6f, urlHeight = 32f, noticeGap = 2f, noticeHeight = 26f;
+        const float urlGap = 6f, urlHeight = 32f, noticeGap = 2f, noticeHeight = 40f;
         const float closeHeight = 73f;     // CouchCoopSkipButton.DesignSize.Y
         const float closeInset = 16f;      // CouchCoopModalDialog.DismissBottomInset
 
@@ -222,6 +223,28 @@ internal static class CouchCoopQrLayoutContractTests
         // 352:136 is event_button.png's 284:110 aspect, so the borrowed art is not stretched.
         var buttonAspect = layout.ButtonWidth / layout.ButtonHeight;
         Expect(MathF.Abs(buttonAspect - (284f / 110f)) < 0.02f, "the button matches event_button.png's aspect");
+    }
+
+    private static void ConnectionCompanionClearsTheQrCard()
+    {
+        const float qrLeft = (1920f - 1000f) / 2f;
+        var companionRight = CouchCoopConnectionLayout.Left + CouchCoopConnectionLayout.Width;
+        Expect(CouchCoopConnectionLayout.Top == 72f && CouchCoopConnectionLayout.Height == 936f,
+            "the connection companion shares the QR card's vertical extent");
+        Expect(companionRight + CouchCoopConnectionLayout.Gap == qrLeft,
+            "the connection companion leaves a fixed gap before the unchanged QR card");
+        Expect(CouchCoopConnectionLayout.Left >= 0f,
+            "the connection companion remains inside the 1920-wide design space");
+
+        // Godot scales the same design coordinates uniformly for the 1280x800 Deck-friendly
+        // viewport.  The side card must retain both its gap and its clearance from the QR card.
+        const float scale = 1280f / 1920f;
+        var scaledCompanionRight = companionRight * scale;
+        var scaledQrLeft = qrLeft * scale;
+        Expect(scaledCompanionRight < scaledQrLeft,
+            "the scaled 1280-wide companion still clears the QR card");
+        Expect(MathF.Abs((scaledQrLeft - scaledCompanionRight) - CouchCoopConnectionLayout.Gap * scale) < 0.01f,
+            "the scaled companion keeps the QR-card gap");
     }
 
     private static void Expect(bool condition, string because)

@@ -30,7 +30,9 @@ make_valid_payload() {
   for file in \
     LICENSE NOTICE THIRD_PARTY_NOTICES.md \
     couchcoop.dll CouchCoop.Mod.dll CouchCoop.Mod.Contracts.dll \
-    CouchCoop.MirrorProtocol.dll CouchCoop.Spirectl.dll QRCoder.dll; do
+    CouchCoop.MirrorProtocol.dll CouchCoop.Spirectl.dll QRCoder.dll DeviceDetector.NET.dll LiteDB.dll \
+    Microsoft.Extensions.DependencyInjection.Abstractions.dll Microsoft.Extensions.Logging.Abstractions.dll \
+    System.Diagnostics.DiagnosticSource.dll YamlDotNet.dll; do
     printf 'fixture\n' > "$root/$file"
   done
   min="$(release_lane_min_game_version "$lane")"
@@ -43,7 +45,9 @@ make_valid_payload() {
   printf '<!doctype html>\n' > "$root/frontend/index.html"
   printf 'app/index-fixture.js\n' > "$root/frontend/app-boot"
   for file in \
-    QRCoder-1.6.0-MIT.txt spirectl-LICENSE spirectl-NOTICE \
+    QRCoder-1.6.0-MIT.txt DeviceDetector.NET-6.5.2-Apache-2.0.txt LiteDB-5.0.21-MIT.txt \
+    Microsoft.Extensions.DependencyInjection.Abstractions-10.0.10-MIT.txt Microsoft.Extensions.Logging.Abstractions-10.0.10-MIT.txt \
+    System.Diagnostics.DiagnosticSource-10.0.10-MIT.txt YamlDotNet-18.1.0-MIT.txt spirectl-LICENSE spirectl-NOTICE \
     godot-scene-web-LICENSE HarfBuzz-LICENSE Emscripten-LICENSE \
     OpenSans-LICENSE npm-dependencies.tsv; do
     printf 'fixture\n' > "$root/licenses/$file"
