@@ -68,6 +68,13 @@ public static class CouchCoopMod
             // for why a Godot-less server process must never take it).
             Server.CouchCoopStaticBackgroundTracker.EngineAvailable = true;
 
+            // Resolve (and, when the game build or a cache generation has moved, purge) the on-disk cache before
+            // ANYTHING can read or write it. Everything those caches hold is derived from the game's content, so
+            // a cache written by another build — or by the other Steam branch — serves wrong pixels for the right
+            // key. It goes first because it can: no runtime, no game state, just the install on disk and Steam.
+            Server.CouchCoopCacheRoot.LogSink = Session.CouchCoopLog.Info;
+            Server.CouchCoopCacheRoot.Warm();
+
             // Crash-proof self-reaper: if the host dies without killing us (e.g. it segfaults), terminate this
             // orphaned headless instead of lingering invisibly. Idempotent + no-op when not host-spawned.
             if (IsHeadlessClient) HeadlessHostWatchdog.Start();

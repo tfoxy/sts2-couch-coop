@@ -536,10 +536,11 @@ project:
   hooksFile: $(yaml_quote "$repo_root/sts2.hooks.yaml")
 
 instances:
-  # Deliberately EMPTY, and do not copy the repo root's \`symlinkUserDataDirs: [couch-coop]\` here.
-  # CouchCoop's asset cache lives at user://couch-coop/assets/couchcoop-asset-cache-v<N>, where N is
-  # spirectl's AssetPayloadVersion -- there is no game-version component. Sharing that directory
-  # between two game branches serves one branch the other's cached bytes.
+  # Left empty because this branch keeps its own save state; the cache is no longer a reason.
+  # CouchCoop's caches live at user://couch-coop/cache/<branch>/ and carry a stamp naming the game
+  # build that wrote them, so sharing \`couch-coop\` between two branches is safe -- each writes its
+  # own directory, and a build move empties only that one. Copying the repo root's
+  # \`symlinkUserDataDirs: [couch-coop]\` here would share a warm cache correctly, not corrupt one.
   symlinkUserDataDirs: []
 EOF
 

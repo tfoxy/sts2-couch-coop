@@ -24,9 +24,13 @@ internal static class HeadlessUserDirSeeder
     // whole `couch-coop` dir: the slot dirs are themselves inside `couch-coop`, so a slot-level
     // `couch-coop -> <userdir>/couch-coop` link would point at its own ancestor and turn any recursive walk of
     // the user dir into an infinite descent (recursive enumeration follows directory symlinks and has no cycle
-    // detection — dotnet/runtime#97123). Linking the leaves keeps the warm cache shared with the cycle gone.
+    // detection — dotnet/runtime#97123). Linking the leaf keeps the warm cache shared with the cycle gone.
+    //
+    // ONE leaf, because every cache now hangs under `couch-coop/cache/<branch>/` (CouchCoopCacheRoot) rather
+    // than beside each other at the top. A slot resolves the same branch as the host — it is the same install —
+    // so it lands in the same branch directory through the link and shares the host's warm cache.
     private const string CouchCoopDirName = "couch-coop";
-    private static readonly string[] SharedCouchCoopCacheDirs = ["assets", "astc-cache", "resource-cache"];
+    private static readonly string[] SharedCouchCoopCacheDirs = ["cache"];
 
     // Mutable config + the Steam profile: COPIED (per-file) so the slot OWNS its own writable copy instead of
     // sharing the host's. Seeding `steam/` is REQUIRED: without an existing profile the game sees every profile

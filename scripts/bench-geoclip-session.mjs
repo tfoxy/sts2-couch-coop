@@ -629,7 +629,7 @@ async function runSession(o, arm, index, outDir, log) {
     // primed once beforehand so no session is the one that pays for them. `--clear-scope all` restores
     // everything, which is the honest setting for a cold-launch question this bench is not asking.
     const inScope = (entry) => o.clearScope === "all"
-      || entry.store?.startsWith("couchcoop-geoclip-cache")
+      || entry.store === "geoclips"
       || (entry.kind === "assetBlob" && entry.scheme === "spine");
     const toClear = diff.created.filter(inScope);
     const cleared = o.keepCache ? { removed: [], failed: [], skipped: "keep-cache" } : await removeEntries(toClear);

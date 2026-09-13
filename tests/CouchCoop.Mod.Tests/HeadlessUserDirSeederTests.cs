@@ -162,9 +162,10 @@ internal static class HeadlessUserDirSeederTests
         Directory.CreateDirectory(Path.Combine(hostUserDir, "shader_cache"));
         File.WriteAllText(Path.Combine(hostUserDir, "shader_cache", "warm.bin"), "warm");
         Directory.CreateDirectory(Path.Combine(hostUserDir, "vulkan"));
-        Directory.CreateDirectory(Path.Combine(hostUserDir, "couch-coop", "assets"));
-        File.WriteAllText(Path.Combine(hostUserDir, "couch-coop", "assets", "cached.bin"), "asset");
-        // astc-cache / resource-cache do not exist yet on the host: the seeder must create them so the link resolves.
+        // The branch-scoped cache (CouchCoopCacheRoot): a slot resolves the same branch as the host — it is the
+        // same install — so one `cache` link shares every cache under it, warm.
+        Directory.CreateDirectory(Path.Combine(hostUserDir, "couch-coop", "cache", "public", "assets"));
+        File.WriteAllText(Path.Combine(hostUserDir, "couch-coop", "cache", "public", "assets", "cached.bin"), "asset");
 
         var result = HeadlessUserDirSeeder.Prepare(
             6,
@@ -175,13 +176,11 @@ internal static class HeadlessUserDirSeederTests
         Assert(result is not null, "cache-link prepare succeeds");
         var slotCouchCoop = Path.Combine(slotUserDir, "couch-coop");
         Assert(new DirectoryInfo(slotCouchCoop).LinkTarget is null, "slot couch-coop is a real directory");
-        foreach (var leaf in new[] { "assets", "astc-cache", "resource-cache" })
-        {
-            var link = new DirectoryInfo(Path.Combine(slotCouchCoop, leaf));
-            Assert(link.LinkTarget == Path.Combine(hostUserDir, "couch-coop", leaf),
-                $"slot couch-coop/{leaf} links to the host's shared cache leaf");
-        }
-        Assert(File.ReadAllText(Path.Combine(slotCouchCoop, "assets", "cached.bin")) == "asset",
+        Assert(
+            new DirectoryInfo(Path.Combine(slotCouchCoop, "cache")).LinkTarget
+                == Path.Combine(hostUserDir, "couch-coop", "cache"),
+            "slot couch-coop/cache links to the host's shared cache leaf");
+        Assert(File.ReadAllText(Path.Combine(slotCouchCoop, "cache", "public", "assets", "cached.bin")) == "asset",
             "the warm host asset cache is reachable through the leaf link");
         Assert(new DirectoryInfo(Path.Combine(slotUserDir, "shader_cache")).LinkTarget
                == Path.Combine(hostUserDir, "shader_cache"),
@@ -189,7 +188,7 @@ internal static class HeadlessUserDirSeederTests
         Assert(!Directory.Exists(Path.Combine(slotUserDir, "CouchCoop")),
             "the legacy CouchCoop dir is no longer linked into a slot");
 
-        Assert(File.Exists(Path.Combine(hostUserDir, "couch-coop", "assets", "cached.bin")),
+        Assert(File.Exists(Path.Combine(hostUserDir, "couch-coop", "cache", "public", "assets", "cached.bin")),
             "the host's warm cache remains intact");
         Assert(File.Exists(Path.Combine(hostUserDir, "shader_cache", "warm.bin")),
             "host shader cache contents survive seeding");
@@ -204,14 +203,14 @@ internal static class HeadlessUserDirSeederTests
         var hostUserDir = Path.Combine(xdg, "SlayTheSpire2");
         var slotUserDir = SlotUserDir(xdg, 7);
 
-        Directory.CreateDirectory(Path.Combine(hostUserDir, "couch-coop", "assets"));
-        File.WriteAllText(Path.Combine(hostUserDir, "couch-coop", "assets", "huge.bin"), "warm-cache");
+        Directory.CreateDirectory(Path.Combine(hostUserDir, "couch-coop", "cache"));
+        File.WriteAllText(Path.Combine(hostUserDir, "couch-coop", "cache", "huge.bin"), "warm-cache");
         Directory.CreateDirectory(Path.Combine(hostUserDir, "steam", "123"));
         File.WriteAllText(Path.Combine(hostUserDir, "steam", "123", "settings.save"), "host-steam");
         // A link inside the seed tree pointing at the shared cache (and one pointing at its own ancestor).
         Directory.CreateSymbolicLink(
             Path.Combine(hostUserDir, "steam", "123", "cache-link"),
-            Path.Combine(hostUserDir, "couch-coop", "assets"));
+            Path.Combine(hostUserDir, "couch-coop", "cache"));
         Directory.CreateSymbolicLink(
             Path.Combine(hostUserDir, "steam", "loop"),
             Path.Combine(hostUserDir, "steam"));
@@ -229,7 +228,7 @@ internal static class HeadlessUserDirSeederTests
             "a directory symlink inside the seed tree is not followed or reproduced");
         Assert(!Directory.Exists(Path.Combine(slotUserDir, "steam", "loop")),
             "a self-referential symlink inside the seed tree is not followed");
-        Assert(File.ReadAllText(Path.Combine(hostUserDir, "couch-coop", "assets", "huge.bin")) == "warm-cache",
+        Assert(File.ReadAllText(Path.Combine(hostUserDir, "couch-coop", "cache", "huge.bin")) == "warm-cache",
             "the host's shared cache is untouched by seeding");
     }
 

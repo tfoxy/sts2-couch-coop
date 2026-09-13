@@ -14,8 +14,14 @@ using Spirectl.Sts2.Core.SceneInspection;
 using Spirectl.Sts2.Core.State;
 using Spirectl.Sts2.Embedding;
 
-// WS-U (M3): the `session` envelope carries the disk asset-cache invalidation token composed from the host's game
-// version + the mod assembly version + the server asset schema. The native client names its cache namespace after it.
+// WS-U (M3): the `session` envelope carries the client asset-cache invalidation token, composed from the host's
+// GAME BUILD + the mod assembly version + the server asset schema. The native client names its disk-cache
+// namespace after it; the browser's service worker drops its durable /res/ store when it moves.
+//
+// The game-build half comes from CouchCoopCacheRoot — the same identity the host keys its OWN on-disk cache on —
+// and deliberately NOT from the runtime's reported capabilities, which is what the last case here pins. The
+// embedded runtime facade reports GameVersion as the empty string, so composing from it normalized to "unknown"
+// and the token never moved when the game updated at all.
 internal static class AssetCacheTokenEnvelopeTests
 {
     public static void Run()
@@ -27,7 +33,8 @@ internal static class AssetCacheTokenEnvelopeTests
         ArmBaselineFastPath();
 
         EnvelopeCarriesComposedToken();
-        GameVersionFlowsIntoToken();
+        GameBuildFlowsIntoToken();
+        TheRuntimesReportedVersionIsNotTheSource();
     }
 
     private static void ArmBaselineFastPath()
@@ -47,20 +54,66 @@ internal static class AssetCacheTokenEnvelopeTests
 
         Assert(envelope.AssetCacheToken is not null, "session envelope carries an assetCacheToken");
 
-        var expected = AssetCacheToken.Compose("game-42.7", ModAssemblyVersion(), SpirectlAssetBinaryCache.SchemaVersion);
-        Assert(envelope.AssetCacheToken == expected, "token == Compose(gameVersion, modVersion, assetSchema)");
+        var expected = AssetCacheToken.Compose(
+            BrowserStateEnvelopeFactory.DescribeGameBuild(CouchCoopCacheRoot.Identity),
+            ModAssemblyVersion(),
+            SpirectlAssetBinaryCache.SchemaVersion);
+        Assert(envelope.AssetCacheToken == expected, "token == Compose(gameBuild, modVersion, assetSchema)");
         Assert(envelope.AssetCacheToken!.StartsWith("cc-", StringComparison.Ordinal), "token has the cc- prefix");
     }
 
-    private static void GameVersionFlowsIntoToken()
+    // Each part of the build identity has to be able to move the token on its own: a rebuild can keep the version
+    // string while moving the content hash, a Steam build id moves with no version change at all, and two
+    // branches can share a version while rendering different pixels.
+    private static void GameBuildFlowsIntoToken()
+    {
+        var baseline = new CouchCoopCacheIdentity(
+            Branch: "public",
+            BranchSource: "steamworks",
+            SteamBuildId: 23811903,
+            GameVersion: "v0.107.1",
+            MainAssemblyHash: 1692500715,
+            CacheVersion: CouchCoopCacheRoot.CacheVersion,
+            AssetPayloadVersion: 1);
+
+        var moved = new (string Name, CouchCoopCacheIdentity Identity)[]
+        {
+            ("gameVersion", baseline with { GameVersion = "v0.107.2" }),
+            ("mainAssemblyHash", baseline with { MainAssemblyHash = 999 }),
+            ("steamBuildId", baseline with { SteamBuildId = 24000000 }),
+            ("branch", baseline with { Branch = "public-beta" }),
+        };
+
+        var reference = Token(baseline);
+        foreach (var (name, identity) in moved)
+        {
+            Assert(Token(identity) != reference, $"a moved {name} yields a different token");
+        }
+
+        // And how the branch was LEARNED is not part of the answer — a start where Steam was down reports the
+        // same branch through the install manifest, and must not invalidate every phone's cache for it.
+        Assert(
+            Token(baseline with { BranchSource = "appmanifest" }) == reference,
+            "the branch SOURCE does not move the token");
+    }
+
+    // The bug this replaced: SpirectlRuntimeFacade.GetCapabilities() hardcodes GameVersion to the empty string,
+    // so a token composed from it normalized to "unknown" on every real host and never moved on a game update.
+    // Two hosts reporting different capability versions must now agree, because neither is consulted.
+    private static void TheRuntimesReportedVersionIsNotTheSource()
     {
         var a = new BrowserStateEnvelopeFactory(new CouchCoopRuntimeHost(new CouchCoopRuntimeDependencies(new StubRuntime("v-one"), new StubRuntime("v-one"), new StubRuntime("v-one"), new StubRuntime("v-one"), new StubRuntime("v-one"), new StubRuntime("v-one"), new StubRuntime("v-one"), new StubRuntime("v-one"), new StubRuntime("v-one"), new StubRuntime("v-one"))))
             .CreateSessionEnvelope("Alice", "session", null).GetAwaiter().GetResult();
         var b = new BrowserStateEnvelopeFactory(new CouchCoopRuntimeHost(new CouchCoopRuntimeDependencies(new StubRuntime("v-two"), new StubRuntime("v-two"), new StubRuntime("v-two"), new StubRuntime("v-two"), new StubRuntime("v-two"), new StubRuntime("v-two"), new StubRuntime("v-two"), new StubRuntime("v-two"), new StubRuntime("v-two"), new StubRuntime("v-two"))))
             .CreateSessionEnvelope("Alice", "session", null).GetAwaiter().GetResult();
 
-        Assert(a.AssetCacheToken != b.AssetCacheToken, "a different game version yields a different token");
+        Assert(a.AssetCacheToken == b.AssetCacheToken, "the runtime's reported version does not feed the token");
     }
+
+    private static string Token(CouchCoopCacheIdentity identity) => AssetCacheToken.Compose(
+        BrowserStateEnvelopeFactory.DescribeGameBuild(identity),
+        ModAssemblyVersion(),
+        SpirectlAssetBinaryCache.SchemaVersion);
 
     // Recompute the mod assembly version exactly as BrowserStateEnvelopeFactory does, so the expected token matches
     // regardless of the SDK-default version this build resolves to.

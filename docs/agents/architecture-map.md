@@ -28,12 +28,14 @@ This map records current contracts, not retired implementation alternatives.
 - **Spine clips:** `/spines/` bodies are `SPCL` v1 with encoded image-frame payloads and node-local placement. The sole
   retry selector is `retry=1`.
 - **Geoclips:** `/geoclips/{scene}?node={path}&anim={name}&file={artifact}` is the browser form. Artifacts use
-  `geoclip/1`; operator files are optional overrides, then the managed
-  `couchcoop-geoclip-cache-v1` store. A failed probe falls back to the spine raster path rather than leaving a
-  blank node.
+  `geoclip/1`; operator files are optional overrides, then the managed store under the branch cache's
+  `geoclips/`. A failed probe falls back to the spine raster path rather than leaving a blank node.
 - **Static backgrounds and cache:** combat URLs are `/bg/{id}?layers={digest}&v=1`; event and room backgrounds
   use `/bg/events/{id}?v=1` and `/bg/rooms/{id}?frame={frame}&v=1`. Their codec is named by `Content-Type`.
-  `SpirectlAssetBinaryCache.SchemaVersion` derives from spirectl's asset-payload version; do not hand-bump it.
+  Host caches live at `user://couch-coop/cache/<branch>/` — one directory per Steam branch, at most two, each
+  stamped with the game build and cache generations that wrote it and emptied when either moves
+  (`CouchCoopCacheRoot`). `SpirectlAssetBinaryCache.SchemaVersion` is a token component, not a path, and half of
+  it is spirectl's asset-payload version; do not hand-bump that half.
 - **Repros:** the browser flight recorder writes `repro/1` NDJSON. It records raw wire frames plus viewer input;
   `scripts/analyze-repro.mjs` and `scripts/replay-repro.mjs` are its consumers.
 

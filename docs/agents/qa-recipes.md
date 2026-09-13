@@ -42,7 +42,8 @@ the same idea for a standalone probe instance):
   run history (`saves/history/`, copy-if-missing) are preserved.
 - **Slot dirs live at `user://couch-coop/headless-slots/slot-<N>/SlayTheSpire2`** — everything the mod creates
   in the user profile is under `couch-coop/`. Symlink the big content-addressed caches from a known-good
-  profile: `shader_cache` + `vulkan` whole-dir, and `couch-coop/{assets,astc-cache,resource-cache}` PER LEAF.
+  profile: `shader_cache` + `vulkan` whole-dir, and `couch-coop/cache` PER LEAF (one leaf — every cache is
+  branch scoped underneath it).
   Never link the whole `couch-coop` dir into a slot — the slot is inside it, so that link points at its own
   ancestor and any recursive walk (which follows symlinks with no cycle detection) never terminates.
 - **Own bridge socket**: `SPIRECTL_BRIDGE_SOCKET_PATH=/tmp/spirectl-bridge-<slot>.sock` — without this a second
@@ -348,7 +349,7 @@ curl 'http://127.0.0.1:13337/perf/spine.json'
 COUCHCOOP_SPINE_BENCH=1 <host>   then                    # re-bakes ONE key with its cache bypassed
 curl -G 'http://127.0.0.1:13337/perf/spine-render.json' --data-urlencode 'key=<a key from /perf/spine.json>' \
   --data 'repeats=3&warmups=1'
-# Whole-catalog cold sweep: move `~/.local/share/SlayTheSpire2/couch-coop/resource-cache` aside and launch with
+# Whole-catalog cold sweep: move `~/.local/share/SlayTheSpire2/couch-coop/cache/<branch>` aside and launch with
 # `--prerender-spines`; every `[couch-coop] spine-prerender …` line then carries that bake's phase breakdown.
 ```
 
@@ -438,7 +439,7 @@ candidate gets its own metric block — the bare size key for the shipped `png`,
 two settings of one codec never average together. Anything malformed (`avif`, `webp@85`, `png@0.8`, `png:foo`)
 is a **400**, not a silently substituted render: a mislabelled row is worse than an error.
 
-`dump=1` writes the last repeat of each candidate to `<resource-cache>/../bench-dumps/<id>-<size>-<label>.<ext>`
+`dump=1` writes the last repeat of each candidate to `<cache-root>/../bench-dumps/<id>-<size>-<label>.<ext>`
 and lists the paths in `params.dumps`. It is the only way to get real bytes at real encoder settings out of the
 host (the render-size fields are embeddable-only, so the CLI cannot ask for 2520x1080), and therefore the only
 way to pixel-diff a lossy candidate against the PNG reference.
@@ -750,17 +751,18 @@ works. Things worth knowing before reading its output:
   their copied `sts2.local.yaml`. Recover a poisoned install with `scripts/build-local-mod.sh` from main + a
   game restart.
 - **Stale on-disk model cache** after a bridge/model shape change: clear
-  `~/.local/share/SlayTheSpire2/couch-coop/resource-cache/model/` after `install-bridge` + relaunch, or you'll
-  test against old cached JSON. (It moved out of the old `SlayTheSpire2/CouchCoop/` dir — everything the mod
-  writes into the user profile now lives under `couch-coop/`; the old dir is abandoned, not migrated.)
+  `~/.local/share/SlayTheSpire2/couch-coop/cache/*/assets/model/` after `install-bridge` + relaunch, or you'll
+  test against old cached JSON. The glob is over BRANCH directories (the cache is scoped per Steam branch, at
+  most two), and a bridge change invalidates all of them without the stamp noticing — nothing about the GAME
+  moved. Everything the mod writes into the user profile lives under `couch-coop/`.
 - **Any `dotnet build` of the sln DEPLOYS — verify the installed DLL after every deploy.** The main checkout's
   build also copies into the live mods dir, so a stray build (yours or another agent's) silently replaces
   whatever was deployed. Build/deploy only while holding the live lock, and afterwards prove the install is
   yours: `stat -c %y <modsDir>/CouchCoop.Mod.dll`, or grep the DLL for a type name only your branch adds (see
   the `couch-deploy` skill; an Aug-10 agent measured a whole QA leg against someone else's build before
-  checking). The old `strings -el … | grep couchcoop-asset-cache` recipe stopped printing a version on
-  2026-09-04 — the generation is interpolated from spirectl's `AssetPayloadVersion`, so only the
-  `couchcoop-asset-cache-v` prefix is in the assembly.
+  checking). Do not try to read a cache generation out of the DLL to identify a build: the string is
+  interpolated from two constants, and since the cache became branch scoped it names no path at all — the
+  live answer is the `[couch-coop] cache branch=… cache=v…` line the mod logs at startup.
 - **Live-lease hygiene (multi-agent rounds).** Acquire only the named resources you touch with
   `scripts/live-qa-lock.mjs`; all live sessions share `install`, while deployment holds it exclusively. Before
   RELEASING, restore the real `../spirectl` / `../godot-scene-web` checkouts to clean `main`.

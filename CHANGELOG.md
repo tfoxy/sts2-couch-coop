@@ -9,6 +9,13 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and
 
 ## [Unreleased]
 
+### Fixed
+
+- Cached art is now kept per game version and per Steam branch, so switching between the stable and
+  beta branches — or playing after a game update — no longer shows art left over from the other
+  build. Phones drop their saved copies on the same change, and the host keeps at most two caches
+  and clears out anything older.
+
 ### Changed
 
 - Workshop uploads now record which build they came from, so a published item can be traced back to

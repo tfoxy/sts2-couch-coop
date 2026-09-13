@@ -118,6 +118,31 @@ export interface MirrorSettingsPayload {
   trailDrive?: boolean;
 }
 
+// The last asset-cache token forwarded to the service worker. Module scope, not per-client: the worker holds ONE
+// durable /res/ store for this origin, so what matters is the last value it was told, not which connection told
+// it. Reconnects re-send the same token, and the guard keeps that from being a message per reconnect.
+let lastPublishedAssetCacheToken: string | null = null;
+
+/**
+ * Hand the host's asset-cache token to the service worker, which drops its durable /res/ store when it moves.
+ *
+ * Deliberately silent everywhere it cannot work: no worker API, no controller yet (the very first load, before
+ * `clients.claim()`), or a host too old to send a token. None of those are errors — they mean this origin has no
+ * durable store to invalidate, or will get the token on the next envelope, and the build stamp still covers a
+ * frontend rebuild on its own.
+ */
+function publishAssetCacheToken(token: string | null): void {
+  if (!token || token === lastPublishedAssetCacheToken) return;
+  try {
+    const controller = navigator.serviceWorker?.controller;
+    if (!controller) return;
+    controller.postMessage({ type: "couchcoop-asset-identity", value: token });
+    lastPublishedAssetCacheToken = token;
+  } catch {
+    // A worker that refuses a message is a cache that re-fetches, never a broken mirror.
+  }
+}
+
 export interface MirrorClient {
   status: MirrorClientStatus;
   state: MirrorState;
@@ -584,6 +609,7 @@ export function connectMirrorClient(options: {
         if (envelope.type === "session") {
           parsed = envelope;
           client.session = envelope;
+          publishAssetCacheToken(envelope.assetCacheToken ?? null);
           notify();
         }
       } catch {

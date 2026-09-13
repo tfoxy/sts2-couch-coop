@@ -22,10 +22,18 @@ import { access, mkdir, readdir, rm, stat } from "node:fs/promises";
 import { homedir } from "node:os";
 import path from "node:path";
 
-/** Store-root directory names, as the two C# stores mint them (SchemaVersion in each class). */
-const STORE_ROOT_PATTERN = /^couchcoop-(geoclip-cache|asset-cache)-v\d+$/;
+// Store-root directory names, as the two C# stores mint them.
+//
+// One name each, for both layouts. The shipped host is branch scoped — `<cache-root>/<branch>/{assets,geoclips}`
+// (CouchCoopCacheRoot) — and a store handed an EXPLICIT root, which is what this bench uses, puts the same two
+// leaves directly under it. The generation that produced the bytes is not in the path at all any more; it lives
+// in the branch's `.cache-identity.json`, which is also what throws the tree away when it moves.
+const STORE_ROOTS = [
+  { pattern: /^geoclips$/, kind: "geoclip" },
+  { pattern: /^assets$/, kind: "asset" },
+];
 
-/** How deep under the cache root to look for a store. `<root>/assets/<schema>` is the shipped layout; 4 is slack. */
+/** How deep under the cache root to look for a store. `<root>/<branch>/assets` is the shipped layout; 4 is slack. */
 const DISCOVERY_DEPTH = 4;
 
 /** A pose directory is named by the full sha256 hex of its geoclip key (CouchCoopGeoclipStore). */
@@ -85,8 +93,9 @@ export async function discoverStoreRoots(cacheRoot, depth = DISCOVERY_DEPTH) {
     for (const entry of await listDirs(dir)) {
       if (!entry.isDirectory()) continue;
       const full = path.join(dir, entry.name);
-      if (STORE_ROOT_PATTERN.test(entry.name)) {
-        found.push({ kind: entry.name.startsWith("couchcoop-geoclip") ? "geoclip" : "asset", path: full, name: entry.name });
+      const store = STORE_ROOTS.find(({ pattern }) => pattern.test(entry.name));
+      if (store) {
+        found.push({ kind: store.kind, path: full, name: entry.name });
         continue; // a store root never nests another
       }
       await walk(full, remaining - 1);

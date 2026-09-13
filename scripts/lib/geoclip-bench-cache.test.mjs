@@ -18,12 +18,13 @@ import {
 const POSE_A = "a".repeat(64);
 const POSE_B = "b".repeat(64);
 
-// The layout CouchCoopGeoclipStore and SpirectlAssetBinaryCache actually mint under an explicit
-// COUCHCOOP_CACHE_ROOT: <root>/assets/<schema>/... for both stores.
+// The layout CouchCoopGeoclipStore and SpirectlAssetBinaryCache actually mint when handed an explicit root:
+// <root>/geoclips/ and <root>/assets/ — the same two leaf names the shipped host uses under its branch
+// directory, so this bench walks exactly the shape a real host writes.
 async function makeCacheRoot() {
   const root = await mkdtemp(path.join(tmpdir(), "geoclip-bench-cache-"));
-  const geoclip = path.join(root, "assets", "couchcoop-geoclip-cache-v1");
-  const asset = path.join(root, "assets", "couchcoop-asset-cache-v13");
+  const geoclip = path.join(root, "geoclips");
+  const asset = path.join(root, "assets");
   await mkdir(path.join(geoclip, "pages"), { recursive: true });
   await mkdir(path.join(geoclip, "refusals"), { recursive: true });
   await mkdir(path.join(geoclip, "staging"), { recursive: true });

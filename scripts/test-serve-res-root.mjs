@@ -9,7 +9,7 @@ import { canonicalAssetKey, cachePaths, createResRootServer, resolveAssetRequest
 
 const root = mkdtempSync(join(tmpdir(), "serve-res-root-"));
 const recovered = join(root, "recovered");
-const cache = join(root, "couchcoop-asset-cache-v13");
+const cache = join(root, "assets");
 
 function seed(key, bytes, mime = "application/octet-stream", paired = true) {
   const paths = cachePaths(cache, key);

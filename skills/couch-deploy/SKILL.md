@@ -67,11 +67,12 @@ Every deploy ends here. Do not skip it because the build printed no errors:
 stat -c %y <modsDir>/CouchCoop.Mod.dll
 ```
 
-The mtime must be your deploy's. **The old `strings -el … | grep couchcoop-asset-cache` recipe no longer prints
-a version** (2026-09-04): the asset-cache generation is now interpolated from spirectl's `AssetPayloadVersion`,
-so the assembly carries only the `couchcoop-asset-cache-v` prefix. It was the weaker check anyway — the token
-names the asset-cache schema, which most branches never bump, so on any branch that leaves it alone it was
-identical to main's and **could not tell the two builds apart**. It caught a stale schema, not a stale build.
+The mtime must be your deploy's. **Do not try to read a cache generation out of the DLL** — the old
+`strings -el … | grep couchcoop-asset-cache` recipe stopped printing a version in 2026-09 (the generation is
+interpolated from two constants) and the string it grepped for is gone entirely now that the cache is branch
+scoped. It was the weaker check anyway — the token names a cache schema, which most branches never bump, so on
+any branch that leaves it alone it was identical to main's and **could not tell the two builds apart**. It
+caught a stale schema, not a stale build.
 (Two QA agents in one round found it vacuous for their branch and had to invent the technique below; one of them
 caught their own wrong-checkout deploy with it mid-round.)
 
@@ -101,11 +102,13 @@ you measure anything.
 Clear the stale on-disk model cache or you will test against old cached JSON:
 
 ```bash
-rm -rf ~/.local/share/SlayTheSpire2/couch-coop/resource-cache/model/
+rm -rf ~/.local/share/SlayTheSpire2/couch-coop/cache/*/assets/model/
 ```
 
-Then relaunch. Everything the mod writes into the user profile now lives under `couch-coop/`; the old
-`SlayTheSpire2/CouchCoop/` directory is abandoned, not migrated.
+Then relaunch. The glob is over BRANCH directories — the cache is scoped per Steam branch
+(`couch-coop/cache/<branch>/`, at most two) and a bridge change invalidates every one of them, which no stamp
+can notice because nothing about the GAME moved. Everything the mod writes into the user profile lives under
+`couch-coop/`; the old `SlayTheSpire2/CouchCoop/` directory is abandoned, not migrated.
 
 ## Restart
 

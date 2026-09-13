@@ -54,10 +54,11 @@ Use the `couch-deploy` skill. The short version:
   `install-bridge` alone does not update what the browser mirror sees. (`game deploy` above does both.)
 - **Any `dotnet build` of the sln deploys.** Another agent's stray build silently replaces yours. After every deploy,
   prove the install is yours — `stat -c %y <modsDir>/CouchCoop.Mod.dll`, or grep the DLL for a string only your
-  branch contains (see the `couch-deploy` skill). The old `strings … | grep couchcoop-asset-cache` recipe no
-  longer prints a version: the generation is interpolated from spirectl's `AssetPayloadVersion`.
+  branch contains (see the `couch-deploy` skill). Do not try to read a cache generation out of the DLL — that
+  string names no path any more.
 - After a bridge/model shape change, clear
-  `~/.local/share/SlayTheSpire2/couch-coop/resource-cache/model/`, or you test against old cached JSON.
+  `~/.local/share/SlayTheSpire2/couch-coop/cache/*/assets/model/` (the glob is over BRANCH directories), or you
+  test against old cached JSON.
 
 ## Running the game
 

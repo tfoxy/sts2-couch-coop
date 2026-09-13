@@ -110,12 +110,13 @@ the run form warns when it has drifted — that means the branch updated since r
 and passes its own `--user-dir`, so two branches never share save state. Do **not** reach for
 `XDG_DATA_HOME` instead — it redirects far more than the game's user dir.
 
-`instances.symlinkUserDataDirs: [couch-coop]` in the repo-root `sts2.local.yaml` is deliberately *not*
-inherited by a branch, and must not be copied into one. That setting symlinks the shared
-`user://couch-coop` directory into each instance, and CouchCoop's asset cache lives inside it at
-`couch-coop/assets/couchcoop-asset-cache-v<spirectl AssetPayloadVersion>`. That namespace has **no
-game-version component**, so two branches sharing the directory would serve each other stale bytes
-rendered by the other game build — a rendering bug with no visible cause.
+`instances.symlinkUserDataDirs: [couch-coop]` in the repo-root `sts2.local.yaml` symlinks the shared
+`user://couch-coop` directory into each instance, and CouchCoop's caches live inside it. Sharing it
+across branches is **safe**: the caches are branch scoped at `couch-coop/cache/<branch>/`, so a beta
+instance and a stable one write to different directories even when the parent is shared. (It was not
+always: the namespace used to carry only a schema number, and two branches sharing the directory served
+each other bytes rendered by the other game build — a rendering bug with no visible cause. See
+[Cache layout](#cache-layout) for what replaced it.)
 
 The **decompile corpus** is the other piece of per-branch state, and the one it costs most to get
 wrong. `.sts2/toolchain` in this checkout is a symlink to `../../spirectl/.sts2/toolchain/` — a
@@ -185,9 +186,38 @@ sts2 game launch -- --prerender-spines
 
 CouchCoop starts the browser server first and discovers clips in the background. Progress and the final
 `COUCHCOOP_SPINE_PRERENDER` JSON summary are written to `godot.log`; failures are per clip and do not stop
-lazy rendering or the remaining warmup work. The asset cache namespace is
-`couchcoop-asset-cache-v<spirectl AssetPayloadVersion>`; the value is owned by spirectl, not manually
-versioned in this repository.
+lazy rendering or the remaining warmup work. What it warms is the branch-scoped asset cache below.
+
+### Cache layout
+
+Everything CouchCoop caches on disk — rendered asset bytes, baked geoclips, ASTC containers — is derived
+from the game's own content, so the same `res://` path renders different pixels on different game builds.
+The cache is therefore keyed by the install, not just by the resource:
+
+```
+user://couch-coop/cache/
+  <branch>/                     one per Steam branch ("public", "public-beta")
+    .cache-identity.json        the stamp: game version, content hash, Steam build id, cache versions
+    assets/  geoclips/  astc/  pending/
+  .trash/                       purged trees, deleted in the background
+```
+
+On startup the mod compares that stamp against the install it is running in. If the game build has moved,
+or either cache version has, the whole branch directory is moved aside **before** anything reads or writes
+it and deleted in the background — a rename, so a multi-gigabyte cache costs no startup time. At most two
+branch directories are kept; a third is evicted least-recently-used first. One line in `godot.log` reports
+which branch was resolved, where the answer came from (`steamworks`, `appmanifest`, or a fallback), and
+any purge.
+
+The branch comes from Steam itself (`SteamApps.GetCurrentBetaName()`) with the install manifest as a
+fallback; `release_info.json` has no branch field — its `branch` is the release tag. Two version numbers
+ride the stamp: CouchCoop's own `CacheVersion`, and spirectl's `AssetPayloadVersion`, which is owned by
+spirectl and not manually versioned in this repository. `COUCHCOOP_CACHE_ROOT` moves the whole thing.
+
+The same identity composes the `assetCacheToken` on the `session` envelope, so the browser's service
+worker drops its durable `/res/` store on exactly the changes that empty the host's — including the two
+the frontend bundle hash cannot see, a game update with no frontend rebuild and a phone hopping between a
+stable host and a beta one.
 
 Static backgrounds use `/bg/{id}?layers={digest}&v=1` for combat, `/bg/events/{id}?v=1` for event
 backdrops, and `/bg/rooms/{id}?frame={frame}&v=1` for room backdrops. The codec is host policy and is

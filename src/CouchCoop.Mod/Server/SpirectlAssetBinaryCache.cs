@@ -1,4 +1,3 @@
-using System.Runtime.CompilerServices;
 using System.Security.Cryptography;
 using System.Text;
 using Spirectl.Sts2;
@@ -9,22 +8,21 @@ namespace CouchCoop.Mod.Server;
 // spirectl asset seam renders/extracts each asset on the Godot MAIN THREAD (slow — especially Spine
 // sprites, which render to PNG); a disk hit serves the bytes straight from a background thread with no
 // main-thread hop. Asset keys (res:// / model:// / composed://) are static per path/id, so cached bytes
-// never go stale within a game/mod version — the schema-version subfolder invalidates across upgrades.
+// never go stale within a game/mod version — CouchCoopCacheRoot owns invalidation across upgrades, and
+// across the two game branches that render different pixels for the same key.
 public sealed class SpirectlAssetBinaryCache
 {
-    // The generation of the asset BYTES this cache holds. It is spirectl's own payload-shape version, not a
-    // number kept here: every one of the twelve bumps this constant went through was a spirectl-side change to
-    // what a key renders (composed spine placement, shaded bakes, raw-vs-JSON resource docs), spotted by hand
-    // after the fact and rolled here — an out-of-band count that could only ever be late. spirectl now publishes
-    // the number it bumps when it changes those bytes, so the invalidation happens with the change that caused
-    // it. The value is 13, the generation this cache had already reached, so adopting it invalidated nothing.
+    // The two generations that decide whether cached bytes are still readable: CouchCoop's own (what WE store
+    // and how it is addressed) and spirectl's (what a key RENDERS — composed spine placement, shaded bakes,
+    // raw-vs-JSON resource docs). Both move on their own schedule, which is why they are two numbers rather
+    // than one, and neither appears in a path any more: CouchCoopCacheRoot stamps them into the branch
+    // directory's identity file, and a move there empties the directory instead of orphaning a sibling.
     //
-    // Public so the session envelope's assetCacheToken (WS-U) folds the server asset schema into the CLIENT disk
-    // cache's invalidation key — a schema bump re-namespaces the client cache exactly as it invalidates this one.
-    //
-    // A cache-visible change on OUR side (the key grammar, the blob container, what we choose to store) is not
-    // covered by spirectl's number: add a local suffix here if that ever happens.
-    public static readonly string SchemaVersion = $"couchcoop-asset-cache-v{SpirectlSts2Runtime.AssetPayloadVersion}";
+    // Public so the session envelope's assetCacheToken (WS-U) folds the server asset schema into the CLIENT
+    // cache's invalidation key — a generation bump re-namespaces the client cache exactly as it invalidates
+    // this one.
+    public static readonly string SchemaVersion =
+        $"couchcoop-cache-v{CouchCoopCacheRoot.CacheVersion}+sp{SpirectlSts2Runtime.AssetPayloadVersion}";
     private readonly string? _root;
     private readonly ManagedCacheQuota? _quota;
 
@@ -32,9 +30,18 @@ public sealed class SpirectlAssetBinaryCache
 
     internal SpirectlAssetBinaryCache(string? root, ManagedCacheQuota? quota)
     {
-        var resolved = string.IsNullOrWhiteSpace(root) ? DefaultRoot() : root;
-        _root = string.IsNullOrWhiteSpace(resolved) ? null : Path.Combine(resolved, SchemaVersion);
-        _quota = _root is null ? null : quota ?? CreateQuota(resolved!);
+        // An explicitly-passed root (tests, benches, the hosted harness) is NOT branch scoped — those callers own
+        // a scratch directory and wipe it themselves — but it still gets the same `assets/` leaf the branch
+        // layout uses, so there is exactly one on-disk shape for anything that walks a cache to recognise.
+        if (!string.IsNullOrWhiteSpace(root))
+        {
+            _root = Path.Combine(root, CouchCoopCacheRoot.AssetsFolderName);
+            _quota = quota ?? CreateQuota(root);
+            return;
+        }
+
+        _root = CouchCoopCacheRoot.AssetsRoot;
+        _quota = _root is null ? null : quota ?? CouchCoopCacheRoot.Quota;
     }
 
     public bool IsEnabled => _root is not null;
@@ -160,62 +167,8 @@ public sealed class SpirectlAssetBinaryCache
         return index <= 0 ? "other" : assetKey[..index];
     }
 
-    /// <summary>
-    /// The machine's asset-cache ROOT — the directory every couch-coop on-disk cache hangs its own
-    /// schema-version folder under (this one appends <see cref="SchemaVersion"/>;
-    /// <see cref="CouchCoopGeoclipStore"/> appends its own). Internal rather than private so the geoclip store
-    /// resolves the root the SAME way instead of re-deriving it: the <c>COUCHCOOP_CACHE_ROOT</c> override, the
-    /// GodotSharp-guarded game data dir, and the LocalApplicationData fallback are one policy, and the tests'
-    /// temp-root override has to move both caches or it moves neither.
-    /// </summary>
-    internal static string? DefaultRoot()
-    {
-        var configured = Environment.GetEnvironmentVariable("COUCHCOOP_CACHE_ROOT");
-        if (!string.IsNullOrWhiteSpace(configured))
-        {
-            return Path.Combine(configured, "assets");
-        }
-
-        // GodotSharp is provided by the running game, not the test/headless runner — referencing it can
-        // throw an assembly-load failure when the method is JIT-compiled, so the call is isolated in a
-        // non-inlined method and the failure is caught HERE (a try INSIDE that method would never run).
-        string? gameDir = null;
-        try
-        {
-            gameDir = TryResolveGameDataDir();
-        }
-        catch
-        {
-            // GodotSharp unavailable (headless/test) — fall back below.
-        }
-
-        if (!string.IsNullOrWhiteSpace(gameDir))
-        {
-            return gameDir;
-        }
-
-        var local = Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData);
-        return string.IsNullOrWhiteSpace(local)
-            ? Path.Combine(Path.GetTempPath(), "SlayTheSpire2", "couch-coop", "assets")
-            : Path.Combine(local, "SlayTheSpire2", "couch-coop", "assets");
-    }
-
-    internal static ManagedCacheQuota CreateQuota(string assetRoot)
-        => ManagedCacheQuota.ForAssetRoot(assetRoot);
-
-    // The game data dir (where the game writes logs) is Godot's user://; GlobalizePath converts it to an
-    // absolute OS path. The user asked for a `couch-coop` folder beside `logs`, so the cache lives at
-    // user://couch-coop/assets. Must be called on the Godot main thread (this runs at mod init).
-    // NoInlining keeps the GodotSharp reference out of the caller's JIT so the caller can catch a load
-    // failure when GodotSharp is absent.
-    [MethodImpl(MethodImplOptions.NoInlining)]
-    private static string? TryResolveGameDataDir()
-    {
-        var globalized = Godot.ProjectSettings.GlobalizePath("user://couch-coop/assets");
-        return string.IsNullOrWhiteSpace(globalized) || globalized.StartsWith("user://", StringComparison.Ordinal)
-            ? null
-            : globalized;
-    }
+    internal static ManagedCacheQuota CreateQuota(string cacheRoot)
+        => ManagedCacheQuota.ForCacheRoot(cacheRoot);
 }
 
 public sealed record SpirectlAssetCacheEntry(byte[] Bytes, string ContentType);

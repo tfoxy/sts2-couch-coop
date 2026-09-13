@@ -128,6 +128,32 @@ if (args is ["localization", ..])
     return;
 }
 
+// `dotnet run --project tests/CouchCoop.Mod.Tests -- cache` runs the branch-scoped cache ALONE, all three parts
+// of it: the stamp comparison that decides whether cached bytes are still trustworthy (plus the purge and the
+// two-directory cap), the `assetCacheToken` the same identity composes for the CLIENT caches, and the one
+// user-dir link that shares the host's warm cache with a headless seat. Filesystem against temp roots — no game,
+// no Steam, no Godot, and the identity ladder itself lives in spirectl — which puts it in the same standing as
+// host-guards above, and makes it the reachable way to verify a change here: the full sequence below dies
+// partway through on some machines (see the note above HeadlessAudioMuteTargetsTests) and never gets this far.
+if (args is ["cache", ..])
+{
+    // The envelope leg resolves the machine's default cache root, so point it somewhere disposable first — for
+    // the same reason the full sequence does below, and with the same consequence if it is forgotten.
+    Environment.SetEnvironmentVariable(
+        "COUCHCOOP_CACHE_ROOT",
+        Path.Combine(Path.GetTempPath(), "couchcoop-cache-verb-" + Guid.NewGuid().ToString("N")));
+    CacheRootPurgeTests.Run();
+    AssetCacheTokenEnvelopeTests.Run();
+    HeadlessUserDirSeederTests.Run();
+    // The other three caches' own contracts. All of them are registered far enough down the full sequence to be
+    // unreachable there, so a change to where any of them writes is only verifiable from here.
+    AstcTranscodeCacheTests.Run();
+    await ManagedCacheQuotaTests.RunAsync();
+    await GeoclipStoreTests.RunAsync();
+    Console.WriteLine("cache: ok");
+    return;
+}
+
 // `dotnet run --project tests/CouchCoop.Mod.Tests -- seat-timeout` runs the seat READINESS deadline alone: the
 // clamp band behind COUCHCOOP_SEAT_READY_TIMEOUT_SECONDS, its relationship to the browser's own join ceiling,
 // the one "still loading" progress line, and the early-exit path that must keep failing fast regardless. Same
@@ -192,6 +218,10 @@ Environment.SetEnvironmentVariable(
 
 HotReloadInteropTests.Run();
 SpirectlEmbeddedAssemblyBoundaryTests.Run();
+// Also reachable alone as `-- cache`, and placed up here for the same reason as the host-UI legs below: pure
+// filesystem, no Godot types, and everything from HeadlessAudioMuteTargetsTests down is unreachable on some
+// machines.
+CacheRootPurgeTests.Run();
 // Steam Deck: the shared gate that decides whether a gui_input event activates a CouchCoop button, which now
 // answers to the controller's select action as well as to the mouse. Placed up here deliberately — it is pure
 // C# with no Godot types at all, and everything from HeadlessAudioMuteTargetsTests below is currently
