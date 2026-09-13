@@ -1,5 +1,4 @@
 using Godot;
-using System.Diagnostics;
 using CouchCoop.Mod.Localization;
 using MegaCrit.Sts2.Core.ControllerInput;
 using MegaCrit.Sts2.Core.Nodes.CommonUi;
@@ -62,7 +61,8 @@ internal sealed partial class CouchCoopQrHostPanel : Control
     private readonly CouchCoopEventButton _button;
     private readonly CouchCoopQrHotkeyHint _hint = new(HotkeyAction);
     private readonly Label _connectionNotice = new();
-    private readonly Label _connectionBadge = new();
+    private readonly TextureRect _connectionBadge = new();
+    private readonly Label _connectionCount = new();
     private readonly CouchCoopQrDialog _dialog = new();
     private readonly CouchCoopHostTransportAlertDialog _alert = new();
     private readonly Action _openAction;
@@ -71,8 +71,7 @@ internal sealed partial class CouchCoopQrHostPanel : Control
     private bool _installed;
     private bool _hotkeyBound;
     private int _localeRevision = -1;
-    private readonly HashSet<string> _seenIssueKeys = [];
-    private long _attentionNoticeUntil;
+    private readonly CouchCoopConnectionAttention _attention = new();
 
     public CouchCoopQrHostPanel()
     {
@@ -98,14 +97,37 @@ internal sealed partial class CouchCoopQrHostPanel : Control
         // hot-reloadable button rect for free and disappears with it while a modal is up.
         _button.AddChild(_hint);
         ConfigureConnectionAttention(_connectionNotice, 16);
-        _connectionNotice.Position = new Vector2(0, -32);
-        _connectionNotice.Size = new Vector2(_layout.ButtonWidth, 28);
-        ConfigureConnectionAttention(_connectionBadge, 22);
-        _connectionBadge.Text = "!";
-        _connectionBadge.Position = new Vector2(_layout.ButtonWidth - 38, 6);
-        _connectionBadge.Size = new Vector2(32, 32);
-        _connectionBadge.HorizontalAlignment = HorizontalAlignment.Center;
-        _connectionBadge.AddThemeColorOverride("font_color", new Color(1f, 0.79f, 0.35f, 1f));
+        _connectionNotice.Name = "ConnectionNotice";
+        _connectionNotice.Visible = false;
+        _connectionNotice.AutowrapMode = TextServer.AutowrapMode.WordSmart;
+        _connectionNotice.HorizontalAlignment = HorizontalAlignment.Center;
+        _connectionNotice.VerticalAlignment = VerticalAlignment.Bottom;
+        _connectionNotice.GrowVertical = GrowDirection.Begin;
+        _connectionNotice.AnchorRight = 1;
+        _connectionNotice.OffsetTop = -56;
+        _connectionNotice.OffsetBottom = -8;
+        _connectionNotice.AddThemeColorOverride("font_color", CouchCoopGameUiTheme.ConnectionGroupGold);
+        _connectionBadge.Name = "ConnectionCountBadge";
+        _connectionBadge.Visible = false;
+        _connectionBadge.Texture = CouchCoopGameUiTheme.ConnectionCountTexture;
+        _connectionBadge.ExpandMode = TextureRect.ExpandModeEnum.IgnoreSize;
+        _connectionBadge.StretchMode = TextureRect.StretchModeEnum.KeepAspectCentered;
+        _connectionBadge.MouseFilter = MouseFilterEnum.Ignore;
+        _connectionBadge.FocusMode = FocusModeEnum.None;
+        _connectionBadge.AnchorLeft = 1;
+        _connectionBadge.AnchorRight = 1;
+        _connectionBadge.OffsetLeft = -56;
+        _connectionBadge.OffsetRight = 0;
+        _connectionBadge.OffsetTop = -8;
+        _connectionBadge.OffsetBottom = 48;
+        ConfigureConnectionAttention(_connectionCount, 24);
+        _connectionCount.Name = "ConnectionCount";
+        _connectionCount.HorizontalAlignment = HorizontalAlignment.Center;
+        _connectionCount.SetAnchorsAndOffsetsPreset(LayoutPreset.FullRect);
+        _connectionCount.AddThemeColorOverride("font_color", CouchCoopGameUiTheme.ConnectionDeviceCream);
+        _connectionCount.AddThemeColorOverride("font_outline_color", Colors.Black);
+        _connectionCount.AddThemeConstantOverride("outline_size", 6);
+        _connectionBadge.AddChild(_connectionCount);
         _button.AddChild(_connectionNotice);
         _button.AddChild(_connectionBadge);
         AddChild(_button);
@@ -156,8 +178,6 @@ internal sealed partial class CouchCoopQrHostPanel : Control
         _button.OffsetBottom = _layout.OffsetBottom;
         _button.CustomMinimumSize = _layout.ButtonSize;
         _button.ApplyFontSize(_layout.ButtonFontSize);
-        _connectionNotice.Size = new Vector2(_layout.ButtonWidth, 28);
-        _connectionBadge.Position = new Vector2(_layout.ButtonWidth - 38, 6);
 
         _dialog.ApplyLayout();
         _alert.ApplyLayout();
@@ -199,6 +219,8 @@ internal sealed partial class CouchCoopQrHostPanel : Control
         _button.ApplyFontSize(_layout.ButtonFontSize);
         _hint.RefreshLocalization();
         _connectionNotice.Text = CouchCoopLocalization.Resolve("couchcoop_connection_attention_notice");
+        CouchCoopGameUiTheme.ApplyFont(_connectionNotice, CouchCoopGameUiTheme.KreonBoldGlyphSpaceOne, 16);
+        CouchCoopGameUiTheme.ApplyFont(_connectionCount, CouchCoopGameUiTheme.KreonBoldGlyphSpaceOne, 24);
         _dialog.RefreshLocalization(_snapshot);
         _alert.RefreshLocalization();
     }
@@ -206,24 +228,18 @@ internal sealed partial class CouchCoopQrHostPanel : Control
     private void RefreshConnectionAttention()
     {
         var attention = CouchCoopConnectionPanel.Attention();
-        var newIssue = attention.Keys.Any(key => _seenIssueKeys.Add(key));
-        _seenIssueKeys.IntersectWith(attention.Keys);
-        if (newIssue && !_dialog.IsOpen)
-        {
-            _attentionNoticeUntil = Stopwatch.GetTimestamp() + Stopwatch.Frequency * 6;
-        }
-        _connectionBadge.Text = attention.Count.ToString(System.Globalization.CultureInfo.InvariantCulture);
-        _connectionBadge.Visible = !_dialog.IsOpen && attention.Count > 0;
-        _connectionNotice.Visible = !_dialog.IsOpen && attention.Count > 0
-            && Stopwatch.GetTimestamp() <= _attentionNoticeUntil;
+        var state = _attention.Update(attention.Keys, attention.Count, _dialog.IsOpen);
+        _connectionCount.Text = attention.Count.ToString(System.Globalization.CultureInfo.InvariantCulture);
+        _connectionBadge.Visible = state.ShowBadge;
+        _connectionNotice.Visible = state.ShowNotice;
     }
 
     private static void ConfigureConnectionAttention(Label label, int fontSize)
     {
         label.MouseFilter = MouseFilterEnum.Ignore;
+        label.FocusMode = FocusModeEnum.None;
         label.VerticalAlignment = VerticalAlignment.Center;
-        label.AddThemeFontOverride("font", CouchCoopGameUiTheme.KreonBoldGlyphSpaceOne);
-        label.AddThemeFontSizeOverride("font_size", fontSize);
+        CouchCoopGameUiTheme.ApplyFont(label, CouchCoopGameUiTheme.KreonBoldGlyphSpaceOne, fontSize);
         label.AddThemeColorOverride("font_color", CouchCoopGameUiTheme.ButtonFontColor);
     }
 

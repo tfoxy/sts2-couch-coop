@@ -11,7 +11,85 @@ internal static class ConnectionUiTests
     {
         ClipboardReportsWriteReadAndMismatchFailures();
         RowTextIsFourLinesAndOnlyCompletesWithCheckmark();
+        IssueRowsUseSavedStageAndKeepTheirFourthLineMeaningful();
         CompanionCardGeometryKeepsTheQrCardCentred();
+        DetailControlsStayInsideTheCompanionCard();
+        ProblemIdentitySurvivesRefinementAndArchiving();
+        OutcomeWordsAndStylingSurviveRecovery();
+    }
+
+    private static void DetailControlsStayInsideTheCompanionCard()
+    {
+        Assert(CouchCoopConnectionLayout.ButtonTop + 48f <= CouchCoopConnectionLayout.Height
+            && CouchCoopConnectionLayout.FeedbackTop + 30f <= CouchCoopConnectionLayout.Height,
+            "detail actions and feedback remain inside the 936-unit companion card");
+        Assert(CouchCoopConnectionLayout.ListWithDetailsHeight < CouchCoopConnectionLayout.DetailTop - 60f,
+            "an issue selection makes room for its structured details without overlaying the list");
+        foreach (var expanded in new[] { false, true })
+        {
+            Assert(60 + CouchCoopConnectionLayout.ListHeightFor(true, expanded) < CouchCoopConnectionLayout.SummaryTopFor(expanded),
+                "list and explanation never overlap in either disclosure state");
+            Assert(CouchCoopConnectionLayout.SummaryTopFor(expanded) + CouchCoopConnectionLayout.SummaryHeight
+                < CouchCoopConnectionLayout.DisclosureTopFor(expanded), "scrollable explanation stays above the disclosure");
+        }
+        Assert(CouchCoopConnectionLayout.ListHeightFor(false, false) == CouchCoopConnectionLayout.ListHeightFor(false, true)
+            && 60 + CouchCoopConnectionLayout.ListHeightFor(false, false) == CouchCoopConnectionLayout.Height - CouchCoopConnectionLayout.Padding,
+            "without a selected issue the list occupies the available card height");
+    }
+
+    private static void IssueRowsUseSavedStageAndKeepTheirFourthLineMeaningful()
+    {
+        CouchCoopLocalization.SetLanguageForTests("eng");
+        var warning = new ConnectionIssue("browser-view-slow", "", "", null, IsWarning: true,
+            Timing: new ConnectionIssueTiming(ConnectionStage.LoadingView, 1_900, 3_000, DateTimeOffset.UtcNow),
+            Outcome: ConnectionIssueOutcome.Waiting);
+        var warningLines = Row(new(ConnectionStage.Failed, 5, 6, 0), warning);
+        Assert(warningLines.Length == 4 && warningLines[2].Contains("Loading game view", StringComparison.Ordinal)
+            && warningLines[2].Contains("1s", StringComparison.Ordinal) && warningLines[3] == "Completed steps: 5/6 · Waiting",
+            "warning rows use their saved stage and retain completed-step progress");
+
+        var failed = new ConnectionIssue("native-disconnected", "", "", null,
+            Timing: new ConnectionIssueTiming(ConnectionStage.Joining, 2_000, 4_000, DateTimeOffset.UtcNow));
+        var failedLines = Row(new(ConnectionStage.Failed, 4, 6, 0), failed);
+        Assert(failedLines.Length == 4 && failedLines[3] == "native-disconnected · Failed",
+            "failed rows reserve their fourth line for the error code");
+    }
+
+    private static void ProblemIdentitySurvivesRefinementAndArchiving()
+    {
+        var registry = ConnectionRegistry.Shared;
+        registry.Clear();
+        try
+        {
+            var id = Guid.NewGuid();
+            registry.Connected(id, "Device"); registry.BeginAttempt(id);
+            registry.Fail(id, "browser-transport-lost", "Transport lost", "Retry");
+            var key = CouchCoopConnectionPanel.Attention().Keys.Single();
+            registry.Fail(id, "native-join-rejected", "Native cause", "Retry");
+            Assert(CouchCoopConnectionPanel.Attention().Keys.Single() == key, "cause refinement is the same notification");
+            registry.Disconnected(id);
+            Assert(CouchCoopConnectionPanel.Attention().Keys.Single() == key, "archiving is the same notification");
+            registry.Dismiss(registry.Snapshot().Rows.Single().Id);
+            Assert(CouchCoopConnectionPanel.Attention().Count == 0, "dismissed issues clear the badge count");
+        }
+        finally { registry.Clear(); }
+    }
+
+    private static void OutcomeWordsAndStylingSurviveRecovery()
+    {
+        CouchCoopLocalization.SetLanguageForTests("eng");
+        var issue = new ConnectionIssue("browser-view-slow", "", "", null, true,
+            new(ConnectionStage.LoadingView, 30_000, 30_000, DateTimeOffset.UnixEpoch), ConnectionIssueOutcome.Recovered);
+        var lines = Row(new(ConnectionStage.LoadingView, 3, 4, 500_000), issue);
+        Assert(lines[2].Contains("30s", StringComparison.Ordinal) && lines[3].Contains("Recovered", StringComparison.Ordinal),
+            "saved recovery retains its original timer and an explicit outcome word");
+        var row = new ConnectionStatusRow(Guid.NewGuid(), ConnectionStage.LoadingView, 0, "", "", 3, 4, issue, 500_000, false);
+        var color = typeof(CouchCoopConnectionPanel).GetMethod("RowColor", BindingFlags.Static | BindingFlags.NonPublic)!;
+        Assert((Godot.Color)color.Invoke(null, [2, row])! == CouchCoopGameUiTheme.ConnectionCompleteGreen,
+            "recovered warnings use completion styling");
+        Assert((Godot.Color)color.Invoke(null, [3, row])! == CouchCoopGameUiTheme.ConnectionProgressMuted
+            && CouchCoopGameUiTheme.ConnectionProgressFontSize < CouchCoopGameUiTheme.ConnectionBodyFontSize,
+            "the progress line keeps its quieter role on selected or recovered rows");
     }
 
     private static void ClipboardReportsWriteReadAndMismatchFailures()
@@ -53,10 +131,10 @@ internal static class ConnectionUiTests
             "the pair remains within the scaled 1280-wide safe area");
     }
 
-    private static string[] Row((ConnectionStage Stage, int Step, int Total, long StageElapsed) input)
+    private static string[] Row((ConnectionStage Stage, int Step, int Total, long StageElapsed) input, ConnectionIssue? issue = null)
     {
         var row = new ConnectionStatusRow(Guid.NewGuid(), input.Stage, 0, "A\nB", "Device\rName", input.Step, input.Total,
-            null, input.StageElapsed, true);
+            issue, input.StageElapsed, true);
         var method = typeof(CouchCoopConnectionPanel).GetMethod("RowText", BindingFlags.Static | BindingFlags.NonPublic)
             ?? throw new MissingMethodException("CouchCoopConnectionPanel.RowText");
         return ((string)method.Invoke(null, [row])!).Split('\n');

@@ -40,6 +40,7 @@
     <Compile Include="../CouchCoop.Mod.Tests/ConnectionControlRouteTests.cs" Link="ConnectionControlRouteTests.cs" />
     <Compile Include="../CouchCoop.Mod.Tests/ConnectionStatusTests.cs" Link="ConnectionStatusTests.cs" />
     <Compile Include="../CouchCoop.Mod.Tests/ConnectionUiTests.cs" Link="ConnectionUiTests.cs" />
+    <Compile Include="../CouchCoop.Mod.Tests/ConnectionAttentionTests.cs" Link="ConnectionAttentionTests.cs" />
     <Compile Include="../CouchCoop.Mod.Tests/HeadlessDisconnectExitTests.cs" Link="HeadlessDisconnectExitTests.cs" />
     <Compile Include="../CouchCoop.Mod.Tests/HeadlessClientManagerTests.cs" Link="HeadlessClientManagerTests.cs" />
     <Compile Include="../CouchCoop.Mod.Tests/HeadlessConnectionLifecycleTests.cs" Link="HeadlessConnectionLifecycleTests.cs" />

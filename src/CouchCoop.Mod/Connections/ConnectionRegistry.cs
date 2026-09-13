@@ -12,13 +12,19 @@ public sealed class ConnectionRegistry
     public const int MaximumReportBytes = 64 * 1024;
     private readonly object _gate = new();
     private readonly TimeProvider _time;
+    private readonly Func<TimeSpan, CancellationToken, Task> _delay;
     private readonly Dictionary<Guid, Entry> _clients = [];
     private readonly Dictionary<Guid, Entry> _issues = [];
     private readonly Queue<Guid> _issueOrder = [];
     private long _revision;
     private int _overflow;
 
-    public ConnectionRegistry(TimeProvider? time = null) => _time = time ?? TimeProvider.System;
+    public ConnectionRegistry(TimeProvider? time = null) : this(time, null) { }
+    internal ConnectionRegistry(TimeProvider? time, Func<TimeSpan, CancellationToken, Task>? delay)
+    {
+        _time = time ?? TimeProvider.System;
+        _delay = delay ?? ((duration, cancellationToken) => Task.Delay(duration, _time, cancellationToken));
+    }
 
     public ConnectionRegistrySnapshot Snapshot()
     {
@@ -52,6 +58,7 @@ public sealed class ConnectionRegistry
         lock (_gate)
         {
             if (!_clients.TryGetValue(id, out var entry)) return string.Empty;
+            EndWaitingIssue(entry, ConnectionIssueOutcome.Ended);
             ArchiveCurrent(entry);
             entry.AttemptId = Guid.NewGuid().ToString("N");
             entry.Issue = null;
@@ -182,10 +189,40 @@ public sealed class ConnectionRegistry
             if (!_clients.TryGetValue(id, out var entry) || entry.Stage != ConnectionStage.LoadingView || entry.SlowNotice) return;
             if (Elapsed(entry.StageStartedTicks) < 30_000) return;
             entry.SlowNotice = true;
-            entry.Issue = new("browser-view-slow", "Still waiting for the browser to display the game.",
-                "Keep the browser tab open. Reload it if loading does not finish.", null, IsWarning: true);
+            Trace(entry, $"{entry.Stage}: {Elapsed(entry.StageStartedTicks)} ms");
+            entry.Issue = TimedIssue(entry, new("browser-view-slow", "Still waiting for the browser to display the game.",
+                "Keep the browser tab open. Reload it if loading does not finish.", null, IsWarning: true), ConnectionIssueOutcome.Waiting);
             SaveIssue(entry);
             Changed();
+        }
+    }
+
+    /// <summary>Records a slow-view warning when this attempt has actually spent 30 seconds loading.</summary>
+    public async Task NoticeSlowViewWhenDueAsync(Guid id, string? attemptId, CancellationToken cancellationToken = default)
+    {
+        while (!cancellationToken.IsCancellationRequested)
+        {
+            TimeSpan remaining;
+            lock (_gate)
+            {
+                if (!TryAttempt(id, attemptId, out var entry) || entry.Stage != ConnectionStage.LoadingView || entry.SlowNotice)
+                    return;
+                remaining = TimeSpan.FromMilliseconds(Math.Max(0, 30_000 - Elapsed(entry.StageStartedTicks)));
+                if (remaining == TimeSpan.Zero)
+                {
+                    // Keep recording atomic with the attempt check: a retry may reuse this client ID.
+                    NoticeSlowView(id);
+                    return;
+                }
+            }
+            try
+            {
+                await _delay(remaining, cancellationToken).ConfigureAwait(false);
+            }
+            catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
+            {
+                return;
+            }
         }
     }
 
@@ -195,6 +232,7 @@ public sealed class ConnectionRegistry
         {
             if (!_clients.Remove(id, out var entry)) return;
             entry.IsLive = false;
+            EndWaitingIssue(entry, ConnectionIssueOutcome.Ended);
             ArchiveCurrent(entry);
             Changed();
         }
@@ -307,8 +345,9 @@ public sealed class ConnectionRegistry
             report = new ConnectionReportContent
             {
                 ReportId = e.IssueId ?? e.Id, ClientId = e.ClientId, DeviceLabel = e.DeviceLabel, PlayerName = e.DisplayName,
-                Stage = (e.Stage == ConnectionStage.Failed ? e.FailedStage : e.Stage).ToString(), Step = row.StepCount, Total = row.StepTotal,
-                StartedAtUtc = e.StartedAtUtc, ElapsedMs = row.ElapsedMs, IssueCode = e.Issue?.Code,
+                Stage = (e.Issue?.Timing?.Stage ?? (e.Stage == ConnectionStage.Failed ? e.FailedStage : e.Stage)).ToString(), Step = row.StepCount, Total = row.StepTotal,
+                StartedAtUtc = e.StartedAtUtc, ElapsedMs = row.ElapsedMs, StageElapsedMs = row.StageElapsedMs,
+                RecordedAtUtc = e.Issue?.Timing?.RecordedAtUtc ?? default, Outcome = e.Issue?.Outcome, IssueCode = e.Issue?.Code,
                 Summary = e.Issue?.Summary, Action = e.Issue?.Action, Detail = e.Issue?.Detail,
                 Timeline = e.Timeline.ToArray(), Facts = facts, Logs = e.Logs.Values.ToArray()
             };
@@ -351,7 +390,7 @@ public sealed class ConnectionRegistry
     private void CompleteIfReady(Entry e)
     {
         if (e.Stage != ConnectionStage.LoadingView || !e.FramePresented || !e.Member || (e.RequiresChild && !e.ChildBrowser)) return;
-        if (e.Issue?.IsWarning == true) { ArchiveCurrent(e); e.Issue = null; e.IssueId = null; }
+        if (e.Issue?.IsWarning == true) { EndWaitingIssue(e, ConnectionIssueOutcome.Recovered); ArchiveCurrent(e); e.Issue = null; e.IssueId = null; }
         SetStage(e, ConnectionStage.Complete);
     }
     private void FailLocked(Entry e, ConnectionIssue issue, bool inferredTransport = false)
@@ -368,7 +407,7 @@ public sealed class ConnectionRegistry
                     or Session.HeadlessClientManager.SeatBuildMismatchCode)
             {
                 Trace(e, $"Earlier browser symptom: {e.Issue.Code}: {e.Issue.Detail ?? e.Issue.Summary}");
-                e.Issue = issue;
+                e.Issue = TimedIssue(e, issue, ConnectionIssueOutcome.Failed);
                 SaveIssue(e);
                 Changed();
             }
@@ -381,8 +420,8 @@ public sealed class ConnectionRegistry
             return;
         }
         e.FailedStage = e.Stage;
+        e.Issue = TimedIssue(e, issue, ConnectionIssueOutcome.Failed);
         SetStage(e, ConnectionStage.Failed);
-        e.Issue = issue;
         e.InferredTransportIssue = inferredTransport;
         SaveIssue(e);
         Changed();
@@ -436,13 +475,28 @@ public sealed class ConnectionRegistry
     {
         if (e.IssueId is Guid id && _issues.ContainsKey(id)) _issues[id] = e.CopyForIssue(_time.GetTimestamp());
     }
-    private ConnectionStatusRow Row(Entry e, long now) => new(e.Id, e.Stage,
-        Math.Max(0, (long)_time.GetElapsedTime(e.StartedTicks, e.IsLive ? now : e.EndedTicks).TotalMilliseconds), e.DisplayName,
-        e.DeviceLabel, ConnectionStageSteps.Current(e.Stage == ConnectionStage.Failed ? e.FailedStage : e.Stage, e.StepTotal),
-        e.StepTotal, e.Issue, e.Stage == ConnectionStage.Failed || !e.IsLive ? 0 : Elapsed(e.StageStartedTicks),
+    private ConnectionIssue TimedIssue(Entry e, ConnectionIssue issue, ConnectionIssueOutcome outcome)
+    {
+        var timing = e.Issue?.Timing ?? issue.Timing ?? new ConnectionIssueTiming(e.Stage,
+            Elapsed(e.StageStartedTicks), Elapsed(e.StartedTicks), _time.GetUtcNow());
+        return issue with { Timing = timing, Outcome = outcome };
+    }
+    private static void EndWaitingIssue(Entry e, ConnectionIssueOutcome outcome)
+    {
+        if (e.Issue?.Outcome == ConnectionIssueOutcome.Waiting)
+            e.Issue = e.Issue with { Outcome = outcome };
+    }
+    private ConnectionStatusRow Row(Entry e, long now)
+    {
+        var timing = e.Issue?.Timing;
+        return new(e.Id, e.Stage,
+        timing?.AttemptElapsedMs ?? Math.Max(0, (long)_time.GetElapsedTime(e.StartedTicks, e.IsLive ? now : e.EndedTicks).TotalMilliseconds), e.DisplayName,
+        e.DeviceLabel, ConnectionStageSteps.Current(timing?.Stage ?? (e.Stage == ConnectionStage.Failed ? e.FailedStage : e.Stage), e.StepTotal),
+        e.StepTotal, e.Issue, timing?.StageElapsedMs ?? (e.Stage == ConnectionStage.Failed || !e.IsLive ? 0 : Elapsed(e.StageStartedTicks)),
         e.IsLive, false, _overflow, e.Stage == ConnectionStage.Failed ? e.FailedStage : null,
         new(e.ClientId, e.AttemptId, e.StartedAtUtc, e.StageStartedTicks, e.IsLive,
             e.ProcessId, e.ProcessGeneration, e.Facts.GetValueOrDefault("transport"), e.IssueId));
+    }
     private void Trace(Entry e, string text)
     {
         e.Timeline.Add($"{_time.GetUtcNow():O} +{Elapsed(e.StartedTicks)} ms: {text}");
@@ -499,7 +553,11 @@ public static class ConnectionStageSteps
         ConnectionStage.Complete => total, _ => 0
     };
 }
-public sealed record ConnectionIssue(string Code, string Summary, string Action, string? Detail, bool IsWarning = false);
+public sealed record ConnectionIssueTiming(ConnectionStage Stage, long StageElapsedMs, long AttemptElapsedMs,
+    DateTimeOffset RecordedAtUtc);
+public enum ConnectionIssueOutcome { Waiting, Failed, Recovered, Ended }
+public sealed record ConnectionIssue(string Code, string Summary, string Action, string? Detail, bool IsWarning = false,
+    ConnectionIssueTiming? Timing = null, ConnectionIssueOutcome Outcome = ConnectionIssueOutcome.Failed);
 public sealed record ConnectionStatusRow(Guid Id, ConnectionStage Stage, long ElapsedMs, string? DisplayName,
     string? DeviceLabel, int StepCount, int StepTotal, ConnectionIssue? Issue, long StageElapsedMs,
     bool IsLive = true, bool Dismissed = false, int IssueHistoryOverflow = 0, ConnectionStage? FailedStage = null, ConnectionAttemptSnapshot? Attempt = null);
