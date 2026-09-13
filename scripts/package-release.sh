@@ -71,8 +71,21 @@ if [[ "${COUCHCOOP_RELEASE_STAGED:-}" != "1" ]]; then
   short_commit="$(git -C "$repo_root" rev-parse --short=12 HEAD)"
   tag="$(git -C "$repo_root" tag --points-at HEAD --list 'v*' | sort -V | tail -n 1)"
   if [[ "$snapshot" == "1" ]]; then
-    version="0.0.0-snapshot.${short_commit}"
-    assembly_version="0.0.0.0"
+    # A snapshot names the version it is actually a build OF, taken from the shipped manifest, with
+    # the commit as SemVer BUILD METADATA. Two consequences, both deliberate:
+    #   * it reads as a real version, not 0.0.0;
+    #   * build metadata is ignored when versions are compared, so a snapshot ties with the published
+    #     release of the same version rather than losing to it. The game resolves a mod installed both
+    #     from the Workshop and from mods/ by version, and on a TIE it keeps the local copy -- so a
+    #     locally installed test build is the one that loads. A `-snapshot` PRERELEASE would sort
+    #     BELOW the release and be silently ignored, which is exactly how a QA run gets contaminated.
+    manifest_version="$(jq -er '.version' "$repo_root/src/CouchCoop.Mod.Loader/couchcoop.json")"
+    [[ "$manifest_version" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]] || {
+      echo "mod manifest version is not MAJOR.MINOR.PATCH: $manifest_version" >&2
+      exit 1
+    }
+    version="${manifest_version}+snapshot.${short_commit}"
+    assembly_version="${manifest_version}.0"
     archive_base="couchcoop-snapshot-${short_commit}"
     tag=""
   else
@@ -144,6 +157,14 @@ if [[ "${COUCHCOOP_RELEASE_STAGED:-}" != "1" ]]; then
   exit 0
 fi
 
+# A tagged release appends the commit as build metadata; a snapshot version already carries its own
+# build metadata, and SemVer allows only one '+' segment.
+if [[ "$version" == *+* ]]; then
+  informational_version="$version"
+else
+  informational_version="$version+$source_commit"
+fi
+
 # The staged pass builds exactly one lane; the outer pass names it.
 lane="${COUCHCOOP_RELEASE_STS2_LANE:?missing STS2 reference lane}"
 sdk_project="$(lane_project "$lane")"
@@ -205,7 +226,7 @@ DOTNET_ROLL_FORWARD=Major dotnet publish "$repo_root/src/CouchCoop.Mod.Loader/Co
   -p:Sts2GameApi="$game_api_lane" \
   -p:EnableSts2LiveHost=true \
   -p:Version="$version" -p:AssemblyVersion="$assembly_version" -p:FileVersion="$assembly_version" \
-  -p:InformationalVersion="$version+$source_commit" -p:ContinuousIntegrationBuild=true \
+  -p:InformationalVersion="$informational_version" -p:ContinuousIntegrationBuild=true \
   -p:DebugSymbols=false -p:DebugType=None
 
 COUCHCOOP_RELEASE_BUILD=1 COUCHCOOP_FRONTEND_OUT_DIR="$payload_dir/frontend" \
