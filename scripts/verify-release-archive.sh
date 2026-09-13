@@ -266,7 +266,10 @@ if [[ -n "$archive" ]]; then
 
   if [[ -n "$checksums" ]]; then
     [[ -f "$checksums" ]] || { echo "checksum file does not exist" >&2; exit 2; }
-    (cd "$(dirname "$checksums")" && sha256sum -c "$(basename "$checksums")")
+    # One SHA256SUMS covers every lane's archive, and a caller usually holds only one of them (an
+    # uploader downloads its own lane). --ignore-missing checks what is here and still fails when
+    # nothing was verified, so a checksum file that does not name this archive is caught.
+    (cd "$(dirname "$checksums")" && sha256sum --ignore-missing -c "$(basename "$checksums")")
   fi
   echo "verify-release-archive: archive ok"
   exit 0

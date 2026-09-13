@@ -70,10 +70,13 @@ write_payload() {
 }
 
 # <archive path> <payload parent dir>: one zip plus the one checksum file that still ships with it.
+# <archive path> <payload parent dir> [lane]: one zip, and its line APPENDED to the release-wide
+# checksum file, which is what package-release.sh publishes -- one file naming every lane's archive.
 publish_assets() {
-  local archive="$1" payload_parent="$2"
+  local archive="$1" payload_parent="$2" lane="${3:-stable}" sums
   (cd "$payload_parent" && zip -X -q -r "$archive" couchcoop)
-  (cd "$(dirname "$archive")" && sha256sum "$(basename "$archive")" > "${archive%.zip}.SHA256SUMS")
+  sums="$(dirname "$archive")/$(release_checksums_name "$(basename "$archive")" "$lane").SHA256SUMS"
+  (cd "$(dirname "$archive")" && sha256sum "$(basename "$archive")" >> "$sums")
 }
 
 write_payload "$payload" stable
@@ -85,7 +88,7 @@ beta_payload="$fixture/beta-payload/couchcoop"
 mkdir -p "$(dirname "$beta_payload")"
 cp -a "$payload" "$beta_payload"
 write_payload "$beta_payload" public-beta
-publish_assets "$assets/couchcoop-v0.1.0-public-beta.zip" "$fixture/beta-payload"
+publish_assets "$assets/couchcoop-v0.1.0-public-beta.zip" "$fixture/beta-payload" public-beta
 
 # A dist directory holding only the stable lane, for a --lane public-beta run that must not fall back.
 stable_only="$fixture/stable-only"
@@ -110,7 +113,7 @@ publish_assets "$snapshot_dist/couchcoop-snapshot-abcdef123456.zip" "$snapshot_p
 # stable, and the gate must refuse it rather than publish the wrong game branch to the beta item.
 mislabelled="$fixture/mislabelled"
 mkdir -p "$mislabelled"
-publish_assets "$mislabelled/couchcoop-v0.1.0-public-beta.zip" "$fixture/payload"
+publish_assets "$mislabelled/couchcoop-v0.1.0-public-beta.zip" "$fixture/payload" public-beta
 
 uploader_dir="$fixture/uploader"
 workspace="$uploader_dir/Workspace"

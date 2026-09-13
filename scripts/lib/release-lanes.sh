@@ -124,6 +124,17 @@ release_lane_archive_name() {
   fi
 }
 
+# <archive filename> <lane> -> the release-wide base name, i.e. the archive name with its .zip and
+# any lane suffix removed. One release publishes one SHA256SUMS covering every lane's archive, so
+# every lane has to arrive at the same name for it.
+release_checksums_name() {
+  local archive="$1" lane="$2" base="${1%.zip}"
+  if [[ "$lane" != "$RELEASE_LANE_DEFAULT" ]]; then
+    base="${base%-$lane}"
+  fi
+  printf '%s\n' "$base"
+}
+
 # Anchored ERE matching one lane's RELEASED archive name, so a directory holding both lanes cannot
 # hand the wrong payload to a lane-specific consumer.
 release_lane_release_archive_regex() {

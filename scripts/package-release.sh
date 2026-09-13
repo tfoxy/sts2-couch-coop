@@ -120,6 +120,27 @@ if [[ "${COUCHCOOP_RELEASE_STAGED:-}" != "1" ]]; then
     COUCHCOOP_RELEASE_STS2_LANE="$lane" \
     bash "$source_parent/couchcoop/scripts/package-release.sh"
   done
+
+  # One checksum file for the whole release, not one per lane. Each staged pass writes its own so it
+  # can verify the archive it just built; here they become a single published asset, because a
+  # release is one thing a person downloads from and `sha256sum -c` handles a multi-line file fine.
+  combined="$repo_root/dist/$archive_base.SHA256SUMS"
+  per_lane=()
+  for lane in "${lanes[@]}"; do
+    per_lane+=("$repo_root/dist/$(release_lane_archive_name "$archive_base" "$lane")")
+  done
+  : > "$combined.tmp"
+  for archive in "${per_lane[@]}"; do
+    cat "${archive%.zip}.SHA256SUMS" >> "$combined.tmp"
+  done
+  LC_ALL=C sort -k2 "$combined.tmp" > "$combined"
+  rm -f "$combined.tmp"
+  for archive in "${per_lane[@]}"; do
+    [[ "${archive%.zip}.SHA256SUMS" == "$combined" ]] || rm -f "${archive%.zip}.SHA256SUMS"
+  done
+  # Prove the published file verifies every archive it names, from the directory it ships in.
+  (cd "$repo_root/dist" && sha256sum -c "$(basename "$combined")")
+
   exit 0
 fi
 
