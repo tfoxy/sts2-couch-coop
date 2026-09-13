@@ -225,24 +225,35 @@ Three properties of that script are load-bearing, and all three exist because of
 Self-test, with a mock uploader and fixture workspaces — no Steam, no network:
 `bash scripts/test-upload-workshop-release.sh`. Run it after any change to the upload script.
 
-### Branch scoping, and a timeout that is not a failure
+### Branch scoping: one item, one revision per game branch
 
-The Workshop can scope an item to a range of game branches, and `workshop.json` carries it as
-`minBranch` / `maxBranch`. The release script passes them through untouched, like everything else
-the workspace declares.
+**Steam serves branch-scoped revisions, and its own UI states the rule.** The *Update Linked Game
+Version* dialog on a revision says:
+
+> You can link this version of your Workshop Item with a specific version of the game. Choose the
+> earliest and latest version of the game your item works for (they can be the same). Any users who
+> are playing on a version of the game that is between the two game versions you've specified will
+> download and use this version of your Workshop item.
+
+So the shape for two lanes is **one Workshop item, two uploads**, each linked to the game version its
+payload was built for — not two items. Its version dropdown offers `Any`, `Latest Version`, and each
+branch by name; for this app they line up with the game builds we target:
+
+| dropdown entry | game build |
+|---|---|
+| `Latest Version (6/18/2026)` | stable `v0.107.1` |
+| `public-beta (8/13/2026)` | beta `v0.111.0` |
+
+`workshop.json`'s `minBranch` / `maxBranch` set the same thing at upload time, and the release script
+passes them through untouched.
 
 **The trap is the reporting, not the feature.** An upload carrying either key sits in
 `k_EItemUpdateStatusCommittingChanges` for minutes and then the uploader gives up with
-`k_EResultTimeout` — **while the change commits anyway**. That is the client running out of
-patience, not Steam rejecting the update, so the non-zero exit is not the thing to trust. Measured
-on the DEV item on 12 Sep 2026: the item ended up correctly linked to `public-beta` at both ends
-despite every such run reporting failure.
-
-So when a branch-scoped upload reports `k_EResultTimeout`, **check the item page before retrying** —
-a blind retry just republishes the same content and waits out the same timeout. The script prints a
-note to that effect when it sees the keys. The vendored `Workspace/README.md` says the same thing
-more vaguely ("seem to have weird behavior ... Prefer updating them on the web instead"), and the
-web UI's *Update Linked Game Version* dialog is where to confirm or adjust the range by hand.
+`k_EResultTimeout` — **while the change commits anyway**. That is the client running out of patience,
+not Steam rejecting the update, so the non-zero exit is not the thing to trust. So when a
+branch-scoped upload reports a timeout, **check the item page before retrying**: a blind retry just
+republishes the same content and waits out the same timeout. The script prints a note when it sees
+the keys, and the web dialog is where to confirm or correct a range by hand.
 
 The game enforces the player's side regardless: it asks Steam which branches an item supports and
 raises `STEAM_BRANCH_UNSUPPORTED` rather than half-loading a mod built for another branch.
