@@ -129,6 +129,74 @@ The coordinator writes the squash message, with the whole branch diff in hand.
 `--notes-file` fed by `scripts/changelog-section.sh`, which fails the release if that version has no
 section. Pushing is always explicit — no agent pushes a branch or a tag on its own.
 
+## Publishing to the Steam Workshop
+
+The GitHub Release is the source of truth; a Workshop item is a copy of an archive that has already
+been published there. `scripts/upload-workshop-release.sh` downloads the latest release (or reads
+`--dist <dir>` for a local one), verifies it against its contents manifest and checksums, replaces
+the workspace's `content/`, writes the `changeNote`, and runs the official uploader:
+
+```bash
+scripts/upload-workshop-release.sh                       # latest GitHub Release → public item
+scripts/upload-workshop-release.sh --dist dist           # a local archive instead
+```
+
+Three properties of that script are load-bearing, and all three exist because of an incident:
+
+- **It writes the change note and nothing else.** The workspace's `workshop.json` *is* the live
+  item's configuration, so a release upload has no business rewriting the rest of it. `--visibility`
+  is applied only on a first publish — no `<workspace>/mod_id.txt` yet — or when you pass the flag
+  explicitly. Before that rule, a bare run flipped the public listing to `private`.
+- **There is no `previews/` directory in the workspace, deliberately.** The uploader reads a present
+  `previews/` as the *complete desired gallery* and deletes anything missing from it remotely; that
+  destroyed the item's only additional preview in v0.1.1. The gallery is curated in the Steam web UI
+  now, web-added previews may carry no filename the uploader can match, and upstream's documented
+  switch is that an absent `previews/` leaves all previews unchanged. Do not recreate it, and do not
+  make a script require it. (Local diagnosis: `.agents/memory/workshop-uploader-workspace-sync.md`.
+  The real log is `.sts2/uploader/mod-uploader.log`; the repo-root one is empty and misleads.)
+- **The uploader binary stays put; the workspace moves.** `ModUploader` needs `libsteam_api.so` and
+  `steam_appid.txt` beside it, so it always runs from `.sts2/uploader`, and the workspace is picked
+  with `--workspace <dir>` or `COUCHCOOP_WORKSHOP_WORKSPACE_DIR`, defaulting to
+  `.sts2/uploader/Workspace` — the public item. One 14 MB binary serves every item.
+
+Self-test, with a mock uploader and fixture workspaces — no Steam, no network:
+`bash scripts/test-upload-workshop-release.sh`. Run it after any change to the upload script.
+
+### The unlisted DEV item
+
+To put a build in front of real players before the public listing moves, publish it as a **second,
+unlisted** Workshop item from a second workspace. Unlisted, not `friends_only`: an unlisted item is
+reachable by direct link by anyone it is handed to, without being a Steam friend, and stays out of
+Workshop browse and search.
+
+Created once, by the maintainer, with their own Steam session:
+
+```bash
+cd .sts2/uploader && ./ModUploader new -w "$PWD/Workspace.dev"
+```
+
+Then in `Workspace.dev/`: set `"visibility": "unlisted"` and a title that reads as a test build in
+`workshop.json`, replace `image.png` with one under 1 MiB, and leave `previews/` **absent** (the
+template creates none). The first upload creates the item and writes its ID to
+`Workspace.dev/mod_id.txt`; later ones can omit `--visibility` entirely:
+
+```bash
+scripts/upload-workshop-release.sh --dist dist \
+  --workspace .sts2/uploader/Workspace.dev --visibility unlisted
+```
+
+**The DEV item keeps the same mod id on purpose.** Both payloads declare `"id": "couchcoop"` and the
+`couchcoop/` payload root, which is pinned by `scripts/verify-release-archive.sh` and by the
+uploader's own extract check — and the mod is not safe against two instances of itself in one game
+anyway. So the two items cannot be installed side by side, and testers need this, verbatim:
+
+> **Unsubscribe** from the other CouchCoop item before subscribing to this one. Unchecking it in the
+> in-game mod list is not enough. Both items install a mod with the same id, the in-game enable
+> setting is keyed to that id, not to the Workshop item — so one checkbox covers both copies — and
+> the loader refuses the second mod claiming an id already taken, leaving it failed. With both
+> subscribed, which copy the game loads is not something you can choose. When you are done testing,
+> unsubscribe here and resubscribe to the public item.
+
 ## Reading the history
 
 `git log` on `main` is the history. **`priv` is not.** It is a frozen local archive of the

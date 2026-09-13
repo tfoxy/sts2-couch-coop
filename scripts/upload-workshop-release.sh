@@ -3,27 +3,55 @@ set -euo pipefail
 
 usage() {
   cat >&2 <<'EOF'
-usage: scripts/upload-workshop-release.sh [--visibility private|public|unlisted|friends_only] [--dist <directory>]
+usage: scripts/upload-workshop-release.sh [--visibility private|public|unlisted|friends_only]
+                                          [--workspace <directory>] [--dist <directory>]
 
 Downloads, verifies, and uploads the latest published CouchCoop GitHub Release.
 --dist instead uses the newest couchcoop-vMAJOR.MINOR.PATCH archive in a local
 release directory, with its matching contents manifest and checksums.
 The first successful upload creates the Workshop item and writes its ID to
-.sts2/uploader/Workspace/mod_id.txt. Later uploads update that same item.
+<workspace>/mod_id.txt. Later uploads update that same item.
+
+--workspace selects which workspace to publish, so one uploader binary can serve
+several items (the public listing and a standing unlisted DEV item, say). Every
+workspace precondition applies to the selected workspace.
+
+--visibility is applied only on a first publish (no <workspace>/mod_id.txt yet)
+or when the flag is passed explicitly. A run that omits it leaves the published
+item's visibility exactly as the workspace already declares it.
 
 Environment:
   COUCHCOOP_WORKSHOP_UPLOADER_DIR    uploader directory (default: <repo>/.sts2/uploader)
+  COUCHCOOP_WORKSHOP_WORKSPACE_DIR   workspace directory (default: <uploader dir>/Workspace)
 EOF
 }
 
 repo_root="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
-visibility="private"
+# An unset --visibility must stay distinguishable from one passed with the default value,
+# because only an explicit flag may rewrite an already-published item's visibility.
+visibility_default="private"
+visibility=""
+visibility_explicit=false
+workspace_arg=""
 dist_dir=""
 
 while [[ $# -gt 0 ]]; do
   case "$1" in
     --visibility)
       visibility="${2:-}"
+      visibility_explicit=true
+      shift 2
+      ;;
+    --workspace)
+      [[ -z "$workspace_arg" ]] || {
+        echo "--workspace may be specified only once" >&2
+        exit 2
+      }
+      workspace_arg="${2:-}"
+      [[ -n "$workspace_arg" ]] || {
+        echo "--workspace requires a directory" >&2
+        exit 2
+      }
       shift 2
       ;;
     --dist)
@@ -49,6 +77,8 @@ while [[ $# -gt 0 ]]; do
   esac
 done
 
+[[ "$visibility_explicit" == true ]] || visibility="$visibility_default"
+
 case "$visibility" in
   private|public|unlisted|friends_only) ;;
   *)
@@ -71,7 +101,9 @@ if [[ -z "$dist_dir" ]]; then
 fi
 
 uploader_dir="${COUCHCOOP_WORKSHOP_UPLOADER_DIR:-$repo_root/.sts2/uploader}"
-workspace="$uploader_dir/Workspace"
+# The uploader binary needs libsteam_api.so and steam_appid.txt beside it, so it stays where it
+# is and the workspace travels instead: flag, then environment, then the uploader's own default.
+workspace="${workspace_arg:-${COUCHCOOP_WORKSHOP_WORKSPACE_DIR:-$uploader_dir/Workspace}}"
 uploader="$uploader_dir/ModUploader"
 config_source="$workspace/workshop.json"
 
@@ -167,15 +199,27 @@ unzip -q "$archive_path" -d "$extract_dir"
 }
 
 change_note="Release $tag"
-jq --arg visibility "$visibility" --arg change_note "$change_note" \
-  '.visibility = $visibility | .changeNote = $change_note' \
-  "$config_source" > "$stage_dir/workshop.json"
+# A published item's visibility lives in the workspace and is the maintainer's setting, not this
+# script's: a release upload writes the change note and nothing else. mod_id.txt is what proves the
+# item exists — workshop.json is required above, so its presence would prove nothing.
+if [[ "$visibility_explicit" == true || ! -f "$workspace/mod_id.txt" ]]; then
+  jq --arg visibility "$visibility" --arg change_note "$change_note" \
+    '.visibility = $visibility | .changeNote = $change_note' \
+    "$config_source" > "$stage_dir/workshop.json"
+  visibility_report="$visibility"
+else
+  jq --arg change_note "$change_note" '.changeNote = $change_note' \
+    "$config_source" > "$stage_dir/workshop.json"
+  visibility_report="$(jq -r '.visibility // "unset"' "$config_source") (left as the workspace declares it)"
+fi
 
-# Gallery previews are intentionally managed manually in Workspace/previews/.
+# Gallery previews are intentionally managed manually: with no previews/ directory in the
+# workspace, the uploader leaves the item's existing gallery untouched.
 rm -rf -- "$workspace/content"
 mkdir -p "$workspace/content"
 cp -a "$extract_dir/couchcoop/." "$workspace/content/"
 cp "$stage_dir/workshop.json" "$workspace/workshop.json"
 
-printf 'Uploading %s to Steam Workshop with visibility %s...\n' "$tag" "$visibility"
+printf 'Uploading %s from %s to Steam Workshop with visibility %s...\n' \
+  "$tag" "$workspace" "$visibility_report"
 (cd "$uploader_dir" && ./ModUploader upload -w "$workspace")
