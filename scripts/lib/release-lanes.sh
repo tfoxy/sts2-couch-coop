@@ -89,6 +89,12 @@ release_lane_discover() {
   [[ -d "$sdk_root" ]] || { echo "release-lanes: no reference SDK root: $sdk_root" >&2; return 1; }
   for dir in "$sdk_root"/*/; do
     lane="$(basename "$dir")"
+    # Build output is unambiguously not a lane. Everything else still fails loudly below: an
+    # unreviewed lane must not be silently dropped from a release, but a stray obj/ from someone's
+    # local build must not be able to stop one either.
+    case "$lane" in
+      obj|bin) continue ;;
+    esac
     release_lane_is_valid_name "$lane" || {
       echo "release-lanes: reference lane directory is not a usable lane name: $lane" >&2
       return 1
