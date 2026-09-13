@@ -339,7 +339,20 @@ assert_eq 9999999999 "$(tr -d '\n' < "$dev_workspace/mod_id.txt")"
 assert_eq "$primary_config_before" "$(sha256sum < "$workspace/workshop.json")"
 assert_uploaded "$dev_workspace"
 
-# Leg 8: the environment selects the same workspace without a flag, and the flag beats an unusable
+# Leg 8: a relative --workspace resolves against the CURRENT DIRECTORY, not $uploader_dir.
+# ModUploader is invoked as `cd "$uploader_dir" && ./ModUploader -w "$workspace"`, so an
+# unresolved relative path would be silently re-anchored there instead -- e.g. run from a repo
+# root, `.sts2/uploader/Workspace.dev` would double into `.sts2/uploader/.sts2/uploader/Workspace.dev`.
+(
+  cd "$fixture"
+  MOCK_UPLOADER_LOG="$fixture/uploader.log" \
+  COUCHCOOP_WORKSHOP_UPLOADER_DIR="$uploader_dir" \
+  PATH="$blocked_gh_bin:$PATH" \
+  bash "$script" --dist "$assets" --lane public-beta --workspace dev-workspace
+)
+assert_uploaded "$dev_workspace"
+
+# Leg 9: the environment selects the same workspace without a flag, and the flag beats an unusable
 # environment value rather than consulting it.
 MOCK_UPLOADER_LOG="$fixture/uploader.log" \
 COUCHCOOP_WORKSHOP_UPLOADER_DIR="$uploader_dir" \
@@ -356,7 +369,7 @@ PATH="$blocked_gh_bin:$PATH" \
 bash "$script" --dist "$assets" --lane stable --workspace "$dev_workspace"
 assert_uploaded "$dev_workspace"
 
-# Leg 9: workspace preconditions apply to the SELECTED workspace, not the default one.
+# Leg 10: workspace preconditions apply to the SELECTED workspace, not the default one.
 broken_workspace="$fixture/broken-workspace"
 mkdir -p "$broken_workspace"
 cp "$dev_workspace/workshop.json" "$broken_workspace/workshop.json"
@@ -364,7 +377,7 @@ head -c 1100000 /dev/zero > "$broken_workspace/image.png"
 expect_refused oversize-preview 'must be smaller than 1 MiB' \
   --dist "$assets" --workspace "$broken_workspace"
 
-# Leg 10: a dist directory holding TWO releases is refused, not resolved by "newest wins". A stale
+# Leg 11: a dist directory holding TWO releases is refused, not resolved by "newest wins". A stale
 # archive from an earlier build is exactly how the wrong payload reaches an item.
 two_releases="$fixture/two-releases"
 mkdir -p "$two_releases"
@@ -373,18 +386,18 @@ cp "$assets/couchcoop-v0.1.0.zip" "$two_releases/couchcoop-v0.0.9.zip"
 expect_refused two-releases 'holds 2 different releases' \
   --dist "$two_releases" --workspace "$dev_workspace"
 
-# Leg 11: the lane is verified against the payload's own build-info.txt, so a mislabelled filename
+# Leg 12: the lane is verified against the payload's own build-info.txt, so a mislabelled filename
 # cannot publish the stable payload as the beta revision.
 expect_refused mislabelled-lane "built for lane 'stable', not the requested 'public-beta'" \
   --dist "$mislabelled" --lane public-beta --workspace "$dev_workspace"
 
-# Leg 12: an unknown lane is a usage error, not a guess, and so is an ambiguous one.
+# Leg 13: an unknown lane is a usage error, not a guess, and so is an ambiguous one.
 expect_refused unknown-lane 'unknown release lane' \
   --dist "$assets" --lane experimental --workspace "$dev_workspace"
 expect_refused repeated-lane 'may be specified only once' \
   --dist "$assets" --lane stable --lane public-beta --workspace "$dev_workspace"
 
-# Leg 13: a workspace may declare which lanes it carries, checked for EVERY lane BEFORE anything is
+# Leg 14: a workspace may declare which lanes it carries, checked for EVERY lane BEFORE anything is
 # uploaded -- a two-lane run must not publish one and then refuse the other.
 printf 'public-beta\n' > "$dev_workspace/lane.txt"
 expect_refused workspace-lane-mismatch "may publish lane(s) [public-beta], but this run publishes 'stable'" \
@@ -401,7 +414,7 @@ assert_uploaded "$dev_workspace" 2
 [[ ! -e "$dev_workspace/content/lane.txt" ]] || fail "lane.txt leaked into the uploaded content"
 rm -f "$dev_workspace/lane.txt"
 
-# Leg 14: a snapshot is refused for an ordinary workspace and published by a DEV CHANNEL, which is
+# Leg 15: a snapshot is refused for an ordinary workspace and published by a DEV CHANNEL, which is
 # what one is for. The opt-in is a marker file, so it travels with the item.
 expect_refused snapshot-no-dev-channel 'is not a dev channel' \
   --dist "$snapshot_dist" --lane stable --workspace "$dev_workspace"
@@ -423,7 +436,7 @@ grep -qF 'Test build 0.1.1+snapshot.abcdef123456 — Slay the Spire 2 v0.107.1' 
 expect_refused snapshot-public 'is not a dev channel' --yes --dist "$snapshot_dist" --lane stable
 rm -f "$dev_workspace/dev-channel"
 
-# Leg 15: the two ways an upload can end badly are told apart. A k_EResultTimeout is a slow commit
+# Leg 16: the two ways an upload can end badly are told apart. A k_EResultTimeout is a slow commit
 # that lands, so the run reports it and carries on with a distinct exit code; anything else is a real
 # failure and must stop the release rather than leave it half published.
 real_uploader="$uploader_dir/ModUploader"

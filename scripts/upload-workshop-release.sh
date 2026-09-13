@@ -134,13 +134,19 @@ uploader_dir="${COUCHCOOP_WORKSHOP_UPLOADER_DIR:-$repo_root/.sts2/uploader}"
 # is and the workspace travels instead: flag, then environment, then the uploader's own default.
 workspace="${workspace_arg:-${COUCHCOOP_WORKSHOP_WORKSPACE_DIR:-$uploader_dir/Workspace}}"
 uploader="$uploader_dir/ModUploader"
-config_source="$workspace/workshop.json"
 
 [[ -d "$workspace" ]] || {
   echo "Workshop workspace does not exist: $workspace" >&2
   echo "Create it with the official ModUploader before running this script." >&2
   exit 1
 }
+# Resolved AFTER the existence check (so a bad path is reported as the user typed it) but BEFORE
+# any other use: ModUploader itself is invoked as `cd "$uploader_dir" && ./ModUploader -w
+# "$workspace"`, so a relative workspace would be re-interpreted against $uploader_dir instead of
+# the directory this script was run from -- doubling e.g. .sts2/uploader/Workspace.dev into
+# .sts2/uploader/.sts2/uploader/Workspace.dev, which ModUploader then reports missing.
+workspace="$(cd "$workspace" && pwd)"
+config_source="$workspace/workshop.json"
 [[ -x "$uploader" ]] || {
   echo "official ModUploader is missing or not executable: $uploader" >&2
   exit 1
