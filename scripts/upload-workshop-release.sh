@@ -166,6 +166,19 @@ fi
   echo "Workshop primary preview must be smaller than 1 MiB: $workspace/image.png" >&2
   exit 1
 }
+# minBranch/maxBranch are passed through untouched like everything else the workspace declares, but
+# they are worth a word of warning. MEASURED on the DEV item, Sep 12 2026: an upload carrying either
+# key sits in k_EItemUpdateStatusCommittingChanges for minutes and then the uploader gives up with
+# k_EResultTimeout — while the change itself lands. A timeout here is the CLIENT running out of
+# patience, not Steam rejecting the update, so the exit code is not the thing to trust. The vendored
+# Workspace/README.md puts it as "seem to have weird behavior ... Prefer updating them on the web
+# instead."
+if [[ "$(jq -r 'has("minBranch") or has("maxBranch")' "$config_source")" == true ]]; then
+  echo "note: $(basename "$config_source") declares branch scoping, which makes the Workshop commit slow." >&2
+  echo "      If this run ends in k_EResultTimeout, check the item page before retrying: the change" >&2
+  echo "      usually committed anyway, and a blind retry republishes the same content." >&2
+fi
+
 stage_dir="$(mktemp -d "${TMPDIR:-/tmp}/couchcoop-workshop-upload.XXXXXX")"
 trap 'rm -rf "$stage_dir"' EXIT
 
