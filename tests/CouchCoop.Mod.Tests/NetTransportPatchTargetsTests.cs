@@ -10,6 +10,11 @@ using MegaCrit.Sts2.Core.Saves.Runs;
 // the saved-run host hook — must still resolve against the installed STS2 assemblies. If a game update renames or
 // removes one, this fails the build instead of shipping a mod that silently degrades to "cannot host".
 //
+// And the seat's JOIN side, where a miss is silent by construction: both patches there resolve members by NAME and
+// only log when they cannot (ENetHandshakePatch's update loop and connection flag; HostNetIdPatch's layer-3
+// handshake coercion on the v111 lane). A rename would leave the mod running with no sign that the patch never
+// took, so these assertions are the only thing standing between that and a seat that just stops joining.
+//
 // Pure metadata reflection (AccessTools), same resolution the patches themselves use: no live game, no Harmony
 // install, no native Godot/Steam library is touched.
 internal static class NetTransportPatchTargetsTests
@@ -22,6 +27,8 @@ internal static class NetTransportPatchTargetsTests
         CommandLineOverrideTargetsResolve();
         HostNetIdTargetsResolve();
         HostNetIdIsOnlyOverriddenWhenItDiffers();
+        HandshakeSenderIsCoercedOnlyFromTheTransportPlaceholder();
+        EnetHandshakeTargetsResolve();
         JoinHostTargetResolves();
         JoinHostParsing();
         SeatSpawnGateFailsOpen();
@@ -141,6 +148,57 @@ internal static class NetTransportPatchTargetsTests
             "ENetClient.HostNetId getter resolves (the hardcoded 1uL a Steam-hosted seat must not believe)");
         Assert(AccessTools.Field(typeof(MegaCrit.Sts2.Core.Multiplayer.Quality.NetQualityTracker), "_netService") is not null,
             "NetQualityTracker._netService resolves (the coercion reads the client's own HostNetId through it)");
+#if STS2_API_V111
+        // Layer 3's own seams, named rather than left to the loop above: on this lane their absence is not a
+        // degraded seat but a seat that cannot join a Steam-hosted session at all.
+        Assert(HostNetIdPatch.Targets.Any(t =>
+                t.Type == typeof(MegaCrit.Sts2.Core.Multiplayer.Connection.HandshakeManager)
+                && t.Name == "HandshakeMessageReceived"
+                && AccessTools.Method(t.Type, t.Name, t.Args) is not null),
+            "HandshakeManager.HandshakeMessageReceived(ulong, PacketReader) is a target on the v111 lane and "
+            + "resolves (the beta's peer-version handshake, which a Steam-hosted seat must answer within 10s)");
+        // The handler field is as load-bearing as the method: the prefix declines to coerce without it.
+        Assert(AccessTools.Field(typeof(MegaCrit.Sts2.Core.Multiplayer.Connection.HandshakeManager), "_handler") is not null,
+            "HandshakeManager._handler resolves (how layer 3 proves it is inside a CLIENT's handshake manager)");
+#endif
+    }
+
+    // Layer 3's decision, as arithmetic: no Harmony, no game process, and (deliberately) not #if'd out on v107,
+    // so both game builds run these.
+    private static void HandshakeSenderIsCoercedOnlyFromTheTransportPlaceholder()
+    {
+        const ulong steamHost = 76561198000000123UL;
+
+        Assert(HostNetIdPatch.TransportSenderPlaceholder == 1UL,
+            "the transport's placeholder sender is 1 — the value layer 3 exists to disbelieve");
+        Assert(HostNetIdPatch.CoerceHandshakeSenderId(1UL, steamHost) == steamHost,
+            "the transport's placeholder sender becomes the host id the seat was launched with");
+        Assert(HostNetIdPatch.CoerceHandshakeSenderId(steamHost, steamHost) == steamHost,
+            "a sender that already IS the host id survives unchanged");
+        Assert(HostNetIdPatch.CoerceHandshakeSenderId(1002UL, steamHost) == 1002UL,
+            "a real peer netId passes through untouched — we only ever claim to know who '1' is");
+        Assert(HostNetIdPatch.CoerceHandshakeSenderId(0UL, steamHost) == 0UL,
+            "0 is not the placeholder, so it is not ours to rewrite either");
+        Assert(HostNetIdPatch.CoerceHandshakeSenderId(1UL, 1UL) == 1UL,
+            "an ENet-hosted session (host netId 1) is a no-op — sender and host already agree");
+        Assert(HostNetIdPatch.CoerceHandshakeSenderId(1UL, 0UL) == 1UL,
+            "with no host id armed there is nothing to coerce TO; stock behavior, never a 0 sender");
+        Assert(HostNetIdPatch.CoerceHandshakeSenderId(steamHost, 1UL) == steamHost,
+            "a no-op host id never rewrites a real sender in the other direction");
+    }
+
+    // ENetHandshakePatch resolves BOTH its members by name (a string method spec and a private field) and only
+    // LOGS on a miss, so a rename would silently disable it and hand back the intermittent join timeout it was
+    // written to cure. Nothing else in the suite covers either; both resolve on v0.107.1 and v0.111.0 today.
+    private static void EnetHandshakeTargetsResolve()
+    {
+        var update = AccessTools.Method(ENetHandshakePatch.UpdateTarget);
+        Assert(update is not null,
+            $"{ENetHandshakePatch.UpdateTarget} resolves (the update loop that must stay inert until connected)");
+        Assert(update!.DeclaringType == typeof(MegaCrit.Sts2.Core.Multiplayer.Transport.ENet.ENetClient),
+            "…and resolves to the same ENetClient the rest of these patches bind to by type");
+        Assert(AccessTools.Field(update.DeclaringType!, ENetHandshakePatch.ConnectedFieldName) is not null,
+            $"ENetClient.{ENetHandshakePatch.ConnectedFieldName} resolves (the flag the prefix gates the loop on)");
     }
 
     private static void HostNetIdIsOnlyOverriddenWhenItDiffers()
