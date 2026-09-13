@@ -24,6 +24,20 @@ internal static class ModManifestGameplayRelevanceTests
 
         // The id is what the mod list is keyed by; a rename would also change the comparison.
         Assert(root.TryGetProperty("id", out var id) && id.GetString() == "couchcoop", "the manifest id is couchcoop");
+
+        // The SOURCE manifest must carry a real release version. Two scripts stamp a different one into the
+        // copy they publish and neither may reach this file: scripts/package-release.sh derives a snapshot
+        // version FROM this value (and requires MAJOR.MINOR.PATCH exactly), and scripts/stamp-local-mod.sh
+        // writes a deliberately unbeatable 9999.0.0 into a dev deploy so it cannot lose the game's
+        // Workshop-vs-local version comparison. A stamp that leaked back into the repo would ship.
+        Assert(root.TryGetProperty("version", out var version) && version.ValueKind == JsonValueKind.String,
+            "the manifest declares a version");
+        var declared = version.GetString() ?? "";
+        Assert(System.Text.RegularExpressions.Regex.IsMatch(declared, @"^[0-9]+\.[0-9]+\.[0-9]+$"),
+            $"the source manifest version is plain MAJOR.MINOR.PATCH, not a stamped one: '{declared}'");
+        Assert(!declared.StartsWith("9999.", StringComparison.Ordinal),
+            "the dev deploy stamp (9999.x) never reaches the source manifest — scripts/stamp-local-mod.sh "
+            + "writes it into the DEPLOYED copy only");
     }
 
     private static string ManifestPath()

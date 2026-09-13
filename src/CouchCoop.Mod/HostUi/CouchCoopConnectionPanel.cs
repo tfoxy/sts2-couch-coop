@@ -333,6 +333,9 @@ internal sealed partial class CouchCoopConnectionPanel : Panel
         var key = issue.Code switch
         {
             "launch-exception" or "launch-refused" or "process-exited" or "startup-timeout" or "process-monitor-failed" => "launch",
+            // Its own group, not the generic join one: the remedy is to remove one of the two installed copies
+            // of the mod, which no amount of reconnecting achieves.
+            Session.HeadlessClientManager.SeatBuildMismatchCode => "mod_mismatch",
             "native-join-rejected" or "native-disconnected" or "child-status-lost" => "join",
             "browser-view-slow" => "slow",
             "browser-render-failed" or "browser-transport-lost" => "browser",

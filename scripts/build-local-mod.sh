@@ -105,7 +105,18 @@ mkdir -p "$output_dir"
 # Spirectl.Sts2.dll, now shipped as CouchCoop.Spirectl.dll) would otherwise linger in the mod dir and
 # could be picked up at load time. Subdirectories (frontend/, hot-reload/) are regenerated separately
 # below and are left untouched.
-find "$output_dir" -maxdepth 1 -type f \( -name '*.dll' -o -name '*.pdb' \) -delete
+#
+# couchcoop.json and build-info.txt are swept for a DIFFERENT reason, and it cost a whole beta QA
+# session. The loader project copies the manifest with CopyToOutputDirectory/CopyToPublishDirectory =
+# PreserveNewest (CouchCoop.Mod.Loader.csproj:36), which compares timestamps and SKIPS the copy when
+# the destination is newer — so a manifest left behind by an older release-archive install is never
+# replaced. It kept declaring that archive's version, the game's beta build resolves a
+# Workshop-plus-local duplicate by taking the HIGHER version, and every headless seat therefore loaded
+# the published Workshop copy of the mod while the host ran this one. build-info.txt is stale in the
+# same way and for the same reason. Deleting both forces PreserveNewest to re-copy, and
+# scripts/stamp-local-mod.sh then writes the dev identity into the fresh files below.
+find "$output_dir" -maxdepth 1 -type f \
+  \( -name '*.dll' -o -name '*.pdb' -o -name 'couchcoop.json' -o -name 'build-info.txt' \) -delete
 
 dotnet publish "$repo_root/src/CouchCoop.Mod.Loader/CouchCoop.Mod.Loader.csproj" \
   -c "$configuration" \
@@ -125,5 +136,10 @@ dotnet build "$repo_root/src/CouchCoop.Mod.HotReload/CouchCoop.Mod.HotReload.csp
   -p:HotReloadDeployDir="$output_dir/hot-reload"
 
 COUCHCOOP_FRONTEND_OUT_DIR="$output_dir/frontend" npm --prefix "$repo_root/frontend" run build
+
+# Last, because it stamps what was actually published: a dev manifest version that cannot lose the
+# game's Workshop-vs-local version comparison, plus the build-info.txt that says which source commit,
+# API lane and sibling checkouts this deploy came from.
+"$repo_root/scripts/stamp-local-mod.sh" --output "$output_dir" --configuration "$configuration"
 
 printf '{"outputDir":"%s","configuration":"%s"}\n' "$output_dir" "$configuration"

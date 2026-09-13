@@ -14,6 +14,7 @@ internal static class HeadlessConnectionLifecycleTests
         await MembershipChangeDuringListenerProbeKeepsWaiting();
         await HealthyChildDoesNotCompleteBeforeBrowserAcknowledgement();
         await NativeFailureRetainsItsCauseWhenChildExits();
+        await SeatBuildMismatchIsItsOwnIssueWithItsOwnRemedy();
         await EarlyProcessExitFailsTheAttempt();
         await StalledShutdownIsForcedBeforeEnsureReturns();
         await RetryFencesOldGenerationAndEvictsTheOldPeer();
@@ -154,6 +155,46 @@ internal static class HeadlessConnectionLifecycleTests
             var report = ConnectionRegistry.Shared.BuildReport(id) ?? "";
             Assert(report.Contains("precise native cause", StringComparison.Ordinal),
                 "the native failure detail remains the primary diagnostic after cleanup");
+        }
+        finally { CleanupControl(id); ConnectionRegistry.Shared.Clear(); }
+    }
+
+    // A seat that loaded a different copy of CouchCoop than the host reports it and exits at mod init,
+    // before it has a network connection to be rejected from. That is a DIFFERENT failure from a native
+    // rejection and has a different remedy — remove one of the two installed copies of the mod — so the
+    // host must not fold it into `native-join-rejected`, whose next action ("check that game and mod
+    // versions match") is the exact advice the player has already followed.
+    private static async Task SeatBuildMismatchIsItsOwnIssueWithItsOwnRemedy()
+    {
+        var id = BeginAttempt();
+        var process = new FakeProcess(37);
+        using var manager = NewManager(_ => process, () => false, () => true);
+        try
+        {
+            const string detail = "Host CouchCoop build: 1.0.0+aaa. This player's game loaded CouchCoop build: "
+                + "0.1.1+snapshot.bbb, from: /steamapps/workshop/content/2868840/3800644054/CouchCoop.Mod.dll.";
+            var pending = manager.EnsureHeadlessAsync(id, "build-mismatch", CancellationToken.None);
+            var control = await WaitForControlAsync(id);
+            RegisterKnown(control, id, "mismatch-token");
+            HeadlessConnectionControl.Shared.Observe("mismatch-token", control.Generation,
+                new HeadlessConnectionStatus(1, "Failed", HeadlessSeatBuildGuard.MismatchErrorCode, detail, 0));
+            process.Exit(); // the guard force-exits right after its report lands.
+
+            Assert(await pending.WaitAsync(TimeSpan.FromSeconds(2)) is null, "a mismatched seat refuses a redirect");
+
+            var row = ConnectionRegistry.Shared.Snapshot().Rows.Single(entry => entry.Id == id);
+            Assert(row.Issue?.Code == HeadlessClientManager.SeatBuildMismatchCode,
+                "the mismatch gets its own issue code rather than the generic native rejection");
+            Assert(row.Issue!.Action.Contains("Workshop", StringComparison.Ordinal),
+                "the next action names the real remedy (remove one of the two installed copies)");
+            Assert(!row.Issue.Action.Contains("versions match", StringComparison.Ordinal),
+                "…and not the generic version advice a player has already acted on");
+
+            var report = ConnectionRegistry.Shared.BuildReport(id) ?? "";
+            Assert(report.Contains("workshop/content/2868840", StringComparison.Ordinal),
+                "the report carries the assembly path that names WHICH copy the seat loaded");
+            Assert(report.Contains("modVersion:", StringComparison.Ordinal),
+                "…beside the host's own build, so both sides are in one report");
         }
         finally { CleanupControl(id); ConnectionRegistry.Shared.Clear(); }
     }

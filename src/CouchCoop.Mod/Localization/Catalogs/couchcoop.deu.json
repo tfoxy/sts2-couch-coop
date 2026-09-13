@@ -114,6 +114,8 @@
   "couchcoop_connection_error_launch_action": "Versuchen Sie erneut beizutreten.",
   "couchcoop_connection_error_join_summary": "Das Spiel des Spielers hat die Verbindung verloren.",
   "couchcoop_connection_error_join_action": "Verbinden Sie diesen Browser erneut.",
+  "couchcoop_connection_error_mod_mismatch_summary": "Das Spiel dieses Spielers hat eine andere Kopie von CouchCoop geladen.",
+  "couchcoop_connection_error_mod_mismatch_action": "Behalten Sie nur eine Kopie der Mod installiert, starten Sie das Spiel neu und versuchen Sie es erneut.",
   "couchcoop_connection_error_browser_summary": "Der Browser konnte die Spielansicht nicht anzeigen.",
   "couchcoop_connection_error_browser_action": "Laden Sie den Browser neu und treten Sie erneut bei.",
   "couchcoop_connection_error_service_summary": "Der Browserdienst des Hosts wurde beendet.",

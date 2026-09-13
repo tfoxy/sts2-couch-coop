@@ -114,6 +114,8 @@
   "couchcoop_connection_error_launch_action": "Try joining again.",
   "couchcoop_connection_error_join_summary": "The player game lost its connection.",
   "couchcoop_connection_error_join_action": "Reconnect this browser.",
+  "couchcoop_connection_error_mod_mismatch_summary": "This player's game loaded a different copy of CouchCoop.",
+  "couchcoop_connection_error_mod_mismatch_action": "Keep only one copy of the mod installed, restart the game, then try again.",
   "couchcoop_connection_error_browser_summary": "The browser could not show the game view.",
   "couchcoop_connection_error_browser_action": "Reload the browser, then join again.",
   "couchcoop_connection_error_service_summary": "The host browser service stopped.",

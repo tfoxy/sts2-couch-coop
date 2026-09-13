@@ -114,6 +114,8 @@
   "couchcoop_connection_error_launch_action": "Tekrar katılmayı deneyin.",
   "couchcoop_connection_error_join_summary": "Oyuncunun oyunu bağlantısını kaybetti.",
   "couchcoop_connection_error_join_action": "Bu tarayıcıyı yeniden bağlayın.",
+  "couchcoop_connection_error_mod_mismatch_summary": "Bu oyuncunun oyunu CouchCoop'un farklı bir kopyasını yükledi.",
+  "couchcoop_connection_error_mod_mismatch_action": "Modun yalnızca tek bir kopyasını kurulu bırakın, oyunu yeniden başlatın ve tekrar deneyin.",
   "couchcoop_connection_error_browser_summary": "Tarayıcı oyun görünümünü gösteremedi.",
   "couchcoop_connection_error_browser_action": "Tarayıcıyı yenileyip tekrar katılın.",
   "couchcoop_connection_error_service_summary": "Ana bilgisayarın tarayıcı hizmeti durdu.",

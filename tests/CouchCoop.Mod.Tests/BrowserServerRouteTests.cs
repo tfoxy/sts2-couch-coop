@@ -110,8 +110,27 @@ if (args is ["connections", ..])
     await ConnectionReportFormatterTests.Run();
     await ConnectionAttemptLogsTests.Run();
     await ConnectionControlTests.RunAsync();
+    SeatModBuildTests.Run();
     await HeadlessConnectionLifecycleTests.RunAsync();
     Console.WriteLine("connections: ok");
+    return;
+}
+
+// `dotnet run --project tests/CouchCoop.Mod.Tests -- seat-build` runs the "a seat must run the same copy of
+// CouchCoop as its host" rules ALONE: which installed copy a loaded path is, which mod-list row a seat is
+// seeded to disable, the settings.save rewrite that does it, and the build comparison the seat refuses on.
+// Pure — temp directories and strings, no game, no process, no port — so it stands on its own like
+// host-guards above, and it is also registered in `connections` (the guard's failure is a connection issue)
+// and in the full sequence below.
+if (args is ["seat-build", ..])
+{
+    SeatModBuildTests.Run();
+    // The other half of "which copy of the mod is this": the shipped manifest's own id, version shape and
+    // affects_gameplay flag. It is registered in the full sequence only just BELOW the suite that can take
+    // the process down on some machines, so this verb is the reachable way to check it — and both of the
+    // scripts that stamp a version into a published copy of the manifest are held to it.
+    ModManifestGameplayRelevanceTests.Run();
+    Console.WriteLine("seat build: ok");
     return;
 }
 
@@ -158,6 +177,9 @@ if (args is ["cache", ..])
     CacheRootPurgeTests.Run();
     AssetCacheTokenEnvelopeTests.Run();
     HeadlessUserDirSeederTests.Run();
+    // The seeder's other job: pinning which copy of CouchCoop the seeded profile may load. Registered here as
+    // well as under `seat-build`, because a change to the seed walk is the way to break it by accident.
+    SeatModBuildTests.Run();
     // The other three caches' own contracts. All of them are registered far enough down the full sequence to be
     // unreachable there, so a change to where any of them writes is only verifiable from here.
     AstcTranscodeCacheTests.Run();
@@ -246,6 +268,10 @@ CouchCoopModalFocusTests.Run();
 // ...and WHICH controls a d-pad can walk to inside that modal: the closed chain that makes the QR dialog's
 // host-select rows reachable without letting focus escape onto the lobby behind the scrim.
 CouchCoopModalFocusChainTests.Run();
+// Beta round: a seat must load the SAME copy of CouchCoop as its host, and say so loudly when it did not.
+// Up here with the other pure suites for the same reason — everything from HeadlessAudioMuteTargetsTests
+// below is unreachable on some machines. Also reachable alone as `-- seat-build`.
+SeatModBuildTests.Run();
 
 // Pure suites (no IO) run first so they execute regardless of the network-suite flakiness.
 // CAUTION: "pure" here means no IO, not no Godot — this next suite reflects over game types through

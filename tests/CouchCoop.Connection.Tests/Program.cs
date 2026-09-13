@@ -47,6 +47,16 @@ if (args is ["--seats"])
     return;
 }
 
+// "A seat runs the same copy of CouchCoop as its host": the seeded mod-list pin and the build guard whose
+// failure becomes the `seat-build-mismatch` connection issue the lifecycle leg below asserts.
+if (args is ["--seat-build"])
+{
+    Console.WriteLine("seat build: mod selection and build guard");
+    SeatModBuildTests.Run();
+    Console.WriteLine("seat build: ok");
+    return;
+}
+
 Console.WriteLine("connections: registry");
 ConnectionRegistryTests.Run();
 Console.WriteLine("connections: device label");
@@ -63,6 +73,8 @@ Console.WriteLine("connections: disconnect exit");
 await HeadlessDisconnectExitTests.RunAsync();
 Console.WriteLine("connections: control routes");
 await ConnectionControlRouteTests.RunAsync();
+Console.WriteLine("connections: seat build");
+SeatModBuildTests.Run();
 Console.WriteLine("connections: lifecycle");
 await HeadlessConnectionLifecycleTests.RunAsync();
 Console.WriteLine("connections: websocket lifecycle");

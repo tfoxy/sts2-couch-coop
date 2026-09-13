@@ -298,7 +298,9 @@ public sealed class ConnectionRegistry
             var row = Row(e, _time.GetTimestamp());
             var facts = new Dictionary<string, string>(e.Facts)
             {
-                ["modVersion"] = typeof(ConnectionRegistry).Assembly.GetCustomAttribute<AssemblyInformationalVersionAttribute>()?.InformationalVersion ?? "unknown",
+                // The same string the host hands each seat it spawns, so a report and a seat's mismatch
+                // detail are directly comparable rather than two independent renderings of "our version".
+                ["modVersion"] = CouchCoopModBuildIdentity.Current,
                 ["hostOS"] = System.Runtime.InteropServices.RuntimeInformation.OSDescription,
                 ["gameVersion"] = e.Facts.GetValueOrDefault("gameVersion") ?? HostGameVersion ?? "unknown"
             };
@@ -359,7 +361,11 @@ public sealed class ConnectionRegistry
         {
             // A socket can close before the process monitor observes the cause. Replace that symptom only
             // with a confirmed native/process failure; teardown must never replace an existing native cause.
-            if (e.Issue.Code == "browser-transport-lost" && issue.Code is "process-exited" or "native-join-rejected" or "native-disconnected")
+            // `seat-build-mismatch` belongs in that set for the same reason and more strongly: the seat
+            // reported it about itself and then exited, so the closed socket is its consequence.
+            if (e.Issue.Code == "browser-transport-lost"
+                && issue.Code is "process-exited" or "native-join-rejected" or "native-disconnected"
+                    or Session.HeadlessClientManager.SeatBuildMismatchCode)
             {
                 Trace(e, $"Earlier browser symptom: {e.Issue.Code}: {e.Issue.Detail ?? e.Issue.Summary}");
                 e.Issue = issue;

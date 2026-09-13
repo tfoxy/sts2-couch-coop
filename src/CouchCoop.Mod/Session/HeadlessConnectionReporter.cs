@@ -174,6 +174,39 @@ public sealed class HeadlessConnectionReporter : IDisposable
         }
     }
 
+    /// <summary>
+    /// Send ONE terminal status to the host and stop, without a runtime, a subscription or a heartbeat.
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// For a failure the seat detects before it has a <see cref="CouchCoopRuntimeHost"/> to report through
+    /// — today, <see cref="HeadlessSeatBuildGuard"/>, which runs at mod init and must be able to name its
+    /// cause and then exit. Same endpoint, same bearer token, same generation header as the live reporter,
+    /// so the host accepts it through exactly one code path.
+    /// </para>
+    /// <para>
+    /// Sequence 1: this is the first status the host will have seen for this generation, and the caller
+    /// terminates the process, so nothing follows it that a bumped sequence would have to stay ahead of.
+    /// </para>
+    /// <para>
+    /// Returns whether the host accepted it. False means the seat's own environment carries no control
+    /// channel, or the host did not answer — never a reason to keep going.
+    /// </para>
+    /// </remarks>
+    public static async Task<bool> ReportTerminalFailureAsync(string errorCode, string detail, CancellationToken cancellationToken)
+    {
+        if (!TryReadEnvironment(out var endpoint, out var token, out var generation)) return false;
+        var status = new HeadlessConnectionStatus(1, "Failed", Bound(errorCode, 128), Bound(detail, 2048), 0);
+        using var request = new HttpRequestMessage(HttpMethod.Post, endpoint)
+        {
+            Content = new StringContent(JsonSerializer.Serialize(status), Encoding.UTF8, "application/json"),
+        };
+        request.Headers.Authorization = new AuthenticationHeaderValue("Bearer", token);
+        request.Headers.Add("X-CouchCoop-Generation", generation.ToString(System.Globalization.CultureInfo.InvariantCulture));
+        using var response = await Client.SendAsync(request, cancellationToken).ConfigureAwait(false);
+        return response.IsSuccessStatusCode;
+    }
+
     private static string? Bound(string? value, int limit)
         => value is { Length: > 0 } && value.Length > limit ? value[..(limit - 14)] + "…[truncated]" : value;
 

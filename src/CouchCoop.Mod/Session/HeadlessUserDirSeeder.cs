@@ -45,6 +45,12 @@ internal static class HeadlessUserDirSeeder
     // steam/<id>/[modded/]profile<N>/saves/prefs.save — the `steam` tree covers all of them. Copy-if-missing
     // (the previous behavior) froze a slot at whatever it was first seeded with, which is how slots ended up on
     // language "esp" and fps 24 while the host was on "eng"/60.
+    //
+    // WHAT THE COPY DOES NOT CARRY, and it is a settings value living in this very file: the per-mod enable
+    // flags (`mod_settings.mod_list`, one row per (mod id, source) pair in steam/<id>/settings.save). Those the
+    // host REWRITES from the mods it found, after it has already decided which ones to load — so the copy is a
+    // record of what the host discovered, not of what it chose. The seat's CouchCoop row is therefore pinned
+    // explicitly after the copy; see HeadlessSeatModSelection.
     private static readonly string[] SeedCopyDirs = ["default", "mod_configs", "steam"];
 
     // spirectl leaves many "settings.save.spirectl-backup-<ts>" files in steam/<id>/; they're pure cruft for a
@@ -74,13 +80,21 @@ internal static class HeadlessUserDirSeeder
             slot,
             CurrentPlatform(),
             Environment.GetEnvironmentVariable,
-            Environment.GetFolderPath);
+            Environment.GetFolderPath,
+            HeadlessSeatModSelection.SourceToDisableForThisHost());
 
+    /// <param name="seatModSourceToDisable">
+    /// The <c>couchcoop</c> mod-list row source the seeded profiles must disable, so the seat loads the same copy
+    /// of the mod as this host. <see langword="null"/> leaves the seeded mod list exactly as copied — which is
+    /// what the pure seeding tests want, and what a host that cannot tell where its own CouchCoop came from must
+    /// do rather than guess.
+    /// </param>
     internal static HeadlessUserDirPrepareResult? Prepare(
         int slot,
         HeadlessUserDirPlatform platform,
         Func<string, string?> getEnvironmentVariable,
-        Func<Environment.SpecialFolder, string> getFolderPath)
+        Func<Environment.SpecialFolder, string> getFolderPath,
+        string? seatModSourceToDisable = null)
     {
         try
         {
@@ -149,6 +163,13 @@ internal static class HeadlessUserDirSeeder
                 {
                     CopySeedTree(src, Path.Combine(slotUserDir, name), slot);
                 }
+            }
+
+            // AFTER the copy, and only over the copy: the seat's own settings.save now says which copy of
+            // CouchCoop it may load, instead of inheriting a mod list the host rewrote from discovery.
+            if (seatModSourceToDisable is not null)
+            {
+                HeadlessSeatModSelection.PinSeatProfiles(slotUserDir, seatModSourceToDisable, slot);
             }
 
             return new HeadlessUserDirPrepareResult(slotBase, slotUserDir, policy.EnvironmentVariables, hostUserDir);

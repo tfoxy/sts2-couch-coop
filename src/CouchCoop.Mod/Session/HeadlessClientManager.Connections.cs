@@ -6,6 +6,13 @@ namespace CouchCoop.Mod.Session;
 
 public sealed partial class HeadlessClientManager
 {
+    /// <summary>
+    /// The connection issue a seat that loaded a different CouchCoop build than its host is reported as.
+    /// Public because the report copy, the host panel's issue mapping and the registry's confirmed-cause rule
+    /// all key on the literal, and three spellings of it would drift.
+    /// </summary>
+    public const string SeatBuildMismatchCode = "seat-build-mismatch";
+
     private readonly Dictionary<int, OwnedConnection> _ownedConnections = [];
     private readonly Dictionary<Guid, BrowserAttempt> _browserAttempts = [];
     private readonly Dictionary<int, Task> _connectionCleanup = [];
@@ -425,9 +432,17 @@ public sealed partial class HeadlessClientManager
     private static bool SetTerminalFailure(OwnedConnection owned, HeadlessConnectionStatus? status)
     {
         if (status?.NativePhase.Equals("Failed", StringComparison.OrdinalIgnoreCase) == true)
-            owned.Failure ??= new("native-join-rejected", "The game rejected the connection to the host.",
-                "Check that game and mod versions match, then retry. Copy this report if it continues.",
-                $"{status.ErrorCode ?? "Unknown native error"}: {status.ErrorDetail ?? "No native error detail was supplied."}");
+            // A build mismatch is a terminal failure like any other, but it is NOT a native rejection: the seat
+            // never reached the network, and "check that game and mod versions match" is the one next action a
+            // player cannot act on. It has a remedy — remove one of the two installed copies of this mod — so it
+            // gets its own code and says so. The detail comes from the seat and names the file it loaded.
+            owned.Failure ??= string.Equals(status.ErrorCode, HeadlessSeatBuildGuard.MismatchErrorCode, StringComparison.Ordinal)
+                ? new(SeatBuildMismatchCode, "This player's game is running a different version of CouchCoop than the host.",
+                    "Both copies of the mod are installed. Unsubscribe the CouchCoop item in the Steam Workshop, or redeploy the mod, so only one remains — then retry.",
+                    status.ErrorDetail ?? "The client game did not report which build it loaded.")
+                : new("native-join-rejected", "The game rejected the connection to the host.",
+                    "Check that game and mod versions match, then retry. Copy this report if it continues.",
+                    $"{status.ErrorCode ?? "Unknown native error"}: {status.ErrorDetail ?? "No native error detail was supplied."}");
         else if (status?.NativePhase.Equals("Disconnected", StringComparison.OrdinalIgnoreCase) == true)
             owned.Failure ??= new("native-disconnected", "The client game disconnected from the host.",
                 "Reconnect this device. Copy this report if it drops again.", status.ErrorDetail ?? status.ErrorCode);
