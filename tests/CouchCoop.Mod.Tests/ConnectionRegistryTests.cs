@@ -27,6 +27,19 @@ internal static class ConnectionRegistryTests
         var row = registry.Snapshot().Rows.Single();
         Assert(row.Issue!.Code == "native-join-rejected", "confirmed native cause replaces symptom and survives teardown");
         Assert(row.Attempt!.IssueId == reportId, "cause refinement keeps one report");
+
+        // The same rule for a seat that refused to run: it replaces the browser symptom, and the report ID
+        // and timing stay the first record's.
+        var mismatchId = Guid.NewGuid();
+        registry.Connected(mismatchId, "tablet"); registry.BeginAttempt(mismatchId);
+        registry.Fail(mismatchId, "browser-transport-lost", "Socket closed", "Reconnect", "No close detail");
+        var mismatchReportId = registry.Snapshot().Rows.Single(entry => entry.Id == mismatchId).Attempt!.IssueId;
+        registry.Fail(mismatchId, CouchCoop.Mod.Session.HeadlessClientManager.SeatBuildMismatchCode,
+            "Different build", "Keep one copy", "loaded from /steamapps/workshop/content/2868840/1/CouchCoop.Mod.dll");
+        var mismatchRow = registry.Snapshot().Rows.Single(entry => entry.Id == mismatchId);
+        Assert(mismatchRow.Issue!.Code == CouchCoop.Mod.Session.HeadlessClientManager.SeatBuildMismatchCode,
+            "a seat build mismatch replaces the browser transport symptom");
+        Assert(mismatchRow.Attempt!.IssueId == mismatchReportId, "…and keeps the first report's identity");
         registry.Disconnected(id);
         var report = registry.BuildReport(id)!;
         Assert(report.Contains("Earlier browser symptom", StringComparison.Ordinal), "original transport observation retained");
@@ -135,7 +148,14 @@ internal static class ConnectionRegistryTests
         registry.Disconnected(delayedClose);
         Assert(registry.Snapshot().Rows.Count == 0, "late clean close retracts only an inferred child-count issue");
 
-        foreach (var confirmedCode in new[] { "browser-transport-lost", "native-join-rejected", "process-exited" })
+        // `seat-build-mismatch` is in this set for the same reason as the native/process causes: the seat
+        // reported it about ITSELF and then force-exited, so the socket closing afterwards is its consequence
+        // and must not be allowed to retract it.
+        foreach (var confirmedCode in new[]
+                 {
+                     "browser-transport-lost", "native-join-rejected", "process-exited",
+                     CouchCoop.Mod.Session.HeadlessClientManager.SeatBuildMismatchCode,
+                 })
         {
             var failed = Complete();
             registry.SetReadiness(failed, true, false);

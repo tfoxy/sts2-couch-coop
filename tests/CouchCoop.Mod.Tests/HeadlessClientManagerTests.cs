@@ -614,7 +614,8 @@ internal static class HeadlessClientManagerTests
 
     private static void SeatEnvironmentCarriesTheJoinContract()
     {
-        var env = HeadlessClientManager.SeatLaunchEnvironment(slot: 3, port: 13367, netId: 1003, hostNetId: 1, hostPid: 4242);
+        var env = HeadlessClientManager.SeatLaunchEnvironment(
+            slot: 3, port: 13367, netId: 1003, hostNetId: 1, hostPid: 4242, hostModBuild: "1.0.0+abc123");
 
         Assert(env["COUCHCOOP_HEADLESS_CLIENT"] == "1", "the seat identifies itself as a headless couch client");
         Assert(env["COUCHCOOP_HEADLESS_SLOT"] == "3", "the seat carries its slot");
@@ -626,6 +627,10 @@ internal static class HeadlessClientManagerTests
         Assert(env["COUCHCOOP_HOST_NETID"] == "1", "the seat is told the host's netId");
         Assert(env["COUCHCOOP_JOIN_HOST"] == "127.0.0.1:33771",
             "the seat is told its join target explicitly (the game's own FastMpJoin hardcodes this address)");
+        // A dev machine can have two copies of this mod installed and the game picks between them per
+        // process, so the seat is told which build the host is and refuses to be a different one.
+        Assert(env["COUCHCOOP_HOST_MOD_BUILD"] == "1.0.0+abc123",
+            "the seat carries the host's own CouchCoop build for HeadlessSeatBuildGuard to compare against");
     }
 
     private static void SeatIsToldTheSteamHostsNetId()
@@ -633,7 +638,8 @@ internal static class HeadlessClientManagerTests
         // On a Steam-hosted session the host answers to its SteamID64, NOT 1. A seat that isn't told would echo
         // every heartbeat to netId 1 and NetClientGameService.SendMessage would throw ~5x a second.
         const ulong steamId = 76561198000000123UL;
-        var env = HeadlessClientManager.SeatLaunchEnvironment(slot: 2, port: 13357, netId: 1002, hostNetId: steamId, hostPid: 7);
+        var env = HeadlessClientManager.SeatLaunchEnvironment(
+            slot: 2, port: 13357, netId: 1002, hostNetId: steamId, hostPid: 7, hostModBuild: "1.0.0+abc123");
         Assert(env["COUCHCOOP_HOST_NETID"] == "76561198000000123",
             "a Steam-hosted session hands the seat the host's real (SteamID64) netId");
         Assert(env["COUCHCOOP_CLIENT_ID"] == "1002", "…while the seat keeps its own couch netId");
@@ -653,7 +659,7 @@ internal static class HeadlessClientManagerTests
             "seats ask the CLR GC to favour a tighter heap over collection throughput");
 
         var contract = HeadlessClientManager.SeatLaunchEnvironment(
-            slot: 3, port: 13367, netId: 1003, hostNetId: 1, hostPid: 4242);
+            slot: 3, port: 13367, netId: 1003, hostNetId: 1, hostPid: 4242, hostModBuild: "1.0.0+abc123");
         foreach (var key in tuning.Keys)
         {
             Assert(!contract.ContainsKey(key),

@@ -27,4 +27,20 @@ internal static class CouchCoopLog
             // Logger not up / not callable from here. Any Console.Error line the caller wrote still stands.
         }
     }
+
+    /// <summary>
+    /// The same line, tagged <c>[ERROR]</c>. For the few conditions a reader of <c>godot.log</c> must be able
+    /// to grep for after the fact — a seat that refused to run, and nothing routine.
+    /// </summary>
+    public static void Error(string message)
+    {
+        try
+        {
+            MegaCrit.Sts2.Core.Logging.Log.Error(message);
+        }
+        catch
+        {
+            // Same guard as Info: a diagnostic must never be the reason a shutdown or a worker dies.
+        }
+    }
 }

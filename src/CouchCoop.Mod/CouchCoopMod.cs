@@ -62,6 +62,13 @@ public static class CouchCoopMod
     {
         lock (Gate)
         {
+            // FIRST, before a patch is applied, a cache is warmed or a runtime exists: a seat running a
+            // different CouchCoop build than the host that spawned it reports that and terminates. Everything
+            // below this line assumes the two sides of the browser wire contract were compiled together, and
+            // the failure when they were not is either silent divergence or an opaque readiness timeout.
+            // No-op on a host, and on a seat whose host predates the check.
+            if (IsHeadlessClient) HeadlessSeatBuildGuard.EnforceOrExit();
+
             CouchCoopLocalization.Initialize();
             // Init only ever runs inside a real Godot process, so it is the safe place to arm the
             // static-background tracker's probe path (which calls GodotSharp NATIVE code — see the latch's doc

@@ -163,7 +163,8 @@ The mod configuration is the part that is not obvious:
   settings.save rewrite or restore at all — and edits `<userDir>/SlayTheSpire2/steam/<steamid>/settings.save`
   itself via `scripts/lib/mp5-mod-loadout.py`, keyed on `(id, source)`. It only flips `is_enabled`, never
   invents a row (the game's ModManager owns discovery), and a missing `sts2unlimited` row is fatal rather
-  than a silent four-seat lobby.
+  than a silent four-seat lobby. This pins the **host instance**; the seats it spawns pin themselves, from
+  the copy the host actually loaded (see the seat launch contract in `architecture-map.md`).
 - **`sts2 game mods settings` seeds the instance user dir without launching or deploying** — it is the only
   lifecycle command that does. That is what lets the loadout be pinned before the first launch instead of
   launch → edit → restart. First seed of a fresh instance copies ~780 MB from `~/.local/share/SlayTheSpire2`;
@@ -606,6 +607,8 @@ Run `dotnet run --project tests/CouchCoop.Connection.Tests` for registry identit
 report bounds, log attribution, authenticated child control routes, and headless failure/retry cleanup.
 This independent executable avoids loading the known failing full Mod.Tests runner. `--routes` selects
 only the loopback HTTP tests; `--host-ui` runs native focus and localization checks; `--seats` covers allocation/teardown;
+`--seat-build` covers "a seat runs the same copy of CouchCoop as its host" — which mod-list row a seat is seeded
+to disable, the `settings.save` rewrite that does it, and the build comparison the seat refuses on;
 `--ws-lifecycle` covers startup cancellation over a real WebSocket; `--labels` isolates
 the device parser. Use the normal scratch deployment environment when running in a worktree.
 
@@ -712,6 +715,15 @@ works. Things worth knowing before reading its output:
 
 - **`npm run build` deploys.** Its Vite `outDir` is the installed mod's `frontend/` dir — running it in a
   branch overwrites the live install with unmerged code. Use `vue-tsc --noEmit` for the typecheck gate instead.
+- **Two copies of this mod can be installed, and the game picks per process.** With both a `mods/couchcoop`
+  deploy and a Workshop subscription, stable `v0.107.1` keeps the local copy and beta `v0.111.0` keeps the
+  HIGHER version — with one `[WARN]` to say which. A beta session ran the published build in every headless
+  seat while the host ran the working tree. `scripts/build-local-mod.sh` now stamps `9999.0.0+dev.<sha>` into
+  the deployed manifest so a dev deploy cannot lose that comparison, seats are seeded with the other copy's
+  mod-list row disabled, and a seat whose build differs from its host's reports `seat-build-mismatch` and
+  exits instead of joining. **Still prove what loaded**, and from the log rather than from having deployed:
+  `grep 'Loading assembly DLL' <userDir>/logs/godot.log` must name `mods/couchcoop/couchcoop.dll`, in the
+  seat logs as well as the host's.
 - **`pkill -f <pattern>` self-matches.** A pattern that also appears in the invoking shell's own argv (e.g. a
   literal string from the command you're about to relaunch) kills the invoking shell too (exit 144, no output).
   Also: `COUCHCOOP_HEADLESS_CLIENT` is an environment variable, not argv — `pkill -f` against it matches

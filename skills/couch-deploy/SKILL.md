@@ -61,7 +61,23 @@ through `scripts/build-local-mod.sh` with the rest of the mod.
 
 ## Prove it
 
-Every deploy ends here. Do not skip it because the build printed no errors:
+Every deploy ends here. Do not skip it because the build printed no errors.
+
+Start with the record the deploy writes about itself — `build-local-mod.sh` prints one line naming the
+version it stamped, and leaves the same identity in the mod dir:
+
+```bash
+jq -r '.sourceCommit, .branch, .dirty, .dependencies.sts2References.lane' <modsDir>/build-info.txt
+jq -r '.version' <modsDir>/couchcoop.json     # 9999.0.0+dev.<sha>[.dirty] for a dev deploy
+```
+
+`9999` is deliberate: game v0.111.0 resolves a mod installed **both** from the Workshop and from `mods/`
+by taking the HIGHER version, so a dev deploy declares one nothing published can beat. A `couchcoop.json`
+that still says `0.1.1` or `0.0.0-snapshot.…` is a deploy from an older script — or one that did not
+happen. `build-info.txt`'s `sourceCommit` is also what the seats compare against: it is the commit inside
+the assembly's `1.0.0+<sha>` informational version.
+
+Then the freshness check:
 
 ```bash
 stat -c %y <modsDir>/CouchCoop.Mod.dll

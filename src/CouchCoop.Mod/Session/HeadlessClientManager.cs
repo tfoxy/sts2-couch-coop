@@ -1270,12 +1270,20 @@ public sealed partial class HeadlessClientManager : IDisposable
     /// and every heartbeat echo would otherwise throw (see <see cref="Patches.HostNetIdPatch"/>).
     /// </param>
     /// <param name="hostPid">The host process id, for the seat's crash-proof self-reaper.</param>
+    /// <param name="hostModBuild">
+    /// The HOST's own CouchCoop build (<see cref="Connections.CouchCoopModBuildIdentity.Current"/>), which the
+    /// seat compares against its own before it does anything else. A developer machine can have two copies of
+    /// this mod installed — the local deploy and a Steam Workshop subscription — and the game picks between them
+    /// per process, so "the host and its seats are the same build" is not something either side can assume.
+    /// Passed in rather than read here so the launch contract stays pure and testable.
+    /// </param>
     internal static IReadOnlyDictionary<string, string> SeatLaunchEnvironment(
         int slot,
         int port,
         ulong netId,
         ulong hostNetId,
-        int hostPid)
+        int hostPid,
+        string hostModBuild)
         => new Dictionary<string, string>(StringComparer.Ordinal)
         {
             ["COUCHCOOP_PREFERRED_PORT"] = port.ToString(CultureInfo.InvariantCulture),
@@ -1287,6 +1295,8 @@ public sealed partial class HeadlessClientManager : IDisposable
             // Replaces "--clientId <N>" on the command line.
             ["COUCHCOOP_CLIENT_ID"] = netId.ToString(CultureInfo.InvariantCulture),
             ["COUCHCOOP_HOST_NETID"] = hostNetId.ToString(CultureInfo.InvariantCulture),
+            // The host's mod build, so the seat can refuse to be a different one. See HeadlessSeatBuildGuard.
+            [Connections.CouchCoopModBuildIdentity.HostBuildEnvironmentVariable] = hostModBuild,
             // Explicit rather than implied: the game's FastMpJoin hardcodes 127.0.0.1:33771, and so do we, but
             // stating it means the seat's join target is visible in the process environment and can be redirected
             // without a rebuild (COUCHCOOP_JOIN_HOST is honored by every modded client).
@@ -1391,7 +1401,8 @@ public sealed partial class HeadlessClientManager : IDisposable
             };
         }
 
-        foreach (var kv in SeatLaunchEnvironment(slot, port, netId, hostNetId, Environment.ProcessId))
+        foreach (var kv in SeatLaunchEnvironment(
+            slot, port, netId, hostNetId, Environment.ProcessId, Connections.CouchCoopModBuildIdentity.Current))
         {
             psi.EnvironmentVariables[kv.Key] = kv.Value;
         }

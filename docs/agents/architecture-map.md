@@ -500,6 +500,27 @@ Verified live on a running seat (`/proc/<pid>/cmdline` is exactly `SlayTheSpire2
 | `COUCHCOOP_HOST_NETID` | `1` | host's real netId; `Patches/HostNetIdPatch.cs` rewrites `ENetClient.HostNetId` when this is not 1, or heartbeat replies would throw every 200ms |
 | `COUCHCOOP_JOIN_HOST` | `127.0.0.1:33771` | explicit direct-connect host, honoured by any modded client |
 | `COUCHCOOP_HEADLESS_SLOT` / `COUCHCOOP_PREFERRED_PORT` | `2` / `13357` | per-slot user dir + browser port |
+| `COUCHCOOP_HOST_MOD_BUILD` | `1.0.0+<sha>` | the HOST's own mod build; a seat whose build differs reports and exits at mod init |
+
+### A seat must run the same copy of CouchCoop as its host
+
+Two copies of this mod can be installed at once — the install's `mods/couchcoop` and a Steam Workshop
+subscription — and **the game chooses between them per process**. Stable `v0.107.1` always keeps the local
+copy; beta `v0.111.0` keeps the HIGHER version. So the host and the seats it spawns can disagree, and once did:
+a whole beta QA session ran the published Workshop build in every seat while the host ran the working tree.
+Three independent defences, none of which needs anyone to unsubscribe:
+
+| where | mechanism | files |
+| --- | --- | --- |
+| deploy | a dev deploy stamps `9999.0.0+dev.<sha>` into the DEPLOYED manifest, so it cannot lose a version comparison, and writes `build-info.txt` beside it. The stale-file sweep now removes both, because `PreserveNewest` never replaces a newer stale manifest | `scripts/build-local-mod.sh`, `scripts/stamp-local-mod.sh` (self-test `scripts/test-stamp-local-mod.sh`) |
+| seat seeding | the seeded profile's `mod_settings.mod_list` row for the copy the host is NOT running is written `is_enabled: false`, so the seat's choice is not a version comparison at all. Symmetric — a Workshop-running host disables the seat's local row | `Session/HeadlessSeatModSelection.cs`, called from `HeadlessUserDirSeeder.Prepare` |
+| seat runtime | the seat compares `COUCHCOOP_HOST_MOD_BUILD` with its own build at mod init and, on a difference, reports `couchcoop-build-mismatch` through the control channel and force-exits before any patch or join. The host surfaces it as the `seat-build-mismatch` issue, whose next action is "keep only one copy installed" | `Session/HeadlessSeatBuildGuard.cs`, `Connections/CouchCoopModBuildIdentity.cs`, `HeadlessClientManager.Connections.cs` |
+
+The per-mod enable flag lives in `steam/<id>/settings.save` (and `default/<n>/settings.save`) under
+`mod_settings.mod_list`, one `{id, source, is_enabled}` row per **(mod, source)** pair — `source` is
+`mods_directory` or `steam_workshop`. The seeder does copy that file; what it cannot carry is the host's
+*decision*, because the host rewrites the list from what it discovered after it has already chosen. Tests:
+`-- seat-build` (also in `-- connections` and `-- cache`).
 
 ## Lobby QR host panel
 
@@ -651,6 +672,10 @@ panel is no longer mounted; its internal narration remains available for diagnos
   A failed child stops input and arms the five-second forced-exit backstop before notifying the host
   and browser and requesting quit. Parent cleanup captures logs and releases the peer before a seat
   can be reused. Healthy reconnect and mid-run detach still retain the existing game.
+- A seat that loaded a different CouchCoop build than the host reports `couchcoop-build-mismatch` on that
+  same channel at mod init, before any join, and exits. It is NOT folded into `native-join-rejected`: the
+  host raises `seat-build-mismatch`, whose detail names the assembly file the seat loaded and whose next
+  action is to keep only one copy of the mod installed. See the seat launch contract above.
 - Browser `client-frame-presented` is bound to the granted attempt and emitted after successful rendering
   and two animation-frame callbacks while visible. DOM and canvas use the same receipt path. It is
   separate from `scene-ack`, which remains the scene stream's flow-control credit.

@@ -114,6 +114,8 @@
   "couchcoop_connection_error_launch_action": "ลองเข้าร่วมอีกครั้ง",
   "couchcoop_connection_error_join_summary": "เกมของผู้เล่นขาดการเชื่อมต่อ",
   "couchcoop_connection_error_join_action": "เชื่อมต่อเบราว์เซอร์นี้อีกครั้ง",
+  "couchcoop_connection_error_mod_mismatch_summary": "เกมของผู้เล่นนี้โหลด CouchCoop คนละสำเนากับโฮสต์",
+  "couchcoop_connection_error_mod_mismatch_action": "ให้ติดตั้ง CouchCoop ไว้เพียงสำเนาเดียว รีสตาร์ทเกม แล้วลองอีกครั้ง",
   "couchcoop_connection_error_browser_summary": "เบราว์เซอร์ไม่สามารถแสดงหน้าจอเกมได้",
   "couchcoop_connection_error_browser_action": "รีโหลดเบราว์เซอร์แล้วเข้าร่วมอีกครั้ง",
   "couchcoop_connection_error_service_summary": "บริการเบราว์เซอร์ของโฮสต์หยุดทำงาน",

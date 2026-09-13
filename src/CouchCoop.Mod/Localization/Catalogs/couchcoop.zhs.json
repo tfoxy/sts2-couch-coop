@@ -114,6 +114,8 @@
   "couchcoop_connection_error_launch_action": "请重新加入。",
   "couchcoop_connection_error_join_summary": "玩家的游戏失去了连接。",
   "couchcoop_connection_error_join_action": "请重新连接此浏览器。",
+  "couchcoop_connection_error_mod_mismatch_summary": "该玩家的游戏加载了不同的 CouchCoop 副本。",
+  "couchcoop_connection_error_mod_mismatch_action": "只保留一个模组副本，重启游戏后重试。",
   "couchcoop_connection_error_browser_summary": "浏览器无法显示游戏画面。",
   "couchcoop_connection_error_browser_action": "刷新浏览器后重新加入。",
   "couchcoop_connection_error_service_summary": "主机浏览器服务已停止。",

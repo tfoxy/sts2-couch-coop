@@ -114,6 +114,8 @@
   "couchcoop_connection_error_launch_action": "Essayez de rejoindre à nouveau.",
   "couchcoop_connection_error_join_summary": "La partie du joueur a perdu sa connexion.",
   "couchcoop_connection_error_join_action": "Reconnectez ce navigateur.",
+  "couchcoop_connection_error_mod_mismatch_summary": "La partie de ce joueur a chargé une autre copie de CouchCoop.",
+  "couchcoop_connection_error_mod_mismatch_action": "Ne gardez qu'une seule copie du mod installée, redémarrez le jeu, puis réessayez.",
   "couchcoop_connection_error_browser_summary": "Le navigateur n'a pas pu afficher la vue du jeu.",
   "couchcoop_connection_error_browser_action": "Rechargez le navigateur, puis rejoignez à nouveau.",
   "couchcoop_connection_error_service_summary": "Le service de navigateur de l'hôte s'est arrêté.",

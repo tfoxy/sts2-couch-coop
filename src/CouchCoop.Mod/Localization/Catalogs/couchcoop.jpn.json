@@ -114,6 +114,8 @@
   "couchcoop_connection_error_launch_action": "もう一度参加してください。",
   "couchcoop_connection_error_join_summary": "プレイヤーのゲームの接続が切れました。",
   "couchcoop_connection_error_join_action": "このブラウザを再接続してください。",
+  "couchcoop_connection_error_mod_mismatch_summary": "このプレイヤーのゲームは別のCouchCoopを読み込みました。",
+  "couchcoop_connection_error_mod_mismatch_action": "CouchCoopのコピーを1つだけ残し、ゲームを再起動してからもう一度お試しください。",
   "couchcoop_connection_error_browser_summary": "ブラウザでゲーム画面を表示できませんでした。",
   "couchcoop_connection_error_browser_action": "ブラウザを再読み込みしてから、もう一度参加してください。",
   "couchcoop_connection_error_service_summary": "ホストのブラウザサービスが停止しました。",

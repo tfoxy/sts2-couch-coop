@@ -114,6 +114,8 @@
   "couchcoop_connection_error_launch_action": "Попробуйте присоединиться снова.",
   "couchcoop_connection_error_join_summary": "Игра игрока потеряла соединение.",
   "couchcoop_connection_error_join_action": "Переподключите этот браузер.",
+  "couchcoop_connection_error_mod_mismatch_summary": "Игра этого игрока загрузила другую копию CouchCoop.",
+  "couchcoop_connection_error_mod_mismatch_action": "Оставьте установленной только одну копию мода, перезапустите игру и повторите попытку.",
   "couchcoop_connection_error_browser_summary": "Браузер не смог показать экран игры.",
   "couchcoop_connection_error_browser_action": "Перезагрузите браузер и присоединитесь снова.",
   "couchcoop_connection_error_service_summary": "Служба браузера хоста остановлена.",
