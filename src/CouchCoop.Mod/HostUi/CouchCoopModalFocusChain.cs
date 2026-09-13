@@ -66,6 +66,14 @@ internal static class CouchCoopModalFocusChain
     /// is the game's own idiom for a closed ring (the character-select buttons pin their top and bottom to
     /// themselves).
     /// </remarks>
+    internal static int KeyboardTarget(int current, int count, bool backward)
+    {
+        if (count <= 0) throw new ArgumentOutOfRangeException(nameof(count));
+        if (current < 0) return backward ? count - 1 : 0;
+        var links = Neighbors(current, count);
+        return backward ? links.Previous : links.Next;
+    }
+
     internal static Link Neighbors(int index, int count)
     {
         if (count <= 0)

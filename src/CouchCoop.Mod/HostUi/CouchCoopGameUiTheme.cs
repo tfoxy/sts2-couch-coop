@@ -30,6 +30,7 @@ internal static class CouchCoopGameUiTheme
     public const string HsvShaderPath = "res://shaders/hsv.gdshader";
     public const string KreonBoldGlyphSpaceOnePath = "res://themes/kreon_bold_glyph_space_one.tres";
     public const string KreonBoldGlyphSpaceTwoPath = "res://themes/kreon_bold_glyph_space_two.tres";
+    public const string ConnectionCountTexturePath = "res://images/packed/combat_ui/pile_button_count.png";
 
     /// <summary>The hsv.gdshader uniform the game tweens for hover/press brightness. <c>1.0</c> is identity.</summary>
     public const string HsvValueParameter = "shader_parameter/v";
@@ -65,12 +66,41 @@ internal static class CouchCoopGameUiTheme
     public static Shader? HsvShader => _hsvShader.Value;
     public static Font? KreonBoldGlyphSpaceOne => _kreonBoldGlyphSpaceOne.Value;
     public static Font? KreonBoldGlyphSpaceTwo => _kreonBoldGlyphSpaceTwo.Value;
+    public static Texture2D? ConnectionCountTexture => _connectionCountTexture.Value;
+
+    // ---- connection companion card --------------------------------------------------------------------------
+    public static Color ConnectionPanelTitleGold { get; } = Color.FromHtml("#EFC851");
+    public static Color ConnectionGroupGold { get; } = Color.FromHtml("#EFC851");
+    public static Color ConnectionSubtitleGold { get; } = Color.FromHtml("#B69257");
+    public static Color ConnectionDeviceCream { get; } = Color.FromHtml("#FFF1D5");
+    public static Color ConnectionPlayerCream { get; } = Color.FromHtml("#E8D5B6");
+    public static Color ConnectionStageCream { get; } = Color.FromHtml("#F4E6CC");
+    public static Color ConnectionWarningOrange { get; } = Color.FromHtml("#E5A34C");
+    public static Color ConnectionFailureRed { get; } = Color.FromHtml("#E56A5D");
+    public static Color ConnectionCompleteGreen { get; } = Color.FromHtml("#8DCB83");
+    public static Color ConnectionProgressMuted { get; } = Color.FromHtml("#B6A99A");
+    public static Color ConnectionExplanationCream { get; } = Color.FromHtml("#F4E6CC");
+    public static Color ConnectionTechnicalMuted { get; } = Color.FromHtml("#A99F94");
+    public static Color ConnectionFocusCream { get; } = Color.FromHtml("#FFF1D5");
+    public const int ConnectionTitleFontSize = 24;
+    public const int ConnectionHeadingFontSize = 20;
+    public const int ConnectionSubtitleFontSize = 16;
+    public const int ConnectionBodyFontSize = 18;
+    public const int ConnectionProgressFontSize = 15;
+
+    public static StyleBoxFlat CreateConnectionRowStyle(bool selected, bool focused = false)
+        => CreateFallbackStyle(
+            focused ? Colors.Transparent : selected ? new Color(.18f, .14f, .07f, .95f) : new Color(.05f, .06f, .08f, .75f),
+            focused ? ConnectionFocusCream : selected ? ConnectionGroupGold : new Color(.3f, .3f, .3f, .8f),
+            6,
+            focused ? 3 : selected ? 2 : 1);
 
     private static readonly DeferredResource<Texture2D> _eventButtonTexture = Deferred<Texture2D>(EventButtonTexturePath);
     private static readonly DeferredResource<Texture2D> _rewardSkipButtonTexture = Deferred<Texture2D>(RewardSkipButtonTexturePath);
     private static readonly DeferredResource<Shader> _hsvShader = Deferred<Shader>(HsvShaderPath);
     private static readonly DeferredResource<Font> _kreonBoldGlyphSpaceOne = Deferred<Font>(KreonBoldGlyphSpaceOnePath);
     private static readonly DeferredResource<Font> _kreonBoldGlyphSpaceTwo = Deferred<Font>(KreonBoldGlyphSpaceTwoPath);
+    private static readonly DeferredResource<Texture2D> _connectionCountTexture = Deferred<Texture2D>(ConnectionCountTexturePath);
 
     /// <summary>
     /// A fresh hsv ShaderMaterial, or <see langword="null"/> when the shader failed to load. Never
@@ -115,6 +145,13 @@ internal static class CouchCoopGameUiTheme
         }
 
         label.AddThemeFontSizeOverride("font_size", fontSize);
+    }
+
+    public static void ApplyFont(Button button, Font? font, int fontSize)
+    {
+        var resolvedFont = ResolveBoldFont(font);
+        if (resolvedFont is not null) button.AddThemeFontOverride("font", resolvedFont);
+        button.AddThemeFontSizeOverride("font_size", fontSize);
     }
 
     /// <summary>

@@ -58,6 +58,13 @@ internal abstract partial class CouchCoopModalDialog : Control
     private readonly StyleBoxFlat _cardStyle = new();
     private readonly CouchCoopSkipButton _dismiss;
     private readonly Action _closeAction;
+    private readonly Action _selectAction;
+    private readonly Action _tabAction;
+    private readonly Action _pageUpAction;
+    private readonly Action _pageDownAction;
+    private readonly StringName _tabKey;
+    private readonly StringName _pageUpKey;
+    private readonly StringName _pageDownKey;
     private readonly Callable _inputModeChanged;
     private readonly Vector2 _cardSize;
     private readonly Vector2 _dismissSize;
@@ -71,6 +78,7 @@ internal abstract partial class CouchCoopModalDialog : Control
     private HostLobbyQrOverlayLayout _layout = HostLobbyQrOverlayLayout.Default;
     private Control? _restoreFocus;
     private bool _cancelBound;
+
     private bool _inputModeWired;
     private bool _installed;
     private bool _closing;
@@ -97,6 +105,14 @@ internal abstract partial class CouchCoopModalDialog : Control
         _cardSize = cardSize;
         _dismissSize = dismissSize ?? CouchCoopSkipButton.DesignSize;
         _closeAction = Close;
+        _selectAction = SelectFocusedControl;
+        _tabAction = MoveKeyboardFocus;
+        _pageUpAction = () => PageFocusedControl(Key.Pageup);
+        _pageDownAction = () => PageFocusedControl(Key.Pagedown);
+        var inputPrefix = $"couchcoop_modal_{GetInstanceId()}";
+        _tabKey = new StringName($"{inputPrefix}_tab");
+        _pageUpKey = new StringName($"{inputPrefix}_page_up");
+        _pageDownKey = new StringName($"{inputPrefix}_page_down");
         _inputModeChanged = Callable.From(OnInputModeChanged);
 
         Name = names.Root;
@@ -675,10 +691,17 @@ internal abstract partial class CouchCoopModalDialog : Control
 
             manager.PushHotkeyPressedBinding(MegaInput.cancel, _closeAction);
             manager.PushHotkeyPressedBinding(MegaInput.pauseAndBack, _closeAction);
+            manager.PushHotkeyPressedBinding(MegaInput.select, _selectAction);
+            BindKeyboardAction(manager, _tabKey, Key.Tab, _tabAction);
+            BindKeyboardAction(manager, _pageUpKey, Key.Pageup, _pageUpAction);
+            BindKeyboardAction(manager, _pageDownKey, Key.Pagedown, _pageDownAction);
             _cancelBound = true;
         }
         catch (Exception exception)
         {
+            // Roll back partial registration so the next heartbeat can retry cleanly.
+            _cancelBound = true;
+            UnbindCancel();
             Console.Error.WriteLine($"[couch-coop] modal cancel bind failed name={Name} detail={exception.GetType().Name}: {exception.Message}");
         }
     }
@@ -746,6 +769,11 @@ internal abstract partial class CouchCoopModalDialog : Control
             manager.PushHotkeyPressedBinding(MegaInput.cancel, _closeAction);
             manager.RemoveHotkeyPressedBinding(MegaInput.pauseAndBack, _closeAction);
             manager.PushHotkeyPressedBinding(MegaInput.pauseAndBack, _closeAction);
+            manager.RemoveHotkeyPressedBinding(MegaInput.select, _selectAction);
+            manager.PushHotkeyPressedBinding(MegaInput.select, _selectAction);
+            ReassertKeyboardAction(manager, _tabKey, _tabAction);
+            ReassertKeyboardAction(manager, _pageUpKey, _pageUpAction);
+            ReassertKeyboardAction(manager, _pageDownKey, _pageDownAction);
         }
         catch (Exception exception)
         {
@@ -766,10 +794,82 @@ internal abstract partial class CouchCoopModalDialog : Control
             var manager = NHotkeyManager.Instance;
             manager?.RemoveHotkeyPressedBinding(MegaInput.cancel, _closeAction);
             manager?.RemoveHotkeyPressedBinding(MegaInput.pauseAndBack, _closeAction);
+            manager?.RemoveHotkeyPressedBinding(MegaInput.select, _selectAction);
+            UnbindKeyboardAction(manager, _tabKey, _tabAction);
+            UnbindKeyboardAction(manager, _pageUpKey, _pageUpAction);
+            UnbindKeyboardAction(manager, _pageDownKey, _pageDownAction);
         }
         catch (Exception exception)
         {
             Console.Error.WriteLine($"[couch-coop] modal cancel unbind failed name={Name} detail={exception.GetType().Name}: {exception.Message}");
         }
+    }
+
+    /// <summary>Consumes select while a modal is open, so it cannot trigger lobby controls behind it.</summary>
+    private void SelectFocusedControl()
+    {
+        if (!GodotObject.IsInstanceValid(this) || !IsInsideTree() || !Visible)
+        {
+            return;
+        }
+
+        var focused = GetViewport()?.GuiGetFocusOwner();
+        if (focused is null || !IsAncestorOf(focused))
+        {
+            return;
+        }
+
+        if (ReferenceEquals(focused, _dismiss))
+        {
+            Close();
+        }
+        else if (focused is CouchCoopTextureButton { IsEnabled: true } textured)
+        {
+            textured.Activated?.Invoke();
+        }
+        else if (focused is Button { Disabled: false } button)
+        {
+            button.EmitSignal(Button.SignalName.Pressed);
+        }
+    }
+
+    private static void BindKeyboardAction(NHotkeyManager manager, StringName action, Key key, Action callback)
+    {
+        if (!InputMap.HasAction(action))
+        {
+            InputMap.AddAction(action);
+            InputMap.ActionAddEvent(action, new InputEventKey { Keycode = key });
+        }
+        manager.PushHotkeyPressedBinding(action, callback);
+    }
+
+    private static void ReassertKeyboardAction(NHotkeyManager manager, StringName action, Action callback)
+    {
+        manager.RemoveHotkeyPressedBinding(action, callback);
+        manager.PushHotkeyPressedBinding(action, callback);
+    }
+
+    private static void UnbindKeyboardAction(NHotkeyManager? manager, StringName action, Action callback)
+    {
+        manager?.RemoveHotkeyPressedBinding(action, callback);
+        if (InputMap.HasAction(action)) InputMap.EraseAction(action);
+    }
+
+    private void MoveKeyboardFocus()
+    {
+        if (!GodotObject.IsInstanceValid(this) || !IsInsideTree() || !Visible || _chain.Count == 0) return;
+        var current = _chain.IndexOf(GetViewport().GuiGetFocusOwner());
+        // One Tab action handles both directions; separate modifier bindings can both match Shift+Tab.
+        var backward = Input.IsKeyPressed(Key.Shift);
+        var target = CouchCoopModalFocusChain.KeyboardTarget(current, _chain.Count, backward);
+        _chain[target].GrabFocus();
+    }
+
+    private void PageFocusedControl(Key key)
+    {
+        if (!GodotObject.IsInstanceValid(this) || !IsInsideTree() || !Visible) return;
+        var focused = GetViewport()?.GuiGetFocusOwner();
+        if (focused is not null && IsAncestorOf(focused))
+            focused.EmitSignal(Control.SignalName.GuiInput, new InputEventKey { Keycode = key, Pressed = true });
     }
 }

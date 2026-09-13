@@ -3,32 +3,36 @@ using CouchCoop.Mod.Localization;
 using Godot;
 
 namespace CouchCoop.Mod.HostUi;
-
 /// <summary>The QR dialog's live browser-connection companion card.</summary>
 internal sealed partial class CouchCoopConnectionPanel : Panel
 {
     public const string NodeName = "CouchCoopConnectionPanel";
     public const string ListName = "CouchCoopConnectionList";
     public const string DetailName = "CouchCoopConnectionDetail";
-
     private readonly StyleBoxFlat _style = new();
     private readonly Label _title = new();
-    private readonly ScrollContainer _scroll = new() { Name = ListName };
+    private readonly ScrollContainer _scroll = new()
+    {
+        Name = ListName
+    };
     private readonly VBoxContainer _rows = new();
-    private readonly RichTextLabel _detail = new() { Name = DetailName };
-    private readonly Label _overflow = new();
-    private readonly Button _copy = new();
-    private readonly Button _dismiss = new();
+    private readonly ScrollContainer _summaryScroll = new();
+    private readonly VBoxContainer _summary = new();
+    private readonly Button _technical = new();
+    private readonly RichTextLabel _detail = new()
+    {
+        Name = DetailName
+    };
+    private readonly Button _copy = new(), _dismiss = new();
     private readonly Label _feedback = new();
     private readonly List<Control> _focus = [];
     private readonly Dictionary<Guid, Button> _rowControls = [];
     private readonly Dictionary<Guid, Label[]> _rowLabels = [];
     private Guid? _selected;
+    private Guid? _detailIssueId;
     private int _localeRevision = -1;
     private long _renderedRevision = -1;
-    private bool _installed;
-    private bool _hasAppeared;
-
+    private bool _installed, _hasAppeared, _technicalOpen;
     public Action? FocusChainChanged { get; set; }
 
     public CouchCoopConnectionPanel()
@@ -36,83 +40,84 @@ internal sealed partial class CouchCoopConnectionPanel : Panel
         Name = NodeName;
         MouseFilter = MouseFilterEnum.Stop;
         FocusMode = FocusModeEnum.None;
-        AnchorLeft = 0.5f;
-        AnchorRight = 0.5f;
-        AnchorTop = 0.5f;
-        AnchorBottom = 0.5f;
+        AnchorLeft = AnchorRight = AnchorTop = AnchorBottom = .5f;
         OffsetLeft = CouchCoopConnectionLayout.Left - 960f;
         OffsetRight = OffsetLeft + CouchCoopConnectionLayout.Width;
         OffsetTop = -CouchCoopConnectionLayout.Height / 2f;
         OffsetBottom = CouchCoopConnectionLayout.Height / 2f;
-
         _style.BgColor = Color.FromHtml(HostLobbyQrOverlayLayout.DefaultPanelColorHtml);
         _style.BorderColor = Color.FromHtml(HostLobbyQrOverlayLayout.DefaultPanelBorderColorHtml);
         _style.SetBorderWidthAll(3);
         _style.SetCornerRadiusAll(16);
         AddThemeStyleboxOverride("panel", _style);
-
-        ConfigureLabel(_title, 22);
+        ConfigureLabel(_title, CouchCoopGameUiTheme.ConnectionTitleFontSize, CouchCoopGameUiTheme.ConnectionPanelTitleGold);
         _title.HorizontalAlignment = HorizontalAlignment.Center;
-        _title.Position = new Vector2(CouchCoopConnectionLayout.Padding, 8);
-        _title.Size = new Vector2(CouchCoopConnectionLayout.Width - CouchCoopConnectionLayout.Padding * 2, CouchCoopConnectionLayout.TitleHeight);
-
+        Place(_title, 8, 44);
         _scroll.Position = new Vector2(CouchCoopConnectionLayout.Padding, 60);
-        _scroll.Size = new Vector2(CouchCoopConnectionLayout.Width - CouchCoopConnectionLayout.Padding * 2, 520);
+        _scroll.Size = new Vector2(CouchCoopConnectionLayout.InnerWidth, CouchCoopConnectionLayout.ListHeight);
         _scroll.HorizontalScrollMode = ScrollContainer.ScrollMode.Disabled;
-        _scroll.MouseFilter = MouseFilterEnum.Stop;
         _rows.SizeFlagsHorizontal = Control.SizeFlags.ExpandFill;
-        _rows.AddThemeConstantOverride("separation", 8);
+        _rows.AddThemeConstantOverride("separation", 10);
         _scroll.AddChild(_rows);
-
+        _summaryScroll.Position = new Vector2(CouchCoopConnectionLayout.Padding, CouchCoopConnectionLayout.DetailTop);
+        _summaryScroll.Name = "ConnectionExplanation";
+        _summaryScroll.Size = new Vector2(CouchCoopConnectionLayout.InnerWidth, CouchCoopConnectionLayout.SummaryHeight);
+        _summaryScroll.HorizontalScrollMode = ScrollContainer.ScrollMode.Disabled;
+        _summaryScroll.FocusMode = FocusModeEnum.All;
+        _summaryScroll.AddChild(_summary);
+        _summary.SizeFlagsHorizontal = SizeFlags.ExpandFill;
+        _summary.AddThemeConstantOverride("separation", 6);
+        ConfigureButton(_technical);
+        _technical.Name = "ConnectionTechnicalDisclosure";
+        _technical.AddThemeFontSizeOverride("font_size", CouchCoopGameUiTheme.ConnectionSubtitleFontSize);
+        Place(_technical, CouchCoopConnectionLayout.TechnicalToggleTop, 34);
+        _technical.Pressed += ToggleTechnical;
         _detail.BbcodeEnabled = false;
-        _detail.FitContent = false;
         _detail.ScrollActive = true;
         _detail.SelectionEnabled = true;
         _detail.FocusMode = FocusModeEnum.All;
         _detail.AutowrapMode = TextServer.AutowrapMode.WordSmart;
-        _detail.MouseFilter = MouseFilterEnum.Stop;
-        _detail.Position = new Vector2(CouchCoopConnectionLayout.Padding, 592);
-        _detail.Size = new Vector2(CouchCoopConnectionLayout.Width - CouchCoopConnectionLayout.Padding * 2, 190);
-        _detail.AddThemeColorOverride("default_color", CouchCoopGameUiTheme.ButtonFontColor);
-
-        ConfigureLabel(_overflow, 14);
-        _overflow.HorizontalAlignment = HorizontalAlignment.Center;
-        _overflow.Position = new Vector2(CouchCoopConnectionLayout.Padding, 566);
-        _overflow.Size = new Vector2(CouchCoopConnectionLayout.Width - CouchCoopConnectionLayout.Padding * 2, 24);
-
+        _detail.Position = new Vector2(CouchCoopConnectionLayout.Padding, CouchCoopConnectionLayout.TechnicalTop);
+        _detail.Size = new Vector2(CouchCoopConnectionLayout.InnerWidth, CouchCoopConnectionLayout.TechnicalHeight);
+        _detail.AddThemeColorOverride("default_color", CouchCoopGameUiTheme.ConnectionTechnicalMuted);
+        _summaryScroll.AddThemeStyleboxOverride("focus", CouchCoopGameUiTheme.CreateConnectionRowStyle(false, true));
+        _detail.AddThemeStyleboxOverride("focus", CouchCoopGameUiTheme.CreateConnectionRowStyle(false, true));
         ConfigureButton(_copy);
-        _copy.Position = new Vector2(CouchCoopConnectionLayout.Padding, 796);
-        _copy.Size = new Vector2(180, 52);
+        _copy.Position = new Vector2(CouchCoopConnectionLayout.Padding, CouchCoopConnectionLayout.ButtonTop);
+        _copy.Size = new Vector2(180, 48);
         ConfigureButton(_dismiss);
-        _dismiss.Position = new Vector2(CouchCoopConnectionLayout.Width - CouchCoopConnectionLayout.Padding - 180, 796);
-        _dismiss.Size = new Vector2(180, 52);
-
-        ConfigureLabel(_feedback, 16);
+        _dismiss.Position = new Vector2(CouchCoopConnectionLayout.Width - CouchCoopConnectionLayout.Padding - 180, CouchCoopConnectionLayout.ButtonTop);
+        _dismiss.Size = new Vector2(180, 48);
+        ConfigureLabel(_feedback, CouchCoopGameUiTheme.ConnectionSubtitleFontSize, CouchCoopGameUiTheme.ConnectionExplanationCream);
         _feedback.HorizontalAlignment = HorizontalAlignment.Center;
-        _feedback.Position = new Vector2(CouchCoopConnectionLayout.Padding, 858);
-        _feedback.Size = new Vector2(CouchCoopConnectionLayout.Width - CouchCoopConnectionLayout.Padding * 2, 32);
-
+        Place(_feedback, CouchCoopConnectionLayout.FeedbackTop, 30);
         AddChild(_title);
         AddChild(_scroll);
+        AddChild(_summaryScroll);
+        AddChild(_technical);
         AddChild(_detail);
-        AddChild(_overflow);
         AddChild(_copy);
         AddChild(_dismiss);
         AddChild(_feedback);
         Visible = false;
+        return;
+        void Place(Control control, float top, float height)
+        {
+            control.Position = new Vector2(CouchCoopConnectionLayout.Padding, top);
+            control.Size = new Vector2(CouchCoopConnectionLayout.InnerWidth, height);
+        }
     }
 
-    /// <summary>
-    /// Explicit wiring, called by the dialog's install path.  This assembly must not depend on a
-    /// virtual <c>_Ready</c> callback being dispatched by the game host.
-    /// </summary>
+    /// <summary>Wires native Godot signals explicitly because the host cannot be trusted to call Ready.</summary>
     public void Install()
     {
-        if (_installed) return;
+        if (_installed)
+            return;
         _installed = true;
         _copy.Pressed += OnCopy;
         _dismiss.Pressed += OnDismiss;
         _detail.GuiInput += OnDetailInput;
+        _summaryScroll.GuiInput += OnSummaryInput;
     }
 
     public void Refresh(bool force = false)
@@ -120,146 +125,257 @@ internal sealed partial class CouchCoopConnectionPanel : Panel
         var snapshot = ConnectionRegistry.Shared.Snapshot();
         var localeChanged = _localeRevision != CouchCoopLocalization.Revision;
         RefreshLocalization();
-        var rows = snapshot.Rows.Where(row => row.IsLive || (row.Issue is not null && !row.Dismissed)).ToArray();
-        Visible = rows.Length > 0;
+        var all = snapshot.Rows.Where(row => row.IsLive || (row.Issue is not null && !row.Dismissed)).ToArray();
+        Visible = all.Length > 0;
         if (Visible && !_hasAppeared)
         {
             _hasAppeared = true;
             var final = Position;
             Position = final + new Vector2(-24, 0);
-            CreateTween().TweenProperty(this, "position", final, 0.16f);
+            CreateTween().TweenProperty(this, "position", final, .16f);
         }
+
         if (!Visible)
         {
-            var hadFocusControls = _focus.Count > 0;
+            var hadFocus = _focus.Count > 0;
+            Clear();
             _selected = null;
-            _focus.Clear();
-            _rowControls.Clear();
-            _rowLabels.Clear();
             _renderedRevision = snapshot.Revision;
-            if (hadFocusControls) FocusChainChanged?.Invoke();
+            if (hadFocus)
+                FocusChainChanged?.Invoke();
             return;
         }
 
-        if (_selected is { } selected && !rows.Any(row => row.Id == selected))
+        // An active warning gets a historical row ID on recovery or retry. Keep its report selected.
+        if (_detailIssueId is { } problemId && all.FirstOrDefault(row => row.Attempt?.IssueId == problemId) is { } savedProblem)
+            _selected = savedProblem.Id;
+        if (_selected is { } id && !all.Any(row => row.Id == id))
         {
             _selected = null;
+            _technicalOpen = false;
         }
-        _selected ??= rows[0].Id;
-
-        // A lobby scan runs four times a second.  Rows only need rebuilding when lifecycle data or
-        // wording changes; elapsed labels are updated in place so a focused Deck row never disappears.
+        _selected ??= all[0].Id;
         if (!force && !localeChanged && _renderedRevision == snapshot.Revision)
         {
-            foreach (var row in rows)
-            {
-                if (_rowControls.TryGetValue(row.Id, out var control)) UpdateRow(control, _rowLabels[row.Id], row);
-            }
+            foreach (var row in all)
+                if (_rowControls.TryGetValue(row.Id, out var button))
+                    UpdateRow(button, _rowLabels[row.Id], row);
             return;
         }
 
         var focused = _rowControls.FirstOrDefault(pair => pair.Value.HasFocus()).Key;
-        foreach (var child in _rows.GetChildren()) child.QueueFree();
-        _focus.Clear();
-        _rowControls.Clear();
-        _rowLabels.Clear();
-        var liveRows = rows.Where(row => row.IsLive && row.Issue is null).ToArray();
-        var issueRows = rows.Where(row => row.Issue is not null).ToArray();
-        AddSection(liveRows, "couchcoop_connection_live");
-        AddSection(issueRows, "couchcoop_connection_recent_issues");
-
-        void AddSection(IReadOnlyList<ConnectionStatusRow> section, string labelKey)
+        var previousRows = _rowControls.Keys.ToArray();
+        var scroll = _scroll.GetVScrollBar().Value;
+        var listHeight = _scroll.Size.Y;
+        Clear();
+        AddGroup(all.Where(row => row.IsLive && row.Issue is null).ToArray(), "couchcoop_connection_devices", "couchcoop_connection_devices_subtitle");
+        AddGroup(all.Where(row => row.Issue is not null).ToArray(), "couchcoop_connection_problems", "couchcoop_connection_problems_subtitle");
+        if (snapshot.OverflowCount > 0)
         {
-            if (section.Count == 0) return;
-            var header = new Label { Text = CouchCoopLocalization.Resolve(labelKey) };
-            ConfigureLabel(header, 16);
-            _rows.AddChild(header);
-            foreach (var row in section)
-            {
-                var button = new Button { FocusMode = FocusModeEnum.All, MouseFilter = MouseFilterEnum.Stop };
-                ConfigureButton(button);
-                button.ToggleMode = true;
-                button.ButtonPressed = row.Id == _selected;
-                button.CustomMinimumSize = new Vector2(0, 104);
-                var lines = new VBoxContainer { MouseFilter = MouseFilterEnum.Ignore, Alignment = BoxContainer.AlignmentMode.Center };
-                lines.AddThemeConstantOverride("separation", 0);
-                button.AddChild(lines);
-                lines.SetAnchorsAndOffsetsPreset(LayoutPreset.FullRect);
-                lines.OffsetLeft = 4;
-                lines.OffsetRight = -4;
-                var labels = Enumerable.Range(0, 4).Select(index =>
-                {
-                    var label = new Label();
-                    ConfigureLabel(label, index == 3 ? 15 : 18);
-                    label.AutowrapMode = TextServer.AutowrapMode.Off;
-                    label.ClipText = true;
-                    label.TextOverrunBehavior = TextServer.OverrunBehavior.TrimEllipsis;
-                    lines.AddChild(label);
-                    return label;
-                }).ToArray();
-                UpdateRow(button, labels, row);
-                var id = row.Id;
-                button.Pressed += () => Select(id);
-                button.FocusEntered += () => _scroll.EnsureControlVisible(button);
-                _rows.AddChild(button);
-                _focus.Add(button);
-                _rowControls.Add(id, button);
-                _rowLabels.Add(id, labels);
-            }
+            var overflow = new Label { Text = $"{snapshot.OverflowCount}: {CouchCoopLocalization.Resolve("couchcoop_connection_history_overflow")}" };
+            ConfigureLabel(overflow, CouchCoopGameUiTheme.ConnectionSubtitleFontSize, CouchCoopGameUiTheme.ConnectionTechnicalMuted);
+            _rows.AddChild(overflow);
         }
-
-        var current = rows.First(row => row.Id == _selected);
-        var report = current.Issue is null ? null : ConnectionRegistry.Shared.BuildReport(current.Id);
-        var reportDetails = report is not null && report.IndexOf("\nreport id:", StringComparison.Ordinal) is var reportStart && reportStart >= 0
-            ? report[reportStart..] : string.Empty;
-        var detailScroll = _detail.GetVScrollBar().Value;
-        _detail.Text = current.Issue is { } issue ? $"{LocalizedIssue(issue)}\n{reportDetails}"
-            : CouchCoopLocalization.Resolve("couchcoop_connection_detail_waiting");
-        _detail.GetVScrollBar().SetDeferred(Godot.Range.PropertyName.Value, detailScroll);
-        _copy.Visible = !string.IsNullOrWhiteSpace(report);
-        _dismiss.Visible = current.Issue is not null;
-        _copy.Text = CouchCoopLocalization.Resolve("couchcoop_connection_copy_report");
-        _dismiss.Text = CouchCoopLocalization.Resolve("couchcoop_connection_dismiss");
-        _overflow.Text = rows.Any(row => row.IssueHistoryOverflow > 0)
-            ? $"{snapshot.OverflowCount}: {CouchCoopLocalization.Resolve("couchcoop_connection_history_overflow")}" : string.Empty;
-        _overflow.Visible = !string.IsNullOrEmpty(_overflow.Text);
-        if (current.Issue is not null) _focus.Add(_detail);
-        if (_copy.Visible) _focus.Add(_copy);
-        if (_dismiss.Visible) _focus.Add(_dismiss);
+        RenderDetails(all.First(row => row.Id == _selected));
         _renderedRevision = snapshot.Revision;
+        _scroll.GetVScrollBar().SetDeferred(Godot.Range.PropertyName.Value, scroll);
         FocusChainChanged?.Invoke();
         if (focused != Guid.Empty && _rowControls.TryGetValue(focused, out var replacement))
-        {
             replacement.CallDeferred(Control.MethodName.GrabFocus);
-        }
+        if (_scroll.Size.Y != listHeight || localeChanged || !previousRows.SequenceEqual(_rowControls.Keys))
+            EnsureSelectionVisible();
     }
 
     public void AppendFocusChain(List<Control> chain) => chain.AddRange(_focus.Where(control => control.Visible));
-
     public static (int Count, HashSet<string> Keys) Attention()
     {
-        var rows = ConnectionRegistry.Shared.Snapshot().Rows
-            .Where(row => row.Issue is not null && !row.Dismissed).ToArray();
-        return (rows.Length, rows.Select(row => $"{row.Id:N}:{row.Issue!.Code}").ToHashSet(StringComparer.Ordinal));
+        var rows = ConnectionRegistry.Shared.Snapshot().Rows.Where(row => row.Issue is not null && !row.Dismissed).ToArray();
+        return (rows.Length, rows.Select(row => (row.Attempt?.IssueId ?? row.Id).ToString("N")).ToHashSet(StringComparer.Ordinal));
+    }
+
+    private void AddGroup(IReadOnlyList<ConnectionStatusRow> section, string titleKey, string subtitleKey)
+    {
+        if (section.Count == 0)
+            return;
+        var box = new PanelContainer();
+        var boxStyle = CouchCoopGameUiTheme.CreateFallbackStyle(new Color(.07f, .07f, .08f, .88f), CouchCoopGameUiTheme.ConnectionGroupGold, 8, 1);
+        boxStyle.ContentMarginLeft = 8;
+        boxStyle.ContentMarginRight = 8;
+        boxStyle.ContentMarginTop = 8;
+        boxStyle.ContentMarginBottom = 8;
+        box.AddThemeStyleboxOverride("panel", boxStyle);
+        var group = new VBoxContainer();
+        group.AddThemeConstantOverride("separation", 4);
+        box.AddChild(group);
+        var header = new PanelContainer();
+        var headerStyle = CouchCoopGameUiTheme.CreateFallbackStyle(new Color(.16f, .12f, .055f, 1f), CouchCoopGameUiTheme.ConnectionGroupGold, 6, 1);
+        headerStyle.ContentMarginLeft = headerStyle.ContentMarginRight = 8;
+        headerStyle.ContentMarginTop = headerStyle.ContentMarginBottom = 6;
+        header.AddThemeStyleboxOverride("panel", headerStyle);
+        var lines = new VBoxContainer();
+        header.AddChild(lines);
+        var title = new Label
+        {
+            Text = CouchCoopLocalization.Resolve(titleKey, Args("count", section.Count))
+        };
+        ConfigureLabel(title, CouchCoopGameUiTheme.ConnectionHeadingFontSize, CouchCoopGameUiTheme.ConnectionGroupGold);
+        var subtitle = new Label
+        {
+            Text = CouchCoopLocalization.Resolve(subtitleKey)
+        };
+        ConfigureLabel(subtitle, CouchCoopGameUiTheme.ConnectionSubtitleFontSize, CouchCoopGameUiTheme.ConnectionSubtitleGold);
+        lines.AddChild(title);
+        lines.AddChild(subtitle);
+        group.AddChild(header);
+        foreach (var row in section)
+            group.AddChild(AddRow(row));
+        _rows.AddChild(box);
+    }
+
+    private Button AddRow(ConnectionStatusRow row)
+    {
+        var button = new Button
+        {
+            FocusMode = FocusModeEnum.All,
+            ToggleMode = true,
+            ButtonPressed = row.Id == _selected,
+            CustomMinimumSize = new Vector2(0, 104)
+        };
+        ConfigureButton(button);
+        button.AddThemeStyleboxOverride("normal", CouchCoopGameUiTheme.CreateConnectionRowStyle(selected: false));
+        button.AddThemeStyleboxOverride("hover", CouchCoopGameUiTheme.CreateConnectionRowStyle(selected: true));
+        button.AddThemeStyleboxOverride("pressed", CouchCoopGameUiTheme.CreateConnectionRowStyle(selected: true));
+        button.AddThemeStyleboxOverride("hover_pressed", CouchCoopGameUiTheme.CreateConnectionRowStyle(selected: true));
+        button.AddThemeStyleboxOverride("focus", CouchCoopGameUiTheme.CreateConnectionRowStyle(selected: false, focused: true));
+        var lines = new VBoxContainer
+        {
+            MouseFilter = MouseFilterEnum.Ignore,
+            Alignment = BoxContainer.AlignmentMode.Center
+        };
+        lines.AddThemeConstantOverride("separation", 0);
+        button.AddChild(lines);
+        lines.SetAnchorsAndOffsetsPreset(LayoutPreset.FullRect);
+        lines.OffsetLeft = 8;
+        lines.OffsetRight = -8;
+        var labels = Enumerable.Range(0, 4).Select(index =>
+        {
+            var label = new Label
+            {
+                ClipText = true,
+                TextOverrunBehavior = TextServer.OverrunBehavior.TrimEllipsis
+            };
+            ConfigureLabel(label, index == 3 ? CouchCoopGameUiTheme.ConnectionProgressFontSize : CouchCoopGameUiTheme.ConnectionBodyFontSize, RowColor(index, row));
+            label.AutowrapMode = TextServer.AutowrapMode.Off;
+            lines.AddChild(label);
+            return label;
+        }).ToArray();
+        UpdateRow(button, labels, row);
+        var id = row.Id;
+        button.Pressed += () => Select(id);
+        button.FocusEntered += () => _scroll.EnsureControlVisible(button);
+        _focus.Add(button);
+        _rowControls.Add(id, button);
+        _rowLabels.Add(id, labels);
+        return button;
+    }
+
+    private void RenderDetails(ConnectionStatusRow row)
+    {
+        foreach (var child in _summary.GetChildren())
+        {
+            _summary.RemoveChild(child);
+            child.QueueFree();
+        }
+        var issue = row.Issue;
+        var visible = issue is not null;
+        var issueId = visible ? row.Attempt?.IssueId ?? row.Id : (Guid?)null;
+        if (_detailIssueId != issueId)
+        {
+            _technicalOpen = false;
+            _summaryScroll.ScrollVertical = 0;
+            _detail.GetVScrollBar().Value = 0;
+            _feedback.Text = string.Empty;
+        }
+        _detailIssueId = issueId;
+        _summaryScroll.Visible = _technical.Visible = _copy.Visible = _dismiss.Visible = visible;
+        _feedback.Visible = visible;
+        _detail.Visible = visible && _technicalOpen;
+        _scroll.Size = new Vector2(CouchCoopConnectionLayout.InnerWidth, CouchCoopConnectionLayout.ListHeightFor(visible, _technicalOpen));
+        _summaryScroll.Position = new Vector2(CouchCoopConnectionLayout.Padding, CouchCoopConnectionLayout.SummaryTopFor(_technicalOpen));
+        _technical.Position = new Vector2(CouchCoopConnectionLayout.Padding, CouchCoopConnectionLayout.DisclosureTopFor(_technicalOpen));
+        if (!visible)
+            return;
+        AddDetail("couchcoop_connection_what_happened", Summary(issue!), CouchCoopGameUiTheme.ConnectionGroupGold);
+        AddDetail("couchcoop_connection_what_try", Action(issue!), CouchCoopGameUiTheme.ConnectionGroupGold);
+        AddDetail("couchcoop_connection_outcome", CouchCoopLocalization.Resolve($"couchcoop_connection_outcome_detail_{issue!.Outcome.ToString().ToLowerInvariant()}"), OutcomeColor(issue!));
+        _technical.Text = CouchCoopLocalization.Resolve(_technicalOpen ? "couchcoop_connection_hide_technical" : "couchcoop_connection_show_technical");
+        var scroll = _detail.GetVScrollBar().Value;
+        _detail.Text = ConnectionRegistry.Shared.BuildReport(row.Id) ?? string.Empty;
+        _detail.GetVScrollBar().SetDeferred(Godot.Range.PropertyName.Value, scroll);
+        _copy.Text = CouchCoopLocalization.Resolve("couchcoop_connection_copy_report");
+        _dismiss.Text = CouchCoopLocalization.Resolve("couchcoop_connection_dismiss");
+        _focus.Add(_summaryScroll);
+        _focus.Add(_technical);
+        if (_technicalOpen)
+            _focus.Add(_detail);
+        _focus.Add(_copy);
+        _focus.Add(_dismiss);
+        return;
+        void AddDetail(string key, string value, Color color)
+        {
+            var title = new Label
+            {
+                Text = CouchCoopLocalization.Resolve(key)
+            };
+            ConfigureLabel(title, CouchCoopGameUiTheme.ConnectionBodyFontSize, color);
+            var body = new Label
+            {
+                Text = value
+            };
+            ConfigureLabel(body, CouchCoopGameUiTheme.ConnectionBodyFontSize, CouchCoopGameUiTheme.ConnectionExplanationCream);
+            _summary.AddChild(title);
+            _summary.AddChild(body);
+        }
     }
 
     private void Select(Guid id)
     {
+        if (_selected != id)
+        {
+            _detailIssueId = null;
+            _technicalOpen = false;
+            _summaryScroll.ScrollVertical = 0;
+            _detail.GetVScrollBar().Value = 0;
+        }
         _selected = id;
-        _detail.GetVScrollBar().Value = 0;
         _feedback.Text = string.Empty;
-        Refresh(force: true);
+        Refresh(true);
+        EnsureSelectionVisible();
+    }
+
+    private void ToggleTechnical()
+    {
+        _technicalOpen = !_technicalOpen;
+        Refresh(true);
+        EnsureSelectionVisible();
+    }
+
+    private void EnsureSelectionVisible()
+    {
+        // Container sorting and the new list height settle after this input callback. Waiting until
+        // then keeps the selected four-line row in view when opening or expanding its report.
+        Callable.From(() =>
+        {
+            if (!GodotObject.IsInstanceValid(this) || !IsInsideTree()) return;
+            if (_selected is { } id && _rowControls.TryGetValue(id, out var row))
+                _scroll.EnsureControlVisible(row);
+        }).CallDeferred();
     }
 
     private void OnCopy()
     {
-        if (_selected is not { } id || ConnectionRegistry.Shared.BuildReport(id) is not { Length: > 0 } report)
-        {
-            return;
-        }
-        _feedback.Text = CouchCoopClipboard.TryCopy(report, DisplayServer.ClipboardSet, DisplayServer.ClipboardGet)
-            ? CouchCoopLocalization.Resolve("couchcoop_connection_copied")
-            : CouchCoopLocalization.Resolve("couchcoop_connection_copy_failed");
+        if (_selected is { } id && ConnectionRegistry.Shared.BuildReport(id)is { Length: > 0 } report)
+            _feedback.Text = CouchCoopClipboard.TryCopy(report, DisplayServer.ClipboardSet, DisplayServer.ClipboardGet) ? CouchCoopLocalization.Resolve("couchcoop_connection_copied") : CouchCoopLocalization.Resolve("couchcoop_connection_copy_failed");
     }
 
     private void OnDismiss()
@@ -267,93 +383,139 @@ internal sealed partial class CouchCoopConnectionPanel : Panel
         if (_selected is { } id && ConnectionRegistry.Shared.Dismiss(id))
         {
             _selected = null;
+            _detailIssueId = null;
+            _technicalOpen = false;
             _feedback.Text = string.Empty;
-            Refresh(force: true);
+            Refresh(true);
         }
     }
 
     private void OnDetailInput(InputEvent input)
     {
-        var direction = input switch
+        var direction = PageDirection(input);
+        if (direction != 0)
         {
-            InputEventKey { Pressed: true, Keycode: Key.Pageup } => -1,
-            InputEventKey { Pressed: true, Keycode: Key.Pagedown } => 1,
-            InputEventJoypadButton { Pressed: true, ButtonIndex: JoyButton.LeftShoulder } => -1,
-            InputEventJoypadButton { Pressed: true, ButtonIndex: JoyButton.RightShoulder } => 1,
-            _ => 0
-        };
-        if (direction == 0) return;
-        _detail.GetVScrollBar().Value += direction * _detail.Size.Y;
-        _detail.AcceptEvent();
+            _detail.GetVScrollBar().Value += direction * _detail.Size.Y;
+            _detail.AcceptEvent();
+        }
     }
+
+    private void OnSummaryInput(InputEvent input)
+    {
+        var direction = PageDirection(input);
+        if (direction == 0) return;
+        _summaryScroll.ScrollVertical += direction * (int)_summaryScroll.Size.Y;
+        _summaryScroll.AcceptEvent();
+    }
+
+    private static int PageDirection(InputEvent input) => input switch
+    {
+        InputEventKey { Pressed: true, Keycode: Key.Pageup } => -1,
+        InputEventKey { Pressed: true, Keycode: Key.Pagedown } => 1,
+        InputEventJoypadButton { Pressed: true, ButtonIndex: JoyButton.LeftShoulder } => -1,
+        InputEventJoypadButton { Pressed: true, ButtonIndex: JoyButton.RightShoulder } => 1,
+        _ => 0
+    };
 
     private void RefreshLocalization()
     {
-        if (_localeRevision == CouchCoopLocalization.Revision) return;
+        if (_localeRevision == CouchCoopLocalization.Revision)
+            return;
         _localeRevision = CouchCoopLocalization.Revision;
         _title.Text = CouchCoopLocalization.Resolve("couchcoop_connection_title");
-        CouchCoopGameUiTheme.ApplyFont(_title, CouchCoopGameUiTheme.KreonBoldGlyphSpaceOne, 22);
-        CouchCoopGameUiTheme.ApplyRichFont(_detail, CouchCoopGameUiTheme.KreonBoldGlyphSpaceOne, 18);
+        CouchCoopGameUiTheme.ApplyFont(_title, CouchCoopGameUiTheme.KreonBoldGlyphSpaceOne, CouchCoopGameUiTheme.ConnectionTitleFontSize);
+        CouchCoopGameUiTheme.ApplyRichFont(_detail, CouchCoopGameUiTheme.KreonBoldGlyphSpaceOne, CouchCoopGameUiTheme.ConnectionSubtitleFontSize);
+        CouchCoopGameUiTheme.ApplyFont(_technical, CouchCoopGameUiTheme.KreonBoldGlyphSpaceOne, CouchCoopGameUiTheme.ConnectionSubtitleFontSize);
+        CouchCoopGameUiTheme.ApplyFont(_copy, CouchCoopGameUiTheme.KreonBoldGlyphSpaceOne, CouchCoopGameUiTheme.ConnectionBodyFontSize);
+        CouchCoopGameUiTheme.ApplyFont(_dismiss, CouchCoopGameUiTheme.KreonBoldGlyphSpaceOne, CouchCoopGameUiTheme.ConnectionBodyFontSize);
+    }
+
+    private void Clear()
+    {
+        foreach (var child in _rows.GetChildren())
+        {
+            _rows.RemoveChild(child);
+            child.QueueFree();
+        }
+        _focus.Clear();
+        _rowControls.Clear();
+        _rowLabels.Clear();
     }
 
     private static void UpdateRow(Button button, Label[] labels, ConnectionStatusRow row)
     {
-        var text = RowText(row);
-        button.AccessibilityName = text;
-        var lines = text.Split('\n');
-        for (var index = 0; index < labels.Length; index++) labels[index].Text = lines[index];
+        var lines = RowText(row).Split('\n');
+        button.AccessibilityName = string.Join(". ", lines);
+        for (var i = 0; i < labels.Length; i++)
+        {
+            labels[i].Text = lines[i];
+            labels[i].AddThemeColorOverride("font_color", RowColor(i, row));
+        }
     }
 
     private static string RowText(ConnectionStatusRow row)
     {
-        var device = row.DeviceLabel == "Host service"
-            ? CouchCoopLocalization.Resolve("couchcoop_connection_host_service")
-            : string.IsNullOrWhiteSpace(row.DeviceLabel)
-            ? CouchCoopLocalization.Resolve("couchcoop_connection_unknown_device") : row.DeviceLabel;
-        var name = string.IsNullOrWhiteSpace(row.DisplayName) ? "…" : row.DisplayName;
-        var phase = CouchCoopLocalization.Resolve($"couchcoop_connection_stage_{(row.FailedStage ?? row.Stage).ToString().ToLowerInvariant()}");
-        var elapsed = TimeSpan.FromMilliseconds(Math.Max(row.StageElapsedMs, 0));
-        var elapsedText = row.Stage is ConnectionStage.Initializing or ConnectionStage.Joining or ConnectionStage.LoadingView
-            ? $" ({Math.Max(0, (int)Math.Floor(elapsed.TotalSeconds))}s)" : string.Empty;
-        var progress = row.Stage == ConnectionStage.Failed ? row.Issue?.Code ?? "connection-failed" : row.Stage == ConnectionStage.Complete
-            ? "✓"
-            : CouchCoopLocalization.Resolve("couchcoop_connection_progress", new Dictionary<string, CouchCoopTextArgument>
-            {
-                ["current"] = row.StepCount.ToString(System.Globalization.CultureInfo.InvariantCulture),
-                ["total"] = row.StepTotal.ToString(System.Globalization.CultureInfo.InvariantCulture),
-            });
-        return $"{SingleLine(device)}\n{SingleLine(name)}\n{phase}{elapsedText}\n{progress}";
+        var device = row.DeviceLabel == "Host service" ? CouchCoopLocalization.Resolve("couchcoop_connection_host_service") : string.IsNullOrWhiteSpace(row.DeviceLabel) ? CouchCoopLocalization.Resolve("couchcoop_connection_unknown_device") : row.DeviceLabel;
+        var stage = row.Issue?.Timing?.Stage ?? row.FailedStage ?? row.Stage;
+        var elapsed = row.Issue?.Timing?.StageElapsedMs ?? row.StageElapsedMs;
+        var timer = stage is ConnectionStage.Initializing or ConnectionStage.Joining or ConnectionStage.LoadingView ? $" ({Math.Max(0, (int)(elapsed / 1000))}s)" : string.Empty;
+        var status = row.Issue is { } issue ? $"{OutcomeMarker(issue.Outcome)} " : string.Empty;
+        var fourth = row.Issue is { IsWarning: true } ? CouchCoopLocalization.Resolve("couchcoop_connection_progress", Args("current", row.StepCount, "total", row.StepTotal)) : row.Issue is not null ? row.Issue.Code : stage == ConnectionStage.Complete ? "✓" : CouchCoopLocalization.Resolve("couchcoop_connection_progress", Args("current", row.StepCount, "total", row.StepTotal));
+        // Keep the stage and its saved timer together. The quieter fourth line spells out the outcome.
+        if (row.Issue is { } savedIssue) fourth += $" · {Outcome(savedIssue)}";
+        return $"{One(device)}\n{One(string.IsNullOrWhiteSpace(row.DisplayName) ? "…" : row.DisplayName)}\n{status}{CouchCoopLocalization.Resolve($"couchcoop_connection_stage_{stage.ToString().ToLowerInvariant()}")}{timer}\n{fourth}";
     }
 
-    private static string SingleLine(string value)
-        => value.Replace('\r', ' ').Replace('\n', ' ').Trim();
-
-    private static string LocalizedIssue(ConnectionIssue issue)
+    private static Color RowColor(int line, ConnectionStatusRow row) => line switch
     {
-        var key = issue.Code switch
-        {
-            "launch-exception" or "launch-refused" or "process-exited" or "startup-timeout" or "process-monitor-failed" => "launch",
-            // Its own group, not the generic join one: the remedy is to remove one of the two installed copies
-            // of the mod, which no amount of reconnecting achieves.
-            Session.HeadlessClientManager.SeatBuildMismatchCode => "mod_mismatch",
-            "native-join-rejected" or "native-disconnected" or "child-status-lost" => "join",
-            "browser-view-slow" => "slow",
-            "browser-render-failed" or "browser-transport-lost" => "browser",
-            "host-service-failed" or "host-service-stopped" => "service",
-            _ => "join"
-        };
-        var summaryKey = issue.Code == "process-exited" ? "process_exit" : key;
-        var summary = CouchCoopLocalization.Resolve($"couchcoop_connection_error_{summaryKey}_summary");
-        var action = CouchCoopLocalization.Resolve($"couchcoop_connection_error_{key}_action");
-        return string.IsNullOrWhiteSpace(issue.Detail) ? $"{summary}\n{action}" : $"{summary}\n{action}\n\n{ConnectionReportFormatter.SanitizeDiagnostic(issue.Detail)}";
+        0 => CouchCoopGameUiTheme.ConnectionDeviceCream,
+        1 => CouchCoopGameUiTheme.ConnectionPlayerCream,
+        2 => row.Issue is { } issue ? OutcomeColor(issue) : row.Stage == ConnectionStage.Complete ? CouchCoopGameUiTheme.ConnectionCompleteGreen : CouchCoopGameUiTheme.ConnectionStageCream,
+        _ => CouchCoopGameUiTheme.ConnectionProgressMuted
+    };
+    private static string IssueKey(ConnectionIssue issue) => issue.Code switch
+    {
+        "process-exited" => "process_exit",
+        Session.HeadlessClientManager.SeatBuildMismatchCode => "mod_mismatch",
+        "launch-exception" or "launch-refused" or "startup-timeout" or "process-monitor-failed" => "launch",
+        "native-join-rejected" or "native-disconnected" or "child-status-lost" => "join",
+        "browser-view-slow" => "slow",
+        "browser-render-failed" or "browser-transport-lost" => "browser",
+        "host-service-failed" or "host-service-stopped" => "service",
+        _ => "join"
+    };
+    private static string Summary(ConnectionIssue issue) => CouchCoopLocalization.Resolve($"couchcoop_connection_error_{IssueKey(issue)}_summary");
+    private static string Action(ConnectionIssue issue) => CouchCoopLocalization.Resolve($"couchcoop_connection_error_{(issue.Code == "process-exited" ? "launch" : IssueKey(issue))}_action");
+    private static string Outcome(ConnectionIssue issue) => CouchCoopLocalization.Resolve($"couchcoop_connection_outcome_{issue.Outcome.ToString().ToLowerInvariant()}");
+    private static string OutcomeMarker(ConnectionIssueOutcome outcome) => outcome switch
+    {
+        ConnectionIssueOutcome.Waiting => "⚠",
+        ConnectionIssueOutcome.Failed => "✕",
+        ConnectionIssueOutcome.Recovered => "✓",
+        _ => "■"
+    };
+    private static Color OutcomeColor(ConnectionIssue issue) => issue.Outcome switch
+    {
+        ConnectionIssueOutcome.Waiting => CouchCoopGameUiTheme.ConnectionWarningOrange,
+        ConnectionIssueOutcome.Recovered => CouchCoopGameUiTheme.ConnectionCompleteGreen,
+        ConnectionIssueOutcome.Failed => CouchCoopGameUiTheme.ConnectionFailureRed,
+        _ => CouchCoopGameUiTheme.ConnectionTechnicalMuted
+    };
+    private static string One(string text) => text.Replace('\r', ' ').Replace('\n', ' ').Trim();
+    private static Dictionary<string, CouchCoopTextArgument> Args(params object[] values)
+    {
+        var result = new Dictionary<string, CouchCoopTextArgument>();
+        for (var i = 0; i < values.Length; i += 2)
+            result[(string)values[i]] = values[i + 1].ToString()!;
+        return result;
     }
 
-    private static void ConfigureLabel(Label label, int size)
+    private static void ConfigureLabel(Label label, int size, Color color)
     {
         label.MouseFilter = MouseFilterEnum.Ignore;
         label.VerticalAlignment = VerticalAlignment.Center;
         label.AutowrapMode = TextServer.AutowrapMode.WordSmart;
-        label.AddThemeColorOverride("font_color", CouchCoopGameUiTheme.ButtonFontColor);
+        label.AddThemeColorOverride("font_color", color);
         CouchCoopGameUiTheme.ApplyFont(label, CouchCoopGameUiTheme.KreonBoldGlyphSpaceOne, size);
     }
 
@@ -361,7 +523,6 @@ internal sealed partial class CouchCoopConnectionPanel : Panel
     {
         button.FocusMode = FocusModeEnum.All;
         button.MouseFilter = MouseFilterEnum.Stop;
-        button.AddThemeFontOverride("font", CouchCoopGameUiTheme.KreonBoldGlyphSpaceOne);
-        button.AddThemeFontSizeOverride("font_size", 18);
+        CouchCoopGameUiTheme.ApplyFont(button, CouchCoopGameUiTheme.KreonBoldGlyphSpaceOne, CouchCoopGameUiTheme.ConnectionBodyFontSize);
     }
 }

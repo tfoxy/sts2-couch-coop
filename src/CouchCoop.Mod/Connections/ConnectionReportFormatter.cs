@@ -20,6 +20,9 @@ public sealed record ConnectionReportContent
     public int Total { get; init; }
     public DateTimeOffset StartedAtUtc { get; init; }
     public long ElapsedMs { get; init; }
+    public long StageElapsedMs { get; init; }
+    public DateTimeOffset RecordedAtUtc { get; init; }
+    public ConnectionIssueOutcome? Outcome { get; init; }
     public IReadOnlyList<string> Timeline { get; init; } = [];
     public IReadOnlyDictionary<string, string> Facts { get; init; } = new Dictionary<string, string>();
     public IReadOnlyList<ConnectionLogExcerpt> Logs { get; init; } = [];
@@ -55,7 +58,10 @@ public static partial class ConnectionReportFormatter
         Line(text, "report id", content.ReportId == Guid.Empty ? "unknown" : content.ReportId.ToString("N"));
         Line(text, "client id", content.ClientId == Guid.Empty ? "unknown" : content.ClientId.ToString("N"));
         Line(text, "started", content.StartedAtUtc == default ? "unknown" : content.StartedAtUtc.ToUniversalTime().ToString("O"));
+        Line(text, "recorded", content.RecordedAtUtc == default ? "unknown" : content.RecordedAtUtc.ToUniversalTime().ToString("O"));
         Line(text, "elapsed", content.ElapsedMs < 0 ? "unknown" : $"{content.ElapsedMs} ms");
+        Line(text, "stage elapsed", content.StageElapsedMs < 0 ? "unknown" : $"{content.StageElapsedMs} ms");
+        Line(text, "outcome", content.Outcome?.ToString().ToLowerInvariant() ?? "unknown");
         Line(text, "progress", content.Total > 0 ? $"{content.Step}/{content.Total}" : "unknown");
 
         foreach (var key in new[] { "gameVersion", "modVersion", "hostOS", "transport", "process", "cleanup" })

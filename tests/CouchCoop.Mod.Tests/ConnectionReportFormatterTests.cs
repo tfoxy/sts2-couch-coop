@@ -20,6 +20,8 @@ internal static class ConnectionReportFormatterTests
         {
             Summary = "Native join failed", Action = "Retry after checking the host.", Detail = "native code 17\nsecond line",
             Facts = new Dictionary<string, string> { ["gameVersion"] = "1.0", ["transport"] = "loopback HTTP" },
+            RecordedAtUtc = DateTimeOffset.UnixEpoch, Outcome = ConnectionIssueOutcome.Failed,
+            StageElapsedMs = 42,
             Logs = [new ConnectionLogExcerpt("client", "error", "line one\nline two")]
         });
         Assert(report.Contains("next action: Retry", StringComparison.Ordinal), "action first");
@@ -28,6 +30,9 @@ internal static class ConnectionReportFormatterTests
         Assert(report.Contains("[ host godot.log / unavailable ]", StringComparison.Ordinal), "missing host log explicit");
         Assert(report.Contains("concurrent host errors may be unrelated", StringComparison.Ordinal), "log caveat retained");
         Assert(report.Contains("modVersion: unknown", StringComparison.Ordinal), "missing facts are explicit");
+        Assert(report.Contains("recorded: 1970-01-01T00:00:00.0000000+00:00", StringComparison.Ordinal)
+            && report.Contains("stage elapsed: 42 ms", StringComparison.Ordinal) && report.Contains("outcome: failed", StringComparison.Ordinal),
+            "recording time, stage duration, and outcome are reported plainly");
     }
 
     private static void KeepsBothLogSourcesVisible()

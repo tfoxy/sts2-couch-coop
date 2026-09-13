@@ -13,6 +13,8 @@ internal static class ConnectionRegistryTests
         FrameNeedsMembershipAndChildReadiness();
         CleanSocketCloseDoesNotRetainChildCountInference();
         DirectViewAndSlowWarning();
+        SlowWarningWaitRechecksEarlyWakeAndAttempt();
+        SavedIssueTimingAndOutcomes();
         CloseDismissOverflowAndDedupe();
     }
 
@@ -179,6 +181,91 @@ internal static class ConnectionRegistryTests
         Assert(registry.Snapshot().Rows.Single(x => x.Id == id).Stage == ConnectionStage.Complete, "warning does not terminate healthy completion");
     }
 
+    private static void SlowWarningWaitRechecksEarlyWakeAndAttempt()
+    {
+        var time = new FakeTime(); var delay = new ControlledDelay(); var registry = new ConnectionRegistry(time, delay.Delay);
+        var id = Guid.NewGuid(); registry.Connected(id, null); var attempt = registry.BeginAttempt(id);
+        registry.ConfigureView(id, false); registry.Advance(id, ConnectionStage.LoadingView);
+        var wait = registry.NoticeSlowViewWhenDueAsync(id, attempt);
+        Assert(delay.WaitForPending(1), "slow warning schedules its first delay");
+        delay.ReleaseNext();
+        Assert(delay.WaitForPending(2), "an early timer wake schedules the remaining monotonic duration");
+        time.Advance(30_000); delay.ReleaseNext(); wait.GetAwaiter().GetResult();
+        Assert(registry.Snapshot().Rows.Single(row => row.Id == id).Issue?.Code == "browser-view-slow",
+            "an early wake cannot permanently skip the slow warning");
+
+        var staleId = Guid.NewGuid(); registry.Connected(staleId, null); var stale = registry.BeginAttempt(staleId);
+        registry.ConfigureView(staleId, false); registry.Advance(staleId, ConnectionStage.LoadingView);
+        var staleWait = registry.NoticeSlowViewWhenDueAsync(staleId, stale);
+        Assert(delay.WaitForPending(3), "stale attempt schedules its delay");
+        registry.BeginAttempt(staleId); delay.ReleaseNext(); staleWait.GetAwaiter().GetResult();
+        Assert(registry.Snapshot().Rows.Single(row => row.Id == staleId).Issue is null,
+            "a superseded attempt cannot create a warning on its replacement");
+
+        var cancelledId = Guid.NewGuid(); registry.Connected(cancelledId, null); var cancelled = registry.BeginAttempt(cancelledId);
+        registry.ConfigureView(cancelledId, false); registry.Advance(cancelledId, ConnectionStage.LoadingView);
+        using var cancellation = new CancellationTokenSource(); var cancelledWait = registry.NoticeSlowViewWhenDueAsync(cancelledId, cancelled, cancellation.Token);
+        Assert(delay.WaitForPending(4), "cancellable wait schedules its delay");
+        cancellation.Cancel(); cancelledWait.GetAwaiter().GetResult();
+        Assert(registry.Snapshot().Rows.Single(row => row.Id == cancelledId).Issue is null, "cancellation leaves no warning behind");
+    }
+
+    private static void SavedIssueTimingAndOutcomes()
+    {
+        var time = new FakeTime(); var registry = new ConnectionRegistry(time); var id = Guid.NewGuid();
+        registry.Connected(id, null); var attempt = registry.BeginAttempt(id); registry.ConfigureView(id, requiresChild: false);
+        time.Advance(10_000); registry.Advance(id, ConnectionStage.LoadingView); time.Advance(30_000); registry.NoticeSlowView(id);
+        var warning = registry.Snapshot().Rows.Single(row => row.Id == id);
+        Assert(warning.Issue?.Outcome == ConnectionIssueOutcome.Waiting && warning.Issue.Timing?.StageElapsedMs == 30_000
+            && warning.Issue.Timing.AttemptElapsedMs == 40_000, "warning records its first observed timing");
+        time.Advance(200_000); var laterWarning = registry.Snapshot().Rows.Single(row => row.Id == id);
+        Assert(laterWarning.ElapsedMs == 40_000 && laterWarning.StageElapsedMs == 30_000, "warning problem duration stays frozen while the attempt lives");
+        registry.Fail(id, "browser-transport-lost", "Socket closed", "Retry", "first cause");
+        var failed = registry.Snapshot().Rows.Single(row => row.Id == id);
+        Assert(failed.Issue?.Outcome == ConnectionIssueOutcome.Failed && failed.Issue.Timing == warning.Issue!.Timing
+            && failed.ElapsedMs == 40_000 && failed.StageElapsedMs == 30_000 && failed.StepCount == 3,
+            "failure captures before changing the stage and preserves warning timing and progress");
+        var reportId = failed.Attempt!.IssueId!.Value; var reportBefore = registry.BuildReport(id)!; time.Advance(50_000); registry.RecordDiagnostic(id, "late", "diagnostic");
+        registry.AttachLogExcerpt(id, "client", "late log", "error"); registry.Fail(id, "native-join-rejected", "Native rejected", "Retry", "refined cause");
+        var reportAfter = registry.BuildReport(id)!;
+        Assert(reportBefore.Contains("stage: LoadingView", StringComparison.Ordinal) && reportBefore.Contains("elapsed: 40000 ms", StringComparison.Ordinal)
+            && reportBefore.Contains("stage elapsed: 30000 ms", StringComparison.Ordinal)
+            && reportBefore.Contains("LoadingView: 30000 ms", StringComparison.Ordinal), "report includes the captured stage and both frozen durations");
+        Assert(reportAfter.Contains("stage: LoadingView", StringComparison.Ordinal) && reportAfter.Contains("elapsed: 40000 ms", StringComparison.Ordinal)
+            && reportAfter.Contains("stage elapsed: 30000 ms", StringComparison.Ordinal)
+            && reportAfter.Contains("summary: Native rejected", StringComparison.Ordinal), "late diagnostics, logs, and refinement keep report timing frozen");
+        Assert(registry.Snapshot().Rows.Single(row => row.Id == id).Issue!.Timing == warning.Issue!.Timing,
+            "late diagnostics do not move saved timing");
+        registry.Disconnected(id); var archived = registry.Snapshot().Rows.Single(row => row.Id == reportId);
+        Assert(archived.ElapsedMs == 40_000 && archived.StageElapsedMs == 30_000 && archived.Issue?.Outcome == ConnectionIssueOutcome.Failed,
+            "closed failure snapshot remains stable");
+
+        var recover = Guid.NewGuid(); registry.Connected(recover, null); var recoverAttempt = registry.BeginAttempt(recover);
+        registry.ConfigureView(recover, false); registry.Advance(recover, ConnectionStage.LoadingView); time.Advance(30_000); registry.NoticeSlowView(recover);
+        var recoveredId = registry.Snapshot().Rows.Single(row => row.Id == recover).Attempt!.IssueId!.Value;
+        registry.Presented(recover, recoverAttempt);
+        Assert(registry.Snapshot().Rows.Single(row => row.Id == recoveredId).Issue?.Outcome == ConnectionIssueOutcome.Recovered,
+            "first presented frame archives waiting warning as recovered");
+
+        var ended = Guid.NewGuid(); registry.Connected(ended, null); registry.BeginAttempt(ended); registry.ConfigureView(ended, false);
+        registry.Advance(ended, ConnectionStage.LoadingView); time.Advance(30_000); registry.NoticeSlowView(ended);
+        var endedId = registry.Snapshot().Rows.Single(row => row.Id == ended).Attempt!.IssueId!.Value; registry.Disconnected(ended);
+        Assert(registry.Snapshot().Rows.Single(row => row.Id == endedId).Issue?.Outcome == ConnectionIssueOutcome.Ended,
+            "clean close archives waiting warning as ended");
+
+        var retry = Guid.NewGuid(); registry.Connected(retry, null); registry.BeginAttempt(retry); time.Advance(5_000);
+        registry.Fail(retry, "first", "First", "Retry"); registry.BeginAttempt(retry); time.Advance(12_000);
+        registry.Fail(retry, "second", "Second", "Retry");
+        Assert(registry.Snapshot().Rows.Single(row => row.Id == retry).Issue?.Timing?.AttemptElapsedMs == 12_000,
+            "retry creates a new issue timing instead of reusing the prior attempt");
+
+        var dismissed = Guid.NewGuid(); registry.Connected(dismissed, null); registry.BeginAttempt(dismissed); time.Advance(5_000);
+        registry.Fail(dismissed, "dismiss", "Dismiss", "Retry"); registry.Dismiss(dismissed); time.Advance(9_000);
+        var resumed = registry.Snapshot().Rows.Single(row => row.Id == dismissed);
+        Assert(resumed.Issue is null && resumed.StageElapsedMs == 9_000 && resumed.ElapsedMs == 14_000,
+            "dismissal returns a live row to its monotonic timer");
+    }
+
     private static void CloseDismissOverflowAndDedupe()
     {
         var registry = new ConnectionRegistry(new FakeTime()); var clean = Guid.NewGuid(); registry.Connected(clean, null); registry.Disconnected(clean);
@@ -201,5 +288,28 @@ internal static class ConnectionRegistryTests
         public override long GetTimestamp() => _timestamp;
         public override DateTimeOffset GetUtcNow() => DateTimeOffset.UnixEpoch.AddMilliseconds(_timestamp);
         public void Advance(long milliseconds) => _timestamp += milliseconds;
+    }
+
+    private sealed class ControlledDelay
+    {
+        private readonly object _gate = new();
+        private readonly Queue<TaskCompletionSource> _pending = [];
+        private int _scheduled;
+
+        public Task Delay(TimeSpan _, CancellationToken cancellationToken)
+        {
+            var completion = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+            lock (_gate) { _pending.Enqueue(completion); _scheduled++; }
+            cancellationToken.Register(() => completion.TrySetCanceled(cancellationToken));
+            return completion.Task;
+        }
+
+        public bool WaitForPending(int count) => SpinWait.SpinUntil(() => Volatile.Read(ref _scheduled) >= count, TimeSpan.FromSeconds(1));
+        public void ReleaseNext()
+        {
+            TaskCompletionSource completion;
+            lock (_gate) completion = _pending.Dequeue();
+            completion.TrySetResult();
+        }
     }
 }

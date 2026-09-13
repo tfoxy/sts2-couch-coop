@@ -20,6 +20,7 @@ internal static class CouchCoopModalFocusChainTests
         UnfocusableControlsDropOut();
         TheDismissButtonIsNeverDroppedFromTheChain();
         AChainMustBeDeclared();
+        KeyboardStartsAndWrapsInsideTheModal();
 
         Console.WriteLine("CouchCoopModalFocusChainTests: ok");
     }
@@ -72,6 +73,16 @@ internal static class CouchCoopModalFocusChainTests
         Expect(
             participants.Count == 1 && participants[0] == 2,
             "the dismiss button stays in the chain even if it reports itself unfocusable");
+    }
+
+    private static void KeyboardStartsAndWrapsInsideTheModal()
+    {
+        Expect(CouchCoopModalFocusChain.KeyboardTarget(-1, 8, false) == 0, "Tab leaves parking for the first modal control");
+        Expect(CouchCoopModalFocusChain.KeyboardTarget(-1, 8, true) == 7, "Shift+Tab leaves parking for Close");
+        Expect(CouchCoopModalFocusChain.KeyboardTarget(7, 8, false) == 0, "Tab after Close returns to the first row");
+        Expect(CouchCoopModalFocusChain.KeyboardTarget(0, 8, true) == 7, "Shift+Tab before the first row returns to Close");
+        Expect(CouchCoopModalFocusChain.KeyboardTarget(3, 8, false) == 4, "Tab advances once through details and actions");
+        Expect(CouchCoopModalFocusChain.KeyboardTarget(4, 8, true) == 3, "Shift+Tab reverses one step");
     }
 
     private static void AChainMustBeDeclared()

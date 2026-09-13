@@ -35,6 +35,8 @@ if (args is ["--host-ui"])
     CouchCoopLocalizationTests.Run();
     Console.WriteLine("host ui: connections");
     ConnectionUiTests.Run();
+    Console.WriteLine("host ui: connection attention");
+    ConnectionAttentionTests.Run();
     Console.WriteLine("host ui: ok");
     return;
 }

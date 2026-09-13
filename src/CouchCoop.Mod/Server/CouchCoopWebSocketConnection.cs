@@ -741,11 +741,7 @@ public sealed class CouchCoopWebSocketConnection
             if (directView == true) ConnectionRegistry.Shared.UseShortPath(session.Id);
             ConnectionRegistry.Shared.Advance(session.Id, ConnectionStage.LoadingView);
             var expectedAttempt = connectionAttemptId;
-            _ = Task.Run(async () =>
-            {
-                await Task.Delay(TimeSpan.FromSeconds(30)).ConfigureAwait(false);
-                ConnectionRegistry.Shared.ForAttempt(session.Id, expectedAttempt, registry => registry.NoticeSlowView(session.Id));
-            });
+            _ = ConnectionRegistry.Shared.NoticeSlowViewWhenDueAsync(session.Id, expectedAttempt, cancellationToken);
         }
 
         // V2/V3/V4, from the SAME three-way outcome the reply below carries, so the panel can
@@ -893,11 +889,7 @@ public sealed class CouchCoopWebSocketConnection
                         var attemptId = ConnectionRegistry.Shared.BeginAttempt(session.Id);
                         ConnectionRegistry.Shared.ConfigureView(session.Id, requiresChild: false);
                         ConnectionRegistry.Shared.Advance(session.Id, ConnectionStage.LoadingView);
-                        _ = Task.Run(async () =>
-                        {
-                            await Task.Delay(TimeSpan.FromSeconds(30)).ConfigureAwait(false);
-                            ConnectionRegistry.Shared.ForAttempt(session.Id, attemptId, registry => registry.NoticeSlowView(session.Id));
-                        });
+                        _ = ConnectionRegistry.Shared.NoticeSlowViewWhenDueAsync(session.Id, attemptId, cancellationToken);
                         await SendEnvelopeAsync(await _envelopeFactory.CreateSessionEnvelope(_viewerName, "watch", session,
                             directView: true, connectionAttemptId: attemptId, cancellationToken: cancellationToken).ConfigureAwait(false)).ConfigureAwait(false);
                     }
