@@ -527,20 +527,12 @@ internal abstract partial class CouchCoopModalDialog : Control
         }
     }
 
-    /// <summary>The game's own notion of which input the host is on; false whenever it cannot be read.</summary>
-    private static bool IsUsingController()
-    {
-        try
-        {
-            return NControllerManager.Instance?.IsUsingController ?? false;
-        }
-        catch (Exception exception)
-        {
-            Console.Error.WriteLine(
-                $"[couch-coop] modal input mode read failed detail={exception.GetType().Name}: {exception.Message}");
-            return false;
-        }
-    }
+    /// <summary>
+    /// Whether the host is driving without a mouse, and so needs the dismiss button reachable by focus ring.
+    /// Read through <see cref="CouchCoopHostInputMode"/>, which is the one place that knows the game reports
+    /// this differently on different builds; false whenever it cannot be read.
+    /// </summary>
+    private static bool IsUsingController() => CouchCoopHostInputMode.Read().WithoutMouse;
 
     /// <summary>A pad was picked up (or put down) — re-park focus if this modal is the thing on screen.</summary>
     private void OnInputModeChanged()
