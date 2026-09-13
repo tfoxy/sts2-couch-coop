@@ -149,16 +149,24 @@ config_source="$workspace/workshop.json"
   echo "Workshop primary preview is missing: $workspace/image.png" >&2
   exit 1
 }
-# A workspace may pin itself to one lane by declaring it in lane.txt. Nothing else checks that the
-# lane and the workspace belong together, and getting it wrong is the worst outcome this script has:
-# publishing the public-beta payload to the public listing breaks the mod for every subscriber on the
-# normal game branch. The uploader ignores workspace files it does not know (content/, workshop.json,
-# image.png and previews/ are all it reads), so this stays local and is never sent to Steam.
+# A workspace may declare which lanes it is allowed to publish, one per line in lane.txt. Getting
+# this wrong is the worst outcome this script has: publishing the public-beta payload as the public
+# listing's only content breaks the mod for every subscriber on the normal game branch.
+#
+# It is a LIST, not a single pin, because one Workshop item can legitimately carry both lanes -- Steam
+# links each uploaded revision to a game-version range and serves a subscriber the revision matching
+# their branch. A workspace that carries both simply names both. The uploader ignores workspace files
+# it does not know (content/, workshop.json, image.png and previews/ are all it reads), so this stays
+# local and is never sent to Steam.
 if [[ -f "$workspace/lane.txt" ]]; then
-  declared_lane="$(tr -d '[:space:]' < "$workspace/lane.txt")"
-  [[ "$declared_lane" == "$lane" ]] || {
-    echo "workspace $workspace is pinned to lane '$declared_lane', but this run publishes lane '$lane'" >&2
-    echo "Publish that lane's own workspace, or correct --lane." >&2
+  mapfile -t allowed_lanes < <(grep -vE '^\s*(#|$)' "$workspace/lane.txt" | tr -d '[:blank:]')
+  lane_allowed=false
+  for allowed in ${allowed_lanes[@]+"${allowed_lanes[@]}"}; do
+    [[ "$allowed" == "$lane" ]] && lane_allowed=true
+  done
+  [[ "$lane_allowed" == true ]] || {
+    echo "workspace $workspace may publish lane(s) [${allowed_lanes[*]}], but this run publishes '$lane'" >&2
+    echo "Publish a lane that workspace is for, or add the lane to its lane.txt." >&2
     exit 1
   }
 fi
