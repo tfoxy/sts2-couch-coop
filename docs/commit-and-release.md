@@ -185,42 +185,40 @@ stable archive from loading on a newer game: there is no `max_game_version`, and
 
 ## Publishing to the Steam Workshop
 
-The GitHub Release is the source of truth; a Workshop item is a copy of an archive that has already
-been published there. `scripts/upload-workshop-release.sh` downloads the latest release (or reads
-`--dist <dir>` for a local one), verifies it against its checksums and its own in-payload
-`build-info.txt`, replaces the workspace's `content/`, writes the `changeNote`, and runs the official
-uploader:
+The GitHub Release is the source of truth; a Workshop item is a copy of an archive already published
+there. With no arguments the script takes the latest release and publishes **every lane** to the
+public listing — one revision per lane, each linked to the game branch its payload was built for:
 
 ```bash
-scripts/upload-workshop-release.sh                       # latest GitHub Release → public item
-scripts/upload-workshop-release.sh --dist dist           # a local archive instead
-scripts/upload-workshop-release.sh --lane public-beta \
-  --workspace .sts2/uploader/Workspace.dev               # the beta lane's archive
+scripts/upload-workshop-release.sh                    # latest GitHub Release -> public item
+scripts/upload-workshop-release.sh --dist dist        # a locally built release instead
+scripts/upload-workshop-release.sh --lane stable      # just one lane
 ```
 
-`--lane` defaults to `stable` and is the *only* thing that selects a lane. With both lanes' archives
-sitting in one `dist/`, "newest by version" would silently publish one game branch's payload to the
-other branch's item, so the flag is explicit and the gate then re-checks the chosen archive's
-`build-info.txt` against it. A `--snapshot` build is refused by name: a Workshop item copies an
-archive that exists as a GitHub Release, and a snapshot has no tag.
+It asks for confirmation before touching the public listing, and refuses non-interactively unless
+`--yes` is passed. Change notes come from `CHANGELOG.md` — the same bytes the GitHub Release body
+uses — on the default lane's revision; the other lanes' revisions point at it, because Steam shows
+one note per revision and the list should not be duplicated.
 
-Three properties of that script are load-bearing, and all three exist because of an incident:
+Four properties are load-bearing, and each exists because of an incident:
 
-- **It writes the change note and nothing else.** The workspace's `workshop.json` *is* the live
-  item's configuration, so a release upload has no business rewriting the rest of it. `--visibility`
-  is applied only on a first publish — no `<workspace>/mod_id.txt` yet — or when you pass the flag
-  explicitly. Before that rule, a bare run flipped the public listing to `private`.
+- **It writes the change note and the branch link, and nothing else.** The workspace's
+  `workshop.json` *is* the live item's configuration. `--visibility` applies only on a first publish
+  — no `<workspace>/mod_id.txt` yet — or when passed explicitly. Before that rule a bare run flipped
+  the public listing to `private`.
 - **There is no `previews/` directory in the workspace, deliberately.** The uploader reads a present
-  `previews/` as the *complete desired gallery* and deletes anything missing from it remotely; that
-  destroyed the item's only additional preview in v0.1.1. The gallery is curated in the Steam web UI
-  now, web-added previews may carry no filename the uploader can match, and upstream's documented
-  switch is that an absent `previews/` leaves all previews unchanged. Do not recreate it, and do not
-  make a script require it. (Local diagnosis: `.agents/memory/workshop-uploader-workspace-sync.md`.
-  The real log is `.sts2/uploader/mod-uploader.log`; the repo-root one is empty and misleads.)
+  `previews/` as the *complete desired gallery* and deletes anything missing from it; that destroyed
+  the item's only additional preview in v0.1.1. The gallery is curated in the Steam web UI now, and
+  upstream's documented switch is that an absent `previews/` leaves previews unchanged. Do not
+  recreate it. (Diagnosis: `.agents/memory/workshop-uploader-workspace-sync.md`. The real log is
+  `.sts2/uploader/mod-uploader.log`; the repo-root one is empty and misleads.)
 - **The uploader binary stays put; the workspace moves.** `ModUploader` needs `libsteam_api.so` and
-  `steam_appid.txt` beside it, so it always runs from `.sts2/uploader`, and the workspace is picked
-  with `--workspace <dir>` or `COUCHCOOP_WORKSHOP_WORKSPACE_DIR`, defaulting to
-  `.sts2/uploader/Workspace` — the public item. One 14 MB binary serves every item.
+  `steam_appid.txt` beside it, so it runs from `.sts2/uploader` and the workspace is chosen with
+  `--workspace` or `COUCHCOOP_WORKSHOP_WORKSPACE_DIR`. A workspace may declare which lanes it is
+  allowed to carry, one per line in `lane.txt`, checked for every lane before anything uploads.
+- **A `--dist` directory holding two different releases is refused**, not resolved by "newest wins".
+  A stale archive from an earlier build is how the wrong payload reaches an item; this has already
+  caught a leftover `couchcoop-v0.1.0.zip`.
 
 Self-test, with a mock uploader and fixture workspaces — no Steam, no network:
 `bash scripts/test-upload-workshop-release.sh`. Run it after any change to the upload script.
