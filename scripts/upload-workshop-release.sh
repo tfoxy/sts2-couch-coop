@@ -182,22 +182,40 @@ if [[ -n "$dist_dir" ]]; then
       | sort -V
   )
   if [[ ${#archives[@]} -eq 0 ]]; then
-    # A --snapshot build is deliberately not publishable: a Workshop item is a copy of an archive
-    # that already exists as a GitHub Release, and a snapshot has no release and no tag.
-    if find "$dist_dir" -maxdepth 1 -type f -printf '%f\n' \
-      | grep -qE "$(release_lane_snapshot_archive_regex "$lane")"; then
-      echo "$dist_dir holds only a snapshot archive for lane $lane; the Workshop publishes tagged releases" >&2
-    else
+    # A --snapshot build is not publishable to the public listing: a Workshop item there is a copy of
+    # an archive that already exists as a GitHub Release, and a snapshot has no release and no tag.
+    # A DEV channel is the exception, and is the whole reason one exists — it publishes builds that
+    # are deliberately NOT releases yet. It opts in with a `dev-channel` marker file in its
+    # workspace, so the opt-in travels with the item rather than with whoever typed the command.
+    mapfile -t snapshots < <(
+      find "$dist_dir" -maxdepth 1 -type f -printf '%f\n' \
+        | grep -E "$(release_lane_snapshot_archive_regex "$lane")" \
+        | sort
+    )
+    if [[ ${#snapshots[@]} -eq 0 ]]; then
       echo "no lane $lane release archive found in: $dist_dir" >&2
+      exit 1
     fi
-    exit 1
+    if [[ ! -f "$workspace/dev-channel" ]]; then
+      echo "$dist_dir holds only a snapshot archive for lane $lane, and $workspace is not a dev channel" >&2
+      echo "The Workshop publishes tagged releases. To publish pre-release builds to a DEV item," >&2
+      echo "create an empty '$workspace/dev-channel' marker file." >&2
+      exit 1
+    fi
+    [[ ${#snapshots[@]} -eq 1 ]] || {
+      echo "$dist_dir holds ${#snapshots[@]} snapshot archives for lane $lane; keep one, they carry no orderable version" >&2
+      exit 1
+    }
+    archive_name="${snapshots[0]}"
+  else
+    archive_name="${archives[${#archives[@]} - 1]}"
   fi
-  archive_name="${archives[${#archives[@]} - 1]}"
   tag="${archive_name#couchcoop-}"
   tag="${tag%.zip}"
   # A suffixed lane archive carries the lane in its filename; the tag is what is left.
   [[ "$lane" == "$RELEASE_LANE_DEFAULT" ]] || tag="${tag%-$lane}"
-  [[ "$tag" =~ ^v[0-9]+\.[0-9]+\.[0-9]+$ ]] || {
+  # A snapshot's "tag" is snapshot-<sha>, which is a legal change-note subject but never a release tag.
+  [[ "$tag" =~ ^v[0-9]+\.[0-9]+\.[0-9]+$ || "$tag" =~ ^snapshot-[0-9a-f]+$ ]] || {
     echo "archive name does not carry a vMAJOR.MINOR.PATCH tag: $archive_name" >&2
     exit 1
   }
@@ -234,11 +252,18 @@ done
 
 # --lane here is not a formality: the gate reads the archive's own couchcoop/build-info.txt and
 # fails when the payload was built for another game branch, so a mislabelled file cannot reach an item.
+# A tag maps to the payload version by dropping the leading v; a snapshot's filename carries only the
+# sha, and package-release.sh stamps that payload `0.0.0-snapshot.<sha>`.
+if [[ "$tag" =~ ^snapshot-([0-9a-f]+)$ ]]; then
+  payload_version="0.0.0-snapshot.${BASH_REMATCH[1]}"
+else
+  payload_version="${tag#v}"
+fi
 "$repo_root/scripts/verify-release-archive.sh" \
   --archive "$archive_path" \
   --checksums "$checksums_path" \
   --lane "$lane" \
-  --version "${tag#v}"
+  --version "$payload_version"
 
 extract_dir="$stage_dir/extract"
 unzip -q "$archive_path" -d "$extract_dir"
@@ -247,11 +272,15 @@ unzip -q "$archive_path" -d "$extract_dir"
   exit 1
 }
 
-if [[ "$lane" == "$RELEASE_LANE_DEFAULT" ]]; then
-  change_note="Release $tag"
+# A snapshot is explicitly not a release, and the note is read by whoever is testing it.
+if [[ "$tag" == snapshot-* ]]; then
+  change_note="Test build $payload_version"
 else
+  change_note="Release $tag"
+fi
+if [[ "$lane" != "$RELEASE_LANE_DEFAULT" ]]; then
   # Two items now differ by which game branch they target, so the note says which one this is.
-  change_note="Release $tag ($lane)"
+  change_note="$change_note ($lane)"
 fi
 # A published item's visibility lives in the workspace and is the maintainer's setting, not this
 # script's: a release upload writes the change note and nothing else. mod_id.txt is what proves the
