@@ -115,11 +115,12 @@ ok "pins project.profilesFile at the repo root" \
   grep -qF "profilesFile: \"$TREPO/sts2.profiles.yaml\"" "$BETA_CFG/sts2.local.yaml"
 ok "pins project.hooksFile at the repo root" \
   grep -qF "hooksFile: \"$TREPO/sts2.hooks.yaml\"" "$BETA_CFG/sts2.local.yaml"
-# One branch must never serve the other its cached asset bytes: the cache namespace is
-# couchcoop-asset-cache-v<spirectl AssetPayloadVersion>, with no game-version component.
+# A branch keeps its own save state. The CACHE is no longer a reason for this — it is branch scoped at
+# user://couch-coop/cache/<branch>/ and stamped with the build that wrote it — and the generated comment
+# has to say so, or the next reader copies a warning that stopped being true.
 ok "leaves instances.symlinkUserDataDirs empty" \
   grep -qE '^[[:space:]]*symlinkUserDataDirs:[[:space:]]*\[\][[:space:]]*$' "$BETA_CFG/sts2.local.yaml"
-ok "…and says why"            grep -q 'asset-cache-v' "$BETA_CFG/sts2.local.yaml"
+ok "…and says why"            grep -q 'couch-coop/cache/<branch>' "$BETA_CFG/sts2.local.yaml"
 
 echo "== the branch corpus is pinned away from the shared one =="
 # `sts2 project recover --kind decompile` rewrites <toolchain.dir>/decompile/, and toolchain.dir

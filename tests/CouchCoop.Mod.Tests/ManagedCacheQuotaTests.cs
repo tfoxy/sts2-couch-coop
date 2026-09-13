@@ -42,16 +42,18 @@ internal static class ManagedCacheQuotaTests
         }
         finally { Directory.Delete(alias); }
 
+        // A headless seat reaches the host's warm cache through a symlinked `cache` leaf. Two spellings of one
+        // directory must not become two independent ceilings over the same disk, so the quota resolves the path.
         var hostCouch = Path.Combine(scope.Root, "host", "couch-coop");
-        var hostAssets = Path.Combine(hostCouch, "assets");
+        var hostCache = Path.Combine(hostCouch, "cache");
         var seatCouch = Path.Combine(scope.Root, "host", "couch-coop", "headless-slots", "slot-2", "SlayTheSpire2", "couch-coop");
-        Directory.CreateDirectory(hostAssets);
+        Directory.CreateDirectory(Path.Combine(hostCache, "public"));
         Directory.CreateDirectory(seatCouch);
-        Directory.CreateSymbolicLink(Path.Combine(seatCouch, "assets"), hostAssets);
-        var hostQuota = SpirectlAssetBinaryCache.CreateQuota(hostAssets);
-        var seatQuota = SpirectlAssetBinaryCache.CreateQuota(Path.Combine(seatCouch, "assets"));
+        Directory.CreateSymbolicLink(Path.Combine(seatCouch, "cache"), hostCache);
+        var hostQuota = ManagedCacheQuota.ForCacheRoot(Path.Combine(hostCache, "public"));
+        var seatQuota = ManagedCacheQuota.ForCacheRoot(Path.Combine(seatCouch, "cache", "public"));
         Expect(hostQuota.CoordinationRoot == seatQuota.CoordinationRoot,
-            "host and headless asset-leaf symlinks resolve through the shared cache target");
+            "host and headless cache-leaf symlinks resolve through the shared cache target");
 
         var lowDisk = new ManagedCacheQuota(scope.Root, [scope.Root], ceilingBytes: 100,
             freeSpaceReserveBytes: 20, entryLimitBytes: 50, freeSpace: _ => 24, allocationUnitBytes: 1, reconcileInterval: TimeSpan.Zero);

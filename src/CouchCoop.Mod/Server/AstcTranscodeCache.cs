@@ -1,4 +1,3 @@
-using System.Runtime.CompilerServices;
 using System.Security.Cryptography;
 
 namespace CouchCoop.Mod.Server;
@@ -36,9 +35,21 @@ public sealed class AstcTranscodeCache
 
     public AstcTranscodeCache(string? root = null) : this(root, null) { }
 
+    /// <summary>Points this cache at an operator-chosen directory, used verbatim.</summary>
+    public const string RootEnvironmentVariable = "COUCHCOOP_ASTC_CACHE_ROOT";
+
     internal AstcTranscodeCache(string? root, ManagedCacheQuota? quota)
     {
-        var resolved = string.IsNullOrWhiteSpace(root) ? DefaultRoot() : root;
+        // An explicit root — the constructor argument, or the env override the sidecar batch and replay proxy
+        // are pointed at with `--astc-cache` — is used VERBATIM. Re-scoping it would point this route at files
+        // those tools never wrote. Only the default path goes through the branch-scoped, purge-on-stale root.
+        var configured = string.IsNullOrWhiteSpace(root)
+            ? Environment.GetEnvironmentVariable(RootEnvironmentVariable)
+            : root;
+        // The default root is the BRANCH directory itself: this cache owns two leaves under it (`astc/` and
+        // `pending/`) rather than one, so it hangs them beside `assets/` and `geoclips/` instead of nesting.
+        var explicitRoot = !string.IsNullOrWhiteSpace(configured);
+        var resolved = explicitRoot ? configured : CouchCoopCacheRoot.BranchRoot;
         if (string.IsNullOrWhiteSpace(resolved))
         {
             return;
@@ -47,7 +58,7 @@ public sealed class AstcTranscodeCache
         _root = resolved;
         _astcDir = Path.Combine(_root, "astc");
         _pendingDir = Path.Combine(_root, "pending");
-        _quota = quota ?? CreateQuota(_root);
+        _quota = quota ?? (explicitRoot ? CreateQuota(_root) : CouchCoopCacheRoot.Quota);
     }
 
     public bool IsEnabled => _root is not null;
@@ -134,50 +145,8 @@ public sealed class AstcTranscodeCache
     }
 
     private static ManagedCacheQuota CreateQuota(string astcRoot)
-        => ManagedCacheQuota.ForAstcRoot(astcRoot);
+        => ManagedCacheQuota.ForCacheRoot(astcRoot);
 
     public static string Sha256Hex(byte[] bytes) =>
         Convert.ToHexString(SHA256.HashData(bytes)).ToLowerInvariant();
-
-    // Root resolution mirrors SpirectlAssetBinaryCache: COUCHCOOP_ASTC_CACHE_ROOT (absolute) wins — the batch,
-    // replay proxy, and tests all point at one dir with it; else the Godot user://couch-coop/astc sibling of the
-    // binary cache; else LocalApplicationData. The GodotSharp reference is isolated (NoInlining + catch) so the
-    // headless/test runner (no GodotSharp) falls through cleanly.
-    private static string? DefaultRoot()
-    {
-        var configured = Environment.GetEnvironmentVariable("COUCHCOOP_ASTC_CACHE_ROOT");
-        if (!string.IsNullOrWhiteSpace(configured))
-        {
-            return configured;
-        }
-
-        string? gameDir = null;
-        try
-        {
-            gameDir = TryResolveGameAstcDir();
-        }
-        catch
-        {
-            // GodotSharp unavailable (headless/test) — fall back below.
-        }
-
-        if (!string.IsNullOrWhiteSpace(gameDir))
-        {
-            return gameDir;
-        }
-
-        var local = Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData);
-        return string.IsNullOrWhiteSpace(local)
-            ? Path.Combine(Path.GetTempPath(), "SlayTheSpire2", "couch-coop", "astc-cache")
-            : Path.Combine(local, "SlayTheSpire2", "couch-coop", "astc-cache");
-    }
-
-    [MethodImpl(MethodImplOptions.NoInlining)]
-    private static string? TryResolveGameAstcDir()
-    {
-        var globalized = Godot.ProjectSettings.GlobalizePath("user://couch-coop/astc-cache");
-        return string.IsNullOrWhiteSpace(globalized) || globalized.StartsWith("user://", StringComparison.Ordinal)
-            ? null
-            : globalized;
-    }
 }

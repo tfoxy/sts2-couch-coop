@@ -153,6 +153,12 @@ export interface BrowserSessionEnvelope extends BrowserEnvelopeBase {
   androidApkUrl?: string | null;
   // The host machine name, stamped on every current session.
   hostName: string;
+  // The host's asset-cache identity: it changes exactly when the bytes behind a given /res/ url can have
+  // changed (its game build, or a cache generation on either side of the seam). Forwarded to the service
+  // worker, which drops its durable /res/ store when it moves — the one signal that covers a game update with
+  // no frontend rebuild, and a phone that joins a stable host and then a beta one. Absent on an older host,
+  // which simply means the worker keeps relying on the bundle hash alone.
+  assetCacheToken?: string | null;
   // Static background (Stage A): the CURRENT combat room's host-rendered background image — the live bg scene
   // root's res:// path plus a ready-to-fetch /bg/ URL (digest-qualified when the host read the mounted layer
   // variant). Absent/null when unknown: non-combat screens, the host valve off, or no probe yet.
@@ -318,6 +324,7 @@ export function parseBrowserEnvelopeValue(raw: unknown): BrowserEnvelope {
       freezeDecor: typeof value.freezeDecor === "boolean" ? value.freezeDecor : null,
       androidApkUrl: typeof value.androidApkUrl === "string" ? value.androidApkUrl : null,
       hostName: requiredString(value.hostName, "hostName"),
+      assetCacheToken: typeof value.assetCacheToken === "string" ? value.assetCacheToken : null,
       staticBackground: normalizeStaticBackground(value.staticBackground),
       scrollAction: requiredTrue(value.scrollAction, "scrollAction"),
       rewardAction: requiredTrue(value.rewardAction, "rewardAction")

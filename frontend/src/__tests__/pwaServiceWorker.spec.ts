@@ -30,6 +30,7 @@ interface SwInternals {
   ASSET_CACHE: string;
   OFFLINE_URL: string;
   BUILD_STAMP_KEY: string;
+  ASSET_IDENTITY_KEY: string;
   MAX_ENTRY_BYTES: number;
   extractBuildStamp(html: unknown): string | null;
   classifyRequest(request: unknown, origin: string): "navigate" | "asset" | "bypass";
@@ -37,6 +38,7 @@ interface SwInternals {
   planTrim(entries: { bytes: number }[], caps: { maxEntries: number; maxBytes: number }): number;
   trimAssetCache(): Promise<number>;
   reconcileBuildStamp(response: Response): Promise<boolean>;
+  reconcileAssetIdentity(identity: unknown): Promise<boolean>;
   handleNavigation(request: unknown): Promise<Response>;
   handleAsset(request: unknown): Promise<Response>;
 }
@@ -378,6 +380,55 @@ describe("service worker: caching behaviour", () => {
     await h.internals.handleNavigation(h.makeRequest("/", { mode: "navigate" }));
     await h.internals.handleNavigation(h.makeRequest("/", { mode: "navigate" }));
     expect((await (await h.storage.open(h.internals.ASSET_CACHE)).keys())).toHaveLength(1);
+  });
+
+  it("records the host's asset identity on first sight without wiping anything", async () => {
+    await h.internals.handleAsset(h.makeRequest("/res/a.png"));
+
+    await h.dispatch("message", { data: { type: "couchcoop-asset-identity", value: "cc-aaaa1111" } });
+
+    expect((await (await h.storage.open(h.internals.ASSET_CACHE)).keys())).toHaveLength(1);
+    const shell = await h.storage.open(h.internals.SHELL_CACHE);
+    expect(await (await shell.match(h.internals.ASSET_IDENTITY_KEY))?.text()).toBe("cc-aaaa1111");
+  });
+
+  // The signal the bundle hash cannot give: the frontend is byte-identical across both game branches and
+  // across a game update with no frontend rebuild, so the document alone says nothing changed.
+  it("drops the whole asset cache when the host's asset identity moves", async () => {
+    await h.internals.handleAsset(h.makeRequest("/res/a.png"));
+    await h.dispatch("message", { data: { type: "couchcoop-asset-identity", value: "cc-aaaa1111" } });
+    expect((await (await h.storage.open(h.internals.ASSET_CACHE)).keys())).toHaveLength(1);
+
+    // Same phone, same frontend build, different host game build (or the other Steam branch).
+    await h.dispatch("message", { data: { type: "couchcoop-asset-identity", value: "cc-bbbb2222" } });
+
+    expect((await (await h.storage.open(h.internals.ASSET_CACHE)).keys())).toEqual([]);
+    const shell = await h.storage.open(h.internals.SHELL_CACHE);
+    expect(await (await shell.match(h.internals.ASSET_IDENTITY_KEY))?.text()).toBe("cc-bbbb2222");
+  });
+
+  it("keeps the cache when the same identity arrives again", async () => {
+    await h.internals.handleAsset(h.makeRequest("/res/a.png"));
+    await h.dispatch("message", { data: { type: "couchcoop-asset-identity", value: "cc-aaaa1111" } });
+    await h.dispatch("message", { data: { type: "couchcoop-asset-identity", value: "cc-aaaa1111" } });
+
+    expect((await (await h.storage.open(h.internals.ASSET_CACHE)).keys())).toHaveLength(1);
+  });
+
+  // Load-bearing, exactly as for the build stamp: a host too old to send a token, or a malformed message,
+  // must not be read as "everything changed" and wipe a cache the player just filled.
+  it("treats an absent or unusable identity as no signal rather than as a change", async () => {
+    await h.internals.handleAsset(h.makeRequest("/res/a.png"));
+    await h.dispatch("message", { data: { type: "couchcoop-asset-identity", value: "cc-aaaa1111" } });
+
+    for (const value of [undefined, null, "", 42, {}]) {
+      // eslint-disable-next-line no-await-in-loop -- ordering matters; each must leave the cache alone.
+      expect(await h.internals.reconcileAssetIdentity(value)).toBe(false);
+    }
+
+    expect((await (await h.storage.open(h.internals.ASSET_CACHE)).keys())).toHaveLength(1);
+    const shell = await h.storage.open(h.internals.SHELL_CACHE);
+    expect(await (await shell.match(h.internals.ASSET_IDENTITY_KEY))?.text()).toBe("cc-aaaa1111");
   });
 
   it("never serves a cached application document — a dead host gets the offline page", async () => {

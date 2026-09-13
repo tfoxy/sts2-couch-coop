@@ -281,8 +281,8 @@ internal static class GeoclipStoreTests
         Expect(adopted.Success, "a well-formed bake adopts");
 
         var root = scope.Store.RootPath!;
-        Expect(Path.GetFileName(root) == CouchCoopGeoclipStore.SchemaVersion,
-            "the store hangs its own schema-version folder off the asset cache root, like the asset cache does");
+        Expect(Path.GetFileName(root) == CouchCoopCacheRoot.GeoclipFolderName,
+            "the store hangs its own leaf off the cache root — the same name the branch-scoped layout uses");
 
         var directory = scope.Store.TryResolveDirectory(spineKey);
         Expect(directory == adopted.Directory, "the adopted directory is the one the store resolves");

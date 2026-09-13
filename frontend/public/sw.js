@@ -62,13 +62,24 @@
  *       The reconcile is awaited before the document is returned so the page it produces can never race
  *       ahead and repopulate the cache we are about to delete.
  *
- *  (ii) FORMAT VERSION — the manual override, for when the worker's own semantics change (or for an
+ *  (ii) HOST ASSET IDENTITY — the server's own answer to "can the bytes behind a /res/ url have
+ *       changed?". It arrives on the `session` envelope as `assetCacheToken` and the page forwards it
+ *       here (`couchcoop-asset-identity`); the host composes it from the same game build + cache
+ *       generation it keys its OWN disk cache on, so the phone and the host invalidate together.
+ *       Same discipline as the build stamp: a changed value drops the asset cache, and the first
+ *       observation only records, because absence is not evidence of change.
+ *
+ *       This covers what the build stamp cannot. Both game branches ship the SAME frontend bundle, so
+ *       the hash is identical whether this phone last joined a stable host or a beta one — and a game
+ *       update with no frontend rebuild moves nothing the document can show. Those paths did not exist
+ *       when the stamp was the only invalidator; they do now.
+ *
+ * (iii) FORMAT VERSION — the manual override, for when the worker's own semantics change (or for an
  *       emergency wipe). Bumping it renames the caches; `activate` sweeps the orphans.
  *
- * There is deliberately NO time-based TTL. A TTL would contradict the origin's own `immutable` header,
- * it would re-fetch megabytes on a schedule unrelated to whether anything actually changed, and the
- * update path it would cover (a game update with no frontend rebuild) does not exist in this repo's
- * deploy story. If that ever changes, the honest fix is a version field in the payload, not a guess.
+ * There is deliberately NO time-based TTL. A TTL would contradict the origin's own `immutable` header
+ * and would re-fetch megabytes on a schedule unrelated to whether anything actually changed. The two
+ * signals above both fire on a real change and nothing else, which is what a TTL is a guess at.
  *
  * EVICTION is FIFO against a byte budget and an entry count, both soft caps:
  *   - `cache.keys()` is specified to return keys in INSERTION order, so dropping from the front is
@@ -92,6 +103,8 @@ const ASSET_CACHE = `${CACHE_PREFIX}assets-v${CACHE_FORMAT_VERSION}`;
 const OFFLINE_URL = "/offline.html";
 /** Synthetic in-cache key for the last-seen build stamp. Never requested over the network. */
 const BUILD_STAMP_KEY = "/__couchcoop_sw__/build-stamp";
+/** Synthetic in-cache key for the last-seen host asset identity. Never requested over the network. */
+const ASSET_IDENTITY_KEY = "/__couchcoop_sw__/asset-identity";
 
 /*
  * Cache-first prefixes. Strictly an allowlist — anything not listed is bypassed entirely.
@@ -246,21 +259,40 @@ async function trimAssetCache() {
 /**
  * Compare the build stamp in a freshly fetched document against the last one we saw, and drop the whole
  * asset cache when it moved. Returns true when it invalidated.
- *
- * The very first observation only RECORDS — there is nothing meaningful to invalidate then, and treating
- * "we've never seen a stamp" as "the build changed" would wipe the cache a returning player just filled.
  */
 async function reconcileBuildStamp(response) {
   const stamp = extractBuildStamp(await response.text());
   if (!stamp) return false;
+  return reconcileStamp(BUILD_STAMP_KEY, stamp);
+}
 
+/**
+ * Compare the host's asset identity against the last one we saw, and drop the whole asset cache when it
+ * moved. Returns true when it invalidated.
+ *
+ * The value is the session envelope's `assetCacheToken`, forwarded from the page. The host composes it from
+ * the game build and the cache generations it keys its own on-disk cache on, so "the host's bytes can have
+ * changed" and "this phone's cached bytes are stale" stay one fact rather than two that drift apart.
+ */
+async function reconcileAssetIdentity(identity) {
+  if (typeof identity !== "string" || identity.length === 0) return false;
+  return reconcileStamp(ASSET_IDENTITY_KEY, identity);
+}
+
+/**
+ * The shared half of both invalidators: record the value, and drop the asset cache when it MOVED.
+ *
+ * The very first observation only RECORDS — there is nothing meaningful to invalidate then, and treating
+ * "we've never seen one" as "it changed" would wipe the cache a returning player just filled.
+ */
+async function reconcileStamp(key, value) {
   const shell = await caches.open(SHELL_CACHE);
-  const previous = await shell.match(BUILD_STAMP_KEY);
-  const previousStamp = previous ? await previous.text() : null;
-  if (previousStamp === stamp) return false;
+  const previous = await shell.match(key);
+  const previousValue = previous ? await previous.text() : null;
+  if (previousValue === value) return false;
 
-  await shell.put(BUILD_STAMP_KEY, new Response(stamp, { headers: { "content-type": "text/plain" } }));
-  if (previousStamp === null) return false;
+  await shell.put(key, new Response(value, { headers: { "content-type": "text/plain" } }));
+  if (previousValue === null) return false;
 
   await caches.delete(ASSET_CACHE);
   return true;
@@ -393,7 +425,18 @@ self.addEventListener("fetch", (event) => {
 
 self.addEventListener("message", (event) => {
   const data = event && event.data;
-  if (!data || data.type !== "couchcoop-sw-reset") return;
+  if (!data) return;
+
+  // The host's asset identity, forwarded from the page's `session` envelope. A message rather than a fetch:
+  // it costs no round trip, it carries no offline failure mode (no envelope means no change means no wipe),
+  // and it arrives exactly when the page learns which host it is actually talking to.
+  if (data.type === "couchcoop-asset-identity") {
+    const work = reconcileAssetIdentity(data.value).catch(() => {});
+    if (typeof event.waitUntil === "function") event.waitUntil(work);
+    return;
+  }
+
+  if (data.type !== "couchcoop-sw-reset") return;
   const work = (async () => {
     try {
       await wipeCouchCoopCaches();
@@ -413,6 +456,7 @@ self.__couchCoopSwInternals = {
   ASSET_CACHE,
   OFFLINE_URL,
   BUILD_STAMP_KEY,
+  ASSET_IDENTITY_KEY,
   CACHE_FIRST_PREFIXES,
   MAX_ASSET_BYTES,
   MAX_ASSET_ENTRIES,
@@ -424,6 +468,7 @@ self.__couchCoopSwInternals = {
   planTrim,
   trimAssetCache,
   reconcileBuildStamp,
+  reconcileAssetIdentity,
   handleNavigation,
   handleAsset
 };

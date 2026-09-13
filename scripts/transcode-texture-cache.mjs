@@ -13,7 +13,7 @@
 // batch many per run). Output: <astc-cache>/astc/<sha256>.cctx. Idempotent: existing outputs are skipped.
 //
 //   node scripts/transcode-texture-cache.mjs \
-//     --source-cache ~/.local/share/SlayTheSpire2/couch-coop/assets/couchcoop-asset-cache-v<upstream-version>/res \
+//     --source-cache ~/.local/share/SlayTheSpire2/couch-coop/cache/<branch>/assets/res \
 //     --astc-cache /path/to/astc-cache
 //
 // It ALSO drains the mod's runtime "pending inbox" (<astc-cache>/pending/*.bin — raster bytes the /res?fmt=astc
@@ -34,17 +34,20 @@ import { REPO_ROOT } from "./lib/repo-layout.mjs";
 const DEFAULT_EDITOR =
   join(homedir(), ".local/godot-4.5.1-mono/Godot_v4.5.1-stable_mono_linux_x86_64/Godot_v4.5.1-stable_mono_linux.x86_64");
 const DEFAULT_PROJECT = join(REPO_ROOT, "scripts", "transcode-godot");
-const DEFAULT_ASSET_CACHE_ROOT = join(homedir(), ".local/share/SlayTheSpire2/couch-coop/assets");
+const DEFAULT_CACHE_ROOT = join(homedir(), ".local/share/SlayTheSpire2/couch-coop/cache");
 
-// The asset cache's version is spirectl's payload discriminator, not a CouchCoop schema. Discover the
-// newest locally available upstream namespace instead of pinning a stale Couch-owned-looking default.
+// The cache is branch scoped — <cache>/<branch>/assets/res — and a machine may hold two branches at once
+// (CouchCoopCacheRoot caps it there). Pick the most recently written one rather than guessing which the operator
+// meant: the branch they last played is the branch whose blobs are worth transcoding, and transcoding the other
+// one's would be pure waste. `--source-cache` names one outright when that guess is wrong.
 function defaultSourceCaches() {
   try {
-    return readdirSync(DEFAULT_ASSET_CACHE_ROOT, { withFileTypes: true })
-      .map((entry) => ({ entry, match: /^couchcoop-asset-cache-v(\d+)$/.exec(entry.name) }))
-      .filter(({ entry, match }) => entry.isDirectory() && match)
-      .sort((a, b) => Number(b.match[1]) - Number(a.match[1]))
-      .map(({ entry }) => join(DEFAULT_ASSET_CACHE_ROOT, entry.name, "res"))
+    return readdirSync(DEFAULT_CACHE_ROOT, { withFileTypes: true })
+      .filter((entry) => entry.isDirectory() && !entry.name.startsWith("."))
+      .map((entry) => join(DEFAULT_CACHE_ROOT, entry.name, "assets"))
+      .filter((dir) => existsSync(dir))
+      .sort((a, b) => statSync(b).mtimeMs - statSync(a).mtimeMs)
+      .map((dir) => join(dir, "res"))
       .slice(0, 1);
   } catch {
     return [];

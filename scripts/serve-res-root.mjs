@@ -3,7 +3,8 @@
 // fallback answers PNG resource renditions that are intentionally absent from
 // a recovered tree. It never extracts, rasterizes, copies, or writes game assets.
 //
-//   node scripts/serve-res-root.mjs --port 5195 --asset-cache-root /path/to/couchcoop-asset-cache-v13
+//   node scripts/serve-res-root.mjs --port 5195 \
+//     --asset-cache-root ~/.local/share/SlayTheSpire2/couch-coop/cache/<branch>/assets
 //
 // `--asset-cache-root` is SpirectlAssetBinaryCache.RootPath: the directory that contains `res/<sha256>.bin` and
 // its paired `.meta`. The cache key is exactly the shipped CachedSpirectlAssetHttpAdapter convention:

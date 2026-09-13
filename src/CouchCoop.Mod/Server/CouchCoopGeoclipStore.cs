@@ -14,7 +14,7 @@ namespace CouchCoop.Mod.Server;
 /// </summary>
 /// <remarks>
 /// <para>
-/// LAYOUT, under <c>&lt;asset-cache-root&gt;/couchcoop-geoclip-cache-v1/</c>:
+/// LAYOUT, under <see cref="CouchCoopCacheRoot.GeoclipRoot"/> (or <c>&lt;explicit root&gt;/geoclips/</c>):
 /// </para>
 /// <code>
 ///   pages/sheet-&lt;hash&gt;.png|.webp   content-addressed packed sheets, SHARED by every pose of every rig
@@ -40,9 +40,12 @@ namespace CouchCoop.Mod.Server;
 /// never served. There is no eviction, matching <see cref="SpirectlAssetBinaryCache"/>, which has none either.
 /// </para>
 /// <para>
-/// SCHEMA VERSION IN THE PATH, again as the asset cache does: bumping <see cref="SchemaVersion"/> re-namespaces
-/// the whole store. That is the coarse lever (the artifact LAYOUT changed). The fine lever is
-/// <see cref="GeoclipSelector"/>'s <c>gv</c>, which versions the geoclip POLICY inside an unchanged layout.
+/// TWO LEVERS. <see cref="GeoclipSelector"/>'s <c>gv</c> is the fine one: it versions the geoclip POLICY inside an
+/// unchanged layout, moving cached deltas and leaving every raster clip and still valid, because those are
+/// addressed by keys that do not carry it. <see cref="CouchCoopCacheRoot.CacheVersion"/> is the coarse one — reach
+/// for it when the on-disk LAYOUT changes (what files a pose directory holds, or how they are named), which is the
+/// one thing a <c>gv</c> bump cannot express. It empties this store's whole branch directory, and every other
+/// cache in it, which is the honest cost of saying "nothing written before this is readable".
 /// </para>
 /// <para>
 /// A REFUSAL IS ALSO A RESULT, and it has to be durable or the sweep never converges. Roughly half of a real
@@ -68,13 +71,6 @@ namespace CouchCoop.Mod.Server;
 /// </remarks>
 public sealed class CouchCoopGeoclipStore
 {
-    /// <summary>
-    /// Bump when the on-disk LAYOUT changes (what files a pose directory holds, or how they are named), which is
-    /// the one thing a <c>gv</c> bump cannot express — see <see cref="GeoclipSelector"/>.
-    /// </summary>
-    /// <remarks>The v1 namespace intentionally has no reader or migration path for earlier CouchCoop layouts.</remarks>
-    public const string SchemaVersion = "couchcoop-geoclip-cache-v1";
-
     /// <summary>
     /// The tail appended to a canonical <c>spine://</c> key to address the GEOCLIP for that identity.
     /// </summary>
@@ -189,17 +185,23 @@ public sealed class CouchCoopGeoclipStore
     private readonly ConcurrentDictionary<string, ManagedCacheQuota.Reservation> _stagingReservations = new(StringComparer.Ordinal);
 
     /// <param name="cacheRoot">
-    /// The asset-cache root to hang this store under. Null resolves the machine default exactly as
-    /// <see cref="SpirectlAssetBinaryCache"/> does, so both caches move together under
-    /// <c>COUCHCOOP_CACHE_ROOT</c>.
+    /// A directory to hang this store's <c>geoclips/</c> leaf under, NOT branch scoped (tests and benches, which
+    /// own a scratch directory and wipe it themselves). Null takes the branch-scoped root the shipped host uses;
+    /// the leaf name is the same either way, so there is one on-disk shape.
     /// </param>
     public CouchCoopGeoclipStore(string? cacheRoot = null) : this(cacheRoot, null) { }
 
     internal CouchCoopGeoclipStore(string? cacheRoot, ManagedCacheQuota? quota)
     {
-        var resolved = string.IsNullOrWhiteSpace(cacheRoot) ? SpirectlAssetBinaryCache.DefaultRoot() : cacheRoot;
-        _root = string.IsNullOrWhiteSpace(resolved) ? null : Path.Combine(resolved, SchemaVersion);
-        _quota = _root is null ? null : quota ?? SpirectlAssetBinaryCache.CreateQuota(resolved!);
+        if (!string.IsNullOrWhiteSpace(cacheRoot))
+        {
+            _root = Path.Combine(cacheRoot, CouchCoopCacheRoot.GeoclipFolderName);
+            _quota = quota ?? SpirectlAssetBinaryCache.CreateQuota(cacheRoot);
+            return;
+        }
+
+        _root = CouchCoopCacheRoot.GeoclipRoot;
+        _quota = _root is null ? null : quota ?? CouchCoopCacheRoot.Quota;
     }
 
     /// <summary>Whether a root could be resolved at all. Says NOTHING about the root existing on disk.</summary>

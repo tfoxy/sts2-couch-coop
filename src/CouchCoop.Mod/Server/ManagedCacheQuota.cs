@@ -51,19 +51,21 @@ internal sealed class ManagedCacheQuota
     public long EntryLimitBytes => _entryLimitBytes;
     private static StringComparer PathComparer => OperatingSystem.IsWindows() ? StringComparer.OrdinalIgnoreCase : StringComparer.Ordinal;
 
-    public static ManagedCacheQuota ForAssetRoot(string root) => ForCacheRoot(root);
-    public static ManagedCacheQuota ForAstcRoot(string root) => ForCacheRoot(root);
-
-    private static ManagedCacheQuota ForCacheRoot(string root)
+    /// <summary>
+    /// One budget for a whole cache root — every cache hung under it at once.
+    /// </summary>
+    /// <remarks>
+    /// <para>Coordinates on, and measures, the same directory: that directory holds every leaf
+    /// (<c>assets/</c>, <c>geoclips/</c>, <c>astc/</c>, <c>pending/</c>), so there is nothing to infer. Its own
+    /// <c>.cache-budget</c> sits inside and is excluded from measurement, and a purge takes the accounting with
+    /// the tree it describes.</para>
+    /// <para>The path is RESOLVED, which is what makes a host and its headless seats share one budget: a seat
+    /// reaches the same bytes through a symlinked <c>cache</c> leaf, and two spellings of one directory must not
+    /// mean two independent ceilings over the same disk.</para>
+    /// </remarks>
+    public static ManagedCacheQuota ForCacheRoot(string root)
     {
-        // Headless profiles link individual cache directories, not their parent. Resolve the leaf first.
         var full = ResolvedFilePath.Resolve(root);
-        if (new[] { "assets", "astc-cache", "resource-cache" }.Contains(Path.GetFileName(full), PathComparer))
-        {
-            var parent = Path.GetDirectoryName(full)!;
-            return new ManagedCacheQuota(parent,
-                [Path.Combine(parent, "assets"), Path.Combine(parent, "astc-cache"), Path.Combine(parent, "resource-cache")]);
-        }
         return new ManagedCacheQuota(full, [full]);
     }
 
