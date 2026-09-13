@@ -32,11 +32,11 @@ is_allowed_payload_file() {
   local path="$1" leaf
   case "$path" in
     LICENSE|NOTICE|THIRD_PARTY_NOTICES.md|couchcoop.json|build-info.txt) return 0 ;;
-    couchcoop.dll|CouchCoop.Mod.dll|CouchCoop.Mod.Contracts.dll|CouchCoop.MirrorProtocol.dll|CouchCoop.Spirectl.dll|QRCoder.dll) return 0 ;;
+    couchcoop.dll|CouchCoop.Mod.dll|CouchCoop.Mod.Contracts.dll|CouchCoop.MirrorProtocol.dll|CouchCoop.Spirectl.dll|QRCoder.dll|DeviceDetector.NET.dll|LiteDB.dll|Microsoft.Extensions.DependencyInjection.Abstractions.dll|Microsoft.Extensions.Logging.Abstractions.dll|System.Diagnostics.DiagnosticSource.dll|YamlDotNet.dll) return 0 ;;
     frontend/index.html|frontend/offline.html|frontend/sw.js|frontend/app-boot|frontend/.vite/manifest.json) return 0 ;;
     frontend/manifest.webmanifest|frontend/manifest.*.webmanifest) return 0 ;;
     frontend/icons/icon.svg|frontend/icons/icon-*.png) return 0 ;;
-    licenses/QRCoder-1.6.0-MIT.txt|licenses/spirectl-LICENSE|licenses/spirectl-NOTICE|licenses/godot-scene-web-LICENSE|licenses/HarfBuzz-LICENSE|licenses/Emscripten-LICENSE|licenses/OpenSans-LICENSE|licenses/npm-dependencies.tsv) return 0 ;;
+    licenses/QRCoder-1.6.0-MIT.txt|licenses/DeviceDetector.NET-6.5.2-Apache-2.0.txt|licenses/LiteDB-5.0.21-MIT.txt|licenses/Microsoft.Extensions.DependencyInjection.Abstractions-10.0.10-MIT.txt|licenses/Microsoft.Extensions.Logging.Abstractions-10.0.10-MIT.txt|licenses/System.Diagnostics.DiagnosticSource-10.0.10-MIT.txt|licenses/YamlDotNet-18.1.0-MIT.txt|licenses/spirectl-LICENSE|licenses/spirectl-NOTICE|licenses/godot-scene-web-LICENSE|licenses/HarfBuzz-LICENSE|licenses/Emscripten-LICENSE|licenses/OpenSans-LICENSE|licenses/npm-dependencies.tsv) return 0 ;;
     licenses/npm/*.LICENSE)
       leaf="${path#licenses/npm/}"
       [[ "$leaf" != */* && -n "$leaf" ]]
@@ -63,9 +63,21 @@ required_files=(
   CouchCoop.MirrorProtocol.dll
   CouchCoop.Spirectl.dll
   QRCoder.dll
+  DeviceDetector.NET.dll
+  LiteDB.dll
+  Microsoft.Extensions.DependencyInjection.Abstractions.dll
+  Microsoft.Extensions.Logging.Abstractions.dll
+  System.Diagnostics.DiagnosticSource.dll
+  YamlDotNet.dll
   frontend/index.html
   frontend/app-boot
   licenses/QRCoder-1.6.0-MIT.txt
+  licenses/DeviceDetector.NET-6.5.2-Apache-2.0.txt
+  licenses/LiteDB-5.0.21-MIT.txt
+  licenses/Microsoft.Extensions.DependencyInjection.Abstractions-10.0.10-MIT.txt
+  licenses/Microsoft.Extensions.Logging.Abstractions-10.0.10-MIT.txt
+  licenses/System.Diagnostics.DiagnosticSource-10.0.10-MIT.txt
+  licenses/YamlDotNet-18.1.0-MIT.txt
   licenses/spirectl-LICENSE
   licenses/spirectl-NOTICE
   licenses/godot-scene-web-LICENSE

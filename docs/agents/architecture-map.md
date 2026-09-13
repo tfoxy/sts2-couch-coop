@@ -626,73 +626,45 @@ The always-on QR overlay is gone. A game-styled button opens a dialog instead.
   generators here), so the controller calls an idempotent `Install()` explicitly after `AddChild`, and
   hover/press flow through signal `Callable`s.
 
-### Host connectivity log
+### Host connection status
 
-A second injected panel on the same lobby screens, rendering what the couch-coop plumbing is doing in
-plain sentences. It exists because every event it shows already went to the console — and `sts2 game launch`
-used to detach stdio to `/dev/null`, so in the field the host's TV said nothing while a phone failed to join.
-**The existing console lines are untouched**; each `Append` sits beside one. (Since 2026-09-04 `game launch`
-also TEES the child's stdio to `.sts2/artifacts/game-launch/`, reachable via `dev logs --source game-stdio`
-and `launch.stdio` — which is the operator's copy. The panel is still the only thing the person on the couch
-can see, and the mod's own lines are on stdout, not stderr.)
+The QR dialog owns a 420×936 companion card to the left of its unchanged centered card, separated
+by 24 design units. It appears when a WebSocket client or retained issue exists. The old lobby activity
+panel is no longer mounted; its internal narration remains available for diagnostics.
 
-- **Files**: `Activity/CouchCoopActivityLog.cs` (the ring), `Activity/CouchCoopActivityMessages.cs` (all
-  copy), `Activity/CouchCoopActivityRender.cs` (bbcode), `Activity/CouchCoopActivityPanelState.cs`
-  (collapse flag), `HostUi/CouchCoopActivityPanel.cs`, `HostUi/CouchCoopActivityLayout.cs`. Specs:
-  `CouchCoopActivityLogTests`, plus narration legs in `HeadlessClientManagerTests`,
-  `MirrorSeatRosterTests` and `BrowserServerRouteTests`.
-- **`Activity/` is NOT in any hot-reload glob, and must not be.** `Diagnostics/`, `Server/` and
-  `Protocol/` are `<Compile Include>`d into `CouchCoop.Mod.HotReload.csproj`, so each generation compiles
-  its own copy — a static ring there would silently split in two on reload. The linked `Server/` sources
-  reach these types through the `ProjectReference` instead, which works only while the API takes BCL
-  types and the enums declared in `Activity/` (the `WireSceneDelta` CS1503 type-identity trap).
-- **Gate is `IsHostLobby`, NOT `ShouldShow`** — the difference is the point. `ShouldShow` additionally
-  requires a bound listener; a host whose browser server failed to bind is exactly who must read
-  "Couldn't start the phone connection service."
-- **Placement**: right-anchored (`AnchorLeft/Right = 1.0`, offsets −584 … −24), `y 96 → 536`, header 44
-  (the collapsed height). Below the game's own version label (`main_menu.tscn :: ReleaseInfo`, y 18–63,
-  which shows through on the lobby). Right-anchored because `project.godot` stretches `canvas_items` with
-  `expand`, so an ultrawide window grows the design width. Known accepted edge: an *open* act-dropdown
-  list (y 75–250) would overlap, but it is not normally visible on these screens.
-- **Node contract** (probe-asserted): `CouchCoopActivityPanel` (FullRect, `Ignore`) →
-  `CouchCoopActivityCard` (`Panel`, `Ignore`) → `CouchCoopActivityHeader` (**`Stop`**, `gui_input`
-  toggles collapse) → `CouchCoopActivityTitleLabel` + `CouchCoopActivityToggleLabel` ("–"/"+"), and
-  `CouchCoopActivityBody` (`Ignore`) → `CouchCoopActivityLogText` (`RichTextLabel`, **`Stop`**). The
-  header is a plain `Control`, not an `NButton` — no hover dance. `ClipContents` on the log is left at
-  its default `true` (correct: it is a scrolling viewport — this is not the bug in
-  [clip-contents-blast-radius.md](clip-contents-blast-radius.md)).
-- **The log node is a subclass (`CouchCoopActivityLogLabel`) purely to be INSPECTABLE.** `append_text`
-  does not update a `RichTextLabel`'s `text` property, so `dev scene node --properties` on the log reads
-  empty and no probe could assert a word of it. The subclass exposes `GetFormattedText()`, which is the
-  first accessor spirectl's text diagnostics reflect for (`GetFormattedText` → `Text` → `BbcodeText`,
-  with a base-type walk that resolves a `Godot.RichTextLabel` subclass), so the markup-stripped log shows
-  up as `properties.text.text` with no extra node.
-- **Sibling order**: installed by `CouchCoopQrHostPanelController.Scan` (one controller, not two — the
-  recursive screen walk is the expensive half of the tick) and then `MoveChild`ed to be the **earlier**
-  sibling of the QR panel, so QR modals and their input-blocking scrims draw over it. `ZIndex = -1` was
-  rejected: it hides the panel behind the lobby's StaticBg.
-- **Rendering is incremental and append-only.** `NewestSequence` doubles as a revision; an unchanged tick
-  costs one lock and a comparison. New entries go through `RichTextLabel.AppendText`, **never `.Text =`**
-  — `set_text` calls `clear()`, which re-arms `scroll_following` (godot 4.5.1) and would yank a
-  scrolled-up reader to the bottom on every event. A ring drop (`SnapshotSince(..., out truncated)`)
-  falls back to a full redraw with an "…earlier events not shown" head.
-- **`EscapeBbcode` is load-bearing**: half the log is a display name typed into a browser, and the label
-  has bbcode enabled. `[` → `[lb]`.
-- **`CouchCoopStreamSkip.Stamp` before `AddChild`**, same race as the QR panel — and here the stake is
-  that the log carries player-chosen NAMES, which must not reach every other phone.
-- **Emission points**: `Session/HeadlessClientManager.cs` S1–S17 (seat lifecycle; the launch trio wraps
-  `_launcher(slot)` in `EnsureHeadlessAsync` rather than living in `LaunchReal`, which no test can
-  reach), `Server/CouchCoopWebSocketConnection.cs` V1–V5, `HostUi/CouchCoopHostUiServices.cs` +
-  `CouchCoopMod.StartHostUiServices` B1–B7, and two transitions in `Session/MirrorSeatDirectory.cs`.
-- **Two curations that are the difference between a log and a feed**: (1) V5 ("… phone disconnected") is
-  suppressed once a viewer was handed off to a seat — the seat channel already says whether their window
-  was closed or kept alive, and `RegisterConnection`/`UnregisterConnection` are never narrated at all
-  (they fire on every page load); (2) `MirrorSeatDirectory` narrates only when it has seen the seat
-  before (`had == true`), or a fresh per-generation directory would re-announce the whole roster on
-  startup and after every hot reload.
-- **A generation swap is not a restart**: nothing in `HotReloadableBrowserServerHost` (or in the
-  standalone `CouchCoopBrowserServer` harness twin) emits. Pinned by
-  `AssertHotReloadableServerHostSwapAsync` asserting the log's revision does not move.
+- `Connections/ConnectionRegistry.cs` owns immutable client/attempt snapshots for the process lifetime.
+  **Keep `Connections/` outside hot-reload source globs.** Server generations share this BCL-facing API.
+  Client identity is the original host WebSocket session ID; display names and parsed device labels do
+  not identify a client. Redirected sockets report through their owned process generation.
+- Normal progress has six stages: connecting, choosing a name, initializing, joining the host, loading
+  the browser view, and complete. Direct views and existing games use four. Stage clocks are monotonic;
+  closing the dialog does not affect them. A first-frame receipt alone cannot complete a native join.
+- `HeadlessClientManager.Connections.cs` requires the live owned process, an authenticated fresh child
+  heartbeat, a responding listener, and host-observed membership before redirecting. The configurable
+  startup deadline remains 75 seconds. Browser presentation taking 30 seconds records an actionable
+  warning while leaving the joined game running.
+- `/internal/client-status` is a bounded POST on the existing raw TCP HTTP server, restricted to loopback
+  and a per-process credential. Launch environment supplies `COUCHCOOP_HEADLESS_CONTROL_URL`,
+  `COUCHCOOP_HEADLESS_CONTROL_TOKEN`, and `COUCHCOOP_HEADLESS_CONTROL_GENERATION`. Generations and increasing sequences
+  reject delayed reports; the response can request shutdown. Credentials never appear in reports.
+- spirectl's multiplayer connection subscription observes native failures before dialog suppression.
+  A failed child stops input and arms the five-second forced-exit backstop before notifying the host
+  and browser and requesting quit. Parent cleanup captures logs and releases the peer before a seat
+  can be reused. Healthy reconnect and mid-run detach still retain the existing game.
+- Browser `client-frame-presented` is bound to the granted attempt and emitted after successful rendering
+  and two animation-frame callbacks while visible. DOM and canvas use the same receipt path. It is
+  separate from `scene-ack`, which remains the scene stream's flow-control credit.
+- Cleanly closed sockets disappear. Failed attempts remain under Recent issues until dismissed or
+  hosting ends; at most 128 detailed issues are retained, with an overflow count. Reports preserve the
+  first known cause, stable codes, stage timing, process cleanup, and separately labelled bounded host
+  and client `godot.log` excerpts. Concurrent host errors are supporting evidence. Copied text is capped
+  at 64 KiB of UTF-8 and normalizes user-directory prefixes and control credentials.
+- The native list rows, detail area, Copy report, Dismiss issue, selector, and Close form one modal focus
+  chain. Shoulder buttons page through focused details. Clipboard feedback verifies a readback before
+  displaying Copied. New issues while closed add a count badge and a brief non-modal notice.
+- The QR dialog remains accessible if the browser service fails. Its empty state explains the WebSocket
+  boundary and basic network checks. Native strings are localized in all supported catalogs; diagnostic
+  codes and copied report fields remain stable.
 
 ## Suites / build (quick index — full detail in qa-recipes.md)
 - `dotnet run --project tests/CouchCoop.MirrorProtocol.Tests` and `dotnet run --project tests/CouchCoop.Mod.Tests`

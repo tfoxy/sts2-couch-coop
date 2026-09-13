@@ -5,22 +5,12 @@ using CouchCoop.Mod.Localization;
 namespace CouchCoop.Mod.HostUi;
 
 /// <summary>
-/// Finds the lobby screens and keeps exactly one <see cref="CouchCoopQrHostPanel"/> and one
-/// <see cref="CouchCoopActivityPanel"/> installed on each for as long as this instance is hosting a lobby.
+/// Finds the lobby screens and keeps exactly one <see cref="CouchCoopQrHostPanel"/> installed on each
+/// for as long as this instance is hosting a lobby.
 /// </summary>
 /// <remarks>
 /// <para>
-/// BOTH panels ride this one controller rather than getting a second scan of their own. The state pull
-/// is the expensive half of the tick, so a second controller would double the per-tick cost to save
-/// nothing — and their SIBLING ORDER matters (see <c>OrderBelowQrPanel</c>), which two independently-timed
-/// scans could not keep deterministic.
-/// </para>
-/// <para>
-/// Their GATES differ on purpose. The QR panel needs <see cref="CouchCoopLobbyHostGate.ShouldShow"/>
-/// (which additionally requires a bound listener — a QR pointing at nothing is a promise we cannot keep),
-/// while the activity panel uses <see cref="CouchCoopLobbyHostGate.IsHostLobby"/> alone: a host whose
-/// browser server FAILED to bind is exactly the host who needs to read "Couldn't start the phone
-/// connection service." on their television.
+/// The state pull is the expensive half of the tick, so this controller owns the sole native host surface.
 /// </para>
 /// <para>
 /// The 0.25s tick GATES as well as installs: <see cref="CouchCoopLobbyHostGate"/> is evaluated every
@@ -53,6 +43,9 @@ public static class CouchCoopQrHostPanelController
     private static bool _initialized;
     private static bool _scanScheduled;
     private static bool _refreshRequested;
+    // Keep the pending timer wrapper with the controller until its callback has run; the scan chain owns this
+    // callback and must not rely on a temporary local surviving until the next tick.
+    private static SceneTreeTimer? _scanTimer;
 
     /// <summary>
     /// The lobby screens currently alive, fed by <see cref="Patches.LobbyScreenMountPatch"/>. The tick runs
@@ -173,9 +166,7 @@ public static class CouchCoopQrHostPanelController
     }
 
     /// <summary>
-    /// Ask every installed panel (QR and activity) to re-apply its layout on the next scan tick. Only the
-    /// QR panel's layout is hot-reloadable; the activity panel's is compile-time constant and simply
-    /// re-asserts itself, which is cheap and keeps one refresh path instead of two.
+    /// Ask every installed QR panel to re-apply its layout on the next scan tick.
     /// </summary>
     public static void RefreshAll()
     {
@@ -192,6 +183,7 @@ public static class CouchCoopQrHostPanelController
             _initialized = false;
             _scanScheduled = false;
             _refreshRequested = false;
+            _scanTimer = null;
             _alertState = HostTransportAlertState.Initial;
         }
 
@@ -207,7 +199,6 @@ public static class CouchCoopQrHostPanelController
         foreach (var screen in FindLobbyScreens(root))
         {
             RemoveFrom(screen);
-            RemoveActivityFrom(screen);
         }
     }
 
@@ -219,17 +210,6 @@ public static class CouchCoopQrHostPanelController
         }
 
         node.GetNodeOrNull<CouchCoopQrHostPanel>(CouchCoopQrHostPanel.NodeName)?.QueueFree();
-    }
-
-    /// <summary>Twin of <see cref="RemoveFrom"/> for the host connectivity log panel.</summary>
-    public static void RemoveActivityFrom(Node? node)
-    {
-        if (node is null || !GodotObject.IsInstanceValid(node))
-        {
-            return;
-        }
-
-        node.GetNodeOrNull<CouchCoopActivityPanel>(CouchCoopActivityPanel.NodeName)?.QueueFree();
     }
 
     /// <summary>Start the tick chain unless one is already running.</summary>
@@ -255,6 +235,7 @@ public static class CouchCoopQrHostPanelController
         lock (Gate)
         {
             _scanScheduled = false;
+            _scanTimer = null;
         }
     }
 
@@ -266,9 +247,23 @@ public static class CouchCoopQrHostPanelController
             return;
         }
 
-        var timer = root.GetTree().CreateTimer(0.25);
+        var timer = root.GetTree().CreateTimer(0.25,
+            processAlways: true,
+            ignoreTimeScale: true);
+        lock (Gate)
+        {
+            _scanTimer = timer;
+        }
         timer.Timeout += () =>
         {
+            lock (Gate)
+            {
+                if (!ReferenceEquals(_scanTimer, timer))
+                {
+                    return;
+                }
+                _scanTimer = null;
+            }
             if (!GodotObject.IsInstanceValid(root))
             {
                 ParkScan();
@@ -347,7 +342,6 @@ public static class CouchCoopQrHostPanelController
             foreach (var screen in screens)
             {
                 RemoveFrom(screen);
-                RemoveActivityFrom(screen);
             }
 
             DecideHostTransportAlert(null);
@@ -358,17 +352,15 @@ public static class CouchCoopQrHostPanelController
         // of this tick, and on the main menu or mid-combat there is nothing to decide.
         var snapshot = CouchCoopMod.HostUiSnapshot;
         var lobbyState = CouchCoopMod.TryGetLobbyState();
-        var shouldShow = CouchCoopLobbyHostGate.ShouldShow(snapshot.ListenerBaseUri, lobbyState);
-        // NOT ShouldShow: the activity panel must appear even when the browser server failed to bind, since
-        // saying so is its entire job. See the class remarks.
-        var showActivity = CouchCoopLobbyHostGate.IsHostLobby(lobbyState);
-
+        // Keep the QR entry point reachable when the browser listener failed. The dialog's empty state
+        // names that failure; hiding the only host-facing explanation stranded controller users in the lobby.
+        var shouldShow = CouchCoopLobbyHostGate.IsHostLobby(lobbyState);
         // A host lobby is on screen: arm the LAN/WAN services that no longer start at mod init. Raised on
         // IsHostLobby (not ShouldShow) so a host whose listener failed to bind still gets them — and never
         // on a singleplayer lobby, which is the whole point of gating here rather than at the mount patch.
         // The subscriber is idempotent and self-latching, so re-raising it every tick is harmless; keeping
         // the raise unconditional means there is no "already armed?" flag here to fall out of sync.
-        if (showActivity)
+        if (CouchCoopLobbyHostGate.IsHostLobby(lobbyState))
         {
             try
             {
@@ -395,7 +387,7 @@ public static class CouchCoopQrHostPanelController
             {
                 // Unconditional: `mounted ??= ScanScreen(...)` would short-circuit and skip installing on a
                 // second visible lobby screen. Only the FIRST panel is remembered, as the alert's host.
-                var panel = ScanScreen(screen, snapshot, shouldShow, showActivity, refresh);
+                var panel = ScanScreen(screen, snapshot, shouldShow, refresh);
                 mounted ??= panel;
             }
             catch (Exception exception)
@@ -421,7 +413,6 @@ public static class CouchCoopQrHostPanelController
         Node screen,
         CouchCoopHostUiSnapshot snapshot,
         bool shouldShow,
-        bool showActivity,
         bool refresh)
     {
         if (!GodotObject.IsInstanceValid(screen))
@@ -432,10 +423,7 @@ public static class CouchCoopQrHostPanelController
         var visible = IsVisibleInTree(screen);
         CouchCoopQrHostPanel? mounted = null;
 
-        // The two panels are isolated FROM EACH OTHER, not just from other screens. They are independent
-        // surfaces with independent gates, and the QR panel is built first — so without this split, one
-        // throw while building it also cost the lobby its activity log, which is the surface whose whole
-        // job is to still be there when something else has gone wrong.
+        // Isolate installation so a transient node failure cannot stop later refreshes.
         try
         {
             if (!shouldShow || !visible)
@@ -451,25 +439,6 @@ public static class CouchCoopQrHostPanelController
         {
             Console.Error.WriteLine(
                 $"[couch-coop] qr host panel step failed: {exception.GetType().Name}: {exception.Message}");
-        }
-
-        // AFTER the QR panel, so a freshly installed activity panel can find it and sort itself before
-        // it (OrderBelowQrPanel). Its own gate, evaluated by the caller.
-        try
-        {
-            if (!showActivity || !visible)
-            {
-                RemoveActivityFrom(screen);
-            }
-            else
-            {
-                EnsureActivityPanel(screen, refresh)?.Refresh();
-            }
-        }
-        catch (Exception exception)
-        {
-            Console.Error.WriteLine(
-                $"[couch-coop] activity panel step failed: {exception.GetType().Name}: {exception.Message}");
         }
 
         return mounted;
@@ -551,66 +520,6 @@ public static class CouchCoopQrHostPanelController
         panel.Visible = true;
         panel.Apply(snapshot);
         return panel;
-    }
-
-    private static CouchCoopActivityPanel? EnsureActivityPanel(Node screen, bool refreshLayout)
-    {
-        var panel = screen.GetNodeOrNull<CouchCoopActivityPanel>(CouchCoopActivityPanel.NodeName);
-        if (panel is not null && !IsUsablePanel(panel))
-        {
-            return null;
-        }
-
-        if (panel is null)
-        {
-            panel = new CouchCoopActivityPanel();
-            // Stamp BEFORE AddChild, for the same reason the QR panel does: spirectl's scene watcher can
-            // observe a node the moment it enters the tree, so a later stamp races a keyframe. Here the
-            // stake is different but no smaller — the log carries player-chosen display NAMES, and this
-            // stamp is what keeps them off the wire and off every other player's phone.
-            CouchCoopStreamSkip.Stamp(panel);
-            screen.AddChild(panel);
-            panel.Install();
-            OrderBelowQrPanel(screen, panel);
-            Console.Error.WriteLine($"[couch-coop] activity panel installed screen={screen.GetType().Name}");
-        }
-        else if (refreshLayout)
-        {
-            panel.ApplyLayout();
-        }
-
-        panel.Visible = true;
-        return panel;
-    }
-
-    /// <summary>
-    /// Makes the activity panel the EARLIER sibling of the QR panel.
-    /// </summary>
-    /// <remarks>
-    /// Godot draws (and hit-tests) siblings in child order, so the QR panel's modals must come second or
-    /// their scrims would sit UNDER this panel — a phone-scanning host could then click straight through
-    /// an open dialog onto the log's header. <c>ZIndex = -1</c> was the other candidate and is wrong: it
-    /// would push the panel behind the lobby's own StaticBg and make it invisible.
-    /// <para>
-    /// Only needed on install (the scan installs the QR panel first, so this one is appended after it); a
-    /// QR panel that appears LATER is appended after us and needs no move.
-    /// </para>
-    /// </remarks>
-    private static void OrderBelowQrPanel(Node screen, CouchCoopActivityPanel activity)
-    {
-        var qrPanel = screen.GetNodeOrNull<CouchCoopQrHostPanel>(CouchCoopQrHostPanel.NodeName);
-        if (qrPanel is null || !GodotObject.IsInstanceValid(qrPanel))
-        {
-            return;
-        }
-
-        var qrIndex = qrPanel.GetIndex();
-        if (activity.GetIndex() < qrIndex)
-        {
-            return;
-        }
-
-        screen.MoveChild(activity, qrIndex);
     }
 
     /// <summary>

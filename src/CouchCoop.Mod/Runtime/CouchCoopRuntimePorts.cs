@@ -28,7 +28,8 @@ public sealed record CouchCoopRuntimeDependencies(
     ISpineGeoClipBaker SpineGeoClipBaker,
     ISemanticActionSource Actions,
     IRuntimeSceneWatchControlSource SceneWatchControls,
-    IDisposable? Lifetime = null) : IDisposable
+    IDisposable? Lifetime = null,
+    IRuntimeMultiplayerConnectionSource? MultiplayerConnection = null) : IDisposable
 {
     public void Dispose() => Lifetime?.Dispose();
 
@@ -36,7 +37,7 @@ public sealed record CouchCoopRuntimeDependencies(
     public static CouchCoopRuntimeDependencies FromFactory(ISpirectlRuntime runtime)
     {
         ArgumentNullException.ThrowIfNull(runtime);
-        return new CouchCoopRuntimeDependencies(runtime, runtime, runtime, runtime, runtime, runtime, runtime, runtime, runtime, runtime, runtime as IDisposable);
+        return new CouchCoopRuntimeDependencies(runtime, runtime, runtime, runtime, runtime, runtime, runtime, runtime, runtime, runtime, runtime as IDisposable, runtime);
     }
 
 }

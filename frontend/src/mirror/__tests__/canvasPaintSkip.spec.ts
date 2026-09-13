@@ -24,6 +24,7 @@ import { mount } from "@vue/test-utils";
 
 import MirrorView from "@/mirror/MirrorView.vue";
 import { createMirrorRendererFor, __setStageBackendForTest, requestedStageBackend } from "@/mirror/rendererFactory";
+import * as rendererFactory from "@/mirror/rendererFactory";
 import type { MirrorRenderer } from "@/mirror/mirrorRenderer";
 import { applySceneDelta, createMirrorState, parseSceneDelta, type MirrorState } from "@/mirror/sceneTree";
 
@@ -271,6 +272,49 @@ describe("the canvas stage's unchanged-picture paint skip", () => {
   }
 
   // --- the contract that must never break -----------------------------------------------------------------------
+
+  it.each(["dom", "canvas"] as const)("reports the first %s view after its paint opportunity", (backend) => {
+    __setStageBackendForTest(backend);
+    const presented = vi.fn();
+    const wrapper = mount(MirrorView, { props: {
+      state: staticScene(), revision: 1, connected: true, connectionAttemptId: "view-1",
+      onFirstSceneFramePresented: presented
+    } });
+    expect(presented).not.toHaveBeenCalled();
+    raf.flush();
+    expect(presented).not.toHaveBeenCalled();
+    raf.flush();
+    expect(presented).toHaveBeenCalledExactlyOnceWith("view-1");
+    raf.flush();
+    expect(presented).toHaveBeenCalledTimes(1);
+    wrapper.unmount();
+  });
+
+  it("waits when canvas sources are deferred, then reports after a successful reconcile", async () => {
+    const original = rendererFactory.createMirrorRendererFor;
+    let deferred = true;
+    vi.spyOn(rendererFactory, "createMirrorRendererFor").mockImplementation((...args) => {
+      const real = original(...args);
+      const reconcile = real.reconcile.bind(real);
+      real.reconcile = (...values) => deferred ? false : reconcile(...values);
+      return real;
+    });
+    const presented = vi.fn();
+    const acks = vi.fn();
+    const wrapper = mount(MirrorView, { props: {
+      state: staticScene(), revision: 1, connected: true, connectionAttemptId: "view-1",
+      onFirstSceneFramePresented: presented, onSceneRendered: acks
+    } });
+    raf.flush(); raf.flush();
+    expect(presented).not.toHaveBeenCalled();
+    expect(acks).not.toHaveBeenCalled();
+    deferred = false;
+    await wrapper.setProps({ revision: 2 });
+    raf.flush(); raf.flush(); raf.flush();
+    expect(presented).toHaveBeenCalledExactlyOnceWith("view-1");
+    expect(acks).toHaveBeenCalled();
+    wrapper.unmount();
+  });
 
   it("STILL ACKS on a frame whose paint was skipped — the flow-control credit the host waits on", async () => {
     const state = staticScene();

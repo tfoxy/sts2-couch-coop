@@ -169,6 +169,8 @@ export interface MirrorClient {
   // scene delta. This paces the stream to the device's real frame rate — the fix for the slow-client runaway.
   // No-op while the stream gate is off (nothing was rendered, so there is no frame to credit).
   sendSceneAck(): void;
+  sendClientFramePresented(attemptId: string): void;
+  sendClientViewError(attemptId: string, error: unknown, code?: "browser-render-failed" | "browser-transport-lost"): void;
   // WS-B STREAM GATE. Turn the host's `scene-delta` stream on/off for THIS connection without reconnecting.
   // OFF: the host sends nothing at all and this client applies nothing (a viewer sitting on the join picker must
   // not pull — or render — a multiplayer host's game in the background). ON: the host replies with a fresh FULL
@@ -273,6 +275,8 @@ export function connectMirrorClient(options: {
     sendInput,
     sendAction,
     sendSceneAck,
+    sendClientFramePresented,
+    sendClientViewError,
     sendJoin,
     sendSettings,
     sendWatch,
@@ -458,6 +462,22 @@ export function connectMirrorClient(options: {
   // mount-time one). Frames that consumed nothing new send nothing; the host's 500ms self-heal remains the
   // backstop it always was for a delta that never reaches a render.
   const SCENE_ACK = '{"type":"scene-ack"}';
+
+  function sendConnectionReceipt(attemptId: string, fields: Record<string, string>): void {
+    if (!attemptId || attemptId.length > 128 || socket.readyState !== WebSocketCtor.OPEN) return;
+    try { socket.send(JSON.stringify({ ...fields, attemptId })); } catch { /* Racing close. */ }
+  }
+
+  function sendClientFramePresented(attemptId: string): void {
+    sendConnectionReceipt(attemptId, { type: "client-frame-presented" });
+  }
+
+  function sendClientViewError(attemptId: string, error: unknown, code?: "browser-render-failed" | "browser-transport-lost"): void {
+    const detail = error instanceof Error ? `${error.name}: ${error.message}` : String(error);
+    sendConnectionReceipt(attemptId, {
+      type: "client-view-error", code: code ?? "browser-render-failed", detail: detail.slice(0, 2048)
+    });
+  }
 
   function sendSceneAck(): void {
     if (deltasSinceAck === 0 || !watching || socket.readyState !== WebSocketCtor.OPEN) {

@@ -9,6 +9,7 @@
   </PropertyGroup>
 
   <ItemGroup>
+    <PackageReference Include="DeviceDetector.NET" Version="6.5.2" />
     <PackageReference Include="QRCoder" Version="1.6.0" />
 
     <EmbeddedResource Include="Localization/Catalogs/couchcoop.en.json">

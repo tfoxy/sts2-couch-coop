@@ -69,6 +69,32 @@ afterEach(() => {
   vi.restoreAllMocks();
 });
 
+describe("connection diagnostic receipts", () => {
+  it("sends presentation on the original gated socket without granting scene credit", () => {
+    const { client, socket } = connect(false);
+    client.sendClientFramePresented("attempt-1");
+    expect(socket.sentOfType("client-frame-presented")).toEqual([
+      { type: "client-frame-presented", attemptId: "attempt-1" }
+    ]);
+    expect(socket.sentOfType("scene-ack")).toEqual([]);
+    client.close();
+    client.sendClientFramePresented("attempt-2");
+    expect(socket.sentOfType("client-frame-presented")).toHaveLength(1);
+  });
+
+  it("bounds rendering error details and retains the attempt discriminator", () => {
+    const { client, socket } = connect(false);
+    client.sendClientViewError("attempt-1", new Error("x".repeat(3000)));
+    const message = socket.sentOfType("client-view-error")[0];
+    expect(message).toMatchObject({ attemptId: "attempt-1", code: "browser-render-failed" });
+    expect((message.detail as string).length).toBe(2048);
+    client.sendClientFramePresented("");
+    client.sendClientFramePresented("x".repeat(129));
+    expect(socket.sentOfType("client-frame-presented")).toEqual([]);
+    client.close();
+  });
+});
+
 describe("buildMirrorWebSocketUrl", () => {
   it("mints the complete canonical selector set", () => {
     const url = buildMirrorWebSocketUrl({ href: "http://host:13337/", protocol: "http:" });

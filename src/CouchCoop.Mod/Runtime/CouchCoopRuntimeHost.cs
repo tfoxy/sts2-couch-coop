@@ -44,6 +44,7 @@ public sealed class CouchCoopRuntimeHost : IDisposable, ICouchCoopCapabilityPoli
     private readonly ISpineGeoClipBaker _spineGeoClipBaker;
     private readonly ISemanticActionSource _actionSource;
     private readonly IRuntimeSceneWatchControlSource _sceneWatchControlSource;
+    private readonly IRuntimeMultiplayerConnectionSource _multiplayerConnection;
     private readonly IDisposable? _lifetime;
     private readonly Action<string> _log;
     private readonly Lazy<EmbeddableRuntimeCapabilities> _capabilities;
@@ -61,6 +62,7 @@ public sealed class CouchCoopRuntimeHost : IDisposable, ICouchCoopCapabilityPoli
         _spineGeoClipBaker = runtime.SpineGeoClipBaker;
         _actionSource = runtime.Actions;
         _sceneWatchControlSource = runtime.SceneWatchControls;
+        _multiplayerConnection = runtime.MultiplayerConnection ?? EmptyMultiplayerConnectionSource.Instance;
         _lifetime = runtime.Lifetime;
         _log = log ?? (message => Console.Error.WriteLine(message));
         _capabilities = new Lazy<EmbeddableRuntimeCapabilities>(
@@ -74,6 +76,26 @@ public sealed class CouchCoopRuntimeHost : IDisposable, ICouchCoopCapabilityPoli
     public EmbeddableAssetBatchResult GetPresentationAssets(PresentationAssetBatchRequest request)
         => _assetsSource.GetPresentationAssets(request);
     public IRuntimeSceneWatchControls SceneWatchControls => _sceneWatchControlSource.SceneWatchControls;
+    public MultiplayerConnectionSnapshot? GetCurrentMultiplayerConnection()
+        => _multiplayerConnection.GetCurrentMultiplayerConnection();
+    public IDisposable SubscribeMultiplayerConnection(Action<MultiplayerConnectionSnapshot> onEvent)
+        => _multiplayerConnection.SubscribeMultiplayerConnection(onEvent);
+
+    private sealed class EmptyMultiplayerConnectionSource : IRuntimeMultiplayerConnectionSource
+    {
+        public static EmptyMultiplayerConnectionSource Instance { get; } = new();
+
+        public MultiplayerConnectionSnapshot? GetCurrentMultiplayerConnection() => null;
+
+        public IDisposable SubscribeMultiplayerConnection(Action<MultiplayerConnectionSnapshot> onEvent)
+            => EmptySubscription.Instance;
+
+        private sealed class EmptySubscription : IDisposable
+        {
+            public static EmptySubscription Instance { get; } = new();
+            public void Dispose() { }
+        }
+    }
 
     public EmbeddableRuntimeCapabilities Capabilities => _capabilities.Value;
 

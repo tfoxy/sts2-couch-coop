@@ -157,6 +157,24 @@ describe("MirrorApp join-failure drills", () => {
     expectFormIsBack();
   });
 
+  it("keeps the failed join retryable when later roster updates still assign the name", async () => {
+    await tapASeat();
+    const assigned = { name: "Alice", status: "joined", joined: true, playerId: "p:1003", connectionCount: 1 };
+    latest().emit(sessionMessage({ session: assigned }));
+    await settle();
+    expect(heading()).toBe("Joining…");
+    latest().emit(sessionMessage({ joinRejection: "spawn-failed", joinRejectionDetail: "Join deadline expired." }));
+    await settle();
+    latest().emit(sessionMessage({ session: assigned }));
+    await settle();
+    expectFormIsBack();
+    expect(detail().text()).toBe("Join deadline expired.");
+    expect(latest().sent.some((m: any) => m.type === "watch" && m.on === true)).toBe(false);
+    await app!.findAll('[data-testid="player-picker"] button')[1].trigger("click");
+    await settle();
+    expect(heading()).toBe("Joining…");
+  });
+
   it("puts the actually loaded MirrorApp module bundle in a repro header", async () => {
     app = mount(MirrorApp);
     await settle();

@@ -3,6 +3,7 @@ import { afterEach, beforeEach, describe, expect, it, vi, type Mock } from "vite
 import { nextTick } from "vue";
 
 import MirrorApp from "@/mirror/MirrorApp.vue";
+import MirrorView from "@/mirror/MirrorView.vue";
 import { RECONNECT_BASE_DELAY_MS } from "@/mirror/reconnectPolicy";
 
 // WS3 — the browser's join state lives in the page URL, and the page URL is NAVIGABLE.
@@ -112,9 +113,9 @@ describe("MirrorApp — join state in the page URL", () => {
     await nextTick();
   };
   const latest = () => MockWebSocket.instances[MockWebSocket.instances.length - 1];
-  const mountAt = (search: string) => {
+  const mountAt = (search: string, stubScene = false) => {
     window.history.replaceState(null, "", `/${search}`);
-    app = mount(MirrorApp, { props: { reloadPage } });
+    app = mount(MirrorApp, { props: { reloadPage }, global: { stubs: { MirrorView: stubScene } } });
     return app;
   };
   // A Back/Forward press: the browser changes the URL WITHOUT adding an entry, then fires popstate.
@@ -154,6 +155,45 @@ describe("MirrorApp — join state in the page URL", () => {
     app = null;
     (globalThis as unknown as { WebSocket: unknown }).WebSocket = realWebSocket;
     window.history.replaceState(null, "", "/");
+  });
+
+  it("reports a redirected view to the original host, and ignores receipts from an old attempt", async () => {
+    mountAt("", true);
+    await settle();
+    const host = latest();
+    host.emit(sessionMessage());
+    await settle();
+    await rows()[1].trigger("click");
+    host.emit(sessionMessage({ headlessMirrorPort: 14000, connectionAttemptId: "join-1" }));
+    await settle();
+    const child = latest();
+    child.emit({
+      type: "scene-delta", full: true, screenType: "lobby", screenInstanceId: "lobby:1",
+      upserts: [{ id: "root", name: "Root", nodeType: "Control", visible: true }],
+      removedIds: [], orderedIds: ["root"]
+    });
+    await settle();
+    const view = app!.findComponent(MirrorView);
+    expect(view.props("connectionAttemptId")).toBe("join-1");
+    expect(host.sentOfType("client-frame-presented")).toEqual([]);
+    const present = view.props("onFirstSceneFramePresented")!;
+    present("stale-attempt");
+    expect(host.sentOfType("client-frame-presented")).toEqual([]);
+    present("join-1");
+    expect(host.sentOfType("client-frame-presented")).toEqual([
+      { type: "client-frame-presented", attemptId: "join-1" }
+    ]);
+    expect(child.sentOfType("client-frame-presented")).toEqual([]);
+    view.props("onSceneRenderError")!("join-1", new Error("decode failed"));
+    expect(host.sentOfType("client-view-error")[0]).toMatchObject({
+      attemptId: "join-1", detail: "Error: decode failed"
+    });
+    child.close();
+    expect(host.sentOfType("client-view-error").at(-1)).toMatchObject({
+      attemptId: "join-1", code: "browser-transport-lost"
+    });
+    present("join-1");
+    expect(host.sentOfType("client-frame-presented")).toHaveLength(1);
   });
 
   it("pushes ?name=<seat> when the host grants the seat, so Back leaves it", async () => {

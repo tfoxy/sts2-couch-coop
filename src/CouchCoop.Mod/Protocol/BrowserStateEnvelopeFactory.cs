@@ -68,6 +68,7 @@ public sealed class BrowserStateEnvelopeFactory(
         string? joinRejection = null,
         // Server-fault text for joinRejection == "join-failed" only; ignored (and omitted from the wire) otherwise.
         string? joinRejectionDetail = null,
+        string? connectionAttemptId = null,
         CancellationToken cancellationToken = default)
     {
         cancellationToken.ThrowIfCancellationRequested();
@@ -167,7 +168,8 @@ public sealed class BrowserStateEnvelopeFactory(
                 ? new BrowserStaticBackgroundDto(staticBg.ScenePath, staticBg.Url)
                 : null,
             ScrollAction: true,
-            RewardAction: true);
+            RewardAction: true,
+            ConnectionAttemptId: connectionAttemptId);
 
         return envelope;
     }

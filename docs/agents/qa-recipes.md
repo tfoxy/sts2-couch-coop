@@ -600,6 +600,22 @@ IS a whole multiple of 80px proves nothing about quantisation; the equality arm 
 
 Run only the touched suite(s) per implementer; a coordinator/reviewer runs full suites once at merge time.
 
+### Focused connection status checks
+
+Run `dotnet run --project tests/CouchCoop.Connection.Tests` for registry identity/timers, device parsing,
+report bounds, log attribution, authenticated child control routes, and headless failure/retry cleanup.
+This independent executable avoids loading the known failing full Mod.Tests runner. `--routes` selects
+only the loopback HTTP tests; `--host-ui` runs native focus and localization checks; `--seats` covers allocation/teardown;
+`--ws-lifecycle` covers startup cancellation over a real WebSocket; `--labels` isolates
+the device parser. Use the normal scratch deployment environment when running in a worktree.
+
+Frontend coverage includes `firstScenePresentation.spec.ts`, receipt messages, MirrorApp redirects, and
+DOM/canvas mounting. Run the frontend typecheck and Vitest without `npm run build` (which deploys).
+For live QA, verify the installed DLL and parser dependency closure, then use an isolated lobby and
+private browser sockets. Capture the QR at desktop and 1280×800 with anonymous, joined, failed, and many
+clients; exercise long localized strings and controller-only navigation including details, Copy, and
+Dismiss. Verify Steam Deck Game Mode clipboard on actual hardware, or explicitly record its absence.
+
 ### Live lobby scenarios (QR host panel)
 
 ```

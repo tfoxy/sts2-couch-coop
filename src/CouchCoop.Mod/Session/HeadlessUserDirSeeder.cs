@@ -151,7 +151,7 @@ internal static class HeadlessUserDirSeeder
                 }
             }
 
-            return new HeadlessUserDirPrepareResult(slotBase, slotUserDir, policy.EnvironmentVariables);
+            return new HeadlessUserDirPrepareResult(slotBase, slotUserDir, policy.EnvironmentVariables, hostUserDir);
         }
         catch (Exception ex)
         {
@@ -325,7 +325,8 @@ internal enum HeadlessUserDirPlatform
 internal sealed record HeadlessUserDirPrepareResult(
     string SlotBase,
     string SlotUserDir,
-    IReadOnlyDictionary<string, string> EnvironmentVariables);
+    IReadOnlyDictionary<string, string> EnvironmentVariables,
+    string? HostUserDir = null);
 
 internal sealed record HeadlessUserDirPolicy(
     string HostUserDir,

@@ -67,6 +67,7 @@ import { installGlContextEventReporter } from "@/mirror/glContextEvents";
 import { mirrorStaticPin } from "@/mirror/staticPin";
 import { mirrorShopRemovalProbe } from "@/mirror/shopRemovalProbe";
 import { onTextureSizesResolved } from "@/mirror/textureCache";
+import { createFirstScenePresentation } from "@/mirror/firstScenePresentation";
 import {
   MIRROR_DESIGN_HEIGHT,
   MIRROR_DESIGN_WIDTH,
@@ -100,6 +101,10 @@ const props = withDefaults(defineProps<{
   // Called after each rendered frame so the client can ack the host (scene-delta flow control). Absent → no ack
   // (the host's self-heal timeout still drives updates).
   onSceneRendered?: () => void;
+  connectionAttemptId?: string | null;
+  connected?: boolean;
+  onFirstSceneFramePresented?: (attemptId: string) => void;
+  onSceneRenderError?: (attemptId: string, error: unknown) => void;
 }>(), {
   // Render-only mounts do not accept input. The application always supplies the current semantic sender.
   sendScroll: () => () => null
@@ -108,6 +113,23 @@ const props = withDefaults(defineProps<{
 const frame = ref<HTMLElement | null>(null);
 const stage = ref<HTMLElement | null>(null);
 const defs = ref<SVGDefsElement | null>(null);
+const firstPresentation = createFirstScenePresentation({
+  presented: (attemptId) => props.onFirstSceneFramePresented?.(attemptId),
+  failed: (attemptId, error) => props.onSceneRenderError?.(attemptId, error),
+  requestFrame: (callback) => requestAnimationFrame(callback),
+  cancelFrame: (handle) => cancelAnimationFrame(handle),
+  visible: () => document.visibilityState !== "hidden" && props.connected !== false
+});
+watch(() => props.connectionAttemptId, (attemptId) => {
+  firstPresentation.setAttempt(attemptId ?? null);
+  // A direct-view grant can arrive after this component already mounted its scene.
+  if (attemptId) scheduleRender();
+}, { flush: "sync" });
+firstPresentation.setAttempt(props.connectionAttemptId ?? null);
+document.addEventListener("visibilitychange", firstPresentation.visibilityChanged);
+watch(() => props.connected, (connected) => {
+  if (connected) firstPresentation.visibilityChanged();
+});
 /**
  * THE CANVAS STAGE'S OWN HOST — the element `?stage=canvas` lays its single <canvas> out in, a SIBLING of
  * `.mirror-stage` sized at the fitted box with NO transform on it or above it.
@@ -468,6 +490,10 @@ function runScheduledRender(): void {
     // Ack AFTER the frame is rendered so the host releases the next coalesced delta (flow control): the stream
     // self-paces to however fast this device can actually render.
     props.onSceneRendered?.();
+    if (renderer) firstPresentation.rendered();
+  } catch (error) {
+    firstPresentation.failed(error);
+    throw error;
   } finally {
     renderRunning = false;
   }
@@ -510,6 +536,15 @@ function reconcileNow(): void {
 }
 
 onMounted(() => {
+  try {
+    mountScene();
+  } catch (error) {
+    firstPresentation.failed(error);
+    throw error;
+  }
+});
+
+function mountScene(): void {
   // R7 W1 fix (d): page-wide GL context-loss reporting, installed before anything creates a context. The stage
   // counts its OWN losses, but when the GPU process goes every context on the page goes with it — including the
   // gsw effect runtimes' canvases, which on the DOM arm are the only ones there are.
@@ -771,8 +806,9 @@ onMounted(() => {
       );
     }
     startAdaptiveQuality();
+    if (initialPresented !== false) firstPresentation.rendered();
   }
-});
+}
 
 // Map an effect mode to the runtime backing-store scale. The two DYNAMIC variants pick the resolution axis (½/¼)
 // on every device — that is what makes those panel settings mean the same thing on a phone and on a desktop —
@@ -1133,6 +1169,8 @@ watch(
 );
 
 onBeforeUnmount(() => {
+  firstPresentation.dispose();
+  document.removeEventListener("visibilitychange", firstPresentation.visibilityChanged);
   setHandRaiseLayer(null);
   // The gauges outlive nothing: with the runtimes gone they would keep calling into disposed handles.
   setStaticStillGauge(null);

@@ -329,6 +329,24 @@ const reconnectState = ref(steadyReconnectState());
 
 // Forward-declared so callbacks can check whether they belong to the current client.
 let activeClient: MirrorClient;
+// The host socket remains the status authority after its game-view redirect.
+const presentationTarget = shallowRef<{ source: MirrorClient; view: MirrorClient; attemptId: string } | null>(null);
+function bindPresentation(source: MirrorClient, view: MirrorClient): void {
+  const attemptId = source.session?.connectionAttemptId;
+  presentationTarget.value = attemptId ? { source, view, attemptId } : null;
+}
+function onFirstSceneFramePresented(attemptId: string): void {
+  const target = presentationTarget.value;
+  if (target?.attemptId === attemptId && target.view === activeClient && activeClient.status === "connected") {
+    target.source.sendClientFramePresented(attemptId);
+  }
+}
+function onSceneRenderError(attemptId: string, error: unknown): void {
+  const target = presentationTarget.value;
+  if (target?.attemptId === attemptId && target.view === activeClient) {
+    target.source.sendClientViewError(attemptId, error);
+  }
+}
 
 // The latency probe runs only while something is actually SHOWING the numbers: the settings panel is open (start on
 // open, stop on close), the viewer turned on the floating overlay (which stays up with the panel closed — native
@@ -408,6 +426,10 @@ function makeClient(url?: string, watchStream = false): MirrorClient {
       if (c.status === "connected") {
         reconnectDelayMs = RECONNECT_BASE_DELAY_MS;
       } else if (c.status === "disconnected") {
+        const target = presentationTarget.value;
+        if (target?.view === c && target.source !== c) {
+          target.source.sendClientViewError(target.attemptId, "The game-view WebSocket closed. The browser did not report a more specific cause.", "browser-transport-lost");
+        }
         handleActiveClientDrop();
         return;
       }
@@ -500,6 +522,7 @@ function makeClient(url?: string, watchStream = false): MirrorClient {
         ),
         true
       );
+      bindPresentation(c, activeClient);
       mirrorState.value = activeClient.state;
       status.value = activeClient.status;
       revision.value = activeClient.state.revision;
@@ -513,6 +536,7 @@ function makeClient(url?: string, watchStream = false): MirrorClient {
     },
     onDirectView() {
       if (activeClient !== c) return;
+      bindPresentation(c, c);
       // Watch the host's own stream in place: no redirect, stay on THIS (host) socket. `directView` unlocks
       // showScene. Never `rememberJoinedName` here — this viewer holds no seat and no name, so the seat form of
       // `?name=` would be a lie (and would auto-join a seat on the next reload).
@@ -554,6 +578,7 @@ function makeClient(url?: string, watchStream = false): MirrorClient {
     },
     onJoinRejected(reason, detail) {
       if (activeClient !== c) return;
+      presentationTarget.value = null;
       // Name isn't servable → drop the pending join (recomputes back to the picker) and surface the message.
       pendingName.value = null;
       joinMessage.value = rejectionMessage(reason);
@@ -567,6 +592,7 @@ function makeClient(url?: string, watchStream = false): MirrorClient {
     },
     onActionError(message) {
       if (activeClient !== c) return;
+      presentationTarget.value = null;
       // The backstop (see mirrorClient.onActionError): the host faulted on our join and answered on the channel
       // this client otherwise ignores. Treated exactly like a "join-failed" rejection — the difference is only
       // which envelope carried it, and the viewer should not have to care.
@@ -616,7 +642,11 @@ reproRecorder.setResyncRequester(() => {
 const hasScene = () => mirrorState.value.orderedIds.length > 0;
 
 // Shared join-screen inputs derived from the host session (+ connection status).
-const joinInfo = computed(() => joinInfoFromSession(joinSession.value, status.value));
+const joinInfo = computed(() => ({
+  ...joinInfoFromSession(joinSession.value, status.value),
+  // A roster assignment can precede readiness or outlive a failed launch. Only a view grant ends the picker.
+  joined: joined.value || directView.value
+}));
 // The server's mirror screen discriminator drives the picker mode (name field only in MP character-select).
 const mirrorScreen = computed(() => joinSession.value?.screen?.mirrorMode ?? null);
 // A device that already HAS a view never shows a roster: in the first-frame gap ("Loading…") the picker would
@@ -841,6 +871,7 @@ function onSeatChosen(name: string, playerId?: string): void {
 function submitJoin(name: string, playerId?: string): void {
   const trimmed = trimName(name);
   if (!trimmed || pendingName.value) return;
+  presentationTarget.value = null;
   joinMessage.value = null; // clear a prior rejection on a fresh attempt
   joinDetail.value = null;
   pendingName.value = trimmed;
@@ -906,6 +937,7 @@ function handleActiveClientDrop(): void {
 // only to protect the redirect handoff, and by now there is no headless left to protect.
 function reconnectToHost(): void {
   reconnectTimer = null;
+  presentationTarget.value = null;
   allClients.forEach((c) => c.close());
   allClients.length = 0;
   // A remembered seat supersedes the `?name=` auto-join (it carries the exact playerId); with no seat to reclaim
@@ -1067,6 +1099,10 @@ onBeforeUnmount(() => {
       :send-scroll="sendScroll"
       :scroll-ack="scrollAck"
       :on-scene-rendered="sendSceneAck"
+      :connection-attempt-id="presentationTarget?.attemptId"
+      :connected="status === 'connected'"
+      :on-first-scene-frame-presented="onFirstSceneFramePresented"
+      :on-scene-render-error="onSceneRenderError"
     >
       <!-- STAGE-A "Static background": the host-rendered combat bg image. Beneath everything via its own
            most-negative z-index (slot DOM order is NOT stable — the reconciler's full-walk reorder moves the

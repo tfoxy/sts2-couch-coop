@@ -251,7 +251,8 @@ export function shouldWatchHostStream(
   if (mirrorMode === null) {
     return false;
   }
-  return computeMirrorJoinMode(info, pendingJoinName, mirrorMode) === "title-only";
+  // A name-based roster assignment is not a view grant, even if it reports joined.
+  return !isMultiplayerMirrorMode(mirrorMode);
 }
 
 // ---- roster filter -----------------------------------------------------------------------------------------

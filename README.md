@@ -19,6 +19,10 @@ Turn phones, tablets, and laptops on your local network into browser-based clien
 
 You can also use CouchCoop by yourself and play from your phone. Slay the Spire 2 must still be running on the host computer.
 
+## Connection troubleshooting
+
+Open **Couch Co-op QR Code** on the host to see each browser connection. Select the affected device to see its current step and any error. For an error, use **Copy report** and include that text plus a screenshot of the QR connection list when asking for help. Paste the report into a GitHub bug report or the mod’s Steam Workshop Discussions. A screenshot is useful too, especially if copying fails. No ZIP file is needed.
+
 <details>
 <summary>Verify a GitHub Release download</summary>
 

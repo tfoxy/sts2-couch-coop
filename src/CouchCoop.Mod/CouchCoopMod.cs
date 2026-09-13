@@ -191,6 +191,9 @@ public static class CouchCoopMod
             // AFTER this seat booted renders as a raw netId. See HeadlessClientNameSync for why it owns its own
             // clock rather than riding the browser server's state observer.
             if (IsHeadlessClient) Session.HeadlessClientNameSync.Start(_runtime);
+            if (IsHeadlessClient) Session.HeadlessConnectionReporter.Initialize(
+                _runtime,
+                HeadlessDisconnectExitPatch.RequestExit);
             StartHostUiServices(_runtime);
             StartSpinePrerenderIfRequested(_runtime);
             StartGeoclipPrerenderIfRequested(_runtime);
@@ -309,6 +312,7 @@ public static class CouchCoopMod
     {
         lock (Gate)
         {
+            if (IsHeadlessClient) Session.HeadlessConnectionReporter.Stop();
             // Cancel WITHOUT joining the prerender task on purpose: Shutdown holds the Gate lock on the Godot
             // main thread, and each clip render blocks on main-thread marshaling, so awaiting the task here
             // would deadlock (or, at best, always burn a join timeout). The job observes the token between
@@ -620,6 +624,11 @@ public static class CouchCoopMod
 
     private static void StartHostUiServices(CouchCoopRuntimeHost runtime)
     {
+        CouchCoop.Mod.Connections.ConnectionRegistry.HostGameVersion =
+            string.IsNullOrWhiteSpace(runtime.Capabilities.GameVersion)
+                ? CouchCoopCacheRoot.Identity.GameVersion
+                : runtime.Capabilities.GameVersion;
+        CouchCoop.Mod.Connections.ConnectionRegistry.HostLogPath = Godot.ProjectSettings.GlobalizePath("user://logs/godot.log");
         try
         {
             // A windowed/display HOST defers the LAN discovery responder, the `.local` mDNS name and the
@@ -652,6 +661,8 @@ public static class CouchCoopMod
                 CouchCoopActivityCategory.Server,
                 CouchCoopActivitySeverity.Bad,
                 CouchCoopActivityMessages.BrowserServerFailed);
+            CouchCoop.Mod.Connections.ConnectionRegistry.Shared.ReportHostIssue("host-service-failed",
+                "The browser connection service could not start.", "Restart the game. If the service still fails, copy this report.", exception.ToString());
             _hostUiStartupFailure = CouchCoopHostUiSnapshot.Unavailable([
                 new CouchCoopHostUiDiagnostic(
                     CouchCoopHostUiServices.HostUiStartupFailedCode,

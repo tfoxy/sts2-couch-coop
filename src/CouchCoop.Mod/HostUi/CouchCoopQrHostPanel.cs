@@ -1,4 +1,5 @@
 using Godot;
+using System.Diagnostics;
 using CouchCoop.Mod.Localization;
 using MegaCrit.Sts2.Core.ControllerInput;
 using MegaCrit.Sts2.Core.Nodes.CommonUi;
@@ -60,6 +61,8 @@ internal sealed partial class CouchCoopQrHostPanel : Control
 
     private readonly CouchCoopEventButton _button;
     private readonly CouchCoopQrHotkeyHint _hint = new(HotkeyAction);
+    private readonly Label _connectionNotice = new();
+    private readonly Label _connectionBadge = new();
     private readonly CouchCoopQrDialog _dialog = new();
     private readonly CouchCoopHostTransportAlertDialog _alert = new();
     private readonly Action _openAction;
@@ -68,6 +71,8 @@ internal sealed partial class CouchCoopQrHostPanel : Control
     private bool _installed;
     private bool _hotkeyBound;
     private int _localeRevision = -1;
+    private readonly HashSet<string> _seenIssueKeys = [];
+    private long _attentionNoticeUntil;
 
     public CouchCoopQrHostPanel()
     {
@@ -82,12 +87,27 @@ internal sealed partial class CouchCoopQrHostPanel : Control
             Activated = OpenDialog,
         };
 
-        _dialog.Closed = () => _button.Visible = true;
+        _dialog.Closed = () =>
+        {
+            _button.Visible = true;
+            RefreshConnectionAttention();
+        };
         _alert.Closed = () => _button.Visible = true;
 
         // Under the BUTTON, not the panel: the hint anchors to the button's bottom edge, so it follows the
         // hot-reloadable button rect for free and disappears with it while a modal is up.
         _button.AddChild(_hint);
+        ConfigureConnectionAttention(_connectionNotice, 16);
+        _connectionNotice.Position = new Vector2(0, -32);
+        _connectionNotice.Size = new Vector2(_layout.ButtonWidth, 28);
+        ConfigureConnectionAttention(_connectionBadge, 22);
+        _connectionBadge.Text = "!";
+        _connectionBadge.Position = new Vector2(_layout.ButtonWidth - 38, 6);
+        _connectionBadge.Size = new Vector2(32, 32);
+        _connectionBadge.HorizontalAlignment = HorizontalAlignment.Center;
+        _connectionBadge.AddThemeColorOverride("font_color", new Color(1f, 0.79f, 0.35f, 1f));
+        _button.AddChild(_connectionNotice);
+        _button.AddChild(_connectionBadge);
         AddChild(_button);
         AddChild(_dialog);
         // Added last so the alert draws over the QR dialog if the two are ever up together. They cannot
@@ -136,6 +156,8 @@ internal sealed partial class CouchCoopQrHostPanel : Control
         _button.OffsetBottom = _layout.OffsetBottom;
         _button.CustomMinimumSize = _layout.ButtonSize;
         _button.ApplyFontSize(_layout.ButtonFontSize);
+        _connectionNotice.Size = new Vector2(_layout.ButtonWidth, 28);
+        _connectionBadge.Position = new Vector2(_layout.ButtonWidth - 38, 6);
 
         _dialog.ApplyLayout();
         _alert.ApplyLayout();
@@ -152,6 +174,10 @@ internal sealed partial class CouchCoopQrHostPanel : Control
         ArgumentNullException.ThrowIfNull(snapshot);
         _snapshot = snapshot;
         RefreshLocalization();
+        // Registry snapshots are memory-only and do not enumerate adapters or touch the browser server.
+        // Refreshing here lets an open dialog advance its elapsed timers without a second controller tick.
+        _dialog.RefreshConnections();
+        RefreshConnectionAttention();
         // A no-op unless a modal is actually up. This is the only heartbeat the mod has in a lobby, and a
         // modal that opens by ITSELF during lobby setup — the transport alert — can lose both its cancel
         // binding and its controller focus to the screen finishing its own setup afterwards. See
@@ -172,8 +198,33 @@ internal sealed partial class CouchCoopQrHostPanel : Control
         _button.Text = ButtonText;
         _button.ApplyFontSize(_layout.ButtonFontSize);
         _hint.RefreshLocalization();
+        _connectionNotice.Text = CouchCoopLocalization.Resolve("couchcoop_connection_attention_notice");
         _dialog.RefreshLocalization(_snapshot);
         _alert.RefreshLocalization();
+    }
+
+    private void RefreshConnectionAttention()
+    {
+        var attention = CouchCoopConnectionPanel.Attention();
+        var newIssue = attention.Keys.Any(key => _seenIssueKeys.Add(key));
+        _seenIssueKeys.IntersectWith(attention.Keys);
+        if (newIssue && !_dialog.IsOpen)
+        {
+            _attentionNoticeUntil = Stopwatch.GetTimestamp() + Stopwatch.Frequency * 6;
+        }
+        _connectionBadge.Text = attention.Count.ToString(System.Globalization.CultureInfo.InvariantCulture);
+        _connectionBadge.Visible = !_dialog.IsOpen && attention.Count > 0;
+        _connectionNotice.Visible = !_dialog.IsOpen && attention.Count > 0
+            && Stopwatch.GetTimestamp() <= _attentionNoticeUntil;
+    }
+
+    private static void ConfigureConnectionAttention(Label label, int fontSize)
+    {
+        label.MouseFilter = MouseFilterEnum.Ignore;
+        label.VerticalAlignment = VerticalAlignment.Center;
+        label.AddThemeFontOverride("font", CouchCoopGameUiTheme.KreonBoldGlyphSpaceOne);
+        label.AddThemeFontSizeOverride("font_size", fontSize);
+        label.AddThemeColorOverride("font_color", CouchCoopGameUiTheme.ButtonFontColor);
     }
 
     // ---- controller hotkey ------------------------------------------------------------------------

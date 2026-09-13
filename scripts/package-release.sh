@@ -256,6 +256,10 @@ cp "$repo_root/LICENSE" "$payload_dir/LICENSE"
 cp "$repo_root/NOTICE" "$payload_dir/NOTICE"
 cp "$repo_root/THIRD_PARTY_NOTICES.md" "$payload_dir/THIRD_PARTY_NOTICES.md"
 cp "$repo_root/licenses/QRCoder-1.6.0-MIT.txt" "$license_dir/QRCoder-1.6.0-MIT.txt"
+cp "$repo_root/licenses/DeviceDetector.NET-6.5.2-Apache-2.0.txt" "$license_dir/DeviceDetector.NET-6.5.2-Apache-2.0.txt"
+for license in LiteDB-5.0.21-MIT.txt Microsoft.Extensions.DependencyInjection.Abstractions-10.0.10-MIT.txt Microsoft.Extensions.Logging.Abstractions-10.0.10-MIT.txt System.Diagnostics.DiagnosticSource-10.0.10-MIT.txt YamlDotNet-18.1.0-MIT.txt; do
+  cp "$repo_root/licenses/$license" "$license_dir/$license"
+done
 cp "$source_parent/spirectl/LICENSE" "$license_dir/spirectl-LICENSE"
 cp "$source_parent/spirectl/NOTICE" "$license_dir/spirectl-NOTICE"
 cp "$source_parent/godot-scene-web/LICENSE" "$license_dir/godot-scene-web-LICENSE"
