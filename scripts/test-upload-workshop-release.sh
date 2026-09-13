@@ -209,6 +209,9 @@ assert_eq public "$(jq -r '.visibility' "$workspace/workshop.json")"
 assert_eq 'Release v0.1.0' "$(jq -r '.changeNote' "$workspace/workshop.json")"
 assert_eq CouchCoop "$(jq -r '.title' "$workspace/workshop.json")"
 assert_eq 'Fixture source description' "$(jq -r '.description' "$workspace/workshop.json")"
+# Branch scoping is set in the Steam web UI, never here: a workshop.json carrying these keys makes
+# the Workshop commit time out (measured three times against the DEV item, with a clean control).
+# The script neither adds them nor tolerates them -- see the refusal leg below.
 assert_eq false "$(jq 'has("minBranch") or has("maxBranch")' "$workspace/workshop.json")"
 assert_uploaded "$workspace"
 
@@ -412,5 +415,16 @@ expect_refused snapshot-ambiguous 'carry no orderable version' \
   --dist "$snapshot_dist" --workspace "$dev_workspace"
 rm -f "$snapshot_dist/couchcoop-snapshot-fedcba654321.zip" "$snapshot_dist/couchcoop-snapshot-fedcba654321.SHA256SUMS"
 rm -f "$dev_workspace/dev-channel"
+
+# Leg 17: a workspace declaring branch scoping is refused up front, rather than spending ten minutes
+# in CommittingChanges and failing k_EResultTimeout.
+for branch_key in minBranch maxBranch; do
+  jq --arg k "$branch_key" '. + {($k): "public-beta"}' "$dev_workspace/workshop.json" > "$dev_workspace/ws.tmp"
+  mv "$dev_workspace/ws.tmp" "$dev_workspace/workshop.json"
+  expect_refused "branch-key-$branch_key" "declares $branch_key, which makes the Workshop commit time out" \
+    --dist "$assets" --workspace "$dev_workspace"
+  jq --arg k "$branch_key" 'del(.[$k])' "$dev_workspace/workshop.json" > "$dev_workspace/ws.tmp"
+  mv "$dev_workspace/ws.tmp" "$dev_workspace/workshop.json"
+done
 
 echo "test-upload-workshop-release: ok"
