@@ -126,8 +126,14 @@ The coordinator writes the squash message, with the whole branch diff in hand.
    ```
 
 `.github/workflows/release.yml` then packages the archives and publishes the GitHub Release with
-`--notes-file` fed by `scripts/changelog-section.sh`, which fails the release if that version has no
-section. Pushing is always explicit — no agent pushes a branch or a tag on its own.
+`--notes-file` fed by `scripts/release-body.sh`: the version's `CHANGELOG.md` section, then a table
+saying which download is for which game. It still fails the release if that version has no section —
+it propagates `scripts/changelog-section.sh`'s exit status, which is what that gate always was.
+
+The table's wording draws a distinction worth keeping: a lane with a manifest floor **requires** that
+game version and refuses to load below it, while a lane without one is only **built against** the
+version its references were pinned from and keeps working on newer builds of the same branch. Saying
+"requires" for both would tell players the normal download stops working at the next game update. Pushing is always explicit — no agent pushes a branch or a tag on its own.
 
 ### What a release publishes
 
@@ -199,6 +205,12 @@ It asks for confirmation before touching the public listing, and refuses non-int
 `--yes` is passed. Change notes come from `CHANGELOG.md` — the same bytes the GitHub Release body
 uses — on the default lane's revision; the other lanes' revisions point at it, because Steam shows
 one note per revision and the list should not be duplicated.
+
+Each revision's heading names the payload's version and the game build it was made for, e.g.
+`Release v0.1.2 — Slay the Spire 2 v0.107.1`. The version comes from the payload's own
+`build-info.txt` rather than the archive name, because a snapshot's filename carries only a commit
+sha while its payload carries `<base version>+snapshot.<sha>` — and a Steam page otherwise shows
+nothing but a branch chip.
 
 Four properties are load-bearing, and each exists because of an incident:
 
