@@ -166,6 +166,20 @@ fi
   echo "Workshop primary preview must be smaller than 1 MiB: $workspace/image.png" >&2
   exit 1
 }
+# MEASURED, Sep 12 2026, on the DEV item: an upload whose workshop.json carries minBranch or
+# maxBranch sits in k_EItemUpdateStatusCommittingChanges and then fails k_EResultTimeout. Three runs
+# with the keys failed and the control run without them, immediately after, succeeded. The uploader's
+# own README says of these two: "seem to have weird behavior ... Prefer updating them on the web
+# instead." So branch scoping is set in the Steam web UI, and declaring it here only costs a
+# multi-minute timeout on every release. Refuse it up front, where the message can say so.
+for branch_key in minBranch maxBranch; do
+  [[ "$(jq -r --arg k "$branch_key" 'has($k)' "$config_source")" == false ]] || {
+    echo "$config_source declares $branch_key, which makes the Workshop commit time out" >&2
+    echo "Set this mod's supported game branches in the Steam web UI instead, and remove the key." >&2
+    exit 1
+  }
+done
+
 stage_dir="$(mktemp -d "${TMPDIR:-/tmp}/couchcoop-workshop-upload.XXXXXX")"
 trap 'rm -rf "$stage_dir"' EXIT
 
