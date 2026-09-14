@@ -232,7 +232,7 @@ function createMirrorRenderer(stage: HTMLElement, defs: SVGElement): MirrorRende
     nodes: () => reconcileController.nodes(),
     records: () => records,
     staticBgEnabled: () => mirrorSettings.staticBgEnabled,
-    staticBgFailed: () => mirrorSettings.staticBgFailed,
+    staticBgFailedOpen: () => mirrorSettings.staticBgFailedOpen,
     now: () => reconcileController.walkNow(),
     holdMaxMs: () => STATIC_BG_HOLD_MAX_MS,
     expiredDeadline: STATIC_BG_HOLD_EXPIRED,

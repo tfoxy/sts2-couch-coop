@@ -174,9 +174,12 @@ export interface MirrorWalkStats {
   // `staticBgHeldRoots` is a GAUGE — how many combat bg scene roots the renderer is holding unbuilt RIGHT NOW
   // (re-derived per walk, the `dormantRoots` idiom, because a settled combat skip-cleans its held root).
   // `staticBgHoldSkippedBuilds` is the cumulative COUNTER of boundary returns caused by the hold: this is the
-  // number that PROVES the live bg subtree was never built (a bench arm reading 0 in a combat recording is a
-  // fail-open run and must be labelled as such). `staticBgHoldExpiries` counts belt-and-braces releases — the
-  // component should always have won that race, so any non-zero value is a bug report.
+  // number that PROVES the live bg subtree was never built (a bench arm reading 0 in a combat recording means the
+  // hold was not engaged at all — the setting was off — and must be labelled as such).
+  // `staticBgHoldExpiries` counts per-path belt releases. It is now STRUCTURALLY 0 for combat, which no longer
+  // arms a deadline at all: the combat hold is unconditional, so there is no race for the component to win. The
+  // belt survives only for the families that still fail open (event backdrops, the shop), where a non-zero value
+  // is still a bug report.
   staticBgHeldRoots: number;
   staticBgHoldSkippedBuilds: number;
   staticBgHoldExpiries: number;

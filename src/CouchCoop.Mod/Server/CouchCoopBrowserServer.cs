@@ -145,7 +145,8 @@ public sealed class CouchCoopBrowserServer(
                         _ = connection.ResendSessionAsync(CancellationToken.None);
                     }
                 },
-                log: _log);
+                log: _log,
+                warmVariant: WarmPublishedStaticBackground);
             return Interlocked.CompareExchange(ref _staticBgTracker, created, null) ?? created;
         }
     }
@@ -390,6 +391,108 @@ public sealed class CouchCoopBrowserServer(
         }
 
         return ComputeBgSkipDesired(streaming, needed);
+    }
+
+    // WARM-AT-PUBLISH admission: is at least one STREAMING viewer showing the static image right now? Derived
+    // from the two counts the skip aggregate already keeps, with no second pass over the connection set: `needed`
+    // is exactly "streaming AND NOT staticBg", so `streaming - needed` is "streaming AND staticBg". Deliberately
+    // WEAKER than ComputeBgSkipDesired's unanimity: a mixed room (one viewer on the still, one on the live
+    // scenery) still has somebody waiting on the picture, and warming for them is the whole point. Pure so the
+    // truth table is unit-testable.
+    internal static bool HasStaticBgViewer(int streamingMirrorConnections, int bgStreamNeededCount)
+        => streamingMirrorConnections > bgStreamNeededCount;
+
+    /// <summary>
+    /// WARM-AT-PUBLISH (the tracker's <c>warmVariant</c> callback): render the just-published QUALIFIED variant
+    /// now, so its immutable URL is backed by bytes before any client asks for it.
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// WHY: the route may only RENDER the digest/frame the tracker is CURRENTLY publishing, and the host keeps no
+    /// digest→layers history, so a fetch that arrives one publish late is not slow — it is a permanent
+    /// <c>unknown-background-variant</c> 404 for that URL. Worse, it used to be self-sustaining: the client
+    /// fail-opened on that 404, which folded <c>staticBg:false</c> onto the wire, which re-armed a deferred probe
+    /// that could publish a different digest and lose the race again. Rendering at publish time takes the race off the
+    /// table: the bytes land in the memory map and on disk, and the currency rule then only ever adjudicates
+    /// whether to render, never whether to SERVE.
+    /// </para>
+    /// <para>
+    /// COST: one render per room entry that publishes a qualified variant, even if nobody fetches it — measured
+    /// on the live host at ~282 ms wall / ~111 ms of it blocking the game's main thread, 280 KB (see
+    /// <c>/perf/bg.json</c>). Bounded three ways: only a qualified variant warms
+    /// (<see cref="CouchCoopStaticBackgroundTracker.IsWarmableVariant"/>), only while somebody is actually showing
+    /// a still (<see cref="HasStaticBgViewer"/>), and only through the SHARED
+    /// <see cref="CouchCoopAssetExtractionGate"/>, so it can never overlap a spine bake.
+    /// </para>
+    /// <para>
+    /// THREADING: called from the tracker's publish, which runs on the GODOT MAIN THREAD. Everything here must
+    /// return immediately — hence the <c>Task.Run</c>; the render itself marshals back to the main thread inside
+    /// the provider and would deadlock if awaited here. The two counts are read WITHOUT <c>_observerGate</c> on
+    /// purpose: blocking the game's main thread on a lock that observer start/stop holds is not worth a warm
+    /// heuristic, and a stale read costs at most one render that nobody needed (or skips one somebody did).
+    /// </para>
+    /// </remarks>
+    private void WarmPublishedStaticBackground(CouchCoopStaticBackgroundState state)
+    {
+        if (_isHeadlessClient || envelopeFactory is null)
+        {
+            return; // a seat process cannot render; asset HTTP goes to the host origin anyway
+        }
+
+        if (!HasStaticBgViewer(_streamingMirrorConnectionCount, _bgStreamNeededCount))
+        {
+            return;
+        }
+
+        if (CouchCoopStaticBackgroundTracker.TryResolveVariantTarget(state) is not { } target)
+        {
+            return;
+        }
+
+        var provider = StaticBackgroundProvider(envelopeFactory);
+        var (family, id) = target;
+        // The digest and the frame are mutually exclusive by family (the provider throws on a mismatch), and the
+        // layer set is only meaningful alongside a digest — pass the published state through unchanged so the
+        // warmed key is byte-identical to the one the advertised URL parses back to.
+        var layerPaths = state.Digest is null ? null : state.LayerPaths;
+        _ = Task.Run(async () =>
+        {
+            try
+            {
+                var image = await provider
+                    .GetImageAsync(family, id, state.Digest, layerPaths, allowRender: true, CancellationToken.None, state.EventFrame)
+                    .ConfigureAwait(false);
+                if (image.Error is not null)
+                {
+                    _log($"[couch-coop] static-bg-warm failed id={id} family={family} detail={image.Error.Code}");
+                    return;
+                }
+
+                _log($"[couch-coop] static-bg-warm {image.CacheStatus} id={id} family={family} bytes={image.Bytes?.Length ?? 0}");
+            }
+            catch (Exception exception)
+            {
+                _log($"[couch-coop] static-bg-warm failed id={id} family={family} detail={exception.GetType().Name}: {exception.Message}");
+            }
+        });
+    }
+
+    // The one static-background provider instance, shared by the /bg/ route and the warm-at-publish path (which
+    // reach it from different threads, hence the CAS rather than the route's old `??=`).
+    private CouchCoopStaticBackgroundProvider StaticBackgroundProvider(BrowserStateEnvelopeFactory factory)
+    {
+        var existing = _staticBackgrounds;
+        if (existing is not null)
+        {
+            return existing;
+        }
+
+        var created = new CouchCoopStaticBackgroundProvider(
+            factory.RuntimeHost.Assets,
+            new SpirectlAssetBinaryCache(resourceCacheRoot),
+            _log,
+            _isHeadlessClient);
+        return Interlocked.CompareExchange(ref _staticBackgrounds, created, null) ?? created;
     }
 
     // Stage-B walk skip: one connection's staticBg declaration flipped via the `settings` message. Recompute under
@@ -2272,11 +2375,7 @@ public sealed class CouchCoopBrowserServer(
             : 1;
         var dump = request.QueryValues.TryGetValue("dump", out var dumpValue) && dumpValue is "1" or "true";
 
-        _staticBackgrounds ??= new CouchCoopStaticBackgroundProvider(
-            envelopeFactory.RuntimeHost.Assets,
-            new SpirectlAssetBinaryCache(resourceCacheRoot),
-            _log,
-            _isHeadlessClient);
+        var backgrounds = StaticBackgroundProvider(envelopeFactory);
 
         // The mounted layer set of the published variant when it is the id being benched — the same input the
         // served render uses, so the bench prices the same picture rather than a discovery-order stand-in.
@@ -2308,7 +2407,7 @@ public sealed class CouchCoopBrowserServer(
                             dumpRoot,
                             $"{id}-{width}x{height}-{format.FileLabel}.{format.FileExtension}"))
                         : null;
-                    var samples = await _staticBackgrounds
+                    var samples = await backgrounds
                         .MeasureRenderAsync(id, layerPaths, width, height, format, dumpPath, cancellationToken)
                         .ConfigureAwait(false);
                     if (dumpPath is not null)
@@ -2511,11 +2610,7 @@ public sealed class CouchCoopBrowserServer(
 
         var id = bg.Id;
 
-        _staticBackgrounds ??= new CouchCoopStaticBackgroundProvider(
-            envelopeFactory.RuntimeHost.Assets,
-            new SpirectlAssetBinaryCache(resourceCacheRoot),
-            _log,
-            _isHeadlessClient);
+        var backgrounds = StaticBackgroundProvider(envelopeFactory);
 
         // Digest resolution against the tracker's CURRENT published variant: only the digest the envelope is
         // currently pointing clients at may RENDER (with that exact layer set). A stale digest serves the
@@ -2559,7 +2654,7 @@ public sealed class CouchCoopBrowserServer(
             }
         }
 
-        var image = await _staticBackgrounds.GetImageAsync(bg.Family, id, digest, layerPaths, allowRender, cancellationToken, frame).ConfigureAwait(false);
+        var image = await backgrounds.GetImageAsync(bg.Family, id, digest, layerPaths, allowRender, cancellationToken, frame).ConfigureAwait(false);
         if (image.Error is not null)
         {
             await HttpResponseWriter.WriteJsonAsync(

@@ -357,13 +357,18 @@ export function createCanvasStaticBackgroundResources(options: {
       ready = true;
       if (readyCallbackUrl === active.url) readyCallback?.(true);
     },
+    // The canvas twin of the DOM staticBackgroundRuntime's hold — same two regimes, same reasons; see the
+    // comments there. COMBAT skips unconditionally while the setting is on (no failure fold, no deadline);
+    // every other family keeps the fail-open latch and its per-path belt.
     refresh(next: MirrorState, at: number): void {
-      const enabled =
-        mirrorSettings.staticBgEnabled && !mirrorSettings.staticBgFailed;
+      const enabled = mirrorSettings.staticBgEnabled;
+      const failedOpen = mirrorSettings.staticBgFailedOpen;
       skipRoots.clear();
-      if (!enabled) {
+      if (!enabled || failedOpen) {
+        // Same release-edge deadline clear the DOM runtime does: a belt already running when the fail-open latch
+        // engaged must not come back already-expired on recovery.
         deadlines.clear();
-        return;
+        if (!enabled) return;
       }
       for (const node of next.nodes.values()) {
         const path = staticBgTargetPathOf(node, next.nodes);
@@ -379,6 +384,12 @@ export function createCanvasStaticBackgroundResources(options: {
           !isCombatBackgroundSceneRoot(node, next.nodes)
         )
           continue;
+        // COMBAT: unconditional (past the suppressible-root gate a combat-convention path IS a combat root).
+        if (isCombatBackgroundScenePath(path)) {
+          skipRoots.add(node.id);
+          continue;
+        }
+        if (failedOpen) continue;
         if (path === shown) {
           skipRoots.add(node.id);
           continue;

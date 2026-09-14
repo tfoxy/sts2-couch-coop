@@ -16,6 +16,8 @@ import {
 
   type MirrorRenderer
 } from "@/mirror/mirrorRenderer";
+import { createStaticBackgroundRuntime } from "@/mirror/renderer/dom/staticBackgroundRuntime";
+import { isCombatBackgroundScenePath } from "@/mirror/renderer/staticBackgroundPolicy";
 import { MIRROR_RENDERER_KEY } from "@/mirror/rendererKey";
 import { mirrorSettings } from "@/mirror/mirrorSettings";
 import StaticBackground from "@/mirror/StaticBackground.vue";
@@ -36,9 +38,17 @@ import {
 //     no atlas/spine canvases, no gsw shader/particle bindings, nothing queued for the idle hatchery. Derived from
 //     the WIRE plus mirrorSettings, so the very first walk that sees a new room's root already holds it.
 //   * the SHOWN-SIGNAL suppression (Stage-A, component-owned) — `display:none` + gsw's effect-suspend stamp on a
-//     root that exists after a fail-open recovery.
+//     root that exists anyway (the setting armed over a built subtree, or a fail-open recovery on a family that
+//     still has one).
 //
-// Fail-open is the invariant across both: setting off, decode failure, or watchdog ⇒ the live subtree.
+// THE INVARIANT IS NO LONGER "fail open". It is split by family, and the split is the point of this suite:
+//   COMBAT — the hold is UNCONDITIONAL while the setting is on. No decode failure, no stalled fetch and no
+//     deadline may put the live combat bg subtree back on a phone; the component walks a picture-only ladder
+//     (digest-less URL → this room's previous still → a bare #181818 stage) and the store's fail-open latch is
+//     never even set.
+//   EVENT BACKDROPS / THE SHOP — unchanged fail-open, belt included.
+// Setting OFF still means the live subtree, on every family.
+//
 // The root-matching rule (convention path + BgContainer under CombatSceneContainer, covering EventRoom-wrapped
 // combat and excluding the non-combat screens) is pinned here too, over wire-shaped deltas.
 
@@ -131,13 +141,13 @@ function el(stage: HTMLElement, id: string): HTMLElement {
 beforeEach(() => {
   document.body.innerHTML = "";
   mirrorSettings.staticBgEnabled = true;
-  mirrorSettings.staticBgFailed = false;
+  mirrorSettings.staticBgFailedOpen = false;
   mirrorWalkStats.reset();
 });
 
 afterEach(() => {
   mirrorSettings.staticBgEnabled = true;
-  mirrorSettings.staticBgFailed = false;
+  mirrorSettings.staticBgFailedOpen = false;
   __setStillDecoderForTest(null);
 });
 
@@ -212,21 +222,35 @@ describe("static-background BUILD HOLD", () => {
     expect(mirrorWalkStats.staticBgHeldRoots).toBe(1);
   });
 
-  it("decode FAILURE (staticBgFailed) builds the live subtree on the very next full walk — fail-open", () => {
+  // CONTRACT CHANGE (combat-only unconditional hold). This case used to assert the opposite — that the fail-open
+  // latch rebuilt the live combat subtree. The product rule is now that it never does: performance is the point
+  // of the setting, and the combat bg subtree is the most expensive thing the phone composites, so a missing
+  // picture buys a blank stage rather than ~500 elements back. The latch is not even SET by a combat failure any
+  // more (StaticBackground.vue only sets it for the families that still fail open), but the renderer must hold
+  // regardless of what the store says — which is what this pins.
+  it("a COMBAT hold NEVER fails open: the live subtree stays unbuilt even with the latch engaged", () => {
     const { stage, renderer } = harness();
     const state = createMirrorState();
     full(state, combatNodes(), COMBAT_ORDER);
     renderer.reconcile(state);
     expect(el(stage, "bg")).toBeNull();
 
-    // The latch StaticBackground.vue flips on a decode error / its watchdog. MirrorView's watcher forces exactly
-    // this walk (a HELD root is skip-clean, so only `structural` can see the release).
-    mirrorSettings.staticBgFailed = true;
+    mirrorSettings.staticBgFailedOpen = true;
     renderer.reconcile(state, { forceTextures: true });
-    expect(el(stage, "bg")).not.toBeNull();
-    expect(el(stage, "bg").style.display).toBe("");
-    expect(el(stage, "layer0")).not.toBeNull();
-    expect(mirrorWalkStats.staticBgHeldRoots).toBe(0);
+    expect(el(stage, "bg")).toBeNull();
+    expect(el(stage, "layer0")).toBeNull();
+    expect(mirrorWalkStats.staticBgHeldRoots).toBe(1);
+    // …and the belt never armed, so there is nothing to expire either.
+    expect(mirrorWalkStats.staticBgHoldExpiries).toBe(0);
+    // THE EXACT DOM OUTCOME the product requirement names: the hold target is the combat background SCENE ROOT
+    // (the child of BgContainer), so `…/CombatSceneContainer/BgContainer` survives as one element carrying NO
+    // mirror nodes at all, and nothing under it is ever built. The container itself is not the target and is not
+    // chased. (Its own `mirror-clip-self` paint div is the container's own fill, not a node of the scene.)
+    const bgc = el(stage, "bgc");
+    expect(bgc).not.toBeNull();
+    expect(bgc.getAttribute("data-node-path")).toBe("CombatRoom/CombatSceneContainer/BgContainer");
+    expect(bgc.querySelectorAll("[data-node-id]").length).toBe(0);
+    expect(el(stage, "hero")).not.toBeNull(); // the rest of the room is untouched
   });
 
   it("setting OFF keeps the live subtree built", () => {
@@ -352,27 +376,111 @@ describe("static-background BUILD HOLD", () => {
 
 });
 
-// A decode failure opens the live path. These cases cover the existing-element writer after that fail-open recovery:
-// a later successful static image may still suppress the rebuilt root without waiting for another scene walk.
-describe("renderer suppression after fail-open — root-only display:none, gated on the shown-signal", () => {
-  beforeEach(() => {
-    mirrorSettings.staticBgFailed = true;
+// THE BELT, AND THE SCOPE BOUNDARY THE COMBAT-ONLY HOLD DREW THROUGH IT. Driven against the runtime's own ports
+// rather than through a renderer, because the belt is a function of `now()` and nothing else can move that clock
+// 8 real seconds in a unit test. Two regimes, one predicate apart:
+//   COMBAT — never arms a deadline, so it can never expire, however long the picture takes.
+//   EVENT  — still arms one, so "held with nothing resolving" stays bounded for the families that fail open.
+describe("static-background hold runtime — the per-path belt", () => {
+  const HOLD_MAX_MS = 8000;
+
+  function runtimeOver(nodes: Record<string, unknown>[], order: string[]) {
+    const state = createMirrorState();
+    full(state, nodes, order);
+    let now = 0;
+    let failedOpen = false;
+    let expiries = 0;
+    const runtime = createStaticBackgroundRuntime<{ id: string }>({
+      nodes: () => state.nodes,
+      records: () => new Map(),
+      staticBgEnabled: () => true,
+      staticBgFailedOpen: () => failedOpen,
+      now: () => now,
+      holdMaxMs: () => HOLD_MAX_MS,
+      expiredDeadline: -1,
+      targetPath: staticBgTargetPathOf,
+      isSuppressibleRoot: isStaticBackgroundSuppressibleRoot,
+      isCombatPath: isCombatBackgroundScenePath,
+      isCombatRoot: isCombatBackgroundSceneRoot,
+      writeDisplay: () => {},
+      markEffectsDirty: () => {},
+      noteHoldExpiry: () => { expiries++; }
+    });
+    // One walk over one root, at the current clock.
+    const walk = (id: string): boolean => {
+      runtime.beginWalk();
+      const held = runtime.hold(id, state.nodes.get(id)!);
+      runtime.finishWalk();
+      return held;
+    };
+    return {
+      walk,
+      advance: (ms: number) => { now += ms; },
+      latch: (value: boolean) => { failedOpen = value; },
+      expiries: () => expiries
+    };
+  }
+
+  it("a COMBAT root is held forever with no picture — the belt never arms, so it never expires", () => {
+    const combat = runtimeOver(combatNodes(), COMBAT_ORDER);
+    expect(combat.walk("bg")).toBe(true);
+    for (let i = 0; i < 10; i++) {
+      combat.advance(HOLD_MAX_MS * 2);
+      expect(combat.walk("bg")).toBe(true);
+    }
+    expect(combat.expiries()).toBe(0);
   });
 
-  it("does NOT suppress anything before the image is confirmed shown", () => {
+  it("…and it is held through the fail-open latch too", () => {
+    const combat = runtimeOver(combatNodes(), COMBAT_ORDER);
+    combat.latch(true);
+    combat.advance(HOLD_MAX_MS * 2);
+    expect(combat.walk("bg")).toBe(true);
+    expect(combat.expiries()).toBe(0);
+  });
+
+  it("an EVENT backdrop still expires its belt — the scope boundary, kept on purpose", () => {
+    const events = runtimeOver(eventNodes(), EVENT_ORDER);
+    expect(events.walk("neowbg")).toBe(true); // arms the deadline
+    events.advance(HOLD_MAX_MS + 1);
+    expect(events.walk("neowbg")).toBe(false); // …and fires it
+    expect(events.expiries()).toBe(1);
+  });
+
+  it("an EVENT backdrop also releases on the fail-open latch, where combat does not", () => {
+    const events = runtimeOver(eventNodes(), EVENT_ORDER);
+    expect(events.walk("neowbg")).toBe(true);
+    events.latch(true);
+    expect(events.walk("neowbg")).toBe(false);
+    expect(events.expiries()).toBe(0); // released by the latch, not by the belt
+  });
+});
+
+// The display:none writer exists for a bg root that is ALREADY BUILT when the still lands, and can suppress it
+// without waiting for another scene walk. Combat no longer reaches that state through fail-open (the hold is
+// unconditional now), so these cases set it up the way a viewer does: the subtree is built with the setting OFF,
+// the viewer turns "Static background" on mid-combat, and the image confirms before MirrorView's forced full walk
+// reclaims the subtree. Same writer, same ordering, a setup that can still happen.
+describe("renderer suppression over an already-built root — root-only display:none, gated on the shown-signal", () => {
+  // Build with the setting off, then arm it. `buildLive` is what every case here opens with.
+  function buildLive(): { stage: HTMLElement; renderer: MirrorRenderer; state: MirrorState } {
+    mirrorSettings.staticBgEnabled = false;
     const { stage, renderer } = harness();
     const state = createMirrorState();
     full(state, combatNodes(), COMBAT_ORDER);
     renderer.reconcile(state);
+    mirrorSettings.staticBgEnabled = true;
+    return { stage, renderer, state };
+  }
+
+  it("does NOT suppress anything before the image is confirmed shown", () => {
+    const { stage } = buildLive();
     expect(el(stage, "bg").style.display).toBe("");
     expect(el(stage, "layer0").style.display).toBe("");
   });
 
   it("suppresses the matched root (and ONLY the root element) once shown, immediately — no walk needed", () => {
-    const { stage, renderer } = harness();
-    const state = createMirrorState();
-    full(state, combatNodes(), COMBAT_ORDER);
-    renderer.reconcile(state);
+    const { stage, renderer } = buildLive();
 
     renderer.setStaticBackgroundShown(UNDERDOCKS_BG);
     expect(el(stage, "bg").style.display).toBe("none");
@@ -382,11 +490,11 @@ describe("renderer suppression after fail-open — root-only display:none, gated
     expect(el(stage, "bgc").style.display).toBe("");
   });
 
-  it("clearing the signal (fetch failure / image gone) restores the live subtree — fail-open", () => {
-    const { stage, renderer } = harness();
-    const state = createMirrorState();
-    full(state, combatNodes(), COMBAT_ORDER);
-    renderer.reconcile(state);
+  // Clearing the shown signal releases the DISPLAY suppression only. The BUILD hold is a separate decision (a
+  // pure function of the settings + the wire), so on combat the next full walk still holds this root unbuilt —
+  // taking the display:none back off does not put the live scenery on screen, it just stops fighting the walk.
+  it("clearing the signal (image gone) takes the display:none back off the built element", () => {
+    const { stage, renderer } = buildLive();
 
     renderer.setStaticBackgroundShown(UNDERDOCKS_BG);
     expect(el(stage, "bg").style.display).toBe("none");
@@ -405,7 +513,10 @@ describe("renderer suppression after fail-open — root-only display:none, gated
     expect(el(stage, "bg").style.display).toBe("");
   });
 
+  // With the setting ON the root would be HELD rather than built, so this one keeps the setting off across the
+  // walk that introduces the room — the element exists, and the suppression writer must still claim it.
   it("a root that WALKS IN while the signal holds is suppressed on its first visit (room re-entry)", () => {
+    mirrorSettings.staticBgEnabled = false;
     const { stage, renderer } = harness();
     const state = createMirrorState();
     full(state, [rawNode("lobby", null)], ["lobby"]);
@@ -414,20 +525,27 @@ describe("renderer suppression after fail-open — root-only display:none, gated
     renderer.setStaticBackgroundShown(UNDERDOCKS_BG); // image already confirmed from the previous room
     full(state, combatNodes(), COMBAT_ORDER);
     renderer.reconcile(state);
+    mirrorSettings.staticBgEnabled = true;
+    renderer.setStaticBackgroundShown(null);
+    renderer.setStaticBackgroundShown(UNDERDOCKS_BG);
     expect(el(stage, "bg").style.display).toBe("none");
     expect(el(stage, "hero").style.display).toBe("");
   });
 
-  it("suppression survives further walks (a volatile re-style must not resurrect the root)", () => {
-    const { stage, renderer } = harness();
-    const state = createMirrorState();
-    full(state, combatNodes(), COMBAT_ORDER);
-    renderer.reconcile(state);
+  // A volatile re-style must never resurrect a suppressed root. On COMBAT the next walk with the setting on does
+  // something stronger than preserving the display:none — the unconditional hold reclaims the element entirely, so
+  // there is nothing left to resurrect. (The "display:none survives a walk" shape still applies to the families
+  // that fail open; it is covered in the gsw dormancy suite below, which walks over a stamped event root.)
+  it("a later walk does not resurrect the root — the hold reclaims it outright", () => {
+    const { stage, renderer, state } = buildLive();
     renderer.setStaticBackgroundShown(UNDERDOCKS_BG);
+    expect(el(stage, "bg").style.display).toBe("none");
 
     full(state, combatNodes(), COMBAT_ORDER); // a fresh keyframe re-visits everything
     renderer.reconcile(state);
-    expect(el(stage, "bg").style.display).toBe("none");
+    expect(el(stage, "bg")).toBeNull();
+    expect(el(stage, "layer0")).toBeNull();
+    expect(mirrorWalkStats.staticBgHeldRoots).toBe(1);
   });
 });
 
@@ -437,47 +555,53 @@ describe("renderer suppression after fail-open — root-only display:none, gated
 // gsw's 30s sweep only reaches DORMANT bindings, and nothing was declaring dormancy. The suppressed root now also
 // carries gsw's EFFECTS_SUSPENDED_ATTR, which is ancestor-scoped (`closest()`), so one stamp parks the subtree.
 // A held root has no element to stamp and needs none because it owns no bindings. This suite exercises the writer
-// after fail-open has rebuilt a live root.
+// over a root that fail-open has rebuilt.
+//
+// ON THE EVENT BACKDROP, deliberately. The writer is family-agnostic (it keys on isStaticBackgroundSuppressibleRoot),
+// but it only ever runs over an element that EXISTS while the setting is on — and since the combat-only
+// unconditional hold landed, a combat bg root with the setting on is never built at all, so combat can no longer
+// reach this state. Event backdrops still fail open, so they still can. Do not "restore" this suite to combat:
+// the combat equivalent is the BUILD HOLD suite above, which asserts there is no element in the first place.
 describe("static-background suppression declares dormancy to gsw", () => {
   const SUSPENDED = "data-godot-effects-suspended";
 
   beforeEach(() => {
-    mirrorSettings.staticBgFailed = true;
+    mirrorSettings.staticBgFailedOpen = true;
   });
 
   it("stamps the effect-suspend marker on the suppressed root, and ONLY there", () => {
     const { stage, renderer } = harness();
     const state = createMirrorState();
-    full(state, combatNodes(), COMBAT_ORDER);
+    full(state, eventNodes(), EVENT_ORDER);
     renderer.reconcile(state);
-    expect(el(stage, "bg").hasAttribute(SUSPENDED)).toBe(false);
+    expect(el(stage, "neowbg").hasAttribute(SUSPENDED)).toBe(false);
 
-    renderer.setStaticBackgroundShown(UNDERDOCKS_BG);
-    expect(el(stage, "bg").getAttribute(SUSPENDED)).toBe("static-bg");
+    renderer.setStaticBackgroundShown(NEOW_BG);
+    expect(el(stage, "neowbg").getAttribute(SUSPENDED)).toBe("static-bg");
     // Ancestor-scoped, so the stamp belongs on the root alone — never on the children it already covers, and
     // never on anything outside the suppressed subtree.
-    expect(el(stage, "layer0").hasAttribute(SUSPENDED)).toBe(false);
-    expect(el(stage, "bgc").hasAttribute(SUSPENDED)).toBe(false);
-    expect(el(stage, "hero").hasAttribute(SUSPENDED)).toBe(false);
+    expect(el(stage, "fog").hasAttribute(SUSPENDED)).toBe(false);
+    expect(el(stage, "layout").hasAttribute(SUSPENDED)).toBe(false);
+    expect(el(stage, "options").hasAttribute(SUSPENDED)).toBe(false);
   });
 
   it("takes the marker back off when the suppression lifts, and the subtree repaints", () => {
     const { stage, renderer } = harness();
     const state = createMirrorState();
-    full(state, combatNodes(), COMBAT_ORDER);
+    full(state, eventNodes(), EVENT_ORDER);
     renderer.reconcile(state);
 
-    renderer.setStaticBackgroundShown(UNDERDOCKS_BG);
-    expect(el(stage, "bg").getAttribute(SUSPENDED)).toBe("static-bg");
+    renderer.setStaticBackgroundShown(NEOW_BG);
+    expect(el(stage, "neowbg").getAttribute(SUSPENDED)).toBe("static-bg");
 
     renderer.setStaticBackgroundShown(null); // fail-open: the live subtree comes back
-    expect(el(stage, "bg").hasAttribute(SUSPENDED)).toBe(false);
-    expect(el(stage, "bg").style.display).toBe("");
+    expect(el(stage, "neowbg").hasAttribute(SUSPENDED)).toBe(false);
+    expect(el(stage, "neowbg").style.display).toBe("");
     // …and a later walk keeps it awake (the stamp must not creep back on a re-style).
-    full(state, combatNodes(), COMBAT_ORDER);
+    full(state, eventNodes(), EVENT_ORDER);
     renderer.reconcile(state);
-    expect(el(stage, "bg").hasAttribute(SUSPENDED)).toBe(false);
-    expect(el(stage, "bg").style.display).toBe("");
+    expect(el(stage, "neowbg").hasAttribute(SUSPENDED)).toBe(false);
+    expect(el(stage, "neowbg").style.display).toBe("");
   });
 
   // The defect this fixes: a settled combat re-styles NOTHING, so a stamp that only landed inside the walk's
@@ -488,26 +612,26 @@ describe("static-background suppression declares dormancy to gsw", () => {
     full(state, [rawNode("lobby", null)], ["lobby"]);
     renderer.reconcile(state);
 
-    renderer.setStaticBackgroundShown(UNDERDOCKS_BG); // image already confirmed from the previous room
-    full(state, combatNodes(), COMBAT_ORDER);
+    renderer.setStaticBackgroundShown(NEOW_BG); // image already confirmed from the previous room
+    full(state, eventNodes(), EVENT_ORDER);
     renderer.reconcile(state);
-    expect(el(stage, "bg").getAttribute(SUSPENDED)).toBe("static-bg");
+    expect(el(stage, "neowbg").getAttribute(SUSPENDED)).toBe("static-bg");
 
     // The signal clearing while the tree is settled must take it off through the same helper.
     renderer.setStaticBackgroundShown(null);
-    expect(el(stage, "bg").hasAttribute(SUSPENDED)).toBe(false);
+    expect(el(stage, "neowbg").hasAttribute(SUSPENDED)).toBe(false);
   });
 
   it("setting OFF ⇒ no stamp at all (the gate and the marker are the same decision)", () => {
     mirrorSettings.staticBgEnabled = false;
     const { stage, renderer } = harness();
     const state = createMirrorState();
-    full(state, combatNodes(), COMBAT_ORDER);
+    full(state, eventNodes(), EVENT_ORDER);
     renderer.reconcile(state);
 
-    renderer.setStaticBackgroundShown(UNDERDOCKS_BG);
-    expect(el(stage, "bg").hasAttribute(SUSPENDED)).toBe(false);
-    expect(el(stage, "bg").style.display).toBe("");
+    renderer.setStaticBackgroundShown(NEOW_BG);
+    expect(el(stage, "neowbg").hasAttribute(SUSPENDED)).toBe(false);
+    expect(el(stage, "neowbg").style.display).toBe("");
   });
 
   // The attribute has TWO independent owners now (the occlusion gate and this one). gsw reads PRESENCE, not value,
@@ -526,28 +650,28 @@ describe("static-background suppression declares dormancy to gsw", () => {
         mouseFilter: 0
       })
     ];
-    full(state, combatNodes(), COMBAT_ORDER);
+    full(state, eventNodes(), EVENT_ORDER);
     renderer.reconcile(state);
-    renderer.setStaticBackgroundShown(UNDERDOCKS_BG);
-    expect(el(stage, "bg").getAttribute(SUSPENDED)).toBe("static-bg");
+    renderer.setStaticBackgroundShown(NEOW_BG);
+    expect(el(stage, "neowbg").getAttribute(SUSPENDED)).toBe("static-bg");
 
     // Dialog opens. Several walks: the occlusion gate engages only after its hysteresis.
-    full(state, [...combatNodes(), ...cover], [...COMBAT_ORDER, "dialog", "scrim"]);
+    full(state, [...eventNodes(), ...cover], [...EVENT_ORDER, "dialog", "scrim"]);
     for (let i = 0; i < 4; i++) {
       renderer.reconcile(state);
     }
     const occludedRoot = stage.querySelector('[data-godot-effects-suspended="occluded"]');
     expect(occludedRoot, "the dialog should have gated a covered root").not.toBeNull();
-    expect(el(stage, "bg").getAttribute(SUSPENDED)).toBe("static-bg");
+    expect(el(stage, "neowbg").getAttribute(SUSPENDED)).toBe("static-bg");
 
     // Dialog closes: the occlusion gate disengages — and must leave the bg root's own claim alone.
-    full(state, combatNodes(), COMBAT_ORDER);
+    full(state, eventNodes(), EVENT_ORDER);
     for (let i = 0; i < 4; i++) {
       renderer.reconcile(state);
     }
     expect(stage.querySelector('[data-godot-effects-suspended="occluded"]')).toBeNull();
-    expect(el(stage, "bg").getAttribute(SUSPENDED)).toBe("static-bg");
-    expect(el(stage, "bg").style.display).toBe("none");
+    expect(el(stage, "neowbg").getAttribute(SUSPENDED)).toBe("static-bg");
+    expect(el(stage, "neowbg").style.display).toBe("none");
   });
 
   // …and the same-ELEMENT case, which is the one that actually needed fixing: when a cover's earlier-painting
@@ -558,56 +682,56 @@ describe("static-background suppression declares dormancy to gsw", () => {
     const state = createMirrorState();
     // The scrim is the bg root's own later-painting sibling, so `bg` is the covered root the occlusion pass picks.
     const covered = [
-      ...combatNodes(),
-      rawNode("scrim", "bgc", {
+      ...eventNodes(),
+      rawNode("scrim", "layout", {
         nodeType: "Godot.ColorRect",
         localRect: { position: { x: 0, y: 0 }, size: { x: 1920, y: 1080 } },
         fillColor: { r: 0, g: 0, b: 0, a: 1, html: "#000000ff" },
         mouseFilter: 0
       })
     ];
-    full(state, covered, [...COMBAT_ORDER, "scrim"]);
+    full(state, covered, [...EVENT_ORDER, "scrim"]);
     for (let i = 0; i < 4; i++) {
       renderer.reconcile(state);
     }
-    expect(el(stage, "bg").getAttribute(SUSPENDED)).toBe("occluded");
+    expect(el(stage, "neowbg").getAttribute(SUSPENDED)).toBe("occluded");
 
     // The static image lands while the cover is up: same element, second owner.
-    renderer.setStaticBackgroundShown(UNDERDOCKS_BG);
-    expect(el(stage, "bg").hasAttribute(SUSPENDED)).toBe(true);
+    renderer.setStaticBackgroundShown(NEOW_BG);
+    expect(el(stage, "neowbg").hasAttribute(SUSPENDED)).toBe(true);
 
     // Cover goes away. The occlusion gate disengages — the bg gate does not.
-    full(state, combatNodes(), COMBAT_ORDER);
+    full(state, eventNodes(), EVENT_ORDER);
     for (let i = 0; i < 4; i++) {
       renderer.reconcile(state);
     }
-    expect(el(stage, "bg").getAttribute(SUSPENDED)).toBe("static-bg");
-    expect(el(stage, "bg").style.display).toBe("none");
+    expect(el(stage, "neowbg").getAttribute(SUSPENDED)).toBe("static-bg");
+    expect(el(stage, "neowbg").style.display).toBe("none");
 
     // Only when the LAST owner lets go does the subtree wake and repaint.
     renderer.setStaticBackgroundShown(null);
-    expect(el(stage, "bg").hasAttribute(SUSPENDED)).toBe(false);
-    expect(el(stage, "bg").style.display).toBe("");
+    expect(el(stage, "neowbg").hasAttribute(SUSPENDED)).toBe(false);
+    expect(el(stage, "neowbg").style.display).toBe("");
   });
 
   it("a root that leaves the tree does not resurrect a stale stamp when it comes back", () => {
     const { stage, renderer } = harness();
     const state = createMirrorState();
-    full(state, combatNodes(), COMBAT_ORDER);
+    full(state, eventNodes(), EVENT_ORDER);
     renderer.reconcile(state);
-    renderer.setStaticBackgroundShown(UNDERDOCKS_BG);
-    expect(el(stage, "bg").getAttribute(SUSPENDED)).toBe("static-bg");
+    renderer.setStaticBackgroundShown(NEOW_BG);
+    expect(el(stage, "neowbg").getAttribute(SUSPENDED)).toBe("static-bg");
 
     // Room change: the bg root is gone (its element + record are torn down), then combat returns.
     full(state, [rawNode("lobby", null)], ["lobby"]);
     renderer.reconcile(state);
-    expect(el(stage, "bg")).toBeNull();
+    expect(el(stage, "neowbg")).toBeNull();
 
-    full(state, combatNodes(), COMBAT_ORDER);
+    full(state, eventNodes(), EVENT_ORDER);
     renderer.reconcile(state);
     // Re-derived from scratch on the first visit of the NEW element — same answer, freshly stamped.
-    expect(el(stage, "bg").getAttribute(SUSPENDED)).toBe("static-bg");
-    expect(el(stage, "bg").style.display).toBe("none");
+    expect(el(stage, "neowbg").getAttribute(SUSPENDED)).toBe("static-bg");
+    expect(el(stage, "neowbg").style.display).toBe("none");
   });
 });
 
@@ -693,14 +817,79 @@ describe("StaticBackground.vue — decode gate + shown-signal ordering", () => {
     expect(calls[calls.length - 1]).toEqual({ scenePath: null });
   });
 
-  it("a fetch/decode FAILURE clears the suppression and shows no image (fail-open)", async () => {
+  // CONTRACT CHANGE (combat-only unconditional hold). This used to assert that a combat failure latched the
+  // store and re-admitted the live subtree. It must not: the descriptor here is ALREADY the digest-less URL, so
+  // the ladder has no second rung to try and nothing was previously shown — the viewer gets a bare stage, and the
+  // host keeps skipping the subtree (staticBgFailedOpen stays false, so `staticBg` stays true on the wire).
+  it("a COMBAT failure shows no image and does NOT tell the host to re-admit the subtree", async () => {
     __setStillDecoderForTest((_url, ready) => ready(false));
     const calls: ShownCall[] = [];
     const wrapper = mountBg(calls, { scenePath: UNDERDOCKS_BG, url: "/bg/underdocks?v=1" });
     await wrapper.vm.$nextTick();
     expect(calls[calls.length - 1]).toEqual({ scenePath: null });
-    expect(mirrorSettings.staticBgFailed).toBe(true); // …and the host is told, so Stage B re-admits the subtree
+    expect(mirrorSettings.staticBgFailedOpen).toBe(false);
     expect(wrapper.find('[data-testid="mirror-static-bg-image"]').exists()).toBe(false);
+    wrapper.unmount();
+  });
+
+  // The EVENT half of the scope boundary the user chose: event backdrops keep the fail-open safety net, so their
+  // failure DOES latch and DOES tell the host to re-admit the live backdrop.
+  it("an EVENT failure still fails open: the latch flips so Stage B re-admits the backdrop", async () => {
+    __setStillDecoderForTest((_url, ready) => ready(false));
+    const calls: ShownCall[] = [];
+    const wrapper = mountBg(calls, { scenePath: NEOW_BG, url: "/bg/events/neow?v=1" });
+    await wrapper.vm.$nextTick();
+    expect(calls[calls.length - 1]).toEqual({ scenePath: null });
+    expect(mirrorSettings.staticBgFailedOpen).toBe(true);
+    expect(wrapper.find('[data-testid="mirror-static-bg-image"]').exists()).toBe(false);
+    wrapper.unmount();
+  });
+
+  // LADDER RUNG 2. The host renders a digest-qualified variant only while it is the CURRENT publish and keeps no
+  // digest history, so that URL can 404 permanently. Before giving up, retry the digest-less URL for the same
+  // room — always renderable host-side, and what the prerender sweep bakes.
+  it("LADDER: a failed digest-qualified combat URL retries the digest-less one and shows it", async () => {
+    const asked: string[] = [];
+    __setStillDecoderForTest((url, ready) => {
+      asked.push(url);
+      ready(!url.includes("layers="));
+    });
+    const calls: ShownCall[] = [];
+    const wrapper = mountBg(calls, {
+      scenePath: UNDERDOCKS_BG,
+      url: "/bg/underdocks?layers=6f2d501405db6ef5&v=1"
+    });
+    await wrapper.vm.$nextTick();
+    expect(asked).toEqual([
+      "/bg/underdocks?layers=6f2d501405db6ef5&v=1",
+      "/bg/underdocks?v=1"
+    ]);
+    expect(calls[calls.length - 1]).toEqual({ scenePath: UNDERDOCKS_BG });
+    expect(wrapper.find('[data-testid="mirror-static-bg-image"]').attributes("src")).toBe("/bg/underdocks?v=1");
+    expect(mirrorSettings.staticBgFailedOpen).toBe(false);
+    wrapper.unmount();
+  });
+
+  // LADDER RUNG 3. Both URLs are gone, but a still for THIS SAME room is already on screen (a re-publish of the
+  // same room under a new digest). Keep it rather than blanking the stage — the stale-shown guard is what takes a
+  // picture down when the wire says the room really changed.
+  it("LADDER: keeps the still already shown for the same room when every URL fails", async () => {
+    let failFrom = 99;
+    let asked = 0;
+    __setStillDecoderForTest((_url, ready) => ready(asked++ < failFrom));
+    const calls: ShownCall[] = [];
+    const wrapper = mountBg(calls, { scenePath: UNDERDOCKS_BG, url: "/bg/underdocks?v=1" });
+    await wrapper.vm.$nextTick();
+    expect(wrapper.find('[data-testid="mirror-static-bg-image"]').attributes("src")).toBe("/bg/underdocks?v=1");
+
+    // A new digest for the SAME room, and nothing resolves any more.
+    failFrom = 0;
+    asked = 0;
+    await wrapper.setProps({ descriptor: { scenePath: UNDERDOCKS_BG, url: "/bg/underdocks?layers=deadbeef&v=1" } });
+    await wrapper.vm.$nextTick();
+    expect(wrapper.find('[data-testid="mirror-static-bg-image"]').attributes("src")).toBe("/bg/underdocks?v=1");
+    expect(calls[calls.length - 1]).toEqual({ scenePath: UNDERDOCKS_BG });
+    expect(mirrorSettings.staticBgFailedOpen).toBe(false);
     wrapper.unmount();
   });
 
@@ -826,9 +1015,11 @@ describe("StaticBackground.vue — decode gate + shown-signal ordering", () => {
     wrapper.unmount();
   });
 
-  // The bound that keeps a room from staying dark on a stalled fetch. Deliberately SHORTER than the renderer's own
-  // belt, so the component always wins and `mirrorWalkStats.staticBgHoldExpiries` stays 0 in a healthy session.
-  it("WATCHDOG: a decode that never settles latches staticBgFailed and clears the signal", async () => {
+  // The bound that keeps a room from staying dark on a stalled fetch. Its PURPOSE changed with the combat-only
+  // unconditional hold: the combat hold has no belt to beat any more, so this now just stops waiting on a URL that
+  // is never going to answer and enters the same ladder a decode error enters. On a combat target that means NO
+  // latch (the host keeps skipping the subtree) — only the signal clears.
+  it("WATCHDOG: a combat decode that never settles clears the signal without latching", async () => {
     vi.useFakeTimers();
     try {
       __setStillDecoderForTest(() => {
@@ -839,11 +1030,11 @@ describe("StaticBackground.vue — decode gate + shown-signal ordering", () => {
       full(state, combatNodes(), COMBAT_ORDER);
       const wrapper = mountBg(calls, null, state);
       await nextTick();
-      expect(mirrorSettings.staticBgFailed).toBe(false);
+      expect(mirrorSettings.staticBgFailedOpen).toBe(false);
 
       vi.advanceTimersByTime(6000);
       await nextTick();
-      expect(mirrorSettings.staticBgFailed).toBe(true);
+      expect(mirrorSettings.staticBgFailedOpen).toBe(false);
       expect(calls[calls.length - 1]).toEqual({ scenePath: null });
       expect(wrapper.find('[data-testid="mirror-static-bg-image"]').exists()).toBe(false);
       wrapper.unmount();
@@ -971,7 +1162,7 @@ describe("event backdrops — build hold + suppression", () => {
     renderer.reconcile(state);
     expect(el(stage, "neowbg")).toBeNull();
 
-    mirrorSettings.staticBgFailed = true;
+    mirrorSettings.staticBgFailedOpen = true;
     renderer.reconcile(state, { forceTextures: true });
     expect(el(stage, "neowbg")).not.toBeNull();
     expect(el(stage, "neowbg").style.display).toBe("");
@@ -1020,7 +1211,7 @@ describe("event backdrops — build hold + suppression", () => {
   });
 
   it("shown-signal suppression + gsw dormancy stamp work on an event root after fail-open", () => {
-    mirrorSettings.staticBgFailed = true;
+    mirrorSettings.staticBgFailedOpen = true;
     const { stage, renderer } = harness();
     const state = createMirrorState();
     full(state, eventNodes(), EVENT_ORDER);
@@ -1077,14 +1268,14 @@ describe("room backdrops — predicate + build hold + suppression", () => {
     renderer.reconcile(state);
     expect(el(stage, "mbgc")).toBeNull();
 
-    mirrorSettings.staticBgFailed = true;
+    mirrorSettings.staticBgFailedOpen = true;
     renderer.reconcile(state, { forceTextures: true });
     expect(el(stage, "mbgc")).not.toBeNull();
     expect(el(stage, "mfire")).not.toBeNull();
   });
 
   it("shown-signal suppression stamps the SUBTREE root after fail-open", () => {
-    mirrorSettings.staticBgFailed = true;
+    mirrorSettings.staticBgFailedOpen = true;
     const { stage, renderer } = harness();
     const state = createMirrorState();
     full(state, shopNodes(), SHOP_ORDER);

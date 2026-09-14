@@ -54,7 +54,10 @@ public sealed record CouchCoopStaticBackgroundState(
 // Godot main thread (Callable.From(...).CallDeferred(), the CouchCoopHeadlessVisualSuspender idiom — reading live
 // Node state off-thread is unsafe). The publish slot is a process-wide volatile (one host process serves one
 // game), read by BrowserStateEnvelopeFactory on whatever thread builds a session envelope.
-public sealed class CouchCoopStaticBackgroundTracker(Action? onPublishedChanged = null, Action<string>? log = null)
+public sealed class CouchCoopStaticBackgroundTracker(
+    Action? onPublishedChanged = null,
+    Action<string>? log = null,
+    Action<CouchCoopStaticBackgroundState>? warmVariant = null)
 {
     private static CouchCoopStaticBackgroundState? _published;
 
@@ -73,6 +76,11 @@ public sealed class CouchCoopStaticBackgroundTracker(Action? onPublishedChanged 
 
     private readonly Action? _onPublishedChanged = onPublishedChanged;
     private readonly Action<string> _log = log ?? (message => Console.Error.WriteLine(message));
+
+    // WARM-AT-PUBLISH (see PublishAndNotify): hands the freshly published QUALIFIED variant to whoever can render
+    // it. Null in every host that has no renderer behind it (test harnesses, the standalone server), which is why
+    // the tracker keeps no provider reference of its own.
+    private readonly Action<CouchCoopStaticBackgroundState>? _warmVariant = warmVariant;
 
     // The screen fingerprint last seen (scene-observer thread only). Unlike the session-resend twin, the FIRST
     // delta of a generation DOES probe: a viewer connecting mid-combat needs the descriptor immediately.
@@ -503,8 +511,60 @@ public sealed class CouchCoopStaticBackgroundTracker(Action? onPublishedChanged 
             node => [.. node.GetChildren()],
             node => node.SceneFilePath);
 
+    /// <summary>
+    /// WARM-AT-PUBLISH gate: is this publish a QUALIFIED variant — one carrying a layer digest (combat) or a
+    /// probed frame spec (events, the shop)?
+    /// </summary>
+    /// <remarks>
+    /// Only a qualified variant needs warming. Its URL names a variant that exists ONLY while the tracker is
+    /// publishing it: the route refuses to render a digest/frame that is no longer current
+    /// (CouchCoopBrowserServer.HandleStaticBackgroundRequestAsync), and the host keeps no digest→layers history,
+    /// so a variant that loses that race 404s <c>unknown-background-variant</c> FOREVER rather than transiently.
+    /// The UNqualified variant has no such window — it is always renderable, and
+    /// <see cref="CouchCoopStaticBackgroundPrerenderJob"/> bakes every one of them at startup — so warming it
+    /// again would buy nothing.
+    /// </remarks>
+    internal static bool IsWarmableVariant(CouchCoopStaticBackgroundState? state)
+        => state is not null && (state.Digest is not null || state.EventFrame is not null);
+
+    /// <summary>
+    /// The <c>(family, id)</c> a published state addresses — the pair <c>CouchCoopStaticBackgroundProvider</c>
+    /// renders from — resolved from its scene path through the same three family grammars the probe located it
+    /// with. Null when the path follows none of them (nothing warmable).
+    /// </summary>
+    internal static (StaticBackgroundFamily Family, string Id)? TryResolveVariantTarget(
+        CouchCoopStaticBackgroundState state)
+    {
+        ArgumentNullException.ThrowIfNull(state);
+        if (CouchCoopStaticBackgroundProvider.TryParseBackgroundId(state.ScenePath) is { } combatId)
+        {
+            return (StaticBackgroundFamily.Combat, combatId);
+        }
+
+        if (CouchCoopStaticBackgroundProvider.TryParseEventBackgroundId(state.ScenePath) is { } eventId)
+        {
+            return (StaticBackgroundFamily.Events, eventId);
+        }
+
+        if (BackgroundSceneFamilies.TryParseRoomBackgroundId(state.ScenePath) is { } roomId)
+        {
+            return (StaticBackgroundFamily.Rooms, roomId);
+        }
+
+        return null;
+    }
+
     // Publish + fire the change callback (the server re-sends sessions). Change = scenePath/digest/url identity;
     // the digest already fingerprints the layer list.
+    //
+    // WARM-AT-PUBLISH. A qualified variant's bytes are then rendered IMMEDIATELY, off this thread, instead of
+    // on the first client fetch. That is what closes the permanent-404 hole: the URL the envelope is about to
+    // advertise is renderable only while it is the CURRENT publish, and a client fetch that arrives after the
+    // next publish (~125ms of deferred probe hops away at the host's 8fps idle) finds a route that refuses to
+    // render it and a host with no digest history to render it FROM. Warming here means the bytes are on disk
+    // before the race can be lost, so the currency rule never has to adjudicate — a later stale-digest fetch is
+    // a disk hit, not a 404. Fire-and-forget by contract: this runs on the Godot main thread (the probe body),
+    // so the callback must return immediately and do its render on a pool thread.
     private void PublishAndNotify(CouchCoopStaticBackgroundState? next)
     {
         var current = Volatile.Read(ref _published);
@@ -522,6 +582,19 @@ public sealed class CouchCoopStaticBackgroundTracker(Action? onPublishedChanged 
 
         Volatile.Write(ref _published, next);
         _onPublishedChanged?.Invoke();
+
+        if (_warmVariant is { } warm && IsWarmableVariant(next))
+        {
+            try
+            {
+                warm(next!);
+            }
+            catch (Exception exception)
+            {
+                // A warm is an optimization; its failure must never break the publish the clients are waiting on.
+                _log($"[couch-coop] static-bg-warm scheduling failed: {exception.GetType().Name}: {exception.Message}");
+            }
+        }
     }
 
     /// <summary>Test seam: publish a value through the real change-detection path (fires the callback).</summary>
