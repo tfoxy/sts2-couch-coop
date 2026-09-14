@@ -229,8 +229,7 @@ The cache is therefore keyed by the install, not just by the resource:
 
 ```
 user://couch-coop/cache/
-  .cache-versions.json          branch -> version; what may be deleted when a branch moves
-  <version>/                    one per game version ("v0.107.1", "v0.111.0")
+  <version>/                    one per game version ("v0.107.1", "v0.111.0"), at most two
     .cache-identity.json        the stamp: game version, content hash, cache versions
     assets/  geoclips/  astc/  pending/
   .trash/                       purged trees, deleted in the background
@@ -245,30 +244,28 @@ On startup the mod compares that stamp against the install it is running in. If 
 hash has moved, or either cache version has, the directory is moved aside **before** anything reads or writes
 it and deleted in the background — a rename, so a multi-gigabyte cache costs no startup time.
 
-**The ordinary start asks Steam nothing.** When the version's directory is already there and its stamp
-matches, that is the whole answer, and one line in `godot.log` reports the version and `(branch not
-consulted)`. The branch is resolved only when this install has moved to a version it has no directory for —
-and then for one job: updating `.cache-versions.json`, which records the version each branch is currently on
-so the directory a branch *leaves* can be released by name. A version another branch still points at is never
-released. A directory no entry names is an orphan and is reclaimed on the next slow start; behind that, at
-most three version directories are kept, least-recently-used evicted first, so a map that could not be read
-cannot turn into unbounded disk.
+**Nothing here ever asks for the Steam branch.** The version already separates the builds, so the branch
+decides nothing — and a start whose directory is present and stamped writes nothing at all.
 
-The branch comes from Steam itself (`SteamApps.GetCurrentBetaName()`) with the install manifest as a
-fallback; `release_info.json` has no branch field — its `branch` is the release tag. Steam is asked only
-about an install it actually mounted: it answers for an *app*, not a directory, so a second copy of the game
-launched from outside the Steam library would otherwise be told the branch of the copy Steam has mounted.
-That copy falls through to the spirectl API lane, which is a coarse per-game-API bucket (`v107`, `v111`) —
-stable across patches, which is what makes it usable as a map key. The branch, how it was learned and the
-Steam build id are all **recorded in the stamp and compared by nothing**: they are labels for a build, not
-statements about its content, and a start that took the fast path never learns them.
+**At most two directories survive, and the one retired is the lowest version.** Two is the axis a player
+moves along: the build they are on and the one they switch to. Version numbers are compared per component,
+not as text (`v0.9.0` is below `v0.10.0`). A directory whose name is not a version at all — the branch-named
+`public/` and `public-beta/` the previous layout left — is unreachable rather than merely old, so it is
+reclaimed outright instead of occupying one of the two slots.
+
+**An install that will not state its version gets no cache.** Everything is keyed on the version, so a blank
+one would put every build in one directory whose stamp also matches every build — one build serving
+another's pixels. The mod logs `cache disabled: this install reported no usable game version` and runs
+uncached. `release_info.json` is found by walking up from the mod assembly and, failing that, from the game
+executable — the second is what makes a **Steam Workshop** install work, since a Workshop item lives outside
+the game directory entirely.
 
 Two version numbers ride the stamp: CouchCoop's own `CacheVersion`, and spirectl's `AssetPayloadVersion`,
 which is owned by spirectl and not manually versioned in this repository. `COUCHCOOP_CACHE_ROOT` moves the
 whole thing.
 
-The same four fields compose the `assetCacheToken` on the `session` envelope, so the directory the host
-serves from and the URL a client caches under key on one fact rather than two that can disagree. That is how
+The same fields compose the `assetCacheToken` on the `session` envelope, so the directory the host serves
+from and the URL a client caches under key on one fact rather than two that can disagree. That is how
 clients invalidate on exactly the changes that empty the host's cache — including the two the frontend bundle
 hash cannot see: a game update with no frontend rebuild, and a phone hopping between a stable host and a beta
 one.

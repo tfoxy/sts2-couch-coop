@@ -859,8 +859,7 @@ works. Things worth knowing before reading its output:
   the `couch-deploy` skill; an Aug-10 agent measured a whole QA leg against someone else's build before
   checking). Do not try to read a cache generation out of the DLL to identify a build: the string is
   interpolated from two constants, and since the cache became version scoped it names no path at all — the
-  live answer is the `[couch-coop] cache game=… hash=… cache=v… root=…` line the mod logs at startup. That line
-  ends in `(branch not consulted)` on an ordinary start, which is the fast path working, not a failure.
+  live answer is the `[couch-coop] cache game=… hash=… cache=v… root=…` line the mod logs at startup.
 - **Live-lease hygiene (multi-agent rounds).** Acquire only the named resources you touch with
   `scripts/live-qa-lock.mjs`; all live sessions share `install`, while deployment holds it exclusively. Before
   RELEASING, restore the real `../spirectl` / `../godot-scene-web` checkouts to clean `main`.

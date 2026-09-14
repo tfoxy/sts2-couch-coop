@@ -27,13 +27,11 @@ namespace CouchCoop.Mod.Server;
 /// </para>
 /// <para>
 /// THIS USED TO BE KEYED BY BRANCH, and the objection to versions then was that they "mint a new directory per
-/// patch and grow without bound". The map below is the answer to that objection: it records which version each
-/// branch is currently on, so when a branch moves we know exactly which directory it left and may delete it —
-/// by knowledge rather than by an LRU guess. The cap is still there, demoted to a backstop for a map we could
-/// not read.
+/// patch and grow without bound". The cap is the answer: at most two directories survive, and the one thrown
+/// away is the LOWEST VERSION. Two is what the axis a player moves along actually needs — the branch they are
+/// on and the one they switch to — and "lowest version" needs no bookkeeping, no timestamps and no branch.
 /// </para>
 /// <code>
-///   &lt;base&gt;/.cache-versions.json              branch -> version, the map that says what may be deleted
 ///   &lt;base&gt;/&lt;version&gt;/.cache-identity.json  the stamp; its CONTENT fields must match
 ///   &lt;base&gt;/&lt;version&gt;/assets/               SpirectlAssetBinaryCache
 ///   &lt;base&gt;/&lt;version&gt;/geoclips/             CouchCoopGeoclipStore
@@ -42,10 +40,14 @@ namespace CouchCoop.Mod.Server;
 ///   &lt;base&gt;/.trash/&lt;guid&gt;/                   renamed-aside trees, deleted in the background
 /// </code>
 /// <para>
-/// THE ORDINARY START ASKS STEAM NOTHING. When the version directory is already there and its stamp matches,
-/// that is the whole answer: the branch decides nothing about where bytes live, so nothing needs to resolve it.
-/// It is consulted only on the slow path, to do the map bookkeeping — where a wrong answer costs a directory
-/// that lingers, never a directory that serves the wrong bytes. See <see cref="ResolveOnce"/>.
+/// NOTHING HERE EVER ASKS FOR THE STEAM BRANCH. It decides nothing: the version already separates the builds,
+/// and a directory is retired by comparing version numbers. A start whose directory is present and stamped
+/// writes nothing at all. See <see cref="ResolveOnce"/>.
+/// </para>
+/// <para>
+/// AN INSTALL THAT WILL NOT STATE ITS VERSION GETS NO CACHE. Everything here is keyed on the version, so a blank
+/// one would put every build in one directory whose stamp also matches every build — one build serving another's
+/// pixels for the right key. Refusing costs a slower session and cannot be silent.
 /// </para>
 /// <para>
 /// THE RENAME IS THE GUARANTEE, not the delete. A stale tree is moved aside before anything reads or writes it —
@@ -54,9 +56,8 @@ namespace CouchCoop.Mod.Server;
 /// seconds or leave a window in which the old bytes are still servable.
 /// </para>
 /// <para>
-/// RESOLVED ONCE PER PROCESS, at the top of mod init, before anything can touch the disk. It needs no runtime
-/// and no game state — just the install on disk, and Steam only on the slow path — which is exactly why it can
-/// run that early.
+/// RESOLVED ONCE PER PROCESS, at the top of mod init, before anything can touch the disk. It needs no runtime,
+/// no game state and no Steam — just the install on disk — which is exactly why it can run that early.
 /// </para>
 /// </remarks>
 public static class CouchCoopCacheRoot
@@ -78,16 +79,7 @@ public static class CouchCoopCacheRoot
     /// <summary>Dot-prefixed so it is never servable and never mistaken for cached content.</summary>
     internal const string IdentityFileName = ".cache-identity.json";
 
-    /// <summary>
-    /// The branch → version map, at the BASE root. Dot-prefixed for the same reason the stamp is, and for one
-    /// more: every other entry at this level is a version directory, and this must never be mistaken for one.
-    /// </summary>
-    internal const string VersionMapFileName = ".cache-versions.json";
-
     internal const string TrashFolderName = ".trash";
-
-    /// <summary>What a version directory is called when the install could not state its version.</summary>
-    internal const string UnknownVersion = "unknown";
 
     private static readonly JsonSerializerOptions StampJson = new(JsonSerializerDefaults.Web)
     {
@@ -95,11 +87,7 @@ public static class CouchCoopCacheRoot
     };
 
     private static readonly Lazy<Resolution> Current = new(
-        () => ResolveOnce(
-            DefaultBaseRoot(),
-            CouchCoopCacheContent.Resolve(),
-            CouchCoopCacheSlot.Resolve,
-            DefaultLog),
+        () => ResolveOnce(DefaultBaseRoot(), CouchCoopCacheContent.Resolve(), DefaultLog),
         LazyThreadSafetyMode.ExecutionAndPublication);
 
     /// <summary>
@@ -115,19 +103,10 @@ public static class CouchCoopCacheRoot
     public static string? VersionRoot => Current.Value.VersionRoot;
 
     /// <summary>
-    /// What this install says about its own content. Never null; may be entirely unknown. Steam-free, so
-    /// reading it never forces a branch lookup.
+    /// What this install says about its own content. Never null; may be entirely unknown (in which case no
+    /// cache was resolved at all).
     /// </summary>
     public static CouchCoopCacheContent Content => Current.Value.Content;
-
-    /// <summary>
-    /// The branch this process resolved, or null when the fast path meant nobody ever had to ask.
-    /// </summary>
-    /// <remarks>
-    /// Diagnostics only. Nothing may key cached bytes — on disk or on a client — off a value that is present
-    /// or absent depending on which path a start happened to take.
-    /// </remarks>
-    public static CouchCoopCacheSlot? ResolvedSlot => Current.Value.Slot;
 
     /// <summary>
     /// The two cache leaves, named here rather than in each cache, because an EXPLICITLY-rooted cache uses the
@@ -155,83 +134,79 @@ public static class CouchCoopCacheRoot
     internal sealed record Resolution(
         string? VersionRoot,
         CouchCoopCacheContent Content,
-        CouchCoopCacheSlot? Slot,
         ManagedCacheQuota? Quota);
 
     /// <summary>
     /// The whole policy, as a pure-ish function of a base root and what the install says about itself, so tests
     /// drive it without a game.
     /// </summary>
-    /// <param name="resolveSlot">
-    /// The branch, resolved ONLY if the slow path needs it. A <c>Func</c> rather than a value because "did this
-    /// start have to ask Steam?" is a property worth being able to assert — the fast path must never call it.
-    /// </param>
     internal static Resolution ResolveOnce(
         string? baseRoot,
         CouchCoopCacheContent content,
-        Func<CouchCoopCacheSlot> resolveSlot,
         Action<string> log,
         bool sweepLegacy = true)
     {
         if (string.IsNullOrWhiteSpace(baseRoot))
         {
             log("[couch-coop] cache disabled: no writable cache root could be resolved");
-            return new Resolution(null, content, null, null);
+            return new Resolution(null, content, null);
         }
 
-        var versionName = DirectoryNameFor(content.GameVersion);
+        // AN INSTALL THAT WILL NOT SAY WHAT IT IS GETS NO CACHE. Everything here is keyed on the version, so a
+        // blank one would put every build in one directory whose stamp also matches every build — which is not a
+        // miss, it is one build serving another's pixels for the right key. Refusing costs a slower session;
+        // the alternative is a rendering bug with no cause anywhere near the rendering code.
+        // Covers both halves: a version the install never stated, and one that cannot become a safe single path
+        // segment. Neither yields a name, and there is deliberately no fallback bucket to put them in.
+        if (DirectoryNameFor(content.GameVersion) is not { } versionName)
+        {
+            log("[couch-coop] cache disabled: this install reported no usable game version "
+                + $"({Show(content.GameVersion)}) — is release_info.json readable?");
+            return new Resolution(null, content, null);
+        }
+
         var versionRoot = Path.Combine(baseRoot, versionName);
         var trashRoot = Path.Combine(baseRoot, TrashFolderName);
         var stamp = CacheIdentityStamp.For(content);
-        CouchCoopCacheSlot? slot = null;
 
         // Cross-process: the host and every headless seat come up together after a game update and would
-        // otherwise each try to move the same tree aside — and, now, to rewrite the same map. Same named-mutex
-        // shape ManagedCacheQuota uses. The map is a read-modify-write, so it has to happen in here.
+        // otherwise each try to move the same tree aside. Same named-mutex shape ManagedCacheQuota uses.
         using var gate = new CacheGate(baseRoot);
         var held = gate.Enter();
         try
         {
             var existing = TryReadStamp(versionRoot);
-            if (existing is not null && existing.Matches(stamp))
+            if (existing is null || !existing.Matches(stamp))
             {
-                // THE FAST PATH. The directory for this version is here and vouched for, which is the entire
-                // answer — so no branch is resolved, no map is read, and Steam is never asked anything.
-                TouchLastUsed(versionRoot, stamp, log);
-            }
-            else
-            {
-                slot = resolveSlot();
-                var reason = Directory.Exists(versionRoot)
-                    ? (existing is null ? "no readable stamp" : existing.DescribeDifference(stamp))
-                    : null;
-
-                // The map bookkeeping comes FIRST, so the directory this branch is leaving is released even if
-                // the (rarer) purge of a mismatched current directory fails below.
-                ReleaseThePreviousVersion(baseRoot, trashRoot, slot.Branch, versionName, log);
-
-                if (reason is not null)
+                if (Directory.Exists(versionRoot))
                 {
+                    var reason = existing is null ? "no readable stamp" : existing.DescribeDifference(stamp);
                     if (!TryMoveAside(versionRoot, trashRoot, log))
                     {
                         // Refusing the cache entirely is the only safe answer left: the tree that is there
                         // was written for something else, and serving from it is the one forbidden outcome.
                         log($"[couch-coop] cache disabled: stale cache at {versionRoot} could not be moved aside ({reason})");
-                        return new Resolution(null, content, slot, null);
+                        return new Resolution(null, content, null);
                     }
                     log($"[couch-coop] cache purged version={versionName} reason={reason}");
                 }
 
-                SweepOrphans(baseRoot, versionName, trashRoot, log);
-                WriteStamp(versionRoot, stamp, slot, log);
+                WriteStamp(versionRoot, stamp, log);
             }
 
+            DeleteTheRetiredVersionMap(baseRoot);
+
+            // EVERY start, not just one that created a directory. Enforcing the cap costs a directory listing
+            // and some string compares — it reads no stamps — and running it unconditionally is what drains a
+            // machine that arrived with more than two (the branch-named directories the old layout left, which
+            // a cap of two cannot clear in a single pass). In the steady state it finds nothing to do, so a
+            // start whose directory is already stamped still writes nothing.
             EvictBeyondCap(baseRoot, versionRoot, trashRoot, log);
         }
         catch (Exception exception) when (IsIoFailure(exception))
         {
             log($"[couch-coop] cache disabled: {exception.GetType().Name}: {exception.Message}");
-            return new Resolution(null, content, slot, null);
+            return new Resolution(null, content, null);
         }
         finally
         {
@@ -241,146 +216,37 @@ public static class CouchCoopCacheRoot
             }
         }
 
-        // The branch is reported only when this start actually had to resolve one. "branch not consulted" is
-        // the ordinary case and the line says so, rather than printing a stale or invented value.
-        log($"[couch-coop] cache game={Describe(content.GameVersion)} hash={content.MainAssemblyHash} "
-            + $"cache=v{content.CacheVersion}+sp{content.AssetPayloadVersion} root={versionRoot} "
-            + (slot is null
-                ? "(branch not consulted)"
-                : $"branch={Describe(slot.Branch)} source={slot.BranchSource} build={slot.SteamBuildId}"));
+        log($"[couch-coop] cache game={content.GameVersion} hash={content.MainAssemblyHash} "
+            + $"cache=v{content.CacheVersion}+sp{content.AssetPayloadVersion} root={versionRoot}");
 
         StartBackgroundSweep(trashRoot, sweepLegacy ? LegacyRootsFor(baseRoot) : []);
-        return new Resolution(versionRoot, content, slot, ManagedCacheQuota.ForCacheRoot(versionRoot));
+        return new Resolution(versionRoot, content, ManagedCacheQuota.ForCacheRoot(versionRoot));
     }
 
-    private static string Describe(string value) => value.Length == 0 ? "unknown" : value;
-
-    // ---- the branch -> version map -------------------------------------------------------------------------
+    private static string Show(string value) => string.IsNullOrWhiteSpace(value) ? "(none)" : value;
 
     /// <summary>
-    /// Point <paramref name="branch"/> at <paramref name="versionName"/>, and move aside the version it was on.
+    /// REMOVE THIS METHOD AND ITS ONE CALL SITE ON OR AFTER 2026-11-14.
     /// </summary>
     /// <remarks>
-    /// <para>
-    /// This is the whole reason the map exists. A branch that moves to a new version leaves its old directory
-    /// behind, and only the map knows WHICH directory that was — the alternative is an LRU guess that throws
-    /// away whichever directory happened to be touched least recently, which on a two-install machine is
-    /// routinely the wrong one.
-    /// </para>
-    /// <para>
-    /// ONLY IF NO OTHER BRANCH IS ON IT. Two branches legitimately share a version — a beta that has been
-    /// promoted to stable is the same build under two names — and the one that moves away must not delete the
-    /// directory the other is still using.
-    /// </para>
+    /// v0.2.0 shipped a <c>.cache-versions.json</c> recording which version each Steam branch was on, so a
+    /// directory could be released the moment its branch moved. Retiring the lowest version needs no such
+    /// bookkeeping, so the file is now meaningless — and a meaningless file sitting beside the caches is a
+    /// question somebody will eventually have to answer. Deleting the method and its call is the whole removal.
     /// </remarks>
-    private static void ReleaseThePreviousVersion(
-        string baseRoot,
-        string trashRoot,
-        string branch,
-        string versionName,
-        Action<string> log)
-    {
-        var key = MapKeyFor(branch);
-        var map = ReadVersionMap(baseRoot);
-        var previous = map.GetValueOrDefault(key);
-
-        if (previous is not null
-            && !string.Equals(previous, versionName, StringComparison.Ordinal)
-            && !map.Any(entry =>
-                !string.Equals(entry.Key, key, StringComparison.Ordinal)
-                && string.Equals(entry.Value, previous, StringComparison.Ordinal)))
-        {
-            var previousRoot = Path.Combine(baseRoot, previous);
-            if (Directory.Exists(previousRoot) && TryMoveAside(previousRoot, trashRoot, log))
-            {
-                log($"[couch-coop] cache released version={previous} (branch={key} moved to {versionName})");
-            }
-        }
-
-        map[key] = versionName;
-        WriteVersionMap(baseRoot, map, log);
-    }
-
-    /// <summary>The map's key for a branch — never blank, so an unidentified install still gets one slot.</summary>
-    private static string MapKeyFor(string branch) =>
-        string.IsNullOrWhiteSpace(branch) ? UnknownVersion : branch.Trim();
-
-    /// <summary>
-    /// The map, or an EMPTY one when it is absent, unreadable or not the shape we write.
-    /// </summary>
-    /// <remarks>
-    /// Degrading to empty is right for all three: the map is regenerable bookkeeping, not a contract, and the
-    /// cost of having forgotten an entry is a directory the orphan sweep or the cap reclaims instead.
-    /// </remarks>
-    internal static Dictionary<string, string> ReadVersionMap(string baseRoot)
+    private static void DeleteTheRetiredVersionMap(string baseRoot)
     {
         try
         {
-            var path = Path.Combine(baseRoot, VersionMapFileName);
-            if (!File.Exists(path))
+            var path = Path.Combine(baseRoot, ".cache-versions.json");
+            if (File.Exists(path))
             {
-                return new(StringComparer.Ordinal);
+                File.Delete(path);
             }
-
-            var parsed = JsonSerializer.Deserialize<Dictionary<string, string>>(File.ReadAllText(path), StampJson);
-            return parsed is null
-                ? new(StringComparer.Ordinal)
-                : new Dictionary<string, string>(parsed, StringComparer.Ordinal);
-        }
-        catch (Exception exception) when (IsIoFailure(exception) || exception is JsonException)
-        {
-            return new(StringComparer.Ordinal);
-        }
-    }
-
-    private static void WriteVersionMap(string baseRoot, Dictionary<string, string> map, Action<string> log)
-    {
-        try
-        {
-            Directory.CreateDirectory(baseRoot);
-            var path = Path.Combine(baseRoot, VersionMapFileName);
-            var temporary = path + "." + Guid.NewGuid().ToString("N") + ".tmp";
-            File.WriteAllText(temporary, JsonSerializer.Serialize(map, StampJson));
-            File.Move(temporary, path, overwrite: true);
         }
         catch (Exception exception) when (IsIoFailure(exception))
         {
-            // A map we cannot write means a directory we will not be able to release by name later. The cap
-            // still bounds the damage, so this is a log line rather than a refusal.
-            log($"[couch-coop] cache version-map write failed: {exception.GetType().Name}: {exception.Message}");
-        }
-    }
-
-    /// <summary>
-    /// Move aside every version directory that is neither the one in use nor named by the map.
-    /// </summary>
-    /// <remarks>
-    /// <para>
-    /// A directory no map entry names is unreachable: nothing will ever resolve to it, because resolution goes
-    /// by version name and the map is what remembers the versions a branch has been on.
-    /// </para>
-    /// <para>
-    /// It is also how the PREVIOUS layout is reclaimed. Caches used to be named after the branch
-    /// (<c>public/</c>, <c>public-beta/</c>); under version naming those are orphans on the first start after
-    /// the change, and this collects them in one pass rather than leaving gigabytes for the cap to dribble out.
-    /// </para>
-    /// <para>Runs on the slow path only, which is where the map has just been made current.</para>
-    /// </remarks>
-    private static void SweepOrphans(string baseRoot, string versionName, string trashRoot, Action<string> log)
-    {
-        var named = new HashSet<string>(ReadVersionMap(baseRoot).Values, StringComparer.Ordinal) { versionName };
-
-        foreach (var directory in VersionDirectories(baseRoot))
-        {
-            if (named.Contains(Path.GetFileName(directory)))
-            {
-                continue;
-            }
-
-            if (TryMoveAside(directory, trashRoot, log))
-            {
-                log($"[couch-coop] cache reclaimed orphan version={Path.GetFileName(directory)}");
-            }
+            // A leftover file we could not delete costs nothing but the confusion it was meant to save.
         }
     }
 
@@ -388,9 +254,8 @@ public static class CouchCoopCacheRoot
     /// The version directories under <paramref name="baseRoot"/> — everything that is not dot-prefixed.
     /// </summary>
     /// <remarks>
-    /// Dot-prefixed is the rule rather than a list of known names, because the base now holds a dot-prefixed
-    /// FILE (the map) beside <c>.trash/</c>, and anything added later should be excluded by being named that
-    /// way rather than by being remembered here.
+    /// Dot-prefixed is the rule rather than a list of known names, so anything added beside them later is
+    /// excluded by being named that way rather than by being remembered here.
     /// </remarks>
     private static IEnumerable<string> VersionDirectories(string baseRoot)
     {
@@ -413,11 +278,11 @@ public static class CouchCoopCacheRoot
     /// would hide the directory and put it in the class this file reserves for metadata, and <c>.</c>/<c>..</c>
     /// are the traversal the sanitiser exists to stop.
     /// </remarks>
-    internal static string DirectoryNameFor(string version)
+    internal static string? DirectoryNameFor(string version)
     {
         if (string.IsNullOrWhiteSpace(version))
         {
-            return UnknownVersion;
+            return null;
         }
 
         var builder = new StringBuilder(version.Length);
@@ -427,24 +292,92 @@ public static class CouchCoopCacheRoot
         }
 
         var name = builder.ToString();
-        return name.Length == 0 || name.StartsWith('.') || name.All(c => c == '.')
-            ? UnknownVersion
-            : name;
+        return name.Length == 0 || name.StartsWith('.') || name.All(c => c == '.') ? null : name;
     }
 
-    // ---- the directory cap, now a backstop -----------------------------------------------------------------
-
-    internal const int MaxVersionDirectories = 3;
-
     /// <summary>
-    /// Keep this version plus at most two others, the most recently used. Everything else moves to trash.
+    /// Order two version directory names lowest-first: <c>v0.107.1</c> &lt; <c>v0.111.0</c>.
     /// </summary>
     /// <remarks>
-    /// A BACKSTOP, not the policy. The map releases a directory the moment its branch moves off it, which is
-    /// both earlier and better targeted than any LRU rule — but a map that could not be read or written forgets
-    /// entries, and without a cap that would mean gigabytes nothing will ever reclaim. Three because the two
-    /// supported branches plus one in flight during an update is the most a working machine should hold.
-    /// The version in use is never a candidate for eviction whatever its timestamp says.
+    /// <para>
+    /// Numeric per component, because the obvious alternative is wrong in a way that only shows up later:
+    /// compared as text <c>v0.9.0</c> sorts ABOVE <c>v0.10.0</c>, and the cache would start retiring the newer
+    /// build. Leading <c>v</c> is ignored; a missing component reads as 0, so <c>v0.107</c> and <c>v0.107.0</c>
+    /// are the same version.
+    /// </para>
+    /// <para>
+    /// A name that is not a version at all sorts LOWEST, so it is retired first. That is what clears out the
+    /// branch-named directories (<c>public/</c>, <c>public-beta/</c>) left by the layout this replaced.
+    /// </para>
+    /// </remarks>
+    internal static int CompareVersionNames(string left, string right)
+    {
+        var a = VersionComponents(left);
+        var b = VersionComponents(right);
+
+        // Neither parses: fall back to ordinal so the order is at least deterministic.
+        if (a is null && b is null) return string.CompareOrdinal(left, right);
+        if (a is null) return -1;
+        if (b is null) return 1;
+
+        for (var i = 0; i < Math.Max(a.Count, b.Count); i++)
+        {
+            var difference = (i < a.Count ? a[i] : 0).CompareTo(i < b.Count ? b[i] : 0);
+            if (difference != 0)
+            {
+                return difference;
+            }
+        }
+
+        return 0;
+    }
+
+    /// <summary>Whether <paramref name="name"/> is a version this resolver could ever have minted.</summary>
+    internal static bool IsVersionName(string name) => VersionComponents(name) is not null;
+
+    /// <summary>The dot-separated integers in a version name, or null when it is not one.</summary>
+    private static List<int>? VersionComponents(string name)
+    {
+        var trimmed = name.StartsWith('v') || name.StartsWith('V') ? name[1..] : name;
+        if (trimmed.Length == 0)
+        {
+            return null;
+        }
+
+        var components = new List<int>();
+        foreach (var part in trimmed.Split('.'))
+        {
+            if (!int.TryParse(part, System.Globalization.NumberStyles.None, System.Globalization.CultureInfo.InvariantCulture, out var value))
+            {
+                return null;
+            }
+            components.Add(value);
+        }
+
+        return components;
+    }
+
+    // ---- the directory cap -----------------------------------------------------------------------------
+
+    /// <summary>
+    /// How many version directories survive. Two is the axis a player moves along: the branch they are on and
+    /// the one they switch to.
+    /// </summary>
+    internal const int MaxVersionDirectories = 2;
+
+    /// <summary>
+    /// Keep at most <see cref="MaxVersionDirectories"/> directories, retiring the LOWEST VERSION first.
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// THE WHOLE GARBAGE-COLLECTION POLICY, and it needs nothing but the directory names — no map, no
+    /// timestamps, no branch. The lowest version is the one a player is least likely to go back to, and an
+    /// older build that is genuinely still in use simply rebuilds its cache when it is next started.
+    /// </para>
+    /// <para>
+    /// The version in use is never a candidate however it sorts — evicting it would delete the cache the very
+    /// next line is about to fill.
+    /// </para>
     /// </remarks>
     private static void EvictBeyondCap(string baseRoot, string versionRoot, string trashRoot, Action<string> log)
     {
@@ -455,11 +388,23 @@ public static class CouchCoopCacheRoot
 
         var others = VersionDirectories(baseRoot)
             .Where(path => !PathsEqual(path, versionRoot))
-            .Select(path => (Path: path, LastUsed: TryReadStamp(path)?.LastUsedUtcTicks ?? 0L))
-            .OrderByDescending(entry => entry.LastUsed)
             .ToList();
 
-        foreach (var (path, _) in others.Skip(MaxVersionDirectories - 1))
+        // A name that is not a version cannot be resolved to by anything, ever — nothing computes it. So it is
+        // not a cache that happens to be old, it is garbage, and it must not occupy one of the two slots. This
+        // is what clears the branch-named directories (`public/`, `public-beta/`) the previous layout left.
+        foreach (var path in others.Where(path => !IsVersionName(Path.GetFileName(path))).ToList())
+        {
+            if (TryMoveAside(path, trashRoot, log))
+            {
+                log($"[couch-coop] cache reclaimed unreachable directory={Path.GetFileName(path)}");
+            }
+            others.Remove(path);
+        }
+
+        foreach (var path in others
+            .OrderByDescending(path => Path.GetFileName(path), Comparer<string>.Create(CompareVersionNames))
+            .Skip(MaxVersionDirectories - 1))
         {
             if (TryMoveAside(path, trashRoot, log))
             {
@@ -485,31 +430,16 @@ public static class CouchCoopCacheRoot
         }
     }
 
-    /// <summary>
-    /// Write the stamp. <paramref name="slot"/> is the branch this start resolved, or null on the fast path —
-    /// it is RECORDED, never compared, so a refresh that never asked keeps whatever the last one wrote.
-    /// </summary>
-    private static void WriteStamp(
-        string versionRoot,
-        CacheIdentityStamp stamp,
-        CouchCoopCacheSlot? slot,
-        Action<string> log)
+    private static void WriteStamp(string versionRoot, CacheIdentityStamp stamp, Action<string> log)
     {
         try
         {
             Directory.CreateDirectory(versionRoot);
             var path = Path.Combine(versionRoot, IdentityFileName);
-            var labelled = slot is null
-                ? stamp with { LastUsedUtcTicks = DateTime.UtcNow.Ticks }
-                : stamp with
-                {
-                    LastUsedUtcTicks = DateTime.UtcNow.Ticks,
-                    Branch = slot.Branch,
-                    BranchSource = slot.BranchSource,
-                    SteamBuildId = slot.SteamBuildId,
-                };
             var temporary = path + "." + Guid.NewGuid().ToString("N") + ".tmp";
-            File.WriteAllText(temporary, JsonSerializer.Serialize(labelled, StampJson));
+            File.WriteAllText(
+                temporary,
+                JsonSerializer.Serialize(stamp with { StampedUtcTicks = DateTime.UtcNow.Ticks }, StampJson));
             File.Move(temporary, path, overwrite: true);
         }
         catch (Exception exception) when (IsIoFailure(exception))
@@ -518,31 +448,6 @@ public static class CouchCoopCacheRoot
             // never wrong — so it is a log line, not a refusal.
             log($"[couch-coop] cache stamp write failed: {exception.GetType().Name}: {exception.Message}");
         }
-    }
-
-    /// <summary>
-    /// Refresh the stamp's <c>lastUsedUtcTicks</c> so the cap's LRU ordering stays honest.
-    /// </summary>
-    /// <remarks>
-    /// Deliberately carries NO slot: this is the fast path, where no branch was resolved. Passing null preserves
-    /// whatever labels the directory already holds rather than blanking them — the stamp keeps its record of the
-    /// last start that did know.
-    /// </remarks>
-    private static void TouchLastUsed(string versionRoot, CacheIdentityStamp stamp, Action<string> log)
-    {
-        var existing = TryReadStamp(versionRoot);
-        WriteStamp(
-            versionRoot,
-            existing is null
-                ? stamp
-                : stamp with
-                {
-                    Branch = existing.Branch,
-                    BranchSource = existing.BranchSource,
-                    SteamBuildId = existing.SteamBuildId,
-                },
-            slot: null,
-            log);
     }
 
     // ---- moving aside and sweeping ------------------------------------------------------------------------
@@ -768,11 +673,11 @@ public static class CouchCoopCacheRoot
 /// layout, or a client that may or may not be running — so the ordinary start can compare all four and be done.
 /// </para>
 /// <para>
-/// WHAT IS DELIBERATELY NOT HERE: the branch, how it was learned, and the Steam build id. Those are labels for
-/// a build, not statements about its content, and each needs an answer from outside the install. They live on
-/// <see cref="CouchCoopCacheSlot"/>, are recorded in the stamp for diagnostics, and are compared by nothing.
-/// The Steam build id is the one real loss — it would catch an asset-only Steam rebuild that kept both the
-/// version string and the assembly hash — and it is not worth an appmanifest parse on every single start.
+/// WHAT IS DELIBERATELY NOT HERE: the Steam branch and build id. Neither is a statement about the build's
+/// CONTENT, both need an answer from outside the install, and the version already separates the builds — so
+/// nothing in the cache ever asks for them. The build id is the one real loss (it would catch an asset-only
+/// Steam rebuild that kept both the version string and the assembly hash) and it is not worth making every
+/// start depend on Steam.
 /// </para>
 /// </remarks>
 public sealed record CouchCoopCacheContent(
@@ -794,76 +699,26 @@ public sealed record CouchCoopCacheContent(
 }
 
 /// <summary>
-/// WHICH BRANCH THIS INSTALL IS — the label, used for one job only: naming a row in the branch → version map.
-/// </summary>
-/// <remarks>
-/// <para>
-/// Resolving this is the expensive, circumstantial half of the identity: a Steamworks reflection probe that
-/// needs a running Steam client, then a walk to the install manifest. It is therefore resolved LAZILY, only
-/// when <see cref="CouchCoopCacheRoot.ResolveOnce"/> has to write the map — i.e. when this install has moved to
-/// a version it has no directory for.
-/// </para>
-/// <para>
-/// A wrong answer here cannot serve wrong bytes. The worst it does is release the wrong row of the map, which
-/// leaves a directory for the cap to reclaim.
-/// </para>
-/// </remarks>
-public sealed record CouchCoopCacheSlot(string Branch, string BranchSource, int SteamBuildId)
-{
-    /// <summary>
-    /// The branch from spirectl's ladder, falling back to the spirectl API LANE when nothing could identify one
-    /// — a copied install launched outside a Steam library.
-    /// </summary>
-    /// <remarks>
-    /// The lane is a good fallback KEY specifically because of what it is: a compile-time property of the bridge
-    /// (<c>GameApi/V107</c>, <c>GameApi/V111</c>), so it is coarse and does not move with a patch. A key that
-    /// changed every time the game did would never match the row it wrote last time, and the map would grow a
-    /// dead entry per update instead of releasing the directory it names.
-    /// </remarks>
-    public static CouchCoopCacheSlot Resolve()
-    {
-        var build = Sts2GameBuildIdentity.Resolve();
-        var branch = build.HasBranch ? build.Branch : BridgeBuildInfo.Sts2ApiLane;
-        var source = build.HasBranch ? build.BranchSource : (branch.Length > 0 ? "api-lane" : "unknown");
-        return new CouchCoopCacheSlot(branch, source, build.BuildId);
-    }
-}
-
-/// <summary>
 /// The on-disk stamp: what a version directory says it was written for.
 /// </summary>
 /// <remarks>
-/// <para>
-/// Only the four <see cref="CouchCoopCacheContent"/> fields take part in the staleness comparison. The rest is
-/// RECORDED FOR A READER — <see cref="SteamBuildId"/>, <see cref="Branch"/> and <see cref="BranchSource"/> tell
-/// whoever opens this file which install last wrote here and how it was identified, and
-/// <see cref="LastUsedUtcTicks"/> is what orders the cap's LRU.
-/// </para>
-/// <para>
-/// The labels are written only by a start that actually resolved them, so a run of fast-path starts leaves the
-/// last known answer in place rather than blanking it. That is also why they cannot be compared: they would be
-/// present or absent depending on which path a start happened to take.
-/// </para>
+/// The four <see cref="CouchCoopCacheContent"/> fields are the comparison; <see cref="StampedUtcTicks"/> is for
+/// whoever opens the file by hand. Written ONCE, when the directory is created — a start that finds its
+/// directory already stamped writes nothing at all.
 /// </remarks>
 internal sealed record CacheIdentityStamp(
     int CacheVersion,
     int AssetPayloadVersion,
     string GameVersion,
     int MainAssemblyHash,
-    int SteamBuildId,
-    string Branch,
-    string BranchSource,
-    long LastUsedUtcTicks)
+    long StampedUtcTicks)
 {
     public static CacheIdentityStamp For(CouchCoopCacheContent content) => new(
         content.CacheVersion,
         content.AssetPayloadVersion,
         content.GameVersion,
         content.MainAssemblyHash,
-        SteamBuildId: 0,
-        Branch: string.Empty,
-        BranchSource: string.Empty,
-        LastUsedUtcTicks: 0);
+        StampedUtcTicks: 0);
 
     public bool Matches(CacheIdentityStamp other) =>
         CacheVersion == other.CacheVersion
@@ -872,11 +727,6 @@ internal sealed record CacheIdentityStamp(
         && string.Equals(GameVersion, other.GameVersion, StringComparison.Ordinal);
 
     /// <summary>Which field moved, for the one log line a purge emits.</summary>
-    /// <remarks>
-    /// Only the compared fields can appear here. <see cref="SteamBuildId"/>, <see cref="Branch"/> and
-    /// <see cref="BranchSource"/> are recorded for whoever reads this file by hand and take no part in the
-    /// decision, so "no difference" is a real answer when only they moved.
-    /// </remarks>
     public string DescribeDifference(CacheIdentityStamp other)
     {
         if (CacheVersion != other.CacheVersion) return $"cacheVersion {CacheVersion}→{other.CacheVersion}";

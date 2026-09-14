@@ -33,9 +33,9 @@ This map records current contracts, not retired implementation alternatives.
 - **Static backgrounds and cache:** combat URLs are `/bg/{id}?layers={digest}&v=1`; event and room backgrounds
   use `/bg/events/{id}?v=1` and `/bg/rooms/{id}?frame={frame}&v=1`. Their codec is named by `Content-Type`.
   Host caches live at `user://couch-coop/cache/<version>/` — one directory per GAME VERSION, each stamped with
-  the build and cache generations that wrote it and emptied when either moves. A `.cache-versions.json` beside
-  them records which version each branch is on, so the directory a branch leaves is released by name; the branch
-  is resolved only when that map has to change, never on an ordinary start (`CouchCoopCacheRoot`). `SpirectlAssetBinaryCache.SchemaVersion` is a token component, not a path, and half of
+  the build and cache generations that wrote it and emptied when either moves. At most two survive; the lowest
+  version is retired, and a name that is not a version is reclaimed outright. Nothing consults the Steam branch,
+  and an install that cannot state its version runs uncached rather than sharing one (`CouchCoopCacheRoot`). `SpirectlAssetBinaryCache.SchemaVersion` is a token component, not a path, and half of
   it is spirectl's asset-payload version; do not hand-bump that half.
 - **Repros:** the browser flight recorder writes `repro/1` NDJSON. It records raw wire frames plus viewer input;
   `scripts/analyze-repro.mjs` and `scripts/replay-repro.mjs` are its consumers.
