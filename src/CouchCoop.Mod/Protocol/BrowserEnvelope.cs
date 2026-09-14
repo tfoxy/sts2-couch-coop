@@ -71,9 +71,8 @@ public sealed record BrowserEnvelope(
     // Null (omitted by BrowserJson) when the host could not enumerate — a Godot-less harness, an older host — and
     // the client then keeps its own compiled-in prefetch list, which is what shipped before this existed.
     BrowserAtlasManifestDto? AtlasManifest = null,
-    // Current hosts accept absolute scroll offsets and element-addressed reward claims.
+    // Current hosts accept absolute scroll offsets.
     bool ScrollAction = true,
-    bool RewardAction = true,
     string? ConnectionAttemptId = null);
 
 // The wire shape Stage B also consumes: { "scenePath": "res://scenes/backgrounds/<id>/<id>_background.tscn",

@@ -68,8 +68,7 @@ const MAIN_MENU_SESSION = {
   players: [],
   screen: { kind: "menu", type: "Menu", title: "Menu", mirrorMode: "main-menu" },
   hostName: "host",
-  scrollAction: true,
-  rewardAction: true
+  scrollAction: true
 };
 
 const SCENE_DELTA = {

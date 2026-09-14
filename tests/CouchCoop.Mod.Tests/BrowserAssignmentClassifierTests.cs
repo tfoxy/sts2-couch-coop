@@ -113,7 +113,7 @@ internal static class BrowserAssignmentClassifierTests
         })
         {
             var produced = MirrorMode(state);
-            var json = "{\"type\":\"session\",\"session\":{\"name\":null,\"status\":\"unassigned\",\"joined\":false,\"playerId\":null,\"connectionCount\":0},\"players\":[],\"screen\":{\"kind\":\"lobby\",\"type\":null,\"title\":null,\"mirrorMode\":\"" + produced + "\"},\"assetCacheToken\":\"cache\",\"hostName\":\"host\",\"scrollAction\":true,\"rewardAction\":true}";
+            var json = "{\"type\":\"session\",\"session\":{\"name\":null,\"status\":\"unassigned\",\"joined\":false,\"playerId\":null,\"connectionCount\":0},\"players\":[],\"screen\":{\"kind\":\"lobby\",\"type\":null,\"title\":null,\"mirrorMode\":\"" + produced + "\"},\"assetCacheToken\":\"cache\",\"hostName\":\"host\",\"scrollAction\":true}";
             var parsed = SessionEnvelope.Parse(System.Text.Encoding.UTF8.GetBytes(json));
             Expect(parsed?.Screen?.MirrorMode == produced,
                 $"the wire allowlist accepts the kind the classifier produces ({label} → {produced})");

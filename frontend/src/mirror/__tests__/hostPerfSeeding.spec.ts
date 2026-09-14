@@ -187,9 +187,7 @@ describe("MirrorApp — Host performance seeding", () => {
       ],
       screen: { kind: "run", type: "Run", title: "Run", mirrorMode: "mp-run" },
       hostName: "host",
-      scrollAction: true,
-      rewardAction: true,
-      ...over
+      scrollAction: true,      ...over
     };
   }
 

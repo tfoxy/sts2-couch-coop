@@ -44,9 +44,7 @@ function session(over: Partial<BrowserSessionEnvelope> = {}): BrowserSessionEnve
     players: [],
     screen: { kind: "lobby", type: "lobby", title: "Lobby", mirrorMode: "mp-character-select" },
     hostName: "host",
-    scrollAction: true,
-    rewardAction: true,
-    ...over
+    scrollAction: true,    ...over
   };
 }
 

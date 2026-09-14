@@ -76,9 +76,7 @@ function sessionMessage(over: Record<string, unknown> = {}) {
     players: [HOST_ROW, SEAT_ROW],
     screen: { kind: "run", type: "Run", title: "Run", mirrorMode: "mp-run" },
     hostName: "host",
-    scrollAction: true,
-    rewardAction: true,
-    ...over
+    scrollAction: true,    ...over
   };
 }
 

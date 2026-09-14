@@ -40,7 +40,6 @@ internal static class EnvelopeTests
             ["joinRejection"] = null,
             ["refreshRate"] = 24,
             ["scrollAction"] = true,
-            ["rewardAction"] = true,
             ["assetCacheToken"] = "cache",
             ["hostName"] = "host",
         });
@@ -98,7 +97,6 @@ internal static class EnvelopeTests
                 ["session"] = CurrentAssignment(),
                 ["players"] = new List<object?>(),
                 ["scrollAction"] = true,
-                ["rewardAction"] = true,
                 ["assetCacheToken"] = "cache",
                 ["hostName"] = "host",
                 ["screen"] = new Dictionary<string, object?> { ["kind"] = "lobby", ["type"] = null, ["title"] = null, ["mirrorMode"] = kind },
@@ -113,7 +111,6 @@ internal static class EnvelopeTests
             ["session"] = CurrentAssignment(),
             ["players"] = new List<object?>(),
             ["scrollAction"] = true,
-            ["rewardAction"] = true,
             ["assetCacheToken"] = "cache",
             ["hostName"] = "host",
             ["screen"] = new Dictionary<string, object?> { ["kind"] = "run", ["type"] = null, ["title"] = null, ["mirrorMode"] = "bogus" },
@@ -126,7 +123,6 @@ internal static class EnvelopeTests
             ["session"] = CurrentAssignment(),
             ["players"] = new List<object?>(),
             ["scrollAction"] = true,
-            ["rewardAction"] = true,
             ["assetCacheToken"] = "cache",
             ["hostName"] = "host",
             ["screen"] = new Dictionary<string, object?> { ["kind"] = "lobby", ["type"] = null, ["title"] = null, ["mirrorMode"] = "sp-character-selection" },
@@ -139,7 +135,6 @@ internal static class EnvelopeTests
             ["session"] = CurrentAssignment(),
             ["players"] = new List<object?>(),
             ["scrollAction"] = true,
-            ["rewardAction"] = true,
             ["assetCacheToken"] = "cache",
             ["hostName"] = "host",
             ["screen"] = new Dictionary<string, object?> { ["title"] = "X" },
@@ -160,32 +155,29 @@ internal static class EnvelopeTests
             ["type"] = "session",
             ["session"] = CurrentAssignment(),
             ["players"] = new List<object?>(),
-            ["rewardAction"] = true,
             ["assetCacheToken"] = "cache",
             ["hostName"] = "host",
         });
         Check.That(SessionEnvelope.Parse(missingSemanticSupport) is null, "missing semantic-action support rejects a current session");
 
-        var falseRewardAction = TestFixtures.J(new Dictionary<string, object?>
+        var falseScrollAction = TestFixtures.J(new Dictionary<string, object?>
         {
             ["type"] = "session", ["session"] = CurrentAssignment(), ["players"] = new List<object?>(),
             ["screen"] = CurrentScreen(), ["assetCacheToken"] = "cache", ["hostName"] = "host",
-            ["scrollAction"] = true, ["rewardAction"] = false,
+            ["scrollAction"] = false,
         });
-        Check.That(SessionEnvelope.Parse(falseRewardAction) is null, "false rewardAction rejects a current session");
+        Check.That(SessionEnvelope.Parse(falseScrollAction) is null, "false scrollAction rejects a current session");
 
         var missingAssetCacheToken = TestFixtures.J(new Dictionary<string, object?>
         {
             ["type"] = "session", ["session"] = CurrentAssignment(), ["players"] = new List<object?>(),
-            ["screen"] = CurrentScreen(), ["hostName"] = "host", ["scrollAction"] = true, ["rewardAction"] = true,
-        });
+            ["screen"] = CurrentScreen(), ["hostName"] = "host", ["scrollAction"] = true,        });
         Check.That(SessionEnvelope.Parse(missingAssetCacheToken) is null, "missing assetCacheToken rejects a current session");
 
         var missingHostName = TestFixtures.J(new Dictionary<string, object?>
         {
             ["type"] = "session", ["session"] = CurrentAssignment(), ["players"] = new List<object?>(),
-            ["screen"] = CurrentScreen(), ["assetCacheToken"] = "cache", ["scrollAction"] = true, ["rewardAction"] = true,
-        });
+            ["screen"] = CurrentScreen(), ["assetCacheToken"] = "cache", ["scrollAction"] = true,        });
         Check.That(SessionEnvelope.Parse(missingHostName) is null, "missing hostName rejects a current session");
 
         var malformedSeat = TestFixtures.J(new Dictionary<string, object?>
@@ -193,7 +185,6 @@ internal static class EnvelopeTests
             ["type"] = "session",
             ["session"] = CurrentAssignment(),
             ["scrollAction"] = true,
-            ["rewardAction"] = true,
             ["assetCacheToken"] = "cache",
             ["hostName"] = "host",
             ["screen"] = CurrentScreen(),
@@ -217,7 +208,6 @@ internal static class EnvelopeTests
             ["players"] = new List<object?>(),
             ["screen"] = CurrentScreen(),
             ["scrollAction"] = true,
-            ["rewardAction"] = true,
             ["assetCacheToken"] = "cache",
             ["hostName"] = "host",
         });
@@ -229,7 +219,6 @@ internal static class EnvelopeTests
             ["session"] = CurrentAssignment(),
             ["screen"] = CurrentScreen(),
             ["scrollAction"] = true,
-            ["rewardAction"] = true,
             ["assetCacheToken"] = "cache",
             ["hostName"] = "host",
             ["players"] = new List<object?>

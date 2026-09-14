@@ -78,9 +78,7 @@ function currentSession(overrides: Record<string, unknown> = {}) {
     players: players ?? [basePlayer],
     screen: { ...baseScreen, ...(screen as Record<string, unknown> | undefined) },
     hostName: "host",
-    scrollAction: true,
-    rewardAction: true,
-    ...rest
+    scrollAction: true,    ...rest
   };
 }
 
