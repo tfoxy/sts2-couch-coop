@@ -47,21 +47,30 @@ public static class CouchCoopAssetVersion
         $"{(hasQuery ? '&' : '?')}{QueryParameter}={Uri.EscapeDataString(Token)}";
 
     private static string Compose() => AssetCacheToken.Compose(
-        DescribeGameBuild(CouchCoopCacheRoot.Identity),
+        DescribeGameBuild(CouchCoopCacheRoot.Content),
         ModAssemblyVersion,
         SpirectlAssetBinaryCache.SchemaVersion);
 
     /// <summary>
-    /// The game build, as one token component: version, content hash, Steam build id and branch.
+    /// The game build, as one token component: the version and the content hash.
     /// </summary>
     /// <remarks>
-    /// All four, because each covers a gap the others leave. The version alone repeats across a rebuild that
-    /// keeps its string; the hash alone is 0 when <c>release_info.json</c> is unreadable; the build id alone is 0
-    /// off Steam; and the branch alone is what two branches sharing a version would differ by. Any one of them
-    /// moving must move the token, so they are concatenated rather than chosen between.
+    /// <para>
+    /// EXACTLY THE FIELDS THE HOST'S OWN CACHE COMPARES (<see cref="CouchCoopCacheContent"/>), so the directory
+    /// the host serves from and the URL a client caches under key on one fact rather than two that can disagree.
+    /// Both are read from the install's <c>release_info.json</c>: the version alone repeats across a rebuild
+    /// that keeps its string, the hash alone is 0 when that file is unreadable, so both ride.
+    /// </para>
+    /// <para>
+    /// The Steam build id and the branch USED TO BE HERE and were removed, for a reason beyond tidiness: the
+    /// branch is now resolved only when the host's cache layout actually needs it, so a token that contained it
+    /// would come out different depending on whether this host had taken the fast or the slow path — the same
+    /// build, two tokens, and every client re-downloading for nothing. They are labels for a build, not
+    /// statements about its content, and this is a content key.
+    /// </para>
     /// </remarks>
-    internal static string DescribeGameBuild(CouchCoopCacheIdentity identity) =>
-        $"{identity.GameVersion}/{identity.MainAssemblyHash}/{identity.SteamBuildId}/{identity.Branch}";
+    internal static string DescribeGameBuild(CouchCoopCacheContent content) =>
+        $"{content.GameVersion}/{content.MainAssemblyHash}";
 
     /// <summary>
     /// The mod assembly's version. The mod csproj sets no explicit version, so this resolves to the SDK default

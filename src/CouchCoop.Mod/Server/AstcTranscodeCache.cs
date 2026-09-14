@@ -42,14 +42,14 @@ public sealed class AstcTranscodeCache
     {
         // An explicit root — the constructor argument, or the env override the sidecar batch and replay proxy
         // are pointed at with `--astc-cache` — is used VERBATIM. Re-scoping it would point this route at files
-        // those tools never wrote. Only the default path goes through the branch-scoped, purge-on-stale root.
+        // those tools never wrote. Only the default path goes through the version-scoped, purge-on-stale root.
         var configured = string.IsNullOrWhiteSpace(root)
             ? Environment.GetEnvironmentVariable(RootEnvironmentVariable)
             : root;
-        // The default root is the BRANCH directory itself: this cache owns two leaves under it (`astc/` and
+        // The default root is the VERSION directory itself: this cache owns two leaves under it (`astc/` and
         // `pending/`) rather than one, so it hangs them beside `assets/` and `geoclips/` instead of nesting.
         var explicitRoot = !string.IsNullOrWhiteSpace(configured);
-        var resolved = explicitRoot ? configured : CouchCoopCacheRoot.BranchRoot;
+        var resolved = explicitRoot ? configured : CouchCoopCacheRoot.VersionRoot;
         if (string.IsNullOrWhiteSpace(resolved))
         {
             return;

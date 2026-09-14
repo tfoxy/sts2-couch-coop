@@ -63,7 +63,7 @@ internal static class AssetCacheTokenEnvelopeTests
         Assert(envelope.AssetCacheToken is not null, "session envelope carries an assetCacheToken");
 
         var expected = AssetCacheToken.Compose(
-            CouchCoopAssetVersion.DescribeGameBuild(CouchCoopCacheRoot.Identity),
+            CouchCoopAssetVersion.DescribeGameBuild(CouchCoopCacheRoot.Content),
             ModAssemblyVersion(),
             SpirectlAssetBinaryCache.SchemaVersion);
         Assert(envelope.AssetCacheToken == expected, "token == Compose(gameBuild, modVersion, assetSchema)");
@@ -102,39 +102,40 @@ internal static class AssetCacheTokenEnvelopeTests
             "a path-only route opens its query");
     }
 
-    // Each part of the build identity has to be able to move the token on its own: a rebuild can keep the version
-    // string while moving the content hash, a Steam build id moves with no version change at all, and two
-    // branches can share a version while rendering different pixels.
+    // THE TOKEN IS A CONTENT KEY, and it keys on exactly what the host's own cache directory compares
+    // (CouchCoopCacheContent). Both halves have to be able to move it on their own: a rebuild can keep the
+    // version string while moving the content hash, and the hash is 0 when release_info.json is unreadable.
+    //
+    // The branch and the Steam build id USED TO BE IN HERE. They are labels for a build rather than statements
+    // about its content — and, concretely, the host now resolves the branch only when its cache layout needs it
+    // (see CouchCoopCacheRoot), so a token carrying one would come out different depending on whether this host
+    // had taken the fast or the slow path. Same build, two tokens, every client re-downloading for nothing.
     private static void GameBuildFlowsIntoToken()
     {
-        var baseline = new CouchCoopCacheIdentity(
-            Branch: "public",
-            BranchSource: "steamworks",
-            SteamBuildId: 23811903,
+        var baseline = new CouchCoopCacheContent(
             GameVersion: "v0.107.1",
             MainAssemblyHash: 1692500715,
             CacheVersion: CouchCoopCacheRoot.CacheVersion,
             AssetPayloadVersion: 1);
 
-        var moved = new (string Name, CouchCoopCacheIdentity Identity)[]
+        var moved = new (string Name, CouchCoopCacheContent Content)[]
         {
             ("gameVersion", baseline with { GameVersion = "v0.107.2" }),
             ("mainAssemblyHash", baseline with { MainAssemblyHash = 999 }),
-            ("steamBuildId", baseline with { SteamBuildId = 24000000 }),
-            ("branch", baseline with { Branch = "public-beta" }),
         };
 
         var reference = Token(baseline);
-        foreach (var (name, identity) in moved)
+        foreach (var (name, content) in moved)
         {
-            Assert(Token(identity) != reference, $"a moved {name} yields a different token");
+            Assert(Token(content) != reference, $"a moved {name} yields a different token");
         }
 
-        // And how the branch was LEARNED is not part of the answer — a start where Steam was down reports the
-        // same branch through the install manifest, and must not invalidate every phone's cache for it.
+        // The token is composed from the CONTENT record, so the labels are not merely equal-by-luck — there is
+        // nowhere to put them. Pin the shape that guarantees it: two fields, and the same string for two hosts
+        // whose branch and build id differ.
         Assert(
-            Token(baseline with { BranchSource = "appmanifest" }) == reference,
-            "the branch SOURCE does not move the token");
+            CouchCoopAssetVersion.DescribeGameBuild(baseline) == "v0.107.1/1692500715",
+            "the build component is version/hash and nothing else");
     }
 
     // The bug this replaced: SpirectlRuntimeFacade.GetCapabilities() hardcodes GameVersion to the empty string,
@@ -150,8 +151,8 @@ internal static class AssetCacheTokenEnvelopeTests
         Assert(a.AssetCacheToken == b.AssetCacheToken, "the runtime's reported version does not feed the token");
     }
 
-    private static string Token(CouchCoopCacheIdentity identity) => AssetCacheToken.Compose(
-        CouchCoopAssetVersion.DescribeGameBuild(identity),
+    private static string Token(CouchCoopCacheContent content) => AssetCacheToken.Compose(
+        CouchCoopAssetVersion.DescribeGameBuild(content),
         ModAssemblyVersion(),
         SpirectlAssetBinaryCache.SchemaVersion);
 

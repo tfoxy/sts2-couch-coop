@@ -650,7 +650,7 @@ public static class CouchCoopMod
     {
         CouchCoop.Mod.Connections.ConnectionRegistry.HostGameVersion =
             string.IsNullOrWhiteSpace(runtime.Capabilities.GameVersion)
-                ? CouchCoopCacheRoot.Identity.GameVersion
+                ? CouchCoopCacheRoot.Content.GameVersion
                 : runtime.Capabilities.GameVersion;
         CouchCoop.Mod.Connections.ConnectionRegistry.HostLogPath = Godot.ProjectSettings.GlobalizePath("user://logs/godot.log");
         try
