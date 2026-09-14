@@ -12,6 +12,7 @@ import {
 import type { MirrorActionMessage } from "@/mirror/mapNodeTap";
 import { publishAtlasManifest } from "@/mirror/imagePrefetch";
 import { reproRecorder } from "@/mirror/reproRecorder";
+import { publishAssetVersion } from "@/join/assetVersion";
 import { hostWsUrl } from "@/join/hostBase";
 
 // Standalone client for the live-tree MIRROR. Opens its own `/ws` connection and renders off `scene-delta`
@@ -630,6 +631,11 @@ export function connectMirrorClient(options: {
         if (envelope.type === "session") {
           parsed = envelope;
           client.session = envelope;
+          // The host's game build, latched for the two clients of it: every asset URL this page mints from
+          // here on (`?b=` — @/join/assetVersion), and the service worker's durable /res/ store, which drops
+          // the entries stranded under the previous build's URLs. Both from the one envelope field, so the
+          // page and the worker can never disagree about which build they are caching for.
+          publishAssetVersion(envelope.assetCacheToken ?? null);
           publishAssetCacheToken(envelope.assetCacheToken ?? null);
           // The atlas pages this host's build actually ships. Latched module-side, where the idle prefetch
           // reads it: on a first connect the prefetch chain is already walking by the time this lands, and it

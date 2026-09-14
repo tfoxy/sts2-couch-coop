@@ -16,7 +16,14 @@ using Spirectl.Sts2.Embedding;
 
 // WS-U (M3): the `session` envelope carries the client asset-cache invalidation token, composed from the host's
 // GAME BUILD + the mod assembly version + the server asset schema. The native client names its disk-cache
-// namespace after it; the browser's service worker drops its durable /res/ store when it moves.
+// namespace after it; the BROWSER puts it in the url of every asset it fetches (`?b=`) and drops its durable
+// service-worker /res/ store when it moves.
+//
+// THE URL IS THE INVALIDATOR, and that is what the /bg/ case here exists for. Every asset answer carries
+// `Cache-Control: public, max-age=31536000, immutable`, which is true of the bytes and not of the url: a client
+// that joined a public-beta host holds that build's atlas under a url THIS build also mints, for a year. A cache
+// wipe cannot reach that (the browser's HTTP cache is not the service worker's, and on the plain-HTTP LAN path
+// there is no worker at all) — a url that names the build needs no wipe.
 //
 // The game-build half comes from CouchCoopCacheRoot — the same identity the host keys its OWN on-disk cache on —
 // and deliberately NOT from the runtime's reported capabilities, which is what the last case here pins. The
@@ -35,6 +42,7 @@ internal static class AssetCacheTokenEnvelopeTests
         EnvelopeCarriesComposedToken();
         GameBuildFlowsIntoToken();
         TheRuntimesReportedVersionIsNotTheSource();
+        AssetUrlsTheHostMintsCarryTheSameToken();
     }
 
     private static void ArmBaselineFastPath()
@@ -55,11 +63,43 @@ internal static class AssetCacheTokenEnvelopeTests
         Assert(envelope.AssetCacheToken is not null, "session envelope carries an assetCacheToken");
 
         var expected = AssetCacheToken.Compose(
-            BrowserStateEnvelopeFactory.DescribeGameBuild(CouchCoopCacheRoot.Identity),
+            CouchCoopAssetVersion.DescribeGameBuild(CouchCoopCacheRoot.Identity),
             ModAssemblyVersion(),
             SpirectlAssetBinaryCache.SchemaVersion);
         Assert(envelope.AssetCacheToken == expected, "token == Compose(gameBuild, modVersion, assetSchema)");
+        Assert(envelope.AssetCacheToken == CouchCoopAssetVersion.Token, "the envelope publishes THE host token");
         Assert(envelope.AssetCacheToken!.StartsWith("cc-", StringComparison.Ordinal), "token has the cc- prefix");
+    }
+
+    // The other consumer of the same token: the /bg/ urls this host mints itself. A background is rendered from
+    // the game's own scenes, so the same id and the same layer digest paint different pixels on a different
+    // build — and the route promises `immutable` for a year. ONE token for both, because a client that latched
+    // the envelope's value and a url that named a different build would disagree about which bytes are current.
+    private static void AssetUrlsTheHostMintsCarryTheSameToken()
+    {
+        var token = CouchCoopAssetVersion.Token;
+        var suffix = $"&b={Uri.EscapeDataString(token)}";
+
+        var combat = CouchCoopStaticBackgroundProvider.BuildImageUrl("cultist", "d19e5f");
+        Assert(combat.EndsWith(suffix, StringComparison.Ordinal), $"combat /bg/ url carries the build: {combat}");
+        Assert(combat.Contains("layers=d19e5f&", StringComparison.Ordinal), "…without disturbing the layers digest");
+        Assert(combat.Contains("v=", StringComparison.Ordinal), "…or the url grammar's own version");
+
+        // Digest-less (deterministic) and event variants take it too — every shape the minter has.
+        Assert(
+            CouchCoopStaticBackgroundProvider.BuildImageUrl("cultist", null).EndsWith(suffix, StringComparison.Ordinal),
+            "digest-less /bg/ url carries the build");
+        Assert(
+            CouchCoopStaticBackgroundProvider
+                .BuildImageUrl(StaticBackgroundFamily.Events, "neow", null, "0.0,0.0,1.000")
+                .EndsWith(suffix, StringComparison.Ordinal),
+            "event /bg/ url carries the build");
+
+        // `b`, not `v`: the /bg/ grammar already spends `v` on itself and /spines/ reserves it as a clip
+        // discriminator, so a shared name would collide with a selector the route actually reads.
+        Assert(CouchCoopAssetVersion.QueryParameter == "b", "the build rides `b`");
+        Assert(CouchCoopAssetVersion.QuerySuffix(hasQuery: false).StartsWith("?b=", StringComparison.Ordinal),
+            "a path-only route opens its query");
     }
 
     // Each part of the build identity has to be able to move the token on its own: a rebuild can keep the version
@@ -111,15 +151,15 @@ internal static class AssetCacheTokenEnvelopeTests
     }
 
     private static string Token(CouchCoopCacheIdentity identity) => AssetCacheToken.Compose(
-        BrowserStateEnvelopeFactory.DescribeGameBuild(identity),
+        CouchCoopAssetVersion.DescribeGameBuild(identity),
         ModAssemblyVersion(),
         SpirectlAssetBinaryCache.SchemaVersion);
 
-    // Recompute the mod assembly version exactly as BrowserStateEnvelopeFactory does, so the expected token matches
+    // Recompute the mod assembly version exactly as CouchCoopAssetVersion does, so the expected token matches
     // regardless of the SDK-default version this build resolves to.
     private static string ModAssemblyVersion() =>
-        typeof(BrowserStateEnvelopeFactory).Assembly.GetCustomAttribute<AssemblyInformationalVersionAttribute>()?.InformationalVersion
-        ?? typeof(BrowserStateEnvelopeFactory).Assembly.GetName().Version?.ToString()
+        typeof(CouchCoopAssetVersion).Assembly.GetCustomAttribute<AssemblyInformationalVersionAttribute>()?.InformationalVersion
+        ?? typeof(CouchCoopAssetVersion).Assembly.GetName().Version?.ToString()
         ?? "0";
 
     private static void Assert(bool condition, string label)

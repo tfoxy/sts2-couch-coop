@@ -39,6 +39,7 @@
 // it. The array stays the full wish — trimming `card_atlas_2` out of it would silently stop warming a page the
 // STABLE build really has, and break again on the next repack. The intersection is a filter, never a reorder: a
 // page that survives it keeps its place in the priority order above.
+import { whenAssetVersion } from "@/join/assetVersion";
 import { atlasPageSize, preloadAtlas, whenAtlasSettled } from "@/mirror/atlasBaker";
 import { mirrorResourceUrl } from "@/mirror/sceneTree";
 import { warmImage } from "@/mirror/textureCache";
@@ -227,7 +228,40 @@ function schedule(step: () => void): void {
   }
 }
 
+/**
+ * WHY THIS WAITS FOR THE HOST'S BUILD.
+ *
+ * Asset urls carry the host's game build (`?b=` — see @/join/assetVersion), and this is the ONE asset consumer
+ * that can run before the `session` envelope that supplies it: it is called from MirrorApp's setup body, before
+ * the socket is even open, while everything else mints urls off a delta that by construction arrives after the
+ * envelope. Warming a page under an unqualified url is not merely a wasted request — it is the exact bug the
+ * build qualifier exists to fix, because the host answers `immutable` for a year and the atlas this chain warms
+ * first is the one a repacked branch changes.
+ *
+ * So the plan is made, and every url minted, only once the build is known. The manifest intersection this chain
+ * already performs rides the SAME envelope, so waiting costs the walk nothing it was not already waiting for.
+ *
+ * THE DEADLINE is for a host that never sends a token at all (one older than the field; the SPA ships with the
+ * host, so this is a hand-mixed deploy rather than a supported shape). Prefetching is speculative, so the answer
+ * to "we never learned the build" is to walk unqualified — exactly the behaviour that predates this — rather
+ * than to silently stop warming and cost the combat replay a median 1501 ms on its last texture upload.
+ */
+const BUILD_WAIT_DEADLINE_MS = 15_000;
+
 export function prefetchMirrorImages(): void {
+  let started = false;
+  const begin = (): void => {
+    if (started) return;
+    started = true;
+    beginPrefetchWalk();
+  };
+  whenAssetVersion(begin);
+  if (!started && typeof setTimeout === "function") {
+    setTimeout(begin, BUILD_WAIT_DEADLINE_MS);
+  }
+}
+
+function beginPrefetchWalk(): void {
   const planned = plannedAtlases();
   stats.list = planned?.map((path) => mirrorResourceUrl(path)) ?? [];
   if (planned === null) {

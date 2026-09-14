@@ -52,27 +52,35 @@
  *
  * That durability is also the danger, so invalidation is layered:
  *
- *   (i) BUILD STAMP — the real invalidator. Every successful navigation response is scanned for the
- *       hashed entry bundle Vite emits (`/app/index-<hash>.js`, see vite.config.ts `assetsDir: "app"`).
- *       That string changes on every frontend build, and in this repo the frontend build's outDir IS
- *       the installed mod directory — the SPA and the game code ship as one unit. So "the bundle hash
- *       changed" is a reliable proxy for "the mod was updated", and it drops the whole asset cache.
- *       No build-time plugin, no manifest, no version constant a human has to remember. Absence of the
+ *   (0) THE URL ITSELF — the real invalidator, and it is NOT in this file. Every asset url the page
+ *       mints carries the host's game build (`?b=<assetCacheToken>`, frontend/src/join/assetVersion.ts),
+ *       so a build change re-addresses every asset and nothing that caches by url can serve one build's
+ *       bytes for another's. That has to be the mechanism, because the cache this worker owns is not the
+ *       one that holds the bytes: THE HTTP CACHE IS. This worker only registers on a secure origin — the
+ *       default LAN url is plain HTTP, where it never runs at all — and even where it does, deleting an
+ *       entry here just sends the next fetch to a still-valid `immutable` HTTP response under the same
+ *       url, which hands the stale bytes straight back. Everything below is therefore eviction, not
+ *       correctness.
+ *
+ *   (i) BUILD STAMP — every successful navigation response is scanned for the hashed entry bundle Vite
+ *       emits (`/app/index-<hash>.js`, see vite.config.ts `assetsDir: "app"`). That string changes on
+ *       every frontend build, and in this repo the frontend build's outDir IS the installed mod
+ *       directory — the SPA and the game code ship as one unit. So "the bundle hash changed" is a
+ *       reliable proxy for "the mod was updated", and it drops the whole asset cache. Absence of the
  *       signal (no match in the HTML) never invalidates: a missing signal is not evidence of change.
  *       The reconcile is awaited before the document is returned so the page it produces can never race
  *       ahead and repopulate the cache we are about to delete.
  *
- *  (ii) HOST ASSET IDENTITY — the server's own answer to "can the bytes behind a /res/ url have
- *       changed?". It arrives on the `session` envelope as `assetCacheToken` and the page forwards it
- *       here (`couchcoop-asset-identity`); the host composes it from the same game build + cache
- *       generation it keys its OWN disk cache on, so the phone and the host invalidate together.
- *       Same discipline as the build stamp: a changed value drops the asset cache, and the first
- *       observation only records, because absence is not evidence of change.
+ *  (ii) HOST ASSET IDENTITY — the same token the urls carry, forwarded from the `session` envelope by
+ *       the page (`couchcoop-asset-identity`). The host composes it from the same game build + cache
+ *       generation it keys its OWN disk cache on, so the phone and the host evict together. Same
+ *       discipline as the build stamp: a changed value drops the asset cache, and the first observation
+ *       only records, because absence is not evidence of change.
  *
- *       This covers what the build stamp cannot. Both game branches ship the SAME frontend bundle, so
- *       the hash is identical whether this phone last joined a stable host or a beta one — and a game
- *       update with no frontend rebuild moves nothing the document can show. Those paths did not exist
- *       when the stamp was the only invalidator; they do now.
+ *       What it buys, now that the url carries the build: the entries under the PREVIOUS build's urls
+ *       are unreachable dead weight the moment the token moves, and this reclaims them at once instead
+ *       of waiting for the FIFO budget to walk them out. Both game branches ship the same frontend
+ *       bundle, so the build stamp cannot see that hop — which is why the two signals are separate.
  *
  * (iii) FORMAT VERSION — the manual override, for when the worker's own semantics change (or for an
  *       emergency wipe). Bumping it renames the caches; `activate` sweeps the orphans.
@@ -273,6 +281,9 @@ async function reconcileBuildStamp(response) {
  * The value is the session envelope's `assetCacheToken`, forwarded from the page. The host composes it from
  * the game build and the cache generations it keys its own on-disk cache on, so "the host's bytes can have
  * changed" and "this phone's cached bytes are stale" stay one fact rather than two that drift apart.
+ *
+ * This is EVICTION, not correctness — the page puts the same token in every asset url it mints, so what this
+ * drops is already unreachable by the time we get here. See note (0) in the header.
  */
 async function reconcileAssetIdentity(identity) {
   if (typeof identity !== "string" || identity.length === 0) return false;

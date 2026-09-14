@@ -11,6 +11,7 @@
 import { renderQuality } from "@/render/quality";
 import { mirrorSettings } from "@/mirror/mirrorSettings";
 import type { MirrorNode } from "@/mirror/sceneTree";
+import { assetVersionSuffix } from "@/join/assetVersion";
 import { hostUrl } from "@/join/hostBase";
 
 // True when a node should fetch + play a Spine clip: it's a SpineSprite (static scene/node metadata present),
@@ -82,6 +83,11 @@ export function isGeoclipPlaybackEnabled(): boolean {
 // (the common request) yield a
 // BYTE-IDENTICAL url to before — the browser HTTP + clip caches stay valid (zero invalidation).
 //
+// `&b=` (the host's game build, @/join/assetVersion) goes LAST, after every selector including `still`/`t`, so
+// the selector contract above reads unchanged and a host that sends no token still mints the historic url. It
+// is not a clip selector — the host ignores it and it never enters the server-side clip key — it is what stops
+// one build's rendered clip being served out of the browser's HTTP cache on another build.
+//
 // FIX 2b first-frame-immediate: `still` FORCES `&still=1` (a cheap single-frame render) independent of the tier's
 // own isSpineStillMode() detection, so a full-clip (high/low) tier can fetch a still-first placeholder ahead of the
 // full animated clip. It composes with the tier's own still-mode (either forces the still), so a still-mode tier is
@@ -118,10 +124,13 @@ export function spineClipUrl(node: MirrorNode, opts?: { skel?: string | null; re
   // the host's origin, consistently for both branches so the two never disagree.
   const wantsStill = opts?.still === true || isSpineStillMode();
   if (!wantsStill) {
-    return hostUrl(`/spines/${scenePath}?${selectors.join("&")}`);
+    return hostUrl(`/spines/${scenePath}?${selectors.join("&")}${assetVersionSuffix(true)}`);
   }
   const stillTime = spineStillTime(node);
-  return hostUrl(`/spines/${scenePath}?${selectors.join("&")}&still=1${stillTime != null ? `&t=${stillTime}` : ""}`);
+  return hostUrl(
+    `/spines/${scenePath}?${selectors.join("&")}&still=1${stillTime != null ? `&t=${stillTime}` : ""}`
+      + assetVersionSuffix(true)
+  );
 }
 
 // The geoclip artifact url for a node's CURRENT anim (see mirror/geoclipPlayer.ts), or null when the node isn't
@@ -134,6 +143,9 @@ export function spineClipUrl(node: MirrorNode, opts?: { skel?: string | null; re
 // folding in selectors it does not vary by would just address a directory nobody baked. And the artifact FILE
 // rides the query rather than the path, because the scene path itself contains slashes: `?file=` is what tells the
 // host this is the scene-addressed form and not `/geoclips/<key>/<file>`.
+//
+// `&b=` rides here for the same reason it rides the clip url: a bake is derived from the game's content, so a
+// build change must re-address it rather than re-use whatever the browser cached. It is not a bake selector.
 export function geoclipUrl(node: MirrorNode, file: string): string | null {
   const scene = node.spineSceneResPath;
   const anim = node.spineCurrentAnim;
@@ -147,7 +159,7 @@ export function geoclipUrl(node: MirrorNode, file: string): string | null {
   }
   selectors.push(`anim=${encodeURIComponent(anim)}`);
   selectors.push(`file=${encodeURIComponent(file)}`);
-  return hostUrl(`/geoclips/${scenePath}?${selectors.join("&")}`);
+  return hostUrl(`/geoclips/${scenePath}?${selectors.join("&")}${assetVersionSuffix(true)}`);
 }
 
 // The `&t=` seconds a STILL of `node` should sample, or null when the host's own still-frame heuristic should pick.

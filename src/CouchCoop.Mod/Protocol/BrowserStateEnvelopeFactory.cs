@@ -1,4 +1,3 @@
-using System.Reflection;
 using System.Text.Json;
 using CouchCoop.MirrorProtocol.Envelopes;
 using CouchCoop.Mod.Runtime;
@@ -27,26 +26,7 @@ public sealed class BrowserStateEnvelopeFactory(
     private readonly Func<string?>? _androidApkUrl = androidApkUrl;
     private readonly MirrorSeatDirectory? _mirrorSeats = mirrorSeats;
 
-    // The mod assembly's version, folded into the client disk-cache token (WS-U). The mod csproj sets no explicit
-    // version, so this resolves to the SDK default (e.g. "1.0.0") — stable per build, changing only across releases.
-    private static readonly string ModAssemblyVersion =
-        typeof(BrowserStateEnvelopeFactory).Assembly.GetCustomAttribute<AssemblyInformationalVersionAttribute>()?.InformationalVersion
-        ?? typeof(BrowserStateEnvelopeFactory).Assembly.GetName().Version?.ToString()
-        ?? "0";
-
     internal CouchCoopRuntimeHost RuntimeHost => _runtimeHost;
-
-    /// <summary>
-    /// The game build, as one token component: version, content hash, Steam build id and branch.
-    /// </summary>
-    /// <remarks>
-    /// All four, because each covers a gap the others leave. The version alone repeats across a rebuild that
-    /// keeps its string; the hash alone is 0 when <c>release_info.json</c> is unreadable; the build id alone is 0
-    /// off Steam; and the branch alone is what two branches sharing a version would differ by. Any one of them
-    /// moving must move the token, so they are concatenated rather than chosen between.
-    /// </remarks>
-    internal static string DescribeGameBuild(CouchCoopCacheIdentity identity) =>
-        $"{identity.GameVersion}/{identity.MainAssemblyHash}/{identity.SteamBuildId}/{identity.Branch}";
 
     /// <summary>
     /// The <c>joinRejection</c> code for a mirror join that targets <paramref name="targetNetId"/>, or null when it
@@ -147,16 +127,11 @@ public sealed class BrowserStateEnvelopeFactory(
             FreezeDecor: freezeDecor,
             AndroidApkUrl: _androidApkUrl?.Invoke(),
             // WS-U: clients key their asset caches by this token — the native client its disk cache namespace, the
-            // browser its service-worker /res/ store — and it changes iff the bytes a given asset url maps to can
-            // change. That is the SAME question CouchCoopCacheRoot answers for the host's own disk, so it is
-            // composed from the same identity rather than from a second, separately-drifting notion of "which
-            // build is this". It deliberately does NOT come from Capabilities.GameVersion, which the embedded
-            // runtime facade reports as the empty string — the token used to normalize that to "unknown" and so
-            // never moved when the game updated at all.
-            AssetCacheToken: CouchCoop.MirrorProtocol.Assets.AssetCacheToken.Compose(
-                DescribeGameBuild(CouchCoopCacheRoot.Identity),
-                ModAssemblyVersion,
-                SpirectlAssetBinaryCache.SchemaVersion),
+            // browser the `?b=` on every asset url it mints (plus its service-worker /res/ store) — and it changes
+            // iff the bytes a given asset url maps to can change. Composed ONCE, in CouchCoopAssetVersion, from
+            // the SAME identity CouchCoopCacheRoot keys the host's own disk on, and shared with the /bg/ urls this
+            // host mints so the two can never name different builds.
+            AssetCacheToken: CouchCoopAssetVersion.Token,
             // The host machine's name, so the native join dialog can name the host it is connecting to alongside
             // its address. Same source as the LAN-discovery reply (CouchCoopHostUiServices), so a discovered host
             // and a hand-typed one show the same label. Cheap (a cached OS string) — no need to hoist it.
