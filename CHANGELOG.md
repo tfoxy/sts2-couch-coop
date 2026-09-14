@@ -9,12 +9,27 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and
 
 ## [Unreleased]
 
+## [0.2.0] - 2026-09-14
+
+### Added
+
+- CouchCoop now runs on the game's public-beta branch.
+- Steam Workshop metadata is localized for all supported Slay the Spire 2 languages.
+- Log in lobby was replaced with a Connections panel in the QR code dialog. For each device, it shows connection progress and any issue that may have happened.
+
 ### Fixed
 
+- Taking a reward on a phone now goes through the game's own button, so a potion you have no room for is declined instead of vanishing
+- Fixed a reward row being taken instead of highlighted when you tapped it again after tapping somewhere else
+- Hosting with a player-limit mod installed now really admits more than four players.
+- CouchCoop's in-game buttons (e.g. QR code dialog button, other buttons inside the QR dialog interface) can now be activated with a controller (such as when hosting from the SteamDeck and using its controller to open/close the QR code dialog).
+- A player's game now refuses to join when it is running a different copy of the mod than the host, and says which one it loaded, instead of failing with an unexplained timeout.
 - Cached art is now kept per game version and per Steam branch, so switching between the stable and
   beta branches — or playing after a game update — no longer shows art left over from the other
   build. Phones drop their saved copies on the same change, and the host keeps at most two caches
   and clears out anything older.
+- A player's game window is no longer closed for taking too long to start on a slower host.
+- Player names now appear correctly in the host's activity panel in every language.
 
 ### Changed
 
@@ -34,6 +49,7 @@ First public release. Turn the phones, tablets and laptops on your network into 
 a local Slay the Spire 2 co-op session — no app to install on the other devices, and no `sts2` CLI
 needed to run the mod.
 
-[Unreleased]: https://github.com/tfoxy/sts2-couch-coop/compare/v0.1.1...HEAD
+[Unreleased]: https://github.com/tfoxy/sts2-couch-coop/compare/v0.2.0...HEAD
+[0.2.0]: https://github.com/tfoxy/sts2-couch-coop/releases/tag/v0.2.0
 [0.1.1]: https://github.com/tfoxy/sts2-couch-coop/compare/v0.1.0...v0.1.1
 [0.1.0]: https://github.com/tfoxy/sts2-couch-coop/releases/tag/v0.1.0
