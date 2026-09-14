@@ -148,6 +148,20 @@ if (args is ["host-ui", ..])
     return;
 }
 
+// `dotnet run --project tests/CouchCoop.Mod.Tests -- decor-freeze` runs the decorative-freeze policy ALONE: which
+// mechanism each frozen animator type gets, and the ONE type that must never be in the table at all (the star
+// counter — freezing it strands the browser's star count at its pre-gain value). Pure metadata reflection over the
+// installed STS2 assemblies — no Harmony install, no Godot engine, no live game — so it stands alone like
+// host-guards above. Registered here because the full sequence below cannot reach it: it sits after
+// HeadlessAudioMuteTargetsTests, which takes the process down with SIGSEGV on some machines (see the note there),
+// so a truncated full run would report this suite as neither passed nor failed.
+if (args is ["decor-freeze", ..])
+{
+    HeadlessDecorativeFreezeTests.Run();
+    Console.WriteLine("decor freeze: ok");
+    return;
+}
+
 // `dotnet run --project tests/CouchCoop.Mod.Tests -- localization` runs the catalog suite ALONE, and it is
 // registered here rather than only in the normal sequence for a concrete reason: the sequence below does not
 // reach it on some machines, and while it was unreachable nine catalogs shipped with TRANSLATED placeholder
