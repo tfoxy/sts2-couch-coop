@@ -1,16 +1,21 @@
 using CouchCoop.Mod.Activity;
 
-// F1 host connectivity log: the ring, the copy and the bbcode rendering.
+// F1 host connectivity log: the ring and the copy.
 //
-// EVERYTHING testable about this feature is in here, because everything testable about it is PURE. The
-// Godot side (CouchCoopActivityPanel) is a thin adapter that positions nodes and calls AppendText; the
-// decisions worth pinning — what a ring drop looks like, whether a viewer name can inject bbcode into the
-// host's television, exactly which sentence each event prints — all live in Activity/, which has no Godot
-// usings at all and runs in this Godot-less host.
+// EVERYTHING testable about this feature is in here, because everything that is left of it is PURE. It had
+// a Godot side once — CouchCoopActivityPanel, a RichTextLabel that rendered the ring in the lobby — and the
+// connections panel replaced it, so the bbcode rendering and its tests went with it. What remains is the
+// ring itself and the sentences it records: what a ring drop looks like, and exactly which sentence each
+// event prints. All of it lives in Activity/, which has no Godot usings at all and runs in this Godot-less
+// host.
 //
-// The message strings are asserted LITERALLY on purpose. They are a QA contract shared with
-// scripts/probe-pc-lobby-activity-log.mjs (which greps the rendered panel for them), so a copy edit has to
-// be a deliberate three-file change rather than something that slips through green.
+// NOTE, and it is the reason this suite is worth keeping: the ring currently has NO production reader. The
+// writers below are live (seat launches, viewer joins, server state), the display is not. Either this comes
+// back in the connections panel or the whole subsystem goes; until then these tests are what stops the copy
+// rotting in the meantime.
+//
+// The message strings are asserted LITERALLY on purpose: they are player-facing sentences in fourteen
+// catalogs, so a copy edit has to be a deliberate change rather than something that slips through green.
 internal static class CouchCoopActivityLogTests
 {
     public static void Run()
@@ -21,7 +26,7 @@ internal static class CouchCoopActivityLogTests
             RingWrapsAndKeepsTheNewest();
             AppendDistinctSuppressesOnlyAnImmediateRepeat();
             BlankMessagesAreDropped();
-            SnapshotSinceFeedsThePanelIncrementally();
+            SnapshotSinceFeedsAReaderIncrementally();
             SnapshotSinceReportsTruncationWhenTheRingOutranTheReader();
             ConcurrentAppendsKeepEverySequence();
 
@@ -30,13 +35,6 @@ internal static class CouchCoopActivityLogTests
             ViewerMessagesAreTheContract();
             JoinRejectionCopyIsMapped();
             ServerMessagesAreTheContract();
-
-            BbcodeIsEscapedInUntrustedText();
-            SeverityColoursAreStable();
-            RowCarriesAnInjectedClocksTime();
-            ToBbcodeRendersEveryRowInOrder();
-            TruncatedHeadIsRenderedOnce();
-            HeaderSummaryVariants();
         }
         finally
         {
@@ -139,7 +137,7 @@ internal static class CouchCoopActivityLogTests
             "a blank message renders as an empty row, which reads as a glitch — it is dropped instead");
     }
 
-    private static void SnapshotSinceFeedsThePanelIncrementally()
+    private static void SnapshotSinceFeedsAReaderIncrementally()
     {
         CouchCoopActivityLog.Reset();
         CouchCoopActivityLog.Append(CouchCoopActivityCategory.Seat, CouchCoopActivitySeverity.Info, "one");
@@ -338,126 +336,6 @@ internal static class CouchCoopActivityLogTests
             CouchCoopActivityMessages.SecureOriginUnavailable(null) == "Secure (https) link unavailable.",
             "B5 without a reason is still a complete sentence");
         Assert(CouchCoopActivityMessages.BrowserServerStopped == "Phone connection stopped.", "B6");
-    }
-
-    // ---- rendering ---------------------------------------------------------------------------------------
-
-    private static void BbcodeIsEscapedInUntrustedText()
-    {
-        // THE security-shaped assertion in this file. Half of what the panel prints is a display name typed
-        // into a browser by whoever is on the couch, and the label has bbcode ENABLED — so an unescaped
-        // name lets a phone recolour, bold, or (with an unclosed tag) swallow the host's television.
-        // `[lb]` is Godot's own escape for a literal '['. Only the OPENING bracket needs it: with no tag able
-        // to open, the trailing ']' is inert text.
-        Assert(CouchCoopActivityRender.EscapeBbcode("[b]Ann") == "[lb]b]Ann",
-            "an opening tag bracket becomes the literal-bracket escape");
-        Assert(CouchCoopActivityRender.EscapeBbcode("[b]Ann[/b]") == "[lb]b]Ann[lb]/b]",
-            "…and so does EVERY one of them, not just the first");
-        Assert(CouchCoopActivityRender.EscapeBbcode("plain") == "plain", "ordinary text is untouched");
-        Assert(CouchCoopActivityRender.EscapeBbcode("a]b") == "a]b", "a lone ']' is inert once no tag can open");
-        Assert(CouchCoopActivityRender.EscapeBbcode(null) == string.Empty, "null renders as nothing, not as 'null'");
-
-        var entry = new CouchCoopActivityEntry(
-            1,
-            new DateTimeOffset(2026, 9, 2, 21, 5, 9, TimeSpan.Zero),
-            CouchCoopActivityCategory.Viewer,
-            CouchCoopActivitySeverity.Good,
-            "[color=red]Ann[/color] connected.");
-        var row = CouchCoopActivityRender.RowBbcode(entry);
-        Assert(!row.Contains("[color=red]", StringComparison.Ordinal),
-            "a name carrying a colour tag cannot reach the label as markup");
-        Assert(row.Contains("[lb]color=red]", StringComparison.Ordinal), "…it reaches it as text");
-    }
-
-    private static void SeverityColoursAreStable()
-    {
-        Assert(CouchCoopActivityRender.ColorFor(CouchCoopActivitySeverity.Info) == "#fdf4e3", "info is the lobby cream");
-        Assert(CouchCoopActivityRender.ColorFor(CouchCoopActivitySeverity.Good) == "#8fd6a0", "good is green");
-        Assert(CouchCoopActivityRender.ColorFor(CouchCoopActivitySeverity.Warn) == "#f0c674", "warn is amber");
-        Assert(CouchCoopActivityRender.ColorFor(CouchCoopActivitySeverity.Bad) == "#e88b8b", "bad is red");
-        Assert(CouchCoopActivityRender.ColorFor((CouchCoopActivitySeverity)99) == "#fdf4e3",
-            "an unknown severity degrades to neutral rather than rendering an empty colour tag");
-    }
-
-    private static void RowCarriesAnInjectedClocksTime()
-    {
-        CouchCoopActivityLog.Reset();
-        CouchCoopActivityLog.SetClockForTests(() => new DateTimeOffset(2026, 9, 2, 21, 5, 9, TimeSpan.Zero));
-        try
-        {
-            CouchCoopActivityLog.Append(CouchCoopActivityCategory.Seat, CouchCoopActivitySeverity.Warn, "Ann's game is ready.");
-            var entry = CouchCoopActivityLog.Snapshot()[0];
-            Assert(CouchCoopActivityLog.FormatTimestamp(entry.Timestamp) == "21:05:09",
-                "the row's clock is HH:mm:ss — a host reads it against the wall, not against a date");
-            Assert(
-                CouchCoopActivityRender.RowBbcode(entry)
-                    == "[color=#8a94a6]21:05:09[/color]  [color=#f0c674]Ann's game is ready.[/color]\n",
-                "a row is: dim clock, two spaces, severity-coloured message, newline");
-        }
-        finally
-        {
-            CouchCoopActivityLog.SetClockForTests(null);
-        }
-    }
-
-    private static void ToBbcodeRendersEveryRowInOrder()
-    {
-        var at = new DateTimeOffset(2026, 9, 2, 21, 0, 0, TimeSpan.Zero);
-        var entries = new List<CouchCoopActivityEntry>
-        {
-            new(1, at, CouchCoopActivityCategory.Server, CouchCoopActivitySeverity.Good, "first"),
-            new(2, at.AddSeconds(1), CouchCoopActivityCategory.Seat, CouchCoopActivitySeverity.Bad, "second"),
-        };
-
-        var rendered = CouchCoopActivityRender.ToBbcode(entries, truncatedHead: false);
-        Assert(
-            rendered == CouchCoopActivityRender.RowBbcode(entries[0]) + CouchCoopActivityRender.RowBbcode(entries[1]),
-            "a full render is exactly the concatenated rows, so an append and a redraw produce the same text");
-        Assert(CouchCoopActivityRender.ToBbcode([], truncatedHead: false) == string.Empty,
-            "an empty log renders an empty body, not a placeholder row");
-    }
-
-    private static void TruncatedHeadIsRenderedOnce()
-    {
-        var entry = new CouchCoopActivityEntry(
-            300,
-            new DateTimeOffset(2026, 9, 2, 21, 0, 0, TimeSpan.Zero),
-            CouchCoopActivityCategory.Seat,
-            CouchCoopActivitySeverity.Info,
-            "kept");
-
-        var rendered = CouchCoopActivityRender.ToBbcode([entry], truncatedHead: true);
-        Assert(rendered.StartsWith("[i][color=#8a94a6]…earlier events not shown[/color][/i]\n", StringComparison.Ordinal),
-            "the dropped-lines marker is the FIRST thing in the block, in the same dim colour as the clocks");
-        Assert(rendered.EndsWith(CouchCoopActivityRender.RowBbcode(entry), StringComparison.Ordinal),
-            "…and the retained rows follow it unchanged");
-        Assert(
-            !CouchCoopActivityRender.ToBbcode([entry], truncatedHead: false)
-                .Contains(CouchCoopActivityRender.TruncatedHeadText, StringComparison.Ordinal),
-            "an untruncated render carries no marker");
-    }
-
-    private static void HeaderSummaryVariants()
-    {
-        Assert(CouchCoopActivityRender.HeaderSummary(0, null) == "Couch Co-Op activity — no events yet",
-            "the panel is up before anything happens, so the empty header has to read as a state and not a bug");
-        Assert(CouchCoopActivityRender.HeaderSummary(1, CouchCoopActivitySeverity.Info) == "Couch Co-Op activity — 1 event",
-            "one event is singular");
-        Assert(CouchCoopActivityRender.HeaderSummary(12, CouchCoopActivitySeverity.Good) == "Couch Co-Op activity — 12 events",
-            "many events are plural");
-        Assert(
-            CouchCoopActivityRender.HeaderSummary(3, CouchCoopActivitySeverity.Warn)
-                == "Couch Co-Op activity — 3 events (needs attention)",
-            "a warning newest entry flags the header — the point of which is to be readable COLLAPSED");
-        Assert(
-            CouchCoopActivityRender.HeaderSummary(3, CouchCoopActivitySeverity.Bad)
-                == "Couch Co-Op activity — 3 events (needs attention)",
-            "…and so does a failure");
-        Assert(
-            !CouchCoopActivityRender.HeaderSummary(3, CouchCoopActivitySeverity.Good).Contains("attention", StringComparison.Ordinal),
-            "a recovered log drops the flag again (the newest entry, not a high-water mark)");
-        Assert(CouchCoopActivityRender.HeaderSummary(0, CouchCoopActivitySeverity.Bad) == "Couch Co-Op activity — no events yet",
-            "an empty log has nothing to flag whatever it is handed");
     }
 
     private static void Assert(bool condition, string label)

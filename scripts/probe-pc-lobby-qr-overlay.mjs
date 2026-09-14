@@ -37,7 +37,7 @@ import {
   acquireLiveLock, releaseLiveLock,
   sceneTree, sceneTreeWithProperties, nodesNamed, findNodePath, nodeDetails,
   globalRect, isVisible, textOf, rowLabelText,
-  hoverAndClick, hoverNode, clickAt, bareScrimPoint,
+  hoverAndClick, hoverNode, clickAt, bareScrimPoint, holdViewer,
   loadFixture, waitFor, selectedCharacterButtonId, lobbyNetGameType,
   screenshot, designRectToPixels, roiDiffRatio, scanMirrorForQrNodes
 } from "./probe-lib-lobby-qr.mjs";
@@ -555,6 +555,12 @@ async function assertLoadRunLobby() {
 // =================================================================================================
 // Step 10 -- nothing from the CouchCoopQr* family may reach a mirror client
 // =================================================================================================
+/**
+ * A viewer held open for the mirror-exclusion scan, so the connections panel is actually POPULATED while the
+ * stream is being watched. Named distinctively only so it is recognisable in a capture.
+ */
+const SCAN_WITNESS_VIEWER = "ZzWitnessViewer";
+
 async function assertMirrorExclusion() {
   // Run it on a host lobby, where the panel definitely exists in the game tree.
   const panelPath = await loadLobbyFixtureStable(FIXTURE_HOST_LOBBY, SCREEN_START_RUN_LOBBY);
@@ -562,15 +568,34 @@ async function assertMirrorExclusion() {
   const inGameTree = (tree.nodes ?? []).filter(node => node.name.startsWith("CouchCoopQr")).map(node => node.name);
   assert(inGameTree.length >= 5, `the panel subtree should be visible to dev inspection, found ${inGameTree.length}`);
 
-  const scan = await scanMirrorForQrNodes({ ...mirrorScanOptions(), durationMs: 8000 });
+  // A SECOND viewer, held open for the scan, and it is the point of this leg rather than decoration: a live
+  // row is what puts the connections panel on screen with a player's NAME in it. That panel is a sibling of
+  // the QR card inside the same stamped subtree, so the only thing keeping one player's name off every other
+  // player's phone is the stream-skip stamp. This leg inherited that duty from the retired activity-log
+  // probe, whose panel the connections panel replaced.
+  const witness = await holdViewer(SCAN_WITNESS_VIEWER, mirrorOrigin);
+  let scan;
+  try {
+    scan = await scanMirrorForQrNodes({
+      ...mirrorScanOptions(),
+      durationMs: 8000,
+      // `CouchCoopConnection*` is NOT covered by the CouchCoopQr* default -- the two families share a stamped
+      // root and nothing else, so the older pattern would have watched a leak of the whole roster go past.
+      extraPatterns: [/CouchCoopConnection[A-Za-z0-9_]*/g]
+    });
+  } finally {
+    witness.close();
+  }
+
   assert(!scan.socketError, `mirror scan could not connect: ${scan.socketError}`);
   assert(scan.messages > 0, "mirror scan received no messages -- is the browser server up?");
   assert(scan.sawFullKeyframe,
     `mirror scan never saw a full keyframe ("full":true) to scan (${describeScan(scan)})`);
   assert(
     scan.matches.length === 0,
-    `CouchCoopQr* nodes leaked to a mirror client: ${scan.matches.join(", ")}. ` +
-    "A phone that can see the button can PRESS it (mirror input is injected into the host)."
+    `host-only content leaked to a mirror client: ${scan.matches.join(", ")}. ` +
+    "A phone that can see the button can PRESS it (mirror input is injected into the host), and a phone " +
+    "that can see the connections panel can read every other player's name."
   );
 
   record("mirror-exclusion", {
@@ -579,11 +604,21 @@ async function assertMirrorExclusion() {
     bytes: scan.bytes,
     fullKeyframeBytes: scan.fullKeyframeBytes,
     couchCoopQrNamesInGameTree: inGameTree.length,
-    couchCoopQrNamesOnMirror: scan.matches.length,
+    hostOnlyMatchesOnMirror: scan.matches.length,
+    witnessViewer: { name: SCAN_WITNESS_VIEWER, sawSession: witness.sawSession },
+    scannedFamilies: ["CouchCoopQr*", "CouchCoopConnection*"],
+    whyTheNameIsNotAsserted:
+      "The retired activity-log probe also asserted that the viewer's NAME never appeared. That cannot be " +
+      "carried over honestly, and both halves were measured here. While the viewer is LIVE its name is on " +
+      "the wire legitimately -- the game's own lobby NameplateLabel, which every player is meant to see. " +
+      "Once it disconnects, the host holds the name NOWHERE (the connections panel keeps only its title), " +
+      "so asserting absence then passes whatever the stamp does. The node-family check above is the part " +
+      "that still bites: a leaked connections row arrives under CouchCoopConnectionPanel.",
     positiveControl:
       "Scan sensitivity was verified out-of-band by relaunching with " +
-      "SPIRECTL_SCENE_WATCH_HONOR_STREAM_SKIP=0, which makes all 18 CouchCoopQr* names appear on this " +
-      "same stream -- so a zero here is an exclusion, not a blind spot.",
+      "SPIRECTL_SCENE_WATCH_HONOR_STREAM_SKIP=0, which makes the CouchCoopQr*/CouchCoopConnection* names " +
+      "and the canary viewer's name all appear on this same stream -- so a zero here is an exclusion, " +
+      "not a blind spot.",
     panelPath
   });
 }
