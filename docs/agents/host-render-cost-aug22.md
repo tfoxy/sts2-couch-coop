@@ -12,16 +12,35 @@ measurements and retired URL forms.
   must not append an image extension or infer one.
 - Current URLs are immutable. A variant which is no longer current may use matching cached bytes or return a
   miss; it must never render a different image under the old URL.
+- **A qualified variant is rendered at publish time, not on first fetch.** The tracker hands every publish that
+  carries a `layers` digest or a `frame` spec to the server's warm callback
+  (`CouchCoopBrowserServer.WarmPublishedStaticBackground`, log tag `static-bg-warm`), which renders it on a pool
+  thread through the shared `CouchCoopAssetExtractionGate`. Without this the immutable-URL rule and the "only the
+  current variant may render" rule combine into a permanent 404: the host keeps no `digest → layer paths`
+  history, so a fetch that arrives one publish late can never be served. The warm is gated on at least one
+  streaming viewer having `staticBg` on, and unqualified variants are skipped (the prerender sweep bakes those).
 
 `CouchCoopStaticBackgroundProvider` owns URL construction and cache identity. `StaticBackground.vue` must use
-the streamed URL rather than reconstructing it.
+the streamed URL rather than reconstructing it — with one exception, below.
 
 ## Cache and failure behavior
 
 Rendered bytes are held in the managed asset cache whose schema comes from spirectl's asset-payload version.
 The cache is bounded by the server's managed-cache quota; a cache failure must leave existing readable entries
-available. A browser that cannot fetch or decode the background fails open to the live scene rather than showing
-a blank stage.
+available.
+
+Client failure behaviour is **split by family**, and combat is the exception to the "use the streamed URL" rule
+above. Do not "fix" either half back to a single rule.
+
+| Family | A still that cannot be fetched or decoded |
+| --- | --- |
+| Combat | **The live subtree never returns.** The hold is unconditional while the setting is on. The client ladder is: the descriptor's qualified URL → the digest-less `/bg/{id}?v=1` derived from the same scene path (always renderable, and what the prerender sweep bakes; it may show a different layer variant, which is invisible at background scale) → the still already on screen if it is this same room's → nothing, showing `.mirror-stage`'s `#181818`. |
+| Event, Room | Unchanged fail-open. The client latches `staticBgFailedOpen`, which folds `staticBg:false` onto the wire, the host re-admits the subtree, and the live backdrop renders. Their stills are qualified by a live-probed frame and the frame-less reference variant is visibly mis-placed, so a wrong picture is worse than none. |
+
+Why combat differs: performance is the entire point of the setting, and the combat background subtree is the
+most expensive thing the phone composites (~500 elements versus one `<img>`). Folding a combat failure onto the
+wire was also self-sustaining — the fold re-armed a deferred probe that could publish a different digest and
+strand the next URL too.
 
 `X-Cache` reports the provider result. Treat it as diagnostic evidence, not a request to bypass the variant
 contract. The normal route is safe to cache indefinitely because a changed payload changes its URL identity.

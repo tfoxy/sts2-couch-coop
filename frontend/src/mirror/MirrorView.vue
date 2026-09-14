@@ -1161,10 +1161,16 @@ watch(
 // and a HELD root is skip-clean by construction — same node object, same cached ctx — so an update walk would
 // swallow the release. A FULL walk is therefore mandatory in BOTH directions: `structural` bypasses `visit`'s
 // skip-clean gate, and the same walk's reclaim hands back any subtree that was built while the hold was off.
-// Covers: the setting toggled off (live bg rebuilds), a decode/watchdog failure latching `staticBgFailed` (live bg
-// rebuilds), and a later room's decode clearing that latch (the hold re-engages and the subtree is reclaimed).
+// Covers: the setting toggled off (live bg rebuilds), an event/shop decode failure latching `staticBgFailedOpen`
+// (that live backdrop rebuilds), and a later room's decode clearing that latch (the hold re-engages and the
+// subtree is reclaimed).
+//
+// WATCHED AS A PAIR, not as the old `enabled && !failed` conjunction. The hold is no longer that conjunction:
+// `beginWalk` keys on the SETTING alone and the latch is folded per-path (combat holds through a failure). The
+// conjunction hid one real edge — the setting coming back ON while the latch is engaged, where the combat hold
+// re-engages but `enabled && !failed` stays false and no walk would be scheduled.
 watch(
-  () => mirrorSettings.staticBgEnabled && !mirrorSettings.staticBgFailed,
+  [() => mirrorSettings.staticBgEnabled, () => mirrorSettings.staticBgFailedOpen],
   () => scheduleRender(true, "staticBg")
 );
 

@@ -233,6 +233,28 @@ if (args is ["seat-timeout", ..])
     return;
 }
 
+// `dotnet run --project tests/CouchCoop.Mod.Tests -- static-bg` runs the whole STATIC BACKGROUND family ALONE:
+// the /bg/ image producer, the event and room families, the tracker's mounted-layer probe, warm-at-publish, and
+// the Stage-B walk-skip unanimity. Same rationale as `host-guards` / `beta-targets` above, and it is not
+// optional here: all five of these are registered near the END of the normal sequence, which dies partway
+// through on some machines (see the note above HeadlessAudioMuteTargetsTests) and never reaches them. A change
+// to the static-background lane verified only through a full run has not been verified at all.
+if (args is ["static-bg", ..])
+{
+    await StaticBackgroundProviderTests.RunAsync();
+    await StaticBackgroundEventsTests.RunAsync();
+    StaticBackgroundLayerProbeTests.Run();
+    StaticBackgroundWarmPublishTests.Run();
+    StaticBackgroundRenderMetricsTests.Run();
+    WalkSkipUnanimityTests.Run();
+    // …and the ROUTE half over a real listener (grammar, digest/frame currency, X-Cache, the codec headers).
+    // It lives inside BrowserServerRouteTests' big sequence, which is doubly unreachable — the crash above, and
+    // then only after ~40 other route assertions — so it is hoisted out to here as well.
+    await BrowserServerRouteTests.RunStaticBackgroundRoutesAsync();
+    Console.WriteLine("static bg: ok");
+    return;
+}
+
 // `dotnet run --project tests/CouchCoop.Mod.Tests -- beta-targets` runs ONLY the Harmony patch-TARGET guards:
 // every game member this mod patches or reflects over, resolved against the STS2 assemblies this build was
 // compiled with. That is the whole per-GAME-BUILD question, which makes it the one-liner to run after a game
@@ -483,6 +505,9 @@ await StaticBackgroundEventsTests.RunAsync();
 // …and the tracker's MOUNTED-LAYER probe, which decides WHICH variant the render depicts (the placeholder
 // containers hide the instanced variant one level down — see the file header).
 StaticBackgroundLayerProbeTests.Run();
+// …and WARM-AT-PUBLISH: the qualified variant is rendered the moment it is published, which is what stops a
+// digest/frame-qualified URL from 404ing forever once the tracker has moved on.
+StaticBackgroundWarmPublishTests.Run();
 // Stage-B walk skip: the pure unanimity decision, the `?staticBg=` polarity, the settings-envelope wire twins,
 // the tracker's Godot-less desired-skip latch and the retained-map re-admission shape. The live socket half
 // (accept parse, live flips, disconnects, valve) rides BrowserServerRouteTests below.
@@ -1558,6 +1583,18 @@ internal sealed class BrowserServerRouteTests
     // Stage-A static background: /bg/<id>?layers=<digest>&v=1 — 200 + image/png + immutable + X-Cache
     // (miss → memory → disk hit), 400 on malformed paths/digests, 404 on unknown ids / stale digests / valve-off,
     // and the current-digest render carrying the tracker's published layer set as the CompositionSelector.
+    /// <summary>
+    /// The <c>-- static-bg</c> verb's entry into the /bg/ route assertions, over a throwaway SPA root. Exists so
+    /// the route half is REACHABLE: its only other caller is the big RunAsync sequence, which the Exe does not
+    /// get to on some machines (see the note above HeadlessAudioMuteTargetsTests).
+    /// </summary>
+    internal static async Task RunStaticBackgroundRoutesAsync()
+    {
+        using var root = new TempStaticRoot();
+        await AssertStaticBackgroundRoutesAsync(root.Path);
+        Console.WriteLine("static background routes: ok");
+    }
+
     private static async Task AssertStaticBackgroundRoutesAsync(string staticRoot)
     {
         CouchCoopStaticBackgroundTracker.ResetForTest();
@@ -1668,8 +1705,25 @@ internal sealed class BrowserServerRouteTests
                 "the current-digest render carries the published layer set as the CompositionSelector");
 
             var stale = await GetAsync(baseUri, "/bg/underdocks?layers=0123456789abcdef&v=1");
-            Expect(stale.StatusLine.Contains("404 NotFound", StringComparison.Ordinal), "a stale (non-current) digest 404s instead of rendering");
+            Expect(stale.StatusLine.Contains("404 NotFound", StringComparison.Ordinal), "a stale (non-current) digest that was NEVER rendered 404s instead of rendering");
             Expect(stale.Body.Contains("unknown-background-variant", StringComparison.Ordinal), "the stale-digest failure is structured");
+
+            // …and the other half of that rule, which is what WARM-AT-PUBLISH exists to guarantee: a digest whose
+            // bytes DO exist keeps serving after the tracker moves on. The currency rule gates RENDERING, never
+            // SERVING — that distinction is the whole fix for the permanently-404ing qualified variant, because
+            // the host keeps no digest→layers history and a URL that loses the publish race can otherwise never be
+            // served from anything. Here the earlier request rendered it; in the shipped host the warm does, before
+            // any client asks.
+            new CouchCoopStaticBackgroundTracker().PublishForTest(new CouchCoopStaticBackgroundState(
+                "res://scenes/backgrounds/spire/spire_background.tscn",
+                ["res://scenes/backgrounds/spire/layers/spire_bg_00_c.tscn"],
+                "fedcba9876543210",
+                CouchCoopStaticBackgroundProvider.BuildImageUrl("spire", "fedcba9876543210")));
+            var callsBeforeStaleServe = AssetCalls();
+            var stillServed = await GetRawAsync(baseUri, $"/bg/underdocks?layers={digest}&v=1");
+            Expect(stillServed.StatusLine.Contains("200 OK", StringComparison.Ordinal), "a no-longer-current digest whose bytes were rendered still SERVES");
+            Expect(stillServed.Body.SequenceEqual(variant.Body), "…and serves the same bytes the URL has always named");
+            Expect(AssetCalls() == callsBeforeStaleServe, "…from cache, with no render (the currency rule still forbids rendering it)");
 
             // EVENT family: /bg/events/<id>?v=1 renders the literal event backdrop scene at the same fixed
             // policy, always digest-less (event backdrops mount no layer variants).

@@ -251,9 +251,9 @@ function runReconcileVariant(
   }
   const state = createMirrorState();
 
-  // The arm. `staticBgFailed` is cleared either way — a previous run's fail-open latch must not leak into this one.
+  // The arm. `staticBgFailedOpen` is cleared either way — a previous run's fail-open latch must not leak into this one.
   mirrorSettings.staticBgEnabled = staticBg === "on";
-  mirrorSettings.staticBgFailed = false;
+  mirrorSettings.staticBgFailedOpen = false;
   // Pin the renderer's belt-and-braces clock so the hold cannot expire PART WAY through a measured run (which would
   // silently mix both arms into one number). The component's stand-in below is what a real session relies on.
 
@@ -473,7 +473,7 @@ describe("mirror combat replay bench (tier i)", () => {
     });
     // Leave the store the way the process found it (vitest may run other files in this worker).
     mirrorSettings.staticBgEnabled = true;
-    mirrorSettings.staticBgFailed = false;
+    mirrorSettings.staticBgFailedOpen = false;
 
     // --- Walk stats (defensive — a later workstream adds mirrorWalkStats) ---------------------------------
     const walkStats = (rendererModule as Record<string, unknown>).mirrorWalkStats as
