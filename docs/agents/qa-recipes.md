@@ -698,10 +698,9 @@ Dismiss. Verify Steam Deck Game Mode clipboard on actual hardware, or explicitly
 ```
 sts2 --json test run tests/scenarios/pc-lobby-qr-overlay.sts2.yaml
 sts2 --json test run tests/scenarios/lobby-actions-remain-available.sts2.yaml
-sts2 --json test run tests/scenarios/pc-lobby-activity-log.sts2.yaml
 ```
 
-All three are self-contained: `game.deploy` (build + restart + verify) → `dev.delay` → the probe hook. They drive
+Both are self-contained: `game.deploy` (build + restart + verify) → `dev.delay` → the probe hook. They drive
 a REAL game, so they take the live lock themselves.
 
 | piece | path |
@@ -709,18 +708,14 @@ a REAL game, so they take the live lock themselves.
 | shared probe helpers | `scripts/probe-lib-lobby-qr.mjs` |
 | button/dialog/mirror probe | `scripts/probe-pc-lobby-qr-overlay.mjs` (screenshots `01..08` + `result.json` under `.sts2/artifacts/pc-lobby-qr-overlay/`) |
 | semantic-actions probe | `scripts/probe-lobby-actions-remain-available.mjs` (available → blocked → available) |
-| host connectivity log probe | `scripts/probe-pc-lobby-activity-log.mjs` (8 legs + screenshots + `result.json` under `.sts2/artifacts/pc-lobby-activity-log/`) |
 
-The activity-log probe's legs, in order: **recorded-while-invisible** (a viewer connects and goes on the MAIN
-MENU, where no panel exists; the lobby that opens afterwards already shows their name — the ring records always
-and only the PANEL is gated), node contract + zero intersection with the game's own `ReleaseInfo` version label
-(screenshot taken with **Regent selected**, whose orange background is what makes that label readable at all),
-the same on the saved-game lobby, the negative gates (SP character select / main menu / in-run → absent), the
-collapse toggle surviving a screen change, a >25-event log scrolled to its newest line, and the mirror
-exclusion — `/CouchCoopActivity[A-Za-z0-9_]*/` over a full keyframe, zero matches, **and** the probe's viewer
-name never appearing in the stream (names ride this log; the stream-skip stamp is what keeps them off the wire).
-Finish with `lobby-actions-remain-available.sts2.yaml`, which must still pass: a second injected panel over the
-lobby is exactly the shape of change that silently eats a click.
+There was a third, `pc-lobby-activity-log`, and it is **retired**: the lobby activity panel it drove was replaced
+by the connections panel, and nothing mounted it any more, so the probe could only ever time out. Its one
+irreplaceable leg moved into the overlay probe's mirror scan — no `CouchCoopQr*` **or** `CouchCoopConnection*`
+node, and no viewer NAME, may reach a passive client. Player names ride the connections panel now, and the
+stream-skip stamp is the only thing keeping them off the wire, so that assertion is load-bearing wherever it
+lives. Run `lobby-actions-remain-available.sts2.yaml` last, and it must still pass: a second injected panel over
+the lobby is exactly the shape of change that silently eats a click.
 
 Gotchas these two encode, all found the hard way:
 - **The `dev.delay` is load-bearing.** A freshly restarted game keeps finishing its boot flow for several

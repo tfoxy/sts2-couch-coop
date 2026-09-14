@@ -364,6 +364,47 @@ export async function bareScrimPoint(dialogPath, { scrimName = NAMES.scrim } = {
   return { point, surfaces };
 }
 
+/**
+ * Joins the host as a named viewer and KEEPS the socket open until the caller closes it.
+ *
+ * Inherited from the retired activity-log probe, which used it to prove that a player's typed name never
+ * reaches another player's phone. A viewer that merely connects and leaves is not enough for that: the host
+ * surfaces a name while the connection is LIVE, so the socket has to still be open while the mirror is being
+ * scanned. Resolves once the host has answered with a session, so the caller knows the name is registered
+ * before it starts looking for it.
+ */
+export async function holdViewer(name, origin = process.env.COUCHCOOP_GAME_ORIGIN ?? "ws://127.0.0.1:13337") {
+  assert(typeof WebSocket === "function", "global WebSocket is unavailable -- Node >= 22 required");
+  const url = `${origin.replace(/\/$/, "")}/ws?watch=1&staticBg=0&cardFlight=1&handTween=1&trailDrive=0`;
+
+  return await new Promise((resolve, reject) => {
+    const socket = new WebSocket(url);
+    const close = () => { try { socket.close(); } catch { /* already closing */ } };
+    const timer = setTimeout(() => {
+      close();
+      reject(new ProbeError(`no session reply from ${url} within 10s -- is the browser server up?`));
+    }, 10000);
+
+    socket.addEventListener("open", () => {
+      socket.send(JSON.stringify({ type: "join", requestId: "probe:held-viewer", name }));
+    });
+    socket.addEventListener("message", event => {
+      const data = typeof event.data === "string" ? event.data : String(event.data);
+      // Ack scene deltas so the host keeps this viewer alive for the whole scan (1-credit flow control).
+      if (data.includes('"type":"scene-delta"')) {
+        try { socket.send('{"type":"scene-ack"}'); } catch { /* racing close */ }
+      }
+      if (!data.includes('"type":"session"')) return;
+      clearTimeout(timer);
+      resolve({ name, url, sawSession: true, close });
+    });
+    socket.addEventListener("error", () => {
+      clearTimeout(timer);
+      reject(new ProbeError(`could not reach ${url}`));
+    });
+  });
+}
+
 /** A raw click at explicit canvas coords, with no hover first -- used to prove input is BLOCKED. */
 export async function clickAt(x, y) {
   const click = await sts2(["act", "mouse", "click", "--x", String(Math.round(x)), "--y", String(Math.round(y))], { mode: "dangerous" });

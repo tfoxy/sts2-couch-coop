@@ -175,6 +175,11 @@ if (args is ["decor-freeze", ..])
 if (args is ["localization", ..])
 {
     CouchCoopLocalizationTests.Run();
+    // The activity ring's copy belongs with the catalogs and, like them, the full sequence cannot reach it —
+    // it is registered below at a point the SIGSEGV above never gets to, so every assertion in it has been
+    // unrunnable on this machine. Same shape as the catalog suite (pure, literal player-facing sentences,
+    // no Godot), so it runs here too.
+    CouchCoopActivityLogTests.Run();
     Console.WriteLine("localization: ok");
     return;
 }

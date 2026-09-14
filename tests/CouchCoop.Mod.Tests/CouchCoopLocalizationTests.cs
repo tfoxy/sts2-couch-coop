@@ -12,7 +12,6 @@ internal static class CouchCoopLocalizationTests
         ShippedCatalogsDoNotTranslateThePlaceholdersThemselves();
         LocaleSelectionFallsBackToEnglish();
         StructuredActivityRerendersAfterLocaleChange();
-        NamesRemainBbcodeEscapedAfterResolution();
         SemanticMappingsAndFontPredicateUseTheLocale();
         Console.WriteLine("CouchCoopLocalizationTests: ok");
     }
@@ -149,16 +148,6 @@ internal static class CouchCoopLocalizationTests
         Assert(retained.Message == "Ann 已连接。", "the retained row rerenders after a locale revision");
         CouchCoopLocalization.SetLanguageForTests("eng");
         CouchCoopActivityLog.Reset();
-    }
-
-    private static void NamesRemainBbcodeEscapedAfterResolution()
-    {
-        CouchCoopLocalization.SetLanguageForTests("zhs");
-        var entry = new CouchCoopActivityEntry(1, DateTimeOffset.UnixEpoch, CouchCoopActivityCategory.Viewer,
-            CouchCoopActivitySeverity.Info, CouchCoopActivityMessages.ViewerConnected("[color=red]Ann"));
-        Assert(CouchCoopActivityRender.RowBbcode(entry).Contains("[lb]color=red]Ann", StringComparison.Ordinal),
-            "localized templates still escape player names before BBCode paint");
-        CouchCoopLocalization.SetLanguageForTests("eng");
     }
 
     private static IEnumerable<string> Placeholders(string value)
