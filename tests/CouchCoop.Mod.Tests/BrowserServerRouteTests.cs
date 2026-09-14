@@ -283,7 +283,17 @@ if (args is ["beta-targets", ..])
         catch (Exception exception)
         {
             failures.Add(name);
-            Console.WriteLine($"  {name}: FAILED -- {exception.Message}");
+            // The WHOLE chain, not just the outer message. These legs fail through a static constructor more
+            // often than not, and "The type initializer for 'X' threw an exception" names nothing you can act
+            // on — the member that actually moved is in the inner exception. Printing only the outer message
+            // cost a bisect once; it should never cost a second one.
+            var detail = new List<string>();
+            for (var current = exception; current is not null; current = current.InnerException)
+            {
+                detail.Add($"{current.GetType().Name}: {current.Message}");
+            }
+
+            Console.WriteLine($"  {name}: FAILED -- {string.Join(" <- ", detail)}");
         }
     }
 
