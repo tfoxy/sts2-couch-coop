@@ -12,11 +12,5 @@ Runtimes code or exported Spine data, and no FMOD code; it reads content at
 runtime exclusively from the user's own legitimately-obtained game
 installation.
 
-The compile-only interoperability declarations under contracts/ refer to
-Slay the Spire 2 identifiers owned by Mega Crit and other respective
-rightsholders. Those identifiers are present solely so CouchCoop can bind to a
-user-supplied, legitimate game installation. They are not relicensed under,
-and are not claimed as part of, CouchCoop's Apache-2.0-licensed original work.
-
 See THIRD_PARTY_NOTICES.md and the license bundle included with binary
 distributions for incorporated open-source components.
