@@ -2629,7 +2629,6 @@ internal sealed class BrowserServerRouteTests
         Expect(root.GetProperty("capabilities").GetProperty("capabilities").GetArrayLength() >= 4, "session includes runtime capabilities");
         Expect(root.GetProperty("notices")[0].GetProperty("capabilityId").GetString() == CouchCoopRuntimeHost.StateCapability, "session includes structured notices");
         Expect(root.GetProperty("screen").GetProperty("kind").GetString() == "run", "session classifies the current screen");
-        Expect(root.GetProperty("rewardAction").GetBoolean(), "session advertises element-addressed reward claims");
         Expect(!root.TryGetProperty("lobbyState", out _), "session message omits the redundant lobbyState re-encoding");
     }
 

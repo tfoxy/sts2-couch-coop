@@ -151,7 +151,6 @@ public sealed class BrowserStateEnvelopeFactory(
                 ? new BrowserAtlasManifestDto(CouchCoopAtlasManifest.AtlasDirectory, atlasPages)
                 : null,
             ScrollAction: true,
-            RewardAction: true,
             ConnectionAttemptId: connectionAttemptId);
 
         return envelope;

@@ -69,9 +69,7 @@ describe("session envelope — the absolute-scroll contract", () => {
       players: [],
       screen: { kind: "unsupported", type: null, title: null, mirrorMode: "unsupported" },
       hostName: "host",
-      scrollAction: true,
-      rewardAction: true,
-      ...extra
+      scrollAction: true,      ...extra
     };
   }
 

@@ -49,8 +49,7 @@ const SESSION = {
     directory: "res://images/atlases/",
     pages: ["res://images/atlases/card_atlas_0.png", "res://images/atlases/card_atlas_1.png"]
   },
-  scrollAction: true,
-  rewardAction: true
+  scrollAction: true
 };
 
 describe("parseBrowserEnvelopeValue — the string and object entry points agree", () => {
@@ -77,8 +76,7 @@ describe("parseBrowserEnvelopeValue — the string and object entry points agree
       type: "session",
       headlessMirrorPort: 13401,
       directView: false,
-      scrollAction: true,
-      rewardAction: true
+      scrollAction: true
     });
     const session = viaValue as Extract<typeof viaValue, { type: "session" }>;
     expect(session.players?.[0]?.netId).toBe(1003);
@@ -126,18 +124,10 @@ describe("parseBrowserEnvelopeValue — the string and object entry points agree
     delete missingSupport.scrollAction;
     expect(() => parseBrowserEnvelopeValue(missingSupport)).toThrow("scrollAction");
 
-    const missingRewardAction = { ...SESSION } as Record<string, unknown>;
-    delete missingRewardAction.rewardAction;
-    expect(() => parseBrowserEnvelopeValue(missingRewardAction)).toThrow("rewardAction");
-
     expect(() => parseBrowserEnvelopeValue({ ...SESSION, scrollAction: "true" }))
       .toThrow("scrollAction");
-    expect(() => parseBrowserEnvelopeValue({ ...SESSION, rewardAction: 0 }))
-      .toThrow("rewardAction");
     expect(() => parseBrowserEnvelopeValue({ ...SESSION, scrollAction: false }))
       .toThrow("scrollAction");
-    expect(() => parseBrowserEnvelopeValue({ ...SESSION, rewardAction: false }))
-      .toThrow("rewardAction");
     expect(() => parseBrowserEnvelopeValue({ ...SESSION, hostName: null }))
       .toThrow("hostName");
 
@@ -184,9 +174,7 @@ describe("parseBrowserEnvelopeValue — the string and object entry points agree
         session: { name: null, status: "unassigned", joined: false, playerId: null, connectionCount: 0 },
         players: [],
         hostName: "host",
-        scrollAction: true,
-        rewardAction: true,
-        screen: { kind: "lobby", type: null, title: null, mirrorMode }
+        scrollAction: true,        screen: { kind: "lobby", type: null, title: null, mirrorMode }
       });
       return (parsed as Extract<typeof parsed, { type: "session" }>).screen?.mirrorMode;
     };

@@ -187,8 +187,7 @@ internal static class JoinModelTests
             RefreshRate: null,
             AssetCacheToken: "cache",
             HostName: "host",
-            ScrollAction: true,
-            RewardAction: true);
+            ScrollAction: true);
     }
 
     private static void LiftsRosterScreenAssignmentOutOfSession()
@@ -351,7 +350,7 @@ internal static class JoinModelTests
     private static void SessionEnvelopeParsesMirrorSeatFields()
     {
         const string json =
-            "{\"type\":\"session\",\"session\":{\"name\":null,\"status\":\"unassigned\",\"joined\":false,\"playerId\":null,\"connectionCount\":0},\"assetCacheToken\":\"cache\",\"hostName\":\"host\",\"scrollAction\":true,\"rewardAction\":true,\"screen\":{\"kind\":\"unsupported\",\"type\":null,\"title\":null,\"mirrorMode\":\"unsupported\"},\"players\":[" +
+            "{\"type\":\"session\",\"session\":{\"name\":null,\"status\":\"unassigned\",\"joined\":false,\"playerId\":null,\"connectionCount\":0},\"assetCacheToken\":\"cache\",\"hostName\":\"host\",\"scrollAction\":true,\"screen\":{\"kind\":\"unsupported\",\"type\":null,\"title\":null,\"mirrorMode\":\"unsupported\"},\"players\":[" +
             "{\"playerId\":\"p:1002\",\"name\":\"Alice\",\"netId\":1002,\"isHost\":false,\"isRunPlayer\":true,\"connectionCount\":0,\"disconnected\":true,\"isLocal\":false,\"isMirrorSeat\":true,\"seatStatus\":\"stuck\",\"seatStatusReason\":\"Cannot rejoin\",\"characterId\":null}," +
             "{\"playerId\":\"p:1004\",\"name\":\"Cara\",\"netId\":null,\"isHost\":false,\"isRunPlayer\":true,\"connectionCount\":0,\"disconnected\":false,\"isLocal\":false,\"isMirrorSeat\":false,\"seatStatus\":\"ready\",\"seatStatusReason\":null,\"characterId\":null}," +
             "{\"playerId\":\"Synthetic\",\"name\":\"Synthetic\",\"netId\":null,\"isHost\":false,\"isRunPlayer\":false,\"connectionCount\":0,\"disconnected\":false,\"isLocal\":false,\"isMirrorSeat\":false,\"seatStatus\":\"ready\",\"seatStatusReason\":null,\"characterId\":null}," +
@@ -381,7 +380,7 @@ internal static class JoinModelTests
     private static void SessionEnvelopeParsesIsLocal()
     {
         const string json =
-            "{\"type\":\"session\",\"session\":{\"name\":null,\"status\":\"unassigned\",\"joined\":false,\"playerId\":null,\"connectionCount\":0},\"assetCacheToken\":\"cache\",\"hostName\":\"host\",\"scrollAction\":true,\"rewardAction\":true,\"screen\":{\"kind\":\"unsupported\",\"type\":null,\"title\":null,\"mirrorMode\":\"unsupported\"},\"players\":[" +
+            "{\"type\":\"session\",\"session\":{\"name\":null,\"status\":\"unassigned\",\"joined\":false,\"playerId\":null,\"connectionCount\":0},\"assetCacheToken\":\"cache\",\"hostName\":\"host\",\"scrollAction\":true,\"screen\":{\"kind\":\"unsupported\",\"type\":null,\"title\":null,\"mirrorMode\":\"unsupported\"},\"players\":[" +
             "{\"playerId\":\"host\",\"name\":\"Hosty\",\"netId\":null,\"isHost\":true,\"isRunPlayer\":false,\"connectionCount\":0,\"disconnected\":false,\"isLocal\":false,\"isMirrorSeat\":false,\"seatStatus\":\"ready\",\"seatStatusReason\":null,\"characterId\":null}," +
             "{\"playerId\":\"me\",\"name\":\"Alice\",\"netId\":null,\"isHost\":false,\"isRunPlayer\":true,\"connectionCount\":1,\"disconnected\":false,\"isLocal\":true,\"isMirrorSeat\":true,\"seatStatus\":\"ready\",\"seatStatusReason\":null,\"characterId\":null}," +
             "{\"playerId\":\"them\",\"name\":\"Bob\",\"netId\":null,\"isHost\":false,\"isRunPlayer\":true,\"connectionCount\":0,\"disconnected\":false,\"isLocal\":false,\"isMirrorSeat\":false,\"seatStatus\":\"ready\",\"seatStatusReason\":null,\"characterId\":null}]}";

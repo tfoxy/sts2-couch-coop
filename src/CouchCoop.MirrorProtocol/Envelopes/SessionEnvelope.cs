@@ -64,7 +64,6 @@ public sealed record SessionEnvelope(
     string AssetCacheToken,
     string HostName,
     bool ScrollAction,
-    bool RewardAction,
     string? ConnectionAttemptId = null)
 {
     // Mirror-view screen discriminators (TS MirrorScreenKind).
@@ -124,8 +123,7 @@ public sealed record SessionEnvelope(
         if (session is null || players is null || screen is null
             || AsStringOrNull(Get(root, "assetCacheToken")) is not { } assetCacheToken
             || AsStringOrNull(Get(root, "hostName")) is not { } hostName
-            || Get(root, "scrollAction") is not { ValueKind: JsonValueKind.True }
-            || Get(root, "rewardAction") is not { ValueKind: JsonValueKind.True })
+            || Get(root, "scrollAction") is not { ValueKind: JsonValueKind.True })
         {
             return null;
         }
@@ -141,7 +139,6 @@ public sealed record SessionEnvelope(
             assetCacheToken,
             hostName,
             ScrollAction: true,
-            RewardAction: true,
             ConnectionAttemptId: AsStringOrNull(Get(root, "connectionAttemptId")));
     }
 

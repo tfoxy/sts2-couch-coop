@@ -172,9 +172,8 @@ export interface BrowserSessionEnvelope extends BrowserEnvelopeBase {
   // a client asking a repacked build for a page it no longer has. Absent on an older host and on any host that
   // could not enumerate — the prefetch then walks its own list unchanged, exactly as it always did.
   atlasManifest?: BrowserAtlasManifestDescriptor | null;
-  // Current hosts always support these semantic actions.
+  // Current hosts always accept an absolute scroll offset (`set-scroll-offset`).
   scrollAction: true;
-  rewardAction: true;
 }
 
 // The `staticBackground` wire shape (BrowserStaticBackgroundDto server-side).
@@ -362,8 +361,7 @@ export function parseBrowserEnvelopeValue(raw: unknown): BrowserEnvelope {
       assetCacheToken: typeof value.assetCacheToken === "string" ? value.assetCacheToken : null,
       staticBackground: normalizeStaticBackground(value.staticBackground),
       atlasManifest: normalizeAtlasManifest(value.atlasManifest),
-      scrollAction: requiredTrue(value.scrollAction, "scrollAction"),
-      rewardAction: requiredTrue(value.rewardAction, "rewardAction")
+      scrollAction: requiredTrue(value.scrollAction, "scrollAction")
     };
   }
 
