@@ -121,8 +121,8 @@ Clear the stale on-disk model cache or you will test against old cached JSON:
 rm -rf ~/.local/share/SlayTheSpire2/couch-coop/cache/*/assets/model/
 ```
 
-Then relaunch. The glob is over BRANCH directories — the cache is scoped per Steam branch
-(`couch-coop/cache/<branch>/`, at most two) and a bridge change invalidates every one of them, which no stamp
+Then relaunch. The glob is over VERSION directories — the cache is scoped per game version
+(`couch-coop/cache/<version>/`) and a bridge change invalidates every one of them, which no stamp
 can notice because nothing about the GAME moved. Everything the mod writes into the user profile lives under
 `couch-coop/`; the old `SlayTheSpire2/CouchCoop/` directory is abandoned, not migrated.
 

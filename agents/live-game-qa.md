@@ -57,7 +57,7 @@ Use the `couch-deploy` skill. The short version:
   branch contains (see the `couch-deploy` skill). Do not try to read a cache generation out of the DLL — that
   string names no path any more.
 - After a bridge/model shape change, clear
-  `~/.local/share/SlayTheSpire2/couch-coop/cache/*/assets/model/` (the glob is over BRANCH directories), or you
+  `~/.local/share/SlayTheSpire2/couch-coop/cache/*/assets/model/` (the glob is over VERSION directories), or you
   test against old cached JSON.
 
 ## Running the game

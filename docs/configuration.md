@@ -114,11 +114,12 @@ and passes its own `--user-dir`, so two branches never share save state. Do **no
 
 `instances.symlinkUserDataDirs: [couch-coop]` in the repo-root `sts2.local.yaml` symlinks the shared
 `user://couch-coop` directory into each instance, and CouchCoop's caches live inside it. Sharing it
-across branches is **safe**: the caches are branch scoped at `couch-coop/cache/<branch>/`, so a beta
+across branches is **safe**: the caches are version scoped at `couch-coop/cache/<version>/`, so a beta
 instance and a stable one write to different directories even when the parent is shared. (It was not
 always: the namespace used to carry only a schema number, and two branches sharing the directory served
-each other bytes rendered by the other game build — a rendering bug with no visible cause. See
-[Cache layout](#cache-layout) for what replaced it.)
+each other bytes rendered by the other game build — a rendering bug with no visible cause. Scoping by
+branch fixed that but left the *layout* depending on branch detection, which is why it is now the version.
+See [Cache layout](#cache-layout).)
 
 The **decompile corpus** is the other piece of per-branch state, and the one it costs most to get
 wrong. `.sts2/toolchain` in this checkout is a symlink to `../../spirectl/.sts2/toolchain/` — a
@@ -228,31 +229,49 @@ The cache is therefore keyed by the install, not just by the resource:
 
 ```
 user://couch-coop/cache/
-  <branch>/                     one per Steam branch ("public", "public-beta")
-    .cache-identity.json        the stamp: game version, content hash, Steam build id, cache versions
+  .cache-versions.json          branch -> version; what may be deleted when a branch moves
+  <version>/                    one per game version ("v0.107.1", "v0.111.0")
+    .cache-identity.json        the stamp: game version, content hash, cache versions
     assets/  geoclips/  astc/  pending/
   .trash/                       purged trees, deleted in the background
 ```
 
-On startup the mod compares that stamp against the install it is running in. If the game build has moved,
-or either cache version has, the whole branch directory is moved aside **before** anything reads or writes
-it and deleted in the background — a rename, so a multi-gigabyte cache costs no startup time. At most two
-branch directories are kept; a third is evicted least-recently-used first. One line in `godot.log` reports
-which branch was resolved, where the answer came from (`steamworks`, `appmanifest`, or a fallback), and
-any purge.
+**The directory is named after the game version**, read from the install's own `release_info.json`. That is a
+fact each install states about *itself*, so two installs on different versions cannot collide however their
+branch resolves — and an install that moves between versions gets a sibling per version rather than purging
+each way.
+
+On startup the mod compares that stamp against the install it is running in. If the game version or content
+hash has moved, or either cache version has, the directory is moved aside **before** anything reads or writes
+it and deleted in the background — a rename, so a multi-gigabyte cache costs no startup time.
+
+**The ordinary start asks Steam nothing.** When the version's directory is already there and its stamp
+matches, that is the whole answer, and one line in `godot.log` reports the version and `(branch not
+consulted)`. The branch is resolved only when this install has moved to a version it has no directory for —
+and then for one job: updating `.cache-versions.json`, which records the version each branch is currently on
+so the directory a branch *leaves* can be released by name. A version another branch still points at is never
+released. A directory no entry names is an orphan and is reclaimed on the next slow start; behind that, at
+most three version directories are kept, least-recently-used evicted first, so a map that could not be read
+cannot turn into unbounded disk.
 
 The branch comes from Steam itself (`SteamApps.GetCurrentBetaName()`) with the install manifest as a
 fallback; `release_info.json` has no branch field — its `branch` is the release tag. Steam is asked only
 about an install it actually mounted: it answers for an *app*, not a directory, so a second copy of the game
 launched from outside the Steam library would otherwise be told the branch of the copy Steam has mounted.
-That copy falls through to the spirectl API lane instead, which still separates the two supported builds.
+That copy falls through to the spirectl API lane, which is a coarse per-game-API bucket (`v107`, `v111`) —
+stable across patches, which is what makes it usable as a map key. The branch, how it was learned and the
+Steam build id are all **recorded in the stamp and compared by nothing**: they are labels for a build, not
+statements about its content, and a start that took the fast path never learns them.
+
 Two version numbers ride the stamp: CouchCoop's own `CacheVersion`, and spirectl's `AssetPayloadVersion`,
 which is owned by spirectl and not manually versioned in this repository. `COUCHCOOP_CACHE_ROOT` moves the
 whole thing.
 
-The same identity composes the `assetCacheToken` on the `session` envelope, which is how clients invalidate
-on exactly the changes that empty the host's cache — including the two the frontend bundle hash cannot see:
-a game update with no frontend rebuild, and a phone hopping between a stable host and a beta one.
+The same four fields compose the `assetCacheToken` on the `session` envelope, so the directory the host
+serves from and the URL a client caches under key on one fact rather than two that can disagree. That is how
+clients invalidate on exactly the changes that empty the host's cache — including the two the frontend bundle
+hash cannot see: a game update with no frontend rebuild, and a phone hopping between a stable host and a beta
+one.
 
 **Clients put that token in the URL** (`?b=<token>`, appended to `/res/`, `/models/`, `/spines/` and the
 `/bg/` URLs the host mints itself). That, not a cache wipe, is what actually invalidates. Every asset answer

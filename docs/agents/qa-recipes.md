@@ -43,7 +43,7 @@ the same idea for a standalone probe instance):
 - **Slot dirs live at `user://couch-coop/headless-slots/slot-<N>/SlayTheSpire2`** — everything the mod creates
   in the user profile is under `couch-coop/`. Symlink the big content-addressed caches from a known-good
   profile: `shader_cache` + `vulkan` whole-dir, and `couch-coop/cache` PER LEAF (one leaf — every cache is
-  branch scoped underneath it).
+  version scoped underneath it).
   Never link the whole `couch-coop` dir into a slot — the slot is inside it, so that link points at its own
   ancestor and any recursive walk (which follows symlinks with no cycle detection) never terminates.
 - **Own bridge socket**: `SPIRECTL_BRIDGE_SOCKET_PATH=/tmp/spirectl-bridge-<slot>.sock` — without this a second
@@ -350,7 +350,7 @@ curl 'http://127.0.0.1:13337/perf/spine.json'
 COUCHCOOP_SPINE_BENCH=1 <host>   then                    # re-bakes ONE key with its cache bypassed
 curl -G 'http://127.0.0.1:13337/perf/spine-render.json' --data-urlencode 'key=<a key from /perf/spine.json>' \
   --data 'repeats=3&warmups=1'
-# Whole-catalog cold sweep: move `~/.local/share/SlayTheSpire2/couch-coop/cache/<branch>` aside and launch with
+# Whole-catalog cold sweep: move `~/.local/share/SlayTheSpire2/couch-coop/cache/<version>` aside and launch with
 # `--prerender-spines`; every `[couch-coop] spine-prerender …` line then carries that bake's phase breakdown.
 ```
 
@@ -854,8 +854,8 @@ works. Things worth knowing before reading its output:
   game restart.
 - **Stale on-disk model cache** after a bridge/model shape change: clear
   `~/.local/share/SlayTheSpire2/couch-coop/cache/*/assets/model/` after `install-bridge` + relaunch, or you'll
-  test against old cached JSON. The glob is over BRANCH directories (the cache is scoped per Steam branch, at
-  most two), and a bridge change invalidates all of them without the stamp noticing — nothing about the GAME
+  test against old cached JSON. The glob is over VERSION directories (the cache is scoped per game version), and
+  a bridge change invalidates all of them without the stamp noticing — nothing about the GAME
   moved. Everything the mod writes into the user profile lives under `couch-coop/`.
 - **Any `dotnet build` of the sln DEPLOYS — verify the installed DLL after every deploy.** The main checkout's
   build also copies into the live mods dir, so a stray build (yours or another agent's) silently replaces
@@ -863,8 +863,9 @@ works. Things worth knowing before reading its output:
   yours: `stat -c %y <modsDir>/CouchCoop.Mod.dll`, or grep the DLL for a type name only your branch adds (see
   the `couch-deploy` skill; an Aug-10 agent measured a whole QA leg against someone else's build before
   checking). Do not try to read a cache generation out of the DLL to identify a build: the string is
-  interpolated from two constants, and since the cache became branch scoped it names no path at all — the
-  live answer is the `[couch-coop] cache branch=… cache=v…` line the mod logs at startup.
+  interpolated from two constants, and since the cache became version scoped it names no path at all — the
+  live answer is the `[couch-coop] cache game=… hash=… cache=v… root=…` line the mod logs at startup. That line
+  ends in `(branch not consulted)` on an ordinary start, which is the fast path working, not a failure.
 - **Live-lease hygiene (multi-agent rounds).** Acquire only the named resources you touch with
   `scripts/live-qa-lock.mjs`; all live sessions share `install`, while deployment holds it exclusively. Before
   RELEASING, restore the real `../spirectl` / `../godot-scene-web` checkouts to clean `main`.
