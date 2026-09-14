@@ -25,6 +25,7 @@ internal static class IdleHostCostTests
         FirstScreenArmsTheTickAndOnlyTheFirst();
         AFreedScreenIsPrunedAndParksTheTick();
         AHiddenOrDetachedScreenKeepsItsEntry();
+        MountPlanContract();
         MountTargetsResolve();
         MountPatchRefusesAnInheritedReady();
         await DeferredHostUiKeepsTheListenerButNotTheNetworkAsync(rootPath);
@@ -88,6 +89,77 @@ internal static class IdleHostCostTests
         var registry = new LobbyScreenRegistry(_ => true); // alive, whatever the tree says
         registry.Add(11);
         Expect(registry.Live() is [11], "a screen that is merely hidden or detached keeps its registration");
+    }
+
+    // ---- LobbyScreenMountPlan: a failed patch is retried, a successful one never is -------------------
+
+    // THE REGRESSION THIS ENCODES. The patch used to latch "applied" on its first call whatever the outcome,
+    // and its documented consolation — the controller's startup scan — finds nothing, because that scan runs
+    // at mod init when no lobby screen exists (`seeded=0` on every launch). So one failed attempt cost the
+    // lobby its QR button for the whole process. It happened for real: MonoMod's native exec-helper could not
+    // be dlopened at mod-init time, all eleven of the mod's Harmony patches died, and the very next dlopen
+    // 18ms later succeeded. A failure is worth retrying; a success never is.
+    // Internal so the `-- host-guards` verb can run these alone — the full sequence does not reach this file
+    // on every machine.
+    internal static void MountPlanContract()
+    {
+        MountPlanRetriesOnlyWhatFailed();
+        MountPlanIsInertOnceComplete();
+        MountPlanSurvivesAThrowingTarget();
+    }
+
+    private static void MountPlanRetriesOnlyWhatFailed()
+    {
+        var plan = new LobbyScreenMountPlan(["alpha", "beta"]);
+        Expect(plan.TargetCount == 2, "the plan remembers its denominator for the targets=n/m line");
+        Expect(!plan.IsComplete, "a fresh plan has everything to do");
+
+        var attempted = new List<string>();
+        var patched = plan.Attempt(target =>
+        {
+            attempted.Add(target);
+            return target == "alpha"; // beta fails, exactly as a patch does when the native helper is missing
+        });
+
+        Expect(!patched, "an attempt that could not install every target reports incomplete");
+        Expect(attempted.Count == 2, "the first attempt tries both targets");
+        Expect(plan.Pending is ["beta"], "the installed target is dropped and only the failure stays pending");
+
+        attempted.Clear();
+        var second = plan.Attempt(target =>
+        {
+            attempted.Add(target);
+            return true;
+        });
+
+        Expect(second, "a retry that installs the remainder completes the plan");
+        Expect(attempted is ["beta"], "the retry re-patches ONLY the pending target — Harmony would happily install a second copy of the other");
+        Expect(plan.IsComplete && plan.Pending.Count == 0, "a completed plan has nothing left to attempt");
+    }
+
+    // Once everything is hooked the plan must go inert, because the panel controller calls Apply() a second
+    // time on every process and a second postfix on the same _Ready would report each mount twice.
+    private static void MountPlanIsInertOnceComplete()
+    {
+        var plan = new LobbyScreenMountPlan(["alpha"]);
+        Expect(plan.Attempt(_ => true), "the first attempt completes the plan");
+
+        var calls = 0;
+        Expect(plan.Attempt(_ => { calls++; return true; }), "a completed plan still reports complete");
+        Expect(calls == 0, "…and does no work: an installed target is never patched twice");
+    }
+
+    // A target that THROWS must not take its siblings down with it, and must stay retryable. The live failure
+    // mode is a DllNotFoundException out of Harmony, which is per-target and transient.
+    private static void MountPlanSurvivesAThrowingTarget()
+    {
+        var plan = new LobbyScreenMountPlan(["alpha", "beta"]);
+        var complete = plan.Attempt(target => target == "alpha"
+            ? true
+            : throw new DllNotFoundException("mm-exhelper.so: undefined symbol: _Unwind_RaiseException"));
+
+        Expect(!complete, "a throwing target leaves the plan incomplete");
+        Expect(plan.Pending is ["beta"], "the throw is a failure, not an abort — the sibling still installed and the thrower stays pending");
     }
 
     // ---- LobbyScreenMountPatch: the game seam ---------------------------------------------------------

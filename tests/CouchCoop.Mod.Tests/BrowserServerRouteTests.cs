@@ -83,6 +83,11 @@ if (args is ["host-guards", ..])
     NetTransportPatchTargetsTests.Run();
     HostPeerRoutingTests.Run();
     HostTransportCapacityTests.Run();
+    // The lobby mount patch's RETRY contract — pure, no Harmony install and no game, same standing as the
+    // legs above. Registered here as well as in the full sequence because the sequence does not reach
+    // IdleHostCostTests on some machines, and the regression it guards (one failed patch attempt costing the
+    // lobby its QR button for the whole process) is invisible until someone opens a lobby.
+    IdleHostCostTests.MountPlanContract();
     Console.WriteLine("host guards: ok");
     return;
 }

@@ -80,6 +80,24 @@ public static class CouchCoopQrHostPanelController
             _initialized = true;
         }
 
+        // SECOND CHANCE at the mount patch, and the last one. Init applies it with the other patches, at the
+        // very top of the mod's startup; this runs at the bottom, after the spirectl runtime has been composed.
+        // A native precondition that was not satisfied up there may well be by now — the failure that motivated
+        // this cost every patch in the mod, and a dlopen 18 ms later succeeded — and a target already installed
+        // is not touched again. Still long before any lobby screen runs its _Ready, which is the ordering that
+        // matters. Nothing retries after this: the miss is reported, loudly, by the patch itself.
+        try
+        {
+            Patches.LobbyScreenMountPatch.Apply();
+        }
+        catch (Exception exception)
+        {
+            // _initialized is latched above, so a throw escaping here would cost the seed walk and every later
+            // arm — the panel would be gone for the process over a retry that was only ever a second chance.
+            Console.Error.WriteLine(
+                $"[couch-coop] lobby screen mount retry failed: {exception.GetType().Name}: {exception.Message}");
+        }
+
         try
         {
             if (Engine.GetMainLoop() is not SceneTree { Root: { } root })
