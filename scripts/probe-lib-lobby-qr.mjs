@@ -289,6 +289,81 @@ export async function hoverNode(path, { settleMs = 300, expectHovered = true } =
   return { position: hover?.hoverPosition ?? null, hovered: hover?.hovered === true };
 }
 
+/**
+ * A point on the dialog's scrim that no other surface of the dialog covers -- i.e. somewhere an
+ * outside-click really is outside.
+ *
+ * This used to be one line: halfway between the screen's left edge and the card's left edge. That is
+ * where the CONNECTIONS panel now lives whenever the host has a saved connection problem, so the
+ * "outside" click landed on a sibling surface, the dialog stayed up, and the probe failed claiming the
+ * outside-click close was broken when it was not. The card is no longer the only thing on the scrim,
+ * so the point is derived from ALL of the dialog's visible children instead of from the card alone --
+ * every future sibling included, since the failure mode is silent and looks like a product defect.
+ *
+ * Four candidate bands (left of / right of / above / below everything occupied), and the WIDEST one
+ * wins rather than the first that fits: with the connections panel up, "left" is a 16px gutter while
+ * "right" is 460px of bare scrim, and a click aimed at the middle of 16px is one layout tweak away from
+ * landing on a surface again. A dialog that leaves no band wide enough is a real finding and asserts.
+ */
+export async function bareScrimPoint(dialogPath, { scrimName = NAMES.scrim } = {}) {
+  const scrimRect = globalRect(await nodeDetails(`${dialogPath}/${scrimName}`, { properties: false }));
+  assert(scrimRect, "the dialog scrim has no rect to click on");
+
+  // Direct children only: a grandchild is inside its parent's rect, so it cannot rule out a point the
+  // parent already allows.
+  const tree = await sceneTree(dialogPath);
+  const childPaths = (tree?.nodes ?? [])
+    .map(node => node.nodePath)
+    .filter(path => path.startsWith(`${dialogPath}/`) && !path.slice(dialogPath.length + 1).includes("/"));
+
+  const surfaces = [];
+  for (const path of childPaths) {
+    const node = await nodeDetails(path, { properties: true });
+    const name = path.slice(dialogPath.length + 1);
+    if (name === scrimName || !isVisible(node)) continue;
+    const rect = globalRect(node);
+    if (!rect || rect.size.x <= 0 || rect.size.y <= 0) continue;
+    surfaces.push({ name, rect });
+  }
+  assert(surfaces.length > 0, "the open dialog has no visible surface over its scrim — nothing to be outside of");
+
+  const left = Math.min(...surfaces.map(s => s.rect.position.x));
+  const right = Math.max(...surfaces.map(s => s.rect.position.x + s.rect.size.x));
+  const top = Math.min(...surfaces.map(s => s.rect.position.y));
+  const bottom = Math.max(...surfaces.map(s => s.rect.position.y + s.rect.size.y));
+  const midX = Math.round(scrimRect.position.x + scrimRect.size.x / 2);
+  const midY = Math.round(scrimRect.position.y + scrimRect.size.y / 2);
+
+  const scrimRight = scrimRect.position.x + scrimRect.size.x;
+  const scrimBottom = scrimRect.position.y + scrimRect.size.y;
+  const candidates = [
+    { from: "left of every surface", gap: left - scrimRect.position.x, x: Math.round((scrimRect.position.x + left) / 2), y: midY },
+    { from: "right of every surface", gap: scrimRight - right, x: Math.round((right + scrimRight) / 2), y: midY },
+    { from: "above every surface", gap: top - scrimRect.position.y, x: midX, y: Math.round((scrimRect.position.y + top) / 2) },
+    { from: "below every surface", gap: scrimBottom - bottom, x: midX, y: Math.round((bottom + scrimBottom) / 2) }
+  ].sort((a, b) => b.gap - a.gap);
+
+  // A 4px inset keeps a point that is only just clear from riding a rounding boundary into a surface.
+  const inset = 4;
+  const covers = ({ rect }, point) =>
+    point.x >= rect.position.x - inset && point.x <= rect.position.x + rect.size.x + inset &&
+    point.y >= rect.position.y - inset && point.y <= rect.position.y + rect.size.y + inset;
+  const onScrim = point =>
+    point.x >= scrimRect.position.x && point.x <= scrimRight &&
+    point.y >= scrimRect.position.y && point.y <= scrimBottom;
+
+  const point = candidates.find(candidate =>
+    candidate.gap > inset * 2 && onScrim(candidate) && !surfaces.some(s => covers(s, candidate)));
+  assert(
+    point,
+    "no bare scrim left to click: the dialog's surfaces " +
+      surfaces.map(s => `${s.name}(${s.rect.position.x},${s.rect.position.y} ${s.rect.size.x}x${s.rect.size.y})`).join(", ") +
+      ` leave no band wider than ${inset * 2}px on any edge of the scrim, so an outside click is not ` +
+      "reachable with a mouse"
+  );
+  return { point, surfaces };
+}
+
 /** A raw click at explicit canvas coords, with no hover first -- used to prove input is BLOCKED. */
 export async function clickAt(x, y) {
   const click = await sts2(["act", "mouse", "click", "--x", String(Math.round(x)), "--y", String(Math.round(y))], { mode: "dangerous" });
@@ -404,8 +479,21 @@ export async function roiDiffRatio(baselinePath, actualPath, regionsPath) {
  *
  * Sensitivity of this scan was proven by a positive control: relaunching with
  * SPIRECTL_SCENE_WATCH_HONOR_STREAM_SKIP=0 makes all 18 CouchCoopQr* names appear here.
+ *
+ * TWO windows, and the distinction is what keeps this leg from flaking: `keyframeTimeoutMs` is how long
+ * to wait for the host's first keyframe, `durationMs` is how long to scan once it has arrived.
+ *
+ * `origin` defaults to the compiled-in 13337, which the host only gets when nothing else already has it
+ * — so a caller driving a named instance should pass the port that instance actually bound. Scanning
+ * the wrong game does NOT error: the socket opens, a real stream arrives, and the leg fails later on a
+ * keyframe that was never coming.
  */
-export async function scanMirrorForQrNodes({ durationMs = 6000, origin = process.env.COUCHCOOP_GAME_ORIGIN ?? "ws://127.0.0.1:13337", extraPatterns = [] } = {}) {
+export async function scanMirrorForQrNodes({
+  durationMs = 6000,
+  keyframeTimeoutMs = 20000,
+  origin = process.env.COUCHCOOP_GAME_ORIGIN ?? "ws://127.0.0.1:13337",
+  extraPatterns = []
+} = {}) {
   const url = `${origin.replace(/\/$/, "")}/ws?watch=1&staticBg=0&cardFlight=1&handTween=1&trailDrive=0`;
   assert(typeof WebSocket === "function", "global WebSocket is unavailable -- Node >= 22 required");
 
@@ -427,7 +515,17 @@ export async function scanMirrorForQrNodes({ durationMs = 6000, origin = process
       resolve({ url, messages, bytes, sawFullKeyframe, fullKeyframeBytes, matches: [...matches], socketError });
     };
 
-    const timer = setTimeout(finish, durationMs);
+    // The scan window opens AT THE KEYFRAME, not at connect. A fixed window from connect made this leg
+    // intermittently fail with "never saw a full keyframe" on a host that was streaming perfectly: the
+    // host's first keyframe for a new viewer is produced on the game main thread, which the probe has
+    // usually just given work (a fixture load, a hover hold), so it can miss a short window entirely.
+    // Waiting for it also makes the leak check STRICTER, since the keyframe is the message most likely
+    // to carry a leaked node name.
+    let timer = setTimeout(finish, keyframeTimeoutMs);
+    const startScanWindow = () => {
+      clearTimeout(timer);
+      timer = setTimeout(finish, durationMs);
+    };
 
     socket.addEventListener("message", event => {
       const data = typeof event.data === "string" ? event.data : String(event.data);
@@ -437,6 +535,7 @@ export async function scanMirrorForQrNodes({ durationMs = 6000, origin = process
         if (!sawFullKeyframe && data.includes('"full":true')) {
           sawFullKeyframe = true;
           fullKeyframeBytes = Buffer.byteLength(data, "utf8");
+          startScanWindow();
         }
         // 1-credit flow control: ack instantly so the host keeps sending.
         try { socket.send('{"type":"scene-ack"}'); } catch { /* racing close */ }
