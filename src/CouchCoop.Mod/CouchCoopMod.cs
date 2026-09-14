@@ -103,6 +103,15 @@ public static class CouchCoopMod
                 return _runtime;
             }
 
+            // KEEP THIS ABOVE EVERY Apply() BELOW. Harmony's detours go through MonoMod, which dlopens a native
+            // exec-helper that resolves libgcc's unwinder from the process's GLOBAL symbol namespace — and the
+            // game's runtime does not leave it there. Without this preload the dlopen fails with
+            // "undefined symbol: _Unwind_RaiseException" and EVERY patch below dies, each one logging its own
+            // failure and degrading on its own terms: no command-line override (so a seat cannot join), no
+            // transport bookkeeping, and no lobby-screen mount signal — which costs the lobby its QR button for
+            // the whole session. The spirectl runtime preloads it too, but it does that when the runtime is
+            // COMPOSED, which is a hundred lines below here.
+            EnsureMonoModCanPatch();
             // Feed the game an env-gated override table through CommandLineHelper. EMPTY on a host (it hosts
             // normally, Steam included — the old FastmpPatch forced ENet on everyone and made a real Steam
             // session impossible); on a headless couch seat it re-materializes "fastmp=join" + "clientId=<netId>"
@@ -712,6 +721,55 @@ public static class CouchCoopMod
         return int.TryParse(configured, out var port) && port is > 0 and <= ushort.MaxValue
             ? port
             : DefaultPreferredPort;
+    }
+
+    /// <summary>
+    /// Satisfy Harmony's one native precondition, and say in <c>godot.log</c> whether it worked.
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// The preload itself lives in spirectl, which owns this knowledge and preloads for its own hooks — this is
+    /// only the call an embedder has to make because it patches BEFORE composing that runtime. See
+    /// <c>Sts2MonoModNativeDependencies</c> for the mechanism; it is idempotent and per-process, so the bridge's
+    /// later call is free.
+    /// </para>
+    /// <para>
+    /// Logged through <see cref="CouchCoopLog"/> as well as stderr ON PURPOSE. Every other patch diagnostic in
+    /// this mod is stderr-only, which a launcher captures to its own file — and when this exact failure happened
+    /// live, <c>godot.log</c> (the file anyone actually reads, and the one the connection report links to) held
+    /// six CouchCoop lines and not one of them said why the QR button was missing.
+    /// </para>
+    /// </remarks>
+    private static void EnsureMonoModCanPatch()
+    {
+        try
+        {
+            var preload = Spirectl.Sts2.Live.Sts2MonoModNativeDependencies.EnsureLoaded();
+            if (!preload.Supported)
+            {
+                return; // not a Linux process: nothing to preload, and nothing went wrong
+            }
+
+            if (preload.Loaded)
+            {
+                Console.Error.WriteLine("[couch-coop] monomod unwinder preloaded");
+                CouchCoopLog.Info("[couch-coop] monomod unwinder preloaded (libgcc_s.so.1, RTLD_GLOBAL)");
+                return;
+            }
+
+            var detail = $"[couch-coop] monomod unwinder preload FAILED detail={preload.Error} — Harmony patches "
+                + "may fail with 'undefined symbol: _Unwind_RaiseException'; the lobby QR button and co-op seat "
+                + "joining depend on them";
+            Console.Error.WriteLine(detail);
+            CouchCoopLog.Error(detail);
+        }
+        catch (Exception exception)
+        {
+            // Never fatal: the patches below each degrade on their own, and a mod that refuses to load is worse
+            // than one that loads without its hooks.
+            Console.Error.WriteLine(
+                $"[couch-coop] monomod unwinder preload threw detail={exception.GetType().Name}: {exception.Message}");
+        }
     }
 
     private static void InitializeQrHostPanel()

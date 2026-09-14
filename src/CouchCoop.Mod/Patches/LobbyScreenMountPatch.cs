@@ -1,5 +1,6 @@
 using System.Reflection;
 using CouchCoop.Mod.HostUi;
+using CouchCoop.Mod.Session;
 using Godot;
 using HarmonyLib;
 
@@ -32,14 +33,20 @@ namespace CouchCoop.Mod.Patches;
 /// <see cref="LobbyScreenRegistry"/>.
 /// </para>
 /// <para>
-/// Failure is always silent-and-degraded, never fatal: a missing type or a refused seam logs one line and
-/// leaves the controller on its one-shot startup scan, which still finds a lobby that was already mounted.
+/// Failure is degraded, never fatal — but it is NOT cheap, and it used to be silent. There is no working
+/// fallback behind this patch: the controller's other discovery path is a one-shot walk at mod init, when no
+/// lobby screen exists yet, so a screen this patch misses is a screen nothing ever reports and the lobby loses
+/// its QR button for the whole process. Hence <see cref="LobbyScreenMountPlan"/> (a failed target stays pending
+/// and is retried on the next <see cref="Apply"/>, which the panel controller makes once more after the
+/// runtime is up) and hence the <see cref="CouchCoopLog"/> line: a patch that cannot be installed says so in
+/// <c>godot.log</c>, naming the consequence, because the stderr line it used to write alone goes to a file
+/// nobody reads.
 /// </para>
 /// </remarks>
 internal static class LobbyScreenMountPatch
 {
     private static readonly object _sync = new();
-    private static bool _applied;
+    private static LobbyScreenMountPlan? _plan;
 
     /// <summary>
     /// The game members this patch binds to, shared with the reflection guard test — the same contract
@@ -60,34 +67,60 @@ internal static class LobbyScreenMountPatch
     /// <summary>The one lifecycle method both screens declare, and the only one safe to patch.</summary>
     internal const string ReadyMethodName = "_Ready";
 
-    internal static void Apply()
+    /// <summary>
+    /// Install the mount hook on every screen that does not have it yet.
+    /// </summary>
+    /// <returns>
+    /// Whether both screens are now hooked. Safe and free to call again: an installed target is never patched
+    /// twice, and a fully satisfied patch returns immediately.
+    /// </returns>
+    internal static bool Apply()
     {
         lock (_sync)
         {
-            if (_applied) return;
-            _applied = true; // one-shot regardless of outcome
+            var plan = _plan ??= new LobbyScreenMountPlan(ScreenTypeNames);
+            if (plan.IsComplete)
+            {
+                return true;
+            }
 
-            var harmony = new Harmony("com.couchcoop.lobby-screen-mount");
             var postfix = typeof(LobbyScreenMountPatch)
                 .GetMethod(nameof(ReadyPostfix), BindingFlags.NonPublic | BindingFlags.Static);
             if (postfix is null)
             {
-                Console.Error.WriteLine(
-                    "[couch-coop] LobbyScreenMountPatch: postfix not found — lobby panels fall back to the startup scan.");
-                return;
+                // Our own method, so this cannot be a game-side change and a retry cannot help it.
+                ReportIncomplete("the mount postfix is missing from this build");
+                return false;
             }
 
-            var patched = 0;
-            foreach (var typeName in ScreenTypeNames)
+            var harmony = new Harmony("com.couchcoop.lobby-screen-mount");
+            var complete = plan.Attempt(typeName => TryPatch(harmony, typeName, postfix));
+
+            Console.Error.WriteLine(
+                $"[couch-coop] lobby screen mount patch installed targets={plan.TargetCount - plan.Pending.Count}/{plan.TargetCount}");
+            if (!complete)
             {
-                if (TryPatch(harmony, typeName, postfix))
-                {
-                    patched++;
-                }
+                ReportIncomplete($"still pending: {string.Join(", ", plan.Pending)}");
             }
 
-            Console.Error.WriteLine($"[couch-coop] lobby screen mount patch installed targets={patched}/{ScreenTypeNames.Count}");
+            return complete;
         }
+    }
+
+    /// <summary>
+    /// Say in <c>godot.log</c> what a reader needs to know: that the button is gone and why.
+    /// </summary>
+    /// <remarks>
+    /// The one place in this patch that does NOT write only to stderr. When every Harmony patch in the mod
+    /// failed on a live host, <c>godot.log</c> carried six CouchCoop lines and none of them mentioned it; the
+    /// diagnosis took a reconstruction from the launcher's captured stderr, which a player does not have.
+    /// </remarks>
+    private static void ReportIncomplete(string detail)
+    {
+        var message = $"[couch-coop] lobby screen mount patch INCOMPLETE ({detail}) — the Couch Co-Op QR button "
+            + "will not appear in the lobby this session";
+        Console.Error.WriteLine(message);
+        CouchCoopLog.Error(message);
     }
 
     private static bool TryPatch(Harmony harmony, string typeName, MethodInfo postfix)
@@ -127,7 +160,7 @@ internal static class LobbyScreenMountPatch
         if (type is null)
         {
             Console.Error.WriteLine(
-                $"[couch-coop] LobbyScreenMountPatch: {typeName} not found — lobby panels fall back to the startup scan.");
+                $"[couch-coop] LobbyScreenMountPatch: {typeName} not found.");
             return null;
         }
 
@@ -135,7 +168,7 @@ internal static class LobbyScreenMountPatch
         if (target is null)
         {
             Console.Error.WriteLine(
-                $"[couch-coop] LobbyScreenMountPatch: {typeName}._Ready not found — lobby panels fall back to the startup scan.");
+                $"[couch-coop] LobbyScreenMountPatch: {typeName}._Ready not found.");
             return null;
         }
 
@@ -145,8 +178,7 @@ internal static class LobbyScreenMountPatch
             // node in the game — the exact cost this patch removes, multiplied.
             Console.Error.WriteLine(
                 $"[couch-coop] LobbyScreenMountPatch: {typeName} does not declare _Ready "
-                + $"(would have patched {target.DeclaringType?.FullName ?? "unknown"}) — refused, "
-                + "lobby panels fall back to the startup scan.");
+                + $"(would have patched {target.DeclaringType?.FullName ?? "unknown"}) — refused.");
             return null;
         }
 
