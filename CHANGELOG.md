@@ -9,6 +9,12 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and
 
 ## [Unreleased]
 
+## [0.2.1] - 2026-09-14
+
+### Fixed
+
+- Cache now keeps two version folders at most, named by version
+
 ## [0.2.0] - 2026-09-14
 
 ### Added
@@ -49,7 +55,8 @@ First public release. Turn the phones, tablets and laptops on your network into 
 a local Slay the Spire 2 co-op session — no app to install on the other devices, and no `sts2` CLI
 needed to run the mod.
 
-[Unreleased]: https://github.com/tfoxy/sts2-couch-coop/compare/v0.2.0...HEAD
+[Unreleased]: https://github.com/tfoxy/sts2-couch-coop/compare/v0.2.1...HEAD
+[0.2.1]: https://github.com/tfoxy/sts2-couch-coop/releases/tag/v0.2.1
 [0.2.0]: https://github.com/tfoxy/sts2-couch-coop/releases/tag/v0.2.0
 [0.1.1]: https://github.com/tfoxy/sts2-couch-coop/compare/v0.1.0...v0.1.1
 [0.1.0]: https://github.com/tfoxy/sts2-couch-coop/releases/tag/v0.1.0
