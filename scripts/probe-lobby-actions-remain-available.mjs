@@ -17,17 +17,18 @@
 // expose `mouseFilter` at all (verified 2026-08-08 -- it exists only in spirectl's mirror scene
 // WATCHER, never in the dev scene provider). The pre-2026-08 version of this probe "asserted" the
 // filter with `mouseFilter === undefined || ...`, which passed vacuously on every run. The real
-// behaviour is therefore asserted on the INPUT path below, and the declared filters are guarded
-// against source drift by a regex over the CURRENT files.
+// behaviour is therefore asserted on the INPUT path below, and the declared filters are guarded by a
+// regex search over the WHOLE HostUi directory -- not over named files, which is how this check came
+// to fail on a healthy build after the scrim moved into the shared modal base.
 
-import { mkdir, readFile, writeFile, rm } from "node:fs/promises";
+import { mkdir, readdir, readFile, writeFile, rm } from "node:fs/promises";
 import { fileURLToPath } from "node:url";
 import {
   NAMES, SCREEN_START_RUN_LOBBY, FIXTURE_HOST_LOBBY,
   ProbeError, assert, sleep,
   acquireLiveLock, releaseLiveLock,
   sts2, sceneTree, nodesNamed, findNodePath, nodeDetails, globalRect, isVisible,
-  hoverAndClick, clickAt,
+  hoverAndClick, clickAt, bareScrimPoint,
   loadFixture, waitFor, selectedCharacterButtonId,
   screenshot
 } from "./probe-lib-lobby-qr.mjs";
@@ -56,39 +57,62 @@ async function dialogVisible(panelPath) {
 // Static contract: the declared mouse filters of the injected tree
 // =================================================================================================
 async function assertDeclaredMouseFilters() {
-  const read = async relative => await readFile(new URL(`../${relative}`, import.meta.url), "utf8");
+  // Searched across the host-UI sources rather than read out of named files, and that is the fix for a
+  // real failure: these four declarations used to be grepped from CouchCoopQrDialog.cs by name, the
+  // scrim and the card then moved into the shared CouchCoopModalDialog base (and `_panel` was renamed
+  // `_card`), and the probe died on its FIRST leg with "the scrim must be MouseFilterEnum.Stop" while
+  // the scrim was perfectly correct one file over. A declaration that moves house is not a regression;
+  // one that disappears is. So the contract is "exactly one host-UI source declares this", and the file
+  // that does is reported as evidence instead of being hard-coded into the question.
+  const hostUi = new URL("../src/CouchCoop.Mod/HostUi/", import.meta.url);
+  const sources = new Map();
+  for (const entry of await readdir(hostUi)) {
+    if (entry.endsWith(".cs")) {
+      sources.set(`src/CouchCoop.Mod/HostUi/${entry}`, await readFile(new URL(entry, hostUi), "utf8"));
+    }
+  }
+  assert(sources.size > 0, "no host-UI sources found — is this probe running outside the repo?");
 
-  const panelSource = "src/CouchCoop.Mod/HostUi/CouchCoopQrHostPanel.cs";
-  const dialogSource = "src/CouchCoop.Mod/HostUi/CouchCoopQrDialog.cs";
-  const panel = await read(panelSource);
-  const dialog = await read(dialogSource);
+  const declaredIn = (pattern, what) => {
+    const hits = [...sources].filter(([, text]) => pattern.test(text)).map(([name]) => name);
+    assert(hits.length > 0, `no host-UI source declares ${what} (searched ${sources.size} files for ${pattern})`);
+    assert(hits.length === 1, `${what} is declared in more than one place (${hits.join(", ")}) — one of them is dead`);
+    return hits[0];
+  };
 
-  // The panel ROOT must be inert, or it would swallow lobby clicks whenever only the button shows.
-  assert(
-    /MouseFilter\s*=\s*MouseFilterEnum\.Ignore/.test(panel),
-    `${panelSource}: the panel root must be MouseFilterEnum.Ignore so the lobby stays clickable`
+  // The panel ROOT must be inert, or it would swallow lobby clicks whenever only the button shows. Bound
+  // to its class as well as its assignment: `MouseFilter = ...Ignore` on its own is the commonest line in
+  // the directory, so without the class anchor this would match almost any file and prove nothing.
+  const panelRoot = declaredIn(
+    /class CouchCoopQrHostPanel[\s\S]*?\n\s*MouseFilter\s*=\s*MouseFilterEnum\.Ignore/,
+    "the QR panel root as MouseFilterEnum.Ignore (so the lobby stays clickable)"
   );
-  // The dialog root is Ignore too; the SCRIM is what blocks.
-  assert(
-    /_scrim\.MouseFilter\s*=\s*MouseFilterEnum\.Stop/.test(dialog),
-    `${dialogSource}: the scrim must be MouseFilterEnum.Stop so an open dialog captures lobby clicks`
+  // The modal root is Ignore too; the SCRIM is what blocks, and the CARD is what stops a click on the
+  // dialog's own surface from falling through to the scrim and dismissing it under a player's finger.
+  const modalRoot = declaredIn(
+    /class CouchCoopModalDialog[\s\S]*?\n\s*MouseFilter\s*=\s*MouseFilterEnum\.Ignore/,
+    "the modal root as MouseFilterEnum.Ignore"
   );
-  assert(
-    /_panel\.MouseFilter\s*=\s*MouseFilterEnum\.Stop/.test(dialog),
-    `${dialogSource}: the dialog card must be MouseFilterEnum.Stop`
+  const scrim = declaredIn(
+    /_scrim\.MouseFilter\s*=\s*MouseFilterEnum\.Stop/,
+    "the scrim as MouseFilterEnum.Stop (so an open dialog captures lobby clicks)"
   );
-  assert(
-    /_qr\.MouseFilter\s*=\s*MouseFilterEnum\.Stop/.test(dialog),
-    `${dialogSource}: the QR itself must be Stop so lining a phone up over it does not dismiss the dialog`
+  const card = declaredIn(
+    /_card\.MouseFilter\s*=\s*MouseFilterEnum\.Stop/,
+    "the dialog card as MouseFilterEnum.Stop"
+  );
+  const qr = declaredIn(
+    /_qr\.MouseFilter\s*=\s*MouseFilterEnum\.Stop/,
+    "the QR texture as MouseFilterEnum.Stop (so lining a phone up over it does not dismiss the dialog)"
   );
 
   evidence.source = {
-    panelSource,
-    dialogSource,
-    panelRoot: "MouseFilterEnum.Ignore",
-    scrim: "MouseFilterEnum.Stop",
-    dialogCard: "MouseFilterEnum.Stop",
-    qrTexture: "MouseFilterEnum.Stop",
+    searched: `src/CouchCoop.Mod/HostUi/*.cs (${sources.size} files)`,
+    panelRoot: { filter: "MouseFilterEnum.Ignore", declaredIn: panelRoot },
+    modalRoot: { filter: "MouseFilterEnum.Ignore", declaredIn: modalRoot },
+    scrim: { filter: "MouseFilterEnum.Stop", declaredIn: scrim },
+    dialogCard: { filter: "MouseFilterEnum.Stop", declaredIn: card },
+    qrTexture: { filter: "MouseFilterEnum.Stop", declaredIn: qr },
     note:
       "Checked in source because `dev scene node --properties` does not expose mouseFilter; the live " +
       "behaviour these filters produce is asserted on the input path in legs A/B/C."
@@ -270,8 +294,18 @@ try {
     afterRawB === beforeRawB,
     `leg B: a raw click at (${blockedX},${blockedY}) must be captured by the scrim, but selection moved ${beforeRawB} -> ${afterRawB}`
   );
-  // That click also dismissed the dialog (click-outside-to-close).
-  assert(!(await dialogVisible(panelPath)), "leg B: the outside click must also close the dialog");
+
+  // The blocked click above is NOT an outside click, and this leg used to assume it was. The character
+  // buttons sit under the dialog CARD, which since the single-select redesign consumes clicks on its own
+  // surface instead of letting them fall through to the scrim — deliberately, so blank card space cannot
+  // dismiss the dialog under a player's finger. So the close needs its own point, on scrim that nothing
+  // covers: the connections panel is up there too whenever the host has a saved connection problem.
+  assert(await dialogVisible(panelPath), "leg B: a click on the card surface must NOT close the dialog");
+  const { point: outside, surfaces: dialogSurfaces } = await bareScrimPoint(at(panelPath, NAMES.dialog));
+  await clickAt(outside.x, outside.y);
+  await sleep(500);
+  assert(!(await dialogVisible(panelPath)), "leg B: a click on bare scrim must close the dialog");
+  evidence.legs.B_outsideClick = { clickedAt: outside, from: outside.from, dialogSurfaces };
   evidence.legs.B = {
     rawClickAt: { x: blockedX, y: blockedY },
     selectionBefore: beforeRawB,

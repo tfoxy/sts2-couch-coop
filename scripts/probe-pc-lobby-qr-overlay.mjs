@@ -37,7 +37,7 @@ import {
   acquireLiveLock, releaseLiveLock,
   sceneTree, sceneTreeWithProperties, nodesNamed, findNodePath, nodeDetails,
   globalRect, isVisible, textOf, rowLabelText,
-  hoverAndClick, hoverNode, clickAt,
+  hoverAndClick, hoverNode, clickAt, bareScrimPoint,
   loadFixture, waitFor, selectedCharacterButtonId, lobbyNetGameType,
   screenshot, designRectToPixels, roiDiffRatio, scanMirrorForQrNodes
 } from "./probe-lib-lobby-qr.mjs";
@@ -142,6 +142,38 @@ async function dialogVisible(panelPath) {
   const node = await nodeDetails(at(panelPath, DIALOG), { transform: false });
   return isVisible(node);
 }
+
+/**
+ * What a mirror scan saw, for an assertion message. A bare "never saw a full keyframe" is the least
+ * actionable failure this probe can produce -- it reads as a broken product and is usually a scan
+ * pointed at the wrong host, so the url and the traffic counters go in the message itself.
+ */
+function describeScan(scan) {
+  return `url=${scan.url} messages=${scan.messages} bytes=${scan.bytes}` +
+    `${scan.socketError ? ` socketError=${scan.socketError}` : ""}`;
+}
+
+/**
+ * Which mirror the stream scans belong to.
+ *
+ * 13337 is only the host's FIRST choice of port; it walks when that is taken, which it is whenever a
+ * second instance is running. The scan helper's hard-coded default therefore connects to whatever game
+ * owns 13337 — a real one, so the socket opens and no error is reported, and the leg fails minutes
+ * later with "never saw a full keyframe" while the host under test was streaming perfectly on another
+ * port. The dialog displays this host's own base URL, so the port is taken from there as soon as it is
+ * read. An explicit COUCHCOOP_GAME_ORIGIN still wins: scanning from another machine is a real use.
+ */
+let mirrorOrigin = process.env.COUCHCOOP_GAME_ORIGIN ?? null;
+function learnMirrorOrigin(displayedUrl) {
+  if (process.env.COUCHCOOP_GAME_ORIGIN || !displayedUrl) return;
+  try {
+    const port = new URL(displayedUrl).port;
+    if (port) mirrorOrigin = `ws://127.0.0.1:${port}`;
+  } catch {
+    // Not a URL we can parse — leave the helper on its own default rather than guessing.
+  }
+}
+const mirrorScanOptions = () => (mirrorOrigin ? { origin: mirrorOrigin } : {});
 
 /**
  * The controller re-scans every 0.25s and will QueueFree + re-add the panel whenever its gate
@@ -255,6 +287,8 @@ async function assertStartRunLobby() {
   const defaultOption = rowLabelText(dialogTree, NAMES.hostSelectCurrent);
   assert(/^\d+\.\d+\.\d+\.\d+:\d+$/.test(defaultOption ?? ""), `default option must be a plain interface IPv4 with a port, got ${JSON.stringify(defaultOption)}`);
   assert(defaultUrl === `http://${defaultOption}/`, `default URL must be the plain address URL, got ${JSON.stringify(defaultUrl)}`);
+  // The host names its own port here; every later mirror scan uses it. See learnMirrorOrigin.
+  learnMirrorOrigin(defaultUrl);
 
   const qrNode = await nodeDetails(at(panelPath, `${DIALOG_PANEL}/${NAMES.qrTexture}`));
   assert(isVisible(qrNode), "the QR texture must be visible once an address is selected");
@@ -372,11 +406,13 @@ async function assertStartRunLobby() {
   await shot("03b-row-hover-tips.png", `hover-tip pair for the web-link row (${webLabel})`);
 
   const tipScan = await scanMirrorForQrNodes({
+    ...mirrorScanOptions(),
     durationMs: 6000,
     extraPatterns: [/sts2-couch\.pages\.dev/g, /local-ip\.co/g, /Wired \(Ethernet\)/g, /Plain address/g]
   });
   assert(!tipScan.socketError, `tip-leak mirror scan could not connect: ${tipScan.socketError}`);
-  assert(tipScan.sawFullKeyframe, "tip-leak mirror scan never saw a full keyframe to scan");
+  assert(tipScan.sawFullKeyframe,
+    `tip-leak mirror scan never saw a full keyframe to scan (${describeScan(tipScan)})`);
   assert(tipScan.matches.length === 0,
     `hover-tip content leaked to a mirror client: ${tipScan.matches.join(", ")} — the created NHoverTipSet must be stream-skip stamped`);
   record("hover-tips", { tipNodes: tipNodes.map(node => node.name), tipScanMessages: tipScan.messages, tipScanMatches: tipScan.matches });
@@ -460,19 +496,17 @@ async function assertStartRunLobby() {
   // centred near y 948), so the blocked click above proves blocking but is NOT an outside click. The
   // pre-redesign card let card-surface clicks fall through to the scrim — which is why one click used
   // to prove both — but the single-select card consumes them (clicking blank card space must not
-  // dismiss the dialog under a player's finger). The outside-click close needs its own point, taken
-  // from the live card rect: mid-way between the screen edge and the card's left edge.
+  // dismiss the dialog under a player's finger). The outside-click close needs its own point.
   assert(await dialogVisible(panelPath), "a blocked lobby click on the card surface must NOT close the dialog");
-  const cardRect = globalRect(await nodeDetails(at(panelPath, DIALOG_PANEL), { properties: false }));
-  const outsideX = Math.max(20, Math.round(cardRect.position.x / 2));
-  const outsideY = Math.round(cardRect.position.y + cardRect.size.y / 2);
-  await clickAt(outsideX, outsideY);
+  const { point: outside, surfaces: dialogSurfaces } = await bareScrimPoint(at(panelPath, DIALOG));
+  await clickAt(outside.x, outside.y);
   await sleep(500);
   assert(!(await dialogVisible(panelPath)), "a click outside the dialog card must close the dialog");
   record("close-via-outside-click", {
     closed: true,
-    clickedAt: { x: outsideX, y: outsideY },
-    cardRect,
+    clickedAt: outside,
+    from: outside.from,
+    dialogSurfaces,
     blockedCardSurfaceClick: { x: blockedX, y: blockedY, note: "consumed by the card, dialog stayed open" }
   });
 
@@ -528,10 +562,11 @@ async function assertMirrorExclusion() {
   const inGameTree = (tree.nodes ?? []).filter(node => node.name.startsWith("CouchCoopQr")).map(node => node.name);
   assert(inGameTree.length >= 5, `the panel subtree should be visible to dev inspection, found ${inGameTree.length}`);
 
-  const scan = await scanMirrorForQrNodes({ durationMs: 8000 });
+  const scan = await scanMirrorForQrNodes({ ...mirrorScanOptions(), durationMs: 8000 });
   assert(!scan.socketError, `mirror scan could not connect: ${scan.socketError}`);
   assert(scan.messages > 0, "mirror scan received no messages -- is the browser server up?");
-  assert(scan.sawFullKeyframe, 'mirror scan never saw a full keyframe ("full":true) to scan');
+  assert(scan.sawFullKeyframe,
+    `mirror scan never saw a full keyframe ("full":true) to scan (${describeScan(scan)})`);
   assert(
     scan.matches.length === 0,
     `CouchCoopQr* nodes leaked to a mirror client: ${scan.matches.join(", ")}. ` +
