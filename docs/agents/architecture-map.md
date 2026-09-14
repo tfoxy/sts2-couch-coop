@@ -59,6 +59,36 @@ This map records current contracts, not retired implementation alternatives.
   'inputCapture.spec.ts'` to confirm).
 - Web twin: `frontend/src/mirror/inputCapture.ts` (includes `computeTouchInfo`).
 
+## Real input, not semantic actions
+- **The rule** (CLAUDE.md → Architecture Rules): a viewer's gesture becomes the same hover / press / release /
+  key events a player at the keyboard produces, replayed at a resolved coordinate; the game's own widget
+  decides what that means. Committing a player's choice through a spirectl semantic action needs the
+  maintainer's explicit go-ahead for that specific case.
+- **Why.** A semantic action is a *re-implementation* of what the game does when you click the thing. The
+  re-implementation is a copy, and a copy drifts. It also only reproduces the paths whoever wrote it thought
+  of — a widget that can REFUSE is the easy one to miss, because on the happy path the two look identical.
+- **The case that set the rule (Sep 2026).** Reward rows were claimed with `claim-reward`. Take a potion with
+  no free potion slot and the game declines it: the potion bar plays its refuse animation and, when a player
+  clicks the row with a mouse, the row stays and the reward is still there to take later. Through the browser
+  the row was retired anyway and the reward was destroyed — the bridge's direct commit dropped the row without
+  ever asking whether the reward had been received. Two fixes: the bridge only retires a reward the game
+  actually gave (`../spirectl` → `Sts2ActionHandler.RewardCommit.cs`), and the browser stops using the
+  semantic action at all, so `NRewardButton` runs its own claim and its own refusal.
+- **Known limit, do not re-diagnose it as a coordinate bug.** The game's hover-first widgets only accept a
+  press while they are focused, and focus follows the pointer through the host's streamed `focused` channel —
+  so a click injected at a widget the pointer was not already over can focus it without pressing it. The
+  browser's two-step tap already satisfies this (the first tap hovers, the second presses). See
+  `.agents/memory/reward-button-focus-and-semantic-activation.md`, and `.sts2/research/` for the live probe
+  behind the current gesture shape.
+- **Current semantic-action inventory in the browser client** — keep this list honest when it changes:
+  | Action | Where | Status |
+  | --- | --- | --- |
+  | `claim-reward` | `frontend/src/mirror/rewardFocusCoordinator.ts` | **being removed** — reward rows move to real input, so the game's own button runs its claim and its refusal |
+  | `select-map-node` | `frontend/src/mirror/mapNodeTap.ts` | in use, awaiting the maintainer's call. Not a straight swap: it carries a travelable gate and injects the run-global map vote for synthetic host-local seats, which have no map screen of their own for raw input to land on |
+  | `set-scroll-offset` | `frontend/src/mirror/MirrorApp.vue`, the eager-scroll absolute channel | in use, awaiting the maintainer's call. View state only — it moves a scroll container, it does not commit a player choice |
+- Read-only spirectl surfaces — state reads, the scene stream, screenshots, inspection — are unaffected. This
+  rule is about causing state changes.
+
 ## View scale
 - Files: table `src/CouchCoop.MirrorProtocol/SceneModel/ViewScale.cs`, pure stamp index
   `ViewScaleStampIndex.cs`, native adapter `godot-client/src/Scene/ViewScaler.cs`, and web layout/input modules
