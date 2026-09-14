@@ -60,11 +60,21 @@ import {
   __setAtlasPrefetchParamForTest,
   type MirrorImagePrefetchStats
 } from "@/mirror/imagePrefetch";
+import { publishAssetVersion, __resetAssetVersionForTest } from "@/join/assetVersion";
 
-const ATLAS = (name: string): string => `/res/images/atlases/${name}.png`;
+/**
+ * The host's game build, latched in `beforeEach` because the chain now WAITS for it — asset urls carry it, and
+ * this chain is the one asset consumer that can run before the `session` envelope supplies it. Every url below
+ * therefore carries `?b=`, which is the whole point: it is what stops a repacked beta atlas being served out of
+ * the HTTP cache on a stable host. The gate itself is specced separately at the bottom of this file.
+ */
+const BUILD = "cc-testbuild000001";
+const B = `?b=${BUILD}`;
+
+const ATLAS = (name: string): string => `/res/images/atlases/${name}.png${B}`;
 const ARROWS = [
-  "/res/images/ui/combat/targeting_arrow_head.png",
-  "/res/images/ui/combat/targeting_arrow_segment.png"
+  `/res/images/ui/combat/targeting_arrow_head.png${B}`,
+  `/res/images/ui/combat/targeting_arrow_segment.png${B}`
 ];
 
 /** The full shipped priority list, in order (the SPEC of the order, not a copy of the module's array). */
@@ -153,8 +163,11 @@ beforeEach(() => {
   __setAtlasPrefetchParamForTest(null);
   __resetImagePrefetchStatsForTest();
   // The manifest is latched at module scope and `publishAtlasManifest` deliberately never clears it, so one
-  // spec's host would otherwise decide what the next spec's chain may ask for.
+  // spec's host would otherwise decide what the next spec's chain may ask for. The asset version is latched the
+  // same way and for the same reason.
   __resetAtlasManifestForTest();
+  __resetAssetVersionForTest();
+  publishAssetVersion(BUILD);
 });
 
 afterEach(() => {
@@ -162,6 +175,7 @@ afterEach(() => {
   __setAtlasPrefetchParamForTest(undefined);
   __resetImagePrefetchStatsForTest();
   __resetAtlasManifestForTest();
+  __resetAssetVersionForTest();
   vi.useRealTimers();
 });
 
@@ -378,6 +392,72 @@ describe("prefetchMirrorImages and the host's atlas manifest", () => {
     drain();
 
     expect(preloadedUrls()).toEqual(["ui_atlas_0", "compressed_0", "card_atlas_0"].map(ATLAS));
+  });
+});
+
+// THE HOST'S GAME BUILD (`assetCacheToken` on the session envelope → `?b=` on every asset url). This chain is
+// the ONE asset consumer that can run before that envelope: it starts from MirrorApp's setup body, before the
+// socket is open, whereas everything else mints urls off a delta that arrives after it. Warming a page under an
+// unqualified url is the exact bug the qualifier exists to fix — the host answers `immutable` for a year, and
+// the atlases this chain warms first are the ones a repacked branch changes — so the walk waits.
+describe("prefetchMirrorImages and the host's game build", () => {
+  it("requests NOTHING until the host's build is known", () => {
+    __resetAssetVersionForTest();
+    prefetchMirrorImages();
+
+    expect(idleQueue.length).toBe(0);
+    expect(flushIdle()).toBe(0);
+    expect(baker.preloadAtlas).not.toHaveBeenCalled();
+    // Not merely unrequested: nothing was even PLANNED, so no unqualified url exists to be fetched later.
+    expect(stats().list).toEqual([]);
+  });
+
+  it("walks the whole list, build-qualified, as soon as the token lands", () => {
+    __resetAssetVersionForTest();
+    prefetchMirrorImages();
+    expect(baker.preloadAtlas).not.toHaveBeenCalled();
+
+    publishAssetVersion(BUILD);
+    drain();
+
+    expect(preloadedUrls()).toEqual(ORDER);
+    for (const url of preloadedUrls()) {
+      expect(url).toContain(`?b=${BUILD}`);
+    }
+    expect(warmImage.mock.calls.map((call) => call[0])).toEqual(ARROWS);
+  });
+
+  // A host too old to send a token at all. Prefetching is speculative, so "we never learned the build" degrades
+  // to the unqualified walk that predates the qualifier rather than silently never warming anything — which
+  // would cost the combat replay a median 1501 ms on its last texture upload.
+  it("walks unqualified once the deadline passes with no token", () => {
+    __resetAssetVersionForTest();
+    vi.useFakeTimers();
+
+    prefetchMirrorImages();
+    expect(idleQueue.length).toBe(0);
+
+    vi.advanceTimersByTime(15_000);
+    drain();
+
+    expect(preloadedUrls()).toEqual(ORDER.map((url) => url.replace(B, "")));
+    expect(preloadedUrls()[0]).not.toContain("?b=");
+  });
+
+  // Both the token and the atlas manifest ride the SAME envelope, so a chain gated on the token is also a chain
+  // that has the manifest — the mid-walk re-check stays, but on a first connect it no longer has to carry the
+  // case it was written for.
+  it("has the host's manifest by the time it plans, so an absent page is filtered out of the plan", () => {
+    __resetAssetVersionForTest();
+    prefetchMirrorImages();
+
+    publishAtlasManifest(manifestWithout("card_atlas_2"));
+    publishAssetVersion(BUILD);
+    drain();
+
+    expect(preloadedUrls()).toEqual(ORDER.filter((url) => url !== ATLAS("card_atlas_2")));
+    expect(stats().list).toEqual(ORDER.filter((url) => url !== ATLAS("card_atlas_2")));
+    expect(stats().absent).toBe(0);
   });
 });
 

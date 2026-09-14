@@ -210,10 +210,21 @@ public sealed class CouchCoopStaticBackgroundProvider(
 
     /// <summary>
     /// The ready-to-fetch `/bg/` URL for a background variant — the exact grammar the route parses back:
-    /// <c>/bg/&lt;id&gt;?layers=&lt;digest&gt;&amp;v=1</c> (digest-absent = deterministic variant). The digest in
-    /// the URL is what keeps the bytes cache-stable under the route's immutable caching: a NEW layer variant mints
-    /// a NEW URL (via the envelope descriptor) instead of new bytes under the old one.
+    /// <c>/bg/&lt;id&gt;?layers=&lt;digest&gt;&amp;v=1&amp;b=&lt;build&gt;</c> (digest-absent = deterministic
+    /// variant). The digest in the URL is what keeps the bytes cache-stable under the route's immutable caching: a
+    /// NEW layer variant mints a NEW URL (via the envelope descriptor) instead of new bytes under the old one.
     /// </summary>
+    /// <remarks>
+    /// <para>
+    /// TWO VERSIONS, ANSWERING TWO DIFFERENT QUESTIONS. <c>v</c> is this URL GRAMMAR's own version — bump it when
+    /// what the route parses changes. <c>b</c> is the GAME BUILD (<see cref="CouchCoopAssetVersion"/>), and it is
+    /// here for the reason the digest is: a background is rendered from the game's own scenes, so the same id and
+    /// the same layer set paint different pixels on a different build. Without it a client that joined a
+    /// public-beta host keeps that build's background under a URL this build also mints, for the full year the
+    /// route's <c>immutable</c> header promises. The route reads <c>layers</c>/<c>frame</c>/<c>v</c> by name and
+    /// ignores the rest, so <c>b</c> costs the parse and the stale-digest rule nothing.
+    /// </para>
+    /// </remarks>
     /// <remarks>
     /// NO file extension, deliberately. It used to be <c>.png</c>, which stopped being true the moment the encoder
     /// became a policy (<see cref="RenderCodec"/>) — and pinning the codec into the path means every future codec
@@ -225,14 +236,15 @@ public sealed class CouchCoopStaticBackgroundProvider(
         => BuildImageUrl(StaticBackgroundFamily.Combat, id, layersDigest);
 
     /// <summary>
-    /// Family-aware URL minting: events ride <c>/bg/events/&lt;id&gt;?[frame=&lt;spec&gt;&amp;]v=1</c> — always
-    /// digest-less, optionally frame-qualified (see BuildCacheKey).
+    /// Family-aware URL minting: events ride <c>/bg/events/&lt;id&gt;?[frame=&lt;spec&gt;&amp;]v=1&amp;b=…</c> —
+    /// always digest-less, optionally frame-qualified (see BuildCacheKey).
     /// </summary>
     public static string BuildImageUrl(StaticBackgroundFamily family, string id, string? layersDigest, string? eventFrame = null)
         => $"/bg/{FamilyPathPrefix(family)}{id}?"
            + (layersDigest is null ? string.Empty : $"layers={layersDigest}&")
            + (eventFrame is null ? string.Empty : $"frame={Uri.EscapeDataString(eventFrame)}&")
-           + $"v={KeyVersion}";
+           + $"v={KeyVersion}"
+           + CouchCoopAssetVersion.QuerySuffix(hasQuery: true);
 
     /// <summary>
     /// Serve the static background image for <paramref name="id"/>. <paramref name="layerScenePaths"/> is the

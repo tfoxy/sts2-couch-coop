@@ -203,6 +203,12 @@ their own resource aliases.
 encoded image-frame payloads and node-local placement, so clients apply placement below the streamed node transform. The one
 supported escalation selector is `retry=1`; do not use a clip `v` parameter as a retry mechanism.
 
+Every asset route additionally accepts `b={token}`, the host's game build (see **Cache layout** below).
+It is a **cache-busting qualifier, never a selector**: the host reads it nowhere, it never enters a
+server-side cache key, and a request with it is byte-identical to one without. Clients append it to every
+asset URL they mint so a game update re-addresses the assets rather than leaving one build's bytes cached
+under a URL the next build also asks for.
+
 To populate the host's Spine clip cache before accepting browser play, pass `--prerender-spines` through the
 normal game launch command, or set `COUCHCOOP_PRERENDER_SPINES=1` in the game's environment:
 
@@ -236,17 +242,34 @@ which branch was resolved, where the answer came from (`steamworks`, `appmanifes
 any purge.
 
 The branch comes from Steam itself (`SteamApps.GetCurrentBetaName()`) with the install manifest as a
-fallback; `release_info.json` has no branch field — its `branch` is the release tag. Two version numbers
-ride the stamp: CouchCoop's own `CacheVersion`, and spirectl's `AssetPayloadVersion`, which is owned by
-spirectl and not manually versioned in this repository. `COUCHCOOP_CACHE_ROOT` moves the whole thing.
+fallback; `release_info.json` has no branch field — its `branch` is the release tag. Steam is asked only
+about an install it actually mounted: it answers for an *app*, not a directory, so a second copy of the game
+launched from outside the Steam library would otherwise be told the branch of the copy Steam has mounted.
+That copy falls through to the spirectl API lane instead, which still separates the two supported builds.
+Two version numbers ride the stamp: CouchCoop's own `CacheVersion`, and spirectl's `AssetPayloadVersion`,
+which is owned by spirectl and not manually versioned in this repository. `COUCHCOOP_CACHE_ROOT` moves the
+whole thing.
 
-The same identity composes the `assetCacheToken` on the `session` envelope, so the browser's service
-worker drops its durable `/res/` store on exactly the changes that empty the host's — including the two
-the frontend bundle hash cannot see, a game update with no frontend rebuild and a phone hopping between a
-stable host and a beta one.
+The same identity composes the `assetCacheToken` on the `session` envelope, which is how clients invalidate
+on exactly the changes that empty the host's cache — including the two the frontend bundle hash cannot see:
+a game update with no frontend rebuild, and a phone hopping between a stable host and a beta one.
 
-Static backgrounds use `/bg/{id}?layers={digest}&v=1` for combat, `/bg/events/{id}?v=1` for event
-backdrops, and `/bg/rooms/{id}?frame={frame}&v=1` for room backdrops. The codec is host policy and is
+**Clients put that token in the URL** (`?b=<token>`, appended to `/res/`, `/models/`, `/spines/` and the
+`/bg/` URLs the host mints itself). That, not a cache wipe, is what actually invalidates. Every asset answer
+carries `Cache-Control: public, max-age=31536000, immutable`, which is true of the bytes and not of the
+path — so without a build qualifier a browser's HTTP cache pins one build's atlas under a URL the other
+build also asks for, for a year. A cache wipe cannot reach that cache: the service worker registers only on
+a secure origin, so on the default plain-HTTP LAN address there is no worker at all, and even where there is
+one, deleting its copy just refills it from the still-valid HTTP entry. A URL that names the build needs no
+wipe — every layer that caches by URL invalidates itself. The service worker still drops its `/res/` store
+when the token moves, which evicts the entries stranded under the previous build's URLs.
+
+Old hosts that send no token, and clients that have not yet received one, mint the unqualified URL and
+behave exactly as they did before.
+
+Static backgrounds use `/bg/{id}?layers={digest}&v=1&b={build}` for combat, `/bg/events/{id}?v=1&b={build}`
+for event backdrops, and `/bg/rooms/{id}?frame={frame}&v=1&b={build}` for room backdrops. `v` versions this
+URL grammar; `b` is the game build above. The codec is host policy and is
 identified by `Content-Type`, not a path extension. A current URL is immutable; stale variants resolve only
 from cache or fail, never render a different background under the same URL.
 

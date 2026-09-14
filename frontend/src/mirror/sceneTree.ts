@@ -10,8 +10,9 @@
 
 import { normalizeParticleSpecConfig, type ParticleSpecConfig } from "@godot-scene-web/html/runtime";
 
-// `@/join/*` is the shell's own join layer (see joinModel.ts); hostBase has no dependencies of its own at
-// all, so importing it does not breach the self-containment rule above.
+// `@/join/*` is the shell's own join layer (see joinModel.ts); hostBase and assetVersion have no dependencies
+// of their own at all, so importing them does not breach the self-containment rule above.
+import { assetVersion, assetVersionSuffix } from "@/join/assetVersion";
 import { hostBase, hostUrl } from "@/join/hostBase";
 
 import {
@@ -1904,24 +1905,30 @@ function asNumberOr(value: unknown, fallback: number): number {
   return typeof value === "number" && Number.isFinite(value) ? value : fallback;
 }
 
-// Memo for `mirrorResourceUrl`, a PURE function of (resource path × host base). The path split/encode/join plus
-// `hostUrl`'s two `hostBase()` calls ran per textured node per delta; a phone trace of combat attributed ~93ms
-// across two traces to this and `hostBase` together. Unbounded by design: the key space is the set of distinct
-// resource paths the game addresses (a few thousand at most, each a string the delta already holds), and evicting
-// would defeat the point since the same paths recur every frame.
+// Memo for `mirrorResourceUrl`, a PURE function of (resource path × host base × asset version). The path
+// split/encode/join plus `hostUrl`'s two `hostBase()` calls ran per textured node per delta; a phone trace of
+// combat attributed ~93ms across two traces to this and `hostBase` together. Unbounded by design: the key space
+// is the set of distinct resource paths the game addresses (a few thousand at most, each a string the delta
+// already holds), and evicting would defeat the point since the same paths recur every frame.
 //
-// The host base is not part of the KEY, it is a GUARD: it can only change on the public-origin bootstrap path,
-// where it changes for every entry at once, so one compare + `clear()` is both cheaper and safer than a compound
-// key (nothing can survive with the wrong origin baked in).
+// Neither the host base nor the asset version is part of the KEY, they are GUARDS: each can only change for
+// every entry at once — the base on the public-origin bootstrap path, the version when the `session` envelope
+// lands — so one compare + `clear()` is both cheaper and safer than a compound key (nothing can survive with
+// the wrong origin or the wrong game build baked in).
 const resourceUrlCache = new Map<string, string>();
 let resourceUrlCacheBase: string | null = null;
+let resourceUrlCacheVersion: string | null = null;
 
-// Map a Godot resource path to the host's HTTP asset route. `res://images/x.png` → `/res/images/x.png`.
+// Map a Godot resource path to the host's HTTP asset route. `res://images/x.png` → `/res/images/x.png`,
+// qualified by the host's game build once one is known (`?b=…` — see @/join/assetVersion for why the build
+// rides the URL rather than a cache wipe).
 export function mirrorResourceUrl(resourcePath: string): string {
   const base = hostBase();
-  if (base !== resourceUrlCacheBase) {
+  const version = assetVersion();
+  if (base !== resourceUrlCacheBase || version !== resourceUrlCacheVersion) {
     resourceUrlCache.clear();
     resourceUrlCacheBase = base;
+    resourceUrlCacheVersion = version;
   }
   const cached = resourceUrlCache.get(resourcePath);
   if (cached !== undefined) {
@@ -1931,10 +1938,12 @@ export function mirrorResourceUrl(resourcePath: string): string {
   const trimmed = resourcePath.startsWith("res://")
     ? resourcePath.slice("res://".length)
     : resourcePath;
-  // `hostUrl` is a no-op in host-served mode (see @/join/hostBase), so this stays the exact string it has
-  // always been there — which matters because the result is a cache key in several of the hot paths below,
-  // not just a fetch target. Under the public-origin bootstrap it gains the host's origin.
-  const url = hostUrl(`/res/${trimmed.split("/").map(encodeURIComponent).join("/")}`);
+  // `hostUrl` is a no-op in host-served mode (see @/join/hostBase), so with no version latched this stays the
+  // exact string it has always been there — which matters because the result is a cache key in several of the
+  // hot paths below, not just a fetch target. Under the public-origin bootstrap it gains the host's origin.
+  const url = hostUrl(
+    `/res/${trimmed.split("/").map(encodeURIComponent).join("/")}${assetVersionSuffix(false)}`
+  );
   resourceUrlCache.set(resourcePath, url);
   return url;
 }

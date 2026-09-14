@@ -416,6 +416,10 @@ async function decodePage(url: string, keepPage: boolean): Promise<HeldPage> {
   // `force-cache` on purpose: the mod serves `/res/...` as `public, max-age=31536000, immutable`, so the atlas
   // the main thread already fetched for its own decode-once cache is in the HTTP cache — the worker should read
   // that copy rather than pull 19MB of PNG over the LAN a second time.
+  // That is safe across a GAME BUILD change, and only because the url names the build (`?b=`, see
+  // @/join/assetVersion): `force-cache` will happily serve a stale entry without revalidating, so on a shared
+  // url a repacked beta atlas would be exactly what this hands back on a stable host. A new build is a new url,
+  // which is a guaranteed miss here rather than a hit nothing would catch.
   // `credentials: "omit"`, not "same-origin": under the public-origin bootstrap the atlas is CROSS-origin,
   // and a credentialed CORS request additionally requires the server to echo a specific origin and send
   // `Access-Control-Allow-Credentials`. We send no credentials to the host in any mode, so omitting them
