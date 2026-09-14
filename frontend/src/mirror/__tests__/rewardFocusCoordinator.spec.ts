@@ -23,18 +23,15 @@ function setup(initialModality: PressModality = "touch", canControl = true) {
   let modality = initialModality;
   const focusTarget = vi.fn();
   const clearProgrammaticFocus = vi.fn();
-  const sendAction = vi.fn();
   const coordinator = createRewardFocusCoordinator({
     modality: () => modality,
     canControl: () => canControl,
-    input: { focusTarget, clearProgrammaticFocus },
-    sendAction
+    input: { focusTarget, clearProgrammaticFocus }
   });
   return {
     coordinator,
     focusTarget,
     clearProgrammaticFocus,
-    sendAction,
     setModality: (next: PressModality) => (modality = next),
   };
 }
@@ -185,20 +182,4 @@ describe("reward focus coordinator", () => {
     run.coordinator.afterReconcile({ screenId: null, rows: [] });
     expect(run.clearProgrammaticFocus).toHaveBeenCalled();
   });
-
-  it("routes only a current uncovered reward through claim-reward by element id", () => {
-    const run = setup();
-    run.coordinator.afterReconcile(snapshot(["a", "b"]));
-
-    expect(run.coordinator.activateTarget("b")).toBe(true);
-    expect(run.sendAction).toHaveBeenCalledWith({
-      semanticActionId: "claim-reward",
-      args: { elementId: "b" }
-    });
-    expect(run.coordinator.activateTarget("missing")).toBe(false);
-
-    run.coordinator.afterReconcile(snapshot(["a", "b"], { covered: true }));
-    expect(run.coordinator.activateTarget("a")).toBe(false);
-  });
-
 });

@@ -1,19 +1,14 @@
 import type { PressModality } from "@/inputModality";
 import type { InputCapture } from "@/mirror/inputCapture";
-import type { MirrorActionMessage } from "@/mirror/mapNodeTap";
 import type { RewardFocusSnapshot } from "@/mirror/renderer/contracts";
 
 const EMPTY: RewardFocusSnapshot = { screenId: null, rows: [] };
 const FOCUS_SETTLE_MS = 750;
-export const CLAIM_REWARD_ACTION_ID = "claim-reward";
-export const REWARD_ELEMENT_ID_ARG = "elementId";
 
 export interface RewardFocusCoordinator {
   afterReconcile(snapshot: RewardFocusSnapshot): void;
   /** A real touch supersedes a still-settling auto-focus when it targets somewhere else. */
   noteTouchTarget(id: string | null): void;
-  /** Routes a touch activation only when id is a current, uncovered reward row. */
-  activateTarget(id: string): boolean;
   dispose(): void;
 }
 
@@ -22,7 +17,6 @@ export function createRewardFocusCoordinator(options: {
   modality: () => PressModality;
   canControl: () => boolean;
   input: Pick<InputCapture, "focusTarget" | "clearProgrammaticFocus">;
-  sendAction?: (message: MirrorActionMessage) => void;
 }): RewardFocusCoordinator {
   let previous = EMPTY;
   let pending: { screenId: string; index: number; targetId?: string; gameX?: number; gameY?: number } | null = null;
@@ -136,23 +130,6 @@ export function createRewardFocusCoordinator(options: {
     attemptPending(snapshot);
   }
 
-  function activateTarget(id: string): boolean {
-    if (
-      !options.canControl() ||
-      !options.sendAction ||
-      previous.screenId === null
-    ) {
-      return false;
-    }
-    const row = previous.rows.find((candidate) => candidate.id === id);
-    if (!row || row.covered) return false;
-    options.sendAction({
-      semanticActionId: CLAIM_REWARD_ACTION_ID,
-      args: { [REWARD_ELEMENT_ID_ARG]: id }
-    });
-    return true;
-  }
-
   function noteTouchTarget(id: string | null): void {
     if (!pending?.targetId || id === pending.targetId) return;
     // Do not clear InputCapture's programmatic readiness here: the plan deliberately keeps that narrow arm until
@@ -165,7 +142,6 @@ export function createRewardFocusCoordinator(options: {
   return {
     afterReconcile,
     noteTouchTarget,
-    activateTarget,
     dispose: clearFlow
   };
 }

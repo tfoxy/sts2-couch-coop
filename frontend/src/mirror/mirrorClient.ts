@@ -156,9 +156,10 @@ export interface MirrorClient {
   // Send an upstream input message (no-op when the socket isn't open). Fire-and-forget: the host replies only
   // on error, which this receive-only client ignores.
   sendInput(message: MirrorInputMessage): void;
-  // R11 WS-M — send a SEMANTIC action (`{type:"action"}`). The mirror
-  // drives the game with raw input, with narrow exceptions for controls whose synthetic coordinate click is a
-  // no-op: map points route through `select-map-node`, and reward-list rows through `claim-reward`. No viewer id is
+  // R11 WS-M — send a SEMANTIC action (`{type:"action"}`). The mirror drives gameplay with REAL INPUT (see
+  // docs/agents/architecture-map.md "Real input, not semantic actions"); this channel is for the narrow cases the
+  // maintainer has signed off — map travel (`select-map-node`, which also carries the run-global vote a synthetic
+  // host-local seat has no map screen for) and the view-only `set-scroll-offset`. No viewer id is
   // sent: the host takes the acting seat from THIS connection (a joined seat's
   // socket is its own headless game; a direct-view socket is the host's game). Fire-and-forget — the host answers
   // with an `action-result` this client ignores (a refused vote simply doesn't travel, as a dead click didn't).

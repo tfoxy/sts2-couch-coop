@@ -90,7 +90,7 @@ const props = withDefaults(defineProps<{
   // When provided, this client is a CONTROLLER: pointer/keyboard over the stage is captured and sent upstream.
   // Absent → a pure (receive-only) mirror.
   sendInput?: (message: MirrorInputMessage) => void;
-  // The semantic action channel (mirrorClient.sendAction), used for map travel and reward-row activation.
+  // The semantic action channel (mirrorClient.sendAction), used for map travel and the absolute scroll offset.
   sendAction?: (message: MirrorActionMessage) => void;
   // The absolute scroll channel (see eagerScroll.ts' header).
   //   sendScroll  put a `set-scroll-offset` on the wire for one scroll container; returns the requestId it went
@@ -731,7 +731,6 @@ function mountScene(): void {
           unfocusOnRelease: () => mirrorSettings.unfocusOnRelease,
           tapToFocus: () => mirrorSettings.tapToFocus,
           isFocused: (id) => props.state.nodes.get(id)?.focused === true,
-          activateTarget: (id) => rewardFocusCoordinator?.activateTarget(id) ?? false,
           noteTouchTarget: (id) => rewardFocusCoordinator?.noteTouchTarget(id),
           isCard: (id) => renderer?.isCardTouchTarget(id) ?? false,
           isHandCard: (id) => renderer?.isHandCard(id) ?? false,
@@ -772,8 +771,7 @@ function mountScene(): void {
       rewardFocusCoordinator = createRewardFocusCoordinator({
         modality: lastPressModality,
         canControl: () => props.sendInput !== undefined,
-        input: inputCapture,
-        sendAction: props.sendAction
+        input: inputCapture
       });
       // A mouse/pen press changes modality without waiting for another scene delta. Only the coordinator's narrow
       // programmatic readiness is cleared; the user's ordinary tap-to-focus arm remains intact.

@@ -840,23 +840,6 @@ describe("createInputCapture — touch", () => {
     ]);
   });
 
-  it("lets a focused reward consume activation semantically while retaining the down-hover", () => {
-    stubTouchStack("reward-1");
-    const activateTarget = vi.fn(() => true);
-    capture.dispose();
-    sent = [];
-    capture = createInputCapture(stage, (message) => sent.push(message), undefined, undefined, undefined, {
-      isFocused: (id) => id === "reward-1",
-      activateTarget
-    });
-
-    stage.dispatchEvent(touchEvent("pointerdown", { clientX: 480, clientY: 270 }));
-    stage.dispatchEvent(touchEvent("pointerup", { clientX: 480, clientY: 270 }));
-    expect(activateTarget).toHaveBeenCalledOnce();
-    expect(activateTarget).toHaveBeenCalledWith("reward-1");
-    expect(sent).toEqual([{ kind: "hover", coordX: 960, coordY: 540 }]);
-  });
-
   it("reports the press-time touch target before its down-hover can change focus", () => {
     stubTouchStack("reward-1");
     const noteTouchTarget = vi.fn();
@@ -1223,7 +1206,6 @@ type TouchOpts = {
   unfocusOnRelease?: () => boolean;
   tapToFocus?: () => boolean;
   isFocused?: (id: string) => boolean;
-  activateTarget?: (id: string) => boolean;
   isCard?: (id: string) => boolean;
   isHandCard?: (id: string) => boolean;
   playZoneThreshold?: (dragStartY: number) => number;
