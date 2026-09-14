@@ -571,7 +571,11 @@ export function createInputCapture(
   // (see DECORATIVE_OVERLAY / PREVIEW_CONTAINER in mirrorRenderer), so they can't occlude a neighbour's tap.
   let armedRootId: string | null = null;
   // Reward auto-focus sends a hover and then waits on a network round trip for authoritative focus. This narrow
-  // local readiness closes that gap without changing the user's normal arm or its debounce clock.
+  // local readiness closes that gap without changing the user's normal arm or its debounce clock. Its LIFETIME is
+  // not this module's to decide: `focusTarget(…, true)` arms it and rewardFocusCoordinator — the only caller —
+  // drops it (releaseReady) the moment the streamed `focused` flag carries the readiness itself, the row or screen
+  // goes, the player touches elsewhere, or the settle flow gives up. Kept armed past its focus, it would make a
+  // row that merely needs re-focusing take itself on the next tap.
   let programmaticFocusedRootId: string | null = null;
   // R16: the nowMs at which armedRootId was last (re)armed — a re-tap of the SAME widget within
   // TAP_ARM_DEBOUNCE_MS of THIS timestamp is treated as an accidental double-tap (see onTouchUp's commit branch).
