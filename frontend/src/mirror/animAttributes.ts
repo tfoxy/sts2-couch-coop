@@ -1,16 +1,20 @@
 import type { PresentationAnimationBinding } from "@spirectl/presentation/render";
 
-// Decorative animations that the windowless headless instance freezes game-side (CouchCoopHeadlessVisualSuspender's decorative
-// freeze — energy/star counter spin `NEnergyCounter`/`NStarCounter`, enemy-intent bob `NIntent`) to stop the
-// per-frame producer churn, replayed here on the browser's own clock so the mirror still animates them. Keyed by
-// the node's SCENE-RELATIVE path (stable across the per-character energy/star-counter scene variants, which all
-// share this subtree) — matching how the presentation catalog keys these bindings.
+// Decorative animations the browser replays on its own clock, because the motion never reaches it: either the
+// windowless headless instance froze the animator game-side (CouchCoopHeadlessVisualSuspender's decorative freeze —
+// energy counter spin `NEnergyCounter`, enemy-intent bob `NIntent`) or the producer divides the motion back out of
+// the transform before emitting (spirectl's `Sts2OrbSpinFold`, which covers BOTH counter families — the star
+// counter is not frozen, and must not be: its per-frame path is the only thing that raises its count label).
+// Either way the replay here is unconditional and composes from the same authored rest pose, so it is the one
+// source of this motion in the mirror. Keyed by the node's SCENE-RELATIVE path (stable across the per-character
+// energy/star-counter scene variants, which all share this subtree) — matching how the presentation catalog keys
+// these bindings.
 //
 // The vocabulary + keyframes are OWNED by @spirectl/presentation/render (the STS2 render vocabulary shared by
 // mirror hosts). We reuse its `applyAnimationBinding` per element (see mirrorRenderer), so this file only maps
 // a frozen node → the animation binding to replay. Params are the per-binding options this file pins.
 //
-// Two frozen decorative animations are replayed:
+// Two decorative animations are replayed:
 //   - Energy/star ORB SPIN: see `spinDurationMs` below. These are LEAF sprites, spun by a self-layer child
 //     (rotate would ORBIT if applied to the baked-matrix element).
 //   - Enemy INTENT BOB: the intent badge drifts up and down on the spot. The whole `IntentHolder` container moves

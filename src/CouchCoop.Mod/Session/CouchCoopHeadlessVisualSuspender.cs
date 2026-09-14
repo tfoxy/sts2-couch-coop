@@ -183,16 +183,27 @@ public static class CouchCoopHeadlessVisualSuspender
         // slide-in / slide-out POSITION tweens are self-bound and must keep running, or the counter strands
         // off-screen — see above.
         ["NEnergyCounter"] = DecorFreeze.ProcessOnly,
-        // Combat star counter. Same rotation-layer spin, plus a self-bound colour tween on a star gain (a brief
-        // over-bright flash settling back over ~200ms) that ProcessMode=Disabled used to strand mid-flight, leaving
-        // the star icon permanently too bright.
-        // CAVEAT (pre-existing, NOT introduced here): the star COUNT label is also ramped per frame when the count
-        // goes UP (it snaps immediately when it goes down), so a frozen star counter shows a stale rising count.
-        // It stays frozen anyway because the
-        // browser owns its spin (`Icon/RotationLayers/Layer1|Layer2` bindings) and an unfrozen game-side spin would
-        // double up with the client's. Fixing the count properly needs the label driven from semantic state (a
-        // `star_counter` catalog entry) — the semantic model carries no star field today.
-        ["NStarCounter"] = DecorFreeze.ProcessOnly,
+        // DELIBERATELY ABSENT — the combat star counter (`NStarCounter`). Do not add it back; the omission is
+        // pinned by HeadlessDecorativeFreezeTests.TheStarCounterIsNeverFrozen.
+        // Freezing it stopped the browser's star COUNT from ever rising. On screen a gain RAMPS the number up to
+        // its new total over a moment, and that ramp is the only thing that writes the label on the way up — a
+        // spend lands on it at once, which is why spending alone looked healthy. So a frozen seat sat on a stale
+        // count for the rest of the fight (Venerate as the Regent: `…/StarCounter/MarginContainer/CountLabel`
+        // never left its old value) while the game's own window was correct.
+        // Re-admitting its spin costs the wire NOTHING, because the PRODUCER already removes that spin rather
+        // than leaning on this freeze to stop it: spirectl's `Sts2OrbSpinFold` names the star counter's rotation
+        // layers (`Icon/RotationLayers/Layer1|Layer2` in star_counter.tscn) and `Sts2RuntimeSceneWatcher` divides
+        // the accumulated rotation analytically back out to the layers' authored rest angle before emitting, so
+        // the spin never reaches a delta and cannot double up with the client's own `rotate` replay
+        // (`animAttributes.ts`). That fold is local-transform-mode only, which CouchCoop satisfies —
+        // `EmitLocalTransforms = true` in CouchCoopMod. A doubled spin comes back only if the fold is switched
+        // OFF (`SPIRECTL_ORB_SPIN_FOLD=0`, or the master `SPIRECTL_DECOR_EMIT_SUPPRESS=0`), and then it is the
+        // browser's rings turning at twice their rate — not a stale count.
+        // The per-frame cost this hands back is small and bounded: per seat per frame, two rotation writes and
+        // one smoothing step. The label re-renders only when the integer it shows actually changes.
+        // If a future round DOES find a reason to freeze it, it is ProcessOnly and never WholeNode: a gain
+        // brightens the star icon and settles it back over ~200ms on a self-bound tween that ProcessMode=Disabled
+        // strands mid-flight, leaving the icon permanently too bright.
         // Enemy intent icon: its per-frame work bobs %IntentHolder and cycles the icon's flip-book at 15fps.
         // CAVEAT (pre-existing, NOT introduced here): that same per-frame cycle is the only thing that writes
         // `%Intent.Texture`, so a frozen intent keeps showing the PREVIOUS intent's icon after the frame list is

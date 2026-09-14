@@ -22,6 +22,9 @@ using DecorFreeze = CouchCoop.Mod.Session.CouchCoopHeadlessVisualSuspender.Decor
 //   WholeNode    =>  the type MUST NOT override _Process (its churn is a self-bound tween chain, so pausing that
 //                    chain via ProcessMode=Disabled is the only lever — and is the intended effect).
 //
+// One ABSENCE is pinned too (TheStarCounterIsNeverFrozen): a type whose per-frame path is the sole writer of
+// something the mirror renders cannot be frozen at all, whichever mechanism is used.
+//
 // If a game update renames one of these node types, or moves the energy-orb spin off _Process onto a tween (or
 // vice versa), the mechanism silently becomes wrong — these tests fail the build instead.
 internal static class HeadlessDecorativeFreezeTests
@@ -32,6 +35,7 @@ internal static class HeadlessDecorativeFreezeTests
         ProcessOnlyTypesOverrideProcess();
         WholeNodeTypesDoNotOverrideProcess();
         TheEnergyCounterIsProcessOnly();
+        TheStarCounterIsNeverFrozen();
     }
 
     // The freeze matches by C# type NAME (GetType().Name), so a rename in the game silently disables it. Resolve
@@ -99,8 +103,6 @@ internal static class HeadlessDecorativeFreezeTests
         var policy = CouchCoopHeadlessVisualSuspender.DecorativeAnimatorTypes;
         Assert(policy.TryGetValue("NEnergyCounter", out var energy) && energy == DecorFreeze.ProcessOnly,
             "NEnergyCounter is frozen ProcessOnly so its self-bound AnimIn/AnimOut position tween keeps running");
-        Assert(policy.TryGetValue("NStarCounter", out var star) && star == DecorFreeze.ProcessOnly,
-            "NStarCounter is frozen ProcessOnly so its self-bound _hsvTween (shader v 2->1) keeps running");
         Assert(policy.TryGetValue("NIntent", out var intent) && intent == DecorFreeze.ProcessOnly,
             "NIntent is frozen ProcessOnly (its churn is the _Process bob, not a tween)");
 
@@ -109,6 +111,31 @@ internal static class HeadlessDecorativeFreezeTests
         Assert(counter is not null && counter.GetMethod("AnimIn", Flags) is not null
                 && counter.GetMethod("AnimOut", Flags) is not null,
             "NEnergyCounter still declares AnimIn/AnimOut (the self-bound position tweens the freeze must not pause)");
+    }
+
+    // The star counter must stay OUT of the policy entirely. Freezing its per-frame work froze the browser's star
+    // COUNT: on screen a gain ramps the number up to its new total, and that ramp is the only writer of the count
+    // label on the way up (a spend lands on it at once — which is why spending alone looked healthy), so a frozen
+    // seat showed a stale count for the rest of the fight while the game's own window was right. Nothing is lost by
+    // running it: the counter's ring spin is removed from the wire by the PRODUCER (spirectl's Sts2OrbSpinFold
+    // divides the accumulated rotation back out to the authored rest), not by this freeze.
+    //
+    // The general rule this is one instance of — "no ProcessOnly type may own a value the mirror renders whose only
+    // writer is that same per-frame path" — is NOT asserted mechanically, and deliberately. Both halves are beyond
+    // reflection: which nodes the browser renders is a client-side fact, and "only writer" needs a transitive IL
+    // walk of the game's own call graph (the per-frame path here reaches the label through a helper, so a one-level
+    // scan would miss it). That analysis is brittle across game updates and is exactly the kind of internals
+    // reconstruction that does not belong in a committed file, so the specific type is pinned instead.
+    private static void TheStarCounterIsNeverFrozen()
+    {
+        Assert(!CouchCoopHeadlessVisualSuspender.DecorativeAnimatorTypes.ContainsKey("NStarCounter"),
+            "NStarCounter must NOT be in the decorative-freeze policy — freezing it strands the browser's star "
+            + "count at its pre-gain value (see the comment above this test, and in the policy table)");
+
+        // A rename in the game would make the pin above vacuously true, so keep the name honest.
+        Assert(ResolveGameType("NStarCounter") is not null,
+            "NStarCounter still resolves against the installed STS2 assemblies (if the game renamed it, re-point "
+            + "this pin at the new name rather than dropping it)");
     }
 
     private const BindingFlags Flags =
