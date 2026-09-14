@@ -201,6 +201,10 @@ EOF
 cat > "$uploader_dir/ModUploader" <<'EOF'
 #!/usr/bin/env bash
 set -euo pipefail
+if [[ "${1:-}" == --version ]]; then
+  echo '1.0.0+84e755cea6bcfa014df3165c882f1824259245c6'
+  exit 0
+fi
 printf '%s\n' "$*" >> "$MOCK_UPLOADER_LOG"
 workspace="${@: -1}"
 # nullglob, not ls: under `set -o pipefail` a non-matching glob makes ls exit 2 and takes the
@@ -214,6 +218,12 @@ if [[ ! -f "$workspace/mod_id.txt" ]]; then
 fi
 EOF
 chmod +x "$mock_bin/gh" "$uploader_dir/ModUploader"
+jq -n \
+  --arg commit '84e755cea6bcfa014df3165c882f1824259245c6' \
+  --arg version '1.0.0+84e755cea6bcfa014df3165c882f1824259245c6' \
+  --arg sha256 "$(sha256sum "$uploader_dir/ModUploader" | awk '{print $1}')" \
+  '{commit: $commit, version: $version, modUploaderSha256: $sha256}' \
+  > "$uploader_dir/.couchcoop-localized-uploader.json"
 
 blocked_gh_bin="$test_root/blocked-gh"
 mkdir -p "$blocked_gh_bin"
@@ -242,6 +252,14 @@ expect_refused() {
 
 revision() { jq -r "$2" "$fixture/revision-$1.json"; }
 
+# A public upload must never silently feed localization fields to the old upstream uploader, which
+# would deserialize and discard them. DEV workspaces do not need this gate.
+mv "$uploader_dir/.couchcoop-localized-uploader.json" "$fixture/localized-uploader-marker.json"
+: > "$fixture/uploader.log"
+expect_refused unverified-localized-uploader 'needs the PR #12-capable uploader' --yes --dist "$assets" --lane stable
+mv "$fixture/localized-uploader-marker.json" "$uploader_dir/.couchcoop-localized-uploader.json"
+rm "$fixture/uploader.log"
+
 # Leg 1: the DEFAULT run -- no arguments beyond the confirmation -- publishes EVERY lane of the
 # latest GitHub Release to the public listing, one revision each, and leaves the item's visibility
 # alone. This is the shape a maintainer actually types.
@@ -253,8 +271,10 @@ bash "$script" --yes
 
 assert_uploaded "$workspace" 2
 assert_eq public "$(jq -r '.visibility' "$workspace/workshop.json")"
-assert_eq CouchCoop "$(jq -r '.title' "$workspace/workshop.json")"
-assert_eq 'Fixture source description' "$(jq -r '.description' "$workspace/workshop.json")"
+assert_eq 'Couch Co-op' "$(jq -r '.title' "$workspace/workshop.json")"
+assert_eq "$(<"$repo_root/workshop/description.en.md")" "$(jq -r '.description' "$workspace/workshop.json")"
+assert_eq english "$(jq -r '.language' "$workspace/workshop.json")"
+assert_eq 13 "$(jq -r '.localizations | length' "$workspace/workshop.json")"
 assert_file "$workspace/stale.txt"
 assert_file "$workspace/previews/old.gif"
 [[ ! -e "$workspace/content/old.txt" ]] || fail "stale payload survived"
@@ -265,6 +285,9 @@ assert_eq public "$(revision 1 .minBranch)"
 assert_eq public "$(revision 1 .maxBranch)"
 assert_eq public-beta "$(revision 2 .minBranch)"
 assert_eq public-beta "$(revision 2 .maxBranch)"
+assert_eq english "$(revision 1 .language)"
+assert_eq 13 "$(revision 1 '.localizations | length')"
+assert_eq null "$(revision 2 .localizations)"
 
 # The change list rides on the default lane's revision and the other points at it, because Steam
 # shows one note per revision and the list should not be duplicated.
@@ -294,7 +317,8 @@ bash "$script" --yes --visibility private --lane stable
 
 assert_uploaded "$workspace"
 assert_eq private "$(jq -r '.visibility' "$workspace/workshop.json")"
-assert_eq 'Fixture source description' "$(jq -r '.description' "$workspace/workshop.json")"
+assert_eq "$(<"$repo_root/workshop/description.en.md")" "$(jq -r '.description' "$workspace/workshop.json")"
+assert_eq 13 "$(jq -r '.localizations | length' "$workspace/workshop.json")"
 assert_eq 1234567890 "$(tr -d '\n' < "$workspace/mod_id.txt")"
 
 # Leg 4: --lane narrows a run to one revision.

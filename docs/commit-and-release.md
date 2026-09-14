@@ -206,6 +206,26 @@ It asks for confirmation before touching the public listing, and refuses non-int
 uses — on the default lane's revision; the other lanes' revisions point at it, because Steam shows
 one note per revision and the list should not be duplicated.
 
+### Localized public metadata
+
+The public item's title and description are generated from the tracked `workshop/` source bundle.
+English is the primary Steam language; the other 13 current STS2 languages are submitted as Steam
+metadata-only updates. Edit the relevant Markdown description or `workshop/titles.json`, then run
+`bash scripts/test-render-workshop-localizations.sh` before publishing. The renderer also checks
+that every Quick Start label remains identical to the native `couchcoop_qr_button` localization.
+
+Mega Crit's uploader support is still PR #12 rather than an upstream release. Once per local tooling
+install, run `scripts/install-localized-workshop-uploader.sh`; it builds pinned commit
+`84e755cea6bcfa014df3165c882f1824259245c6` into ignored `.sts2/uploader/` without copying its
+source into this repository or disturbing workspaces, item IDs, previews, Steam settings, or logs.
+Public uploads refuse an older or unverified uploader. The unlisted DEV workspace intentionally
+remains English-only.
+
+The release script sends the complete localization set with its first selected lane. Later lanes in
+the same release omit that already-item-wide metadata, then the public workspace is restored to the
+complete generated configuration. This reduces redundant Steam metadata revisions; it does not
+publish anything until the maintainer runs the existing upload command and confirms it.
+
 Each revision's heading names the payload's version and the game build it was made for, e.g.
 `Release v0.1.2 — Slay the Spire 2 v0.107.1`. The version comes from the payload's own
 `build-info.txt` rather than the archive name, because a snapshot's filename carries only a commit

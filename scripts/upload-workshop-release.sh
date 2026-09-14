@@ -38,6 +38,8 @@ EOF
 repo_root="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 # shellcheck source=lib/release-lanes.sh
 source "$repo_root/scripts/lib/release-lanes.sh"
+readonly LOCALIZED_UPLOADER_COMMIT="84e755cea6bcfa014df3165c882f1824259245c6"
+readonly LOCALIZED_UPLOADER_VERSION="1.0.0+84e755cea6bcfa014df3165c882f1824259245c6"
 # An unset --visibility must stay distinguishable from one passed with the default value,
 # because only an explicit flag may rewrite an already-published item's visibility.
 visibility_default="private"
@@ -160,6 +162,45 @@ config_source="$workspace/workshop.json"
   echo "Workshop primary preview is missing: $workspace/image.png" >&2
   exit 1
 }
+
+# The public item carries the tracked multilingual metadata. Other workspaces deliberately keep
+# their own copy -- in particular Workspace.dev is an English-only tester warning.
+canonical_public_workspace="$uploader_dir/Workspace"
+is_public_workspace=false
+if [[ -d "$canonical_public_workspace" ]] && [[ "$workspace" == "$(cd "$canonical_public_workspace" && pwd)" ]]; then
+  is_public_workspace=true
+fi
+
+require_localized_uploader() {
+  local marker actual_version actual_sha
+  marker="$uploader_dir/.couchcoop-localized-uploader.json"
+  [[ -f "$marker" ]] || {
+    echo "The public Workshop item needs the PR #12-capable uploader." >&2
+    echo "Run scripts/install-localized-workshop-uploader.sh first." >&2
+    exit 1
+  }
+  jq -e --arg commit "$LOCALIZED_UPLOADER_COMMIT" --arg version "$LOCALIZED_UPLOADER_VERSION" \
+    '.commit == $commit and .version == $version and (.modUploaderSha256 | strings | length == 64)' \
+    "$marker" >/dev/null || {
+    echo "Localized uploader marker is invalid: $marker" >&2
+    echo "Run scripts/install-localized-workshop-uploader.sh again." >&2
+    exit 1
+  }
+  actual_version="$($uploader --version)"
+  [[ "$actual_version" == "$LOCALIZED_UPLOADER_VERSION" ]] || {
+    echo "Localized uploader version mismatch: expected $LOCALIZED_UPLOADER_VERSION, got $actual_version" >&2
+    echo "Run scripts/install-localized-workshop-uploader.sh again." >&2
+    exit 1
+  }
+  actual_sha="$(sha256sum "$uploader" | awk '{print $1}')"
+  [[ "$actual_sha" == "$(jq -r '.modUploaderSha256' "$marker")" ]] || {
+    echo "Localized uploader binary does not match its marker: $uploader" >&2
+    echo "Run scripts/install-localized-workshop-uploader.sh again." >&2
+    exit 1
+  }
+}
+
+[[ "$is_public_workspace" == true ]] && require_localized_uploader
 # Which lanes this run publishes. Default is every lane the release has, because one Workshop item
 # serves both game branches through one revision each; --lane narrows it.
 mapfile -t all_lanes < <(release_lane_discover "$repo_root/eng/Sts2.ReferenceSdk")
@@ -198,6 +239,12 @@ fi
 
 stage_dir="$(mktemp -d "${TMPDIR:-/tmp}/couchcoop-workshop-upload.XXXXXX")"
 trap 'rm -rf "$stage_dir"' EXIT
+
+localized_config=""
+if [[ "$is_public_workspace" == true ]]; then
+  localized_config="$stage_dir/workshop-localizations.json"
+  "$repo_root/scripts/render-workshop-localizations.sh" --base "$config_source" --output "$localized_config"
+fi
 
 # ---- resolve the release this run publishes ---------------------------------------------------
 # One release, one version, every lane. A directory holding two versions is refused rather than
@@ -307,6 +354,7 @@ fi
 
 # ---- publish, one revision per lane ---------------------------------------------------------------
 timed_out_lanes=()
+first_lane=true
 for lane in ${lanes[@]+"${lanes[@]}"}; do
   archive_name="$(release_lane_archive_name "$archive_base" "$lane")"
   archive_path="$dist_dir/$archive_name"
@@ -337,16 +385,24 @@ for lane in ${lanes[@]+"${lanes[@]}"}; do
   # A published item's visibility is the maintainer's setting, not this script's: it is applied only
   # on a first publish, or when --visibility was passed explicitly. mod_id.txt is what proves the item
   # exists -- workshop.json is required above, so its presence would prove nothing.
+  config_for_lane="$config_source"
+  if [[ "$is_public_workspace" == true ]]; then
+    config_for_lane="$localized_config"
+    if [[ "$first_lane" != true ]]; then
+      config_for_lane="$stage_dir/workshop-without-localizations.json"
+      jq 'del(.localizations)' "$localized_config" > "$config_for_lane"
+    fi
+  fi
   if [[ "$visibility_explicit" == true || ! -f "$workspace/mod_id.txt" ]]; then
     jq --arg visibility "$visibility" --arg change_note "$change_note" --arg branch "$steam_branch" \
       '.visibility = $visibility | .changeNote = $change_note | .minBranch = $branch | .maxBranch = $branch' \
-      "$config_source" > "$stage_dir/workshop.json"
+      "$config_for_lane" > "$stage_dir/workshop.json"
     visibility_report="$visibility"
   else
     jq --arg change_note "$change_note" --arg branch "$steam_branch" \
       '.changeNote = $change_note | .minBranch = $branch | .maxBranch = $branch' \
-      "$config_source" > "$stage_dir/workshop.json"
-    visibility_report="$(jq -r '.visibility // "unset"' "$config_source") (left as the workspace declares it)"
+      "$config_for_lane" > "$stage_dir/workshop.json"
+    visibility_report="$(jq -r '.visibility // "unset"' "$config_for_lane") (left as the workspace declares it)"
   fi
 
   # Gallery previews are intentionally managed manually: with no previews/ directory in the
@@ -378,7 +434,18 @@ for lane in ${lanes[@]+"${lanes[@]}"}; do
       exit 1
     fi
   fi
+  first_lane=false
 done
+
+# The second branch revision intentionally omits localizations, but the maintainer's workspace must
+# remain an inspectable complete generated config after a successful run.
+if [[ "$is_public_workspace" == true ]]; then
+  jq --slurpfile localized "$localized_config" \
+    '.title = $localized[0].title | .description = $localized[0].description |
+     .language = $localized[0].language | .localizations = $localized[0].localizations' \
+    "$stage_dir/workshop.json" > "$stage_dir/workshop-complete.json"
+  cp "$stage_dir/workshop-complete.json" "$workspace/workshop.json"
+fi
 
 if [[ ${#timed_out_lanes[@]} -gt 0 ]]; then
   echo >&2
