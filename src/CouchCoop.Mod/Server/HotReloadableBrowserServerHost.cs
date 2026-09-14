@@ -162,11 +162,9 @@ public sealed class HotReloadableBrowserServerHost : IHotServerHost, IAsyncDispo
         }
     }
 
-    // NO host-connectivity-log emission in this class, deliberately (B1/B3/B6 live one level up, in
-    // CouchCoopHostUiServices). A hot-reload GENERATION SWAP is not a restart: the listener, the port and
-    // every open socket survive it, so narrating "Phone connection stopped/ready" here would tell a host in
-    // a lobby that their phones had just dropped when nothing of the sort happened. Asserted by
-    // BrowserServerRouteTests.AssertHotReloadableServerHostSwapAsync (log sequence unchanged across swaps).
+    // A hot-reload GENERATION SWAP is not a restart: the listener, the port and every open socket survive
+    // it. Anything this class reports as a start or a stop would therefore be describing an event that did
+    // not happen to anyone holding a connection.
     public async Task<Uri> StartAsync(CancellationToken cancellationToken = default)
     {
         if (_listener is not null && BaseUri is not null)

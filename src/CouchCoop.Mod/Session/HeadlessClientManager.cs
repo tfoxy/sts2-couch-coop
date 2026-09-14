@@ -6,7 +6,6 @@ using System.Net.Http;
 using System.Runtime.InteropServices;
 using System.Text.Json;
 using System.Text.Json.Serialization;
-using CouchCoop.Mod.Activity;
 using CouchCoop.MirrorProtocol.Envelopes;
 
 namespace CouchCoop.Mod.Session;
@@ -124,12 +123,6 @@ public sealed partial class HeadlessClientManager : IDisposable
     /// <inheritdoc cref="MinSeatReadyTimeoutSeconds"/>
     internal const double MaxSeatReadyTimeoutSeconds = 900.0;
 
-    /// <summary>
-    /// The longest a seat may stay quiet before the panel says so once (see <see cref="StillLoadingNoticeAfter"/>).
-    /// 30s is the top of the file's own measured cold-start range, so a seat still silent here is genuinely slow
-    /// rather than merely cold.
-    /// </summary>
-    private static readonly TimeSpan StillLoadingNoticeCeiling = TimeSpan.FromSeconds(30);
 
     // Guards the slot bookkeeping below. ORDERING RULE: nothing may block on the game's main thread while holding
     // this — the main thread takes it too (DescribeSeats on every screen change, Dispose at shutdown), so doing so
@@ -173,24 +166,6 @@ public sealed partial class HeadlessClientManager : IDisposable
     public static int SlotToPort(int slot) => HostPort + slot * PortStep;
     public static ulong SlotToNetId(int slot) => BaseNetId + (ulong)slot;
 
-    /// <summary>
-    /// Write one SEAT line to the host connectivity log (rendered natively on the lobby screen).
-    /// </summary>
-    /// <remarks>
-    /// <para>
-    /// Every call site sits BESIDE an existing <see cref="Console.Error"/> line, never in place of one: the
-    /// stderr text is the developer-facing record and stays byte-identical, while this is the sentence a
-    /// player in the room can act on. The two say different things on purpose (slot/netId/exit-code vs
-    /// "Ann's game is ready.").
-    /// </para>
-    /// <para>
-    /// SAFE UNDER <c>_lock</c>, which is why most calls below are inside it: the log's own gate is a LEAF
-    /// lock that does nothing but copy a struct into an array (see <c>CouchCoopActivityLog</c>'s remarks),
-    /// so it can never participate in the main-thread ordering hazard this class's lock lives under.
-    /// </para>
-    /// </remarks>
-    private static void Narrate(CouchCoopActivitySeverity severity, CouchCoop.Mod.Localization.CouchCoopText message)
-        => CouchCoopActivityLog.Append(CouchCoopActivityCategory.Seat, severity, message);
 
     /// <summary>
     /// The highest slot currently allocatable: <see cref="MinSlot"/> plus however many seats the live lobby has
@@ -474,9 +449,6 @@ public sealed partial class HeadlessClientManager : IDisposable
                 if (_processBySlot.ContainsKey(slot))
                 {
                     Console.Error.WriteLine($"[couch-coop] headless reuse (netId-bound) slot={slot} netId={SlotToNetId(slot)} name={name} newSession={sessionId:N}");
-                    // S1: a seat tapped in the picker whose instance is still up. From the room's point of
-                    // view this is somebody coming back, not a spawn.
-                    Narrate(CouchCoopActivitySeverity.Good, CouchCoopActivityMessages.SeatReconnected(name));
                     ReportSlotBound(onSlotBound, slot, name);
                     return new(SlotToPort(slot), NewProcess: false);
                 }
@@ -498,8 +470,6 @@ public sealed partial class HeadlessClientManager : IDisposable
                 {
                     // Headless still live → share it (e.g. a second browser tab with the same name).
                     Console.Error.WriteLine($"[couch-coop] headless reuse slot={slot} name={name} newSession={sessionId:N}");
-                    // S2: the name-resolved twin of S1.
-                    Narrate(CouchCoopActivitySeverity.Good, CouchCoopActivityMessages.SeatReconnected(name));
                     // Still a BINDING (this session now owns the slot), so report it: the live instance's netId
                     // may have lost its name override in the meantime (e.g. a lobby disconnect cleared it), and
                     // re-asserting costs one idempotent action.
@@ -525,9 +495,8 @@ public sealed partial class HeadlessClientManager : IDisposable
                 slot = AllocateSlotForNewNameLocked(maxSlot);
                 if (slot == 0)
                 {
-                    // S3: every slot has a LIVE process. The one refusal a host can actually do something
-                    // about (close a window, raise the lobby cap), so it is worth a line on the TV.
-                    Narrate(CouchCoopActivitySeverity.Bad, CouchCoopActivityMessages.SeatPoolFull(name));
+                    // Every slot has a LIVE process. The one refusal a host can actually do something
+                    // about: close a window, or raise the lobby cap.
                     return null;
                 }
                 _sessionToSlot[sessionId] = slot;
@@ -546,15 +515,12 @@ public sealed partial class HeadlessClientManager : IDisposable
             // the fresh file at construction.
             WriteMultiplayerNamesFileLocked(slot, name);
 
-            // S4-S7 (the launch trio) live HERE rather than in LaunchReal, deliberately. LaunchReal is only
-            // reachable with a real game executable, so an append inside it would be unreachable from the
-            // unit suite; wrapping `_launcher(slot)` instead means the FakeProcess harness exercises the
-            // whole narration — including both failure shapes (a null return and a throw), which is where
-            // the interesting behaviour is. The Console.Error lines inside LaunchReal are untouched.
+            // The launch is wrapped HERE rather than inside LaunchReal, deliberately: LaunchReal is only
+            // reachable with a real game executable, so failure handling written inside it would be
+            // unreachable from the unit suite. Wrapping `_launcher(slot)` means the FakeProcess harness
+            // exercises both failure shapes — a null return and a throw — which is where the interesting
+            // behaviour is.
             IHeadlessProcess? proc;
-            // S4: announced BEFORE the process starts, because the 20-60s wait that follows is precisely
-            // the interval a host is staring at the screen wondering whether anything is happening.
-            Narrate(CouchCoopActivitySeverity.Info, CouchCoopActivityMessages.SeatLaunching(name));
             try
             {
                 PrepareConnectionLocked(slot, sessionId);
@@ -565,8 +531,6 @@ public sealed partial class HeadlessClientManager : IDisposable
                 CouchCoop.Mod.Connections.ConnectionRegistry.Shared.Fail(sessionId, "launch-exception",
                     "The game process could not be launched.", "Check the game installation and retry. Copy this report if it fails again.", launchError.ToString());
                 ForgetConnectionLocked(slot);
-                // S5: a launcher that throws.
-                Narrate(CouchCoopActivitySeverity.Bad, CouchCoopActivityMessages.SeatLaunchFailed(name));
                 // A launcher that THROWS must unwind exactly like one that returns null. Without this the binding
                 // made above survives the failure, and the viewer's very next attempt short-circuits at the top of
                 // this method to `return SlotToPort(slot)` — handing the browser a port that nothing is listening
@@ -584,9 +548,6 @@ public sealed partial class HeadlessClientManager : IDisposable
                     "The game process did not start.", "Make sure the host lobby is accepting couch players, then retry.",
                     "The process launcher returned no process handle. No further cause is available.");
                 ForgetConnectionLocked(slot);
-                // S6: the launcher declined (no ENet listener, Process.Start failed). Same sentence as S5 —
-                // the distinction between "threw" and "returned null" is a developer's, not a player's.
-                Narrate(CouchCoopActivitySeverity.Bad, CouchCoopActivityMessages.SeatLaunchFailed(name));
                 // Spawn failed: drop this session. Only forget the claim if WE just created it (a new name) —
                 // a reconnect's pre-existing claim is left intact so the player can retry on the same netId.
                 _sessionToSlot.Remove(sessionId);
@@ -599,9 +560,6 @@ public sealed partial class HeadlessClientManager : IDisposable
                 owned.Process = proc;
                 CouchCoop.Mod.Connections.ConnectionRegistry.Shared.BindProcess(sessionId, proc.Id, owned.Generation);
             }
-            // S7: the window exists. NOT playable yet — the ~20-30s asset preload starts now — so the copy
-            // says "loading" rather than anything that would send a player to look at their phone.
-            Narrate(CouchCoopActivitySeverity.Info, CouchCoopActivityMessages.SeatLaunchOpened(name));
         }
 
         // Reconnect respawn: clear any stale ENet peer on this netId now (off the lock), well before the freshly
@@ -735,10 +693,7 @@ public sealed partial class HeadlessClientManager : IDisposable
             }
 
             Console.Error.WriteLine($"[couch-coop] reaping stuck headless (up but not connected) slot={slot} netId={netId}");
-            // S14: before RemoveNameForSlotLocked below (the reap DROPS the claim, unlike Release).
-            Narrate(
-                CouchCoopActivitySeverity.Warn,
-                CouchCoopActivityMessages.SeatStuckReaped(ClaimedNameForSlotLocked(slot)));
+            // A reap DROPS the claim, unlike Release.
             foreach (var sk in _sessionToSlot.Where(p => p.Value == slot).Select(p => p.Key).ToList())
                 _sessionToSlot.Remove(sk);
             _detachedSlots.Remove(slot);
@@ -806,12 +761,6 @@ public sealed partial class HeadlessClientManager : IDisposable
             // a different player only if every slot fills up. We still SIGKILL the process (the game IGNORES
             // SIGTERM) and return the netId so the caller evicts the now-dead ENet peer, freeing the netId for
             // the reconnecting headless to reuse.
-            //
-            // S12: only on THIS branch — the two returns above are "another session took over" and "no such
-            // session", neither of which is a player leaving. The claim survives, so the name is still here.
-            Narrate(
-                CouchCoopActivitySeverity.Info,
-                CouchCoopActivityMessages.SeatReleased(ClaimedNameForSlotLocked(slot)));
             var stopped = ShutdownSlotLocked(slot, graceful: false);
             ConnectionRegistry.Shared.RecordDiagnostic(sessionId, "cleanup", stopped
                 ? "Owned game terminated after its last lobby browser disconnected."
@@ -842,11 +791,6 @@ public sealed partial class HeadlessClientManager : IDisposable
             {
                 _detachedSlots.Add(slot);
                 Console.Error.WriteLine($"[couch-coop] headless detached (kept alive mid-run) slot={slot} netId={SlotToNetId(slot)}");
-                // S13: the copy has to say the window is KEPT, or a host watching a phone drop mid-fight
-                // reasonably concludes that player is out of the run.
-                Narrate(
-                    CouchCoopActivitySeverity.Info,
-                    CouchCoopActivityMessages.SeatDetached(ClaimedNameForSlotLocked(slot)));
             }
         }
     }
@@ -867,10 +811,6 @@ public sealed partial class HeadlessClientManager : IDisposable
             foreach (var slot in _detachedSlots.ToList())
             {
                 Console.Error.WriteLine($"[couch-coop] reaping detached headless on run-end slot={slot} netId={SlotToNetId(slot)}");
-                // S16: again before the claim is dropped on the next line.
-                Narrate(
-                    CouchCoopActivitySeverity.Info,
-                    CouchCoopActivityMessages.SeatRunEndReaped(ClaimedNameForSlotLocked(slot)));
                 RemoveNameForSlotLocked(slot);
                 if (ShutdownSlotLocked(slot, graceful: false))
                 {
@@ -889,12 +829,6 @@ public sealed partial class HeadlessClientManager : IDisposable
         {
             if (_disposed) return;
             _disposed = true;
-            // S17: ONE line, not one per window — a host quitting the game does not need a paragraph, and
-            // this is emitted before the claims are cleared only so the condition can be read at all.
-            if (_processBySlot.Count > 0)
-            {
-                Narrate(CouchCoopActivitySeverity.Info, CouchCoopActivityMessages.SeatsShuttingDown);
-            }
 
             _nameToSlot.Clear();
             _sessionToSlot.Clear();
@@ -924,10 +858,6 @@ public sealed partial class HeadlessClientManager : IDisposable
         foreach (var slot in dead)
         {
             Console.Error.WriteLine($"[couch-coop] headless reaping dead slot={slot}");
-            // S15: the claim is deliberately KEPT here (reconnect identity), so the name is still readable.
-            Narrate(
-                CouchCoopActivitySeverity.Warn,
-                CouchCoopActivityMessages.SeatWindowGone(ClaimedNameForSlotLocked(slot)));
             // Drop any sessions still pointing at this dead slot so their later Release is a no-op. The name
             // claim is intentionally retained so the player keeps the same netId on reconnect.
             foreach (var sk in _sessionToSlot.Where(p => p.Value == slot).Select(p => p.Key).ToList())
@@ -1361,15 +1291,7 @@ public sealed partial class HeadlessClientManager : IDisposable
                 $"[couch-coop] headless launch refused slot={slot}: this host has no ENet listener for couch seats "
                 + $"(dual={CouchCoopHostTransport.IsDual}). A seat can only join a host that is running the ENet side "
                 + $"on port {CouchCoopHostTransport.EnetPort}.");
-            // S8: the one narration whose CODE PATH the unit suite cannot reach (LaunchReal only runs with a
-            // real game exe, and the test ctor replaces the launcher outright), so it is covered as a message
-            // test only. It names the CAUSE; the generic S6 "couldn't start" follows immediately from the null
-            // return, which is the right order — reason first, then outcome.
-            //
             // The name is read under the caller's lock: _launcher is only ever invoked from inside _lock.
-            Narrate(
-                CouchCoopActivitySeverity.Bad,
-                CouchCoopActivityMessages.SeatNoLocalTransport(ClaimedNameForSlotLocked(slot)));
             return null;
         }
 
@@ -1515,15 +1437,6 @@ public sealed partial class HeadlessClientManager : IDisposable
             Math.Clamp(seconds, MinSeatReadyTimeoutSeconds, MaxSeatReadyTimeoutSeconds));
     }
 
-    /// <summary>
-    /// How far into the wait the one "still loading" line is emitted (S18), given the deadline in force:
-    /// <see cref="StillLoadingNoticeCeiling"/>, or half the deadline when that is sooner. The halving is what
-    /// keeps the notice MEANINGFUL under a shortened deadline — a line that landed at the same moment as the
-    /// timeout that kills the seat would just be noise in front of the failure. Pure, for the same reason as
-    /// <see cref="ParseSeatReadyTimeout"/>.
-    /// </summary>
-    internal static TimeSpan StillLoadingNoticeAfter(TimeSpan readyTimeout)
-        => readyTimeout / 2 < StillLoadingNoticeCeiling ? readyTimeout / 2 : StillLoadingNoticeCeiling;
 
     // Read per wait rather than cached: it costs one environment lookup per join, and a cached copy would be one
     // more thing to reason about on the hot-reload path for no gain.
@@ -1541,11 +1454,6 @@ public sealed partial class HeadlessClientManager : IDisposable
         // DefaultSeatReadyTimeoutSeconds for the number, and SeatReadyTimeoutEnvironmentVariable to override it.
         var started = DateTimeOffset.UtcNow;
         var deadline = started + SeatReadyTimeout;
-        // The one progress line, and the latch that keeps it to one. A seat that is merely slow reports NOTHING
-        // until it serves, so without this the panel sits on S7's "loading" for over a minute and a host with a
-        // slow PC cannot tell a long start from a dead one.
-        var stillLoadingAt = started + StillLoadingNoticeAfter(deadline - started);
-        var stillLoadingNarrated = false;
         while (DateTimeOffset.UtcNow < deadline)
         {
             ct.ThrowIfCancellationRequested();
@@ -1562,11 +1470,6 @@ public sealed partial class HeadlessClientManager : IDisposable
                 if (exited)
                 {
                     Console.Error.WriteLine($"[couch-coop] headless exited early slot={slot} exitCode={exitCode}");
-                    // S9: read the claim BEFORE RemoveNameForSlotLocked below, or the line loses its name and
-                    // degrades to "A player's game window closed while starting up." for everyone.
-                    Narrate(
-                        CouchCoopActivitySeverity.Bad,
-                        CouchCoopActivityMessages.SeatExitedEarly(ClaimedNameForSlotLocked(slot)));
                     RemoveNameForSlotLocked(slot);
                     ShutdownSlotLocked(slot, graceful: false);
                     _sessionToSlot.Remove(sessionId);
@@ -1576,21 +1479,7 @@ public sealed partial class HeadlessClientManager : IDisposable
             if (await _readinessProbe(port, ct).ConfigureAwait(false))
             {
                 Console.Error.WriteLine($"[couch-coop] headless ready slot={slot} port={port}");
-                // S10: the end of the long wait S4 announced — the phone is about to be redirected onto it.
-                Narrate(CouchCoopActivitySeverity.Good, CouchCoopActivityMessages.SeatReady(ClaimedNameForSlot(slot)));
                 return port;
-            }
-
-            if (!stillLoadingNarrated && DateTimeOffset.UtcNow >= stillLoadingAt)
-            {
-                stillLoadingNarrated = true;
-                // S18: still nothing wrong — the seat is loading, and the host is told so rather than left to
-                // guess. Emitted OUTSIDE _lock (ClaimedNameForSlot takes it for the read and lets it go), like
-                // S10 beside it: this loop runs on a thread-pool thread and must never hold the slot lock
-                // across anything the game's main thread could be waiting behind.
-                Narrate(
-                    CouchCoopActivitySeverity.Info,
-                    CouchCoopActivityMessages.SeatStillLoading(ClaimedNameForSlot(slot)));
             }
 
             await Task.Delay(250, ct).ConfigureAwait(false);
@@ -1600,10 +1489,6 @@ public sealed partial class HeadlessClientManager : IDisposable
         Console.Error.WriteLine($"[couch-coop] headless startup timeout slot={slot} port={port} — killing.");
         lock (_lock)
         {
-            // S11: same trap as S9 — the claim is about to be cleared, so capture the name first.
-            Narrate(
-                CouchCoopActivitySeverity.Bad,
-                CouchCoopActivityMessages.SeatStartTimedOut(ClaimedNameForSlotLocked(slot)));
             _sessionToSlot.Remove(sessionId);
             RemoveNameForSlotLocked(slot);
             ShutdownSlotLocked(slot, graceful: false);

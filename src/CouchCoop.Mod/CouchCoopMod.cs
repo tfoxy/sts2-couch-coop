@@ -1,4 +1,3 @@
-using CouchCoop.Mod.Activity;
 using CouchCoop.Mod.Localization;
 using CouchCoop.Mod.HostUi;
 using CouchCoop.Mod.Contracts;
@@ -132,7 +131,7 @@ public static class CouchCoopMod
             // Escape hatch (no in-game join UI exists): COUCHCOOP_JOIN_HOST=ip[:port] redirects the ONE place
             // every ENet join is constructed. Inert unless the env var is set, so an ordinary player is unaffected.
             JoinHostOverridePatch.Apply();
-            // Tell the QR/activity panel controller when a lobby screen is readied, so it does not have to go
+            // Tell the QR panel controller when a lobby screen is readied, so it does not have to go
             // looking: it used to walk the WHOLE scene tree four times a second for the life of the process,
             // which is the largest thing this mod did on a machine nobody was using it from. Host-only — a
             // headless seat renders no panels — and mounted here, with the other patches, because it must be
@@ -681,10 +680,6 @@ public static class CouchCoopMod
             // escapes to here (a bad static root, a construction fault) leaves the host with no browser
             // server at all, which the player-facing log must report identically — the distinction between
             // the two catch sites is a developer's, and the stderr line above already carries it.
-            CouchCoopActivityLog.Append(
-                CouchCoopActivityCategory.Server,
-                CouchCoopActivitySeverity.Bad,
-                CouchCoopActivityMessages.BrowserServerFailed);
             CouchCoop.Mod.Connections.ConnectionRegistry.Shared.ReportHostIssue("host-service-failed",
                 "The browser connection service could not start.", "Restart the game. If the service still fails, copy this report.", exception.ToString());
             _hostUiStartupFailure = CouchCoopHostUiSnapshot.Unavailable([

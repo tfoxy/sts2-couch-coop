@@ -1,4 +1,3 @@
-using CouchCoop.Mod.Activity;
 using CouchCoop.Mod.Session;
 using System.Diagnostics;
 
@@ -45,23 +44,11 @@ internal static class HeadlessClientManagerTests
         SeatMemoryTuningIsSeparateFromTheJoinContract();
         SeatMemoryTuningFillsOnlyUnsetKeys();
 
-        // F1 host connectivity log — the SEAT channel (S1..S17). These assert the ORDERED narration a host
-        // reads on the lobby panel, not just that something was logged: the sequence is the product (a
-        // "ready" before a "starting" would be a bug nobody would notice from a set-membership check).
-        //
-        // S8 (no ENet listener for seats) is the one point with no coverage here: it lives in LaunchReal,
-        // which needs a real game executable and is replaced outright by the test launcher. It is covered as
-        // a MESSAGE test in CouchCoopActivityLogTests instead.
-        await LifecycleIsNarratedInOrder();
-        await AFailedLaunchIsNarratedForBothFailureShapes();
-        await AnEarlyExitIsNarratedWithTheClaimedName();
-        await AReconnectRespawnIsNotNarratedAsAReconnect();
-        await ADetachAndRunEndReapAreNarratedSeparately();
-        await AStuckReapIsNarrated();
-        await APoolFullRefusalNamesThePlayer();
-        await ShutdownIsNarratedOnce();
-
-        CouchCoopActivityLog.Reset();
+        // What survives the retired host connectivity log: this suite used to assert the ORDERED sentences a
+        // host read on the lobby panel for every seat lifecycle step. The panel and the ring are gone, so the
+        // sentences are not a contract any more — but one of those tests was reading a REAL behaviour through
+        // them, and it keeps its own observable.
+        await ARespawnAfterADeadHandleLaunchesAFreshProcess();
     }
 
     // A controllable fake process. RequestGracefulStop optionally "exits" the process (simulating a clean
@@ -119,7 +106,6 @@ internal static class HeadlessClientManagerTests
             // The host connectivity log is a process-global ring, so every harness starts from empty. (A
             // test that builds TWO harnesses therefore clears the first one's narration — none of the
             // narration tests below do that.)
-            CouchCoopActivityLog.Reset();
             MaxSeats = maxSeats;
             Manager = new HeadlessClientManager(
                 launcher: slot =>
@@ -726,214 +712,29 @@ internal static class HeadlessClientManagerTests
 
     // ---- host connectivity log: the seat channel ---------------------------------------------------------
 
-    /// <summary>Every line currently on the host connectivity panel, oldest first.</summary>
-    private static List<string> Narration()
-        => CouchCoopActivityLog.Snapshot().Select(entry => entry.Message).ToList();
 
-    private static void AssertNarration(IReadOnlyList<string> expected, string label)
+
+
+
+
+    private static async Task ARespawnAfterADeadHandleLaunchesAFreshProcess()
     {
-        var actual = Narration();
-        Assert(
-            actual.Count == expected.Count && actual.SequenceEqual(expected),
-            $"{label}: expected [{string.Join(" | ", expected)}] but the panel reads [{string.Join(" | ", actual)}]");
-    }
-
-    private static async Task LifecycleIsNarratedInOrder()
-    {
-        var h = new Harness();
-        var session = Guid.NewGuid();
-        await h.Manager.EnsureHeadlessAsync(session, "Ann", default);
-
-        // S4 comes BEFORE the process exists and S10 after the readiness probe: that ordering is the whole
-        // point of the panel, because the gap between them is the 20-60s a host spends wondering.
-        AssertNarration(
-            [
-                "Starting Ann's game window…",
-                "Ann's game window opened — loading (this takes a moment).",
-                "Ann's game is ready.",
-            ],
-            "a fresh join narrates launch → opened → ready");
-
-        // A second browser on the same name shares the LIVE instance: one line, and no spurious launch pair.
-        CouchCoopActivityLog.Reset();
-        await h.Manager.EnsureHeadlessAsync(Guid.NewGuid(), "Ann", default);
-        AssertNarration(["Ann is back — reconnected to their game."], "reusing a live instance narrates a reconnect only");
-
-        // Neither no-op branch of Release says anything: an unknown session, and a session whose slot a
-        // same-name reconnect has already taken over (the second browser above). Narrating either would put
-        // "Ann left" on the TV while Ann is still playing.
-        CouchCoopActivityLog.Reset();
-        h.Manager.Release(Guid.NewGuid());
-        h.Manager.Release(session);
-        AssertNarration([], "the two no-op Release branches narrate nothing");
-
-        // The real departure: the session that still owns the slot, outside a run.
-        var solo = new Harness();
-        var soloSession = Guid.NewGuid();
-        await solo.Manager.EnsureHeadlessAsync(soloSession, "Ann", default);
-        CouchCoopActivityLog.Reset();
-        solo.Manager.Release(soloSession);
-        AssertNarration(
-            ["Ann left — their game window was closed."],
-            "a lobby-time disconnect closes the window, and the line says so");
-    }
-
-    private static async Task AFailedLaunchIsNarratedForBothFailureShapes()
-    {
-        // A launcher that returns null.
-        CouchCoopActivityLog.Reset();
-        using (var silent = new HeadlessClientManager(
-            launcher: _ => null,
-            readinessProbe: (_, _) => Task.FromResult(true)))
-        {
-            Assert(await silent.EnsureHeadlessAsync(Guid.NewGuid(), "Ann", default) is null, "a null launch yields no port");
-        }
-
-        AssertNarration(
-            ["Starting Ann's game window…", "Couldn't start Ann's game window."],
-            "a null launch narrates the attempt and then the failure");
-
-        // A launcher that throws. Same sentence: the distinction is a developer's, not a player's, and the
-        // Console.Error line beside it still carries the exception.
-        CouchCoopActivityLog.Reset();
-        using (var boom = new HeadlessClientManager(
-            launcher: _ => throw new KeyNotFoundException("boom"),
-            readinessProbe: (_, _) => Task.FromResult(true)))
-        {
-            var threw = false;
-            try
-            {
-                await boom.EnsureHeadlessAsync(Guid.NewGuid(), "Ann", default);
-            }
-            catch (KeyNotFoundException)
-            {
-                threw = true;
-            }
-
-            Assert(threw, "a throwing launcher still propagates (the join handler turns it into a rejection)");
-        }
-
-        AssertNarration(
-            ["Starting Ann's game window…", "Couldn't start Ann's game window."],
-            "a throwing launch narrates identically — and, crucially, is narrated at all despite unwinding");
-    }
-
-    private static async Task AnEarlyExitIsNarratedWithTheClaimedName()
-    {
-        // The process starts and dies before it ever serves: WaitForReadyAsync sees HasExited on its first
-        // pass. The name must be read BEFORE the claim is cleared on the next line, or every host sees
-        // "A player's game window closed while starting up."
-        CouchCoopActivityLog.Reset();
-        using var manager = new HeadlessClientManager(
-            launcher: slot =>
-            {
-                var process = new FakeProcess(slot, gracefulStopExits: true);
-                process.ForceExit();
-                return process;
-            },
-            readinessProbe: (_, _) => Task.FromResult(false));
-
-        Assert(await manager.EnsureHeadlessAsync(Guid.NewGuid(), "Ann", default) is null, "a stillborn instance yields no port");
-        AssertNarration(
-            [
-                "Starting Ann's game window…",
-                "Ann's game window opened — loading (this takes a moment).",
-                "Ann's game window closed while starting up.",
-            ],
-            "an early exit is named, not anonymous");
-    }
-
-    private static async Task AReconnectRespawnIsNotNarratedAsAReconnect()
-    {
-        // The reconnect RESPAWN path deliberately says nothing of its own: "Starting Ann's game window…"
-        // follows immediately, and a "reconnected" line in front of it would double every relaunch. What it
-        // DOES narrate first is the dead handle it reaped (S15).
+        // The reconnect path must not hand back a dead instance. This used to be read through the narration
+        // ("…is no longer running." then a plain relaunch, never a "reconnected" line); with the log gone the
+        // observable is the launcher itself — a SECOND process, not a reuse of the exited one.
         var h = new Harness();
         await h.Manager.EnsureHeadlessAsync(Guid.NewGuid(), "Ann", default);
+        Assert(h.Spawned.Count == 1, "the first join launches one instance");
         h.Spawned[0].ForceExit();
 
-        CouchCoopActivityLog.Reset();
         await h.Manager.EnsureHeadlessAsync(Guid.NewGuid(), "Ann", default);
-        AssertNarration(
-            [
-                "Ann's game window is no longer running.",
-                "Starting Ann's game window…",
-                "Ann's game window opened — loading (this takes a moment).",
-                "Ann's game is ready.",
-            ],
-            "a respawn narrates the dead-orphan reap then a plain relaunch — never a 'reconnected' line");
+        Assert(h.Spawned.Count == 2, "a join whose instance has exited launches a fresh one rather than reusing the dead handle");
+        Assert(!h.Spawned[1].HasExited, "…and the replacement is live");
     }
 
-    private static async Task ADetachAndRunEndReapAreNarratedSeparately()
-    {
-        var h = new Harness();
-        var session = Guid.NewGuid();
-        await h.Manager.EnsureHeadlessAsync(session, "Ann", default);
 
-        CouchCoopActivityLog.Reset();
-        h.Manager.MarkDetached(session);
-        AssertNarration(
-            ["Ann's phone disconnected — keeping their game open so they can rejoin."],
-            "a mid-run detach must SAY the window is kept, or a host reads it as a player lost");
 
-        CouchCoopActivityLog.Reset();
-        h.Manager.ReapDetachedSlots();
-        AssertNarration(["The run ended — closed Ann's game window."], "the run-end reap is its own line");
 
-        // Reaping again has nothing to say.
-        CouchCoopActivityLog.Reset();
-        h.Manager.ReapDetachedSlots();
-        AssertNarration([], "a second run-end reap narrates nothing");
-    }
-
-    private static async Task AStuckReapIsNarrated()
-    {
-        var h = new Harness();
-        await h.Manager.EnsureHeadlessAsync(Guid.NewGuid(), "Ann", default);
-
-        CouchCoopActivityLog.Reset();
-        Assert(h.Manager.ReapSeat(1002), "the zombie is reaped");
-        AssertNarration(
-            ["Ann's game stopped responding — closing it so they can start again."],
-            "the stuck reap names the remedy, since the seat becomes retryable the moment it completes");
-
-        CouchCoopActivityLog.Reset();
-        Assert(!h.Manager.ReapSeat(1002), "reaping again is a no-op");
-        AssertNarration([], "…and a no-op reap says nothing");
-    }
-
-    private static async Task APoolFullRefusalNamesThePlayer()
-    {
-        var h = new Harness();
-        await h.Manager.EnsureHeadlessAsync(Guid.NewGuid(), "A", default);
-        await h.Manager.EnsureHeadlessAsync(Guid.NewGuid(), "B", default);
-        await h.Manager.EnsureHeadlessAsync(Guid.NewGuid(), "C", default);
-
-        CouchCoopActivityLog.Reset();
-        Assert(await h.Manager.EnsureHeadlessAsync(Guid.NewGuid(), "Dee", default) is null, "the fourth player is refused");
-        AssertNarration(
-            ["Dee couldn't join — every player slot is in use."],
-            "the pool-full refusal is the one a host can act on, so it names who was turned away");
-    }
-
-    private static async Task ShutdownIsNarratedOnce()
-    {
-        var h = new Harness();
-        await h.Manager.EnsureHeadlessAsync(Guid.NewGuid(), "Ann", default);
-        await h.Manager.EnsureHeadlessAsync(Guid.NewGuid(), "Bob", default);
-
-        CouchCoopActivityLog.Reset();
-        h.Manager.Dispose();
-        AssertNarration(
-            ["Closing Couch Co-Op — shutting down all player game windows."],
-            "shutdown is ONE line however many windows are open");
-
-        // A manager with nothing running has nothing to announce.
-        var empty = new Harness();
-        CouchCoopActivityLog.Reset();
-        empty.Manager.Dispose();
-        AssertNarration([], "disposing a manager that never spawned anything narrates nothing");
-    }
 
     private static void Assert(bool condition, string label)
     {

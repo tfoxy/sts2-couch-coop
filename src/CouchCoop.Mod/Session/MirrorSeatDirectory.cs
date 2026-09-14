@@ -1,4 +1,3 @@
-using CouchCoop.Mod.Activity;
 using CouchCoop.MirrorProtocol.Envelopes;
 
 namespace CouchCoop.Mod.Session;
@@ -325,58 +324,6 @@ public sealed class MirrorSeatDirectory
                 + $"processLive={seat.ProcessLive} gameConnected={gameConnectedNetIds.Contains(seat.NetId)} "
                 + $"detached={seat.Detached} claim={seat.ClaimedName ?? "none"} mode={mirrorMode ?? "none"}");
 
-            NarrateTransition(seat, had, was, now);
-        }
-    }
-
-    /// <summary>
-    /// The player-facing half of a seat transition, for the host connectivity log. Two transitions only.
-    /// </summary>
-    /// <remarks>
-    /// <para>
-    /// <b><paramref name="had"/> gates everything.</b> A directory is built per generation and starts with
-    /// no history, so on startup — and after every hot reload — the first evaluation reports EVERY seat as a
-    /// "transition" from nothing. Announcing those would repaint the whole roster onto the TV for an event
-    /// nobody experienced. Only a seat whose status this directory has seen before can genuinely change.
-    /// </para>
-    /// <para>
-    /// <b>→stuck is deliberately silent.</b> A stuck verdict is immediately followed by the reap it triggers,
-    /// and <c>HeadlessClientManager.ReapSeat</c>'s S14 says the same thing better ("stopped responding —
-    /// closing it so they can start again") because it can also promise the remedy.
-    /// </para>
-    /// <para>
-    /// <see cref="CouchCoopActivityLog.AppendDistinct"/>, not <c>Append</c>: this runs on every session
-    /// envelope build (many times a second), and a seat that flickers between two states across a
-    /// re-evaluation must not be able to fill the ring.
-    /// </para>
-    /// </remarks>
-    private static void NarrateTransition(
-        MirrorSeatDescription seat,
-        bool had,
-        MirrorSeatStatus was,
-        MirrorSeatStatus now)
-    {
-        if (!had)
-        {
-            return;
-        }
-
-        if (string.Equals(now.Status, MirrorSeatStatuses.Offline, StringComparison.Ordinal))
-        {
-            CouchCoopActivityLog.AppendDistinct(
-                CouchCoopActivityCategory.Server,
-                CouchCoopActivitySeverity.Warn,
-                CouchCoopActivityMessages.SeatWentOffline(seat.ClaimedName));
-            return;
-        }
-
-        if (string.Equals(now.Status, MirrorSeatStatuses.Ready, StringComparison.Ordinal)
-            && !string.Equals(was.Status, MirrorSeatStatuses.Ready, StringComparison.Ordinal))
-        {
-            CouchCoopActivityLog.AppendDistinct(
-                CouchCoopActivityCategory.Server,
-                CouchCoopActivitySeverity.Good,
-                CouchCoopActivityMessages.SeatAvailableAgain(seat.ClaimedName));
         }
     }
 

@@ -4,7 +4,6 @@ using System.Net.WebSockets;
 using System.Text;
 using System.Text.Json;
 using CouchCoop.Mod;
-using CouchCoop.Mod.Activity;
 using CouchCoop.Mod.Contracts;
 using CouchCoop.Mod.Tests;
 using CouchCoop.Mod.Diagnostics;
@@ -102,7 +101,12 @@ if (args is ["host-guards", ..])
 if (args is ["seats", ..])
 {
     await HeadlessClientManagerTests.RunAsync();
-    // The suite narrates every seat it starts, so say plainly that it finished — an exit code is easy to lose
+    // The seat ROSTER's transition bookkeeping — which seat the picker offers, and the statuses it remembers
+    // between evaluations. Registered here for the reason this whole verb exists: it sits after
+    // HeadlessAudioMuteTargetsTests in the full sequence, which takes the process down with SIGSEGV on some
+    // machines, so it had no runnable home at all.
+    MirrorSeatRosterTests.Run();
+    // The suite logs every seat it starts, so say plainly that it finished — an exit code is easy to lose
     // in that scroll, which is the same reason host-guards prints its own line.
     Console.WriteLine("seats: ok");
     return;
@@ -179,7 +183,6 @@ if (args is ["localization", ..])
     // it is registered below at a point the SIGSEGV above never gets to, so every assertion in it has been
     // unrunnable on this machine. Same shape as the catalog suite (pure, literal player-facing sentences,
     // no Godot), so it runs here too.
-    CouchCoopActivityLogTests.Run();
     Console.WriteLine("localization: ok");
     return;
 }
@@ -501,7 +504,6 @@ CouchCoopLobbyHostGateTests.Run();
 // shared with the live probe) and the bbcode escaping that keeps a browser-typed display name from
 // re-styling the host's television. Runs FIRST of the log-touching suites and resets the process-global
 // ring on its way out, since the manager/server suites below append to the same one.
-CouchCoopActivityLogTests.Run();
 // F2: the wire's screen.mirrorMode kind for each host screen — the ONE decision behind "does this phone get a
 // join form, or does it just mirror?". Shares CouchCoopLobbyHostGateTests' snapshot builders, so it runs beside
 // it: the QR gate and the mirror kind are two readings of the same lobby shape.
@@ -844,7 +846,6 @@ internal sealed class BrowserServerRouteTests
         // F1 host connectivity log, viewer channel. Dedicated server for the same reason as the neighbours
         // above: the log is a process-global ring, so this leg resets it and must not share one with a
         // connection another assert left open.
-        await AssertActivityViewerNarrationAsync(root.Path);
         AssertQrGeneration();
         AssertAssignmentDtos();
         AssertJoinRejectionDetailPlumbing();
@@ -2362,9 +2363,6 @@ internal sealed class BrowserServerRouteTests
         occupied.Stop();
     }
 
-    /// <summary>Every line currently on the host connectivity panel, oldest first.</summary>
-    private static List<string> ActivityNarration()
-        => CouchCoopActivityLog.Snapshot().Select(entry => entry.Message).ToList();
 
     private static async Task AssertHostUiServicesAsync(string rootPath)
     {
@@ -2374,7 +2372,6 @@ internal sealed class BrowserServerRouteTests
         // than as an exact sequence — the secure-origin leg is a detached task that may add its own B4/B5
         // line at an unpredictable moment, and pinning the order here would make this suite flaky on a
         // machine with a different network shape.
-        CouchCoopActivityLog.Reset();
         Uri? advertised = null;
         await using (var services = new CouchCoopHostUiServices(
                          new CouchCoopRuntimeHost(new CouchCoopRuntimeDependencies(new RecordingSpirectlRuntime(), new RecordingSpirectlRuntime(), new RecordingSpirectlRuntime(), new RecordingSpirectlRuntime(), new RecordingSpirectlRuntime(), new RecordingSpirectlRuntime(), new RecordingSpirectlRuntime(), new RecordingSpirectlRuntime(), new RecordingSpirectlRuntime(), new RecordingSpirectlRuntime()), logs.Add),
@@ -2396,15 +2393,6 @@ internal sealed class BrowserServerRouteTests
                                    && !log.Contains("?name=", StringComparison.Ordinal)), "host UI service logs selected URL without name query");
         }
 
-        var startedNarration = ActivityNarration();
-        Expect(
-            startedNarration.Contains($"Phone connection ready — {advertised}"),
-            "B1: the activity panel carries the ADVERTISED join URL — the string a host reads out to somebody typing it into a phone, never the wildcard the listener bound");
-        Expect(
-            startedNarration.Contains("Phone connection stopped."),
-            "B6: disposing a RUNNING server reports that phones can no longer reach it");
-
-        CouchCoopActivityLog.Reset();
         var failureLogs = new List<string>();
         await using var unavailable = new CouchCoopHostUiServices(
             new CouchCoopRuntimeHost(new CouchCoopRuntimeDependencies(new RecordingSpirectlRuntime(), new RecordingSpirectlRuntime(), new RecordingSpirectlRuntime(), new RecordingSpirectlRuntime(), new RecordingSpirectlRuntime(), new RecordingSpirectlRuntime(), new RecordingSpirectlRuntime(), new RecordingSpirectlRuntime(), new RecordingSpirectlRuntime(), new RecordingSpirectlRuntime()), failureLogs.Add),
@@ -2417,26 +2405,11 @@ internal sealed class BrowserServerRouteTests
         Expect(failed.JoinBaseUri is null, "host UI service omits join URI when startup fails");
         Expect(failed.Diagnostics.Any(diagnostic => diagnostic.Code == CouchCoopHostUiServices.BrowserServerUnavailableCode), "host UI service records structured startup diagnostic");
         Expect(failureLogs.Any(log => log.Contains(CouchCoopHostUiServices.BrowserServerUnavailableCode, StringComparison.Ordinal)), "host UI service logs diagnostic code");
-
-        var failedNarration = ActivityNarration();
-        Expect(
-            failedNarration.Contains("Couldn't start the phone connection service."),
-            "B3: THE event the activity panel exists for — and the reason its gate is IsHostLobby rather than ShouldShow, since a host with no listener has no QR panel either");
-        Expect(
-            !failedNarration.Contains("Phone connection stopped."),
-            "a server that never bound must not also report STOPPING — the unwind path runs DisposeBrowserServerAsync, so this is gated on IsRunning, not on non-null");
     }
 
     private static async Task AssertHotReloadableServerHostSwapAsync(string rootPath)
     {
         var preferred = ReserveEphemeralPort();
-        // F1: a hot-reload GENERATION SWAP is not a restart. The listener, the port and every open socket
-        // survive it, so nothing in this class may write to the host connectivity log — a host in a lobby
-        // would otherwise be told their phones had dropped when nothing happened. Pinned as "the log's
-        // revision does not move", which catches any future emission anywhere on this path.
-        CouchCoopActivityLog.Reset();
-        var sequenceBefore = CouchCoopActivityLog.NewestSequence;
-
         await using (var host = new HotReloadableBrowserServerHost(
             new CouchCoopRuntimeHost(new CouchCoopRuntimeDependencies(new RecordingSpirectlRuntime(), new RecordingSpirectlRuntime(), new RecordingSpirectlRuntime(), new RecordingSpirectlRuntime(), new RecordingSpirectlRuntime(), new RecordingSpirectlRuntime(), new RecordingSpirectlRuntime(), new RecordingSpirectlRuntime(), new RecordingSpirectlRuntime(), new RecordingSpirectlRuntime())),
             rootPath,
@@ -2459,78 +2432,8 @@ internal sealed class BrowserServerRouteTests
             var secondResponse = await GetAsync(baseUri, "/");
             Expect(secondResponse.Body.Contains("generation-two", StringComparison.Ordinal), "hot server host dispatches to swapped generation");
         }
-
-        Expect(
-            CouchCoopActivityLog.NewestSequence == sequenceBefore,
-            "a generation swap (and the host's own start/dispose) writes NOTHING to the host connectivity log");
     }
 
-    /// <summary>
-    /// F1: the VIEWER channel of the host connectivity log (V1/V5), over real sockets.
-    /// </summary>
-    /// <remarks>
-    /// The curation is the point, not the logging. `/ws` is opened by every page load — before anyone has
-    /// typed a name, on every refresh, on every reconnect — so an anonymous socket that merely comes and
-    /// goes must leave the panel untouched. Only a connection that ANNOUNCED itself may announce its
-    /// departure.
-    /// </remarks>
-    private static async Task AssertActivityViewerNarrationAsync(string rootPath)
-    {
-        var runtime = new RecordingSpirectlRuntime { Mode = RuntimeStateMode.Lobby, LobbyNetGameType = "host" };
-        await using var server = new CouchCoopBrowserServer(
-            new StaticSpaFileProvider(rootPath),
-            new CapturingAssetAdapter(),
-            new BrowserStateEnvelopeFactory(new CouchCoopRuntimeHost(new CouchCoopRuntimeDependencies(runtime, runtime, runtime, runtime, runtime, runtime, runtime, runtime, runtime, runtime))),
-            preferredPort: ReserveEphemeralPort());
-        var baseUri = await server.StartAsync();
-
-        // 1. An ANONYMOUS connection, opened and closed without ever joining: zero entries.
-        CouchCoopActivityLog.Reset();
-        using (var anonymous = new ClientWebSocket())
-        {
-            await anonymous.ConnectAsync(
-                new UriBuilder(baseUri) { Scheme = "ws", Path = "/ws", Query = "watch=0&staticBg=0&cardFlight=1&handTween=1&trailDrive=0" }.Uri,
-                CancellationToken.None);
-            _ = await ReadWsMessageAsync(anonymous); // the anonymous connect session
-            await CloseWebSocketSilentlyAsync(anonymous);
-        }
-
-        // The teardown is asynchronous (the client's CloseAsync returns on the server's ACK, before the
-        // receive loop's finally runs), so give it a window in which it COULD have written something.
-        await Task.Delay(300);
-        Expect(
-            CouchCoopActivityLog.Count == 0,
-            "an anonymous page load that comes and goes writes nothing to the panel — otherwise the log would be nothing but refreshes");
-
-        // 2. A client that joins by name: announced on arrival, and again on departure. It picks the HOST's own
-        //    seat ("Alice" is this lobby's host), which is the one join outcome that neither spawns nor rejects —
-        //    the viewer watches the host's stream in place (V2).
-        using (var named = new ClientWebSocket())
-        {
-            await named.ConnectAsync(new UriBuilder(baseUri) { Scheme = "ws", Path = "/ws", Query = "watch=0&staticBg=0&cardFlight=1&handTween=1&trailDrive=0" }.Uri, CancellationToken.None);
-            _ = await DrainConnectAsync(named);
-            _ = await SendJoinAsync(named, "browser:req:activity-join", "Alice");
-
-            Expect(
-                ActivityNarration().Contains("Alice connected — watching this screen."),
-                "V2: a viewer granted DIRECT VIEW is announced as watching the host's own screen");
-            Expect(
-                CouchCoopActivityLog.Count == 1,
-                "…and it is ONE line: the connect itself was anonymous and stayed silent");
-
-            // A re-sent join must not repaint the panel — the announcement is latched per connection.
-            _ = await SendJoinAsync(named, "browser:req:activity-join-again", "Alice");
-            Expect(CouchCoopActivityLog.Count == 1, "a repeated join does not re-announce the same viewer");
-
-            await CloseWebSocketSilentlyAsync(named);
-        }
-
-        Expect(
-            await WaitForAsync(() => ActivityNarration().Contains("Alice's phone disconnected.")),
-            "V5: a viewer who announced their arrival announces their departure");
-        CouchCoopActivityLog.Reset();
-        await server.StopAsync();
-    }
 
     private static int ReserveEphemeralPort()
     {

@@ -1,6 +1,5 @@
 using System.Net;
 using System.Net.Sockets;
-using CouchCoop.Mod.Activity;
 using CouchCoop.Mod.Localization;
 using CouchCoop.Mod.Contracts;
 using CouchCoop.Mod.Runtime;
@@ -93,7 +92,6 @@ public sealed class CouchCoopHostUiServices : IAsyncDisposable
                 _log($"[couch-coop] host-discovery falling back to {DiscoveryFallbackHost} — no LAN address to advertise");
                 // B2: the server IS up, so this is a warning rather than a failure — a phone on the same
                 // machine can still reach it, and the QR dialog still offers the `.local` name.
-                Narrate(CouchCoopActivitySeverity.Warn, CouchCoopActivityMessages.BrowserServerNoAddress);
             }
 
             _snapshot = new CouchCoopHostUiSnapshot(
@@ -115,9 +113,6 @@ public sealed class CouchCoopHostUiServices : IAsyncDisposable
                 _log($"[couch-coop] browser server available url={joinBaseUri}");
                 // B1: the ADVERTISED url, never the wildcard the listener bound — this is a line a host may
                 // read out loud to somebody typing it into a phone.
-                Narrate(
-                    CouchCoopActivitySeverity.Good,
-                    CouchCoopActivityMessages.BrowserServerReady(joinBaseUri.ToString()));
             }
         }
         catch (Exception exception) when (exception is SocketException or InvalidOperationException or IOException or UnauthorizedAccessException)
@@ -128,7 +123,6 @@ public sealed class CouchCoopHostUiServices : IAsyncDisposable
             // B3: THE event this whole panel exists for. It is also why the panel's gate is IsHostLobby and
             // not ShouldShow — a host with no listener has no QR either, and would otherwise see nothing at
             // all on the one screen where the failure matters.
-            Narrate(CouchCoopActivitySeverity.Bad, CouchCoopActivityMessages.BrowserServerFailed);
             _snapshot = CouchCoopHostUiSnapshot.Unavailable([.. _diagnostics]);
             await DisposeBrowserServerAsync().ConfigureAwait(false);
         }
@@ -261,7 +255,6 @@ public sealed class CouchCoopHostUiServices : IAsyncDisposable
             {
                 SecureUnavailableReason = CouchCoopSecureText.Disabled(SecureOriginCertificates.EnabledEnvironmentVariable),
             };
-            NarrateSecureUnavailable(_snapshot.SecureUnavailableReason);
             return;
         }
 
@@ -278,7 +271,6 @@ public sealed class CouchCoopHostUiServices : IAsyncDisposable
                 .Any(candidate => SecureOriginHost.IsSecureOriginEligible(candidate.Address)))
         {
             _snapshot = _snapshot with { SecureUnavailableReason = CouchCoopSecureText.AddressIneligible };
-            NarrateSecureUnavailable(_snapshot.SecureUnavailableReason);
             return;
         }
 
@@ -296,15 +288,6 @@ public sealed class CouchCoopHostUiServices : IAsyncDisposable
                 if (!status.IsReady || _browserServer is null)
                 {
                     _snapshot = _snapshot with { SecureUnavailableReason = status.Text };
-                    // A Pending status is the QR dialog's "still checking…" progress copy, not an outcome.
-                    // The activity log narrates OUTCOMES only — B4 when the link comes up, or a final
-                    // unavailable reason — so a still-pending acquisition stays silent here rather than
-                    // reading as an outage on the TV (and rather than racing a stray Info line into
-                    // whatever the ring's readers assert next).
-                    if (status.State != SecureOriginState.Pending)
-                    {
-                        NarrateSecureUnavailable(_snapshot.SecureUnavailableReason);
-                    }
                     return;
                 }
 
@@ -318,12 +301,10 @@ public sealed class CouchCoopHostUiServices : IAsyncDisposable
                     };
                     // B4. Arrives SECONDS after B1 by design (the certificate is a WAN round-trip), which is
                     // precisely why it is its own line rather than a field on the startup one.
-                    Narrate(CouchCoopActivitySeverity.Good, CouchCoopActivityMessages.SecureOriginReady);
                 }
                 else
                 {
                     _snapshot = _snapshot with { SecureUnavailableReason = CouchCoopSecureText.PortFailed };
-                    NarrateSecureUnavailable(_snapshot.SecureUnavailableReason);
                 }
             }
             catch (Exception exception)
@@ -331,7 +312,6 @@ public sealed class CouchCoopHostUiServices : IAsyncDisposable
                 // Catch-all on a detached task: an escaping exception here would be an unobserved
                 // TaskException, and the whole contract of this feature is that it cannot hurt the host.
                 _snapshot = _snapshot with { SecureUnavailableReason = CouchCoopSecureText.SetupFailed };
-                NarrateSecureUnavailable(_snapshot.SecureUnavailableReason);
                 _log($"[couch-coop] host-ui diagnostic code={SecureOriginCertificates.UnavailableCode} "
                     + $"detail={exception.GetType().Name}: {exception.Message}");
             }
@@ -348,17 +328,7 @@ public sealed class CouchCoopHostUiServices : IAsyncDisposable
             ? throw new InvalidOperationException("The browser server has not been started.")
             : _browserServer.ReplaceGenerationAsync(generation, generationNumber, cancellationToken);
 
-    /// <summary>Write one SERVER line to the host connectivity log. See <c>CouchCoopActivityLog</c>.</summary>
-    private static void Narrate(CouchCoopActivitySeverity severity, CouchCoop.Mod.Localization.CouchCoopText message)
-        => CouchCoopActivityLog.Append(CouchCoopActivityCategory.Server, severity, message);
 
-    /// <summary>
-    /// B5 — the secure origin is not on offer. <c>SecureUnavailableReason</c> is a semantic player-facing
-    /// value shared by the QR dialog and activity feed, so both resolve the same fact in the active locale.
-    /// <para>Info, not Warn: LAN play is completely unaffected, which is the whole design of that feature.</para>
-    /// </summary>
-    private static void NarrateSecureUnavailable(CouchCoopText? reason)
-        => Narrate(CouchCoopActivitySeverity.Info, CouchCoopActivityMessages.SecureOriginUnavailable(reason));
 
     private async ValueTask DisposeBrowserServerAsync()
     {
@@ -367,7 +337,6 @@ public sealed class CouchCoopHostUiServices : IAsyncDisposable
         // the phone connection service." would be noise contradicting itself.
         if (_browserServer is { IsRunning: true })
         {
-            Narrate(CouchCoopActivitySeverity.Info, CouchCoopActivityMessages.BrowserServerStopped);
         }
 
         // Re-arm the one-shot latch with the services it guards, so a restarted host UI can bring them up
