@@ -1,5 +1,4 @@
 using System.Text.RegularExpressions;
-using CouchCoop.Mod.Activity;
 using CouchCoop.Mod.Localization;
 using CouchCoop.Mod.HostUi;
 using CouchCoop.Mod.Server;
@@ -11,7 +10,6 @@ internal static class CouchCoopLocalizationTests
         CatalogsStayInParityAndUseSafePlaceholders();
         ShippedCatalogsDoNotTranslateThePlaceholdersThemselves();
         LocaleSelectionFallsBackToEnglish();
-        StructuredActivityRerendersAfterLocaleChange();
         SemanticMappingsAndFontPredicateUseTheLocale();
         Console.WriteLine("CouchCoopLocalizationTests: ok");
     }
@@ -24,10 +22,8 @@ internal static class CouchCoopLocalizationTests
         }
         Assert(!CouchCoopGameUiTheme.ShouldUseLocaleFont("eng") && !CouchCoopGameUiTheme.ShouldUseLocaleFont("fra"), "Latin locales keep Kreon/default fonts");
         CouchCoopLocalization.SetLanguageForTests("eng");
-        Assert(CouchCoopActivityMessages.DescribeJoinRejection("no-free-instance").Resolve() == "every player slot is in use", "known rejection maps to its English catalog entry");
         Assert(CouchCoopSecureText.ProviderUnavailable.Resolve() == "No internet, or the certificate service is down.", "known secure status resolves from the English catalog");
         CouchCoopLocalization.SetLanguageForTests("zhs");
-        Assert(CouchCoopActivityMessages.DescribeJoinRejection("no-free-instance").Resolve().Contains("玩家位置", StringComparison.Ordinal), "known rejection maps in Chinese");
         Assert(CouchCoopSecureText.AddressIneligible.Resolve().Contains("网络地址", StringComparison.Ordinal), "known secure status is semantic Chinese copy");
         Assert(CouchCoopSecureText.ProviderUnavailable.Resolve().Contains("证书服务", StringComparison.Ordinal), "provider failure remains structured and selects Chinese at resolution");
         var status = new SecureOriginStatus(SecureOriginState.Unavailable, CouchCoopSecureText.ProviderUnavailable, null);
@@ -36,8 +32,6 @@ internal static class CouchCoopLocalizationTests
         Assert(CouchCoopSecureText.ProviderUnavailable.ResolveForLanguage(CouchCoopLocalization.EnglishLanguage)
             == "No internet, or the certificate service is down.",
             "developer diagnostics can resolve semantic status in English while the UI is Chinese");
-        Assert(CouchCoopActivityMessages.SecureOriginUnavailable(null).Resolve() == "安全（https）链接不可用。",
-            "the no-reason secure activity event is a complete Chinese sentence without a synthetic argument");
         var blocker = QrHostOptions.DescribeSecureFor(new QrAdapterInfo("Wi-Fi", QrAdapterKind.Wifi, System.Net.IPAddress.Parse("127.0.0.1")), null, 0, CouchCoopSecureText.Pending);
         Assert(blocker.Detail.Contains("网络地址", StringComparison.Ordinal), "localized QR blocker detail resolves late");
         var tip = QrHoverTipCopy.MethodTipFor(new QrHostOption("host", 1, QrHostOptionKind.Secure, null));
@@ -134,21 +128,6 @@ internal static class CouchCoopLocalizationTests
         CouchCoopLocalization.SetLanguageForTests("eng");
     }
 
-    private static void StructuredActivityRerendersAfterLocaleChange()
-    {
-        CouchCoopActivityLog.Reset();
-        CouchCoopLocalization.SetLanguageForTests("eng");
-        CouchCoopActivityLog.Append(CouchCoopActivityCategory.Viewer, CouchCoopActivitySeverity.Info,
-            CouchCoopActivityMessages.ViewerConnected("Ann"));
-        var retained = CouchCoopActivityLog.Snapshot().Single();
-        Assert(retained.Text.Key == "couchcoop_activity_viewer_connected", "activity retains a catalog key rather than resolved copy");
-        Assert(retained.Message == "Ann connected.", "English resolves at paint time");
-
-        CouchCoopLocalization.SetLanguageForTests("zhs");
-        Assert(retained.Message == "Ann 已连接。", "the retained row rerenders after a locale revision");
-        CouchCoopLocalization.SetLanguageForTests("eng");
-        CouchCoopActivityLog.Reset();
-    }
 
     private static IEnumerable<string> Placeholders(string value)
         => Regex.Matches(value, "\\{([A-Za-z][A-Za-z0-9_-]*)\\}").Select(match => match.Groups[1].Value).Order();

@@ -6,7 +6,6 @@ using System.Security.Cryptography;
 using System.Text;
 using System.Text.Json;
 using System.Threading.Channels;
-using CouchCoop.Mod.Activity;
 using CouchCoop.Mod.Connections;
 using CouchCoop.Mod.Contracts;
 using CouchCoop.Mod.Protocol;
@@ -126,25 +125,6 @@ public sealed class CouchCoopWebSocketConnection
     // state). Set in AcceptCoreAsync; _viewerName updated on a successful join.
     private BrowserSessionHandle? _session;
     private string? _viewerName;
-
-    // ---- host connectivity log (V1..V5) ----------------------------------------------------------------
-    // True once this connection has ANNOUNCED itself on the host's activity panel (a mirror join granted
-    // direct view). A connection that never announced must never announce its
-    // departure either: `/ws` is opened by every page load, long before anyone types a name, and a
-    // "someone disconnected" line for an anonymous socket that merely bounced is pure noise.
-    private bool _announcedConnect;
-
-    // True once this connection's join was answered with a headless port, i.e. the viewer was handed off to
-    // their OWN game window.
-    //
-    // WHY IT SUPPRESSES V5 — this is the curation that makes the log readable rather than a duplicate feed.
-    // A seated player's departure is already narrated on the SEAT channel, by HeadlessClientManager, with
-    // the fact that actually matters: whether their game window was closed (S12) or kept alive for a
-    // mid-run rejoin (S13). Adding "Ann's phone disconnected." on top says less and says it twice. It also
-    // covers any client that DOES drop the host socket after the redirect (today's frontend deliberately
-    // holds it open — closing it would trigger Release() and kill the instance before the redirect lands),
-    // which would otherwise report a disconnect seconds after a perfectly successful join.
-    private bool _handedOffToSeat;
 
     private CouchCoopWebSocketConnection(
         BrowserStateEnvelopeFactory envelopeFactory,
@@ -376,18 +356,6 @@ public sealed class CouchCoopWebSocketConnection
             lock (_inputLock) inputDrain = _inputPumpTask;
             try { await inputDrain.ConfigureAwait(false); } catch { }
             _connections.TryRemove(_id, out _);
-            // V5. Both halves of the condition are load-bearing: `_announcedConnect` keeps anonymous page
-            // loads out of the log entirely, and `!_handedOffToSeat` keeps a seated player's departure on
-            // the SEAT channel, where it is said once and with the fact that matters (window closed vs kept
-            // alive for a rejoin). See the two fields' declarations.
-            if (_announcedConnect && !_handedOffToSeat)
-            {
-                CouchCoopActivityLog.Append(
-                    CouchCoopActivityCategory.Viewer,
-                    CouchCoopActivitySeverity.Info,
-                    CouchCoopActivityMessages.ViewerDisconnected(_viewerName));
-            }
-
             // Give the streaming count back BEFORE the connection count so the server sees a consistent
             // (streaming <= mirror) pair on every RefreshObserversLocked pass. Idempotent: a connection that was
             // already gated off (or never streamed) reports nothing.
@@ -449,58 +417,6 @@ public sealed class CouchCoopWebSocketConnection
             {
                 _lobby.LeaveLobbyPlayer(removedPlayerId);
             }
-        }
-    }
-
-    /// <summary>
-    /// V2/V3/V4 — narrate one mirror join's outcome onto the host connectivity log.
-    /// </summary>
-    /// <remarks>
-    /// <para>
-    /// Deliberately silent on the FOURTH outcome: a reply carrying no port, no direct view and no rejection
-    /// is the screen-only answer to an empty name submit (the client is being shown the picker). Nothing has
-    /// happened yet, and announcing it would put a line on the TV for every keystroke-free page load.
-    /// </para>
-    /// <para>
-    /// Also deliberately silent on <c>RegisterConnection</c>/<c>UnregisterConnection</c>: those fire for
-    /// every anonymous socket, i.e. once per page load, per refresh, per reconnect — the log would be
-    /// nothing but them.
-    /// </para>
-    /// </remarks>
-    private void NarrateMirrorJoin(string? name, int? headlessPort, bool? directView, string? joinRejection)
-    {
-        if (joinRejection is not null)
-        {
-            // V4: the one outcome the host most needs on screen — it is the moment a player is standing
-            // there saying "it isn't working".
-            CouchCoopActivityLog.Append(
-                CouchCoopActivityCategory.Viewer,
-                CouchCoopActivitySeverity.Warn,
-                CouchCoopActivityMessages.ViewerRejected(name, joinRejection));
-            return;
-        }
-
-        if (headlessPort is not null)
-        {
-            // V3: hand-off. The seat channel takes the story from here (S4..S10 have already told most of
-            // it), so this line exists to explain why the browser is about to go quiet.
-            _handedOffToSeat = true;
-            CouchCoopActivityLog.Append(
-                CouchCoopActivityCategory.Viewer,
-                CouchCoopActivitySeverity.Info,
-                CouchCoopActivityMessages.ViewerHandedOff(name));
-            return;
-        }
-
-        if (directView == true && !_announcedConnect)
-        {
-            // V2: watching the host's own screen — a singleplayer run, the host seat, or a headless instance
-            // serving its own stream. Latched like V1.
-            _announcedConnect = true;
-            CouchCoopActivityLog.Append(
-                CouchCoopActivityCategory.Viewer,
-                CouchCoopActivitySeverity.Good,
-                CouchCoopActivityMessages.ViewerWatching(name));
         }
     }
 
@@ -727,8 +643,8 @@ public sealed class CouchCoopWebSocketConnection
                 $"[couch-coop] mirror join failed for '{join.Name}': {joinException}");
         }
 
-        // A close can arrive just after readiness. Do not narrate or reply for a tab that is
-        // already gone; teardown below owns its slot release.
+        // A close can arrive just after readiness. Do not reply to a tab that is already gone;
+        // teardown below owns its slot release.
         cancellationToken.ThrowIfCancellationRequested();
 
         if (joinRejection is not null)
@@ -743,10 +659,6 @@ public sealed class CouchCoopWebSocketConnection
             var expectedAttempt = connectionAttemptId;
             _ = ConnectionRegistry.Shared.NoticeSlowViewWhenDueAsync(session.Id, expectedAttempt, cancellationToken);
         }
-
-        // V2/V3/V4, from the SAME three-way outcome the reply below carries, so the panel can
-        // never disagree with what the viewer was told.
-        NarrateMirrorJoin(join.Name, headlessPort, directView, joinRejection);
 
         await SendEnvelopeAsync(await _envelopeFactory.CreateSessionEnvelope(
             join.Name,

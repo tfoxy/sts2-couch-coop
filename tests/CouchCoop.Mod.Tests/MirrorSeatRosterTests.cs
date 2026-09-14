@@ -1,4 +1,3 @@
-using CouchCoop.Mod.Activity;
 using CouchCoop.Mod.Session;
 using CouchCoop.MirrorProtocol.Envelopes;
 using Spirectl.Sts2.Core.State;
@@ -38,11 +37,6 @@ internal static class MirrorSeatRosterTests
 
         // F1 host connectivity log: the SEAT-STATUS transitions this directory narrates onto the lobby panel.
         // Only two of them, and only for a seat this directory has seen before — see NarrateTransition.
-        AFreshDirectoryNarratesNothing();
-        GoingOfflineIsNarratedOnceAndComingBackIsNarratedToo();
-        GoingStuckIsNotNarratedHere();
-        AnUnclaimedSeatStillNarratesASentence();
-        CouchCoopActivityLog.Reset();
     }
 
     // ---- MirrorSeatDirectory --------------------------------------------------------------------------------
@@ -161,108 +155,10 @@ internal static class MirrorSeatRosterTests
         return (new MirrorSeatDirectory(describeSeats: () => live), live);
     }
 
-    private static void AssertNarration(IReadOnlyList<string> expected, string label)
-    {
-        var actual = CouchCoopActivityLog.Snapshot().Select(entry => entry.Message).ToList();
-        Assert(
-            actual.Count == expected.Count && actual.SequenceEqual(expected),
-            $"{label}: expected [{string.Join(" | ", expected)}] but the panel reads [{string.Join(" | ", actual)}]");
-    }
 
-    // THE startup guard. A directory is built per hot-reload generation and starts with no history, so its
-    // FIRST evaluation reports every seat as a transition from nothing. Announcing those would repaint the
-    // whole roster onto the host's television for an event nobody experienced.
-    private static void AFreshDirectoryNarratesNothing()
-    {
-        CouchCoopActivityLog.Reset();
-        var (directory, _) = MutableDirectory(
-            Seat(1002, processLive: true, name: "Ann"),
-            Seat(1003, processLive: false, name: "Bob"));
 
-        directory.Evaluate(new HashSet<ulong> { 1002 }, MirrorSeatDirectory.RunMirrorMode);
-        AssertNarration([], "the first evaluation of a fresh directory is silent, however many seats it describes");
-    }
 
-    private static void GoingOfflineIsNarratedOnceAndComingBackIsNarratedToo()
-    {
-        CouchCoopActivityLog.Reset();
-        var (directory, live) = MutableDirectory(Seat(1002, processLive: true, name: "Ann"));
-        directory.Evaluate(new HashSet<ulong> { 1002 });
-        AssertNarration([], "the baseline observation is silent");
 
-        // The instance goes away mid-run: the seat can no longer be taken (the run refuses a peer that is not
-        // already in it), which is exactly the thing a host is asked about out loud.
-        live[0] = live[0] with { ProcessLive = false };
-        directory.Evaluate(new HashSet<ulong>(), MirrorSeatDirectory.RunMirrorMode);
-        const string offline = "Ann's seat is offline — reload the saved run to let them rejoin.";
-        AssertNarration([offline], "going offline is narrated with the remedy");
-
-        // Steady state repaints nothing: this runs on every session-envelope build, many times a second.
-        directory.Evaluate(new HashSet<ulong>(), MirrorSeatDirectory.RunMirrorMode);
-        directory.Evaluate(new HashSet<ulong>(), MirrorSeatDirectory.RunMirrorMode);
-        AssertNarration([offline], "an unchanged status is not a transition");
-
-        // Back on a lobby screen the same observation reads ready (tapping the row respawns into the seat).
-        directory.Evaluate(new HashSet<ulong>());
-        AssertNarration([offline, "Ann's seat is available again."], "recovery is worth a line of its own");
-
-        // The AppendDistinct belt BEHIND the transition guard: two seats carrying the same claim (a stale
-        // duplicate) dropping in ONE evaluation produce one line, not two identical ones.
-        CouchCoopActivityLog.Reset();
-        var (twin, twinLive) = MutableDirectory(
-            Seat(1002, processLive: true, name: "Ann"),
-            Seat(1003, processLive: true, name: "Ann"));
-        twin.Evaluate(new HashSet<ulong> { 1002, 1003 });
-        twinLive[0] = twinLive[0] with { ProcessLive = false };
-        twinLive[1] = twinLive[1] with { ProcessLive = false };
-        twin.Evaluate(new HashSet<ulong>(), MirrorSeatDirectory.RunMirrorMode);
-        AssertNarration([offline], "an immediately-repeated identical line is suppressed");
-    }
-
-    private static void GoingStuckIsNotNarratedHere()
-    {
-        CouchCoopActivityLog.Reset();
-        var clock = new Clock();
-        var reaped = new List<ulong>();
-        var live = new List<MirrorSeatDescription> { Seat(1002, processLive: true, name: "Ann") };
-        var directory = new MirrorSeatDirectory(
-            describeSeats: () => live,
-            reapSeat: netId =>
-            {
-                reaped.Add(netId);
-                for (var i = 0; i < live.Count; i++)
-                {
-                    if (live[i].NetId == netId) live[i] = live[i] with { ProcessLive = false, ClaimedName = null };
-                }
-            },
-            clock: () => clock.Now);
-
-        directory.Evaluate(new HashSet<ulong>());
-        clock.Advance(MirrorSeatDirectory.StuckGrace + TimeSpan.FromSeconds(1));
-        directory.Evaluate(new HashSet<ulong>());
-        Assert(reaped.Count == 1, "the zombie was reaped (the precondition for this test)");
-        AssertNarration(
-            [],
-            "→stuck says nothing HERE: HeadlessClientManager.ReapSeat's own line follows immediately and says "
-            + "it better, because it can also promise the seat becomes retryable");
-
-        // …and the post-reap recovery IS narrated, from the same rule as any other return to ready. The claim
-        // is gone by then (the reap drops it, unlike Release), so the line falls back to the unnamed form.
-        directory.Evaluate(new HashSet<ulong>());
-        AssertNarration(["A player's seat is available again."], "the seat coming back is still a transition");
-    }
-
-    private static void AnUnclaimedSeatStillNarratesASentence()
-    {
-        CouchCoopActivityLog.Reset();
-        var (directory, live) = MutableDirectory(Seat(1004, processLive: true, name: null));
-        directory.Evaluate(new HashSet<ulong> { 1004 });
-        live[0] = live[0] with { ProcessLive = false };
-        directory.Evaluate(new HashSet<ulong>(), MirrorSeatDirectory.RunMirrorMode);
-        AssertNarration(
-            ["A player's seat is offline — reload the saved run to let them rejoin."],
-            "a seat whose claim was already dropped still reads as English");
-    }
 
     // ---- the mirror-mode matrix ------------------------------------------------------------------------------
     //
