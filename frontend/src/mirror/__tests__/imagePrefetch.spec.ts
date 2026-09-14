@@ -54,6 +54,8 @@ vi.mock("@/mirror/textureCache", () => ({ warmImage }));
 
 import {
   prefetchMirrorImages,
+  publishAtlasManifest,
+  __resetAtlasManifestForTest,
   __resetImagePrefetchStatsForTest,
   __setAtlasPrefetchParamForTest,
   type MirrorImagePrefetchStats
@@ -66,7 +68,7 @@ const ARROWS = [
 ];
 
 /** The full shipped priority list, in order (the SPEC of the order, not a copy of the module's array). */
-const ORDER = [
+const NAMES = [
   "ui_atlas_0",
   "ui_atlas_1",
   "compressed_0",
@@ -79,7 +81,20 @@ const ORDER = [
   "power_atlas",
   "relic_outline_atlas",
   "potion_outline_atlas"
-].map(ATLAS);
+];
+const ORDER = NAMES.map(ATLAS);
+
+// --- the host's published manifest -----------------------------------------------------------------------------
+
+/** The `res://` spelling of a page: what the HOST publishes, and what the intersection is done on. */
+const ATLAS_DIR = "res://images/atlases/";
+const RES = (name: string): string => `${ATLAS_DIR}${name}.png`;
+
+/** What a repacked build's manifest looks like: every page this frontend wishes for, minus the named ones. */
+const manifestWithout = (...missing: readonly string[]) => ({
+  directory: ATLAS_DIR,
+  pages: NAMES.filter((name) => !missing.includes(name)).map(RES)
+});
 
 // --- the idle scheduler, stubbed so a spec owns the clock ------------------------------------------------------
 
@@ -137,12 +152,16 @@ beforeEach(() => {
   };
   __setAtlasPrefetchParamForTest(null);
   __resetImagePrefetchStatsForTest();
+  // The manifest is latched at module scope and `publishAtlasManifest` deliberately never clears it, so one
+  // spec's host would otherwise decide what the next spec's chain may ask for.
+  __resetAtlasManifestForTest();
 });
 
 afterEach(() => {
   delete (window as unknown as Record<string, unknown>).requestIdleCallback;
   __setAtlasPrefetchParamForTest(undefined);
   __resetImagePrefetchStatsForTest();
+  __resetAtlasManifestForTest();
   vi.useRealTimers();
 });
 
@@ -267,6 +286,98 @@ describe("?atlasPrefetch", () => {
     drain();
 
     expect(preloadedUrls()).toEqual(ORDER);
+  });
+});
+
+// THE HOST'S PUBLISHED PAGE LIST (`atlasManifest` on the session envelope). The wish-list above is compiled into
+// this bundle, so it describes the game build this file was written against: the game's public-beta branch
+// repacked the card atlas from three pages into two, and every client then asked for `card_atlas_2` — a 404 that
+// costs the HOST a failed main-thread ResourceLoader.Load per new client, uncached, forever. These specs pin the
+// three halves of the fix: a page the host does not publish is never requested; with no manifest the compiled-in
+// list is walked unchanged (an older host, a test harness, SSR); and the intersection is a FILTER, never a
+// reorder — the priority order at the top of imagePrefetch.ts is the whole reason that file exists.
+describe("prefetchMirrorImages and the host's atlas manifest", () => {
+  it("never requests a page the host did not publish", () => {
+    publishAtlasManifest(manifestWithout("card_atlas_2"));
+    prefetchMirrorImages();
+    drain();
+
+    expect(preloadedUrls()).not.toContain(ATLAS("card_atlas_2"));
+    expect(preloadedUrls()).toEqual(ORDER.filter((url) => url !== ATLAS("card_atlas_2")));
+    // Not merely unrequested — never LOADED, which is the host-side cost this exists to remove.
+    expect(baker.loads).not.toContain(ATLAS("card_atlas_2"));
+    expect(stats().failed).toBe(0);
+    // Known absent before the walk started, so it is filtered out of the plan rather than counted mid-walk.
+    expect(stats().list).toEqual(ORDER.filter((url) => url !== ATLAS("card_atlas_2")));
+    expect(stats().absent).toBe(0);
+    // …and the arrows still warm: dropping a page must not truncate the chain.
+    expect(warmImage.mock.calls.map((call) => call[0])).toEqual(ARROWS);
+  });
+
+  it("keeps the shipped priority order across the pages that survive", () => {
+    publishAtlasManifest(manifestWithout("ui_atlas_1", "card_atlas_2", "power_atlas"));
+    prefetchMirrorImages();
+    drain();
+
+    // The chrome still leads, the cards still precede the relics: a filter, not a reordering.
+    expect(preloadedUrls()).toEqual(
+      ["ui_atlas_0", "compressed_0", "card_atlas_0", "card_atlas_1", "relic_atlas", "potion_atlas",
+        "intent_atlas", "relic_outline_atlas", "potion_outline_atlas"].map(ATLAS)
+    );
+  });
+
+  it("walks the full compiled-in list when the host publishes no manifest", () => {
+    prefetchMirrorImages();
+    drain();
+
+    expect(preloadedUrls()).toEqual(ORDER);
+    expect(stats().list).toEqual(ORDER);
+    expect(stats().absent).toBe(0);
+  });
+
+  // The ordinary first connect: the chain is started at mirror setup and the session envelope lands a moment
+  // later, while the walk is already a page or two in. The pages that matter — the card atlas — are further down
+  // the list than that, which is why the check is re-run per step rather than only at plan time.
+  it("filters the REST of the walk when the manifest arrives mid-chain", () => {
+    prefetchMirrorImages();
+    flushIdle();
+    settle(ATLAS("ui_atlas_0"));
+    expect(preloadedUrls()).toEqual([ATLAS("ui_atlas_0")]);
+
+    publishAtlasManifest(manifestWithout("card_atlas_2"));
+    drain();
+
+    expect(preloadedUrls()).toEqual(ORDER.filter((url) => url !== ATLAS("card_atlas_2")));
+    // The plan was made before the host answered, so it still names the page; `absent` is what says it was
+    // dropped on the way past.
+    expect(stats().list).toEqual(ORDER);
+    expect(stats().absent).toBe(1);
+    expect(stats().started).toBe(ORDER.length - 1);
+    expect(stats().failed).toBe(0);
+    expect(warmImage.mock.calls.map((call) => call[0])).toEqual(ARROWS);
+  });
+
+  // A manifest for some OTHER directory says nothing about these pages, and a host that stops sending one has
+  // not retracted what it already said. Both fail open, because a prefetch that warms nothing is the regression
+  // this list was written to avoid (a median 1501 ms later last texture upload).
+  it("fails open for pages outside the published directory, and ignores a later null", () => {
+    publishAtlasManifest({ directory: "res://images/other_atlases/", pages: [RES("nothing_we_want")] });
+    publishAtlasManifest(null);
+    prefetchMirrorImages();
+    drain();
+
+    expect(preloadedUrls()).toEqual(ORDER);
+  });
+
+  // `?atlasPrefetch=<n>` means "the first n pages worth warming" — so on a repacked build it warms n REAL pages
+  // rather than n-1 and a 404.
+  it("applies ?atlasPrefetch=<n> to what survived the intersection", () => {
+    publishAtlasManifest(manifestWithout("ui_atlas_1"));
+    __setAtlasPrefetchParamForTest("3");
+    prefetchMirrorImages();
+    drain();
+
+    expect(preloadedUrls()).toEqual(["ui_atlas_0", "compressed_0", "card_atlas_0"].map(ATLAS));
   });
 });
 

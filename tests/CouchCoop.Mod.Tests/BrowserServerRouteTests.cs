@@ -203,6 +203,25 @@ if (args is ["cache", ..])
     return;
 }
 
+// `dotnet run --project tests/CouchCoop.Mod.Tests -- atlas` runs the atlas-manifest contract ALONE: how a
+// res://images/atlases/ directory listing becomes the loadable page paths a client may ask for, and what the
+// session envelope does with the result (including omitting the field when this host never enumerated). Pure
+// strings and one envelope build — no engine, no directory, no port — which puts it in the same standing as
+// host-guards above. It also runs in the normal sequence below, up with the other engine-free suites.
+if (args is ["atlas", ..])
+{
+    // The envelope leg builds a real session envelope, whose assetCacheToken resolves the machine's default cache
+    // root — which without this lands in Godot.ProjectSettings.GlobalizePath and SIGSEGVs a process with no engine
+    // (see the long note above the same assignment in the full sequence). Same first line as the `cache` verb, and
+    // with the same consequence if it is dropped: an instant exit 139 with not one line of output.
+    Environment.SetEnvironmentVariable(
+        "COUCHCOOP_CACHE_ROOT",
+        Path.Combine(Path.GetTempPath(), "couchcoop-atlas-verb-" + Guid.NewGuid().ToString("N")));
+    AtlasManifestEnvelopeTests.Run();
+    Console.WriteLine("atlas: ok");
+    return;
+}
+
 // `dotnet run --project tests/CouchCoop.Mod.Tests -- seat-timeout` runs the seat READINESS deadline alone: the
 // clamp band behind COUCHCOOP_SEAT_READY_TIMEOUT_SECONDS, its relationship to the browser's own join ceiling,
 // the one "still loading" progress line, and the early-exit path that must keep failing fast regardless. Same
@@ -286,6 +305,10 @@ CouchCoopModalFocusChainTests.Run();
 // Up here with the other pure suites for the same reason — everything from HeadlessAudioMuteTargetsTests
 // below is unreachable on some machines. Also reachable alone as `-- seat-build`.
 SeatModBuildTests.Run();
+// Beta round: which atlas pages this build ships, and how the session envelope carries them — the answer that
+// stops a client asking a repacked build for a page it no longer has. Pure strings plus one envelope build, so
+// it belongs up here with the rest, and it is also reachable alone as `-- atlas`.
+AtlasManifestEnvelopeTests.Run();
 
 // Pure suites (no IO) run first so they execute regardless of the network-suite flakiness.
 // CAUTION: "pure" here means no IO, not no Godot — this next suite reflects over game types through

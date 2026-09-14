@@ -10,6 +10,7 @@ import {
   type BrowserSessionEnvelope
 } from "@/protocol/browserEnvelope";
 import type { MirrorActionMessage } from "@/mirror/mapNodeTap";
+import { publishAtlasManifest } from "@/mirror/imagePrefetch";
 import { reproRecorder } from "@/mirror/reproRecorder";
 import { hostWsUrl } from "@/join/hostBase";
 
@@ -630,6 +631,10 @@ export function connectMirrorClient(options: {
           parsed = envelope;
           client.session = envelope;
           publishAssetCacheToken(envelope.assetCacheToken ?? null);
+          // The atlas pages this host's build actually ships. Latched module-side, where the idle prefetch
+          // reads it: on a first connect the prefetch chain is already walking by the time this lands, and it
+          // re-checks per page, so the answer binds the pages further down the list (the card atlas).
+          publishAtlasManifest(envelope.atlasManifest ?? null);
           notify();
         }
       } catch {

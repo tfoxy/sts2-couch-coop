@@ -29,9 +29,20 @@
 // residency budget is 48–128MB across the pool) while this list is ~247MB of RGBA. Pre-decoding it into the pool
 // would evict, per page, whatever regions the pool was actually asked for — a guaranteed LRU thrash in exchange
 // for speculation. The pool decodes a page when a region of it is baked, and not before.
+//
+// WHY THE LIST IS A WISH, NOT AN ANSWER. Every path below is a `res://` path compiled into this bundle, so the
+// list describes the game build this file was WRITTEN against, not the one the client is talking to. The game's
+// public-beta branch repacked the card atlas from three pages into two, and every client then asked a host with
+// no `card_atlas_2.png` for it: a 404 that costs the HOST a failed main-thread `ResourceLoader.Load`, is not
+// negatively cached there, and so repeats for every new client. The host now publishes the pages it actually has
+// (`atlasManifest` on the session envelope → `publishAtlasManifest` below), and the wish-list is intersected with
+// it. The array stays the full wish — trimming `card_atlas_2` out of it would silently stop warming a page the
+// STABLE build really has, and break again on the next repack. The intersection is a filter, never a reorder: a
+// page that survives it keeps its place in the priority order above.
 import { atlasPageSize, preloadAtlas, whenAtlasSettled } from "@/mirror/atlasBaker";
 import { mirrorResourceUrl } from "@/mirror/sceneTree";
 import { warmImage } from "@/mirror/textureCache";
+import type { BrowserAtlasManifestDescriptor } from "@/protocol/browserEnvelope";
 
 const PREFETCH_ATLASES = [
   "res://images/atlases/ui_atlas_0.png",
@@ -55,6 +66,40 @@ const PREFETCH_IMAGES = [
   "res://images/ui/combat/targeting_arrow_segment.png"
 ] as const;
 
+// ---- the host's published page list ---------------------------------------------------------------------------
+//
+// MODULE SCOPE, not per-connection: the manifest describes the GAME BUILD behind this origin, so every mirror
+// connection a page makes — the host, then the headless seat it is redirected to — answers with the same one.
+// Latching it here also means a reconnect does not un-learn it.
+let publishedManifest: BrowserAtlasManifestDescriptor | null = null;
+
+/**
+ * Latch the host's atlas manifest from a `session` envelope. Null (an older host, or one that could not
+ * enumerate) is IGNORED rather than clearing a manifest we already have: forgetting is strictly worse than
+ * keeping the last real answer, and every connection in a session is the same game build.
+ */
+export function publishAtlasManifest(manifest: BrowserAtlasManifestDescriptor | null): void {
+  if (manifest !== null) {
+    publishedManifest = manifest;
+  }
+}
+
+/**
+ * May this `res://` page be asked for?
+ *
+ * Yes unless the host has explicitly contradicted it — three cases, and only the last can answer no:
+ *   - no manifest at all (offline, SSR, an older host, a test harness) → walk the compiled-in list;
+ *   - a path OUTSIDE the manifest's directory → this manifest does not speak for it;
+ *   - a path inside it → only when the host named it.
+ * That last case is the whole fix; the first two are why a trim of the array would have been the wrong one.
+ */
+function isPublishedPage(resourcePath: string): boolean {
+  if (publishedManifest === null || !resourcePath.startsWith(publishedManifest.directory)) {
+    return true;
+  }
+  return publishedManifest.pages.includes(resourcePath);
+}
+
 /** The idle deadline: a browser that never goes idle still runs the step within this long. */
 const IDLE_TIMEOUT_MS = 2_000;
 /** Safari has no requestIdleCallback. A short timer is the honest stand-in — late enough not to race connect. */
@@ -62,9 +107,14 @@ const FALLBACK_DELAY_MS = 50;
 
 /** `window.__mirrorImagePrefetch` — what the chain planned, how far it got, and what it cost. */
 export interface MirrorImagePrefetchStats {
-  /** The atlas urls this chain will walk, in order (already truncated by `?atlasPrefetch=<n>`). */
+  /**
+   * The atlas urls this chain PLANNED to walk, in order — already truncated by `?atlasPrefetch=<n>` and already
+   * intersected with whatever the host had published when the plan was made. A manifest that arrives mid-walk
+   * (the ordinary case: the chain starts at setup, the session envelope lands a moment later) filters the
+   * remaining steps without rewriting this, so `list.length - absent` is what was actually dispatched.
+   */
   list: string[];
-  /** How many of them have been DISPATCHED (0…list.length) — `index === list.length` means the walk finished. */
+  /** How many of them have been CONSIDERED (0…list.length) — `index === list.length` means the walk finished. */
   index: number;
   /** Pages this chain asked `preloadAtlas` for, pages that settled, and pages that settled with NO pixels. */
   started: number;
@@ -72,6 +122,11 @@ export interface MirrorImagePrefetchStats {
   failed: number;
   /** …of those, the ones already settled when we got to them: the demand path (or a re-run) beat us to it. */
   skipped: number;
+  /**
+   * Planned pages the chain did NOT request because the host's published manifest arrived mid-walk and does not
+   * name them. Nonzero is this working: on the beta's repacked card atlas it is the one page that used to 404.
+   */
+  absent: number;
   /** Wall from the `prefetchMirrorImages()` call to the last step, idle waiting included (that IS the latency). */
   ms: number;
   /**
@@ -103,6 +158,7 @@ const stats: MirrorImagePrefetchStats = {
   settled: 0,
   failed: 0,
   skipped: 0,
+  absent: 0,
   ms: 0,
   decodedBytes: 0,
   decodedPages: 0
@@ -128,20 +184,28 @@ function readPrefetchParam(): string | null {
   return null;
 }
 
-/** The atlas urls to walk, or null for "prefetch nothing at all" (`?atlasPrefetch=off`). */
+/**
+ * The `res://` atlas paths to walk, or null for "prefetch nothing at all" (`?atlasPrefetch=off`).
+ *
+ * INTERSECT, THEN TRUNCATE. `?atlasPrefetch=<n>` means "the first n pages worth warming", so the manifest filter
+ * runs first and the count applies to what survived: on a host that ships two card pages, `=6` warms six real
+ * pages rather than five and a 404. With no manifest the two orders are identical, which is what every existing
+ * measurement with this lever was taken under.
+ */
 function plannedAtlases(): string[] | null {
   const raw = readPrefetchParam();
   if (raw === "off" || raw === "false") {
     return null;
   }
-  let limit: number = PREFETCH_ATLASES.length;
+  const available = PREFETCH_ATLASES.filter((path) => isPublishedPage(path));
+  let limit: number = available.length;
   if (raw !== null && raw !== "") {
     const n = Number(raw);
     if (Number.isFinite(n) && n >= 0) {
       limit = Math.min(limit, Math.floor(n));
     }
   }
-  return PREFETCH_ATLASES.slice(0, limit).map((path) => mirrorResourceUrl(path));
+  return available.slice(0, limit);
 }
 
 /**
@@ -165,7 +229,7 @@ function schedule(step: () => void): void {
 
 export function prefetchMirrorImages(): void {
   const planned = plannedAtlases();
-  stats.list = planned ?? [];
+  stats.list = planned?.map((path) => mirrorResourceUrl(path)) ?? [];
   if (planned === null) {
     return;
   }
@@ -179,8 +243,18 @@ export function prefetchMirrorImages(): void {
       stats.ms = now() - startedAt;
       return;
     }
-    const url = planned[at++];
+    const path = planned[at++];
     stats.index = at;
+    // RE-CHECKED HERE, not only at plan time. The chain is started at mirror setup — before the socket has
+    // answered — so on a first connect the manifest lands while the walk is already a page or two in. Asking
+    // again per step is what makes the host's answer bind the pages further down the list, which is exactly
+    // where the card atlas sits. Costs one `startsWith` per page.
+    if (!isPublishedPage(path)) {
+      stats.absent += 1;
+      schedule(step);
+      return;
+    }
+    const url = mirrorResourceUrl(path);
     stats.started += 1;
     preloadAtlas(url);
     // ONE IN FLIGHT: the next step is scheduled from THIS page's settle, never before it. A page that had already
@@ -220,7 +294,13 @@ export function __resetImagePrefetchStatsForTest(): void {
   stats.settled = 0;
   stats.failed = 0;
   stats.skipped = 0;
+  stats.absent = 0;
   stats.ms = 0;
   stats.decodedBytes = 0;
   stats.decodedPages = 0;
+}
+
+/** TEST-ONLY: clear the latched host manifest, which `publishAtlasManifest` deliberately cannot do. */
+export function __resetAtlasManifestForTest(): void {
+  publishedManifest = null;
 }

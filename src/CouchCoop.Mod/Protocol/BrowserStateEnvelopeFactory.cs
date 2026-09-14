@@ -167,6 +167,14 @@ public sealed class BrowserStateEnvelopeFactory(
             StaticBackground: CouchCoopStaticBackgroundTracker.Published is { } staticBg
                 ? new BrowserStaticBackgroundDto(staticBg.ScenePath, staticBg.Url)
                 : null,
+            // The atlas pages this game build actually ships, so the browser's idle prefetch asks only for pages
+            // that exist. Enumerated ONCE at startup (CouchCoopAtlasManifest.Warm from CouchCoopMod.Init) and read
+            // here as a plain volatile — no Godot call, no directory walk per session. Null when this process
+            // never enumerated (no engine, unreadable directory): the field is omitted and the client falls back
+            // to its own compiled-in list.
+            AtlasManifest: CouchCoopAtlasManifest.Pages is { Count: > 0 } atlasPages
+                ? new BrowserAtlasManifestDto(CouchCoopAtlasManifest.AtlasDirectory, atlasPages)
+                : null,
             ScrollAction: true,
             RewardAction: true,
             ConnectionAttemptId: connectionAttemptId);
