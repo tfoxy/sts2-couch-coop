@@ -56,9 +56,11 @@
 //   H15 five-to-four        Playing the fifth card leaves four; the fourth survivor's raised-only upper band
 //                          focuses it, while a nearby dead pixel receives no raise correction.
 //   H16 reward focus        Reward-list entry follows the page's last press modality. Touch entry focuses the
-//                          first row (and therefore shows its HoverTip), that row activates with one touch, and
-//                          removals retain the same index / clamp the last index. Pointer entry never auto-focuses,
-//                          and unknown -> touch while the list is already open never moves focus by itself.
+//                          first row (and therefore shows its HoverTip), one tap on that row puts a plain left
+//                          click on its native centre, and the readiness that made it one-tap does NOT survive
+//                          focus moving away. Pointer entry never auto-focuses, and unknown -> touch while the
+//                          list is already open never moves focus by itself. Activation is asserted on the WIRE:
+//                          no reward can be CLAIMED on a rewards fixture — see checkH16.
 //   H17 shop removal        The merchant's card-removal coin honours every Tap to focus / Confirm tap setting
 //                          combination. Each irreversible route starts from a fresh shop, opens removal, then
 //                          stages (but never confirms) one deck card through the real browser-to-game loop.
@@ -3706,90 +3708,122 @@ async function checkH16(ctx) {
     screenshot: entryShot
   });
 
-  // The potion is the first row: it shows a real HoverTip and has no nested selection screen, so its disappearance
-  // after exactly one physical touch
-  // proves the auto-focused target skipped the old invisible arm-only tap. The newly-first row must inherit index 0.
-  const firstId = settledTouchEntry.rows[0].id;
-  const firstPoint = await rewardRowClientPoint(page, settledTouchEntry.rows[0]);
+  // ACTIVATION IS ASSERTED ON THE WIRE, NOT ON THE ROW DISAPPEARING.
+  //
+  // A rewards FIXTURE synthesizes a reward set the game's own synchronizer is never told about, so on this screen
+  // NO reward can be claimed BY ANY MEANS: the claim throws inside the game, which leaves the row on screen and
+  // permanently disabled. That looks exactly like input that never landed, and exactly like a legitimate refusal.
+  // It is what produced the long-standing "a synthetic click focuses a reward row but never presses it" finding
+  // that made this client reach for the `claim-reward` semantic action in the first place. A live probe against a
+  // REAL reward set disproved it: one ordinary left click at the row's native centre claims the row, cold, with no
+  // preceding hover and no press/release split (.sts2/research/reward-real-input-probe-sep14.md).
+  //
+  // So this check proves the GESTURE — that the auto-focused row takes the one-tap path and puts a plain left
+  // click on its native centre — which is the only half a fixture can answer for. Whether that click CLAIMS is a
+  // question for a real reward screen (`dev console room Monster`, then `dev console win`), which this harness's
+  // fixture-driven game has no way to build. Do not "fix" a red H16 by restoring a semantic activation path.
+  const firstRow = settledTouchEntry.rows[0];
+  const firstId = firstRow.id;
+  const firstPoint = await rewardRowClientPoint(page, firstRow);
   if (!firstPoint) {
     throw new Error(`no rendered hit rectangle for first reward ${firstId}: ${JSON.stringify(firstPoint)}`);
   }
   const firstInputStart = await sentCount(page);
   await pointer.tap(firstPoint.cx, firstPoint.cy);
-  let afterFirst;
-  try {
-    afterFirst = await waitRewardFocus(
-      page,
-      (state) => state.rows.length === 2 && !state.rows.some((row) => row.id === firstId) && state.rows[0].focused
-    );
-  } catch (err) {
-    const firstInputs = await readSentInputs(page, firstInputStart);
-    const wire = await page.evaluate(() => ({
-      sent: Array.isArray(window.__touchQaSent) ? window.__touchQaSent : [],
-      received: Array.isArray(window.__touchQaReceived) ? window.__touchQaReceived : []
-    }));
-    const after = await readRewardFocus(page);
-    const shot = `${outDir}/${combo.name}-H16-first-touch-fail.png`;
-    await page.screenshot({ path: shot });
-    return bad("the auto-focused first reward did not activate with one touch", {
-      stage: combo.stage,
-      pointer: combo.pointer,
-      firstId,
-      firstPoint,
-      firstInputs,
-      wire,
-      after,
-      screenshot: shot,
-      waitError: String(err && err.message)
-    });
-  }
+  await sleep(FOCUS_SETTLE_MS);
+  const firstInputs = await readSentInputs(page, firstInputStart);
+  const firstClicks = firstInputs.filter((message) => message.kind === "click" && message.button === "left");
+  const oneTapShot = `${outDir}/${combo.name}-H16-auto-focused-one-tap.png`;
+  await page.screenshot({ path: oneTapShot });
+  const atNativeCentre = (message) =>
+    Math.round(message.coordX) === Math.round(firstRow.gameCenter.x) &&
+    Math.round(message.coordY) === Math.round(firstRow.gameCenter.y);
   findings.push({
-    part: "one-touch-and-same-index",
-    status: afterFirst.rows.length === 2 && afterFirst.rows[0].focused ? PASS : FAIL,
-    beforeId: firstId,
-    after: afterFirst,
-    point: firstPoint
+    part: "one-tap-clicks-the-auto-focused-row",
+    status: firstClicks.length === 1 && atNativeCentre(firstClicks[0]) ? PASS : FAIL,
+    firstId,
+    gameCenter: firstRow.gameCenter,
+    point: firstPoint,
+    inputs: firstInputs,
+    screenshot: oneTapShot
   });
 
+  // THE READINESS LATCH MUST NOT OUTLIVE ITS FOCUS.
+  //
+  // Auto-focus arms a local "already ready, activate on release" latch to cover the hover -> focus-delta round
+  // trip. It used to survive for the whole screen, so after focus moved elsewhere a tap meant to re-focus the
+  // first row TOOK it instead — a reward spent on a tap the player did not intend. Re-enter the list to arm it
+  // again: the row tapped above is left disabled by the fixture's failed claim and can never be focused again.
+  loadFixture("combat", { force: true });
+  await waitRewardFocus(page, (state) => state.screenId === null);
+  await parkGameCursorAwayFromRewards(page);
+  loadFixture("rewardFocus", { force: true });
+  await waitRewardFocus(page, (state) => state.rows.length === 3 && state.rows[0].focused);
+  await sleep(FOCUS_SETTLE_MS);
+  const armedEntry = await waitRewardFocus(
+    page,
+    (state) => state.rows.length === 3 && state.rows[0].focused && state.rows[0].gameCenter !== null
+  );
+  const armedId = armedEntry.rows[0].id;
+
+  // A real touch on a DIFFERENT row: the ordinary focus-first tap there, and the armed row's readiness retires.
+  const otherPoint = await rewardRowClientPoint(page, armedEntry.rows[1]);
+  if (!otherPoint) throw new Error(`no rendered hit rectangle for reward ${armedEntry.rows[1].id}`);
+  await pointer.tap(otherPoint.cx, otherPoint.cy);
+  const movedFocus = await waitRewardFocus(
+    page,
+    (state) => state.rows.some((row) => row.id === armedEntry.rows[1].id && row.focused) &&
+      !state.rows.some((row) => row.id === armedId && row.focused)
+  );
   await sleep(FOCUS_SETTLE_MS);
 
-  // Focus the LAST row with the ordinary first tap, then consume that already-focused relic with ONE more touch.
-  // Its removed index is now out of range, so the coordinator must clamp to the remaining last row (index 0).
-  const last = afterFirst.rows[afterFirst.rows.length - 1];
-  const lastPoint = await rewardRowClientPoint(page, last);
-  if (!lastPoint) throw new Error(`no rendered hit rectangle for last reward ${last.id}`);
-  await pointer.tap(lastPoint.cx, lastPoint.cy);
-  await waitRewardFocus(
-    page,
-    (state) => state.rows.length === 2 && state.rows.some((row) => row.id === last.id && row.focused)
-  );
+  // Back to the once-armed row. The host reports it UNFOCUSED, so this tap must FOCUS it — not take it. Before
+  // the latch was made to follow authoritative focus, this tap sent a click and spent the reward.
+  const backRow = (await readRewardFocus(page)).rows.find((row) => row.id === armedId);
+  const backPoint = backRow ? await rewardRowClientPoint(page, backRow) : null;
+  if (!backPoint) throw new Error(`the once-armed reward ${armedId} lost its hit rectangle`);
+  const backStart = await sentCount(page);
+  await pointer.tap(backPoint.cx, backPoint.cy);
   await sleep(FOCUS_SETTLE_MS);
-  const settledLastFocused = await waitRewardFocus(
-    page,
-    (state) => state.rows.length === 2 && state.rows.some((row) => row.id === last.id && row.focused)
-  );
-  const liveLast = settledLastFocused.rows.find((row) => row.id === last.id);
-  const liveLastPoint = await rewardRowClientPoint(page, liveLast);
-  if (!liveLastPoint) throw new Error(`focused last reward ${last.id} lost its hit rectangle`);
-  await pointer.tap(liveLastPoint.cx, liveLastPoint.cy);
-  const afterLast = await waitRewardFocus(
-    page,
-    (state) => state.rows.length === 1 && !state.rows.some((row) => row.id === last.id) && state.rows[0].focused
-  );
-  const clampShot = `${outDir}/${combo.name}-H16-last-clamp.png`;
-  await page.screenshot({ path: clampShot });
+  const backInputs = await readSentInputs(page, backStart);
+  const staleLatchShot = `${outDir}/${combo.name}-H16-stale-latch.png`;
+  await page.screenshot({ path: staleLatchShot });
   findings.push({
-    part: "last-removal-clamp",
-    status: afterLast.rows.length === 1 && afterLast.rows[0].focused ? PASS : FAIL,
-    removedId: last.id,
-    after: afterLast,
-    screenshot: clampShot
+    part: "re-tap-after-focus-moved-only-focuses",
+    status: backInputs.every((message) => message.kind !== "click") ? PASS : FAIL,
+    armedId,
+    movedTo: movedFocus.rows.find((row) => row.focused)?.id ?? null,
+    inputs: backInputs,
+    screenshot: staleLatchShot
+  });
+
+  // …and the row is still perfectly reachable: now that the host reports it focused, the next tap does click it.
+  // That is the ordinary two-tap, and it is what the player gets whenever the latch is not standing in.
+  const refocused = await waitRewardFocus(page, (state) => state.rows.some((row) => row.id === armedId && row.focused));
+  const refocusedPoint = await rewardRowClientPoint(page, refocused.rows.find((row) => row.id === armedId));
+  if (!refocusedPoint) throw new Error(`the re-focused reward ${armedId} lost its hit rectangle`);
+  const secondStart = await sentCount(page);
+  await pointer.tap(refocusedPoint.cx, refocusedPoint.cy);
+  await sleep(FOCUS_SETTLE_MS);
+  const secondInputs = await readSentInputs(page, secondStart);
+  findings.push({
+    part: "second-tap-clicks-the-now-focused-row",
+    status: secondInputs.filter((message) => message.kind === "click" && message.button === "left").length === 1
+      ? PASS
+      : FAIL,
+    armedId,
+    inputs: secondInputs
   });
 
   const failed = findings.filter((finding) => finding.status === FAIL);
-  const detail = { stage: combo.stage, pointer: combo.pointer, findings, screenshots: [entryShot, clampShot] };
+  const detail = {
+    stage: combo.stage,
+    pointer: combo.pointer,
+    findings,
+    screenshots: [entryShot, oneTapShot, staleLatchShot]
+  };
   return failed.length === 0
-    ? ok("touch entry focused the first reward, one touch took it, and last-index removal clamped; pointer/unknown stayed inert", detail)
+    ? ok("touch entry focused the first reward and one tap clicked its native centre; the readiness did not outlive its focus, and the ordinary two-tap still reaches the row; pointer/unknown stayed inert", detail)
     : bad(`${failed.length} reward-focus sub-check(s) failed`, detail);
 }
 
