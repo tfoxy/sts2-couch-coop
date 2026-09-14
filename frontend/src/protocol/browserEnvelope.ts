@@ -167,6 +167,11 @@ export interface BrowserSessionEnvelope extends BrowserEnvelopeBase {
   // StaticBackground.vue displays it while the "Static background" setting is ON; absent ⇒ fail open to the
   // live bg subtree.
   staticBackground?: BrowserStaticBackgroundDescriptor | null;
+  // The atlas PAGES this host's game build actually ships, enumerated once on the host from res://images/atlases/.
+  // The idle prefetch (@/mirror/imagePrefetch) intersects its compiled-in wish-list with this, which is what stops
+  // a client asking a repacked build for a page it no longer has. Absent on an older host and on any host that
+  // could not enumerate — the prefetch then walks its own list unchanged, exactly as it always did.
+  atlasManifest?: BrowserAtlasManifestDescriptor | null;
   // Current hosts always support these semantic actions.
   scrollAction: true;
   rewardAction: true;
@@ -176,6 +181,14 @@ export interface BrowserSessionEnvelope extends BrowserEnvelopeBase {
 export interface BrowserStaticBackgroundDescriptor {
   scenePath: string;
   url: string;
+}
+
+// The `atlasManifest` wire shape (BrowserAtlasManifestDto server-side). `directory` says what the page list
+// COVERS, so "not in `pages`" can only ever mean "this build does not ship it" and never "this manifest was not
+// talking about it" — see the C# record's comment for why that distinction is the point.
+export interface BrowserAtlasManifestDescriptor {
+  directory: string;
+  pages: readonly string[];
 }
 
 export interface BrowserActionResultEnvelope extends BrowserEnvelopeBase {
@@ -267,6 +280,24 @@ function normalizeStaticBackground(raw: unknown): BrowserStaticBackgroundDescrip
     : null;
 }
 
+// The `atlasManifest` descriptor: accepted only when the directory is a non-empty string AND at least one page
+// survives. A manifest that normalized to zero pages would tell the prefetch "this build ships no atlases at
+// all", which is never true of a real host — so a half-formed one reads as "unknown" and the prefetch keeps its
+// own list, the same fail-open rule `staticBackground` above uses. Non-string entries are dropped individually
+// rather than voiding the manifest: one junk element should not cost the client the other eleven real answers.
+// NOT passed through `hostUrl` — these are `res://` resource paths the prefetch maps itself, not routes.
+function normalizeAtlasManifest(raw: unknown): BrowserAtlasManifestDescriptor | null {
+  if (raw === null || typeof raw !== "object") {
+    return null;
+  }
+  const value = raw as { directory?: unknown; pages?: unknown };
+  if (typeof value.directory !== "string" || value.directory.length === 0 || !Array.isArray(value.pages)) {
+    return null;
+  }
+  const pages = value.pages.filter((page): page is string => typeof page === "string" && page.length > 0);
+  return pages.length > 0 ? { directory: value.directory, pages } : null;
+}
+
 export function parseBrowserEnvelope(json: string): BrowserEnvelope {
   return parseBrowserEnvelopeValue(JSON.parse(json));
 }
@@ -330,6 +361,7 @@ export function parseBrowserEnvelopeValue(raw: unknown): BrowserEnvelope {
       hostName: requiredString(value.hostName, "hostName"),
       assetCacheToken: typeof value.assetCacheToken === "string" ? value.assetCacheToken : null,
       staticBackground: normalizeStaticBackground(value.staticBackground),
+      atlasManifest: normalizeAtlasManifest(value.atlasManifest),
       scrollAction: requiredTrue(value.scrollAction, "scrollAction"),
       rewardAction: requiredTrue(value.rewardAction, "rewardAction")
     };

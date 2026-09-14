@@ -45,6 +45,10 @@ const SESSION = {
   androidApkUrl: "/couchcoop-client.apk",
   hostName: "living-room-pc",
   staticBackground: { scenePath: "res://scenes/bg.tscn", url: "/bg/combat" },
+  atlasManifest: {
+    directory: "res://images/atlases/",
+    pages: ["res://images/atlases/card_atlas_0.png", "res://images/atlases/card_atlas_1.png"]
+  },
   scrollAction: true,
   rewardAction: true
 };
@@ -82,6 +86,39 @@ describe("parseBrowserEnvelopeValue — the string and object entry points agree
     expect(session.players?.[1]?.netId).toBeNull();
     expect(session.screen?.mirrorMode).toBe("mp-run");
     expect(session.staticBackground?.url).toBe("/bg/combat");
+    expect(session.atlasManifest?.directory).toBe("res://images/atlases/");
+    expect(session.atlasManifest?.pages).toEqual([
+      "res://images/atlases/card_atlas_0.png",
+      "res://images/atlases/card_atlas_1.png"
+    ]);
+  });
+
+  // The atlas manifest tells the idle prefetch which pages this host's build actually ships, so a half-formed one
+  // must read as "unknown" (walk the compiled-in list) and never as "this build ships no atlases", which would
+  // silently turn the prefetch off. Absent is the older-host case and has to stay clean.
+  it("treats a half-formed atlasManifest as absent, and keeps a usable one", () => {
+    const manifestOf = (atlasManifest: unknown) => {
+      const parsed = parseBrowserEnvelopeValue({ ...SESSION, atlasManifest });
+      return (parsed as Extract<typeof parsed, { type: "session" }>).atlasManifest;
+    };
+
+    for (const junk of [
+      undefined,
+      null,
+      "res://images/atlases/",
+      { pages: ["res://images/atlases/card_atlas_0.png"] },        // no directory
+      { directory: "", pages: ["res://images/atlases/x.png"] },     // blank directory
+      { directory: "res://images/atlases/" },                        // no pages
+      { directory: "res://images/atlases/", pages: [] },             // …or none left
+      { directory: "res://images/atlases/", pages: [3, "", null] },  // …or none usable
+      { directory: "res://images/atlases/", pages: "card_atlas_0" }  // pages is not a list
+    ]) {
+      expect(manifestOf(junk)).toBeNull();
+    }
+
+    // One junk entry costs that entry, not the manifest: the other real pages are still answers.
+    expect(manifestOf({ directory: "res://images/atlases/", pages: ["res://images/atlases/a.png", 7, ""] }))
+      .toEqual({ directory: "res://images/atlases/", pages: ["res://images/atlases/a.png"] });
   });
 
   it("rejects incomplete current semantic support and identity/status fields", () => {

@@ -65,6 +65,12 @@ public sealed record BrowserEnvelope(
     // host, or a host that has not probed yet. A client with the "Static background" setting ON displays this
     // image and hides the live bg subtree; when absent it fails open to the live subtree.
     BrowserStaticBackgroundDto? StaticBackground = null,
+    // The atlas PAGES this game build actually ships, enumerated once at startup from res://images/atlases/ and
+    // filled in BrowserStateEnvelopeFactory from CouchCoopAtlasManifest.Pages. One-time per session, not a
+    // per-broadcast field: it can only move when the game build does, and a build change ends the session.
+    // Null (omitted by BrowserJson) when the host could not enumerate — a Godot-less harness, an older host — and
+    // the client then keeps its own compiled-in prefetch list, which is what shipped before this existed.
+    BrowserAtlasManifestDto? AtlasManifest = null,
     // Current hosts accept absolute scroll offsets and element-addressed reward claims.
     bool ScrollAction = true,
     bool RewardAction = true,
@@ -75,6 +81,19 @@ public sealed record BrowserEnvelope(
 public sealed record BrowserStaticBackgroundDto(
     string ScenePath,
     string Url);
+
+// The `atlasManifest` wire shape: { "directory": "res://images/atlases/", "pages": ["res://images/atlases/
+// card_atlas_0.png", …] } (camelCased by BrowserJson).
+//
+// `directory` is carried as well as the pages so the answer says WHAT IT COVERS. The client's prefetch wish-list
+// is a priority-ordered set of res:// paths; intersecting it with a bare page list would make "not in the list"
+// ambiguous between "this build does not have that page" and "that page is not this manifest's business". With
+// the directory named, the rule is exact: a wish-list entry inside `directory` is kept only when `pages` names
+// it, and anything outside `directory` passes through untouched. That also keeps a future repack that MOVES the
+// atlases visible instead of silently emptying every client's prefetch.
+public sealed record BrowserAtlasManifestDto(
+    string Directory,
+    IReadOnlyList<string> Pages);
 
 public sealed record BrowserErrorEnvelope(
     string Type,

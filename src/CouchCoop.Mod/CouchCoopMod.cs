@@ -82,6 +82,14 @@ public static class CouchCoopMod
             Server.CouchCoopCacheRoot.LogSink = Session.CouchCoopLog.Info;
             Server.CouchCoopCacheRoot.Warm();
 
+            // Enumerate the atlas pages THIS build ships, once, while we are on the main thread with an engine.
+            // Published on every session envelope so the browser's idle prefetch stops guessing: the game's
+            // public-beta branch repacked the card atlas from three pages to two, and a client asking for the
+            // page that no longer exists costs the host a failed main-thread ResourceLoader.Load per new client.
+            // Safe to leave unknown — the client keeps its own compiled-in list — so this never blocks Init.
+            Server.CouchCoopAtlasManifest.LogSink = Session.CouchCoopLog.Info;
+            Server.CouchCoopAtlasManifest.Warm();
+
             // Crash-proof self-reaper: if the host dies without killing us (e.g. it segfaults), terminate this
             // orphaned headless instead of lingering invisibly. Idempotent + no-op when not host-spawned.
             if (IsHeadlessClient) HeadlessHostWatchdog.Start();
