@@ -4,11 +4,21 @@ import type { RewardFocusSnapshot } from "@/mirror/renderer/contracts";
 
 const EMPTY: RewardFocusSnapshot = { screenId: null, rows: [] };
 const FOCUS_SETTLE_MS = 750;
+// How many times the settle timer may RE-SEND an unconfirmed hover for one pending flow. One: the timer exists to
+// cover a row that was entering or being reparented when the first hover went out. A row the host never reports
+// focused is not going to start, and re-hovering it forever also re-arms the readiness latch forever.
+const MAX_SETTLE_RETRIES = 1;
 
 export interface RewardFocusCoordinator {
   afterReconcile(snapshot: RewardFocusSnapshot): void;
   /** A real touch supersedes a still-settling auto-focus when it targets somewhere else. */
   noteTouchTarget(id: string | null): void;
+  /**
+   * Drops the narrow programmatic readiness this coordinator armed (see `readyId`). The coordinator is its SOLE
+   * owner — every other module that wants it gone asks here rather than reaching for
+   * `InputCapture.clearProgrammaticFocus`, so the latch can never outlive the focus it stands in for.
+   */
+  releaseReady(): void;
   dispose(): void;
 }
 
@@ -19,8 +29,20 @@ export function createRewardFocusCoordinator(options: {
   input: Pick<InputCapture, "focusTarget" | "clearProgrammaticFocus">;
 }): RewardFocusCoordinator {
   let previous = EMPTY;
-  let pending: { screenId: string; index: number; targetId?: string; gameX?: number; gameY?: number } | null = null;
+  let pending: {
+    screenId: string;
+    index: number;
+    targetId?: string;
+    gameX?: number;
+    gameY?: number;
+    retries?: number;
+  } | null = null;
   let settleTimer: ReturnType<typeof setTimeout> | null = null;
+  // The row whose programmatic readiness is currently armed in InputCapture — the mirror image of its
+  // `programmaticFocusedRootId`, which only `focusTarget(…, true)` below ever sets. That latch makes the row
+  // "already ready, activate on release" at the next press, so it must live exactly as long as the gap it covers:
+  // from the auto-focus hover until authoritative focus arrives (or the row/screen/user says otherwise).
+  let readyId: string | null = null;
 
   function cancelSettleTimer(): void {
     if (settleTimer === null) return;
@@ -28,10 +50,16 @@ export function createRewardFocusCoordinator(options: {
     settleTimer = null;
   }
 
+  function releaseReady(): void {
+    if (readyId === null) return;
+    readyId = null;
+    options.input.clearProgrammaticFocus();
+  }
+
   function clearFlow(): void {
     cancelSettleTimer();
     pending = null;
-    options.input.clearProgrammaticFocus();
+    releaseReady();
   }
 
   function scheduleSettleCheck(): void {
@@ -41,6 +69,7 @@ export function createRewardFocusCoordinator(options: {
       if (!pending) return;
       if (!options.canControl() || options.modality() !== "touch") {
         pending = null;
+        releaseReady();
         return;
       }
       attemptPending(previous, true);
@@ -60,6 +89,7 @@ export function createRewardFocusCoordinator(options: {
       pending.targetId === target.id &&
       pending.gameX === target.gameCenter.x &&
       pending.gameY === target.gameCenter.y;
+    const retries = pending.retries ?? 0;
 
     if (matchesLastAttempt) {
       if (target.focused) {
@@ -69,19 +99,44 @@ export function createRewardFocusCoordinator(options: {
         else if (settleTimer === null) scheduleSettleCheck();
         return;
       }
-      // An unchanged reconcile is not a reason to repeat input. The timer provides one bounded retry if the game
+      // An unchanged reconcile is not a reason to repeat input. The timer provides the bounded retry if the game
       // ignored the hover while the row was entering or being reparented.
       if (!fromSettleTimer) return;
     }
+    if (fromSettleTimer && retries >= MAX_SETTLE_RETRIES) {
+      // Give up rather than re-hover on a loop: this row is not going to be focused by us. Drop the readiness with
+      // the flow, so the worst case is the player's ordinary two-tap (focus, then activate) rather than a row that
+      // stays falsely armed and takes itself on the next tap.
+      cancelSettleTimer();
+      pending = null;
+      releaseReady();
+      return;
+    }
 
     options.input.focusTarget(target.id, target.gameCenter.x, target.gameCenter.y, true);
+    readyId = target.id;
     pending = {
       ...pending,
       targetId: target.id,
       gameX: target.gameCenter.x,
-      gameY: target.gameCenter.y
+      gameY: target.gameCenter.y,
+      retries: fromSettleTimer ? retries + 1 : retries
     };
     scheduleSettleCheck();
+  }
+
+  /**
+   * AUTHORITATIVE FOCUS SUPERSEDES THE LATCH. `readyId` stands in for the streamed `focused` flag across one
+   * hover → focus-delta round trip; the moment that flag arrives for the armed row the stream carries the
+   * readiness itself, and a latch that stays on outlives its own focus — the row would then activate on a tap
+   * that should merely re-focus it, after the player has focused something else.
+   *
+   * Deliberately NOT released on a bare `focused: false`: that is exactly the gap the latch exists to cover.
+   */
+  function noteAuthoritativeFocus(snapshot: RewardFocusSnapshot): void {
+    if (readyId === null) return;
+    const row = snapshot.rows.find((candidate) => candidate.id === readyId);
+    if (!row || row.focused) releaseReady();
   }
 
   function afterReconcile(snapshot: RewardFocusSnapshot): void {
@@ -94,6 +149,9 @@ export function createRewardFocusCoordinator(options: {
       previous = snapshot;
       return;
     }
+
+    // Before the pending machinery, which may re-arm the latch for a new row in this same reconcile.
+    noteAuthoritativeFocus(snapshot);
 
     if (options.canControl() && options.modality() === "touch") {
       if (screenChanged) {
@@ -131,10 +189,13 @@ export function createRewardFocusCoordinator(options: {
   }
 
   function noteTouchTarget(id: string | null): void {
+    // A deliberate touch anywhere but the armed row retires its readiness, whether or not a flow is still pending:
+    // the player has expressed a newer target, and the armed row must go back to the ordinary focus-first tap.
+    // InputCapture reads the latch for THIS press before calling in, so a tap on the armed row still activates.
+    if (id !== readyId) releaseReady();
     if (!pending?.targetId || id === pending.targetId) return;
-    // Do not clear InputCapture's programmatic readiness here: the plan deliberately keeps that narrow arm until
-    // pointer mode or rewards-flow exit. This only stops the coordinator from moving focus back after the user's
-    // down-hover has expressed a newer target.
+    // This also stops the coordinator from moving focus back after the user's down-hover has expressed a newer
+    // target.
     cancelSettleTimer();
     pending = null;
   }
@@ -142,6 +203,7 @@ export function createRewardFocusCoordinator(options: {
   return {
     afterReconcile,
     noteTouchTarget,
+    releaseReady,
     dispose: clearFlow
   };
 }

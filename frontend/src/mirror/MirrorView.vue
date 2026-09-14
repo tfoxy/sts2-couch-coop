@@ -774,9 +774,10 @@ function mountScene(): void {
         input: inputCapture
       });
       // A mouse/pen press changes modality without waiting for another scene delta. Only the coordinator's narrow
-      // programmatic readiness is cleared; the user's ordinary tap-to-focus arm remains intact.
+      // programmatic readiness is cleared; the user's ordinary tap-to-focus arm remains intact. Asked of the
+      // coordinator, not of InputCapture directly, so that latch has exactly one owner.
       unsubscribePressModality = onPressModalityChange((modality) => {
-        if (modality === "pointer") inputCapture?.clearProgrammaticFocus();
+        if (modality === "pointer") rewardFocusCoordinator?.releaseReady();
       });
       if (initialPresented !== false) {
         rewardFocusCoordinator.afterReconcile(renderer.rewardFocusSnapshot());

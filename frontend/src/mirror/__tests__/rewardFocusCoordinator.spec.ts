@@ -151,7 +151,7 @@ describe("reward focus coordinator", () => {
     }
   });
 
-  it("lets a real touch on another target supersede a still-settling auto-focus", () => {
+  it("lets a real touch on another target supersede a still-settling auto-focus, and drops the readiness", () => {
     vi.useFakeTimers();
     try {
       const run = setup();
@@ -163,11 +163,85 @@ describe("reward focus coordinator", () => {
       run.coordinator.afterReconcile(snapshot(["a", "b"], { focused: "b" }));
       vi.advanceTimersByTime(1000);
       expect(run.focusTarget).toHaveBeenCalledOnce();
-      expect(run.clearProgrammaticFocus).not.toHaveBeenCalled();
+      // The armed row is no longer what the player is touching, so it must go back to the ordinary two-tap.
+      expect(run.clearProgrammaticFocus).toHaveBeenCalled();
       run.coordinator.dispose();
     } finally {
       vi.useRealTimers();
     }
+  });
+
+  it("keeps the readiness for a touch on the armed row itself — that tap is the one-tap claim", () => {
+    const run = setup();
+    run.coordinator.afterReconcile(snapshot(["a", "b"]));
+    expect(run.focusTarget).toHaveBeenCalledWith("a", 100, 200, true);
+
+    run.coordinator.noteTouchTarget("a");
+    expect(run.clearProgrammaticFocus).not.toHaveBeenCalled();
+  });
+
+  it("releases the readiness once the armed row is authoritatively focused, but never on a bare unfocused frame", () => {
+    const run = setup();
+    run.coordinator.afterReconcile(snapshot(["a", "b"]));
+    expect(run.focusTarget).toHaveBeenCalledWith("a", 100, 200, true);
+
+    // The gap the latch exists for: the hover is out, the host has not answered yet.
+    run.coordinator.afterReconcile(snapshot(["a", "b"]));
+    expect(run.clearProgrammaticFocus).not.toHaveBeenCalled();
+
+    run.coordinator.afterReconcile(snapshot(["a", "b"], { focused: "a" }));
+    expect(run.clearProgrammaticFocus).toHaveBeenCalledOnce();
+
+    // Focus moving away afterwards is the reported bug's shape: no latch may survive to activate on the next tap.
+    run.coordinator.afterReconcile(snapshot(["a", "b"]));
+    expect(run.clearProgrammaticFocus).toHaveBeenCalledOnce();
+  });
+
+  it("releases the readiness on a touch elsewhere even when no flow is pending any more", () => {
+    const run = setup();
+    run.coordinator.afterReconcile(snapshot(["a", "b"]));
+    // A pure reorder drops `pending` while the readiness stays armed — the case the `!pending?.targetId` early
+    // return used to walk straight past.
+    run.coordinator.afterReconcile(snapshot(["b", "a"]));
+    expect(run.clearProgrammaticFocus).not.toHaveBeenCalled();
+
+    run.coordinator.noteTouchTarget("b");
+    expect(run.clearProgrammaticFocus).toHaveBeenCalledOnce();
+  });
+
+  it("gives up after one bounded settle retry instead of re-hovering forever", () => {
+    vi.useFakeTimers();
+    try {
+      const run = setup();
+      run.coordinator.afterReconcile(snapshot(["a", "b"]));
+      expect(run.focusTarget).toHaveBeenCalledTimes(1);
+
+      vi.advanceTimersByTime(750); // the one bounded retry
+      expect(run.focusTarget).toHaveBeenCalledTimes(2);
+      expect(run.clearProgrammaticFocus).not.toHaveBeenCalled();
+
+      vi.advanceTimersByTime(750); // still unconfirmed → stop, and drop the readiness with the flow
+      expect(run.focusTarget).toHaveBeenCalledTimes(2);
+      expect(run.clearProgrammaticFocus).toHaveBeenCalledOnce();
+
+      vi.advanceTimersByTime(10_000);
+      expect(run.focusTarget).toHaveBeenCalledTimes(2);
+      run.coordinator.dispose();
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it("releases the readiness when the armed row leaves the list", () => {
+    const run = setup();
+    run.coordinator.afterReconcile(snapshot(["a", "b"]));
+    expect(run.focusTarget).toHaveBeenCalledWith("a", 100, 200, true);
+    run.clearProgrammaticFocus.mockClear();
+
+    run.coordinator.afterReconcile(snapshot(["b"]));
+    expect(run.clearProgrammaticFocus).toHaveBeenCalledOnce();
+    // …and the survivor is armed in its place, so the release is not a regression of the auto-focus job.
+    expect(run.focusTarget).toHaveBeenLastCalledWith("b", 100, 200, true);
   });
 
   it("does nothing for empty lists, unchanged keyframes, or pure reorders and clears on rewards exit", () => {
