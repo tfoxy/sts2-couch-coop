@@ -185,7 +185,7 @@ public sealed class CouchCoopGeoclipStore
     private readonly ConcurrentDictionary<string, ManagedCacheQuota.Reservation> _stagingReservations = new(StringComparer.Ordinal);
 
     /// <param name="cacheRoot">
-    /// A directory to hang this store's <c>geoclips/</c> leaf under, NOT branch scoped (tests and benches, which
+    /// A directory to hang this store's <c>geoclips/</c> leaf under, NOT version scoped (tests and benches, which
     /// own a scratch directory and wipe it themselves). Null takes the branch-scoped root the shipped host uses;
     /// the leaf name is the same either way, so there is one on-disk shape.
     /// </param>

@@ -30,7 +30,7 @@ public sealed class SpirectlAssetBinaryCache
 
     internal SpirectlAssetBinaryCache(string? root, ManagedCacheQuota? quota)
     {
-        // An explicitly-passed root (tests, benches, the hosted harness) is NOT branch scoped — those callers own
+        // An explicitly-passed root (tests, benches, the hosted harness) is NOT version scoped — those callers own
         // a scratch directory and wipe it themselves — but it still gets the same `assets/` leaf the branch
         // layout uses, so there is exactly one on-disk shape for anything that walks a cache to recognise.
         if (!string.IsNullOrWhiteSpace(root))
