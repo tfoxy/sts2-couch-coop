@@ -287,9 +287,6 @@ export function createInputCapture(
     // Authoritative clickable focus from the streamed scene. Read once on touch-down, before the down-hover can
     // change it, so a previously-unfocused target keeps the ordinary arm-first behavior for that whole press.
     isFocused?: (id: string) => boolean;
-    // Reward buttons cannot be activated reliably by a synthetic coordinate click. A current reward target may
-    // consume the tap through the semantic action channel; false/unwired falls through to the existing raw click.
-    activateTarget?: (id: string) => boolean;
     // A real primary touch supersedes a still-settling programmatic reward focus when it lands elsewhere.
     noteTouchTarget?: (id: string | null) => void;
     isCard?: (id: string) => boolean;
@@ -810,15 +807,11 @@ export function createInputCapture(
   // classification and effect are the same number by construction.
   function touchLeftClick(
     coord: { coordX: number; coordY: number },
-    targetId?: string | null,
     allowArmedRemovalRetap = false
   ): void {
     const hit = confirmHitAt(coord.coordX, coord.coordY);
     if (hit !== null && !allowArmedRemovalRetap) {
       armConfirmAt(hit.id, hit.kind, coord);
-      return;
-    }
-    if (targetId && touch.activateTarget?.(targetId) === true) {
       return;
     }
     send({ kind: "click", button: "left", ...coord });
@@ -2053,7 +2046,7 @@ export function createInputCapture(
         armedRootId = removalHit.id;
         pressedRootId = removalHit.id;
         clearConfirm();
-        touchLeftClick(releaseCoord, removalHit.id, true);
+        touchLeftClick(releaseCoord, true);
         return;
       }
       removalServiceArm = { id: removalHit.id, armedAtMs: nowMs() };
@@ -2119,7 +2112,7 @@ export function createInputCapture(
       armedRootId = p.focusedRootIdAtDown;
       pressedRootId = p.focusedRootIdAtDown;
       clearConfirm();
-      touchLeftClick(releaseCoord, p.focusedRootIdAtDown);
+      touchLeftClick(releaseCoord);
       return;
     }
     if (touch.tapToFocus?.() === false) {
@@ -2128,7 +2121,7 @@ export function createInputCapture(
       armedRootId = null;
       pressedRootId = top;
       clearConfirm();
-      touchLeftClick(releaseCoord, top);
+      touchLeftClick(releaseCoord);
       return;
     }
     // #12: in a from-hand card-CHOICE dialog, a HAND card selects with a SINGLE tap — no arm-first double tap. Only a
@@ -2138,7 +2131,7 @@ export function createInputCapture(
       armedRootId = null;
       pressedRootId = null;
       clearConfirm();
-      touchLeftClick(releaseCoord, top);
+      touchLeftClick(releaseCoord);
       return;
     }
     if (top === armedRootId) {
@@ -2152,7 +2145,7 @@ export function createInputCapture(
       // clicks on every subsequent tap — tapping away (empty space / a block button) is what disarms it.
       pressedRootId = top;
       clearConfirm();
-      touchLeftClick(releaseCoord, top);
+      touchLeftClick(releaseCoord);
     } else {
       // A different widget on top → arm it (first tap, or switching to another card/option). A fresh focus clears
       // any prior press (that selection context is gone).

@@ -74,16 +74,21 @@ This map records current contracts, not retired implementation alternatives.
   ever asking whether the reward had been received. Two fixes: the bridge only retires a reward the game
   actually gave (`../spirectl` → `Sts2ActionHandler.RewardCommit.cs`), and the browser stops using the
   semantic action at all, so `NRewardButton` runs its own claim and its own refusal.
-- **Known limit, do not re-diagnose it as a coordinate bug.** The game's hover-first widgets only accept a
-  press while they are focused, and focus follows the pointer through the host's streamed `focused` channel —
-  so a click injected at a widget the pointer was not already over can focus it without pressing it. The
-  browser's two-step tap already satisfies this (the first tap hovers, the second presses). See
-  `.agents/memory/reward-button-focus-and-semantic-activation.md`, and `.sts2/research/` for the live probe
-  behind the current gesture shape.
+- **There is no "raw clicks can't press a hover-first widget" limit — that finding was falsified (Sep 2026).**
+  The game's hover-first widgets only accept a press while they are focused, but Godot's Viewport focuses the
+  control under the cursor *before* it delivers the press, so one ordinary full click at a resolved coordinate
+  focuses and presses in the same frame: a live probe claimed reward rows cold, with no preceding hover and no
+  press/release split, confirmed by resource deltas. The browser's two-step tap is a touch-UX choice (a phone
+  has no hover, so the first tap shows what the second will commit), not a workaround for an input limit.
+- **Do not measure reward activation on a rewards fixture.** A fixture-built reward set cannot be claimed by
+  *any* path, and it fails looking exactly like input that never landed — that false negative is what produced
+  the falsified finding above. Build a real reward screen instead: `sts2 --instance <n> dev console room
+  Monster`, then `dev console win`. Full write-up in `.sts2/research/reward-real-input-probe-sep14.md`; summary
+  in `.agents/memory/reward-button-focus-and-semantic-activation.md`.
 - **Current semantic-action inventory in the browser client** — keep this list honest when it changes:
   | Action | Where | Status |
   | --- | --- | --- |
-  | `claim-reward` | `frontend/src/mirror/rewardFocusCoordinator.ts` | **being removed** — reward rows move to real input, so the game's own button runs its claim and its refusal |
+  | `claim-reward` | — | **removed** — reward rows are claimed by real input, so the game's own button runs its claim and its refusal |
   | `select-map-node` | `frontend/src/mirror/mapNodeTap.ts` | in use, awaiting the maintainer's call. Not a straight swap: it carries a travelable gate and injects the run-global map vote for synthetic host-local seats, which have no map screen of their own for raw input to land on |
   | `set-scroll-offset` | `frontend/src/mirror/MirrorApp.vue`, the eager-scroll absolute channel | in use, awaiting the maintainer's call. View state only — it moves a scroll container, it does not commit a player choice |
 - Read-only spirectl surfaces — state reads, the scene stream, screenshots, inspection — are unaffected. This
