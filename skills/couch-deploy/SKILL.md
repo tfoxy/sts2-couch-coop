@@ -96,8 +96,15 @@ Whenever the *branch* is the thing to prove — a branch build landed, or main w
 only your branch contains, and check **both directions**:
 
 ```bash
-strings -el <modsDir>/CouchCoop.Mod.dll | grep -c CouchCoopActivityPanel   # a type name from your own diff
+strings -a <modsDir>/CouchCoop.Mod.dll | grep -c CouchCoopActivityPanel   # a type name from your own diff
 ```
+
+**Use `strings -a`, not `strings -el`, and this is not a style preference.** A .NET assembly keeps the two
+kinds of string in two different heaps with two different encodings: type, method and field names live in
+`#Strings` as UTF-8, while the literals in your source live in `#US` as UTF-16. `-el` scans for UTF-16 only, so
+it finds your log messages and **silently reports 0 for every type name** — verified on the installed DLL:
+`strings -el` says 0 for a type that `strings -a` finds. In this recipe a 0 is the proof signal, so the wrong
+flag does not merely fail to help, it certifies a stale build as a restored one. `-a` covers both heaps.
 
 Positive count after deploying the branch, **0 after restoring main** — the 0 is what makes the string a
 discriminator rather than a coincidence. New type names and new literal log messages both work; pick one or two
