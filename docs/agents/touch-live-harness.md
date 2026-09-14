@@ -52,7 +52,7 @@ Artifacts go to `.sts2/artifacts/touch-harness/` and must not be committed.
 | H13 | During hand motion, each widened-stage field claim is evaluated at the node's drawn pose. Run with `--query spreadAudit=1`. |
 | H14 | Hold-to-raise enables on press, survives capture outside its control, and restores the saved setting on release. |
 | H15 | After an exact five-to-four hand transition, a genuinely raised survivor keeps an independent board-empty point raw; its raised-only band resolves correctly, and its focused zero-lift grab leaves the fan then safely cancels back. |
-| H16 | Reward-list focus follows the last press modality, activates correctly, and remains stable across row removal. |
+| H16 | Reward-list focus follows the last press modality; the auto-focused row takes the one-tap path and puts exactly one plain left click on its native centre; the readiness that made it one-tap does not survive focus moving away. Asserted on the WIRE — a rewards fixture cannot claim a reward by any path, so whether that click CLAIMS belongs to a real reward screen (`dev console room Monster`, then `dev console win`). Row-removal index retention/clamping is covered by `rewardFocusCoordinator.spec.ts`, not here. |
 | H17 | The shop card-removal service honours every Tap to focus / Confirm tap combination, opens a `remove` picker only through its permitted route, and stages one card without confirming the game dialog. Touch-only; runs on DOM and canvas. |
 
 The report contains timelines, sent input envelopes, failed-frame geometry, and screenshot paths. Read the report
