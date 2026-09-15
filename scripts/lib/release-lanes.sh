@@ -175,6 +175,52 @@ release_payload_min_game_version() {
   printf 'v%s\n' "$lowest"
 }
 
+# "A, B and C" -- a list a player reads, not a shell array dumped into prose.
+release_join_with_and() {
+  local items=("$@") count=$# head
+  [[ $count -gt 0 ]] || return 0
+  [[ $count -gt 1 ]] || { printf '%s\n' "${items[0]}"; return 0; }
+  head="$(printf '%s, ' "${items[@]:0:count-1}")"
+  printf '%s and %s\n' "${head%, }" "${items[count-1]}"
+}
+
+# <lane>... -> the plain-text compatibility statement, for surfaces that cannot take Markdown --
+# today the Steam Workshop change note, which renders BBCode and would show `backticks` literally.
+#
+# TWO FACTS, AND THEY ARE NOT THE SAME NUMBER, which is the whole reason this is one function. The
+# payload REQUIRES the lowest floor and refuses below it; it is BUILT FOR each lane's game build and
+# runs on newer ones by picking the highest lane at or below what is running. Collapsing them --
+# "requires v0.107.1 and v0.111.0" -- tells half the readers the mod will not run for them. The
+# GitHub release body states the same two facts in Markdown from the same lane table, and
+# test-release-body.sh / test-upload-workshop-release.sh pin both against these functions so the two
+# surfaces cannot drift apart.
+#
+# It must never say Steam serves a build per branch. It does not: one item, one revision, and the mod
+# chooses at load time. See the header of this file for the client behaviour that forced that.
+release_compatibility_summary() {
+  local lane where=() builds=()
+  [[ $# -gt 0 ]] || { echo "release-lanes: release_compatibility_summary needs at least one lane" >&2; return 1; }
+  for lane in "$@"; do
+    if [[ "$lane" == "$RELEASE_LANE_DEFAULT" ]]; then
+      where+=("the normal game")
+    else
+      where+=("its $(release_lane_steam_branch "$lane") branch")
+    fi
+    builds+=("$(release_lane_game_build "$lane")")
+  done
+
+  printf 'Works with Slay the Spire 2 %s and newer, on %s.\n' \
+    "$(release_payload_min_game_version "$@")" "$(release_join_with_and "${where[@]}")"
+  if [[ ${#builds[@]} -eq 1 ]]; then
+    # A one-lane payload is a local or DEV build, and "a build for each of those (v0.107.1)" reads as
+    # though something is missing. It is also the shape a reader most needs stated plainly.
+    printf 'This download carries one build, made for %s.\n' "${builds[0]}"
+  else
+    printf 'This one download carries a build for each of those (%s), and the mod loads the one that fits the game it is installed in.\n' \
+      "$(release_join_with_and "${builds[@]}")"
+  fi
+}
+
 # A lane this repo has reviewed a floor for. Packaging additionally requires the lane to exist on
 # disk under eng/Sts2.ReferenceSdk/, so adding a lane has to touch both places.
 release_lane_is_known() {

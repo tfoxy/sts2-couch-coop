@@ -42,14 +42,10 @@ archive="$(release_archive_name "couchcoop-$tag")"
 checksums="$(release_checksums_name "$archive").SHA256SUMS"
 mapfile -t lanes < <(release_lane_discover "$repo_root/eng/Sts2.ReferenceSdk")
 
-# "A, B and C" -- a list a player reads, not a shell array dumped into prose.
-join_with_and() {
-  local items=("$@") count=$# head
-  [[ $count -gt 0 ]] || return 0
-  [[ $count -gt 1 ]] || { printf '%s\n' "${items[0]}"; return 0; }
-  head="$(printf '%s, ' "${items[@]:0:count-1}")"
-  printf '%s and %s\n' "${head%, }" "${items[count-1]}"
-}
+# The list joiner and the lane facts below both come from scripts/lib/release-lanes.sh, which is also
+# what the Steam Workshop change note renders its compatibility line from. Same table, two media: this
+# body is Markdown, a Steam change note is BBCode and would print backticks literally.
+join_with_and() { release_join_with_and "$@"; }
 
 where=()
 builds=()
