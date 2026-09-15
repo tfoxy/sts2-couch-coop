@@ -75,6 +75,10 @@
   "couchcoop_connection_error_browser_action": "Laden Sie den Browser neu und treten Sie erneut bei.",
   "couchcoop_connection_error_service_summary": "Der Browserdienst des Hosts wurde beendet.",
   "couchcoop_connection_error_service_action": "Kehren Sie zur Lobby zurück und versuchen Sie es erneut.",
+  "couchcoop_connection_error_patch_summary": "Couch Co-Op konnte sich nicht in das Spiel einklinken, daher ist Couch-Koop in dieser Sitzung nicht möglich.",
+  "couchcoop_connection_error_patch_action": "Starten Sie das Spiel neu. Wenn Couch-Koop weiterhin nicht startet, kopieren Sie diesen Bericht.",
+  "couchcoop_connection_error_shared_profile_summary": "Die Spieler an diesem Computer teilen sich ein Spielprofil und eine Protokolldatei.",
+  "couchcoop_connection_error_shared_profile_action": "Couch-Koop funktioniert weiterhin. Ändern Sie keine Spieleinstellungen, während andere Spieler verbunden sind.",
   "couchcoop_connection_empty": "Geräte erscheinen hier, nachdem sie sich mit dem Browser-Server verbunden haben. Nutzen Sie dasselbe WLAN und prüfen Sie die oben angezeigte Adresse.",
   "couchcoop_connection_host_service": "Host-Dienst",
   "couchcoop_connection_error_slow_summary": "Warten, bis der Browser das Spiel anzeigt.",
@@ -90,10 +94,12 @@
   "couchcoop_connection_outcome_failed": "Fehlgeschlagen",
   "couchcoop_connection_outcome_recovered": "Behoben",
   "couchcoop_connection_outcome_ended": "Beendet",
+  "couchcoop_connection_outcome_degraded": "Eingeschränkt",
   "couchcoop_connection_show_technical": "Technische Details anzeigen",
   "couchcoop_connection_hide_technical": "Technische Details ausblenden",
   "couchcoop_connection_outcome_detail_waiting": "Es wird noch auf die Spielansicht gewartet. Dieser Versuch kann noch gelingen.",
   "couchcoop_connection_outcome_detail_failed": "Dieser Versuch wurde beendet. Folge den vorgeschlagenen Schritten und verbinde dich dann erneut.",
   "couchcoop_connection_outcome_detail_recovered": "Die Spielansicht funktioniert jetzt. Diese frühere Warnung bleibt als Hinweis gespeichert.",
-  "couchcoop_connection_outcome_detail_ended": "Diese Verbindung endete, bevor die Verzögerung behoben war."
+  "couchcoop_connection_outcome_detail_ended": "Diese Verbindung endete, bevor die Verzögerung behoben war.",
+  "couchcoop_connection_outcome_detail_degraded": "Couch-Koop läuft mit einer Einschränkung. Sie wird hier zur Information gespeichert."
 }

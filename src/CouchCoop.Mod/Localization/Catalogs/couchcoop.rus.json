@@ -75,6 +75,10 @@
   "couchcoop_connection_error_browser_action": "Перезагрузите браузер и присоединитесь снова.",
   "couchcoop_connection_error_service_summary": "Служба браузера хоста остановлена.",
   "couchcoop_connection_error_service_action": "Вернитесь в лобби и попробуйте снова.",
+  "couchcoop_connection_error_patch_summary": "Couch Co-Op не смог подключиться к игре, поэтому совместная игра в этом сеансе недоступна.",
+  "couchcoop_connection_error_patch_action": "Перезапустите игру. Если совместная игра всё равно не запускается, скопируйте этот отчёт.",
+  "couchcoop_connection_error_shared_profile_summary": "Игроки на этом компьютере используют один игровой профиль и один файл журнала.",
+  "couchcoop_connection_error_shared_profile_action": "Совместная игра продолжает работать. Не меняйте настройки игры, пока подключены другие игроки.",
   "couchcoop_connection_empty": "Устройства появятся здесь после подключения к серверу браузера. Используйте ту же сеть Wi‑Fi и проверьте адрес выше.",
   "couchcoop_connection_host_service": "Служба хоста",
   "couchcoop_connection_error_slow_summary": "Ожидание отображения игры в браузере.",
@@ -90,10 +94,12 @@
   "couchcoop_connection_outcome_failed": "Сбой",
   "couchcoop_connection_outcome_recovered": "Восстановлено",
   "couchcoop_connection_outcome_ended": "Завершено",
+  "couchcoop_connection_outcome_degraded": "Ограничено",
   "couchcoop_connection_show_technical": "Показать технические сведения",
   "couchcoop_connection_hide_technical": "Скрыть технические сведения",
   "couchcoop_connection_outcome_detail_waiting": "Экран игры всё ещё ожидается. Эта попытка ещё может завершиться.",
   "couchcoop_connection_outcome_detail_failed": "Эта попытка остановлена. Выполните предложенные шаги, затем подключитесь снова.",
   "couchcoop_connection_outcome_detail_recovered": "Экран игры теперь работает. Это предыдущее предупреждение сохранено для справки.",
-  "couchcoop_connection_outcome_detail_ended": "Это подключение завершилось до устранения задержки."
+  "couchcoop_connection_outcome_detail_ended": "Это подключение завершилось до устранения задержки.",
+  "couchcoop_connection_outcome_detail_degraded": "Совместная игра работает с ограничением. Оно сохранено здесь для справки."
 }

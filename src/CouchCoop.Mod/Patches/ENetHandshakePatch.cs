@@ -58,7 +58,11 @@ internal static class ENetHandshakePatch
             }
             catch (Exception ex)
             {
-                Console.Error.WriteLine($"[couch-coop] ENetHandshakePatch: Harmony patch failed ({ex.GetType().Name}: {ex.Message}) — handshake patch skipped.");
+                // Without it the seat's join times out on a drained handshake ack: seat joining, exactly.
+                CouchCoopPatchDiagnostics.PatchFailed(
+                    nameof(ENetHandshakePatch),
+                    $"Harmony patch failed ({ex.GetType().Name}: {ex.Message}) — handshake patch skipped.",
+                    costsCoop: true);
             }
         }
     }

@@ -114,8 +114,13 @@ internal static class JoinHostOverridePatch
             }
             catch (Exception ex)
             {
-                Console.Error.WriteLine(
-                    $"[couch-coop] JoinHostOverridePatch: Harmony patch failed ({ex.GetType().Name}: {ex.Message}) — {JoinHostEnvVar} ignored.");
+                // No panel row: this patch is inert unless a developer set the env var, so its failure is not
+                // something a player can act on. It is still recorded, because "which patches installed" is one
+                // answer and a partially patched process is the thing worth seeing.
+                CouchCoopPatchDiagnostics.PatchFailed(
+                    nameof(JoinHostOverridePatch),
+                    $"Harmony patch failed ({ex.GetType().Name}: {ex.Message}) — {JoinHostEnvVar} ignored.",
+                    costsCoop: false);
             }
         }
     }

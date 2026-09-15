@@ -75,6 +75,10 @@
   "couchcoop_connection_error_browser_action": "Rechargez le navigateur, puis rejoignez à nouveau.",
   "couchcoop_connection_error_service_summary": "Le service de navigateur de l'hôte s'est arrêté.",
   "couchcoop_connection_error_service_action": "Retournez au salon et réessayez.",
+  "couchcoop_connection_error_patch_summary": "Couch Co-Op n'a pas pu s'attacher au jeu ; le mode coopératif ne peut pas fonctionner pour cette session.",
+  "couchcoop_connection_error_patch_action": "Redémarrez le jeu. Si le mode coopératif ne démarre toujours pas, copiez ce rapport.",
+  "couchcoop_connection_error_shared_profile_summary": "Les joueurs de cet ordinateur partagent un seul profil de jeu et un seul fichier journal.",
+  "couchcoop_connection_error_shared_profile_action": "Le mode coopératif fonctionne toujours. Évitez de modifier les paramètres du jeu pendant que d'autres joueurs sont connectés.",
   "couchcoop_connection_empty": "Les appareils apparaissent ici après leur connexion au serveur du navigateur. Utilisez le même réseau Wi‑Fi et vérifiez l’adresse affichée ci-dessus.",
   "couchcoop_connection_host_service": "Service de l’hôte",
   "couchcoop_connection_error_slow_summary": "En attente de l’affichage du jeu dans le navigateur.",
@@ -90,10 +94,12 @@
   "couchcoop_connection_outcome_failed": "Échec",
   "couchcoop_connection_outcome_recovered": "Rétabli",
   "couchcoop_connection_outcome_ended": "Terminé",
+  "couchcoop_connection_outcome_degraded": "Limité",
   "couchcoop_connection_show_technical": "Afficher les détails techniques",
   "couchcoop_connection_hide_technical": "Masquer les détails techniques",
   "couchcoop_connection_outcome_detail_waiting": "La vue du jeu est toujours en attente. Cette tentative peut encore aboutir.",
   "couchcoop_connection_outcome_detail_failed": "Cette tentative s'est arrêtée. Suivez les étapes suggérées, puis reconnectez-vous.",
   "couchcoop_connection_outcome_detail_recovered": "La vue du jeu fonctionne maintenant. Cet avertissement précédent est conservé à titre de référence.",
-  "couchcoop_connection_outcome_detail_ended": "Cette connexion s'est terminée avant que le délai ne soit résolu."
+  "couchcoop_connection_outcome_detail_ended": "Cette connexion s'est terminée avant que le délai ne soit résolu.",
+  "couchcoop_connection_outcome_detail_degraded": "Le mode coopératif fonctionne avec une limitation. Elle est conservée ici à titre d'information."
 }

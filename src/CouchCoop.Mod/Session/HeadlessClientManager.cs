@@ -1357,6 +1357,25 @@ public sealed partial class HeadlessClientManager : IDisposable
                 psi.EnvironmentVariables[kv.Key] = kv.Value;
             }
         }
+        else
+        {
+            // "Best-effort" used to mean "silently". A seat launched with no isolation runs fine, but every
+            // player on this machine then writes into ONE godot.log and ONE settings/save profile — which is
+            // both a support problem (whose error is that line?) and a real one (the last writer wins on
+            // settings). macOS reaches this on every spawn: Godot resolves user:// from $HOME there and has no
+            // --user-dir flag, so there is nothing to repoint. Say it in the log AND in the panel, as a
+            // warning: co-op works, with a limitation the player should know about before they report a bug.
+            var platform = RuntimeInformation.OSDescription;
+            HeadlessLog.Write(
+                $"[couch-coop] headless launching WITHOUT user-dir isolation slot={slot} platform={platform} — "
+                + "this seat shares the host's Godot user directory.");
+            CouchCoop.Mod.Connections.ConnectionRegistry.Shared.ReportHostIssue(
+                SharedUserDirCode,
+                "Players on this computer share one game profile and one log file.",
+                "Co-op still works. Avoid changing game settings while other players are connected, and mention this line if you report a problem.",
+                $"No per-slot Godot user directory is available on this platform ({platform}); seat slot {slot} was launched into the host's user directory.",
+                isWarning: true);
+        }
         CaptureConnectionLogsLocked(slot, preparedUserDir?.HostUserDir, preparedUserDir?.SlotUserDir);
         // SHARE THE HOST'S SECURE-ORIGIN CERTIFICATE CACHE. This must come AFTER the user-dir isolation above,
         // because that isolation is exactly what breaks the cache: the seeder repoints XDG_DATA_HOME (Linux) /

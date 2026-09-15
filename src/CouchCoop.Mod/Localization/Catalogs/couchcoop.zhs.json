@@ -75,6 +75,10 @@
   "couchcoop_connection_error_browser_action": "刷新浏览器后重新加入。",
   "couchcoop_connection_error_service_summary": "主机浏览器服务已停止。",
   "couchcoop_connection_error_service_action": "返回大厅后重试。",
+  "couchcoop_connection_error_patch_summary": "Couch Co-Op 无法接入游戏，本次游戏无法使用同屏联机。",
+  "couchcoop_connection_error_patch_action": "请重启游戏。如果同屏联机仍无法启动，请复制此报告。",
+  "couchcoop_connection_error_shared_profile_summary": "这台电脑上的玩家共用同一个游戏配置文件和同一个日志文件。",
+  "couchcoop_connection_error_shared_profile_action": "同屏联机仍可正常使用。其他玩家连接期间请勿更改游戏设置。",
   "couchcoop_connection_empty": "设备连接到浏览器服务器后会显示在这里。请使用同一 Wi‑Fi 网络，并检查上方显示的地址。",
   "couchcoop_connection_host_service": "主机服务",
   "couchcoop_connection_error_slow_summary": "正在等待浏览器显示游戏。",
@@ -90,10 +94,12 @@
   "couchcoop_connection_outcome_failed": "失败",
   "couchcoop_connection_outcome_recovered": "已恢复",
   "couchcoop_connection_outcome_ended": "已结束",
+  "couchcoop_connection_outcome_degraded": "受限",
   "couchcoop_connection_show_technical": "显示技术详情",
   "couchcoop_connection_hide_technical": "隐藏技术详情",
   "couchcoop_connection_outcome_detail_waiting": "仍在等待游戏画面。此尝试仍可能完成。",
   "couchcoop_connection_outcome_detail_failed": "此尝试已停止。请按照建议的步骤操作，然后重新连接。",
   "couchcoop_connection_outcome_detail_recovered": "游戏画面现已正常工作。此较早的警告会保留供参考。",
-  "couchcoop_connection_outcome_detail_ended": "此连接在延迟消除前结束。"
+  "couchcoop_connection_outcome_detail_ended": "此连接在延迟消除前结束。",
+  "couchcoop_connection_outcome_detail_degraded": "同屏联机正在受限状态下运行。此信息保存于此以供参考。"
 }

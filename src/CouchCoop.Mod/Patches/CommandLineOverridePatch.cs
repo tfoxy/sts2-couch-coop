@@ -147,7 +147,12 @@ internal static class CommandLineOverridePatch
         }
         catch (Exception ex)
         {
-            Console.Error.WriteLine($"[couch-coop] CommandLineOverridePatch: Harmony patch of {label} failed ({ex.GetType().Name}: {ex.Message}).");
+            // A seat re-materializes its own `fastmp=join` + `clientId` through this patch, so losing it means
+            // no player can join — the panel is told once, deduplicated with every other essential patch.
+            CouchCoopPatchDiagnostics.PatchFailed(
+                nameof(CommandLineOverridePatch),
+                $"Harmony patch of {label} failed ({ex.GetType().Name}: {ex.Message}).",
+                costsCoop: true);
         }
     }
 }

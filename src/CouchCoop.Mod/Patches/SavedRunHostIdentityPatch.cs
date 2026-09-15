@@ -45,8 +45,12 @@ internal static class SavedRunHostIdentityPatch
             }
             catch (Exception exception)
             {
-                Console.Error.WriteLine(
-                    $"[couch-coop] SavedRunHostIdentityPatch: patch failed ({exception.GetType().Name}: {exception.Message}) — saved runs use stock hosting.");
+                // Degraded, not lost: a saved Steam run falls back to stock hosting rather than becoming
+                // unjoinable, so this records and logs without adding a row the player cannot act on.
+                CouchCoopPatchDiagnostics.PatchFailed(
+                    nameof(SavedRunHostIdentityPatch),
+                    $"patch failed ({exception.GetType().Name}: {exception.Message}) — saved runs use stock hosting.",
+                    costsCoop: false);
             }
         }
     }

@@ -115,6 +115,9 @@ if (args is ["seats", ..])
 if (args is ["connections", ..])
 {
     ConnectionRegistryTests.Run();
+    // Host-side diagnostics: patch health, host-issue severity and deduplication. Registered in a verb for
+    // the reason the note above HeadlessAudioMuteTargetsTests gives — the full sequence cannot reach it.
+    HostPatchHealthTests.Run();
     ConnectionDeviceLabelTests.Run();
     await ConnectionReportFormatterTests.Run();
     await ConnectionAttemptLogsTests.Run();
@@ -344,6 +347,9 @@ Environment.SetEnvironmentVariable(
 
 HotReloadInteropTests.Run();
 SpirectlEmbeddedAssemblyBoundaryTests.Run();
+// Host patch health: a registry with a fake clock and a recorder, no Godot types — up here with the other
+// pure suites, and also reachable alone as `-- connections`.
+HostPatchHealthTests.Run();
 // Also reachable alone as `-- cache`, and placed up here for the same reason as the host-UI legs below: pure
 // filesystem, no Godot types, and everything from HeadlessAudioMuteTargetsTests down is unreachable on some
 // machines.

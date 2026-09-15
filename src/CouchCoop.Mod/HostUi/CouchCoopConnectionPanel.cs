@@ -455,12 +455,15 @@ internal sealed partial class CouchCoopConnectionPanel : Panel
 
     private static string RowText(ConnectionStatusRow row)
     {
-        var device = row.DeviceLabel == "Host service" ? CouchCoopLocalization.Resolve("couchcoop_connection_host_service") : string.IsNullOrWhiteSpace(row.DeviceLabel) ? CouchCoopLocalization.Resolve("couchcoop_connection_unknown_device") : row.DeviceLabel;
+        var hostRow = row.DeviceLabel == "Host service";
+        var device = hostRow ? CouchCoopLocalization.Resolve("couchcoop_connection_host_service") : string.IsNullOrWhiteSpace(row.DeviceLabel) ? CouchCoopLocalization.Resolve("couchcoop_connection_unknown_device") : row.DeviceLabel;
         var stage = row.Issue?.Timing?.Stage ?? row.FailedStage ?? row.Stage;
         var elapsed = row.Issue?.Timing?.StageElapsedMs ?? row.StageElapsedMs;
         var timer = stage is ConnectionStage.Initializing or ConnectionStage.Joining or ConnectionStage.LoadingView ? $" ({Math.Max(0, (int)(elapsed / 1000))}s)" : string.Empty;
         var status = row.Issue is { } issue ? $"{OutcomeMarker(issue.Outcome)} " : string.Empty;
-        var fourth = row.Issue is { IsWarning: true } ? CouchCoopLocalization.Resolve("couchcoop_connection_progress", Args("current", row.StepCount, "total", row.StepTotal)) : row.Issue is not null ? row.Issue.Code : stage == ConnectionStage.Complete ? "✓" : CouchCoopLocalization.Resolve("couchcoop_connection_progress", Args("current", row.StepCount, "total", row.StepTotal));
+        // A host-service warning has no attempt behind it, so its step count would be a fabricated "1/6";
+        // it keeps the code on the fourth line like any other issue row. Client warnings are unchanged.
+        var fourth = row.Issue is { IsWarning: true } && !hostRow ? CouchCoopLocalization.Resolve("couchcoop_connection_progress", Args("current", row.StepCount, "total", row.StepTotal)) : row.Issue is not null ? row.Issue.Code : stage == ConnectionStage.Complete ? "✓" : CouchCoopLocalization.Resolve("couchcoop_connection_progress", Args("current", row.StepCount, "total", row.StepTotal));
         // Keep the stage and its saved timer together. The quieter fourth line spells out the outcome.
         if (row.Issue is { } savedIssue) fourth += $" · {Outcome(savedIssue)}";
         return $"{One(device)}\n{One(string.IsNullOrWhiteSpace(row.DisplayName) ? "…" : row.DisplayName)}\n{status}{CouchCoopLocalization.Resolve($"couchcoop_connection_stage_{stage.ToString().ToLowerInvariant()}")}{timer}\n{fourth}";
@@ -482,6 +485,8 @@ internal sealed partial class CouchCoopConnectionPanel : Panel
         "browser-view-slow" => "slow",
         "browser-render-failed" or "browser-transport-lost" => "browser",
         "host-service-failed" or "host-service-stopped" => "service",
+        Connections.CouchCoopPatchHealth.IssueCode => "patch",
+        Session.HeadlessClientManager.SharedUserDirCode => "shared_profile",
         _ => "join"
     };
     private static string Summary(ConnectionIssue issue) => CouchCoopLocalization.Resolve($"couchcoop_connection_error_{IssueKey(issue)}_summary");
@@ -489,14 +494,16 @@ internal sealed partial class CouchCoopConnectionPanel : Panel
     private static string Outcome(ConnectionIssue issue) => CouchCoopLocalization.Resolve($"couchcoop_connection_outcome_{issue.Outcome.ToString().ToLowerInvariant()}");
     private static string OutcomeMarker(ConnectionIssueOutcome outcome) => outcome switch
     {
-        ConnectionIssueOutcome.Waiting => "⚠",
+        ConnectionIssueOutcome.Waiting or ConnectionIssueOutcome.Degraded => "⚠",
         ConnectionIssueOutcome.Failed => "✕",
         ConnectionIssueOutcome.Recovered => "✓",
         _ => "■"
     };
     private static Color OutcomeColor(ConnectionIssue issue) => issue.Outcome switch
     {
-        ConnectionIssueOutcome.Waiting => CouchCoopGameUiTheme.ConnectionWarningOrange,
+        // A degraded host condition is a running session with a limitation, never a stopped one — orange like
+        // the slow-view warning, and expressly not the failure red.
+        ConnectionIssueOutcome.Waiting or ConnectionIssueOutcome.Degraded => CouchCoopGameUiTheme.ConnectionWarningOrange,
         ConnectionIssueOutcome.Recovered => CouchCoopGameUiTheme.ConnectionCompleteGreen,
         ConnectionIssueOutcome.Failed => CouchCoopGameUiTheme.ConnectionFailureRed,
         _ => CouchCoopGameUiTheme.ConnectionTechnicalMuted

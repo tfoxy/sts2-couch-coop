@@ -75,6 +75,10 @@
   "couchcoop_connection_error_browser_action": "ブラウザを再読み込みしてから、もう一度参加してください。",
   "couchcoop_connection_error_service_summary": "ホストのブラウザサービスが停止しました。",
   "couchcoop_connection_error_service_action": "ロビーに戻ってもう一度試してください。",
+  "couchcoop_connection_error_patch_summary": "Couch Co-Opをゲームに組み込めなかったため、このセッションでは協力プレイを利用できません。",
+  "couchcoop_connection_error_patch_action": "ゲームを再起動してください。それでも協力プレイが始まらない場合は、このレポートをコピーしてください。",
+  "couchcoop_connection_error_shared_profile_summary": "このコンピューターのプレイヤーは、1つのゲームプロフィールと1つのログファイルを共有します。",
+  "couchcoop_connection_error_shared_profile_action": "協力プレイは引き続き利用できます。他のプレイヤーが接続している間は、ゲーム設定を変更しないでください。",
   "couchcoop_connection_empty": "ブラウザサーバーに接続したデバイスがここに表示されます。同じ Wi‑Fi ネットワークを使い、上に表示されたアドレスを確認してください。",
   "couchcoop_connection_host_service": "ホストサービス",
   "couchcoop_connection_error_slow_summary": "ブラウザーにゲームが表示されるのを待っています。",
@@ -90,10 +94,12 @@
   "couchcoop_connection_outcome_failed": "失敗",
   "couchcoop_connection_outcome_recovered": "回復済み",
   "couchcoop_connection_outcome_ended": "終了",
+  "couchcoop_connection_outcome_degraded": "制限あり",
   "couchcoop_connection_show_technical": "技術的な詳細を表示",
   "couchcoop_connection_hide_technical": "技術的な詳細を隠す",
   "couchcoop_connection_outcome_detail_waiting": "ゲーム画面をまだ待っています。この試行はまだ完了する可能性があります。",
   "couchcoop_connection_outcome_detail_failed": "この試行は停止しました。提案された手順に従ってから、もう一度接続してください。",
   "couchcoop_connection_outcome_detail_recovered": "ゲーム画面は現在動作しています。この以前の警告は参照用に保存されています。",
-  "couchcoop_connection_outcome_detail_ended": "この接続は遅延が解消される前に終了しました。"
+  "couchcoop_connection_outcome_detail_ended": "この接続は遅延が解消される前に終了しました。",
+  "couchcoop_connection_outcome_detail_degraded": "協力プレイは制限付きで動作しています。この内容は参考として保存されます。"
 }

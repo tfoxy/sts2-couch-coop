@@ -170,14 +170,36 @@ public sealed class ConnectionRegistry
         }
     }
 
-    public Guid ReportHostIssue(string code, string summary, string action, string? detail = null)
+    /// <summary>
+    /// Raise a synthetic "Host service" row — a problem with THIS host rather than with any one client, so it
+    /// appears in the panel with no connection attempt behind it. Deduplicated by <paramref name="code"/>: the
+    /// first report wins and later ones return its id without adding a second row.
+    /// </summary>
+    /// <param name="isWarning">
+    /// <see langword="true"/> for a degraded-but-working condition. Those must not read as a stopped session:
+    /// the row is recorded with the <see cref="ConnectionIssueOutcome.Degraded"/> outcome and the entry is NOT
+    /// moved to <see cref="ConnectionStage.Failed"/>, so the panel paints it as a warning rather than a failure.
+    /// </param>
+    public Guid ReportHostIssue(string code, string summary, string action, string? detail = null, bool isWarning = false)
     {
         lock (_gate)
         {
-            if (_issues.Values.FirstOrDefault(e => e.DeviceLabel == "Host service" && e.Issue?.Code == code) is { } existing) return existing.Id;
+            // Match on the CLEANED code, which is the one a row ends up carrying — otherwise a caller whose code
+            // arrives padded or over-length creates a second row that looks identical to the first.
+            var cleanCode = Clean(code, 96) ?? "host-service-failed";
+            if (_issues.Values.FirstOrDefault(e => e.DeviceLabel == "Host service" && e.Issue?.Code == cleanCode) is { } existing) return existing.Id;
             var id = Guid.NewGuid();
             var entry = new Entry(id, id, _time.GetUtcNow(), _time.GetTimestamp()) { DeviceLabel = "Host service", LogSource = ConnectionAttemptLogs.CaptureAvailable(HostLogPath, null) };
-            FailLocked(entry, new(Clean(code, 96) ?? "host-service-failed", summary, action, Clean(detail, 8192)));
+            var issue = new ConnectionIssue(cleanCode, summary, action, Clean(detail, 8192), IsWarning: isWarning);
+            if (!isWarning)
+            {
+                FailLocked(entry, issue);
+                return entry.IssueId!.Value;
+            }
+
+            entry.Issue = TimedIssue(entry, issue, ConnectionIssueOutcome.Degraded);
+            SaveIssue(entry);
+            Changed();
             return entry.IssueId!.Value;
         }
     }
@@ -340,6 +362,10 @@ public sealed class ConnectionRegistry
                 // detail are directly comparable rather than two independent renderings of "our version".
                 ["modVersion"] = CouchCoopModBuildIdentity.Current,
                 ["hostOS"] = System.Runtime.InteropServices.RuntimeInformation.OSDescription,
+                // Beside the OS on purpose: whether this build's Harmony hooks are installed is a per-PLATFORM
+                // answer, and a host whose patches never applied produces reports that otherwise look like an
+                // ordinary network failure — no QR button, no seat can join, nothing saying why.
+                ["patchHealth"] = CouchCoopPatchHealth.Describe(),
                 ["gameVersion"] = e.Facts.GetValueOrDefault("gameVersion") ?? HostGameVersion ?? "unknown"
             };
             report = new ConnectionReportContent
@@ -555,7 +581,11 @@ public static class ConnectionStageSteps
 }
 public sealed record ConnectionIssueTiming(ConnectionStage Stage, long StageElapsedMs, long AttemptElapsedMs,
     DateTimeOffset RecordedAtUtc);
-public enum ConnectionIssueOutcome { Waiting, Failed, Recovered, Ended }
+/// <summary>
+/// What became of a recorded issue. <see cref="Degraded"/> is the one that is not about an attempt at all: a
+/// host condition that is still running under a limitation (added last so the existing four keep their values).
+/// </summary>
+public enum ConnectionIssueOutcome { Waiting, Failed, Recovered, Ended, Degraded }
 public sealed record ConnectionIssue(string Code, string Summary, string Action, string? Detail, bool IsWarning = false,
     ConnectionIssueTiming? Timing = null, ConnectionIssueOutcome Outcome = ConnectionIssueOutcome.Failed);
 public sealed record ConnectionStatusRow(Guid Id, ConnectionStage Stage, long ElapsedMs, string? DisplayName,

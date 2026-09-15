@@ -75,6 +75,10 @@
   "couchcoop_connection_error_browser_action": "Ricarica il browser, poi partecipa di nuovo.",
   "couchcoop_connection_error_service_summary": "Il servizio browser dell’host si è arrestato.",
   "couchcoop_connection_error_service_action": "Torna alla lobby e riprova.",
+  "couchcoop_connection_error_patch_summary": "Couch Co-Op non è riuscito ad agganciarsi al gioco, quindi la co-op non può funzionare in questa sessione.",
+  "couchcoop_connection_error_patch_action": "Riavvia il gioco. Se la co-op continua a non avviarsi, copia questo rapporto.",
+  "couchcoop_connection_error_shared_profile_summary": "I giocatori su questo computer condividono un solo profilo di gioco e un solo file di log.",
+  "couchcoop_connection_error_shared_profile_action": "La co-op funziona comunque. Evita di cambiare le impostazioni di gioco mentre altri giocatori sono connessi.",
   "couchcoop_connection_empty": "I dispositivi appariranno qui dopo la connessione al server del browser. Usa la stessa rete Wi‑Fi e controlla l’indirizzo mostrato sopra.",
   "couchcoop_connection_host_service": "Servizio dell’host",
   "couchcoop_connection_error_slow_summary": "In attesa che il browser mostri il gioco.",
@@ -90,10 +94,12 @@
   "couchcoop_connection_outcome_failed": "Non riuscito",
   "couchcoop_connection_outcome_recovered": "Ripristinato",
   "couchcoop_connection_outcome_ended": "Terminato",
+  "couchcoop_connection_outcome_degraded": "Limitato",
   "couchcoop_connection_show_technical": "Mostra dettagli tecnici",
   "couchcoop_connection_hide_technical": "Nascondi dettagli tecnici",
   "couchcoop_connection_outcome_detail_waiting": "La visuale di gioco è ancora in attesa. Questo tentativo può ancora riuscire.",
   "couchcoop_connection_outcome_detail_failed": "Questo tentativo si è interrotto. Segui i passaggi suggeriti, quindi riconnettiti.",
   "couchcoop_connection_outcome_detail_recovered": "La visuale di gioco ora funziona. Questo avviso precedente viene conservato come riferimento.",
-  "couchcoop_connection_outcome_detail_ended": "Questa connessione è terminata prima che il ritardo si risolvesse."
+  "couchcoop_connection_outcome_detail_ended": "Questa connessione è terminata prima che il ritardo si risolvesse.",
+  "couchcoop_connection_outcome_detail_degraded": "La co-op funziona con una limitazione. È salvata qui come riferimento."
 }

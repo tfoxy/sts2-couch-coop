@@ -16,7 +16,49 @@ internal static class ConnectionUiTests
         DetailControlsStayInsideTheCompanionCard();
         ProblemIdentitySurvivesRefinementAndArchiving();
         OutcomeWordsAndStylingSurviveRecovery();
+        HostIssueCodesHaveTheirOwnLocalizedCopy();
     }
+
+    /// <summary>
+    /// The panel resolves its copy from the issue CODE, and an unmapped code falls through to the join copy —
+    /// "The player game lost its connection", on a Host service row, for a problem that has no player and no
+    /// connection. A new code without a mapping is therefore not a missing string but a wrong sentence.
+    /// </summary>
+    private static void HostIssueCodesHaveTheirOwnLocalizedCopy()
+    {
+        CouchCoopLocalization.SetLanguageForTests("eng");
+        var joinSummary = Copy("Summary", new ConnectionIssue("something-nobody-mapped", "", "", null));
+        foreach (var code in new[]
+                 {
+                     CouchCoopPatchHealth.IssueCode,
+                     CouchCoop.Mod.Session.HeadlessClientManager.SharedUserDirCode,
+                 })
+        {
+            var issue = new ConnectionIssue(code, "", "", null);
+            Assert(Copy("Summary", issue) != joinSummary && Copy("Action", issue) != Copy("Action", new ConnectionIssue("something-nobody-mapped", "", "", null)),
+                $"{code} has its own player-facing copy rather than the unmapped-code fallback");
+            Assert(!string.IsNullOrWhiteSpace(Copy("Summary", issue)) && !Copy("Summary", issue).StartsWith("couchcoop_", StringComparison.Ordinal),
+                $"{code} resolves to a real sentence, not its catalog key");
+        }
+
+        var degraded = new ConnectionIssue(CouchCoop.Mod.Session.HeadlessClientManager.SharedUserDirCode, "", "", null, IsWarning: true,
+            Timing: new ConnectionIssueTiming(ConnectionStage.Connecting, 0, 0, DateTimeOffset.UnixEpoch),
+            Outcome: ConnectionIssueOutcome.Degraded);
+        var row = new ConnectionStatusRow(Guid.NewGuid(), ConnectionStage.Connecting, 0, null, "Host service", 1, 6, degraded, 0, false);
+        var color = typeof(CouchCoopConnectionPanel).GetMethod("RowColor", BindingFlags.Static | BindingFlags.NonPublic)!;
+        Assert((Godot.Color)color.Invoke(null, [2, row])! == CouchCoopGameUiTheme.ConnectionWarningOrange,
+            "a degraded host row is painted as a warning, never as a failure");
+        var text = ((string)typeof(CouchCoopConnectionPanel).GetMethod("RowText", BindingFlags.Static | BindingFlags.NonPublic)!
+            .Invoke(null, [row])!).Split('\n');
+        Assert(text[0] == "Host service" && text[2].StartsWith("⚠", StringComparison.Ordinal),
+            "…and marked with the warning glyph");
+        Assert(text[3].StartsWith(CouchCoop.Mod.Session.HeadlessClientManager.SharedUserDirCode, StringComparison.Ordinal),
+            "a host row has no attempt, so its fourth line carries the code rather than a fabricated step count");
+    }
+
+    private static string Copy(string member, ConnectionIssue issue)
+        => (string)typeof(CouchCoopConnectionPanel).GetMethod(member, BindingFlags.Static | BindingFlags.NonPublic)!
+            .Invoke(null, [issue])!;
 
     private static void DetailControlsStayInsideTheCompanionCard()
     {

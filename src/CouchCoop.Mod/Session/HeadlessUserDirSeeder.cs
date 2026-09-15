@@ -70,6 +70,29 @@ internal static class HeadlessUserDirSeeder
     private const string UserDataDirName = "SlayTheSpire2";
 
     /// <summary>
+    /// An extra sink for the lines this type narrates. <c>CouchCoopMod.Init</c> points it at
+    /// <c>CouchCoopLog.Error</c>, which is the only channel that reaches <c>godot.log</c> in the shipped Steam
+    /// flow — and, keeping only ERROR entries, the connections report's log excerpt.
+    /// </summary>
+    /// <remarks>
+    /// A hook rather than a direct <c>CouchCoopLog</c> call, for the reason
+    /// <see cref="Server.CouchCoopCacheRoot.LogSink"/> gives and one more: this type IS reachable from the
+    /// suite, which runs with no Godot engine, and the game's logger is not safe to call from there.
+    /// The suite uses the same hook to read the lines back.
+    /// </remarks>
+    internal static Action<string>? LogSink { get; set; }
+
+    /// <summary>
+    /// Both channels, for the reason this round exists: <c>Console.Error</c> is discarded by a Steam-launched
+    /// game, so a line that goes only there cannot be read by the player who hit the problem.
+    /// </summary>
+    private static void Log(string message)
+    {
+        Console.Error.WriteLine(message);
+        LogSink?.Invoke(message);
+    }
+
+    /// <summary>
     /// Returns the child environment needed to isolate <c>user://</c> for <paramref name="slot"/>, re-seeding it
     /// from the host's user dir. Called once per SPAWN (never for a reused live instance), so the settings the
     /// host currently has — language, fps, fast mode — are what the new instance starts with.
@@ -101,6 +124,11 @@ internal static class HeadlessUserDirSeeder
             var policy = ResolvePolicy(slot, platform, getEnvironmentVariable, getFolderPath);
             if (policy is null)
             {
+                // Was silent, and it is the one return in this file a player can be affected by without any
+                // trace: the caller launches the seat anyway, into the HOST's user dir. Say what that costs.
+                Log($"[couch-coop] headless user-dir seed skipped slot={slot} platform={platform} — this seat "
+                    + "shares the host's user directory: one godot.log and one settings/save profile for every "
+                    + "player on this computer.");
                 return null;
             }
 
@@ -176,7 +204,7 @@ internal static class HeadlessUserDirSeeder
         }
         catch (Exception ex)
         {
-            Console.Error.WriteLine($"[couch-coop] headless user-dir seed failed slot={slot}: {ex.GetType().Name}: {ex.Message}");
+            Log($"[couch-coop] headless user-dir seed failed slot={slot}: {ex.GetType().Name}: {ex.Message}");
             return null;
         }
     }
@@ -190,6 +218,14 @@ internal static class HeadlessUserDirSeeder
         if (RuntimeInformation.IsOSPlatform(OSPlatform.Windows))
         {
             return HeadlessUserDirPlatform.Windows;
+        }
+        // Named rather than folded into Unsupported: macOS is a platform this mod actually runs on, and a
+        // diagnostic that says "MacOs" is the difference between a known gap and an unexplained one. There is
+        // no isolation to offer yet — Godot resolves user:// from $HOME there and has no --user-dir flag — so
+        // the policy below still declines; it declines OUT LOUD.
+        if (RuntimeInformation.IsOSPlatform(OSPlatform.OSX))
+        {
+            return HeadlessUserDirPlatform.MacOs;
         }
         return HeadlessUserDirPlatform.Unsupported;
     }
@@ -229,11 +265,17 @@ internal static class HeadlessUserDirSeeder
                 break;
 
             default:
+                // No per-slot data-root variable is known here. macOS is the case that matters: Godot resolves
+                // user:// from $HOME alone and offers no --user-dir, so there is nothing to point at a slot.
+                Log($"[couch-coop] headless user-dir isolation unavailable slot={slot} platform={platform} — "
+                    + "no per-slot data-root environment variable is known for this platform.");
                 return null;
         }
 
         if (string.IsNullOrWhiteSpace(dataHome))
         {
+            Log($"[couch-coop] headless user-dir isolation unavailable slot={slot} platform={platform} — "
+                + "this platform's data-root path resolved empty.");
             return null;
         }
 
@@ -341,6 +383,12 @@ internal enum HeadlessUserDirPlatform
     Unsupported,
     Linux,
     Windows,
+
+    /// <summary>
+    /// Runs the game, has no user-dir isolation. Kept distinct from <see cref="Unsupported"/> so the log line
+    /// and the connections row can name it — see <see cref="HeadlessUserDirSeeder.ResolvePolicy"/>.
+    /// </summary>
+    MacOs,
 }
 
 internal sealed record HeadlessUserDirPrepareResult(

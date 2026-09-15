@@ -13,6 +13,7 @@ internal static class HeadlessUserDirSeederTests
         SharedCachesAreLinkedPerLeafWithoutAnAncestorCycle();
         SeedingNeverFollowsDirectorySymlinks();
         UnsupportedPlatformReturnsNull();
+        MacOsDeclinesOutLoud();
     }
 
     private static void LinuxPolicyUsesXdgDataHome()
@@ -244,6 +245,53 @@ internal static class HeadlessUserDirSeederTests
             Env(),
             _ => Path.Combine(root.Path, "home"));
         Assert(result is null, "unsupported platform returns null");
+    }
+
+    /// <summary>
+    /// macOS declines like any unsupported platform — and, unlike before, says so. The seat is still launched
+    /// (into the host's user dir), so a silent null is a limitation nobody can see: one <c>godot.log</c> and
+    /// one settings/save profile for every player on the machine, with nothing in either naming the cause.
+    /// </summary>
+    private static void MacOsDeclinesOutLoud()
+    {
+        using var root = new TempDir();
+        var lines = new List<string>();
+        HeadlessUserDirSeeder.LogSink = lines.Add;
+        try
+        {
+            var policy = HeadlessUserDirSeeder.ResolvePolicy(
+                4,
+                HeadlessUserDirPlatform.MacOs,
+                Env(),
+                _ => Path.Combine(root.Path, "home"));
+            Assert(policy is null, "macOS has no per-slot data-root variable to offer");
+            Assert(lines.Count == 1 && lines[0].Contains("MacOs", StringComparison.Ordinal)
+                && lines[0].Contains("slot=4", StringComparison.Ordinal),
+                "the refused policy names the platform and the slot");
+
+            lines.Clear();
+            var result = HeadlessUserDirSeeder.Prepare(
+                4,
+                HeadlessUserDirPlatform.MacOs,
+                Env(),
+                _ => Path.Combine(root.Path, "home"));
+            Assert(result is null, "macOS prepare still returns null — WS1 makes it visible, it does not fix it");
+            Assert(lines.Count == 2 && lines[1].Contains("shares the host's user directory", StringComparison.Ordinal),
+                "the skipped seed states the consequence, not just the cause");
+
+            // Linux is untouched: the proven path stays quiet.
+            lines.Clear();
+            var linux = HeadlessUserDirSeeder.Prepare(
+                4,
+                HeadlessUserDirPlatform.Linux,
+                Env(("XDG_DATA_HOME", Path.Combine(root.Path, "xdg"))),
+                _ => Path.Combine(root.Path, "home"));
+            Assert(linux is not null && lines.Count == 0, "a working platform logs nothing new");
+        }
+        finally
+        {
+            HeadlessUserDirSeeder.LogSink = null;
+        }
     }
 
     private static Func<string, string?> Env(params (string Key, string Value)[] values)
