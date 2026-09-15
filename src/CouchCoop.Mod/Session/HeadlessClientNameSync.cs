@@ -104,7 +104,7 @@ internal sealed class HeadlessClientNameSync
             {
                 // Naming is cosmetic; a failed tick must never take the seat down. Next tick retries.
                 Console.Error.WriteLine(
-                    $"[couch-coop] seat name sync tick failed: {exception.GetType().Name}: {exception.Message}");
+                    $"[couchcoop] seat name sync tick failed: {exception.GetType().Name}: {exception.Message}");
             }
         }
     }

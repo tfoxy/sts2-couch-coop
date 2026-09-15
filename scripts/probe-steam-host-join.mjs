@@ -467,7 +467,7 @@ export function gradeHostBranch(parsed) {
       branch: "unknown",
       hostNetId: null,
       problems: [
-        "the host logged NO `[couch-coop] host-transport` line for this host start "
+        "the host logged NO `[couchcoop] host-transport` line for this host start "
         + `(scanned ${parsed?.scannedLines ?? 0} line(s), from line ${(parsed?.sinceLine ?? 0) + 1}). `
         + "Either the log path is wrong -- a worktree's own .sts2/ is empty, so --host-stderr may be "
         + "pointing at nothing -- or CouchCoop is not loaded in this host at all."

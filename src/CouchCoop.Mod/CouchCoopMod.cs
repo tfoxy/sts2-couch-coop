@@ -99,7 +99,7 @@ public static class CouchCoopMod
             catch (Exception exception)
             {
                 Session.CouchCoopLog.Info(
-                    $"[couch-coop] cache unavailable: {exception.GetType().Name}: {exception.Message} "
+                    $"[couchcoop] cache unavailable: {exception.GetType().Name}: {exception.Message} "
                     + "-- continuing without one");
             }
 
@@ -185,7 +185,7 @@ public static class CouchCoopMod
             // Opt-in CPU attribution logger (COUCHCOOP_HEADLESS_PROFILE=1): logs the per-frame process/physics/
             // render split to the per-slot godot.log so we can see where the headless CPU goes. No-op otherwise.
             // Also installs on a plain `--headless` instance, which is where the memory levers are A/B'd — its
-            // `[couch-coop][memory] rss_mb=` line reads /proc/self/statm and so measures the reclaim without
+            // `[couchcoop][memory] rss_mb=` line reads /proc/self/statm and so measures the reclaim without
             // needing ptrace access from outside (yama blocks that for a game the profiler did not spawn).
             //
             // …and on a WINDOWED host, which is the one machine whose idle cost is the product requirement: the
@@ -309,7 +309,7 @@ public static class CouchCoopMod
         }
         catch (Exception exception)
         {
-            Console.Error.WriteLine($"[couch-coop] lobby state read failed detail={exception.GetType().Name}: {exception.Message}");
+            Console.Error.WriteLine($"[couchcoop] lobby state read failed detail={exception.GetType().Name}: {exception.Message}");
             return null;
         }
     }
@@ -422,7 +422,7 @@ public static class CouchCoopMod
         // #14: the prerender job bakes through the same admission path as a live request, so give its provider the
         // same live instance count — a warmup bake must yield to the games exactly like a client-driven one.
         var clips = new CouchCoopSpineClipProvider(runtime.Assets, cache, null, CountGameInstances);
-        SpinePrerenderLog($"[couch-coop] spine-prerender requested cacheRoot={cache.RootPath ?? "disabled"}");
+        SpinePrerenderLog($"[couchcoop] spine-prerender requested cacheRoot={cache.RootPath ?? "disabled"}");
         _spinePrerenderTask = Task.Run(async () =>
         {
             try
@@ -435,7 +435,7 @@ public static class CouchCoopMod
             }
             catch (Exception exception)
             {
-                SpinePrerenderLog($"[couch-coop] spine-prerender failed detail={exception.GetType().Name}: {exception.Message}");
+                SpinePrerenderLog($"[couchcoop] spine-prerender failed detail={exception.GetType().Name}: {exception.Message}");
             }
         }, cancellationToken);
     }
@@ -464,7 +464,7 @@ public static class CouchCoopMod
         // main-thread render.
         var store = new CouchCoopGeoclipStore();
         var geoclips = new CouchCoopGeoclipProvider(new CouchCoopRuntimeGeoclipBaker(runtime.SpineGeoClipBaker, runtime), store, SpinePrerenderLog);
-        SpinePrerenderLog($"[couch-coop] geoclip-prerender requested store={store.RootPath ?? "disabled"}");
+        SpinePrerenderLog($"[couchcoop] geoclip-prerender requested store={store.RootPath ?? "disabled"}");
         _geoclipPrerenderTask = Task.Run(async () =>
         {
             try
@@ -479,7 +479,7 @@ public static class CouchCoopMod
             }
             catch (Exception exception)
             {
-                SpinePrerenderLog($"[couch-coop] geoclip-prerender failed detail={exception.GetType().Name}: {exception.Message}");
+                SpinePrerenderLog($"[couchcoop] geoclip-prerender failed detail={exception.GetType().Name}: {exception.Message}");
             }
         }, cancellationToken);
     }
@@ -509,7 +509,7 @@ public static class CouchCoopMod
         // static, so a client that asks for a variant this sweep is mid-render on coalesces onto the same render
         // instead of starting a second one. The disk cache is shared too; only the small memory map is per-instance.
         var backgrounds = new CouchCoopStaticBackgroundProvider(runtime.Assets, cache, SpinePrerenderLog);
-        SpinePrerenderLog($"[couch-coop] bg-prerender requested cacheRoot={cache.RootPath ?? "disabled"}");
+        SpinePrerenderLog($"[couchcoop] bg-prerender requested cacheRoot={cache.RootPath ?? "disabled"}");
         _bgPrerenderTask = Task.Run(async () =>
         {
             try
@@ -524,7 +524,7 @@ public static class CouchCoopMod
             }
             catch (Exception exception)
             {
-                SpinePrerenderLog($"[couch-coop] bg-prerender failed detail={exception.GetType().Name}: {exception.Message}");
+                SpinePrerenderLog($"[couchcoop] bg-prerender failed detail={exception.GetType().Name}: {exception.Message}");
             }
         }, cancellationToken);
     }
@@ -701,7 +701,7 @@ public static class CouchCoopMod
         }
         catch (Exception exception)
         {
-            Console.Error.WriteLine($"[couch-coop] host-ui diagnostic code={CouchCoopHostUiServices.HostUiStartupFailedCode} detail={exception.GetType().Name}: {exception.Message}");
+            Console.Error.WriteLine($"[couchcoop] host-ui diagnostic code={CouchCoopHostUiServices.HostUiStartupFailedCode} detail={exception.GetType().Name}: {exception.Message}");
             // B7: the outer twin of B3. StartAsync catches the socket-shaped failures itself; anything that
             // escapes to here (a bad static root, a construction fault) leaves the host with no browser
             // server at all, which the player-facing log must report identically — the distinction between
@@ -723,7 +723,7 @@ public static class CouchCoopMod
                 }
                 catch (Exception disposeException)
                 {
-                    Console.Error.WriteLine($"[couch-coop] host-ui diagnostic code={CouchCoopHostUiServices.HostUiStartupDisposeFailedCode} detail={disposeException.GetType().Name}: {disposeException.Message}");
+                    Console.Error.WriteLine($"[couchcoop] host-ui diagnostic code={CouchCoopHostUiServices.HostUiStartupDisposeFailedCode} detail={disposeException.GetType().Name}: {disposeException.Message}");
                 }
 
                 _hostUi = null;
@@ -762,7 +762,7 @@ public static class CouchCoopMod
         catch (Exception exception)
         {
             Console.Error.WriteLine(
-                $"[couch-coop] host log path unresolved detail={exception.GetType().Name}: {exception.Message}");
+                $"[couchcoop] host log path unresolved detail={exception.GetType().Name}: {exception.Message}");
         }
     }
 
@@ -801,15 +801,15 @@ public static class CouchCoopMod
 
             if (preload.Loaded)
             {
-                Console.Error.WriteLine("[couch-coop] monomod unwinder preloaded");
-                CouchCoopLog.Info("[couch-coop] monomod unwinder preloaded (libgcc_s.so.1, RTLD_GLOBAL)");
+                Console.Error.WriteLine("[couchcoop] monomod unwinder preloaded");
+                CouchCoopLog.Info("[couchcoop] monomod unwinder preloaded (libgcc_s.so.1, RTLD_GLOBAL)");
                 // The Linux behaviour is untouched; only recorded, so a report from the platform we actually
                 // ship on says what its precondition did instead of "probe=not-run".
                 Connections.CouchCoopPatchHealth.RecordProbe("unwinder-preloaded");
                 return;
             }
 
-            var detail = $"[couch-coop] monomod unwinder preload FAILED detail={preload.Error} — Harmony patches "
+            var detail = $"[couchcoop] monomod unwinder preload FAILED detail={preload.Error} — Harmony patches "
                 + "may fail with 'undefined symbol: _Unwind_RaiseException'; the lobby QR button and co-op seat "
                 + "joining depend on them";
             Console.Error.WriteLine(detail);
@@ -823,7 +823,7 @@ public static class CouchCoopMod
             // Never fatal: the patches below each degrade on their own, and a mod that refuses to load is worse
             // than one that loads without its hooks.
             Console.Error.WriteLine(
-                $"[couch-coop] monomod unwinder preload threw detail={exception.GetType().Name}: {exception.Message}");
+                $"[couchcoop] monomod unwinder preload threw detail={exception.GetType().Name}: {exception.Message}");
             Connections.CouchCoopPatchHealth.RecordProbe($"threw({exception.GetType().Name})");
         }
     }
@@ -848,7 +848,7 @@ public static class CouchCoopMod
         var probe = Patches.CouchCoopHarmonyProbe.Run();
         if (probe.Succeeded)
         {
-            const string Message = "[couch-coop] harmony probe ok (macOS): a trial patch of our own method applied and took effect";
+            const string Message = "[couchcoop] harmony probe ok (macOS): a trial patch of our own method applied and took effect";
             Console.Error.WriteLine(Message);
             CouchCoopLog.Info(Message);
             Connections.CouchCoopPatchHealth.RecordProbe("ok");
@@ -856,7 +856,7 @@ public static class CouchCoopMod
         }
 
         var error = probe.Error ?? "unknown";
-        var message = $"[couch-coop] harmony probe FAILED (macOS) detail={error} — no Harmony patch can be "
+        var message = $"[couchcoop] harmony probe FAILED (macOS) detail={error} — no Harmony patch can be "
             + "installed in this process, so the lobby Couch Co-Op button will not appear and no player can join "
             + "a seat this session";
         Console.Error.WriteLine(message);
@@ -874,7 +874,7 @@ public static class CouchCoopMod
         }
         catch (Exception exception)
         {
-            Console.Error.WriteLine($"[couch-coop] host-ui diagnostic code={CouchCoopHostUiServices.HostUiOverlayStartupFailedCode} detail={exception.GetType().Name}: {exception.Message}");
+            Console.Error.WriteLine($"[couchcoop] host-ui diagnostic code={CouchCoopHostUiServices.HostUiOverlayStartupFailedCode} detail={exception.GetType().Name}: {exception.Message}");
         }
     }
 }

@@ -205,7 +205,7 @@ public sealed class HostReachabilityWatch
             // present, and once something has, keeping it in the saved-problems list is a sentence that is no
             // longer true about a session that is now working.
             _registry.Dismiss(issueId);
-            _log?.Invoke("[couch-coop] host-reachability cleared — a connection reached the browser listener");
+            _log?.Invoke("[couchcoop] host-reachability cleared — a connection reached the browser listener");
         }
     }
 
@@ -304,7 +304,7 @@ public sealed class HostReachabilityWatch
             return;
         }
 
-        _log?.Invoke($"[couch-coop] host-ui diagnostic code={IssueCode} detail=no-inbound-connection-in-{warnSeconds}s");
+        _log?.Invoke($"[couchcoop] host-ui diagnostic code={IssueCode} detail=no-inbound-connection-in-{warnSeconds}s");
     }
 
     /// <summary>

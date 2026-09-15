@@ -277,7 +277,7 @@ public sealed class MirrorSeatDirectory
                 try { _reapSeat(netId); }
                 catch (Exception ex)
                 {
-                    Console.Error.WriteLine($"[couch-coop] reaping stuck seat netId={netId} failed: {ex.GetType().Name}: {ex.Message}");
+                    Console.Error.WriteLine($"[couchcoop] reaping stuck seat netId={netId} failed: {ex.GetType().Name}: {ex.Message}");
                 }
             }
         }
@@ -320,7 +320,7 @@ public sealed class MirrorSeatDirectory
             // SEGFAULTS the test host — a native crash `catch` cannot intercept (verified: exit 139). So the seat
             // verdict remains available through the current launcher-side stdio capture or an attached terminal.
             Console.Error.WriteLine(
-                $"[couch-coop] mirror-seat netId={seat.NetId} {(had ? was.Status : "none")}->{now.Status} "
+                $"[couchcoop] mirror-seat netId={seat.NetId} {(had ? was.Status : "none")}->{now.Status} "
                 + $"processLive={seat.ProcessLive} gameConnected={gameConnectedNetIds.Contains(seat.NetId)} "
                 + $"detached={seat.Detached} claim={seat.ClaimedName ?? "none"} mode={mirrorMode ?? "none"}");
 
@@ -377,7 +377,7 @@ public sealed class MirrorSeatDirectory
         {
             // Degrade to "no opinion" (every seat ready) rather than failing the session envelope — the join screen
             // is the ONLY way back in, so it must render even when the seat table cannot be read.
-            Console.Error.WriteLine($"[couch-coop] describing mirror seats failed: {ex.GetType().Name}: {ex.Message}");
+            Console.Error.WriteLine($"[couchcoop] describing mirror seats failed: {ex.GetType().Name}: {ex.Message}");
             return [];
         }
     }

@@ -71,7 +71,7 @@ internal static class CouchCoopHostInputMode
         catch (Exception exception)
         {
             Console.Error.WriteLine(
-                $"[couch-coop] host input mode read failed detail={exception.GetType().Name}: {exception.Message}");
+                $"[couchcoop] host input mode read failed detail={exception.GetType().Name}: {exception.Message}");
             return default;
         }
     }

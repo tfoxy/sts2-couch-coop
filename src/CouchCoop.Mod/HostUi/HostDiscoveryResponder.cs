@@ -52,7 +52,7 @@ public sealed class HostDiscoveryResponder : IAsyncDisposable
         }
         catch (SocketException exception)
         {
-            _log($"[couch-coop] host-ui diagnostic code={UnavailableCode} detail={exception.SocketErrorCode}");
+            _log($"[couchcoop] host-ui diagnostic code={UnavailableCode} detail={exception.SocketErrorCode}");
             _udp = null;
         }
 

@@ -200,21 +200,21 @@ test("parseProcCmdline splits the NUL-delimited argv and drops the trailing NUL"
 // Synthesized from the format strings in src/CouchCoop.Mod/Session/CouchCoopHostTransport.cs
 // (`LogEffectiveCapacity` and the `steam host started` line). Both go to stderr with no level prefix.
 const STEAM_LOG = [
-  "[couch-coop] browser server listening on 13337",
-  "[couch-coop] host-transport effective maxClients=8 (requested=8, source=host-start)",
-  "[couch-coop] host-transport steam host started lobby=109775241058315825 hostNetId=76561198072573591 couchSeats=ENet:33771.",
+  "[couchcoop] browser server listening on 13337",
+  "[couchcoop] host-transport effective maxClients=8 (requested=8, source=host-start)",
+  "[couchcoop] host-transport steam host started lobby=109775241058315825 hostNetId=76561198072573591 couchSeats=ENet:33771.",
   ""
 ].join("\n");
 
 const ENET_LOG = [
-  "[couch-coop] browser server listening on 13337",
-  "[couch-coop] host-transport effective maxClients=4 (requested=4, source=stock-enet)",
+  "[couchcoop] browser server listening on 13337",
+  "[couchcoop] host-transport effective maxClients=4 (requested=4, source=stock-enet)",
   ""
 ].join("\n");
 
 const STEAM_OFFLINE_LOG = [
-  "[couch-coop] host-transport effective maxClients=8 (requested=8, source=host-start)",
-  "[couch-coop] host-transport steam host failed (k_EResultNoConnection) — falling back to a couch/LAN-only ENet host on port 33771. Remote Steam friends cannot join this session.",
+  "[couchcoop] host-transport effective maxClients=8 (requested=8, source=host-start)",
+  "[couchcoop] host-transport steam host failed (k_EResultNoConnection) — falling back to a couch/LAN-only ENet host on port 33771. Remote Steam friends cannot join this session.",
   ""
 ].join("\n");
 
@@ -270,7 +270,7 @@ test("gradeHostBranch REFUSES the ENet branch by name", () => {
 // so "the host took the ENet branch" would be a claim the log does not support.
 test("gradeHostBranch tells a silent host start apart from an ENet one", () => {
   const verdict = gradeHostBranch(parseHostTransportLog([
-    "[couch-coop] host-transport steam host threw (InvalidOperationException: Steam is not initialized)",
+    "[couchcoop] host-transport steam host threw (InvalidOperationException: Steam is not initialized)",
     ""
   ].join("\n")));
   assert.equal(verdict.ok, false);
@@ -290,7 +290,7 @@ test("gradeHostBranch REFUSES a Steam start that fell back to ENet", () => {
 
 test("gradeHostBranch REFUSES a Steam start that never produced a lobby", () => {
   const verdict = gradeHostBranch(parseHostTransportLog([
-    "[couch-coop] host-transport effective maxClients=8 (requested=8, source=host-start)",
+    "[couchcoop] host-transport effective maxClients=8 (requested=8, source=host-start)",
     ""
   ].join("\n")));
   assert.equal(verdict.ok, false);
@@ -302,8 +302,8 @@ test("gradeHostBranch REFUSES a Steam start that never produced a lobby", () => 
 // handling -- HostNetIdPatch is inert there, which is the whole reason the ENet coverage missed this.
 test("gradeHostBranch REFUSES a Steam lobby hosting as the ENet wire id", () => {
   const verdict = gradeHostBranch(parseHostTransportLog([
-    "[couch-coop] host-transport effective maxClients=4 (requested=4, source=host-start)",
-    `[couch-coop] host-transport steam host started lobby=1 hostNetId=${ENET_WIRE_HOST_NET_ID} couchSeats=ENet:33771.`,
+    "[couchcoop] host-transport effective maxClients=4 (requested=4, source=host-start)",
+    `[couchcoop] host-transport steam host started lobby=1 hostNetId=${ENET_WIRE_HOST_NET_ID} couchSeats=ENet:33771.`,
     ""
   ].join("\n")));
   assert.equal(verdict.ok, false);
@@ -313,8 +313,8 @@ test("gradeHostBranch REFUSES a Steam lobby hosting as the ENet wire id", () => 
 
 test("gradeHostBranch REFUSES a Steam lobby with no couch ENet side, and says why no seat could join", () => {
   const verdict = gradeHostBranch(parseHostTransportLog([
-    "[couch-coop] host-transport effective maxClients=4 (requested=4, source=host-start)",
-    "[couch-coop] host-transport steam host started lobby=109775241058315825 hostNetId=76561198072573591 couchSeats=unavailable.",
+    "[couchcoop] host-transport effective maxClients=4 (requested=4, source=host-start)",
+    "[couchcoop] host-transport steam host started lobby=109775241058315825 hostNetId=76561198072573591 couchSeats=unavailable.",
     ""
   ].join("\n")));
   assert.equal(verdict.ok, false);
@@ -327,7 +327,7 @@ test("gradeHostBranch REFUSES a log with no host-transport line at all, and name
   const verdict = gradeHostBranch(parseHostTransportLog("boot\nnothing here\n"));
   assert.equal(verdict.ok, false);
   assert.equal(verdict.branch, "unknown");
-  assert.match(verdict.problems.join(" "), /logged NO `\[couch-coop\] host-transport` line/);
+  assert.match(verdict.problems.join(" "), /logged NO `\[couchcoop\] host-transport` line/);
   assert.match(verdict.problems.join(" "), /a worktree's own \.sts2\/ is empty/);
 });
 

@@ -94,7 +94,7 @@ internal static class CouchCoopHostTransportPatch
             else
             {
                 Console.Error.WriteLine(
-                    "[couch-coop] CouchCoopHostTransportPatch: NetHostGameService._netHost / Platform setter not found — "
+                    "[couchcoop] CouchCoopHostTransportPatch: NetHostGameService._netHost / Platform setter not found — "
                     + "hosting left STOCK (no Steam-offline fallback, no couch seats on a Steam-hosted session).");
             }
 
@@ -121,7 +121,7 @@ internal static class CouchCoopHostTransportPatch
             if (!enetBookkeeping)
             {
                 Console.Error.WriteLine(
-                    "[couch-coop] CouchCoopHostTransportPatch: ENet host bookkeeping unavailable — couch seats will be "
+                    "[couchcoop] CouchCoopHostTransportPatch: ENet host bookkeeping unavailable — couch seats will be "
                     + "launched unguarded (pre-WS-1 behavior).");
             }
         }
@@ -169,7 +169,7 @@ internal static class CouchCoopHostTransportPatch
         if (NetIdGetter is null)
         {
             Console.Error.WriteLine(
-                "[couch-coop] CouchCoopHostTransportPatch: NetHostGameService.NetId getter not found — "
+                "[couchcoop] CouchCoopHostTransportPatch: NetHostGameService.NetId getter not found — "
                 + "saved Steam runs may not load through an ENet fallback.");
             return;
         }
@@ -183,7 +183,7 @@ internal static class CouchCoopHostTransportPatch
         catch (Exception exception)
         {
             Console.Error.WriteLine(
-                $"[couch-coop] CouchCoopHostTransportPatch: NetHostGameService.NetId getter patch failed "
+                $"[couchcoop] CouchCoopHostTransportPatch: NetHostGameService.NetId getter patch failed "
                 + $"({exception.GetType().Name}: {exception.Message}) — saved Steam runs may not load through an ENet fallback.");
         }
     }
@@ -206,7 +206,7 @@ internal static class CouchCoopHostTransportPatch
         var target = AccessTools.Method(type, name, args);
         if (target is null)
         {
-            Console.Error.WriteLine($"[couch-coop] CouchCoopHostTransportPatch: {label} not found — host transport bookkeeping skipped.");
+            Console.Error.WriteLine($"[couchcoop] CouchCoopHostTransportPatch: {label} not found — host transport bookkeeping skipped.");
             return false;
         }
 

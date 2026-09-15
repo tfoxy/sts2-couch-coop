@@ -128,7 +128,7 @@ internal sealed class JoinProgressTicker
             // A diagnostic must never be able to fail the thing it is describing: the join keeps running with no
             // progress line, exactly as it did before this existed.
             Console.Error.WriteLine(
-                $"[couch-coop] join progress stopped: {exception.GetType().Name}: {exception.Message}");
+                $"[couchcoop] join progress stopped: {exception.GetType().Name}: {exception.Message}");
         }
     }
 

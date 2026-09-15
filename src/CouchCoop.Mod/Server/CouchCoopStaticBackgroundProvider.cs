@@ -410,7 +410,7 @@ public sealed class CouchCoopStaticBackgroundProvider(
         if (!await _cache.TryWriteAsync(cacheKey, bytes, contentType).ConfigureAwait(false))
         {
             // Best-effort cache; serve the freshly rendered image even if the write-through fails.
-            _cacheDiagnostics.Write("static-bg-cache-write-failed", $"[couch-coop] static-bg cache write failed key={cacheKey}");
+            _cacheDiagnostics.Write("static-bg-cache-write-failed", $"[couchcoop] static-bg cache write failed key={cacheKey}");
         }
 
         // Published only now: the requester is still blocked on the write-through, so it belongs in the same
@@ -515,7 +515,7 @@ public sealed class CouchCoopStaticBackgroundProvider(
                 return new RenderChainResult(result, samples);
             }
 
-            _log($"[couch-coop] static-bg selector render failed id={id} field={result.Error?.Field} code={result.Error?.Code}; retrying deterministic discovery");
+            _log($"[couchcoop] static-bg selector render failed id={id} field={result.Error?.Field} code={result.Error?.Code}; retrying deterministic discovery");
         }
 
         result = TimeRender(
@@ -539,7 +539,7 @@ public sealed class CouchCoopStaticBackgroundProvider(
             return new RenderChainResult(result, samples);
         }
 
-        _log($"[couch-coop] static-bg composed render failed id={id} code={result.Error?.Code}; retrying literal scene");
+        _log($"[couchcoop] static-bg composed render failed id={id} code={result.Error?.Code}; retrying literal scene");
         result = TimeRender(
             id,
             renderWidthPx,
@@ -715,7 +715,7 @@ public sealed class CouchCoopStaticBackgroundProvider(
             using var reservation = _cache.Quota?.TryReserve(payload.Contents.LongLength);
             if (reservation is null)
             {
-                _log($"[couch-coop] static-bg bench dump refused by managed-cache quota path={dumpPath}");
+                _log($"[couchcoop] static-bg bench dump refused by managed-cache quota path={dumpPath}");
             }
             else try
             {
@@ -734,7 +734,7 @@ public sealed class CouchCoopStaticBackgroundProvider(
             }
             catch (Exception exception)
             {
-                _log($"[couch-coop] static-bg bench dump failed path={dumpPath} error={exception.GetType().Name}: {exception.Message}");
+                _log($"[couchcoop] static-bg bench dump failed path={dumpPath} error={exception.GetType().Name}: {exception.Message}");
             }
         }
 

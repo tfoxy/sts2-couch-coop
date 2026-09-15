@@ -74,7 +74,7 @@ Use the `couch-deploy` skill. The short version:
   `sts2 game launch` no longer discards the child's stdio (2026-09-04): it tees both streams to
   `.sts2/artifacts/game-launch/` and reports the paths as `launch.stdio` (also `game info.launchStdio`).
   `sts2 --mode dev --json dev logs --source game-stdio` tails them — capped at 80 lines and it ignores
-  `--limit`, so read the file it names for anything longer. **The mod's own `[couch-coop]` / `[spirectl]` lines
+  `--limit`, so read the file it names for anything longer. **The mod's own `[couchcoop]` / `[spirectl]` lines
   are on STDOUT**, not stderr.
 - `pkill -f <pattern>` self-matches and kills the invoking shell (exit 144, no output). `COUCHCOOP_*` are env vars,
   not argv. The real pattern is `SlayTheSpire2 --headless`. Kill and relaunch in **separate** Bash calls.

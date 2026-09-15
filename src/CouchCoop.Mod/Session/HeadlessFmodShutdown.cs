@@ -79,7 +79,7 @@ public static class HeadlessFmodShutdown
             _started = true;
         }
 
-        Console.Error.WriteLine("[couch-coop][fmod] headless FMOD disable enabling");
+        Console.Error.WriteLine("[couchcoop][fmod] headless FMOD disable enabling");
         _ = Task.Run(InstallLoopAsync);
     }
 
@@ -100,13 +100,13 @@ public static class HeadlessFmodShutdown
             catch (Exception exception)
             {
                 Console.Error.WriteLine(
-                    $"[couch-coop][fmod] install attempt failed: {exception.GetType().Name}: {exception.Message}");
+                    $"[couchcoop][fmod] install attempt failed: {exception.GetType().Name}: {exception.Message}");
             }
 
             await Task.Delay(250).ConfigureAwait(false);
         }
 
-        Console.Error.WriteLine("[couch-coop][fmod] install gave up (SceneTree never became ready)");
+        Console.Error.WriteLine("[couchcoop][fmod] install gave up (SceneTree never became ready)");
     }
 
     // Runs on the game main thread (deferred). Attaches a repeating Timer whose Timeout drives the readiness Probe.
@@ -127,7 +127,7 @@ public static class HeadlessFmodShutdown
         };
         timer.Timeout += () => Probe(root, timer);
         root.AddChild(timer);
-        CouchCoopLog.Info("[couch-coop][fmod] headless FMOD-disable armed; waiting for FmodServer + FmodManager to be ready.");
+        CouchCoopLog.Info("[couchcoop][fmod] headless FMOD-disable armed; waiting for FmodServer + FmodManager to be ready.");
     }
 
     // Runs on the game main thread (Timer.Timeout). Waits until the FmodServer singleton AND the FmodManager autoload
@@ -150,7 +150,7 @@ public static class HeadlessFmodShutdown
             if (++_readinessProbes > MaxReadinessProbes)
             {
                 CouchCoopLog.Info(
-                    "[couch-coop][fmod] gave up waiting for FmodServer/FmodManager — FMOD left running (nothing disabled).");
+                    "[couchcoop][fmod] gave up waiting for FmodServer/FmodManager — FMOD left running (nothing disabled).");
                 _done = true;
                 CleanupTimer(timer);
             }
@@ -178,7 +178,7 @@ public static class HeadlessFmodShutdown
         fmodManager.SetProcess(false);
         fmodManager.SetPhysicsProcess(false);
         fmodManager.ProcessMode = Node.ProcessModeEnum.Disabled;
-        CouchCoopLog.Info("[couch-coop][fmod] disabled /root/FmodManager processing (stops per-frame FmodServer.update()).");
+        CouchCoopLog.Info("[couchcoop][fmod] disabled /root/FmodManager processing (stops per-frame FmodServer.update()).");
 
         // Defensive extras (unverified node paths; harmless if absent, not required for correctness).
         foreach (var path in SiblingAudioNodePaths)
@@ -187,7 +187,7 @@ public static class HeadlessFmodShutdown
             if (node is not null && GodotObject.IsInstanceValid(node))
             {
                 node.ProcessMode = Node.ProcessModeEnum.Disabled;
-                CouchCoopLog.Info($"[couch-coop][fmod] disabled '{path}' processing (defensive).");
+                CouchCoopLog.Info($"[couchcoop][fmod] disabled '{path}' processing (defensive).");
             }
         }
 
@@ -197,12 +197,12 @@ public static class HeadlessFmodShutdown
         {
             server.Call(ShutdownMethod);
             CouchCoopLog.Info(
-                "[couch-coop][fmod] FmodServer.shutdown() called — mixer/DSP thread released; headless audio fully off.");
+                "[couchcoop][fmod] FmodServer.shutdown() called — mixer/DSP thread released; headless audio fully off.");
         }
         else
         {
             CouchCoopLog.Info(
-                "[couch-coop][fmod] FmodServer singleton/shutdown() unavailable at teardown — left running (update() already disabled).");
+                "[couchcoop][fmod] FmodServer singleton/shutdown() unavailable at teardown — left running (update() already disabled).");
         }
     }
 

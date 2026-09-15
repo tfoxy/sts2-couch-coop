@@ -98,7 +98,7 @@ internal static class JoinHostOverridePatch
             if (target is null)
             {
                 Console.Error.WriteLine(
-                    $"[couch-coop] JoinHostOverridePatch: ENetClientConnectionInitializer(ulong, string, ushort) not found — {JoinHostEnvVar} ignored.");
+                    $"[couchcoop] JoinHostOverridePatch: ENetClientConnectionInitializer(ulong, string, ushort) not found — {JoinHostEnvVar} ignored.");
                 return;
             }
 
@@ -110,7 +110,7 @@ internal static class JoinHostOverridePatch
                 var prefix = typeof(JoinHostOverridePatch)
                     .GetMethod(nameof(PrefixConstructor), BindingFlags.NonPublic | BindingFlags.Static);
                 new Harmony("com.couchcoop.join-host").Patch(target, prefix: new HarmonyMethod(prefix));
-                Console.Error.WriteLine($"[couch-coop] join host overridden to {host}:{(port?.ToString() ?? "<game default>")}");
+                Console.Error.WriteLine($"[couchcoop] join host overridden to {host}:{(port?.ToString() ?? "<game default>")}");
             }
             catch (Exception ex)
             {

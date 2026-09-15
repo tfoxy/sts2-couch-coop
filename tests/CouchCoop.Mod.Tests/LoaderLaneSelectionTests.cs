@@ -28,6 +28,9 @@ internal static class LoaderLaneSelectionTests
         AGameNewerThanEveryLaneStillGetsTheHighestLane();
         AGameOlderThanEveryLaneIsRefusedByName();
         NoLanesDirectoryIsTheFlatDevLayout();
+        AFlatDeployBuiltForAnotherGameBuildIsRefusedByName();
+        AFlatDeployWithNothingTrustworthyToCompareStaysSilent();
+        ALanePayloadIgnoresTheDeployStamp();
         AnUndetectableGameVersionRefusesOnlyWhenLanesExist();
         ANonVersionDirectoryInsideLanesIsIgnored();
         AnEmptyLanesDirectoryIsRefusedRatherThanSilentlyFlat();
@@ -247,6 +250,132 @@ internal static class LoaderLaneSelectionTests
         var unknown = CouchCoopLaneSelection.Select(root.Path, null);
         Assert(unknown.LaneDirectory is null && unknown.Refusal is null,
             "a flat payload with an unknown game version is still just flat");
+    }
+
+    /// <summary>
+    /// The guard this whole flat-payload branch exists for: a dev deploy left behind by a game update.
+    /// </summary>
+    /// <remarks>
+    /// The real incident, Sep 15 2026. The install was switched from stable to the public beta; the deploy
+    /// in `mods/couchcoop` had been built at 18:18 against v0.107.1 and was still there. With no `lanes/`
+    /// directory the loader took the flat path silently, loaded the v107 implementation into a v0.111.0
+    /// game, and the bridge's API manifest died on `Could not load type '…Multiplayer.LobbyPlayer'` — a
+    /// forty-frame stack naming a GAME type, which reads as "the game is broken" and names neither build.
+    /// </remarks>
+    private static void AFlatDeployBuiltForAnotherGameBuildIsRefusedByName()
+    {
+        using var root = new TempDir();
+        File.WriteAllText(Path.Combine(root.Path, "CouchCoop.Mod.dll"), "not really a dll");
+        LocalBuildInfo(root, "v0.107.1");
+
+        var matched = CouchCoopLaneSelection.Select(root.Path, "v0.107.1");
+        Assert(matched.Refusal is null, "the build it was compiled for loads, which is every ordinary deploy");
+        Assert(matched.LaneDirectory is null, "…and is still flat");
+
+        var refused = CouchCoopLaneSelection.Select(root.Path, "v0.111.0");
+        Assert(refused.LaneDirectory is null, "a refusal chooses nothing");
+        Assert(refused.Refusal is not null, "a deploy built for another game build refuses");
+        Assert(refused.Refusal!.Contains("v0.107.1", StringComparison.Ordinal),
+            $"the refusal names the build this payload IS: {refused.Refusal}");
+        Assert(refused.Refusal.Contains("v0.111.0", StringComparison.Ordinal),
+            $"the refusal names the build that is installed: {refused.Refusal}");
+        Assert(refused.Refusal.Contains("build-local-mod.sh", StringComparison.Ordinal),
+            $"the refusal names the one command that fixes it: {refused.Refusal}");
+
+        // EXACT, not nearest-lower-or-equal. This is the direction a lane accepts (v0.112.0 keeps taking the
+        // 0.111.0 lane) and the direction that produced the crash, so the two rules must not be confused: a
+        // flat payload carries one compile and knows only the one build it was compiled against.
+        Assert(
+            CouchCoopLaneSelection.Select(root.Path, "v0.107.2").Refusal is not null,
+            "a NEWER game than the one this was built for still refuses");
+        Assert(
+            CouchCoopLaneSelection.Select(root.Path, "v0.106.0").Refusal is not null,
+            "so does an older one");
+
+        // The stamp writes the prefix and the parse is numeric, so the two spellings must agree.
+        using var bare = new TempDir();
+        LocalBuildInfo(bare, "0.107.1");
+        Assert(CouchCoopLaneSelection.Select(bare.Path, "v0.107.1").Refusal is null,
+            "'0.107.1' and 'v0.107.1' are the same build");
+    }
+
+    /// <summary>
+    /// Every way the comparison can come up empty, all of which must stay flat and silent.
+    /// </summary>
+    /// <remarks>
+    /// A guard that refused whenever it could not answer would take the mod down over a missing diagnostic
+    /// rather than over a real mismatch — and three of these five are ordinary, not broken.
+    /// </remarks>
+    private static void AFlatDeployWithNothingTrustworthyToCompareStaysSilent()
+    {
+        // No stamp at all: a hand-assembled payload, or a deploy older than stamp-local-mod.sh.
+        using var unstamped = new TempDir();
+        Assert(CouchCoopLaneSelection.ReadFlatBuildGameVersion(unstamped.Path) is null, "no stamp, no answer");
+        Assert(CouchCoopLaneSelection.Select(unstamped.Path, "v0.111.0").Refusal is null,
+            "an unstamped flat payload is still just flat");
+
+        // `unknown` is what the stamp writes when the lane probe could not read the install.
+        using var unknown = new TempDir();
+        LocalBuildInfo(unknown, "unknown");
+        Assert(CouchCoopLaneSelection.ReadFlatBuildGameVersion(unknown.Path) is null,
+            "'unknown' is the absence of an answer, not an answer");
+        Assert(CouchCoopLaneSelection.Select(unknown.Path, "v0.111.0").Refusal is null, "…so nothing refuses");
+
+        // A RELEASE stamp names a reference package per lane and no single build. It should never reach the
+        // flat path (a release payload carries lanes/), but if it does it must not be read as one build.
+        using var release = new TempDir();
+        File.WriteAllText(
+            Path.Combine(release.Path, CouchCoopLaneSelection.BuildInfoFileName),
+            """
+            {
+              "schemaVersion": "couchcoop-release-build-info/v2",
+              "dependencies": {
+                "sts2References": {
+                  "stable": { "gameBuild": "v0.107.1", "bridgeGameApi": "v107" },
+                  "public-beta": { "gameBuild": "v0.111.0", "bridgeGameApi": "v111" }
+                }
+              }
+            }
+            """);
+        Assert(CouchCoopLaneSelection.ReadFlatBuildGameVersion(release.Path) is null,
+            "a release stamp carries no single compiled-for build");
+        Assert(CouchCoopLaneSelection.Select(release.Path, "v0.111.0").Refusal is null,
+            "…and so cannot refuse anything");
+
+        // Unparseable and unreadable stamps: a truncated write, and a version the ladder cannot compare.
+        using var malformed = new TempDir();
+        File.WriteAllText(Path.Combine(malformed.Path, CouchCoopLaneSelection.BuildInfoFileName), "{ not json");
+        Assert(CouchCoopLaneSelection.ReadFlatBuildGameVersion(malformed.Path) is null, "broken JSON is silent");
+        Assert(CouchCoopLaneSelection.Select(malformed.Path, "v0.111.0").Refusal is null, "…and never fatal");
+
+        using var nonVersion = new TempDir();
+        LocalBuildInfo(nonVersion, "main");
+        Assert(CouchCoopLaneSelection.Select(nonVersion.Path, "v0.111.0").Refusal is null,
+            "a stamp that is not a M.m.p version cannot be compared, so it is accepted");
+
+        // And the other side of the comparison: a game whose version could not be read. A flat payload with
+        // an undetectable install was already silent before this guard existed, and must stay that way.
+        using var stamped = new TempDir();
+        LocalBuildInfo(stamped, "v0.107.1");
+        Assert(CouchCoopLaneSelection.Select(stamped.Path, null).Refusal is null,
+            "an undetectable game version is not a mismatch");
+    }
+
+    /// <summary>The stamp is the FLAT payload's build identity, and a lane payload has its own.</summary>
+    /// <remarks>
+    /// A release archive extracted over an older one can leave a stale root `build-info.txt` beside a fresh
+    /// `lanes/` tree — the same shape `DescribeIgnoredRootCopy` exists for. Reading it there would refuse a
+    /// payload that is choosing its lane perfectly well.
+    /// </remarks>
+    private static void ALanePayloadIgnoresTheDeployStamp()
+    {
+        using var root = new TempDir();
+        Lanes(root, "0.107.1", "0.111.0");
+        LocalBuildInfo(root, "v0.107.1");
+
+        var selection = CouchCoopLaneSelection.Select(root.Path, "v0.111.0");
+        Assert(selection.Refusal is null, "a stale stamp beside lanes/ never refuses");
+        Assert(LaneName(selection) == "0.111.0", $"the lane still decides — got '{LaneName(selection)}'");
     }
 
     private static void AnUndetectableGameVersionRefusesOnlyWhenLanesExist()
@@ -549,6 +678,23 @@ internal static class LoaderLaneSelectionTests
             Directory.CreateDirectory(Path.Combine(root.Path, "lanes", name));
         }
     }
+
+    /// <summary>
+    /// The dev-deploy stamp, in the shape <c>scripts/stamp-local-mod.sh</c> writes it — schema name, and
+    /// the compiled-against build nested under <c>dependencies.sts2References.version</c>.
+    /// </summary>
+    private static void LocalBuildInfo(TempDir root, string gameVersion) =>
+        File.WriteAllText(
+            Path.Combine(root.Path, CouchCoopLaneSelection.BuildInfoFileName),
+            $$"""
+            {
+              "schemaVersion": "couchcoop-local-build-info/v1",
+              "version": "9999.0.0+dev.abcdef012345",
+              "dependencies": {
+                "sts2References": { "lane": "v107", "id": "local-install", "version": "{{gameVersion}}" }
+              }
+            }
+            """);
 
     private static string? LaneName(CouchCoopLaneSelection.LaneSelection selection) =>
         selection.LaneDirectory is null ? null : Path.GetFileName(selection.LaneDirectory);

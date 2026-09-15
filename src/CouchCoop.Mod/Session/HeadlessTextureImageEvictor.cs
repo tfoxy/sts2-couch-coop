@@ -167,13 +167,13 @@ public static class HeadlessTextureImageEvictor
             catch (Exception exception)
             {
                 Console.Error.WriteLine(
-                    $"[couch-coop][texevict] install attempt failed: {exception.GetType().Name}: {exception.Message}");
+                    $"[couchcoop][texevict] install attempt failed: {exception.GetType().Name}: {exception.Message}");
             }
 
             await Task.Delay(250).ConfigureAwait(false);
         }
 
-        Console.Error.WriteLine("[couch-coop][texevict] install gave up (SceneTree never became ready)");
+        Console.Error.WriteLine("[couchcoop][texevict] install gave up (SceneTree never became ready)");
     }
 
     private static void AttachOnMainThread(Node root)
@@ -193,7 +193,7 @@ public static class HeadlessTextureImageEvictor
         };
         timer.Timeout += Tick;
         root.AddChild(timer);
-        CouchCoopLog.Info($"[couch-coop][texevict] headless texture image evictor ready (interval={IntervalSeconds:0.#}s)");
+        CouchCoopLog.Info($"[couchcoop][texevict] headless texture image evictor ready (interval={IntervalSeconds:0.#}s)");
     }
 
     // Runs on the game main thread (Timer.Timeout).
@@ -242,7 +242,7 @@ public static class HeadlessTextureImageEvictor
             EvictedCount += evictedThisSlice;
             ReclaimedBytes += reclaimedThisSlice;
             CouchCoopLog.Info(
-                $"[couch-coop][texevict] released {evictedThisSlice} image(s), "
+                $"[couchcoop][texevict] released {evictedThisSlice} image(s), "
                 + $"{reclaimedThisSlice / (1024.0 * 1024.0):0.0}MB this pass; "
                 + $"{EvictedCount} / {ReclaimedBytes / (1024.0 * 1024.0):0.0}MB total");
         }
@@ -274,7 +274,7 @@ public static class HeadlessTextureImageEvictor
             catch (Exception exception)
             {
                 Console.Error.WriteLine(
-                    $"[couch-coop][texevict] cannot list {directory}: {exception.GetType().Name}: {exception.Message}");
+                    $"[couchcoop][texevict] cannot list {directory}: {exception.GetType().Name}: {exception.Message}");
                 continue;
             }
 
@@ -299,7 +299,7 @@ public static class HeadlessTextureImageEvictor
         {
             _discoveryComplete = true;
             _texturePaths.TrimExcess();
-            CouchCoopLog.Info($"[couch-coop][texevict] discovery complete: {_texturePaths.Count} texture path(s) under res://");
+            CouchCoopLog.Info($"[couchcoop][texevict] discovery complete: {_texturePaths.Count} texture path(s) under res://");
         }
     }
 
@@ -348,7 +348,7 @@ public static class HeadlessTextureImageEvictor
             // A texture can be freed underneath us between the sweep and the read, and a resource can refuse to
             // produce an image at all. Neither is worth failing the pass over.
             Console.Error.WriteLine(
-                $"[couch-coop][texevict] skipped a texture: {exception.GetType().Name}: {exception.Message}");
+                $"[couchcoop][texevict] skipped a texture: {exception.GetType().Name}: {exception.Message}");
             return 0;
         }
     }

@@ -35,6 +35,12 @@ namespace CouchCoop.Mod.Loader;
 /// nothing pointing back here.
 /// </para>
 /// <para>
+/// A FLAT PAYLOAD STILL HAS A BUILD IDENTITY, and it is checked. The dev deploy's <c>build-info.txt</c>
+/// names the game build it was compiled against, so a deploy that has been left behind by a game update or
+/// a branch switch is refused here by name rather than crashing later — see
+/// <see cref="DescribeFlatBuildMismatch"/> for why that comparison is exact while a lane's is not.
+/// </para>
+/// <para>
 /// Godot-free, Steam-free and dependency-free on purpose, for two reasons. It runs BEFORE any lane assembly
 /// is loaded, so it cannot call the equivalent ladder in <c>Spirectl.Sts2.Live.Sts2GameBuildIdentity</c> —
 /// that type lives in <c>CouchCoop.Spirectl.dll</c>, which is itself one of the two lane-varying assemblies.
@@ -49,6 +55,29 @@ internal static class CouchCoopLaneSelection
     internal const string LanesDirectoryName = "lanes";
 
     internal const string ReleaseInfoFileName = "release_info.json";
+
+    /// <summary>
+    /// The deploy stamp <c>scripts/stamp-local-mod.sh</c> writes beside the assemblies, naming the game
+    /// build this payload was compiled against.
+    /// </summary>
+    /// <remarks>
+    /// Deliberately <c>.txt</c> despite holding JSON: the game scans every <c>*.json</c> under a mod
+    /// directory, recursively and unbounded, as a candidate mod manifest, and a second one would register a
+    /// phantom mod. Same reason the lane directories carry no manifest of their own.
+    /// </remarks>
+    internal const string BuildInfoFileName = "build-info.txt";
+
+    /// <summary>
+    /// The <c>schemaVersion</c> prefix that marks a DEV deploy's stamp, as opposed to a release payload's
+    /// <c>couchcoop-release-build-info/</c>.
+    /// </summary>
+    /// <remarks>
+    /// The distinction is load-bearing, not cosmetic. A dev stamp names ONE game build — the install it was
+    /// compiled against — which is exactly the fact the flat-layout guard needs. A release stamp names a
+    /// reference package per lane and no single build, so reading a compiled-for version out of it would be
+    /// meaningless; a release payload also always carries <c>lanes/</c>, so the guard never runs there.
+    /// </remarks>
+    private const string LocalBuildInfoSchemaPrefix = "couchcoop-local-build-info/";
 
     /// <summary>
     /// How far up from a starting directory to look for <c>release_info.json</c>, counting the starting
@@ -215,8 +244,12 @@ internal static class CouchCoopLaneSelection
             if (!Directory.Exists(lanesDirectory))
             {
                 // The flat dev layout. Silent by design — this is the path every `build-local-mod.sh`
-                // deploy takes, and it predates lanes entirely.
-                return new LaneSelection(null, detectedVersion, null);
+                // deploy takes, and it predates lanes entirely — EXCEPT when the deploy stamp beside it
+                // says it was compiled for a different game build than the one running.
+                return new LaneSelection(
+                    null,
+                    detectedVersion,
+                    DescribeFlatBuildMismatch(ReadFlatBuildGameVersion(modDirectory), detectedVersion));
             }
 
             laneDirectories = Directory.GetDirectories(lanesDirectory);
@@ -294,6 +327,98 @@ internal static class CouchCoopLaneSelection
         }
 
         return new LaneSelection(best, detectedVersion, null);
+    }
+
+    /// <summary>
+    /// The game build a FLAT dev payload was compiled against, from its <c>build-info.txt</c>, or
+    /// <see langword="null"/> when there is nothing trustworthy to compare.
+    /// </summary>
+    /// <remarks>
+    /// Three ways to answer "nothing to compare", all of them normal and all of them silent: no stamp at
+    /// all (a payload assembled by hand, or a deploy that predates the stamp), a RELEASE stamp (which names
+    /// a reference package per lane rather than one build), and the literal <c>unknown</c> the stamp writes
+    /// when the lane probe could not read the install. A guard that refused on any of those would take the
+    /// mod down over a missing diagnostic rather than over a real mismatch.
+    /// </remarks>
+    internal static string? ReadFlatBuildGameVersion(string modDirectory)
+    {
+        try
+        {
+            var path = Path.Combine(modDirectory, BuildInfoFileName);
+            if (!File.Exists(path))
+            {
+                return null;
+            }
+
+            using var document = JsonDocument.Parse(File.ReadAllText(path));
+            var root = document.RootElement;
+            if (root.ValueKind != JsonValueKind.Object
+                || !root.TryGetProperty("schemaVersion", out var schema)
+                || schema.ValueKind != JsonValueKind.String
+                || schema.GetString() is not { } schemaVersion
+                || !schemaVersion.StartsWith(LocalBuildInfoSchemaPrefix, StringComparison.Ordinal))
+            {
+                return null;
+            }
+
+            if (!root.TryGetProperty("dependencies", out var dependencies)
+                || dependencies.ValueKind != JsonValueKind.Object
+                || !dependencies.TryGetProperty("sts2References", out var references)
+                || references.ValueKind != JsonValueKind.Object
+                || !references.TryGetProperty("version", out var version)
+                || version.ValueKind != JsonValueKind.String)
+            {
+                return null;
+            }
+
+            var text = version.GetString();
+            return string.IsNullOrWhiteSpace(text)
+                || string.Equals(text, "unknown", StringComparison.OrdinalIgnoreCase)
+                ? null
+                : text;
+        }
+        catch (Exception exception) when (IsIoFailure(exception) || exception is JsonException)
+        {
+            return null;
+        }
+    }
+
+    /// <summary>
+    /// Why a flat dev payload must not load into <paramref name="detectedVersion"/>, or
+    /// <see langword="null"/> when it may.
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// EXACT MATCH, which is the opposite of the nearest-lower-or-equal rule <see cref="Select"/> applies to
+    /// a lane, and the difference is the whole point. A lane directory is named by the FLOOR build it
+    /// supports, so "highest lane at or below the game" is a meaningful answer. A flat payload is not a
+    /// lane: it carries one compile, and the only thing known about it is the single build it was compiled
+    /// against. Under the floor rule a v107-compiled deploy would be ACCEPTED into a v0.111.0 game — the
+    /// exact crash this guard exists to stop, where the v107 sources name a game type the beta removed and
+    /// the bridge's API manifest dies on a type load before it can say why.
+    /// </para>
+    /// <para>
+    /// Strictness costs nothing here because a flat payload only ever comes from
+    /// <c>scripts/build-local-mod.sh</c>, which compiles against the very install it deploys into. If the
+    /// two disagree, the install moved under the deploy and the answer is always the same one line. A
+    /// released payload carries <c>lanes/</c> and never reaches this.
+    /// </para>
+    /// </remarks>
+    internal static string? DescribeFlatBuildMismatch(string? compiledFor, string? detectedVersion)
+    {
+        if (!TryParseVersion(compiledFor, out var compiled)
+            || !TryParseVersion(detectedVersion, out var running)
+            || compiled.CompareTo(running) == 0)
+        {
+            return null;
+        }
+
+        return $"CouchCoop was built for Slay the Spire 2 {compiledFor} but this install is "
+            + $"{detectedVersion}. A local dev deploy is compiled against ONE game build and binds members "
+            + "another build does not have, so loading it here would fail from inside a game callback with "
+            + $"nothing naming CouchCoop. Re-run scripts/build-local-mod.sh against this install (the "
+            + $"build this deploy came from is recorded in {BuildInfoFileName} beside this file). The mod "
+            + "is not loaded.";
     }
 
     /// <summary>

@@ -43,7 +43,7 @@ public sealed class BrowserInputExecutor(ISemanticActionSource actions)
         }
         catch (Exception ex)
         {
-            FailureLog.Write("invalid-input", $"[couch-coop] invalid input: {ex}");
+            FailureLog.Write("invalid-input", $"[couchcoop] invalid input: {ex}");
             return Error(requestId, BrowserActionErrorCodes.InvalidMessage, "The input message is invalid.");
         }
 
@@ -59,13 +59,13 @@ public sealed class BrowserInputExecutor(ISemanticActionSource actions)
         }
         catch (Exception ex)
         {
-            FailureLog.Write("input-failed", $"[couch-coop] input failed: {ex}");
+            FailureLog.Write("input-failed", $"[couchcoop] input failed: {ex}");
             return Error(requestId, BrowserActionErrorCodes.InternalFailure, "The game could not apply the input.");
         }
 
         // Fire-and-forget on success (no echo); surface only failures so a controller can diagnose.
         if (result.Success) return null;
-        FailureLog.Write("input-failed", $"[couch-coop] input failed: {BrowserJson.Serialize(result)}");
+        FailureLog.Write("input-failed", $"[couchcoop] input failed: {BrowserJson.Serialize(result)}");
         return Error(requestId, BrowserActionErrorCodes.InternalFailure, "The game could not apply the input.");
     }
 

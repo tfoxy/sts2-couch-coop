@@ -87,8 +87,8 @@ the same idea for a standalone probe instance):
   nothing. `EnsureHeadlessAsync` then takes 20-60s (it waits for the instance to ENet-join and preload), and
   the socket must stay OPEN or the seat is torn down again.
 - **`sts2 game launch` KEEPS the mod's stdio** (2026-09-04; it used to send fd 1/2 to `/dev/null`, which is why
-  this repo built an in-game log panel). The couch-coop diagnostics (`[couch-coop] qr host panel ...`,
-  `[couch-coop] headless ...`, seat spawn refusals) and spirectl's `[spirectl]` lines are **on STDOUT**, not
+  this repo built an in-game log panel). The couch-coop diagnostics (`[couchcoop] qr host panel ...`,
+  `[couchcoop] headless ...`, seat spawn refusals) and spirectl's `[spirectl]` lines are **on STDOUT**, not
   stderr; `godot.log` still only captures `GD.Print`. Both streams are teed to
   `.sts2/artifacts/game-launch/game-launch-<unixms>-<pid>.{stdout,stderr}.log`, with `game.stdout.log` /
   `game.stderr.log` symlinks refreshed to the latest run. The paths ride in the launch payload
@@ -351,7 +351,7 @@ COUCHCOOP_SPINE_BENCH=1 <host>   then                    # re-bakes ONE key with
 curl -G 'http://127.0.0.1:13337/perf/spine-render.json' --data-urlencode 'key=<a key from /perf/spine.json>' \
   --data 'repeats=3&warmups=1'
 # Whole-catalog cold sweep: move `~/.local/share/SlayTheSpire2/couch-coop/cache/<version>` aside and launch with
-# `--prerender-spines`; every `[couch-coop] spine-prerender …` line then carries that bake's phase breakdown.
+# `--prerender-spines`; every `[couchcoop] spine-prerender …` line then carries that bake's phase breakdown.
 ```
 
 #### The `/bg/` URL grammar and codec
@@ -651,7 +651,7 @@ roster, handshake. What to know before reading its output:
 
 - **Leg 2 is the whole point, and it is fatal.** A gate that silently degrades to ENet is *worse* than
   no gate, because ENet is the branch that already worked. So the probe grades the host's own
-  `[couch-coop] host-transport` lines rather than its own intent, and only `steam` passes:
+  `[couchcoop] host-transport` lines rather than its own intent, and only `steam` passes:
   `source=host-start` says our `StartSteamHost` prefix ran, `source=stock-enet` says the other branch
   did, and `steam host started lobby=… hostNetId=… couchSeats=ENet:33771` is the proof a real Steam
   lobby exists. `source=host-start` **alone is not enough** — the Steam-offline fallback runs through
@@ -876,7 +876,7 @@ works. Things worth knowing before reading its output:
   the `couch-deploy` skill; an Aug-10 agent measured a whole QA leg against someone else's build before
   checking). Do not try to read a cache generation out of the DLL to identify a build: the string is
   interpolated from two constants, and since the cache became version scoped it names no path at all — the
-  live answer is the `[couch-coop] cache game=… hash=… cache=v… root=…` line the mod logs at startup.
+  live answer is the `[couchcoop] cache game=… hash=… cache=v… root=…` line the mod logs at startup.
 - **Live-lease hygiene (multi-agent rounds).** Acquire only the named resources you touch with
   `scripts/live-qa-lock.mjs`; all live sessions share `install`, while deployment holds it exclusively. Before
   RELEASING, restore the real `../spirectl` / `../godot-scene-web` checkouts to clean `main`.

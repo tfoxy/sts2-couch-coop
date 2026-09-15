@@ -68,7 +68,7 @@ internal static class HeadlessDeathDelayCapPatch
                 if (target is null)
                 {
                     Console.Error.WriteLine(
-                        $"[couch-coop] HeadlessDeathDelayCapPatch: {TargetTypeName}.{TargetMethodName} not found "
+                        $"[couchcoop] HeadlessDeathDelayCapPatch: {TargetTypeName}.{TargetMethodName} not found "
                         + "— a headless death sequence can still stall on a frozen death-particle signal.");
                     return;
                 }
@@ -78,14 +78,14 @@ internal static class HeadlessDeathDelayCapPatch
                 if (postfix is null)
                 {
                     Console.Error.WriteLine(
-                        "[couch-coop] HeadlessDeathDelayCapPatch: postfix method was not found; skipping.");
+                        "[couchcoop] HeadlessDeathDelayCapPatch: postfix method was not found; skipping.");
                     return;
                 }
 
                 new Harmony("com.couchcoop.headless-death-delay-cap")
                     .Patch(target, postfix: new HarmonyMethod(postfix));
                 Console.Error.WriteLine(
-                    $"[couch-coop] HeadlessDeathDelayCapPatch: capped {TargetTypeName}.{TargetMethodName} at "
+                    $"[couchcoop] HeadlessDeathDelayCapPatch: capped {TargetTypeName}.{TargetMethodName} at "
                     + $"{_capSeconds:0.##}s.");
             }
             catch (Exception ex)
@@ -177,7 +177,7 @@ internal static class HeadlessDeathDelayCapPatch
         if (!ReferenceEquals(winner, original))
         {
             Console.Error.WriteLine(
-                $"[couch-coop] HeadlessDeathDelayCapPatch: {TargetTypeName}.{TargetMethodName} exceeded "
+                $"[couchcoop] HeadlessDeathDelayCapPatch: {TargetTypeName}.{TargetMethodName} exceeded "
                 + $"{capSeconds:0.##}s (frozen spine never raised the death-particle event); continuing the death sequence.");
             return;
         }

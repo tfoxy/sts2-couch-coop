@@ -95,14 +95,14 @@ public static class CouchCoopQrHostPanelController
             // _initialized is latched above, so a throw escaping here would cost the seed walk and every later
             // arm — the panel would be gone for the process over a retry that was only ever a second chance.
             Console.Error.WriteLine(
-                $"[couch-coop] lobby screen mount retry failed: {exception.GetType().Name}: {exception.Message}");
+                $"[couchcoop] lobby screen mount retry failed: {exception.GetType().Name}: {exception.Message}");
         }
 
         try
         {
             if (Engine.GetMainLoop() is not SceneTree { Root: { } root })
             {
-                Console.Error.WriteLine("[couch-coop] qr host panel unavailable: scene tree not ready");
+                Console.Error.WriteLine("[couchcoop] qr host panel unavailable: scene tree not ready");
                 return;
             }
 
@@ -119,7 +119,7 @@ public static class CouchCoopQrHostPanelController
                 }
             }
 
-            Console.Error.WriteLine($"[couch-coop] qr host panel armed seeded={seeded}");
+            Console.Error.WriteLine($"[couchcoop] qr host panel armed seeded={seeded}");
             if (Screens.IsOccupied)
             {
                 EnsureScanScheduled(root);
@@ -127,7 +127,7 @@ public static class CouchCoopQrHostPanelController
         }
         catch (Exception exception)
         {
-            Console.Error.WriteLine($"[couch-coop] qr host panel scan failed: {exception.GetType().Name}: {exception.Message}");
+            Console.Error.WriteLine($"[couchcoop] qr host panel scan failed: {exception.GetType().Name}: {exception.Message}");
         }
     }
 
@@ -152,7 +152,7 @@ public static class CouchCoopQrHostPanelController
             return; // already known — a re-ready must not start a second timer chain
         }
 
-        Console.Error.WriteLine($"[couch-coop] lobby screen mounted screen={screen.GetType().Name}");
+        Console.Error.WriteLine($"[couchcoop] lobby screen mounted screen={screen.GetType().Name}");
 
         bool initialized;
         lock (Gate)
@@ -243,7 +243,7 @@ public static class CouchCoopQrHostPanelController
             _scanScheduled = true;
         }
 
-        Console.Error.WriteLine("[couch-coop] qr host panel scan scheduled");
+        Console.Error.WriteLine("[couchcoop] qr host panel scan scheduled");
         ScheduleScan(root);
     }
 
@@ -300,7 +300,7 @@ public static class CouchCoopQrHostPanelController
             {
                 // A throw here would kill the timer chain and with it every future scan, so the panel
                 // would never appear again this session. Log and keep the loop alive instead.
-                Console.Error.WriteLine($"[couch-coop] qr host panel scan tick failed: {exception.GetType().Name}: {exception.Message}");
+                Console.Error.WriteLine($"[couchcoop] qr host panel scan tick failed: {exception.GetType().Name}: {exception.Message}");
             }
 
             if (!keepTicking)
@@ -308,7 +308,7 @@ public static class CouchCoopQrHostPanelController
                 // No lobby screen left alive: stop ticking entirely. This is the idle state an unmodded
                 // game is being compared against — the next _Ready postfix restarts the chain.
                 ParkScan();
-                Console.Error.WriteLine("[couch-coop] qr host panel scan parked (no lobby screen)");
+                Console.Error.WriteLine("[couchcoop] qr host panel scan parked (no lobby screen)");
                 return;
             }
 
@@ -387,7 +387,7 @@ public static class CouchCoopQrHostPanelController
             catch (Exception exception)
             {
                 Console.Error.WriteLine(
-                    $"[couch-coop] host lobby arm failed: {exception.GetType().Name}: {exception.Message}");
+                    $"[couchcoop] host lobby arm failed: {exception.GetType().Name}: {exception.Message}");
             }
         }
 
@@ -415,7 +415,7 @@ public static class CouchCoopQrHostPanelController
                 // panels gone and surviving main-menu round trips. Isolating a screen keeps its siblings
                 // working and lets the next tick re-install once the stale node has actually gone.
                 Console.Error.WriteLine(
-                    $"[couch-coop] qr host panel screen scan failed: {exception.GetType().Name}: {exception.Message}");
+                    $"[couchcoop] qr host panel screen scan failed: {exception.GetType().Name}: {exception.Message}");
             }
         }
 
@@ -456,7 +456,7 @@ public static class CouchCoopQrHostPanelController
         catch (Exception exception)
         {
             Console.Error.WriteLine(
-                $"[couch-coop] qr host panel step failed: {exception.GetType().Name}: {exception.Message}");
+                $"[couchcoop] qr host panel step failed: {exception.GetType().Name}: {exception.Message}");
         }
 
         return mounted;
@@ -494,7 +494,7 @@ public static class CouchCoopQrHostPanelController
         {
             mounted.ShowHostTransportAlert(localizedNotice);
         }
-        Console.Error.WriteLine($"[couch-coop] host transport alert shown note={notice?.ResolveForLanguage(CouchCoopLocalization.EnglishLanguage)}");
+        Console.Error.WriteLine($"[couchcoop] host transport alert shown note={notice?.ResolveForLanguage(CouchCoopLocalization.EnglishLanguage)}");
     }
 
     /// <summary>
@@ -528,7 +528,7 @@ public static class CouchCoopQrHostPanelController
             CouchCoopStreamSkip.Stamp(panel);
             screen.AddChild(panel);
             panel.Install();
-            Console.Error.WriteLine($"[couch-coop] qr host panel installed screen={screen.GetType().Name}");
+            Console.Error.WriteLine($"[couchcoop] qr host panel installed screen={screen.GetType().Name}");
         }
         else if (refreshLayout)
         {
@@ -593,7 +593,7 @@ public static class CouchCoopQrHostPanelController
             catch (Exception exception)
             {
                 Console.Error.WriteLine(
-                    $"[couch-coop] qr host panel walk skipped a stale node: {exception.GetType().Name}: {exception.Message}");
+                    $"[couchcoop] qr host panel walk skipped a stale node: {exception.GetType().Name}: {exception.Message}");
             }
         }
 

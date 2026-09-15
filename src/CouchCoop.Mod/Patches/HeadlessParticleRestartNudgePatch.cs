@@ -47,7 +47,7 @@ internal static class HeadlessParticleRestartNudgePatch
             catch (Exception ex)
             {
                 Console.Error.WriteLine(
-                    "[couch-coop] HeadlessParticleRestartNudgePatch: Harmony init failed "
+                    "[couchcoop] HeadlessParticleRestartNudgePatch: Harmony init failed "
                     + $"({ex.GetType().Name}: {ex.Message}); frozen one-shots restarted later will not report `finished`.");
                 return;
             }
@@ -59,7 +59,7 @@ internal static class HeadlessParticleRestartNudgePatch
             if (restartPostfix is null || setEmittingPostfix is null)
             {
                 Console.Error.WriteLine(
-                    "[couch-coop] HeadlessParticleRestartNudgePatch: postfix methods were not found; skipping.");
+                    "[couchcoop] HeadlessParticleRestartNudgePatch: postfix methods were not found; skipping.");
                 return;
             }
 
@@ -70,7 +70,7 @@ internal static class HeadlessParticleRestartNudgePatch
             patched += TryPatchSetEmitting(harmony, typeof(CpuParticles2D), setEmittingPostfix) ? 1 : 0;
 
             Console.Error.WriteLine(
-                $"[couch-coop] HeadlessParticleRestartNudgePatch: installed ({patched}/{TargetCount} targets); "
+                $"[couchcoop] HeadlessParticleRestartNudgePatch: installed ({patched}/{TargetCount} targets); "
                 + "one-shot bursts started on frozen particle nodes now schedule a synthesized `finished`.");
         }
     }
@@ -97,7 +97,7 @@ internal static class HeadlessParticleRestartNudgePatch
             if (target is null)
             {
                 Console.Error.WriteLine(
-                    $"[couch-coop] HeadlessParticleRestartNudgePatch: {type.Name}.Restart not found — "
+                    $"[couchcoop] HeadlessParticleRestartNudgePatch: {type.Name}.Restart not found — "
                     + "a post-freeze restart on that type will not schedule a `finished` nudge.");
                 return false;
             }
@@ -108,7 +108,7 @@ internal static class HeadlessParticleRestartNudgePatch
         catch (Exception ex)
         {
             Console.Error.WriteLine(
-                $"[couch-coop] HeadlessParticleRestartNudgePatch: patching {type.Name}.Restart failed "
+                $"[couchcoop] HeadlessParticleRestartNudgePatch: patching {type.Name}.Restart failed "
                 + $"({ex.GetType().Name}: {ex.Message}).");
             return false;
         }
@@ -122,7 +122,7 @@ internal static class HeadlessParticleRestartNudgePatch
             if (target is null)
             {
                 Console.Error.WriteLine(
-                    $"[couch-coop] HeadlessParticleRestartNudgePatch: {type.Name}.set_Emitting not found — "
+                    $"[couchcoop] HeadlessParticleRestartNudgePatch: {type.Name}.set_Emitting not found — "
                     + "a post-freeze `Emitting = true` on that type will not schedule a `finished` nudge.");
                 return false;
             }
@@ -133,7 +133,7 @@ internal static class HeadlessParticleRestartNudgePatch
         catch (Exception ex)
         {
             Console.Error.WriteLine(
-                $"[couch-coop] HeadlessParticleRestartNudgePatch: patching {type.Name}.set_Emitting failed "
+                $"[couchcoop] HeadlessParticleRestartNudgePatch: patching {type.Name}.set_Emitting failed "
                 + $"({ex.GetType().Name}: {ex.Message}).");
             return false;
         }

@@ -188,7 +188,7 @@ public sealed class CouchCoopGeoclipPrerenderJob(
         }
         catch (Exception exception)
         {
-            _log($"[couch-coop] geoclip-prerender catalog failed detail={exception.GetType().Name}: {exception.Message}");
+            _log($"[couchcoop] geoclip-prerender catalog failed detail={exception.GetType().Name}: {exception.Message}");
             tally.Fail(null, "catalog-" + Kebab(exception.GetType().Name));
             return Complete(stopwatch, "failed", default, tally);
         }
@@ -201,7 +201,7 @@ public sealed class CouchCoopGeoclipPrerenderJob(
         }
 
         _log(
-            $"[couch-coop] geoclip-prerender discovered scenes={found.Scenes} spineNodes={found.SpineNodes} "
+            $"[couchcoop] geoclip-prerender discovered scenes={found.Scenes} spineNodes={found.SpineNodes} "
             + $"clips={found.Clips} discoveryFailures={discoveryFailures} "
             + $"store={_geoclips.Store.RootPath ?? "disabled"}");
 
@@ -254,7 +254,7 @@ public sealed class CouchCoopGeoclipPrerenderJob(
             entries.Count);
 
         _log(
-            $"[couch-coop] geoclip-prerender scoped scenes={found.Scenes} spineNodes={found.SpineNodes} "
+            $"[couchcoop] geoclip-prerender scoped scenes={found.Scenes} spineNodes={found.SpineNodes} "
             + $"clips={found.Clips} discoveryFailures=0 store={_geoclips.Store.RootPath ?? "disabled"}");
 
         return await SweepAsync(entries, found, maxRigBatchPoses, stopwatch, tally, cancellationToken)
@@ -269,7 +269,7 @@ public sealed class CouchCoopGeoclipPrerenderJob(
     {
         if (!_geoclips.Store.IsEnabled)
         {
-            _log("[couch-coop] geoclip-prerender REFUSED to start: no geoclip cache root could be resolved.");
+            _log("[couchcoop] geoclip-prerender REFUSED to start: no geoclip cache root could be resolved.");
             return Complete(stopwatch, "store-disabled", default, tally);
         }
 
@@ -345,7 +345,7 @@ public sealed class CouchCoopGeoclipPrerenderJob(
                 {
                     if (_geoclips.Store.TryResolveDirectory(keys[i]) is null && !_geoclips.Store.HasRefusal(keys[i]))
                     {
-                        _log($"[couch-coop] geoclip-prerender {startedAt + i + 1}/{found.Clips} start key={keys[i]}");
+                        _log($"[couchcoop] geoclip-prerender {startedAt + i + 1}/{found.Clips} start key={keys[i]}");
                     }
                 }
 
@@ -370,7 +370,7 @@ public sealed class CouchCoopGeoclipPrerenderJob(
                     {
                         tally.Refuse(entry, refusal.Reason, refusal.Cached);
                         _log(
-                            $"[couch-coop] geoclip-prerender {completed}/{found.Clips} status={StatusRefused} "
+                            $"[couchcoop] geoclip-prerender {completed}/{found.Clips} status={StatusRefused} "
                             + $"key={key} reason={refusal.Reason} cached={(refusal.Cached ? 1 : 0)} "
                             + $"detail={refusal.Detail} {timing}");
                         continue;
@@ -380,7 +380,7 @@ public sealed class CouchCoopGeoclipPrerenderJob(
                     {
                         tally.Fail(entry, error.Code);
                         _log(
-                            $"[couch-coop] geoclip-prerender {completed}/{found.Clips} status={StatusFailed} "
+                            $"[couchcoop] geoclip-prerender {completed}/{found.Clips} status={StatusFailed} "
                             + $"key={key} code={error.Code} detail={error.Message} {timing}");
                         continue;
                     }
@@ -390,7 +390,7 @@ public sealed class CouchCoopGeoclipPrerenderJob(
                         // Belt: a success with nothing to serve is not a success.
                         tally.Fail(entry, "geoclip-empty-result");
                         _log(
-                            $"[couch-coop] geoclip-prerender {completed}/{found.Clips} status={StatusFailed} "
+                            $"[couchcoop] geoclip-prerender {completed}/{found.Clips} status={StatusFailed} "
                             + $"key={key} code=geoclip-empty-result {timing}");
                         continue;
                     }
@@ -404,7 +404,7 @@ public sealed class CouchCoopGeoclipPrerenderJob(
                             still: true));
                     var measured = tally.Store(entry, result.Directory, hit, raster);
                     _log(
-                        $"[couch-coop] geoclip-prerender {completed}/{found.Clips} "
+                        $"[couchcoop] geoclip-prerender {completed}/{found.Clips} "
                         + $"status={(hit ? StatusHit : StatusBaked)} key={key} "
                         + $"geometryBytes={measured.GeometryBytes} pages={measured.PageReferences} "
                         + $"newPages={measured.NewPages} newPageBytes={measured.NewPageBytes} "
@@ -425,7 +425,7 @@ public sealed class CouchCoopGeoclipPrerenderJob(
                     completed++;
                     tally.Fail(chunk[i], Kebab(exception.GetType().Name));
                     _log(
-                        $"[couch-coop] geoclip-prerender {completed}/{found.Clips} status={StatusFailed} "
+                        $"[couchcoop] geoclip-prerender {completed}/{found.Clips} status={StatusFailed} "
                         + $"key={keys[i] ?? chunk[i].SceneResPath} detail={exception.GetType().Name}: "
                         + $"{exception.Message} elapsedMs={chunkWatch.ElapsedMilliseconds} posesInBake={chunk.Count}");
                 }

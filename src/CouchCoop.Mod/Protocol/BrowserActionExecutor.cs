@@ -89,7 +89,7 @@ public sealed class BrowserActionExecutor(CouchCoopRuntimeHost runtimeHost, Acti
         }
         if (Interlocked.CompareExchange(ref _lastFailureLog, now, previous) == previous)
         {
-            _log($"[couch-coop] browser-action failed detail={detail}");
+            _log($"[couchcoop] browser-action failed detail={detail}");
         }
     }
 

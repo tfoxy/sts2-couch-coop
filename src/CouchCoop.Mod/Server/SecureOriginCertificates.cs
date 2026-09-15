@@ -164,7 +164,7 @@ public sealed class SecureOriginCertificates : IDisposable
     {
         if (!Enabled)
         {
-            _log($"[couch-coop] host-ui diagnostic code={DisabledCode} detail={EnabledEnvironmentVariable}");
+            _log($"[couchcoop] host-ui diagnostic code={DisabledCode} detail={EnabledEnvironmentVariable}");
             return;
         }
 
@@ -408,7 +408,7 @@ public sealed class SecureOriginCertificates : IDisposable
             _status = new SecureOriginStatus(SecureOriginState.Ready, CouchCoopSecureText.Ready, _provider.Domain);
         }
 
-        _log($"[couch-coop] secure-origin ready provider={_provider.Id} domain={_provider.Domain} source={source} "
+        _log($"[couchcoop] secure-origin ready provider={_provider.Id} domain={_provider.Domain} source={source} "
             + $"expires={certificate.NotAfter.ToUniversalTime():yyyy-MM-dd}");
     }
 
@@ -419,7 +419,7 @@ public sealed class SecureOriginCertificates : IDisposable
             _status = new SecureOriginStatus(SecureOriginState.Unavailable, reason, _provider.Domain);
         }
 
-        _log($"[couch-coop] host-ui diagnostic code={UnavailableCode} provider={_provider.Id} detail={reason.ResolveForLanguage(CouchCoopLocalization.EnglishLanguage)}");
+        _log($"[couchcoop] host-ui diagnostic code={UnavailableCode} provider={_provider.Id} detail={reason.ResolveForLanguage(CouchCoopLocalization.EnglishLanguage)}");
     }
 
     // Same polarity as the other valves in this codebase: absent means ON, and only an explicit

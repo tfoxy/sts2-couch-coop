@@ -348,7 +348,7 @@ can, and both are logged:
 Both appear on one line:
 
 ```
-[couch-coop] mdns-responder self-check selfCheck=Answered answered=3 byInterface=if2=3 name=living-room-pc.local
+[couchcoop] mdns-responder self-check selfCheck=Answered answered=3 byInterface=if2=3 name=living-room-pc.local
 ```
 
 `selfCheck=Unanswered` **swaps the `.local` row's detail line for a "didn't answer" warning** and appends the

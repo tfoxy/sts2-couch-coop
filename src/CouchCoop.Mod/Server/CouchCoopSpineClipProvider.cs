@@ -322,7 +322,7 @@ public sealed class CouchCoopSpineClipProvider(
             var instances = SampleGameInstances();
             if (SpineBakeBudget.ShouldDegrade(instances, SpineBakeBudget.InstanceLimit))
             {
-                _log($"[couch-coop] spine-clip degraded instances={instances} limit={SpineBakeBudget.InstanceLimit} key={spineKey}");
+                _log($"[couchcoop] spine-clip degraded instances={instances} limit={SpineBakeBudget.InstanceLimit} key={spineKey}");
                 var degraded = await GetClipAsync(degradedKey).ConfigureAwait(false);
                 return degraded with { Degraded = true };
             }
@@ -405,7 +405,7 @@ public sealed class CouchCoopSpineClipProvider(
         if (cacheWriteFailed)
         {
             // Best-effort cache; serve the freshly rendered clip even if the write-through fails.
-            _cacheDiagnostics.Write("spine-clip-cache-write-failed", $"[couch-coop] spine-clip cache write failed key={spineKey}");
+            _cacheDiagnostics.Write("spine-clip-cache-write-failed", $"[couchcoop] spine-clip cache write failed key={spineKey}");
         }
 
         bake.CacheWritten(cacheWrite);

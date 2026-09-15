@@ -28,7 +28,7 @@ internal static class HostLobbyQrOverlayLayoutProvider
         }
         catch (Exception exception)
         {
-            Console.Error.WriteLine($"[couch-coop] host lobby QR overlay layout reload failed: {exception.GetType().Name}: {exception.Message}");
+            Console.Error.WriteLine($"[couchcoop] host lobby QR overlay layout reload failed: {exception.GetType().Name}: {exception.Message}");
             return HostLobbyQrOverlayLayout.Default;
         }
     }

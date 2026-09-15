@@ -54,7 +54,7 @@ public static class CouchCoopHeadlessCpuProfiler
             _started = true;
         }
 
-        Console.Error.WriteLine("[couch-coop][profile] headless CPU profiler enabling (COUCHCOOP_HEADLESS_PROFILE=1)");
+        Console.Error.WriteLine("[couchcoop][profile] headless CPU profiler enabling (COUCHCOOP_HEADLESS_PROFILE=1)");
         _ = Task.Run(InstallLoopAsync);
     }
 
@@ -76,13 +76,13 @@ public static class CouchCoopHeadlessCpuProfiler
             catch (Exception exception)
             {
                 Console.Error.WriteLine(
-                    $"[couch-coop][profile] profiler install attempt failed: {exception.GetType().Name}: {exception.Message}");
+                    $"[couchcoop][profile] profiler install attempt failed: {exception.GetType().Name}: {exception.Message}");
             }
 
             await Task.Delay(250).ConfigureAwait(false);
         }
 
-        Console.Error.WriteLine("[couch-coop][profile] profiler install gave up (SceneTree never became ready)");
+        Console.Error.WriteLine("[couchcoop][profile] profiler install gave up (SceneTree never became ready)");
     }
 
     // Runs on the game main thread (deferred). Attaches a repeating Timer whose Timeout drives sampling.
@@ -103,7 +103,7 @@ public static class CouchCoopHeadlessCpuProfiler
         };
         timer.Timeout += Sample;
         root.AddChild(timer);
-        CouchCoopLog.Info($"[couch-coop][profile] headless CPU profiler ready (interval={IntervalSeconds:0.#}s)");
+        CouchCoopLog.Info($"[couchcoop][profile] headless CPU profiler ready (interval={IntervalSeconds:0.#}s)");
     }
 
     // Runs on the game main thread (Timer.Timeout). Reads the monitors and logs one line.
@@ -135,7 +135,7 @@ public static class CouchCoopHeadlessCpuProfiler
         _lastProcMs = nowProcMs;
 
         CouchCoopLog.Info(
-            $"[couch-coop][profile] cpu%={cpuPct:0.0} fps={fps:0.0} frame_ms={frameMs:0.00} process_ms={processMs:0.00} "
+            $"[couchcoop][profile] cpu%={cpuPct:0.0} fps={fps:0.0} frame_ms={frameMs:0.00} process_ms={processMs:0.00} "
             + $"physics_ms={physicsMs:0.00} render_ms~={renderMs:0.00} drawcalls={drawCalls:0} "
             + $"objs={objects:0} prims={primitives:0} nodes={nodes:0} mem_mb={memMb:0.0}");
 
@@ -143,7 +143,7 @@ public static class CouchCoopHeadlessCpuProfiler
     }
 
     // Second line, memory attribution. Split from the cpu line because the two answer different questions and
-    // are read separately (a memory round greps `[couch-coop][memory]`, a cpu round greps `[couch-coop][profile]`).
+    // are read separately (a memory round greps `[couchcoop][memory]`, a cpu round greps `[couchcoop][profile]`).
     //
     // rss_mb is the number that actually matters — Godot's MemoryStatic counts only what went through Godot's
     // own `Memory::alloc_static`, which misses the CLR entirely (GC heap + JIT code + loader heaps were ~300MB
@@ -160,7 +160,7 @@ public static class CouchCoopHeadlessCpuProfiler
         var managedMb = GC.GetTotalMemory(forceFullCollection: false) / (1024.0 * 1024.0);
 
         CouchCoopLog.Info(
-            $"[couch-coop][memory] rss_mb={ReadResidentMb():0.0} godot_static_mb={staticMb:0.0} "
+            $"[couchcoop][memory] rss_mb={ReadResidentMb():0.0} godot_static_mb={staticMb:0.0} "
             + $"godot_static_max_mb={staticMaxMb:0.0} clr_managed_mb={managedMb:0.0} "
             + $"objects={objectCount:0} resources={resourceCount:0} "
             + $"tex_images_evicted={HeadlessTextureImageEvictor.EvictedCount} "

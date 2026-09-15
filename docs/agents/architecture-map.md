@@ -1076,7 +1076,7 @@ seat can never draw.
   facts it depends on are in its docstring. Needs the target to be ptrace-readable: yama is `ptrace_scope=1`
   here, and it works on a Steam-launched game because Sentry/crashpad sets `PR_SET_PTRACER_ANY`. An
   `sts2 game launch` instance is reparented to systemd and is NOT readable — use the in-process
-  `[couch-coop][memory] rss_mb=` line (`COUCHCOOP_HEADLESS_PROFILE=1`) for those.
+  `[couchcoop][memory] rss_mb=` line (`COUCHCOOP_HEADLESS_PROFILE=1`) for those.
 - Godot's `Performance.MEMORY_STATIC` reports **0.0** in the shipped release template (tracking is
   `DEBUG_ENABLED`-only). Do not build a memory claim on it; use `rss_mb` or the census script.
 - **Where a tuned seat's RSS actually sits** (live pair, Aug-15; seat 1051MB / PSS 933MB, host 3527MB):
