@@ -1,0 +1,130 @@
+# On-demand macOS smoke check.
+#
+# WHY IT EXISTS: the mod has a macOS audience (Slay the Spire 2 ships a native macOS build) and no
+# maintainer Mac. This job is the cheapest standing answer to "does the part of this repo that does
+# not need the game still build and pass on macOS?".
+#
+# WHY IT IS ON-DEMAND: pull requests are disabled in this repository, so there is no PR event to
+# hang a check on, and a per-push check on `main` would burn macOS minutes on every docs commit.
+# Fire it from the Actions tab (workflow_dispatch), or push the branch below when you want a run
+# tied to a specific commit.
+#
+# WHAT IT DELIBERATELY DOES NOT DO — this is the scope decision, not an oversight:
+#   * It never builds `CouchCoop.Mod`, `CouchCoop.Mod.Tests`, `CouchCoop.Connection.Tests` or
+#     `CouchCoop.Mod.Loader`. Those resolve STS2/Godot references from `game.assembliesDir` in
+#     `sts2.local.yaml` (see the root Directory.Build.props/targets), which no runner has. Measured:
+#     `dotnet build src/CouchCoop.Mod` with no local config fails with
+#     "Missing required game.assembliesDir in sts2.local.yaml".
+#   * It does not use `eng/Sts2.ReferenceSdk` to supply those assemblies from NuGet, which is how
+#     the release build compiles the mod with no game install. That path works, but its drivers
+#     (`scripts/verify-sts2-reference-sdk.sh`, `scripts/package-release.sh`) use GNU `find -printf`,
+#     `sha256sum` and bash 4 `mapfile`, none of which exist on a stock macOS runner. Porting them is
+#     a separate piece of work; a red job would be worse than no job.
+#   * It never runs `npm run build`. That script's Vite `outDir` is the INSTALLED mod's frontend
+#     directory, so building deploys. `vue-tsc --noEmit` is the type gate; `vitest run` is the test
+#     gate.
+#   * It does not run Playwright e2e (`frontend/e2e`), which needs browser downloads and a served
+#     app, nor `godot-client` (paused).
+
+name: macOS check
+
+on:
+  workflow_dispatch:
+  # A dedicated throwaway branch, so a run is something you ASK for by pushing to it. Nothing else
+  # in the repo depends on this branch existing; delete and recreate it freely.
+  push:
+    branches:
+      - 'ci/macos'
+
+permissions:
+  contents: read
+
+concurrency:
+  group: macos-check-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  macos:
+    runs-on: macos-14
+    timeout-minutes: 45
+    env:
+      # Insurance, not a requirement: no runner has a game install, so nothing here can resolve a
+      # local mods directory. Pinning it at a scratch path means a step added later cannot become a
+      # deploy by accident.
+      COUCHCOOP_GAME_MODS_DIR: ${{ runner.temp }}/couchcoop-mods
+
+    steps:
+      - name: Check out source
+        uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5.1.0
+        with:
+          path: sources/sts2-couch-coop
+
+      # The frontend is aliased to the TWO sibling checkouts as TypeScript SOURCE — no npm link, no
+      # workspace, no build step (frontend/vite.config.ts and frontend/tsconfig.json map
+      # `@spirectl/presentation*` and `@godot-scene-web/*` at ../../spirectl and
+      # ../../godot-scene-web). 126 of the 433 files under frontend/src import one of them, so
+      # neither `vue-tsc` nor `vitest` resolves without both siblings beside this checkout.
+      #
+      # Cloned by hand rather than with actions/checkout so the repository URL and the commit both
+      # come from release-dependencies.json and cannot drift from what a release builds — and so no
+      # token is involved for a public sibling. Same shape scripts/package-release.sh uses.
+      - name: Clone the pinned sibling checkouts
+        working-directory: sources
+        run: |
+          set -euo pipefail
+          pins=sts2-couch-coop/release-dependencies.json
+          for name in spirectl godot-scene-web; do
+            url="$(jq -er --arg n "$name" '.dependencies[$n].repository' "$pins")"
+            commit="$(jq -er --arg n "$name" '.dependencies[$n].commit' "$pins")"
+            git clone --quiet "$url" "$name"
+            git -C "$name" checkout --quiet --detach "$commit"
+            echo "$name @ $(git -C "$name" rev-parse HEAD)"
+          done
+
+      # 8.0.x as well as 9.0.x: CouchCoop.MirrorProtocol and its test runner target net8.0 (the
+      # Godot 4.5 .NET base TFM), so this pins the matching runtime rather than relying on the
+      # runner's roll-forward.
+      - name: Set up .NET
+        uses: actions/setup-dotnet@26b0ec14cb23fa6904739307f278c14f94c95bf1 # v5.4.0
+        with:
+          dotnet-version: |
+            8.0.x
+            9.0.x
+
+      # 22.x on purpose, matching release.yml: its npm 10 is the resolver frontend/package-lock.json
+      # is validated against. npm 11 has accepted locks that npm 10 then rejected for missing
+      # hoisted peer entries, so the lower resolver is the honest gate.
+      - name: Set up Node
+        uses: actions/setup-node@a0853c24544627f65ddf259abe73b1d18a591444 # v5.0.0
+        with:
+          node-version: '22.x'
+
+      # The game-assembly-FREE leg. Both projects set CouchCoopRequiresSts2Assemblies=false and have
+      # zero package references, so this is the one part of the C# tree a runner can compile at all.
+      # The suite is a custom `Exe` runner, NOT a VSTest project: `dotnet test` is a silent no-op on
+      # it and would pass without running anything.
+      - name: Mirror protocol suite
+        working-directory: sources/sts2-couch-coop
+        run: dotnet run --project tests/CouchCoop.MirrorProtocol.Tests -c Release
+
+      # Corepack picks the package-manager version BEFORE pnpm processes --dir, so each install runs
+      # from inside the directory whose `packageManager` pin it must honour (godot-scene-web pins
+      # pnpm 10.26.0). `corepack pnpm --dir <project>` would run Corepack's default instead.
+      - name: Install sibling renderer dependencies
+        run: |
+          set -euo pipefail
+          corepack enable
+          (cd sources/godot-scene-web && corepack pnpm install --frozen-lockfile)
+          (cd sources/spirectl/presentation/web && corepack pnpm install --frozen-lockfile)
+
+      - name: Install frontend dependencies
+        working-directory: sources/sts2-couch-coop/frontend
+        run: npm ci
+
+      - name: Frontend type check
+        working-directory: sources/sts2-couch-coop/frontend
+        run: npx vue-tsc --noEmit
+
+      - name: Frontend tests
+        working-directory: sources/sts2-couch-coop/frontend
+        run: npx vitest run

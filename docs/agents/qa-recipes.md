@@ -601,6 +601,14 @@ IS a whole multiple of 80px proves nothing about quantisation; the equality arm 
 
 Run only the touched suite(s) per implementer; a coordinator/reviewer runs full suites once at merge time.
 
+**On macOS, by request.** `.github/workflows/macos-check.yml` runs rows 1 and 4 of that table on `macos-14`,
+triggered by `workflow_dispatch` or a push to the throwaway `ci/macos` branch — never on a PR (PRs are
+disabled here) and never on `main`. It is scoped to exactly the two legs that need no game install: everything
+under `src/CouchCoop.Mod*` resolves STS2/Godot references from `game.assembliesDir`, which no runner has, and
+the `eng/Sts2.ReferenceSdk` route that lets the release build compile without a game has GNU-only drivers
+(`find -printf`, `sha256sum`, bash 4 `mapfile`). The frontend leg clones `spirectl` and `godot-scene-web` at
+the `release-dependencies.json` commits first, because the frontend is aliased to their TypeScript source.
+
 ### A new game build (a beta branch, or an update landing on the current one)
 
 Two gates, and **the second one is not optional**.
