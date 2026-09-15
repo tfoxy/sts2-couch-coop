@@ -221,6 +221,65 @@ release_compatibility_summary() {
   fi
 }
 
+# stdin -> stdout: the CHANGELOG section as Steam BBCode.
+#
+# A Steam change note is BBCode, not Markdown, so the section shipped verbatim rendered as literal
+# "### Fixed" and "- item" lines on the item page -- the release notes a subscriber reads were the
+# only place the project's own formatting did not survive. Handles what the changelog actually
+# contains (surveyed, not guessed): ATX headings, "- " bullets with 2-space wrapped continuations,
+# inline code, links and bold. Anything else passes through as text, which is the right failure mode
+# for a note: unconverted prose still reads, a mangled tag does not.
+release_markdown_to_bbcode() {
+  awk '
+    function inline(s) {
+      # Longest-first so [text](url) is not eaten by the bold or code rules.
+      while (match(s, /\[[^]]+\]\([^)]+\)/)) {
+        piece = substr(s, RSTART, RLENGTH)
+        split(piece, m, "\\]\\(")   # split() takes a REGEX, and "](" is not one
+        text = substr(m[1], 2)
+        url  = substr(m[2], 1, length(m[2]) - 1)
+        s = substr(s, 1, RSTART - 1) "[url=" url "]" text "[/url]" substr(s, RSTART + RLENGTH)
+      }
+      while (match(s, /\*\*[^*]+\*\*/)) {
+        piece = substr(s, RSTART + 2, RLENGTH - 4)
+        s = substr(s, 1, RSTART - 1) "[b]" piece "[/b]" substr(s, RSTART + RLENGTH)
+      }
+      while (match(s, /`[^`]+`/)) {
+        piece = substr(s, RSTART + 1, RLENGTH - 2)
+        s = substr(s, 1, RSTART - 1) "[i]" piece "[/i]" substr(s, RSTART + RLENGTH)
+      }
+      return s
+    }
+    function close_list() { if (in_list) { print "[/list]"; in_list = 0 } }
+    function flush_item() { if (item != "") { print "[*]" inline(item); item = "" } }
+    {
+      line = $0
+      # A wrapped bullet continuation: indented, and we are mid-item. Join it rather than emitting a
+      # stray line, which would fall outside the [*] and break the list.
+      if (in_list && item != "" && line ~ /^[ \t]+[^ \t-]/) {
+        sub(/^[ \t]+/, "", line); item = item " " line; next
+      }
+      if (line ~ /^#{1,6} /) {
+        flush_item(); close_list()
+        level = index(line, " ") - 1
+        if (level > 3) level = 3          # Steam has [h1]-[h3] only
+        sub(/^#+ /, "", line)
+        print "[h" level "]" inline(line) "[/h" level "]"
+        next
+      }
+      if (line ~ /^[-*] /) {
+        flush_item()
+        if (!in_list) { print "[list]"; in_list = 1 }
+        sub(/^[-*] /, "", line); item = line
+        next
+      }
+      if (line ~ /^[ \t]*$/) { flush_item(); close_list(); print ""; next }
+      flush_item(); close_list(); print inline(line)
+    }
+    END { flush_item(); close_list() }
+  '
+}
+
 # A lane this repo has reviewed a floor for. Packaging additionally requires the lane to exist on
 # disk under eng/Sts2.ReferenceSdk/, so adding a lane has to touch both places.
 release_lane_is_known() {
