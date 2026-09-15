@@ -331,7 +331,18 @@ unzip -q "$archive_path" -d "$extract_dir"
 # covers both cases with one rule, and for a tagged release the gate has already held the two equal.
 payload_version="$(jq -er '.version' "$extract_dir/couchcoop/build-info.txt")"
 if [[ "$tag" == snapshot-* ]]; then heading="Test build $payload_version"; else heading="Release v$payload_version"; fi
-change_note="$(printf '%s\n\n%s\n' "$heading" "$release_notes")"
+
+# Which games this revision runs on, stated on the revision itself. A subscriber cannot see the
+# payload, and the branch chip that used to answer this is gone with the branch links -- so without
+# this line a Steam revision says nothing about whether it is for the game the reader is playing.
+# Generated from the lanes the archive actually carries, not from the reviewed table, so a payload
+# built without a lane cannot advertise it. Plain text: Steam renders BBCode, not Markdown.
+mapfile -t payload_lanes < <(
+  jq -er '.dependencies.sts2References | keys_unsorted[]' "$extract_dir/couchcoop/build-info.txt")
+[[ ${#payload_lanes[@]} -gt 0 ]] || { echo "release payload declares no lanes" >&2; exit 1; }
+compatibility="$(release_compatibility_summary "${payload_lanes[@]}")"
+
+change_note="$(printf '%s\n\n%s\n\n%s\n' "$heading" "$compatibility" "$release_notes")"
 
 config_for_upload="$config_source"
 [[ "$is_public_workspace" != true ]] || config_for_upload="$localized_config"
