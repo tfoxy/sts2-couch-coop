@@ -90,12 +90,26 @@ an assembly name over the shared `.targets`), restore it to generate `<lane>/pac
 and add the lane to `reviewed_lanes` plus its three reviewed-input functions in
 `scripts/verify-sts2-reference-sdk.sh`. That script fails on a lane directory it has not reviewed,
 and on two lanes pinning the same package version — the copy-paste that would quietly make one
-lane's release build the other's.
+lane's release build the other's. The lane also needs its reviewed rows in
+`scripts/lib/release-lanes.sh` — including a **game floor**, which names the payload directory the
+lane ships in and is what the loader matches a running game against; a lane with no floor cannot be
+ordered against the others and so cannot be selected. `scripts/test-verify-release-archive.sh`
+asserts the two lists agree, so a half-added lane fails loudly rather than being left out of a
+release.
 
-`scripts/package-release.sh` builds every lane it discovers here unless `COUCHCOOP_RELEASE_STS2_LANE`
-narrows the run; the lane, its package id, resolved version and content hash are recorded **inside
-each payload** as `couchcoop/build-info.txt` under `dependencies.sts2References`, and
-`scripts/verify-release-archive.sh` holds the payload's manifest to the lane declared there.
+`scripts/package-release.sh` builds every lane it discovers here into **one** payload, each lane's
+game-version-sensitive assemblies under `couchcoop/lanes/<that lane's floor>/`.
+`COUCHCOOP_RELEASE_STS2_LANE` still narrows the run to the lanes it names, but the result is a
+**local build, not a publishable release**: the script says so as it starts, and it tells the payload
+gate which lanes to expect, so an archive missing a lane cannot pass the `--complete` check the
+release path uses. Publishing one would strand every player on the branch whose lane is absent.
+
+Each lane's package id, resolved version and content hash — with the game build it was pinned from,
+its `min_game_version` floor, its bridge API lane, its payload directory and its NuGet lockfile hash
+— are recorded **inside that one payload** as `couchcoop/build-info.txt`, under
+`dependencies.sts2References` keyed by lane. `scripts/verify-release-archive.sh` holds that record
+and the shipped `lanes/` directories to each other, and holds the manifest's single
+`min_game_version` to the **lowest** floor among the lanes that ship.
 
 ---
 

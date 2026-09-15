@@ -125,41 +125,78 @@ The coordinator writes the squash message, with the whole branch diff in hand.
    git push origin v0.1.2
    ```
 
-`.github/workflows/release.yml` then packages the archives and publishes the GitHub Release with
-`--notes-file` fed by `scripts/release-body.sh`: the version's `CHANGELOG.md` section, then a table
-saying which download is for which game. It still fails the release if that version has no section —
+`.github/workflows/release.yml` then packages the archive and publishes the GitHub Release with
+`--notes-file` fed by `scripts/release-body.sh`: the version's `CHANGELOG.md` section, then a short
+note saying what the download is for. It still fails the release if that version has no section —
 it propagates `scripts/changelog-section.sh`'s exit status, which is what that gate always was.
 
-The table's wording draws a distinction worth keeping: a lane with a manifest floor **requires** that
-game version and refuses to load below it, while a lane without one is only **built against** the
-version its references were pinned from and keeps working on newer builds of the same branch. Saying
-"requires" for both would tell players the normal download stops working at the next game update. Pushing is always explicit — no agent pushes a branch or a tag on its own.
+Two things in that note are load-bearing, and `scripts/test-release-body.sh` asserts both:
+
+- The payload **requires** the game version in its `min_game_version` and refuses to load below it,
+  while the newer build it also carries a lane for is one it merely **carries a build for**, not one
+  it is limited to. Saying "requires" of the newer one would tell players the download stops working
+  at the next game update.
+- The note must never say Steam hands a subscriber the build matching their game branch. It does
+  not — see "One payload, one revision" below — and that exact sentence shipped as release prose
+  until this shape replaced it.
+
+Pushing is always explicit — no agent pushes a branch or a tag on its own.
 
 ### What a release publishes
 
-One **archive per STS2 reference lane**, each lane named after a game Steam branch
-(`eng/Sts2.ReferenceSdk/<lane>/`, reviewed by `scripts/verify-sts2-reference-sdk.sh`):
+**One archive**, carrying every STS2 reference lane:
 
 | asset | what it is |
 |---|---|
-| `couchcoop-<tag>.zip` | the `stable` lane. **This name is a contract** — the README's `gh attestation verify <zip>` block and every existing download link point at it, so it is never suffixed. |
+| `couchcoop-<tag>.zip` | the whole release. **This name is a contract** — the README's `gh attestation verify <zip>` block and every existing download link point at it, so it is never suffixed. |
 | `couchcoop-<tag>.SHA256SUMS` | that archive's checksum, `sha256sum -c`-able offline |
-| `couchcoop-<tag>-<lane>.zip` | every other lane, e.g. `-public-beta` |
-| `couchcoop-<tag>-<lane>.SHA256SUMS` | that archive's checksum |
 
-`scripts/package-release.sh` emits **all lanes in one invocation** — it clones the two pinned sibling
-repositories once and then stages a payload per lane — because the workflow calls it once and
-publishes `dist/*` and attests `dist/*.zip` wholesale. `COUCHCOOP_RELEASE_STS2_LANE` narrows a local
-run to one lane. Lane facts a release depends on live in `scripts/lib/release-lanes.sh`.
+Inside the payload, the game-version-sensitive assemblies sit one lane deep — `couchcoop/lanes/<game
+version>/` — beside the shared frontend, licences and the `couchcoop/couchcoop.dll` the game loads by
+the `<modDir>/<id>.dll` convention. That loader picks a lane at run time from the build it finds
+itself in; nothing about the choice is baked into the download. A lane is named after a game Steam
+branch on the way in (`eng/Sts2.ReferenceSdk/<lane>/`, reviewed by
+`scripts/verify-sts2-reference-sdk.sh`) and after the game version it was pinned from on the way out,
+because a directory the loader matches against a running game should be named for what it matches.
 
-Two things used to be published beside each archive and are not any more:
+`scripts/package-release.sh` builds every lane in one invocation — it clones the two pinned sibling
+repositories once and then stages the lanes into one payload — because the workflow calls it once and
+publishes `dist/*` and attests `dist/*.zip` wholesale. That same wholesale publish is why it refuses
+to start while `dist/` still holds a lane-suffixed `.zip` or `.SHA256SUMS` from the retired
+two-archive shape: a leftover `couchcoop-<tag>-public-beta.zip` would go out as part of this release.
+
+`COUCHCOOP_RELEASE_STS2_LANE` narrows a build to the lanes it names. That is a **local build, not a
+publishable release** — the script says so as it starts, and the lanes are stated to the payload gate
+rather than inferred from the zip: one `--lane <lane>` per lane built, plus `--complete` only when
+every reviewed lane is present, which is the check a release run makes. A payload missing a lane
+strands every player on that game branch, so it must fail the gate rather than ship. Lane facts a
+release depends on live in `scripts/lib/release-lanes.sh`, which also owns the per-lane **game
+floor** — the lowest game version a lane's assemblies are good for, and the name of the payload
+directory they ship in. Every lane has one now; a lane without one could not be ordered against the
+others and so could not be selected at run time.
+
+There used to be a second archive, `couchcoop-<tag>-public-beta.zip`, and it is gone. Two archives
+needed the Workshop to hand each subscriber the right one, and it cannot — see "One payload, one
+revision" below, which is the whole reason this shape changed.
+
+Two things used to be published beside the archive and are not any more:
 
 - **The per-file contents manifest.** `scripts/verify-release-archive.sh --archive` recomputes it
   from the zip, so shipping it added an asset without adding a check. `--emit-contents <file>` writes
   one locally for anyone who wants it.
 - **`build-info.json`.** The build metadata is the only thing about a release the archive cannot
-  otherwise tell you — with one archive per game branch it is the record of which game API a zip
-  targets — so it moved **inside** the payload, as `couchcoop/build-info.txt`.
+  otherwise tell you — the record of which commit, which sibling pins and which game APIs a zip was
+  built from — so it moved **inside** the payload, as `couchcoop/build-info.txt`.
+
+  It is `couchcoop-release-build-info/v2`, and the part that changed with the merge is
+  `dependencies.sts2References`: a set **keyed by lane**, not one object, because one payload is
+  compiled against one pinned reference package per lane. Each lane's record carries that package's
+  id, resolved version and content hash, the `gameBuild` it was pinned from, the `minGameVersion`
+  floor that lane declares, its `bridgeGameApi` lane, the `laneDirectory` it ships in, and its own
+  `nugetLockSha256` — the lane lockfile hash lives in the lane's record, so the release-wide
+  `lockfileSha256` holds only the lane-independent locks. The gate holds the declared lane set and
+  the shipped `lanes/` directories to each other in both directions: a record claiming a lane the
+  archive does not carry is how a player on that branch is told they have a build they do not have.
 
   The extension is load-bearing. STS2 lists a mod directory and reads every filename ending in
   `.json` as a mod manifest, and Godot's hidden-file test is a dot prefix on Unix but
@@ -176,35 +213,40 @@ signature, and one small checksum file next to them costs nothing while working 
 
 ### `min_game_version`, and what it cannot do
 
-A lane built against a newer game's references stamps that game as the payload manifest's
-`min_game_version` (`v0.111.0` for `public-beta`; the `stable` payload declares no floor). The game
-compares it as a semantic version, a leading `v` is accepted and is its own rendering in
-`release_info.json`, and there are two failure modes: `GAME_VERSION_UNSUPPORTED` for a game older
+A payload has one manifest, so it declares **one** `min_game_version`, and it is the **lowest** game
+version any of its lanes was built for — `v0.107.1`. A floor cannot express a set, so that is all it
+can say: anything older than the oldest lane is refused by the game itself, and everything above it
+is the loader's decision inside the payload — which lane to load for the build it finds itself in,
+and what to do when a running build matches none of them. Stamping the newest lane's version instead
+would be the one genuinely destructive mistake available here: it would refuse the mod on the game
+most players are running.
+
+The game compares the value as a semantic version, a leading `v` is accepted and is its own rendering
+in `release_info.json`, and there are two failure modes: `GAME_VERSION_UNSUPPORTED` for a game older
 than the floor, which is the point, and `GAME_VERSION_INVALID` for a value that does not parse —
 **which fails the mod on every build, the right one included**, and is therefore worse than no floor
 at all. So the literal lives in one place, that place refuses to emit anything but
 `vMAJOR.MINOR.PATCH`, and the payload gate re-checks the stamped value independently.
 
-Being a *minimum*, it makes the beta archive refuse an older game loudly, but nothing stops the
-stable archive from loading on a newer game: there is no `max_game_version`, and only the Workshop's
-`maxBranch` scopes downward.
+Being a *minimum*, it refuses an older game loudly and says nothing at all about a newer one: there
+is **no `max_game_version`**, and nothing else scopes downward either. That is not a gap waiting for
+a Workshop feature to fill it — the Workshop's `minBranch`/`maxBranch` look like the missing upper
+bound and are not, for the reason in the next section. `min_game_version` is the only field that
+actually refuses a mod on the wrong build.
 
 ## Publishing to the Steam Workshop
 
 The GitHub Release is the source of truth; a Workshop item is a copy of an archive already published
-there. With no arguments the script takes the latest release and publishes **every lane** to the
-public listing — one revision per lane, each linked to the game branch its payload was built for:
+there. One release is one archive, so it is **one revision**, linked to no game branch:
 
 ```bash
 scripts/upload-workshop-release.sh                    # latest GitHub Release -> public item
 scripts/upload-workshop-release.sh --dist dist        # a locally built release instead
-scripts/upload-workshop-release.sh --lane stable      # just one lane
 ```
 
 It asks for confirmation before touching the public listing, and refuses non-interactively unless
-`--yes` is passed. Change notes come from `CHANGELOG.md` — the same bytes the GitHub Release body
-uses — on the default lane's revision; the other lanes' revisions point at it, because Steam shows
-one note per revision and the list should not be duplicated.
+`--yes` is passed. The change note is the version's `CHANGELOG.md` section — the same bytes the
+GitHub Release body uses — under a heading naming the payload's version.
 
 ### Localized public metadata
 
@@ -221,23 +263,31 @@ source into this repository or disturbing workspaces, item IDs, previews, Steam 
 Public uploads refuse an older or unverified uploader. The unlisted DEV workspace intentionally
 remains English-only.
 
-The release script sends the complete localization set with its first selected lane. Later lanes in
-the same release omit that already-item-wide metadata, then the public workspace is restored to the
-complete generated configuration. This reduces redundant Steam metadata revisions; it does not
-publish anything until the maintainer runs the existing upload command and confirms it.
+The release script sends the complete localization set with the release's one revision, and leaves
+the public workspace holding that complete generated configuration. It does not publish anything
+until the maintainer runs the existing upload command and confirms it.
 
-Each revision's heading names the payload's version and the game build it was made for, e.g.
-`Release v0.1.2 — Slay the Spire 2 v0.107.1`. The version comes from the payload's own
-`build-info.txt` rather than the archive name, because a snapshot's filename carries only a commit
-sha while its payload carries `<base version>+snapshot.<sha>` — and a Steam page otherwise shows
-nothing but a branch chip.
+The revision's heading names the payload's version, e.g. `Release v0.1.2`. The version comes from the
+payload's own `build-info.txt` rather than the archive name, because a snapshot's filename carries
+only a commit sha while its payload carries `<base version>+snapshot.<sha>` — and a Steam page shows
+nothing else about what a revision even is. It deliberately does **not** name a game build any more:
+one payload serves every branch, so naming one would be a false claim.
 
-Four properties are load-bearing, and each exists because of an incident:
+Five properties are load-bearing, and each exists because of an incident:
 
-- **It writes the change note and the branch link, and nothing else.** The workspace's
-  `workshop.json` *is* the live item's configuration. `--visibility` applies only on a first publish
-  — no `<workspace>/mod_id.txt` yet — or when passed explicitly. Before that rule a bare run flipped
-  the public listing to `private`.
+- **It writes the change note, and nothing else.** The workspace's `workshop.json` *is* the live
+  item's configuration. `--visibility` applies only on a first publish — no `<workspace>/mod_id.txt`
+  yet — or when passed explicitly. Before that rule a bare run flipped the public listing to
+  `private`.
+- **It never writes `minBranch` or `maxBranch` — it deletes them.** Both real workspaces still carry
+  `minBranch = maxBranch = public-beta` on disk from the retired branch-linked shape. That residue is
+  harmless: the upload config is generated per run and the keys are stripped out of it, so the next
+  upload also rewrites the file without them. The reason they must never come back is "One payload,
+  one revision" below. Removing them also retired a pathology that was only ever theirs: an upload carrying
+  either key sat in `k_EItemUpdateStatusCommittingChanges` for minutes and then failed with
+  `k_EResultTimeout` while committing anyway. Without them, an upload commits promptly and a
+  non-zero exit is an ordinary failure — the script stops, and says to check the item page before
+  retrying, because an uploader's exit code is a claim about the client and not about server state.
 - **There is no `previews/` directory in the workspace, deliberately.** The uploader reads a present
   `previews/` as the *complete desired gallery* and deletes anything missing from it; that destroyed
   the item's only additional preview in v0.1.1. The gallery is curated in the Steam web UI now, and
@@ -247,46 +297,75 @@ Four properties are load-bearing, and each exists because of an incident:
 - **The uploader binary stays put; the workspace moves.** `ModUploader` needs `libsteam_api.so` and
   `steam_appid.txt` beside it, so it runs from `.sts2/uploader` and the workspace is chosen with
   `--workspace` or `COUCHCOOP_WORKSHOP_WORKSPACE_DIR`. A workspace may declare which lanes it is
-  allowed to carry, one per line in `lane.txt`, checked for every lane before anything uploads.
-- **A `--dist` directory holding two different releases is refused**, not resolved by "newest wins".
-  A stale archive from an earlier build is how the wrong payload reaches an item; this has already
-  caught a leftover `couchcoop-v0.1.0.zip`.
+  allowed to carry, one per line in `lane.txt`, checked before anything uploads. Since one payload
+  carries every lane, a workspace has to allow them all — one pinned to a single lane can no longer
+  publish a release, which is right, because no single-lane payload exists to give it.
+- **A `--dist` directory holding two different release archives is refused**, not resolved by "newest
+  wins". A stale archive from an earlier build is how the wrong payload reaches an item; this has
+  already caught a leftover `couchcoop-v0.1.0.zip`, and it now also catches a leftover
+  `couchcoop-<tag>-public-beta.zip` from the two-archive shape, which is the likelier stale file for
+  a while yet.
 
 Self-test, with a mock uploader and fixture workspaces — no Steam, no network:
 `bash scripts/test-upload-workshop-release.sh`. Run it after any change to the upload script.
 
-### Branch scoping: one item, one revision per game branch
+### One payload, one revision — and why not branch linking
 
-**Steam serves branch-scoped revisions, and its own UI states the rule.** The *Update Linked Game
-Version* dialog on a revision says:
+**The rule: a release is one revision of one item, carrying every lane, linked to no game branch.
+Never publish one revision per game branch.** This section is long because the alternative looks
+correct, is documented as correct by Steam's own UI, and still reached real players broken.
+
+Steam does offer branch-linked revisions. The *Update Linked Game Version* dialog says so:
 
 > You can link this version of your Workshop Item with a specific version of the game. Choose the
 > earliest and latest version of the game your item works for (they can be the same). Any users who
 > are playing on a version of the game that is between the two game versions you've specified will
 > download and use this version of your Workshop item.
 
-So the shape for two lanes is **one Workshop item, two uploads**, each linked to the game version its
-payload was built for — not two items. Its version dropdown offers `Any`, `Latest Version`, and each
-branch by name; for this app they line up with the game builds we target:
+`workshop.json`'s `minBranch` / `maxBranch` set the same thing at upload time. Read that paragraph
+and the shape for two lanes is obvious: one item, two uploads, each linked to the branch its payload
+was built for. That is what CouchCoop did, and **players on the normal game branch were served the
+beta payload**, which the game then refused: *Mod CouchCoop declares min game version v0.111.0 higher
+than current game version v0.107.1*. Resubscribing fixed it for a while — measured here at 34 minutes
+once and 2 h 56 m another time — and then it came back.
 
-| dropdown entry | game build |
-|---|---|
-| `Latest Version (6/18/2026)` | stable `v0.107.1` |
-| `public-beta (8/13/2026)` | beta `v0.111.0` |
+**The cause is that the client has two update paths and only one of them honours the link.** Both are
+visible by name in `~/.steam/steam/logs/workshop_log.txt`:
 
-`workshop.json`'s `minBranch` / `maxBranch` set the same thing at upload time, and the release script
-passes them through untouched.
+| log line | when it fires | which revision it takes |
+|---|---|---|
+| `Detected workshop change (author snapshot)` | subscribe, and first acquire only | the **branch-matched** revision — correct |
+| `Detected workshop change (latest from server)` | every periodic refresh, roughly every 45 minutes, plus a full reconcile | the item's **newest** revision, branch-blind |
 
-**The trap is the reporting, not the feature.** An upload carrying either key sits in
-`k_EItemUpdateStatusCommittingChanges` for minutes and then the uploader gives up with
-`k_EResultTimeout` — **while the change commits anyway**. That is the client running out of patience,
-not Steam rejecting the update, so the non-zero exit is not the thing to trust. So when a
-branch-scoped upload reports a timeout, **check the item page before retrying**: a blind retry just
-republishes the same content and waits out the same timeout. The script prints a note when it sees
-the keys, and the web dialog is where to confirm or correct a range by hand.
+On this machine that was 8 occurrences of the first and 44 of the second. And the client has nothing
+to reconcile against: `steamapps/workshop/appworkshop_<appid>.acf` stores exactly one `manifest` and
+one `latest_manifest` per item, with **no per-branch field**. So a branch-linked scheme holds only
+while the branch-matched revision for a given user is *also* the item's newest — true for at most one
+branch at a time. Everyone else drifts onto the newest revision at the next refresh.
 
-The game enforces the player's side regardless: it asks Steam which branches an item supports and
-raises `STEAM_BRANCH_UNSUPPORTED` rather than half-loading a mod built for another branch.
+Which branch lost was decided by upload order: lanes were published default-first, so `public-beta`
+was always last and therefore always newest, and every stable subscriber converged on it.
+
+**No pair of `minBranch`/`maxBranch` values fixes this**, because the path that clobbers the payload
+reads no range at all. Four things were ruled out before reaching that conclusion, and each is worth
+knowing so nobody re-opens them: `Latest Version` is not a dynamic newest-build sentinel (the
+changelog page's own script maps the default branch to that literal string); the stable revision did
+exist, with its own `Works with game version` chip, beside the beta one; the app's branch-versioning
+feature flag was on; and the `k_EResultTimeout` uploads had all committed, as the
+`minBranch`/`maxBranch` note above describes.
+
+**Nothing on the player's side catches the mistake either.** The game does ask Steam which branches
+an item supports, but that check is **advisory**: it records a message and logs an error, and the mod
+loads anyway. The only thing that actually refuses a mod on the wrong build is `min_game_version` —
+which is why a beta-floored payload on a stable game failed loudly, and why a stable payload on a
+beta game would have failed silently instead. Verified against both game builds' decompiled corpora;
+the derivation is in `.sts2/research/workshop-branch-check-advisory-sep15.md`.
+
+**The ecosystem agrees, for whatever that is worth as corroboration.** No STS2 Workshop mod uses
+branch linking: RitsuLib (3747602295), MultiplayerLimitBreak (3747606832) and Unlimited (3747509118)
+have zero `Works with game version` chips between them. RitsuLib ships one payload with per-version
+variant folders and a single minimum version — the shape this document now describes — and is MIT and
+public at <https://github.com/BAKAOLC/STS2-RitsuLib>.
 
 ### The unlisted DEV item
 

@@ -462,8 +462,57 @@ public sealed class CouchCoopHostUiServices : IAsyncDisposable
     {
         var assemblyDirectory = Path.GetDirectoryName(typeof(CouchCoopHostUiServices).Assembly.Location);
         return Path.GetFullPath(Path.Combine(
-            string.IsNullOrWhiteSpace(assemblyDirectory) ? AppContext.BaseDirectory : assemblyDirectory,
+            ResolvePayloadRoot(
+                string.IsNullOrWhiteSpace(assemblyDirectory) ? AppContext.BaseDirectory : assemblyDirectory),
             "frontend"));
+    }
+
+    /// <summary>
+    /// The payload root — the directory holding <c>frontend/</c> — given the directory THIS ASSEMBLY was
+    /// loaded from.
+    /// </summary>
+    /// <remarks>
+    /// The two are not always the same directory. A released payload carries the assemblies that differ
+    /// between game builds under <c>lanes/&lt;floor version&gt;/</c> and the loader picks one at load time,
+    /// while everything both lanes share — <c>frontend/</c> above all — ships ONCE at the payload root. So
+    /// this assembly can be a level deeper than the files it serves, and resolving them beside itself would
+    /// hand the browser a static root that does not exist.
+    /// <para>
+    /// A dev deploy (<c>scripts/build-local-mod.sh</c>) is flat and single-lane, so the two directories
+    /// coincide and this returns its argument unchanged.
+    /// </para>
+    /// <para>
+    /// The <c>lanes</c> name is duplicated from <c>CouchCoopLaneSelection.LanesDirectoryName</c> in the
+    /// loader rather than shared: the loader is deliberately dependency-free and this assembly never
+    /// references it. The packaged layout is pinned by <c>scripts/verify-release-archive.sh</c>, which is
+    /// what stops the two spellings drifting apart unnoticed.
+    /// </para>
+    /// </remarks>
+    internal static string ResolvePayloadRoot(string assemblyDirectory)
+    {
+        if (string.IsNullOrWhiteSpace(assemblyDirectory))
+        {
+            return assemblyDirectory;
+        }
+
+        var trimmed = assemblyDirectory.TrimEnd(Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar);
+        var parent = Path.GetDirectoryName(trimmed);
+        if (string.IsNullOrEmpty(parent))
+        {
+            return assemblyDirectory;
+        }
+
+        // Only `<root>/lanes/<something>` is a lane directory. Comparing the PARENT's name rather than the
+        // assembly directory's own keeps a mod installed under a path that merely contains a "lanes"
+        // segment from being rewritten.
+        var comparison = OperatingSystem.IsWindows() ? StringComparison.OrdinalIgnoreCase : StringComparison.Ordinal;
+        if (!string.Equals(Path.GetFileName(parent), "lanes", comparison))
+        {
+            return assemblyDirectory;
+        }
+
+        var payloadRoot = Path.GetDirectoryName(parent);
+        return string.IsNullOrEmpty(payloadRoot) ? assemblyDirectory : payloadRoot;
     }
 }
 

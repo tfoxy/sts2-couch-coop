@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # Self-test for scripts/release-body.sh: the GitHub Release body is the changelog section plus a
-# table saying which download is for which game. No network, no Steam, no build.
+# short note about the one download a release publishes. No network, no Steam, no build.
 
 set -euo pipefail
 
@@ -49,28 +49,62 @@ body="$(bash "$script" v0.1.2)"
 assert_contains "$body" 'A fixture change a player would read.' 'changelog section'
 grep -qF 'An older fixture change' <<<"$body" && fail "body leaked another version's section"
 
-# One row per lane, naming that lane's archive.
 mapfile -t lanes < <(release_lane_discover "$repo_root/eng/Sts2.ReferenceSdk")
 [[ ${#lanes[@]} -ge 2 ]] || fail "expected at least two lanes to test against, got ${#lanes[@]}"
-rows="$(grep -c '^| `couchcoop-' <<<"$body")"
-assert_eq "${#lanes[@]}" "$rows"
+
+# ONE DOWNLOAD. The body may name exactly one .zip, and it is the unsuffixed archive whose name is a
+# published contract (the README's `gh attestation verify <zip>` block and every existing download
+# link point at it). Reading every zip name out of the body rather than asserting one is present is
+# what makes a re-introduced second archive fail here instead of passing unnoticed.
+mapfile -t archives < <(grep -oE 'couchcoop-[A-Za-z0-9.+-]*\.zip' <<<"$body" | LC_ALL=C sort -u)
+assert_eq 1 "${#archives[@]}"
+assert_eq "$(release_archive_name couchcoop-v0.1.2)" "${archives[0]}"
+# ...and one checksums file beside it. A release publishes exactly these two assets.
+assert_contains "$body" "$(release_checksums_name "${archives[0]}").SHA256SUMS" 'checksums asset'
+assert_contains "$body" 'gh attestation verify' 'attestation guidance'
+
+# REGRESSION: the retired two-archive shape must not come back by name. `-public-beta.zip` is
+# spelled out as well as derived, because that is the literal every stale link and doc still carries.
+grep -qF -- '-public-beta.zip' <<<"$body" && fail 'the body names the retired per-lane beta archive'
 for lane in "${lanes[@]}"; do
-  assert_contains "$body" "\`$(release_lane_archive_name couchcoop-v0.1.2 "$lane")\`" "lane $lane row"
+  grep -qF -- "couchcoop-v0.1.2-$lane.zip" <<<"$body" && fail "the body names a per-lane archive for $lane"
 done
 
-# The distinction that matters: a lane with a manifest floor REQUIRES that game version, one without
-# is only BUILT AGAINST the version its references came from and still loads on newer builds of the
-# same branch. Telling players the normal download stops working on the next game update is worse
-# than saying nothing.
+# REGRESSION: the body must never claim Steam hands a subscriber the build matching their game
+# branch. It does not -- the client's periodic refresh takes an item's newest revision branch-blind,
+# which is the reason one payload carries every lane -- and this sentence shipped as release prose.
+grep -qiE 'matching your branch|build matching|gives you the build|(steam|workshop)[^.]{0,40}(picks|selects|chooses)' <<<"$body" \
+  && fail "the body claims Steam selects a build by game branch:"$'\n'"$body"
+grep -qiE 'minBranch|maxBranch|branch-linked|one revision per' <<<"$body" \
+  && fail "the body describes Workshop branch linking:"$'\n'"$body"
+
+# The distinction that matters: the payload REQUIRES the lowest lane floor and the game refuses to
+# load it below that, while the newer builds it carries lanes for are ones it is BUILT FOR, not
+# limited to. Telling players the download stops working on the next game update is worse than
+# saying nothing, so a requirement is stated of the floor and of nothing else.
+#
+# Checked SENTENCE BY SENTENCE, not over the whole body and not line by line: the two versions
+# appear one sentence apart and the line breaks between them are just wrapping. A sentence ends at a
+# period followed by whitespace, which no version string does -- `v0.107.1` is dot-then-digit.
+floor="$(release_payload_min_game_version "${lanes[@]}")"
+assert_contains "$body" "**$floor**" 'the payload floor'
+mapfile -t sentences < <(tr '\n' ' ' <<<"$body" | sed 's/\. /.\n/g')
+required_floor=0
+for sentence in "${sentences[@]}"; do
+  grep -qiE 'require|needs' <<<"$sentence" || continue
+  grep -qF "$floor" <<<"$sentence" && required_floor=1
+  for lane in "${lanes[@]}"; do
+    build="$(release_lane_game_build "$lane")"
+    [[ "$build" == "$floor" ]] && continue
+    grep -qF "$build" <<<"$sentence" \
+      && fail "lane $lane is only built for $build, but the body states it as a requirement:"$'\n'"$sentence"
+  done
+done
+[[ "$required_floor" == 1 ]] || fail "the body never says the download requires $floor:"$'\n'"$body"
+
+# Every lane's game build is still named, so a player can see what the one download carries.
 for lane in "${lanes[@]}"; do
-  row="$(grep -F "\`$(release_lane_archive_name couchcoop-v0.1.2 "$lane")\`" <<<"$body")"
-  if [[ -n "$(release_lane_min_game_version "$lane")" ]]; then
-    assert_contains "$row" "requires **$(release_lane_min_game_version "$lane")**" "lane $lane"
-    grep -qF 'built against' <<<"$row" && fail "lane $lane has a floor but says 'built against'"
-  else
-    assert_contains "$row" "built against **$(release_lane_game_build "$lane")**" "lane $lane"
-    grep -qF 'requires' <<<"$row" && fail "lane $lane has no floor but says 'requires'"
-  fi
+  assert_contains "$body" "$(release_lane_game_build "$lane")" "lane $lane game build"
 done
 
 # A tag with no changelog section must still fail the release rather than publish a body with no

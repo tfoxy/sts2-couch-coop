@@ -173,13 +173,22 @@ Two consequences worth knowing before you build for a branch:
 - A **release** build has no install to detect from, so it is told the lane instead. It compiles
   against a staged reference SDK — a bare assemblies directory with no `release_info.json` — and
   `scripts/package-release.sh` therefore passes `-p:Sts2GameApi=` from
-  [`release_lane_game_api()`](../scripts/lib/release-lanes.sh). Adding a release lane is therefore two
-  things: a reviewed row in that function, and a pinned reference SDK under
+  [`release_lane_game_api()`](../scripts/lib/release-lanes.sh). Adding a release lane is therefore a
+  reviewed set of rows in [`scripts/lib/release-lanes.sh`](../scripts/lib/release-lanes.sh) — the lane
+  name, its game API, the game build it is compiled against, its Steam branch, and its **game floor** —
+  plus a pinned reference SDK under
   [`eng/Sts2.ReferenceSdk/<lane>/`](../eng/Sts2.ReferenceSdk/README.md) (project +
-  `packages.lock.json`, both tracked). Both exist for
+  `packages.lock.json`, both tracked). All of them exist for
   `public-beta` today — `FuYnAloft.Sts2.References 0.111.0-beta`, lane `v111` — so the beta packages
   like stable does. A lane with no row fails the release by name rather than publishing an
   undeclared one.
+
+  The floor is the row that is easy to forget and impossible to omit. One release archive carries every
+  lane under `lanes/<floor>/` and the mod picks one at load time, so the floor both **names** a lane's
+  directory and **orders** it against the others; a lane without one cannot be placed in that order.
+  The payload's own `min_game_version` is the lowest floor of the lanes it carries, which is what makes
+  a single download refuse a game older than anything it supports while still loading on everything
+  newer. See [commit-and-release.md](commit-and-release.md) for the packaging and publishing side.
 
 Some game members do not fail a build when they move. A Harmony target resolved by name, or a
 reflective read with a fallback, compiles clean and then degrades silently at runtime — which is why
