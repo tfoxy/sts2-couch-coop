@@ -48,8 +48,9 @@ public static class CouchCoopHostUiNotices
     public static bool? MdnsNameResolves { get; set; }
 
     /// <summary>
-    /// Set to <c>0</c>/<c>false</c>/<c>off</c>/<c>no</c> to ignore <see cref="MdnsNameResolves"/> and keep
-    /// the <c>.local</c> row first however the self-check went.
+    /// Set to <c>0</c>/<c>false</c>/<c>off</c>/<c>no</c> to ignore <see cref="MdnsNameResolves"/> and leave
+    /// the <c>.local</c> row unbadged however the self-check went. The row's POSITION never depended on this
+    /// — <c>QrHostOptions.Build</c> appends the mDNS row last unconditionally.
     /// </summary>
     public const string MdnsRowSelfCheckEnvironmentVariable = "COUCHCOOP_MDNS_ROW_SELFCHECK";
 
