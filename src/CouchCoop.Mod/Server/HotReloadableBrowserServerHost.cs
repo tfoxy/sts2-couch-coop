@@ -172,30 +172,38 @@ public sealed class HotReloadableBrowserServerHost : IHotServerHost, IAsyncDispo
             return BaseUri;
         }
 
-        for (var port = _preferredPort; port <= ushort.MaxValue; port++)
+        TcpListener listener;
+        try
         {
-            cancellationToken.ThrowIfCancellationRequested();
-            var listener = new TcpListener(_bindAddress, port);
-            try
-            {
-                listener.Start();
-                _listener = listener;
-                _stop = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
-                BaseUri = new Uri($"http://{_bindAddress}:{((IPEndPoint)listener.LocalEndpoint).Port}/");
-                // …and say which port we actually WALKED TO. THIS is the listener a real game binds — the twin in
-                // `CouchCoopBrowserServer.StartAsync` serves the standalone/test path — so publishing only there
-                // left the file missing on exactly the process anything outside would want to find.
-                BrowserPortFile.Publish(BaseUri.Port);
-                _acceptLoop = AcceptLoopAsync(_stop.Token);
-                return BaseUri;
-            }
-            catch (SocketException)
-            {
-                listener.Stop();
-            }
+            // A HOST still walks upward when its preferred port is taken: several game instances share one
+            // machine, and `scripts/lib/instance-port.mjs` reads the walked port back out of BrowserPortFile for
+            // exactly that reason. A SEAT may NOT — the host hands the browser the port it assigned and probes
+            // that same port, so a walked seat serves an address nobody will ever ask for. See
+            // HeadlessSeatPortGuard, which owns both halves of that rule.
+            listener = HeadlessSeatPortGuard.Bind(_bindAddress, _preferredPort, IsHeadlessClient, cancellationToken);
+        }
+        catch (SeatPortUnavailableException failure)
+        {
+            // Names the cause to the host over the authenticated control channel, then terminates this process.
+            // Never returns; the rethrow exists so the compiler (and a future non-exiting variant) sees a path.
+            HeadlessSeatPortGuard.ReportAndExit(failure);
+            throw;
         }
 
-        throw new InvalidOperationException($"No local port was available at or above {_preferredPort}.");
+        _listener = listener;
+        _stop = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
+        BaseUri = new Uri($"http://{_bindAddress}:{((IPEndPoint)listener.LocalEndpoint).Port}/");
+        // …and say which port we actually BOUND. THIS is the listener a real game binds — the twin in
+        // `CouchCoopBrowserServer.StartAsync` serves the standalone/test path — so publishing only there
+        // left the file missing on exactly the process anything outside would want to find.
+        BrowserPortFile.Publish(BaseUri.Port);
+        // The same number, over the authenticated heartbeat, because the file is the wrong channel for the one
+        // reader that most needs it: the host. It is written into THIS process's Godot user dir, which the host
+        // does not open (only tooling does), so the host used to have no way to notice it was about to hand a
+        // browser a port this process is not serving — until the 75-second deadline.
+        HeadlessConnectionReporter.PublishBrowserPort(BaseUri.Port);
+        _acceptLoop = AcceptLoopAsync(_stop.Token);
+        return BaseUri;
     }
 
     public async Task ReplaceGenerationAsync(

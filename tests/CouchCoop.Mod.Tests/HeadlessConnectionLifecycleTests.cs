@@ -234,9 +234,15 @@ internal static class HeadlessConnectionLifecycleTests
             Assert(ConnectionRegistry.Shared.Snapshot().Rows.Single(row => row.Id == id).Issue?.Code == "startup-timeout",
                 "pre-existing host membership without a child heartbeat still gets the startup deadline");
             var report = ConnectionRegistry.Shared.BuildReport(id)!;
-            Assert(report.Contains("Host lobby membership: True", StringComparison.Ordinal)
+            // The deadline now names WHICH of the four causes it observed. Nothing here is wrong — no heartbeat
+            // ever arrived, so the honest verdict is "still starting", and it must not read as a firewall or a
+            // port conflict just because the wait ran out.
+            Assert(report.Contains("This player's game is still starting", StringComparison.Ordinal),
+                "a seat that simply never reported is described as still starting, not as a failure of something");
+            Assert(report.Contains("host lobby membership: True", StringComparison.Ordinal)
                    && report.Contains("child phase: not reported", StringComparison.Ordinal)
-                   && report.Contains("child HTTP listener: not yet probed", StringComparison.Ordinal),
+                   && report.Contains("port this player's game reports it bound: not reported", StringComparison.Ordinal)
+                   && report.Contains("host loopback probe of the assigned port: not yet probed", StringComparison.Ordinal),
                 "timeout distinguishes a missing authenticated heartbeat from the known membership and untested listener");
             Assert(process.Killed, "the parent force-kills a child that outlives its five-second shutdown grace");
             Assert(elapsed >= TimeSpan.FromSeconds(5), "Ensure waits through the five-second forced-cleanup fence");

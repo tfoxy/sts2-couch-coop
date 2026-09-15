@@ -60,6 +60,8 @@ if (args is ["--seats"])
 {
     Console.WriteLine("seats: allocator and teardown");
     await HeadlessClientManagerTests.RunAsync();
+    Console.WriteLine("seats: port truth");
+    await SeatPortTruthTests.RunAsync();
     Console.WriteLine("seats: ok");
     return;
 }
@@ -96,6 +98,8 @@ Console.WriteLine("connections: control routes");
 await ConnectionControlRouteTests.RunAsync();
 Console.WriteLine("connections: seat build");
 SeatModBuildTests.Run();
+Console.WriteLine("connections: seat port truth");
+await SeatPortTruthTests.RunAsync();
 Console.WriteLine("connections: lifecycle");
 await HeadlessConnectionLifecycleTests.RunAsync();
 Console.WriteLine("connections: websocket lifecycle");

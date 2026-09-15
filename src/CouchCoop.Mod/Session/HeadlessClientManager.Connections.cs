@@ -44,8 +44,21 @@ public sealed partial class HeadlessClientManager
         await CleanupExitedConnectionsAsync(ct).ConfigureAwait(false);
         ConnectionRegistry.Shared.ConfigureView(sessionId, requiresChild: true, reused: true);
         var launchLogs = ConnectionAttemptLogs.CaptureStart(ConnectionRegistry.HostLogPath, null);
+        // BOTH of these are settled BEFORE _lock is taken, and for the same reason: MaxSlot's probe marshals to
+        // the game's main thread, and the port survey can block on a dropped packet. The main thread takes _lock
+        // on every screen change, so either one evaluated under it stalls (MaxSlot deadlocks) the game.
+        var maxSlot = MaxSlot;
+        var occupiedSeatPorts = await SurveySeatPortsAsync(maxSlot, displayName, targetNetId, ct).ConfigureAwait(false);
+        foreach (var (occupiedSlot, owner) in occupiedSeatPorts)
+        {
+            ConnectionRegistry.Shared.RecordDiagnostic(sessionId, $"seat port {SlotToPort(occupiedSlot)}", owner);
+        }
         HeadlessAllocation? allocation;
-        try { allocation = AllocateHeadless(sessionId, displayName, ct, allowNewSlot, onSlotBound, targetNetId); }
+        try
+        {
+            allocation = AllocateHeadless(
+                sessionId, displayName, ct, maxSlot, occupiedSeatPorts, allowNewSlot, onSlotBound, targetNetId);
+        }
         catch
         {
             foreach (var log in await launchLogs.ReadErrorsAsync().ConfigureAwait(false))
@@ -96,9 +109,12 @@ public sealed partial class HeadlessClientManager
         ConnectionRegistry.Shared.BindLogs(sessionId, owned.Logs);
         ConnectionRegistry.Shared.RecordDiagnostic(sessionId, "process", $"pid={owned.Process.Id}; slot={slot}; generation={owned.Generation}; netId={SlotToNetId(slot)}");
         var started = Stopwatch.GetTimestamp();
-        string listenerProof = "not yet probed";
-        string readinessProof = "No readiness observation was captured.";
-        while (Stopwatch.GetElapsedTime(started) < SeatReadyTimeout)
+        var deadline = SeatReadyTimeout;
+        // The verdict is rebuilt from the host's own facts on every pass and replaces the one sentence that used
+        // to end in "child HTTP listener: not responding" for three unrelated causes. See SeatReadinessVerdict.
+        var verdict = SeatReadinessVerdict.Describe(
+            ReadinessFacts(owned, null, member: false, port.Value, started, deadline));
+        while (Stopwatch.GetElapsedTime(started) < deadline)
         {
             ct.ThrowIfCancellationRequested();
             if (!IsCurrent(owned)) return null;
@@ -106,17 +122,33 @@ public sealed partial class HeadlessClientManager
             var status = HeadlessConnectionControl.Shared.Snapshot(slot, owned.Generation);
             var member = _membershipProbe(SlotToNetId(slot));
             var fresh = status is not null && Fresh(status);
-            readinessProof = $"Host lobby membership: {member}; child phase: {status?.Status?.NativePhase ?? "not reported"}; authenticated heartbeat fresh: {fresh}; child HTTP listener: {listenerProof}.";
-            ApplyToAttempt(sessionId, owned, registry => registry.RecordDiagnostic(sessionId, "join readiness", readinessProof));
+            verdict = SeatReadinessVerdict.Describe(ReadinessFacts(owned, status, member, port.Value, started, deadline));
+            ApplyToAttempt(sessionId, owned, registry => registry.RecordDiagnostic(sessionId, "join readiness", verdict.Detail));
+            LogCauseChange(owned, verdict);
+            if (verdict.Cause == SeatReadinessCause.PortConflict)
+            {
+                // The seat says it bound a port that is not the one we hand the browser. Nothing downstream can
+                // recover from that, and waiting out the deadline would only turn a one-second answer into a
+                // 75-second one — this is the backstop that makes any imprecision in the pre-spawn survey
+                // harmless. See SeatReadinessVerdict.PortTakenCode.
+                owned.Failure ??= verdict.Issue;
+                await StopFailedConnectionAsync(owned).ConfigureAwait(false);
+                return null;
+            }
             if (status?.Status?.NativePhase.Equals("Connecting", StringComparison.OrdinalIgnoreCase) == true)
                 ApplyToAttempt(sessionId, owned, registry => registry.Advance(sessionId, ConnectionStage.Joining));
             if (member && status?.Status is { NativePhase: "Connecting" or "starting" } && fresh)
             {
-                var listenerResponding = await _readinessProbe(port.Value, ct).ConfigureAwait(false);
-                listenerProof = listenerResponding ? "responding" : "not responding";
-                readinessProof = $"Host lobby membership: {member}; child phase: {status.Status.NativePhase}; authenticated heartbeat fresh: {fresh}; child HTTP listener: {listenerProof}.";
-                ApplyToAttempt(sessionId, owned, registry => registry.RecordDiagnostic(sessionId, "join readiness", readinessProof));
-                if (!listenerResponding)
+                var probe = await _readinessProbe(port.Value, ct).ConfigureAwait(false);
+                // Retained on the connection so the monitor below can keep naming the cause after this loop has
+                // returned — that is the only place the network-path verdict can be reached.
+                owned.ListenerResponding = probe.Responding;
+                owned.ListenerProbeFailure = probe.Failure;
+                owned.ListenerReachability = probe.Reachability;
+                verdict = SeatReadinessVerdict.Describe(ReadinessFacts(owned, status, member, port.Value, started, deadline));
+                ApplyToAttempt(sessionId, owned, registry => registry.RecordDiagnostic(sessionId, "join readiness", verdict.Detail));
+                LogCauseChange(owned, verdict);
+                if (!probe.Responding)
                 {
                     await Task.Delay(200, ct).ConfigureAwait(false);
                     continue;
@@ -145,12 +177,70 @@ public sealed partial class HeadlessClientManager
             }
             await Task.Delay(200, ct).ConfigureAwait(false);
         }
-        owned.Failure ??= new("startup-timeout", "The game did not join the host before the connection deadline.",
-            "Retry after the host finishes loading. If this repeats, copy the report and check that game and mod versions match.",
-            $"Deadline: {SeatReadyTimeout.TotalSeconds:0} seconds. {readinessProof}");
+        // The deadline names the cause it actually observed rather than always saying "startup timeout": a
+        // blocked loopback and a seat that was merely slow produced byte-identical text before this.
+        owned.Failure ??= verdict.Issue;
         await StopFailedConnectionAsync(owned).ConfigureAwait(false);
         return null;
     }
+
+    /// <summary>
+    /// Write the readiness cause to the host log the first time it becomes this cause, and not again until it
+    /// changes.
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// One line per TRANSITION, deliberately: the verdict is recomputed five times a second during a join and
+    /// four times a second for as long as a seat lives, and a line per evaluation would be the flood the
+    /// godot-log-hygiene rule exists to prevent. What this buys is a diagnosis that is visible WHILE a live leg
+    /// is running — the copyable report is the durable record, but nobody can watch one.
+    /// </para>
+    /// <para>
+    /// And silent while nothing is wrong. Every healthy join is "still starting" for its whole 20-60 seconds, so
+    /// announcing that on each spawn would be noise in the one file a support report is read from. A transition
+    /// BACK to still-starting is logged, because that is a named condition clearing rather than a seat dying,
+    /// and the difference is not otherwise recoverable from the log.
+    /// </para>
+    /// </remarks>
+    private static void LogCauseChange(OwnedConnection owned, SeatReadinessVerdictResult verdict)
+    {
+        var previous = owned.LoggedCause;
+        if (previous == verdict.Cause) return;
+        owned.LoggedCause = verdict.Cause;
+        if (verdict.Cause == SeatReadinessCause.StillStarting && previous is null) return;
+        Console.Error.WriteLine(
+            $"[couch-coop] seat readiness slot={owned.Slot} cause={verdict.Cause}: {verdict.Detail}");
+    }
+
+    /// <summary>
+    /// Everything the host knows about <paramref name="owned"/>'s readiness right now, in the shape
+    /// <see cref="SeatReadinessVerdict"/> reads.
+    /// </summary>
+    private static SeatReadinessFacts ReadinessFacts(
+        OwnedConnection owned,
+        HeadlessConnectionControlSnapshot? status,
+        bool member,
+        int expectedPort,
+        long startedTicks,
+        TimeSpan deadline)
+        => new(
+            ExpectedPort: expectedPort,
+            // The seat's own word for where it is listening. 0 until it has one, which is "not up yet" and must
+            // never read as a disagreement — every heartbeat from before this field existed would say 0.
+            ReportedPort: status?.Status?.BrowserPort ?? 0,
+            // The pre-spawn survey's finding is not carried here: a slot whose port had an owner never got
+            // spawned into (AllocateHeadless fails it outright), so by this point the only port evidence left is
+            // what the seat itself reports.
+            PortOwner: null,
+            HostMember: member,
+            NativePhase: status?.Status?.NativePhase,
+            HeartbeatFresh: status is not null && Fresh(status),
+            ListenerResponding: owned.ListenerResponding,
+            ProbeFailure: owned.ListenerProbeFailure,
+            TcpReachability: owned.ListenerReachability,
+            ConnectedBrowserCount: status?.Status?.ConnectedChildBrowserCount ?? 0,
+            ElapsedMs: (long)Stopwatch.GetElapsedTime(startedTicks).TotalMilliseconds,
+            DeadlineMs: (long)deadline.TotalMilliseconds);
 
     private void PrepareConnectionLocked(int slot, Guid sessionId)
     {
@@ -277,13 +367,22 @@ public sealed partial class HeadlessClientManager
                 var status = HeadlessConnectionControl.Shared.Snapshot(owned.Slot, owned.Generation);
                 var native = status?.Status;
                 SetTerminalFailure(owned, native);
+                var member = _membershipProbe!(SlotToNetId(owned.Slot));
+                // The same four-cause verdict the join wait uses, kept running after the redirect. This is the
+                // only place the NETWORK PATH cause can be reached: the join returns as soon as the host itself
+                // can reach the seat, so "the seat is up, the host can talk to it, and no viewer ever arrived"
+                // is only observable from here. A port disagreement is terminal on this side too — it means the
+                // browser is being pointed at an address this seat does not serve.
+                var verdict = SeatReadinessVerdict.Describe(ReadinessFacts(
+                    owned, status, member, SlotToPort(owned.Slot), owned.StartedTicks, TimeSpan.Zero));
+                LogCauseChange(owned, verdict);
+                if (verdict.Cause == SeatReadinessCause.PortConflict) owned.Failure ??= verdict.Issue;
                 if (owned.Process!.HasExited)
                     owned.Failure ??= ProcessExitedIssue(owned.Process);
                 if (owned.HasJoined && status is not null && !Fresh(status))
                     owned.Failure ??= new("child-status-lost", "The client game stopped responding to the host.",
                         "Retry the connection. Copy this report if the client becomes unresponsive again.", "No authenticated child heartbeat arrived for 10 seconds.");
                 if (owned.Failure is not null) { await StopFailedConnectionAsync(owned).ConfigureAwait(false); return; }
-                var member = _membershipProbe!(SlotToNetId(owned.Slot));
                 Guid[] clients;
                 lock (_lock) clients = _browserAttempts.Where(p => p.Value.Slot == owned.Slot && p.Value.Generation == owned.Generation).Select(p => p.Key).ToArray();
                 foreach (var id in clients)
@@ -292,6 +391,13 @@ public sealed partial class HeadlessClientManager
                     {
                         if (native?.NativePhase.Equals("Connecting", StringComparison.OrdinalIgnoreCase) == true)
                             registry.Advance(id, ConnectionStage.Joining);
+                        // Only while something is actually diagnosable. The verdict's elapsed figure changes every
+                        // second, so recording it unconditionally would bump the registry revision (and repaint the
+                        // panel) once a second for every connected seat, for the whole session — and say nothing.
+                        // A seat with a browser attached always classifies as "still starting", so this is silent
+                        // the moment the join succeeds.
+                        if (verdict.Cause != SeatReadinessCause.StillStarting)
+                            registry.RecordDiagnostic(id, "view readiness", verdict.Detail);
                         registry.SetReadiness(id, member, native?.ConnectedChildBrowserCount > 0);
                         registry.NoticeSlowView(id);
                     });
@@ -408,8 +514,21 @@ public sealed partial class HeadlessClientManager
         public int Slot { get; } = slot;
         public long Generation { get; } = generation;
         public string Token { get; } = token;
+        /// <summary>When this seat was claimed, for the elapsed figure the readiness verdict prints.</summary>
+        public long StartedTicks { get; } = Stopwatch.GetTimestamp();
         public IHeadlessProcess? Process;
         public bool MonitorStarted, HasJoined, Quarantined;
+        /// <summary>
+        /// The last result of the host's own loopback probe of this seat's assigned port, and why it failed.
+        /// Null until the join wait has probed at all. Retained past that wait because the monitor keeps naming
+        /// the readiness cause and has no probe of its own — re-probing on its 250 ms tick would be a poll.
+        /// </summary>
+        public bool? ListenerResponding;
+        public string? ListenerProbeFailure;
+        /// <summary>What a raw TCP connect found when the HTTP probe last failed; see the probe's own doc.</summary>
+        public SeatPortReachability ListenerReachability;
+        /// <summary>The readiness cause already written to the host log; see <c>LogCauseChange</c>.</summary>
+        public SeatReadinessCause? LoggedCause;
         public ConnectionIssue? Failure;
         public ConnectionAttemptLogs? Logs;
         public string? QuarantineReason;
@@ -481,13 +600,24 @@ public sealed partial class HeadlessClientManager
             // never reached the network, and "check that game and mod versions match" is the one next action a
             // player cannot act on. It has a remedy — remove one of the two installed copies of this mod — so it
             // gets its own code and says so. The detail comes from the seat and names the file it loaded.
-            owned.Failure ??= string.Equals(status.ErrorCode, HeadlessSeatBuildGuard.MismatchErrorCode, StringComparison.Ordinal)
-                ? new(SeatBuildMismatchCode, "This player's game is running a different version of CouchCoop than the host.",
-                    "Both copies of the mod are installed. Unsubscribe the CouchCoop item in the Steam Workshop, or redeploy the mod, so only one remains — then retry.",
-                    SeatBuildMismatchDetail(status.ErrorDetail, SeatsShareTheHostProfile))
-                : new("native-join-rejected", "The game rejected the connection to the host.",
+            //
+            // The port guard's refusal is mapped the same way and for the same reason: the seat could not bind
+            // the port it was assigned, which is a host-side port conflict with a real remedy (restart the game
+            // and free the port), not a game that refused the connection.
+            owned.Failure ??= status.ErrorCode switch
+            {
+                HeadlessSeatBuildGuard.MismatchErrorCode =>
+                    new(SeatBuildMismatchCode, "This player's game is running a different version of CouchCoop than the host.",
+                        "Both copies of the mod are installed. Unsubscribe the CouchCoop item in the Steam Workshop, or redeploy the mod, so only one remains — then retry.",
+                        SeatBuildMismatchDetail(status.ErrorDetail, SeatsShareTheHostProfile)),
+                HeadlessSeatPortGuard.UnavailableErrorCode =>
+                    SeatReadinessVerdict.IssueFor(
+                        SeatReadinessCause.PortConflict,
+                        status.ErrorDetail ?? "The client game did not report which port it could not bind."),
+                _ => new("native-join-rejected", "The game rejected the connection to the host.",
                     "Check that game and mod versions match, then retry. Copy this report if it continues.",
-                    $"{status.ErrorCode ?? "Unknown native error"}: {status.ErrorDetail ?? "No native error detail was supplied."}");
+                    $"{status.ErrorCode ?? "Unknown native error"}: {status.ErrorDetail ?? "No native error detail was supplied."}"),
+            };
         else if (status?.NativePhase.Equals("Disconnected", StringComparison.OrdinalIgnoreCase) == true)
             owned.Failure ??= new("native-disconnected", "The client game disconnected from the host.",
                 "Reconnect this device. Copy this report if it drops again.", status.ErrorDetail ?? status.ErrorCode);

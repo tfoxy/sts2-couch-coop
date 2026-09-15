@@ -480,6 +480,12 @@ internal sealed partial class CouchCoopConnectionPanel : Panel
     {
         "process-exited" => "process_exit",
         Session.HeadlessClientManager.SeatBuildMismatchCode => "mod_mismatch",
+        // The three causes the old single readiness sentence used to cover. Each has its own next action — free
+        // the port, allow the port through this computer's firewall, fix the path from the device — so each
+        // needs its own localized copy rather than a differently-worded English detail under one key.
+        Session.SeatReadinessVerdict.PortTakenCode => "seat_port",
+        Session.SeatReadinessVerdict.PortBlockedCode => "seat_port_blocked",
+        Session.SeatReadinessVerdict.NetworkPathCode => "seat_network",
         "launch-exception" or "launch-refused" or "startup-timeout" or "process-monitor-failed" => "launch",
         "native-join-rejected" or "native-disconnected" or "child-status-lost" => "join",
         "browser-view-slow" => "slow",

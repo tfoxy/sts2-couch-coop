@@ -148,7 +148,12 @@ public sealed partial class HeadlessClientManager : IDisposable
     // Probe used by WaitForReadyAsync to decide when a freshly spawned headless is serving on its port.
     // Defaults to the real HTTP poll; the test ctor injects an instant probe so the slot bookkeeping
     // (dedup / reuse / reap / release) can be exercised without a real HTTP server.
-    private readonly Func<int, CancellationToken, Task<bool>> _readinessProbe;
+    private readonly Func<int, CancellationToken, Task<SeatListenerProbeResult>> _readinessProbe;
+    // Asks whether a seat's computed browser port is genuinely free on this machine BEFORE we spawn into it,
+    // returning an English description of the owner (or null). Defaults to the real loopback connect + test bind;
+    // the test ctor injects a decided answer so the allocator's slot-skip can be exercised without sockets — and
+    // one test deliberately uses the REAL probe against a live blackhole listener. See SeatPortAvailability.
+    private readonly Func<int, CancellationToken, Task<string?>> _seatPortProbe;
     // Invoked when we RESPAWN a headless on a claimed-but-dead slot (a mid-run reconnect): force-evicts any
     // stale ENet peer still holding that netId on the host so the respawned headless's same-netId handshake
     // isn't rejected (IdCollision → timeout). Null in tests / when no host net server is available. Idempotent
@@ -165,6 +170,68 @@ public sealed partial class HeadlessClientManager : IDisposable
 
     public static int SlotToPort(int slot) => HostPort + slot * PortStep;
     public static ulong SlotToNetId(int slot) => BaseNetId + (ulong)slot;
+
+    /// <summary>
+    /// How many slots the pre-spawn port survey looks at. Bounded because <see cref="MaxSlot"/> is not: a probed
+    /// lobby that reports no cap opens the whole 1002..1099 guard band, and surveying all of it on every join
+    /// would trade a real cost for information about seats nobody is about to take. The pinned slots (a
+    /// netId-bound rejoin, a name's existing claim) are ALWAYS surveyed on top of this, because those are the two
+    /// cases that cannot route around an occupied port.
+    /// </summary>
+    private const int MaxSurveyedSeatPorts = 8;
+
+    /// <summary>
+    /// Which seat ports are already owned by something else on this computer, measured BEFORE <c>_lock</c> is
+    /// taken and handed to the locked allocation as a plain lookup.
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// The pre-lock timing is the same rule <see cref="MaxSlot"/> documents, for a different reason: this probe
+    /// does not marshal to the game's main thread, but it CAN block for
+    /// <see cref="SeatPortAvailability.ProbeTimeout"/> per port when a local firewall rule drops the packet
+    /// instead of refusing it — and the main thread takes <c>_lock</c> on every screen change. Probes run
+    /// concurrently so a pathological port costs one timeout for the whole survey, not one each.
+    /// </para>
+    /// <para>
+    /// A slot already running one of OUR seats surveys as occupied (its own listener answers). That is harmless:
+    /// every branch that could act on the result returns earlier for a live process.
+    /// </para>
+    /// </remarks>
+    private async Task<Dictionary<int, string>> SurveySeatPortsAsync(
+        int maxSlot,
+        string? displayName,
+        ulong? targetNetId,
+        CancellationToken cancellationToken)
+    {
+        var slots = new List<int>();
+        void Consider(int slot)
+        {
+            if (slot >= MinSlot && slot <= maxSlot && !slots.Contains(slot)) slots.Add(slot);
+        }
+
+        if (targetNetId is ulong netId && TryNetIdToSlot(netId, maxSlot, out var boundSlot)) Consider(boundSlot);
+        if (NormalizeName(displayName) is { } name)
+        {
+            lock (_lock)
+            {
+                if (_nameToSlot.TryGetValue(name, out var claimed)) Consider(claimed);
+            }
+        }
+
+        for (var slot = MinSlot; slot <= maxSlot && slots.Count < MaxSurveyedSeatPorts; slot++) Consider(slot);
+
+        var probed = await Task.WhenAll(slots.Select(async slot =>
+            (Slot: slot, Owner: await _seatPortProbe(SlotToPort(slot), cancellationToken).ConfigureAwait(false))))
+            .ConfigureAwait(false);
+
+        var occupied = new Dictionary<int, string>();
+        foreach (var (slot, owner) in probed)
+        {
+            if (!string.IsNullOrWhiteSpace(owner)) occupied[slot] = owner;
+        }
+
+        return occupied;
+    }
 
 
     /// <summary>
@@ -269,12 +336,27 @@ public sealed partial class HeadlessClientManager : IDisposable
         Func<int, IHeadlessProcess?> launcher,
         Func<int, CancellationToken, Task<bool>>? readinessProbe = null,
         Action<ulong>? evictStalePeer = null,
-        Func<int?>? maxSeatsProbe = null)
+        Func<int?>? maxSeatsProbe = null,
+        Func<int, CancellationToken, Task<string?>>? seatPortProbe = null)
     {
         _launcher = launcher ?? throw new ArgumentNullException(nameof(launcher));
-        _readinessProbe = readinessProbe ?? DefaultHttpReadinessAsync;
+        _readinessProbe = readinessProbe is null
+            ? DefaultHttpReadinessAsync
+            : async (port, token) =>
+            {
+                var responding = await readinessProbe(port, token).ConfigureAwait(false);
+                // NotProbed, deliberately: an injected bool carries no reachability, and inventing one here
+                // would let a unit harness produce a host-local-block verdict it never measured.
+                return new SeatListenerProbeResult(
+                    responding,
+                    responding ? null : "the injected readiness probe reported no failure detail",
+                    SeatPortReachability.NotProbed);
+            };
         _evictStalePeer = evictStalePeer;
         _maxSeatsProbe = maxSeatsProbe;
+        // A unit harness that says nothing about ports gets "every port is free", which is the behaviour every
+        // pre-existing seat test was written against.
+        _seatPortProbe = seatPortProbe ?? ((_, _) => Task.FromResult<string?>(null));
     }
 
     private HeadlessClientManager(
@@ -289,6 +371,7 @@ public sealed partial class HeadlessClientManager : IDisposable
         _readinessProbe = DefaultHttpReadinessAsync;
         _evictStalePeer = evictStalePeer;
         _maxSeatsProbe = maxSeatsProbe;
+        _seatPortProbe = SeatPortAvailability.DescribeOwnerAsync;
     }
 
     /// <summary>
@@ -360,19 +443,29 @@ public sealed partial class HeadlessClientManager : IDisposable
     /// <paramref name="onSlotBound"/> still fires before the launch.
     /// </para>
     /// </summary>
+    /// <param name="maxSlot">
+    /// The caller's PRE-LOCK snapshot of <see cref="MaxSlot"/>. Taken by the caller, not here, because the same
+    /// value is needed to decide which seat ports to survey — and both must be settled before <c>_lock</c>.
+    /// </param>
+    /// <param name="occupiedSeatPorts">
+    /// Seat slots whose browser port already has a foreign owner (see <see cref="SurveySeatPortsAsync"/>). A
+    /// brand-new player is routed around them; a PINNED seat — a netId-bound rejoin, or a returning name whose
+    /// claim is its identity in the host's run — cannot move, so an owner on its port fails the join immediately
+    /// with <see cref="SeatReadinessVerdict.PortTakenCode"/> rather than spawning a seat the browser could never
+    /// reach.
+    /// </param>
     private HeadlessAllocation? AllocateHeadless(
         Guid sessionId,
         string? displayName,
         CancellationToken ct,
+        int maxSlot,
+        IReadOnlyDictionary<int, string> occupiedSeatPorts,
         bool allowNewSlot = true,
         Action<ulong, string?>? onSlotBound = null,
         ulong? targetNetId = null)
     {
         var name = NormalizeName(displayName);
         int slot;
-        // Snapshot the slot range BEFORE taking _lock: MaxSlot's probe blocks on a main-thread marshal, and the
-        // main thread takes _lock too — evaluating it under the lock deadlocks the game (see MaxSlot's doc).
-        var maxSlot = MaxSlot;
         // Set when we respawn on a claimed-but-dead slot (a reconnect): after releasing the lock we force-evict
         // any stale ENet peer still holding this netId so the respawned headless's same-netId handshake isn't
         // rejected (IdCollision). Done off the lock — the eviction marshals to the game thread.
@@ -491,8 +584,10 @@ public sealed partial class HeadlessClientManager : IDisposable
                 // (allowNewSlot:false): the host's run no longer accepts a newly joining peer. The reuse branch
                 // above (an existing claim) is unaffected, so a mid-run RECONNECT still works.
                 if (!allowNewSlot) return null;
-                // New (or anonymous) player → a fully-free slot, else reclaim a claimed-but-dead one.
-                slot = AllocateSlotForNewNameLocked(maxSlot);
+                // New (or anonymous) player → a fully-free slot, else reclaim a claimed-but-dead one. A brand-new
+                // player has no netId to keep, so a slot whose port is already owned by something else is simply
+                // skipped: they join on the next one instead of failing at all.
+                slot = AllocateSlotForNewNameLocked(maxSlot, occupiedSeatPorts);
                 if (slot == 0)
                 {
                     // Every slot has a LIVE process. The one refusal a host can actually do something
@@ -501,6 +596,40 @@ public sealed partial class HeadlessClientManager : IDisposable
                 }
                 _sessionToSlot[sessionId] = slot;
                 if (name is not null) _nameToSlot[name] = slot;
+            }
+
+            // The slot is settled and we are about to SPAWN on it (every reuse branch above has already returned).
+            // If its browser port has a foreign owner, this join cannot work: the host hands the browser
+            // SlotToPort(slot) and probes that same port, and the seat is no longer allowed to walk away from it.
+            // Failing here costs about a second; the alternative is the 75-second deadline and a message that
+            // blames the seat's listener. The brand-new-name branch above has already preferred a free port, so
+            // reaching this line means the slot could not move — a netId-bound rejoin, a returning name whose
+            // claim IS its identity in the host's run, or a lobby in which every seat port is taken.
+            if (occupiedSeatPorts.TryGetValue(slot, out var portOwner))
+            {
+                var verdict = SeatReadinessVerdict.Describe(new SeatReadinessFacts(
+                    ExpectedPort: SlotToPort(slot),
+                    ReportedPort: 0,
+                    PortOwner: portOwner,
+                    HostMember: false,
+                    NativePhase: null,
+                    HeartbeatFresh: false,
+                    ListenerResponding: null,
+                    ProbeFailure: null,
+                    TcpReachability: SeatPortReachability.NotProbed,
+                    ConnectedBrowserCount: 0,
+                    ElapsedMs: 0,
+                    DeadlineMs: (long)SeatReadyTimeout.TotalMilliseconds));
+                var issue = verdict.Issue;
+                Console.Error.WriteLine(
+                    $"[couch-coop] headless spawn refused slot={slot} port={SlotToPort(slot)}: {portOwner}");
+                ConnectionRegistry.Shared.Fail(sessionId, issue.Code, issue.Summary, issue.Action, issue.Detail);
+                // Unwind exactly as the launch-refused path does: drop this session, and only forget the claim if
+                // WE just created it — a reconnect's pre-existing claim stays so the player can retry on the same
+                // netId once the port is freed.
+                _sessionToSlot.Remove(sessionId);
+                if (!reusingClaim) RemoveNameForSlotLocked(slot);
+                return null;
             }
 
             // The slot (→ netId) is now bound to this player, on BOTH paths above (a reconnect respawn on an
@@ -725,13 +854,30 @@ public sealed partial class HeadlessClientManager : IDisposable
         }
     }
 
-    private int AllocateSlotForNewNameLocked(int maxSlot)
+    /// <param name="occupiedPortSlots">
+    /// Slots whose browser port already has a foreign owner. Preferred AGAINST, not forbidden: a new player who
+    /// can take another seat should just take it, but when every candidate's port is occupied the honest outcome
+    /// is the named <see cref="SeatReadinessVerdict.PortTakenCode"/> failure the caller raises — not "no seat
+    /// available", which would send the host looking for a window to close.
+    /// </param>
+    private int AllocateSlotForNewNameLocked(int maxSlot, IReadOnlyDictionary<int, string>? occupiedPortSlots = null)
+    {
+        if (occupiedPortSlots is { Count: > 0 })
+        {
+            var free = PickSlotForNewNameLocked(maxSlot, slot => !occupiedPortSlots.ContainsKey(slot));
+            if (free != 0) return free;
+        }
+
+        return PickSlotForNewNameLocked(maxSlot, _ => true);
+    }
+
+    private int PickSlotForNewNameLocked(int maxSlot, Func<int, bool> acceptable)
     {
         var claimed = _nameToSlot.Values.ToHashSet();
         for (var s = MinSlot; s <= maxSlot; s++)
-            if (!_processBySlot.ContainsKey(s) && !claimed.Contains(s)) return s;
+            if (!_processBySlot.ContainsKey(s) && !claimed.Contains(s) && acceptable(s)) return s;
         for (var s = MinSlot; s <= maxSlot; s++)
-            if (!_processBySlot.ContainsKey(s)) { RemoveNameForSlotLocked(s); return s; }
+            if (!_processBySlot.ContainsKey(s) && acceptable(s)) { RemoveNameForSlotLocked(s); return s; }
         return 0;
     }
 
@@ -1617,7 +1763,7 @@ public sealed partial class HeadlessClientManager : IDisposable
                     return null;
                 }
             }
-            if (await _readinessProbe(port, ct).ConfigureAwait(false))
+            if ((await _readinessProbe(port, ct).ConfigureAwait(false)).Responding)
             {
                 Console.Error.WriteLine($"[couch-coop] headless ready slot={slot} port={port}");
                 return port;
@@ -1716,18 +1862,64 @@ public sealed partial class HeadlessClientManager : IDisposable
 
     // Real readiness probe: any HTTP response (2xx/4xx/5xx) means the headless's browser server is
     // listening; only a connection-refused/timeout means it isn't up yet.
-    private static async Task<bool> DefaultHttpReadinessAsync(int port, CancellationToken ct)
+    internal static async Task<SeatListenerProbeResult> DefaultHttpReadinessAsync(int port, CancellationToken ct)
     {
         using var http = new HttpClient { Timeout = TimeSpan.FromMilliseconds(800) };
+        var started = Stopwatch.GetTimestamp();
         try
         {
             using var r = await http.GetAsync($"http://127.0.0.1:{port}/", ct).ConfigureAwait(false);
-            return true;
+            return new SeatListenerProbeResult(true, null, SeatPortReachability.NotProbed);
         }
         catch (OperationCanceledException) when (ct.IsCancellationRequested) { throw; }
-        catch { return false; }
+        catch (Exception exception)
+        {
+            // WHY it failed, not only that it did. "Not responding" on its own fitted three unrelated causes
+            // (see SeatReadinessVerdict), and the difference between a REFUSED connection (nothing is listening
+            // yet) and a DROPPED one (a local firewall rule ate the host's own loopback packet) is exactly the
+            // evidence that tells two of them apart.
+            var elapsed = (long)Stopwatch.GetElapsedTime(started).TotalMilliseconds;
+            var socketError = (exception as HttpRequestException)?.InnerException as System.Net.Sockets.SocketException;
+            var cause = socketError is null
+                ? exception.GetType().Name
+                : $"{exception.GetType().Name}/{socketError.SocketErrorCode}";
+            var failure = $"{cause} after {elapsed.ToString(CultureInfo.InvariantCulture)} ms";
+
+            // …and then ONE raw TCP connect, on the failure path only, because the HTTP timeout alone still
+            // fits two very different states. A DROPPED packet never completes the handshake. A listener that is
+            // BOUND BUT WEDGED — accept loop stuck, HTTP server mid-init — completes it from the kernel backlog
+            // and only the read times out. Both print the same TaskCanceledException, so without this the second
+            // one would be reported as a firewall problem on a machine whose firewall is fine. A healthy join
+            // never reaches here, and the connect carries the caller's token so a shutdown is not delayed.
+            var reachability = ct.IsCancellationRequested
+                ? new SeatPortProbe(SeatPortReachability.NotProbed, "not probed: the attempt was cancelled")
+                : await SeatPortAvailability
+                    .ProbeLoopbackAsync(port, SeatPortAvailability.ProbeTimeout, ct)
+                    .ConfigureAwait(false);
+
+            return new SeatListenerProbeResult(
+                false, $"{failure}; {reachability.Detail}", reachability.Reachability);
+        }
     }
 }
+
+/// <summary>
+/// One result of the host's own loopback HTTP probe of a seat's assigned browser port, WITH the reason it
+/// failed. The reason is the point: the probe used to return a bare bool, and the single word "not responding"
+/// that produced was the whole evidence behind a message that fitted a port conflict, a local firewall rule and
+/// a blocked phone equally well.
+/// </summary>
+/// <param name="Responding">Whether anything answered HTTP on the port. Any status code counts.</param>
+/// <param name="Failure">Exception type (and socket error, where there is one) plus elapsed ms; null on success.</param>
+/// <param name="Reachability">
+/// What a raw TCP connect found immediately afterwards — measured only when the HTTP probe failed, and the fact
+/// that separates "this machine is dropping its own packets" from "the listener is there and not serving yet".
+/// <see cref="SeatPortReachability.NotProbed"/> whenever it was not measured, which must never be read as either.
+/// </param>
+internal readonly record struct SeatListenerProbeResult(
+    bool Responding,
+    string? Failure,
+    SeatPortReachability Reachability);
 
 /// <summary>
 /// Real <see cref="IHeadlessProcess"/> over a spawned <see cref="Process"/>. On Linux, graceful stop
