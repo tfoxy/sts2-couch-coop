@@ -37,7 +37,50 @@ internal static class LoaderLaneSelectionTests
         ProbeOrderPutsTheLaneAheadOfTheSharedRoot();
         AnAlreadyLoadedCopyFromADifferentPathIsRefused();
         SharedPayloadFilesResolveFromThePayloadRootNotTheLane();
+        AStaleRootCopyIsReportedRatherThanRefused();
         Console.WriteLine("LoaderLaneSelectionTests: ok");
+    }
+
+    /// <summary>
+    /// A lane-owned assembly left at the mod root is named in the log, and never fatal.
+    /// </summary>
+    /// <remarks>
+    /// Both arrangements happen for real and they want opposite verdicts, which is why this reports
+    /// instead of refusing. Extracting a new release over an old one is the ordinary manual upgrade and
+    /// leaves stale root copies from the pre-lanes layout — refusing there would break every such upgrade
+    /// to fix nothing. A dev deploy over an old release install is the reverse: flat assemblies at the
+    /// root, shadowed by a leftover `lanes/`, running old code with no symptom. That one is fixed in
+    /// `scripts/build-local-mod.sh`, which removes `lanes/` before deploying; this message is the backstop
+    /// if anything reintroduces it.
+    /// </remarks>
+    private static void AStaleRootCopyIsReportedRatherThanRefused()
+    {
+        using var root = new TempDir();
+        Lanes(root, "0.107.1");
+        var lane = Path.Combine(root.Path, "lanes", "0.107.1");
+        File.WriteAllText(Path.Combine(lane, "CouchCoop.Mod.dll"), "lane");
+
+        Assert(
+            CouchCoopLaneSelection.DescribeIgnoredRootCopy(root.Path, lane, "CouchCoop.Mod") is null,
+            "no message when the root holds no copy at all — the released payload's normal shape");
+
+        File.WriteAllText(Path.Combine(root.Path, "CouchCoop.Mod.dll"), "stale root");
+        var message = CouchCoopLaneSelection.DescribeIgnoredRootCopy(root.Path, lane, "CouchCoop.Mod");
+        Assert(message is not null, "a root copy beside a chosen lane is reported");
+        Assert(message!.Contains(lane, StringComparison.Ordinal), "the message names the lane in use");
+        Assert(
+            message.Contains(Path.Combine(root.Path, "CouchCoop.Mod.dll"), StringComparison.Ordinal),
+            "the message names the ignored copy, so it can be deleted without guessing");
+
+        // The flat dev layout has no lane, so there is nothing shadowing anything and nothing to say.
+        Assert(
+            CouchCoopLaneSelection.DescribeIgnoredRootCopy(root.Path, null, "CouchCoop.Mod") is null,
+            "a flat deploy is silent");
+
+        // Selection itself is unchanged by the stale copy: it still picks the lane, and does not refuse.
+        var selection = CouchCoopLaneSelection.Select(root.Path, "v0.107.1");
+        Assert(selection.Refusal is null, "a stale root copy never refuses the mod");
+        Assert(LaneName(selection) == "0.107.1", "the lane still wins over the root copy");
     }
 
     /// <summary>

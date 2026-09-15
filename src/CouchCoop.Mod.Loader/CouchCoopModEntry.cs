@@ -67,6 +67,17 @@ public static partial class CouchCoopModEntry
             {
                 Log.Info(
                     $"[couch-coop] game {selection.DetectedVersion} -> lane '{selection.LaneDirectory}'");
+
+                // Names a stale root copy the lane is shadowing. Benign for someone who extracted a new
+                // release over an old one; the tell that a dev deploy is not the code running otherwise.
+                var ignoredRootCopy = CouchCoopLaneSelection.DescribeIgnoredRootCopy(
+                    modDirectory,
+                    selection.LaneDirectory,
+                    ImplementationAssemblyName);
+                if (ignoredRootCopy is not null)
+                {
+                    Log.Warn($"[couch-coop] {ignoredRootCopy}");
+                }
             }
 
             Assembly ResolveFromModDirectory(AssemblyName assemblyName)
