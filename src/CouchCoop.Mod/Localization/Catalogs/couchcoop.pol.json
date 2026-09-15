@@ -77,7 +77,7 @@
   "couchcoop_connection_error_service_action": "Wróć do lobby i spróbuj ponownie.",
   "couchcoop_connection_error_patch_summary": "Couch Co-Op nie mógł podłączyć się do gry, więc tryb kooperacji nie zadziała w tej sesji.",
   "couchcoop_connection_error_patch_action": "Uruchom grę ponownie. Jeśli kooperacja nadal się nie uruchamia, skopiuj ten raport.",
-  "couchcoop_connection_error_shared_profile_summary": "Gracze na tym komputerze współdzielą jeden profil gry i jeden plik dziennika.",
+  "couchcoop_connection_error_shared_profile_summary": "Gracze na tym komputerze współdzielą jeden profil gry.",
   "couchcoop_connection_error_shared_profile_action": "Kooperacja nadal działa. Nie zmieniaj ustawień gry, gdy podłączeni są inni gracze.",
   "couchcoop_connection_empty": "Urządzenia pojawią się tutaj po połączeniu z serwerem przeglądarki. Użyj tej samej sieci Wi‑Fi i sprawdź adres pokazany powyżej.",
   "couchcoop_connection_host_service": "Usługa hosta",

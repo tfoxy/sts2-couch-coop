@@ -1180,12 +1180,113 @@ public sealed partial class HeadlessClientManager : IDisposable
     }
 
     /// <summary>
-    /// The ONLY game argument a couch seat is launched with. Everything that used to travel on the command line
+    /// The game argument every couch seat is launched with. Everything that used to travel on the command line
     /// (<c>-fastmp join</c>, <c>--clientId N</c>) is now environment-driven and re-materialized inside the seat by
     /// <see cref="Patches.CommandLineOverridePatch"/>. A visible <c>-fastmp</c> is exactly what made a normally
     /// hosted session look like the local-multiplayer test path, and argv is unreliable in the embedded host.
     /// </summary>
-    internal const string SeatGameArgs = "--headless";
+    internal const string SeatHeadlessArgument = "--headless";
+
+    /// <summary>
+    /// Where a seat writes its log when it was launched with NO user-dir isolation, relative to the HOST's user
+    /// directory — which, in exactly that case, is also the seat's.
+    /// </summary>
+    /// <param name="hostLogPath">
+    /// <see cref="Connections.ConnectionRegistry.HostLogPath"/>, i.e. <c>&lt;userDir&gt;/logs/godot.log</c>.
+    /// The user dir is taken from it rather than resolved again so there is ONE answer to "where does this
+    /// process keep its files", and so this stays pure. <see langword="null"/> (a host that never resolved a
+    /// log path) yields null and the seat launches exactly as it did before.
+    /// </param>
+    /// <remarks>
+    /// Under <c>couch-coop/</c> because everything this mod creates in the user profile lives there, and beside
+    /// rather than inside <c>headless-slots/</c> because that directory holds isolated USER DIRS — this is one
+    /// file, and a reader who finds it there must not think isolation happened.
+    /// </remarks>
+    internal static string? SeatLogPath(string? hostLogPath, int slot)
+    {
+        if (string.IsNullOrWhiteSpace(hostLogPath)) return null;
+        var logsDirectory = Path.GetDirectoryName(hostLogPath);
+        var userDirectory = string.IsNullOrEmpty(logsDirectory) ? null : Path.GetDirectoryName(logsDirectory);
+        if (string.IsNullOrEmpty(userDirectory)) return null;
+        return Path.Combine(
+            userDirectory, "couch-coop", "seat-logs", $"slot-{slot.ToString(CultureInfo.InvariantCulture)}.log");
+    }
+
+    /// <summary>
+    /// The game arguments for one seat: <see cref="SeatHeadlessArgument"/>, plus <c>--log-file</c> when this
+    /// seat has to be told where to write.
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// WHY THIS IS NOT A CONSTANT ANY MORE. Godot's file logger TRUNCATES its log file on every process start
+    /// (<c>RotatedFileLogger::rotate_file</c>, called from its constructor, reopens the path with
+    /// <c>FileAccess::WRITE</c>). With an isolated <c>user://</c> per seat that only ever affects the seat's own
+    /// file. WITHOUT isolation — macOS, where Godot derives <c>user://</c> from <c>$HOME</c> alone — every seat
+    /// spawn reopens and truncates the HOST's live <c>user://logs/godot.log</c>, which is why the macOS bug
+    /// report that started this work arrived with no log to attach: by the time the player went looking, three
+    /// seats had erased it.
+    /// </para>
+    /// <para>
+    /// <c>--log-file</c> REPLACES the default logger rather than adding to it (Godot 4.5
+    /// <c>main/main.cpp</c>: the project's <c>debug/file_logging</c> logger is only installed when no
+    /// <c>--log-file</c> was given), so a seat pointed at its own file never opens the host's at all. The path
+    /// is opened with filesystem access, so an absolute path outside <c>user://</c> is allowed; rotation is
+    /// disabled for an overridden path, so the seat's file is the only one that appears.
+    /// </para>
+    /// <para>
+    /// QUOTED, because the macOS user dir contains a space (<c>~/Library/Application Support/…</c>) and
+    /// <see cref="ProcessStartInfo.Arguments"/> is a command line, not an argv. A path containing a double
+    /// quote cannot be quoted this way and is refused outright — a seat with no <c>--log-file</c> is the
+    /// behaviour we already had, while a mis-split command line would be a seat that does not launch.
+    /// </para>
+    /// </remarks>
+    internal static string SeatGameArguments(string? seatLogPath)
+        => string.IsNullOrWhiteSpace(seatLogPath) || seatLogPath.Contains('"', StringComparison.Ordinal)
+            ? SeatHeadlessArgument
+            : $"{SeatHeadlessArgument} --log-file \"{seatLogPath}\"";
+
+    /// <summary>
+    /// True once any seat on this host has been launched WITHOUT user-dir isolation, i.e. into the host's own
+    /// Godot profile.
+    /// </summary>
+    /// <remarks>
+    /// Process-wide and one-way, because the condition is a property of the platform rather than of a seat.
+    /// Read where a failure has to explain itself: without isolation the host cannot pin which copy of this mod
+    /// a seat loads (<see cref="HeadlessSeatModSelection"/> only runs over a seat's OWN settings file), so a
+    /// machine with two installed copies can produce <c>seat-build-mismatch</c> for a reason the generic detail
+    /// does not name.
+    /// </remarks>
+    internal static bool SeatsShareTheHostProfile => Volatile.Read(ref _seatsShareTheHostProfile) != 0;
+
+    private static int _seatsShareTheHostProfile;
+
+    /// <summary>
+    /// <see cref="SeatLogPath"/> for this host, with its directory created so the seat has somewhere to write
+    /// and the host something to read back.
+    /// </summary>
+    /// <remarks>
+    /// Godot would create the directory itself, but the host is the one that records this path as the seat's
+    /// log SOURCE before the process exists — so it creates it, and answers null if it cannot. Null means the
+    /// seat launches with no <c>--log-file</c>, which is exactly the behaviour that shipped; a thrown launch
+    /// would be a seat nobody gets.
+    /// </remarks>
+    private static string? PrepareSeatLogPath(int slot)
+    {
+        var path = SeatLogPath(Connections.ConnectionRegistry.HostLogPath, slot);
+        if (path is null) return null;
+        try
+        {
+            Directory.CreateDirectory(Path.GetDirectoryName(path)!);
+            return path;
+        }
+        catch (Exception exception)
+            when (exception is IOException or UnauthorizedAccessException or ArgumentException or NotSupportedException)
+        {
+            Console.Error.WriteLine($"[couch-coop] headless seat log dir unavailable slot={slot} path={path}: "
+                + $"{exception.GetType().Name}: {exception.Message}");
+            return null;
+        }
+    }
 
     /// <summary>
     /// The couch-coop environment a seat process is launched with. Pure (no process/Godot state beyond the host
@@ -1296,7 +1397,21 @@ public sealed partial class HeadlessClientManager : IDisposable
         }
 
         var hostNetId = CouchCoopHostTransport.HostNetId;
-        var gameArgs = SeatGameArgs;
+
+        // Isolate the Godot user dir per slot so instances don't interleave into one godot.log or overwrite each
+        // other's files. Godot's STS2 custom user dir resolves via XDG_DATA_HOME on Linux and APPDATA on Windows;
+        // the seeder (under user://couch-coop/headless-slots/) links the shared caches and RE-SEEDS the profile
+        // from the host on every spawn, so this NEW instance inherits the host's current language / fps / fast
+        // mode. This is the only call site, which is why re-seeding here can never disturb a reused live
+        // instance. Best-effort: if the slot dir can't be prepared we launch without isolation (shared user dir).
+        //
+        // RESOLVED BEFORE THE COMMAND LINE IS BUILT, because the answer decides it: a seat with no isolation of
+        // its own must be handed an explicit --log-file, or starting it truncates the host's live log.
+        var preparedUserDir = HeadlessUserDirSeeder.Prepare(slot);
+        var seatLogPath = preparedUserDir is null
+            ? PrepareSeatLogPath(slot)
+            : Path.Combine(preparedUserDir.SlotUserDir, "logs", "godot.log");
+        var gameArgs = SeatGameArguments(preparedUserDir is null ? seatLogPath : null);
         Console.Error.WriteLine($"[couch-coop] headless launching slot={slot} port={port} netId={netId} hostNetId={hostNetId} exe={_gameExe}");
 
         ProcessStartInfo psi;
@@ -1343,13 +1458,6 @@ public sealed partial class HeadlessClientManager : IDisposable
                 psi.EnvironmentVariables[kv.Key] = kv.Value;
             }
         }
-        // Isolate the Godot user dir per slot so instances don't interleave into one godot.log or overwrite each
-        // other's files. Godot's STS2 custom user dir resolves via XDG_DATA_HOME on Linux and APPDATA on Windows;
-        // the seeder (under user://couch-coop/headless-slots/) links the shared caches and RE-SEEDS the profile
-        // from the host on every spawn, so this NEW instance inherits the host's current language / fps / fast
-        // mode. This is the only call site, which is why re-seeding here can never disturb a reused live
-        // instance. Best-effort: if the slot dir can't be prepared we launch without isolation (shared user dir).
-        var preparedUserDir = HeadlessUserDirSeeder.Prepare(slot);
         if (preparedUserDir is not null)
         {
             foreach (var kv in preparedUserDir.EnvironmentVariables)
@@ -1360,23 +1468,37 @@ public sealed partial class HeadlessClientManager : IDisposable
         else
         {
             // "Best-effort" used to mean "silently". A seat launched with no isolation runs fine, but every
-            // player on this machine then writes into ONE godot.log and ONE settings/save profile — which is
-            // both a support problem (whose error is that line?) and a real one (the last writer wins on
-            // settings). macOS reaches this on every spawn: Godot resolves user:// from $HOME there and has no
-            // --user-dir flag, so there is nothing to repoint. Say it in the log AND in the panel, as a
-            // warning: co-op works, with a limitation the player should know about before they report a bug.
+            // player on this machine then writes into ONE settings/save profile — which is both a support
+            // problem and a real one (the last writer wins on settings). macOS reaches this on every spawn:
+            // Godot resolves user:// from $HOME there and has no --user-dir flag, so there is nothing to
+            // repoint. Say it in the log AND in the panel, as a warning: co-op works, with a limitation the
+            // player should know about before they report a bug.
+            //
+            // The shared godot.log is NO LONGER part of it: gameArgs above hands this seat its own --log-file,
+            // so the host's log survives the spawn. The row still says the profile is shared, because that half
+            // is unfixed until macOS gets real isolation.
+            Volatile.Write(ref _seatsShareTheHostProfile, 1);
             var platform = RuntimeInformation.OSDescription;
             HeadlessLog.Write(
                 $"[couch-coop] headless launching WITHOUT user-dir isolation slot={slot} platform={platform} — "
-                + "this seat shares the host's Godot user directory.");
+                + $"this seat shares the host's Godot user directory; its log goes to {seatLogPath ?? "the shared user directory"}.");
             CouchCoop.Mod.Connections.ConnectionRegistry.Shared.ReportHostIssue(
                 SharedUserDirCode,
-                "Players on this computer share one game profile and one log file.",
+                "Players on this computer share one game profile.",
                 "Co-op still works. Avoid changing game settings while other players are connected, and mention this line if you report a problem.",
-                $"No per-slot Godot user directory is available on this platform ({platform}); seat slot {slot} was launched into the host's user directory.",
+                $"No per-slot Godot user directory is available on this platform ({platform}); seat slot {slot} was launched into the host's user directory."
+                    + $" Its log is kept separate at: {seatLogPath ?? "unavailable — this seat shares the host's godot.log"}.",
                 isWarning: true);
         }
-        CaptureConnectionLogsLocked(slot, preparedUserDir?.HostUserDir, preparedUserDir?.SlotUserDir);
+        // Explicit paths, not user dirs: without isolation the seat's log is NOT `<userDir>/logs/godot.log`
+        // (that one belongs to the host) but the per-slot file --log-file points at. Passing the user dir here
+        // is what made every macOS seat failure report its client log as "unavailable".
+        CaptureConnectionLogsLocked(
+            slot,
+            preparedUserDir?.HostUserDir is { } hostUserDir
+                ? Path.Combine(hostUserDir, "logs", "godot.log")
+                : Connections.ConnectionRegistry.HostLogPath,
+            seatLogPath);
         // SHARE THE HOST'S SECURE-ORIGIN CERTIFICATE CACHE. This must come AFTER the user-dir isolation above,
         // because that isolation is exactly what breaks the cache: the seeder repoints XDG_DATA_HOME (Linux) /
         // LOCALAPPDATA (Windows) at a per-slot directory, and the certificate cache defaults to

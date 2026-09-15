@@ -77,7 +77,7 @@
   "couchcoop_connection_error_service_action": "Torna alla lobby e riprova.",
   "couchcoop_connection_error_patch_summary": "Couch Co-Op non è riuscito ad agganciarsi al gioco, quindi la co-op non può funzionare in questa sessione.",
   "couchcoop_connection_error_patch_action": "Riavvia il gioco. Se la co-op continua a non avviarsi, copia questo rapporto.",
-  "couchcoop_connection_error_shared_profile_summary": "I giocatori su questo computer condividono un solo profilo di gioco e un solo file di log.",
+  "couchcoop_connection_error_shared_profile_summary": "I giocatori su questo computer condividono un solo profilo di gioco.",
   "couchcoop_connection_error_shared_profile_action": "La co-op funziona comunque. Evita di cambiare le impostazioni di gioco mentre altri giocatori sono connessi.",
   "couchcoop_connection_empty": "I dispositivi appariranno qui dopo la connessione al server del browser. Usa la stessa rete Wi‑Fi e controlla l’indirizzo mostrato sopra.",
   "couchcoop_connection_host_service": "Servizio dell’host",

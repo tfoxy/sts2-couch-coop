@@ -1,3 +1,4 @@
+using CouchCoop.Mod.Server;
 using CouchCoop.Mod.Session;
 using System.Diagnostics;
 
@@ -39,6 +40,10 @@ internal static class HeadlessClientManagerTests
         WindowsBridgeEndpointUsesNamedPipe();
         UnixBridgeEndpointUsesSocket();
         SeatLaunchIsCommandLineFree();
+        SeatWithoutIsolationIsGivenItsOwnLogFile();
+        OnlySeatsScopeTheBrowserPortFile();
+        SeatBuildMismatchExplainsAnUnisolatedHost();
+        HostWatchdogIdentityRule();
         SeatEnvironmentCarriesTheJoinContract();
         SeatIsToldTheSteamHostsNetId();
         SeatMemoryTuningIsSeparateFromTheJoinContract();
@@ -593,9 +598,83 @@ internal static class HeadlessClientManagerTests
     // is what makes a normally-hosted (non -fastmp) session possible, so it is asserted explicitly.
     private static void SeatLaunchIsCommandLineFree()
     {
-        Assert(HeadlessClientManager.SeatGameArgs == "--headless",
+        Assert(HeadlessClientManager.SeatGameArguments(null) == "--headless",
             "a seat is launched with --headless ONLY: no -fastmp (which would mark the session as the local-"
             + "multiplayer test path) and no --clientId (argv is unreliable in the embedded host)");
+        Assert(HeadlessClientManager.SeatGameArguments("   ") == "--headless",
+            "a blank log path adds nothing — the argument list stays what it was");
+    }
+
+    // A seat launched with no user-dir isolation is handed its OWN log file, because Godot truncates the log it
+    // opens on every process start: without this, each macOS seat spawn erased the host's live godot.log, which
+    // is why the bug report that started this work arrived with no log attached.
+    private static void SeatWithoutIsolationIsGivenItsOwnLogFile()
+    {
+        var path = HeadlessClientManager.SeatLogPath(
+            Path.Combine("/home", "p", ".local", "share", "SlayTheSpire2", "logs", "godot.log"), 3);
+        Assert(path == Path.Combine("/home", "p", ".local", "share", "SlayTheSpire2", "couch-coop", "seat-logs", "slot-3.log"),
+            "the seat's log lands under the mod's own couch-coop/ folder in the user dir it shares, named by slot");
+        Assert(HeadlessClientManager.SeatLogPath(
+                Path.Combine("/home", "p", ".local", "share", "SlayTheSpire2", "logs", "godot.log"), 2)
+            != path, "two slots never resolve to one file");
+
+        Assert(HeadlessClientManager.SeatGameArguments(path) == $"--headless --log-file \"{path}\"",
+            "--log-file follows --headless and is quoted");
+
+        // The macOS user dir contains a space (~/Library/Application Support/…). An unquoted path would split
+        // into two arguments and the seat would refuse to start.
+        var spaced = Path.Combine("/Users", "p", "Library", "Application Support", "SlayTheSpire2", "couch-coop", "seat-logs", "slot-2.log");
+        Assert(HeadlessClientManager.SeatGameArguments(spaced).EndsWith($"\"{spaced}\"", StringComparison.Ordinal),
+            "a path with a space stays one argument");
+
+        // A path that cannot be quoted loses the flag rather than producing a command line that mis-splits:
+        // a seat with no log file is what shipped; a seat that does not launch is not.
+        Assert(HeadlessClientManager.SeatGameArguments("/tmp/we\"ird/godot.log") == "--headless",
+            "a path containing a double quote is refused, not escaped");
+
+        // A host that never resolved its own log path cannot derive one for a seat, and must not guess.
+        Assert(HeadlessClientManager.SeatLogPath(null, 2) is null, "no host log path ⇒ no seat log path");
+        Assert(HeadlessClientManager.SeatLogPath("   ", 2) is null, "a blank host log path ⇒ no seat log path");
+        Assert(HeadlessClientManager.SeatLogPath("godot.log", 2) is null,
+            "a host log path with no directory above it ⇒ no seat log path");
+    }
+
+    // The seat's browser-port record. With an isolated user dir it is already per-instance; without one, every
+    // process on the machine resolves the same path, so the seats — never the host — are the ones scoped.
+    private static void OnlySeatsScopeTheBrowserPortFile()
+    {
+        Assert(BrowserPortFile.FileNameFor(null) == "browser-port",
+            "a HOST keeps the name scripts/lib/instance-port.mjs and the bring-up scripts read");
+        Assert(BrowserPortFile.FileNameFor("") == "browser-port" && BrowserPortFile.FileNameFor("  ") == "browser-port",
+            "an absent or blank slot is a host, not a seat");
+        Assert(BrowserPortFile.FileNameFor("2") == "browser-port-slot-2"
+            && BrowserPortFile.FileNameFor(" 3 ") == "browser-port-slot-3",
+            "a seat scopes the record by its slot");
+        Assert(BrowserPortFile.FileNameFor("2") != BrowserPortFile.FileNameFor("3"),
+            "two seats never share one record");
+        Assert(BrowserPortFile.FileNameFor("nonsense") == "browser-port"
+            && BrowserPortFile.FileNameFor("0") == "browser-port"
+            && BrowserPortFile.FileNameFor("-1") == "browser-port",
+            "an unparseable or non-positive slot falls back to the host name rather than inventing one");
+    }
+
+    // A host that could not isolate its seats cannot pin which copy of the mod they load either, so the build
+    // mismatch it can produce says why. Every other host reports exactly what it reported before.
+    private static void SeatBuildMismatchExplainsAnUnisolatedHost()
+    {
+        const string reported = "Host CouchCoop build: 1.0.0+abc. This player's game loaded CouchCoop build: 0.9.0, from: /x.";
+        Assert(HeadlessClientManager.SeatBuildMismatchDetail(reported, seatsShareTheHostProfile: false) == reported,
+            "an isolating host's detail is untouched");
+        Assert(HeadlessClientManager.SeatBuildMismatchDetail(null, seatsShareTheHostProfile: false)
+            == "The client game did not report which build it loaded.",
+            "a seat that said nothing still gets the existing sentence");
+
+        var shared = HeadlessClientManager.SeatBuildMismatchDetail(reported, seatsShareTheHostProfile: true);
+        Assert(shared.StartsWith(reported, StringComparison.Ordinal),
+            "the seat's own report stays first — it is the line that names the file");
+        Assert(shared.Contains("per-player game profile", StringComparison.Ordinal)
+            && shared.Contains("picks one per process", StringComparison.Ordinal),
+            "…followed by why a host with no per-seat profile can hit this at all");
     }
 
     private static void SeatEnvironmentCarriesTheJoinContract()
@@ -686,6 +765,35 @@ internal static class HeadlessClientManagerTests
         HeadlessClientManager.ApplyMemoryTuning(inherited);
         Assert(inherited.EnvironmentVariables[firstKey] == "99",
             $"an inherited {firstKey} is never overwritten by the seat default ({firstDefault})");
+    }
+
+    // The seat's crash-proof self-reaper, on the platform with no /proc: it decides whether the HOST is still
+    // alive, and the only mistake it can make — calling a live host gone — SIGKILLs a healthy seat. Both probes
+    // are injected so every branch is reachable without a second process to kill.
+    private static void HostWatchdogIdentityRule()
+    {
+        const string armed = "638600000000000000";
+
+        Assert(!HeadlessHostWatchdog.HostAliveByIdentity(armed, () => false, () => armed),
+            "no process with that pid → the host is gone");
+        Assert(HeadlessHostWatchdog.HostAliveByIdentity(armed, () => true, () => armed),
+            "the same pid with the same start time → the same host, still running");
+        Assert(!HeadlessHostWatchdog.HostAliveByIdentity(armed, () => true, () => "638699999999999999"),
+            "the pid was RECYCLED onto another process → the host is gone, which is the whole point of pinning it");
+
+        // Two "can't tell" cases, both resolved toward NOT killing: a watchdog that guesses wrong here takes
+        // down a seat whose host is fine, and the next poll is two seconds away.
+        Assert(HeadlessHostWatchdog.HostAliveByIdentity(armed, () => true, () => null),
+            "an unreadable start time on a live pid is not evidence of a dead host");
+        Assert(HeadlessHostWatchdog.HostAliveByIdentity(null, () => true, () => "anything"),
+            "no identity pinned at arm → fall back to bare existence");
+        Assert(!HeadlessHostWatchdog.HostAliveByIdentity(null, () => false, () => "anything"),
+            "…but bare existence still decides when the pid is gone");
+
+        var identityReads = 0;
+        Assert(!HeadlessHostWatchdog.HostAliveByIdentity(armed, () => false, () => { identityReads++; return armed; }),
+            "a dead pid short-circuits");
+        Assert(identityReads == 0, "the identity probe is not run for a pid that does not exist");
     }
 
     private static void WindowsBridgeEndpointUsesNamedPipe()

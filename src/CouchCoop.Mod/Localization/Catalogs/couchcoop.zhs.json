@@ -77,7 +77,7 @@
   "couchcoop_connection_error_service_action": "返回大厅后重试。",
   "couchcoop_connection_error_patch_summary": "Couch Co-Op 无法接入游戏，本次游戏无法使用同屏联机。",
   "couchcoop_connection_error_patch_action": "请重启游戏。如果同屏联机仍无法启动，请复制此报告。",
-  "couchcoop_connection_error_shared_profile_summary": "这台电脑上的玩家共用同一个游戏配置文件和同一个日志文件。",
+  "couchcoop_connection_error_shared_profile_summary": "这台电脑上的玩家共用同一个游戏配置文件。",
   "couchcoop_connection_error_shared_profile_action": "同屏联机仍可正常使用。其他玩家连接期间请勿更改游戏设置。",
   "couchcoop_connection_empty": "设备连接到浏览器服务器后会显示在这里。请使用同一 Wi‑Fi 网络，并检查上方显示的地址。",
   "couchcoop_connection_host_service": "主机服务",

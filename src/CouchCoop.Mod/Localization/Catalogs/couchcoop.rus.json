@@ -77,7 +77,7 @@
   "couchcoop_connection_error_service_action": "Вернитесь в лобби и попробуйте снова.",
   "couchcoop_connection_error_patch_summary": "Couch Co-Op не смог подключиться к игре, поэтому совместная игра в этом сеансе недоступна.",
   "couchcoop_connection_error_patch_action": "Перезапустите игру. Если совместная игра всё равно не запускается, скопируйте этот отчёт.",
-  "couchcoop_connection_error_shared_profile_summary": "Игроки на этом компьютере используют один игровой профиль и один файл журнала.",
+  "couchcoop_connection_error_shared_profile_summary": "Игроки на этом компьютере используют один игровой профиль.",
   "couchcoop_connection_error_shared_profile_action": "Совместная игра продолжает работать. Не меняйте настройки игры, пока подключены другие игроки.",
   "couchcoop_connection_empty": "Устройства появятся здесь после подключения к серверу браузера. Используйте ту же сеть Wi‑Fi и проверьте адрес выше.",
   "couchcoop_connection_host_service": "Служба хоста",

@@ -174,11 +174,19 @@ public sealed partial class HeadlessClientManager
         start.Environment["COUCHCOOP_HEADLESS_CONTROL_GENERATION"] = owned.Generation.ToString(System.Globalization.CultureInfo.InvariantCulture);
     }
 
-    private void CaptureConnectionLogsLocked(int slot, string? hostUserDir, string? clientUserDir)
+    /// <summary>
+    /// Bind this slot's attempt to the two log FILES a failure will be explained from.
+    /// </summary>
+    /// <remarks>
+    /// Paths, not user directories. A seat launched without user-dir isolation has no <c>logs/godot.log</c> of
+    /// its own — its log is the per-slot file <c>--log-file</c> points at (see
+    /// <c>HeadlessClientManager.SeatLogPath</c>), and deriving one from the shared user dir would either report
+    /// the HOST's log as the client's or, as it did, report nothing at all.
+    /// </remarks>
+    private void CaptureConnectionLogsLocked(int slot, string? hostLogPath, string? clientLogPath)
     {
         if (_ownedConnections.TryGetValue(slot, out var owned))
-            owned.Logs = ConnectionAttemptLogs.CaptureStart(hostUserDir is null ? ConnectionRegistry.HostLogPath : Path.Combine(hostUserDir, "logs", "godot.log"),
-                clientUserDir is null ? null : Path.Combine(clientUserDir, "logs", "godot.log"));
+            owned.Logs = ConnectionAttemptLogs.CaptureStart(hostLogPath, clientLogPath);
     }
 
     private void ForgetConnectionLocked(int slot)
@@ -436,6 +444,36 @@ public sealed partial class HeadlessClientManager
             "Retry the connection. If the game closes again, copy this report.", $"Process exit code: {exitCode}.");
     }
 
+    /// <summary>
+    /// The technical detail a <see cref="SeatBuildMismatchCode"/> row carries: what the seat reported, plus —
+    /// when this host could not isolate its seats — WHY the mismatch was reachable at all.
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// On a host with per-seat user dirs this failure should be unreachable: the seeder rewrites each seat's own
+    /// <c>settings.save</c> so the row for the other installed copy of the mod is disabled
+    /// (<see cref="HeadlessSeatModSelection"/>), and the seat then loads what the host loaded. That pin runs
+    /// INSIDE the seeder, over a file the seat owns.
+    /// </para>
+    /// <para>
+    /// Without isolation there is no such file — the only <c>settings.save</c> on the machine is the host's own,
+    /// and rewriting it is out of the question — so the game chooses per process and can choose differently for
+    /// a seat. The remedy the player is given does not change (keep one copy installed), but a support report
+    /// that does not say this reads as a random failure on a machine where it is in fact deterministic.
+    /// </para>
+    /// </remarks>
+    internal static string SeatBuildMismatchDetail(string? reportedDetail, bool seatsShareTheHostProfile)
+    {
+        var detail = string.IsNullOrWhiteSpace(reportedDetail)
+            ? "The client game did not report which build it loaded."
+            : reportedDetail;
+        return seatsShareTheHostProfile
+            ? detail + " This platform has no per-player game profile, so the host cannot tell a player's game "
+                + "which copy of CouchCoop to load — with two copies installed, the game picks one per process "
+                + "and can pick differently for each player."
+            : detail;
+    }
+
     private static bool SetTerminalFailure(OwnedConnection owned, HeadlessConnectionStatus? status)
     {
         if (status?.NativePhase.Equals("Failed", StringComparison.OrdinalIgnoreCase) == true)
@@ -446,7 +484,7 @@ public sealed partial class HeadlessClientManager
             owned.Failure ??= string.Equals(status.ErrorCode, HeadlessSeatBuildGuard.MismatchErrorCode, StringComparison.Ordinal)
                 ? new(SeatBuildMismatchCode, "This player's game is running a different version of CouchCoop than the host.",
                     "Both copies of the mod are installed. Unsubscribe the CouchCoop item in the Steam Workshop, or redeploy the mod, so only one remains — then retry.",
-                    status.ErrorDetail ?? "The client game did not report which build it loaded.")
+                    SeatBuildMismatchDetail(status.ErrorDetail, SeatsShareTheHostProfile))
                 : new("native-join-rejected", "The game rejected the connection to the host.",
                     "Check that game and mod versions match, then retry. Copy this report if it continues.",
                     $"{status.ErrorCode ?? "Unknown native error"}: {status.ErrorDetail ?? "No native error detail was supplied."}");

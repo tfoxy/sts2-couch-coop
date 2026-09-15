@@ -77,7 +77,7 @@
   "couchcoop_connection_error_service_action": "กลับไปที่ล็อบบี้แล้วลองอีกครั้ง",
   "couchcoop_connection_error_patch_summary": "Couch Co-Op ไม่สามารถเชื่อมเข้ากับเกมได้ จึงเล่นแบบร่วมมือในเซสชันนี้ไม่ได้",
   "couchcoop_connection_error_patch_action": "รีสตาร์ทเกม หากยังเล่นแบบร่วมมือไม่ได้ ให้คัดลอกรายงานนี้",
-  "couchcoop_connection_error_shared_profile_summary": "ผู้เล่นบนคอมพิวเตอร์เครื่องนี้ใช้โปรไฟล์เกมและไฟล์บันทึกร่วมกัน",
+  "couchcoop_connection_error_shared_profile_summary": "ผู้เล่นบนคอมพิวเตอร์เครื่องนี้ใช้โปรไฟล์เกมร่วมกัน",
   "couchcoop_connection_error_shared_profile_action": "โหมดร่วมมือยังใช้งานได้ หลีกเลี่ยงการเปลี่ยนการตั้งค่าเกมขณะที่ผู้เล่นคนอื่นเชื่อมต่ออยู่",
   "couchcoop_connection_empty": "อุปกรณ์จะแสดงที่นี่หลังเชื่อมต่อกับเซิร์ฟเวอร์เบราว์เซอร์ ใช้เครือข่าย Wi‑Fi เดียวกันและตรวจสอบที่อยู่ที่แสดงด้านบน",
   "couchcoop_connection_host_service": "บริการของโฮสต์",
