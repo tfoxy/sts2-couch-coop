@@ -87,8 +87,48 @@ public static class CouchCoopCacheRoot
     };
 
     private static readonly Lazy<Resolution> Current = new(
-        () => ResolveOnce(DefaultBaseRoot(), CouchCoopCacheContent.Resolve(), DefaultLog),
+        ResolveOrDisable,
         LazyThreadSafetyMode.ExecutionAndPublication);
+
+    /// <summary>
+    /// The lazy's factory, and the one place in this file that catches EVERYTHING.
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// A CACHE FAILURE MUST NEVER BE ABLE TO ABORT MOD INIT. There is no exception for which "the mod does not
+    /// start" is a better outcome than "this session renders everything itself", and the blast radius of a throw
+    /// here is much larger than one failed start: the lazy is
+    /// <see cref="LazyThreadSafetyMode.ExecutionAndPublication"/>, which CACHES THE EXCEPTION, so every later
+    /// read of <see cref="VersionRoot"/>, <see cref="Content"/> and <see cref="Quota"/> rethrows it for the life
+    /// of the process. <see cref="Warm"/> is called at the top of mod init with nothing above it but the
+    /// loader's blanket catch, so the visible result is one log line and then a mod that does nothing at all.
+    /// </para>
+    /// <para>
+    /// The two inputs are guarded here rather than inside <see cref="ResolveOnce"/> because they are outside
+    /// it: <see cref="DefaultBaseRoot"/> reads the environment and the game's data dir, and
+    /// <see cref="CouchCoopCacheContent.Resolve"/> touches the embedded spirectl assembly (whose static
+    /// initialiser can fail as a <c>TypeInitializationException</c> when the two halves of a deploy disagree).
+    /// <see cref="ResolveOnce"/> is total in its own right; this covers getting as far as calling it.
+    /// </para>
+    /// <para>
+    /// The narrow <see cref="IsIoFailure"/> predicate below stays narrow. Each of its uses answers a specific
+    /// question about one operation ("could that file be read?"), where an unexpected type is worth seeing.
+    /// This is the BOUNDARY, and a boundary's job is to be total — the same shape
+    /// <c>CouchCoopAtlasManifest.Warm</c> already uses for the same reason.
+    /// </para>
+    /// </remarks>
+    private static Resolution ResolveOrDisable()
+    {
+        try
+        {
+            return ResolveOnce(DefaultBaseRoot(), CouchCoopCacheContent.Resolve(), DefaultLog);
+        }
+        catch (Exception exception)
+        {
+            DefaultLog($"[couch-coop] cache disabled: {exception.GetType().Name}: {exception.Message}");
+            return new Resolution(null, CouchCoopCacheContent.Unknown, null);
+        }
+    }
 
     /// <summary>
     /// Force resolution (and, if the stamp has moved, the purge) now, and report what happened.
@@ -96,6 +136,8 @@ public static class CouchCoopCacheRoot
     /// <remarks>
     /// Called at the very top of mod init. Everything else reaches this lazily, so forgetting the call costs
     /// correctness nothing — it only moves the work to whichever request happens to need the cache first.
+    /// <para>Never throws: see <see cref="ResolveOrDisable"/>. The call site in <c>CouchCoopMod.Init</c> guards
+    /// it anyway, because the one failure this cannot catch is this class failing to initialise at all.</para>
     /// </remarks>
     public static void Warm() => _ = Current.Value;
 
@@ -169,58 +211,76 @@ public static class CouchCoopCacheRoot
         var trashRoot = Path.Combine(baseRoot, TrashFolderName);
         var stamp = CacheIdentityStamp.For(content);
 
-        // Cross-process: the host and every headless seat come up together after a game update and would
-        // otherwise each try to move the same tree aside. Same named-mutex shape ManagedCacheQuota uses.
-        using var gate = new CacheGate(baseRoot);
-        var held = gate.Enter();
+        // EVERYTHING FROM HERE IS INSIDE ONE GUARD, and the two constructions at its edges are why. Both the
+        // gate below and the quota at the end build a NAMED MUTEX, which on Unix is backed by files the runtime
+        // keeps under $TMPDIR — a per-user directory that is periodically purged on macOS. Neither call is
+        // reading this cache; both can fail, and a named-mutex failure is not necessarily an IOException. While
+        // they sat outside the guard, a throw from either escaped into the lazy that caches it forever and took
+        // the whole mod's init with it — for a cache, which is an optimisation.
         try
         {
-            var existing = TryReadStamp(versionRoot);
-            if (existing is null || !existing.Matches(stamp))
+            // Cross-process: the host and every headless seat come up together after a game update and would
+            // otherwise each try to move the same tree aside. Same named-mutex shape ManagedCacheQuota uses.
+            using var gate = new CacheGate(baseRoot);
+            var held = gate.Enter();
+            try
             {
-                if (Directory.Exists(versionRoot))
+                var existing = TryReadStamp(versionRoot);
+                if (existing is null || !existing.Matches(stamp))
                 {
-                    var reason = existing is null ? "no readable stamp" : existing.DescribeDifference(stamp);
-                    if (!TryMoveAside(versionRoot, trashRoot, log))
+                    if (Directory.Exists(versionRoot))
                     {
-                        // Refusing the cache entirely is the only safe answer left: the tree that is there
-                        // was written for something else, and serving from it is the one forbidden outcome.
-                        log($"[couch-coop] cache disabled: stale cache at {versionRoot} could not be moved aside ({reason})");
-                        return new Resolution(null, content, null);
+                        var reason = existing is null ? "no readable stamp" : existing.DescribeDifference(stamp);
+                        if (!TryMoveAside(versionRoot, trashRoot, log))
+                        {
+                            // Refusing the cache entirely is the only safe answer left: the tree that is there
+                            // was written for something else, and serving from it is the one forbidden outcome.
+                            log($"[couch-coop] cache disabled: stale cache at {versionRoot} could not be moved aside ({reason})");
+                            return new Resolution(null, content, null);
+                        }
+                        log($"[couch-coop] cache purged version={versionName} reason={reason}");
                     }
-                    log($"[couch-coop] cache purged version={versionName} reason={reason}");
+
+                    WriteStamp(versionRoot, stamp, log);
                 }
 
-                WriteStamp(versionRoot, stamp, log);
+                DeleteTheRetiredVersionMap(baseRoot);
+
+                // EVERY start, not just one that created a directory. Enforcing the cap costs a directory
+                // listing and some string compares — it reads no stamps — and running it unconditionally is
+                // what drains a machine that arrived with more than two (the branch-named directories the old
+                // layout left, which a cap of two cannot clear in a single pass). In the steady state it finds
+                // nothing to do, so a start whose directory is already stamped still writes nothing.
+                EvictBeyondCap(baseRoot, versionRoot, trashRoot, log);
+            }
+            finally
+            {
+                if (held)
+                {
+                    gate.Release();
+                }
             }
 
-            DeleteTheRetiredVersionMap(baseRoot);
+            // BEFORE the success line, and inside the guard. A version root without a quota is not a weaker
+            // cache, it is a broken one: the geoclip store dereferences CouchCoopCacheRoot.Quota unconditionally
+            // once it has a root, so "root, no quota" is a null deref waiting for the first bake. The pair is
+            // resolved together or not at all — which also keeps the log honest, since a failure here must not
+            // follow a line that already announced the root.
+            var quota = ManagedCacheQuota.ForCacheRoot(versionRoot);
 
-            // EVERY start, not just one that created a directory. Enforcing the cap costs a directory listing
-            // and some string compares — it reads no stamps — and running it unconditionally is what drains a
-            // machine that arrived with more than two (the branch-named directories the old layout left, which
-            // a cap of two cannot clear in a single pass). In the steady state it finds nothing to do, so a
-            // start whose directory is already stamped still writes nothing.
-            EvictBeyondCap(baseRoot, versionRoot, trashRoot, log);
+            log($"[couch-coop] cache game={content.GameVersion} hash={content.MainAssemblyHash} "
+                + $"cache=v{content.CacheVersion}+sp{content.AssetPayloadVersion} root={versionRoot}");
+
+            StartBackgroundSweep(trashRoot, sweepLegacy ? LegacyRootsFor(baseRoot) : []);
+            return new Resolution(versionRoot, content, quota);
         }
-        catch (Exception exception) when (IsIoFailure(exception))
+        catch (Exception exception)
         {
+            // TOTAL, for the reason ResolveOrDisable documents: the answer to every failure in here is the same
+            // one — no cache, said out loud — and there is none for which throwing at the caller is better.
             log($"[couch-coop] cache disabled: {exception.GetType().Name}: {exception.Message}");
             return new Resolution(null, content, null);
         }
-        finally
-        {
-            if (held)
-            {
-                gate.Release();
-            }
-        }
-
-        log($"[couch-coop] cache game={content.GameVersion} hash={content.MainAssemblyHash} "
-            + $"cache=v{content.CacheVersion}+sp{content.AssetPayloadVersion} root={versionRoot}");
-
-        StartBackgroundSweep(trashRoot, sweepLegacy ? LegacyRootsFor(baseRoot) : []);
-        return new Resolution(versionRoot, content, ManagedCacheQuota.ForCacheRoot(versionRoot));
     }
 
     private static string Show(string value) => string.IsNullOrWhiteSpace(value) ? "(none)" : value;
@@ -650,7 +710,12 @@ public static class CouchCoopCacheRoot
             // Bounded: a peer wedged holding this must not wedge the game's startup with it. Proceeding without
             // the gate is safe — every step below is idempotent and the loser simply re-reads a fresh stamp.
             try { return _mutex.WaitOne(TimeSpan.FromSeconds(10)); }
+            // We DID acquire it; the previous owner died holding it. Held, so it must be released.
             catch (AbandonedMutexException) { return true; }
+            // Anything else means the wait did not succeed, so nothing is held. Since proceeding ungated is
+            // already a supported outcome (the timeout above returns false), a wait that cannot even be
+            // attempted degrades to it rather than costing the session its whole cache.
+            catch (Exception) { return false; }
         }
 
         public void Release()
@@ -686,6 +751,21 @@ public sealed record CouchCoopCacheContent(
     int CacheVersion,
     int AssetPayloadVersion)
 {
+    /// <summary>
+    /// What an install that could not be asked at all says about itself: nothing.
+    /// </summary>
+    /// <remarks>
+    /// The value <see cref="Resolve"/> could not produce, for the caller that has to answer anyway. Deliberately
+    /// spelled with literals rather than by reaching for <c>SpirectlSts2Runtime.AssetPayloadVersion</c>: this
+    /// exists for the case where reading that assembly is what failed, so touching it here would throw again.
+    /// An empty version is refused by the resolver, so this can never become a cache directory.
+    /// </remarks>
+    public static readonly CouchCoopCacheContent Unknown = new(
+        GameVersion: string.Empty,
+        MainAssemblyHash: 0,
+        CacheVersion: CouchCoopCacheRoot.CacheVersion,
+        AssetPayloadVersion: 0);
+
     /// <summary>Read this install's own declaration, and pair it with our two cache generations.</summary>
     public static CouchCoopCacheContent Resolve()
     {
