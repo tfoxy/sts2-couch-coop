@@ -323,7 +323,9 @@ publish a different name than the QR shows.
 Where an OS responder is already running, both answer with the same address for the same name. RFC 6762 treats
 identical rdata as legal coexistence, not a conflict, so avahi does not conflict-rename the host.
 
-- Kill switch: `COUCHCOOP_MDNS_RESPONDER=0` (also `false`/`off`/`no`) disables the responder entirely.
+- Kill switch: `COUCHCOOP_MDNS_RESPONDER=0` (also `false`/`off`/`no`) disables the responder entirely. Unset
+  means the platform default, which is to publish **except on macOS** — see the macOS section below; `=1` (or
+  any other non-falsey value) publishes there too.
 - Related: `COUCHCOOP_ADVERTISED_HOST` pins the advertised address outright and wins the QR dialog's default row.
 - Startup logs one of `mdns-responder publishing name=… interfaces=…`, `mdns-responder-disabled`, or
   `mdns-responder-unavailable detail=…`. Any socket failure (port 5353 denied, no multicast route, hostile
@@ -403,20 +405,35 @@ prove the answer came from the mod rather than from avahi/Bonjour.
 
 ### macOS
 
-**`.local` is the OS's job here, not ours.** macOS runs Bonjour, which already publishes and answers for the
-machine's own name — the responder above exists for Windows, which has nothing equivalent (see the note under
-"Local network name"). Our responder still starts: it binds `IPAddress.Any:5353` with `ReuseAddress` and
-`ExclusiveAddressUse=false`, and where Bonjour does not share the port the bind simply fails and logs
-`mdns-responder-unavailable detail=bind:…`. On macOS that line is not a problem to chase — the name keeps
-resolving because Bonjour is publishing it. `COUCHCOOP_MDNS_RESPONDER=0` is the clean way to stop starting a
-second responder on a host that never needed one.
+**`.local` is the OS's job here, not ours, and on macOS we do not do it.** macOS runs Bonjour, which already
+publishes and answers for the machine's own name — the responder above exists for Windows, which has nothing
+equivalent (see the note under "Local network name"). So **the responder defaults to publishing nothing on
+macOS**: it binds no socket, joins no group, announces nothing, and logs
+`mdns-responder-disabled detail=macos-bonjour-owns-the-name`.
 
-One consequence for the self-check above: **on macOS neither signal attributes the answer to us.** The
-responder does no duplicate-answer suppression — it answers every matching query it receives — so with both
-bound, a phone's query is answered twice and `answered=` climbs normally; and `selfCheck=Answered` only means
-*some* responder returned one of our own addresses, which Bonjour does. Both readings are therefore about the
-NAME resolving, not about who published it. That is the right thing to care about here, but do not read a
-green self-check on macOS as evidence that this responder is doing any work.
+That is a safety decision as much as a tidiness one. The coexistence argument under "Local network name" holds
+only while both responders answer identically, and it assumes we can never be wrong about the name. Bonjour is
+the authoritative owner: it *probed* for the name (RFC 6762 §8.1) and it *defends* it (§9), and we do neither —
+we would be writing A records with the cache-flush bit set for a name somebody else owns. Wherever our answer
+set differed from Bonjour's (an interface Bonjour excludes, an address that moved between our 30-second
+refreshes, a subnet we rank differently) that difference is a name conflict, and macOS resolves conflicts by
+**renaming the computer**, visibly, for the user. The upside would have been nil, because Bonjour publishes the
+name already.
+
+- `COUCHCOOP_MDNS_RESPONDER=1` publishes anyway, if you need to compare behaviour.
+- `COUCHCOOP_MDNS_RESPONDER=0` is still fully inert — no socket *and* no self-check.
+- The startup line carries `mode=` (`Publishing` / `SelfCheckOnly` / `Off`), and
+  `dotnet run --project tests/CouchCoop.Mod.Tests -- mdns-harness 30 "" selfcheck` runs just that mode by hand.
+
+**The self-check still runs**, because the QR dialog's `.local` row asks whether the NAME resolves, not whether
+we published it — and on a Mac the answer should be yes, via Bonjour. Which is the other thing to know here:
+**on macOS neither self-check signal attributes the answer to us.** The responder does no duplicate-answer
+suppression, so where it *is* publishing a phone's query is answered twice and `answered=` climbs normally; and
+`selfCheck=Answered` only ever means *some* responder returned one of our own addresses, which Bonjour does.
+Both readings are therefore about the NAME resolving, not about who published it. That is the right thing to
+care about, but never read a green self-check on macOS as evidence that this responder did any work — by
+default it did none. (Turning publishing off cannot make the row report failure by accident: with no verdict
+recorded at all, `mdnsNameResolves` stays unset and `MdnsRowTrusted()` reads that as "assume it works".)
 
 **What actually breaks a macOS host is inbound TCP to the browser server, and there are two separate gates for
 it.** Both fail the same way: the host binds and listens, the QR encodes a correct address, the phone scans it
@@ -435,6 +452,24 @@ and then times out, and the host logs nothing — because `bind` succeeded and `
 Neither gate has anything to do with mDNS, so the fallback is not the usual one: a literal IP row does not
 route around them. If a phone cannot reach the host at all, check these two before touching anything in this
 section.
+
+**The host now says something when this happens.** Ninety seconds after a host lobby appears, if the browser
+listener has accepted no inbound TCP connection at all, the connections panel gains a warning-level **Host
+service** row (`host-no-inbound-connections`) whose technical detail names both gates by their settings path.
+The clock starts at the lobby, not at the bind — the listener is up from mod init, so a bind-anchored clock
+would warn every player who never wanted co-op — and any accepted connection, on either the plain or the secure
+listener, cancels the warning or withdraws a standing one.
+
+Read the row for what it says and no more. From inside the host, **"nobody has scanned the code yet" and
+"nothing can reach this port" are the same observation**: a blocked connection never reaches `accept`, so there
+is nothing to distinguish them by, and the copy deliberately does not pick one. It is a prompt to check, not a
+verdict. It will also appear on a host playing only with remote Steam friends over native clients, where no
+browser is expected to connect at all.
+
+- `COUCHCOOP_REACHABILITY_WARN_SECONDS` overrides the threshold. `0` (also `off`/`false`/`no`) disables the row;
+  anything else is clamped to 15–3600 seconds. Garbage falls back to the default rather than disabling it.
+- Startup logs `host-ui diagnostic code=host-no-inbound-connections detail=no-inbound-connection-in-90s` when it
+  fires, and one line when a connection clears it.
 
 **Known limitation, not a configuration problem:** `HeadlessUserDirSeeder` supports Linux and Windows only
 (`CurrentPlatform()` returns `Unsupported` otherwise), so on macOS every headless seat launches with **no

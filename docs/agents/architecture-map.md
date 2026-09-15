@@ -734,15 +734,29 @@ panel is no longer mounted; its internal narration remains available for diagnos
   can be reused. Healthy reconnect and mid-run detach still retain the existing game.
 - `ReportHostIssue` raises a synthetic **Host service** row with no client attempt behind it, deduplicated by
   code. `isWarning: true` records it with the `Degraded` outcome — orange ⚠, not failure red — for a condition
-  that is running under a limitation rather than stopped. Three codes exist: `host-service-failed` (no browser
+  that is running under a limitation rather than stopped. Four codes exist: `host-service-failed` (no browser
   listener), `host-patch-failed` (Harmony hooks could not be installed, so no QR button and no seat joining),
-  and `host-seat-profile-shared` (warning: this platform has no per-seat Godot user dir, so every player on the
+  `host-seat-profile-shared` (warning: this platform has no per-seat Godot user dir, so every player on the
   machine shares one settings/save profile — macOS, where `user://` comes from `$HOME` and there is no
-  `--user-dir`). **A new code needs a `CouchCoopConnectionPanel.IssueKey` mapping and its catalog
-  pair**: unmapped codes fall through to the join copy, which on a Host service row is a wrong sentence, not a
-  missing one. `Connections/CouchCoopPatchHealth.cs` records patch outcomes and publishes the `patchHealth` fact
-  into every report beside `hostOS`; off Linux, `CouchCoopHarmonyProbe` answers the question up front by
-  detouring a throwaway method of our own before any real patch is attempted.
+  `--user-dir`; the seat's *log* is no longer shared, see the seat launch contract), and
+  `host-no-inbound-connections` (warning: see below). **A new code needs a
+  `CouchCoopConnectionPanel.IssueKey` mapping and its catalog pair**: unmapped codes fall through to the join
+  copy, which on a Host service row is a wrong sentence, not a missing one.
+  `Connections/CouchCoopPatchHealth.cs` records patch outcomes and publishes the `patchHealth` fact into every
+  report beside `hostOS`; off Linux, `CouchCoopHarmonyProbe` answers the question up front by detouring a
+  throwaway method of our own before any real patch is attempted.
+- `Connections/HostReachabilityWatch.cs` raises `host-no-inbound-connections` when the browser listener has
+  accepted **nothing** for 90s. It exists for the macOS shape nothing else can see: the Local Network privacy
+  permission and the application firewall both leave the host bound and listening while every phone times out —
+  a blocked connection never reaches `accept`, so there is no failure to report and no row to raise. The clock
+  starts in `CouchCoopHostUiServices.StartDiscoveryServices` (a HOST lobby is on screen), **never at the bind** —
+  the listener is up from mod init and a bind-anchored clock would warn every solo player. Both accept loops
+  (`CouchCoopBrowserServer`, `SecureBrowserListener`) call `NoteInboundConnection()` before admission, which
+  cancels the warning or withdraws a standing one; `Disarm()` runs on host teardown. `COUCHCOOP_REACHABILITY_WARN_SECONDS`
+  overrides the threshold (`0`/`off` disables; clamped to 15–3600). **The copy never accuses**: from inside the
+  host "nobody has scanned yet" and "nothing can reach this port" are the same observation, so the row states the
+  fact and names what to check only conditionally. Tests: `HostReachabilityWatchTests`
+  (`-- network`, `-- connections`, and Connection.Tests `--patch-health`).
 - A seat that loaded a different CouchCoop build than the host reports `couchcoop-build-mismatch` on that
   same channel at mod init, before any join, and exits. It is NOT folded into `native-join-rejected`: the
   host raises `seat-build-mismatch`, whose detail names the assembly file the seat loaded and whose next

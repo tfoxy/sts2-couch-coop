@@ -79,6 +79,8 @@
   "couchcoop_connection_error_patch_action": "Redémarrez le jeu. Si le mode coopératif ne démarre toujours pas, copiez ce rapport.",
   "couchcoop_connection_error_shared_profile_summary": "Les joueurs de cet ordinateur partagent un seul profil de jeu.",
   "couchcoop_connection_error_shared_profile_action": "Le mode coopératif fonctionne toujours. Évitez de modifier les paramètres du jeu pendant que d'autres joueurs sont connectés.",
+  "couchcoop_connection_error_reachability_summary": "Aucun téléphone ni navigateur ne s'est encore connecté à ce PC.",
+  "couchcoop_connection_error_reachability_action": "Si personne n'a encore essayé, c'est normal. Si quelqu'un essaie et que la connexion expire, vérifiez que son téléphone est sur ce même réseau, puis autorisez ce jeu à accepter les connexions entrantes : sous macOS dans System Settings > Privacy & Security > Local Network et System Settings > Network > Firewall ; sous Windows, dans l'invite du pare-feu pour le jeu.",
   "couchcoop_connection_empty": "Les appareils apparaissent ici après leur connexion au serveur du navigateur. Utilisez le même réseau Wi‑Fi et vérifiez l’adresse affichée ci-dessus.",
   "couchcoop_connection_host_service": "Service de l’hôte",
   "couchcoop_connection_error_slow_summary": "En attente de l’affichage du jeu dans le navigateur.",

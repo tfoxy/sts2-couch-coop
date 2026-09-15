@@ -79,6 +79,8 @@
   "couchcoop_connection_error_patch_action": "ゲームを再起動してください。それでも協力プレイが始まらない場合は、このレポートをコピーしてください。",
   "couchcoop_connection_error_shared_profile_summary": "このコンピューターのプレイヤーは、1つのゲームプロフィールを共有します。",
   "couchcoop_connection_error_shared_profile_action": "協力プレイは引き続き利用できます。他のプレイヤーが接続している間は、ゲーム設定を変更しないでください。",
+  "couchcoop_connection_error_reachability_summary": "このPCにはまだスマートフォンもブラウザーも接続していません。",
+  "couchcoop_connection_error_reachability_action": "まだ誰も試していない場合は正常です。誰かが接続を試みてタイムアウトする場合は、その端末が同じネットワークに接続されているか確認し、このゲームが受信接続を受け入れられるようにしてください。macOSでは System Settings > Privacy & Security > Local Network と System Settings > Network > Firewall、Windowsではゲームのファイアウォールの確認ダイアログで許可します。",
   "couchcoop_connection_empty": "ブラウザサーバーに接続したデバイスがここに表示されます。同じ Wi‑Fi ネットワークを使い、上に表示されたアドレスを確認してください。",
   "couchcoop_connection_host_service": "ホストサービス",
   "couchcoop_connection_error_slow_summary": "ブラウザーにゲームが表示されるのを待っています。",

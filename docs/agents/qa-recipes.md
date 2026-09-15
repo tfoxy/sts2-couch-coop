@@ -693,8 +693,15 @@ only the loopback HTTP tests; `--host-ui` runs native focus and localization che
 to disable, the `settings.save` rewrite that does it, and the build comparison the seat refuses on;
 `--ws-lifecycle` covers startup cancellation over a real WebSocket; `--labels` isolates
 the device parser; `--patch-health` covers the host's OWN diagnostics — whether this process could install its
-Harmony hooks, how host-service rows deduplicate, and that a degraded host condition is painted as a warning
-rather than a failure. Use the normal scratch deployment environment when running in a worktree.
+Harmony hooks, how host-service rows deduplicate, that a degraded host condition is painted as a warning rather
+than a failure, and the reachability watch that raises `host-no-inbound-connections`. Use the normal scratch
+deployment environment when running in a worktree.
+
+For the host's NETWORKING decisions, `dotnet run --project tests/CouchCoop.Mod.Tests -- network` runs the whole
+family alone — advertised-IPv4 ranking (incl. the macOS `en0`/`utun`/`bridge100` shapes), the QR option list,
+the mDNS wire codec and its three-way mode decision, the discovery responder and the TLS listener over real
+loopback sockets, listener hardening, and the reachability watch. It is engine-free and opens nothing on port
+5353. Like the other verbs it exists because the full Mod.Tests sequence dies before reaching any of it.
 
 Frontend coverage includes `firstScenePresentation.spec.ts`, receipt messages, MirrorApp redirects, and
 DOM/canvas mounting. Run the frontend typecheck and Vitest without `npm run build` (which deploys).

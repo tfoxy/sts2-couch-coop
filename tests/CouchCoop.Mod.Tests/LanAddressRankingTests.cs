@@ -24,6 +24,10 @@ internal static class LanAddressRankingTests
         DhcpBreaksATieBetweenOtherwiseEqualNics();
         TiesKeepEnumerationOrder();
 
+        MacBookWifiBeatsAVirtualisationBridge();
+        MacFullTunnelVpnLosesToWifi();
+        MacWiredBeatsWifiJustLikeEverywhereElse();
+
         OverrideAcceptsIpLiteralAndHostname();
         OverrideRejectsGarbage();
 
@@ -157,6 +161,91 @@ internal static class LanAddressRankingTests
         var second = Nic("eth1", "192.168.0.11", NetworkInterfaceType.Ethernet, gateway: true, prefixOrigin: PrefixOrigin.Dhcp);
         Expect(LanAddressRanking.Best([first, second])?.InterfaceName == "eth0", "a full tie keeps OS enumeration order");
         Expect(LanAddressRanking.Best([second, first])?.InterfaceName == "eth1", "the tie-break is genuinely order-stable");
+    }
+
+    // ---- macOS shapes ---------------------------------------------------------------------------------------
+    //
+    // This file only ever held Windows and Linux topologies, so nothing pinned what the ranker does with a Mac.
+    // The descriptors below are what .NET actually reports on macOS, read out of dotnet/runtime rather than
+    // guessed (nobody here has a Mac):
+    //
+    //  * en0 is Wireless80211 on a laptop, NOT Ethernet. pal_interfaceaddresses.c maps sdl_type IFT_ETHER to
+    //    Ethernet and then issues a SIOCGIFMEDIA ioctl that reclassifies it to Wireless80211 when the media is
+    //    IFM_IEEE80211. "Fixing" a Mac's wifi being called Ethernet would CREATE the bug, not remove it.
+    //  * GatewayAddresses IS implemented (BsdIpInterfaceProperties enumerates the route table via sysctl
+    //    NET_RT_DUMP and keeps only RTF_GATEWAY entries whose destination is 0.0.0.0 on that interface), so the
+    //    dominant rule works — it is, if anything, a cleaner "has a default route" than Linux's /proc parse.
+    //  * PrefixOrigin throws PlatformNotSupportedException (UnixUnicastIPAddressInformation), so the DHCP
+    //    tie-break is inert there. That is why every descriptor below is PrefixOrigin.Other.
+    //  * utun* is IFT_OTHER, which MapHardwareType leaves as Unknown — tier 0, unlike Tailscale on Windows,
+    //    which claims Ethernet. macOS is the EASIER case for this ranker, not the harder one.
+    //
+    // Verdict: no misordering to fix. These exist so a later change cannot break macOS silently.
+
+    private static LanAddressCandidate MacNic(
+        string name,
+        string address,
+        NetworkInterfaceType type,
+        bool gateway)
+        => new(name, type, OperationalStatus.Up, false, IPAddress.Parse(address), PrefixOrigin.Other, gateway);
+
+    // Internet Sharing, Parallels and Docker Desktop all leave a bridge interface behind, and macOS reports it
+    // as Ethernet with a MAC (SIOCGIFMEDIA only rescues WIFI from that classification, never a bridge). Tier
+    // alone would therefore prefer the bridge over the laptop's wifi; the gateway rule is what stops it.
+    private static void MacBookWifiBeatsAVirtualisationBridge()
+    {
+        var wifi = MacNic("en0", "192.168.1.64", NetworkInterfaceType.Wireless80211, gateway: true);
+        var bridge = MacNic("bridge100", "192.168.2.1", NetworkInterfaceType.Ethernet, gateway: false);
+
+        Expect(LanAddressRanking.Best([bridge, wifi])?.InterfaceName == "en0",
+            "a MacBook advertises its wifi address, not the Internet Sharing bridge");
+        Expect(LanAddressRanking.Best([wifi, bridge])?.InterfaceName == "en0",
+            "…whichever order the OS enumerated them in");
+
+        // awdl0 (AirDrop) and llw0 (low-latency wifi) are the interfaces a spec-first fix would have excluded
+        // by name. They carry IPv6 link-local only, so the IPv4 filter already drops them — and a name-based
+        // exclusion would be one more list to keep in step with Apple. Pinned as the IPv4 rule, not a name rule.
+        var awdl = new LanAddressCandidate("awdl0", NetworkInterfaceType.Ethernet, OperationalStatus.Up, false,
+            IPAddress.Parse("fe80::1c0d:2aff:fe3b:1"), PrefixOrigin.Other, false);
+        Expect(!LanAddressRanking.IsEligible(awdl), "awdl0 is dropped for having no IPv4, not for being named awdl0");
+        Expect(LanAddressRanking.Rank([awdl, wifi]).Count == 1, "…so it never reaches the ranking at all");
+    }
+
+    // A full-tunnel VPN installs a default route on utun, so unlike a bridge it DOES satisfy the dominant rule.
+    // It still loses, because utun is type Unknown (tier 0) where the wifi NIC is tier 1. This is the macOS
+    // counterpart of the reported Tailscale defect, and it resolves more cleanly: on Windows the tunnel claims
+    // Ethernet and has to be beaten on the gateway rule instead.
+    private static void MacFullTunnelVpnLosesToWifi()
+    {
+        var wifi = MacNic("en0", "192.168.1.64", NetworkInterfaceType.Wireless80211, gateway: true);
+        var utun = MacNic("utun4", "10.96.0.7", NetworkInterfaceType.Unknown, gateway: true);
+
+        Expect(LanAddressRanking.Best([utun, wifi])?.InterfaceName == "en0",
+            "a VPN tunnel with its own default route still loses to the wifi NIC on the type tier");
+
+        // Tailscale on macOS is the same shape but CGNAT-addressed, so it also takes the range penalty.
+        var tailscale = MacNic("utun5", "100.86.76.72", NetworkInterfaceType.Unknown, gateway: false);
+        Expect(LanAddressRanking.Best([tailscale, wifi])?.InterfaceName == "en0",
+            "…and Tailscale's macOS utun loses on the gateway rule as well");
+    }
+
+    private static void MacWiredBeatsWifiJustLikeEverywhereElse()
+    {
+        // A Thunderbolt/USB ethernet adapter enumerates as en1..enN and keeps IFT_ETHER through SIOCGIFMEDIA.
+        var wifi = MacNic("en0", "192.168.1.64", NetworkInterfaceType.Wireless80211, gateway: true);
+        var wired = MacNic("en6", "192.168.1.70", NetworkInterfaceType.Ethernet, gateway: true);
+        Expect(LanAddressRanking.Best([wifi, wired])?.InterfaceName == "en6",
+            "a wired Mac advertises the cable, which is the lower-latency half of the connection");
+
+        // The one macOS shape the ranker gets WRONG, and it is the documented cross-platform tie-break rather
+        // than anything Apple-specific: with no default route anywhere (an isolated switch, or wifi with no
+        // internet), the ethernet-typed bridge outranks the wifi NIC. The identical assertion already exists
+        // for libvirt on Linux (DockerBridgeLosesToWifi). Pinned so the limitation is deliberate, not a
+        // surprise — fixing it means demoting ethernet-typed adapters by NAME, which this round refuses to do.
+        var gatewaylessWifi = MacNic("en0", "192.168.1.64", NetworkInterfaceType.Wireless80211, gateway: false);
+        var bridge = MacNic("bridge100", "192.168.2.1", NetworkInterfaceType.Ethernet, gateway: false);
+        Expect(LanAddressRanking.Best([gatewaylessWifi, bridge])?.InterfaceName == "bridge100",
+            "with no default route anywhere the bridge wins on tier (documented limitation, same as virbr0)");
     }
 
     // ---- COUCHCOOP_ADVERTISED_HOST override -----------------------------------------------------------------
