@@ -32,7 +32,118 @@ internal static class MdnsResponderTests
         PublishesExactlyTheNameTheQrDialogShows();
         ParsesTheKillSwitch();
         StaysInertWhenDisabledOrUnnamed();
+        MacOsDefaultsToSelfCheckOnly();
+        SelfCheckOnlyKeepsTheNameAndOpensNoSocket();
+        ReusePortIsSetWhereThePlatformHasIt();
         Console.WriteLine("MdnsResponderTests: ok");
+    }
+
+    /// <summary>
+    /// WS4: macOS already runs Bonjour, which OWNS <c>&lt;host&gt;.local</c> — it probed for the name (RFC 6762
+    /// §8.1) and defends it (§9), and we do neither. Publishing beside it means writing cache-flush A records
+    /// for somebody else's name, and any difference between the two answer sets is a conflict macOS resolves by
+    /// renaming the computer in front of the user. So the platform default there is SelfCheckOnly.
+    /// </summary>
+    /// <remarks>
+    /// Driven through the PURE resolver with the platform passed in, because nobody on this project has a Mac
+    /// and <c>OperatingSystem.IsMacOS()</c> is a compile-away constant on the build host. The one thing that
+    /// cannot be faked — that the shipped default is read from the real platform — is asserted separately.
+    /// </remarks>
+    private static void MacOsDefaultsToSelfCheckOnly()
+    {
+        Expect(MdnsResponder.ResolveMode(null, publishesByDefault: false) == MdnsResponderMode.SelfCheckOnly,
+            "an unset kill-switch on macOS publishes nothing");
+        Expect(MdnsResponder.ResolveMode("  ", publishesByDefault: false) == MdnsResponderMode.SelfCheckOnly,
+            "a blank value is 'unset', not 'enabled'");
+        Expect(MdnsResponder.ResolveMode(null, publishesByDefault: true) == MdnsResponderMode.Publishing,
+            "an unset kill-switch everywhere else still publishes — the responder exists FOR Windows");
+
+        // Overridable in both directions, through the same one variable the docs already name.
+        Expect(MdnsResponder.ResolveMode("1", publishesByDefault: false) == MdnsResponderMode.Publishing,
+            "an explicit opt-in publishes even on a platform whose default is not to");
+        Expect(MdnsResponder.ResolveMode("0", publishesByDefault: false) == MdnsResponderMode.Off,
+            "and the kill-switch still means OFF on macOS");
+
+        // The kill-switch's meaning is unchanged: fully inert, not 'a quieter responder'. Somebody who turned
+        // the responder off wanted silence, and SelfCheckOnly still sends one multicast query.
+        foreach (var falsey in new[] { "0", " 0 ", "false", "OFF", "no" })
+        {
+            Expect(MdnsResponder.ResolveMode(falsey, publishesByDefault: true) == MdnsResponderMode.Off,
+                $"'{falsey}' is Off, never SelfCheckOnly");
+        }
+
+        Expect(MdnsResponder.PublishesByDefault == !OperatingSystem.IsMacOS(),
+            "the shipped default reads the real platform, and macOS is the only one that opts out");
+        Expect(MdnsResponder.ResolveModeFromEnvironment()
+            == MdnsResponder.ResolveMode(Environment.GetEnvironmentVariable(MdnsResponder.EnabledEnvironmentVariable), MdnsResponder.PublishesByDefault),
+            "the environment reader is the pure resolver plus the platform default, with nothing else in it");
+    }
+
+    /// <summary>
+    /// The macOS arm, constructed for real on this build host by pinning the mode. It must hold the name (the
+    /// self-check needs one), bind NOTHING, and tear down cleanly.
+    /// </summary>
+    /// <remarks>
+    /// Disposed before the self-check's one-second settle elapses, so this test sends no datagram and the
+    /// suite's "opens no socket" rule survives. The probe itself is a real multicast query and is only
+    /// exercisable by hand — <c>mdns-harness selfcheck</c>.
+    /// </remarks>
+    private static void SelfCheckOnlyKeepsTheNameAndOpensNoSocket()
+    {
+        var logs = new List<string>();
+        var responder = new MdnsResponder("selfcheck-test.local", IPAddress.Loopback, logs.Add, MdnsResponderMode.SelfCheckOnly);
+        try
+        {
+            Expect(responder.Mode == MdnsResponderMode.SelfCheckOnly, "the pinned mode survives construction");
+            Expect(!responder.IsListening, "SelfCheckOnly binds no socket — port 5353 stays entirely Bonjour's");
+            Expect(responder.JoinedInterfaceCount == 0, "…and joins no multicast group");
+            Expect(responder.HostName == "selfcheck-test.local",
+                "…but keeps the name, because the self-check has to ask the network for SOMETHING");
+            Expect(logs.Exists(line => line.Contains(MdnsResponder.DisabledCode, StringComparison.Ordinal)
+                    && line.Contains(MdnsResponder.PlatformDefaultOffDetail, StringComparison.Ordinal)),
+                "and says in the log that the PLATFORM turned publishing off, not the operator");
+            Expect(!logs.Exists(line => line.Contains("mdns-responder publishing", StringComparison.Ordinal)),
+                "it never claims to be publishing");
+        }
+        finally
+        {
+            responder.DisposeAsync().AsTask().GetAwaiter().GetResult();
+        }
+
+        // An Off responder has no name at all, which is what separates the two: Off cannot self-check, because
+        // there is nothing to ask for. This is also the belt on the accident the change had to avoid — turning
+        // publishing off must never make the `.local` row report FAILURE, and an unrun check leaves
+        // CouchCoopHostUiNotices.MdnsNameResolves null, which MdnsRowTrusted() reads as "assume it works".
+        var off = new MdnsResponder("selfcheck-test.local", IPAddress.Loopback, _ => { }, MdnsResponderMode.Off);
+        Expect(off.HostName is null && !off.IsListening, "an Off responder holds neither name nor socket");
+        off.DisposeAsync().AsTask().GetAwaiter().GetResult();
+        Expect(CouchCoopHostUiNotices.MdnsRowTrusted(),
+            "with no self-check verdict recorded, the .local row is still trusted rather than badged");
+    }
+
+    // The shared helper HostDiscoveryResponder now uses too. Asserted here because the mDNS socket is the
+    // reason it exists: 5353 is a shared port by design, and on macOS SO_REUSEADDR alone does not share it.
+    private static void ReusePortIsSetWhereThePlatformHasIt()
+    {
+        using var socket = new System.Net.Sockets.Socket(
+            System.Net.Sockets.AddressFamily.InterNetwork,
+            System.Net.Sockets.SocketType.Dgram,
+            System.Net.Sockets.ProtocolType.Udp);
+
+        var set = SocketReusePort.TryEnable(socket, "test");
+        Expect(set == SocketReusePort.IsSupportedOnThisPlatform,
+            "SO_REUSEPORT is set on every platform that has one, and reported unset on Windows");
+
+        if (!set)
+        {
+            return;
+        }
+
+        // Read it back through the raw path too: a managed SetSocketOption of this option silently fails on
+        // Unix (the known-options table drops the cast), which is the bug the helper's remarks describe.
+        var readBack = new byte[4];
+        socket.GetRawSocketOption(OperatingSystem.IsLinux() ? 1 : 0xFFFF, OperatingSystem.IsLinux() ? 15 : 0x0200, readBack);
+        Expect(BitConverter.ToInt32(readBack) != 0, "…and the kernel really took it");
     }
 
     private static void ParsesAnAQuery()

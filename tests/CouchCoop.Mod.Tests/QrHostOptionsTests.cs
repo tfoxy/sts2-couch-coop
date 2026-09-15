@@ -27,6 +27,7 @@ internal static class QrHostOptionsTests
         OverrideStaysFirstWhateverTheMdnsSelfCheckSays();
 
         TierBeatsGatewayUnlikeRank();
+        MacAdapterShapesGroupAndLabelCorrectly();
         ScoreBreaksTiesInsideATier();
         TiesKeepEnumerationOrder();
         OneGroupPerAdapterUsesItsBestScoredIpv4();
@@ -179,6 +180,52 @@ internal static class QrHostOptionsTests
 
         var advertised = LanAddressRanking.Rank(nics);
         Expect(advertised[0].Address.ToString() == "192.168.5.20", "while Rank still leads with the gatewayed wifi");
+    }
+
+    /// <summary>
+    /// The macOS shapes, which this file did not have — it held Windows and Linux topologies only.
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// The descriptors come from what .NET actually reports on macOS (see the long note in
+    /// <c>LanAddressRankingTests</c>): <c>en0</c> is <c>Wireless80211</c> on a laptop because the native PAL
+    /// reclassifies <c>IFT_ETHER</c> via a <c>SIOCGIFMEDIA</c> ioctl, <c>utun*</c> is <c>Unknown</c>, and a
+    /// virtualisation bridge keeps <c>Ethernet</c>.
+    /// </para>
+    /// <para>
+    /// The second half of this test records a real trap rather than a passing behaviour, and deliberately does
+    /// not fix it: a Mac running Internet Sharing, Parallels or Docker Desktop has a <c>bridge100</c> that the
+    /// dialog LISTS FIRST and therefore DEFAULTS to, because the dialog's grouping leads with the type tier
+    /// (see <see cref="TierBeatsGatewayUnlikeRank"/>). That is a deliberate, cross-platform product choice —
+    /// the identical thing happens with libvirt's <c>virbr0</c> on Linux — and the advertised address the rest
+    /// of the mod uses is still correct, because <c>LanAddressRanking.Rank</c> leads with the gateway instead.
+    /// Changing it is a product decision about every platform at once, not a macOS fix.
+    /// </para>
+    /// </remarks>
+    private static void MacAdapterShapesGroupAndLabelCorrectly()
+    {
+        var en0 = Nic("en0", "192.168.1.64", NetworkInterfaceType.Wireless80211, gateway: true);
+        var utun = Nic("utun4", "10.96.0.7", NetworkInterfaceType.Unknown, gateway: true);
+        var bridge = Nic("bridge100", "192.168.2.1", NetworkInterfaceType.Ethernet, gateway: false);
+
+        var groups = QrHostOptions.BestPerAdapter([en0, utun]);
+        Expect(groups[0].InterfaceName == "en0", "a MacBook's wifi leads a list whose only rival is a VPN tunnel");
+
+        var options = Build("macbook", null, en0, utun);
+        var wifiRow = options.First(option => option.Kind == QrHostOptionKind.Interface && option.Host == "192.168.1.64");
+        Expect(wifiRow.Adapter?.Kind == QrAdapterKind.Wifi,
+            "en0 is grouped and labelled as Wi-Fi — .NET already reclassifies it, so nothing here may 'fix' it");
+        var tunnelRow = options.First(option => option.Kind == QrHostOptionKind.Interface && option.Host == "10.96.0.7");
+        Expect(tunnelRow.Adapter?.Kind == QrAdapterKind.Other,
+            "utun is grouped as Other, which is what its VPN-shaped hover copy is for");
+        Expect(options[0].Host == "192.168.1.64", "and the dialog defaults to the wifi row");
+
+        // The trap, pinned rather than fixed. See the remarks.
+        var withBridge = Build("macbook", null, en0, bridge);
+        Expect(withBridge[0].Host == "192.168.2.1",
+            "a virtualisation bridge leads the DIALOG on tier (deliberate; same as virbr0 on Linux)");
+        Expect(LanAddressRanking.Best([en0, bridge])?.Address.ToString() == "192.168.1.64",
+            "…while the address the rest of the mod actually advertises is still the wifi one");
     }
 
     private static void ScoreBreaksTiesInsideATier()

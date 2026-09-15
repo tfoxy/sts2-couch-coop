@@ -1041,6 +1041,10 @@ public sealed class CouchCoopBrowserServer(
                 break;
             }
 
+            // Before admission, deliberately: even a connection our own limiter turns away proves that inbound
+            // packets reach this listener, which is the single thing HostReachabilityWatch is asking about.
+            CouchCoop.Mod.Connections.HostReachabilityWatch.Shared.NoteInboundConnection();
+
             var lease = _admission.TryAcquireHttp((client.Client.RemoteEndPoint as IPEndPoint)?.Address);
             if (lease is null)
             {

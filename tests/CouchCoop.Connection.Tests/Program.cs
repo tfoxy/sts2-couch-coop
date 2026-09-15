@@ -22,6 +22,10 @@ if (args is ["--patch-health"])
 {
     Console.WriteLine("connections: host patch health");
     HostPatchHealthTests.Run();
+    // The other host-condition row: a listener that is up and has never been reached. Same family — a host
+    // problem with no client behind it — and the same panel surface, so it is verified from the same verb.
+    Console.WriteLine("connections: host reachability");
+    HostReachabilityWatchTests.Run();
     Console.WriteLine("connections: host patch health ok");
     return;
 }
@@ -74,6 +78,8 @@ Console.WriteLine("connections: registry");
 ConnectionRegistryTests.Run();
 Console.WriteLine("connections: host patch health");
 HostPatchHealthTests.Run();
+Console.WriteLine("connections: host reachability");
+HostReachabilityWatchTests.Run();
 Console.WriteLine("connections: device label");
 ConnectionDeviceLabelTests.Run();
 Console.WriteLine("connections: report formatter");

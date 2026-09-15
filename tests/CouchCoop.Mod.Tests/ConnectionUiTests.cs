@@ -31,6 +31,7 @@ internal static class ConnectionUiTests
         foreach (var code in new[]
                  {
                      CouchCoopPatchHealth.IssueCode,
+                     HostReachabilityWatch.IssueCode,
                      CouchCoop.Mod.Session.HeadlessClientManager.SharedUserDirCode,
                  })
         {

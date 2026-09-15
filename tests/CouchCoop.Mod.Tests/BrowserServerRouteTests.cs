@@ -112,12 +112,38 @@ if (args is ["seats", ..])
     return;
 }
 
+// `dotnet run --project tests/CouchCoop.Mod.Tests -- network` runs the HOST NETWORKING family ALONE: which IPv4
+// the host advertises, the option list the QR dialog builds from it, the mDNS responder's wire codec and its
+// three-way mode decision, the discovery responder over real UDP loopback, the listener's own hardening, and
+// the reachability watch that says when nothing has connected. Registered as its own verb for the reason every
+// other verb here exists — the full sequence below dies partway through on some machines (see the note above
+// HeadlessAudioMuteTargetsTests) and reaches none of these, so a networking change verified only through a full
+// run has not been verified at all. They are engine-free: loopback sockets and synthetic NIC descriptors, no
+// game, no Godot, and nothing that touches port 5353.
+if (args is ["network", ..])
+{
+    LanAddressRankingTests.Run();
+    QrHostOptionsTests.Run();
+    MdnsResponderTests.Run();
+    await HostDiscoveryResponderTests.RunAsync();
+    await NetworkHardeningTests.RunAsync();
+    HostReachabilityWatchTests.Run();
+    // The TLS listener over a real loopback handshake. Hoisted in here because it is the one suite that drives
+    // an accept loop end to end, and the accept loops are where the reachability watch is notified from — and
+    // because it is otherwise registered only in the full sequence below, which does not reach it.
+    SecureBrowserListenerTests.RunAsync();
+    Console.WriteLine("network: ok");
+    return;
+}
+
 if (args is ["connections", ..])
 {
     ConnectionRegistryTests.Run();
     // Host-side diagnostics: patch health, host-issue severity and deduplication. Registered in a verb for
     // the reason the note above HeadlessAudioMuteTargetsTests gives — the full sequence cannot reach it.
     HostPatchHealthTests.Run();
+    // …and the other host-condition row, which is raised from the networking layer but lands in this panel.
+    HostReachabilityWatchTests.Run();
     ConnectionDeviceLabelTests.Run();
     await ConnectionReportFormatterTests.Run();
     await ConnectionAttemptLogsTests.Run();
@@ -446,6 +472,9 @@ GeoclipBakeMetricsTests.Run();
 SceneOrderDiffTests.Run();
 InputCoalescerTests.Run();
 await NetworkHardeningTests.RunAsync();
+// WS4 macOS: the "listener is up, nothing has ever connected" observation — the only signal a host has when
+// the macOS Local Network permission or the application firewall is silently eating inbound connections.
+HostReachabilityWatchTests.Run();
 HeadlessUserDirSeederTests.Run();
 // M3 WS-T host-discovery responder (real UDP loopback round-trip). Runs before the flaky network suite below.
 await HostDiscoveryResponderTests.RunAsync();

@@ -486,6 +486,7 @@ internal sealed partial class CouchCoopConnectionPanel : Panel
         "browser-render-failed" or "browser-transport-lost" => "browser",
         "host-service-failed" or "host-service-stopped" => "service",
         Connections.CouchCoopPatchHealth.IssueCode => "patch",
+        Connections.HostReachabilityWatch.IssueCode => "reachability",
         Session.HeadlessClientManager.SharedUserDirCode => "shared_profile",
         _ => "join"
     };

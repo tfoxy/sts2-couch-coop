@@ -79,6 +79,8 @@
   "couchcoop_connection_error_patch_action": "Перезапустите игру. Если совместная игра всё равно не запускается, скопируйте этот отчёт.",
   "couchcoop_connection_error_shared_profile_summary": "Игроки на этом компьютере используют один игровой профиль.",
   "couchcoop_connection_error_shared_profile_action": "Совместная игра продолжает работать. Не меняйте настройки игры, пока подключены другие игроки.",
+  "couchcoop_connection_error_reachability_summary": "К этому компьютеру ещё не подключались ни телефон, ни браузер.",
+  "couchcoop_connection_error_reachability_action": "Если никто ещё не пробовал, это нормально. Если кто-то пытается, но время ожидания истекает, проверьте, что телефон в той же сети, и разрешите игре принимать входящие подключения: в macOS - System Settings > Privacy & Security > Local Network и System Settings > Network > Firewall; в Windows - в запросе брандмауэра для игры.",
   "couchcoop_connection_empty": "Устройства появятся здесь после подключения к серверу браузера. Используйте ту же сеть Wi‑Fi и проверьте адрес выше.",
   "couchcoop_connection_host_service": "Служба хоста",
   "couchcoop_connection_error_slow_summary": "Ожидание отображения игры в браузере.",

@@ -32,10 +32,23 @@ namespace CouchCoop.Mod.HostUi;
 /// share the port with avahi on Linux.
 /// </para>
 /// <para>
+/// …AND WHY macOS IS DIFFERENT. That coexistence argument only holds while the two answer sets are
+/// identical, and it rests on us never being wrong about the name. Bonjour is the authoritative owner of
+/// <c>&lt;host&gt;.local</c> on a Mac, it PROBED for the name (RFC 6762 §8.1) and it defends it (§9); we
+/// do neither. We would publish A records with the cache-flush bit set for a name somebody else owns —
+/// and wherever our answer set differs from Bonjour's (an interface Bonjour excludes, an address that
+/// moved between our 30s refreshes, a subnet we rank differently) that difference IS a conflict, which
+/// macOS resolves by RENAMING the computer in front of the user. The upside is nil: Bonjour already
+/// publishes the name, which is the entire reason <c>ToMdnsHostName</c>'s prediction was documented as
+/// correct on macOS. So macOS DEFAULTS to <see cref="MdnsResponderMode.SelfCheckOnly"/> — see
+/// <see cref="ResolveMode"/>.
+/// </para>
+/// <para>
 /// SAFETY. Everything is best-effort. A bind refusal, a missing multicast route, a hostile firewall or
 /// a mid-run NIC teardown logs once and leaves the responder inert — it must never take down the host
 /// UI or the browser server, which are what actually serve the game. Set
-/// <c>COUCHCOOP_MDNS_RESPONDER=0</c> to disable it entirely.
+/// <c>COUCHCOOP_MDNS_RESPONDER=0</c> to disable it entirely, or <c>=1</c> to publish on a platform whose
+/// default is not to.
 /// </para>
 /// <para>
 /// SCOPE. IPv4 A records only (the join URL, QR and discovery reply are all IPv4-shaped), no PTR/SRV/TXT
@@ -45,14 +58,25 @@ namespace CouchCoop.Mod.HostUi;
 /// </remarks>
 public sealed class MdnsResponder : IAsyncDisposable
 {
-    /// <summary>Kill-switch. Set to <c>0</c>/<c>false</c>/<c>off</c>/<c>no</c> to never open the socket.</summary>
+    /// <summary>
+    /// Kill-switch, and switch-ON. <c>0</c>/<c>false</c>/<c>off</c>/<c>no</c> makes this responder entirely
+    /// inert; anything else turns PUBLISHING on even where the platform default is off. Unset means the
+    /// platform default — see <see cref="ResolveMode"/>.
+    /// </summary>
     public const string EnabledEnvironmentVariable = "COUCHCOOP_MDNS_RESPONDER";
 
     /// <summary>Logged once when the responder cannot run; the host is unaffected.</summary>
     public const string UnavailableCode = "mdns-responder-unavailable";
 
-    /// <summary>Logged once when the kill-switch turned the responder off.</summary>
+    /// <summary>
+    /// Logged once when this responder is not publishing — because the kill-switch says so
+    /// (<c>detail=COUCHCOOP_MDNS_RESPONDER</c>) or because the platform already has an owner for the name
+    /// (<c>detail=<see cref="PlatformDefaultOffDetail"/></c>).
+    /// </summary>
     public const string DisabledCode = "mdns-responder-disabled";
+
+    /// <summary>The <c>detail=</c> on <see cref="DisabledCode"/> when the PLATFORM, not the operator, said no.</summary>
+    public const string PlatformDefaultOffDetail = "macos-bonjour-owns-the-name";
 
     /// <summary>The mDNS port. Fixed by the spec — there is no port-walk fallback for multicast DNS.</summary>
     public const int MdnsPort = 5353;
@@ -112,12 +136,22 @@ public sealed class MdnsResponder : IAsyncDisposable
     /// The ranked LAN IPv4 (see <c>LanAddressRanking.Rank</c>), used only when the arrival interface of a
     /// query cannot be determined. May be null.
     /// </param>
-    public MdnsResponder(string? hostName, IPAddress? fallbackAddress = null, Action<string>? log = null)
+    /// <param name="mode">
+    /// Pins the mode instead of resolving it from the platform and the environment. The shipped call site passes
+    /// null; a test (and the <c>mdns-harness</c> verb) passes a value so the macOS arm is reachable from a Linux
+    /// build host, which is the only way it gets exercised at all — nobody on this project has a Mac.
+    /// </param>
+    public MdnsResponder(
+        string? hostName,
+        IPAddress? fallbackAddress = null,
+        Action<string>? log = null,
+        MdnsResponderMode? mode = null)
     {
         _log = log ?? (message => Console.Error.WriteLine(message));
         _fallbackAddress = fallbackAddress?.AddressFamily == AddressFamily.InterNetwork ? fallbackAddress : null;
+        Mode = mode ?? ResolveModeFromEnvironment();
 
-        if (!IsEnabledByEnvironment())
+        if (Mode == MdnsResponderMode.Off)
         {
             _log($"[couch-coop] host-ui diagnostic code={DisabledCode} detail={EnabledEnvironmentVariable}");
             return;
@@ -127,6 +161,7 @@ public sealed class MdnsResponder : IAsyncDisposable
         if (string.IsNullOrEmpty(trimmed))
         {
             _log($"[couch-coop] host-ui diagnostic code={UnavailableCode} detail=no-host-name");
+            Mode = MdnsResponderMode.Off;
             return;
         }
 
@@ -138,10 +173,24 @@ public sealed class MdnsResponder : IAsyncDisposable
         catch (ArgumentException exception)
         {
             _log($"[couch-coop] host-ui diagnostic code={UnavailableCode} detail=bad-host-name:{exception.GetType().Name}");
+            Mode = MdnsResponderMode.Off;
             return;
         }
 
         _hostName = trimmed;
+
+        if (Mode == MdnsResponderMode.SelfCheckOnly)
+        {
+            // No socket, no memberships, no announcements, no answers — but the `.local` ROW still needs to
+            // know whether the name resolves, and here it is somebody else (Bonjour) who makes that true. The
+            // interface map is gathered anyway because the self-check's "is this answer for MY machine" test
+            // is exactly the set of this machine's own addresses.
+            _log($"[couch-coop] host-ui diagnostic code={DisabledCode} detail={PlatformDefaultOffDetail}");
+            RefreshInterfaces();
+            _maintenanceLoop = Task.Run(() => SelfCheckOnlyLoopAsync(_cts.Token));
+            return;
+        }
+
         _socket = TryOpenSocket();
         if (_socket is null)
         {
@@ -153,6 +202,9 @@ public sealed class MdnsResponder : IAsyncDisposable
         _maintenanceLoop = Task.Run(() => MaintenanceLoopAsync(_cts.Token));
         _log($"[couch-coop] mdns-responder publishing name={_hostName} interfaces={_joined.Count}");
     }
+
+    /// <summary>What this responder decided to do at construction. See <see cref="ResolveMode"/>.</summary>
+    public MdnsResponderMode Mode { get; private set; }
 
     /// <summary>True when the socket is open and the responder is answering queries.</summary>
     public bool IsListening => _socket is not null;
@@ -172,11 +224,10 @@ public sealed class MdnsResponder : IAsyncDisposable
         }
     }
 
-    /// <summary>Reads the kill-switch. Anything other than an explicit falsey value means enabled.</summary>
-    public static bool IsEnabledByEnvironment()
-        => IsEnabled(Environment.GetEnvironmentVariable(EnabledEnvironmentVariable));
-
-    /// <summary>Pure half of the kill-switch, so the parsing is testable without touching the environment.</summary>
+    /// <summary>
+    /// Pure half of the kill-switch: whether an explicitly SET value is a falsey one. Not the whole decision
+    /// any more — an unset value means the platform default, which is what <see cref="ResolveMode"/> is for.
+    /// </summary>
     public static bool IsEnabled(string? rawValue)
     {
         var value = rawValue?.Trim();
@@ -191,6 +242,46 @@ public sealed class MdnsResponder : IAsyncDisposable
             || value.Equals("no", StringComparison.OrdinalIgnoreCase));
     }
 
+    /// <summary>Whether this platform PUBLISHES the name by default. False only on macOS, where Bonjour owns it.</summary>
+    public static bool PublishesByDefault => !OperatingSystem.IsMacOS();
+
+    /// <summary>Reads <see cref="EnabledEnvironmentVariable"/> against this machine's platform default.</summary>
+    public static MdnsResponderMode ResolveModeFromEnvironment()
+        => ResolveMode(Environment.GetEnvironmentVariable(EnabledEnvironmentVariable), PublishesByDefault);
+
+    /// <summary>
+    /// The whole three-way decision, pure, so it is testable on any OS without touching the environment.
+    /// </summary>
+    /// <param name="rawValue">The raw <see cref="EnabledEnvironmentVariable"/> value; null/blank means unset.</param>
+    /// <param name="publishesByDefault">
+    /// <see cref="PublishesByDefault"/>, passed in so a Linux build host can assert the macOS arm.
+    /// </param>
+    /// <remarks>
+    /// <para>
+    /// The kill-switch keeps its old meaning EXACTLY: an explicit falsey value is
+    /// <see cref="MdnsResponderMode.Off"/> — no socket, no probe, no datagram of any kind. Somebody who turned
+    /// the responder off wanted silence, not a quieter responder.
+    /// </para>
+    /// <para>
+    /// The unset case is where macOS differs. <see cref="MdnsResponderMode.SelfCheckOnly"/> publishes nothing
+    /// but still runs the startup probe, because the QR dialog's <c>.local</c> row asks "does this name
+    /// resolve", not "did we publish it" — and on a Mac the answer is yes via Bonjour. Dropping the probe with
+    /// the socket would be SAFE (an unrun check leaves <c>MdnsNameResolves</c> null, which
+    /// <c>CouchCoopHostUiNotices.MdnsRowTrusted</c> reads as "assume it works") but it would also make the row
+    /// permanently uninformative on the one platform where the name is most likely to be genuinely fine.
+    /// </para>
+    /// </remarks>
+    public static MdnsResponderMode ResolveMode(string? rawValue, bool publishesByDefault)
+    {
+        var value = rawValue?.Trim();
+        if (string.IsNullOrEmpty(value))
+        {
+            return publishesByDefault ? MdnsResponderMode.Publishing : MdnsResponderMode.SelfCheckOnly;
+        }
+
+        return IsEnabled(value) ? MdnsResponderMode.Publishing : MdnsResponderMode.Off;
+    }
+
     private Socket? TryOpenSocket()
     {
         Socket? socket = null;
@@ -199,10 +290,12 @@ public sealed class MdnsResponder : IAsyncDisposable
             socket = new Socket(AddressFamily.InterNetwork, SocketType.Dgram, ProtocolType.Udp);
 
             // Reuse BEFORE Bind, exactly like HostDiscoveryResponder: 5353 is a SHARED port by design
-            // (RFC 6762 §15.1), and on Linux avahi is already sitting on it.
+            // (RFC 6762 §15.1), and on Linux avahi is already sitting on it. SO_REUSEADDR alone happens to be
+            // enough for UDP on Linux today, but a peer that sets only SO_REUSEPORT would still lock us out —
+            // and macOS's mDNSResponder does exactly that. See SocketReusePort.
             socket.ExclusiveAddressUse = false;
             socket.SetSocketOption(SocketOptionLevel.Socket, SocketOptionName.ReuseAddress, true);
-            TrySetReusePort(socket);
+            SocketReusePort.TryEnable(socket, "mdns-responder", _log);
 
             socket.Bind(new IPEndPoint(IPAddress.Any, MdnsPort));
 
@@ -239,12 +332,6 @@ public sealed class MdnsResponder : IAsyncDisposable
     // started still gets a membership (without one we would never RECEIVE its queries).
     private void RefreshInterfaces()
     {
-        var socket = _socket;
-        if (socket is null)
-        {
-            return;
-        }
-
         var current = GatherInterfaces();
         var map = new Dictionary<int, IPAddress>(current.Count);
         foreach (var entry in current)
@@ -253,6 +340,14 @@ public sealed class MdnsResponder : IAsyncDisposable
         }
 
         _answerByInterface = map;
+
+        // SelfCheckOnly has no socket, so there are no memberships to reconcile — but it DOES want the map
+        // above, which is the self-check's set of "addresses that would mean this machine".
+        var socket = _socket;
+        if (socket is null)
+        {
+            return;
+        }
 
         lock (_joined)
         {
@@ -399,43 +494,6 @@ public sealed class MdnsResponder : IAsyncDisposable
         }
         catch (Exception exception) when (exception is SocketException or ObjectDisposedException or NotSupportedException)
         {
-        }
-    }
-
-    // SO_REUSEPORT. Port 5353 is shared by every mDNS participant on the box (RFC 6762 §15.1), and on Linux
-    // avahi is already there; SO_REUSEADDR alone happens to be enough for UDP on Linux today, but a peer that
-    // sets only SO_REUSEPORT would still lock us out, and macOS's mDNSResponder does exactly that.
-    //
-    // This MUST go through SetRawSocketOption: the managed SetSocketOption translates SocketOptionName values
-    // through a known-options table on Unix, so a `(SocketOptionName)15` cast never reaches setsockopt — it
-    // fails with OperationNotSupported (observed, not theorised). SetRawSocketOption passes the numbers down
-    // verbatim, which is why the level/option constants are spelled out per OS here.
-    private void TrySetReusePort(Socket socket)
-    {
-        const int LinuxSolSocket = 1;
-        const int LinuxSoReusePort = 15;
-        const int BsdSolSocket = 0xFFFF;
-        const int BsdSoReusePort = 0x0200;
-
-        var (level, option) = OperatingSystem.IsLinux()
-            ? (LinuxSolSocket, LinuxSoReusePort)
-            : OperatingSystem.IsMacOS() || OperatingSystem.IsFreeBSD()
-                ? (BsdSolSocket, BsdSoReusePort)
-                : (0, 0);
-
-        if (option == 0)
-        {
-            // Windows has no SO_REUSEPORT; SO_REUSEADDR already carries the sharing semantics there.
-            return;
-        }
-
-        try
-        {
-            socket.SetRawSocketOption(level, option, BitConverter.GetBytes(1));
-        }
-        catch (Exception exception) when (exception is SocketException or ObjectDisposedException or NotSupportedException)
-        {
-            _log($"[couch-coop] mdns-responder option-unavailable option=so-reuseport detail={DescribeError(exception)}");
         }
     }
 
@@ -662,6 +720,24 @@ public sealed class MdnsResponder : IAsyncDisposable
         }
     }
 
+    // SelfCheckOnly's whole lifetime: probe once, publish the verdict, stop. No announcements (nothing to
+    // announce), no periodic interface refresh (the map's only reader was that one probe), no receive loop.
+    // Strictly less work than Publishing, which is the point — on macOS the responder's only remaining job is
+    // to tell the QR dialog whether Bonjour's answer is coming back.
+    private async Task SelfCheckOnlyLoopAsync(CancellationToken token)
+    {
+        try
+        {
+            // The same one-second settle the Publishing path gets from its first announcement interval: a
+            // probe fired in the constructor's own tick would race the interface enumeration it just did.
+            await Task.Delay(AnnouncementInterval, token).ConfigureAwait(false);
+            await RunSelfCheckAsync(token).ConfigureAwait(false);
+        }
+        catch (Exception exception) when (exception is OperationCanceledException or ObjectDisposedException)
+        {
+        }
+    }
+
     private async Task RunSelfCheckAsync(CancellationToken token)
     {
         if (_hostName is null)
@@ -690,7 +766,9 @@ public sealed class MdnsResponder : IAsyncDisposable
         // responder never started at all, so it cannot hold a reference to it.
         CouchCoopHostUiNotices.MdnsNameResolves = Health.NameLikelyResolves;
 
-        _log($"[couch-coop] mdns-responder self-check {Health.Describe()} name={_hostName}");
+        // `mode=` matters on macOS: selfCheck=Answered there says the NAME resolves, not that we published it
+        // (we did not). Without the mode on the line the two readings are indistinguishable in a user's log.
+        _log($"[couch-coop] mdns-responder self-check {Health.Describe()} name={_hostName} mode={Mode}");
     }
 
     // One announcement per interface, each carrying THAT interface's address — a single announcement with
@@ -777,4 +855,23 @@ public sealed class MdnsResponder : IAsyncDisposable
             : exception.GetType().Name;
 
     private readonly record struct MdnsInterface(int Index, IPAddress Address, bool IsLoopback);
+}
+
+/// <summary>What a constructed <see cref="MdnsResponder"/> actually does. Resolved once, at construction.</summary>
+public enum MdnsResponderMode
+{
+    /// <summary>
+    /// Inert. No socket, no probe, no datagram — the meaning <c>COUCHCOOP_MDNS_RESPONDER=0</c> has always had,
+    /// and also where an unusable host name lands.
+    /// </summary>
+    Off,
+
+    /// <summary>Bind 5353, answer queries, announce, say goodbye, and run the startup self-check.</summary>
+    Publishing,
+
+    /// <summary>
+    /// Publish NOTHING, but still run the startup self-check so the QR dialog's <c>.local</c> row reflects
+    /// whether the name resolves. The macOS default: Bonjour owns and answers for the name there.
+    /// </summary>
+    SelfCheckOnly
 }

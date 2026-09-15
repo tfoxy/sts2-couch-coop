@@ -203,6 +203,10 @@ public sealed class SecureBrowserListener : IAsyncDisposable
                 continue;
             }
 
+            // The TLS twin of the plain listener's call: a phone that joined over the secure origin reached this
+            // machine, so the "nothing has connected" warning must not fire behind it. See HostReachabilityWatch.
+            CouchCoop.Mod.Connections.HostReachabilityWatch.Shared.NoteInboundConnection();
+
             var lease = _admission?.TryAcquireHttp((client.Client.RemoteEndPoint as IPEndPoint)?.Address);
             if (_admission is not null && lease is null)
             {

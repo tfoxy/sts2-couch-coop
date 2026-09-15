@@ -79,6 +79,8 @@
   "couchcoop_connection_error_patch_action": "Starten Sie das Spiel neu. Wenn Couch-Koop weiterhin nicht startet, kopieren Sie diesen Bericht.",
   "couchcoop_connection_error_shared_profile_summary": "Die Spieler an diesem Computer teilen sich ein Spielprofil.",
   "couchcoop_connection_error_shared_profile_action": "Couch-Koop funktioniert weiterhin. Ändern Sie keine Spieleinstellungen, während andere Spieler verbunden sind.",
+  "couchcoop_connection_error_reachability_summary": "Bisher hat sich kein Telefon und kein Browser mit diesem PC verbunden.",
+  "couchcoop_connection_error_reachability_action": "Wenn es noch niemand versucht hat, ist das normal. Versucht es jemand und die Verbindung läuft ab, prüfen Sie, ob das Telefon im selben Netzwerk ist, und erlauben Sie diesem Spiel eingehende Verbindungen - unter macOS in System Settings > Privacy & Security > Local Network und System Settings > Network > Firewall; unter Windows in der Firewall-Abfrage für das Spiel.",
   "couchcoop_connection_empty": "Geräte erscheinen hier, nachdem sie sich mit dem Browser-Server verbunden haben. Nutzen Sie dasselbe WLAN und prüfen Sie die oben angezeigte Adresse.",
   "couchcoop_connection_host_service": "Host-Dienst",
   "couchcoop_connection_error_slow_summary": "Warten, bis der Browser das Spiel anzeigt.",

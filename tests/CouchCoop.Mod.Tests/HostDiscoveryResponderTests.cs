@@ -13,7 +13,58 @@ internal static class HostDiscoveryResponderTests
         await RepliesToProbe();
         await IgnoresNonProbeTraffic();
         BindFailureIsSurvivable();
+        await ADuplicateBindOfTheSamePortIsPermitted();
         Console.WriteLine("HostDiscoveryResponderTests: ok");
+    }
+
+    /// <summary>
+    /// WS4 macOS: a second responder on the SAME wildcard port must bind rather than be refused.
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// This socket used to set <c>SO_REUSEADDR</c> only, under a comment claiming two hosts on one machine
+    /// "never fight over the socket". That is Linux-true and BSD-false: on macOS a duplicate bind of the
+    /// identical <c>0.0.0.0:port</c> needs <c>SO_REUSEPORT</c> on every socket in the group, so the second bind
+    /// failed and that host silently had no LAN discovery at all. The case that actually reaches a player is
+    /// not two hosts — the port-walk gives them different numbers — but a restart racing a dying process, and
+    /// anything holding UDP &lt;port&gt; while TCP &lt;port&gt; was free, since only TCP is walked.
+    /// </para>
+    /// <para>
+    /// What this does NOT assert is that both sockets receive the datagram: Linux hashes a reuseport group and
+    /// BSD picks one. Exactly one reply is the correct expectation, and it is what a prober needs.
+    /// </para>
+    /// </remarks>
+    private static async Task ADuplicateBindOfTheSamePortIsPermitted()
+    {
+        if (!SocketReusePort.IsSupportedOnThisPlatform)
+        {
+            // Windows has no SO_REUSEPORT; SO_REUSEADDR already carries the sharing semantics there.
+            return;
+        }
+
+        var reply = new HostDiscoveryReply("127.0.0.1", 13337, null, "dup-bind", HostDiscovery.ProtocolVersion);
+        await using var first = new HostDiscoveryResponder(0, () => reply, _ => { });
+        Expect(first.IsListening, "the first responder binds an ephemeral port");
+        var port = first.Port;
+
+        var logged = new List<string>();
+        await using var second = new HostDiscoveryResponder(port, () => reply, logged.Add);
+        Expect(second.IsListening,
+            $"a second responder binds the SAME port ({port}) instead of logging {HostDiscoveryResponder.UnavailableCode}");
+        Expect(!logged.Exists(line => line.Contains(HostDiscoveryResponder.UnavailableCode, StringComparison.Ordinal)),
+            "…and reports no bind failure");
+
+        // Whichever socket the stack hands it to, a probe is still answered exactly once.
+        using var client = new UdpClient(AddressFamily.InterNetwork);
+        client.Client.Bind(new IPEndPoint(IPAddress.Loopback, 0));
+        var probe = HostDiscovery.EncodeProbe();
+        await client.SendAsync(probe, probe.Length, new IPEndPoint(IPAddress.Loopback, port));
+
+        var buffer = await ReceiveWithTimeout(client, TimeSpan.FromSeconds(3));
+        Expect(buffer is not null && HostDiscovery.TryDecodeReply(buffer!)?.Name == "dup-bind",
+            "one of the two co-bound responders answers the probe");
+        Expect(await ReceiveWithTimeout(client, TimeSpan.FromMilliseconds(400)) is null,
+            "and only one of them does — a reuseport group delivers a datagram once");
     }
 
     private static async Task RepliesToProbe()

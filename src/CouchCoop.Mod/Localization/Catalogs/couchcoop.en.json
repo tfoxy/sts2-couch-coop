@@ -93,6 +93,8 @@
   "couchcoop_connection_error_patch_action": "Restart the game. If co-op still does not start, copy this report.",
   "couchcoop_connection_error_shared_profile_summary": "Players on this computer share one game profile.",
   "couchcoop_connection_error_shared_profile_action": "Co-op still works. Avoid changing game settings while other players are connected.",
+  "couchcoop_connection_error_reachability_summary": "No phone or browser has connected to this PC yet.",
+  "couchcoop_connection_error_reachability_action": "If nobody has tried yet, this is normal. If someone is trying and it times out, check their phone is on this same network, then let this game accept incoming connections - on macOS under System Settings > Privacy & Security > Local Network and System Settings > Network > Firewall; on Windows, in the firewall prompt for the game.",
   "couchcoop_connection_empty": "Devices appear here after connecting to the browser server. Use the same Wi-Fi network and check the address shown above.",
   "couchcoop_connection_host_service": "Host service",
   "couchcoop_connection_error_slow_summary": "Waiting for the browser to display the game.",

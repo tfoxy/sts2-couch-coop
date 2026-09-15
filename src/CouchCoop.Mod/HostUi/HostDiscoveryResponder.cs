@@ -31,9 +31,22 @@ public sealed class HostDiscoveryResponder : IAsyncDisposable
         try
         {
             var udp = new UdpClient(AddressFamily.InterNetwork);
-            // Set reuse BEFORE Bind so two hosts on one machine (or a fast restart) never fight over the socket.
+            // Set reuse BEFORE Bind, so a duplicate bind of this exact wildcard port is permitted rather than
+            // refused. That matters on a fast restart (a dying process still holding the socket) and whenever
+            // something else already took UDP <port> while TCP <port> was free — the port-walk only checks TCP,
+            // so the two can disagree and discovery is the half that loses.
+            //
+            // BOTH options are needed, and the comment that used to sit here ("two hosts on one machine never
+            // fight over the socket") was Linux-true and macOS-false. SO_REUSEADDR alone permits a duplicate
+            // UDP bind on Linux; on BSD it does not, so on macOS the second bind failed and that host simply
+            // had no LAN discovery. See SocketReusePort.
+            //
+            // What it does NOT buy, on either OS: two live responders both receiving the same datagram. Linux
+            // hashes a reuseport group and BSD delivers to one socket, so co-located hosts still rely on the
+            // port-walk giving them different numeric ports (which it does — UDP follows the TCP port choice).
             udp.Client.ExclusiveAddressUse = false;
             udp.Client.SetSocketOption(SocketOptionLevel.Socket, SocketOptionName.ReuseAddress, true);
+            SocketReusePort.TryEnable(udp.Client, "host-discovery", _log);
             udp.Client.Bind(new IPEndPoint(IPAddress.Any, listenPort));
             _udp = udp;
         }

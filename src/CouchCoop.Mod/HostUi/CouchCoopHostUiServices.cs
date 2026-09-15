@@ -222,6 +222,17 @@ public sealed class CouchCoopHostUiServices : IAsyncDisposable
         // "checking…" state, which is what makes arriving at the lobby (rather than at launch) invisible.
         StartSecureOriginAsync(joinBaseUri);
 
+        // WS4 macOS: start the "bound but unreachable" clock HERE and nowhere else. The listener itself came up
+        // at mod init and stays up for the whole process, so a threshold measured from the bind would warn every
+        // player who launched the game and never opened a co-op lobby. `_deferDiscoveryServices` is true only for
+        // the windowed host, and in that mode this method runs only once a HOST LOBBY is on screen — which is
+        // the first moment "nobody has connected" is worth saying out loud. A headless SEAT (deferred:false) is
+        // never armed: its listener is reached by the host redirecting a browser to it, not by a phone.
+        if (_deferDiscoveryServices)
+        {
+            Connections.HostReachabilityWatch.Shared.Arm(joinBaseUri?.ToString() ?? listenerBaseUri.ToString());
+        }
+
         _log("[couch-coop] host discovery services started (lan discovery + mdns + secure origin)");
     }
 
@@ -348,6 +359,10 @@ public sealed class CouchCoopHostUiServices : IAsyncDisposable
             _listenerBaseUri = null;
             _joinBaseUri = null;
         }
+
+        // …and with them the reachability clock, so a failed start or a host restart does not leave a pending
+        // warning (or a standing row) about a listener that no longer exists.
+        Connections.HostReachabilityWatch.Shared.Disarm();
 
         if (_mdns is not null)
         {
