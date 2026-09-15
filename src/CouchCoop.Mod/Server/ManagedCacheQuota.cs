@@ -81,11 +81,15 @@ internal sealed class ManagedCacheQuota
         var locked = false;
         try
         {
+            // OUTSIDE the mutex, deliberately. This is a filesystem syscall against a path that may sit on a
+            // network or automounted volume, and holding a cross-process lock across it lets one wedged mount
+            // stall every other process's admission. Nothing it reads is shared state, and free space is
+            // advisory to begin with — a few microseconds of staleness cannot matter against a 2 GiB reserve.
+            var space = _freeSpace(_coordinationRoot);
             locked = Enter();
             if (!locked) return Denied();
             var state = LoadAndReconcile();
             var reserved = state.Reservations.Values.Sum(x => x.ChargedBytes);
-            var space = _freeSpace(_coordinationRoot);
             var available = Math.Min(checked(_ceilingBytes - state.UsedBytes - reserved),
                 checked(space - _freeSpaceReserveBytes - reserved));
             // Metadata and allocation slack are included before any data or temporary file is created.
@@ -226,14 +230,49 @@ internal sealed class ManagedCacheQuota
             or IOException or UnauthorizedAccessException or FormatException or OverflowException) { return -1; }
     }
 
-    private static long AvailableFreeSpace(string path)
+    /// <summary>
+    /// Free space on the volume holding <paramref name="path"/>, or <see cref="long.MaxValue"/> when it cannot
+    /// be determined.
+    /// </summary>
+    /// <remarks>
+    /// <para>ONE VOLUME, NOT EVERY VOLUME. This used to enumerate every mounted drive and match the longest
+    /// name that prefixed the path, which meant stat-ing every mount — a stale SMB/NFS share, or a macOS autofs
+    /// entry that mounts on touch, blocks the whole enumeration. Asking about the one path we care about is both
+    /// the direct question and the only one that cannot be made slow by a volume nothing here uses.</para>
+    /// <para>IT FAILS OPEN, and that is not the same choice the accounting makes. An unreadable
+    /// <c>state.json</c> fails CLOSED because the unknown is how much is already used, and writing on top of an
+    /// unknown total is how the ceiling gets blown. Free space is a second, independent bound: when it cannot be
+    /// read the ceiling still holds, so refusing as well would trade a real cache for no extra safety. The old
+    /// shape got this backwards twice over — <c>First()</c> THREW when no drive matched, and the throw landed in
+    /// the accounting catch, so a path the enumeration could not attribute refused every write for the life of
+    /// the process AND reported it to the player as a storage limit it had not reached.</para>
+    /// <para>The probe walks to the nearest existing ancestor first. A cache root that has not been created yet
+    /// is an ordinary first run, not an unknown volume, and the old prefix match answered for it — reporting
+    /// "unknown" there would silently retire the reserve on exactly the run that is about to fill the disk.</para>
+    /// </remarks>
+    internal static long AvailableFreeSpace(string path)
     {
-        var full = ResolvedFilePath.Resolve(path);
-        var comparison = OperatingSystem.IsWindows() ? StringComparison.OrdinalIgnoreCase : StringComparison.Ordinal;
-        return DriveInfo.GetDrives().Where(d => d.IsReady)
-            .Where(d => full.Equals(d.Name.TrimEnd(Path.DirectorySeparatorChar), comparison)
-                || full.StartsWith(d.Name.TrimEnd(Path.DirectorySeparatorChar) + Path.DirectorySeparatorChar, comparison))
-            .OrderByDescending(d => d.Name.Length).First().AvailableFreeSpace;
+        try
+        {
+            return new DriveInfo(NearestExistingDirectory(ResolvedFilePath.Resolve(path))).AvailableFreeSpace;
+        }
+        catch (Exception e) when (e is IOException or UnauthorizedAccessException or ArgumentException
+            or NotSupportedException or System.Security.SecurityException or InvalidOperationException)
+        {
+            return long.MaxValue;
+        }
+    }
+
+    private static string NearestExistingDirectory(string path)
+    {
+        var directory = path;
+        while (!string.IsNullOrEmpty(directory) && !Directory.Exists(directory))
+        {
+            var parent = Path.GetDirectoryName(directory);
+            if (string.IsNullOrEmpty(parent) || parent == directory) break;
+            directory = parent;
+        }
+        return string.IsNullOrEmpty(directory) ? path : directory;
     }
 
     private sealed class UsageState
