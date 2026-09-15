@@ -12,7 +12,7 @@ internal sealed class ConnectionJoinOperation : IDisposable
 
     public ConnectionJoinOperation(Action<Exception>? onFault = null)
         => _onFault = onFault ?? (exception => Console.Error.WriteLine(
-            $"[couch-coop] join operation fault: {exception.GetType().Name}: {exception.Message}"));
+            $"[couchcoop] join operation fault: {exception.GetType().Name}: {exception.Message}"));
 
     public bool TryStart(CancellationToken connectionToken, Func<CancellationToken, Task> work)
     {

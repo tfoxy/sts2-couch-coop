@@ -256,7 +256,7 @@ public sealed class CouchCoopGeoclipProvider(
             if (!outcome.Success)
             {
                 bake.Failed();
-                _log($"[couch-coop] geoclip bake failed key={request.SpineKey} code={outcome.ErrorCode ?? "unspecified"}");
+                _log($"[couchcoop] geoclip bake failed key={request.SpineKey} code={outcome.ErrorCode ?? "unspecified"}");
                 return CouchCoopGeoclipResult.Failure(new CouchCoopAssetHttpError(
                     outcome.ErrorCode ?? "geoclip-bake-failed",
                     outcome.ErrorMessage ?? "The geoclip bake did not succeed.",
@@ -318,7 +318,7 @@ public sealed class CouchCoopGeoclipProvider(
                         request.SpineKey, arm, reason, outcome.ClaimsProven, outcome.ClaimsUnproven).ConfigureAwait(false);
                 bake.Failed();
                 _log(
-                    $"[couch-coop] geoclip bake REFUSED (incomplete) key={request.SpineKey} {reason} arm={arm} "
+                    $"[couchcoop] geoclip bake REFUSED (incomplete) key={request.SpineKey} {reason} arm={arm} "
                     + $"producerJudged={(outcome.RefusalReason is null ? 0 : 1)} "
                     + $"fromMemo={(outcome.RefusedFromMemo ? 1 : 0)} "
                     + $"refusalRetryable={(retryable ? 1 : 0)} "
@@ -351,7 +351,7 @@ public sealed class CouchCoopGeoclipProvider(
             {
                 bake.Failed();
                 _log(
-                    $"[couch-coop] geoclip bake produced no manifest under staging key={request.SpineKey} "
+                    $"[couchcoop] geoclip bake produced no manifest under staging key={request.SpineKey} "
                     + $"manifestPath={outcome.ManifestPath ?? "<null>"}");
                 return CouchCoopGeoclipResult.Failure(new CouchCoopAssetHttpError(
                     "geoclip-manifest-missing",
@@ -369,7 +369,7 @@ public sealed class CouchCoopGeoclipProvider(
             if (!adopted.Success || adopted.Directory is null)
             {
                 bake.Failed();
-                _log($"[couch-coop] geoclip adopt failed key={request.SpineKey} code={adopted.ErrorCode ?? "unspecified"}");
+                _log($"[couchcoop] geoclip adopt failed key={request.SpineKey} code={adopted.ErrorCode ?? "unspecified"}");
                 return CouchCoopGeoclipResult.Failure(new CouchCoopAssetHttpError(
                     adopted.ErrorCode ?? "geoclip-adopt-failed",
                     adopted.ErrorMessage ?? "The geoclip bake could not be published.",
@@ -379,7 +379,7 @@ public sealed class CouchCoopGeoclipProvider(
 
             bake.Succeeded(producedBytes, outcome.FrameCount);
             _log(
-                $"[couch-coop] geoclip baked key={request.SpineKey} "
+                $"[couchcoop] geoclip baked key={request.SpineKey} "
                 + $"frames={outcome.FrameCount} parts={outcome.PartCount} pages={adopted.PageFiles.Count} "
                 + $"t={outcome.SampleTimeSeconds:0.###}s source={outcome.SampleTimeSource ?? "unspecified"} "
                 + $"bake={outcome.ElapsedMs}ms " + FormatBakeCost(bake, profile, started));
@@ -920,7 +920,7 @@ public sealed class CouchCoopGeoclipProvider(
             {
                 bake.Failed();
                 _log(
-                    $"[couch-coop] geoclip rig bake failed scene={head.SceneResPath} "
+                    $"[couchcoop] geoclip rig bake failed scene={head.SceneResPath} "
                     + $"poses={requests.Count} code={outcome.ErrorCode ?? "unspecified"}");
                 return [.. requests.Select(request => CouchCoopGeoclipResult.Failure(new CouchCoopAssetHttpError(
                     outcome.ErrorCode ?? "geoclip-bake-failed",
@@ -940,7 +940,7 @@ public sealed class CouchCoopGeoclipProvider(
             var claimsUnproven = poses.Sum(pose => pose.ClaimsUnproven);
             bake.ClaimProvenance(claimsProven, claimsUnproven);
             _log(
-                $"[couch-coop] geoclip rig baked scene={head.SceneResPath} poses={poses.Count}/{requests.Count} "
+                $"[couchcoop] geoclip rig baked scene={head.SceneResPath} poses={poses.Count}/{requests.Count} "
                 + $"scenesLoaded={outcome.ScenesLoaded} note={outcome.BatchNote ?? "unspecified"} "
                 + $"batched={poses.Count(pose => pose.Batched)} "
                 + $"{DescribeClaimProvenance(claimsProven, claimsUnproven)} "
@@ -1021,7 +1021,7 @@ public sealed class CouchCoopGeoclipProvider(
     {
         if (!pose.Success)
         {
-            _log($"[couch-coop] geoclip bake failed key={request.SpineKey} detail={pose.FailureReason ?? "unspecified"}");
+            _log($"[couchcoop] geoclip bake failed key={request.SpineKey} detail={pose.FailureReason ?? "unspecified"}");
             return CouchCoopGeoclipResult.Failure(new CouchCoopAssetHttpError(
                 "geoclip-bake-failed",
                 pose.FailureReason ?? "The geoclip bake did not succeed.",
@@ -1043,7 +1043,7 @@ public sealed class CouchCoopGeoclipProvider(
                 && await _store.RecordRefusalAsync(
                     request.SpineKey, arm, reason, pose.ClaimsProven, pose.ClaimsUnproven).ConfigureAwait(false);
             _log(
-                $"[couch-coop] geoclip bake REFUSED (incomplete) key={request.SpineKey} {reason} arm={arm} "
+                $"[couchcoop] geoclip bake REFUSED (incomplete) key={request.SpineKey} {reason} arm={arm} "
                 + $"refusalRetryable={(retryable ? 1 : 0)} "
                 + $"{DescribeClaimProvenance(pose.ClaimsProven, pose.ClaimsUnproven)}"
                 + (pose.ClaimProofNote is { Length: > 0 } note ? $" [{note}]" : string.Empty)
@@ -1068,7 +1068,7 @@ public sealed class CouchCoopGeoclipProvider(
         if (produced is null)
         {
             _log(
-                $"[couch-coop] geoclip bake produced no manifest under staging key={request.SpineKey} "
+                $"[couchcoop] geoclip bake produced no manifest under staging key={request.SpineKey} "
                 + $"manifestPath={pose.ManifestPath ?? "<null>"}");
             return CouchCoopGeoclipResult.Failure(new CouchCoopAssetHttpError(
                 "geoclip-manifest-missing",
@@ -1080,7 +1080,7 @@ public sealed class CouchCoopGeoclipProvider(
         var adopted = await _store.AdoptAsync(request.SpineKey, produced).ConfigureAwait(false);
         if (!adopted.Success || adopted.Directory is null)
         {
-            _log($"[couch-coop] geoclip adopt failed key={request.SpineKey} code={adopted.ErrorCode ?? "unspecified"}");
+            _log($"[couchcoop] geoclip adopt failed key={request.SpineKey} code={adopted.ErrorCode ?? "unspecified"}");
             return CouchCoopGeoclipResult.Failure(new CouchCoopAssetHttpError(
                 adopted.ErrorCode ?? "geoclip-adopt-failed",
                 adopted.ErrorMessage ?? "The geoclip bake could not be published.",
@@ -1089,7 +1089,7 @@ public sealed class CouchCoopGeoclipProvider(
         }
 
         _log(
-            $"[couch-coop] geoclip baked key={request.SpineKey} "
+            $"[couchcoop] geoclip baked key={request.SpineKey} "
             + $"frames={pose.FrameCount} parts={pose.PartCount} pages={adopted.PageFiles.Count} "
             + $"t={pose.SampleTimeSeconds:0.###}s source={pose.SampleTimeSource ?? "unspecified"} "
             + $"batched={(pose.Batched ? 1 : 0)}");

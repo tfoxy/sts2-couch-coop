@@ -75,7 +75,7 @@ internal static class HeadlessHostWatchdog
             Name = "couchcoop-host-watchdog",
         };
         thread.Start();
-        Console.Error.WriteLine($"[couch-coop] headless host-watchdog armed for host pid={hostPid}.");
+        Console.Error.WriteLine($"[couchcoop] headless host-watchdog armed for host pid={hostPid}.");
     }
 
     private static void Watch(int hostPid, string? hostStartTime, bool onLinux)
@@ -93,7 +93,7 @@ internal static class HeadlessHostWatchdog
             // stderr and godot.log: the per-slot file keeps "the instance just vanished" diagnosable after the
             // process and launcher-side stdio capture are gone (see HeadlessLog).
             HeadlessLog.Write(
-                $"[couch-coop] headless host-watchdog: host pid={hostPid} is gone — terminating orphaned headless.");
+                $"[couchcoop] headless host-watchdog: host pid={hostPid} is gone — terminating orphaned headless.");
             // SIGKILL ourselves: the game traps SIGTERM, but SIGKILL is untrappable so the orphan can't linger.
             HeadlessForceExit.Now();
             return;

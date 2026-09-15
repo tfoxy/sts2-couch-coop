@@ -102,7 +102,7 @@ public sealed class CouchCoopLobbyParticipation(CouchCoopRuntimeHost runtimeHost
         {
             var cause = result.Result?.Message ?? result.Error?.Message ?? "No action error detail was supplied.";
             if (requireSuccess) throw new InvalidOperationException($"Peer cleanup failed for {netId}: {cause}");
-            Console.Error.WriteLine($"[couch-coop] DisconnectClient({netId}) failed: {cause}");
+            Console.Error.WriteLine($"[couchcoop] DisconnectClient({netId}) failed: {cause}");
         }
     }
 
@@ -132,7 +132,7 @@ public sealed class CouchCoopLobbyParticipation(CouchCoopRuntimeHost runtimeHost
             DisplayName: displayName));
         if (!result.Success)
         {
-            Console.Error.WriteLine($"[couch-coop] SetClientName({netId}, '{displayName}') failed: {result.Result?.Message ?? result.Error?.Message}");
+            Console.Error.WriteLine($"[couchcoop] SetClientName({netId}, '{displayName}') failed: {result.Result?.Message ?? result.Error?.Message}");
         }
 
         return result.Success;
@@ -292,7 +292,7 @@ public sealed class CouchCoopLobbyParticipation(CouchCoopRuntimeHost runtimeHost
         {
             _warnedUnreadableLobbyCap = true;
             Console.Error.WriteLine(
-                $"[couch-coop] the live lobby reports a player cap of {lobby.MaxPlayers} — seat limits, the ENet "
+                $"[couchcoop] the live lobby reports a player cap of {lobby.MaxPlayers} — seat limits, the ENet "
                 + "listener size and browser admission are all running WITHOUT a known cap until it reads back.");
         }
 

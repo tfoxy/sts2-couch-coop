@@ -46,7 +46,7 @@ public sealed class CouchCoopSceneObserver(CouchCoopRuntimeHost runtimeHost) : I
     {
         if (!string.Equals(delta.TransformSpace, LocalTransformSpace, StringComparison.Ordinal))
         {
-            Console.Error.WriteLine("[couch-coop] rejected scene delta without local transforms.");
+            Console.Error.WriteLine("[couchcoop] rejected scene delta without local transforms.");
             return;
         }
 

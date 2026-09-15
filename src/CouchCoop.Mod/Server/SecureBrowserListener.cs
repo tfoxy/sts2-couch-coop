@@ -118,7 +118,7 @@ public sealed class SecureBrowserListener : IAsyncDisposable
         }
         catch (Exception exception)
         {
-            _log($"[couch-coop] host-ui diagnostic code={UnavailableCode} detail={exception.GetType().Name}: {exception.Message}");
+            _log($"[couchcoop] host-ui diagnostic code={UnavailableCode} detail={exception.GetType().Name}: {exception.Message}");
             return false;
         }
 
@@ -146,12 +146,12 @@ public sealed class SecureBrowserListener : IAsyncDisposable
             catch (Exception exception)
             {
                 listener.Stop();
-                _log($"[couch-coop] host-ui diagnostic code={UnavailableCode} detail={exception.GetType().Name}: {exception.Message}");
+                _log($"[couchcoop] host-ui diagnostic code={UnavailableCode} detail={exception.GetType().Name}: {exception.Message}");
                 return false;
             }
         }
 
-        _log($"[couch-coop] host-ui diagnostic code={UnavailableCode} detail=no-port-at-or-above-{preferredPort}");
+        _log($"[couchcoop] host-ui diagnostic code={UnavailableCode} detail=no-port-at-or-above-{preferredPort}");
         return false;
     }
 

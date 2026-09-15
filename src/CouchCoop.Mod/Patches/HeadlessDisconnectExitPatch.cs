@@ -149,7 +149,7 @@ internal static class HeadlessDisconnectExitPatch
         if (target is null)
         {
             Console.Error.WriteLine(
-                $"[couch-coop] HeadlessDisconnectExitPatch: {label} not found — headless clean-exit on disconnect is DISABLED.");
+                $"[couchcoop] HeadlessDisconnectExitPatch: {label} not found — headless clean-exit on disconnect is DISABLED.");
             return;
         }
 

@@ -236,7 +236,7 @@ internal static class CouchCoopGameUiTheme
 
                     if (_cached is not null)
                     {
-                        Console.Error.WriteLine($"[couch-coop] host-ui theme resource was freed; reloading path={path}");
+                        Console.Error.WriteLine($"[couchcoop] host-ui theme resource was freed; reloading path={path}");
                         _cached = null;
                     }
 
@@ -258,7 +258,7 @@ internal static class CouchCoopGameUiTheme
             catch (Exception exception)
             {
                 Console.Error.WriteLine(
-                    $"[couch-coop] host-ui theme load failed path={path} detail={exception.GetType().Name}: {exception.Message}");
+                    $"[couchcoop] host-ui theme load failed path={path} detail={exception.GetType().Name}: {exception.Message}");
                 return null;
             }
         }

@@ -435,8 +435,8 @@ test("runPlayerAliveness derives aliveness from HP and never guesses", () => {
 // =================================================================================================
 
 const hostLog = [
-  "[couch-coop] browser server listening on 13337",                                  // 1
-  "[couch-coop] headless netId-bound spawn slot=2 netId=1002",                       // 2
+  "[couchcoop] browser server listening on 13337",                                  // 1
+  "[couchcoop] headless netId-bound spawn slot=2 netId=1002",                       // 2
   "[PacketSizePatch] Patched NetMessageWriter",                                      // 3
   "Embarking on a multiplayer run. Players: 5",                                      // 4
   "Packet writer is growing from 4096 to 8192",                                      // 5
@@ -597,7 +597,7 @@ test("captureLogBaselines + archiveEvidence produce a signals.json that dates th
     const seat3 = join(slotLogDir(3), "godot.log");
 
     // Pre-embark content: whatever the host and the seats logged while the lobby filled.
-    writeFileSync(hostStdoutPath, "[couch-coop] browser server listening\n[PacketSizePatch] Patched NetMessageWriter\n");
+    writeFileSync(hostStdoutPath, "[couchcoop] browser server listening\n[PacketSizePatch] Patched NetMessageWriter\n");
     writeFileSync(seat2, "Sending handshake with net ID 1002\nClientLobbyJoinResponseMessage Players: 3\n");
     writeFileSync(seat3, "Sending handshake with net ID 1003\nClientLobbyJoinResponseMessage Players: 3\n");
 

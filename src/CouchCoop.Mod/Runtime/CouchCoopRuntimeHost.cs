@@ -262,7 +262,7 @@ public sealed class CouchCoopRuntimeHost : IDisposable, ICouchCoopCapabilityPoli
     private void LogUnsupported(CouchCoopRuntimeNotice notice)
     {
         _log(
-            "[couch-coop] unsupported spirectl capability "
+            "[couchcoop] unsupported spirectl capability "
             + $"id={notice.CapabilityId} supported={notice.Supported} provisional={notice.Provisional} "
             + $"reason={notice.UnsupportedReason ?? "unspecified"}");
     }

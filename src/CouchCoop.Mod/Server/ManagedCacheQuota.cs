@@ -204,7 +204,7 @@ internal sealed class ManagedCacheQuota
         var previous = Volatile.Read(ref _lastDiagnostic);
         if ((previous == 0 || now - previous >= 30_000)
             && Interlocked.CompareExchange(ref _lastDiagnostic, now, previous) == previous)
-            Console.Error.WriteLine("[couch-coop] cache-storage-limit: skipping new persistence; existing assets remain available.");
+            Console.Error.WriteLine("[couchcoop] cache-storage-limit: skipping new persistence; existing assets remain available.");
         return null;
     }
 

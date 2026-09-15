@@ -30,6 +30,12 @@ public static partial class CouchCoopModEntry
             return;
         }
 
+        // Hoisted out of the `try` so the failure line below can carry them. Which game this is, and which
+        // build of CouchCoop this is, are the two facts that turn an opaque CLR type-load stack into an
+        // obvious answer — and they are the two the catch would otherwise have lost.
+        string? detectedVersion = null;
+        var payloadDescription = "flat";
+
         try
         {
             var loaderAssembly = Assembly.GetExecutingAssembly();
@@ -46,14 +52,16 @@ public static partial class CouchCoopModEntry
             // this picks the highest one at or below the running game. A flat payload (every dev deploy) has
             // no `lanes/` directory and takes the pre-lane path unchanged and silently. See
             // CouchCoopLaneSelection for why the decision cannot simply call spirectl's version ladder.
-            var selection = CouchCoopLaneSelection.Select(
-                modDirectory,
-                CouchCoopLaneSelection.ResolveGameVersion());
+            detectedVersion = CouchCoopLaneSelection.ResolveGameVersion();
+            var selection = CouchCoopLaneSelection.Select(modDirectory, detectedVersion);
+            payloadDescription = selection.LaneDirectory is not null
+                ? $"lane {Path.GetFileName(selection.LaneDirectory)}"
+                : $"flat, built for {CouchCoopLaneSelection.ReadFlatBuildGameVersion(modDirectory) ?? "<unstamped>"}";
             if (selection.Refusal is not null)
             {
                 // Refuse BEFORE loading anything. A lane built for a different game build loads fine and then
                 // throws from inside a game callback, where nothing names CouchCoop as the cause.
-                Log.Error($"[couch-coop] {selection.Refusal}");
+                Log.Error($"[couchcoop] {selection.Refusal}");
                 return;
             }
 
@@ -66,7 +74,7 @@ public static partial class CouchCoopModEntry
             if (selection.LaneDirectory is not null)
             {
                 Log.Info(
-                    $"[couch-coop] game {selection.DetectedVersion} -> lane '{selection.LaneDirectory}'");
+                    $"[couchcoop] game {selection.DetectedVersion} -> lane '{selection.LaneDirectory}'");
 
                 // Names a stale root copy the lane is shadowing. Benign for someone who extracted a new
                 // release over an old one; the tell that a dev deploy is not the code running otherwise.
@@ -76,7 +84,7 @@ public static partial class CouchCoopModEntry
                     ImplementationAssemblyName);
                 if (ignoredRootCopy is not null)
                 {
-                    Log.Warn($"[couch-coop] {ignoredRootCopy}");
+                    Log.Warn($"[couchcoop] {ignoredRootCopy}");
                 }
             }
 
@@ -105,11 +113,11 @@ public static partial class CouchCoopModEntry
                         {
                             if (conflict.Fatal)
                             {
-                                Log.Error($"[couch-coop] {conflict.Message}");
+                                Log.Error($"[couchcoop] {conflict.Message}");
                             }
                             else
                             {
-                                Log.Warn($"[couch-coop] {conflict.Message}");
+                                Log.Warn($"[couchcoop] {conflict.Message}");
                             }
                         }
 
@@ -170,7 +178,13 @@ public static partial class CouchCoopModEntry
         }
         catch (Exception ex)
         {
-            Log.Error($"[couch-coop] bootstrap loader failed: {ex}");
+            // The build identity leads, because it is the answer far more often than the stack is. The
+            // failure this catch sees most is an implementation compiled for a different game build than
+            // the one running: the CLR reports it as a TypeLoadException naming a GAME type, which reads
+            // as "the game is broken" and names neither the build we are nor the build this is.
+            Log.Error(
+                $"[couchcoop] bootstrap loader failed (game {detectedVersion ?? "<undetected>"}, "
+                + $"payload {payloadDescription}): {ex}");
         }
     }
 

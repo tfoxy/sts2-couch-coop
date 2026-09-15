@@ -173,6 +173,6 @@ internal static class CouchCoopQrHoverTips
         }
 
         _warned = true;
-        Console.Error.WriteLine($"[couch-coop] qr-hover-tips unavailable — dialog unaffected; first failure: {detail}");
+        Console.Error.WriteLine($"[couchcoop] qr-hover-tips unavailable — dialog unaffected; first failure: {detail}");
     }
 }

@@ -30,7 +30,7 @@ internal static class CouchCoopPatchDiagnostics
     /// </param>
     internal static void PatchFailed(string patch, string detail, bool costsCoop)
     {
-        var message = $"[couch-coop] {patch}: {detail}";
+        var message = $"[couchcoop] {patch}: {detail}";
         Console.Error.WriteLine(message);
         CouchCoopLog.Error(message);
         CouchCoopPatchHealth.PatchFailed(patch, costsCoop, message);
