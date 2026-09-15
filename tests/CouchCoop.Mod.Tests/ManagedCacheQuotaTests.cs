@@ -74,6 +74,39 @@ internal static class ManagedCacheQuotaTests
 
         var entryLimited = new ManagedCacheQuota(scope.Root, [scope.Root], 100, 0, 2, _ => 100, allocationUnitBytes: 1, reconcileInterval: TimeSpan.Zero);
         Expect(entryLimited.TryReserve(3) is null, "the generated-entry limit is enforced independently");
+
+        FreeSpaceIsProbedForOneVolumeAndFailsOpen(scope);
+    }
+
+    // THE PROBE THAT USED TO FAIL CLOSED. It enumerated every mounted volume and matched the longest name that
+    // prefixed the path, then took First() — which THREW when nothing matched, and the throw landed in the
+    // accounting catch, so every write was refused for the life of the process and the player was told the cache
+    // was full. Two properties matter now: it answers for the one volume holding the path (nothing else is
+    // stat-ed, so a stale network mount cannot make admission slow), and when it cannot answer at all it says so
+    // as "no free-space constraint" rather than as a denial. The ceiling is the bound that still holds either
+    // way; free space is a second, independent one, and losing a second bound must not cost the whole cache.
+    private static void FreeSpaceIsProbedForOneVolumeAndFailsOpen(TempScope scope)
+    {
+        Expect(ManagedCacheQuota.AvailableFreeSpace(scope.Root) > 0, "a real directory reports real free space");
+
+        // A first run reaches here before anything has created the cache root. The old prefix match answered for
+        // it; a bare statvfs would not, and silently reporting "unknown" would retire the reserve on exactly the
+        // run that is about to fill the disk.
+        Expect(
+            ManagedCacheQuota.AvailableFreeSpace(Path.Combine(scope.Root, "not", "created", "yet")) > 0,
+            "a root that does not exist yet answers from its nearest existing ancestor");
+
+        Expect(
+            ManagedCacheQuota.AvailableFreeSpace("\0not-a-path") == long.MaxValue,
+            "a path the probe cannot answer for fails OPEN, not closed");
+
+        // …and end to end: a quota built with the REAL probe (no injected stub anywhere above this line used it)
+        // admits an ordinary write instead of denying every one of them.
+        var live = new ManagedCacheQuota(scope.Root, [scope.Root], ceilingBytes: 1024 * 1024,
+            freeSpaceReserveBytes: 0, entryLimitBytes: 4096, allocationUnitBytes: 1,
+            reconcileInterval: TimeSpan.Zero);
+        using var admitted = live.TryReserve(64);
+        Expect(admitted is not null, "the default free-space probe admits a write rather than denying it");
     }
 
     private static void Expect(bool condition, string label)
