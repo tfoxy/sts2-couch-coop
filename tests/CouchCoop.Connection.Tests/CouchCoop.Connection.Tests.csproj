@@ -33,6 +33,7 @@
   <ItemGroup>
     <Compile Include="../CouchCoop.Mod.Tests/WebSocketJoinLifecycleTests.cs" Link="WebSocketJoinLifecycleTests.cs" />
     <Compile Include="../CouchCoop.Mod.Tests/ConnectionRegistryTests.cs" Link="ConnectionRegistryTests.cs" />
+    <Compile Include="../CouchCoop.Mod.Tests/HostPatchHealthTests.cs" Link="HostPatchHealthTests.cs" />
     <Compile Include="../CouchCoop.Mod.Tests/ConnectionDeviceLabelTests.cs" Link="ConnectionDeviceLabelTests.cs" />
     <Compile Include="../CouchCoop.Mod.Tests/ConnectionReportFormatterTests.cs" Link="ConnectionReportFormatterTests.cs" />
     <Compile Include="../CouchCoop.Mod.Tests/ConnectionAttemptLogsTests.cs" Link="ConnectionAttemptLogsTests.cs" />

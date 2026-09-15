@@ -13,6 +13,13 @@ public sealed partial class HeadlessClientManager
     /// </summary>
     public const string SeatBuildMismatchCode = "seat-build-mismatch";
 
+    /// <summary>
+    /// The host-service issue a session runs under when its seats get no isolated Godot user directory — a
+    /// WARNING, not a failure: co-op works, but every player on this machine shares one <c>godot.log</c> and one
+    /// settings/save profile. Public for the same reason as the code above: the panel's copy keys on the literal.
+    /// </summary>
+    public const string SharedUserDirCode = "host-seat-profile-shared";
+
     private readonly Dictionary<int, OwnedConnection> _ownedConnections = [];
     private readonly Dictionary<Guid, BrowserAttempt> _browserAttempts = [];
     private readonly Dictionary<int, Task> _connectionCleanup = [];

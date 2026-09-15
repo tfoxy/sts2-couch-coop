@@ -47,6 +47,7 @@ internal static class LobbyScreenMountPatch
 {
     private static readonly object _sync = new();
     private static LobbyScreenMountPlan? _plan;
+    private static int _attempts;
 
     /// <summary>
     /// The game members this patch binds to, shared with the reflection guard test — the same contract
@@ -84,12 +85,13 @@ internal static class LobbyScreenMountPatch
                 return true;
             }
 
+            _attempts++;
             var postfix = typeof(LobbyScreenMountPatch)
                 .GetMethod(nameof(ReadyPostfix), BindingFlags.NonPublic | BindingFlags.Static);
             if (postfix is null)
             {
                 // Our own method, so this cannot be a game-side change and a retry cannot help it.
-                ReportIncomplete("the mount postfix is missing from this build");
+                ReportIncomplete("the mount postfix is missing from this build", retryExhausted: true);
                 return false;
             }
 
@@ -100,7 +102,10 @@ internal static class LobbyScreenMountPatch
                 $"[couch-coop] lobby screen mount patch installed targets={plan.TargetCount - plan.Pending.Count}/{plan.TargetCount}");
             if (!complete)
             {
-                ReportIncomplete($"still pending: {string.Join(", ", plan.Pending)}");
+                // The panel controller makes one more Apply after the runtime is up, so the FIRST incomplete
+                // attempt is expected and must not tell the player the button is gone — only a retry that also
+                // failed may do that. The log line stands either way.
+                ReportIncomplete($"still pending: {string.Join(", ", plan.Pending)}", retryExhausted: _attempts > 1);
             }
 
             return complete;
@@ -115,12 +120,20 @@ internal static class LobbyScreenMountPatch
     /// failed on a live host, <c>godot.log</c> carried six CouchCoop lines and none of them mentioned it; the
     /// diagnosis took a reconstruction from the launcher's captured stderr, which a player does not have.
     /// </remarks>
-    private static void ReportIncomplete(string detail)
+    /// <param name="retryExhausted">
+    /// Whether this is the last word. Only then does the connections panel get its (deduplicated) row: the
+    /// button really is gone for the session, which is a thing the player can see and report.
+    /// </param>
+    private static void ReportIncomplete(string detail, bool retryExhausted)
     {
         var message = $"[couch-coop] lobby screen mount patch INCOMPLETE ({detail}) — the Couch Co-Op QR button "
             + "will not appear in the lobby this session";
         Console.Error.WriteLine(message);
         CouchCoopLog.Error(message);
+        if (retryExhausted)
+        {
+            Connections.CouchCoopPatchHealth.PatchFailed(nameof(LobbyScreenMountPatch), costsCoop: true, message);
+        }
     }
 
     private static bool TryPatch(Harmony harmony, string typeName, MethodInfo postfix)
@@ -138,9 +151,12 @@ internal static class LobbyScreenMountPatch
         }
         catch (Exception exception)
         {
-            Console.Error.WriteLine(
-                $"[couch-coop] LobbyScreenMountPatch: Harmony patch of {typeName}._Ready failed "
-                + $"({exception.GetType().Name}: {exception.Message}).");
+            // Recorded, but NOT reported to the panel from here: this target stays pending and is retried, and
+            // ReportIncomplete below is the one that speaks once the retry has also failed.
+            CouchCoopPatchDiagnostics.PatchFailed(
+                nameof(LobbyScreenMountPatch),
+                $"Harmony patch of {typeName}._Ready failed ({exception.GetType().Name}: {exception.Message}).",
+                costsCoop: false);
             return false;
         }
     }

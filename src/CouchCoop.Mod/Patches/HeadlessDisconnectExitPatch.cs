@@ -162,8 +162,12 @@ internal static class HeadlessDisconnectExitPatch
         }
         catch (Exception exception)
         {
-            Console.Error.WriteLine(
-                $"[couch-coop] HeadlessDisconnectExitPatch: Harmony patch of {label} failed ({exception.GetType().Name}: {exception.Message}).");
+            // Seat-side and after the fact: the seat still joins, it just cannot exit cleanly when the host
+            // goes. Recorded and logged; no row (the seat's registry is not the host's panel).
+            CouchCoopPatchDiagnostics.PatchFailed(
+                nameof(HeadlessDisconnectExitPatch),
+                $"Harmony patch of {label} failed ({exception.GetType().Name}: {exception.Message}).",
+                costsCoop: false);
         }
     }
 

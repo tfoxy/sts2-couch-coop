@@ -68,6 +68,13 @@ public static class CouchCoopMod
             // No-op on a host, and on a seat whose host predates the check.
             if (IsHeadlessClient) HeadlessSeatBuildGuard.EnforceOrExit();
 
+            // Then the log path, BEFORE the first thing that can report a host issue. It used to be set in
+            // StartHostUiServices, a hundred lines below the Harmony patch block — so any issue raised during
+            // patching captured no log excerpt at all, which is exactly the failure whose evidence lives in
+            // that file. Nothing reads it earlier than this, and every reader (ConnectionRegistry.Connected,
+            // BeginAttempt, ReportHostIssue, the seat launcher) resolves it at call time.
+            InitializeHostLogPath();
+
             CouchCoopLocalization.Initialize();
             // Init only ever runs inside a real Godot process, so it is the safe place to arm the
             // static-background tracker's probe path (which calls GodotSharp NATIVE code — see the latch's doc
@@ -95,6 +102,11 @@ public static class CouchCoopMod
                     $"[couch-coop] cache unavailable: {exception.GetType().Name}: {exception.Message} "
                     + "-- continuing without one");
             }
+
+            // Same hook, same reason, for the per-seat user-dir seeder: its refusals used to be silent, and
+            // the platform that hits them (macOS has no isolation to offer) is the one whose stderr goes
+            // nowhere. Error level — the connections report's log excerpt keeps only those.
+            Session.HeadlessUserDirSeeder.LogSink = Session.CouchCoopLog.Error;
 
             // Enumerate the atlas pages THIS build ships, once, while we are on the main thread with an engine.
             // Published on every session envelope so the browser's idle prefetch stops guessing: the game's
@@ -666,7 +678,6 @@ public static class CouchCoopMod
             string.IsNullOrWhiteSpace(runtime.Capabilities.GameVersion)
                 ? CouchCoopCacheRoot.Content.GameVersion
                 : runtime.Capabilities.GameVersion;
-        CouchCoop.Mod.Connections.ConnectionRegistry.HostLogPath = Godot.ProjectSettings.GlobalizePath("user://logs/godot.log");
         try
         {
             // A windowed/display HOST defers the LAN discovery responder, the `.local` mDNS name and the
@@ -734,7 +745,30 @@ public static class CouchCoopMod
     }
 
     /// <summary>
-    /// Satisfy Harmony's one native precondition, and say in <c>godot.log</c> whether it worked.
+    /// Point the connections panel (and every copyable report) at this process's <c>godot.log</c>.
+    /// </summary>
+    /// <remarks>
+    /// Guarded because it is now the FIRST engine call <c>Init</c> makes, and a diagnostic path must never be
+    /// the reason mod init fails: without the path, rows simply carry no log excerpt, which is what they did
+    /// before this existed.
+    /// </remarks>
+    private static void InitializeHostLogPath()
+    {
+        try
+        {
+            CouchCoop.Mod.Connections.ConnectionRegistry.HostLogPath =
+                Godot.ProjectSettings.GlobalizePath("user://logs/godot.log");
+        }
+        catch (Exception exception)
+        {
+            Console.Error.WriteLine(
+                $"[couch-coop] host log path unresolved detail={exception.GetType().Name}: {exception.Message}");
+        }
+    }
+
+    /// <summary>
+    /// Satisfy Harmony's one native precondition, and say in <c>godot.log</c> whether it worked — or, on a
+    /// platform that has no such precondition, whether patching works at all (see <see cref="ProbeNativePatching"/>).
     /// </summary>
     /// <remarks>
     /// <para>
@@ -757,13 +791,21 @@ public static class CouchCoopMod
             var preload = Spirectl.Sts2.Live.Sts2MonoModNativeDependencies.EnsureLoaded();
             if (!preload.Supported)
             {
-                return; // not a Linux process: nothing to preload, and nothing went wrong
+                // Not a Linux process: there is no libgcc preload to make, and its absence is not a fault.
+                // That is NOT the same as "patching works here", which is what this early return used to
+                // assume. MonoMod still loads a native exec-helper on the first patch of the process, and on
+                // macOS the hardened runtime is entitled to refuse it — so ASK, once, with a patch of our own.
+                ProbeNativePatching();
+                return;
             }
 
             if (preload.Loaded)
             {
                 Console.Error.WriteLine("[couch-coop] monomod unwinder preloaded");
                 CouchCoopLog.Info("[couch-coop] monomod unwinder preloaded (libgcc_s.so.1, RTLD_GLOBAL)");
+                // The Linux behaviour is untouched; only recorded, so a report from the platform we actually
+                // ship on says what its precondition did instead of "probe=not-run".
+                Connections.CouchCoopPatchHealth.RecordProbe("unwinder-preloaded");
                 return;
             }
 
@@ -772,6 +814,9 @@ public static class CouchCoopMod
                 + "joining depend on them";
             Console.Error.WriteLine(detail);
             CouchCoopLog.Error(detail);
+            // NOT a row: the preload failing is a strong predictor of broken patching, not proof of it (the
+            // symbols are sometimes already present), and each patch that then fails raises the row itself.
+            Connections.CouchCoopPatchHealth.RecordProbe($"unwinder-preload-failed({preload.Error})");
         }
         catch (Exception exception)
         {
@@ -779,7 +824,46 @@ public static class CouchCoopMod
             // than one that loads without its hooks.
             Console.Error.WriteLine(
                 $"[couch-coop] monomod unwinder preload threw detail={exception.GetType().Name}: {exception.Message}");
+            Connections.CouchCoopPatchHealth.RecordProbe($"threw({exception.GetType().Name})");
         }
+    }
+
+    /// <summary>
+    /// On a platform with no preload to make, find out whether Harmony can patch at all — see
+    /// <see cref="Patches.CouchCoopHarmonyProbe"/> for why macOS is the platform that has to be asked.
+    /// </summary>
+    /// <remarks>
+    /// macOS only, on purpose. Windows patching is not known to have a first-load veto and works today; adding a
+    /// startup patch there would be a change to a platform this round has no way to test. It is recorded as
+    /// skipped rather than as healthy, so a Windows report never claims a probe that never ran.
+    /// </remarks>
+    private static void ProbeNativePatching()
+    {
+        if (!OperatingSystem.IsMacOS())
+        {
+            Connections.CouchCoopPatchHealth.RecordProbe("skipped (not required on this platform)");
+            return;
+        }
+
+        var probe = Patches.CouchCoopHarmonyProbe.Run();
+        if (probe.Succeeded)
+        {
+            const string Message = "[couch-coop] harmony probe ok (macOS): a trial patch of our own method applied and took effect";
+            Console.Error.WriteLine(Message);
+            CouchCoopLog.Info(Message);
+            Connections.CouchCoopPatchHealth.RecordProbe("ok");
+            return;
+        }
+
+        var error = probe.Error ?? "unknown";
+        var message = $"[couch-coop] harmony probe FAILED (macOS) detail={error} — no Harmony patch can be "
+            + "installed in this process, so the lobby Couch Co-Op button will not appear and no player can join "
+            + "a seat this session";
+        Console.Error.WriteLine(message);
+        CouchCoopLog.Error(message);
+        Connections.CouchCoopPatchHealth.ProbeFailed(
+            error,
+            $"{message} (host {System.Runtime.InteropServices.RuntimeInformation.OSDescription})");
     }
 
     private static void InitializeQrHostPanel()

@@ -75,6 +75,10 @@
   "couchcoop_connection_error_browser_action": "Tarayıcıyı yenileyip tekrar katılın.",
   "couchcoop_connection_error_service_summary": "Ana bilgisayarın tarayıcı hizmeti durdu.",
   "couchcoop_connection_error_service_action": "Lobiye dönüp tekrar deneyin.",
+  "couchcoop_connection_error_patch_summary": "Couch Co-Op oyuna bağlanamadı, bu oturumda ortak oynanış çalışmayacak.",
+  "couchcoop_connection_error_patch_action": "Oyunu yeniden başlatın. Ortak oynanış yine başlamazsa bu raporu kopyalayın.",
+  "couchcoop_connection_error_shared_profile_summary": "Bu bilgisayardaki oyuncular tek bir oyun profilini ve tek bir günlük dosyasını paylaşır.",
+  "couchcoop_connection_error_shared_profile_action": "Ortak oynanış çalışmaya devam eder. Diğer oyuncular bağlıyken oyun ayarlarını değiştirmekten kaçının.",
   "couchcoop_connection_empty": "Cihazlar tarayıcı sunucusuna bağlandıktan sonra burada görünür. Aynı Wi‑Fi ağını kullanın ve yukarıda gösterilen adresi kontrol edin.",
   "couchcoop_connection_host_service": "Sunucu hizmeti",
   "couchcoop_connection_error_slow_summary": "Tarayıcının oyunu göstermesi bekleniyor.",
@@ -90,10 +94,12 @@
   "couchcoop_connection_outcome_failed": "Başarısız",
   "couchcoop_connection_outcome_recovered": "Kurtarıldı",
   "couchcoop_connection_outcome_ended": "Bitti",
+  "couchcoop_connection_outcome_degraded": "Sınırlı",
   "couchcoop_connection_show_technical": "Teknik ayrıntıları göster",
   "couchcoop_connection_hide_technical": "Teknik ayrıntıları gizle",
   "couchcoop_connection_outcome_detail_waiting": "Oyun görünümü hâlâ bekleniyor. Bu deneme yine de tamamlanabilir.",
   "couchcoop_connection_outcome_detail_failed": "Bu deneme durdu. Önerilen adımları uygulayın, sonra yeniden bağlanın.",
   "couchcoop_connection_outcome_detail_recovered": "Oyun görünümü artık çalışıyor. Bu önceki uyarı başvuru için kaydedildi.",
-  "couchcoop_connection_outcome_detail_ended": "Bu bağlantı gecikme giderilmeden önce sona erdi."
+  "couchcoop_connection_outcome_detail_ended": "Bu bağlantı gecikme giderilmeden önce sona erdi.",
+  "couchcoop_connection_outcome_detail_degraded": "Ortak oynanış bir sınırlamayla çalışıyor. Başvurmanız için burada saklanır."
 }

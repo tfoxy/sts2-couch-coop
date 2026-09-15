@@ -220,7 +220,12 @@ internal static class CouchCoopHostTransportPatch
         }
         catch (Exception ex)
         {
-            Console.Error.WriteLine($"[couch-coop] CouchCoopHostTransportPatch: Harmony patch of {label} failed ({ex.GetType().Name}: {ex.Message}).");
+            // The seat launcher refuses to spawn when it cannot tell that this host is running the ENet side,
+            // so losing this bookkeeping costs seat joining rather than merely a statistic.
+            CouchCoopPatchDiagnostics.PatchFailed(
+                nameof(CouchCoopHostTransportPatch),
+                $"Harmony patch of {label} failed ({ex.GetType().Name}: {ex.Message}).",
+                costsCoop: true);
             return false;
         }
     }

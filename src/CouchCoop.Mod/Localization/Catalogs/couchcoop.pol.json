@@ -75,6 +75,10 @@
   "couchcoop_connection_error_browser_action": "Odśwież przeglądarkę, a potem dołącz ponownie.",
   "couchcoop_connection_error_service_summary": "Usługa przeglądarki hosta została zatrzymana.",
   "couchcoop_connection_error_service_action": "Wróć do lobby i spróbuj ponownie.",
+  "couchcoop_connection_error_patch_summary": "Couch Co-Op nie mógł podłączyć się do gry, więc tryb kooperacji nie zadziała w tej sesji.",
+  "couchcoop_connection_error_patch_action": "Uruchom grę ponownie. Jeśli kooperacja nadal się nie uruchamia, skopiuj ten raport.",
+  "couchcoop_connection_error_shared_profile_summary": "Gracze na tym komputerze współdzielą jeden profil gry i jeden plik dziennika.",
+  "couchcoop_connection_error_shared_profile_action": "Kooperacja nadal działa. Nie zmieniaj ustawień gry, gdy podłączeni są inni gracze.",
   "couchcoop_connection_empty": "Urządzenia pojawią się tutaj po połączeniu z serwerem przeglądarki. Użyj tej samej sieci Wi‑Fi i sprawdź adres pokazany powyżej.",
   "couchcoop_connection_host_service": "Usługa hosta",
   "couchcoop_connection_error_slow_summary": "Oczekiwanie na wyświetlenie gry w przeglądarce.",
@@ -90,10 +94,12 @@
   "couchcoop_connection_outcome_failed": "Niepowodzenie",
   "couchcoop_connection_outcome_recovered": "Odzyskano",
   "couchcoop_connection_outcome_ended": "Zakończono",
+  "couchcoop_connection_outcome_degraded": "Ograniczone",
   "couchcoop_connection_show_technical": "Pokaż szczegóły techniczne",
   "couchcoop_connection_hide_technical": "Ukryj szczegóły techniczne",
   "couchcoop_connection_outcome_detail_waiting": "Nadal czekamy na widok gry. Ta próba może się jeszcze zakończyć.",
   "couchcoop_connection_outcome_detail_failed": "Ta próba została zatrzymana. Wykonaj sugerowane kroki, a następnie połącz się ponownie.",
   "couchcoop_connection_outcome_detail_recovered": "Widok gry już działa. To wcześniejsze ostrzeżenie zachowano jako odniesienie.",
-  "couchcoop_connection_outcome_detail_ended": "To połączenie zakończyło się, zanim opóźnienie ustąpiło."
+  "couchcoop_connection_outcome_detail_ended": "To połączenie zakończyło się, zanim opóźnienie ustąpiło.",
+  "couchcoop_connection_outcome_detail_degraded": "Kooperacja działa z ograniczeniem. Zapisano je tutaj w celach informacyjnych."
 }

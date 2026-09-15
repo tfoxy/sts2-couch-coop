@@ -15,6 +15,16 @@ if (args is ["--routes"])
     return;
 }
 
+// The host's own diagnostics: whether this process could install its Harmony hooks, and how a degraded host
+// condition reaches the panel without reading as a stopped session.
+if (args is ["--patch-health"])
+{
+    Console.WriteLine("connections: host patch health");
+    HostPatchHealthTests.Run();
+    Console.WriteLine("connections: host patch health ok");
+    return;
+}
+
 if (args is ["--labels"])
 {
     Console.WriteLine("connections: device label");
@@ -61,6 +71,8 @@ if (args is ["--seat-build"])
 
 Console.WriteLine("connections: registry");
 ConnectionRegistryTests.Run();
+Console.WriteLine("connections: host patch health");
+HostPatchHealthTests.Run();
 Console.WriteLine("connections: device label");
 ConnectionDeviceLabelTests.Run();
 Console.WriteLine("connections: report formatter");

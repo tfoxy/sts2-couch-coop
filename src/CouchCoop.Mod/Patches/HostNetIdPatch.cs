@@ -272,7 +272,11 @@ internal static class HostNetIdPatch
         }
         catch (Exception ex)
         {
-            Console.Error.WriteLine($"[couch-coop] HostNetIdPatch: Harmony patch of {label} failed ({ex.GetType().Name}: {ex.Message}).");
+            // Seat-side, and the seat cannot stay joined to a Steam-hosted session without it.
+            CouchCoopPatchDiagnostics.PatchFailed(
+                nameof(HostNetIdPatch),
+                $"Harmony patch of {label} failed ({ex.GetType().Name}: {ex.Message}).",
+                costsCoop: true);
         }
     }
 }

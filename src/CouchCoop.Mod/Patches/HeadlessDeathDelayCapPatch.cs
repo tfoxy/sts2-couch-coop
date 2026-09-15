@@ -90,9 +90,11 @@ internal static class HeadlessDeathDelayCapPatch
             }
             catch (Exception ex)
             {
-                Console.Error.WriteLine(
-                    $"[couch-coop] HeadlessDeathDelayCapPatch: patching {TargetTypeName}.{TargetMethodName} failed "
-                    + $"({ex.GetType().Name}: {ex.Message}).");
+                // Seat-side backstop for a frozen death animation; its absence costs a stall, not a join.
+                CouchCoopPatchDiagnostics.PatchFailed(
+                    nameof(HeadlessDeathDelayCapPatch),
+                    $"patching {TargetTypeName}.{TargetMethodName} failed ({ex.GetType().Name}: {ex.Message}).",
+                    costsCoop: false);
             }
         }
     }

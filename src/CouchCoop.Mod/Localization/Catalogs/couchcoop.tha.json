@@ -75,6 +75,10 @@
   "couchcoop_connection_error_browser_action": "รีโหลดเบราว์เซอร์แล้วเข้าร่วมอีกครั้ง",
   "couchcoop_connection_error_service_summary": "บริการเบราว์เซอร์ของโฮสต์หยุดทำงาน",
   "couchcoop_connection_error_service_action": "กลับไปที่ล็อบบี้แล้วลองอีกครั้ง",
+  "couchcoop_connection_error_patch_summary": "Couch Co-Op ไม่สามารถเชื่อมเข้ากับเกมได้ จึงเล่นแบบร่วมมือในเซสชันนี้ไม่ได้",
+  "couchcoop_connection_error_patch_action": "รีสตาร์ทเกม หากยังเล่นแบบร่วมมือไม่ได้ ให้คัดลอกรายงานนี้",
+  "couchcoop_connection_error_shared_profile_summary": "ผู้เล่นบนคอมพิวเตอร์เครื่องนี้ใช้โปรไฟล์เกมและไฟล์บันทึกร่วมกัน",
+  "couchcoop_connection_error_shared_profile_action": "โหมดร่วมมือยังใช้งานได้ หลีกเลี่ยงการเปลี่ยนการตั้งค่าเกมขณะที่ผู้เล่นคนอื่นเชื่อมต่ออยู่",
   "couchcoop_connection_empty": "อุปกรณ์จะแสดงที่นี่หลังเชื่อมต่อกับเซิร์ฟเวอร์เบราว์เซอร์ ใช้เครือข่าย Wi‑Fi เดียวกันและตรวจสอบที่อยู่ที่แสดงด้านบน",
   "couchcoop_connection_host_service": "บริการของโฮสต์",
   "couchcoop_connection_error_slow_summary": "กำลังรอให้เบราว์เซอร์แสดงเกม",
@@ -90,10 +94,12 @@
   "couchcoop_connection_outcome_failed": "ล้มเหลว",
   "couchcoop_connection_outcome_recovered": "กู้คืนแล้ว",
   "couchcoop_connection_outcome_ended": "สิ้นสุดแล้ว",
+  "couchcoop_connection_outcome_degraded": "จำกัด",
   "couchcoop_connection_show_technical": "แสดงรายละเอียดทางเทคนิค",
   "couchcoop_connection_hide_technical": "ซ่อนรายละเอียดทางเทคนิค",
   "couchcoop_connection_outcome_detail_waiting": "ยังรอหน้าจอเกมอยู่ ความพยายามนี้อาจเสร็จสิ้นได้",
   "couchcoop_connection_outcome_detail_failed": "ความพยายามนี้หยุดลงแล้ว ทำตามขั้นตอนที่แนะนำแล้วเชื่อมต่อใหม่",
   "couchcoop_connection_outcome_detail_recovered": "หน้าจอเกมใช้งานได้แล้ว คำเตือนก่อนหน้านี้ถูกบันทึกไว้เพื่ออ้างอิง",
-  "couchcoop_connection_outcome_detail_ended": "การเชื่อมต่อนี้สิ้นสุดลงก่อนที่ความล่าช้าจะหมดไป"
+  "couchcoop_connection_outcome_detail_ended": "การเชื่อมต่อนี้สิ้นสุดลงก่อนที่ความล่าช้าจะหมดไป",
+  "couchcoop_connection_outcome_detail_degraded": "โหมดร่วมมือกำลังทำงานโดยมีข้อจำกัด ระบบบันทึกไว้ที่นี่เพื่อใช้อ้างอิง"
 }

@@ -713,6 +713,17 @@ panel is no longer mounted; its internal narration remains available for diagnos
   A failed child stops input and arms the five-second forced-exit backstop before notifying the host
   and browser and requesting quit. Parent cleanup captures logs and releases the peer before a seat
   can be reused. Healthy reconnect and mid-run detach still retain the existing game.
+- `ReportHostIssue` raises a synthetic **Host service** row with no client attempt behind it, deduplicated by
+  code. `isWarning: true` records it with the `Degraded` outcome — orange ⚠, not failure red — for a condition
+  that is running under a limitation rather than stopped. Three codes exist: `host-service-failed` (no browser
+  listener), `host-patch-failed` (Harmony hooks could not be installed, so no QR button and no seat joining),
+  and `host-seat-profile-shared` (warning: this platform has no per-seat Godot user dir, so every player on the
+  machine shares one `godot.log` and one settings/save profile — macOS, where `user://` comes from `$HOME` and
+  there is no `--user-dir`). **A new code needs a `CouchCoopConnectionPanel.IssueKey` mapping and its catalog
+  pair**: unmapped codes fall through to the join copy, which on a Host service row is a wrong sentence, not a
+  missing one. `Connections/CouchCoopPatchHealth.cs` records patch outcomes and publishes the `patchHealth` fact
+  into every report beside `hostOS`; off Linux, `CouchCoopHarmonyProbe` answers the question up front by
+  detouring a throwaway method of our own before any real patch is attempted.
 - A seat that loaded a different CouchCoop build than the host reports `couchcoop-build-mismatch` on that
   same channel at mod init, before any join, and exits. It is NOT folded into `native-join-rejected`: the
   host raises `seat-build-mismatch`, whose detail names the assembly file the seat loaded and whose next

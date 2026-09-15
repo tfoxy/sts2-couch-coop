@@ -692,7 +692,9 @@ only the loopback HTTP tests; `--host-ui` runs native focus and localization che
 `--seat-build` covers "a seat runs the same copy of CouchCoop as its host" — which mod-list row a seat is seeded
 to disable, the `settings.save` rewrite that does it, and the build comparison the seat refuses on;
 `--ws-lifecycle` covers startup cancellation over a real WebSocket; `--labels` isolates
-the device parser. Use the normal scratch deployment environment when running in a worktree.
+the device parser; `--patch-health` covers the host's OWN diagnostics — whether this process could install its
+Harmony hooks, how host-service rows deduplicate, and that a degraded host condition is painted as a warning
+rather than a failure. Use the normal scratch deployment environment when running in a worktree.
 
 Frontend coverage includes `firstScenePresentation.spec.ts`, receipt messages, MirrorApp redirects, and
 DOM/canvas mounting. Run the frontend typecheck and Vitest without `npm run build` (which deploys).
