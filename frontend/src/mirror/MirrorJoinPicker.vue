@@ -48,6 +48,14 @@ const props = defineProps<{
   // `screenTitle || placeholder` order was only wrong for the transient states — where the screen title is a
   // memory of a session that has since been superseded, and the lifecycle word is the only truth on screen.
   transient?: boolean;
+  // The join's SECOND line, under the transient heading: what the host is doing about the join in flight, how
+  // long it has been doing it, and that this can legitimately take up to a minute (composed by the parent from
+  // the host's `join-progress` — copy in mirror/loadingState). Absent whenever no join is outstanding.
+  //
+  // It exists because "Joining…" above is ONE WORD that cannot change for the 20-60s a cold seat spawn takes, so
+  // a healthy join and a dead one showed the same screen and players closed the tab on both. Deliberately NOT
+  // folded into the heading: the heading is the lifecycle word every other state uses too, and it stays as it is.
+  progress?: string | null;
   // Rejection message shown above the picker ("that name is not from a session player.").
   message?: string | null;
   // Optional SECOND line under `message`, carrying the host's own words for a fault the friendly line can only
@@ -175,6 +183,15 @@ function submitJoin(name: string = joinName.value, playerId?: string): void {
         data-testid="mirror-spinner"
       />{{ titleText }}
     </h1>
+
+    <!-- The join's progress line. Directly under the heading it explains, and inside the section's existing
+         `aria-live="polite"` so each update is announced rather than silently replacing the last. Rendered in
+         BOTH shapes for the same reason the message surface is: a join in flight can be showing either. -->
+    <p
+      v-if="progress"
+      class="mirror-join-progress"
+      data-testid="mirror-join-progress"
+    >{{ progress }}</p>
 
     <!-- MP character-select: the name field is the PRIMARY control, shown FIRST. A real <form> so Enter submits. -->
     <form
@@ -364,6 +381,21 @@ function submitJoin(name: string = joinName.value, playerId?: string): void {
   .mirror-spinner {
     animation-duration: 3.2s;
   }
+}
+
+/* The join progress line. Quiet — it is reassurance under a heading, not a warning: neither the amber of a
+   rejection (nothing is wrong) nor the near-invisible grey of the fault detail (this is the one thing on screen
+   a waiting player is reading). Wrapped and width-capped like the detail line so a long localized sentence
+   cannot widen the panel. CouchCoop's OWN join chrome, not @spirectl/godot-scene-web presentation DOM. */
+.mirror-join-progress {
+  margin: 0.15rem 0 0.35rem;
+  color: rgba(255, 255, 255, 0.78);
+  font-size: 0.85rem;
+  line-height: 1.4;
+  text-align: center;
+  max-width: 32rem;
+  margin-inline: auto;
+  overflow-wrap: anywhere;
 }
 
 .mirror-join-message {

@@ -230,6 +230,93 @@ export type BrowserEnvelope =
   | BrowserErrorEnvelope
   | BrowserServerReloadEnvelope;
 
+/**
+ * `join-progress` — what the host is DOING about a join that has not answered yet.
+ *
+ * A cold seat spawn legitimately takes 20-60s and the host awaits it inline, so between the `join` and its reply
+ * the screen used to show a bare "Joining…" spinner — the same screen a join that had already died showed for the
+ * full 75s deadline. This envelope is the host reading its own connection registry out loud, about once a second
+ * and only while something changes.
+ *
+ * Deliberately NOT part of `BrowserEnvelope` / `parseBrowserEnvelopeValue`: that union is the request/reply
+ * surface every client branches on, and this is a one-way progress notification the mirror client picks off the
+ * socket itself (`parseJoinProgress` below). Keeping it out means an older client's "unknown type → drop" path is
+ * still exactly what happens, and nothing that consumes `BrowserEnvelope` has to learn a new case.
+ *
+ * C# twin: `BrowserJoinProgressEnvelope` (CouchCoop.MirrorProtocol).
+ */
+export interface BrowserJoinProgress {
+  /** The `join` request this describes. A progress for any other request is about a join we have given up on. */
+  requestId: string;
+  stage: JoinProgressStage;
+  /** Which of `stepTotal` steps the attempt is on, so the viewer sees movement inside one long stage. */
+  step: number;
+  stepTotal: number;
+  /** Milliseconds since the attempt began, as the HOST measures it — the client runs no timer of its own. */
+  elapsedMs: number;
+}
+
+/**
+ * The closed stage vocabulary. Stable wire tokens for the host's own connection stages — the raw enum names are
+ * internal bookkeeping and never reach a player's screen; the client maps these to localized copy.
+ * C# twin: `BrowserJoinProgressStages` (CouchCoop.MirrorProtocol).
+ */
+export type JoinProgressStage =
+  | "connecting"
+  | "choosing"
+  | "initializing"
+  | "joining"
+  | "loading-view"
+  | "complete"
+  | "failed";
+
+const JOIN_PROGRESS_STAGES: readonly JoinProgressStage[] = [
+  "connecting",
+  "choosing",
+  "initializing",
+  "joining",
+  "loading-view",
+  "complete",
+  "failed"
+];
+
+function isJoinProgressStage(value: unknown): value is JoinProgressStage {
+  return typeof value === "string" && (JOIN_PROGRESS_STAGES as readonly string[]).includes(value);
+}
+
+/** A non-negative whole number, or null. Same refusal rule as the scroll ack: a coerced 0 is a real-looking lie. */
+function joinProgressCount(raw: unknown): number | null {
+  return typeof raw === "number" && Number.isFinite(raw) && raw >= 0 ? Math.floor(raw) : null;
+}
+
+/**
+ * Read one incoming frame as a join-progress notification, or null when it is not one (or not a usable one).
+ *
+ * Every field is required, because a half-formed progress is worse than none: the line it renders is a claim
+ * about what the host is doing right now, and a missing stage or elapsed would show the viewer a confident
+ * sentence built out of defaults. An unknown `stage` refuses for the same reason — a future host stage this build
+ * has no words for must fall back to the plain spinner, not to a made-up description.
+ */
+export function parseJoinProgress(raw: unknown): BrowserJoinProgress | null {
+  if (!raw || typeof raw !== "object") {
+    return null;
+  }
+  const value = raw as Record<string, unknown>;
+  if (value.type !== "join-progress" || typeof value.requestId !== "string" || value.requestId.length === 0) {
+    return null;
+  }
+  if (!isJoinProgressStage(value.stage)) {
+    return null;
+  }
+  const step = joinProgressCount(value.step);
+  const stepTotal = joinProgressCount(value.stepTotal);
+  const elapsedMs = joinProgressCount(value.elapsedMs);
+  if (step === null || stepTotal === null || elapsedMs === null) {
+    return null;
+  }
+  return { requestId: value.requestId, stage: value.stage, step, stepTotal, elapsedMs };
+}
+
 export interface BrowserActionRequestEnvelope {
   type: "action";
   requestId: string;

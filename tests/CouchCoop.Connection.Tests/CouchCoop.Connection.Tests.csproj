@@ -12,6 +12,10 @@
   <ItemGroup>
     <ProjectReference Include="../../src/CouchCoop.Mod/CouchCoop.Mod.csproj" />
     <ProjectReference Include="../../src/CouchCoop.Mod.Contracts/CouchCoop.Mod.Contracts.csproj" />
+    <!-- Direct reference to the shared protocol lib, exactly as CouchCoop.Mod.Tests takes it: with
+         DisableTransitiveProjectReferences=true above, the mod's own reference is not flowed to the compiler, and
+         the browser DTOs the join-progress test asserts on (BrowserJoinProgressEnvelope) live there. -->
+    <ProjectReference Include="../../src/CouchCoop.MirrorProtocol/CouchCoop.MirrorProtocol.csproj" />
     <Reference Include="CouchCoop.Spirectl">
       <HintPath>../../src/CouchCoop.Mod/bin/$(Configuration)/net9.0/CouchCoop.Spirectl.dll</HintPath>
       <Private>true</Private>
@@ -32,6 +36,7 @@
 
   <ItemGroup>
     <Compile Include="../CouchCoop.Mod.Tests/WebSocketJoinLifecycleTests.cs" Link="WebSocketJoinLifecycleTests.cs" />
+    <Compile Include="../CouchCoop.Mod.Tests/JoinProgressTickerTests.cs" Link="JoinProgressTickerTests.cs" />
     <Compile Include="../CouchCoop.Mod.Tests/ConnectionRegistryTests.cs" Link="ConnectionRegistryTests.cs" />
     <Compile Include="../CouchCoop.Mod.Tests/HostPatchHealthTests.cs" Link="HostPatchHealthTests.cs" />
     <Compile Include="../CouchCoop.Mod.Tests/ConnectionDeviceLabelTests.cs" Link="ConnectionDeviceLabelTests.cs" />

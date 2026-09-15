@@ -7,6 +7,8 @@ import {
 import {
   HEADLESS_HOST_DISCONNECTED_REASON,
   parseBrowserEnvelopeValue,
+  parseJoinProgress,
+  type BrowserJoinProgress,
   type BrowserSessionEnvelope
 } from "@/protocol/browserEnvelope";
 import type { MirrorActionMessage } from "@/mirror/mapNodeTap";
@@ -234,6 +236,12 @@ export function connectMirrorClient(options: {
   // "Joining…" forever. Fired ONLY while a join is in flight, so an unrelated refused action (e.g. a map-node
   // vote the game turned down) can never clear the form. The app treats it as that join failing.
   onActionError?: (message: string) => void;
+  // The host's running commentary on a join it has not answered yet (`join-progress`): stage, step and how long
+  // it has been going. Fired ONLY for the join currently in flight — a progress carrying any other `requestId` is
+  // about an attempt this client has already abandoned, and letting it through would re-animate a screen the
+  // viewer has moved on from. The app renders it as a second line under "Joining…", which is the whole reason a
+  // 40-second seat spawn no longer looks identical to a dead one.
+  onJoinProgress?: (progress: BrowserJoinProgress) => void;
   // R19 WP5 — the ABSOLUTE-SCROLL ack (see MirrorScrollAck). The one `action-result` this client reads for its
   // VALUE rather than for the fact that it failed. Fired only for a SUCCESSFUL `set-scroll-offset` result, i.e.
   // strictly after the join backstop above has had its look, so nothing about join failure changes.
@@ -320,6 +328,10 @@ export function connectMirrorClient(options: {
   // for a join. Set on send; cleared by whichever session directive resolves the join, by the backstop itself,
   // and on close (a dropped socket resets the whole dance app-side anyway).
   let joinPending = false;
+  // …and WHICH join that is. `join-progress` carries the requestId it describes, so a straggler about a previous
+  // attempt (a retry after a timeout, a seat the viewer gave up on) can be told from live progress and dropped.
+  // Cleared in exact lockstep with `joinPending` — the two answer the same question from different angles.
+  let joinRequestId: string | null = null;
   let inputSequence = 0;
   let settingsSequence = 0;
   let actionSequence = 0;
@@ -518,15 +530,17 @@ export function connectMirrorClient(options: {
       return;
     }
     joinSequence += 1;
+    const requestId = `join:${joinSequence}`;
     try {
       socket.send(JSON.stringify({
         type: "join",
-        requestId: `join:${joinSequence}`,
+        requestId,
         name: name.trim(),
         // Omitted (not null) when there is no picked seat, so a free-text join's bytes are exactly as before.
         ...(playerId ? { playerId } : {})
       }));
       joinPending = true;
+      joinRequestId = requestId;
     } catch {
       // Racing close — drop it.
     }
@@ -605,6 +619,7 @@ export function connectMirrorClient(options: {
       const code = (raw as { code?: unknown }).code;
       if (joinPending && typeof code === "string" && code.length > 0) {
         joinPending = false;
+        joinRequestId = null;
         const message = (raw as { message?: unknown }).message;
         options.onActionError?.(typeof message === "string" && message ? message : code);
         return;
@@ -615,6 +630,22 @@ export function connectMirrorClient(options: {
       const ack = readScrollAck(raw);
       if (ack) {
         options.onScrollAck?.(ack);
+      }
+      return;
+    }
+
+    // `join-progress` — the host saying what it is doing about the join we are waiting on. ABOVE the `watching`
+    // gate for exactly the reason the backstop above it is: a viewer sitting on the join picker has the scene
+    // stream turned OFF, which is precisely the state this speaks for. (Dropped here, it would be silence during
+    // the one wait that most needs a voice.)
+    //
+    // Matched against the join IN FLIGHT. A progress for any other requestId is a straggler about an attempt this
+    // client has abandoned — a retry after the join timeout, a seat the viewer walked away from — and rendering
+    // it would restart a countdown on a screen that has moved on.
+    if (raw && typeof raw === "object" && (raw as { type?: unknown }).type === "join-progress") {
+      const progress = parseJoinProgress(raw);
+      if (progress && joinPending && progress.requestId === joinRequestId) {
+        options.onJoinProgress?.(progress);
       }
       return;
     }
@@ -650,12 +681,15 @@ export function connectMirrorClient(options: {
 
       if (parsed?.directView === true) {
         joinPending = false;
+        joinRequestId = null;
         options.onDirectView?.();
       } else if (typeof parsed?.headlessMirrorPort === "number") {
         joinPending = false;
+        joinRequestId = null;
         options.onHeadlessRedirect?.(parsed.headlessMirrorPort);
       } else if (typeof parsed?.joinRejection === "string") {
         joinPending = false;
+        joinRequestId = null;
         // A rejection is TERMINAL on its own — it is not cross-checked against `session.joined`. It used to be,
         // and that was the "the join screen spins forever" bug: the host derives `session` from the name→roster
         // assignment, which happily reports `joined: true` for a name it just refused to serve, so the guard
@@ -693,6 +727,7 @@ export function connectMirrorClient(options: {
     reproRecorder.tapWsLifecycle("close");
     client.status = "disconnected";
     joinPending = false;
+    joinRequestId = null;
     stopPing();
     notify();
   });

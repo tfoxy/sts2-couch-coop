@@ -52,10 +52,10 @@ import {
   RECONNECT_BASE_DELAY_MS,
   type RejoinTarget
 } from "@/mirror/reconnectPolicy";
-import { computeMirrorLoadingState, mirrorLoadingLabel } from "@/mirror/loadingState";
+import { computeMirrorLoadingState, mirrorJoinProgressLine, mirrorLoadingLabel } from "@/mirror/loadingState";
 import { prefetchMirrorImages } from "@/mirror/imagePrefetch";
 import { createMirrorState } from "@/mirror/sceneTree";
-import type { BrowserSessionEnvelope } from "@/protocol/browserEnvelope";
+import type { BrowserJoinProgress, BrowserSessionEnvelope } from "@/protocol/browserEnvelope";
 import MirrorJoinPicker from "@/mirror/MirrorJoinPicker.vue";
 import MirrorHostWaiting from "@/mirror/MirrorHostWaiting.vue";
 import {
@@ -223,6 +223,11 @@ const joinMessage = ref<string | null>(null);
 // The host's own fault text under that message — only ever set for a server-side failure ("join-failed" or the
 // action-result backstop). Cleared in lockstep with `joinMessage` everywhere.
 const joinDetail = ref<string | null>(null);
+// The host's latest word on the join IN FLIGHT (`join-progress`): which step, and how long it has been going.
+// Rendered as a second line under "Joining…", because that word alone cannot change for the 20-60s a cold seat
+// spawn really takes — which is why a healthy join and a dead one looked identical. Reset on every fresh attempt
+// and cleared by every resolution, in exact lockstep with `pendingName` / `joinMessage` / `joinDetail`.
+const joinProgress = ref<BrowserJoinProgress | null>(null);
 
 // Name memory + `?name=` auto-join. `urlName` (if present) auto-joins on
 // connect; `prefillName` only pre-fills the form. `pendingName` is the in-flight join target (null = idle).
@@ -509,6 +514,7 @@ function makeClient(url?: string, watchStream = false): MirrorClient {
       reconnectState.value = reconnectStateAfterViewRestored();
       joinMessage.value = null;
       joinDetail.value = null;
+      joinProgress.value = null;
       // Gate the source-host socket off. It must stay OPEN (closing it triggers the server's Release(), killing the
       // headless before the redirect lands) but it has no reason to keep receiving bytes — and dropping its
       // streaming registration is what lets a host whose viewers have all redirected away stop its producer.
@@ -543,6 +549,7 @@ function makeClient(url?: string, watchStream = false): MirrorClient {
       pendingName.value = null;
       joinMessage.value = null;
       joinDetail.value = null;
+      joinProgress.value = null;
       // …but a direct view granted on a MULTIPLAYER screen (lobby / saved-game lobby / mp run) IS a state worth
       // returning to: it is the host player's own browser, or a viewer that picked the [Host] row. Stamp the
       // marker form — `?name=` with NO value — so a reload re-picks the host row instead of dumping the player
@@ -585,6 +592,7 @@ function makeClient(url?: string, watchStream = false): MirrorClient {
       // Only a server FAULT carries detail; every other code is self-describing, and a stale detail under a
       // fresh unrelated rejection would misattribute the cause.
       joinDetail.value = detail ?? null;
+      joinProgress.value = null;
       // DISARM the auto-rejoin. A refused seat that still reads "ready" on the next session would otherwise be
       // retried on every envelope — a silent request storm. From here the viewer taps the row themselves.
       rejoinTarget = null;
@@ -599,8 +607,16 @@ function makeClient(url?: string, watchStream = false): MirrorClient {
       pendingName.value = null;
       joinMessage.value = rejectionMessage("join-failed");
       joinDetail.value = message || null;
+      joinProgress.value = null;
       rejoinTarget = null;
       lastJoinAttempt = null;
+    },
+    // The host's running commentary on the join we are waiting on. The client only ever forwards progress for the
+    // join in flight (mirrorClient matches the requestId), so this cannot be re-animated by a straggler about an
+    // attempt already abandoned.
+    onJoinProgress(progress) {
+      if (activeClient !== c) return;
+      joinProgress.value = progress;
     },
     onScrollAck(ack) {
       if (activeClient !== c) return; // a superseded connection's answer is about a game we are no longer watching
@@ -757,6 +773,14 @@ const joinNotice = computed(() => joinMessage.value);
 // message it explains (the two are cleared together everywhere, but this makes the ordering unconditional).
 const joinNoticeDetail = computed(() => (joinMessage.value ? joinDetail.value : null));
 
+// The JOIN PROGRESS line, under the "Joining…" heading (copy + stage mapping in @/mirror/loadingState). Gated on
+// `pendingName` for the same reason the detail above is gated on its message: the line is a statement about a
+// request that is still outstanding, so it must be impossible for it to outlive one — the six resolution paths
+// clear `joinProgress` themselves, and this makes that unconditional rather than a rule six call sites keep.
+const joinProgressNotice = computed(() =>
+  (pendingName.value ? mirrorJoinProgressLine(joinProgress.value, t) : null)
+);
+
 // F3 — THE WAITING SCREEN. A viewer whose URL names a seat (`?name=Ann`), sitting on a host screen that has no
 // seat to give: the main menu, a singleplayer character select, a singleplayer run. It replaces the picker, which
 // would be a lie there (there is nothing on it to pick), and pairs with the closed stream gate above — no scene
@@ -874,6 +898,9 @@ function submitJoin(name: string, playerId?: string): void {
   presentationTarget.value = null;
   joinMessage.value = null; // clear a prior rejection on a fresh attempt
   joinDetail.value = null;
+  // A fresh attempt starts with no progress: the previous one's last stage/elapsed describes a join that is over,
+  // and leaving it on screen would show this attempt starting at 40 seconds.
+  joinProgress.value = null;
   pendingName.value = trimmed;
   prefillName.value = trimmed;
   // Held until the host confirms with a redirect, which promotes it to the auto-rejoin target.
@@ -899,6 +926,7 @@ watch(pendingName, (name) => {
     pendingName.value = null;
     joinMessage.value = t("join.hostNoAnswer");
     joinDetail.value = null;
+    joinProgress.value = null;
     // Same disarm as a rejection: whatever we were reaching for is not answering, so stop reaching for it
     // automatically. The viewer taps the row again themselves.
     rejoinTarget = null;
@@ -920,6 +948,7 @@ function handleActiveClientDrop(): void {
   // escalated notice only (which is derived from the phase, never written here).
   joinMessage.value = null;
   joinDetail.value = null;
+  joinProgress.value = null;
   // Reset the whole join dance, exactly like the native TeardownAndReconnect: the roster/screen we remember is
   // from a game that is gone, and re-running the dance from scratch is what makes the fallback self-healing.
   joined.value = false;
@@ -1198,6 +1227,7 @@ onBeforeUnmount(() => {
         :kicker="t('app.mirror')"
         :placeholder="joinPlaceholder"
         :transient="loadingState !== null"
+        :progress="joinProgressNotice"
         :message="joinNotice"
         :detail="joinNoticeDetail"
         @join="onSeatChosen"

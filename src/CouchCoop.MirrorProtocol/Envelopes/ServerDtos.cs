@@ -78,6 +78,64 @@ public sealed record BrowserPongEnvelope(
     double T0,
     bool? MainThread = null);
 
+/// <summary>
+/// Host → browser JOIN PROGRESS, sent roughly once a second while a `join` request is still being resolved, and
+/// only while something it reports has actually changed.
+/// <para>
+/// It exists because a join is the one request that legitimately takes 20-60 seconds (a cold seat spawn), and
+/// until this envelope the browser showed a bare "Joining…" spinner for all of it — byte-identical to the screen
+/// a join that had already died showed for the full 75 s deadline. A player cannot tell "slow" from "dead" from a
+/// spinner, so they close the tab, and the field report is "it hangs".
+/// </para>
+/// <para>
+/// Every field is copied from the host's existing per-attempt row (ConnectionRegistry's
+/// <c>ConnectionStatusRow</c>) — there is no second progress model behind this. <see cref="RequestId"/> echoes the
+/// `join` message this progress is about, so a client can ignore progress for a join it has already given up on.
+/// <see cref="Stage"/> is a token from <see cref="BrowserJoinProgressStages"/>, never a raw enum name or number:
+/// the client maps it to player-facing copy in its own language.
+/// </para>
+/// <para>
+/// Safe to add: unknown envelope types are dropped by every existing client (mirrorClient.ts parses `type` and
+/// falls through), so an older browser against a newer host simply keeps the spinner it always had.
+/// </para>
+/// </summary>
+public sealed record BrowserJoinProgressEnvelope(
+    string Type,
+    string RequestId,
+    string Stage,
+    // Which of StepTotal steps this attempt is on (ConnectionStageSteps.Current), so the viewer sees movement even
+    // while one long step runs.
+    int Step,
+    int StepTotal,
+    // Milliseconds since the attempt began, as the host measures it. The CLIENT does not run its own timer off
+    // this — it just renders what the latest envelope says — so a viewer's clock can never disagree with the
+    // host's, and a stalled stream visibly stops counting instead of inventing progress.
+    long ElapsedMs);
+
+/// <summary>
+/// The closed set of <see cref="BrowserJoinProgressEnvelope.Stage"/> tokens. Stable wire spellings for the host's
+/// own <c>ConnectionStage</c>, kept separate from the enum on purpose: the enum's names and ordinals are internal
+/// bookkeeping the wire must not inherit, and the client turns these tokens into localized copy.
+/// TS twin: <c>JOIN_PROGRESS_STAGES</c> in <c>frontend/src/protocol/browserEnvelope.ts</c>.
+/// </summary>
+public static class BrowserJoinProgressStages
+{
+    /// <summary>The browser's socket is up; nothing has been requested yet.</summary>
+    public const string Connecting = "connecting";
+    /// <summary>The host is waiting on a player choice.</summary>
+    public const string Choosing = "choosing";
+    /// <summary>A seat is being prepared/launched for this player. The long one on a cold start.</summary>
+    public const string Initializing = "initializing";
+    /// <summary>The seat is up and joining the host's game.</summary>
+    public const string Joining = "joining";
+    /// <summary>The seat is serving; the browser's view is still loading.</summary>
+    public const string LoadingView = "loading-view";
+    /// <summary>Everything this attempt needed has arrived.</summary>
+    public const string Complete = "complete";
+    /// <summary>The attempt failed. Carried for completeness; the terminal reply says what went wrong.</summary>
+    public const string Failed = "failed";
+}
+
 // Browser → host runtime settings (the mirror Settings panel). Every field optional; a null field means "leave
 // unchanged". Applied per the receiving (headless) game instance. Parsed from what SettingsMessage serializes.
 public sealed record BrowserSettingsRequestEnvelope(

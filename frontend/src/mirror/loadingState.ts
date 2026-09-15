@@ -1,5 +1,6 @@
 import type { MirrorClientStatus } from "@/mirror/mirrorClient";
 import type { ReconnectPhase } from "@/mirror/reconnectPolicy";
+import type { BrowserJoinProgress, JoinProgressStage } from "@/protocol/browserEnvelope";
 
 // The mirror's PRE-GAME lifecycle states, as one pure function so the copy and the precedence live in one place
 // instead of being re-derived inside the picker's title expression.
@@ -73,6 +74,59 @@ export function computeMirrorLoadingState(inputs: MirrorLoadingInputs): MirrorLo
     return "connecting";
   }
   return null;
+}
+
+// ---- the join's SECOND line -----------------------------------------------------------------------------------
+//
+// "Joining…" above is one word and cannot change for 20-60 seconds, because that is genuinely how long a cold
+// seat spawn takes. The measured consequence (2026-09-15): a healthy join and a dead one showed the byte-identical
+// screen, so players closed the tab well before either resolved and reported "it hangs". The host has always known
+// which step it is on and for how long — `join-progress` carries it, and this turns it into a sentence.
+//
+// The heading is untouched: the transient word stays exactly what it was, and this sits under it.
+
+/** The message key each host stage renders as. `failed` is absent on purpose — see `mirrorJoinProgressLine`. */
+export const MIRROR_JOIN_PROGRESS_KEYS = {
+  connecting: "join.progress.connecting",
+  choosing: "join.progress.choosing",
+  initializing: "join.progress.initializing",
+  joining: "join.progress.joining",
+  "loading-view": "join.progress.loadingView",
+  complete: "join.progress.complete"
+} as const satisfies Partial<Record<JoinProgressStage, string>>;
+
+export type MirrorJoinProgressKey =
+  | (typeof MIRROR_JOIN_PROGRESS_KEYS)[keyof typeof MIRROR_JOIN_PROGRESS_KEYS]
+  | "join.progress.line";
+
+/**
+ * The progress line to render under the join heading, or null when there is nothing honest to say.
+ *
+ * Null for `failed` (and for a null progress): the attempt is over, the terminal reply owns the screen within
+ * milliseconds, and a stage word there would be a worse answer than the rejection about to replace it. Everything
+ * else renders what is happening, how far along it is, how long it has been going — and that this can legitimately
+ * take up to a minute, which is the sentence that stops a player from closing the tab on a join that is working.
+ *
+ * Elapsed is whatever the host last said, floored to whole seconds. The client deliberately runs no timer of its
+ * own: a counter that keeps climbing after the host has gone quiet is exactly the reassuring lie this replaced.
+ */
+export function mirrorJoinProgressLine(
+  progress: BrowserJoinProgress | null,
+  translate: (key: MirrorJoinProgressKey, values?: Record<string, string | number>) => string
+): string | null {
+  if (!progress) {
+    return null;
+  }
+  const stageKey = MIRROR_JOIN_PROGRESS_KEYS[progress.stage as keyof typeof MIRROR_JOIN_PROGRESS_KEYS];
+  if (!stageKey) {
+    return null;
+  }
+  return translate("join.progress.line", {
+    stage: translate(stageKey),
+    step: progress.step,
+    total: progress.stepTotal,
+    seconds: Math.max(0, Math.floor(progress.elapsedMs / 1000))
+  });
 }
 
 /** The label for a transient state, or null when steady (the caller falls back to its own steady placeholder). */

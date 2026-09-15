@@ -466,6 +466,14 @@ public sealed class CouchCoopWebSocketConnection
         // Server-fault text carried to the viewer when the block below throws. Null on every ordinary path.
         string? joinRejectionDetail = null;
 
+        // TELL THE VIEWER WHAT THIS IS DOING. Everything below can take 20-60 seconds (a cold seat spawn is
+        // awaited inline), and until this ticker existed the browser had a bare spinner for all of it — the same
+        // spinner a join that had already died showed for the full deadline. The registry rows above are the
+        // single source of the stage/step/elapsed it streams; the `finally` stops it before the terminal reply
+        // below, so progress can never arrive after the answer it was describing.
+        var progress = JoinProgressTicker.Start(
+            ConnectionRegistry.Shared, session.Id, requestId, SendJoinProgressAsync, cancellationToken);
+
         // An unexpected fault in the join decision below must reach the VIEWER, not just the log. Everything
         // here — the lobby context read, the spawn, the secure-port resolution — used to run bare inside the
         // receive loop's own try, whose catch answers with an `action-result`; the mirror client does not read
@@ -641,6 +649,13 @@ public sealed class CouchCoopWebSocketConnection
                 "Retry this connection. If it fails again, copy this report.", joinException.ToString());
             MessageDiagnostics.Write("join-failed",
                 $"[couch-coop] mirror join failed for '{join.Name}': {joinException}");
+        }
+        finally
+        {
+            // The attempt is decided — by a port, a direct view, a rejection, a throw or the socket going away.
+            // Awaited, not just cancelled: the viewer must never be told "still starting" after being told how
+            // this ended.
+            await progress.StopAsync().ConfigureAwait(false);
         }
 
         // A close can arrive just after readiness. Do not reply to a tab that is already gone;
@@ -1014,6 +1029,11 @@ public sealed class CouchCoopWebSocketConnection
         await SendBytesAsync(Encoding.UTF8.GetBytes(BrowserJson.Serialize(
             new BrowserPongEnvelope("pong", t0, true)))).ConfigureAwait(false);
     }
+
+    // One join-progress frame, serialized exactly like the pong above (BrowserJson: web camelCase, nulls omitted)
+    // and pushed through the same send gate, so it interleaves safely with the join's own reply.
+    private Task SendJoinProgressAsync(BrowserJoinProgressEnvelope progress)
+        => SendBytesAsync(Encoding.UTF8.GetBytes(BrowserJson.Serialize(progress)));
 
     // Fire-and-forget frame send used by the scene keyframe path: a send failure means the socket is gone, and
     // the receive loop's teardown unregisters this connection.
