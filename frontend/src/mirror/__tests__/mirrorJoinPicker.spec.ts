@@ -45,6 +45,7 @@ function mountPicker(over: {
   screenTitle?: string | null;
   placeholder?: string | null;
   transient?: boolean;
+  progress?: string | null;
 } = {}) {
   return mount(MirrorJoinPicker, {
     props: {
@@ -56,7 +57,8 @@ function mountPicker(over: {
       message: over.message ?? null,
       detail: over.detail ?? null,
       placeholder: over.placeholder ?? null,
-      transient: over.transient ?? false
+      transient: over.transient ?? false,
+      progress: over.progress ?? null
     }
   });
 }
@@ -309,6 +311,40 @@ describe("MirrorJoinPicker", () => {
     expect(
       mountPicker({ mode: "picker", message: null, detail: "orphaned detail" })
         .find('[data-testid="mirror-join-detail"]').exists()
+    ).toBe(false);
+  });
+
+  // THE JOIN'S SECOND LINE. "Joining…" above is one word that cannot change for the 20-60s a cold seat spawn
+  // really takes, which is why a healthy join and a dead one showed the same screen. The parent composes the
+  // sentence from the host's `join-progress`; the picker's job is to put it directly under the heading.
+  it("renders the progress line under the transient heading", () => {
+    const wrapper = mountPicker({
+      mode: "picker",
+      transient: true,
+      placeholder: "Joining…",
+      progress: "Starting this player's game — step 3 of 6, 23s so far. This can take up to a minute, so keep this page open."
+    });
+    const line = wrapper.find('[data-testid="mirror-join-progress"]');
+    expect(line.exists()).toBe(true);
+    expect(line.text()).toContain("23s so far");
+    expect(line.text()).toContain("up to a minute");
+    // The heading is EXACTLY the lifecycle word it always was — this line sits under it, it does not replace it.
+    expect(wrapper.find("h1").text()).toBe("Joining…");
+    expect(wrapper.find('[data-testid="mirror-spinner"]').exists()).toBe(true);
+  });
+
+  it("renders the progress line in title-only mode too", () => {
+    // A join in flight can be showing either shape (a dropped roster leaves the title-only view), so the line
+    // follows the same rule the message surface does.
+    const wrapper = mountPicker({ mode: "title-only", transient: true, placeholder: "Joining…", progress: "Reaching the host — step 1 of 6, 2s so far." });
+    expect(wrapper.find('[data-testid="screen-title-only-view"]').exists()).toBe(true);
+    expect(wrapper.find('[data-testid="mirror-join-progress"]').text()).toContain("Reaching the host");
+  });
+
+  it("renders no progress line when the parent supplies none", () => {
+    expect(
+      mountPicker({ mode: "picker", transient: true, placeholder: "Joining…" })
+        .find('[data-testid="mirror-join-progress"]').exists()
     ).toBe(false);
   });
 });

@@ -3,6 +3,7 @@ using CouchCoop.Mod.Tests;
 if (args is ["--ws-lifecycle"])
 {
     await WebSocketJoinLifecycleTests.RunAsync();
+    await JoinProgressTickerTests.RunAsync();
     Console.WriteLine("connections: websocket lifecycle ok");
     return;
 }
@@ -93,4 +94,6 @@ Console.WriteLine("connections: lifecycle");
 await HeadlessConnectionLifecycleTests.RunAsync();
 Console.WriteLine("connections: websocket lifecycle");
 await WebSocketJoinLifecycleTests.RunAsync();
+Console.WriteLine("connections: join progress");
+await JoinProgressTickerTests.RunAsync();
 Console.WriteLine("connections: ok");
