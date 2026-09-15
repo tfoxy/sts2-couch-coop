@@ -12,4 +12,18 @@
   <Target Name="ValidateCouchCoopLocalModDir" BeforeTargets="PrepareForBuild" Condition="'$(MSBuildProjectName)' == 'CouchCoop.Mod.Loader' and '$(CouchCoopBuildToLocalMods)' == 'true'">
     <Error Condition="'$(CouchCoopLocalModDir)' == ''" Text="Missing required game.path in sts2.local.yaml; CouchCoop cannot choose the default local mods output directory." />
   </Target>
+
+  <!--
+    A build that outputs into the local mods dir writes FLAT assemblies, but a released payload carries the
+    lane-varying ones under lanes/<floor version>/ and the loader probes the chosen lane BEFORE the mod root.
+    So building over a release or Workshop install would leave that lanes/ tree in place to shadow everything
+    this build just wrote, and the game would keep running the released code with no symptom. This build is
+    already replacing that install's assemblies; removing lanes/ makes it replace the install COMPLETELY
+    rather than leaving a half-and-half tree. scripts/build-local-mod.sh does the same for the path that
+    publishes with an explicit -o instead of this OutputPath.
+  -->
+  <Target Name="RemoveCouchCoopStaleLaneDir" BeforeTargets="PrepareForBuild" Condition="'$(MSBuildProjectName)' == 'CouchCoop.Mod.Loader' and '$(CouchCoopBuildToLocalMods)' == 'true' and '$(CouchCoopLocalModDir)' != '' and Exists('$(CouchCoopLocalModDir)/lanes')">
+    <Message Importance="high" Text="CouchCoop: removing $(CouchCoopLocalModDir)/lanes left by a released payload; it would shadow this build." />
+    <RemoveDir Directories="$(CouchCoopLocalModDir)/lanes" />
+  </Target>
 </Project>

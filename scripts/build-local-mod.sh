@@ -118,6 +118,15 @@ mkdir -p "$output_dir"
 find "$output_dir" -maxdepth 1 -type f \
   \( -name '*.dll' -o -name '*.pdb' -o -name 'couchcoop.json' -o -name 'build-info.txt' \) -delete
 
+# And the same hazard one directory down, which is NOT covered by the -maxdepth 1 sweep above. A
+# RELEASE payload carries the two lane-varying assemblies under lanes/<floor version>/ and the loader
+# probes the chosen lane BEFORE the mod root — so a lanes/ tree left behind by a release-archive or
+# Workshop install silently wins over the flat assemblies this script is about to write, and the dev
+# build you just compiled never runs. A dev deploy is always single-lane and flat, so this directory
+# is never ours to keep. The loader also logs the copy it ignored, but by then the wrong build is
+# already loaded.
+rm -rf "$output_dir/lanes"
+
 dotnet publish "$repo_root/src/CouchCoop.Mod.Loader/CouchCoop.Mod.Loader.csproj" \
   -c "$configuration" \
   -p:CouchCoopBuildToLocalMods=false \

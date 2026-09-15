@@ -53,7 +53,7 @@ Use the `couch-deploy` skill. The short version:
 - A change in `../spirectl` needs **both** `sts2 game install-bridge` **and** `scripts/build-local-mod.sh`.
   `install-bridge` alone does not update what the browser mirror sees. (`game deploy` above does both.)
 - **Any `dotnet build` of the sln deploys.** Another agent's stray build silently replaces yours. After every deploy,
-  prove the install is yours — `stat -c %y <modsDir>/CouchCoop.Mod.dll`, or grep the DLL for a string only your
+  prove the install is yours — `find <modsDir> -name CouchCoop.Mod.dll -printf '%T+ %p\n'` (a released payload keeps it under `lanes/<floor>/`, so do not stat a fixed path), or grep the DLL for a string only your
   branch contains (see the `couch-deploy` skill). Do not try to read a cache generation out of the DLL — that
   string names no path any more.
 - After a bridge/model shape change, clear

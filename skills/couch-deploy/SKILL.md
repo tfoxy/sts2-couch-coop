@@ -71,6 +71,11 @@ jq -r '.sourceCommit, .branch, .dirty, .dependencies.sts2References.lane' <modsD
 jq -r '.version' <modsDir>/couchcoop.json     # 9999.0.0+dev.<sha>[.dirty] for a dev deploy
 ```
 
+That is the **dev** shape, `schemaVersion: couchcoop-local-build-info/v1`, where one deploy means one lane.
+A released payload writes `couchcoop-release-build-info/v2`, where `dependencies.sts2References` is keyed by
+lane because the one archive carries a build for each — so `.sts2References.lane` reads `null` there and is
+not evidence of anything. Check `schemaVersion` first if you did not place the install yourself.
+
 `9999` is deliberate: game v0.111.0 resolves a mod installed **both** from the Workshop and from `mods/`
 by taking the HIGHER version, so a dev deploy declares one nothing published can beat. A `couchcoop.json`
 that still says `0.1.1` or `0.0.0-snapshot.…` is a deploy from an older script — or one that did not
@@ -80,8 +85,16 @@ the assembly's `1.0.0+<sha>` informational version.
 Then the freshness check:
 
 ```bash
-stat -c %y <modsDir>/CouchCoop.Mod.dll
+find <modsDir> -name CouchCoop.Mod.dll -printf '%T+ %p\n'
 ```
+
+**Find it, do not assume where it is.** A dev deploy is flat, so `<modsDir>/CouchCoop.Mod.dll` exists; a
+RELEASED payload carries that assembly and `CouchCoop.Spirectl.dll` under `lanes/<floor version>/` instead,
+because one download ships a build per game version and the loader picks one at load time. `stat` on the flat
+path therefore fails outright on a Workshop or release-archive install — which reads as "nothing is deployed"
+when the truth is "deployed in the other layout". The printed path answers both questions at once: which
+layout you are looking at, and, for a release payload, which lane. Seeing BOTH a root copy and a `lanes/`
+tree means one is stale (the loader logs which one it ignored, and prefers the lane).
 
 The mtime must be your deploy's. **Do not try to read a cache generation out of the DLL** — the old
 `strings -el … | grep couchcoop-asset-cache` recipe stopped printing a version in 2026-09 (the generation is
@@ -96,7 +109,7 @@ Whenever the *branch* is the thing to prove — a branch build landed, or main w
 only your branch contains, and check **both directions**:
 
 ```bash
-strings -a <modsDir>/CouchCoop.Mod.dll | grep -c CouchCoopActivityPanel   # a type name from your own diff
+find <modsDir> -name CouchCoop.Mod.dll -exec strings -a {} + | grep -c CouchCoopActivityPanel   # a type name from your own diff
 ```
 
 **Use `strings -a`, not `strings -el`, and this is not a style preference.** A .NET assembly keeps the two
@@ -110,8 +123,8 @@ Positive count after deploying the branch, **0 after restoring main** — the 0 
 discriminator rather than a coincidence. New type names and new literal log messages both work; pick one or two
 from your diff before you deploy.
 
-If the branch adds no new string at all (a pure behaviour tweak), you are down to freshness: note `stat -c %y`
-on the installed DLL right after your deploy and re-check it before each measurement. Do **not** try to `cmp`
+If the branch adds no new string at all (a pure behaviour tweak), you are down to freshness: note the mtime
+the `find` above prints right after your deploy and re-check it before each measurement. Do **not** try to `cmp`
 the installed DLL against `src/CouchCoop.Mod/bin/…` instead — the publish that deploys and the builds that fill
 `bin/` run with different property sets and (with deterministic compilation embedding source paths) from
 different checkout paths, so the same source differs byte-for-byte. That check was tried and false-negatives on

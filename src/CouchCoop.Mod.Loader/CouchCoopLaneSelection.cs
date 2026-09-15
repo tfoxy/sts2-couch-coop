@@ -323,6 +323,54 @@ internal static class CouchCoopLaneSelection
     }
 
     /// <summary>
+    /// A copy of a lane-owned assembly sitting at the mod root, which the chosen lane now shadows.
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// Reported, never fatal, and the direction matters. Extracting a new release over an existing
+    /// installation is the ordinary manual upgrade path, and the archive before lanes existed put these
+    /// assemblies at the mod root — so an upgrader ends up with stale root copies beside a fresh
+    /// <c>lanes/</c> tree. Probing the lane first already resolves that correctly, and refusing on the
+    /// ambiguity would break every one of those upgrades to fix nothing.
+    /// </para>
+    /// <para>
+    /// The opposite arrangement is the one that costs time: a dev deploy writes flat assemblies at the
+    /// root, so a <c>lanes/</c> tree left behind by an earlier release install shadows the build you just
+    /// compiled and the game runs the OLD code with no symptom. That is fixed where it is caused —
+    /// <c>scripts/build-local-mod.sh</c> removes <c>lanes/</c> before it deploys — and this line is what
+    /// names it if some other path reintroduces it.
+    /// </para>
+    /// </remarks>
+    internal static string? DescribeIgnoredRootCopy(
+        string modDirectory,
+        string? laneDirectory,
+        string simpleName)
+    {
+        if (laneDirectory is null)
+        {
+            return null;
+        }
+
+        try
+        {
+            var rootCopy = Path.Combine(modDirectory, $"{simpleName}.dll");
+            if (!File.Exists(rootCopy) || !File.Exists(Path.Combine(laneDirectory, $"{simpleName}.dll")))
+            {
+                return null;
+            }
+
+            return $"CouchCoop is using '{simpleName}' from the lane '{laneDirectory}' and IGNORING the copy "
+                + $"at '{rootCopy}'. That root copy is left over from an older layout — harmless after "
+                + "extracting a new release over an old one, but if you just built a dev deploy it means "
+                + "the lane is shadowing it and the game is running the older code.";
+        }
+        catch (Exception exception) when (IsIoFailure(exception))
+        {
+            return null;
+        }
+    }
+
+    /// <summary>
     /// An already-loaded assembly that is a DIFFERENT FILE from the one this payload would have loaded.
     /// </summary>
     /// <param name="Message">What to log, naming both paths.</param>
