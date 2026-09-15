@@ -51,13 +51,23 @@ internal static class CouchCoopLaneSelection
     internal const string ReleaseInfoFileName = "release_info.json";
 
     /// <summary>
-    /// How far up from a starting directory to look for <c>release_info.json</c>.
+    /// How far up from a starting directory to look for <c>release_info.json</c>, counting the starting
+    /// directory itself.
     /// </summary>
     /// <remarks>
     /// Bounded rather than fixed-depth, matching <c>Sts2GameBuildIdentity.TryWalkToInstallRoot</c>, so a
-    /// differently nested deployment still resolves and a pathological symlink loop still terminates.
+    /// differently nested deployment still resolves and a pathological symlink loop still terminates. The
+    /// number is set by the deepest real start: a mod inside a macOS <c>.app</c> sits at
+    /// <c>&lt;app&gt;.app/Contents/MacOS/mods/&lt;mod&gt;/</c>, four steps below the bundle's
+    /// <c>Contents/</c>, and the game's mod scan is recursive — so a payload may nest itself further under
+    /// <c>mods/</c> and must still resolve.
     /// </remarks>
-    internal const int InstallRootWalkDepth = 5;
+    internal const int InstallRootWalkDepth = 8;
+
+    /// <summary>The macOS application-bundle directories this walk has to know about.</summary>
+    private const string BundleSuffix = ".app";
+    private const string BundleContentsDirectoryName = "Contents";
+    private const string BundleResourcesDirectoryName = "Resources";
 
     /// <summary>
     /// The outcome of a lane decision: at most one of <paramref name="LaneDirectory"/> (use it) and
@@ -489,6 +499,11 @@ internal static class CouchCoopLaneSelection
             ?? TryWalkToInstallRoot(DirectoryOf(SafeProcessPath())));
 
     /// <summary>Walk up from <paramref name="startDirectory"/> looking for <c>release_info.json</c>.</summary>
+    /// <remarks>
+    /// NOT PURELY UPWARD, because inside a macOS bundle the file is not above either starting point — see
+    /// <see cref="BundleResourceDirectory"/>. This walk carries more weight than spirectl's copy of it: a
+    /// version it cannot read is not a slow session, it is a REFUSAL to load any lane at all.
+    /// </remarks>
     internal static string? TryWalkToInstallRoot(string? startDirectory)
     {
         var directory = startDirectory;
@@ -496,9 +511,17 @@ internal static class CouchCoopLaneSelection
         {
             try
             {
+                // The directory itself first, at every level: where both shapes exist, the tree we are
+                // actually sitting in is the more specific answer.
                 if (File.Exists(Path.Combine(directory, ReleaseInfoFileName)))
                 {
                     return directory;
+                }
+
+                if (BundleResourceDirectory(directory) is { } resources
+                    && File.Exists(Path.Combine(resources, ReleaseInfoFileName)))
+                {
+                    return resources;
                 }
 
                 directory = Path.GetDirectoryName(directory);
@@ -510,6 +533,42 @@ internal static class CouchCoopLaneSelection
         }
 
         return null;
+    }
+
+    /// <summary>
+    /// <c>&lt;name&gt;.app/Contents/Resources</c>, when <paramref name="directory"/> is that bundle's
+    /// <c>Contents</c>; otherwise <see langword="null"/>.
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// WHY A WALK UPWARD IS NOT ENOUGH ON macOS, and why this is the difference between the mod running and
+    /// not running at all. A <c>.app</c> is not a flat install directory: the executable lives in
+    /// <c>Contents/MacOS/</c> and the shipped data — <c>release_info.json</c> among it — in
+    /// <c>Contents/Resources/</c>. Those are SIBLINGS, so the file is an ancestor of neither starting point:
+    /// not of the binary, and not of this loader deployed at <c>Contents/MacOS/mods/&lt;mod&gt;/</c>. No walk
+    /// depth reaches a sibling. With no version, <see cref="Select"/> refuses to choose a lane — correctly, it
+    /// must never guess — so a SHIPPED payload logs one line and loads nothing, on every Mac.
+    /// </para>
+    /// <para>
+    /// Keyed on the <c>Contents</c> directory rather than on <c>MacOS</c>, so the walk finds the resource
+    /// directory whichever sibling it came up through, and gated on the <c>.app</c> suffix so an ordinary
+    /// directory named <c>Contents</c> is not mistaken for a bundle. Deliberately not gated on
+    /// <see cref="OperatingSystem.IsMacOS"/>: the shape is unambiguous on its own, and an OS gate would make
+    /// the one platform this exists for the one platform it cannot be tested on.
+    /// </para>
+    /// </remarks>
+    private static string? BundleResourceDirectory(string directory)
+    {
+        var trimmed = Path.TrimEndingDirectorySeparator(directory);
+        if (!string.Equals(Path.GetFileName(trimmed), BundleContentsDirectoryName, StringComparison.Ordinal))
+        {
+            return null;
+        }
+
+        var bundle = Path.GetFileName(Path.GetDirectoryName(trimmed));
+        return !string.IsNullOrEmpty(bundle) && bundle.EndsWith(BundleSuffix, StringComparison.OrdinalIgnoreCase)
+            ? Path.Combine(trimmed, BundleResourcesDirectoryName)
+            : null;
     }
 
     /// <summary>
