@@ -349,14 +349,17 @@ Both appear on one line:
 [couch-coop] mdns-responder self-check selfCheck=Answered answered=3 byInterface=if2=3 name=living-room-pc.local
 ```
 
-`selfCheck=Unanswered` **demotes the `.local` row below the literal IP rows in the QR dialog**, so the code a
-player scans is one that certainly works. The row is demoted, not removed — it may still resolve for a phone
-on a different segment, and a player who wants to use mDNS can still select it explicitly. The browser never
-switches to the `.local` origin automatically; if the selected mDNS code does not work, choose a literal IP row
-instead. `selfCheck=NotRun` never demotes anything — an unrun probe is not evidence.
+`selfCheck=Unanswered` **swaps the `.local` row's detail line for a "didn't answer" warning** and appends the
+same warning to its hover tip. It moves nothing: the mDNS row is ALWAYS last in the dialog (it is the least
+reliable method, so `QrHostOptions.Build` appends it after every address row regardless of the self-check), and
+it is never disabled or removed — the name may still resolve for a phone on a segment the probe could not
+reach, and a player who wants mDNS can still select it explicitly. The browser never switches to the `.local`
+origin automatically; if the selected mDNS code does not work, choose a literal IP row instead.
+`selfCheck=NotRun` never badges anything — `mdnsNameResolves` defaults to TRUE, because an unrun probe is not
+evidence.
 
-- Kill switch: `COUCHCOOP_MDNS_ROW_SELFCHECK=0` suppresses the self-check warning; it does not make the
-  `.local` row the default.
+- Kill switch: `COUCHCOOP_MDNS_ROW_SELFCHECK=0` suppresses the "didn't answer" badge; it does not move the
+  `.local` row or make it the default.
 
 ### Windows
 
@@ -397,6 +400,54 @@ differs from the address it queried, which is true of every mDNS legacy-unicast 
 host's real IP). Use a raw UDP probe, `avahi-resolve -n <name>.local`, `getent ahostsv4 <name>.local`, or a
 phone on the same LAN instead. Publishing a name no OS responder owns (the second form above) is the way to
 prove the answer came from the mod rather than from avahi/Bonjour.
+
+### macOS
+
+**`.local` is the OS's job here, not ours.** macOS runs Bonjour, which already publishes and answers for the
+machine's own name — the responder above exists for Windows, which has nothing equivalent (see the note under
+"Local network name"). Our responder still starts: it binds `IPAddress.Any:5353` with `ReuseAddress` and
+`ExclusiveAddressUse=false`, and where Bonjour does not share the port the bind simply fails and logs
+`mdns-responder-unavailable detail=bind:…`. On macOS that line is not a problem to chase — the name keeps
+resolving because Bonjour is publishing it. `COUCHCOOP_MDNS_RESPONDER=0` is the clean way to stop starting a
+second responder on a host that never needed one.
+
+One consequence for the self-check above: **on macOS neither signal attributes the answer to us.** The
+responder does no duplicate-answer suppression — it answers every matching query it receives — so with both
+bound, a phone's query is answered twice and `answered=` climbs normally; and `selfCheck=Answered` only means
+*some* responder returned one of our own addresses, which Bonjour does. Both readings are therefore about the
+NAME resolving, not about who published it. That is the right thing to care about here, but do not read a
+green self-check on macOS as evidence that this responder is doing any work.
+
+**What actually breaks a macOS host is inbound TCP to the browser server, and there are two separate gates for
+it.** Both fail the same way: the host binds and listens, the QR encodes a correct address, the phone scans it
+and then times out, and the host logs nothing — because `bind` succeeded and `accept` is simply never reached.
+
+- **The Local Network privacy permission** — System Settings → Privacy & Security → Local Network. macOS
+  prompts once per app, the first time it touches the local network. On a Steam-launched game that prompt is
+  easy to lose: it can be attributed to **Steam** rather than to the game, it may have been answered (either
+  way) long before CouchCoop was installed, and it can be drawn behind the fullscreen game window. Check that
+  both Steam and Slay the Spire 2 are switched on in that list.
+- **The application firewall** — System Settings → Network → Firewall → Options. When it is on, macOS asks
+  once whether to accept incoming connections for the game and remembers the answer; "Block all incoming
+  connections" overrides the per-app allowance entirely. The mod can open neither gate: the privacy permission
+  is the user's to grant and the firewall needs admin — the same rule as Windows above.
+
+Neither gate has anything to do with mDNS, so the fallback is not the usual one: a literal IP row does not
+route around them. If a phone cannot reach the host at all, check these two before touching anything in this
+section.
+
+**Known limitation, not a configuration problem:** `HeadlessUserDirSeeder` supports Linux and Windows only
+(`CurrentPlatform()` returns `Unsupported` otherwise), so on macOS every headless seat launches with **no
+user-dir isolation** and shares the host's Godot user directory — one `godot.log`, one settings file, one save
+profile, concurrently written. The seeder degrades gracefully by design (its caller treats a null policy as
+"launch without isolation"), so nothing fails loudly; the cost is interleaved logs and a real risk to saves.
+It also costs the connection report its log excerpt: a fresh game process starts a fresh `godot.log`, so on
+macOS **spawning a seat restarts the host's log**, and `ConnectionAttemptLogs` correctly reports its
+checkpoint as `rotated` with no post-attempt error context to show. The fix is not a matter of adding a
+`case`: Godot derives `user://` from `$HOME` on macOS
+(`~/Library/Application Support/…`), and there is no `--user-dir` flag and no `XDG_DATA_HOME`/`APPDATA`
+equivalent to repoint per child process — so the isolation needs a different mechanism, designed and verified
+on a Mac.
 
 ## Artifact Policy
 

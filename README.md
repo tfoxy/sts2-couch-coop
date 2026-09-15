@@ -49,7 +49,7 @@ These are tested configurations for a four-player session, not guaranteed hardwa
 | Lowest tested | Intel Core i5-6200U | 8 GB | Playable, with occasional lag for all players |
 | Recommended | Intel Core i7-11370H | 16 GB | Played without noticeable issues |
 
-The GPU requirements are similar to the base game. Windows and Linux are tested; macOS is not currently tested.
+The GPU requirements are similar to the base game. Windows and Linux are tested; macOS is not, and has some extra setup — see [macOS](#macos) below.
 
 <details>
 <summary>Host resource usage</summary>
@@ -57,6 +57,19 @@ The GPU requirements are similar to the base game. Windows and Linux are tested;
 Each browser player requires a separate headless game client on the host. In testing, each additional player used roughly 20% more CPU and 50% more RAM than the base game, although short CPU spikes can be higher. A four-player session therefore used about 60% more CPU and 150% more RAM.
 
 </details>
+
+### macOS
+
+Slay the Spire 2 has a native macOS build, and nothing in CouchCoop refuses to run on it — but nobody has yet played a full session on a Mac, so treat what follows as untested rather than supported. If you try it, please [report what you find](https://github.com/tfoxy/sts2-couch-coop/issues/new?template=bug_report.yml).
+
+**Install from the Steam Workshop.** On macOS the game's `mods` folder is inside the application bundle, at `SlayTheSpire2.app/Contents/MacOS/mods`, which Finder only opens after right-clicking the app and choosing **Show Package Contents** — and writing anything into a signed bundle breaks its signature. Steam installs Workshop content outside the bundle instead, so a subscription avoids the folder and the signature both. The manual ZIP still works if you prefer it; just know what it touches.
+
+**Two permission prompts stand between the host and your phones.** macOS asks about local network access and, if the firewall is on, about incoming connections. If either is answered "no", the host still starts and the QR code still scans — the phone simply waits and then times out, with nothing on the host to say why.
+
+- **Local Network** lives in System Settings → Privacy & Security → Local Network. Because Steam launches the game, the prompt can be attributed to Steam rather than to Slay the Spire 2, can have been answered long before you installed CouchCoop, or can be drawn behind the fullscreen game. Check that both entries are switched on.
+- **The firewall** lives in System Settings → Network → Firewall. When it is on, macOS asks once whether to accept incoming connections for the game, and remembers a "Deny". Firewall → Options is where to change that answer, and "Block all incoming connections" overrides everything else.
+
+**Back up your saves first.** Each browser player runs a headless copy of the game on the host, and on macOS those copies share the host's Godot folder instead of each getting their own — one log file, one settings file, one save profile, written by several processes at once. Windows and Linux give each player their own; doing the same on macOS needs a Mac to test the fix on.
 
 ### Steam Deck
 

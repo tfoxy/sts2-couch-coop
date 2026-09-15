@@ -25,7 +25,7 @@ namespace CouchCoop.Mod.HostUi;
 /// </para>
 /// <para>
 /// Everything here is best-effort in the responder's house style — a failure to probe is
-/// <see cref="MdnsSelfCheck.NotRun"/>, never an exception into the host, and never a demotion (an unrun
+/// <see cref="MdnsSelfCheck.NotRun"/>, never an exception into the host, and never a warning badge (an unrun
 /// check must not look like a failed one).
 /// </para>
 /// </remarks>
@@ -79,10 +79,10 @@ public sealed class MdnsHealth
     /// True unless we have POSITIVE evidence the name does not resolve.
     /// </summary>
     /// <remarks>
-    /// The asymmetry is the point: this drives whether the QR dialog still defaults to the <c>.local</c>
-    /// row, and demoting it on a probe that merely failed to run would punish a working setup for an
-    /// unrelated hiccup. Only <see cref="MdnsSelfCheck.Unanswered"/> — we asked the network for our own
-    /// name and nothing came back — is strong enough to reorder the dialog.
+    /// The asymmetry is the point: this drives whether the QR dialog badges the <c>.local</c> row as
+    /// "didn't answer", and badging it on a probe that merely failed to run would punish a working setup
+    /// for an unrelated hiccup. Only <see cref="MdnsSelfCheck.Unanswered"/> — we asked the network for our
+    /// own name and nothing came back — is strong enough to warn the player.
     /// </remarks>
     public bool NameLikelyResolves => SelfCheck != MdnsSelfCheck.Unanswered;
 
