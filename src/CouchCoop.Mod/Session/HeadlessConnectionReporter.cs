@@ -18,6 +18,13 @@ public sealed class HeadlessConnectionReporter : IDisposable
     private static HeadlessConnectionReporter? _current;
     private static readonly HttpClient Client = new() { Timeout = TimeSpan.FromSeconds(2) };
 
+    /// <summary>
+    /// The browser port this process actually bound, reported on every heartbeat. STATIC rather than per-instance
+    /// because the two are not ordered: the browser server may bind before <see cref="Initialize"/> runs, or
+    /// after it, depending on how far mod init has got. Whichever happens first, the other reads it.
+    /// </summary>
+    private static int _browserPort;
+
     private readonly Uri _endpoint;
     private readonly string _token;
     private readonly long _generation;
@@ -57,6 +64,18 @@ public sealed class HeadlessConnectionReporter : IDisposable
 
     public static void BrowserOpened() => ChangeBrowserCount(1);
     public static void BrowserClosed() => ChangeBrowserCount(-1);
+
+    /// <summary>
+    /// Tell the host which browser port this process actually bound, and push it immediately rather than waiting
+    /// for the next one-second tick — the host is deciding, right now, whether the port it assigned is the port
+    /// the browser should be sent to.
+    /// </summary>
+    public static void PublishBrowserPort(int port)
+    {
+        if (port is < 0 or > ushort.MaxValue) return;
+        Volatile.Write(ref _browserPort, port);
+        lock (StaticGate) _current?.QueueReport();
+    }
 
     public static void Stop()
     {
@@ -156,7 +175,8 @@ public sealed class HeadlessConnectionReporter : IDisposable
                 native?.Phase.ToString() ?? "starting",
                 Bound(native?.Error?.Code, 128),
                 Bound(native?.Error?.NativeDetail, 2048),
-                Volatile.Read(ref _browserCount));
+                Volatile.Read(ref _browserCount),
+                Volatile.Read(ref _browserPort));
             using var request = new HttpRequestMessage(HttpMethod.Post, _endpoint)
             {
                 Content = new StringContent(JsonSerializer.Serialize(status), Encoding.UTF8, "application/json")
@@ -196,7 +216,8 @@ public sealed class HeadlessConnectionReporter : IDisposable
     public static async Task<bool> ReportTerminalFailureAsync(string errorCode, string detail, CancellationToken cancellationToken)
     {
         if (!TryReadEnvironment(out var endpoint, out var token, out var generation)) return false;
-        var status = new HeadlessConnectionStatus(1, "Failed", Bound(errorCode, 128), Bound(detail, 2048), 0);
+        var status = new HeadlessConnectionStatus(
+            1, "Failed", Bound(errorCode, 128), Bound(detail, 2048), 0, Volatile.Read(ref _browserPort));
         using var request = new HttpRequestMessage(HttpMethod.Post, endpoint)
         {
             Content = new StringContent(JsonSerializer.Serialize(status), Encoding.UTF8, "application/json"),

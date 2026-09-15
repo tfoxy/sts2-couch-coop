@@ -452,6 +452,21 @@ BEFORE `_launcher(slot)`, and only the null-RETURN path undid it — so after a 
 short-circuited to `return SlotToPort(slot)` and was redirected to a port with nothing listening, which is worse
 than the failure it retried. The launch is now wrapped so a throw unwinds identically, then rethrows.
 
+**A seat's browser port is assigned, not preferred.** `SlotToPort(slot) = 13337 + slot*10` is what the host
+hands the browser AND what it probes for readiness, so a seat that walked off that port served an address nobody
+would ever ask for — the join burned the 75s deadline while the seat was healthy one port up. Four parts, all in
+`Session/`:
+
+| part | mechanism | files |
+| --- | --- | --- |
+| pre-spawn survey | before `_lock` (same rule as `MaxSlot`), each candidate seat port gets a loopback **connect** plus a test **bind**; either answer means occupied. A bind test alone is not enough — under `SO_REUSEADDR` a bind to `0.0.0.0:P` succeeds while a squatter on `127.0.0.1:P` still owns loopback. A probe that TIMES OUT reports free: dropped ≠ owned | `SeatPortAvailability.cs`, `HeadlessClientManager.SurveySeatPortsAsync` |
+| skip, or fail fast | a brand-new player is routed to a slot whose port is free (`AllocateSlotForNewNameLocked`). A PINNED seat — a `targetNetId` rejoin, or a returning name whose claim is its identity in the host's run — cannot move, so it fails immediately with `seat-port-taken` instead of spawning | `HeadlessClientManager.cs` |
+| the seat may not walk | `HeadlessSeatPortGuard.Bind` walks for a HOST and binds exactly for a SEAT, gated on `CouchCoopMod.IsHeadlessClient`. The host's walk is load-bearing (several instances per machine; `scripts/lib/instance-port.mjs` reads `BrowserPortFile`). A seat that cannot bind reports `couchcoop-seat-port-unavailable` and force-exits, `HeadlessSeatBuildGuard`-style | `HeadlessSeatPortGuard.cs`, `Server/HotReloadableBrowserServerHost.cs` |
+| the backstop | the seat reports its REAL bound port on the authenticated heartbeat (`HeadlessConnectionStatus.BrowserPort`; `0` = not bound yet, never a disagreement). Any disagreement with `SlotToPort` fails with `seat-port-taken` rather than handing the browser a port nothing serves | `Connections/HeadlessConnectionControl.cs`, `HeadlessConnectionReporter.cs` |
+
+Tests: `-- seats` and the default leg (`SeatPortTruthTests`), including the detection probe against a real
+blackhole listener.
+
 Tests: `BrowserServerRouteTests.AssertJoinFaultReachesTheViewerAsync` drives the whole thing over a real socket
 with a throwing launcher (the manager's launcher delegate is the seam, and it is where the real bug lived) —
 including the retry leg, which is what found the slot leak. Plus `AssertJoinRejectionDetailPlumbing` (wire
@@ -761,6 +776,23 @@ panel is no longer mounted; its internal narration remains available for diagnos
   same channel at mod init, before any join, and exits. It is NOT folded into `native-join-rejected`: the
   host raises `seat-build-mismatch`, whose detail names the assembly file the seat loaded and whose next
   action is to keep only one copy of the mod installed. See the seat launch contract above.
+- **Why a seat is not serving yet is ONE of four named causes, never one sentence.** `SeatReadinessVerdict`
+  classifies from facts the host already holds — the seat's reported bound port vs the assigned one, the host's
+  own loopback probe *and its failure reason* (exception type / socket error / elapsed ms), heartbeat freshness
+  and phase, and `ConnectedChildBrowserCount` — into `seat-port-taken` (something else owns the port),
+  `seat-port-blocked` (the seat IS listening where expected and this computer cannot reach it: an unscoped
+  `iptables … --dport 13347:13417 -j DROP` sits above any `-i lo ACCEPT` and eats the host's own probe),
+  **claimed only when a raw TCP connect could not complete either** — a failed HTTP probe alone also fits a
+  listener that is bound but WEDGED, which completes the handshake from the kernel backlog and fails only the
+  read, and telling that player to edit their firewall would be this round's own mistake repeated; a connect that
+  was ACCEPTED (wedged) or REFUSED (nothing listening yet) is `startup-timeout` instead —
+  `seat-network-path` (host can reach it, the device never did — this must not accuse the listener) and
+  `startup-timeout` (nothing is wrong yet). Each has its own `IssueKey` mapping and catalog pair. The technical
+  **detail** stays English and carries the same evidence tail under every cause; the summary/action above it are
+  localized. This replaces a single string ending in `child HTTP listener: not responding` that was measured
+  byte-identical across two of these — and that contradicted itself, calling a listener unresponsive in the same
+  sentence as `authenticated heartbeat fresh: True`. The network-path cause is only reachable from
+  `MonitorConnectionAsync`, because the join returns as soon as the HOST can reach the seat.
 - Browser `client-frame-presented` is bound to the granted attempt and emitted after successful rendering
   and two animation-frame callbacks while visible. DOM and canvas use the same receipt path. It is
   separate from `scene-ack`, which remains the scene stream's flow-control credit.

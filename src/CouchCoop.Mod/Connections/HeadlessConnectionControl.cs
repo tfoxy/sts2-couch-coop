@@ -98,7 +98,10 @@ public sealed class HeadlessConnectionControl
             && status.NativePhase.Length <= 32
             && (status.ErrorCode is null || status.ErrorCode.Length <= 128)
             && (status.ErrorDetail is null || status.ErrorDetail.Length <= 2048)
-            && status.ConnectedChildBrowserCount >= 0;
+            && status.ConnectedChildBrowserCount >= 0
+            // 0 is "not bound yet"; anything outside the port space is a payload the host must not act on, and it
+            // WOULD act on it — a reported port that disagrees with the assigned one fails the join.
+            && status.BrowserPort is >= 0 and <= ushort.MaxValue;
 
     private static byte[] HashToken(string token) => SHA256.HashData(Encoding.UTF8.GetBytes(token));
 
@@ -119,12 +122,20 @@ public sealed class HeadlessConnectionControl
     }
 }
 
+/// <param name="BrowserPort">
+/// The port this seat's browser server ACTUALLY bound, or <c>0</c> before it has one. Additive, and safe to be so:
+/// the build guard already enforces that a seat and its host are the same build, so there is no older seat to read
+/// this from. It exists because the host otherwise has no authority on the question — it assumed
+/// <c>HeadlessClientManager.SlotToPort(slot)</c> at every decision point while the seat's real port went only to a
+/// file nothing in the mod opens. <c>0</c> means "has not said yet" and must never be read as a disagreement.
+/// </param>
 public sealed record HeadlessConnectionStatus(
     long Sequence,
     string NativePhase,
     string? ErrorCode,
     string? ErrorDetail,
-    int ConnectedChildBrowserCount);
+    int ConnectedChildBrowserCount,
+    int BrowserPort = 0);
 
 public sealed record HeadlessConnectionObserveResult(bool Accepted, bool ShutdownRequested)
 {
