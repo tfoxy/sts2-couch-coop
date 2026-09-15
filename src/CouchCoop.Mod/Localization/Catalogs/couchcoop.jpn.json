@@ -77,7 +77,7 @@
   "couchcoop_connection_error_service_action": "ロビーに戻ってもう一度試してください。",
   "couchcoop_connection_error_patch_summary": "Couch Co-Opをゲームに組み込めなかったため、このセッションでは協力プレイを利用できません。",
   "couchcoop_connection_error_patch_action": "ゲームを再起動してください。それでも協力プレイが始まらない場合は、このレポートをコピーしてください。",
-  "couchcoop_connection_error_shared_profile_summary": "このコンピューターのプレイヤーは、1つのゲームプロフィールと1つのログファイルを共有します。",
+  "couchcoop_connection_error_shared_profile_summary": "このコンピューターのプレイヤーは、1つのゲームプロフィールを共有します。",
   "couchcoop_connection_error_shared_profile_action": "協力プレイは引き続き利用できます。他のプレイヤーが接続している間は、ゲーム設定を変更しないでください。",
   "couchcoop_connection_empty": "ブラウザサーバーに接続したデバイスがここに表示されます。同じ Wi‑Fi ネットワークを使い、上に表示されたアドレスを確認してください。",
   "couchcoop_connection_host_service": "ホストサービス",

@@ -20,7 +20,14 @@ import { readFile } from "node:fs/promises";
 import { connect } from "node:net";
 import path from "node:path";
 
-/** Where the mod writes the port, relative to an instance's `userDir`. Mirrors `BrowserPortFile.FileName`. */
+/**
+ * Where the mod writes the port, relative to an instance's `userDir`. Mirrors `BrowserPortFile.FileName`.
+ *
+ * A HOST's file, which is the only one this reader wants: a spawned SEAT writes `browser-port-slot-<N>` instead,
+ * because on a platform with no per-seat user dir (macOS) every process would otherwise resolve this same path
+ * and the last seat to start would overwrite the host's record. A seat's port is never discovered from a file —
+ * it is `SlotToPort(slot)`, known before the process exists.
+ */
 export const BROWSER_PORT_RELATIVE = path.join("SlayTheSpire2", "couch-coop", "browser-port");
 
 /** The `instance.json` for `name` under `repoRoot`, or null when there is no such instance. */

@@ -35,6 +35,37 @@ public static class BrowserPortFile
     /// <summary>The file name, inside <c>user://couch-coop/</c>. Read by <c>scripts/lib/instance-port.mjs</c>.</summary>
     public const string FileName = "browser-port";
 
+    /// <summary>
+    /// The env var a spawned seat carries its slot number in (see
+    /// <c>HeadlessClientManager.SeatLaunchEnvironment</c>). Present only in a seat process.
+    /// </summary>
+    private const string SlotEnvironmentVariable = "COUCHCOOP_HEADLESS_SLOT";
+
+    /// <summary>
+    /// The file name this process writes: the plain one for a HOST, a per-slot one for a SEAT.
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// A seat normally gets an isolated <c>user://</c>, so its record already lands in a directory of its own
+    /// and this makes no difference. On a platform where isolation is unavailable (macOS — see
+    /// <c>HeadlessUserDirSeeder</c>) every process on the machine resolves the SAME path, and the record stops
+    /// describing anybody: the last seat to start overwrites the host's port with its own, and the first seat
+    /// to stop deletes the file outright. Scoping the seats fixes both without moving anything a reader knows
+    /// about.
+    /// </para>
+    /// <para>
+    /// THE HOST'S NAME IS FIXED, deliberately. <c>scripts/lib/instance-port.mjs</c> and the bring-up scripts
+    /// address an instance by its user dir and expect <c>couch-coop/browser-port</c> there, and the instance a
+    /// QA script launches is always a host. A seat's port is not discovered from a file at all — it is
+    /// <c>SlotToPort(slot)</c>, known to the host before the process exists.
+    /// </para>
+    /// </remarks>
+    internal static string FileNameFor(string? headlessSlot)
+        => int.TryParse(headlessSlot?.Trim(), NumberStyles.Integer, CultureInfo.InvariantCulture, out var slot)
+            && slot > 0
+            ? $"{FileName}-slot-{slot.ToString(CultureInfo.InvariantCulture)}"
+            : FileName;
+
     /// <summary>Write the bound HTTP port. No-op when the user dir cannot be resolved (headless tests).</summary>
     public static void Publish(int port)
     {
@@ -114,7 +145,8 @@ public static class BrowserPortFile
     [MethodImpl(MethodImplOptions.NoInlining)]
     private static string? TryResolveGodotPath()
     {
-        var globalized = Godot.ProjectSettings.GlobalizePath("user://couch-coop/" + FileName);
+        var globalized = Godot.ProjectSettings.GlobalizePath(
+            "user://couch-coop/" + FileNameFor(Environment.GetEnvironmentVariable(SlotEnvironmentVariable)));
         return string.IsNullOrWhiteSpace(globalized) || globalized.StartsWith("user://", StringComparison.Ordinal)
             ? null
             : globalized;

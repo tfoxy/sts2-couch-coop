@@ -126,9 +126,12 @@ internal static class HeadlessUserDirSeeder
             {
                 // Was silent, and it is the one return in this file a player can be affected by without any
                 // trace: the caller launches the seat anyway, into the HOST's user dir. Say what that costs.
+                // The log half of this used to be named here too. It is no longer true: the LAUNCHER hands a
+                // seat with no isolation its own --log-file, so the host's godot.log survives the spawn. What
+                // remains unisolated — and unfixable without a per-slot user dir — is the profile.
                 Log($"[couch-coop] headless user-dir seed skipped slot={slot} platform={platform} — this seat "
-                    + "shares the host's user directory: one godot.log and one settings/save profile for every "
-                    + "player on this computer.");
+                    + "shares the host's user directory: one settings/save profile for every player on this "
+                    + "computer.");
                 return null;
             }
 
