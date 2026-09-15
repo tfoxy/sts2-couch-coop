@@ -33,6 +33,7 @@ internal static class LoaderLaneSelectionTests
         AnEmptyLanesDirectoryIsRefusedRatherThanSilentlyFlat();
         TheInstallWalkFindsTheGameFromTheModDirectory();
         TheInstallWalkFailsOnTheWorkshopShapeSoTheProcessRungMatters();
+        TheInstallWalkReachesIntoAMacOsAppBundle();
         ReleaseInfoIsReadVerbatimOrNotAtAll();
         ProbeOrderPutsTheLaneAheadOfTheSharedRoot();
         AnAlreadyLoadedCopyFromADifferentPathIsRefused();
@@ -352,6 +353,57 @@ internal static class LoaderLaneSelectionTests
         var fromProcess = CouchCoopLaneSelection.TryWalkToInstallRoot(executableDirectory);
         Assert(CouchCoopLaneSelection.ReadInstallVersion(fromProcess) == "v0.111.0",
             "the process-executable rung reaches the install a Workshop item cannot see");
+    }
+
+    // THE macOS SHAPE, and it is the difference between the mod running and not running at all. A .app keeps
+    // its executable in Contents/MacOS/ and its shipped data in Contents/Resources/ — SIBLINGS — so
+    // release_info.json is an ancestor of neither starting point, and no walk depth reaches a sibling. With no
+    // version, Select() refuses to pick a lane (correctly: it must never guess which build this is), so a
+    // SHIPPED laned payload logged one line and loaded nothing at all. That is "the mod doesn't work on macOS".
+    private static void TheInstallWalkReachesIntoAMacOsAppBundle()
+    {
+        using var temp = new TempDir();
+        var contents = Path.Combine(temp.Path, "Slay the Spire 2", "SlayTheSpire2.app", "Contents");
+        var resources = Path.Combine(contents, "Resources");
+        var macOs = Path.Combine(contents, "MacOS");
+        Directory.CreateDirectory(resources);
+        Directory.CreateDirectory(macOs);
+        File.WriteAllText(Path.Combine(resources, "release_info.json"), """{"version":"v0.111.0"}""");
+
+        // Rung 1: this loader, deployed into the bundle's mods directory.
+        var modDirectory = Path.Combine(macOs, "mods", "couchcoop");
+        Directory.CreateDirectory(modDirectory);
+        Assert(CouchCoopLaneSelection.ReadInstallVersion(
+                CouchCoopLaneSelection.TryWalkToInstallRoot(modDirectory)) == "v0.111.0",
+            "the walk reaches the bundle's resources from a mod inside Contents/MacOS/mods");
+
+        // …and one level deeper, because the game's mod scan is recursive and a payload may nest.
+        var nested = Path.Combine(modDirectory, "lanes", "0.111.0");
+        Directory.CreateDirectory(nested);
+        Assert(CouchCoopLaneSelection.TryWalkToInstallRoot(nested) is not null,
+            "…and still reaches it from inside a lane directory under that");
+
+        // Rung 2: the executable's own directory, which is what a Workshop install falls through to.
+        Assert(CouchCoopLaneSelection.ReadInstallVersion(
+                CouchCoopLaneSelection.TryWalkToInstallRoot(macOs)) == "v0.111.0",
+            "the process rung reaches it from Contents/MacOS itself");
+
+        // The bundle also has a flatter shape, with the file beside the binary. That one an ordinary upward
+        // walk already reached, and it must keep winning where it exists: the tree we are sitting in is the
+        // more specific answer than a sibling of one of its ancestors.
+        File.WriteAllText(Path.Combine(macOs, "release_info.json"), """{"version":"v0.107.1"}""");
+        Assert(CouchCoopLaneSelection.ReadInstallVersion(
+                CouchCoopLaneSelection.TryWalkToInstallRoot(modDirectory)) == "v0.107.1",
+            "a version file beside the binary is preferred to the bundle's resources");
+
+        // The sideways step is gated on the `.app` suffix. Reading a stranger's release_info.json would pick a
+        // lane for a game this is not running under, which is the one outcome lanes exist to prevent.
+        var impostor = Path.Combine(temp.Path, "some", "project", "Contents");
+        Directory.CreateDirectory(Path.Combine(impostor, "Resources"));
+        Directory.CreateDirectory(Path.Combine(impostor, "MacOS"));
+        File.WriteAllText(Path.Combine(impostor, "Resources", "release_info.json"), """{"version":"v9.9.9"}""");
+        Assert(CouchCoopLaneSelection.TryWalkToInstallRoot(Path.Combine(impostor, "MacOS")) is null,
+            "an ordinary directory named Contents is not treated as a bundle");
     }
 
     private static void ReleaseInfoIsReadVerbatimOrNotAtAll()
