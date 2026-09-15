@@ -283,11 +283,14 @@ if [[ "$tag" == snapshot-* && ! -f "$workspace/dev-channel" ]]; then
 fi
 
 # ---- change notes ------------------------------------------------------------------------------
-# One revision, one note: the CHANGELOG section, the same bytes the GitHub Release body uses.
+# One revision, one note: the CHANGELOG section, the same content the GitHub Release body uses --
+# rendered as BBCode, because that is what a Steam change note is. Shipped verbatim, the section's
+# own Markdown appeared literally on the item page ("### Fixed", "- item"), which made the release
+# notes the one place the project's formatting did not survive contact with its reader.
 if [[ "$tag" == snapshot-* ]]; then
   release_notes="Test build of an unreleased commit. Not a release; see the GitHub repository for what is in it."
 else
-  release_notes="$(bash "$repo_root/scripts/changelog-section.sh" "$tag")" || {
+  release_notes="$(bash "$repo_root/scripts/changelog-section.sh" "$tag" | release_markdown_to_bbcode)" || {
     echo "CHANGELOG.md has no section for $tag; a release cannot be published without notes" >&2
     exit 1
   }

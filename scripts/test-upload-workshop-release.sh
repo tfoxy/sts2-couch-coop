@@ -201,6 +201,9 @@ cat > "$changelog" <<'EOF'
 ### Changed
 
 - A fixture change a player would read.
+- A `code span`, some **bold**, and a [link](https://example.invalid/x) a player would read.
+- A wrapped bullet whose second line is indented, which must join the item it belongs to
+  rather than escaping the list.
 EOF
 export CHANGELOG_FILE="$changelog"
 
@@ -335,6 +338,23 @@ assert_eq 13 "$(revision 1 '.localizations | length')"
 # The Steam page shows nothing else about what a revision is.
 grep -qF 'A fixture change a player would read.' <<<"$(revision 1 .changeNote)" \
   || fail "the revision does not carry the changelog: $(revision 1 .changeNote)"
+
+# A Steam change note is BBCode. Shipped as Markdown the section rendered "### Fixed" and "- item"
+# literally, which made the release notes the one surface whose formatting did not survive.
+note_bb="$(revision 1 .changeNote)"
+grep -qF '[h3]Changed[/h3]' <<<"$note_bb" || fail "the heading was not converted to BBCode: $note_bb"
+grep -qF '[list]' <<<"$note_bb" || fail "the bullets were not wrapped in a BBCode list: $note_bb"
+grep -qF '[*]A fixture change a player would read.' <<<"$note_bb" \
+  || fail "a bullet was not converted to a BBCode list item: $note_bb"
+grep -qF '[i]code span[/i]' <<<"$note_bb" || fail "inline code was not converted: $note_bb"
+grep -qF '[b]bold[/b]' <<<"$note_bb" || fail "bold was not converted: $note_bb"
+grep -qF '[url=https://example.invalid/x]link[/url]' <<<"$note_bb" \
+  || fail "a link was not converted: $note_bb"
+# The wrapped continuation must be folded INTO its item. Left on its own line it falls outside the
+# [*] and Steam renders it as a stray paragraph in the middle of the list.
+grep -qF '[*]A wrapped bullet whose second line is indented, which must join the item it belongs to rather than escaping the list.' <<<"$note_bb" \
+  || fail "a wrapped bullet was not folded into its list item: $note_bb"
+grep -qE '^(###|- )' <<<"$note_bb" && fail "raw Markdown survived into the change note: $note_bb"
 grep -qF 'Release v0.1.0' <<<"$(revision 1 .changeNote)" \
   || fail "the heading lacks the payload version: $(revision 1 .changeNote)"
 # The revision must say which games it runs on. A subscriber cannot open the payload, and the branch
