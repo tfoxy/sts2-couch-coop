@@ -143,6 +143,19 @@ if (args is ["seat-build", ..])
     return;
 }
 
+// `dotnet run --project tests/CouchCoop.Mod.Tests -- lanes` runs the LOADER's lane selection ALONE: which
+// `lanes/<floor version>/` directory one Workshop payload picks for the running game, and when it refuses to
+// pick at all. Pure — temp directories, fabricated release_info.json files, no game and no Steam — because the
+// decision is made before any lane assembly is loaded. Registered as its own verb for the reason the verbs
+// above exist: the full sequence below dies partway through on some machines, and a suite reachable only from
+// there is a suite that never runs. See LoaderLaneSelectionTests.
+if (args is ["lanes", ..])
+{
+    LoaderLaneSelectionTests.Run();
+    Console.WriteLine("lanes: ok");
+    return;
+}
+
 // `dotnet run --project tests/CouchCoop.Mod.Tests -- host-ui` runs the pure host-UI decisions ALONE. Same
 // rationale as `host-guards` above — no IO, no Harmony, no Godot engine, no live game — and the same
 // arrangement: they also run in the normal sequence below. This is the reachable way to verify a host-UI
@@ -350,6 +363,10 @@ CouchCoopModalFocusChainTests.Run();
 // Up here with the other pure suites for the same reason — everything from HeadlessAudioMuteTargetsTests
 // below is unreachable on some machines. Also reachable alone as `-- seat-build`.
 SeatModBuildTests.Run();
+// Workshop single-payload round: which implementation lane the loader picks for the running game build, and
+// when it refuses. Pure temp directories, no game — up here with the other pure suites, and also reachable
+// alone as `-- lanes`.
+LoaderLaneSelectionTests.Run();
 // Beta round: which atlas pages this build ships, and how the session envelope carries them — the answer that
 // stops a client asking a repacked build for a page it no longer has. Pure strings plus one envelope build, so
 // it belongs up here with the rest, and it is also reachable alone as `-- atlas`.

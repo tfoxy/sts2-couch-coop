@@ -24,8 +24,8 @@ assert_eq() {
 # The mock uploader appends one line per invocation; every leg asserts the whole log, so the
 # exact argv of every upload so far is checked, including which workspace it was pointed at.
 expected_log=""
-# assert_uploaded <workspace> [count]: a release publishes one upload PER LANE, so a run can add
-# several lines at once; the whole log is asserted after they are all accounted for.
+# assert_uploaded <workspace> [count]: a release is ONE archive and therefore ONE revision, so a
+# run adds exactly one line unless a leg says otherwise.
 assert_uploaded() {
   local workspace="$1" count="${2:-1}" i
   for (( i = 0; i < count; i++ )); do
@@ -38,14 +38,33 @@ for command in jq zip unzip sha256sum; do
   command -v "$command" >/dev/null || fail "missing test prerequisite: $command"
 done
 
+# The lanes a release carries. One payload carries all of them, so this is not a selection any
+# more -- it is the list a workspace's lane.txt has to allow in full, and the list of lane
+# directories the payload has to hold.
+mapfile -t lanes < <(release_lane_discover "$repo_root/eng/Sts2.ReferenceSdk")
+[[ ${#lanes[@]} -ge 2 ]] || fail "this test's lane.txt legs need at least two reference lanes"
+# The assemblies that vary by lane, and therefore ship under lanes/<floor>/ instead of at the
+# payload root. Read from the reviewed table so this fixture follows the real layout.
+mapfile -t lane_assemblies < <(release_lane_assembly_names)
+
 fixture="$test_root/fixture"
 assets="$fixture/assets"
 payload="$fixture/payload/couchcoop"
-mkdir -p "$assets" "$payload/frontend/icons" "$payload/frontend/.vite" "$payload/frontend/app" "$payload/licenses/npm"
+mkdir -p "$assets" "$fixture/all-revisions" "$payload/frontend/icons" "$payload/frontend/.vite" \
+  "$payload/frontend/app" "$payload/licenses/npm"
 
+# The payload's INTERNAL shape is scripts/verify-release-archive.sh's contract, not this script's:
+# the uploader reads only the couchcoop/ root and build-info.txt's version, and copies the rest
+# verbatim. So this fixture only has to be a payload that gate accepts -- it follows that gate's
+# layout rather than restating it, and nothing else in this file depends on the shape.
+#
+# The SHARED tree, at the payload root. The two lane-varying assemblies are deliberately absent
+# here: the gate refuses CouchCoop.Mod.dll or CouchCoop.Spirectl.dll at the root, because a lane's
+# build sitting in the loader-neutral tree would be served to every player whatever branch they are
+# on. They are written per lane below.
 for file in \
   LICENSE NOTICE THIRD_PARTY_NOTICES.md couchcoop.json build-info.txt couchcoop.dll \
-  CouchCoop.Mod.dll CouchCoop.Mod.Contracts.dll CouchCoop.MirrorProtocol.dll CouchCoop.Spirectl.dll QRCoder.dll DeviceDetector.NET.dll LiteDB.dll Microsoft.Extensions.DependencyInjection.Abstractions.dll Microsoft.Extensions.Logging.Abstractions.dll System.Diagnostics.DiagnosticSource.dll YamlDotNet.dll \
+  CouchCoop.Mod.Contracts.dll CouchCoop.MirrorProtocol.dll QRCoder.dll DeviceDetector.NET.dll LiteDB.dll Microsoft.Extensions.DependencyInjection.Abstractions.dll Microsoft.Extensions.Logging.Abstractions.dll System.Diagnostics.DiagnosticSource.dll YamlDotNet.dll \
   frontend/index.html frontend/app-boot frontend/manifest.webmanifest frontend/icons/icon.svg frontend/.vite/manifest.json \
   licenses/QRCoder-1.6.0-MIT.txt licenses/DeviceDetector.NET-6.5.2-Apache-2.0.txt licenses/LiteDB-5.0.21-MIT.txt licenses/Microsoft.Extensions.DependencyInjection.Abstractions-10.0.10-MIT.txt licenses/Microsoft.Extensions.Logging.Abstractions-10.0.10-MIT.txt licenses/System.Diagnostics.DiagnosticSource-10.0.10-MIT.txt licenses/YamlDotNet-18.1.0-MIT.txt licenses/spirectl-LICENSE licenses/spirectl-NOTICE licenses/godot-scene-web-LICENSE \
   licenses/HarfBuzz-LICENSE licenses/Emscripten-LICENSE licenses/OpenSans-LICENSE licenses/npm-dependencies.tsv \
@@ -54,51 +73,66 @@ for file in \
   printf 'fixture %s\n' "$file" > "$payload/$file"
 done
 
-# The build metadata lives INSIDE the payload now (as .txt, because STS2 reads every root-level .json
-# in a mod directory as a manifest), and the verifier holds the manifest's min_game_version to the
-# lane build-info.txt declares. So a lane fixture is a payload, not just a filename.
+# One directory per lane, named after that lane's game floor, holding only the lane-varying
+# assemblies. A release payload carries EVERY lane -- that is the whole point of the merged shape --
+# so this fixture carries every lane the reference SDK declares.
+for lane in "${lanes[@]}"; do
+  lane_dir="$payload/lanes/$(release_lane_dir_name "$lane")"
+  mkdir -p "$lane_dir"
+  for file in "${lane_assemblies[@]}"; do
+    printf 'fixture %s %s\n' "$lane" "$file" > "$lane_dir/$file"
+  done
+done
+
+# The manifest floor and the build-info lane records are read from the reviewed table rather than
+# written out here, so this fixture cannot drift away from what the release gate expects of a real
+# payload. Two things it has to get right, because the gate recomputes both:
+#   * the manifest declares the LOWEST floor among the lanes carried, not the first lane's -- a
+#     higher one would make the one payload refuse to load on the older branch it also serves;
+#   * build-info.txt's sts2References is a set KEYED BY LANE (schema v2), and the lane set it
+#     declares has to be exactly the set of lanes/<floor>/ directories that ship.
 write_payload() {
-  local root="$1" lane="$2" min
-  min="$(release_lane_min_game_version "$lane")"
-  if [[ -n "$min" ]]; then
-    jq -n --arg min "$min" '{id: "couchcoop", version: "0.1.0", min_game_version: $min}' > "$root/couchcoop.json"
-  else
-    jq -n '{id: "couchcoop", version: "0.1.0"}' > "$root/couchcoop.json"
-  fi
-  jq -n --arg lane "$lane" '{
-    schemaVersion: "couchcoop-release-build-info/v1",
+  local root="$1" lane references="{}"
+  jq -n --arg min "$(release_payload_min_game_version "${lanes[@]}")" \
+    '{id: "couchcoop", version: "0.1.0", min_game_version: $min}' > "$root/couchcoop.json"
+  for lane in "${lanes[@]}"; do
+    references="$(jq -n --argjson acc "$references" --arg lane "$lane" \
+      --arg build "$(release_lane_game_build "$lane")" \
+      --arg floor "$(release_lane_game_floor "$lane")" \
+      --arg api "$(release_lane_game_api "$lane")" \
+      --arg directory "$(release_lane_dir_name "$lane")" \
+      '$acc + {($lane): {id: "FuYnAloft.Sts2.References", version: "0.0.0-fixture",
+                         nugetContentHash: "fixture", gameBuild: $build, minGameVersion: $floor,
+                         bridgeGameApi: $api, laneDirectory: $directory,
+                         nugetLockSha256: "fixture"}}')"
+  done
+  jq -n --argjson references "$references" '{
+    schemaVersion: "couchcoop-release-build-info/v2",
     sourceCommit: "0000000000000000000000000000000000000000",
     tag: "v0.1.0",
     version: "0.1.0",
-    dependencies: {sts2References: {lane: $lane, id: "FuYnAloft.Sts2.References", version: "0.0.0-fixture"}}
+    dependencies: {sts2References: $references}
   }' > "$root/build-info.txt"
 }
 
-# <archive path> <payload parent dir>: one zip plus the one checksum file that still ships with it.
-# <archive path> <payload parent dir> [lane]: one zip, and its line APPENDED to the release-wide
-# checksum file, which is what package-release.sh publishes -- one file naming every lane's archive.
+# <archive path> <payload parent dir>: one zip and the one checksum file beside it. A release
+# publishes exactly these two assets.
 publish_assets() {
-  local archive="$1" payload_parent="$2" lane="${3:-stable}" sums
+  local archive="$1" payload_parent="$2"
   (cd "$payload_parent" && zip -X -q -r "$archive" couchcoop)
-  sums="$(dirname "$archive")/$(release_checksums_name "$(basename "$archive")" "$lane").SHA256SUMS"
-  (cd "$(dirname "$archive")" && sha256sum "$(basename "$archive")" >> "$sums")
+  (cd "$(dirname "$archive")" && sha256sum "$(basename "$archive")" >> "${archive%.zip}.SHA256SUMS")
 }
 
-write_payload "$payload" stable
+write_payload "$payload"
 publish_assets "$assets/couchcoop-v0.1.0.zip" "$fixture/payload"
 
-# The beta lane's archive sits in the same directory, which is the whole hazard: only the --lane flag
-# may decide which of the two is published, never "newest by sort -V".
-beta_payload="$fixture/beta-payload/couchcoop"
-mkdir -p "$(dirname "$beta_payload")"
-cp -a "$payload" "$beta_payload"
-write_payload "$beta_payload" public-beta
-publish_assets "$assets/couchcoop-v0.1.0-public-beta.zip" "$fixture/beta-payload" public-beta
-
-# A dist directory holding only the stable lane, for a --lane public-beta run that must not fall back.
-stable_only="$fixture/stable-only"
-mkdir -p "$stable_only"
-cp "$assets/couchcoop-v0.1.0.zip" "$assets/couchcoop-v0.1.0.SHA256SUMS" "$stable_only/"
+# A dist directory still holding a lane-suffixed archive from the retired two-archive shape. It is a
+# SECOND release archive as far as this script is concerned, and must be refused rather than half
+# published -- that leftover is exactly how an old payload reaches an item.
+stale_lane_suffix="$fixture/stale-lane-suffix"
+mkdir -p "$stale_lane_suffix"
+cp "$assets"/couchcoop-v0.1.0.* "$stale_lane_suffix/"
+cp "$assets/couchcoop-v0.1.0.zip" "$stale_lane_suffix/couchcoop-v0.1.0-${lanes[1]}.zip"
 
 # A --snapshot build, which is not publishable: a Workshop item copies an archive that exists as a
 # GitHub Release, and a snapshot has no tag.
@@ -114,18 +148,14 @@ for f in couchcoop.json build-info.txt; do
 done
 publish_assets "$snapshot_dist/couchcoop-snapshot-abcdef123456.zip" "$snapshot_payload"
 
-# A beta-named archive carrying a stable payload: the name says public-beta, build-info.txt says
-# stable, and the gate must refuse it rather than publish the wrong game branch to the beta item.
-mislabelled="$fixture/mislabelled"
-mkdir -p "$mislabelled"
-publish_assets "$mislabelled/couchcoop-v0.1.0-public-beta.zip" "$fixture/payload" public-beta
-
 uploader_dir="$fixture/uploader"
 workspace="$uploader_dir/Workspace"
 mkdir -p "$workspace"
 printf 'primary preview' > "$workspace/image.png"
 # "public" is deliberately NOT the script's default: a run that omits --visibility must leave it
-# alone, so this value is what makes that assertion able to fail.
+# alone, so this value is what makes that assertion able to fail. minBranch/maxBranch are here for
+# the same reason: the real workspaces still carry them from the retired branch-linked shape, and a
+# run has to DELETE them rather than pass them through.
 jq -n '{
   title: "CouchCoop",
   description: "Fixture source description",
@@ -134,8 +164,8 @@ jq -n '{
   tags: [],
   dependencies: [],
   contentDescriptors: [],
-  minBranch: "public",
-  maxBranch: "public"
+  minBranch: "public-beta",
+  maxBranch: "public-beta"
 }' > "$workspace/workshop.json"
 printf 'stale content' > "$workspace/stale.txt"
 mkdir -p "$workspace/content"
@@ -156,7 +186,9 @@ jq -n '{
   changeNote: "",
   tags: [],
   dependencies: [],
-  contentDescriptors: []
+  contentDescriptors: [],
+  minBranch: "public-beta",
+  maxBranch: "public-beta"
 }' > "$dev_workspace/workshop.json"
 printf '9999999999\n' > "$dev_workspace/mod_id.txt"
 
@@ -195,9 +227,9 @@ fi
 echo "unexpected gh invocation: $*" >&2
 exit 1
 EOF
-# Each upload is one Workshop REVISION, and a release publishes one per lane. The mock records the
-# workshop.json of every invocation so a multi-lane run can be asserted revision by revision -- the
-# workspace file only ever holds the last one.
+# Each upload is one Workshop REVISION. The mock records the workshop.json of every invocation
+# twice: once under a per-leg name the legs reset, and once in all-revisions/, which is never
+# reset so the end of the file can sweep EVERY revision this test ever produced.
 cat > "$uploader_dir/ModUploader" <<'EOF'
 #!/usr/bin/env bash
 set -euo pipefail
@@ -207,12 +239,14 @@ if [[ "${1:-}" == --version ]]; then
 fi
 printf '%s\n' "$*" >> "$MOCK_UPLOADER_LOG"
 workspace="${@: -1}"
+fixture_dir="$(dirname "$MOCK_UPLOADER_LOG")"
 # nullglob, not ls: under `set -o pipefail` a non-matching glob makes ls exit 2 and takes the
 # whole mock down on the very first upload, when there is nothing to count yet.
 shopt -s nullglob
-existing=( "$(dirname "$MOCK_UPLOADER_LOG")"/revision-*.json )
-index=$(( ${#existing[@]} + 1 ))
-cp "$workspace/workshop.json" "$(dirname "$MOCK_UPLOADER_LOG")/revision-$index.json"
+existing=( "$fixture_dir"/revision-*.json )
+cp "$workspace/workshop.json" "$fixture_dir/revision-$(( ${#existing[@]} + 1 )).json"
+all=( "$fixture_dir"/all-revisions/*.json )
+cp "$workspace/workshop.json" "$fixture_dir/all-revisions/$(( ${#all[@]} + 1 )).json"
 if [[ ! -f "$workspace/mod_id.txt" ]]; then
   printf '1234567890\n' > "$workspace/mod_id.txt"
 fi
@@ -256,20 +290,20 @@ revision() { jq -r "$2" "$fixture/revision-$1.json"; }
 # would deserialize and discard them. DEV workspaces do not need this gate.
 mv "$uploader_dir/.couchcoop-localized-uploader.json" "$fixture/localized-uploader-marker.json"
 : > "$fixture/uploader.log"
-expect_refused unverified-localized-uploader 'needs the PR #12-capable uploader' --yes --dist "$assets" --lane stable
+expect_refused unverified-localized-uploader 'needs the PR #12-capable uploader' --yes --dist "$assets"
 mv "$fixture/localized-uploader-marker.json" "$uploader_dir/.couchcoop-localized-uploader.json"
 rm "$fixture/uploader.log"
 
-# Leg 1: the DEFAULT run -- no arguments beyond the confirmation -- publishes EVERY lane of the
-# latest GitHub Release to the public listing, one revision each, and leaves the item's visibility
-# alone. This is the shape a maintainer actually types.
+# Leg 1: the DEFAULT run -- no arguments beyond the confirmation -- publishes the latest GitHub
+# Release to the public listing as ONE revision, and leaves the item's visibility alone. This is the
+# shape a maintainer actually types.
 MOCK_RELEASE_ASSETS="$assets" \
 MOCK_UPLOADER_LOG="$fixture/uploader.log" \
 COUCHCOOP_WORKSHOP_UPLOADER_DIR="$uploader_dir" \
 PATH="$mock_bin:$PATH" \
 bash "$script" --yes
 
-assert_uploaded "$workspace" 2
+assert_uploaded "$workspace"
 assert_eq public "$(jq -r '.visibility' "$workspace/workshop.json")"
 assert_eq 'Couch Co-op' "$(jq -r '.title' "$workspace/workshop.json")"
 assert_eq "$(<"$repo_root/workshop/description.en.md")" "$(jq -r '.description' "$workspace/workshop.json")"
@@ -279,30 +313,33 @@ assert_file "$workspace/stale.txt"
 assert_file "$workspace/previews/old.gif"
 [[ ! -e "$workspace/content/old.txt" ]] || fail "stale payload survived"
 
-# Each revision is linked to the game branch its payload was built for -- that is what makes ONE
-# item serve both branches, and it is the whole point of the two-revision shape.
-assert_eq public "$(revision 1 .minBranch)"
-assert_eq public "$(revision 1 .maxBranch)"
-assert_eq public-beta "$(revision 2 .minBranch)"
-assert_eq public-beta "$(revision 2 .maxBranch)"
+# The item's content is the archive's payload, byte for byte. Asserting the whole tree rather than
+# one manifest field keeps this test honest about what the uploader's job is, and independent of
+# what the payload happens to contain.
+diff -r "$payload" "$workspace/content" >/dev/null || fail "uploaded content is not the archive payload"
+
+# THE REGRESSION THIS SHAPE EXISTS FOR: no revision may carry a branch link. A branch-linked
+# revision is only served to its branch by the client's subscribe path; the periodic refresh takes
+# the item's NEWEST revision branch-blind, so linking cannot keep two payloads apart on one item and
+# every subscriber converges on whichever revision was uploaded last. The fixture workspace declares
+# both keys, so passing them through is what this would catch.
+assert_eq null "$(revision 1 .minBranch)"
+assert_eq null "$(revision 1 .maxBranch)"
+assert_eq null "$(jq -r '.minBranch' "$workspace/workshop.json")"
+assert_eq null "$(jq -r '.maxBranch' "$workspace/workshop.json")"
+
 assert_eq english "$(revision 1 .language)"
 assert_eq 13 "$(revision 1 '.localizations | length')"
-assert_eq null "$(revision 2 .localizations)"
 
-# The change list rides on the default lane's revision and the other points at it, because Steam
-# shows one note per revision and the list should not be duplicated.
+# One revision, one note: the changelog section under a heading that names the payload's version.
+# The Steam page shows nothing else about what a revision is.
 grep -qF 'A fixture change a player would read.' <<<"$(revision 1 .changeNote)" \
-  || fail "stable revision does not carry the changelog: $(revision 1 .changeNote)"
-# A revision's heading has to name the version and the game build: the Steam page shows only a
-# branch chip, so without this a reader cannot tell what a revision even is.
-grep -qF 'Release v0.1.0 — Slay the Spire 2 v0.107.1' <<<"$(revision 1 .changeNote)" \
-  || fail "stable heading lacks the version or the game build: $(revision 1 .changeNote)"
-grep -qF 'Release v0.1.0 (public-beta) — Slay the Spire 2 v0.111.0' <<<"$(revision 2 .changeNote)" \
-  || fail "beta heading lacks the version or the game build: $(revision 2 .changeNote)"
-grep -qF 'A fixture change a player would read.' <<<"$(revision 2 .changeNote)" \
-  && fail "beta revision should point at the stable revision, not repeat the list"
-grep -qF 'stable revision' <<<"$(revision 2 .changeNote)" \
-  || fail "beta revision does not point at the stable one: $(revision 2 .changeNote)"
+  || fail "the revision does not carry the changelog: $(revision 1 .changeNote)"
+grep -qF 'Release v0.1.0' <<<"$(revision 1 .changeNote)" \
+  || fail "the heading lacks the payload version: $(revision 1 .changeNote)"
+# One payload serves every game branch, so a heading naming one game build would be a false claim.
+grep -qE 'Slay the Spire 2 v[0-9]|public-beta' <<<"$(revision 1 .changeNote)" \
+  && fail "the heading still names a single game build or branch: $(revision 1 .changeNote)"
 
 # Leg 2: publishing to the PUBLIC listing is never a by-product of a half-typed command.
 expect_refused no-confirmation 'stdin is not a terminal and --yes was not passed' --dist "$assets"
@@ -313,7 +350,7 @@ MOCK_RELEASE_ASSETS="$assets" \
 MOCK_UPLOADER_LOG="$fixture/uploader.log" \
 COUCHCOOP_WORKSHOP_UPLOADER_DIR="$uploader_dir" \
 PATH="$mock_bin:$PATH" \
-bash "$script" --yes --visibility private --lane stable
+bash "$script" --yes --visibility private
 
 assert_uploaded "$workspace"
 assert_eq private "$(jq -r '.visibility' "$workspace/workshop.json")"
@@ -321,18 +358,17 @@ assert_eq "$(<"$repo_root/workshop/description.en.md")" "$(jq -r '.description' 
 assert_eq 13 "$(jq -r '.localizations | length' "$workspace/workshop.json")"
 assert_eq 1234567890 "$(tr -d '\n' < "$workspace/mod_id.txt")"
 
-# Leg 4: --lane narrows a run to one revision.
+# Leg 4: a release is one archive, so a run is one revision. There is nothing left to narrow.
 assert_eq 1 "$(ls "$fixture"/revision-*.json | wc -l)"
 
 # Leg 5: --dist reads a locally built release, with gh poisoned so it cannot silently fall back.
 MOCK_UPLOADER_LOG="$fixture/uploader.log" \
 COUCHCOOP_WORKSHOP_UPLOADER_DIR="$uploader_dir" \
 PATH="$blocked_gh_bin:$PATH" \
-bash "$script" --yes --dist "$assets" --lane public-beta
+bash "$script" --yes --dist "$assets"
 
 assert_uploaded "$workspace"
-assert_eq public-beta "$(jq -r '.minBranch' "$workspace/workshop.json")"
-assert_eq v0.111.0 "$(jq -r '.min_game_version' "$workspace/content/couchcoop.json")"
+diff -r "$payload" "$workspace/content" >/dev/null || fail "--dist uploaded something other than the payload"
 
 # Leg 6: a first publish -- no mod_id.txt yet -- applies the default visibility over whatever the
 # workspace declared, and the uploader writes the new item ID.
@@ -340,7 +376,7 @@ rm -f "$workspace/mod_id.txt"
 MOCK_UPLOADER_LOG="$fixture/uploader.log" \
 COUCHCOOP_WORKSHOP_UPLOADER_DIR="$uploader_dir" \
 PATH="$blocked_gh_bin:$PATH" \
-bash "$script" --yes --dist "$assets" --lane stable
+bash "$script" --yes --dist "$assets"
 
 assert_uploaded "$workspace"
 assert_eq private "$(jq -r '.visibility' "$workspace/workshop.json")"
@@ -353,12 +389,14 @@ primary_config_before="$(sha256sum < "$workspace/workshop.json")"
 MOCK_UPLOADER_LOG="$fixture/uploader.log" \
 COUCHCOOP_WORKSHOP_UPLOADER_DIR="$uploader_dir" \
 PATH="$blocked_gh_bin:$PATH" \
-bash "$script" --dist "$assets" --lane public-beta --workspace "$dev_workspace"
+bash "$script" --dist "$assets" --workspace "$dev_workspace"
 
 assert_file "$dev_workspace/content/couchcoop.json"
 assert_eq unlisted "$(jq -r '.visibility' "$dev_workspace/workshop.json")"
 assert_eq 'CouchCoop DEV' "$(jq -r '.title' "$dev_workspace/workshop.json")"
 assert_eq 9999999999 "$(tr -d '\n' < "$dev_workspace/mod_id.txt")"
+# A DEV workspace declares the branch keys too, and they are deleted there as well.
+assert_eq null "$(jq -r '.minBranch' "$dev_workspace/workshop.json")"
 [[ ! -e "$dev_workspace/previews" ]] || fail "--workspace run created a previews directory"
 assert_eq "$primary_config_before" "$(sha256sum < "$workspace/workshop.json")"
 assert_uploaded "$dev_workspace"
@@ -372,7 +410,7 @@ assert_uploaded "$dev_workspace"
   MOCK_UPLOADER_LOG="$fixture/uploader.log" \
   COUCHCOOP_WORKSHOP_UPLOADER_DIR="$uploader_dir" \
   PATH="$blocked_gh_bin:$PATH" \
-  bash "$script" --dist "$assets" --lane public-beta --workspace dev-workspace
+  bash "$script" --dist "$assets" --workspace dev-workspace
 )
 assert_uploaded "$dev_workspace"
 
@@ -382,7 +420,7 @@ MOCK_UPLOADER_LOG="$fixture/uploader.log" \
 COUCHCOOP_WORKSHOP_UPLOADER_DIR="$uploader_dir" \
 COUCHCOOP_WORKSHOP_WORKSPACE_DIR="$dev_workspace" \
 PATH="$blocked_gh_bin:$PATH" \
-bash "$script" --dist "$assets" --lane stable
+bash "$script" --dist "$assets"
 assert_uploaded "$dev_workspace"
 assert_eq "$primary_config_before" "$(sha256sum < "$workspace/workshop.json")"
 
@@ -390,7 +428,7 @@ MOCK_UPLOADER_LOG="$fixture/uploader.log" \
 COUCHCOOP_WORKSHOP_UPLOADER_DIR="$uploader_dir" \
 COUCHCOOP_WORKSHOP_WORKSPACE_DIR="$fixture/no-such-workspace" \
 PATH="$blocked_gh_bin:$PATH" \
-bash "$script" --dist "$assets" --lane stable --workspace "$dev_workspace"
+bash "$script" --dist "$assets" --workspace "$dev_workspace"
 assert_uploaded "$dev_workspace"
 
 # Leg 10: workspace preconditions apply to the SELECTED workspace, not the default one.
@@ -401,103 +439,101 @@ head -c 1100000 /dev/zero > "$broken_workspace/image.png"
 expect_refused oversize-preview 'must be smaller than 1 MiB' \
   --dist "$assets" --workspace "$broken_workspace"
 
-# Leg 11: a dist directory holding TWO releases is refused, not resolved by "newest wins". A stale
-# archive from an earlier build is exactly how the wrong payload reaches an item.
+# Leg 11: a dist directory holding TWO release archives is refused, not resolved by "newest wins". A
+# stale archive from an earlier build is exactly how the wrong payload reaches an item.
 two_releases="$fixture/two-releases"
 mkdir -p "$two_releases"
-cp "$assets"/couchcoop-v0.1.0* "$two_releases/"
+cp "$assets"/couchcoop-v0.1.0.* "$two_releases/"
 cp "$assets/couchcoop-v0.1.0.zip" "$two_releases/couchcoop-v0.0.9.zip"
-expect_refused two-releases 'holds 2 different releases' \
+expect_refused two-releases 'holds 2 different release archives' \
   --dist "$two_releases" --workspace "$dev_workspace"
 
-# Leg 12: the lane is verified against the payload's own build-info.txt, so a mislabelled filename
-# cannot publish the stable payload as the beta revision.
-expect_refused mislabelled-lane "built for lane 'stable', not the requested 'public-beta'" \
-  --dist "$mislabelled" --lane public-beta --workspace "$dev_workspace"
+# ...and that also catches a leftover from the retired two-archive shape, which is the likelier
+# stale file for a while yet.
+expect_refused stale-lane-suffix 'holds 2 different release archives' \
+  --dist "$stale_lane_suffix" --workspace "$dev_workspace"
 
-# Leg 13: an unknown lane is a usage error, not a guess, and so is an ambiguous one.
-expect_refused unknown-lane 'unknown release lane' \
-  --dist "$assets" --lane experimental --workspace "$dev_workspace"
-expect_refused repeated-lane 'may be specified only once' \
-  --dist "$assets" --lane stable --lane public-beta --workspace "$dev_workspace"
+# Leg 12: --lane is gone with the per-lane archives it selected, and an unknown flag is a usage
+# error rather than a silently ignored argument.
+expect_refused retired-lane-flag 'usage: scripts/upload-workshop-release.sh' \
+  --dist "$assets" --lane "${lanes[0]}" --workspace "$dev_workspace"
 
-# Leg 14: a workspace may declare which lanes it carries, checked for EVERY lane BEFORE anything is
-# uploaded -- a two-lane run must not publish one and then refuse the other.
-printf 'public-beta\n' > "$dev_workspace/lane.txt"
-expect_refused workspace-lane-mismatch "may publish lane(s) [public-beta], but this run publishes 'stable'" \
+# Leg 13: a workspace may declare which lanes it carries. One payload carries every lane, so a
+# workspace has to allow them all -- a workspace pinned to a single lane can no longer publish a
+# release at all, because no single-lane payload exists to give it.
+printf '%s\n' "${lanes[1]}" > "$dev_workspace/lane.txt"
+expect_refused workspace-lane-mismatch "may publish lane(s) [${lanes[1]}], but this release carries '${lanes[0]}'" \
   --dist "$assets" --workspace "$dev_workspace"
 
-# ...and a workspace that carries BOTH names both, which is what one item serving two branch-linked
-# revisions needs. lane.txt stays local: the uploader never receives it.
-printf 'public-beta\nstable\n' > "$dev_workspace/lane.txt"
+# ...and a workspace naming every lane publishes. lane.txt stays local: the uploader never
+# receives it.
+printf '%s\n' "${lanes[@]}" > "$dev_workspace/lane.txt"
 MOCK_UPLOADER_LOG="$fixture/uploader.log" \
 COUCHCOOP_WORKSHOP_UPLOADER_DIR="$uploader_dir" \
 PATH="$blocked_gh_bin:$PATH" \
 bash "$script" --dist "$assets" --workspace "$dev_workspace"
-assert_uploaded "$dev_workspace" 2
+assert_uploaded "$dev_workspace"
 [[ ! -e "$dev_workspace/content/lane.txt" ]] || fail "lane.txt leaked into the uploaded content"
 rm -f "$dev_workspace/lane.txt"
 
-# Leg 15: a snapshot is refused for an ordinary workspace and published by a DEV CHANNEL, which is
+# Leg 14: a snapshot is refused for an ordinary workspace and published by a DEV CHANNEL, which is
 # what one is for. The opt-in is a marker file, so it travels with the item.
 expect_refused snapshot-no-dev-channel 'is not a dev channel' \
-  --dist "$snapshot_dist" --lane stable --workspace "$dev_workspace"
+  --dist "$snapshot_dist" --workspace "$dev_workspace"
 
 printf '' > "$dev_workspace/dev-channel"
 MOCK_UPLOADER_LOG="$fixture/uploader.log" \
 COUCHCOOP_WORKSHOP_UPLOADER_DIR="$uploader_dir" \
 PATH="$blocked_gh_bin:$PATH" \
-bash "$script" --dist "$snapshot_dist" --lane stable --workspace "$dev_workspace"
+bash "$script" --dist "$snapshot_dist" --workspace "$dev_workspace"
 assert_uploaded "$dev_workspace"
 [[ ! -e "$dev_workspace/content/dev-channel" ]] || fail "dev-channel marker leaked into the uploaded content"
 # A snapshot's filename carries only a commit sha, so a heading built from it says nothing about
 # which version the build is OF. It comes from the payload for exactly that reason.
-grep -qF 'Test build 0.1.1+snapshot.abcdef123456 — Slay the Spire 2 v0.107.1' \
+grep -qF 'Test build 0.1.1+snapshot.abcdef123456' \
   <<<"$(jq -r '.changeNote' "$dev_workspace/workshop.json")" \
   || fail "snapshot heading lost the base version: $(jq -r '.changeNote' "$dev_workspace/workshop.json")"
 
 # ...and the public listing still refuses one even with a dev channel sitting beside it.
-expect_refused snapshot-public 'is not a dev channel' --yes --dist "$snapshot_dist" --lane stable
+expect_refused snapshot-public 'is not a dev channel' --yes --dist "$snapshot_dist"
 rm -f "$dev_workspace/dev-channel"
 
-# Leg 16: the two ways an upload can end badly are told apart. A k_EResultTimeout is a slow commit
-# that lands, so the run reports it and carries on with a distinct exit code; anything else is a real
-# failure and must stop the release rather than leave it half published.
+# Leg 15: a failed upload stops the release and says to look at the item page before retrying --
+# an uploader's non-zero exit is a claim about the CLIENT, not about server state. There is no
+# longer a "timeout but it committed" arm: that pathology belonged to the branch keys, which are
+# not written any more, so k_EResultTimeout is now an ordinary failure like any other.
 real_uploader="$uploader_dir/ModUploader"
 cp "$real_uploader" "$fixture/ModUploader.real"
 
-cat > "$real_uploader" <<'MOCKEOF'
+for failure in 'Error occurred while uploading to the workshop! Result: k_EResultTimeout' 'something genuinely broke'; do
+  cat > "$real_uploader" <<MOCKEOF
 #!/usr/bin/env bash
-printf '%s\n' "$*" >> "$MOCK_UPLOADER_LOG"
-echo "Error occurred while uploading to the workshop! Result: k_EResultTimeout"
-exit 1
-MOCKEOF
-chmod +x "$real_uploader"
-timeout_status=0
-MOCK_UPLOADER_LOG="$fixture/uploader.log" \
-COUCHCOOP_WORKSHOP_UPLOADER_DIR="$uploader_dir" \
-PATH="$blocked_gh_bin:$PATH" \
-bash "$script" --dist "$assets" --workspace "$dev_workspace" >"$fixture/timeout.out" 2>&1 || timeout_status=$?
-assert_eq 3 "$timeout_status"
-grep -qF 'VERIFY on the item page' "$fixture/timeout.out" || fail "a timeout must tell the operator to verify"
-assert_uploaded "$dev_workspace" 2
-
-cat > "$real_uploader" <<'MOCKEOF'
-#!/usr/bin/env bash
-printf '%s\n' "$*" >> "$MOCK_UPLOADER_LOG"
-echo "something genuinely broke"
+printf '%s\n' "\$*" >> "\$MOCK_UPLOADER_LOG"
+echo "$failure"
 exit 7
 MOCKEOF
-chmod +x "$real_uploader"
-broken_status=0
-MOCK_UPLOADER_LOG="$fixture/uploader.log" \
-COUCHCOOP_WORKSHOP_UPLOADER_DIR="$uploader_dir" \
-PATH="$blocked_gh_bin:$PATH" \
-bash "$script" --dist "$assets" --workspace "$dev_workspace" >"$fixture/broken.out" 2>&1 || broken_status=$?
-assert_eq 1 "$broken_status"
-grep -qF 'failed to upload' "$fixture/broken.out" || fail "a real failure must say so"
-# It stopped at the FIRST lane instead of publishing the second.
-assert_uploaded "$dev_workspace" 1
+  chmod +x "$real_uploader"
+  failed_status=0
+  MOCK_UPLOADER_LOG="$fixture/uploader.log" \
+  COUCHCOOP_WORKSHOP_UPLOADER_DIR="$uploader_dir" \
+  PATH="$blocked_gh_bin:$PATH" \
+  bash "$script" --dist "$assets" --workspace "$dev_workspace" >"$fixture/failed.out" 2>&1 || failed_status=$?
+  assert_eq 1 "$failed_status"
+  grep -qF 'the upload failed' "$fixture/failed.out" || fail "a failed upload must say so: $failure"
+  grep -qF 'Check the item page before retrying' "$fixture/failed.out" \
+    || fail "a failed upload must tell the operator to verify: $failure"
+  assert_uploaded "$dev_workspace"
+done
 cp "$fixture/ModUploader.real" "$real_uploader"
+
+# The sweep: across every revision this test produced -- public and DEV, first publish and update,
+# release and snapshot -- not one carries a branch link.
+revision_count=0
+for recorded in "$fixture"/all-revisions/*.json; do
+  revision_count=$(( revision_count + 1 ))
+  jq -e 'has("minBranch") or has("maxBranch") | not' "$recorded" >/dev/null \
+    || fail "revision $recorded carries a branch link: $(jq -c '{minBranch, maxBranch}' "$recorded")"
+done
+[[ $revision_count -ge 10 ]] || fail "expected the sweep to cover every revision, saw $revision_count"
 
 echo "test-upload-workshop-release: ok"

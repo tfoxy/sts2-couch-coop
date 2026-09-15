@@ -3,21 +3,23 @@ set -euo pipefail
 
 usage() {
   cat >&2 <<'EOF'
-usage: scripts/upload-workshop-release.sh [--lane stable|public-beta] [--dist <directory>]
+usage: scripts/upload-workshop-release.sh [--dist <directory>]
                                           [--workspace <directory>] [--visibility private|public|unlisted|friends_only]
                                           [--yes]
 
-Publishes a CouchCoop release to a Steam Workshop item. With no arguments it takes
-the latest published GitHub Release and uploads EVERY lane to the public listing,
-one revision per lane, each linked to the game branch its payload was built for --
-which is how one item serves both the normal game and its public-beta branch.
+Publishes a CouchCoop release to a Steam Workshop item. A release is ONE archive
+carrying every reference lane, so this is ONE revision -- linked to no game branch,
+because the Steam client's periodic refresh picks an item's newest revision without
+looking at branch links. See docs/commit-and-release.md, "One payload, one revision".
 
---lane narrows the run to a single lane. --dist reads a locally built release
-directory instead of the GitHub Release; it must hold exactly one version.
+With no arguments it takes the latest published GitHub Release and publishes it to
+the public listing. --dist reads a locally built release directory instead; it must
+hold exactly one release archive.
 
 --workspace selects which item to publish, so one uploader binary can serve several
 (the public listing and a standing unlisted DEV item, say). A workspace may declare
-the lanes it is allowed to carry, one per line, in <workspace>/lane.txt.
+the lanes it is allowed to carry, one per line, in <workspace>/lane.txt; since one
+payload carries them all, a workspace must allow every lane of the release.
 
 --visibility is applied only on a first publish (no <workspace>/mod_id.txt yet) or
 when passed explicitly; otherwise the item keeps the visibility it has.
@@ -25,9 +27,8 @@ when passed explicitly; otherwise the item keeps the visibility it has.
 Publishing to the public listing asks for confirmation first. --yes skips that, and
 is the only way to do it non-interactively.
 
-Change notes come from CHANGELOG.md, the same section the GitHub Release body uses.
-The default lane's revision carries the list; other lanes' revisions point at it,
-because Steam shows one change note per revision and the list should not be duplicated.
+The change note is the CHANGELOG.md section, the same bytes the GitHub Release body
+uses, under a heading naming the payload's version.
 
 Environment:
   COUCHCOOP_WORKSHOP_UPLOADER_DIR    uploader directory (default: <repo>/.sts2/uploader)
@@ -47,23 +48,10 @@ visibility=""
 visibility_explicit=false
 workspace_arg=""
 dist_dir=""
-lane_filter=""
 assume_yes=false
 
 while [[ $# -gt 0 ]]; do
   case "$1" in
-    --lane)
-      [[ -z "$lane_filter" ]] || {
-        echo "--lane may be specified only once" >&2
-        exit 2
-      }
-      lane_filter="${2:-}"
-      release_lane_is_known "$lane_filter" || {
-        echo "unknown release lane '$lane_filter'; see scripts/lib/release-lanes.sh" >&2
-        exit 2
-      }
-      shift 2
-      ;;
     --yes)
       assume_yes=true
       shift
@@ -201,23 +189,19 @@ require_localized_uploader() {
 }
 
 [[ "$is_public_workspace" == true ]] && require_localized_uploader
-# Which lanes this run publishes. Default is every lane the release has, because one Workshop item
-# serves both game branches through one revision each; --lane narrows it.
-mapfile -t all_lanes < <(release_lane_discover "$repo_root/eng/Sts2.ReferenceSdk")
-lanes=()
-if [[ -n "$lane_filter" ]]; then
-  lanes=("$lane_filter")
-else
-  lanes=(${all_lanes[@]+"${all_lanes[@]}"})
-fi
+
+# The lanes this release carries. A release is ONE archive whose payload holds every lane, so this
+# is no longer a selection -- it is the list a workspace has to be allowed to carry.
+mapfile -t lanes < <(release_lane_discover "$repo_root/eng/Sts2.ReferenceSdk")
 [[ ${#lanes[@]} -gt 0 ]] || { echo "no release lane to publish" >&2; exit 1; }
 
 # A workspace may declare which lanes it is allowed to carry, one per line in lane.txt. Getting this
-# wrong is the worst outcome this script has: publishing the public-beta payload as the public
-# listing's only content breaks the mod for every subscriber on the normal game branch. It is a LIST,
-# not a single pin, because one item legitimately carries both. Checked for EVERY lane before
-# anything is uploaded, so a two-lane run cannot publish one and then refuse the other. The uploader
-# ignores workspace files it does not know, so lane.txt is never sent to Steam.
+# wrong is the worst outcome this script has: publishing a payload a workspace is not meant to carry
+# reaches every subscriber of that item. It is a LIST, not a single pin, and because one payload now
+# carries every lane, a workspace must allow ALL of them -- a workspace pinned to a single lane can
+# no longer publish a release, which is correct, because no single-lane payload exists any more.
+# Checked before anything is uploaded. The uploader ignores workspace files it does not know, so
+# lane.txt is never sent to Steam.
 if [[ -f "$workspace/lane.txt" ]]; then
   mapfile -t allowed_lanes < <(grep -vE '^\s*(#|$)' "$workspace/lane.txt" | tr -d '[:blank:]')
   for lane in ${lanes[@]+"${lanes[@]}"}; do
@@ -226,8 +210,8 @@ if [[ -f "$workspace/lane.txt" ]]; then
       [[ "$allowed" == "$lane" ]] && lane_allowed=true
     done
     [[ "$lane_allowed" == true ]] || {
-      echo "workspace $workspace may publish lane(s) [${allowed_lanes[*]}], but this run publishes '$lane'" >&2
-      echo "Publish a lane that workspace is for, or add the lane to its lane.txt." >&2
+      echo "workspace $workspace may publish lane(s) [${allowed_lanes[*]}], but this release carries '$lane'" >&2
+      echo "One payload carries every lane, so the workspace has to allow them all: add it to lane.txt." >&2
       exit 1
     }
   done
@@ -247,21 +231,23 @@ if [[ "$is_public_workspace" == true ]]; then
 fi
 
 # ---- resolve the release this run publishes ---------------------------------------------------
-# One release, one version, every lane. A directory holding two versions is refused rather than
-# resolved by "newest wins": a stale archive from an earlier build is exactly how the wrong payload
-# reaches an item, and the newest name is not evidence of what anyone meant to publish.
+# One release, one archive. A directory holding more than one is refused rather than resolved by
+# "newest wins": a stale archive from an earlier build is exactly how the wrong payload reaches an
+# item, and the newest name is not evidence of what anyone meant to publish. This also catches a
+# leftover from the retired two-archive shape -- `couchcoop-<tag>-public-beta.zip` is a second name,
+# so a directory still holding one is refused instead of publishing half of an old release.
 if [[ -n "$dist_dir" ]]; then
   [[ -d "$dist_dir" ]] || { echo "local release directory does not exist: $dist_dir" >&2; exit 1; }
-  lane_alternation="$(IFS='|'; echo "${all_lanes[*]}")"
   mapfile -t bases < <(
     find "$dist_dir" -maxdepth 1 -type f -name 'couchcoop-*.zip' -printf '%f\n' \
-      | sed -E "s/\.zip\$//; s/-($lane_alternation)\$//" \
+      | sed -E 's/\.zip$//' \
       | sort -u
   )
   [[ ${#bases[@]} -ne 0 ]] || { echo "no couchcoop release archive found in: $dist_dir" >&2; exit 1; }
   [[ ${#bases[@]} -eq 1 ]] || {
-    echo "$dist_dir holds ${#bases[@]} different releases: ${bases[*]}" >&2
-    echo "Keep one, or point --dist at a directory that holds only the release you mean to publish." >&2
+    echo "$dist_dir holds ${#bases[@]} different release archives: ${bases[*]}" >&2
+    echo "A release publishes exactly one couchcoop-<tag>.zip. Keep the one you mean to publish," >&2
+    echo "or point --dist at a directory that holds only it." >&2
     exit 1
   }
   archive_base="${bases[0]}"
@@ -273,12 +259,8 @@ else
     exit 1
   }
   archive_base="couchcoop-${tag}"
-  patterns=()
-  for lane in ${lanes[@]+"${lanes[@]}"}; do
-    patterns+=(--pattern "$(release_lane_archive_name "$archive_base" "$lane")")
-  done
   gh release download "$tag" --repo tfoxy/sts2-couch-coop \
-    "${patterns[@]}" --pattern "$archive_base.SHA256SUMS" --dir "$stage_dir"
+    --pattern "$archive_base.zip" --pattern "$archive_base.SHA256SUMS" --dir "$stage_dir"
   dist_dir="$stage_dir"
 fi
 
@@ -286,7 +268,9 @@ fi
   echo "release archives do not carry a vMAJOR.MINOR.PATCH tag: $archive_base" >&2
   exit 1
 }
+archive_path="$dist_dir/$archive_base.zip"
 checksums_path="$dist_dir/$archive_base.SHA256SUMS"
+[[ -f "$archive_path" ]] || { echo "release is missing its archive: $archive_path" >&2; exit 1; }
 [[ -f "$checksums_path" ]] || { echo "release is missing its checksums: $checksums_path" >&2; exit 1; }
 
 # A snapshot is not a release, so the public listing will not take one; the DEV channel exists
@@ -299,9 +283,7 @@ if [[ "$tag" == snapshot-* && ! -f "$workspace/dev-channel" ]]; then
 fi
 
 # ---- change notes ------------------------------------------------------------------------------
-# Steam shows one change note per revision, and a release publishes one revision per lane. Repeating
-# the whole list on each would be noise, so the default lane's revision carries it and the others
-# point at that one. The list itself is the same bytes the GitHub Release body uses.
+# One revision, one note: the CHANGELOG section, the same bytes the GitHub Release body uses.
 if [[ "$tag" == snapshot-* ]]; then
   release_notes="Test build of an unreleased commit. Not a release; see the GitHub repository for what is in it."
 else
@@ -310,27 +292,6 @@ else
     exit 1
   }
 fi
-
-# <lane> <payload version> -> the revision's change note.
-#
-# The heading names the VERSION and the GAME BUILD, because a Steam revision otherwise says neither:
-# the page shows only a branch chip, and the tag is not the version for a snapshot -- a snapshot's
-# filename carries a commit sha while its payload carries `<base version>+snapshot.<sha>`. Taking the
-# version from the payload covers both cases with one rule, and for a tagged release the gate has
-# already held the two equal.
-lane_change_note() {
-  local lane="$1" version="$2" heading game_build
-  game_build="$(release_lane_game_build "$lane")"
-  if [[ "$tag" == snapshot-* ]]; then heading="Test build $version"; else heading="Release v$version"; fi
-  [[ "$lane" == "$RELEASE_LANE_DEFAULT" ]] || heading="$heading ($lane)"
-  heading="$heading — Slay the Spire 2 $game_build"
-  if [[ "$lane" == "$RELEASE_LANE_DEFAULT" ]]; then
-    printf '%s\n\n%s\n' "$heading" "$release_notes"
-  else
-    printf '%s\n\nBuilt for the %s branch of the game. The list of changes is on this update'"'"'s %s revision.\n' \
-      "$heading" "$lane" "$RELEASE_LANE_DEFAULT"
-  fi
-}
 
 # ---- confirm before touching the public listing --------------------------------------------------
 # The default workspace is the public listing. Publishing to it is the one action here that reaches
@@ -341,9 +302,7 @@ if [[ "$is_default_workspace" == true && "$assume_yes" != true ]]; then
   printf 'About to publish to the PUBLIC Workshop listing:\n' >&2
   printf '  item      %s\n' "$(cat "$workspace/mod_id.txt" 2>/dev/null || echo '(new item)')" >&2
   printf '  release   %s\n' "$tag" >&2
-  for lane in ${lanes[@]+"${lanes[@]}"}; do
-    printf '  revision  %-12s -> game branch %s\n' "$lane" "$(release_lane_steam_branch "$lane")" >&2
-  done
+  printf '  payload   %s  (lanes: %s)\n' "$archive_base.zip" "${lanes[*]}" >&2
   [[ -t 0 ]] || {
     echo "Refusing: stdin is not a terminal and --yes was not passed." >&2
     exit 1
@@ -352,106 +311,75 @@ if [[ "$is_default_workspace" == true && "$assume_yes" != true ]]; then
   [[ "$reply" == [yY] || "$reply" == [yY][eE][sS] ]] || { echo "Aborted." >&2; exit 1; }
 fi
 
-# ---- publish, one revision per lane ---------------------------------------------------------------
-timed_out_lanes=()
-first_lane=true
-for lane in ${lanes[@]+"${lanes[@]}"}; do
-  archive_name="$(release_lane_archive_name "$archive_base" "$lane")"
-  archive_path="$dist_dir/$archive_name"
-  [[ -f "$archive_path" ]] || { echo "release is missing lane $lane's archive: $archive_path" >&2; exit 1; }
+# ---- publish one revision --------------------------------------------------------------------
+# The gate reads the archive's own couchcoop/build-info.txt. A tagged release's payload version is
+# the tag without its v; a snapshot's is stamped from the mod manifest and is not derivable from the
+# filename, so the gate checks the payload's internal consistency instead of an expected string.
+version_args=()
+[[ "$tag" == snapshot-* ]] || version_args=(--version "${tag#v}")
+"$repo_root/scripts/verify-release-archive.sh" \
+  --archive "$archive_path" --checksums "$checksums_path" ${version_args[@]+"${version_args[@]}"}
 
-  # The gate reads the archive's own couchcoop/build-info.txt, so a payload built for another game
-  # branch cannot reach the revision meant for this one. A tagged release's payload version is the
-  # tag without its v; a snapshot's is stamped from the mod manifest and is not derivable from the
-  # filename, so the gate checks the payload's internal consistency instead of an expected string.
-  version_args=()
-  [[ "$tag" == snapshot-* ]] || version_args=(--version "${tag#v}")
-  "$repo_root/scripts/verify-release-archive.sh" \
-    --archive "$archive_path" --checksums "$checksums_path" --lane "$lane" ${version_args[@]+"${version_args[@]}"}
+extract_dir="$stage_dir/extract"
+rm -rf "$extract_dir"
+unzip -q "$archive_path" -d "$extract_dir"
+[[ -d "$extract_dir/couchcoop" ]] || { echo "release archive has no couchcoop payload directory" >&2; exit 1; }
 
-  extract_dir="$stage_dir/extract-$lane"
-  rm -rf "$extract_dir"
-  unzip -q "$archive_path" -d "$extract_dir"
-  [[ -d "$extract_dir/couchcoop" ]] || { echo "release archive has no couchcoop payload directory" >&2; exit 1; }
+# The heading names the VERSION, because a Steam revision otherwise says nothing about what it is,
+# and the tag is not the version for a snapshot -- a snapshot's filename carries only a commit sha
+# while its payload carries `<base version>+snapshot.<sha>`. Taking the version from the payload
+# covers both cases with one rule, and for a tagged release the gate has already held the two equal.
+payload_version="$(jq -er '.version' "$extract_dir/couchcoop/build-info.txt")"
+if [[ "$tag" == snapshot-* ]]; then heading="Test build $payload_version"; else heading="Release v$payload_version"; fi
+change_note="$(printf '%s\n\n%s\n' "$heading" "$release_notes")"
 
-  # minBranch/maxBranch are what make one item serve two game branches: Steam gives a subscriber the
-  # revision whose linked range covers the game version they are running. They are derived from the
-  # lane rather than read from the workspace, because the lane is the thing being published.
-  steam_branch="$(release_lane_steam_branch "$lane")"
-  # The payload is the only thing that knows its own version -- a snapshot's filename carries just a
-  # commit sha -- and it has already been held consistent with the manifest by the gate above.
-  payload_version="$(jq -er '.version' "$extract_dir/couchcoop/build-info.txt")"
-  change_note="$(lane_change_note "$lane" "$payload_version")"
-  # A published item's visibility is the maintainer's setting, not this script's: it is applied only
-  # on a first publish, or when --visibility was passed explicitly. mod_id.txt is what proves the item
-  # exists -- workshop.json is required above, so its presence would prove nothing.
-  config_for_lane="$config_source"
-  if [[ "$is_public_workspace" == true ]]; then
-    config_for_lane="$localized_config"
-    if [[ "$first_lane" != true ]]; then
-      config_for_lane="$stage_dir/workshop-without-localizations.json"
-      jq 'del(.localizations)' "$localized_config" > "$config_for_lane"
-    fi
-  fi
-  if [[ "$visibility_explicit" == true || ! -f "$workspace/mod_id.txt" ]]; then
-    jq --arg visibility "$visibility" --arg change_note "$change_note" --arg branch "$steam_branch" \
-      '.visibility = $visibility | .changeNote = $change_note | .minBranch = $branch | .maxBranch = $branch' \
-      "$config_for_lane" > "$stage_dir/workshop.json"
-    visibility_report="$visibility"
-  else
-    jq --arg change_note "$change_note" --arg branch "$steam_branch" \
-      '.changeNote = $change_note | .minBranch = $branch | .maxBranch = $branch' \
-      "$config_for_lane" > "$stage_dir/workshop.json"
-    visibility_report="$(jq -r '.visibility // "unset"' "$config_for_lane") (left as the workspace declares it)"
-  fi
+config_for_upload="$config_source"
+[[ "$is_public_workspace" != true ]] || config_for_upload="$localized_config"
 
-  # Gallery previews are intentionally managed manually: with no previews/ directory in the
-  # workspace, the uploader leaves the item's existing gallery untouched.
-  rm -rf -- "$workspace/content"
-  mkdir -p "$workspace/content"
-  cp -a "$extract_dir/couchcoop/." "$workspace/content/"
-  cp "$stage_dir/workshop.json" "$workspace/workshop.json"
-
-  printf 'Uploading %s (lane %s -> game branch %s) from %s with visibility %s...\n' \
-    "$tag" "$lane" "$steam_branch" "$workspace" "$visibility_report"
-  # `set -e` would abort on the failing pipeline before the status could be read, and PIPESTATUS does
-  # not survive an `|| var=$?`. Disable the trap for exactly this call and read PIPESTATUS on the very
-  # next line, which is the only place it is still the uploader's.
-  set +e
-  (cd "$uploader_dir" && ./ModUploader upload -w "$workspace") 2>&1 | tee "$stage_dir/upload-$lane.log"
-  upload_status=${PIPESTATUS[0]}
-  set -e
-  if [[ "$upload_status" -ne 0 ]]; then
-    # MEASURED: an upload whose workshop.json carries a branch range sits in CommittingChanges for
-    # minutes and then the uploader gives up with k_EResultTimeout -- while the change commits
-    # anyway. That is the client running out of patience, not Steam rejecting the update, so it is
-    # reported and the run continues rather than aborting a half-published release.
-    if grep -qF 'k_EResultTimeout' "$stage_dir/upload-$lane.log"; then
-      timed_out_lanes+=("$lane")
-      echo "note: lane $lane reported k_EResultTimeout; that usually still commits -- verify below." >&2
-    else
-      echo "lane $lane failed to upload" >&2
-      exit 1
-    fi
-  fi
-  first_lane=false
-done
-
-# The second branch revision intentionally omits localizations, but the maintainer's workspace must
-# remain an inspectable complete generated config after a successful run.
-if [[ "$is_public_workspace" == true ]]; then
-  jq --slurpfile localized "$localized_config" \
-    '.title = $localized[0].title | .description = $localized[0].description |
-     .language = $localized[0].language | .localizations = $localized[0].localizations' \
-    "$stage_dir/workshop.json" > "$stage_dir/workshop-complete.json"
-  cp "$stage_dir/workshop-complete.json" "$workspace/workshop.json"
+# minBranch/maxBranch are DELETED, never written -- including out of whatever a workspace's own
+# workshop.json still declares from the retired branch-linked shape. A branch-linked revision is
+# only served to the branch it is linked to by the client's SUBSCRIBE path; the periodic refresh
+# that runs every ~45 minutes takes an item's NEWEST revision regardless of branch, so branch links
+# cannot keep two lanes apart on one item. See docs/commit-and-release.md, "One payload, one
+# revision". Deleting them also retires the multi-minute CommittingChanges/k_EResultTimeout commit
+# that only ever happened to uploads carrying these keys.
+#
+# A published item's visibility is the maintainer's setting, not this script's: it is applied only
+# on a first publish, or when --visibility was passed explicitly. mod_id.txt is what proves the item
+# exists -- workshop.json is required above, so its presence would prove nothing.
+if [[ "$visibility_explicit" == true || ! -f "$workspace/mod_id.txt" ]]; then
+  jq --arg visibility "$visibility" --arg change_note "$change_note" \
+    'del(.minBranch, .maxBranch) | .visibility = $visibility | .changeNote = $change_note' \
+    "$config_for_upload" > "$stage_dir/workshop.json"
+  visibility_report="$visibility"
+else
+  jq --arg change_note "$change_note" \
+    'del(.minBranch, .maxBranch) | .changeNote = $change_note' \
+    "$config_for_upload" > "$stage_dir/workshop.json"
+  visibility_report="$(jq -r '.visibility // "unset"' "$config_for_upload") (left as the workspace declares it)"
 fi
 
-if [[ ${#timed_out_lanes[@]} -gt 0 ]]; then
-  echo >&2
-  echo "Uploaded ${#lanes[@]} revision(s); lane(s) [${timed_out_lanes[*]}] reported k_EResultTimeout." >&2
-  echo "That is the uploader giving up on a slow commit, not a rejection. VERIFY on the item page" >&2
-  echo "that each revision is linked to the game branch it should be, and do not blindly retry --" >&2
-  echo "a retry republishes the same content and waits out the same timeout." >&2
-  exit 3
+# Gallery previews are intentionally managed manually: with no previews/ directory in the
+# workspace, the uploader leaves the item's existing gallery untouched.
+rm -rf -- "$workspace/content"
+mkdir -p "$workspace/content"
+cp -a "$extract_dir/couchcoop/." "$workspace/content/"
+cp "$stage_dir/workshop.json" "$workspace/workshop.json"
+
+printf 'Uploading %s from %s with visibility %s...\n' "$tag" "$workspace" "$visibility_report"
+# `set -e` would abort on the failing pipeline before the status could be read, and PIPESTATUS does
+# not survive an `|| var=$?`. Disable the trap for exactly this call and read PIPESTATUS on the very
+# next line, which is the only place it is still the uploader's.
+set +e
+(cd "$uploader_dir" && ./ModUploader upload -w "$workspace") 2>&1 | tee "$stage_dir/upload.log"
+upload_status=${PIPESTATUS[0]}
+set -e
+if [[ "$upload_status" -ne 0 ]]; then
+  echo "the upload failed" >&2
+  # An uploader's non-zero exit is a claim about the CLIENT, not about server state: this is how a
+  # slow commit was once read as a rejection, and the change had landed. Look at the item page
+  # before running anything again.
+  echo "Check the item page before retrying: a non-zero exit says the client gave up, not that" >&2
+  echo "Steam rejected the update, and a blind retry republishes the same content." >&2
+  exit 1
 fi

@@ -12,6 +12,17 @@ public static partial class CouchCoopModEntry
     private const string ImplementationTypeName = "CouchCoop.Mod.CouchCoopMod";
     private static bool _initialized;
 
+    /// <summary>
+    /// Simple names already reported as a foreign-copy conflict, so a resolve storm cannot flood godot.log.
+    /// </summary>
+    /// <remarks>
+    /// The conflict throw travels out through <c>Resolving</c> / <c>AssemblyResolve</c> handlers that swallow
+    /// it (by contract — a handler must return null, not throw), so the CLR's own "could not load" is all a
+    /// player would otherwise see. The message has to be logged where it is DECIDED, and the CLR will ask for
+    /// the same name repeatedly.
+    /// </remarks>
+    private static readonly HashSet<string> ReportedConflicts = new(StringComparer.Ordinal);
+
     public static void Init()
     {
         if (_initialized)
@@ -31,8 +42,37 @@ public static partial class CouchCoopModEntry
             var loadContext = AssemblyLoadContext.GetLoadContext(loaderAssembly)
                 ?? throw new InvalidOperationException("Unable to resolve the CouchCoop load context.");
 
+            // WHICH LANE. One payload ships an implementation per game build under `lanes/<floor version>/`;
+            // this picks the highest one at or below the running game. A flat payload (every dev deploy) has
+            // no `lanes/` directory and takes the pre-lane path unchanged and silently. See
+            // CouchCoopLaneSelection for why the decision cannot simply call spirectl's version ladder.
+            var selection = CouchCoopLaneSelection.Select(
+                modDirectory,
+                CouchCoopLaneSelection.ResolveGameVersion());
+            if (selection.Refusal is not null)
+            {
+                // Refuse BEFORE loading anything. A lane built for a different game build loads fine and then
+                // throws from inside a game callback, where nothing names CouchCoop as the cause.
+                Log.Error($"[couch-coop] {selection.Refusal}");
+                return;
+            }
+
+            // The lane FIRST, the mod root second: the lane owns CouchCoop.Mod.dll / CouchCoop.Spirectl.dll,
+            // the root owns everything both lanes share.
+            string[] probeDirectories = selection.LaneDirectory is null
+                ? [modDirectory]
+                : [selection.LaneDirectory, modDirectory];
+
+            if (selection.LaneDirectory is not null)
+            {
+                Log.Info(
+                    $"[couch-coop] game {selection.DetectedVersion} -> lane '{selection.LaneDirectory}'");
+            }
+
             Assembly ResolveFromModDirectory(AssemblyName assemblyName)
             {
+                var assemblyPath = CouchCoopLaneSelection.FindAssembly(probeDirectories, assemblyName.Name);
+
                 var loadedAssembly = AppDomain.CurrentDomain.GetAssemblies()
                     .FirstOrDefault(candidate => string.Equals(
                         candidate.GetName().Name,
@@ -40,15 +80,42 @@ public static partial class CouchCoopModEntry
                         StringComparison.Ordinal));
                 if (loadedAssembly is not null)
                 {
+                    // Already loaded by simple name is normally the right answer — it is what keeps one copy
+                    // of the shared types in the process. But if we ship that name ourselves and the loaded
+                    // copy is a DIFFERENT FILE, silently using it runs the other lane, or a second installed
+                    // copy of CouchCoop, with no symptom until something binds a member that moved.
+                    var conflict = CouchCoopLaneSelection.DescribeLoadedCopyConflict(
+                        assemblyName.Name,
+                        SafeLocation(loadedAssembly),
+                        assemblyPath);
+                    if (conflict is not null)
+                    {
+                        if (assemblyName.Name is { } name && ReportedConflicts.Add(name))
+                        {
+                            if (conflict.Fatal)
+                            {
+                                Log.Error($"[couch-coop] {conflict.Message}");
+                            }
+                            else
+                            {
+                                Log.Warn($"[couch-coop] {conflict.Message}");
+                            }
+                        }
+
+                        if (conflict.Fatal)
+                        {
+                            throw new InvalidOperationException(conflict.Message);
+                        }
+                    }
+
                     return loadedAssembly;
                 }
 
-                var assemblyPath = Path.Combine(modDirectory, $"{assemblyName.Name}.dll");
-                if (!File.Exists(assemblyPath))
+                if (assemblyPath is null)
                 {
                     throw new FileNotFoundException(
-                        $"Unable to resolve '{assemblyName.Name}' from '{modDirectory}'.",
-                        assemblyPath);
+                        $"Unable to resolve '{assemblyName.Name}' from "
+                        + $"'{string.Join("', '", probeDirectories)}'.");
                 }
 
                 return loadContext.LoadFromAssemblyPath(assemblyPath);
@@ -93,6 +160,27 @@ public static partial class CouchCoopModEntry
         catch (Exception ex)
         {
             Log.Error($"[couch-coop] bootstrap loader failed: {ex}");
+        }
+    }
+
+    /// <summary>
+    /// <see cref="Assembly.Location"/>, or <see langword="null"/> when the assembly has none.
+    /// </summary>
+    /// <remarks>
+    /// A dynamic assembly throws on <c>Location</c> under some hosts and returns an empty string under
+    /// others. Both mean the same thing here — "no file to compare" — and the caller treats that as "no
+    /// conflict", because refusing on an incomparable path would take the mod down over nothing.
+    /// </remarks>
+    private static string? SafeLocation(Assembly assembly)
+    {
+        try
+        {
+            var location = assembly.Location;
+            return string.IsNullOrEmpty(location) ? null : location;
+        }
+        catch (NotSupportedException)
+        {
+            return null;
         }
     }
 
