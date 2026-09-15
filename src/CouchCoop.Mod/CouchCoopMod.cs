@@ -78,8 +78,23 @@ public static class CouchCoopMod
             // ANYTHING can read or write it. Everything those caches hold is derived from the game's content, so
             // a cache written by another build — or by the other Steam branch — serves wrong pixels for the right
             // key. It goes first because it can: no runtime, no game state, just the install on disk and Steam.
-            Server.CouchCoopCacheRoot.LogSink = Session.CouchCoopLog.Info;
-            Server.CouchCoopCacheRoot.Warm();
+            //
+            // AND IT CANNOT TAKE INIT WITH IT. A cache is an optimisation; every line below this one is the
+            // mod. Warm() is total in its own right, but the failure that is total-proof from the inside is
+            // not the only one — this type failing to INITIALISE surfaces here, at the first touch, and no
+            // try inside it would ever run. Above this frame there is only the loader's blanket catch, which
+            // logs and returns: a mod that does nothing, because a cache could not be set up.
+            try
+            {
+                Server.CouchCoopCacheRoot.LogSink = Session.CouchCoopLog.Info;
+                Server.CouchCoopCacheRoot.Warm();
+            }
+            catch (Exception exception)
+            {
+                Session.CouchCoopLog.Info(
+                    $"[couch-coop] cache unavailable: {exception.GetType().Name}: {exception.Message} "
+                    + "-- continuing without one");
+            }
 
             // Enumerate the atlas pages THIS build ships, once, while we are on the main thread with an engine.
             // Published on every session envelope so the browser's idle prefetch stops guessing: the game's

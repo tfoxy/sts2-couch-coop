@@ -31,6 +31,8 @@ internal static class CacheRootPurgeTests
         AVersionNameIsReducedToOneSafeSegment();
         VersionNamesCompareNumerically();
         LegacyLayoutIsSweptOnce();
+        NoFailureAnywhereInResolutionEscapes();
+        ARootAndAQuotaAreResolvedTogetherOrNotAtAll();
         Console.WriteLine("cache root: ok");
     }
 
@@ -282,6 +284,64 @@ internal static class CacheRootPurgeTests
         Expect(WaitUntilGone(legacyAsset), "the pre-scoping asset cache is reclaimed");
         Expect(WaitUntilGone(legacyAstc), "and so is the pre-scoping astc cache");
     }
+
+    // THE CHEAPEST GUARD AGAINST THE WHOLE CLASS, and the class is worth naming. Resolution builds two NAMED
+    // MUTEXES — the cross-process gate and the quota's — and both used to sit OUTSIDE the guarded region, one
+    // before it and one in the final `return`. On Unix a named mutex is backed by files the runtime keeps under
+    // $TMPDIR, which on macOS is a per-user /var/folders/... path that gets purged out from under a long-running
+    // process; a failure there is not necessarily an IOException, so the old narrow predicate would not have held
+    // it either. A throw from either escaped into a Lazy(ExecutionAndPublication), which caches the exception for
+    // the life of the process, then out through Warm() at the top of mod init and into the loader's blanket
+    // catch — one log line, and a mod that does nothing at all, because a CACHE could not be set up.
+    //
+    // A named-mutex failure cannot be induced in-process, so the trigger here is the other real throw site with
+    // the same shape: the quota resolves its coordination path through Path.GetFullPath, which refuses a path
+    // carrying a NUL. What is being asserted is structural — that a throw from the quota construction cannot
+    // leave ResolveOnce — and it holds for any exception, which is the point of a total boundary.
+    private static void NoFailureAnywhereInResolutionEscapes()
+    {
+        var poisoned = Path.Combine(Path.GetTempPath(), "couchcoop-cache-root-\0-" + Guid.NewGuid().ToString("N"));
+
+        // First: prove the construction really is a throw site, so this test cannot quietly stop testing
+        // anything if the failure mode moves.
+        var threw = false;
+        try { ManagedCacheQuota.ForCacheRoot(Path.Combine(poisoned, "v0.107.1")); }
+        catch (Exception) { threw = true; }
+        Expect(threw, "the quota construction is a real throw site");
+
+        var lines = new List<string>();
+        CouchCoopCacheRoot.Resolution resolution;
+        try
+        {
+            resolution = CouchCoopCacheRoot.ResolveOnce(poisoned, Content(), lines.Add, sweepLegacy: false);
+        }
+        catch (Exception exception)
+        {
+            throw new Exception($"cache root: resolution let a {exception.GetType().Name} escape");
+        }
+
+        Expect(resolution.VersionRoot is null, "a failure anywhere in resolution disables the cache");
+        Expect(resolution.Quota is null, "…and hands back no quota");
+        Expect(lines.Any(l => l.Contains("cache disabled", StringComparison.Ordinal)), "…and says so out loud");
+    }
+
+    // The pair is not two independent answers. CouchCoopGeoclipStore dereferences the quota unconditionally once
+    // it has a root, so "a root, but no quota" is a null deref waiting for the first bake — which is why a quota
+    // that cannot be built has to take the root down with it rather than degrade to unmetered writes.
+    private static void ARootAndAQuotaAreResolvedTogetherOrNotAtAll()
+    {
+        using var temp = new TempDir();
+
+        foreach (var content in new[] { Content(), Content() with { GameVersion = "" } })
+        {
+            var resolution = Resolve(temp, content);
+            Expect(
+                (resolution.VersionRoot is null) == (resolution.Quota is null),
+                $"a root and a quota are resolved together or not at all ({Show(content.GameVersion)})");
+        }
+    }
+
+    private static string Show(string value) => value.Length == 0 ? "(no version)" : value;
 
     // ---- helpers ----------------------------------------------------------------------------------------
 
