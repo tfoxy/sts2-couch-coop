@@ -561,15 +561,17 @@ Verified live on a running seat (`/proc/<pid>/cmdline` is exactly `SlayTheSpire2
 ### When a seat gets no user dir of its own
 
 `HeadlessUserDirSeeder.Prepare` repoints `XDG_DATA_HOME` (Linux) / `APPDATA` (Windows) at a per-slot directory.
-There is no macOS equivalent — Godot derives `user://` from `$HOME` alone there and has no `--user-dir` — so a
-macOS seat runs in the HOST's user dir. Isolation itself is deferred (it needs a Mac to verify); what the host
-does instead, per seat, is stop the sharing from destroying things:
+On macOS Godot has no equivalent data-root variable, but it does resolve the custom `user://` under
+`$HOME/Library/Application Support/SlayTheSpire2`. The launcher makes `HOME` the slot base and builds a
+non-recursive fake-home farm: it links every other entry from the real home, retains real `Library` →
+`Application Support` → `SlayTheSpire2` ancestors, and seeds that final private directory normally. This keeps
+Steam reachable without turning a recursive walk into an ancestor cycle. CI proves the farm and stock Godot's
+`HOME` behavior, but no full game session has yet run on a Mac; Steam, FMOD, or `getpwuid` consumers may still
+escape `HOME`.
 
-| shared thing | without the fix | what the launcher does |
-| --- | --- | --- |
-| `user://logs/godot.log` | Godot's `RotatedFileLogger` reopens its path `WRITE` in its constructor, so **every seat spawn truncated the host's live log** — which is why the macOS bug report that started this arrived with nothing attached | `SeatGameArguments` adds `--log-file <userDir>/couch-coop/seat-logs/slot-N.log`. `--log-file` *replaces* the project logger rather than adding to it, and disables rotation, so the seat never opens the host's file. The same path is what `CaptureConnectionLogsLocked` binds as the attempt's **client** log, which used to be `unavailable` on every macOS failure |
-| `user://couch-coop/browser-port` | last seat to start overwrote the host's record; first seat to stop deleted it | `BrowserPortFile.FileNameFor` scopes a SEAT to `browser-port-slot-N`. The host's name is fixed — `scripts/lib/instance-port.mjs` and the bring-up scripts read it, and a seat's port is `SlotToPort(slot)`, never discovered from a file |
-| `settings.save` (the mod list) | unfixed, and deliberately: pinning writes into a seat's OWN settings file, and without isolation that file is the host's. See the seat-copy table below | `seat-build-mismatch` says so in its detail (`SeatBuildMismatchDetail`), so the failure reads as deterministic rather than random |
+If this preparation fails, the launcher falls back to the host profile, passes the seat an explicit `--log-file`,
+and raises `host-seat-profile-shared`. That warning is a genuine fallback on every platform, not the normal
+macOS path.
 
 `HeadlessHostWatchdog` also covers macOS now: `kill(pid, 0)` for host liveness and `Process.StartTime` for
 PID-reuse identity, which is an absolute kernel timestamp there. **The Linux path still reads `/proc` and is
@@ -613,7 +615,7 @@ Three independent defences, none of which needs anyone to unsubscribe:
 | where | mechanism | files |
 | --- | --- | --- |
 | deploy | a dev deploy stamps `9999.0.0+dev.<sha>` into the DEPLOYED manifest, so it cannot lose a version comparison, and writes `build-info.txt` beside it. The stale-file sweep now removes both, because `PreserveNewest` never replaces a newer stale manifest | `scripts/build-local-mod.sh`, `scripts/stamp-local-mod.sh` (self-test `scripts/test-stamp-local-mod.sh`) |
-| seat seeding | the seeded profile's `mod_settings.mod_list` row for the copy the host is NOT running is written `is_enabled: false`, so the seat's choice is not a version comparison at all. Symmetric — a Workshop-running host disables the seat's local row. **Only runs where the seat HAS a seeded profile**: `PinSeatProfiles` is called from inside `Prepare`, so a host with no user-dir isolation (macOS) never pins, and must not — the only `settings.save` on such a machine is the host's own | `Session/HeadlessSeatModSelection.cs`, called from `HeadlessUserDirSeeder.Prepare` |
+| seat seeding | the seeded profile's `mod_settings.mod_list` row for the copy the host is NOT running is written `is_enabled: false`, so the seat's choice is not a version comparison at all. Symmetric — a Workshop-running host disables the seat's local row. `PinSeatProfiles` runs inside successful `Prepare` calls, including the macOS fake-home path; a preparation fallback deliberately does not pin because it would be editing the host's own `settings.save` | `Session/HeadlessSeatModSelection.cs`, called from `HeadlessUserDirSeeder.Prepare` |
 | seat runtime | the seat compares `COUCHCOOP_HOST_MOD_BUILD` with its own build at mod init and, on a difference, reports `couchcoop-build-mismatch` through the control channel and force-exits before any patch or join. The host surfaces it as the `seat-build-mismatch` issue, whose next action is "keep only one copy installed" | `Session/HeadlessSeatBuildGuard.cs`, `Connections/CouchCoopModBuildIdentity.cs`, `HeadlessClientManager.Connections.cs` |
 
 The per-mod enable flag lives in `steam/<id>/settings.save` (and `default/<n>/settings.save`) under
@@ -776,9 +778,9 @@ panel is no longer mounted; its internal narration remains available for diagnos
   code. `isWarning: true` records it with the `Degraded` outcome — orange ⚠, not failure red — for a condition
   that is running under a limitation rather than stopped. Four codes exist: `host-service-failed` (no browser
   listener), `host-patch-failed` (Harmony hooks could not be installed, so no QR button and no seat joining),
-  `host-seat-profile-shared` (warning: this platform has no per-seat Godot user dir, so every player on the
-  machine shares one settings/save profile — macOS, where `user://` comes from `$HOME` and there is no
-  `--user-dir`; the seat's *log* is no longer shared, see the seat launch contract), and
+  `host-seat-profile-shared` (warning: a per-seat Godot user-dir preparation failed, so every player on the
+  machine shares one settings/save profile; macOS normally uses its fake-home farm, and the seat's *log* is
+  still separate — see the seat launch contract), and
   `host-no-inbound-connections` (warning: see below). **A new code needs a
   `CouchCoopConnectionPanel.IssueKey` mapping and its catalog pair**: unmapped codes fall through to the join
   copy, which on a Host service row is a wrong sentence, not a missing one.

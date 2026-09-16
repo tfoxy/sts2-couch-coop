@@ -1,0 +1,20 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup>
+    <OutputType>Exe</OutputType>
+    <TargetFramework>net8.0</TargetFramework>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <Nullable>enable</Nullable>
+    <LangVersion>latest</LangVersion>
+    <RollForward>Major</RollForward>
+    <CouchCoopRequiresSts2Assemblies>false</CouchCoopRequiresSts2Assemblies>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <!-- Compile the shipping implementation and its existing filesystem suite directly. This stays game-free
+         while preventing a macOS-only copy from drifting away from the mod's actual seeder. -->
+    <Compile Include="../../src/CouchCoop.Mod/Session/HeadlessUserDirSeeder.cs" Link="HeadlessUserDirSeeder.cs" />
+    <Compile Include="../../src/CouchCoop.Mod/Session/HeadlessSeatModSelection.cs" Link="HeadlessSeatModSelection.cs" />
+    <Compile Include="../../src/CouchCoop.Mod/Connections/CouchCoopModBuildIdentity.cs" Link="CouchCoopModBuildIdentity.cs" />
+    <Compile Include="../CouchCoop.Mod.Tests/HeadlessUserDirSeederTests.cs" Link="HeadlessUserDirSeederTests.cs" />
+  </ItemGroup>
+</Project>

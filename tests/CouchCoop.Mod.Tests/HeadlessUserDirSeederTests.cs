@@ -14,7 +14,8 @@ internal static class HeadlessUserDirSeederTests
         SharedCachesAreLinkedPerLeafWithoutAnAncestorCycle();
         SeedingNeverFollowsDirectorySymlinks();
         UnsupportedPlatformReturnsNull();
-        MacOsDeclinesOutLoud();
+        MacOsPolicyBuildsAnIsolatedFakeHomeFarm();
+        MacOsRequiresHomeAndLogsTheFallback();
     }
 
     private static void LinuxPolicyUsesXdgDataHome()
@@ -336,12 +337,121 @@ internal static class HeadlessUserDirSeederTests
         Assert(result is null, "unsupported platform returns null");
     }
 
-    /// <summary>
-    /// macOS declines like any unsupported platform — and, unlike before, says so. The seat is still launched
-    /// (into the host's user dir), so a silent null is a limitation nobody can see: one <c>godot.log</c> and
-    /// one settings/save profile for every player on the machine, with nothing in either naming the cause.
-    /// </summary>
-    private static void MacOsDeclinesOutLoud()
+    private static void MacOsPolicyBuildsAnIsolatedFakeHomeFarm()
+    {
+        using var root = new TempDir();
+        var home = Path.Combine(root.Path, "home");
+        var hostUserDir = Path.Combine(home, "Library", "Application Support", "SlayTheSpire2");
+        var slotBase = Path.Combine(hostUserDir, "couch-coop", "headless-slots", "slot-4");
+        var slotUserDir = Path.Combine(slotBase, "Library", "Application Support", "SlayTheSpire2");
+
+        Directory.CreateDirectory(Path.Combine(home, "Desktop"));
+        File.WriteAllText(Path.Combine(home, "Desktop", "host-only.txt"), "host desktop");
+        Directory.CreateSymbolicLink(Path.Combine(home, "LinkedDesktop"), Path.Combine(home, "Desktop"));
+        Directory.CreateSymbolicLink(Path.Combine(home, "SelfHome"), home);
+        File.WriteAllText(Path.Combine(home, ".zprofile"), "host profile");
+        File.WriteAllText(Path.Combine(home, "Documents.txt"), "host document");
+        Directory.CreateDirectory(Path.Combine(home, "Library", "Preferences"));
+        File.WriteAllText(Path.Combine(home, "Library", "Preferences", "host.pref"), "host preference");
+        File.WriteAllText(Path.Combine(home, "Library", "host-library-file"), "library file");
+        Directory.CreateDirectory(Path.Combine(home, "Library", "Application Support", "Steam"));
+        File.WriteAllText(Path.Combine(home, "Library", "Application Support", "Steam", "steam.pid"), "steam");
+        Directory.CreateDirectory(hostUserDir);
+        File.WriteAllText(Path.Combine(hostUserDir, "host-only.txt"), "host user data");
+        if (OperatingSystem.IsMacOS())
+        {
+            Assert(Directory.Exists(Path.Combine(home, "lIbRaRy")),
+                "the macOS runner's APFS volume resolves case variants of an existing directory");
+        }
+
+        Assert(HeadlessUserDirSeeder.IsMacOsFakeHomeExclusion("lIbRaRy", "Library")
+               && HeadlessUserDirSeeder.IsMacOsFakeHomeExclusion("aPpLiCaTiOn SuPpOrT", "Application Support")
+               && HeadlessUserDirSeeder.IsMacOsFakeHomeExclusion("sLaYtHeSpIrE2", "SlayTheSpire2")
+               && !HeadlessUserDirSeeder.IsMacOsFakeHomeExclusion("Steam", "SlayTheSpire2"),
+            "all fake-home exclusions compare names OrdinalIgnoreCase");
+
+        // A real entry in a slot is owned by that slot and must survive even when the real home has the same name.
+        Directory.CreateDirectory(Path.Combine(slotBase, "Desktop"));
+        File.WriteAllText(Path.Combine(slotBase, "Desktop", "slot-only.txt"), "slot desktop");
+        File.WriteAllText(Path.Combine(slotBase, "Documents.txt"), "slot document");
+        File.CreateSymbolicLink(Path.Combine(slotBase, ".zprofile"), Path.Combine(root.Path, "stale-profile"));
+        Directory.CreateDirectory(SlotLibrary(slotBase));
+        Directory.CreateSymbolicLink(
+            Path.Combine(SlotLibrary(slotBase), "Preferences"),
+            Path.Combine(root.Path, "stale-preferences"));
+
+        var policy = HeadlessUserDirSeeder.ResolvePolicy(
+            4,
+            HeadlessUserDirPlatform.MacOs,
+            Env(("HOME", home)),
+            _ => Path.Combine(root.Path, "unused"));
+        Assert(policy is not null, "macOS policy resolves with HOME");
+        Assert(policy!.HostUserDir == hostUserDir, "macOS host user dir is HOME/Library/Application Support/SlayTheSpire2");
+        Assert(policy.SlotBase == slotBase, "macOS slot base remains under the host user dir");
+        Assert(policy.SlotUserDir == slotUserDir, "macOS slot user dir is inside the fake home");
+        Assert(policy.EnvironmentVariables.Count == 1
+               && policy.EnvironmentVariables.TryGetValue("HOME", out var childHome)
+               && childHome == slotBase,
+            "macOS child environment is exactly HOME=slot base");
+
+        var result = HeadlessUserDirSeeder.Prepare(
+            4,
+            HeadlessUserDirPlatform.MacOs,
+            Env(("HOME", home)),
+            _ => Path.Combine(root.Path, "unused"));
+        Assert(result is not null, "macOS fake-home prepare succeeds");
+        Assert(result!.SlotBase == slotBase && result.SlotUserDir == slotUserDir,
+            "macOS prepare returns the resolved fake-home paths");
+
+        Assert(new DirectoryInfo(Path.Combine(slotBase, "Library")).LinkTarget is null,
+            "fake-home Library is a real first exclusion layer");
+        Assert(new DirectoryInfo(Path.Combine(slotBase, "Library", "Application Support")).LinkTarget is null,
+            "fake-home Application Support is a real second exclusion layer");
+        Assert(new DirectoryInfo(slotUserDir).LinkTarget is null,
+            "fake-home SlayTheSpire2 is a real isolated third exclusion layer");
+        Assert(new FileInfo(Path.Combine(slotBase, ".zprofile")).LinkTarget == Path.Combine(home, ".zprofile"),
+            "an ordinary home file is linked and a stale file link is repaired");
+        Assert(new DirectoryInfo(Path.Combine(slotBase, "Desktop")).LinkTarget is null
+               && File.ReadAllText(Path.Combine(slotBase, "Desktop", "slot-only.txt")) == "slot desktop",
+            "a real slot-owned directory is preserved instead of replaced by a farm link");
+        Assert(new FileInfo(Path.Combine(slotBase, "Documents.txt")).LinkTarget is null
+               && File.ReadAllText(Path.Combine(slotBase, "Documents.txt")) == "slot document",
+            "a real slot-owned file is preserved instead of replaced by a farm link");
+        Assert(new DirectoryInfo(Path.Combine(slotBase, "LinkedDesktop")).LinkTarget == Path.Combine(home, "LinkedDesktop"),
+            "a source directory symlink is mirrored without being followed");
+        Assert(new DirectoryInfo(Path.Combine(slotBase, "SelfHome")).LinkTarget == Path.Combine(home, "SelfHome"),
+            "a self-referential home symlink is mirrored without traversal");
+        Assert(new DirectoryInfo(Path.Combine(slotBase, "Library", "Preferences")).LinkTarget
+               == Path.Combine(home, "Library", "Preferences"),
+            "an ordinary Library directory is linked and a stale directory link is repaired");
+        Assert(new FileInfo(Path.Combine(slotBase, "Library", "host-library-file")).LinkTarget
+               == Path.Combine(home, "Library", "host-library-file"),
+            "an ordinary Library file is linked");
+        Assert(File.ReadAllText(Path.Combine(slotBase, "Library", "Application Support", "Steam", "steam.pid")) == "steam",
+            "Steam remains reachable through the fake-home farm");
+
+        File.WriteAllText(Path.Combine(slotUserDir, "slot-write.txt"), "slot write");
+        Assert(File.ReadAllText(Path.Combine(slotUserDir, "slot-write.txt")) == "slot write"
+               && !File.Exists(Path.Combine(hostUserDir, "slot-write.txt")),
+            "writes under isolated SlayTheSpire2 do not reach the host profile");
+        Assert(new DirectoryInfo(slotBase).LinkTarget is null
+               && new DirectoryInfo(SlotLibrary(slotBase)).LinkTarget is null
+               && !Path.GetFullPath(SlotLibrary(slotBase)).StartsWith(
+                   Path.GetFullPath(slotUserDir) + Path.DirectorySeparatorChar,
+                   StringComparison.Ordinal),
+            "the fake-home ancestors are real rather than links back through the isolated user dir");
+
+        var repeated = HeadlessUserDirSeeder.Prepare(
+            4,
+            HeadlessUserDirPlatform.MacOs,
+            Env(("HOME", home)),
+            _ => Path.Combine(root.Path, "unused"));
+        Assert(repeated is not null
+               && new FileInfo(Path.Combine(slotBase, ".zprofile")).LinkTarget == Path.Combine(home, ".zprofile"),
+            "the fake-home farm is idempotent");
+    }
+
+    private static void MacOsRequiresHomeAndLogsTheFallback()
     {
         using var root = new TempDir();
         var lines = new List<string>();
@@ -351,37 +461,29 @@ internal static class HeadlessUserDirSeederTests
             var policy = HeadlessUserDirSeeder.ResolvePolicy(
                 4,
                 HeadlessUserDirPlatform.MacOs,
-                Env(),
-                _ => Path.Combine(root.Path, "home"));
-            Assert(policy is null, "macOS has no per-slot data-root variable to offer");
-            Assert(lines.Count == 1 && lines[0].Contains("MacOs", StringComparison.Ordinal)
-                && lines[0].Contains("slot=4", StringComparison.Ordinal),
-                "the refused policy names the platform and the slot");
+                Env(("HOME", "  ")),
+                _ => Path.Combine(root.Path, "unused"));
+            Assert(policy is null && lines.Count == 1 && lines[0].Contains("HOME resolved empty", StringComparison.Ordinal),
+                "macOS refuses a blank HOME and logs why");
 
             lines.Clear();
             var result = HeadlessUserDirSeeder.Prepare(
                 4,
                 HeadlessUserDirPlatform.MacOs,
                 Env(),
-                _ => Path.Combine(root.Path, "home"));
-            Assert(result is null, "macOS prepare still returns null — WS1 makes it visible, it does not fix it");
-            Assert(lines.Count == 2 && lines[1].Contains("shares the host's user directory", StringComparison.Ordinal),
-                "the skipped seed states the consequence, not just the cause");
-
-            // Linux is untouched: the proven path stays quiet.
-            lines.Clear();
-            var linux = HeadlessUserDirSeeder.Prepare(
-                4,
-                HeadlessUserDirPlatform.Linux,
-                Env(("XDG_DATA_HOME", Path.Combine(root.Path, "xdg"))),
-                _ => Path.Combine(root.Path, "home"));
-            Assert(linux is not null && lines.Count == 0, "a working platform logs nothing new");
+                _ => Path.Combine(root.Path, "unused"));
+            Assert(result is null && lines.Count == 2
+                   && lines[0].Contains("HOME resolved empty", StringComparison.Ordinal)
+                   && lines[1].Contains("shares the host's user directory", StringComparison.Ordinal),
+                "a failed macOS farm reaches the existing visible shared-profile fallback");
         }
         finally
         {
             HeadlessUserDirSeeder.LogSink = null;
         }
     }
+
+    private static string SlotLibrary(string slotBase) => Path.Combine(slotBase, "Library");
 
     private static Func<string, string?> Env(params (string Key, string Value)[] values)
     {

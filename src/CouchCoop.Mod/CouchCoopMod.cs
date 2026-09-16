@@ -103,9 +103,9 @@ public static class CouchCoopMod
                     + "-- continuing without one");
             }
 
-            // Same hook, same reason, for the per-seat user-dir seeder: its refusals used to be silent, and
-            // the platform that hits them (macOS has no isolation to offer) is the one whose stderr goes
-            // nowhere. Error level — the connections report's log excerpt keeps only those.
+            // Same hook, same reason, for the per-seat user-dir seeder: its preparation failures must not be
+            // silent, especially where stderr goes nowhere. Error level — the connections report's log excerpt
+            // keeps only those.
             Session.HeadlessUserDirSeeder.LogSink = Session.CouchCoopLog.Error;
 
             // Enumerate the atlas pages THIS build ships, once, while we are on the main thread with an engine.

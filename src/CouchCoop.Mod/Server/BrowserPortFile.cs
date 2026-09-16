@@ -47,11 +47,10 @@ public static class BrowserPortFile
     /// <remarks>
     /// <para>
     /// A seat normally gets an isolated <c>user://</c>, so its record already lands in a directory of its own
-    /// and this makes no difference. On a platform where isolation is unavailable (macOS — see
-    /// <c>HeadlessUserDirSeeder</c>) every process on the machine resolves the SAME path, and the record stops
-    /// describing anybody: the last seat to start overwrites the host's port with its own, and the first seat
-    /// to stop deletes the file outright. Scoping the seats fixes both without moving anything a reader knows
-    /// about.
+    /// and this makes no difference. If preparation falls back to the shared host profile on any platform (see
+    /// <c>HeadlessUserDirSeeder</c>), every process resolves the SAME path and the record stops describing
+    /// anybody: the last seat to start overwrites the host's port with its own, and the first seat to stop
+    /// deletes the file outright. Scoping the seats fixes both without moving anything a reader knows about.
     /// </para>
     /// <para>
     /// THE HOST'S NAME IS FIXED, deliberately. <c>scripts/lib/instance-port.mjs</c> and the bring-up scripts

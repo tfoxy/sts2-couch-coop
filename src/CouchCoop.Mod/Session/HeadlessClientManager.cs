@@ -1744,14 +1744,14 @@ public sealed partial class HeadlessClientManager : IDisposable
         {
             // "Best-effort" used to mean "silently". A seat launched with no isolation runs fine, but every
             // player on this machine then writes into ONE settings/save profile — which is both a support
-            // problem and a real one (the last writer wins on settings). macOS reaches this on every spawn:
-            // Godot resolves user:// from $HOME there and has no --user-dir flag, so there is nothing to
-            // repoint. Say it in the log AND in the panel, as a warning: co-op works, with a limitation the
-            // player should know about before they report a bug.
+            // problem and a real one (the last writer wins on settings). macOS normally avoids it with the
+            // fake-home farm in HeadlessUserDirSeeder; this is its genuine preparation-failure fallback. Say it
+            // in the log AND in the panel, as a warning: co-op works, with a limitation the player should know
+            // about before they report a bug.
             //
             // The shared godot.log is NO LONGER part of it: gameArgs above hands this seat its own --log-file,
             // so the host's log survives the spawn. The row still says the profile is shared, because that half
-            // is unfixed until macOS gets real isolation.
+            // only applies while preparation has fallen back to the shared profile.
             Volatile.Write(ref _seatsShareTheHostProfile, 1);
             var platform = RuntimeInformation.OSDescription;
             HeadlessLog.Write(

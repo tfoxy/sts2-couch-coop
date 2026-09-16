@@ -69,7 +69,11 @@ Slay the Spire 2 has a native macOS build, and nothing in CouchCoop refuses to r
 - **Local Network** lives in System Settings → Privacy & Security → Local Network. Because Steam launches the game, the prompt can be attributed to Steam rather than to Slay the Spire 2, can have been answered long before you installed CouchCoop, or can be drawn behind the fullscreen game. Check that both entries are switched on.
 - **The firewall** lives in System Settings → Network → Firewall. When it is on, macOS asks once whether to accept incoming connections for the game, and remembers a "Deny". Firewall → Options is where to change that answer, and "Block all incoming connections" overrides everything else.
 
-**Back up your saves first.** Each browser player runs a headless copy of the game on the host, and on macOS those copies share the host's Godot folder instead of each getting their own — one log file, one settings file, one save profile, written by several processes at once. Windows and Linux give each player their own; doing the same on macOS needs a Mac to test the fix on.
+**Back up your saves first.** Each browser player gets an isolated local Godot profile. On macOS CouchCoop gives
+each seat a fake `$HOME` and links ordinary home files back to the host while keeping
+`Library/Application Support/SlayTheSpire2` private. CI verifies that stock Godot honors this layout, but nobody
+has yet played a full game session on a Mac. Steam, FMOD, or code using `getpwuid` may still choose paths outside
+`$HOME`; report any Mac session result, especially a save or mod-loading problem.
 
 ### Steam Deck
 

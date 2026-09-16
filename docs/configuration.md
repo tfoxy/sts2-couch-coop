@@ -471,18 +471,17 @@ browser is expected to connect at all.
 - Startup logs `host-ui diagnostic code=host-no-inbound-connections detail=no-inbound-connection-in-90s` when it
   fires, and one line when a connection clears it.
 
-**Known limitation, not a configuration problem:** `HeadlessUserDirSeeder` supports Linux and Windows only
-(`CurrentPlatform()` returns `Unsupported` otherwise), so on macOS every headless seat launches with **no
-user-dir isolation** and shares the host's Godot user directory — one `godot.log`, one settings file, one save
-profile, concurrently written. The seeder degrades gracefully by design (its caller treats a null policy as
-"launch without isolation"), so nothing fails loudly; the cost is interleaved logs and a real risk to saves.
-It also costs the connection report its log excerpt: a fresh game process starts a fresh `godot.log`, so on
-macOS **spawning a seat restarts the host's log**, and `ConnectionAttemptLogs` correctly reports its
-checkpoint as `rotated` with no post-attempt error context to show. The fix is not a matter of adding a
-`case`: Godot derives `user://` from `$HOME` on macOS
-(`~/Library/Application Support/…`), and there is no `--user-dir` flag and no `XDG_DATA_HOME`/`APPDATA`
-equivalent to repoint per child process — so the isolation needs a different mechanism, designed and verified
-on a Mac.
+**macOS profile isolation:** Godot has no macOS `--user-dir` or data-root variable, but it derives this game's
+custom `user://` from `$HOME/Library/Application Support/SlayTheSpire2`. A seat therefore receives a per-slot
+fake `$HOME`: ordinary home entries are symlinked back to the host, while `Library`, `Application Support`, and
+`SlayTheSpire2` are real directories ending at the seat's isolated profile. The macOS CI job runs both the
+game-free farm suite and stock Godot against that fake home. It does **not** prove a full STS2 session on a Mac.
+Steam, FMOD, or a native dependency that calls `getpwuid` can still select a path outside `$HOME`.
+
+If the farm cannot be prepared (for example, `HOME` is missing or a filesystem operation fails), the launcher
+falls back to the shared host profile and raises the existing `host-seat-profile-shared` warning. That warning is
+a real fallback, not the normal macOS path; the seat still receives an explicit per-slot log file so the host log
+is not truncated.
 
 ## Artifact Policy
 
