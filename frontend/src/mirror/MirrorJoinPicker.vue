@@ -3,6 +3,7 @@ import { computed, nextTick, reactive, ref, watch } from "vue";
 import { translate as t } from "@/i18n";
 
 import type { BrowserPlayerOption } from "@/protocol/browserEnvelope";
+import type { MirrorSeatNoticeCopy } from "@/mirror/loadingState";
 import {
   mirrorPickerNameLabel,
   mirrorPickerRosterHeading,
@@ -56,6 +57,16 @@ const props = defineProps<{
   // a healthy join and a dead one showed the same screen and players closed the tab on both. Deliberately NOT
   // folded into the heading: the heading is the lifecycle word every other state uses too, and it stays as it is.
   progress?: string | null;
+  // The host's named VERDICT about this viewer's seat (composed by the parent from `seat-notice` — copy in
+  // mirror/loadingState): what is true, what to try, and the host's own English technical line under the two.
+  //
+  // Separate from `message`/`detail` below on purpose. Those are a join REJECTION: a terminal answer to a request
+  // the viewer just made, which ends the attempt. This is a statement about the SEAT, and its whole reason for
+  // existing is the case where the join succeeded — the host handed out a port, the device cannot open it, and
+  // this screen would otherwise read "Loading…" for ever. The two can even be on screen together (a verdict about
+  // the seat, then a rejection of the retry), and folding them into one surface would make the second overwrite
+  // the first.
+  seatNotice?: MirrorSeatNoticeCopy | null;
   // Rejection message shown above the picker ("that name is not from a session player.").
   message?: string | null;
   // Optional SECOND line under `message`, carrying the host's own words for a fault the friendly line can only
@@ -192,6 +203,24 @@ function submitJoin(name: string = joinName.value, playerId?: string): void {
       class="mirror-join-progress"
       data-testid="mirror-join-progress"
     >{{ progress }}</p>
+
+    <!-- The host's verdict about this viewer's seat. Directly under the heading (and the progress line, when both
+         are up: "here is what the host is doing" then "here is what is wrong with it"), inside the section's
+         existing `aria-live="polite"`. Rendered in BOTH shapes for the same reason the message surface is — this
+         one can arrive long after a join succeeded, when either shape may be on screen. -->
+    <div
+      v-if="seatNotice"
+      class="mirror-seat-notice"
+      data-testid="mirror-seat-notice"
+    >
+      <p class="mirror-seat-notice-summary" data-testid="mirror-seat-notice-summary">{{ seatNotice.summary }}</p>
+      <p class="mirror-seat-notice-action" data-testid="mirror-seat-notice-action">{{ seatNotice.action }}</p>
+      <p
+        v-if="seatNotice.detail"
+        class="mirror-seat-notice-detail"
+        data-testid="mirror-seat-notice-detail"
+      >{{ seatNotice.detail }}</p>
+    </div>
 
     <!-- MP character-select: the name field is the PRIMARY control, shown FIRST. A real <form> so Enter submits. -->
     <form
@@ -396,6 +425,45 @@ function submitJoin(name: string = joinName.value, playerId?: string): void {
   max-width: 32rem;
   margin-inline: auto;
   overflow-wrap: anywhere;
+}
+
+/* The seat verdict. Amber like a rejection, because something IS wrong and this is the screen's real answer —
+   but boxed rather than bare, since unlike a rejection it can sit under a live "Loading…" heading and has to read
+   as a block about the seat rather than as a caption for the word above it. Width-capped like the lines around it
+   so a long localized sentence cannot widen the panel. CouchCoop's OWN join chrome, not @spirectl/godot-scene-web
+   presentation DOM. */
+.mirror-seat-notice {
+  margin: 0.35rem auto 0.6rem;
+  padding: 0.6rem 0.9rem;
+  max-width: 32rem;
+  border: 1px solid rgba(255, 207, 122, 0.35);
+  border-radius: 0.5rem;
+  background: rgba(255, 207, 122, 0.08);
+  text-align: center;
+  overflow-wrap: anywhere;
+}
+
+.mirror-seat-notice-summary {
+  margin: 0;
+  color: #ffcf7a;
+  font-size: 0.95rem;
+  line-height: 1.4;
+}
+
+.mirror-seat-notice-action {
+  margin: 0.3rem 0 0;
+  color: rgba(255, 255, 255, 0.82);
+  font-size: 0.85rem;
+  line-height: 1.4;
+}
+
+/* The host's own English, for a player to quote rather than to read — same role, and same treatment, as the
+   fault detail under a rejection below. */
+.mirror-seat-notice-detail {
+  margin: 0.4rem 0 0;
+  color: rgba(255, 255, 255, 0.5);
+  font-size: 0.72rem;
+  line-height: 1.35;
 }
 
 .mirror-join-message {

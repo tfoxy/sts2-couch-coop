@@ -317,6 +317,73 @@ export function parseJoinProgress(raw: unknown): BrowserJoinProgress | null {
   return { requestId: value.requestId, stage: value.stage, step, stepTotal, elapsedMs };
 }
 
+/**
+ * `seat-notice` — the host's own named verdict about why THIS viewer's seat is not serving them.
+ *
+ * The one failure a player is most likely to hit is the one nothing could tell them about. With the path from
+ * this device to its seat port blocked (a device-scoped firewall rule, guest/AP isolation, a router that
+ * separates clients), the host's own loopback probe of that seat SUCCEEDS — so the join is answered as a success,
+ * the app is redirected to a port it cannot open, and the screen sits on "Loading…" for ever while the host
+ * names the cause precisely four times a second and tells only itself.
+ *
+ * It arrives on the HOST socket, which a redirected viewer deliberately keeps open (closing it triggers the
+ * server's Release() and kills the seat), so it is the only channel left in exactly the case it exists for.
+ *
+ * Deliberately NOT part of `BrowserEnvelope` / `parseBrowserEnvelopeValue`, for the same reason `join-progress`
+ * is not: that union is the request/reply surface every client branches on, and this is a one-way notification
+ * the mirror client picks off the socket itself. C# twin: `BrowserSeatNoticeEnvelope` (CouchCoop.MirrorProtocol).
+ */
+export interface BrowserSeatNotice {
+  cause: SeatNoticeCause;
+  /**
+   * The host's English technical line — the same sentence its connection panel shows in grey and its copyable
+   * report quotes verbatim. Rendered under the localized copy, never instead of it, and null on a withdrawal.
+   */
+  detail: string | null;
+}
+
+/**
+ * The closed cause vocabulary. Stable wire tokens for the host's own readiness causes — the raw enum names are
+ * internal bookkeeping and never reach a player's screen; the client maps these to localized copy.
+ *
+ * `none` is the WITHDRAWAL: the named cause stopped being true (the device got through, a browser attached), so
+ * take the message off the screen rather than leaving a wrong accusation on it. There is no token for the host's
+ * fourth cause, "still starting" — that is the normal state of every healthy join for its whole 20-60 seconds and
+ * is never announced. C# twin: `BrowserSeatNoticeCauses` (CouchCoop.MirrorProtocol).
+ */
+export type SeatNoticeCause = "none" | "port-conflict" | "host-local-block" | "network-path";
+
+const SEAT_NOTICE_CAUSES: readonly SeatNoticeCause[] = ["none", "port-conflict", "host-local-block", "network-path"];
+
+function isSeatNoticeCause(value: unknown): value is SeatNoticeCause {
+  return typeof value === "string" && (SEAT_NOTICE_CAUSES as readonly string[]).includes(value);
+}
+
+/**
+ * Read one incoming frame as a seat notice, or null when it is not one (or not a usable one).
+ *
+ * An unknown `cause` refuses outright rather than degrading to "something is wrong": this message tells a player
+ * which of several unrelated things to go and fix, and a build with no copy for a future cause would be guessing
+ * at which. Silence is the honest fallback there — the same one this screen had before the envelope existed.
+ *
+ * `detail` is optional (a withdrawal carries none, and the host omits nulls), and a non-string one is dropped
+ * rather than refusing the frame: the cause is what the player acts on, and losing the grey technical line is a
+ * far smaller loss than losing the message it explains.
+ */
+export function parseSeatNotice(raw: unknown): BrowserSeatNotice | null {
+  if (!raw || typeof raw !== "object") {
+    return null;
+  }
+  const value = raw as Record<string, unknown>;
+  if (value.type !== "seat-notice" || !isSeatNoticeCause(value.cause)) {
+    return null;
+  }
+  return {
+    cause: value.cause,
+    detail: typeof value.detail === "string" && value.detail.length > 0 ? value.detail : null
+  };
+}
+
 export interface BrowserActionRequestEnvelope {
   type: "action";
   requestId: string;

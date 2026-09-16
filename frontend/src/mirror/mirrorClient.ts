@@ -8,7 +8,9 @@ import {
   HEADLESS_HOST_DISCONNECTED_REASON,
   parseBrowserEnvelopeValue,
   parseJoinProgress,
+  parseSeatNotice,
   type BrowserJoinProgress,
+  type BrowserSeatNotice,
   type BrowserSessionEnvelope
 } from "@/protocol/browserEnvelope";
 import type { MirrorActionMessage } from "@/mirror/mapNodeTap";
@@ -243,6 +245,11 @@ export function connectMirrorClient(options: {
   // viewer has moved on from. The app renders it as a second line under "Joining…", which is the whole reason a
   // 40-second seat spawn no longer looks identical to a dead one.
   onJoinProgress?: (progress: BrowserJoinProgress) => void;
+  // The host's named verdict about the seat THIS viewer was given (`seat-notice`): a port another program on the
+  // host owns, a port the host computer blocks locally, or a path from this device to the seat that is blocked.
+  // Fired whether or not a join is in flight — the case it exists for is a join that already succeeded and a
+  // redirect to a port this device cannot open — and a `none` cause withdraws whatever was last shown.
+  onSeatNotice?: (notice: BrowserSeatNotice) => void;
   // R19 WP5 — the ABSOLUTE-SCROLL ack (see MirrorScrollAck). The one `action-result` this client reads for its
   // VALUE rather than for the fact that it failed. Fired only for a SUCCESSFUL `set-scroll-offset` result, i.e.
   // strictly after the join backstop above has had its look, so nothing about join failure changes.
@@ -651,6 +658,20 @@ export function connectMirrorClient(options: {
       const progress = parseJoinProgress(raw);
       if (progress && joinPending && progress.requestId === joinRequestId) {
         options.onJoinProgress?.(progress);
+      }
+      return;
+    }
+
+    // `seat-notice` — the host's named verdict about why this viewer's seat is not serving them. ABOVE the
+    // `watching` gate, and — unlike the progress above it — NOT tied to a join in flight: the case it exists for
+    // is a viewer whose join already SUCCEEDED and who was redirected to a seat port their device cannot open.
+    // That viewer's stream gate on this socket is shut (the redirect turns it off, and the socket stays open only
+    // so the host does not Release() the seat), so a handler below the gate would be silent during precisely the
+    // wait this speaks for.
+    if (raw && typeof raw === "object" && (raw as { type?: unknown }).type === "seat-notice") {
+      const notice = parseSeatNotice(raw);
+      if (notice) {
+        options.onSeatNotice?.(notice);
       }
       return;
     }

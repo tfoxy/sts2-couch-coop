@@ -85,6 +85,20 @@ export const en = {
   "join.progress.loadingView": "Loading the game view",
   "join.progress.complete": "Almost ready",
   "join.progress.line": "{stage} — step {step} of {total}, {seconds}s so far. This can take up to a minute, so keep this page open.",
+  // THE SEAT NOTICE (mirror/loadingState.ts): the host's own named verdict about this player's seat, which until
+  // now reached the host's panel, the host log and the copyable report — and never the person who had to act on
+  // it. Each cause is one sentence saying what is true and one saying what to try, matching the pair the host
+  // panel shows (couchcoop_connection_error_seat_* in the native catalogs) so the two surfaces cannot drift.
+  // The network one is the important one and the easiest to get wrong: this player's game IS running and IS
+  // answering on the host, so it must never suggest otherwise — what failed is the path from this device to it.
+  // The other two are faults on the HOST computer, so they say so instead of sending a phone's owner to their
+  // own settings for something they cannot reach.
+  "seat.notice.networkPath": "Your game is running on the host computer, but this device couldn't reach it.",
+  "seat.notice.networkPathFix": "Join the same Wi-Fi as the host — not a guest network — turn off any VPN, and check the router isn't keeping devices apart.",
+  "seat.notice.portConflict": "Another program on the host computer is using the port your game needs.",
+  "seat.notice.portConflictFix": "Nothing to change on this device — ask whoever is hosting to restart Slay the Spire 2, then try again.",
+  "seat.notice.hostBlock": "The host computer is blocking the port your game is served on.",
+  "seat.notice.hostBlockFix": "Nothing to change on this device — ask whoever is hosting to allow Slay the Spire 2 through their firewall or security software.",
   "loading.connecting": "Connecting…",
   "loading.reconnecting": "Reconnecting…",
   "loading.joining": "Joining…",
@@ -260,6 +274,12 @@ export const zhHans: LocaleCatalog = {
   "join.progress.loadingView": "正在加载游戏画面",
   "join.progress.complete": "即将就绪",
   "join.progress.line": "{stage} — 第 {step} / {total} 步，已用时 {seconds} 秒。这可能需要长达一分钟，请保持此页面打开。",
+  "seat.notice.networkPath": "你的游戏已在主机电脑上运行，但本设备无法连接到它。",
+  "seat.notice.networkPathFix": "请连接与主机相同的 Wi-Fi（不要用访客网络），关闭所有 VPN，并检查路由器是否隔离了设备之间的通信。",
+  "seat.notice.portConflict": "主机电脑上的另一个程序正占用你的游戏所需的端口。",
+  "seat.notice.portConflictFix": "本设备无需改动——请让主持游戏的人重启《杀戮尖塔 2》后再试一次。",
+  "seat.notice.hostBlock": "主机电脑正在阻止你的游戏所使用的端口。",
+  "seat.notice.hostBlockFix": "本设备无需改动——请让主持游戏的人在防火墙或安全软件中放行《杀戮尖塔 2》。",
   "loading.connecting": "正在连接…",
   "loading.reconnecting": "正在重新连接…",
   "loading.joining": "正在加入…",

@@ -70,6 +70,10 @@ if (args is ["--seats"])
     // the network-path cause is allowed to rest on.
     Console.WriteLine("seats: arrival evidence");
     await SeatArrivalEvidenceTests.RunAsync();
+    // …and the last leg of that evidence: the verdict reaching the PHONE, which is the one surface that could
+    // not see any of the four causes before.
+    Console.WriteLine("seats: notice to the browser");
+    SeatNoticeTests.Run();
     Console.WriteLine("seats: ok");
     return;
 }
@@ -112,6 +116,8 @@ Console.WriteLine("connections: seat port truth");
 await SeatPortTruthTests.RunAsync();
 Console.WriteLine("connections: seat arrival evidence");
 await SeatArrivalEvidenceTests.RunAsync();
+Console.WriteLine("connections: seat notice");
+SeatNoticeTests.Run();
 Console.WriteLine("connections: lifecycle");
 await HeadlessConnectionLifecycleTests.RunAsync();
 Console.WriteLine("connections: websocket lifecycle");

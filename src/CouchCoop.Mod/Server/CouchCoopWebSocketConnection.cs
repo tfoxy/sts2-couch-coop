@@ -105,6 +105,11 @@ public sealed class CouchCoopWebSocketConnection
     private Task _inputPumpTask = Task.CompletedTask;
     private readonly ConnectionJoinOperation _joinOperation;
     private readonly MainThreadPingGate _mainThreadPingGate = new();
+    // Outbound SEAT NOTICES, chained. The hub calls us on the seat monitor's 250 ms loop, which must never block
+    // on a socket, so each notice is handed to a task — and each task waits for the one before it, because the
+    // whole point of a withdrawal is that it lands AFTER the accusation it cancels. Guarded by _seatNoticeLock.
+    private readonly object _seatNoticeLock = new();
+    private Task _seatNoticeSends = Task.CompletedTask;
     internal const int MaxInboundMessageBytes = 256 * 1024;
     private readonly Guid _id = Guid.NewGuid();
     private WebSocket? _socket;
@@ -296,6 +301,12 @@ public sealed class CouchCoopWebSocketConnection
             ConnectionRegistry.Shared.Connected(session.Id, ConnectionDeviceLabel.FromUserAgent(request.Header("User-Agent")));
             ConnectionRegistry.Shared.RecordDiagnostic(session.Id, "transport", _isSecure ? "Host WebSocket over TLS" : "Host WebSocket over HTTP");
             ConnectionRegistry.Shared.RecordDiagnostic(session.Id, "gameVersion", _envelopeFactory.RuntimeHost.Capabilities.GameVersion);
+            // Offer this socket as the way to reach this viewer with their seat's readiness verdict. Registered
+            // HERE, before any join: the seat is bound to the session id, and the monitor's next tick finds
+            // whoever is listening for it. It is also why the socket a redirected viewer keeps open (gated, but
+            // open — closing it would Release() and kill their seat) is still useful to the host: on the one
+            // failure where the browser cannot reach the seat it was sent to, this is the only channel left.
+            SeatNoticeHub.Shared.Subscribe(session.Id, OnSeatNotice);
         }
         // A seat's connect URL carries the visit id the host's page minted (the host's own does not — that one
         // arrives on the `join` message below), so a seat can bind its arrival to this socket immediately.
@@ -357,6 +368,11 @@ public sealed class CouchCoopWebSocketConnection
             if (CouchCoopMod.IsHeadlessClient) HeadlessConnectionReporter.BrowserClosed();
             else
             {
+                // Before anything else in this branch: nothing may be handed a dead socket, and the hub's record
+                // of what this viewer has been told dies with the session it belonged to — a phone that comes
+                // back does so as a NEW session and must be told the verdict again rather than debounced against
+                // a conversation held over a socket that no longer exists.
+                SeatNoticeHub.Shared.Unsubscribe(session.Id);
                 if (_headlessManager is not null) await _headlessManager.FinishReportedFailureAsync(session.Id).ConfigureAwait(false);
                 ConnectionRegistry.Shared.Disconnected(session.Id);
             }
@@ -1066,6 +1082,38 @@ public sealed class CouchCoopWebSocketConnection
     // and pushed through the same send gate, so it interleaves safely with the join's own reply.
     private Task SendJoinProgressAsync(BrowserJoinProgressEnvelope progress)
         => SendBytesAsync(Encoding.UTF8.GetBytes(BrowserJson.Serialize(progress)));
+
+    // SeatNoticeHub's delivery callback. Called on the seat monitor's 250 ms loop, which must not block on a
+    // socket and whose own exception handler tears the seat down — so this returns immediately and the send it
+    // starts swallows everything (a closing socket is the expected failure, and teardown unregisters us anyway).
+    // Chained rather than fired independently so a withdrawal can never overtake the notice it withdraws.
+    private void OnSeatNotice(SeatNotice? notice)
+    {
+        lock (_seatNoticeLock)
+        {
+            _seatNoticeSends = _seatNoticeSends
+                .ContinueWith(_ => SendSeatNoticeAsync(notice), CancellationToken.None,
+                    TaskContinuationOptions.None, TaskScheduler.Default)
+                .Unwrap();
+        }
+    }
+
+    // One seat-notice frame. A null notice is the WITHDRAWAL: the same envelope with the `none` cause and no
+    // detail, rather than a second type, so a client has one parse path and an older one drops both identically.
+    private async Task SendSeatNoticeAsync(SeatNotice? notice)
+    {
+        try
+        {
+            await SendBytesAsync(Encoding.UTF8.GetBytes(BrowserJson.Serialize(new BrowserSeatNoticeEnvelope(
+                "seat-notice",
+                notice?.Cause ?? BrowserSeatNoticeCauses.None,
+                notice?.Detail)))).ConfigureAwait(false);
+        }
+        catch
+        {
+            // Socket closing/closed. A diagnostic may never be the thing that fails a connection.
+        }
+    }
 
     // Fire-and-forget frame send used by the scene keyframe path: a send failure means the socket is gone, and
     // the receive loop's teardown unregisters this connection.

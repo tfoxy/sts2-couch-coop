@@ -802,6 +802,25 @@ panel is no longer mounted; its internal narration remains available for diagnos
   byte-identical across two of these — and that contradicted itself, calling a listener unresponsive in the same
   sentence as `authenticated heartbeat fresh: True`. The network-path cause is only reachable from
   `MonitorConnectionAsync`, because the join returns as soon as the HOST can reach the seat.
+- **…and that verdict reaches the PHONE, not just the panel.** For the network-path cause the host's own loopback
+  probe of the seat *succeeds*, so the join is answered as a **success** and the browser is redirected to a port
+  its device cannot open — the viewer then sits on "Loading…" for ever while the host names the cause four times
+  a second and tells only itself. `MonitorConnectionAsync` hands each tick's verdict to the seat's
+  `Session/SeatNoticeSpeaker.cs` and publishes the result to the sessions bound to that slot through
+  `Connections/SeatNoticeHub.cs`; each `CouchCoopWebSocketConnection` subscribes itself by session id and sends
+  `{type:"seat-notice", cause, detail}` (`BrowserSeatNoticeEnvelope`, tokens in `BrowserSeatNoticeCauses`, never
+  the enum). The channel is the **host** socket a redirected viewer keeps open — `onHeadlessRedirect` only gates
+  its stream off, because closing it triggers `Release()` and kills the seat — so the client handler sits above
+  the `watching` gate and is **not** tied to a join in flight, and the app guards on `hostClient`, not
+  `activeClient` (after the redirect the active client is the seat socket that, in this very case, never
+  connects). Three rules: `StillStarting` maps to no token and is never announced (it is every healthy join for
+  20-60 s); a cause that clears sends `none`, which WITHDRAWS, so an accusation cannot outlive it; and
+  `SeatNoticeSpeaker.NetworkPathSettlingDelay` (20 s) holds the network cause back, because it can first hold
+  before the browser has even been told which port to open. The hub debounces per **session**, so a viewer that
+  drops and reconnects is told again rather than inheriting a record belonging to a socket that is gone. Copy in
+  `frontend/src/mirror/loadingState.ts` (`seat.notice.*`, 14 catalogs) is the second-person twin of the host
+  panel's `couchcoop_connection_error_seat_*`, and the English detail rides along verbatim so the two surfaces
+  cannot drift.
 - **Before the WebSocket there is a VISIT ID and an arrival ring.** `ConnectionRegistry` rows begin at the
   upgrade, so a device that fetched `/` and got no further left nothing at all. The SPA document is now served
   with a per-response nonce injected into its `<head>` (`Server/VisitIdTag.cs` →
