@@ -9,6 +9,21 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and
 
 ## [Unreleased]
 
+## [0.2.3] - 2026-09-16
+
+### Fixed
+
+- Fix custom sounds from other mods crashing the client (e.g. selecting Downfall character in the character select screen)
+- The mod now loads on a macOS install instead of refusing because it could not tell which game build it is.
+- macOS browser players now use isolated local game profiles.
+- A cache that cannot be set up no longer stops the mod from loading.
+- A cache write is no longer refused for the rest of a session when free space cannot be measured.
+- The host no longer claims nothing can reach it while phones are already connecting.
+- A taken seat port now tells you to close whatever is holding it, rather than to restart the game.
+- The host's connection panel now tells you when a player's device cannot reach the game it was given, instead of telling you to reload their browser.
+- The host is now warned when another program on the computer is using one of the ports Couch Co-Op gives players, instead of finding out only when a rejoin fails.
+- A phone that cannot reach its own game view now waits for it instead of making the host restart that player's game over and over, and a join refused because of a blocked or busy port now says what to do about it.
+
 ## [0.2.2] - 2026-09-15
 
 ### Changed
@@ -61,7 +76,8 @@ First public release. Turn the phones, tablets and laptops on your network into 
 a local Slay the Spire 2 co-op session — no app to install on the other devices, and no `sts2` CLI
 needed to run the mod.
 
-[Unreleased]: https://github.com/tfoxy/sts2-couch-coop/compare/v0.2.2...HEAD
+[Unreleased]: https://github.com/tfoxy/sts2-couch-coop/compare/v0.2.3...HEAD
+[0.2.3]: https://github.com/tfoxy/sts2-couch-coop/releases/tag/v0.2.3
 [0.2.2]: https://github.com/tfoxy/sts2-couch-coop/releases/tag/v0.2.2
 [0.2.1]: https://github.com/tfoxy/sts2-couch-coop/releases/tag/v0.2.1
 [0.2.0]: https://github.com/tfoxy/sts2-couch-coop/releases/tag/v0.2.0
