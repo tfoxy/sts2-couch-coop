@@ -24,6 +24,95 @@ internal static class HeadlessDisconnectExitTests
         await NotifyThatNeverCompletesIsTimeBoxed();
         await QuitFailureLeavesTheBackstopToFinishTheJob();
         await ScheduledBackstopForceExits();
+        ARunInProgressRefusalIsClassified();
+        await ASpecificReasonRefinesTheGenericOneThatStartedTheShutdown();
+        await AGenericSecondReasonNeverDisplacesASpecificOne();
+        await RefinementHappensAtMostOnceAndNeverThrows();
+    }
+
+    // The seat learns its refusal as a rendered NetErrorInfo — free text — and the host panel resolves its copy
+    // from an issue CODE. Classification is the join between the two; without it the one refusal a player can act
+    // on arrives as a string nothing has a sentence for.
+    private static void ARunInProgressRefusalIsClassified()
+    {
+        Assert(HeadlessDisconnectReason.Classify("DisconnectionReason RunInProgress False")
+                == HeadlessDisconnectReason.RunInProgressCode,
+            "a rendered RunInProgress refusal classifies to the run-in-progress issue code");
+        Assert(HeadlessDisconnectReason.Classify("DisconnectionReason UnknownNetworkError False")
+                == "DisconnectionReason UnknownNetworkError False",
+            "a reason we have no sentence for is passed through unchanged rather than flattened");
+        Assert(HeadlessDisconnectReason.Classify("  ") == "connection-ended", "an empty reason still names something");
+        Assert(HeadlessDisconnectReason.IsSpecific(HeadlessDisconnectReason.RunInProgressCode)
+                && !HeadlessDisconnectReason.IsSpecific(HeadlessDisconnectReason.NativeNetworkErrorCode),
+            "'the socket is gone' is generic; 'the run had already begun' is not");
+    }
+
+    // THE RACE THAT LOST THE DIAGNOSIS. The transport publishes a generic drop first and starts the shutdown; the
+    // game's own handler follows with the reason the host actually gave. The second one used to be logged as
+    // "already running — ignoring" and thrown away, leaving the host to show the generic join copy ("check that
+    // game and mod versions match") for a run the seat simply was not in.
+    private static async Task ASpecificReasonRefinesTheGenericOneThatStartedTheShutdown()
+    {
+        var refined = new List<string>();
+        var notifies = 0;
+        var quits = 0;
+        var arms = 0;
+        var sequence = new HeadlessDisconnectExitSequence(
+            notifyViewers: (_, _) => { notifies++; return Task.CompletedTask; },
+            quit: () => quits++,
+            forceExit: () => { },
+            schedule: (_, _) => arms++,
+            log: _ => { },
+            refineReason: refined.Add);
+
+        Assert(await sequence.StartAsync(HeadlessDisconnectReason.NativeNetworkErrorCode), "the generic drop starts the shutdown");
+        Assert(!await sequence.StartAsync(HeadlessDisconnectReason.RunInProgressCode),
+            "the specific reason does not restart the shutdown");
+        Assert(sequence.Reason == HeadlessDisconnectReason.RunInProgressCode,
+            "…but it becomes the recorded reason");
+        Assert(refined.Count == 1 && refined[0] == HeadlessDisconnectReason.RunInProgressCode,
+            "…and is handed to the hook that reports it upstream");
+        Assert(notifies == 1 && quits == 1 && arms == 1,
+            $"refinement changes nothing about the shutdown itself (notify={notifies} quit={quits} arm={arms})");
+    }
+
+    private static async Task AGenericSecondReasonNeverDisplacesASpecificOne()
+    {
+        var refined = new List<string>();
+        var sequence = new HeadlessDisconnectExitSequence(
+            notifyViewers: (_, _) => Task.CompletedTask,
+            quit: () => { },
+            forceExit: () => { },
+            schedule: (_, _) => { },
+            log: _ => { },
+            refineReason: refined.Add);
+
+        await sequence.StartAsync(HeadlessDisconnectReason.RunInProgressCode);
+        await sequence.StartAsync(HeadlessDisconnectReason.NativeNetworkErrorCode);
+        Assert(sequence.Reason == HeadlessDisconnectReason.RunInProgressCode,
+            "a later 'the socket is gone' never overwrites the reason the host actually gave");
+        Assert(refined.Count == 0, "…and reports nothing upstream");
+    }
+
+    // Bounded work: the seat is seconds from exiting, so however many disconnect notifications the game produces,
+    // the refinement fires at most once — and a hook that throws must not be able to interfere with the exit.
+    private static async Task RefinementHappensAtMostOnceAndNeverThrows()
+    {
+        var refined = 0;
+        var sequence = new HeadlessDisconnectExitSequence(
+            notifyViewers: (_, _) => Task.CompletedTask,
+            quit: () => { },
+            forceExit: () => { },
+            schedule: (_, _) => { },
+            log: _ => { },
+            refineReason: _ => { refined++; throw new IOException("the host is already gone"); });
+
+        await sequence.StartAsync(HeadlessDisconnectReason.NativeNetworkErrorCode);
+        Assert(!await sequence.StartAsync(HeadlessDisconnectReason.RunInProgressCode), "the refining trigger still returns false");
+        Assert(!await sequence.StartAsync("DisconnectionReason NotInSaveGame False"), "a third reason is refused");
+        Assert(refined == 1, $"the refinement hook ran exactly once (ran {refined} times)");
+        Assert(sequence.Reason == HeadlessDisconnectReason.RunInProgressCode,
+            "a hook that threw does not lose the refined reason");
     }
 
     // Every patched method must still exist. A game update that renames either one leaves a headless wedged behind

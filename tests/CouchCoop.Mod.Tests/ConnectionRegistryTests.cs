@@ -157,6 +157,7 @@ internal static class ConnectionRegistryTests
                  {
                      "browser-transport-lost", "native-join-rejected", "process-exited",
                      CouchCoop.Mod.Session.HeadlessClientManager.SeatBuildMismatchCode,
+                     CouchCoop.Mod.Session.HeadlessDisconnectReason.RunInProgressCode,
                  })
         {
             var failed = Complete();
@@ -168,6 +169,21 @@ internal static class ConnectionRegistryTests
             registry.Disconnected(failed);
             Assert(registry.Snapshot().Rows.Any(row => row.Issue?.Code == confirmedCode), "clean teardown retains confirmed failures");
         }
+
+        // THE ONE REPLACEMENT ALLOWED, and its direction. A seat reports a drop generically first and names the
+        // real reason a beat later; without this the row keeps the generic native rejection and the host is told
+        // to check that game and mod versions match, for a run the player is simply not in.
+        var refined = Complete();
+        registry.Fail(refined, "native-join-rejected", "Native rejection", "Retry", "the socket went away");
+        registry.Fail(refined, CouchCoop.Mod.Session.HeadlessDisconnectReason.RunInProgressCode,
+            "The run was already in progress", "Reload the saved run", "RunInProgress");
+        Assert(registry.Snapshot().Rows.Any(row => row.Id == refined
+                && row.Issue?.Code == CouchCoop.Mod.Session.HeadlessDisconnectReason.RunInProgressCode),
+            "a late run-in-progress refusal replaces the generic native cause recorded before it");
+        registry.Fail(refined, "native-disconnected", "Disconnected", "Retry", "a later generic report");
+        Assert(registry.Snapshot().Rows.Any(row => row.Id == refined
+                && row.Issue?.Code == CouchCoop.Mod.Session.HeadlessDisconnectReason.RunInProgressCode),
+            "…and nothing generic takes it back");
     }
 
     private static void DirectViewAndSlowWarning()

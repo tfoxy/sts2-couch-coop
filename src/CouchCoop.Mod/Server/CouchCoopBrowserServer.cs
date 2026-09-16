@@ -118,7 +118,10 @@ public sealed class CouchCoopBrowserServer(
             netId => new CouchCoopLobbyParticipation(runtimeHost).DisconnectClient(netId, requireSuccess: true),
             // How many seats the live lobby has room for — the stock four-player cap unless a multiplayer
             // limit mod raised it.
-            () => new CouchCoopLobbyParticipation(runtimeHost).MaxCouchSeats());
+            () => new CouchCoopLobbyParticipation(runtimeHost).MaxCouchSeats(),
+            // Whether the host is inside a run right now: once it is, no seat process may be LAUNCHED, because
+            // the host's netcode refuses any client that is not already connected.
+            () => new CouchCoopLobbyParticipation(runtimeHost).IsRunInProgress());
     }
     // Static-background image producer for the /bg/ route (lazily built like _spineClips).
     private CouchCoopStaticBackgroundProvider? _staticBackgrounds;

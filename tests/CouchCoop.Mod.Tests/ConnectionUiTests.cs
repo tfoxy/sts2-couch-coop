@@ -33,6 +33,11 @@ internal static class ConnectionUiTests
                      CouchCoopPatchHealth.IssueCode,
                      HostReachabilityWatch.IssueCode,
                      CouchCoop.Mod.Session.HeadlessClientManager.SharedUserDirCode,
+                     // Both ends of the mid-run refusal report this one — the host declining to launch a seat
+                     // into a running run, and a seat the host's netcode turned away. Unmapped it would render
+                     // the join copy ("check that game and mod versions match"), which is wrong advice for a run
+                     // the player simply is not in.
+                     CouchCoop.Mod.Session.HeadlessDisconnectReason.RunInProgressCode,
                  })
         {
             var issue = new ConnectionIssue(code, "", "", null);

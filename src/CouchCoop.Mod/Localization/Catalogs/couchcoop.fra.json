@@ -69,6 +69,8 @@
   "couchcoop_connection_error_launch_action": "Essayez de rejoindre à nouveau.",
   "couchcoop_connection_error_join_summary": "La partie du joueur a perdu sa connexion.",
   "couchcoop_connection_error_join_action": "Reconnectez ce navigateur.",
+  "couchcoop_connection_error_seat_run_in_progress_summary": "La partie a déjà commencé, le jeu de ce joueur ne peut donc pas la rejoindre.",
+  "couchcoop_connection_error_seat_run_in_progress_action": "Rechargez la partie sauvegardée pour permettre à ce joueur de revenir.",
   "couchcoop_connection_error_mod_mismatch_summary": "La partie de ce joueur a chargé une autre copie de CouchCoop.",
   "couchcoop_connection_error_mod_mismatch_action": "Ne gardez qu'une seule copie du mod installée, redémarrez le jeu, puis réessayez.",
   "couchcoop_connection_error_seat_port_summary": "Un autre programme de cet ordinateur utilise le port de ce joueur.",

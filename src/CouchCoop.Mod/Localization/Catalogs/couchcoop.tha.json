@@ -69,6 +69,8 @@
   "couchcoop_connection_error_launch_action": "ลองเข้าร่วมอีกครั้ง",
   "couchcoop_connection_error_join_summary": "เกมของผู้เล่นขาดการเชื่อมต่อ",
   "couchcoop_connection_error_join_action": "เชื่อมต่อเบราว์เซอร์นี้อีกครั้ง",
+  "couchcoop_connection_error_seat_run_in_progress_summary": "การเล่นรอบนี้เริ่มไปแล้ว เกมของผู้เล่นคนนี้จึงเข้าร่วมไม่ได้",
+  "couchcoop_connection_error_seat_run_in_progress_action": "โหลดรอบที่บันทึกไว้ใหม่ เพื่อให้ผู้เล่นคนนี้กลับเข้ามาได้",
   "couchcoop_connection_error_mod_mismatch_summary": "เกมของผู้เล่นนี้โหลด CouchCoop คนละสำเนากับโฮสต์",
   "couchcoop_connection_error_mod_mismatch_action": "ให้ติดตั้ง CouchCoop ไว้เพียงสำเนาเดียว รีสตาร์ทเกม แล้วลองอีกครั้ง",
   "couchcoop_connection_error_seat_port_summary": "โปรแกรมอื่นบนคอมพิวเตอร์เครื่องนี้กำลังใช้พอร์ตของผู้เล่นนี้อยู่",

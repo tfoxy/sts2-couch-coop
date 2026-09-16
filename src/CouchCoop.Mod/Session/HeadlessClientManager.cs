@@ -164,6 +164,12 @@ public sealed partial class HeadlessClientManager : IDisposable
     // limit mods raise that — see CouchCoopLobbyParticipation.MaxCouchSeats, which is what the host wires in here.
     // Null in tests / on a headless client instance, which then get DefaultSeats.
     private readonly Func<int?>? _maxSeatsProbe;
+
+    // Whether the host's game is PAST character select right now (CouchCoopLobbyParticipation.IsRunInProgress).
+    // A probe for the same reason the seat cap is one: the answer changes while the host plays, and a value
+    // sampled at construction would be a lie for the whole session. Null (a standalone server, a test) reads as
+    // "no run", which is the historical behaviour — see RunInProgress.
+    private readonly Func<bool>? _runInProgressProbe;
     private readonly string? _gameExe;
     private readonly string? _headlessWrapper;
     private bool _disposed;
@@ -289,6 +295,45 @@ public sealed partial class HeadlessClientManager : IDisposable
     }
 
     /// <summary>
+    /// Whether the host's game is currently INSIDE a run (anything past character select). The one question that
+    /// decides whether a seat whose process is gone may be launched again — see the refusal in
+    /// <see cref="AllocateHeadless"/>.
+    /// <para>
+    /// FALSE on the multiplayer load-saved-run lobby, deliberately and load-bearingly: the host is between runs
+    /// there (no live run, a save waiting to be resumed), and that lobby is the one screen a departed seat
+    /// genuinely CAN rejoin through. Gating on this predicate therefore shuts the mid-run launch without touching
+    /// the rejoin flow that works.
+    /// </para>
+    /// <para>
+    /// NEVER evaluate this while holding <c>_lock</c>, for exactly the reason <see cref="MaxSlot"/> spells out:
+    /// the probe is a state pull that blocks on a marshal to the game's main thread, and the main thread takes
+    /// <c>_lock</c>. Public entry points snapshot it before locking and hand the value down.
+    /// </para>
+    /// <para>
+    /// A missing probe, or one that throws, reads as NO RUN. The gate exists to refuse a launch the host would
+    /// reject anyway, so guessing "in a run" from an unreadable state would cost a player their seat on a screen
+    /// where nothing was wrong; the game refuses the peer itself if we are wrong the other way.
+    /// </para>
+    /// </summary>
+    private bool RunInProgress
+    {
+        get
+        {
+            if (_runInProgressProbe is null) return false;
+            try
+            {
+                return _runInProgressProbe();
+            }
+            catch (Exception ex)
+            {
+                Console.Error.WriteLine(
+                    $"[couchcoop] run-in-progress probe failed ({ex.GetType().Name}: {ex.Message}) — assuming no run.");
+                return false;
+            }
+        }
+    }
+
+    /// <summary>
     /// Inverse of <see cref="SlotToNetId"/>, with a range check: true only when <paramref name="netId"/> names a
     /// slot this manager can actually run (<see cref="MinSlot"/>..<see cref="MaxSlot"/>). Used by the netId-BOUND
     /// spawn path, where the target seat comes from the game's run/save rather than from our own allocator, so it
@@ -337,9 +382,11 @@ public sealed partial class HeadlessClientManager : IDisposable
         Func<int, CancellationToken, Task<bool>>? readinessProbe = null,
         Action<ulong>? evictStalePeer = null,
         Func<int?>? maxSeatsProbe = null,
-        Func<int, CancellationToken, Task<string?>>? seatPortProbe = null)
+        Func<int, CancellationToken, Task<string?>>? seatPortProbe = null,
+        Func<bool>? runInProgressProbe = null)
     {
         _launcher = launcher ?? throw new ArgumentNullException(nameof(launcher));
+        _runInProgressProbe = runInProgressProbe;
         _readinessProbe = readinessProbe is null
             ? DefaultHttpReadinessAsync
             : async (port, token) =>
@@ -363,8 +410,10 @@ public sealed partial class HeadlessClientManager : IDisposable
         string gameExe,
         string? headlessWrapper,
         Action<ulong>? evictStalePeer,
-        Func<int?>? maxSeatsProbe)
+        Func<int?>? maxSeatsProbe,
+        Func<bool>? runInProgressProbe)
     {
+        _runInProgressProbe = runInProgressProbe;
         _gameExe = gameExe;
         _headlessWrapper = string.IsNullOrWhiteSpace(headlessWrapper) ? null : headlessWrapper.Trim();
         _launcher = LaunchReal;
@@ -381,15 +430,19 @@ public sealed partial class HeadlessClientManager : IDisposable
     /// reuses it (see <see cref="_evictStalePeer"/>); pass null to disable (no host net server).
     /// <paramref name="maxSeatsProbe"/> reports how many couch seats the live lobby has room for, or null when
     /// there is no lobby to ask (see <see cref="MaxSlot"/>); pass no probe at all to keep the stock three.
+    /// <paramref name="runInProgressProbe"/> reports whether the host is inside a run right now (see
+    /// <see cref="RunInProgress"/>), which is what refuses a mid-run seat LAUNCH; pass none and no launch is
+    /// ever refused on that ground.
     /// </summary>
     public static HeadlessClientManager? TryCreate(
         Action<ulong>? evictStalePeer = null,
-        Func<int?>? maxSeatsProbe = null)
+        Func<int?>? maxSeatsProbe = null,
+        Func<bool>? runInProgressProbe = null)
     {
         var exe = System.Diagnostics.Process.GetCurrentProcess().MainModule?.FileName;
         if (string.IsNullOrEmpty(exe)) return null;
         var wrapper = Environment.GetEnvironmentVariable("COUCHCOOP_HEADLESS_WRAPPER");
-        return new HeadlessClientManager(exe, wrapper, evictStalePeer, maxSeatsProbe);
+        return new HeadlessClientManager(exe, wrapper, evictStalePeer, maxSeatsProbe, runInProgressProbe);
     }
 
     // Trim + case-fold display names so reconnects/dedup are stable regardless of incidental
@@ -407,16 +460,17 @@ public sealed partial class HeadlessClientManager : IDisposable
     /// (overridable — see <see cref="SeatReadyTimeoutEnvironmentVariable"/>).
     /// <para>
     /// A player's <paramref name="displayName"/> CLAIMS a slot (→ a fixed netId) for the host's lifetime. A
-    /// same-name return reuses that slot: if its headless is still live it's shared as-is; if it died (browser
-    /// closed) a fresh headless is re-spawned on the SAME slot/netId. This is what enables a mid-run RECONNECT:
-    /// the host holds the player's seat in the running RunState keyed by their lobby netId, and only accepts a
-    /// reconnecting peer whose netId matches it (a fresh netId is rejected as "run in progress"). Pinning the
-    /// name→netId binding across disconnects makes a returning player present that original identity.
+    /// same-name return reuses that slot: if its headless is still LIVE it is shared as-is — that shared instance
+    /// is the whole mid-run RECONNECT, and it is load-bearing: the browser goes away, the seat's process keeps
+    /// playing (see <see cref="MarkDetached"/>), and the returning browser re-attaches to the peer the run still
+    /// has. If the process is GONE the claim is remembered but a replacement can only be launched between runs;
+    /// see <see cref="RunInProgress"/> and the refusal in <see cref="AllocateHeadless"/>.
     /// </para>
     /// <para>
-    /// When <paramref name="allowNewSlot"/> is false (a run is active), only REUSE of an existing name claim is
-    /// permitted — a brand-new name returns null instead of launching, so no NEW mirror client is instanced
-    /// mid-run. Reconnect/reuse of an already-claimed slot is unaffected.
+    /// When <paramref name="allowNewSlot"/> is false, only REUSE of an existing name claim is permitted — a
+    /// brand-new name returns null instead of launching, so no NEW mirror client is instanced mid-run. That flag
+    /// is about a new PLAYER; whether a claimed-but-dead seat may be re-launched is a separate question, answered
+    /// by <see cref="RunInProgress"/> (a launch mid-run is refused on every path).
     /// </para>
     /// <para>
     /// <paramref name="onSlotBound"/> reports <c>(netId, name)</c> the moment this player's slot is bound —
@@ -433,19 +487,24 @@ public sealed partial class HeadlessClientManager : IDisposable
     /// <para>
     /// <paramref name="targetNetId"/> switches slot selection from "by name" to "by SEAT": the slot is
     /// <c>netId - 1000</c> (<see cref="TryNetIdToSlot"/>) instead of whatever <see cref="AllocateSlotForNewNameLocked"/>
-    /// happens to pick. This is what makes a REJOIN work at all. The game gates rejoining on netId — the load-run
-    /// lobby disconnects any client whose netId is not in the loaded save (<c>NetError.NotInSaveGame</c>) and a
-    /// running <c>RunLobby</c> rejects any peer not already in the run (<c>NetError.RunInProgress</c>) — so a
-    /// headless spawned on a name-chosen slot almost never carries the seat's netId and is bounced on arrival, no
-    /// matter how the picker labelled it. Passing the seat's netId here is the whole cure. Everything else on this
-    /// method is unchanged and applies equally: the slot is still name-CLAIMED (so a later same-name return reuses
-    /// it), a live instance on that slot is still shared rather than respawned, a detach is still cleared, and
+    /// happens to pick. This is what makes a rejoin THROUGH THE LOAD-SAVED-RUN LOBBY work at all: that lobby
+    /// disconnects any client whose netId is not in the loaded save (<c>NetError.NotInSaveGame</c>), so a headless
+    /// spawned on a name-chosen slot almost never carries the seat's netId and is bounced on arrival, no matter
+    /// how the picker labelled it. Passing the seat's netId here is the whole cure. It does NOT open a rejoin into
+    /// a RUNNING run — nothing does; see <paramref name="runInProgress"/>. Everything else on this method is
+    /// unchanged and applies equally: the slot is still name-CLAIMED (so a later same-name return reuses it), a
+    /// live instance on that slot is still shared rather than respawned, a detach is still cleared, and
     /// <paramref name="onSlotBound"/> still fires before the launch.
     /// </para>
     /// </summary>
     /// <param name="maxSlot">
     /// The caller's PRE-LOCK snapshot of <see cref="MaxSlot"/>. Taken by the caller, not here, because the same
     /// value is needed to decide which seat ports to survey — and both must be settled before <c>_lock</c>.
+    /// </param>
+    /// <param name="runInProgress">
+    /// The caller's PRE-LOCK snapshot of <see cref="RunInProgress"/> — taken by the caller for the same reason
+    /// <paramref name="maxSlot"/> is (the probe marshals to the game's main thread, which takes <c>_lock</c>).
+    /// True refuses every LAUNCH here; it never touches the reuse of a process that is already running.
     /// </param>
     /// <param name="occupiedSeatPorts">
     /// Seat slots whose browser port already has a foreign owner (see <see cref="SurveySeatPortsAsync"/>). A
@@ -460,6 +519,7 @@ public sealed partial class HeadlessClientManager : IDisposable
         CancellationToken ct,
         int maxSlot,
         IReadOnlyDictionary<int, string> occupiedSeatPorts,
+        bool runInProgress,
         bool allowNewSlot = true,
         Action<ulong, string?>? onSlotBound = null,
         ulong? targetNetId = null)
@@ -570,10 +630,25 @@ public sealed partial class HeadlessClientManager : IDisposable
                     return new(SlotToPort(slot), NewProcess: false);
                 }
 
-                // Claimed but the headless died → re-spawn on the SAME slot (same netId) below so the host's
-                // run-in-progress rejoin accepts this returning player. Evict any stale peer on this netId after
-                // the lock (see evictNetIdAfterSpawn) in case the dead headless's Release never ran (ungraceful
-                // drop / no clean WS close).
+                // Claimed but the headless died → re-spawn on the SAME slot (same netId) below, so that BETWEEN
+                // RUNS the returning player presents the identity the lobby (or the loaded save) knows them by.
+                //
+                // THIS IS NOT A MID-RUN REJOIN, and it used to claim it was. The comment here read "so the host's
+                // run-in-progress rejoin accepts this returning player"; the host does no such thing. Observed on
+                // a live host after a seat's process died mid-run and the browser auto-reconnected by name — the
+                // replacement instance was spawned on the same slot, carried the same netId 1002, and the host
+                // refused it on arrival anyway:
+                //
+                //   [StartRunLobby (…)] Client 1002 connected but we are already beginning the run!
+                //   [ENetHost] Disconnecting client 1002, reason: RunInProgress
+                //
+                // 1002 WAS a player in that run. Being the run's own netId is not enough: the host admits peers
+                // while the lobby is up and stops when the run begins, so a process that is not already connected
+                // has no way back in until the host reloads the save. The `runInProgress` gate below is what stops
+                // us from spending ~30s of the player's time launching a seat to be refused.
+                //
+                // Evict any stale peer on this netId after the lock (see evictNetIdAfterSpawn) in case the dead
+                // headless's Release never ran (ungraceful drop / no clean WS close).
                 reusingClaim = true;
                 evictNetIdAfterSpawn = SlotToNetId(slot);
                 Console.Error.WriteLine($"[couchcoop] headless reconnect slot={slot} netId={SlotToNetId(slot)} name={name} session={sessionId:N}");
@@ -596,6 +671,35 @@ public sealed partial class HeadlessClientManager : IDisposable
                 }
                 _sessionToSlot[sessionId] = slot;
                 if (name is not null) _nameToSlot[name] = slot;
+            }
+
+            // THE MID-RUN LAUNCH GATE. Every branch above that could hand back a LIVE process has already
+            // returned, so reaching this line means we are about to start a new game process and walk it up to
+            // the host's ENet listener. The host will refuse it: once the run begins it disconnects any client
+            // that is not already connected, its own seats included (see the log quoted in the reconnect branch
+            // above). Refusing here instead costs the player a second and an accurate sentence, where letting it
+            // through costs ~30s of "Joining…" and then the generic "check that game and mod versions match".
+            //
+            // Scoped as tightly as the defect: this refuses a LAUNCH, never a REUSE — the mid-run browser
+            // reconnect to a seat whose process is still playing is the load-bearing path here and returns above,
+            // untouched. And RunInProgress reads FALSE on the multiplayer load-saved-run lobby, which is the one
+            // screen a departed seat genuinely can come back through, so that flow stays open too.
+            if (runInProgress)
+            {
+                Console.Error.WriteLine(
+                    $"[couchcoop] headless spawn refused slot={slot} netId={SlotToNetId(slot)} name={name}: a run is in progress");
+                ConnectionRegistry.Shared.Fail(
+                    sessionId,
+                    HeadlessDisconnectReason.RunInProgressCode,
+                    "The run is already in progress, so this player's game cannot be started for it.",
+                    "The host has to reload the saved run to let this player back in.",
+                    $"No game process is running for netId {SlotToNetId(slot)} and the host refuses any client that "
+                    + "is not already connected once a run has begun, so no new one was launched.");
+                // Unwind exactly as the port-owner refusal below does: drop this session, and keep a claim we did
+                // not create — the player's seat stays theirs for the rejoin once the host reloads the save.
+                _sessionToSlot.Remove(sessionId);
+                if (!reusingClaim) RemoveNameForSlotLocked(slot);
+                return null;
             }
 
             // The slot is settled and we are about to SPAWN on it (every reuse branch above has already returned).
@@ -854,6 +958,28 @@ public sealed partial class HeadlessClientManager : IDisposable
         lock (_lock)
         {
             return _nameToSlot.ContainsKey(name);
+        }
+    }
+
+    /// <summary>
+    /// The seat netId <paramref name="displayName"/> claims, or null when this name holds no slot here.
+    /// <see cref="HasNameClaim"/>'s answer with the identity attached.
+    /// <para>
+    /// It exists so a FREE-TEXT name join can be judged by the same seat rule a roster tap is. A browser that
+    /// reconnects after its seat died re-joins with the remembered NAME and no player id, so the join handler had
+    /// no netId to hand <see cref="MirrorSeatDirectory.RefuseJoin"/> and the seat verdict the picker was already
+    /// rendering was simply skipped for it — which is how a viewer could drive a join into a seat every row on
+    /// their own screen showed as unjoinable. Resolving the claim closes that gap; a name with no claim still
+    /// returns null and is judged exactly as before.
+    /// </para>
+    /// </summary>
+    public ulong? NetIdForClaimedName(string? displayName)
+    {
+        var name = NormalizeName(displayName);
+        if (name is null) return null;
+        lock (_lock)
+        {
+            return _nameToSlot.TryGetValue(name, out var slot) ? SlotToNetId(slot) : null;
         }
     }
 

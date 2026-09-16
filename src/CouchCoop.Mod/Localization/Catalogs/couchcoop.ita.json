@@ -69,6 +69,8 @@
   "couchcoop_connection_error_launch_action": "Prova a partecipare di nuovo.",
   "couchcoop_connection_error_join_summary": "La partita del giocatore ha perso la connessione.",
   "couchcoop_connection_error_join_action": "Riconnetti questo browser.",
+  "couchcoop_connection_error_seat_run_in_progress_summary": "La run è già iniziata, quindi la partita di questo giocatore non può unirsi.",
+  "couchcoop_connection_error_seat_run_in_progress_action": "Ricarica la run salvata per far rientrare questo giocatore.",
   "couchcoop_connection_error_mod_mismatch_summary": "La partita di questo giocatore ha caricato una copia diversa di CouchCoop.",
   "couchcoop_connection_error_mod_mismatch_action": "Tieni installata una sola copia della mod, riavvia il gioco e riprova.",
   "couchcoop_connection_error_seat_port_summary": "Un altro programma su questo computer sta usando la porta di questo giocatore.",
