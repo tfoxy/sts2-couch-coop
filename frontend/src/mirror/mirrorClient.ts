@@ -16,6 +16,7 @@ import { publishAtlasManifest } from "@/mirror/imagePrefetch";
 import { reproRecorder } from "@/mirror/reproRecorder";
 import { publishAssetVersion } from "@/join/assetVersion";
 import { hostWsUrl } from "@/join/hostBase";
+import { readVisitId } from "@/join/visitId";
 
 // Standalone client for the live-tree MIRROR. Opens its own `/ws` connection and renders off `scene-delta`
 // messages; it also parses the `session` envelope to drive the join screen — roster + run-vs-lobby — so the
@@ -531,13 +532,17 @@ export function connectMirrorClient(options: {
     }
     joinSequence += 1;
     const requestId = `join:${joinSequence}`;
+    // This page's pre-WebSocket identity (see join/visitId.ts). The host merges the `GET /` that preceded
+    // this socket into THIS connection's row with it; a page that has none joins byte-identically to before.
+    const visit = readVisitId();
     try {
       socket.send(JSON.stringify({
         type: "join",
         requestId,
         name: name.trim(),
         // Omitted (not null) when there is no picked seat, so a free-text join's bytes are exactly as before.
-        ...(playerId ? { playerId } : {})
+        ...(playerId ? { playerId } : {}),
+        ...(visit ? { visit } : {})
       }));
       joinPending = true;
       joinRequestId = requestId;
@@ -832,7 +837,12 @@ export function buildHeadlessMirrorWebSocketUrl(
   port: number,
   sourceLocation: Pick<Location, "href" | "protocol"> = window.location,
   staticBg = false,
-  trailDrive = false
+  trailDrive = false,
+  // This page's visit id, carried to the SEAT so its own arrival log can answer "did this device ever reach
+  // me?" — the observation that turns the host's *network path* verdict from an inference into evidence.
+  // Defaults to the document's own id; pass null to send none. Optional on the wire: unlike watch/staticBg,
+  // an absent `visit` is not a contract error, so an older client or a hand-built URL connects unchanged.
+  visit: string | null = readVisitId()
 ): string {
   // Same host-base derivation as buildMirrorWebSocketUrl; only the PORT differs for a headless instance.
   // Deriving the authority from the host base (rather than `location`) is what keeps this pointing at the
@@ -844,5 +854,6 @@ export function buildHeadlessMirrorWebSocketUrl(
   wsUrl.searchParams.set("cardFlight", "1");
   wsUrl.searchParams.set("handTween", "1");
   wsUrl.searchParams.set("trailDrive", trailDrive ? "1" : "0");
+  if (visit) wsUrl.searchParams.set("visit", visit);
   return wsUrl.toString();
 }

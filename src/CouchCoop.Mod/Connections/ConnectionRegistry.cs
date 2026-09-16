@@ -13,6 +13,9 @@ public sealed class ConnectionRegistry
     private readonly object _gate = new();
     private readonly TimeProvider _time;
     private readonly Func<TimeSpan, CancellationToken, Task> _delay;
+    // The pre-WebSocket half of the same story: HTTP requests that reached this host before (or instead of) a
+    // socket. Folded into every report so "which step failed?" has an answer even when no row was ever opened.
+    private readonly ConnectionArrivalLog _arrivals;
     private readonly Dictionary<Guid, Entry> _clients = [];
     private readonly Dictionary<Guid, Entry> _issues = [];
     private readonly Queue<Guid> _issueOrder = [];
@@ -20,10 +23,12 @@ public sealed class ConnectionRegistry
     private int _overflow;
 
     public ConnectionRegistry(TimeProvider? time = null) : this(time, null) { }
-    internal ConnectionRegistry(TimeProvider? time, Func<TimeSpan, CancellationToken, Task>? delay)
+    internal ConnectionRegistry(TimeProvider? time, Func<TimeSpan, CancellationToken, Task>? delay,
+        ConnectionArrivalLog? arrivals = null)
     {
         _time = time ?? TimeProvider.System;
         _delay = delay ?? ((duration, cancellationToken) => Task.Delay(duration, _time, cancellationToken));
+        _arrivals = arrivals ?? ConnectionArrivalLog.Shared;
     }
 
     public ConnectionRegistrySnapshot Snapshot()
@@ -378,6 +383,11 @@ public sealed class ConnectionRegistry
                 Timeline = e.Timeline.ToArray(), Facts = facts, Logs = e.Logs.Values.ToArray()
             };
         }
+
+        // Folded in AFTER this registry's lock is released: the arrival log has a lock of its own, and these
+        // two must never be held nested. `visit` is set when this connection's browser sent back the id its
+        // page was served with, in which case that device's own arrivals lead the list.
+        report = report with { Arrivals = _arrivals.DescribeForReport(report.Facts.GetValueOrDefault("visit")) };
         return ConnectionReportFormatter.Format(report);
     }
 

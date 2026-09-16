@@ -793,6 +793,27 @@ panel is no longer mounted; its internal narration remains available for diagnos
   byte-identical across two of these — and that contradicted itself, calling a listener unresponsive in the same
   sentence as `authenticated heartbeat fresh: True`. The network-path cause is only reachable from
   `MonitorConnectionAsync`, because the join returns as soon as the HOST can reach the seat.
+- **Before the WebSocket there is a VISIT ID and an arrival ring.** `ConnectionRegistry` rows begin at the
+  upgrade, so a device that fetched `/` and got no further left nothing at all. The SPA document is now served
+  with a per-response nonce injected into its `<head>` (`Server/VisitIdTag.cs` →
+  `<meta name="couchcoop-visit">`) on a **`Cache-Control: no-store`** response — without the `no-store` the HTTP
+  cache hands several devices one id. Not a cookie, deliberately: cookies are not port-scoped (RFC 6265 §8.5), so
+  one set by `:13337` would ride to `:13357` and to every other service on the machine. Every other static file
+  keeps exactly the caching it had. `Connections/ConnectionArrivalLog.cs` records `{at, remote, path, outcome,
+  visit, device label}` for the shell, `/ws` and refusals in a 128-entry ring (`MaximumRetainedArrivals`, the
+  shape of `MaximumRetainedFailures`), folded into every report by `BuildReport`. **Bounded on purpose** — it
+  sits on an unauthenticated LAN request path: repeats of the newest entry coalesce, user-agent parsing is
+  memoised and budgeted, `godot.log` emission is a token bucket, and nothing is keyed by remote address. Never
+  records a player name: the query string is dropped (`?name=` rides there, the reason `OfflineQrCode` strips it).
+  The browser reads the tag back (`frontend/src/join/visitId.ts`) and sends it on `join`, which **promotes** the
+  visit into that connection's row instead of leaving a second one; the seat's socket URL carries `?visit=`, so a
+  seat's own log answers "did this device ever reach me?". Read API for the readiness verdict:
+  `HasArrivedForVisit` / `Summarize(visitId)` (host) and `SummarizeViewerArrivals()` / `ViewerArrivalCount`
+  (process-wide, loopback excluded — the host's own probe is not a device). Layered UNDER
+  `HostReachabilityWatch`, which counts raw accepts: an empty ring says which of the two silences it is. Tests:
+  `ConnectionArrivalLogTests` (Connection.Tests `--routes`), `visitId.spec.ts`, `mirrorClientVisit.spec.ts`.
+  **Scope limit:** this closes "reached HTTP, failed later" only — a phone that never reaches the host makes no
+  request and leaves no row.
 - Browser `client-frame-presented` is bound to the granted attempt and emitted after successful rendering
   and two animation-frame callbacks while visible. DOM and canvas use the same receipt path. It is
   separate from `scene-ack`, which remains the scene stream's flow-control credit.

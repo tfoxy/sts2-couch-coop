@@ -341,6 +341,21 @@ describe("service worker: caching behaviour", () => {
     expect(h.fetchCalls).toHaveLength(1);
   });
 
+  // THE VISIT ID DEPENDS ON THIS. The host embeds a per-response nonce in the document and serves it
+  // `no-store`; if this worker ever answered a navigation from a cache, or stored one, two devices would
+  // share an id and every pre-socket arrival would be attributed to the wrong phone.
+  it("always fetches a navigation and never stores the document", async () => {
+    const first = await h.internals.handleNavigation(h.makeRequest("/", { mode: "navigate" }));
+    expect(await first.text()).toContain("/app/index-v1.js");
+    await h.internals.handleNavigation(h.makeRequest("/", { mode: "navigate" }));
+
+    expect(h.fetchCalls.filter((url) => url === `${ORIGIN}/`)).toHaveLength(2);
+    for (const name of await h.storage.keys()) {
+      const cache = await h.storage.open(name);
+      expect(await cache.keys()).not.toContain(`${ORIGIN}/`);
+    }
+  });
+
   it("does not store a failed asset response", async () => {
     h.routes.set(`${ORIGIN}/res/missing.png`, () => new Response("nope", { status: 404 }));
     await h.internals.handleAsset(h.makeRequest("/res/missing.png"));

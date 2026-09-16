@@ -28,11 +28,15 @@ public sealed class CouchCoopBrowserServer(
     HeadlessClientManager? headlessManager = null,
     bool? isHeadlessClient = null,
     Action<string>? log = null,
-    NetworkAdmissionLimiter? admission = null) : IAsyncDisposable
+    NetworkAdmissionLimiter? admission = null,
+    ConnectionArrivalLog? arrivals = null) : IAsyncDisposable
 {
     private readonly IPAddress _bindAddress = bindAddress ?? IPAddress.Loopback;
     private readonly Action<string> _log = log ?? (message => Console.Error.WriteLine(message));
     private readonly RateLimitedDiagnosticLog _networkDiagnostics = new(log ?? (message => Console.Error.WriteLine(message)));
+    // Pre-WebSocket arrivals. The PROCESS-owned log by default (a seat is its own process and keeps its own),
+    // injectable so a test server records into an instance of its own rather than into the shared one.
+    private readonly ConnectionArrivalLog _arrivals = arrivals ?? ConnectionArrivalLog.Shared;
     private readonly bool _isHeadlessClient = isHeadlessClient ?? CouchCoopMod.IsHeadlessClient;
     private readonly bool _ownsHeadlessManager = headlessManager is null;
     private readonly BrowserSessionRegistry _sessionRegistry = new();
@@ -1159,6 +1163,7 @@ public sealed class CouchCoopBrowserServer(
                 webSocketLease = _admission.TryAcquireWebSocket();
                 if (webSocketLease is null)
                 {
+                    RecordWebSocketArrival(request, remoteAddress, ConnectionArrivalOutcome.WebSocketCapacity);
                     await HttpResponseWriter.WriteJsonErrorAsync(stream, HttpStatusCode.ServiceUnavailable,
                         "websocket-capacity", "Too many WebSocket connections are active.", cancellationToken).ConfigureAwait(false);
                     return;
@@ -1283,6 +1288,7 @@ public sealed class CouchCoopBrowserServer(
 
         if (string.Equals(request.Path, "/ws", StringComparison.Ordinal) && !request.IsWebSocketUpgrade)
         {
+            RecordWebSocketArrival(request, remoteAddress, ConnectionArrivalOutcome.InvalidUpgrade);
             await HttpResponseWriter.WriteJsonErrorAsync(
                 stream,
                 HttpStatusCode.BadRequest,
@@ -1300,6 +1306,7 @@ public sealed class CouchCoopBrowserServer(
             // Origin is allowed (non-browser clients) and why same-origin is decided against the Host header.
             if (!CouchCoopWebOrigin.IsAllowedWebSocketOrigin(request.Header("Origin"), request.Header("Host")))
             {
+                RecordWebSocketArrival(request, remoteAddress, ConnectionArrivalOutcome.OriginRefused);
                 _networkDiagnostics.Write("websocket-origin-refused",
                     "[couchcoop] browser-server diagnostic code=websocket-origin-refused "
                     + $"origin={request.Header("Origin")} host={request.Header("Host")} "
@@ -1315,6 +1322,7 @@ public sealed class CouchCoopBrowserServer(
 
             if (envelopeFactory is null)
             {
+                RecordWebSocketArrival(request, remoteAddress, ConnectionArrivalOutcome.RuntimeUnavailable);
                 await HttpResponseWriter.WriteJsonErrorAsync(
                     stream,
                     HttpStatusCode.ServiceUnavailable,
@@ -1323,6 +1331,11 @@ public sealed class CouchCoopBrowserServer(
                     cancellationToken).ConfigureAwait(false);
                 return;
             }
+
+            // The viewer reached the socket. On a SEAT this is the arrival that answers "did that device ever
+            // get here?" — the seat's URL carries the visit id the host's page minted, so the two processes'
+            // arrival logs describe the same visit.
+            RecordWebSocketArrival(request, remoteAddress, ConnectionArrivalOutcome.WebSocket);
 
             var connectionEnvelopeFactory = new BrowserStateEnvelopeFactory(
                 envelopeFactory.RuntimeHost,
@@ -1347,6 +1360,7 @@ public sealed class CouchCoopBrowserServer(
                     isSecure,
                     _headlessManager,
                     _isHeadlessClient,
+                    _arrivals,
                     cancellationToken).ConfigureAwait(false);
             return;
         }
@@ -1822,11 +1836,62 @@ public sealed class CouchCoopBrowserServer(
         var file = await staticFiles.TryOpenAsync(request.Path, cancellationToken).ConfigureAwait(false);
         if (file is null)
         {
+            _arrivals.Record(remoteAddress, request.Path, ConnectionArrivalOutcome.NotFound,
+                userAgent: request.Header("User-Agent"));
             await HttpResponseWriter.WriteJsonErrorAsync(stream, HttpStatusCode.NotFound, "not-found", "Route was not found.", cancellationToken).ConfigureAwait(false);
             return;
         }
 
+        // THE SPA DOCUMENT — the one response that gets a visit id, and therefore the one that may never be
+        // cached. Every other static file (the hashed bundle, the wasm, the icons) is byte-identical for every
+        // device and keeps exactly the caching it had.
+        if (VisitIdTag.IsHtml(file.ContentType))
+        {
+            var visitId = _arrivals.BeginVisit(remoteAddress, request.Header("User-Agent"), request.Path);
+            await HttpResponseWriter.WriteBytesAsync(
+                stream,
+                200,
+                "OK",
+                VisitIdTag.Inject(file.Bytes, visitId),
+                file.ContentType,
+                new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase)
+                {
+                    // Without this the HTTP cache hands several devices the same id, and every arrival after
+                    // the first is attributed to whichever device happened to fetch the document first.
+                    ["Cache-Control"] = VisitIdTag.RequiredCacheControl
+                },
+                cancellationToken).ConfigureAwait(false);
+            return;
+        }
+
         await HttpResponseWriter.WriteBytesAsync(stream, 200, "OK", file.Bytes, file.ContentType, cancellationToken: cancellationToken).ConfigureAwait(false);
+    }
+
+    /// <summary>
+    /// The WebSocket query selector that carries a visit id to a SEAT. Optional and outside the connection
+    /// contract (unlike `watch` / `staticBg`, an absent value is not an error): a client that predates the
+    /// visit id, or a seat URL built by hand, connects exactly as before.
+    /// </summary>
+    public const string MirrorVisitSelector = "visit";
+
+    /// <summary>
+    /// Record one <c>/ws</c> arrival — accepted or refused — carrying the visit id from the connect URL when
+    /// there is one.
+    /// </summary>
+    /// <remarks>
+    /// The HOST's own <c>/ws</c> has no <c>?visit=</c>: the browser sends its visit on the <c>join</c> message
+    /// instead, which is what merges it into the WebSocket row. A SEAT's URL does carry it, because by then
+    /// the host knows which visit it redirected and the seat has never seen this device before.
+    /// </remarks>
+    private void RecordWebSocketArrival(CouchCoopHttpRequest? request, IPAddress remoteAddress, string outcome)
+    {
+        if (request is null) return;
+        _arrivals.Record(
+            remoteAddress,
+            request.Path,
+            outcome,
+            request.QueryValues.GetValueOrDefault(MirrorVisitSelector),
+            request.Header("User-Agent"));
     }
 
     private static async Task HandleHeadlessClientStatusAsync(

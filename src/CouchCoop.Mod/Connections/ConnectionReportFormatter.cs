@@ -24,6 +24,11 @@ public sealed record ConnectionReportContent
     public DateTimeOffset RecordedAtUtc { get; init; }
     public ConnectionIssueOutcome? Outcome { get; init; }
     public IReadOnlyList<string> Timeline { get; init; } = [];
+    /// <summary>
+    /// Pre-WebSocket HTTP arrivals (<see cref="ConnectionArrivalLog"/>), newest first, this attempt's own
+    /// visit leading. Empty is meaningful: nothing from any device reached this host's HTTP surface.
+    /// </summary>
+    public IReadOnlyList<string> Arrivals { get; init; } = [];
     public IReadOnlyDictionary<string, string> Facts { get; init; } = new Dictionary<string, string>();
     public IReadOnlyList<ConnectionLogExcerpt> Logs { get; init; } = [];
 }
@@ -32,6 +37,8 @@ public static partial class ConnectionReportFormatter
 {
     public const int MaximumUtf8Bytes = 64 * 1024;
     public const string TruncationMarker = "\n[report truncated at 64 KiB]\n";
+    /// <summary>A second cap beside the source's own, so this formatter's output stays bounded on its own terms.</summary>
+    public const int MaximumReportedArrivals = ConnectionArrivalLog.MaximumReportedArrivals + 1;
 
     [GeneratedRegex("(?i)(?:bearer\\s+|authorization\\s*[:=]?\\s*(?:bearer\\s+)?)\\S+")]
     private static partial Regex Authorization();
@@ -75,6 +82,12 @@ public static partial class ConnectionReportFormatter
             text.AppendLine("timeline:");
             foreach (var item in content.Timeline) text.Append("- ").AppendLine(Sanitize(item));
         }
+
+        // The pre-WebSocket half. The scope limit is stated in the header on purpose: this section only ever
+        // shows devices that REACHED this host over HTTP. A phone that never got here makes no request and
+        // therefore leaves nothing, which is a different fact from "it got here and then failed".
+        text.AppendLine("arrivals: HTTP requests that reached this host; a device that never reached it leaves none.");
+        foreach (var item in content.Arrivals.Take(MaximumReportedArrivals)) text.Append("- ").AppendLine(Sanitize(item));
         // Reserve space for both log sources even when diagnostic fields are unusually large.
         text = new StringBuilder(TruncateUtf8(text.ToString(), 30 * 1024, "\n[diagnostic fields truncated]\n"));
         text.AppendLine("logs: concurrent host errors may be unrelated.");

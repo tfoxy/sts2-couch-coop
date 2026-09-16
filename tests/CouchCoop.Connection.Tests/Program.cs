@@ -12,6 +12,10 @@ if (args is ["--routes"])
 {
     Console.WriteLine("connections: control routes");
     await ConnectionControlRouteTests.RunAsync();
+    // The other route-shaped contract: what the SPA document is served WITH (a per-response visit id, and the
+    // no-store that keeps two devices from sharing one), and the arrival ring behind it.
+    Console.WriteLine("connections: arrival log");
+    await ConnectionArrivalLogTests.RunAsync();
     Console.WriteLine("connections: control routes ok");
     return;
 }
@@ -96,6 +100,8 @@ Console.WriteLine("connections: disconnect exit");
 await HeadlessDisconnectExitTests.RunAsync();
 Console.WriteLine("connections: control routes");
 await ConnectionControlRouteTests.RunAsync();
+Console.WriteLine("connections: arrival log");
+await ConnectionArrivalLogTests.RunAsync();
 Console.WriteLine("connections: seat build");
 SeatModBuildTests.Run();
 Console.WriteLine("connections: seat port truth");

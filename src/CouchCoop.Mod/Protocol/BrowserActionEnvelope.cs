@@ -25,7 +25,13 @@ public sealed record BrowserJoinRequestEnvelope(
     // host has no remembered name for is labelled with a synthesized "Player 1003", so resolving that label back to
     // a netId by string match is at best fragile and at worst ambiguous. The netId parsed out of this is what the
     // netId-bound spawn binds to, and the game gates a rejoin on exactly that netId.
-    string? PlayerId = null);
+    string? PlayerId = null,
+    // The VISIT ID this page was served with — read by the client out of its own `<meta name="couchcoop-visit">`
+    // (see ConnectionArrivalLog / VisitIdTag). It merges the `GET /` that preceded this socket into this
+    // connection's row instead of leaving an ownerless arrival beside it. NOT a credential and never trusted as
+    // one: it selects nothing and authorises nothing, and a value outside the minted shape is dropped. Omitted
+    // by a client that has none (a dev-server page, a non-browser client), which joins exactly as before.
+    string? Visit = null);
 
 // Upstream raw-input replay from a controlling mirror client (single-controller foundation). `Kind` selects
 // the injection; element-addressed pointer input carries `ElementId` (+ optional normalized 0..1 offset),
