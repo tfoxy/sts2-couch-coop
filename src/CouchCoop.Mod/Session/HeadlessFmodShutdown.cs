@@ -1,5 +1,6 @@
 using Godot;
 using System;
+using System.Collections.Generic;
 using System.Threading.Tasks;
 
 namespace CouchCoop.Mod.Session;
@@ -25,6 +26,14 @@ namespace CouchCoop.Mod.Session;
 /// change), it aborts without shutting down, so it can't re-trigger the crash. Pair with
 /// <see cref="HeadlessAudioMutePatch"/>, which no-ops every <c>NAudioManager</c>/<c>NRunMusicController</c> forward
 /// so no game code re-enters the torn-down system (notably per-act bank load/unload on act transitions).
+///
+/// A second, quieter ordering hazard: the addon's <c>FmodListener2D</c>/<c>FmodListener3D</c> nodes call
+/// <c>FmodServer.remove_listener()</c> from their own <c>_exit_tree</c>. Left attached, that only fires when the
+/// whole <see cref="SceneTree"/> tears down at process exit — long after <c>shutdown()</c> already ran — and
+/// <c>remove_listener()</c> against the released system push_errors (<c>"Cannot set listener 0 weight to 0"</c>).
+/// So <see cref="Teardown"/> detaches every listener node it can find (by class, not by one hardcoded path) with an
+/// explicit, synchronous <c>RemoveChild</c> BEFORE calling <c>shutdown()</c> — that is what actually fires
+/// <c>_exit_tree</c> immediately, while the system is still alive — then frees the now-detached node afterwards.
 ///
 /// Implementation mirrors <see cref="CouchCoopHeadlessVisualSuspender"/> / <see cref="CouchCoopHeadlessCpuProfiler"/>:
 /// the mod has no Godot source generator so a custom <c>Node._Process</c> never fires; a background <see cref="Task"/>
@@ -55,8 +64,12 @@ public static class HeadlessFmodShutdown
     private static readonly string[] SiblingAudioNodePaths =
     [
         "Game/FmodBankLoader",
-        "Game/AudioManager/FmodListener2D",
     ];
+
+    // fmod-gdextension's registered listener classes (res://addons/fmod/fmod.gdextension's [icons] section lists
+    // both). Discovered BY TYPE via a tree walk rather than trusting one hardcoded path — the scene may have a 3D
+    // listener, more than one, or move it, and a path miss would silently leave the shutdown-ordering hazard live.
+    private static readonly string[] FmodListenerClassNames = ["FmodListener2D", "FmodListener3D"];
 
     private static readonly object Gate = new();
     private static bool _started;
@@ -191,7 +204,13 @@ public static class HeadlessFmodShutdown
             }
         }
 
-        // 2) Now safe: release the FMOD system and its mixer/DSP thread.
+        // 2) Detach any FMOD listener node(s) BEFORE releasing the system: each one's _exit_tree calls
+        // FmodServer.remove_listener(), which must run while FmodServer is still alive (see class doc). RemoveChild
+        // fires _exit_tree synchronously, right here — QueueFree alone would only defer it to the SceneTree's final
+        // teardown at process exit, long after shutdown() below has already run.
+        var detachedListeners = DetachFmodListeners(root);
+
+        // 3) Now safe: release the FMOD system and its mixer/DSP thread.
         var server = Engine.HasSingleton(FmodServerSingleton) ? Engine.GetSingleton(FmodServerSingleton) : null;
         if (server is not null && GodotObject.IsInstanceValid(server) && server.HasMethod(ShutdownMethod))
         {
@@ -204,6 +223,80 @@ public static class HeadlessFmodShutdown
             CouchCoopLog.Info(
                 "[couchcoop][fmod] FmodServer singleton/shutdown() unavailable at teardown — left running (update() already disabled).");
         }
+
+        // 4) Free the detached listener node(s) now that they're safely outside the tree. Their _exit_tree already
+        // ran in step 2 while FmodServer was alive; freeing an out-of-tree node does not re-dispatch _exit_tree, so
+        // this cannot re-run remove_listener() against the now-released system.
+        foreach (var listener in detachedListeners)
+        {
+            if (GodotObject.IsInstanceValid(listener))
+            {
+                listener.QueueFree();
+            }
+        }
+    }
+
+    // Runs on the game main thread, called from Teardown before shutdown(). Walks the tree looking for FMOD
+    // listener nodes BY TYPE (GetClass() against the fmod-gdextension's registered class names) rather than
+    // trusting one hardcoded path, and detaches each one it finds so its _exit_tree fires now, while the system is
+    // still alive. Returns the detached nodes so the caller can free them only once shutdown() has run.
+    private static List<Node> DetachFmodListeners(Node root)
+    {
+        var detached = new List<Node>();
+
+        if (!GodotObject.IsInstanceValid(root))
+        {
+            return detached;
+        }
+
+        var stack = new Stack<Node>();
+        stack.Push(root);
+
+        while (stack.Count > 0)
+        {
+            var current = stack.Pop();
+            if (!GodotObject.IsInstanceValid(current))
+            {
+                continue;
+            }
+
+            if (Array.IndexOf(FmodListenerClassNames, current.GetClass()) >= 0)
+            {
+                var path = current.GetPath();
+                var parent = current.GetParentOrNull<Node>();
+                if (parent is not null && GodotObject.IsInstanceValid(parent))
+                {
+                    parent.RemoveChild(current);
+                    detached.Add(current);
+                    CouchCoopLog.Info(
+                        $"[couchcoop][fmod] detached '{current.GetClass()}' at '{path}' from the tree before shutdown (its _exit_tree calls FmodServer.remove_listener).");
+                }
+                else
+                {
+                    CouchCoopLog.Info(
+                        $"[couchcoop][fmod] found '{current.GetClass()}' at '{path}' with no parent to detach from — left as-is.");
+                }
+
+                // Listener nodes are leaves in practice; no need to descend into them.
+                continue;
+            }
+
+            foreach (var child in current.GetChildren())
+            {
+                if (GodotObject.IsInstanceValid(child))
+                {
+                    stack.Push(child);
+                }
+            }
+        }
+
+        if (detached.Count == 0)
+        {
+            CouchCoopLog.Info(
+                "[couchcoop][fmod] no FMOD listener node found in the tree — nothing to detach before shutdown.");
+        }
+
+        return detached;
     }
 
     private static void CleanupTimer(Godot.Timer timer)
