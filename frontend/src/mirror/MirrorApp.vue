@@ -56,7 +56,8 @@ import {
   computeMirrorLoadingState,
   mirrorJoinProgressLine,
   mirrorLoadingLabel,
-  mirrorSeatNoticeCopy
+  mirrorSeatNoticeCopy,
+  seatNoticeForRejection
 } from "@/mirror/loadingState";
 import { prefetchMirrorImages } from "@/mirror/imagePrefetch";
 import { createMirrorState } from "@/mirror/sceneTree";
@@ -97,6 +98,12 @@ const forceReload = (): void => {
 
 // Maps a server `joinRejection` code to the message the picker shows. The default is the "wrong name" copy the
 // product spec calls for (covers a bad `?name=` and a mid-run newcomer picking a non-session player).
+//
+// THREE CODES NEVER REACH THIS TABLE. The host's named seat causes (`seat-port-taken` / `seat-port-blocked` /
+// `seat-network-path`) are rendered through the seat-notice surface instead — see `onJoinRejected` and
+// `seatNoticeForRejection`. They are the same three conditions that reach a REDIRECTED viewer on the `seat-notice`
+// channel, so they get the same words from the same catalogs rather than a second, vaguer translation of "try
+// again" here.
 const JOIN_REJECTION_MESSAGES: Record<string, "join.notSession" | "join.noFreeInstance" | "join.spawnFailed" | "join.seatUnavailable" | "join.failed"> = {
   "not-a-session-player": "join.notSession",
   "no-free-instance": "join.noFreeInstance",
@@ -335,6 +342,32 @@ let rejoinTarget: RejoinTarget | null = null;
 let lastJoinAttempt: RejoinTarget | null = null;
 let reconnectDelayMs = RECONNECT_BASE_DELAY_MS;
 let reconnectTimer: ReturnType<typeof setTimeout> | null = null;
+// ---- HOLDING A SEAT THE DEVICE CANNOT REACH (yet) ---------------------------------------------------------------
+//
+// The port the host last redirected us to, or null when this device holds no seat. It is what makes a seat socket
+// RETRYABLE without restarting the join — and the reason it has to exist is the worst thing this app has been
+// measured doing.
+//
+// THE LOOP, measured live 2026-09-16 on a phone whose path to its seat port was blocked (a device-scoped firewall
+// rule; guest/AP isolation and a client-isolating router do the same): the join COMPLETES, the browser is
+// redirected, and the seat socket never opens. That drop used to run the full `handleActiveClientDrop` teardown,
+// whose `reconnectToHost` closes EVERY client — the host socket included. Closing that socket is precisely what
+// makes the server `Release()` and kill the seat process, so the auto-rejoin then paid for a fresh 20-60 s cold
+// spawn, which was redirected to a port the device still could not reach, and so on: **32 full game-process
+// launches from one phone**, every ~43 s, with no end. It also cleared `seatNotice` each time and the respawned
+// seat got a fresh speaker, which is why the phone's own diagnosis first appeared at 63.8 s and then flickered
+// (~13 s visible per ~43 s period) instead of standing still at ~20 s.
+//
+// A socket that NEVER OPENED is the one shape that says nothing about the seat: the seat is alive, the host is
+// still talking to us, and only this device's path to it is in doubt. So that case holds instead — the host socket
+// stays open (it is also the ONLY channel the verdict arrives on; see `onSeatNotice`), the seat URL is retried on
+// the same backoff ladder, and the notice is left standing. Every other drop — a seat socket that opened and later
+// died, a headless announcing its exit, the host socket itself — is unchanged and still tears down.
+let seatViewPort: number | null = null;
+// Which clients ever reached `connected`. Read off `mirrorClient.status` at the moment it says so, because by the
+// time a `disconnected` notification arrives the status has already been overwritten and "never opened" and "opened
+// then dropped" are indistinguishable — which is exactly the distinction the hold above rests on.
+const everConnected = new WeakSet<MirrorClient>();
 // Armed while a join is in flight (see the `pendingName` watcher); the last line of defence against a
 // never-ending "Joining…".
 let joinTimeoutTimer: ReturnType<typeof setTimeout> | null = null;
@@ -441,6 +474,9 @@ function makeClient(url?: string, watchStream = false): MirrorClient {
     trailDrive: mirrorSettings.trailDriveCapable,
     pingIntervalMs: desiredPingIntervalMs(),
     onChange() {
+      // ABOVE the staleness guard on purpose: "did this socket ever open?" is a fact about the CLIENT, not about
+      // whether it happens to be the active one when it is asked. See `everConnected`.
+      if (c.status === "connected") everConnected.add(c);
       if (activeClient !== c) return; // stale callback from a superseded client
       status.value = c.status;
       revision.value = c.state.revision;
@@ -449,10 +485,25 @@ function makeClient(url?: string, watchStream = false): MirrorClient {
       // `activeClient`, so nothing below this line applies to a connection that just went away).
       if (c.status === "connected") {
         reconnectDelayMs = RECONNECT_BASE_DELAY_MS;
+        // A HELD seat socket that finally opened is the view coming back, so the "Reconnecting…" the hold put on
+        // screen comes down — the same restoration the redirect and direct-view grants perform. Only reachable
+        // from a hold: after a redirect the phase is already steady, and a device with no seat has no seat socket.
+        if (c !== hostClient && joined.value && reconnectState.value.phase !== "steady") {
+          reconnectState.value = reconnectStateAfterViewRestored();
+        }
       } else if (c.status === "disconnected") {
         const target = presentationTarget.value;
         if (target?.view === c && target.source !== c) {
           target.source.sendClientViewError(target.attemptId, "The game-view WebSocket closed. The browser did not report a more specific cause.", "browser-transport-lost");
+        }
+        // A seat socket that NEVER OPENED, with the host still talking to us: hold the seat instead of tearing
+        // the join down (see `seatViewPort` for the loop this stops). Everything else falls through unchanged —
+        // including a seat socket that opened and later dropped, which really is a view that was lost, and a drop
+        // that finds the host socket gone too, where there is nothing left to hold onto.
+        if (seatViewPort !== null && c !== hostClient && !everConnected.has(c)
+          && hostClient.status === "connected") {
+          holdSeatView(seatViewPort);
+          return;
         }
         handleActiveClientDrop();
         return;
@@ -538,23 +589,10 @@ function makeClient(url?: string, watchStream = false): MirrorClient {
       // headless before the redirect lands) but it has no reason to keep receiving bytes — and dropping its
       // streaming registration is what lets a host whose viewers have all redirected away stop its producer.
       c.sendWatch(false);
-      activeClient = makeClient(
-        buildHeadlessMirrorWebSocketUrl(
-          port,
-          undefined,
-          staticBgWireValue(mirrorSettings),
-          mirrorSettings.trailDriveCapable
-        ),
-        true
-      );
-      bindPresentation(c, activeClient);
-      mirrorState.value = activeClient.state;
-      status.value = activeClient.status;
-      revision.value = activeClient.state.revision;
-      if (latencyEnabled && typeof window !== "undefined") {
-        (window as unknown as { __mirrorLatency?: () => MirrorLatency }).__mirrorLatency =
-          () => ({ ...activeClient.latency });
-      }
+      // Remember the port BEFORE opening the socket: a connection that never opens is exactly the case the hold
+      // exists for, and it needs somewhere to retry.
+      seatViewPort = port;
+      openSeatView(port);
       // Do NOT call c.close() here. Closing the host WS triggers Release() on the server,
       // which kills the headless process — before the browser has established the new WS.
       // The host connection is closed on unmount (via allClients) instead.
@@ -607,13 +645,21 @@ function makeClient(url?: string, watchStream = false): MirrorClient {
       presentationTarget.value = null;
       // Name isn't servable → drop the pending join (recomputes back to the picker) and surface the message.
       pendingName.value = null;
-      joinMessage.value = rejectionMessage(reason);
-      // Only a server FAULT carries detail; every other code is self-describing, and a stale detail under a
-      // fresh unrelated rejection would misattribute the cause.
-      joinDetail.value = detail ?? null;
       joinProgress.value = null;
-      // The rejection is the more specific answer about the same attempt, and it owns the screen.
-      seatNotice.value = null;
+      // A NAMED SEAT CAUSE is the same verdict the `seat-notice` channel carries for a viewer whose join
+      // succeeded, arriving instead as the answer that ENDED this one. It renders through that surface — summary,
+      // action, and the host's own English underneath — so the player is told which of three unrelated things to
+      // fix rather than being invited to retry something a retry cannot fix. The rejection is still terminal:
+      // everything below is unchanged, and the picker comes back for the viewer to tap again.
+      const verdict = seatNoticeForRejection(reason, detail ?? null);
+      // Either way the rejection is the more specific answer about the same attempt, and it owns the screen: the
+      // two surfaces are written in lockstep so a stale one can never sit under the other.
+      seatNotice.value = verdict;
+      joinMessage.value = verdict ? null : rejectionMessage(reason);
+      // Only a server FAULT carries detail; every other code is self-describing, and a stale detail under a
+      // fresh unrelated rejection would misattribute the cause. (A verdict's own evidence tail rides on the seat
+      // notice above, under its localized copy, exactly as it does on the redirect path.)
+      joinDetail.value = verdict ? null : detail ?? null;
       // DISARM the auto-rejoin. A refused seat that still reads "ready" on the next session would otherwise be
       // retried on every envelope — a silent request storm. From here the viewer taps the row themselves.
       rejoinTarget = null;
@@ -944,6 +990,9 @@ function submitJoin(name: string, playerId?: string): void {
   // is still true, so clearing costs nothing and keeps a diagnosis about the seat the viewer just walked away
   // from off the screen of the one they picked instead.
   seatNotice.value = null;
+  // …and with no seat held: this attempt will be answered with a port of its own, and a stale one would let a
+  // retry ladder keep reaching for the seat the viewer just walked away from.
+  seatViewPort = null;
   pendingName.value = trimmed;
   prefillName.value = trimmed;
   // Held until the host confirms with a redirect, which promotes it to the auto-rejoin target.
@@ -977,6 +1026,64 @@ watch(pendingName, (name) => {
   }, JOIN_TIMEOUT_MS);
 });
 
+// Open (or re-open) the socket to this device's own seat and hand the app over to it. The HOST socket is not
+// touched: it stays open and gated off, because closing it is what makes the server Release() and kill the seat.
+// Shared by the redirect and by the hold's retry so the two cannot build a different URL — the query is rebuilt
+// from the CURRENT settings each time, so a viewer who changed one while waiting gets it honoured on the retry.
+function openSeatView(port: number): void {
+  activeClient = makeClient(
+    buildHeadlessMirrorWebSocketUrl(
+      port,
+      undefined,
+      staticBgWireValue(mirrorSettings),
+      mirrorSettings.trailDriveCapable
+    ),
+    true
+  );
+  bindPresentation(hostClient, activeClient);
+  mirrorState.value = activeClient.state;
+  status.value = activeClient.status;
+  revision.value = activeClient.state.revision;
+  if (latencyEnabled && typeof window !== "undefined") {
+    (window as unknown as { __mirrorLatency?: () => MirrorLatency }).__mirrorLatency =
+      () => ({ ...activeClient.latency });
+  }
+}
+
+// THE HOLD. This device's seat socket never opened; keep the seat and retry the port instead of restarting the
+// join (see `seatViewPort` for the 32-launch loop that teardown produced).
+//
+// What is deliberately NOT done here, each line of it a thing the teardown does:
+//   * the HOST socket is not closed — it is what keeps the seat process alive AND the only channel the host's
+//     verdict arrives on;
+//   * `joined` / `joinSession` / `rejoinTarget` are untouched, so no `join` is re-sent and no cold spawn is paid
+//     for. The seat we hold is the seat we are still trying to reach;
+//   * `seatNotice` is left standing. Clearing it is why the phone's diagnosis used to flicker on the respawn
+//     period instead of simply being true.
+//
+// The PHASE does advance, which is what puts the ordinary "Reconnecting…" + spinner under the notice: the honest
+// report is that the view is not here and we are still trying. Same `reconnectTimer` guard and same backoff ladder
+// as the teardown path, so the two signals one drop produces (`close`, then `error`) schedule exactly one retry.
+function holdSeatView(port: number): void {
+  if (reconnectTimer !== null) return;
+  // The socket that just died. Retired on the next attempt rather than left in `allClients`: a hold can legitimately
+  // run for hours at the ladder's 10s cap, and every attempt that stayed on that list would keep a dead socket and
+  // its retained scene map alive for the life of the page.
+  const dead = activeClient;
+  reconnectState.value = reconnectStateAfterDrop(reconnectState.value, true);
+  reconnectTimer = setTimeout(() => {
+    reconnectTimer = null;
+    // The seat we were holding must still be the seat we hold — anything that let go of it (a full teardown, a
+    // fresh join) already cleared the port, and reaching for it anyway would be this file's own stale-timer bug.
+    if (seatViewPort !== port) return;
+    dead.close();
+    const at = allClients.indexOf(dead);
+    if (at >= 0) allClients.splice(at, 1);
+    openSeatView(port);
+  }, reconnectDelayMs);
+  reconnectDelayMs = nextReconnectDelayMs(reconnectDelayMs);
+}
+
 // The ACTIVE connection went away (socket closed/errored, or a headless told us it is exiting). Fall back to the
 // picker on the original host and start reconnecting. Guarded by `reconnectTimer` so the several signals a single
 // drop produces (last-gasp envelope, then `close`, then `error`) schedule exactly one attempt.
@@ -1003,6 +1110,9 @@ function handleActiveClientDrop(): void {
   directViewRequested = false;
   pendingName.value = null;
   joinSession.value = null;
+  // And the seat itself is gone with it: `reconnectToHost` closes the host socket, which is what ends the seat
+  // process, so there is no port left to hold. The host assigns a fresh one on the next redirect.
+  seatViewPort = null;
   reconnectTimer = setTimeout(reconnectToHost, reconnectDelayMs);
   // Grow the ladder for the NEXT attempt; a successful open resets it (see onChange).
   reconnectDelayMs = nextReconnectDelayMs(reconnectDelayMs);

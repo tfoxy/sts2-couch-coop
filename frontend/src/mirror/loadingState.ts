@@ -155,6 +155,40 @@ export const MIRROR_SEAT_NOTICE_KEYS = {
 
 export type MirrorSeatNoticeKey = (typeof MIRROR_SEAT_NOTICE_KEYS)[keyof typeof MIRROR_SEAT_NOTICE_KEYS][number];
 
+// ---- the same verdict, arriving as a REJECTION -----------------------------------------------------------------
+//
+// The notice above rides the `seat-notice` channel, which only exists because the join SUCCEEDED and the seat then
+// turned out to be unreachable. The identical three causes can also end a join outright — a pinned rejoin onto a
+// port another program owns fails in well under a second — and that path answers on the `joinRejection` channel
+// instead, where every code used to collapse into "spawn-failed": *"Couldn't start your game view — please try
+// again"*. That is an invitation to retry the one thing a retry cannot fix, and the sentence the player needed
+// ("Nothing to change on this device — ask whoever is hosting to restart Slay the Spire 2") already existed,
+// translated, in all 14 catalogs — reachable only down the other path.
+//
+// So the host now forwards the verdict's own issue code and this maps it back onto the cause, which renders
+// through the seat-notice surface above. Same words, same markup, same catalogs; no new strings, and one
+// vocabulary for a player and whoever is hosting for them.
+
+/** The host issue code each seat-notice cause is announced under on the `joinRejection` channel. */
+export const MIRROR_REJECTION_SEAT_CAUSES = {
+  "seat-port-taken": "port-conflict",
+  "seat-port-blocked": "host-local-block",
+  "seat-network-path": "network-path"
+} as const satisfies Record<string, SeatNoticeCause>;
+
+/**
+ * The seat notice a `joinRejection` carries, or null when the code is not one of the three named causes.
+ *
+ * Null is the signal to fall back to `JOIN_REJECTION_MESSAGES` exactly as before: every other code — including a
+ * cause a future host names and this build has no copy for — keeps the behaviour it has today, for the same reason
+ * `mirrorSeatNoticeCopy` refuses an unknown cause rather than guessing which of several unrelated fixes to send a
+ * player to.
+ */
+export function seatNoticeForRejection(code: string, detail: string | null): BrowserSeatNotice | null {
+  const cause = MIRROR_REJECTION_SEAT_CAUSES[code as keyof typeof MIRROR_REJECTION_SEAT_CAUSES];
+  return cause ? { cause, detail } : null;
+}
+
 export interface MirrorSeatNoticeCopy {
   /** What is true, localized. */
   summary: string;
