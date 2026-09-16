@@ -336,6 +336,20 @@ public sealed class HotReloadableBrowserServerHost : IHotServerHost, IAsyncDispo
                 break;
             }
 
+            // Before admission, deliberately: even a connection our own limiter turns away proves that inbound
+            // packets reach this listener, which is the single thing HostReachabilityWatch is asking about.
+            //
+            // AND THIS IS THE LOOP A REAL HOST RUNS. There are three accept loops carrying this call; the twin
+            // in CouchCoopBrowserServer.StartAsync serves the standalone/test path that a shipped host never
+            // reaches (the `_mirrorSeats` note at the top of that file records the last feature wired only
+            // there and dead in production). While this third loop was missing it, every plain-HTTP arrival on
+            // a shipped host was invisible to the watch: the 90s "no phone or browser has connected" row was
+            // measured live, twice, behind a phone that had already made three inbound requests — which the
+            // arrival log recorded, because ConnectionArrivalLog is written deeper, inside the generation's
+            // request handling. A false "nobody can reach this host" is the exact wrong signal this whole
+            // diagnostic exists to delete, so HostReachabilityAcceptLoopTests pins the call from outside.
+            CouchCoop.Mod.Connections.HostReachabilityWatch.Shared.NoteInboundConnection();
+
             var lease = Admission.TryAcquireHttp((client.Client.RemoteEndPoint as IPEndPoint)?.Address);
             if (lease is null)
             {

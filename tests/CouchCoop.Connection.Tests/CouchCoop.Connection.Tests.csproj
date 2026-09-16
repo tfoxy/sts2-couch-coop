@@ -40,6 +40,8 @@
     <Compile Include="../CouchCoop.Mod.Tests/ConnectionRegistryTests.cs" Link="ConnectionRegistryTests.cs" />
     <Compile Include="../CouchCoop.Mod.Tests/HostPatchHealthTests.cs" Link="HostPatchHealthTests.cs" />
     <Compile Include="../CouchCoop.Mod.Tests/HostReachabilityWatchTests.cs" Link="HostReachabilityWatchTests.cs" />
+    <Compile Include="../CouchCoop.Mod.Tests/HostReachabilityAcceptLoopTests.cs" Link="HostReachabilityAcceptLoopTests.cs" />
+    <Compile Include="../CouchCoop.Mod.Tests/NativeLogLatchTests.cs" Link="NativeLogLatchTests.cs" />
     <Compile Include="../CouchCoop.Mod.Tests/ConnectionDeviceLabelTests.cs" Link="ConnectionDeviceLabelTests.cs" />
     <Compile Include="../CouchCoop.Mod.Tests/ConnectionReportFormatterTests.cs" Link="ConnectionReportFormatterTests.cs" />
     <Compile Include="../CouchCoop.Mod.Tests/ConnectionAttemptLogsTests.cs" Link="ConnectionAttemptLogsTests.cs" />
