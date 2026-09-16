@@ -13,6 +13,24 @@ rejected. Browser semantic actions are limited to the two actions used by the sh
 player comes from the served game process or the server-owned connection identity. Raw pointer and keyboard input
 and ordinary client settings remain available.
 
+The join page itself is served with `Cache-Control: no-store` and carries a per-response **visit id** — 16 random
+bytes, embedded in the document as `<meta name="couchcoop-visit">`. It is a diagnostic correlation id, not a
+credential: it selects nothing, authorises nothing, is accepted back only in the exact minted shape, and is
+deliberately not a cookie, because cookies are not port-scoped and one set by the host's port would be sent to
+every other service on that machine. The `no-store` is what stops a cache handing several devices one id; the
+long-lived caching of hashed application assets is unchanged.
+
+The host keeps a bounded **arrival log** of HTTP requests that reached it — the join page, `/ws`, and refusals —
+holding the time, remote address, requested path, outcome, visit id, and a coarse device label parsed from the
+User-Agent. It exists because connection records previously began only at the WebSocket upgrade, so a device that
+reached the host and failed earlier left no trace at all. It never records a player name: query strings are
+discarded, which is where a name would ride. At most 128 entries are retained, repeats of the newest entry are
+folded into it rather than added, user-agent parsing is memoised and budgeted per minute, log output is a token
+bucket, and no per-address state is kept — so recording an arrival cannot be used to grow this process's memory
+or CPU. Entries older than 30 minutes stop being matched and are dropped. The log is copied into a connection
+report and written to the host's own log; it is not exposed on any route. It can only describe devices that
+reached the host: one that never arrives produces no request and no entry.
+
 Network work is bounded with message, header, handshake, connection, queue, and ping limits. Slow network writes
 receive deadlines without disconnecting an otherwise idle player. Managed generated assets use coordinated
 reservations, per-entry and total-cache limits, and a free-space reserve. Existing cache hits remain readable;
@@ -34,6 +52,7 @@ Current limits:
 | Stalled network write | 30 seconds per transmission chunk |
 | Managed cache / free-space reserve | 4 GiB / 2 GiB |
 | Generated entry | 128 MiB |
+| Retained HTTP arrivals | 128 entries, 30 minutes, 128-character paths |
 
 Cache accounting includes old generated cache generations, staged files, metadata, and ASTC outputs. Shipped
 assets and separately configured operator geoclips are excluded. Reservations are shared across processes;

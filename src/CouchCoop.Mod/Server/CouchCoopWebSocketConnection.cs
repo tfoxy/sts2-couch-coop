@@ -125,6 +125,9 @@ public sealed class CouchCoopWebSocketConnection
     // state). Set in AcceptCoreAsync; _viewerName updated on a successful join.
     private BrowserSessionHandle? _session;
     private string? _viewerName;
+    // Where this connection's pre-WebSocket half is recorded: the visit id the browser sends on `join` is
+    // merged into THIS connection's row here, rather than left as a second, ownerless arrival.
+    private readonly ConnectionArrivalLog _arrivals;
 
     private CouchCoopWebSocketConnection(
         BrowserStateEnvelopeFactory envelopeFactory,
@@ -139,7 +142,8 @@ public sealed class CouchCoopWebSocketConnection
         bool isHeadlessClient,
         bool sceneStreaming,
         bool wantsStaticBg,
-        bool isSecure)
+        bool isSecure,
+        ConnectionArrivalLog arrivals)
     {
         _envelopeFactory = envelopeFactory ?? throw new ArgumentNullException(nameof(envelopeFactory));
         _connections = connections ?? throw new ArgumentNullException(nameof(connections));
@@ -154,6 +158,7 @@ public sealed class CouchCoopWebSocketConnection
         _sceneStreaming = sceneStreaming;
         _wantsStaticBg = wantsStaticBg;
         _isSecure = isSecure;
+        _arrivals = arrivals ?? throw new ArgumentNullException(nameof(arrivals));
         _actionExecutor = new BrowserActionExecutor(envelopeFactory.RuntimeHost);
         _inputExecutor = new BrowserInputExecutor(envelopeFactory.RuntimeHost);
         _lobby = new CouchCoopLobbyParticipation(envelopeFactory.RuntimeHost);
@@ -203,6 +208,7 @@ public sealed class CouchCoopWebSocketConnection
         bool isSecure = false,
         HeadlessClientManager? headlessManager = null,
         bool isHeadlessClient = false,
+        ConnectionArrivalLog? arrivals = null,
         CancellationToken cancellationToken = default)
     {
         if (request.QueryValues.ContainsKey("view"))
@@ -244,7 +250,8 @@ public sealed class CouchCoopWebSocketConnection
                 isHeadlessClient,
                 watch,
                 staticBg,
-                isSecure)
+                isSecure,
+                arrivals ?? ConnectionArrivalLog.Shared)
             .AcceptCoreAsync(stream, request, cancellationToken)
             .ConfigureAwait(false);
     }
@@ -290,6 +297,9 @@ public sealed class CouchCoopWebSocketConnection
             ConnectionRegistry.Shared.RecordDiagnostic(session.Id, "transport", _isSecure ? "Host WebSocket over TLS" : "Host WebSocket over HTTP");
             ConnectionRegistry.Shared.RecordDiagnostic(session.Id, "gameVersion", _envelopeFactory.RuntimeHost.Capabilities.GameVersion);
         }
+        // A seat's connect URL carries the visit id the host's page minted (the host's own does not — that one
+        // arrives on the `join` message below), so a seat can bind its arrival to this socket immediately.
+        PromoteVisit(session, request.QueryValues.GetValueOrDefault(CouchCoopBrowserServer.MirrorVisitSelector));
         _connections[_id] = this;
         try
         {
@@ -446,6 +456,22 @@ public sealed class CouchCoopWebSocketConnection
                 Console.Error.WriteLine($"[couchcoop] early SetClientName({netId}) failed: {exception.GetType().Name}: {exception.Message}");
             }
         });
+    }
+
+    /// <summary>
+    /// Merge a visit id into THIS connection, so the HTTP arrivals that preceded the socket belong to the
+    /// same attempt instead of forming a second, ownerless record. Untrusted input: anything that is not a
+    /// minted visit id is dropped, and a value that matches nothing is simply a no-op.
+    /// </summary>
+    private void PromoteVisit(BrowserSessionHandle session, string? visitId)
+    {
+        var visit = ConnectionArrivalLog.NormalizeVisitId(visitId);
+        if (visit is null) return;
+        _arrivals.Promote(visit, session.Id);
+        // A seat has no registry rows of its own — it reports through HeadlessConnectionReporter — so only the
+        // host records the correlation as a fact on the row.
+        if (!CouchCoopMod.IsHeadlessClient)
+            ConnectionRegistry.Shared.RecordDiagnostic(session.Id, "visit", visit);
     }
 
     private bool TryStartJoin(BrowserSessionHandle session, BrowserJoinRequestEnvelope join, CancellationToken cancellationToken)
@@ -757,6 +783,12 @@ public sealed class CouchCoopWebSocketConnection
                     }
                     else
                     {
+                        // PROMOTION, NOT A GHOST. The browser read this id out of the document the host served
+                        // it and sends it back here; merging it into this connection's row is what makes the
+                        // `GET /` that preceded this socket part of the same attempt. Done before the join is
+                        // started so a join that fails still carries its arrivals into the report.
+                        PromoteVisit(session, join.Visit);
+
                         // Mirror join gating (rules: only instance a NEW headless client while the host accepts
                         // joins — MP character-select / load-saved-game — and never for the host seat or a
                         // singleplayer run; a run-active brand-new name is rejected; an existing player still
