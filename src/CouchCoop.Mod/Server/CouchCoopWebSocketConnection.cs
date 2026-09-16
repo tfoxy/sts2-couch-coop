@@ -493,6 +493,71 @@ public sealed class CouchCoopWebSocketConnection
     private bool TryStartJoin(BrowserSessionHandle session, BrowserJoinRequestEnvelope join, CancellationToken cancellationToken)
         => _joinOperation.TryStart(cancellationToken, token => RunJoinAsync(session, join, token));
 
+    /// <summary>
+    /// Which <c>joinRejection</c> code answers a spawn that came back with NO port, and the English evidence
+    /// tail that rides under it.
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// THE NAMED CAUSES SURVIVE THE REJECTION. The seat readiness verdict already classifies four unrelated
+    /// conditions, each with its own fix, and each already has translated copy on both the host panel and the
+    /// phone (<c>MIRROR_SEAT_NOTICE_KEYS</c>). But a join that is REFUSED used to collapse all of them into
+    /// "spawn-failed", whose copy is "Couldn't start your game view — please try again": an invitation to retry
+    /// something no retry can fix. Measured Sep-15 2026, a pinned rejoin onto a port another program owned
+    /// failed in 606 ms and told the player exactly that — while the sentence it needed
+    /// ("Nothing to change on this device — ask whoever is hosting to restart Slay the Spire 2") already existed,
+    /// translated, in all 14 catalogs, reachable only down the redirect path.
+    /// </para>
+    /// <para>
+    /// So the three named seat causes are forwarded VERBATIM as the rejection code and the client renders them
+    /// through the same seat-notice surface the redirect path uses. Any other code — including a future one this
+    /// build has never heard of — falls through to the arms below, unchanged.
+    /// </para>
+    /// <para>
+    /// Ordering: a named cause outranks the spawn-window arms for the same reason
+    /// <see cref="HeadlessDisconnectReason.RunInProgressCode"/> does — it is a statement about WHY the seat could
+    /// not be served, and the window is only a statement about whether one was allowed to be tried.
+    /// </para>
+    /// </remarks>
+    internal static (string Rejection, string? Detail) ClassifyFailedSpawn(
+        ConnectionIssue? failure,
+        bool spawnAllowed,
+        bool isSeatRejoin,
+        bool hasNameClaim)
+    {
+        var evidence = failure?.Detail ?? failure?.Summary;
+
+        if (failure?.Code == HeadlessDisconnectReason.RunInProgressCode)
+        {
+            // The allocator refused to LAUNCH into a running run. Rule 6 in the join decision catches this
+            // for every join the seat table has an opinion on; reaching here means it did not (no seat table,
+            // or a seat whose verdict had not been evaluated yet), so the same answer is given from the same
+            // code the picker's disabled rows carry. Not "spawn-failed": nothing failed and a retry changes
+            // nothing until the host reloads the save, so copy that invites an immediate retry would be a lie.
+            return (MirrorSeatStatuses.UnavailableRejection, evidence);
+        }
+
+        if (failure?.Code is SeatReadinessVerdict.PortTakenCode
+            or SeatReadinessVerdict.PortBlockedCode
+            or SeatReadinessVerdict.NetworkPathCode)
+        {
+            // A cause with a fix. `failure.Code` is non-null inside this pattern.
+            return (failure.Code, evidence);
+        }
+
+        if (spawnAllowed || isSeatRejoin)
+        {
+            // Spawn window (or an allowed seat rejoin), but no port: the respawn failed, else the pool is
+            // full. A seat rejoin is a respawn by definition, so it reports "spawn-failed" rather than
+            // pretending the name was unknown.
+            return (failure is not null || isSeatRejoin || hasNameClaim ? "spawn-failed" : "no-free-instance", evidence);
+        }
+
+        // Not a spawn window (a run is active), not a seat that exists here, and no existing claim to reuse
+        // (rules 2 & 5). Self-describing, so it carries no evidence tail.
+        return ("not-a-session-player", null);
+    }
+
     private async Task RunJoinAsync(BrowserSessionHandle session, BrowserJoinRequestEnvelope join, CancellationToken cancellationToken)
     {
         var requestId = string.IsNullOrWhiteSpace(join.RequestId) ? Guid.NewGuid().ToString("N") : join.RequestId;
@@ -635,33 +700,11 @@ public sealed class CouchCoopWebSocketConnection
                     {
                         var failure = ConnectionRegistry.Shared.Snapshot().Rows
                             .FirstOrDefault(row => row.Id == session.Id)?.Issue;
-                        if (failure?.Code == Session.HeadlessDisconnectReason.RunInProgressCode)
-                        {
-                            // The allocator refused to LAUNCH into a running run. Rule 6 above catches this
-                            // for every join the seat table has an opinion on; reaching here means it did
-                            // not (no seat table, or a seat whose verdict had not been evaluated yet), so
-                            // the same answer is given from the same code the picker's disabled rows carry.
-                            // Not "spawn-failed": nothing failed and a retry changes nothing until the host
-                            // reloads the save, so copy that invites an immediate retry would be a lie.
-                            joinRejection = MirrorSeatStatuses.UnavailableRejection;
-                            joinRejectionDetail = failure.Detail ?? failure.Summary;
-                        }
-                        else if (ctx.SpawnAllowed || isSeatRejoin)
-                        {
-                            // Spawn window (or an allowed seat rejoin), but no port: the respawn failed, else
-                            // the pool is full. A seat rejoin is a respawn by definition, so it reports
-                            // "spawn-failed" rather than pretending the name was unknown.
-                            joinRejection = failure is not null || isSeatRejoin || _headlessManager.HasNameClaim(trimmedName)
-                                ? "spawn-failed"
-                                : "no-free-instance";
-                            joinRejectionDetail = failure?.Detail ?? failure?.Summary;
-                        }
-                        else
-                        {
-                            // Not a spawn window (a run is active), not a seat that exists here, and no
-                            // existing claim to reuse (rules 2 & 5).
-                            joinRejection = "not-a-session-player";
-                        }
+                        (joinRejection, joinRejectionDetail) = ClassifyFailedSpawn(
+                            failure,
+                            spawnAllowed: ctx.SpawnAllowed,
+                            isSeatRejoin: isSeatRejoin,
+                            hasNameClaim: _headlessManager.HasNameClaim(trimmedName));
                     }
                 }
             }

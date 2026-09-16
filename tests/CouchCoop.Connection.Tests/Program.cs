@@ -25,6 +25,10 @@ if (args is ["--routes"])
     // a non-game process used to be a SIGSEGV, and this asserts it is now inert.
     Console.WriteLine("connections: native log latch");
     NativeLogLatchTests.Run();
+    // The join reply's own envelope field: which `joinRejection` code a refused join is answered with, and so
+    // which copy the phone renders for it.
+    Console.WriteLine("connections: seat rejection codes");
+    SeatRejectionCodeTests.Run();
     Console.WriteLine("connections: control routes ok");
     return;
 }
@@ -131,6 +135,8 @@ Console.WriteLine("connections: seat arrival evidence");
 await SeatArrivalEvidenceTests.RunAsync();
 Console.WriteLine("connections: seat notice");
 SeatNoticeTests.Run();
+Console.WriteLine("connections: seat rejection codes");
+SeatRejectionCodeTests.Run();
 Console.WriteLine("connections: lifecycle");
 await HeadlessConnectionLifecycleTests.RunAsync();
 Console.WriteLine("connections: websocket lifecycle");
