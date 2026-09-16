@@ -134,7 +134,7 @@ public sealed partial class HeadlessClientManager : IDisposable
     /// How long a spawned seat gets to say ANYTHING to the host before it is killed — as opposed to
     /// <see cref="DefaultSeatReadyTimeoutSeconds"/>, which is how long it gets to become usable.
     /// <para>
-    /// 20s, and unlike the readiness deadline this one is not measured against the browser's patience. What makes
+    /// 35s, and unlike the readiness deadline this one is not measured against the browser's patience. What makes
     /// it safe is that a seat says hello from <see cref="HeadlessSeatCloudIsolationGuard"/> — the first patch-time
     /// thing in mod init — rather than from the connection reporter a hundred lines below it. So the only work
     /// inside this window is the game's own boot up to mod init, NOT the 20-30s asset preload that dominates a
@@ -145,19 +145,24 @@ public sealed partial class HeadlessClientManager : IDisposable
     /// another 55 seconds finding out whether it will ever serve a browser.
     /// </para>
     /// <para>
-    /// The margin is not assumed: every seat's actual figure is logged once as
+    /// THE NUMBER IS STILL UNMEASURED ON A REAL MACHINE, which is why it is 35 and not the 20 the hello makes
+    /// plausible. The live leg that was to measure it never spawned a seat (its host would not leave the main
+    /// menu), so nothing here is backed by a figure from a game: the only inputs are unit-suite timings. Killing
+    /// a HEALTHY seat breaks a join that works today, while waiting longer to kill an unmodded one costs almost
+    /// nothing — by the paragraph below, that seat has already written — so the error is taken in the safe
+    /// direction until somebody measures it. Every seat's actual figure is logged once as
     /// <c>seat first contact slot=N afterMs=…</c>, and `docs/agents/qa-recipes.md` §7 makes reading it a step of
-    /// the live recipe. If a real machine is anywhere near this number, raise the default — and an operator can
-    /// raise it for their own machine today with the env var, which is why this is a default and not a constant.
+    /// the live recipe: when a slow machine finally reports one, this can come down. An operator can raise it
+    /// today with the env var, which is why this is a default and not a constant.
     /// </para>
     /// <para>
     /// SAID PLAINLY: this SHRINKS the window, it does not close it. An unmodded game runs its own startup cloud
-    /// sync at its normal startup time, which is INSIDE these 20 seconds — so a seat killed here may already have
+    /// sync at its normal startup time, which is INSIDE these 35 seconds — so a seat killed here may already have
     /// written. What closes the hole is a host-side backup of the profile taken before the seat is spawned, which
     /// is a separate work item. Do not read this deadline as a guarantee.
     /// </para>
     /// </summary>
-    internal const double DefaultSeatContactTimeoutSeconds = 20.0;
+    internal const double DefaultSeatContactTimeoutSeconds = 35.0;
 
 
     // Guards the slot bookkeeping below. ORDERING RULE: nothing may block on the game's main thread while holding

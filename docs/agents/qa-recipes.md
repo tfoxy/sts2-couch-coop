@@ -850,18 +850,18 @@ works. Things worth knowing before reading its output:
   exits instead of joining. **Still prove what loaded**, and from the log rather than from having deployed:
   `grep 'Loading assembly DLL' <userDir>/logs/godot.log` must name `mods/couchcoop/couchcoop.dll`, in the
   seat logs as well as the host's.
-- **A seat that CouchCoop is not running in now dies in 20 seconds, not 75.** The seat declares "Steam Cloud
+- **A seat that CouchCoop is not running in now dies in 35 seconds, not 75.** The seat declares "Steam Cloud
   save isolation installed" on every heartbeat; a heartbeat without that declaration fails the seat on arrival,
-  and total silence past `COUCHCOOP_SEAT_CONTACT_TIMEOUT_SECONDS` (default 20) does the same. Both land as the
+  and total silence past `COUCHCOOP_SEAT_CONTACT_TIMEOUT_SECONDS` (default 35) does the same. Both land as the
   `seat-cloud-isolation-unconfirmed` issue, whose detail says which of the two it was — so a seat that used to
   sit on "Joining…" for 75 seconds because its mod failed to load now stops early and says why. To exercise the
   refusal itself, launch the host with `COUCHCOOP_FORCE_SEAT_ISOLATION_FAILURE=1` (exactly `1`); it is inherited
   by the seats it spawns, forces the verdict without opening any write path, and is inert unset.
 
-  **MEASURE THE MARGIN ON THE MACHINE YOU ARE ON — one grep, every live leg that spawns a seat.** The 20s
-  default assumes a seat can say hello (from the cloud-isolation guard, the first patch-time thing in mod init)
-  well inside it, and that assumption is only true until a slower machine is tried. After any leg that spawned a
-  seat:
+  **MEASURE THE MARGIN ON THE MACHINE YOU ARE ON — one grep, every live leg that spawns a seat. NOBODY HAS YET.**
+  The 35s default assumes a seat can say hello (from the cloud-isolation guard, the first patch-time thing in mod
+  init) well inside it, and no figure from a real game exists: the leg meant to take one never spawned a seat.
+  Until one does, 35 is a deliberately safe guess rather than a measurement. After any leg that spawned a seat:
 
   ```bash
   grep 'seat first contact' ~/.local/share/SlayTheSpire2/logs/godot.log | tail -5
