@@ -30,7 +30,7 @@ internal static class HeadlessUserDirSeeder
     // ONE leaf, because every cache now hangs under `couch-coop/cache/<branch>/` (CouchCoopCacheRoot) rather
     // than beside each other at the top. A slot resolves the same branch as the host — it is the same install —
     // so it lands in the same branch directory through the link and shares the host's warm cache.
-    private const string CouchCoopDirName = "couch-coop";
+    internal const string CouchCoopDirName = "couch-coop";
     private static readonly string[] SharedCouchCoopCacheDirs = ["cache"];
 
     // Mutable config + the Steam profile: COPIED (per-file) so the slot OWNS its own writable copy instead of
@@ -56,6 +56,14 @@ internal static class HeadlessUserDirSeeder
     // record of what the host discovered, not of what it chose. The seat's CouchCoop row is therefore pinned
     // explicitly after the copy; see HeadlessSeatModSelection.
     private static readonly string[] SeedCopyDirs = ["default", "mod_configs", "steam"];
+
+    /// <summary>
+    /// The seed dir names, exposed because ANYTHING ELSE THIS MOD WRITES INTO THE USER DIR MUST STAY OUT OF
+    /// THEM: a directory inside one is copied into every seat on every spawn, and — for the trees the game's own
+    /// save store owns — is then something the store and its cloud sync can see. <c>HostProfileBackup</c>
+    /// is the current reason this is readable, and the suite asserts the separation rather than trusting it.
+    /// </summary>
+    internal static IReadOnlyList<string> SeedCopyDirNames => SeedCopyDirs;
 
     // spirectl leaves many "settings.save.spirectl-backup-<ts>" files in steam/<id>/; they're pure cruft for a
     // fresh slot (≈half the dir) — skip them so each slot copies only the real profile (~real files, not backups).
@@ -98,7 +106,8 @@ internal static class HeadlessUserDirSeeder
     private const string UserDataDirName = "SlayTheSpire2";
 
     /// <summary>
-    /// An extra sink for the lines this type narrates. <c>CouchCoopMod.Init</c> points it at
+    /// An extra sink for the lines this type — and <c>HostProfileBackup</c>, which narrates through the
+    /// same <see cref="Log"/> — emit. <c>CouchCoopMod.Init</c> points it at
     /// <c>CouchCoopLog.Error</c>, which is the only channel that reaches <c>godot.log</c> in the shipped Steam
     /// flow — and, keeping only ERROR entries, the connections report's log excerpt.
     /// </summary>
@@ -114,7 +123,7 @@ internal static class HeadlessUserDirSeeder
     /// Both channels, for the reason this round exists: <c>Console.Error</c> is discarded by a Steam-launched
     /// game, so a line that goes only there cannot be read by the player who hit the problem.
     /// </summary>
-    private static void Log(string message)
+    internal static void Log(string message)
     {
         CouchCoopLog.Stderr(message);
         LogSink?.Invoke(message);
@@ -287,8 +296,82 @@ internal static class HeadlessUserDirSeeder
         Func<string, string?> getEnvironmentVariable,
         Func<Environment.SpecialFolder, string> getFolderPath)
     {
+        // The data root does not depend on the slot — see ResolveDataRoot, which is also how a caller with no
+        // slot at all reaches the HOST's user dir. Only the per-slot names below do.
+        if (ResolveDataRoot(platform, getEnvironmentVariable, getFolderPath, $"slot={slot} platform={platform}")
+            is not { } dataRoot)
+        {
+            return null;
+        }
+
+        var (dataHome, hostHome) = dataRoot;
+
+        var resolvedSlotBase = SlotBase(Path.Combine(dataHome, UserDataDirName), slot);
+        var environment = platform switch
+        {
+            HeadlessUserDirPlatform.Linux => new Dictionary<string, string>(StringComparer.Ordinal)
+            {
+                ["XDG_DATA_HOME"] = resolvedSlotBase,
+            },
+            // OrdinalIgnoreCase because Windows environment names are case-insensitive and the launch path
+            // merges these into a dictionary that already holds the parent process's own spelling of them.
+            HeadlessUserDirPlatform.Windows => new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase)
+            {
+                ["APPDATA"] = resolvedSlotBase,
+                ["LOCALAPPDATA"] = Path.Combine(resolvedSlotBase, "LocalAppData"),
+            },
+            HeadlessUserDirPlatform.MacOs => new Dictionary<string, string>(StringComparer.Ordinal)
+            {
+                ["HOME"] = resolvedSlotBase,
+            },
+            // Unreachable: ResolveDataRoot has already refused every platform without a data-root variable.
+            _ => throw new InvalidOperationException($"No per-slot environment is known for {platform}."),
+        };
+
+        var hostUserDir = Path.Combine(dataHome, UserDataDirName);
+        var slotUserDir = platform == HeadlessUserDirPlatform.MacOs
+            ? Path.Combine(resolvedSlotBase, "Library", "Application Support", UserDataDirName)
+            : Path.Combine(resolvedSlotBase, UserDataDirName);
+        return new HeadlessUserDirPolicy(hostUserDir, resolvedSlotBase, slotUserDir, environment, hostHome);
+    }
+
+    /// <summary>
+    /// WHERE THE GAME'S OWN USER DIRECTORY IS ON THIS MACHINE — the host's, with no slot involved.
+    /// </summary>
+    /// <remarks>
+    /// Exists for <c>HostProfileBackup</c>, which needs the host's profile path BEFORE a slot has been chosen
+    /// (and off the manager's lock). It shares <see cref="ResolveDataRoot"/> with <see cref="ResolvePolicy"/>
+    /// rather than repeating the platform switch, because a second copy of that switch is a second thing to get
+    /// wrong on the two platforms nobody here can run. Deliberately SILENT: the one line a failure to resolve
+    /// deserves is the caller's, and a "slot=… isolation unavailable" line from a path that has no slot would
+    /// read as a seat problem.
+    /// </remarks>
+    internal static string? ResolveHostUserDir()
+        => ResolveHostUserDir(CurrentPlatform(), Environment.GetEnvironmentVariable, Environment.GetFolderPath);
+
+    internal static string? ResolveHostUserDir(
+        HeadlessUserDirPlatform platform,
+        Func<string, string?> getEnvironmentVariable,
+        Func<Environment.SpecialFolder, string> getFolderPath)
+        => ResolveDataRoot(platform, getEnvironmentVariable, getFolderPath, logContext: null) is { } dataRoot
+            ? Path.Combine(dataRoot.DataHome, UserDataDirName)
+            : null;
+
+    /// <summary>
+    /// The platform's data root — the directory the game's <c>SlayTheSpire2</c> user dir sits in — plus the real
+    /// <c>HOME</c> on macOS, which the fake-home farm needs. Null when this platform has no data-root lever.
+    /// </summary>
+    /// <param name="logContext">
+    /// What to name in a refusal line (<c>slot=N platform=P</c>), or <see langword="null"/> to refuse silently
+    /// for a caller that has no slot to name and narrates its own failure.
+    /// </param>
+    private static (string DataHome, string? HostHome)? ResolveDataRoot(
+        HeadlessUserDirPlatform platform,
+        Func<string, string?> getEnvironmentVariable,
+        Func<Environment.SpecialFolder, string> getFolderPath,
+        string? logContext)
+    {
         string dataHome;
-        Dictionary<string, string> environment;
         string? hostHome = null;
         switch (platform)
         {
@@ -297,10 +380,6 @@ internal static class HeadlessUserDirSeeder
                 dataHome = string.IsNullOrWhiteSpace(xdg)
                     ? Path.Combine(getFolderPath(Environment.SpecialFolder.UserProfile), ".local", "share")
                     : xdg;
-                environment = new Dictionary<string, string>(StringComparer.Ordinal)
-                {
-                    ["XDG_DATA_HOME"] = SlotBase(Path.Combine(dataHome, UserDataDirName), slot),
-                };
                 break;
 
             case HeadlessUserDirPlatform.Windows:
@@ -308,54 +387,43 @@ internal static class HeadlessUserDirSeeder
                 dataHome = string.IsNullOrWhiteSpace(appData)
                     ? getFolderPath(Environment.SpecialFolder.ApplicationData)
                     : appData;
-                var slotBase = SlotBase(Path.Combine(dataHome, UserDataDirName), slot);
-                environment = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase)
-                {
-                    ["APPDATA"] = slotBase,
-                    ["LOCALAPPDATA"] = Path.Combine(slotBase, "LocalAppData"),
-                };
                 break;
 
             case HeadlessUserDirPlatform.MacOs:
                 hostHome = getEnvironmentVariable("HOME");
                 if (string.IsNullOrWhiteSpace(hostHome))
                 {
-                    Log($"headless user-dir isolation unavailable slot={slot} platform={platform} — "
-                        + "HOME resolved empty.");
+                    LogUnavailable(logContext, "HOME resolved empty.");
                     return null;
                 }
 
                 dataHome = Path.Combine(hostHome, "Library", "Application Support");
-                var macSlotBase = SlotBase(Path.Combine(dataHome, UserDataDirName), slot);
-                environment = new Dictionary<string, string>(StringComparer.Ordinal)
-                {
-                    ["HOME"] = macSlotBase,
-                };
                 break;
 
             default:
-                Log($"headless user-dir isolation unavailable slot={slot} platform={platform} — "
-                    + "no per-slot data-root environment variable is known for this platform.");
+                LogUnavailable(
+                    logContext,
+                    "no per-slot data-root environment variable is known for this platform.");
                 return null;
         }
 
         if (string.IsNullOrWhiteSpace(dataHome))
         {
-            Log($"headless user-dir isolation unavailable slot={slot} platform={platform} — "
-                + "this platform's data-root path resolved empty.");
+            LogUnavailable(logContext, "this platform's data-root path resolved empty.");
             return null;
         }
 
-        var hostUserDir = Path.Combine(dataHome, UserDataDirName);
-        var resolvedSlotBase = environment.TryGetValue("XDG_DATA_HOME", out var linuxSlotBase)
-            ? linuxSlotBase
-            : environment.TryGetValue("APPDATA", out var windowsSlotBase)
-                ? windowsSlotBase
-                : environment["HOME"];
-        var slotUserDir = platform == HeadlessUserDirPlatform.MacOs
-            ? Path.Combine(resolvedSlotBase, "Library", "Application Support", UserDataDirName)
-            : Path.Combine(resolvedSlotBase, UserDataDirName);
-        return new HeadlessUserDirPolicy(hostUserDir, resolvedSlotBase, slotUserDir, environment, hostHome);
+        return (dataHome, hostHome);
+    }
+
+    private static void LogUnavailable(string? logContext, string reason)
+    {
+        if (logContext is null)
+        {
+            return;
+        }
+
+        Log($"headless user-dir isolation unavailable {logContext} — {reason}");
     }
 
     private static string SlotBase(string hostUserDir, int slot)
@@ -512,7 +580,9 @@ internal static class HeadlessUserDirSeeder
                 continue;
             }
 
-            if (entry.Name.Contains(BackupMarker, StringComparison.Ordinal)
+            // A seat skips every quarantine, which HostProfileBackup deliberately does NOT — see
+            // IsSpirectlBackupFile. Inheriting a quarantined save is how a slot grew one in the first place.
+            if (IsSpirectlBackupFile(entry.Name)
                 || entry.Name.EndsWith(CorruptMarker, StringComparison.Ordinal)
                 || IsRunSaveFile(entry.Name))
             {
@@ -534,6 +604,20 @@ internal static class HeadlessUserDirSeeder
             }
         }
     }
+
+    /// <summary>
+    /// Whether <paramref name="fileName"/> is one of spirectl's own backup copies (<see cref="BackupMarker"/>) —
+    /// dead weight in a profile, and worth nothing to anybody: not to a seat, and not to
+    /// <c>HostProfileBackup</c>, which is the reason this one rule of the three is named rather than inlined.
+    /// </summary>
+    /// <remarks>
+    /// The QUARANTINE rule (<see cref="CorruptMarker"/>) is deliberately not paired with it here, because the
+    /// two callers genuinely disagree about it: a seat must never inherit a quarantined save (that is how they
+    /// appear in a slot at all), while the backup keeps one, because a quarantined file is still the player's
+    /// save and <c>docs/save-recovery.md</c> tells them renaming it back is worth trying.
+    /// </remarks>
+    internal static bool IsSpirectlBackupFile(string fileName)
+        => fileName.Contains(BackupMarker, StringComparison.Ordinal);
 
     /// <summary>
     /// Whether <paramref name="fileName"/> is part of an in-progress run save — the <c>.save</c>, its
