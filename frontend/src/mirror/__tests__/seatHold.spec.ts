@@ -82,6 +82,10 @@ function sessionMessage(over: Record<string, unknown> = {}) {
     screen: { kind: "run", type: "Run", title: "Run", mirrorMode: "mp-run" },
     hostName: "host",
     scrollAction: true,
+    // The attempt this connection's receipts are about. Load-bearing for the `client-view-error` assertions:
+    // `sendConnectionReceipt` drops anything with no attempt id, so a fixture without one would make "the
+    // browser sent no transport-loss report" true for the wrong reason.
+    connectionAttemptId: "attempt-1",
     ...over
   };
 }
@@ -168,6 +172,43 @@ describe("MirrorApp seat hold", () => {
     expect(app!.find('[data-testid="mirror-spinner"]').exists()).toBe(true);
     // And no roster is offered: this device still holds its seat, so a row here could only double-join it.
     expect(app!.find('[data-testid="player-picker"]').exists()).toBe(false);
+  });
+
+  // THE FALSE WITNESS. `client-view-error` with `browser-transport-lost` is not a hint — the host's registry
+  // takes the browser at its word and FAILS the row with "reload the browser and select the same player", which
+  // is the wrong fix told to the wrong person for a device that never opened the socket at all. Worse, it
+  // outranks the host's own four-cause verdict, which is the only thing here with the evidence to tell a blocked
+  // path from a port another program owns.
+  it("never claims a transport was lost when the seat socket never had one", async () => {
+    await tapASeat();
+    MockWebSocket.blocked = [`:${SEAT_PORT}`];
+    hostSocket().emit(sessionMessage({ headlessMirrorPort: SEAT_PORT }));
+    await settle();
+    expect(hostSocket().sentOfType("client-view-error")).toHaveLength(0);
+
+    // …and it stays silent across the retry ladder, which is where one wrong row would have become many.
+    vi.advanceTimersByTime(RECONNECT_BASE_DELAY_MS);
+    await settle();
+    vi.advanceTimersByTime(RECONNECT_BASE_DELAY_MS * 2);
+    await settle();
+    expect(hostSocket().sentOfType("client-view-error")).toHaveLength(0);
+  });
+
+  // The other side of the same rule: a view socket that OPENED and then died really is a lost transport, which
+  // is the case that string was written for, and the host is still told.
+  it("still reports a transport that was genuinely lost", async () => {
+    await tapASeat();
+    hostSocket().emit(sessionMessage({ headlessMirrorPort: SEAT_PORT }));
+    await settle();
+    expect(heading()).toBe("Loading…");
+    expect(hostSocket().sentOfType("client-view-error")).toHaveLength(0);
+
+    latest().close();
+    await settle();
+
+    const reports = hostSocket().sentOfType("client-view-error");
+    expect(reports).toHaveLength(1);
+    expect(reports[0].code).toBe("browser-transport-lost");
   });
 
   it("retries the seat URL on the backoff ladder, opening no host connection of its own", async () => {

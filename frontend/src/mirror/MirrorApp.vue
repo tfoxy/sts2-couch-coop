@@ -492,8 +492,27 @@ function makeClient(url?: string, watchStream = false): MirrorClient {
           reconnectState.value = reconnectStateAfterViewRestored();
         }
       } else if (c.status === "disconnected") {
+        // A VIEW SOCKET THAT NEVER OPENED IS NOT A LOST TRANSPORT, and must not tell the host it was one.
+        //
+        // `sendClientViewError(..., "browser-transport-lost")` is not a hint: the host's registry takes the
+        // browser at its word and FAILS the row with "The browser disconnected from its game view — reload the
+        // browser and select the same player to reconnect" (ConnectionRegistry.ClientViewError). For a device
+        // that could never open the seat socket at all that is the wrong fix, told to the wrong person, and it
+        // is the exact sentence this round exists to stop the host being shown.
+        //
+        // WHY SILENCE IS BETTER THAN A DIFFERENT MESSAGE HERE. The host is not blind: it has the seat's own
+        // arrival evidence and the four-cause verdict that rides on it, which can tell a blocked path from a
+        // port another program owns from a seat that is merely still starting — none of which this browser can
+        // distinguish. A "transport lost" claim would be a false witness that OUTRANKS that better evidence
+        // (it fails the row, where the verdict only warns). So the browser reports the one thing it genuinely
+        // observed — nothing — and the host's own verdict is left to speak about the seat.
+        //
+        // Gated on the plain fact rather than on the hold's preconditions below: a never-opened view socket is
+        // no more a witness to transport loss when the host socket happens to have died too. A socket that
+        // OPENED and then died is unchanged — that is a real transport loss, and the case the string was
+        // written for.
         const target = presentationTarget.value;
-        if (target?.view === c && target.source !== c) {
+        if (target?.view === c && target.source !== c && everConnected.has(c)) {
           target.source.sendClientViewError(target.attemptId, "The game-view WebSocket closed. The browser did not report a more specific cause.", "browser-transport-lost");
         }
         // A seat socket that NEVER OPENED, with the host still talking to us: hold the seat instead of tearing
