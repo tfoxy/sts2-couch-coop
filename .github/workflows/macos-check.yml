@@ -47,13 +47,20 @@ jobs:
   macos:
     runs-on: macos-14
     timeout-minutes: 45
-    env:
+
+    steps:
       # Insurance, not a requirement: no runner has a game install, so nothing here can resolve a
       # local mods directory. Pinning it at a scratch path means a step added later cannot become a
       # deploy by accident.
-      COUCHCOOP_GAME_MODS_DIR: ${{ runner.temp }}/couchcoop-mods
+      #
+      # Exported here rather than in a job-level `env:` because the `runner` context does not exist at
+      # that level — only `github`, `needs`, `strategy`, `matrix`, `vars` and `inputs` do — and naming it
+      # there fails the whole workflow at parse time with "Unrecognized named-value: 'runner'". As a step,
+      # $RUNNER_TEMP is an ordinary environment variable and needs no expression at all. It is the first
+      # step so every later one inherits it; nothing above it builds.
+      - name: Pin a scratch mods directory
+        run: echo "COUCHCOOP_GAME_MODS_DIR=$RUNNER_TEMP/couchcoop-mods" >> "$GITHUB_ENV"
 
-    steps:
       - name: Check out source
         uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5.1.0
         with:
