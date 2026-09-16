@@ -1,6 +1,7 @@
 using System.Net;
 using System.Net.NetworkInformation;
 using System.Net.Sockets;
+using CouchCoop.Mod.Session;
 
 namespace CouchCoop.Mod.HostUi;
 
@@ -147,20 +148,20 @@ public sealed class MdnsResponder : IAsyncDisposable
         Action<string>? log = null,
         MdnsResponderMode? mode = null)
     {
-        _log = log ?? (message => Console.Error.WriteLine(message));
+        _log = log ?? CouchCoopLog.Stderr;
         _fallbackAddress = fallbackAddress?.AddressFamily == AddressFamily.InterNetwork ? fallbackAddress : null;
         Mode = mode ?? ResolveModeFromEnvironment();
 
         if (Mode == MdnsResponderMode.Off)
         {
-            _log($"[couchcoop] host-ui diagnostic code={DisabledCode} detail={EnabledEnvironmentVariable}");
+            _log($"host-ui diagnostic code={DisabledCode} detail={EnabledEnvironmentVariable}");
             return;
         }
 
         var trimmed = hostName?.Trim().TrimEnd('.');
         if (string.IsNullOrEmpty(trimmed))
         {
-            _log($"[couchcoop] host-ui diagnostic code={UnavailableCode} detail=no-host-name");
+            _log($"host-ui diagnostic code={UnavailableCode} detail=no-host-name");
             Mode = MdnsResponderMode.Off;
             return;
         }
@@ -172,7 +173,7 @@ public sealed class MdnsResponder : IAsyncDisposable
         }
         catch (ArgumentException exception)
         {
-            _log($"[couchcoop] host-ui diagnostic code={UnavailableCode} detail=bad-host-name:{exception.GetType().Name}");
+            _log($"host-ui diagnostic code={UnavailableCode} detail=bad-host-name:{exception.GetType().Name}");
             Mode = MdnsResponderMode.Off;
             return;
         }
@@ -185,7 +186,7 @@ public sealed class MdnsResponder : IAsyncDisposable
             // know whether the name resolves, and here it is somebody else (Bonjour) who makes that true. The
             // interface map is gathered anyway because the self-check's "is this answer for MY machine" test
             // is exactly the set of this machine's own addresses.
-            _log($"[couchcoop] host-ui diagnostic code={DisabledCode} detail={PlatformDefaultOffDetail}");
+            _log($"host-ui diagnostic code={DisabledCode} detail={PlatformDefaultOffDetail}");
             RefreshInterfaces();
             _maintenanceLoop = Task.Run(() => SelfCheckOnlyLoopAsync(_cts.Token));
             return;
@@ -200,7 +201,7 @@ public sealed class MdnsResponder : IAsyncDisposable
         RefreshInterfaces();
         _receiveLoop = Task.Run(() => ReceiveLoopAsync(_cts.Token));
         _maintenanceLoop = Task.Run(() => MaintenanceLoopAsync(_cts.Token));
-        _log($"[couchcoop] mdns-responder publishing name={_hostName} interfaces={_joined.Count}");
+        _log($"mdns-responder publishing name={_hostName} interfaces={_joined.Count}");
     }
 
     /// <summary>What this responder decided to do at construction. See <see cref="ResolveMode"/>.</summary>
@@ -321,7 +322,7 @@ public sealed class MdnsResponder : IAsyncDisposable
             // The overwhelmingly common failures are "5353 already exclusively bound" (a Bonjour/avahi
             // build that does not share) and "denied by policy". Both are survivable: the QR's IP rows
             // still work, so we log the code once and stay quiet.
-            _log($"[couchcoop] host-ui diagnostic code={UnavailableCode} detail=bind:{DescribeError(exception)}");
+            _log($"host-ui diagnostic code={UnavailableCode} detail=bind:{DescribeError(exception)}");
             socket?.Dispose();
             return null;
         }
@@ -505,7 +506,7 @@ public sealed class MdnsResponder : IAsyncDisposable
         }
         catch (Exception exception) when (exception is SocketException or ObjectDisposedException or NotSupportedException)
         {
-            _log($"[couchcoop] mdns-responder option-unavailable option={label} detail={DescribeError(exception)}");
+            _log($"mdns-responder option-unavailable option={label} detail={DescribeError(exception)}");
         }
     }
 
@@ -541,7 +542,7 @@ public sealed class MdnsResponder : IAsyncDisposable
                 // not kill the loop; a permanently broken socket must not spin it either.
                 if (++consecutiveFailures >= MaxConsecutiveReceiveFailures)
                 {
-                    _log($"[couchcoop] host-ui diagnostic code={UnavailableCode} detail=receive:{exception.SocketErrorCode}");
+                    _log($"host-ui diagnostic code={UnavailableCode} detail=receive:{exception.SocketErrorCode}");
                     break;
                 }
 
@@ -768,7 +769,7 @@ public sealed class MdnsResponder : IAsyncDisposable
 
         // `mode=` matters on macOS: selfCheck=Answered there says the NAME resolves, not that we published it
         // (we did not). Without the mode on the line the two readings are indistinguishable in a user's log.
-        _log($"[couchcoop] mdns-responder self-check {Health.Describe()} name={_hostName} mode={Mode}");
+        _log($"mdns-responder self-check {Health.Describe()} name={_hostName} mode={Mode}");
     }
 
     // One announcement per interface, each carrying THAT interface's address — a single announcement with

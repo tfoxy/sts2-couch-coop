@@ -265,8 +265,8 @@ public sealed partial class HeadlessClientManager
         if (previous == verdict.Cause) return;
         owned.LoggedCause = verdict.Cause;
         if (verdict.Cause == SeatReadinessCause.StillStarting && previous is null) return;
-        Console.Error.WriteLine(
-            $"[couchcoop] seat readiness slot={owned.Slot} cause={verdict.Cause}: {verdict.Detail}");
+        CouchCoopLog.Stderr(
+            $"seat readiness slot={owned.Slot} cause={verdict.Cause}: {verdict.Detail}");
     }
 
     /// <summary>

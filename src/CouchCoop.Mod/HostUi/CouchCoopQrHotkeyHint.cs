@@ -1,3 +1,4 @@
+using CouchCoop.Mod.Session;
 using Godot;
 using CouchCoop.Mod.Localization;
 using MegaCrit.Sts2.Core.Nodes.CommonUi;
@@ -189,8 +190,8 @@ internal sealed partial class CouchCoopQrHotkeyHint : Control
         }
         catch (Exception exception)
         {
-            Console.Error.WriteLine(
-                $"[couchcoop] qr hotkey hint refresh failed detail={exception.GetType().Name}: {exception.Message}");
+            CouchCoopLog.Stderr(
+                $"qr hotkey hint refresh failed detail={exception.GetType().Name}: {exception.Message}");
         }
     }
 
@@ -208,8 +209,8 @@ internal sealed partial class CouchCoopQrHotkeyHint : Control
         }
         catch (Exception exception)
         {
-            Console.Error.WriteLine(
-                $"[couchcoop] qr hotkey hint exit hook failed detail={exception.GetType().Name}: {exception.Message}");
+            CouchCoopLog.Stderr(
+                $"qr hotkey hint exit hook failed detail={exception.GetType().Name}: {exception.Message}");
             return;
         }
 
@@ -248,8 +249,8 @@ internal sealed partial class CouchCoopQrHotkeyHint : Control
         }
         catch (Exception exception)
         {
-            Console.Error.WriteLine(
-                $"[couchcoop] qr hotkey hint connect failed signal={signal} detail={exception.GetType().Name}: {exception.Message}");
+            CouchCoopLog.Stderr(
+                $"qr hotkey hint connect failed signal={signal} detail={exception.GetType().Name}: {exception.Message}");
         }
     }
 
@@ -269,8 +270,8 @@ internal sealed partial class CouchCoopQrHotkeyHint : Control
         }
         catch (Exception exception)
         {
-            Console.Error.WriteLine(
-                $"[couchcoop] qr hotkey hint disconnect failed signal={signal} detail={exception.GetType().Name}: {exception.Message}");
+            CouchCoopLog.Stderr(
+                $"qr hotkey hint disconnect failed signal={signal} detail={exception.GetType().Name}: {exception.Message}");
         }
     }
 }

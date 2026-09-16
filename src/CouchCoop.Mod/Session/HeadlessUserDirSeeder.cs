@@ -116,7 +116,7 @@ internal static class HeadlessUserDirSeeder
     /// </summary>
     private static void Log(string message)
     {
-        Console.Error.WriteLine(message);
+        CouchCoopLog.Stderr(message);
         LogSink?.Invoke(message);
     }
 
@@ -157,7 +157,7 @@ internal static class HeadlessUserDirSeeder
                 // The log half of this used to be named here too. It is no longer true: the LAUNCHER hands a
                 // seat with no isolation its own --log-file, so the host's godot.log survives the spawn. What
                 // remains unisolated — and unfixable without a per-slot user dir — is the profile.
-                Log($"[couchcoop] headless user-dir seed skipped slot={slot} platform={platform} — this seat "
+                Log($"headless user-dir seed skipped slot={slot} platform={platform} — this seat "
                     + "shares the host's user directory: one settings/save profile for every player on this "
                     + "computer.");
                 return null;
@@ -209,7 +209,7 @@ internal static class HeadlessUserDirSeeder
                 }
                 catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
                 {
-                    Console.Error.WriteLine($"[couchcoop] headless user-dir host cache dir skipped slot={slot} name={CouchCoopDirName}/{leaf}: {ex.GetType().Name}: {ex.Message}");
+                    CouchCoopLog.Stderr($"headless user-dir host cache dir skipped slot={slot} name={CouchCoopDirName}/{leaf}: {ex.GetType().Name}: {ex.Message}");
                     continue;
                 }
                 TryLinkSharedCache(slot, Path.Combine(slotCouchCoop, leaf), target);
@@ -243,8 +243,8 @@ internal static class HeadlessUserDirSeeder
 
             if (pruned > 0)
             {
-                Console.Error.WriteLine(
-                    $"[couchcoop] headless user-dir run saves pruned slot={slot} count={pruned} — a seat "
+                CouchCoopLog.Stderr(
+                    $"headless user-dir run saves pruned slot={slot} count={pruned} — a seat "
                     + "receives the run from the host over the network and never loads one from disk.");
             }
 
@@ -259,7 +259,7 @@ internal static class HeadlessUserDirSeeder
         }
         catch (Exception ex)
         {
-            Log($"[couchcoop] headless user-dir seed failed slot={slot}: {ex.GetType().Name}: {ex.Message}");
+            Log($"headless user-dir seed failed slot={slot}: {ex.GetType().Name}: {ex.Message}");
             return null;
         }
     }
@@ -320,7 +320,7 @@ internal static class HeadlessUserDirSeeder
                 hostHome = getEnvironmentVariable("HOME");
                 if (string.IsNullOrWhiteSpace(hostHome))
                 {
-                    Log($"[couchcoop] headless user-dir isolation unavailable slot={slot} platform={platform} — "
+                    Log($"headless user-dir isolation unavailable slot={slot} platform={platform} — "
                         + "HOME resolved empty.");
                     return null;
                 }
@@ -334,14 +334,14 @@ internal static class HeadlessUserDirSeeder
                 break;
 
             default:
-                Log($"[couchcoop] headless user-dir isolation unavailable slot={slot} platform={platform} — "
+                Log($"headless user-dir isolation unavailable slot={slot} platform={platform} — "
                     + "no per-slot data-root environment variable is known for this platform.");
                 return null;
         }
 
         if (string.IsNullOrWhiteSpace(dataHome))
         {
-            Log($"[couchcoop] headless user-dir isolation unavailable slot={slot} platform={platform} — "
+            Log($"headless user-dir isolation unavailable slot={slot} platform={platform} — "
                 + "this platform's data-root path resolved empty.");
             return null;
         }
@@ -457,7 +457,7 @@ internal static class HeadlessUserDirSeeder
         }
         catch (Exception ex) when (ex is IOException or UnauthorizedAccessException or NotSupportedException)
         {
-            Console.Error.WriteLine($"[couchcoop] headless user-dir cache link skipped slot={slot} link={link}: {ex.GetType().Name}: {ex.Message}");
+            CouchCoopLog.Stderr($"headless user-dir cache link skipped slot={slot} link={link}: {ex.GetType().Name}: {ex.Message}");
         }
     }
 
@@ -530,7 +530,7 @@ internal static class HeadlessUserDirSeeder
             }
             catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
             {
-                Console.Error.WriteLine($"[couchcoop] headless user-dir seed file skipped slot={slot} file={entry.FullName}: {ex.GetType().Name}: {ex.Message}");
+                CouchCoopLog.Stderr($"headless user-dir seed file skipped slot={slot} file={entry.FullName}: {ex.GetType().Name}: {ex.Message}");
             }
         }
     }
@@ -584,7 +584,7 @@ internal static class HeadlessUserDirSeeder
             }
             catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
             {
-                Console.Error.WriteLine($"[couchcoop] headless user-dir run save not pruned slot={slot} file={entry.FullName}: {ex.GetType().Name}: {ex.Message}");
+                CouchCoopLog.Stderr($"headless user-dir run save not pruned slot={slot} file={entry.FullName}: {ex.GetType().Name}: {ex.Message}");
             }
         }
 

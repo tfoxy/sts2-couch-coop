@@ -62,7 +62,7 @@ public static class SocketReusePort
         }
         catch (Exception exception) when (exception is SocketException or ObjectDisposedException or NotSupportedException)
         {
-            log?.Invoke($"[couchcoop] {label} option-unavailable option=so-reuseport detail="
+            log?.Invoke($"{label} option-unavailable option=so-reuseport detail="
                 + (exception is SocketException socketException
                     ? socketException.SocketErrorCode.ToString()
                     : exception.GetType().Name));

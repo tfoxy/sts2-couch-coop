@@ -92,7 +92,7 @@ public static class HeadlessFmodShutdown
             _started = true;
         }
 
-        Console.Error.WriteLine("[couchcoop][fmod] headless FMOD disable enabling");
+        CouchCoopLog.Stderr("[fmod] headless FMOD disable enabling");
         _ = Task.Run(InstallLoopAsync);
     }
 
@@ -112,14 +112,14 @@ public static class HeadlessFmodShutdown
             }
             catch (Exception exception)
             {
-                Console.Error.WriteLine(
-                    $"[couchcoop][fmod] install attempt failed: {exception.GetType().Name}: {exception.Message}");
+                CouchCoopLog.Stderr(
+                    $"[fmod] install attempt failed: {exception.GetType().Name}: {exception.Message}");
             }
 
             await Task.Delay(250).ConfigureAwait(false);
         }
 
-        Console.Error.WriteLine("[couchcoop][fmod] install gave up (SceneTree never became ready)");
+        CouchCoopLog.Stderr("[fmod] install gave up (SceneTree never became ready)");
     }
 
     // Runs on the game main thread (deferred). Attaches a repeating Timer whose Timeout drives the readiness Probe.
@@ -140,7 +140,7 @@ public static class HeadlessFmodShutdown
         };
         timer.Timeout += () => Probe(root, timer);
         root.AddChild(timer);
-        CouchCoopLog.Info("[couchcoop][fmod] headless FMOD-disable armed; waiting for FmodServer + FmodManager to be ready.");
+        CouchCoopLog.Info("[fmod] headless FMOD-disable armed; waiting for FmodServer + FmodManager to be ready.");
     }
 
     // Runs on the game main thread (Timer.Timeout). Waits until the FmodServer singleton AND the FmodManager autoload
@@ -163,7 +163,7 @@ public static class HeadlessFmodShutdown
             if (++_readinessProbes > MaxReadinessProbes)
             {
                 CouchCoopLog.Info(
-                    "[couchcoop][fmod] gave up waiting for FmodServer/FmodManager — FMOD left running (nothing disabled).");
+                    "[fmod] gave up waiting for FmodServer/FmodManager — FMOD left running (nothing disabled).");
                 _done = true;
                 CleanupTimer(timer);
             }
@@ -191,7 +191,7 @@ public static class HeadlessFmodShutdown
         fmodManager.SetProcess(false);
         fmodManager.SetPhysicsProcess(false);
         fmodManager.ProcessMode = Node.ProcessModeEnum.Disabled;
-        CouchCoopLog.Info("[couchcoop][fmod] disabled /root/FmodManager processing (stops per-frame FmodServer.update()).");
+        CouchCoopLog.Info("[fmod] disabled /root/FmodManager processing (stops per-frame FmodServer.update()).");
 
         // Defensive extras (unverified node paths; harmless if absent, not required for correctness).
         foreach (var path in SiblingAudioNodePaths)
@@ -200,7 +200,7 @@ public static class HeadlessFmodShutdown
             if (node is not null && GodotObject.IsInstanceValid(node))
             {
                 node.ProcessMode = Node.ProcessModeEnum.Disabled;
-                CouchCoopLog.Info($"[couchcoop][fmod] disabled '{path}' processing (defensive).");
+                CouchCoopLog.Info($"[fmod] disabled '{path}' processing (defensive).");
             }
         }
 
@@ -216,12 +216,12 @@ public static class HeadlessFmodShutdown
         {
             server.Call(ShutdownMethod);
             CouchCoopLog.Info(
-                "[couchcoop][fmod] FmodServer.shutdown() called — mixer/DSP thread released; headless audio fully off.");
+                "[fmod] FmodServer.shutdown() called — mixer/DSP thread released; headless audio fully off.");
         }
         else
         {
             CouchCoopLog.Info(
-                "[couchcoop][fmod] FmodServer singleton/shutdown() unavailable at teardown — left running (update() already disabled).");
+                "[fmod] FmodServer singleton/shutdown() unavailable at teardown — left running (update() already disabled).");
         }
 
         // 4) Free the detached listener node(s) now that they're safely outside the tree. Their _exit_tree already
@@ -269,12 +269,12 @@ public static class HeadlessFmodShutdown
                     parent.RemoveChild(current);
                     detached.Add(current);
                     CouchCoopLog.Info(
-                        $"[couchcoop][fmod] detached '{current.GetClass()}' at '{path}' from the tree before shutdown (its _exit_tree calls FmodServer.remove_listener).");
+                        $"[fmod] detached '{current.GetClass()}' at '{path}' from the tree before shutdown (its _exit_tree calls FmodServer.remove_listener).");
                 }
                 else
                 {
                     CouchCoopLog.Info(
-                        $"[couchcoop][fmod] found '{current.GetClass()}' at '{path}' with no parent to detach from — left as-is.");
+                        $"[fmod] found '{current.GetClass()}' at '{path}' with no parent to detach from — left as-is.");
                 }
 
                 // Listener nodes are leaves in practice; no need to descend into them.
@@ -293,7 +293,7 @@ public static class HeadlessFmodShutdown
         if (detached.Count == 0)
         {
             CouchCoopLog.Info(
-                "[couchcoop][fmod] no FMOD listener node found in the tree — nothing to detach before shutdown.");
+                "[fmod] no FMOD listener node found in the tree — nothing to detach before shutdown.");
         }
 
         return detached;

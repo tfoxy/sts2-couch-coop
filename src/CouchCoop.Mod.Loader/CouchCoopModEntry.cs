@@ -1,6 +1,6 @@
 using System.Reflection;
 using System.Runtime.Loader;
-using MegaCrit.Sts2.Core.Logging;
+using CouchCoop.Mod.Session;
 using MegaCrit.Sts2.Core.Modding;
 
 namespace CouchCoop.Mod.Loader;
@@ -61,7 +61,7 @@ public static partial class CouchCoopModEntry
             {
                 // Refuse BEFORE loading anything. A lane built for a different game build loads fine and then
                 // throws from inside a game callback, where nothing names CouchCoop as the cause.
-                Log.Error($"[couchcoop] {selection.Refusal}");
+                CouchCoopLogLine.Error(selection.Refusal);
                 return;
             }
 
@@ -73,8 +73,8 @@ public static partial class CouchCoopModEntry
 
             if (selection.LaneDirectory is not null)
             {
-                Log.Info(
-                    $"[couchcoop] game {selection.DetectedVersion} -> lane '{selection.LaneDirectory}'");
+                CouchCoopLogLine.Info(
+                    $"game {selection.DetectedVersion} -> lane '{selection.LaneDirectory}'");
 
                 // Names a stale root copy the lane is shadowing. Benign for someone who extracted a new
                 // release over an old one; the tell that a dev deploy is not the code running otherwise.
@@ -84,7 +84,7 @@ public static partial class CouchCoopModEntry
                     ImplementationAssemblyName);
                 if (ignoredRootCopy is not null)
                 {
-                    Log.Warn($"[couchcoop] {ignoredRootCopy}");
+                    CouchCoopLogLine.Warn(ignoredRootCopy);
                 }
             }
 
@@ -113,11 +113,11 @@ public static partial class CouchCoopModEntry
                         {
                             if (conflict.Fatal)
                             {
-                                Log.Error($"[couchcoop] {conflict.Message}");
+                                CouchCoopLogLine.Error(conflict.Message);
                             }
                             else
                             {
-                                Log.Warn($"[couchcoop] {conflict.Message}");
+                                CouchCoopLogLine.Warn(conflict.Message);
                             }
                         }
 
@@ -182,8 +182,8 @@ public static partial class CouchCoopModEntry
             // failure this catch sees most is an implementation compiled for a different game build than
             // the one running: the CLR reports it as a TypeLoadException naming a GAME type, which reads
             // as "the game is broken" and names neither the build we are nor the build this is.
-            Log.Error(
-                $"[couchcoop] bootstrap loader failed (game {detectedVersion ?? "<undetected>"}, "
+            CouchCoopLogLine.Error(
+                $"bootstrap loader failed (game {detectedVersion ?? "<undetected>"}, "
                 + $"payload {payloadDescription}): {ex}");
         }
     }

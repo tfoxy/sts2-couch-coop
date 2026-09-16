@@ -1,6 +1,7 @@
 using System.Net;
 using System.Net.Sockets;
 using CouchCoop.MirrorProtocol.Discovery;
+using CouchCoop.Mod.Session;
 
 namespace CouchCoop.Mod.HostUi;
 
@@ -26,7 +27,7 @@ public sealed class HostDiscoveryResponder : IAsyncDisposable
     public HostDiscoveryResponder(int listenPort, Func<HostDiscoveryReply> replyFactory, Action<string>? log = null)
     {
         _replyFactory = replyFactory ?? throw new ArgumentNullException(nameof(replyFactory));
-        _log = log ?? (message => Console.Error.WriteLine(message));
+        _log = log ?? CouchCoopLog.Stderr;
 
         try
         {
@@ -52,7 +53,7 @@ public sealed class HostDiscoveryResponder : IAsyncDisposable
         }
         catch (SocketException exception)
         {
-            _log($"[couchcoop] host-ui diagnostic code={UnavailableCode} detail={exception.SocketErrorCode}");
+            _log($"host-ui diagnostic code={UnavailableCode} detail={exception.SocketErrorCode}");
             _udp = null;
         }
 

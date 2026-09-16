@@ -1,3 +1,4 @@
+using CouchCoop.Mod.Session;
 using Godot;
 
 namespace CouchCoop.Mod.Server;
@@ -95,23 +96,23 @@ public static class CouchCoopAtlasManifest
         {
             // A build with no such directory, or a listing this version of Godot refuses. Leaving the manifest
             // unknown costs the beta its 404s again; it never costs a page that does exist.
-            Log($"[couchcoop] atlas manifest unavailable: {exception.Message}");
+            Log($"atlas manifest unavailable: {exception.Message}");
             return;
         }
 
         if (pages.Length == 0)
         {
-            Log($"[couchcoop] atlas manifest empty under {AtlasDirectory} -- not published");
+            Log($"atlas manifest empty under {AtlasDirectory} -- not published");
             return;
         }
 
         _pages = pages;
-        Log($"[couchcoop] atlas manifest: {pages.Length} page(s) under {AtlasDirectory}");
+        Log($"atlas manifest: {pages.Length} page(s) under {AtlasDirectory}");
     }
 
     private static void Log(string message)
     {
-        Console.Error.WriteLine(message);
+        CouchCoopLog.Stderr(message);
         LogSink?.Invoke(message);
     }
 

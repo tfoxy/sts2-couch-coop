@@ -5,6 +5,7 @@ using System.Text;
 using CouchCoop.Mod.Diagnostics;
 using CouchCoop.Mod.Runtime;
 using CouchCoop.MirrorProtocol.SceneModel;
+using CouchCoop.Mod.Session;
 using Spirectl.Sts2.Embedding;
 using Spirectl.Sts2.Live;
 
@@ -84,8 +85,8 @@ public sealed class CouchCoopStaticBackgroundProvider(
 
     private readonly ISpirectlAssetProvider _assets = assets ?? throw new ArgumentNullException(nameof(assets));
     private readonly SpirectlAssetBinaryCache _cache = cache ?? throw new ArgumentNullException(nameof(cache));
-    private readonly Action<string> _log = log ?? (message => Console.Error.WriteLine(message));
-    private readonly RateLimitedDiagnosticLog _cacheDiagnostics = new(log ?? Console.Error.WriteLine);
+    private readonly Action<string> _log = log ?? CouchCoopLog.Stderr;
+    private readonly RateLimitedDiagnosticLog _cacheDiagnostics = new(log ?? CouchCoopLog.Stderr);
     private readonly bool _isHeadlessClient = isHeadlessClient ?? CouchCoopMod.IsHeadlessClient;
 
     // In-flight extractions only — an entry is removed once its task settles (the memory/disk caches are the
@@ -410,7 +411,7 @@ public sealed class CouchCoopStaticBackgroundProvider(
         if (!await _cache.TryWriteAsync(cacheKey, bytes, contentType).ConfigureAwait(false))
         {
             // Best-effort cache; serve the freshly rendered image even if the write-through fails.
-            _cacheDiagnostics.Write("static-bg-cache-write-failed", $"[couchcoop] static-bg cache write failed key={cacheKey}");
+            _cacheDiagnostics.Write("static-bg-cache-write-failed", $"static-bg cache write failed key={cacheKey}");
         }
 
         // Published only now: the requester is still blocked on the write-through, so it belongs in the same
@@ -515,7 +516,7 @@ public sealed class CouchCoopStaticBackgroundProvider(
                 return new RenderChainResult(result, samples);
             }
 
-            _log($"[couchcoop] static-bg selector render failed id={id} field={result.Error?.Field} code={result.Error?.Code}; retrying deterministic discovery");
+            _log($"static-bg selector render failed id={id} field={result.Error?.Field} code={result.Error?.Code}; retrying deterministic discovery");
         }
 
         result = TimeRender(
@@ -539,7 +540,7 @@ public sealed class CouchCoopStaticBackgroundProvider(
             return new RenderChainResult(result, samples);
         }
 
-        _log($"[couchcoop] static-bg composed render failed id={id} code={result.Error?.Code}; retrying literal scene");
+        _log($"static-bg composed render failed id={id} code={result.Error?.Code}; retrying literal scene");
         result = TimeRender(
             id,
             renderWidthPx,
@@ -715,7 +716,7 @@ public sealed class CouchCoopStaticBackgroundProvider(
             using var reservation = _cache.Quota?.TryReserve(payload.Contents.LongLength);
             if (reservation is null)
             {
-                _log($"[couchcoop] static-bg bench dump refused by managed-cache quota path={dumpPath}");
+                _log($"static-bg bench dump refused by managed-cache quota path={dumpPath}");
             }
             else try
             {
@@ -734,7 +735,7 @@ public sealed class CouchCoopStaticBackgroundProvider(
             }
             catch (Exception exception)
             {
-                _log($"[couchcoop] static-bg bench dump failed path={dumpPath} error={exception.GetType().Name}: {exception.Message}");
+                _log($"static-bg bench dump failed path={dumpPath} error={exception.GetType().Name}: {exception.Message}");
             }
         }
 

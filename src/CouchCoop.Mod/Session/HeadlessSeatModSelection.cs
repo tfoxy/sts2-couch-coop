@@ -108,8 +108,8 @@ internal static class HeadlessSeatModSelection
         }
         catch (Exception ex) when (ex is IOException or UnauthorizedAccessException or JsonException)
         {
-            Console.Error.WriteLine(
-                $"[couchcoop] headless seat mod selection skipped slot={slot} file={settingsPath}: {ex.GetType().Name}: {ex.Message}");
+            CouchCoopLog.Stderr(
+                $"headless seat mod selection skipped slot={slot} file={settingsPath}: {ex.GetType().Name}: {ex.Message}");
             return false;
         }
     }

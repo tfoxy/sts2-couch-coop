@@ -1,5 +1,6 @@
 using System.Reflection;
 using System.Text.Json;
+using CouchCoop.Mod.Session;
 using Godot;
 
 namespace CouchCoop.Mod.HostUi;
@@ -28,7 +29,7 @@ internal static class HostLobbyQrOverlayLayoutProvider
         }
         catch (Exception exception)
         {
-            Console.Error.WriteLine($"[couchcoop] host lobby QR overlay layout reload failed: {exception.GetType().Name}: {exception.Message}");
+            CouchCoopLog.Stderr($"host lobby QR overlay layout reload failed: {exception.GetType().Name}: {exception.Message}");
             return HostLobbyQrOverlayLayout.Default;
         }
     }

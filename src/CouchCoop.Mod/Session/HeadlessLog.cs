@@ -16,12 +16,18 @@ namespace CouchCoop.Mod.Session;
 /// logger write is guarded (via <see cref="CouchCoopLog"/>) because it must never be able to break a shutdown
 /// path — it can be called off the main thread, and before the engine is up.
 /// </para>
+/// <para>
+/// Both go through <see cref="CouchCoopLog"/>, so neither sink can spell the line differently from the other.
+/// This used to pass the caller's raw string to both, which made the prefix the caller's problem — and every
+/// dual-sink helper of this shape in the mod was one typo from the two channels disagreeing, which is exactly
+/// what happened at the arrival log's own copy of it: <c>[couch-coop]</c>, at two call sites, matching nothing.
+/// </para>
 /// </summary>
 internal static class HeadlessLog
 {
     public static void Write(string message)
     {
-        Console.Error.WriteLine(message);
+        CouchCoopLog.Stderr(message);
         CouchCoopLog.Info(message);
     }
 }

@@ -1,3 +1,4 @@
+using CouchCoop.Mod.Session;
 using Godot;
 using MegaCrit.Sts2.Core.ControllerInput;
 using MegaCrit.Sts2.Core.Nodes.GodotExtensions;
@@ -162,8 +163,8 @@ internal abstract partial class CouchCoopTextureButton : NButton
         }
         catch (Exception exception)
         {
-            Console.Error.WriteLine(
-                $"[couchcoop] host-ui button ConnectSignals failed name={Name} detail={exception.GetType().Name}: {exception.Message}");
+            CouchCoopLog.Stderr(
+                $"host-ui button ConnectSignals failed name={Name} detail={exception.GetType().Name}: {exception.Message}");
         }
 
         Connect(Control.SignalName.GuiInput, Callable.From<InputEvent>(OnGuiInputSignal));
@@ -357,7 +358,7 @@ internal abstract partial class CouchCoopTextureButton : NButton
         }
         catch (Exception exception)
         {
-            Console.Error.WriteLine($"[couchcoop] host-ui button sfx skipped detail={exception.GetType().Name}: {exception.Message}");
+            CouchCoopLog.Stderr($"host-ui button sfx skipped detail={exception.GetType().Name}: {exception.Message}");
         }
     }
 

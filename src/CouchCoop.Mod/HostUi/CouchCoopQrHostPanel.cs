@@ -1,3 +1,4 @@
+using CouchCoop.Mod.Session;
 using Godot;
 using CouchCoop.Mod.Localization;
 using MegaCrit.Sts2.Core.ControllerInput;
@@ -269,8 +270,8 @@ internal sealed partial class CouchCoopQrHostPanel : Control
         }
         catch (Exception exception)
         {
-            Console.Error.WriteLine(
-                $"[couchcoop] qr hotkey exit hook failed detail={exception.GetType().Name}: {exception.Message}");
+            CouchCoopLog.Stderr(
+                $"qr hotkey exit hook failed detail={exception.GetType().Name}: {exception.Message}");
             return;
         }
 
@@ -281,8 +282,8 @@ internal sealed partial class CouchCoopQrHostPanel : Control
         }
         catch (Exception exception)
         {
-            Console.Error.WriteLine(
-                $"[couchcoop] qr hotkey bind failed detail={exception.GetType().Name}: {exception.Message}");
+            CouchCoopLog.Stderr(
+                $"qr hotkey bind failed detail={exception.GetType().Name}: {exception.Message}");
         }
     }
 
@@ -300,8 +301,8 @@ internal sealed partial class CouchCoopQrHostPanel : Control
         }
         catch (Exception exception)
         {
-            Console.Error.WriteLine(
-                $"[couchcoop] qr hotkey unbind failed detail={exception.GetType().Name}: {exception.Message}");
+            CouchCoopLog.Stderr(
+                $"qr hotkey unbind failed detail={exception.GetType().Name}: {exception.Message}");
         }
     }
 
@@ -329,8 +330,8 @@ internal sealed partial class CouchCoopQrHostPanel : Control
         {
             // The hotkey manager invokes this from a deferred Callable, outside any of our own try/catch:
             // a throw here would surface as an engine error on the host's screen, so swallow and log.
-            Console.Error.WriteLine(
-                $"[couchcoop] qr hotkey open failed detail={exception.GetType().Name}: {exception.Message}");
+            CouchCoopLog.Stderr(
+                $"qr hotkey open failed detail={exception.GetType().Name}: {exception.Message}");
         }
     }
 

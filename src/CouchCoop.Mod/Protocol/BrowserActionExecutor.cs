@@ -1,5 +1,6 @@
 using System.Text.Json;
 using CouchCoop.Mod.Runtime;
+using CouchCoop.Mod.Session;
 using Spirectl.Sts2.Core.Actions;
 using Spirectl.Sts2.Embedding;
 
@@ -8,7 +9,7 @@ namespace CouchCoop.Mod.Protocol;
 public sealed class BrowserActionExecutor(CouchCoopRuntimeHost runtimeHost, Action<string>? log = null)
 {
     private readonly CouchCoopRuntimeHost _runtimeHost = runtimeHost ?? throw new ArgumentNullException(nameof(runtimeHost));
-    private readonly Action<string> _log = log ?? Console.Error.WriteLine;
+    private readonly Action<string> _log = log ?? CouchCoopLog.Stderr;
     private long _lastFailureLog;
 
     // Every live `/ws` connection is a mirror view of exactly one game process. A joined seat is redirected to its
@@ -89,7 +90,7 @@ public sealed class BrowserActionExecutor(CouchCoopRuntimeHost runtimeHost, Acti
         }
         if (Interlocked.CompareExchange(ref _lastFailureLog, now, previous) == previous)
         {
-            _log($"[couchcoop] browser-action failed detail={detail}");
+            _log($"browser-action failed detail={detail}");
         }
     }
 

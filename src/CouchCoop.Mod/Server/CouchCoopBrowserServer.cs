@@ -32,8 +32,8 @@ public sealed class CouchCoopBrowserServer(
     ConnectionArrivalLog? arrivals = null) : IAsyncDisposable
 {
     private readonly IPAddress _bindAddress = bindAddress ?? IPAddress.Loopback;
-    private readonly Action<string> _log = log ?? (message => Console.Error.WriteLine(message));
-    private readonly RateLimitedDiagnosticLog _networkDiagnostics = new(log ?? (message => Console.Error.WriteLine(message)));
+    private readonly Action<string> _log = log ?? CouchCoopLog.Stderr;
+    private readonly RateLimitedDiagnosticLog _networkDiagnostics = new(log ?? CouchCoopLog.Stderr);
     // Pre-WebSocket arrivals. The PROCESS-owned log by default (a seat is its own process and keeps its own),
     // injectable so a test server records into an instance of its own rather than into the shared one.
     private readonly ConnectionArrivalLog _arrivals = arrivals ?? ConnectionArrivalLog.Shared;
@@ -220,7 +220,7 @@ public sealed class CouchCoopBrowserServer(
         // Published so the /secure-port route can report it: a HOST that redirects a TLS viewer to this
         // instance has no other way to learn the port we actually walked to.
         SecureOriginEndpoint.Publish(listener.Port);
-        _log($"[couchcoop] secure-origin listening port={listener.Port}");
+        _log($"secure-origin listening port={listener.Port}");
         return true;
     }
 
@@ -471,15 +471,15 @@ public sealed class CouchCoopBrowserServer(
                     .ConfigureAwait(false);
                 if (image.Error is not null)
                 {
-                    _log($"[couchcoop] static-bg-warm failed id={id} family={family} detail={image.Error.Code}");
+                    _log($"static-bg-warm failed id={id} family={family} detail={image.Error.Code}");
                     return;
                 }
 
-                _log($"[couchcoop] static-bg-warm {image.CacheStatus} id={id} family={family} bytes={image.Bytes?.Length ?? 0}");
+                _log($"static-bg-warm {image.CacheStatus} id={id} family={family} bytes={image.Bytes?.Length ?? 0}");
             }
             catch (Exception exception)
             {
-                _log($"[couchcoop] static-bg-warm failed id={id} family={family} detail={exception.GetType().Name}: {exception.Message}");
+                _log($"static-bg-warm failed id={id} family={family} detail={exception.GetType().Name}: {exception.Message}");
             }
         });
     }
@@ -658,8 +658,8 @@ public sealed class CouchCoopBrowserServer(
             catch (Exception exception)
             {
                 // Naming is cosmetic: never let it break the session rebroadcast this method exists for.
-                Console.Error.WriteLine(
-                    $"[couchcoop] publishing roster names failed: {exception.GetType().Name}: {exception.Message}");
+                CouchCoopLog.Stderr(
+                    $"publishing roster names failed: {exception.GetType().Name}: {exception.Message}");
             }
         }
 
@@ -1196,7 +1196,7 @@ public sealed class CouchCoopBrowserServer(
         catch (Exception exception) when (exception is IOException or SocketException && !IsAssemblyLoadFailure(exception))
         {
             _networkDiagnostics.Write("connection-closed",
-                "[couchcoop] browser-server diagnostic code=connection-closed "
+                "browser-server diagnostic code=connection-closed "
                 + $"target={request?.Target ?? "<unread>"} detail={exception.GetType().Name}: {exception.Message}");
         }
         catch (Exception exception)
@@ -1218,7 +1218,7 @@ public sealed class CouchCoopBrowserServer(
             catch (Exception writeException) when (writeException is IOException or SocketException or ObjectDisposedException or OperationCanceledException)
             {
                 _networkDiagnostics.Write("internal-server-error-write-failed",
-                    "[couchcoop] browser-server diagnostic code=internal-server-error-write-failed "
+                    "browser-server diagnostic code=internal-server-error-write-failed "
                     + $"detail={writeException.GetType().Name}: {writeException.Message}");
             }
         }
@@ -1311,7 +1311,7 @@ public sealed class CouchCoopBrowserServer(
             {
                 RecordWebSocketArrival(request, remoteAddress, ConnectionArrivalOutcome.OriginRefused);
                 _networkDiagnostics.Write("websocket-origin-refused",
-                    "[couchcoop] browser-server diagnostic code=websocket-origin-refused "
+                    "browser-server diagnostic code=websocket-origin-refused "
                     + $"origin={request.Header("Origin")} host={request.Header("Host")} "
                     + $"detail=set {CouchCoopWebOrigin.OriginCheckEnvironmentVariable}=0 to disable this check");
                 await HttpResponseWriter.WriteJsonErrorAsync(
@@ -2094,7 +2094,7 @@ public sealed class CouchCoopBrowserServer(
         if (!originAllowed)
         {
             _networkDiagnostics.Write("boot-origin-not-allowed",
-                "[couchcoop] browser-server diagnostic code=boot-origin-not-allowed "
+                "browser-server diagnostic code=boot-origin-not-allowed "
                 + $"origin={origin} expected={webOrigin} "
                 + $"detail=set COUCHCOOP_WEB_ORIGIN to this origin, or {CouchCoopWebOrigin.OriginCheckEnvironmentVariable}=0");
         }
@@ -2795,7 +2795,7 @@ public sealed class CouchCoopBrowserServer(
         // been too little to locate the throwing call (the Godot-typed refresh-rate read that silently killed every
         // /ws session in the hosted e2e harness took a debugger to find).
         _networkDiagnostics.Write("internal-server-error",
-            "[couchcoop] browser-server diagnostic code=internal-server-error "
+            "browser-server diagnostic code=internal-server-error "
             + $"target={request?.Target ?? "<unread>"} detail={exception.GetType().Name}: {exception.Message}"
             + $"{Environment.NewLine}{exception}");
     }

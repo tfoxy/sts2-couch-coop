@@ -471,5 +471,5 @@ internal static class CouchCoopHostTransport
     private static void LogEffectiveCapacity(int effective, int requested, string source)
         => Log($"effective maxClients={effective} (requested={requested}, source={source})");
 
-    internal static void Log(string message) => Console.Error.WriteLine("[couchcoop] host-transport " + message);
+    internal static void Log(string message) => CouchCoopLog.Stderr("host-transport " + message);
 }

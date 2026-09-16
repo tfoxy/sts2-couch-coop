@@ -1,4 +1,5 @@
 using System.Reflection;
+using CouchCoop.Mod.Session;
 using HarmonyLib;
 using MegaCrit.Sts2.Core.Multiplayer.Connection;
 
@@ -97,8 +98,8 @@ internal static class JoinHostOverridePatch
                 [typeof(ulong), typeof(string), typeof(ushort)]);
             if (target is null)
             {
-                Console.Error.WriteLine(
-                    $"[couchcoop] JoinHostOverridePatch: ENetClientConnectionInitializer(ulong, string, ushort) not found — {JoinHostEnvVar} ignored.");
+                CouchCoopLog.Stderr(
+                    $"JoinHostOverridePatch: ENetClientConnectionInitializer(ulong, string, ushort) not found — {JoinHostEnvVar} ignored.");
                 return;
             }
 
@@ -110,7 +111,7 @@ internal static class JoinHostOverridePatch
                 var prefix = typeof(JoinHostOverridePatch)
                     .GetMethod(nameof(PrefixConstructor), BindingFlags.NonPublic | BindingFlags.Static);
                 new Harmony("com.couchcoop.join-host").Patch(target, prefix: new HarmonyMethod(prefix));
-                Console.Error.WriteLine($"[couchcoop] join host overridden to {host}:{(port?.ToString() ?? "<game default>")}");
+                CouchCoopLog.Stderr($"join host overridden to {host}:{(port?.ToString() ?? "<game default>")}");
             }
             catch (Exception ex)
             {

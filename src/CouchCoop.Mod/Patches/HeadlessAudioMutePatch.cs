@@ -116,7 +116,7 @@ internal static class HeadlessAudioMutePatch
             if (refused.Count > 0)
             {
                 throw new InvalidOperationException(
-                    "[couchcoop] HeadlessAudioMutePatch could not mute "
+                    Session.CouchCoopLog.Line("HeadlessAudioMutePatch could not mute ")
                     + $"{refused.Count} of {Targets.Count} game→FMOD forwards on this build, so a headless seat "
                     + "would keep driving a torn-down FMOD server. Refusing rather than running half-muted: "
                     + string.Join("; ", refused));

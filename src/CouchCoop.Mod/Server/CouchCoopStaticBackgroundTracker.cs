@@ -1,6 +1,7 @@
 using System.Runtime.CompilerServices;
 using CouchCoop.Mod.HostUi;
 using CouchCoop.MirrorProtocol.SceneModel;
+using CouchCoop.Mod.Session;
 using Godot;
 using Spirectl.Sts2.Core.SceneInspection;
 
@@ -70,7 +71,7 @@ public sealed class CouchCoopStaticBackgroundTracker(
     // could never be set and silently read false. See the flag's own remarks.
 
     private readonly Action? _onPublishedChanged = onPublishedChanged;
-    private readonly Action<string> _log = log ?? (message => Console.Error.WriteLine(message));
+    private readonly Action<string> _log = log ?? CouchCoopLog.Stderr;
 
     // WARM-AT-PUBLISH (see PublishAndNotify): hands the freshly published QUALIFIED variant to whoever can render
     // it. Null in every host that has no renderer behind it (test harnesses, the standalone server), which is why
@@ -127,7 +128,7 @@ public sealed class CouchCoopStaticBackgroundTracker(
         catch (Exception exception)
         {
             Volatile.Write(ref _probeScheduled, 0);
-            _log($"[couchcoop] static-bg skip scheduling failed: {exception.GetType().Name}: {exception.Message}");
+            _log($"static-bg skip scheduling failed: {exception.GetType().Name}: {exception.Message}");
         }
     }
 
@@ -173,7 +174,7 @@ public sealed class CouchCoopStaticBackgroundTracker(
             // Godot-less host (the hosted-server test harness) or a teardown race: no live tree to probe. Leave
             // the published value untouched — it can only ever have been set by a real probe in this process.
             Volatile.Write(ref _probeScheduled, 0);
-            _log($"[couchcoop] static-bg probe scheduling failed: {exception.GetType().Name}: {exception.Message}");
+            _log($"static-bg probe scheduling failed: {exception.GetType().Name}: {exception.Message}");
         }
     }
 
@@ -211,7 +212,7 @@ public sealed class CouchCoopStaticBackgroundTracker(
             }
             catch (Exception exception)
             {
-                _log($"[couchcoop] static-bg probe failed: {exception.GetType().Name}: {exception.Message}");
+                _log($"static-bg probe failed: {exception.GetType().Name}: {exception.Message}");
             }
             finally
             {
@@ -587,7 +588,7 @@ public sealed class CouchCoopStaticBackgroundTracker(
             catch (Exception exception)
             {
                 // A warm is an optimization; its failure must never break the publish the clients are waiting on.
-                _log($"[couchcoop] static-bg-warm scheduling failed: {exception.GetType().Name}: {exception.Message}");
+                _log($"static-bg-warm scheduling failed: {exception.GetType().Name}: {exception.Message}");
             }
         }
     }

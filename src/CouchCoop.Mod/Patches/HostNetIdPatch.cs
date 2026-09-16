@@ -1,5 +1,6 @@
 using System.Globalization;
 using System.Reflection;
+using CouchCoop.Mod.Session;
 using HarmonyLib;
 using MegaCrit.Sts2.Core.Multiplayer.Game;
 using MegaCrit.Sts2.Core.Multiplayer.Quality;
@@ -153,7 +154,7 @@ internal static class HostNetIdPatch
         var getter = AccessTools.PropertyGetter(typeof(ENetClient), "HostNetId");
         if (getter is null)
         {
-            Console.Error.WriteLine("[couchcoop] HostNetIdPatch: ENetClient.HostNetId getter not found — relying on the heartbeat coercion alone.");
+            CouchCoopLog.Stderr("HostNetIdPatch: ENetClient.HostNetId getter not found — relying on the heartbeat coercion alone.");
             return;
         }
 
@@ -169,14 +170,14 @@ internal static class HostNetIdPatch
             [typeof(MegaCrit.Sts2.Core.Multiplayer.Messages.HeartbeatRequestMessage), typeof(ulong)]);
         if (heartbeat is null)
         {
-            Console.Error.WriteLine("[couchcoop] HostNetIdPatch: NetQualityTracker.HandleHeartbeatRequestMessage not found — inlining fallback unavailable.");
+            CouchCoopLog.Stderr("HostNetIdPatch: NetQualityTracker.HandleHeartbeatRequestMessage not found — inlining fallback unavailable.");
             return;
         }
 
         _netServiceField = AccessTools.Field(typeof(NetQualityTracker), "_netService");
         if (_netServiceField is null)
         {
-            Console.Error.WriteLine("[couchcoop] HostNetIdPatch: NetQualityTracker._netService not found — inlining fallback unavailable.");
+            CouchCoopLog.Stderr("HostNetIdPatch: NetQualityTracker._netService not found — inlining fallback unavailable.");
             return;
         }
 
@@ -193,7 +194,7 @@ internal static class HostNetIdPatch
             [typeof(ulong), typeof(MegaCrit.Sts2.Core.Multiplayer.Serialization.PacketReader)]);
         if (received is null)
         {
-            Console.Error.WriteLine("[couchcoop] HostNetIdPatch: HandshakeManager.HandshakeMessageReceived not found — a Steam-hosted seat will time out on the peer-version handshake.");
+            CouchCoopLog.Stderr("HostNetIdPatch: HandshakeManager.HandshakeMessageReceived not found — a Steam-hosted seat will time out on the peer-version handshake.");
             return;
         }
 
@@ -202,7 +203,7 @@ internal static class HostNetIdPatch
         _handshakeHandlerField = AccessTools.Field(typeof(HandshakeManager), "_handler");
         if (_handshakeHandlerField is null)
         {
-            Console.Error.WriteLine("[couchcoop] HostNetIdPatch: HandshakeManager._handler not found — refusing to coerce a handshake sender we cannot prove belongs to a client.");
+            CouchCoopLog.Stderr("HostNetIdPatch: HandshakeManager._handler not found — refusing to coerce a handshake sender we cannot prove belongs to a client.");
             return;
         }
 

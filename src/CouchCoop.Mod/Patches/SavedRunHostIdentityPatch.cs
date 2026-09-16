@@ -33,7 +33,7 @@ internal static class SavedRunHostIdentityPatch
             var target = AccessTools.Method(typeof(NMultiplayerSubmenu), "StartHost", [typeof(SerializableRun)]);
             if (target is null)
             {
-                Console.Error.WriteLine("[couchcoop] SavedRunHostIdentityPatch: NMultiplayerSubmenu.StartHost(SerializableRun) not found — saved runs use stock hosting.");
+                CouchCoopLog.Stderr("SavedRunHostIdentityPatch: NMultiplayerSubmenu.StartHost(SerializableRun) not found — saved runs use stock hosting.");
                 return;
             }
 

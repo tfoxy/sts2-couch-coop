@@ -1,3 +1,4 @@
+using CouchCoop.Mod.Session;
 using Spirectl.Sts2.Core.Artifacts;
 using Spirectl.Sts2.Core.Models;
 using Spirectl.Sts2.Core.SceneInspection;
@@ -64,7 +65,7 @@ public sealed class CouchCoopRuntimeHost : IDisposable, ICouchCoopCapabilityPoli
         _sceneWatchControlSource = runtime.SceneWatchControls;
         _multiplayerConnection = runtime.MultiplayerConnection ?? EmptyMultiplayerConnectionSource.Instance;
         _lifetime = runtime.Lifetime;
-        _log = log ?? (message => Console.Error.WriteLine(message));
+        _log = log ?? CouchCoopLog.Stderr;
         _capabilities = new Lazy<EmbeddableRuntimeCapabilities>(
             DiscoverCapabilities,
             LazyThreadSafetyMode.ExecutionAndPublication);
@@ -262,7 +263,7 @@ public sealed class CouchCoopRuntimeHost : IDisposable, ICouchCoopCapabilityPoli
     private void LogUnsupported(CouchCoopRuntimeNotice notice)
     {
         _log(
-            "[couchcoop] unsupported spirectl capability "
+            "unsupported spirectl capability "
             + $"id={notice.CapabilityId} supported={notice.Supported} provisional={notice.Provisional} "
             + $"reason={notice.UnsupportedReason ?? "unspecified"}");
     }

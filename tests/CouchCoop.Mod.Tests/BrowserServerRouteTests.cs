@@ -178,6 +178,17 @@ if (args is ["seat-build", ..])
 // decision is made before any lane assembly is loaded. Registered as its own verb for the reason the verbs
 // above exist: the full sequence below dies partway through on some machines, and a suite reachable only from
 // there is a suite that never runs. See LoaderLaneSelectionTests.
+// The `[couchcoop]` log prefix has one owner (CouchCoopLog.Format) and one file allowed to spell it out.
+// `dotnet run --project tests/CouchCoop.Mod.Tests -- log-prefix` runs that check ALONE: pure string work and a
+// source walk, no Godot types, no IO beyond reading src/. It also runs at the top of the normal sequence below
+// — a check registered after HeadlessAudioMuteTargetsTests would never run at all.
+if (args is [CouchCoopLogPrefixTests.Verb, ..])
+{
+    CouchCoopLogPrefixTests.Run();
+    Console.WriteLine("log prefix: ok");
+    return;
+}
+
 if (args is ["lanes", ..])
 {
     LoaderLaneSelectionTests.Run();
@@ -376,6 +387,10 @@ Environment.SetEnvironmentVariable(
 
 HotReloadInteropTests.Run();
 SpirectlEmbeddedAssemblyBoundaryTests.Run();
+// The one-owner guard for the `[couchcoop]` log prefix. FIRST among the pure suites on purpose: it is
+// the check most likely to be defeated by where it sits, since everything from HeadlessAudioMuteTargetsTests
+// down is currently unreachable. Also reachable alone as `-- log-prefix`.
+CouchCoopLogPrefixTests.Run();
 // Host patch health: a registry with a fake clock and a recorder, no Godot types — up here with the other
 // pure suites, and also reachable alone as `-- connections`.
 HostPatchHealthTests.Run();

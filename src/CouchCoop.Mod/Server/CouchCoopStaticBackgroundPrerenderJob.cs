@@ -2,6 +2,7 @@ using System.Diagnostics;
 using System.Text.Json;
 using CouchCoop.Mod.Diagnostics;
 using CouchCoop.Mod.Runtime;
+using CouchCoop.Mod.Session;
 using Spirectl.Sts2.Core.Models;
 using Spirectl.Sts2.Live;
 
@@ -39,7 +40,7 @@ public sealed class CouchCoopStaticBackgroundPrerenderJob(
 {
     private readonly CouchCoopRuntimeHost _runtime = runtime ?? throw new ArgumentNullException(nameof(runtime));
     private readonly CouchCoopStaticBackgroundProvider _backgrounds = backgrounds ?? throw new ArgumentNullException(nameof(backgrounds));
-    private readonly Action<string> _log = log ?? (message => Console.Error.WriteLine(message));
+    private readonly Action<string> _log = log ?? CouchCoopLog.Stderr;
 
     /// <summary>
     /// The model families that name a background root. The combat pair is required and the split is not obvious:
@@ -75,18 +76,18 @@ public sealed class CouchCoopStaticBackgroundPrerenderJob(
             catch (Exception exception)
             {
                 catalogFailures++;
-                _log($"[couchcoop] bg-prerender catalog failed family={family} detail={exception.GetType().Name}: {exception.Message}");
+                _log($"bg-prerender catalog failed family={family} detail={exception.GetType().Name}: {exception.Message}");
                 continue;
             }
 
             if (catalog.Error is not null)
             {
                 catalogFailures++;
-                _log($"[couchcoop] bg-prerender catalog failed family={family} code={catalog.Error.Code} detail={catalog.Error.Message}");
+                _log($"bg-prerender catalog failed family={family} code={catalog.Error.Code} detail={catalog.Error.Message}");
                 continue;
             }
 
-            _log($"[couchcoop] bg-prerender catalog family={family} models={catalog.Models.Count} status={catalog.Status}");
+            _log($"bg-prerender catalog family={family} models={catalog.Models.Count} status={catalog.Status}");
             models.AddRange(catalog.Models);
         }
 
@@ -99,7 +100,7 @@ public sealed class CouchCoopStaticBackgroundPrerenderJob(
         // ZERO DISCOVERED IS A REPORTED OUTCOME. A sweep that silently baked nothing and then announced success
         // would look exactly like a sweep that worked, and the next round would "verify" a prerender that never
         // happened. Say the count first, every time.
-        _log($"[couchcoop] bg-prerender discovered={ids.Count} models={models.Count} codec={CouchCoopStaticBackgroundProvider.ShippedCodec.Label}");
+        _log($"bg-prerender discovered={ids.Count} models={models.Count} codec={CouchCoopStaticBackgroundProvider.ShippedCodec.Label}");
         if (ids.Count == 0)
         {
             return Complete(stopwatch, "empty", 0, 0, 0, catalogFailures);
@@ -129,21 +130,21 @@ public sealed class CouchCoopStaticBackgroundPrerenderJob(
                 if (image.Error is not null || image.Bytes is null || image.Bytes.Length == 0)
                 {
                     failures++;
-                    _log($"[couchcoop] bg-prerender {completed}/{ids.Count} status=failed id={loggedId} detail={image.Error?.Message ?? "empty-render"} elapsedMs={itemWatch.ElapsedMilliseconds}");
+                    _log($"bg-prerender {completed}/{ids.Count} status=failed id={loggedId} detail={image.Error?.Message ?? "empty-render"} elapsedMs={itemWatch.ElapsedMilliseconds}");
                     continue;
                 }
 
                 if (image.CacheStatus is "hit" or "memory")
                 {
                     hits++;
-                    _log($"[couchcoop] bg-prerender {completed}/{ids.Count} status=hit id={loggedId} bytes={image.Bytes.Length}");
+                    _log($"bg-prerender {completed}/{ids.Count} status=hit id={loggedId} bytes={image.Bytes.Length}");
                     continue;
                 }
 
                 rendered++;
                 // The sweep IS the whole-catalog render benchmark, so each item carries its phase breakdown: a cold
                 // prerender log is then a per-background answer to "where did the render time go".
-                _log($"[couchcoop] bg-prerender {completed}/{ids.Count} status=rendered id={loggedId} bytes={image.Bytes.Length} contentType={image.ContentType} elapsedMs={itemWatch.ElapsedMilliseconds}{DescribePhases()}");
+                _log($"bg-prerender {completed}/{ids.Count} status=rendered id={loggedId} bytes={image.Bytes.Length} contentType={image.ContentType} elapsedMs={itemWatch.ElapsedMilliseconds}{DescribePhases()}");
             }
             catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
             {
@@ -152,7 +153,7 @@ public sealed class CouchCoopStaticBackgroundPrerenderJob(
             catch (Exception exception)
             {
                 failures++;
-                _log($"[couchcoop] bg-prerender {completed}/{ids.Count} status=failed id={loggedId} detail={exception.GetType().Name}: {exception.Message} elapsedMs={itemWatch.ElapsedMilliseconds}");
+                _log($"bg-prerender {completed}/{ids.Count} status=failed id={loggedId} detail={exception.GetType().Name}: {exception.Message} elapsedMs={itemWatch.ElapsedMilliseconds}");
             }
         }
 

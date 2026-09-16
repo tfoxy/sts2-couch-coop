@@ -37,7 +37,7 @@ public sealed class HotReloadableBrowserServerHost : IHotServerHost, IAsyncDispo
         _bindAddress = bindAddress ?? IPAddress.Loopback;
         _preferredPort = preferredPort;
         ResourceCacheRoot = resourceCacheRoot;
-        _log = log ?? (message => Console.Error.WriteLine(message));
+        _log = log ?? CouchCoopLog.Stderr;
         var lobby = new CouchCoopLobbyParticipation(_runtime);
         _headlessManager = CouchCoopMod.IsHeadlessClient
             ? null
@@ -116,7 +116,7 @@ public sealed class HotReloadableBrowserServerHost : IHotServerHost, IAsyncDispo
         // Published so the /secure-port route can report it: a HOST that redirects a TLS viewer to this
         // instance has no other way to learn the port we actually walked to.
         SecureOriginEndpoint.Publish(listener.Port);
-        _log($"[couchcoop] secure-origin listening port={listener.Port}");
+        _log($"secure-origin listening port={listener.Port}");
         return true;
     }
 
@@ -234,11 +234,11 @@ public sealed class HotReloadableBrowserServerHost : IHotServerHost, IAsyncDispo
                 previous,
                 new HotReloadShutdownContext("server-reload", generationNumber),
                 cancellationToken).ConfigureAwait(false);
-            _log($"[couchcoop] hot-reload generation swapped previous={previousNumber} active={generationNumber}");
+            _log($"hot-reload generation swapped previous={previousNumber} active={generationNumber}");
         }
         else
         {
-            _log($"[couchcoop] hot-reload generation activated active={generationNumber}");
+            _log($"hot-reload generation activated active={generationNumber}");
         }
     }
 

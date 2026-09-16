@@ -164,8 +164,8 @@ internal static class SeatPortAvailability
         catch (Exception exception)
         {
             // A platform that refuses the test itself must not be read as an owner.
-            Console.Error.WriteLine(
-                $"[couchcoop] seat port bind test skipped port={port}: {exception.GetType().Name}: {exception.Message}");
+            CouchCoopLog.Stderr(
+                $"seat port bind test skipped port={port}: {exception.GetType().Name}: {exception.Message}");
             return null;
         }
         finally
