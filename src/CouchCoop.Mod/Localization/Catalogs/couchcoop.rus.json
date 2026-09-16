@@ -75,6 +75,8 @@
   "couchcoop_connection_error_mod_mismatch_action": "Оставьте установленной только одну копию мода, перезапустите игру и повторите попытку.",
   "couchcoop_connection_error_seat_port_summary": "Другая программа на этом компьютере занимает порт этого игрока.",
   "couchcoop_connection_error_seat_port_action": "Закройте программу, занимающую этот порт на компьютере-хосте, в том числе другую копию Slay the Spire 2, и повторите попытку.",
+  "couchcoop_connection_error_seat_port_occupied_summary": "Другая программа на этом компьютере занимает один из портов, которые совместная игра выделяет игрокам.",
+  "couchcoop_connection_error_seat_port_occupied_action": "Совместная игра продолжает работать. Игроки получают другой порт. Закройте эту программу, если позже игрок не сможет подключиться.",
   "couchcoop_connection_error_seat_port_blocked_summary": "Этот компьютер блокирует порт, на котором работает игра этого игрока.",
   "couchcoop_connection_error_seat_port_blocked_action": "Разрешите Slay the Spire 2 в брандмауэре или защитной программе этого компьютера и повторите попытку.",
   "couchcoop_connection_error_seat_network_summary": "Игра этого игрока запущена, но его устройство так и не смогло до неё добраться.",

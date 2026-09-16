@@ -21,6 +21,14 @@ public sealed partial class HeadlessClientManager
     /// </summary>
     public const string SharedUserDirCode = "host-seat-profile-shared";
 
+    /// <summary>
+    /// The host-service issue raised when the pre-spawn survey finds a FOREIGN owner on a port in the seat range
+    /// and routes the new player around it. A WARNING for the same reason as the code above: the join worked, and
+    /// what the operator is being told is that something else on their machine holds a port this mod needs.
+    /// Public because the panel's copy mapping keys on the literal.
+    /// </summary>
+    public const string SeatPortOccupiedCode = "host-seat-port-occupied";
+
     private readonly Dictionary<int, OwnedConnection> _ownedConnections = [];
     private readonly Dictionary<Guid, BrowserAttempt> _browserAttempts = [];
     private readonly Dictionary<int, Task> _connectionCleanup = [];
@@ -56,6 +64,10 @@ public sealed partial class HeadlessClientManager
         {
             ConnectionRegistry.Shared.RecordDiagnostic(sessionId, $"seat port {SlotToPort(occupiedSlot)}", owner);
         }
+        // The diagnostic above lands on the joining player's own row, whose entire detail surface is hidden while
+        // that row has no issue — so on the success this survey usually produces (the player is simply routed to
+        // the next port) the host was never told anything at all. Raise it where it can be seen.
+        ReportForeignSeatPortOwners(occupiedSeatPorts);
         HeadlessAllocation? allocation;
         try
         {
@@ -186,6 +198,47 @@ public sealed partial class HeadlessClientManager
         owned.Failure ??= verdict.Issue;
         await StopFailedConnectionAsync(owned).ConfigureAwait(false);
         return null;
+    }
+
+    /// <summary>
+    /// Raise (once) the host-service warning for seat ports a FOREIGN program holds, naming each port and what
+    /// answered on it.
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// THE HOST'S OWN LIVE SEATS ARE NOT SQUATTERS, and the survey cannot tell the difference: it asks the port
+    /// whether anything answers, and a seat this host started answers. Every ordinary two-player session would
+    /// otherwise raise this warning about itself. The slots with a process of ours are subtracted here rather
+    /// than in <c>SurveySeatPortsAsync</c>, whose result feeds slot selection and where a live own seat is
+    /// already excluded by its process handle.
+    /// </para>
+    /// <para>
+    /// ONE ROW FOR THE WHOLE SURVEY: <see cref="ConnectionRegistry.ReportHostIssue"/> deduplicates by code, so
+    /// repeated joins against the same squatter do not stack rows. The first report's detail is the one the row
+    /// keeps.
+    /// </para>
+    /// </remarks>
+    private void ReportForeignSeatPortOwners(IReadOnlyDictionary<int, string> occupiedSeatPorts)
+    {
+        if (occupiedSeatPorts.Count == 0) return;
+        HashSet<int> ours;
+        lock (_lock) ours = _processBySlot.Keys.ToHashSet();
+        var foreign = occupiedSeatPorts.Where(pair => !ours.Contains(pair.Key)).OrderBy(pair => pair.Key).ToArray();
+        if (foreign.Length == 0) return;
+        var ports = string.Join("; ", foreign.Select(pair =>
+            $"{SlotToPort(pair.Key).ToString(System.Globalization.CultureInfo.InvariantCulture)} ({pair.Value})"));
+        ConnectionRegistry.Shared.ReportHostIssue(
+            SeatPortOccupiedCode,
+            // Word-for-word the English twin of couchcoop_connection_error_seat_port_occupied_{summary,action}, so
+            // a copied report and the panel above it never read as two different findings.
+            "Another program on this computer is using one of the ports Couch Co-Op gives players.",
+            "Co-op still works. Players are routed around that port. Close the other program if a player later "
+                + "cannot connect.",
+            "Checked before starting a player's game. Ports in this mod's player range that already had an owner, "
+                + $"and what answered on them: {ports}. The player who was joining got a free port instead, so "
+                + "their join was unaffected. A player whose seat is pinned (a rejoin, or a returning name the "
+                + "host's run knows by its seat) cannot be moved, so the same owner would fail that join outright.",
+            isWarning: true);
     }
 
     /// <summary>

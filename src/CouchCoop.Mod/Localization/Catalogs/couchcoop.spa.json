@@ -75,6 +75,8 @@
   "couchcoop_connection_error_mod_mismatch_action": "Mantén instalada solo una copia del mod, reinicia el juego y vuelve a intentarlo.",
   "couchcoop_connection_error_seat_port_summary": "Otro programa de este equipo está usando el puerto de este jugador.",
   "couchcoop_connection_error_seat_port_action": "Cierra lo que esté usando ese puerto en el equipo anfitrión, incluida otra copia de Slay the Spire 2, y vuelve a intentarlo.",
+  "couchcoop_connection_error_seat_port_occupied_summary": "Otro programa de este equipo está usando uno de los puertos que el modo cooperativo asigna a los jugadores.",
+  "couchcoop_connection_error_seat_port_occupied_action": "El modo cooperativo sigue funcionando. Los jugadores se desvían a otro puerto. Cierra el otro programa si más adelante un jugador no puede conectarse.",
   "couchcoop_connection_error_seat_port_blocked_summary": "Este equipo está bloqueando el puerto en el que se sirve el juego de este jugador.",
   "couchcoop_connection_error_seat_port_blocked_action": "Permite Slay the Spire 2 en el firewall o el software de seguridad de este equipo y vuelve a intentarlo.",
   "couchcoop_connection_error_seat_network_summary": "El juego de este jugador está en marcha, pero su dispositivo nunca llegó a él.",

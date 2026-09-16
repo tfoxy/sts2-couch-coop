@@ -75,6 +75,8 @@
   "couchcoop_connection_error_mod_mismatch_action": "ให้ติดตั้ง CouchCoop ไว้เพียงสำเนาเดียว รีสตาร์ทเกม แล้วลองอีกครั้ง",
   "couchcoop_connection_error_seat_port_summary": "โปรแกรมอื่นบนคอมพิวเตอร์เครื่องนี้กำลังใช้พอร์ตของผู้เล่นนี้อยู่",
   "couchcoop_connection_error_seat_port_action": "ปิดโปรแกรมที่กำลังใช้พอร์ตนั้นบนคอมพิวเตอร์โฮสต์ รวมถึง Slay the Spire 2 อีกชุดหนึ่ง แล้วลองอีกครั้ง",
+  "couchcoop_connection_error_seat_port_occupied_summary": "โปรแกรมอื่นบนคอมพิวเตอร์เครื่องนี้กำลังใช้พอร์ตหนึ่งที่โหมดร่วมมือจัดสรรให้ผู้เล่นอยู่",
+  "couchcoop_connection_error_seat_port_occupied_action": "โหมดร่วมมือยังใช้งานได้ ผู้เล่นจะถูกจัดให้ใช้พอร์ตอื่นแทน ปิดโปรแกรมนั้นหากภายหลังมีผู้เล่นเชื่อมต่อไม่ได้",
   "couchcoop_connection_error_seat_port_blocked_summary": "คอมพิวเตอร์เครื่องนี้กำลังบล็อกพอร์ตที่เกมของผู้เล่นนี้ให้บริการอยู่",
   "couchcoop_connection_error_seat_port_blocked_action": "อนุญาต Slay the Spire 2 ในไฟร์วอลล์หรือซอฟต์แวร์ความปลอดภัยของคอมพิวเตอร์เครื่องนี้ แล้วลองอีกครั้ง",
   "couchcoop_connection_error_seat_network_summary": "เกมของผู้เล่นนี้ทำงานอยู่ แต่อุปกรณ์ของเขาไม่เคยเชื่อมต่อถึงเลย",

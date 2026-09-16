@@ -75,6 +75,8 @@
   "couchcoop_connection_error_mod_mismatch_action": "Modun yalnızca tek bir kopyasını kurulu bırakın, oyunu yeniden başlatın ve tekrar deneyin.",
   "couchcoop_connection_error_seat_port_summary": "Bu bilgisayardaki başka bir program bu oyuncunun bağlantı noktasını kullanıyor.",
   "couchcoop_connection_error_seat_port_action": "Ana bilgisayarda o bağlantı noktasını kullanan programı, Slay the Spire 2'nin başka bir kopyası da dâhil olmak üzere kapatın ve tekrar deneyin.",
+  "couchcoop_connection_error_seat_port_occupied_summary": "Bu bilgisayardaki başka bir program, ortak oynanışın oyunculara verdiği bağlantı noktalarından birini kullanıyor.",
+  "couchcoop_connection_error_seat_port_occupied_action": "Ortak oynanış çalışmaya devam eder. Oyuncular başka bir bağlantı noktasına yönlendirilir. Daha sonra bir oyuncu bağlanamazsa diğer programı kapatın.",
   "couchcoop_connection_error_seat_port_blocked_summary": "Bu bilgisayar, bu oyuncunun oyununun yayınlandığı bağlantı noktasını engelliyor.",
   "couchcoop_connection_error_seat_port_blocked_action": "Bu bilgisayarın güvenlik duvarında veya güvenlik yazılımında Slay the Spire 2'ye izin verin ve tekrar deneyin.",
   "couchcoop_connection_error_seat_network_summary": "Bu oyuncunun oyunu çalışıyor ancak cihazı ona hiç ulaşamadı.",
