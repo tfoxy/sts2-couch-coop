@@ -74,7 +74,7 @@
   "couchcoop_connection_error_mod_mismatch_summary": "该玩家的游戏加载了不同的 CouchCoop 副本。",
   "couchcoop_connection_error_mod_mismatch_action": "只保留一个模组副本，重启游戏后重试。",
   "couchcoop_connection_error_seat_port_summary": "这台电脑上的其他程序正在占用该玩家的端口。",
-  "couchcoop_connection_error_seat_port_action": "在主机电脑上重启 Slay the Spire 2 以释放该端口，然后重试。",
+  "couchcoop_connection_error_seat_port_action": "请关闭主机电脑上占用该端口的程序（包括另一份《杀戮尖塔 2》），然后重试。",
   "couchcoop_connection_error_seat_port_blocked_summary": "这台电脑正在拦截该玩家游戏所使用的端口。",
   "couchcoop_connection_error_seat_port_blocked_action": "在这台电脑的防火墙或安全软件中允许 Slay the Spire 2，然后重试。",
   "couchcoop_connection_error_seat_network_summary": "该玩家的游戏正在运行，但其设备从未连接上。",

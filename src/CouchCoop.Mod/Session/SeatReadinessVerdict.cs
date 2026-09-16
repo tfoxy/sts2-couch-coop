@@ -310,10 +310,18 @@ internal static class SeatReadinessVerdict
     /// </summary>
     internal static ConnectionIssue IssueFor(SeatReadinessCause cause, string detail) => cause switch
     {
+        // "Close whatever is using that port", NOT "restart Slay the Spire 2". Seat ports are derived from the
+        // CONSTANT HostPort (HeadlessClientManager.SlotToPort, :79 and :177), never from the browser port this
+        // host actually walked to — so on a machine running two copies of the game the port is very often held
+        // by the OTHER instance's seats, and the old sentence sent the operator to restart the one instance
+        // that was innocent. The port itself is already named in the detail under this line, and so is the
+        // owner when the host found one before spawning, which is why the action can point at "that port"
+        // rather than guess at a program.
         SeatReadinessCause.PortConflict => new(
             PortTakenCode,
             "Another program on this computer is using this player's port.",
-            "Restart Slay the Spire 2 on the host computer to free the port, then try again.",
+            "Close whatever is using that port on the host computer, including another copy of Slay the Spire 2, "
+                + "then try again.",
             detail),
         SeatReadinessCause.HostLocalBlock => new(
             PortBlockedCode,

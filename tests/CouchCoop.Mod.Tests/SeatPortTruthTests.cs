@@ -127,8 +127,15 @@ internal static class SeatPortTruthTests
                 "the refusal is the seat-port-taken issue, not a generic launch failure");
             Assert(row.Issue!.Detail!.Contains("13367", StringComparison.Ordinal),
                 "the technical detail names the port a human has to go and free");
-            Assert(row.Issue.Action.Contains("Restart Slay the Spire 2", StringComparison.Ordinal),
-                "…and the next action is the one that actually frees an orphaned seat's port");
+            Assert(row.Issue.Action.Contains("Close whatever is using that port", StringComparison.Ordinal),
+                "…and the next action points at whatever holds that port");
+            // NOT "restart Slay the Spire 2". Seat ports come off the CONSTANT HostPort via SlotToPort, never off
+            // the browser port this host walked to, so on a machine running two copies of the game the holder is
+            // very often the OTHER instance's seat — and that sentence sent the operator to restart the one
+            // instance that was innocent. The detail above already names the port, and the owner when the host
+            // found one before spawning.
+            Assert(!row.Issue.Action.Contains("Restart Slay the Spire 2", StringComparison.Ordinal),
+                "…without telling the operator to restart an instance that may not be the port's owner");
         }
         finally { ConnectionRegistry.Shared.Clear(); }
     }

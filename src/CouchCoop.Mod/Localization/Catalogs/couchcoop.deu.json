@@ -74,7 +74,7 @@
   "couchcoop_connection_error_mod_mismatch_summary": "Das Spiel dieses Spielers hat eine andere Kopie von CouchCoop geladen.",
   "couchcoop_connection_error_mod_mismatch_action": "Behalten Sie nur eine Kopie der Mod installiert, starten Sie das Spiel neu und versuchen Sie es erneut.",
   "couchcoop_connection_error_seat_port_summary": "Ein anderes Programm auf diesem Computer belegt den Port dieses Spielers.",
-  "couchcoop_connection_error_seat_port_action": "Starten Sie Slay the Spire 2 auf dem Host-Computer neu, um den Port freizugeben, und versuchen Sie es erneut.",
+  "couchcoop_connection_error_seat_port_action": "Schließen Sie das Programm, das diesen Port auf dem Host-Computer belegt, auch wenn es eine weitere Kopie von Slay the Spire 2 ist, und versuchen Sie es erneut.",
   "couchcoop_connection_error_seat_port_blocked_summary": "Dieser Computer blockiert den Port, auf dem das Spiel dieses Spielers bereitgestellt wird.",
   "couchcoop_connection_error_seat_port_blocked_action": "Lassen Sie Slay the Spire 2 durch die Firewall oder Sicherheitssoftware dieses Computers zu und versuchen Sie es erneut.",
   "couchcoop_connection_error_seat_network_summary": "Das Spiel dieses Spielers läuft, aber sein Gerät hat es nie erreicht.",
