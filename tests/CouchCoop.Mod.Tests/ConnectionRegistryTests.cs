@@ -44,6 +44,19 @@ internal static class ConnectionRegistryTests
         Assert(mismatchRow.Issue!.Code == CouchCoop.Mod.Session.HeadlessClientManager.SeatBuildMismatchCode,
             "a seat build mismatch replaces the browser transport symptom");
         Assert(mismatchRow.Attempt!.IssueId == mismatchReportId, "…and keeps the first report's identity");
+
+        // …and identically for the seat this host stopped over the player's cloud saves. Same shape, same
+        // reason: the seat is killed the moment the host learns it cannot vouch for them, so the browser socket
+        // closing is downstream of the cause, and "reconnect this device" would be advice about the wrong thing.
+        var cloudId = Guid.NewGuid();
+        registry.Connected(cloudId, "phone"); registry.BeginAttempt(cloudId);
+        registry.Fail(cloudId, "browser-transport-lost", "Socket closed", "Reconnect", "No close detail");
+        registry.Fail(cloudId, CouchCoop.Mod.Session.HeadlessClientManager.SeatCloudIsolationCode,
+            "No cloud save promise", "Restart and retry", "the seat never declared the isolation");
+        Assert(registry.Snapshot().Rows.Single(entry => entry.Id == cloudId).Issue!.Code
+                == CouchCoop.Mod.Session.HeadlessClientManager.SeatCloudIsolationCode,
+            "a cloud-isolation refusal replaces the browser transport symptom too");
+
         registry.Disconnected(id);
         var report = registry.BuildReport(id)!;
         Assert(report.Contains("Earlier browser symptom", StringComparison.Ordinal), "original transport observation retained");
@@ -159,6 +172,7 @@ internal static class ConnectionRegistryTests
                  {
                      "browser-transport-lost", "native-join-rejected", "process-exited",
                      CouchCoop.Mod.Session.HeadlessClientManager.SeatBuildMismatchCode,
+                     CouchCoop.Mod.Session.HeadlessClientManager.SeatCloudIsolationCode,
                      CouchCoop.Mod.Session.HeadlessDisconnectReason.RunInProgressCode,
                  })
         {

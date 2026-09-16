@@ -73,6 +73,8 @@
   "couchcoop_connection_error_seat_run_in_progress_action": "Wczytaj ponownie zapisany przebieg, aby ten gracz mógł wrócić.",
   "couchcoop_connection_error_mod_mismatch_summary": "Gra tego gracza wczytała inną kopię CouchCoop.",
   "couchcoop_connection_error_mod_mismatch_action": "Zostaw zainstalowaną tylko jedną kopię moda, uruchom grę ponownie i spróbuj jeszcze raz.",
+  "couchcoop_connection_error_seat_cloud_isolation_summary": "Gra tego gracza nie mogła zagwarantować, że nie ruszy Twoich zapisów w Steam Cloud.",
+  "couchcoop_connection_error_seat_cloud_isolation_action": "Została zatrzymana, zanim cokolwiek zapisała. Uruchom grę ponownie i spróbuj jeszcze raz, a jeśli się powtórzy, skopiuj ten raport.",
   "couchcoop_connection_error_seat_port_summary": "Inny program na tym komputerze używa portu tego gracza.",
   "couchcoop_connection_error_seat_port_action": "Zamknij program używający tego portu na komputerze hosta, w tym inną kopię Slay the Spire 2, i spróbuj jeszcze raz.",
   "couchcoop_connection_error_seat_port_occupied_summary": "Inny program na tym komputerze używa jednego z portów, które kooperacja przydziela graczom.",

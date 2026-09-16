@@ -161,6 +161,10 @@ if (args is ["connections", ..])
     await ConnectionAttemptLogsTests.Run();
     await ConnectionControlTests.RunAsync();
     SeatModBuildTests.Run();
+    // "A seat that cannot guarantee Steam Cloud save isolation must not keep running": the pure verdict, the
+    // test lever, and the player-facing copy. Registered here because its failure IS a connection issue — the
+    // lifecycle legs below assert the host's half of the same rule.
+    SeatCloudIsolationGuardTests.Run();
     await HeadlessConnectionLifecycleTests.RunAsync();
     Console.WriteLine("connections: ok");
     return;
@@ -430,6 +434,10 @@ CouchCoopModalFocusTests.Run();
 // ...and WHICH controls a d-pad can walk to inside that modal: the closed chain that makes the QR dialog's
 // host-select rows reachable without letting focus escape onto the lobby behind the scrim.
 CouchCoopModalFocusChainTests.Run();
+// …and the seat rule that protects the player's SAVES rather than their session: the verdict a failed cloud
+// isolation becomes, its test lever and its copy. Pure strings, so it sits up here with the rest, above the
+// suite that can take this process down. Also reachable alone as `-- connections`.
+SeatCloudIsolationGuardTests.Run();
 // Beta round: a seat must load the SAME copy of CouchCoop as its host, and say so loudly when it did not.
 // Up here with the other pure suites for the same reason — everything from HeadlessAudioMuteTargetsTests
 // below is unreachable on some machines. Also reachable alone as `-- seat-build`.

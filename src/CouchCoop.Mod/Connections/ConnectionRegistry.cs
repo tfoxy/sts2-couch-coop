@@ -540,6 +540,9 @@ public sealed class ConnectionRegistry
             // with a confirmed native/process failure; teardown must never replace an existing native cause.
             // `seat-build-mismatch` belongs in that set for the same reason and more strongly: the seat
             // reported it about itself and then exited, so the closed socket is its consequence.
+            // `seat-cloud-isolation-unconfirmed` is in it on identical grounds — the seat is killed the moment
+            // the host learns it cannot vouch for the player's cloud saves, so a browser socket closing is
+            // downstream of the cause, and "reconnect this device" would be advice about the wrong thing.
             // …and the same asymmetry once more, one level down: a seat reports a drop TWICE, generically
             // first (its transport saw the socket go) and specifically a beat later (the game's own handler
             // knows what the host said). The generic report gets here first and would otherwise pin the row to
@@ -547,7 +550,8 @@ public sealed class ConnectionRegistry
             // So a run-in-progress refusal may replace a generic cause; nothing may replace IT.
             if ((e.Issue.Code == "browser-transport-lost"
                     && issue.Code is "process-exited" or "native-join-rejected" or "native-disconnected"
-                        or Session.HeadlessClientManager.SeatBuildMismatchCode)
+                        or Session.HeadlessClientManager.SeatBuildMismatchCode
+                        or Session.HeadlessClientManager.SeatCloudIsolationCode)
                 || (issue.Code == Session.HeadlessDisconnectReason.RunInProgressCode
                     && e.Issue.Code is "browser-transport-lost" or "native-join-rejected" or "native-disconnected"))
             {

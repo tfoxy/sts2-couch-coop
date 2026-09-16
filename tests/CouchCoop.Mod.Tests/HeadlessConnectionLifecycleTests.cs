@@ -5,6 +5,12 @@ using CouchCoop.Mod.Session;
 namespace CouchCoop.Mod.Tests;
 
 /// <summary>Serial lifecycle checks for the host-owned headless connection monitor.</summary>
+/// <remarks>
+/// EVERY HEARTBEAT BELOW SAYS <c>CloudSaveIsolated: true</c>, and that is not decoration. A seat declares on each
+/// status that it has closed the paths by which it could write into the host account's Steam Cloud save storage,
+/// and a heartbeat WITHOUT that declaration now fails the seat outright — so a healthy seat in a test has to
+/// state it exactly as a healthy seat does in the field. The legs that omit it are the ones testing the refusal.
+/// </remarks>
 internal static class HeadlessConnectionLifecycleTests
 {
     public static async Task RunAsync()
@@ -16,6 +22,9 @@ internal static class HeadlessConnectionLifecycleTests
         await NativeFailureRetainsItsCauseWhenChildExits();
         await ALateRunInProgressReasonRefinesTheGenericRejection();
         await SeatBuildMismatchIsItsOwnIssueWithItsOwnRemedy();
+        await ASeatThatCannotIsolateCloudSavesIsItsOwnIssue();
+        await AHeartbeatWithoutTheCloudDeclarationStopsTheSeat();
+        await ASilentSeatIsStoppedAtTheContactDeadline();
         await EarlyProcessExitFailsTheAttempt();
         await StalledShutdownIsForcedBeforeEnsureReturns();
         await RetryFencesOldGenerationAndEvictsTheOldPeer();
@@ -55,7 +64,7 @@ internal static class HeadlessConnectionLifecycleTests
             // arrive from off this machine. The affirmative zero is what the network-path cause rests on.
             void Heartbeat(long sequence, long arrivals) => HeadlessConnectionControl.Shared.Observe(
                 "unreached-token", control.Generation,
-                new HeadlessConnectionStatus(sequence, "Connecting", null, null, 0, port, arrivals));
+                new HeadlessConnectionStatus(sequence, "Connecting", null, null, 0, port, arrivals, CloudSaveIsolated: true));
             Heartbeat(1, 0);
             Assert(await pending.WaitAsync(TimeSpan.FromSeconds(2)) == port, "the join completes and the browser is redirected");
 
@@ -99,7 +108,7 @@ internal static class HeadlessConnectionLifecycleTests
             RegisterKnown(control, id, "gating-token");
 
             HeadlessConnectionControl.Shared.Observe("gating-token", control.Generation,
-                new HeadlessConnectionStatus(1, "Connecting", null, null, 1));
+                new HeadlessConnectionStatus(1, "Connecting", null, null, 1, CloudSaveIsolated: true));
             await Task.Delay(100);
             Assert(!pending.IsCompleted, "HTTP false or host membership false must not redirect");
 
@@ -109,7 +118,7 @@ internal static class HeadlessConnectionLifecycleTests
 
             httpReady = true;
             HeadlessConnectionControl.Shared.Observe("gating-token", control.Generation,
-                new HeadlessConnectionStatus(2, "Connecting", null, null, 1));
+                new HeadlessConnectionStatus(2, "Connecting", null, null, 1, CloudSaveIsolated: true));
             Assert(await pending.WaitAsync(TimeSpan.FromSeconds(2)) == HeadlessClientManager.SlotToPort(control.Slot),
                 "a fresh authenticated report, membership, and HTTP listener make the child redirectable");
         }
@@ -127,7 +136,7 @@ internal static class HeadlessConnectionLifecycleTests
             var control = await WaitForControlAsync(id);
             RegisterKnown(control, id, "ack-token");
             HeadlessConnectionControl.Shared.Observe("ack-token", control.Generation,
-                new HeadlessConnectionStatus(1, "Connecting", null, null, 1));
+                new HeadlessConnectionStatus(1, "Connecting", null, null, 1, CloudSaveIsolated: true));
             Assert(await pending.WaitAsync(TimeSpan.FromSeconds(2)) is not null, "healthy child becomes redirectable");
 
             var row = ConnectionRegistry.Shared.Snapshot().Rows.Single(entry => entry.Id == id);
@@ -153,11 +162,11 @@ internal static class HeadlessConnectionLifecycleTests
             var control = await WaitForControlAsync(id);
             RegisterKnown(control, id, "probe-race-token");
             HeadlessConnectionControl.Shared.Observe("probe-race-token", control.Generation,
-                new HeadlessConnectionStatus(1, "Connecting", null, null, 0));
+                new HeadlessConnectionStatus(1, "Connecting", null, null, 0, CloudSaveIsolated: true));
             await probeEntered.Task.WaitAsync(TimeSpan.FromSeconds(2));
 
             HeadlessConnectionControl.Shared.Observe("probe-race-token", control.Generation,
-                new HeadlessConnectionStatus(2, "Failed", "late-native-failure", "failed while listener was probed", 0));
+                new HeadlessConnectionStatus(2, "Failed", "late-native-failure", "failed while listener was probed", 0, CloudSaveIsolated: true));
             process.Exit();
             finishProbe.TrySetResult();
 
@@ -183,7 +192,7 @@ internal static class HeadlessConnectionLifecycleTests
             var control = await WaitForControlAsync(id);
             RegisterKnown(control, id, "membership-race-token");
             HeadlessConnectionControl.Shared.Observe("membership-race-token", control.Generation,
-                new HeadlessConnectionStatus(1, "Connecting", null, null, 0));
+                new HeadlessConnectionStatus(1, "Connecting", null, null, 0, CloudSaveIsolated: true));
             await probeEntered.Task.WaitAsync(TimeSpan.FromSeconds(2));
             member = false;
             finishProbe.TrySetResult();
@@ -207,7 +216,7 @@ internal static class HeadlessConnectionLifecycleTests
             var control = await WaitForControlAsync(id);
             RegisterKnown(control, id, "native-token");
             HeadlessConnectionControl.Shared.Observe("native-token", control.Generation,
-                new HeadlessConnectionStatus(1, "Failed", "native-network-error", "precise native cause", 0));
+                new HeadlessConnectionStatus(1, "Failed", "native-network-error", "precise native cause", 0, CloudSaveIsolated: true));
             process.Exit(); // models the child's own graceful failure backstop.
 
             Assert(await pending.WaitAsync(TimeSpan.FromSeconds(2)) is null, "native failure refuses a redirect");
@@ -241,13 +250,13 @@ internal static class HeadlessConnectionLifecycleTests
             RegisterKnown(control, id, "late-reason-token");
 
             HeadlessConnectionControl.Shared.Observe("late-reason-token", control.Generation,
-                new HeadlessConnectionStatus(1, "Failed", "native-network-error", "the socket went away", 0));
+                new HeadlessConnectionStatus(1, "Failed", "native-network-error", "the socket went away", 0, CloudSaveIsolated: true));
             var generic = ConnectionRegistry.Shared.Snapshot().Rows.Single(entry => entry.Id == id).Issue;
             Assert(generic?.Code == "native-join-rejected", "the generic drop lands first, as it does in the field");
 
             HeadlessConnectionControl.Shared.Observe("late-reason-token", control.Generation,
                 new HeadlessConnectionStatus(2, "Failed", HeadlessDisconnectReason.RunInProgressCode,
-                    "The host's game refused the connection with RunInProgress.", 0));
+                    "The host's game refused the connection with RunInProgress.", 0, CloudSaveIsolated: true));
             process.Exit();
 
             Assert(await pending.WaitAsync(TimeSpan.FromSeconds(2)) is null, "the refused seat still refuses a redirect");
@@ -275,7 +284,7 @@ internal static class HeadlessConnectionLifecycleTests
             var control = await WaitForControlAsync(id);
             RegisterKnown(control, id, "mismatch-token");
             HeadlessConnectionControl.Shared.Observe("mismatch-token", control.Generation,
-                new HeadlessConnectionStatus(1, "Failed", HeadlessSeatBuildGuard.MismatchErrorCode, detail, 0));
+                new HeadlessConnectionStatus(1, "Failed", HeadlessSeatBuildGuard.MismatchErrorCode, detail, 0, CloudSaveIsolated: true));
             process.Exit(); // the guard force-exits right after its report lands.
 
             Assert(await pending.WaitAsync(TimeSpan.FromSeconds(2)) is null, "a mismatched seat refuses a redirect");
@@ -295,6 +304,112 @@ internal static class HeadlessConnectionLifecycleTests
                 "…beside the host's own build, so both sides are in one report");
         }
         finally { CleanupControl(id); ConnectionRegistry.Shared.Clear(); }
+    }
+
+    // The seat ran our guard, could not close every path into the host account's Steam Cloud save storage, said
+    // so, and exited. That is not a native rejection and not a build mismatch: it is a refusal about the PLAYER'S
+    // SAVES, and the report has to carry which paths were left open so a support answer is possible at all.
+    private static async Task ASeatThatCannotIsolateCloudSavesIsItsOwnIssue()
+    {
+        var id = BeginAttempt();
+        var process = new FakeProcess(39);
+        using var manager = NewManager(_ => process, () => false, () => true);
+        try
+        {
+            const string detail = "CouchCoop could not close 1 of 12 paths by which this player's game could "
+                + "write into the Steam Cloud save storage of the Steam account running the host. Left open: "
+                + "SteamRemoteSaveStore.ForgetFile(String) does not resolve against the installed STS2 assemblies.";
+            var pending = manager.EnsureHeadlessAsync(id, "cloud-isolation", CancellationToken.None);
+            var control = await WaitForControlAsync(id);
+            RegisterKnown(control, id, "cloud-isolation-token");
+            // Exactly what the guard sends: its own code, and the declaration NOT made — it is reporting that it
+            // does not have the guarantee.
+            HeadlessConnectionControl.Shared.Observe("cloud-isolation-token", control.Generation,
+                new HeadlessConnectionStatus(1, "Failed", HeadlessSeatCloudIsolationGuard.FailureErrorCode, detail, 0));
+            process.Exit(); // the guard force-exits right after its report lands.
+
+            Assert(await pending.WaitAsync(TimeSpan.FromSeconds(2)) is null, "a seat that cannot isolate its saves refuses a redirect");
+            var row = ConnectionRegistry.Shared.Snapshot().Rows.Single(entry => entry.Id == id);
+            Assert(row.Issue?.Code == HeadlessClientManager.SeatCloudIsolationCode,
+                "the refusal gets its own issue code rather than the generic native rejection");
+            Assert(!row.Issue!.Action.Contains("versions match", StringComparison.Ordinal),
+                "…and not the generic version advice, which has nothing to do with saves");
+            var report = ConnectionRegistry.Shared.BuildReport(id) ?? "";
+            Assert(report.Contains("ForgetFile", StringComparison.Ordinal),
+                "the report keeps the seat's own list of the write paths it could not close");
+        }
+        finally { CleanupControl(id); ConnectionRegistry.Shared.Clear(); }
+    }
+
+    // The other half, and the one that covers a seat OUR CODE IS NOT RUNNING IN: something authenticated is
+    // heartbeating on that slot and it does not declare the isolation. The host must not spend the readiness
+    // deadline on it — the process it is waiting for has the host account's cloud storage attached.
+    private static async Task AHeartbeatWithoutTheCloudDeclarationStopsTheSeat()
+    {
+        var id = BeginAttempt();
+        var process = new FakeProcess(41);
+        using var manager = NewManager(_ => process, () => true, () => true);
+        try
+        {
+            var started = Stopwatch.GetTimestamp();
+            var pending = manager.EnsureHeadlessAsync(id, "undeclared", CancellationToken.None);
+            var control = await WaitForControlAsync(id);
+            RegisterKnown(control, id, "undeclared-token");
+            // A perfectly ordinary healthy heartbeat — except that it says nothing about cloud saves.
+            HeadlessConnectionControl.Shared.Observe("undeclared-token", control.Generation,
+                new HeadlessConnectionStatus(1, "Connecting", null, null, 1,
+                    HeadlessClientManager.SlotToPort(control.Slot)));
+            process.Exit();
+
+            Assert(await pending.WaitAsync(TimeSpan.FromSeconds(9)) is null,
+                "an undeclared seat is never redirected to, however healthy it otherwise looks");
+            Assert(Stopwatch.GetElapsedTime(started) < TimeSpan.FromSeconds(30),
+                "…and it is stopped on the heartbeat, not left to the 75-second readiness deadline");
+            var row = ConnectionRegistry.Shared.Snapshot().Rows.Single(entry => entry.Id == id);
+            Assert(row.Issue?.Code == HeadlessClientManager.SeatCloudIsolationCode,
+                "a heartbeat with no declaration is the cloud-isolation issue, not a native rejection");
+            Assert(row.Issue!.Detail == HeadlessClientManager.UndeclaredCloudIsolationDetail,
+                "…whose detail says what was missing rather than describing a failure that did not happen");
+        }
+        finally { CleanupControl(id); ConnectionRegistry.Shared.Clear(); }
+    }
+
+    // And the case where nothing is heartbeating at all, because CouchCoop never loaded in that process: a
+    // deadline of its own, far short of the readiness one. NOTE what this does not prove — see
+    // HeadlessClientManager.DefaultSeatContactTimeoutSeconds: an unmodded game runs its cloud sync inside this
+    // window, so the deadline shrinks the exposure rather than removing it.
+    private static async Task ASilentSeatIsStoppedAtTheContactDeadline()
+    {
+        var priorContact = Environment.GetEnvironmentVariable(HeadlessClientManager.SeatContactTimeoutEnvironmentVariable);
+        var priorReady = Environment.GetEnvironmentVariable(HeadlessClientManager.SeatReadyTimeoutEnvironmentVariable);
+        Environment.SetEnvironmentVariable(HeadlessClientManager.SeatContactTimeoutEnvironmentVariable, "1");
+        // Deliberately far above the contact deadline: what is being asserted is that the SHORT one fires.
+        Environment.SetEnvironmentVariable(HeadlessClientManager.SeatReadyTimeoutEnvironmentVariable, "60");
+        var id = BeginAttempt();
+        var process = new FakeProcess(42);
+        using var manager = NewManager(_ => process, () => true, () => true);
+        try
+        {
+            var started = Stopwatch.GetTimestamp();
+            var result = await manager.EnsureHeadlessAsync(id, "silent", CancellationToken.None)
+                .WaitAsync(TimeSpan.FromSeconds(20));
+            Assert(result is null, "a seat that never says anything is not redirected to");
+            Assert(Stopwatch.GetElapsedTime(started) < TimeSpan.FromSeconds(30),
+                "…and dies on the contact deadline rather than the readiness one");
+            var row = ConnectionRegistry.Shared.Snapshot().Rows.Single(entry => entry.Id == id);
+            Assert(row.Issue?.Code == HeadlessClientManager.SeatCloudIsolationCode,
+                "silence past the contact deadline is reported as the cloud-isolation issue");
+            Assert(row.Issue!.Detail!.Contains("did not report anything", StringComparison.Ordinal),
+                "…with a detail that says the mod is not running in that game, not that it refused");
+            Assert(process.Killed, "the silent seat is actually terminated");
+        }
+        finally
+        {
+            Environment.SetEnvironmentVariable(HeadlessClientManager.SeatContactTimeoutEnvironmentVariable, priorContact);
+            Environment.SetEnvironmentVariable(HeadlessClientManager.SeatReadyTimeoutEnvironmentVariable, priorReady);
+            CleanupControl(id);
+            ConnectionRegistry.Shared.Clear();
+        }
     }
 
     private static async Task EarlyProcessExitFailsTheAttempt()
@@ -370,7 +485,7 @@ internal static class HeadlessConnectionLifecycleTests
             var oldControl = await WaitForControlAsync(oldId);
             RegisterKnown(oldControl, oldId, "old-token");
             HeadlessConnectionControl.Shared.Observe("old-token", oldControl.Generation,
-                new HeadlessConnectionStatus(1, "Failed", "old-native", "old failure", 0));
+                new HeadlessConnectionStatus(1, "Failed", "old-native", "old failure", 0, CloudSaveIsolated: true));
             launched.Single().Exit();
             Assert(await oldEnsure.WaitAsync(TimeSpan.FromSeconds(2)) is null, "failed generation is cleaned up before retry");
             await WaitUntilAsync(() => evicted.Count == 1, "failed generation evicts its stale host peer");
@@ -382,11 +497,11 @@ internal static class HeadlessConnectionLifecycleTests
             var newControl = await WaitForControlAsync(newId);
             Assert(newControl.Generation > oldControl.Generation, "retry owns a new process generation");
             Assert(!HeadlessConnectionControl.Shared.Observe("old-token", oldControl.Generation,
-                    new HeadlessConnectionStatus(2, "Connecting", null, null, 1)).Accepted,
+                    new HeadlessConnectionStatus(2, "Connecting", null, null, 1, CloudSaveIsolated: true)).Accepted,
                 "a late report from the failed generation cannot update its replacement");
             RegisterKnown(newControl, newId, "new-token");
             HeadlessConnectionControl.Shared.Observe("new-token", newControl.Generation,
-                new HeadlessConnectionStatus(1, "Connecting", null, null, 1));
+                new HeadlessConnectionStatus(1, "Connecting", null, null, 1, CloudSaveIsolated: true));
             Assert(await newEnsure.WaitAsync(TimeSpan.FromSeconds(2)) is not null, "replacement generation becomes ready independently");
             Assert(launched.Count == 2, "retry has one new child and no ghost peer process");
             CleanupControl(newId);
@@ -405,7 +520,7 @@ internal static class HeadlessConnectionLifecycleTests
             var control = await WaitForControlAsync(firstId);
             RegisterKnown(control, firstId, "reuse-token");
             HeadlessConnectionControl.Shared.Observe("reuse-token", control.Generation,
-                new HeadlessConnectionStatus(1, "Connecting", null, null, 1));
+                new HeadlessConnectionStatus(1, "Connecting", null, null, 1, CloudSaveIsolated: true));
             await first.WaitAsync(TimeSpan.FromSeconds(2));
 
             var secondId = BeginAttempt();
@@ -434,7 +549,7 @@ internal static class HeadlessConnectionLifecycleTests
             var control = await WaitForControlAsync(id);
             RegisterKnown(control, id, "quarantine-token");
             HeadlessConnectionControl.Shared.Observe("quarantine-token", control.Generation,
-                new HeadlessConnectionStatus(1, "Failed", "native-failure", "kill must not free this slot", 0));
+                new HeadlessConnectionStatus(1, "Failed", "native-failure", "kill must not free this slot", 0, CloudSaveIsolated: true));
             Assert(await pending.WaitAsync(TimeSpan.FromSeconds(8)) is null, "failed child is not redirectable");
             Assert(process.KillAttempts > 0, "failed cleanup attempted forced termination");
             Assert(manager.Release(id) is null, "release cannot free a seat whose client still may be live");
@@ -468,7 +583,7 @@ internal static class HeadlessConnectionLifecycleTests
             RegisterKnown(control, firstId, "same-name-token");
             var second = manager.EnsureHeadlessAsync(secondId, "same-name", CancellationToken.None);
             HeadlessConnectionControl.Shared.Observe("same-name-token", control.Generation,
-                new HeadlessConnectionStatus(1, "Connecting", null, null, 0));
+                new HeadlessConnectionStatus(1, "Connecting", null, null, 0, CloudSaveIsolated: true));
             await Task.WhenAll(first, second).WaitAsync(TimeSpan.FromSeconds(2));
 
             var rows = ConnectionRegistry.Shared.Snapshot().Rows;
@@ -489,7 +604,7 @@ internal static class HeadlessConnectionLifecycleTests
             var control = await WaitForControlAsync(id);
             RegisterKnown(control, id, "exited-view-token");
             HeadlessConnectionControl.Shared.Observe("exited-view-token", control.Generation,
-                new HeadlessConnectionStatus(1, "Connecting", null, null, 1));
+                new HeadlessConnectionStatus(1, "Connecting", null, null, 1, CloudSaveIsolated: true));
             Assert(await pending.WaitAsync(TimeSpan.FromSeconds(2)) is not null, "view was joined");
             ConnectionRegistry.Shared.Fail(id, "browser-transport-lost", "Socket closed", "Reconnect");
             process.Exit();
@@ -513,7 +628,7 @@ internal static class HeadlessConnectionLifecycleTests
             var control = await WaitForControlAsync(id);
             RegisterKnown(control, id, "released-during-cleanup-token");
             HeadlessConnectionControl.Shared.Observe("released-during-cleanup-token", control.Generation,
-                new HeadlessConnectionStatus(1, "Failed", "rejected", "native reason", 0));
+                new HeadlessConnectionStatus(1, "Failed", "rejected", "native reason", 0, CloudSaveIsolated: true));
             await WaitUntilAsync(() => HeadlessConnectionControl.Shared.Snapshot(control.Slot, control.Generation)?.ShutdownRequested == true,
                 "failure cleanup starts");
             Assert(manager.Release(id) == HeadlessClientManager.SlotToNetId(control.Slot), "browser release takes ownership of peer eviction");

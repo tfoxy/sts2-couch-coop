@@ -26,6 +26,7 @@ internal static class SeatReadyTimeoutTests
         TheDefaultDeadlineLosesTheRaceToTheBrowser();
         AnOperatorValueWinsAndIsClamped();
         GarbageFallsBackToTheDefault();
+        TheContactDeadlineIsShorterAndReadTheSameWay();
         await ASlowSeatRunsToTheDeadlineAndIsKilled();
         await AnEarlyExitStillFailsFastUnderALongDeadline();
         Console.WriteLine("SeatReadyTimeoutTests: ok");
@@ -78,6 +79,35 @@ internal static class SeatReadyTimeoutTests
         }
     }
 
+
+    // The SECOND deadline, which asks a different question: not "is this seat usable yet" but "is CouchCoop
+    // running in it at all". Total silence means the reporter — initialised early in mod init, long before the
+    // 20-30s asset preload — never ran, so the process has no isolation between it and the host account's Steam
+    // Cloud saves. It must therefore be well short of the readiness deadline, and it is read through the same
+    // parse rule so an operator who has learned one knob has learned both.
+    private static void TheContactDeadlineIsShorterAndReadTheSameWay()
+    {
+        var contact = HeadlessClientManager.DefaultSeatContactTimeoutSeconds;
+        Assert(contact < HeadlessClientManager.DefaultSeatReadyTimeoutSeconds,
+            "a silent seat dies long before a merely slow one would");
+        Assert(HeadlessClientManager.ParseSeatContactTimeout(null) == TimeSpan.FromSeconds(contact),
+            "an unset override resolves to that default");
+        Assert(HeadlessClientManager.ParseSeatContactTimeout("45") == TimeSpan.FromSeconds(45),
+            "an operator value wins here too");
+        Assert(
+            HeadlessClientManager.ParseSeatContactTimeout("0")
+                == TimeSpan.FromSeconds(HeadlessClientManager.MinSeatReadyTimeoutSeconds),
+            "…inside the same clamp floor");
+        Assert(
+            HeadlessClientManager.ParseSeatContactTimeout("99999")
+                == TimeSpan.FromSeconds(HeadlessClientManager.MaxSeatReadyTimeoutSeconds),
+            "…and the same ceiling");
+        foreach (var raw in new[] { "", "   ", "twenty", "20s", "NaN" })
+        {
+            Assert(HeadlessClientManager.ParseSeatContactTimeout(raw) == TimeSpan.FromSeconds(contact),
+                $"'{raw}' falls back to the default rather than being half-honoured");
+        }
+    }
 
     // The bug this round fixes, read from the panel: a seat that is merely slow must be narrated as loading and
     // only then killed — and the "still loading" line must appear ONCE, not once per 250ms poll.

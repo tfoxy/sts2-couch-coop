@@ -27,6 +27,22 @@ public sealed class HeadlessConnectionReporter : IDisposable
     /// </summary>
     private static int _browserPort;
 
+    /// <summary>
+    /// The status sequence, for the WHOLE PROCESS rather than per reporter instance.
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// The host drops any status whose sequence is not ahead of the last one it accepted for this generation
+    /// (<c>HeadlessConnectionControl.Observe</c>), and this process has three senders: the guards' one-shot
+    /// reports at mod init, the seat's hello, and the live heartbeat. A per-instance counter made the hello and
+    /// the reporter's first heartbeat both claim 1, so the host silently dropped the heartbeat — and, more
+    /// quietly, a reporter re-created by a hot reload restarted at 1 and had every status rejected until it
+    /// climbed past the old one's high-water mark. One counter cannot do either. It only ever over-counts, which
+    /// costs nothing: a fresh generation starts the host's side at zero.
+    /// </para>
+    /// </remarks>
+    private static long _sequence;
+
     private readonly Uri _endpoint;
     private readonly string _token;
     private readonly long _generation;
@@ -35,7 +51,6 @@ public sealed class HeadlessConnectionReporter : IDisposable
     private readonly Timer _heartbeat;
     private readonly object _reportGate = new();
     private int _browserCount;
-    private long _sequence;
     private MultiplayerConnectionSnapshot? _native;
     private int _disposed;
     private bool _sending;
@@ -173,13 +188,17 @@ public sealed class HeadlessConnectionReporter : IDisposable
         {
             var native = _native;
             var status = new HeadlessConnectionStatus(
-                Interlocked.Increment(ref _sequence),
+                NextSequence(),
                 native?.Phase.ToString() ?? "starting",
                 Bound(native?.Error?.Code, 128),
                 Bound(native?.Error?.NativeDetail, 2048),
                 Volatile.Read(ref _browserCount),
                 Volatile.Read(ref _browserPort),
-                ViewerArrivals());
+                ViewerArrivals(),
+                // The seat's standing declaration that it is keeping out of the account's cloud saves. On every
+                // heartbeat rather than once at startup, because the host's check is "the last thing this seat
+                // said", and a fact stated once is a fact the host would have to remember on the seat's behalf.
+                HeadlessSeatCloudIsolationGuard.Installed);
             using var request = new HttpRequestMessage(HttpMethod.Post, _endpoint)
             {
                 Content = new StringContent(JsonSerializer.Serialize(status), Encoding.UTF8, "application/json")
@@ -220,12 +239,68 @@ public sealed class HeadlessConnectionReporter : IDisposable
     /// channel, or the host did not answer — never a reason to keep going.
     /// </para>
     /// </remarks>
-    public static async Task<bool> ReportTerminalFailureAsync(string errorCode, string detail, CancellationToken cancellationToken)
+    public static Task<bool> ReportTerminalFailureAsync(string errorCode, string detail, CancellationToken cancellationToken)
+        // The declaration goes on a terminal report too, and it is normally FALSE here: the two guards that call
+        // this run before the seat can claim anything, and the cloud-isolation guard reports its own refusal from
+        // a process that by definition has not got the guarantee. The host reads the named error code first, so
+        // this costs a guard's diagnosis nothing.
+        => PostOnceAsync(
+            new HeadlessConnectionStatus(
+                NextSequence(), "Failed", Bound(errorCode, 128), Bound(detail, 2048), 0,
+                Volatile.Read(ref _browserPort), ViewerArrivals(), HeadlessSeatCloudIsolationGuard.Installed),
+            cancellationToken);
+
+    /// <summary>
+    /// The phase a seat's HELLO carries. Deliberately not one of the four the host acts on
+    /// (<c>Connecting</c> / <c>starting</c> / <c>Failed</c> / <c>Disconnected</c>): a hello is contact, never
+    /// readiness, and a phase inside the join wait's redirect set would put this status on the readiness path.
+    /// It still prints, as <c>child phase: mod-init</c>, which is exactly where the seat is.
+    /// </summary>
+    internal const string HelloPhase = "mod-init";
+
+    /// <summary>
+    /// Say hello: one status carrying "a CouchCoop seat is alive in this process and its Steam Cloud save
+    /// isolation is installed", sent from mod init, long before there is a runtime to report through.
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// WHY THIS EXISTS. The host kills a seat it has heard NOTHING from
+    /// (<c>HeadlessClientManager.DefaultSeatContactTimeoutSeconds</c>), and without this the earliest a seat
+    /// could speak was <see cref="Initialize"/> — a hundred lines further down <c>CouchCoopMod.Init</c>, behind
+    /// the localization load, the cache warm, the atlas walk, every patch and the composition of the runtime.
+    /// That made the contact deadline a race against how long this machine takes to start a game, which is the
+    /// one thing it must not be: a 15W handheld that is starting perfectly normally would lose it. Sent from the
+    /// isolation guard the moment the guarantee holds, it is instead a race against nothing.
+    /// </para>
+    /// <para>
+    /// IT IS NOT READINESS, and must never become it. See <see cref="HelloPhase"/>.
+    /// </para>
+    /// <para>
+    /// Returns whether the host accepted it. A false is not a reason to stop the seat: the process is healthy and
+    /// the live reporter will say the same thing a second later. It is only worth logging.
+    /// </para>
+    /// <para>
+    /// <paramref name="cloudSaveIsolated"/> is passed rather than read from
+    /// <see cref="HeadlessSeatCloudIsolationGuard.Installed"/> so that what goes on the wire is assertable in a
+    /// test process, where no guard can run. The only production caller is the guard itself, on the line after it
+    /// latches that value, so the two cannot disagree; every later heartbeat reads the latch.
+    /// </para>
+    /// </remarks>
+    public static Task<bool> ReportSeatHelloAsync(bool cloudSaveIsolated, CancellationToken cancellationToken)
+        => PostOnceAsync(
+            new HeadlessConnectionStatus(
+                NextSequence(), HelloPhase, null, null, 0,
+                Volatile.Read(ref _browserPort), ViewerArrivals(), cloudSaveIsolated),
+            cancellationToken);
+
+    /// <summary>
+    /// POST one status over the authenticated control channel, with no runtime, subscription or heartbeat behind
+    /// it. Same endpoint, same bearer token, same generation header as the live reporter, so the host accepts
+    /// every one of these through exactly one code path.
+    /// </summary>
+    private static async Task<bool> PostOnceAsync(HeadlessConnectionStatus status, CancellationToken cancellationToken)
     {
         if (!TryReadEnvironment(out var endpoint, out var token, out var generation)) return false;
-        var status = new HeadlessConnectionStatus(
-            NextTerminalSequence(), "Failed", Bound(errorCode, 128), Bound(detail, 2048), 0,
-            Volatile.Read(ref _browserPort), ViewerArrivals());
         using var request = new HttpRequestMessage(HttpMethod.Post, endpoint)
         {
             Content = new StringContent(JsonSerializer.Serialize(status), Encoding.UTF8, "application/json"),
@@ -236,18 +311,8 @@ public sealed class HeadlessConnectionReporter : IDisposable
         return response.IsSuccessStatusCode;
     }
 
-    /// <summary>
-    /// The sequence number a terminal report must carry to be accepted — the live reporter's own counter where
-    /// one is running, else 1 (no status has been sent for this generation yet). See
-    /// <see cref="ReportTerminalFailureAsync"/> for why a constant is not safe here.
-    /// </summary>
-    private static long NextTerminalSequence()
-    {
-        lock (StaticGate)
-        {
-            return _current is { } reporter ? Interlocked.Increment(ref reporter._sequence) : 1;
-        }
-    }
+    /// <summary>The next sequence number for ANY status this process sends. See <see cref="_sequence"/>.</summary>
+    private static long NextSequence() => Interlocked.Increment(ref _sequence);
 
     /// <summary>
     /// The seat's own arrival evidence, read fresh on every send: how much has reached THIS process from

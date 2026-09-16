@@ -480,6 +480,10 @@ internal sealed partial class CouchCoopConnectionPanel : Panel
     {
         "process-exited" => "process_exit",
         Session.HeadlessClientManager.SeatBuildMismatchCode => "mod_mismatch",
+        // Its own key, never the generic "join" fallback: this failure is about the player's SAVES, and the join
+        // copy ("check that game and mod versions match") would send the operator to look at versions while the
+        // thing they need to know is that nothing was written and their saves are intact.
+        Session.HeadlessClientManager.SeatCloudIsolationCode => "seat_cloud_isolation",
         // The three causes the old single readiness sentence used to cover. Each has its own next action — free
         // the port, allow the port through this computer's firewall, fix the path from the device — so each
         // needs its own localized copy rather than a differently-worded English detail under one key.

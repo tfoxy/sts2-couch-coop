@@ -123,6 +123,42 @@ public sealed partial class HeadlessClientManager : IDisposable
     /// <inheritdoc cref="MinSeatReadyTimeoutSeconds"/>
     internal const double MaxSeatReadyTimeoutSeconds = 900.0;
 
+    /// <summary>
+    /// TUNING knob for <see cref="SeatContactTimeout"/>, in seconds. Same polarity and the same clamp band as
+    /// <see cref="SeatReadyTimeoutEnvironmentVariable"/>: an operator value wins, inside
+    /// <see cref="MinSeatReadyTimeoutSeconds"/>..<see cref="MaxSeatReadyTimeoutSeconds"/>.
+    /// </summary>
+    internal const string SeatContactTimeoutEnvironmentVariable = "COUCHCOOP_SEAT_CONTACT_TIMEOUT_SECONDS";
+
+    /// <summary>
+    /// How long a spawned seat gets to say ANYTHING to the host before it is killed — as opposed to
+    /// <see cref="DefaultSeatReadyTimeoutSeconds"/>, which is how long it gets to become usable.
+    /// <para>
+    /// 20s, and unlike the readiness deadline this one is not measured against the browser's patience. What makes
+    /// it safe is that a seat says hello from <see cref="HeadlessSeatCloudIsolationGuard"/> — the first patch-time
+    /// thing in mod init — rather than from the connection reporter a hundred lines below it. So the only work
+    /// inside this window is the game's own boot up to mod init, NOT the 20-30s asset preload that dominates a
+    /// cold start and that a 15W handheld can run well past while starting perfectly normally. Silence past this
+    /// therefore means no CouchCoop is running in that process at all (the mod never loaded, its lane was refused,
+    /// a foreign copy won the assembly load, or the loader's blanket catch swallowed a bootstrap failure). Such a
+    /// process has the host account's Steam Cloud save storage attached, so the host stops it rather than spending
+    /// another 55 seconds finding out whether it will ever serve a browser.
+    /// </para>
+    /// <para>
+    /// The margin is not assumed: every seat's actual figure is logged once as
+    /// <c>seat first contact slot=N afterMs=…</c>, and `docs/agents/qa-recipes.md` §7 makes reading it a step of
+    /// the live recipe. If a real machine is anywhere near this number, raise the default — and an operator can
+    /// raise it for their own machine today with the env var, which is why this is a default and not a constant.
+    /// </para>
+    /// <para>
+    /// SAID PLAINLY: this SHRINKS the window, it does not close it. An unmodded game runs its own startup cloud
+    /// sync at its normal startup time, which is INSIDE these 20 seconds — so a seat killed here may already have
+    /// written. What closes the hole is a host-side backup of the profile taken before the seat is spawned, which
+    /// is a separate work item. Do not read this deadline as a guarantee.
+    /// </para>
+    /// </summary>
+    internal const double DefaultSeatContactTimeoutSeconds = 20.0;
+
 
     // Guards the slot bookkeeping below. ORDERING RULE: nothing may block on the game's main thread while holding
     // this — the main thread takes it too (DescribeSeats on every screen change, Dispose at shutdown), so doing so
@@ -1850,12 +1886,23 @@ public sealed partial class HeadlessClientManager : IDisposable
     /// deadline they did not ask for. Pure, so the band is testable without a game install.
     /// </summary>
     internal static TimeSpan ParseSeatReadyTimeout(string? raw)
+        => ParseSeatTimeout(raw, DefaultSeatReadyTimeoutSeconds);
+
+    /// <summary>
+    /// <see cref="SeatContactTimeoutEnvironmentVariable"/> resolved to a timeout, on exactly the terms above:
+    /// unset / blank / unparseable ⇒ <see cref="DefaultSeatContactTimeoutSeconds"/>, anything else clamped into
+    /// the same band. One rule for both deadlines, so an operator who has learned one has learned the other.
+    /// </summary>
+    internal static TimeSpan ParseSeatContactTimeout(string? raw)
+        => ParseSeatTimeout(raw, DefaultSeatContactTimeoutSeconds);
+
+    private static TimeSpan ParseSeatTimeout(string? raw, double fallbackSeconds)
     {
         if (string.IsNullOrWhiteSpace(raw)
             || !double.TryParse(raw.Trim(), NumberStyles.Float, CultureInfo.InvariantCulture, out var seconds)
             || !double.IsFinite(seconds))
         {
-            return TimeSpan.FromSeconds(DefaultSeatReadyTimeoutSeconds);
+            return TimeSpan.FromSeconds(fallbackSeconds);
         }
 
         return TimeSpan.FromSeconds(
@@ -1867,6 +1914,10 @@ public sealed partial class HeadlessClientManager : IDisposable
     // more thing to reason about on the hot-reload path for no gain.
     private static TimeSpan SeatReadyTimeout
         => ParseSeatReadyTimeout(Environment.GetEnvironmentVariable(SeatReadyTimeoutEnvironmentVariable));
+
+    /// <inheritdoc cref="DefaultSeatContactTimeoutSeconds"/>
+    private static TimeSpan SeatContactTimeout
+        => ParseSeatContactTimeout(Environment.GetEnvironmentVariable(SeatContactTimeoutEnvironmentVariable));
 
     private async Task<int?> WaitForReadyAsync(int slot, Guid sessionId, CancellationToken ct)
     {

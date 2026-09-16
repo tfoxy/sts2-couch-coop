@@ -170,6 +170,18 @@ public static class CouchCoopMod
             // the whole session. The spirectl runtime preloads it too, but it does that when the runtime is
             // COMPOSED, which is a hundred lines below here.
             EnsureMonoModCanPatch();
+            // FIRST OF THE PATCHES, and the order is the whole point. A seat's user:// is isolated per slot;
+            // Steam Cloud storage is not — it is addressed by (account, app) and is therefore the SAME store the
+            // player's own game writes to. This closes every seat→cloud write and skips the seat's startup cloud
+            // sync, so a seat can neither overwrite the player's cloud saves nor block its own startup
+            // reconciling against them. Seat-only; the host keeps cloud saves.
+            //
+            // It used to sit NINTH, after two cache warms and eight other Apply() calls — including the
+            // command-line override immediately below, which is what lets a seat join at all. A throw from any of
+            // them left a seat that had joined, was playing, and was writing into the account's cloud storage
+            // with no protection installed. Nothing above it here but EnsureMonoModCanPatch(), which it needs;
+            // everything that can fail belongs below the protection, not above it.
+            if (IsHeadlessClient) HeadlessSeatCloudIsolationGuard.EnforceOrExit();
             // Feed the game an env-gated override table through CommandLineHelper. EMPTY on a host (it hosts
             // normally, Steam included — the old FastmpPatch forced ENet on everyone and made a real Steam
             // session impossible); on a headless couch seat it re-materializes "fastmp=join" + "clientId=<netId>"
@@ -204,11 +216,6 @@ public static class CouchCoopMod
             // --headless does NOT silence, so mute it at the source. Host-only patch. This severs every game→FMOD
             // forward but does NOT stop FMOD's always-on native mixer/DSP thread — HeadlessFmodShutdown does that.
             if (IsHeadlessClient) HeadlessAudioMutePatch.Apply();
-            // A seat's user:// is isolated per slot; Steam Cloud storage is not — it is addressed by (account,
-            // app) and is therefore the SAME store the player's own game writes to. Close every seat→cloud write
-            // and skip the seat's startup cloud sync, so a seat can neither overwrite the player's cloud saves
-            // nor block its own startup reconciling against them. Seat-only; the host keeps cloud saves.
-            if (IsHeadlessClient) SeatCloudSaveIsolationPatch.Apply();
             // A headless instance that permanently loses its ENet connection (host process died, or dropped it
             // mid-run) has no human to dismiss STS2's network-error / "report a bug" modal and no retry of its
             // own — it used to sit behind that dialog forever, holding its seat's slot. Suppress the popup and
