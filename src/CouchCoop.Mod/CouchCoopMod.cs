@@ -172,6 +172,11 @@ public static class CouchCoopMod
             // --headless does NOT silence, so mute it at the source. Host-only patch. This severs every game→FMOD
             // forward but does NOT stop FMOD's always-on native mixer/DSP thread — HeadlessFmodShutdown does that.
             if (IsHeadlessClient) HeadlessAudioMutePatch.Apply();
+            // A seat's user:// is isolated per slot; Steam Cloud storage is not — it is addressed by (account,
+            // app) and is therefore the SAME store the player's own game writes to. Close every seat→cloud write
+            // and skip the seat's startup cloud sync, so a seat can neither overwrite the player's cloud saves
+            // nor block its own startup reconciling against them. Seat-only; the host keeps cloud saves.
+            if (IsHeadlessClient) SeatCloudSaveIsolationPatch.Apply();
             // A headless instance that permanently loses its ENet connection (host process died, or dropped it
             // mid-run) has no human to dismiss STS2's network-error / "report a bug" modal and no retry of its
             // own — it used to sit behind that dialog forever, holding its seat's slot. Suppress the popup and

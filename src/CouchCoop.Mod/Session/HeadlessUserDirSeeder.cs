@@ -39,6 +39,9 @@ internal static class HeadlessUserDirSeeder
     // profile seeded there's no sync and the browser server comes up in ~4s. The game uses the `steam/<id>/`
     // profile path (not `default/`), but we seed both cheaply.
     //
+    // Patches.SeatCloudSaveIsolationPatch now removes a seat's cloud sync entirely, so that startup stall can no
+    // longer be provoked at all — but seeding stays REQUIRED for the settings below, which no patch supplies.
+    //
     // The copy OVERWRITES: Prepare() runs only from HeadlessClientManager.LaunchReal, i.e. only when a NEW
     // instance is about to be spawned (a reused live instance never re-enters this path), so every spawn must
     // inherit the host's CURRENT settings. Language and fps live in steam/<id>/settings.save; fast-mode lives in
@@ -59,6 +62,30 @@ internal static class HeadlessUserDirSeeder
 
     // The game quarantines unreadable saves as "<name>.VAL.corrupt"; never propagate that into a slot.
     private const string CorruptMarker = ".VAL.corrupt";
+
+    // IN-PROGRESS RUN SAVES ARE NEVER SEEDED, and are PRUNED from a slot that already has them.
+    //
+    // A run save is the one file in the profile that is not configuration: it is the state of a game somebody is
+    // in the middle of playing, and it is bound to the players it was created for. Copying the host's live copy
+    // into a slot hands a seat a save it is not a participant in; the seat's own main menu then validates it,
+    // rejects it, and quarantines it as "<name>.<ts>.VAL.corrupt" — a file the player later finds in their
+    // profile. Nothing a seat does needs one: a seat is a CLIENT that receives the run over the network from the
+    // host, and it never starts one from disk.
+    //
+    // The PRUNE is the half that actually clears the field. CopySeedTree only adds and overwrites, so a run save
+    // a previous spawn already copied would otherwise survive every future spawn untouched, however carefully the
+    // copy skipped it.
+    //
+    // Matched by name prefix rather than exact name so the whole family goes: the ".save" itself, its ".backup"
+    // sibling, and any ".<ts>.VAL.corrupt" / ".<ts>.FUT.corrupt" quarantine the seat made out of one.
+    //
+    // WHY THIS IS SAFE ONLY ALONGSIDE Patches.SeatCloudSaveIsolationPatch. A seat whose save store still mirrors
+    // to Steam Cloud reconciles the profile against the cloud at startup, and a file it has NO local copy of is
+    // the expensive case: one remote round trip per missing path, with the rest of startup waiting on it. Leaving
+    // run saves out would have swapped a corrupted profile for the startup stall this seeder exists to avoid.
+    // The patch skips the seat's cloud sync outright, so there is no round trip to provoke and the omission is
+    // free. Do not relax that patch without revisiting this list.
+    private static readonly string[] RunSaveNamePrefixes = ["current_run.", "current_run_mp."];
 
     // Past-run history (steam/<id>/profile<N>/saves/history/) is ~2/3 of the profile bytes, is append-only, and
     // carries no settings — so it is seeded copy-if-missing instead of being re-copied on every spawn. It is
@@ -194,6 +221,26 @@ internal static class HeadlessUserDirSeeder
                 {
                     CopySeedTree(src, Path.Combine(slotUserDir, name), slot);
                 }
+            }
+
+            // AFTER the copy, over the slot's OWN tree: drop any in-progress run save a previous spawn left
+            // behind. The copy above cannot do this — it only ever adds and overwrites, so a file it now skips
+            // stays exactly where an older build of this seeder put it. See RunSaveNamePrefixes.
+            var pruned = 0;
+            foreach (var name in SeedCopyDirs)
+            {
+                var dir = Path.Combine(slotUserDir, name);
+                if (Directory.Exists(dir))
+                {
+                    pruned += PruneRunSaves(dir, slot);
+                }
+            }
+
+            if (pruned > 0)
+            {
+                Console.Error.WriteLine(
+                    $"[couchcoop] headless user-dir run saves pruned slot={slot} count={pruned} — a seat "
+                    + "receives the run from the host over the network and never loads one from disk.");
             }
 
             // AFTER the copy, and only over the copy: the seat's own settings.save now says which copy of
@@ -359,7 +406,8 @@ internal static class HeadlessUserDirSeeder
             }
 
             if (entry.Name.Contains(BackupMarker, StringComparison.Ordinal)
-                || entry.Name.EndsWith(CorruptMarker, StringComparison.Ordinal))
+                || entry.Name.EndsWith(CorruptMarker, StringComparison.Ordinal)
+                || IsRunSaveFile(entry.Name))
             {
                 continue;
             }
@@ -378,6 +426,62 @@ internal static class HeadlessUserDirSeeder
                 Console.Error.WriteLine($"[couchcoop] headless user-dir seed file skipped slot={slot} file={entry.FullName}: {ex.GetType().Name}: {ex.Message}");
             }
         }
+    }
+
+    /// <summary>
+    /// Whether <paramref name="fileName"/> is part of an in-progress run save — the <c>.save</c>, its
+    /// <c>.backup</c> sibling, or a quarantined derivative of either. See <see cref="RunSaveNamePrefixes"/>.
+    /// </summary>
+    internal static bool IsRunSaveFile(string fileName)
+    {
+        foreach (var prefix in RunSaveNamePrefixes)
+        {
+            if (fileName.StartsWith(prefix, StringComparison.Ordinal))
+            {
+                return true;
+            }
+        }
+
+        return false;
+    }
+
+    // Delete every run-save file under the slot's seed tree, returning how many went. Walks explicitly and skips
+    // links for the same reason CopySeedTree does: recursive enumeration follows reparse points with no cycle
+    // detection, and the slot dirs live inside `couch-coop` alongside the shared-cache links. Per-file failures
+    // are logged and skipped — one file that could not be deleted is not a reason to abandon a launch.
+    private static int PruneRunSaves(string dir, int slot)
+    {
+        var pruned = 0;
+        foreach (var entry in new DirectoryInfo(dir).EnumerateFileSystemInfos())
+        {
+            if (entry.LinkTarget is not null)
+            {
+                continue;
+            }
+
+            if (entry is DirectoryInfo childDir)
+            {
+                pruned += PruneRunSaves(childDir.FullName, slot);
+                continue;
+            }
+
+            if (!IsRunSaveFile(entry.Name))
+            {
+                continue;
+            }
+
+            try
+            {
+                File.Delete(entry.FullName);
+                pruned++;
+            }
+            catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
+            {
+                Console.Error.WriteLine($"[couchcoop] headless user-dir run save not pruned slot={slot} file={entry.FullName}: {ex.GetType().Name}: {ex.Message}");
+            }
+        }
+
+        return pruned;
     }
 }
 
