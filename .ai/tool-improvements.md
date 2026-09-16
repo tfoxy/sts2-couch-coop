@@ -222,3 +222,42 @@ Fix direction: find out whether this is a readback timing issue (screenshot afte
 swapped a non-`preserveDrawingBuffer` context) or a headless-compositing one, and then either make the two
 harnesses force a fresh paint immediately before capture or make them REFUSE a canvas-arm `--shot` outside
 a headed run rather than writing a blank PNG. Either is better than the present silent blank.
+
+## The host connection panel cannot be driven past its ~4 visible rows
+
+Found: WI-4 legs 5-6 (2026-09-16), reading the `seat-port-blocked` copyable report off a live host.
+
+`CouchCoopConnectionPanel`'s list is a `ScrollContainer` about 414 px tall — roughly **four** ~108 px rows —
+and `sts2` offers no way to scroll it. The only input verb is `act mouse click --x --y`; there is no wheel,
+no scroll setter, and no key-press verb, so `dev scene tree` + `dev scene hover` will happily hand back a
+row at `hoverPosition y = -3294` that no click can reach. Three things that look like workarounds are not:
+
+- **Reopening the QR dialog does not reset the scroll.** The dialog reuses the same panel instance, so the
+  list comes back exactly where it was.
+- **Selecting a row only scrolls minimally** (`EnsureSelectionVisible` → `ScrollContainer.EnsureControlVisible`),
+  so walking upward costs one selection per row.
+- **Node ids churn between the read and the click.** The panel rebuilds its children on its refresh tick, so
+  `@Button@NNNN` from a `dev scene tree` is frequently dead by the time you hover it; paths must be re-read
+  immediately before every hover, and even then the row may have moved.
+
+Why it matters: a host that has been up for a while accumulates rows, and the newest problems sort to the
+TOP of the "Connection problems" group. After one blocked-phone leg the list held **36** rows — 32 of them
+`browser-transport-lost` from a retry loop — with the `seat-port-blocked` row this leg existed to read
+sitting at index 0, ~30 rows above the viewport. The panel is exactly the surface a connection-diagnostics
+round has to read, and it becomes unreadable precisely when a session has had enough trouble to be worth
+diagnosing. The only way past it is to click at a coordinate the hover did not vouch for, which is the
+blind-input hazard `qa-recipes` §0 exists to forbid.
+
+What I did instead: closed and relaunched the instance (`sts2 game close` + `game launch`, **no rebuild** —
+install identity re-verified unchanged afterwards) and re-ran the leg, which gave a clean 3-row panel where
+the row was on screen. That costs a full restart plus a re-run of the measurement (~4 minutes here), and it
+is only available when the leg is cheap to repeat; a leg that took a long setup to reach would simply not be
+readable.
+
+Fix direction, cheapest first: (a) a `dev scene scroll --path <ScrollContainer> --to <px|top|bottom>` verb, or
+a `--ensure-visible <path>` flag on `dev scene hover` that scrolls the ancestor container before returning a
+position — either makes the whole list reachable with no new input surface; (b) failing that, `act key` for
+arrow/page keys, since the panel already builds a focus chain (`_focus`) over its rows; (c) independently,
+have `dev scene hover` REFUSE (or flag) a target whose resolved position is outside the viewport instead of
+returning coordinates that will silently click something else. (c) is worth doing regardless of (a) — the
+current behaviour is a blind-click trap for any scrolled container, not just this panel.
