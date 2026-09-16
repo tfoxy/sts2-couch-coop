@@ -16,6 +16,15 @@ if (args is ["--routes"])
     // no-store that keeps two devices from sharing one), and the arrival ring behind it.
     Console.WriteLine("connections: arrival log");
     await ConnectionArrivalLogTests.RunAsync();
+    // …and the layer below both of those: the accept loop the SHIPPED host runs, which is the one that was
+    // missing its HostReachabilityWatch call. Socket-driven, so it belongs with the route legs rather than
+    // with the watch's own pure suite.
+    Console.WriteLine("connections: reachability accept loop");
+    await HostReachabilityAcceptLoopTests.RunAsync();
+    // The default sink under every one of those diagnostics: recording into the process-wide arrival log from
+    // a non-game process used to be a SIGSEGV, and this asserts it is now inert.
+    Console.WriteLine("connections: native log latch");
+    NativeLogLatchTests.Run();
     Console.WriteLine("connections: control routes ok");
     return;
 }
@@ -110,6 +119,10 @@ Console.WriteLine("connections: control routes");
 await ConnectionControlRouteTests.RunAsync();
 Console.WriteLine("connections: arrival log");
 await ConnectionArrivalLogTests.RunAsync();
+Console.WriteLine("connections: reachability accept loop");
+await HostReachabilityAcceptLoopTests.RunAsync();
+Console.WriteLine("connections: native log latch");
+NativeLogLatchTests.Run();
 Console.WriteLine("connections: seat build");
 SeatModBuildTests.Run();
 Console.WriteLine("connections: seat port truth");
