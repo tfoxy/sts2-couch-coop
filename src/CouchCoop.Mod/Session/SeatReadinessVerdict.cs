@@ -105,26 +105,34 @@ internal sealed record SeatReadinessVerdictResult(SeatReadinessCause Cause, stri
 /// EVERY MESSAGE CARRIES THE SAME EVIDENCE TAIL, so a report that names the wrong cause can still be re-read: the
 /// verdict is an interpretation of the facts, and the facts are printed beside it.
 /// </para>
+/// <para>
+/// PUBLIC for one reason, and it is a build constraint rather than a design one: <c>Server/*.cs</c> is
+/// link-compiled into <c>CouchCoop.Mod.HotReload</c> as a second assembly, and
+/// <c>CouchCoopWebSocketConnection.ClassifyFailedSpawn</c> names the four codes below to decide which
+/// <c>joinRejection</c> a refused join carries. <c>Session/</c> is NOT link-compiled, so <c>internal</c> here
+/// compiles perfectly in <c>CouchCoop.Mod</c> and then breaks the other project — where no test suite would
+/// have caught it. The CODES are the public surface; everything that interprets them stays internal.
+/// </para>
 /// </remarks>
-internal static class SeatReadinessVerdict
+public static class SeatReadinessVerdict
 {
     /// <summary>
     /// The connection issue a seat whose assigned browser port has a foreign owner is reported as — whether the
     /// host found that owner before spawning, or the seat itself reported a different bound port afterwards.
     /// Public-by-const because the report copy and the host panel's issue mapping both key on the literal.
     /// </summary>
-    internal const string PortTakenCode = "seat-port-taken";
+    public const string PortTakenCode = "seat-port-taken";
 
     /// <summary>The seat is listening where it should be and THIS computer cannot reach it.</summary>
-    internal const string PortBlockedCode = "seat-port-blocked";
+    public const string PortBlockedCode = "seat-port-blocked";
 
     /// <summary>The seat is reachable from the host; the viewer's device never arrived.</summary>
-    internal const string NetworkPathCode = "seat-network-path";
+    public const string NetworkPathCode = "seat-network-path";
 
     /// <summary>Nothing was wrong; it was simply not finished. The pre-existing code, unchanged.</summary>
-    internal const string StillStartingCode = "startup-timeout";
+    public const string StillStartingCode = "startup-timeout";
 
-    public static SeatReadinessVerdictResult Describe(SeatReadinessFacts facts)
+    internal static SeatReadinessVerdictResult Describe(SeatReadinessFacts facts)
     {
         ArgumentNullException.ThrowIfNull(facts);
         var cause = Classify(facts);
