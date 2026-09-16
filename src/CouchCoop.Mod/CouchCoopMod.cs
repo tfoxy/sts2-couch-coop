@@ -61,6 +61,13 @@ public static class CouchCoopMod
     {
         lock (Gate)
         {
+            // FIRST OF ALL, above even the build guard: this is a real game process, so STS2's own logger may
+            // be called. CouchCoopLog is OFF by default because the call it makes is uncatchable outside the
+            // engine (native SIGSEGV, not an exception), and this is the one line that turns it on. It sits
+            // above the guard below because that guard's refusal is exactly the kind of line a player's
+            // godot.log has to carry.
+            CouchCoopLog.GameRuntimeAvailable = true;
+
             // FIRST, before a patch is applied, a cache is warmed or a runtime exists: a seat running a
             // different CouchCoop build than the host that spawned it reports that and terminates. Everything
             // below this line assumes the two sides of the browser wire contract were compiled together, and
