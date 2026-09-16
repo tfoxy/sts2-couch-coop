@@ -13,6 +13,9 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and
 
 ### Fixed
 
+- The extra games launched for browser players no longer write into your Steam Cloud saves, or take
+  over the run you had in progress. If an earlier version overwrote your profile, see
+  [docs/save-recovery.md](docs/save-recovery.md) for how to get it back.
 - Fix custom sounds from other mods crashing the client (e.g. selecting Downfall character in the character select screen)
 - The mod now loads on a macOS install instead of refusing because it could not tell which game build it is.
 - macOS browser players now use isolated local game profiles.
