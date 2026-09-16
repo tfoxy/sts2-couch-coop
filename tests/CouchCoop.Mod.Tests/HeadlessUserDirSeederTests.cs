@@ -10,6 +10,7 @@ internal static class HeadlessUserDirSeederTests
         WindowsPolicyUsesAppData();
         SeedingOverwritesProfileFilesFromTheHost();
         SeedingPreservesLogsAndSeedsRunHistoryOnce();
+        RunSavesAreNeitherSeededNorLeftBehind();
         SharedCachesAreLinkedPerLeafWithoutAnAncestorCycle();
         SeedingNeverFollowsDirectorySymlinks();
         UnsupportedPlatformReturnsNull();
@@ -149,6 +150,94 @@ internal static class HeadlessUserDirSeederTests
             "missing run-history files are still seeded (profile stays complete, no Steam cloud sync)");
         Assert(File.ReadAllText(Path.Combine(slotUserDir, "steam", "123", "settings.save")) == "host-steam",
             "settings beside history still overwrite");
+    }
+
+    // An in-progress run save is state bound to the players it was created for, not configuration: a seat that
+    // inherits the host's copy validates it, rejects it, and quarantines it in the player's profile. So it is
+    // never copied — AND it is pruned from a slot an older build of this seeder already put one in, which is the
+    // half that actually clears the field (CopySeedTree only ever adds and overwrites). Everything else the
+    // profile carries — settings, prefs, progress, run history — must still seed exactly as before.
+    private static void RunSavesAreNeitherSeededNorLeftBehind()
+    {
+        using var root = new TempDir();
+        var xdg = Path.Combine(root.Path, "xdg");
+        var hostUserDir = Path.Combine(xdg, "SlayTheSpire2");
+        var slotUserDir = SlotUserDir(xdg, 8);
+        var savesDir = Path.Combine("steam", "123", "modded", "profile1", "saves");
+        var historyDir = Path.Combine(savesDir, "history");
+
+        Directory.CreateDirectory(Path.Combine(hostUserDir, historyDir));
+        File.WriteAllText(Path.Combine(hostUserDir, "steam", "123", "settings.save"), "host-settings");
+        File.WriteAllText(Path.Combine(hostUserDir, savesDir, "prefs.save"), "host-prefs");
+        File.WriteAllText(Path.Combine(hostUserDir, savesDir, "progress.save"), "host-progress");
+        File.WriteAllText(Path.Combine(hostUserDir, historyDir, "run-9.save"), "host-run-9");
+        // The host's LIVE run, in every shape it appears in a profile.
+        File.WriteAllText(Path.Combine(hostUserDir, savesDir, "current_run.save"), "host-live-run");
+        File.WriteAllText(Path.Combine(hostUserDir, savesDir, "current_run.save.backup"), "host-live-run-backup");
+        File.WriteAllText(Path.Combine(hostUserDir, savesDir, "current_run_mp.save"), "host-live-mp-run");
+        File.WriteAllText(Path.Combine(hostUserDir, savesDir, "current_run_mp.save.backup"), "host-live-mp-backup");
+
+        // …and a slot that an older build of this seeder already seeded, including a quarantine the seat made
+        // out of one of them. None of these have a host counterpart any more, so only a prune can remove them.
+        Directory.CreateDirectory(Path.Combine(slotUserDir, savesDir));
+        File.WriteAllText(Path.Combine(slotUserDir, savesDir, "current_run.save"), "stale-slot-run");
+        File.WriteAllText(Path.Combine(slotUserDir, savesDir, "current_run_mp.save"), "stale-slot-mp-run");
+        File.WriteAllText(Path.Combine(slotUserDir, savesDir, "current_run_mp.save.backup"), "stale-slot-mp-backup");
+        File.WriteAllText(Path.Combine(slotUserDir, savesDir, "current_run_mp.1789519058.VAL.corrupt"), "quarantined");
+
+        var result = HeadlessUserDirSeeder.Prepare(
+            8,
+            HeadlessUserDirPlatform.Linux,
+            Env(("XDG_DATA_HOME", xdg)),
+            _ => Path.Combine(root.Path, "home"));
+
+        Assert(result is not null, "run-save prepare succeeds");
+        Assert(result!.SlotUserDir == slotUserDir, "run-save slot user dir resolves as usual");
+
+        foreach (var name in new[]
+                 {
+                     "current_run.save", "current_run.save.backup",
+                     "current_run_mp.save", "current_run_mp.save.backup",
+                     "current_run_mp.1789519058.VAL.corrupt",
+                 })
+        {
+            Assert(!File.Exists(Path.Combine(slotUserDir, savesDir, name)),
+                $"no run save reaches or survives in a slot ({name})");
+        }
+
+        // The host keeps its own, untouched — the prune walks the SLOT tree only.
+        Assert(File.ReadAllText(Path.Combine(hostUserDir, savesDir, "current_run.save")) == "host-live-run",
+            "the host's live run save is not touched by seeding");
+        Assert(File.ReadAllText(Path.Combine(hostUserDir, savesDir, "current_run_mp.save")) == "host-live-mp-run",
+            "the host's live multiplayer run save is not touched by seeding");
+
+        // Everything the seat genuinely inherits still arrives.
+        Assert(File.ReadAllText(Path.Combine(slotUserDir, "steam", "123", "settings.save")) == "host-settings",
+            "settings.save still seeds (language / fps)");
+        Assert(File.ReadAllText(Path.Combine(slotUserDir, savesDir, "prefs.save")) == "host-prefs",
+            "prefs.save still seeds (fast mode)");
+        Assert(File.ReadAllText(Path.Combine(slotUserDir, savesDir, "progress.save")) == "host-progress",
+            "progress.save still seeds");
+        Assert(File.ReadAllText(Path.Combine(slotUserDir, historyDir, "run-9.save")) == "host-run-9",
+            "saves/history/ still seeds");
+
+        // The prefix rule itself, including the two shapes the filesystem leg above does not stage: a `.FUT`
+        // quarantine (which the seeder's separate `.VAL.corrupt` marker does NOT match) and the names that must
+        // keep seeding. A rule this short is worth pinning directly — it is the whole definition of the family.
+        foreach (var runSave in new[]
+                 {
+                     "current_run.save", "current_run.save.backup", "current_run_mp.save",
+                     "current_run_mp.save.backup", "current_run_mp.1789519058.VAL.corrupt",
+                     "current_run.1788707420.FUT.corrupt", "current_run_mp.save.1777029871.VAL.corrupt",
+                 })
+        {
+            Assert(HeadlessUserDirSeeder.IsRunSaveFile(runSave), $"{runSave} is a run save");
+        }
+
+        foreach (var keep in new[] { "settings.save", "prefs.save", "progress.save", "profile.save", "run-9.save" })
+        {
+            Assert(!HeadlessUserDirSeeder.IsRunSaveFile(keep), $"{keep} is NOT a run save and keeps seeding");
+        }
     }
 
     // The slot dirs live INSIDE couch-coop/, so linking the whole couch-coop dir would point a slot at its own

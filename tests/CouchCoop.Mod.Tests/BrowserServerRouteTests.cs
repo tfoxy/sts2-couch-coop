@@ -351,6 +351,9 @@ if (args is ["beta-targets", ..])
     // lobby-screen mount points — in the same order the full sequence takes them.
     Leg(nameof(NetTransportPatchTargetsTests), NetTransportPatchTargetsTests.Run);
     Leg(nameof(HeadlessAudioMuteTargetsTests), HeadlessAudioMuteTargetsTests.Run);
+    // The seat's Steam-Cloud write paths. Same standing as the FMOD forwards above, and the same consequence if
+    // a member moves and nobody notices — except that here the damage lands in the player's own save storage.
+    Leg(nameof(SeatCloudSaveIsolationTargetsTests), SeatCloudSaveIsolationTargetsTests.Run);
     Leg(nameof(HeadlessDisconnectExitTests), () => HeadlessDisconnectExitTests.RunAsync().GetAwaiter().GetResult());
     Leg("IdleHostCostTests.MountTargets", IdleHostCostTests.MountTargetsResolve);
 
@@ -410,6 +413,9 @@ AtlasManifestEnvelopeTests.Run();
 // does, every suite registered after it silently never runs. Verify a change through one of the verbs above
 // rather than reading a truncated full run as green.
 HeadlessAudioMuteTargetsTests.Run();
+// The seat's Steam-Cloud write paths, reflected over the same way. Also reachable as `-- beta-targets`, which is
+// the way to actually run it while the suite above can take this process down.
+SeatCloudSaveIsolationTargetsTests.Run();
 // WS-1 networking/hosting: every game member the host-transport / CLI-override / host-netId / save-compat patches
 // bind to must still resolve, including the two private NetHostGameService seams the composite host rewrites.
 NetTransportPatchTargetsTests.Run();

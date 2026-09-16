@@ -577,6 +577,31 @@ untouched** — `Process.StartTime` is reconstructed from boot time on Linux and
 processes (`.agents/memory/cache-process-identity-linux.md`). Before this, a host crash on macOS left every seat
 alive forever, windowless and with no Dock icon.
 
+### A seat must not write into the player's Steam Cloud saves
+
+The per-slot user dir isolates a seat's **local** writes. Steam Cloud storage has no equivalent seam: it is
+addressed by (Steam account, app id), so it is the same store the player's own game uses, and a seat writing
+into it writes over their saves from outside the slot sandbox. Measured on a live host: a seat pushed its stale
+slot copies of every profile into the account's cloud store, including a quarantined `*.VAL.corrupt` file.
+
+| lever | what it does | files |
+| --- | --- | --- |
+| `SeatCloudSaveIsolationPatch` | seat-only (`COUCHCOOP_HEADLESS_CLIENT=1`). Harmony-skips every mutating `SteamRemoteSaveStore` method — both `WriteFile` overloads and both `WriteFileAsync` twins, `DeleteFile`, `RenameFile`, `CreateDirectory`, `DeleteDirectory`, `DeleteTemporaryFiles`, `ForgetFile` — plus `NGame.DoCloudSync`, the seat's startup cloud reconcile. Reads are untouched (they are answered locally). **A target that does not resolve throws**, like `HeadlessAudioMutePatch`: half this patch is a seat silently overwriting saves | `Patches/SeatCloudSaveIsolationPatch.cs`, applied from `CouchCoopMod.Init` |
+| run saves are never seeded | `HeadlessUserDirSeeder` skips `current_run.*` / `current_run_mp.*` (the `.save`, its `.backup`, and any quarantined derivative) **and prunes any a previous spawn already left in the slot** — the copy walk only adds and overwrites, so the prune is what clears the field. `settings.save`, `prefs.save`, `progress.save` and `saves/history/` seed exactly as before | `Session/HeadlessUserDirSeeder.cs` |
+
+**Why not launch the seat with Steam off.** The game has a first-party switch that leaves Steam uninitialised,
+which would remove the cloud store entirely — but Steam **Workshop mod discovery is behind the same
+initialisation**, so a seat launched that way loads only the install's `mods/` directory. On any machine whose
+host runs a Workshop mod (CouchCoop's own Workshop build, or a subscribed content mod) the seat would run a
+different mod set than the host it joins. Verified against the installed `sts2.dll` and against the host and
+seat logs, which show two Workshop mods reached only through the Steam-gated path. The switch is therefore
+unusable here.
+
+The two halves are **ordered**: dropping run saves from the seed is only free because the patch removes the
+seat's cloud sync. With a cloud store still attached, a save file the slot has no local copy of costs a remote
+round trip that the rest of startup waits on — the stall the seeder was written to avoid. Tests: `-- cache`
+(the seeder) and `-- beta-targets` (the patch targets).
+
 ### A seat must run the same copy of CouchCoop as its host
 
 Two copies of this mod can be installed at once — the install's `mods/couchcoop` and a Steam Workshop
