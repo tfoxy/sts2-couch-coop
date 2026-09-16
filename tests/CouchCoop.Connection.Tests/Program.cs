@@ -66,6 +66,10 @@ if (args is ["--seats"])
     await HeadlessClientManagerTests.RunAsync();
     Console.WriteLine("seats: port truth");
     await SeatPortTruthTests.RunAsync();
+    // The other half of the readiness verdict: the seat's own evidence that a device reached it, which is what
+    // the network-path cause is allowed to rest on.
+    Console.WriteLine("seats: arrival evidence");
+    await SeatArrivalEvidenceTests.RunAsync();
     Console.WriteLine("seats: ok");
     return;
 }
@@ -106,6 +110,8 @@ Console.WriteLine("connections: seat build");
 SeatModBuildTests.Run();
 Console.WriteLine("connections: seat port truth");
 await SeatPortTruthTests.RunAsync();
+Console.WriteLine("connections: seat arrival evidence");
+await SeatArrivalEvidenceTests.RunAsync();
 Console.WriteLine("connections: lifecycle");
 await HeadlessConnectionLifecycleTests.RunAsync();
 Console.WriteLine("connections: websocket lifecycle");

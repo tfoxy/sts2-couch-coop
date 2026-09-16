@@ -618,6 +618,9 @@ public sealed partial class HeadlessClientManager : IDisposable
                     ProbeFailure: null,
                     TcpReachability: SeatPortReachability.NotProbed,
                     ConnectedBrowserCount: 0,
+                    // No seat was spawned on this slot, so nothing has reported arrivals — "has not said",
+                    // which is not the same as "nothing ever reached it" and must not read as one.
+                    SeatViewerArrivals: null,
                     ElapsedMs: 0,
                     DeadlineMs: (long)SeatReadyTimeout.TotalMilliseconds));
                 var issue = verdict.Issue;

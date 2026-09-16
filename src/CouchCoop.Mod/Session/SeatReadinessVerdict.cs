@@ -50,6 +50,15 @@ internal enum SeatReadinessCause
 /// those is a firewall.
 /// </param>
 /// <param name="ConnectedBrowserCount">How many browsers the seat says are attached to it.</param>
+/// <param name="SeatViewerArrivals">
+/// How many requests from something other than this machine have reached the SEAT's own listener, as the seat
+/// itself reports it over the authenticated heartbeat; <see langword="null"/> until it has said. The only fact in
+/// this record the host cannot take for itself — that request lands in another process and leaves no trace here —
+/// and the one that separates "the device never got through" from "the viewer has not tapped the link yet".
+/// Loopback is excluded at the source, so the host's own readiness probe of this seat is never counted as a
+/// device, and an arrival whose remote address could not be read counts AS one: this number can only ever be too
+/// generous, never too accusing.
+/// </param>
 /// <param name="ElapsedMs">How long this attempt has been waiting.</param>
 /// <param name="DeadlineMs">The wait it is measured against.</param>
 internal sealed record SeatReadinessFacts(
@@ -63,6 +72,7 @@ internal sealed record SeatReadinessFacts(
     string? ProbeFailure,
     SeatPortReachability TcpReachability,
     int ConnectedBrowserCount,
+    long? SeatViewerArrivals,
     long ElapsedMs,
     long DeadlineMs);
 
@@ -133,7 +143,7 @@ internal static class SeatReadinessVerdict
 
         // Everything below needs the seat's own word for where it is. A seat that has not reported a port yet is
         // simply not up — never a disagreement, and never grounds for accusing a firewall.
-        var boundWhereExpected = facts.HeartbeatFresh && facts.ReportedPort == facts.ExpectedPort;
+        var boundWhereExpected = BoundWhereExpected(facts);
 
         // 2. It says it is listening there, this computer cannot reach it from 127.0.0.1, AND the raw connect
         //    was dropped rather than answered. This is the case an unscoped
@@ -155,19 +165,56 @@ internal static class SeatReadinessVerdict
             return SeatReadinessCause.HostLocalBlock;
         }
 
-        // 3. It is listening there, the host reached it, the lobby has it — and no viewer ever arrived. The
-        //    listener is fine; the path to it is not. Membership is required so a seat whose lobby join is
-        //    flickering is not mislabelled as a network problem.
-        if (boundWhereExpected
-            && facts.HostMember
-            && facts.ListenerResponding == true
-            && facts.ConnectedBrowserCount == 0)
+        // 3. It is listening there, the host reached it, the lobby has it, no browser ever completed a
+        //    connection — AND the seat itself has seen nothing arrive from outside this machine.
+        //
+        //    THE LAST CLAUSE IS WHAT MAKES THIS AN OBSERVATION. Without it this verdict rested on
+        //    ConnectedBrowserCount == 0, which says only "no browser FINISHED connecting" and fits a blocked
+        //    path and a viewer who has not tapped the link yet equally well — and it accused the player's
+        //    network on the strength of that. The seat knows the difference, because anything from a real
+        //    device that reached its listener is in the seat's own arrival log, and it carries the count up on
+        //    its heartbeat.
+        //
+        //    AN AFFIRMATIVE ZERO, never a missing one. `null` is "the seat has not said" and falls through:
+        //    this is the one cause that blames something the player owns, and it may not be reached by a field
+        //    that merely defaulted.
+        if (HostSideIsClear(facts) && facts.SeatViewerArrivals == 0)
         {
             return SeatReadinessCause.NetworkPath;
         }
 
+        // AND THE NEAR MISS IS DELIBERATELY NOT A FIFTH CAUSE. Everything above true except the zero — the seat
+        // WAS reached and no browser connection completed — sounds specific and is not:
+        //   * it is the normal state of every healthy join for as long as the seat's page is loading. The first
+        //     arrival is the SPA document; the browser is only counted at the WebSocket upgrade, and 1.3 MB of
+        //     JS plus a 417 KB wasm separate the two on a phone. A cause here would print a diagnosis over
+        //     every successful join and defeat the silence the monitor's still-starting gate exists for.
+        //   * the count is process-wide, not per-visit, so "something reached the seat" is not "THIS device
+        //     reached the seat" — a second viewer, a reload, or a LAN scanner produces the same number. The
+        //     specific claim it appears to license is one this evidence cannot support.
+        //   * a cause exists to name a fix (one enum member, one pair of catalog entries, one next action), and
+        //     this condition has no single fix behind it: a refused upgrade, a page that failed to boot, a
+        //     closed tab and a reload loop all land here.
+        // So it stays "still starting" — honest — and says what it saw in one extra English sentence plus the
+        // evidence tail, instead of fourteen catalogs of advice nobody could act on.
         return SeatReadinessCause.StillStarting;
     }
+
+    /// <summary>Whether the seat is bound where the host expects it and the host's own probe agrees.</summary>
+    private static bool BoundWhereExpected(SeatReadinessFacts facts)
+        => facts.HeartbeatFresh && facts.ReportedPort == facts.ExpectedPort;
+
+    /// <summary>
+    /// Everything the network-path verdict needs from the HOST's side of the wire: the seat is listening where
+    /// the browser is being sent, the lobby has it, this computer can reach it, and no browser has ever completed
+    /// a connection to it. Shared by the classifier and the message so the "was reached anyway" sentence is
+    /// spoken in exactly the state that would otherwise have been a network-path verdict, and nowhere else.
+    /// </summary>
+    private static bool HostSideIsClear(SeatReadinessFacts facts)
+        => BoundWhereExpected(facts)
+            && facts.HostMember
+            && facts.ListenerResponding == true
+            && facts.ConnectedBrowserCount == 0;
 
     private static string Cause(SeatReadinessCause cause, SeatReadinessFacts facts)
     {
@@ -203,7 +250,20 @@ internal static class SeatReadinessVerdict
                     + "wrong address).";
 
             default:
-                return "This player's game is still starting, and nothing has failed yet.";
+            {
+                var text = new StringBuilder("This player's game is still starting, and nothing has failed yet.");
+                // The near miss of the network-path verdict, said out loud. Everything about the host is fine
+                // and no browser has connected — the shape that used to be reported as a blocked path — but the
+                // seat has been reached, so the one thing this state is NOT is a device that never got through.
+                // Deliberately "something", not "this device": the count is process-wide (see Classify).
+                if (HostSideIsClear(facts) && facts.SeatViewerArrivals > 0)
+                {
+                    text.Append(" Something from outside this computer has already reached this player's game, "
+                        + "so the path to it is not the problem — no browser has finished connecting to it yet.");
+                }
+
+                return text.ToString();
+            }
         }
     }
 
@@ -225,6 +285,13 @@ internal static class SeatReadinessVerdict
             + "; host loopback probe of the assigned port: " + probe
             + "; browsers connected to this player's game: "
             + facts.ConnectedBrowserCount.ToString(CultureInfo.InvariantCulture)
+            // Read as a pair with the line above it, which is why it sits here: "requests N, browsers 0" is a
+            // device that arrived and did not finish, "requests 0, browsers 0" is a device that never arrived,
+            // and before this the report could only print the second half of that and guess at the first.
+            + "; requests to this player's game from outside this computer: "
+            + (facts.SeatViewerArrivals is { } arrivals
+                ? arrivals.ToString(CultureInfo.InvariantCulture)
+                : "not reported")
             // The monitor keeps producing verdicts after the join wait is over, where there is no deadline left
             // to measure against and quoting one would be an invention.
             + (facts.DeadlineMs > 0

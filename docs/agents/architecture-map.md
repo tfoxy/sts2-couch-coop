@@ -779,15 +779,24 @@ panel is no longer mounted; its internal narration remains available for diagnos
 - **Why a seat is not serving yet is ONE of four named causes, never one sentence.** `SeatReadinessVerdict`
   classifies from facts the host already holds — the seat's reported bound port vs the assigned one, the host's
   own loopback probe *and its failure reason* (exception type / socket error / elapsed ms), heartbeat freshness
-  and phase, and `ConnectedChildBrowserCount` — into `seat-port-taken` (something else owns the port),
+  and phase, `ConnectedChildBrowserCount`, and the seat's own viewer-arrival count off the same heartbeat — into
+  `seat-port-taken` (something else owns the port),
   `seat-port-blocked` (the seat IS listening where expected and this computer cannot reach it: an unscoped
   `iptables … --dport 13347:13417 -j DROP` sits above any `-i lo ACCEPT` and eats the host's own probe),
   **claimed only when a raw TCP connect could not complete either** — a failed HTTP probe alone also fits a
   listener that is bound but WEDGED, which completes the handshake from the kernel backlog and fails only the
   read, and telling that player to edit their firewall would be this round's own mistake repeated; a connect that
   was ACCEPTED (wedged) or REFUSED (nothing listening yet) is `startup-timeout` instead —
-  `seat-network-path` (host can reach it, the device never did — this must not accuse the listener) and
-  `startup-timeout` (nothing is wrong yet). Each has its own `IssueKey` mapping and catalog pair. The technical
+  `seat-network-path` (host can reach it, the device never did — this must not accuse the listener), **claimed
+  only on the SEAT's own affirmative zero**: `ConnectedChildBrowserCount == 0` says no browser *finished*
+  connecting, which fits a blocked path and a viewer who has not tapped the link yet equally, so the seat reports
+  how much has reached its own listener (`HeadlessConnectionStatus.ViewerArrivalCount`, nullable — `null` is "has
+  not said" and falls through, because this is the cause that blames something the player owns) — and
+  `startup-timeout` (nothing is wrong yet), which also absorbs the near miss: a seat that HAS been reached with no
+  browser attached is **deliberately not a fifth cause** (it is the normal state of every healthy join while the
+  seat's page loads, the count is process-wide so it cannot name *this* device, and no single fix sits behind it);
+  it says so in one English sentence and in the evidence tail instead. Each cause has its own `IssueKey` mapping
+  and catalog pair. The technical
   **detail** stays English and carries the same evidence tail under every cause; the summary/action above it are
   localized. This replaces a single string ending in `child HTTP listener: not responding` that was measured
   byte-identical across two of these — and that contradicted itself, calling a listener unresponsive in the same
@@ -809,7 +818,12 @@ panel is no longer mounted; its internal narration remains available for diagnos
   visit into that connection's row instead of leaving a second one; the seat's socket URL carries `?visit=`, so a
   seat's own log answers "did this device ever reach me?". Read API for the readiness verdict:
   `HasArrivedForVisit` / `Summarize(visitId)` (host) and `SummarizeViewerArrivals()` / `ViewerArrivalCount`
-  (process-wide, loopback excluded — the host's own probe is not a device). Layered UNDER
+  (process-wide, loopback excluded — the host's own probe is not a device; an unreadable remote address counts AS
+  one, so the number can only be too generous, never too accusing). A seat carries `ViewerArrivalCount` to the
+  host on every heartbeat (`HeadlessConnectionReporter.ViewerArrivals`), which is what the network-path verdict
+  above rests on. **Writing to `ConnectionArrivalLog.Shared` from a test process segfaults it** (exit 139): its
+  default sink writes through the game's logger, which is not callable outside the game and does not throw.
+  Reading it is safe; tests that record inject their own log action. Layered UNDER
   `HostReachabilityWatch`, which counts raw accepts: an empty ring says which of the two silences it is. Tests:
   `ConnectionArrivalLogTests` (Connection.Tests `--routes`), `visitId.spec.ts`, `mirrorClientVisit.spec.ts`.
   **Scope limit:** this closes "reached HTTP, failed later" only — a phone that never reaches the host makes no

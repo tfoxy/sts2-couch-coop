@@ -101,7 +101,10 @@ public sealed class HeadlessConnectionControl
             && status.ConnectedChildBrowserCount >= 0
             // 0 is "not bound yet"; anything outside the port space is a payload the host must not act on, and it
             // WOULD act on it — a reported port that disagrees with the assigned one fails the join.
-            && status.BrowserPort is >= 0 and <= ushort.MaxValue;
+            && status.BrowserPort is >= 0 and <= ushort.MaxValue
+            // A count is either absent or a count. A negative one is neither, and the verdict downstream
+            // compares it against zero.
+            && status.ViewerArrivalCount is null or >= 0;
 
     private static byte[] HashToken(string token) => SHA256.HashData(Encoding.UTF8.GetBytes(token));
 
@@ -129,13 +132,33 @@ public sealed class HeadlessConnectionControl
 /// <c>HeadlessClientManager.SlotToPort(slot)</c> at every decision point while the seat's real port went only to a
 /// file nothing in the mod opens. <c>0</c> means "has not said yet" and must never be read as a disagreement.
 /// </param>
+/// <param name="ViewerArrivalCount">
+/// How many HTTP requests from something other than this machine have reached THIS seat's own browser server over
+/// the seat process's lifetime — <see cref="ConnectionArrivalLog.ViewerArrivalCount"/>, which excludes loopback so
+/// the host's own readiness probe can never be counted as a device. The host cannot observe this for itself: the
+/// request that proves a phone got through lands on the seat's listener, in another process, and leaves no trace
+/// on the host. Additive on the same grounds as <see cref="BrowserPort"/> — the build guard makes a seat and its
+/// host the same build, so there is no older seat to read this from.
+/// </param>
+/// <remarks>
+/// <para>
+/// <b>Why this one is nullable and <see cref="BrowserPort"/> is not.</b> Both are additive and both default, but
+/// the danger of a defaulted value is not symmetric. 0 is not a legal port, so a <see cref="BrowserPort"/> of 0
+/// cannot be mistaken for a real answer. 0 arrivals, by contrast, IS the load-bearing value — it is the whole
+/// evidence for the host's <c>seat-network-path</c> verdict, which tells a player their router or Wi-Fi is at
+/// fault. A status that simply never carried the field would then read as "the seat says nothing ever reached
+/// it", and a missing field would become an accusation. <see langword="null"/> keeps "has not said" unforgeable,
+/// and the verdict requires an affirmative zero before it will blame the network.
+/// </para>
+/// </remarks>
 public sealed record HeadlessConnectionStatus(
     long Sequence,
     string NativePhase,
     string? ErrorCode,
     string? ErrorDetail,
     int ConnectedChildBrowserCount,
-    int BrowserPort = 0);
+    int BrowserPort = 0,
+    long? ViewerArrivalCount = null);
 
 public sealed record HeadlessConnectionObserveResult(bool Accepted, bool ShutdownRequested)
 {

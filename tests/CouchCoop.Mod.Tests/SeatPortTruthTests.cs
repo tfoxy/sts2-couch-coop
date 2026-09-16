@@ -223,7 +223,12 @@ internal static class SeatPortTruthTests
         bool? listenerResponding = null,
         string? probeFailure = null,
         SeatPortReachability reachability = SeatPortReachability.NotProbed,
-        int browsers = 0)
+        int browsers = 0,
+        // Every scenario in THIS file models a seat nothing ever reached from the network: the two firewall
+        // legs, the wedged listener, the port conflict. The seat reporting an affirmative zero is that
+        // situation, so it is the default here — never the "has not said" null, which would quietly make the
+        // network-path assertions below pass for the wrong reason.
+        long? viewerArrivals = 0)
         => new(
             ExpectedPort: 13357,
             ReportedPort: reportedPort,
@@ -235,6 +240,7 @@ internal static class SeatPortTruthTests
             ProbeFailure: probeFailure,
             TcpReachability: reachability,
             ConnectedBrowserCount: browsers,
+            SeatViewerArrivals: viewerArrivals,
             ElapsedMs: 23_000,
             DeadlineMs: 75_000);
 
