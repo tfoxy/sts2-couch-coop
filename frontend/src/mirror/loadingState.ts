@@ -1,6 +1,11 @@
 import type { MirrorClientStatus } from "@/mirror/mirrorClient";
 import type { ReconnectPhase } from "@/mirror/reconnectPolicy";
-import type { BrowserJoinProgress, JoinProgressStage } from "@/protocol/browserEnvelope";
+import type {
+  BrowserJoinProgress,
+  BrowserSeatNotice,
+  JoinProgressStage,
+  SeatNoticeCause
+} from "@/protocol/browserEnvelope";
 
 // The mirror's PRE-GAME lifecycle states, as one pure function so the copy and the precedence live in one place
 // instead of being re-derived inside the picker's title expression.
@@ -127,6 +132,63 @@ export function mirrorJoinProgressLine(
     total: progress.stepTotal,
     seconds: Math.max(0, Math.floor(progress.elapsedMs / 1000))
   });
+}
+
+// ---- the SEAT NOTICE ------------------------------------------------------------------------------------------
+//
+// The host's own named verdict about this viewer's seat, in words a player can act on. It is not the join's
+// progress line above: that says a healthy wait is still healthy, this says which of several unrelated things has
+// gone wrong — and it can arrive long after the join SUCCEEDED, because the failure it exists for is a viewer who
+// was redirected to a seat port their device cannot open and left on "Loading…" for ever.
+//
+// Each cause is one sentence naming what is true and one naming what to try, in the same pair the host's own
+// connection panel shows (couchcoop_connection_error_seat_* in the native catalogs). The meaning is deliberately
+// the same on both surfaces so a player and whoever is hosting for them are never reading two diagnoses; the
+// VOICE is not, because "this player's game" on the panel is "your game" here, and "this computer" is the host's.
+
+/** The `[what is true, what to try]` message keys each announced cause renders as. `none` withdraws — see below. */
+export const MIRROR_SEAT_NOTICE_KEYS = {
+  "port-conflict": ["seat.notice.portConflict", "seat.notice.portConflictFix"],
+  "host-local-block": ["seat.notice.hostBlock", "seat.notice.hostBlockFix"],
+  "network-path": ["seat.notice.networkPath", "seat.notice.networkPathFix"]
+} as const satisfies Partial<Record<SeatNoticeCause, readonly [string, string]>>;
+
+export type MirrorSeatNoticeKey = (typeof MIRROR_SEAT_NOTICE_KEYS)[keyof typeof MIRROR_SEAT_NOTICE_KEYS][number];
+
+export interface MirrorSeatNoticeCopy {
+  /** What is true, localized. */
+  summary: string;
+  /** What to try about it, localized. */
+  action: string;
+  /**
+   * The host's own English technical line, verbatim, or null. Shown quietly under the two sentences above: it is
+   * what a player pastes into a support thread, and it is the same text the host's panel shows and its copyable
+   * report quotes — which is what stops the two surfaces from describing one seat two different ways.
+   */
+  detail: string | null;
+}
+
+/**
+ * The seat notice to render, or null when there is nothing to show.
+ *
+ * Null for a null notice and for the `none` cause, which is the host WITHDRAWING one: the condition stopped being
+ * true (the device finally got through, a browser attached, the port was freed), and a message that stays up once
+ * it has stopped being true is worse than no message. Null for an unrecognised cause too — a build with no copy
+ * for a future cause would be guessing at which of several unrelated fixes to send a player to, and silence is
+ * the honest answer there.
+ */
+export function mirrorSeatNoticeCopy(
+  notice: BrowserSeatNotice | null,
+  translate: (key: MirrorSeatNoticeKey) => string
+): MirrorSeatNoticeCopy | null {
+  if (!notice) {
+    return null;
+  }
+  const keys = MIRROR_SEAT_NOTICE_KEYS[notice.cause as keyof typeof MIRROR_SEAT_NOTICE_KEYS];
+  if (!keys) {
+    return null;
+  }
+  return { summary: translate(keys[0]), action: translate(keys[1]), detail: notice.detail };
 }
 
 /** The label for a transient state, or null when steady (the caller falls back to its own steady placeholder). */

@@ -52,10 +52,15 @@ import {
   RECONNECT_BASE_DELAY_MS,
   type RejoinTarget
 } from "@/mirror/reconnectPolicy";
-import { computeMirrorLoadingState, mirrorJoinProgressLine, mirrorLoadingLabel } from "@/mirror/loadingState";
+import {
+  computeMirrorLoadingState,
+  mirrorJoinProgressLine,
+  mirrorLoadingLabel,
+  mirrorSeatNoticeCopy
+} from "@/mirror/loadingState";
 import { prefetchMirrorImages } from "@/mirror/imagePrefetch";
 import { createMirrorState } from "@/mirror/sceneTree";
-import type { BrowserJoinProgress, BrowserSessionEnvelope } from "@/protocol/browserEnvelope";
+import type { BrowserJoinProgress, BrowserSeatNotice, BrowserSessionEnvelope } from "@/protocol/browserEnvelope";
 import MirrorJoinPicker from "@/mirror/MirrorJoinPicker.vue";
 import MirrorHostWaiting from "@/mirror/MirrorHostWaiting.vue";
 import {
@@ -228,6 +233,15 @@ const joinDetail = ref<string | null>(null);
 // spawn really takes — which is why a healthy join and a dead one looked identical. Reset on every fresh attempt
 // and cleared by every resolution, in exact lockstep with `pendingName` / `joinMessage` / `joinDetail`.
 const joinProgress = ref<BrowserJoinProgress | null>(null);
+// The host's named verdict about the seat we were GIVEN (`seat-notice`) — a port another program on the host owns,
+// a port the host computer blocks locally, or a path from this device to the seat that is blocked.
+//
+// Deliberately NOT cleared by the redirect, unlike everything above it. The failure this exists for is a join that
+// SUCCEEDED: the host's own loopback probe of the seat answers, so it hands us a port and we are redirected to a
+// socket this device cannot open — and the screen then says "Loading…" for ever. It lives exactly as long as the
+// HOST socket that delivered it, which is the invariant that keeps it from going stale: that socket's session is
+// what the host debounces against, so when it goes both sides forget together and the next one is told afresh.
+const seatNotice = ref<BrowserSeatNotice | null>(null);
 
 // Name memory + `?name=` auto-join. `urlName` (if present) auto-joins on
 // connect; `prefillName` only pre-fills the form. `pendingName` is the in-flight join target (null = idle).
@@ -334,6 +348,11 @@ const reconnectState = ref(steadyReconnectState());
 
 // Forward-declared so callbacks can check whether they belong to the current client.
 let activeClient: MirrorClient;
+// The socket the HOST itself speaks to us on — the one opened against the page's own origin. It is `activeClient`
+// until a headless redirect, after which the active client is the SEAT's socket and this one stays open (stream
+// gated off) purely so the host does not Release() and kill that seat. That makes it the only channel left when
+// the seat cannot be reached, which is exactly when the host has something to say (see `onSeatNotice`).
+let hostClient: MirrorClient;
 // The host socket remains the status authority after its game-view redirect.
 const presentationTarget = shallowRef<{ source: MirrorClient; view: MirrorClient; attemptId: string } | null>(null);
 function bindPresentation(source: MirrorClient, view: MirrorClient): void {
@@ -593,6 +612,8 @@ function makeClient(url?: string, watchStream = false): MirrorClient {
       // fresh unrelated rejection would misattribute the cause.
       joinDetail.value = detail ?? null;
       joinProgress.value = null;
+      // The rejection is the more specific answer about the same attempt, and it owns the screen.
+      seatNotice.value = null;
       // DISARM the auto-rejoin. A refused seat that still reads "ready" on the next session would otherwise be
       // retried on every envelope — a silent request storm. From here the viewer taps the row themselves.
       rejoinTarget = null;
@@ -608,6 +629,7 @@ function makeClient(url?: string, watchStream = false): MirrorClient {
       joinMessage.value = rejectionMessage("join-failed");
       joinDetail.value = message || null;
       joinProgress.value = null;
+      seatNotice.value = null;
       rejoinTarget = null;
       lastJoinAttempt = null;
     },
@@ -617,6 +639,14 @@ function makeClient(url?: string, watchStream = false): MirrorClient {
     onJoinProgress(progress) {
       if (activeClient !== c) return;
       joinProgress.value = progress;
+    },
+    // The host's verdict about our seat. Guarded on the HOST socket rather than on `activeClient`, which is the
+    // whole point: after a headless redirect the active client is the seat's own socket — the one that, in the
+    // case this speaks for, never opens — and the host socket we keep alive is where this arrives. A `none`
+    // cause is the host withdrawing it, which lands here as null and takes the message off the screen.
+    onSeatNotice(notice) {
+      if (hostClient !== c) return;
+      seatNotice.value = notice.cause === "none" ? null : notice;
     },
     onScrollAck(ack) {
       if (activeClient !== c) return; // a superseded connection's answer is about a game we are no longer watching
@@ -630,6 +660,9 @@ function makeClient(url?: string, watchStream = false): MirrorClient {
     }
   });
   allClients.push(c);
+  // No `url` means the page's own origin, i.e. the host. Recorded here rather than at each call site so the two
+  // places that open a host connection (first connect, and the reconnect fallback) cannot disagree.
+  if (url === undefined) hostClient = c;
   return c;
 }
 
@@ -781,6 +814,12 @@ const joinProgressNotice = computed(() =>
   (pendingName.value ? mirrorJoinProgressLine(joinProgress.value, t) : null)
 );
 
+// The SEAT NOTICE block: what is true, what to try, and the host's own English technical line under it (copy in
+// @/mirror/loadingState). Deliberately NOT gated on `pendingName` the way the progress line above it is — the
+// failure it reports is a join that already succeeded, so gating it on an outstanding request would silence it in
+// precisely the state it exists for. Its lifetime is the host socket's instead (see `seatNotice`).
+const seatNoticeCopy = computed(() => mirrorSeatNoticeCopy(seatNotice.value, t));
+
 // F3 — THE WAITING SCREEN. A viewer whose URL names a seat (`?name=Ann`), sitting on a host screen that has no
 // seat to give: the main menu, a singleplayer character select, a singleplayer run. It replaces the picker, which
 // would be a lie there (there is nothing on it to pick), and pairs with the closed stream gate above — no scene
@@ -901,6 +940,10 @@ function submitJoin(name: string, playerId?: string): void {
   // A fresh attempt starts with no progress: the previous one's last stage/elapsed describes a join that is over,
   // and leaving it on screen would show this attempt starting at 40 seconds.
   joinProgress.value = null;
+  // …and with no verdict. The host re-publishes one within a tick or two of binding this attempt to a seat if it
+  // is still true, so clearing costs nothing and keeps a diagnosis about the seat the viewer just walked away
+  // from off the screen of the one they picked instead.
+  seatNotice.value = null;
   pendingName.value = trimmed;
   prefillName.value = trimmed;
   // Held until the host confirms with a redirect, which promotes it to the auto-rejoin target.
@@ -949,6 +992,10 @@ function handleActiveClientDrop(): void {
   joinMessage.value = null;
   joinDetail.value = null;
   joinProgress.value = null;
+  // The verdict goes with the socket that delivered it: `reconnectToHost` closes this host connection, and the
+  // host forgets what that session was told when it does. Keeping the message would risk it outliving the thing
+  // it described with nothing left able to withdraw it — the fresh session is told again if it is still true.
+  seatNotice.value = null;
   // Reset the whole join dance, exactly like the native TeardownAndReconnect: the roster/screen we remember is
   // from a game that is gone, and re-running the dance from scratch is what makes the fallback self-healing.
   joined.value = false;
@@ -1228,6 +1275,7 @@ onBeforeUnmount(() => {
         :placeholder="joinPlaceholder"
         :transient="loadingState !== null"
         :progress="joinProgressNotice"
+        :seat-notice="seatNoticeCopy"
         :message="joinNotice"
         :detail="joinNoticeDetail"
         @join="onSeatChosen"

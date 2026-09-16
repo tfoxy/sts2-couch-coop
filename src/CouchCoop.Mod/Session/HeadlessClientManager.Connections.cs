@@ -380,6 +380,18 @@ public sealed partial class HeadlessClientManager
                 var verdict = SeatReadinessVerdict.Describe(ReadinessFacts(
                     owned, status, member, SlotToPort(owned.Slot), owned.StartedTicks, TimeSpan.Zero));
                 LogCauseChange(owned, verdict);
+                Guid[] clients;
+                lock (_lock) clients = _browserAttempts.Where(p => p.Value.Slot == owned.Slot && p.Value.Generation == owned.Generation).Select(p => p.Key).ToArray();
+                // TELL THE PLAYER, not just the panel. Every other consumer of this verdict stops at the HOST —
+                // the log line above, the registry diagnostic below, and the copyable report behind it — and the
+                // one person who could act on the cause, the viewer whose seat it is, has only ever seen a
+                // spinner. That is worst for the network-path cause, which is reachable only here and describes
+                // a device that was handed a port it cannot open. Deliberately ABOVE the failure bail below, so
+                // a port conflict (which kills this seat on this very tick) still reaches the browser before its
+                // seat goes away. The speaker decides whether this cause is worth saying yet; the hub decides
+                // who has not already been told, and can neither block nor fault this loop.
+                var notice = owned.Notice.Observe(verdict);
+                foreach (var id in clients) SeatNoticeHub.Shared.Publish(id, notice);
                 if (verdict.Cause == SeatReadinessCause.PortConflict) owned.Failure ??= verdict.Issue;
                 if (owned.Process!.HasExited)
                     owned.Failure ??= ProcessExitedIssue(owned.Process);
@@ -387,8 +399,6 @@ public sealed partial class HeadlessClientManager
                     owned.Failure ??= new("child-status-lost", "The client game stopped responding to the host.",
                         "Retry the connection. Copy this report if the client becomes unresponsive again.", "No authenticated child heartbeat arrived for 10 seconds.");
                 if (owned.Failure is not null) { await StopFailedConnectionAsync(owned).ConfigureAwait(false); return; }
-                Guid[] clients;
-                lock (_lock) clients = _browserAttempts.Where(p => p.Value.Slot == owned.Slot && p.Value.Generation == owned.Generation).Select(p => p.Key).ToArray();
                 foreach (var id in clients)
                 {
                     ApplyToAttempt(id, owned, registry =>
@@ -533,6 +543,12 @@ public sealed partial class HeadlessClientManager
         public SeatPortReachability ListenerReachability;
         /// <summary>The readiness cause already written to the host log; see <c>LogCauseChange</c>.</summary>
         public SeatReadinessCause? LoggedCause;
+        /// <summary>
+        /// What this seat should currently be telling its VIEWERS, and since when. Per seat rather than per
+        /// viewer because the settling delay measures how long a cause has held for the seat, and a viewer that
+        /// drops and reconnects mid-episode must not restart that clock.
+        /// </summary>
+        public readonly SeatNoticeSpeaker Notice = new();
         public ConnectionIssue? Failure;
         public ConnectionAttemptLogs? Logs;
         public string? QuarantineReason;

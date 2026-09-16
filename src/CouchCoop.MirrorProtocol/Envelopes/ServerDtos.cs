@@ -136,6 +136,67 @@ public static class BrowserJoinProgressStages
     public const string Failed = "failed";
 }
 
+/// <summary>
+/// Host → browser SEAT NOTICE: the host's own named verdict about why this viewer's seat is not serving them,
+/// pushed on the socket the viewer already has open.
+/// <para>
+/// It exists because the one failure a player is most likely to hit is the one the host could not tell them
+/// about. With the path from the device to its seat port blocked (a device-scoped firewall rule, guest/AP
+/// isolation, a router that separates clients), the host's own loopback probe of that seat SUCCEEDS — so the join
+/// is answered as a success and the browser is redirected to a port it cannot open. The host names the cause
+/// precisely four times a second and, before this envelope, told only itself: the panel, the host log and the
+/// copyable report all knew, and the player saw a spinner.
+/// </para>
+/// <para>
+/// The channel is the host socket the viewer keeps open past its redirect (closing it would trigger the server's
+/// Release() and kill the seat, so the client only gates the scene stream off). This is a one-way notification on
+/// that socket, not a reply: there is no request id, because the thing it describes is a seat, not a request, and
+/// it outlives the join that produced it.
+/// </para>
+/// <para>
+/// <see cref="Cause"/> is a token from <see cref="BrowserSeatNoticeCauses"/>, never a raw enum name or ordinal:
+/// the client maps it to player-facing copy in its own language. <see cref="Detail"/> is the host's English
+/// technical line — the same sentence the panel shows in grey and the report quotes verbatim — carried so the two
+/// surfaces cannot drift, and null on a withdrawal.
+/// </para>
+/// <para>
+/// Safe to add: unknown envelope types are dropped by every existing client, so an older browser against a newer
+/// host simply keeps the spinner it always had.
+/// </para>
+/// </summary>
+public sealed record BrowserSeatNoticeEnvelope(
+    string Type,
+    string Cause,
+    string? Detail);
+
+/// <summary>
+/// The closed set of <see cref="BrowserSeatNoticeEnvelope.Cause"/> tokens. Stable wire spellings for the host's
+/// own <c>SeatReadinessCause</c>, kept separate from that enum on purpose — the enum's names and ordinals are
+/// internal bookkeeping the wire must not inherit, and the client turns these tokens into localized copy.
+/// <para>
+/// There is deliberately NO token for the host's fourth cause, "still starting". That cause is the normal state
+/// of every healthy join for its whole 20-60 seconds and there is nothing for a player to do about it, so it is
+/// never announced; a seat that returns to it withdraws with <see cref="None"/> instead.
+/// </para>
+/// TS twin: <c>SEAT_NOTICE_CAUSES</c> in <c>frontend/src/protocol/browserEnvelope.ts</c>.
+/// </summary>
+public static class BrowserSeatNoticeCauses
+{
+    /// <summary>
+    /// WITHDRAWAL — nothing is wrong any more; clear whatever was on screen. Sent when a named cause clears
+    /// (the device finally reached the seat, a browser attached), so a stale accusation cannot outlive the
+    /// condition it described. Never the first notice a viewer receives: with nothing outstanding there is
+    /// nothing to withdraw.
+    /// </summary>
+    public const string None = "none";
+    /// <summary>Something else on the host computer owns the port this viewer's seat was assigned.</summary>
+    public const string PortConflict = "port-conflict";
+    /// <summary>The seat is listening where it should be and the HOST computer cannot reach it locally.</summary>
+    public const string HostLocalBlock = "host-local-block";
+    /// <summary>The seat is up and the host can reach it; this viewer's device never got through to it.</summary>
+    public const string NetworkPath = "network-path";
+}
+
 // Browser → host runtime settings (the mirror Settings panel). Every field optional; a null field means "leave
 // unchanged". Applied per the receiving (headless) game instance. Parsed from what SettingsMessage serializes.
 public sealed record BrowserSettingsRequestEnvelope(

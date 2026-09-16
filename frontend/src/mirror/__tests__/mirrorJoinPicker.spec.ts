@@ -46,6 +46,7 @@ function mountPicker(over: {
   placeholder?: string | null;
   transient?: boolean;
   progress?: string | null;
+  seatNotice?: { summary: string; action: string; detail: string | null } | null;
 } = {}) {
   return mount(MirrorJoinPicker, {
     props: {
@@ -58,7 +59,8 @@ function mountPicker(over: {
       detail: over.detail ?? null,
       placeholder: over.placeholder ?? null,
       transient: over.transient ?? false,
-      progress: over.progress ?? null
+      progress: over.progress ?? null,
+      seatNotice: over.seatNotice ?? null
     }
   });
 }
@@ -345,6 +347,62 @@ describe("MirrorJoinPicker", () => {
     expect(
       mountPicker({ mode: "picker", transient: true, placeholder: "Joining…" })
         .find('[data-testid="mirror-join-progress"]').exists()
+    ).toBe(false);
+  });
+
+  // THE SEAT NOTICE — the host's named verdict about this viewer's seat. Not a rejection: it can arrive long
+  // after a join SUCCEEDED, on a screen that reads "Loading…", which is the whole case it exists for (the host
+  // handed out a port this device cannot open). The parent composes the copy; the picker puts it under the
+  // heading in both shapes and keeps it separate from the rejection surface.
+  const SEAT_NOTICE = {
+    summary: "Your game is running on the host computer, but this device couldn't reach it.",
+    action: "Join the same Wi-Fi as the host — not a guest network — turn off any VPN.",
+    detail: "Observed: assigned port 13357; requests to this player's game from outside this computer: 0."
+  };
+
+  it("renders the seat notice under a transient heading", () => {
+    const wrapper = mountPicker({
+      mode: "picker",
+      transient: true,
+      placeholder: "Loading…",
+      seatNotice: SEAT_NOTICE
+    });
+    expect(wrapper.find('[data-testid="mirror-seat-notice-summary"]').text()).toBe(SEAT_NOTICE.summary);
+    expect(wrapper.find('[data-testid="mirror-seat-notice-action"]').text()).toBe(SEAT_NOTICE.action);
+    expect(wrapper.find('[data-testid="mirror-seat-notice-detail"]').text()).toBe(SEAT_NOTICE.detail);
+    // The heading is EXACTLY the lifecycle word it always was — this block sits under it, it does not replace it.
+    expect(wrapper.find("h1").text()).toBe("Loading…");
+  });
+
+  it("renders the seat notice in title-only mode too", () => {
+    const wrapper = mountPicker({ mode: "title-only", transient: true, placeholder: "Loading…", seatNotice: SEAT_NOTICE });
+    expect(wrapper.find('[data-testid="screen-title-only-view"]').exists()).toBe(true);
+    expect(wrapper.find('[data-testid="mirror-seat-notice"]').exists()).toBe(true);
+  });
+
+  it("renders a seat notice with no technical detail", () => {
+    const wrapper = mountPicker({ mode: "picker", seatNotice: { ...SEAT_NOTICE, detail: null } });
+    expect(wrapper.find('[data-testid="mirror-seat-notice"]').exists()).toBe(true);
+    expect(wrapper.find('[data-testid="mirror-seat-notice-detail"]').exists()).toBe(false);
+  });
+
+  it("keeps the seat notice and a join rejection on separate surfaces", () => {
+    // They answer different questions about different things — one is the verdict on the seat, the other is the
+    // refusal of a request — and both can legitimately be on screen at once. Folding them into one surface would
+    // make the newer overwrite the older.
+    const wrapper = mountPicker({
+      mode: "picker",
+      seatNotice: SEAT_NOTICE,
+      message: "No free game slot is available right now."
+    });
+    expect(wrapper.find('[data-testid="mirror-seat-notice-summary"]').text()).toBe(SEAT_NOTICE.summary);
+    expect(wrapper.find('[data-testid="mirror-join-message"]').text()).toBe("No free game slot is available right now.");
+  });
+
+  it("renders no seat notice when the parent supplies none", () => {
+    expect(
+      mountPicker({ mode: "picker", transient: true, placeholder: "Loading…" })
+        .find('[data-testid="mirror-seat-notice"]').exists()
     ).toBe(false);
   });
 });
