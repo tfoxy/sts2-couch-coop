@@ -8,9 +8,10 @@ namespace CouchCoop.Mod.Session;
 /// <c>logs/godot.log</c>, settings, and caches instead of interleaving into the host's single user dir
 /// (and racing to overwrite shared files). The game sets <c>use_custom_user_dir=true</c> /
 /// <c>custom_user_dir_name="SlayTheSpire2"</c>. Godot resolves that directory from <c>XDG_DATA_HOME</c>
-/// on Linux and <c>APPDATA</c> on Windows, so the launcher points the relevant child-process data root at
-/// a per-slot directory. Mods load from the install <c>mods/</c> dir (NOT <c>user://</c>), so isolating
-/// <c>user://</c> does not affect mod loading.
+/// on Linux, <c>APPDATA</c> on Windows, and <c>$HOME/Library/Application Support</c> on macOS. The macOS
+/// path uses a per-slot fake home: its three real ancestors retain the isolated user dir while every other
+/// home entry links back to the real home. Mods load from the install <c>mods/</c> dir (NOT <c>user://</c>),
+/// so isolating <c>user://</c> does not affect mod loading.
 /// </summary>
 internal static class HeadlessUserDirSeeder
 {
@@ -170,6 +171,10 @@ internal static class HeadlessUserDirSeeder
             // nests SlayTheSpire2 underneath it.
             var slotBase = policy.SlotBase;
             var slotUserDir = policy.SlotUserDir;
+            if (platform == HeadlessUserDirPlatform.MacOs)
+            {
+                PrepareMacOsFakeHomeFarm(policy);
+            }
             Directory.CreateDirectory(slotUserDir);
             Directory.CreateDirectory(Path.Combine(slotUserDir, "logs"));
             foreach (var dir in policy.EnvironmentVariables.Values)
@@ -269,10 +274,6 @@ internal static class HeadlessUserDirSeeder
         {
             return HeadlessUserDirPlatform.Windows;
         }
-        // Named rather than folded into Unsupported: macOS is a platform this mod actually runs on, and a
-        // diagnostic that says "MacOs" is the difference between a known gap and an unexplained one. There is
-        // no isolation to offer yet — Godot resolves user:// from $HOME there and has no --user-dir flag — so
-        // the policy below still declines; it declines OUT LOUD.
         if (RuntimeInformation.IsOSPlatform(OSPlatform.OSX))
         {
             return HeadlessUserDirPlatform.MacOs;
@@ -288,6 +289,7 @@ internal static class HeadlessUserDirSeeder
     {
         string dataHome;
         Dictionary<string, string> environment;
+        string? hostHome = null;
         switch (platform)
         {
             case HeadlessUserDirPlatform.Linux:
@@ -314,9 +316,24 @@ internal static class HeadlessUserDirSeeder
                 };
                 break;
 
+            case HeadlessUserDirPlatform.MacOs:
+                hostHome = getEnvironmentVariable("HOME");
+                if (string.IsNullOrWhiteSpace(hostHome))
+                {
+                    Log($"[couchcoop] headless user-dir isolation unavailable slot={slot} platform={platform} — "
+                        + "HOME resolved empty.");
+                    return null;
+                }
+
+                dataHome = Path.Combine(hostHome, "Library", "Application Support");
+                var macSlotBase = SlotBase(Path.Combine(dataHome, UserDataDirName), slot);
+                environment = new Dictionary<string, string>(StringComparer.Ordinal)
+                {
+                    ["HOME"] = macSlotBase,
+                };
+                break;
+
             default:
-                // No per-slot data-root variable is known here. macOS is the case that matters: Godot resolves
-                // user:// from $HOME alone and offers no --user-dir, so there is nothing to point at a slot.
                 Log($"[couchcoop] headless user-dir isolation unavailable slot={slot} platform={platform} — "
                     + "no per-slot data-root environment variable is known for this platform.");
                 return null;
@@ -332,14 +349,104 @@ internal static class HeadlessUserDirSeeder
         var hostUserDir = Path.Combine(dataHome, UserDataDirName);
         var resolvedSlotBase = environment.TryGetValue("XDG_DATA_HOME", out var linuxSlotBase)
             ? linuxSlotBase
-            : environment["APPDATA"];
-        var slotUserDir = Path.Combine(resolvedSlotBase, UserDataDirName);
-        return new HeadlessUserDirPolicy(hostUserDir, resolvedSlotBase, slotUserDir, environment);
+            : environment.TryGetValue("APPDATA", out var windowsSlotBase)
+                ? windowsSlotBase
+                : environment["HOME"];
+        var slotUserDir = platform == HeadlessUserDirPlatform.MacOs
+            ? Path.Combine(resolvedSlotBase, "Library", "Application Support", UserDataDirName)
+            : Path.Combine(resolvedSlotBase, UserDataDirName);
+        return new HeadlessUserDirPolicy(hostUserDir, resolvedSlotBase, slotUserDir, environment, hostHome);
     }
 
     private static string SlotBase(string hostUserDir, int slot)
     {
         return Path.Combine(hostUserDir, CouchCoopDirName, "headless-slots", $"slot-{slot}");
+    }
+
+    // Godot's only proven macOS user-dir lever is HOME. A slot's HOME is nested under the real user dir, so
+    // copying it would be both slow and unsafe: link all unrelated top-level entries instead, retaining three
+    // real levels that lead to this slot's own SlayTheSpire2 directory. This is deliberately non-recursive;
+    // following a source directory link would let a user's home point the farm back at itself.
+    private static void PrepareMacOsFakeHomeFarm(HeadlessUserDirPolicy policy)
+    {
+        var hostHome = policy.HostHome
+            ?? throw new InvalidOperationException("macOS user-dir policy did not resolve HOME.");
+        var slotHome = policy.SlotBase;
+        var hostLibrary = Path.Combine(hostHome, "Library");
+        var slotLibrary = Path.Combine(slotHome, "Library");
+        var hostApplicationSupport = Path.Combine(hostLibrary, "Application Support");
+        var slotApplicationSupport = Path.Combine(slotLibrary, "Application Support");
+
+        MirrorFarmLayer(hostHome, slotHome, "Library");
+        MirrorFarmLayer(hostLibrary, slotLibrary, "Application Support");
+        MirrorFarmLayer(hostApplicationSupport, slotApplicationSupport, UserDataDirName);
+        Directory.CreateDirectory(policy.SlotUserDir);
+    }
+
+    private static void MirrorFarmLayer(string sourceDirectory, string slotDirectory, string excludedName)
+    {
+        Directory.CreateDirectory(slotDirectory);
+        if (!Directory.Exists(sourceDirectory))
+        {
+            return;
+        }
+
+        // Enumerate one level only. In particular, do not descend into a source directory symlink.
+        foreach (var entry in new DirectoryInfo(sourceDirectory).EnumerateFileSystemInfos())
+        {
+            if (IsMacOsFakeHomeExclusion(entry.Name, excludedName))
+            {
+                continue;
+            }
+
+            EnsureFarmSymlink(
+                Path.Combine(slotDirectory, entry.Name),
+                entry.FullName,
+                entry is DirectoryInfo);
+        }
+    }
+
+    // Kept independently testable because the macOS runner uses a case-insensitive APFS volume: an end-to-end
+    // `lIbRaRy` fixture aliases `Library` there, so it cannot prove the comparison mode by being absent.
+    internal static bool IsMacOsFakeHomeExclusion(string entryName, string excludedName)
+        => string.Equals(entryName, excludedName, StringComparison.OrdinalIgnoreCase);
+
+    // Unlike EnsureSymlink (the cache's best-effort, directory-only behavior), the fake-home farm must link
+    // both files and directories and must repair stale links. Real entries are slot-owned and therefore sacred.
+    private static void EnsureFarmSymlink(string link, string target, bool targetIsDirectory)
+    {
+        var existingTarget = new FileInfo(link).LinkTarget ?? new DirectoryInfo(link).LinkTarget;
+        if (existingTarget is not null)
+        {
+            if (string.Equals(existingTarget, target, StringComparison.Ordinal))
+            {
+                return;
+            }
+
+            // File.Delete unlinks both kinds on the platforms we support; the Directory.Delete fallback covers
+            // a filesystem that insists on treating a directory link as a directory operation.
+            try
+            {
+                File.Delete(link);
+            }
+            catch (IOException)
+            {
+                Directory.Delete(link);
+            }
+        }
+        else if (Directory.Exists(link) || File.Exists(link))
+        {
+            return;
+        }
+
+        if (targetIsDirectory)
+        {
+            Directory.CreateSymbolicLink(link, target);
+        }
+        else
+        {
+            File.CreateSymbolicLink(link, target);
+        }
     }
 
     private static void TryLinkSharedCache(int slot, string link, string target)
@@ -491,10 +598,7 @@ internal enum HeadlessUserDirPlatform
     Linux,
     Windows,
 
-    /// <summary>
-    /// Runs the game, has no user-dir isolation. Kept distinct from <see cref="Unsupported"/> so the log line
-    /// and the connections row can name it — see <see cref="HeadlessUserDirSeeder.ResolvePolicy"/>.
-    /// </summary>
+    /// <summary>Uses <c>HOME</c> plus a fake-home farm because macOS has no data-root variable.</summary>
     MacOs,
 }
 
@@ -508,4 +612,5 @@ internal sealed record HeadlessUserDirPolicy(
     string HostUserDir,
     string SlotBase,
     string SlotUserDir,
-    IReadOnlyDictionary<string, string> EnvironmentVariables);
+    IReadOnlyDictionary<string, string> EnvironmentVariables,
+    string? HostHome = null);

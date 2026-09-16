@@ -1,0 +1,8 @@
+; Stock-Godot macOS user:// probe. It intentionally contains no game content or CouchCoop code.
+config_version=5
+
+[application]
+config/name="CouchCoop MacOS UserDir Probe"
+config/features=PackedStringArray("4.5")
+config/use_custom_user_dir=true
+config/custom_user_dir_name="SlayTheSpire2"

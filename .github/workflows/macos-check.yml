@@ -2,7 +2,8 @@
 #
 # WHY IT EXISTS: the mod has a macOS audience (Slay the Spire 2 ships a native macOS build) and no
 # maintainer Mac. This job is the cheapest standing answer to "does the part of this repo that does
-# not need the game still build and pass on macOS?".
+# not need the game still build and pass on macOS?". It also pins Godot's only proven macOS user-dir lever
+# ($HOME) with a stock-engine probe; it never installs or launches Slay the Spire 2.
 #
 # WHY IT IS ON-DEMAND: pull requests are disabled in this repository, so there is no PR event to
 # hang a check on, and a per-push check on `main` would burn macOS minutes on every docs commit.
@@ -113,6 +114,41 @@ jobs:
       - name: Mirror protocol suite
         working-directory: sources/sts2-couch-coop
         run: dotnet run --project tests/CouchCoop.MirrorProtocol.Tests -c Release
+
+      - name: macOS fake-home farm suite
+        working-directory: sources/sts2-couch-coop
+        run: dotnet run --project tests/CouchCoop.MacOs.Tests -c Release
+
+      # A stock Godot run proves the platform premise behind the farm: on macOS custom user:// resolves below
+      # HOME/Library/Application Support. This is intentionally an official binary download with no cache, not
+      # a game install or a test against the mod's GodotSharp dependency.
+      - name: Verify stock Godot honors fake HOME
+        working-directory: sources/sts2-couch-coop
+        run: |
+          set -euo pipefail
+          godot_root="$RUNNER_TEMP/godot-4.5.1"
+          archive="$RUNNER_TEMP/Godot_v4.5.1-stable_macos.universal.zip"
+          mkdir -p "$godot_root"
+          curl --fail --location --retry 3 --retry-all-errors --retry-max-time 1200 \
+            --connect-timeout 15 --max-time 900 \
+            --output "$archive" \
+            https://github.com/godotengine/godot-builds/releases/download/4.5.1-stable/Godot_v4.5.1-stable_macos.universal.zip
+          expected_sha=65c27959d02aaacfc131ec7ecb90179ba8045200cb02982bf2be96d117010b8a
+          actual_sha="$(shasum -a 256 "$archive" | awk '{print $1}')"
+          test "$actual_sha" = "$expected_sha"
+          unzip -q "$archive" -d "$godot_root"
+          fake_home="$RUNNER_TEMP/couchcoop-godot-fake-home"
+          output="$RUNNER_TEMP/couchcoop-godot-user-dir.log"
+          rm -rf "$fake_home"
+          mkdir -p "$fake_home"
+          HOME="$fake_home" "$godot_root/Godot.app/Contents/MacOS/Godot" --headless \
+            --path "$PWD/tests/CouchCoop.MacOs.UserDirProbe" --script res://probe.gd >"$output" 2>&1
+          marker_count="$(grep -c '^COUCHCOOP_USER_DIR_JSON=' "$output" || true)"
+          test "$marker_count" = 1
+          marker="$(grep '^COUCHCOOP_USER_DIR_JSON=' "$output")"
+          actual_user_dir="$(printf '%s' "${marker#COUCHCOOP_USER_DIR_JSON=}" | jq -er '.userDir')"
+          expected_user_dir="$fake_home/Library/Application Support/SlayTheSpire2"
+          test "$actual_user_dir" = "$expected_user_dir"
 
       # Corepack picks the package-manager version BEFORE pnpm processes --dir, so each install runs
       # from inside the directory whose `packageManager` pin it must honour (godot-scene-web pins
