@@ -83,6 +83,8 @@ public sealed class ConnectionRegistry
             entry.SlowNotice = false;
             entry.TransportClosing = entry.InferredTransportIssue = false;
             entry.ChildBrowserMissingTicks = null;
+            entry.ChildBrowserEverSeen = false;
+            entry.SeatConditionCode = null;
             Trace(entry, "Attempt started");
             Changed();
             return entry.AttemptId;
@@ -117,11 +119,24 @@ public sealed class ConnectionRegistry
         lock (_gate)
         {
             if (!_clients.TryGetValue(id, out var entry)) return;
-            if (childBrowser) entry.ChildBrowserMissingTicks = null;
-            if (entry.Stage == ConnectionStage.Complete && entry.RequiresChild && !childBrowser && !entry.TransportClosing)
+            if (childBrowser)
+            {
+                entry.ChildBrowserMissingTicks = null;
+                entry.ChildBrowserEverSeen = true;
+            }
+            if (entry.Stage == ConnectionStage.Complete && entry.RequiresChild && !childBrowser && !entry.TransportClosing
+                && entry.ChildBrowserEverSeen)
             {
                 // A tab owns two sockets, which can close in either order. Give its original socket time
                 // to deliver a clean close before inferring a failure from the child's browser count.
+                //
+                // AND ONLY FOR A TAB THAT ACTUALLY HAD A VIEW. `ChildBrowser` is current state, so without the
+                // ever-seen latch this arm fires identically for a viewer who NEVER arrived at the seat — which
+                // is the blocked-path shape, not transport loss. Measured Sep-16 2026: a phone redirected to a
+                // seat it could not reach was reported to the host as "reload the browser and select the same
+                // player", advice for a problem it did not have, while the phone itself was correctly told its
+                // network path was blocked. A viewer who never attached falls through to ReportSeatCondition,
+                // which carries the cause the seat monitor actually observed.
                 entry.ChildBrowserMissingTicks ??= _time.GetTimestamp();
                 if (Elapsed(entry.ChildBrowserMissingTicks.Value) >= 2_000)
                     FailLocked(entry, new("browser-transport-lost", "The browser disconnected from its game view.",
@@ -155,6 +170,24 @@ public sealed class ConnectionRegistry
             if (!TryAttempt(id, attemptId, out var entry) || entry.Stage is not (ConnectionStage.LoadingView or ConnectionStage.Complete)) return false;
             if (code == "browser-transport-lost")
             {
+                // THE SAME DISTINCTION AS THE INFERENCE IN SetReadiness, and this is the arm that actually fires
+                // in the blocked-path shape. The browser reports a lost game view the moment its seat socket
+                // reaches `disconnected` — which a socket that NEVER OPENED does too, so a viewer that could not
+                // reach its seat at all reports itself as a closed tab. Measured Sep-16 2026: that is where the
+                // host panel's "reload the browser and select the same player" came from while the phone in the
+                // player's hand was correctly being told its network path was blocked.
+                //
+                // If the seat never saw a browser attach, there was no view to lose. The report is kept on the
+                // timeline as evidence and the row is left to the seat monitor's verdict, which is the surface
+                // that can actually name the cause. `RequiresChild` is false for a direct view, whose own socket
+                // IS the view — that case keeps today's behaviour exactly.
+                if (entry.RequiresChild && !entry.ChildBrowserEverSeen)
+                {
+                    Trace(entry, "Browser reported a lost game view before any browser reached this player's game: "
+                        + (Clean(detail, 512) ?? "no detail was supplied"));
+                    Changed();
+                    return true;
+                }
                 FailLocked(entry, new("browser-transport-lost", "The browser disconnected from its game view.",
                     "Reload the browser and select the same player to reconnect.", Clean(detail, 4096)));
                 return true;
@@ -206,6 +239,72 @@ public sealed class ConnectionRegistry
             SaveIssue(entry);
             Changed();
             return entry.IssueId!.Value;
+        }
+    }
+
+    /// <summary>
+    /// Put the seat monitor's readiness verdict on this client's own row, as a WARNING, or take it back off
+    /// again when <paramref name="issue"/> is <see langword="null"/>.
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// TWO SURFACES, ONE DECISION. The four-cause verdict reached the viewer (the seat-notice channel) and the
+    /// host's copyable report (a recorded diagnostic), but never the host panel's row, which went on inferring a
+    /// cause of its own from the child browser count. So the host and the phone named different causes for the
+    /// same seat, and the host's was the wrong one. This is called from the same tick, and from the same
+    /// decision, that feeds the viewer's notice — so both surfaces say the same thing at the same moment, and
+    /// the network-path settling delay covers them together instead of only the phone.
+    /// </para>
+    /// <para>
+    /// A WARNING, NEVER A FAILURE. The join completed and the seat process is alive and serving; only the last
+    /// hop is broken. <see cref="FailLocked"/> would move a running session's row to
+    /// <see cref="ConnectionStage.Failed"/> and stop it reading as live, so this takes the same route
+    /// <see cref="ReportHostIssue"/> takes for a degraded host condition: <see cref="TimedIssue"/> with
+    /// <see cref="ConnectionIssueOutcome.Degraded"/> plus <see cref="SaveIssue"/>, no stage change.
+    /// </para>
+    /// <para>
+    /// DEDUPLICATED BY CODE, because the caller is a 250 ms monitor loop: re-recording the same cause would bump
+    /// the revision — and repaint the panel — four times a second for as long as the condition lasts. It also
+    /// never overwrites a recorded FAILURE (a failed row has the more specific word already), and a withdrawal
+    /// only ever retracts the warning this entry point itself raised.
+    /// </para>
+    /// </remarks>
+    public void ReportSeatCondition(Guid id, ConnectionIssue? issue)
+    {
+        lock (_gate)
+        {
+            if (!_clients.TryGetValue(id, out var entry)) return;
+            if (issue is null)
+            {
+                if (entry.SeatConditionCode is not { } raised) return;
+                entry.SeatConditionCode = null;
+                // The cause stopped holding, so the accusation comes off the screen — but only if it is still
+                // the thing on the screen. Anything recorded over it since (a failure, a later warning) is a
+                // more recent verdict about this row and is not ours to retract.
+                if (entry.Issue?.Code != raised || entry.Issue.Outcome != ConnectionIssueOutcome.Degraded) return;
+                if (entry.IssueId is { } withdrawn) _issues.Remove(withdrawn);
+                entry.Issue = null;
+                entry.IssueId = null;
+                Trace(entry, $"Seat condition cleared: {raised}");
+                Changed();
+                return;
+            }
+
+            if (entry.Stage == ConnectionStage.Failed) return;
+            var code = Clean(issue.Code, 96) ?? "seat-condition";
+            if (entry.SeatConditionCode == code && entry.Issue?.Code == code) return;
+            entry.SeatConditionCode = code;
+            entry.Issue = TimedIssue(entry, issue with
+            {
+                Code = code,
+                Summary = Clean(issue.Summary, 1024) ?? "This player's game is not serving their browser.",
+                Action = Clean(issue.Action, 1024) ?? "Copy this report.",
+                Detail = Clean(issue.Detail, 8192),
+                IsWarning = true,
+            }, ConnectionIssueOutcome.Degraded);
+            SaveIssue(entry);
+            Trace(entry, $"Seat condition: {code}");
+            Changed();
         }
     }
 
@@ -294,6 +393,7 @@ public sealed class ConnectionRegistry
                 entry.Issue = null;
                 entry.IssueId = null;
                 entry.InferredTransportIssue = false;
+                entry.SeatConditionCode = null;
                 if (entry.Stage == ConnectionStage.Failed) SetStage(entry, ConnectionStage.Choosing);
                 Changed();
                 return true;
@@ -316,6 +416,8 @@ public sealed class ConnectionRegistry
                 entry.FramePresented = entry.Member = entry.ChildBrowser = false;
                 entry.TransportClosing = entry.InferredTransportIssue = false;
                 entry.ChildBrowserMissingTicks = null;
+                entry.ChildBrowserEverSeen = false;
+                entry.SeatConditionCode = null;
                 SetStage(entry, ConnectionStage.Choosing);
             }
             Changed();
@@ -426,7 +528,7 @@ public sealed class ConnectionRegistry
     private void CompleteIfReady(Entry e)
     {
         if (e.Stage != ConnectionStage.LoadingView || !e.FramePresented || !e.Member || (e.RequiresChild && !e.ChildBrowser)) return;
-        if (e.Issue?.IsWarning == true) { EndWaitingIssue(e, ConnectionIssueOutcome.Recovered); ArchiveCurrent(e); e.Issue = null; e.IssueId = null; }
+        if (e.Issue?.IsWarning == true) { EndWaitingIssue(e, ConnectionIssueOutcome.Recovered); ArchiveCurrent(e); e.Issue = null; e.IssueId = null; e.SeatConditionCode = null; }
         SetStage(e, ConnectionStage.Complete);
     }
     private void FailLocked(Entry e, ConnectionIssue issue, bool inferredTransport = false)
@@ -570,6 +672,14 @@ public sealed class ConnectionRegistry
         public bool RequiresChild = true;
         public bool Member, ChildBrowser, FramePresented, SlowNotice;
         public bool TransportClosing, InferredTransportIssue;
+        /// <summary>
+        /// Whether a browser has EVER been attached to this attempt's seat, as opposed to
+        /// <see cref="ChildBrowser"/>, which is only whether one is attached right now. The transport-loss
+        /// inference needs the difference: "had a view and lost it" is transport loss, "never arrived" is not.
+        /// </summary>
+        public bool ChildBrowserEverSeen;
+        /// <summary>The issue code of the seat-condition warning currently on this row; see <c>ReportSeatCondition</c>.</summary>
+        public string? SeatConditionCode;
         public long? ChildBrowserMissingTicks;
         public ConnectionAttemptLogs? LogSource;
         public List<string> Timeline = [];

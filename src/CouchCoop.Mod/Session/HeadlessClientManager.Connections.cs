@@ -253,7 +253,7 @@ public sealed partial class HeadlessClientManager
     private void PrepareConnectionLocked(int slot, Guid sessionId)
     {
         if (_membershipProbe is null) return;
-        var owned = new OwnedConnection(slot, ++_processGeneration, Convert.ToHexString(RandomNumberGenerator.GetBytes(32)));
+        var owned = new OwnedConnection(slot, ++_processGeneration, Convert.ToHexString(RandomNumberGenerator.GetBytes(32)), _seatNoticeTime);
         _ownedConnections[slot] = owned;
         _browserAttempts[sessionId] = new(slot, owned.Generation, ConnectionRegistry.Shared.AttemptId(sessionId));
         HeadlessConnectionControl.Shared.Register(slot, owned.Generation, sessionId, owned.Token);
@@ -394,8 +394,20 @@ public sealed partial class HeadlessClientManager
                 // a port conflict (which kills this seat on this very tick) still reaches the browser before its
                 // seat goes away. The speaker decides whether this cause is worth saying yet; the hub decides
                 // who has not already been told, and can neither block nor fault this loop.
+                // …AND THE HOST'S OWN ROW, from this same decision. Before this, the panel had no path to the
+                // verdict at all: it inferred a cause of its own from the seat's child-browser count and called a
+                // viewer who never arrived a lost browser tab, while the phone in that player's hand was being
+                // told — correctly — that its network path was blocked. Reading the speaker's answer rather than
+                // the verdict directly is what keeps the two surfaces identical: one settling delay, one
+                // withdrawal, one moment. `null` means "nothing to say", and withdraws the row as it withdraws
+                // the phone's notice. A WARNING, never a failure — the seat is alive and the join completed.
                 var notice = owned.Notice.Observe(verdict);
-                foreach (var id in clients) SeatNoticeHub.Shared.Publish(id, notice);
+                var condition = notice is null ? null : verdict.Issue;
+                foreach (var id in clients)
+                {
+                    SeatNoticeHub.Shared.Publish(id, notice);
+                    ApplyToAttempt(id, owned, registry => registry.ReportSeatCondition(id, condition));
+                }
                 if (verdict.Cause == SeatReadinessCause.PortConflict) owned.Failure ??= verdict.Issue;
                 if (owned.Process!.HasExited)
                     owned.Failure ??= ProcessExitedIssue(owned.Process);
@@ -527,7 +539,7 @@ public sealed partial class HeadlessClientManager
         }
     }
 
-    private sealed class OwnedConnection(int slot, long generation, string token)
+    private sealed class OwnedConnection(int slot, long generation, string token, TimeProvider? noticeTime = null)
     {
         public int Slot { get; } = slot;
         public long Generation { get; } = generation;
@@ -552,7 +564,7 @@ public sealed partial class HeadlessClientManager
         /// viewer because the settling delay measures how long a cause has held for the seat, and a viewer that
         /// drops and reconnects mid-episode must not restart that clock.
         /// </summary>
-        public readonly SeatNoticeSpeaker Notice = new();
+        public readonly SeatNoticeSpeaker Notice = new(noticeTime);
         public ConnectionIssue? Failure;
         public ConnectionAttemptLogs? Logs;
         public string? QuarantineReason;
