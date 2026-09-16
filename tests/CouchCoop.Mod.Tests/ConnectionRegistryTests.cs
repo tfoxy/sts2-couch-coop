@@ -12,6 +12,8 @@ internal static class ConnectionRegistryTests
         RetryFencesOldAttemptAndPreservesIssue();
         FrameNeedsMembershipAndChildReadiness();
         CleanSocketCloseDoesNotRetainChildCountInference();
+        AViewerThatNeverArrivedIsNotALostBrowser();
+        SeatConditionIsAWarningThatDedupesAndWithdraws();
         DirectViewAndSlowWarning();
         SlowWarningWaitRechecksEarlyWakeAndAttempt();
         SavedIssueTimingAndOutcomes();
@@ -186,6 +188,137 @@ internal static class ConnectionRegistryTests
             "…and nothing generic takes it back");
     }
 
+    /// <summary>
+    /// The Sep-16 defect: a phone that completes its join, is redirected to its seat and cannot reach it was
+    /// reported to the HOST as a closed browser tab ("reload the browser and select the same player"), while the
+    /// phone itself was correctly told its network path was blocked. Two surfaces, two diagnoses, the host's
+    /// wrong. Both producers of that row are asserted here, because the one the panel actually shows is the
+    /// client's own report, not the child-count inference.
+    /// </summary>
+    private static void AViewerThatNeverArrivedIsNotALostBrowser()
+    {
+        var time = new FakeTime();
+        var registry = new ConnectionRegistry(time);
+
+        // A viewer redirected to a seat it cannot open. The seat monitor keeps saying "no browser attached", and
+        // the browser reports its game-view socket as closed the moment it gives up — it never opened.
+        var blocked = Guid.NewGuid();
+        registry.Connected(blocked, "phone");
+        var blockedAttempt = registry.BeginAttempt(blocked);
+        registry.ConfigureView(blocked, requiresChild: true);
+        registry.Advance(blocked, ConnectionStage.LoadingView);
+        registry.SetReadiness(blocked, member: true, childBrowser: false);
+        time.Advance(10_000);
+        registry.SetReadiness(blocked, member: true, childBrowser: false);
+        Assert(registry.ClientViewError(blocked, blockedAttempt, "browser-transport-lost", "socket closed"),
+            "the client's view error is still accepted and recorded");
+        var blockedRow = registry.Snapshot().Rows.Single(row => row.Id == blocked);
+        Assert(blockedRow.Issue is null && blockedRow.Stage == ConnectionStage.LoadingView,
+            "a viewer that never reached its seat is not reported as a lost browser tab");
+        Assert(registry.BuildReport(blocked)!.Contains("before any browser reached", StringComparison.Ordinal),
+            "…and the report it could not fail still carries what the browser said");
+
+        // …and the same attempt, once a browser HAS been attached, keeps today's behaviour on both producers.
+        registry.SetReadiness(blocked, member: true, childBrowser: true);
+        Assert(registry.ClientViewError(blocked, blockedAttempt, "browser-transport-lost", "socket closed"),
+            "a view error after a real attachment is recorded");
+        Assert(registry.Snapshot().Rows.Single(row => row.Id == blocked).Issue?.Code == "browser-transport-lost",
+            "a browser that HAD a view and lost it is still reported as transport loss");
+
+        // The child-count inference, both ways. Reaching Complete needs a frame and an attached browser, so the
+        // never-attached side is built by taking the attachment away again after the row completed.
+        var everSeen = Guid.NewGuid();
+        registry.Connected(everSeen, "phone");
+        var everSeenAttempt = registry.BeginAttempt(everSeen);
+        registry.ConfigureView(everSeen, requiresChild: true);
+        registry.Advance(everSeen, ConnectionStage.LoadingView);
+        registry.SetReadiness(everSeen, member: true, childBrowser: true);
+        registry.Presented(everSeen, everSeenAttempt);
+        Assert(registry.Snapshot().Rows.Single(row => row.Id == everSeen).Stage == ConnectionStage.Complete,
+            "the attached row completes");
+        registry.SetReadiness(everSeen, member: true, childBrowser: false);
+        time.Advance(2_000);
+        registry.SetReadiness(everSeen, member: true, childBrowser: false);
+        Assert(registry.Snapshot().Rows.Single(row => row.Id == everSeen).Issue?.Code == "browser-transport-lost",
+            "a completed view whose browser goes away is still inferred as transport loss");
+
+        // The gate itself: a Complete row that requires a child and has NEVER had one cannot infer transport
+        // loss. Reached by the one live path that produces it — a direct view (which completes without a child)
+        // that then asks for a seat, which is ConfigureView(requiresChild: true, reused: true).
+        var promoted = Guid.NewGuid();
+        registry.Connected(promoted, "phone");
+        var promotedAttempt = registry.BeginAttempt(promoted);
+        // ConfigureView grants membership and the view outright for a direct view, so no browser is ever
+        // REPORTED attached on this attempt — which is exactly the state the latch has to survive.
+        registry.ConfigureView(promoted, requiresChild: false);
+        registry.Advance(promoted, ConnectionStage.LoadingView);
+        registry.Presented(promoted, promotedAttempt);
+        Assert(registry.Snapshot().Rows.Single(row => row.Id == promoted).Stage == ConnectionStage.Complete,
+            "the direct view completes");
+        registry.ConfigureView(promoted, requiresChild: true, reused: true);
+        registry.SetReadiness(promoted, member: true, childBrowser: false);
+        time.Advance(2_000);
+        registry.SetReadiness(promoted, member: true, childBrowser: false);
+        Assert(registry.Snapshot().Rows.Single(row => row.Id == promoted).Issue is null,
+            "a completed row promoted to a seat view infers nothing until a browser has reached that seat");
+    }
+
+    /// <summary>
+    /// The seat monitor's verdict on the host's own row: a WARNING (the session is alive and the join completed),
+    /// deduplicated so a 250 ms monitor tick cannot bump the revision, and withdrawn when the cause stops holding.
+    /// </summary>
+    private static void SeatConditionIsAWarningThatDedupesAndWithdraws()
+    {
+        var time = new FakeTime();
+        var registry = new ConnectionRegistry(time);
+        var id = Guid.NewGuid();
+        registry.Connected(id, "phone");
+        registry.BeginAttempt(id);
+        registry.ConfigureView(id, requiresChild: true);
+        registry.Advance(id, ConnectionStage.LoadingView);
+
+        var networkPath = new ConnectionIssue(CouchCoop.Mod.Session.SeatReadinessVerdict.NetworkPathCode,
+            "This player's game is running, but their device never reached it.", "Check the network.", "evidence tail");
+        registry.ReportSeatCondition(id, null);
+        Assert(registry.Snapshot().Rows.Single(row => row.Id == id).Issue is null, "nothing to withdraw is a no-op");
+
+        registry.ReportSeatCondition(id, networkPath);
+        var raised = registry.Snapshot();
+        var row = raised.Rows.Single(entry => entry.Id == id);
+        Assert(row.Issue?.Code == CouchCoop.Mod.Session.SeatReadinessVerdict.NetworkPathCode
+            && row.Issue.IsWarning && row.Issue.Outcome == ConnectionIssueOutcome.Degraded
+            && row.Stage == ConnectionStage.LoadingView,
+            "the seat verdict reaches the row as a warning and leaves a live session live");
+
+        // Saving an issue kicks off an asynchronous log capture that bumps the revision once on its own, so let
+        // the row settle before measuring what a DUPLICATE report costs.
+        var settled = Settled(registry);
+        registry.ReportSeatCondition(id, networkPath with { Detail = "a later tick of the same cause" });
+        var deduped = registry.Snapshot();
+        Assert(deduped.Revision == settled,
+            "re-reporting the same cause does not bump the revision, so the panel does not repaint on every tick");
+        Assert(deduped.Rows.Single(entry => entry.Id == id).Issue?.Detail == "evidence tail",
+            "…and the row keeps the first report of that cause rather than being rewritten every tick");
+
+        registry.ReportSeatCondition(id, null);
+        Assert(registry.Snapshot().Rows.Single(entry => entry.Id == id).Issue is null
+            && registry.Snapshot().Rows.Count(entry => entry.Id != id) == 0,
+            "a cause that stops holding is withdrawn from the row and leaves no archived issue behind");
+
+        registry.ReportSeatCondition(id, networkPath);
+        Assert(registry.Snapshot().Rows.Single(entry => entry.Id == id).Issue?.Code
+            == CouchCoop.Mod.Session.SeatReadinessVerdict.NetworkPathCode, "the same cause can be raised again");
+
+        // A recorded failure is the more specific word, and outranks a warning in both directions.
+        registry.Fail(id, "process-exited", "The client game process closed unexpectedly.", "Retry.", "exit 1");
+        registry.ReportSeatCondition(id, networkPath);
+        Assert(registry.Snapshot().Rows.Single(entry => entry.Id == id).Issue?.Code == "process-exited",
+            "a seat condition never overwrites a recorded failure");
+        registry.ReportSeatCondition(id, null);
+        Assert(registry.Snapshot().Rows.Single(entry => entry.Id == id).Issue?.Code == "process-exited",
+            "…and a withdrawal only ever retracts the warning this entry point raised");
+    }
+
     private static void DirectViewAndSlowWarning()
     {
         var time = new FakeTime(); var registry = new ConnectionRegistry(time); var id = Guid.NewGuid(); registry.Connected(id, null);
@@ -296,6 +429,22 @@ internal static class ConnectionRegistryTests
     }
 
     private static void Assert(bool value, string message) { if (!value) throw new Exception(message); }
+
+    /// <summary>
+    /// The registry's revision once the asynchronous log capture behind <c>SaveIssue</c> has stopped moving it.
+    /// </summary>
+    private static long Settled(ConnectionRegistry registry)
+    {
+        var revision = registry.Snapshot().Revision;
+        for (var attempt = 0; attempt < 200; attempt++)
+        {
+            Thread.Sleep(10);
+            var next = registry.Snapshot().Revision;
+            if (next == revision) return revision;
+            revision = next;
+        }
+        return revision;
+    }
 
     private sealed class FakeTime : TimeProvider
     {

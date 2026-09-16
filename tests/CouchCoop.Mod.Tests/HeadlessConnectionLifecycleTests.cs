@@ -24,6 +24,65 @@ internal static class HeadlessConnectionLifecycleTests
         await ConcurrentReuseKeepsPerAttemptStepTotals();
         await BrowserDropCapturesAnAlreadyExitedProcess();
         await RetiredCleanupDoesNotEvictAgain();
+        await AnUnreachedSeatNamesItsCauseOnTheHostRow();
+    }
+
+    /// <summary>
+    /// The monitor's verdict reaching the host's OWN row — the wiring, not the pieces.
+    /// </summary>
+    /// <remarks>
+    /// The shape measured live on Sep-16 2026: the join completes, the browser is redirected, and the device
+    /// cannot open the seat's port. The host's loopback probe of that seat SUCCEEDS, so nothing host-side is
+    /// wrong and the only cause left is the network path — which before this round reached the phone and never
+    /// the panel, where the row instead read <c>browser-transport-lost</c>. The settling delay is driven off an
+    /// injected clock; twenty seconds of wall time in a unit suite is not a test.
+    /// </remarks>
+    private static async Task AnUnreachedSeatNamesItsCauseOnTheHostRow()
+    {
+        var id = BeginAttempt();
+        var time = new AdvanceableTime();
+        var process = new FakeProcess(37);
+        var manager = new HeadlessClientManager(_ => process, (_, _) => Task.FromResult(true), seatNoticeTime: time);
+        manager.ConfigureConnectionMonitoring(_ => true, () => 12345);
+        using var _manager = manager;
+        try
+        {
+            var pending = manager.EnsureHeadlessAsync(id, "unreached", CancellationToken.None);
+            var control = await WaitForControlAsync(id);
+            RegisterKnown(control, id, "unreached-token");
+            var port = HeadlessClientManager.SlotToPort(control.Slot);
+            // A seat that is up, bound where the host expects it, in the lobby — and that has seen nothing at all
+            // arrive from off this machine. The affirmative zero is what the network-path cause rests on.
+            void Heartbeat(long sequence, long arrivals) => HeadlessConnectionControl.Shared.Observe(
+                "unreached-token", control.Generation,
+                new HeadlessConnectionStatus(sequence, "Connecting", null, null, 0, port, arrivals));
+            Heartbeat(1, 0);
+            Assert(await pending.WaitAsync(TimeSpan.FromSeconds(2)) == port, "the join completes and the browser is redirected");
+
+            // Inside the settling window nothing is said, on either surface.
+            Heartbeat(2, 0);
+            await Task.Delay(400);
+            Assert(ConnectionRegistry.Shared.Snapshot().Rows.Single(entry => entry.Id == id).Issue is null,
+                "a seat that has only just become unreachable is not yet an accusation");
+
+            time.Advance(SeatNoticeSpeaker.NetworkPathSettlingDelay + TimeSpan.FromSeconds(1));
+            await WaitUntilAsync(
+                () => ConnectionRegistry.Shared.Snapshot().Rows.Single(entry => entry.Id == id).Issue?.Code
+                    == SeatReadinessVerdict.NetworkPathCode,
+                "the host row to carry the seat's own verdict");
+            var issue = ConnectionRegistry.Shared.Snapshot().Rows.Single(entry => entry.Id == id).Issue!;
+            Assert(issue.IsWarning && issue.Outcome == ConnectionIssueOutcome.Degraded,
+                "…as a warning: the seat is alive and the join completed, so the row must stay live");
+            Assert(ConnectionRegistry.Shared.Snapshot().Rows.Single(entry => entry.Id == id).Stage
+                != ConnectionStage.Failed, "…and the session is not moved to Failed underneath a running seat");
+
+            // The device gets through: the accusation comes off the row rather than sitting there being wrong.
+            Heartbeat(3, 4);
+            await WaitUntilAsync(
+                () => ConnectionRegistry.Shared.Snapshot().Rows.Single(entry => entry.Id == id).Issue is null,
+                "the host row to withdraw a cause that stopped holding");
+        }
+        finally { CleanupControl(id); ConnectionRegistry.Shared.Clear(); }
     }
 
     private static async Task RequiresHttpMembershipAndAuthenticatedStatus()
@@ -507,6 +566,16 @@ internal static class HeadlessConnectionLifecycleTests
             if (Stopwatch.GetTimestamp() >= deadline) throw new Exception($"[HeadlessConnectionLifecycleTests] timed out waiting for {description}");
             await Task.Delay(20);
         }
+    }
+
+    /// <summary>A clock a test can push forward, for the seat notice's settling delay.</summary>
+    private sealed class AdvanceableTime : TimeProvider
+    {
+        private long _timestamp;
+        public override long TimestampFrequency => 1000;
+        public override long GetTimestamp() => Interlocked.Read(ref _timestamp);
+        public override DateTimeOffset GetUtcNow() => DateTimeOffset.UnixEpoch.AddMilliseconds(Interlocked.Read(ref _timestamp));
+        public void Advance(TimeSpan duration) => Interlocked.Add(ref _timestamp, (long)duration.TotalMilliseconds);
     }
 
     private static void CleanupControl(Guid id)

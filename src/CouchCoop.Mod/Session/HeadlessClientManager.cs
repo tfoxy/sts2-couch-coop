@@ -154,6 +154,13 @@ public sealed partial class HeadlessClientManager : IDisposable
     // the test ctor injects a decided answer so the allocator's slot-skip can be exercised without sockets — and
     // one test deliberately uses the REAL probe against a live blackhole listener. See SeatPortAvailability.
     private readonly Func<int, CancellationToken, Task<string?>> _seatPortProbe;
+    /// <summary>
+    /// The clock each seat's <see cref="SeatNoticeSpeaker"/> measures its settling delay on, or
+    /// <see langword="null"/> for the system clock. A test seam, and the only one available for that delay: the
+    /// network-path cause — the one the whole notice/row path exists for — is unreachable in under 20 seconds of
+    /// wall time otherwise, so without this the wiring from the monitor to both surfaces cannot be exercised at all.
+    /// </summary>
+    private readonly TimeProvider? _seatNoticeTime;
     // Invoked when we RESPAWN a headless on a claimed-but-dead slot (a mid-run reconnect): force-evicts any
     // stale ENet peer still holding that netId on the host so the respawned headless's same-netId handshake
     // isn't rejected (IdCollision → timeout). Null in tests / when no host net server is available. Idempotent
@@ -383,8 +390,10 @@ public sealed partial class HeadlessClientManager : IDisposable
         Action<ulong>? evictStalePeer = null,
         Func<int?>? maxSeatsProbe = null,
         Func<int, CancellationToken, Task<string?>>? seatPortProbe = null,
-        Func<bool>? runInProgressProbe = null)
+        Func<bool>? runInProgressProbe = null,
+        TimeProvider? seatNoticeTime = null)
     {
+        _seatNoticeTime = seatNoticeTime;
         _launcher = launcher ?? throw new ArgumentNullException(nameof(launcher));
         _runInProgressProbe = runInProgressProbe;
         _readinessProbe = readinessProbe is null

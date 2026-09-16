@@ -37,6 +37,7 @@ internal static class SeatNoticeTests
         CarriesTheHostsOwnEnglishOntoTheWire();
         ADeliveryThatThrowsCannotFaultThePublisher();
         AReconnectingViewerIsToldAgain();
+        TheSameDecisionReachesTheHostsOwnRow();
         Console.WriteLine("SeatNoticeTests: ok");
     }
 
@@ -271,6 +272,69 @@ internal static class SeatNoticeTests
         }
     }
 
+    /// <summary>
+    /// The host panel and the phone say the same thing at the same moment, because they are fed by ONE decision.
+    /// </summary>
+    /// <remarks>
+    /// Measured Sep-16 2026, and the reason this exists: with a phone-scoped block the phone was correctly told
+    /// its network path was blocked while the host's row read <c>browser-transport-lost</c> — "reload the browser
+    /// and select the same player" — because the verdict only ever rode the seat-notice channel and the panel
+    /// inferred a cause of its own. This replays the monitor's exact code shape (<c>Notice.Observe(verdict)</c>,
+    /// then the notice and the row from that one answer) against the real speaker and the real registry, which is
+    /// the only way to pin "the same moment": the 20 s settling delay has to cover BOTH surfaces or neither.
+    /// </remarks>
+    private static void TheSameDecisionReachesTheHostsOwnRow()
+    {
+        var time = new FakeTime();
+        var speaker = new SeatNoticeSpeaker(time);
+        var registry = new ConnectionRegistry(time);
+        var viewer = Guid.NewGuid();
+        registry.Connected(viewer, "phone");
+        registry.BeginAttempt(viewer);
+        registry.ConfigureView(viewer, requiresChild: true);
+        registry.Advance(viewer, ConnectionStage.LoadingView);
+
+        // One tick, exactly as HeadlessClientManager.MonitorConnectionAsync runs it.
+        SeatNotice? Tick(SeatReadinessVerdictResult verdict)
+        {
+            var notice = speaker.Observe(verdict);
+            registry.ReportSeatCondition(viewer, notice is null ? null : verdict.Issue);
+            return notice;
+        }
+
+        var blocked = Verdict(NetworkPath() with { ElapsedMs = 60_000 });
+        Assert(Tick(blocked) is null && registry.Snapshot().Rows.Single(row => row.Id == viewer).Issue is null,
+            "inside the settling window NEITHER surface accuses the player's network");
+
+        time.Advance((long)SeatNoticeSpeaker.NetworkPathSettlingDelay.TotalMilliseconds);
+        Assert(Tick(blocked)?.Cause == BrowserSeatNoticeCauses.NetworkPath, "the phone is told once the cause has held");
+        var row = registry.Snapshot().Rows.Single(entry => entry.Id == viewer);
+        Assert(row.Issue?.Code == SeatReadinessVerdict.NetworkPathCode,
+            "…and the host's own row carries the SAME cause, not a browser-transport symptom");
+        Assert(row.Issue!.IsWarning && row.Issue.Outcome == ConnectionIssueOutcome.Degraded
+            && row.Stage == ConnectionStage.LoadingView && row.IsLive,
+            "…as a warning on a session that is still running, because the seat is alive and the join completed");
+        Assert(row.Issue.Detail == blocked.Detail,
+            "…carrying the same evidence tail the phone was given");
+
+        // Repeated ticks of a cause that is still holding. The speaker keeps answering (the hub is what decides
+        // who has already been told — see SpeaksOnChangeNotOnTick), so the ROW is the surface that has to absorb
+        // the tick rate: four revision bumps a second, for the life of the seat, would repaint the panel forever.
+        // Saving the issue starts an asynchronous log capture that moves the revision once on its own, so let the
+        // row settle before measuring.
+        var settled = Settled(registry);
+        for (var tick = 0; tick < 8; tick++)
+        {
+            Assert(Tick(blocked)?.Cause == BrowserSeatNoticeCauses.NetworkPath, "the cause is still held");
+        }
+        Assert(registry.Snapshot().Revision == settled, "a held cause does not rewrite the row on every tick");
+
+        // The condition stops holding: the accusation comes off BOTH surfaces rather than sitting there wrong.
+        Assert(Tick(Verdict(StillStarting())) is null, "the cause clears");
+        Assert(registry.Snapshot().Rows.Single(entry => entry.Id == viewer).Issue is null,
+            "a withdrawal on the phone is a withdrawal on the panel");
+    }
+
     // ---- facts ------------------------------------------------------------------------------------------------
 
     private static SeatReadinessVerdictResult Verdict(SeatReadinessFacts facts) => SeatReadinessVerdict.Describe(facts);
@@ -337,6 +401,20 @@ internal static class SeatNoticeTests
     private static void Assert(bool value, string message)
     {
         if (!value) throw new Exception("[SeatNoticeTests] " + message);
+    }
+
+    /// <summary>The registry's revision once the asynchronous log capture behind a saved issue has stopped moving it.</summary>
+    private static long Settled(ConnectionRegistry registry)
+    {
+        var revision = registry.Snapshot().Revision;
+        for (var attempt = 0; attempt < 200; attempt++)
+        {
+            Thread.Sleep(10);
+            var next = registry.Snapshot().Revision;
+            if (next == revision) return revision;
+            revision = next;
+        }
+        return revision;
     }
 
     private sealed class FakeTime : TimeProvider
