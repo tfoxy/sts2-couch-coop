@@ -140,6 +140,17 @@ public sealed class HeadlessConnectionControl
 /// on the host. Additive on the same grounds as <see cref="BrowserPort"/> — the build guard makes a seat and its
 /// host the same build, so there is no older seat to read this from.
 /// </param>
+/// <param name="CloudSaveIsolated">
+/// The seat's POSITIVE declaration that it has closed every path by which it could write into the Steam Cloud
+/// save storage of the account running the host (<c>HeadlessSeatCloudIsolationGuard.Installed</c>). A heartbeat
+/// without it fails the seat — see <c>HeadlessClientManager.SeatCloudIsolationCode</c>.
+/// <para>
+/// NOT nullable, and defaulting to <see langword="false"/> on purpose: absent must mean "not declared", because
+/// the payloads that would omit it are exactly the dangerous ones — an older or foreign CouchCoop that heartbeats
+/// without the field, and JSON that simply does not carry it. Every other additive field on this record defaults
+/// to the answer that is safe to act on; this one defaults to the answer that is safe to REFUSE on.
+/// </para>
+/// </param>
 /// <remarks>
 /// <para>
 /// <b>Why this one is nullable and <see cref="BrowserPort"/> is not.</b> Both are additive and both default, but
@@ -158,7 +169,8 @@ public sealed record HeadlessConnectionStatus(
     string? ErrorDetail,
     int ConnectedChildBrowserCount,
     int BrowserPort = 0,
-    long? ViewerArrivalCount = null);
+    long? ViewerArrivalCount = null,
+    bool CloudSaveIsolated = false);
 
 public sealed record HeadlessConnectionObserveResult(bool Accepted, bool ShutdownRequested)
 {

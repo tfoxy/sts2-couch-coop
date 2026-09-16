@@ -38,6 +38,7 @@ internal static class SeatArrivalEvidenceTests
         await TheCountSurvivesTheAuthenticatedHeartbeat();
         TheReporterReadsTheViewerCounterNotTheTotal();
         await TheSeatsOwnReporterCarriesItToTheHost();
+        await TheSeatSaysHelloBeforeItHasARuntime();
         Console.WriteLine("SeatArrivalEvidenceTests: ok");
     }
 
@@ -308,6 +309,63 @@ internal static class SeatArrivalEvidenceTests
             Environment.SetEnvironmentVariable(HeadlessConnectionReporter.ControlTokenEnvironmentVariable, token);
             Environment.SetEnvironmentVariable(HeadlessConnectionReporter.ControlGenerationEnvironmentVariable, generation);
             HeadlessConnectionControl.Shared.Unregister(93, 5);
+        }
+    }
+
+    /// <summary>
+    /// The seat's HELLO over the same real route: contact established from mod init, before there is a runtime,
+    /// a subscription or a heartbeat — which is what makes the host's short no-contact deadline a question about
+    /// whether CouchCoop is running rather than a race against how fast this computer starts a game.
+    /// </summary>
+    /// <remarks>
+    /// Three things are asserted, and the middle one is the load-bearing one: the hello carries the cloud-save
+    /// declaration, it is NOT a phase the join wait can redirect on, and a status sent AFTER it is still accepted
+    /// — the sequence is process-wide, so the hello cannot consume the number the reporter's first heartbeat
+    /// would have used and get it silently dropped.
+    /// </remarks>
+    private static async Task TheSeatSaysHelloBeforeItHasARuntime()
+    {
+        using var root = new TempSpa();
+        await using var server = new CouchCoopBrowserServer(
+            new StaticSpaFileProvider(root.Path), new UnusedAssets(), envelopeFactory: null,
+            bindAddress: IPAddress.Loopback, preferredPort: 0, isHeadlessClient: true);
+        var baseUri = await server.StartAsync();
+        HeadlessConnectionControl.Shared.Register(94, 6, Guid.NewGuid(), "hello-token");
+        var url = Environment.GetEnvironmentVariable(HeadlessConnectionReporter.ControlUrlEnvironmentVariable);
+        var token = Environment.GetEnvironmentVariable(HeadlessConnectionReporter.ControlTokenEnvironmentVariable);
+        var generation = Environment.GetEnvironmentVariable(HeadlessConnectionReporter.ControlGenerationEnvironmentVariable);
+        try
+        {
+            Environment.SetEnvironmentVariable(HeadlessConnectionReporter.ControlUrlEnvironmentVariable,
+                new Uri(baseUri, "/internal/client-status").ToString());
+            Environment.SetEnvironmentVariable(HeadlessConnectionReporter.ControlTokenEnvironmentVariable, "hello-token");
+            Environment.SetEnvironmentVariable(HeadlessConnectionReporter.ControlGenerationEnvironmentVariable, "6");
+
+            Assert(await HeadlessConnectionReporter.ReportSeatHelloAsync(cloudSaveIsolated: true, CancellationToken.None),
+                "the seat's hello reaches the host's control endpoint with no runtime behind it");
+            var hello = HeadlessConnectionControl.Shared.Snapshot(94, 6)?.Status;
+            Assert(hello?.CloudSaveIsolated == true,
+                "…carrying the declaration the host's no-contact and undeclared rules both read");
+            Assert(hello?.ErrorCode is null,
+                "…and no error code: a hello is contact, not a complaint");
+            Assert(hello?.NativePhase == HeadlessConnectionReporter.HelloPhase
+                && hello.NativePhase is not ("Connecting" or "starting"),
+                "…in a phase the join wait cannot redirect on, so contact can never be mistaken for readiness");
+            Assert(hello!.BrowserPort == 0,
+                "…and with no bound port, because at mod init there is not one — the host reads 0 as 'not yet'");
+
+            Assert(await HeadlessConnectionReporter.ReportTerminalFailureAsync(
+                    "seat-port-unavailable", "a later report", CancellationToken.None),
+                "a status sent after the hello is still accepted — the sequence is process-wide, not per sender");
+            Assert(HeadlessConnectionControl.Shared.Snapshot(94, 6)?.Status?.Sequence > hello.Sequence,
+                "…because it carries a higher sequence than the hello did");
+        }
+        finally
+        {
+            Environment.SetEnvironmentVariable(HeadlessConnectionReporter.ControlUrlEnvironmentVariable, url);
+            Environment.SetEnvironmentVariable(HeadlessConnectionReporter.ControlTokenEnvironmentVariable, token);
+            Environment.SetEnvironmentVariable(HeadlessConnectionReporter.ControlGenerationEnvironmentVariable, generation);
+            HeadlessConnectionControl.Shared.Unregister(94, 6);
         }
     }
 

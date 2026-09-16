@@ -14,6 +14,19 @@ public sealed partial class HeadlessClientManager
     public const string SeatBuildMismatchCode = "seat-build-mismatch";
 
     /// <summary>
+    /// The connection issue a seat that cannot be shown to be keeping its saves out of the host account's Steam
+    /// Cloud storage is reported as. Public for the same reason as the code above: the report copy, the panel's
+    /// issue mapping and the registry's confirmed-cause rule all key on the literal.
+    /// </summary>
+    /// <remarks>
+    /// ONE CODE FOR BOTH SHAPES, because the player's position is identical in both and so is the remedy: a seat
+    /// that said it could not install the protection (<see cref="HeadlessSeatCloudIsolationGuard.FailureErrorCode"/>),
+    /// and a seat that never said it had. The two are told apart in the DETAIL, which is where a support report
+    /// needs the difference; the friendly copy above it would read the same either way.
+    /// </remarks>
+    public const string SeatCloudIsolationCode = "seat-cloud-isolation-unconfirmed";
+
+    /// <summary>
     /// The host-service issue a session runs under only when preparing an isolated Godot user directory failed —
     /// a WARNING, not a failure: co-op works, but every player on this machine shares one settings/save profile.
     /// A fallback seat still has its own explicit log file. Public for the same reason as the code above: the
@@ -136,6 +149,9 @@ public sealed partial class HeadlessClientManager
         ConnectionRegistry.Shared.RecordDiagnostic(sessionId, "process", $"pid={owned.Process.Id}; slot={slot}; generation={owned.Generation}; netId={SlotToNetId(slot)}");
         var started = Stopwatch.GetTimestamp();
         var deadline = SeatReadyTimeout;
+        // The second, much shorter deadline: not "is this seat usable yet" but "is OUR CODE in it at all". See
+        // DefaultSeatContactTimeoutSeconds, including what it does NOT guarantee.
+        var contactDeadline = SeatContactTimeout;
         // The verdict is rebuilt from the host's own facts on every pass and replaces the one sentence that used
         // to end in "child HTTP listener: not responding" for three unrelated causes. See SeatReadinessVerdict.
         var verdict = SeatReadinessVerdict.Describe(
@@ -146,6 +162,16 @@ public sealed partial class HeadlessClientManager
             if (!IsCurrent(owned)) return null;
             if (owned.Failure is not null || owned.Quarantined) { await StopFailedConnectionAsync(owned).ConfigureAwait(false); return null; }
             var status = HeadlessConnectionControl.Shared.Snapshot(slot, owned.Generation);
+            LogFirstContact(owned, status);
+            // NOT ONE WORD from this process, well past the point where our own guard says hello. That is a game
+            // running without CouchCoop in it, holding this computer's Steam Cloud save storage, and the
+            // remaining 55 seconds of the readiness deadline buy nothing but exposure.
+            if (status?.Status is null && Stopwatch.GetElapsedTime(started) >= contactDeadline)
+            {
+                owned.Failure ??= SeatCloudIsolationIssue(NoSeatContactDetail(contactDeadline));
+                await StopFailedConnectionAsync(owned).ConfigureAwait(false);
+                return null;
+            }
             var member = _membershipProbe(SlotToNetId(slot));
             var fresh = status is not null && Fresh(status);
             verdict = SeatReadinessVerdict.Describe(ReadinessFacts(owned, status, member, port.Value, started, deadline));
@@ -249,6 +275,33 @@ public sealed partial class HeadlessClientManager
                 + "their join was unaffected. A player whose seat is pinned (a rejoin, or a returning name the "
                 + "host's run knows by its seat) cannot be moved, so the same owner would fail that join outright.",
             isWarning: true);
+    }
+
+    /// <summary>
+    /// Write ONE line per seat process saying how long it took to say anything at all, the first time it does.
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// This is the measurement the contact deadline is set from, and it exists because the deadline was chosen
+    /// without one. It is the seat's hello (<see cref="HeadlessSeatCloudIsolationGuard"/>) landing, so what it
+    /// measures is "spawn → our code is running and has closed the cloud writes" — game boot plus mod init up to
+    /// the first patch — on THIS computer. A figure anywhere near
+    /// <see cref="DefaultSeatContactTimeoutSeconds"/> means the default is too tight for that machine.
+    /// </para>
+    /// <para>
+    /// One line per seat PROCESS, not per join: a reused seat has spoken long ago, and re-announcing its first
+    /// contact on every rejoin would be a number about nothing. Stderr, like the readiness causes beside it.
+    /// </para>
+    /// </remarks>
+    private static void LogFirstContact(OwnedConnection owned, HeadlessConnectionControlSnapshot? status)
+    {
+        if (owned.FirstContactLogged || status?.Status is not { } first) return;
+        owned.FirstContactLogged = true;
+        CouchCoopLog.Stderr(
+            $"seat first contact slot={owned.Slot} afterMs="
+            + ((long)Stopwatch.GetElapsedTime(owned.StartedTicks).TotalMilliseconds)
+                .ToString(System.Globalization.CultureInfo.InvariantCulture)
+            + $" phase={first.NativePhase} cloudIsolated={first.CloudSaveIsolated}");
     }
 
     /// <summary>
@@ -611,6 +664,8 @@ public sealed partial class HeadlessClientManager
         public long StartedTicks { get; } = Stopwatch.GetTimestamp();
         public IHeadlessProcess? Process;
         public bool MonitorStarted, HasJoined, Quarantined;
+        /// <summary>Whether this seat's first-contact figure has been written; see <c>LogFirstContact</c>.</summary>
+        public bool FirstContactLogged;
         /// <summary>
         /// The last result of the host's own loopback probe of this seat's assigned port, and why it failed.
         /// Null until the join wait has probed at all. Retained past that wait because the monitor keeps naming
@@ -693,6 +748,47 @@ public sealed partial class HeadlessClientManager
     }
 
     /// <summary>
+    /// The issue a seat is failed with when this host cannot confirm it is staying out of the account's Steam
+    /// Cloud save storage. English here, as every issue is, and word-for-word the
+    /// <c>couchcoop_connection_error_seat_cloud_isolation_*</c> catalog entries the panel and the phone render.
+    /// </summary>
+    internal static ConnectionIssue SeatCloudIsolationIssue(string detail)
+        => new(
+            SeatCloudIsolationCode,
+            "This player's game could not promise to leave your Steam Cloud saves alone.",
+            "It was stopped before it could write anything. Restart the game and try again, and copy this report "
+                + "if it happens again.",
+            detail);
+
+    /// <summary>
+    /// The detail for a seat that is talking to this host and has not declared the isolation. The seat is running
+    /// SOMETHING — the heartbeat is authenticated — so what this names is the one thing that matters: whatever it
+    /// is running is not code that closed the cloud write paths.
+    /// </summary>
+    internal const string UndeclaredCloudIsolationDetail =
+        "This player's game reported its status to the host without stating that CouchCoop's Steam Cloud save "
+        + "protection is installed in it. A player's game shares the host account's cloud save storage, so one "
+        + "that cannot state it has closed those writes is stopped rather than allowed to join.";
+
+    /// <summary>
+    /// The detail for a seat that never said anything at all within
+    /// <see cref="SeatContactTimeoutEnvironmentVariable"/>'s deadline.
+    /// </summary>
+    /// <remarks>
+    /// HONEST ABOUT WHAT THIS IS. It SHRINKS the window; it does not close it. A seat with no CouchCoop in it
+    /// runs the game's own startup cloud sync at the game's own startup time, which is inside this deadline — so
+    /// killing it at 20 seconds is not a guarantee that it wrote nothing, only that it stopped long before the
+    /// 75-second readiness deadline would have noticed. The actual safety net is a host-side backup of the
+    /// profile taken BEFORE the seat is spawned, which is a separate work item.
+    /// </remarks>
+    internal static string NoSeatContactDetail(TimeSpan deadline)
+        => "This player's game did not report anything to the host within "
+            + ((long)deadline.TotalSeconds).ToString(System.Globalization.CultureInfo.InvariantCulture)
+            + " seconds of being started, so CouchCoop is not running inside it. A game without CouchCoop in it "
+            + "shares this computer's Steam Cloud save storage with the host, so it is stopped instead of being "
+            + "given the rest of the startup deadline.";
+
+    /// <summary>
     /// Whether <paramref name="code"/> is one of the catch-all native failures — the ones recorded when the seat
     /// could say only that its connection ended.
     /// </summary>
@@ -720,6 +816,19 @@ public sealed partial class HeadlessClientManager
             return true;
         }
 
+        // THE SEAT HAS TO SAY IT, every time, and this is where a seat that does not gets stopped. A heartbeat is
+        // authenticated, so something is running in that process — but a process that does not declare the cloud
+        // isolation is one whose writes reach the host account's save storage, and it is talking to us now rather
+        // than in 75 seconds. Restricted to a seat that has named no cause of its own: the two guards report
+        // their own terminal failures from BEFORE this declaration can be true (the build guard runs above the
+        // isolation guard by design), and their named cause is the better diagnosis in both cases.
+        if (status is { CloudSaveIsolated: false, ErrorCode: null }
+            && (owned.Failure is null || IsGenericNativeFailure(owned.Failure.Code)))
+        {
+            owned.Failure = SeatCloudIsolationIssue(UndeclaredCloudIsolationDetail);
+            return true;
+        }
+
         if (status?.NativePhase.Equals("Failed", StringComparison.OrdinalIgnoreCase) == true)
             // A build mismatch is a terminal failure like any other, but it is NOT a native rejection: the seat
             // never reached the network, and "check that game and mod versions match" is the one next action a
@@ -735,6 +844,13 @@ public sealed partial class HeadlessClientManager
                     new(SeatBuildMismatchCode, "This player's game is running a different version of CouchCoop than the host.",
                         "Both copies of the mod are installed. Unsubscribe the CouchCoop item in the Steam Workshop, or redeploy the mod, so only one remains — then retry.",
                         SeatBuildMismatchDetail(status.ErrorDetail, SeatsShareTheHostProfile)),
+                // The seat installed CouchCoop, ran the check, and could not close every write path. It names the
+                // cause itself, so it arrives here rather than through the missing-declaration arm above, and it
+                // keeps the seat's own detail — which lists the paths it could not close.
+                HeadlessSeatCloudIsolationGuard.FailureErrorCode =>
+                    SeatCloudIsolationIssue(
+                        status.ErrorDetail
+                        ?? "The client game did not report which cloud save paths it could not close."),
                 HeadlessSeatPortGuard.UnavailableErrorCode =>
                     SeatReadinessVerdict.IssueFor(
                         SeatReadinessCause.PortConflict,

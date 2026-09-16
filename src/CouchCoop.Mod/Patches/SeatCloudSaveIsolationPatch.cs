@@ -37,17 +37,35 @@ namespace CouchCoop.Mod.Patches;
 ///
 /// <b>A target that does not resolve is a REFUSAL, not a shrug</b> — the same posture, and for a sharper
 /// reason, than <see cref="HeadlessAudioMutePatch"/>: a seat that launches with half this patch installed
-/// silently overwrites the player's cloud saves, and nothing on screen says so. <see cref="Apply"/> therefore
-/// throws, naming every target it could not take. It is unreachable in a shipped build, because
+/// silently overwrites the player's cloud saves, and nothing on screen says so. <see cref="Install"/>
+/// therefore RETURNS every target it could not take, and <see cref="Session.HeadlessSeatCloudIsolationGuard"/>
+/// turns a non-empty answer into a reported, terminated seat. It is unreachable in a shipped build, because
 /// <c>SeatCloudSaveIsolationTargetsTests</c> resolves the identical <see cref="Targets"/> list at test time.
 ///
-/// Applied from <c>CouchCoopMod.Init</c> for a headless seat only (<c>COUCHCOOP_HEADLESS_CLIENT=1</c>): the
+/// <b>Why it no longer throws.</b> It used to, and the throw did not refuse anything: mod init is called from
+/// the loader's blanket <c>catch</c>, which logs and returns, so the seat carried on running with Steam up and
+/// every cloud write open — the exact state the throw was written to prevent. Refusing is a decision about the
+/// PROCESS, so it belongs with the other guards that can make one, not inside a patch installer.
+///
+/// Installed from <c>CouchCoopMod.Init</c> for a headless seat only (<c>COUCHCOOP_HEADLESS_CLIENT=1</c>): the
 /// real player-facing host keeps its cloud saves working exactly as the game shipped them.
 /// </summary>
 internal static class SeatCloudSaveIsolationPatch
 {
+    /// <summary>
+    /// Test lever: set to <c>1</c> to make the isolation guarantee FAIL on a seat that is otherwise healthy, so
+    /// a live QA leg can exercise the refusal (report → host issue row → seat exit) without editing code.
+    /// </summary>
+    /// <remarks>
+    /// It forces the VERDICT, not an open write path: the Harmony skips below are installed exactly as usual and
+    /// only then is the synthetic refusal appended. So a lever left set on a machine still cannot let a seat
+    /// write into the player's cloud storage — the worst it can do is refuse seats that were fine.
+    /// </remarks>
+    internal const string ForceFailureEnvironmentVariable = "COUCHCOOP_FORCE_SEAT_ISOLATION_FAILURE";
+
     private static readonly object _sync = new();
     private static bool _applied;
+    private static IReadOnlyList<string> _refused = [];
 
     /// <summary>
     /// The complete set of (declaring type, method name, parameter types) this patch targets — the single
@@ -73,11 +91,20 @@ internal static class SeatCloudSaveIsolationPatch
         (typeof(NGame), "DoCloudSync", []),
     ];
 
-    internal static void Apply()
+    /// <summary>
+    /// Close every seat→Steam-Cloud write path and return the ones that could NOT be closed — empty when the
+    /// isolation is complete. One-shot: a second call returns the first call's answer.
+    /// </summary>
+    /// <remarks>
+    /// The caller decides what a non-empty answer means. That is <see cref="Session.HeadlessSeatCloudIsolationGuard"/>,
+    /// for the reason in this type's summary: a seat that cannot guarantee the isolation must stop being a seat,
+    /// and only something holding the process can do that.
+    /// </remarks>
+    internal static IReadOnlyList<string> Install()
     {
         lock (_sync)
         {
-            if (_applied) return;
+            if (_applied) return _refused;
             _applied = true; // one-shot regardless of outcome — don't repeat missing-method lookups each Init
 
             var harmony = new Harmony("com.couchcoop.seat-cloud-save-isolation");
@@ -87,16 +114,27 @@ internal static class SeatCloudSaveIsolationPatch
                 PatchSkip(harmony, type, name, args, refused);
             }
 
-            if (refused.Count > 0)
+            // LAST, deliberately: the lever forces the verdict a seat is judged on, over write paths that are
+            // already closed. See ForceFailureEnvironmentVariable.
+            if (ForcedFailure(Environment.GetEnvironmentVariable(ForceFailureEnvironmentVariable)))
             {
-                throw new InvalidOperationException(
-                    Session.CouchCoopLog.Line("SeatCloudSaveIsolationPatch could not close ")
-                    + $"{refused.Count} of {Targets.Count} seat→Steam-Cloud write paths on this build, so a seat "
-                    + "would write into the player's own account save storage. Refusing rather than launching a "
-                    + "seat that corrupts saves: " + string.Join("; ", refused));
+                refused.Add(
+                    $"{ForceFailureEnvironmentVariable}=1 is set on this computer, which forces this check to "
+                    + "fail so the refusal can be tested. The write paths themselves were closed normally");
             }
+
+            _refused = refused;
+            return _refused;
         }
     }
+
+    /// <summary>
+    /// Whether <see cref="ForceFailureEnvironmentVariable"/>'s value arms the test lever. Exactly <c>"1"</c>,
+    /// trimmed, and nothing else: a lever that answered to "true"/"yes"/"on" would also answer to a value someone
+    /// set for a different tool. Pure, so the polarity is testable without a seat.
+    /// </summary>
+    internal static bool ForcedFailure(string? raw)
+        => string.Equals(raw?.Trim(), "1", StringComparison.Ordinal);
 
     private static void PatchSkip(Harmony harmony, Type type, string name, Type[] args, ICollection<string> refused)
     {

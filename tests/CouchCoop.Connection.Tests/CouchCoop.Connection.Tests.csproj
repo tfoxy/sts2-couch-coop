@@ -59,6 +59,7 @@
     <Compile Include="../CouchCoop.Mod.Tests/SeatArrivalEvidenceTests.cs" Link="SeatArrivalEvidenceTests.cs" />
     <Compile Include="../CouchCoop.Mod.Tests/SeatNoticeTests.cs" Link="SeatNoticeTests.cs" />
     <Compile Include="../CouchCoop.Mod.Tests/SeatRejectionCodeTests.cs" Link="SeatRejectionCodeTests.cs" />
+    <Compile Include="../CouchCoop.Mod.Tests/SeatCloudIsolationGuardTests.cs" Link="SeatCloudIsolationGuardTests.cs" />
     <Compile Include="../CouchCoop.Mod.Tests/CouchCoopButtonActivationTests.cs" Link="CouchCoopButtonActivationTests.cs" />
     <Compile Include="../CouchCoop.Mod.Tests/CouchCoopModalFocusTests.cs" Link="CouchCoopModalFocusTests.cs" />
     <Compile Include="../CouchCoop.Mod.Tests/CouchCoopModalFocusChainTests.cs" Link="CouchCoopModalFocusChainTests.cs" />

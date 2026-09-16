@@ -73,6 +73,8 @@
   "couchcoop_connection_error_seat_run_in_progress_action": "Bu oyuncunun geri katılabilmesi için kayıtlı turu yeniden yükleyin.",
   "couchcoop_connection_error_mod_mismatch_summary": "Bu oyuncunun oyunu CouchCoop'un farklı bir kopyasını yükledi.",
   "couchcoop_connection_error_mod_mismatch_action": "Modun yalnızca tek bir kopyasını kurulu bırakın, oyunu yeniden başlatın ve tekrar deneyin.",
+  "couchcoop_connection_error_seat_cloud_isolation_summary": "Bu oyuncunun oyunu, Steam Cloud kayıtlarınıza dokunmayacağını garanti edemedi.",
+  "couchcoop_connection_error_seat_cloud_isolation_action": "Hiçbir şey yazmadan önce durduruldu. Oyunu yeniden başlatıp tekrar deneyin; yine olursa bu raporu kopyalayın.",
   "couchcoop_connection_error_seat_port_summary": "Bu bilgisayardaki başka bir program bu oyuncunun bağlantı noktasını kullanıyor.",
   "couchcoop_connection_error_seat_port_action": "Ana bilgisayarda o bağlantı noktasını kullanan programı, Slay the Spire 2'nin başka bir kopyası da dâhil olmak üzere kapatın ve tekrar deneyin.",
   "couchcoop_connection_error_seat_port_occupied_summary": "Bu bilgisayardaki başka bir program, ortak oynanışın oyunculara verdiği bağlantı noktalarından birini kullanıyor.",

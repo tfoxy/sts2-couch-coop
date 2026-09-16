@@ -73,6 +73,8 @@
   "couchcoop_connection_error_seat_run_in_progress_action": "重新读取已保存的对战，让该玩家重新加入。",
   "couchcoop_connection_error_mod_mismatch_summary": "该玩家的游戏加载了不同的 CouchCoop 副本。",
   "couchcoop_connection_error_mod_mismatch_action": "只保留一个模组副本，重启游戏后重试。",
+  "couchcoop_connection_error_seat_cloud_isolation_summary": "该玩家的游戏无法保证不会动你的 Steam 云存档。",
+  "couchcoop_connection_error_seat_cloud_isolation_action": "它在写入任何内容之前已被停止。请重启游戏后重试；若再次出现，请复制此报告。",
   "couchcoop_connection_error_seat_port_summary": "这台电脑上的其他程序正在占用该玩家的端口。",
   "couchcoop_connection_error_seat_port_action": "请关闭主机电脑上占用该端口的程序（包括另一份《杀戮尖塔 2》），然后重试。",
   "couchcoop_connection_error_seat_port_occupied_summary": "这台电脑上的其他程序正在占用同屏联机分配给玩家的端口之一。",

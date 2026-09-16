@@ -835,6 +835,30 @@ works. Things worth knowing before reading its output:
   exits instead of joining. **Still prove what loaded**, and from the log rather than from having deployed:
   `grep 'Loading assembly DLL' <userDir>/logs/godot.log` must name `mods/couchcoop/couchcoop.dll`, in the
   seat logs as well as the host's.
+- **A seat that CouchCoop is not running in now dies in 20 seconds, not 75.** The seat declares "Steam Cloud
+  save isolation installed" on every heartbeat; a heartbeat without that declaration fails the seat on arrival,
+  and total silence past `COUCHCOOP_SEAT_CONTACT_TIMEOUT_SECONDS` (default 20) does the same. Both land as the
+  `seat-cloud-isolation-unconfirmed` issue, whose detail says which of the two it was — so a seat that used to
+  sit on "Joining…" for 75 seconds because its mod failed to load now stops early and says why. To exercise the
+  refusal itself, launch the host with `COUCHCOOP_FORCE_SEAT_ISOLATION_FAILURE=1` (exactly `1`); it is inherited
+  by the seats it spawns, forces the verdict without opening any write path, and is inert unset.
+
+  **MEASURE THE MARGIN ON THE MACHINE YOU ARE ON — one grep, every live leg that spawns a seat.** The 20s
+  default assumes a seat can say hello (from the cloud-isolation guard, the first patch-time thing in mod init)
+  well inside it, and that assumption is only true until a slower machine is tried. After any leg that spawned a
+  seat:
+
+  ```bash
+  grep 'seat first contact' ~/.local/share/SlayTheSpire2/logs/godot.log | tail -5
+  # [couchcoop] seat first contact slot=2 afterMs=3412 phase=mod-init cloudIsolated=True
+  ```
+
+  `afterMs` is spawn → our code running with the cloud writes closed: game boot plus mod init, NOT the 20-30s
+  asset preload. Healthy figures should be a few seconds. **Anything past ~10 000 on a machine that is starting
+  normally means the default is too tight for it** — raise `COUCHCOOP_SEAT_CONTACT_TIMEOUT_SECONDS` for that
+  machine, and say so in the round report so the default can be raised for everyone. A missing line means the
+  seat never made contact at all, which is the condition the deadline exists for. Record the number you saw; it
+  is the measurement this default is waiting on (there is none from a Steam Deck yet).
 - **`pkill -f <pattern>` self-matches.** A pattern that also appears in the invoking shell's own argv (e.g. a
   literal string from the command you're about to relaunch) kills the invoking shell too (exit 144, no output).
   Also: `COUCHCOOP_HEADLESS_CLIENT` is an environment variable, not argv — `pkill -f` against it matches

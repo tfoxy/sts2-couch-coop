@@ -73,6 +73,8 @@
   "couchcoop_connection_error_seat_run_in_progress_action": "Laden Sie den gespeicherten Run erneut, damit dieser Spieler wieder mitspielen kann.",
   "couchcoop_connection_error_mod_mismatch_summary": "Das Spiel dieses Spielers hat eine andere Kopie von CouchCoop geladen.",
   "couchcoop_connection_error_mod_mismatch_action": "Behalten Sie nur eine Kopie der Mod installiert, starten Sie das Spiel neu und versuchen Sie es erneut.",
+  "couchcoop_connection_error_seat_cloud_isolation_summary": "Das Spiel dieses Spielers konnte nicht zusichern, Ihre Steam-Cloud-Spielstände unangetastet zu lassen.",
+  "couchcoop_connection_error_seat_cloud_isolation_action": "Es wurde gestoppt, bevor es etwas schreiben konnte. Starten Sie das Spiel neu und versuchen Sie es erneut; kopieren Sie diesen Bericht, falls es wieder passiert.",
   "couchcoop_connection_error_seat_port_summary": "Ein anderes Programm auf diesem Computer belegt den Port dieses Spielers.",
   "couchcoop_connection_error_seat_port_action": "Schließen Sie das Programm, das diesen Port auf dem Host-Computer belegt, auch wenn es eine weitere Kopie von Slay the Spire 2 ist, und versuchen Sie es erneut.",
   "couchcoop_connection_error_seat_port_occupied_summary": "Ein anderes Programm auf diesem Computer belegt einen der Ports, die Couch-Koop an Spieler vergibt.",
