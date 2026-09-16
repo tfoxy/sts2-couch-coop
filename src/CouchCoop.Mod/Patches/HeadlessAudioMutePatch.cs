@@ -20,10 +20,18 @@ namespace CouchCoop.Mod.Patches;
 ///
 /// Relationship to <see cref="Session.HeadlessFmodShutdown"/>: that helper additionally tears the FMOD system down
 /// (<c>FmodServer.shutdown()</c>) to reclaim the always-on native mixer/DSP thread — the frame-rate-INDEPENDENT
-/// audio CPU that muting alone can never stop. This patch is its safety net: once the system is shut down, any
-/// surviving game→FMOD forward (most dangerously per-act BANK LOAD on an act transition, but also stop/param/volume
-/// calls) would hit an uninitialized native server; no-opping every forward here guarantees nothing re-enters it.
-/// The two are complementary — this patch is correct on its own (no audio) even when shutdown is disabled.
+/// audio CPU that muting alone can never stop. This patch is its safety net for the VANILLA game: once the system
+/// is shut down, any surviving game→FMOD forward (most dangerously per-act BANK LOAD on an act transition, but also
+/// stop/param/volume calls) would hit an uninitialized native server, and no-opping every forward in
+/// <see cref="Targets"/> keeps the base game out of it. The two are complementary — this patch is correct on its
+/// own (no audio) even when shutdown is disabled.
+///
+/// <b>It is a list, not a guarantee, and it never covers third-party mods.</b> <see cref="Targets"/> names game
+/// types this assembly compiled against; a mod ships its own FMOD helper that this patch cannot see and can never
+/// enumerate. That is not theoretical — a third-party mod's per-call singleton lookup crashed a seat on
+/// 2026-09-16. Surviving an unknown caller is a different mechanism, and it lives in
+/// <see cref="Session.FmodSingletonStub"/>: the engine singleton NAME is re-pointed at a no-op stub before the
+/// native system is released, so a caller nobody listed gets <c>null</c> instead of freed memory.
 ///
 /// Coverage is <see cref="Targets"/> — one list, read both by <see cref="Apply"/> and by the reflection guard test,
 /// so the thing we patch and the thing we assert can no longer drift apart.

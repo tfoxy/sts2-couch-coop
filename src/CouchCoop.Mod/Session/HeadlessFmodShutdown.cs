@@ -1,6 +1,7 @@
 using Godot;
 using System;
 using System.Collections.Generic;
+using System.Linq;
 using System.Threading.Tasks;
 
 namespace CouchCoop.Mod.Session;
@@ -25,7 +26,20 @@ namespace CouchCoop.Mod.Session;
 /// <c>/root/FmodManager</c> and disabled its processing first — if the autoload is absent (a future game/addon
 /// change), it aborts without shutting down, so it can't re-trigger the crash. Pair with
 /// <see cref="HeadlessAudioMutePatch"/>, which no-ops every <c>NAudioManager</c>/<c>NRunMusicController</c> forward
-/// so no game code re-enters the torn-down system (notably per-act bank load/unload on act transitions).
+/// so no VANILLA game code re-enters the torn-down system (notably per-act bank load/unload on act transitions).
+///
+/// THAT MUTE PATCH IS NOT A GUARANTEE — it is a list, and a list only covers callers we compiled against.
+/// This class doc used to claim the pair made it impossible for anything to re-enter the released system. That
+/// was false the moment a third-party mod was installed. A MOD's own audio helper is on nobody's list, and a
+/// well-written one resolves the singleton per call behind exactly the guards that all still pass after
+/// <c>shutdown()</c> — <c>has_singleton</c> true, <c>is_instance_valid</c> true — because <c>shutdown()</c>
+/// frees the NATIVE system while leaving the GODOT object registered and alive. Measured, 2026-09-16: with
+/// Downfall installed, a viewer tapping a modded character in the browser mirror killed the seat with a native
+/// SIGSEGV inside <c>libGodotFmod…so</c> (faults at +0x50 / +0x90), nothing in <c>godot.log</c>, no managed
+/// exception for the mod's own try/catch to catch. The hole is the DOORWAY, not the caller list, so
+/// <see cref="Teardown"/> now closes the doorway (<see cref="FmodSingletonStub.CloseDoorways"/>) BEFORE
+/// releasing the system, leaving no window in between. Read that class for the ladder and for the residual
+/// risk we knowingly keep.
 ///
 /// A second, quieter ordering hazard: the addon's <c>FmodListener2D</c>/<c>FmodListener3D</c> nodes call
 /// <c>FmodServer.remove_listener()</c> from their own <c>_exit_tree</c>. Left attached, that only fires when the
@@ -210,8 +224,22 @@ public static class HeadlessFmodShutdown
         // teardown at process exit, long after shutdown() below has already run.
         var detachedListeners = DetachFmodListeners(root);
 
-        // 3) Now safe: release the FMOD system and its mixer/DSP thread.
-        var server = Engine.HasSingleton(FmodServerSingleton) ? Engine.GetSingleton(FmodServerSingleton) : null;
+        // 3) Close the DOORWAY before releasing the system, so there is never a window in which the engine
+        // singleton resolves to an object whose native system is gone. This is what protects callers we did
+        // not compile against — any third-party mod's audio helper — and it captures the REAL singleton object
+        // on the way through, which is what step 4 shuts down. See FmodSingletonStub for the fallback ladder.
+        var doorways = FmodSingletonStub.CloseDoorways();
+
+        // 4) Now safe: release the FMOD system and its mixer/DSP thread. Called on the RETAINED real object —
+        // the name may now point at the no-op stub, and registration is irrelevant to a direct Call().
+        // Resolve through the doorway result when there is one, and only fall back to the live registry when the
+        // swap never saw this name — asking the registry AFTER a successful swap would hand back the no-op stub
+        // and 'shutdown()' on the stub would return null while the real mixer thread kept running, logged as a
+        // success. The fallback exists for the case where CloseDoorways found nothing at all.
+        var doorway = doorways.FirstOrDefault(d => d.Name == FmodServerSingleton);
+        var server = doorway is not null
+            ? doorway.Real
+            : Engine.HasSingleton(FmodServerSingleton) ? Engine.GetSingleton(FmodServerSingleton) : null;
         if (server is not null && GodotObject.IsInstanceValid(server) && server.HasMethod(ShutdownMethod))
         {
             server.Call(ShutdownMethod);
@@ -224,7 +252,7 @@ public static class HeadlessFmodShutdown
                 "[fmod] FmodServer singleton/shutdown() unavailable at teardown — left running (update() already disabled).");
         }
 
-        // 4) Free the detached listener node(s) now that they're safely outside the tree. Their _exit_tree already
+        // 5) Free the detached listener node(s) now that they're safely outside the tree. Their _exit_tree already
         // ran in step 2 while FmodServer was alive; freeing an out-of-tree node does not re-dispatch _exit_tree, so
         // this cannot re-run remove_listener() against the now-released system.
         foreach (var listener in detachedListeners)
