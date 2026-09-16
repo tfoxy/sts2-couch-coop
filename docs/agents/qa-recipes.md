@@ -668,6 +668,19 @@ roster, handshake. What to know before reading its output:
   a Steam client that is running and **online**, and a host launched without `-fastmp` — leg 0 refuses
   that flag up front rather than spending three minutes to report "not the Steam branch" about a host
   that was never going to be one.
+- **Two preconditions leg 0 cannot check, both measured on 2026-09-16.** (1) *A Steam client that
+  answers.* "Steam is running, logged on, `api.steampowered.com` returns 200" does not mean it will
+  create a lobby: a client left up for days refused five host starts in a row with
+  `k_EResultNoConnection`, and a plain **restart of the Steam client** fixed it with nothing else
+  changed. That failure is not the rig and not an isolated `--instance` — the same instance hosted
+  real lobbies immediately afterwards. (2) *An active profile with multiplayer progression.* On a
+  fresh profile (`maxAscension: 0`) the game skips `NMultiplayerHostSubmenu` entirely and the Host
+  click hosts a standard run on the spot, so leg 1 times out on a submenu that will never appear —
+  while leg 2 passes on the real Steam lobby that was created behind it. That combination (leg 1 red,
+  leg 2 green, `NCharacterSelectScreen` in the timeout's last value) means "wrong profile", not
+  "hosting is broken". The instance's active profile is not stable, either: Steam cloud sync pushes
+  `modded/profile.save` from the remote store into the instance's user dir at startup, so set
+  `last_profile_id` in **both** places.
 - **Leg 5 is build-conditional, and defaults to asserting.** A build in `BUILDS_WITHOUT_HANDSHAKE`
   (`v0.107.1` today) skips it; every other build, **including one the probe has never seen**, must show
   `[HandshakeManager] Got handshake from sender …` in the seat's own `godot.log` and must not show
