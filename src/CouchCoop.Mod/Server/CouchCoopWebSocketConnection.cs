@@ -1031,7 +1031,7 @@ public sealed class CouchCoopWebSocketConnection
         // absent. The same EngineAvailable latch that keeps static-background work out of that process must gate
         // these game-side settings too. In every actual Godot host CouchCoopMod.Init sets it before serving /ws,
         // so production settings retain their existing behavior and errors.
-        if (!CouchCoopStaticBackgroundTracker.EngineAvailable)
+        if (!CouchCoopMod.EngineAvailable)
         {
             return;
         }

@@ -64,15 +64,10 @@ public sealed class CouchCoopStaticBackgroundTracker(
     /// <summary>The tracker's published volatile: the current combat bg descriptor source, null when unknown.</summary>
     public static CouchCoopStaticBackgroundState? Published => Volatile.Read(ref _published);
 
-    /// <summary>
-    /// Latched TRUE from <c>CouchCoopMod.Init()</c> — i.e. only inside a REAL Godot process. The probe path calls
-    /// into GodotSharp NATIVE code (<c>Callable.From(...).CallDeferred()</c>), and in a Godot-less server process
-    /// that has GodotSharp on its probing path (tests/CouchCoop.Mod.Tests copies the DLL) the managed call JITs
-    /// fine and then SEGFAULTS in native interop — uncatchable, same class as the SpirectlAssetBinaryCache
-    /// GlobalizePath hazard. The try/catch around scheduling only covers hosts where GodotSharp fails to LOAD
-    /// (tests/CouchCoop.HostedServerHarness); this latch covers the loaded-but-engineless case.
-    /// </summary>
-    public static volatile bool EngineAvailable;
+    // The engine latch this probe path needs is CouchCoopMod.EngineAvailable — one flag, one writer (Init), read
+    // here and by every other native-call gate in the mod. It used to be stored on THIS type, which made it a
+    // per-assembly static: Server/*.cs is link-compiled into CouchCoop.Mod.HotReload too, so the reloaded copy
+    // could never be set and silently read false. See the flag's own remarks.
 
     private readonly Action? _onPublishedChanged = onPublishedChanged;
     private readonly Action<string> _log = log ?? (message => Console.Error.WriteLine(message));
@@ -115,7 +110,7 @@ public sealed class CouchCoopStaticBackgroundTracker(
         }
 
         _desiredSkip = desired;
-        if (!EngineAvailable)
+        if (!CouchCoopMod.EngineAvailable)
         {
             return; // Godot-less server process: nothing to stamp, and native calls would crash
         }
@@ -159,7 +154,7 @@ public sealed class CouchCoopStaticBackgroundTracker(
         }
 
         _lastScreenSignature = signature;
-        if (!EngineAvailable)
+        if (!CouchCoopMod.EngineAvailable)
         {
             return; // Godot-less server process (test harnesses): nothing to probe, and native calls would crash
         }

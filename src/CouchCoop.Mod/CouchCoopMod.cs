@@ -33,6 +33,34 @@ public static class CouchCoopMod
     public static bool IsHeadlessClient { get; } =
         Environment.GetEnvironmentVariable("COUCHCOOP_HEADLESS_CLIENT") == "1";
 
+    /// <summary>
+    /// "A real game process is running behind this assembly." Latched TRUE by <see cref="Init"/>, which is the
+    /// only writer, and false everywhere else: test runners, benches, the hosted server harness, and any
+    /// tooling that loads these types without an engine.
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// EVERY READER GATES A NATIVE CALL, AND THE LATCH — NOT A <c>try</c> — IS WHAT MAKES IT SAFE. GodotSharp
+    /// (and STS2's own logger) bind and JIT perfectly well in a process that merely has the DLL on its probing
+    /// path, and then SEGFAULT in native interop, which no <c>catch</c> can see. A <c>try</c> only covers the
+    /// other case, where the assembly fails to LOAD at all. Readers today: the static-background tracker's
+    /// deferred probe, <c>BrowserPortFile</c>, <c>CouchCoopWebSocketConnection.ApplyBrowserSettings</c>,
+    /// <c>CouchCoopAtlasManifest.Warm</c>, <c>CouchCoopCacheRoot</c>'s game-data-dir resolution, and
+    /// <c>CouchCoopLog</c>.
+    /// </para>
+    /// <para>
+    /// IT LIVES HERE, ON THE ROOT TYPE, BECAUSE THAT IS THE ONLY SINGLE-INSTANCE HOME. <c>Server/*.cs</c> is
+    /// link-compiled into <c>CouchCoop.Mod.HotReload</c> as well, so a latch stored on any type in that folder
+    /// exists TWICE with independent statics, and <c>Init</c> could only ever set the <c>CouchCoop.Mod</c> copy.
+    /// The hot generation really does construct its own <c>SpirectlAssetBinaryCache</c>
+    /// (<c>CouchCoopHotServerGeneration</c>), so a per-assembly latch would have left the reloaded generation
+    /// resolving a DIFFERENT cache root than its host. <c>CouchCoopMod</c> is not link-compiled, so both
+    /// assemblies reach this one field through the project reference — the same route
+    /// <c>CachedSpirectlAssetHttpAdapter</c> already takes to <see cref="IsHeadlessClient"/>.
+    /// </para>
+    /// </remarks>
+    public static volatile bool EngineAvailable;
+
     // True when this instance has NO real window — a spawned headless CLIENT (above) OR a host launched with
     // Godot's `--headless` (dev/server). Any windowless instance needs the 16:9 viewport force: with no window and
     // no saved aspect setting the root viewport goes Auto→Expand → a ~1920x1920 SQUARE that vertically offsets the
@@ -61,12 +89,13 @@ public static class CouchCoopMod
     {
         lock (Gate)
         {
-            // FIRST OF ALL, above even the build guard: this is a real game process, so STS2's own logger may
-            // be called. CouchCoopLog is OFF by default because the call it makes is uncatchable outside the
-            // engine (native SIGSEGV, not an exception), and this is the one line that turns it on. It sits
-            // above the guard below because that guard's refusal is exactly the kind of line a player's
-            // godot.log has to carry.
-            CouchCoopLog.GameRuntimeAvailable = true;
+            // FIRST OF ALL, above even the build guard: Init only ever runs inside a real game process, so this
+            // is the one place that may say so. Everything gated on the latch — STS2's own logger, the cache
+            // root's game-data-dir resolution, the static-background probe, the atlas walk — is a native call
+            // that SEGFAULTS rather than throwing when there is no engine behind it, so the flag has to be on
+            // before the first of them. It sits above the seat build guard below because that guard's refusal
+            // is exactly the kind of line a player's godot.log has to carry.
+            EngineAvailable = true;
 
             // FIRST, before a patch is applied, a cache is warmed or a runtime exists: a seat running a
             // different CouchCoop build than the host that spawned it reports that and terminates. Everything
@@ -83,10 +112,6 @@ public static class CouchCoopMod
             InitializeHostLogPath();
 
             CouchCoopLocalization.Initialize();
-            // Init only ever runs inside a real Godot process, so it is the safe place to arm the
-            // static-background tracker's probe path (which calls GodotSharp NATIVE code — see the latch's doc
-            // for why a Godot-less server process must never take it).
-            Server.CouchCoopStaticBackgroundTracker.EngineAvailable = true;
 
             // Resolve (and, when the game build or a cache generation has moved, purge) the on-disk cache before
             // ANYTHING can read or write it. Everything those caches hold is derived from the game's content, so

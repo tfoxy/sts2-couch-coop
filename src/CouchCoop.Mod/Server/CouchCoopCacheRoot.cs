@@ -634,17 +634,25 @@ public static class CouchCoopCacheRoot
             return configured;
         }
 
-        // GodotSharp is provided by the running game, not the test/headless runner — referencing it can throw an
-        // assembly-load failure when the method is JIT-compiled, so the call is isolated in a non-inlined method
-        // and the failure is caught HERE (a try INSIDE that method would never run).
+        // THE LATCH, NOT THE TRY/CATCH, IS WHAT MAKES THIS SAFE — and the try alone was a trap, exactly as it is
+        // at the identical call in BrowserPortFile.TryResolvePath. The catch below only covers a process where
+        // GodotSharp fails to LOAD. In one that has the DLL on its probing path but no engine behind it — which
+        // every C# test runner here is, because they copy GodotSharp.dll — the managed call binds, JITs, and then
+        // SEGFAULTS inside ProjectSettings.GlobalizePath, uncatchable. That is what made
+        // HotReloadableBrowserServerHost unstandable-up in a suite: its built-in generation constructs a
+        // SpirectlAssetBinaryCache, which lands here. Measured, exit 139.
         string? gameDir = null;
-        try
+        if (CouchCoopMod.EngineAvailable)
         {
-            gameDir = TryResolveGameDataDir();
-        }
-        catch
-        {
-            // GodotSharp unavailable (headless/test) — fall back below.
+            try
+            {
+                gameDir = TryResolveGameDataDir();
+            }
+            catch
+            {
+                // GodotSharp failed to LOAD at all (the hosted-server harness) — the case the latch does not
+                // cover. Fall back below.
+            }
         }
 
         if (!string.IsNullOrWhiteSpace(gameDir))

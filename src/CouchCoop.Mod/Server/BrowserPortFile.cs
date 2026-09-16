@@ -123,9 +123,9 @@ public static class BrowserPortFile
         // has GodotSharp on its probing path but no engine behind it (which `tests/CouchCoop.Mod.Tests` is — it
         // copies the DLL, and it really does start a browser server), the managed call JITs fine and then
         // SEGFAULTS in native code, which no `catch` can see. This exact call cost a test run with SIGSEGV before
-        // the latch went in. `CouchCoopStaticBackgroundTracker.EngineAvailable` is latched true from
+        // the latch went in. `CouchCoopMod.EngineAvailable` is latched true from
         // `CouchCoopMod.Init()`, i.e. only inside a real Godot process, and its own remarks name this hazard.
-        if (!CouchCoopStaticBackgroundTracker.EngineAvailable)
+        if (!CouchCoopMod.EngineAvailable)
         {
             return null;
         }
