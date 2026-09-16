@@ -77,6 +77,18 @@ if (args is [ManagedCacheProcessTests.ChildVerb, ..])
 // how many players can actually connect. They are pure — no IO, no Harmony install, no live game, no port — which
 // makes them the one slice of this suite that is safe to run on its own, and the way to verify a hosting change
 // when something else in the full run is unhappy. They also run in the normal sequence below.
+// `dotnet run --project tests/CouchCoop.Mod.Tests -- fmod-stub` runs the FMOD singleton stub's source generator
+// ALONE: the rules that decide whether the no-op GDScript a headless seat swaps in before tearing FMOD down
+// actually compiles. Pure strings, no Godot types, no IO. Its own verb for the same reason every verb here
+// exists — the full sequence dies partway through on some machines — and because this is the seam that stands
+// between a third-party mod's FMOD call and a native SIGSEGV on the seat.
+if (args is ["fmod-stub", ..])
+{
+    FmodSingletonStubTests.Run();
+    Console.WriteLine("fmod-stub: ok");
+    return;
+}
+
 if (args is ["host-guards", ..])
 {
     NetTransportPatchTargetsTests.Run();
@@ -391,6 +403,10 @@ SpirectlEmbeddedAssemblyBoundaryTests.Run();
 // the check most likely to be defeated by where it sits, since everything from HeadlessAudioMuteTargetsTests
 // down is currently unreachable. Also reachable alone as `-- log-prefix`.
 CouchCoopLogPrefixTests.Run();
+// The GDScript source generated for the no-op FMOD singleton stub — pure strings, no Godot types, and placed
+// this high for the usual reason: everything from HeadlessAudioMuteTargetsTests down is unreachable on some
+// machines. Also reachable alone as `-- fmod-stub`.
+FmodSingletonStubTests.Run();
 // Host patch health: a registry with a fake clock and a recorder, no Godot types — up here with the other
 // pure suites, and also reachable alone as `-- connections`.
 HostPatchHealthTests.Run();
