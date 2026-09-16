@@ -54,7 +54,7 @@ public static class HeadlessViewportConfigurator
             _started = true;
         }
 
-        Console.Error.WriteLine("[couchcoop] headless viewport configurator starting");
+        CouchCoopLog.Stderr("headless viewport configurator starting");
         _ = Task.Run(ConfigureLoopAsync);
     }
 
@@ -94,7 +94,7 @@ public static class HeadlessViewportConfigurator
         catch (Exception exception)
         {
             threw = true;
-            Console.Error.WriteLine($"[couchcoop] headless viewport apply failed: {exception.GetType().Name}: {exception.Message}");
+            CouchCoopLog.Stderr($"headless viewport apply failed: {exception.GetType().Name}: {exception.Message}");
             return false;
         }
     }
@@ -131,8 +131,8 @@ public static class HeadlessViewportConfigurator
 
         if (changed)
         {
-            Console.Error.WriteLine(
-                $"[couchcoop] headless viewport: aspect {beforeAspect}->Keep, content {beforeContent}->{TargetSize}, "
+            CouchCoopLog.Stderr(
+                $"headless viewport: aspect {beforeAspect}->Keep, content {beforeContent}->{TargetSize}, "
                 + $"window {beforeWindow}->{root.Size}, visible={root.GetVisibleRect().Size}");
         }
 

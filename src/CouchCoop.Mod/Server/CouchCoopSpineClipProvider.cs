@@ -4,6 +4,7 @@ using System.Globalization;
 using System.Text;
 using CouchCoop.Mod.Diagnostics;
 using CouchCoop.Mod.Runtime;
+using CouchCoop.Mod.Session;
 using Spirectl.Sts2.Embedding;
 using Spirectl.Sts2.Live;
 
@@ -74,8 +75,8 @@ public sealed class CouchCoopSpineClipProvider(
 
     private readonly ISpirectlAssetProvider _assets = assets ?? throw new ArgumentNullException(nameof(assets));
     private readonly SpirectlAssetBinaryCache _cache = cache ?? throw new ArgumentNullException(nameof(cache));
-    private readonly Action<string> _log = log ?? (message => Console.Error.WriteLine(message));
-    private readonly RateLimitedDiagnosticLog _cacheDiagnostics = new(log ?? Console.Error.WriteLine);
+    private readonly Action<string> _log = log ?? CouchCoopLog.Stderr;
+    private readonly RateLimitedDiagnosticLog _cacheDiagnostics = new(log ?? CouchCoopLog.Stderr);
 
     // Live count of STS2 instances on this machine (host + headless seats), sampled per admission. Null on a host
     // that could not resolve its seat table — the budget then behaves as "one instance" (never degrade), which is
@@ -322,7 +323,7 @@ public sealed class CouchCoopSpineClipProvider(
             var instances = SampleGameInstances();
             if (SpineBakeBudget.ShouldDegrade(instances, SpineBakeBudget.InstanceLimit))
             {
-                _log($"[couchcoop] spine-clip degraded instances={instances} limit={SpineBakeBudget.InstanceLimit} key={spineKey}");
+                _log($"spine-clip degraded instances={instances} limit={SpineBakeBudget.InstanceLimit} key={spineKey}");
                 var degraded = await GetClipAsync(degradedKey).ConfigureAwait(false);
                 return degraded with { Degraded = true };
             }
@@ -405,7 +406,7 @@ public sealed class CouchCoopSpineClipProvider(
         if (cacheWriteFailed)
         {
             // Best-effort cache; serve the freshly rendered clip even if the write-through fails.
-            _cacheDiagnostics.Write("spine-clip-cache-write-failed", $"[couchcoop] spine-clip cache write failed key={spineKey}");
+            _cacheDiagnostics.Write("spine-clip-cache-write-failed", $"spine-clip cache write failed key={spineKey}");
         }
 
         bake.CacheWritten(cacheWrite);

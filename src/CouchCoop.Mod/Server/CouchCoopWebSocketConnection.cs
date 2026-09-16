@@ -17,7 +17,7 @@ namespace CouchCoop.Mod.Server;
 
 public sealed class CouchCoopWebSocketConnection
 {
-    private static readonly RateLimitedDiagnosticLog MessageDiagnostics = new(Console.Error.WriteLine);
+    private static readonly RateLimitedDiagnosticLog MessageDiagnostics = new(CouchCoopLog.Stderr);
     internal const int MaxInputMessageBytes = 4 * 1024;
     internal const string InvalidInputMessageCode = "invalid-input-message";
     private readonly BrowserStateEnvelopeFactory _envelopeFactory;
@@ -469,7 +469,7 @@ public sealed class CouchCoopWebSocketConnection
             catch (Exception exception)
             {
                 // Naming is cosmetic: never let it surface as a failed join.
-                Console.Error.WriteLine($"[couchcoop] early SetClientName({netId}) failed: {exception.GetType().Name}: {exception.Message}");
+                CouchCoopLog.Stderr($"early SetClientName({netId}) failed: {exception.GetType().Name}: {exception.Message}");
             }
         });
     }
@@ -737,8 +737,8 @@ public sealed class CouchCoopWebSocketConnection
                 {
                     headlessPort = null;
                     joinRejection = "spawn-failed";
-                    Console.Error.WriteLine(
-                        "[couchcoop] secure-origin join refused: headless instance on port "
+                    CouchCoopLog.Stderr(
+                        "secure-origin join refused: headless instance on port "
                         + $"{insecurePort.ToString(System.Globalization.CultureInfo.InvariantCulture)} reported no secure port.");
                 }
             }
@@ -754,7 +754,7 @@ public sealed class CouchCoopWebSocketConnection
             ConnectionRegistry.Shared.Fail(session.Id, "launch-exception", "The host could not complete the game launch.",
                 "Retry this connection. If it fails again, copy this report.", joinException.ToString());
             MessageDiagnostics.Write("join-failed",
-                $"[couchcoop] mirror join failed for '{join.Name}': {joinException}");
+                $"mirror join failed for '{join.Name}': {joinException}");
         }
         finally
         {
@@ -1037,7 +1037,7 @@ public sealed class CouchCoopWebSocketConnection
             }
             catch (Exception ex)
             {
-                MessageDiagnostics.Write("invalid-message", $"[couchcoop] websocket message failed: {ex}");
+                MessageDiagnostics.Write("invalid-message", $"websocket message failed: {ex}");
                 await SendResultAsync(InvalidMessage(inboundRequestId, "The game could not process this message.")).ConfigureAwait(false);
             }
         }

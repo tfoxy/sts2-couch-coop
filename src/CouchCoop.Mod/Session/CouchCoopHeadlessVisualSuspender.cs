@@ -329,8 +329,8 @@ public static class CouchCoopHeadlessVisualSuspender
         // player's own on-screen frame rate — dropping it to 8fps because the game went quiet would be a visible
         // stutter on the TV, and it is not what the viewer asked for by ticking "Freeze particles".
         _idleFps = rescanOnly ? 0 : DefaultIdleMaxFps;
-        Console.Error.WriteLine(
-            $"[couchcoop][suspend] {(rescanOnly ? "on-demand freeze rescan enabling (browser Settings toggle on a non-headless instance)" : "headless idle visual suspend enabling")}; "
+        CouchCoopLog.Stderr(
+            $"[suspend] {(rescanOnly ? "on-demand freeze rescan enabling (browser Settings toggle on a non-headless instance)" : "headless idle visual suspend enabling")}; "
             + $"idle fps cap={(_idleFps > 0 ? _idleFps.ToString() : "off")}");
 
         // Catch one-shots that are (re)started AFTER their node was already frozen — the freeze walk only sees a
@@ -405,14 +405,14 @@ public static class CouchCoopHeadlessVisualSuspender
             }
             catch (Exception exception)
             {
-                Console.Error.WriteLine(
-                    $"[couchcoop][suspend] install attempt failed: {exception.GetType().Name}: {exception.Message}");
+                CouchCoopLog.Stderr(
+                    $"[suspend] install attempt failed: {exception.GetType().Name}: {exception.Message}");
             }
 
             await Task.Delay(250).ConfigureAwait(false);
         }
 
-        Console.Error.WriteLine("[couchcoop][suspend] install gave up (SceneTree never became ready)");
+        CouchCoopLog.Stderr("[suspend] install gave up (SceneTree never became ready)");
     }
 
     // Runs on the game main thread (deferred). Attaches a repeating Timer whose Timeout drives Tick.
@@ -436,7 +436,7 @@ public static class CouchCoopHeadlessVisualSuspender
         timer.Timeout += () => Tick(root);
         root.AddChild(timer);
         CouchCoopLog.Info(
-            $"[couchcoop][suspend] headless idle visual suspend ready (idle>={IdleThresholdMs}ms, check={CheckIntervalSeconds:0.##}s, "
+            $"[suspend] headless idle visual suspend ready (idle>={IdleThresholdMs}ms, check={CheckIntervalSeconds:0.##}s, "
             + $"idle fps cap={(_idleFps > 0 ? _idleFps.ToString() : "off")})");
     }
 
@@ -566,7 +566,7 @@ public static class CouchCoopHeadlessVisualSuspender
         if (froze > 0)
         {
             CouchCoopLog.Info(
-                $"[couchcoop][suspend] froze {froze} decorative animator node(s) "
+                $"[suspend] froze {froze} decorative animator node(s) "
                 + $"(total held: process-only {_decorativeProcessFrozenIds.Count}, whole-node {_decorativeFrozenIds.Count})");
         }
     }
@@ -627,7 +627,7 @@ public static class CouchCoopHeadlessVisualSuspender
         if (froze > 0)
         {
             CouchCoopLog.Info(
-                $"[couchcoop][suspend] froze {froze} particle node(s) (total held {_particleFrozenIds.Count}"
+                $"[suspend] froze {froze} particle node(s) (total held {_particleFrozenIds.Count}"
                 + (nudged > 0 ? $", {nudged} mid-burst one-shot(s) scheduled for an end-of-burst nudge)" : ")"));
         }
 
@@ -880,7 +880,7 @@ public static class CouchCoopHeadlessVisualSuspender
         catch (Exception exception)
         {
             CouchCoopLog.Info(
-                $"[couchcoop][suspend] finish-nudge fire failed for {instanceId}: "
+                $"[suspend] finish-nudge fire failed for {instanceId}: "
                 + $"{exception.GetType().Name}: {exception.Message}");
         }
     }
@@ -952,7 +952,7 @@ public static class CouchCoopHeadlessVisualSuspender
         if (froze > 0 || refroze > 0)
         {
             CouchCoopLog.Info(
-                $"[couchcoop][suspend] froze {froze} spine node(s) (total held {_spineFrozenIds.Count}"
+                $"[suspend] froze {froze} spine node(s) (total held {_spineFrozenIds.Count}"
                 + (refroze > 0 ? $", re-froze {refroze} that had come back)" : ")"));
         }
 
@@ -994,7 +994,7 @@ public static class CouchCoopHeadlessVisualSuspender
 
         _fpsThrottled = true;
         Engine.MaxFps = _idleFps;
-        CouchCoopLog.Info($"[couchcoop][suspend] idle — throttled Engine.MaxFps {_baselineMaxFps}->{_idleFps}");
+        CouchCoopLog.Info($"[suspend] idle — throttled Engine.MaxFps {_baselineMaxFps}->{_idleFps}");
     }
 
     // Runs on the main thread. Restore the captured baseline frame rate. Idempotent.
@@ -1007,7 +1007,7 @@ public static class CouchCoopHeadlessVisualSuspender
 
         _fpsThrottled = false;
         Engine.MaxFps = _baselineMaxFps;
-        CouchCoopLog.Info($"[couchcoop][suspend] activity — restored Engine.MaxFps ->{_baselineMaxFps}");
+        CouchCoopLog.Info($"[suspend] activity — restored Engine.MaxFps ->{_baselineMaxFps}");
     }
 
     // Match the whole spine-godot node family by native class string (SpineSprite / SpineMesh2D / SpineSlotNode /
@@ -1238,7 +1238,7 @@ public static class CouchCoopHeadlessVisualSuspender
 
         if (dropped > 0)
         {
-            CouchCoopLog.Info($"[couchcoop][suspend] runtime toggle — dropped {dropped} pending particle finish-nudge(s)");
+            CouchCoopLog.Info($"[suspend] runtime toggle — dropped {dropped} pending particle finish-nudge(s)");
         }
     }
 
@@ -1370,7 +1370,7 @@ public static class CouchCoopHeadlessVisualSuspender
         frozenIds.Clear();
         if (resumed > 0)
         {
-            CouchCoopLog.Info($"[couchcoop][suspend] runtime toggle — resumed {resumed} frozen node(s)");
+            CouchCoopLog.Info($"[suspend] runtime toggle — resumed {resumed} frozen node(s)");
         }
     }
 
@@ -1393,7 +1393,7 @@ public static class CouchCoopHeadlessVisualSuspender
         frozenIds.Clear();
         if (resumed > 0)
         {
-            CouchCoopLog.Info($"[couchcoop][suspend] runtime toggle — resumed _process on {resumed} decorative node(s)");
+            CouchCoopLog.Info($"[suspend] runtime toggle — resumed _process on {resumed} decorative node(s)");
         }
     }
 

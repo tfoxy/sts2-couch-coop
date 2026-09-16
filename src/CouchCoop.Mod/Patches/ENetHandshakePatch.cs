@@ -1,4 +1,5 @@
 using System.Reflection;
+using CouchCoop.Mod.Session;
 using HarmonyLib;
 
 namespace CouchCoop.Mod.Patches;
@@ -39,14 +40,14 @@ internal static class ENetHandshakePatch
             var target = AccessTools.Method(UpdateTarget);
             if (target is null)
             {
-                Console.Error.WriteLine("[couchcoop] ENetHandshakePatch: ENetClient.Update not found — handshake patch skipped.");
+                CouchCoopLog.Stderr("ENetHandshakePatch: ENetClient.Update not found — handshake patch skipped.");
                 return;
             }
 
             _isConnectedField = AccessTools.Field(target.DeclaringType!, ConnectedFieldName);
             if (_isConnectedField is null)
             {
-                Console.Error.WriteLine("[couchcoop] ENetHandshakePatch: ENetClient._isConnected not found — handshake patch skipped.");
+                CouchCoopLog.Stderr("ENetHandshakePatch: ENetClient._isConnected not found — handshake patch skipped.");
                 return;
             }
 

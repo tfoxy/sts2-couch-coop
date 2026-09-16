@@ -1,4 +1,5 @@
 using System;
+using CouchCoop.Mod.Session;
 using MegaCrit.Sts2.Core.Nodes.CommonUi;
 #if STS2_API_V111
 // Aliased rather than imported: the game's enum shares its name with the controller manager's property that
@@ -70,8 +71,8 @@ internal static class CouchCoopHostInputMode
         }
         catch (Exception exception)
         {
-            Console.Error.WriteLine(
-                $"[couchcoop] host input mode read failed detail={exception.GetType().Name}: {exception.Message}");
+            CouchCoopLog.Stderr(
+                $"host input mode read failed detail={exception.GetType().Name}: {exception.Message}");
             return default;
         }
     }

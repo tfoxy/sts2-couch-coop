@@ -137,12 +137,12 @@ public static class LanAddressRanking
         }
         catch (NetworkInformationException exception)
         {
-            log?.Invoke($"[couchcoop] lan-address enumeration failed detail={exception.GetType().Name}:{exception.ErrorCode}");
+            log?.Invoke($"lan-address enumeration failed detail={exception.GetType().Name}:{exception.ErrorCode}");
             return [];
         }
         catch (PlatformNotSupportedException exception)
         {
-            log?.Invoke($"[couchcoop] lan-address enumeration unsupported detail={exception.GetType().Name}");
+            log?.Invoke($"lan-address enumeration unsupported detail={exception.GetType().Name}");
             return [];
         }
 
@@ -160,7 +160,7 @@ public static class LanAddressRanking
             {
                 // One flaky adapter (a VPN tearing down mid-enumeration is the common case) must not cost us the
                 // rest of the list.
-                log?.Invoke($"[couchcoop] lan-address interface skipped detail={exception.GetType().Name}");
+                log?.Invoke($"lan-address interface skipped detail={exception.GetType().Name}");
             }
         }
 
@@ -236,7 +236,7 @@ public static class LanAddressRanking
         {
             if (IPAddress.Any.Equals(address) || IPAddress.IPv6Any.Equals(address))
             {
-                log?.Invoke($"[couchcoop] advertised-host override ignored value={value} reason=wildcard-address");
+                log?.Invoke($"advertised-host override ignored value={value} reason=wildcard-address");
                 return null;
             }
 
@@ -249,7 +249,7 @@ public static class LanAddressRanking
         // digits and dots was plainly MEANT to be an IPv4 literal, and it already failed to parse as one.
         if (unbracketed.All(character => char.IsAsciiDigit(character) || character == '.'))
         {
-            log?.Invoke($"[couchcoop] advertised-host override ignored value={value} reason=malformed-ip-literal");
+            log?.Invoke($"advertised-host override ignored value={value} reason=malformed-ip-literal");
             return null;
         }
 
@@ -258,7 +258,7 @@ public static class LanAddressRanking
             return unbracketed;
         }
 
-        log?.Invoke($"[couchcoop] advertised-host override ignored value={value} reason=not-an-address-or-hostname");
+        log?.Invoke($"advertised-host override ignored value={value} reason=not-an-address-or-hostname");
         return null;
     }
 }

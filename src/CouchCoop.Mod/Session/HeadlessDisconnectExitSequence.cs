@@ -127,14 +127,14 @@ internal sealed class HeadlessDisconnectExitSequence
             // Already shutting down — but the reason may still be worth more than the one we started with.
             if (!TryRefineReason(reason))
             {
-                _log($"[couchcoop] headless disconnect-exit already running — ignoring reason={reason}");
+                _log($"headless disconnect-exit already running — ignoring reason={reason}");
             }
 
             return false;
         }
 
         lock (_reasonGate) _reason = reason;
-        _log($"[couchcoop] headless lost its host connection permanently (reason={reason}) — exiting.");
+        _log($"headless lost its host connection permanently (reason={reason}) — exiting.");
 
         // (1) Backstop first — see the class remarks. A throw here would leave us with no guaranteed exit at all,
         // so a failed arm degrades to "quit only" with a loud log rather than aborting the shutdown.
@@ -144,7 +144,7 @@ internal sealed class HeadlessDisconnectExitSequence
         }
         catch (Exception exception)
         {
-            _log($"[couchcoop] headless disconnect-exit could not arm the force-exit backstop: {exception.GetType().Name}: {exception.Message}");
+            _log($"headless disconnect-exit could not arm the force-exit backstop: {exception.GetType().Name}: {exception.Message}");
         }
 
         // (2) Best-effort, time-boxed last gasp to the attached viewers.
@@ -157,7 +157,7 @@ internal sealed class HeadlessDisconnectExitSequence
         }
         catch (Exception exception)
         {
-            _log($"[couchcoop] headless disconnect-exit clean quit failed: {exception.GetType().Name}: {exception.Message} — waiting for the force-exit backstop.");
+            _log($"headless disconnect-exit clean quit failed: {exception.GetType().Name}: {exception.Message} — waiting for the force-exit backstop.");
         }
 
         return true;
@@ -189,14 +189,14 @@ internal sealed class HeadlessDisconnectExitSequence
             _refined = true;
         }
 
-        _log($"[couchcoop] headless disconnect-exit reason refined: {previous} -> {reason}");
+        _log($"headless disconnect-exit reason refined: {previous} -> {reason}");
         try
         {
             _refineReason?.Invoke(reason);
         }
         catch (Exception exception)
         {
-            _log($"[couchcoop] headless disconnect-exit could not report the refined reason: {exception.GetType().Name}: {exception.Message}");
+            _log($"headless disconnect-exit could not report the refined reason: {exception.GetType().Name}: {exception.Message}");
         }
 
         return true;
@@ -212,13 +212,13 @@ internal sealed class HeadlessDisconnectExitSequence
         }
         catch (Exception exception)
         {
-            _log($"[couchcoop] headless disconnect-exit last-gasp notify skipped: {exception.GetType().Name}: {exception.Message}");
+            _log($"headless disconnect-exit last-gasp notify skipped: {exception.GetType().Name}: {exception.Message}");
         }
     }
 
     private void ForceExitNow()
     {
-        _log("[couchcoop] headless disconnect-exit: clean quit did not land — force-exiting.");
+        _log("headless disconnect-exit: clean quit did not land — force-exiting.");
         _forceExit();
     }
 

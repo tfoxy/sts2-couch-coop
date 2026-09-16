@@ -54,7 +54,7 @@ public static class CouchCoopHeadlessCpuProfiler
             _started = true;
         }
 
-        Console.Error.WriteLine("[couchcoop][profile] headless CPU profiler enabling (COUCHCOOP_HEADLESS_PROFILE=1)");
+        CouchCoopLog.Stderr("[profile] headless CPU profiler enabling (COUCHCOOP_HEADLESS_PROFILE=1)");
         _ = Task.Run(InstallLoopAsync);
     }
 
@@ -75,14 +75,14 @@ public static class CouchCoopHeadlessCpuProfiler
             }
             catch (Exception exception)
             {
-                Console.Error.WriteLine(
-                    $"[couchcoop][profile] profiler install attempt failed: {exception.GetType().Name}: {exception.Message}");
+                CouchCoopLog.Stderr(
+                    $"[profile] profiler install attempt failed: {exception.GetType().Name}: {exception.Message}");
             }
 
             await Task.Delay(250).ConfigureAwait(false);
         }
 
-        Console.Error.WriteLine("[couchcoop][profile] profiler install gave up (SceneTree never became ready)");
+        CouchCoopLog.Stderr("[profile] profiler install gave up (SceneTree never became ready)");
     }
 
     // Runs on the game main thread (deferred). Attaches a repeating Timer whose Timeout drives sampling.
@@ -103,7 +103,7 @@ public static class CouchCoopHeadlessCpuProfiler
         };
         timer.Timeout += Sample;
         root.AddChild(timer);
-        CouchCoopLog.Info($"[couchcoop][profile] headless CPU profiler ready (interval={IntervalSeconds:0.#}s)");
+        CouchCoopLog.Info($"[profile] headless CPU profiler ready (interval={IntervalSeconds:0.#}s)");
     }
 
     // Runs on the game main thread (Timer.Timeout). Reads the monitors and logs one line.
@@ -135,7 +135,7 @@ public static class CouchCoopHeadlessCpuProfiler
         _lastProcMs = nowProcMs;
 
         CouchCoopLog.Info(
-            $"[couchcoop][profile] cpu%={cpuPct:0.0} fps={fps:0.0} frame_ms={frameMs:0.00} process_ms={processMs:0.00} "
+            $"[profile] cpu%={cpuPct:0.0} fps={fps:0.0} frame_ms={frameMs:0.00} process_ms={processMs:0.00} "
             + $"physics_ms={physicsMs:0.00} render_ms~={renderMs:0.00} drawcalls={drawCalls:0} "
             + $"objs={objects:0} prims={primitives:0} nodes={nodes:0} mem_mb={memMb:0.0}");
 
@@ -160,7 +160,7 @@ public static class CouchCoopHeadlessCpuProfiler
         var managedMb = GC.GetTotalMemory(forceFullCollection: false) / (1024.0 * 1024.0);
 
         CouchCoopLog.Info(
-            $"[couchcoop][memory] rss_mb={ReadResidentMb():0.0} godot_static_mb={staticMb:0.0} "
+            $"[memory] rss_mb={ReadResidentMb():0.0} godot_static_mb={staticMb:0.0} "
             + $"godot_static_max_mb={staticMaxMb:0.0} clr_managed_mb={managedMb:0.0} "
             + $"objects={objectCount:0} resources={resourceCount:0} "
             + $"tex_images_evicted={HeadlessTextureImageEvictor.EvictedCount} "

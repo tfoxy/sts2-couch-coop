@@ -439,14 +439,14 @@ public sealed class ConnectionArrivalLog
 
         if (suppressed == 0)
         {
-            _log("[couch-coop] arrival " + Describe(arrival));
+            _log("arrival " + Describe(arrival));
             return;
         }
 
         // One notice per throttle interval, keyed by a CONSTANT: nothing here may be keyed by anything a
         // caller controls.
         _throttleNotice.Write("arrival-log-throttled",
-            $"[couch-coop] arrival log throttled — {suppressed} further arrival(s) this minute were not logged");
+            $"arrival log throttled — {suppressed} further arrival(s) this minute were not logged");
     }
 
     private static string DescribeAddress(IPAddress? address)
@@ -485,7 +485,7 @@ public sealed class ConnectionArrivalLog
     /// </summary>
     private static void DefaultLog(string message)
     {
-        Console.Error.WriteLine(message);
+        CouchCoopLog.Stderr(message);
         CouchCoopLog.Info(message);
     }
 

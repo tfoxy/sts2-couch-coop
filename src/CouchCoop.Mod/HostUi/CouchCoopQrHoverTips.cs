@@ -1,3 +1,4 @@
+using CouchCoop.Mod.Session;
 using Godot;
 using MegaCrit.Sts2.Core.HoverTips;
 using MegaCrit.Sts2.Core.Localization;
@@ -173,6 +174,6 @@ internal static class CouchCoopQrHoverTips
         }
 
         _warned = true;
-        Console.Error.WriteLine($"[couchcoop] qr-hover-tips unavailable — dialog unaffected; first failure: {detail}");
+        CouchCoopLog.Stderr($"qr-hover-tips unavailable — dialog unaffected; first failure: {detail}");
     }
 }

@@ -713,6 +713,15 @@ Harmony hooks, how host-service rows deduplicate, that a degraded host condition
 than a failure, and the reachability watch that raises `host-no-inbound-connections`. Use the normal scratch
 deployment environment when running in a worktree.
 
+For the `[couchcoop]` log prefix, `dotnet run --project tests/CouchCoop.Mod.Tests -- log-prefix` checks that it
+is still produced by one function and spelled out in one file. Every mod log line is built by
+`CouchCoopLogLine.Format` (`src/CouchCoop.Mod/Session/CouchCoopLogLine.cs`); call sites pass the message alone
+and choose a sink on `CouchCoopLog` (`Stderr` / `Info` / `Warn` / `Error`, or `HeadlessLog.Write` for both).
+Subsystem tags stay in the message (`"[fmod] …"`). The verb fails if any other file under `src/CouchCoop.Mod*`
+puts the prefix in a string literal — which is how a `[couch-coop]` spelling used to survive at two call sites,
+invisible to every grep and probe script that matches the real one. The check also runs at the top of the
+normal sequence; registering it further down would have made it unreachable.
+
 For the host's NETWORKING decisions, `dotnet run --project tests/CouchCoop.Mod.Tests -- network` runs the whole
 family alone — advertised-IPv4 ranking (incl. the macOS `en0`/`utun`/`bridge100` shapes), the QR option list,
 the mDNS wire codec and its three-way mode decision, the discovery responder and the TLS listener over real

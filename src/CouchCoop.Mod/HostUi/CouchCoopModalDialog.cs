@@ -1,3 +1,4 @@
+using CouchCoop.Mod.Session;
 using Godot;
 using MegaCrit.Sts2.Core.ControllerInput;
 using MegaCrit.Sts2.Core.Nodes.CommonUi;
@@ -437,8 +438,8 @@ internal abstract partial class CouchCoopModalDialog : Control
         }
         catch (Exception exception)
         {
-            Console.Error.WriteLine(
-                $"[couchcoop] modal focus ring failed name={Name} detail={exception.GetType().Name}: {exception.Message}");
+            CouchCoopLog.Stderr(
+                $"modal focus ring failed name={Name} detail={exception.GetType().Name}: {exception.Message}");
         }
     }
 
@@ -511,8 +512,8 @@ internal abstract partial class CouchCoopModalDialog : Control
         }
         catch (Exception exception)
         {
-            Console.Error.WriteLine(
-                $"[couchcoop] modal focus read failed name={Name} detail={exception.GetType().Name}: {exception.Message}");
+            CouchCoopLog.Stderr(
+                $"modal focus read failed name={Name} detail={exception.GetType().Name}: {exception.Message}");
             return new CouchCoopModalFocusParking.FocusState(false, false);
         }
     }
@@ -538,8 +539,8 @@ internal abstract partial class CouchCoopModalDialog : Control
         }
         catch (Exception exception)
         {
-            Console.Error.WriteLine(
-                $"[couchcoop] modal focus parking failed name={Name} detail={exception.GetType().Name}: {exception.Message}");
+            CouchCoopLog.Stderr(
+                $"modal focus parking failed name={Name} detail={exception.GetType().Name}: {exception.Message}");
         }
     }
 
@@ -591,8 +592,8 @@ internal abstract partial class CouchCoopModalDialog : Control
         }
         catch (Exception exception)
         {
-            Console.Error.WriteLine(
-                $"[couchcoop] modal exit hook failed name={Name} detail={exception.GetType().Name}: {exception.Message}");
+            CouchCoopLog.Stderr(
+                $"modal exit hook failed name={Name} detail={exception.GetType().Name}: {exception.Message}");
             return;
         }
 
@@ -636,8 +637,8 @@ internal abstract partial class CouchCoopModalDialog : Control
         }
         catch (Exception exception)
         {
-            Console.Error.WriteLine(
-                $"[couchcoop] modal input mode connect failed signal={signal} detail={exception.GetType().Name}: {exception.Message}");
+            CouchCoopLog.Stderr(
+                $"modal input mode connect failed signal={signal} detail={exception.GetType().Name}: {exception.Message}");
         }
     }
 
@@ -658,8 +659,8 @@ internal abstract partial class CouchCoopModalDialog : Control
         }
         catch (Exception exception)
         {
-            Console.Error.WriteLine(
-                $"[couchcoop] modal input mode disconnect failed signal={signal} detail={exception.GetType().Name}: {exception.Message}");
+            CouchCoopLog.Stderr(
+                $"modal input mode disconnect failed signal={signal} detail={exception.GetType().Name}: {exception.Message}");
         }
     }
 
@@ -702,7 +703,7 @@ internal abstract partial class CouchCoopModalDialog : Control
             // Roll back partial registration so the next heartbeat can retry cleanly.
             _cancelBound = true;
             UnbindCancel();
-            Console.Error.WriteLine($"[couchcoop] modal cancel bind failed name={Name} detail={exception.GetType().Name}: {exception.Message}");
+            CouchCoopLog.Stderr($"modal cancel bind failed name={Name} detail={exception.GetType().Name}: {exception.Message}");
         }
     }
 
@@ -777,7 +778,7 @@ internal abstract partial class CouchCoopModalDialog : Control
         }
         catch (Exception exception)
         {
-            Console.Error.WriteLine($"[couchcoop] modal cancel reassert failed name={Name} detail={exception.GetType().Name}: {exception.Message}");
+            CouchCoopLog.Stderr($"modal cancel reassert failed name={Name} detail={exception.GetType().Name}: {exception.Message}");
         }
     }
 
@@ -801,7 +802,7 @@ internal abstract partial class CouchCoopModalDialog : Control
         }
         catch (Exception exception)
         {
-            Console.Error.WriteLine($"[couchcoop] modal cancel unbind failed name={Name} detail={exception.GetType().Name}: {exception.Message}");
+            CouchCoopLog.Stderr($"modal cancel unbind failed name={Name} detail={exception.GetType().Name}: {exception.Message}");
         }
     }
 

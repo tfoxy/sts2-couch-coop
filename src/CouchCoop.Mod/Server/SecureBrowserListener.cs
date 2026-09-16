@@ -4,6 +4,7 @@ using System.Net.Sockets;
 using System.Security.Authentication;
 using System.Security.Cryptography.X509Certificates;
 using CouchCoop.Mod.Contracts;
+using CouchCoop.Mod.Session;
 
 namespace CouchCoop.Mod.Server;
 
@@ -77,7 +78,7 @@ public sealed class SecureBrowserListener : IAsyncDisposable
     {
         _bindAddress = bindAddress ?? throw new ArgumentNullException(nameof(bindAddress));
         _handle = handle ?? throw new ArgumentNullException(nameof(handle));
-        _log = log ?? (message => Console.Error.WriteLine(message));
+        _log = log ?? CouchCoopLog.Stderr;
         _admission = admission;
         _handshakeTimeout = handshakeTimeout ?? HandshakeTimeout;
     }
@@ -118,7 +119,7 @@ public sealed class SecureBrowserListener : IAsyncDisposable
         }
         catch (Exception exception)
         {
-            _log($"[couchcoop] host-ui diagnostic code={UnavailableCode} detail={exception.GetType().Name}: {exception.Message}");
+            _log($"host-ui diagnostic code={UnavailableCode} detail={exception.GetType().Name}: {exception.Message}");
             return false;
         }
 
@@ -146,12 +147,12 @@ public sealed class SecureBrowserListener : IAsyncDisposable
             catch (Exception exception)
             {
                 listener.Stop();
-                _log($"[couchcoop] host-ui diagnostic code={UnavailableCode} detail={exception.GetType().Name}: {exception.Message}");
+                _log($"host-ui diagnostic code={UnavailableCode} detail={exception.GetType().Name}: {exception.Message}");
                 return false;
             }
         }
 
-        _log($"[couchcoop] host-ui diagnostic code={UnavailableCode} detail=no-port-at-or-above-{preferredPort}");
+        _log($"host-ui diagnostic code={UnavailableCode} detail=no-port-at-or-above-{preferredPort}");
         return false;
     }
 

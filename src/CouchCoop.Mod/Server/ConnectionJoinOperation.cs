@@ -1,3 +1,5 @@
+using CouchCoop.Mod.Session;
+
 namespace CouchCoop.Mod.Server;
 
 /// <summary>Owns the one long-running join operation associated with a browser socket.</summary>
@@ -11,8 +13,8 @@ internal sealed class ConnectionJoinOperation : IDisposable
     private bool _closed;
 
     public ConnectionJoinOperation(Action<Exception>? onFault = null)
-        => _onFault = onFault ?? (exception => Console.Error.WriteLine(
-            $"[couchcoop] join operation fault: {exception.GetType().Name}: {exception.Message}"));
+        => _onFault = onFault ?? (exception => CouchCoopLog.Stderr(
+            $"join operation fault: {exception.GetType().Name}: {exception.Message}"));
 
     public bool TryStart(CancellationToken connectionToken, Func<CancellationToken, Task> work)
     {

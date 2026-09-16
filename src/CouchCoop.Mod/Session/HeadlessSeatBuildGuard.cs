@@ -76,14 +76,14 @@ internal static class HeadlessSeatBuildGuard
         catch (Exception exception)
         {
             // A guard that cannot read its own inputs must not be the thing that stops a seat starting.
-            Console.Error.WriteLine($"[couchcoop] seat build check skipped: {exception.GetType().Name}: {exception.Message}");
+            CouchCoopLog.Stderr($"seat build check skipped: {exception.GetType().Name}: {exception.Message}");
             return;
         }
 
         if (detail is null) return;
 
-        CouchCoopLog.Error($"[couchcoop] seat refused: mod build does not match the host. {detail}");
-        Console.Error.WriteLine($"[couchcoop] seat refused: mod build does not match the host. {detail}");
+        CouchCoopLog.Error($"seat refused: mod build does not match the host. {detail}");
+        CouchCoopLog.Stderr($"seat refused: mod build does not match the host. {detail}");
 
         try
         {
@@ -97,7 +97,7 @@ internal static class HeadlessSeatBuildGuard
         {
             // The host still learns something: the process is about to exit, which it reports as a closed
             // client game. Losing the precise cause is better than joining with the wrong build.
-            Console.Error.WriteLine($"[couchcoop] seat build mismatch report failed: {exception.GetType().Name}: {exception.Message}");
+            CouchCoopLog.Stderr($"seat build mismatch report failed: {exception.GetType().Name}: {exception.Message}");
         }
 
         // Not a polite quit: nothing has started yet, there is no scene tree to drain, and the one outcome

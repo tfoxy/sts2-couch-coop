@@ -10,6 +10,10 @@
     <RootNamespace>CouchCoop.Mod.Loader</RootNamespace>
     <LangVersion>latest</LangVersion>
     <DisableTransitiveProjectReferences>true</DisableTransitiveProjectReferences>
+    <!-- The linked CouchCoopLogLine.cs below also exists in the referenced CouchCoop.Mod. Same situation, and
+         same suppression, as CouchCoop.Mod.HotReload's linked Server/ sources: the locally compiled copy
+         wins, which is exactly what is wanted here. -->
+    <NoWarn>$(NoWarn);CS0436</NoWarn>
     <OutputPath Condition="'$(CouchCoopBuildToLocalMods)' == 'true' and '$(CouchCoopLocalModDir)' != ''">$(CouchCoopLocalModDir)/</OutputPath>
     <PublishDir Condition="'$(CouchCoopBuildToLocalMods)' == 'true' and '$(CouchCoopLocalModDir)' != ''">$(CouchCoopLocalModDir)/</PublishDir>
     <AppendTargetFrameworkToOutputPath Condition="'$(CouchCoopBuildToLocalMods)' == 'true' and '$(CouchCoopLocalModDir)' != ''">false</AppendTargetFrameworkToOutputPath>
@@ -30,6 +34,17 @@
   <ItemGroup>
     <ProjectReference Include="../CouchCoop.Mod/CouchCoop.Mod.csproj" />
     <ProjectReference Include="../CouchCoop.Mod.Contracts/CouchCoop.Mod.Contracts.csproj" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <!-- The prefix every CouchCoop log line carries is written down in exactly one file, and the loader logs
+         too. It is LINKED rather than called through the ProjectReference above because the loader has to be
+         able to log BEFORE it has installed the assembly resolver that can find CouchCoop.Mod.dll: a lane
+         payload keeps the implementation under lanes/<version>/, off every default probing path, so a call
+         into that assembly would fail to bind on exactly the paths (lane refusal, bootstrap failure) whose
+         only job is to say why the mod did not load. The file is kept free of any reference outside itself
+         so that it can be compiled here; the engine latch lives on CouchCoopLog, which is not linked. -->
+    <Compile Include="../CouchCoop.Mod/Session/CouchCoopLogLine.cs" Link="Session/CouchCoopLogLine.cs" />
   </ItemGroup>
 
   <ItemGroup>

@@ -98,8 +98,8 @@ internal static class LobbyScreenMountPatch
             var harmony = new Harmony("com.couchcoop.lobby-screen-mount");
             var complete = plan.Attempt(typeName => TryPatch(harmony, typeName, postfix));
 
-            Console.Error.WriteLine(
-                $"[couchcoop] lobby screen mount patch installed targets={plan.TargetCount - plan.Pending.Count}/{plan.TargetCount}");
+            CouchCoopLog.Stderr(
+                $"lobby screen mount patch installed targets={plan.TargetCount - plan.Pending.Count}/{plan.TargetCount}");
             if (!complete)
             {
                 // The panel controller makes one more Apply after the runtime is up, so the FIRST incomplete
@@ -126,9 +126,9 @@ internal static class LobbyScreenMountPatch
     /// </param>
     private static void ReportIncomplete(string detail, bool retryExhausted)
     {
-        var message = $"[couchcoop] lobby screen mount patch INCOMPLETE ({detail}) — the Couch Co-Op QR button "
+        var message = $"lobby screen mount patch INCOMPLETE ({detail}) — the Couch Co-Op QR button "
             + "will not appear in the lobby this session";
-        Console.Error.WriteLine(message);
+        CouchCoopLog.Stderr(message);
         CouchCoopLog.Error(message);
         if (retryExhausted)
         {
@@ -175,16 +175,16 @@ internal static class LobbyScreenMountPatch
         var type = AccessTools.TypeByName(typeName);
         if (type is null)
         {
-            Console.Error.WriteLine(
-                $"[couchcoop] LobbyScreenMountPatch: {typeName} not found.");
+            CouchCoopLog.Stderr(
+                $"LobbyScreenMountPatch: {typeName} not found.");
             return null;
         }
 
         var target = AccessTools.Method(type, ReadyMethodName, []);
         if (target is null)
         {
-            Console.Error.WriteLine(
-                $"[couchcoop] LobbyScreenMountPatch: {typeName}._Ready not found.");
+            CouchCoopLog.Stderr(
+                $"LobbyScreenMountPatch: {typeName}._Ready not found.");
             return null;
         }
 
@@ -192,8 +192,8 @@ internal static class LobbyScreenMountPatch
         {
             // REFUSED, not patched. An inherited _Ready is Godot.Node's, and hooking that instruments every
             // node in the game — the exact cost this patch removes, multiplied.
-            Console.Error.WriteLine(
-                $"[couchcoop] LobbyScreenMountPatch: {typeName} does not declare _Ready "
+            CouchCoopLog.Stderr(
+                $"LobbyScreenMountPatch: {typeName} does not declare _Ready "
                 + $"(would have patched {target.DeclaringType?.FullName ?? "unknown"}) — refused.");
             return null;
         }
@@ -212,8 +212,8 @@ internal static class LobbyScreenMountPatch
         {
             // A throw here would propagate into the game's own screen construction. The panels are a
             // convenience; the lobby is not.
-            Console.Error.WriteLine(
-                $"[couchcoop] LobbyScreenMountPatch: mount note failed: {exception.GetType().Name}: {exception.Message}");
+            CouchCoopLog.Stderr(
+                $"LobbyScreenMountPatch: mount note failed: {exception.GetType().Name}: {exception.Message}");
         }
     }
 }

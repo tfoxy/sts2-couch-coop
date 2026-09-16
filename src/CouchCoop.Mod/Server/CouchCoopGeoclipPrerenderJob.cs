@@ -2,6 +2,7 @@ using System.Diagnostics;
 using System.Text.Json;
 using System.Text.Json.Nodes;
 using CouchCoop.Mod.Runtime;
+using CouchCoop.Mod.Session;
 using Spirectl.Sts2.Core.Artifacts;
 
 namespace CouchCoop.Mod.Server;
@@ -155,7 +156,7 @@ public sealed class CouchCoopGeoclipPrerenderJob(
 
     private readonly CouchCoopRuntimeHost _runtime = runtime ?? throw new ArgumentNullException(nameof(runtime));
     private readonly CouchCoopGeoclipProvider _geoclips = geoclips ?? throw new ArgumentNullException(nameof(geoclips));
-    private readonly Action<string> _log = log ?? (message => Console.Error.WriteLine(message));
+    private readonly Action<string> _log = log ?? CouchCoopLog.Stderr;
 
     // The RASTER baseline the per-rig comparison is measured against: the webp stills already on disk for the
     // same identities. Size-only probes, so a rig with no cached stills simply reports no baseline rather than
@@ -188,7 +189,7 @@ public sealed class CouchCoopGeoclipPrerenderJob(
         }
         catch (Exception exception)
         {
-            _log($"[couchcoop] geoclip-prerender catalog failed detail={exception.GetType().Name}: {exception.Message}");
+            _log($"geoclip-prerender catalog failed detail={exception.GetType().Name}: {exception.Message}");
             tally.Fail(null, "catalog-" + Kebab(exception.GetType().Name));
             return Complete(stopwatch, "failed", default, tally);
         }
@@ -201,7 +202,7 @@ public sealed class CouchCoopGeoclipPrerenderJob(
         }
 
         _log(
-            $"[couchcoop] geoclip-prerender discovered scenes={found.Scenes} spineNodes={found.SpineNodes} "
+            $"geoclip-prerender discovered scenes={found.Scenes} spineNodes={found.SpineNodes} "
             + $"clips={found.Clips} discoveryFailures={discoveryFailures} "
             + $"store={_geoclips.Store.RootPath ?? "disabled"}");
 
@@ -254,7 +255,7 @@ public sealed class CouchCoopGeoclipPrerenderJob(
             entries.Count);
 
         _log(
-            $"[couchcoop] geoclip-prerender scoped scenes={found.Scenes} spineNodes={found.SpineNodes} "
+            $"geoclip-prerender scoped scenes={found.Scenes} spineNodes={found.SpineNodes} "
             + $"clips={found.Clips} discoveryFailures=0 store={_geoclips.Store.RootPath ?? "disabled"}");
 
         return await SweepAsync(entries, found, maxRigBatchPoses, stopwatch, tally, cancellationToken)
@@ -269,7 +270,7 @@ public sealed class CouchCoopGeoclipPrerenderJob(
     {
         if (!_geoclips.Store.IsEnabled)
         {
-            _log("[couchcoop] geoclip-prerender REFUSED to start: no geoclip cache root could be resolved.");
+            _log("geoclip-prerender REFUSED to start: no geoclip cache root could be resolved.");
             return Complete(stopwatch, "store-disabled", default, tally);
         }
 
@@ -345,7 +346,7 @@ public sealed class CouchCoopGeoclipPrerenderJob(
                 {
                     if (_geoclips.Store.TryResolveDirectory(keys[i]) is null && !_geoclips.Store.HasRefusal(keys[i]))
                     {
-                        _log($"[couchcoop] geoclip-prerender {startedAt + i + 1}/{found.Clips} start key={keys[i]}");
+                        _log($"geoclip-prerender {startedAt + i + 1}/{found.Clips} start key={keys[i]}");
                     }
                 }
 
@@ -370,7 +371,7 @@ public sealed class CouchCoopGeoclipPrerenderJob(
                     {
                         tally.Refuse(entry, refusal.Reason, refusal.Cached);
                         _log(
-                            $"[couchcoop] geoclip-prerender {completed}/{found.Clips} status={StatusRefused} "
+                            $"geoclip-prerender {completed}/{found.Clips} status={StatusRefused} "
                             + $"key={key} reason={refusal.Reason} cached={(refusal.Cached ? 1 : 0)} "
                             + $"detail={refusal.Detail} {timing}");
                         continue;
@@ -380,7 +381,7 @@ public sealed class CouchCoopGeoclipPrerenderJob(
                     {
                         tally.Fail(entry, error.Code);
                         _log(
-                            $"[couchcoop] geoclip-prerender {completed}/{found.Clips} status={StatusFailed} "
+                            $"geoclip-prerender {completed}/{found.Clips} status={StatusFailed} "
                             + $"key={key} code={error.Code} detail={error.Message} {timing}");
                         continue;
                     }
@@ -390,7 +391,7 @@ public sealed class CouchCoopGeoclipPrerenderJob(
                         // Belt: a success with nothing to serve is not a success.
                         tally.Fail(entry, "geoclip-empty-result");
                         _log(
-                            $"[couchcoop] geoclip-prerender {completed}/{found.Clips} status={StatusFailed} "
+                            $"geoclip-prerender {completed}/{found.Clips} status={StatusFailed} "
                             + $"key={key} code=geoclip-empty-result {timing}");
                         continue;
                     }
@@ -404,7 +405,7 @@ public sealed class CouchCoopGeoclipPrerenderJob(
                             still: true));
                     var measured = tally.Store(entry, result.Directory, hit, raster);
                     _log(
-                        $"[couchcoop] geoclip-prerender {completed}/{found.Clips} "
+                        $"geoclip-prerender {completed}/{found.Clips} "
                         + $"status={(hit ? StatusHit : StatusBaked)} key={key} "
                         + $"geometryBytes={measured.GeometryBytes} pages={measured.PageReferences} "
                         + $"newPages={measured.NewPages} newPageBytes={measured.NewPageBytes} "
@@ -425,7 +426,7 @@ public sealed class CouchCoopGeoclipPrerenderJob(
                     completed++;
                     tally.Fail(chunk[i], Kebab(exception.GetType().Name));
                     _log(
-                        $"[couchcoop] geoclip-prerender {completed}/{found.Clips} status={StatusFailed} "
+                        $"geoclip-prerender {completed}/{found.Clips} status={StatusFailed} "
                         + $"key={keys[i] ?? chunk[i].SceneResPath} detail={exception.GetType().Name}: "
                         + $"{exception.Message} elapsedMs={chunkWatch.ElapsedMilliseconds} posesInBake={chunk.Count}");
                 }

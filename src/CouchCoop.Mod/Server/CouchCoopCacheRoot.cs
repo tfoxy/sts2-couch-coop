@@ -2,6 +2,7 @@ using System.Runtime.CompilerServices;
 using System.Security.Cryptography;
 using System.Text;
 using System.Text.Json;
+using CouchCoop.Mod.Session;
 using Spirectl.Sts2;
 using Spirectl.Sts2.Live;
 
@@ -125,7 +126,7 @@ public static class CouchCoopCacheRoot
         }
         catch (Exception exception)
         {
-            DefaultLog($"[couchcoop] cache disabled: {exception.GetType().Name}: {exception.Message}");
+            DefaultLog($"cache disabled: {exception.GetType().Name}: {exception.Message}");
             return new Resolution(null, CouchCoopCacheContent.Unknown, null);
         }
     }
@@ -190,7 +191,7 @@ public static class CouchCoopCacheRoot
     {
         if (string.IsNullOrWhiteSpace(baseRoot))
         {
-            log("[couchcoop] cache disabled: no writable cache root could be resolved");
+            log("cache disabled: no writable cache root could be resolved");
             return new Resolution(null, content, null);
         }
 
@@ -202,7 +203,7 @@ public static class CouchCoopCacheRoot
         // segment. Neither yields a name, and there is deliberately no fallback bucket to put them in.
         if (DirectoryNameFor(content.GameVersion) is not { } versionName)
         {
-            log("[couchcoop] cache disabled: this install reported no usable game version "
+            log("cache disabled: this install reported no usable game version "
                 + $"({Show(content.GameVersion)}) — is release_info.json readable?");
             return new Resolution(null, content, null);
         }
@@ -235,10 +236,10 @@ public static class CouchCoopCacheRoot
                         {
                             // Refusing the cache entirely is the only safe answer left: the tree that is there
                             // was written for something else, and serving from it is the one forbidden outcome.
-                            log($"[couchcoop] cache disabled: stale cache at {versionRoot} could not be moved aside ({reason})");
+                            log($"cache disabled: stale cache at {versionRoot} could not be moved aside ({reason})");
                             return new Resolution(null, content, null);
                         }
-                        log($"[couchcoop] cache purged version={versionName} reason={reason}");
+                        log($"cache purged version={versionName} reason={reason}");
                     }
 
                     WriteStamp(versionRoot, stamp, log);
@@ -268,7 +269,7 @@ public static class CouchCoopCacheRoot
             // follow a line that already announced the root.
             var quota = ManagedCacheQuota.ForCacheRoot(versionRoot);
 
-            log($"[couchcoop] cache game={content.GameVersion} hash={content.MainAssemblyHash} "
+            log($"cache game={content.GameVersion} hash={content.MainAssemblyHash} "
                 + $"cache=v{content.CacheVersion}+sp{content.AssetPayloadVersion} root={versionRoot}");
 
             StartBackgroundSweep(trashRoot, sweepLegacy ? LegacyRootsFor(baseRoot) : []);
@@ -278,7 +279,7 @@ public static class CouchCoopCacheRoot
         {
             // TOTAL, for the reason ResolveOrDisable documents: the answer to every failure in here is the same
             // one — no cache, said out loud — and there is none for which throwing at the caller is better.
-            log($"[couchcoop] cache disabled: {exception.GetType().Name}: {exception.Message}");
+            log($"cache disabled: {exception.GetType().Name}: {exception.Message}");
             return new Resolution(null, content, null);
         }
     }
@@ -457,7 +458,7 @@ public static class CouchCoopCacheRoot
         {
             if (TryMoveAside(path, trashRoot, log))
             {
-                log($"[couchcoop] cache reclaimed unreachable directory={Path.GetFileName(path)}");
+                log($"cache reclaimed unreachable directory={Path.GetFileName(path)}");
             }
             others.Remove(path);
         }
@@ -468,7 +469,7 @@ public static class CouchCoopCacheRoot
         {
             if (TryMoveAside(path, trashRoot, log))
             {
-                log($"[couchcoop] cache evicted version={Path.GetFileName(path)} (keeping at most {MaxVersionDirectories})");
+                log($"cache evicted version={Path.GetFileName(path)} (keeping at most {MaxVersionDirectories})");
             }
         }
     }
@@ -506,7 +507,7 @@ public static class CouchCoopCacheRoot
         {
             // A stamp we cannot write means the next start re-purges a cache that was actually fine. Wasteful,
             // never wrong — so it is a log line, not a refusal.
-            log($"[couchcoop] cache stamp write failed: {exception.GetType().Name}: {exception.Message}");
+            log($"cache stamp write failed: {exception.GetType().Name}: {exception.Message}");
         }
     }
 
@@ -526,7 +527,7 @@ public static class CouchCoopCacheRoot
             {
                 if (attempt == 1)
                 {
-                    log($"[couchcoop] cache move-aside failed for {directory}: {exception.GetType().Name}: {exception.Message}");
+                    log($"cache move-aside failed for {directory}: {exception.GetType().Name}: {exception.Message}");
                 }
             }
         }
@@ -691,7 +692,7 @@ public static class CouchCoopCacheRoot
 
     private static void DefaultLog(string message)
     {
-        Console.Error.WriteLine(message);
+        CouchCoopLog.Stderr(message);
         LogSink?.Invoke(message);
     }
 

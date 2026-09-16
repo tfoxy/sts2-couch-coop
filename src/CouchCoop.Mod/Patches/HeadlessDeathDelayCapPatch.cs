@@ -3,6 +3,7 @@ using System.Globalization;
 using System.Reflection;
 using System.Threading;
 using System.Threading.Tasks;
+using CouchCoop.Mod.Session;
 using HarmonyLib;
 
 namespace CouchCoop.Mod.Patches;
@@ -67,8 +68,8 @@ internal static class HeadlessDeathDelayCapPatch
                 var target = ResolveTarget();
                 if (target is null)
                 {
-                    Console.Error.WriteLine(
-                        $"[couchcoop] HeadlessDeathDelayCapPatch: {TargetTypeName}.{TargetMethodName} not found "
+                    CouchCoopLog.Stderr(
+                        $"HeadlessDeathDelayCapPatch: {TargetTypeName}.{TargetMethodName} not found "
                         + "— a headless death sequence can still stall on a frozen death-particle signal.");
                     return;
                 }
@@ -77,15 +78,15 @@ internal static class HeadlessDeathDelayCapPatch
                     .GetMethod(nameof(CapDelayTaskPostfix), BindingFlags.NonPublic | BindingFlags.Static);
                 if (postfix is null)
                 {
-                    Console.Error.WriteLine(
-                        "[couchcoop] HeadlessDeathDelayCapPatch: postfix method was not found; skipping.");
+                    CouchCoopLog.Stderr(
+                        "HeadlessDeathDelayCapPatch: postfix method was not found; skipping.");
                     return;
                 }
 
                 new Harmony("com.couchcoop.headless-death-delay-cap")
                     .Patch(target, postfix: new HarmonyMethod(postfix));
-                Console.Error.WriteLine(
-                    $"[couchcoop] HeadlessDeathDelayCapPatch: capped {TargetTypeName}.{TargetMethodName} at "
+                CouchCoopLog.Stderr(
+                    $"HeadlessDeathDelayCapPatch: capped {TargetTypeName}.{TargetMethodName} at "
                     + $"{_capSeconds:0.##}s.");
             }
             catch (Exception ex)
@@ -176,8 +177,8 @@ internal static class HeadlessDeathDelayCapPatch
         var winner = await Task.WhenAny(original, timeout).ConfigureAwait(false);
         if (!ReferenceEquals(winner, original))
         {
-            Console.Error.WriteLine(
-                $"[couchcoop] HeadlessDeathDelayCapPatch: {TargetTypeName}.{TargetMethodName} exceeded "
+            CouchCoopLog.Stderr(
+                $"HeadlessDeathDelayCapPatch: {TargetTypeName}.{TargetMethodName} exceeded "
                 + $"{capSeconds:0.##}s (frozen spine never raised the death-particle event); continuing the death sequence.");
             return;
         }

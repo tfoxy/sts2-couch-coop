@@ -1,4 +1,5 @@
 using System.Reflection;
+using CouchCoop.Mod.Session;
 using HarmonyLib;
 using MegaCrit.Sts2.Core.Helpers;
 
@@ -136,7 +137,7 @@ internal static class CommandLineOverridePatch
         var target = AccessTools.Method(typeof(CommandLineHelper), name, args);
         if (target is null)
         {
-            Console.Error.WriteLine($"[couchcoop] CommandLineOverridePatch: {label} not found — headless seat args not overridden.");
+            CouchCoopLog.Stderr($"CommandLineOverridePatch: {label} not found — headless seat args not overridden.");
             return;
         }
 

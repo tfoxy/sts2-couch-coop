@@ -5,6 +5,7 @@ using CouchCoop.Mod.Contracts;
 using CouchCoop.Mod.Runtime;
 using CouchCoop.Mod.Server;
 using CouchCoop.MirrorProtocol.Discovery;
+using CouchCoop.Mod.Session;
 
 namespace CouchCoop.Mod.HostUi;
 
@@ -61,7 +62,7 @@ public sealed class CouchCoopHostUiServices : IAsyncDisposable
         _staticRoot = staticRoot ?? DefaultStaticRoot();
         _bindAddress = bindAddress ?? IPAddress.Any;
         _preferredPort = preferredPort;
-        _log = log ?? (message => Console.Error.WriteLine(message));
+        _log = log ?? CouchCoopLog.Stderr;
         _deferDiscoveryServices = deferDiscoveryServices;
     }
 
@@ -89,7 +90,7 @@ public sealed class CouchCoopHostUiServices : IAsyncDisposable
             if (joinBaseUri is null)
             {
                 AddDiagnostic(NoAdvertisableHostAddressCode, "No LAN-reachable host address was available for the browser server.");
-                _log($"[couchcoop] host-discovery falling back to {DiscoveryFallbackHost} — no LAN address to advertise");
+                _log($"host-discovery falling back to {DiscoveryFallbackHost} — no LAN address to advertise");
                 // B2: the server IS up, so this is a warning rather than a failure — a phone on the same
                 // machine can still reach it, and the QR dialog still offers the `.local` name.
             }
@@ -110,7 +111,7 @@ public sealed class CouchCoopHostUiServices : IAsyncDisposable
 
             if (joinBaseUri is not null)
             {
-                _log($"[couchcoop] browser server available url={joinBaseUri}");
+                _log($"browser server available url={joinBaseUri}");
                 // B1: the ADVERTISED url, never the wildcard the listener bound — this is a line a host may
                 // read out loud to somebody typing it into a phone.
             }
@@ -233,7 +234,7 @@ public sealed class CouchCoopHostUiServices : IAsyncDisposable
             Connections.HostReachabilityWatch.Shared.Arm(joinBaseUri?.ToString() ?? listenerBaseUri.ToString());
         }
 
-        _log("[couchcoop] host discovery services started (lan discovery + mdns + secure origin)");
+        _log("host discovery services started (lan discovery + mdns + secure origin)");
     }
 
     public async ValueTask DisposeAsync()
@@ -323,7 +324,7 @@ public sealed class CouchCoopHostUiServices : IAsyncDisposable
                 // Catch-all on a detached task: an escaping exception here would be an unobserved
                 // TaskException, and the whole contract of this feature is that it cannot hurt the host.
                 _snapshot = _snapshot with { SecureUnavailableReason = CouchCoopSecureText.SetupFailed };
-                _log($"[couchcoop] host-ui diagnostic code={SecureOriginCertificates.UnavailableCode} "
+                _log($"host-ui diagnostic code={SecureOriginCertificates.UnavailableCode} "
                     + $"detail={exception.GetType().Name}: {exception.Message}");
             }
         });
@@ -427,7 +428,7 @@ public sealed class CouchCoopHostUiServices : IAsyncDisposable
         // its whole purpose is to rescue a machine whose topology we read wrong.
         if (LanAddressRanking.ReadAdvertisedHostOverride(LogAddressSelection) is { } overridden)
         {
-            LogAddressSelection($"[couchcoop] advertised-host override host={overridden} source={LanAddressRanking.AdvertisedHostEnvironmentVariable}");
+            LogAddressSelection($"advertised-host override host={overridden} source={LanAddressRanking.AdvertisedHostEnvironmentVariable}");
             return overridden;
         }
 
@@ -452,7 +453,7 @@ public sealed class CouchCoopHostUiServices : IAsyncDisposable
         var ranked = LanAddressRanking.Rank(LanAddressRanking.GatherFromOs(LogAddressSelection));
         if (ranked.Count == 0)
         {
-            LogAddressSelection("[couchcoop] lan-address none found");
+            LogAddressSelection("lan-address none found");
             return null;
         }
 
@@ -460,7 +461,7 @@ public sealed class CouchCoopHostUiServices : IAsyncDisposable
         // log: this line set says exactly which addresses were on the table and what each one scored.
         for (var index = 0; index < ranked.Count; index++)
         {
-            LogAddressSelection($"[couchcoop] lan-address candidate rank={index} {LanAddressRanking.Describe(ranked[index])}");
+            LogAddressSelection($"lan-address candidate rank={index} {LanAddressRanking.Describe(ranked[index])}");
         }
 
         return ranked[0].Address;
@@ -470,7 +471,7 @@ public sealed class CouchCoopHostUiServices : IAsyncDisposable
     {
         var diagnostic = new CouchCoopHostUiDiagnostic(code, message, detail);
         _diagnostics.Add(diagnostic);
-        _log($"[couchcoop] host-ui diagnostic code={diagnostic.Code} detail={diagnostic.Detail ?? "none"}");
+        _log($"host-ui diagnostic code={diagnostic.Code} detail={diagnostic.Detail ?? "none"}");
     }
 
     private static string DefaultStaticRoot()

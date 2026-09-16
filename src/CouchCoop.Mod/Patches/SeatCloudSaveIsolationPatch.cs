@@ -90,7 +90,7 @@ internal static class SeatCloudSaveIsolationPatch
             if (refused.Count > 0)
             {
                 throw new InvalidOperationException(
-                    "[couchcoop] SeatCloudSaveIsolationPatch could not close "
+                    Session.CouchCoopLog.Line("SeatCloudSaveIsolationPatch could not close ")
                     + $"{refused.Count} of {Targets.Count} seat→Steam-Cloud write paths on this build, so a seat "
                     + "would write into the player's own account save storage. Refusing rather than launching a "
                     + "seat that corrupts saves: " + string.Join("; ", refused));

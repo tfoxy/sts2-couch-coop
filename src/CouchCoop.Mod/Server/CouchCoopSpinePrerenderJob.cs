@@ -1,5 +1,6 @@
 using System.Diagnostics;
 using System.Text.Json;
+using CouchCoop.Mod.Session;
 using Spirectl.Sts2.Core.Artifacts;
 using Spirectl.Sts2.Live;
 using CouchCoop.Mod.Diagnostics;
@@ -14,7 +15,7 @@ public sealed class CouchCoopSpinePrerenderJob(
 {
     private readonly CouchCoopRuntimeHost _runtime = runtime ?? throw new ArgumentNullException(nameof(runtime));
     private readonly CouchCoopSpineClipProvider _clips = clips ?? throw new ArgumentNullException(nameof(clips));
-    private readonly Action<string> _log = log ?? (message => Console.Error.WriteLine(message));
+    private readonly Action<string> _log = log ?? CouchCoopLog.Stderr;
 
     public async Task<CouchCoopSpinePrerenderSummary> RunAsync(CancellationToken cancellationToken = default)
     {
@@ -34,7 +35,7 @@ public sealed class CouchCoopSpinePrerenderJob(
         }
         catch (Exception exception)
         {
-            _log($"[couchcoop] spine-prerender catalog failed detail={exception.GetType().Name}: {exception.Message}");
+            _log($"spine-prerender catalog failed detail={exception.GetType().Name}: {exception.Message}");
             return Complete(stopwatch, "failed", 0, 0, 0, 0, 0, 1);
         }
 
@@ -43,7 +44,7 @@ public sealed class CouchCoopSpinePrerenderJob(
         var passes = new[] { SpinePrerenderPass.Stills };
         var totalItems = totalClips * passes.Length;
         var discoveredFailures = catalog.Failures.Count + (catalog.Error is null ? 0 : 1);
-        _log($"[couchcoop] spine-prerender discovered scenes={catalog.ScannedSceneCount} spineNodes={catalog.SpineNodeCount} clips={totalClips} items={totalItems} discoveryFailures={discoveredFailures}");
+        _log($"spine-prerender discovered scenes={catalog.ScannedSceneCount} spineNodes={catalog.SpineNodeCount} clips={totalClips} items={totalItems} discoveryFailures={discoveredFailures}");
 
         var hits = 0;
         var rendered = 0;
@@ -77,14 +78,14 @@ public sealed class CouchCoopSpinePrerenderJob(
                     if (result.Error is not null || result.Blob is null)
                     {
                         failures++;
-                        _log($"[couchcoop] spine-prerender {completed}/{totalItems} pass={pass} status=failed key={key} detail={result.Error?.Message ?? "empty-render"} elapsedMs={itemWatch.ElapsedMilliseconds}");
+                        _log($"spine-prerender {completed}/{totalItems} pass={pass} status=failed key={key} detail={result.Error?.Message ?? "empty-render"} elapsedMs={itemWatch.ElapsedMilliseconds}");
                         continue;
                     }
 
                     if (result.CacheStatus == "HIT")
                     {
                         hits++;
-                        _log($"[couchcoop] spine-prerender {completed}/{totalItems} pass={pass} status=hit key={key}");
+                        _log($"spine-prerender {completed}/{totalItems} pass={pass} status=hit key={key}");
                         continue;
                     }
 
@@ -97,7 +98,7 @@ public sealed class CouchCoopSpinePrerenderJob(
                     var status = result.CacheWriteFailed ? "rendered-cache-write-failed" : "rendered";
                     // The sweep IS the whole-catalog bake benchmark, so each item carries its phase breakdown:
                     // a cold prerender log is then a per-spine answer to "where did the bake time go".
-                    _log($"[couchcoop] spine-prerender {completed}/{totalItems} pass={pass} status={status} key={key} elapsedMs={itemWatch.ElapsedMilliseconds}{DescribePhases()}");
+                    _log($"spine-prerender {completed}/{totalItems} pass={pass} status={status} key={key} elapsedMs={itemWatch.ElapsedMilliseconds}{DescribePhases()}");
                 }
                 catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
                 {
@@ -106,7 +107,7 @@ public sealed class CouchCoopSpinePrerenderJob(
                 catch (Exception exception)
                 {
                     failures++;
-                    _log($"[couchcoop] spine-prerender {completed}/{totalItems} pass={pass} status=failed key={key} detail={exception.GetType().Name}: {exception.Message} elapsedMs={itemWatch.ElapsedMilliseconds}");
+                    _log($"spine-prerender {completed}/{totalItems} pass={pass} status=failed key={key} detail={exception.GetType().Name}: {exception.Message} elapsedMs={itemWatch.ElapsedMilliseconds}");
                 }
             }
         }

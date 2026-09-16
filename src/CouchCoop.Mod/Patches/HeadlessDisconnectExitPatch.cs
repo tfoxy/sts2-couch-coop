@@ -152,7 +152,7 @@ internal static class HeadlessDisconnectExitPatch
             catch (Exception exception)
             {
                 HeadlessLog.Write(
-                    $"[couchcoop] reporting the refined disconnect reason failed: {exception.GetType().Name}: {exception.Message}");
+                    $"reporting the refined disconnect reason failed: {exception.GetType().Name}: {exception.Message}");
             }
         });
     }
@@ -183,8 +183,8 @@ internal static class HeadlessDisconnectExitPatch
         var target = AccessTools.Method(type, name, args);
         if (target is null)
         {
-            Console.Error.WriteLine(
-                $"[couchcoop] HeadlessDisconnectExitPatch: {label} not found — headless clean-exit on disconnect is DISABLED.");
+            CouchCoopLog.Stderr(
+                $"HeadlessDisconnectExitPatch: {label} not found — headless clean-exit on disconnect is DISABLED.");
             return;
         }
 

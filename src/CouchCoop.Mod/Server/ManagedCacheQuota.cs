@@ -3,6 +3,7 @@ using System.Diagnostics;
 using System.Security.Cryptography;
 using System.Text;
 using System.Text.Json;
+using CouchCoop.Mod.Session;
 
 namespace CouchCoop.Mod.Server;
 
@@ -204,7 +205,7 @@ internal sealed class ManagedCacheQuota
         var previous = Volatile.Read(ref _lastDiagnostic);
         if ((previous == 0 || now - previous >= 30_000)
             && Interlocked.CompareExchange(ref _lastDiagnostic, now, previous) == previous)
-            Console.Error.WriteLine("[couchcoop] cache-storage-limit: skipping new persistence; existing assets remain available.");
+            CouchCoopLog.Stderr("cache-storage-limit: skipping new persistence; existing assets remain available.");
         return null;
     }
 

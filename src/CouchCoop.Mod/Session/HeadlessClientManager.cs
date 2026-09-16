@@ -291,7 +291,7 @@ public sealed partial class HeadlessClientManager : IDisposable
                 catch (Exception ex)
                 {
                     // A cap we cannot read must never cost anyone their seat: fall back to the stock three.
-                    Console.Error.WriteLine($"[couchcoop] max-seats probe failed ({ex.GetType().Name}: {ex.Message}) — assuming {DefaultSeats}.");
+                    CouchCoopLog.Stderr($"max-seats probe failed ({ex.GetType().Name}: {ex.Message}) — assuming {DefaultSeats}.");
                 }
             }
 
@@ -333,8 +333,8 @@ public sealed partial class HeadlessClientManager : IDisposable
             }
             catch (Exception ex)
             {
-                Console.Error.WriteLine(
-                    $"[couchcoop] run-in-progress probe failed ({ex.GetType().Name}: {ex.Message}) — assuming no run.");
+                CouchCoopLog.Stderr(
+                    $"run-in-progress probe failed ({ex.GetType().Name}: {ex.Message}) — assuming no run.");
                 return false;
             }
         }
@@ -564,7 +564,7 @@ public sealed partial class HeadlessClientManager : IDisposable
                     // The caller handed us a netId that is not one of our seats (the host itself, a genuine remote
                     // player, a garbled id). Refusing here — rather than clamping into range — keeps us from ever
                     // spawning an instance that impersonates somebody else's peer.
-                    Console.Error.WriteLine($"[couchcoop] headless netId-bound join rejected: netId={wantedNetId} is not a couch-coop seat");
+                    CouchCoopLog.Stderr($"headless netId-bound join rejected: netId={wantedNetId} is not a couch-coop seat");
                     return null;
                 }
 
@@ -610,13 +610,13 @@ public sealed partial class HeadlessClientManager : IDisposable
 
                 if (_processBySlot.ContainsKey(slot))
                 {
-                    Console.Error.WriteLine($"[couchcoop] headless reuse (netId-bound) slot={slot} netId={SlotToNetId(slot)} name={name} newSession={sessionId:N}");
+                    CouchCoopLog.Stderr($"headless reuse (netId-bound) slot={slot} netId={SlotToNetId(slot)} name={name} newSession={sessionId:N}");
                     ReportSlotBound(onSlotBound, slot, name);
                     return new(SlotToPort(slot), NewProcess: false);
                 }
 
                 evictNetIdAfterSpawn = SlotToNetId(slot);
-                Console.Error.WriteLine($"[couchcoop] headless netId-bound spawn slot={slot} netId={SlotToNetId(slot)} name={name} session={sessionId:N}");
+                CouchCoopLog.Stderr($"headless netId-bound spawn slot={slot} netId={SlotToNetId(slot)} name={name} session={sessionId:N}");
             }
             else if (name is not null && _nameToSlot.TryGetValue(name, out var claimedSlot))
             {
@@ -631,7 +631,7 @@ public sealed partial class HeadlessClientManager : IDisposable
                 if (_processBySlot.ContainsKey(slot))
                 {
                     // Headless still live → share it (e.g. a second browser tab with the same name).
-                    Console.Error.WriteLine($"[couchcoop] headless reuse slot={slot} name={name} newSession={sessionId:N}");
+                    CouchCoopLog.Stderr($"headless reuse slot={slot} name={name} newSession={sessionId:N}");
                     // Still a BINDING (this session now owns the slot), so report it: the live instance's netId
                     // may have lost its name override in the meantime (e.g. a lobby disconnect cleared it), and
                     // re-asserting costs one idempotent action.
@@ -660,7 +660,7 @@ public sealed partial class HeadlessClientManager : IDisposable
                 // headless's Release never ran (ungraceful drop / no clean WS close).
                 reusingClaim = true;
                 evictNetIdAfterSpawn = SlotToNetId(slot);
-                Console.Error.WriteLine($"[couchcoop] headless reconnect slot={slot} netId={SlotToNetId(slot)} name={name} session={sessionId:N}");
+                CouchCoopLog.Stderr($"headless reconnect slot={slot} netId={SlotToNetId(slot)} name={name} session={sessionId:N}");
             }
             else
             {
@@ -695,8 +695,8 @@ public sealed partial class HeadlessClientManager : IDisposable
             // screen a departed seat genuinely can come back through, so that flow stays open too.
             if (runInProgress)
             {
-                Console.Error.WriteLine(
-                    $"[couchcoop] headless spawn refused slot={slot} netId={SlotToNetId(slot)} name={name}: a run is in progress");
+                CouchCoopLog.Stderr(
+                    $"headless spawn refused slot={slot} netId={SlotToNetId(slot)} name={name}: a run is in progress");
                 ConnectionRegistry.Shared.Fail(
                     sessionId,
                     HeadlessDisconnectReason.RunInProgressCode,
@@ -737,8 +737,8 @@ public sealed partial class HeadlessClientManager : IDisposable
                     ElapsedMs: 0,
                     DeadlineMs: (long)SeatReadyTimeout.TotalMilliseconds));
                 var issue = verdict.Issue;
-                Console.Error.WriteLine(
-                    $"[couchcoop] headless spawn refused slot={slot} port={SlotToPort(slot)}: {portOwner}");
+                CouchCoopLog.Stderr(
+                    $"headless spawn refused slot={slot} port={SlotToPort(slot)}: {portOwner}");
                 ConnectionRegistry.Shared.Fail(sessionId, issue.Code, issue.Summary, issue.Action, issue.Detail);
                 // Unwind exactly as the launch-refused path does: drop this session, and only forget the claim if
                 // WE just created it — a reconnect's pre-existing claim stays so the player can retry on the same
@@ -813,7 +813,7 @@ public sealed partial class HeadlessClientManager : IDisposable
         if (evictNetIdAfterSpawn is ulong staleNetId)
         {
             try { _evictStalePeer?.Invoke(staleNetId); }
-            catch (Exception ex) { Console.Error.WriteLine($"[couchcoop] evict stale peer netId={staleNetId} failed: {ex.GetType().Name}: {ex.Message}"); }
+            catch (Exception ex) { CouchCoopLog.Stderr($"evict stale peer netId={staleNetId} failed: {ex.GetType().Name}: {ex.Message}"); }
         }
 
         return new(SlotToPort(slot), NewProcess: true);
@@ -841,7 +841,7 @@ public sealed partial class HeadlessClientManager : IDisposable
         }
         catch (Exception ex)
         {
-            Console.Error.WriteLine($"[couchcoop] slot-bound callback netId={SlotToNetId(slot)} failed: {ex.GetType().Name}: {ex.Message}");
+            CouchCoopLog.Stderr($"slot-bound callback netId={SlotToNetId(slot)} failed: {ex.GetType().Name}: {ex.Message}");
         }
     }
 
@@ -937,7 +937,7 @@ public sealed partial class HeadlessClientManager : IDisposable
                 return false;
             }
 
-            Console.Error.WriteLine($"[couchcoop] reaping stuck headless (up but not connected) slot={slot} netId={netId}");
+            CouchCoopLog.Stderr($"reaping stuck headless (up but not connected) slot={slot} netId={netId}");
             // A reap DROPS the claim, unlike Release.
             foreach (var sk in _sessionToSlot.Where(p => p.Value == slot).Select(p => p.Key).ToList())
                 _sessionToSlot.Remove(sk);
@@ -1074,7 +1074,7 @@ public sealed partial class HeadlessClientManager : IDisposable
             if (_processBySlot.ContainsKey(slot))
             {
                 _detachedSlots.Add(slot);
-                Console.Error.WriteLine($"[couchcoop] headless detached (kept alive mid-run) slot={slot} netId={SlotToNetId(slot)}");
+                CouchCoopLog.Stderr($"headless detached (kept alive mid-run) slot={slot} netId={SlotToNetId(slot)}");
             }
         }
     }
@@ -1094,7 +1094,7 @@ public sealed partial class HeadlessClientManager : IDisposable
             var freed = new List<ulong>();
             foreach (var slot in _detachedSlots.ToList())
             {
-                Console.Error.WriteLine($"[couchcoop] reaping detached headless on run-end slot={slot} netId={SlotToNetId(slot)}");
+                CouchCoopLog.Stderr($"reaping detached headless on run-end slot={slot} netId={SlotToNetId(slot)}");
                 RemoveNameForSlotLocked(slot);
                 if (ShutdownSlotLocked(slot, graceful: false))
                 {
@@ -1141,7 +1141,7 @@ public sealed partial class HeadlessClientManager : IDisposable
         if (dead is null) return;
         foreach (var slot in dead)
         {
-            Console.Error.WriteLine($"[couchcoop] headless reaping dead slot={slot}");
+            CouchCoopLog.Stderr($"headless reaping dead slot={slot}");
             // Drop any sessions still pointing at this dead slot so their later Release is a no-op. The name
             // claim is intentionally retained so the player keeps the same netId on reconnect.
             foreach (var sk in _sessionToSlot.Where(p => p.Value == slot).Select(p => p.Key).ToList())
@@ -1244,7 +1244,7 @@ public sealed partial class HeadlessClientManager : IDisposable
         }
         catch (Exception ex)
         {
-            Console.Error.WriteLine($"[couchcoop] failed writing {MultiplayerNamesFile}: {ex.GetType().Name}: {ex.Message}");
+            CouchCoopLog.Stderr($"failed writing {MultiplayerNamesFile}: {ex.GetType().Name}: {ex.Message}");
         }
     }
 
@@ -1566,7 +1566,7 @@ public sealed partial class HeadlessClientManager : IDisposable
         catch (Exception exception)
             when (exception is IOException or UnauthorizedAccessException or ArgumentException or NotSupportedException)
         {
-            Console.Error.WriteLine($"[couchcoop] headless seat log dir unavailable slot={slot} path={path}: "
+            CouchCoopLog.Stderr($"headless seat log dir unavailable slot={slot} path={path}: "
                 + $"{exception.GetType().Name}: {exception.Message}");
             return null;
         }
@@ -1672,8 +1672,8 @@ public sealed partial class HeadlessClientManager : IDisposable
         // Refuse loudly instead — the viewer gets the "no seat available" path immediately.
         if (!CouchCoopHostTransport.MaySpawnCouchSeat)
         {
-            Console.Error.WriteLine(
-                $"[couchcoop] headless launch refused slot={slot}: this host has no ENet listener for couch seats "
+            CouchCoopLog.Stderr(
+                $"headless launch refused slot={slot}: this host has no ENet listener for couch seats "
                 + $"(dual={CouchCoopHostTransport.IsDual}). A seat can only join a host that is running the ENet side "
                 + $"on port {CouchCoopHostTransport.EnetPort}.");
             // The name is read under the caller's lock: _launcher is only ever invoked from inside _lock.
@@ -1696,7 +1696,7 @@ public sealed partial class HeadlessClientManager : IDisposable
             ? PrepareSeatLogPath(slot)
             : Path.Combine(preparedUserDir.SlotUserDir, "logs", "godot.log");
         var gameArgs = SeatGameArguments(preparedUserDir is null ? seatLogPath : null);
-        Console.Error.WriteLine($"[couchcoop] headless launching slot={slot} port={port} netId={netId} hostNetId={hostNetId} exe={_gameExe}");
+        CouchCoopLog.Stderr($"headless launching slot={slot} port={port} netId={netId} hostNetId={hostNetId} exe={_gameExe}");
 
         ProcessStartInfo psi;
         if (_headlessWrapper is not null)
@@ -1764,7 +1764,7 @@ public sealed partial class HeadlessClientManager : IDisposable
             Volatile.Write(ref _seatsShareTheHostProfile, 1);
             var platform = RuntimeInformation.OSDescription;
             HeadlessLog.Write(
-                $"[couchcoop] headless launching WITHOUT user-dir isolation slot={slot} platform={platform} — "
+                $"headless launching WITHOUT user-dir isolation slot={slot} platform={platform} — "
                 + $"this seat shares the host's Godot user directory; its log goes to {seatLogPath ?? "the shared user directory"}.");
             CouchCoop.Mod.Connections.ConnectionRegistry.Shared.ReportHostIssue(
                 SharedUserDirCode,
@@ -1812,14 +1812,14 @@ public sealed partial class HeadlessClientManager : IDisposable
             var proc = Process.Start(psi);
             if (proc != null)
             {
-                Console.Error.WriteLine($"[couchcoop] headless spawned slot={slot} pid={proc.Id}");
+                CouchCoopLog.Stderr($"headless spawned slot={slot} pid={proc.Id}");
                 return new OsHeadlessProcess(proc);
             }
             return null;
         }
         catch (Exception ex)
         {
-            Console.Error.WriteLine($"[couchcoop] headless launch failed slot={slot}: {ex.GetType().Name}: {ex.Message}");
+            CouchCoopLog.Stderr($"headless launch failed slot={slot}: {ex.GetType().Name}: {ex.Message}");
             throw;
         }
     }
@@ -1894,7 +1894,7 @@ public sealed partial class HeadlessClientManager : IDisposable
                 catch { exited = true; }
                 if (exited)
                 {
-                    Console.Error.WriteLine($"[couchcoop] headless exited early slot={slot} exitCode={exitCode}");
+                    CouchCoopLog.Stderr($"headless exited early slot={slot} exitCode={exitCode}");
                     RemoveNameForSlotLocked(slot);
                     ShutdownSlotLocked(slot, graceful: false);
                     _sessionToSlot.Remove(sessionId);
@@ -1903,7 +1903,7 @@ public sealed partial class HeadlessClientManager : IDisposable
             }
             if ((await _readinessProbe(port, ct).ConfigureAwait(false)).Responding)
             {
-                Console.Error.WriteLine($"[couchcoop] headless ready slot={slot} port={port}");
+                CouchCoopLog.Stderr($"headless ready slot={slot} port={port}");
                 return port;
             }
 
@@ -1911,7 +1911,7 @@ public sealed partial class HeadlessClientManager : IDisposable
         }
 
         // Timeout: kill the process
-        Console.Error.WriteLine($"[couchcoop] headless startup timeout slot={slot} port={port} — killing.");
+        CouchCoopLog.Stderr($"headless startup timeout slot={slot} port={port} — killing.");
         lock (_lock)
         {
             _sessionToSlot.Remove(sessionId);

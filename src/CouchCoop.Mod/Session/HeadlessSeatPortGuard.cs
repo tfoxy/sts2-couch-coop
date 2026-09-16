@@ -107,8 +107,8 @@ internal static class HeadlessSeatPortGuard
     {
         ArgumentNullException.ThrowIfNull(failure);
         var detail = Detail(failure.PreferredPort, failure.BindAddress, failure.SocketError);
-        CouchCoopLog.Error($"[couchcoop] seat refused: assigned browser port unavailable. {detail}");
-        Console.Error.WriteLine($"[couchcoop] seat refused: assigned browser port unavailable. {detail}");
+        CouchCoopLog.Error($"seat refused: assigned browser port unavailable. {detail}");
+        CouchCoopLog.Stderr($"seat refused: assigned browser port unavailable. {detail}");
 
         try
         {
@@ -122,8 +122,8 @@ internal static class HeadlessSeatPortGuard
         {
             // The host still learns something: the process is about to exit, which it reports as a closed
             // client game. Losing the precise cause is better than serving a port nobody will ask for.
-            Console.Error.WriteLine(
-                $"[couchcoop] seat port report failed: {exception.GetType().Name}: {exception.Message}");
+            CouchCoopLog.Stderr(
+                $"seat port report failed: {exception.GetType().Name}: {exception.Message}");
         }
 
         // Not a polite quit: there is no browser attached to drain, and the one outcome that must be impossible

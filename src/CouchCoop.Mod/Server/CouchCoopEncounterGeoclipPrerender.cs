@@ -1,4 +1,5 @@
 using CouchCoop.Mod.Runtime;
+using CouchCoop.Mod.Session;
 using Spirectl.Sts2.Core.Artifacts;
 using Spirectl.Sts2.Core.SceneInspection;
 
@@ -209,7 +210,7 @@ public sealed class CouchCoopEncounterGeoclipPrerender : IDisposable
     {
         _observer = observer ?? throw new ArgumentNullException(nameof(observer));
         _job = job ?? throw new ArgumentNullException(nameof(job));
-        _log = log ?? (message => Console.Error.WriteLine(message));
+        _log = log ?? CouchCoopLog.Stderr;
         _armed = armed ?? (() => ArmedByEnvironment);
         _settleDelay = settleDelay ?? DefaultSettleDelay;
     }
@@ -325,13 +326,13 @@ public sealed class CouchCoopEncounterGeoclipPrerender : IDisposable
             }
 
             _log(
-                $"[couchcoop] geoclip-prerender encounter ARMED screen={screenType} instance={screenInstanceId} "
+                $"geoclip-prerender encounter ARMED screen={screenType} instance={screenInstanceId} "
                 + $"identities={roster.Count} settleMs={_settleDelay.TotalMilliseconds:0} batch={RigBatchPoses}");
 
             var summary = await job.RunAsync(roster, RigBatchPoses, cancellationToken).ConfigureAwait(false);
 
             _log(
-                $"[couchcoop] geoclip-prerender encounter DONE screen={screenType} instance={screenInstanceId} "
+                $"geoclip-prerender encounter DONE screen={screenType} instance={screenInstanceId} "
                 + $"status={summary.Status} hits={summary.Hits} baked={summary.Baked} "
                 + $"refused={summary.Refused} refusedCached={summary.RefusedCached} failed={summary.Failed} "
                 + $"elapsedMs={summary.ElapsedMs}");
@@ -346,7 +347,7 @@ public sealed class CouchCoopEncounterGeoclipPrerender : IDisposable
             // A prerender is an optimisation. It may never take the browser server down with it, and it must not
             // be able to make the mirror worse than the on-demand path it is trying to get ahead of.
             _log(
-                $"[couchcoop] geoclip-prerender encounter failed screen={screenType} "
+                $"geoclip-prerender encounter failed screen={screenType} "
                 + $"instance={screenInstanceId} detail={exception.GetType().Name}: {exception.Message}");
         }
     }

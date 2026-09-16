@@ -228,7 +228,10 @@ internal static class ConnectionArrivalLogTests
             "the bundle fetch is not recorded as a shell arrival");
         lock (lines)
         {
-            Assert(lines.Any(line => line.StartsWith("[couch-coop] arrival ", StringComparison.Ordinal) && line.Contains("-> shell", StringComparison.Ordinal)),
+            // No prefix here, and that is the point: the injected sink sees the MESSAGE, and CouchCoopLog is
+            // what prepends `[couchcoop] ` on the way out — which is why this assertion used to match
+            // `[couch-coop] `, a spelling nothing else in the mod used. CouchCoopLogPrefixTests pins the prefix.
+            Assert(lines.Any(line => line.StartsWith("arrival ", StringComparison.Ordinal) && line.Contains("-> shell", StringComparison.Ordinal)),
                 "an arrival reaches the diagnostic log");
             Assert(lines.All(line => !line.Contains("Tomas", StringComparison.OrdinalIgnoreCase)), "and never carries a player name");
         }

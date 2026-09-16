@@ -1,3 +1,4 @@
+using CouchCoop.Mod.Session;
 using Godot;
 using CouchCoop.Mod.Localization;
 using MegaCrit.Sts2.Core.Localization.Fonts;
@@ -236,7 +237,7 @@ internal static class CouchCoopGameUiTheme
 
                     if (_cached is not null)
                     {
-                        Console.Error.WriteLine($"[couchcoop] host-ui theme resource was freed; reloading path={path}");
+                        CouchCoopLog.Stderr($"host-ui theme resource was freed; reloading path={path}");
                         _cached = null;
                     }
 
@@ -257,8 +258,8 @@ internal static class CouchCoopGameUiTheme
             }
             catch (Exception exception)
             {
-                Console.Error.WriteLine(
-                    $"[couchcoop] host-ui theme load failed path={path} detail={exception.GetType().Name}: {exception.Message}");
+                CouchCoopLog.Stderr(
+                    $"host-ui theme load failed path={path} detail={exception.GetType().Name}: {exception.Message}");
                 return null;
             }
         }
