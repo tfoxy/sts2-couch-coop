@@ -69,6 +69,8 @@
   "couchcoop_connection_error_launch_action": "Tekrar katılmayı deneyin.",
   "couchcoop_connection_error_join_summary": "Oyuncunun oyunu bağlantısını kaybetti.",
   "couchcoop_connection_error_join_action": "Bu tarayıcıyı yeniden bağlayın.",
+  "couchcoop_connection_error_seat_run_in_progress_summary": "Tur çoktan başladı, bu yüzden bu oyuncunun oyunu katılamıyor.",
+  "couchcoop_connection_error_seat_run_in_progress_action": "Bu oyuncunun geri katılabilmesi için kayıtlı turu yeniden yükleyin.",
   "couchcoop_connection_error_mod_mismatch_summary": "Bu oyuncunun oyunu CouchCoop'un farklı bir kopyasını yükledi.",
   "couchcoop_connection_error_mod_mismatch_action": "Modun yalnızca tek bir kopyasını kurulu bırakın, oyunu yeniden başlatın ve tekrar deneyin.",
   "couchcoop_connection_error_seat_port_summary": "Bu bilgisayardaki başka bir program bu oyuncunun bağlantı noktasını kullanıyor.",

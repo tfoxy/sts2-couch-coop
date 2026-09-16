@@ -69,6 +69,8 @@
   "couchcoop_connection_error_launch_action": "다시 참가해 보세요.",
   "couchcoop_connection_error_join_summary": "플레이어 게임의 연결이 끊겼습니다.",
   "couchcoop_connection_error_join_action": "이 브라우저를 다시 연결하세요.",
+  "couchcoop_connection_error_seat_run_in_progress_summary": "런이 이미 시작되어 이 플레이어의 게임은 참가할 수 없습니다.",
+  "couchcoop_connection_error_seat_run_in_progress_action": "저장된 런을 다시 불러와 이 플레이어가 다시 참가하게 하세요.",
   "couchcoop_connection_error_mod_mismatch_summary": "이 플레이어의 게임이 다른 CouchCoop 사본을 불러왔습니다.",
   "couchcoop_connection_error_mod_mismatch_action": "모드 사본을 하나만 남기고 게임을 다시 시작한 후 다시 시도하세요.",
   "couchcoop_connection_error_seat_port_summary": "이 컴퓨터의 다른 프로그램이 이 플레이어의 포트를 사용하고 있습니다.",

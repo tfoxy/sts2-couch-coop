@@ -571,15 +571,22 @@ public sealed class CouchCoopWebSocketConnection
                     // Rule 4: the HOST seat was selected — never spawn; watch the host's own stream.
                     directView = true;
                 }
-                else if (_envelopeFactory.RefuseSeatJoin(targetNetId) is { } seatRejection)
+                else if (_envelopeFactory.RefuseSeatJoin(
+                    // WHICH SEAT IS BEING JUDGED. A roster tap says so outright; a free-text submit does not,
+                    // so the name's own slot claim answers for it. That second half is not a nicety: the
+                    // browser's automatic reconnect re-joins with the REMEMBERED NAME and no player id, so with
+                    // only `targetNetId` this rule was skipped for precisely the join that most needed it — a
+                    // device coming back to a seat whose process had died. It would fall through, be allowed to
+                    // spawn, and the host would refuse the instance ~30s later. A name with no claim here is
+                    // still unjudged and still falls through to name resolution below, exactly as before.
+                    targetNetId ?? _headlessManager.NetIdForClaimedName(trimmedName)) is { } seatRejection)
                 {
                     // Rule 6: the picked SEAT is not joinable right now (mid-run with no game-connected
                     // instance, or a lobby zombie awaiting its reap — MirrorSeatDirectory's matrix). The
                     // picker already renders those rows disabled; enforcing it here too means a stale
                     // roster, a retried request or a hand-crafted client cannot drive a join the picker
                     // would not offer — which would spawn an instance the game then refuses, i.e. a join
-                    // that silently fails. Only a seat-targeted tap is judged: a free-text name submit
-                    // carries no netId and still falls through to name resolution below.
+                    // that silently fails.
                     joinRejection = seatRejection;
                 }
                 else
@@ -624,23 +631,37 @@ public sealed class CouchCoopWebSocketConnection
                         // action ran before the peer existed).
                         _lobby.SetClientName(HeadlessClientManager.NetIdForPort(readyPort), trimmedName);
                     }
-                    else if (ctx.SpawnAllowed || isSeatRejoin)
-                    {
-                        // Spawn window (or an allowed seat rejoin), but no port: the respawn failed, else
-                        // the pool is full. A seat rejoin is a respawn by definition, so it reports
-                        // "spawn-failed" rather than pretending the name was unknown.
-                        var failure = ConnectionRegistry.Shared.Snapshot().Rows
-                            .FirstOrDefault(row => row.Id == session.Id)?.Issue;
-                        joinRejection = failure is not null || isSeatRejoin || _headlessManager.HasNameClaim(trimmedName)
-                            ? "spawn-failed"
-                            : "no-free-instance";
-                        joinRejectionDetail = failure?.Detail ?? failure?.Summary;
-                    }
                     else
                     {
-                        // Not a spawn window (a run is active), not a seat that exists here, and no
-                        // existing claim to reuse (rules 2 & 5).
-                        joinRejection = "not-a-session-player";
+                        var failure = ConnectionRegistry.Shared.Snapshot().Rows
+                            .FirstOrDefault(row => row.Id == session.Id)?.Issue;
+                        if (failure?.Code == Session.HeadlessDisconnectReason.RunInProgressCode)
+                        {
+                            // The allocator refused to LAUNCH into a running run. Rule 6 above catches this
+                            // for every join the seat table has an opinion on; reaching here means it did
+                            // not (no seat table, or a seat whose verdict had not been evaluated yet), so
+                            // the same answer is given from the same code the picker's disabled rows carry.
+                            // Not "spawn-failed": nothing failed and a retry changes nothing until the host
+                            // reloads the save, so copy that invites an immediate retry would be a lie.
+                            joinRejection = MirrorSeatStatuses.UnavailableRejection;
+                            joinRejectionDetail = failure.Detail ?? failure.Summary;
+                        }
+                        else if (ctx.SpawnAllowed || isSeatRejoin)
+                        {
+                            // Spawn window (or an allowed seat rejoin), but no port: the respawn failed, else
+                            // the pool is full. A seat rejoin is a respawn by definition, so it reports
+                            // "spawn-failed" rather than pretending the name was unknown.
+                            joinRejection = failure is not null || isSeatRejoin || _headlessManager.HasNameClaim(trimmedName)
+                                ? "spawn-failed"
+                                : "no-free-instance";
+                            joinRejectionDetail = failure?.Detail ?? failure?.Summary;
+                        }
+                        else
+                        {
+                            // Not a spawn window (a run is active), not a seat that exists here, and no
+                            // existing claim to reuse (rules 2 & 5).
+                            joinRejection = "not-a-session-player";
+                        }
                     }
                 }
             }

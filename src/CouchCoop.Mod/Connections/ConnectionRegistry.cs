@@ -438,9 +438,16 @@ public sealed class ConnectionRegistry
             // with a confirmed native/process failure; teardown must never replace an existing native cause.
             // `seat-build-mismatch` belongs in that set for the same reason and more strongly: the seat
             // reported it about itself and then exited, so the closed socket is its consequence.
-            if (e.Issue.Code == "browser-transport-lost"
-                && issue.Code is "process-exited" or "native-join-rejected" or "native-disconnected"
-                    or Session.HeadlessClientManager.SeatBuildMismatchCode)
+            // …and the same asymmetry once more, one level down: a seat reports a drop TWICE, generically
+            // first (its transport saw the socket go) and specifically a beat later (the game's own handler
+            // knows what the host said). The generic report gets here first and would otherwise pin the row to
+            // "check that game and mod versions match" — wrong advice for a run the player simply is not in.
+            // So a run-in-progress refusal may replace a generic cause; nothing may replace IT.
+            if ((e.Issue.Code == "browser-transport-lost"
+                    && issue.Code is "process-exited" or "native-join-rejected" or "native-disconnected"
+                        or Session.HeadlessClientManager.SeatBuildMismatchCode)
+                || (issue.Code == Session.HeadlessDisconnectReason.RunInProgressCode
+                    && e.Issue.Code is "browser-transport-lost" or "native-join-rejected" or "native-disconnected"))
             {
                 Trace(e, $"Earlier browser symptom: {e.Issue.Code}: {e.Issue.Detail ?? e.Issue.Summary}");
                 e.Issue = TimedIssue(e, issue, ConnectionIssueOutcome.Failed);

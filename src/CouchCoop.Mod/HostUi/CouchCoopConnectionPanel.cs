@@ -488,6 +488,11 @@ internal sealed partial class CouchCoopConnectionPanel : Panel
         Session.SeatReadinessVerdict.NetworkPathCode => "seat_network",
         "launch-exception" or "launch-refused" or "startup-timeout" or "process-monitor-failed" => "launch",
         "native-join-rejected" or "native-disconnected" or "child-status-lost" => "join",
+        // Split OUT of "join" deliberately. The generic join copy tells the host to check that game and mod
+        // versions match, which is wrong twice over for a run already in progress: nothing is mismatched, and
+        // the only thing that helps is reloading the save. Both ends of the same refusal share this code — the
+        // host declining to launch a seat into a running run, and a seat the host's netcode turned away.
+        Session.HeadlessDisconnectReason.RunInProgressCode => "seat_run_in_progress",
         "browser-view-slow" => "slow",
         "browser-render-failed" or "browser-transport-lost" => "browser",
         "host-service-failed" or "host-service-stopped" => "service",

@@ -44,10 +44,12 @@ public sealed partial class HeadlessClientManager
         await CleanupExitedConnectionsAsync(ct).ConfigureAwait(false);
         ConnectionRegistry.Shared.ConfigureView(sessionId, requiresChild: true, reused: true);
         var launchLogs = ConnectionAttemptLogs.CaptureStart(ConnectionRegistry.HostLogPath, null);
-        // BOTH of these are settled BEFORE _lock is taken, and for the same reason: MaxSlot's probe marshals to
-        // the game's main thread, and the port survey can block on a dropped packet. The main thread takes _lock
-        // on every screen change, so either one evaluated under it stalls (MaxSlot deadlocks) the game.
+        // ALL THREE of these are settled BEFORE _lock is taken, and for the same reason: the MaxSlot and
+        // RunInProgress probes marshal to the game's main thread, and the port survey can block on a dropped
+        // packet. The main thread takes _lock on every screen change, so any of them evaluated under it stalls
+        // (the state probes deadlock) the game.
         var maxSlot = MaxSlot;
+        var runInProgress = RunInProgress;
         var occupiedSeatPorts = await SurveySeatPortsAsync(maxSlot, displayName, targetNetId, ct).ConfigureAwait(false);
         foreach (var (occupiedSlot, owner) in occupiedSeatPorts)
         {
@@ -57,7 +59,8 @@ public sealed partial class HeadlessClientManager
         try
         {
             allocation = AllocateHeadless(
-                sessionId, displayName, ct, maxSlot, occupiedSeatPorts, allowNewSlot, onSlotBound, targetNetId);
+                sessionId, displayName, ct, maxSlot, occupiedSeatPorts, runInProgress, allowNewSlot, onSlotBound,
+                targetNetId);
         }
         catch
         {
@@ -613,8 +616,34 @@ public sealed partial class HeadlessClientManager
             : detail;
     }
 
+    /// <summary>
+    /// Whether <paramref name="code"/> is one of the catch-all native failures — the ones recorded when the seat
+    /// could say only that its connection ended.
+    /// </summary>
+    /// <remarks>
+    /// These exist to be OVERWRITTEN. The seat's transport publishes a generic drop before the game reports the
+    /// reason behind it, so the generic code wins the race to the row and a plain <c>??=</c> then pins the panel
+    /// to "check that game and mod versions match" — advice a player cannot act on, for a refusal that has a real
+    /// remedy. A specific code arriving afterwards replaces one of these; nothing replaces a specific one.
+    /// </remarks>
+    private static bool IsGenericNativeFailure(string? code)
+        => code is "native-join-rejected" or "native-disconnected";
+
     private static bool SetTerminalFailure(OwnedConnection owned, HeadlessConnectionStatus? status)
     {
+        // The seat's late, specific word on a drop the host has already written down generically. Checked ahead
+        // of the phase arms below because it is the one case that must be allowed to REPLACE a recorded failure.
+        if (status?.ErrorCode == HeadlessDisconnectReason.RunInProgressCode
+            && (owned.Failure is null || IsGenericNativeFailure(owned.Failure.Code)))
+        {
+            owned.Failure = new(
+                HeadlessDisconnectReason.RunInProgressCode,
+                "The run was already in progress, so the host refused this player's game.",
+                "The host has to reload the saved run to let this player back in.",
+                status.ErrorDetail ?? "The host's game refused the connection with RunInProgress.");
+            return true;
+        }
+
         if (status?.NativePhase.Equals("Failed", StringComparison.OrdinalIgnoreCase) == true)
             // A build mismatch is a terminal failure like any other, but it is NOT a native rejection: the seat
             // never reached the network, and "check that game and mod versions match" is the one next action a

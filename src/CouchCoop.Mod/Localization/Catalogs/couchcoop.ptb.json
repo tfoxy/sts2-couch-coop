@@ -69,6 +69,8 @@
   "couchcoop_connection_error_launch_action": "Tente entrar novamente.",
   "couchcoop_connection_error_join_summary": "O jogo do jogador perdeu a conexão.",
   "couchcoop_connection_error_join_action": "Reconecte este navegador.",
+  "couchcoop_connection_error_seat_run_in_progress_summary": "A jornada já começou, então o jogo deste jogador não pode entrar nela.",
+  "couchcoop_connection_error_seat_run_in_progress_action": "Recarregue a jornada salva para deixar este jogador voltar.",
   "couchcoop_connection_error_mod_mismatch_summary": "O jogo deste jogador carregou uma cópia diferente do CouchCoop.",
   "couchcoop_connection_error_mod_mismatch_action": "Mantenha apenas uma cópia do mod instalada, reinicie o jogo e tente novamente.",
   "couchcoop_connection_error_seat_port_summary": "Outro programa neste computador está usando a porta deste jogador.",

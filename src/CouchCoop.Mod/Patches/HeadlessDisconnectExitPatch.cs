@@ -120,7 +120,42 @@ internal static class HeadlessDisconnectExitPatch
             await HeadlessConnectionReporter.FlushAsync(cancellationToken).ConfigureAwait(false);
             await CouchCoopMod.CloseBrowserConnectionsAsync(BrowserServerReloadReasons.HeadlessHostDisconnected, cancellationToken).ConfigureAwait(false);
         },
-        quit: QuitGameDeferred);
+        quit: QuitGameDeferred,
+        // A reason that arrives after the shutdown has started still has somewhere to go: one terminal status to
+        // the HOST, which is the only surface that outlives this process. Without it the refinement would be a
+        // log line in a file nobody reads, in a seat that is about to disappear.
+        refineReason: ReportRefinedReason);
+
+    /// <summary>
+    /// Send the refined disconnect reason to the host as this seat's terminal status, best-effort and bounded.
+    /// </summary>
+    /// <remarks>
+    /// Fire-and-forget under the force-exit backstop's budget: the process is already quitting, so this is a
+    /// short window in which the host may or may not hear us, and it must not be able to hold the exit open. The
+    /// host treats a specific seat code as a refinement of the generic one it has already recorded (see
+    /// <c>HeadlessClientManager.SetTerminalFailure</c>), so a late arrival still corrects the panel and a lost
+    /// one leaves it exactly as it was.
+    /// </remarks>
+    private static void ReportRefinedReason(string reason)
+    {
+        _ = Task.Run(async () =>
+        {
+            try
+            {
+                using var cancel = new CancellationTokenSource(TimeSpan.FromSeconds(2));
+                await HeadlessConnectionReporter.ReportTerminalFailureAsync(
+                    reason,
+                    "The host refused this player's game after the connection had already been reported lost, "
+                    + "so this is the specific reason behind that generic drop.",
+                    cancel.Token).ConfigureAwait(false);
+            }
+            catch (Exception exception)
+            {
+                HeadlessLog.Write(
+                    $"[couchcoop] reporting the refined disconnect reason failed: {exception.GetType().Name}: {exception.Message}");
+            }
+        });
+    }
 
     // Ask Godot to shut down on ITS OWN main loop. CallDeferred (not a direct Quit()) because the disconnect can
     // be reported from the net update path mid-frame and, in the failure case we care about, from a state where
@@ -188,11 +223,20 @@ internal static class HeadlessDisconnectExitPatch
         RequestExit(Describe(info));
     }
 
+    /// <summary>
+    /// Turn the game's rendered disconnect info into the reason the exit sequence records — a known connection
+    /// issue CODE where we recognise one, the rendering itself otherwise.
+    /// </summary>
+    /// <remarks>
+    /// This used to be a bare <c>info.ToString()</c>, which is why the one refusal a player can act on arrived as
+    /// free text and left with the process. Classifying it here is what lets the sequence tell a reason that says
+    /// something from one that only says the socket closed — see <see cref="HeadlessDisconnectReason"/>.
+    /// </remarks>
     private static string Describe(NetErrorInfo info)
     {
         try
         {
-            return info.ToString();
+            return HeadlessDisconnectReason.Classify(info.ToString());
         }
         catch
         {

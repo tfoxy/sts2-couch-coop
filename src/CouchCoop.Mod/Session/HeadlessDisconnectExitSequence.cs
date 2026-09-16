@@ -34,6 +34,20 @@ namespace CouchCoop.Mod.Session;
 /// <c>Disconnect()</c> call), and the sequence must not re-enter: a second trigger logs and returns false without
 /// re-arming a second force-exit timer or re-sending the last gasp.
 /// </para>
+///
+/// <para>
+/// ONE-SHOT IS NOT THE SAME AS ONE REASON, and conflating the two threw away the only useful diagnosis this seat
+/// had. The two notifications do not carry equally good information and they do not arrive in a helpful order:
+/// the TRANSPORT publishes a generic "the socket is gone" first and wins the race below, and the GAME's own
+/// disconnect handler follows a beat later with the reason the host actually gave (observed on a seat the host
+/// refused mid-run: <c>native-network-error</c> started the shutdown, then <c>RunInProgress</c> arrived and was
+/// discarded with "already running — ignoring"). The host then had nothing to show the player but the generic
+/// join copy — "check that game and mod versions match" — for a run the seat simply was not in. So a LATER
+/// SPECIFIC reason now REFINES an earlier generic one (see <see cref="HeadlessDisconnectReason.IsSpecific"/>):
+/// the shutdown itself does not restart, but the refined reason is logged and handed to the caller's
+/// <c>refineReason</c> hook, which is what reports it upstream. Refinement happens at most once, and a second
+/// generic reason never displaces a specific one.
+/// </para>
 /// </summary>
 internal sealed class HeadlessDisconnectExitSequence
 {
@@ -52,14 +66,24 @@ internal sealed class HeadlessDisconnectExitSequence
     private readonly Action _forceExit;
     private readonly Action<TimeSpan, Action> _schedule;
     private readonly Action<string> _log;
+    private readonly Action<string>? _refineReason;
     private readonly TimeSpan _forceExitDelay;
     private readonly TimeSpan _notifyTimeout;
     private int _started;
+    private readonly object _reasonGate = new();
+    private string? _reason;
+    private bool _refined;
 
     /// <param name="notifyViewers">Sends the last-gasp envelope + closes viewer sockets (reason, cancellation).</param>
     /// <param name="quit">Requests the clean game shutdown (production: a deferred <c>SceneTree.Quit()</c>).</param>
     /// <param name="forceExit">The untrappable exit used when the clean quit doesn't land in time.</param>
     /// <param name="schedule">Runs an action after a delay off the calling thread (production: a background thread).</param>
+    /// <param name="refineReason">
+    /// Called at most once, with a SPECIFIC reason that arrived after a generic one had already started the
+    /// shutdown (see the class remarks). Production reports it upstream so the host can name the real cause;
+    /// null simply keeps the refinement in the log. Never allowed to throw into the caller — a diagnosis must
+    /// not be able to delay an exit.
+    /// </param>
     public HeadlessDisconnectExitSequence(
         Func<string, CancellationToken, Task> notifyViewers,
         Action quit,
@@ -67,8 +91,10 @@ internal sealed class HeadlessDisconnectExitSequence
         Action<TimeSpan, Action>? schedule = null,
         Action<string>? log = null,
         TimeSpan? forceExitDelay = null,
-        TimeSpan? notifyTimeout = null)
+        TimeSpan? notifyTimeout = null,
+        Action<string>? refineReason = null)
     {
+        _refineReason = refineReason;
         _notifyViewers = notifyViewers ?? throw new ArgumentNullException(nameof(notifyViewers));
         _quit = quit ?? throw new ArgumentNullException(nameof(quit));
         _forceExit = forceExit ?? HeadlessForceExit.Now;
@@ -84,6 +110,12 @@ internal sealed class HeadlessDisconnectExitSequence
     public bool Started => Volatile.Read(ref _started) != 0;
 
     /// <summary>
+    /// The best reason recorded so far — the one the shutdown started with, unless a more specific one arrived
+    /// afterwards and refined it (see the class remarks). Null before the first trigger.
+    /// </summary>
+    public string? Reason { get { lock (_reasonGate) return _reason; } }
+
+    /// <summary>
     /// Run the shutdown for <paramref name="reason"/> (a human-readable disconnect description that reaches the
     /// log AND the viewers). Returns false when the sequence was already started — the caller may fire this from
     /// several disconnect notifications without guarding.
@@ -92,10 +124,16 @@ internal sealed class HeadlessDisconnectExitSequence
     {
         if (Interlocked.Exchange(ref _started, 1) != 0)
         {
-            _log($"[couchcoop] headless disconnect-exit already running — ignoring reason={reason}");
+            // Already shutting down — but the reason may still be worth more than the one we started with.
+            if (!TryRefineReason(reason))
+            {
+                _log($"[couchcoop] headless disconnect-exit already running — ignoring reason={reason}");
+            }
+
             return false;
         }
 
+        lock (_reasonGate) _reason = reason;
         _log($"[couchcoop] headless lost its host connection permanently (reason={reason}) — exiting.");
 
         // (1) Backstop first — see the class remarks. A throw here would leave us with no guaranteed exit at all,
@@ -120,6 +158,45 @@ internal sealed class HeadlessDisconnectExitSequence
         catch (Exception exception)
         {
             _log($"[couchcoop] headless disconnect-exit clean quit failed: {exception.GetType().Name}: {exception.Message} — waiting for the force-exit backstop.");
+        }
+
+        return true;
+    }
+
+    /// <summary>
+    /// Record <paramref name="reason"/> over the one the shutdown started with, when it is specific and that one
+    /// was not, and tell the refinement hook. Returns whether it was taken.
+    /// </summary>
+    /// <remarks>
+    /// AT MOST ONCE, and only ever generic→specific. The seat is seconds from exiting, so this must be a bounded
+    /// amount of extra work no matter how many disconnect notifications the game produces; and a second specific
+    /// reason is not better than the first, it is just later.
+    /// </remarks>
+    private bool TryRefineReason(string reason)
+    {
+        string previous;
+        lock (_reasonGate)
+        {
+            if (_refined
+                || !HeadlessDisconnectReason.IsSpecific(reason)
+                || HeadlessDisconnectReason.IsSpecific(_reason))
+            {
+                return false;
+            }
+
+            previous = _reason ?? "none";
+            _reason = reason;
+            _refined = true;
+        }
+
+        _log($"[couchcoop] headless disconnect-exit reason refined: {previous} -> {reason}");
+        try
+        {
+            _refineReason?.Invoke(reason);
+        }
+        catch (Exception exception)
+        {
+            _log($"[couchcoop] headless disconnect-exit could not report the refined reason: {exception.GetType().Name}: {exception.Message}");
         }
 
         return true;

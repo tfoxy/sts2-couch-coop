@@ -326,8 +326,13 @@ internal static class MirrorSeatRosterTests
         Assert(directory.RefuseJoin(1002) is null, "a ready seat is joinable");
         Assert(directory.RefuseJoin(1003) == MirrorSeatStatuses.UnavailableRejection,
             "a mid-run offline seat is refused with the shared rejection code");
+        // A null netId still means "nothing seat-shaped to judge" HERE. What changed is upstream: the join
+        // handler no longer hands this a null just because the request was free text — it resolves the name's
+        // own slot claim first (HeadlessClientManager.NetIdForClaimedName), because the browser's automatic
+        // reconnect re-joins by remembered NAME and was skipping this gate for precisely the seat it had lost.
+        // A name with no claim still arrives here as null and is still left to the game to judge.
         Assert(directory.RefuseJoin(null) is null,
-            "a free-text name submit targets no seat, so the seat gate has nothing to say about it");
+            "a join that resolves to no seat at all leaves the seat gate with nothing to say about it");
         Assert(directory.RefuseJoin(1099) is null, "an unknown netId is left to the game to judge");
 
         // The lobby zombie is refused for the same reason (it is about to be reaped, not joined). 1002's timer was

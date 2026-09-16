@@ -41,7 +41,12 @@ public sealed class HotReloadableBrowserServerHost : IHotServerHost, IAsyncDispo
         var lobby = new CouchCoopLobbyParticipation(_runtime);
         _headlessManager = CouchCoopMod.IsHeadlessClient
             ? null
-            : HeadlessClientManager.TryCreate(netId => lobby.DisconnectClient(netId, requireSuccess: true), lobby.MaxCouchSeats);
+            : HeadlessClientManager.TryCreate(
+                netId => lobby.DisconnectClient(netId, requireSuccess: true),
+                lobby.MaxCouchSeats,
+                // Once the host is in a run its netcode refuses any client that is not already connected, so no
+                // seat process may be launched — see HeadlessClientManager.RunInProgress.
+                lobby.IsRunInProgress);
         _headlessManager?.ConfigureConnectionMonitoring(lobby.IsGamePlayerConnected, () => BaseUri?.Port ?? 0);
         Admission = new NetworkAdmissionLimiter(() => new CouchCoopLobbyParticipation(_runtime).MaxLobbyPlayers());
         _generation = new BuiltInBrowserServerGeneration(this);

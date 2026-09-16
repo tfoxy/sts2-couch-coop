@@ -69,6 +69,8 @@
   "couchcoop_connection_error_launch_action": "Попробуйте присоединиться снова.",
   "couchcoop_connection_error_join_summary": "Игра игрока потеряла соединение.",
   "couchcoop_connection_error_join_action": "Переподключите этот браузер.",
+  "couchcoop_connection_error_seat_run_in_progress_summary": "Забег уже начался, поэтому игра этого игрока не может к нему присоединиться.",
+  "couchcoop_connection_error_seat_run_in_progress_action": "Загрузите сохранённый забег заново, чтобы этот игрок снова смог играть.",
   "couchcoop_connection_error_mod_mismatch_summary": "Игра этого игрока загрузила другую копию CouchCoop.",
   "couchcoop_connection_error_mod_mismatch_action": "Оставьте установленной только одну копию мода, перезапустите игру и повторите попытку.",
   "couchcoop_connection_error_seat_port_summary": "Другая программа на этом компьютере занимает порт этого игрока.",

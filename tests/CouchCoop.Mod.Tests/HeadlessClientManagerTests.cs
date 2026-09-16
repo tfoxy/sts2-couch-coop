@@ -54,6 +54,13 @@ internal static class HeadlessClientManagerTests
         // sentences are not a contract any more — but one of those tests was reading a REAL behaviour through
         // them, and it keeps its own observable.
         await ARespawnAfterADeadHandleLaunchesAFreshProcess();
+
+        // The mid-run launch gate, and the seat-identity lookup the join handler judges a free-text name with.
+        await AClaimedButDeadSeatIsNotRelaunchedMidRun();
+        await TheSameClaimStillSpawnsOnALoadSavedRunLobby();
+        await ALiveSeatIsStillReusedMidRun();
+        await ANetIdBoundRespawnIsAlsoRefusedMidRun();
+        await AClaimedNameResolvesToItsSeatNetId();
     }
 
     // A controllable fake process. RequestGracefulStop optionally "exits" the process (simulating a clean
@@ -105,6 +112,11 @@ internal static class HeadlessClientManagerTests
         // Mutable so a test can raise it the way a multiplayer limit mod does mid-session. NULLABLE because the
         // real probe reports null when there is no lobby to ask, which is a different answer from any number.
         public int? MaxSeats = 3;
+        // What the manager's run-in-progress probe answers. Mutable so one harness can play out the sequence
+        // that produced the defect: a seat allocated in the lobby, then the host starts the run, then the
+        // browser comes back. FALSE is both the default and what the load-saved-run lobby reports, which is why
+        // the rejoin flow that genuinely works stays open under this gate.
+        public bool RunInProgress;
 
         public Harness(int? maxSeats = 3)
         {
@@ -122,7 +134,8 @@ internal static class HeadlessClientManagerTests
                 },
                 // Instant "ready" so EnsureHeadlessAsync returns the port without a real HTTP poll.
                 readinessProbe: (_, _) => Task.FromResult(true),
-                maxSeatsProbe: () => MaxSeats);
+                maxSeatsProbe: () => MaxSeats,
+                runInProgressProbe: () => RunInProgress);
         }
 
         // Records the slot-bound callback into the same ordered trace as the launcher.
@@ -843,6 +856,86 @@ internal static class HeadlessClientManagerTests
 
 
 
+
+    // ---- the mid-run launch gate -----------------------------------------------------------------------------
+    // One defect, four cells. A seat's process dies mid-run and its browser comes back: the allocator used to
+    // re-spawn on the same slot regardless, believing the host's run would take the returning netId back. It does
+    // not — the host refuses any client that is not already connected once the run begins, that seat's own netId
+    // included — so the player spent ~30s starting a game that was disconnected on arrival. What must NOT change
+    // is everything next to it: a live process is still shared, and the load-saved-run lobby (which reads "no run
+    // in progress") still spawns.
+
+    private static async Task AClaimedButDeadSeatIsNotRelaunchedMidRun()
+    {
+        var h = new Harness();
+        // Allocated in the lobby, the way a real seat is.
+        await h.Manager.EnsureHeadlessAsync(Guid.NewGuid(), "Ann", default);
+        Assert(h.Spawned.Count == 1, "the lobby join launches Ann's instance");
+        h.Spawned[0].ForceExit(); // the seat's process died mid-run
+
+        h.RunInProgress = true;
+        // Exactly the shape the browser's automatic reconnect produces: the remembered NAME, no seat id, and no
+        // spawn window (the host is in a run).
+        var port = await h.Manager.EnsureHeadlessAsync(Guid.NewGuid(), "Ann", default, allowNewSlot: false);
+        Assert(port is null, "a dead seat's name-claim is refused while the run is in progress");
+        Assert(h.Spawned.Count == 1, "…and NOTHING is launched — the host would refuse the instance on arrival");
+        Assert(h.Manager.HasNameClaim("Ann"), "…while Ann keeps her seat for the rejoin once the host reloads the save");
+    }
+
+    private static async Task TheSameClaimStillSpawnsOnALoadSavedRunLobby()
+    {
+        var h = new Harness();
+        await h.Manager.EnsureHeadlessAsync(Guid.NewGuid(), "Ann", default);
+        h.Spawned[0].ForceExit();
+
+        // The load-saved-run lobby: the host is BETWEEN runs (no live run, a save waiting), which is what
+        // IsRunInProgress reports there — and it is the one screen a departed seat can genuinely come back
+        // through, so the gate must not close on it.
+        h.RunInProgress = false;
+        var port = await h.Manager.EnsureHeadlessAsync(Guid.NewGuid(), "Ann", default, allowNewSlot: false);
+        Assert(port == HeadlessClientManager.SlotToPort(2), "the same claim spawns again between runs, on the same slot");
+        Assert(h.Spawned.Count == 2, "…launching a fresh instance for the rejoin");
+    }
+
+    private static async Task ALiveSeatIsStillReusedMidRun()
+    {
+        var h = new Harness();
+        await h.Manager.EnsureHeadlessAsync(Guid.NewGuid(), "Ann", default);
+        h.RunInProgress = true;
+
+        // THE LOAD-BEARING CASE. The browser went away and came back while the seat's process kept playing; that
+        // process is still the run's connected peer, so re-attaching must work exactly as before.
+        var port = await h.Manager.EnsureHeadlessAsync(Guid.NewGuid(), "Ann", default, allowNewSlot: false);
+        Assert(port == HeadlessClientManager.SlotToPort(2), "a mid-run browser reconnect still gets its live seat's port");
+        Assert(h.Spawned.Count == 1, "…by sharing the running process, not by launching a second one");
+    }
+
+    private static async Task ANetIdBoundRespawnIsAlsoRefusedMidRun()
+    {
+        var h = new Harness();
+        await h.Manager.EnsureHeadlessAsync(Guid.NewGuid(), "Ann", default);
+        h.Spawned[0].ForceExit();
+        h.RunInProgress = true;
+
+        // The seat-targeted form of the same request (a roster tap). The rejoin window the caller opens for a
+        // netId that is already in the run does not make the host accept it, so the launch is refused here too.
+        var port = await h.Manager.EnsureHeadlessAsync(
+            Guid.NewGuid(), "Ann", default, allowNewSlot: true, targetNetId: HeadlessClientManager.SlotToNetId(2));
+        Assert(port is null, "a netId-bound respawn of a dead seat is refused mid-run as well");
+        Assert(h.Spawned.Count == 1, "…and launches nothing");
+    }
+
+    private static async Task AClaimedNameResolvesToItsSeatNetId()
+    {
+        var h = new Harness();
+        await h.Manager.EnsureHeadlessAsync(Guid.NewGuid(), "Ann", default);
+        // What lets the join handler judge a FREE-TEXT name against the same seat verdict a roster tap gets —
+        // the browser's automatic reconnect carries a name and no seat id.
+        Assert(h.Manager.NetIdForClaimedName(" aNN ") == HeadlessClientManager.SlotToNetId(2),
+            "a claimed name resolves to its seat's netId, on the same trim/case rule as the dedup key");
+        Assert(h.Manager.NetIdForClaimedName("Nobody") is null, "an unclaimed name resolves to no seat");
+        Assert(h.Manager.NetIdForClaimedName("  ") is null, "a blank name resolves to no seat");
+    }
 
     private static void Assert(bool condition, string label)
     {

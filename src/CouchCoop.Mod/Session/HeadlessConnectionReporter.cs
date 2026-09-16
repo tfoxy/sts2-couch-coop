@@ -208,8 +208,12 @@ public sealed class HeadlessConnectionReporter : IDisposable
     /// so the host accepts it through exactly one code path.
     /// </para>
     /// <para>
-    /// Sequence 1: this is the first status the host will have seen for this generation, and the caller
-    /// terminates the process, so nothing follows it that a bumped sequence would have to stay ahead of.
+    /// THE SEQUENCE IS NOT A CONSTANT. The host drops any status whose sequence is not ahead of the last one it
+    /// saw for this generation (<c>HeadlessConnectionControl.Observe</c>), so a hardcoded 1 is only correct
+    /// before the live reporter has sent anything — true of the guards, which report at mod init and then exit,
+    /// and false of a reason refined during shutdown, by which point a second of heartbeats has already gone up.
+    /// Taking the live reporter's own counter when there is one keeps every terminal report on one rule, and a
+    /// late diagnosis from being silently discarded.
     /// </para>
     /// <para>
     /// Returns whether the host accepted it. False means the seat's own environment carries no control
@@ -220,8 +224,8 @@ public sealed class HeadlessConnectionReporter : IDisposable
     {
         if (!TryReadEnvironment(out var endpoint, out var token, out var generation)) return false;
         var status = new HeadlessConnectionStatus(
-            1, "Failed", Bound(errorCode, 128), Bound(detail, 2048), 0, Volatile.Read(ref _browserPort),
-            ViewerArrivals());
+            NextTerminalSequence(), "Failed", Bound(errorCode, 128), Bound(detail, 2048), 0,
+            Volatile.Read(ref _browserPort), ViewerArrivals());
         using var request = new HttpRequestMessage(HttpMethod.Post, endpoint)
         {
             Content = new StringContent(JsonSerializer.Serialize(status), Encoding.UTF8, "application/json"),
@@ -230,6 +234,19 @@ public sealed class HeadlessConnectionReporter : IDisposable
         request.Headers.Add("X-CouchCoop-Generation", generation.ToString(System.Globalization.CultureInfo.InvariantCulture));
         using var response = await Client.SendAsync(request, cancellationToken).ConfigureAwait(false);
         return response.IsSuccessStatusCode;
+    }
+
+    /// <summary>
+    /// The sequence number a terminal report must carry to be accepted — the live reporter's own counter where
+    /// one is running, else 1 (no status has been sent for this generation yet). See
+    /// <see cref="ReportTerminalFailureAsync"/> for why a constant is not safe here.
+    /// </summary>
+    private static long NextTerminalSequence()
+    {
+        lock (StaticGate)
+        {
+            return _current is { } reporter ? Interlocked.Increment(ref reporter._sequence) : 1;
+        }
     }
 
     /// <summary>

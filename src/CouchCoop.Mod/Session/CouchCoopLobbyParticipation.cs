@@ -348,12 +348,27 @@ public sealed class CouchCoopLobbyParticipation(CouchCoopRuntimeHost runtimeHost
         /// <summary>
         /// Whether a headless may be launched for <paramref name="netId"/> even outside the
         /// <see cref="SpawnAllowed"/> window. True for a netId that is already a seat here, because that is a
-        /// RESPAWN of an existing peer rather than a new peer joining: the game gates a rejoin on netId — the
-        /// load-run lobby accepts exactly the netIds in the save (<c>NetError.NotInSaveGame</c> otherwise) and a
-        /// running <c>RunLobby</c> accepts exactly the peers already in the run (<c>NetError.RunInProgress</c>
-        /// otherwise) — so a seat-matched instance is precisely what it WILL take back. Refusing to launch it was
-        /// the second half of the "a dropped-out player is only offered Watch host" defect: even an unfiltered
-        /// roster row was unjoinable because the spawn window was shut.
+        /// RESPAWN of an existing peer rather than a new peer joining. It exists for the LOAD-SAVED-RUN LOBBY,
+        /// where the host is typically alone while the save still expects everyone: that lobby accepts exactly
+        /// the netIds in the save (<c>NetError.NotInSaveGame</c> otherwise), so a seat-matched instance is
+        /// precisely what it will take back, and refusing to launch one was the second half of the "a dropped-out
+        /// player is only offered Watch host" defect.
+        /// <para>
+        /// IT DOES NOT MEAN A RUNNING RUN WILL TAKE THE PEER BACK, and this comment used to say it did ("a
+        /// running <c>RunLobby</c> accepts exactly the peers already in the run"). It does not. A host observed
+        /// live refused a replacement instance carrying the netId of a player who WAS in that run:
+        /// </para>
+        /// <para>
+        ///   <c>[StartRunLobby (…)] Client 1002 connected but we are already beginning the run!</c><br/>
+        ///   <c>[ENetHost] Disconnecting client 1002, reason: RunInProgress</c>
+        /// </para>
+        /// <para>
+        /// What the host actually gates on is whether the peer is already CONNECTED when the run starts, not
+        /// whether its netId is in the run. So a seat that keeps its process alive across a browser drop rejoins
+        /// (it never disconnected); a seat whose process died is out until the host reloads the save. The launch
+        /// itself is refused on that ground in <see cref="HeadlessClientManager"/>, which reads
+        /// <see cref="IsRunInProgress"/> directly — this predicate is only about the NEW-peer window.
+        /// </para>
         /// <para>
         /// This deliberately does NOT widen the window any further: a netId with no seat here is still refused
         /// mid-run, exactly as before.

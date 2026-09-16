@@ -83,6 +83,8 @@
   "couchcoop_connection_error_launch_action": "Try joining again.",
   "couchcoop_connection_error_join_summary": "The player game lost its connection.",
   "couchcoop_connection_error_join_action": "Reconnect this browser.",
+  "couchcoop_connection_error_seat_run_in_progress_summary": "The run has already started, so this player's game cannot join it.",
+  "couchcoop_connection_error_seat_run_in_progress_action": "Reload the saved run to let this player back in.",
   "couchcoop_connection_error_mod_mismatch_summary": "This player's game loaded a different copy of CouchCoop.",
   "couchcoop_connection_error_mod_mismatch_action": "Keep only one copy of the mod installed, restart the game, then try again.",
   "couchcoop_connection_error_seat_port_summary": "Another program on this computer is using this player's port.",

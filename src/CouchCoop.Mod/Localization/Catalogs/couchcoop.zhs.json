@@ -69,6 +69,8 @@
   "couchcoop_connection_error_launch_action": "请重新加入。",
   "couchcoop_connection_error_join_summary": "玩家的游戏失去了连接。",
   "couchcoop_connection_error_join_action": "请重新连接此浏览器。",
+  "couchcoop_connection_error_seat_run_in_progress_summary": "本局对战已经开始，因此该玩家的游戏无法加入。",
+  "couchcoop_connection_error_seat_run_in_progress_action": "重新读取已保存的对战，让该玩家重新加入。",
   "couchcoop_connection_error_mod_mismatch_summary": "该玩家的游戏加载了不同的 CouchCoop 副本。",
   "couchcoop_connection_error_mod_mismatch_action": "只保留一个模组副本，重启游戏后重试。",
   "couchcoop_connection_error_seat_port_summary": "这台电脑上的其他程序正在占用该玩家的端口。",

@@ -14,6 +14,7 @@ internal static class HeadlessConnectionLifecycleTests
         await MembershipChangeDuringListenerProbeKeepsWaiting();
         await HealthyChildDoesNotCompleteBeforeBrowserAcknowledgement();
         await NativeFailureRetainsItsCauseWhenChildExits();
+        await ALateRunInProgressReasonRefinesTheGenericRejection();
         await SeatBuildMismatchIsItsOwnIssueWithItsOwnRemedy();
         await EarlyProcessExitFailsTheAttempt();
         await StalledShutdownIsForcedBeforeEnsureReturns();
@@ -164,6 +165,44 @@ internal static class HeadlessConnectionLifecycleTests
     // rejection and has a different remedy — remove one of the two installed copies of the mod — so the
     // host must not fold it into `native-join-rejected`, whose next action ("check that game and mod
     // versions match") is the exact advice the player has already followed.
+    // The seat reports the drop TWICE and the two reports are not equally good: its transport publishes a
+    // generic "the connection failed" first, and the game's own disconnect handler follows with the reason the
+    // host actually gave. The host recorded the first and kept it (`??=`), so a seat the host turned away
+    // because its run had already begun was shown as a generic native rejection — "check that game and mod
+    // versions match", which is neither true nor actionable for a run the player is simply not in.
+    private static async Task ALateRunInProgressReasonRefinesTheGenericRejection()
+    {
+        var id = BeginAttempt();
+        var process = new FakeProcess(38);
+        using var manager = NewManager(_ => process, () => false, () => true);
+        try
+        {
+            var pending = manager.EnsureHeadlessAsync(id, "late-reason", CancellationToken.None);
+            var control = await WaitForControlAsync(id);
+            RegisterKnown(control, id, "late-reason-token");
+
+            HeadlessConnectionControl.Shared.Observe("late-reason-token", control.Generation,
+                new HeadlessConnectionStatus(1, "Failed", "native-network-error", "the socket went away", 0));
+            var generic = ConnectionRegistry.Shared.Snapshot().Rows.Single(entry => entry.Id == id).Issue;
+            Assert(generic?.Code == "native-join-rejected", "the generic drop lands first, as it does in the field");
+
+            HeadlessConnectionControl.Shared.Observe("late-reason-token", control.Generation,
+                new HeadlessConnectionStatus(2, "Failed", HeadlessDisconnectReason.RunInProgressCode,
+                    "The host's game refused the connection with RunInProgress.", 0));
+            process.Exit();
+
+            Assert(await pending.WaitAsync(TimeSpan.FromSeconds(2)) is null, "the refused seat still refuses a redirect");
+            var row = ConnectionRegistry.Shared.Snapshot().Rows.Single(entry => entry.Id == id);
+            Assert(row.Issue?.Code == HeadlessDisconnectReason.RunInProgressCode,
+                "the specific reason REPLACES the generic one the host had already written down");
+            Assert(row.Issue!.Action.Contains("reload the saved run", StringComparison.OrdinalIgnoreCase),
+                "…and carries the only remedy there is");
+            Assert(!row.Issue.Action.Contains("versions match", StringComparison.Ordinal),
+                "…not the version advice that fits a mismatch and nothing else");
+        }
+        finally { CleanupControl(id); ConnectionRegistry.Shared.Clear(); }
+    }
+
     private static async Task SeatBuildMismatchIsItsOwnIssueWithItsOwnRemedy()
     {
         var id = BeginAttempt();
