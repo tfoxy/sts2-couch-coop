@@ -81,11 +81,26 @@ the same idea for a standalone probe instance):
   Players: 2`, and recurring `NetQualityTracker` stats with no `Cannot send messages to non-host players`):
   `~/.local/share/SlayTheSpire2/couch-coop/headless-slots/slot-<N>/SlayTheSpire2/logs/godot.log`.
 - Joining a browser seat WITHOUT a dev server (useful for a headless regression leg): open a WebSocket to
-  `ws://127.0.0.1:13337/ws` and send
-  `{"type":"join","requestId":"<id>","name":"Ann","playerId":"p:1002"}`. `requestId` is REQUIRED and the
-  `playerId` is the seat you are claiming; a join with neither is answered `status:"unassigned"` and spawns
-  nothing. `EnsureHeadlessAsync` then takes 20-60s (it waits for the instance to ENet-join and preload), and
-  the socket must stay OPEN or the seat is torn down again.
+  `ws://127.0.0.1:13337/ws?watch=1&staticBg=0&cardFlight=1&handTween=1&trailDrive=0` and send
+  `{"type":"join","requestId":"<id>","name":"Ann","playerId":"p:1002"}`. **All five query selectors are
+  REQUIRED** (`CouchCoopWebSocketConnection.ParseRequiredBoolean`); a bare `/ws` is answered
+  `400 invalid-websocket-contract` / "Missing or non-canonical `watch` WebSocket contract selector" and the
+  socket closes with 1006 before you see it, which reads as "the server is broken". `requestId` is REQUIRED;
+  `playerId` is honoured only for a roster BUTTON tap (a couch seat netId) — the free-text path the real client
+  uses sends the NAME alone and lets the host resolve the seat. `EnsureHeadlessAsync` then takes 20-60s (it
+  waits for the instance to ENet-join and preload), and the socket must stay OPEN or the seat is torn down
+  again. The join's TERMINAL answer is the `session` message carrying your `requestId`: read its
+  `joinRejection` / `headlessMirrorPort` / `directView`. `joinRejection: "not-a-session-player"` with
+  `screen.type: "screens/main_menu"` means the host is not in a lobby at all — load
+  `pc-lobby-host.sts2.fixture.yaml` (§4) first. Note `-fastmp host_standard` does NOT by itself leave the host
+  in a joinable lobby: it was observed sitting on the main menu with the browser server up and every join
+  refused that way.
+- **Steam Remote Storage is NOT covered by instance isolation**, and this bites harder than anything else on
+  this page. `sts2 --instance` / `XDG_DATA_HOME` isolate `user://` only; the cloud store is keyed by
+  (Steam account, app id), so `~/.steam/*/userdata/*/2868840/remote/` is shared by every instance on the box.
+  A `-fastmp host_standard` host inside a fully isolated instance quarantined the operator's real co-op save
+  there (`… .VAL.corrupt in steam remote store`) — see the `fastmp-host-standard-quarantines-coop-save` memory.
+  md5 that directory as well as the profile before any leg that starts a game, not just before a fastmp one.
 - **`sts2 game launch` KEEPS the mod's stdio** (2026-09-04; it used to send fd 1/2 to `/dev/null`, which is why
   this repo built an in-game log panel). The couch-coop diagnostics (`[couchcoop] qr host panel ...`,
   `[couchcoop] headless ...`, seat spawn refusals) and spirectl's `[spirectl]` lines are **on STDOUT**, not
