@@ -16,6 +16,7 @@ that answers your question**, not the whole file.
 | benchmarking geoclip against the `/spines/` still on host blocking time and browser first-frame latency | [geoclip-knights-bench.md](geoclip-knights-bench.md) | `mirror-bench` agent, `couch-live-lock` skill |
 | analysing canvas-stage draw lists, atlas bounds, text coverers, or animation concurrency offline | [canvas-stage-probes-aug26.md](canvas-stage-probes-aug26.md) | `mirror-bench` agent |
 | chasing a bug a **player** hit that you cannot reproduce | [repro-recorder.md](repro-recorder.md) | `scripts/analyze-repro.mjs`, `scripts/replay-repro.mjs` |
+| designing or implementing in-game issue reporting, diagnostic bundles, or a support backend | [in-game-issue-reporting-investigation.md](in-game-issue-reporting-investigation.md) | start with the evidence limits and phased recommendation; no production backend exists |
 | implementing one item of a multi-agent round | this file, then [architecture-map.md](architecture-map.md) | `round-implementer` agent, `couch-worktree` skill |
 | touching `clip_contents` or anything with a wide blast radius | [clip-contents-blast-radius.md](clip-contents-blast-radius.md) | — |
 | working on host-side render/encode cost | [host-render-cost-aug22.md](host-render-cost-aug22.md), [host-render-cost-aug22-round2.md](host-render-cost-aug22-round2.md) | — |
