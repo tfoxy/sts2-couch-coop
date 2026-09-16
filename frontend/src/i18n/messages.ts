@@ -96,6 +96,14 @@ export const en = {
   "seat.notice.networkPath": "Your game is running on the host computer, but this device couldn't reach it.",
   "seat.notice.networkPathFix": "Join the same Wi-Fi as the host — not a guest network — turn off any VPN, and check the router isn't keeping devices apart.",
   "seat.notice.portConflict": "Another program on the host computer is using the port your game needs.",
+  // DELIBERATELY NOT the host panel's wording, which was broadened to "close whatever is using that port,
+  // including another copy of Slay the Spire 2" once seat ports turned out to be derived from a constant rather
+  // than from the host's own walked port (so on a machine running two copies, the owner is often the other one).
+  // The person reading THIS screen cannot see a port owner or close anything: they can only relay an instruction.
+  // "Restart Slay the Spire 2" is the one instruction that is both relayable and, in the overwhelmingly common
+  // field case — a leftover seat process from an earlier session still holding its port — the actual fix. The two
+  // surfaces are allowed to diverge here because they are addressed to people with different powers; the identical
+  // pair is the native panel's copy and the report's, which SeatPortTruthTests pins word for word.
   "seat.notice.portConflictFix": "Nothing to change on this device — ask whoever is hosting to restart Slay the Spire 2, then try again.",
   "seat.notice.hostBlock": "The host computer is blocking the port your game is served on.",
   "seat.notice.hostBlockFix": "Nothing to change on this device — ask whoever is hosting to allow Slay the Spire 2 through their firewall or security software.",
