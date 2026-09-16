@@ -11,9 +11,11 @@ namespace CouchCoop.Mod.Session;
 /// <summary>Child-side best-effort reporter for its native connection and browser presence.</summary>
 public sealed class HeadlessConnectionReporter : IDisposable
 {
-    private const string ControlUrlEnvironmentVariable = "COUCHCOOP_HEADLESS_CONTROL_URL";
-    private const string ControlTokenEnvironmentVariable = "COUCHCOOP_HEADLESS_CONTROL_TOKEN";
-    private const string ControlGenerationEnvironmentVariable = "COUCHCOOP_HEADLESS_CONTROL_GENERATION";
+    // Internal rather than private so a test can point a reporter at a real control endpoint and assert what
+    // actually goes over the wire, instead of restating these three names as literals beside it.
+    internal const string ControlUrlEnvironmentVariable = "COUCHCOOP_HEADLESS_CONTROL_URL";
+    internal const string ControlTokenEnvironmentVariable = "COUCHCOOP_HEADLESS_CONTROL_TOKEN";
+    internal const string ControlGenerationEnvironmentVariable = "COUCHCOOP_HEADLESS_CONTROL_GENERATION";
     private static readonly object StaticGate = new();
     private static HeadlessConnectionReporter? _current;
     private static readonly HttpClient Client = new() { Timeout = TimeSpan.FromSeconds(2) };
@@ -176,7 +178,8 @@ public sealed class HeadlessConnectionReporter : IDisposable
                 Bound(native?.Error?.Code, 128),
                 Bound(native?.Error?.NativeDetail, 2048),
                 Volatile.Read(ref _browserCount),
-                Volatile.Read(ref _browserPort));
+                Volatile.Read(ref _browserPort),
+                ViewerArrivals());
             using var request = new HttpRequestMessage(HttpMethod.Post, _endpoint)
             {
                 Content = new StringContent(JsonSerializer.Serialize(status), Encoding.UTF8, "application/json")
@@ -217,7 +220,8 @@ public sealed class HeadlessConnectionReporter : IDisposable
     {
         if (!TryReadEnvironment(out var endpoint, out var token, out var generation)) return false;
         var status = new HeadlessConnectionStatus(
-            1, "Failed", Bound(errorCode, 128), Bound(detail, 2048), 0, Volatile.Read(ref _browserPort));
+            1, "Failed", Bound(errorCode, 128), Bound(detail, 2048), 0, Volatile.Read(ref _browserPort),
+            ViewerArrivals());
         using var request = new HttpRequestMessage(HttpMethod.Post, endpoint)
         {
             Content = new StringContent(JsonSerializer.Serialize(status), Encoding.UTF8, "application/json"),
@@ -227,6 +231,32 @@ public sealed class HeadlessConnectionReporter : IDisposable
         using var response = await Client.SendAsync(request, cancellationToken).ConfigureAwait(false);
         return response.IsSuccessStatusCode;
     }
+
+    /// <summary>
+    /// The seat's own arrival evidence, read fresh on every send: how much has reached THIS process from
+    /// something other than this machine.
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// The host cannot see this. A viewer's request to a seat lands on the seat's listener, in the seat's
+    /// process, and the host learns only that no browser ever completed a connection — which fits a blocked path
+    /// and a player who has not tapped the link yet equally well. Carrying the count upstream is what turns the
+    /// host's network-path verdict from an inference into an observation.
+    /// </para>
+    /// <para>
+    /// VIEWER arrivals, never <c>TotalArrivalCount</c>: the total includes the host's own loopback readiness
+    /// probe of this very port, so reporting it would make every probed seat claim a device had reached it, and
+    /// the verdict this feeds would never be reachable again.
+    /// </para>
+    /// <para>
+    /// <paramref name="log"/> is a test seam and nothing else — the process-wide log cannot be written to from a
+    /// test process, because its default sink writes through the GAME's logger, which is not callable outside
+    /// the game and takes the process down rather than throwing. Passing one in is how the choice of counter
+    /// above gets asserted at the line that makes it.
+    /// </para>
+    /// </remarks>
+    internal static long ViewerArrivals(ConnectionArrivalLog? log = null)
+        => (log ?? ConnectionArrivalLog.Shared).ViewerArrivalCount;
 
     private static string? Bound(string? value, int limit)
         => value is { Length: > 0 } && value.Length > limit ? value[..(limit - 14)] + "…[truncated]" : value;

@@ -239,6 +239,10 @@ public sealed partial class HeadlessClientManager
             ProbeFailure: owned.ListenerProbeFailure,
             TcpReachability: owned.ListenerReachability,
             ConnectedBrowserCount: status?.Status?.ConnectedChildBrowserCount ?? 0,
+            // The seat's own arrival evidence, straight off the heartbeat. NOT coalesced to 0 when it is
+            // missing: null is "the seat has not said", and the verdict that reads this one accuses the
+            // player's network, so it must never be reachable by a defaulted field.
+            SeatViewerArrivals: status?.Status?.ViewerArrivalCount,
             ElapsedMs: (long)Stopwatch.GetElapsedTime(startedTicks).TotalMilliseconds,
             DeadlineMs: (long)deadline.TotalMilliseconds);
 
