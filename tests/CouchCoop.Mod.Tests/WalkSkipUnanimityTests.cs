@@ -135,7 +135,7 @@ internal static class WalkSkipUnanimityTests
     // construction (only CouchCoopMod.Init sets it, inside a real game process).
     private static void TrackerLatchesDesiredSkipWithoutAnEngine()
     {
-        Assert(!CouchCoopStaticBackgroundTracker.EngineAvailable, "test host is Godot-less (the latch precondition)");
+        Assert(!CouchCoop.Mod.CouchCoopMod.EngineAvailable, "test host is Godot-less (the latch precondition)");
         var tracker = new CouchCoopStaticBackgroundTracker();
         Assert(!tracker.DesiredSkipForTest, "desired-skip starts false");
         tracker.SetDesiredSkip(true);

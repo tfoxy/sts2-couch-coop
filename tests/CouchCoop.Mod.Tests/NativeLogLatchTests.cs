@@ -11,8 +11,9 @@ namespace CouchCoop.Mod.Tests;
 // The shared connection arrival log's DEFAULT sink is CouchCoopLog.Info, which made
 // `ConnectionArrivalLog.Shared.Record(...)` a process-killer for any test that reached it, and the rule that
 // came out of that ("never record into the shared log from a test; always inject your own log action") lived
-// only in a memory note. CouchCoopLog.GameRuntimeAvailable is the latch that replaces it: off by default, set
-// once from CouchCoopMod.Init(), i.e. only inside a real game.
+// only in a memory note. CouchCoopMod.EngineAvailable is the latch that replaces it — the mod's one "a real
+// game process is running" flag, set once from CouchCoopMod.Init(), shared with the cache root's game-data-dir
+// resolution, the static-background probe, BrowserPortFile and the atlas walk.
 //
 // So THIS SUITE DELIBERATELY DOES THE THING THAT USED TO CRASH. Its whole assertion is that the runner is
 // still alive on the next line; there is no way to express that other than by doing it. If this file ever
@@ -29,8 +30,8 @@ internal static class NativeLogLatchTests
 
     private static void TheLatchIsOffInAProcessThatNeverRanModInit()
     {
-        Expect(!CouchCoopLog.GameRuntimeAvailable,
-            "a test runner never calls CouchCoopMod.Init(), so the native logger stays untouched");
+        Expect(!CouchCoopMod.EngineAvailable,
+            "a test runner never calls CouchCoopMod.Init(), so every native-call gate stays shut");
 
         // Both levels, straight at the guard, with no sink injected anywhere. Before the latch these two lines
         // alone would have ended the run.

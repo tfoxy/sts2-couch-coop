@@ -16,7 +16,7 @@ namespace CouchCoop.Mod.Session;
 /// hypothetical: <c>ConnectionArrivalLog.Shared.Record(...)</c> killed a test process outright, because the
 /// shared log's default sink is <see cref="Info"/>. The rule that came out of it ("never record into the
 /// shared arrival log from a test; always inject your own log action") was documentation, and documentation
-/// only protects the people who have read it. <see cref="GameRuntimeAvailable"/> makes the DEFAULT safe
+/// only protects the people who have read it. <c>CouchCoopMod.EngineAvailable</c> makes the DEFAULT safe
 /// instead: off until a real game process says otherwise, so any host-side type is constructible, callable
 /// and testable out of the engine, and the injected-log seams
 /// (<c>new ConnectionArrivalLog(time, log: …)</c>, <c>HeadlessConnectionReporter.ViewerArrivals(log)</c>)
@@ -25,23 +25,9 @@ namespace CouchCoop.Mod.Session;
 /// </remarks>
 internal static class CouchCoopLog
 {
-    /// <summary>
-    /// Latched TRUE from <c>CouchCoopMod.Init()</c> — i.e. only inside a REAL game process, where STS2's
-    /// logger exists to be called. Default OFF, because the failure it gates is uncatchable: the managed call
-    /// binds and JITs fine with <c>sts2.dll</c> merely on the probing path, and then dies in native code.
-    /// Same shape, and the same reason, as
-    /// <c>CouchCoopStaticBackgroundTracker.EngineAvailable</c> beside it.
-    /// </summary>
-    /// <remarks>
-    /// Set at the very top of <c>Init</c>, above the seat build guard, so nothing that runs during mod
-    /// startup loses its <c>godot.log</c> line. A process that never calls <c>Init</c> is by definition not
-    /// the game.
-    /// </remarks>
-    public static volatile bool GameRuntimeAvailable;
-
     public static void Info(string message)
     {
-        if (!GameRuntimeAvailable)
+        if (!CouchCoopMod.EngineAvailable)
         {
             return;
         }
@@ -62,7 +48,7 @@ internal static class CouchCoopLog
     /// </summary>
     public static void Error(string message)
     {
-        if (!GameRuntimeAvailable)
+        if (!CouchCoopMod.EngineAvailable)
         {
             return;
         }

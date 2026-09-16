@@ -75,13 +75,13 @@ public static class CouchCoopAtlasManifest
     /// immediately, so a re-entered Init cannot pay for the walk twice.
     /// </summary>
     /// <remarks>
-    /// Gated on the same <c>EngineAvailable</c> latch the static-background tracker uses, and for the same reason:
+    /// Gated on the same <c>CouchCoopMod.EngineAvailable</c> latch every other native-call site uses, and for the same reason:
     /// <see cref="DirAccess"/> is GodotSharp, and a server process that has GodotSharp on its probing path but no
     /// engine running SEGFAULTS in native interop rather than throwing something catchable.
     /// </remarks>
     public static void Warm()
     {
-        if (_pages is not null || !CouchCoopStaticBackgroundTracker.EngineAvailable)
+        if (_pages is not null || !CouchCoopMod.EngineAvailable)
         {
             return;
         }

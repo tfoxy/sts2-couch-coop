@@ -41,12 +41,10 @@ internal static class HostReachabilityAcceptLoopTests
                 "the latch starts clear, so what it reads below is this test's own connection");
 
             using var root = new TempSpaRoot();
-            // The host's built-in generation builds a SpirectlAssetBinaryCache, whose default root resolution
-            // calls Godot.ProjectSettings.GlobalizePath — and GodotSharp.dll is copied next to this runner, so
-            // the managed call binds and then dies in native interop (SIGSEGV; the try/catch around it only
-            // covers a runner where GodotSharp fails to LOAD). COUCHCOOP_CACHE_ROOT short-circuits that
-            // resolution before the engine is touched, which is what every harness and bench uses it for.
-            using var cacheRoot = new ScopedCacheRoot(root.Path);
+            // No COUCHCOOP_CACHE_ROOT needed, and that is load-bearing: the built-in generation builds a
+            // SpirectlAssetBinaryCache, whose root resolution used to call Godot.ProjectSettings.GlobalizePath
+            // and SIGSEGV this runner. CouchCoopMod.EngineAvailable gates it now, so the host stands up in a
+            // suite on its own.
             var runtime = new StubRuntimeSource();
             await using var host = new HotReloadableBrowserServerHost(
                 new CouchCoopRuntimeHost(new CouchCoopRuntimeDependencies(
@@ -82,21 +80,6 @@ internal static class HostReachabilityAcceptLoopTests
         {
             HostReachabilityWatch.Shared.ResetForTests();
         }
-    }
-
-    private sealed class ScopedCacheRoot : IDisposable
-    {
-        private readonly string? _previous;
-
-        public ScopedCacheRoot(string path)
-        {
-            _previous = Environment.GetEnvironmentVariable(CouchCoopCacheRoot.RootEnvironmentVariable);
-            Environment.SetEnvironmentVariable(
-                CouchCoopCacheRoot.RootEnvironmentVariable, System.IO.Path.Combine(path, "cache"));
-        }
-
-        public void Dispose()
-            => Environment.SetEnvironmentVariable(CouchCoopCacheRoot.RootEnvironmentVariable, _previous);
     }
 
     private sealed class TempSpaRoot : IDisposable
