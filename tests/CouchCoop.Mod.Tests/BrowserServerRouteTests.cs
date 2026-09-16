@@ -269,6 +269,11 @@ if (args is ["cache", ..])
     CacheRootPurgeTests.Run();
     AssetCacheTokenEnvelopeTests.Run();
     HeadlessUserDirSeederTests.Run();
+    // The host's OWN profile, copied aside before the first seat of a session is spawned — the last line of
+    // defence behind SeatCloudSaveIsolationPatch, and the only one that still works when a seat never loads our
+    // code at all. It shares the seeder's walk rules and must land OUTSIDE the seeder's seed dirs, so a change
+    // to either is a reason to run both; registered here for the same reason the seeder is.
+    HostProfileBackupTests.Run();
     // The seeder's other job: pinning which copy of CouchCoop the seeded profile may load. Registered here as
     // well as under `seat-build`, because a change to the seed walk is the way to break it by accident.
     SeatModBuildTests.Run();
@@ -513,6 +518,7 @@ await NetworkHardeningTests.RunAsync();
 // the macOS Local Network permission or the application firewall is silently eating inbound connections.
 HostReachabilityWatchTests.Run();
 HeadlessUserDirSeederTests.Run();
+HostProfileBackupTests.Run();
 // M3 WS-T host-discovery responder (real UDP loopback round-trip). Runs before the flaky network suite below.
 await HostDiscoveryResponderTests.RunAsync();
 AssetCacheTokenEnvelopeTests.Run();

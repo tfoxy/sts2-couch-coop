@@ -28,6 +28,7 @@ the seeder no longer hands a seat an in-progress run save. Affected releases: **
 | rejected runs become `*.VAL.corrupt` | quarantined files present in the account's remote store |
 | the mod's per-player snapshot path | `HeadlessUserDirSeeder.SlotBase` + `ResolvePolicy` (`couch-coop/headless-slots/slot-<N>/`) |
 | what the snapshot contains | `HeadlessUserDirSeeder.SeedCopyDirs` = `default`, `mod_configs`, `steam` |
+| the pre-session backup path and contents | `HostProfileBackup` (`couch-coop/save-backups/<utc stamp>/` holding `default/` + `steam/`), taken once per host session at the first join, three kept. Excludes in-progress run saves and `*.spirectl-backup-*`; **keeps** `*.VAL.corrupt` quarantines, because this page tells players those are still their save |
 | Linux save + log paths | observed on a live Linux install |
 
 **Unverified, and marked as such below:**
@@ -81,9 +82,18 @@ Your live profile is at `steam\<your steam id>\modded\profile<N>\saves\` inside 
 because you play with mods; an unmodded profile is at `steam\<your steam id>\profile<N>\saves\`. `<N>` is
 1, 2 or 3, matching the profile slot you play on.
 
-Four places a better copy may exist:
+Five places a better copy may exist, best first:
 
-- **The mod's own snapshots.** Every time a browser player joined, the mod copied your profile into that
+- **The mod's own backup of your profile**, taken just before the first browser player of a session joins.
+  This is the one to try first: it is a copy of your profile from *before* that session, and the mod keeps
+  the last three. Versions after v0.2.3 make these; if you are on an older one the folder will not exist.
+  - Windows `%APPDATA%\SlayTheSpire2\couch-coop\save-backups\<date and time>\steam\<your steam id>\modded\profile<N>\saves\`
+  - Linux `~/.local/share/SlayTheSpire2/couch-coop/save-backups/<date and time>/steam/<your steam id>/modded/profile<N>/saves/`
+  - macOS `~/Library/Application Support/SlayTheSpire2/couch-coop/save-backups/<date and time>/steam/<your steam id>/modded/profile<N>/saves/`
+
+  The folder name is the date and time in UTC, newest last. The run you had in progress is deliberately not
+  in there — `progress.save`, your settings, your past-run history and any quarantined `.VAL.corrupt` files are.
+- **The mod's per-player snapshots.** Every time a browser player joined, the mod copied your profile into that
   player's folder. Look in:
   - Windows `%APPDATA%\SlayTheSpire2\couch-coop\headless-slots\slot-<N>\SlayTheSpire2\steam\<your steam id>\modded\profile<N>\saves\`
   - Linux `~/.local/share/SlayTheSpire2/couch-coop/headless-slots/slot-<N>/SlayTheSpire2/steam/<your steam id>/modded/profile<N>/saves/`

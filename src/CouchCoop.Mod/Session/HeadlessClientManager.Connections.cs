@@ -53,6 +53,16 @@ public sealed partial class HeadlessClientManager
         await CleanupExitedConnectionsAsync(ct).ConfigureAwait(false);
         ConnectionRegistry.Shared.ConfigureView(sessionId, requiresChild: true, reused: true);
         var launchLogs = ConnectionAttemptLogs.CaptureStart(ConnectionRegistry.HostLogPath, null);
+        // BEFORE ANY SEAT PROCESS OF THIS SESSION CAN EXIST, copy the host's own save profile aside — the last
+        // line of defence behind SeatCloudSaveIsolationPatch, and the only one that survives a seat which never
+        // loads our code at all (a refused lane, an assembly conflict, the loader's blanket catch). Once per host
+        // process, synchronous, and best-effort to the point of being unable to fail a join.
+        //
+        // HERE, AND NOT AT THE SPAWN, for the same reason the three probes below are here: _lock is taken by the
+        // game's MAIN THREAD on every screen change, and a whole profile copy inside it is the room-load freeze
+        // all over again. This needs no slot and nothing the lock protects, so it has no business under it. The
+        // trade — this entry is also reached by joins that reuse or are refused — is argued in EnsureForThisHostOnce.
+        HostProfileBackup.EnsureForThisHostOnce();
         // ALL THREE of these are settled BEFORE _lock is taken, and for the same reason: the MaxSlot and
         // RunInProgress probes marshal to the game's main thread, and the port survey can block on a dropped
         // packet. The main thread takes _lock on every screen change, so any of them evaluated under it stalls
