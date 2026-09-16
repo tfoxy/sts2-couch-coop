@@ -75,6 +75,8 @@
   "couchcoop_connection_error_mod_mismatch_action": "CouchCoopのコピーを1つだけ残し、ゲームを再起動してからもう一度お試しください。",
   "couchcoop_connection_error_seat_port_summary": "このコンピューター上の別のプログラムが、このプレイヤーのポートを使用しています。",
   "couchcoop_connection_error_seat_port_action": "ホストコンピューターでそのポートを使用しているプログラム（Slay the Spire 2の別のコピーを含む）を終了してから、もう一度お試しください。",
+  "couchcoop_connection_error_seat_port_occupied_summary": "このコンピューター上の別のプログラムが、協力プレイがプレイヤーに割り当てるポートの1つを使用しています。",
+  "couchcoop_connection_error_seat_port_occupied_action": "協力プレイは引き続き利用できます。プレイヤーはそのポートを避けて割り当てられます。後でプレイヤーが接続できない場合は、その別のプログラムを終了してください。",
   "couchcoop_connection_error_seat_port_blocked_summary": "このコンピューターが、このプレイヤーのゲームが使用しているポートをブロックしています。",
   "couchcoop_connection_error_seat_port_blocked_action": "このコンピューターのファイアウォールまたはセキュリティソフトでSlay the Spire 2を許可してから、もう一度お試しください。",
   "couchcoop_connection_error_seat_network_summary": "このプレイヤーのゲームは動作していますが、端末から一度も接続できていません。",

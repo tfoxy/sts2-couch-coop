@@ -38,6 +38,10 @@ internal static class ConnectionUiTests
                      // the join copy ("check that game and mod versions match"), which is wrong advice for a run
                      // the player simply is not in.
                      CouchCoop.Mod.Session.HeadlessDisconnectReason.RunInProgressCode,
+                     // The stepped-around seat port. Unmapped it would render the join copy — "the player game
+                     // lost its connection / reconnect this browser" — on a Host service row raised by a join
+                     // that SUCCEEDED, which is wrong twice over.
+                     CouchCoop.Mod.Session.HeadlessClientManager.SeatPortOccupiedCode,
                  })
         {
             var issue = new ConnectionIssue(code, "", "", null);
@@ -46,6 +50,27 @@ internal static class ConnectionUiTests
             Assert(!string.IsNullOrWhiteSpace(Copy("Summary", issue)) && !Copy("Summary", issue).StartsWith("couchcoop_", StringComparison.Ordinal),
                 $"{code} resolves to a real sentence, not its catalog key");
         }
+
+        // …and in EVERY catalog, not only English. A key that exists in `en` and nowhere else would pass the arm
+        // check above and still fall through to the join copy for the other thirteen languages; the catalogs'
+        // own key-parity test does not know which keys the panel asks for.
+        foreach (var language in CouchCoopLocalization.SupportedLanguages)
+        {
+            CouchCoopLocalization.SetLanguageForTests(language);
+            var unmapped = new ConnectionIssue("something-nobody-mapped", "", "", null);
+            var occupied = new ConnectionIssue(CouchCoop.Mod.Session.HeadlessClientManager.SeatPortOccupiedCode, "", "", null);
+            Assert(Copy("Summary", occupied) != Copy("Summary", unmapped) && Copy("Action", occupied) != Copy("Action", unmapped),
+                $"the stepped-around seat port has its own copy in {language}, not the join fallback");
+            Assert(!Copy("Summary", occupied).StartsWith("couchcoop_", StringComparison.Ordinal)
+                && !Copy("Action", occupied).StartsWith("couchcoop_", StringComparison.Ordinal),
+                $"…and it resolves to a real sentence in {language}, not its catalog key");
+            // The success it fires on must not be described with the FAILURE copy for the same machine
+            // condition: "restart Slay the Spire 2, then try again" is advice for a join that did not happen.
+            var failed = new ConnectionIssue(CouchCoop.Mod.Session.SeatReadinessVerdict.PortTakenCode, "", "", null);
+            Assert(Copy("Action", occupied) != Copy("Action", failed),
+                $"a stepped-around port does not reuse the failed-join port copy in {language}");
+        }
+        CouchCoopLocalization.SetLanguageForTests("eng");
 
         var degraded = new ConnectionIssue(CouchCoop.Mod.Session.HeadlessClientManager.SharedUserDirCode, "", "", null, IsWarning: true,
             Timing: new ConnectionIssueTiming(ConnectionStage.Connecting, 0, 0, DateTimeOffset.UnixEpoch),

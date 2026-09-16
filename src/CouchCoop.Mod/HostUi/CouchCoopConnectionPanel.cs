@@ -499,6 +499,11 @@ internal sealed partial class CouchCoopConnectionPanel : Panel
         Connections.CouchCoopPatchHealth.IssueCode => "patch",
         Connections.HostReachabilityWatch.IssueCode => "reachability",
         Session.HeadlessClientManager.SharedUserDirCode => "shared_profile",
+        // Distinct from `seat_port` above, and deliberately so: that one is a join that FAILED on a port with an
+        // owner, this one is a join that succeeded by stepping around it. Same machine condition, opposite news,
+        // and the failure copy ("restart the game, then try again") would tell the operator to fix something that
+        // is not currently broken.
+        Session.HeadlessClientManager.SeatPortOccupiedCode => "seat_port_occupied",
         _ => "join"
     };
     private static string Summary(ConnectionIssue issue) => CouchCoopLocalization.Resolve($"couchcoop_connection_error_{IssueKey(issue)}_summary");

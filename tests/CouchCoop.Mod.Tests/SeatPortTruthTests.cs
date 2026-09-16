@@ -25,6 +25,7 @@ internal static class SeatPortTruthTests
         await AFreePortSurveysAsFree();
         await ANewPlayerSkipsASlotWhoseBrowserPortIsTaken();
         await ANewPlayerStillJoinsWhenTheFirstTwoSeatPortsAreTaken();
+        await ASteppedAroundSeatPortIsVisibleToTheHost();
         await APinnedSeatFailsImmediatelyInsteadOfSpawning();
         await APinnedSeatFailureKeepsTheReconnectClaim();
         ASeatMayNotWalkOffItsAssignedPort();
@@ -108,6 +109,59 @@ internal static class SeatPortTruthTests
         Assert(await harness.Manager.EnsureHeadlessAsync(Guid.NewGuid(), "Ann", default)
                 == HeadlessClientManager.SlotToPort(4),
             "the skip walks past every occupied seat port, not just the first");
+    }
+
+    /// <summary>
+    /// The successful skip above is the host's ONLY warning that something on their machine holds a port in the
+    /// seat range — and it used to be invisible: the occupancy was recorded onto the joining player's own row,
+    /// whose entire detail surface is hidden while that row has no issue, which on a successful join it never
+    /// has. The same squatter hard-fails a PINNED rejoin later, so the operator wants to know now.
+    /// </summary>
+    private static async Task ASteppedAroundSeatPortIsVisibleToTheHost()
+    {
+        ConnectionRegistry.Shared.Clear();
+        try
+        {
+            var harness = new SeatHarness(occupied: [HeadlessClientManager.SlotToPort(2)]);
+            Assert(await harness.Manager.EnsureHeadlessAsync(BeginAttempt(), "Ann", default)
+                    == HeadlessClientManager.SlotToPort(3),
+                "the join succeeds by stepping around the occupied port");
+
+            var rows = ConnectionRegistry.Shared.Snapshot().Rows
+                .Where(row => row.Issue?.Code == HeadlessClientManager.SeatPortOccupiedCode).ToArray();
+            Assert(rows.Length == 1, "the stepped-around port raises exactly one host row");
+            var issue = rows[0].Issue!;
+            Assert(rows[0].DeviceLabel == "Host service" && issue.IsWarning
+                && issue.Outcome == ConnectionIssueOutcome.Degraded && rows[0].Stage != ConnectionStage.Failed,
+                "…as a WARNING about this computer, not as a failed connection — the join worked");
+            Assert(issue.Detail!.Contains(
+                    HeadlessClientManager.SlotToPort(2).ToString(System.Globalization.CultureInfo.InvariantCulture),
+                    StringComparison.Ordinal)
+                && issue.Detail.Contains("a test squatter holds", StringComparison.Ordinal),
+                "…naming the port and what answered on it");
+
+            Assert(await harness.Manager.EnsureHeadlessAsync(BeginAttempt(), "Bea", default) is not null,
+                "a second player joins too");
+            Assert(ConnectionRegistry.Shared.Snapshot().Rows
+                    .Count(row => row.Issue?.Code == HeadlessClientManager.SeatPortOccupiedCode) == 1,
+                "every later survey of the same squatter folds into the one row");
+
+            // THE HOST'S OWN SEATS ARE NOT SQUATTERS. The survey asks the port whether anything answers, and a
+            // seat this host started answers — so without subtracting our own live slots this warning would fire
+            // on every ordinary multi-player session, about this mod, on this machine.
+            ConnectionRegistry.Shared.Clear();
+            var ours = new SeatHarness();
+            var first = await ours.Manager.EnsureHeadlessAsync(BeginAttempt(), "Ann", default);
+            Assert(first == HeadlessClientManager.SlotToPort(2), "the first player takes the first seat");
+            ours.Occupied.Add(first!.Value);
+            Assert(await ours.Manager.EnsureHeadlessAsync(BeginAttempt(), "Bea", default)
+                    == HeadlessClientManager.SlotToPort(3),
+                "the second player takes the next seat");
+            Assert(ConnectionRegistry.Shared.Snapshot().Rows
+                    .All(row => row.Issue?.Code != HeadlessClientManager.SeatPortOccupiedCode),
+                "a port held by this host's OWN live seat raises nothing");
+        }
+        finally { ConnectionRegistry.Shared.Clear(); }
     }
 
     // ---- 3. a PINNED seat cannot move, so it fails fast instead of spawning -----------------------------------
