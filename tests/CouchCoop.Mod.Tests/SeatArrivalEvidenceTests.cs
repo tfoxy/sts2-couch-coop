@@ -340,6 +340,13 @@ internal static class SeatArrivalEvidenceTests
                 new Uri(baseUri, "/internal/client-status").ToString());
             Environment.SetEnvironmentVariable(HeadlessConnectionReporter.ControlTokenEnvironmentVariable, "hello-token");
             Environment.SetEnvironmentVariable(HeadlessConnectionReporter.ControlGenerationEnvironmentVariable, "6");
+            // The port asserted below is a PROCESS-WIDE static (HeadlessConnectionReporter's `_browserPort`,
+            // static by design: the browser server and Initialize are not ordered). In a real seat it is 0
+            // because nothing has bound yet — but this runner shares one process with tests that DO bind, and
+            // HotReloadableBrowserServerHost publishes whatever port it got. So the precondition has to be
+            // established rather than assumed: under `--seats` this test passed, and in the full sequence it
+            // failed on a port an earlier test had already published.
+            HeadlessConnectionReporter.PublishBrowserPort(0);
 
             Assert(await HeadlessConnectionReporter.ReportSeatHelloAsync(cloudSaveIsolated: true, CancellationToken.None),
                 "the seat's hello reaches the host's control endpoint with no runtime behind it");
