@@ -81,7 +81,7 @@ installed.
 the seat ports are already permitted, because the rule is per-**program**, not per-port. That is the
 evidence behind the post's "allow the program, not a port" advice — it is correct, and now measured.
 
-## 4. Not yet measured, and why
+## 4. Getting the real game running here, and the two things that nearly stopped it
 
 The **product** fingerprint — what the host's Connections panel and the phone actually render per knob —
 was blocked at first: the guest's Steam install was **v0.107.1** (buildid 23811903) against this repo's
@@ -123,10 +123,19 @@ prefix on Windows — the spelling the troubleshooting post had wrong.
 Note the guest also loads two unrelated Workshop mods (BaseLib, STS2-RitsuLib), so it is not a clean-room
 host; RitsuLib runs its own listener on 127.0.0.1:18742.
 
-### …and then the game cannot render, which ends the product half here
+### …and the game DOES run — in a small window
+
+> **CORRECTED.** The section below originally concluded "the product fingerprint is not obtainable on
+> this VM". **That was wrong, and it was an over-reading of a real error.** The game runs fine here when
+> its window is made **small**; the maintainer did so and it has been up for minutes with CouchCoop's
+> browser server bound on `0.0.0.0:13337` and serving HTTP 200. The D3D12 failure below is real but is a
+> **swap-chain-size** failure at the default window size on the Basic Render Driver, not an inability to
+> render at all. The general lesson: *"the renderer logged ERR_CANT_CREATE and the process exited"*
+> supports "this configuration failed", never "this machine cannot render" — the second needs a
+> configuration sweep, and one smaller window falsified it.
 
 The guest has **no GPU**. Godot picks D3D12 and falls back to the *Microsoft Basic Render Driver*, which
-cannot create the swap chain:
+at the default window size cannot create the swap chain:
 
 ```
 D3D12 12_0 - Forward+ - Using Device #1: Microsoft - Microsoft Basic Render Driver
@@ -134,17 +143,66 @@ ERROR: Condition "!((HRESULT)(res) >= 0)" is true. Returning: ERR_CANT_CREATE
    at: swap_chain_resize (drivers/d3d12/rendering_device_driver_d3d12.cpp:2854)
 ```
 
-repeated until the process exits — the game never reaches a window (`.../shots/01-game-launched.png`
-shows the console with no game). Relaunching through Steam with `--rendering-driver opengl3` did not
-produce a log at all. Windows ships no software OpenGL 3.3, and WARP is D3D-only.
+repeated until the process exits (`.../shots/01-game-launched.png` — the console, with no game window).
+Relaunching through Steam with `--rendering-driver opengl3` produced no log at all: Windows ships no
+software OpenGL 3.3 and WARP is D3D-only.
 
-So **the product fingerprint — what the Connections panel and the phone render per knob — is not
-obtainable on this VM**, and that is now a measured fact rather than the prediction in
-`windows-connection-fingerprints`' parent memory. GPU passthrough is the only thing that would change it
-and is refused for good reason: the RTX 2060 is the host's only GPU and drives every gamescope QA
-instance. The product half belongs to Stage 3 on physical Windows.
+**Make the window small and it runs.** Measured with the game live: pid 8396, 452 s of CPU, CouchCoop's
+browser server listening on `0.0.0.0:13337`, serving HTTP 200. So the product fingerprint IS obtainable
+here — see §6, which is the measurement it unlocked. Frame rate is poor and irrelevant: every knob in
+this stage is about whether a connection is accepted.
 
-## 5. A9b reproduced live, on the platform where it is worst
+GPU passthrough remains refused and remains unnecessary: the RTX 2060 is the host's only GPU and drives
+every gamescope QA instance.
+
+## 5. The loopback prediction, CONFIRMED against the live product
+
+The round's second priority: *"Windows Firewall does not filter loopback, so a Windows-blocked seat
+should make the host's own probe SUCCEED and classify as `seat-network-path`."* Measured with the game
+live and CouchCoop's browser server bound on `0.0.0.0:13337`.
+
+Method: one inbound Block rule, `TCP/13337`, `RemoteAddress 192.168.122.1` (the Linux host, standing in
+for the phone). Deliberately peer-scoped and port-scoped — `-s <peer>`-style, the same discipline
+`connection-diagnostics-round-sep15` insists on, and it keeps the SSH control channel on tcp/22 alive as
+a built-in control.
+
+| probe, while that rule is in force | result |
+| --- | --- |
+| blocked peer → `http://192.168.122.32:13337/` | **dropped**, 3 × 10 s timeout, no RST |
+| SSH tcp/22 from the same peer (control) | **connected** — the rule is scoped, not a blackout |
+| host's own `http://127.0.0.1:13337/` | **HTTP 200** |
+| host's own raw loopback TCP connect (the shape `SeatPortAvailability` probes with) | **Accepted**, 438 ms |
+| host's own `http://192.168.122.32:13337/` — its OWN LAN address | **HTTP 200** |
+| rule removed (withdrawal half) | **HTTP 200**, 8/8, connect 2-15 ms |
+
+**Windows does not filter a machine's traffic to itself — not even to its own non-loopback address.** So
+every host-side check this verdict makes passes: `ListenerResponding == true`,
+`TcpReachability == Accepted`, and no device ever arrives so `SeatViewerArrivals == 0` →
+`HostSideIsClear` → **`seat-network-path`**. The prediction holds exactly.
+
+The consequence is the defect: that cause's action told the operator to sort out their Wi-Fi and their
+router, when the block was Windows Firewall **on the machine they are sitting at** — and a host-side
+block is *indistinguishable* from a router problem by any evidence the host can gather. Fixed by naming
+this computer's firewall first in the action (all 14 catalogs) and adding a per-OS English detail that
+says plainly that reaching the port from itself does not rule its own firewall out.
+
+**This also reproduces the design doc's central trap**, which it warned about and which is easy to
+dismiss: *"a self-test from the host machine passes in precisely the case it exists to catch."* Measured
+here — the guest answered its own LAN address with 200 while a real peer got nothing. Never accept a
+host-side self-test as evidence that a phone can connect.
+
+### One false alarm worth recording, because it nearly became a finding
+
+An earlier remote GET timed out at 15 s while the listener was already bound, and that was briefly read
+as "allowed and still blocked" (knob A2) — the game's two inbound Allow rules are textbook-perfect
+(TCP + UDP, Any local port, Any remote address, Any interface, all three profiles, Enabled, and zero
+enabled inbound Block rules anywhere). **It was not a block.** It was a cold, CPU-starved browser server:
+the first loopback request took 6 566 ms and the second 179 ms, and once warm the same remote GET
+returned 200 in 37 ms and then 8/8. A slow host can make a bound, permitted, perfectly healthy port look
+firewalled for tens of seconds. Re-test after warm-up before concluding anything from a single timeout —
+and note this is the field's "it hangs" symptom with no firewall involved at all.
+
+## 6. A9b reproduced live, on the platform where it is worst
 
 Unplanned, and visible in the startup log above — the host ranked its two adapters:
 
