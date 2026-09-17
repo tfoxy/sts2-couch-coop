@@ -452,13 +452,24 @@ LoaderLaneSelectionTests.Run();
 AtlasManifestEnvelopeTests.Run();
 
 // Pure suites (no IO) run first so they execute regardless of the network-suite flakiness.
-// CAUTION: "pure" here means no IO, not no Godot — this next suite reflects over game types through
-// GodotSharp, and on some machines that SIGSEGVs the whole process (exit 139) with no engine running. When it
-// does, every suite registered after it silently never runs. Verify a change through one of the verbs above
-// rather than reading a truncated full run as green.
+//
+// THE RULE THIS SEQUENCE LIVES BY, and the one that cost six days when it was not written down: a test may
+// REFLECT over a game type all it likes, but it must not CONSTRUCT one. Reflection reads metadata and is safe
+// with no engine — that is all the next two suites do. Construction runs game code, and game code reaches
+// GodotSharp entry points that a running engine fills in at startup and that are null in a bare test process:
+// the call lands on address 0 and the process dies (exit 139, `segfault at 0 ip 0000000000000000`). It is an
+// uncatchable SIGSEGV with no managed stack, and it takes every suite below it down with it. This is the same
+// hazard as the COUCHCOOP_CACHE_ROOT note above, reached by a different road.
+//
+// It was long believed to be THIS suite that died, because a suite's report line is only printed once it has
+// PASSED, so a crash anywhere in the silent stretch that starts here looks like it happened at the top of it.
+// The real callers were SavedRunEnetHostShapeTests and SavedRunLoadLobbyIdentityTests, thirteen lines down.
+// Before believing any attribution in this file, including this one, dump the crashing process:
+// `DOTNET_DbgEnableMiniDump=1 DOTNET_DbgMiniDumpType=4 DOTNET_DbgMiniDumpName=/tmp/dump.%d` on the run, then
+// `dotnet-dump analyze /tmp/dump.<pid> -c clrstack`. It names the real frame in seconds.
 HeadlessAudioMuteTargetsTests.Run();
-// The seat's Steam-Cloud write paths, reflected over the same way. Also reachable as `-- beta-targets`, which is
-// the way to actually run it while the suite above can take this process down.
+// The seat's Steam-Cloud write paths, reflected over the same way. Also reachable as `-- beta-targets`, which
+// stays the fast way to ask the per-game-build question on its own.
 SeatCloudSaveIsolationTargetsTests.Run();
 // WS-1 networking/hosting: every game member the host-transport / CLI-override / host-netId / save-compat patches
 // bind to must still resolve, including the two private NetHostGameService seams the composite host rewrites.
