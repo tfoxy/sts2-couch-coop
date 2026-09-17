@@ -51,8 +51,9 @@ public sealed class SecureBrowserListener : IAsyncDisposable
     /// <remarks>
     /// <c>+1</c> keeps the pair readable (13337 / 13338) and, critically, does not collide with the
     /// headless seat ports, which are the HTTP base plus a multiple of ten
-    /// (<c>HeadlessClientManager.SlotToPort</c>: 13347, 13357, …). Each headless instance runs this same
-    /// host code, so each gets its own secure port at its own base + 1.
+    /// (<c>HeadlessClientManager.SlotToPort</c>: 13357, 13367, … — the first seat is slot 2, because
+    /// <c>MinSlot</c> is 2 and slot → netId is <c>1000 + slot</c>, so 13347 is never bound at all). Each
+    /// headless instance runs this same host code, so each gets its own secure port at its own base + 1.
     /// </remarks>
     public const int PreferredPortOffset = 1;
 
