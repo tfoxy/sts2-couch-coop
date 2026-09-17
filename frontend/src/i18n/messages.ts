@@ -94,7 +94,7 @@ export const en = {
   // The other two are faults on the HOST computer, so they say so instead of sending a phone's owner to their
   // own settings for something they cannot reach.
   "seat.notice.networkPath": "Your game is running on the host computer, but this device couldn't reach it.",
-  "seat.notice.networkPathFix": "Join the same Wi-Fi as the host — not a guest network — turn off any VPN, and check the router isn't keeping devices apart.",
+  "seat.notice.networkPathFix": "Ask whoever is hosting to allow Slay the Spire 2 through their firewall or security software, and check you're on the host's Wi-Fi — not a guest network — with any VPN turned off.",
   "seat.notice.portConflict": "Another program on the host computer is using the port your game needs.",
   // DELIBERATELY NOT the host panel's wording, which was broadened to "close whatever is using that port,
   // including another copy of Slay the Spire 2" once seat ports turned out to be derived from a constant rather
@@ -283,7 +283,7 @@ export const zhHans: LocaleCatalog = {
   "join.progress.complete": "即将就绪",
   "join.progress.line": "{stage} — 第 {step} / {total} 步，已用时 {seconds} 秒。这可能需要长达一分钟，请保持此页面打开。",
   "seat.notice.networkPath": "你的游戏已在主机电脑上运行，但本设备无法连接到它。",
-  "seat.notice.networkPathFix": "请连接与主机相同的 Wi-Fi（不要用访客网络），关闭所有 VPN，并检查路由器是否隔离了设备之间的通信。",
+  "seat.notice.networkPathFix": "请让主持游戏的人在防火墙或安全软件中放行《杀戮尖塔 2》，并确认你连接的是主机所在的 Wi-Fi（不是访客网络）且已关闭 VPN。",
   "seat.notice.portConflict": "主机电脑上的另一个程序正占用你的游戏所需的端口。",
   "seat.notice.portConflictFix": "本设备无需改动——请让主持游戏的人重启《杀戮尖塔 2》后再试一次。",
   "seat.notice.hostBlock": "主机电脑正在阻止你的游戏所使用的端口。",

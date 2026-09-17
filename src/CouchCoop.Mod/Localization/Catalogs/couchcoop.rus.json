@@ -82,7 +82,7 @@
   "couchcoop_connection_error_seat_port_blocked_summary": "Этот компьютер блокирует порт, на котором работает игра этого игрока.",
   "couchcoop_connection_error_seat_port_blocked_action": "Разрешите Slay the Spire 2 в брандмауэре или защитной программе этого компьютера и повторите попытку.",
   "couchcoop_connection_error_seat_network_summary": "Игра этого игрока запущена, но его устройство так и не смогло до неё добраться.",
-  "couchcoop_connection_error_seat_network_action": "Подключите устройство к той же сети Wi-Fi, что и этот компьютер, отключите гостевую сеть или изоляцию клиентов в роутере и отсканируйте код ещё раз.",
+  "couchcoop_connection_error_seat_network_action": "Разрешите Slay the Spire 2 в брандмауэре и защитной программе этого компьютера, убедитесь, что устройство подключено к сети этого компьютера, а не к гостевой, и отсканируйте код ещё раз.",
   "couchcoop_connection_error_browser_summary": "Браузер не смог показать экран игры.",
   "couchcoop_connection_error_browser_action": "Перезагрузите браузер и присоединитесь снова.",
   "couchcoop_connection_error_service_summary": "Служба браузера хоста остановлена.",

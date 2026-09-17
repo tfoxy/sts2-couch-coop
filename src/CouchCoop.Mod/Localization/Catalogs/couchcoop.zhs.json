@@ -82,7 +82,7 @@
   "couchcoop_connection_error_seat_port_blocked_summary": "这台电脑正在拦截该玩家游戏所使用的端口。",
   "couchcoop_connection_error_seat_port_blocked_action": "在这台电脑的防火墙或安全软件中允许 Slay the Spire 2，然后重试。",
   "couchcoop_connection_error_seat_network_summary": "该玩家的游戏正在运行，但其设备从未连接上。",
-  "couchcoop_connection_error_seat_network_action": "将设备连接到与这台电脑相同的 Wi-Fi，关闭路由器的访客网络或客户端隔离，然后重新扫码。",
+  "couchcoop_connection_error_seat_network_action": "在这台电脑的防火墙和安全软件中允许 Slay the Spire 2，确认设备连接的是这台电脑所在的网络而不是访客网络，然后重新扫码。",
   "couchcoop_connection_error_browser_summary": "浏览器无法显示游戏画面。",
   "couchcoop_connection_error_browser_action": "刷新浏览器后重新加入。",
   "couchcoop_connection_error_service_summary": "主机浏览器服务已停止。",

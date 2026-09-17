@@ -82,7 +82,7 @@
   "couchcoop_connection_error_seat_port_blocked_summary": "คอมพิวเตอร์เครื่องนี้กำลังบล็อกพอร์ตที่เกมของผู้เล่นนี้ให้บริการอยู่",
   "couchcoop_connection_error_seat_port_blocked_action": "อนุญาต Slay the Spire 2 ในไฟร์วอลล์หรือซอฟต์แวร์ความปลอดภัยของคอมพิวเตอร์เครื่องนี้ แล้วลองอีกครั้ง",
   "couchcoop_connection_error_seat_network_summary": "เกมของผู้เล่นนี้ทำงานอยู่ แต่อุปกรณ์ของเขาไม่เคยเชื่อมต่อถึงเลย",
-  "couchcoop_connection_error_seat_network_action": "เชื่อมต่ออุปกรณ์กับ Wi-Fi เดียวกับคอมพิวเตอร์เครื่องนี้ ปิดเครือข่ายผู้เยี่ยมชมหรือการแยกไคลเอ็นต์ในเราเตอร์ แล้วสแกนโค้ดอีกครั้ง",
+  "couchcoop_connection_error_seat_network_action": "อนุญาต Slay the Spire 2 ในไฟร์วอลล์และซอฟต์แวร์ความปลอดภัยของคอมพิวเตอร์เครื่องนี้ ตรวจสอบว่าอุปกรณ์อยู่ในเครือข่ายของคอมพิวเตอร์เครื่องนี้ ไม่ใช่เครือข่ายผู้เยี่ยมชม แล้วสแกนโค้ดอีกครั้ง",
   "couchcoop_connection_error_browser_summary": "เบราว์เซอร์ไม่สามารถแสดงหน้าจอเกมได้",
   "couchcoop_connection_error_browser_action": "รีโหลดเบราว์เซอร์แล้วเข้าร่วมอีกครั้ง",
   "couchcoop_connection_error_service_summary": "บริการเบราว์เซอร์ของโฮสต์หยุดทำงาน",

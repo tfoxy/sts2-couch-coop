@@ -96,7 +96,7 @@
   "couchcoop_connection_error_seat_port_blocked_summary": "This computer is blocking the port this player's game is serving on.",
   "couchcoop_connection_error_seat_port_blocked_action": "Allow Slay the Spire 2 through this computer's firewall or security software, then try again.",
   "couchcoop_connection_error_seat_network_summary": "This player's game is running, but their device never reached it.",
-  "couchcoop_connection_error_seat_network_action": "Put the device on the same Wi-Fi as this computer and turn off guest network or client isolation on the router, then scan the code again.",
+  "couchcoop_connection_error_seat_network_action": "Allow Slay the Spire 2 through this computer's firewall and security software, check the device is on this computer's network and not a guest one, then scan the code again.",
   "couchcoop_connection_error_browser_summary": "The browser could not show the game view.",
   "couchcoop_connection_error_browser_action": "Reload the browser, then join again.",
   "couchcoop_connection_error_service_summary": "The host browser service stopped.",

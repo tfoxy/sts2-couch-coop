@@ -67,7 +67,7 @@
   "join.progress.complete": "まもなく準備完了です",
   "join.progress.line": "{stage} — ステップ {step}/{total}、経過 {seconds} 秒。最大で 1 分ほどかかることがあります。このページは開いたままにしてください。",
   "seat.notice.networkPath": "あなたのゲームはホストコンピューターで動作していますが、この端末からは接続できませんでした。",
-  "seat.notice.networkPathFix": "ホストと同じWi-Fi（ゲストネットワークではないもの）に接続し、VPNをオフにして、ルーターが端末どうしを分離していないか確認してください。",
+  "seat.notice.networkPathFix": "ホストの人にファイアウォールまたはセキュリティソフトでSlay the Spire 2を許可してもらい、ゲストネットワークではなくホストと同じWi-Fiに接続していてVPNがオフになっているか確認してください。",
   "seat.notice.portConflict": "ホストコンピューター上の別のプログラムが、あなたのゲームに必要なポートを使用しています。",
   "seat.notice.portConflictFix": "この端末で変更することはありません。ホストの人にSlay the Spire 2を再起動してもらってから、もう一度お試しください。",
   "seat.notice.hostBlock": "ホストコンピューターが、あなたのゲームを配信しているポートをブロックしています。",

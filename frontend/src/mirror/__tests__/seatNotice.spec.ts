@@ -197,8 +197,8 @@ describe("MirrorApp seat notice", () => {
 
     expect(summary()).toBe("Your game is running on the host computer, but this device couldn't reach it.");
     expect(action()).toBe(
-      "Join the same Wi-Fi as the host — not a guest network — turn off any VPN, and check the router isn't "
-      + "keeping devices apart."
+      "Ask whoever is hosting to allow Slay the Spire 2 through their firewall or security software, and check "
+      + "you're on the host's Wi-Fi — not a guest network — with any VPN turned off."
     );
     // The mistake this round exists to stop being repeated: the seat IS up and IS answering the host, so the
     // copy must not suggest the game failed to start or stopped responding.
@@ -300,6 +300,6 @@ describe("MirrorApp seat notice", () => {
     hostSocket().emit(noticeFrame());
     await settle();
     expect(summary()).toBe("你的游戏已在主机电脑上运行，但本设备无法连接到它。");
-    expect(action()).toBe("请连接与主机相同的 Wi-Fi（不要用访客网络），关闭所有 VPN，并检查路由器是否隔离了设备之间的通信。");
+    expect(action()).toBe("请让主持游戏的人在防火墙或安全软件中放行《杀戮尖塔 2》，并确认你连接的是主机所在的 Wi-Fi（不是访客网络）且已关闭 VPN。");
   });
 });

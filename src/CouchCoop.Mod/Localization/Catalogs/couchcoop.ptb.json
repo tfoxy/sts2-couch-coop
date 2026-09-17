@@ -82,7 +82,7 @@
   "couchcoop_connection_error_seat_port_blocked_summary": "Este computador está bloqueando a porta em que o jogo deste jogador está sendo servido.",
   "couchcoop_connection_error_seat_port_blocked_action": "Permita o Slay the Spire 2 no firewall ou no software de segurança deste computador e tente novamente.",
   "couchcoop_connection_error_seat_network_summary": "O jogo deste jogador está em execução, mas o dispositivo dele nunca chegou até ele.",
-  "couchcoop_connection_error_seat_network_action": "Conecte o dispositivo ao mesmo Wi-Fi deste computador, desative a rede de convidados ou o isolamento de clientes no roteador e leia o código novamente.",
+  "couchcoop_connection_error_seat_network_action": "Permita o Slay the Spire 2 no firewall e no software de segurança deste computador, verifique se o dispositivo está na rede deste computador e não em uma rede de convidados e leia o código novamente.",
   "couchcoop_connection_error_browser_summary": "O navegador não conseguiu mostrar a tela do jogo.",
   "couchcoop_connection_error_browser_action": "Recarregue o navegador e entre novamente.",
   "couchcoop_connection_error_service_summary": "O serviço de navegador do host parou.",
