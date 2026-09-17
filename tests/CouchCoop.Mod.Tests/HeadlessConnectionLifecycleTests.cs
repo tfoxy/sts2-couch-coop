@@ -25,6 +25,7 @@ internal static class HeadlessConnectionLifecycleTests
         await ASeatThatCannotIsolateCloudSavesIsItsOwnIssue();
         await AHeartbeatWithoutTheCloudDeclarationStopsTheSeat();
         await ASilentSeatIsStoppedAtTheContactDeadline();
+        await ASilentSeatThatJoinedIsNotBlamedOnCloudSaves();
         await EarlyProcessExitFailsTheAttempt();
         await StalledShutdownIsForcedBeforeEnsureReturns();
         await RetryFencesOldGenerationAndEvictsTheOldPeer();
@@ -378,7 +379,31 @@ internal static class HeadlessConnectionLifecycleTests
     // deadline of its own, far short of the readiness one. NOTE what this does not prove — see
     // HeadlessClientManager.DefaultSeatContactTimeoutSeconds: an unmodded game runs its cloud sync inside this
     // window, so the deadline shrinks the exposure rather than removing it.
-    private static async Task ASilentSeatIsStoppedAtTheContactDeadline()
+    //
+    // THE MEMBERSHIP PROBE IS `false` ON PURPOSE, and this pair of tests is the reason the argument matters.
+    // A game with no CouchCoop in it cannot appear in the host's lobby at all: joining is synthesized by
+    // CommandLineOverridePatch, which is ours. So a silent NON-member is the unmodded seat, and a silent
+    // member is a different failure with a different name — the test below.
+    private static Task ASilentSeatIsStoppedAtTheContactDeadline()
+        => AssertSilentSeatAtContactDeadline(
+            member: false,
+            expectedCode: HeadlessClientManager.SeatCloudIsolationCode,
+            expectedDetailFragment: "did not report anything",
+            because: "a silent seat the lobby never listed is the cloud-isolation issue");
+
+    // The mirror image, and the one this split exists for: the lobby HAS this seat, so CouchCoop demonstrably
+    // ran in it (only our patch could have made it join) and the cloud isolation guard demonstrably passed
+    // (it runs before that patch and exits the process on failure). Calling that a cloud-save risk was a false
+    // alarm on the one subject where a false alarm costs the most.
+    private static Task ASilentSeatThatJoinedIsNotBlamedOnCloudSaves()
+        => AssertSilentSeatAtContactDeadline(
+            member: true,
+            expectedCode: HeadlessClientManager.SeatSilentAfterJoinCode,
+            expectedDetailFragment: "joined the host's lobby",
+            because: "a silent seat the lobby DOES list is named as a seat that joined and went quiet");
+
+    private static async Task AssertSilentSeatAtContactDeadline(
+        bool member, string expectedCode, string expectedDetailFragment, string because)
     {
         var priorContact = Environment.GetEnvironmentVariable(HeadlessClientManager.SeatContactTimeoutEnvironmentVariable);
         var priorReady = Environment.GetEnvironmentVariable(HeadlessClientManager.SeatReadyTimeoutEnvironmentVariable);
@@ -387,7 +412,7 @@ internal static class HeadlessConnectionLifecycleTests
         Environment.SetEnvironmentVariable(HeadlessClientManager.SeatReadyTimeoutEnvironmentVariable, "60");
         var id = BeginAttempt();
         var process = new FakeProcess(42);
-        using var manager = NewManager(_ => process, () => true, () => true);
+        using var manager = NewManager(_ => process, () => member, () => true);
         try
         {
             var started = Stopwatch.GetTimestamp();
@@ -397,10 +422,16 @@ internal static class HeadlessConnectionLifecycleTests
             Assert(Stopwatch.GetElapsedTime(started) < TimeSpan.FromSeconds(30),
                 "…and dies on the contact deadline rather than the readiness one");
             var row = ConnectionRegistry.Shared.Snapshot().Rows.Single(entry => entry.Id == id);
-            Assert(row.Issue?.Code == HeadlessClientManager.SeatCloudIsolationCode,
-                "silence past the contact deadline is reported as the cloud-isolation issue");
-            Assert(row.Issue!.Detail!.Contains("did not report anything", StringComparison.Ordinal),
-                "…with a detail that says the mod is not running in that game, not that it refused");
+            Assert(row.Issue?.Code == expectedCode, because);
+            Assert(row.Issue!.Detail!.Contains(expectedDetailFragment, StringComparison.Ordinal),
+                $"…and its detail says so ({expectedDetailFragment})");
+            // The false alarm this split removes, asserted as an absence so it cannot come back quietly.
+            if (member)
+            {
+                Assert(!row.Issue!.Summary.Contains("Steam Cloud", StringComparison.Ordinal)
+                        && row.Issue.Code != HeadlessClientManager.SeatCloudIsolationCode,
+                    "a seat that joined is never accused of touching the account's Steam Cloud saves");
+            }
             Assert(process.Killed, "the silent seat is actually terminated");
         }
         finally

@@ -75,6 +75,8 @@
   "couchcoop_connection_error_mod_mismatch_action": "Оставьте установленной только одну копию мода, перезапустите игру и повторите попытку.",
   "couchcoop_connection_error_seat_cloud_isolation_summary": "Игра этого игрока не смогла гарантировать, что не тронет ваши сохранения в Steam Cloud.",
   "couchcoop_connection_error_seat_cloud_isolation_action": "Она была остановлена до того, как что-либо записала. Перезапустите игру и попробуйте снова, а если повторится — скопируйте этот отчёт.",
+  "couchcoop_connection_error_seat_silent_summary": "Игра этого игрока запустилась и подключилась, но затем перестала отвечать.",
+  "couchcoop_connection_error_seat_silent_action": "Попробуйте снова. Если это повторяется, проверьте собственный журнал этого игрока (путь указан в этом отчёте) и попробуйте снова, отключив остальные моды.",
   "couchcoop_connection_error_seat_port_summary": "Другая программа на этом компьютере занимает порт этого игрока.",
   "couchcoop_connection_error_seat_port_action": "Закройте программу, занимающую этот порт на компьютере-хосте, в том числе другую копию Slay the Spire 2, и повторите попытку.",
   "couchcoop_connection_error_seat_port_occupied_summary": "Другая программа на этом компьютере занимает один из портов, которые совместная игра выделяет игрокам.",

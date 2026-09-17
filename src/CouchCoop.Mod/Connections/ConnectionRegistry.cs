@@ -551,7 +551,11 @@ public sealed class ConnectionRegistry
             if ((e.Issue.Code == "browser-transport-lost"
                     && issue.Code is "process-exited" or "native-join-rejected" or "native-disconnected"
                         or Session.HeadlessClientManager.SeatBuildMismatchCode
-                        or Session.HeadlessClientManager.SeatCloudIsolationCode)
+                        or Session.HeadlessClientManager.SeatCloudIsolationCode
+                        // Same grounds again: the host kills a seat the moment it decides this, so a browser
+                        // socket closing is downstream of the cause, and "reconnect this device" would point
+                        // at the device when the answer is in the seat's own log.
+                        or Session.HeadlessClientManager.SeatSilentAfterJoinCode)
                 || (issue.Code == Session.HeadlessDisconnectReason.RunInProgressCode
                     && e.Issue.Code is "browser-transport-lost" or "native-join-rejected" or "native-disconnected"))
             {

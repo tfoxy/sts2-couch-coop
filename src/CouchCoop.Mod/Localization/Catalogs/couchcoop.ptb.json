@@ -75,6 +75,8 @@
   "couchcoop_connection_error_mod_mismatch_action": "Mantenha apenas uma cópia do mod instalada, reinicie o jogo e tente novamente.",
   "couchcoop_connection_error_seat_cloud_isolation_summary": "O jogo deste jogador não pôde garantir que não mexeria nos seus saves da Steam Cloud.",
   "couchcoop_connection_error_seat_cloud_isolation_action": "Ele foi interrompido antes de escrever qualquer coisa. Reinicie o jogo e tente novamente, e copie este relatório se acontecer de novo.",
+  "couchcoop_connection_error_seat_silent_summary": "O jogo deste jogador iniciou e entrou, mas depois parou de responder.",
+  "couchcoop_connection_error_seat_silent_action": "Tente novamente. Se continuar acontecendo, verifique o log do próprio jogador (o caminho está neste relatório) e tente de novo com os outros mods desativados.",
   "couchcoop_connection_error_seat_port_summary": "Outro programa neste computador está usando a porta deste jogador.",
   "couchcoop_connection_error_seat_port_action": "Feche o programa que está usando essa porta no computador anfitrião, inclusive outra cópia do Slay the Spire 2, e tente novamente.",
   "couchcoop_connection_error_seat_port_occupied_summary": "Outro programa neste computador está usando uma das portas que o modo cooperativo atribui aos jogadores.",
