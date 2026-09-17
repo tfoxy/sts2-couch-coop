@@ -102,6 +102,71 @@ selection and the cache root key off the **version** — so it is not a mismatch
 A `steam://validate` issued over SSH did not start the update and the client then exited: the branch
 change needed someone at the guest console.
 
+### The mod deploys and LOADS on Windows — proven from the log
+
+With the branch matched, the Linux install was tarred across and extracted into the guest's
+`mods\couchcoop`. Identity matches on both sides: `sourceCommit 3c689be2`, `dirty false`, lane `v111`,
+manifest `9999.0.0+dev.3c689be2fd2a`. The guest's own `godot.log` then proves the load rather than the
+copy:
+
+```
+[INFO] Loading assembly DLL C:\Program Files (x86)\Steam\steamapps\common\Slay the Spire 2\mods\couchcoop\couchcoop.dll
+* CouchCoop [couchcoop] (9999.0.0+dev.3c689be2fd2a)
+[INFO] [couchcoop] cache game=v0.111.0 hash=222455745 cache=v1+sp1 root=C:/Users/VM/AppData/Roaming/SlayTheSpire2/couch-coop/cache\v0.111.0
+```
+
+**That line settles round item 4 on real Windows**, with the mod running: the user dir is
+`%APPDATA%\SlayTheSpire2\`, so `%APPDATA%\SlayTheSpire2\logs\godot.log` is correct, and
+`%APPDATA%\Godot\app_userdata\SlayTheSpire2\logs` does **not** exist. It also confirms the `[couchcoop]`
+prefix on Windows — the spelling the troubleshooting post had wrong.
+
+Note the guest also loads two unrelated Workshop mods (BaseLib, STS2-RitsuLib), so it is not a clean-room
+host; RitsuLib runs its own listener on 127.0.0.1:18742.
+
+### …and then the game cannot render, which ends the product half here
+
+The guest has **no GPU**. Godot picks D3D12 and falls back to the *Microsoft Basic Render Driver*, which
+cannot create the swap chain:
+
+```
+D3D12 12_0 - Forward+ - Using Device #1: Microsoft - Microsoft Basic Render Driver
+ERROR: Condition "!((HRESULT)(res) >= 0)" is true. Returning: ERR_CANT_CREATE
+   at: swap_chain_resize (drivers/d3d12/rendering_device_driver_d3d12.cpp:2854)
+```
+
+repeated until the process exits — the game never reaches a window (`.../shots/01-game-launched.png`
+shows the console with no game). Relaunching through Steam with `--rendering-driver opengl3` did not
+produce a log at all. Windows ships no software OpenGL 3.3, and WARP is D3D-only.
+
+So **the product fingerprint — what the Connections panel and the phone render per knob — is not
+obtainable on this VM**, and that is now a measured fact rather than the prediction in
+`windows-connection-fingerprints`' parent memory. GPU passthrough is the only thing that would change it
+and is refused for good reason: the RTX 2060 is the host's only GPU and drives every gamescope QA
+instance. The product half belongs to Stage 3 on physical Windows.
+
+## 5. A9b reproduced live, on the platform where it is worst
+
+Unplanned, and visible in the startup log above — the host ranked its two adapters:
+
+```
+[couchcoop] lan-address candidate rank=0 192.168.0.7    if=Ethernet   score=55 gw=1 tier=2 range=rfc1918 origin=Dhcp
+[couchcoop] lan-address candidate rank=1 192.168.122.32 if=Ethernet 2 score=55 gw=1 tier=2 range=rfc1918 origin=Dhcp
+```
+
+**An exact tie at the maximum score**, 32+16+4+2+1 = 55 on both. `LanAddressRanking.Rank` is
+`OrderByDescending(ScoreOf)` and LINQ's sort is stable with no further tiebreak, so which address the QR
+advertises is decided purely by **OS enumeration order**. Here rank 0 happened to be the LAN address a
+phone can reach; nothing made it so.
+
+Worse on Windows than the design doc expected. The doc noted that the DHCP tiebreak is inert off Windows
+because `ReadPrefixOrigin` throws on Linux — here it is live, both candidates report `origin=Dhcp`, and it
+*still* cannot separate them. This is the A9b shape (host on one subnet, phone on another) with no virtual
+adapters contrived: any Windows box with two gateway-carrying Ethernet adapters — Hyper-V's Default
+Switch, WSL, a VPN NIC, a second physical port — is one enumeration-order flip away from advertising an
+address no phone can reach. The mitigations still stand (the QR dialog lists every adapter group and
+`COUCHCOOP_ADVERTISED_HOST` overrides outright), which is exactly why the post leads with "pick a
+different row".
+
 Everything in sections 1-3 needed no game, which is what the design doc's Stage 2 fallback anticipated.
 Sections marked owed here move to Stage 3 on physical Windows, or back to this guest once the game
 matches.
