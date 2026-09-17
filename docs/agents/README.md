@@ -21,6 +21,7 @@ that answers your question**, not the whole file.
 | touching `clip_contents` or anything with a wide blast radius | [clip-contents-blast-radius.md](clip-contents-blast-radius.md) | — |
 | working on host-side render/encode cost | [host-render-cost-aug22.md](host-render-cost-aug22.md), [host-render-cost-aug22-round2.md](host-render-cost-aug22-round2.md) | — |
 | working on phone access, HTTPS, PWA, the public origin | [local-network-access.md](local-network-access.md) | — |
+| diagnosing a join failure on Windows, or touching a loopback probe timeout | [windows-connection-fingerprints.md](windows-connection-fingerprints.md) | — |
 | changing browser UI copy, locale selection, manifests, or offline-page text | [../browser-localization.md](../browser-localization.md) | — |
 | changing native in-game CouchCoop strings | [../native-localization.md](../native-localization.md) | — |
 | changing a browser-server boundary, resource route, cache, or network limit | [../security.md](../security.md) | — |
