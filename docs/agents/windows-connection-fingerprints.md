@@ -84,12 +84,23 @@ evidence behind the post's "allow the program, not a port" advice — it is corr
 ## 4. Not yet measured, and why
 
 The **product** fingerprint — what the host's Connections panel and the phone actually render per knob —
-is still owed. The guest's Steam install of the game is **v0.107.1** (buildid 23811903) against this
-repo's **v0.111.0** / lane `v111` (buildid 24724944), both on the default branch; the Windows copy is
-simply stale. The mod is managed IL built against v0.111.0 assemblies, so deploying it onto v0.107.1
-invites the `TypeLoadException` in `.agents/memory/lane-mismatch-flat-deploy-sep15.md`. Steam in the
-guest is logged in and online, but a `steam://validate` issued over SSH did not start an update and the
-client then exited — the update needs someone at the guest console.
+was blocked at first: the guest's Steam install was **v0.107.1** (buildid 23811903) against this repo's
+**v0.111.0** / lane `v111` (buildid 24724944), and the mod is managed IL built against v0.111.0
+assemblies, so deploying onto it invites the `TypeLoadException` in
+`.agents/memory/lane-mismatch-flat-deploy-sep15.md`.
+
+**The cause was a branch difference, and a case-sensitive grep hid it.** `v0.111.0` is the
+**`public-beta`** branch, not default. The key in `appmanifest_2868840.acf` is spelled **`BetaKey`**, so
+a `grep -E "betakey"` finds nothing and both installs read as "default branch" — which is exactly the
+wrong conclusion. **Match the branch, not just the version, and grep case-insensitively.** Resolved by
+switching the guest to `public-beta`; it is now buildid 24724944 / v0.111.0, matching Linux.
+
+One difference that is expected and harmless: `release_info.json`'s `main_assembly_hash` differs between
+the two platforms (Linux 1579942752, Windows 222455745). Nothing in the mod reads that field — lane
+selection and the cache root key off the **version** — so it is not a mismatch signal.
+
+A `steam://validate` issued over SSH did not start the update and the client then exited: the branch
+change needed someone at the guest console.
 
 Everything in sections 1-3 needed no game, which is what the design doc's Stage 2 fallback anticipated.
 Sections marked owed here move to Stage 3 on physical Windows, or back to this guest once the game
