@@ -17,25 +17,35 @@ pastes it into a discussion by hand. Suggested title: **Can't connect from a pho
 
 ## What has been checked against the shipped build
 
-Verified on Linux at `36e466af` against `src/CouchCoop.Mod/Localization/Catalogs/couchcoop.en.json` and
-`frontend/src/i18n/messages.ts`, and again on screen in `.sts2/artifacts/conndiag-round2/p2-06-crop.png`:
+Re-checked claim by claim on Linux at `aa1384f0` against
+`src/CouchCoop.Mod/Localization/Catalogs/couchcoop.en.json` and `frontend/src/i18n/messages.ts`, and
+earlier on screen in `.sts2/artifacts/conndiag-round2/p2-06-crop.png`. **The previous checkpoint
+(`36e466af`) covered only the copy keys, so seven claims that were never string-checked at all had gone
+stale or had always been wrong — see the commit for the list.** A claim belongs in this table only once
+something in the tree has been cited for it.
 
 | the post says | the build says |
 | --- | --- |
-| panel is called **Connections** | `couchcoop_connection_title` |
-| failures live under **Connection problems** | `couchcoop_connection_problems` |
+| panel is called **Connections**, reached from the **Couch Co-Op QR Code** screen | `couchcoop_connection_title`; the panel is a child of `CouchCoopQrDialog` (`AddChild(_connections)`), and the lobby's own control is `couchcoop_qr_button` |
+| failures live under **Connection problems (n)** | `couchcoop_connection_problems` — the value carries `({count})` |
 | the button is **Copy report** | `couchcoop_connection_copy_report` — *not* "Copy", which an earlier draft said |
 | **Show technical details** | `couchcoop_connection_show_technical` |
-| the three named causes, verbatim | `seat.notice.networkPath` / `portConflict` / `hostBlock` and their `*Fix` twins |
-| the progress line | `join.progress.line` plus its six stage keys |
-| Linux log path | `~/.local/share/SlayTheSpire2/logs/godot.log` |
+| the three named causes, verbatim | `seat.notice.networkPath` / `portConflict` / `hostBlock`. Their `*Fix` twins are **paraphrased** in the post, not quoted |
+| the progress line, at **step 1 of 6** | `join.progress.line` plus its six stage keys; `ConnectionStageSteps.Current` maps `Connecting => 1` (an earlier draft said step 2, which the product cannot print) |
+| the blocked case shows **Loading…**, not Joining… | `MirrorApp.vue` clears `pendingName` on the seat redirect ("the wait from here is the headless streaming its first frame"); `SeatNoticeSpeaker` records that the browser's 90 s join timeout "is disarmed by the redirect, so a blocked viewer waits on Loading… indefinitely", and speaks at `NetworkPathSettlingDelay` = 20 s |
+| Linux log path, and the **`[couchcoop]`** prefix | `~/.local/share/SlayTheSpire2/logs/godot.log`; `CouchCoopLogLine.Prefix` is `[couchcoop]`, pinned by `CouchCoopLogPrefixTests`. The post said `[couch-coop]`, a spelling `86a87c6e` removed from the mod — it would have matched nothing |
+| home-screen icons survive a new host address only from the **Web link** row | `frontend/src/join/hostStore.ts` — a PWA installed from `http://<ip>:13337/` "captures that origin … and is dead the moment the router hands the PC a different address"; the stable public origin re-probes remembered hosts and recovers silently |
 | per-player ports **13357, 13367, 13377** | `HeadlessClientManager.MinSlot` is 2 and `SlotToPort` is `13337 + slot*10`; `SeatPortTruthTests` asserts the first player takes `SlotToPort(2)`, and a `--seats` run logs `slot=2 port=13357` / `slot=3 port=13367` / `slot=4 port=13377`. Earlier drafts said 13347, which nothing binds |
 
-**One line is still unverified: the Windows `%APPDATA%\SlayTheSpire2\logs\godot.log` path.** The code
-builds it from `user://logs/godot.log` (`src/CouchCoop.Mod/CouchCoopMod.cs`), and Godot's Windows
-`user://` depends on the project's `use_custom_user_dir` setting, so it needs one look at a real Windows
-install before the post goes out. That check is the Windows stage of
-`~/.claude/plans/some-people-are-having-wise-seal.md`, deferred to a later round.
+**One line is still unconfirmed on real hardware: the Windows `%APPDATA%\SlayTheSpire2\logs\godot.log`
+path.** The code builds it from `user://logs/godot.log`
+(`ProjectSettings.GlobalizePath`, `src/CouchCoop.Mod/CouchCoopMod.cs`). The `use_custom_user_dir`
+question an earlier draft left open **is already answered in the tree**: `HeadlessUserDirSeeder` records
+that the game sets `use_custom_user_dir=true` / `custom_user_dir_name="SlayTheSpire2"`, and that Godot
+resolves that directory from `XDG_DATA_HOME` on Linux, **`APPDATA` on Windows**, and
+`$HOME/Library/Application Support` on macOS. So the path in the post is what the code implies; what is
+outstanding is only one look at a real Windows install, which is the Windows stage of
+`~/.claude/plans/some-people-are-having-wise-seal.md`.
 
 ## The post, as Steam BBCode
 
@@ -62,7 +72,7 @@ Prefer the plain numeric address (something like [b]192.168.1.5:13337[/b]). It h
 [h3]3. Read what the page tells you while it is joining[/h3]
 Starting a player's game can legitimately take up to a minute. While that happens the page now tells you where it has got to, on a line under [i]Joining…[/i]:
 
-[i]Reaching the host — step 2 of 6, 14s so far. This can take up to a minute, so keep this page open.[/i]
+[i]Reaching the host — step 1 of 6, 14s so far. This can take up to a minute, so keep this page open.[/i]
 
 If that line is counting up and changing stage, it is working - keep the page open. The six stages are reaching the host, waiting for the host, starting this player's game, connecting this player to the game, loading the game view, almost ready.
 
@@ -78,7 +88,9 @@ Nothing to change on your device. On the host, something else is holding one of 
 Also nothing to change on your device. The host's own firewall or security software is blocking it - see section 5.
 [/list]
 
-If you get none of those and it simply sits there, the host gives up at 75 seconds with [i]Couldn't start your game view - please try again[/i] and a grey line under it. Most people close the tab before that, so if you can, wait it out once and copy what it says.
+[b]The most common blocked case does not say [i]Joining…[/i] at all.[/b] If your device reached the host but cannot reach the port your own player was given, the join [i]succeeds[/i] - and the page then switches to [i]Loading…[/i] and stays there. There is no progress line and no countdown on that screen, because from the host's side nothing has failed. The first useful thing you will see is the [b]"couldn't reach it"[/b] message above, about [b]20 seconds[/b] after the page changes. So: if you are stuck on [i]Loading…[/i], wait half a minute for that message rather than reloading - reloading starts the whole wait again.
+
+If instead it sits on [i]Joining…[/i] and never changes, the host gives up at 75 seconds with [i]Couldn't start your game view - please try again[/i] and a grey line under it. That is a different failure from the one above. Either way, copy what it says.
 
 [h3]5. Each player uses their own port[/h3]
 The lobby is on [b]13337[/b], and then each player uses [b]13357[/b], [b]13367[/b], [b]13377[/b] and so on. A firewall rule that opens only 13337 lets you reach the player list and then fails at the second step. If you (or a guide you followed) added one, remove it and allow [b]the game program[/b] instead - that covers every port it needs.
@@ -103,7 +115,7 @@ Some routers stop devices on the same Wi-Fi from reaching each other. Look for a
 Also worth knowing: a Wi-Fi extender or powerline adapter set up in [b]router[/b] mode instead of [b]bridge[/b] / [b]access point[/b] mode puts your phone on a separate network from the host, even though the Wi-Fi name looks the same.
 
 [h3]8. Browser settings that block plain addresses[/h3]
-Some browsers try to force every address to HTTPS, which the host does not use. If the address bar shows a security warning instead of the game, turn these off and try again:
+Some browsers try to force every address to HTTPS, which the plain numeric address does not use. (The [b]Secure link[/b] row on the QR screen is the one that does - so if HTTPS-forcing is the problem, that row is also worth trying.) If the address bar shows a security warning instead of the game, turn these off and try again:
 [list]
 [*]Chrome: [b]Settings > Privacy and security > Security > Always use secure connections[/b]
 [*]Firefox: [b]Settings > Privacy & Security > HTTPS-Only Mode[/b]
@@ -114,7 +126,13 @@ On iPhone, also check [b]Settings > Apps > Safari[/b] for iCloud Private Relay a
 Security suites such as ESET, Bitdefender, Norton, Kaspersky and Avast have their own firewall, separate from Windows. Allowing the game in Windows does nothing for those. Check the suite's own network or firewall settings, or pause its firewall briefly to see whether that is what is blocking it.
 
 [h3]10. If it used to work and then stopped[/h3]
-The host computer's address can change when it reconnects to Wi-Fi or after a router restart. Open the QR screen again and rescan - the new address will be there. If you added the client to your home screen, it keeps working; it just needs one fresh scan to learn the new address.
+The host computer's address can change when it reconnects to Wi-Fi or after a router restart. Open the QR screen again and rescan - the new address will be there.
+
+If you added the client to your home screen, what happens next depends on which row you installed it from:
+[list]
+[*]Installed from the [b]Web link[/b] row: it keeps working and finds the new address by itself. Just open it - no rescan needed.
+[*]Installed from the [b]numeric address[/b] or the [b]Secure link[/b]: the icon points at the old address and cannot recover. Delete it and add it again after rescanning. (Installing from the [b]Web link[/b] row instead avoids this for good.)
+[/list]
 
 [hr][/hr]
 [h1]Still stuck? Post here[/h1]
@@ -127,6 +145,7 @@ This is the most useful thing you can tell us, because each answer points at a d
 [*]the browser never loads anything at all
 [*]the page loads, but the player list never appears
 [*]you can pick a name, but it sits on "Joining..." - tell us what the progress line under it said, and what message you got if you waited
+[*]it gets past that and sits on [b]"Loading..."[/b] instead - this one is the port/firewall case, and it is the most common. Tell us whether the "couldn't reach it" message appeared after about 20 seconds
 [*]it connected fine, then dropped during the run
 [/list]
 
@@ -142,8 +161,8 @@ This is the most useful thing you can tell us, because each answer points at a d
 
 [h3]Two things the host computer can hand you[/h3]
 [list]
-[*][b]The connection panel.[/b] On the host, the lobby has a [b]Connections[/b] panel. Devices that got far enough to appear there are listed, and anything that went wrong is kept under [b]Connection problems[/b]. Select the row and use [b]Copy report[/b] - that copies a report with the failing step, the timings and the host's own diagnosis already in it. Paste it straight into your post.
-[*][b]The log file.[/b] On Windows it is at [i]%APPDATA%\SlayTheSpire2\logs\godot.log[/i]. On Linux, [i]~/.local/share/SlayTheSpire2/logs/godot.log[/i]. Lines starting with [i][couch-coop][/i] are the relevant ones.
+[*][b]The connection panel.[/b] On the host, open the [b]Couch Co-Op QR Code[/b] screen - the [b]Connections[/b] panel is on it, under the code. Devices that got far enough to appear there are listed, and anything that went wrong is kept under [b]Connection problems[/b] (with a count after it). Select the row and use [b]Copy report[/b] - that copies a report with the failing step, the timings and the host's own diagnosis already in it. Paste it straight into your post.
+[*][b]The log file.[/b] On Windows it is at [i]%APPDATA%\SlayTheSpire2\logs\godot.log[/i]. On Linux, [i]~/.local/share/SlayTheSpire2/logs/godot.log[/i]. Lines starting with [i][couchcoop][/i] are the relevant ones.
 [/list]
 
 [hr][/hr]
