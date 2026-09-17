@@ -9,7 +9,9 @@ pastes it into a discussion by hand. Suggested title: **Can't connect from a pho
 - It leads with **switching rows in the QR host selector**, not with the firewall: that is the only fix
   which is one tap, needs no admin rights, and covers a whole class of causes at once.
 - The Windows advice says **allow the program, not a port**. Opening 13337 alone produces the
-  "stuck on Joining…" failure, because each player gets their own port (13347, 13357, 13367, …).
+  "stuck on Joining…" failure, because each player gets their own port (13357, 13367, 13377, …).
+  **Not 13347** — the first seat is slot 2 (`HeadlessClientManager.MinSlot`), so `SlotToPort` starts at
+  13357 and nothing ever binds 13347. Two drafts of this post named it; it is a port no player uses.
 - The report section is ordered by how much each question narrows things down. The first one — how far it
   gets — is worth more than all the rest combined, because it maps onto a step in the join.
 
@@ -27,6 +29,7 @@ Verified on Linux at `36e466af` against `src/CouchCoop.Mod/Localization/Catalogs
 | the three named causes, verbatim | `seat.notice.networkPath` / `portConflict` / `hostBlock` and their `*Fix` twins |
 | the progress line | `join.progress.line` plus its six stage keys |
 | Linux log path | `~/.local/share/SlayTheSpire2/logs/godot.log` |
+| per-player ports **13357, 13367, 13377** | `HeadlessClientManager.MinSlot` is 2 and `SlotToPort` is `13337 + slot*10`; `SeatPortTruthTests` asserts the first player takes `SlotToPort(2)`, and a `--seats` run logs `slot=2 port=13357` / `slot=3 port=13367` / `slot=4 port=13377`. Earlier drafts said 13347, which nothing binds |
 
 **One line is still unverified: the Windows `%APPDATA%\SlayTheSpire2\logs\godot.log` path.** The code
 builds it from `user://logs/godot.log` (`src/CouchCoop.Mod/CouchCoopMod.cs`), and Godot's Windows
@@ -78,7 +81,7 @@ Also nothing to change on your device. The host's own firewall or security softw
 If you get none of those and it simply sits there, the host gives up at 75 seconds with [i]Couldn't start your game view - please try again[/i] and a grey line under it. Most people close the tab before that, so if you can, wait it out once and copy what it says.
 
 [h3]5. Each player uses their own port[/h3]
-The lobby is on [b]13337[/b], and then each player uses [b]13347[/b], [b]13357[/b], [b]13367[/b] and so on. A firewall rule that opens only 13337 lets you reach the player list and then fails at the second step. If you (or a guide you followed) added one, remove it and allow [b]the game program[/b] instead - that covers every port it needs.
+The lobby is on [b]13337[/b], and then each player uses [b]13357[/b], [b]13367[/b], [b]13377[/b] and so on. A firewall rule that opens only 13337 lets you reach the player list and then fails at the second step. If you (or a guide you followed) added one, remove it and allow [b]the game program[/b] instead - that covers every port it needs.
 
 [h3]6. Windows: allow the game through the firewall[/h3]
 First check the network type, because this alone blocks a lot of connections:
