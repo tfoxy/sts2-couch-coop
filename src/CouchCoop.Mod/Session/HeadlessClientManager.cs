@@ -2087,8 +2087,12 @@ public sealed partial class HeadlessClientManager : IDisposable
             // never reaches here, and the connect carries the caller's token so a shutdown is not delayed.
             var reachability = ct.IsCancellationRequested
                 ? new SeatPortProbe(SeatPortReachability.NotProbed, "not probed: the attempt was cancelled")
+                // ClassificationProbeTimeout, NOT the survey's 250 ms: telling a refusal from a dropped packet
+                // is the entire job here, and on Windows a refusal takes ~2 s to arrive (measured — see that
+                // constant). Under the shorter budget every Windows "nothing is listening" read as a dropped
+                // packet and was reported to the operator as their firewall.
                 : await SeatPortAvailability
-                    .ProbeLoopbackAsync(port, SeatPortAvailability.ProbeTimeout, ct)
+                    .ProbeLoopbackAsync(port, SeatPortAvailability.ClassificationProbeTimeout, ct)
                     .ConfigureAwait(false);
 
             return new SeatListenerProbeResult(

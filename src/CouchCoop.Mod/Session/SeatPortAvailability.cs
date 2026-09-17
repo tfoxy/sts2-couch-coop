@@ -57,10 +57,51 @@ internal readonly record struct SeatPortProbe(SeatPortReachability Reachability,
 internal static class SeatPortAvailability
 {
     /// <summary>
-    /// How long one loopback connect may take. A port nothing listens on is refused by the kernel in
-    /// microseconds, so this only bounds the dropped-packet case above.
+    /// How long one loopback connect may take when the only question is whether something ANSWERS — the
+    /// pre-spawn survey's question. An accept is immediate on every platform (measured: 0 ms on Windows, 0 ms
+    /// on Linux), so this budget only ever bounds the two negative answers, which the survey does not have to
+    /// tell apart: either way it falls through to the test bind.
     /// </summary>
+    /// <remarks>
+    /// DO NOT reuse this where REFUSED and DROPPED have to be separated — use
+    /// <see cref="ClassificationProbeTimeout"/>, and read its remarks for the measurement that forced the split.
+    /// Raising this one instead would put ~2 seconds of Windows refusal latency on the join path of every host
+    /// whose seat ports are free, which is the common case.
+    /// </remarks>
     internal static readonly TimeSpan ProbeTimeout = TimeSpan.FromMilliseconds(250);
+
+    /// <summary>
+    /// How long a loopback connect may take when the answer has to distinguish "nothing is listening" from
+    /// "this machine dropped its own packet" — the readiness classifier's question, and the one
+    /// <see cref="SeatReadinessVerdict"/> turns into a firewall accusation.
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// MEASURED Sep-17 2026, and this is why the constant exists. A closed loopback port is refused by the
+    /// kernel in MICROSECONDS on Linux — five samples, 0.02-0.09 ms — and that is where 250 ms came from. On
+    /// Windows 11 (build 26200) the same refusal takes just over TWO SECONDS: five samples, 2008-2034 ms, with
+    /// an open port still accepting in 0 ms. The old budget sat between the two, so on Windows a refusal was
+    /// never observed at all.
+    /// </para>
+    /// <para>
+    /// WHAT THAT COST. <see cref="SeatPortReachability.Unreachable"/> is documented to mean "this machine
+    /// dropped its own packet", and <c>SeatReadinessVerdict.Classify</c> reads it as
+    /// <c>SeatReadinessCause.HostLocalBlock</c> — "Allow Slay the Spire 2 through this computer's firewall or
+    /// security software". On Windows a seat whose listener is simply GONE (it crashed, or is being torn down,
+    /// while its heartbeat is still inside the freshness window) produced exactly that timeout, so the host
+    /// told the operator to go change firewall settings that were never the problem. On Linux the identical
+    /// state refuses instantly and falls through to "still starting", which is the honest answer. Two
+    /// platforms, two diagnoses, one bug — the shape this whole diagnostic effort exists to delete.
+    /// </para>
+    /// <para>
+    /// FIVE SECONDS, not two-and-a-bit: the measurement is from one Windows build in a VM, and the margin is
+    /// free. This connect runs ONLY on the readiness-failure path, after an HTTP probe has already timed out,
+    /// so a healthy join never waits on it; and readiness DETECTION is unaffected either way, because a
+    /// listener that is up accepts immediately. The cost is a slower poll while a seat is genuinely missing,
+    /// which buys a correct verdict.
+    /// </para>
+    /// </remarks>
+    internal static readonly TimeSpan ClassificationProbeTimeout = TimeSpan.FromSeconds(5);
 
     /// <summary>
     /// The address a seat's browser server binds (<c>CouchCoopHostUiServices</c>'s default), and therefore the
