@@ -24,7 +24,6 @@ internal static class SavedRunLoadLobbyIdentityTests
     {
         const ulong savedSteamHost = 76561198000000123UL;
         var service = new FallbackHostService(nativeNetId: 1UL);
-        var listener = new RecordingListener();
 
         try
         {
@@ -32,16 +31,21 @@ internal static class SavedRunLoadLobbyIdentityTests
             Assert(service.NativeNetId == 1UL, "the underlying offline ENet host remains native id 1");
             Assert(service.NetId == savedSteamHost, "the saved fallback service exposes the saved Steam id");
 
-            var lobby = new LoadRunLobby(service, listener, Run(savedSteamHost, 1002UL));
-            lobby.AddLocalHostPlayer();
+            // The lobby half of this regression cannot run in a test process, and used to end it. Constructing a
+            // LoadRunLobby runs game code, which reaches GodotSharp entry points that only a running engine fills
+            // in; in a bare test process they are null, so the call lands on address 0 and the process dies
+            // (`segfault at 0 ip 0000000000000000`, exit 139). It is uncatchable, it killed every suite registered
+            // after this one, and for six days it was misattributed to an unrelated suite above.
+            //
+            // What is left here is the half that is ours and that actually regressed: the identity the lobby will
+            // read. The lobby's own use of it is a live-game behaviour — assert the seam we depend on still exists,
+            // and prove the registration itself against a running game.
+            Assert(Run(savedSteamHost, 1002UL).Players.Single(player => player.NetId == service.NetId).NetId == savedSteamHost,
+                "the saved run resolves its local player by the identity the lobby will read off the service");
 
-            Assert(RegisteredNetIds(lobby).SequenceEqual([savedSteamHost]),
-                "LoadRunLobby registers only the saved Steam host, never ENet id 1");
-            Assert(listener.ConnectedPlayerIds.SequenceEqual([savedSteamHost]),
-                "the loaded-lobby listener receives the saved Steam host id");
-            Assert(lobby.Run.Players.Single(player => player.NetId == lobby.NetService.NetId).NetId == savedSteamHost,
-                "the loaded lobby can resolve its local saved player by the service identity");
-            lobby.CleanUp(disconnectSession: false);
+            var addLocalHost = typeof(LoadRunLobby).GetMethod(nameof(LoadRunLobby.AddLocalHostPlayer));
+            Assert(addLocalHost is not null,
+                "LoadRunLobby still registers its local host through AddLocalHostPlayer (the call that reads NetService.NetId)");
         }
         finally
         {
@@ -66,6 +70,10 @@ internal static class SavedRunLoadLobbyIdentityTests
     /// Every netId the loaded lobby has registered, in registration order. v0.107.1 exposes them as a
     /// <c>HashSet</c> (<c>ConnectedPlayerIds</c>); v0.111.0 replaced that with a projection over the new
     /// per-player records (<c>PlayerIds</c>). One element either way here, so ordering costs this test nothing.
+    /// <para>Nothing calls this any more — see the note in <see cref="SavedSteamHostIsRegisteredByLoadLobby"/> for
+    /// why a lobby cannot be built here. It stays because it still COMPILES, which is the cheap half of the guard:
+    /// if a game update moves the registered-player projection again, this stops building on that lane and says so
+    /// at build time instead of at whatever live session next tries to resume a saved Steam run.</para>
     /// </summary>
     private static IReadOnlyList<ulong> RegisteredNetIds(LoadRunLobby lobby)
 #if STS2_API_V111
@@ -133,6 +141,11 @@ internal static class SavedRunLoadLobbyIdentityTests
 #endif
     }
 
+    /// <summary>
+    /// Kept for the same reason as <see cref="RegisteredNetIds"/>: no lobby can be constructed here to hand it to,
+    /// but implementing the game's listener interface is a compile-time pin on that interface's shape across both
+    /// API lanes. A widened interface fails the build rather than a live resume.
+    /// </summary>
     private sealed class RecordingListener : ILoadRunLobbyListener
     {
         public List<ulong> ConnectedPlayerIds { get; } = [];
