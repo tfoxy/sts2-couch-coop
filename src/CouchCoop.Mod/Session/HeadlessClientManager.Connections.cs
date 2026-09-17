@@ -27,6 +27,31 @@ public sealed partial class HeadlessClientManager
     public const string SeatCloudIsolationCode = "seat-cloud-isolation-unconfirmed";
 
     /// <summary>
+    /// The issue a seat is failed with when it JOINED the host's lobby and then never reported to the host at
+    /// all. Public for the same reason as the code above: the report copy and the panel's issue mapping key on
+    /// the literal.
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// WHY THIS IS NOT <see cref="SeatCloudIsolationCode"/>, which is what every silent seat used to be called.
+    /// A seat can only appear in the host's lobby because CouchCoop put it there:
+    /// <c>CommandLineOverridePatch.Apply()</c> is what re-materializes <c>fastmp=join</c> inside the seat, and
+    /// <c>HeadlessSeatCloudIsolationGuard.EnforceOrExit()</c> runs BEFORE it and exits the process when the
+    /// protection could not be installed. So host lobby membership PROVES the isolation guard already passed,
+    /// and telling that player their saves might have been touched is not a cautious answer — it is a false one,
+    /// about the one subject where a false alarm costs the most trust.
+    /// </para>
+    /// <para>
+    /// What it does mean is narrower and more useful: the mod started, got as far as joining, and then stopped
+    /// short of <c>HeadlessConnectionReporter.Initialize</c>. Everything between those two points is seat-only
+    /// setup, which is exactly why the host's own game can be running perfectly while this fails — and why the
+    /// remedy named below is the seat's own log and the other mods loaded beside us, not the host's firewall,
+    /// its ports, or the player's network.
+    /// </para>
+    /// </remarks>
+    public const string SeatSilentAfterJoinCode = "seat-silent-after-join";
+
+    /// <summary>
     /// The host-service issue a session runs under only when preparing an isolated Godot user directory failed —
     /// a WARNING, not a failure: co-op works, but every player on this machine shares one settings/save profile.
     /// A fallback seat still has its own explicit log file. Public for the same reason as the code above: the
@@ -163,16 +188,23 @@ public sealed partial class HeadlessClientManager
             if (owned.Failure is not null || owned.Quarantined) { await StopFailedConnectionAsync(owned).ConfigureAwait(false); return null; }
             var status = HeadlessConnectionControl.Shared.Snapshot(slot, owned.Generation);
             LogFirstContact(owned, status);
-            // NOT ONE WORD from this process, well past the point where our own guard says hello. That is a game
-            // running without CouchCoop in it, holding this computer's Steam Cloud save storage, and the
-            // remaining 55 seconds of the readiness deadline buy nothing but exposure.
+            var member = _membershipProbe(SlotToNetId(slot));
+            // NOT ONE WORD from this process, well past the point where our own guard says hello, and the
+            // remaining 40 seconds of the readiness deadline buy nothing. WHICH failure that is turns entirely
+            // on whether the host's lobby has this seat, so the membership probe above moved ahead of it:
+            //   * NOT a member — nothing of ours ran, so this is a game holding the account's Steam Cloud save
+            //     storage with no protection installed. That is the exposure the deadline exists to cut short.
+            //   * a member — CouchCoop DID run: only CommandLineOverridePatch could have made it join, and the
+            //     cloud isolation guard runs before that patch and exits on failure, so the saves are provably
+            //     covered. See SeatSilentAfterJoinCode for why saying otherwise here would be a false alarm.
             if (status?.Status is null && Stopwatch.GetElapsedTime(started) >= contactDeadline)
             {
-                owned.Failure ??= SeatCloudIsolationIssue(NoSeatContactDetail(contactDeadline));
+                owned.Failure ??= member
+                    ? SeatSilentAfterJoinIssue(SilentAfterJoinDetail(contactDeadline, slot))
+                    : SeatCloudIsolationIssue(NoSeatContactDetail(contactDeadline));
                 await StopFailedConnectionAsync(owned).ConfigureAwait(false);
                 return null;
             }
-            var member = _membershipProbe(SlotToNetId(slot));
             var fresh = status is not null && Fresh(status);
             verdict = SeatReadinessVerdict.Describe(ReadinessFacts(owned, status, member, port.Value, started, deadline));
             ApplyToAttempt(sessionId, owned, registry => registry.RecordDiagnostic(sessionId, "join readiness", verdict.Detail));
@@ -761,6 +793,39 @@ public sealed partial class HeadlessClientManager
             detail);
 
     /// <summary>
+    /// The issue a seat is failed with when it joined the host's lobby and then went silent. English here, as
+    /// every issue is, and word-for-word the <c>couchcoop_connection_error_seat_silent_*</c> catalog entries the
+    /// panel and the phone render.
+    /// </summary>
+    /// <remarks>
+    /// The action names the seat's OWN log and the other mods, and neither is a guess: every step between
+    /// joining and reporting is seat-only setup, and a seat loads the same Workshop mod set as its host (see
+    /// <c>SeatCloudSaveIsolationPatch</c> for why it cannot be launched without one). It deliberately does not
+    /// mention ports, firewalls or the player's network — nothing on that side of the wire has been reached yet.
+    /// </remarks>
+    internal static ConnectionIssue SeatSilentAfterJoinIssue(string detail)
+        => new(
+            SeatSilentAfterJoinCode,
+            "This player's game started and joined, then stopped responding.",
+            "Try again. If it keeps happening, check that player's own log (its path is in this report) and try "
+                + "again with other mods disabled.",
+            detail);
+
+    /// <summary>
+    /// The detail for a seat that reached the host's lobby and then said nothing within the contact deadline.
+    /// Names the slot so the reader can find that seat's log, which is the only place the reason exists.
+    /// </summary>
+    internal static string SilentAfterJoinDetail(TimeSpan deadline, int slot)
+        => "This player's game joined the host's lobby, so CouchCoop started inside it and your Steam Cloud "
+            + "saves were protected, but it then reported nothing to the host within "
+            + ((long)deadline.TotalSeconds).ToString(System.Globalization.CultureInfo.InvariantCulture)
+            + " seconds of being started. It stopped somewhere after joining and before it could serve this "
+            + "player's game view, which is setup only that player's game does — so the host's own game is "
+            + "unaffected, and another installed mod failing in it is the usual reason. The reason is in slot "
+            + slot.ToString(System.Globalization.CultureInfo.InvariantCulture)
+            + "'s own log, whose path is listed with this report.";
+
+    /// <summary>
     /// The detail for a seat that is talking to this host and has not declared the isolation. The seat is running
     /// SOMETHING — the heartbeat is authenticated — so what this names is the one thing that matters: whatever it
     /// is running is not code that closed the cloud write paths.
@@ -772,7 +837,10 @@ public sealed partial class HeadlessClientManager
 
     /// <summary>
     /// The detail for a seat that never said anything at all within
-    /// <see cref="SeatContactTimeoutEnvironmentVariable"/>'s deadline.
+    /// <see cref="SeatContactTimeoutEnvironmentVariable"/>'s deadline AND never reached the host's lobby. The
+    /// membership half of that condition is what lets this text assert "CouchCoop is not running inside it";
+    /// a silent seat the lobby DOES list gets <see cref="SilentAfterJoinDetail"/> instead, because there the
+    /// same assertion would be false.
     /// </summary>
     /// <remarks>
     /// HONEST ABOUT WHAT THIS IS. It SHRINKS the window; it does not close it. A seat with no CouchCoop in it

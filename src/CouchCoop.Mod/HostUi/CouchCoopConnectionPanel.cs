@@ -484,6 +484,10 @@ internal sealed partial class CouchCoopConnectionPanel : Panel
         // copy ("check that game and mod versions match") would send the operator to look at versions while the
         // thing they need to know is that nothing was written and their saves are intact.
         Session.HeadlessClientManager.SeatCloudIsolationCode => "seat_cloud_isolation",
+        // Also its own key, and for the mirror-image reason: this seat's saves are provably fine (the lobby
+        // has it, so the isolation guard passed), and the thing the operator needs pointed at is that player's
+        // own log and the other mods loaded beside us — not versions, ports or the network.
+        Session.HeadlessClientManager.SeatSilentAfterJoinCode => "seat_silent",
         // The three causes the old single readiness sentence used to cover. Each has its own next action — free
         // the port, allow the port through this computer's firewall, fix the path from the device — so each
         // needs its own localized copy rather than a differently-worded English detail under one key.
