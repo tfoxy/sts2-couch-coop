@@ -82,7 +82,7 @@
   "couchcoop_connection_error_seat_port_blocked_summary": "Bu bilgisayar, bu oyuncunun oyununun yayınlandığı bağlantı noktasını engelliyor.",
   "couchcoop_connection_error_seat_port_blocked_action": "Bu bilgisayarın güvenlik duvarında veya güvenlik yazılımında Slay the Spire 2'ye izin verin ve tekrar deneyin.",
   "couchcoop_connection_error_seat_network_summary": "Bu oyuncunun oyunu çalışıyor ancak cihazı ona hiç ulaşamadı.",
-  "couchcoop_connection_error_seat_network_action": "Cihazı bu bilgisayarla aynı Wi-Fi ağına bağlayın, yönlendiricide misafir ağını veya istemci yalıtımını kapatın ve kodu yeniden tarayın.",
+  "couchcoop_connection_error_seat_network_action": "Bu bilgisayarın güvenlik duvarında ve güvenlik yazılımında Slay the Spire 2'ye izin verin, cihazın misafir ağında değil bu bilgisayarın ağında olduğundan emin olun ve kodu yeniden tarayın.",
   "couchcoop_connection_error_browser_summary": "Tarayıcı oyun görünümünü gösteremedi.",
   "couchcoop_connection_error_browser_action": "Tarayıcıyı yenileyip tekrar katılın.",
   "couchcoop_connection_error_service_summary": "Ana bilgisayarın tarayıcı hizmeti durdu.",

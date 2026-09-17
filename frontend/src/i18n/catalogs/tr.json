@@ -67,7 +67,7 @@
   "join.progress.complete": "Neredeyse hazır",
   "join.progress.line": "{stage} — adım {step}/{total}, şu ana kadar {seconds} sn. Bu bir dakikayı bulabilir, lütfen bu sayfayı açık bırakın.",
   "seat.notice.networkPath": "Oyununuz ana bilgisayarda çalışıyor ancak bu cihaz ona ulaşamadı.",
-  "seat.notice.networkPathFix": "Sunucuyla aynı Wi-Fi ağına bağlanın (misafir ağına değil), VPN'i kapatın ve yönlendiricinin cihazları birbirinden ayırmadığından emin olun.",
+  "seat.notice.networkPathFix": "Oyunu barındıran kişiden Slay the Spire 2'ye güvenlik duvarında veya güvenlik yazılımında izin vermesini isteyin ve sunucuyla aynı Wi-Fi ağında (misafir ağında değil) olduğunuzu, VPN'in de kapalı olduğunu kontrol edin.",
   "seat.notice.portConflict": "Ana bilgisayardaki başka bir program, oyununuzun ihtiyaç duyduğu bağlantı noktasını kullanıyor.",
   "seat.notice.portConflictFix": "Bu cihazda değiştirilecek bir şey yok — oyunu barındıran kişiden Slay the Spire 2'yi yeniden başlatmasını isteyin, sonra tekrar deneyin.",
   "seat.notice.hostBlock": "Ana bilgisayar, oyununuzun sunulduğu bağlantı noktasını engelliyor.",

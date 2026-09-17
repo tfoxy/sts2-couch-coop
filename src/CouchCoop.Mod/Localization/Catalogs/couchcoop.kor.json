@@ -82,7 +82,7 @@
   "couchcoop_connection_error_seat_port_blocked_summary": "이 컴퓨터가 이 플레이어의 게임이 사용하는 포트를 차단하고 있습니다.",
   "couchcoop_connection_error_seat_port_blocked_action": "이 컴퓨터의 방화벽이나 보안 소프트웨어에서 Slay the Spire 2를 허용한 후 다시 시도하세요.",
   "couchcoop_connection_error_seat_network_summary": "이 플레이어의 게임은 실행 중이지만, 기기가 한 번도 연결하지 못했습니다.",
-  "couchcoop_connection_error_seat_network_action": "기기를 이 컴퓨터와 같은 Wi-Fi에 연결하고 공유기의 게스트 네트워크 또는 클라이언트 격리를 끈 후 코드를 다시 스캔하세요.",
+  "couchcoop_connection_error_seat_network_action": "이 컴퓨터의 방화벽과 보안 소프트웨어에서 Slay the Spire 2를 허용하고, 기기가 게스트 네트워크가 아니라 이 컴퓨터의 네트워크에 연결되어 있는지 확인한 후 코드를 다시 스캔하세요.",
   "couchcoop_connection_error_browser_summary": "브라우저가 게임 화면을 표시하지 못했습니다.",
   "couchcoop_connection_error_browser_action": "브라우저를 새로 고친 후 다시 참가하세요.",
   "couchcoop_connection_error_service_summary": "호스트 브라우저 서비스가 중지되었습니다.",

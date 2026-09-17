@@ -253,9 +253,7 @@ public static class SeatReadinessVerdict
                     + "security software).";
 
             case SeatReadinessCause.NetworkPath:
-                return "This player's game is running and answering on the host, but the device never reached it. "
-                    + $"The path from the phone to port {port} is blocked (firewall, guest/AP isolation, or the "
-                    + "wrong address).";
+                return NetworkPathCause(facts.ExpectedPort, OperatingSystem.IsMacOS(), OperatingSystem.IsWindows());
 
             default:
             {
@@ -273,6 +271,43 @@ public static class SeatReadinessVerdict
                 return text.ToString();
             }
         }
+    }
+
+    /// <summary>
+    /// The English detail for a blocked path to the seat, naming the host-side gate the CURRENT platform is
+    /// most likely to be holding shut. Pure and platform-injected so all three wordings are testable off their
+    /// own OS — the shape <c>HostReachabilityWatch.Describe</c> already uses for the same reason.
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// WHY THE HOST'S OWN FIREWALL IS NAMED FIRST HERE, in the one verdict that blames the network. This cause
+    /// is reached only when the host's loopback probe SUCCEEDED, and MEASURED Sep-17 2026 on Windows 11 with
+    /// the real game: with an inbound Block rule on the browser port scoped to one peer, the host's own
+    /// loopback HTTP probe still returned 200 and its raw loopback connect was still accepted in 438 ms, while
+    /// that peer timed out with no RST. Windows does not filter a machine's traffic to itself, so a
+    /// host-firewall block is INVISIBLE to every check this verdict makes and lands here — under copy that used
+    /// to send the operator to their router and their Wi-Fi, which are not the problem in that case.
+    /// </para>
+    /// <para>
+    /// The router and guest/AP isolation are still named, because they produce exactly the same evidence and
+    /// are genuinely common. The point of the split is only that the host's own firewall is the one cause the
+    /// operator can act on at the machine they are already sitting at, and on Windows it is the likeliest.
+    /// </para>
+    /// </remarks>
+    internal static string NetworkPathCause(int port, bool isMacOS, bool isWindows)
+    {
+        var gate = isMacOS
+            ? "this computer's firewall (System Settings > Network > Firewall) and its Local Network permission "
+                + "for this game (System Settings > Privacy & Security > Local Network)"
+            : isWindows
+                ? "this computer's firewall — the game needs an inbound allow rule, and a network marked Public "
+                    + "blocks far more than one marked Private"
+                : "this computer's firewall or security software";
+        return "This player's game is running and answering on the host, but the device never reached it. "
+            + $"Something between the two is dropping the connection to port {port}: {gate}, security software, "
+            + "guest/AP isolation on the router, or the device being on a different network. NOTE: this host "
+            + "reached the port from itself, which does NOT rule its own firewall out — a machine's traffic to "
+            + "itself is not filtered, so a host-side block looks exactly like this.";
     }
 
     private static string Evidence(SeatReadinessFacts facts)
@@ -336,11 +371,16 @@ public static class SeatReadinessVerdict
             "This computer is blocking the port this player's game is serving on.",
             "Allow Slay the Spire 2 through this computer's firewall or security software, then try again.",
             detail),
+        // The action names THIS COMPUTER'S firewall before the router, and that order is a measurement rather
+        // than a guess: a host-side block is invisible to every check that reaches this verdict (see
+        // NetworkPathCause's remarks), so it arrives here indistinguishable from a router problem — and it is
+        // the likeliest of the two on Windows, where most hosts are. Still one sentence in fourteen languages;
+        // the per-OS settings paths live in the English detail under it, not here.
         SeatReadinessCause.NetworkPath => new(
             NetworkPathCode,
             "This player's game is running, but their device never reached it.",
-            "Put the device on the same Wi-Fi as this computer and turn off guest network or client isolation on "
-                + "the router, then scan the code again.",
+            "Allow Slay the Spire 2 through this computer's firewall and security software, check the device is "
+                + "on this computer's network and not a guest one, then scan the code again.",
             detail),
         _ => new(
             StillStartingCode,

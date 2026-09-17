@@ -67,7 +67,7 @@
   "join.progress.complete": "Presque prêt",
   "join.progress.line": "{stage} — étape {step} sur {total}, {seconds} s écoulées. Cela peut prendre jusqu'à une minute, gardez cette page ouverte.",
   "seat.notice.networkPath": "Votre partie tourne sur l'ordinateur hôte, mais cet appareil n'a pas réussi à l'atteindre.",
-  "seat.notice.networkPathFix": "Connectez-vous au même Wi-Fi que l'hôte — pas au réseau invité —, désactivez tout VPN et vérifiez que le routeur n'isole pas les appareils les uns des autres.",
+  "seat.notice.networkPathFix": "Demandez à l'hôte d'autoriser Slay the Spire 2 dans son pare-feu ou son logiciel de sécurité, et vérifiez que vous êtes sur le Wi-Fi de l'hôte — pas sur le réseau invité — avec tout VPN désactivé.",
   "seat.notice.portConflict": "Un autre programme de l'ordinateur hôte utilise le port dont votre partie a besoin.",
   "seat.notice.portConflictFix": "Rien à changer sur cet appareil : demandez à l'hôte de redémarrer Slay the Spire 2, puis réessayez.",
   "seat.notice.hostBlock": "L'ordinateur hôte bloque le port sur lequel votre partie est diffusée.",

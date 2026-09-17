@@ -67,7 +67,7 @@
   "join.progress.complete": "Quasi pronto",
   "join.progress.line": "{stage} — passaggio {step} di {total}, {seconds} s finora. Può richiedere fino a un minuto, quindi tieni aperta questa pagina.",
   "seat.notice.networkPath": "La tua partita è in esecuzione sul computer host, ma questo dispositivo non è riuscito a raggiungerla.",
-  "seat.notice.networkPathFix": "Collegati alla stessa rete Wi-Fi dell'host — non a quella ospiti —, disattiva eventuali VPN e verifica che il router non isoli i dispositivi tra loro.",
+  "seat.notice.networkPathFix": "Chiedi a chi ospita di consentire Slay the Spire 2 nel suo firewall o software di sicurezza e verifica di essere sulla rete Wi-Fi dell'host — non su quella ospiti — con eventuali VPN disattivate.",
   "seat.notice.portConflict": "Un altro programma sul computer host sta usando la porta di cui ha bisogno la tua partita.",
   "seat.notice.portConflictFix": "Non c'è nulla da cambiare su questo dispositivo: chiedi a chi ospita di riavviare Slay the Spire 2, poi riprova.",
   "seat.notice.hostBlock": "Il computer host sta bloccando la porta su cui viene servita la tua partita.",
