@@ -36,6 +36,7 @@ internal static class SeatPortTruthTests
         AWedgedListenerIsNotAFirewall();
         await TheRealProbeMeasuresTheWedgedCaseItself();
         await ARefusedConnectIsToldApartFromADroppedOne();
+        TheClassifierGetsLongEnoughToSeeARefusal();
         AnUnreportedPortIsNeverADisagreement();
         TheProbeFailureReasonSurvivesIntoTheMessage();
         EveryNewIssueCodeHasLocalizedCopyInAllFourteenCatalogs();
@@ -74,8 +75,12 @@ internal static class SeatPortTruthTests
 
         int free;
         using (var released = new Blackhole()) free = released.Port;
+        // ClassificationProbeTimeout, not ProbeTimeout: observing the refusal AT ALL is platform-sensitive.
+        // Linux refuses a closed loopback port in ~0.03 ms, Windows 11 in ~2030 ms (both measured Sep-17 2026,
+        // five samples each), so under the survey's 250 ms budget this assertion held on Linux and could not
+        // hold on Windows — the same blind spot that made the host call a missing seat a firewall there.
         var refused = await SeatPortAvailability.ProbeLoopbackAsync(
-            free, SeatPortAvailability.ProbeTimeout, CancellationToken.None);
+            free, SeatPortAvailability.ClassificationProbeTimeout, CancellationToken.None);
         Assert(refused.Reachability == SeatPortReachability.ConnectionRefused,
             "an empty port is REFUSED — which is 'nothing is listening yet', not 'this machine is blocking it'");
         Assert(refused.Reachability != SeatPortReachability.Unreachable,
@@ -510,6 +515,30 @@ internal static class SeatPortTruthTests
 
     // A seat that has not yet said which port it bound reports 0. Reading that as a disagreement would fail every
     // join in its first seconds, and would fail every heartbeat sent before the field existed.
+    /// <summary>
+    /// The budget the readiness classifier probes with must be able to OUTLAST a platform's refusal, because a
+    /// refusal it never sees is reported as <see cref="SeatPortReachability.Unreachable"/> — the one answer that
+    /// accuses the operator's firewall.
+    /// </summary>
+    /// <remarks>
+    /// Measured Sep-17 2026: a closed loopback port is refused in 0.02-0.09 ms on Linux and 2008-2034 ms on
+    /// Windows 11 build 26200 (five samples each). The survey's 250 ms sits between those, so on Windows every
+    /// "nothing is listening" — a seat that crashed, or is being torn down, while its heartbeat is still fresh —
+    /// timed out and classified as `seat-port-blocked`, "allow the game through this computer's firewall". This
+    /// pins the two budgets apart so the classifier can never be wired back onto the survey's.
+    /// </remarks>
+    private static void TheClassifierGetsLongEnoughToSeeARefusal()
+    {
+        Assert(SeatPortAvailability.ClassificationProbeTimeout > SeatPortAvailability.ProbeTimeout,
+            "the classifying probe gets a longer budget than the survey, which only asks whether anything answers");
+        Assert(SeatPortAvailability.ClassificationProbeTimeout >= TimeSpan.FromSeconds(3),
+            "…and more than the ~2.03s a closed loopback port takes to be refused on Windows, or a missing seat "
+                + "reads as a dropped packet and the operator is sent to their firewall");
+        Assert(SeatPortAvailability.ProbeTimeout < TimeSpan.FromSeconds(1),
+            "…while the survey stays short, because raising IT would put Windows' refusal latency on the join "
+                + "path of every host whose seat ports are free");
+    }
+
     private static void AnUnreportedPortIsNeverADisagreement()
     {
         foreach (var responding in new bool?[] { null, true, false })
