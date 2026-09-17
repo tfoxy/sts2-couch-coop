@@ -138,28 +138,41 @@ public sealed partial class HeadlessClientManager : IDisposable
     /// it safe is that a seat says hello from <see cref="HeadlessSeatCloudIsolationGuard"/> — the first patch-time
     /// thing in mod init — rather than from the connection reporter a hundred lines below it. So the only work
     /// inside this window is the game's own boot up to mod init, NOT the 20-30s asset preload that dominates a
-    /// cold start and that a 15W handheld can run well past while starting perfectly normally. Silence past this
-    /// therefore means no CouchCoop is running in that process at all (the mod never loaded, its lane was refused,
-    /// a foreign copy won the assembly load, or the loader's blanket catch swallowed a bootstrap failure). Such a
-    /// process has the host account's Steam Cloud save storage attached, so the host stops it rather than spending
-    /// another 55 seconds finding out whether it will ever serve a browser.
+    /// cold start and that a 15W handheld can run well past while starting perfectly normally. So silence past
+    /// this buys nothing, and the host stops the seat rather than spending the remaining 40 seconds of the
+    /// readiness deadline finding out whether it will ever serve a browser.
     /// </para>
     /// <para>
-    /// THE NUMBER IS STILL UNMEASURED ON A REAL MACHINE, which is why it is 35 and not the 20 the hello makes
-    /// plausible. The live leg that was to measure it never spawned a seat (its host would not leave the main
-    /// menu), so nothing here is backed by a figure from a game: the only inputs are unit-suite timings. Killing
-    /// a HEALTHY seat breaks a join that works today, while waiting longer to kill an unmodded one costs almost
-    /// nothing — by the paragraph below, that seat has already written — so the error is taken in the safe
-    /// direction until somebody measures it. Every seat's actual figure is logged once as
-    /// <c>seat first contact slot=N afterMs=…</c>, and `docs/agents/qa-recipes.md` §7 makes reading it a step of
-    /// the live recipe: when a slow machine finally reports one, this can come down. An operator can raise it
-    /// today with the env var, which is why this is a default and not a constant.
+    /// WHAT the silence MEANS is decided elsewhere, on host lobby membership — see
+    /// <see cref="SeatSilentAfterJoinCode"/>. A non-member had none of our code in it (the mod never loaded, its
+    /// lane was refused, a foreign copy won the assembly load, or the loader's blanket catch swallowed a
+    /// bootstrap failure) and has the host account's Steam Cloud save storage attached with nothing installed to
+    /// keep it out, which is the exposure this deadline exists to cut short. A member is a seat CouchCoop did run
+    /// in, and is a different fault with a different remedy.
+    /// </para>
+    /// <para>
+    /// 35 AND NOT 20, AND NOW THERE IS A MEASUREMENT BEHIND THAT. Live leg 2026-09-17, dev desktop (12 threads),
+    /// host on the default profile: first contact at 4121 ms and 4296 ms on an idle machine, and <b>9901 ms with
+    /// every core saturated</b>. The loaded figure is the one this default has to survive — a host is never idle
+    /// at the moment it spawns a seat — and at ~9.9s the fastest machine available already reaches the point
+    /// `docs/agents/qa-recipes.md` §7 calls "too tight", so 20 would have left a 2x margin there and less than
+    /// that on a 15W handheld, which has still reported no figure at all. The asymmetry that picked the safe
+    /// direction has not changed either: killing a HEALTHY seat breaks a join that works today, while waiting
+    /// longer to kill an unmodded one costs almost nothing, because by the paragraph below that seat has already
+    /// written. Every seat's figure is logged once as <c>seat first contact slot=N afterMs=…</c> — stderr only,
+    /// so it is in the host's stdio capture and never in <c>godot.log</c> — and §7 makes reading it a step of the
+    /// live recipe. An operator can still raise it for their own machine with the env var, which is why this is a
+    /// default and not a constant.
     /// </para>
     /// <para>
     /// SAID PLAINLY: this SHRINKS the window, it does not close it. An unmodded game runs its own startup cloud
     /// sync at its normal startup time, which is INSIDE these 35 seconds — so a seat killed here may already have
-    /// written. What closes the hole is a host-side backup of the profile taken before the seat is spawned, which
-    /// is a separate work item. Do not read this deadline as a guarantee.
+    /// written. The window is also wider than this number: a process with none of our code in it cannot answer
+    /// the graceful stop either, so it lives for this deadline PLUS the five-second shutdown deadline before the
+    /// forced exit (measured on the same leg, from the copied report:
+    /// <c>cleanup: Forced exit after the five-second graceful shutdown deadline</c>). What actually covers that
+    /// case is <see cref="HostProfileBackup"/>, the host-side copy taken before any seat of the session can
+    /// exist. Do not read this deadline as a guarantee.
     /// </para>
     /// </summary>
     internal const double DefaultSeatContactTimeoutSeconds = 35.0;

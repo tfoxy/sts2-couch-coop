@@ -852,33 +852,79 @@ works. Things worth knowing before reading its output:
   seat logs as well as the host's.
 - **A seat that CouchCoop is not running in now dies in 35 seconds, not 75.** The seat declares "Steam Cloud
   save isolation installed" on every heartbeat; a heartbeat without that declaration fails the seat on arrival,
-  and total silence past `COUCHCOOP_SEAT_CONTACT_TIMEOUT_SECONDS` (default 35) does the same. Both land as the
-  `seat-cloud-isolation-unconfirmed` issue, whose detail says which of the two it was — so a seat that used to
-  sit on "Joining…" for 75 seconds because its mod failed to load now stops early and says why. To exercise the
+  and total silence past `COUCHCOOP_SEAT_CONTACT_TIMEOUT_SECONDS` (default 35) does the same — so a seat that
+  used to sit on "Joining…" for 75 seconds because its mod failed to load now stops early and says why.
+  **Silence splits on host lobby membership** (`77b2f7e1`): a silent seat the lobby does NOT list ran none of
+  our code, so it keeps `seat-cloud-isolation-unconfirmed`; a silent seat the lobby DOES list got there through
+  `CommandLineOverridePatch`, which only runs after the isolation guard, so its saves are provably covered and
+  it is failed as `seat-silent-after-join` instead, pointing at the seat's own log and the mods beside us.
+  Expect the cloud-isolation code from a missing declaration or from an unmodded seat, and never from a seat
+  that reached the lobby. To exercise the
   refusal itself, launch the host with `COUCHCOOP_FORCE_SEAT_ISOLATION_FAILURE=1` (exactly `1`); it is inherited
   by the seats it spawns, forces the verdict without opening any write path, and is inert unset.
 
-  **MEASURE THE MARGIN ON THE MACHINE YOU ARE ON — one grep, every live leg that spawns a seat. NOBODY HAS YET.**
-  The 35s default assumes a seat can say hello (from the cloud-isolation guard, the first patch-time thing in mod
-  init) well inside it, and no figure from a real game exists: the leg meant to take one never spawned a seat.
-  Until one does, 35 is a deliberately safe guess rather than a measurement. After any leg that spawned a seat:
+  To exercise the **silent non-member** arm (the one that still accuses the cloud, and the one an unmodded seat
+  can only ever produce — with no CouchCoop there is no `CommandLineOverridePatch` and therefore no lobby
+  membership; measured 2026-09-17, its report reads `host lobby membership: False`), put
+  `COUCHCOOP_SEAT_CONTACT_TIMEOUT_SECONDS=2` on the host and point
+  `COUCHCOOP_HEADLESS_WRAPPER` at a script that flips every `couchcoop` row in the SLOT's own
+  `$XDG_DATA_HOME/SlayTheSpire2/steam/<id>/settings.save` (`mod_settings.mod_list`, keyed on `(id, source)` like
+  `scripts/lib/mp5-mod-loadout.py`) to `is_enabled: false` and then `exec "$@" --force-steam off`. The wrapper
+  runs in the seat's environment after `HeadlessUserDirSeeder` has seeded the slot, so its edit lands on top of
+  `PinSeatProfiles`, and the host strips `COUCHCOOP_HEADLESS_WRAPPER` from the child so it cannot recurse.
+  `--force-steam off` is unusable for a PRODUCT seat — it strips every Workshop mod, so the seat runs different
+  content than its host — but it is what makes a deliberately unmodded QA seat safe: verified live 2026-09-17,
+  such a seat logs `Steam initialization skipped (editor mode)` and writes nothing to the cloud store at all.
+
+  **MEASURE THE MARGIN ON THE MACHINE YOU ARE ON — one grep, every live leg that spawns a seat.** The 35s
+  default assumes a seat can say hello (from the cloud-isolation guard, the first patch-time thing in mod init)
+  well inside it. Measured 2026-09-17 on the dev desktop (12 threads, RTX 2060), mod `759cadb0`, host on the
+  default profile: **4121 ms and 4296 ms on an idle machine, and 9901 ms with all twelve cores saturated.**
+  Compare a proposed default against the LOADED figure, not the idle one — a host is never idle at the moment it
+  spawns a seat — and ~9.9s already sits on the "too tight" line below, which is why 35 stayed rather than coming
+  down to the 20 the hello makes plausible. There is still no figure from a handheld or a Steam Deck. After any
+  leg that spawned a seat:
 
   ```bash
-  grep 'seat first contact' ~/.local/share/SlayTheSpire2/logs/godot.log | tail -5
-  # [couchcoop] seat first contact slot=2 afterMs=3412 phase=mod-init cloudIsolated=True
+  # THE LINE IS STDERR-ONLY (CouchCoopLog.Stderr), so it is in the host's stdio capture and is NEVER in
+  # godot.log, which only receives the STS2 logger sinks. Measured on the leg above: 0 hits in godot.log.
+  grep 'seat first contact' .sts2/artifacts/game-launch/game.stderr.log | tail -5
+  # [couchcoop] seat first contact slot=2 afterMs=4121 phase=mod-init cloudIsolated=True
   ```
 
   `afterMs` is spawn → our code running with the cloud writes closed: game boot plus mod init, NOT the 20-30s
   asset preload. Healthy figures should be a few seconds. **Anything past ~10 000 on a machine that is starting
   normally means the default is too tight for it** — raise `COUCHCOOP_SEAT_CONTACT_TIMEOUT_SECONDS` for that
-  machine, and say so in the round report so the default can be raised for everyone. A missing line means the
-  seat never made contact at all, which is the condition the deadline exists for. Record the number you saw; it
-  is the measurement this default is waiting on (there is none from a Steam Deck yet).
+  machine, and say so in the round report. A missing line means the seat never made contact at all, which is the
+  condition the deadline exists for.
+
+  **The deadline is not the whole exposure window**, which matters because the window is what an unmodded seat
+  writes inside. A seat with none of our code in it cannot answer the graceful stop either, so its process lives
+  for the deadline **plus the five-second shutdown deadline** before the forced exit — measured on the same leg,
+  from the copied report: `cleanup: Forced exit after the five-second graceful shutdown deadline`. The pre-spawn
+  profile backup is still the thing that actually covers that case.
 - **`pkill -f <pattern>` self-matches.** A pattern that also appears in the invoking shell's own argv (e.g. a
   literal string from the command you're about to relaunch) kills the invoking shell too (exit 144, no output).
   Also: `COUCHCOOP_HEADLESS_CLIENT` is an environment variable, not argv — `pkill -f` against it matches
   nothing; the real headless process pattern is `SlayTheSpire2 --headless`. Run kill and relaunch as separate
   Bash calls.
+- **A scratch `--config` needs a SHORT `transport.ipcPath`, and must be run from a scratch CWD.** AF_UNIX caps a
+  socket path at 108 characters. With no `transport.ipcPath` the bridge socket is
+  `<configDir>/.sts2/ipc/spirectl-bridge.sock`, so a config living under an agent scratchpad (118 chars on this
+  box) makes the bridge throw `ArgumentOutOfRangeException … invalid length for use with domain sockets` and
+  `sts2 game launch` fail `launch_timeout` / `ipc_socket_missing` — **while the game is up and perfectly
+  healthy**, which reads as "the game did not start". Write `transport: {kind: ipc, ipcPath: /tmp/<short>.sock}`
+  into the scratch config; `game.launchEnv.SPIRECTL_BRIDGE_SOCKET_PATH` does NOT fix it, the CLI overwrites that
+  with its own configDir-derived path. And run `sts2 --config <path>` from a scratch cwd: from the repo root the
+  repo's own `sts2.local.yaml` is still discovered (it appears in `config resolve`'s `configFiles`), which brings
+  back the gamescope/wayland launch args a scratch config exists to avoid.
+- **The PreToolUse guard refuses `sts2 game close` without `--instance`, lease or no lease.** It cannot see that
+  you hold `exclusive:game:default`, so its message tells you to take a lease you already have. For a
+  default-profile host you started yourself, kill the pid you launched — attribute it through
+  `/proc/<pid>/environ` (its `SPIRECTL_BRIDGE_SOCKET_PATH` / `DISPLAY` identify your launch), never a `pkill -f`
+  pattern. Two upsides, both observed 2026-09-17: the Steam client stays logged on, where `game close` is the
+  thing that takes Steam down with it; and you find out that the game ignores `SIGTERM` (twice, ~25s) and needs
+  `-KILL`.
 - **`--shot` needs a real display, never `--headless`.** Under `--headless` the dummy renderer never fires
   `FramePostDraw`, so the capture path hangs until a hard timeout. Use a per-agent `Xvfb :6x -screen 0
   <WxH>x24` (own display number per concurrent agent) — never the user's live `DISPLAY=:1`. Non-shot runs
