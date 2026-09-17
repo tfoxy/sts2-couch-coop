@@ -35,8 +35,8 @@ the seeder no longer hands a seat an in-progress run save. Affected releases: **
 
 - The **Windows** and **macOS** save paths are derived from `HeadlessUserDirSeeder.ResolvePolicy` (`APPDATA`
   on Windows, `$HOME/Library/Application Support` on macOS) and from Godot's `use_custom_user_dir` handling.
-  Neither has been seen on a real install, the same gap `phone-connection-troubleshooting.md` records for
-  its Windows log path.
+  Neither has been seen on a real install, the same gap `workshop/phone-connection-troubleshooting.md`
+  records for its Windows log path.
 - The Steam **userdata** locations on Windows and macOS are the standard ones, not checked here.
 - What Steam does when Cloud is switched back on (the "which version to keep" prompt) is general Steam
   behaviour, not something this repo has tested for this app.
