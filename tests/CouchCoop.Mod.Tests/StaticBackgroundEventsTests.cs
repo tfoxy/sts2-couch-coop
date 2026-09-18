@@ -11,6 +11,9 @@ internal static class StaticBackgroundEventsTests
 {
     private const string NeowScene = "res://scenes/events/background_scenes/neow.tscn";
 
+    /// <summary>The game-build qualifier every minted asset URL ends with. Opaque; the grammar around it is not.</summary>
+    private static string BuildQualifier => $"&b={Uri.EscapeDataString(CouchCoopAssetVersion.Token)}";
+
     public static async Task RunAsync()
     {
         ParsesTheEventBackdropConvention();
@@ -49,10 +52,13 @@ internal static class StaticBackgroundEventsTests
             CouchCoopStaticBackgroundProvider.BuildCacheKey(StaticBackgroundFamily.Events, "neow", null)
             == "bg://events/neow?w=2520&h=1080&v=1",
             "the event cache key rides the bg://events/ namespace with the fixed policy");
+        // `&b=<build>` rides every URL this host mints and NO cache key — see the note on the same pair in
+        // StaticBackgroundProviderTests for why the two sides differ. The token is opaque, so it is read from
+        // the host; the grammar around it is pinned literally.
         Assert(
             CouchCoopStaticBackgroundProvider.BuildImageUrl(StaticBackgroundFamily.Events, "neow", null)
-            == "/bg/events/neow?v=1",
-            "the event URL grammar is /bg/events/<id>?v=1");
+            == $"/bg/events/neow?v=1{BuildQualifier}",
+            "the event URL grammar is /bg/events/<id>?v=1&b=<build>");
         Assert(
             CouchCoopStaticBackgroundProvider.BuildCacheKey(StaticBackgroundFamily.Events, "neow", null)
             != CouchCoopStaticBackgroundProvider.BuildCacheKey("neow", null),
@@ -82,7 +88,7 @@ internal static class StaticBackgroundEventsTests
             "the frame rides the cache key (a distinct variant)");
         Assert(
             CouchCoopStaticBackgroundProvider.BuildImageUrl(StaticBackgroundFamily.Events, "neow", null, frame)
-            == $"/bg/events/neow?frame={Uri.EscapeDataString(frame)}&v=1",
+            == $"/bg/events/neow?frame={Uri.EscapeDataString(frame)}&v=1{BuildQualifier}",
             "the frame rides the URL, escaped");
         Assert(
             CouchCoopStaticBackgroundProvider.BuildCacheKey(StaticBackgroundFamily.Events, "neow", null, frame)
@@ -211,7 +217,7 @@ internal static class StaticBackgroundEventsTests
 
             tracker.PublishForTest(state);
             Assert(fired == 1 && CouchCoopStaticBackgroundTracker.Published == state, "an event publish fires the change callback");
-            Assert(CouchCoopStaticBackgroundTracker.Published!.Url == "/bg/events/neow?v=1", "the published URL is the digest-less event URL");
+            Assert(CouchCoopStaticBackgroundTracker.Published!.Url == $"/bg/events/neow?v=1{BuildQualifier}", "the published URL is the digest-less event URL");
             Assert(CouchCoopStaticBackgroundTracker.Published.Digest is null, "an event publish is always digest-less");
 
             tracker.PublishForTest(state with { LayerPaths = [] });

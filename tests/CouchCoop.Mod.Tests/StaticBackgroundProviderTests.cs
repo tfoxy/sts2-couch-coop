@@ -257,11 +257,21 @@ internal static class StaticBackgroundProviderTests
             "the digest-less key is the deterministic-fallback variant");
         // R21: no file extension. The encoder is a policy (RenderCodec), so pinning it into the path would force
         // every future codec change to move the URL, the client fallback and the route grammar in lockstep.
+        //
+        // TWO VERSIONS, AND THE KEY CARRIES ONLY ONE OF THEM. `v` is the URL GRAMMAR's version, asserted
+        // literally above and below. `b` is the GAME BUILD (CouchCoopAssetVersion) and rides the URL because the
+        // URL is the only thing that can invalidate a client's HTTP cache: every asset answer is
+        // `immutable, max-age=31536000`, so without it a phone that joined a public-beta host keeps that build's
+        // background under a URL this build also mints, for a year. The CACHE KEY above deliberately stays bare —
+        // the host's own on-disk cache is already scoped by game version at the directory level, so folding the
+        // build in would duplicate every rendered background for nothing. The token itself is opaque (it hashes
+        // the install's release_info), so it is read from the host; every other character is pinned here.
+        var build = $"&b={Uri.EscapeDataString(CouchCoopAssetVersion.Token)}";
         Assert(
-            CouchCoopStaticBackgroundProvider.BuildImageUrl("underdocks", digest) == $"/bg/underdocks?layers={digest}&v=1",
-            "the URL grammar is /bg/<id>?layers=<digest>&v=1");
+            CouchCoopStaticBackgroundProvider.BuildImageUrl("underdocks", digest) == $"/bg/underdocks?layers={digest}&v=1{build}",
+            "the URL grammar is /bg/<id>?layers=<digest>&v=1&b=<build>");
         Assert(
-            CouchCoopStaticBackgroundProvider.BuildImageUrl("underdocks", null) == "/bg/underdocks?v=1",
+            CouchCoopStaticBackgroundProvider.BuildImageUrl("underdocks", null) == $"/bg/underdocks?v=1{build}",
             "the digest-less URL omits layers");
         // The client's wire fallback in frontend/src/mirror/StaticBackground.vue hardcodes this `v=`; if the two
         // drift the fallback asks for a namespace the host stopped serving and every descriptor-less room is blank.
