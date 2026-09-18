@@ -290,11 +290,26 @@ matches.
 
 SSH as `VM@192.168.122.32` with the `couchcoop-qa` ed25519 key (`ssh win11-qa` via the `~/.ssh/config`
 alias). The default shell is `cmd`, and PowerShell in the guest is **5.1 / .NET Framework** — .NET-Core-only
-overloads are not available there, which is what broke the first probe. **There is no QEMU guest agent
-installed**, so SSH is the only remote channel: anything that can close port 22 — `AllowInboundRules False`
-above all — needs a `schtasks` auto-revert scheduled *before* it is applied, with no fallback but the
-console. The SSH allow rules are scoped `Any` (`OpenSSH QA`, `CouchCoopQA-SSH`), so a per-program game block
-or a network→Public flip does not touch them.
+overloads are not available there, which is what broke the first probe. The SSH allow rules are scoped `Any`
+(`OpenSSH QA`, `CouchCoopQA-SSH`), so a per-program game block or a network→Public flip does not touch them.
+
+**The QEMU guest agent is now installed (Sep-18 2026), so SSH is no longer the only channel.**
+`virsh qemu-agent-command win11 '{"execute":"guest-ping"}'` answers, `virsh guestinfo` / `domfsinfo` /
+`domifaddr --source agent` work, and — the point — a lost SSH key can now be repaired **without a console**:
+`virsh set-user-password win11 --user VM --password <pw>` and `guest-exec` give a scripted way in. It also
+means `virsh reboot/shutdown --mode agent` are clean. Measured: after an agent-initiated reboot the agent
+and SSH both returned on their own at ~57 s (`QEMU-GA` is `StartType Automatic`). Even so, a change that
+could sever tcp/22 (`AllowInboundRules False` above all) still wants a `schtasks` auto-revert scheduled
+*before* it is applied — the agent is the safety net, not a licence to skip it.
+
+How it was installed, for a rebuild: the **guest-agent MSI alone is not enough** — it needs the
+**virtio-serial** driver to see its channel, and a fresh guest has the `PCI Simple Communications Controller`
+(`VEN_1AF4&DEV_1043`) in Error with no driver. So install the drivers first: download
+`virtio-win-gt-x64.msi` (from `fedorapeople.org/groups/virt/virtio-win/direct-downloads/latest-virtio/`),
+`scp` it over, `msiexec /i … /qn /norestart` (WHQL-signed, no prompt) — that brings up "VirtIO Serial
+Driver" + "VirtIO Balloon Driver". The `/qn` gt install did **not** register the agent service here, so then
+install the standalone `qemu-ga-x86_64.msi` (from `…/latest-qemu-ga/`) the same way; with the serial driver
+now present the `QEMU-GA` service starts and the host channel connects within seconds.
 
 ### Restoring access after the key is lost
 
@@ -312,8 +327,10 @@ If the private key is ever lost again, or the guest is rebuilt:
    libvirt `default` network — it will not drift. (`virsh net-dumpxml default` shows the `<host>` entry; to
    re-add it: `virsh net-update default add ip-dhcp-host "<host mac='52:54:00:ca:79:41' ip='192.168.122.32'/>" --live --config`.)
 2. Regenerate the key into `~/.ssh` (never a scratchpad): `ssh-keygen -t ed25519 -f ~/.ssh/couchcoop-qa -N ""`.
-3. Get the new public key into the guest. sshd is installed and running and port 22 is open, so the only
-   thing missing is authorization. With no remote channel, hand it in on a **virtual CD**: put an
+3. Get the new public key into the guest. **First try the guest agent** (`virsh qemu-agent-command win11
+   '{"execute":"guest-ping"}'`): if it answers, `guest-exec` can append the key with no console at all. Only
+   if the agent is also dead do you need the console. sshd is installed and running and port 22 is open, so
+   the only thing missing is authorization. Hand the key in on a **virtual CD**: put an
    `authorize.ps1` (append the pubkey to `%ProgramData%\ssh\administrators_authorized_keys` — the account
    `VM` is an admin, so the per-user file is ignored — then `icacls <file> /inheritance:r /grant
    'Administrators:F' 'SYSTEM:F'`) and a self-elevating `INSTALL.bat` into a dir, `xorriso -as mkisofs -R -J
