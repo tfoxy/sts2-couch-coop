@@ -95,6 +95,8 @@
   "couchcoop_connection_error_shared_profile_action": "협동 플레이는 계속 사용할 수 있습니다. 다른 플레이어가 연결된 동안에는 게임 설정을 변경하지 마세요.",
   "couchcoop_connection_error_reachability_summary": "아직 이 PC에 연결한 휴대폰이나 브라우저가 없습니다.",
   "couchcoop_connection_error_reachability_action": "아직 아무도 시도하지 않았다면 정상입니다. 누군가 시도했는데 시간이 초과된다면, 해당 휴대폰이 같은 네트워크에 있는지 확인한 뒤 이 게임이 들어오는 연결을 허용하도록 설정하세요. macOS에서는 System Settings > Privacy & Security > Local Network 및 System Settings > Network > Firewall, Windows에서는 게임의 방화벽 알림에서 허용합니다.",
+  "couchcoop_connection_error_host_firewall_summary": "이 PC의 방화벽이 플레이어의 연결을 막고 있습니다.",
+  "couchcoop_connection_error_host_firewall_action": "Windows 방화벽에서 Slay the Spire 2를 포트가 아닌 프로그램으로, '개인'에 체크해 허용하고 이전 알림이 남긴 차단 규칙이 있으면 삭제하세요. 이 PC가 찾은 정확한 규칙은 보고서를 복사하면 확인할 수 있습니다.",
   "couchcoop_connection_empty": "브라우저 서버에 연결한 기기가 여기에 표시됩니다. 같은 Wi‑Fi 네트워크를 사용하고 위에 표시된 주소를 확인하세요.",
   "couchcoop_connection_host_service": "호스트 서비스",
   "couchcoop_connection_error_slow_summary": "브라우저에 게임이 표시되기를 기다리는 중입니다.",

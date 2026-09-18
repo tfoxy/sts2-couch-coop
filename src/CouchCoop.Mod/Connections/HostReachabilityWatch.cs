@@ -43,12 +43,32 @@ public sealed class HostReachabilityWatch
     /// </summary>
     public const string IssueCode = "host-no-inbound-connections";
 
+    /// <summary>
+    /// The code raised INSTEAD of <see cref="IssueCode"/> when the host has asked its own firewall and been
+    /// told plainly that it is the blocker. <c>CouchCoopConnectionPanel.IssueKey</c> MUST carry an arm for
+    /// this one too.
+    /// </summary>
+    /// <remarks>
+    /// A separate code rather than a differently-worded detail because the two need opposite actions from the
+    /// player: the ambiguous row's is "wait, or go and look at your network", and this one's is "there is a
+    /// rule on this computer, change it". Only <see cref="WindowsFirewallVerdict.BlockRule"/>,
+    /// <see cref="WindowsFirewallVerdict.NoAllowRule"/> and <see cref="WindowsFirewallVerdict.ProfileMismatch"/>
+    /// earn it; everything else, including every failure to ask, keeps the honest ambiguous row.
+    /// </remarks>
+    public const string FirewallIssueCode = "host-firewall-blocked";
+
     /// <summary>English fallback copy, for the copyable report. The PANEL resolves its own localized strings.</summary>
     public const string IssueSummary = "No phone or browser has connected to this PC yet.";
 
     public const string IssueAction =
         "If nobody has tried yet, this is normal. If someone is trying and it times out, allow this game to "
         + "accept incoming connections in your system's firewall and local-network settings.";
+
+    public const string FirewallIssueSummary = "This computer's firewall is blocking players from connecting.";
+
+    public const string FirewallIssueAction =
+        "Allow Slay the Spire 2 through Windows Firewall as a program, for the Private profile, and remove any "
+        + "block rule left behind by an earlier prompt.";
 
     /// <summary>Seconds to wait before warning. <c>0</c>/<c>off</c>/<c>false</c>/<c>no</c> disables the watch.</summary>
     public const string WarnSecondsEnvironmentVariable = "COUCHCOOP_REACHABILITY_WARN_SECONDS";
@@ -75,6 +95,7 @@ public sealed class HostReachabilityWatch
 
     private readonly ConnectionRegistry _registry;
     private readonly Func<TimeSpan, CancellationToken, Task> _delay;
+    private readonly Func<CancellationToken, Task<WindowsFirewallReading?>> _firewall;
     private readonly Action<string>? _log;
     private readonly object _gate = new();
 
@@ -89,9 +110,20 @@ public sealed class HostReachabilityWatch
         ConnectionRegistry? registry = null,
         Func<TimeSpan, CancellationToken, Task>? delay = null,
         Action<string>? log = null)
+        : this(registry, delay, log, firewall: null)
+    {
+    }
+
+    /// <summary>Test seam for the firewall reading, which a unit test must never take from the real OS.</summary>
+    internal HostReachabilityWatch(
+        ConnectionRegistry? registry,
+        Func<TimeSpan, CancellationToken, Task>? delay,
+        Action<string>? log,
+        Func<CancellationToken, Task<WindowsFirewallReading?>>? firewall)
     {
         _registry = registry ?? ConnectionRegistry.Shared;
         _delay = delay ?? Task.Delay;
+        _firewall = firewall ?? WindowsFirewallProbe.ReadAsync;
         _log = log;
     }
 
@@ -281,9 +313,19 @@ public sealed class HostReachabilityWatch
             }
         }
 
-        var detail = Describe(warnSeconds, endpoint, OperatingSystem.IsMacOS(), OperatingSystem.IsWindows());
+        // Asked only now, and only on Windows: the query costs a process, and a host whose join works never
+        // gets here. A null reading (switched off, another OS, or anything that could not be answered) leaves
+        // the copy exactly as it was.
+        var firewall = await _firewall(token).ConfigureAwait(false);
+        var accuses = firewall?.Verdict is WindowsFirewallVerdict.BlockRule
+            or WindowsFirewallVerdict.NoAllowRule
+            or WindowsFirewallVerdict.ProfileMismatch;
+
+        var detail = Describe(warnSeconds, endpoint, OperatingSystem.IsMacOS(), OperatingSystem.IsWindows(), firewall?.Detail);
         // Outside the lock: the registry takes its own, and reporting kicks off a log read.
-        var issueId = _registry.ReportHostIssue(IssueCode, IssueSummary, IssueAction, detail, isWarning: true);
+        var issueId = accuses
+            ? _registry.ReportHostIssue(FirewallIssueCode, FirewallIssueSummary, FirewallIssueAction, detail, isWarning: true)
+            : _registry.ReportHostIssue(IssueCode, IssueSummary, IssueAction, detail, isWarning: true);
 
         var stale = false;
         lock (_gate)
@@ -304,7 +346,9 @@ public sealed class HostReachabilityWatch
             return;
         }
 
-        _log?.Invoke($"host-ui diagnostic code={IssueCode} detail=no-inbound-connection-in-{warnSeconds}s");
+        var code = accuses ? FirewallIssueCode : IssueCode;
+        var verdict = firewall is null ? "not-asked" : firewall.Verdict.ToString();
+        _log?.Invoke($"host-ui diagnostic code={code} detail=no-inbound-connection-in-{warnSeconds}s firewall={verdict}");
     }
 
     /// <summary>
@@ -340,7 +384,12 @@ public sealed class HostReachabilityWatch
     /// detail, and the only place the exact per-OS settings paths live — the player-facing action stays one
     /// short sentence in fourteen languages.
     /// </summary>
-    public static string Describe(int warnSeconds, string? endpoint, bool isMacOS, bool isWindows)
+    /// <param name="firewallSentence">
+    /// What this computer's own firewall said when it was asked (<c>WindowsFirewallProbe</c>), or null when
+    /// there was nothing to ask or no answer. A STRING rather than the verdict type so this method — which is
+    /// public, and mirrored into the hot-reload assembly — does not publish the probe's internals.
+    /// </param>
+    public static string Describe(int warnSeconds, string? endpoint, bool isMacOS, bool isWindows, string? firewallSentence = null)
     {
         var where = string.IsNullOrWhiteSpace(endpoint) ? "the browser server" : endpoint.Trim();
         var gates = isMacOS
@@ -354,10 +403,12 @@ public sealed class HostReachabilityWatch
                     + "blocks far more than one marked Private."
                 : "Check that the host firewall allows inbound connections on this port.";
 
+        var asked = string.IsNullOrWhiteSpace(firewallSentence) ? string.Empty : " " + firewallSentence!.Trim();
         return $"No inbound TCP connection has reached {where} in the {warnSeconds}s since this host lobby "
             + "opened. This host cannot tell \"nobody has scanned the code yet\" from \"nothing can reach this "
             + "port\": a blocked connection never reaches accept(), so both look identical from here. "
             + gates
-            + " On every platform the phone must be on the same network as this PC.";
+            + " On every platform the phone must be on the same network as this PC."
+            + asked;
     }
 }

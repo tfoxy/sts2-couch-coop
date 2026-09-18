@@ -202,6 +202,43 @@ returned 200 in 37 ms and then 8/8. A slow host can make a bound, permitted, per
 firewalled for tens of seconds. Re-test after warm-up before concluding anything from a single timeout —
 and note this is the field's "it hangs" symptom with no firewall involved at all.
 
+## 5b. What §3 and §5 turned into: the host asks its own firewall
+
+Sections 3 and 5 together say something stronger than either does alone. The block is *readable locally*
+(§3: the permission is carried by per-program inbound allow rules, and the stock inbound default is block),
+and it is *unreadable over the network* (§5: every host-side check passes while a real peer gets nothing).
+That is exactly the shape of a question a process should ask the OS rather than infer from traffic — so
+`src/CouchCoop.Mod/Connections/WindowsFirewallProbe.cs` now does, once, on the failure path, when
+`HostReachabilityWatch` has already decided to raise its 90 s row.
+
+| what the query finds | row |
+|---|---|
+| an enabled inbound **Block** rule naming this exe | `host-firewall-blocked` |
+| no enabled inbound **Allow** rule naming it | `host-firewall-blocked` |
+| allow rules exist but none covers the profile of any active network | `host-firewall-blocked` |
+| allowed and covered | the old `host-no-inbound-connections`, plus a sentence **exonerating** the firewall |
+| anything else — no PowerShell, a timeout, an unreadable answer, zero rules, zero programs | the old row, unchanged |
+
+Two design points worth keeping:
+
+- **Every uncertain shape is Unknown**, including the two "empty" ones, because "we looked and found nothing"
+  and "we could not look" are the same empty list and only one of them is an accusation. The facts therefore
+  carry `inboundRuleCount` and `programRuleCount` purely as *did the query run* signals.
+- **The exoneration is worth as much as the accusation.** "This game IS allowed inbound, so this PC's own
+  firewall is not what is stopping it" is what moves an operator on to the router, the phone and the
+  security suite — the §5 defect was a row that sent them to the router when the answer was on their desk.
+
+**UNVERIFIED ON WINDOWS, and the reason is worth recording:** the guest was started for this and the
+`couchcoop-qa` SSH key no longer exists on the Linux host (it lived in a since-cleaned session scratchpad),
+so nothing in this section's PowerShell has been *run*. The classifier, the parser and every verdict are
+unit-tested (`WindowsFirewallProbeTests`, 8 legs); the query itself is not. It was rewritten to make that
+survivable: the first draft joined rules to application filters on `InstanceID`, which is a guess about a WMI
+class's identity, and a wrong guess there matches nothing silently — an inert probe that reports nothing
+anywhere. It now follows the documented association (`$filter | Get-NetFirewallRule`) after narrowing by file
+name, `$ErrorActionPreference = 'Stop'` turns any failure into no JSON at all, and no JSON is Unknown. **The
+owed leg is one run of `WindowsFirewallProbe.Query` on the guest**, comparing its JSON against the firewall
+state §3 captured by hand.
+
 ## 6. A9b reproduced live, on the platform where it is worst
 
 Unplanned, and visible in the startup log above — the host ranked its two adapters:

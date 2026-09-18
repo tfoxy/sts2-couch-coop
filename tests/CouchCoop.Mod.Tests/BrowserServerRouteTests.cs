@@ -140,6 +140,7 @@ if (args is ["network", ..])
     await HostDiscoveryResponderTests.RunAsync();
     await NetworkHardeningTests.RunAsync();
     HostReachabilityWatchTests.Run();
+    WindowsFirewallProbeTests.Run();
     // The TLS listener over a real loopback handshake. Hoisted in here because it is the one suite that drives
     // an accept loop end to end, and the accept loops are where the reachability watch is notified from — and
     // because it is otherwise registered only in the full sequence below, which does not reach it.
@@ -163,6 +164,8 @@ if (args is ["connections", ..])
     HostPatchHealthTests.Run();
     // …and the other host-condition row, which is raised from the networking layer but lands in this panel.
     HostReachabilityWatchTests.Run();
+    // …and the local question that row can answer on Windows instead of listing two causes it cannot separate.
+    WindowsFirewallProbeTests.Run();
     ConnectionDeviceLabelTests.Run();
     await ConnectionReportFormatterTests.Run();
     await ConnectionAttemptLogsTests.Run();
@@ -543,6 +546,7 @@ await NetworkHardeningTests.RunAsync();
 // WS4 macOS: the "listener is up, nothing has ever connected" observation — the only signal a host has when
 // the macOS Local Network permission or the application firewall is silently eating inbound connections.
 HostReachabilityWatchTests.Run();
+WindowsFirewallProbeTests.Run();
 HeadlessUserDirSeederTests.Run();
 HostProfileBackupTests.Run();
 // M3 WS-T host-discovery responder (real UDP loopback round-trip). Runs before the flaky network suite below.

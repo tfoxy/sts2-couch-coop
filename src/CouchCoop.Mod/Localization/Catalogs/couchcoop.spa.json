@@ -95,6 +95,8 @@
   "couchcoop_connection_error_shared_profile_action": "El modo cooperativo sigue funcionando. Evita cambiar los ajustes del juego mientras haya otros jugadores conectados.",
   "couchcoop_connection_error_reachability_summary": "Todavía no se ha conectado ningún teléfono ni navegador a este equipo.",
   "couchcoop_connection_error_reachability_action": "Si aún no lo ha intentado nadie, es normal. Si alguien lo intenta y se agota el tiempo de espera, comprueba que su teléfono esté en esta misma red y permite que este juego acepte conexiones entrantes: en macOS, en System Settings > Privacy & Security > Local Network y System Settings > Network > Firewall; en Windows, en el aviso del firewall para el juego.",
+  "couchcoop_connection_error_host_firewall_summary": "El firewall de este PC impide que los jugadores se conecten.",
+  "couchcoop_connection_error_host_firewall_action": "Permite Slay the Spire 2 en el Firewall de Windows como programa (no como puerto), con Privada marcada, y elimina cualquier regla de bloqueo que haya dejado un aviso anterior. Copia este informe para ver la regla exacta que encontró este PC.",
   "couchcoop_connection_empty": "Los dispositivos aparecerán aquí tras conectarse al servidor del navegador. Usa la misma red Wi‑Fi y comprueba la dirección mostrada arriba.",
   "couchcoop_connection_host_service": "Servicio del anfitrión",
   "couchcoop_connection_error_slow_summary": "Esperando a que el navegador muestre el juego.",

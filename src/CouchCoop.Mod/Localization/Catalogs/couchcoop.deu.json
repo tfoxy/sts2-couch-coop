@@ -95,6 +95,8 @@
   "couchcoop_connection_error_shared_profile_action": "Couch-Koop funktioniert weiterhin. Ändern Sie keine Spieleinstellungen, während andere Spieler verbunden sind.",
   "couchcoop_connection_error_reachability_summary": "Bisher hat sich kein Telefon und kein Browser mit diesem PC verbunden.",
   "couchcoop_connection_error_reachability_action": "Wenn es noch niemand versucht hat, ist das normal. Versucht es jemand und die Verbindung läuft ab, prüfen Sie, ob das Telefon im selben Netzwerk ist, und erlauben Sie diesem Spiel eingehende Verbindungen - unter macOS in System Settings > Privacy & Security > Local Network und System Settings > Network > Firewall; unter Windows in der Firewall-Abfrage für das Spiel.",
+  "couchcoop_connection_error_host_firewall_summary": "Die Firewall dieses PCs blockiert die Verbindung der Spieler.",
+  "couchcoop_connection_error_host_firewall_action": "Erlauben Sie Slay the Spire 2 in der Windows-Firewall als Programm (nicht als Port), mit gesetztem Haken bei Privat, und löschen Sie eine Blockierregel, die eine frühere Abfrage hinterlassen hat. Kopieren Sie diesen Bericht für die genaue Regel, die dieser PC gefunden hat.",
   "couchcoop_connection_empty": "Geräte erscheinen hier, nachdem sie sich mit dem Browser-Server verbunden haben. Nutzen Sie dasselbe WLAN und prüfen Sie die oben angezeigte Adresse.",
   "couchcoop_connection_host_service": "Host-Dienst",
   "couchcoop_connection_error_slow_summary": "Warten, bis der Browser das Spiel anzeigt.",

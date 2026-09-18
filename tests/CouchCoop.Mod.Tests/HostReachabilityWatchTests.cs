@@ -27,6 +27,7 @@ internal static class HostReachabilityWatchTests
         DisarmWithdrawsAStandingRow();
         ADisabledThresholdNeverArms();
         TheCopyNamesBothMacOsGatesAndNeverAccuses();
+        OnlyADecisiveFirewallReadingChangesTheRow();
         Console.WriteLine("HostReachabilityWatchTests: ok");
     }
 
@@ -208,15 +209,83 @@ internal static class HostReachabilityWatchTests
         Expect(other.Contains("45s", StringComparison.Ordinal), "the detail carries the threshold it actually used");
         Expect(other.Contains("firewall", StringComparison.OrdinalIgnoreCase),
             "and stays useful on a platform with neither branch");
+
+        // The one row that is ALLOWED to accuse, because by then it has asked and been told. Its copy lives on
+        // the separate code checked below, never on the ambiguous one's — the loop above still forbids it there.
+        Expect(HostReachabilityWatch.FirewallIssueSummary.Contains("is blocking", StringComparison.Ordinal),
+            "the firewall row says plainly that this computer is blocking, which is the whole reason it exists");
+        var asked = HostReachabilityWatch.Describe(90, null, isMacOS: false, isWindows: true,
+            "Windows Firewall: no enabled inbound allow rule for this game exists on this computer.");
+        Expect(asked.Contains("no enabled inbound allow rule", StringComparison.Ordinal),
+            "a reading is appended to the detail rather than replacing the observation it came with");
+        Expect(asked.Contains("accept()", StringComparison.Ordinal),
+            "…which keeps the honest account of what this host can and cannot see");
+    }
+
+    private static void OnlyADecisiveFirewallReadingChangesTheRow()
+    {
+        // On Windows the row can do better than "this host cannot tell": WindowsFirewallProbe asks the OS
+        // whether a rule for this game exists and covers the active network. Three answers earn the accusing
+        // row; everything else — including every way of failing to get an answer — keeps the honest one.
+        foreach (var verdict in new[]
+                 {
+                     WindowsFirewallVerdict.BlockRule,
+                     WindowsFirewallVerdict.NoAllowRule,
+                     WindowsFirewallVerdict.ProfileMismatch,
+                 })
+        {
+            var (registry, delay, watch) = Harness(new WindowsFirewallReading(verdict, $"Windows Firewall: {verdict} sentence."));
+            watch.Arm("http://192.168.0.9:13337/", 90);
+            Release(delay, watch);
+
+            var row = registry.Snapshot().Rows.Single();
+            Expect(row.Issue?.Code == HostReachabilityWatch.FirewallIssueCode,
+                $"{verdict} raises the firewall row, not the ambiguous one");
+            Expect(row.Issue?.IsWarning == true, "…still as a warning: co-op has not failed, it has not started");
+            Expect(row.Issue?.Detail?.Contains($"Windows Firewall: {verdict} sentence.", StringComparison.Ordinal) == true,
+                "…and the probe's own sentence is carried into the copyable report");
+        }
+
+        foreach (var reading in new WindowsFirewallReading?[]
+                 {
+                     null,
+                     new WindowsFirewallReading(WindowsFirewallVerdict.Unknown, "Windows Firewall: could not be queried."),
+                     new WindowsFirewallReading(WindowsFirewallVerdict.Allowed, "Windows Firewall: this game IS allowed inbound."),
+                 })
+        {
+            var (registry, delay, watch) = Harness(reading);
+            watch.Arm("http://192.168.0.9:13337/", 90);
+            Release(delay, watch);
+
+            var row = registry.Snapshot().Rows.Single();
+            Expect(row.Issue?.Code == HostReachabilityWatch.IssueCode,
+                $"a {reading?.Verdict.ToString() ?? "missing"} reading keeps the row that accuses nobody");
+            if (reading is not null)
+            {
+                Expect(row.Issue?.Detail?.Contains(reading.Detail, StringComparison.Ordinal) == true,
+                    "…and still carries what the firewall said, because exonerating it is worth as much");
+            }
+        }
+
+        // The two codes are separate strings, and BOTH have to be mapped in CouchCoopConnectionPanel.IssueKey —
+        // an unmapped code renders the generic join sentence rather than a missing one.
+        Expect(HostReachabilityWatch.FirewallIssueCode != HostReachabilityWatch.IssueCode,
+            "the firewall row is its own code");
+        Expect(!string.IsNullOrWhiteSpace(HostReachabilityWatch.FirewallIssueSummary)
+            && !string.IsNullOrWhiteSpace(HostReachabilityWatch.FirewallIssueAction),
+            "and carries its own English fallback copy for the report");
     }
 
     // ---- harness --------------------------------------------------------------------------------------------
 
-    private static (ConnectionRegistry Registry, ControlledDelay Delay, HostReachabilityWatch Watch) Harness()
+    private static (ConnectionRegistry Registry, ControlledDelay Delay, HostReachabilityWatch Watch) Harness(
+        WindowsFirewallReading? firewall = null)
     {
         var registry = new ConnectionRegistry(new FakeTime());
         var delay = new ControlledDelay();
-        return (registry, delay, new HostReachabilityWatch(registry, delay.Delay));
+        // The firewall reading is stubbed even in the default case: a unit suite must never spawn the real
+        // query, which on a Windows developer box would make these legs depend on that machine's rules.
+        return (registry, delay, new HostReachabilityWatch(registry, delay.Delay, null, _ => Task.FromResult(firewall)));
     }
 
     private static void Release(ControlledDelay delay, HostReachabilityWatch watch)

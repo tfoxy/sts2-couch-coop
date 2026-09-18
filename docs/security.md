@@ -31,6 +31,17 @@ or CPU. Entries older than 30 minutes stop being matched and are dropped. The lo
 report and written to the host's own log; it is not exposed on any route. It can only describe devices that
 reached the host: one that never arrives produces no request and no entry.
 
+On Windows only, and only after the host has already concluded that nothing has reached it in 90 seconds, the
+mod runs **one `powershell.exe` query** to read this computer's own inbound firewall rules and the profile of
+its active networks, so the resulting diagnostic can name a cause instead of listing two it cannot separate.
+The script is a compile-time constant with nothing interpolated into it: the single runtime value it needs —
+this process's own executable path — is passed in an environment variable, which PowerShell reads as data
+rather than parsing as syntax, so no request, player name, or peer-controlled string can reach a command line.
+It is read-only (`Get-NetFirewallRule`, `Get-NetFirewallApplicationFilter`, `Get-NetConnectionProfile`),
+changes nothing, runs at most once per session, is capped at 12 seconds and killed if it overruns, and is
+switched off entirely by `COUCHCOOP_FIREWALL_PROBE=off`. Its output is a sentence in the host's own connection
+report; nothing acts on it. A host that never fails a connection never runs it.
+
 Network work is bounded with message, header, handshake, connection, queue, and ping limits. Slow network writes
 receive deadlines without disconnecting an otherwise idle player. Managed generated assets use coordinated
 reservations, per-entry and total-cache limits, and a free-space reserve. Existing cache hits remain readable;
