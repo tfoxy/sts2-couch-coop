@@ -112,6 +112,15 @@ public static class CouchCoopMod
             // BeginAttempt, ReportHostIssue, the seat launcher) resolves it at call time.
             InitializeHostLogPath();
 
+            // A spawned seat has no local player. Its copy of the global input map must not retain joypad actions,
+            // or one controller connected to the host can drive both the host and its headless seat. Do this before
+            // any game screen can consume input; the host's map is deliberately untouched.
+            if (IsHeadlessClient)
+            {
+                var removedJoypadBindings = HeadlessJoypadInputMapIsolation.RemoveJoypadBindings();
+                CouchCoopLog.Info($"headless input map: removed {removedJoypadBindings} joypad binding(s)");
+            }
+
             CouchCoopLocalization.Initialize();
 
             // Resolve (and, when the game build or a cache generation has moved, purge) the on-disk cache before
