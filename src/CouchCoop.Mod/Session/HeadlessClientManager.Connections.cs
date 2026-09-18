@@ -1,6 +1,7 @@
 using System.Diagnostics;
 using System.Security.Cryptography;
 using CouchCoop.Mod.Connections;
+using CouchCoop.Mod.Server;
 
 namespace CouchCoop.Mod.Session;
 
@@ -50,6 +51,30 @@ public sealed partial class HeadlessClientManager
     /// </para>
     /// </remarks>
     public const string SeatSilentAfterJoinCode = "seat-silent-after-join";
+
+    /// <summary>
+    /// The issue a seat is failed with when it is demonstrably ALIVE AND SERVING — its browser listener answers
+    /// this host, or it has written the port it bound — and still cannot get a status through the authenticated
+    /// control channel. Public for the same reason as the codes above: the report copy, the panel's issue
+    /// mapping and <c>CouchCoopWebSocketConnection.ClassifyFailedSpawn</c> all key on the literal.
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// WHY THIS IS NOT <see cref="SeatSilentAfterJoinCode"/>. That code's copy tells the operator their player's
+    /// game "stopped responding" and its detail names another installed mod as the usual reason. Both are
+    /// reasonable for a seat that went quiet and cannot be reached — and both are FALSE for a seat that is
+    /// answering HTTP on its own port while it says nothing to us. Measured in the field 2026-09-18: a seat that
+    /// had joined the host's lobby, bound its port and was still idling normally 74 seconds later, reported to
+    /// the player as a startup timeout. Nothing in that seat stopped, and nothing in it needed disabling.
+    /// </para>
+    /// <para>
+    /// What it does mean is one-directional and local: two processes of the same game, on one computer, over
+    /// 127.0.0.1, and the seat→host direction is not getting through. So the remedy named is the machine's own
+    /// filtering — a proxy, a VPN, security software — and never the player's device, their network or the
+    /// router, none of which are anywhere near this wire.
+    /// </para>
+    /// </remarks>
+    public const string SeatControlBlockedCode = "seat-control-blocked";
 
     /// <summary>
     /// The host-service issue a session runs under only when preparing an isolated Godot user directory failed —
@@ -197,10 +222,11 @@ public sealed partial class HeadlessClientManager
             //   * a member — CouchCoop DID run: only CommandLineOverridePatch could have made it join, and the
             //     cloud isolation guard runs before that patch and exits on failure, so the saves are provably
             //     covered. See SeatSilentAfterJoinCode for why saying otherwise here would be a false alarm.
+            //     WHETHER IT IS STILL RUNNING is then asked rather than assumed — see ClassifySilentSeatAsync.
             if (status?.Status is null && Stopwatch.GetElapsedTime(started) >= contactDeadline)
             {
                 owned.Failure ??= member
-                    ? SeatSilentAfterJoinIssue(SilentAfterJoinDetail(contactDeadline, slot))
+                    ? await ClassifySilentSeatAsync(owned, port.Value, contactDeadline, ct).ConfigureAwait(false)
                     : SeatCloudIsolationIssue(NoSeatContactDetail(contactDeadline));
                 await StopFailedConnectionAsync(owned).ConfigureAwait(false);
                 return null;
@@ -396,7 +422,10 @@ public sealed partial class HeadlessClientManager
             // player's network, so it must never be reachable by a defaulted field.
             SeatViewerArrivals: status?.Status?.ViewerArrivalCount,
             ElapsedMs: (long)Stopwatch.GetElapsedTime(startedTicks).TotalMilliseconds,
-            DeadlineMs: (long)deadline.TotalMilliseconds);
+            DeadlineMs: (long)deadline.TotalMilliseconds,
+            // Free: the counters ride the snapshot this caller already holds, plus one locked read of the
+            // host's own refusal pair. Nothing here touches the disk or the network.
+            ControlChannel: DescribeControlChannel(status));
 
     private void PrepareConnectionLocked(int slot, Guid sessionId)
     {
@@ -433,6 +462,24 @@ public sealed partial class HeadlessClientManager
     {
         if (_ownedConnections.TryGetValue(slot, out var owned))
             owned.Logs = ConnectionAttemptLogs.CaptureStart(hostLogPath, clientLogPath);
+    }
+
+    /// <summary>
+    /// Record where this seat will write its bound browser port, for the same reason the log paths above are
+    /// recorded here: the launcher is the only place the seat's user directory is known, and re-deriving it on
+    /// the failure path would have to re-answer a question (isolated, or fallen back to the host's profile?)
+    /// that was already settled at the spawn.
+    /// </summary>
+    private void CaptureSeatPortFileLocked(int slot, string? seatUserDir)
+    {
+        if (!_ownedConnections.TryGetValue(slot, out var owned) || string.IsNullOrWhiteSpace(seatUserDir)) return;
+        // The seat resolves this as `user://couch-coop/<name>` from inside its own process
+        // (BrowserPortFile.TryResolveGodotPath); this is the same path from outside, which is why it takes the
+        // seat's Godot user dir rather than its slot base.
+        owned.SeatPortFilePath = Path.Combine(
+            seatUserDir,
+            HeadlessUserDirSeeder.CouchCoopDirName,
+            BrowserPortFile.FileNameFor(slot));
     }
 
     private void ForgetConnectionLocked(int slot)
@@ -710,6 +757,13 @@ public sealed partial class HeadlessClientManager
         /// <summary>The readiness cause already written to the host log; see <c>LogCauseChange</c>.</summary>
         public SeatReadinessCause? LoggedCause;
         /// <summary>
+        /// Where this seat will write the browser port it actually bound (<c>BrowserPortFile</c>), resolved at
+        /// LAUNCH because that is where the seat's user directory is known — and read only on the failure path,
+        /// by <c>ClassifySilentSeatAsync</c>, as the one fact about a seat this host can learn with no network.
+        /// Null when the seat's user dir could not be resolved at all.
+        /// </summary>
+        public string? SeatPortFilePath;
+        /// <summary>
         /// What this seat should currently be telling its VIEWERS, and since when. Per seat rather than per
         /// viewer because the settling delay measures how long a cause has held for the seat, and a viewer that
         /// drops and reconnects mid-episode must not restart that clock.
@@ -812,16 +866,221 @@ public sealed partial class HeadlessClientManager
             detail);
 
     /// <summary>
+    /// The issue a seat is failed with when it is running and serving and cannot reach the host's control
+    /// channel. English here, as every issue is, and word-for-word the
+    /// <c>couchcoop_connection_error_seat_control_*</c> catalog entries the panel and the phone render.
+    /// </summary>
+    /// <remarks>
+    /// The action is addressed to whoever is at the HOST, because that is the only machine involved — and it
+    /// names no port, because the seat's port is demonstrably working (that is how this cause was reached) and
+    /// the request being blocked is the host's own control listener. Nothing here mentions the joining player's
+    /// device or network; see <see cref="SeatControlBlockedCode"/>.
+    /// </remarks>
+    internal static ConnectionIssue SeatControlBlockedIssue(string detail)
+        => new(
+            SeatControlBlockedCode,
+            "This player's game is running, but it cannot report back to your game.",
+            "Allow Slay the Spire 2 through this computer's firewall and security software, turn off any VPN, "
+                + "proxy or network-filtering software on this computer, then try again.",
+            detail);
+
+    /// <summary>
+    /// Which of the two silences this is — a seat that STOPPED, or one that is running and cannot report —
+    /// asked with the two pieces of evidence that do not depend on the channel that is already not working.
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// ON THE FAILURE PATH ONLY, and that is what pays for it. A healthy join never reaches the contact
+    /// deadline, so this costs a live-and-well seat nothing; the same trade
+    /// <c>DefaultHttpReadinessAsync</c>'s follow-up TCP connect already makes for the probe in the other
+    /// direction. Both facts are gathered ONCE, here, rather than on the 200 ms readiness pass.
+    /// </para>
+    /// <para>
+    /// THE PORT FILE IS ASKED FIRST BECAUSE IT NEEDS NO NETWORK. The seat writes the port it bound into its own
+    /// user dir (<see cref="BrowserPortFile"/>) — so when the suspicion is that this machine is filtering one
+    /// program talking to another, the file is the one piece of evidence that suspicion cannot touch. It is
+    /// believed only when its pid is the process WE started: the record outlives a killed seat by design.
+    /// </para>
+    /// <para>
+    /// THREE ANSWERS, not two: the record can also show the seat serving on a port that is NOT the one the
+    /// browser is being sent to, which is a port conflict and has the port conflict's remedy. That arm exists
+    /// only because the file does — the verdict's own port-disagreement test reads the heartbeat, which is by
+    /// definition absent here.
+    /// </para>
+    /// <para>
+    /// The probe runs UNGATED BY HEARTBEAT FRESHNESS, which is the whole point. The readiness loop's own probe
+    /// is reached only once a fresh status has arrived, so the host used to hold its single cheapest question —
+    /// "is anything serving on the port I am about to hand out?" — behind the very report it never got, and
+    /// printed `host loopback probe of the assigned port: not yet probed` on a seat that would have answered it.
+    /// Its result is stored on the connection so the evidence tail and the monitor can read it afterwards.
+    /// </para>
+    /// </remarks>
+    private async Task<ConnectionIssue> ClassifySilentSeatAsync(
+        OwnedConnection owned,
+        int expectedPort,
+        TimeSpan deadline,
+        CancellationToken cancellationToken)
+    {
+        var record = BrowserPortFile.Read(owned.SeatPortFilePath);
+        var probe = await _readinessProbe(expectedPort, cancellationToken).ConfigureAwait(false);
+        owned.ListenerResponding = probe.Responding;
+        owned.ListenerProbeFailure = probe.Failure;
+        owned.ListenerReachability = probe.Reachability;
+        return ClassifySilentSeat(
+            owned.Slot,
+            expectedPort,
+            ProcessId(owned.Process),
+            record,
+            probe,
+            DescribeControlChannel(HeadlessConnectionControl.Shared.Snapshot(owned.Slot, owned.Generation)),
+            deadline);
+    }
+
+    /// <summary>
+    /// The decision the two gathered facts support, and only that — no file, no socket, no clock.
+    /// </summary>
+    /// <remarks>
+    /// Split out from <see cref="ClassifySilentSeatAsync"/> so all three answers are assertable: the file half
+    /// of this cannot be reached through the unit suite's injected launcher (no real seat process ever writes a
+    /// record), and a diagnosis nobody can test is how the wrong one ships. The wiring above it — which file,
+    /// which port, which probe — is what the live leg proves.
+    /// </remarks>
+    internal static ConnectionIssue ClassifySilentSeat(
+        int slot,
+        int expectedPort,
+        int seatProcessId,
+        (int Port, int Pid)? portRecord,
+        SeatListenerProbeResult probe,
+        string controlChannel,
+        TimeSpan deadline)
+    {
+        // Believed only when the record is THIS process's: it outlives a killed seat by design, so a stale one
+        // must never read as a live listener. See BrowserPortFile.
+        var ours = portRecord is { } written && seatProcessId > 0 && written.Pid == seatProcessId;
+        var boundHere = ours && portRecord!.Value.Port == expectedPort;
+        var evidence = SilentSeatEvidence(portRecord, boundHere, expectedPort, probe, controlChannel);
+
+        // A PORT DISAGREEMENT, from the seat's own record rather than from its heartbeat. The readiness verdict
+        // already treats "the seat bound a port that is not the one we hand the browser" as a port conflict
+        // (SeatReadinessVerdict.Classify, arm 1) — but it can only see that over the channel that is silent
+        // here, so this shape used to be unreachable whenever the report never arrived. The remedy is the port
+        // conflict's, not the control channel's: whatever the browser is sent to is not this player's game.
+        if (ours && portRecord!.Value.Port != expectedPort)
+        {
+            return SeatReadinessVerdict.IssueFor(
+                SeatReadinessCause.PortConflict,
+                "This player's game recorded that it bound port "
+                + portRecord.Value.Port.ToString(System.Globalization.CultureInfo.InvariantCulture)
+                + " rather than port "
+                + expectedPort.ToString(System.Globalization.CultureInfo.InvariantCulture)
+                + ", which is the one the browser is sent to — so the address that player was given answers to "
+                + "something that is not their game. " + evidence);
+        }
+
+        return probe.Responding || boundHere
+            ? SeatControlBlockedIssue(ControlBlockedDetail(deadline, expectedPort) + " " + evidence)
+            : SeatSilentAfterJoinIssue(SilentAfterJoinDetail(deadline, slot) + " " + evidence);
+    }
+
+    /// <summary>
+    /// What the questions above found, in one English sentence every one of those details ends with — so a
+    /// report that names the wrong cause can still be re-read, exactly as the readiness verdict's tail is.
+    /// </summary>
+    private static string SilentSeatEvidence(
+        (int Port, int Pid)? record,
+        bool boundHere,
+        int expectedPort,
+        SeatListenerProbeResult probe,
+        string controlChannel)
+    {
+        var port = expectedPort.ToString(System.Globalization.CultureInfo.InvariantCulture);
+        var file = record is { } written
+            ? (boundHere
+                ? $"this player's game recorded that it bound port {port} itself"
+                : "this player's game recorded port "
+                    + written.Port.ToString(System.Globalization.CultureInfo.InvariantCulture)
+                    + " under process "
+                    + written.Pid.ToString(System.Globalization.CultureInfo.InvariantCulture)
+                    + ", which is not the port and process this host started")
+            : "this player's game has recorded no bound port of its own";
+        return "Observed: " + file
+            + "; this computer's own request to port " + port + ": "
+            + (probe.Responding ? "answered" : $"no answer ({probe.Failure ?? "no failure detail was captured"})")
+            + "; " + controlChannel
+            + ".";
+    }
+
+    /// <summary>
+    /// What this host has heard on the control channel for one seat, and what it has REFUSED across all of them.
+    /// </summary>
+    /// <remarks>
+    /// The two halves answer different questions and only together answer the one that matters. A seat's own
+    /// accepted count at zero says the host never heard it; the process-wide refusal count at zero then says
+    /// the host never turned anything away either — so nothing ever arrived, and the POST is not reaching this
+    /// process at all. A non-zero refusal count is the opposite finding with the opposite fix: it DID arrive,
+    /// and this host rejected it (a stale generation, a token from a seat this host has replaced). Neither was
+    /// observable before this; the same silence covered both.
+    /// </remarks>
+    internal static string DescribeControlChannel(HeadlessConnectionControlSnapshot? status)
+    {
+        var refusals = HeadlessConnectionControl.Shared.Refusals;
+        var seat = status is null
+            ? "this seat has no control-channel registration on the host"
+            : "status reports accepted from this seat: "
+                + status.AcceptedCount.ToString(System.Globalization.CultureInfo.InvariantCulture)
+                + ", refused: "
+                + status.RefusedCount.ToString(System.Globalization.CultureInfo.InvariantCulture)
+                + (status.RefusedCount > 0 ? $" (last: {status.LastRefusal})" : string.Empty);
+        return seat + "; status reports this host refused from any process: "
+            + refusals.Count.ToString(System.Globalization.CultureInfo.InvariantCulture)
+            + (refusals.Count > 0 ? $" (last: {refusals.Last})" : string.Empty);
+    }
+
+    private static int ProcessId(IHeadlessProcess? process)
+    {
+        try { return process?.Id ?? 0; }
+        catch { return 0; }
+    }
+
+    /// <summary>
+    /// The detail for a seat that is RUNNING AND SERVING and still cannot get a status to the host.
+    /// </summary>
+    /// <remarks>
+    /// Says what the wire is — two processes of one game, on one computer, over the loopback address — because
+    /// without that the reader has no way to know that none of the usual suspects (the router, the Wi-Fi, the
+    /// player's device, the seat's own port) can be involved. See <see cref="SeatControlBlockedCode"/>.
+    /// </remarks>
+    internal static string ControlBlockedDetail(TimeSpan deadline, int expectedPort)
+        => "This player's game joined the host's lobby and is serving on port "
+            + expectedPort.ToString(System.Globalization.CultureInfo.InvariantCulture)
+            + ", so it started correctly and is still running — but it could not report a single status to the "
+            + "host within "
+            + ((long)deadline.TotalSeconds).ToString(System.Globalization.CultureInfo.InvariantCulture)
+            + " seconds. That report is an ordinary local request from one copy of the game to the other over "
+            + "this computer's own loopback address (127.0.0.1), so nothing outside this computer is involved: "
+            + "no router, no Wi-Fi and not the joining player's device. Something on this computer is stopping "
+            + "one program from talking to another — a proxy setting, a VPN client, or security software.";
+
+    /// <summary>
     /// The detail for a seat that reached the host's lobby and then said nothing within the contact deadline.
     /// Names the slot so the reader can find that seat's log, which is the only place the reason exists.
     /// </summary>
+    /// <remarks>
+    /// IT NO LONGER ASSERTS THAT THE SEAT STOPPED. This text is now reached only when the host has also failed
+    /// to reach that seat's port AND the seat has recorded no port of its own, which makes "it stopped" the
+    /// likeliest reading but still not a measured one — a wedged listener produces the same evidence. So the
+    /// cause is offered rather than stated, and the one thing that IS established (it joined, so our code ran
+    /// and the saves were protected) is stated plainly. The seat that is provably still serving gets
+    /// <see cref="ControlBlockedDetail"/> instead, which is what this used to be printed for as well.
+    /// </remarks>
     internal static string SilentAfterJoinDetail(TimeSpan deadline, int slot)
         => "This player's game joined the host's lobby, so CouchCoop started inside it and your Steam Cloud "
             + "saves were protected, but it then reported nothing to the host within "
             + ((long)deadline.TotalSeconds).ToString(System.Globalization.CultureInfo.InvariantCulture)
-            + " seconds of being started. It stopped somewhere after joining and before it could serve this "
-            + "player's game view, which is setup only that player's game does — so the host's own game is "
-            + "unaffected, and another installed mod failing in it is the usual reason. The reason is in slot "
+            + " seconds of being started, and this host could not reach its game view either. Everything "
+            + "between joining and serving that view is setup only that player's game does — so the host's own "
+            + "game is unaffected, and another installed mod failing in it is the most common reason. The "
+            + "reason, if there is one, is in slot "
             + slot.ToString(System.Globalization.CultureInfo.InvariantCulture)
             + "'s own log, whose path is listed with this report.";
 

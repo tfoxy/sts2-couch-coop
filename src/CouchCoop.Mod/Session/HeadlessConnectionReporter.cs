@@ -1,9 +1,13 @@
+using System.Diagnostics;
+using System.Globalization;
 using System.Net.Http.Headers;
 using System.Net.Http.Json;
+using System.Net.Sockets;
 using System.Text;
 using System.Text.Json;
 using CouchCoop.Mod.Connections;
 using CouchCoop.Mod.Runtime;
+using CouchCoop.Mod.Server;
 using Spirectl.Sts2.Embedding;
 
 namespace CouchCoop.Mod.Session;
@@ -18,7 +22,64 @@ public sealed class HeadlessConnectionReporter : IDisposable
     internal const string ControlGenerationEnvironmentVariable = "COUCHCOOP_HEADLESS_CONTROL_GENERATION";
     private static readonly object StaticGate = new();
     private static HeadlessConnectionReporter? _current;
-    private static readonly HttpClient Client = new() { Timeout = TimeSpan.FromSeconds(2) };
+
+    /// <summary>
+    /// The one client every status goes out on, with the machine's PROXY CONFIGURATION TAKEN OUT OF THE PATH.
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// This is a loopback IPC channel between two processes of the same game on one computer, and it has no
+    /// business consulting a proxy. A bare <c>new HttpClient()</c> does: it falls back to
+    /// <see cref="HttpClient.DefaultProxy"/>, which on Windows is built from the user's WinINET settings and on
+    /// every platform honours <c>HTTP_PROXY</c>. A proxy configured without a loopback bypass therefore breaks
+    /// exactly this POST while leaving the player's browser — which bypasses localhost on its own — working
+    /// perfectly, and the seat then looks silent for reasons no log could explain. Turning it off costs nothing
+    /// (127.0.0.1 was never going through a proxy usefully) and removes a whole family of that shape.
+    /// </para>
+    /// <para>
+    /// Redirects off for the same reason the route is a single POST: the only legitimate answer from the host is
+    /// the control response, and a redirect to anywhere else is not something to follow with a bearer token.
+    /// </para>
+    /// </remarks>
+    private static readonly HttpClient Client = new(new SocketsHttpHandler
+    {
+        UseProxy = false,
+        AllowAutoRedirect = false,
+    })
+    {
+        Timeout = TimeSpan.FromSeconds(2),
+    };
+
+    /// <summary>
+    /// Why the control channel is not working, in THIS seat's own <c>godot.log</c>.
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// WHY THIS EXISTS. <see cref="SendOnceAsync"/> swallowed every failure in a bare <c>catch</c> and dropped
+    /// every non-2xx answer without a word, and <see cref="TryReadEnvironment"/> returning false built no
+    /// reporter at all — also without a word. So a seat whose channel was dead produced no evidence anywhere:
+    /// not here, and not on the host, which can only report the absence of a heartbeat. Measured in the field
+    /// 2026-09-18, on a report where the seat had joined the lobby, bound its browser port and was idling
+    /// healthily while the host waited out its whole 75-second deadline and then blamed startup.
+    /// </para>
+    /// <para>
+    /// ERROR, not <c>Info</c>: only ERROR lines are kept in the copyable report's log excerpt, and this is the
+    /// line a support report has to carry. RATE-LIMITED and keyed by failure SHAPE, because the sender runs once
+    /// a second for the life of the process: a dead channel costs one line per window rather than 75 of them,
+    /// and a cause that CHANGES is printed at once instead of being hidden behind the first one's window.
+    /// </para>
+    /// </remarks>
+    private static readonly RateLimitedDiagnosticLog Diagnostics = new(message => (LogSink ?? CouchCoopLog.Error)(message));
+
+    /// <summary>
+    /// Where the lines above go. The same seam <c>CouchCoopCacheRoot</c> and <c>HeadlessUserDirSeeder</c> use,
+    /// and for the same reason: the default writes through the GAME's logger, which is not callable outside a
+    /// game process, so a test asserting what this says has to be able to take the line itself.
+    /// </summary>
+    internal static Action<string>? LogSink { get; set; }
+
+    /// <summary>Whether this process has already said, once, that the channel came up. See <c>NoteAccepted</c>.</summary>
+    private static int _acceptedLogged;
 
     /// <summary>
     /// The browser port this process actually bound, reported on every heartbeat. STATIC rather than per-instance
@@ -71,7 +132,12 @@ public sealed class HeadlessConnectionReporter : IDisposable
 
     public static void Initialize(CouchCoopRuntimeHost runtime, Action<string> requestShutdown)
     {
-        if (!TryReadEnvironment(out var endpoint, out var token, out var generation)) return;
+        if (!TryReadEnvironment(out var endpoint, out var token, out var generation, out var fault))
+        {
+            ReportNoChannel(fault);
+            return;
+        }
+
         lock (StaticGate)
         {
             _current?.Dispose();
@@ -184,6 +250,7 @@ public sealed class HeadlessConnectionReporter : IDisposable
 
     private async Task SendOnceAsync()
     {
+        var started = Stopwatch.GetTimestamp();
         try
         {
             var native = _native;
@@ -206,15 +273,89 @@ public sealed class HeadlessConnectionReporter : IDisposable
             request.Headers.Authorization = new AuthenticationHeaderValue("Bearer", _token);
             request.Headers.Add("X-CouchCoop-Generation", _generation.ToString(System.Globalization.CultureInfo.InvariantCulture));
             using var response = await Client.SendAsync(request).ConfigureAwait(false);
-            if (!response.IsSuccessStatusCode) return;
+            if (!response.IsSuccessStatusCode)
+            {
+                // A REFUSAL, and it used to be indistinguishable from success. The host answers non-2xx when it
+                // does not recognise the token or the generation (`HeadlessConnectionControl.Observe`), which is
+                // a completely different fault from an unreachable host and has a completely different fix —
+                // yet both left this method having returned quietly.
+                Report("control-status-refused", $"the host answered {Status(response)}", started);
+                return;
+            }
+
+            NoteAccepted();
             var command = await response.Content.ReadFromJsonAsync<HeadlessConnectionControlResponse>().ConfigureAwait(false);
             if (command?.Shutdown == true) _requestShutdown("host-requested-shutdown");
         }
-        catch
+        catch (Exception exception)
         {
-            // A transient host startup/shutdown failure must never block the game loop or exit a child.
+            // A transient host startup/shutdown failure must never block the game loop or exit a child — so this
+            // still swallows everything. What it no longer does is swallow it SILENTLY.
+            Report("control-status-failed", Describe(exception), started);
         }
     }
+
+    /// <summary>
+    /// Say, once per process, that the host has accepted a status — so the seat's own log dates the moment its
+    /// control channel came up, and its ABSENCE is evidence in every report where it never did.
+    /// </summary>
+    /// <remarks>
+    /// <c>Info</c> and exactly one line: a healthy seat must stay quiet in the one file a support report is read
+    /// from, and this is the cheapest line that makes "the channel never worked" falsifiable.
+    /// </remarks>
+    private static void NoteAccepted()
+    {
+        if (Interlocked.Exchange(ref _acceptedLogged, 1) != 0) return;
+        CouchCoopLog.Info("seat control channel up: the host accepted this seat's first status");
+    }
+
+    /// <summary>
+    /// Record one control-channel failure, naming the endpoint it was talking to. See <see cref="Diagnostics"/>
+    /// for why this is rate-limited and why it is ERROR.
+    /// </summary>
+    /// <remarks>
+    /// The endpoint is quoted because a wrong one is a real failure shape (a host whose listener moved), and it
+    /// is safe to quote: the URL is a loopback address, a port and a fixed path. THE BEARER TOKEN IS NEVER
+    /// LOGGED — it is this seat's authority to declare its cloud-save isolation, and a log excerpt travels into
+    /// support threads.
+    /// </remarks>
+    private void Report(string code, string cause, long startedTicks)
+    {
+        if (Volatile.Read(ref _disposed) != 0) return;
+        Report(_endpoint, code, cause, startedTicks);
+    }
+
+    /// <inheritdoc cref="Report(string,string,long)"/>
+    private static void Report(Uri endpoint, string code, string cause, long startedTicks)
+    {
+        Diagnostics.Write(
+            code + ":" + cause,
+            $"seat control channel: {cause} after "
+            + ((long)Stopwatch.GetElapsedTime(startedTicks).TotalMilliseconds)
+                .ToString(CultureInfo.InvariantCulture)
+            + $" ms POSTing this seat's status to {endpoint} — until this succeeds the host cannot see this "
+            + "seat's phase, browser port or browser count, and will refuse the join with nothing to show for "
+            + "it. Check for a proxy, a VPN, or security software on this computer that filters one program "
+            + "talking to another.");
+    }
+
+    /// <summary>
+    /// One send failure, in the shape <c>HeadlessClientManager.DefaultHttpReadinessAsync</c> already composes
+    /// for the probe in the other direction: the exception, and the socket error underneath it where there is
+    /// one. The socket error is the half that separates a refused connection (nothing listening) from a dropped
+    /// one (something is filtering it), and it is lost by the exception type alone.
+    /// </summary>
+    private static string Describe(Exception exception)
+    {
+        var socketError = (exception as HttpRequestException)?.InnerException as SocketException
+            ?? exception.InnerException as SocketException;
+        return socketError is null
+            ? exception.GetType().Name
+            : $"{exception.GetType().Name}/{socketError.SocketErrorCode}";
+    }
+
+    private static string Status(HttpResponseMessage response)
+        => ((int)response.StatusCode).ToString(CultureInfo.InvariantCulture) + " " + response.StatusCode;
 
     /// <summary>
     /// Send ONE terminal status to the host and stop, without a runtime, a subscription or a heartbeat.
@@ -300,15 +441,72 @@ public sealed class HeadlessConnectionReporter : IDisposable
     /// </summary>
     private static async Task<bool> PostOnceAsync(HeadlessConnectionStatus status, CancellationToken cancellationToken)
     {
-        if (!TryReadEnvironment(out var endpoint, out var token, out var generation)) return false;
+        if (!TryReadEnvironment(out var endpoint, out var token, out var generation, out var fault))
+        {
+            ReportNoChannel(fault);
+            return false;
+        }
+
         using var request = new HttpRequestMessage(HttpMethod.Post, endpoint)
         {
             Content = new StringContent(JsonSerializer.Serialize(status), Encoding.UTF8, "application/json"),
         };
         request.Headers.Authorization = new AuthenticationHeaderValue("Bearer", token);
-        request.Headers.Add("X-CouchCoop-Generation", generation.ToString(System.Globalization.CultureInfo.InvariantCulture));
-        using var response = await Client.SendAsync(request, cancellationToken).ConfigureAwait(false);
-        return response.IsSuccessStatusCode;
+        request.Headers.Add("X-CouchCoop-Generation", generation.ToString(CultureInfo.InvariantCulture));
+        var started = Stopwatch.GetTimestamp();
+        // The EARLIEST evidence there is. This path carries the seat's hello, sent from the isolation guard at
+        // mod init — so when the channel is dead, this is the first thing in the process that knows, seconds
+        // before the live reporter's first heartbeat and a minute before the host's deadline. Its callers
+        // already handle the failure (a hello is best-effort, a terminal report is bounded); they log it to
+        // stderr, which in the shipped Steam flow goes nowhere. Recorded here so it lands in godot.log, then
+        // rethrown so no caller's behaviour changes.
+        try
+        {
+            using var response = await Client.SendAsync(request, cancellationToken).ConfigureAwait(false);
+            if (!response.IsSuccessStatusCode)
+            {
+                Report(endpoint, "control-status-refused", $"the host answered {Status(response)}", started);
+                return false;
+            }
+
+            NoteAccepted();
+            return true;
+        }
+        catch (Exception exception) when (!cancellationToken.IsCancellationRequested)
+        {
+            Report(endpoint, "control-status-failed", Describe(exception), started);
+            throw;
+        }
+    }
+
+    /// <summary>
+    /// Say that this seat has no control channel at all — but only where that is a FAULT.
+    /// </summary>
+    /// <remarks>
+    /// A seat launched by hand (QA, a dev loop) carries no control environment and is not supposed to: it has
+    /// no host to report to, and an ERROR line there would be noise in every manual run. A process the host
+    /// SPAWNED is the opposite case — without this channel it can never be admitted, whatever else it does
+    /// right, and today it fails an entire 75-second deadline without one word about why. So the seat flag is
+    /// the gate, and the line says which part of the environment was wrong rather than "not configured".
+    /// </remarks>
+    private static void ReportNoChannel(string? fault) => ReportNoChannel(fault, CouchCoopMod.IsHeadlessClient);
+
+    /// <inheritdoc cref="ReportNoChannel(string?)"/>
+    /// <remarks>
+    /// <paramref name="spawnedSeat"/> is passed rather than read so the gate is assertable: the flag it comes
+    /// from is latched from the environment at static initialisation, so a test process is permanently "not a
+    /// seat" and could otherwise only ever observe the silent half of this decision.
+    /// </remarks>
+    internal static void ReportNoChannel(string? fault, bool spawnedSeat)
+    {
+        if (!spawnedSeat) return;
+        Diagnostics.Write(
+            "control-channel-absent",
+            "seat control channel is not configured, so this seat can never be admitted: "
+            + (fault ?? "no reason was recorded")
+            + ". This process was started as a co-op seat by a host, which always sets "
+            + $"{ControlUrlEnvironmentVariable}, {ControlTokenEnvironmentVariable} and "
+            + $"{ControlGenerationEnvironmentVariable}.");
     }
 
     /// <summary>The next sequence number for ANY status this process sends. See <see cref="_sequence"/>.</summary>
@@ -351,20 +549,75 @@ public sealed class HeadlessConnectionReporter : IDisposable
         lock (StaticGate) return (_current?.QueueReport() ?? Task.CompletedTask).WaitAsync(cancellationToken);
     }
 
-    private static bool TryReadEnvironment(out Uri endpoint, out string token, out long generation)
+    /// <summary>This seat's control channel, out of its environment. See <see cref="TryParseChannel"/>.</summary>
+    private static bool TryReadEnvironment(out Uri endpoint, out string token, out long generation, out string? fault)
     {
-        endpoint = null!;
         token = Environment.GetEnvironmentVariable(ControlTokenEnvironmentVariable) ?? string.Empty;
+        fault = TryParseChannel(
+            Environment.GetEnvironmentVariable(ControlUrlEnvironmentVariable),
+            token,
+            Environment.GetEnvironmentVariable(ControlGenerationEnvironmentVariable),
+            out var parsed,
+            out generation);
+        endpoint = parsed!;
+        return fault is null;
+    }
+
+    /// <summary>
+    /// The three raw values that make a control channel, parsed — and, when they do not make one, WHICH of
+    /// them is why, in English.
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// Returns <see langword="null"/> when the channel is usable, and the fault otherwise: the shape lets the
+    /// one caller above read as "is there a fault?" while every branch keeps its own sentence.
+    /// </para>
+    /// <para>
+    /// PURE, and internal, because the fault text is the load-bearing half. It goes into the seat's
+    /// <c>godot.log</c> (see <see cref="ReportNoChannel"/>) and is the only thing that will distinguish "the
+    /// host never set this" from "the host set it to something this seat will not talk to" in a support report
+    /// — so it is worth asserting directly, without an environment or a game process to stand it up in.
+    /// </para>
+    /// <para>
+    /// It names the variables and quotes the URL, and NEVER the token: that value is this seat's authority to
+    /// declare its own cloud-save isolation, and a log excerpt travels into support threads.
+    /// </para>
+    /// </remarks>
+    internal static string? TryParseChannel(
+        string? rawUrl,
+        string? rawToken,
+        string? rawGeneration,
+        out Uri? endpoint,
+        out long generation)
+    {
+        endpoint = null;
         generation = 0;
-        if (!Uri.TryCreate(Environment.GetEnvironmentVariable(ControlUrlEnvironmentVariable), UriKind.Absolute, out var parsed))
+        if (!Uri.TryCreate(rawUrl, UriKind.Absolute, out var parsed))
         {
-            return false;
+            return string.IsNullOrWhiteSpace(rawUrl)
+                ? $"{ControlUrlEnvironmentVariable} is not set"
+                : $"{ControlUrlEnvironmentVariable} is not an absolute URL";
+        }
+
+        if (!parsed.IsLoopback || parsed.Scheme != Uri.UriSchemeHttp)
+        {
+            return $"{ControlUrlEnvironmentVariable} is {parsed}, which is not a loopback http address";
+        }
+
+        if (string.IsNullOrWhiteSpace(rawToken) || rawToken.Length > 512)
+        {
+            return $"{ControlTokenEnvironmentVariable} is "
+                + (string.IsNullOrWhiteSpace(rawToken) ? "not set" : "longer than 512 characters");
+        }
+
+        if (!long.TryParse(rawGeneration, NumberStyles.Integer, CultureInfo.InvariantCulture, out generation)
+            || generation <= 0)
+        {
+            return $"{ControlGenerationEnvironmentVariable} is not a positive whole number";
         }
 
         endpoint = parsed;
-        return endpoint.IsLoopback && endpoint.Scheme == Uri.UriSchemeHttp
-            && !string.IsNullOrWhiteSpace(token) && token.Length <= 512
-            && long.TryParse(Environment.GetEnvironmentVariable(ControlGenerationEnvironmentVariable), out generation) && generation > 0;
+        return null;
     }
 
     public void Dispose()

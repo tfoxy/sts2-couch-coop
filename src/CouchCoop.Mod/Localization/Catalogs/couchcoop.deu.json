@@ -77,6 +77,8 @@
   "couchcoop_connection_error_seat_cloud_isolation_action": "Es wurde gestoppt, bevor es etwas schreiben konnte. Starten Sie das Spiel neu und versuchen Sie es erneut; kopieren Sie diesen Bericht, falls es wieder passiert.",
   "couchcoop_connection_error_seat_silent_summary": "Das Spiel dieses Spielers wurde gestartet und ist beigetreten, reagierte dann aber nicht mehr.",
   "couchcoop_connection_error_seat_silent_action": "Versuchen Sie es erneut. Wenn es weiterhin auftritt, prüfen Sie das eigene Protokoll dieses Spielers (der Pfad steht in diesem Bericht) und versuchen Sie es erneut mit deaktivierten anderen Mods.",
+  "couchcoop_connection_error_seat_control_summary": "Das Spiel dieses Spielers läuft, kann sich aber nicht bei Ihrem Spiel zurückmelden.",
+  "couchcoop_connection_error_seat_control_action": "Lassen Sie Slay the Spire 2 durch die Firewall und Sicherheitssoftware dieses Computers zu, deaktivieren Sie VPN-, Proxy- und netzwerkfilternde Software auf diesem Computer und versuchen Sie es erneut.",
   "couchcoop_connection_error_seat_port_summary": "Ein anderes Programm auf diesem Computer belegt den Port dieses Spielers.",
   "couchcoop_connection_error_seat_port_action": "Schließen Sie das Programm, das diesen Port auf dem Host-Computer belegt, auch wenn es eine weitere Kopie von Slay the Spire 2 ist, und versuchen Sie es erneut.",
   "couchcoop_connection_error_seat_port_occupied_summary": "Ein anderes Programm auf diesem Computer belegt einen der Ports, die Couch-Koop an Spieler vergibt.",

@@ -36,15 +36,21 @@ internal static class SeatRejectionCodeTests
         Console.WriteLine("SeatRejectionCodeTests: ok");
     }
 
-    // The three causes the phone has copy for. Forwarded verbatim so the client can key its seat-notice cause
+    // The causes the phone has copy for. Forwarded verbatim so the client can key its seat-notice cause
     // off the same literal the host panel's IssueKey arm does — one vocabulary, two surfaces.
+    //
+    // `seat-control-blocked` is the fourth, and it reuses the third's copy rather than adding a fifth string
+    // set: from the DEVICE's side, a host that cannot talk to its own seat and a host that is blocking that
+    // seat's port are the same news — nothing here is wrong, and the fix belongs to whoever is hosting. See
+    // MIRROR_REJECTION_SEAT_CAUSES in loadingState.ts, which maps it onto `host-local-block`.
     private static void NamedSeatCausesRideTheirOwnCode()
     {
         foreach (var code in new[]
                  {
                      SeatReadinessVerdict.PortTakenCode,
                      SeatReadinessVerdict.PortBlockedCode,
-                     SeatReadinessVerdict.NetworkPathCode
+                     SeatReadinessVerdict.NetworkPathCode,
+                     HeadlessClientManager.SeatControlBlockedCode
                  })
         {
             var refused = CouchCoopWebSocketConnection.ClassifyFailedSpawn(

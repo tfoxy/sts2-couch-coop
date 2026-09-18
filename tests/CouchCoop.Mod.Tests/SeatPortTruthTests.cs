@@ -581,6 +581,11 @@ internal static class SeatPortTruthTests
             "couchcoop_connection_error_seat_port_blocked_action",
             "couchcoop_connection_error_seat_network_summary",
             "couchcoop_connection_error_seat_network_action",
+            // The fifth pair, for the cause a seat that is RUNNING AND SERVING and cannot report to the host
+            // is named as. It has its own panel key for the same reason the three above do — its fix is on
+            // this computer, and `seat_silent`'s copy would send the operator after the seat instead.
+            "couchcoop_connection_error_seat_control_summary",
+            "couchcoop_connection_error_seat_control_action",
         ];
         Assert(CouchCoopLocalization.SupportedLanguages.Count == 14, "there are still fourteen catalogs to fill");
         foreach (var language in CouchCoopLocalization.SupportedLanguages)
@@ -608,6 +613,24 @@ internal static class SeatPortTruthTests
                 $"{cause} summary matches its catalog entry");
             Assert(english[$"couchcoop_connection_error_{key}_action"] == issue.Action,
                 $"{cause} action matches its catalog entry");
+        }
+
+        // Same rule for the control-channel cause, which is built by the seat manager rather than by the
+        // readiness verdict (it is decided at the contact deadline, not from the readiness facts) — so it is
+        // pinned against its own factory rather than against IssueFor.
+        var blocked = HeadlessClientManager.SeatControlBlockedIssue("detail");
+        Assert(english["couchcoop_connection_error_seat_control_summary"] == blocked.Summary
+                && english["couchcoop_connection_error_seat_control_action"] == blocked.Action,
+            "the control-channel cause's English copy matches its catalog entry word for word");
+
+        // And it says nothing about the joining player's device or network: this cause is two processes on the
+        // host's own machine, and every one of those words would send someone to the wrong place. Asserted as
+        // an absence, because that is the mistake this round exists to stop repeating.
+        foreach (var word in new[] { "router", "Wi-Fi", "guest", "device" })
+        {
+            Assert(!blocked.Summary.Contains(word, StringComparison.OrdinalIgnoreCase)
+                    && !blocked.Action.Contains(word, StringComparison.OrdinalIgnoreCase),
+                $"the control-channel copy never mentions '{word}' — nothing outside this computer is involved");
         }
     }
 

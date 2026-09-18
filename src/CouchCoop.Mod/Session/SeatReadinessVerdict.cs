@@ -61,6 +61,17 @@ internal enum SeatReadinessCause
 /// </param>
 /// <param name="ElapsedMs">How long this attempt has been waiting.</param>
 /// <param name="DeadlineMs">The wait it is measured against.</param>
+/// <param name="ControlChannel">
+/// What this host has HEARD from the seat, and REFUSED from anything, on the authenticated control channel —
+/// English, composed once in <c>HeadlessClientManager.DescribeControlChannel</c> for the same reason
+/// <paramref name="ProbeFailure"/> is composed in one place.
+/// <para>
+/// Evidence only: no verdict below turns on it, because the cause it speaks to (the seat cannot reach the host
+/// at all) is settled at the contact deadline rather than here. It prints on EVERY verdict because it is free —
+/// the counters ride the status snapshot the loop already takes — and because its absence is what made a
+/// missing heartbeat unreadable: "nothing arrived" and "this host refused what arrived" were the same silence.
+/// </para>
+/// </param>
 internal sealed record SeatReadinessFacts(
     int ExpectedPort,
     int ReportedPort,
@@ -74,7 +85,8 @@ internal sealed record SeatReadinessFacts(
     int ConnectedBrowserCount,
     long? SeatViewerArrivals,
     long ElapsedMs,
-    long DeadlineMs);
+    long DeadlineMs,
+    string? ControlChannel = null);
 
 /// <summary>A named cause, its English technical detail, and the issue it becomes if the wait runs out.</summary>
 internal sealed record SeatReadinessVerdictResult(SeatReadinessCause Cause, string Detail)
@@ -335,6 +347,9 @@ public static class SeatReadinessVerdict
             + (facts.SeatViewerArrivals is { } arrivals
                 ? arrivals.ToString(CultureInfo.InvariantCulture)
                 : "not reported")
+            // Read as a pair with "authenticated heartbeat fresh" above, which says only that no status is
+            // CURRENT. This says whether one ever arrived, and whether this host threw any away.
+            + (facts.ControlChannel is { Length: > 0 } control ? "; " + control : string.Empty)
             // The monitor keeps producing verdicts after the join wait is over, where there is no deadline left
             // to measure against and quoting one would be an invention.
             + (facts.DeadlineMs > 0

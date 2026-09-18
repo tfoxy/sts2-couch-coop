@@ -77,6 +77,8 @@
   "couchcoop_connection_error_seat_cloud_isolation_action": "書き込む前に停止しました。ゲームを再起動してもう一度お試しください。再発する場合はこのレポートをコピーしてください。",
   "couchcoop_connection_error_seat_silent_summary": "このプレイヤーのゲームは起動して参加しましたが、その後応答しなくなりました。",
   "couchcoop_connection_error_seat_silent_action": "もう一度お試しください。繰り返し発生する場合は、そのプレイヤー自身のログ（パスはこのレポートに記載されています）を確認し、他のMODを無効にして再度お試しください。",
+  "couchcoop_connection_error_seat_control_summary": "このプレイヤーのゲームは動作していますが、あなたのゲームに状況を報告できません。",
+  "couchcoop_connection_error_seat_control_action": "このコンピューターのファイアウォールとセキュリティソフトでSlay the Spire 2を許可し、このコンピューターのVPN・プロキシ・ネットワークフィルタリングソフトを無効にしてから、もう一度お試しください。",
   "couchcoop_connection_error_seat_port_summary": "このコンピューター上の別のプログラムが、このプレイヤーのポートを使用しています。",
   "couchcoop_connection_error_seat_port_action": "ホストコンピューターでそのポートを使用しているプログラム（Slay the Spire 2の別のコピーを含む）を終了してから、もう一度お試しください。",
   "couchcoop_connection_error_seat_port_occupied_summary": "このコンピューター上の別のプログラムが、協力プレイがプレイヤーに割り当てるポートの1つを使用しています。",

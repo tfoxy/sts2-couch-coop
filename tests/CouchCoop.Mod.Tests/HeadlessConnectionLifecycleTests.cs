@@ -26,6 +26,7 @@ internal static class HeadlessConnectionLifecycleTests
         await AHeartbeatWithoutTheCloudDeclarationStopsTheSeat();
         await ASilentSeatIsStoppedAtTheContactDeadline();
         await ASilentSeatThatJoinedIsNotBlamedOnCloudSaves();
+        await ASilentSeatThatIsStillServingBlamesTheControlChannel();
         await EarlyProcessExitFailsTheAttempt();
         await StalledShutdownIsForcedBeforeEnsureReturns();
         await RetryFencesOldGenerationAndEvictsTheOldPeer();
@@ -387,23 +388,59 @@ internal static class HeadlessConnectionLifecycleTests
     private static Task ASilentSeatIsStoppedAtTheContactDeadline()
         => AssertSilentSeatAtContactDeadline(
             member: false,
+            // Nothing this host can reach on the port changes this verdict: a seat the lobby never listed had
+            // none of our code in it, whatever else is answering.
+            serving: true,
             expectedCode: HeadlessClientManager.SeatCloudIsolationCode,
             expectedDetailFragment: "did not report anything",
             because: "a silent seat the lobby never listed is the cloud-isolation issue");
 
-    // The mirror image, and the one this split exists for: the lobby HAS this seat, so CouchCoop demonstrably
+    // The mirror image, and the one that split exists for: the lobby HAS this seat, so CouchCoop demonstrably
     // ran in it (only our patch could have made it join) and the cloud isolation guard demonstrably passed
     // (it runs before that patch and exits the process on failure). Calling that a cloud-save risk was a false
     // alarm on the one subject where a false alarm costs the most.
+    //
+    // …AND THIS SEAT IS ALSO UNREACHABLE on its own port, which is what now earns the "stopped responding"
+    // wording. The leg below is the same silence from a seat that is provably still serving.
     private static Task ASilentSeatThatJoinedIsNotBlamedOnCloudSaves()
         => AssertSilentSeatAtContactDeadline(
             member: true,
+            serving: false,
             expectedCode: HeadlessClientManager.SeatSilentAfterJoinCode,
             expectedDetailFragment: "joined the host's lobby",
-            because: "a silent seat the lobby DOES list is named as a seat that joined and went quiet");
+            because: "a silent seat the lobby lists and the host cannot reach is a seat that joined and stopped");
 
-    private static async Task AssertSilentSeatAtContactDeadline(
-        bool member, string expectedCode, string expectedDetailFragment, string because)
+    /// <summary>
+    /// The field shape from 2026-09-18: the seat joined, bound its port and was still answering — and the host
+    /// called it a startup timeout for 75 seconds because the ONE fact it needed was on the channel that was
+    /// broken. It must now be a cause of its own, and must not carry either of the two wrong stories: that the
+    /// seat stopped, or that another mod is at fault.
+    /// </summary>
+    private static async Task ASilentSeatThatIsStillServingBlamesTheControlChannel()
+    {
+        var row = await AssertSilentSeatAtContactDeadline(
+            member: true,
+            serving: true,
+            expectedCode: HeadlessClientManager.SeatControlBlockedCode,
+            expectedDetailFragment: "could not report a single status",
+            because: "a silent seat that is still serving is named as a blocked control channel");
+        var issue = row.Issue!;
+        Assert(!issue.Summary.Contains("stopped responding", StringComparison.OrdinalIgnoreCase)
+                && !issue.Detail!.Contains("other mod", StringComparison.OrdinalIgnoreCase)
+                && !issue.Detail.Contains("another installed mod", StringComparison.OrdinalIgnoreCase),
+            "…and never tells the operator a running seat stopped, or sends them hunting another mod");
+        Assert(issue.Detail!.Contains("127.0.0.1", StringComparison.Ordinal)
+                && issue.Action.Contains("this computer", StringComparison.OrdinalIgnoreCase),
+            "…and names the wire it is actually about: this computer, talking to itself");
+        Assert(!issue.Action.Contains("network", StringComparison.OrdinalIgnoreCase)
+                || !issue.Action.Contains("router", StringComparison.OrdinalIgnoreCase),
+            "…and never sends anyone to their router for two processes on one machine");
+        Assert(issue.Detail.Contains("this host refused", StringComparison.Ordinal),
+            "…and carries the refusal evidence that separates 'nothing arrived' from 'the host said no'");
+    }
+
+    private static async Task<ConnectionStatusRow> AssertSilentSeatAtContactDeadline(
+        bool member, bool serving, string expectedCode, string expectedDetailFragment, string because)
     {
         var priorContact = Environment.GetEnvironmentVariable(HeadlessClientManager.SeatContactTimeoutEnvironmentVariable);
         var priorReady = Environment.GetEnvironmentVariable(HeadlessClientManager.SeatReadyTimeoutEnvironmentVariable);
@@ -412,7 +449,7 @@ internal static class HeadlessConnectionLifecycleTests
         Environment.SetEnvironmentVariable(HeadlessClientManager.SeatReadyTimeoutEnvironmentVariable, "60");
         var id = BeginAttempt();
         var process = new FakeProcess(42);
-        using var manager = NewManager(_ => process, () => member, () => true);
+        using var manager = NewManager(_ => process, () => member, () => serving);
         try
         {
             var started = Stopwatch.GetTimestamp();
@@ -425,7 +462,8 @@ internal static class HeadlessConnectionLifecycleTests
             Assert(row.Issue?.Code == expectedCode, because);
             Assert(row.Issue!.Detail!.Contains(expectedDetailFragment, StringComparison.Ordinal),
                 $"…and its detail says so ({expectedDetailFragment})");
-            // The false alarm this split removes, asserted as an absence so it cannot come back quietly.
+            // The false alarm the membership split removes, asserted as an absence so it cannot come back
+            // quietly.
             if (member)
             {
                 Assert(!row.Issue!.Summary.Contains("Steam Cloud", StringComparison.Ordinal)
@@ -433,6 +471,7 @@ internal static class HeadlessConnectionLifecycleTests
                     "a seat that joined is never accused of touching the account's Steam Cloud saves");
             }
             Assert(process.Killed, "the silent seat is actually terminated");
+            return row;
         }
         finally
         {

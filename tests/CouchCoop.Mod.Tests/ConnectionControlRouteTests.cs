@@ -14,6 +14,69 @@ internal static class ConnectionControlRouteTests
     {
         await AcceptsOnlyBoundLoopbackReports();
         await RefusesNonLoopbackReports();
+        await EveryRefusalIsCounted();
+    }
+
+    /// <summary>
+    /// A refused status is COUNTED, per seat and per host, with the reason the last one carried.
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// The point of the counters, and why this asserts the zero as hard as the increments: on the host, a seat
+    /// with no heartbeat is the same silence whether nothing ever arrived or everything that arrived was turned
+    /// away — and those two have opposite fixes. Before this, both read as "authenticated heartbeat fresh:
+    /// false" and nothing else. So a host that refused NOTHING has to be able to say so.
+    /// </para>
+    /// <para>
+    /// The two refusals with no entry to charge them to (no token at all, and a token this host does not know)
+    /// are the reason the host-wide pair exists; both are exercised here.
+    /// </para>
+    /// </remarks>
+    private static async Task EveryRefusalIsCounted()
+    {
+        using var root = new TempStaticSpa();
+        await using var server = new CouchCoopBrowserServer(
+            new StaticSpaFileProvider(root.Path), new UnusedAssetAdapter(), envelopeFactory: null,
+            bindAddress: IPAddress.Loopback, preferredPort: 0, isHeadlessClient: true);
+        var baseUri = await server.StartAsync();
+        var session = Guid.NewGuid();
+        HeadlessConnectionControl.Shared.Register(84, 11, session, "counted-token");
+        var before = HeadlessConnectionControl.Shared.Refusals;
+        try
+        {
+            using var client = new HttpClient { BaseAddress = baseUri };
+            Assert((await SendAsync(client, "counted-token", 11, StatusJson(1))).StatusCode == HttpStatusCode.OK,
+                "a healthy report is accepted");
+            var accepted = HeadlessConnectionControl.Shared.Snapshot(84, 11)!;
+            Assert(accepted.AcceptedCount == 1 && accepted.RefusedCount == 0
+                    && accepted.LastRefusal == HeadlessConnectionRejection.None,
+                "…and counted as accepted, with nothing refused and no reason to name");
+            Assert(HeadlessConnectionControl.Shared.Refusals.Count == before.Count,
+                "…and an accepted report never moves the host's refusal count");
+
+            await SendAsync(client, "counted-token", 12, StatusJson(2));
+            var generation = HeadlessConnectionControl.Shared.Snapshot(84, 11)!;
+            Assert(generation.RefusedCount == 1
+                    && generation.LastRefusal == HeadlessConnectionRejection.GenerationMismatch,
+                "a status from a generation this host has replaced is refused, and says so");
+
+            await SendAsync(client, "counted-token", 11, StatusJson(1));
+            var stale = HeadlessConnectionControl.Shared.Snapshot(84, 11)!;
+            Assert(stale.RefusedCount == 2 && stale.LastRefusal == HeadlessConnectionRejection.StaleSequence,
+                "a sequence already seen is refused, and says so");
+            Assert(stale.AcceptedCount == 1, "…and neither refusal is mistaken for something heard");
+
+            await SendAsync(client, "not-a-known-token", 11, StatusJson(3));
+            var unknown = HeadlessConnectionControl.Shared.Refusals;
+            Assert(unknown.Count == before.Count + 3 && unknown.Last == HeadlessConnectionRejection.UnknownToken,
+                "a token this host never issued is counted on the host, which is the only place it can be");
+            Assert(HeadlessConnectionControl.Shared.Snapshot(84, 11)!.RefusedCount == 2,
+                "…and is not charged to an innocent seat");
+        }
+        finally
+        {
+            HeadlessConnectionControl.Shared.Unregister(84, 11);
+        }
     }
 
     private static async Task AcceptsOnlyBoundLoopbackReports()

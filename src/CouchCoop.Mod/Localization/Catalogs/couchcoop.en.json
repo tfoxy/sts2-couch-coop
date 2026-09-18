@@ -91,6 +91,8 @@
   "couchcoop_connection_error_seat_cloud_isolation_action": "It was stopped before it could write anything. Restart the game and try again, and copy this report if it happens again.",
   "couchcoop_connection_error_seat_silent_summary": "This player's game started and joined, then stopped responding.",
   "couchcoop_connection_error_seat_silent_action": "Try again. If it keeps happening, check that player's own log (its path is in this report) and try again with other mods disabled.",
+  "couchcoop_connection_error_seat_control_summary": "This player's game is running, but it cannot report back to your game.",
+  "couchcoop_connection_error_seat_control_action": "Allow Slay the Spire 2 through this computer's firewall and security software, turn off any VPN, proxy or network-filtering software on this computer, then try again.",
   "couchcoop_connection_error_seat_port_summary": "Another program on this computer is using this player's port.",
   "couchcoop_connection_error_seat_port_action": "Close whatever is using that port on the host computer, including another copy of Slay the Spire 2, then try again.",
   "couchcoop_connection_error_seat_port_occupied_summary": "Another program on this computer is using one of the ports Couch Co-Op gives players.",
