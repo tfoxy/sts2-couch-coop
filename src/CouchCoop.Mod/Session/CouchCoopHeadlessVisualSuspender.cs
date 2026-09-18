@@ -1318,9 +1318,10 @@ public static class CouchCoopHeadlessVisualSuspender
     ///
     /// Main-thread-safe: the live read is marshalled via the same <c>Callable.From(...).CallDeferred()</c> idiom
     /// used across this file, with a TaskCompletionSource fallback (mirrors
-    /// <c>CouchCoopWebSocketConnection.AnswerMainThreadPingAsync</c>). In a unit test with no SceneTree/main loop the
-    /// deferred call can't run, so it resolves immediately to the (uncaptured) <see cref="_baselineMaxFps"/> = 0 —
-    /// callers then emit null and nothing breaks.
+    /// <c>CouchCoopWebSocketConnection.AnswerMainThreadPingAsync</c>). Off-engine — every C# test runner here — the
+    /// deferred read is skipped entirely on the <c>CouchCoopMod.EngineAvailable</c> latch and this resolves to the
+    /// (uncaptured) <see cref="_baselineMaxFps"/> = 0, so callers emit null. See the latch's own comment in the body
+    /// for why a try/catch around the native call was never enough.
     /// </summary>
     public static async Task<int> GetEffectiveBaselineMaxFpsAsync()
     {
@@ -1331,6 +1332,23 @@ public static class CouchCoopHeadlessVisualSuspender
             return _baselineMaxFps;
         }
 
+        // THE LATCH, NOT THE TRY/CATCH, IS WHAT MAKES THE NEXT LINE SAFE — the same correction already written out
+        // at CouchCoopCacheRoot's ResolveGameDataDir, for the same reason, because the comment this replaced made
+        // exactly the promise that one warns against. `Callable.From(...).CallDeferred()` is a GodotSharp native
+        // call. The catch below only covers a process where GodotSharp fails to LOAD; in one that has the DLL on
+        // its probing path but no engine behind it — which every C# test runner here is, because they copy
+        // GodotSharp.dll — the managed call BINDS, JITS AND THEN SEGFAULTS, uncatchably. Measured: a bare
+        // CouchCoopBrowserServer exits 139 on its first `/ws`, because CreateSessionEnvelope calls this on the
+        // accept path (dump: signal 11 on the accept thread, this frame on top).
+        //
+        // The old comment's claim — "in a unit test the deferred call can't run, so it resolves immediately …
+        // nothing breaks" — described the THROW path, which is not the path a test takes. Nothing broke only for
+        // as long as every suite that reached here happened to have latched `_baselineCaptured` above first.
+        if (!CouchCoopMod.EngineAvailable)
+        {
+            return _baselineMaxFps; // no engine → the uncaptured baseline (0), and the caller emits null
+        }
+
         // Desktop host / not-yet-ticked: read the live Engine.MaxFps on the game main thread.
         var tcs = new TaskCompletionSource<int>(TaskCreationOptions.RunContinuationsAsynchronously);
         try
@@ -1339,7 +1357,7 @@ public static class CouchCoopHeadlessVisualSuspender
         }
         catch
         {
-            tcs.TrySetResult(_baselineMaxFps); // no game main loop (e.g. tests) → resolve to the uncaptured baseline (0)
+            tcs.TrySetResult(_baselineMaxFps); // GodotSharp failed to LOAD — the case the latch does not cover
         }
 
         try

@@ -174,6 +174,7 @@ if (args is ["lifecycle", ..])
 if (args is ["client-vitals", ..])
 {
     ClientVitalsReceiptTests.Run();
+    await BrowserServerRouteTests.RunClientVitalsReceiptAsync();
     Console.WriteLine("client vitals: ok");
     return;
 }
@@ -2686,6 +2687,33 @@ internal sealed class BrowserServerRouteTests
     }
 
     /// <summary>
+    /// The socket-level census leg, on a server of its own — the <c>client-vitals</c> verb.
+    /// </summary>
+    /// <remarks>
+    /// Registered as its own verb rather than only inside <see cref="RunAsync"/> because the long route sequence
+    /// asserts a great many unrelated things before reaching this one, and a diagnostic channel that can only be
+    /// exercised when every other route contract already passes is a channel nobody runs. Same reason
+    /// <see cref="RunStaticBackgroundRoutesAsync"/> exists, and the setup is copied from it.
+    /// </remarks>
+    internal static async Task RunClientVitalsReceiptAsync()
+    {
+        using var root = new TempStaticRoot();
+        using var cacheRoot = new TempResourceCacheRoot();
+        var runtime = new RecordingSpirectlRuntime();
+        var envelopeFactory = new BrowserStateEnvelopeFactory(
+            new CouchCoopRuntimeHost(new CouchCoopRuntimeDependencies(runtime, runtime, runtime, runtime, runtime, runtime, runtime, runtime, runtime, runtime)));
+        await using var server = new CouchCoopBrowserServer(
+            new StaticSpaFileProvider(root.Path),
+            new CapturingAssetAdapter(),
+            envelopeFactory,
+            resourceCacheRoot: cacheRoot.Path);
+        var baseUri = await server.StartAsync();
+        await AssertClientVitalsReceiptAsync(baseUri);
+        await server.StopAsync();
+        Console.WriteLine("client vitals receipt: ok");
+    }
+
+    /// <summary>
     /// The browser's resource census over a real socket: a well-formed one becomes a report fact, and a
     /// malformed one changes nothing.
     /// </summary>
@@ -2697,16 +2725,12 @@ internal sealed class BrowserServerRouteTests
     /// no reply; a census is told, not asked).
     /// </para>
     /// <para>
-    /// <b>UNRUN as of 2026-09-18, and not because of anything it asserts.</b> <see cref="RunAsync"/> cannot reach
-    /// this leg on <c>main</c>: the sequence above it fails first at <c>AssertJoinedRunSession</c> (the join reply
-    /// is missing fields), behind three further pre-existing failures earlier in the runner — the QR layout
-    /// contract and both <c>/bg/</c> URL-grammar suites. Lifting this leg into a verb of its own does not help
-    /// either: a bare server's websocket session build hits an ungated off-engine native call and exits 139,
-    /// the family documented at the <c>EngineAvailable</c> latch in <c>CouchCoopCacheRoot</c>. So the parse, the
-    /// refusal rules and the registry-to-report path are covered by <c>ClientVitalsReceiptTests</c>, which does
-    /// run; what is uncovered is the dispatch branch in <c>CouchCoopWebSocketConnection</c>, which is four lines
-    /// shaped exactly like the two sibling receipts beside it — neither of which has socket-level coverage
-    /// either. Delete this note when the runner is repaired and this leg has actually gone green.
+    /// Reached through the <c>client-vitals</c> verb, not through <see cref="RunAsync"/>, which still cannot get
+    /// here on <c>main</c>: the sequence above this leg fails first at <c>AssertJoinedRunSession</c>, behind three
+    /// further pre-existing failures earlier in the runner. Standing this leg up on a server of its own is what
+    /// found the segfault now fixed at <c>CouchCoopHeadlessVisualSuspender.GetEffectiveBaselineMaxFpsAsync</c> —
+    /// a bare server used to exit 139 on its first <c>/ws</c>, because the session envelope read
+    /// <c>Engine.MaxFps</c> through an ungated native call on the accept path.
     /// </para>
     /// </remarks>
     private static async Task AssertClientVitalsReceiptAsync(Uri baseUri)
