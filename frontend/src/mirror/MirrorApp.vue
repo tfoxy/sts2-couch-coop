@@ -396,12 +396,44 @@ function onFirstSceneFramePresented(attemptId: string): void {
   const target = presentationTarget.value;
   if (target?.attemptId === attemptId && target.view === activeClient && activeClient.status === "connected") {
     target.source.sendClientFramePresented(attemptId);
+    startClientVitals();
   }
 }
 function onSceneRenderError(attemptId: string, error: unknown): void {
   const target = presentationTarget.value;
   if (target?.attemptId === attemptId && target.view === activeClient) {
     target.source.sendClientViewError(attemptId, error);
+  }
+}
+
+// THE CLIENT-VITALS CENSUS (see @/mirror/clientVitals). Driven from here rather than from inside the client
+// because it reads the DOM, the window and the settings store — none of which the transport should know about.
+//
+// It starts at the FIRST PRESENTED FRAME and not at connect, and that is the whole design: the census is about
+// what the page is HOLDING, and before a frame has been drawn it is holding nothing worth reporting. It is also
+// the moment the reported iPhone crash lives inside — first frame at 2169ms, dead at 2788ms — so a 2s cadence
+// starting here lands at least one census inside the window that kills the tab.
+//
+// Sent on the SOURCE client (the host socket) exactly as the frame-presented and view-error receipts are: after a
+// headless redirect the seat socket is the one that dies, and a census that rode it would die with it.
+const VITALS_CADENCE_MS = 2_000;
+let vitalsTimer: ReturnType<typeof setInterval> | null = null;
+function pushClientVitals(): void {
+  const target = presentationTarget.value;
+  if (target && target.view === activeClient && activeClient.status === "connected") {
+    target.source.sendClientVitals(target.attemptId);
+  }
+}
+function startClientVitals(): void {
+  pushClientVitals();
+  if (vitalsTimer === null && typeof setInterval === "function") {
+    vitalsTimer = setInterval(pushClientVitals, VITALS_CADENCE_MS);
+  }
+}
+function stopClientVitals(): void {
+  if (vitalsTimer !== null) {
+    clearInterval(vitalsTimer);
+    vitalsTimer = null;
   }
 }
 
@@ -1277,6 +1309,7 @@ if (typeof window !== "undefined") {
 }
 
 onBeforeUnmount(() => {
+  stopClientVitals();
   if (reconnectTimer !== null) {
     clearTimeout(reconnectTimer);
     reconnectTimer = null;

@@ -14,6 +14,11 @@ import {
   type BrowserSessionEnvelope
 } from "@/protocol/browserEnvelope";
 import type { MirrorActionMessage } from "@/mirror/mapNodeTap";
+import {
+  collectClientVitals,
+  defaultClientVitalsSources,
+  type ClientVitalsSources
+} from "@/mirror/clientVitals";
 import { publishAtlasManifest } from "@/mirror/imagePrefetch";
 import { reproRecorder } from "@/mirror/reproRecorder";
 import { publishAssetVersion } from "@/join/assetVersion";
@@ -185,6 +190,11 @@ export interface MirrorClient {
   sendSceneAck(): void;
   sendClientFramePresented(attemptId: string): void;
   sendClientViewError(attemptId: string, error: unknown, code?: "browser-render-failed" | "browser-transport-lost"): void;
+  // The bounded resource census (see @/mirror/clientVitals for what it carries and why). Throttled HERE rather
+  // than only at the caller, because the reason this exists is a page already short of memory: the guard has to
+  // hold even if some future caller drives it from a frame callback. Returns whether it actually sent, which is
+  // what the specs assert on.
+  sendClientVitals(attemptId: string): boolean;
   // WS-B STREAM GATE. Turn the host's `scene-delta` stream on/off for THIS connection without reconnecting.
   // OFF: the host sends nothing at all and this client applies nothing (a viewer sitting on the join picker must
   // not pull — or render — a multiplayer host's game in the background). ON: the host replies with a fresh FULL
@@ -282,8 +292,12 @@ export function connectMirrorClient(options: {
   // permanently gone. Reloading the page would only re-open this dying port, so the app can fall back to the
   // original host (picker + reconnect) instead. Without this handler the client reloads the page.
   onHostGone?: (reason: string) => void;
+  // TEST SEAM for the client-vitals census: where it reads the page from. Production leaves it unset and gets
+  // `defaultClientVitalsSources()`, which reads the real document, window and settings store.
+  vitalsSources?: ClientVitalsSources;
 } = {}): MirrorClient {
   const sourceLocation = options.location ?? window.location;
+  const vitalsSources = options.vitalsSources ?? defaultClientVitalsSources();
   const WebSocketCtor = options.WebSocketCtor ?? WebSocket;
   const diagnosticSocketRole = lifecycleSocketRole(options.url !== undefined);
   const state = createMirrorState();
@@ -303,6 +317,7 @@ export function connectMirrorClient(options: {
     sendSceneAck,
     sendClientFramePresented,
     sendClientViewError,
+    sendClientVitals,
     sendJoin,
     sendSettings,
     sendWatch,
@@ -493,9 +508,14 @@ export function connectMirrorClient(options: {
   // backstop it always was for a delta that never reaches a render.
   const SCENE_ACK = '{"type":"scene-ack"}';
 
-  function sendConnectionReceipt(attemptId: string, fields: Record<string, string>): void {
-    if (!attemptId || attemptId.length > 128 || socket.readyState !== WebSocketCtor.OPEN) return;
-    try { socket.send(JSON.stringify({ ...fields, attemptId })); } catch { /* Racing close. */ }
+  function sendConnectionReceipt(attemptId: string, fields: Record<string, string | number>): boolean {
+    if (!attemptId || attemptId.length > 128 || socket.readyState !== WebSocketCtor.OPEN) return false;
+    try {
+      socket.send(JSON.stringify({ ...fields, attemptId }));
+      return true;
+    } catch {
+      return false; // Racing close.
+    }
   }
 
   function sendClientFramePresented(attemptId: string): void {
@@ -508,6 +528,23 @@ export function connectMirrorClient(options: {
     sendConnectionReceipt(attemptId, {
       type: "client-view-error", code: code ?? "browser-render-failed", detail: detail.slice(0, 2048)
     });
+  }
+
+  // The census cadence. Slow on purpose: its value is "what was this page holding shortly before it died", and a
+  // kill is not something you can sample your way closer to — the host keeps only the latest, and every send is a
+  // JSON.stringify plus a DOM census on a device we already suspect is struggling. 2s costs nothing and is far
+  // inside the ~600ms-after-first-frame window the reported crash occupied.
+  const VITALS_INTERVAL_MS = 2_000;
+  let lastVitalsAt = Number.NEGATIVE_INFINITY;
+
+  function sendClientVitals(attemptId: string): boolean {
+    const now = performance.now();
+    if (now - lastVitalsAt < VITALS_INTERVAL_MS) return false;
+    const vitals = collectClientVitals(vitalsSources);
+    // Stamped BEFORE the send so a throw (a racing close) still spends the slot: a socket that is going away is
+    // not a reason to start censusing the DOM every frame.
+    lastVitalsAt = now;
+    return sendConnectionReceipt(attemptId, { type: "client-vitals", ...vitals });
   }
 
   function sendSceneAck(): void {

@@ -917,6 +917,22 @@ public sealed class CouchCoopWebSocketConnection
                     continue;
                 }
 
+                if (string.Equals(type, "client-vitals", StringComparison.Ordinal))
+                {
+                    // The browser's bounded resource census. Unlike the two receipts above it carries no attempt
+                    // verdict and changes nothing about the row's outcome — it is evidence for a report that may
+                    // never be written, kept because the failure it exists for (the web view being killed by the
+                    // phone's OS) destroys every other witness. See ClientVitalsReceipt for why the host renders
+                    // the line rather than storing what it was sent.
+                    var vitals = ClientVitalsReceipt.Render(document.RootElement);
+                    if (vitals is not null)
+                    {
+                        ConnectionRegistry.Shared.RecordDiagnostic(session.Id, ClientVitalsReceipt.FactKey, vitals);
+                    }
+
+                    continue;
+                }
+
                 if (string.Equals(type, "scene-ack", StringComparison.Ordinal))
                 {
                     // Flow control: the client finished rendering the last scene delta → release the next one.

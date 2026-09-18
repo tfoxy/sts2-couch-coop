@@ -44,6 +44,7 @@
     <Compile Include="../CouchCoop.Mod.Tests/WindowsFirewallProbeTests.cs" Link="WindowsFirewallProbeTests.cs" />
     <Compile Include="../CouchCoop.Mod.Tests/NativeLogLatchTests.cs" Link="NativeLogLatchTests.cs" />
     <Compile Include="../CouchCoop.Mod.Tests/ConnectionDeviceLabelTests.cs" Link="ConnectionDeviceLabelTests.cs" />
+    <Compile Include="../CouchCoop.Mod.Tests/ClientVitalsReceiptTests.cs" Link="ClientVitalsReceiptTests.cs" />
     <Compile Include="../CouchCoop.Mod.Tests/ConnectionReportFormatterTests.cs" Link="ConnectionReportFormatterTests.cs" />
     <Compile Include="../CouchCoop.Mod.Tests/ConnectionAttemptLogsTests.cs" Link="ConnectionAttemptLogsTests.cs" />
     <Compile Include="../CouchCoop.Mod.Tests/ConnectionControlTests.cs" Link="ConnectionControlTests.cs" />
