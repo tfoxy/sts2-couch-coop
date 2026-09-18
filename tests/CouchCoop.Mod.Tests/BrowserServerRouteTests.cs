@@ -148,6 +148,13 @@ if (args is ["network", ..])
     return;
 }
 
+if (args is ["lifecycle", ..])
+{
+    BrowserLifecycleDiagnosticsTests.Run();
+    Console.WriteLine("lifecycle: ok");
+    return;
+}
+
 if (args is ["connections", ..])
 {
     ConnectionRegistryTests.Run();
@@ -727,6 +734,13 @@ internal sealed class BrowserServerRouteTests
         var rootResponse = await GetAsync(baseUri, "/");
         Expect(rootResponse.StatusLine.Contains("200 OK", StringComparison.Ordinal), "root serves index");
         Expect(rootResponse.Body.Contains("spa-index", StringComparison.Ordinal), "root body is index");
+        Expect(!rootResponse.Body.Contains("couchcoop-lifecycle", StringComparison.Ordinal),
+            "ordinary hosting does not expose the synthetic lifecycle channel");
+        Expect(!rootResponse.Body.Contains("couchcoop-synthetic-seat", StringComparison.Ordinal),
+            "ordinary hosting does not expose a synthetic seat redirect");
+        var inertLifecycle = await PostJsonAsync(baseUri, BrowserLifecycleDiagnostics.Route, "{}");
+        Expect(inertLifecycle.StatusLine.Contains("404 NotFound", StringComparison.Ordinal),
+            "the lifecycle POST route is absent unless a validated diagnostics directory enabled it");
 
         var fallback = await GetAsync(baseUri, "/players/alice");
         Expect(fallback.StatusLine.Contains("200 OK", StringComparison.Ordinal), "SPA route falls back");
@@ -3465,6 +3479,27 @@ internal sealed class BrowserServerRouteTests
         }
 
         return new HttpProbeResponse(lines.FirstOrDefault() ?? string.Empty, headers, body);
+    }
+
+    private static async Task<HttpProbeResponse> PostJsonAsync(Uri baseUri, string path, string body)
+    {
+        using var client = new TcpClient();
+        await client.ConnectAsync(IPAddress.Loopback, baseUri.Port);
+        await using var stream = client.GetStream();
+        var bytes = Encoding.UTF8.GetBytes(body);
+        var headers = Encoding.ASCII.GetBytes(
+            $"POST {path} HTTP/1.1\r\nHost: 127.0.0.1:{baseUri.Port}\r\nContent-Type: application/json\r\nContent-Length: {bytes.Length}\r\nConnection: close\r\n\r\n");
+        await stream.WriteAsync(headers);
+        await stream.WriteAsync(bytes);
+        using var memory = new MemoryStream();
+        await stream.CopyToAsync(memory);
+        var text = Encoding.UTF8.GetString(memory.ToArray());
+        var split = text.IndexOf("\r\n\r\n", StringComparison.Ordinal);
+        var headerText = split >= 0 ? text[..split] : text;
+        var responseBody = split >= 0 ? text[(split + 4)..] : string.Empty;
+        var lines = headerText.Split("\r\n", StringSplitOptions.RemoveEmptyEntries);
+        return new HttpProbeResponse(lines.FirstOrDefault() ?? string.Empty,
+            new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase), responseBody);
     }
 
     // Binary-safe GET: the body is kept as raw bytes (GetAsync UTF-8 decodes it, which corrupts a clip

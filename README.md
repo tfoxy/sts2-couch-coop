@@ -75,6 +75,11 @@ each seat a fake `$HOME` and links ordinary home files back to the host while ke
 has yet played a full game session on a Mac. Steam, FMOD, or code using `getpwuid` may still choose paths outside
 `$HOME`; report any Mac session result, especially a save or mod-loading problem.
 
+For a startup failure, the read-only `scripts/macos-support-diagnostics.sh` helper can summarize the package,
+signature verdicts, and allowlisted startup checkpoints without copying or walking game content. Its explicit
+arguments and the limits of hosted Mac/iPhone checks are documented in
+[Steam-free macOS and iPhone checks](docs/agents/steam-free-macos-iphone.md).
+
 ### Steam Deck
 
 Steam Deck can host CouchCoop, in Game Mode as well as Desktop Mode. The lobby's **Couch Co-op QR Code** button cannot be reached by the controller's normal menu navigation, so it has its own binding: press the west face button (**X** on the Deck) while the lobby is on screen. The button shows that glyph whenever a controller is in use.

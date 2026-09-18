@@ -16,10 +16,20 @@ using Spirectl.Sts2.Core.State;
 using Spirectl.Sts2.Embedding;
 
 var options = HarnessOptions.Parse(args);
+static CouchCoopRuntimeDependencies Dependencies(FakeSpirectlRuntime runtime)
+    => new(runtime, runtime, runtime, runtime, runtime, runtime, runtime, runtime, runtime, runtime);
+if (options.Mode == HarnessMode.IphoneBurstSelfTest)
+{
+    FakeSpirectlRuntime.AssertIphoneBurstShape();
+    await FakeSpirectlRuntime.AssertIphoneBurstFlowAsync();
+    Console.WriteLine("iphone-burst-self-test: ok");
+    return;
+}
 if (!Directory.Exists(options.StaticRoot))
 {
     throw new DirectoryNotFoundException($"Static root does not exist: {options.StaticRoot}");
 }
+
 
 using var stop = new CancellationTokenSource();
 void RequestStop()
@@ -40,16 +50,37 @@ Console.CancelKeyPress += (_, eventArgs) =>
 };
 AppDomain.CurrentDomain.ProcessExit += (_, _) => RequestStop();
 
+var diagnostics = options.ArtifactDirectory is null ? null : new BrowserLifecycleDiagnostics(options.ArtifactDirectory);
+var runtime = new FakeSpirectlRuntime(options.Mode == HarnessMode.IphoneBurst
+    ? HarnessMode.IphoneBurstControl
+    : options.Mode);
 await using var server = new CouchCoopBrowserServer(
     new StaticSpaFileProvider(options.StaticRoot),
     new FakeAssetAdapter(),
-    new BrowserStateEnvelopeFactory(new CouchCoopRuntimeHost(new CouchCoopRuntimeDependencies(new FakeSpirectlRuntime(options.Mode), new FakeSpirectlRuntime(options.Mode), new FakeSpirectlRuntime(options.Mode), new FakeSpirectlRuntime(options.Mode), new FakeSpirectlRuntime(options.Mode), new FakeSpirectlRuntime(options.Mode), new FakeSpirectlRuntime(options.Mode), new FakeSpirectlRuntime(options.Mode), new FakeSpirectlRuntime(options.Mode), new FakeSpirectlRuntime(options.Mode)))),
+    new BrowserStateEnvelopeFactory(new CouchCoopRuntimeHost(Dependencies(runtime))),
     bindAddress: IPAddress.Loopback,
     preferredPort: options.Port,
-    resourceCacheRoot: Environment.GetEnvironmentVariable("COUCHCOOP_CACHE_ROOT"));
+    resourceCacheRoot: Environment.GetEnvironmentVariable("COUCHCOOP_CACHE_ROOT"),
+    lifecycleDiagnostics: diagnostics,
+    lifecycleSocketRole: options.Mode == HarnessMode.IphoneBurst ? "host" : null,
+    onSceneAck: runtime.ReleaseIphoneBurst);
 
 var baseUri = await server.StartAsync(stop.Token).ConfigureAwait(false);
-Console.WriteLine(JsonSerializer.Serialize(new { baseUrl = baseUri.ToString() }));
+// iphone-burst deliberately owns TWO real browser servers. The control remains alive when the browser enters the
+// seat-shaped scene server, matching the production host/seat socket lifetime without launching a game process.
+var seatRuntime = options.Mode == HarnessMode.IphoneBurst ? new FakeSpirectlRuntime(HarnessMode.IphoneBurst) : null;
+await using var seatServer = options.Mode == HarnessMode.IphoneBurst
+    ? new CouchCoopBrowserServer(
+        new StaticSpaFileProvider(options.StaticRoot), new FakeAssetAdapter(),
+        new BrowserStateEnvelopeFactory(new CouchCoopRuntimeHost(Dependencies(seatRuntime!))),
+        bindAddress: IPAddress.Loopback, preferredPort: 0,
+        resourceCacheRoot: Environment.GetEnvironmentVariable("COUCHCOOP_CACHE_ROOT"),
+        lifecycleDiagnostics: diagnostics, lifecycleSocketRole: "seat",
+        onSceneAck: seatRuntime!.ReleaseIphoneBurst)
+    : null;
+var seatUri = seatServer is null ? null : await seatServer.StartAsync(stop.Token).ConfigureAwait(false);
+if (seatUri is not null) server.SyntheticSeatPort = seatUri.Port;
+Console.WriteLine(JsonSerializer.Serialize(new { baseUrl = baseUri.ToString(), seatBaseUrl = seatUri?.ToString(), mode = options.Mode.ToString().ToLowerInvariant(), artifactDirectory = options.ArtifactDirectory }));
 Console.Out.Flush();
 
 // M3 WS-T host-discovery leg: also answer UDP discovery probes on the same port the TCP server chose, so a
@@ -83,19 +114,25 @@ catch (OperationCanceledException)
 }
 
 await server.StopAsync(CancellationToken.None).ConfigureAwait(false);
+if (seatServer is not null) await seatServer.StopAsync(CancellationToken.None).ConfigureAwait(false);
 
-internal sealed record HarnessOptions(string StaticRoot, int Port, HarnessMode Mode)
+internal sealed record HarnessOptions(string StaticRoot, int Port, HarnessMode Mode, string? ArtifactDirectory)
 {
     public static HarnessOptions Parse(string[] args)
     {
         var staticRoot = Path.GetFullPath(Path.Combine(AppContext.BaseDirectory, "../../../../../frontend/dist"));
         var port = 13337;
         var mode = HarnessMode.Run;
+        string? artifactDirectory = null;
 
         for (var index = 0; index < args.Length; index++)
         {
             switch (args[index])
             {
+                case "--help":
+                    Console.WriteLine("HostedServerHarness: --mode iphone-burst --artifact-dir PATH [--static-root PATH] [--port PORT]");
+                    Environment.Exit(0);
+                    break;
                 // The real game launcher passes these headless/bootstrap flags. The harness does not need
                 // them, but it must tolerate them so browser join tests can complete the spawn path.
                 case "--headless":
@@ -125,12 +162,18 @@ internal sealed record HarnessOptions(string StaticRoot, int Port, HarnessMode M
                 case "--mode":
                     mode = ParseMode(RequireValue(args, ref index, "--mode"));
                     break;
+                case "--artifact-dir":
+                    artifactDirectory = RequireValue(args, ref index, "--artifact-dir");
+                    break;
                 default:
                     throw new ArgumentException($"Unknown argument: {args[index]}");
             }
         }
 
-        return new HarnessOptions(Path.GetFullPath(staticRoot), port, mode);
+        if (mode == HarnessMode.IphoneBurst && string.IsNullOrWhiteSpace(artifactDirectory))
+            throw new ArgumentException("--mode iphone-burst requires --artifact-dir PATH.");
+        return new HarnessOptions(Path.GetFullPath(staticRoot), port, mode,
+            artifactDirectory is null ? null : Path.GetFullPath(artifactDirectory));
     }
 
     private static string RequireValue(string[] args, ref int index, string name)
@@ -153,6 +196,8 @@ internal sealed record HarnessOptions(string StaticRoot, int Port, HarnessMode M
             "unsupported-run" => HarnessMode.UnsupportedRun,
             "singleplayer-ambiguous" => HarnessMode.SingleplayerAmbiguous,
             "singleplayer-safe" => HarnessMode.SingleplayerSafe,
+            "iphone-burst" => HarnessMode.IphoneBurst,
+            "iphone-burst-self-test" => HarnessMode.IphoneBurstSelfTest,
             _ => throw new ArgumentException($"Unknown harness mode: {value}")
         };
 }
@@ -164,7 +209,10 @@ internal enum HarnessMode
     Unsupported,
     UnsupportedRun,
     SingleplayerAmbiguous,
-    SingleplayerSafe
+    SingleplayerSafe,
+    IphoneBurst,
+    IphoneBurstControl,
+    IphoneBurstSelfTest
 }
 
 internal sealed class FakeAssetAdapter : ICouchCoopAssetHttpAdapter
@@ -236,6 +284,11 @@ internal sealed class FakeAssetAdapter : ICouchCoopAssetHttpAdapter
                 : Cached(RawTestResource, "text/plain; charset=utf-8"));
         }
 
+        if (opaqueKey.StartsWith("res://synthetic/iphone/", StringComparison.Ordinal))
+        {
+            return ServeSyntheticIphonePngAsync(opaqueKey, cancellationToken);
+        }
+
         // WS-U e2e fallback: any res:// image key → the deterministic 1x1 PNG (identical bytes cold + warm).
         if (_fakeAny && opaqueKey.StartsWith("res://", StringComparison.Ordinal) && IsImageKey(opaqueKey))
         {
@@ -250,6 +303,18 @@ internal sealed class FakeAssetAdapter : ICouchCoopAssetHttpAdapter
             [
                 new EmbeddableAssetNotice("missing-asset", "error", "Fake provider has no asset for this key.", "key")
             ])));
+    }
+
+    private static async Task<CouchCoopAssetHttpResponse> ServeSyntheticIphonePngAsync(string key, CancellationToken cancellationToken)
+    {
+        var pieces = (key.Split('/').LastOrDefault() ?? "0-16.png").Split('-', '.', StringSplitOptions.RemoveEmptyEntries);
+        _ = int.TryParse(pieces.ElementAtOrDefault(0), out var index);
+        _ = int.TryParse(pieces.ElementAtOrDefault(1), out var dimension);
+        dimension = dimension is 16 or 24 or 32 or 48 or 64 or 96 ? dimension : 16;
+        var delay = index switch { < 6 => 0, < 12 => 50, < 18 => 150, _ => 400 };
+        if (delay > 0) await Task.Delay(delay, cancellationToken).ConfigureAwait(false);
+        if (index >= 22) await SyntheticBurstResources.FinalGroup.Task.WaitAsync(cancellationToken).ConfigureAwait(false);
+        return Cached(BuildPatternPng(dimension, index), "image/png");
     }
 
     private static CouchCoopAssetHttpResponse Cached(byte[] payload, string contentType)
@@ -273,6 +338,34 @@ internal sealed class FakeAssetAdapter : ICouchCoopAssetHttpAdapter
     // identical every call, so the cold and warm cache runs render identical frames. Built with a real zlib IDAT +
     // CRC32 chunks so it is guaranteed decodable (a hand-typed base64 blob risks a wrong CRC → decode failure).
     private static readonly byte[] OnePng = BuildOnePng();
+
+    private static byte[] BuildPatternPng(int size, int seed)
+    {
+        var raw = new byte[(size * 4 + 1) * size];
+        for (var y = 0; y < size; y++)
+        {
+            raw[y * (size * 4 + 1)] = 0;
+            for (var x = 0; x < size; x++)
+            {
+                var at = y * (size * 4 + 1) + 1 + x * 4;
+                var bright = ((x / 4 + y / 4 + seed) & 1) == 0;
+                raw[at] = bright ? (byte)(30 + seed * 7) : (byte)220;
+                raw[at + 1] = bright ? (byte)170 : (byte)(30 + seed * 3);
+                raw[at + 2] = bright ? (byte)240 : (byte)80;
+                raw[at + 3] = 255;
+            }
+        }
+        using var compressed = new System.IO.MemoryStream();
+        using (var zlib = new System.IO.Compression.ZLibStream(compressed, System.IO.Compression.CompressionLevel.Fastest, leaveOpen: true)) zlib.Write(raw);
+        using var output = new System.IO.MemoryStream();
+        output.Write(new byte[] { 0x89, 0x50, 0x4E, 0x47, 0x0D, 0x0A, 0x1A, 0x0A });
+        var ihdr = new byte[13];
+        System.Buffers.Binary.BinaryPrimitives.WriteUInt32BigEndian(ihdr, (uint)size);
+        System.Buffers.Binary.BinaryPrimitives.WriteUInt32BigEndian(ihdr.AsSpan(4), (uint)size);
+        ihdr[8] = 8; ihdr[9] = 6;
+        WriteChunk(output, "IHDR", ihdr); WriteChunk(output, "IDAT", compressed.ToArray()); WriteChunk(output, "IEND", []);
+        return output.ToArray();
+    }
 
     private static byte[] BuildOnePng()
     {
@@ -337,6 +430,8 @@ internal sealed class FakeAssetAdapter : ICouchCoopAssetHttpAdapter
 internal sealed class FakeSpirectlRuntime : IRuntimeCapabilitySource, IRuntimeAssetSource, IRuntimeStateSource, IAnimationHintSource, IRuntimeSceneDeltaSource, IGameModelSource, ISpineCatalogSource, ISpineGeoClipBaker, ISemanticActionSource, IRuntimeSceneWatchControlSource
 {
     private readonly HarnessMode _mode;
+    private Action<RuntimeSceneDelta>? _sceneCallback;
+    private int _burstReleased;
 
     public IRuntimeSceneWatchControls SceneWatchControls { get; } = new NoopSceneWatchControls();
 
@@ -348,7 +443,19 @@ internal sealed class FakeSpirectlRuntime : IRuntimeCapabilitySource, IRuntimeAs
     public ISpirectlAssetProvider Assets { get; } = new FakeSpirectlAssetProvider();
 
     public EmbeddableRuntimeCapabilities GetCapabilities()
-        => new(
+    {
+        var capabilities = new List<EmbeddableRuntimeCapability>
+        {
+            Capability(CouchCoopRuntimeHost.StateCapability),
+            Capability(CouchCoopRuntimeHost.GameModelsCapability),
+            Capability(CouchCoopRuntimeHost.SemanticActionsCapability),
+            Capability(CouchCoopRuntimeHost.AssetExtractionCapability),
+            Capability(CouchCoopRuntimeHost.LiveSts2HostCapability)
+        };
+        if (_mode == HarnessMode.IphoneBurst)
+            capabilities.Insert(1, Capability(CouchCoopRuntimeHost.SceneCapability));
+
+        return new(
             "spirectl/v1",
             "test-game",
             "test-bridge",
@@ -356,25 +463,23 @@ internal sealed class FakeSpirectlRuntime : IRuntimeCapabilitySource, IRuntimeAs
             RuntimeAttachmentState.Attached,
             DataSourceKind.Stub,
             Provisional: false,
-            [
-                Capability(CouchCoopRuntimeHost.StateCapability),
-                Capability(CouchCoopRuntimeHost.GameModelsCapability),
-                Capability(CouchCoopRuntimeHost.SemanticActionsCapability),
-                Capability(CouchCoopRuntimeHost.AssetExtractionCapability),
-                Capability(CouchCoopRuntimeHost.LiveSts2HostCapability)
-            ],
+            capabilities,
             []);
+    }
 
     public CurrentStateResult GetCurrentState(CurrentStateRequest request)
-        => new(
+    {
+        var isControlLobby = _mode is HarnessMode.Lobby or HarnessMode.IphoneBurstControl;
+        return new(
             true,
             new StateSnapshot(
                 StateSnapshot.CurrentSchemaVersion,
                 "en",
-                _mode == HarnessMode.Lobby ? "screens/character_select_screen" : "run",
-                _mode == HarnessMode.Lobby ? CreateStateCharacterSelect() : null,
-                _mode == HarnessMode.Lobby ? null : CreateStateRun(["Host", "Alice", "Bob"])),
+                isControlLobby ? "screens/character_select_screen" : "run",
+                isControlLobby ? CreateStateCharacterSelect() : null,
+                isControlLobby ? null : CreateStateRun(["Host", "Alice", "Bob"])),
             null);
+    }
 
     // Required by ISpirectlRuntime; unreachable from any route the harness serves.
     public EmbeddableAssetBatchResult GetPresentationAssets(PresentationAssetBatchRequest request) => new("ok", []);
@@ -423,7 +528,116 @@ internal sealed class FakeSpirectlRuntime : IRuntimeCapabilitySource, IRuntimeAs
         RuntimeSceneSubscriptionRequest request,
         Action<RuntimeSceneDelta> onDelta,
         Action<EmbeddableRuntimeError>? onError = null)
-        => new NoopDisposable();
+    {
+        _sceneCallback = onDelta;
+        if (_mode == HarnessMode.IphoneBurst)
+        {
+            Console.Error.WriteLine("iphone-burst scene subscription active");
+            _ = Task.Run(async () =>
+            {
+                try
+                {
+                    await Task.Delay(80).ConfigureAwait(false);
+                    onDelta(BuildIphoneKeyframe());
+                    Console.Error.WriteLine("iphone-burst keyframe emitted");
+                }
+                catch (Exception exception)
+                {
+                    Console.Error.WriteLine($"iphone-burst keyframe failed: {exception.GetType().Name}: {exception.Message}");
+                }
+            });
+        }
+        return new NoopDisposable();
+    }
+
+    public void ReleaseIphoneBurst()
+    {
+        if (_mode != HarnessMode.IphoneBurst || Interlocked.Exchange(ref _burstReleased, 1) != 0) return;
+        SyntheticBurstResources.FinalGroup.TrySetResult();
+        _ = Task.Run(async () =>
+        {
+            // The final resource group and the incremental scene change are released only by the first actual
+            // browser scene acknowledgement, not a timer.  This is the synthetic slow-Safari survival boundary.
+            await Task.Delay(20).ConfigureAwait(false);
+            _sceneCallback?.Invoke(BuildIphoneDelta());
+        });
+    }
+
+    internal static RuntimeSceneDelta BuildIphoneKeyframe()
+    {
+        var nodes = new List<RuntimeSceneNodeDelta>();
+        var order = new List<string>();
+        nodes.Add(Node("root", null, "SyntheticRoot", "Control", 0, 0, 1920, 1080, null, null));
+        order.Add("root");
+        for (var index = 0; index < 64; index++)
+        {
+            var text = string.Concat(Enumerable.Range(0, 3).Select(offset => char.ConvertFromUtf32(0x0400 + index * 3 + offset)));
+            var id = $"text-{index}";
+            nodes.Add(Node(id, "root", id, "Label", 40 + (index % 8) * 230, 40 + (index / 8) * 100, 210, 72, text, null));
+            order.Add(id);
+        }
+        foreach (var control in new[] { ("control-panel", "Panel", 120d, 690d), ("control-play", "Button", 390d, 690d), ("control-ready", "Button", 660d, 690d) })
+        {
+            nodes.Add(Node(control.Item1, "root", control.Item1, control.Item2, control.Item3, control.Item4, 220, 80, control.Item1, null));
+            order.Add(control.Item1);
+        }
+        int[] dimensions = [16, 24, 32, 48, 64, 96];
+        for (var index = 0; index < 24; index++)
+        {
+            var dimension = dimensions[index % dimensions.Length];
+            var id = $"image-{index}";
+            nodes.Add(Node(id, "root", id, "TextureRect", 30 + (index % 12) * 155, 850 + (index / 12) * 100, 90, 90, null,
+                new RuntimeSceneResourceRefSnapshot("texture", $"res://synthetic/iphone/{index}-{dimension}.png", "CompressedTexture2D", id)));
+            order.Add(id);
+        }
+        return new RuntimeSceneDelta(true, "run", "synthetic:iphone-burst", nodes, [], order, TransformSpace: "local");
+    }
+
+    internal static RuntimeSceneDelta BuildIphoneDelta()
+    {
+        var changed = new List<RuntimeSceneNodeDelta>();
+        for (var index = 0; index < 8; index++)
+            changed.Add(Node($"text-{index}", "root", null, null, 90 + index * 210, 120, 210, 72, $"delta-{index}", null,
+                new RuntimeSceneColorSnapshot(index / 8.0, 0.3, 1 - index / 8.0, 1, null)));
+        changed.Add(Node("delta-added", "root", "delta-added", "Label", 840, 720, 240, 80, "second-ack", null));
+        return new RuntimeSceneDelta(false, "run", "synthetic:iphone-burst", changed, [], null, TransformSpace: "local");
+    }
+
+    private static RuntimeSceneNodeDelta Node(string id, string? parent, string? name, string? type, double x, double y, double width, double height, string? text, RuntimeSceneResourceRefSnapshot? texture, RuntimeSceneColorSnapshot? color = null)
+        => new(
+            id, parent, name, type, null, true, 1, 0, 0, texture, false,
+            text is null ? null : new RuntimeSceneTextPropertiesSnapshot(text, text, false, "synthetic", "iphone-burst", null, 28, null, color ?? new RuntimeSceneColorSnapshot(1, 1, 1, 1, "#ffffff"), null, null, null, [], []),
+            Modulate: color,
+            Transform: new RuntimeSceneTransform2DSnapshot(new RuntimeSceneVector2Snapshot(1, 0), new RuntimeSceneVector2Snapshot(0, 1), new RuntimeSceneVector2Snapshot(x, y)),
+            LocalRect: new RuntimeSceneRect2Snapshot(new RuntimeSceneVector2Snapshot(0, 0), new RuntimeSceneVector2Snapshot(width, height)));
+
+    internal static void AssertIphoneBurstShape()
+    {
+        var frame = BuildIphoneKeyframe();
+        if (BrowserSceneDeltaMessage.Serialize(frame).Length == 0) throw new InvalidOperationException("synthetic keyframe serialization");
+        if (frame.Upserts.Count(node => node.Text is not null) < 64 || frame.Upserts.Count(node => node.Texture is not null) != 24) throw new InvalidOperationException("synthetic keyframe node count");
+        var chars = frame.Upserts.Where(node => node.Text?.Text is not null).SelectMany(node => node.Text!.Text!).ToHashSet();
+        if (chars.Count < 192 || !frame.Upserts.Any(node => node.Id == "root" && node.LocalRect?.Size.X == 1920 && node.LocalRect.Size.Y == 1080)) throw new InvalidOperationException("synthetic keyframe dimensions or character diversity");
+        if (frame.Upserts.Where(node => node.Texture is not null).Select(node => node.Texture!.ResourcePath.Split('-', '.')[1]).Distinct().Count() != 6) throw new InvalidOperationException("synthetic texture dimensions");
+        var delta = BuildIphoneDelta();
+        if (BrowserSceneDeltaMessage.Serialize(delta).Length == 0) throw new InvalidOperationException("synthetic delta serialization");
+        if (delta.Full || delta.Upserts.Count < 9 || delta.Upserts.All(node => node.Id != "delta-added")) throw new InvalidOperationException("synthetic incremental delta");
+    }
+
+    internal static async Task AssertIphoneBurstFlowAsync()
+    {
+        var runtime = new FakeSpirectlRuntime(HarnessMode.IphoneBurst);
+        var first = new TaskCompletionSource<RuntimeSceneDelta>(TaskCreationOptions.RunContinuationsAsynchronously);
+        var second = new TaskCompletionSource<RuntimeSceneDelta>(TaskCreationOptions.RunContinuationsAsynchronously);
+        using var subscription = runtime.SubscribeRuntimeSceneDelta(
+            new RuntimeSceneSubscriptionRequest(),
+            delta => (delta.Full ? first : second).TrySetResult(delta));
+        if (!(await first.Task.WaitAsync(TimeSpan.FromSeconds(2)).ConfigureAwait(false)).Full)
+            throw new InvalidOperationException("synthetic first scene was not a keyframe");
+        runtime.ReleaseIphoneBurst();
+        if ((await second.Task.WaitAsync(TimeSpan.FromSeconds(2)).ConfigureAwait(false)).Full)
+            throw new InvalidOperationException("synthetic second scene was not incremental");
+    }
 
     public async IAsyncEnumerable<CombatWatchEvent> WatchCombatEventsAsync(
         CombatEventSubscriptionRequest request,
@@ -585,8 +799,8 @@ internal sealed class FakeSpirectlRuntime : IRuntimeCapabilitySource, IRuntimeAs
         => new(
             new StateCharacterSelectLobbySnapshot(
                 "multiplayer",
-                "Host",
-                "Host",
+                "p:1",
+                "p:1",
                 ConnectingPlayerCount: 0,
                 Ascension: 0,
                 MaxAscension: 20,
@@ -595,8 +809,8 @@ internal sealed class FakeSpirectlRuntime : IRuntimeCapabilitySource, IRuntimeAs
                 ModifierIds: [],
                 Players:
                 [
-                    new StateCharacterSelectPlayerSnapshot("Host", 0, "ironclad", false, 20, "Host"),
-                    new StateCharacterSelectPlayerSnapshot("Alice", 1, "silent", true, 20, "Alice")
+                    new StateCharacterSelectPlayerSnapshot("p:1", 0, "ironclad", false, 20, "Host"),
+                    new StateCharacterSelectPlayerSnapshot("p:1002", 1, "silent", true, 20, "Alice", IsConnected: false)
                 ]),
             CharacterButtons:
             [
@@ -662,6 +876,11 @@ internal sealed class FakeSpirectlRuntime : IRuntimeCapabilitySource, IRuntimeAs
         public void SetHandTweenReplayEnabled(bool enabled) { }
         public void SetTrailReplayEnabled(bool enabled) { }
     }
+}
+
+internal static class SyntheticBurstResources
+{
+    public static TaskCompletionSource FinalGroup { get; } = new(TaskCreationOptions.RunContinuationsAsynchronously);
 }
 
 internal sealed class FakeSpirectlAssetProvider : ISpirectlAssetProvider

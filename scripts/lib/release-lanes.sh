@@ -1,5 +1,7 @@
 # Shared release-lane vocabulary. Sourced by scripts/package-release.sh,
 # scripts/verify-release-archive.sh and scripts/upload-workshop-release.sh — never executed.
+# shellcheck source=release-portable.sh
+source "$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/release-portable.sh"
 #
 # A lane is named after a GAME STEAM BRANCH (`stable`, `public-beta`) and selects which pinned STS2
 # reference package a release build compiles against (eng/Sts2.ReferenceSdk/<lane>/). The `-beta`
@@ -158,8 +160,7 @@ release_lane_from_dir_name() {
 }
 
 # <lane>... -> the `min_game_version` the merged manifest declares: the LOWEST floor among the lanes
-# the payload actually carries. Sorted with sort -V over the numeric part, so 0.9.0 < 0.11.0 the way
-# a version sorts and not the way a string does.
+# the payload actually carries. Numeric keys give semantic ordering on both GNU and BSD sort.
 release_payload_min_game_version() {
   local lane floor floors=() lowest
   [[ $# -gt 0 ]] || { echo "release-lanes: release_payload_min_game_version needs at least one lane" >&2; return 1; }
@@ -167,7 +168,7 @@ release_payload_min_game_version() {
     floor="$(release_lane_game_floor "$lane")" || return 1
     floors+=("$floor")
   done
-  lowest="$(printf '%s\n' "${floors[@]#v}" | sort -V | head -n 1)"
+  lowest="$(printf '%s\n' "${floors[@]#v}" | release_semver_sort | head -n 1)"
   [[ "$lowest" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]] || {
     echo "release-lanes: merged floor did not resolve to MAJOR.MINOR.PATCH: $lowest" >&2
     return 1

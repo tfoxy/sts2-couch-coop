@@ -617,15 +617,13 @@ IS a whole multiple of 80px proves nothing about quantisation; the equality arm 
 
 Run only the touched suite(s) per implementer; a coordinator/reviewer runs full suites once at merge time.
 
-**On macOS, by request.** `.github/workflows/macos-check.yml` runs the protocol, game-free fake-home farm, and
-frontend type/unit legs on `macos-14`, triggered by `workflow_dispatch` or a push to the throwaway `ci/macos`
-branch — never on a PR (PRs are disabled here) and never on `main`. It also downloads pinned stock Godot and
-proves a fake `HOME` resolves the committed probe's custom `user://` to the expected Application Support path.
-The job remains game-install-free: everything under `src/CouchCoop.Mod*` resolves STS2/Godot references from
-`game.assembliesDir`, which no runner has, and the `eng/Sts2.ReferenceSdk` route that lets the release build
-compile without a game has GNU-only drivers (`find -printf`, `sha256sum`, bash 4 `mapfile`). The frontend leg
-clones `spirectl` and `godot-scene-web` at the `release-dependencies.json` commits first, because the frontend
-is aliased to their TypeScript source.
+**On macOS and iPhone, by request.** `.github/workflows/macos-check.yml` is triggered by `workflow_dispatch` or a
+push to the throwaway `ci/macos` branch — never on a PR or `main`. An Ubuntu policy gate and hermetic iPhone 13
+WebKit leg run first. Selected `macos-15` Apple Silicon and `macos-15-intel` jobs then build both locked reference
+lanes and the production snapshot package, validate its exact layout and metadata closure, run the standalone
+Harmony watchdog, retain the fake-home suite, and prove stock Godot honors the fake `HOME`. None of these legs
+downloads or launches the game. See [steam-free-macos-iphone.md](steam-free-macos-iphone.md) before translating a
+green hosted check into a platform-support claim.
 
 ### A new game build (a beta branch, or an update landing on the current one)
 

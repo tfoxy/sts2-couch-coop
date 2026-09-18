@@ -15,6 +15,9 @@
     <Compile Include="../../src/CouchCoop.Mod/Session/HeadlessUserDirSeeder.cs" Link="HeadlessUserDirSeeder.cs" />
     <Compile Include="../../src/CouchCoop.Mod/Session/HeadlessSeatModSelection.cs" Link="HeadlessSeatModSelection.cs" />
     <Compile Include="../../src/CouchCoop.Mod/Connections/CouchCoopModBuildIdentity.cs" Link="CouchCoopModBuildIdentity.cs" />
+    <!-- The shipping loader has to pick a payload before any game-bound implementation assembly is loaded.
+         Source-link it here so synthetic .app trees test that exact code on every host OS. -->
+    <Compile Include="../../src/CouchCoop.Mod.Loader/CouchCoopLaneSelection.cs" Link="CouchCoopLaneSelection.cs" />
     <Compile Include="../CouchCoop.Mod.Tests/HeadlessUserDirSeederTests.cs" Link="HeadlessUserDirSeederTests.cs" />
   </ItemGroup>
 </Project>

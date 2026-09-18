@@ -19,6 +19,12 @@ import { reproRecorder } from "@/mirror/reproRecorder";
 import { publishAssetVersion } from "@/join/assetVersion";
 import { hostWsUrl } from "@/join/hostBase";
 import { readVisitId } from "@/join/visitId";
+import {
+  lifecycleEvent,
+  lifecycleSocketRole,
+  lifecycleVisitNonce,
+  sceneCheckpoint
+} from "@/lifecycleTelemetry";
 
 // Standalone client for the live-tree MIRROR. Opens its own `/ws` connection and renders off `scene-delta`
 // messages; it also parses the `session` envelope to drive the join screen — roster + run-vs-lobby — so the
@@ -279,6 +285,7 @@ export function connectMirrorClient(options: {
 } = {}): MirrorClient {
   const sourceLocation = options.location ?? window.location;
   const WebSocketCtor = options.WebSocketCtor ?? WebSocket;
+  const diagnosticSocketRole = lifecycleSocketRole(options.url !== undefined);
   const state = createMirrorState();
   const latency: MirrorLatency = emptyMirrorLatency();
   // The gate's desired value, and what the HOST currently believes (seeded from the connect URL) so a flip is
@@ -496,6 +503,7 @@ export function connectMirrorClient(options: {
   }
 
   function sendClientViewError(attemptId: string, error: unknown, code?: "browser-render-failed" | "browser-transport-lost"): void {
+    lifecycleEvent({ kind: "error", category: code === "browser-transport-lost" ? "transport" : "render" });
     const detail = error instanceof Error ? `${error.name}: ${error.message}` : String(error);
     sendConnectionReceipt(attemptId, {
       type: "client-view-error", code: code ?? "browser-render-failed", detail: detail.slice(0, 2048)
@@ -509,6 +517,7 @@ export function connectMirrorClient(options: {
     deltasSinceAck = 0;
     try {
       socket.send(SCENE_ACK);
+      sceneCheckpoint("ack-sent");
     } catch {
       // Racing close — drop it; the host's self-heal timeout re-grants credit if an ack is lost.
     }
@@ -571,6 +580,7 @@ export function connectMirrorClient(options: {
   }
 
   socket.addEventListener("open", () => {
+    lifecycleEvent({ kind: "ws-open", role: diagnosticSocketRole });
     reproRecorder.tapWsLifecycle("open");
     client.status = "connected";
     // Flush a gate change made between construction and open (e.g. the first session already told us the host
@@ -742,6 +752,7 @@ export function connectMirrorClient(options: {
     }
 
     if (delta) {
+      sceneCheckpoint("scene-received");
       applySceneDelta(state, delta);
       // The host spent a send credit on this delta; the next rendered frame owes it an ack (see sendSceneAck).
       deltasSinceAck += 1;
@@ -749,7 +760,21 @@ export function connectMirrorClient(options: {
     }
   });
 
-  socket.addEventListener("close", () => {
+  socket.addEventListener("close", (event) => {
+    const diagnosticClose: {
+      kind: "ws-close";
+      role: "host" | "seat";
+      code?: number;
+      clean?: boolean;
+    } = {
+      kind: "ws-close",
+      role: diagnosticSocketRole,
+      clean: event.wasClean
+    };
+    // WebSocket uses 1000..4999 for reportable close codes. Some engines expose 0 when no protocol code exists;
+    // omit it rather than making the strict diagnostics endpoint reject an otherwise valid final batch.
+    if (event.code >= 1000 && event.code <= 4999) diagnosticClose.code = event.code;
+    lifecycleEvent(diagnosticClose);
     reproRecorder.tapWsLifecycle("close");
     client.status = "disconnected";
     joinPending = false;
@@ -757,6 +782,12 @@ export function connectMirrorClient(options: {
     stopPing();
     notify();
   });
+
+  socket.addEventListener("error", () => lifecycleEvent({
+    kind: "ws-error",
+    role: diagnosticSocketRole,
+    category: "transport"
+  }));
 
   socket.addEventListener("error", () => {
     client.status = "disconnected";
@@ -848,6 +879,8 @@ export function buildMirrorWebSocketUrl(
   wsUrl.searchParams.set("cardFlight", "1");
   wsUrl.searchParams.set("handTween", "1");
   wsUrl.searchParams.set("trailDrive", trailDrive ? "1" : "0");
+  const diagnosticVisit = lifecycleVisitNonce();
+  if (diagnosticVisit) wsUrl.searchParams.set("diagnosticVisit", diagnosticVisit);
   return wsUrl.toString();
 }
 
@@ -876,5 +909,7 @@ export function buildHeadlessMirrorWebSocketUrl(
   wsUrl.searchParams.set("handTween", "1");
   wsUrl.searchParams.set("trailDrive", trailDrive ? "1" : "0");
   if (visit) wsUrl.searchParams.set("visit", visit);
+  const diagnosticVisit = lifecycleVisitNonce();
+  if (diagnosticVisit) wsUrl.searchParams.set("diagnosticVisit", diagnosticVisit);
   return wsUrl.toString();
 }

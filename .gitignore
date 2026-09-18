@@ -22,6 +22,7 @@ reports/
 # Browser validation artifacts.
 .playwright/
 .playwright-cli/
+.ci-artifacts/
 
 # Build and package output.
 bin/

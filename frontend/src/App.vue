@@ -4,7 +4,7 @@ import InstallButton from "@/pwa/InstallButton.vue";
 
 // Thin shell around the ONE client this app ships: MirrorApp, the live-tree mirror. It streams the
 // host's actual Godot nodes, so animations come for free; it is a shared spectator view, and it works
-// for other mods unchanged. MirrorApp owns the mirror surface / `data-testid="game-surface"` root.
+// for other mods unchanged. MirrorApp owns the mirror surface / `data-testid="mirror-surface"` root.
 //
 // There is deliberately no view switch here: the live-tree mirror is the only browser client.
 </script>

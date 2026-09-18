@@ -1,38 +1,18 @@
-# On-demand macOS smoke check.
-#
-# WHY IT EXISTS: the mod has a macOS audience (Slay the Spire 2 ships a native macOS build) and no
-# maintainer Mac. This job is the cheapest standing answer to "does the part of this repo that does
-# not need the game still build and pass on macOS?". It also pins Godot's only proven macOS user-dir lever
-# ($HOME) with a stock-engine probe; it never installs or launches Slay the Spire 2.
-#
-# WHY IT IS ON-DEMAND: pull requests are disabled in this repository, so there is no PR event to
-# hang a check on, and a per-push check on `main` would burn macOS minutes on every docs commit.
-# Fire it from the Actions tab (workflow_dispatch), or push the branch below when you want a run
-# tied to a specific commit.
-#
-# WHAT IT DELIBERATELY DOES NOT DO — this is the scope decision, not an oversight:
-#   * It never builds `CouchCoop.Mod`, `CouchCoop.Mod.Tests`, `CouchCoop.Connection.Tests` or
-#     `CouchCoop.Mod.Loader`. Those resolve STS2/Godot references from `game.assembliesDir` in
-#     `sts2.local.yaml` (see the root Directory.Build.props/targets), which no runner has. Measured:
-#     `dotnet build src/CouchCoop.Mod` with no local config fails with
-#     "Missing required game.assembliesDir in sts2.local.yaml".
-#   * It does not use `eng/Sts2.ReferenceSdk` to supply those assemblies from NuGet, which is how
-#     the release build compiles the mod with no game install. That path works, but its drivers
-#     (`scripts/verify-sts2-reference-sdk.sh`, `scripts/package-release.sh`) use GNU `find -printf`,
-#     `sha256sum` and bash 4 `mapfile`, none of which exist on a stock macOS runner. Porting them is
-#     a separate piece of work; a red job would be worse than no job.
-#   * It never runs `npm run build`. That script's Vite `outDir` is the INSTALLED mod's frontend
-#     directory, so building deploys. `vue-tsc --noEmit` is the type gate; `vitest run` is the test
-#     gate.
-#   * It does not run Playwright e2e (`frontend/e2e`), which needs browser downloads and a served
-#     app, nor `godot-client` (paused).
-
-name: macOS check
+name: Steam-free macOS and iPhone checks
 
 on:
   workflow_dispatch:
-  # A dedicated throwaway branch, so a run is something you ASK for by pushing to it. Nothing else
-  # in the repo depends on this branch existing; delete and recreate it freely.
+    inputs:
+      run_arm:
+        description: Run the Apple Silicon macOS package and runtime checks
+        required: true
+        type: boolean
+        default: true
+      run_intel:
+        description: Run the Intel macOS package and runtime checks
+        required: true
+        type: boolean
+        default: false
   push:
     branches:
       - 'ci/macos'
@@ -41,88 +21,254 @@ permissions:
   contents: read
 
 concurrency:
-  group: macos-check-${{ github.ref }}
+  group: macos-iphone-check-${{ github.ref }}
   cancel-in-progress: true
 
 jobs:
-  macos:
-    runs-on: macos-14
-    timeout-minutes: 45
-
+  policy:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
     steps:
-      # Insurance, not a requirement: no runner has a game install, so nothing here can resolve a
-      # local mods directory. Pinning it at a scratch path means a step added later cannot become a
-      # deploy by accident.
-      #
-      # Exported here rather than in a job-level `env:` because the `runner` context does not exist at
-      # that level — only `github`, `needs`, `strategy`, `matrix`, `vars` and `inputs` do — and naming it
-      # there fails the whole workflow at parse time with "Unrecognized named-value: 'runner'". As a step,
-      # $RUNNER_TEMP is an ordinary environment variable and needs no expression at all. It is the first
-      # step so every later one inherits it; nothing above it builds.
-      - name: Pin a scratch mods directory
-        run: echo "COUCHCOOP_GAME_MODS_DIR=$RUNNER_TEMP/couchcoop-mods" >> "$GITHUB_ENV"
+      - name: Check out source without credentials
+        timeout-minutes: 3
+        uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5.1.0
+        with:
+          persist-credentials: false
 
-      - name: Check out source
+      - name: Check workflow policy
+        timeout-minutes: 3
+        run: scripts/test-macos-iphone-workflow-policy.sh
+
+      - name: Check shell scripts when ShellCheck is available
+        timeout-minutes: 3
+        run: |
+          if command -v shellcheck >/dev/null 2>&1; then
+            shellcheck -x -S warning \
+              scripts/lib/release-portable.sh \
+              scripts/macos-support-diagnostics.sh \
+              scripts/package-release.sh \
+              scripts/run-iphone-safari-simulator.sh \
+              scripts/test-iphone-safari-simulator.sh \
+              scripts/validate-macos-iphone-workflow.sh \
+              scripts/test-macos-iphone-workflow-policy.sh \
+              scripts/test-validate-iphone-artifact-stage.sh \
+              scripts/verify-release-archive.sh \
+              scripts/verify-sts2-reference-sdk.sh
+          fi
+
+  iphone_webkit:
+    needs: policy
+    runs-on: ubuntu-24.04
+    timeout-minutes: 40
+    steps:
+      - name: Check out source without credentials
+        timeout-minutes: 3
         uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5.1.0
         with:
           path: sources/sts2-couch-coop
+          persist-credentials: false
 
-      # The frontend is aliased to the TWO sibling checkouts as TypeScript SOURCE — no npm link, no
-      # workspace, no build step (frontend/vite.config.ts and frontend/tsconfig.json map
-      # `@spirectl/presentation*` and `@godot-scene-web/*` at ../../spirectl and
-      # ../../godot-scene-web). 126 of the 433 files under frontend/src import one of them, so
-      # neither `vue-tsc` nor `vitest` resolves without both siblings beside this checkout.
-      #
-      # Cloned by hand rather than with actions/checkout so the repository URL and the commit both
-      # come from release-dependencies.json and cannot drift from what a release builds — and so no
-      # token is involved for a public sibling. Same shape scripts/package-release.sh uses.
-      - name: Clone the pinned sibling checkouts
+      - name: Clone pinned public presentation sources
+        timeout-minutes: 8
         working-directory: sources
         run: |
           set -euo pipefail
           pins=sts2-couch-coop/release-dependencies.json
           for name in spirectl godot-scene-web; do
-            url="$(jq -er --arg n "$name" '.dependencies[$n].repository' "$pins")"
-            commit="$(jq -er --arg n "$name" '.dependencies[$n].commit' "$pins")"
+            url="$(jq -er --arg name "$name" '.dependencies[$name].repository' "$pins")"
+            commit="$(jq -er --arg name "$name" '.dependencies[$name].commit' "$pins")"
             git clone --quiet "$url" "$name"
             git -C "$name" checkout --quiet --detach "$commit"
-            echo "$name @ $(git -C "$name" rev-parse HEAD)"
+            test "$(git -C "$name" rev-parse HEAD)" = "$commit"
           done
 
-      # 8.0.x as well as 9.0.x: CouchCoop.MirrorProtocol and its test runner target net8.0 (the
-      # Godot 4.5 .NET base TFM), so this pins the matching runtime rather than relying on the
-      # runner's roll-forward.
       - name: Set up .NET
+        timeout-minutes: 4
         uses: actions/setup-dotnet@26b0ec14cb23fa6904739307f278c14f94c95bf1 # v5.4.0
         with:
           dotnet-version: |
             8.0.x
             9.0.x
 
-      # 22.x on purpose, matching release.yml: its npm 10 is the resolver frontend/package-lock.json
-      # is validated against. npm 11 has accepted locks that npm 10 then rejected for missing
-      # hoisted peer entries, so the lower resolver is the honest gate.
       - name: Set up Node
+        timeout-minutes: 4
         uses: actions/setup-node@a0853c24544627f65ddf259abe73b1d18a591444 # v5.0.0
         with:
           node-version: '22.x'
 
-      # The game-assembly-FREE leg. Both projects set CouchCoopRequiresSts2Assemblies=false and have
-      # zero package references, so this is the one part of the C# tree a runner can compile at all.
-      # The suite is a custom `Exe` runner, NOT a VSTest project: `dotnet test` is a silent no-op on
-      # it and would pass without running anything.
-      - name: Mirror protocol suite
-        working-directory: sources/sts2-couch-coop
-        run: dotnet run --project tests/CouchCoop.MirrorProtocol.Tests -c Release
+      - name: Install presentation and frontend dependencies
+        timeout-minutes: 12
+        run: |
+          set -euo pipefail
+          corepack enable
+          (cd sources/godot-scene-web && corepack pnpm install --frozen-lockfile)
+          (cd sources/spirectl/presentation/web && corepack pnpm install --frozen-lockfile)
+          npm --prefix sources/sts2-couch-coop/frontend ci
 
-      - name: macOS fake-home farm suite
-        working-directory: sources/sts2-couch-coop
-        run: dotnet run --project tests/CouchCoop.MacOs.Tests -c Release
+      - name: Install the WebKit browser
+        timeout-minutes: 10
+        working-directory: sources/sts2-couch-coop/frontend
+        run: npx playwright install --with-deps webkit
 
-      # A stock Godot run proves the platform premise behind the farm: on macOS custom user:// resolves below
-      # HOME/Library/Application Support. This is intentionally an official binary download with no cache, not
-      # a game install or a test against the mod's GodotSharp dependency.
-      - name: Verify stock Godot honors fake HOME
+      - name: Run the hermetic iPhone 13 WebKit contract
+        timeout-minutes: 12
+        working-directory: sources/sts2-couch-coop
+        env:
+          PLAYWRIGHT_HTML_OPEN: never
+        run: |
+          COUCHCOOP_IPHONE_ARTIFACT_DIR="$GITHUB_WORKSPACE/sources/sts2-couch-coop/.ci-artifacts/iphone-webkit" \
+            npm --prefix frontend run test:iphone-webkit
+
+      - name: Validate staged WebKit diagnostics
+        timeout-minutes: 2
+        id: validate_webkit_artifacts
+        if: always()
+        working-directory: sources/sts2-couch-coop
+        run: node scripts/validate-iphone-artifact-stage.mjs webkit .ci-artifacts/iphone-webkit
+
+      - name: Upload staged synthetic diagnostics
+        timeout-minutes: 3
+        if: ${{ always() && steps.validate_webkit_artifacts.outcome == 'success' }}
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: iphone-webkit-synthetic-${{ github.run_id }}
+          path: sources/sts2-couch-coop/.ci-artifacts/iphone-webkit
+          if-no-files-found: ignore
+          retention-days: 3
+
+  macos_arm:
+    needs: [policy, iphone_webkit]
+    if: ${{ github.event_name == 'push' || inputs.run_arm == true }}
+    runs-on: macos-15
+    timeout-minutes: 150
+    steps:
+      - name: Pin a scratch mod directory
+        timeout-minutes: 1
+        run: echo "COUCHCOOP_GAME_MODS_DIR=$RUNNER_TEMP/couchcoop-mods" >> "$GITHUB_ENV"
+
+      - name: Check out source without credentials
+        timeout-minutes: 3
+        uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5.1.0
+        with:
+          path: sources/sts2-couch-coop
+          fetch-depth: 0
+          persist-credentials: false
+
+      - name: Clone pinned public release sources
+        timeout-minutes: 8
+        working-directory: sources
+        run: |
+          set -euo pipefail
+          pins=sts2-couch-coop/release-dependencies.json
+          for name in spirectl godot-scene-web; do
+            url="$(jq -er --arg name "$name" '.dependencies[$name].repository' "$pins")"
+            commit="$(jq -er --arg name "$name" '.dependencies[$name].commit' "$pins")"
+            git clone --quiet "$url" "$name"
+            git -C "$name" checkout --quiet --detach "$commit"
+            test "$(git -C "$name" rev-parse HEAD)" = "$commit"
+          done
+
+      - name: Set up .NET
+        timeout-minutes: 4
+        uses: actions/setup-dotnet@26b0ec14cb23fa6904739307f278c14f94c95bf1 # v5.4.0
+        with:
+          dotnet-version: |
+            8.0.x
+            9.0.x
+
+      - name: Set up Node
+        timeout-minutes: 4
+        uses: actions/setup-node@a0853c24544627f65ddf259abe73b1d18a591444 # v5.0.0
+        with:
+          node-version: '22.x'
+
+      - name: Audit portable package fixtures and pinned reference lanes
+        timeout-minutes: 15
+        working-directory: sources/sts2-couch-coop
+        run: |
+          scripts/verify-sts2-reference-sdk.sh stable public-beta
+          scripts/test-verify-release-archive.sh
+          scripts/test-macos-support-diagnostics.sh
+          scripts/test-iphone-safari-simulator.sh
+
+      - name: Build persistent reference SDKs and Harmony probes
+        timeout-minutes: 15
+        working-directory: sources/sts2-couch-coop
+        run: |
+          set -euo pipefail
+          sdk_root="$RUNNER_TEMP/couchcoop-reference-sdk"
+          for lane in stable public-beta; do
+            dotnet build "eng/Sts2.ReferenceSdk/$lane/Sts2.ReferenceSdk.$lane.csproj" \
+              -c Release -o "$sdk_root/$lane" -p:RestoreLockedMode=true
+          done
+          dotnet build tests/CouchCoop.HarmonySmoke/CouchCoop.HarmonySmoke.csproj \
+            -c Release -o "$RUNNER_TEMP/couchcoop-harmony-smoke" \
+            -p:RestoreLockedMode=true -p:CouchCoopBuildToLocalMods=false
+
+      - name: Run game-free macOS and Harmony checks
+        timeout-minutes: 12
+        working-directory: sources/sts2-couch-coop
+        run: |
+          dotnet run --project tests/CouchCoop.MacOs.Tests -c Release
+          dotnet run --project tests/CouchCoop.MacOs.Tests -c Release -- \
+            --harmony-smoke "$RUNNER_TEMP/couchcoop-harmony-smoke/CouchCoop.HarmonySmoke"
+
+      - name: Build and validate the production snapshot package
+        timeout-minutes: 55
+        working-directory: sources/sts2-couch-coop
+        run: scripts/package-release.sh --snapshot
+
+      - name: Recheck the snapshot beneath a path containing spaces
+        timeout-minutes: 6
+        working-directory: sources/sts2-couch-coop
+        run: |
+          set -euo pipefail
+          set -- dist/couchcoop-snapshot-*.zip
+          test "$#" -eq 1 && test -f "$1"
+          archive="$1"
+          extracted="$RUNNER_TEMP/CouchCoop package verification"
+          mkdir -p "$extracted"
+          unzip -q "$archive" -d "$extracted"
+          version="$(jq -er '.version' "$extracted/couchcoop/couchcoop.json")"
+          scripts/verify-release-archive.sh --payload "$extracted/couchcoop" --version "$version" \
+            --lane stable --lane public-beta --complete
+          dotnet run --project tests/CouchCoop.MacOs.Tests -c Release -- --verify-archive "$archive"
+
+      - name: Run iPhone 13 Simulator Safari survival contract
+        timeout-minutes: 25
+        working-directory: sources/sts2-couch-coop
+        run: |
+          set -euo pipefail
+          artifact_dir="$PWD/.ci-artifacts/iphone-safari-arm"
+          harness_out="$RUNNER_TEMP/couchcoop-iphone-harness.out"
+          harness_err="$RUNNER_TEMP/couchcoop-iphone-harness.err"
+          mkdir -p "$artifact_dir"
+          dotnet run --project tests/CouchCoop.HostedServerHarness -c Release \
+            -p:Sts2AssembliesDir="$RUNNER_TEMP/couchcoop-reference-sdk/stable" \
+            -p:CouchCoopBuildToLocalMods=false -- \
+            --static-root "$RUNNER_TEMP/CouchCoop package verification/couchcoop/frontend" \
+            --port 23339 --mode iphone-burst --artifact-dir "$artifact_dir" \
+            >"$harness_out" 2>"$harness_err" &
+          harness_pid=$!
+          trap 'kill "$harness_pid" >/dev/null 2>&1 || true' EXIT HUP INT TERM
+          poll=0
+          while [ "$poll" -lt 120 ] && ! grep -q '"baseUrl"' "$harness_out"; do
+            kill -0 "$harness_pid" >/dev/null 2>&1 || { sed -n '1,40p' "$harness_err" >&2; exit 1; }
+            sleep 1
+            poll=$((poll + 1))
+          done
+          harness_url="$(grep '"baseUrl"' "$harness_out" | tail -n 1 | jq -er '.baseUrl')"
+          scripts/run-iphone-safari-simulator.sh --artifact-dir "$artifact_dir" --harness-url "$harness_url"
+
+      - name: Validate staged ARM Simulator diagnostics
+        timeout-minutes: 2
+        id: validate_arm_artifacts
+        if: always()
+        working-directory: sources/sts2-couch-coop
+        run: node scripts/validate-iphone-artifact-stage.mjs safari .ci-artifacts/iphone-safari-arm
+
+      - name: Verify stock Godot honors a fake HOME
+        timeout-minutes: 15
         working-directory: sources/sts2-couch-coop
         run: |
           set -euo pipefail
@@ -130,44 +276,190 @@ jobs:
           archive="$RUNNER_TEMP/Godot_v4.5.1-stable_macos.universal.zip"
           mkdir -p "$godot_root"
           curl --fail --location --retry 3 --retry-all-errors --retry-max-time 1200 \
-            --connect-timeout 15 --max-time 900 \
-            --output "$archive" \
+            --connect-timeout 15 --max-time 900 --output "$archive" \
             https://github.com/godotengine/godot-builds/releases/download/4.5.1-stable/Godot_v4.5.1-stable_macos.universal.zip
           expected_sha=65c27959d02aaacfc131ec7ecb90179ba8045200cb02982bf2be96d117010b8a
-          actual_sha="$(shasum -a 256 "$archive" | awk '{print $1}')"
-          test "$actual_sha" = "$expected_sha"
+          test "$(shasum -a 256 "$archive" | awk '{print $1}')" = "$expected_sha"
           unzip -q "$archive" -d "$godot_root"
           fake_home="$RUNNER_TEMP/couchcoop-godot-fake-home"
           output="$RUNNER_TEMP/couchcoop-godot-user-dir.log"
-          rm -rf "$fake_home"
           mkdir -p "$fake_home"
           HOME="$fake_home" "$godot_root/Godot.app/Contents/MacOS/Godot" --headless \
             --path "$PWD/tests/CouchCoop.MacOs.UserDirProbe" --script res://probe.gd >"$output" 2>&1
-          marker_count="$(grep -c '^COUCHCOOP_USER_DIR_JSON=' "$output" || true)"
-          test "$marker_count" = 1
           marker="$(grep '^COUCHCOOP_USER_DIR_JSON=' "$output")"
-          actual_user_dir="$(printf '%s' "${marker#COUCHCOOP_USER_DIR_JSON=}" | jq -er '.userDir')"
-          expected_user_dir="$fake_home/Library/Application Support/SlayTheSpire2"
-          test "$actual_user_dir" = "$expected_user_dir"
+          actual="$(printf '%s' "${marker#COUCHCOOP_USER_DIR_JSON=}" | jq -er '.userDir')"
+          test "$actual" = "$fake_home/Library/Application Support/SlayTheSpire2"
 
-      # Corepack picks the package-manager version BEFORE pnpm processes --dir, so each install runs
-      # from inside the directory whose `packageManager` pin it must honour (godot-scene-web pins
-      # pnpm 10.26.0). `corepack pnpm --dir <project>` would run Corepack's default instead.
-      - name: Install sibling renderer dependencies
+      - name: Upload staged ARM Simulator diagnostics
+        timeout-minutes: 3
+        if: ${{ always() && steps.validate_arm_artifacts.outcome == 'success' }}
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: iphone-safari-arm-synthetic-${{ github.run_id }}
+          path: sources/sts2-couch-coop/.ci-artifacts/iphone-safari-arm
+          if-no-files-found: ignore
+          retention-days: 3
+
+  macos_intel:
+    needs: [policy, iphone_webkit]
+    if: ${{ github.event_name == 'workflow_dispatch' && inputs.run_intel == true }}
+    runs-on: macos-15-intel
+    timeout-minutes: 150
+    steps:
+      - name: Pin a scratch mod directory
+        timeout-minutes: 1
+        run: echo "COUCHCOOP_GAME_MODS_DIR=$RUNNER_TEMP/couchcoop-mods" >> "$GITHUB_ENV"
+
+      - name: Check out source without credentials
+        timeout-minutes: 3
+        uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5.1.0
+        with:
+          path: sources/sts2-couch-coop
+          fetch-depth: 0
+          persist-credentials: false
+
+      - name: Clone pinned public release sources
+        timeout-minutes: 8
+        working-directory: sources
         run: |
           set -euo pipefail
-          corepack enable
-          (cd sources/godot-scene-web && corepack pnpm install --frozen-lockfile)
-          (cd sources/spirectl/presentation/web && corepack pnpm install --frozen-lockfile)
+          pins=sts2-couch-coop/release-dependencies.json
+          for name in spirectl godot-scene-web; do
+            url="$(jq -er --arg name "$name" '.dependencies[$name].repository' "$pins")"
+            commit="$(jq -er --arg name "$name" '.dependencies[$name].commit' "$pins")"
+            git clone --quiet "$url" "$name"
+            git -C "$name" checkout --quiet --detach "$commit"
+            test "$(git -C "$name" rev-parse HEAD)" = "$commit"
+          done
 
-      - name: Install frontend dependencies
-        working-directory: sources/sts2-couch-coop/frontend
-        run: npm ci
+      - name: Set up .NET
+        timeout-minutes: 4
+        uses: actions/setup-dotnet@26b0ec14cb23fa6904739307f278c14f94c95bf1 # v5.4.0
+        with:
+          dotnet-version: |
+            8.0.x
+            9.0.x
 
-      - name: Frontend type check
-        working-directory: sources/sts2-couch-coop/frontend
-        run: npx vue-tsc --noEmit
+      - name: Set up Node
+        timeout-minutes: 4
+        uses: actions/setup-node@a0853c24544627f65ddf259abe73b1d18a591444 # v5.0.0
+        with:
+          node-version: '22.x'
 
-      - name: Frontend tests
-        working-directory: sources/sts2-couch-coop/frontend
-        run: npx vitest run
+      - name: Audit portable package fixtures and pinned reference lanes
+        timeout-minutes: 15
+        working-directory: sources/sts2-couch-coop
+        run: |
+          scripts/verify-sts2-reference-sdk.sh stable public-beta
+          scripts/test-verify-release-archive.sh
+          scripts/test-macos-support-diagnostics.sh
+          scripts/test-iphone-safari-simulator.sh
+
+      - name: Build persistent reference SDKs and Harmony probes
+        timeout-minutes: 15
+        working-directory: sources/sts2-couch-coop
+        run: |
+          set -euo pipefail
+          sdk_root="$RUNNER_TEMP/couchcoop-reference-sdk"
+          for lane in stable public-beta; do
+            dotnet build "eng/Sts2.ReferenceSdk/$lane/Sts2.ReferenceSdk.$lane.csproj" \
+              -c Release -o "$sdk_root/$lane" -p:RestoreLockedMode=true
+          done
+          dotnet build tests/CouchCoop.HarmonySmoke/CouchCoop.HarmonySmoke.csproj \
+            -c Release -o "$RUNNER_TEMP/couchcoop-harmony-smoke" \
+            -p:RestoreLockedMode=true -p:CouchCoopBuildToLocalMods=false
+
+      - name: Run game-free macOS and Harmony checks
+        timeout-minutes: 12
+        working-directory: sources/sts2-couch-coop
+        run: |
+          dotnet run --project tests/CouchCoop.MacOs.Tests -c Release
+          dotnet run --project tests/CouchCoop.MacOs.Tests -c Release -- \
+            --harmony-smoke "$RUNNER_TEMP/couchcoop-harmony-smoke/CouchCoop.HarmonySmoke"
+
+      - name: Build and validate the production snapshot package
+        timeout-minutes: 55
+        working-directory: sources/sts2-couch-coop
+        run: scripts/package-release.sh --snapshot
+
+      - name: Recheck the snapshot beneath a path containing spaces
+        timeout-minutes: 6
+        working-directory: sources/sts2-couch-coop
+        run: |
+          set -euo pipefail
+          set -- dist/couchcoop-snapshot-*.zip
+          test "$#" -eq 1 && test -f "$1"
+          archive="$1"
+          extracted="$RUNNER_TEMP/CouchCoop package verification"
+          mkdir -p "$extracted"
+          unzip -q "$archive" -d "$extracted"
+          version="$(jq -er '.version' "$extracted/couchcoop/couchcoop.json")"
+          scripts/verify-release-archive.sh --payload "$extracted/couchcoop" --version "$version" \
+            --lane stable --lane public-beta --complete
+          dotnet run --project tests/CouchCoop.MacOs.Tests -c Release -- --verify-archive "$archive"
+
+      - name: Run iPhone 13 Simulator Safari survival contract
+        timeout-minutes: 25
+        working-directory: sources/sts2-couch-coop
+        run: |
+          set -euo pipefail
+          artifact_dir="$PWD/.ci-artifacts/iphone-safari-intel"
+          harness_out="$RUNNER_TEMP/couchcoop-iphone-harness.out"
+          harness_err="$RUNNER_TEMP/couchcoop-iphone-harness.err"
+          mkdir -p "$artifact_dir"
+          dotnet run --project tests/CouchCoop.HostedServerHarness -c Release \
+            -p:Sts2AssembliesDir="$RUNNER_TEMP/couchcoop-reference-sdk/stable" \
+            -p:CouchCoopBuildToLocalMods=false -- \
+            --static-root "$RUNNER_TEMP/CouchCoop package verification/couchcoop/frontend" \
+            --port 23339 --mode iphone-burst --artifact-dir "$artifact_dir" \
+            >"$harness_out" 2>"$harness_err" &
+          harness_pid=$!
+          trap 'kill "$harness_pid" >/dev/null 2>&1 || true' EXIT HUP INT TERM
+          poll=0
+          while [ "$poll" -lt 120 ] && ! grep -q '"baseUrl"' "$harness_out"; do
+            kill -0 "$harness_pid" >/dev/null 2>&1 || { sed -n '1,40p' "$harness_err" >&2; exit 1; }
+            sleep 1
+            poll=$((poll + 1))
+          done
+          harness_url="$(grep '"baseUrl"' "$harness_out" | tail -n 1 | jq -er '.baseUrl')"
+          scripts/run-iphone-safari-simulator.sh --artifact-dir "$artifact_dir" --harness-url "$harness_url"
+
+      - name: Validate staged Intel Simulator diagnostics
+        timeout-minutes: 2
+        id: validate_intel_artifacts
+        if: always()
+        working-directory: sources/sts2-couch-coop
+        run: node scripts/validate-iphone-artifact-stage.mjs safari .ci-artifacts/iphone-safari-intel
+
+      - name: Verify stock Godot honors a fake HOME
+        timeout-minutes: 15
+        working-directory: sources/sts2-couch-coop
+        run: |
+          set -euo pipefail
+          godot_root="$RUNNER_TEMP/godot-4.5.1"
+          archive="$RUNNER_TEMP/Godot_v4.5.1-stable_macos.universal.zip"
+          mkdir -p "$godot_root"
+          curl --fail --location --retry 3 --retry-all-errors --retry-max-time 1200 \
+            --connect-timeout 15 --max-time 900 --output "$archive" \
+            https://github.com/godotengine/godot-builds/releases/download/4.5.1-stable/Godot_v4.5.1-stable_macos.universal.zip
+          expected_sha=65c27959d02aaacfc131ec7ecb90179ba8045200cb02982bf2be96d117010b8a
+          test "$(shasum -a 256 "$archive" | awk '{print $1}')" = "$expected_sha"
+          unzip -q "$archive" -d "$godot_root"
+          fake_home="$RUNNER_TEMP/couchcoop-godot-fake-home"
+          output="$RUNNER_TEMP/couchcoop-godot-user-dir.log"
+          mkdir -p "$fake_home"
+          HOME="$fake_home" "$godot_root/Godot.app/Contents/MacOS/Godot" --headless \
+            --path "$PWD/tests/CouchCoop.MacOs.UserDirProbe" --script res://probe.gd >"$output" 2>&1
+          marker="$(grep '^COUCHCOOP_USER_DIR_JSON=' "$output")"
+          actual="$(printf '%s' "${marker#COUCHCOOP_USER_DIR_JSON=}" | jq -er '.userDir')"
+          test "$actual" = "$fake_home/Library/Application Support/SlayTheSpire2"
+
+      - name: Upload staged Intel Simulator diagnostics
+        timeout-minutes: 3
+        if: ${{ always() && steps.validate_intel_artifacts.outcome == 'success' }}
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: iphone-safari-intel-synthetic-${{ github.run_id }}
+          path: sources/sts2-couch-coop/.ci-artifacts/iphone-safari-intel
+          if-no-files-found: ignore
+          retention-days: 3

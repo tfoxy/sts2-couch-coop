@@ -29,14 +29,24 @@ public sealed class CouchCoopBrowserServer(
     bool? isHeadlessClient = null,
     Action<string>? log = null,
     NetworkAdmissionLimiter? admission = null,
-    ConnectionArrivalLog? arrivals = null) : IAsyncDisposable
+    ConnectionArrivalLog? arrivals = null,
+    BrowserLifecycleDiagnostics? lifecycleDiagnostics = null,
+    string? lifecycleSocketRole = null,
+    Action? onSceneAck = null) : IAsyncDisposable
 {
+    /// <summary>Harness-only synthetic seat port injected into the control document; null in product hosting.</summary>
+    public int? SyntheticSeatPort { get; set; }
     private readonly IPAddress _bindAddress = bindAddress ?? IPAddress.Loopback;
     private readonly Action<string> _log = log ?? CouchCoopLog.Stderr;
     private readonly RateLimitedDiagnosticLog _networkDiagnostics = new(log ?? CouchCoopLog.Stderr);
     // Pre-WebSocket arrivals. The PROCESS-owned log by default (a seat is its own process and keeps its own),
     // injectable so a test server records into an instance of its own rather than into the shared one.
     private readonly ConnectionArrivalLog _arrivals = arrivals ?? ConnectionArrivalLog.Shared;
+    private readonly BrowserLifecycleDiagnostics? _lifecycleDiagnostics = lifecycleDiagnostics;
+    private readonly string? _lifecycleSocketRole = lifecycleSocketRole is "host" or "seat"
+        ? lifecycleSocketRole
+        : null;
+    private readonly Action? _onSceneAck = onSceneAck;
     private readonly bool _isHeadlessClient = isHeadlessClient ?? CouchCoopMod.IsHeadlessClient;
     private readonly bool _ownsHeadlessManager = headlessManager is null;
     private readonly BrowserSessionRegistry _sessionRegistry = new();
@@ -1263,6 +1273,13 @@ public sealed class CouchCoopBrowserServer(
             return;
         }
 
+        if (string.Equals(request.Path, BrowserLifecycleDiagnostics.Route, StringComparison.Ordinal)
+            || string.Equals(request.Path, BrowserLifecycleDiagnostics.Route + "/summary", StringComparison.Ordinal))
+        {
+            await HandleLifecycleDiagnosticsAsync(stream, request, cancellationToken).ConfigureAwait(false);
+            return;
+        }
+
         if (!string.Equals(request.Method, "GET", StringComparison.OrdinalIgnoreCase))
         {
             await HttpResponseWriter.WriteJsonErrorAsync(stream, HttpStatusCode.MethodNotAllowed, "method-not-allowed", "Only GET is supported.", cancellationToken).ConfigureAwait(false);
@@ -1349,22 +1366,40 @@ public sealed class CouchCoopBrowserServer(
                 // The host's ONE seat directory (see _mirrorSeats): its grace-window bookkeeping must outlive any
                 // single connection, so the same instance is shared rather than one built per socket.
                 mirrorSeats: MirrorSeats());
-            await CouchCoopWebSocketConnection.AcceptAsync(
-                    stream,
-                    request,
-                    connectionEnvelopeFactory,
-                    _connections,
-                    () => _observer,
-                    () => _sceneObserver,
-                    RegisterConnection,
-                    UnregisterConnection,
-                    RegisterSceneStreaming,
-                    OnConnectionStaticBgChanged,
-                    isSecure,
-                    _headlessManager,
-                    _isHeadlessClient,
-                    _arrivals,
-                    cancellationToken).ConfigureAwait(false);
+            var diagnosticVisit = request.QueryValues.GetValueOrDefault(BrowserLifecycleDiagnostics.WebSocketVisitSelector);
+            if (_lifecycleSocketRole is { } socketRole)
+                _lifecycleDiagnostics?.RecordSocketEvent(diagnosticVisit, socketRole, "open");
+            try
+            {
+                await CouchCoopWebSocketConnection.AcceptAsync(
+                        stream,
+                        request,
+                        connectionEnvelopeFactory,
+                        _connections,
+                        () => _observer,
+                        () => _sceneObserver,
+                        RegisterConnection,
+                        UnregisterConnection,
+                        RegisterSceneStreaming,
+                        OnConnectionStaticBgChanged,
+                        isSecure,
+                        _headlessManager,
+                        _isHeadlessClient,
+                        _arrivals,
+                        _onSceneAck,
+                        cancellationToken).ConfigureAwait(false);
+            }
+            catch
+            {
+                if (_lifecycleSocketRole is { } failedRole)
+                    _lifecycleDiagnostics?.RecordSocketEvent(diagnosticVisit, failedRole, "error");
+                throw;
+            }
+            finally
+            {
+                if (_lifecycleSocketRole is { } closedRole)
+                    _lifecycleDiagnostics?.RecordSocketEvent(diagnosticVisit, closedRole, "close");
+            }
             return;
         }
 
@@ -1851,11 +1886,20 @@ public sealed class CouchCoopBrowserServer(
         if (VisitIdTag.IsHtml(file.ContentType))
         {
             var visitId = _arrivals.BeginVisit(remoteAddress, request.Header("User-Agent"), request.Path);
+            var tagged = VisitIdTag.Inject(file.Bytes, visitId);
+            if (_lifecycleDiagnostics is not null)
+            {
+                tagged = VisitIdTag.InjectMeta(tagged, _lifecycleDiagnostics.BeginVisitMeta());
+            }
+            if (SyntheticSeatPort is { } syntheticPort)
+            {
+                tagged = VisitIdTag.InjectMeta(tagged, $"<meta name=\"couchcoop-synthetic-seat\" content=\"{syntheticPort}\" />");
+            }
             await HttpResponseWriter.WriteBytesAsync(
                 stream,
                 200,
                 "OK",
-                VisitIdTag.Inject(file.Bytes, visitId),
+                tagged,
                 file.ContentType,
                 new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase)
                 {
@@ -1868,6 +1912,29 @@ public sealed class CouchCoopBrowserServer(
         }
 
         await HttpResponseWriter.WriteBytesAsync(stream, 200, "OK", file.Bytes, file.ContentType, cancellationToken: cancellationToken).ConfigureAwait(false);
+    }
+
+    private async Task HandleLifecycleDiagnosticsAsync(Stream stream, CouchCoopHttpRequest request, CancellationToken cancellationToken)
+    {
+        if (_lifecycleDiagnostics is not null && string.Equals(request.Path, BrowserLifecycleDiagnostics.Route + "/summary", StringComparison.Ordinal)
+            && string.Equals(request.Method, "GET", StringComparison.OrdinalIgnoreCase))
+        {
+            await HttpResponseWriter.WriteJsonAsync(stream, HttpStatusCode.OK, _lifecycleDiagnostics.Summary(), cancellationToken).ConfigureAwait(false);
+            return;
+        }
+        if (_lifecycleDiagnostics is null || !string.Equals(request.Method, "POST", StringComparison.OrdinalIgnoreCase)
+            || !int.TryParse(request.Header("Content-Length"), out var length) || length < 0 || length > BrowserLifecycleDiagnostics.MaximumRequestBytes)
+        {
+            await HttpResponseWriter.WriteJsonErrorAsync(stream, HttpStatusCode.NotFound, "not-found", "Route was not found.", cancellationToken).ConfigureAwait(false);
+            return;
+        }
+        var body = await ReadBoundedBodyAsync(stream, length, cancellationToken).ConfigureAwait(false);
+        if (!_lifecycleDiagnostics.TryAccept(body))
+        {
+            await HttpResponseWriter.WriteJsonErrorAsync(stream, HttpStatusCode.BadRequest, "invalid-lifecycle", "Lifecycle payload was refused.", cancellationToken).ConfigureAwait(false);
+            return;
+        }
+        await HttpResponseWriter.WriteBytesAsync(stream, 204, "No Content", [], "text/plain", cancellationToken: cancellationToken).ConfigureAwait(false);
     }
 
     /// <summary>

@@ -38,6 +38,7 @@ checks=(
   "hot-reload-dev-loop|scripts/probe-hot-reload-dev-loop.sh --json"
   "validate-no-sts2-cli-runtime|scripts/validate-no-sts2-cli-runtime.sh --json"
   "validate-artifacts|scripts/validate-artifacts.sh --json"
+  "macos-iphone-workflow-policy|scripts/test-macos-iphone-workflow-policy.sh"
   "test-validate-forbidden-patterns|scripts/test-validate-forbidden-patterns.sh"
   "validate-forbidden-patterns|scripts/validate-forbidden-patterns.sh --json"
 )

@@ -54,6 +54,16 @@ Current limits:
 | Generated entry | 128 MiB |
 | Retained HTTP arrivals | 128 entries, 30 minutes, 128-character paths |
 
+The synthetic iPhone harness has a separate browser-lifecycle recorder for CI. It is absent during ordinary
+hosting: the route and page configuration are created only when the harness receives an explicit, validated
+diagnostics directory. A visit receives a fresh 128-bit nonce and a relative same-origin POST endpoint; the page
+never learns the directory. The recorder accepts at most 16 KiB per request, 32 events per batch, 16 batches per
+visit, four batches per second with a burst of eight, 256 live visits with a 30-minute expiry, and 1 MiB in the
+single process JSONL file. Its schema permits only relative timing, lifecycle/visibility, viewport/orientation,
+fullscreen, socket-role lifecycle, sanitized error categories, and ordinal scene/render/ack checkpoints. Unknown
+fields and values are rejected. URLs, query values, names, scene payloads, error text/stacks, user agents, tokens,
+and arbitrary messages have no accepted field and are never persisted.
+
 Cache accounting includes old generated cache generations, staged files, metadata, and ASTC outputs. Shipped
 assets and separately configured operator geoclips are excluded. Reservations are shared across processes;
 unused capacity from small writes is reconciled periodically, so persistence can be refused conservatively near
