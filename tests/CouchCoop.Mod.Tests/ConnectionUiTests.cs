@@ -32,6 +32,11 @@ internal static class ConnectionUiTests
                  {
                      CouchCoopPatchHealth.IssueCode,
                      HostReachabilityWatch.IssueCode,
+                     // Its sibling, raised instead of it once this computer's own firewall has been asked and
+                     // has answered. Unmapped it would render the join copy on a row about a rule the player
+                     // has to go and change — and, worse, would be indistinguishable from the ambiguous row
+                     // whose whole point is that it does NOT know what this one does.
+                     HostReachabilityWatch.FirewallIssueCode,
                      CouchCoop.Mod.Session.HeadlessClientManager.SharedUserDirCode,
                      // Both ends of the mid-run refusal report this one — the host declining to launch a seat
                      // into a running run, and a seat the host's netcode turned away. Unmapped it would render
@@ -69,6 +74,18 @@ internal static class ConnectionUiTests
             var failed = new ConnectionIssue(CouchCoop.Mod.Session.SeatReadinessVerdict.PortTakenCode, "", "", null);
             Assert(Copy("Action", occupied) != Copy("Action", failed),
                 $"a stepped-around port does not reuse the failed-join port copy in {language}");
+
+            // The two reachability rows say opposite things and must never share a sentence in any language:
+            // one is "this may just be nobody having scanned yet", the other is "there is a rule on this PC".
+            var reachability = new ConnectionIssue(HostReachabilityWatch.IssueCode, "", "", null);
+            var firewall = new ConnectionIssue(HostReachabilityWatch.FirewallIssueCode, "", "", null);
+            Assert(Copy("Summary", firewall) != Copy("Summary", unmapped) && Copy("Action", firewall) != Copy("Action", unmapped),
+                $"the firewall row has its own copy in {language}, not the join fallback");
+            Assert(Copy("Summary", firewall) != Copy("Summary", reachability) && Copy("Action", firewall) != Copy("Action", reachability),
+                $"…and does not reuse the ambiguous row's copy in {language}");
+            Assert(!Copy("Summary", firewall).StartsWith("couchcoop_", StringComparison.Ordinal)
+                && !Copy("Action", firewall).StartsWith("couchcoop_", StringComparison.Ordinal),
+                $"…and resolves to a real sentence in {language}, not its catalog key");
         }
         CouchCoopLocalization.SetLanguageForTests("eng");
 

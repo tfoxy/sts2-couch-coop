@@ -95,6 +95,8 @@
   "couchcoop_connection_error_shared_profile_action": "Ortak oynanış çalışmaya devam eder. Diğer oyuncular bağlıyken oyun ayarlarını değiştirmekten kaçının.",
   "couchcoop_connection_error_reachability_summary": "Bu bilgisayara henüz hiçbir telefon veya tarayıcı bağlanmadı.",
   "couchcoop_connection_error_reachability_action": "Henüz kimse denemediyse bu normaldir. Biri deniyor ve zaman aşımına uğruyorsa, telefonunun aynı ağda olduğunu doğrulayın ve bu oyunun gelen bağlantıları kabul etmesine izin verin: macOS'ta System Settings > Privacy & Security > Local Network ve System Settings > Network > Firewall; Windows'ta oyunun güvenlik duvarı isteminde.",
+  "couchcoop_connection_error_host_firewall_summary": "Bu bilgisayarın güvenlik duvarı oyuncuların bağlanmasını engelliyor.",
+  "couchcoop_connection_error_host_firewall_action": "Windows Güvenlik Duvarı'nda Slay the Spire 2'ye bağlantı noktası olarak değil program olarak, Özel işaretliyken izin verin ve daha önceki bir istemin bıraktığı engelleme kuralını silin. Bu bilgisayarın bulduğu kuralın tamamı için bu raporu kopyalayın.",
   "couchcoop_connection_empty": "Cihazlar tarayıcı sunucusuna bağlandıktan sonra burada görünür. Aynı Wi‑Fi ağını kullanın ve yukarıda gösterilen adresi kontrol edin.",
   "couchcoop_connection_host_service": "Sunucu hizmeti",
   "couchcoop_connection_error_slow_summary": "Tarayıcının oyunu göstermesi bekleniyor.",

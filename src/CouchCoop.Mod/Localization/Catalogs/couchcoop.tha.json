@@ -95,6 +95,8 @@
   "couchcoop_connection_error_shared_profile_action": "โหมดร่วมมือยังใช้งานได้ หลีกเลี่ยงการเปลี่ยนการตั้งค่าเกมขณะที่ผู้เล่นคนอื่นเชื่อมต่ออยู่",
   "couchcoop_connection_error_reachability_summary": "ยังไม่มีโทรศัพท์หรือเบราว์เซอร์เชื่อมต่อกับพีซีเครื่องนี้",
   "couchcoop_connection_error_reachability_action": "หากยังไม่มีใครลองเชื่อมต่อ ถือว่าปกติ หากมีคนลองแล้วหมดเวลา ให้ตรวจสอบว่าโทรศัพท์อยู่ในเครือข่ายเดียวกัน แล้วอนุญาตให้เกมนี้รับการเชื่อมต่อขาเข้า บน macOS ที่ System Settings > Privacy & Security > Local Network และ System Settings > Network > Firewall ส่วนบน Windows ให้อนุญาตในกล่องแจ้งเตือนไฟร์วอลล์ของเกม",
+  "couchcoop_connection_error_host_firewall_summary": "ไฟร์วอลล์ของพีซีเครื่องนี้กำลังปิดกั้นไม่ให้ผู้เล่นเชื่อมต่อ",
+  "couchcoop_connection_error_host_firewall_action": "อนุญาต Slay the Spire 2 ในไฟร์วอลล์ Windows แบบโปรแกรม (ไม่ใช่แบบพอร์ต) โดยติ๊ก ส่วนตัว และลบกฎบล็อกที่เหลือจากการถามครั้งก่อน คัดลอกรายงานนี้เพื่อดูกฎที่พีซีเครื่องนี้พบ",
   "couchcoop_connection_empty": "อุปกรณ์จะแสดงที่นี่หลังเชื่อมต่อกับเซิร์ฟเวอร์เบราว์เซอร์ ใช้เครือข่าย Wi‑Fi เดียวกันและตรวจสอบที่อยู่ที่แสดงด้านบน",
   "couchcoop_connection_host_service": "บริการของโฮสต์",
   "couchcoop_connection_error_slow_summary": "กำลังรอให้เบราว์เซอร์แสดงเกม",

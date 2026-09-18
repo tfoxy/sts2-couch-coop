@@ -95,6 +95,8 @@
   "couchcoop_connection_error_shared_profile_action": "Совместная игра продолжает работать. Не меняйте настройки игры, пока подключены другие игроки.",
   "couchcoop_connection_error_reachability_summary": "К этому компьютеру ещё не подключались ни телефон, ни браузер.",
   "couchcoop_connection_error_reachability_action": "Если никто ещё не пробовал, это нормально. Если кто-то пытается, но время ожидания истекает, проверьте, что телефон в той же сети, и разрешите игре принимать входящие подключения: в macOS - System Settings > Privacy & Security > Local Network и System Settings > Network > Firewall; в Windows - в запросе брандмауэра для игры.",
+  "couchcoop_connection_error_host_firewall_summary": "Брандмауэр этого компьютера не даёт игрокам подключиться.",
+  "couchcoop_connection_error_host_firewall_action": "Разрешите Slay the Spire 2 в брандмауэре Windows как программу (а не порт), отметив профиль «Частная», и удалите правило блокировки, оставшееся от прежнего запроса. Скопируйте этот отчёт, чтобы увидеть найденное правило.",
   "couchcoop_connection_empty": "Устройства появятся здесь после подключения к серверу браузера. Используйте ту же сеть Wi‑Fi и проверьте адрес выше.",
   "couchcoop_connection_host_service": "Служба хоста",
   "couchcoop_connection_error_slow_summary": "Ожидание отображения игры в браузере.",

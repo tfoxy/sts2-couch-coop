@@ -506,6 +506,10 @@ internal sealed partial class CouchCoopConnectionPanel : Panel
         "host-service-failed" or "host-service-stopped" => "service",
         Connections.CouchCoopPatchHealth.IssueCode => "patch",
         Connections.HostReachabilityWatch.IssueCode => "reachability",
+        // Split out of `reachability` because the two rows are opposite news. That one says "this may just be
+        // nobody having scanned yet"; this one is raised only once this computer's own firewall has been asked
+        // and has said it is the blocker, and its action is a thing to go and change here.
+        Connections.HostReachabilityWatch.FirewallIssueCode => "host_firewall",
         Session.HeadlessClientManager.SharedUserDirCode => "shared_profile",
         // Distinct from `seat_port` above, and deliberately so: that one is a join that FAILED on a port with an
         // owner, this one is a join that succeeded by stepping around it. Same machine condition, opposite news,
