@@ -228,16 +228,36 @@ Two design points worth keeping:
   firewall is not what is stopping it" is what moves an operator on to the router, the phone and the
   security suite — the §5 defect was a row that sent them to the router when the answer was on their desk.
 
-**UNVERIFIED ON WINDOWS, and the reason is worth recording:** the guest was started for this and the
-`couchcoop-qa` SSH key no longer exists on the Linux host (it lived in a since-cleaned session scratchpad),
-so nothing in this section's PowerShell has been *run*. The classifier, the parser and every verdict are
-unit-tested (`WindowsFirewallProbeTests`, 8 legs); the query itself is not. It was rewritten to make that
-survivable: the first draft joined rules to application filters on `InstanceID`, which is a guess about a WMI
-class's identity, and a wrong guess there matches nothing silently — an inert probe that reports nothing
-anywhere. It now follows the documented association (`$filter | Get-NetFirewallRule`) after narrowing by file
-name, `$ErrorActionPreference = 'Stop'` turns any failure into no JSON at all, and no JSON is Unknown. **The
-owed leg is one run of `WindowsFirewallProbe.Query` on the guest**, comparing its JSON against the firewall
-state §3 captured by hand.
+### Measured live, 2026-09-18, against the shipped query and classifier
+
+Ran `WindowsFirewallProbe.Query` on the guest (exe
+`C:\Program Files (x86)\Steam\steamapps\common\Slay the Spire 2\SlayTheSpire2.exe`), captured its JSON in
+four firewall states, and fed each through the real `WindowsFirewallProbe.Parse` + `Classify`. The query's
+`inboundRuleCount`/`programRuleCount` came back **268 / 481** — both "did the query work" signals healthy —
+and the stock rules matched §3 exactly (two enabled inbound Allow, `Domain, Private, Public`; both networks
+`Private`).
+
+| firewall state applied (reverted after each) | query rules | **verdict** |
+|---|---|---|
+| stock | 2× enabled Allow `Domain,Private,Public` | **Allowed** — "…is not what is stopping the connection…" |
+| + an enabled inbound Block rule for the exe | the above + 1 Block `Any` | **BlockRule** — names the rule, points at the old "Cancel" |
+| the two Allow rules disabled | 2× Allow `enabled=False` | **NoAllowRule** — "There are 2 rules for it that are switched off" |
+| the two Allow rules set Public-only, networks Private | 2× enabled Allow `Public` | **ProfileMismatch** — names both networks and their category |
+
+All four are the verdict the design intends, produced by the shipped code on real Windows. The restore was
+verified: after the run the firewall was byte-identical to stock. **The previously-owed leg is done** — the
+query, the half that had never run outside a unit test, emits JSON the classifier turns into the right
+verdict across every reachable state.
+
+One copy fix fell out of seeing the Allowed sentence on live data: the clause read "for Private, **which is
+what** this PC's network … is Private", which is ungrammatical; it is now "for Private, **and** this PC's
+network … is Private".
+
+The query was also hardened before this run and it is why the above was survivable to get wrong: the first
+draft joined rules to application filters on `InstanceID` (a guess about a WMI class's identity that would
+match nothing *silently* — an inert probe), and it now follows the documented association
+(`$filter | Get-NetFirewallRule`) after narrowing by file name, with `$ErrorActionPreference = 'Stop'` so any
+failure yields no JSON, which is `Unknown`.
 
 ## 6. A9b reproduced live, on the platform where it is worst
 
@@ -268,10 +288,40 @@ matches.
 
 ## Control channel
 
-SSH as `VM@192.168.122.32` with the `couchcoop-qa` ed25519 key; default shell is `cmd`, and quoting
-survives only via `powershell -EncodedCommand` (a `wps` helper doing the UTF-16LE/base64 wrap lives in the
-session scratchpad). PowerShell in the guest is **5.1 / .NET Framework** — .NET-Core-only overloads are
-not available there, which is what broke the first probe. **There is no QEMU guest agent installed**
-(contrary to the earlier round's note), so SSH is the only remote channel: anything that can close port 22
-— `AllowInboundRules False` above all — needs a `schtasks` auto-revert scheduled *before* it is applied,
-with no fallback but the console.
+SSH as `VM@192.168.122.32` with the `couchcoop-qa` ed25519 key (`ssh win11-qa` via the `~/.ssh/config`
+alias). The default shell is `cmd`, and PowerShell in the guest is **5.1 / .NET Framework** — .NET-Core-only
+overloads are not available there, which is what broke the first probe. **There is no QEMU guest agent
+installed**, so SSH is the only remote channel: anything that can close port 22 — `AllowInboundRules False`
+above all — needs a `schtasks` auto-revert scheduled *before* it is applied, with no fallback but the
+console. The SSH allow rules are scoped `Any` (`OpenSSH QA`, `CouchCoopQA-SSH`), so a per-program game block
+or a network→Public flip does not touch them.
+
+### Restoring access after the key is lost
+
+The `couchcoop-qa` **private** key lives at `~/.ssh/couchcoop-qa` on the Linux QA host — durable, not a
+scratchpad (a scratchpad copy is exactly what was lost on Sep-18, taking access with it). Its **public** half,
+which is not a secret, is:
+
+```
+ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIHbi32SCm6pKjBcEb2IoTWMvK34goKMAX6enAxwkET6g couchcoop-qa
+```
+
+If the private key is ever lost again, or the guest is rebuilt:
+
+1. `192.168.122.32` is a **static DHCP reservation** for the guest's NAT NIC (`52:54:00:ca:79:41`) in the
+   libvirt `default` network — it will not drift. (`virsh net-dumpxml default` shows the `<host>` entry; to
+   re-add it: `virsh net-update default add ip-dhcp-host "<host mac='52:54:00:ca:79:41' ip='192.168.122.32'/>" --live --config`.)
+2. Regenerate the key into `~/.ssh` (never a scratchpad): `ssh-keygen -t ed25519 -f ~/.ssh/couchcoop-qa -N ""`.
+3. Get the new public key into the guest. sshd is installed and running and port 22 is open, so the only
+   thing missing is authorization. With no remote channel, hand it in on a **virtual CD**: put an
+   `authorize.ps1` (append the pubkey to `%ProgramData%\ssh\administrators_authorized_keys` — the account
+   `VM` is an admin, so the per-user file is ignored — then `icacls <file> /inheritance:r /grant
+   'Administrators:F' 'SYSTEM:F'`) and a self-elevating `INSTALL.bat` into a dir, `xorriso -as mkisofs -R -J
+   -o key.iso <dir>`, `virsh change-media win11 sdb key.iso --insert --live`, and have someone run it once at
+   the console (`virsh screenshot win11` confirms the desktop state; the guest is usually left logged in with
+   an elevated PowerShell open, in which case `D:\authorize.ps1` is the whole of it). Eject with
+   `virsh change-media win11 sdb --eject --live`.
+
+An SSH session for the admin `VM` account can run elevated cmdlets directly (measured — `New-NetFirewallRule`
+succeeds), so once in, no scheduled-task dance is needed for firewall work; the auto-revert discipline above
+is only for a change that could sever port 22 itself.

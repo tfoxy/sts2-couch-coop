@@ -301,7 +301,7 @@ internal static class WindowsFirewallProbe
         }
 
         var where = covered.Count > 0
-            ? $" for {string.Join(" and ", covered)}, which is what {NetworksSentence(facts.Networks)}"
+            ? $" for {string.Join(" and ", covered)}, and {NetworksSentence(facts.Networks)}"
             : string.Empty;
         return new WindowsFirewallReading(WindowsFirewallVerdict.Allowed,
             $"Windows Firewall: this game IS allowed inbound on this computer{where} — so this PC's own Windows "
