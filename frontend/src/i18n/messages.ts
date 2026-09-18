@@ -192,6 +192,7 @@ export const en = {
   "boot.originRefusedGeneric": "This game is not set up to accept the app from this address. Use the plain address shown under the QR code.",
   "boot.unreachableOne": "The game didn't answer. Check it's running and that this phone is on the same Wi-Fi, then try again.",
   "boot.unreachableMany": "None of the saved addresses answered. Scan the QR code again — your PC's address may have changed.",
+  "boot.unreachableIos": "iPhone and iPad can't reach a game on your local network from this link. On the game's QR screen, pick \"Plain address\" or \"Secure link\" instead, and scan that.",
   "boot.loadFailed": "Found the game but couldn't load it. Make sure the mod is up to date, or open the plain address shown under the QR code.",
   "boot.gameAddress": "Game address",
 } as const;
@@ -373,6 +374,7 @@ export const zhHans: LocaleCatalog = {
   "boot.originRefusedGeneric": "此游戏未设置为接受来自此地址的应用。请使用二维码下方显示的普通地址。",
   "boot.unreachableOne": "游戏没有响应。请确认游戏正在运行、手机与电脑连接到同一 Wi‑Fi，然后重试。",
   "boot.unreachableMany": "保存的地址均未响应。请重新扫描二维码——你的电脑地址可能已改变。",
+  "boot.unreachableIos": "iPhone 和 iPad 无法通过此链接连接本地网络中的游戏。请在游戏的二维码界面改选“普通地址”或“安全链接”，然后扫描该二维码。",
   "boot.loadFailed": "已找到游戏，但无法加载。请确认 Mod 已更新，或打开二维码下方显示的普通地址。",
   "boot.gameAddress": "游戏地址",
 };
