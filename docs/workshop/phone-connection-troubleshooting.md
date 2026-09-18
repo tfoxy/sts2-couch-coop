@@ -25,6 +25,12 @@ pastes it into a discussion by hand. Suggested title: **Can't connect from a pho
   `[ERROR]` lines" as the default instead.
 - **Singular voice throughout.** One person answers these threads; "we" would imply a support team that
   does not exist. Keep it that way in any edit.
+- Two additions came from one field report (Windows 11, mod 0.2.3, zero inbound connections in 90 s, tried
+  on a Samsung phone *and* an iPad). The iPad half of that report carried no information at all — the web
+  link cannot work there — and the reporter had no way to know, so **section 1 now says so before anyone
+  spends an evening on their router**. The other is the self-test in section 6: everybody tries the address
+  on the host PC, it always works, and it is the one check that passes *precisely* when the host's own
+  firewall is the cause.
 
 ## Deliberately NOT changed
 
@@ -57,6 +63,9 @@ something in the tree has been cited for it.
 | log lines look like **`[INFO] [couchcoop] …`**, and `[ERROR]` lines count too | `CouchCoopLogLine.Format` prepends `[couchcoop]` to the *message*; Godot's logger prepends the severity, so `[couchcoop]` is never at the start of the line. The post previously said "lines starting with `[couchcoop]`", which matches nothing |
 | the **per-player log** path, `couch-coop/headless-slots/slot-2/SlayTheSpire2/logs/godot.log` | `HeadlessUserDirSeeder.SlotBase` is `<userDir>/couch-coop/headless-slots/slot-N` and `SlotUserDir` appends `SlayTheSpire2` again (`Library/Application Support/SlayTheSpire2` on macOS); `HeadlessClientManager` launches the seat with `<SlotUserDir>/logs/godot.log`. **Confirmed on this Linux install**, doubled directory name and all. The `couch-coop/seat-logs/slot-N.log` fallback is `HeadlessClientManager.SeatLogPath`, used when per-slot isolation could not be prepared |
 | the **Copy report** names both log paths | `CaptureConnectionLogsLocked(slot, hostLog, seatLogPath)` — the host log and the seat log are both attached to the connection record the report is built from |
+| an **iPhone or iPad cannot use the Web link row at all**, and it is a browser rule rather than a setting | Measured 2026-09-17, WebKit 26.4 against Chromium 147 — [local-network-access.md](../agents/local-network-access.md) "WebKit refuses the whole mode". Every insecure private-IP subresource of an https page is blocked outright, so there is no permission to grant. The client says it too: `boot.unreachableIos`, gated by `webLinkBlockedByBrowser` in `frontend/src/boot/bootstrap.ts` |
+| the row names the post tells an iOS player to pick, **Plain address** and **Secure link** | `couchcoop_qr_method_ipv4_title` / `couchcoop_qr_method_secure_title`. The in-game description of the web row already ends "doesn't work on iPhone yet" (`couchcoop_qr_method_web_description`), so the two screens now agree |
+| **opening the address on the host PC proves nothing about the firewall** | [windows-connection-fingerprints.md](../agents/windows-connection-fingerprints.md) §5: with an inbound Block rule in force the guest answered **its own LAN address** with HTTP 200 while the blocked peer got three 10 s timeouts and no RST. Windows does not filter a machine's traffic to itself |
 | a log contains a **SteamID64 and the OS user name**, no passwords, no other player's account | Swept this machine's host log and all seven per-slot seat logs: one unique SteamID64 (the host's own, up to 144 occurrences, in `user://steam/<id>/…` paths), OS user name in file paths, LAN/VPN-range IPs only. The single `token` match is `PublicKeyToken=null`, a .NET artifact; the heartbeat's per-attempt token is never logged |
 
 **One line is still unconfirmed on real hardware: the Windows `%APPDATA%\SlayTheSpire2\logs\godot.log`
@@ -92,6 +101,8 @@ Most connection problems come down to a handful of causes. This list is roughly 
 The QR screen has a selector with several ways to reach the host. If the one you scanned does not work, choose another and scan again.
 
 Prefer the plain numeric address (something like [b]192.168.1.5:13337[/b]). It has the fewest moving parts. The [b].local[/b] name and the web link both depend on things outside the mod - your router, an internet connection, browser permissions - so they can fail on a network where the numeric address works fine.
+
+[b]On an iPhone or iPad, skip the [i]Web link[/i] row entirely.[/b] Safari - and every other browser on iOS, because they are all Safari underneath - refuses to let a page loaded from the internet reach anything on your home network. That is a rule in the browser, not a setting, so there is nothing to allow and nothing to change: the page will load and then tell you the game didn't answer, on any network, however your firewall is set up. Use [b]Plain address[/b] or [b]Secure link[/b] on an iPhone or iPad. (The page says so itself now, if you get that far.)
 
 [h3]2. Make sure the phone is really on the same network[/h3]
 [list]
@@ -138,6 +149,8 @@ Then allow the game:
 [/list]
 If you answered "Cancel" on a Windows firewall prompt at some point, Windows remembers that as a block rule and will never ask again. In that case you have to remove the entry above and re-add it.
 
+[b]Opening the address in a browser on the host PC itself proves nothing.[/b] It is the obvious thing to try, and it is measured to be misleading: Windows does not filter a computer's traffic to itself - not even to its own network address - so with the firewall actively blocking every phone, the host's own browser still loads the page perfectly. If that worked for you, it tells you the game is running and serving. It says nothing at all about the firewall.
+
 Only tick [b]Public[/b] if your network is set to Public and you cannot change it. Ticking it makes the game reachable on any network you join, including cafes and hotels.
 
 [h3]7. The router[/h3]
@@ -162,7 +175,7 @@ The host computer's address can change when it reconnects to Wi-Fi or after a ro
 If you added the client to your home screen, what happens next depends on which row you installed it from:
 [list]
 [*]Installed from the [b]Web link[/b] row: it keeps working and finds the new address by itself. Just open it - no rescan needed.
-[*]Installed from the [b]numeric address[/b] or the [b]Secure link[/b]: the icon points at the old address and cannot recover. Delete it and add it again after rescanning. (Installing from the [b]Web link[/b] row instead avoids this for good.)
+[*]Installed from the [b]numeric address[/b] or the [b]Secure link[/b]: the icon points at the old address and cannot recover. Delete it and add it again after rescanning. (On Android, installing from the [b]Web link[/b] row instead avoids this for good. On an iPhone or iPad that row cannot work - see section 1 - so re-adding the icon is the only way there.)
 [/list]
 
 [hr][/hr]
