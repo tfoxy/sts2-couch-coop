@@ -177,6 +177,9 @@ if (args is ["connections", ..])
     // …and the local question that row can answer on Windows instead of listing two causes it cannot separate.
     WindowsFirewallProbeTests.Run();
     ConnectionDeviceLabelTests.Run();
+    // The browser's own resource census — the one piece of client evidence that survives the web view being
+    // killed, because it is pushed while the page is still alive rather than as it dies.
+    ClientVitalsReceiptTests.Run();
     await ConnectionReportFormatterTests.Run();
     await ConnectionAttemptLogsTests.Run();
     await ConnectionControlTests.RunAsync();
@@ -533,6 +536,7 @@ HeadlessParticleFinishNudgeTests.Run();
 await HeadlessDisconnectExitTests.RunAsync();
 ConnectionRegistryTests.Run();
 ConnectionDeviceLabelTests.Run();
+ClientVitalsReceiptTests.Run();
 await ConnectionReportFormatterTests.Run();
 await ConnectionAttemptLogsTests.Run();
 await ConnectionControlTests.RunAsync();

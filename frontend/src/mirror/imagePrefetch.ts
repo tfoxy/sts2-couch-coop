@@ -169,6 +169,15 @@ if (typeof window !== "undefined") {
   (window as unknown as Record<string, unknown>).__mirrorImagePrefetch = stats;
 }
 
+/**
+ * The live stats object — the same one behind `window.__mirrorImagePrefetch`, for in-app readers that should not
+ * have to go through a global (the client-vitals census). Returned by reference, as the bench harness already
+ * reads it: these are counters that move while you hold them, and a copy would be a reading from the past.
+ */
+export function mirrorImagePrefetchStats(): Readonly<MirrorImagePrefetchStats> {
+  return stats;
+}
+
 const now = (): number => (typeof performance !== "undefined" ? performance.now() : Date.now());
 
 /** Test override for the query param (undefined = read the real URL). */

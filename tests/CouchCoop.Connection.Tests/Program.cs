@@ -55,6 +55,10 @@ if (args is ["--labels"])
 {
     Console.WriteLine("connections: device label");
     ConnectionDeviceLabelTests.Run();
+    // The other thing a report says about the device, and the only one that survives the browser being killed:
+    // the bounded resource census the client pushes while it is still alive.
+    Console.WriteLine("connections: client vitals");
+    ClientVitalsReceiptTests.Run();
     Console.WriteLine("connections: device label ok");
     return;
 }
@@ -123,6 +127,8 @@ Console.WriteLine("connections: windows firewall probe");
 WindowsFirewallProbeTests.Run();
 Console.WriteLine("connections: device label");
 ConnectionDeviceLabelTests.Run();
+Console.WriteLine("connections: client vitals");
+ClientVitalsReceiptTests.Run();
 Console.WriteLine("connections: report formatter");
 await ConnectionReportFormatterTests.Run();
 Console.WriteLine("connections: attempt logs");
