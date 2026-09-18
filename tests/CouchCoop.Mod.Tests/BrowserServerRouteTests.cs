@@ -72,6 +72,15 @@ if (args is [ManagedCacheProcessTests.ChildVerb, ..])
     Environment.Exit(await ManagedCacheProcessTests.RunChildAsync(args));
 }
 
+// Runs the headless seat's joypad InputMap isolation checks alone. This pure suite uses type metadata and ordinary
+// collections only, so it is safe without an engine and stays independently green of the later QR-layout contract.
+if (args is ["headless-input", ..])
+{
+    HeadlessJoypadInputMapIsolationTests.Run();
+    Console.WriteLine("headless input: ok");
+    return;
+}
+
 // `dotnet run --project tests/CouchCoop.Mod.Tests -- host-guards` runs the WS-1 hosting guards ALONE: the patch
 // TARGET resolution, the composite host's peer routing, and the Harmony ordering + client-cap rules that decide
 // how many players can actually connect. They are pure — no IO, no Harmony install, no live game, no port — which
@@ -422,6 +431,9 @@ SpirectlEmbeddedAssemblyBoundaryTests.Run();
 // the check most likely to be defeated by where it sits, since everything from HeadlessAudioMuteTargetsTests
 // down is currently unreachable. Also reachable alone as `-- log-prefix`.
 CouchCoopLogPrefixTests.Run();
+// A headless seat strips controller bindings from its own InputMap before the game can consume input. This suite
+// uses types and ordinary collections only: constructing Godot objects in this runner can segfault.
+HeadlessJoypadInputMapIsolationTests.Run();
 // The GDScript source generated for the no-op FMOD singleton stub — pure strings, no Godot types, and placed
 // this high for the usual reason: everything from HeadlessAudioMuteTargetsTests down is unreachable on some
 // machines. Also reachable alone as `-- fmod-stub`.
