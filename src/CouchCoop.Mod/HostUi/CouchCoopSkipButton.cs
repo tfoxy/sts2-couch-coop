@@ -24,8 +24,19 @@ internal sealed partial class CouchCoopSkipButton : CouchCoopTextureButton
 {
     public const string NodeName = "CouchCoopQrCloseButton";
 
+    /// <summary>Design width of the shipped skip button.</summary>
+    /// <remarks>
+    /// The two halves are <c>const</c> as well as being the <see cref="DesignSize"/> vector, so a card-geometry
+    /// contract can read them without touching a Godot-derived type: a <c>const</c> is inlined into the caller
+    /// at compile time, while reading the <c>static readonly</c> vector would load this class.
+    /// </remarks>
+    internal const float DesignWidth = 300f;
+
+    /// <summary>Design height of the shipped skip button. See <see cref="DesignWidth"/>.</summary>
+    internal const float DesignHeight = 73f;
+
     /// <summary>Design size of the shipped skip button.</summary>
-    public static readonly Vector2 DesignSize = new(300f, 73f);
+    public static readonly Vector2 DesignSize = new(DesignWidth, DesignHeight);
 
     /// <summary>Design font size of the shipped skip button's label.</summary>
     public const int DesignFontSize = 34;

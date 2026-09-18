@@ -172,30 +172,40 @@ internal static class CouchCoopQrLayoutContractTests
     // notice and close rows underneath it. This is why the constant is 592 rather than the 620 the old
     // budget carried.
     //
-    // THESE ARE MIRRORED CONSTANTS, and the mirror can go stale — CouchCoopQrDialog's geometry is `private
-    // const` (it is Godot-coupled and cannot be constructed here), so this test cannot read the real
-    // values. It has silently drifted once already: the numbers stayed at the pre-web-link layout while
-    // the dialog grew a second toggle row, and the assertions below went on passing against geometry that
-    // no longer existed. If you move a row in CouchCoopQrDialog, move it here too. The single-select
-    // redesign removed both toggle rows (their methods are option rows now), which is why the card is
-    // 936 with the QR at 152 — and why the expanded option list, the new thing that must fit, gets its
-    // own assertion below.
+    // THIS READS THE DIALOG'S OWN CONSTANTS, and that is load-bearing rather than tidiness. It used to
+    // re-type them, and the mirror drifted twice: once when the dialog grew a second toggle row and these
+    // numbers stayed at the pre-web-link layout (the assertions went on passing against geometry that no
+    // longer existed), and once when the notice row grew 26 -> 40 for the longer localized instructions —
+    // that one WAS caught, but only because the mirror happened to be updated in the same commit, and a
+    // mirrored expectation cannot be mutation-tested at all. The geometry is `internal const` on
+    // CouchCoopQrDialog / CouchCoopModalDialog / CouchCoopSkipButton now, and a const is inlined at compile
+    // time, so reading it here loads no Godot-derived type (constructing one needs a live engine; see the
+    // suite header). Move a row in the dialog and this arithmetic re-runs against the move.
+    //
+    // MinimumRowClearance exists because the failure mode is a 1px overlap: an invariant that only refuses a
+    // negative gap is discovered by a player, not by this suite.
+    private const float MinimumRowClearance = 4f;
+
     private static void TheCardStillHasRoomForTheConstantExtent()
     {
         var layout = HostLobbyQrOverlayLayout.Default;
 
         const float designSpaceHeight = 1080f;
-        const float panelHeight = 936f;    // CouchCoopQrDialog.PanelHeight
-        const float qrTop = 152f;          // CouchCoopQrDialog.QrTop
-        const float urlGap = 6f, urlHeight = 32f, noticeGap = 2f, noticeHeight = 40f;
-        const float closeHeight = 73f;     // CouchCoopSkipButton.DesignSize.Y
-        const float closeInset = 16f;      // CouchCoopModalDialog.DismissBottomInset
+        const float panelHeight = CouchCoopQrDialog.PanelHeight;
+        const float qrTop = CouchCoopQrDialog.QrTop;
+        const float urlGap = CouchCoopQrDialog.UrlGap;
+        const float urlHeight = CouchCoopQrDialog.UrlHeight;
+        const float noticeGap = CouchCoopQrDialog.NoticeGap;
+        const float noticeHeight = CouchCoopQrDialog.NoticeHeight;
+        const float closeHeight = CouchCoopSkipButton.DesignHeight;
+        const float closeInset = CouchCoopQrDialog.DismissBottomInset;
 
         var noticeBottom = qrTop + layout.QrDisplayExtent + urlGap + urlHeight + noticeGap + noticeHeight;
         var closeTop = panelHeight - layout.ResolvedPanelPadding - closeHeight - closeInset;
 
-        Expect(noticeBottom <= closeTop,
-            $"the notice row (bottom {noticeBottom}) clears the close button (top {closeTop}) at the constant extent");
+        Expect(closeTop - noticeBottom >= MinimumRowClearance,
+            $"the notice row (bottom {noticeBottom}) clears the close button (top {closeTop}) by at least "
+            + $"{MinimumRowClearance} at the constant extent");
         Expect(closeTop + closeHeight <= panelHeight, "the close button stays inside the card");
         Expect(panelHeight <= designSpaceHeight,
             $"the card ({panelHeight}) still fits the {designSpaceHeight}-tall design space");
@@ -203,8 +213,8 @@ internal static class CouchCoopQrLayoutContractTests
         // The expanded option list hangs below the closed select row and draws over the QR; at the
         // decision layer's hard cap it must still bottom out inside the card, because the select has no
         // scrolling — the cap IS the fit guarantee.
-        const float selectTop = 72f;       // CouchCoopQrDialog.SelectTop
-        const float rowHeight = 64f;       // CouchCoopQrHostSelect.RowHeight
+        const float selectTop = CouchCoopQrDialog.SelectTop;
+        const float rowHeight = CouchCoopQrHostSelect.RowHeight;
         var listBottom = selectTop + rowHeight + (QrHostOptions.MaxOptions * rowHeight);
         Expect(listBottom <= panelHeight,
             $"a fully expanded option list (bottom {listBottom}) stays inside the card ({panelHeight})");

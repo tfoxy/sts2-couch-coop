@@ -51,8 +51,12 @@ internal readonly record struct CouchCoopModalNames(string Root, string Scrim, s
 /// </remarks>
 internal abstract partial class CouchCoopModalDialog : Control
 {
-    /// <summary>Gap between the dismiss button and the card's padded bottom edge.</summary>
-    private const float DismissBottomInset = 16f;
+    /// <summary>
+    /// Default gap between the dismiss button and the card's padded bottom edge. A dialog whose body fills its
+    /// card can ask for a smaller one (see the constructor); <c>internal</c> so the layout contract suite reads
+    /// this number instead of re-typing it.
+    /// </summary>
+    internal const float DefaultDismissBottomInset = 16f;
 
     private readonly ColorRect _scrim;
     private readonly Panel _card;
@@ -69,6 +73,7 @@ internal abstract partial class CouchCoopModalDialog : Control
     private readonly Callable _inputModeChanged;
     private readonly Vector2 _cardSize;
     private readonly Vector2 _dismissSize;
+    private readonly float _dismissBottomInset;
 
     // The focus chain, and the scratch list the body declares into. Fields rather than locals because the
     // chain is rebuilt on every list expand/collapse and option rebuild, and because ApplyFocusTarget has
@@ -97,14 +102,22 @@ internal abstract partial class CouchCoopModalDialog : Control
     /// close button.
     /// </param>
     /// <param name="dismissFontSize">Label size for the dismiss button, matched to its box.</param>
+    /// <param name="dismissBottomInset">
+    /// Gap between the button and the card's padded bottom edge, defaulting to
+    /// <see cref="DefaultDismissBottomInset"/>. Passed in for the same reason the size is: a dialog whose body
+    /// fills its card needs the button nearer the floor, where the slack actually is, rather than squeezing the
+    /// content stack above it.
+    /// </param>
     protected CouchCoopModalDialog(
         CouchCoopModalNames names,
         Vector2 cardSize,
         Vector2? dismissSize = null,
-        int dismissFontSize = CouchCoopSkipButton.DesignFontSize)
+        int dismissFontSize = CouchCoopSkipButton.DesignFontSize,
+        float dismissBottomInset = DefaultDismissBottomInset)
     {
         _cardSize = cardSize;
         _dismissSize = dismissSize ?? CouchCoopSkipButton.DesignSize;
+        _dismissBottomInset = dismissBottomInset;
         _closeAction = Close;
         _selectAction = SelectFocusedControl;
         _tabAction = MoveKeyboardFocus;
@@ -304,7 +317,7 @@ internal abstract partial class CouchCoopModalDialog : Control
 
         _dismiss.Position = new Vector2(
             (_cardSize.X - _dismissSize.X) / 2f,
-            _cardSize.Y - padding - _dismissSize.Y - DismissBottomInset);
+            _cardSize.Y - padding - _dismissSize.Y - _dismissBottomInset);
         _dismiss.Size = _dismissSize;
     }
 
