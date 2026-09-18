@@ -52,17 +52,35 @@ internal sealed partial class CouchCoopQrDialog : CouchCoopModalDialog
     // toggles into the option list, so the QR moved up to 152 and the card shrank to 936, which clears
     // the design space by 72 on each side. The expanded option list (at most QrHostOptions.MaxOptions
     // rows of 64 under a 64 closed row at 72) bottoms out at 904, still inside the card.
-    // CouchCoopQrLayoutContractTests pins the arithmetic.
-    private const float PanelWidth = 1000f;
-    private const float PanelHeight = 936f;
-    private const float TitleTop = 12f;
-    private const float TitleHeight = 52f;
-    private const float SelectTop = 72f;
-    private const float QrTop = 152f;
-    private const float UrlGap = 6f;
-    private const float UrlHeight = 32f;
-    private const float NoticeGap = 2f;
-    private const float NoticeHeight = 40f;
+    //
+    // The stack is TIGHT AT THE BOTTOM and slack below the close button, which is why this dialog asks
+    // for a smaller DismissBottomInset (see the base constructor call) rather than moving a row: when the
+    // notice row grew 26 -> 40 to fit the longer localized instructions, its bottom (784 + 40 = 824)
+    // landed one unit INSIDE a close button whose top was 823, while the button still floated 40 above
+    // the card floor. Taking 8 of that slack gives the notice row 7 units of clearance and leaves the
+    // button 32 above the floor. The QR's 592 extent is NOT the adjustable dimension here: it is one
+    // whole 16-unit module per pixel for the 37-module LAN code (QrRasterTests) and it lives in four
+    // contract copies (HostLobbyQrOverlayLayout, CouchCoopHotLogic, the loader shell, its validator).
+    //
+    // These are `internal const` so CouchCoopQrLayoutContractTests can READ them: it used to re-type
+    // them, and a mirror that drifts turns a layout contract into a test of itself. A const is inlined
+    // at compile time, so the suite never loads this Godot-derived type.
+    internal const float PanelWidth = 1000f;
+    internal const float PanelHeight = 936f;
+    internal const float TitleTop = 12f;
+    internal const float TitleHeight = 52f;
+    internal const float SelectTop = 72f;
+    internal const float QrTop = 152f;
+    internal const float UrlGap = 6f;
+    internal const float UrlHeight = 32f;
+    internal const float NoticeGap = 2f;
+    internal const float NoticeHeight = 40f;
+
+    /// <summary>
+    /// This dialog's close-button inset, below <see cref="CouchCoopModalDialog.DefaultDismissBottomInset"/>
+    /// because its body fills the card. See the geometry note above.
+    /// </summary>
+    internal const float DismissBottomInset = 8f;
 
     private readonly Label _title = new() { Name = TitleLabelName };
     private readonly Label _url = new() { Name = UrlLabelName };
@@ -79,7 +97,9 @@ internal sealed partial class CouchCoopQrDialog : CouchCoopModalDialog
     public CouchCoopQrDialog()
         : base(
             new CouchCoopModalNames(NodeName, ScrimName, PanelName, CouchCoopSkipButton.NodeName),
-            new Vector2(PanelWidth, PanelHeight), dismissFontSize: 28)
+            new Vector2(PanelWidth, PanelHeight),
+            dismissFontSize: 28,
+            dismissBottomInset: DismissBottomInset)
     {
         DismissText = CloseButtonText;
 
