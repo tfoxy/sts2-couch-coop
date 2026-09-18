@@ -13,6 +13,14 @@ fail() {
   exit 1
 }
 
+loader_project="$repo_root/src/CouchCoop.Mod.Loader/CouchCoop.Mod.Loader.csproj"
+grep -Fq 'Include="System.Diagnostics.DiagnosticSource"' "$loader_project" \
+  || fail "loader does not pin the bundled DiagnosticSource package"
+grep -Fq 'Version="[10.0.10]"' "$loader_project" \
+  || fail "loader does not pin DiagnosticSource 10.0.10 exactly"
+grep -Fq 'CopyToPublishDirectory="PreserveNewest"' "$loader_project" \
+  || fail "loader does not copy DiagnosticSource into release publish output"
+
 lane_assemblies=()
 while IFS= read -r assembly; do lane_assemblies+=("$assembly"); done < <(release_lane_assembly_names)
 known_lanes=()

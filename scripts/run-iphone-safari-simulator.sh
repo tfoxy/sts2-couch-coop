@@ -49,6 +49,12 @@ command -v node >/dev/null 2>&1 || fail capability node-unavailable 78
 command -v curl >/dev/null 2>&1 || fail capability curl-unavailable 78
 
 script_dir=$(CDPATH='' cd -- "$(dirname -- "$0")" && pwd)
+
+# Warm and verify the host before CoreSimulator startup competes for the runner. This request deliberately loads
+# the real shell, so Safari's later first navigation does not pay the host's cold visit-diagnostics cost.
+node "$script_dir/lib/iphone-harness-preflight.mjs" "$harness_url" >/dev/null \
+  || fail host-socket-close harness-preflight-failed
+
 selection_dir=$(mktemp -d "${TMPDIR:-/tmp}/couchcoop-simulator-selection.XXXXXX")
 driver_pid=""
 device=""
@@ -105,10 +111,6 @@ if [ "$created" = 1 ] || [ "$restore_shutdown" = 1 ]; then
   xcrun simctl boot "$device" >/dev/null 2>&1 || fail simulator-safaridriver-failure simulator-boot-failed
 fi
 xcrun simctl bootstatus "$device" -b || fail simulator-safaridriver-failure simulator-bootstatus-failed
-
-# Prove the synthetic server speaks both transports before attributing a later failure to Safari.
-node "$script_dir/lib/iphone-harness-preflight.mjs" "$harness_url" >/dev/null \
-  || fail host-socket-close harness-preflight-failed
 
 # Never let Authorization Services turn a hosted run into an invisible password prompt. GitHub's macOS runner
 # grants passwordless sudo; a local Mac without equivalent authority records a named capability result and the

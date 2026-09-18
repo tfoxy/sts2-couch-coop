@@ -40,6 +40,7 @@ if [ ! -f "$workflow" ]; then
 fi
 
 require_fixed "workflow_dispatch:" "workflow_dispatch trigger is missing"
+require_fixed "run_webkit:" "run_webkit dispatch input is missing"
 require_fixed "run_arm:" "run_arm dispatch input is missing"
 require_fixed "run_intel:" "run_intel dispatch input is missing"
 require_fixed "default: true" "Apple Silicon must be the default dispatch architecture"
@@ -51,6 +52,13 @@ for job in policy iphone_webkit macos_arm macos_intel; do
   require_fixed "  $job:" "required job is missing: $job"
 done
 
+require_count "needs: policy" 3 \
+  "WebKit and both Mac jobs must depend only on the policy gate"
+reject_fixed "needs: [policy, iphone_webkit]" \
+  "Mac jobs must not wait for the independent WebKit job"
+require_fixed "inputs.run_webkit == true" \
+  "the WebKit dispatch toggle must control the WebKit job"
+
 require_fixed "runs-on: ubuntu-24.04" "Ubuntu policy/WebKit runner is not pinned"
 require_fixed "runs-on: macos-15" "Apple Silicon runner must be macos-15"
 require_fixed "runs-on: macos-15-intel" "Intel runner must be macos-15-intel"
@@ -60,6 +68,10 @@ require_count "f00ee565e9d3682584117ef8865f5ff6d8f571fbf2733075ee06b9e0953261b8"
   "both Mac jobs must verify the pinned Godot .NET SHA-256"
 require_count "--godot-harmony-fixture" 4 \
   "both Mac jobs must run stock and ad-hoc-hardened Godot Harmony fixtures"
+require_count 'fixture_bin="$fixture_stage/.godot/mono/temp/bin/Debug"' 2 \
+  "both Mac jobs must stage the Debug fixture expected by the Godot editor binary"
+require_count 'CouchCoop.MacOs.GodotHarmonyFixture.runtimeconfig.json 0Harmony.dll GodotSharp.dll' 2 \
+  "both Mac jobs must verify the staged Godot fixture runtime closure"
 require_count "codesign --force --deep --sign - --options runtime" 2 \
   "both Mac jobs must create an ad-hoc hardened fixture copy"
 require_count 'plutil -convert json -o - "$actual_entitlements"' 2 \
@@ -87,6 +99,12 @@ require_fixed "beta-targets \"\$RUNNER_TEMP/couchcoop-reference-sdk/public-beta/
   "public-beta reference lane metadata guard is missing"
 require_count "name: Run iPhone 13 Simulator Safari survival contract" 1 \
   "the exact iPhone Simulator contract must run only on Apple Silicon"
+require_fixed "id: iphone_safari_contract" \
+  "the ARM Simulator producer must expose an outcome for artifact validation"
+require_fixed "steps.iphone_safari_contract.outcome != 'skipped'" \
+  "ARM artifacts must not be validated when their producer was skipped"
+require_fixed "-p:Sts2GameApi=v107 -p:CouchCoopBuildToLocalMods=false --" \
+  "the ARM Simulator harness must preserve its verified stable API lane"
 require_fixed "--iphone-profile field-repro" "ARM Simulator must run the field-reproduction profile"
 reject_fixed "iphone-safari-intel" "Intel must not stage or upload iPhone Simulator artifacts"
 
@@ -179,6 +197,12 @@ else
   if grep -Fq "get-task-allow" "$entitlements"; then
     fail "Godot hardened-runtime fixture must not request get-task-allow"
   fi
+fi
+
+fixture_project="$repo_root/tests/CouchCoop.MacOs.GodotHarmonyFixture/project.godot"
+if [ ! -f "$fixture_project" ] \
+  || ! grep -Fq 'project/assembly_name="CouchCoop.MacOs.GodotHarmonyFixture"' "$fixture_project"; then
+  fail "Godot fixture project must bind the generated assembly name explicitly"
 fi
 
 if [ -n "$failures" ]; then
