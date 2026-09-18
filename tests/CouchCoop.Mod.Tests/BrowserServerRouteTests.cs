@@ -3831,6 +3831,19 @@ internal sealed class BrowserServerRouteTests
 
     // The frame answering ONE request. The host also pushes unsolicited frames on every connection (scene-delta
     // stream, and `session` re-sends carrying requestId "session"), so a reply must be matched by its request id.
+    /// <summary>
+    /// The TERMINAL reply to <paramref name="requestId"/>, skipping everything else on the socket.
+    /// </summary>
+    /// <remarks>
+    /// Correlating on the request id alone is not enough, and this is not a harness detail: a `join` in flight
+    /// also draws `join-progress` frames that echo THE SAME request id (JoinProgressTicker), deliberately — that
+    /// id is how the browser attaches the host's running commentary to the join it is still waiting on. The
+    /// first one lands before the answer does, so a reader that stops at "the ids match" returns the
+    /// commentary and every assertion about the reply reads a frame that was never one. The client itself
+    /// branches on `type`, which is why `join-progress` is kept out of `BrowserEnvelope` on the TypeScript side;
+    /// this does the same. Harmless for the action replies that also come through here — nothing else on the
+    /// wire shares a request id with its own answer.
+    /// </remarks>
     private static async Task<string> ReadCorrelatedReplyAsync(ClientWebSocket socket, string requestId, int timeoutMs = 5000)
     {
         var deadline = Environment.TickCount64 + timeoutMs;
@@ -3846,11 +3859,16 @@ internal sealed class BrowserServerRouteTests
                 ?? throw new TimeoutException($"Timed out waiting for the session reply to '{requestId}'.");
 
             using var document = JsonDocument.Parse(message);
-            if (document.RootElement.TryGetProperty("requestId", out var id) && id.GetString() == requestId)
+            if (document.RootElement.TryGetProperty("requestId", out var id)
+                && id.GetString() == requestId
+                && !IsProgressFrame(document.RootElement))
             {
                 return message;
             }
         }
+
+        static bool IsProgressFrame(JsonElement root)
+            => root.TryGetProperty("type", out var type) && type.GetString() == "join-progress";
     }
 
     private static async Task<string> ReadNextWsMessageOfTypeAsync(ClientWebSocket socket, string type, int timeoutMs = 5000)
