@@ -18,6 +18,8 @@
     <!-- The shipping loader has to pick a payload before any game-bound implementation assembly is loaded.
          Source-link it here so synthetic .app trees test that exact code on every host OS. -->
     <Compile Include="../../src/CouchCoop.Mod.Loader/CouchCoopLaneSelection.cs" Link="CouchCoopLaneSelection.cs" />
+    <Compile Include="../../src/CouchCoop.Mod/HostUi/LobbySupportCheckpoints.cs" Link="LobbySupportCheckpoints.cs" />
     <Compile Include="../CouchCoop.Mod.Tests/HeadlessUserDirSeederTests.cs" Link="HeadlessUserDirSeederTests.cs" />
+    <Compile Include="../CouchCoop.Mod.Tests/LobbySupportCheckpointsTests.cs" Link="LobbySupportCheckpointsTests.cs" />
   </ItemGroup>
 </Project>

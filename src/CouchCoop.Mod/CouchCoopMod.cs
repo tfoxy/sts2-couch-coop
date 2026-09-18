@@ -27,6 +27,12 @@ public static class CouchCoopMod
     private static Task? _geoclipPrerenderTask;
     private static bool _geoclipPrerenderStarted;
 
+    /// <summary>Bounded support checkpoints shared by the lobby mount, controller and listener seams.</summary>
+    internal static LobbySupportCheckpoints LobbyCheckpoints { get; } = new(
+        CouchCoopLog.Stderr,
+        CouchCoopLog.Info,
+        CouchCoopLog.Error);
+
     // True when this game instance was spawned by HeadlessClientManager to serve a single
     // browser player in co-op. Headless clients skip the QR overlay (no display) and do
     // not spawn sub-headless instances of their own.
@@ -745,7 +751,9 @@ public static class CouchCoopMod
             _hostUi = new CouchCoopHostUiServices(
                 runtime,
                 preferredPort: ResolvePreferredPort(),
-                deferDiscoveryServices: !IsHeadlessClient);
+                deferDiscoveryServices: !IsHeadlessClient,
+                // A spawned seat has no display lobby and must not impersonate the host's support trail.
+                checkpoints: IsHeadlessClient ? null : LobbyCheckpoints);
             _hostUiStartupFailure = null;
             _hostUi.StartAsync().GetAwaiter().GetResult();
             if (!IsHeadlessClient)

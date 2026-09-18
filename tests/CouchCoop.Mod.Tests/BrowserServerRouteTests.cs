@@ -108,6 +108,7 @@ if (args is ["host-guards", ..])
     // IdleHostCostTests on some machines, and the regression it guards (one failed patch attempt costing the
     // lobby its QR button for the whole process) is invisible until someone opens a lobby.
     IdleHostCostTests.MountPlanContract();
+    LobbySupportCheckpointsTests.Run();
     Console.WriteLine("host guards: ok");
     return;
 }

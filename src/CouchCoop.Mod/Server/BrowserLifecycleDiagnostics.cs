@@ -28,19 +28,16 @@ public sealed class BrowserLifecycleDiagnostics
     private readonly Func<DateTimeOffset> _now;
     private readonly Func<long> _monotonicMilliseconds;
     private readonly object _writeGate;
+    private readonly BrowserLifecycleWorkloadSnapshot? _workload;
     private readonly object _visitGate = new();
     private readonly ConcurrentDictionary<string, Visit> _visits = new(StringComparer.Ordinal);
     private int _nextVisit;
-    private int _sceneAcks;
-    private int _presentations;
-    private int _viewError;
-    private int _hostSocketOpen;
-    private int _seatSocketOpen;
 
     public BrowserLifecycleDiagnostics(
         string artifactDirectory,
         Func<DateTimeOffset>? utcNow = null,
-        Func<long>? monotonicMilliseconds = null)
+        Func<long>? monotonicMilliseconds = null,
+        BrowserLifecycleWorkloadSnapshot? workload = null)
     {
         if (string.IsNullOrWhiteSpace(artifactDirectory))
             throw new ArgumentException("An artifact directory is required.", nameof(artifactDirectory));
@@ -51,6 +48,7 @@ public sealed class BrowserLifecycleDiagnostics
         _writeGate = ProcessFileLocks.GetOrAdd(_path, static _ => new object());
         _now = utcNow ?? (() => DateTimeOffset.UtcNow);
         _monotonicMilliseconds = monotonicMilliseconds ?? (() => Environment.TickCount64);
+        _workload = workload;
     }
 
     /// <summary>A same-origin config tag. The filesystem directory and visit ordinal never reach the page.</summary>
@@ -107,7 +105,7 @@ public sealed class BrowserLifecycleDiagnostics
                     || visit.Batches >= MaximumBatchesPerVisit
                     || !visit.HasBatchToken(_monotonicMilliseconds())) return false;
                 if (!visit.TryPlan(accepted, out var plan)) return false;
-                if (!AppendBatch(visit.Ordinal, accepted)) return false;
+                if (!AppendBatch(visit, accepted)) return false;
                 visit.Commit(plan, _monotonicMilliseconds());
                 return true;
             }
@@ -142,26 +140,28 @@ public sealed class BrowserLifecycleDiagnostics
                 Code: closeCode is >= 1000 and <= 4999 ? closeCode : null,
                 Clean: clean),
         };
-        AppendBatch(visit.Ordinal, [item]);
+        lock (visit.Gate)
+            AppendBatch(visit, [item]);
     }
 
-    /// <summary>Payload-free counters/booleans for a harness verdict.</summary>
-    public object Summary() => new
+    /// <summary>
+    /// Payload-free counters/booleans for one browser visit. A nonce is deliberately required here: combining
+    /// arrivals makes a later reload look like the journey that presented the first frame.
+    /// </summary>
+    public object Summary(string? nonce)
     {
-        sceneAcks = Volatile.Read(ref _sceneAcks),
-        presentations = Volatile.Read(ref _presentations),
-        viewError = Volatile.Read(ref _viewError) != 0,
-        hostSocketOpen = Volatile.Read(ref _hostSocketOpen) != 0,
-        seatSocketOpen = Volatile.Read(ref _seatSocketOpen) != 0,
-    };
+        if (!IsNonce(nonce, out var normalized) || !_visits.TryGetValue(normalized, out var visit))
+            return SummarySnapshot.Empty;
+        lock (visit.Gate) return visit.Summary(_workload);
+    }
 
-    private bool AppendBatch(int visit, IReadOnlyList<LifecycleEvent> events)
+    private bool AppendBatch(Visit visit, IReadOnlyList<LifecycleEvent> events)
     {
         if (events.Count == 0) return true;
 
         var batch = new StringBuilder();
         foreach (var item in events)
-            batch.Append(JsonSerializer.Serialize(PersistedEvent(visit, item))).Append('\n');
+            batch.Append(JsonSerializer.Serialize(PersistedEvent(visit.Ordinal, item))).Append('\n');
         var bytes = Encoding.UTF8.GetBytes(batch.ToString());
 
         // One process-local lock and one FileStream.Write call per accepted batch. A reader can see either the
@@ -171,7 +171,7 @@ public sealed class BrowserLifecycleDiagnostics
             using var stream = new FileStream(_path, FileMode.Append, FileAccess.Write, FileShare.Read);
             if (stream.Length + bytes.Length > MaximumFileBytes) return false;
             stream.Write(bytes);
-            foreach (var item in events) UpdateSummary(item);
+            foreach (var item in events) visit.UpdateSummary(item);
             return true;
         }
     }
@@ -196,18 +196,6 @@ public sealed class BrowserLifecycleDiagnostics
         return result;
     }
 
-    private void UpdateSummary(LifecycleEvent item)
-    {
-        if (item.Kind == "ack-sent") Interlocked.Increment(ref _sceneAcks);
-        if (item.Kind == "frame-presented") Interlocked.Increment(ref _presentations);
-        if (item.Kind == "error" && item.Category is "render" or "transport")
-            Interlocked.Exchange(ref _viewError, 1);
-        if (item.Kind == "ws-open" && item.Role == "host") Interlocked.Exchange(ref _hostSocketOpen, 1);
-        if (item.Kind == "ws-open" && item.Role == "seat") Interlocked.Exchange(ref _seatSocketOpen, 1);
-        if (item.Kind == "ws-close" && item.Role == "host") Interlocked.Exchange(ref _hostSocketOpen, 0);
-        if (item.Kind == "ws-close" && item.Role == "seat") Interlocked.Exchange(ref _seatSocketOpen, 0);
-    }
-
     private static bool TryParseEvent(JsonElement item, out LifecycleEvent parsed)
     {
         parsed = default;
@@ -223,7 +211,7 @@ public sealed class BrowserLifecycleDiagnostics
         switch (kind)
         {
             case "lifecycle":
-                return StateEvent(item, time, kind, ["load", "pageshow", "pagehide"], out parsed);
+                return StateEvent(item, time, kind, ["load", "pageshow", "pagehide", "navigation"], out parsed);
             case "visibility":
                 return StateEvent(item, time, kind, ["visible", "hidden"], out parsed);
             case "orientation":
@@ -369,6 +357,16 @@ public sealed class BrowserLifecycleDiagnostics
         private int _lastClientTime = -1;
         private int _checkpointOrdinal;
         private int _checkpointStage;
+        private int _sceneAcks;
+        private int _presentations;
+        private bool _viewError;
+        private bool _hostSocketOpen;
+        private bool _seatSocketOpen;
+        private bool _hostSeen;
+        private bool _seatSeen;
+        private bool _journeyValid = true;
+        private bool _pagehide;
+        private bool _navigation;
 
         public bool HasBatchToken(long now)
         {
@@ -421,6 +419,55 @@ public sealed class BrowserLifecycleDiagnostics
             Batches++;
         }
 
+        public void UpdateSummary(LifecycleEvent item)
+        {
+            if (item.Kind == "ack-sent") _sceneAcks++;
+            if (item.Kind == "frame-presented") _presentations++;
+            if (item.Kind == "error" && item.Category is "render" or "transport") _viewError = true;
+
+            if (item.Kind == "lifecycle" && item.State is "pagehide" or "navigation")
+            {
+                _pagehide |= item.State == "pagehide";
+                _navigation |= item.State == "navigation";
+                if (_presentations > 0) _journeyValid = false;
+            }
+
+            if (item.Role == "host") UpdateSocket(ref _hostSocketOpen, ref _hostSeen, item);
+            if (item.Role == "seat") UpdateSocket(ref _seatSocketOpen, ref _seatSeen, item);
+        }
+
+        private void UpdateSocket(ref bool open, ref bool seen, LifecycleEvent item)
+        {
+            if (item.Kind == "ws-open")
+            {
+                if (_presentations > 0 && seen) _journeyValid = false;
+                open = true;
+                seen = true;
+            }
+            else if (item.Kind is "ws-close" or "ws-error")
+            {
+                if (_presentations > 0) _journeyValid = false;
+                open = false;
+            }
+        }
+
+        public SummarySnapshot Summary(BrowserLifecycleWorkloadSnapshot? workload) => new(
+            Ordinal,
+            Ordinal,
+            _sceneAcks,
+            _presentations,
+            _checkpointOrdinal,
+            Math.Clamp(_checkpointStage, 0, 4),
+            _pagehide,
+            _navigation,
+            _viewError,
+            SocketState(_hostSeen, _hostSocketOpen),
+            SocketState(_seatSeen, _seatSocketOpen),
+            _journeyValid,
+            workload);
+
+        private static string SocketState(bool seen, bool open) => !seen ? "unseen" : open ? "open" : "closed";
+
         private static int CheckpointStage(string kind) => kind switch
         {
             "scene-received" => 1,
@@ -429,6 +476,24 @@ public sealed class BrowserLifecycleDiagnostics
             "ack-sent" => 4,
             _ => 0,
         };
+    }
+
+    private sealed record SummarySnapshot(
+        int visitOrdinal,
+        int journeyOrdinal,
+        int sceneAcks,
+        int presentations,
+        int lastCheckpointOrdinal,
+        int lastCheckpointStage,
+        bool pagehide,
+        bool navigation,
+        bool viewError,
+        string hostSocketState,
+        string seatSocketState,
+        bool journeyValid,
+        BrowserLifecycleWorkloadSnapshot? workload)
+    {
+        public static readonly SummarySnapshot Empty = new(0, 0, 0, 0, 0, 0, false, false, false, "unseen", "unseen", false, null);
     }
 
     private readonly record struct VisitPlan(int LastClientTime, int CheckpointOrdinal, int CheckpointStage);
@@ -445,3 +510,16 @@ public sealed class BrowserLifecycleDiagnostics
         int? Code = null,
         bool? Clean = null);
 }
+
+/// <summary>Exact synthetic-harness limits, supplied by the harness and never by page input.</summary>
+public sealed record BrowserLifecycleWorkloadSnapshot(
+    string profile,
+    int nodes,
+    int text,
+    int chars,
+    int resources,
+    int decodedBytes,
+    int maxDimension,
+    int keyframes,
+    int deltas,
+    int expectedMessages);

@@ -17,7 +17,42 @@ for lane in 0.107.1 0.111.0; do
   printf fixture > "$mod/lanes/$lane/CouchCoop.Mod.dll"
   printf fixture > "$mod/lanes/$lane/CouchCoop.Spirectl.dll"
 done
-printf '%s\n' '[couchcoop] loader-entry' '[couchcoop] harmony-probe-complete result=ok' > "$log"
+cat > "$log" <<'EOF'
+[couchcoop] loader-entry
+[couchcoop] loader-version version=v0.111.0
+[couchcoop] loader-payload payload=lane 0.111.0
+[couchcoop] loader-invoke
+[couchcoop] mod-init
+[couchcoop] harmony-probe-enter
+[couchcoop] harmony-probe-complete result=ok
+[couchcoop] lobby-patch-attempt phase=initial pending=2 total=2
+[couchcoop] lobby-patch-attempt phase=retry pending=0 total=2
+[couchcoop] lobby-patch-complete targets=2 total=2
+[couchcoop] lobby-patch-incomplete targets=1 total=2 retry=pending
+[ERROR] [couchcoop] lobby-patch-incomplete targets=0 total=2 retry=exhausted
+[couchcoop] host-browser-listener result=available
+[ERROR] [couchcoop] host-browser-listener result=unavailable
+[couchcoop] lobby-controller-armed
+[couchcoop] lobby-screen-mounted kind=character-select
+[couchcoop] lobby-screen-mounted kind=load-game
+[couchcoop] host-lobby-evaluated kind=character-select result=host
+[couchcoop] host-lobby-evaluated kind=load-game result=not-host
+[couchcoop] host-lobby-evaluated kind=load-game result=unavailable
+[couchcoop] qr-panel-install-enter kind=character-select
+[couchcoop] qr-panel-install-complete kind=character-select
+[ERROR] [couchcoop] qr-panel-install-failed kind=load-game category=attach
+junk [couchcoop] lobby-controller-armed
+[couchcoop] lobby-controller-armed suffix=leak
+[couchcoop] host-browser-listener result=available url=http://secret.invalid:13337/path
+[couchcoop] lobby-screen-mounted kind=character-select path=/Users/secret
+[couchcoop] host-lobby-evaluated kind=load-game result=host port=13337
+[couchcoop] qr-panel-install-failed kind=load-game category=attach name=secret
+[couchcoop] qr-panel-install-failed kind=load-game category=attach stack=trace
+[couchcoop] host-browser-listener result=maybe
+[couchcoop] lobby-screen-mounted kind=other
+[couchcoop] qr-panel-install-failed kind=load-game category=unknown
+[couchcoop] lobby-patch-attempt phase=initial pending=1 total=2
+EOF
 
 snapshot() {
   local file
@@ -29,7 +64,31 @@ output="$("$repo_root/scripts/macos-support-diagnostics.sh" --app "$app" --mod "
 after="$(snapshot)"
 [[ "$before" == "$after" ]] || { echo "support diagnostics changed the fixture" >&2; exit 1; }
 grep -F 'package_layout           ok' <<< "$output" >/dev/null
-grep -F '[couchcoop] loader-entry' <<< "$output" >/dev/null
-grep -F '[couchcoop] harmony-probe-complete result=ok' <<< "$output" >/dev/null
+while IFS= read -r expected; do
+  grep -Fx "$expected" <<< "$output" >/dev/null || { echo "missing approved checkpoint: $expected" >&2; exit 1; }
+done <<'EOF'
+[couchcoop] loader-entry
+[couchcoop] harmony-probe-complete result=ok
+[couchcoop] lobby-patch-attempt phase=initial pending=2 total=2
+[couchcoop] lobby-patch-complete targets=2 total=2
+[ERROR] [couchcoop] lobby-patch-incomplete targets=0 total=2 retry=exhausted
+[couchcoop] lobby-screen-mounted kind=character-select
+[ERROR] [couchcoop] qr-panel-install-failed kind=load-game category=attach
+EOF
+while IFS= read -r rejected; do
+  ! grep -F "$rejected" <<< "$output" >/dev/null || { echo "accepted malicious checkpoint: $rejected" >&2; exit 1; }
+done <<'EOF'
+junk [couchcoop] lobby-controller-armed
+[couchcoop] lobby-controller-armed suffix=leak
+url=http://secret.invalid:13337/path
+path=/Users/secret
+port=13337
+name=secret
+stack=trace
+result=maybe
+kind=other
+category=unknown
+lobby-patch-attempt phase=initial pending=1 total=2
+EOF
 ! grep -F "$fixture" <<< "$output" >/dev/null || { echo "support output leaked a fixture path" >&2; exit 1; }
 echo "test-macos-support-diagnostics: ok"

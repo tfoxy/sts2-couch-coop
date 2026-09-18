@@ -2,7 +2,7 @@
 // Callers pass enums, counters and dimensions only; there is deliberately no free-form message field.
 type SocketRole = "host" | "seat";
 type EventInput =
-  | { kind: "lifecycle"; state: "load" | "pageshow" | "pagehide" }
+  | { kind: "lifecycle"; state: "load" | "pageshow" | "pagehide" | "navigation" }
   | { kind: "visibility"; state: "visible" | "hidden" }
   | { kind: "viewport"; width: number; height: number }
   | { kind: "orientation"; state: "portrait" | "landscape" }
@@ -21,6 +21,7 @@ let queue: WireEvent[] = [];
 let scheduled = false;
 let sceneOrdinal = 0;
 let checkpointStage = 0;
+let deliveryTail: Promise<void> = Promise.resolve();
 
 function readConfig(): Config | null {
   try {
@@ -41,13 +42,23 @@ function flush(): void {
   scheduled = false;
   if (!config || queue.length === 0) return;
   const events = queue.splice(0, 32);
-  void fetch(config.endpoint, {
-    method: "POST",
-    credentials: "same-origin",
-    headers: { "content-type": "application/json" },
-    body: JSON.stringify({ nonce: config.nonce, events }),
-    keepalive: true
-  }).catch(() => {});
+  const endpoint = config.endpoint;
+  const body = JSON.stringify({ nonce: config.nonce, events });
+  // A later checkpoint batch must never overtake an earlier one. The diagnostics endpoint validates ordinal
+  // order, and independent keepalive fetches can otherwise complete in reverse order under a heavy render.
+  deliveryTail = deliveryTail.catch(() => {}).then(async () => {
+    try {
+      await fetch(endpoint, {
+        method: "POST",
+        credentials: "same-origin",
+        headers: { "content-type": "application/json" },
+        body,
+        keepalive: true
+      });
+    } catch {
+      // Diagnostics are evidence only. A transport failure must not affect the mirror itself.
+    }
+  });
 }
 
 /** Record one schema-bound event. No caller can pass a URL, name, payload, stack, token or arbitrary message. */
@@ -108,6 +119,7 @@ export function installLifecycleTelemetry(): void {
     lifecycleEvent({ kind: "lifecycle", state: "pagehide" });
     flush();
   });
+  addEventListener("beforeunload", () => lifecycleEvent({ kind: "lifecycle", state: "navigation" }));
   addEventListener("error", () => lifecycleEvent({ kind: "error", category: "runtime" }));
   addEventListener("unhandledrejection", () => lifecycleEvent({ kind: "error", category: "exception" }));
   addEventListener("resize", () => { viewport(); orientation(); });

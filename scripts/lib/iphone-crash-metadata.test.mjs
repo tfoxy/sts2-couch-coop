@@ -1,0 +1,37 @@
+import assert from "node:assert/strict";
+import { mkdtemp, mkdir, readFile, rm, writeFile, utimes } from "node:fs/promises";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
+import { fileURLToPath } from "node:url";
+import { spawnSync } from "node:child_process";
+
+const home = await mkdtemp(join(tmpdir(), "couchcoop-crash-scan-"));
+const udid = "AABBCCDD-1122-3344-5566-778899AABBCC";
+const host = join(home, "Library", "Logs", "DiagnosticReports");
+const sim = join(home, "Library", "Developer", "CoreSimulator", "Devices", udid, "data", "Library", "Logs", "CrashReporter");
+const wrong = join(home, "Library", "Developer", "CoreSimulator", "Devices", "OTHER", "data", "Library", "Logs", "CrashReporter");
+await Promise.all([mkdir(host, { recursive: true }), mkdir(sim, { recursive: true }), mkdir(wrong, { recursive: true })]);
+async function report(root, name, mtime, proc = "WebKit", bugType = "309", extra = "") { const path = join(root, name); await writeFile(path, `${JSON.stringify({ procName: proc, bug_type: bugType, os_version: "SECRET", incident_id: "SECRET", body: extra })}\n${"x".repeat(9000)}`); await utimes(path, mtime / 1000, mtime / 1000); }
+await report(host, "WebKit-lower.ips", 1000, "WebKit", "998");
+await report(host, "WebKit-upper.ips", 2000, "WebKit", "999");
+await report(host, "MobileSafari-direct.ips", 1500, "MobileSafari");
+const legacy = join(host, "Safari-legacy.crash");
+await writeFile(legacy, "Process: Safari\nIncident Identifier: SECRET\n");
+await utimes(legacy, 1.55, 1.55);
+await report(sim, "JetsamEvent-good.ips", 1600, "evil");
+await report(sim, "WebKit-bad-proc.ips", 1700, "evil");
+await report(wrong, "WebKit-wrong.ips", 1800);
+for (let i = 0; i < 25; i++) await report(host, `WebKit-${i}.ips`, 1101 + i, "WebKit");
+const output = join(home, "out.json");
+const result = spawnSync(process.execPath, [fileURLToPath(new URL("./iphone-crash-metadata.mjs", import.meta.url)), "--sinceEpochMs", "1000", "--untilEpochMs", "2000", "--udid", udid, "--output", output], { env: { ...process.env, HOME: home }, encoding: "utf8" });
+assert.equal(result.status, 10, result.stderr);
+const rows = JSON.parse(await readFile(output, "utf8"));
+assert(rows.length <= 10);
+assert(rows.some(row => row.processCategory === "mobile-safari"));
+assert(rows.some(row => row.processCategory === "safari"));
+assert(rows.some(row => row.processCategory === "simulator-jetsam"));
+assert(rows.every(row => row.bugType !== "998" && row.bugType !== "999"));
+assert(rows.every(row => Object.keys(row).every(key => ["relativeTimeMs", "processCategory", "bugType"].includes(key))));
+assert(!JSON.stringify(rows).match(/SECRET|WebKit-|MobileSafari-direct|\.ips|\//));
+await rm(home, { recursive: true, force: true });
+console.log("iphone-crash-metadata: ok");
