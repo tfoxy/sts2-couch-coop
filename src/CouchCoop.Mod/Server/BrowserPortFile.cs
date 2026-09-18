@@ -61,9 +61,59 @@ public static class BrowserPortFile
     /// </remarks>
     internal static string FileNameFor(string? headlessSlot)
         => int.TryParse(headlessSlot?.Trim(), NumberStyles.Integer, CultureInfo.InvariantCulture, out var slot)
-            && slot > 0
-            ? $"{FileName}-slot-{slot.ToString(CultureInfo.InvariantCulture)}"
+            ? FileNameFor(slot)
             : FileName;
+
+    /// <inheritdoc cref="FileNameFor(string?)"/>
+    internal static string FileNameFor(int slot)
+        => slot > 0 ? $"{FileName}-slot-{slot.ToString(CultureInfo.InvariantCulture)}" : FileName;
+
+    /// <summary>
+    /// Read a record somebody else wrote, by path: the port a process says it bound, and its pid.
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// The HOST reads a SEAT's record with this, and it is the one thing the host can learn about a seat
+    /// WITHOUT a network round trip of any kind. That matters in exactly one situation, and it is the situation
+    /// this was added for: a seat whose authenticated control channel to the host is not working reports
+    /// nothing, so the host's only other evidence that the seat is alive and serving would be a loopback probe
+    /// — over the very transport that is in doubt. A file needs none.
+    /// </para>
+    /// <para>
+    /// THE PID IS THE POINT, and the caller must check it (see the class remarks): <c>sts2 game close</c> kills
+    /// a seat, so a record outliving its process is the normal case, not the edge one. Returning the pid rather
+    /// than validating it here keeps the check with the caller that knows which process it expects.
+    /// </para>
+    /// <para>
+    /// Total: an unreadable, absent, truncated or foreign file is <see langword="null"/>, never a throw. This
+    /// is diagnostic evidence, and a missing answer is a normal one.
+    /// </para>
+    /// </remarks>
+    internal static (int Port, int Pid)? Read(string? path)
+    {
+        if (string.IsNullOrWhiteSpace(path)) return null;
+        try
+        {
+            using var document = System.Text.Json.JsonDocument.Parse(File.ReadAllText(path));
+            if (document.RootElement.ValueKind != System.Text.Json.JsonValueKind.Object) return null;
+            return document.RootElement.TryGetProperty("port", out var port)
+                && document.RootElement.TryGetProperty("pid", out var pid)
+                && port.TryGetInt32(out var portValue)
+                && pid.TryGetInt32(out var pidValue)
+                && portValue is > 0 and <= ushort.MaxValue
+                && pidValue > 0
+                ? (portValue, pidValue)
+                : null;
+        }
+        catch (Exception exception) when (exception is IOException
+            or UnauthorizedAccessException
+            or System.Text.Json.JsonException
+            or ArgumentException
+            or NotSupportedException)
+        {
+            return null;
+        }
+    }
 
     /// <summary>Write the bound HTTP port. No-op when the user dir cannot be resolved (headless tests).</summary>
     public static void Publish(int port)

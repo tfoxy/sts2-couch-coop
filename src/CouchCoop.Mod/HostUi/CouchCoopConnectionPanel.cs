@@ -488,6 +488,11 @@ internal sealed partial class CouchCoopConnectionPanel : Panel
         // has it, so the isolation guard passed), and the thing the operator needs pointed at is that player's
         // own log and the other mods loaded beside us — not versions, ports or the network.
         Session.HeadlessClientManager.SeatSilentAfterJoinCode => "seat_silent",
+        // Split out of `seat_silent`, which tells the operator their player's game stopped responding and
+        // points them at its log and their other mods. This cause is reached only once the host has PROVED
+        // that game is still running and serving, so that copy would send them hunting a fault that is not
+        // there — the fault is on this computer, between two processes. See SeatControlBlockedCode.
+        Session.HeadlessClientManager.SeatControlBlockedCode => "seat_control",
         // The three causes the old single readiness sentence used to cover. Each has its own next action — free
         // the port, allow the port through this computer's firewall, fix the path from the device — so each
         // needs its own localized copy rather than a differently-worded English detail under one key.

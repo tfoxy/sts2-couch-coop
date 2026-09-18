@@ -374,6 +374,31 @@ describe("MirrorApp join rejection copy", () => {
       .toBe("Your game is running on the host computer, but this device couldn't reach it.");
   });
 
+  // The host's fourth named cause: this player's game is running and serving on the host, and the host cannot
+  // get a status out of it — two processes on that machine, over its own loopback address. It deliberately
+  // reuses the host-block copy rather than adding a fifth string set: from here the situation is identical
+  // (nothing on this device is wrong, and only whoever is hosting can fix it), and the part that IS different
+  // arrives as the host's own English detail underneath. What must never happen is the `spawn-failed` default,
+  // which invites a retry that cannot work.
+  it("sends a blocked control channel to the host-block copy, not to 'please try again'", async () => {
+    await rejectAJoin({
+      joinRejection: "seat-control-blocked",
+      joinRejectionDetail:
+        "This player's game joined the host's lobby and is serving on port 13357 … over this computer's own "
+        + "loopback address (127.0.0.1)."
+    });
+
+    expect(app!.find('[data-testid="mirror-seat-notice-summary"]').text())
+      .toBe("The host computer is blocking the port your game is served on.");
+    expect(app!.find('[data-testid="mirror-seat-notice-action"]').text())
+      .toBe(
+        "Nothing to change on this device — ask whoever is hosting to allow Slay the Spire 2 through their "
+        + "firewall or security software."
+      );
+    expect(app!.find('[data-testid="mirror-seat-notice-detail"]').text()).toContain("127.0.0.1");
+    expect(joinMessage().exists()).toBe(false);
+  });
+
   it("leaves every other code exactly as it was", async () => {
     await rejectAJoin({ joinRejection: "spawn-failed", joinRejectionDetail: "Join deadline expired." });
     expect(joinMessage().text()).toBe("Couldn't start your game view — please try again.");

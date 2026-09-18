@@ -77,6 +77,8 @@
   "couchcoop_connection_error_seat_cloud_isolation_action": "Se detuvo antes de que pudiera escribir nada. Reinicia el juego e inténtalo de nuevo; copia este informe si vuelve a ocurrir.",
   "couchcoop_connection_error_seat_silent_summary": "El juego de este jugador se inició y se unió, pero luego dejó de responder.",
   "couchcoop_connection_error_seat_silent_action": "Vuelve a intentarlo. Si sigue ocurriendo, revisa el registro propio de ese jugador (su ruta está en este informe) e inténtalo de nuevo con los demás mods desactivados.",
+  "couchcoop_connection_error_seat_control_summary": "El juego de este jugador está funcionando, pero no puede informar a tu juego.",
+  "couchcoop_connection_error_seat_control_action": "Permite Slay the Spire 2 en el firewall y el software de seguridad de este equipo, desactiva cualquier VPN, proxy o software de filtrado de red en este equipo y vuelve a intentarlo.",
   "couchcoop_connection_error_seat_port_summary": "Otro programa de este equipo está usando el puerto de este jugador.",
   "couchcoop_connection_error_seat_port_action": "Cierra lo que esté usando ese puerto en el equipo anfitrión, incluida otra copia de Slay the Spire 2, y vuelve a intentarlo.",
   "couchcoop_connection_error_seat_port_occupied_summary": "Otro programa de este equipo está usando uno de los puertos que el modo cooperativo asigna a los jugadores.",

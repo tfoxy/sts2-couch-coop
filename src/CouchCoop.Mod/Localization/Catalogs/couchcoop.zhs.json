@@ -77,6 +77,8 @@
   "couchcoop_connection_error_seat_cloud_isolation_action": "它在写入任何内容之前已被停止。请重启游戏后重试；若再次出现，请复制此报告。",
   "couchcoop_connection_error_seat_silent_summary": "该玩家的游戏已启动并加入，但随后停止响应。",
   "couchcoop_connection_error_seat_silent_action": "请重试。如果仍然发生，请查看该玩家自己的日志（路径见本报告），并在禁用其他模组后重试。",
+  "couchcoop_connection_error_seat_control_summary": "该玩家的游戏正在运行，但无法向你的游戏回报状态。",
+  "couchcoop_connection_error_seat_control_action": "在这台电脑的防火墙和安全软件中允许 Slay the Spire 2，关闭这台电脑上的 VPN、代理或网络过滤软件，然后重试。",
   "couchcoop_connection_error_seat_port_summary": "这台电脑上的其他程序正在占用该玩家的端口。",
   "couchcoop_connection_error_seat_port_action": "请关闭主机电脑上占用该端口的程序（包括另一份《杀戮尖塔 2》），然后重试。",
   "couchcoop_connection_error_seat_port_occupied_summary": "这台电脑上的其他程序正在占用同屏联机分配给玩家的端口之一。",

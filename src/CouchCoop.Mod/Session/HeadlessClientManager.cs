@@ -1837,6 +1837,12 @@ public sealed partial class HeadlessClientManager : IDisposable
                 ? Path.Combine(hostUserDir, "logs", "godot.log")
                 : Connections.ConnectionRegistry.HostLogPath,
             seatLogPath);
+        // …and where that seat will write the port it binds. Same reasoning as the paths above (the user dir is
+        // known HERE and nowhere later), and the fallback matters for the same reason: a seat launched without
+        // isolation writes into the HOST's user dir, under its own slot-scoped name.
+        CaptureSeatPortFileLocked(
+            slot,
+            preparedUserDir?.SlotUserDir ?? HeadlessUserDirSeeder.ResolveHostUserDir());
         // SHARE THE HOST'S SECURE-ORIGIN CERTIFICATE CACHE. This must come AFTER the user-dir isolation above,
         // because that isolation is exactly what breaks the cache: the seeder repoints XDG_DATA_HOME (Linux) /
         // LOCALAPPDATA (Windows) at a per-slot directory, and the certificate cache defaults to

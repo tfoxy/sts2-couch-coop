@@ -544,7 +544,12 @@ public sealed class CouchCoopWebSocketConnection
 
         if (failure?.Code is SeatReadinessVerdict.PortTakenCode
             or SeatReadinessVerdict.PortBlockedCode
-            or SeatReadinessVerdict.NetworkPathCode)
+            or SeatReadinessVerdict.NetworkPathCode
+            // The fourth: this player's game is running and serving, and cannot report to the host. Forwarded
+            // for the same reason as the three above — the viewer would otherwise get "spawn-failed", which
+            // invites the one thing that cannot help (retrying), for a cause whose only fix is on the host's
+            // machine. The page maps it onto the copy it already has for a host-side block.
+            or HeadlessClientManager.SeatControlBlockedCode)
         {
             // A cause with a fix. `failure.Code` is non-null inside this pattern.
             return (failure.Code, evidence);

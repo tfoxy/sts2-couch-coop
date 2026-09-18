@@ -173,7 +173,15 @@ export type MirrorSeatNoticeKey = (typeof MIRROR_SEAT_NOTICE_KEYS)[keyof typeof 
 export const MIRROR_REJECTION_SEAT_CAUSES = {
   "seat-port-taken": "port-conflict",
   "seat-port-blocked": "host-local-block",
-  "seat-network-path": "network-path"
+  "seat-network-path": "network-path",
+  // A FOURTH host code onto the THIRD cause, deliberately. `seat-control-blocked` is the host reporting that
+  // this player's game is running and serving but cannot report back to it — two processes on the host's
+  // machine, over its own loopback address. From THIS device that is the same situation as a host-side port
+  // block in every way that matters to the person holding the phone: nothing here is wrong, nothing here can
+  // be changed, and the fix is whoever is hosting allowing the game through their firewall or security
+  // software — which is word-for-word what `seat.notice.hostBlockFix` already says, in all 14 catalogs. The
+  // host's own English detail renders under it and carries the part that IS different.
+  "seat-control-blocked": "host-local-block"
 } as const satisfies Record<string, SeatNoticeCause>;
 
 /**
