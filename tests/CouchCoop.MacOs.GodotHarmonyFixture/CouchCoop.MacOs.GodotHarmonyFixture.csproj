@@ -1,0 +1,20 @@
+<Project Sdk="Godot.NET.Sdk/4.5.1">
+  <PropertyGroup>
+    <TargetFramework>net8.0</TargetFramework>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <Nullable>enable</Nullable>
+    <LangVersion>latest</LangVersion>
+    <RestorePackagesWithLockFile>true</RestorePackagesWithLockFile>
+    <RestoreLockedMode>true</RestoreLockedMode>
+    <EnableDynamicLoading>true</EnableDynamicLoading>
+    <CouchCoopRequiresSts2Assemblies>false</CouchCoopRequiresSts2Assemblies>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <!-- Public, pinned Harmony is the only detour runtime here. No game, Steam, spirectl, or private SDK refs. -->
+    <PackageReference Include="Lib.Harmony" Version="[2.4.2]" PrivateAssets="all" />
+    <Compile Include="../../src/CouchCoop.Mod/Patches/LobbyScreenMountTargets.cs" Link="LobbyScreenMountTargets.cs" />
+    <Compile Include="../../src/CouchCoop.Mod/Patches/GodotNodeMountHook.cs" Link="GodotNodeMountHook.cs" />
+    <Compile Include="../../src/CouchCoop.Mod/HostUi/LobbyScreenMountPlan.cs" Link="LobbyScreenMountPlan.cs" />
+  </ItemGroup>
+</Project>

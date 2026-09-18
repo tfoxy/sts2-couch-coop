@@ -4,6 +4,7 @@ set -euo pipefail
 
 artifact_dir=""
 harness_url=""
+iphone_profile="field-repro"
 for ((argument_index=1; argument_index<=$#; argument_index++)); do
   if [ "${!argument_index}" = "--artifact-dir" ]; then
     value_index=$((argument_index + 1))
@@ -14,11 +15,15 @@ done
 persist_failure() {
   [ -n "$artifact_dir" ] || return 0
   mkdir -p "$artifact_dir"
-  printf '{"category":"%s","ok":false,"reason":"%s"}\n' "$1" "$2" >"$artifact_dir/iphone-safari-result.json"
+  phase="${3:-pre-first-frame}"
+  failure_class=null
+  if [ "$1" = "renderer-page-crash" ]; then failure_class='"post-first-frame-browser-disappearance"'; fi
+  printf '{"category":"%s","phase":"%s","failureClass":%s,"ok":false,"reason":"%s","profile":"field-repro"}\n' \
+    "$1" "$phase" "$failure_class" "$2" >"$artifact_dir/iphone-safari-result.json"
   [ -f "$artifact_dir/iphone-safari-timeline.json" ] || printf '[]\n' >"$artifact_dir/iphone-safari-timeline.json"
 }
 fail() {
-  persist_failure "$1" "$2"
+  persist_failure "$1" "$2" pre-first-frame
   printf '{"category":"%s","ok":false,"reason":"%s"}\n' "$1" "$2" >&2
   exit "${3:-1}"
 }
@@ -27,12 +32,15 @@ while [ "$#" -gt 0 ]; do
   case "$1" in
     --artifact-dir) artifact_dir="${2:?--artifact-dir requires a path}"; shift 2 ;;
     --harness-url) harness_url="${2:?--harness-url requires a URL}"; shift 2 ;;
+    --iphone-profile) iphone_profile="${2:?--iphone-profile requires baseline or field-repro}"; shift 2 ;;
     --help) printf 'usage: %s --artifact-dir PATH --harness-url URL\n' "$0"; exit 0 ;;
     *) printf 'unknown argument: %s\n' "$1" >&2; exit 64 ;;
   esac
 done
 if [ -z "$artifact_dir" ] || [ -z "$harness_url" ]; then fail capability missing-required-argument 64; fi
+if [ "$iphone_profile" != "field-repro" ]; then fail capability field-repro-required 64; fi
 mkdir -p "$artifact_dir"
+rm -f "$artifact_dir/iphone-safari-failure.png"
 
 [ "$(uname -s)" = "Darwin" ] || fail capability macos-required 78
 command -v xcrun >/dev/null 2>&1 || fail capability xcrun-unavailable 78
@@ -94,23 +102,23 @@ else
 fi
 
 if [ "$created" = 1 ] || [ "$restore_shutdown" = 1 ]; then
-  xcrun simctl boot "$device" >/dev/null 2>&1 || fail simulator-crash simulator-boot-failed
+  xcrun simctl boot "$device" >/dev/null 2>&1 || fail simulator-safaridriver-failure simulator-boot-failed
 fi
-xcrun simctl bootstatus "$device" -b || fail simulator-crash simulator-bootstatus-failed
+xcrun simctl bootstatus "$device" -b || fail simulator-safaridriver-failure simulator-bootstatus-failed
 
 # Prove the synthetic server speaks both transports before attributing a later failure to Safari.
 node "$script_dir/lib/iphone-harness-preflight.mjs" "$harness_url" >/dev/null \
-  || fail websocket harness-preflight-failed
+  || fail host-socket-close harness-preflight-failed
 
 # Never let Authorization Services turn a hosted run into an invisible password prompt. GitHub's macOS runner
 # grants passwordless sudo; a local Mac without equivalent authority records a named capability result and the
 # operator can enable SafariDriver once outside this automation.
 if [ "$(id -u)" -eq 0 ]; then
-  safaridriver --enable </dev/null >/dev/null 2>&1 || fail safaridriver enable-failed
+  safaridriver --enable </dev/null >/dev/null 2>&1 || fail simulator-safaridriver-failure enable-failed
 elif command -v sudo >/dev/null 2>&1 && sudo -n true >/dev/null 2>&1; then
-  sudo -n safaridriver --enable </dev/null >/dev/null 2>&1 || fail safaridriver enable-failed
+  sudo -n safaridriver --enable </dev/null >/dev/null 2>&1 || fail simulator-safaridriver-failure enable-failed
 else
-  fail safaridriver enable-requires-noninteractive-privilege
+  fail simulator-safaridriver-failure enable-requires-noninteractive-privilege
 fi
 safaridriver -p 4444 >/dev/null 2>&1 &
 driver_pid=$!
@@ -121,12 +129,13 @@ while [ "$driver_poll" -lt 40 ]; do
   sleep 0.25
   driver_poll=$((driver_poll + 1))
 done
-[ "$driver_ready" = 1 ] || fail safaridriver start-failed
+[ "$driver_ready" = 1 ] || fail simulator-safaridriver-failure start-failed
 
 crash_since_ms=$(node -e 'process.stdout.write(String(Date.now()))')
 set +e
 node "$script_dir/run-iphone-safari-simulator.mjs" \
   --url "$harness_url" \
+  --profile "$iphone_profile" \
   --artifactDir "$artifact_dir" \
   --webdriver http://127.0.0.1:4444 \
   --udid "$device"
@@ -136,11 +145,13 @@ set -e
 crash_status=0
 node "$script_dir/lib/iphone-crash-metadata.mjs" \
   --sinceEpochMs "$crash_since_ms" \
+  --untilEpochMs "$(node -e 'process.stdout.write(String(Date.now()))')" \
+  --udid "$device" \
   --output "$artifact_dir/iphone-safari-crash-metadata.json" || crash_status=$?
 if [ "$crash_status" -eq 10 ]; then
-  persist_failure simulator-crash matching-crash-report
+  persist_failure renderer-page-crash matching-crash-report post-final-delta
   exit 1
 fi
-[ "$crash_status" -eq 0 ] || fail simulator-crash crash-report-inspection-failed
+[ "$crash_status" -eq 0 ] || fail simulator-safaridriver-failure crash-report-inspection-failed
 rm -f "$artifact_dir/iphone-safari-crash-metadata.json"
 exit "$runner_status"

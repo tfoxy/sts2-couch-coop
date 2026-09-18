@@ -7,9 +7,24 @@
     <LangVersion>latest</LangVersion>
     <RollForward>Major</RollForward>
     <DisableTransitiveProjectReferences>true</DisableTransitiveProjectReferences>
+    <!-- The staged reference-SDK gate needs only PE metadata. This alternate entry point intentionally has no
+         project, Godot, Harmony, STS2, Steam, or spirectl reference, so it can run where those DLLs must never
+         be loaded. -->
+    <EnableDefaultCompileItems Condition="'$(CouchCoopBetaTargetsMode)' == 'metadata'">false</EnableDefaultCompileItems>
+    <CouchCoopRequiresSts2Assemblies Condition="'$(CouchCoopBetaTargetsMode)' == 'metadata'">false</CouchCoopRequiresSts2Assemblies>
   </PropertyGroup>
 
-  <ItemGroup>
+  <ItemGroup Condition="'$(CouchCoopBetaTargetsMode)' == 'metadata'">
+    <Compile Include="MetadataOnlyProgram.cs" />
+    <Compile Include="MetadataOnlyLobbyScreenMountTests.cs" />
+    <Compile Include="MetadataOnlyFixtures.cs" />
+    <Compile Include="../../src/CouchCoop.Mod/Patches/LobbyScreenMountTargets.cs" Link="LobbyScreenMountTargets.cs" />
+  </ItemGroup>
+
+  <ItemGroup Condition="'$(CouchCoopBetaTargetsMode)' != 'metadata'">
+    <Compile Remove="MetadataOnlyProgram.cs" />
+    <Compile Remove="MetadataOnlyLobbyScreenMountTests.cs" />
+    <Compile Remove="MetadataOnlyFixtures.cs" />
     <ProjectReference Include="../../src/CouchCoop.Mod/CouchCoop.Mod.csproj" />
     <ProjectReference Include="../../src/CouchCoop.Mod.Contracts/CouchCoop.Mod.Contracts.csproj" />
     <!-- Direct reference to the shared protocol lib: DisableTransitiveProjectReferences=true above means the

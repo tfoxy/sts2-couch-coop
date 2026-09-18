@@ -21,8 +21,9 @@ describe("iPhone WebKit run policy", () => {
 
   it("allows only the repo-local CI export stage and rejects escapes and symlinks", () => {
     const repo = mkdtempSync(join(tmpdir(), "iphone-artifact-policy-"));
-    const allowed = join(repo, ".ci-artifacts", "iphone-webkit");
+    const allowed = join(repo, ".ci-artifacts", "iphone-webkit", "baseline");
     expect(resolveHermeticArtifactExport(repo, allowed)).toBe(allowed);
+    expect(resolveHermeticArtifactExport(repo, join(repo, ".ci-artifacts", "iphone-webkit", "field-repro"), "field-repro")).toContain("field-repro");
     expect(() => resolveHermeticArtifactExport(repo, join(repo, ".ci-artifacts"))).toThrow(/may only be/);
     expect(() => resolveHermeticArtifactExport(repo, join(repo, "..", "outside"))).toThrow(/may only be/);
 

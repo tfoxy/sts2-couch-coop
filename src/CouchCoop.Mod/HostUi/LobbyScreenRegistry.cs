@@ -1,5 +1,8 @@
 namespace CouchCoop.Mod.HostUi;
 
+/// <summary>The outcome of registering one lobby screen.</summary>
+internal readonly record struct LobbyScreenRegistration(bool Added, bool BecameOccupied);
+
 /// <summary>
 /// The set of lobby screens currently alive in the game, held as Godot instance ids.
 /// </summary>
@@ -53,22 +56,21 @@ internal sealed class LobbyScreenRegistry(Func<ulong, bool> isAlive)
     /// Register a readied lobby screen.
     /// </summary>
     /// <returns>
-    /// <see langword="true"/> when this call took the registry from EMPTY to occupied — i.e. the caller must
-    /// start the scan timer. A duplicate id (a screen re-readied via <c>RequestReady</c>) returns
-    /// <see langword="false"/>, so a second mount can never start a second timer chain.
+    /// Whether the id was added and whether that addition took the registry from empty to occupied. A duplicate
+    /// id (a screen re-readied via <c>RequestReady</c>) returns neither, so it cannot start another timer chain.
     /// </returns>
-    public bool Add(ulong id)
+    public LobbyScreenRegistration Add(ulong id)
     {
         lock (_gate)
         {
             if (_ids.Contains(id))
             {
-                return false;
+                return new(Added: false, BecameOccupied: false);
             }
 
             var wasEmpty = _ids.Count == 0;
             _ids.Add(id);
-            return wasEmpty;
+            return new(Added: true, BecameOccupied: wasEmpty);
         }
     }
 

@@ -25,6 +25,7 @@ public sealed class CouchCoopHostUiServices : IAsyncDisposable
     private readonly IPAddress _bindAddress;
     private readonly int _preferredPort;
     private readonly Action<string> _log;
+    private readonly LobbySupportCheckpoints? _checkpoints;
     private readonly bool _deferDiscoveryServices;
     private readonly List<CouchCoopHostUiDiagnostic> _diagnostics = [];
     private readonly object _discoveryGate = new();
@@ -56,7 +57,8 @@ public sealed class CouchCoopHostUiServices : IAsyncDisposable
         IPAddress? bindAddress = null,
         int preferredPort = 13337,
         Action<string>? log = null,
-        bool deferDiscoveryServices = false)
+        bool deferDiscoveryServices = false,
+        LobbySupportCheckpoints? checkpoints = null)
     {
         _runtime = runtime ?? throw new ArgumentNullException(nameof(runtime));
         _staticRoot = staticRoot ?? DefaultStaticRoot();
@@ -64,6 +66,7 @@ public sealed class CouchCoopHostUiServices : IAsyncDisposable
         _preferredPort = preferredPort;
         _log = log ?? CouchCoopLog.Stderr;
         _deferDiscoveryServices = deferDiscoveryServices;
+        _checkpoints = checkpoints;
     }
 
     public CouchCoopHostUiSnapshot Snapshot => _snapshot;
@@ -103,6 +106,7 @@ public sealed class CouchCoopHostUiServices : IAsyncDisposable
 
             _listenerBaseUri = listenerBaseUri;
             _joinBaseUri = joinBaseUri;
+            _checkpoints?.HostBrowserListener(available: true);
 
             if (!_deferDiscoveryServices)
             {
@@ -125,6 +129,7 @@ public sealed class CouchCoopHostUiServices : IAsyncDisposable
             // not ShouldShow — a host with no listener has no QR either, and would otherwise see nothing at
             // all on the one screen where the failure matters.
             _snapshot = CouchCoopHostUiSnapshot.Unavailable([.. _diagnostics]);
+            _checkpoints?.HostBrowserListener(available: false);
             await DisposeBrowserServerAsync().ConfigureAwait(false);
         }
 

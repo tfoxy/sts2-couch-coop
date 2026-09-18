@@ -51,10 +51,10 @@ internal static class IdleHostCostTests
     {
         var registry = new LobbyScreenRegistry(_ => true);
 
-        Expect(registry.Add(11), "the first screen reports the transition that starts the tick");
+        Expect(registry.Add(11) is { Added: true, BecameOccupied: true }, "the first screen reports the transition that starts the tick");
         Expect(registry.IsOccupied, "the registry is occupied after the first screen");
-        Expect(!registry.Add(22), "a SECOND screen must not report a transition — one tick chain, not two");
-        Expect(!registry.Add(11), "a re-readied screen (RequestReady) must not start a second chain either");
+        Expect(registry.Add(22) is { Added: true, BecameOccupied: false }, "a SECOND screen is added without starting a second chain");
+        Expect(registry.Add(11) is { Added: false, BecameOccupied: false }, "a re-readied screen (RequestReady) must not start a second chain either");
         Expect(registry.Live().Count == 2, "both distinct screens survive; the duplicate was folded");
     }
 
@@ -65,8 +65,8 @@ internal static class IdleHostCostTests
     {
         var alive = new HashSet<ulong> { 11, 22 };
         var registry = new LobbyScreenRegistry(id => alive.Contains(id));
-        registry.Add(11);
-        registry.Add(22);
+        _ = registry.Add(11);
+        _ = registry.Add(22);
 
         alive.Remove(22);
         Expect(registry.Live() is [11], "a freed screen is dropped and the survivor is kept");
@@ -78,7 +78,7 @@ internal static class IdleHostCostTests
 
         // Re-arming after parking is the "back out to the menu and come back" path.
         alive.Add(33);
-        Expect(registry.Add(33), "a screen mounted after parking reports the transition that restarts the tick");
+        Expect(registry.Add(33) is { Added: true, BecameOccupied: true }, "a screen mounted after parking reports the transition that restarts the tick");
     }
 
     // NOT "is it in the tree". Godot runs _Ready once per node, so a screen that is hidden behind a submenu or
@@ -87,7 +87,7 @@ internal static class IdleHostCostTests
     private static void AHiddenOrDetachedScreenKeepsItsEntry()
     {
         var registry = new LobbyScreenRegistry(_ => true); // alive, whatever the tree says
-        registry.Add(11);
+        _ = registry.Add(11);
         Expect(registry.Live() is [11], "a screen that is merely hidden or detached keeps its registration");
     }
 

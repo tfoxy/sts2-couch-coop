@@ -37,7 +37,9 @@ jobs:
 
       - name: Check workflow policy
         timeout-minutes: 3
-        run: scripts/test-macos-iphone-workflow-policy.sh
+        run: |
+          scripts/test-macos-iphone-workflow-policy.sh
+          scripts/test-validate-iphone-artifact-stage.sh
 
       - name: Check shell scripts when ShellCheck is available
         timeout-minutes: 3
@@ -110,8 +112,8 @@ jobs:
         working-directory: sources/sts2-couch-coop/frontend
         run: npx playwright install --with-deps webkit
 
-      - name: Run the hermetic iPhone 13 WebKit contract
-        timeout-minutes: 12
+      - name: Run both hermetic iPhone 13 WebKit profiles
+        timeout-minutes: 30
         working-directory: sources/sts2-couch-coop
         env:
           PLAYWRIGHT_HTML_OPEN: never
@@ -124,7 +126,9 @@ jobs:
         id: validate_webkit_artifacts
         if: always()
         working-directory: sources/sts2-couch-coop
-        run: node scripts/validate-iphone-artifact-stage.mjs webkit .ci-artifacts/iphone-webkit
+        run: |
+          node scripts/validate-iphone-artifact-stage.mjs webkit .ci-artifacts/iphone-webkit/baseline
+          node scripts/validate-iphone-artifact-stage.mjs webkit .ci-artifacts/iphone-webkit/field-repro
 
       - name: Upload staged synthetic diagnostics
         timeout-minutes: 3
@@ -182,6 +186,27 @@ jobs:
         with:
           node-version: '22.x'
 
+      - name: Download the pinned universal Godot .NET runtime
+        timeout-minutes: 15
+        run: |
+          set -euo pipefail
+          archive="$RUNNER_TEMP/Godot_v4.5.1-stable_mono_macos.universal.zip"
+          godot_root="$RUNNER_TEMP/godot-dotnet-4.5.1"
+          curl --fail --location --retry 3 --retry-all-errors --retry-max-time 1200 \
+            --connect-timeout 15 --max-time 900 --output "$archive" \
+            https://github.com/godotengine/godot-builds/releases/download/4.5.1-stable/Godot_v4.5.1-stable_mono_macos.universal.zip
+          expected_sha=f00ee565e9d3682584117ef8865f5ff6d8f571fbf2733075ee06b9e0953261b8
+          test "$(shasum -a 256 "$archive" | awk '{print $1}')" = "$expected_sha"
+          mkdir -p "$godot_root"
+          unzip -q "$archive" -d "$godot_root"
+          godot_count="$(find "$godot_root" -type f -path '*/Contents/MacOS/Godot' | wc -l | tr -d ' ')"
+          test "$godot_count" -eq 1
+          godot_executable="$(find "$godot_root" -type f -path '*/Contents/MacOS/Godot')"
+          godot_app="${godot_executable%/Contents/MacOS/Godot}"
+          test -x "$godot_executable"
+          echo "COUCHCOOP_GODOT_EXECUTABLE=$godot_executable" >> "$GITHUB_ENV"
+          echo "COUCHCOOP_GODOT_APP=$godot_app" >> "$GITHUB_ENV"
+
       - name: Audit portable package fixtures and pinned reference lanes
         timeout-minutes: 15
         working-directory: sources/sts2-couch-coop
@@ -191,8 +216,8 @@ jobs:
           scripts/test-macos-support-diagnostics.sh
           scripts/test-iphone-safari-simulator.sh
 
-      - name: Build persistent reference SDKs and Harmony probes
-        timeout-minutes: 15
+      - name: Build reference SDKs and public runtime fixtures
+        timeout-minutes: 20
         working-directory: sources/sts2-couch-coop
         run: |
           set -euo pipefail
@@ -201,17 +226,91 @@ jobs:
             dotnet build "eng/Sts2.ReferenceSdk/$lane/Sts2.ReferenceSdk.$lane.csproj" \
               -c Release -o "$sdk_root/$lane" -p:RestoreLockedMode=true
           done
+          dotnet run --project tests/CouchCoop.HostedServerHarness -c Release \
+            -p:Sts2AssembliesDir="$sdk_root/stable" -p:Sts2GameApi=v107 \
+            -p:CouchCoopBuildToLocalMods=false -- \
+            --mode iphone-burst-self-test
           dotnet build tests/CouchCoop.HarmonySmoke/CouchCoop.HarmonySmoke.csproj \
             -c Release -o "$RUNNER_TEMP/couchcoop-harmony-smoke" \
             -p:RestoreLockedMode=true -p:CouchCoopBuildToLocalMods=false
+          dotnet restore tests/CouchCoop.MacOs.GodotHarmonyFixture/CouchCoop.MacOs.GodotHarmonyFixture.csproj \
+            --locked-mode
+          dotnet build tests/CouchCoop.MacOs.GodotHarmonyFixture/CouchCoop.MacOs.GodotHarmonyFixture.csproj \
+            -c Release --no-restore
+          fixture_stage="$RUNNER_TEMP/CouchCoop Godot Harmony fixture"
+          ditto tests/CouchCoop.MacOs.GodotHarmonyFixture "$fixture_stage"
+          test -f "$fixture_stage/.godot/mono/temp/bin/Release/CouchCoop.MacOs.GodotHarmonyFixture.dll"
+          echo "COUCHCOOP_GODOT_FIXTURE=$fixture_stage" >> "$GITHUB_ENV"
+
+      - name: Verify stable and public-beta lobby targets as metadata only
+        timeout-minutes: 10
+        working-directory: sources/sts2-couch-coop
+        run: |
+          set -euo pipefail
+          project=tests/CouchCoop.Mod.Tests/CouchCoop.Mod.Tests.csproj
+          metadata_obj="$RUNNER_TEMP/couchcoop-beta-targets/obj/"
+          metadata_bin="$RUNNER_TEMP/couchcoop-beta-targets/bin/"
+          dotnet restore "$project" \
+            -p:CouchCoopBetaTargetsMode=metadata \
+            -p:CouchCoopLocalConfigPath="$RUNNER_TEMP/no-local-game-config.yaml" \
+            -p:BaseIntermediateOutputPath="$metadata_obj" \
+            -p:BaseOutputPath="$metadata_bin"
+          dotnet run --project "$project" -c Release --no-restore \
+            -p:CouchCoopBetaTargetsMode=metadata -p:Sts2GameApi=v107 \
+            -p:CouchCoopLocalConfigPath="$RUNNER_TEMP/no-local-game-config.yaml" \
+            -p:BaseIntermediateOutputPath="$metadata_obj" -p:BaseOutputPath="$metadata_bin" -- \
+            beta-targets "$RUNNER_TEMP/couchcoop-reference-sdk/stable/sts2.dll"
+          dotnet run --project "$project" -c Release --no-restore \
+            -p:CouchCoopBetaTargetsMode=metadata -p:Sts2GameApi=v111 \
+            -p:CouchCoopLocalConfigPath="$RUNNER_TEMP/no-local-game-config.yaml" \
+            -p:BaseIntermediateOutputPath="$metadata_obj" -p:BaseOutputPath="$metadata_bin" -- \
+            beta-targets "$RUNNER_TEMP/couchcoop-reference-sdk/public-beta/sts2.dll"
 
       - name: Run game-free macOS and Harmony checks
-        timeout-minutes: 12
+        timeout-minutes: 15
         working-directory: sources/sts2-couch-coop
         run: |
           dotnet run --project tests/CouchCoop.MacOs.Tests -c Release
           dotnet run --project tests/CouchCoop.MacOs.Tests -c Release -- \
             --harmony-smoke "$RUNNER_TEMP/couchcoop-harmony-smoke/CouchCoop.HarmonySmoke"
+          dotnet run --project tests/CouchCoop.MacOs.Tests -c Release -- \
+            --godot-harmony-fixture "$COUCHCOOP_GODOT_EXECUTABLE" "$COUCHCOOP_GODOT_FIXTURE"
+
+      - name: Run the ad-hoc hardened Godot .NET fixture
+        timeout-minutes: 15
+        working-directory: sources/sts2-couch-coop
+        run: |
+          set -euo pipefail
+          signed_root="$RUNNER_TEMP/CouchCoop hardened Godot"
+          signed_app="$signed_root/$(basename "$COUCHCOOP_GODOT_APP")"
+          mkdir -p "$signed_root"
+          ditto "$COUCHCOOP_GODOT_APP" "$signed_app"
+          codesign --force --deep --sign - --options runtime \
+            --entitlements tests/CouchCoop.MacOs.GodotHarmonyFixture/hardened-runtime.entitlements.plist \
+            "$signed_app"
+          codesign --verify --deep --strict "$signed_app"
+          signature="$RUNNER_TEMP/couchcoop-godot-signature.txt"
+          codesign --display --verbose=4 "$signed_app" >"$signature" 2>&1
+          grep -Fq 'Signature=adhoc' "$signature"
+          grep -Eq '^CodeDirectory .*flags=.*\([^)]*runtime[^)]*\)' "$signature"
+          actual_entitlements="$RUNNER_TEMP/couchcoop-godot-entitlements.plist"
+          codesign --display --entitlements :- "$signed_app" >"$actual_entitlements" 2>/dev/null
+          for key in allow-jit allow-unsigned-executable-memory allow-dyld-environment-variables disable-executable-page-protection disable-library-validation; do
+            test "$(/usr/libexec/PlistBuddy -c "Print :com.apple.security.cs.$key" "$actual_entitlements")" = true
+          done
+          plutil -convert json -o - "$actual_entitlements" | jq -e 'keys == [
+            "com.apple.security.cs.allow-dyld-environment-variables",
+            "com.apple.security.cs.allow-jit",
+            "com.apple.security.cs.allow-unsigned-executable-memory",
+            "com.apple.security.cs.disable-executable-page-protection",
+            "com.apple.security.cs.disable-library-validation"
+          ]' >/dev/null
+          if /usr/libexec/PlistBuddy -c 'Print :com.apple.security.get-task-allow' "$actual_entitlements" >/dev/null 2>&1; then
+            echo 'get-task-allow must not be present' >&2
+            exit 1
+          fi
+          dotnet run --project tests/CouchCoop.MacOs.Tests -c Release -- \
+            --godot-harmony-fixture "$signed_app/Contents/MacOS/Godot" "$COUCHCOOP_GODOT_FIXTURE"
 
       - name: Build and validate the production snapshot package
         timeout-minutes: 55
@@ -239,7 +338,7 @@ jobs:
         working-directory: sources/sts2-couch-coop
         run: |
           set -euo pipefail
-          artifact_dir="$PWD/.ci-artifacts/iphone-safari-arm"
+          artifact_dir="$PWD/.ci-artifacts/iphone-safari-arm/field-repro"
           harness_out="$RUNNER_TEMP/couchcoop-iphone-harness.out"
           harness_err="$RUNNER_TEMP/couchcoop-iphone-harness.err"
           mkdir -p "$artifact_dir"
@@ -247,7 +346,7 @@ jobs:
             -p:Sts2AssembliesDir="$RUNNER_TEMP/couchcoop-reference-sdk/stable" \
             -p:CouchCoopBuildToLocalMods=false -- \
             --static-root "$RUNNER_TEMP/CouchCoop package verification/couchcoop/frontend" \
-            --port 23339 --mode iphone-burst --artifact-dir "$artifact_dir" \
+            --port 23339 --mode iphone-burst --iphone-profile field-repro --artifact-dir "$artifact_dir" \
             >"$harness_out" 2>"$harness_err" &
           harness_pid=$!
           trap 'kill "$harness_pid" >/dev/null 2>&1 || true' EXIT HUP INT TERM
@@ -258,33 +357,25 @@ jobs:
             poll=$((poll + 1))
           done
           harness_url="$(grep '"baseUrl"' "$harness_out" | tail -n 1 | jq -er '.baseUrl')"
-          scripts/run-iphone-safari-simulator.sh --artifact-dir "$artifact_dir" --harness-url "$harness_url"
+          scripts/run-iphone-safari-simulator.sh --artifact-dir "$artifact_dir" \
+            --harness-url "$harness_url" --iphone-profile field-repro
 
       - name: Validate staged ARM Simulator diagnostics
         timeout-minutes: 2
         id: validate_arm_artifacts
         if: always()
         working-directory: sources/sts2-couch-coop
-        run: node scripts/validate-iphone-artifact-stage.mjs safari .ci-artifacts/iphone-safari-arm
+        run: node scripts/validate-iphone-artifact-stage.mjs safari .ci-artifacts/iphone-safari-arm/field-repro
 
       - name: Verify stock Godot honors a fake HOME
-        timeout-minutes: 15
+        timeout-minutes: 5
         working-directory: sources/sts2-couch-coop
         run: |
           set -euo pipefail
-          godot_root="$RUNNER_TEMP/godot-4.5.1"
-          archive="$RUNNER_TEMP/Godot_v4.5.1-stable_macos.universal.zip"
-          mkdir -p "$godot_root"
-          curl --fail --location --retry 3 --retry-all-errors --retry-max-time 1200 \
-            --connect-timeout 15 --max-time 900 --output "$archive" \
-            https://github.com/godotengine/godot-builds/releases/download/4.5.1-stable/Godot_v4.5.1-stable_macos.universal.zip
-          expected_sha=65c27959d02aaacfc131ec7ecb90179ba8045200cb02982bf2be96d117010b8a
-          test "$(shasum -a 256 "$archive" | awk '{print $1}')" = "$expected_sha"
-          unzip -q "$archive" -d "$godot_root"
           fake_home="$RUNNER_TEMP/couchcoop-godot-fake-home"
           output="$RUNNER_TEMP/couchcoop-godot-user-dir.log"
           mkdir -p "$fake_home"
-          HOME="$fake_home" "$godot_root/Godot.app/Contents/MacOS/Godot" --headless \
+          HOME="$fake_home" "$COUCHCOOP_GODOT_EXECUTABLE" --headless \
             --path "$PWD/tests/CouchCoop.MacOs.UserDirProbe" --script res://probe.gd >"$output" 2>&1
           marker="$(grep '^COUCHCOOP_USER_DIR_JSON=' "$output")"
           actual="$(printf '%s' "${marker#COUCHCOOP_USER_DIR_JSON=}" | jq -er '.userDir')"
@@ -346,6 +437,27 @@ jobs:
         with:
           node-version: '22.x'
 
+      - name: Download the pinned universal Godot .NET runtime
+        timeout-minutes: 15
+        run: |
+          set -euo pipefail
+          archive="$RUNNER_TEMP/Godot_v4.5.1-stable_mono_macos.universal.zip"
+          godot_root="$RUNNER_TEMP/godot-dotnet-4.5.1"
+          curl --fail --location --retry 3 --retry-all-errors --retry-max-time 1200 \
+            --connect-timeout 15 --max-time 900 --output "$archive" \
+            https://github.com/godotengine/godot-builds/releases/download/4.5.1-stable/Godot_v4.5.1-stable_mono_macos.universal.zip
+          expected_sha=f00ee565e9d3682584117ef8865f5ff6d8f571fbf2733075ee06b9e0953261b8
+          test "$(shasum -a 256 "$archive" | awk '{print $1}')" = "$expected_sha"
+          mkdir -p "$godot_root"
+          unzip -q "$archive" -d "$godot_root"
+          godot_count="$(find "$godot_root" -type f -path '*/Contents/MacOS/Godot' | wc -l | tr -d ' ')"
+          test "$godot_count" -eq 1
+          godot_executable="$(find "$godot_root" -type f -path '*/Contents/MacOS/Godot')"
+          godot_app="${godot_executable%/Contents/MacOS/Godot}"
+          test -x "$godot_executable"
+          echo "COUCHCOOP_GODOT_EXECUTABLE=$godot_executable" >> "$GITHUB_ENV"
+          echo "COUCHCOOP_GODOT_APP=$godot_app" >> "$GITHUB_ENV"
+
       - name: Audit portable package fixtures and pinned reference lanes
         timeout-minutes: 15
         working-directory: sources/sts2-couch-coop
@@ -355,8 +467,8 @@ jobs:
           scripts/test-macos-support-diagnostics.sh
           scripts/test-iphone-safari-simulator.sh
 
-      - name: Build persistent reference SDKs and Harmony probes
-        timeout-minutes: 15
+      - name: Build reference SDKs and public runtime fixtures
+        timeout-minutes: 20
         working-directory: sources/sts2-couch-coop
         run: |
           set -euo pipefail
@@ -365,17 +477,91 @@ jobs:
             dotnet build "eng/Sts2.ReferenceSdk/$lane/Sts2.ReferenceSdk.$lane.csproj" \
               -c Release -o "$sdk_root/$lane" -p:RestoreLockedMode=true
           done
+          dotnet run --project tests/CouchCoop.HostedServerHarness -c Release \
+            -p:Sts2AssembliesDir="$sdk_root/stable" -p:Sts2GameApi=v107 \
+            -p:CouchCoopBuildToLocalMods=false -- \
+            --mode iphone-burst-self-test
           dotnet build tests/CouchCoop.HarmonySmoke/CouchCoop.HarmonySmoke.csproj \
             -c Release -o "$RUNNER_TEMP/couchcoop-harmony-smoke" \
             -p:RestoreLockedMode=true -p:CouchCoopBuildToLocalMods=false
+          dotnet restore tests/CouchCoop.MacOs.GodotHarmonyFixture/CouchCoop.MacOs.GodotHarmonyFixture.csproj \
+            --locked-mode
+          dotnet build tests/CouchCoop.MacOs.GodotHarmonyFixture/CouchCoop.MacOs.GodotHarmonyFixture.csproj \
+            -c Release --no-restore
+          fixture_stage="$RUNNER_TEMP/CouchCoop Godot Harmony fixture"
+          ditto tests/CouchCoop.MacOs.GodotHarmonyFixture "$fixture_stage"
+          test -f "$fixture_stage/.godot/mono/temp/bin/Release/CouchCoop.MacOs.GodotHarmonyFixture.dll"
+          echo "COUCHCOOP_GODOT_FIXTURE=$fixture_stage" >> "$GITHUB_ENV"
+
+      - name: Verify stable and public-beta lobby targets as metadata only
+        timeout-minutes: 10
+        working-directory: sources/sts2-couch-coop
+        run: |
+          set -euo pipefail
+          project=tests/CouchCoop.Mod.Tests/CouchCoop.Mod.Tests.csproj
+          metadata_obj="$RUNNER_TEMP/couchcoop-beta-targets/obj/"
+          metadata_bin="$RUNNER_TEMP/couchcoop-beta-targets/bin/"
+          dotnet restore "$project" \
+            -p:CouchCoopBetaTargetsMode=metadata \
+            -p:CouchCoopLocalConfigPath="$RUNNER_TEMP/no-local-game-config.yaml" \
+            -p:BaseIntermediateOutputPath="$metadata_obj" \
+            -p:BaseOutputPath="$metadata_bin"
+          dotnet run --project "$project" -c Release --no-restore \
+            -p:CouchCoopBetaTargetsMode=metadata -p:Sts2GameApi=v107 \
+            -p:CouchCoopLocalConfigPath="$RUNNER_TEMP/no-local-game-config.yaml" \
+            -p:BaseIntermediateOutputPath="$metadata_obj" -p:BaseOutputPath="$metadata_bin" -- \
+            beta-targets "$RUNNER_TEMP/couchcoop-reference-sdk/stable/sts2.dll"
+          dotnet run --project "$project" -c Release --no-restore \
+            -p:CouchCoopBetaTargetsMode=metadata -p:Sts2GameApi=v111 \
+            -p:CouchCoopLocalConfigPath="$RUNNER_TEMP/no-local-game-config.yaml" \
+            -p:BaseIntermediateOutputPath="$metadata_obj" -p:BaseOutputPath="$metadata_bin" -- \
+            beta-targets "$RUNNER_TEMP/couchcoop-reference-sdk/public-beta/sts2.dll"
 
       - name: Run game-free macOS and Harmony checks
-        timeout-minutes: 12
+        timeout-minutes: 15
         working-directory: sources/sts2-couch-coop
         run: |
           dotnet run --project tests/CouchCoop.MacOs.Tests -c Release
           dotnet run --project tests/CouchCoop.MacOs.Tests -c Release -- \
             --harmony-smoke "$RUNNER_TEMP/couchcoop-harmony-smoke/CouchCoop.HarmonySmoke"
+          dotnet run --project tests/CouchCoop.MacOs.Tests -c Release -- \
+            --godot-harmony-fixture "$COUCHCOOP_GODOT_EXECUTABLE" "$COUCHCOOP_GODOT_FIXTURE"
+
+      - name: Run the ad-hoc hardened Godot .NET fixture
+        timeout-minutes: 15
+        working-directory: sources/sts2-couch-coop
+        run: |
+          set -euo pipefail
+          signed_root="$RUNNER_TEMP/CouchCoop hardened Godot"
+          signed_app="$signed_root/$(basename "$COUCHCOOP_GODOT_APP")"
+          mkdir -p "$signed_root"
+          ditto "$COUCHCOOP_GODOT_APP" "$signed_app"
+          codesign --force --deep --sign - --options runtime \
+            --entitlements tests/CouchCoop.MacOs.GodotHarmonyFixture/hardened-runtime.entitlements.plist \
+            "$signed_app"
+          codesign --verify --deep --strict "$signed_app"
+          signature="$RUNNER_TEMP/couchcoop-godot-signature.txt"
+          codesign --display --verbose=4 "$signed_app" >"$signature" 2>&1
+          grep -Fq 'Signature=adhoc' "$signature"
+          grep -Eq '^CodeDirectory .*flags=.*\([^)]*runtime[^)]*\)' "$signature"
+          actual_entitlements="$RUNNER_TEMP/couchcoop-godot-entitlements.plist"
+          codesign --display --entitlements :- "$signed_app" >"$actual_entitlements" 2>/dev/null
+          for key in allow-jit allow-unsigned-executable-memory allow-dyld-environment-variables disable-executable-page-protection disable-library-validation; do
+            test "$(/usr/libexec/PlistBuddy -c "Print :com.apple.security.cs.$key" "$actual_entitlements")" = true
+          done
+          plutil -convert json -o - "$actual_entitlements" | jq -e 'keys == [
+            "com.apple.security.cs.allow-dyld-environment-variables",
+            "com.apple.security.cs.allow-jit",
+            "com.apple.security.cs.allow-unsigned-executable-memory",
+            "com.apple.security.cs.disable-executable-page-protection",
+            "com.apple.security.cs.disable-library-validation"
+          ]' >/dev/null
+          if /usr/libexec/PlistBuddy -c 'Print :com.apple.security.get-task-allow' "$actual_entitlements" >/dev/null 2>&1; then
+            echo 'get-task-allow must not be present' >&2
+            exit 1
+          fi
+          dotnet run --project tests/CouchCoop.MacOs.Tests -c Release -- \
+            --godot-harmony-fixture "$signed_app/Contents/MacOS/Godot" "$COUCHCOOP_GODOT_FIXTURE"
 
       - name: Build and validate the production snapshot package
         timeout-minutes: 55
@@ -398,68 +584,16 @@ jobs:
             --lane stable --lane public-beta --complete
           dotnet run --project tests/CouchCoop.MacOs.Tests -c Release -- --verify-archive "$archive"
 
-      - name: Run iPhone 13 Simulator Safari survival contract
-        timeout-minutes: 25
-        working-directory: sources/sts2-couch-coop
-        run: |
-          set -euo pipefail
-          artifact_dir="$PWD/.ci-artifacts/iphone-safari-intel"
-          harness_out="$RUNNER_TEMP/couchcoop-iphone-harness.out"
-          harness_err="$RUNNER_TEMP/couchcoop-iphone-harness.err"
-          mkdir -p "$artifact_dir"
-          dotnet run --project tests/CouchCoop.HostedServerHarness -c Release \
-            -p:Sts2AssembliesDir="$RUNNER_TEMP/couchcoop-reference-sdk/stable" \
-            -p:CouchCoopBuildToLocalMods=false -- \
-            --static-root "$RUNNER_TEMP/CouchCoop package verification/couchcoop/frontend" \
-            --port 23339 --mode iphone-burst --artifact-dir "$artifact_dir" \
-            >"$harness_out" 2>"$harness_err" &
-          harness_pid=$!
-          trap 'kill "$harness_pid" >/dev/null 2>&1 || true' EXIT HUP INT TERM
-          poll=0
-          while [ "$poll" -lt 120 ] && ! grep -q '"baseUrl"' "$harness_out"; do
-            kill -0 "$harness_pid" >/dev/null 2>&1 || { sed -n '1,40p' "$harness_err" >&2; exit 1; }
-            sleep 1
-            poll=$((poll + 1))
-          done
-          harness_url="$(grep '"baseUrl"' "$harness_out" | tail -n 1 | jq -er '.baseUrl')"
-          scripts/run-iphone-safari-simulator.sh --artifact-dir "$artifact_dir" --harness-url "$harness_url"
-
-      - name: Validate staged Intel Simulator diagnostics
-        timeout-minutes: 2
-        id: validate_intel_artifacts
-        if: always()
-        working-directory: sources/sts2-couch-coop
-        run: node scripts/validate-iphone-artifact-stage.mjs safari .ci-artifacts/iphone-safari-intel
-
       - name: Verify stock Godot honors a fake HOME
-        timeout-minutes: 15
+        timeout-minutes: 5
         working-directory: sources/sts2-couch-coop
         run: |
           set -euo pipefail
-          godot_root="$RUNNER_TEMP/godot-4.5.1"
-          archive="$RUNNER_TEMP/Godot_v4.5.1-stable_macos.universal.zip"
-          mkdir -p "$godot_root"
-          curl --fail --location --retry 3 --retry-all-errors --retry-max-time 1200 \
-            --connect-timeout 15 --max-time 900 --output "$archive" \
-            https://github.com/godotengine/godot-builds/releases/download/4.5.1-stable/Godot_v4.5.1-stable_macos.universal.zip
-          expected_sha=65c27959d02aaacfc131ec7ecb90179ba8045200cb02982bf2be96d117010b8a
-          test "$(shasum -a 256 "$archive" | awk '{print $1}')" = "$expected_sha"
-          unzip -q "$archive" -d "$godot_root"
           fake_home="$RUNNER_TEMP/couchcoop-godot-fake-home"
           output="$RUNNER_TEMP/couchcoop-godot-user-dir.log"
           mkdir -p "$fake_home"
-          HOME="$fake_home" "$godot_root/Godot.app/Contents/MacOS/Godot" --headless \
+          HOME="$fake_home" "$COUCHCOOP_GODOT_EXECUTABLE" --headless \
             --path "$PWD/tests/CouchCoop.MacOs.UserDirProbe" --script res://probe.gd >"$output" 2>&1
           marker="$(grep '^COUCHCOOP_USER_DIR_JSON=' "$output")"
           actual="$(printf '%s' "${marker#COUCHCOOP_USER_DIR_JSON=}" | jq -er '.userDir')"
           test "$actual" = "$fake_home/Library/Application Support/SlayTheSpire2"
-
-      - name: Upload staged Intel Simulator diagnostics
-        timeout-minutes: 3
-        if: ${{ always() && steps.validate_intel_artifacts.outcome == 'success' }}
-        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
-        with:
-          name: iphone-safari-intel-synthetic-${{ github.run_id }}
-          path: sources/sts2-couch-coop/.ci-artifacts/iphone-safari-intel
-          if-no-files-found: ignore
-          retention-days: 3

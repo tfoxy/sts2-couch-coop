@@ -7,6 +7,7 @@ export const REAL_URL_ENV = "COUCHCOOP_E2E_REAL_URL";
 export const REAL_GAME_ENV = "COUCHCOOP_ALLOW_REAL_GAME";
 export const REAL_EVIDENCE_ENV = "COUCHCOOP_E2E_LOCAL_EVIDENCE";
 export const INTERNAL_ARTIFACT_ENV = "COUCHCOOP_IPHONE_INTERNAL_ARTIFACT_DIR";
+export const IPHONE_PROFILE_ENV = "COUCHCOOP_IPHONE_PROFILE";
 
 export interface Environment {
   [name: string]: string | undefined;
@@ -16,6 +17,7 @@ export interface IphoneRunPlan {
   kind: "hermetic" | "real";
   baseURL: string;
   evidenceEnabled: boolean;
+  profile: "baseline" | "field-repro";
 }
 
 export interface SocketLifecycle {
@@ -30,6 +32,28 @@ export interface SurvivalObservation {
   pageCrashed: boolean;
   pageErrorCategories: string[];
   sockets: SocketLifecycle[];
+  unexpectedNavigation?: boolean;
+  pageClosed?: boolean;
+  lockedDiagnosticNonce?: string;
+  presentations?: number;
+  acknowledgements?: number;
+  hostSocketOpen?: boolean;
+  seatSocketOpen?: boolean;
+  hostSocketSeen?: boolean;
+  seatSocketSeen?: boolean;
+  journeyValid?: boolean;
+  pagehide?: boolean;
+  navigation?: boolean;
+  viewError?: boolean;
+  scriptUnresponsive?: boolean;
+}
+
+export interface IphoneFailureClassification {
+  category: "renderer-page-crash" | "unexpected-reload-navigation" | "seat-socket-close" |
+    "host-socket-close" | "client-view-error" | "missing-acknowledgement" | "render-stall" |
+    "script-unresponsive" | "simulator-safaridriver-failure" | "success";
+  phase: "pre-first-frame" | "post-first-frame" | "post-final-delta";
+  postFirstFrameBrowserDisappearance: boolean;
 }
 
 /**
@@ -46,7 +70,9 @@ export function resolveIphoneRunPlan(env: Environment): IphoneRunPlan {
   }
 
   if (!hasRealUrl) {
-    return { kind: "hermetic", baseURL: IPHONE_HARNESS_ORIGIN, evidenceEnabled: false };
+    const profile = env[IPHONE_PROFILE_ENV] ?? "baseline";
+    if (profile !== "baseline" && profile !== "field-repro") throw new Error(`${IPHONE_PROFILE_ENV} must be baseline or field-repro.`);
+    return { kind: "hermetic", baseURL: IPHONE_HARNESS_ORIGIN, evidenceEnabled: false, profile };
   }
 
   if (env.GITHUB_ACTIONS === "true") {
@@ -61,7 +87,8 @@ export function resolveIphoneRunPlan(env: Environment): IphoneRunPlan {
   return {
     kind: "real",
     baseURL: url.toString(),
-    evidenceEnabled: env[REAL_EVIDENCE_ENV] === "1"
+    evidenceEnabled: env[REAL_EVIDENCE_ENV] === "1",
+    profile: "baseline"
   };
 }
 
@@ -99,6 +126,7 @@ export interface SharedIphoneSurvivalResult {
   animationFrames: number;
   responsive: boolean;
   crash: boolean;
+  requiredMessages?: number;
 }
 
 /**
@@ -134,6 +162,18 @@ export async function validateSharedIphoneSurvival(result: SharedIphoneSurvivalR
   }
 }
 
+/** Both browser drivers consume the one bounded classifier owned by the shared runner contract. */
+export async function classifySharedIphoneFailure(input: Record<string, unknown>): Promise<IphoneFailureClassification> {
+  const sharedModule = new URL("../../scripts/lib/iphone-survival-contract.mjs", import.meta.url);
+  const loaded = await import(sharedModule.href) as {
+    classifyIphoneFailure?: (value: Record<string, unknown>) => IphoneFailureClassification;
+  };
+  if (typeof loaded.classifyIphoneFailure !== "function") {
+    throw new Error("Shared iPhone survival contract has no classifyIphoneFailure export.");
+  }
+  return loaded.classifyIphoneFailure(input);
+}
+
 /** A supplied artifact directory may only be a child of this invocation's private temp root. */
 export function assertInternalArtifactPath(tempRoot: string, candidate: string): string {
   const root = resolve(tempRoot);
@@ -149,10 +189,10 @@ export function assertInternalArtifactPath(tempRoot: string, candidate: string):
  * The one repository destination CI may upload. It is intentionally not a general output-dir knob:
  * allowing a caller to choose a broader directory would let an artifact collector sweep in game data.
  */
-export function resolveHermeticArtifactExport(repoRoot: string, candidate: string | undefined): string | null {
+export function resolveHermeticArtifactExport(repoRoot: string, candidate: string | undefined, profile: "baseline" | "field-repro" = "baseline"): string | null {
   if (!candidate) return null;
   const root = resolve(repoRoot);
-  const allowed = join(root, ".ci-artifacts", "iphone-webkit");
+  const allowed = join(root, ".ci-artifacts", "iphone-webkit", profile);
   const target = resolve(candidate);
   if (target !== allowed) {
     throw new Error(`${IPHONE_ARTIFACT_ENV} may only be ${allowed}.`);
@@ -180,6 +220,7 @@ export function resolveHermeticArtifactExport(repoRoot: string, candidate: strin
  */
 export function assertSurvival(observation: SurvivalObservation, options: { requireSeat?: boolean } = {}): void {
   if (observation.pageCrashed) throw new Error("iPhone WebKit page crashed.");
+  if (observation.unexpectedNavigation || observation.pageClosed) throw new Error("The locked browser journey navigated or closed after its first frame.");
   if (!observation.presented) throw new Error("No first presented frame was observed.");
   if (observation.responsiveSeconds < 10) throw new Error("The page was not responsive for ten seconds.");
   const requireSeat = options.requireSeat !== false;

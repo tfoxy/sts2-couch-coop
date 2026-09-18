@@ -71,6 +71,7 @@ try {
       "--static-root", frontendOutput,
       "--port", "23339",
       "--mode", "iphone-burst",
+      "--iphone-profile", process.env.COUCHCOOP_IPHONE_PROFILE ?? "baseline",
       "--artifact-dir", artifactDir
     ],
     {

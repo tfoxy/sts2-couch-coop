@@ -13,6 +13,7 @@ internal static class BrowserLifecycleDiagnosticsTests
         EnforcesTheProcessFileCap();
         EnforcesCheckpointOrdering();
         CorrelatesServerSocketEventsByVisitOrdinal();
+        DoesNotPoolJourneyStateAcrossVisits();
     }
 
     private static void AcceptsOnlyTheReviewedSchemaAndRedactsTheNonce()
@@ -178,7 +179,7 @@ internal static class BrowserLifecycleDiagnosticsTests
             Assert(!diagnostics.TryAccept(Body(nonce, "[{\"t\":6,\"kind\":\"visibility\",\"state\":\"hidden\"}]")),
                 "client-relative time cannot move backwards");
 
-            var summary = JsonSerializer.Serialize(diagnostics.Summary());
+            var summary = JsonSerializer.Serialize(diagnostics.Summary(nonce));
             Assert(summary.Contains("\"sceneAcks\":2", StringComparison.Ordinal), "both acknowledgements reach the summary");
             Assert(summary.Contains("\"presentations\":2", StringComparison.Ordinal), "both presentations reach the summary");
         });
@@ -192,14 +193,14 @@ internal static class BrowserLifecycleDiagnosticsTests
             diagnostics.RecordSocketEvent(nonce, "host", "open");
             advanceMonotonic(5);
             diagnostics.RecordSocketEvent(nonce, "seat", "open");
-            var openSummary = JsonSerializer.Serialize(diagnostics.Summary());
-            Assert(openSummary.Contains("\"hostSocketOpen\":true", StringComparison.Ordinal), "the host socket is open");
-            Assert(openSummary.Contains("\"seatSocketOpen\":true", StringComparison.Ordinal), "the seat socket is open");
+            var openSummary = JsonSerializer.Serialize(diagnostics.Summary(nonce));
+            Assert(openSummary.Contains("\"hostSocketState\":\"open\"", StringComparison.Ordinal), "the host socket is open");
+            Assert(openSummary.Contains("\"seatSocketState\":\"open\"", StringComparison.Ordinal), "the seat socket is open");
 
             diagnostics.RecordSocketEvent(nonce, "seat", "close", 1001, true);
-            var closedSummary = JsonSerializer.Serialize(diagnostics.Summary());
-            Assert(closedSummary.Contains("\"hostSocketOpen\":true", StringComparison.Ordinal), "closing the seat keeps the host open");
-            Assert(closedSummary.Contains("\"seatSocketOpen\":false", StringComparison.Ordinal), "the seat close is reflected");
+            var closedSummary = JsonSerializer.Serialize(diagnostics.Summary(nonce));
+            Assert(closedSummary.Contains("\"hostSocketState\":\"open\"", StringComparison.Ordinal), "closing the seat keeps the host open");
+            Assert(closedSummary.Contains("\"seatSocketState\":\"closed\"", StringComparison.Ordinal), "the seat close is reflected");
 
             diagnostics.RecordSocketEvent("not-a-nonce", "host", "close");
             var persisted = File.ReadAllText(Path.Combine(directory, "browser-lifecycle.jsonl"));
@@ -208,6 +209,25 @@ internal static class BrowserLifecycleDiagnosticsTests
                 "only the three valid server socket transitions are persisted");
             Assert(persisted.Contains("\"visit\":1", StringComparison.Ordinal),
                 "server socket transitions correlate through the visit ordinal");
+        });
+    }
+
+    private static void DoesNotPoolJourneyStateAcrossVisits()
+    {
+        WithDiagnostics((diagnostics, _, _, _) =>
+        {
+            var first = Begin(diagnostics);
+            var second = Begin(diagnostics);
+            Assert(diagnostics.TryAccept(Body(first, "[{\"t\":0,\"kind\":\"scene-received\",\"ordinal\":1},{\"t\":1,\"kind\":\"render-begin\",\"ordinal\":1},{\"t\":2,\"kind\":\"frame-presented\",\"ordinal\":1},{\"t\":3,\"kind\":\"ack-sent\",\"ordinal\":1}]")), "first journey accepts its first frame");
+            diagnostics.RecordSocketEvent(first, "host", "open");
+            diagnostics.RecordSocketEvent(second, "seat", "open");
+            var firstSummary = JsonSerializer.Serialize(diagnostics.Summary(first));
+            var secondSummary = JsonSerializer.Serialize(diagnostics.Summary(second));
+            Assert(firstSummary.Contains("\"visitOrdinal\":1", StringComparison.Ordinal) && firstSummary.Contains("\"journeyOrdinal\":1", StringComparison.Ordinal) && firstSummary.Contains("\"lastCheckpointOrdinal\":1", StringComparison.Ordinal) && firstSummary.Contains("\"lastCheckpointStage\":4", StringComparison.Ordinal) && firstSummary.Contains("\"presentations\":1", StringComparison.Ordinal) && firstSummary.Contains("\"seatSocketState\":\"unseen\"", StringComparison.Ordinal), "first journey does not inherit another visit's socket");
+            Assert(secondSummary.Contains("\"presentations\":0", StringComparison.Ordinal) && secondSummary.Contains("\"hostSocketState\":\"unseen\"", StringComparison.Ordinal), "later visit does not inherit first-frame counters");
+            diagnostics.RecordSocketEvent(first, "host", "close");
+            Assert(JsonSerializer.Serialize(diagnostics.Summary(first)).Contains("\"journeyValid\":false", StringComparison.Ordinal), "a socket EOF after first frame invalidates the locked journey");
+            Assert(JsonSerializer.Serialize(diagnostics.Summary("not-a-nonce")).Contains("\"journeyValid\":false", StringComparison.Ordinal), "an unknown summary nonce fails closed");
         });
     }
 

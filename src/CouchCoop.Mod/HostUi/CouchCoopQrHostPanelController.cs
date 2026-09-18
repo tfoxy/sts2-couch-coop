@@ -53,6 +53,7 @@ public static class CouchCoopQrHostPanelController
     /// only while this is occupied; that is the whole idle-cost fix.
     /// </summary>
     private static readonly LobbyScreenRegistry Screens = new(IsAliveNode);
+    private static readonly LobbyCheckpointState Checkpoints = new(CouchCoopMod.LobbyCheckpoints);
 
     // Main-thread only (the scan timer), like the panels themselves.
     private static HostTransportAlertState _alertState = HostTransportAlertState.Initial;
@@ -107,6 +108,10 @@ public static class CouchCoopQrHostPanelController
                 return;
             }
 
+            // This is the first point at which the controller can actually seed or scan. Do not report it
+            // armed before a valid tree exists: an early engine failure is not a usable lobby controller.
+            Checkpoints.ControllerArmed();
+
             // ONE-SHOT seed, not a tick. The mount patch only hears about screens readied AFTER it was
             // installed, so a lobby already on screen (a hot-reload generation, or a patch that landed late)
             // would otherwise never be found. This is the only full-tree walk left on the live path and it
@@ -114,9 +119,19 @@ public static class CouchCoopQrHostPanelController
             var seeded = 0;
             foreach (var screen in FindLobbyScreens(root))
             {
-                if (GodotObject.IsInstanceValid(screen) && Screens.Add(screen.GetInstanceId()))
+                if (!GodotObject.IsInstanceValid(screen))
+                {
+                    continue;
+                }
+
+                var registration = Screens.Add(screen.GetInstanceId());
+                if (registration.Added)
                 {
                     seeded++;
+                    if (CheckpointKind(screen) is { } kind)
+                    {
+                        Checkpoints.ScreenMounted(screen.GetInstanceId(), kind);
+                    }
                 }
             }
 
@@ -148,9 +163,15 @@ public static class CouchCoopQrHostPanelController
             return;
         }
 
-        if (!Screens.Add(screen.GetInstanceId()))
+        var registration = Screens.Add(screen.GetInstanceId());
+        if (!registration.Added)
         {
             return; // already known — a re-ready must not start a second timer chain
+        }
+
+        if (CheckpointKind(screen) is { } kind)
+        {
+            Checkpoints.ScreenMounted(screen.GetInstanceId(), kind);
         }
 
         CouchCoopLog.Stderr($"lobby screen mounted screen={screen.GetType().Name}");
@@ -161,7 +182,7 @@ public static class CouchCoopQrHostPanelController
             initialized = _initialized;
         }
 
-        if (initialized && Engine.GetMainLoop() is SceneTree { Root: { } root })
+        if (initialized && registration.BecameOccupied && Engine.GetMainLoop() is SceneTree { Root: { } root })
         {
             EnsureScanScheduled(root);
         }
@@ -360,6 +381,10 @@ public static class CouchCoopQrHostPanelController
         {
             foreach (var screen in screens)
             {
+                if (CheckpointKind(screen) is { } kind)
+                {
+                    Checkpoints.EndVisibleEpoch(screen.GetInstanceId(), kind);
+                }
                 RemoveFrom(screen);
             }
 
@@ -374,6 +399,9 @@ public static class CouchCoopQrHostPanelController
         // Keep the QR entry point reachable when the browser listener failed. The dialog's empty state
         // names that failure; hiding the only host-facing explanation stranded controller users in the lobby.
         var shouldShow = CouchCoopLobbyHostGate.IsHostLobby(lobbyState);
+        var evaluation = lobbyState is null
+            ? LobbyCheckpointEvaluation.Unavailable
+            : shouldShow ? LobbyCheckpointEvaluation.Host : LobbyCheckpointEvaluation.NotHost;
         // A host lobby is on screen: arm the LAN/WAN services that no longer start at mod init. Raised on
         // IsHostLobby (not ShouldShow) so a host whose listener failed to bind still gets them — and never
         // on a singleplayer lobby, which is the whole point of gating here rather than at the mount patch.
@@ -404,6 +432,11 @@ public static class CouchCoopQrHostPanelController
         {
             try
             {
+                if (IsVisibleInTree(screen) && CheckpointKind(screen) is { } kind)
+                {
+                    Checkpoints.VisibleHostLobbyEvaluated(screen.GetInstanceId(), kind, evaluation);
+                }
+
                 // Unconditional: `mounted ??= ScanScreen(...)` would short-circuit and skip installing on a
                 // second visible lobby screen. Only the FIRST panel is remembered, as the alert's host.
                 var panel = ScanScreen(screen, snapshot, shouldShow, refresh);
@@ -445,8 +478,20 @@ public static class CouchCoopQrHostPanelController
         // Isolate installation so a transient node failure cannot stop later refreshes.
         try
         {
-            if (!shouldShow || !visible)
+            if (!visible)
             {
+                if (CheckpointKind(screen) is { } hiddenKind)
+                {
+                    Checkpoints.EndVisibleEpoch(screen.GetInstanceId(), hiddenKind);
+                }
+                RemoveFrom(screen);
+            }
+            else if (!shouldShow)
+            {
+                if (CheckpointKind(screen) is { } nonHostKind)
+                {
+                    Checkpoints.EndPanelInstallEpoch(screen.GetInstanceId(), nonHostKind);
+                }
                 RemoveFrom(screen);
             }
             else
@@ -514,7 +559,22 @@ public static class CouchCoopQrHostPanelController
 
     private static CouchCoopQrHostPanel? EnsurePanel(Node screen, CouchCoopHostUiSnapshot snapshot, bool refreshLayout)
     {
-        var panel = screen.GetNodeOrNull<CouchCoopQrHostPanel>(CouchCoopQrHostPanel.NodeName);
+        var kind = CheckpointKind(screen);
+        var instanceId = screen.GetInstanceId();
+        CouchCoopQrHostPanel? panel;
+        try
+        {
+            panel = screen.GetNodeOrNull<CouchCoopQrHostPanel>(CouchCoopQrHostPanel.NodeName);
+        }
+        catch
+        {
+            if (kind is { } lookupKind && Checkpoints.BeginPanelInstall(instanceId, lookupKind))
+            {
+                Checkpoints.PanelInstallFailed(instanceId, lookupKind, QrPanelInstallFailureCategory.Lookup);
+            }
+            return null;
+        }
+
         if (panel is not null && !IsUsablePanel(panel))
         {
             return null;
@@ -522,13 +582,54 @@ public static class CouchCoopQrHostPanelController
 
         if (panel is null)
         {
-            panel = new CouchCoopQrHostPanel();
+            if (kind is { } installKind)
+            {
+                _ = Checkpoints.BeginPanelInstall(instanceId, installKind);
+            }
+
+            try
+            {
+                panel = new CouchCoopQrHostPanel();
+            }
+            catch
+            {
+                PanelInstallFailed(instanceId, kind, QrPanelInstallFailureCategory.Create, null);
+                return null;
+            }
+
             // Stamp BEFORE AddChild: spirectl's scene watcher can observe the node the moment it enters
             // the tree, so a stamp applied afterwards races a keyframe and the button could reach a
             // phone — where tapping it would open this dialog on the host's TV.
-            CouchCoopStreamSkip.Stamp(panel);
-            screen.AddChild(panel);
-            panel.Install();
+            try
+            {
+                CouchCoopStreamSkip.Stamp(panel);
+            }
+            catch
+            {
+                PanelInstallFailed(instanceId, kind, QrPanelInstallFailureCategory.StreamSkip, panel);
+                return null;
+            }
+
+            try
+            {
+                screen.AddChild(panel);
+            }
+            catch
+            {
+                PanelInstallFailed(instanceId, kind, QrPanelInstallFailureCategory.Attach, panel);
+                return null;
+            }
+
+            try
+            {
+                panel.Install();
+            }
+            catch
+            {
+                PanelInstallFailed(instanceId, kind, QrPanelInstallFailureCategory.Initialize, panel);
+                return null;
+            }
+
             CouchCoopLog.Stderr($"qr host panel installed screen={screen.GetType().Name}");
         }
         else if (refreshLayout)
@@ -536,10 +637,60 @@ public static class CouchCoopQrHostPanelController
             panel.ApplyLayout();
         }
 
-        panel.Visible = true;
-        panel.Apply(snapshot);
+        try
+        {
+            panel.Visible = true;
+            panel.Apply(snapshot);
+        }
+        catch
+        {
+            PanelInstallFailed(instanceId, kind, QrPanelInstallFailureCategory.Activate, panel);
+            return null;
+        }
+
+        if (kind is { } completeKind)
+        {
+            Checkpoints.PanelInstallComplete(instanceId, completeKind);
+        }
         return panel;
     }
+
+    private static void PanelInstallFailed(
+        ulong instanceId,
+        LobbyCheckpointScreenKind? kind,
+        QrPanelInstallFailureCategory category,
+        CouchCoopQrHostPanel? panel)
+    {
+        if (kind is { } checkpointKind)
+        {
+            Checkpoints.PanelInstallFailed(instanceId, checkpointKind, category);
+        }
+
+        if (panel is null)
+        {
+            return;
+        }
+
+        try
+        {
+            if (GodotObject.IsInstanceValid(panel))
+            {
+                panel.QueueFree();
+            }
+        }
+        catch
+        {
+            // The panel is auxiliary. The bounded checkpoint above is the support record.
+        }
+    }
+
+    private static LobbyCheckpointScreenKind? CheckpointKind(Node node)
+        => node.GetType().Name switch
+        {
+            "NCharacterSelectScreen" => LobbyCheckpointScreenKind.CharacterSelect,
+            "NMultiplayerLoadGameScreen" => LobbyCheckpointScreenKind.LoadGame,
+            _ => null,
+        };
 
     /// <summary>
     /// Every lobby screen under <paramref name="root"/>, skipping nodes that have gone stale.

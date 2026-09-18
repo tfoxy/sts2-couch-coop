@@ -1919,7 +1919,11 @@ public sealed class CouchCoopBrowserServer(
         if (_lifecycleDiagnostics is not null && string.Equals(request.Path, BrowserLifecycleDiagnostics.Route + "/summary", StringComparison.Ordinal)
             && string.Equals(request.Method, "GET", StringComparison.OrdinalIgnoreCase))
         {
-            await HttpResponseWriter.WriteJsonAsync(stream, HttpStatusCode.OK, _lifecycleDiagnostics.Summary(), cancellationToken).ConfigureAwait(false);
+            await HttpResponseWriter.WriteJsonAsync(
+                stream,
+                HttpStatusCode.OK,
+                _lifecycleDiagnostics.Summary(request.QueryValues.GetValueOrDefault(BrowserLifecycleDiagnostics.WebSocketVisitSelector)),
+                cancellationToken).ConfigureAwait(false);
             return;
         }
         if (_lifecycleDiagnostics is null || !string.Equals(request.Method, "POST", StringComparison.OrdinalIgnoreCase)
