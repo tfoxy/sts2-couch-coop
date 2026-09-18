@@ -7,6 +7,10 @@ config/name="CouchCoop Godot Harmony Fixture"
 run/main_scene="res://FixtureRoot.tscn"
 config/features=PackedStringArray("4.5", "C#")
 
+[dotnet]
+
+project/assembly_name="CouchCoop.MacOs.GodotHarmonyFixture"
+
 [display]
 
 window/size/viewport_width=320

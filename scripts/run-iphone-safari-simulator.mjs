@@ -3,6 +3,7 @@
 import { mkdir, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { classifyIphoneFailure, validateIphoneSurvival } from "./lib/iphone-survival-contract.mjs";
+import { retryableSessionReason, sanitizedWebDriverReason } from "./lib/iphone-webdriver-errors.mjs";
 
 const args = Object.fromEntries(process.argv.slice(2).reduce((result, value, index, all) => {
   if (value.startsWith("--")) result.push([value.slice(2), all[index + 1]]);
@@ -24,16 +25,27 @@ class RunnerFailure extends Error {
 }
 
 const wd = args.webdriver.replace(/\/$/, "");
-const request = async (method, path, body, category = "simulator-safaridriver-failure") => {
+const CommandTimeoutMs = 15_000;
+const SessionCreateTimeoutMs = 120_000;
+const request = async (
+  method,
+  path,
+  body,
+  category = "simulator-safaridriver-failure",
+  timeoutMs = CommandTimeoutMs,
+) => {
   let response;
   try {
     response = await fetch(wd + path, {
       method,
       headers: { "content-type": "application/json" },
       body: body ? JSON.stringify(body) : undefined,
-      signal: AbortSignal.timeout(15_000),
+      signal: AbortSignal.timeout(timeoutMs),
     });
-  } catch {
+  } catch (error) {
+    if (error?.name === "TimeoutError") {
+      throw new RunnerFailure(category, "webdriver-command-timeout");
+    }
     throw new RunnerFailure(category, "webdriver-unreachable");
   }
   const json = await response.json().catch(() => ({}));
@@ -43,7 +55,7 @@ const request = async (method, path, body, category = "simulator-safaridriver-fa
       && ["no such window", "invalid session id"].includes(webdriverError)) {
       throw new RunnerFailure("renderer-page-crash", "browser-window-disappeared");
     }
-    throw new RunnerFailure(category, "webdriver-command-failed");
+    throw new RunnerFailure(category, sanitizedWebDriverReason(json.value?.error, json.value?.message));
   }
   return json.value;
 };
@@ -62,20 +74,83 @@ const persist = async (result) => {
   await writeFile(join(args.artifactDir, "iphone-safari-timeline.json"), `${JSON.stringify(timeline)}\n`);
 };
 
+const waitForPageValue = async (base, script, accept, reason) => {
+  const until = performance.now() + 30_000;
+  while (performance.now() < until) {
+    const value = await request("POST", `${base}/execute/sync`, { script, args: [] }, "page-script");
+    if (accept(value)) return value;
+    await new Promise((resolve) => setTimeout(resolve, 250));
+  }
+  throw new RunnerFailure("simulator-safaridriver-failure", reason);
+};
+
+const readJourneySummary = async () => {
+  try {
+    const summaryUrl = new URL("/__couchcoop/lifecycle/summary", args.url);
+    summaryUrl.searchParams.set("diagnosticVisit", diagnosticVisit ?? "");
+    const response = await fetch(summaryUrl, { signal: AbortSignal.timeout(2_000) });
+    const summary = await response.json();
+    observedSummary = summary;
+    return summary;
+  } catch {
+    throw new RunnerFailure(
+      observedSummary.presentations > 0 ? "host-socket-close" : "simulator-safaridriver-failure",
+      "summary-unreachable",
+    );
+  }
+};
+
+const waitForSeatSocket = async (timeoutMs) => {
+  const until = performance.now() + timeoutMs;
+  while (performance.now() < until) {
+    const summary = await readJourneySummary();
+    if (summary.seatSocketState === "open") return true;
+    await new Promise((resolve) => setTimeout(resolve, 250));
+  }
+  return false;
+};
+
+const clickSemanticElement = async (base, selector) => request("POST", `${base}/execute/sync`, {
+  script: "const el=document.querySelector(arguments[0]);if(!el)return false;el.click();return true;",
+  args: [selector],
+}, "page-script");
+
+const createSession = async () => {
+  const body = {
+    capabilities: {
+      alwaysMatch: {
+        browserName: "safari",
+        platformName: "iOS",
+        pageLoadStrategy: "none",
+        "safari:useSimulator": true,
+        "safari:deviceUDID": args.udid,
+      },
+    },
+  };
+  for (let attempt = 1; attempt <= 3; attempt += 1) {
+    try {
+      return await request(
+        "POST",
+        "/session",
+        body,
+        "simulator-safaridriver-failure",
+        SessionCreateTimeoutMs,
+      );
+    } catch (error) {
+      if (!(error instanceof RunnerFailure)
+        || !retryableSessionReason(error.reason)
+        || attempt === 3) throw error;
+      await new Promise((resolve) => setTimeout(resolve, 5_000));
+    }
+  }
+  throw new RunnerFailure("simulator-safaridriver-failure", "session-create-retries-exhausted");
+};
+
 const waitForSummary = async () => {
   const until = performance.now() + 20_000;
   let summary = {};
   while (performance.now() < until) {
-    let response;
-    try {
-      const summaryUrl = new URL("/__couchcoop/lifecycle/summary", args.url);
-      summaryUrl.searchParams.set("diagnosticVisit", diagnosticVisit ?? "");
-      response = await fetch(summaryUrl, { signal: AbortSignal.timeout(2_000) });
-      summary = await response.json();
-      observedSummary = summary;
-    } catch {
-      throw new RunnerFailure(observedSummary.presentations > 0 ? "host-socket-close" : "simulator-safaridriver-failure", "summary-unreachable");
-    }
+    summary = await readJourneySummary();
     if (summary.viewError === true) throw new RunnerFailure("client-view-error", "client-view-error");
     if ((summary.pagehide === true || summary.navigation === true) && summary.presentations > 0) {
       throw new RunnerFailure("unexpected-reload-navigation", "locked-journey-ended");
@@ -97,50 +172,43 @@ const waitForSummary = async () => {
 };
 
 try {
-  const session = await request("POST", "/session", {
-    capabilities: {
-      alwaysMatch: {
-        browserName: "safari",
-        platformName: "iOS",
-        "safari:useSimulator": true,
-        "safari:deviceUDID": args.udid,
-      },
-    },
-  });
+  const session = await createSession();
   sessionId = session.sessionId ?? session.value?.sessionId;
   if (!sessionId) throw new RunnerFailure("safaridriver", "session-id-missing");
   const base = `/session/${sessionId}`;
   at("session-open");
   await request("POST", `${base}/url`, { url: args.url }, "page-script");
   at("control-loaded");
-  diagnosticVisit = await request("POST", `${base}/execute/sync`, {
-    script: "const raw=document.querySelector('meta[name=couchcoop-lifecycle]')?.content;try{return typeof raw==='string'?JSON.parse(atob(raw)).nonce:null}catch{return null}",
-    args: [],
-  }, "page-script");
-  if (typeof diagnosticVisit !== "string" || !/^[0-9a-f]{32}$/.test(diagnosticVisit)) throw new RunnerFailure("page-script", "diagnostic-visit-missing");
+  diagnosticVisit = await waitForPageValue(
+    base,
+    "const raw=document.querySelector('meta[name=couchcoop-lifecycle]')?.content;try{return typeof raw==='string'?JSON.parse(atob(raw)).nonce:null}catch{return null}",
+    (value) => typeof value === "string" && /^[0-9a-f]{32}$/.test(value),
+    "diagnostic-visit-missing",
+  );
 
-  const element = await request("POST", `${base}/element`, {
-    using: "css selector",
-    value: "[data-testid='iphone-burst-seat']",
-  }, "page-script");
-  const elementId = element.ELEMENT ?? element["element-6066-11e4-a52e-4f735466cecf"];
-  if (!elementId) throw new RunnerFailure("page-script", "seat-selector-missing");
-  await request("POST", `${base}/element/${elementId}/click`, undefined, "page-script");
+  await waitForPageValue(
+    base,
+    "return !!document.querySelector(\"[data-testid='iphone-burst-seat']\");",
+    (value) => value === true,
+    "seat-selector-missing",
+  );
+
+  const seatSelector = "[data-testid='iphone-burst-seat']";
+  if (!await clickSemanticElement(base, seatSelector)) {
+    throw new RunnerFailure("page-script", "seat-selector-missing");
+  }
+  // Mobile Safari can consume the first synthetic tap as focus while the control view settles. The seat socket is
+  // the bounded, payload-free proof that the Vue handler actually ran, so retry activation once when it stays absent.
+  if (!await waitForSeatSocket(3_000) && !await clickSemanticElement(base, seatSelector)) {
+    throw new RunnerFailure("page-script", "seat-selector-missing");
+  }
   at("seat-selected");
 
   const summary = await waitForSummary();
   at("final-ack-observed");
   let responsive = true;
   for (let second = 0; second < 10; second++) {
-    const summaryUrl = new URL("/__couchcoop/lifecycle/summary", args.url);
-    summaryUrl.searchParams.set("diagnosticVisit", diagnosticVisit);
-    let poll;
-    try {
-      poll = await fetch(summaryUrl, { signal: AbortSignal.timeout(2_000) }).then(response => response.json());
-      observedSummary = poll;
-    } catch {
-      throw new RunnerFailure("host-socket-close", "summary-unreachable");
-    }
+    const poll = await readJourneySummary();
     if (poll.pagehide || poll.navigation) throw new RunnerFailure("unexpected-reload-navigation", "locked-journey-poll-failed");
     if (poll.seatSocketState !== "open") throw new RunnerFailure("seat-socket-close", "locked-journey-poll-failed");
     if (poll.hostSocketState !== "open") throw new RunnerFailure("host-socket-close", "locked-journey-poll-failed");
