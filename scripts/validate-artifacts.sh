@@ -63,6 +63,7 @@ else
   check_ignored "frontend/playwright-traces/smoke.zip" "Playwright traces"
   check_ignored "frontend/playwright-videos/smoke.webm" "Playwright videos"
   check_ignored "frontend/playwright-screenshots/smoke.png" "Playwright screenshots"
+  check_ignored ".ci-artifacts/iphone-webkit/result.json" "staged synthetic iPhone diagnostics"
   check_ignored ".tmp/validate.log" "temporary files"
   check_ignored "logs/validate.log" "log directory"
   check_ignored "debug.log" "log files"

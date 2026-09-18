@@ -133,6 +133,7 @@ public sealed class CouchCoopWebSocketConnection
     // Where this connection's pre-WebSocket half is recorded: the visit id the browser sends on `join` is
     // merged into THIS connection's row here, rather than left as a second, ownerless arrival.
     private readonly ConnectionArrivalLog _arrivals;
+    private readonly Action? _onSceneAck;
 
     private CouchCoopWebSocketConnection(
         BrowserStateEnvelopeFactory envelopeFactory,
@@ -148,7 +149,8 @@ public sealed class CouchCoopWebSocketConnection
         bool sceneStreaming,
         bool wantsStaticBg,
         bool isSecure,
-        ConnectionArrivalLog arrivals)
+        ConnectionArrivalLog arrivals,
+        Action? onSceneAck)
     {
         _envelopeFactory = envelopeFactory ?? throw new ArgumentNullException(nameof(envelopeFactory));
         _connections = connections ?? throw new ArgumentNullException(nameof(connections));
@@ -164,6 +166,7 @@ public sealed class CouchCoopWebSocketConnection
         _wantsStaticBg = wantsStaticBg;
         _isSecure = isSecure;
         _arrivals = arrivals ?? throw new ArgumentNullException(nameof(arrivals));
+        _onSceneAck = onSceneAck;
         _actionExecutor = new BrowserActionExecutor(envelopeFactory.RuntimeHost);
         _inputExecutor = new BrowserInputExecutor(envelopeFactory.RuntimeHost);
         _lobby = new CouchCoopLobbyParticipation(envelopeFactory.RuntimeHost);
@@ -214,6 +217,7 @@ public sealed class CouchCoopWebSocketConnection
         HeadlessClientManager? headlessManager = null,
         bool isHeadlessClient = false,
         ConnectionArrivalLog? arrivals = null,
+        Action? onSceneAck = null,
         CancellationToken cancellationToken = default)
     {
         if (request.QueryValues.ContainsKey("view"))
@@ -256,7 +260,8 @@ public sealed class CouchCoopWebSocketConnection
                 watch,
                 staticBg,
                 isSecure,
-                arrivals ?? ConnectionArrivalLog.Shared)
+                arrivals ?? ConnectionArrivalLog.Shared,
+                onSceneAck)
             .AcceptCoreAsync(stream, request, cancellationToken)
             .ConfigureAwait(false);
     }
@@ -911,6 +916,7 @@ public sealed class CouchCoopWebSocketConnection
                 {
                     // Flow control: the client finished rendering the last scene delta → release the next one.
                     GrantSceneCredit();
+                    _onSceneAck?.Invoke();
                     continue;
                 }
 

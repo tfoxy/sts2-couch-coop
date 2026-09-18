@@ -57,7 +57,8 @@ if [[ "${COUCHCOOP_RELEASE_STAGED:-}" != "1" ]]; then
   # a per-lane archive cannot survive Steam's refresh path at all (see scripts/lib/release-lanes.sh).
   # The outer pass clones the siblings once; the staged pass builds each lane inside that one
   # workspace and merges them into a single payload.
-  mapfile -t all_lanes < <(release_lane_discover "$sdk_root")
+  all_lanes=()
+  while IFS= read -r lane; do all_lanes+=("$lane"); done < <(release_lane_discover "$sdk_root")
   lanes=()
   if [[ -n "${COUCHCOOP_RELEASE_STS2_LANE:-}" ]]; then
     read -r -a lanes <<< "$COUCHCOOP_RELEASE_STS2_LANE"
@@ -90,7 +91,7 @@ if [[ "${COUCHCOOP_RELEASE_STAGED:-}" != "1" ]]; then
 
   source_commit="$(git -C "$repo_root" rev-parse HEAD)"
   short_commit="$(git -C "$repo_root" rev-parse --short=12 HEAD)"
-  tag="$(git -C "$repo_root" tag --points-at HEAD --list 'v*' | sort -V | tail -n 1)"
+  tag="$(git -C "$repo_root" tag --points-at HEAD --list 'v*' | release_semver_tag_latest)"
   if [[ "$snapshot" == "1" ]]; then
     # A snapshot names the version it is actually a build OF, taken from the shipped manifest, with
     # the commit as SemVer BUILD METADATA. Two consequences, both deliberate:
@@ -129,10 +130,14 @@ if [[ "${COUCHCOOP_RELEASE_STAGED:-}" != "1" ]]; then
   # workflow publishes dist/* wholesale. Refuse rather than publish a payload this run did not build
   # -- and refuse here, before the clone and the builds, not after paying for them.
   stale_suffixes="$(release_lane_known_names | paste -sd '|' -)"
-  while IFS= read -r stale; do
-    echo "package-release: dist/ still holds $stale from an older per-lane release; remove it first" >&2
-    exit 1
-  done < <(cd "$repo_root/dist" && ls -1 2>/dev/null | grep -E -- "-($stale_suffixes)\.(zip|SHA256SUMS)\$" || true)
+  for stale_path in "$repo_root/dist"/*; do
+    [[ -f "$stale_path" ]] || continue
+    stale="$(basename "$stale_path")"
+    if [[ "$stale" =~ -($stale_suffixes)\.(zip|SHA256SUMS)$ ]]; then
+      echo "package-release: dist/ still holds $stale from an older per-lane release; remove it first" >&2
+      exit 1
+    fi
+  done
 
   workspace="$(mktemp -d "${TMPDIR:-/tmp}/couchcoop-release.XXXXXX")"
   trap 'rm -rf "$workspace"' EXIT
@@ -187,7 +192,7 @@ if [[ "${COUCHCOOP_RELEASE_STAGED:-}" != "1" ]]; then
 
   # One archive, one checksum file. Prove the published file verifies what it names, from the
   # directory it ships in.
-  (cd "$repo_root/dist" && sha256sum -c "$(release_checksums_name "$archive_name").SHA256SUMS")
+  release_verify_checksums "$repo_root/dist/$(release_checksums_name "$archive_name").SHA256SUMS"
 
   exit 0
 fi
@@ -199,7 +204,8 @@ for lane in "${lanes[@]}"; do
   [[ -f "$(lane_project "$lane")" && -f "$(lane_lockfile "$lane")" ]] \
     || { echo "unknown STS2 reference lane: $lane" >&2; exit 1; }
 done
-mapfile -t lane_assemblies < <(release_lane_assembly_names)
+lane_assemblies=()
+while IFS= read -r assembly; do lane_assemblies+=("$assembly"); done < <(release_lane_assembly_names)
 # The merged manifest declares the LOWEST floor of the lanes actually built, so the one payload
 # loads on the oldest branch it carries and the runtime selector picks the lane from there.
 min_game_version="$(release_payload_min_game_version "${lanes[@]}")"
@@ -279,8 +285,8 @@ COUCHCOOP_RELEASE_BUILD=1 COUCHCOOP_FRONTEND_OUT_DIR="$payload_dir/frontend" \
 assert_shared_publish_matches() {
   local reference="$1" candidate="$2" lane="$3" relative differing=()
   local reference_list candidate_list
-  reference_list="$(cd "$reference" && find . -type f | LC_ALL=C sort)"
-  candidate_list="$(cd "$candidate" && find . -type f | LC_ALL=C sort)"
+  reference_list="$(release_list_files "$reference")"
+  candidate_list="$(release_list_files "$candidate")"
   if [[ "$reference_list" != "$candidate_list" ]]; then
     echo "lane $lane published a different set of shared files than lane $first_lane:" >&2
     diff <(printf '%s\n' "$reference_list") <(printf '%s\n' "$candidate_list") >&2 || true
@@ -357,7 +363,7 @@ for lane in "${lanes[@]}"; do
     --arg minGameVersion "$(release_lane_game_floor "$lane")" \
     --arg bridgeGameApi "$game_api_lane" \
     --arg laneDirectory "$(release_lane_dir_name "$lane")" \
-    --arg nugetLock "$(sha256sum "$lane_lock" | cut -d ' ' -f 1)" \
+    --arg nugetLock "$(release_sha256 "$lane_lock")" \
     '{($lane): {id: $id, version: $version, nugetContentHash: $contentHash, gameBuild: $gameBuild,
                 minGameVersion: $minGameVersion, bridgeGameApi: $bridgeGameApi,
                 laneDirectory: $laneDirectory, nugetLockSha256: $nugetLock}}' \
@@ -402,7 +408,13 @@ while IFS=$'\t' read -r package_path package_version package_license; do
   package_dir="$repo_root/frontend/$package_path"
   safe_name="${package_name//@/}"
   safe_name="${safe_name//\//__}"
-  license_file="$(find "$package_dir" -maxdepth 1 -type f -iname 'license*' -print -quit)"
+  license_file=""
+  while IFS= read -r candidate; do
+    candidate_name="$(basename "$candidate" | tr '[:upper:]' '[:lower:]')"
+    case "$candidate_name" in
+      license*) license_file="$candidate"; break ;;
+    esac
+  done < <(release_list_immediate_files "$package_dir")
   if [[ -z "$license_file" && -f "$repo_root/licenses/npm-fallbacks/$safe_name.LICENSE" ]]; then
     license_file="$repo_root/licenses/npm-fallbacks/$safe_name.LICENSE"
   fi
@@ -459,9 +471,9 @@ jq -n \
   --arg godotSceneWeb "$godot_scene_web_commit" \
   --argjson sts2References "$sts2_references" \
   --arg dotnet "$(dotnet --version)" --arg node "$(node --version)" --arg pnpm "$(corepack pnpm --version)" \
-  --arg frontendLock "$(sha256sum "$repo_root/frontend/package-lock.json" | cut -d ' ' -f 1)" \
-  --arg spirectlLock "$(sha256sum "$source_parent/spirectl/presentation/web/pnpm-lock.yaml" | cut -d ' ' -f 1)" \
-  --arg godotSceneWebLock "$(sha256sum "$source_parent/godot-scene-web/pnpm-lock.yaml" | cut -d ' ' -f 1)" \
+  --arg frontendLock "$(release_sha256 "$repo_root/frontend/package-lock.json")" \
+  --arg spirectlLock "$(release_sha256 "$source_parent/spirectl/presentation/web/pnpm-lock.yaml")" \
+  --arg godotSceneWebLock "$(release_sha256 "$source_parent/godot-scene-web/pnpm-lock.yaml")" \
   '{schemaVersion: $schema, sourceCommit: $sourceCommit, tag: ($tag | if length > 0 then . else null end), version: $version, dependencies: {spirectl: $spirectl, godotSceneWeb: $godotSceneWeb, sts2References: $sts2References}, toolchain: {dotnet: $dotnet, node: $node, pnpm: $pnpm}, lockfileSha256: {frontendPackageLock: $frontendLock, spirectlPresentationPnpmLock: $spirectlLock, godotSceneWebPnpmLock: $godotSceneWebLock}}' > "$build_info"
 
 # The payload is complete here, build-info.txt included, so the gate sees exactly what ships. The
@@ -477,9 +489,9 @@ if [[ "$complete" == "1" ]]; then verify_args+=(--complete); fi
 # One small checksum file per archive, kept on purpose. The in-payload manifest that used to be
 # published alongside it was a CONSISTENCY check, not an authenticity one -- a tamperer rewrites a
 # payload and its manifest together -- so it is recomputed inside the gate now instead of shipped.
-# SHA256SUMS is cheap, works with sha256sum -c offline, and sits beside GitHub's per-asset digests
+# SHA256SUMS is cheap, verifies with the portable helper offline, and sits beside GitHub's per-asset digests
 # and the release workflow's actions/attest signature. Do not "simplify" it away.
-(cd "$output_dir" && sha256sum "$(basename "$archive")" > "$(basename "$checksums")")
+printf '%s  %s\n' "$(release_sha256 "$archive")" "$(basename "$archive")" > "$checksums"
 "$repo_root/scripts/verify-release-archive.sh" \
   --archive "$archive" --checksums "$checksums" --version "$version" "${verify_args[@]}"
 

@@ -13,8 +13,10 @@ fail() {
   exit 1
 }
 
-mapfile -t lane_assemblies < <(release_lane_assembly_names)
-mapfile -t known_lanes < <(release_lane_known_names)
+lane_assemblies=()
+while IFS= read -r assembly; do lane_assemblies+=("$assembly"); done < <(release_lane_assembly_names)
+known_lanes=()
+while IFS= read -r lane; do known_lanes+=("$lane"); done < <(release_lane_known_names)
 
 # ------------------------------------------------------------------------------------------------
 # The lane table itself. A lane that exists on disk but is unreviewed here (or the reverse) would
@@ -41,6 +43,8 @@ done
   || fail "the merged floor is not the lowest lane floor"
 [[ "$(release_payload_min_game_version public-beta)" == "$(release_lane_game_floor public-beta)" ]] \
   || fail "a single-lane payload does not declare that lane's own floor"
+[[ "$(printf '%s\n' v9.10.2 v10.2.1 v9.99.99 | release_semver_tag_latest)" == "v10.2.1" ]] \
+  || fail "tag semantic ordering does not preserve the v prefix"
 
 write_build_info() { # write_build_info <root> <version> <lane>...
   local root="$1" version="$2" lane
@@ -322,6 +326,12 @@ valid_archive="$fixture_root/valid.zip"
 (cd "$fixture_root/valid" && zip -X -q -r "$valid_archive" couchcoop)
 "$verifier" --archive "$valid_archive" >/dev/null
 "$verifier" --archive "$valid_archive" "${all_lane_args[@]}" --complete --version 1.2.3 >/dev/null
+missing_checksum="$fixture_root/missing-entry.SHA256SUMS"
+printf '%s  %s\n%s  %s\n' \
+  "$(release_sha256 "$valid_archive")" "$(basename "$valid_archive")" \
+  "$(release_sha256 "$valid_archive")" "not-present.zip" > "$missing_checksum"
+expect_reject_saying checksum-missing-entry 'names missing file: not-present.zip' \
+  "$verifier" --archive "$valid_archive" --checksums "$missing_checksum"
 expect_reject_saying archive-wrong-version "build-info.txt version is '1.2.3'" \
   "$verifier" --archive "$valid_archive" --version 9.9.9
 
@@ -350,7 +360,7 @@ diff -u \
   <(unzip -Z1 "$valid_archive" | sed -n '/[^\/]$/p' | LC_ALL=C sort) \
   || fail "recomputed contents manifest does not list exactly the archive's files"
 assert_sha="$(jq -r '.files[] | select(.path == "couchcoop/NOTICE") | .sha256' "$recomputed")"
-[[ "$assert_sha" == "$(sha256sum < "$valid/NOTICE" | cut -d ' ' -f 1)" ]] \
+[[ "$assert_sha" == "$(release_sha256 "$valid/NOTICE")" ]] \
   || fail "recomputed contents manifest hashed couchcoop/NOTICE wrong"
 
 forbidden_loader_archive="$fixture_root/forbidden-loader-symbols.zip"

@@ -4,6 +4,7 @@ using System.Runtime.CompilerServices;
 using System.Text.Json;
 
 [assembly: InternalsVisibleTo("CouchCoop.Mod.Tests")]
+[assembly: InternalsVisibleTo("CouchCoop.MacOs.Tests")]
 
 namespace CouchCoop.Mod.Loader;
 
@@ -241,8 +242,13 @@ internal static class CouchCoopLaneSelection
         string[] laneDirectories;
         try
         {
-            if (!Directory.Exists(lanesDirectory))
+            if (!HasExactDirectoryName(modDirectory, LanesDirectoryName))
             {
+                if (HasDirectoryWithDifferentCase(modDirectory, LanesDirectoryName))
+                {
+                    return new LaneSelection(null, detectedVersion,
+                        $"CouchCoop lane directory must be named exactly '{LanesDirectoryName}'. The mod is not loaded.");
+                }
                 // The flat dev layout. Silent by design — this is the path every `build-local-mod.sh`
                 // deploy takes, and it predates lanes entirely — EXCEPT when the deploy stamp beside it
                 // says it was compiled for a different game build than the one running.
@@ -443,7 +449,7 @@ internal static class CouchCoopLaneSelection
             try
             {
                 var candidate = Path.Combine(directory, $"{simpleName}.dll");
-                if (File.Exists(candidate))
+                if (HasExactFileName(directory, $"{simpleName}.dll"))
                 {
                     return candidate;
                 }
@@ -638,13 +644,13 @@ internal static class CouchCoopLaneSelection
             {
                 // The directory itself first, at every level: where both shapes exist, the tree we are
                 // actually sitting in is the more specific answer.
-                if (File.Exists(Path.Combine(directory, ReleaseInfoFileName)))
+                if (HasExactFileName(directory, ReleaseInfoFileName))
                 {
                     return directory;
                 }
 
                 if (BundleResourceDirectory(directory) is { } resources
-                    && File.Exists(Path.Combine(resources, ReleaseInfoFileName)))
+                    && HasExactFileName(resources, ReleaseInfoFileName))
                 {
                     return resources;
                 }
@@ -713,7 +719,7 @@ internal static class CouchCoopLaneSelection
         try
         {
             var path = Path.Combine(installRoot, ReleaseInfoFileName);
-            if (!File.Exists(path))
+            if (!HasExactFileName(installRoot, ReleaseInfoFileName))
             {
                 return null;
             }
@@ -739,6 +745,49 @@ internal static class CouchCoopLaneSelection
     /// </remarks>
     private static string LeafName(string directory) =>
         Path.GetFileName(directory.TrimEnd(Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar));
+
+    // APFS is commonly case-insensitive. File.Exists("Release_Info.json") would therefore accept a
+    // misspelled release marker on a Mac even though the shipped contract is release_info.json; enumerate
+    // only this directory and compare the returned leaf ordinally.
+    private static bool HasExactFileName(string directory, string name)
+    {
+        try
+        {
+            return Directory.EnumerateFiles(directory, "*", SearchOption.TopDirectoryOnly)
+                .Any(candidate => string.Equals(Path.GetFileName(candidate), name, StringComparison.Ordinal));
+        }
+        catch (Exception exception) when (IsIoFailure(exception))
+        {
+            return false;
+        }
+    }
+
+    private static bool HasExactDirectoryName(string directory, string name)
+    {
+        try
+        {
+            return Directory.EnumerateDirectories(directory, "*", SearchOption.TopDirectoryOnly)
+                .Any(candidate => string.Equals(Path.GetFileName(candidate), name, StringComparison.Ordinal));
+        }
+        catch (Exception exception) when (IsIoFailure(exception))
+        {
+            return false;
+        }
+    }
+
+    private static bool HasDirectoryWithDifferentCase(string directory, string name)
+    {
+        try
+        {
+            return Directory.EnumerateDirectories(directory, "*", SearchOption.TopDirectoryOnly)
+                .Any(candidate => string.Equals(Path.GetFileName(candidate), name, StringComparison.OrdinalIgnoreCase)
+                    && !string.Equals(Path.GetFileName(candidate), name, StringComparison.Ordinal));
+        }
+        catch (Exception exception) when (IsIoFailure(exception))
+        {
+            return false;
+        }
+    }
 
     private static string? SafeAssemblyLocation()
     {

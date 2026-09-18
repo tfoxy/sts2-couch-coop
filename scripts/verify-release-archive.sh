@@ -40,7 +40,8 @@ is_normalized_path() {
 
 # The per-lane assemblies; scripts/lib/release-lanes.sh owns the list, so the gate and the packager
 # cannot disagree about what is lane-varying.
-mapfile -t lane_assemblies < <(release_lane_assembly_names)
+lane_assemblies=()
+while IFS= read -r assembly; do lane_assemblies+=("$assembly"); done < <(release_lane_assembly_names)
 
 is_allowed_payload_file() {
   local path="$1" leaf directory remainder assembly
@@ -164,7 +165,7 @@ verify_file_list() {
     case "$path" in
       */*) ;;
       couchcoop.json) ;;
-      *.json|.*.json)
+      *.json)
         echo "release payload root holds a second .json, which STS2 scans as a mod manifest: $path" >&2
         return 1
         ;;
@@ -188,7 +189,8 @@ verify_file_list() {
   # At least one lane, every lane directory a reviewed lane's floor, and every lane complete. A lane
   # directory missing an assembly is worse than a missing lane: the selector would pick it and the
   # mod would fail at load with a file-not-found nobody can act on.
-  mapfile -t lane_directories < <(payload_lane_directories "$list_file")
+  lane_directories=()
+  while IFS= read -r directory; do lane_directories+=("$directory"); done < <(payload_lane_directories "$list_file")
   [[ ${#lane_directories[@]} -gt 0 ]] || {
     echo "release payload carries no lanes/<floor>/ directory, so no game build can load it" >&2
     return 1
@@ -247,7 +249,8 @@ verify_build_info_and_manifest() {
 
   # sts2References is keyed BY LANE now -- one merged payload is built from more than one reference
   # package, so a single {lane, id, version} object could only ever describe one of them.
-  mapfile -t declared < <(jq -r '.dependencies.sts2References | keys_unsorted[]' "$build_info" | LC_ALL=C sort)
+  declared=()
+  while IFS= read -r lane; do declared+=("$lane"); done < <(jq -r '.dependencies.sts2References | keys_unsorted[]' "$build_info" | LC_ALL=C sort)
   for lane in "${declared[@]}"; do
     release_lane_is_valid_name "$lane" || { echo "payload build-info.txt declares an unusable lane: $lane" >&2; return 1; }
     release_lane_is_known "$lane" || { echo "payload build-info.txt declares an unreviewed lane: $lane" >&2; return 1; }
@@ -309,7 +312,8 @@ resolve_payload_lanes() {
     lane="$(release_lane_from_dir_name "$directory")" || return 1
     lanes+=("$lane")
   done < <(payload_lane_directories "$list_file")
-  mapfile -t payload_lanes < <(printf '%s\n' ${lanes[@]+"${lanes[@]}"} | LC_ALL=C sort)
+  payload_lanes=()
+  while IFS= read -r lane; do payload_lanes+=("$lane"); done < <(printf '%s\n' ${lanes[@]+"${lanes[@]}"} | LC_ALL=C sort)
 }
 
 # What the CALLER said it expected, kept separate from what the payload happens to contain. A
@@ -323,7 +327,8 @@ verify_lane_expectations() {
       || { echo "release payload does not carry the requested lane: $lane" >&2; return 1; }
   done
   [[ "$require_complete" == "1" ]] || return 0
-  mapfile -t known < <(release_lane_known_names | LC_ALL=C sort)
+  known=()
+  while IFS= read -r lane; do known+=("$lane"); done < <(release_lane_known_names | LC_ALL=C sort)
   for lane in "${known[@]}"; do
     printf '%s\n' "${payload_lanes[@]}" | grep -Fxq "$lane" || missing+=("$lane")
   done
@@ -335,13 +340,12 @@ verify_lane_expectations() {
 
 # The published per-file manifest is gone; this recreates it from the archive on demand.
 emit_contents_manifest() {
-  local root="$1" destination="$2" lines="$3" file relative
+  local root="$1" destination="$2" lines="$3" relative
   : > "$lines"
-  while IFS= read -r -d '' file; do
-    relative="${file#$root/}"
-    jq -cn --arg path "couchcoop/$relative" --arg sha256 "$(sha256sum "$file" | cut -d ' ' -f 1)" \
-      --argjson size "$(stat -c %s "$file")" '{path: $path, size: $size, sha256: $sha256}' >> "$lines"
-  done < <(find "$root" -type f -print0 | LC_ALL=C sort -z)
+  while IFS= read -r relative; do
+    jq -cn --arg path "couchcoop/$relative" --arg sha256 "$(release_sha256 "$root/$relative")" \
+      --argjson size "$(release_file_size "$root/$relative")" '{path: $path, size: $size, sha256: $sha256}' >> "$lines"
+  done < <(release_list_files "$root")
   jq -s '{schemaVersion: "couchcoop-release-contents/v1", files: .}' "$lines" > "$destination"
 }
 
@@ -422,7 +426,7 @@ if [[ -n "$archive" ]]; then
     # file that does not name this archive is caught. It mattered more when one SHA256SUMS covered
     # several per-lane archives; kept because a caller may hold the file without every asset beside
     # it, and a checksum file naming nothing it can see must still fail.
-    (cd "$(dirname "$checksums")" && sha256sum --ignore-missing -c "$(basename "$checksums")")
+    release_verify_checksums "$checksums"
   fi
   echo "verify-release-archive: archive ok (lanes: ${payload_lanes[*]})"
   exit 0
@@ -433,18 +437,15 @@ if find "$payload" -type l -print -quit | grep -q .; then
   echo "release payload contains a symlink" >&2
   exit 1
 fi
-while IFS= read -r -d '' directory; do
-  relative_directory="${directory#$payload/}"
+while IFS= read -r relative_directory; do
   case "$relative_directory" in
     hot-reload|hot-reload/*)
       echo "release payload contains forbidden hot-reload directory: $relative_directory" >&2
       exit 1
       ;;
   esac
-done < <(find "$payload" -mindepth 1 -type d -print0)
-while IFS= read -r -d '' file; do
-  printf '%s\n' "${file#$payload/}" >> "$file_list"
-done < <(find "$payload" -type f -print0)
+done < <(release_list_directories "$payload")
+release_list_files "$payload" > "$file_list"
 verify_file_list "$file_list"
 resolve_payload_lanes "$file_list"
 verify_lane_expectations

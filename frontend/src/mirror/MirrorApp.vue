@@ -1016,6 +1016,17 @@ function submitJoin(name: string, playerId?: string): void {
   prefillName.value = trimmed;
   // Held until the host confirms with a redirect, which promotes it to the auto-rejoin target.
   lastJoinAttempt = playerId ? { name: trimmed, playerId } : { name: trimmed };
+  // iphone-burst's two loopback servers exercise the exact host-socket-stays-open redirect shape without a
+  // headless game process. The document tag is absent outside that synthetic harness.
+  const syntheticPort = Number(document.querySelector('meta[name="couchcoop-synthetic-seat"]')?.getAttribute("content"));
+  if (Number.isInteger(syntheticPort) && syntheticPort > 0) {
+    joined.value = true;
+    pendingName.value = null;
+    activeClient.sendWatch(false);
+    seatViewPort = syntheticPort;
+    openSeatView(syntheticPort);
+    return;
+  }
   activeClient.sendJoin(trimmed, playerId);
 }
 

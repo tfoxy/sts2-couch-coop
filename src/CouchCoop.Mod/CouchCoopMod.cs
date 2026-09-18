@@ -96,6 +96,7 @@ public static class CouchCoopMod
             // before the first of them. It sits above the seat build guard below because that guard's refusal
             // is exactly the kind of line a player's godot.log has to carry.
             EngineAvailable = true;
+            Checkpoint("mod-init");
 
             // FIRST, before a patch is applied, a cache is warmed or a runtime exists: a seat running a
             // different CouchCoop build than the host that spawned it reports that and terminates. Everything
@@ -889,7 +890,9 @@ public static class CouchCoopMod
             return;
         }
 
+        Checkpoint("harmony-probe-enter");
         var probe = Patches.CouchCoopHarmonyProbe.Run();
+        Checkpoint($"harmony-probe-complete result={(probe.Succeeded ? "ok" : "failed")}");
         if (probe.Succeeded)
         {
             const string Message = "harmony probe ok (macOS): a trial patch of our own method applied and took effect";
@@ -908,6 +911,12 @@ public static class CouchCoopMod
         Connections.CouchCoopPatchHealth.ProbeFailed(
             error,
             $"{message} (host {System.Runtime.InteropServices.RuntimeInformation.OSDescription})");
+    }
+
+    private static void Checkpoint(string checkpoint)
+    {
+        CouchCoopLog.Stderr(checkpoint);
+        CouchCoopLog.Info(checkpoint);
     }
 
     private static void InitializeQrHostPanel()

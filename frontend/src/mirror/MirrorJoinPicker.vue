@@ -74,6 +74,7 @@ const props = defineProps<{
   // acts on, this is what they quote when reporting it. Never rendered without a `message` above it.
   detail?: string | null;
 }>();
+const isIphoneBurstHarness = document.querySelector('meta[name="couchcoop-synthetic-seat"]') !== null;
 
 // `playerId` is the picked option's state player id ("p:1003") for a roster BUTTON tap, and undefined for a typed
 // name — the host uses it to resolve the seat's netId exactly instead of matching the (possibly synthesized) label.
@@ -280,6 +281,7 @@ function submitJoin(name: string = joinName.value, playerId?: string): void {
         :data-is-host="player.isHost ? 'true' : 'false'"
         :data-seat-status="player.seatStatus"
         :data-is-mirror-seat="player.isMirrorSeat ? 'true' : 'false'"
+        :data-testid="isIphoneBurstHarness && player.name === 'Alice' ? 'iphone-burst-seat' : undefined"
         @click="submitJoin(player.name, player.playerId)"
       >
         <span class="player-name">

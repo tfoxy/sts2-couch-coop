@@ -276,10 +276,12 @@ describe("the canvas stage's unchanged-picture paint skip", () => {
   it.each(["dom", "canvas"] as const)("reports the first %s view after its paint opportunity", (backend) => {
     __setStageBackendForTest(backend);
     const presented = vi.fn();
+    const acks = vi.fn();
     const wrapper = mount(MirrorView, { props: {
       state: staticScene(), revision: 1, connected: true, connectionAttemptId: "view-1",
-      onFirstSceneFramePresented: presented
+      onFirstSceneFramePresented: presented, onSceneRendered: acks
     } });
+    expect(acks).toHaveBeenCalledTimes(1);
     expect(presented).not.toHaveBeenCalled();
     raf.flush();
     expect(presented).not.toHaveBeenCalled();

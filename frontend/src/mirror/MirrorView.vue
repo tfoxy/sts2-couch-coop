@@ -36,6 +36,7 @@ import {
 import { installTextScaleSheet } from "@/mirror/textScaleClasses";
 import { onAtlasRegionsReady } from "@/mirror/atlasBaker";
 import { reproRecorder } from "@/mirror/reproRecorder";
+import { sceneCheckpoint } from "@/lifecycleTelemetry";
 import type { MirrorInputMessage, MirrorScrollAck } from "@/mirror/mirrorClient";
 import type { FullWalkCause, MirrorRenderer } from "@/mirror/renderer/contracts";
 import {
@@ -438,6 +439,7 @@ function runScheduledRender(): void {
   if (renderRunning) {
     return;
   }
+  sceneCheckpoint("render-begin");
   renderRunning = true;
   try {
     const force = pendingForceTextures;
@@ -489,6 +491,7 @@ function runScheduledRender(): void {
     noteMirrorFrame();
     // Ack AFTER the frame is rendered so the host releases the next coalesced delta (flow control): the stream
     // self-paces to however fast this device can actually render.
+    sceneCheckpoint("frame-presented");
     props.onSceneRendered?.();
     if (renderer) firstPresentation.rendered();
   } catch (error) {
@@ -687,7 +690,11 @@ function mountScene(): void {
     // read time, over BOTH runtimes' gsw counters.
     setStaticStillCountersGauge(staticStillCounters);
     renderer.setStretch(spreadFactor.value);
-    // Build the initial DOM synchronously so consumers (and the mount-based tests) see it immediately.
+    // Build the initial DOM synchronously so consumers (and the mount-based tests) see it immediately. This is a
+    // real scene render too: a connection whose first live keyframe arrives before MirrorView mounts still spent
+    // one host flow-control credit, so the initial reconcile must participate in the same diagnostic sequence and
+    // return that credit just like a revision-driven reconcile does.
+    sceneCheckpoint("render-begin");
     const initialPresented = renderer.reconcile(props.state);
     syncHandRaiseUi();
     // Create + configure the live WebGL runtimes from the effective per-viewer effect mode. `off` (the low-end
@@ -805,7 +812,11 @@ function mountScene(): void {
       );
     }
     startAdaptiveQuality();
-    if (initialPresented !== false) firstPresentation.rendered();
+    if (initialPresented !== false) {
+      sceneCheckpoint("frame-presented");
+      props.onSceneRendered?.();
+      firstPresentation.rendered();
+    }
   }
 }
 

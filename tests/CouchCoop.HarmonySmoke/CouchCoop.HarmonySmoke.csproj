@@ -1,0 +1,18 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup>
+    <OutputType>Exe</OutputType>
+    <TargetFramework>net9.0</TargetFramework>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <Nullable>enable</Nullable>
+    <LangVersion>latest</LangVersion>
+    <CouchCoopBuildToLocalMods>false</CouchCoopBuildToLocalMods>
+    <CouchCoopRequiresSts2Assemblies>false</CouchCoopRequiresSts2Assemblies>
+    <RestorePackagesWithLockFile>true</RestorePackagesWithLockFile>
+  </PropertyGroup>
+  <ItemGroup>
+    <!-- The STS2 SDK is reference-only and cannot execute. This pinned public runtime package exercises
+         Harmony itself without loading a game, Godot, or any private assembly. -->
+    <PackageReference Include="Lib.Harmony" Version="[2.4.2]" PrivateAssets="all" />
+    <Compile Include="../../src/CouchCoop.Mod/Patches/CouchCoopHarmonyProbe.cs" Link="CouchCoopHarmonyProbe.cs" />
+  </ItemGroup>
+</Project>

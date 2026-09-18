@@ -192,7 +192,10 @@ verify_lane() {
 
   local expected="$work_dir.expected.txt" actual="$work_dir.actual.txt"
   lane_expected_dlls "$lane" | LC_ALL=C sort > "$expected"
-  find "$work_dir" -maxdepth 1 -type f -name '*.dll' -printf '%f\n' | LC_ALL=C sort > "$actual"
+  (
+    cd "$work_dir"
+    for file in ./*.dll; do [[ -f "$file" ]] && printf '%s\n' "${file#./}"; done | LC_ALL=C sort
+  ) > "$actual"
   diff -u "$expected" "$actual" || {
     echo "lane $lane output does not match the reviewed assembly allowlist" >&2
     return 1

@@ -67,6 +67,20 @@ public static class VisitIdTag
         return result;
     }
 
+    /// <summary>Insert a server-created, non-sensitive metadata tag into a document already safe to rewrite.</summary>
+    public static byte[] InjectMeta(byte[] document, string? tag)
+    {
+        if (string.IsNullOrEmpty(tag) || document.Length == 0 || document.Length > MaximumDocumentBytes) return document;
+        var insertAt = FindHeadInsertionPoint(document);
+        if (insertAt < 0) return document;
+        var bytes = Encoding.UTF8.GetBytes("\n    " + tag);
+        var result = new byte[document.Length + bytes.Length];
+        document.AsSpan(0, insertAt).CopyTo(result);
+        bytes.CopyTo(result, insertAt);
+        document.AsSpan(insertAt).CopyTo(result.AsSpan(insertAt + bytes.Length));
+        return result;
+    }
+
     /// <summary>The byte offset just past the opening <c>&lt;head …&gt;</c> tag, or -1 when there is none.</summary>
     private static int FindHeadInsertionPoint(byte[] document)
     {

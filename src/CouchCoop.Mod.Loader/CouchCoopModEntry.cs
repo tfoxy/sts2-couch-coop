@@ -30,6 +30,8 @@ public static partial class CouchCoopModEntry
             return;
         }
 
+        Checkpoint("loader-entry");
+
         // Hoisted out of the `try` so the failure line below can carry them. Which game this is, and which
         // build of CouchCoop this is, are the two facts that turn an opaque CLR type-load stack into an
         // obvious answer — and they are the two the catch would otherwise have lost.
@@ -53,10 +55,12 @@ public static partial class CouchCoopModEntry
             // no `lanes/` directory and takes the pre-lane path unchanged and silently. See
             // CouchCoopLaneSelection for why the decision cannot simply call spirectl's version ladder.
             detectedVersion = CouchCoopLaneSelection.ResolveGameVersion();
+            Checkpoint($"loader-version version={detectedVersion ?? "<undetected>"}");
             var selection = CouchCoopLaneSelection.Select(modDirectory, detectedVersion);
             payloadDescription = selection.LaneDirectory is not null
                 ? $"lane {Path.GetFileName(selection.LaneDirectory)}"
                 : $"flat, built for {CouchCoopLaneSelection.ReadFlatBuildGameVersion(modDirectory) ?? "<unstamped>"}";
+            Checkpoint($"loader-payload payload={payloadDescription}");
             if (selection.Refusal is not null)
             {
                 // Refuse BEFORE loading anything. A lane built for a different game build loads fine and then
@@ -172,6 +176,7 @@ public static partial class CouchCoopModEntry
                 BindingFlags.Public | BindingFlags.Static)
                 ?? throw new InvalidOperationException($"Unable to resolve '{ImplementationTypeName}.Init'.");
 
+            Checkpoint("loader-invoke");
             initMethod.Invoke(null, null);
             _initialized = true;
             InitializeHotReload(modDirectory);
@@ -186,6 +191,15 @@ public static partial class CouchCoopModEntry
                 $"bootstrap loader failed (game {detectedVersion ?? "<undetected>"}, "
                 + $"payload {payloadDescription}): {ex}");
         }
+    }
+
+    // Loader diagnostics must reach both the terminal attached to a manual launch and the game's own
+    // godot.log. The logger sink is intentionally best-effort (CouchCoopLogLine catches logger startup
+    // failures); stderr remains the early-loader evidence path.
+    private static void Checkpoint(string checkpoint)
+    {
+        CouchCoopLogLine.Stderr(checkpoint);
+        CouchCoopLogLine.Info(checkpoint);
     }
 
     /// <summary>

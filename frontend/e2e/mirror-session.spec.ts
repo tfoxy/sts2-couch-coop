@@ -118,7 +118,8 @@ test("a lobby-only player is removed after their last browser closes", async ({ 
 
   await joined.goto(`${LOBBY_BASE_URL}/?name=MirrorReaped`);
   // A name the lobby has never seen becomes a real row — that is what "joining a lobby" IS.
-  await expect.poll(() => rowsNamed(`${LOBBY_BASE_URL}/ws`, "MirrorReaped")).toBe(1);
+  // The lobby is a separate game-free process, so its first session has the same bounded cold dispatcher probe.
+  await expect.poll(() => rowsNamed(`${LOBBY_BASE_URL}/ws`, "MirrorReaped"), { timeout: 15_000 }).toBe(1);
 
   await context.close();
 
@@ -189,7 +190,9 @@ test("a bare QR URL lands unaffiliated and joins through the normal session prot
  * could otherwise be satisfied by the PREVIOUS leg's controller and never notice its own join failed.
  */
 async function idleSeat(name: string): Promise<void> {
-  await expect.poll(() => controllersFor(rosterUrl(), name)).toBe(0);
+  // A game-free harness may spend its first five seconds proving that no Godot main-thread dispatcher exists.
+  // Give that one cold connection room to degrade; later roster probes are immediate.
+  await expect.poll(() => controllersFor(rosterUrl(), name), { timeout: 15_000 }).toBe(0);
 }
 
 function hostChoice(page: Page) {
@@ -228,7 +231,7 @@ async function roster(wsUrl: string): Promise<RosterPlayer[]> {
     const timer = setTimeout(() => {
       socket.close();
       reject(new Error("Timed out waiting for a session frame from the harness."));
-    }, 5000);
+    }, 10_000);
 
     socket.addEventListener("message", (event) => {
       const message = JSON.parse(String(event.data)) as { type?: string; players?: RosterPlayer[] };

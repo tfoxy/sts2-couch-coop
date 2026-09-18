@@ -8,6 +8,7 @@ import { installServiceWorker } from "./pwa/registerServiceWorker";
 import { installScreenWakeLockFromGlobals } from "./pwa/wakeLock";
 import { installZoomStableViewport } from "./zoomStableViewport";
 import { installPagePressModality } from "./inputModality";
+import { installLifecycleTelemetry } from "./lifecycleTelemetry";
 import "./styles.css";
 
 // Page lifetime, not component lifetime: a touch in the lobby remains the last press modality when the mirror
@@ -33,6 +34,7 @@ injectGodotBaseCss();
 // The game-art cursor is installed only where the browser reports a real cursor.
 installBrowserCursor(document.documentElement, window);
 installZoomStableViewport();
+installLifecycleTelemetry();
 
 // --- secure-context extras ----------------------------------------------------------------------------
 // Both are no-ops on the mod's default plain-HTTP LAN URL, which is not a secure context: there
