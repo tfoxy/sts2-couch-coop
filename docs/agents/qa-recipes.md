@@ -901,6 +901,25 @@ works. Things worth knowing before reading its output:
   for the deadline **plus the five-second shutdown deadline** before the forced exit — measured on the same leg,
   from the copied report: `cleanup: Forced exit after the five-second graceful shutdown deadline`. The pre-spawn
   profile backup is still the thing that actually covers that case.
+- **A seat whose status POST is blocked now joins anyway, through a file — and there is a lever for both
+  halves.** The seat writes its status to `<slotUserDir>/couch-coop/status-slot-N.json` once a POST to
+  `/internal/client-status` has failed, and the host reads it whenever it has heard nothing for two seconds.
+  Launch the host with `COUCHCOOP_FORCE_SEAT_CONTROL_FAILURE=1` (exactly `1`, inherited by the seats it spawns)
+  and the join must still complete: the browser gets its view, `seat-control-blocked` must NOT appear, and the
+  copied report's join-readiness line ends with *"the last status reached this host through this player's status
+  file"*. `=all` breaks the file too, and must then produce `seat-control-blocked` whose detail says the host
+  looked for that file and found nothing. Unset is the control: `status-slot-N.json` must never exist during a
+  healthy session (check WHILE it runs — a clean stop deletes it, so an absence afterwards proves nothing).
+  Two greps, from the seat's own log and the host's:
+
+  ```bash
+  grep 'seat control channel' <slotUserDir>/logs/godot.log   # the lever armed: the POST really is failing
+  ls <slotUserDir>/couch-coop/                               # browser-port-slot-N + status-slot-N.json
+  ```
+
+  The file carries the seat→host direction only. A seat being heard this way never receives the control
+  response, so it cannot be asked to stop gracefully and is force-killed after the five-second deadline — the
+  same `cleanup: Forced exit…` line an unmodded seat produces, and not a new fault.
 - **`pkill -f <pattern>` self-matches.** A pattern that also appears in the invoking shell's own argv (e.g. a
   literal string from the command you're about to relaunch) kills the invoking shell too (exit 144, no output).
   Also: `COUCHCOOP_HEADLESS_CLIENT` is an environment variable, not argv — `pkill -f` against it matches

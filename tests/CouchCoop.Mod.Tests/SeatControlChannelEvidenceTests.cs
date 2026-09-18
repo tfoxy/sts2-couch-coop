@@ -36,6 +36,10 @@ internal static class SeatControlChannelEvidenceTests
         await ARefusedStatusIsRecordedAsARefusalRatherThanSilence();
         ThePortFileIsReadBackAndAStaleOneIsNotBelieved();
         TheSilentSeatDecisionRestsOnEvidenceRatherThanAssumption();
+        TheStatusRecordIsOnlyBelievedWhenItIsOursAndSigned();
+        await TheStatusRecordIsWrittenOnlyWhileTheChannelIsFailing();
+        TheEvidenceTailNamesTheChannelThatDelivered();
+        TheForcedFailureLeverIsAnExactMatch();
         Console.WriteLine("SeatControlChannelEvidenceTests: ok");
     }
 
@@ -276,6 +280,10 @@ internal static class SeatControlChannelEvidenceTests
         Assert(elsewhere.Detail!.Contains("13360", StringComparison.Ordinal)
                 && elsewhere.Detail.Contains("13357", StringComparison.Ordinal),
             "…naming both ports, because the disagreement IS the finding");
+        Assert(!elsewhere.Detail.Contains("not the process this host started", StringComparison.Ordinal),
+            "…and never calls a LIVE seat of ours somebody else's process: the pid matched, the port did not");
+        Assert(stale.Detail!.Contains("not the process this host started", StringComparison.Ordinal),
+            "…while a record from another process is described as exactly that");
 
         // The evidence tail rides on every one of them.
         foreach (var issue in new[] { stopped, reachable, recorded, stale, elsewhere })
@@ -299,6 +307,193 @@ internal static class SeatControlChannelEvidenceTests
             probe: probe,
             controlChannel: "CONTROL-EVIDENCE",
             deadline: TimeSpan.FromSeconds(35));
+
+    // ---- 7. the record that crosses the same gap without a socket --------------------------------------------
+
+    /// <summary>
+    /// The seat's status file: everything the host checks before it will let a record stand in for a report the
+    /// transport never delivered. A forgeable one would be worse than no fallback at all — the status carries
+    /// the seat's Steam Cloud save isolation declaration, which is the whole basis on which a seat is allowed to
+    /// run beside the host's account.
+    /// </summary>
+    private static void TheStatusRecordIsOnlyBelievedWhenItIsOursAndSigned()
+    {
+        var dir = Path.Combine(Path.GetTempPath(), "couch-status-file-" + Guid.NewGuid().ToString("N"));
+        Directory.CreateDirectory(dir);
+        var path = Path.Combine(dir, SeatStatusFile.FileNameFor(2));
+        SeatStatusFile.PathOverride = () => path;
+        try
+        {
+            Assert(SeatStatusFile.FileNameFor(2) == "status-slot-2.json"
+                    && SeatStatusFile.FileNameFor(3) != SeatStatusFile.FileNameFor(2)
+                    && SeatStatusFile.FileNameFor(0) == "status.json",
+                "a seat's record is slot-scoped, so seats sharing the host's profile cannot overwrite each other");
+
+            var pid = Environment.ProcessId;
+            var status = new HeadlessConnectionStatus(
+                7, "Connecting", null, null, 1, 13357, 4, CloudSaveIsolated: true);
+            Assert(SeatStatusFile.TryWrite(status, "s3cret-token", 9), "a seat with a channel can write a record");
+            Assert(SeatStatusFile.Read(path, "s3cret-token", pid, 9) == status,
+                "…and the host reads back the very status the seat would have POSTed, field for field");
+            Assert(!File.ReadAllText(path).Contains("s3cret-token", StringComparison.Ordinal),
+                "…and the bearer token, which is what signs it, is never written into it");
+
+            Assert(SeatStatusFile.Read(path, "another-token", pid, 9) is null,
+                "a record this host did not issue the key for is not evidence about anything");
+            Assert(SeatStatusFile.Read(path, "s3cret-token", pid + 1, 9) is null,
+                "…nor is one written by a process this host did not start: a record outlives a killed seat");
+            Assert(SeatStatusFile.Read(path, "s3cret-token", 0, 9) is null,
+                "…nor any record at all when the host cannot say which process it started");
+            Assert(SeatStatusFile.Read(path, "s3cret-token", pid, 10) is null,
+                "…nor one from a generation this host has replaced");
+
+            var written = File.ReadAllText(path);
+            File.WriteAllText(path, written.Replace("\"Connecting\"", "\"starting\"", StringComparison.Ordinal));
+            Assert(SeatStatusFile.Read(path, "s3cret-token", pid, 9) is null,
+                "an edited status no longer matches the signature over it");
+            File.WriteAllText(path, written.Replace("\"pid\":" + pid, "\"pid\":" + (pid + 1), StringComparison.Ordinal));
+            Assert(SeatStatusFile.Read(path, "s3cret-token", pid + 1, 9) is null,
+                "…and re-labelling a record as another process's breaks it too, because the pid is inside the MAC");
+
+            File.WriteAllText(path, written[..(written.Length / 2)]);
+            Assert(SeatStatusFile.Read(path, "s3cret-token", pid, 9) is null, "a half-written record reads as no answer");
+            File.WriteAllText(path, "[]");
+            Assert(SeatStatusFile.Read(path, "s3cret-token", pid, 9) is null, "and so does a document that is not an object");
+            File.Delete(path);
+            Assert(SeatStatusFile.Read(path, "s3cret-token", pid, 9) is null,
+                "an absent record reads as no answer, not as a throw");
+            Assert(SeatStatusFile.Read(null, "s3cret-token", pid, 9) is null
+                    && SeatStatusFile.Read(path, "", pid, 9) is null,
+                "a caller with no path or no key gets no answer and no exception");
+        }
+        finally
+        {
+            SeatStatusFile.PathOverride = null;
+            Directory.Delete(dir, recursive: true);
+        }
+    }
+
+    /// <summary>
+    /// WHEN the record exists, which is the half that keeps this off healthy machines: only after a report has
+    /// failed, and taken away again the moment one succeeds.
+    /// </summary>
+    private static async Task TheStatusRecordIsWrittenOnlyWhileTheChannelIsFailing()
+    {
+        var dir = Path.Combine(Path.GetTempPath(), "couch-status-write-" + Guid.NewGuid().ToString("N"));
+        Directory.CreateDirectory(dir);
+        var path = Path.Combine(dir, SeatStatusFile.FileNameFor(2));
+        SeatStatusFile.PathOverride = () => path;
+        using var root = new TempSpa();
+        try
+        {
+            // 1. A HEALTHY seat. The host's real route, a token it knows, an accepted status — and no file.
+            await using var server = new CouchCoopBrowserServer(
+                new StaticSpaFileProvider(root.Path), new UnusedAssets(), envelopeFactory: null,
+                bindAddress: IPAddress.Loopback, preferredPort: 0, isHeadlessClient: true);
+            var baseUri = await server.StartAsync();
+            HeadlessConnectionControl.Shared.Register(96, 11, Guid.NewGuid(), "healthy-token");
+            var live = new Uri(baseUri, "/internal/client-status").ToString();
+            await CaptureAsync(live, "healthy-token", "11", async () =>
+                Assert(await HeadlessConnectionReporter.ReportSeatHelloAsync(true, CancellationToken.None),
+                    "the host accepts a status over the loopback POST"));
+            Assert(!File.Exists(path),
+                "a seat whose report is getting through writes NOTHING: the fallback costs a healthy session nothing");
+
+            // 2. The field fault. Nothing listening where this seat was told to report.
+            var closed = $"http://127.0.0.1:{ClosedPort()}/internal/client-status";
+            await CaptureAsync(closed, "healthy-token", "11", async () =>
+            {
+                try { await HeadlessConnectionReporter.ReportSeatHelloAsync(true, CancellationToken.None); }
+                catch (HttpRequestException) { }
+            });
+            Assert(File.Exists(path), "a seat whose report cannot be delivered leaves it where the host can find it");
+            var carried = SeatStatusFile.Read(path, "healthy-token", Environment.ProcessId, 11);
+            Assert(carried is { NativePhase: HeadlessConnectionReporter.HelloPhase, CloudSaveIsolated: true },
+                "…and what it left is the status itself, hello phase and cloud declaration intact");
+
+            // 3. The channel comes back. The record must not outlive the fault it stood in for.
+            await CaptureAsync(live, "healthy-token", "11", async () =>
+                Assert(await HeadlessConnectionReporter.ReportSeatHelloAsync(true, CancellationToken.None),
+                    "the host accepts the status again once the channel works"));
+            Assert(!File.Exists(path), "…and the seat takes its record back down");
+        }
+        finally
+        {
+            HeadlessConnectionControl.Shared.Unregister(96, 11);
+            SeatStatusFile.PathOverride = null;
+            Directory.Delete(dir, recursive: true);
+        }
+    }
+
+    // ---- 8. which channel carried it -------------------------------------------------------------------------
+
+    /// <summary>
+    /// The evidence tail's third question. "Nothing arrived" and "it arrived the slow way" are opposite findings
+    /// about the same computer, and a report that cannot tell them apart cannot say whether the workaround the
+    /// mod now performs is the thing keeping that player in the game.
+    /// </summary>
+    private static void TheEvidenceTailNamesTheChannelThatDelivered()
+    {
+        var status = new HeadlessConnectionStatus(1, "Connecting", null, null, 0, 13357, 0, CloudSaveIsolated: true);
+
+        Assert(Tail(null).Contains("no status has reached this host by either", StringComparison.Ordinal),
+            "a seat with no registration at all has been heard by neither channel");
+        Assert(Tail(Snapshot(status, accepted: 0)).Contains("by either", StringComparison.Ordinal),
+            "…and so has a registered seat that has never had a status accepted");
+
+        var direct = Tail(Snapshot(status, accepted: 4));
+        Assert(direct.Contains("as a direct report", StringComparison.Ordinal)
+                && !direct.Contains("status file", StringComparison.Ordinal),
+            "a healthy seat's tail says the ordinary channel carried it, and raises no fallback");
+
+        var viaFile = Tail(Snapshot(status, accepted: 4, channel: HeadlessStatusChannel.File, viaFile: 4));
+        Assert(viaFile.Contains("status file", StringComparison.Ordinal)
+                && viaFile.Contains("blocked on this computer", StringComparison.Ordinal),
+            "a rescued seat's tail says so, and names the computer rather than the player's network");
+
+        var recovered = Tail(Snapshot(status, accepted: 9, channel: HeadlessStatusChannel.Http, viaFile: 4));
+        Assert(recovered.Contains("as a direct report", StringComparison.Ordinal)
+                && recovered.Contains("4 earlier", StringComparison.Ordinal),
+            "a seat whose channel recovered keeps the count of what had to come the slow way");
+    }
+
+    // ---- 9. the live-QA lever --------------------------------------------------------------------------------
+
+    /// <summary>
+    /// Exactly two values arm it, for <c>SeatCloudSaveIsolationPatch.ForcedFailure</c>'s reason: a lever that
+    /// armed on anything loosely truthy would break every seat on a machine that happened to set the name.
+    /// </summary>
+    private static void TheForcedFailureLeverIsAnExactMatch()
+    {
+        Assert(HeadlessConnectionReporter.ForcedFailure("1")
+                == HeadlessConnectionReporter.ForcedControlFailure.Post,
+            "`1` fails the report, which is the fault measured in the field");
+        Assert(HeadlessConnectionReporter.ForcedFailure(" 1 ")
+                == HeadlessConnectionReporter.ForcedControlFailure.Post,
+            "…and surrounding whitespace is not a different setting");
+        Assert(HeadlessConnectionReporter.ForcedFailure("all")
+                == HeadlessConnectionReporter.ForcedControlFailure.PostAndFile,
+            "`all` fails the report AND the file, which is a seat that cannot be heard at all");
+        foreach (var inert in new[] { null, "", " ", "0", "true", "yes", "ALL", "2", "post" })
+        {
+            Assert(HeadlessConnectionReporter.ForcedFailure(inert) is null,
+                $"'{inert ?? "null"}' does not arm a lever that breaks a player's join");
+        }
+    }
+
+    private static string Tail(HeadlessConnectionControlSnapshot? snapshot)
+        => HeadlessClientManager.DescribeControlChannel(snapshot);
+
+    private static HeadlessConnectionControlSnapshot Snapshot(
+        HeadlessConnectionStatus status,
+        long accepted,
+        HeadlessStatusChannel channel = HeadlessStatusChannel.Http,
+        long viaFile = 0)
+        => new(
+            Slot: 2, Generation: 1, SourceSessionId: Guid.NewGuid(), Status: status,
+            ObservedAtUtc: DateTimeOffset.UtcNow, ObservedMonotonicTick: null, ShutdownRequested: false,
+            AcceptedCount: accepted, RefusedCount: 0, LastRefusal: HeadlessConnectionRejection.None,
+            LastChannel: channel, FileAcceptedCount: viaFile);
 
     // ---- helpers ---------------------------------------------------------------------------------------------
 

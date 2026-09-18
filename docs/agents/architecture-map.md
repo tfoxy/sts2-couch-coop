@@ -783,6 +783,27 @@ panel is no longer mounted; its internal narration remains available for diagnos
   and a per-process credential. Launch environment supplies `COUCHCOOP_HEADLESS_CONTROL_URL`,
   `COUCHCOOP_HEADLESS_CONTROL_TOKEN`, and `COUCHCOOP_HEADLESS_CONTROL_GENERATION`. Generations and increasing sequences
   reject delayed reports; the response can request shutdown. Credentials never appear in reports.
+- **When that POST cannot get through, the same status crosses on DISK and the join still works.** Measured in
+  the field 2026-09-18: a seat that had joined the lobby, bound its port and was idling healthily while every
+  status POST was filtered by something on that computer (a proxy without a loopback bypass, a VPN, security
+  software) — `d27ff12b` named the fault, this survives it. The seat writes
+  `user://couch-coop/status-slot-N.json` **only after a POST has failed** (`Server/SeatStatusFile.cs`, written
+  `.tmp`-then-`File.Move`, deleted on a clean stop or when the channel recovers), and the host reads it **only
+  when it has heard nothing for two seconds** — never on a healthy session, which touches no disk at all. The
+  record is HMAC-SHA256'd with the seat's own bearer token over the status text, the writer's pid and the
+  generation, and **the token is never written**: a local process can replay one (the sequence rule refuses it)
+  or delete one (a DoS indistinguishable from the silence this exists for), but cannot forge one. The host
+  verifies MAC + pid + generation and then feeds it to the SAME `HeadlessConnectionControl.Observe` the route
+  calls, tagged `HeadlessStatusChannel.File`, so every rule and refusal downstream is unchanged; it tracks the
+  last sequence it took from the file so re-reads cannot refuse themselves onto the evidence counters. **Two
+  seconds, not `Fresh()`'s ten** — ten is when a joined seat dies as `child-status-lost`, so reading only at
+  that point would leave a seat the fallback is carrying one read from being killed. Every readiness verdict and
+  silent-seat detail now ends with which channel delivered the last status (`DescribeControlChannel`), so a
+  report separates "primary worked" / "fallback carried it" / "neither"; `seat-control-blocked` means BOTH
+  failed and says so. The host→seat direction has no such fallback — a file-fed seat never receives the
+  response's graceful `ShutdownRequested` and is killed after the five-second deadline, which is already what
+  happens to any seat that cannot answer. QA lever: `COUCHCOOP_FORCE_SEAT_CONTROL_FAILURE` on the host, `1` =
+  POST fails, `all` = POST and file both fail; exact match, inert otherwise.
 - spirectl's multiplayer connection subscription observes native failures before dialog suppression.
   A failed child stops input and arms the five-second forced-exit backstop before notifying the host
   and browser and requesting quit. Parent cleanup captures logs and releases the peer before a seat

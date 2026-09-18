@@ -51,7 +51,20 @@ public sealed class HeadlessConnectionControl
         }
     }
 
-    public HeadlessConnectionObserveResult Observe(string? bearerToken, long generation, HeadlessConnectionStatus status)
+    /// <param name="channel">
+    /// How this status REACHED the host. Defaults to <see cref="HeadlessStatusChannel.Http"/>, which is the
+    /// loopback POST every healthy seat uses and the only caller that existed before the fallback: a status
+    /// recovered from the seat's own <c>SeatStatusFile</c> comes in here, through this same method and its same
+    /// rules, labelled <see cref="HeadlessStatusChannel.File"/>. The label is recorded rather than acted on —
+    /// nothing downstream may treat a status differently for having arrived one way or the other — so that a
+    /// support report can say WHICH channel carried the last status, which is the difference between "the
+    /// primary worked", "the fallback carried it" and "neither".
+    /// </param>
+    public HeadlessConnectionObserveResult Observe(
+        string? bearerToken,
+        long generation,
+        HeadlessConnectionStatus status,
+        HeadlessStatusChannel channel = HeadlessStatusChannel.Http)
     {
         if (string.IsNullOrWhiteSpace(bearerToken) || !IsValid(status))
         {
@@ -83,6 +96,8 @@ public sealed class HeadlessConnectionControl
             }
 
             entry.Accepted++;
+            if (channel == HeadlessStatusChannel.File) entry.FileAccepted++;
+            entry.LastChannel = channel;
             entry.LastSequence = status.Sequence;
             entry.LastStatus = status;
             entry.ObservedAtUtc = DateTimeOffset.UtcNow;
@@ -186,11 +201,14 @@ public sealed class HeadlessConnectionControl
         public long Accepted { get; set; }
         public long Refused { get; set; }
         public HeadlessConnectionRejection LastRefusal { get; set; }
+        /// <summary>How the last accepted status arrived, and how many arrived the slow way. See <c>Observe</c>.</summary>
+        public HeadlessStatusChannel LastChannel { get; set; }
+        public long FileAccepted { get; set; }
 
         public HeadlessConnectionControlSnapshot ToSnapshot()
             => new(
                 Slot, Generation, SourceSessionId, LastStatus, ObservedAtUtc, ObservedMonotonicTick,
-                ShutdownRequested, Accepted, Refused, LastRefusal);
+                ShutdownRequested, Accepted, Refused, LastRefusal, LastChannel, FileAccepted);
     }
 }
 
@@ -275,6 +293,22 @@ public enum HeadlessConnectionRejection
 /// <summary>Every status refused by this host, and why the last one was. See <c>Refusals</c>.</summary>
 public readonly record struct HeadlessConnectionRefusals(long Count, HeadlessConnectionRejection Last);
 
+/// <summary>
+/// How a seat's status reached the host. Recorded, never acted on — see <c>HeadlessConnectionControl.Observe</c>.
+/// </summary>
+public enum HeadlessStatusChannel
+{
+    /// <summary>The loopback POST to <c>/internal/client-status</c>. What every healthy seat uses.</summary>
+    Http,
+
+    /// <summary>
+    /// The seat's own status file (<c>SeatStatusFile</c>), read by the host because the POST was not arriving.
+    /// A seat only ever writes that file after its POST has failed, so this label is also the host's evidence
+    /// that the loopback channel is broken on this computer.
+    /// </summary>
+    File,
+}
+
 /// <param name="AcceptedCount">
 /// How many statuses this host has ACCEPTED for this seat and generation. Load-bearing at zero: a seat whose
 /// count is zero has never once been heard, which is a different fact from a seat that spoke and went quiet.
@@ -283,6 +317,11 @@ public readonly record struct HeadlessConnectionRefusals(long Count, HeadlessCon
 /// How many of this seat's statuses were refused, and <paramref name="LastRefusal"/> why the last one was.
 /// Counted only where the token identified an entry, so the process-wide pair
 /// (<c>HeadlessConnectionControl.Refusals</c>) is the one that also covers a token this host does not know.
+/// </param>
+/// <param name="LastChannel">
+/// How <paramref name="Status"/> reached this host, and <paramref name="FileAcceptedCount"/> how many of this
+/// seat's accepted statuses came the slow way. Meaningless while <paramref name="AcceptedCount"/> is zero —
+/// nothing has arrived by any route — which is why the default is the ordinary one.
 /// </param>
 public sealed record HeadlessConnectionControlSnapshot(
     int Slot,
@@ -294,4 +333,6 @@ public sealed record HeadlessConnectionControlSnapshot(
     bool ShutdownRequested,
     long AcceptedCount = 0,
     long RefusedCount = 0,
-    HeadlessConnectionRejection LastRefusal = HeadlessConnectionRejection.None);
+    HeadlessConnectionRejection LastRefusal = HeadlessConnectionRejection.None,
+    HeadlessStatusChannel LastChannel = HeadlessStatusChannel.Http,
+    long FileAcceptedCount = 0);

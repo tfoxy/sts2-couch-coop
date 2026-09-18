@@ -1,5 +1,4 @@
 using System.Globalization;
-using System.Runtime.CompilerServices;
 
 namespace CouchCoop.Mod.Server;
 
@@ -166,38 +165,10 @@ public static class BrowserPortFile
         }
     }
 
+    /// <summary>
+    /// This process's own record path. The engine latch and the SEGFAULT hazard behind it live in
+    /// <see cref="CouchCoopUserFile.TryResolve"/>, which the seat's status record resolves through too.
+    /// </summary>
     private static string? TryResolvePath()
-    {
-        // THE LATCH, NOT THE TRY/CATCH, IS WHAT MAKES THIS SAFE — and the try/catch alone is not merely
-        // insufficient, it is a trap. `ProjectSettings.GlobalizePath` is a native interop call: in a process that
-        // has GodotSharp on its probing path but no engine behind it (which `tests/CouchCoop.Mod.Tests` is — it
-        // copies the DLL, and it really does start a browser server), the managed call JITs fine and then
-        // SEGFAULTS in native code, which no `catch` can see. This exact call cost a test run with SIGSEGV before
-        // the latch went in. `CouchCoopMod.EngineAvailable` is latched true from
-        // `CouchCoopMod.Init()`, i.e. only inside a real Godot process, and its own remarks name this hazard.
-        if (!CouchCoopMod.EngineAvailable)
-        {
-            return null;
-        }
-
-        try
-        {
-            return TryResolveGodotPath();
-        }
-        catch
-        {
-            // GodotSharp failed to LOAD at all (the hosted-server harness) — the case the latch does not cover.
-            return null;
-        }
-    }
-
-    [MethodImpl(MethodImplOptions.NoInlining)]
-    private static string? TryResolveGodotPath()
-    {
-        var globalized = Godot.ProjectSettings.GlobalizePath(
-            "user://couch-coop/" + FileNameFor(Environment.GetEnvironmentVariable(SlotEnvironmentVariable)));
-        return string.IsNullOrWhiteSpace(globalized) || globalized.StartsWith("user://", StringComparison.Ordinal)
-            ? null
-            : globalized;
-    }
+        => CouchCoopUserFile.TryResolve(FileNameFor(Environment.GetEnvironmentVariable(SlotEnvironmentVariable)));
 }
