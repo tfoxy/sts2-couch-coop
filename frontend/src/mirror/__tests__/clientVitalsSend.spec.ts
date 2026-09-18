@@ -104,8 +104,9 @@ describe("sendClientVitals", () => {
   });
 
   it("sends nothing without an attempt id", () => {
-    // The census is evidence ABOUT AN ATTEMPT — the registry has nowhere to file one that names no attempt, and
-    // an unattributed census would be a receipt for whichever row happened to be current.
+    // Not because the host addresses the census by attempt — it files it against the connection — but because no
+    // attempt means nothing has been presented yet, and a census of an empty page is worse than no census: it
+    // would sit in the report looking like a reading of the screen that died.
     const { client, socket } = connect();
 
     expect(client.sendClientVitals("")).toBe(false);

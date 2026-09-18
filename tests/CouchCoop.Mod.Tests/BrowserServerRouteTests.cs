@@ -4,6 +4,7 @@ using System.Net.WebSockets;
 using System.Text;
 using System.Text.Json;
 using CouchCoop.Mod;
+using CouchCoop.Mod.Connections;
 using CouchCoop.Mod.Contracts;
 using CouchCoop.Mod.Tests;
 using CouchCoop.Mod.Diagnostics;
@@ -163,6 +164,17 @@ if (args is ["lifecycle", ..])
 {
     BrowserLifecycleDiagnosticsTests.Run();
     Console.WriteLine("lifecycle: ok");
+    return;
+}
+
+// The browser's resource census: the parse, the refusal rules and the registry-to-report path. The SOCKET half
+// rides the route sequence (AssertClientVitalsReceiptAsync) — it cannot be lifted into a verb of its own,
+// because a bare server's websocket session build hits an ungated off-engine native call and exits 139. Same
+// family as the latched segfault documented in CouchCoopCacheRoot, and not caused by anything here.
+if (args is ["client-vitals", ..])
+{
+    ClientVitalsReceiptTests.Run();
+    Console.WriteLine("client vitals: ok");
     return;
 }
 
@@ -970,6 +982,9 @@ internal sealed class BrowserServerRouteTests
         await AssertSceneStreamGateAsync(baseUri, runtime);
         await AssertStaticBgWalkSkipAggregateAsync(server, baseUri, runtime);
         await AssertInboundWebSocketLimitsAsync(baseUri, runtime);
+        // The client-vitals census, over a REAL socket: the receipt branch, the parse, and the report fact. The
+        // unit legs cover the rendering and the registry; only this one covers the wiring between them.
+        await AssertClientVitalsReceiptAsync(baseUri);
         await AssertServerReloadClosesWebSocketAsync(server, baseUri);
 
         await server.StopAsync();
@@ -2668,6 +2683,100 @@ internal sealed class BrowserServerRouteTests
         Expect(session.GetProperty("type").GetString() == "session",
             "a valid peer is admitted after rejected peers release their WebSocket slots");
         await CloseWebSocketSilentlyAsync(recovered);
+    }
+
+    /// <summary>
+    /// The browser's resource census over a real socket: a well-formed one becomes a report fact, and a
+    /// malformed one changes nothing.
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// The census exists because a web view killed by the phone's OS sends nothing as it dies, so the report has
+    /// to already carry what the page was holding. That makes the fact reaching the report the contract — not the
+    /// message being accepted — which is why this asserts on <c>BuildReport</c> rather than on a reply (there is
+    /// no reply; a census is told, not asked).
+    /// </para>
+    /// <para>
+    /// <b>UNRUN as of 2026-09-18, and not because of anything it asserts.</b> <see cref="RunAsync"/> cannot reach
+    /// this leg on <c>main</c>: the sequence above it fails first at <c>AssertJoinedRunSession</c> (the join reply
+    /// is missing fields), behind three further pre-existing failures earlier in the runner — the QR layout
+    /// contract and both <c>/bg/</c> URL-grammar suites. Lifting this leg into a verb of its own does not help
+    /// either: a bare server's websocket session build hits an ungated off-engine native call and exits 139,
+    /// the family documented at the <c>EngineAvailable</c> latch in <c>CouchCoopCacheRoot</c>. So the parse, the
+    /// refusal rules and the registry-to-report path are covered by <c>ClientVitalsReceiptTests</c>, which does
+    /// run; what is uncovered is the dispatch branch in <c>CouchCoopWebSocketConnection</c>, which is four lines
+    /// shaped exactly like the two sibling receipts beside it — neither of which has socket-level coverage
+    /// either. Delete this note when the runner is repaired and this leg has actually gone green.
+    /// </para>
+    /// </remarks>
+    private static async Task AssertClientVitalsReceiptAsync(Uri baseUri)
+    {
+        using var socket = new ClientWebSocket();
+        await socket.ConnectAsync(new UriBuilder(baseUri)
+        {
+            Scheme = "ws",
+            Path = "/ws",
+            Query = "watch=0&staticBg=0&cardFlight=1&handTween=1&trailDrive=0"
+        }.Uri, CancellationToken.None);
+        _ = await DrainConnectAsync(socket);
+
+        // The row this socket just created. Live rows are per-connection, and this connection is the newest.
+        var id = ConnectionRegistry.Shared.Snapshot().Rows.Where(row => row.IsLive).Select(row => row.Id).LastOrDefault();
+        Expect(id != Guid.Empty, "the websocket connection registered a live connection row");
+
+        await SendTextAsync(socket, JsonSerializer.Serialize(new
+        {
+            type = "client-vitals",
+            attemptId = "attempt-vitals",
+            stageRequested = "canvas",
+            stageActive = "dom",
+            dpr = 3.49,
+            vw = 390,
+            vh = 844,
+            els = 1204,
+            canvases = 7,
+            canvasPx = 41287680,
+            decodedBytes = 214958080,
+            decodedPages = 62,
+            texBytes = 0,
+            fxBytes = 0,
+            shaderMode = "static",
+            particleMode = "off",
+            jsHeapBytes = 0
+        }));
+        await WaitForReportAsync(id, "canvasPx=41287680", true, "a well-formed census reaches the connection report");
+
+        // A census the host cannot trust must leave the last good one standing rather than replacing it with a
+        // partial reading — the report is read by someone who does not own the device and cannot re-measure.
+        await SendTextAsync(socket, JsonSerializer.Serialize(new
+        {
+            type = "client-vitals", attemptId = "attempt-vitals", stageRequested = "canvas", stageActive = "moon",
+            dpr = 3.49, vw = 390, vh = 844, els = 1204, canvases = 7, canvasPx = 1,
+            decodedBytes = 1, decodedPages = 1, texBytes = 0, fxBytes = 0,
+            shaderMode = "static", particleMode = "off", jsHeapBytes = 0
+        }));
+        await WaitForReportAsync(id, "canvasPx=1 ", false, "a refused census does not overwrite the last good one");
+
+        await CloseWebSocketSilentlyAsync(socket);
+
+        static async Task SendTextAsync(ClientWebSocket socket, string payload) =>
+            await socket.SendAsync(Encoding.UTF8.GetBytes(payload), WebSocketMessageType.Text,
+                WebSocketMessageFlags.EndOfMessage, CancellationToken.None);
+
+        // The census draws no reply, so there is nothing to await but the effect. Poll rather than sleep a fixed
+        // span: the pass is fast and the failure still gets its full budget before it is called one.
+        static async Task WaitForReportAsync(Guid id, string fragment, bool expected, string because)
+        {
+            for (var attempt = 0; attempt < 100; attempt++)
+            {
+                var report = ConnectionRegistry.Shared.BuildReport(id) ?? "";
+                if (report.Contains(fragment, StringComparison.Ordinal) == expected && attempt > 2) break;
+                await Task.Delay(20);
+            }
+
+            var final = ConnectionRegistry.Shared.BuildReport(id) ?? "";
+            Expect(final.Contains(fragment, StringComparison.Ordinal) == expected, $"{because} (report: {final})");
+        }
     }
 
     // On connect the server sends exactly one `session` reply and nothing else.

@@ -924,6 +924,13 @@ public sealed class CouchCoopWebSocketConnection
                     // never be written, kept because the failure it exists for (the web view being killed by the
                     // phone's OS) destroys every other witness. See ClientVitalsReceipt for why the host renders
                     // the line rather than storing what it was sent.
+                    //
+                    // FILED AGAINST THE CONNECTION, NOT THE ATTEMPT, which is why the envelope's `attemptId` is
+                    // not read here. Facts are per-connection, and "this page is holding 41M canvas pixels" is
+                    // true of the browser on the other end of this socket whichever attempt happens to be
+                    // current. The client still withholds the census until it HAS an attempt id — not to address
+                    // it, but because before the first presented frame there is nothing on the page worth
+                    // censusing.
                     var vitals = ClientVitalsReceipt.Render(document.RootElement);
                     if (vitals is not null)
                     {
