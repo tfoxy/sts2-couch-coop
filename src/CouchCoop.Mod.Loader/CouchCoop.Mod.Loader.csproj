@@ -37,6 +37,32 @@
   </ItemGroup>
 
   <ItemGroup>
+    <!--
+      This is an explicitly bundled shared-payload file, not a compile reference. Sentry requires
+      version 10, but some newer SDKs prefer net9.0's version 9 framework reference and omit the
+      package DLL from publish output. Excluding automatic assets and copying the reviewed package
+      file directly makes release contents independent of ResolveAssemblyReference heuristics.
+    -->
+    <PackageReference
+      Include="System.Diagnostics.DiagnosticSource"
+      Version="[10.0.10]"
+      GeneratePathProperty="true"
+      PrivateAssets="all"
+      ExcludeAssets="all" />
+    <None
+      Include="$(PkgSystem_Diagnostics_DiagnosticSource)/lib/net9.0/System.Diagnostics.DiagnosticSource.dll"
+      Link="System.Diagnostics.DiagnosticSource.dll"
+      CopyToOutputDirectory="PreserveNewest"
+      CopyToPublishDirectory="PreserveNewest" />
+  </ItemGroup>
+
+  <Target Name="ValidateBundledDiagnosticSource" BeforeTargets="Build">
+    <Error
+      Condition="!Exists('$(PkgSystem_Diagnostics_DiagnosticSource)/lib/net9.0/System.Diagnostics.DiagnosticSource.dll')"
+      Text="Pinned System.Diagnostics.DiagnosticSource 10.0.10 package is missing its net9.0 assembly." />
+  </Target>
+
+  <ItemGroup>
     <!-- The prefix every CouchCoop log line carries is written down in exactly one file, and the loader logs
          too. It is LINKED rather than called through the ProjectReference above because the loader has to be
          able to log BEFORE it has installed the assembly resolver that can find CouchCoop.Mod.dll: a lane

@@ -619,8 +619,9 @@ Run only the touched suite(s) per implementer; a coordinator/reviewer runs full 
 
 **On macOS and iPhone, by request.** `.github/workflows/macos-check.yml` is triggered by `workflow_dispatch` or a
 push to the throwaway `ci/macos` branch — never on a PR or `main`. An Ubuntu policy gate and hermetic iPhone 13
-WebKit leg run first. Selected `macos-15` Apple Silicon and `macos-15-intel` jobs then build both locked reference
-lanes and the production snapshot package, validate its exact layout and metadata closure, run the standalone
+WebKit leg are available independently; after policy succeeds, WebKit and selected `macos-15` Apple Silicon or
+`macos-15-intel` jobs run in parallel. Dispatch toggles can isolate any one expensive job. The Mac jobs build both
+locked reference lanes and the production snapshot package, validate its exact layout and metadata closure, run the standalone
 Harmony watchdog, retain the fake-home suite, and prove stock Godot honors the fake `HOME`. None of these legs
 downloads or launches the game. See [steam-free-macos-iphone.md](steam-free-macos-iphone.md) before translating a
 green hosted check into a platform-support claim.

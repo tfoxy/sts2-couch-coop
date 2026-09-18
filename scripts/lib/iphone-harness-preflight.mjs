@@ -3,7 +3,10 @@ if (!target) throw new Error("usage: iphone-harness-preflight.mjs URL");
 const url = new URL(target);
 if (url.protocol !== "http:" && url.protocol !== "https:") throw new Error("harness URL must be HTTP(S)");
 
-const response = await fetch(url, { redirect: "error", signal: AbortSignal.timeout(5_000) });
+// The first shell request warms the server's visit/device diagnostics. On a cold hosted macOS process that work
+// can take materially longer than later requests, especially while CoreSimulator services are starting. Keep the
+// probe bounded, but let this deliberate warm-up reach the server's own 30-second network-write deadline.
+const response = await fetch(url, { redirect: "error", signal: AbortSignal.timeout(30_000) });
 if (!response.ok) throw new Error(`HTTP preflight failed: ${response.status}`);
 
 const socketUrl = new URL("/ws", url);

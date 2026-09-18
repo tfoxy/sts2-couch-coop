@@ -3,6 +3,11 @@ name: Steam-free macOS and iPhone checks
 on:
   workflow_dispatch:
     inputs:
+      run_webkit:
+        description: Run the hermetic iPhone WebKit profiles
+        required: true
+        type: boolean
+        default: true
       run_arm:
         description: Run the Apple Silicon macOS package and runtime checks
         required: true
@@ -60,6 +65,7 @@ jobs:
 
   iphone_webkit:
     needs: policy
+    if: ${{ github.event_name == 'push' || inputs.run_webkit == true }}
     runs-on: ubuntu-24.04
     timeout-minutes: 40
     steps:
@@ -141,7 +147,7 @@ jobs:
           retention-days: 3
 
   macos_arm:
-    needs: [policy, iphone_webkit]
+    needs: policy
     if: ${{ github.event_name == 'push' || inputs.run_arm == true }}
     runs-on: macos-15
     timeout-minutes: 150
@@ -236,10 +242,14 @@ jobs:
           dotnet restore tests/CouchCoop.MacOs.GodotHarmonyFixture/CouchCoop.MacOs.GodotHarmonyFixture.csproj \
             --locked-mode
           dotnet build tests/CouchCoop.MacOs.GodotHarmonyFixture/CouchCoop.MacOs.GodotHarmonyFixture.csproj \
-            -c Release --no-restore
+            -c Debug --no-restore
           fixture_stage="$RUNNER_TEMP/CouchCoop Godot Harmony fixture"
           ditto tests/CouchCoop.MacOs.GodotHarmonyFixture "$fixture_stage"
-          test -f "$fixture_stage/.godot/mono/temp/bin/Release/CouchCoop.MacOs.GodotHarmonyFixture.dll"
+          fixture_bin="$fixture_stage/.godot/mono/temp/bin/Debug"
+          for file in CouchCoop.MacOs.GodotHarmonyFixture.dll CouchCoop.MacOs.GodotHarmonyFixture.deps.json \
+            CouchCoop.MacOs.GodotHarmonyFixture.runtimeconfig.json 0Harmony.dll GodotSharp.dll; do
+            test -f "$fixture_bin/$file"
+          done
           echo "COUCHCOOP_GODOT_FIXTURE=$fixture_stage" >> "$GITHUB_ENV"
 
       - name: Verify stable and public-beta lobby targets as metadata only
@@ -335,6 +345,7 @@ jobs:
 
       - name: Run iPhone 13 Simulator Safari survival contract
         timeout-minutes: 25
+        id: iphone_safari_contract
         working-directory: sources/sts2-couch-coop
         run: |
           set -euo pipefail
@@ -344,7 +355,7 @@ jobs:
           mkdir -p "$artifact_dir"
           dotnet run --project tests/CouchCoop.HostedServerHarness -c Release \
             -p:Sts2AssembliesDir="$RUNNER_TEMP/couchcoop-reference-sdk/stable" \
-            -p:CouchCoopBuildToLocalMods=false -- \
+            -p:Sts2GameApi=v107 -p:CouchCoopBuildToLocalMods=false -- \
             --static-root "$RUNNER_TEMP/CouchCoop package verification/couchcoop/frontend" \
             --port 23339 --mode iphone-burst --iphone-profile field-repro --artifact-dir "$artifact_dir" \
             >"$harness_out" 2>"$harness_err" &
@@ -352,18 +363,26 @@ jobs:
           trap 'kill "$harness_pid" >/dev/null 2>&1 || true' EXIT HUP INT TERM
           poll=0
           while [ "$poll" -lt 120 ] && ! grep -q '"baseUrl"' "$harness_out"; do
-            kill -0 "$harness_pid" >/dev/null 2>&1 || { sed -n '1,40p' "$harness_err" >&2; exit 1; }
+            if ! kill -0 "$harness_pid" >/dev/null 2>&1; then
+              sed -n '1,80p' "$harness_out" >&2
+              sed -n '1,40p' "$harness_err" >&2
+              exit 1
+            fi
             sleep 1
             poll=$((poll + 1))
           done
           harness_url="$(grep '"baseUrl"' "$harness_out" | tail -n 1 | jq -er '.baseUrl')"
-          scripts/run-iphone-safari-simulator.sh --artifact-dir "$artifact_dir" \
-            --harness-url "$harness_url" --iphone-profile field-repro
+          if ! scripts/run-iphone-safari-simulator.sh --artifact-dir "$artifact_dir" \
+            --harness-url "$harness_url" --iphone-profile field-repro; then
+            sed -n '1,80p' "$harness_out" >&2
+            sed -n '1,40p' "$harness_err" >&2
+            exit 1
+          fi
 
       - name: Validate staged ARM Simulator diagnostics
         timeout-minutes: 2
         id: validate_arm_artifacts
-        if: always()
+        if: ${{ always() && steps.iphone_safari_contract.outcome != 'skipped' }}
         working-directory: sources/sts2-couch-coop
         run: node scripts/validate-iphone-artifact-stage.mjs safari .ci-artifacts/iphone-safari-arm/field-repro
 
@@ -392,7 +411,7 @@ jobs:
           retention-days: 3
 
   macos_intel:
-    needs: [policy, iphone_webkit]
+    needs: policy
     if: ${{ github.event_name == 'workflow_dispatch' && inputs.run_intel == true }}
     runs-on: macos-15-intel
     timeout-minutes: 150
@@ -487,10 +506,14 @@ jobs:
           dotnet restore tests/CouchCoop.MacOs.GodotHarmonyFixture/CouchCoop.MacOs.GodotHarmonyFixture.csproj \
             --locked-mode
           dotnet build tests/CouchCoop.MacOs.GodotHarmonyFixture/CouchCoop.MacOs.GodotHarmonyFixture.csproj \
-            -c Release --no-restore
+            -c Debug --no-restore
           fixture_stage="$RUNNER_TEMP/CouchCoop Godot Harmony fixture"
           ditto tests/CouchCoop.MacOs.GodotHarmonyFixture "$fixture_stage"
-          test -f "$fixture_stage/.godot/mono/temp/bin/Release/CouchCoop.MacOs.GodotHarmonyFixture.dll"
+          fixture_bin="$fixture_stage/.godot/mono/temp/bin/Debug"
+          for file in CouchCoop.MacOs.GodotHarmonyFixture.dll CouchCoop.MacOs.GodotHarmonyFixture.deps.json \
+            CouchCoop.MacOs.GodotHarmonyFixture.runtimeconfig.json 0Harmony.dll GodotSharp.dll; do
+            test -f "$fixture_bin/$file"
+          done
           echo "COUCHCOOP_GODOT_FIXTURE=$fixture_stage" >> "$GITHUB_ENV"
 
       - name: Verify stable and public-beta lobby targets as metadata only

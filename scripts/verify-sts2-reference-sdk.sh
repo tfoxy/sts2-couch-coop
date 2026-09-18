@@ -124,7 +124,9 @@ verify_lane_inventory() {
 verify_lane_pins_are_distinct() {
   local lane count
   count="$(
-    for lane in "${reviewed_lanes[@]}"; do lane_package_version "$lane"; done | LC_ALL=C sort -u | wc -l
+    for lane in "${reviewed_lanes[@]}"; do lane_package_version "$lane"; done \
+      | LC_ALL=C sort -u \
+      | awk 'END { print NR + 0 }'
   )"
   [[ "$count" == "${#reviewed_lanes[@]}" ]] || {
     echo "reference lanes must pin distinct FuYnAloft.Sts2.References versions" >&2

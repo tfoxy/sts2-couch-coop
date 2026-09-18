@@ -412,7 +412,7 @@ while IFS=$'\t' read -r package_path package_version package_license; do
   while IFS= read -r candidate; do
     candidate_name="$(basename "$candidate" | tr '[:upper:]' '[:lower:]')"
     case "$candidate_name" in
-      license*) license_file="$candidate"; break ;;
+      license*) [[ -n "$license_file" ]] || license_file="$candidate" ;;
     esac
   done < <(release_list_immediate_files "$package_dir")
   if [[ -z "$license_file" && -f "$repo_root/licenses/npm-fallbacks/$safe_name.LICENSE" ]]; then
