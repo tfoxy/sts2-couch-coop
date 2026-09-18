@@ -212,6 +212,9 @@ public sealed partial class HeadlessClientManager
             if (!IsCurrent(owned)) return null;
             if (owned.Failure is not null || owned.Quarantined) { await StopFailedConnectionAsync(owned).ConfigureAwait(false); return null; }
             var status = HeadlessConnectionControl.Shared.Snapshot(slot, owned.Generation);
+            // ABOVE first contact and above the contact deadline below, so a seat whose POST never lands is
+            // still HEARD — by file — inside the window that would otherwise kill it. See ObserveSeatStatusFile.
+            status = ObserveSeatStatusFile(owned, status);
             LogFirstContact(owned, status);
             var member = _membershipProbe(SlotToNetId(slot));
             // NOT ONE WORD from this process, well past the point where our own guard says hello, and the
@@ -263,7 +266,11 @@ public sealed partial class HeadlessClientManager
                     await Task.Delay(200, ct).ConfigureAwait(false);
                     continue;
                 }
-                var afterProbe = HeadlessConnectionControl.Shared.Snapshot(slot, owned.Generation);
+                // The probe above is awaited, and a file-fed seat's freshness is only ever as new as this host's
+                // last read — so re-read here too, or a slow probe could leave the redirect gated on a status
+                // that went stale while nothing was wrong.
+                var afterProbe = ObserveSeatStatusFile(
+                    owned, HeadlessConnectionControl.Shared.Snapshot(slot, owned.Generation));
                 if (!IsCurrent(owned) || owned.Quarantined) return null;
                 SetTerminalFailure(owned, afterProbe?.Status);
                 if (ProcessExited(owned.Process!)) owned.Failure ??= ProcessExitedIssue(owned.Process!);
@@ -280,8 +287,14 @@ public sealed partial class HeadlessClientManager
                     continue;
                 }
                 owned.HasJoined = true;
+                // A SUCCESSFUL join says how it was heard, and only when that is worth saying. This sentence
+                // replaces the verdict detail that carried the evidence tail, so a machine whose direct report
+                // is blocked — and whose join therefore rests entirely on the file fallback — would otherwise
+                // produce a report indistinguishable from a healthy one. Nothing is added on the healthy path.
+                var carriedByFile = afterProbe!.LastChannel == HeadlessStatusChannel.File;
                 ApplyToAttempt(sessionId, owned, registry => registry.RecordDiagnostic(sessionId, "join readiness",
-                    "Host lobby membership, live owned process, authenticated child heartbeat and child HTTP listener confirmed."));
+                    "Host lobby membership, live owned process, authenticated child heartbeat and child HTTP listener confirmed."
+                    + (carriedByFile ? " " + DescribeControlChannel(afterProbe) + "." : string.Empty)));
                 ApplyToAttempt(sessionId, owned, registry => registry.SetReadiness(sessionId, true, afterProbe!.Status!.ConnectedChildBrowserCount > 0));
                 return port;
             }
@@ -465,21 +478,47 @@ public sealed partial class HeadlessClientManager
     }
 
     /// <summary>
-    /// Record where this seat will write its bound browser port, for the same reason the log paths above are
-    /// recorded here: the launcher is the only place the seat's user directory is known, and re-deriving it on
-    /// the failure path would have to re-answer a question (isolated, or fallen back to the host's profile?)
-    /// that was already settled at the spawn.
+    /// Record the two files this seat writes into its own Godot user dir — the browser port it bound, and the
+    /// status record it falls back to when it cannot POST one. For the same reason the log paths above are
+    /// recorded here: the launcher is the only place the seat's user directory is known, and re-deriving it
+    /// later would have to re-answer a question (isolated, or fallen back to the host's profile?) that was
+    /// already settled at the spawn.
     /// </summary>
-    private void CaptureSeatPortFileLocked(int slot, string? seatUserDir)
+    private void CaptureSeatFilePathsLocked(int slot, string? seatUserDir)
     {
         if (!_ownedConnections.TryGetValue(slot, out var owned) || string.IsNullOrWhiteSpace(seatUserDir)) return;
-        // The seat resolves this as `user://couch-coop/<name>` from inside its own process
-        // (BrowserPortFile.TryResolveGodotPath); this is the same path from outside, which is why it takes the
+        // The seat resolves these as `user://couch-coop/<name>` from inside its own process
+        // (CouchCoopUserFile.TryResolve); this is the same directory from outside, which is why it takes the
         // seat's Godot user dir rather than its slot base.
-        owned.SeatPortFilePath = Path.Combine(
-            seatUserDir,
-            HeadlessUserDirSeeder.CouchCoopDirName,
-            BrowserPortFile.FileNameFor(slot));
+        var couchCoop = Path.Combine(seatUserDir, HeadlessUserDirSeeder.CouchCoopDirName);
+        owned.SeatPortFilePath = Path.Combine(couchCoop, BrowserPortFile.FileNameFor(slot));
+        owned.SeatStatusFilePath = Path.Combine(couchCoop, SeatStatusFile.FileNameFor(slot));
+    }
+
+    /// <summary>
+    /// Point this manager at where a seat of <paramref name="slot"/> keeps its files, for a caller that started
+    /// the process itself.
+    /// </summary>
+    /// <remarks>
+    /// The unit harness injects a launcher, so the real spawn — the only place a seat's user directory is known,
+    /// and therefore the only caller of <see cref="CaptureSeatFilePathsLocked"/> — never runs. Without this the
+    /// host's file fallback would be reachable only from a live leg, and a channel that carries a join is not
+    /// something to leave untested. Production code does not call it.
+    /// </remarks>
+    /// <returns>
+    /// The seat's bearer token and the status-record path just derived for it — everything a harness needs to
+    /// write a record the way a real seat would, since the token is the key that signs it. Null when there is no
+    /// such connection.
+    /// </returns>
+    internal (string Token, string StatusPath)? CaptureSeatFiles(int slot, string seatUserDir)
+    {
+        lock (_lock)
+        {
+            CaptureSeatFilePathsLocked(slot, seatUserDir);
+            return _ownedConnections.TryGetValue(slot, out var owned) && owned.SeatStatusFilePath is { } path
+                ? (owned.Token, path)
+                : null;
+        }
     }
 
     private void ForgetConnectionLocked(int slot)
@@ -498,6 +537,86 @@ public sealed partial class HeadlessClientManager
 
     private static bool Fresh(HeadlessConnectionControlSnapshot snapshot)
         => snapshot.ObservedMonotonicTick is { } at && Stopwatch.GetElapsedTime(at) < TimeSpan.FromSeconds(10);
+
+    /// <summary>
+    /// When this host has no fresh word from a seat, look for one the seat left on DISK — and put it through
+    /// exactly the door a POSTed status goes through.
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// WHY. Measured in the field 2026-09-18: a seat that had joined the lobby, bound its port and was idling
+    /// healthily, whose every status POST to this host was being filtered by something on that computer. The
+    /// host could then name the fault but not survive it. The seat writes the same status into its own Godot
+    /// user dir once its POST has failed (<see cref="SeatStatusFile"/>), and this is where the host picks it up
+    /// — a path with no socket on it, which is the point when the socket is what is in doubt.
+    /// </para>
+    /// <para>
+    /// ONLY WHEN THERE IS NOTHING FRESH, which is by construction the only time the seat has written anything.
+    /// A healthy seat's snapshot short-circuits on the first line and this never touches the disk.
+    /// </para>
+    /// <para>
+    /// NOT A PARALLEL PATH: the record goes into <c>HeadlessConnectionControl.Observe</c>, so the sequence rule,
+    /// the generation check, the <c>StatusChanged</c> event and every refusal downstream — the cloud-isolation
+    /// one included — are the ones that already exist. What this adds ahead of that call is only what the
+    /// transport would otherwise have guaranteed: the record is signed with the token THIS host issued, and
+    /// written by the process THIS host started (<see cref="BrowserPortFile"/>'s pid rule, for its reason — a
+    /// record outlives a killed seat by design).
+    /// </para>
+    /// <para>
+    /// The pid rule compares the seat's own <c>Environment.ProcessId</c> with the process handle this host
+    /// holds, so a <c>COUCHCOOP_HEADLESS_WRAPPER</c> that does not <c>exec</c> the game — a QA lever, never a
+    /// shipped configuration, and the documented recipes all exec — leaves the host holding the WRAPPER's pid
+    /// and no record can match. That costs the fallback, never correctness: the outcome is exactly the
+    /// behaviour that shipped before it.
+    /// </para>
+    /// <para>
+    /// THE SEQUENCE IS TRACKED HERE AS WELL AS IN <c>Observe</c>, and that is not redundant. These loops run
+    /// four to five times a second while the seat rewrites its file once a second, so re-submitting what has
+    /// already been taken would have this host refuse its own reads — and each of those refusals lands on the
+    /// process-wide counter that <see cref="DescribeControlChannel"/> reports, i.e. on the exact evidence a
+    /// support report reads to tell "nothing arrived" from "this host said no". Observe stays the authority;
+    /// this only keeps the host from arguing with itself.
+    /// </para>
+    /// </remarks>
+    private HeadlessConnectionControlSnapshot? ObserveSeatStatusFile(
+        OwnedConnection owned, HeadlessConnectionControlSnapshot? current)
+    {
+        if (!OverdueForAStatus(current)) return current;
+        if (owned.SeatStatusFilePath is not { } path) return current;
+        var status = SeatStatusFile.Read(path, owned.Token, ProcessId(owned.Process), owned.Generation);
+        if (status is null) return current;
+        var previous = Volatile.Read(ref owned.LastFileSequence);
+        if (status.Sequence <= previous
+            || Interlocked.CompareExchange(ref owned.LastFileSequence, status.Sequence, previous) != previous)
+        {
+            return current;
+        }
+
+        HeadlessConnectionControl.Shared.Observe(
+            owned.Token, owned.Generation, status, HeadlessStatusChannel.File);
+        return HeadlessConnectionControl.Shared.Snapshot(owned.Slot, owned.Generation) ?? current;
+    }
+
+    /// <summary>
+    /// Whether this seat is late enough with a status that it is worth looking on disk for one.
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// A seat heartbeats once a second, so two seconds means "a report that should have arrived has not". A
+    /// healthy session therefore never reads the disk at all, which is the cost this whole fallback had to
+    /// stay inside.
+    /// </para>
+    /// <para>
+    /// DELIBERATELY NOT <see cref="Fresh"/>, which is ten seconds. Ten is the window after which a joined seat
+    /// is failed as <c>child-status-lost</c> — so reading the file only once the snapshot had aged out of it
+    /// would leave a seat the fallback is CARRYING permanently one read away from being killed, and would drive
+    /// every verdict, notice and panel row off status up to ten seconds old. The two intervals answer different
+    /// questions: this one is "should I look?", that one is "is this seat gone?".
+    /// </para>
+    /// </remarks>
+    private static bool OverdueForAStatus(HeadlessConnectionControlSnapshot? snapshot)
+        => snapshot?.ObservedMonotonicTick is not { } at
+            || Stopwatch.GetElapsedTime(at) >= TimeSpan.FromSeconds(2);
 
     private void ApplyToAttempt(Guid sessionId, OwnedConnection expected, Action<ConnectionRegistry> action)
     {
@@ -567,7 +686,8 @@ public sealed partial class HeadlessClientManager
         {
             while (IsCurrent(owned))
             {
-                var status = HeadlessConnectionControl.Shared.Snapshot(owned.Slot, owned.Generation);
+                var status = ObserveSeatStatusFile(
+                    owned, HeadlessConnectionControl.Shared.Snapshot(owned.Slot, owned.Generation));
                 var native = status?.Status;
                 SetTerminalFailure(owned, native);
                 var member = _membershipProbe!(SlotToNetId(owned.Slot));
@@ -764,6 +884,14 @@ public sealed partial class HeadlessClientManager
         /// </summary>
         public string? SeatPortFilePath;
         /// <summary>
+        /// Where this seat writes its status record when it cannot POST one (<c>SeatStatusFile</c>), resolved at
+        /// LAUNCH for the same reason as the path above — and <see cref="LastFileSequence"/> is the highest
+        /// sequence this host has already taken out of that file. See <c>TryObserveSeatStatusFileAsync</c> for
+        /// why the host tracks that itself rather than letting the control channel refuse the repeats.
+        /// </summary>
+        public string? SeatStatusFilePath;
+        public long LastFileSequence;
+        /// <summary>
         /// What this seat should currently be telling its VIEWERS, and since when. Per seat rather than per
         /// viewer because the settling delay measures how long a cause has held for the seat, and a viewer that
         /// drops and reconnects mid-episode must not restart that clock.
@@ -958,7 +1086,7 @@ public sealed partial class HeadlessClientManager
         // must never read as a live listener. See BrowserPortFile.
         var ours = portRecord is { } written && seatProcessId > 0 && written.Pid == seatProcessId;
         var boundHere = ours && portRecord!.Value.Port == expectedPort;
-        var evidence = SilentSeatEvidence(portRecord, boundHere, expectedPort, probe, controlChannel);
+        var evidence = SilentSeatEvidence(portRecord, ours, boundHere, expectedPort, probe, controlChannel);
 
         // A PORT DISAGREEMENT, from the seat's own record rather than from its heartbeat. The readiness verdict
         // already treats "the seat bound a port that is not the one we hand the browser" as a port conflict
@@ -988,20 +1116,29 @@ public sealed partial class HeadlessClientManager
     /// </summary>
     private static string SilentSeatEvidence(
         (int Port, int Pid)? record,
+        bool ours,
         bool boundHere,
         int expectedPort,
         SeatListenerProbeResult probe,
         string controlChannel)
     {
         var port = expectedPort.ToString(System.Globalization.CultureInfo.InvariantCulture);
+        // THREE readings of one record, because two of them are opposite findings. A record from OUR process on
+        // another port is a live seat serving the wrong address; a record from another process is a leftover
+        // from a seat that is gone. Saying "not the port and process this host started" for both — as this did
+        // — accuses a running seat of being somebody else's.
         var file = record is { } written
             ? (boundHere
                 ? $"this player's game recorded that it bound port {port} itself"
-                : "this player's game recorded port "
-                    + written.Port.ToString(System.Globalization.CultureInfo.InvariantCulture)
-                    + " under process "
-                    + written.Pid.ToString(System.Globalization.CultureInfo.InvariantCulture)
-                    + ", which is not the port and process this host started")
+                : ours
+                    ? "this player's game recorded that it bound port "
+                        + written.Port.ToString(System.Globalization.CultureInfo.InvariantCulture)
+                        + " rather than port " + port
+                    : "the record on disk names port "
+                        + written.Port.ToString(System.Globalization.CultureInfo.InvariantCulture)
+                        + " under process "
+                        + written.Pid.ToString(System.Globalization.CultureInfo.InvariantCulture)
+                        + ", which is not the process this host started for this player")
             : "this player's game has recorded no bound port of its own";
         return "Observed: " + file
             + "; this computer's own request to port " + port + ": "
@@ -1020,6 +1157,12 @@ public sealed partial class HeadlessClientManager
     /// process at all. A non-zero refusal count is the opposite finding with the opposite fix: it DID arrive,
     /// and this host rejected it (a stale generation, a token from a seat this host has replaced). Neither was
     /// observable before this; the same silence covered both.
+    /// <para>
+    /// The third half, since the file fallback: WHICH CHANNEL carried the last status. A seat only writes its
+    /// status file after its POST has failed, so "delivered by file" is itself the finding — this computer is
+    /// filtering one program's request to another and the join survived it anyway. Without this line a report
+    /// from a rescued machine would look exactly like a report from a healthy one.
+    /// </para>
     /// </remarks>
     internal static string DescribeControlChannel(HeadlessConnectionControlSnapshot? status)
     {
@@ -1033,7 +1176,29 @@ public sealed partial class HeadlessClientManager
                 + (status.RefusedCount > 0 ? $" (last: {status.LastRefusal})" : string.Empty);
         return seat + "; status reports this host refused from any process: "
             + refusals.Count.ToString(System.Globalization.CultureInfo.InvariantCulture)
-            + (refusals.Count > 0 ? $" (last: {refusals.Last})" : string.Empty);
+            + (refusals.Count > 0 ? $" (last: {refusals.Last})" : string.Empty)
+            + "; " + DescribeDeliveringChannel(status);
+    }
+
+    /// <summary>
+    /// Which channel this seat's last accepted status came in on, in the same English the tail above is written
+    /// in. <c>AcceptedCount</c> at zero is the case that has no answer: nothing has arrived by any route, which
+    /// the sentence has to say rather than defaulting to the ordinary channel and reading as reassurance.
+    /// </summary>
+    private static string DescribeDeliveringChannel(HeadlessConnectionControlSnapshot? status)
+    {
+        if (status is null || status.AcceptedCount == 0)
+            return "no status has reached this host by either the direct report or this player's status file";
+        return status.LastChannel == HeadlessStatusChannel.File
+            ? "the last status reached this host through this player's status file rather than a direct report ("
+                + status.FileAcceptedCount.ToString(System.Globalization.CultureInfo.InvariantCulture)
+                + " of them), so the direct report is being blocked on this computer and co-op is working around it"
+            : "the last status reached this host as a direct report"
+                + (status.FileAcceptedCount > 0
+                    ? ", after "
+                        + status.FileAcceptedCount.ToString(System.Globalization.CultureInfo.InvariantCulture)
+                        + " earlier ones that had to come through this player's status file"
+                    : string.Empty);
     }
 
     private static int ProcessId(IHeadlessProcess? process)
@@ -1059,7 +1224,12 @@ public sealed partial class HeadlessClientManager
             + " seconds. That report is an ordinary local request from one copy of the game to the other over "
             + "this computer's own loopback address (127.0.0.1), so nothing outside this computer is involved: "
             + "no router, no Wi-Fi and not the joining player's device. Something on this computer is stopping "
-            + "one program from talking to another — a proxy setting, a VPN client, or security software.";
+            + "one program from talking to another — a proxy setting, a VPN client, or security software. "
+            // The seat falls back to a file when that request fails, and this host reads it, so reaching this
+            // text means BOTH ways of being heard failed. Saying so is what keeps the remedy above honest: the
+            // reader has to know the obvious workaround was already tried automatically.
+            + "Couch Co-Op also looked for the status this player's game leaves in its own game folder when it "
+            + "cannot report directly, and found nothing it could use either.";
 
     /// <summary>
     /// The detail for a seat that reached the host's lobby and then said nothing within the contact deadline.

@@ -1,5 +1,6 @@
 using System.Diagnostics;
 using CouchCoop.Mod.Connections;
+using CouchCoop.Mod.Server;
 using CouchCoop.Mod.Session;
 
 namespace CouchCoop.Mod.Tests;
@@ -27,6 +28,7 @@ internal static class HeadlessConnectionLifecycleTests
         await ASilentSeatIsStoppedAtTheContactDeadline();
         await ASilentSeatThatJoinedIsNotBlamedOnCloudSaves();
         await ASilentSeatThatIsStillServingBlamesTheControlChannel();
+        await ASeatWhoseReportIsBlockedStillJoinsThroughItsStatusFile();
         await EarlyProcessExitFailsTheAttempt();
         await StalledShutdownIsForcedBeforeEnsureReturns();
         await RetryFencesOldGenerationAndEvictsTheOldPeer();
@@ -432,11 +434,101 @@ internal static class HeadlessConnectionLifecycleTests
         Assert(issue.Detail!.Contains("127.0.0.1", StringComparison.Ordinal)
                 && issue.Action.Contains("this computer", StringComparison.OrdinalIgnoreCase),
             "…and names the wire it is actually about: this computer, talking to itself");
-        Assert(!issue.Action.Contains("network", StringComparison.OrdinalIgnoreCase)
-                || !issue.Action.Contains("router", StringComparison.OrdinalIgnoreCase),
-            "…and never sends anyone to their router for two processes on one machine");
+        // The ban is on the PLACES that cannot be involved, not on the word "network": the remedy legitimately
+        // names network-filtering software ON THIS COMPUTER. An `||` over both of these passed for the wrong
+        // reason and would have gone on passing with "check your router" in the copy.
+        foreach (var elsewhere in new[] { "router", "Wi-Fi", "internet" })
+        {
+            Assert(!issue.Action.Contains(elsewhere, StringComparison.OrdinalIgnoreCase),
+                $"…and never sends anyone to their {elsewhere} for two processes on one machine");
+        }
         Assert(issue.Detail.Contains("this host refused", StringComparison.Ordinal),
             "…and carries the refusal evidence that separates 'nothing arrived' from 'the host said no'");
+        // BOTH channels, and this is what makes the cause honest now that there are two: this seat wrote no
+        // status file either, so the automatic workaround was tried and found nothing.
+        Assert(issue.Detail.Contains("status this player's game leaves in its own game folder", StringComparison.Ordinal)
+                && issue.Detail.Contains("by either the direct report", StringComparison.Ordinal),
+            "…and says the host also looked for the seat's own status record and had nothing from that either");
+    }
+
+    /// <summary>
+    /// THE ONE THAT MATTERS: with the loopback report dead, the join still completes.
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// Everything else about this failure — naming it, splitting it off the cloud-save accusation, telling the
+    /// player's phone — leaves the player unable to play. A seat whose POST is filtered writes the same status
+    /// into its own Godot user dir instead (<c>SeatStatusFile</c>), and the host reads it while it has nothing
+    /// fresh. So this drives the real host loops with NOTHING ever observed over HTTP, and asserts the browser is
+    /// redirected anyway.
+    /// </para>
+    /// <para>
+    /// The real writer does the writing, keyed by the real token: <c>RegisterKnown</c> is deliberately NOT used
+    /// here, because swapping the registered token for one the test knows would take the host's authentication
+    /// out of exactly the path being tested. The seam is the manager's own, and the <c>FakeProcess</c> takes this
+    /// process's pid so the record is genuinely "written by the process this host started".
+    /// </para>
+    /// </remarks>
+    private static async Task ASeatWhoseReportIsBlockedStillJoinsThroughItsStatusFile()
+    {
+        var id = BeginAttempt();
+        var process = new FakeProcess(Environment.ProcessId);
+        var dir = Path.Combine(Path.GetTempPath(), "couch-seat-fallback-" + Guid.NewGuid().ToString("N"));
+        Directory.CreateDirectory(Path.Combine(dir, HeadlessUserDirSeeder.CouchCoopDirName));
+        using var manager = NewManager(_ => process, () => true, () => true);
+        try
+        {
+            var pending = manager.EnsureHeadlessAsync(id, "blocked-report", CancellationToken.None);
+            var control = await WaitForControlAsync(id);
+            var seat = manager.CaptureSeatFiles(control.Slot, dir)!.Value;
+            SeatStatusFile.PathOverride = () => seat.StatusPath;
+            var port = HeadlessClientManager.SlotToPort(control.Slot);
+
+            // What HeadlessConnectionReporter does the moment its POST fails, at the cadence it does it.
+            void Heartbeat(long sequence) => Assert(
+                SeatStatusFile.TryWrite(
+                    new HeadlessConnectionStatus(
+                        sequence, "Connecting", null, null, 0, port, 1, CloudSaveIsolated: true),
+                    seat.Token,
+                    control.Generation),
+                "the seat can leave its status where the host will look");
+
+            Heartbeat(1);
+            Assert(await pending.WaitAsync(TimeSpan.FromSeconds(5)) == port,
+                "a seat the host can only hear through its status file is still admitted and redirected to");
+            Assert(HeadlessConnectionControl.Shared.Snapshot(control.Slot, control.Generation) is
+                    { AcceptedCount: > 0, LastChannel: HeadlessStatusChannel.File },
+                "…and the host records that the slow channel is what carried it");
+
+            var report = ConnectionRegistry.Shared.BuildReport(id) ?? "";
+            Assert(report.Contains("status file", StringComparison.Ordinal),
+                "…so a support report from this machine says the direct report is being blocked on it");
+            Assert(ConnectionRegistry.Shared.Snapshot().Rows.Single(row => row.Id == id).Issue?.Code
+                    != HeadlessClientManager.SeatControlBlockedCode,
+                "…and the seat is never failed for a channel the host worked around");
+
+            // THE REPEATS. Past the join the monitor keeps looking, and a host that re-submitted a record it had
+            // already taken would refuse itself — on the very counter the evidence tail reports. A seat this
+            // host is carrying by file must also keep being HEARD, or the ten-second child-status-lost rule
+            // would kill it moments after the fallback rescued it.
+            var refusalsBefore = HeadlessConnectionControl.Shared.Refusals.Count;
+            Heartbeat(2);
+            await WaitUntilAsync(
+                () => HeadlessConnectionControl.Shared.Snapshot(control.Slot, control.Generation)?.Status?.Sequence == 2,
+                "the host to pick up the next record the seat writes", seconds: 6);
+            Assert(HeadlessConnectionControl.Shared.Refusals.Count == refusalsBefore,
+                "neither re-reading an unchanged record nor taking an advanced one costs the host a refusal");
+            Assert(ConnectionRegistry.Shared.Snapshot().Rows.Single(row => row.Id == id).Issue?.Code
+                    != "child-status-lost",
+                "…and a seat the host can only hear by file is not then failed for going quiet");
+        }
+        finally
+        {
+            SeatStatusFile.PathOverride = null;
+            CleanupControl(id);
+            ConnectionRegistry.Shared.Clear();
+            try { Directory.Delete(dir, recursive: true); } catch (IOException) { }
+        }
     }
 
     private static async Task<ConnectionStatusRow> AssertSilentSeatAtContactDeadline(
@@ -743,9 +835,9 @@ internal static class HeadlessConnectionLifecycleTests
         return control!;
     }
 
-    private static async Task WaitUntilAsync(Func<bool> condition, string description)
+    private static async Task WaitUntilAsync(Func<bool> condition, string description, double seconds = 2)
     {
-        var deadline = Stopwatch.GetTimestamp() + (long)(Stopwatch.Frequency * 2);
+        var deadline = Stopwatch.GetTimestamp() + (long)(Stopwatch.Frequency * seconds);
         while (!condition())
         {
             if (Stopwatch.GetTimestamp() >= deadline) throw new Exception($"[HeadlessConnectionLifecycleTests] timed out waiting for {description}");

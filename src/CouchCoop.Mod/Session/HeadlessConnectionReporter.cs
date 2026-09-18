@@ -20,6 +20,26 @@ public sealed class HeadlessConnectionReporter : IDisposable
     internal const string ControlUrlEnvironmentVariable = "COUCHCOOP_HEADLESS_CONTROL_URL";
     internal const string ControlTokenEnvironmentVariable = "COUCHCOOP_HEADLESS_CONTROL_TOKEN";
     internal const string ControlGenerationEnvironmentVariable = "COUCHCOOP_HEADLESS_CONTROL_GENERATION";
+
+    /// <summary>
+    /// The QA lever that breaks this seat's control channel on purpose, so a live leg can exercise the fallback
+    /// without a proxy, a VPN or security software to hand.
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// Set it on the HOST: a seat inherits the host's environment, which is how
+    /// <c>COUCHCOOP_FORCE_SEAT_ISOLATION_FAILURE</c> works and the only way to reach a seat whose whole
+    /// environment the host writes. <c>1</c> fails the POST, which is the field fault
+    /// (<c>seat-control-channel-blocked-sep18</c>) and must leave the join WORKING through
+    /// <see cref="SeatStatusFile"/>; <c>all</c> fails the POST and writes no file either, which is both channels
+    /// dead and must still produce <c>seat-control-blocked</c>. Anything else, including unset, is inert.
+    /// </para>
+    /// <para>
+    /// It forces the DELIVERY to fail and nothing else: the status is composed exactly as it would have been, so
+    /// a seat under this lever is a seat that cannot be heard rather than a seat behaving differently.
+    /// </para>
+    /// </remarks>
+    internal const string ForceControlFailureEnvironmentVariable = "COUCHCOOP_FORCE_SEAT_CONTROL_FAILURE";
     private static readonly object StaticGate = new();
     private static HeadlessConnectionReporter? _current;
 
@@ -80,6 +100,15 @@ public sealed class HeadlessConnectionReporter : IDisposable
 
     /// <summary>Whether this process has already said, once, that the channel came up. See <c>NoteAccepted</c>.</summary>
     private static int _acceptedLogged;
+
+    /// <summary>
+    /// Whether a fallback status record is currently on disk for this process. See <see cref="PublishFallback"/>.
+    /// </summary>
+    /// <remarks>
+    /// The flag, not the file, is what a HEALTHY seat pays for: it makes "take the record away again" a volatile
+    /// read per accepted status instead of a delete syscall per second on a machine that never wrote one.
+    /// </remarks>
+    private static int _fallbackWritten;
 
     /// <summary>
     /// The browser port this process actually bound, reported on every heartbeat. STATIC rather than per-instance
@@ -251,10 +280,14 @@ public sealed class HeadlessConnectionReporter : IDisposable
     private async Task SendOnceAsync()
     {
         var started = Stopwatch.GetTimestamp();
+        // Hoisted out of the try so the catch below can still publish it. A send that threw is the commonest
+        // shape of the fault this fallback exists for — there is nothing to fall back to if the status the send
+        // was carrying went out of scope with it.
+        HeadlessConnectionStatus? status = null;
         try
         {
             var native = _native;
-            var status = new HeadlessConnectionStatus(
+            status = new HeadlessConnectionStatus(
                 NextSequence(),
                 native?.Phase.ToString() ?? "starting",
                 Bound(native?.Error?.Code, 128),
@@ -266,6 +299,13 @@ public sealed class HeadlessConnectionReporter : IDisposable
                 // heartbeat rather than once at startup, because the host's check is "the last thing this seat
                 // said", and a fact stated once is a fact the host would have to remember on the seat's behalf.
                 HeadlessSeatCloudIsolationGuard.Installed);
+            if (Forced is { } forced)
+            {
+                Report("control-status-failed", ForcedCause, started);
+                PublishFallback(status, _token, _generation, forced);
+                return;
+            }
+
             using var request = new HttpRequestMessage(HttpMethod.Post, _endpoint)
             {
                 Content = new StringContent(JsonSerializer.Serialize(status), Encoding.UTF8, "application/json")
@@ -280,18 +320,27 @@ public sealed class HeadlessConnectionReporter : IDisposable
                 // a completely different fault from an unreachable host and has a completely different fix —
                 // yet both left this method having returned quietly.
                 Report("control-status-refused", $"the host answered {Status(response)}", started);
+                PublishFallback(status, _token, _generation);
                 return;
             }
 
             NoteAccepted();
+            ClearFallback();
+            // The host's answer, which is also the ONE THING THE FALLBACK CANNOT CARRY: a status recovered from
+            // the seat's file gets no response, so a seat whose POST is blocked never learns it has been asked to
+            // stop and is killed after the five-second graceful deadline instead — today's behaviour for any seat
+            // that cannot answer. A host→seat command file would recover it; deliberately out of scope here
+            // rather than overlooked.
             var command = await response.Content.ReadFromJsonAsync<HeadlessConnectionControlResponse>().ConfigureAwait(false);
             if (command?.Shutdown == true) _requestShutdown("host-requested-shutdown");
         }
         catch (Exception exception)
         {
             // A transient host startup/shutdown failure must never block the game loop or exit a child — so this
-            // still swallows everything. What it no longer does is swallow it SILENTLY.
+            // still swallows everything. What it no longer does is swallow it SILENTLY, and what it now also does
+            // is leave the status somewhere the host can still find it.
             Report("control-status-failed", Describe(exception), started);
+            PublishFallback(status, _token, _generation);
         }
     }
 
@@ -307,6 +356,74 @@ public sealed class HeadlessConnectionReporter : IDisposable
     {
         if (Interlocked.Exchange(ref _acceptedLogged, 1) != 0) return;
         CouchCoopLog.Info("seat control channel up: the host accepted this seat's first status");
+    }
+
+    /// <summary>
+    /// Leave this status where the host can find it WITHOUT the wire that just failed — see
+    /// <see cref="SeatStatusFile"/>.
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// ONLY FROM A FAILURE PATH. Every caller is a site that has just recorded one, which is what keeps a
+    /// healthy session off the disk entirely: the file is a symptom of the loopback channel being broken, not a
+    /// second channel run in parallel.
+    /// </para>
+    /// <para>
+    /// It keeps being rewritten for as long as the failure lasts, once per heartbeat, and that is deliberate.
+    /// The host fails a joined seat it has not heard from for ten seconds
+    /// (<c>HeadlessClientManager.MonitorConnectionAsync</c>, <c>child-status-lost</c>), so a fallback that
+    /// stopped once the join succeeded would kill the seat it had just rescued.
+    /// </para>
+    /// </remarks>
+    private static void PublishFallback(
+        HeadlessConnectionStatus? status, string token, long generation, ForcedControlFailure? forced = null)
+    {
+        // `all` is the live-QA setting for BOTH channels dead; see ForceControlFailureEnvironmentVariable.
+        if (status is null || forced == ForcedControlFailure.PostAndFile) return;
+        if (SeatStatusFile.TryWrite(status, token, generation)) Volatile.Write(ref _fallbackWritten, 1);
+    }
+
+    /// <summary>
+    /// Take the fallback record away again, because the host is hearing this seat directly — or because this
+    /// seat is stopping cleanly, which is <c>BrowserPortFile.Clear</c>'s rule and is here for the same reason: a
+    /// record nothing is behind any more must not be read as a live seat.
+    /// </summary>
+    private static void ClearFallback()
+    {
+        if (Interlocked.Exchange(ref _fallbackWritten, 0) == 0) return;
+        SeatStatusFile.Clear();
+    }
+
+    /// <summary>Which delivery the QA lever is breaking, or null. See <see cref="ForceControlFailureEnvironmentVariable"/>.</summary>
+    private static ForcedControlFailure? Forced
+        => ForcedFailure(Environment.GetEnvironmentVariable(ForceControlFailureEnvironmentVariable));
+
+    /// <inheritdoc cref="Forced"/>
+    /// <remarks>
+    /// Pure and internal so the lever's parsing is assertable without an environment: a lever that silently
+    /// armed on some unrelated value would break every seat on the machine that set it, which is exactly the
+    /// failure mode <c>SeatCloudSaveIsolationPatch.ForcedFailure</c> keeps to an exact match for.
+    /// </remarks>
+    internal static ForcedControlFailure? ForcedFailure(string? raw)
+        => raw?.Trim() switch
+        {
+            "1" => ForcedControlFailure.Post,
+            "all" => ForcedControlFailure.PostAndFile,
+            _ => null,
+        };
+
+    /// <summary>What the lever's forced failure is recorded as, in the seat's own log.</summary>
+    private static string ForcedCause
+        => $"{ForceControlFailureEnvironmentVariable} is set on this computer, which forces this report to fail";
+
+    /// <summary>What <see cref="ForceControlFailureEnvironmentVariable"/> breaks.</summary>
+    internal enum ForcedControlFailure
+    {
+        /// <summary>The loopback POST only, so the fallback file must carry the seat.</summary>
+        Post,
+
+        /// <summary>The POST and the file: no way at all for this seat to be heard.</summary>
+        PostAndFile,
     }
 
     /// <summary>
@@ -460,21 +577,35 @@ public sealed class HeadlessConnectionReporter : IDisposable
         // already handle the failure (a hello is best-effort, a terminal report is bounded); they log it to
         // stderr, which in the shipped Steam flow goes nowhere. Recorded here so it lands in godot.log, then
         // rethrown so no caller's behaviour changes.
+        if (Forced is { } forced)
+        {
+            Report(endpoint, "control-status-failed", ForcedCause, started);
+            PublishFallback(status, token, generation, forced);
+            return false;
+        }
+
         try
         {
             using var response = await Client.SendAsync(request, cancellationToken).ConfigureAwait(false);
             if (!response.IsSuccessStatusCode)
             {
                 Report(endpoint, "control-status-refused", $"the host answered {Status(response)}", started);
+                PublishFallback(status, token, generation);
                 return false;
             }
 
             NoteAccepted();
+            ClearFallback();
             return true;
         }
         catch (Exception exception) when (!cancellationToken.IsCancellationRequested)
         {
             Report(endpoint, "control-status-failed", Describe(exception), started);
+            // BEFORE the rethrow, and this is the earliest the fallback can possibly be written: this path
+            // carries the seat's hello, sent from the cloud-isolation guard at mod init, seconds before the live
+            // reporter exists. A seat whose channel is dead from the start therefore has a record on disk within
+            // milliseconds of the first attempt rather than a second later.
+            PublishFallback(status, token, generation);
             throw;
         }
     }
@@ -625,6 +756,7 @@ public sealed class HeadlessConnectionReporter : IDisposable
         if (Interlocked.Exchange(ref _disposed, 1) != 0) return;
         _heartbeat.Dispose();
         _subscription.Dispose();
+        ClearFallback();
     }
 
     private sealed record HeadlessConnectionControlResponse(bool Shutdown);
