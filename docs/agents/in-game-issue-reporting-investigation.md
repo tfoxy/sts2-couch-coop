@@ -1,7 +1,12 @@
 # In-game issue reporting investigation
 
-Status: design investigation, 2026-09-16. This document specifies a future contract; it does not add reporting
-code, provision a service, or authorize telemetry.
+Status: design investigation, 2026-09-16; extended 2026-09-18 with section N. This document specifies a future
+contract; it does not add reporting code, provision a service, or authorize telemetry.
+
+Sections A–M design reporting for a join attempt that fails while a healthy host keeps running. Section N
+covers the three failures that happen before or outside that path — the game not starting, a native crash that
+outruns every log, and a mod that loads but shows no button. Its evidence is source review of this repository
+on 2026-09-18; nothing in it was live-proven.
 
 ## Evidence, provenance, and limits
 
@@ -236,6 +241,11 @@ process merely to make the report look complete.
 | Network | Raw addresses may exist in arrivals | Topology class and relation only | `omitted_by_policy` |
 | Screenshot | None | Outside v1, separate consent later | `omitted_by_policy` |
 | Windows/macOS runtime behavior | Code/test only here | Same contract after platform QA | `platform_not_live_verified` |
+| Startup phase reached | Checkpoints to stderr/log only | Boot ledger (§N.1) | `boot_log_missing` or `never_reached_init` |
+| Previous run's outcome | Nothing survives a crash | Clean-shutdown seal (§N.2) | `no_clean_shutdown` |
+| Previous run's log | Rotated away, unattributed | Sealed on the next launch (§N.2) | `crashed_before_seal` or `rotated_before_capture` |
+| Native crash site | None | OS crash record (§N.4) | `os_crash_record_unreadable` |
+| Harmony patch health | In-memory row, unreachable if the panel is gone | Ledger fact plus the §N.5 surface | `patching_unavailable` |
 
 ## E. Headless log lifecycle and durable retention
 
@@ -255,6 +265,12 @@ raw file after rotation/truncation. The old bounded excerpt survives only in the
 Therefore the plan's initial “retry overwrites all evidence” hypothesis is too broad: normal cleanup protects the
 current bounded excerpt. The real gap is that there is no atomic, on-disk, session/attempt/generation-bound
 snapshot before file identity changes, and all retained issue rows disappear at host teardown or crash.
+
+Host teardown is not the only loss, and a seat is not the only process worth preserving: a host that crashes —
+or never reaches `Init` at all — loses everything this section describes, because the host is the writer. §N.2
+adds a **process-scoped** record to the same store, under the same caps, retention and redaction, sealed by the
+next launch rather than by a live host. The indexing key there is host session + process generation + launch,
+not attempt + slot; a report selects a process record and an attempt record independently.
 
 ### Required future preservation
 
@@ -442,8 +458,11 @@ status and, when unavailable, a closed reason. `manifest.json` is required but i
 
 ## H. Minimal native-host-first UX
 
-The native connection panel is the right owner because it already shows live and retained issues and can correlate
-host/seat evidence. V1 needs one entry point and two screens:
+The native connection panel is the right owner **when the panel exists**. It already shows live and retained
+issues and can correlate host/seat evidence — but it is reached only through the lobby's Couch Co-op button, so
+it is unreachable in exactly the sessions where the mod failed to attach to the game. §N.5 has the finding and
+the patch-independent entry points that fix it; this section describes the ordinary path. V1 needs one entry
+point and two screens:
 
 1. **Report a problem** opens a short explanation: “CouchCoop can create a diagnostic ZIP containing the selected
    connection attempt, bounded game logs, loaded mod details, and browser connection events when available. It
@@ -545,6 +564,13 @@ boundaries rather than expanding the Copy formatter into a service client:
 | Browser protocol | Bounded ring plus nonce-bound `diagnostics-response` over the established relevant WebSocket; no browser-initiated report. |
 | spirectl | Read-only loaded-mod diagnostics snapshot preserving runtime `load_index` and path-free `source_class` in host and seat. |
 | Future relay | Validate schema/ZIP/redaction receipts/caps, rate limit, retain/delete, and optionally create a normalized Sentry event. |
+| Bootstrap loader | Boot ledger writer, link-compiled like `CouchCoopLogLine` (§N.1); refusal codes; the `running` seal. |
+| Mod startup | Phase records and risk-window markers, the `ready`/`clean` seals, next-launch sealing, per-phase guarding, safe mode (§N.2, §N.3, §N.6). |
+| Degraded host surface | Patch-independent notice and report route when the lobby button is absent (§N.5). |
+
+No collector, redactor, manifest or ZIP type may name a Godot type (§N.7): path resolution is injected, so the
+same sources compile into a BCL-only sidecar for a game that will not start, and the whole collector is testable
+off-engine.
 
 Collection must not use spirectl semantic actions; it is read-only. It must not block gameplay or shutdown beyond
 the local terminal-snapshot boundary. All disk paths are beneath new dedicated user-data roots, and all writes are
@@ -567,14 +593,23 @@ Expected focused validation when implemented:
 Implement versioned DTOs, closed reason codes, redactor, caps, deterministic ZIP validator tests, and durable
 terminal-attempt snapshots. Add the reusable spirectl loaded-mod ordinal/source-class surface. No UI or network.
 
+Preservation is this phase's remit, so the boot ledger (§N.1), the clean-shutdown seal and next-launch sealing
+(§N.2), the risk-window markers (§N.3) and per-phase guarding in `Init` (§N.6) belong here too. They are the
+cheapest items in this document and they are the only ones that help a user whose game will not start.
+
 Exit gate: same-slot retry tests prove the previous snapshot remains immutable and host teardown/restart can read
-it; malicious/oversized/invalid fixtures pass; the Linux live leg is completed under lock.
+it; malicious/oversized/invalid fixtures pass; the Linux live leg is completed under lock. Additionally, a
+killed process leaves a ledger whose last record names its phase, and the next launch seals it.
 
 ### Phase 1 — preview and local export (recommended v1)
 
 Add host/current/previous-seat collection, browser ring and authenticated enrichment, native description/preview,
 Save ZIP, Copy support text, retention/delete, localization, and export-only user documentation. Keep screenshots
 out. No backend credentials or endpoint.
+
+Also the surfaces a broken session needs: the patch-independent degraded surface and startup summary line
+(§N.5), the last-resort instructions (§N.8), and the off-engine collector constraint (§N.7) — which is a
+constraint on how this phase's collector is written, not extra work.
 
 Exit gate: exact preview-to-archive byte identity, offline operation, all unavailable paths, platform tests, and
 artifact-policy review. Observe only voluntarily shared real bundles and support friction.
@@ -612,3 +647,248 @@ decision overturns that default.
    is available but order-sensitive inventory must be marked unavailable rather than inferred.
 5. **Do real voluntarily exported bundles support the proposed caps and Phase 2 value?** Phase 1 should collect
    aggregate support outcomes manually, not telemetry, before changing sizes or operating a receiver.
+6. **Which OS crash records are actually readable by an ordinary Steam player on each platform?** §N.4 assumes
+   the Linux kernel ring, Windows WER entries and macOS `.ips` reports are reachable without elevation. That
+   is a per-distribution and per-configuration fact (`kernel.dmesg_restrict` alone can close the Linux case),
+   and it decides whether native crash attribution is a normal source or a rare bonus. Measure it on real
+   installs before designing around it.
+7. **What threshold and scope should safe mode use?** §N.6 proposes disabling after N consecutive launches
+   with no `ready` seal, phase-granular where the ledger allows. Both N and the granularity are guesses until
+   there is a population of real failed starts to calibrate against — and a safe mode that triggers too
+   eagerly turns a transient failure into a player who thinks the mod was removed.
+8. **Can a browser `/diagnostics` page satisfy §J's threat model?** §N.5 proposes it as the surface that
+   survives a mute game UI, restricted to displaying and downloading what the host already generated. §F and
+   §J currently state flatly that the LAN browser cannot initiate collection. Reconciling those two is a
+   security review, not a UI decision.
+
+## N. Failures before and outside the reporting path
+
+### N.0 Why this is a separate class
+
+Sections A–M assume a live narrator: a host process that reached `Init`, holds a `ConnectionRegistry` in
+memory, shows a native panel, and outlives the seat whose failure it is freezing evidence about. Three failure
+classes break that assumption, and they are the ones that arrive from users whose machines cannot be
+reproduced locally:
+
+1. **The mod prevents the game from starting.** There is no host process, no registry, no panel.
+2. **A native crash kills the process before anything reaches disk.** No managed exception exists for a
+   `try` to catch, and the log ends mid-line.
+3. **The mod loads but the lobby has no Couch Co-op button.** The player sees "the mod does not work" and has
+   no route to a report.
+
+A–M are silent on 1 and 3. On 2 they record only the absence (§C: CouchCoop has no owned crash-upload path).
+The governing principle for all three inverts §G's collection model: **evidence must be written forward as it
+is produced, flushed before the risky call, and readable by a process that is not the game.** Collection after
+the fact has no collector here.
+
+Two facts about the existing code anchor everything below. Both were re-read on 2026-09-18.
+
+- **A checkpoint vocabulary already exists and already goes nowhere durable.**
+  [`CouchCoopModEntry.cs`](../../src/CouchCoop.Mod.Loader/CouchCoopModEntry.cs) and
+  [`CouchCoopMod.cs`](../../src/CouchCoop.Mod/CouchCoopMod.cs) each define a private `Checkpoint()` that
+  writes to stderr and to STS2's logger. A Steam-launched game discards stderr, and `godot.log` is buffered.
+  The checkpoints emitted today — `loader-entry`, `loader-version`, `loader-payload`, `loader-invoke`,
+  `mod-init`, `harmony-probe-enter`, `harmony-probe-complete` — are already the right phase vocabulary; they
+  simply do not survive the process that writes them.
+- **`user://couch-coop/` is already a cross-process evidence channel.**
+  [`CouchCoopUserFile.cs`](../../src/CouchCoop.Mod/Server/CouchCoopUserFile.cs) resolves it, and the seat's
+  status record and browser-port file already use it for exactly "the live channel failed, read it off disk"
+  (§E's blocked-POST fallback). A boot record is the same pattern applied one process earlier.
+
+### N.1 The boot ledger
+
+Route the existing `Checkpoint()` calls to an append-only record under `user://couch-coop/`, in addition to
+stderr and the logger — one file per launch, the last few launches retained under the §E caps. The last line
+written is the phase that died. That single change converts "the game does not start" from a black hole into
+`died after loader-payload`, and it is the input every other proposal in this section consumes.
+
+**Flush every record.** The volume is a few dozen lines per launch, so there is no cost worth optimizing, and
+the rule has to hold without exception: *a diagnostic that is not flushed before the risky call does not
+exist.* A buffered record of a native crash is the crash's own missing log with extra steps.
+
+**The loader phase cannot use `CouchCoopUserFile`.** Its `TryResolve` is gated on
+`CouchCoopMod.EngineAvailable`, which is latched inside `Init` and therefore false for every checkpoint the
+loader emits — and the gate is not paranoia: `ProjectSettings.GlobalizePath` is native interop that segfaults
+rather than throwing when no engine is behind it. There is already an engine-free resolution of the game's
+user dir, `HeadlessUserDirSeeder.ResolveHostUserDir`, whose platform switch covers `XDG_DATA_HOME` on Linux,
+`APPDATA` on Windows and `~/Library/Application Support` on macOS. The ledger writer should reach that switch
+rather than grow a second copy of it.
+
+**The writer must be link-compiled into the loader**, the way
+[`CouchCoopLogLine.cs`](../../src/CouchCoop.Mod/Session/CouchCoopLogLine.cs) already is (see the linked-file
+comment in `CouchCoop.Mod.Loader.csproj`): a lane payload keeps `CouchCoop.Mod.dll` under `lanes/<version>/`,
+off every default probing path, so a call from the loader into that assembly fails to bind on exactly the
+paths — lane refusal, bootstrap failure — whose only job is to say why the mod did not load. That inherits
+`CouchCoopLogLine`'s two constraints: no reference outside itself, and **no mutable static state**, because a
+static in a twice-compiled file is two fields rather than one. Sharing the platform switch therefore means
+making the resolution linkable, not calling across the assembly boundary.
+
+**What each ledger carries**, beyond the phase records: the CouchCoop build, the selected lane, the detected
+game version, and the mod source (Workshop or `mods/`) — all already available from
+`CouchCoopModBuildIdentity` and `CouchCoopLaneSelection`. Lane mismatch and a second installed copy are the
+two most common causes of a silently dead mod, and both are already detected today; they are simply detected
+somewhere nobody can read afterwards.
+
+### N.2 The clean-shutdown seal, and sealing on the next launch
+
+Three states, written by code that already exists at each point: `running` at loader entry, `ready` when
+`CouchCoopMod.Init` returns, `clean` in `CouchCoopMod.Shutdown`. A launch that finds no `clean` seal from the
+previous run knows that run crashed, and the ledger tells it where.
+
+**Seal on the next launch rather than running a watchdog process.** The alternative — a sidecar started with
+the host that polls its PID and seals on abnormal exit — is the only way to observe an exit code or signal
+directly, and the repository already has the two halves it would need (`HeadlessHostWatchdog` does exactly
+this poll in the seat→host direction, and `tools/CouchCoop.CacheQuota` shows the BCL-only sidecar build).
+Reject it anyway: it spends a process on every launch of a game that is usually not in co-op at all, against
+the mod's standing contract that an unused install is indistinguishable from no install — and the exit signal
+it would buy is recoverable from the OS instead (N.4).
+
+Sealing copies, before anything can rotate or truncate it, the previous run's `godot.log` (Godot rotates to a
+timestamped prior file — §E) plus that run's ledger and any OS crash record, into the §E snapshot store:
+**same store, same caps, same redaction, keyed to a process rather than to a join attempt.** Then the lobby
+carries one notice offering Save diagnostic ZIP, and §F's bundle contract is unchanged.
+
+### N.3 Risk-window markers, and closing the class instead
+
+Write a paired `begin`/`end` record around every window in which the mod frees or replaces engine-global
+state: the FMOD shutdown, Harmony patching, texture eviction, viewport reconfiguration, input-map isolation.
+A crash inside such a window is then attributable from the ledger alone.
+
+The FMOD case is the worked example and the reason this is not hypothetical. A seat died with three SIGSEGVs
+inside the FMOD GDExtension's shared library at a null base plus a small offset, with nothing in `godot.log`,
+because our own `FmodServer.shutdown()` had freed the native system while the Godot object stayed registered
+and valid — so a third-party mod's defensive wrapper passed every guard it could write and then dereferenced
+freed memory. Reaching that answer cost a kernel-log read and a decompile of the other mod. A paired marker
+would have said `died inside fmod-shutdown` on the first user report.
+
+Two doctrines follow, and belong in the implementation brief rather than only here:
+
+- **Any engine global the mod mutates is a global another mod may hold a reference to, and no guard that mod
+  can write will save it.** The fix therefore cannot be a longer list of known callers. Keep a short register
+  of CouchCoop's engine-global mutations — singletons, autoloads, input maps, project settings — because that
+  register is the list of future crashes of this exact shape.
+- **Triage a reported crash first for "can this class be closed?"**
+  [`FmodSingletonStub.cs`](../../src/CouchCoop.Mod/Session/FmodSingletonStub.cs) is the model: it re-points
+  the singleton name at a no-op stub so the doorway is harmless for callers we will never see. Reporting
+  infrastructure exists for the crashes that cannot be designed away, and it is worth saying so in a document
+  that is otherwise entirely about reporting.
+
+### N.4 Harvest what the OS recorded; do not install a signal handler
+
+A process that dies in native code cannot describe its own death, but the operating system already wrote it
+down. The collector should read, bounded and redacted:
+
+| Platform | Record | What it gives |
+| --- | --- | --- |
+| Linux | kernel ring / journald segfault lines; core-dump metadata | Faulting shared library and offset — the evidence that solved the FMOD case |
+| Windows | Windows Error Reporting entries in the application event log; optional per-executable `LocalDumps` | Faulting module, exception code, offset |
+| macOS | `~/Library/Logs/DiagnosticReports/*.ips` | Faulting binary, thread, and signal |
+
+Availability is not guaranteed — `kernel.dmesg_restrict` can close the Linux ring to an unprivileged reader,
+and none of the three is present on every configuration — so this is an evidence source with its own
+`unavailable` reason (`os_crash_record_unreadable`), never a required one. These records also carry full
+filesystem paths and complete loaded-module lists, so §J redaction applies to them in full and nothing here
+weakens the "omit raw paths, usernames, hostnames, machine IDs" rule.
+
+**Do not install a `SIGSEGV` handler.** It is the obvious answer and it is wrong here: the CLR, Godot and the
+game's own crashpad each own part of that territory, and the repository already documents what happens when
+that arrangement is disturbed — [`scripts/disable-sentry-crashpad.sh`](../../scripts/disable-sentry-crashpad.sh)
+exists because the shipped crash handler escalated a benign, survivable signal into a process kill on a
+scripted run. A mod adding a fourth participant to the same chain risks converting recoverable faults into
+crashes in order to report crashes. Read the OS's record afterwards instead.
+
+### N.5 The report UI is behind the thing whose absence is being reported
+
+This is the finding for case 3, and §H currently contradicts it.
+
+`CouchCoopPatchHealth` already raises a single `host-patch-failed` row, and its own remarks already name the
+symptom ("no QR button in the lobby"). But that row renders in `CouchCoopConnectionPanel`, which is a field of
+[`CouchCoopQrDialog.cs`](../../src/CouchCoop.Mod/HostUi/CouchCoopQrDialog.cs), which opens only from
+`CouchCoopQrHostPanel` — a panel mounted by `LobbyScreenMountPatch`, that is, by the very patching that
+failed. The panel's controller hotkey is not an escape either: it is bound by the panel *while mounted*
+(`CouchCoopQrHostPanel.BindHotkey`), so it dies with the panel. The most common cause of a missing button
+therefore also removes every route to the report about it —
+[`CouchCoopMod.cs`](../../src/CouchCoop.Mod/CouchCoopMod.cs)'s own `EnsureMonoModCanPatch` comment already
+spells out that one failed native precondition costs the lobby its button for the whole session.
+
+Break the circularity with a ladder, most robust first. Implement 1 and 2; treat 3 as a decision, not a
+default.
+
+1. **A degraded-state surface that depends on no patch.** A `CanvasLayer` added during `Init`, visible only
+   when something is wrong, carrying the reason and the route to a report. `Init` already holds both facts it
+   needs — `CouchCoopPatchHealth` and the `_hostUiStartupFailure` snapshot — and adding a layer to the scene
+   root needs no Harmony. Recommended as the primary fix. Invisible while healthy, so it does not breach the
+   idle-cost contract.
+2. **A greppable one-line startup summary** written to `godot.log` at the end of `Init`: build, lane, game
+   version, patch health, browser port, whether the lobby surface mounted. One line support can ask a player
+   to paste verbatim, at near-zero cost, and the line support would have to reconstruct by hand otherwise.
+3. **The browser server as a report surface.** `StartHostUiServices` runs independently of Harmony, so a
+   `/diagnostics` route reaches the player's phone even when the game UI is mute — which is precisely the
+   population this case describes. It must be weighed against §F and §J's "the LAN browser cannot trigger
+   collection" boundary rather than quietly crossing it. The compromise that preserves the threat model: the
+   page **displays and downloads what the host has already generated**, selects no files, requests no new
+   collection, and sits behind the existing LAN-boundary, quota and confinement work. Whether that is
+   sufficient is a genuine open question (§M).
+4. **The file on disk** (N.1), when the server did not come up either.
+
+### N.6 Recovery, not only reporting
+
+For case 1, a report is second prize; a game that starts is first. Three measures, in increasing cost:
+
+- **Guard each phase of `Init` individually.** Today a throw from any `Apply()` unwinds to the loader's
+  blanket `catch`, which logs and returns — leaving a mod that does nothing at all. Several call sites already
+  degrade individually and report through `CouchCoopPatchHealth`; extending that to the whole sequence turns a
+  broad class of managed startup failures into "one named hook missing" instead of "no mod".
+- **A safe-mode ladder.** After N consecutive launches with no `ready` seal, the next launch skips patches,
+  prerender and the browser server, boots only the degraded surface from N.5, and says why. Because the ledger
+  names the phase that died, a phase-granular skip list is achievable rather than an all-or-nothing switch —
+  `Init` is already a linear sequence of `Apply()` calls. The precedent for refusing early is already in the
+  loader: `CouchCoopLaneSelection` refuses a mismatched lane **before loading anything**, on the reasoning
+  that a lane built for another build loads fine and then throws from inside a game callback where nothing
+  names CouchCoop as the cause.
+- **A wider loader refusal vocabulary**, each refusal with a stable code in the ledger: a game build above
+  every shipped lane, a second installed copy of CouchCoop (already detected by
+  `CouchCoopLaneSelection.DescribeLoadedCopyConflict`), an unsupported platform. A refusal leaves a playable
+  game and a named cause. A crash leaves neither.
+
+### N.7 The collector must run without the game
+
+A design constraint for §K, and the one that makes case 1 reportable at all: **no collector, redactor,
+manifest or ZIP type may name a Godot type.** Path resolution is injected rather than looked up. Two things
+follow. The same sources compile into a BCL-only sidecar exactly as
+[`tools/CouchCoop.CacheQuota`](../../tools/CouchCoop.CacheQuota/CouchCoop.CacheQuota.csproj) already does with
+the mod's quota policy, so a player whose game will not start can still produce the bundle; and the whole
+collector is testable off-engine, which is not a preference here — a managed call into GodotSharp with no
+engine behind it segfaults rather than throwing, which is the hazard `CouchCoopMod.EngineAvailable` exists for
+and which has already cost this repository a test run.
+
+### N.8 Instructions of last resort
+
+When every mechanism above is unavailable, the only channel left is a human reading a path. Two pieces of
+prose, no engineering:
+
+- A short `HOW-TO-REPORT.txt` written into `user://couch-coop/` on every launch, naming the two or three
+  files to attach.
+- Support text in [`workshop/description.en.md`](../../workshop/description.en.md), which today is fifteen
+  lines ending in a bare repository link. The per-platform path prose it needs is already written in
+  [`docs/save-recovery.md`](../save-recovery.md) and should be reused rather than rewritten.
+
+### N.9 Decisions
+
+| Decision | Recommendation |
+| --- | --- |
+| Boot ledger under `user://couch-coop/` | Yes. It is the primitive the rest of this section consumes. |
+| Flush every ledger record to disk | Yes. An unflushed record of a native crash does not exist. |
+| Paired risk-window markers | Yes, around every mutation of engine-global state. |
+| Clean-shutdown seal | Yes — `running` / `ready` / `clean`, written where the code already runs. |
+| Seal a crashed run on the next launch | Yes. Reuses the §E store, keyed to a process. |
+| Sidecar watchdog process | No. A process per launch against the idle-cost contract; the OS already has the exit. |
+| Read OS crash records | Yes, bounded and redacted, as an optional source with its own unavailable reason. |
+| Install a `SIGSEGV` handler | No. Four participants in one signal chain; the crashpad precedent is in this repo. |
+| Patch-independent degraded surface | Yes. The primary fix for a missing button; invisible while healthy. |
+| Greppable startup summary line | Yes. |
+| Browser `/diagnostics` page | Yes, display-and-download only, inside the existing LAN boundary — subject to §M. |
+| Per-phase guarding in `Init` | Yes. |
+| Safe mode after repeated failed starts | Yes, phase-granular, driven by the ledger. |
+| Wider loader refusal vocabulary | Yes. A named refusal beats an unexplained crash. |
+| Collector free of Godot types | Yes, as a hard constraint — it is what makes case 1 reportable and the code testable. |

@@ -17,6 +17,7 @@ that answers your question**, not the whole file.
 | analysing canvas-stage draw lists, atlas bounds, text coverers, or animation concurrency offline | [canvas-stage-probes-aug26.md](canvas-stage-probes-aug26.md) | `mirror-bench` agent |
 | chasing a bug a **player** hit that you cannot reproduce | [repro-recorder.md](repro-recorder.md) | `scripts/analyze-repro.mjs`, `scripts/replay-repro.mjs` |
 | designing or implementing in-game issue reporting, diagnostic bundles, or a support backend | [in-game-issue-reporting-investigation.md](in-game-issue-reporting-investigation.md) | start with the evidence limits and phased recommendation; no production backend exists |
+| getting evidence out of a start-up failure, a crash that logged nothing, or a mod that loads with no QR button | [in-game-issue-reporting-investigation.md](in-game-issue-reporting-investigation.md) §N | boot ledger, shutdown seal, OS crash records; the report UI is currently behind the button that goes missing |
 | implementing one item of a multi-agent round | this file, then [architecture-map.md](architecture-map.md) | `round-implementer` agent, `couch-worktree` skill |
 | touching `clip_contents` or anything with a wide blast radius | [clip-contents-blast-radius.md](clip-contents-blast-radius.md) | — |
 | working on host-side render/encode cost | [host-render-cost-aug22.md](host-render-cost-aug22.md), [host-render-cost-aug22-round2.md](host-render-cost-aug22-round2.md) | — |
