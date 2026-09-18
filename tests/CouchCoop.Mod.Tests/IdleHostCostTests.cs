@@ -99,8 +99,8 @@ internal static class IdleHostCostTests
     // lobby its QR button for the whole process. It happened for real: MonoMod's native exec-helper could not
     // be dlopened at mod-init time, all eleven of the mod's Harmony patches died, and the very next dlopen
     // 18ms later succeeded. A failure is worth retrying; a success never is.
-    // Internal so the `-- host-guards` verb can run these alone — the full sequence does not reach this file
-    // on every machine.
+    // Internal so the `-- host-guards` verb can run these alone: the full sequence reaches this file near its
+    // end, and for six days it aborted long before getting here.
     internal static void MountPlanContract()
     {
         MountPlanRetriesOnlyWhatFailed();

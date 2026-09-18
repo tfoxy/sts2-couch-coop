@@ -12,9 +12,10 @@ namespace CouchCoop.Mod.Tests;
 // something that would have made the script fail to compile, or made the stub answer a call it should have
 // answered.
 //
-// Registered near the TOP of the runner sequence on purpose: the full sequence takes the process down with
-// SIGSEGV inside HeadlessAudioMuteTargetsTests on some machines (pre-existing, unrelated), and anything
-// registered after that point silently never runs. Also reachable alone as `-- fmod-stub`.
+// Registered near the TOP of the runner sequence on purpose, and reachable alone as `-- fmod-stub`. The
+// sequence no longer takes the process down partway (the SIGSEGV inside HeadlessAudioMuteTargetsTests was
+// fixed on 2026-09-17), but a source-generation guard costs nothing to run first and should not depend on
+// every suite above it passing.
 internal static class FmodSingletonStubTests
 {
     public static void Run()
