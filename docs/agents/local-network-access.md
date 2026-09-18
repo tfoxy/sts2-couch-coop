@@ -54,6 +54,32 @@ and WebSockets fail with `net::ERR_BLOCKED_BY_LOCAL_NETWORK_ACCESS_CHECKS` — i
 LNA scope in Chromium 150 and do get the mixed-content exemption. Grant the permission and every one of
 them passes.
 
+**The `ws://` row is version-dependent, and that is an open risk.** Re-measured 2026-09-17 on **Chromium
+147.0.7727.15** (what Playwright 1.59 ships, i.e. roughly today's stable line rather than the 150 above,
+which was a pre-release channel): `new WebSocket("ws://192.168.0.89:13337/ws")` from an https page
+**throws synchronously** —
+
+> Failed to construct 'WebSocket': An insecure WebSocket connection may not be initiated from a page loaded
+> over HTTPS.
+
+— and it is not the permission: the throw happens in Blink before any network request, it still throws
+with `Browser.grantPermissions(origin, ["localNetworkAccess"])` in force, and the discriminating control
+says plainly what rule is being applied:
+
+| from the same https page, Chromium 147 | `new WebSocket(...)` |
+|---|---|
+| `ws://127.0.0.1:13337/ws` (loopback — potentially trustworthy) | **constructed** |
+| `ws://192.168.0.89:13337/ws` (private IP literal) | **THREW** |
+| `ws://example.com/ws` (public name) | **THREW** |
+| `wss://192.168.0.89:13337/ws` | **constructed** |
+
+So in 147 the private-IP-literal exemption covers subresources but **not** WebSockets; in 150 it covered
+both. Everything else in the table above still passes on 147 — `fetch` of `/app-boot.json` succeeded there
+with the permission state still reading `prompt`. The consequence for the product is specific: on a phone
+whose Chrome predates the `ws:` exemption, the web link boots the app successfully and then cannot open
+the game socket at all, which is a *different* failure from anything the bootstrap can report. Untested on
+real Android Chrome, which is what would settle it.
+
 ### The service-worker exception, and the shape that works around it
 
 Inside a service worker the exemption does **not** apply. The block is hard, and the wording differs from
@@ -84,6 +110,41 @@ self.addEventListener("fetch", (event) => {
 A cache hit touches no network, so it is never mixed-content checked — which is why durable asset caching
 survives even though the worker may not fetch the host itself. `frontend/public/sw.js` already models the
 "bypass = return without respondWith" half; what it gains for this mode is the synchronous index.
+
+## Measured, 2026-09-17: WebKit refuses the whole mode
+
+Rig: the same shape, minus cloudflared — a probe page served over **https from this machine's own LAN
+address** with a self-signed cert (`ignoreHTTPSErrors`), against a stand-in host on
+`http://192.168.0.89:13337`. Cert trust is irrelevant to a mixed-content check, which keys off the page's
+scheme. **WebKit 26.4** (Playwright's engine build, `Version/26.4 Safari/605.1.15`), Chromium 147 as the
+control.
+
+| from an https page, by literal private IPv4 | WebKit 26.4 | Chromium 147 |
+|---|---|---|
+| `fetch("http://…/app-boot.json")` | **blocked** | pass |
+| `<script type=module src="http://…">` | **blocked** | pass |
+| `<img src="http://…">` | **blocked** | pass |
+| `new WebSocket("ws://…")` | **blocked** | throws (see above) |
+| `navigator.permissions.query({name:"local-network-access"})` | throws — no such permission | `prompt` |
+
+Every WebKit leg fails the same way, and the message is a **block**, not the window warning Chromium
+prints:
+
+> [blocked] The page at https://192.168.0.89:14443/ requested insecure content from
+> http://192.168.0.89:13337/app-boot.json. This content was blocked and must be served over HTTPS.
+
+with the fetch additionally surfacing `Not allowed to request resource … due to access control checks`.
+
+So the reason iOS is out is **stronger and simpler than "WebKit has not implemented LNA"**: WebKit has no
+private-IP mixed-content exemption at all, so there is no permission to grant and nothing to gate. The web
+link can never reach a plain-HTTP LAN host from an iPhone or iPad, on any network, however the firewall is
+configured — which is why `frontend/src/boot/main.ts` says so on iOS instead of reporting the generic
+"the game didn't answer" (`boot.unreachableIos`).
+
+This is WebKit the engine, not iOS Safari the product. It is the right engine for the question — the
+mixed-content checker is core WebCore, not an iOS shim — but a physical-device report remains the only
+thing that covers real Safari; see [steam-free-macos-iphone.md](steam-free-macos-iphone.md) for what each
+iPhone leg does and does not prove.
 
 ## How the mode is built on top of this
 
@@ -174,7 +235,22 @@ it as public, and `--ip-address-space-overrides=<ip>:0=public` does the same per
 the limit: a `http://127.0.0.1` document is not HTTPS, so that rig exercises the **permission** half only
 and says nothing about mixed content. For the mixed-content half the page must genuinely be HTTPS.
 
+### The cheaper rig, for the mixed-content half only
+
+No tunnel and no account: two Node servers on **this machine's LAN address** — an https one (self-signed,
+driven with `ignoreHTTPSErrors`) serving the probe page, and a plain-http one standing in for the mod —
+then `playwright`'s `webkit` and `chromium` against it. That is the whole of the 2026-09-17 measurement
+above, and it is enough for any question about *blocking*; it says nothing about the permission, which
+needs a genuinely public origin.
+
+**The one trap that fakes a pass: the host leg must not be `127.0.0.1`.** Loopback is
+potentially-trustworthy, so an `http://127.0.0.1` subresource of an https page is not mixed content in any
+engine and every probe passes for the wrong reason. Use the LAN address on both ends.
+
 ## Platform support
 
-Chrome/Edge desktop and Android. **Not iOS Safari** — WebKit has not implemented LNA, so iPhones keep the
-`local-ip.co` and plain-LAN paths. Both QR options stay.
+Chrome/Edge desktop and Android, with the `ws://` caveat measured above on Chromium 147. **Not iOS
+Safari** — and as of 2026-09-17 that is measured rather than inferred: WebKit blocks *every* insecure
+private-IP subresource of an https page outright, so there is no LNA permission to implement and nothing
+a player can allow. iPhones and iPads keep the `local-ip.co` and plain-LAN paths; all QR options stay, and
+the bootstrap tells an iOS visitor which ones they are.

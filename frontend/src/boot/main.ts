@@ -10,6 +10,7 @@ import {
   rememberResolvedHost,
   resolveHost,
   stripHostParam,
+  webLinkBlockedByBrowser,
   type BootFailure
 } from "@/boot/bootstrap";
 import { bootLocale, bootText } from "@/boot/localize";
@@ -44,6 +45,14 @@ function showConnectButton(label: string, sub: string): void {
   connect.disabled = false;
 }
 
+function platform(): Parameters<typeof webLinkBlockedByBrowser>[0] {
+  return {
+    pageProtocol: location.protocol,
+    userAgent: navigator.userAgent,
+    maxTouchPoints: navigator.maxTouchPoints
+  };
+}
+
 // The one line the player has to act on when nothing answered. Each failure gets its OWN sentence rather
 // than a shared "couldn't connect", because the three causes need three different actions and guessing
 // wrong wastes the one thing a player in this state has run out of: patience.
@@ -56,6 +65,9 @@ function explain(failure: BootFailure): string {
         ? t("boot.originRefused", { origin: failure.webOrigin })
         : t("boot.originRefusedGeneric");
     case "unreachable":
+      // Checked BEFORE the two network sentences: on iOS nothing was ever sent, so "check it's running and
+      // that this phone is on the same Wi-Fi" would be advice about a link that cannot work either way.
+      if (webLinkBlockedByBrowser(platform(), failure.tried)) return t("boot.unreachableIos");
       return failure.tried.length === 1
         ? t("boot.unreachableOne") : t("boot.unreachableMany");
   }
@@ -104,6 +116,14 @@ manual.addEventListener("submit", (event) => {
 });
 
 void (async () => {
+  // Said BEFORE the attempt on a browser that cannot make it, rather than after a probe that was never
+  // going to leave the device. The button stays — a UA sniff can misfire, and the cost of being wrong must
+  // be one line of text, never a screen that refuses to try.
+  if (webLinkBlockedByBrowser(platform(), candidatesForPage(location.href))) {
+    showConnectButton(t("boot.connect"), t("boot.unreachableIos"));
+    return;
+  }
+
   // A granted permission means this is a return visit (very often a home-screen launch), so connect with
   // no tap. Otherwise the first local-network request must come from a gesture — not because the API
   // demands one, but because a permission prompt that appears before the player has asked for anything

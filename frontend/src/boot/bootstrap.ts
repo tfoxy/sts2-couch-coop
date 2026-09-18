@@ -189,6 +189,44 @@ export function injectApp(
   });
 }
 
+/** What the platform check below needs. A parameter rather than a `navigator` read, so it is testable. */
+export interface BootPlatform {
+  /** `location.protocol` of the page running the bootstrap. */
+  pageProtocol: string;
+  userAgent: string | null | undefined;
+  /** The only way to tell an iPad from a Mac since iPadOS 13. */
+  maxTouchPoints?: number;
+}
+
+/**
+ * Whether this browser can NEVER reach the candidates below, however the network is configured.
+ *
+ * MEASURED, 2026-09-17 (docs/agents/local-network-access.md): WebKit has no private-IP mixed-content
+ * exemption, so an https page's `fetch`, module script, image and `ws://` to `http://192.168.x.x` are all
+ * blocked outright — "this content was blocked and must be served over HTTPS". There is no permission to
+ * grant and no setting a player can change; the web link simply cannot work from an iPhone or iPad. Saying
+ * "the game didn't answer, check it's running and that this phone is on the same Wi-Fi" to that player
+ * sends them after a firewall that is not the problem, which is the one thing this screen must not do.
+ *
+ * Three conditions, and each one has to hold:
+ *   - the PAGE is https — a host-served bootstrap on plain http has no mixed-content problem at all;
+ *   - EVERY candidate is http — a remembered `local-ip.co` origin is https and would work;
+ *   - the platform is iOS/iPadOS, where every browser is WebKit however it is branded.
+ *
+ * The UA test is a local copy of the one in `@/pwa/installPrompt`, matching the convention already set
+ * there ("cheaper to duplicate than a cross-workstream coupling is to maintain") and for a second reason
+ * here: that module imports Vue, and the public origin ships ~5 KB of bootstrap.
+ */
+export function webLinkBlockedByBrowser(platform: BootPlatform, candidates: readonly string[]): boolean {
+  if (platform.pageProtocol !== "https:") return false;
+  if (candidates.length === 0) return false;
+  if (!candidates.every((origin) => origin.startsWith("http://"))) return false;
+  const userAgent = platform.userAgent;
+  if (typeof userAgent !== "string") return false;
+  if (/iPad|iPhone|iPod/.test(userAgent)) return true;
+  return userAgent.includes("Macintosh") && (platform.maxTouchPoints ?? 0) > 1;
+}
+
 /**
  * Whether the Local Network Access permission is already granted, so a home-screen launch can connect
  * with no tap at all.

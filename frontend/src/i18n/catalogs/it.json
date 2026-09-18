@@ -157,6 +157,7 @@
   "boot.originRefusedGeneric": "Questo gioco non è configurato per accettare l'app da questo indirizzo. Utilizza l'indirizzo semplice mostrato sotto il codice QR.",
   "boot.unreachableOne": "Il gioco non ha risposto. Controlla che funzioni e che il telefono sia collegato alla stessa rete Wi-Fi, quindi riprova.",
   "boot.unreachableMany": "Nessuno degli indirizzi salvati ha risposto. Scansiona di nuovo il codice QR: l'indirizzo del tuo PC potrebbe essere cambiato.",
+  "boot.unreachableIos": "iPhone e iPad non possono raggiungere un gioco sulla tua rete locale da questo link. Nella schermata del codice QR del gioco, scegli «Indirizzo semplice» o «Collegamento sicuro» e scansiona quello.",
   "boot.loadFailed": "Ho trovato il gioco ma non sono riuscito a caricarlo. Assicurati che la mod sia aggiornata o apri l'indirizzo semplice mostrato sotto il codice QR.",
   "boot.gameAddress": "Indirizzo del gioco"
 }

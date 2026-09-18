@@ -8,6 +8,7 @@ import {
   probeHost,
   resolveHost,
   stripHostParam,
+  webLinkBlockedByBrowser,
   type BootManifest
 } from "@/boot/bootstrap";
 import { HOST_STORE_KEY } from "@/join/hostStore";
@@ -184,6 +185,49 @@ describe("candidatesForPage", () => {
 
   it("has nothing to offer on a first visit with no QR", () => {
     expect(candidatesForPage("https://sts2-couch.pages.dev/")).toEqual([]);
+  });
+});
+
+describe("webLinkBlockedByBrowser", () => {
+  const IPHONE = "Mozilla/5.0 (iPhone; CPU iPhone OS 26_0 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/26.0 Mobile/15E148 Safari/604.1";
+  const IPAD = "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/26.0 Safari/605.1.15";
+  const ANDROID = "Mozilla/5.0 (Linux; Android 14; SM-S911B) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/147.0.0.0 Mobile Safari/537.36";
+  const LAN = ["http://192.168.1.5:13337"];
+
+  // Measured 2026-09-17 (docs/agents/local-network-access.md): WebKit blocks every insecure private-IP
+  // subresource of an https page, so this link can never work here however the network is set up.
+  it("is true for an iPhone on the public origin", () => {
+    expect(webLinkBlockedByBrowser({ pageProtocol: "https:", userAgent: IPHONE }, LAN)).toBe(true);
+  });
+
+  it("is true for an iPad, which reports a desktop UA and is only distinguishable by touch points", () => {
+    expect(webLinkBlockedByBrowser({ pageProtocol: "https:", userAgent: IPAD, maxTouchPoints: 5 }, LAN))
+      .toBe(true);
+    expect(webLinkBlockedByBrowser({ pageProtocol: "https:", userAgent: IPAD, maxTouchPoints: 0 }, LAN))
+      .toBe(false);
+  });
+
+  it("is false on Android, where the private-IP exemption is real", () => {
+    expect(webLinkBlockedByBrowser({ pageProtocol: "https:", userAgent: ANDROID }, LAN)).toBe(false);
+  });
+
+  // The bootstrap also runs host-served over plain http, where there is no mixed content to block.
+  it("is false when the PAGE is not https", () => {
+    expect(webLinkBlockedByBrowser({ pageProtocol: "http:", userAgent: IPHONE }, LAN)).toBe(false);
+  });
+
+  // A remembered `local-ip.co` origin is https, so that candidate is reachable from an iPhone and the
+  // player must not be told to go and scan something else.
+  it("is false when any candidate is https, and when there are none at all", () => {
+    expect(webLinkBlockedByBrowser(
+      { pageProtocol: "https:", userAgent: IPHONE },
+      ["http://192.168.1.5:13337", "https://192-168-1-5.local-ip.co:13338"]
+    )).toBe(false);
+    expect(webLinkBlockedByBrowser({ pageProtocol: "https:", userAgent: IPHONE }, [])).toBe(false);
+  });
+
+  it("is false when there is no user agent to read", () => {
+    expect(webLinkBlockedByBrowser({ pageProtocol: "https:", userAgent: undefined }, LAN)).toBe(false);
   });
 });
 

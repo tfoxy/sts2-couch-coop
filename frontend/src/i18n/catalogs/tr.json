@@ -157,6 +157,7 @@
   "boot.originRefusedGeneric": "Bu oyun, uygulamayı bu adresten kabul edecek şekilde ayarlanmadı. QR kodunun altında gösterilen düz adresi kullanın.",
   "boot.unreachableOne": "Oyun cevap vermedi. Çalıştığını ve bu telefonun aynı kablosuz ağa bağlı olup olmadığını kontrol edip tekrar deneyin.",
   "boot.unreachableMany": "Kaydedilen adreslerin hiçbiri yanıt vermedi. QR kodunu tekrar tarayın; bilgisayarınızın adresi değişmiş olabilir.",
+  "boot.unreachableIos": "iPhone ve iPad bu bağlantıdan yerel ağınızdaki bir oyuna ulaşamaz. Oyunun QR kod ekranında bunun yerine “Açık adres” veya “Güvenli bağlantı” seçeneğini seçip onu tarayın.",
   "boot.loadFailed": "Oyunu buldum ama yükleyemedim. Modun güncel olduğundan emin olun veya QR kodunun altında gösterilen düz adresi açın.",
   "boot.gameAddress": "Oyun adresi"
 }
