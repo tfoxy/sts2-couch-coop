@@ -8,9 +8,9 @@ using CouchCoop.Mod.Session;
 // (JOIN_TIMEOUT_MS = 90s in MirrorApp.vue), so a slow-but-healthy start was destroyed by the only participant
 // that could see it. These checks are pure — no IO, no Harmony, no Godot, no port, no game executable — which
 // puts them in the same "safe to run alone" class as the host-guards slice, and they are registered behind
-// `-- seat-timeout` for exactly that reason: the full suite currently dies of a pre-existing SIGSEGV a few
-// suites in (project memory: couch-modtests-segfault-main-sep11), so a check registered ONLY in the normal
-// sequence would never execute on this machine. They also run in that normal sequence.
+// `-- seat-timeout` for exactly that reason. They also run in the normal sequence, which reaches them again
+// now that the SIGSEGV a few suites in is fixed (project memory: couch-modtests-segfault-main-sep11) — the
+// verb stays because a pure, fast check is worth being able to run on its own.
 //
 // The two waiting tests below are the only slow ones (~2s each, against a deliberately shortened deadline);
 // nothing here waits on a real seat.

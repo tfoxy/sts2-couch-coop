@@ -20,9 +20,10 @@ namespace CouchCoop.Mod.Tests;
 /// every support instruction that matches on the real one, and nothing failed.
 /// </para>
 /// <para>
-/// Registered near the TOP of the runner sequence, and behind its own <c>-- log-prefix</c> verb: the suite
-/// currently dies (SIGSEGV, exit 139) inside <c>HeadlessAudioMuteTargetsTests</c> on clean <c>main</c>, so a
-/// check registered after that point silently stops existing.
+/// Registered near the TOP of the runner sequence, and behind its own <c>-- log-prefix</c> verb. The sequence
+/// runs to completion again (the SIGSEGV that used to take it down inside <c>HeadlessAudioMuteTargetsTests</c>
+/// was fixed on 2026-09-17), but the position and the verb are kept: this guard is cheap, it depends on
+/// nothing, and a check that only exists downstream of every other suite is one abort away from not existing.
 /// </para>
 /// </remarks>
 internal static class CouchCoopLogPrefixTests

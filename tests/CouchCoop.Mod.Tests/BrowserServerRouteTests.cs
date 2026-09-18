@@ -105,9 +105,9 @@ if (args is ["host-guards", ..])
     HostPeerRoutingTests.Run();
     HostTransportCapacityTests.Run();
     // The lobby mount patch's RETRY contract — pure, no Harmony install and no game, same standing as the
-    // legs above. Registered here as well as in the full sequence because the sequence does not reach
-    // IdleHostCostTests on some machines, and the regression it guards (one failed patch attempt costing the
-    // lobby its QR button for the whole process) is invisible until someone opens a lobby.
+    // legs above. Registered here as well as in the full sequence: the sequence reaches IdleHostCostTests
+    // again, but the regression it guards (one failed patch attempt costing the lobby its QR button for the
+    // whole process) is invisible until someone opens a lobby, so it is worth reaching without a full run.
     IdleHostCostTests.MountPlanContract();
     LobbySupportCheckpointsTests.Run();
     Console.WriteLine("host guards: ok");
@@ -119,15 +119,15 @@ if (args is ["host-guards", ..])
 // gets a seat at all), the reap/detach bookkeeping, the seat launch contract, and the lock-ordering pins that
 // keep the cap probe off the manager's lock. Pure in the same sense as host-guards — a fake launcher and an
 // instant readiness probe stand in for a real game process and a real HTTP poll — and registered here because
-// the full sequence does not reach it on some machines (see the note above HeadlessAudioMuteTargetsTests), which
-// makes this the only way to verify a change to the seat cap.
+// it is the focused way to verify a change to the seat cap without a full run. (It was once the ONLY way: the
+// sequence used to die partway through — see the note above HeadlessAudioMuteTargetsTests — and now does not.)
 if (args is ["seats", ..])
 {
     await HeadlessClientManagerTests.RunAsync();
     // The seat ROSTER's transition bookkeeping — which seat the picker offers, and the statuses it remembers
-    // between evaluations. Registered here for the reason this whole verb exists: it sits after
-    // HeadlessAudioMuteTargetsTests in the full sequence, which takes the process down with SIGSEGV on some
-    // machines, so it had no runnable home at all.
+    // between evaluations. Registered here for the reason this whole verb exists: it sits late in the full
+    // sequence, which used to abort above it (see the note above HeadlessAudioMuteTargetsTests), and a focused
+    // home for it is worth keeping now that it does not.
     MirrorSeatRosterTests.Run();
     // The suite logs every seat it starts, so say plainly that it finished — an exit code is easy to lose
     // in that scroll, which is the same reason host-guards prints its own line.
@@ -139,9 +139,9 @@ if (args is ["seats", ..])
 // the host advertises, the option list the QR dialog builds from it, the mDNS responder's wire codec and its
 // three-way mode decision, the discovery responder over real UDP loopback, the listener's own hardening, and
 // the reachability watch that says when nothing has connected. Registered as its own verb for the reason every
-// other verb here exists — the full sequence below dies partway through on some machines (see the note above
-// HeadlessAudioMuteTargetsTests) and reaches none of these, so a networking change verified only through a full
-// run has not been verified at all. They are engine-free: loopback sockets and synthetic NIC descriptors, no
+// other verb here exists — the full sequence below is long and, until 2026-09-17, aborted before reaching
+// these (see the note above HeadlessAudioMuteTargetsTests), so a networking change is verified here rather
+// than only through a full run. They are engine-free: loopback sockets and synthetic NIC descriptors, no
 // game, no Godot, and nothing that touches port 5353.
 if (args is ["network", ..])
 {
@@ -183,7 +183,7 @@ if (args is ["connections", ..])
 {
     ConnectionRegistryTests.Run();
     // Host-side diagnostics: patch health, host-issue severity and deduplication. Registered in a verb for
-    // the reason the note above HeadlessAudioMuteTargetsTests gives — the full sequence cannot reach it.
+    // the reason the note above HeadlessAudioMuteTargetsTests gives — it sat behind an abort for six days.
     HostPatchHealthTests.Run();
     // …and the other host-condition row, which is raised from the networking layer but lands in this panel.
     HostReachabilityWatchTests.Run();
@@ -233,7 +233,8 @@ if (args is ["seat-build", ..])
 // The `[couchcoop]` log prefix has one owner (CouchCoopLog.Format) and one file allowed to spell it out.
 // `dotnet run --project tests/CouchCoop.Mod.Tests -- log-prefix` runs that check ALONE: pure string work and a
 // source walk, no Godot types, no IO beyond reading src/. It also runs at the top of the normal sequence below
-// — a check registered after HeadlessAudioMuteTargetsTests would never run at all.
+// — a check that only ran after HeadlessAudioMuteTargetsTests would have gone unrun for the six days the
+// sequence aborted there.
 if (args is [CouchCoopLogPrefixTests.Verb, ..])
 {
     CouchCoopLogPrefixTests.Run();
@@ -250,9 +251,9 @@ if (args is ["lanes", ..])
 
 // `dotnet run --project tests/CouchCoop.Mod.Tests -- host-ui` runs the pure host-UI decisions ALONE. Same
 // rationale as `host-guards` above — no IO, no Harmony, no Godot engine, no live game — and the same
-// arrangement: they also run in the normal sequence below. This is the reachable way to verify a host-UI
-// change, because a full run of this Exe currently dies partway through (see the note above
-// HeadlessAudioMuteTargetsTests) and never reaches most of the sequence.
+// arrangement: they also run in the normal sequence below. This is the FAST way to verify a host-UI change —
+// and it was the only way while a full run aborted partway through (see the note above
+// HeadlessAudioMuteTargetsTests).
 if (args is ["host-ui", ..])
 {
     CouchCoopButtonActivationTests.Run();
@@ -266,9 +267,8 @@ if (args is ["host-ui", ..])
 // mechanism each frozen animator type gets, and the ONE type that must never be in the table at all (the star
 // counter — freezing it strands the browser's star count at its pre-gain value). Pure metadata reflection over the
 // installed STS2 assemblies — no Harmony install, no Godot engine, no live game — so it stands alone like
-// host-guards above. Registered here because the full sequence below cannot reach it: it sits after
-// HeadlessAudioMuteTargetsTests, which takes the process down with SIGSEGV on some machines (see the note there),
-// so a truncated full run would report this suite as neither passed nor failed.
+// host-guards above. Registered here because it sits late in the full sequence, which used to abort above it
+// (see the note above HeadlessAudioMuteTargetsTests) and report this suite as neither passed nor failed.
 if (args is ["decor-freeze", ..])
 {
     HeadlessDecorativeFreezeTests.Run();
@@ -297,8 +297,8 @@ if (args is ["localization", ..])
 // two-directory cap), the `assetCacheToken` the same identity composes for the CLIENT caches, and the one
 // user-dir link that shares the host's warm cache with a headless seat. Filesystem against temp roots — no game,
 // no Steam, no Godot, and the identity ladder itself lives in spirectl — which puts it in the same standing as
-// host-guards above, and makes it the reachable way to verify a change here: the full sequence below dies
-// partway through on some machines (see the note above HeadlessAudioMuteTargetsTests) and never gets this far.
+// host-guards above, and makes it the focused way to verify a change here — it was the only way while the
+// full sequence aborted before getting this far (see the note above HeadlessAudioMuteTargetsTests).
 if (args is ["cache", ..])
 {
     // The envelope leg resolves the machine's default cache root, so point it somewhere disposable first — for
@@ -359,9 +359,9 @@ if (args is ["seat-timeout", ..])
 // `dotnet run --project tests/CouchCoop.Mod.Tests -- static-bg` runs the whole STATIC BACKGROUND family ALONE:
 // the /bg/ image producer, the event and room families, the tracker's mounted-layer probe, warm-at-publish, and
 // the Stage-B walk-skip unanimity. Same rationale as `host-guards` / `beta-targets` above, and it is not
-// optional here: all five of these are registered near the END of the normal sequence, which dies partway
-// through on some machines (see the note above HeadlessAudioMuteTargetsTests) and never reaches them. A change
-// to the static-background lane verified only through a full run has not been verified at all.
+// optional here: all five of these are registered near the END of the normal sequence, which is long and which
+// aborted before reaching them until 2026-09-17 (see the note above HeadlessAudioMuteTargetsTests). This verb
+// is what makes a static-background change cheap to verify on its own.
 if (args is ["static-bg", ..])
 {
     await StaticBackgroundProviderTests.RunAsync();
@@ -383,8 +383,8 @@ if (args is ["static-bg", ..])
 // compiled with. That is the whole per-GAME-BUILD question, which makes it the one-liner to run after a game
 // update or when adding an API lane — point Sts2AssembliesDir at the new build, build, run this. The legs are
 // pure metadata reflection (no Harmony install, no live game, no IO), so like host-guards above they are safe
-// alone, and unlike the full sequence they are reachable: it dies partway through on some machines (see the
-// note above HeadlessAudioMuteTargetsTests) and never reaches most of what is registered after it.
+// alone, and this verb answers the per-build question in one short run rather than through the whole sequence
+// (which, until 2026-09-17, aborted before most of it — see the note above HeadlessAudioMuteTargetsTests).
 //
 // Every leg is run even when an earlier one fails, and each is named on its own line: a game update typically
 // breaks several members at once, and stopping at the first would hide the rest behind another build+run cycle.
@@ -445,27 +445,27 @@ Environment.SetEnvironmentVariable(
 HotReloadInteropTests.Run();
 SpirectlEmbeddedAssemblyBoundaryTests.Run();
 // The one-owner guard for the `[couchcoop]` log prefix. FIRST among the pure suites on purpose: it is
-// the check most likely to be defeated by where it sits, since everything from HeadlessAudioMuteTargetsTests
-// down is currently unreachable. Also reachable alone as `-- log-prefix`.
+// the check most likely to be defeated by where it sits — everything from HeadlessAudioMuteTargetsTests down
+// was unreachable for six days. Also reachable alone as `-- log-prefix`.
 CouchCoopLogPrefixTests.Run();
 // A headless seat strips controller bindings from its own InputMap before the game can consume input. This suite
 // uses types and ordinary collections only: constructing Godot objects in this runner can segfault.
 HeadlessJoypadInputMapIsolationTests.Run();
 // The GDScript source generated for the no-op FMOD singleton stub — pure strings, no Godot types, and placed
-// this high for the usual reason: everything from HeadlessAudioMuteTargetsTests down is unreachable on some
-// machines. Also reachable alone as `-- fmod-stub`.
+// this high for the usual reason: everything from HeadlessAudioMuteTargetsTests down was unreachable while
+// that stretch aborted. Also reachable alone as `-- fmod-stub`.
 FmodSingletonStubTests.Run();
 // Host patch health: a registry with a fake clock and a recorder, no Godot types — up here with the other
 // pure suites, and also reachable alone as `-- connections`.
 HostPatchHealthTests.Run();
 // Also reachable alone as `-- cache`, and placed up here for the same reason as the host-UI legs below: pure
-// filesystem, no Godot types, and everything from HeadlessAudioMuteTargetsTests down is unreachable on some
-// machines.
+// filesystem, no Godot types, and everything from HeadlessAudioMuteTargetsTests down was unreachable while
+// that stretch aborted.
 CacheRootPurgeTests.Run();
 // Steam Deck: the shared gate that decides whether a gui_input event activates a CouchCoop button, which now
 // answers to the controller's select action as well as to the mouse. Placed up here deliberately — it is pure
-// C# with no Godot types at all, and everything from HeadlessAudioMuteTargetsTests below is currently
-// unreachable on some machines (see the next comment). Also reachable alone as `-- host-ui`.
+// C# with no Godot types at all, and everything from HeadlessAudioMuteTargetsTests below was unreachable
+// while that stretch aborted (see the next comment). Also reachable alone as `-- host-ui`.
 CouchCoopButtonActivationTests.Run();
 // Steam Deck follow-up: WHERE a modal parks focus, which is what decides whether that gate can ever pass on
 // a dialog the player did not open with a mouse. Pure C# for the same reason, and in the same verb.
@@ -479,7 +479,7 @@ CouchCoopModalFocusChainTests.Run();
 SeatCloudIsolationGuardTests.Run();
 // Beta round: a seat must load the SAME copy of CouchCoop as its host, and say so loudly when it did not.
 // Up here with the other pure suites for the same reason — everything from HeadlessAudioMuteTargetsTests
-// below is unreachable on some machines. Also reachable alone as `-- seat-build`.
+// below was unreachable while that stretch aborted. Also reachable alone as `-- seat-build`.
 SeatModBuildTests.Run();
 // Workshop single-payload round: which implementation lane the loader picks for the running game build, and
 // when it refuses. Pure temp directories, no game — up here with the other pure suites, and also reachable
@@ -953,8 +953,8 @@ internal sealed class BrowserServerRouteTests
         await AssertSpinePrerenderAsync();
         await AssertSpineClipRoutesAsync(baseUri, runtime);
         await AssertAssetBinaryCacheAsync();
-        // WS-PARTICLE raster format mapping. Runs HERE (before the animation-hint suite below, which has a known
-        // pre-existing failure that aborts the process) so the raster contract is actually exercised.
+        // WS-PARTICLE raster format mapping. Position is historical: it was hoisted above a suite that used to
+        // abort the process, and the sequence now runs to completion either way.
         await AssertRasterResourceFormatAsync();
 
         using var ws = new ClientWebSocket();
@@ -1771,8 +1771,8 @@ internal sealed class BrowserServerRouteTests
     // and the current-digest render carrying the tracker's published layer set as the CompositionSelector.
     /// <summary>
     /// The <c>-- static-bg</c> verb's entry into the /bg/ route assertions, over a throwaway SPA root. Exists so
-    /// the route half is REACHABLE: its only other caller is the big RunAsync sequence, which the Exe does not
-    /// get to on some machines (see the note above HeadlessAudioMuteTargetsTests).
+    /// the route half is cheap to run: its only other caller is the big RunAsync sequence, which the Exe could
+    /// not get to at all for six days (see the note above HeadlessAudioMuteTargetsTests).
     /// </summary>
     internal static async Task RunStaticBackgroundRoutesAsync()
     {
@@ -2725,12 +2725,12 @@ internal sealed class BrowserServerRouteTests
     /// no reply; a census is told, not asked).
     /// </para>
     /// <para>
-    /// Reached through the <c>client-vitals</c> verb, not through <see cref="RunAsync"/>, which still cannot get
-    /// here on <c>main</c>: the sequence above this leg fails first at <c>AssertJoinedRunSession</c>, behind three
-    /// further pre-existing failures earlier in the runner. Standing this leg up on a server of its own is what
+    /// Runs both inside <see cref="RunAsync"/> and under the standalone <c>client-vitals</c> verb. The verb was
+    /// added when the sequence could not reach this far, and standing the leg up on a server of its own is what
     /// found the segfault now fixed at <c>CouchCoopHeadlessVisualSuspender.GetEffectiveBaselineMaxFpsAsync</c> —
     /// a bare server used to exit 139 on its first <c>/ws</c>, because the session envelope read
-    /// <c>Engine.MaxFps</c> through an ungated native call on the accept path.
+    /// <c>Engine.MaxFps</c> through an ungated native call on the accept path. Keep both: a fresh server with no
+    /// prior traffic is a genuinely different starting state, and it is the one that broke.
     /// </para>
     /// </remarks>
     private static async Task AssertClientVitalsReceiptAsync(Uri baseUri)
