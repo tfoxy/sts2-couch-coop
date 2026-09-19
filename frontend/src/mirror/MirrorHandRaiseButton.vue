@@ -132,34 +132,80 @@ const slab = computed(() => {
 });
 
 // The ROOT is the slab's own rect, not BOX — see the header: the hit area is the button and nothing more. Its
-// right/bottom offsets are BOX's, pushed in by the margin BOX would have left on those two sides.
-const rootStyle = computed<CSSProperties>(() => {
+// right/bottom offsets are BOX's, pushed in by the margin BOX would have left on those two sides. All four numbers
+// are DESIGN px; which space each element writes them in is decided by the two styles below.
+const anchor = computed(() => {
   const draw = slab.value;
-  const scale = pressed.value ? DOWN_SCALE : focused.value ? HOVER_SCALE : 1;
   const rect = draw ?? { left: 0, top: 0, width: BOX.width, height: BOX.height };
-  // LAYOUT SPACE (stageFit.ts). This control is the ONE piece of CouchCoop chrome that MirrorView's design-space
-  // chrome layer cannot cover: on the DOM arm it TELEPORTS out of the slot and into a mirror node
-  // (CombatPileContainer, `teleportTarget`), which on the `?stageFit=display` arm is laid out in display px with no
-  // scaling ancestor. So it carries its own conversion.
-  //
-  // The two ANCHOR offsets convert as lengths; the BOX and its whole design-px interior (slab, mask, glyph grid)
-  // instead ride one `transform: scale()` about the bottom-right corner — the corner `right`/`bottom` pin it by, so
-  // the anchor stays put while the art shrinks. Scaling the box and re-deriving the interior would mean converting
-  // four more computed styles and the SVG glyph grid for no visual gain.
-  //
-  // KNOWN NUANCE, display arm only: `transform-origin` is shared with the individual `scale` property, so the
-  // press/hover animation pivots at the bottom-right corner there instead of the centre. At a phone's fit that is a
-  // sub-pixel-to-~2px difference in a 60ms animation; it is called out rather than hidden because it is a real
-  // divergence that no test asserts.
+  return {
+    right: BOX.right + BOX.width - rect.left - rect.width,
+    bottom: BOX.bottom + BOX.height - rect.top - rect.height,
+    width: rect.width,
+    height: rect.height
+  };
+});
+
+/** The press/hover shrink, and the transition that drives it. Identical on both elements and both arms. */
+const pressScale = computed(() => (pressed.value ? DOWN_SCALE : focused.value ? HOVER_SCALE : 1));
+const pressTransition = computed(() => `scale ${pressed.value ? PRESS_MS : RELEASE_MS}ms ease-out`);
+
+// THIS COMPONENT RENDERS INTO TWO DIFFERENT SPACES, and on the `?stageFit=display` arm they are not the same one.
+// The two styles below are the whole of that difference; everything else about the two elements is shared.
+//
+//   * the INPUT TARGET stays in the component's own slot, which MirrorView wraps in `.mirror-chrome-layer` — a
+//     DESIGN-space box that already carries `transform: scale(fit)`. So it writes design px and adds no scale of
+//     its own. Doing otherwise put the anchor at design x fit inside a layer that scaled it again, so the hit area
+//     drifted off the slab a player is aiming at (proven in handRaiseDisplayArm.spec.ts).
+//   * the VISIBLE CHROME teleports out into a mirror node (CombatPileContainer, `teleportTarget`), which on this
+//     arm is laid out in display px with no scaling ancestor. So it converts.
+//
+// On the design arm the two spaces coincide and both styles emit identical strings, which is why one shared style
+// was correct until the display arm existed — and why no existing test could have caught the split.
+
+/** Design px, no layout scale: this element rides MirrorView's already-scaled chrome layer. */
+const targetStyle = computed<CSSProperties>(() => {
+  const a = anchor.value;
+  return {
+    right: `${a.right}px`,
+    bottom: `${a.bottom}px`,
+    width: `${a.width}px`,
+    height: `${a.height}px`,
+    scale: `${pressScale.value}`,
+    transition: pressTransition.value
+  };
+});
+
+/**
+ * Display px: the teleported slab converts its own anchors, and rides one `scale()` for its design-px interior
+ * (slab, mask, glyph grid) rather than converting four more computed styles and the SVG grid for no visual gain.
+ *
+ * WHY THE SCALE IS WRITTEN AS `translate() scale()` ABOUT THE DEFAULT ORIGIN. The layout scale wants to pivot at
+ * the bottom-right corner — the corner `right`/`bottom` pin the button by, so the anchor stays welded to the HUD
+ * while the art shrinks. The press/hover animation wants to pivot at the centre. An element has exactly one
+ * `transform-origin` and the individual `scale:` property shares it, so pointing it at the corner silently moved
+ * the press pivot there too, on this arm only.
+ *
+ * Scaling about the centre and translating by `(O - C)(1 - s)` is algebraically identical to scaling about the
+ * corner O — for a box of width w that is `(w/2)(1 - s)`, because scaling about the centre pulls the right edge in
+ * by exactly that much. So the anchor is pinned exactly as before while `transform-origin` stays at its default
+ * and the press keeps pivoting at the centre, matching the design arm.
+ */
+const chromeStyle = computed<CSSProperties>(() => {
+  const a = anchor.value;
   const s = layoutScale();
   return {
-    right: pxCss(BOX.right + BOX.width - rect.left - rect.width),
-    bottom: pxCss(BOX.bottom + BOX.height - rect.top - rect.height),
-    width: `${rect.width}px`,
-    height: `${rect.height}px`,
-    scale: `${scale}`,
-    ...(s === 1 ? {} : { transform: `scale(${s})`, transformOrigin: "100% 100%" }),
-    transition: `scale ${pressed.value ? PRESS_MS : RELEASE_MS}ms ease-out`
+    right: pxCss(a.right),
+    bottom: pxCss(a.bottom),
+    width: `${a.width}px`,
+    height: `${a.height}px`,
+    scale: `${pressScale.value}`,
+    ...(s === 1
+      ? {}
+      : {
+          transform:
+            `translate(${(a.width / 2) * (1 - s)}px, ${(a.height / 2) * (1 - s)}px) scale(${s})`
+        }),
+    transition: pressTransition.value
   };
 });
 
@@ -289,7 +335,7 @@ onBeforeUnmount(() => {
     class="mirror-hand-raise mirror-hand-raise--chrome"
     data-testid="mirror-hand-raise-chrome"
     aria-hidden="true"
-    :style="rootStyle"
+    :style="chromeStyle"
   >
     <div class="mirror-hand-raise-layer" :style="slabStyle"></div>
     <div class="mirror-hand-raise-layer" :style="interiorStyle"></div>
@@ -331,7 +377,7 @@ onBeforeUnmount(() => {
     role="button"
     :aria-pressed="on"
     :aria-label="t('a11y.raiseHand')"
-    :style="rootStyle"
+    :style="targetStyle"
     @pointerdown.stop.prevent="onDown"
     @pointerup.stop="onUp"
     @pointermove.stop
