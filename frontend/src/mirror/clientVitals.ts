@@ -19,9 +19,12 @@
 //   `canvasPx` — total canvas backing-store pixels. WebKit budgets canvas memory per PAGE and kills the content
 //     process when it is exceeded, and each canvas costs w*h*4 bytes whatever is drawn on it. A desktop with
 //     gigabytes never notices; a phone does. This is the single number most likely to name the fault.
-//   `decodedBytes` — the atlas bitmaps held alive for the life of the page (see imagePrefetch's field docs).
-//     The DOM backend has no eviction budget at all, while the canvas backend has an explicit residency cap, so
-//     reading this against `texBytes` is what distinguishes "too much art" from "the wrong backend".
+//   `decodedBytes` — the atlas bitmaps the page OWNS right now (atlasBaker's residency). This is the field the
+//     iPhone round turned on, and it is worth saying what it used to be: the prefetch chain's cumulative
+//     price list, which could only ever describe the twelve pages that chain walks and could never move after
+//     it finished. It now reads live residency, so it falls when the budget evicts and rises when a page is
+//     promoted — a number that answers "what was this page holding" rather than "what did it once fetch".
+//     Read it against `atlasCap`, which says what budget was in force.
 //
 // NOTHING IDENTIFYING. No URLs, no query values, no player name, no user agent, no stack. Numbers and two small
 // closed enums. The host re-renders the line from parsed values rather than echoing this one (a receipt is
@@ -29,7 +32,7 @@
 
 import { FX_RESIDENT_BYTES_DEFAULT } from "@/mirror/canvas/fxSurfaces";
 import { TEXTURE_RESIDENT_BYTES_DEFAULT } from "@/mirror/canvas/textureBridge";
-import { mirrorImagePrefetchStats } from "@/mirror/imagePrefetch";
+import { atlasResidencyStats, atlasResidentCapBytes } from "@/mirror/atlasBaker";
 import { mirrorSettings, type EffectMode } from "@/mirror/mirrorSettings";
 import { activeStageBackend, requestedStageBackend, type StageBackend } from "@/mirror/rendererFactory";
 
@@ -48,13 +51,18 @@ export interface ClientVitals {
   /** Live `<canvas>` elements anywhere in the document, and their total backing-store pixels. */
   canvases: number;
   canvasPx: number;
-  /** Atlas bitmaps decoded and held for the life of the page, and how many pages they are. */
+  /** Atlas pixels the page OWNS at this instant (`ImageBitmap`s), and how many pages they are. */
   decodedBytes: number;
   decodedPages: number;
   /**
-   * The canvas backend's residency CAPS, in force only while it is the active backend — 0 on the DOM backend,
-   * which is the point: the shipping default has no eviction budget at all, so a report showing `stageActive=dom`
-   * beside a large `decodedBytes` and `texBytes=0` is describing an unbounded page, not a configured one.
+   * The atlas residency cap in force, in bytes (0 = no budget). Unlike the two below it this is non-zero on
+   * BOTH backends, so it is what tells a reader of a pasted report whether the build in their hands bounds the
+   * population that `decodedBytes` measures — the distinction the iPhone report could not make.
+   */
+  atlasCap: number;
+  /**
+   * The canvas backend's residency CAPS, in force only while it is the active backend — 0 on the DOM backend.
+   * They bound the canvas texture bridge's own page population, which is a different one from `decodedBytes`.
    */
   texBytes: number;
   fxBytes: number;
@@ -75,6 +83,8 @@ export interface ClientVitalsSources {
   activeStage: () => StageBackend;
   /** The canvas backend's residency budgets, or null when it is not the active backend. */
   canvasResidency: () => { textureBytes: number; fxBytes: number } | null;
+  /** Owned atlas pixels right now, and the cap bounding them — both backends. */
+  atlasResidency: () => { bytes: number; pages: number; cap: number };
   effectModes: () => { shaderMode: EffectMode; particleMode: EffectMode };
   doc: () => Document | null;
   view: () => Window | null;
@@ -103,7 +113,7 @@ function ratio(value: unknown): number {
 export function collectClientVitals(sources: ClientVitalsSources): ClientVitals {
   const doc = safely(sources.doc, null);
   const view = safely(sources.view, null);
-  const prefetch = safely(() => mirrorImagePrefetchStats(), null);
+  const atlas = safely(sources.atlasResidency, { bytes: 0, pages: 0, cap: 0 });
   const residency = safely(sources.canvasResidency, null);
   const effects = safely(sources.effectModes, { shaderMode: "static" as EffectMode, particleMode: "static" as EffectMode });
 
@@ -130,8 +140,9 @@ export function collectClientVitals(sources: ClientVitalsSources): ClientVitals 
     els: doc ? count(safely(() => doc.querySelectorAll(".mirror-frame *").length, 0)) : 0,
     canvases,
     canvasPx,
-    decodedBytes: count(prefetch?.decodedBytes),
-    decodedPages: count(prefetch?.decodedPages),
+    decodedBytes: count(atlas.bytes),
+    decodedPages: count(atlas.pages),
+    atlasCap: count(atlas.cap),
     texBytes: count(residency?.textureBytes),
     fxBytes: count(residency?.fxBytes),
     shaderMode: effects.shaderMode,
@@ -161,6 +172,13 @@ export function defaultClientVitalsSources(): ClientVitalsSources {
       activeStageBackend() === "canvas"
         ? { textureBytes: TEXTURE_RESIDENT_BYTES_DEFAULT, fxBytes: FX_RESIDENT_BYTES_DEFAULT }
         : null,
+    // …the atlas figures, by contrast, are a LIVE reading rather than a constant: the whole question this census
+    // was built to answer is how much the page was holding at the moment it died, and a cap alone cannot say.
+    atlasResidency: () => ({
+      bytes: atlasResidencyStats.residentBytes,
+      pages: atlasResidencyStats.residentPages,
+      cap: atlasResidentCapBytes()
+    }),
     effectModes: () => ({ shaderMode: mirrorSettings.shaderMode, particleMode: mirrorSettings.particleMode }),
     doc: () => (typeof document === "undefined" ? null : document),
     view: () => (typeof window === "undefined" ? null : window)

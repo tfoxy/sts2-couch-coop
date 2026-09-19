@@ -13,6 +13,7 @@ function sources(overrides: Partial<ClientVitalsSources> = {}): ClientVitalsSour
     requestedStage: () => "dom",
     activeStage: () => "dom",
     canvasResidency: () => null,
+    atlasResidency: () => ({ bytes: 0, pages: 0, cap: 0 }),
     effectModes: () => ({ shaderMode: "static", particleMode: "static" }),
     doc: () => null,
     view: () => null,
@@ -77,11 +78,51 @@ describe("collectClientVitals", () => {
     const off = collectClientVitals(sources({ canvasResidency: () => null }));
     const on = collectClientVitals(sources({ canvasResidency: () => ({ textureBytes: 192, fxBytes: 48 }) }));
 
-    // Zero on the DOM backend is the measurement, not a gap: that backend has no eviction budget at all.
+    // Zero on the DOM backend is the measurement, not a gap: these two bound the CANVAS backend's own textures.
     expect(off.texBytes).toBe(0);
     expect(off.fxBytes).toBe(0);
     expect(on.texBytes).toBe(192);
     expect(on.fxBytes).toBe(48);
+  });
+
+  it("reports atlas residency as a LIVE reading, and its cap, on the DOM backend too", () => {
+    // The iPhone report's whole gap: it carried a large byte figure with `texCap=0 fxCap=0` beside it, and there
+    // was no field that could say whether the page holding those bytes was bounded. `atlasCap` is that field, and
+    // unlike the two canvas caps it is non-zero on the backend every player actually gets.
+    const vitals = collectClientVitals(sources({
+      activeStage: () => "dom",
+      canvasResidency: () => null,
+      atlasResidency: () => ({ bytes: 62_600_000, pages: 1, cap: 96 * 1024 * 1024 })
+    }));
+
+    expect(vitals.decodedBytes).toBe(62_600_000);
+    expect(vitals.decodedPages).toBe(1);
+    expect(vitals.atlasCap).toBe(96 * 1024 * 1024);
+    expect(vitals.texBytes).toBe(0);
+  });
+
+  it("reports a cap of zero when the budget is switched off, without losing the live bytes", () => {
+    // `?atlasResident=0` is the device A/B's off-arm, so its report has to be readable as "unbounded, and this is
+    // what unbounded came to" rather than as a census that failed to take a reading.
+    const vitals = collectClientVitals(sources({
+      atlasResidency: () => ({ bytes: 205_000_000, pages: 11, cap: 0 })
+    }));
+
+    expect(vitals.decodedBytes).toBe(205_000_000);
+    expect(vitals.decodedPages).toBe(11);
+    expect(vitals.atlasCap).toBe(0);
+  });
+
+  it("survives an atlas reading that throws, like every other source", () => {
+    const vitals = collectClientVitals(sources({
+      atlasResidency: () => { throw new Error("detached"); },
+      view: () => fakeView()
+    }));
+
+    expect(vitals.decodedBytes).toBe(0);
+    expect(vitals.decodedPages).toBe(0);
+    expect(vitals.atlasCap).toBe(0);
+    expect(vitals.vw).toBe(390);
   });
 
   it("reports a browser with no performance.memory as zero rather than omitting the field", () => {

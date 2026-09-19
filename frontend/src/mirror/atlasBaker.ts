@@ -82,21 +82,63 @@ export interface AtlasRegion {
 type AtlasSource = ImageBitmap | HTMLImageElement;
 
 interface AtlasEntry {
-  /** Decoded pixels, kept alive so the atlas is never re-decoded. null until the async load+decode resolves. */
-  source: AtlasSource | null;
+  /**
+   * The loaded page element. It is BOTH the fallback draw source and the source a promotion captures from, and
+   * it is deliberately the only thing an ordinary page ever holds: an `<img>`'s decoded frame is a BROWSER
+   * CACHE, which the OS can reclaim under pressure. See THE RESIDENCY BUDGET below.
+   */
+  element: HTMLImageElement | null;
+  /**
+   * OWNED pixels — minted on this page's first real DRAW and closed by the budget. Null until promoted, and null
+   * again after an eviction. A bitmap is memory the PAGE owns: iOS cannot reclaim it without killing the tab,
+   * which is why it is spent only on pages this thread actually draws from.
+   */
+  bitmap: ImageBitmap | null;
+  /**
+   * The page's decoded size — a MEMO, kept because a page's dimensions never change, so an eviction must not
+   * un-answer `atlasPageSize`. Null while loading, and for a page that settled with no pixels.
+   */
+  size: { width: number; height: number } | null;
   /** true once loading settled (success OR failure) — a failed atlas stops retrying. */
   settled: boolean;
-  /** One-shot callbacks fired when `source` becomes available (nodes waiting to draw their first frame). */
+  /** One-shot callbacks fired when the page becomes drawable (nodes waiting to draw their first frame). */
   listeners: Set<() => void>;
+  /** `now()` of the last REAL use (a draw, or a crop-source ask). The LRU key — a preload is not a use. */
+  usedAtMs: number;
+  /** A promotion is in flight: N sprites of one page asking on the same frame capture once. */
+  promoting: boolean;
+  /** A page whose promotion cannot work (no `createImageBitmap`, or a capture that rejected). Never re-asked. */
+  promoteFailed: boolean;
+  /** …and whether the budget has ever taken this page's pixels back, so a re-promotion is countable. */
+  evicted: boolean;
 }
 
 const atlases = new Map<string, AtlasEntry>();
 
-// Load + decode an atlas once (idempotent), holding its decoded `ImageBitmap` alive. A no-op shell without a DOM.
+/** What `drawImage` may be handed for this page right now: owned pixels if we have them, the element if not. */
+function drawSourceOf(entry: AtlasEntry): AtlasSource | null {
+  return entry.bitmap ?? entry.element;
+}
+
+// Load an atlas once (idempotent) and hold its element. A no-op shell without a DOM.
+//
+// THIS NO LONGER DECODES INTO AN OWNED BITMAP. It used to `createImageBitmap` every page it loaded, which — with
+// `imagePrefetch` warming the whole atlas list at mount — pinned ~205 MB of page-owned pixels from the moment of
+// join, for the life of the page, whether or not anything ever drew from them. See THE RESIDENCY BUDGET.
 function getAtlas(url: string): AtlasEntry {
   let entry = atlases.get(url);
   if (entry) return entry;
-  entry = { source: null, settled: false, listeners: new Set() };
+  entry = {
+    element: null,
+    bitmap: null,
+    size: null,
+    settled: false,
+    listeners: new Set(),
+    usedAtMs: 0,
+    promoting: false,
+    promoteFailed: false,
+    evicted: false
+  };
   atlases.set(url, entry);
   if (typeof Image === "undefined") {
     entry.settled = true;
@@ -113,20 +155,21 @@ function getAtlas(url: string): AtlasEntry {
   };
   const onLoad = (): void => {
     detach();
-    const finish = (source: AtlasSource): void => {
-      entry!.source = source;
-      entry!.settled = true;
-      const waiting = [...entry!.listeners];
-      entry!.listeners.clear();
-      for (const cb of waiting) cb();
-    };
-    // Prefer createImageBitmap: it holds DECODED pixels (drawImage of it never re-decodes). Fall back to the
-    // HTMLImageElement if unavailable/failed (drawImage still works, just less eviction-proof).
-    if (typeof createImageBitmap === "function") {
-      createImageBitmap(img).then(finish).catch(() => finish(img));
-    } else {
-      finish(img);
+    entry!.element = img;
+    // The size MEMO, read off the element rather than off a bitmap — which is what lets it outlive an eviction.
+    // A page that loaded with no intrinsic size has no pixels to speak of, and is treated exactly like a failure
+    // by everything that reads `atlasPageSize` (the placeholder gate, the prefetch's byte accounting).
+    const w = img.naturalWidth;
+    const h = img.naturalHeight;
+    entry!.size = typeof w === "number" && typeof h === "number" && w > 0 && h > 0 ? { width: w, height: h } : null;
+    if (ownershipMode() === "eager") {
+      // THE OFF-ARM, for an exact A/B against the behaviour that shipped before the budget (`?atlasOwn=eager`).
+      requestPromotion(url, entry!);
     }
+    entry!.settled = true;
+    const waiting = [...entry!.listeners];
+    entry!.listeners.clear();
+    for (const cb of waiting) cb();
   };
   // A FAILED page still SETTLES, and settling has to wake its waiters (Aug-19). This used to clear `listeners`
   // without invoking them, which silently stranded everyone waiting on a page that 404'd or failed to decode:
@@ -158,20 +201,24 @@ export function preloadAtlas(url: string): void {
 }
 
 /**
- * The DECODED size of an atlas page, or null when this module has no decoded pixels for it (never requested, still
+ * The DECODED size of an atlas page, or null when this module has no pixels for it (never requested, still
  * loading, or failed). A PURE READ — it never calls `getAtlas`, so asking about a page cannot start a fetch: the
  * renderer consults this from a style pass, and a style read that kicks off a 62MB decode would be a trap.
  *
- * The invariant that makes it useful: a non-null answer comes from the bitmap this module is holding alive, so
- * "size known" implies "drawable right now" — the renderer's placeholder-size gate (mirrorRenderer's
- * `placeholderMechanism`) relies on exactly that to know a canvas placeholder can paint synchronously.
+ * The invariant that makes it useful is UNCHANGED by the residency budget: a non-null answer means this module
+ * holds a drawable source for the page, so "size known" still implies "drawable right now" — the renderer's
+ * placeholder-size gate (`atlasPlaceholderMechanism`) relies on exactly that to know a canvas placeholder can
+ * paint synchronously. It reads the size MEMO rather than a bitmap precisely so an eviction cannot break it: the
+ * element is still drawable after the budget takes the owned pixels back, and a size that went null would flip a
+ * 16 MP card sheet from its canvas placeholder to a CSS page crop — the decode storm this whole module exists to
+ * prevent, and a far worse outcome than the residency it was buying back.
  */
 export function atlasPageSize(url: string): { width: number; height: number } | null {
-  const source = atlases.get(url)?.source;
-  if (!source) {
+  const entry = atlases.get(url);
+  if (!entry || entry.size === null || drawSourceOf(entry) === null) {
     return null;
   }
-  return { width: source.width, height: source.height };
+  return { width: entry.size.width, height: entry.size.height };
 }
 
 /**
@@ -195,9 +242,25 @@ export function atlasPageSize(url: string): { width: number; height: number } | 
  * the caller's own idea of the page (the bridge compares against its `<img>`'s `naturalWidth`/`naturalHeight`
  * before using it): the crop rect is in page-pixel coordinates, so cropping from a differently-sized decode
  * would silently cut the wrong sprite rather than fail.
+ *
+ * ONLY OWNED PIXELS ARE OFFERED. Handing back the element instead would satisfy the type and give the caller
+ * nothing: it holds its own `<img>` for the same page, and an element's evictable frame is the exact thing this
+ * accessor exists to route around. So a page nobody has drawn from answers null — and, because the ASK is itself
+ * the evidence that somebody wants to crop this page, it also schedules the promotion that makes the NEXT build's
+ * answer non-null. Still a pure read in the sense the sibling accessor means it: no fetch, and no synchronous
+ * decode inside the caller's frame (the capture is a macrotask — see `requestPromotion`).
  */
 export function atlasDecodedSource(url: string): ImageBitmap | HTMLImageElement | null {
-  return atlases.get(url)?.source ?? null;
+  const entry = atlases.get(url);
+  if (!entry) {
+    return null;
+  }
+  entry.usedAtMs = now();
+  if (entry.bitmap !== null) {
+    return entry.bitmap;
+  }
+  requestPromotion(url, entry);
+  return null;
 }
 
 /**
@@ -218,8 +281,14 @@ export function whenAtlasSettled(url: string, done: () => void): void {
 }
 
 // Draw a sprite region into `ctx` (a region-sized canvas) from its atlas. Returns true when drawn now; false when
-// the atlas isn't decoded yet — in which case `onReady` is invoked once it is (the caller redraws then). The
+// the atlas isn't loaded yet — in which case `onReady` is invoked once it is (the caller redraws then). The
 // canvas is assumed already sized to region.width × region.height and cleared by the caller.
+//
+// THIS IS THE ONE CALL THAT EARNS A PAGE ITS OWNED PIXELS. On the DOM stage it fires for exactly the pages over
+// `ATLAS_PAGE_CROP_MAX_PIXELS` (the card sheets) — every smaller page is CSS page-cropped from the browser's own
+// image cache and has its regions cut by a worker from the WORKER's copy, so nothing on this thread ever draws
+// it. Promotion keyed on the draw therefore spends the budget on the pages that use it, discovered by use rather
+// than by a rule this module would have to keep in sync with the renderer's size gate.
 export function drawAtlasRegion(
   ctx: CanvasRenderingContext2D,
   url: string,
@@ -227,12 +296,14 @@ export function drawAtlasRegion(
   onReady: () => void
 ): boolean {
   const entry = getAtlas(url);
-  if (!entry.source) {
+  const source = drawSourceOf(entry);
+  if (!source) {
     if (!entry.settled) entry.listeners.add(onReady);
     return false;
   }
+  entry.usedAtMs = now();
   ctx.drawImage(
-    entry.source,
+    source,
     region.x,
     region.y,
     region.width,
@@ -242,7 +313,265 @@ export function drawAtlasRegion(
     region.width,
     region.height
   );
+  // AFTER the draw, never before it: the capture can be synchronous on some hosts (gsw measured a 576ms one), and
+  // this frame's sprite must not wait on the next frame's optimisation.
+  requestPromotion(url, entry);
   return true;
+}
+
+// --- THE RESIDENCY BUDGET -------------------------------------------------------------------------------------
+//
+// WHAT WENT WRONG. A player's iPhone rendered the character-select screen and then the tab died, repeatedly —
+// the WebKit content process being killed by iOS, which leaves no trace at all on the client (no unload, no
+// error, no close frame). The census the host keeps for exactly this case (see clientVitals.ts) said what the
+// page was holding: `decodedBytes=208169356 … texCap=0 fxCap=0`. ~205 MB of decoded atlas pixels on the
+// SHIPPING stage, under no budget of any kind.
+//
+// WHERE IT CAME FROM. `getAtlas` used to `createImageBitmap` every page it loaded, and `imagePrefetch` loads the
+// whole atlas list at mount. The eleven pages a stable build ships come to ~205 MB of RGBA — two card sheets at
+// 62.6 + 62.0 MB and nine smaller pages at ~81 MB together — so the figure was resident from the moment of join,
+// before a single card was drawn, and nothing ever released it.
+//
+// WHY THAT IS THE FAULT AND NOT MERELY A BIG NUMBER. An `ImageBitmap` is memory the PAGE owns. The OS cannot
+// reclaim it; on a phone under pressure the only way to get it back is to kill the tab. An `<img>`'s decoded
+// frame is a browser CACHE — the OS reclaims it and the browser lazily re-decodes, which costs CPU rather than
+// the session. So the 205 MB was the least reclaimable thing on the page.
+//
+// WHY NEARLY ALL OF IT WAS DEAD WEIGHT. Every atlas sprite reaches the same steady state: a `<div>` painting a
+// small BAKED REGION BLOB. The two placeholder mechanisms that precede it are chosen by page size alone
+// (`atlasPlaceholderMechanism`): a page at or under 6 MP is CSS page-cropped out of the browser's own image
+// cache, and a page over it mounts a canvas and calls `drawAtlasRegion`. Only the second needs pixels on THIS
+// thread, and only the card sheets are over the gate. The nine smaller pages — ui, relics, potions, intents,
+// powers — are on screen constantly and were never once drawn from here. Their bitmaps were ~81 MB of
+// unreclaimable memory bought for nothing.
+//
+// THE POLICY, which deliberately mirrors the canvas stage's texture bridge rather than inventing one:
+//   * a page loads as an ELEMENT. That is all a load buys, and it is all `imagePrefetch` ever asks for;
+//   * a page is PROMOTED to owned pixels by a real draw (or a crop-source ask), so the budget is spent on use;
+//   * the owned set is capped, least-recently-used first, and an evicted page keeps its element and its size
+//     memo — the worst an eviction can cost is a lazy re-decode inside the browser, never a blank sprite and
+//     never a downgraded placeholder;
+//   * a page used inside `ATLAS_USE_GRACE_MS` is NEVER evicted, whatever the total. This is the bridge's
+//     always-allow-one rule (see `evictOverCap` there): if the live working set alone exceeds the cap then the
+//     cap loses, because evicting a page the next frame immediately redraws converts a memory ceiling into a
+//     re-decode treadmill and makes the screen worse in both currencies at once. `evictedByCap` climbing on an
+//     ordinary screen is how a too-tight cap announces itself.
+
+/**
+ * THE RESIDENT OWNED-PAGE CAP, default 96 MB.
+ *
+ * Sized against the measured pages rather than guessed: the two card sheets are 62.6 and 62.0 MB, so this holds
+ * one of them with ~33 MB of headroom for a second page passing through, and sheds the other once it has been
+ * idle. A run that shows cards from both sheets at once keeps both — the grace rule above makes the cap lose
+ * that argument on purpose — so this bounds CROSS-SCREEN ACCUMULATION rather than a single screen's working set,
+ * exactly as `TEXTURE_RESIDENT_BYTES_DEFAULT` does one stage over.
+ *
+ * `0` is the documented OFF switch, matching the budgets it is modelled on. `?atlasResident=<MB>` overrides it
+ * for one page load; `?atlasOwn=eager` additionally restores the pre-budget mint-on-load behaviour, and the two
+ * together (`?atlasOwn=eager&atlasResident=0`) are the exact off-arm for a device A/B.
+ */
+export const ATLAS_RESIDENT_BYTES_DEFAULT = 96 * 1024 * 1024;
+
+/**
+ * How recently a page must have been drawn to be un-evictable. One second rather than a frame count because this
+ * module has no build clock of its own — it is called from the renderer's style pass, not from a build — and a
+ * second is comfortably longer than the gap between a sprite's successive redraws while it is on screen.
+ */
+const ATLAS_USE_GRACE_MS = 1_000;
+
+/** Live residency counters — `window.__mirrorAtlasResidency`, and the census's `decodedBytes`/`atlasCap`. */
+export interface AtlasResidencyStats {
+  /** Owned (`ImageBitmap`) bytes held right now, and how many pages they are. THE number the census reports. */
+  residentBytes: number;
+  residentPages: number;
+  /** The cap in force (0 = off). Non-zero on BOTH stages, unlike the canvas-only texture/fx caps. */
+  residentCap: number;
+  /** Pages promoted from an element to owned pixels, and how many of those were promoted more than once. */
+  promoted: number;
+  /**
+   * …the subset that had been evicted before. This is the ONLY re-decode signal script can see: when the budget
+   * takes a page back the element remains, and whether the BROWSER then drops and re-decodes that element's
+   * frame is invisible from here. A device trace is what answers that; this counter only says how often the cap
+   * made us re-capture a bitmap we used to have.
+   */
+  rePromoted: number;
+  /** Pages released by the cap. Climbing on an ordinary screen means the cap is too tight for its working set. */
+  evictedByCap: number;
+  /** Promotions refused outright — no `createImageBitmap`, or a capture that rejected. */
+  promoteFailed: number;
+}
+
+export const atlasResidencyStats: AtlasResidencyStats = {
+  residentBytes: 0,
+  residentPages: 0,
+  residentCap: 0,
+  promoted: 0,
+  rePromoted: 0,
+  evictedByCap: 0,
+  promoteFailed: 0
+};
+
+if (typeof window !== "undefined") {
+  (window as unknown as Record<string, unknown>).__mirrorAtlasResidency = atlasResidencyStats;
+}
+
+/** The levers, read ONCE per page load like every other lever in this codebase (see rendererFactory). */
+type AtlasOwnershipMode = "lazy" | "eager";
+
+function readSearchParams(): URLSearchParams | null {
+  if (typeof window === "undefined" || typeof URLSearchParams === "undefined") {
+    return null;
+  }
+  try {
+    return new URLSearchParams(window.location.search);
+  } catch {
+    return null;
+  }
+}
+
+// `?atlasResident=<MB>`: a finite, non-negative number of MEGABYTES (0 = no cap). Junk keeps the shipped default
+// — an unrecognised lever value must never silently remove a viewer's budget.
+function readResidentCap(): number {
+  const raw = readSearchParams()?.get("atlasResident");
+  if (raw === null || raw === undefined || raw === "") {
+    return ATLAS_RESIDENT_BYTES_DEFAULT;
+  }
+  const mb = Number(raw);
+  if (!Number.isFinite(mb) || mb < 0) {
+    return ATLAS_RESIDENT_BYTES_DEFAULT;
+  }
+  return Math.floor(mb * 1024 * 1024);
+}
+
+// `?atlasOwn=eager` restores mint-on-load. Anything else is the shipped `lazy`.
+function readOwnershipMode(): AtlasOwnershipMode {
+  return readSearchParams()?.get("atlasOwn") === "eager" ? "eager" : "lazy";
+}
+
+let residentCapBytes: number = readResidentCap();
+let ownership: AtlasOwnershipMode = readOwnershipMode();
+atlasResidencyStats.residentCap = residentCapBytes;
+
+function ownershipMode(): AtlasOwnershipMode {
+  return ownership;
+}
+
+/** The cap in force, for the census (which must report the budget even on a page holding nothing yet). */
+export function atlasResidentCapBytes(): number {
+  return residentCapBytes;
+}
+
+function bytesOf(entry: AtlasEntry): number {
+  return entry.size === null ? 0 : entry.size.width * entry.size.height * 4;
+}
+
+/**
+ * Where a promotion's capture runs. A MACROTASK, deliberately, and for the same reason the texture bridge
+ * schedules its own: `createImageBitmap` is not guaranteed asynchronous, so a capture taken inline would land in
+ * the animation frame of the sprite that triggered it.
+ */
+function schedulePromotion(task: () => void): void {
+  if (typeof setTimeout === "function") {
+    setTimeout(task, 0);
+    return;
+  }
+  task();
+}
+
+/** Mint owned pixels for a page that has earned them. Idempotent, and a no-op for a page that cannot be captured. */
+function requestPromotion(url: string, entry: AtlasEntry): void {
+  if (entry.bitmap !== null || entry.promoting || entry.promoteFailed || entry.element === null) {
+    return;
+  }
+  if (typeof createImageBitmap !== "function") {
+    // No capture path (an older WebKit, a test shell). The element stays the draw source forever, which is
+    // exactly the behaviour that predates this module's bitmaps — correct, just not eviction-proof.
+    entry.promoteFailed = true;
+    atlasResidencyStats.promoteFailed += 1;
+    return;
+  }
+  entry.promoting = true;
+  schedulePromotion(() => {
+    const element = entry.element;
+    if (element === null || entry.bitmap !== null || atlases.get(url) !== entry) {
+      entry.promoting = false;
+      return;
+    }
+    let capture: Promise<ImageBitmap>;
+    try {
+      capture = createImageBitmap(element);
+    } catch {
+      entry.promoting = false;
+      entry.promoteFailed = true;
+      atlasResidencyStats.promoteFailed += 1;
+      return;
+    }
+    capture.then(
+      (bitmap) => {
+        entry.promoting = false;
+        // Raced by a second capture, or by a reset that dropped this entry: close the loser rather than leak it.
+        if (entry.bitmap !== null || atlases.get(url) !== entry) {
+          closeBitmap(bitmap);
+          return;
+        }
+        entry.bitmap = bitmap;
+        atlasResidencyStats.residentPages += 1;
+        atlasResidencyStats.residentBytes += bytesOf(entry);
+        atlasResidencyStats.promoted += 1;
+        if (entry.evicted) {
+          atlasResidencyStats.rePromoted += 1;
+        }
+        evictOverCap();
+      },
+      () => {
+        entry.promoting = false;
+        entry.promoteFailed = true;
+        atlasResidencyStats.promoteFailed += 1;
+      }
+    );
+  });
+}
+
+function closeBitmap(bitmap: ImageBitmap): void {
+  if (typeof (bitmap as { close?: () => void }).close === "function") {
+    bitmap.close();
+  }
+}
+
+/** Take a page's owned pixels back. The element and the size memo stay, so nothing it answers goes null. */
+function releaseOwnedPixels(entry: AtlasEntry): void {
+  const bitmap = entry.bitmap;
+  if (bitmap === null) {
+    return;
+  }
+  entry.bitmap = null;
+  entry.evicted = true;
+  atlasResidencyStats.residentPages -= 1;
+  atlasResidencyStats.residentBytes -= bytesOf(entry);
+  closeBitmap(bitmap);
+}
+
+/** Release owned pages, least-recently-drawn first, until the total is back under the cap. */
+function evictOverCap(): void {
+  if (residentCapBytes <= 0 || atlasResidencyStats.residentBytes <= residentCapBytes) {
+    return;
+  }
+  const at = now();
+  const candidates: AtlasEntry[] = [];
+  for (const entry of atlases.values()) {
+    // Owned, and not part of what the page is drawing right now — see the always-allow-one rule above.
+    if (entry.bitmap !== null && at - entry.usedAtMs > ATLAS_USE_GRACE_MS) {
+      candidates.push(entry);
+    }
+  }
+  candidates.sort((a, b) => a.usedAtMs - b.usedAtMs);
+  for (const entry of candidates) {
+    if (atlasResidencyStats.residentBytes <= residentCapBytes) {
+      return;
+    }
+    releaseOwnedPixels(entry);
+    atlasResidencyStats.evictedByCap += 1;
+  }
 }
 
 // --- region blobs ---------------------------------------------------------------------------------------------
@@ -1035,20 +1364,26 @@ function startRegionBake(key: string, url: string, region: AtlasRegion): void {
   }
   regionBaking.add(key);
   const entry = getAtlas(url);
-  if (entry.source) {
-    enqueueBake({ key, url, region, source: entry.source, strip: null });
+  // The INLINE fallback's draw source, resolved when the job is queued. It is whatever this page has — owned
+  // pixels if the budget is holding them, otherwise the element, whose `drawImage` is exactly as correct and
+  // merely less eviction-proof. A bake deliberately does NOT promote: the pool does the cropping from its own
+  // copy of the page, so a bake is not evidence that THIS thread needs the pixels.
+  const source = drawSourceOf(entry);
+  if (source) {
+    enqueueBake({ key, url, region, source, strip: null });
     return;
   }
   if (entry.settled) {
     failRegion(key); // the atlas itself failed to load — nothing to cut a region out of
     return;
   }
-  // Waiting on the MAIN THREAD's decode even when the pool will do the work: a worker's atlas is its own copy, so
+  // Waiting on the MAIN THREAD's load even when the pool will do the work: a worker's atlas is its own copy, so
   // a page the main thread could not load (404, tainted, decode failure) is one the worker has no business
   // fetching either — and this is also what keeps the inline fallback below always able to draw.
   entry.listeners.add(() => {
-    if (entry.source) {
-      enqueueBake({ key, url, region, source: entry.source, strip: null });
+    const settledSource = drawSourceOf(entry);
+    if (settledSource) {
+      enqueueBake({ key, url, region, source: settledSource, strip: null });
     } else {
       failRegion(key);
     }
@@ -1322,7 +1657,17 @@ export function notifyAtlasRegionIds(ids: ReadonlySet<string>): void {
 
 /** TEST-ONLY: drop the atlas cache so a test starts clean. */
 export function __resetAtlasCacheForTest(): void {
+  for (const entry of atlases.values()) {
+    releaseOwnedPixels(entry); // closes the bitmaps AND rewinds the byte/page counters
+  }
   atlases.clear();
+  atlasResidencyStats.residentBytes = 0;
+  atlasResidencyStats.residentPages = 0;
+  atlasResidencyStats.promoted = 0;
+  atlasResidencyStats.rePromoted = 0;
+  atlasResidencyStats.evictedByCap = 0;
+  atlasResidencyStats.promoteFailed = 0;
+  __setAtlasResidencyForTest(undefined, undefined);
   for (const blob of regionBlobs.values()) {
     if (typeof URL !== "undefined" && typeof URL.revokeObjectURL === "function") {
       URL.revokeObjectURL(blob);
@@ -1378,16 +1723,58 @@ export function __resetAtlasCacheForTest(): void {
  */
 export function __setAtlasPageSizeForTest(url: string, size: { width: number; height: number } | null): void {
   if (size === null) {
+    const existing = atlases.get(url);
+    if (existing) releaseOwnedPixels(existing);
     atlases.delete(url);
     return;
   }
-  const entry = atlases.get(url) ?? { source: null, settled: false, listeners: new Set<() => void>() };
-  entry.source = { width: size.width, height: size.height } as unknown as AtlasSource;
+  const entry: AtlasEntry = atlases.get(url) ?? {
+    element: null,
+    bitmap: null,
+    size: null,
+    settled: false,
+    listeners: new Set<() => void>(),
+    usedAtMs: 0,
+    promoting: false,
+    promoteFailed: false,
+    evicted: false
+  };
+  entry.size = { width: size.width, height: size.height };
+  // A stand-in for the loaded ELEMENT, carrying only what a draw source has to satisfy the type — `atlasPageSize`
+  // reads the memo above, and nothing in jsdom ever rasterises this.
+  entry.element = (entry.element ?? { naturalWidth: size.width, naturalHeight: size.height }) as HTMLImageElement;
   entry.settled = true;
   atlases.set(url, entry);
   const waiting = [...entry.listeners];
   entry.listeners.clear();
   for (const cb of waiting) cb();
+}
+
+/** TEST-ONLY: pin the residency levers without a URL (`undefined` restores the values read at module load). */
+export function __setAtlasResidencyForTest(
+  cap: number | undefined,
+  mode: AtlasOwnershipMode | undefined = undefined
+): void {
+  residentCapBytes = cap === undefined ? readResidentCap() : cap;
+  ownership = mode === undefined ? readOwnershipMode() : mode;
+  atlasResidencyStats.residentCap = residentCapBytes;
+}
+
+/** TEST-ONLY: the residency tuning, so a spec asserts the real constants rather than copies of them. */
+export const __atlasResidencyTuningForTest = {
+  ATLAS_RESIDENT_BYTES_DEFAULT,
+  ATLAS_USE_GRACE_MS
+};
+
+/** TEST-ONLY: is this page holding OWNED pixels right now? (`atlasDecodedSource` would promote on a miss.) */
+export function __atlasOwnsPixelsForTest(url: string): boolean {
+  return atlases.get(url)?.bitmap != null;
+}
+
+/** TEST-ONLY: back-date a page's last use so the grace window has elapsed without a fake clock. */
+export function __ageAtlasUseForTest(url: string, byMs: number): void {
+  const entry = atlases.get(url);
+  if (entry) entry.usedAtMs -= byMs;
 }
 
 /** TEST-ONLY: the bake tuning constants, so a spec asserts the real thresholds rather than copies of them. */

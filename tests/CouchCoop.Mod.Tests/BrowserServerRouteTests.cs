@@ -2762,6 +2762,7 @@ internal sealed class BrowserServerRouteTests
             canvasPx = 41287680,
             decodedBytes = 214958080,
             decodedPages = 62,
+            atlasCap = 100663296,
             texBytes = 0,
             fxBytes = 0,
             shaderMode = "static",
