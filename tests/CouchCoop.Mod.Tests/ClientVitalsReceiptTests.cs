@@ -17,6 +17,7 @@ internal static class ClientVitalsReceiptTests
       "dpr": 3.49, "vw": 390, "vh": 844,
       "els": 1204, "canvases": 7, "canvasPx": 18432000,
       "decodedBytes": 214958080, "decodedPages": 62,
+      "atlasCap": 100663296,
       "texBytes": 0, "fxBytes": 0,
       "shaderMode": "static", "particleMode": "off",
       "jsHeapBytes": 0
@@ -38,6 +39,10 @@ internal static class ClientVitalsReceiptTests
         Assert(line.Contains("canvasPx=18432000", StringComparison.Ordinal), $"canvas pixels (actual: {line})");
         Assert(line.Contains("decodedBytes=214958080", StringComparison.Ordinal), $"decoded bytes (actual: {line})");
         Assert(line.Contains("decodedPages=62", StringComparison.Ordinal), $"decoded pages (actual: {line})");
+        // The pair the iPhone report could not form. `decodedBytes` alone cannot distinguish a page whose working
+        // set honestly needs that much from one under no budget at all; the cap beside it is what settles that,
+        // and unlike the two canvas caps below it is non-zero on the backend every player gets.
+        Assert(line.Contains("atlasCap=100663296", StringComparison.Ordinal), $"atlas residency cap (actual: {line})");
         Assert(line.Contains("texCap=0", StringComparison.Ordinal), $"texture cap (actual: {line})");
         Assert(line.Contains("fxCap=0", StringComparison.Ordinal), $"fx cap (actual: {line})");
         Assert(line.Contains("shaders=static", StringComparison.Ordinal), $"shader mode (actual: {line})");
@@ -50,10 +55,18 @@ internal static class ClientVitalsReceiptTests
         Assert(large is not null && large.Contains("decodedBytes=999000000000", StringComparison.Ordinal),
             $"large byte counts stay in full decimal (actual: {large ?? "null"})");
 
+        // `?atlasResident=0` is the device A/B's off-arm, and its report has to read as "this page was unbounded,
+        // and this is what unbounded came to" rather than as a census that failed to take a reading.
+        var uncapped = Render(Valid.Replace("\"atlasCap\": 100663296", "\"atlasCap\": 0", StringComparison.Ordinal));
+        Assert(uncapped is not null && uncapped.Contains("atlasCap=0", StringComparison.Ordinal),
+            $"a zero cap renders as a measurement (actual: {uncapped ?? "null"})");
+
         // REFUSED WHOLE, never partially rendered. A census missing a field or carrying one out of range is not a
         // measurement, and half of one would read like a measurement — which is the one thing this line must not
         // do, because a person who does not own the device is going to trust these numbers.
         Assert(Render(Valid.Replace("\"els\": 1204,", "", StringComparison.Ordinal)) is null, "a missing field refuses the census");
+        Assert(Render(Valid.Replace("\"atlasCap\": 100663296,", "", StringComparison.Ordinal)) is null, "a census without the atlas cap refuses");
+        Assert(Render(Valid.Replace("\"atlasCap\": 100663296", "\"atlasCap\": 1e30", StringComparison.Ordinal)) is null, "an atlas cap past its ceiling refuses the census");
         Assert(Render(Valid.Replace("\"dpr\": 3.49", "\"dpr\": -1", StringComparison.Ordinal)) is null, "a negative number refuses the census");
         Assert(Render(Valid.Replace("\"dpr\": 3.49", "\"dpr\": 64", StringComparison.Ordinal)) is null, "a dpr past its ceiling refuses the census");
         Assert(Render(Valid.Replace("\"canvasPx\": 18432000", "\"canvasPx\": 1e30", StringComparison.Ordinal)) is null, "a pixel total past its ceiling refuses the census");

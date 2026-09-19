@@ -39,6 +39,7 @@ const vitalsSources: ClientVitalsSources = {
   requestedStage: () => "dom",
   activeStage: () => "dom",
   canvasResidency: () => null,
+  atlasResidency: () => ({ bytes: 0, pages: 0, cap: 96 * 1024 * 1024 }),
   effectModes: () => ({ shaderMode: "static", particleMode: "static" }),
   doc: () => null,
   view: () => null

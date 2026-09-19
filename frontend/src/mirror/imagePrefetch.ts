@@ -6,6 +6,13 @@
 // decode happens, never HOW MUCH decoding happens — a page is loaded once per session either way, `getAtlas` is
 // idempotent, and a page the demand path grabbed first is a plain map hit here.
 //
+// WHAT WARMING A PAGE COSTS, since Sep-18. A warm loads the page and records its size; it does NOT mint an
+// `ImageBitmap` for it any more. It used to, and because this chain warms the whole list at mount that pinned
+// ~205 MB of page-owned pixels from the moment of join — on a phone, the least reclaimable thing on the page, and
+// the measured cause of iOS killing the web view on character select. Ownership is now earned by a real draw and
+// capped; see THE RESIDENCY BUDGET in atlasBaker. Nothing about this chain's job changed: the HTTP cache and the
+// size memo the placeholder gate reads are exactly what it was warming for.
+//
 // WHY IT MATTERS ANYWAY. The mirror's atlas placeholder is chosen by whether the page is DECODED yet
 // (mirrorRenderer's `placeholderMechanism` asks `atlasPageSize`), and the first card draw of a run is exactly the
 // moment a cold ~16 MP card atlas is asked for — the worst possible time to pay for it. Doing it while the client
@@ -131,21 +138,25 @@ export interface MirrorImagePrefetchStats {
   /** Wall from the `prefetchMirrorImages()` call to the last step, idle waiting included (that IS the latency). */
   ms: number;
   /**
-   * DECODED BYTES this chain is holding alive, `width * height * 4` summed over the atlases that settled with
+   * The PIXEL SIZE of what this chain walked, `width * height * 4` summed over the atlases that settled with
    * pixels. Published because the cost was an ESTIMATE for a whole round and estimates do not survive contact
    * with a device.
    *
-   * WHAT IT IS: `atlasBaker` decodes each atlas once into an `ImageBitmap` held in a module-scope Map that is
-   * never evicted, so this is a resident figure for the life of the page, not a transient. Measured against it
-   * on the host (peak renderer VmRSS, `?atlasPrefetch=off` vs default, three pairs plus a standalone ABBA
-   * probe): 222-292 MB. RGBA8 is the right multiplier for a decoded bitmap whatever the source PNG's channel
-   * count, so this is the pixel cost, not the download.
+   * READ IT AS A PRICE LIST, NOT AS RESIDENCY — and that distinction cost a round (Sep-18). It is a CUMULATIVE
+   * counter over this chain's own 12-entry plan: it is written once per page as the walk passes it, it can never
+   * fall, and nothing outside the walk can make it rise. A crash report quoting it as "what the page was
+   * holding" is quoting the wrong number, and a session that showed it flat across a screen change was never
+   * capable of showing anything else. The live figure is `atlasBaker`'s `atlasResidencyStats.residentBytes`,
+   * which is what the client-vitals census reports.
    *
-   * WHAT IT IS NOT: an amount that would be RECLAIMED by turning the prefetch off. The canvas stage never reads
-   * `atlasBaker` at all (the texture bridge keeps its own images), but the DOM stage does, and on either stage
-   * a page the demand path would have fetched later still gets decoded — later, and off the HTTP cache the
-   * prefetch warmed. Measured cost of not warming it: the combat replay's last texture upload lands a median
-   * 1501 ms later. That trade is why this is a counter and not a default change.
+   * WHAT IT IS NOT, part two: an amount that would be RECLAIMED by turning the prefetch off. The chain changes
+   * WHEN a page is fetched, never whether — the demand path loads the same pages later, off a colder cache.
+   * Measured cost of not warming it: the combat replay's last texture upload lands a median 1501 ms later.
+   *
+   * WHAT CHANGED UNDER IT: warming a page no longer PINS it. `preloadAtlas` now leaves the page as an `<img>`
+   * whose decoded frame the browser may reclaim, and only a real draw promotes it to owned pixels under
+   * `ATLAS_RESIDENT_BYTES_DEFAULT`. The host-side VmRSS pairs quoted in earlier rounds (222-292 MB for this
+   * list) were measured before that and describe the old ownership rule.
    */
   decodedBytes: number;
   /** Atlases counted into `decodedBytes` (settled WITH pixels), so the byte figure has a denominator. */
@@ -187,11 +198,23 @@ let prefetchParamOverride: string | null | undefined;
 // the arrows still warm). Same shape as atlasBakePool's readWorkerCountParam — junk keeps the shipped default,
 // and 0 is a MEANINGFUL value rather than a half-disabled feature. Read per call, not at module load, so the test
 // seam works and a second mirror view sees the current URL.
+//
+// THE READ WAS MISSING (Sep-18). This returned `null` unconditionally, so the lever every comment in this file
+// documents — and every device measurement quoted below was taken with — has been inert since the first public
+// release. Restored rather than deleted: it is the cheapest A/B a phone session has for this chain's cost, and
+// the iPhone round needed exactly it.
 function readPrefetchParam(): string | null {
   if (prefetchParamOverride !== undefined) {
     return prefetchParamOverride;
   }
-  return null;
+  if (typeof window === "undefined" || typeof URLSearchParams === "undefined") {
+    return null;
+  }
+  try {
+    return new URLSearchParams(window.location.search).get("atlasPrefetch");
+  } catch {
+    return null;
+  }
 }
 
 /**

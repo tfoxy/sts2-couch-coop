@@ -461,13 +461,58 @@ describe("prefetchMirrorImages and the host's game build", () => {
   });
 });
 
-// R7 W1 fix (b) — DECODED BYTES. The prefetch's cost was an estimate for a whole round, and estimates do not
-// survive contact with a device. `atlasBaker` decodes each atlas once into an `ImageBitmap` held in a module-scope
-// Map that is never evicted, so what this counts is RESIDENT for the life of the page. The host measurement it
-// was validated against: peak renderer VmRSS, `?atlasPrefetch=off` against the default, three pairs plus a
-// standalone ABBA probe, 222-292 MB. The default is deliberately UNCHANGED — turning the prefetch off costs the
-// combat replay a median 1501 ms on its last texture upload — so this is the number that makes the trade
-// arguable rather than a change that assumes the answer.
+// THE LEVER, restored Sep-18. `readPrefetchParam` returned `null` unconditionally, so `?atlasPrefetch` — which
+// every comment in the module documents, and which the device legs quoted below were supposedly measured with —
+// had been inert since the first public release. Nothing caught it because every spec in this file pins the
+// override instead of the URL, so these two read the real one.
+describe("the ?atlasPrefetch URL lever", () => {
+  function withSearch(search: string, body: () => void): void {
+    const before = `${window.location.pathname}${window.location.search}`;
+    window.history.replaceState({}, "", `${window.location.pathname}${search}`);
+    __setAtlasPrefetchParamForTest(undefined); // undefined = read the real URL
+    try {
+      body();
+    } finally {
+      window.history.replaceState({}, "", before);
+    }
+  }
+
+  it("reads ?atlasPrefetch=off from the page URL and walks nothing", () => {
+    withSearch("?atlasPrefetch=off", () => {
+      prefetchMirrorImages();
+      drain();
+
+      expect(preloadedUrls()).toEqual([]);
+      expect(stats().decodedPages).toBe(0);
+    });
+  });
+
+  it("reads ?atlasPrefetch=<n> from the page URL and truncates the walk", () => {
+    withSearch("?atlasPrefetch=2", () => {
+      prefetchMirrorImages();
+      drain();
+
+      expect(preloadedUrls()).toEqual(ORDER.slice(0, 2));
+    });
+  });
+
+  it("keeps the shipped default when the value is junk", () => {
+    // An unrecognised lever value must never silently disable the chain for a viewer who mistyped it.
+    withSearch("?atlasPrefetch=banana", () => {
+      prefetchMirrorImages();
+      drain();
+
+      expect(preloadedUrls()).toEqual(ORDER);
+    });
+  });
+});
+
+// R7 W1 fix (b) — THE PRICE LIST. The prefetch's cost was an estimate for a whole round, and estimates do not
+// survive contact with a device, so the chain counts the pixel size of what it walked. Read it as a price list
+// and NOT as residency (Sep-18): it is cumulative over this chain's own plan, it can never fall, and nothing
+// outside the walk can move it — which is why the iPhone round could not use it to test whether anything
+// accumulated. Live residency lives in `atlasBaker.atlasResidencyStats` and is what the census reports. Warming
+// a page no longer pins its pixels either; the host VmRSS pairs of 222-292 MB describe the old ownership rule.
 describe("prefetch decoded-byte accounting", () => {
   it("counts width * height * 4 per decoded page, and only decoded ones", () => {
     __setAtlasPrefetchParamForTest("3");

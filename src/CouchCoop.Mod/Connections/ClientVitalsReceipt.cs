@@ -72,6 +72,7 @@ public static class ClientVitalsReceipt
             || !TryNumber(root, "canvasPx", MaxPixels, out var canvasPixels)
             || !TryNumber(root, "decodedBytes", MaxBytes, out var decodedBytes)
             || !TryNumber(root, "decodedPages", MaxCanvases, out var decodedPages)
+            || !TryNumber(root, "atlasCap", MaxBytes, out var atlasCapBytes)
             || !TryNumber(root, "texBytes", MaxBytes, out var textureCapBytes)
             || !TryNumber(root, "fxBytes", MaxBytes, out var fxCapBytes)
             || !TryNumber(root, "jsHeapBytes", MaxBytes, out var jsHeapBytes))
@@ -90,10 +91,13 @@ public static class ClientVitalsReceipt
         // when it is exceeded, so the PIXEL total is the number that matters and the count is its denominator.
         text.Append(" canvases=").Append(Whole(canvases));
         text.Append(" canvasPx=").Append(Whole(canvasPixels));
+        // Atlas pixels the page OWNED at this instant, and the budget bounding them. The pair is the point: a
+        // large decodedBytes beside atlasCap=0 is an unbounded page, and the same figure beside a non-zero cap is
+        // a page whose working set genuinely needs that much — two very different reports.
         text.Append(" decodedBytes=").Append(Whole(decodedBytes));
         text.Append(" decodedPages=").Append(Whole(decodedPages));
-        // Zero on the DOM backend because it HAS no residency budget. That reads as a measurement, not a gap:
-        // a large decodedBytes beside texCap=0 is describing an unbounded page.
+        text.Append(" atlasCap=").Append(Whole(atlasCapBytes));
+        // These two are zero on the DOM backend because they bound the CANVAS backend's own texture population.
         text.Append(" texCap=").Append(Whole(textureCapBytes));
         text.Append(" fxCap=").Append(Whole(fxCapBytes));
         text.Append(" shaders=").Append(shaderMode);
