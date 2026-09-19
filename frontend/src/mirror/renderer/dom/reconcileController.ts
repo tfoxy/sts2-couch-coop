@@ -80,6 +80,7 @@ export interface ReconcileController {
   readonly geometryEpoch: () => number;
   readonly geometryDirty: () => boolean;
   markGeomDirty(): void;
+  markGeomRebase(id: string): void;
   noteRevealBuilt(): void;
   reconcile(
     state: MirrorState,
@@ -116,6 +117,26 @@ export function createReconcileController(
   let revealBuiltThisWalk = false;
   let subtreeDirty: Set<string> | null = null;
   const pendingTextureDirty = new Set<string>();
+  /**
+   * Subtrees that must be RE-BASED on the next walk because a transform pin over them has ended.
+   *
+   * While an ancestor is transform-tween pinned the walk skips its descendants wholesale (nodeWalker's
+   * `skipForPin`) and they keep the parent global they last cached. When the pin ends nothing offers them a
+   * context again, and if the node's own stream then goes quiet the walk skips the ancestor too
+   * (`lastNode === node`, ctx unchanged, not in `subtreeDirty`) — so the descendants keep a pose from the middle
+   * of the animation for as long as the scene stays still.
+   *
+   * That is not cosmetic: `interactiveRects()` composes each hit box out of its record's cached parent global,
+   * so the stale ones are the boxes the mirror hit-tests against. Measured live on the touch fixture — one hover
+   * in ten left a hand card's hit box 140-160 design px above the card that the game's own poses, the DOM and
+   * the rendered frame all agreed was at rest, and it never recovered; every pointer resolved through it missed
+   * the card. `markGeomDirty()` cannot fix this on its own: it invalidates the caches that key on the epoch,
+   * while the walk's skip gate is independent of it.
+   *
+   * This is the geometry twin of the PIN PAINT REPAIR in nodeWalker, which fixes exactly the same "and then
+   * nothing dirties this subtree again" hazard for inherited tint.
+   */
+  const pendingGeomRebase = new Set<string>();
   let textureDirtySelf: Set<string> | null = null;
   const changedParents = new Set<string>();
   const orderDirtyParents = new Set<string>();
@@ -174,6 +195,16 @@ export function createReconcileController(
       if (!state.nodes.has(id)) continue;
       (textureDirtySelf ??= new Set()).add(id);
       p.stats.textureRestyles++;
+      let current: string | null = id;
+      while (current != null && !dirty.has(current)) {
+        dirty.add(current);
+        current = state.nodes.get(current)?.parentId ?? null;
+      }
+    }
+    // A released pin only needs its OWN node walked: once the walk visits it, the fresh context it hands down
+    // fails its children's `ctxUnchanged` compare wherever they really are stale, and they re-base themselves.
+    for (const id of pendingGeomRebase) {
+      if (!state.nodes.has(id)) continue;
       let current: string | null = id;
       while (current != null && !dirty.has(current)) {
         dirty.add(current);
@@ -397,6 +428,7 @@ export function createReconcileController(
     p.stats.spinePromotedNodes = p.spineTimeline.promotedCount;
     state.changedIds.clear();
     pendingTextureDirty.clear();
+    pendingGeomRebase.clear();
     textureDirtySelf = null;
     state.sceneRewrite = false;
     p.svgDefs.syncHsvDefs();
@@ -450,6 +482,10 @@ export function createReconcileController(
     geometryEpoch: () => geometryEpoch,
     geometryDirty: () => geomDirty,
     markGeomDirty,
+    /** Re-base this record's subtree on the next walk — see `pendingGeomRebase`. */
+    markGeomRebase(id: string) {
+      pendingGeomRebase.add(id);
+    },
     noteRevealBuilt() {
       revealBuiltThisWalk = true;
     },

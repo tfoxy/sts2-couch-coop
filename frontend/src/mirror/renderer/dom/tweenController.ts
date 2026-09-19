@@ -48,6 +48,11 @@ export interface TweenControllerPorts {
   queueDeraster: (el: HTMLElement) => void;
   derasterNeeded: (record: RenderRecord) => boolean;
   markGeometryDirty: () => void;
+  /**
+   * Force the next walk to visit this record again, so a subtree the pin made the walk skip re-bases on the
+   * pose the node really has. See `pendingGeomRebase` in reconcileController for what goes wrong without it.
+   */
+  markGeomRebase: (id: string) => void;
   noteReparentDrop: () => void;
   noteHintRebased: () => void;
   beginTransformArmBatch: () => void;
@@ -519,6 +524,15 @@ export function createTweenController(
         if (r.el && p.derasterNeeded(r)) p.queueDeraster(r.el);
         r.tweenPreArmLinear = null;
         p.markGeometryDirty();
+        // A SETTLE IS THE ONE PIN-END THAT CAN STRAND WHAT IT COVERED. For as long as the pin lasted the walk
+        // skipped this node's descendants wholesale (nodeWalker's `skipForPin`) and they kept the parent global
+        // they last cached; this path ends the pin from a timer, outside any walk, so nothing offers them a
+        // context again — and if the node's own stream has gone quiet, the next walk skips the node too and they
+        // keep an animation-time pose for good. `markGeometryDirty` above cannot cover it: it invalidates the
+        // caches that key on the epoch, not the walk's skip gate. The other two pin-ends are safe without this:
+        // `releaseTransform` is only reached from `pin()` DURING a walk that is already re-visiting the node,
+        // and `resetTimedState` runs while the record itself is being rebuilt.
+        p.markGeomRebase(r.id);
         changed = true;
       }
       if (r.tweenOpacityUntil && now >= r.tweenOpacityUntil) {

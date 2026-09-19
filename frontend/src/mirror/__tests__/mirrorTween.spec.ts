@@ -1380,6 +1380,60 @@ describe("mirror declarative tween replay (Part C, Stage 1)", () => {
     });
 
   });
+
+  // WHAT A FINISHED PIN LEAVES BEHIND — the hit surface under it.
+  //
+  // While a node is transform-tween pinned the walk skips its whole subtree (nodeWalker's `skipForPin`): the
+  // descendants ride the pinned ELEMENT through the nested DOM, so re-basing them against the streamed transform
+  // mid-animation would decouple them. The cost is that they keep the parent global they last cached — and when the
+  // pin ENDS, nothing offers them a context again. If the node's own stream then goes quiet the walk skips it too
+  // (same node object, unchanged context, not dirty), so the descendants keep that pose indefinitely.
+  //
+  // That is not cosmetic. `interactiveRects()` composes every hit box out of its record's cached parent global, so
+  // a stale one is the box the mirror hit-tests against. Measured live on the touch fixture (2026-09-19): 9 of 30
+  // hover cycles left a hand card's hit box at a pose the game's own poses, the DOM and the rendered frame all
+  // disagreed with — up to 160 design px above the card — and several never recovered. Every pointer resolved
+  // through such a box missed the card, which is what made three separate live checks intermittently red.
+  //
+  // `markGeometryDirty()` cannot cover this: it invalidates the caches that key on the geometry epoch, while the
+  // walk's skip gate is independent of it. The pin's end has to ask for the node itself to be walked again.
+  it("re-bases the hit boxes under a pin once the tween ends, even if the target's stream has gone quiet", () => {
+    const { renderer } = harness();
+    const state = createMirrorState();
+    // A positioner with a mouse-visible child: the hand holder / `Hitbox` shape, which is where this was measured.
+    full(
+      state,
+      [
+        { ...node("holder", null, 0, 100), mouseFilter: 2 },
+        { ...node("hitbox", "holder", 0, 0), mouseFilter: 0 }
+      ],
+      ["holder", "hitbox"]
+    );
+    renderer.reconcile(state);
+    const hitY = () => renderer.interactiveRects().find((r) => r.id === "hitbox")?.transform[5];
+    expect(hitY()).toBe(100);
+
+    // A tween takes the holder to y=500 — the element is pinned to the endpoint for 200ms.
+    clock = 10;
+    hintsOnly(state, [transformHint("holder", [1, 0, 0, 1, 0, 500], 200)]);
+    renderer.reconcile(state);
+
+    // Mid-flight the producer streams the holder's own pose to the same place (the game's hand does exactly this
+    // as a card returns to rest). The pin swallows it and the subtree is skipped, so the hitbox is now stale.
+    clock = 100;
+    volatile(state, [node("holder", null, 0, 500)]);
+    renderer.reconcile(state);
+
+    // The tween runs out…
+    flushRaf(260);
+
+    // …and the next delta touches something else entirely, which is exactly the case that used to strand it: the
+    // holder is unchanged, so the walk has no reason of its own to visit it.
+    volatile(state, [node("bystander", null, 700, 700)]);
+    renderer.reconcile(state);
+
+    expect(hitY()).toBe(500);
+  });
 });
 
 // R10-PERF5 WS-1 — dormancy interaction, from this file's angle. `applyTweenHints` runs AFTER the walk, so a hint
