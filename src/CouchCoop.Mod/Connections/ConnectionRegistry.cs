@@ -404,11 +404,31 @@ public sealed class ConnectionRegistry
         }
     }
 
+    /// <summary>
+    /// Hosting stopped — the host went back to the main menu. Resets every LIVE connection to a fresh
+    /// pre-attempt state, because nothing they describe exists any more.
+    /// </summary>
+    /// <remarks>
+    /// <b>The retained failure reports deliberately SURVIVE this.</b> They used to be cleared here with
+    /// everything else, and that quietly destroyed the only copy of the evidence at the exact moment a player
+    /// goes looking for it: the natural response to "my phone dropped out" is to back out to the menu and try
+    /// again, which is precisely what calls this. The report exists to be read AFTER the attempt it describes,
+    /// so expiring it when the session ends defeats the feature — a viewer whose browser was killed could not
+    /// Copy the evidence that says why.
+    /// <para>
+    /// Keeping them costs no new bookkeeping: an archived issue is an independent snapshot (see
+    /// <c>ArchiveCurrent</c> / <c>CopyForIssue</c>), <c>Snapshot</c> already renders one as a standalone row
+    /// once no live client points at it, and the set is already bounded by <c>MaximumRetainedFailures</c> with
+    /// its own overflow counter. Clearing the live entries' <c>IssueId</c> below is what converts each one from
+    /// "this connection's current problem" into that standalone history row.
+    /// </para>
+    /// Found the hard way on 2026-09-18: a reproduced iPhone failure was diagnosed, the host returned to the
+    /// menu, and the census naming the cause went with it.
+    /// </remarks>
     public void HostingEnded()
     {
         lock (_gate)
         {
-            _issues.Clear(); _issueOrder.Clear(); _overflow = 0;
             foreach (var entry in _clients.Values)
             {
                 entry.Issue = null; entry.IssueId = null; entry.Logs.Clear(); entry.Facts.Clear(); entry.Timeline.Clear();
