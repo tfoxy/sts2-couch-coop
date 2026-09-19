@@ -1,6 +1,6 @@
 ---
 name: touch-input-qa
-description: Run and interpret the live touch/pointer harness (H1-H14) for mirror input work — inputCapture, pointerMap, raiseInverse, viewScaleInverse, confirmTap, hand raise, targeting drag, landing parity. Mandatory before landing any pointer-input change.
+description: Run and interpret the live touch/pointer harness (H1-H17) for mirror input work — inputCapture, pointerMap, raiseInverse, viewScaleInverse, confirmTap, hand raise, targeting drag, landing parity, reward focus, shop removal. Mandatory before landing any pointer-input change.
 ---
 
 # Live pointer-input harness
@@ -47,9 +47,21 @@ A past incident scripted blind input into a live game session.
   ignores the file once the writing pid is gone.
 - **The 2400-wide leg is not optional.** Widescreen stretch is on by default and the near-miss, spread and squeeze
   machinery only runs above design width 1920. A 16:9-only run proves nothing about any of it.
-- **Run the complete H1-H14 set across every selected current combination.** The harness gates every selected
-  combination; H15/H16 remain part of the full regression run.
-- **A single green H10 proves nothing** — it is non-deterministic. Re-run it.
+- **Run the complete H1-H17 set across every selected current combination.** The harness gates every selected
+  combination.
+- **A single verdict from this harness proves nothing — of either sign.** That is the round-of-2026-09-19
+  finding, and it applies to more than H10: H3 inverted between the two stage-fit arms on a repeat run, and H1
+  moved between combos run to run. Two consecutive runs per arm is the floor for any claim, and a check that
+  disagrees with itself across runs is a broken check whatever the product does.
+- **Check the instrument before you believe a failure.** `__mirrorInteractiveRects()` — which every sample point
+  is computed from — composes hit boxes from a cached parent global and can serve one the scene has moved off.
+  It is what made H1, H3 and H6 red at the same time. The harness now measures each rect against the box the
+  browser drew and refuses to sample through a disagreement; a failure note that says "hit surface still
+  disagreed with the game's pose" is the instrument talking, not the game.
+- **`scripts/probe-hand-hitbox-live.mjs` is the oracle for any expectation about a card's edge.** It maps where
+  the game actually accepts a pointer, by hovering (never pressing) a grid across and around a card, against an
+  instance the harness left up with `--observe --keep`. Use it before changing what a check expects — H6 spent
+  months asserting that the game focuses a card from 21px outside its hit box, which it has never done.
 - **H11, H12 and H13 are three different questions.** H11 is landing parity (where cards are drawn vs where the game
   has them), H12 scores the *prediction* (where the client decided to send each card), H13 audits the wide-screen
   field on every node the canvas walks. A rest-time gate that does not score the prediction is vacuous. H12's seam

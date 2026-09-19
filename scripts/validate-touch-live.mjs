@@ -3510,9 +3510,14 @@ async function grabAndCancelH15FocusedSurvivor(page, pointer, holderId, retained
       startInsideNativeHitbox,
     });
   }
-  // The smallest useful drag is still well past both pointer kinds' slop. It stays in the hand-side cancel lane;
-  // after observing the holder leave the fan, the return to `start` makes the release an explicit cancellation.
-  const grab = { cx: start.cx, cy: start.cy - Math.max(24, 48 * initial.hand.scale) };
+  // FAR ENOUGH THAT NEITHER SIDE HAS TO GUESS. The travel used to be 48 design px, which is past both pointer
+  // kinds' slop but still close enough to the press that the gesture reads as a tap once it returns to `start` —
+  // and the game then SELECTS the card instead of cancelling it. Measured 2026-09-19 on touch-2400: the survivor
+  // stayed out of the fan in 1 run of 4, with the press resolving correctly to the target every time, so the
+  // check was straddling the game's own tap/drag classification rather than measuring the cancel it names. The
+  // travel is now unambiguously a drag (the same lane H9's off-grab drop uses), while the release still returns
+  // to `start`, so the assertion below is unchanged: leave the fan, then come back.
+  const grab = { cx: start.cx, cy: start.cy - Math.max(24, 140 * initial.hand.scale) };
   let before;
   try {
     before = await sentCount(page);
