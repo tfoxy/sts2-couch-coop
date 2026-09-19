@@ -640,6 +640,7 @@ function createMirrorRenderer(stage: HTMLElement, defs: SVGElement): MirrorRende
     queueDeraster,
     derasterNeeded: derasterNeededOnSettle,
     markGeometryDirty: () => reconcileController.markGeomDirty(),
+    markGeomRebase: (id) => reconcileController.markGeomRebase(id),
     noteReparentDrop: () => {
       mirrorWalkStats.tweenReparentDropped++;
     },
