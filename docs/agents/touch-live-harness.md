@@ -97,14 +97,14 @@ reports "whose hit surface still disagreed with the game's pose", that is the in
 ## Recorded baseline — what "green" meant on 2026-09-19
 
 Measure a run against this, not against your expectations. Recorded on `round/touch-harness-gate`
-(`a63f311f`, which is `main` + the display-arm work + this round's three fixes), mod deployed from `688bb27b`,
-game v0.111.0.
+(`fae6667f`, which is `main` + the display-arm work + this round's three product fixes and four check
+corrections), mod deployed from `688bb27b`, game v0.111.0.
 
 | leg | result |
 | --- | --- |
 | DOM, default arm, `mouse-1920,mouse-2400,touch-1920,touch-2400` | **all gating checks passed, twice consecutively** |
 | DOM, `--query stageFit=display`, same four combos | **all gating checks passed, twice consecutively** |
-| `canvas-*`, four combos | **H11 fails on 3 of 4 — pre-existing, see below.** Everything else passes or skips |
+| `canvas-*`, four combos | **all gating checks passed** |
 
 **Expected SKIPs, which are not failures and not gaps to panic about.** On a mouse combo H8 and H17 skip
 (both are touch-only gestures). On a canvas combo H1-H10 skip (they read per-node DOM; porting them is
@@ -112,13 +112,25 @@ unfinished work, not a defect). H13 skips unless you pass `--query spreadAudit=1
 happened to arm no hand tween — that one is worth watching: a run where H12 skips has measured nothing about
 the landing prediction, so do not read a green H12 column as coverage without checking the note.
 
-**Known red: H11 on the canvas stage.** Three of four canvas combos fail landing parity by 57-116 design px,
-with the failure's shape varying run to run. It is **pre-existing**: the same three combos fail the same way
-against a Vite serving unmodified `main` with none of this round's commits, and in that same control run H12
-PASSED on every canvas combo (28-44 predicted landings, all within 1.5px). The client's landing prediction is
-therefore accurate while H11's "unexplained" term is not, which is where a fix should start. A `dx -75 dy 0`
-points at the horizontal field/spread term rather than the lift. Do not read this as a regression, and do not
-silence it.
+**H11 on canvas used to be red here, and it was the check's fault.** Three of four canvas combos failed landing
+parity by 57-116 design px — including against a Vite serving unmodified `main`, so it was never a regression.
+The cause: H11 phase 2 scored a "landing" as the DRAWN pose on the last frame a channel was alive, which needs
+the sampler to resolve the ease, and the canvas arm's per-rAF trace samples at a **median ~310 ms (3.1-3.4 fps)**
+against the ~90 ms the check assumed. It was reading the middle of the ease and calling the difference a jump.
+All four offenders had in fact aimed exactly right, which the seam's own `endpoint` field proved once the trace
+stopped throwing it away — and H12 passing on the same gestures was the clue. Landing is now scored at the
+endpoint on the re-derived squeeze field, with settle meaning a real rest instead of a 400 ms deadline, at a flat
+**2 px** tolerance rather than the old `lastStepPx` (45-55 px on those runs) — strictly tighter than what it
+replaced. The scoring lives in `scripts/lib/handLandingScore.mjs` with 15 unit tests, 13 mutations killed.
+
+**Two things that leg turned up and did NOT fix**, so a future round does not have to rediscover them:
+`awaitPoseRest` is satisfied by a producer that is merely LATE (measured: the client drew a focus push 1.2 s
+before the producer re-emitted the same poses — the client was right and the check nearly blamed it), and a
+canvas-touch-1920 handoff has been seen drawing a focused holder at its un-focused pose for ~1.7 s with no live
+channel. Neither reproduced in the final verification runs. The old `?tweenReparent=keep` and `?spreadEndpoint=off`
+levers that earlier rounds used as live negative controls **no longer exist in the build** (both behaviours became
+unconditional), so phase 2's sensitivity is proven offline only; restoring one lever is the obvious next
+improvement.
 
 ## Fixtures and prerequisites
 
