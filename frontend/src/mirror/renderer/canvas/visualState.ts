@@ -89,6 +89,13 @@ export interface CanvasVisualPorts {
   cosmeticOffsetDy(id: string): number;
   effectivelyVisible(node: MirrorNode): boolean;
   isLandingTarget(id: string): boolean;
+  /**
+   * A transform ease is about to be armed on this node, and the loop does not already own its transform — so the
+   * stage is still drawing the pose the ease will start from. The readable-hand lift is the other half of that
+   * drawn position and has to leave the value conjugate to it: see `interactionRuntime.noteTransformArmPose`,
+   * which is the only moment the shared pose read still answers where the card IS rather than where it is HEADED.
+   */
+  onTransformArm(id: string, at: number): void;
   onNodePresent(node: MirrorNode): void;
   onNodeRemoved(id: string): void;
   onRewrite(): void;
@@ -882,6 +889,13 @@ export function createCanvasVisualState(
       const planned = planTweenHints(next.pendingHints, (hint) =>
         targetFacts(next, hint),
       );
+      // BEFORE the arm, and only for a node the loop is not already driving: the pose an un-owned node is drawn
+      // at is the pose its ease will leave, and it stops being readable the instant the channel exists (see
+      // `onTransformArm`). Planned hints rather than wire hints, so a refused or rebased one never reports an arm
+      // that does not happen.
+      for (const hint of planned) {
+        if (hint.channel === "transform" && !loop.ownsTransform(hint.nodeId)) ports.onTransformArm(hint.nodeId, at);
+      }
       loop.applyHints(planned, at);
       for (const hint of planned) {
         if (hint.channel === "transform" && hint.endTransform !== null) {

@@ -3,6 +3,10 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { createMirrorRenderer, type MirrorRenderer } from "@/mirror/mirrorRenderer";
 import { applySceneDelta, createMirrorState, parseSceneDelta, type MirrorState } from "@/mirror/sceneTree";
 
+// The DOM channel-timeline reader — jsdom runs no transitions, so a channel's start is only visible in the ORDER
+// of the renderer's writes. Shared with `handLiftPhase.spec.ts`; see that module's header.
+import { channelOf, watchStyle } from "./styleChannels";
+
 // READABLE-HAND MODE, renderer half. Everything here is asserted through the ELEMENT's `translate` — the one
 // property the pass writes — because that is exactly what a player sees and what the input inverse must undo.
 
@@ -139,67 +143,6 @@ function move(
     })!
   );
   renderer.reconcile(state);
-}
-
-// ---------------------------------------------------------------------------------------------------------------
-// THE TWO DRAWN CHANNELS, READ BACK THE WAY A BROWSER WOULD RUN THEM.
-//
-// A holder's drawn y is the SUM of its `transform` (the game's pose) and its `translate` (the cosmetic lift), and
-// the renderer writes both within one frame — a start value under an instant transition, a style barrier, then the
-// eased target. jsdom runs no transitions, so the values a browser would interpolate BETWEEN are only visible in
-// the ORDER of the writes; `watchStyle` records every state the `style` attribute passed through, and `channelOf`
-// reads one channel's `from`/`to`/timing out of that sequence: `from` is the value in force when the eased
-// transition was first specified (the browser's transition start), `to` the value the frame ended on.
-// ---------------------------------------------------------------------------------------------------------------
-
-/** Every value `el`'s style attribute took from here on, oldest first, with the final state last. Read ONCE. */
-function watchStyle(el: HTMLElement): () => string[] {
-  const observer = new MutationObserver(() => {});
-  observer.observe(el, { attributes: true, attributeFilter: ["style"], attributeOldValue: true });
-  return () => {
-    const states = observer.takeRecords().map((record) => String(record.oldValue ?? ""));
-    states.push(el.getAttribute("style") ?? "");
-    observer.disconnect();
-    return states;
-  };
-}
-
-function styleValue(state: string, prop: string): string | null {
-  const match = new RegExp(`(?:^|;)\\s*${prop}\\s*:\\s*([^;]*)`).exec(state);
-  return match ? match[1].trim() : null;
-}
-
-/** The vertical component of a channel's value: `matrix(a, b, c, d, x, y)` → y, `0px -41px` → -41, `0px` → 0. */
-function channelY(state: string, prop: "transform" | "translate"): number {
-  const value = styleValue(state, prop);
-  if (value == null || value === "" || value === "none") return 0;
-  if (prop === "transform") {
-    const matrix = /matrix\(([^)]*)\)/.exec(value);
-    return matrix ? Number(matrix[1].split(",")[5]) : 0;
-  }
-  const parts = value.split(/\s+/);
-  return parts.length > 1 ? Number.parseFloat(parts[1]) : 0;
-}
-
-/** This state's transition timing for the channel: 0ms (instant/absent) or the duration plus its easing. */
-function channelTiming(state: string, prop: string): { ms: number; ease: string } {
-  const transition = styleValue(state, "transition") ?? "";
-  const timed = new RegExp(`\\b${prop}\\s+([\\d.]+)(m?s)(?:\\s+(cubic-bezier\\([^)]*\\)|[a-z-]+))?`).exec(transition);
-  if (!timed) return { ms: 0, ease: "" };
-  return { ms: Number(timed[1]) * (timed[2] === "s" ? 1000 : 1), ease: timed[3] ?? "" };
-}
-
-function channelOf(
-  states: string[],
-  prop: "transform" | "translate"
-): { from: number; to: number; ms: number; ease: string } {
-  const final = states[states.length - 1];
-  const armed = states.findIndex((state) => channelTiming(state, prop).ms > 0);
-  return {
-    from: channelY(armed === -1 ? final : states[armed], prop),
-    to: channelY(final, prop),
-    ...channelTiming(final, prop)
-  };
 }
 
 beforeEach(() => {

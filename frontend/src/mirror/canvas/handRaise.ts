@@ -11,7 +11,9 @@
 //      `computeSceneInfo`'s walk and nothing else.
 //   2. THE POSE READ's two live facts. The read itself is shared (`raise/holderLocalY` — same five legs for both
 //      backends); what is bound here is the frame the endpoint is measured in and WHICH endpoint counts as live,
-//      the H10 port that module's guard explains.
+//      the H10 port that module's guard explains. Both of that module's questions are bound here off the ONE env:
+//      where a holder is HEADED (the ramp's input, `canvasRaiseIndex`) and where it IS (`canvasPaintedLocalY`,
+//      the value the lift channel has to leave when a pose ease leaves its own start).
 //
 // The offsets the plan returns are applied by `canvasRenderer` as COSMETIC OFFSETS (`buildDrawList`'s
 // `cosmeticOffsets`): a translate applied to a node and INHERITED by everything under it, drawn-only, invisible to
@@ -27,11 +29,18 @@ import {
   type HandRaisePlan,
   type RaiseSceneIndex
 } from "@/mirror/raise/handRaisePlan";
-import { holderLocalY, type HolderPoseEnv } from "@/mirror/raise/holderLocalY";
+import { holderLocalY, holderPaintedLocalY, type HolderPoseEnv } from "@/mirror/raise/holderLocalY";
 import type { MirrorNode, MirrorState } from "@/mirror/sceneTree";
 
 export type { HandRaiseInput, HandRaisePlan };
-export { anyTargetingArrowVisible, createChildIndex, EMPTY_HAND_RAISE_PLAN } from "@/mirror/raise/handRaisePlan";
+export {
+  anyTargetingArrowVisible,
+  createChildIndex,
+  // The ramp arithmetic itself, re-exported so the stage that applies the offsets asks it of the pose a holder is
+  // drawn at through the same import as everything else in this binding — one spelling, both questions.
+  handRaiseDy,
+  EMPTY_HAND_RAISE_PLAN
+} from "@/mirror/raise/handRaisePlan";
 
 export { creatureHudMeasure, type CreatureHudMeasure } from "@/mirror/raise/creatureHud";
 
@@ -99,6 +108,24 @@ export function canvasRaiseIndex(state: MirrorState | null, tween: HandRaiseTwee
     choicePrompt: scan.choicePrompt,
     holderLocalY: (id) => holderLocalY(pose, id)
   };
+}
+
+/**
+ * WHERE THIS HOLDER IS DRAWN RIGHT NOW, in its container — the SECOND question of the same two ports, asked at the
+ * instant a fresh transform ease is about to be armed on it (see `interactionRuntime.noteTransformArmPose`).
+ *
+ * `canvasRaiseIndex` above asks where a holder is HEADED, because that is the ramp's input. This asks where it IS,
+ * because that is the value the cosmetic lift channel has to leave when the pose channel leaves its own start —
+ * two channels summed into one drawn position stay together only if they also start together. Null means the pose
+ * is unknown on this frame: the shared read refuses the resting-fan guess here (see `holderPaintedLocalY`), and a
+ * caller must leave the lift alone rather than step it to a pose the card is not at.
+ */
+export function canvasPaintedLocalY(
+  state: MirrorState | null,
+  tween: HandRaiseTweenEnv | null,
+  id: string
+): number | null {
+  return state === null ? null : holderPaintedLocalY(canvasPoseEnv(state.nodes, state, tween), id);
 }
 
 /** No state at all (the pre-first-delta pass): an index that answers nothing, so the plan is the empty one. */

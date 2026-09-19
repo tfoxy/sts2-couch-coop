@@ -74,7 +74,9 @@ import {
 import type { ViewScaleInputStamp } from "@/mirror/viewScaleInverse";
 import {
   anyTargetingArrowVisible,
+  canvasPaintedLocalY,
   creatureHudMeasure,
+  handRaiseDy,
   planCanvasHandRaise,
   EMPTY_HAND_RAISE_PLAN,
   type CreatureHudMeasure,
@@ -153,6 +155,12 @@ export interface CanvasInteractionRuntime {
   noteRewrite(): void;
 
   applyHeldLift(): void;
+  /**
+   * A fresh transform ease is about to be armed on this node — capture the pose the raise has to phase its lift
+   * channel onto. See the implementation; it must be called BEFORE the arm, which is the last moment the shared
+   * pose read still answers where the card IS rather than where it is HEADED.
+   */
+  noteTransformArmPose(id: string, at: number): void;
   applyHandRaisePass(at?: number): boolean;
   advanceOffsetRamps(at: number): boolean;
 
@@ -339,6 +347,11 @@ export function createCanvasInteractionRuntime(ports: CanvasInteractionRuntimePo
   const raiseOffsetIds = new Set<string>();
   let lastRaiseLift = 0;
   let raiseAtMs = 0;
+  /**
+   * PHASE OF THE TWO DRAWN CHANNELS. Holder id → the local y it was PAINTED at when a fresh transform ease was
+   * armed on it this frame. Written by `noteTransformArmPose`, consumed and cleared by the very next raise pass.
+   */
+  const raiseArmFromLocalY = new Map<string, number>();
   const raiseParentScratch: number[] = [1, 0, 0, 1, 0, 0];
   const raiseTweenEnv: HandRaiseTweenEnv = {
     transformEndpointInto: (id, out) => ports.loop().transformEndpointInto(id, out, raiseAtMs),
@@ -369,13 +382,26 @@ export function createCanvasInteractionRuntime(ports: CanvasInteractionRuntimePo
     return true;
   }
 
-  function setCosmeticOffset(id: string, dx: number, dy: number, ramp: OffsetRampTiming | null = null, at = 0): boolean {
+  /**
+   * `startDy` is where the RAMP is to start, when the caller knows something the retained offset does not: the
+   * lift conjugate to the pose a pose-ease is leaving this very frame (see `applyHandRaisePass`). It is offered
+   * to `declare`, which uses it only when no ramp is already running — a re-target still continues from where
+   * the node IS, as that module's second rule requires.
+   */
+  function setCosmeticOffset(
+    id: string,
+    dx: number,
+    dy: number,
+    ramp: OffsetRampTiming | null = null,
+    at = 0,
+    startDy: number | null = null,
+  ): boolean {
     if (ramp === null) {
       if (offsetRamps.active() !== 0) offsetRamps.forget(id);
       return writeCosmeticOffset(id, dx, dy);
     }
     const previous = cosmeticOffsets.get(id);
-    offsetRamps.declare(id, previous?.dx ?? 0, previous?.dy ?? 0, dx, dy, ramp, at, rampSample);
+    offsetRamps.declare(id, previous?.dx ?? 0, startDy ?? previous?.dy ?? 0, dx, dy, ramp, at, rampSample);
     return writeCosmeticOffset(id, rampSample.dx, rampSample.dy);
   }
 
@@ -417,10 +443,50 @@ export function createCanvasInteractionRuntime(ports: CanvasInteractionRuntimePo
     setCosmeticOffset(id, 0, -currentLiftPx());
   }
 
-  function raiseRampFor(id: string, liftChanged: boolean, liftPx: number, at: number): OffsetRampTiming | null {
-    if (liftChanged || liftPx === 0) return RAISE_LIFT_RAMP;
+  /**
+   * How a holder's lift is drawn this frame, and whether it is RIDING a pose tween's own curve rather than the
+   * mode's own glide. Reused scratch: the answer is consumed before the next holder asks.
+   */
+  const rampChoice: { timing: OffsetRampTiming | null; ridesTween: boolean } = { timing: null, ridesTween: false };
+
+  function raiseRampFor(id: string, liftChanged: boolean, liftPx: number, at: number): typeof rampChoice {
+    if (liftChanged || liftPx === 0) {
+      rampChoice.timing = RAISE_LIFT_RAMP;
+      rampChoice.ridesTween = false;
+      return rampChoice;
+    }
     const timing = ports.loop().transformChannelTiming(id, at);
-    return timing !== null && timing.durationMs > 0 ? timing : null;
+    rampChoice.ridesTween = timing !== null && timing.durationMs > 0;
+    rampChoice.timing = rampChoice.ridesTween ? timing : null;
+    return rampChoice;
+  }
+
+  /**
+   * A transform ease is ABOUT TO BE ARMED on this node and the loop does not already own its transform — so what
+   * the stage is drawing is the pose the producer has just streamed, and that pose is the one the ease will leave
+   * from. Remember the ramp answer for it, because the lift is the other half of the same drawn position and has
+   * to leave the value conjugate to THIS pose.
+   *
+   * WHY THE CAPTURE CANNOT WAIT FOR THE RAISE PASS. The shared pose read answers one of two things about a holder
+   * and which one it answers flips at the arm: before it, where the card IS; after it, where the card is HEADED
+   * (a live channel's endpoint wins every other leg — that is what the ramp wants). The raise pass runs after the
+   * arms, by design, so by then only the destination is left to read.
+   *
+   * THE DEFECT THIS CLOSES — the canvas twin of live H10 (see `handController.noteTransformArmPose`, the DOM half
+   * fixed on 2026-09-19). One producer delta can carry a streamed STEP of an un-focus AND the tween hint for the
+   * rest of it. The step is painted immediately and the ease starts from it; the lift, meanwhile, was ramped from
+   * whatever the retained offset still held — the value conjugate to the pose BEFORE the step — so one frame of
+   * new pose composed with an old lift drew the card `step − (journey − lift)` PAST its own resting place, and the
+   * error decayed over the tween's window. Measured on this fixture before the fix: 24.4 design px past.
+   *
+   * A null answer is the shared read refusing to guess, and it must leave the channel alone: stepping a card's
+   * lift to a pose it is not at is a snap of up to the whole 119 px, drawn.
+   */
+  function noteTransformArmPose(id: string, at: number): void {
+    if (!raiseEnabled || !handHolderIds.has(id)) return;
+    raiseAtMs = at;
+    const localY = canvasPaintedLocalY(ports.state(), raiseTweenEnv, id);
+    if (localY !== null) raiseArmFromLocalY.set(id, localY);
   }
 
   function applyHandRaisePass(at = ports.now()): boolean {
@@ -434,7 +500,13 @@ export function createCanvasInteractionRuntime(ports: CanvasInteractionRuntimePo
     lastRaiseLift = raisePlan.liftPx;
     let moved = false;
     for (const [id, offset] of raisePlan.offsets) {
-      if (setCosmeticOffset(id, offset.dx, offset.dy, raiseRampFor(id, liftChanged, raisePlan.liftPx, at), at)) moved = true;
+      const ramp = raiseRampFor(id, liftChanged, raisePlan.liftPx, at);
+      // PHASE, not just timing. Taking the tween's duration and easing only keeps the two channels together if
+      // they also START together: a lift riding a pose ease has to leave the value conjugate to the pose that
+      // ease leaves. Everything else — the mode's own glide, a re-decide mid-ramp — keeps the retained value.
+      const armFrom = ramp.ridesTween ? raiseArmFromLocalY.get(id) : undefined;
+      const startDy = armFrom === undefined ? null : handRaiseDy(raisePlan.liftPx, armFrom);
+      if (setCosmeticOffset(id, offset.dx, offset.dy, ramp.timing, at, startDy)) moved = true;
       raiseOffsetIds.add(id);
     }
     for (const id of [...raiseOffsetIds]) {
@@ -443,6 +515,9 @@ export function createCanvasInteractionRuntime(ports: CanvasInteractionRuntimePo
       const stillHere = ports.state()?.nodes.has(id) === true;
       if (setCosmeticOffset(id, 0, 0, liftChanged && stillHere ? RAISE_LIFT_RAMP : null, at)) moved = true;
     }
+    // Consumed by the pass that follows the arm, never carried into a later one: a captured pose describes ONE
+    // arm, on the frame it was captured.
+    raiseArmFromLocalY.clear();
     if (moved) invalidateSnapshotInputCaches();
     return moved;
   }
@@ -1304,6 +1379,7 @@ export function createCanvasInteractionRuntime(ports: CanvasInteractionRuntimePo
     noteNodeRemoved,
     noteRewrite,
     applyHeldLift,
+    noteTransformArmPose,
     applyHandRaisePass,
     advanceOffsetRamps,
     setHeldCard,

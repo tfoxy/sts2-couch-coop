@@ -19,6 +19,10 @@
 // FROM; the whole difference between them is the resting-fan guess, and why a guess is admissible in one and not
 // the other is written on the second. Keeping both here is what stops the "current pose" read from re-growing as a
 // private leg in the backend that needs it (2026-09-19: the DOM did, and drew cards past their own resting pose).
+// BOTH backends ask the second question now, at the same moment and each through its own binding of these same
+// legs: the DOM as it arms a transform ease (`handController.noteTransformArmPose`) and the canvas immediately
+// before it does (`canvas/handRaise.canvasPaintedLocalY` → `interactionRuntime.noteTransformArmPose`). One read,
+// two bindings, one answer — which is what keeps the two stages' drawn starts equal by construction.
 
 import { HAND_RAISE_RAMP_START_Y } from "@/mirror/raise/constants";
 import { holderInFan } from "@/mirror/raise/handRaisePlan";
