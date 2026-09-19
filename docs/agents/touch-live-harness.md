@@ -94,6 +94,32 @@ holder's game pose and its hit surface matches the baseline captured from a veri
 the check; points that never converge are counted and named in the check's note rather than scored. If a run
 reports "whose hit surface still disagreed with the game's pose", that is the instrument talking, not the game.
 
+## Recorded baseline — what "green" meant on 2026-09-19
+
+Measure a run against this, not against your expectations. Recorded on `round/touch-harness-gate`
+(`a63f311f`, which is `main` + the display-arm work + this round's three fixes), mod deployed from `688bb27b`,
+game v0.111.0.
+
+| leg | result |
+| --- | --- |
+| DOM, default arm, `mouse-1920,mouse-2400,touch-1920,touch-2400` | **all gating checks passed, twice consecutively** |
+| DOM, `--query stageFit=display`, same four combos | **all gating checks passed, twice consecutively** |
+| `canvas-*`, four combos | **H11 fails on 3 of 4 — pre-existing, see below.** Everything else passes or skips |
+
+**Expected SKIPs, which are not failures and not gaps to panic about.** On a mouse combo H8 and H17 skip
+(both are touch-only gestures). On a canvas combo H1-H10 skip (they read per-node DOM; porting them is
+unfinished work, not a defect). H13 skips unless you pass `--query spreadAudit=1`. H12 skips when the sweep
+happened to arm no hand tween — that one is worth watching: a run where H12 skips has measured nothing about
+the landing prediction, so do not read a green H12 column as coverage without checking the note.
+
+**Known red: H11 on the canvas stage.** Three of four canvas combos fail landing parity by 57-116 design px,
+with the failure's shape varying run to run. It is **pre-existing**: the same three combos fail the same way
+against a Vite serving unmodified `main` with none of this round's commits, and in that same control run H12
+PASSED on every canvas combo (28-44 predicted landings, all within 1.5px). The client's landing prediction is
+therefore accurate while H11's "unexplained" term is not, which is where a fix should start. A `dx -75 dy 0`
+points at the horizontal field/spread term rather than the lift. Do not read this as a regression, and do not
+silence it.
+
 ## Fixtures and prerequisites
 
 The harness needs `sts2` on `PATH`, root `sts2.local.yaml`, and an already deployed mod. It starts its own Vite
