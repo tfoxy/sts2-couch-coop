@@ -1405,6 +1405,14 @@ const underlayStyle = computed(() => ({
   position: relative;
   transform-origin: center center;
   flex: 0 0 auto;
+  /* THE STAGE MUST BE A STACKING CONTEXT, and it has to say so itself. StaticBackground's underlay sits at the
+     most-negative z-index there is, which only stays UNDER the stage's own background and OVER `.mirror-frame`'s
+     letterbox black while it is resolved inside this element's stacking context. `position: relative` with
+     `z-index: auto` does not create one — on the design arm the stage's `transform: scale()` was quietly doing it,
+     so removing the transform for `?stageFit=display` sent the underlay behind the frame's #000 and the combat
+     background vanished entirely while every other node still painted. `isolation: isolate` states the invariant
+     without a transform, and is a no-op on the design arm, where the transform already establishes one. */
+  isolation: isolate;
   /* CouchCoop's OWN chrome (never a gsw/@spirectl presentation element): what shows through while the host-rendered
      static background is still decoding, in the ultra-wide strip the 2520-wide picture does not cover, and wherever
      the live bg subtree is held unbuilt (R12). `.mirror-frame` stays #000 — that is the LETTERBOX; the stage is the
