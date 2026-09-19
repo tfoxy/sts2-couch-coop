@@ -343,6 +343,7 @@ function zeroFullWalkCauses(): Record<FullWalkCause, number> {
     firstBuild: 0,
     forceTextures: 0,
     spread: 0,
+    stageFit: 0,
     spine: 0,
     texture: 0,
     keyframe: 0,

@@ -19,6 +19,7 @@ import MirrorConfirmButton from "@/mirror/MirrorConfirmButton.vue";
 import MirrorHandRaiseButton from "@/mirror/MirrorHandRaiseButton.vue";
 import MirrorView from "@/mirror/MirrorView.vue";
 import StaticBackground from "@/mirror/StaticBackground.vue";
+import { designPx } from "@/mirror/stageFit";
 import {
   buildHeadlessMirrorWebSocketUrl,
   connectMirrorClient,
@@ -188,7 +189,10 @@ reproRecorder.setMetaSupplier(() => {
     // The stage's DESIGN width (1920, or the widened value under widescreen stretch) and its on-screen box.
     // Together these are the transform a recorded clientX/clientY was taken through — without them a replay on
     // a differently-shaped window cannot know whether it is reproducing the bug or a different geometry.
-    designWidth: stage ? Number.parseFloat(stage.style.width) || null : null,
+    // `designPx` because on the `?stageFit=display` arm the stage's inline width IS its on-screen width (stageFit.ts),
+    // and a recording whose `designWidth` equalled `stageRect.w` would tell an offline replay the transform was the
+    // identity — the one thing this pair exists to record. Identity on the default arm.
+    designWidth: stage ? designPx(Number.parseFloat(stage.style.width)) || null : null,
     stageRect: rect ? { x: rect.x, y: rect.y, w: rect.width, h: rect.height } : null
   };
 });

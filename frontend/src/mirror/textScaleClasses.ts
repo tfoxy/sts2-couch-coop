@@ -21,7 +21,25 @@
 // sorts by (attribute-selector specificity ASC, table order ASC). A single class is (0,1,0), so a rule emitted
 // later wins the tie, which is precisely what a higher-specificity attribute selector did before.
 
+import { displaySpaceLayout } from "@/mirror/stageFit";
 import { uiScalingEnabled } from "@/mirror/uiScaling";
+
+/**
+ * LAYOUT SPACE for the GENERATED SHEET (stageFit.ts) — and the one place that cannot use `pxCss`.
+ *
+ * This sheet is built ONCE at install and never rebuilt, so it cannot bake a factor that changes on every resize.
+ * Its absolute px therefore go through a CSS variable instead: `MirrorView` publishes `--mirror-layout-scale` on
+ * `.mirror-stage` (the ancestor of every element this sheet matches) on the display arm, and the browser re-resolves
+ * the `calc()` for free when it moves.
+ *
+ * On the DEFAULT arm this returns the bare literal, so the generated sheet is byte-for-byte what it has always been.
+ *
+ * Only the few genuinely ABSOLUTE lengths need it. Everything else in the table is `em`, a ratio or a unitless
+ * `scale()`, all of which follow the already-converted `font-size` on their own.
+ */
+function layoutPx(value: number): string {
+  return displaySpaceLayout() ? `calc(${value}px * var(--mirror-layout-scale, 1))` : `${value}px`;
+}
 
 export type TextScaleOp = "=" | "$=" | "*=" | "^=";
 
@@ -65,7 +83,7 @@ export const TEXT_SCALE_RULES: readonly TextScaleRule[] = [
   {
     key: "card-description",
     nodePath: [{ op: "$=", value: "CardContainer/DescriptionLabel" }],
-    self: { "--godot-rich-line-height": "calc(0.88em + 1px)", "--godot-rich-paragraph-spacing": "0.14em" },
+    self: { "--godot-rich-line-height": `calc(0.88em + ${layoutPx(1)})`, "--godot-rich-paragraph-spacing": "0.14em" },
     text: { transform: "scale(1.24)", "transform-origin": "50% 50%" }
   },
   {
@@ -126,9 +144,11 @@ export const TEXT_SCALE_RULES: readonly TextScaleRule[] = [
     nodePath: [{ op: "=", value: "Visuals/Label" }],
     self: { [S]: "1.54", "text-align": "center" },
     text: {
-      "font-size": "min(calc(var(--godot-font-px, 0px) * var(--godot-text-scale, 1)), 34px) !important",
+      // The 34px CAP is an absolute length and `--godot-font-px` is already layout-space (nodeStyles), so the two
+      // must be in the same space or the cap bites at the wrong size — see `layoutPx`.
+      "font-size": `min(calc(var(--godot-font-px, 0px) * var(--godot-text-scale, 1)), ${layoutPx(34)}) !important`,
       "white-space": "normal",
-      "line-height": "calc(0.79em + 1px)"
+      "line-height": `calc(0.79em + ${layoutPx(1)})`
     }
   },
   {

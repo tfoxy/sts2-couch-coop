@@ -1,5 +1,7 @@
 import type { PresentationAnimationBinding } from "@spirectl/presentation/render";
 
+import { px } from "@/mirror/stageFit";
+
 // Decorative animations the browser replays on its own clock, because the motion never reaches it: either the
 // windowless headless instance froze the animator game-side (CouchCoopHeadlessVisualSuspender's decorative freeze —
 // energy counter spin `NEnergyCounter`, enemy-intent bob `NIntent`) or the producer divides the motion back out of
@@ -350,7 +352,9 @@ export function nodeAnimBinding(
   }
   // Intent bob runs on the holder so its nested badge travels as one unit.
   if (sceneRelPath === INTENT_BOB_HOLDER || sceneRelPath.endsWith(`/${INTENT_BOB_HOLDER}`)) {
-    return { path: sceneRelPath, kind: "bob", durationMs: 2000, amplitudePx: 10, baselineUpPx: 8 };
+    // LAYOUT SPACE (stageFit.ts): presentation turns these two into a `translate:` keyframe on the holder element,
+    // so they are rendered lengths on a layout-space box — 10 and 8 design px, byte-identical on the default arm.
+    return { path: sceneRelPath, kind: "bob", durationMs: 2000, amplitudePx: px(10), baselineUpPx: px(8) };
   }
   const lastSlash = sceneRelPath.lastIndexOf("/");
   const leaf = lastSlash >= 0 ? sceneRelPath.slice(lastSlash + 1) : sceneRelPath;

@@ -54,6 +54,10 @@ import {
   requestedStageBackend
 } from "@/mirror/rendererFactory";
 import { MIRROR_RENDERER_KEY } from "@/mirror/rendererKey";
+// WHICH SPACE the DOM boxes are laid out in (`?stageFit=design|display`) — see stageFit.ts. This component owns
+// two things about it and nothing else: the backend GRANT (the canvas arm is never granted), and feeding the live
+// fit measurement in so every px emission downstream can convert.
+import { activateDisplayLayout, displaySpaceLayout, setLayoutScale, stageFitMode } from "@/mirror/stageFit";
 import { effectiveRaiseHandCards, setHandRaiseLayer } from "@/mirror/handRaiseUi";
 import { mirrorSettings, type EffectMode } from "@/mirror/mirrorSettings";
 import { isAdaptiveEligible, renderQuality } from "@/render/quality";
@@ -148,6 +152,22 @@ watch(() => props.connected, (connected) => {
  * unchanged, so the fallback stays invisible exactly as the factory promises.
  */
 const canvasHostLayout = requestedStageBackend() === "canvas";
+/**
+ * THE DISPLAY-SPACE LAYOUT GRANT. `?stageFit=display` asks for DOM boxes in real display px and a stage with no
+ * scale transform (stageFit.ts); it is granted only on the DOM backend, for the two reasons stageFit's header
+ * gives — the canvas arm has no scaled DOM subtree to fix, and its runtime reads the stage's design box off
+ * `stage.clientWidth`, which display-px boxes would collapse to the identity. Decided at SETUP, from the REQUESTED
+ * backend, exactly like `canvasHostLayout` and for the same reason: the template is built before any renderer is.
+ */
+activateDisplayLayout(!canvasHostLayout);
+const displayLayout = displaySpaceLayout();
+if (stageFitMode() === "display" && typeof console !== "undefined") {
+  console.info(
+    displayLayout
+      ? "[mirror] stage fit: display — DOM boxes in display px, stage carries no transform (?stageFit=display)"
+      : "[mirror] stage fit: display requested but not applicable to the canvas backend — using design"
+  );
+}
 const canvasHost = ref<HTMLElement | null>(null);
 const scale = ref(1);
 // Live frame size (updated by the ResizeObserver via recomputeScale) — drives the widened design width below.
@@ -253,9 +273,11 @@ function pushStaticPins(): void {
   }
   if (shaderRatio !== undefined && shaderRatio !== loggedPinRatio && typeof console !== "undefined") {
     loggedPinRatio = shaderRatio;
-    // Design px × ratio IS the backing store here (the mirror's boxes are design px — see staticPin.ts), so
-    // this is the widest frozen canvas the stage can produce, and whether gsw's longest-edge clamp will bite.
-    const widest = Math.round(design.value.w * shaderRatio);
+    // Box × ratio IS the backing store here, so this is the widest frozen canvas the stage can produce and
+    // whether gsw's longest-edge clamp will bite. The BOX is design px on the default arm and DISPLAY px on the
+    // `?stageFit=display` arm (gsw's `clientWidth` read follows the layout — see staticPin.ts), which is exactly
+    // why the ratio drops its own fit term there: the two halves must name the same space or the log lies.
+    const widest = Math.round((displayLayout ? design.value.w * scale.value : design.value.w) * shaderRatio);
     const clamped = widest > MAX_PINNED_BACKING_DIM ? ` — CLAMPED to ${MAX_PINNED_BACKING_DIM}` : "";
     console.info(
       `[mirror] static backing pin: shader ${shaderRatio.toFixed(3)}, fit target ${pin
@@ -288,6 +310,16 @@ function recomputeScale(): void {
   }
   const rescaled = scale.value !== Math.min(width / design.value.w, height / design.value.h);
   scale.value = Math.min(width / design.value.w, height / design.value.h);
+  // DISPLAY-SPACE LAYOUT: the fit is no longer a transform on one element, it is baked into every node's box and
+  // matrix — so a fit change invalidates every emitted style and must force the scene-wide restyle walk. `false` on
+  // the default arm always (the factor is pinned at 1 there), which is what keeps this line inert by construction.
+  if (setLayoutScale(scale.value)) {
+    // `setStaticStillGauge`-style ordering is irrelevant here, but the eager-scroll reset is not: an offset in
+    // flight was measured against boxes that have just changed size (same reasoning as the spreadFactor watch).
+    eagerScroll?.reset();
+    scheduleRender(true, "stageFit");
+    pendingRuntimeForce = true;
+  }
   if (rescaled || resized) {
     // R10 WS-F: the input path caches the stage's client rect and only dropped it on a window resize/scroll. The
     // stage can move under BOTH of those: the widescreen stretch toggle rewrites design.w + scale from a computed,
@@ -1232,11 +1264,47 @@ onBeforeUnmount(() => {
   rendererRef.value = null;
 });
 
-const stageStyle = computed(() => ({
+// THE STAGE BOX. On the default arm: the design box, scaled to fit with one transform — and that transform is what
+// WebKit ignores when it sizes the backing store of every composited layer beneath it (stageFit.ts's header).
+// On the display arm the same rendered rect is expressed as a real CSS box with NO transform, so a layer's backing
+// store matches the screen area it occupies. Flex centring on `.mirror-frame` lands both on the same pixels: it
+// centres the border box either way, and `transform-origin: center center` makes the scaled one concentric with it.
+const stageStyle = computed(() =>
+  displayLayout
+    ? {
+        width: `${design.value.w * scale.value}px`,
+        height: `${design.value.h * scale.value}px`,
+        // The live factor, published to CSS for the one consumer that cannot be given it any other way: the
+        // generated text-scale sheet, which is built once at install and so carries its few absolute px as
+        // `calc(Npx * var(--mirror-layout-scale))` (textScaleClasses.ts). Inherited by every mirror node.
+        "--mirror-layout-scale": String(scale.value)
+      }
+    : {
+        width: `${design.value.w}px`,
+        height: `${design.value.h}px`,
+        transform: `scale(${scale.value})`
+        // "--godot-text-scale": String(DEFAULT_TEXT_SCALE)
+      }
+);
+
+/**
+ * THE CHROME'S DESIGN-SPACE LAYER (display arm only).
+ *
+ * The slotted content is CouchCoop's OWN browser-only chrome — the confirm button, the hand-raise button, the
+ * settings gear, the repro badge, the static-background underlay — authored in design px so it rides the game
+ * transform. Unlike the mirror nodes it is NOT emitted through `nodeStyles`, so nothing bakes the factor into it,
+ * and on the display arm it would render at full 1920-space size over a fitted stage.
+ *
+ * It gets a scaled wrapper instead of a conversion, deliberately: this is a handful of elements (measured against
+ * the 1,318 promoted elements of the game tree), so the ancestor-transform layer cost this whole change exists to
+ * remove is negligible here — while converting the chrome would mean baking the factor into hand-written component
+ * CSS, which is both a much larger edit and one no test covers. `transform-origin: 0 0` with `left/top: 0` is the
+ * top-left placement the chrome already assumes; the design arm renders NO wrapper at all, so its DOM is unchanged.
+ */
+const chromeLayerStyle = computed(() => ({
   width: `${design.value.w}px`,
   height: `${design.value.h}px`,
-  transform: `scale(${scale.value})`,
-  // "--godot-text-scale": String(DEFAULT_TEXT_SCALE)
+  transform: `scale(${scale.value})`
 }));
 
 // THE CANVAS HOST'S BOX: the design box AFTER the letterbox fit, in real CSS px, with no transform — that is the
@@ -1285,12 +1353,32 @@ const underlayStyle = computed(() => ({
     </template>
     <div ref="stage" class="mirror-stage" :class="{ 'mirror-stage-over-canvas': canvasHostLayout }" :style="stageStyle">
       <!-- On the DOM arm the underlay slot renders here, exactly where its content has always been: a foreign
-           stage child whose own most-negative z-index (not DOM order) puts it beneath the mirror nodes. -->
-      <slot v-if="!canvasHostLayout" name="underlay" />
+           stage child whose own most-negative z-index (not DOM order) puts it beneath the mirror nodes.
+           DISPLAY ARM: it is design-space content like the chrome, so it rides the same kind of scaled layer — but
+           the layer must CARRY the most-negative z-index itself, because a transform makes it a stacking context
+           and would otherwise trap StaticBackground's own z-index inside it. Same value, same effect: beneath every
+           mirror node whatever the reconciler's order pass does. -->
+      <template v-if="!canvasHostLayout">
+        <div
+          v-if="displayLayout"
+          class="mirror-chrome-layer mirror-underlay-layer"
+          :style="chromeLayerStyle"
+        >
+          <slot name="underlay" />
+        </div>
+        <slot v-else name="underlay" />
+      </template>
       <!-- Browser-only controls rendered in design space so they scale with the game transform.
            The slot content is a sibling to the imperatively-managed mirror nodes and is never
-           touched by the reconciler. -->
-      <slot />
+           touched by the reconciler.
+           DISPLAY ARM: the stage itself is no longer scaled, so the chrome gets its own design-space layer to ride
+           (see `chromeLayerStyle`). The wrapper is out of flow and zero-size-agnostic — `position: absolute` at the
+           stage origin — so it cannot disturb the imperatively-appended mirror nodes around it. The DEFAULT arm
+           renders the bare slot exactly as before: no wrapper element, no stacking context, no DOM change. -->
+      <div v-if="displayLayout" class="mirror-chrome-layer" :style="chromeLayerStyle">
+        <slot />
+      </div>
+      <slot v-else />
     </div>
   </div>
 </template>
@@ -1346,6 +1434,32 @@ const underlayStyle = computed(() => ({
   user-select: none;
   -webkit-user-select: none;
   touch-action: none;
+}
+
+/* DISPLAY ARM ONLY (`?stageFit=display`). CouchCoop's own chrome keeps its design-space box and rides a scale
+   transform of its own, because the stage above it no longer carries one — see `chromeLayerStyle`. Out of flow at
+   the stage's top-left so it overlays the mirror nodes rather than displacing them, scaled about that same corner
+   (`transform-origin: 0 0`) so design (0,0) stays the stage's (0,0). Pointer events pass through the wrapper itself
+   (it is a full-design-box rectangle and would otherwise swallow every tap meant for the game) while its CHILDREN —
+   the real buttons — take their own back. */
+.mirror-chrome-layer {
+  position: absolute;
+  left: 0;
+  top: 0;
+  transform-origin: 0 0;
+  pointer-events: none;
+}
+
+.mirror-chrome-layer > * {
+  pointer-events: auto;
+}
+
+/* The underlay's own design-space layer carries the most-negative z-index that StaticBackground's `<img>` would
+   otherwise carry alone — the transform above makes this element a stacking context, which would contain that
+   z-index instead of letting it reach the stage's own stacking order. Same number, so the outcome is the same:
+   beneath every mirror node, DOM order irrelevant. */
+.mirror-underlay-layer {
+  z-index: -2147483648;
 }
 
 /* CANVAS ARM ONLY. The stage no longer paints the "this room hasn't painted yet" fill, because it now sits ABOVE

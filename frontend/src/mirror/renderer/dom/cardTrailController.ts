@@ -1,4 +1,29 @@
 import { affineInverse, IDENTITY_AFFINE, type Affine } from "@/mirror/affine";
+import { layoutScale } from "@/mirror/stageFit";
+
+/**
+ * LAYOUT SPACE for the comet ribbon (stageFit.ts) — and the ONE place in this change that scales a whole SVG USER
+ * SPACE instead of individual lengths.
+ *
+ * The ribbon is a path `d` string plus `userSpaceOnUse` gradient endpoints, all authored in the node's local space
+ * by `cardTrail.ts`'s pure geometry builder. That builder is shared with the canvas backend, so it must keep
+ * answering in design space, and rewriting a path string per frame to scale it would be both slow and lossy.
+ * Scaling the `<svg>` host's user space converts the path, the band widths and the gradient endpoints in one write.
+ *
+ * This is a scaled ancestor, which is the very thing the display arm exists to remove — deliberately accepted here:
+ * a comet is a handful of `<path>`s inside one `<svg>`, against the ~1,300 promoted elements of the game tree, and
+ * it lives under a second (`TRAIL_POINT_DURATION_MS`). If a trail is ever measured as a real layer cost on WebKit,
+ * the fix is to teach the builder a scale, not to widen this exception.
+ */
+function applyTrailUserSpaceScale(svg: SVGElement | null): void {
+  if (!svg) return;
+  const s = layoutScale();
+  const want = s === 1 ? "" : `scale(${s})`;
+  if (svg.style.transform !== want) {
+    svg.style.transform = want;
+    svg.style.transformOrigin = s === 1 ? "" : "0 0";
+  }
+}
 import {
   buildTrailRibbon,
   buildTrailStrip,
@@ -233,6 +258,9 @@ export function createCardTrailController(ports: {
     ) {
       record.trailD = ribbon.bands[0].d;
       record.trailBandOpacitySig = opacityTag;
+      // The pooled scaffold may predate a fit change (a rotation mid-comet), so re-assert the user-space scale on
+      // the frame the geometry is rewritten. Idempotent string compare inside; a no-op on the default arm.
+      applyTrailUserSpaceScale(paths[0]?.ownerSVGElement ?? null);
       for (let i = 0; i < paths.length && i < ribbon.bands.length; i++) {
         paths[i].setAttribute("d", ribbon.bands[i].d);
         mirrorWalkStats.trailPathWrites++;
@@ -359,6 +387,7 @@ export function createCardTrailController(ports: {
     svg.setAttribute("height", "1");
     svg.style.overflow = "visible";
     svg.style.display = "block";
+    applyTrailUserSpaceScale(svg);
     const defs = document.createElementNS(SVG_NS, "defs");
     const gradient = document.createElementNS(SVG_NS, "linearGradient");
     gradient.setAttribute("id", `mtrail-${takeTrailGradientId()}`);

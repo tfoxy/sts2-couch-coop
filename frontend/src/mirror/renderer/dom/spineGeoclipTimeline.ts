@@ -10,6 +10,7 @@ import {
   uploadGeoclip,
 } from "@/mirror/geoclipPlayer";
 import type { MirrorNode } from "@/mirror/sceneTree";
+import { pxCss } from "@/mirror/stageFit";
 import { geoclipUrl } from "@/mirror/spineAttributes";
 import { decodeStill } from "@/mirror/stillDecode";
 import { frameIndexAt, type LoadedSpineClip } from "@/mirror/spineClip";
@@ -88,10 +89,12 @@ export function createSpineGeoclipTimeline(ports: SpineGeoclipTimelinePorts): Sp
     for (const record of spineStillNodes) refreshPromotion(record);
   }
 
+  // LAYOUT SPACE (stageFit.ts): the CSS box and the node-local offset are lengths; the trailing `scale()` maps clip
+  // px into that box and is dimensionless, so it stays. (The `<img>`'s intrinsic pixels are untouched either way.)
   function applyStillPlacement(img: HTMLImageElement, w: number, h: number, tx: number, ty: number, scale: number): void {
-    img.style.width = `${w}px`;
-    img.style.height = `${h}px`;
-    img.style.transform = `translate(${tx}px, ${ty}px) scale(${scale})`;
+    img.style.width = pxCss(w);
+    img.style.height = pxCss(h);
+    img.style.transform = `translate(${pxCss(tx)}, ${pxCss(ty)}) scale(${scale})`;
   }
 
   function applyGatedStill(record: RenderRecord, clip: LoadedSpineClip, still: LoadedSpineClip["frames"][number], scale: number): void {
@@ -151,9 +154,11 @@ export function createSpineGeoclipTimeline(ports: SpineGeoclipTimelinePorts): Sp
     ports.noteCanvasRepaint(canvas);
     if (canvas.width !== w) canvas.width = w;
     if (canvas.height !== h) canvas.height = h;
-    canvas.style.width = `${w}px`;
-    canvas.style.height = `${h}px`;
-    canvas.style.transform = `translate(${clip.localX}px, ${clip.localY}px) scale(${scale})`;
+    // `canvas.width/height` above are the BACKING STORE (resolution, unaffected); these three are the CSS box and
+    // the node-local offset, which are lengths in layout space — see stageFit.ts.
+    canvas.style.width = pxCss(w);
+    canvas.style.height = pxCss(h);
+    canvas.style.transform = `translate(${pxCss(clip.localX)}, ${pxCss(clip.localY)}) scale(${scale})`;
     ports.syncFrozenCanvasStyle(canvas);
     record.spineShownFrame = -1;
   }

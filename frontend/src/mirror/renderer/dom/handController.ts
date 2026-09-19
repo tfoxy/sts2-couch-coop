@@ -13,6 +13,7 @@ import {
   type RaisedHandVisualClaim,
   type RaiseInputStamp,
 } from "@/mirror/raiseInverse";
+import { designPx, pxCss } from "@/mirror/stageFit";
 import {
   CREATURE_HUD_NAMES,
   CREATURE_POWER_ROW_H,
@@ -168,9 +169,13 @@ export function createHandController<R extends HandRecord>(
     return heldLiftPx(heldCardId != null, heldMode, heldLifted);
   }
 
+  // LAYOUT SPACE (stageFit.ts): `translate` is a rendered offset on a layout-space box, and the lift/raise amounts
+  // are design px off the raise planner. Converting inside the two string producers keeps every idempotence check
+  // (`el.style.translate !== …`) comparing like with like, which is what stops a factor change from writing the
+  // whole hand twice. Both are byte-identical on the default arm.
   function tooltipLiftTranslate(): string {
-    const px = currentLiftPx();
-    return px > 0 ? `0px ${-px}px` : "0px";
+    const lift = currentLiftPx();
+    return lift > 0 ? `0px ${pxCss(-lift)}` : "0px";
   }
 
   function flushTooltipLift(): void {
@@ -227,7 +232,7 @@ export function createHandController<R extends HandRecord>(
       });
       heldLifted = decided.lifted;
       heldEnteredPlayZone = decided.enteredPlayZone;
-      const translate = heldLifted ? `0px ${-currentLiftPx()}px` : "0px";
+      const translate = heldLifted ? `0px ${pxCss(-currentLiftPx())}` : "0px";
       if (el.style.translate !== translate) el.style.translate = translate;
     }
     scheduleTooltipLift();
@@ -312,7 +317,7 @@ export function createHandController<R extends HandRecord>(
   }
 
   function raiseTranslate(dy: number): string {
-    return dy === 0 ? "0px" : `0px ${dy}px`;
+    return dy === 0 ? "0px" : `0px ${pxCss(dy)}`;
   }
   function needsRaiseWrite(el: HTMLElement, dy: number): boolean {
     return (
@@ -713,8 +718,12 @@ export function createHandController<R extends HandRecord>(
 
   function currentHandHitboxContains(holderId: string, clientX: number, clientY: number): boolean {
     const stageRect = p.stage.getBoundingClientRect();
-    const designWidth = Number.parseFloat(p.stage.style.width) || p.stage.clientWidth;
-    const designHeight = Number.parseFloat(p.stage.style.height) || p.stage.clientHeight;
+    // LAYOUT SPACE (stageFit.ts): the stage's own inline box is DISPLAY px on the `?stageFit=display` arm, so
+    // reading it raw would make this ratio the identity and hand `pointWithinPlacedRectMargin` display px to test
+    // against a WIRE `localRect`. `designPx` puts the measurement back where the wire lives; it is the identity on
+    // the default arm, where the inline box already is the design box.
+    const designWidth = designPx(Number.parseFloat(p.stage.style.width) || p.stage.clientWidth);
+    const designHeight = designPx(Number.parseFloat(p.stage.style.height) || p.stage.clientHeight);
     if (stageRect.width <= 0 || stageRect.height <= 0 || designWidth <= 0 || designHeight <= 0) return false;
     const x = (clientX - stageRect.left) * designWidth / stageRect.width;
     const y = (clientY - stageRect.top) * designHeight / stageRect.height;

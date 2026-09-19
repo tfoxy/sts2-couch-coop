@@ -5,6 +5,7 @@ import type { Affine } from "@/mirror/affine";
 import type { MirrorNode } from "@/mirror/sceneTree";
 import type { RenderRecord } from "@/mirror/renderer/dom/recordModel";
 import { setStyleProp } from "@/mirror/renderer/dom/style";
+import { px } from "@/mirror/stageFit";
 
 export interface AnimationRuntime {
   anchorAnimations(target: HTMLElement, startTime: number): void;
@@ -68,11 +69,20 @@ export function createAnimationRuntime(): AnimationRuntime {
     if (!token || !lr) return clearPinnedLoop(record);
     const nodePivot = pinnedLoopNodePivot(token);
     let pivot: { x: number; y: number } | null;
-    if (nodePivot) pivot = elementLocalPoint(node, hasChildren, nodePivot.x, nodePivot.y);
-    else if (pinnedLoopRidesAnimSelf(token)) pivot = null;
+    // LAYOUT SPACE (stageFit.ts): a pivot becomes a `transform-origin` on a layout-space box, so it converts here
+    // — BEFORE the signature below, which is what makes a fit change invalidate the cached pivot and rewrite it
+    // rather than leaving a stale origin behind. `elementLocalPoint` and `mSelf` both stay design-space (the numeric
+    // cores are shared with the canvas backend). Identity on the default arm.
+    if (nodePivot) {
+      const p0 = elementLocalPoint(node, hasChildren, nodePivot.x, nodePivot.y);
+      pivot = { x: px(p0.x), y: px(p0.y) };
+    } else if (pinnedLoopRidesAnimSelf(token)) pivot = null;
     else {
       const cx = lr.width / 2, cy = lr.height / 2;
-      pivot = { x: mSelf[0] * cx + mSelf[2] * cy + mSelf[4], y: mSelf[1] * cx + mSelf[3] * cy + mSelf[5] };
+      pivot = {
+        x: px(mSelf[0] * cx + mSelf[2] * cy + mSelf[4]),
+        y: px(mSelf[1] * cx + mSelf[3] * cy + mSelf[5])
+      };
     }
     const sig = pivot ? `${token}|${Math.round(pivot.x * 100)}|${Math.round(pivot.y * 100)}` : token;
     if (record.pinnedLoopSig === sig) return;

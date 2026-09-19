@@ -17,6 +17,7 @@ import {
   viewScaleSharedEnv,
 } from "@/mirror/renderer/staticBackgroundPolicy";
 import { tipScaleOn } from "@/mirror/renderer/sharedFeatureFlags";
+import { scaleAffineTranslation } from "@/mirror/stageFit";
 import type { RenderRecord } from "@/mirror/renderer/dom/recordModel";
 import { mirrorWalkStats } from "@/mirror/renderer/walkStats";
 import { setUiScalingEnabled, uiScalingEnabled } from "@/mirror/uiScaling";
@@ -273,7 +274,11 @@ export function createScaleController(p: ScaleControllerPorts): ScaleController 
       const parentGlobal = shiftedParentGlobal(rec);
       const parentInv = affineInverse(parentGlobal) ?? IDENTITY_AFFINE;
       const parentMatrix = affineMul(parentInv, affineMul(viewScaleStampMatrix(factor, resolved), parentGlobal));
-      el.style.transform = `${affineCss(parentMatrix)} ${base}`;
+      // LAYOUT SPACE (stageFit.ts): the stamp algebra above is design-space throughout (pivots, clamp offsets and
+      // boxes all come off the wire), but `base` is the element's LAYOUT-space placement string, so the matrix
+      // prepended to it has to be in that space too. Conjugating by the fit factor is exactly "translation × S,
+      // linear part untouched" — the scale about the pivot is dimensionless and must not move.
+      el.style.transform = `${affineCss(scaleAffineTranslation(parentMatrix))} ${base}`;
     }
   }
 
@@ -316,7 +321,8 @@ export function createScaleController(p: ScaleControllerPorts): ScaleController 
       const parentInv = affineInverse(parentGlobal) ?? IDENTITY_AFFINE;
       const parentMatrix = affineMul(parentInv, affineMul(stamp.matrix, parentGlobal));
       // Direct write is intentional: the style cache retains the clean base, so composition never self-compounds.
-      el.style.transform = `${affineCss(parentMatrix)} ${base}`;
+      // Conjugated into layout space for the same reason the view-scale pass above is.
+      el.style.transform = `${affineCss(scaleAffineTranslation(parentMatrix))} ${base}`;
     }
   }
 

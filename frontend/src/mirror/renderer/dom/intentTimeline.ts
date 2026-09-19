@@ -14,6 +14,7 @@ import {
   type IntentStripGeometry,
 } from "@/mirror/intentStrip";
 import { atlasCanvasPlacement } from "@/mirror/nodeStyles";
+import { px, pxCss } from "@/mirror/stageFit";
 import { renderQuality } from "@/render/quality";
 import type { MirrorIntentFrames, MirrorNode } from "@/mirror/sceneTree";
 import {
@@ -168,15 +169,19 @@ export function createIntentTimeline(
     el: HTMLElement,
     geo: IntentStripGeometry,
   ): void {
-    el.style.width = `${geo.travelPx}px`;
-    el.style.height = `${geo.dispH}px`;
-    ensureIntentStepsKeyframes(geo.travelPx);
+    // LAYOUT SPACE (stageFit.ts): the strip's box AND the distance it slides are lengths, and the slide is written
+    // as a `@keyframes` rule keyed BY that distance — so the injected rule and the `animation` shorthand naming it
+    // must both use the converted value or they name different rules. `steps()`/durations/phase are time, untouched.
+    const travel = px(geo.travelPx);
+    el.style.width = pxCss(geo.travelPx);
+    el.style.height = pxCss(geo.dispH);
+    ensureIntentStepsKeyframes(travel);
     const phase = intentStepsPhaseMs(
       ports.now(),
       record.intentStartMs,
       geo.durationMs,
     );
-    el.style.animation = intentStepsAnimationCss(geo, phase);
+    el.style.animation = intentStepsAnimationCss(geo, phase, travel);
     el.style.animationPlayState = record.intentStripPaused ? "paused" : "";
     record.intentStripAnchorMs = record.intentStartMs + phase;
     ports.anchorAnimations(el, record.intentStripAnchorMs);

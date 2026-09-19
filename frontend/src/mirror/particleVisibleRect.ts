@@ -30,6 +30,7 @@
 // runtime's self-time was `get clientWidth`).
 
 import { affineInverse, nodeMatrix, type Affine } from "@/mirror/affine";
+import { px } from "@/mirror/stageFit";
 
 /** The visible stage in design space: [0,width] x
  *  [0,height], where width is `MIRROR_DESIGN_WIDTH · spreadFactor` on a widened stage and the height
@@ -105,10 +106,17 @@ export function particleVisibleRect(
   const y2 = inv[3] * h + y0;
   const x3 = inv[0] * w + inv[2] * h + x0;
   const y3 = inv[1] * w + inv[3] * h + y0;
-  const minX = snapDown(Math.min(x0, x1, x2, x3));
-  const maxX = snapUp(Math.max(x0, x1, x2, x3));
-  const minY = snapDown(Math.min(y0, y1, y2, y3));
-  const maxY = snapUp(Math.max(y0, y1, y2, y3));
+  // LAYOUT SPACE (stageFit.ts). Everything above is DESIGN-space arithmetic — the inputs are the walk's own design
+  // matrices — but the ANSWER is read by gsw in the element's own local CSS px, and on the `?stageFit=display` arm
+  // that space is the design one scaled by the fit factor (the element's box is `W·S × H·S` under an unchanged
+  // linear part, so one local px covers `1/S` of the design px it used to). Converting the four corners here, before
+  // the snap, is what keeps the snap grid a grid in the space the attribute is actually written in — converting
+  // after it would quantise to 16 DESIGN px and then land the result off-grid. A no-op factor of 1 on the default
+  // arm leaves every corner, and therefore every attribute string, bit-identical.
+  const minX = snapDown(px(Math.min(x0, x1, x2, x3)));
+  const maxX = snapUp(px(Math.max(x0, x1, x2, x3)));
+  const minY = snapDown(px(Math.min(y0, y1, y2, y3)));
+  const maxY = snapUp(px(Math.max(y0, y1, y2, y3)));
   if (!Number.isFinite(minX) || !Number.isFinite(minY) || !Number.isFinite(maxX) || !Number.isFinite(maxY)) {
     return null;
   }

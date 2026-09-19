@@ -48,6 +48,7 @@ import {
   paintHandRaiseChrome
 } from "@/mirror/handRaiseChrome";
 import { MIRROR_RENDERER_KEY } from "@/mirror/rendererKey";
+import { layoutScale, pxCss } from "@/mirror/stageFit";
 import { mirrorSettings } from "@/mirror/mirrorSettings";
 import { naturalSize, textureSizeVersion, warmImage } from "@/mirror/textureCache";
 
@@ -136,12 +137,28 @@ const rootStyle = computed<CSSProperties>(() => {
   const draw = slab.value;
   const scale = pressed.value ? DOWN_SCALE : focused.value ? HOVER_SCALE : 1;
   const rect = draw ?? { left: 0, top: 0, width: BOX.width, height: BOX.height };
+  // LAYOUT SPACE (stageFit.ts). This control is the ONE piece of CouchCoop chrome that MirrorView's design-space
+  // chrome layer cannot cover: on the DOM arm it TELEPORTS out of the slot and into a mirror node
+  // (CombatPileContainer, `teleportTarget`), which on the `?stageFit=display` arm is laid out in display px with no
+  // scaling ancestor. So it carries its own conversion.
+  //
+  // The two ANCHOR offsets convert as lengths; the BOX and its whole design-px interior (slab, mask, glyph grid)
+  // instead ride one `transform: scale()` about the bottom-right corner — the corner `right`/`bottom` pin it by, so
+  // the anchor stays put while the art shrinks. Scaling the box and re-deriving the interior would mean converting
+  // four more computed styles and the SVG glyph grid for no visual gain.
+  //
+  // KNOWN NUANCE, display arm only: `transform-origin` is shared with the individual `scale` property, so the
+  // press/hover animation pivots at the bottom-right corner there instead of the centre. At a phone's fit that is a
+  // sub-pixel-to-~2px difference in a 60ms animation; it is called out rather than hidden because it is a real
+  // divergence that no test asserts.
+  const s = layoutScale();
   return {
-    right: `${BOX.right + BOX.width - rect.left - rect.width}px`,
-    bottom: `${BOX.bottom + BOX.height - rect.top - rect.height}px`,
+    right: pxCss(BOX.right + BOX.width - rect.left - rect.width),
+    bottom: pxCss(BOX.bottom + BOX.height - rect.top - rect.height),
     width: `${rect.width}px`,
     height: `${rect.height}px`,
     scale: `${scale}`,
+    ...(s === 1 ? {} : { transform: `scale(${s})`, transformOrigin: "100% 100%" }),
     transition: `scale ${pressed.value ? PRESS_MS : RELEASE_MS}ms ease-out`
   };
 });
