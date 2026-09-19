@@ -175,3 +175,31 @@ describe("hand-raise button across the two layout spaces", () => {
     display.unmount();
   });
 });
+
+// --- the stage's stacking context -------------------------------------------------------------------------------
+//
+// A SOURCE assertion, deliberately, because the failure it guards is invisible to every other kind of test.
+// StaticBackground's underlay sits at the most-negative z-index there is. That only keeps it under the stage's own
+// background and OVER `.mirror-frame`'s letterbox black while it resolves inside the stage's stacking context —
+// and `position: relative` with `z-index: auto` does not create one. On the design arm the stage's
+// `transform: scale()` created it as a side effect; removing the transform for the display arm sent the whole
+// combat background behind the frame's #000 while every other node still painted, so the DOM was identical, every
+// box was identical, the element counts were identical, and 4,600 tests stayed green. Only a rendered frame
+// showed it. jsdom cannot evaluate paint order, so the honest guard is that the declaration is still there.
+describe("the stage declares its own stacking context", () => {
+  it("keeps `isolation: isolate` on .mirror-stage", async () => {
+    // Resolved from the project root, not from `import.meta.url` — vitest serves modules over a non-file URL.
+    const source = await import("node:fs/promises").then((fs) =>
+      fs.readFile(`${process.cwd()}/src/mirror/MirrorView.vue`, "utf8")
+    );
+    // Anchored to the start of a line: the file mentions `.mirror-stage` in prose many times, and an unanchored
+    // match found one of those comments instead of the rule (and so passed for the wrong reason).
+    const rule = /^\.mirror-stage\s*\{[\s\S]*?\}/m.exec(source);
+    expect(rule, "expected a .mirror-stage rule in MirrorView.vue").not.toBeNull();
+    // COMMENTS STRIPPED FIRST. The rule's own comment explains the fix and therefore contains the literal string
+    // `isolation: isolate`, so asserting against the raw text passed with the declaration deleted — the mutation
+    // run caught it. Assert on the declaration, not on the prose about it.
+    const declarations = rule![0].replace(/\/\*[\s\S]*?\*\//g, "");
+    expect(declarations).toMatch(/isolation:\s*isolate\s*;/);
+  });
+});
