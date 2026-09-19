@@ -219,6 +219,7 @@ export function createCanvasMirrorRenderer(
     cosmeticOffsetDy: (id) => interaction.cosmeticOffsets.get(id)?.dy ?? 0,
     effectivelyVisible: (node) => interaction.liveEffectivelyVisible(node),
     isLandingTarget: (id) => interaction.handHolderIds.has(id),
+    onTransformArm: (id, at) => interaction.noteTransformArmPose(id, at),
     onNodePresent: (node) => interaction.noteNodePresent(node),
     onNodeRemoved: (id) => {
       interaction.noteNodeRemoved(id);

@@ -26,7 +26,10 @@
 //     one frame moved the pose channel while the lift channel still held the pose before it. That is a channel
 //     seam, closed where the channel is written (`handController.noteTransformArmPose` + `holderPaintedLocalY`),
 //     and it is why "the ramp said the right thing on the frame it was read" and "the card was drawn past its
-//     pose" can both be true. └────────────────────────────────────────────────────────────────────────────────┘
+//     pose" can both be true. The canvas had the same seam in its own channel — a lift ramped from the retained
+//     offset onto a pose that had already stepped — and it is closed the same way, at its own arm
+//     (`interactionRuntime.noteTransformArmPose`), NOT by changing what this ramp answers. Both arms are measured
+//     across a focus change in `handLiftPhase.spec.ts`. └──────────────────────────────────────────────────────┘
 //   * HOW THE ANSWER IS APPLIED. The DOM writes the individual CSS `translate` property, which composes with the
 //     baked matrix and moves the element's subtree for free; the canvas writes a COSMETIC OFFSET inherited by the
 //     subtree in its draw list. THE LAW BOTH IMPLEMENT: **a raise dy is expressed in the OWNER'S PARENT SPACE** —
