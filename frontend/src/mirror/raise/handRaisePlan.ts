@@ -18,11 +18,15 @@
 //     a canvas build has no incremental walk, so it scans (`scanRaiseIndex` below is that scan, and it is the
 //     default index for any backend without a walk to hang the sets off).
 //   * WHERE A HOLDER IS HEADED (`holderLocalY`). ┌── H10 GUARD ──────────────────────────────────────────────────┐
-//     The DOM's version prefers a tween ENDPOINT while a pin or a pending pin-catch-up is in force; a STALE
-//     endpoint surviving its tween there is live hypothesis H10, SUSPECTED and deliberately LEFT UNFIXED so the
-//     repro recorder can catch it (docs/agents/touch-live-harness.md, H9/H10). The canvas's version takes an
-//     endpoint only while the tween is genuinely live. Folding the two into one function here would silently
-//     resolve an open investigation, so it stays a port. └───────────────────────────────────────────────────────┘
+//     The DOM's version prefers a tween ENDPOINT while a pin or a pending pin-catch-up is in force; the canvas's
+//     takes an endpoint only while the tween is genuinely live, and the two stay a port (see that module's own
+//     header) rather than being folded together here.
+//     The H10 excursion recorded on 2026-09-19 was NOT that difference: the answer was right, and the DOM's eased
+//     lift simply LEFT the wrong value, because a producer delta that steps the pose and arms the return tween in
+//     one frame moved the pose channel while the lift channel still held the pose before it. That is a channel
+//     seam, closed where the channel is written (`handController.noteTransformArmPose` + `holderPaintedLocalY`),
+//     and it is why "the ramp said the right thing on the frame it was read" and "the card was drawn past its
+//     pose" can both be true. └────────────────────────────────────────────────────────────────────────────────┘
 //   * HOW THE ANSWER IS APPLIED. The DOM writes the individual CSS `translate` property, which composes with the
 //     baked matrix and moves the element's subtree for free; the canvas writes a COSMETIC OFFSET inherited by the
 //     subtree in its draw list. THE LAW BOTH IMPLEMENT: **a raise dy is expressed in the OWNER'S PARENT SPACE** —
@@ -186,6 +190,21 @@ export function handRaiseRamp(localY: number): number {
 }
 
 /**
+ * The lift a holder at `localY` is drawn with, in design px (negative = raised), for a mode running at `liftPx`.
+ *
+ * ONE SPELLING of the ramp arithmetic, because it is asked in two places for the same frame: the plan below asks
+ * it of the pose a holder is HEADED for, and the DOM asks it of the pose a holder is drawn at as it puts its lift
+ * channel in phase with a transform ease (see `holderPaintedLocalY`). Two spellings would let the value a card
+ * eases FROM and the value it eases TO come off different arithmetic.
+ *
+ * Rounded, because a sub-pixel ramp step must not churn a rebuild (canvas) or rewrite a style attribute (DOM)
+ * every frame of a tween — and the ROUNDED value is what the input inverse gets, because it is what was drawn.
+ */
+export function handRaiseDy(liftPx: number, localY: number | null): number {
+  return localY == null ? 0 : Math.round(-liftPx * (1 - handRaiseRamp(localY)));
+}
+
+/**
  * Is this holder still one of the FAN's cards — i.e. a child of the hand CONTAINER?
  *
  * The game reparents a holder onto the hand ROOT for as long as the card is out of the hand: while it is being
@@ -290,10 +309,7 @@ export function planHandRaise(index: RaiseSceneIndex, input: HandRaiseInput): Ha
   // --- the hand -----------------------------------------------------------------------------------------------
   for (const holderId of index.holders) {
     const localY = lift > 0 ? index.holderLocalY(holderId) : null;
-    const dy = localY == null ? 0 : -lift * (1 - handRaiseRamp(localY));
-    // Rounded so a sub-pixel ramp step cannot churn a rebuild (canvas) or rewrite a style attribute (DOM) every
-    // frame of a tween — and the ROUNDED value is what the input inverse gets, because it is what was drawn.
-    const rounded = Math.round(dy);
+    const rounded = handRaiseDy(lift, localY);
     if (rounded !== 0) {
       offsets.set(holderId, { dx: 0, dy: rounded });
       // The holder itself is a zero-size anchor; its `Hitbox` child is the box a pointer can land on.

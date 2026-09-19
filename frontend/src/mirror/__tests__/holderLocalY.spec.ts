@@ -10,7 +10,7 @@
 import { describe, expect, it } from "vitest";
 
 import { HAND_RAISE_RAMP_START_Y } from "@/mirror/raise/constants";
-import { holderLocalY, type HolderPoseEnv } from "@/mirror/raise/holderLocalY";
+import { holderLocalY, holderPaintedLocalY, type HolderPoseEnv } from "@/mirror/raise/holderLocalY";
 import type { MirrorNode } from "@/mirror/sceneTree";
 
 const HAND_CONTAINER_NAME = "CardHolderContainer";
@@ -92,5 +92,30 @@ describe("holderLocalY — the pose the focus ramp reads", () => {
     const strict = holderLocalY(env(nodes, { liveEndpointY: () => null }), "holder");
     expect(stale).toBe(-209);
     expect(strict).toBe(-50);
+  });
+});
+
+// The SECOND question, asked of the same legs: not where the card is headed, where it IS. Used to put the DOM's
+// cosmetic lift channel in phase with the pose channel before both of them ease (see `noteTransformArmPose`), which
+// is a write of a drawn position — so a guess is the one answer it must never give.
+describe("holderPaintedLocalY — the pose the holder is drawn at", () => {
+  it("agrees with the ramp read wherever a real pose exists, streamed or endpoint", () => {
+    expect(holderPaintedLocalY(env(scene()), "holder")).toBe(-50);
+    const framed = env(scene(), { liveEndpointY: () => 1080 - 209 });
+    expect(holderPaintedLocalY(framed, "holder")).toBe(holderLocalY(framed, "holder"));
+  });
+
+  it("answers NULL where the ramp read guesses the resting fan", () => {
+    // A tween-owned holder with its transform suppressed: the ramp has to produce a destination for it, and the
+    // resting fan is the honest guess for one. There is no honest guess for where it is being DRAWN, and stepping
+    // its lift to a pose it is not at would snap the card by up to the whole 119px.
+    const nodes = scene({ transform: null });
+    expect(holderLocalY(env(nodes), "holder")).toBe(HAND_RAISE_RAMP_START_Y);
+    expect(holderPaintedLocalY(env(nodes), "holder")).toBeNull();
+  });
+
+  it("answers null for the same non-holders the ramp read refuses", () => {
+    expect(holderPaintedLocalY(env(scene()), "dragged")).toBeNull();
+    expect(holderPaintedLocalY(env(scene()), "nobody")).toBeNull();
   });
 });
