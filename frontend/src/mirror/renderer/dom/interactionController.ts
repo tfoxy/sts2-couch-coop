@@ -7,6 +7,7 @@ import {
   type Affine,
 } from "@/mirror/affine";
 import { type EagerScrollTarget } from "@/mirror/eagerScroll";
+import { designPx, px } from "@/mirror/stageFit";
 import {
   buildEagerScrollTargets,
   scanEagerScrollIds,
@@ -417,7 +418,10 @@ export function createInteractionController(
   function applyLocalOffset(nodeId: string, dy: number): void {
     const el = ports.records().get(nodeId)?.el;
     if (!el) return;
-    const value = Math.abs(dy) < 0.01 ? "0px" : `0px ${dy.toFixed(2)}px`;
+    // LAYOUT SPACE (stageFit.ts): `dy` is an eager-scroll offset in design px and `translate` is a rendered offset.
+    // The 0.01 dead-band stays in DESIGN px on purpose — it asks "did the scroll move at all", a question about the
+    // scroll, not about the screen — and `toFixed(2)` still trims the emitted string. Identity on the default arm.
+    const value = Math.abs(dy) < 0.01 ? "0px" : `0px ${px(dy).toFixed(2)}px`;
     if (el.style.translate !== value) el.style.translate = value;
   }
 
@@ -666,5 +670,7 @@ function baseTranslateY(record: RenderRecord, fallback: number): number {
   const parts = transform.slice(open + 7, close).split(",");
   if (parts.length !== 6) return fallback;
   const f = Number(parts[5]);
-  return Number.isFinite(f) ? f : fallback;
+  // The cached string is the element's LAYOUT-space placement, and every caller composes this against design-space
+  // eager-scroll geometry — so it comes back to design space here (stageFit.ts). Identity on the default arm.
+  return Number.isFinite(f) ? designPx(f) : fallback;
 }

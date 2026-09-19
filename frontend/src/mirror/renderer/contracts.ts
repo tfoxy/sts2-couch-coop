@@ -57,7 +57,11 @@ export type FullWalkCause =
   | "fixup"
   | "occlusion"
   | "staticBg"
-  | "uiScale";
+  | "uiScale"
+  // `?stageFit=display` only: the stage's fit scale moved, and on that arm the fit is baked into every node's box
+  // and matrix rather than carried by one transform — so every emitted style is stale. Never fires on the default
+  // arm (see stageFit.ts's `setLayoutScale`).
+  | "stageFit";
 
 /**
  * R6 P6-A — the RECONCILE PULL, the app's scheduled walk offered to a backend that has its own frame loop.

@@ -22,6 +22,7 @@ import {
 } from "@/mirror/nodeStyles";
 import type { MirrorNode } from "@/mirror/sceneTree";
 import type { MirrorShaderBinding } from "@/mirror/shaderAttributes";
+import { px } from "@/mirror/stageFit";
 import { naturalSize, warmImage } from "@/mirror/textureCache";
 import {
   ATLAS_STICKY_CANVAS_REVERTS,
@@ -369,9 +370,13 @@ export function createDomSubLayers(ports: DomSubLayerPorts): DomSubLayers {
         if (record.atlasPageCropSig !== cropSig) {
           record.atlasPageCropSig = cropSig;
           record.atlasKey = key;
+          // LAYOUT SPACE (stageFit.ts): gsw derives `backgroundSize`/`backgroundPosition` from `box / texture`, so
+          // handing it the box in the space the div is actually laid out in (`inset: 0` of a display-px element)
+          // scales the blown-up page and its offset together — which is what keeps the crop registered. `atlasSize`
+          // stays the page's true natural size: it is source pixels, and the source never moves.
           const crop = regionBackgroundStyle(region, {
             atlasSize: page ?? undefined,
-            box: { width: region.width, height: region.height },
+            box: { width: px(region.width), height: px(region.height) },
           });
           const div = record.atlasRegionDiv!;
           div.style.backgroundImage = `url("${url}")`;
@@ -509,7 +514,8 @@ export function createDomSubLayers(ports: DomSubLayerPorts): DomSubLayers {
           "stroke",
           eraser ? LINE_ERASER_STROKE : (opaqueHtml(color?.html) ?? "#ffffff"),
         );
-        polyline.setAttribute("stroke-width", String(width));
+        // A stroke width is a LENGTH in the same SVG user space the points are in — see `linePointsAttr`.
+        polyline.setAttribute("stroke-width", String(px(width)));
         // Alpha rides stroke-opacity, never the stroke colour, so the two can't multiply each other.
         polyline.setAttribute("stroke-opacity", String(color ? color.a : 1));
         if (eraser) {

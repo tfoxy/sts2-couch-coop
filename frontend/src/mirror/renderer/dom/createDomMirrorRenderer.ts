@@ -45,6 +45,7 @@ import {
 import {
   resetShaderDocCache,
 } from "@/mirror/shaderAttributes";
+import { designPx, layoutScale } from "@/mirror/stageFit";
 import { createMapLineMasks } from "@/mirror/renderer/dom/mapLineMasks";
 import { createSvgDefsRegistry } from "@/mirror/renderer/dom/svgDefsRegistry";
 // THE SPREAD ALGEBRA lives in its own pure module so the canvas backend can place every node on the SAME squeeze
@@ -1175,7 +1176,15 @@ function createMirrorRenderer(stage: HTMLElement, defs: SVGElement): MirrorRende
       acc = affineMul(elementLocalAffine(cur, preferInline), acc);
       cur = cur.parentElement;
     }
-    return acc;
+    // LAYOUT SPACE (stageFit.ts) → back to the DESIGN space this function's contract promises. On the
+    // `?stageFit=display` arm every element in that chain carries a translation already multiplied by the fit
+    // factor, and conjugation composes — the product of `S·Dᵢ·S⁻¹` is `S·(∏Dᵢ)·S⁻¹` — so the whole chain is undone
+    // by dividing the composed TRANSLATION once, here. The linear part never carried the factor and is untouched.
+    // Identity on the default arm, which is why every consumer (the pose seam, the landing log, the hand claim)
+    // is unchanged there.
+    return layoutScale() === 1
+      ? acc
+      : [acc[0], acc[1], acc[2], acc[3], designPx(acc[4]), designPx(acc[5])];
   }
 
   /** Is a card FLIGHT currently placing this record? (At most ~30 live at a reshuffle peak — a scan is right.) */

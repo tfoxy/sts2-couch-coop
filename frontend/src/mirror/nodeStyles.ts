@@ -1,3 +1,11 @@
+// LAYOUT SPACE (see `@/mirror/stageFit.ts`). Every CSS px this file emits goes through `pxCss` / its affine twin,
+// which multiply by the stage's design→display factor — 1 (a no-op, byte-identical strings) on the shipped
+// `?stageFit=design` arm, the fit scale on `?stageFit=display`. The split is deliberately along the file's existing
+// NUMERIC-CORE vs CSS-TWIN seam: the numeric cores (`placementBox`, `atlasFitAffine`, `atlasCanvasFit`,
+// `clipCornerRadius`, `elementLocalPoint`) stay in DESIGN space, because the canvas backend consumes them
+// (`canvas/paintSpec.ts`) and it has no scaled DOM subtree to undo; only the stringifiers that write into the DOM
+// convert. If you add a px emission here, route it through `pxCss` — and if you add a numeric core, do NOT.
+//
 // Per-node rendering for the live-tree MIRROR, shared by the flat top-level list (MirrorView) and the
 // recursive clip-group renderer (MirrorNodeView). A `clip_children` node renders as a container that clips
 // its NESTED descendants to its texture's rounded shape (the combat health-bar `Mask` capsule); those
@@ -12,6 +20,7 @@ import { isCardTrailNode, isCardTrailRootNode } from "@/mirror/cardTrail";
 import { ninePatchAtlasSlices as computeNinePatchAtlasSlices } from "@/mirror/ninePatch";
 import { isShaderInputNode, isWebglShaderNode, stretchModeToBackgroundSize } from "@/mirror/shaderAttributes";
 import { isSpineClipNode } from "@/mirror/spineAttributes";
+import { pxCss, scaleAffineTranslationInPlace } from "@/mirror/stageFit";
 import { uiScalingEnabled } from "@/mirror/uiScaling";
 import { renderQuality } from "@/render/quality";
 import { mirrorResourceUrl, type MirrorFont, type MirrorNode, type MirrorRect } from "@/mirror/sceneTree";
@@ -176,6 +185,9 @@ export function atlasCanvasFit(node: MirrorNode, scratch = false): AtlasCanvasFi
 // canvas then falls back to its default inset:0 stretch.
 //
 // Pure stringifier over `atlasCanvasFit` — the math lives there once, this only formats it.
+//
+// LAYOUT SPACE (stageFit.ts): the canvas's own box and the el-local offset are LENGTHS and take the factor; the
+// trailing `scale()` is the region→box fit, a dimensionless ratio between two boxes that BOTH scale, so it must not.
 export function atlasCanvasPlacement(
   node: MirrorNode
 ): { width: string; height: string; transform: string } | null {
@@ -185,9 +197,9 @@ export function atlasCanvasPlacement(
   }
   const scale = fit.uniform ? `scale(${fit.sx})` : `scale(${fit.sx}, ${fit.sy})`;
   return {
-    width: `${fit.w}px`,
-    height: `${fit.h}px`,
-    transform: `translate(${fit.dx}px, ${fit.dy}px) ${scale}`
+    width: pxCss(fit.w),
+    height: pxCss(fit.h),
+    transform: `translate(${pxCss(fit.dx)}, ${pxCss(fit.dy)}) ${scale}`
   };
 }
 
@@ -312,16 +324,20 @@ export function ninePatchAtlasSlices(node: MirrorNode, renderWidthOverride?: num
   // The bands are laid out across the RENDERED box: the element is `renderWidthOverride` wide, so slicing from the
   // 1920-space `lr` would strand the right cap and stop the stretched middle short (R19 6c).
   const box = { width: renderedWidth(lr, renderWidthOverride), height: lr.height };
+  // LAYOUT SPACE (stageFit.ts): every one of these is a length in the ELEMENT's box — the slice quads and the
+  // blown-up atlas page they crop from — so all eight take the factor together. Scaling the page by the same factor
+  // as the quads is what keeps the crop registered: `backgroundSize`/`backgroundPosition` are the page's rendered
+  // size and offset, not source-texture pixels.
   return computeNinePatchAtlasSlices(region, m, box, page).map((slice) => ({
     position: "absolute",
-    left: `${slice.left}px`,
-    top: `${slice.top}px`,
-    width: `${slice.width}px`,
-    height: `${slice.height}px`,
+    left: pxCss(slice.left),
+    top: pxCss(slice.top),
+    width: pxCss(slice.width),
+    height: pxCss(slice.height),
     backgroundImage: url,
     backgroundRepeat: "no-repeat",
-    backgroundSize: `${slice.backgroundSizeWidth}px ${slice.backgroundSizeHeight}px`,
-    backgroundPosition: `${slice.backgroundPositionX}px ${slice.backgroundPositionY}px`
+    backgroundSize: `${pxCss(slice.backgroundSizeWidth)} ${pxCss(slice.backgroundSizeHeight)}`,
+    backgroundPosition: `${pxCss(slice.backgroundPositionX)} ${pxCss(slice.backgroundPositionY)}`
   }));
 }
 
@@ -392,7 +408,8 @@ function basePlacementCss(
   if (parentInv) {
     m = affineMulInto(m, parentInv, m);
   }
-  return affineCss(m);
+  // LAYOUT SPACE (stageFit.ts): only the TRANSLATION carries px; (a,b,c,d) is the node's own scale/rotation/skew.
+  return affineCss(scaleAffineTranslationInPlace(m));
 }
 
 // Does this node paint its `textureUrl` in CSS at all? (A WebGL/particle node's pixels come from a gsw canvas, a
@@ -530,8 +547,15 @@ function atlasFitPlacement(
   if (!fit) {
     return null;
   }
+  // LAYOUT SPACE (stageFit.ts): the element box is the texture REGION (a length) and the placement matrix carries a
+  // px translation, so both take the factor; the trailing `scale()` is the region→localRect fit, a ratio between two
+  // boxes that both scale, so it does not. `fit.m` is the module scratch here (`scratch = true`) — scaled in place.
   const suffix = fit.uniform ? `scale(${fit.sx})` : `scale(${fit.sx}, ${fit.sy})`;
-  return { transform: `${affineCss(fit.m)} ${suffix}`, width: `${fit.w}px`, height: `${fit.h}px` };
+  return {
+    transform: `${affineCss(scaleAffineTranslationInPlace(fit.m))} ${suffix}`,
+    width: pxCss(fit.w),
+    height: pxCss(fit.h)
+  };
 }
 
 // R10-PERF6 WS-P1 — the walk's ancestor-affine fast path re-derives ONLY a node's placement when an ancestor moved
@@ -578,8 +602,8 @@ export function nodeStyle(item: RenderItem): Record<string, string> {
     style.top = "0px";
     // The PAINTED box may be widened for the horizontal stretch (full-screen fill → stage width); the transform
     // below still uses the raw `lr`, so children re-based against it are unaffected.
-    style.width = `${item.renderWidthOverride ?? lr.width}px`;
-    style.height = `${lr.height}px`;
+    style.width = pxCss(item.renderWidthOverride ?? lr.width);
+    style.height = pxCss(lr.height);
     style.transform = basePlacementCss(transform, lr, item.parentInv);
     style.transformOrigin = "0 0";
   }
@@ -620,7 +644,7 @@ export function nodeStyle(item: RenderItem): Record<string, string> {
     style.overflow = "hidden";
     const radius = clipCornerRadius(node, item.renderWidthOverride);
     if (radius > 0) {
-      style.borderRadius = `${radius}px`;
+      style.borderRadius = pxCss(radius);
     }
   } else if (node.clipContents && lr && lr.width > 0 && lr.height > 0) {
     // `Control.clip_contents` — the OTHER Godot clip, and the only one a non-painting layout container has (see
@@ -658,7 +682,7 @@ export function nodeStyle(item: RenderItem): Record<string, string> {
       // other — the visible axis computes to `auto`, which would make this a scroll container. `inset()` clips the
       // vertical axis at the box edge and outsets the horizontal one. `clip-path` creates a stacking context; that
       // is a no-op here, since every mirror node already carries a baked transform and is already one.
-      style.clipPath = `inset(0px -${item.clipAxisOutsetX}px)`;
+      style.clipPath = `inset(0px -${pxCss(item.clipAxisOutsetX)})`;
     } else {
       style.overflow = "hidden";
     }
@@ -701,7 +725,9 @@ export function nodeStyle(item: RenderItem): Record<string, string> {
     } else if (node.ninePatch && node.ninePatchMargins) {
       const m = node.ninePatchMargins;
       style.borderStyle = "solid";
-      style.borderWidth = `${m.top}px ${m.right}px ${m.bottom}px ${m.left}px`;
+      // LAYOUT SPACE (stageFit.ts): `border-width` is a rendered LENGTH and takes the factor. `border-image-slice`
+      // is deliberately NOT scaled — it addresses the SOURCE texture in its own pixels, and the source never moves.
+      style.borderWidth = `${pxCss(m.top)} ${pxCss(m.right)} ${pxCss(m.bottom)} ${pxCss(m.left)}`;
       style.borderImageSource = `url("${node.textureUrl}")`;
       style.borderImageSlice = `${m.top} ${m.right} ${m.bottom} ${m.left} fill`;
       style.borderImageRepeat = "stretch";
@@ -887,11 +913,14 @@ export function textStyle(node: MirrorNode): Record<string, string> {
     style.color = text.colorHtml;
   }
   if (text.fontSizePx) {
-    style.fontSize = `calc(${text.fontSizePx}px * var(--godot-text-scale, 1))`;
+    // LAYOUT SPACE (stageFit.ts): a font size is a length like any other — without the factor the display arm would
+    // render design-sized glyphs in a display-sized box. The `--godot-text-scale` multiplier is a readability RATIO
+    // and stays outside it, as does every `calc(1em * r)` role ratio below.
+    style.fontSize = `calc(${pxCss(text.fontSizePx)} * var(--godot-text-scale, 1))`;
     // Expose the streamed base px so a generated per-label declaration can re-derive the scaled size and CAP it
     // (WS-TEXT v4 End Turn: `font-size: min(calc(var(--godot-font-px) * var(--godot-text-scale)), <cap>px)`). The
     // font-size above is unchanged, so this is purely additive.
-    style["--godot-font-px"] = `${text.fontSizePx}px`;
+    style["--godot-font-px"] = pxCss(text.fontSizePx);
   }
   if (node.font) {
     style.fontFamily = `"${node.font.family}", sans-serif`;
@@ -915,20 +944,20 @@ export function textStyle(node: MirrorNode): Record<string, string> {
     style["--godot-rich-text-color"] = text.colorHtml ?? "currentColor";
     richRoleFontVars(style, node, text.fontSizePx);
     if (hasOutline) {
-      style["--godot-rich-outline-size"] = `${outlineSize * OUTLINE_SCALE}px`;
+      style["--godot-rich-outline-size"] = pxCss(outlineSize * OUTLINE_SCALE);
       style["--godot-rich-outline-color"] = outlineColorHtml;
     }
     if (node.shadow) {
       style["--godot-rich-shadow-color"] = node.shadow.colorHtml;
-      style["--godot-rich-shadow-x"] = `${node.shadow.offsetX}px`;
-      style["--godot-rich-shadow-y"] = `${node.shadow.offsetY}px`;
+      style["--godot-rich-shadow-x"] = pxCss(node.shadow.offsetX);
+      style["--godot-rich-shadow-y"] = pxCss(node.shadow.offsetY);
     }
   } else {
     if (node.shadow) {
-      style.textShadow = `${node.shadow.offsetX}px ${node.shadow.offsetY}px 0 ${node.shadow.colorHtml}`;
+      style.textShadow = `${pxCss(node.shadow.offsetX)} ${pxCss(node.shadow.offsetY)} 0 ${node.shadow.colorHtml}`;
     }
     if (hasOutline) {
-      style.webkitTextStroke = `${outlineSize * OUTLINE_SCALE}px ${outlineColorHtml}`;
+      style.webkitTextStroke = `${pxCss(outlineSize * OUTLINE_SCALE)} ${outlineColorHtml}`;
       style.paintOrder = "stroke fill";
     }
   }
@@ -995,7 +1024,9 @@ function richRoleFontVars(
     // deliberate ×0.7 italic factor, which is correct: a streamed spacing is the game's real number.
     const spacingPx = role.spacingPx(node);
     if (spacingPx != null) {
-      style[`--godot-rich-${role.cssRole}-letter-spacing`] = `${round4(spacingPx)}px`;
+      // A LENGTH (glyph tracking), so it takes the factor — the round4 stays OUTSIDE it, trimming the wire's own
+      // float noise rather than the layout product (which `pxCss` deliberately leaves at full precision).
+      style[`--godot-rich-${role.cssRole}-letter-spacing`] = pxCss(round4(spacingPx));
     }
   }
 }

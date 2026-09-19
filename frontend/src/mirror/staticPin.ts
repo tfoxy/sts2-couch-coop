@@ -58,6 +58,7 @@
 // making a future "swap a settled frozen surface to a plain <img>" safe by giving it a size that stops moving.
 
 import { MIRROR_DESIGN_HEIGHT, MIRROR_DESIGN_WIDTH } from "@/mirror/sceneTree";
+import { displaySpaceLayout } from "@/mirror/stageFit";
 import { renderQuality } from "@/render/quality";
 
 /** A landscape viewport must cover at least this much of the screen's long AND short edge to count as a
@@ -118,6 +119,24 @@ export interface StaticPinInputs {
   screen?: { width: number; height: number } | null;
   /** Read lazily so a page-zoom / monitor move is picked up by the next push instead of being latched. */
   devicePixelRatio: () => number;
+  /**
+   * Is the host laying its DOM boxes out in DISPLAY px (`?stageFit=display` — see stageFit.ts)? THE FIT TERM IS
+   * THE WHOLE DIFFERENCE, and it is a term that would DOUBLE-COUNT rather than merely drift.
+   *
+   * The `fit` factor above exists solely because gsw measures a binding's box with `clientWidth` /
+   * `ResizeObserver.contentRect` — transform-blind reads — so in the DEFAULT host `contentBox === designBox`, and
+   * the ratio has to supply the fit itself to get from a design box to the pixels it is shown at. On the display
+   * arm the boxes ARE display px, so gsw's own measurement already carries the fit: keeping it here would size a
+   * frozen surface at `designBox × fit²`, i.e. blow up the exact backing stores this arm exists to shrink.
+   *
+   * The header's own caveat named this case before it existed: "A host that RE-LAYOUTS its boxes on a fit change —
+   * CSS boxes in real px — would need `K / fitScale`; the mirror is not that host." On the display arm it is, and
+   * `K / fitScale` is exactly `dpr × staticScale`.
+   *
+   * Read lazily, like `devicePixelRatio`, and defaulted so every existing construction (and every existing spec)
+   * keeps the design-arm formula verbatim.
+   */
+  displayLayout?: () => boolean;
 }
 
 export function createStaticPinTracker(inputs: StaticPinInputs): StaticPinTracker {
@@ -161,7 +180,9 @@ export function createStaticPinTracker(inputs: StaticPinInputs): StaticPinTracke
     ratioFor(staticScale) {
       const dpr = inputs.devicePixelRatio();
       const scale = staticScale > 0 ? staticScale : 1;
-      const ratio = fit * dpr * scale;
+      // The fit term drops out when the host's own boxes already carry it — see `StaticPinInputs.displayLayout`.
+      const fitTerm = inputs.displayLayout?.() ? 1 : fit;
+      const ratio = fitTerm * dpr * scale;
       return Number.isFinite(ratio) && ratio > 0 ? ratio : undefined;
     }
   };
@@ -185,7 +206,8 @@ export function mirrorStaticPin(): StaticPinTracker {
     shared = createStaticPinTracker({
       screen,
       devicePixelRatio: () =>
-        typeof window !== "undefined" && window.devicePixelRatio > 0 ? window.devicePixelRatio : 1
+        typeof window !== "undefined" && window.devicePixelRatio > 0 ? window.devicePixelRatio : 1,
+      displayLayout: displaySpaceLayout
     });
   }
   return shared;

@@ -1,4 +1,5 @@
 import type { Affine } from "@/mirror/affine";
+import { px } from "@/mirror/stageFit";
 
 export { isLineEraser, isMapStrokeNode } from "@/mirror/renderer/sharedFlightPolicy";
 
@@ -53,10 +54,13 @@ function trailBandOpacityTag(
   return tag;
 }
 
+// LAYOUT SPACE (stageFit.ts): these are SVG user-space coordinates, and the `<svg>` host is a zero-box wrapper with
+// `overflow: visible` whose user space IS the node's local space — display px on the `?stageFit=display` arm. The
+// factor is 1 on the default arm, so every emitted string stays byte-identical there.
 function linePointsAttr(flat: number[]): string {
   const parts: string[] = [];
   for (let i = 0; i + 1 < flat.length; i += 2)
-    parts.push(`${flat[i]},${flat[i + 1]}`);
+    parts.push(`${px(flat[i])},${px(flat[i + 1])}`);
   return parts.join(" ");
 }
 

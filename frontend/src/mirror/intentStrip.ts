@@ -123,9 +123,16 @@ export function intentStepsKeyframesCss(travelPx: number): string {
 // The `animation` shorthand for one strip (pure). Phase is applied as a NEGATIVE delay — see the header. Times
 // keep 6 decimals: the cycle length is count/fps, which is rarely exact (4 frames at 15fps = 266.666667ms), and a
 // coarser rounding would slowly drift the glyph off the game clock the phase is anchored to.
-export function intentStepsAnimationCss(geo: IntentStripGeometry, phaseMs: number): string {
+// `travelPx` overrides `geo.travelPx` for the keyframes NAME only — the caller passes the LAYOUT-space travel on the
+// `?stageFit=display` arm, so the name matches the rule it injected (both are keyed by the same number). Defaulted,
+// so every existing caller and spec is byte-identical.
+export function intentStepsAnimationCss(
+  geo: IntentStripGeometry,
+  phaseMs: number,
+  travelPx: number = geo.travelPx
+): string {
   const round6 = (n: number) => Math.round(n * 1e6) / 1e6;
-  return `${intentStepsKeyframesName(geo.travelPx)} ${round6(geo.durationMs)}ms steps(${geo.count}) -${round6(phaseMs)}ms infinite`;
+  return `${intentStepsKeyframesName(travelPx)} ${round6(geo.durationMs)}ms steps(${geo.count}) -${round6(phaseMs)}ms infinite`;
 }
 
 // --- keyframes injection (one <style data-mirror-intent-steps> in <head>, one rule per travel distance) --------

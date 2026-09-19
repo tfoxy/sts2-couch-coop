@@ -29,6 +29,7 @@
 // backends' harnesses already read, so a geoclip lane measured anywhere else would be invisible to them. Counters
 // only — nothing here reads walk state back.
 import { mirrorWalkStats } from "@/mirror/renderer/walkStats";
+import { pxCss } from "@/mirror/stageFit";
 import { asPresentationPackedGeoclip } from "@/mirror/geoclipManifest";
 import {
   foldGeoclipUvs as foldSharedGeoclipUvs,
@@ -846,9 +847,11 @@ export function createGeoclipNode(
     if (el.height !== h) {
       el.height = h;
     }
-    el.style.width = `${w}px`;
-    el.style.height = `${h}px`;
-    el.style.transform = `translate(${next.localX}px, ${next.localY}px) scale(${scale})`;
+    // LAYOUT SPACE (stageFit.ts): `el.width/height` above are the GL backing store (resolution); these are the CSS
+    // box and the node-local offset, both lengths. The trailing `scale()` maps clip px into the box — dimensionless.
+    el.style.width = pxCss(w);
+    el.style.height = pxCss(h);
+    el.style.transform = `translate(${pxCss(next.localX)}, ${pxCss(next.localY)}) scale(${scale})`;
   };
   place(placement);
 

@@ -1,4 +1,5 @@
 import type { Affine } from "@/mirror/affine";
+import { px } from "@/mirror/stageFit";
 
 type LineMaskGroup = {
   mask: SVGElement | null;
@@ -114,7 +115,9 @@ export function createMapLineMasks(defs: SVGElement, recordFor: (id: string) => 
         ensureLineMaskEl(ownerId, group).appendChild(line);
         cut = { line, box: null }; group.erasers.set(id, cut);
       }
-      cut.line.setAttribute("points", points); cut.line.setAttribute("stroke-width", String(width));
+      // `points` arrives already in layout space (the caller builds it with `linePointsAttr`); the width is the raw
+      // design one, so it converts here — see stageFit.ts.
+      cut.line.setAttribute("points", points); cut.line.setAttribute("stroke-width", String(px(width)));
       cut.box = strokeBox(linePoints, width); syncLineMaskPens(group);
       return;
     }
@@ -135,6 +138,10 @@ export function createMapLineMasks(defs: SVGElement, recordFor: (id: string) => 
   return { pinnedStrokeLocal, forgetStrokeLocal: (id: string) => mapStrokeLocals.delete(id), updateStroke, releaseLineMaskStroke, dispose };
 }
 
+// LAYOUT SPACE (stageFit.ts): the returned box goes straight onto the `<mask>`/`<rect>` geometry attributes, which
+// are `userSpaceOnUse` — the same SVG user space the stroke points are in, i.e. the node's LOCAL space, which is
+// display px on the `?stageFit=display` arm. Converting here rather than at the four attribute writes also keeps the
+// eraser/pen OVERLAP tests (which compare two of these boxes) in one consistent space. Identity on the default arm.
 function strokeBox(points: number[], width: number): number[] | null {
   if (points.length < 4) return null;
   let minX = Infinity, minY = Infinity, maxX = -Infinity, maxY = -Infinity;
@@ -143,5 +150,5 @@ function strokeBox(points: number[], width: number): number[] | null {
     minX = Math.min(minX, x); minY = Math.min(minY, y); maxX = Math.max(maxX, x); maxY = Math.max(maxY, y);
   }
   const pad = width / 2 + 1;
-  return [minX - pad, minY - pad, maxX + pad, maxY + pad];
+  return [px(minX - pad), px(minY - pad), px(maxX + pad), px(maxY + pad)];
 }
