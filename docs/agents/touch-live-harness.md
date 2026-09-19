@@ -89,10 +89,15 @@ recovering. Aiming through one puts the pointer in empty board, the game answers
 the GAME for the harness's own bad aim. That single defect was behind the intermittent redness of **H1, H3 and
 H6** simultaneously.
 
-The harness now refuses to measure through it. `awaitAimableHand` holds each point until the offset between a
-holder's game pose and its hit surface matches the baseline captured from a verified-rested hand at the start of
-the check; points that never converge are counted and named in the check's note rather than scored. If a run
-reports "whose hit surface still disagreed with the game's pose", that is the instrument talking, not the game.
+The harness now refuses to measure through it. `awaitAimableHand` holds each point until the box a rect PREDICTS
+its element will occupy matches the box the element actually occupies (`aimDriftPx`); points that never converge
+are counted and named in the check's note rather than scored. The element is the independent witness precisely
+because a skipped element is still drawn correctly through DOM nesting while the composed rect is wrong — and the
+test is pose-independent, so it holds for a focused, scaled or mid-fan card. Measured drift is 0 everywhere
+against ~160px on a stale rect, so the 3px threshold cannot absorb a real one. An earlier attempt keyed on the
+holder→hitbox offset being constant, which is WRONG (a focused card scales to 1.0 and its offset moves 133→211)
+and blocked H3 on every run — do not reintroduce it. If a run reports "whose hit surface still disagreed with the
+game's pose", that is the instrument talking, not the game.
 
 ## Recorded baseline — what "green" meant on 2026-09-19
 
