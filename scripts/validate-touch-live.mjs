@@ -191,6 +191,14 @@ const NOMINAL_RAISE_PX = 119;
  * out; that was measured before this value was chosen.
  */
 const SEAM_TOLERANCE_LOCAL_PX = 30;
+/**
+ * The renderer's art-overhang band: how far outside its drawn hit box (in the card's OWN local px) a painted
+ * pixel may be and still be claimed for that card — `raiseInverse.HAND_ANCHOR_MARGIN_LOCAL_PX`. H6's overhang
+ * half asserts the product's rule, so it has to use the product's number; kept here as a copy because this
+ * script is plain node with no bundler and cannot import a TS module. If the two ever disagree, this check is
+ * asserting a rule the product does not have: the definition lives in `frontend/src/mirror/raiseInverse.ts`.
+ */
+const HAND_ANCHOR_MARGIN_LOCAL_PX = 30;
 /** Reward cards are guarded by a nominal box about the (0x0) card origin — the client's own model. */
 const REWARD_CARD_NOMINAL = { w: 240, h: 338 };
 /** The confirm button's exit slide. Sample its visibility no sooner than this after the triggering tap. */
@@ -560,6 +568,33 @@ const readHand = (page) =>
         name: holder.name,
         raiseDy: rect.raiseDy,
         spreadDx: rect.spreadDx,
+        // THE INSTRUMENT'S OWN INTEGRITY, measured in the same frame as the geometry above.
+        //
+        // Every sample point in this file is computed from this rect, and the rect is composed from a CACHED
+        // parent global that can lag the pose the scene really has (see awaitAimableHand). The browser is the
+        // independent witness: the hitbox ELEMENT is nested inside its holder's element, so it rides the holder's
+        // transform through the DOM and is drawn correctly even in the frames the walk skips it — which is
+        // exactly the case where the composed rect is wrong. So the box this rect PREDICTS the element will
+        // occupy, against the box the element actually occupies, is a pose-independent check on the rect: it
+        // needs no baseline, and it holds while a card is focused, scaled or mid-fan just as well as at rest
+        // (measured 2026-09-19: drift 0 on every card in every state, and ~160px on a stale one).
+        aimDriftPx: (() => {
+          const el = document.querySelector(`[data-node-id="${rect.id}"]`);
+          if (!el) return null;
+          const box = el.getBoundingClientRect();
+          if (box.width < 2 || box.height < 2) return null;
+          let minX = Infinity, minY = Infinity;
+          for (const [fx, fy] of [[0, 0], [1, 0], [0, 1], [1, 1]]) {
+            const lx = lr.x + lr.width * fx;
+            const ly = lr.y + lr.height * fy;
+            minX = Math.min(minX, m[0] * lx + m[2] * ly + m[4] + rect.spreadDx);
+            minY = Math.min(minY, m[1] * lx + m[3] * ly + m[5] + rect.raiseDy);
+          }
+          return Math.max(
+            Math.abs((box.left - r.left) / scale - minX),
+            Math.abs((box.top - r.top) / scale - minY)
+          );
+        })(),
         centre: at(0.5, 0.5),
         top: at(0.5, 0.06),
         bottom: at(0.5, 0.9),
@@ -664,6 +699,9 @@ const classifyPoint = (page, gx, gy) =>
     return {
       containing: containing.map((r) => r.holderId),
       containingIndexes: containing.map((r) => r.index),
+      // Per-holder, so a caller can ask about ONE card ("how far outside card N's own box is this point, in the
+      // local px the renderer's art-overhang margin is expressed in") instead of re-deriving the geometry.
+      byHolder: rows.map((r) => ({ holderId: r.holderId, index: r.index, inside: r.inside, penetration: r.penetration })),
       runnerUpHolder: runnerUp ? runnerUp.holderId : null,
       runnerUpPenetration: runnerUp ? runnerUp.penetration : null,
       topmost: containing.length ? containing[containing.length - 1].holderId : null,
@@ -674,6 +712,29 @@ const classifyPoint = (page, gx, gy) =>
       penetrations: rows.map((r) => r.penetration)
     };
   }, [gx, gy]);
+
+/**
+ * WHICH HAND CARD PAINTS THIS PIXEL — the provenance half of the renderer's own claim rule, re-derived.
+ *
+ * `handController.raisedHandVisualClaimAt` claims a raw stage pixel for a hand holder when two things hold: a
+ * PAINTED descendant of that holder is under the pixel, and the pixel is within `HAND_ANCHOR_MARGIN_LOCAL_PX`
+ * (30 local px) of the holder's own drawn hitbox. This reader answers the first half the same way the renderer
+ * does — topmost painted element, walked up to its hand holder — and the caller answers the second half from
+ * `classifyPoint`. Deliberately re-derived rather than read off the renderer: a check that asked the renderer
+ * whether the renderer was right would assert nothing.
+ */
+const paintedHandOwnerAt = (page, clientX, clientY) =>
+  page.evaluate(([x, y]) => {
+    if (typeof document.elementsFromPoint !== "function") return null;
+    for (const element of document.elementsFromPoint(x, y)) {
+      if (!(element instanceof Element)) continue;
+      const painted = element.closest("[data-node-id][data-paints]");
+      if (!painted) continue;
+      const holder = painted.closest('[data-node-type$="NHandCardHolder"]');
+      if (holder) return holder.getAttribute("data-node-id");
+    }
+    return null;
+  }, [clientX, clientY]);
 
 /** The grabbed card's renderability, by node id. `sub` is the union of its painting descendants. */
 const readCardVisibility = (page, cardId) =>
@@ -717,6 +778,58 @@ async function handAtRest(page) {
 }
 
 /**
+ * THE AIM GUARD — is the hit surface this point would be computed from telling the truth?
+ *
+ * Every sample point in this file is computed from `__mirrorInteractiveRects()`, the mirror's own hit surface,
+ * and that surface is COMPOSED from a cached parent global. While a node is transform-tween pinned the walk skips
+ * its descendants, so the cache can lag the pose the scene really has. Until the fix in `tweenController`'s
+ * settle (2026-09-19) that lag could be permanent — measured 9 of 30 hover cycles leaving a hand card's hit box
+ * up to 160 design px above the card that the game's poses, the DOM and the rendered frame all had at rest.
+ * Aiming through one of those puts the pointer in empty board, the game answers nothing, and the check reports
+ * the GAME for the harness's own bad aim. That single defect was behind the intermittent redness of H1, H3 and H6
+ * at the same time, which is why this guard exists even though the cause is fixed.
+ *
+ * `aimDriftPx` (see readHand) is the measurement: the box the rect PREDICTS its element will occupy against the
+ * box the element actually occupies. The element is the independent witness — it is nested inside its holder, so
+ * it is drawn correctly through DOM nesting exactly in the frames the walk skipped it, which is when the composed
+ * rect is wrong. Pose-independent: it holds for a focused card, a scaled one, a mid-fan one.
+ *
+ * The threshold is 3 design px against a measured drift of 0 on every card in every state; a stale rect misses by
+ * two orders of magnitude more than that, so this cannot absorb one.
+ */
+const AIM_DRIFT_TOLERANCE_PX = 3;
+
+/** Which of these holders' hit surfaces currently disagree with the box the browser drew for them. */
+function staleAim(hand, holders) {
+  if (!hand) return [];
+  return holders
+    .map((id) => {
+      const card = hand.cards.find((c) => c.holderId === id);
+      if (!card || card.aimDriftPx === null || card.aimDriftPx === undefined) return null;
+      return card.aimDriftPx <= AIM_DRIFT_TOLERANCE_PX ? null : { holderId: id, driftPx: Math.round(card.aimDriftPx) };
+    })
+    .filter((x) => x !== null);
+}
+
+/**
+ * Wait until the hand is BOTH at rest and aimable — the hit surfaces of the cards this point needs agree with the
+ * boxes the browser drew for them. Returns the hand plus what was still wrong if it never converged, so a caller
+ * can say WHY it declined to measure instead of measuring anyway.
+ */
+async function awaitAimableHand(page, holders, timeoutMs = 3000) {
+  const deadline = now() + timeoutMs;
+  const rested = await awaitFanRest(page);
+  let hand = await readHand(page);
+  let stale = staleAim(hand, holders);
+  while (stale.length > 0 && now() < deadline) {
+    await sleep(150);
+    hand = await readHand(page);
+    stale = staleAim(hand, holders);
+  }
+  return { hand, stale, rested };
+}
+
+/**
  * Resolve a planned sample point from the CURRENT hand: `holders` names the card (or, for a seam, the two cards
  * whose named points are averaged) by holder id, `key` names the point on it. Null when a named card is no longer
  * in the hand — that is a "nothing to ask" case, not a failure, and the caller counts it separately.
@@ -726,11 +839,20 @@ async function handAtRest(page) {
  * expectation is computed from where they are now, and the disagreement reads exactly like a mis-target.
  */
 async function livePoint(page, holders, key) {
-  const live = await handAtRest(page);
+  // `rested` is the rest wait's own verdict, carried out to the caller instead of being dropped. A hand that
+  // never came back to a whole, still fan is an instrument in an unknown state: the previous gesture may have
+  // left a card selected out of it, and a point resolved against that geometry aims somewhere the card is not.
+  // Scoring it reports the GAME for the harness's own leftovers — which is exactly how the 2026-08-26 armed-tap
+  // failures read before their cause was found.
+  const { hand: live, stale, rested } = await awaitAimableHand(page, holders);
   if (!live) return null;
+  // The hit surface this point would be computed from does not agree with the pose the game has. Anything
+  // measured from here measures the instrument, so hand back a point that is explicitly NOT on stage (every
+  // caller already declines those) carrying the reason, instead of a coordinate that looks usable.
+  if (stale.length > 0) return { aimStale: stale, rested, onStage: false, cx: null, cy: null, gx: null, gy: null };
   const cards = holders.map((id) => live.cards.find((c) => c.holderId === id));
   if (cards.some((c) => c === undefined)) return null;
-  if (cards.length === 1) return cards[0][key];
+  if (cards.length === 1) return { ...cards[0][key], rested };
   const a = cards[0][key];
   const b = cards[1][key];
   return {
@@ -738,7 +860,8 @@ async function livePoint(page, holders, key) {
     cy: (a.cy + b.cy) / 2,
     gx: (a.gx + b.gx) / 2,
     gy: (a.gy + b.gy) / 2,
-    onStage: a.onStage !== false && b.onStage !== false
+    onStage: a.onStage !== false && b.onStage !== false,
+    rested
   };
 }
 
@@ -974,7 +1097,11 @@ async function dwellAndSample(page, pointer, pt, { settleMs = 320, windowMs = 62
       .map((s) => [Math.round(s.coordX), Math.round(s.coordY)]),
     settledFocus: distinct.length === 1 ? distinct[0] : null,
     distinctAfterSettle: distinct,
-    stable: distinct.length === 1
+    stable: distinct.length === 1,
+    // Holders the game has taken OUT of the fan during the dwell. A focus verdict of `null` means something
+    // quite different depending on this: an empty set is "the game was asked and answered nothing", a non-empty
+    // one is "a card was selected/grabbed out of the hand, and the hand answers no hover-focus at all then".
+    outOfFanDuring: [...new Set(samples.flatMap((s) => s.outOfFan ?? []))]
   };
 }
 
@@ -1027,9 +1154,11 @@ async function checkH1(ctx) {
   let loose = 0;
   let offStage = 0;
   let gone = 0;
+  let unaimable = 0;
   for (const { label, holders, key } of plan) {
     const pt = await livePoint(page, holders, key);
     if (pt === null) { gone++; continue; }
+    if (pt.aimStale) { unaimable++; continue; }
     if (pt.onStage === false) { offStage++; continue; }
     const where = await classifyPoint(page, pt.gx, pt.gy);
     if (where.containing.length === 0) continue; // on no card — nothing honest to require
@@ -1076,6 +1205,7 @@ async function checkH1(ctx) {
   const notes = [];
   if (offStage) notes.push(`${offStage} off the bottom of the stage`);
   if (gone) notes.push(`${gone} whose card had left the hand`);
+  if (unaimable) notes.push(`${unaimable} whose hit surface still disagreed with the game's pose`);
   const suffix = notes.length ? ` (${notes.join(", ")} skipped)` : "";
   if (failures.length === 0) return ok(`${strict} exclusive + ${loose} overlap dwell points, all focused a card the pointer was on and held it${suffix}`);
   return bad(`${failures.length}/${evaluated} dwell points mis-focused or flipped${suffix}`, { failures });
@@ -1171,6 +1301,21 @@ async function findTargetedCard(page, pointer, hand) {
  *
  * Only samples taken once the pointer is well away from the press point count: near the pickup the game
  * is still resolving the grab and a few px of lag there is not the reported bug.
+ *
+ * THE ARROW IS A SECOND ASSERTION, AND IT USED TO BE UNFALSIFIABLE. It was one read of `arrows` taken at the
+ * end of the drag, reported as "the targeting arrow was gone by the end of the drag" — and it failed in every
+ * combo on both stage-fit arms while the coordinate half read `errX: 0, errY: 0` on every sample. The saved
+ * screenshot said why (`mouse-1920-H3-arrow.png`, 2026-09-19): the card being dragged was a DEFEND. An
+ * untargeted skill raises no arrow, and it is correct not to. `findTargetedCard` qualifies a Strike or a Bash,
+ * but nothing checked that the measured drag was holding the card it qualified — and the press was landing on a
+ * neighbour, because the sample point came from a hit surface that had gone stale (see the harness doc).
+ *
+ * So the arrow half now asks two answerable questions instead of one unanswerable one:
+ *   * WHICH CARD IS HELD. Read off the seam's out-of-fan set, against the holder the probe qualified. A grab
+ *     that took a different card is its own named failure — never "the arrow was gone".
+ *   * WAS THE ARROW UP WHILE IT MATTERED. Polled at every drag step and asserted over the same FAR samples the
+ *     coordinate is scored on, not read once at the end. A one-frame teardown race at the end of the gesture
+ *     cannot fail it; an arrow that never came up, or dropped mid-drag, still does.
  */
 async function checkH3(ctx) {
   const { page, pointer, combo, outDir } = ctx;
@@ -1178,17 +1323,28 @@ async function checkH3(ctx) {
   if (!hand || hand.cards.length < 3) return skip("no hand to drag from");
   const probe = await findTargetedCard(page, pointer, hand);
   if (!probe) return skip("no hand card raised a targeting arrow (fixture has no targeted attack in hand?)");
-  // Re-read: the probe's grab moved the fan, and the measured drag must start from where the card IS.
-  const settled = await handAtRest(page);
-  const card = settled.cards.find((c) => c.holderId === probe.holderId) ?? probe;
+  // Re-resolve through the aim guard, not just through a rested read: the probe's own grab moved the fan, and
+  // the press has to start from where the card IS — with the hit surface it is computed from agreeing with the
+  // pose the game has for it. Pressing through a lagging one lands on a NEIGHBOUR, which is exactly how this
+  // check used to report "the targeting arrow was gone" while dragging an untargeted card.
+  const centre = await livePoint(page, [probe.holderId], "centre");
+  if (centre === null) return skip("the qualified card left the hand before the measured drag");
+  if (centre.aimStale) {
+    return bad(`the qualified card's hit surface never agreed with the game's pose for it, so the press could not be aimed`, { aimStale: centre.aimStale, card: { holder: probe.holderId, name: probe.name } });
+  }
+  if (centre.onStage === false) return skip("the qualified card's centre is not on stage");
 
   const spreadFactor = hand.designW / 1920;
   const before = await sentCount(page);
   const samples = [];
-  const startX = card.centre.cx, startY = card.centre.cy;
+  const startX = centre.cx, startY = centre.cy;
   const pressDesignX = (startX - hand.origin.x) / hand.scale;
   const pressDesignY = (startY - hand.origin.y) / hand.scale;
   await pointer.press(startX, startY);
+  // WHO IS ACTUALLY HELD. The game reparents the grabbed holder out of the fan, so the seam names it. Read
+  // once the grab has had time to take, and carried into every verdict below.
+  await sleep(160);
+  const heldEarly = (await readFocus(page, FOCUS_POSE_RISE_PX)).outOfFan;
   // Sweep up and across toward the enemy row. Long enough that the "far from the press" gate has plenty
   // of samples, and slow enough that each move produces its own send.
   for (let i = 1; i <= 14; i++) {
@@ -1196,6 +1352,7 @@ async function checkH3(ctx) {
     const cy = startY - i * 48;
     await pointer.drag(cx, cy);
     await sleep(85);
+    const live = await readFocus(page, FOCUS_POSE_RISE_PX);
     const designX = (cx - hand.origin.x) / hand.scale;
     const designY = (cy - hand.origin.y) / hand.scale;
     // Travel is measured POINTER-to-PRESS, both in the stage's own widened design space. Comparing against the
@@ -1211,7 +1368,10 @@ async function checkH3(ctx) {
       designX: Math.round(designX), designY: Math.round(designY),
       sentX: Math.round(sent.coordX), sentY: Math.round(sent.coordY),
       errX: Math.round(sent.coordX * spreadFactor - designX),
-      errY: Math.round(sent.coordY - designY)
+      errY: Math.round(sent.coordY - designY),
+      // The arrow, at this step rather than at the end of the gesture.
+      arrows: live.arrows,
+      outOfFan: live.outOfFan
     });
   }
   const f = await readFocus(page, FOCUS_POSE_RISE_PX);
@@ -1233,12 +1393,39 @@ async function checkH3(ctx) {
   if (far.length === 0) return bad(`the drag never produced a sample >${FAR_ENOUGH_PX} design px from the press point`, { samples, screenshot: shot });
   const worst = far.reduce((a, b) => (Math.hypot(b.errX, b.errY) > Math.hypot(a.errX, a.errY) ? b : a));
   const tolerance = 25;
-  const detail = { screenshot: shot, spreadFactor, arrowsAtScreenshot: f.arrows, worst, farSamples: far };
-  if (f.arrows === 0) return bad("the targeting arrow was gone by the end of the drag", detail);
+  // Which holders were out of the fan while the drag was under way, i.e. what the grab actually picked up.
+  const heldDuring = [...new Set([...heldEarly, ...samples.flatMap((s) => s.outOfFan)])];
+  const arrowsFar = far.map((s) => s.arrows);
+  const detail = {
+    screenshot: shot,
+    spreadFactor,
+    qualifiedCard: { holder: probe.holderId, name: probe.name },
+    heldDuringDrag: heldDuring,
+    arrowsPerFarSample: arrowsFar,
+    arrowsAtScreenshot: f.arrows,
+    worst,
+    farSamples: far
+  };
+  // A grab that took a card OTHER than the one the probe qualified is its own defect, and the arrow says
+  // nothing about the product until this holds: an untargeted card correctly raises no arrow.
+  if (heldDuring.length === 0) {
+    return bad(`the press never took a card out of the hand — nothing was being dragged`, detail);
+  }
+  if (!heldDuring.includes(probe.holderId)) {
+    return bad(`the grab took a different card than the one qualified as targeted (held ${heldDuring.join(",")}, wanted ${probe.holderId} "${probe.name}")`, detail);
+  }
   if (Math.hypot(worst.errX, worst.errY) > tolerance) {
     return bad(`sent coordinate is off the pointer by up to (${worst.errX}, ${worst.errY}) design px (tolerance ${tolerance})`, detail);
   }
-  return ok(`arrow coordinate tracked the pointer within (${worst.errX}, ${worst.errY}) px over ${far.length} far samples; ${shot}`);
+  // The arrow over the FAR samples — the window the coordinate is scored on. Asserted as "up for all of them"
+  // rather than "up at the end": the end of the gesture is a teardown race, the middle is the product.
+  if (arrowsFar.some((n) => n === 0)) {
+    return bad(
+      `the targeting arrow was down for ${arrowsFar.filter((n) => n === 0).length}/${arrowsFar.length} of the far drag samples while holding "${probe.name}"`,
+      detail
+    );
+  }
+  return ok(`"${probe.name}" held throughout, arrow up for all ${far.length} far samples, coordinate within (${worst.errX}, ${worst.errY}) px; ${shot}`);
 }
 
 /**
@@ -1323,17 +1510,32 @@ async function checkH5(ctx) {
 }
 
 /**
- * H6 — corner, edge and ART-OVERHANG taps must resolve to a card the finger is plainly aiming at, never
- * a distant neighbour and never nothing.
+ * H6 — corner, edge and ART-OVERHANG taps. TWO DIFFERENT CLAIMS, because only one of them is the game's to
+ * answer.
  *
- * The overhang samples sit just OUTSIDE the oriented hit box, on the frame/banner/border art that
- * overhangs it — the exact class of tap that used to resolve 119px above the card into empty board. A
- * point out there is on no hit box at all, so the requirement is deliberately weaker than H1's and
- * still says everything the bug report said: the focus must be one of the TWO NEAREST cards (by
- * penetration into their own local frame), and it must not be null. Which of the two nearest wins is a
- * tie-break; "the card 1.4 pitches away" and "nothing" are not.
+ * CORNER / EDGE (inside the hit box): H1's strict rule. The focus must be a card the point is really on.
  *
- * The corner/edge samples are inside the hit box, so they carry H1's strict rule.
+ * ART OVERHANG (just outside the box, on the frame/banner art that overhangs it): this used to require the
+ * GAME to focus one of the two nearest cards, and that expectation was wrong. Measured against the game
+ * itself on 2026-09-19 (`scripts/probe-hand-hitbox-live.mjs`, maps under
+ * `.sts2/artifacts/touch-harness/hitmap-*`): with the readable-hand raise OFF, so the pointer maps to game
+ * space 1:1 and no correction is in play, a point 4 local px INSIDE a card's top edge focuses it and a point
+ * 4 local px OUTSIDE focuses nothing. The boundary is the hit box, to within the 4px step. At the overhang
+ * sample's own 21px the game focuses nothing whether the coordinate is corrected or not. **The game
+ * hit-tests the box, not the art**, so requiring a focus out there asserted something no build has ever
+ * done, on both stage-fit arms, in every combo.
+ *
+ * What IS the mirror's to get right out there — and what the 119px bug was actually about — is the
+ * COORDINATE. The renderer claims a raw stage pixel for a hand card when a PAINTED descendant of that card
+ * is under it and the pixel is within `HAND_ANCHOR_MARGIN_LOCAL_PX` (30 local px) of the card's drawn hit
+ * box; a claimed pixel is mapped back by that card's own cosmetic lift, exactly like a pixel on its body.
+ * So the overhang samples now assert THAT: over a card's own art, inside its margin, the coordinate on the
+ * wire must carry that card's raise correction. A point the product does not claim (no hand art paints it,
+ * or it is past the margin) is outside the rule and is counted as unclaimed rather than scored — the count
+ * is reported, so the samples cannot all quietly become no-ops.
+ *
+ * The Y correction is the whole of the raise-inverse rule (X is the spread/near-miss machinery, which H1 and
+ * H3 measure), so Y is what is asserted; X is recorded for the report.
  */
 async function checkH6(ctx) {
   const { page, pointer } = ctx;
@@ -1343,45 +1545,101 @@ async function checkH6(ctx) {
   const plan = [];
   for (const c of picks) {
     for (const key of ["topLeft", "topRight", "leftEdge", "rightEdge", "overhangTop"]) {
-      plan.push({ label: `card${c.index}.${key}`, holders: [c.holderId], key });
+      plan.push({ label: `card${c.index}.${key}`, holders: [c.holderId], key, owner: c.holderId });
     }
   }
   const failures = [];
   let inside = 0;
   let overhang = 0;
-  for (const { label, holders, key } of plan) {
+  let unclaimed = 0;
+  let unrested = 0;
+  let unaimable = 0;
+  for (const { label, holders, key, owner } of plan) {
     const pt = await livePoint(page, holders, key);
-    if (pt === null || pt.onStage === false) continue;
+    if (pt === null) continue;
+    // The hand never came back to a whole, still fan, or its hit surface still disagrees with the pose the game
+    // has for it: the geometry this point would be computed from is a state the harness itself left behind, not
+    // one the game is in. Do not score it — say so instead.
+    if (pt.aimStale) { unaimable++; continue; }
+    if (pt.onStage === false) continue;
+    if (pt.rested === false) { unrested++; continue; }
     const where = await classifyPoint(page, pt.gx, pt.gy);
     const isOverhang = where.containing.length === 0;
-    // Far outside every card (a stray point, e.g. an outer card's overhang over open board) — no claim.
-    if (isOverhang && (where.nearestPenetration === null || where.nearestPenetration > 60)) continue;
-    if (isOverhang) overhang++; else inside++;
-    const r = await dwellAndSample(page, pointer, pt, { settleMs: 300, windowMs: 420 });
-    const allowed = isOverhang ? where.nearest : where.containing;
-    if (!allowed.includes(r.settledFocus)) {
-      failures.push({
-        point: label,
-        kind: isOverhang ? `overhang(+${where.nearestPenetration}px outside)` : where.containing.length > 1 ? "overlap" : "exclusive",
-        client: [Math.round(pt.cx), Math.round(pt.cy)],
-        design: [Math.round(pt.gx), Math.round(pt.gy)],
-        acceptable: allowed,
-        acceptableCards: isOverhang ? where.nearestIndexes : where.containingIndexes,
-        penetrations: where.penetrations,
-        focused: r.settledFocus,
-        inputsSent: r.sent,
-        sentCoords: r.sentCoords,
-        timeline: compressTimeline(r.samples)
-      });
+
+    if (isOverhang) {
+      // THE COORDINATE CLAIM (see the header). Both halves of the product's own rule have to hold before it
+      // says anything: this card's art must paint the pixel, and the point must be inside the anchor margin.
+      const paintedOwner = await paintedHandOwnerAt(page, pt.cx, pt.cy);
+      const ownerRow = where.byHolder.find((h) => h.holderId === owner) ?? null;
+      const withinMargin = ownerRow !== null && ownerRow.penetration <= HAND_ANCHOR_MARGIN_LOCAL_PX;
+      if (paintedOwner !== owner || !withinMargin) { unclaimed++; continue; }
+      overhang++;
+      const lift = hand.cards.find((c) => c.holderId === owner)?.raiseDy ?? 0;
+      const before = await sentCount(page);
+      await pointer.dwellStart(pt.cx, pt.cy);
+      await sleep(320);
+      const sent = (await readSentInputs(page, before)).filter((x) => x.coordX !== undefined);
+      await pointer.dwellEnd(pt.cx, pt.cy);
+      const first = sent[0] ?? null;
+      // `-raiseDy` because the lift is negative (the card is drawn ABOVE where the game has it), and the
+      // coordinate has to be handed back DOWN to the game's own box.
+      const wantY = pt.gy - lift;
+      const errY = first === null ? null : Math.round(first.coordY - wantY);
+      if (first === null || Math.abs(errY) > 1) {
+        failures.push({
+          point: label,
+          kind: `overhang(+${ownerRow.penetration} local px outside, art-claimed)`,
+          client: [Math.round(pt.cx), Math.round(pt.cy)],
+          design: [Math.round(pt.gx), Math.round(pt.gy)],
+          paintedOwner,
+          ownerRaiseDy: lift,
+          wantSentY: Math.round(wantY),
+          gotSentY: first === null ? null : Math.round(first.coordY),
+          errY,
+          inputsSent: sent.length,
+          sentCoords: sent.slice(-3).map((x) => [Math.round(x.coordX), Math.round(x.coordY)])
+        });
+      }
+    } else {
+      inside++;
+      const r = await dwellAndSample(page, pointer, pt, { settleMs: 300, windowMs: 420 });
+      if (!where.containing.includes(r.settledFocus)) {
+        failures.push({
+          point: label,
+          kind: where.containing.length > 1 ? "overlap" : "exclusive",
+          client: [Math.round(pt.cx), Math.round(pt.cy)],
+          design: [Math.round(pt.gx), Math.round(pt.gy)],
+          acceptable: where.containing,
+          acceptableCards: where.containingIndexes,
+          penetrations: where.penetrations,
+          focused: r.settledFocus,
+          outOfFanDuring: r.outOfFanDuring,
+          inputsSent: r.sent,
+          sentCoords: r.sentCoords,
+          timeline: compressTimeline(r.samples)
+        });
+      }
     }
     await pointer.rest(hand.origin.x + hand.scale * hand.designW * 0.5, hand.origin.y + hand.scale * 220);
     await cancelArmedSelection(page, pointer);
     await awaitFanRest(page);
   }
   const evaluated = inside + overhang;
-  if (evaluated === 0) return skip("no corner/overhang sample was close enough to a card to make a claim about");
-  if (failures.length === 0) return ok(`${inside} corner/edge + ${overhang} art-overhang points all resolved to a card the finger was aiming at`);
-  return bad(`${failures.length}/${evaluated} corner/edge/overhang points resolved to the wrong card (or to nothing)`, { failures });
+  const notes = [];
+  if (unclaimed) notes.push(`${unclaimed} overhang points the renderer does not claim (no hand art there, or past the ${HAND_ANCHOR_MARGIN_LOCAL_PX}px margin)`);
+  if (unrested) notes.push(`${unrested} skipped because the fan never came back to rest`);
+  if (unaimable) notes.push(`${unaimable} skipped because the hit surface still disagreed with the game's pose`);
+  const suffix = notes.length ? ` (${notes.join("; ")})` : "";
+  if (evaluated === 0) return skip(`no corner/overhang sample was close enough to a card to make a claim about${suffix}`);
+  if (failures.length === 0) {
+    return ok(`${inside} corner/edge points focused a card the finger was on, ${overhang} art-overhang points carried their card's raise correction${suffix}`);
+  }
+  const wrongFocus = failures.filter((f) => f.kind === "overlap" || f.kind === "exclusive").length;
+  const wrongCoord = failures.length - wrongFocus;
+  const parts = [];
+  if (wrongFocus) parts.push(`${wrongFocus} corner/edge resolved to the wrong card (or to nothing)`);
+  if (wrongCoord) parts.push(`${wrongCoord} art-overhang sent a coordinate without the card's raise correction`);
+  return bad(`${failures.length}/${evaluated} points failed: ${parts.join("; ")}${suffix}`, { failures });
 }
 
 /**
@@ -1808,7 +2066,7 @@ async function checkH10(ctx) {
   // next handoff landed inside that window and every interesting event scored as "unscorable".
   for (const card of [a, b, c, b, a, b]) {
     const pt = await livePoint(page, [card.holderId], "centre");
-    if (pt === null) continue;
+    if (pt === null || pt.onStage === false) continue;
     if (pointer.kind === "mouse") await pointer.dwellStart(pt.cx, pt.cy);
     else await pointer.tap(pt.cx, pt.cy);
     await sleep(1400);
