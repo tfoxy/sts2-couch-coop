@@ -165,6 +165,7 @@ import { fileURLToPath } from "node:url";
 import { waitForInstancePort } from "./lib/instance-port.mjs";
 import { acquireLease, releaseLease } from "./live-qa-lock.mjs";
 import { assessClientConfirm, selectMirrorModuleBundle } from "./lib/h17-client-confirm-readiness.mjs";
+import { CORRECTION_PX, scoreCorrections } from "./lib/handLandingScore.mjs";
 import { h15CoordinateVerdict, h15FocusedGrabFailure, planH15FifthPlay } from "./lib/h15-plan.mjs";
 
 const REPO_ROOT = resolve(dirname(fileURLToPath(import.meta.url)), "..");
@@ -2192,6 +2193,18 @@ async function checkH10(ctx) {
 // focused card (its neighbours pushed), the hand with one card selected out of it, and the hand after that
 // selection is cancelled. Each is measured only once the fan has STOPPED (`awaitPoseRest`) — mid-motion
 // disagreement is H10's question, not this one.
+//
+// KNOWN HOLE IN THAT WAIT, measured 2026-09-19 and NOT closed — read this before filing what phase 1 reports.
+// `awaitPoseRest` waits for the GAME's poses to stop changing, deliberately (the drawn pose is the thing under
+// test). But "stopped changing" is also true of a producer that is merely LATE, and on the canvas arm the trace
+// samples at ~310 ms, so its two quiet samples are ~600 ms — shorter than the lag actually observed. In
+// report-1789839815113, canvas-mouse-1920/focus, the two holders the focus pushed were drawn at 805 and 1266
+// from t24022 while the producer still said 880 and 1191; it re-emitted 805 at t25256, 1.2 s later. Phase 1
+// scored the gap as `dx -75 dy 0` and `dx +75 dy 0` — the CLIENT WAS RIGHT, and both readings are the wait
+// returning early. A `dx` that is exactly one fan slot, with `dy 0`, at `focus` or `handoff`, is this shape:
+// check the holder's `worstTrace` for the game pose catching up to the drawn one before believing it.
+// The honest fix needs a seam that says whether the producer has SPOKEN about a holder since its last channel
+// closed; there is none today, and lengthening the wait is tuning, not a rule.
 const LANDING_TOLERANCE_PX = 1.5;
 
 /** The shared seam, verbatim. Null when the page has no hand (or is an older build without the seam). */
@@ -2285,25 +2298,17 @@ async function scoreLanding(page, label, { includeOutOfFan = false } = {}) {
  * Phase 1 measures RESTING states, and a resting state is measured AFTER the correction: if the client's
  * predicted motion ends in the wrong place and the next streamed pose yanks the card into line, the fan is
  * perfect by the time anything has settled. That is exactly the reported experience — "they don't end where they
- * should, so when they stop moving they suddenly jump to where they should" — so the defect lives in the frame
- * the correction lands on, not in the frames either side of it.
+ * should, so when they stop moving they suddenly jump to where they should" — so the defect lives in what the
+ * client AIMED AT, not in the frames either side of the correction.
  *
  * So this samples the shared seam ON EVERY ANIMATION FRAME (in the page, at the display's cadence — reading it
- * from node would sample at the harness's own rate and miss a two-frame event) and looks for one shape:
+ * from node would sample at the harness's own rate and miss a two-frame event) and, at each hand-off, compares
+ * the ENDPOINT the channel was headed for against where the holder actually came to rest.
  *
- *     a holder's DRAWN pose goes quiet — two consecutive frames under `QUIET_PX` — and then moves more than
- *     `JUMP_PX` in a single frame, while the GAME's own pose for that holder did not move to match.
- *
- * The last clause is what separates a mispredicted landing from ordinary gameplay: when the game teleports a card
- * (a focus is a teleport, and so is a draw) the streamed pose jumps too and the client is right to follow. A jump
- * the producer did not ask for in that frame is the client correcting itself, and the size of the correction is
- * how wrong the prediction was.
+ * It used to compare the DRAWN pose on the last live frame instead, and that could not work: on the canvas arm
+ * the trace samples at ~310 ms, longer than a hand tween, so that frame is the middle of the ease. See
+ * `scripts/lib/handLandingScore.mjs` — the rule, the four live offenders it retired, and the measurement.
  */
-const CORRECTION_PX = 2;
-/** How long after a hand-off a re-placement still counts as the correction of THAT landing. */
-const CORRECTION_WINDOW_MS = 400;
-/** …and how much the GAME may move the card in that window before the re-placement is its motion, not a fix. */
-const GAME_MOVED_PX = 2;
 
 async function startLandingTrace(page) {
   await page.evaluate(() => {
@@ -2327,7 +2332,13 @@ async function startLandingTrace(page) {
             sd: h.spreadDx,
             rd: h.raiseDy,
             live: h.channelLive,
-            fan: h.inFan
+            fan: h.inFan,
+            // WHERE THE LIVE CHANNEL IS HEADED — the only statement about a landing that does not depend on when
+            // the sampler happened to look. Both backends publish it (`HandPoseSample.endpoint`); phase 2 used to
+            // throw it away and read the DRAWN pose on the last live frame instead, which is the middle of the
+            // motion whenever a frame lasts longer than the tween.
+            ex: h.endpoint ? h.endpoint[4] : null,
+            ey: h.endpoint ? h.endpoint[5] : null
           }))
         });
       }
@@ -2342,149 +2353,6 @@ async function stopLandingTrace(page) {
     window.__landStop = true;
     return window.__landTrace ?? [];
   });
-}
-
-/**
- * THE CORRECTION: where the client's own replay put the card, against where the card ended up.
- *
- * This is deliberately NOT a per-frame "did it jump" test, and the reason is measured rather than assumed: this
- * headless browser paints at about 11 fps (SwiftShader, a 2400x1080 canvas; no launch flag moves it, and the
- * mirror's canvas stage computes every animation frame itself, so the RENDERER is stepping at that rate too). At
- * ~90ms between samples an ordinary motion ONSET is indistinguishable from a correction — both read as "two quiet
- * frames, then a big step" — and a gate built on that reports the environment.
- *
- * What IS frame-rate independent is the pair of poses either side of the hand-off:
- *
- *   * the LANDING — the drawn pose on the last frame a client-side channel owned this holder (`channelLive`), i.e.
- *     where the prediction ended;
- *   * the SETTLED pose — the drawn pose once the holder has gone quiet afterwards, which is the game's own
- *     placement (the producer's suppression window has closed by then and the walk re-derives from what it
- *     streams).
- *
- * Their difference IS the jump the player sees, whatever cadence it was drawn at, and it is exactly the number
- * the offline `handLanding.spec.ts` scores between its beats 2 and 3. A holder the client never predicted (the
- * game streamed every pose) has no landing and is not scored — there was nothing to get wrong.
- */
-function scoreCorrections(trace) {
-  const byHolder = new Map();
-  for (const frame of trace) {
-    for (const h of frame.h) {
-      let rows = byHolder.get(h.id);
-      if (!rows) {
-        rows = [];
-        byHolder.set(h.id, rows);
-      }
-      rows.push({ t: frame.t, f: frame.f, ...h });
-    }
-  }
-  const corrections = [];
-  // Landings the producer's own word CONFIRMED (see the `confirmed` test). Counted rather than dropped silently:
-  // "0 predicted landings" would otherwise read as "nothing was measured" when it means "every prediction was
-  // right", and those are opposite results.
-  let confirmedLandings = 0;
-  for (const [id, rows] of byHolder) {
-    for (let i = 1; i < rows.length; i++) {
-      // The hand-off: a channel owned the holder on the previous frame and does not on this one.
-      if (!(rows[i - 1].live && !rows[i].live)) continue;
-      const landing = rows[i - 1];
-      // Where it comes to rest afterwards — WITHIN A SHORT WINDOW, and only while the GAME is not itself moving
-      // the card. Both bounds are corrections to a first version that scored the game's own motion as a
-      // mispredict: a selected card is parked by the game over the next second and a half, and an unbounded
-      // search happily called that 42px of "correction". The jump this is hunting lands within a frame or two of
-      // the pin lifting, so a window that spans a whole gameplay beat is measuring the wrong thing.
-      let end = i;
-      for (let j = i; j < rows.length && rows[j].t - landing.t <= CORRECTION_WINDOW_MS; j++) {
-        if (rows[j].live) break;
-        end = j;
-      }
-      const settled = rows[end];
-      // The producer moved the card itself between the two samples: the client is right to follow, and what it
-      // followed is not a correction of its own landing.
-      if (Math.hypot(settled.gx - landing.gx, settled.gy - landing.gy) > GAME_MOVED_PX) continue;
-      // …AND THE LANDING WAS CONFIRMED, which is the same idea read the other way round. The seam's game pose and
-      // its drawn pose are sampled together, but the producer's word about a tweened node arrives on ITS own
-      // schedule — a delta later, which on this ~11fps box is a quarter of a second. So a client that predicted
-      // CORRECTLY looks momentarily wrong: it is already drawing the pose the producer is about to state. If any
-      // game pose in the window around the hand-off puts the card where the client landed it, the prediction was
-      // right and the re-placement is the producer catching up, not the client correcting itself.
-      //
-      // The comparison is the same one `handPoseProbe.landingDrift` makes — the field RE-DERIVED at the game's own
-      // x for an origin claimer (`fieldMode === 1`, which every hand holder is), the node's reported shift
-      // otherwise — so a wrong wide-screen shift can never be "confirmed" by it.
-      const confirmed = rows.slice(Math.max(0, i - 2), Math.min(rows.length, end + 3)).some((row) => {
-        const f = row.f ?? 1;
-        const shift = landing.fm === 1 ? Math.min(Math.max(row.gx, 0), 1920) * (f - 1) : landing.sd;
-        return (
-          Math.abs(landing.dx - (row.gx + shift)) <= CORRECTION_PX &&
-          Math.abs(landing.dy - (row.gy + landing.rd)) <= CORRECTION_PX
-        );
-      });
-      if (confirmed) {
-        confirmedLandings++;
-        continue;
-      }
-      const dx = settled.dx - landing.dx;
-      const dy = settled.dy - landing.dy;
-      const distPx = Math.hypot(dx, dy);
-      // THE MOTION'S OWN LAST STEP, which is what a correction has to be measured against rather than against a
-      // fixed number of pixels. Every curve the producer sends is an ease-OUT: it decelerates into its endpoint,
-      // so the final step is the SMALLEST of the motion. A re-placement bigger than the step before it is
-      // therefore something the curve never asked for — the client's landing being overruled. A smaller one is
-      // just the tail of an animation drawn at whatever cadence this device manages (here: ~11 fps headless,
-      // where the last 3px of an Expo tail arrive in one frame and mean nothing).
-      const prior = rows[i - 2];
-      const lastStepPx = prior ? Math.hypot(landing.dx - prior.dx, landing.dy - prior.dy) : 0;
-      // THE CLIENT'S OWN DELIBERATE OFFSET, subtracted before the verdict. The readable-hand lift is released the
-      // moment a card is taken out of the hand — the whole fan lowers by 119px, on purpose, with the game's poses
-      // unchanged — and that lands on exactly the frame a channel hands off. Scored raw, every commit reports two
-      // 119px "jumps" (the two cards whose channels happened to release then) and buries the one correction that
-      // is real. So the raise DELTA is removed and the residual is what is judged; the raw correction stays in the
-      // record, because a lift that steps instead of easing is a defect too — just not this check's.
-      const raiseDeltaPx = settled.rd - landing.rd;
-      const residualPx = Math.hypot(dx, dy - raiseDeltaPx);
-      corrections.push({
-        id,
-        name: landing.name,
-        atMs: rows[i].t,
-        settledAfterMs: Math.round(settled.t - landing.t),
-        correctionPx: Math.round(distPx * 100) / 100,
-        residualPx: Math.round(residualPx * 100) / 100,
-        raiseDeltaPx: Math.round(raiseDeltaPx * 100) / 100,
-        lastStepPx: Math.round(lastStepPx * 100) / 100,
-        /** The correction is a JUMP only if the motion did not just carry on into it — see `lastStepPx`. */
-        overruled: residualPx > Math.max(CORRECTION_PX, lastStepPx),
-        landedAt: [Math.round(landing.dx * 10) / 10, Math.round(landing.dy * 10) / 10],
-        settledAt: [Math.round(settled.dx * 10) / 10, Math.round(settled.dy * 10) / 10],
-        // The two client-side terms at the landing, so a correction can be attributed: an x-only correction of
-        // `(settledGameX − landingGameX)·(F − 1)` is the wide-screen field claimed at the wrong pose; a y-only one
-        // is the readable-hand lift; a correction with the game pose unchanged is a pure mispredicted endpoint.
-        gameAtLanding: [Math.round(landing.gx * 10) / 10, Math.round(landing.gy * 10) / 10],
-        gameAtSettle: [Math.round(settled.gx * 10) / 10, Math.round(settled.gy * 10) / 10],
-        spreadDxLanding: Math.round(landing.sd * 10) / 10,
-        spreadDxSettled: Math.round(settled.sd * 10) / 10,
-        raiseDyLanding: landing.rd,
-        raiseDySettled: settled.rd,
-        inFan: settled.fan,
-        // The frames either side of the hand-off, for this holder alone. A jump you cannot read the run-up to is a
-        // jump you cannot attribute: this is what says whether the client eased into its wrong answer or stepped
-        // there, and what the game was streaming while it did.
-        around: rows.slice(Math.max(0, i - 5), Math.min(rows.length, end + 3)).map((r) => ({
-          t: r.t,
-          drawn: [Math.round(r.dx * 10) / 10, Math.round(r.dy * 10) / 10],
-          game: [Math.round(r.gx * 10) / 10, Math.round(r.gy * 10) / 10],
-          sd: Math.round(r.sd * 10) / 10,
-          rd: r.rd,
-          live: r.live,
-          fan: r.fan
-        }))
-      });
-    }
-  }
-  // Worst RESIDUAL first — the raw correction is reported, but the ranking has to be by what is unexplained, or a
-  // 119px lift release outranks the mispredicted landing hiding behind it.
-  corrections.sort((a, b) => b.residualPx - a.residualPx);
-  corrections.confirmed = confirmedLandings;
-  return corrections;
 }
 
 /**
@@ -2603,18 +2471,28 @@ async function checkH11(ctx) {
     return ok(
       `${measured.length} resting states over ${trace.length} frames: every card drawn where the game has it ` +
         `(worst ${worst.worstPx}px, ${worst.label}/${worst.worst.name}); ` +
-        `${corrections.length} predicted landings, none overruled (worst residual ` +
-        `${corrections.length > 0 ? corrections[0].residualPx : 0}px, inside its own last step); ` +
-        `${corrections.confirmed} more the producer confirmed outright`
+        `${corrections.length} predicted landings scored, none overruled (worst ` +
+        `${corrections.length > 0 ? corrections[0].residualPx : 0}px from where the card rested, tolerance ` +
+        `${CORRECTION_PX}px); ${corrections.confirmed} more the producer confirmed outright, ` +
+        `${corrections.unpredicted} with no endpoint published, ${corrections.unsettled} that never came to rest, ` +
+        `${corrections.outOfFan} the game had taken out of the fan`
     );
   }
   if (offenders.length === 0) {
     const worst = jumps[0];
     return fail(
       `${jumps.length}/${corrections.length} predicted landings ended somewhere the card then jumped from ` +
-        `(worst ${worst.residualPx} design px unexplained: ${worst.name} landed at ${worst.landedAt}, settled at ` +
-        `${worst.settledAt}; raw ${worst.correctionPx}px, of which ${worst.raiseDeltaPx}px is the raise standing aside)`,
-      { jumps: jumps.slice(0, 12), landings: corrections.length, frames: trace.length }
+        `(worst ${worst.residualPx} design px: ${worst.name} aimed at ${worst.aimedAt} — endpoint ` +
+        `${worst.endpointGame} on the F=${trace[0]?.f ?? 1} field — but rested at ${worst.restedAt})`,
+      {
+        jumps: jumps.slice(0, 12),
+        landings: corrections.length,
+        confirmed: corrections.confirmed,
+        unpredicted: corrections.unpredicted,
+        unsettled: corrections.unsettled,
+        outOfFan: corrections.outOfFan,
+        frames: trace.length
+      }
     );
   }
   const worst = offenders.reduce((a, b) => (b.worstPx > a.worstPx ? b : a));
