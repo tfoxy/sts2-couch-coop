@@ -13,6 +13,12 @@
 // ONE THING REMAINS A BACKEND PORT: WHICH endpoint counts as live. The DOM keeps it while its CSS channel awaits
 // collection, through a pending catch-up, and for its one settle-time hand pass; canvas owns the corresponding
 // lifetime inside its tween loop. H10 was fixed in DOM CSS-channel/settle ordering, not by collapsing the ports.
+//
+// TWO QUESTIONS, SAME LEGS. `holderLocalY` answers where a holder is HEADED — the ramp's input, and the value the
+// lift channel eases TO. `holderPaintedLocalY` answers where it IS, which is the value that channel has to ease
+// FROM; the whole difference between them is the resting-fan guess, and why a guess is admissible in one and not
+// the other is written on the second. Keeping both here is what stops the "current pose" read from re-growing as a
+// private leg in the backend that needs it (2026-09-19: the DOM did, and drew cards past their own resting pose).
 
 import { HAND_RAISE_RAMP_START_Y } from "@/mirror/raise/constants";
 import { holderInFan } from "@/mirror/raise/handRaisePlan";
@@ -45,27 +51,52 @@ export interface HolderPoseEnv {
  * Only the Y is read, so the wide-screen spread shift an endpoint carries in its X cannot reach this number.
  */
 export function holderLocalY(env: HolderPoseEnv, id: string): number | null {
-  const node = env.nodes.get(id);
-  if (!node || !holderInFan(env.nodes, id)) {
+  const measured = holderPaintedLocalY(env, id);
+  if (measured != null) {
+    return measured;
+  }
+  if (!raisableFanHolder(env, id)) {
     // A dragged or selected holder is reparented onto the hand ROOT and keeps the game's pose exactly — that is
     // the point of the reparent — so it is neither raisable nor ramped.
     return null;
   }
-  const parentId = node.parentId;
-  if (parentId == null || !env.nodes.has(parentId)) {
+  // In the container, tween-owned, and no endpoint has landed yet (a few frames at the start of a return). The
+  // resting fan is the honest guess: the pose the ramp exists for — the focus — is a TELEPORT, always streamed.
+  return HAND_RAISE_RAMP_START_Y;
+}
+
+/**
+ * The y a holder is actually BEING DRAWN AT in its container right now — the same legs as {@link holderLocalY},
+ * minus the resting-fan guess: null means "nothing on this frame says where this card is", never "it is at rest".
+ *
+ * WHY THE GUESS IS THE WHOLE DIFFERENCE. The ramp answer is asked two ways. `holderLocalY` asks where a holder is
+ * HEADED, and a destination has to be produced for every raisable card, so a suppressed transform falls back to
+ * the fan. This asks where the holder IS, and that answer is only ever used to put the lift channel in phase with
+ * the pose channel before both of them ease (the DOM's `noteTransformArmPose`). A guess there would step a card's
+ * cosmetic lift to a pose it is not at — a snap, drawn, of up to the full lift — so the caller must be told the
+ * pose is unknown and leave the channel alone instead.
+ */
+export function holderPaintedLocalY(env: HolderPoseEnv, id: string): number | null {
+  if (!raisableFanHolder(env, id)) {
     return null;
   }
+  const node = env.nodes.get(id)!;
   // The frame the endpoint is measured in. The composed global when the backend has one; otherwise the parent's
   // own streamed matrix when the composed value is unavailable.
-  let parentGlobalY = env.parentGlobalY(parentId, id);
+  const parentGlobalY = env.parentGlobalY(node.parentId!, id);
   const endpointY = env.liveEndpointY(id);
   if (endpointY != null && parentGlobalY != null) {
     return endpointY - parentGlobalY;
   }
-  if (node.transform == null) {
-    // In the container, tween-owned, and no endpoint has landed yet (a few frames at the start of a return). The
-    // resting fan is the honest guess: the pose the ramp exists for — the focus — is a TELEPORT, always streamed.
-    return HAND_RAISE_RAMP_START_Y;
+  return node.transform == null ? null : node.transform[5];
+}
+
+/** Is this id a fan card the mode may ramp at all — in the hand CONTAINER, under a parent the map still has? */
+function raisableFanHolder(env: HolderPoseEnv, id: string): boolean {
+  const node = env.nodes.get(id);
+  if (!node || !holderInFan(env.nodes, id)) {
+    return false;
   }
-  return node.transform[5];
+  const parentId = node.parentId;
+  return parentId != null && env.nodes.has(parentId);
 }

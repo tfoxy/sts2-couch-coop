@@ -633,6 +633,7 @@ function createMirrorRenderer(stage: HTMLElement, defs: SVGElement): MirrorRende
     cssLinear: cssLinear2x2,
     handHolderIds,
     applyHandRaise: () => handController.applyHandRaise(),
+    noteHandArmPose: (record) => handController.noteTransformArmPose(record),
     applyViewScale: () => scaleController.applyViewScale(),
     applyTipScale: () => scaleController.applyTipScale(),
     noteDeadline: noteTweenDeadline,

@@ -494,6 +494,12 @@ interface RenderRecord {
   // current deadline, it remains the old arm while a re-target is being collected, which identifies the narrow
   // same-offset rearm that must dual-prime both CSS channels.
   raiseTransitionUntil: number;
+  // PHASE OF THE TWO DRAWN CHANNELS. The holder's local y as it was PAINTED at the instant a fresh transform ease
+  // was armed on it (null = none captured, or the pose was unknown). A holder's drawn position is the sum of the
+  // pose channel and the readable-hand lift channel; matching their duration and easing only keeps them together
+  // if the lift also LEAVES the value conjugate to the pose the ease leaves. Written by the tween controller as it
+  // arms, consumed by the very next hand pass — see handController.noteTransformArmPose.
+  raiseArmFromLocalY: number | null;
   // The endpoint held only while tickTweens performs its one settle-time readable-hand pass. A plain release keeps
   // drawing this endpoint, so that pass must not fall back to the retained pre-arm streamed pose. Cleared before
   // returning to the event loop; a real catch-up deliberately leaves this null and uses its streamed pose instead.

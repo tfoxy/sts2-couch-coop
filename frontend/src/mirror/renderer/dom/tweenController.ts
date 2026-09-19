@@ -41,6 +41,13 @@ export interface TweenControllerPorts {
   ) => [number, number, number, number] | null;
   handHolderIds: Set<string>;
   applyHandRaise: () => void;
+  /**
+   * A transform ease is about to be armed on this hand holder and its channel was NOT already live, so the element
+   * is still painting its streamed pose. The readable-hand lift is the other half of that same drawn position and
+   * has to ease from the value conjugate to it — see `handController.noteTransformArmPose`, which is the only
+   * moment the shared pose read still answers where the card IS rather than where it is HEADED.
+   */
+  noteHandArmPose: (record: RenderRecord) => void;
   applyViewScale: () => void;
   applyTipScale: () => void;
   noteDeadline: (at: number) => void;
@@ -141,6 +148,9 @@ export function createTweenController(
     if (r.tweenTransformUntil === 0) {
       r.tweenPreArmLinear = p.cssLinear(r.style.get("transform"));
       r.tweenPinStreamed = r.style.get("transform") ?? null;
+      // Read BEFORE the endpoint below retargets the shared pose read: a fresh arm eases from the pose the element
+      // is painting, and the raise has to leave the lift conjugate to that same pose.
+      if (p.handHolderIds.has(r.id)) p.noteHandArmPose(r);
     }
     r.tweenPinCatchup = null;
     r.tweenPinCatchupOrigin = null;

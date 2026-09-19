@@ -112,7 +112,14 @@ function build(renderer: MirrorRenderer, nodes: Record<string, unknown>[]): Mirr
 
 // A volatile (non-keyframe) delta. `parentId` is restated on every upsert because the wire does: the client
 // rebuilds its parent/child index from it on every delta, so an upsert that omitted it would orphan the node.
-function move(renderer: MirrorRenderer, state: MirrorState, upserts: Record<string, unknown>[]): void {
+// `hintList` rides the SAME delta because the producer sends it that way: one frame of the un-focus can carry both
+// the pose the game has already moved the card to and the tween that covers the rest of the journey.
+function move(
+  renderer: MirrorRenderer,
+  state: MirrorState,
+  upserts: Record<string, unknown>[],
+  hintList: Record<string, unknown>[] = []
+): void {
   const withParents = upserts.map((u) => ({
     parentId: state.nodes.get(u.id as string)?.parentId ?? null,
     // The box, too: a volatile upsert REPLACES a node's rect (only a handful of fields are sticky — see
@@ -121,8 +128,78 @@ function move(renderer: MirrorRenderer, state: MirrorState, upserts: Record<stri
     localRect: { position: { x: 0, y: 0 }, size: { x: 100, y: 16 } },
     ...u
   }));
-  applySceneDelta(state, parseSceneDelta({ type: "scene-delta", full: false, screenType: "run", upserts: withParents })!);
+  applySceneDelta(
+    state,
+    parseSceneDelta({
+      type: "scene-delta",
+      full: false,
+      screenType: "run",
+      upserts: withParents,
+      ...(hintList.length > 0 ? { hints: hintList } : {})
+    })!
+  );
   renderer.reconcile(state);
+}
+
+// ---------------------------------------------------------------------------------------------------------------
+// THE TWO DRAWN CHANNELS, READ BACK THE WAY A BROWSER WOULD RUN THEM.
+//
+// A holder's drawn y is the SUM of its `transform` (the game's pose) and its `translate` (the cosmetic lift), and
+// the renderer writes both within one frame — a start value under an instant transition, a style barrier, then the
+// eased target. jsdom runs no transitions, so the values a browser would interpolate BETWEEN are only visible in
+// the ORDER of the writes; `watchStyle` records every state the `style` attribute passed through, and `channelOf`
+// reads one channel's `from`/`to`/timing out of that sequence: `from` is the value in force when the eased
+// transition was first specified (the browser's transition start), `to` the value the frame ended on.
+// ---------------------------------------------------------------------------------------------------------------
+
+/** Every value `el`'s style attribute took from here on, oldest first, with the final state last. Read ONCE. */
+function watchStyle(el: HTMLElement): () => string[] {
+  const observer = new MutationObserver(() => {});
+  observer.observe(el, { attributes: true, attributeFilter: ["style"], attributeOldValue: true });
+  return () => {
+    const states = observer.takeRecords().map((record) => String(record.oldValue ?? ""));
+    states.push(el.getAttribute("style") ?? "");
+    observer.disconnect();
+    return states;
+  };
+}
+
+function styleValue(state: string, prop: string): string | null {
+  const match = new RegExp(`(?:^|;)\\s*${prop}\\s*:\\s*([^;]*)`).exec(state);
+  return match ? match[1].trim() : null;
+}
+
+/** The vertical component of a channel's value: `matrix(a, b, c, d, x, y)` → y, `0px -41px` → -41, `0px` → 0. */
+function channelY(state: string, prop: "transform" | "translate"): number {
+  const value = styleValue(state, prop);
+  if (value == null || value === "" || value === "none") return 0;
+  if (prop === "transform") {
+    const matrix = /matrix\(([^)]*)\)/.exec(value);
+    return matrix ? Number(matrix[1].split(",")[5]) : 0;
+  }
+  const parts = value.split(/\s+/);
+  return parts.length > 1 ? Number.parseFloat(parts[1]) : 0;
+}
+
+/** This state's transition timing for the channel: 0ms (instant/absent) or the duration plus its easing. */
+function channelTiming(state: string, prop: string): { ms: number; ease: string } {
+  const transition = styleValue(state, "transition") ?? "";
+  const timed = new RegExp(`\\b${prop}\\s+([\\d.]+)(m?s)(?:\\s+(cubic-bezier\\([^)]*\\)|[a-z-]+))?`).exec(transition);
+  if (!timed) return { ms: 0, ease: "" };
+  return { ms: Number(timed[1]) * (timed[2] === "s" ? 1000 : 1), ease: timed[3] ?? "" };
+}
+
+function channelOf(
+  states: string[],
+  prop: "transform" | "translate"
+): { from: number; to: number; ms: number; ease: string } {
+  const final = states[states.length - 1];
+  const armed = states.findIndex((state) => channelTiming(state, prop).ms > 0);
+  return {
+    from: channelY(armed === -1 ? final : states[armed], prop),
+    to: channelY(final, prop),
+    ...channelTiming(final, prop)
+  };
 }
 
 beforeEach(() => {
@@ -643,9 +720,17 @@ describe("readable-hand mode — how the lift MOVES", () => {
     // left this one card at the game's pose, unraised, while every other card came up — and then jumped it into
     // place at the settle.
     move(renderer, state, [{ id: "h1", parentId: "CardHolderContainer" }]);
+    const timeline = watchStyle(el(stage, "h1"));
     hints(renderer, state, [hint("h1", FAN_Y, 400)]);
     expect(el(stage, "h1").style.translate).toBe(`0px ${-RAISE}px`);
     expect(el(stage, "h0").style.translate).toBe(`0px ${-RAISE}px`);
+
+    // …and the arm leaves that lift exactly where the pass before it put it. Phasing the lift channel onto the pose
+    // channel needs a pose to phase it ONTO, and a suppressed holder has none: the resting-fan assumption is a
+    // destination, never a claim about where the card is drawn right now, so nothing here may re-write the channel.
+    const lift = channelOf(timeline(), "translate");
+    expect(lift.from).toBe(-RAISE);
+    expect(lift.to).toBe(-RAISE);
   });
 
   it("holds the lift until the SETTLE puts the focus pose on the element, then drops it in that same frame", () => {
@@ -702,6 +787,59 @@ describe("readable-hand mode — how the lift MOVES", () => {
     // The ordinary fan-pose re-emit is a no-op too — its stream now agrees with the endpoint this settle retained.
     move(renderer, state, [{ id: "h1", transform: at(0, FAN_Y) }]);
     expect(el(stage, "h1").style.translate).toBe(`0px ${-RAISE}px`);
+  });
+
+  // THE PHASE SEAM. Live H10, 2026-09-19: "1/8 focus changes drew a card past the pose it was heading for and back
+  // (worst 9.4 design px, 0ms in, while returning to rest)". The recorded frame trace: the focused holder sat at
+  // 871 design px with `translate: 0px`, then in ONE frame the pose stepped to 920.4 while the lift was still 0 —
+  // 9.4px BELOW the 911 it was heading for — and the error decayed over the next ~150ms exactly as the lift eased.
+  //
+  // Both channels were already given the same duration and easing, so they ran in perfect phase; the entire defect
+  // was the value the LIFT eased FROM. It left the lift conjugate to the focus pose (0) while the transform left
+  // the pose the producer had already stepped to, and one frame of new pose composed with an old lift is drawn
+  // `step × (1 − HAND_RAISE_PX ÷ ramp span)` past the card's own resting pose.
+  it("starts the lift's ease from the pose the transform's ease starts from", () => {
+    const { stage, renderer } = harness();
+    renderer.setRaiseHandCards(true);
+    const state = build(renderer, handScene([{ id: "h0", y: FAN_Y }, { id: "h1", y: FAN_Y }]));
+    move(renderer, state, [{ id: "h1", transform: at(0, FOCUS_Y) }]);
+    const holder = el(stage, "h1");
+    expect(holder.style.translate).toBe("0px"); // focused: the game's own pose, no lift — where the eye last saw it
+
+    // The live step, to the pixel: 871 → 920.4 design px of the 871 → 1030 journey, in the same delta as the tween
+    // that covers the rest of it.
+    const STEPPED_Y = FOCUS_Y + 49.4;
+    const timeline = watchStyle(holder);
+    move(renderer, state, [{ id: "h1", transform: at(0, STEPPED_Y) }], [hint("h1", FAN_Y, 400)]);
+    const states = timeline();
+    const pose = channelOf(states, "transform");
+    const lift = channelOf(states, "translate");
+
+    // The composition below is only a straight blend of the two channels if they really do progress together, so
+    // that is asserted, not assumed.
+    expect(pose.ms).toBe(400);
+    expect(lift.ms).toBe(pose.ms);
+    expect(lift.ease).toBe(pose.ease);
+    expect(pose.to).toBe(FAN_Y);
+    expect(lift.to).toBe(-RAISE);
+
+    const destination = pose.to + lift.to; // the raised resting pose: the live trace's 911
+    const drawnY = (progress: number) =>
+      pose.from + (pose.to - pose.from) * progress + lift.from + (lift.to - lift.from) * progress;
+    // The unfixed magnitude, stated as a number so this test cannot pass by measuring the wrong thing: had the
+    // lift stayed at its focused 0 for this frame, the drawn y would have been the stepped pose itself.
+    expect(STEPPED_Y - destination).toBeCloseTo(9.4, 6);
+
+    let previous = FOCUS_Y; // the settled focused pose — the last position the player saw
+    for (let step = 0; step <= 64; step++) {
+      const y = drawnY(step / 64);
+      // Never PAST the pose it is heading for (the H10 assertion), never back above where it started, and never
+      // reversing: one straight move from the focus pose into the raised fan.
+      expect(y).toBeLessThanOrEqual(destination + 1e-9);
+      expect(y).toBeGreaterThanOrEqual(previous - 1e-9);
+      previous = y;
+    }
+    expect(drawnY(1)).toBeCloseTo(destination, 9);
   });
 
   it("assumes the resting fan for a suppressed holder whose endpoint has not landed yet", () => {

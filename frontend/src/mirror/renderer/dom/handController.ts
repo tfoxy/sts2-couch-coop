@@ -31,6 +31,7 @@ import {
 import {
   EMPTY_CHILDREN,
   EMPTY_HAND_RAISE_PLAN,
+  handRaiseDy,
   holderInFan,
   isHandChoiceNode,
   planHandRaise,
@@ -42,7 +43,11 @@ import {
   heldLiftPx,
   type HeldMode,
 } from "@/mirror/raise/heldLift";
-import { holderLocalY, type HolderPoseEnv } from "@/mirror/raise/holderLocalY";
+import {
+  holderLocalY,
+  holderPaintedLocalY,
+  type HolderPoseEnv,
+} from "@/mirror/raise/holderLocalY";
 import {
   nodeTypeLeaf,
   type MirrorNode,
@@ -58,6 +63,7 @@ export interface HandRecord {
   raiseDy: number;
   raiseTransition: string | null;
   raiseTransitionUntil: number;
+  raiseArmFromLocalY: number | null;
   tweenTransformUntil: number;
   tweenTransformTransition: string | null;
   tweenTransformEndG6: Affine | null;
@@ -99,6 +105,7 @@ export interface HandController<R extends HandRecord> {
   heldGestureIds(): Set<string> | null;
   isHeld(id: string): boolean;
   isTargeting(id: string): boolean;
+  noteTransformArmPose(record: R): void;
   registerNode(id: string, node: MirrorNode, leaf: string, record: R): void;
   removeTargeting(id: string): void;
   removeVisibleTooltip(el: HTMLElement): void;
@@ -297,6 +304,28 @@ export function createHandController<R extends HandRecord>(
     return holderLocalY(holderPoseEnv(record), id);
   }
 
+  /**
+   * A transform ease is ABOUT TO BE ARMED on this holder, and its channel was not already live — so the element is
+   * still painting its streamed pose, and that pose is where the browser will ease FROM. Remember the ramp answer
+   * for it: the lift is the other half of the same drawn position, and it has to ease from the value conjugate to
+   * THIS pose.
+   *
+   * WHY THE CAPTURE HAS TO HAPPEN HERE, AND NOT IN THE HAND PASS. The pose read is one function of one holder, and
+   * what it answers changes the moment the arm retargets the endpoint: before, it is where the card IS; after, it
+   * is where the card is HEADED. The hand pass runs after the arm (that ordering is what gets both channels their
+   * endpoints in one batch), so by then only the destination is left to read.
+   *
+   * THE DEFECT THIS CLOSES (live H10, 2026-09-19). A producer delta can carry a streamed step of the un-focus AND
+   * the tween hint for the rest of it. The walk paints the step; the arm eases the transform on from there; the
+   * hand pass wrote only the ENDPOINT's lift and let the browser ease it from whatever the element still had —
+   * the lift conjugate to the FOCUS pose, one step stale. Both channels then ran the same duration and easing
+   * perfectly in phase, so the whole error was that one stale start value, and it drew the card `step × (1 − lift
+   * ÷ ramp span)` past its own resting pose (measured: a 49.4px step → 9.4 design px past, decaying over ~150ms).
+   */
+  function noteTransformArmPose(record: R): void {
+    record.raiseArmFromLocalY = holderPaintedLocalY(holderPoseEnv(record), record.id);
+  }
+
   // This object is rebuilt per pass but contains only live references. Copying the small registries would make a
   // pass see stale membership after an in-walk reparent or visibility flip.
   function raiseSceneIndex(): RaiseSceneIndex {
@@ -328,10 +357,12 @@ export function createHandController<R extends HandRecord>(
   function writeRaiseTranslate(el: HTMLElement, dy: number): void {
     if (needsRaiseWrite(el, dy)) el.style.translate = raiseTranslate(dy);
   }
+  /** Does this transition make the lift a timed ANIMATION rather than an instant write? */
+  function easedRaise(transition: string | null): boolean {
+    return transition != null && transition !== "translate 0s";
+  }
   function tweenRaiseDeadline(record: R, transition: string | null): number {
-    return transition != null && transition !== "translate 0s"
-      ? record.tweenTransformUntil
-      : 0;
+    return easedRaise(transition) ? record.tweenTransformUntil : 0;
   }
 
   // Both transform and translate are primed before either endpoint is committed. One renderer-owned barrier then
@@ -342,12 +373,16 @@ export function createHandController<R extends HandRecord>(
     el: HTMLElement,
     dy: number,
     transition: string | null,
+    startTranslate: string | null,
   ): void {
     const cs = window.getComputedStyle(el);
     const transform =
       cs.transform && cs.transform !== "none"
         ? cs.transform
         : el.style.transform;
+    // `startTranslate` is the lift conjugate to the pose the transform ease starts from (see noteTransformArmPose);
+    // it is only non-null when that pose is KNOWN and differs from what the element carries. Absent it, the honest
+    // start is what the element is painting — a mid-ease value included, which is why it is read computed.
     const translate =
       cs.translate && cs.translate !== "none"
         ? cs.translate
@@ -359,7 +394,9 @@ export function createHandController<R extends HandRecord>(
     el.style.transition = p.composeTweenTransition(record);
     el.style.transform = transform;
     record.style.set("transform", transform);
-    el.style.translate = translate && translate !== "none" ? translate : target;
+    el.style.translate =
+      startTranslate ??
+      (translate && translate !== "none" ? translate : target);
     record.tweenTransformTransition = transformTransition;
     record.raiseTransition = transition;
     record.raiseTransitionUntil = tweenRaiseDeadline(record, transition);
@@ -400,16 +437,31 @@ export function createHandController<R extends HandRecord>(
         continue;
       }
       const dy = plan.offsets.get(id)?.dy ?? 0;
+      // Consumed by the pass that follows the arm, never carried into a later one: it describes the pose ONE arm
+      // eased from, and a pose is only that arm's for the frame it was captured on.
+      const armFromLocalY = record.raiseArmFromLocalY;
+      record.raiseArmFromLocalY = null;
       const needsWrite = needsRaiseWrite(el, dy);
       const transition =
         plan.liftPx > 0 ? handRaiseTransition(record, liftChanged) : null;
+      // PHASE, not just timing. Matching the transform's duration and easing only keeps the two channels together
+      // if they also START together: the lift has to leave the value conjugate to the pose the transform ease
+      // leaves. Written instantly, behind the same barrier that primes the transform, before the eased target.
+      const startDy =
+        easedRaise(transition) && armFromLocalY != null
+          ? handRaiseDy(plan.liftPx, armFromLocalY)
+          : null;
+      const startTranslate =
+        startDy != null && needsRaiseWrite(el, startDy)
+          ? raiseTranslate(startDy)
+          : null;
       const rearming =
         !needsWrite &&
         record.raiseTransition != null &&
         record.raiseTransitionUntil > p.now() &&
         record.tweenTransformUntil > p.now();
-      if (p.isArmedHand(record) && (needsWrite || rearming)) {
-        dualPrimeRaisedArm(record, el, dy, transition);
+      if (p.isArmedHand(record) && (needsWrite || rearming || startTranslate != null)) {
+        dualPrimeRaisedArm(record, el, dy, transition, startTranslate);
       } else if (needsWrite) {
         if (record.raiseTransition !== transition) {
           record.raiseTransition = transition;
@@ -875,6 +927,7 @@ export function createHandController<R extends HandRecord>(
     record.raiseDy = 0;
     record.raiseTransition = null;
     record.raiseTransitionUntil = 0;
+    record.raiseArmFromLocalY = null;
   }
 
   function dispose(): void {
@@ -904,6 +957,7 @@ export function createHandController<R extends HandRecord>(
     heldGestureIds: () => heldGestureIds,
     isHeld: (id) => heldCardId === id,
     isTargeting: (id) => activeTargetingArrows.has(id),
+    noteTransformArmPose,
     registerNode,
     removeTargeting,
     removeVisibleTooltip,

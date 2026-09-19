@@ -345,6 +345,7 @@ export function createNodeController(p: NodeControllerPorts): NodeController {
       tweenTransformTransition: null,
       tweenTransformArmGeneration: 0,
       raiseTransitionUntil: 0,
+      raiseArmFromLocalY: null,
       tweenTransformSettleEndG6: null,
       tweenTransformEndG6: null,
       tweenPreArmLinear: null,
