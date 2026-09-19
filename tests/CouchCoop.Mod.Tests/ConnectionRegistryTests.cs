@@ -18,6 +18,39 @@ internal static class ConnectionRegistryTests
         SlowWarningWaitRechecksEarlyWakeAndAttempt();
         SavedIssueTimingAndOutcomes();
         CloseDismissOverflowAndDedupe();
+        HostingEndedKeepsTheEvidenceAndResetsTheLiveRow();
+    }
+
+    /// <summary>
+    /// Backing out to the main menu must not destroy the report for a failure that already happened — the one
+    /// moment a player is most likely to do it is straight after the failure they would be reporting.
+    /// </summary>
+    private static void HostingEndedKeepsTheEvidenceAndResetsTheLiveRow()
+    {
+        var registry = new ConnectionRegistry(new FakeTime());
+        var id = Guid.NewGuid();
+        registry.Connected(id, "iPhone iOS 18.7 · Safari 18.7");
+        registry.BeginAttempt(id);
+        registry.RecordDiagnostic(id, "clientVitals", "stage=dom->dom canvasPx=41287680");
+        registry.Fail(id, "browser-transport-lost", "The browser connection ended unexpectedly.",
+            "Check this device's network connection and reload the browser tab.", "ThrowEOFUnexpected");
+        var reportId = registry.Snapshot().Rows.Single().Attempt!.IssueId!.Value;
+
+        registry.HostingEnded();
+
+        // The evidence survives, still readable and still carrying the census that names the cause.
+        var report = registry.BuildReport(reportId);
+        Assert(report is not null, "the failed attempt's report survives hosting ending");
+        Assert(report!.Contains("canvasPx=41287680", StringComparison.Ordinal),
+            $"…and it still carries the client census (actual: {report})");
+        Assert(registry.Snapshot().Rows.Any(row => row.Issue?.Code == "browser-transport-lost"),
+            "…and the panel still shows it as a row to copy from");
+
+        // …while the LIVE connection is reset to a fresh pre-attempt state, because that part really is gone.
+        var live = registry.Snapshot().Rows.Single(row => row.Id == id);
+        Assert(live.Issue is null && live.Attempt!.IssueId is null,
+            "the live connection no longer carries the finished attempt's issue");
+        Assert(live.Stage == ConnectionStage.Choosing, "the live connection is back at the first stage");
     }
 
     private static void ConfirmedCauseReplacesOnlyTransportSymptom()
