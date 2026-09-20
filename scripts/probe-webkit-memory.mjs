@@ -8,6 +8,8 @@ import { spawn } from "node:child_process";
 import { fileURLToPath, pathToFileURL } from "node:url";
 import playwright from "../frontend/node_modules/playwright/index.js";
 import { WEBKIT_MEMORY_SCHEMA, WebKitInspector, isMeasuredMemoryCapture, maxMemoryCategories, sampleWebKitTreeRss, summarizeMemoryWindow } from "./lib/webkit-memory-probe.mjs";
+import { LINUX_PROCESS_MEMORY_SCHEMA, LinuxProcessMemorySampler, legacyRssSummary } from "./lib/linux-process-memory.mjs";
+import { WEBKIT_HEAP_DIAGNOSTICS_SCHEMA, WebKitHeapDiagnostics } from "./lib/webkit-heap-diagnostics.mjs";
 
 const HERE = dirname(fileURLToPath(import.meta.url));
 const { webkit } = playwright;
@@ -21,9 +23,14 @@ const HELP = `Usage: node scripts/probe-webkit-memory.mjs [--self-test | --url U
   --out DIR                Artifact directory (default .sts2/research/webkit-memory-<UTC>).
   --width N --height N --dpr N   Viewport defaults: 844x390 DPR 3.
   --timeout-ms N           Protocol and first-Memory-update timeout (default 10000).
+  --process-memory MODE    Linux process evidence: off, rollup, or smaps (default off).
+  --gc-settle-ms N         Fixed post-GC settle for journey gc commands (default 10000).
+  --heap-timeout-ms N      Heap snapshot timeout (default 120000).
 
-Outputs raw.ndjson, summary.json, stderr.log, and per-snapshot PNGs. A missing lifecycle,
-zero-only Memory update, target loss, or missing WebKit process tree is UNMEASURED (non-zero exit).
+Journey mode additionally accepts {"command":"gc","label":"..."} and
+{"command":"heap-snapshot","label":"..."}. Outputs raw.ndjson, summary.json, stderr.log,
+per-mark PNGs, and requested local diagnostic artifacts. A missing lifecycle, zero-only Memory
+update, target loss, or requested process evidence failure is UNMEASURED (non-zero exit).
 `;
 
 function args(argv) {
@@ -33,24 +40,44 @@ function args(argv) {
   const modes = [argv.includes("--self-test"), journey || Boolean(value("--url"))].filter(Boolean).length;
   if (modes !== 1) throw new Error("choose exactly one of --self-test, --url URL, or --journey");
   const number = (name, fallback) => { const n = Number(value(name, fallback)); if (!Number.isFinite(n) || n <= 0) throw new Error(`${name} must be positive`); return n; };
+  const processMemory = value("--process-memory", "off");
+  if (!["off", "rollup", "smaps"].includes(processMemory)) {
+    throw new Error("--process-memory must be off, rollup, or smaps");
+  }
   return {
     selfTest: argv.includes("--self-test"), url: value("--url"), journey,
     out: value("--out"), width: number("--width", 844), height: number("--height", 390),
-    dpr: number("--dpr", 3), timeoutMs: number("--timeout-ms", 10_000), durationMs: number("--duration-ms", 6_000)
+    dpr: number("--dpr", 3), timeoutMs: number("--timeout-ms", 10_000), durationMs: number("--duration-ms", 6_000),
+    processMemory, gcSettleMs: number("--gc-settle-ms", 10_000),
+    heapTimeoutMs: number("--heap-timeout-ms", 120_000)
   };
 }
 
 const wait = ms => new Promise(resolve => setTimeout(resolve, ms));
 const timestamp = () => new Date().toISOString().replace(/[:.]/g, "-");
 const dataUrlToBuffer = value => Buffer.from(String(value).replace(/^data:image\/png;base64,/, ""), "base64");
+const safeLabel = value => String(value).replace(/[^a-z0-9_-]+/gi, "-");
 
 class Capture {
   constructor(inspector, browser, options, outDir) {
     this.inspector = inspector; this.browser = browser; this.options = options; this.outDir = outDir;
     this.samples = []; this.marks = []; this.protocolErrors = []; this.stderr = ""; this.active = null;
     this.lifecycle = { started: false, completed: false }; this.stopped = false; this.expectedTeardown = false;
+    this.diagnosticRecords = [];
+    this.processMemorySampler = options.processMemory === "off" ? null : new LinuxProcessMemorySampler({
+      rootPid: browser.pid, mode: options.processMemory, outDir
+    });
+    // Construction is intentionally lazy: ordinary journeys never send Heap.enable, Heap.gc, or Heap.snapshot.
+    this.heapDiagnostics = new WebKitHeapDiagnostics({ inspector, outDir, timeoutMs: options.heapTimeoutMs });
     this.raw = createWriteStream(resolve(outDir, "raw.ndjson"));
-    this.record("meta", { schema: WEBKIT_MEMORY_SCHEMA, viewport: { width: options.width, height: options.height, dpr: options.dpr } });
+    this.record("meta", {
+      schema: WEBKIT_MEMORY_SCHEMA,
+      diagnostics: {
+        processMemorySchema: LINUX_PROCESS_MEMORY_SCHEMA, processMemoryMode: options.processMemory,
+        heapSchema: WEBKIT_HEAP_DIAGNOSTICS_SCHEMA
+      },
+      viewport: { width: options.width, height: options.height, dpr: options.dpr }
+    });
     inspector.on("stderr", text => { this.stderr += text; });
     inspector.on("fatal", error => { if (!this.expectedTeardown) this.protocolErrors.push(error.message); });
     inspector.on("target-event", event => this.onTargetEvent(event));
@@ -94,8 +121,25 @@ class Capture {
     if (this.inspector.closed) throw new Error("target was lost before snapshot");
     if (!this.active) throw new Error("snapshot requires a preceding begin command");
     const window = this.active;
-    const rss = sampleWebKitTreeRss(this.browser.pid);
-    if (!rss) throw new Error("WebKit process-tree identity unavailable");
+    let processMemory = null;
+    let rss;
+    if (this.processMemorySampler) {
+      try {
+        processMemory = this.processMemorySampler.capture({
+          label: `${String(this.marks.length).padStart(2, "0")}-${safeLabel(label)}`
+        });
+      } catch (error) {
+        this.record("linux-process-memory-error", {
+          schema: LINUX_PROCESS_MEMORY_SCHEMA, label, message: error.message
+        });
+        throw error;
+      }
+      this.record("linux-process-memory", { label, evidence: processMemory });
+      rss = legacyRssSummary(processMemory);
+    } else {
+      rss = sampleWebKitTreeRss(this.browser.pid);
+      if (!rss) throw new Error("WebKit process-tree identity unavailable");
+    }
     let layers = null;
     try {
       await this.inspector.targetCommand("LayerTree.enable");
@@ -139,7 +183,7 @@ class Capture {
           coordinateSystem: "Viewport", omitDeviceScaleFactor: false
         });
       }
-      screenshot = resolve(this.outDir, `${String(this.marks.length).padStart(2, "0")}-${label.replace(/[^a-z0-9_-]+/gi, "-")}.png`);
+      screenshot = resolve(this.outDir, `${String(this.marks.length).padStart(2, "0")}-${safeLabel(label)}.png`);
       writeFileSync(screenshot, dataUrlToBuffer(image.dataURL ?? image.data));
     } catch (error) { this.protocolErrors.push(`screenshot: ${error.message}`); }
     const layerList = Array.isArray(layers?.layers) ? layers.layers : null;
@@ -149,9 +193,47 @@ class Capture {
     } : null;
     const mark = { label, at: new Date().toISOString(), memory: {
       ...summarizeMemoryWindow(this.samples, window.sampleStart)
-    }, rss, layerSummary, layers, page, screenshot };
+    }, rss, processMemory, layerSummary, layers, page, screenshot };
     this.active = null;
     this.marks.push(mark); this.record("mark", mark); return mark;
+  }
+  async gc(label) {
+    if (!this.active) throw new Error("gc requires a preceding begin command for its pre-GC window");
+    const preIndex = this.marks.length;
+    const pre = await this.mark(`${label}-pre-gc`);
+    this.active = { label: `${label}-post-gc`, sampleStart: this.samples.length };
+    const result = await this.heapDiagnostics.requestGc({ timeoutMs: this.options.timeoutMs });
+    if (!result.supported) {
+      this.active = null;
+      const record = {
+        schema: WEBKIT_HEAP_DIAGNOSTICS_SCHEMA, operation: "gc", label, supported: false,
+        capability: result.capability, preMark: { index: preIndex, label: pre.label }
+      };
+      this.diagnosticRecords.push(record); this.record("webkit-heap-diagnostics", record);
+      return record;
+    }
+    await wait(this.options.gcSettleMs);
+    const postIndex = this.marks.length;
+    const post = await this.mark(`${label}-post-gc`);
+    const record = {
+      schema: WEBKIT_HEAP_DIAGNOSTICS_SCHEMA, operation: "gc", label, supported: true,
+      settleMs: this.options.gcSettleMs, gc: result,
+      preMark: { index: preIndex, label: pre.label }, postMark: { index: postIndex, label: post.label }
+    };
+    this.diagnosticRecords.push(record); this.record("webkit-heap-diagnostics", record);
+    return record;
+  }
+  async heapSnapshot(label) {
+    const result = await this.heapDiagnostics.takeSnapshot({
+      label, index: this.diagnosticRecords.filter(record => record.operation === "heap-snapshot").length,
+      timeoutMs: this.options.heapTimeoutMs
+    });
+    const record = {
+      schema: WEBKIT_HEAP_DIAGNOSTICS_SCHEMA, operation: "heap-snapshot", label,
+      supported: result.supported, ...(result.supported ? { snapshot: result } : { capability: result.capability })
+    };
+    this.diagnosticRecords.push(record); this.record("webkit-heap-diagnostics", record);
+    return record;
   }
   async stop() {
     if (this.stopped) return;
@@ -166,6 +248,10 @@ class Capture {
       schema: WEBKIT_MEMORY_SCHEMA,
       measured: isMeasuredMemoryCapture({ inspectorClosed: this.inspector.closed && !this.expectedTeardown, lifecycle: this.lifecycle, samples: this.samples }),
       browserPid: this.browser.pid, viewport: { width: this.options.width, height: this.options.height, dpr: this.options.dpr },
+      diagnostics: {
+        processMemorySchema: LINUX_PROCESS_MEMORY_SCHEMA, processMemoryMode: this.options.processMemory,
+        heapSchema: WEBKIT_HEAP_DIAGNOSTICS_SCHEMA, heap: this.diagnosticRecords
+      },
       samples: this.samples, categoryPeakBytes: maxMemoryCategories(this.samples), marks: this.marks,
       lifecycle: this.lifecycle, protocolErrors: this.protocolErrors, inspectorErrors: this.inspector.errors
     };
@@ -272,6 +358,12 @@ async function runJourney(capture) {
       } else if (request.command === "snapshot") {
         const mark = await capture.mark(request.label ?? capture.active?.label ?? "snapshot");
         process.stdout.write(`${JSON.stringify({ ok: true, command: "snapshot", mark })}\n`);
+      } else if (request.command === "gc") {
+        const diagnostic = await capture.gc(request.label ?? "gc");
+        process.stdout.write(`${JSON.stringify({ ok: true, command: "gc", diagnostic })}\n`);
+      } else if (request.command === "heap-snapshot") {
+        const diagnostic = await capture.heapSnapshot(request.label ?? "heap-snapshot");
+        process.stdout.write(`${JSON.stringify({ ok: true, command: "heap-snapshot", diagnostic })}\n`);
       } else if (request.command === "stop") return;
       else throw new Error(`unknown journey command ${JSON.stringify(request.command)}`);
     }
@@ -308,7 +400,12 @@ async function main() {
     if (capture) writeFileSync(resolve(outDir, "stderr.log"), capture.stderr);
     const summary = capture ? capture.summary() : {
       schema: WEBKIT_MEMORY_SCHEMA, measured: false, browserPid: launched?.child?.pid ?? null,
-      viewport: { width: options.width, height: options.height, dpr: options.dpr }, samples: [], categoryPeakBytes: {}, marks: [], lifecycle: { started: false, completed: false }, protocolErrors: [], inspectorErrors: []
+      viewport: { width: options.width, height: options.height, dpr: options.dpr },
+      diagnostics: {
+        processMemorySchema: LINUX_PROCESS_MEMORY_SCHEMA, processMemoryMode: options.processMemory,
+        heapSchema: WEBKIT_HEAP_DIAGNOSTICS_SCHEMA, heap: []
+      },
+      samples: [], categoryPeakBytes: {}, marks: [], lifecycle: { started: false, completed: false }, protocolErrors: [], inspectorErrors: []
     };
     summary.cleanup = cleanup;
     if (failure) { summary.measured = false; summary.failure = failure.message; }

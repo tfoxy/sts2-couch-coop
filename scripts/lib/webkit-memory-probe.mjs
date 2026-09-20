@@ -3,7 +3,7 @@
 import { EventEmitter } from "node:events";
 import { readFileSync, readdirSync } from "node:fs";
 
-export const WEBKIT_MEMORY_SCHEMA = "couchcoop-webkit-memory/1";
+export const WEBKIT_MEMORY_SCHEMA = "couchcoop-webkit-memory/2";
 
 export class NulJsonFramer {
   #tail = Buffer.alloc(0);
@@ -30,6 +30,18 @@ export class ProtocolTimeoutError extends Error {
   constructor(label, timeoutMs) {
     super(`${label} timed out after ${timeoutMs}ms`);
     this.name = "ProtocolTimeoutError";
+  }
+}
+
+/** A protocol-declared command failure, retaining the fields capability probes need. */
+export class ProtocolCommandError extends Error {
+  constructor(error, { method = null, scope = null } = {}) {
+    super(error?.message ?? JSON.stringify(error));
+    this.name = "ProtocolCommandError";
+    this.code = error?.code ?? null;
+    this.data = error?.data ?? null;
+    this.method = method;
+    this.scope = scope;
   }
 }
 
@@ -113,7 +125,9 @@ export class WebKitInspector extends EventEmitter {
     const innerId = ++this.#nextId;
     const inner = { id: innerId, method, params };
     const targetId = this.targetId;
-    const promise = withTimeout(new Promise((resolve, reject) => this.#target.set(innerId, { resolve, reject, targetId })), `target ${method}`, timeoutMs);
+    const promise = withTimeout(new Promise((resolve, reject) => this.#target.set(innerId, {
+      resolve, reject, targetId, method, scope: "target"
+    })), `target ${method}`, timeoutMs);
     this.proxy("Target.sendMessageToTarget", { targetId, message: JSON.stringify(inner) }, timeoutMs)
       .catch(error => this.#settle(this.#target, innerId, error));
     return promise;
@@ -147,7 +161,10 @@ export class WebKitInspector extends EventEmitter {
     if (this.#closed) return Promise.reject(new Error(`cannot send ${label}: inspector is closed`));
     const id = ++this.#nextId;
     const message = { id, ...payload };
-    const promise = withTimeout(new Promise((resolve, reject) => map.set(id, { resolve, reject })), label, timeoutMs);
+    const scope = label.split(" ", 1)[0] ?? null;
+    const promise = withTimeout(new Promise((resolve, reject) => map.set(id, {
+      resolve, reject, method: payload.method, scope
+    })), label, timeoutMs);
     if (process.env.WEBKIT_MEMORY_DEBUG) process.stderr.write(`[webkit-inspector->] ${JSON.stringify(message)}\n`);
     this.#stdin.write(`${JSON.stringify(message)}\0`);
     return promise;
@@ -213,7 +230,7 @@ export class WebKitInspector extends EventEmitter {
     if (!waiter) return;
     map.delete(id);
     if (messageOrError instanceof Error) waiter.reject(messageOrError);
-    else if (messageOrError.error) waiter.reject(new Error(messageOrError.error.message ?? JSON.stringify(messageOrError.error)));
+    else if (messageOrError.error) waiter.reject(new ProtocolCommandError(messageOrError.error, waiter));
     else waiter.resolve(messageOrError.result ?? {});
   }
 
