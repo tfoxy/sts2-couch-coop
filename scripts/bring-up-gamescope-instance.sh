@@ -56,6 +56,28 @@ RUN_DIR="/tmp/geoclip-bringup-$INSTANCE"
 CONFIG="$RUN_DIR/sts2.$INSTANCE.yaml"
 GS_LOG="$RUN_DIR/gamescope.log"
 GS_PIDFILE="$RUN_DIR/gamescope.pid"
+GS_STARTFILE="$RUN_DIR/gamescope.start-ticks"
+
+proc_start_ticks() {
+  awk '{print $22}' "/proc/$1/stat" 2>/dev/null
+}
+
+gamescope_is_ours() {
+  local pid="$1"
+  local expected_start_ticks="${2:-}"
+  [ -d "/proc/$pid" ] || return 1
+  tr '\0' ' ' < "/proc/$pid/cmdline" | grep -q gamescope || return 1
+  [ -z "$expected_start_ticks" ] || [ "$(proc_start_ticks "$pid")" = "$expected_start_ticks" ]
+}
+
+require_live_gamescope() {
+  local expected_start_ticks="$1"
+  if ! gamescope_is_ours "$GS_PID" "$expected_start_ticks"; then
+    echo "--- gamescope log ---" >&2
+    tail -80 "$GS_LOG" >&2 || true
+    die "gamescope exited or was replaced during instance launch"
+  fi
+}
 
 # ---------------------------------------------------------------------------------------------------------
 # Teardown
@@ -66,12 +88,20 @@ if [ "$TEARDOWN" = "1" ]; then
   fi
   if [ -f "$GS_PIDFILE" ]; then
     GS_PID="$(cat "$GS_PIDFILE")"
+    GS_START_TICKS="$(cat "$GS_STARTFILE" 2>/dev/null || true)"
     # Only ever OUR compositor: the pid file is written by this script and the process is checked to still be
-    # gamescope before it is signalled. Never a pkill pattern — see the pkill-headless-self-match memory.
-    if [ -d "/proc/$GS_PID" ] && tr '\0' ' ' < "/proc/$GS_PID/cmdline" | grep -q gamescope; then
+    # gamescope with its original process identity before it is signalled. Never a pkill pattern — see the
+    # pkill-headless-self-match memory.
+    if gamescope_is_ours "$GS_PID" "$GS_START_TICKS"; then
       kill "$GS_PID" 2>/dev/null || true
+      for _ in $(seq 1 100); do
+        gamescope_is_ours "$GS_PID" "$GS_START_TICKS" || break
+        sleep 0.1
+      done
+      gamescope_is_ours "$GS_PID" "$GS_START_TICKS" \
+        && die "gamescope PID $GS_PID survived teardown"
     fi
-    rm -f "$GS_PIDFILE"
+    rm -f "$GS_PIDFILE" "$GS_STARTFILE"
   fi
   echo "bring-up: torn down $INSTANCE"
   exit 0
@@ -145,7 +175,7 @@ YAML
 # or SDL auto-detection prefers Wayland and sails straight past the private display onto the real desktop.
 GS_START_MS=$(date +%s%3N)
 env -u WAYLAND_DISPLAY XDG_SESSION_TYPE=x11 \
-  gamescope --backend headless -W "$WIDTH" -H "$HEIGHT" -w "$WIDTH" -h "$HEIGHT" \
+  setsid gamescope --backend headless -W "$WIDTH" -H "$HEIGHT" -w "$WIDTH" -h "$HEIGHT" \
   -- sh -c 'echo "GAMESCOPE_CHILD_DISPLAY=$DISPLAY"; sleep infinity' \
   > "$GS_LOG" 2>&1 &
 GS_PID=$!
@@ -160,6 +190,9 @@ for _ in $(seq 1 200); do
   sleep 0.1
 done
 [ -n "$GS_DISPLAY" ] || { cat "$GS_LOG" >&2; die "gamescope produced no XWayland display within 20 s"; }
+GS_START_TICKS="$(proc_start_ticks "$GS_PID")"
+[ -n "$GS_START_TICKS" ] || die "gamescope exited before its process identity could be recorded"
+echo "$GS_START_TICKS" > "$GS_STARTFILE"
 GS_READY_MS=$(( $(date +%s%3N) - GS_START_MS ))
 
 # The compositor's own statement of which GPU it bound. This is the positive GPU evidence the bench requires;
@@ -182,6 +215,7 @@ env -u WAYLAND_DISPLAY XDG_SESSION_TYPE=x11 DISPLAY="$GS_DISPLAY" \
   > "$RUN_DIR/launch.json" 2> "$RUN_DIR/launch.err" \
   || { echo "--- launch stderr ---" >&2; tail -40 "$RUN_DIR/launch.err" >&2; die "game launch failed"; }
 GAME_READY_MS=$(( $(date +%s%3N) - GAME_START_MS ))
+require_live_gamescope "$GS_START_TICKS"
 
 USER_DIR="$(python3 -c 'import json,sys;print(json.load(open(sys.argv[1]))["userDir"])' "$RUN_DIR/instances/$INSTANCE/instance.json" 2>/dev/null || true)"
 PORT_FILE="$USER_DIR/SlayTheSpire2/couch-coop/browser-port"
@@ -196,6 +230,7 @@ if [ -n "$RECORD" ]; then
   "instance": "$INSTANCE",
   "display": "$GS_DISPLAY",
   "gamescopePid": $GS_PID,
+  "gamescopeStartTicks": $GS_START_TICKS,
   "gamescopeLog": "$GS_LOG",
   "vulkanDevice": $VULKAN_JSON,
   "compositorStartupMs": $GS_READY_MS,

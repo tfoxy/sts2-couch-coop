@@ -78,6 +78,28 @@ RUN_DIR="/tmp/mp5-bringup-$INSTANCE"
 CONFIG="$RUN_DIR/sts2.$INSTANCE.yaml"
 GS_LOG="$RUN_DIR/gamescope.log"
 GS_PIDFILE="$RUN_DIR/gamescope.pid"
+GS_STARTFILE="$RUN_DIR/gamescope.start-ticks"
+
+proc_start_ticks() {
+  awk '{print $22}' "/proc/$1/stat" 2>/dev/null
+}
+
+gamescope_is_ours() {
+  local pid="$1"
+  local expected_start_ticks="${2:-}"
+  [ -d "/proc/$pid" ] || return 1
+  tr '\0' ' ' < "/proc/$pid/cmdline" | grep -q gamescope || return 1
+  [ -z "$expected_start_ticks" ] || [ "$(proc_start_ticks "$pid")" = "$expected_start_ticks" ]
+}
+
+require_live_gamescope() {
+  local expected_start_ticks="$1"
+  if ! gamescope_is_ours "$GS_PID" "$expected_start_ticks"; then
+    echo "--- gamescope log ---" >&2
+    tail -80 "$GS_LOG" >&2 || true
+    die "gamescope exited or was replaced during instance launch"
+  fi
+}
 # `sts2 --instance` derives this from instances.dir; it is not read back from instance.json because that file
 # does not exist until the first launch, and the loadout must be applied BEFORE that.
 USER_DIR="$RUN_DIR/instances/$INSTANCE/user"
@@ -94,12 +116,19 @@ if [ "$TEARDOWN" = "1" ]; then
   fi
   if [ -f "$GS_PIDFILE" ]; then
     GS_PID="$(cat "$GS_PIDFILE")"
+    GS_START_TICKS="$(cat "$GS_STARTFILE" 2>/dev/null || true)"
     # Only ever OUR compositor: the pid file is written by this script and the process is checked to still be
     # gamescope before it is signalled. Never a pkill pattern — see the pkill-headless-self-match memory.
-    if [ -d "/proc/$GS_PID" ] && tr '\0' ' ' < "/proc/$GS_PID/cmdline" | grep -q gamescope; then
+    if gamescope_is_ours "$GS_PID" "$GS_START_TICKS"; then
       kill "$GS_PID" 2>/dev/null || true
+      for _ in $(seq 1 100); do
+        gamescope_is_ours "$GS_PID" "$GS_START_TICKS" || break
+        sleep 0.1
+      done
+      gamescope_is_ours "$GS_PID" "$GS_START_TICKS" \
+        && die "gamescope PID $GS_PID survived teardown"
     fi
-    rm -f "$GS_PIDFILE"
+    rm -f "$GS_PIDFILE" "$GS_STARTFILE"
   fi
   echo "bring-up: torn down $INSTANCE"
   exit 0
@@ -176,7 +205,7 @@ YAML
 # desktop.
 GS_START_MS=$(date +%s%3N)
 env -u WAYLAND_DISPLAY XDG_SESSION_TYPE=x11 \
-  gamescope --backend headless -W "$WIDTH" -H "$HEIGHT" -w "$WIDTH" -h "$HEIGHT" \
+  setsid gamescope --backend headless -W "$WIDTH" -H "$HEIGHT" -w "$WIDTH" -h "$HEIGHT" \
   -- sh -c 'echo "GAMESCOPE_CHILD_DISPLAY=$DISPLAY"; sleep infinity' \
   > "$GS_LOG" 2>&1 &
 GS_PID=$!
@@ -191,6 +220,9 @@ for _ in $(seq 1 200); do
   sleep 0.1
 done
 [ -n "$GS_DISPLAY" ] || { cat "$GS_LOG" >&2; die "gamescope produced no XWayland display within 20 s"; }
+GS_START_TICKS="$(proc_start_ticks "$GS_PID")"
+[ -n "$GS_START_TICKS" ] || die "gamescope exited before its process identity could be recorded"
+echo "$GS_START_TICKS" > "$GS_STARTFILE"
 GS_READY_MS=$(( $(date +%s%3N) - GS_START_MS ))
 
 # The compositor's own statement of which GPU it bound.
@@ -342,6 +374,7 @@ other process, which this script refuses."
   sleep 0.5
 done
 READY_MS=$(( $(date +%s%3N) - GAME_START_MS ))
+require_live_gamescope "$GS_START_TICKS"
 # GAME_PID is the pid the MOD published, i.e. the process actually serving the browser endpoint in this
 # record — not the pid the CLI spawned, which may no longer be the same process.
 
@@ -387,16 +420,16 @@ fi
 # quote in it, or an empty vulkanDevice, would otherwise produce a syntactically broken record (or worse, a
 # valid one with the wrong value).
 if [ -n "$RECORD" ]; then
-  python3 - "$RECORD" "$INSTANCE" "$CONFIG" "$RUN_DIR" "$GS_DISPLAY" "$GS_PID" "$GS_LOG" "$VULKAN_DEVICE" \
+  python3 - "$RECORD" "$INSTANCE" "$CONFIG" "$RUN_DIR" "$GS_DISPLAY" "$GS_PID" "$GS_START_TICKS" "$GS_LOG" "$VULKAN_DEVICE" \
       "$USER_DIR" "$BROWSER_PORT" "$GAME_PID" "$HOST_STDOUT" "$HOST_STDERR" "$SEAT_LOG_GLOB" \
       "$MODS_JSON" "$MODS_SOURCE" "$SETTINGS_SAVE" "$READY_MS" <<'PY'
 import json, sys
 
 (
-    out, instance, config, run_dir, display, gamescope_pid, gamescope_log, vulkan_device,
+    out, instance, config, run_dir, display, gamescope_pid, gamescope_start_ticks, gamescope_log, vulkan_device,
     user_dir, browser_port, game_pid, host_stdout, host_stderr, seat_log_glob,
     mods_json, mods_source, settings_save, ready_ms,
-) = sys.argv[1:19]
+) = sys.argv[1:20]
 
 record = {
     "schema": "couchcoop-five-player-bringup/1",
@@ -405,6 +438,7 @@ record = {
     "runDir": run_dir,
     "display": display,
     "gamescopePid": int(gamescope_pid),
+    "gamescopeStartTicks": int(gamescope_start_ticks),
     "gamescopeLog": gamescope_log,
     "vulkanDevice": vulkan_device or None,
     "userDir": user_dir,
