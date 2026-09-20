@@ -1,0 +1,20 @@
+<!doctype html>
+<meta charset="utf-8">
+<title>WebKit memory probe allocation self-test</title>
+<style>html, body { margin: 0; overflow: hidden; background: #111; }</style>
+<canvas id="allocation" width="2048" height="2048"></canvas>
+<script>
+  const canvas = document.querySelector("#allocation");
+  const context = canvas.getContext("2d");
+  const pixels = context.createImageData(canvas.width, canvas.height);
+  for (let index = 0; index < pixels.data.length; index += 4) {
+    pixels.data[index] = index & 255;
+    pixels.data[index + 1] = (index >> 8) & 255;
+    pixels.data[index + 2] = 180;
+    pixels.data[index + 3] = 255;
+  }
+  context.putImageData(pixels, 0, 0);
+  // Keep a bounded JS allocation alive too: the probe needs categories to be non-zero, not a compositor stress test.
+  window.__webkitMemoryProbeAllocation = Array.from({ length: 20_000 }, (_, index) => ({ index, text: `allocation-${index}` }));
+  window.__webkitMemoryProbeReady = true;
+</script>
