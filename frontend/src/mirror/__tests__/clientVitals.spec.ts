@@ -5,13 +5,15 @@
 
 import { beforeEach, describe, expect, it } from "vitest";
 
-import { collectClientVitals, type ClientVitalsSources } from "@/mirror/clientVitals";
+import { collectClientVitals, defaultClientVitalsSources, type ClientVitalsSources } from "@/mirror/clientVitals";
 import { __resetImagePrefetchStatsForTest } from "@/mirror/imagePrefetch";
+import { __resetStageFitForTest, __setStageFitForTest } from "@/mirror/stageFit";
 
 function sources(overrides: Partial<ClientVitalsSources> = {}): ClientVitalsSources {
   return {
     requestedStage: () => "dom",
     activeStage: () => "dom",
+    stageFit: () => "design",
     canvasResidency: () => null,
     atlasResidency: () => ({ bytes: 0, pages: 0, cap: 0 }),
     effectModes: () => ({ shaderMode: "static", particleMode: "static" }),
@@ -39,6 +41,7 @@ function fakeView(overrides: Record<string, unknown> = {}): Window {
 
 beforeEach(() => {
   __resetImagePrefetchStatsForTest();
+  __resetStageFitForTest();
 });
 
 describe("collectClientVitals", () => {
@@ -49,6 +52,20 @@ describe("collectClientVitals", () => {
 
     expect(vitals.stageRequested).toBe("canvas");
     expect(vitals.stageActive).toBe("dom");
+  });
+
+  it("reports the effective stage-fit arm, not the requested URL arm", () => {
+    const vitals = collectClientVitals(sources({ stageFit: () => "display" }));
+
+    expect(vitals.stageFit).toBe("display");
+  });
+
+  it("reads the production stage-fit source from the granted layout", () => {
+    __setStageFitForTest("display");
+    expect(defaultClientVitalsSources().stageFit()).toBe("display");
+
+    __setStageFitForTest("design");
+    expect(defaultClientVitalsSources().stageFit()).toBe("design");
   });
 
   it("totals canvas backing-store pixels, not just the canvas count", () => {
@@ -168,7 +185,7 @@ describe("collectClientVitals", () => {
     expect(vitals.stageActive).toBe("dom");
   });
 
-  it("carries no identifying value — numbers and two closed enums only", () => {
+  it("carries no identifying value — numbers and three closed enums only", () => {
     // A structural guard, not a spot check: this payload is quoted into a report a player pastes in public, so a
     // future field carrying a URL, a name or a user agent has to fail here rather than in the field.
     const vitals = collectClientVitals(sources({
@@ -176,7 +193,7 @@ describe("collectClientVitals", () => {
       view: () => fakeView()
     }));
 
-    const enums = ["stageRequested", "stageActive", "shaderMode", "particleMode"];
+    const enums = ["stageRequested", "stageActive", "stageFit", "shaderMode", "particleMode"];
     for (const [key, value] of Object.entries(vitals)) {
       if (enums.includes(key)) {
         expect(typeof value, key).toBe("string");

@@ -13,7 +13,7 @@ internal static class ClientVitalsReceiptTests
     private const string Valid = """
     {
       "type": "client-vitals", "attemptId": "a1",
-      "stageRequested": "canvas", "stageActive": "dom",
+      "stageRequested": "canvas", "stageActive": "dom", "stageFit": "display",
       "dpr": 3.49, "vw": 390, "vh": 844,
       "els": 1204, "canvases": 7, "canvasPx": 18432000,
       "decodedBytes": 214958080, "decodedPages": 62,
@@ -32,6 +32,7 @@ internal static class ClientVitalsReceiptTests
         // Every field reaches the line, and the two stage backends arrive as a PAIR: they differ exactly when the
         // canvas backend was asked for and could not be built, which nothing else in the product reports.
         Assert(line!.Contains("stage=canvas->dom", StringComparison.Ordinal), $"stage pair (actual: {line})");
+        Assert(line.Contains("stageFit=display", StringComparison.Ordinal), $"effective stage-fit arm (actual: {line})");
         Assert(line.Contains("dpr=3.49", StringComparison.Ordinal), $"fractional dpr survives (actual: {line})");
         Assert(line.Contains("viewport=390x844", StringComparison.Ordinal), $"viewport (actual: {line})");
         Assert(line.Contains("els=1204", StringComparison.Ordinal), $"element count (actual: {line})");
@@ -65,6 +66,8 @@ internal static class ClientVitalsReceiptTests
         // measurement, and half of one would read like a measurement — which is the one thing this line must not
         // do, because a person who does not own the device is going to trust these numbers.
         Assert(Render(Valid.Replace("\"els\": 1204,", "", StringComparison.Ordinal)) is null, "a missing field refuses the census");
+        Assert(Render(Valid.Replace("\"stageFit\": \"display\",", "", StringComparison.Ordinal)) is null,
+            "a census without the effective stage-fit arm refuses");
         Assert(Render(Valid.Replace("\"atlasCap\": 100663296,", "", StringComparison.Ordinal)) is null, "a census without the atlas cap refuses");
         Assert(Render(Valid.Replace("\"atlasCap\": 100663296", "\"atlasCap\": 1e30", StringComparison.Ordinal)) is null, "an atlas cap past its ceiling refuses the census");
         Assert(Render(Valid.Replace("\"dpr\": 3.49", "\"dpr\": -1", StringComparison.Ordinal)) is null, "a negative number refuses the census");
@@ -72,10 +75,12 @@ internal static class ClientVitalsReceiptTests
         Assert(Render(Valid.Replace("\"canvasPx\": 18432000", "\"canvasPx\": 1e30", StringComparison.Ordinal)) is null, "a pixel total past its ceiling refuses the census");
         Assert(Render(Valid.Replace("\"els\": 1204", "\"els\": \"1204\"", StringComparison.Ordinal)) is null, "a stringified number refuses the census");
 
-        // The two textual fields are matched against closed sets rather than sanitised, so no client string can
+        // The three textual fields are matched against closed sets rather than sanitised, so no client string can
         // ever reach the report — including one that merely names a backend we do not have.
         Assert(Render(Valid.Replace("\"stageActive\": \"dom\"", "\"stageActive\": \"webgpu\"", StringComparison.Ordinal)) is null,
             "an unknown stage backend refuses the census");
+        Assert(Render(Valid.Replace("\"stageFit\": \"display\"", "\"stageFit\": \"zoom\"", StringComparison.Ordinal)) is null,
+            "an unknown stage-fit arm refuses the census");
         Assert(Render(Valid.Replace("\"shaderMode\": \"static\"", "\"shaderMode\": \"https://evil.example/x\"", StringComparison.Ordinal)) is null,
             "an arbitrary string in an enum field refuses the census");
 

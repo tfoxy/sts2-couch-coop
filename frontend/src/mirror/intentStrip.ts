@@ -104,9 +104,18 @@ export function intentStepsPhaseMs(nowMs: number, startMs: number, durationMs: n
   return phase < 0 ? phase + durationMs : phase;
 }
 
-/** Round a px travel to a stable keyframes-name token (3 decimals; `.` → `_` so the name stays a CSS ident). */
+/**
+ * Bucket a travel distance before it reaches the grow-only stylesheet. A one-fiftieth CSS-pixel endpoint error
+ * is visually immaterial, but makes equivalent viewport measurements share a rule instead of retaining one rule
+ * per floating-point fit factor forever.
+ */
+function quantizedTravelPx(travelPx: number): number {
+  return Math.round(travelPx * 50) / 50;
+}
+
+/** Round a bucketed px travel to a stable keyframes-name token (`.` → `_` so the name stays a CSS ident). */
 function travelToken(travelPx: number): string {
-  return String(Math.round(travelPx * 1000) / 1000).replace(".", "_");
+  return String(quantizedTravelPx(travelPx)).replace(".", "_");
 }
 
 /** The keyframes rule name for one travel distance (pure — no DOM). */
@@ -116,15 +125,15 @@ export function intentStepsKeyframesName(travelPx: number): string {
 
 /** The keyframes rule text for one travel distance (pure — no DOM). Literal px values: compositor-eligible. */
 export function intentStepsKeyframesCss(travelPx: number): string {
-  const px = Math.round(travelPx * 1000) / 1000;
+  const px = quantizedTravelPx(travelPx);
   return `@keyframes ${intentStepsKeyframesName(travelPx)}{from{translate:0px 0px}to{translate:-${px}px 0px}}`;
 }
 
 // The `animation` shorthand for one strip (pure). Phase is applied as a NEGATIVE delay — see the header. Times
 // keep 6 decimals: the cycle length is count/fps, which is rarely exact (4 frames at 15fps = 266.666667ms), and a
 // coarser rounding would slowly drift the glyph off the game clock the phase is anchored to.
-// `travelPx` overrides `geo.travelPx` for the keyframes NAME only — the caller passes the LAYOUT-space travel on the
-// `?stageFit=display` arm, so the name matches the rule it injected (both are keyed by the same number). Defaulted,
+// `travelPx` overrides `geo.travelPx` for the keyframes rule's NAME and endpoint — the caller passes the
+// LAYOUT-space travel on the `?stageFit=display` arm, so both resolve through the same residency bucket. Defaulted,
 // so every existing caller and spec is byte-identical.
 export function intentStepsAnimationCss(
   geo: IntentStripGeometry,

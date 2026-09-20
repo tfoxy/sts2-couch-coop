@@ -26,7 +26,7 @@
 //     promoted — a number that answers "what was this page holding" rather than "what did it once fetch".
 //     Read it against `atlasCap`, which says what budget was in force.
 //
-// NOTHING IDENTIFYING. No URLs, no query values, no player name, no user agent, no stack. Numbers and two small
+// NOTHING IDENTIFYING. No URLs, no query values, no player name, no user agent, no stack. Numbers and three small
 // closed enums. The host re-renders the line from parsed values rather than echoing this one (a receipt is
 // client-controlled text), so adding a field here also means teaching the host to read it.
 
@@ -35,12 +35,15 @@ import { TEXTURE_RESIDENT_BYTES_DEFAULT } from "@/mirror/canvas/textureBridge";
 import { atlasResidencyStats, atlasResidentCapBytes } from "@/mirror/atlasBaker";
 import { mirrorSettings, type EffectMode } from "@/mirror/mirrorSettings";
 import { activeStageBackend, requestedStageBackend, type StageBackend } from "@/mirror/rendererFactory";
+import { displaySpaceLayout, type StageFitMode } from "@/mirror/stageFit";
 
-/** The census, as sent. Every value is a finite number or one of two closed enums. */
+/** The census, as sent. Every value is a finite number or one of three closed enums. */
 export interface ClientVitals {
   /** The backend this page ASKED for (`?stage=`), and the one actually serving after any hard fallback. */
   stageRequested: StageBackend;
   stageActive: StageBackend;
+  /** The layout arm actually in force, after the canvas backend's display-layout refusal. */
+  stageFit: StageFitMode;
   /** Device pixel ratio, rounded to 2dp — a 3x phone pays 9x the backing store of a 1x desktop for the same CSS box. */
   dpr: number;
   /** Viewport in CSS px. */
@@ -81,6 +84,8 @@ export interface ClientVitals {
 export interface ClientVitalsSources {
   requestedStage: () => StageBackend;
   activeStage: () => StageBackend;
+  /** The effective layout arm, not the URL's requested arm. */
+  stageFit: () => StageFitMode;
   /** The canvas backend's residency budgets, or null when it is not the active backend. */
   canvasResidency: () => { textureBytes: number; fxBytes: number } | null;
   /** Owned atlas pixels right now, and the cap bounding them — both backends. */
@@ -133,6 +138,7 @@ export function collectClientVitals(sources: ClientVitalsSources): ClientVitals 
   return {
     stageRequested: safely(sources.requestedStage, "dom"),
     stageActive: safely(sources.activeStage, "dom"),
+    stageFit: safely(sources.stageFit, "design"),
     // 2dp because the interesting distinction is 2 vs 3 vs 3.5, and a 17-digit float in a crash report is noise.
     dpr: Math.round(ratio(view?.devicePixelRatio) * 100) / 100,
     vw: count(view?.innerWidth),
@@ -165,6 +171,8 @@ export function defaultClientVitalsSources(): ClientVitalsSources {
   return {
     requestedStage: requestedStageBackend,
     activeStage: activeStageBackend,
+    // This must report the granted arm: `?stageFit=display&stage=canvas` still lays out in design space.
+    stageFit: () => (displaySpaceLayout() ? "display" : "design"),
     // The caps are module constants rather than a live reading on purpose: the live figures sit behind the canvas
     // renderer's owner-keyed diagnostics ports, and a census that reached in there would break every time that
     // internal moved. What a crash report needs from this pair is WHICH BUDGET APPLIED, and that is a constant.
