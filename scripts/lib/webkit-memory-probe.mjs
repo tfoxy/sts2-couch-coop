@@ -134,9 +134,11 @@ export class WebKitInspector extends EventEmitter {
 
   async close(timeoutMs = 2_000) {
     if (this.#closed) return;
+    // WebKit may close the pipe before acknowledging Playwright.close. Once teardown was explicitly
+    // requested, that close is expected; failures before this method remain diagnostic errors.
+    this.#expectedClose = true;
     try {
       await this.outer("Playwright.close", {}, timeoutMs);
-      this.#expectedClose = true;
     } catch { /* browser can close before replying */ }
     this.#stdin.end();
   }

@@ -64,6 +64,15 @@ test("request timeout and zero update conditions are observable failures", async
   assert.equal(h.inspector.closed, true);
 });
 
+test("explicit close does not report a pipe ending before its response as an inspector error", async () => {
+  const h = harness();
+  const closing = h.inspector.close(100);
+  h.stdout.end();
+  await closing;
+  assert.equal(h.inspector.closed, true);
+  assert.deepEqual(h.inspector.errors, []);
+});
+
 test("zero-only, missing-update, and incomplete lifecycle captures are unmeasured", () => {
   const lifecycle = { started: true, completed: true };
   assert.equal(isMeasuredMemoryCapture({ inspectorClosed: false, lifecycle, samples: [] }), false);
