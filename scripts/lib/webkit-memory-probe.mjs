@@ -3,6 +3,8 @@
 import { EventEmitter } from "node:events";
 import { readFileSync, readdirSync } from "node:fs";
 
+export const WEBKIT_MEMORY_SCHEMA = "couchcoop-webkit-memory/1";
+
 export class NulJsonFramer {
   #tail = Buffer.alloc(0);
 
@@ -45,6 +47,7 @@ export class WebKitInspector extends EventEmitter {
   #target = new Map();
   #framer = new NulJsonFramer();
   #closed = false;
+  #expectedClose = false;
   pageProxyId = null;
   targetId = null;
   boundTargetId = null;
@@ -131,7 +134,10 @@ export class WebKitInspector extends EventEmitter {
 
   async close(timeoutMs = 2_000) {
     if (this.#closed) return;
-    try { await this.outer("Playwright.close", {}, timeoutMs); } catch { /* browser can close before replying */ }
+    try {
+      await this.outer("Playwright.close", {}, timeoutMs);
+      this.#expectedClose = true;
+    } catch { /* browser can close before replying */ }
     this.#stdin.end();
   }
 
@@ -212,7 +218,7 @@ export class WebKitInspector extends EventEmitter {
   #fatal(error) {
     if (this.#closed) return;
     this.#closed = true;
-    this.errors.push(error.message);
+    if (!this.#expectedClose) this.errors.push(error.message);
     for (const map of [this.#outer, this.#proxy, this.#target]) {
       for (const { reject } of map.values()) reject(error);
       map.clear();

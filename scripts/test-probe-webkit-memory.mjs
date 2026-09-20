@@ -6,7 +6,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { spawn } from "node:child_process";
 import { pathToFileURL } from "node:url";
-import { NulJsonFramer, ProtocolTimeoutError, WebKitInspector, isMeasuredMemoryCapture, summarizeMemoryWindow } from "./lib/webkit-memory-probe.mjs";
+import { NulJsonFramer, ProtocolTimeoutError, WEBKIT_MEMORY_SCHEMA, WebKitInspector, isMeasuredMemoryCapture, summarizeMemoryWindow } from "./lib/webkit-memory-probe.mjs";
 
 test("NUL framer accepts split and combined JSON frames", () => {
   const framer = new NulJsonFramer();
@@ -93,10 +93,16 @@ function runJourneyProbe(url) {
   return new Promise((resolve, reject) => {
     const child = spawn(process.execPath, ["scripts/probe-webkit-memory.mjs", "--journey", "--url", url, "--out", mkdtempSync(join(tmpdir(), "cc-webkit-probe-journey-"))], { cwd: process.cwd(), stdio: ["pipe", "pipe", "pipe"] });
     let stdout = "", stderr = "";
-    child.stdout.on("data", chunk => { stdout += chunk; }); child.stderr.on("data", chunk => { stderr += chunk; });
+    let scheduled = false;
+    child.stdout.on("data", chunk => {
+      stdout += chunk;
+      if (!scheduled && stdout.includes('"command":"begin"')) {
+        scheduled = true;
+        setTimeout(() => child.stdin.end('{"command":"snapshot","label":"window"}\n{"command":"stop"}\n'), 1_600);
+      }
+    }); child.stderr.on("data", chunk => { stderr += chunk; });
     child.once("error", reject); child.once("exit", code => resolve({ code, stdout, stderr }));
     child.stdin.write('{"command":"begin","label":"window"}\n');
-    setTimeout(() => child.stdin.end('{"command":"snapshot","label":"window"}\n{"command":"stop"}\n'), 1_100);
   });
 }
 
@@ -106,6 +112,9 @@ test("self-test writes a screenshot and reaps its exact WebKit process group", {
   assert.equal(result.code, 0, result.stderr);
   const summary = JSON.parse(readFileSync(join(out, "summary.json"), "utf8"));
   assert.equal(summary.measured, true);
+  assert.equal(summary.schema, WEBKIT_MEMORY_SCHEMA);
+  assert.deepEqual(JSON.parse(readFileSync(join(out, "raw.ndjson"), "utf8").split(/\r?\n/)[0]).schema, WEBKIT_MEMORY_SCHEMA);
+  assert.equal(summary.inspectorErrors.includes("WebKit process exited"), false);
   assert.ok(existsSync(summary.marks[0].screenshot), "self-test should retain a screenshot");
   assert.deepEqual(summary.cleanup.orphanedPids, []);
   assert.equal(existsSync(`/proc/${summary.browserPid}`), false, "the launched process must not survive its probe");
@@ -128,5 +137,6 @@ test("failed URL journey still writes unmeasured raw, summary, and stderr artifa
   assert.notEqual(result.code, 0);
   const summary = JSON.parse(readFileSync(join(out, "summary.json"), "utf8"));
   assert.equal(summary.measured, false);
+  assert.equal(JSON.parse(readFileSync(join(out, "raw.ndjson"), "utf8").split(/\r?\n/)[0]).schema, WEBKIT_MEMORY_SCHEMA);
   for (const name of ["raw.ndjson", "stderr.log", "summary.json"]) assert.equal(existsSync(join(out, name)), true, `${name} missing`);
 });

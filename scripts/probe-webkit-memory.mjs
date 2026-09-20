@@ -7,7 +7,7 @@ import { dirname, resolve } from "node:path";
 import { spawn } from "node:child_process";
 import { fileURLToPath, pathToFileURL } from "node:url";
 import playwright from "../frontend/node_modules/playwright/index.js";
-import { WebKitInspector, isMeasuredMemoryCapture, maxMemoryCategories, sampleWebKitTreeRss, summarizeMemoryWindow } from "./lib/webkit-memory-probe.mjs";
+import { WEBKIT_MEMORY_SCHEMA, WebKitInspector, isMeasuredMemoryCapture, maxMemoryCategories, sampleWebKitTreeRss, summarizeMemoryWindow } from "./lib/webkit-memory-probe.mjs";
 
 const HERE = dirname(fileURLToPath(import.meta.url));
 const { webkit } = playwright;
@@ -50,6 +50,7 @@ class Capture {
     this.samples = []; this.marks = []; this.protocolErrors = []; this.stderr = ""; this.active = null;
     this.lifecycle = { started: false, completed: false }; this.stopped = false; this.expectedTeardown = false;
     this.raw = createWriteStream(resolve(outDir, "raw.ndjson"));
+    this.record("meta", { schema: WEBKIT_MEMORY_SCHEMA, viewport: { width: options.width, height: options.height, dpr: options.dpr } });
     inspector.on("stderr", text => { this.stderr += text; });
     inspector.on("fatal", error => { if (!this.expectedTeardown) this.protocolErrors.push(error.message); });
     inspector.on("target-event", event => this.onTargetEvent(event));
@@ -162,7 +163,7 @@ class Capture {
   }
   summary() {
     return {
-      schema: "couchcoop-webkit-memory/1",
+      schema: WEBKIT_MEMORY_SCHEMA,
       measured: isMeasuredMemoryCapture({ inspectorClosed: this.inspector.closed && !this.expectedTeardown, lifecycle: this.lifecycle, samples: this.samples }),
       browserPid: this.browser.pid, viewport: { width: this.options.width, height: this.options.height, dpr: this.options.dpr },
       samples: this.samples, categoryPeakBytes: maxMemoryCategories(this.samples), marks: this.marks,
@@ -306,14 +307,14 @@ async function main() {
     cleanup = await terminateProcessGroup(launched?.child).catch(error => ({ rootPid: launched?.child?.pid ?? null, orphanedPids: [launched?.child?.pid].filter(Boolean), error: error.message }));
     if (capture) writeFileSync(resolve(outDir, "stderr.log"), capture.stderr);
     const summary = capture ? capture.summary() : {
-      schema: "couchcoop-webkit-memory/1", measured: false, browserPid: launched?.child?.pid ?? null,
+      schema: WEBKIT_MEMORY_SCHEMA, measured: false, browserPid: launched?.child?.pid ?? null,
       viewport: { width: options.width, height: options.height, dpr: options.dpr }, samples: [], categoryPeakBytes: {}, marks: [], lifecycle: { started: false, completed: false }, protocolErrors: [], inspectorErrors: []
     };
     summary.cleanup = cleanup;
     if (failure) { summary.measured = false; summary.failure = failure.message; }
     writeFileSync(resolve(outDir, "summary.json"), `${JSON.stringify(summary, null, 2)}\n`);
     if (!capture) {
-      writeFileSync(resolve(outDir, "raw.ndjson"), "");
+      writeFileSync(resolve(outDir, "raw.ndjson"), `${JSON.stringify({ at: new Date().toISOString(), type: "meta", schema: WEBKIT_MEMORY_SCHEMA, outcome: "launch-failed" })}\n`);
       writeFileSync(resolve(outDir, "stderr.log"), failure?.webkitStderr ?? "");
     }
     if (cleanup.orphanedPids.length) failure ??= new Error(`WebKit cleanup left process(es): ${cleanup.orphanedPids.join(", ")}`);
