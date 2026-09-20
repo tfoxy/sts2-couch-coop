@@ -38,6 +38,7 @@ class MockWebSocket extends EventTarget {
 const vitalsSources: ClientVitalsSources = {
   requestedStage: () => "dom",
   activeStage: () => "dom",
+  stageFit: () => "display",
   canvasResidency: () => null,
   atlasResidency: () => ({ bytes: 0, pages: 0, cap: 96 * 1024 * 1024 }),
   effectModes: () => ({ shaderMode: "static", particleMode: "static" }),
@@ -78,6 +79,7 @@ describe("sendClientVitals", () => {
     const [census] = receipts(socket);
     expect(census?.attemptId).toBe(ATTEMPT);
     expect(census?.stageActive).toBe("dom");
+    expect(census?.stageFit).toBe("display");
     expect(census?.canvases).toBe(0);
   });
 

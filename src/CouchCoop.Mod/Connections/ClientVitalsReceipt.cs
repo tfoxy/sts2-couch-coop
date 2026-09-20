@@ -22,13 +22,13 @@ namespace CouchCoop.Mod.Connections;
 /// <b>Why the host re-renders the line instead of storing what it was sent.</b> A receipt is client-controlled
 /// text on a route any device on the network can open, and this one ends up quoted verbatim into a report a
 /// player copies and pastes into a bug tracker. So nothing here echoes a client string: every field is parsed,
-/// range-checked and re-emitted from the parsed value, and the two textual fields are matched against closed
+/// range-checked and re-emitted from the parsed value, and the three textual fields are matched against closed
 /// sets rather than sanitised. A census that fails any check is REJECTED WHOLE rather than partially rendered —
 /// a half-parsed census would read like a measurement instead of like a malformed message, and the entire point
 /// of this line is that a human trusts the numbers on it.
 /// </para>
 /// <para>
-/// The census carries no URL, name, user agent, stack or payload; it is numbers plus two enums. Adding a field
+/// The census carries no URL, name, user agent, stack or payload; it is numbers plus three enums. Adding a field
 /// means adding it here too, which is the intended friction.
 /// </para>
 /// </remarks>
@@ -39,6 +39,9 @@ public static class ClientVitalsReceipt
 
     /// <summary>The stage backends the mirror can run — <c>?stage=dom|canvas</c>, matching rendererFactory.ts.</summary>
     private static readonly string[] StageBackends = ["dom", "canvas"];
+
+    /// <summary>The layout arms the mirror can grant, matching stageFit.ts.</summary>
+    private static readonly string[] StageFits = ["design", "display"];
 
     /// <summary>The effect modes the settings store can hold, matching mirrorSettings.ts <c>EffectMode</c>.</summary>
     private static readonly string[] EffectModes = ["dynamic", "dynamic-half", "dynamic-quarter", "static", "off"];
@@ -62,6 +65,7 @@ public static class ClientVitalsReceipt
 
         if (!TryEnum(root, "stageRequested", StageBackends, out var stageRequested)
             || !TryEnum(root, "stageActive", StageBackends, out var stageActive)
+            || !TryEnum(root, "stageFit", StageFits, out var stageFit)
             || !TryEnum(root, "shaderMode", EffectModes, out var shaderMode)
             || !TryEnum(root, "particleMode", EffectModes, out var particleMode)
             || !TryNumber(root, "dpr", MaxDpr, out var dpr)
@@ -84,6 +88,7 @@ public static class ClientVitalsReceipt
         // `requested->active` in one token because the pair only means anything together: they differ exactly when
         // the canvas backend was asked for and could not be built, which is a silent fallback nothing else reports.
         text.Append("stage=").Append(stageRequested).Append("->").Append(stageActive);
+        text.Append(" stageFit=").Append(stageFit);
         text.Append(" dpr=").Append(dpr.ToString("0.##", CultureInfo.InvariantCulture));
         text.Append(" viewport=").Append(Whole(viewportWidth)).Append('x').Append(Whole(viewportHeight));
         text.Append(" els=").Append(Whole(elements));

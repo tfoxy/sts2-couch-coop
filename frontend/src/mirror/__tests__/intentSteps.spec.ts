@@ -310,6 +310,21 @@ describe("intent strip geometry + CSS", () => {
     const sheet = document.head.querySelector("style[data-mirror-intent-steps]")!;
     expect(sheet.textContent!.match(/@keyframes/g)).toHaveLength(2);
   });
+
+  it("buckets rule names and endpoints to one fiftieth CSS pixel", () => {
+    const sameBucketA = 192.001;
+    const sameBucketB = 192.009;
+    const nextBucket = 192.011;
+
+    expect(ensureIntentStepsKeyframes(sameBucketA)).toBe(ensureIntentStepsKeyframes(sameBucketB));
+    expect(intentStepsKeyframesCss(sameBucketA)).toContain("translate:-192px 0px");
+    expect(intentStepsKeyframesCss(sameBucketB)).toContain("translate:-192px 0px");
+    expect(ensureIntentStepsKeyframes(nextBucket)).not.toBe(ensureIntentStepsKeyframes(sameBucketA));
+
+    const sheet = document.head.querySelector("style[data-mirror-intent-steps]")!;
+    expect(sheet.textContent!.match(/@keyframes/g)).toHaveLength(2);
+    expect(sheet.textContent).toContain("translate:-192.02px 0px");
+  });
 });
 
 // --- the renderer wiring ----------------------------------------------------------------------------------

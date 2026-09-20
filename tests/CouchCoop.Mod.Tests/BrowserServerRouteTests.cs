@@ -2754,6 +2754,7 @@ internal sealed class BrowserServerRouteTests
             attemptId = "attempt-vitals",
             stageRequested = "canvas",
             stageActive = "dom",
+            stageFit = "display",
             dpr = 3.49,
             vw = 390,
             vh = 844,
@@ -2769,18 +2770,28 @@ internal sealed class BrowserServerRouteTests
             particleMode = "off",
             jsHeapBytes = 0
         }));
+        await WaitForReportAsync(id, "stageFit=display", true, "a well-formed census reports its effective layout arm");
         await WaitForReportAsync(id, "canvasPx=41287680", true, "a well-formed census reaches the connection report");
 
         // A census the host cannot trust must leave the last good one standing rather than replacing it with a
         // partial reading — the report is read by someone who does not own the device and cannot re-measure.
         await SendTextAsync(socket, JsonSerializer.Serialize(new
         {
-            type = "client-vitals", attemptId = "attempt-vitals", stageRequested = "canvas", stageActive = "moon",
+            type = "client-vitals", attemptId = "attempt-vitals", stageRequested = "canvas", stageActive = "dom", stageFit = "zoom",
             dpr = 3.49, vw = 390, vh = 844, els = 1204, canvases = 7, canvasPx = 1,
-            decodedBytes = 1, decodedPages = 1, texBytes = 0, fxBytes = 0,
+            decodedBytes = 1, decodedPages = 1, atlasCap = 1, texBytes = 0, fxBytes = 0,
             shaderMode = "static", particleMode = "off", jsHeapBytes = 0
         }));
         await WaitForReportAsync(id, "canvasPx=1 ", false, "a refused census does not overwrite the last good one");
+
+        await SendTextAsync(socket, JsonSerializer.Serialize(new
+        {
+            type = "client-vitals", attemptId = "attempt-vitals", stageRequested = "canvas", stageActive = "dom",
+            dpr = 3.49, vw = 390, vh = 844, els = 1204, canvases = 7, canvasPx = 2,
+            decodedBytes = 2, decodedPages = 1, atlasCap = 1, texBytes = 0, fxBytes = 0,
+            shaderMode = "static", particleMode = "off", jsHeapBytes = 0
+        }));
+        await WaitForReportAsync(id, "canvasPx=2 ", false, "a census missing stage-fit does not overwrite the last good one");
 
         await CloseWebSocketSilentlyAsync(socket);
 
