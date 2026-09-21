@@ -9,6 +9,8 @@ internal static class LobbySupportCheckpointsTests
     {
         WriterUsesExactGrammarAndSeverity();
         WriterRefusesValuesOutsideTheGrammar();
+        LiveHostRuntimeRoutesSupportAndNamesEveryReason();
+        LiveHostReasonClassifierIsTotalAndNeverPassesTextThrough();
         StateReportsBothScreenKindsAndDeduplicatesTicks();
         PanelFailuresAreOncePerEpochAndCoverEveryCategory();
         Console.WriteLine("LobbySupportCheckpointsTests: ok");
@@ -106,9 +108,103 @@ internal static class LobbySupportCheckpointsTests
         }), "two screen instances remain independent while duplicate IDs and repeated ticks are deduplicated");
     }
 
+    /// <summary>
+    /// A live runtime is routine; a placeholder one is an ERROR, because it costs co-op entirely and silently.
+    /// Enumerating the enum is the point: every reason a build can carry must have a token, or the checkpoint
+    /// throws instead of inventing one.
+    /// </summary>
+    private static void LiveHostRuntimeRoutesSupportAndNamesEveryReason()
+    {
+        var stderr = new List<string>();
+        var info = new List<string>();
+        var error = new List<string>();
+        var checkpoints = new LobbySupportCheckpoints(stderr.Add, info.Add, error.Add);
+
+        checkpoints.LiveHostRuntimeSupported();
+        foreach (var reason in Enum.GetValues<LiveHostRuntimeReason>())
+        {
+            checkpoints.LiveHostRuntimeUnsupported(reason);
+        }
+
+        var supported = new[] { "live-host-runtime result=supported" };
+        var unsupported = new[]
+        {
+            "live-host-runtime result=unsupported reason=outside-game-process",
+            "live-host-runtime result=unsupported reason=non-live-build",
+            "live-host-runtime result=unsupported reason=not-live-adapter",
+            "live-host-runtime result=unsupported reason=unreported",
+            "live-host-runtime result=unsupported reason=unknown",
+        };
+
+        Expect(info.SequenceEqual(supported), "a live host runtime is a routine INFO checkpoint");
+        Expect(error.SequenceEqual(unsupported),
+            "every stub-runtime reason is an ERROR naming exactly one bounded token, in declaration order");
+        Expect(stderr.SequenceEqual(supported.Concat(unsupported)),
+            "the live-host pair writes once to stderr in call order");
+        Expect(unsupported.Length == Enum.GetValues<LiveHostRuntimeReason>().Length,
+            "no reason may be added to the enum without a token and a checkpoint line");
+    }
+
+    /// <summary>
+    /// The classifier is the only thing standing between a spirectl-owned reason string and a support snapshot,
+    /// so its refusal path matters more than its happy path: anything it does not recognise must collapse to a
+    /// bounded token rather than travel as text.
+    /// </summary>
+    private static void LiveHostReasonClassifierIsTotalAndNeverPassesTextThrough()
+    {
+        Expect(
+            LobbySupportCheckpoints.ClassifyLiveHostReason(
+                "This live-host build is not running inside an initialized STS2/Godot process.")
+                == LiveHostRuntimeReason.OutsideGameProcess,
+            "the process gate's reason classifies as outside-game-process");
+        Expect(
+            LobbySupportCheckpoints.ClassifyLiveHostReason(
+                "This build was compiled without live STS2 host references.")
+                == LiveHostRuntimeReason.NonLiveBuild,
+            "a payload compiled without live-host references classifies as non-live-build");
+        Expect(
+            LobbySupportCheckpoints.ClassifyLiveHostReason(
+                "This runtime was not created from a live STS2 host adapter.")
+                == LiveHostRuntimeReason.NotLiveAdapter,
+            "the runtime-options default classifies as not-live-adapter");
+        Expect(
+            LobbySupportCheckpoints.ClassifyLiveHostReason(
+                "  This build was compiled without live STS2 host references.  ")
+                == LiveHostRuntimeReason.NonLiveBuild,
+            "surrounding whitespace does not cost a known reason its token");
+
+        foreach (var absent in new string?[] { null, "", "   ", "\t\n" })
+        {
+            Expect(LobbySupportCheckpoints.ClassifyLiveHostReason(absent) == LiveHostRuntimeReason.Unreported,
+                "a capability with no reason attached classifies as unreported");
+        }
+
+        foreach (var unrecognised in new[]
+                 {
+                     "This live-host build is not running inside an initialized STS2/Godot process",
+                     "this build was compiled without live sts2 host references.",
+                     "/Users/someone/Library/Application Support/SlayTheSpire2",
+                     "System.TypeLoadException: could not load LobbyPlayer",
+                     "outside-game-process",
+                 })
+        {
+            Expect(LobbySupportCheckpoints.ClassifyLiveHostReason(unrecognised) == LiveHostRuntimeReason.Unknown,
+                $"an unrecognised reason classifies as unknown, never a pass-through: {unrecognised}");
+        }
+
+        var error = new List<string>();
+        var checkpoints = new LobbySupportCheckpoints(_ => { }, _ => { }, error.Add);
+        checkpoints.LiveHostRuntimeUnsupported(
+            LobbySupportCheckpoints.ClassifyLiveHostReason("/Users/secret/Library/Application Support"));
+        Expect(error.SequenceEqual(new[] { "live-host-runtime result=unsupported reason=unknown" }),
+            "no fragment of an unrecognised reason reaches the log line");
+    }
+
     private static void WriterRefusesValuesOutsideTheGrammar()
     {
         var checkpoints = new LobbySupportCheckpoints(_ => { }, _ => { }, _ => { });
+        ExpectThrows(() => checkpoints.LiveHostRuntimeUnsupported((LiveHostRuntimeReason)99),
+            "a reason outside the bounded enum is refused rather than written");
         ExpectThrows(() => checkpoints.LobbyPatchAttempt(LobbyPatchAttemptPhase.Initial, 1),
             "initial patch attempts always begin with exactly two pending targets");
         ExpectThrows(() => checkpoints.LobbyPatchAttempt(LobbyPatchAttemptPhase.Retry, 3),

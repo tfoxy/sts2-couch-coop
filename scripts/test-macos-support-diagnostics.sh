@@ -25,6 +25,12 @@ cat > "$log" <<'EOF'
 [couchcoop] mod-init
 [couchcoop] harmony-probe-enter
 [couchcoop] harmony-probe-complete result=ok
+[couchcoop] live-host-runtime result=supported
+[ERROR] [couchcoop] live-host-runtime result=unsupported reason=outside-game-process
+[ERROR] [couchcoop] live-host-runtime result=unsupported reason=non-live-build
+[ERROR] [couchcoop] live-host-runtime result=unsupported reason=not-live-adapter
+[ERROR] [couchcoop] live-host-runtime result=unsupported reason=unreported
+[ERROR] [couchcoop] live-host-runtime result=unsupported reason=unknown
 [couchcoop] lobby-patch-attempt phase=initial pending=2 total=2
 [couchcoop] lobby-patch-attempt phase=retry pending=0 total=2
 [couchcoop] lobby-patch-complete targets=2 total=2
@@ -52,6 +58,10 @@ junk [couchcoop] lobby-controller-armed
 [couchcoop] lobby-screen-mounted kind=other
 [couchcoop] qr-panel-install-failed kind=load-game category=unknown
 [couchcoop] lobby-patch-attempt phase=initial pending=1 total=2
+[couchcoop] live-host-runtime result=unsupported reason=/Users/secret
+[couchcoop] live-host-runtime result=unsupported reason=maybe
+[couchcoop] live-host-runtime result=unsupported reason=placeholder
+[couchcoop] live-host-runtime result=supported suffix=leak
 EOF
 
 snapshot() {
@@ -69,6 +79,12 @@ while IFS= read -r expected; do
 done <<'EOF'
 [couchcoop] loader-entry
 [couchcoop] harmony-probe-complete result=ok
+[couchcoop] live-host-runtime result=supported
+[ERROR] [couchcoop] live-host-runtime result=unsupported reason=outside-game-process
+[ERROR] [couchcoop] live-host-runtime result=unsupported reason=non-live-build
+[ERROR] [couchcoop] live-host-runtime result=unsupported reason=not-live-adapter
+[ERROR] [couchcoop] live-host-runtime result=unsupported reason=unreported
+[ERROR] [couchcoop] live-host-runtime result=unsupported reason=unknown
 [couchcoop] lobby-patch-attempt phase=initial pending=2 total=2
 [couchcoop] lobby-patch-complete targets=2 total=2
 [ERROR] [couchcoop] lobby-patch-incomplete targets=0 total=2 retry=exhausted
@@ -89,6 +105,10 @@ result=maybe
 kind=other
 category=unknown
 lobby-patch-attempt phase=initial pending=1 total=2
+reason=/Users/secret
+reason=maybe
+reason=placeholder
+[couchcoop] live-host-runtime result=supported suffix=leak
 EOF
 ! grep -F "$fixture" <<< "$output" >/dev/null || { echo "support output leaked a fixture path" >&2; exit 1; }
 echo "test-macos-support-diagnostics: ok"

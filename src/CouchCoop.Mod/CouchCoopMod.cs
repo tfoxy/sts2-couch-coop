@@ -291,6 +291,7 @@ public static class CouchCoopMod
 
             _runtime = new CouchCoopRuntimeHost(CouchCoopRuntimeDependencies.FromFactory(Sts2EmbeddableRuntimeFactory.Create()));
             _ = _runtime.Capabilities;
+            ReportLiveHostRuntime(_runtime);
             // Let the host transport size its ENet listener from the LIVE lobby cap instead of the maxClients it
             // is handed — see CouchCoopHostTransport.MaxLobbyPlayersProbe for why that argument cannot be trusted
             // once a multiplayer limit mod is installed. Safe to set on a seat too (it never hosts).
@@ -313,6 +314,63 @@ public static class CouchCoopMod
             if (IsHeadlessClient || IsHeadlessDisplay()) HeadlessViewportConfigurator.Configure();
             if (!IsHeadlessClient) InitializeQrHostPanel();
             return _runtime;
+        }
+    }
+
+    /// <summary>
+    /// Say, in the bounded support vocabulary, whether the runtime just composed is a LIVE STS2 host or a
+    /// placeholder. This is the first checkpoint worth reading in any support log.
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// The signal has always ridden the capability envelope; nothing ever asked for it. A placeholder runtime
+    /// has no state provider, so every observation is a fabricated main menu indistinguishable from a real one
+    /// — the lobby reads as <c>not-host</c> forever, no QR button is built, and browsers never reach the
+    /// player-name form. That failure cost a full round to attribute; one ERROR line makes it self-reporting.
+    /// </para>
+    /// <para>
+    /// Reads the NOTICE rather than <see cref="CouchCoopRuntimeHost.HasCapability"/>: the boolean alone throws
+    /// away the reason, and the reason is the entire diagnostic value — it says which gate refused. It is also
+    /// deliberately not <see cref="CouchCoopRuntimeHost.RequireCapability"/>, which throws on refusal; this
+    /// seam reports and returns, because a mod that declines to load teaches the player nothing.
+    /// </para>
+    /// <para>
+    /// Total by construction. Diagnostics must never cost the rest of <see cref="Init"/>: an unreadable
+    /// envelope is itself reported (as <c>unreported</c>), and a throwing log sink is swallowed.
+    /// </para>
+    /// </remarks>
+    private static void ReportLiveHostRuntime(CouchCoopRuntimeHost runtime)
+    {
+        bool supported;
+        string? reason;
+        try
+        {
+            var notice = runtime.Notices.FirstOrDefault(candidate => string.Equals(
+                candidate.CapabilityId, CouchCoopRuntimeHost.LiveSts2HostCapability, StringComparison.Ordinal));
+            supported = notice?.Supported ?? false;
+            reason = notice?.UnsupportedReason;
+        }
+        catch (Exception)
+        {
+            // A capability envelope that cannot be read is a refusal too, and one with nothing to quote.
+            supported = false;
+            reason = null;
+        }
+
+        try
+        {
+            if (supported)
+            {
+                LobbyCheckpoints.LiveHostRuntimeSupported();
+                return;
+            }
+
+            LobbyCheckpoints.LiveHostRuntimeUnsupported(
+                LobbySupportCheckpoints.ClassifyLiveHostReason(reason));
+        }
+        catch (Exception)
+        {
+            // The sinks are the last thing left that can fail here. Init continues regardless.
         }
     }
 
