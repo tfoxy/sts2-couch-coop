@@ -7,7 +7,8 @@
 //
 // This is a PASSIVE extra watcher: it connects with the canonical `/ws?watch=1&staticBg=0&cardFlight=1&handTween=1&trailDrive=0` query,
 // acks every scene-delta INSTANTLY (so the host coalesces the stream as little as possible — we capture the
-// least-coalesced / most representative frame stream), and NEVER sends inputs. It cannot disturb the live game.
+// least-coalesced frame stream), and NEVER sends inputs. Use --static-bg on to capture the static treatment.
+// The watcher still adds host streaming work; keep it separate from graded live-browser measurements.
 //
 // Output format (NDJSON, one JSON value per line):
 //   line 1:  {"meta":{"format":"repro/1",recordedAt,url,durationMs,messages,bytes}}   (written at finalize)
@@ -21,48 +22,32 @@
 import { mkdirSync, writeFileSync } from "node:fs";
 import { dirname, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
+import { parseRecordingArgs, recordingWebSocketUrl } from "./lib/mirror-recording-options.mjs";
 
 const REPO_ROOT = resolve(dirname(fileURLToPath(import.meta.url)), "..");
 
-function parseArgs(argv) {
-  const args = { duration: 25, out: null };
-  for (let i = 0; i < argv.length; i++) {
-    const a = argv[i];
-    if (a === "--duration") {
-      args.duration = Number(argv[++i]);
-    } else if (a === "--out") {
-      args.out = argv[++i];
-    } else if (a === "--help" || a === "-h") {
-      args.help = true;
-    } else {
-      console.error(`Unknown argument: ${a}`);
-      args.help = true;
-    }
-  }
-  return args;
+let args;
+try {
+  args = parseRecordingArgs(process.argv.slice(2));
+} catch (error) {
+  console.error(error.message);
+  process.exit(2);
 }
-
-const args = parseArgs(process.argv.slice(2));
 if (args.help) {
   console.log(`record-mirror-stream.mjs — capture the live mirror /ws stream to NDJSON
 
   --duration <seconds>   how long to record (default 25)
   --out <path>           output file (default .sts2/bench/combat-<timestamp>.ndjson)
+  --static-bg on|off     request static backgrounds (default off)
 
   env COUCHCOOP_GAME_ORIGIN   ws origin (default ws://127.0.0.1:13337)
 
-Passive extra viewer: acks scene-deltas instantly, never sends inputs, cannot disturb the live game.`);
+Passive viewer: acks scene-deltas instantly and never sends inputs; adds streaming work to the host.`);
   process.exit(0);
 }
 
-if (!Number.isFinite(args.duration) || args.duration <= 0) {
-  console.error(`Invalid --duration: ${args.duration}`);
-  process.exit(2);
-}
-
 const ORIGIN = (process.env.COUCHCOOP_GAME_ORIGIN ?? "ws://127.0.0.1:13337").replace(/\/$/, "");
-// Match the frontend's buildMirrorWebSocketUrl: /ws?watch=1&staticBg=0&cardFlight=1&handTween=1&trailDrive=0 (scene-delta + session only).
-const URL = `${ORIGIN}/ws?watch=1&staticBg=0&cardFlight=1&handTween=1&trailDrive=0`;
+const URL = recordingWebSocketUrl(ORIGIN, args.staticBg);
 
 const timestamp = new Date().toISOString().replace(/[:.]/g, "-");
 const outPath = resolve(REPO_ROOT, args.out ?? `.sts2/bench/combat-${timestamp}.ndjson`);
@@ -153,6 +138,7 @@ function finalize(reason) {
     format: "repro/1",
     recordedAt: new Date().toISOString(),
     url: URL,
+    staticBg: args.staticBg,
     durationMs,
     messages: records.length,
     bytes: totalBytes

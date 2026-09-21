@@ -39,6 +39,7 @@
 import { existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { requireReproHeader } from "./lib/repro-recording.mjs";
 import { replaySession } from "./lib/replay-session.mjs";
+import { createReplayTiming } from "./lib/replay-timing.mjs";
 import { tmpdir } from "node:os";
 import { createServer, request as httpRequest } from "node:http";
 import { createHash } from "node:crypto";
@@ -71,6 +72,7 @@ function parseArgs(argv) {
     astcCache: null,
     loop: false,
     respectWatch: false,
+    timingOut: null,
     selfTest: false,
     help: false,
   };
@@ -89,6 +91,11 @@ function parseArgs(argv) {
       case "--astc-cache": a.astcCache = val(); break;
       case "--loop": a.loop = true; break;
       case "--respect-watch": a.respectWatch = true; break;
+      case "--timing-out": {
+        a.timingOut = val();
+        if (!a.timingOut || a.timingOut.startsWith("--")) throw new Error("--timing-out requires a path");
+        break;
+      }
       case "--self-test": a.selfTest = true; break;
       case "--help": case "-h": a.help = true; break;
       default: console.error(`Unknown argument: ${arg}`); a.help = true;
@@ -454,22 +461,25 @@ function handleConnection(conn, ctx) {
   let replaying = false;
   let replayTimer = null;
   const timers = new Set();
+  let timing = null;
+  let timingGeneration = 0;
 
-  const rawSend = (data) => {
+  const rawSend = (data, recordedIndex = null) => {
     if (closed) return;
     if (!watching && isSceneDelta(data)) return;
     conn.send(data);
+    if (recordedIndex !== null) timing?.send(recordedIndex);
     stats.msgsSent++;
     stats.bytesSent += Buffer.byteLength(data, "utf8");
   };
   // Apply chaos latency (drop is decided in the pace loops so pacing bookkeeping stays coherent).
-  const sendNow = (data) => {
+  const sendNow = (data, recordedIndex = null) => {
     if (closed) return;
     if (ctx.chaos.latency > 0) {
-      const t = setTimeout(() => { timers.delete(t); rawSend(data); }, ctx.chaos.latency);
+      const t = setTimeout(() => { timers.delete(t); rawSend(data, recordedIndex); }, ctx.chaos.latency);
       timers.add(t);
     } else {
-      rawSend(data);
+      rawSend(data, recordedIndex);
     }
   };
 
@@ -502,6 +512,7 @@ function handleConnection(conn, ctx) {
         return;
       }
       ctx.log(`[conn ${id}] recording exhausted (recorded, ${stats.deltasSent} deltas sent)`);
+      timing?.finish("exhausted");
       return;
     }
     const wait = Math.max(0, msgs[idx].t - (performance.now() - startWall));
@@ -515,10 +526,10 @@ function handleConnection(conn, ctx) {
         idx++;
         if (isSceneDelta(d)) {
           if (maybeDropDelta(isKeyframe(d))) { stats.dropped++; continue; }
-          sendNow(d);
+          sendNow(d, idx - 1);
           stats.deltasSent++;
         } else {
-          sendNow(d);
+          sendNow(d, idx - 1);
         }
       }
       scheduleRecorded();
@@ -553,6 +564,7 @@ function handleConnection(conn, ctx) {
     idx = 0;
     credits = 1;
     startWall = performance.now();
+    timing = ctx.timing?.start(id, ++timingGeneration);
     if (ctx.pace === "max") pumpMax();
     else scheduleRecorded();
   };
@@ -565,6 +577,7 @@ function handleConnection(conn, ctx) {
       if (watching === msg.on) return;
       watching = msg.on;
       if (!watching) {
+        timing?.finish("watch-disabled");
         if (replayTimer !== null) { clearTimeout(replayTimer); timers.delete(replayTimer); replayTimer = null; }
         replaying = false;
       } else startReplay();
@@ -593,6 +606,7 @@ function handleConnection(conn, ctx) {
   conn.on("close", () => {
     if (closed) return;
     closed = true;
+    timing?.finish("connection-closed");
     for (const t of timers) clearTimeout(t);
     timers.clear();
     const dur = ((Date.now() - stats.connectedAt) / 1000).toFixed(1);
@@ -630,10 +644,10 @@ function loadRecording(path) {
     if (obj.data.includes('"directView":true')) hasDirectView = true;
     messages.push({ t: typeof obj.t === "number" ? obj.t : 0, data: obj.data });
   }
-  return { abs, meta, hasDirectView, messages };
+  return { abs, meta, hasDirectView, messages, sha256: createHash("sha256").update(text).digest("hex") };
 }
 
-function buildCtx({ messages, hasDirectView, pace, chaos, log, loop, respectWatch }) {
+function buildCtx({ messages, hasDirectView, pace, chaos, log, loop, respectWatch, timing }) {
   return {
     messages: messages.filter((m) => !isServerReload(m.data)),
     hasDirectView,
@@ -643,11 +657,12 @@ function buildCtx({ messages, hasDirectView, pace, chaos, log, loop, respectWatc
     respectWatch: !!respectWatch,
     connSeq: 0,
     log,
+    timing,
   };
 }
 
-function startServer({ messages, hasDirectView, pace, chaos, port, host, log, assetsOrigin, astcCache, loop, respectWatch }) {
-  const ctx = buildCtx({ messages, hasDirectView, pace, chaos, log, loop, respectWatch });
+function startServer({ messages, hasDirectView, pace, chaos, port, host, log, assetsOrigin, astcCache, loop, respectWatch, timing }) {
+  const ctx = buildCtx({ messages, hasDirectView, pace, chaos, log, loop, respectWatch, timing });
   const { httpServer, sockets, impl } = makeTransport((conn) => handleConnection(conn, ctx), assetsOrigin, astcCache);
   return new Promise((res) => {
     httpServer.listen(port, host, () => {
@@ -839,6 +854,7 @@ const HELP = `replay-ws-server.mjs — real-WebSocket replay server for recorded
   --astc-cache <dir>   serve ?fmt=astc GETs from <dir>/astc/<sha256>.cctx (Track F2a; else strip fmt + proxy origin)
   --loop               (recorded pace) restart the recording from t0 on exhaustion — continuous stream
   --respect-watch      withhold recording until watch is enabled; off/on replays from the full keyframe
+  --timing-out <path>   create diagnostic NDJSON send ledger; finite recorded pace, no chaos; refuses overwrite
   --self-test          spin an in-process server + client and assert pacing/ack/pong/reload behaviour
   --help
 
@@ -868,6 +884,10 @@ async function main() {
     process.exit(2);
   }
 
+  const timing = args.timingOut ? createReplayTiming(resolve(args.timingOut), {
+    recordingSha256: rec.sha256, messages: rec.messages.filter(m => !isServerReload(m.data)),
+    pace: args.pace, loop: args.loop, chaos: args.chaos
+  }) : null;
   const srv = await startServer({
     messages: rec.messages,
     hasDirectView: rec.hasDirectView,
@@ -880,6 +900,7 @@ async function main() {
     astcCache: args.astcCache,
     loop: args.loop,
     respectWatch: args.respectWatch,
+    timing,
   });
 
   const strippedCount = rec.messages.filter((m) => !isServerReload(m.data)).length;
@@ -898,6 +919,7 @@ async function main() {
   process.on("SIGINT", async () => {
     console.log("\nSIGINT — closing");
     await srv.close();
+    timing?.close();
     process.exit(0);
   });
 }
