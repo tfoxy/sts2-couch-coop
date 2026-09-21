@@ -90,6 +90,21 @@ The Linux-only `--cgroup` option creates a fresh systemd user scope for the comp
 excluding Node orchestration. It defaults to `memory.max=max` and `memory.swap.max=0`. A survival run may
 separately specify `--cgroup-memory-max-bytes`; capped measurements do not replace uncapped product gates.
 
+For residual-memory attribution with the product still present, capture a new stream with
+`record-mirror-stream.mjs --static-bg on` (the default remains `off`). The recorder writes the selected value
+and canonical WebSocket URL in its metadata. Use it separately from a graded live-browser measurement: an
+additional watcher changes the host's streaming workload. Changing a replay URL cannot add a missing static
+descriptor to an old recording; pin the successful still response and other asset bytes separately.
+
+Finite recorded replay can write an optional `--timing-out <new-file>` NDJSON ledger. It identifies the
+recording hash, admission generations, scheduled and actual monotonic send times, lateness, and terminal
+message/scene byte totals. It refuses overwrite, looping, maximum-speed pacing, and chaos. The ledger observes
+sends without changing protocol messages or ACK pacing. Use its admission clock and recording offsets for
+common observation boundaries, require readiness before the boundary, and reconcile browser consumption
+against the terminal totals. Sends alone do not prove consumption. A watch restart creates a new generation
+and invalidates a comparison requiring one uninterrupted workload. This diagnostic adds server-side logging
+outside the browser cgroup; keep it enabled consistently across a comparison.
+
 The probe records continuous Inspector memory, cgroup counters and identity, process PSS/smaps, temporal
 DOM/LayerTree attribution, canvas dimensions, effects receipts and Network evidence. Outgoing WebSocket
 receipts include scene acknowledgements and client-vitals when emitted. Incoming frames retain hashes, sizes
