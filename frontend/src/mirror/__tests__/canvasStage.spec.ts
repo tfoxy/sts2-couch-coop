@@ -385,6 +385,13 @@ interface StatsShape {
     runBatches: number;
     batchFallbacks: number;
   };
+  retainedSubtrees: {
+    enabled: boolean;
+    execution: { logicalCommands: number; liveCommands: number; substitutedCommands: number };
+    invalidations: { resize: number; rasterScale: number; context: number; dispose: number };
+    cache: { entries: number; bytes: number; peakBytes: number; realHits: number };
+    device: { rendererCpu: null; gpuProcessCpu: null; processRssBytes: null };
+  };
   animActive: number;
   /** R5 T-DR4 — card flights that placed their comet root. */
   trailRootDrives: number;
@@ -581,6 +588,23 @@ describe("createMirrorRendererFor", () => {
       runBatches: 0,
       batchFallbacks: 0
     });
+    expect(stats().retainedSubtrees).toMatchObject({
+      enabled: false,
+      cache: { entries: 0, bytes: 0, peakBytes: 0, realHits: 0 },
+      device: { rendererCpu: null, gpuProcessCpu: null, processRssBytes: null }
+    });
+  });
+
+  it("enables compact retained subtrees only for ?canvasSubtreeCache=on", () => {
+    stubWebgl2();
+    __setStageBackendForTest("canvas");
+    window.history.replaceState(null, "", "/?canvasSubtreeCache=on");
+    try {
+      renderer = createMirrorRendererFor(stageAt(1920, 1080, 1), defsEl());
+      expect(stats().retainedSubtrees.enabled).toBe(true);
+    } finally {
+      window.history.replaceState(null, "", "/");
+    }
   });
 
   it("keeps the stats seam with its newer canvas renderer through an old dispose", () => {
@@ -711,6 +735,7 @@ describe("the canvas stage's sizing law", () => {
     stage.getBoundingClientRect = () => ({ left: 0, top: 0, width: 960, height: 540 }) as DOMRect;
     observed.fire();
     expect([canvas.width, canvas.height]).toEqual([960, 540]);
+    expect(stats().retainedSubtrees.invalidations.resize).toBe(1);
 
     // A resize that does not move the backing store must not drop the (expensive) buffer.
     const clearsBefore = record.clears;

@@ -10,9 +10,11 @@
  */
 import {
   type CanvasExecutor,
+  type CompiledRefreshResult,
   type CompiledDrawList,
   type DrawList,
   type ExecutorTexture,
+  type RetainedRangeSubstitutionPlan,
   type StageProjection,
 } from "@godot-scene-web/canvas";
 
@@ -204,6 +206,19 @@ export interface CanvasFrameRuntimePorts<TWireGraph = unknown> {
   /** Capture the retained wire graph while the just-built ranges are exact. */
   readonly captureWireGraph: (state: MirrorState, build: DrawListBuild) => TWireGraph;
   readonly onBuildTiming: (elapsedMs: number) => void;
+  /** Optional physical-execution cache; it never mutates logical frame products. */
+  readonly retained?: {
+    planBuild(
+      build: DrawListBuild,
+      list: DrawList<ExecutorTexture | null>,
+      projection: StageProjection,
+    ): void;
+    prepare(
+      list: DrawList<ExecutorTexture | null>,
+      projection: StageProjection,
+      refresh: CompiledRefreshResult,
+    ): RetainedRangeSubstitutionPlan | undefined;
+  };
   readonly onPaintTiming: (elapsedMs: number) => void;
   /** Called immediately before direct executor submission. */
   readonly beforeDirectPaint: () => void;
@@ -345,6 +360,7 @@ export function createCanvasFrameRuntime<TWireGraph>(ports: CanvasFrameRuntimePo
     // and all synchronous resource/derived finalization has succeeded.
     snapshot = nextSnapshot;
     listMatchesSnapshot = true;
+    ports.retained?.planBuild(build, ports.list, ports.projection());
     ports.onBuildTiming(ports.now() - started);
     return true;
   }
@@ -366,10 +382,18 @@ export function createCanvasFrameRuntime<TWireGraph>(ports: CanvasFrameRuntimePo
     }
     const started = ports.now();
     ports.beforeDirectPaint();
+    // One coherent compiled delta feeds both retained planning and execution.
+    // The executor must not refresh again after the cache has classified it.
+    const compiledRefresh = options.compiled?.refresh();
+    const substitutions = compiledRefresh === undefined
+      ? undefined
+      : ports.retained?.prepare(ports.list, projection, compiledRefresh);
     const drew = ports.executor.execute(ports.list, projection, {
       clear: true,
       clearColor: options.clearColor,
       compiled: options.compiled,
+      compiledRefresh,
+      substitutions,
     });
     if (drew) ports.paintGuard.bank(ports.list, projection, epoch);
     else ports.paintGuard.invalidate();

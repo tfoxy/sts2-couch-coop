@@ -5,6 +5,7 @@
  */
 import {
   createDrawList,
+  createRetainedRangeCache,
   compileDrawList,
   type DrawList,
   type CompiledDrawList,
@@ -37,6 +38,10 @@ import {
   type CanvasDiagnosticStatsBindings
 } from "@/mirror/renderer/canvas/diagnostics";
 import { createCanvasFrameAssembly } from "@/mirror/renderer/canvas/frameAssembly";
+import {
+  canvasSubtreeCacheEnabled,
+  createRetainedSubtreeRuntime,
+} from "@/mirror/renderer/canvas/retainedSubtreeRuntime";
 
 import { createPaintGuard } from "@/mirror/canvas/paintGuard";
 import type {
@@ -122,6 +127,11 @@ export function createCanvasMirrorRenderer(
   const glyphs = textRuntime.glyphs;
 
   const { textures, executor } = stageRuntime.createExecutor({ glyphs: glyphs?.pass });
+  const retainedCache = createRetainedRangeCache(gl);
+  const retained = createRetainedSubtreeRuntime({
+    enabled: canvasSubtreeCacheEnabled(typeof window === "undefined" ? "" : window.location.search),
+    cache: retainedCache,
+  });
 
   function glMaxTextureSize(): number {
     try {
@@ -134,7 +144,7 @@ export function createCanvasMirrorRenderer(
 
   /** Observational probes only; rendering policy is fixed in this renderer. */
   function urlParam(name: string): string | null {
-    if (name !== "spreadAudit") return null;
+    if (name !== "spreadAudit" && name !== "paintDump") return null;
     return typeof window === "undefined" ? null : new URLSearchParams(window.location.search).get(name);
   }
 
@@ -302,6 +312,7 @@ export function createCanvasMirrorRenderer(
     // construction-time presentation boundary.
     invalidatePaintGuard: () => paintGuard.invalidate(),
     afterContextLost: () => {
+      retained.contextLost();
       executor.invalidate();
       textures.reset();
       pixelResources.contextLost();
@@ -312,6 +323,7 @@ export function createCanvasMirrorRenderer(
       textRuntime.restore();
     },
     backingChanged: () => {
+      retained.invalidateAll("resize");
     },
     // This port is installed before the presentation runtime exists; an early
     // browser resize may only repaint once that frame boundary is live.
@@ -340,6 +352,7 @@ export function createCanvasMirrorRenderer(
       paintOrderCache,
       hitMemo,
       scratch,
+      retained,
     },
     resources: { bridge, textures, pixel: pixelResources, text: textRuntime },
     effects: { runtime: effectsRuntime, stageOwned: stageEffects },
@@ -371,6 +384,7 @@ export function createCanvasMirrorRenderer(
     },
     stage: { runtime: stageRuntime, lifecycle: stageLifecycle, staticBackground: staticBg },
     frame: { runtime: frameRuntime, presentation: initialFramePresentation, executor, compiled: compiledList, paintGuard, dumpList: buildList },
+    retained: { runtime: retained, cache: retainedCache },
     schedule: scheduler,
     visual,
     patch: { runtime: patchRuntime, execution: patchExecution },
@@ -651,6 +665,7 @@ export function createCanvasMirrorRenderer(
       // already refuses every `paint`, so this is hygiene rather than correctness: a renderer that is torn down
       // must not be the last thing holding a reference to a page's worth of texture wrappers.
       initialFramePresentation.invalidatePaintGuard();
+      retained.dispose();
       executor.releaseCompiled(compiledList);
       // Executor and cache resources above are intentionally released before
       // stage teardown destroys their GL context.
