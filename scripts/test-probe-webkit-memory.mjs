@@ -1,15 +1,17 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 import { PassThrough } from "node:stream";
-import { existsSync, mkdtempSync, readFileSync, statSync } from "node:fs";
+import { finished } from "node:stream/promises";
+import { createWriteStream, existsSync, mkdtempSync, readFileSync, statSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { spawn } from "node:child_process";
 import { pathToFileURL } from "node:url";
 import {
   NulJsonFramer, ProtocolCommandError, ProtocolTimeoutError, WEBKIT_MEMORY_SCHEMA,
-  WebKitInspector, isMeasuredMemoryCapture, summarizeMemoryWindow
+  WebKitInspector, classifyTargetTransition, isMeasuredMemoryCapture, summarizeMemoryWindow
 } from "./lib/webkit-memory-probe.mjs";
+import { WebKitNetworkEvidence } from "./lib/webkit-network-evidence.mjs";
 
 test("NUL framer accepts split and combined JSON frames", () => {
   const framer = new NulJsonFramer();
@@ -81,6 +83,12 @@ test("new non-provisional target replaces the active target", () => {
   assert.equal(h.inspector.targetId, "two");
 });
 
+test("only the first initial-navigation target bind is allowed", () => {
+  assert.equal(classifyTargetTransition({ navigationPending: true, hasInitialNavigationTransition: false }), "initial-navigation");
+  assert.equal(classifyTargetTransition({ navigationPending: true, hasInitialNavigationTransition: true }), "unexpected-replacement");
+  assert.equal(classifyTargetTransition({ navigationPending: false, hasInitialNavigationTransition: false }), "unexpected-replacement");
+});
+
 test("destroying a target rejects its pending nested command", async () => {
   const h = harness(); h.inspector.pageProxyId = "page"; h.inspector.targetId = "target";
   const pending = h.inspector.targetCommand("Memory.enable", {}, 100);
@@ -112,6 +120,42 @@ test("explicit close does not report a pipe ending before its response as an ins
   h.stdout.end();
   await closing;
   assert.equal(h.inspector.closed, true);
+  assert.deepEqual(h.inspector.errors, []);
+});
+
+test("close-time network traffic is drained into raw and summary before finalization", async () => {
+  const h = harness(); h.inspector.pageProxyId = "page"; h.inspector.targetId = "target";
+  const root = mkdtempSync(join(tmpdir(), "cc-webkit-close-drain-"));
+  const rawPath = join(root, "raw.ndjson");
+  const raw = createWriteStream(rawPath);
+  const network = new WebKitNetworkEvidence({
+    record: (type, value) => raw.write(`${JSON.stringify({ type, ...value })}\n`)
+  });
+  h.inspector.on("target-event", event => network.accept(event));
+
+  const closing = h.inspector.close(100);
+  const closeRequest = h.sent.at(-1);
+  h.stdout.write(`${JSON.stringify({ id: closeRequest.id, result: {} })}\0`);
+  await closing;
+
+  const payload = '{"type":"scene-delta","revision":99}';
+  h.stdout.write(`${JSON.stringify({
+    pageProxyId: "page", method: "Target.dispatchMessageFromTarget",
+    params: { targetId: "target", message: JSON.stringify({
+      method: "Network.webSocketFrameReceived",
+      params: { requestId: "ws", timestamp: 12.5, response: { opcode: 1, payloadData: payload } }
+    }) }
+  })}\0`);
+  h.stdout.end();
+  await h.inspector.waitForTransportDrain(100);
+  raw.end();
+  await finished(raw);
+
+  const rows = readFileSync(rawPath, "utf8").trim().split(/\r?\n/).map(JSON.parse);
+  assert.equal(rows.filter(row => row.type === "websocket-frame").length, 1);
+  assert.equal(rows.find(row => row.type === "websocket-frame").bytes, Buffer.byteLength(payload));
+  assert.equal(network.summary().frames.length, 1);
+  assert.equal(network.summary().frames[0].sha256, rows.find(row => row.type === "websocket-frame").sha256);
   assert.deepEqual(h.inspector.errors, []);
 });
 
@@ -182,9 +226,34 @@ function runDiagnosticJourney(url, out) {
   });
 }
 
+function runRpcJourney(url, out) {
+  return new Promise((resolve, reject) => {
+    const child = spawn(process.execPath, [
+      "scripts/probe-webkit-memory.mjs", "--journey", "--url", url, "--out", out, "--sample-interval-ms", "250"
+    ], { cwd: process.cwd(), stdio: ["pipe", "pipe", "pipe"] });
+    let stdout = "", stderr = "", sent = false;
+    child.stdout.on("data", chunk => {
+      stdout += chunk;
+      if (!sent && stdout.includes('"command":"ready"')) {
+        sent = true;
+        child.stdin.write([
+          JSON.stringify({ command: "evaluate", expression: "({answer: 6 * 7})" }),
+          JSON.stringify({ command: "mouse", type: "move", x: 12, y: 14, label: "aim" }),
+          JSON.stringify({ command: "tap", x: 12, y: 14, label: "tap" }),
+          JSON.stringify({ command: "begin", label: "rpc" }), ""
+        ].join("\n"));
+        setTimeout(() => child.stdin.end(`${JSON.stringify({ command: "snapshot", label: "rpc" })}\n${JSON.stringify({ command: "stop" })}\n`), 700);
+      }
+    });
+    child.stderr.on("data", chunk => { stderr += chunk; });
+    child.once("error", reject); child.once("exit", code => resolve({ code, stdout, stderr }));
+  });
+}
+
 test("self-test writes a screenshot and reaps its exact WebKit process group", { timeout: 30_000 }, async () => {
   const out = mkdtempSync(join(tmpdir(), "cc-webkit-probe-test-"));
-  const result = await runProbe(["--self-test", "--duration-ms", "1100", "--out", out]);
+  const result = await runProbe(["--self-test", "--duration-ms", "1100", "--out", out,
+    "--init-json", '{"__probeConfig":{"mode":"test"}}']);
   assert.equal(result.code, 0, result.stderr);
   const summary = JSON.parse(readFileSync(join(out, "summary.json"), "utf8"));
   assert.equal(summary.measured, true);
@@ -192,8 +261,26 @@ test("self-test writes a screenshot and reaps its exact WebKit process group", {
   assert.deepEqual(JSON.parse(readFileSync(join(out, "raw.ndjson"), "utf8").split(/\r?\n/)[0]).schema, WEBKIT_MEMORY_SCHEMA);
   assert.equal(summary.inspectorErrors.includes("WebKit process exited"), false);
   assert.ok(existsSync(summary.marks[0].screenshot), "self-test should retain a screenshot");
+  assert.deepEqual(summary.marks[0].page.initReceipt.values, { __probeConfig: { mode: "test" } });
+  assert.equal(summary.network.status, "enabled");
+  assert.equal(summary.network.cutoff.status, "disabled");
+  assert.ok(summary.network.requests.length > 0);
   assert.deepEqual(summary.cleanup.orphanedPids, []);
   assert.equal(existsSync(`/proc/${summary.browserPid}`), false, "the launched process must not survive its probe");
+});
+
+test("journey evaluate, mouse, and tap commands emit durable receipts", { timeout: 30_000 }, async () => {
+  const out = mkdtempSync(join(tmpdir(), "cc-webkit-probe-rpc-"));
+  const url = pathToFileURL(join(process.cwd(), "scripts/fixtures/webkit-memory-selftest.html")).href;
+  const result = await runRpcJourney(url, out);
+  assert.equal(result.code, 0, result.stderr);
+  const rows = result.stdout.trim().split(/\r?\n/).map(JSON.parse);
+  assert.equal(rows[0].command, "ready");
+  assert.deepEqual(rows.find(row => row.command === "evaluate").result.result.value, { answer: 42 });
+  assert.equal(rows.find(row => row.command === "mouse").params.type, "move");
+  assert.equal(rows.find(row => row.command === "tap").params.x, 12);
+  const summary = JSON.parse(readFileSync(join(out, "summary.json"), "utf8"));
+  assert.deepEqual(summary.receipts.filter(receipt => ["evaluate", "mouse", "tap"].includes(receipt.command)).map(receipt => receipt.command), ["evaluate", "mouse", "tap"]);
 });
 
 test("detailed-process self-test writes private smaps evidence and versioned summaries", { timeout: 30_000 }, async () => {
@@ -266,6 +353,7 @@ test("failed URL journey still writes unmeasured raw, summary, and stderr artifa
   assert.notEqual(result.code, 0);
   const summary = JSON.parse(readFileSync(join(out, "summary.json"), "utf8"));
   assert.equal(summary.measured, false);
+  assert.match(summary.failure, /timed out|navigation|UNMEASURED/i);
   assert.equal(JSON.parse(readFileSync(join(out, "raw.ndjson"), "utf8").split(/\r?\n/)[0]).schema, WEBKIT_MEMORY_SCHEMA);
   for (const name of ["raw.ndjson", "stderr.log", "summary.json"]) assert.equal(existsSync(join(out, name)), true, `${name} missing`);
 });

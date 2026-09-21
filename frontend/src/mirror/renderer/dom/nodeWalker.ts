@@ -28,6 +28,7 @@ import type { TweenController } from "@/mirror/renderer/dom/tweenController";
 import type { AnimationRuntime } from "@/mirror/renderer/dom/animationRuntime";
 import type { OcclusionRuntime } from "@/mirror/renderer/dom/occlusionRuntime";
 import type { SceneIdentityRuntime } from "@/mirror/renderer/dom/sceneIdentity";
+import type { SceneAblationDisposition } from "@/mirror/sceneAblation";
 
 export interface NodeWalkerPorts {
   records: Map<string, RenderRecord>;
@@ -51,6 +52,10 @@ export interface NodeWalkerPorts {
   staticBgSuppressedRootIds(): ReadonlySet<string>;
   staticBgHold(id: string, node: MirrorNode): boolean;
   staticBgSuppress(id: string, node: MirrorNode): boolean;
+  sceneAblationDisposition(id: string): SceneAblationDisposition;
+  sceneAblationChanged(id: string): boolean;
+  sceneAblationHeldIds(): ReadonlySet<string>;
+  noteSceneAblationElementCreated(id: string, structural: boolean): void;
   computeSceneInfo(id: string): ReturnType<SceneIdentityRuntime["computeSceneInfo"]>;
   resolveVisualOwnerId(id: string): string;
   hitTestShift(x: number, y: number): number;
@@ -216,7 +221,7 @@ export function createNodeWalker(ports: NodeWalkerPorts): NodeWalker {
     // Reads the SET (last walk's answer) rather than re-asking the predicate, which keeps this O(1) and matches
     // this function's documented contract. Belt-and-braces in practice — a bg root is not `showBehindParent` — but
     // the failure it prevents (BgContainer's own paint slotting behind a child that isn't there) is silent.
-    if (c.visible && !parentHidesChildren && !staticBgRuntime.heldIds.has(cid)) {
+    if (c.visible && !parentHidesChildren && !staticBgRuntime.heldIds.has(cid) && !ports.sceneAblationHeldIds().has(cid)) {
       return true;
     }
     if (structural) {
@@ -313,6 +318,12 @@ export function createNodeWalker(ports: NodeWalkerPorts): NodeWalker {
     if (!node) {
       return;
     }
+    // DEV-ONLY scene-group ablation is decided at the same ownership boundary as static-background hold, before
+    // createEl, sublayers, font/image warming or child recursion. The plan is precomputed once per walk from stable
+    // scene-file + scene-relative paths; this lookup is inert (`full`) without a valid dev injection.
+    const sceneAblationDisposition = ports.sceneAblationDisposition(id);
+    const sceneAblationChanged = ports.sceneAblationChanged(id);
+    const sceneAblationStructural = sceneAblationDisposition === "structural";
 
     // The skip-clean gate runs FIRST, before any per-node derivation, so a skipped node pays only nodes.get +
     // records.get + ctx compare + subtreeDirty.has (the gNode/tint/alpha derivations below are unused by it and were
@@ -347,6 +358,7 @@ export function createNodeWalker(ports: NodeWalkerPorts): NodeWalker {
       record != null && record.haveCtx && record.cAncestorHidden === ctx.ancestorHidden;
     if (
       !structural &&
+      !sceneAblationChanged &&
       record &&
       record.lastNode === node &&
       (ctxSame || skipForPin) &&
@@ -385,6 +397,7 @@ export function createNodeWalker(ports: NodeWalkerPorts): NodeWalker {
     // node kinds (see fastPathEligible) fall through to a full visit instead.
     if (
       !structural &&
+      !sceneAblationChanged &&
       record &&
       record.lastNode === node &&
       ctxSame &&
@@ -453,8 +466,9 @@ export function createNodeWalker(ports: NodeWalkerPorts): NodeWalker {
     // Evaluated unconditionally (not as the third disjunct) so set membership stays honest for an INVISIBLE bg root
     // too — the boundary below reads that set to keep the id out of the idle hatchery's queue.
     const staticBgHeld = staticBgHold(id, node);
+    const sceneAblationHeld = sceneAblationDisposition === "hold";
     const hidden =
-      !node.visible || (orphanRootIds !== null && orphanRootIds.has(id)) || staticBgHeld;
+      !node.visible || (orphanRootIds !== null && orphanRootIds.has(id)) || staticBgHeld || sceneAblationHeld;
     // R10-PERF4 WS-3 (item 3): this node renders inside a display:none subtree, so its PURE-PAINT sub-layers (atlas
     // canvas / spine canvas / gsw markers) are deferred until a reveal. Note it keys off the ANCESTOR flag, not
     // `hidden`: a node hidden on its OWN already skips the whole paint block below.
@@ -677,7 +691,7 @@ export function createNodeWalker(ports: NodeWalkerPorts): NodeWalker {
     }
     // This node's own paint needs refreshing when its data changed (object) or its inherited context changed;
     // if we're only descending to reach a dirty DESCENDANT, its own element is already current.
-    let selfDirty = structural || !record || record.lastNode !== node || !ctxSame || texDirty;
+    let selfDirty = structural || sceneAblationChanged || !record || record.lastNode !== node || !ctxSame || texDirty;
     // GEOMETRY EPOCH — the upserted-node check. `record.lastNode` is still the PREVIOUSLY accounted object here (it's
     // overwritten two lines down), and every changed node is guaranteed to be visited (markDirty seeds subtreeDirty
     // with each changed id + its ancestors, and the skip gate requires `!subtreeDirty.has(id)`), so comparing here
@@ -776,7 +790,7 @@ export function createNodeWalker(ports: NodeWalkerPorts): NodeWalker {
       // R12 STATIC-BG BUILD HOLD. A HELD root must never enter the idle hatchery's queue: the hatchery pre-builds
       // dormant markers, which for this one means the ~27MB of bg canvases the hold exists to not build — a
       // regression that would only ever show up on a real phone, at idle, long after any bench had finished.
-      dormancy.setDormant(record, true, /* queue */ !staticBgHeld);
+      dormancy.setDormant(record, true, /* queue */ !staticBgHeld && !sceneAblationHeld);
       if (staticBgHeld) {
         mirrorWalkStats.staticBgHoldSkippedBuilds++;
         // …and a held root cannot be "suppressed": it has no element to write `display` on. Keep the membership
@@ -797,6 +811,12 @@ export function createNodeWalker(ports: NodeWalkerPorts): NodeWalker {
     const needsOwn = needsOwnEl(node);
     const needsEl = needsOwn || hasChildren;
 
+    // A reparent can change an include-only wrapper into full content, or the reverse. Recreate on either edge:
+    // structural wrappers omit create-only animation/interaction bindings as well as their paint allocations.
+    if (sceneAblationChanged && record.el) {
+      removeEl(record);
+      record.lastCtxRef = ctx;
+    }
     if (needsEl && !record.el) {
       // R10-PERF5 WS-1: this record was a dormant MARKER and is now building — a reveal. Counted here (rather than
       // at the visible flip) because this is the build the reveal actually costs, and because a marker can also be
@@ -816,7 +836,8 @@ export function createNodeWalker(ports: NodeWalkerPorts): NodeWalker {
           ports.noteRevealBuilt();
         }
       }
-      createEl(record, id, node, gNodeStretched);
+      createEl(record, id, node, gNodeStretched, sceneAblationStructural);
+      ports.noteSceneAblationElementCreated(id, sceneAblationStructural);
       // R10-PERF5 WS-3: born in the dark (always true under `hatching` — the entry is effectively hidden and every
       // descendant inherits it), so any decorative animation createEl just declared has nothing to anchor yet. The
       // hidden→visible flip below re-queues it.
@@ -842,26 +863,28 @@ export function createNodeWalker(ports: NodeWalkerPorts): NodeWalker {
     // Unconditional (not gated on record.el) so the held-card targeting tracker below keeps its exact prior behavior.
     const leaf = nodeTypeLeaf(node.nodeType);
 
-    // Scale-controller membership is independent of the held-card lift: a tooltip enlarges whether or not a card
-    // is held, and its direct children need their rendered global cached for the later paint-only pass.
-    scaleController.registerHoverTip(id, leaf, node.visible);
-    // Cache the rendered design global for a HoverTip-set DIRECT child so the scale controller can measure its design
-    // AABB. The parent tip root was visited earlier this DFS, so it's already in the set; the size gate makes this
-    // free unless a tooltip is currently on screen.
-    scaleController.cacheTipChild(record, gNodeStretched);
+    if (!sceneAblationStructural) {
+      // Scale-controller membership is independent of the held-card lift: a tooltip enlarges whether or not a card
+      // is held, and its direct children need their rendered global cached for the later paint-only pass.
+      scaleController.registerHoverTip(id, leaf, node.visible);
+      // Cache the rendered design global for a HoverTip-set DIRECT child so the scale controller can measure its design
+      // AABB. The parent tip root was visited earlier this DFS, so it's already in the set; the size gate makes this
+      // free unless a tooltip is currently on screen.
+      scaleController.cacheTipChild(record, gNodeStretched);
 
-    // #19 / WS-G2 track view-scale items. WHICH nodes resolve to an entry — the cheap root-file / node-name
-    // pre-filter, the leaf-detected card-reward + treasure-relic branches, and the shadowing hazard baked into
-    // the order of the two — is `viewScaleLayout.resolveViewScaleForNode`, shared with the canvas walk. What is
-    // left here is this backend's own BOOKKEEPING: the registered-id map that drives the per-drain pass, its
-    // geometry-epoch invalidation, and the cached design global the pass measures from.
-    scaleController.registerViewScale(id, node, leaf, ctx.inCardRewardScreen, record, gNodeStretched);
+      // #19 / WS-G2 track view-scale items. WHICH nodes resolve to an entry — the cheap root-file / node-name
+      // pre-filter, the leaf-detected card-reward + treasure-relic branches, and the shadowing hazard baked into
+      // the order of the two — is `viewScaleLayout.resolveViewScaleForNode`, shared with the canvas walk. What is
+      // left here is this backend's own BOOKKEEPING: the registered-id map that drives the per-drain pass, its
+      // geometry-epoch invalidation, and the cached design global the pass measures from.
+      scaleController.registerViewScale(id, node, leaf, ctx.inCardRewardScreen, record, gNodeStretched);
 
-    occlusionRuntime.updateCandidate(id, node);
+      occlusionRuntime.updateCandidate(id, node);
 
-    // Hand-only membership, translate ownership and tooltip priming live in the controller. It reads maps lazily
-    // because this walk may have just replaced them, but traversal itself stays the renderer's concern.
-    handController.registerNode(id, node, leaf, record);
+      // Hand-only membership, translate ownership and tooltip priming live in the controller. It reads maps lazily
+      // because this walk may have just replaced them, but traversal itself stays the renderer's concern.
+      handController.registerNode(id, node, leaf, record);
+    }
 
     // Expose this node's ABSOLUTE horizontal re-layout shift on the DOM so the visual-anchor map (pointerMap) can
     // invert it: a pointer at design-x `f·designW` is over content rendered at `gameX + spreadDx`, so the game
@@ -871,7 +894,7 @@ export function createNodeWalker(ports: NodeWalkerPorts): NodeWalker {
     // `data-spread-w` carries the game-width,rendered-width pair a widened BACKDROP needs for its rect-pair map.
     // The spread attributes only matter on a widened stage (dx / renderWidthOverride are 0 at factor 1), so they
     // self-omit there; `data-paints` is cheap to stamp always and pointerMap ignores it on 16:9 anyway.
-    if (record.el) {
+    if (record.el && !sceneAblationStructural) {
       // Cached idempotent writes (see applyCachedAttr): in the common no-spread case (dx 0, no widen, not prop) all
       // four collapse to null === null and touch no DOM, instead of a removeAttribute per node per walk.
       record.attrSpreadDx = applyCachedAttr(record.el, "data-spread-dx", dx !== 0 ? String(dx) : null, record.attrSpreadDx);
@@ -990,7 +1013,7 @@ export function createNodeWalker(ports: NodeWalkerPorts): NodeWalker {
       // and a pulsing proceed glow, and syncPinnedLoop's own signature check makes a repeat call a no-op (it must
       // NEVER restart a running sine). BEFORE the paint block on purpose: a rotation/glow token grows the animSelf
       // child, and the paint pass below is what moves the node's paint into it — same walk, no dropped frame.
-      if (node.pinnedLoopAnim !== null || record.pinnedLoopSig !== null) {
+      if (!sceneAblationStructural && (node.pinnedLoopAnim !== null || record.pinnedLoopSig !== null)) {
         animationRuntime.syncPinnedLoop(
           record,
           node,
@@ -1000,7 +1023,32 @@ export function createNodeWalker(ports: NodeWalkerPorts): NodeWalker {
       }
 
       // A hidden node only needs its display toggled + its subtree propagated; skip invisible paint work.
-      if (!hidden && selfDirty) {
+      if (!hidden && selfDirty && sceneAblationStructural) {
+        // Ancestors retained solely to carry the selected group's nested transform get only placement. In
+        // particular this branch never derives shader/particle bindings, calls updateSubLayers, warms a font/image,
+        // or keeps authored paint/animation from an earlier classification.
+        const item: RenderItem = {
+          node,
+          opacity: 1,
+          tintId: null,
+          parentInv: ctx.parentInv,
+          hasChildren,
+          renderWidthOverride: renderWidthOverride || undefined,
+          transformOverride: node.transform != null ? gNodeStretched : null,
+          suppressBlend: true,
+          clipAxisOutsetX: undefined
+        };
+        const placement = nodePlacementTransform(item);
+        const structuralStyle: Record<string, string> = { pointerEvents: "none" };
+        if (placement !== null) {
+          structuralStyle.transform = placement.transform;
+          structuralStyle.transformOrigin = placement.transformOrigin;
+        }
+        if (applyStyleMap(record.el, structuralStyle, record.style) && !geomDirty && subtreeFeedsGeometry(id)) {
+          markGeomDirty();
+        }
+        markEffectsDirtyBits(applyAttrs(record.el, EMPTY_ATTRS, record.attrs));
+      } else if (!hidden && selfDirty) {
         mirrorWalkStats.styledNodes++;
         // R10-PERF4 WS-4 (item 2) — BLEND CENSUS. A `mix-blend-mode` element forces the compositor to promote
         // everything painting above it, so a blend that is effectively INVISIBLE (alpha ~0) is pure layer tax. The

@@ -61,6 +61,7 @@ import {
   seatNoticeForRejection
 } from "@/mirror/loadingState";
 import { prefetchMirrorImages } from "@/mirror/imagePrefetch";
+import { sceneAblation } from "@/mirror/sceneAblation";
 import { createMirrorState } from "@/mirror/sceneTree";
 import type { BrowserJoinProgress, BrowserSeatNotice, BrowserSessionEnvelope } from "@/protocol/browserEnvelope";
 import MirrorJoinPicker from "@/mirror/MirrorJoinPicker.vue";
@@ -139,7 +140,7 @@ const JOIN_TIMEOUT_MS = 90_000;
 // and replies with `headlessMirrorPort`; the app reconnects there so the player sees their own game view —
 // `activeClient` is replaced and `mirrorState` updated.
 
-prefetchMirrorImages();
+if (sceneAblation.prefetchEnabled) prefetchMirrorImages();
 
 // `?latency=1` turns on the ping→pong RTT probe + the on-screen readout (off by default, zero overhead).
 const latencyEnabled =
@@ -346,6 +347,7 @@ let rejoinTarget: RejoinTarget | null = null;
 let lastJoinAttempt: RejoinTarget | null = null;
 let reconnectDelayMs = RECONNECT_BASE_DELAY_MS;
 let reconnectTimer: ReturnType<typeof setTimeout> | null = null;
+let unmounted = false;
 // ---- HOLDING A SEAT THE DEVICE CANNOT REACH (yet) ---------------------------------------------------------------
 //
 // The port the host last redirected us to, or null when this device holds no seat. It is what makes a seat socket
@@ -492,6 +494,15 @@ function pushServerSettings(c: MirrorClient): void {
 }
 
 function makeClient(url?: string, watchStream = false): MirrorClient {
+  if (!sceneAblation.streamsScene) {
+    watchStream = false;
+    // Seat redirects carry an explicit watched URL; the app-shell gate must cover the first handshake too.
+    if (url) {
+      const gated = new URL(url);
+      gated.searchParams.set("watch", "0");
+      url = gated.toString();
+    }
+  }
   const c = connectMirrorClient({
     url,
     // WS-B stream gate. The HOST connection opens GATED: we do not yet know which screen the host is on, and the
@@ -500,9 +511,9 @@ function makeClient(url?: string, watchStream = false): MirrorClient {
     // `applyWatchGate` turns it on within one round trip when the host isn't on a multiplayer screen. The
     // redirected (own headless) connection opens UNGATED — it is ours to watch by definition.
     watch: watchStream,
-    // Stage-B walk skip: declare the static-background state on the connect URL (`staticBg=1` only when the
-    // setting is ON and the image is not in its fail-open state), so the host counts this connection correctly
-    // from the first byte. Later flips (panel toggle, fetch fail-open) ride the `settings` push below. Ignored
+    // Stage-B walk skip: declare the static-background setting on the connect URL, so the host counts this
+    // connection correctly from the first byte. Panel flips ride the `settings` push below. Image failures do not
+    // change the value. Ignored
     // when an explicit `url` was passed — the headless redirect builds its own query with the same value.
     staticBg: staticBgWireValue(mirrorSettings),
     // R14 trail drive: declare this build's trail-root capability on the connect URL from the first byte.
@@ -510,12 +521,20 @@ function makeClient(url?: string, watchStream = false): MirrorClient {
     trailDrive: mirrorSettings.trailDriveCapable,
     pingIntervalMs: desiredPingIntervalMs(),
     onChange() {
+      if (unmounted) return;
       // ABOVE the staleness guard on purpose: "did this socket ever open?" is a fact about the CLIENT, not about
       // whether it happens to be the active one when it is asked. See `everConnected`.
       if (c.status === "connected") everConnected.add(c);
       if (activeClient !== c) return; // stale callback from a superseded client
       status.value = c.status;
       revision.value = c.state.revision;
+      // DATA-ONLY attribution keeps the real retained-state and flow-control path but deliberately mounts no
+      // renderer. Return the credit on application itself; do not emit frame-presented lifecycle telemetry for a
+      // frame that never existed.
+      if (sceneAblation.active && sceneAblation.effective.mode === "data-only") {
+        sceneAblation.consumeDataOnlyState(c.state);
+        c.sendSceneAck();
+      }
       joinSession.value = c.session;
       // A healthy connection resets the backoff ladder; a dead one starts the fallback (which replaces
       // `activeClient`, so nothing below this line applies to a connection that just went away).
@@ -771,6 +790,11 @@ activeClient = makeClient();
 mirrorState.value = activeClient.state;
 status.value = activeClient.status;
 revision.value = activeClient.state.revision;
+sceneAblation.setStateCounts(() => ({
+  revision: activeClient.state.revision,
+  nodes: activeClient.state.nodes.size,
+  watching: activeClient.watching
+}));
 
 // The recorder's keyframe request (reproRecorder.ReproResyncRequester). Installed here rather than beside the
 // meta supplier because it is the one recorder wiring that needs a CLIENT; the recorder holds the want until
@@ -822,7 +846,7 @@ const joinMode = computed(() =>
 // answer to the host (`watch`), so the bytes we receive and the frames we show can never disagree: a viewer the
 // picker is up for pulls nothing, and a viewer that would render the host stream asks for it.
 const wantsHostStream = computed(() =>
-  shouldWatchHostStream(
+  sceneAblation.streamsScene && shouldWatchHostStream(
     joinInfo.value,
     pendingName.value,
     mirrorScreen.value,
@@ -833,7 +857,9 @@ const wantsHostStream = computed(() =>
     urlSeatIntent.value
   )
 );
-const showScene = computed(() => revision.value >= 0 && hasScene() && wantsHostStream.value);
+const showScene = computed(() =>
+  sceneAblation.rendersScene && revision.value >= 0 && hasScene() && wantsHostStream.value
+);
 
 // DROP THE SURFACE GRADIENT WHILE IT IS COVERED (see `.game-surface.surface-covered` in @/styles.css for the
 // mechanism and the measurement). `showScene` is the whole condition on purpose: it is the SAME expression that
@@ -1313,6 +1339,8 @@ if (typeof window !== "undefined") {
 }
 
 onBeforeUnmount(() => {
+  // Closing a socket can synchronously notify a disconnect; teardown must not start another connection.
+  unmounted = true;
   stopClientVitals();
   if (reconnectTimer !== null) {
     clearTimeout(reconnectTimer);
@@ -1333,6 +1361,7 @@ onBeforeUnmount(() => {
   reproRecorder.setMetaSupplier(null);
   reproRecorder.setResyncRequester(null);
   reproRecorder.stop();
+  sceneAblation.setStateCounts(null);
   allClients.forEach((c) => c.close());
 });
 </script>

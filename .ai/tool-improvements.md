@@ -244,3 +244,19 @@ Fix direction: a stable per-row id on the panel's rows that survives a refresh r
 spirectl way to address a row by something other than an instance-generated node name — e.g. resolving a
 `dev scene hover` target by a subtree text match, so the caller names the row it means rather than the node
 instance it last saw.
+
+## Embedded procedural textures are published but the subresource route only returns shaders
+
+Found during the static-scenery memory attribution run (2026-09-21). The recorded scene carries embedded
+procedural texture references that the browser requests through the existing resource route. The parent
+resource document succeeds and contains the requested typed subresource, but the subresource handler only
+calls the shader-code extractor, so a texture request receives `missing-subresource`.
+
+This is a producer/asset-provider contract gap. A narrowly typed raster extraction path should be owned by
+the reusable asset provider and exposed through the validated host adapter. Do not substitute fabricated
+pixels or silently ignore whole classes of failed requests in measurement tools. Inactive requests require
+exact full-workload visibility/alpha evidence before they can be classified as irrelevant to visible-asset
+completeness; retain their failed-request costs in the workload.
+
+Concrete requests, parent responses, affected scene membership and measurements remain in ignored research:
+`.sts2/research/iphone-static-scenery-20260921T155200Z/live-neow/receipts/asset-404-diagnosis.json`.

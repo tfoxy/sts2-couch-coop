@@ -160,8 +160,8 @@ export function viewScaleSharedEnv(sceneOf: (id: string) => { file: string; relP
 // sub-scenes (`<name>_bg_NN_*.tscn` / `<name>_fg_*.tscn`, mounted one directory deeper) from matching.
 const COMBAT_BG_SCENE_RE = /^res:\/\/scenes\/backgrounds\/([a-z0-9_]+)\/\1_background\.tscn$/;
 
-// Path-only combat-convention test (no parent-chain check) — what the wrapped-combat release arms in BOTH
-// backends ask about the CONFIRMED shown-path, whose node may not even be in the map anymore.
+// Path-only combat-convention test (no parent-chain check), also used by the descriptor family filter when the
+// corresponding node is no longer in the retained map.
 export function isCombatBackgroundScenePath(path: string): boolean {
   return COMBAT_BG_SCENE_RE.test(path);
 }

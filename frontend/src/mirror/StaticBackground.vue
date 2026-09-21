@@ -10,29 +10,20 @@
 // static <img> takes its place at identical pixels.
 //
 // Contracts (see the renderer-side twin comments):
-//   * DECODE-BEFORE-SWAP: a room change keeps the OLD image on screen until the NEW one is decoded (decodeStill —
-//     the spine-still discipline), so there is never a flash of neither-image-nor-subtree.
-//   * SHOWN-SIGNAL ORDERING: renderer suppression engages only AFTER the swap commits, and is cleared the moment
-//     this component cannot vouch for the image (setting off, no descriptor + no fallback, fetch/decode error,
-//     unmount).
+//   * SAME-TARGET DECODE-BEFORE-SWAP: a replacement URL for the same target keeps its valid still until the new
+//     bytes decode. A room change drops the old target immediately and may show a blank stage while loading.
+//   * SHOWN-SIGNAL ORDERING: renderer suppression engages only AFTER the swap commits. This signal controls an
+//     already-built root during setting transitions; the unconditional build hold does not depend on it.
 //   * SOURCE: the session envelope's `staticBackground` descriptor (for combat, a digest-qualified URL matching
 //     the mounted layer variant; for events, always digest-less). FALLBACK for a descriptor-less host: derive
 //     the digest-less deterministic URL from the wire itself (the bg root's sceneFilePath — combat winning over
 //     an event backdrop when both are mounted), rescanned only when the scene STRUCTURE changes.
-//   * WHAT HAPPENS WHEN NO PICTURE CAN BE HAD. Split by family, deliberately:
-//       COMBAT — the live subtree NEVER comes back. Performance is the whole point of this setting, and the
-//         combat bg subtree is the most expensive thing the phone composites, so the fallback ladder is
-//         picture-only: (1) the digest-less deterministic URL for the same room (always renderable host-side,
-//         and what the prerender sweep bakes — it may show a different layer variant, which is invisible at
-//         background scale); (2) the still already on screen, if it is this same room's; (3) NOTHING, letting
-//         `.mirror-stage`'s own #181818 show. Never a broken-image glyph, never the live scenery.
-//       EVENTS / SHOP — unchanged fail-open: latch `staticBgFailedOpen`, release the hold, push `staticBg:false`
-//         so the host re-admits the subtree, and show the live backdrop. Their stills are qualified by a
-//         live-probed frame whose reference variant is visibly mis-placed, so a wrong picture is worse than none.
+//   * WHAT HAPPENS WHEN NO PICTURE CAN BE HAD: every family fails closed. Combat first retries its digest-less
+//     deterministic URL. After that, and immediately for event/shop, keep a valid still already shown for this
+//     same target or show the stage's #181818. A failure never restores live scenery or changes the host wire.
 import { computed, inject, onBeforeUnmount, ref, shallowRef, watch } from "vue";
 
 import {
-  isCombatBackgroundScenePath,
   isCombatBackgroundSceneRoot,
   isEventBackgroundSceneRoot,
   isRoomBackgroundSubtreeRoot,
@@ -45,7 +36,7 @@ import { MIRROR_RENDERER_KEY } from "@/mirror/rendererKey";
 import { mirrorSettings } from "@/mirror/mirrorSettings";
 import { requestedStageBackend } from "@/mirror/rendererFactory";
 import { decodeStill } from "@/mirror/stillDecode";
-// R7 W1 fix (e): the fail-open latch is deliberately silent, which is why nothing could say whether it fired.
+// Image failures are deliberately silent in the UI, so the report is the evidence that a request failed.
 import {
   noteStaticBgAttempt,
   noteStaticBgDecode,
@@ -176,11 +167,8 @@ const shownScenePath = ref<string | null>(null);
 // Monotonic token: a target that changes mid-decode orphans the older decode's commit.
 let pendingToken = 0;
 
-// R12 WATCHDOG, re-purposed. It used to exist to beat the renderer's 8s belt so `staticBgHoldExpiries` stayed at
-// 0. The combat hold has no belt any more (it never expires), so its job now is narrower and simpler: STOP
-// WAITING ON THIS URL. A stalled fetch is indistinguishable from a 404 that never answers, and both should drop
-// to the next rung of the ladder rather than leave the room dark with a decode that may never settle. On fire it
-// takes exactly the same failure arm a decode error takes, so the ladder is identical either way.
+// The watchdog bounds one image request only. It can advance combat's retry ladder or leave a blank stage, but
+// it has no route to the renderer's build hold or the host wire.
 const STATIC_BG_WAIT_MS = 6000;
 let watchdogTimer: ReturnType<typeof setTimeout> | null = null;
 
@@ -215,8 +203,7 @@ function armWatchdog(): void {
 // longer current) and is exactly what the prerender sweep bakes, so it is the one URL that reliably 200s. It may
 // render a different layer variant than the room actually mounted — invisible at background scale, and strictly
 // better than a blank stage. The event/shop counterpart is NOT offered: their frame-less reference variant is
-// visibly mis-placed (the recovered placement lerp drifts from the shipped game), and those families fail open to
-// the live backdrop instead.
+// visibly mis-placed (the recovered placement lerp drifts from the shipped game), so those families go blank.
 function deterministicUrlFor(scenePath: string): string | null {
   const match = COMBAT_BG_SCENE_RE.exec(scenePath);
   return match ? hostUrl(`/bg/${match[1]}?v=1`) : null;
@@ -224,6 +211,8 @@ function deterministicUrlFor(scenePath: string): string | null {
 
 // One attempt failed (decode error, or the watchdog gave up on it). Take the next rung of the ladder.
 function attemptFailed(scenePath: string, url: string, retried: boolean, viaWatchdog: boolean): void {
+  // A timed-out decoder may still call back later. Orphan that completion before retrying or giving up.
+  if (viaWatchdog) pendingToken++;
   attempt = null;
   noteStaticBgFailure(viaWatchdog);
   if (!retried) {
@@ -238,25 +227,10 @@ function attemptFailed(scenePath: string, url: string, retried: boolean, viaWatc
   giveUp(scenePath);
 }
 
-// Both rungs are spent. What is left depends on the family — see the WHAT HAPPENS WHEN NO PICTURE CAN BE HAD
-// contract at the top of this file.
+// No usable request remains. Keep a still only when it belongs to this exact target; otherwise leave the stage
+// blank. Root admission is renderer-owned and remains held throughout.
 function giveUp(scenePath: string): void {
   clearWatchdog();
-  if (!isCombatBackgroundScenePath(scenePath)) {
-    // EVENTS / SHOP: fail open. Transition-guarded — a repeat failure re-assigns the same value, which neither
-    // wakes MirrorApp's settings watch nor re-sends, so it is exactly one `staticBg:false` push per failure
-    // transition. That one flip releases the renderer's hold for this family, tells the host to re-admit the
-    // subtree, and forces the full walk that rebuilds it (MirrorView's staticBg watcher).
-    if (!mirrorSettings.staticBgFailedOpen) {
-      mirrorSettings.staticBgFailedOpen = true;
-    }
-    noteStaticBgLatch(true);
-    clearShown();
-    return;
-  }
-  // COMBAT: the hold stands regardless, so NOTHING here may re-admit the live subtree. RUNG 3 is the still
-  // already on screen when it is this same room's — the stale-shown guard in the target watcher has already
-  // taken it down if the wire says the room really changed — and rung 4 is a bare #181818 stage.
   const keptStill = shownScenePath.value === scenePath && shownUrl.value !== null;
   // The report's `latched` gauge means "this viewer has no still on screen for the current target", which is
   // false in the kept-still case even though the fetch failed. The failure itself is counted either way.
@@ -300,11 +274,6 @@ function beginAttempt(scenePath: string, url: string, retried: boolean): void {
       return;
     }
     noteStaticBgDecode();
-    // A room's image DECODED: clear the fail-open latch (one push of `staticBg:true` re-arms the host's skip),
-    // then commit the swap. Same transition guard as the failure arm.
-    if (mirrorSettings.staticBgFailedOpen) {
-      mirrorSettings.staticBgFailedOpen = false;
-    }
     noteStaticBgLatch(false);
     shownUrl.value = url;
     shownScenePath.value = scenePath;
@@ -329,9 +298,11 @@ watch(
       clearShown();
       return;
     }
-    if (stageTexture) {
-      beginAttempt(next.scenePath, next.url, false);
-      return;
+    // A still may survive another request only for the same target. A scene-path change drops it immediately even
+    // when the producer is already omitting held roots and the descriptor is the sole authority. On canvas,
+    // clearShown also clears the active stage texture before queuing the next source.
+    if (next.scenePath !== shownScenePath.value && shownUrl.value !== null) {
+      clearShown();
     }
     if (next.url === shownUrl.value) {
       // Same bytes (immutable URL); at most the scenePath label moved (it cannot, in practice — the digest
@@ -341,17 +312,9 @@ watch(
       clearWatchdog();
       return;
     }
-    // R12 STALE-SHOWN GUARD. The WIRE has a bg root for a room we are not showing, so the picture on screen is the
-    // PREVIOUS room's — and with the build hold engaged it is the only thing on screen (the live subtree for the
-    // mounted room is held unbuilt). Take it down before starting the new decode; `.mirror-stage`'s own #181818 is
-    // what shows in the gap. Keyed on the wire, NOT merely on "the target changed": in the Stage-B steady state the
-    // wire carries no bg root, and there the decode-before-swap contract (keep the old image until the new one
-    // decodes) still holds — nothing stale is on screen, because the mounted room's picture IS the old image until
-    // the new one lands. Note the ordering: clearShown() bumps pendingToken, so the decode token is taken AFTER it.
-    // Note too the new split — clearShown() no longer releases the BUILD hold (that is derived from mirrorSettings);
-    // it only takes the image and its display-suppression down.
-    if (wireScenePath.value !== null && wireScenePath.value !== shownScenePath.value && shownUrl.value !== null) {
-      clearShown();
+    if (stageTexture) {
+      beginAttempt(next.scenePath, next.url, false);
+      return;
     }
     beginAttempt(next.scenePath, next.url, false);
   },
@@ -390,7 +353,7 @@ watch(wireScenePath, (path) => {
 });
 
 onBeforeUnmount(() => {
-  clearShown(); // also disarms the watchdog — an unmounted component must not latch staticBgFailedOpen later
+  clearShown(); // also disarms the watchdog and orphans any late completion
 });
 
 const imgStyle = computed(() => ({

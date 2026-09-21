@@ -12,6 +12,7 @@ that answers your question**, not the whole file.
 | changing mirror pointer input (`inputCapture`, `pointerMap`, `raiseInverse`, `viewScaleInverse`, `confirmTap`, hand raise) | [touch-live-harness.md](touch-live-harness.md) | `touch-input-qa` agent — **the H1–H16 harness is mandatory before landing** |
 | about to make a viewer's tap *do* something in the game — especially if a spirectl semantic action looks like the shortcut | [architecture-map.md](architecture-map.md) "Real input, not semantic actions" | **ask the maintainer before using a semantic action** |
 | measuring a change, or comparing two rendering backends | [../mirror-combat-bench.md](../mirror-combat-bench.md) + [qa-recipes.md](qa-recipes.md) §5 | `mirror-bench` agent |
+| attributing WebKit memory to scene groups or independent startup work | [../webkit-memory-ablation.md](../webkit-memory-ablation.md) | `mirror-bench` agent, `couch-live-lock` skill |
 | checking a geoclip's first usable browser frame or atlas-page reuse | [geoclip-browser-probe.md](geoclip-browser-probe.md) | `mirror-bench` agent |
 | benchmarking geoclip against the `/spines/` still on host blocking time and browser first-frame latency | [geoclip-knights-bench.md](geoclip-knights-bench.md) | `mirror-bench` agent, `couch-live-lock` skill |
 | analysing canvas-stage draw lists, atlas bounds, text coverers, or animation concurrency offline | [canvas-stage-probes-aug26.md](canvas-stage-probes-aug26.md) | `mirror-bench` agent |

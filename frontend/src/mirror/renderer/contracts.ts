@@ -57,6 +57,7 @@ export type FullWalkCause =
   | "fixup"
   | "occlusion"
   | "staticBg"
+  | "ablation"
   | "uiScale"
   // `?stageFit=display` only: the stage's fit scale moved, and on that arm the fit is baked into every node's box
   // and matrix rather than carried by one transform — so every emitted style is stale. Never fires on the default
@@ -250,17 +251,15 @@ export interface MirrorRenderer {
   noteEffectRendered?(node: HTMLElement, surface: HTMLCanvasElement, info?: FxRenderInfo): void;
   // STAGE-A "Static background": StaticBackground.vue's confirmed-shown signal. `scenePath` = the combat bg
   // scene whose host-rendered image IS currently displayed (load + decode complete — never before), null = none
-  // (setting off / no descriptor / fetch or decode error / component unmount). Null clears every suppression, so
-  // the live bg subtree is the fail-open. The matching root (isCombatBackgroundSceneRoot) goes display:none at
-  // the ROOT only; applied immediately via direct display flips (a settled combat walks nothing).
+  // (setting off / no descriptor / fetch or decode error / component unmount). The matching root goes
+  // display:none at the ROOT only; applied immediately via direct display flips (a settled screen walks nothing).
   //
   // R12 SPLIT OF DUTIES — this signal is no longer what keeps the subtree off the phone:
   //   * the RENDERER owns the BUILD hold, derived from the WIRE plus `mirrorSettings` alone, so
   //     the very first walk that sees a new room's bg root already knows to hold it — no dependence on Vue flush
   //     ordering, on the session envelope's arrival, or on a decode;
   //   * the COMPONENT owns this SHOWN signal, which drives `display` + the gsw effect-suspend stamp for a subtree
-  //     that exists anyway after a hold release, belt expiry, or a background decode failure.
-  // A non-null signal also re-arms this room's belt-and-braces clock (the component just proved it is alive).
+  //     that was built while the setting was off and has not yet reached the setting-triggered full walk.
   setStaticBackgroundShown(scenePath: string | null): void;
   // Canvas-only Stage-C arm. The DOM renderer deliberately does not implement this: StaticBackground.vue then
   // retains its legacy decoded <img>. A canvas renderer calls `ready` only once the source is decoded AND uploaded

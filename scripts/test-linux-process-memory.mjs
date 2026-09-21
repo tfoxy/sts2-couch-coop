@@ -6,7 +6,8 @@ import test from "node:test";
 import {
   LINUX_PROCESS_MEMORY_SCHEMA, LinuxProcessMemoryError, LinuxProcessMemorySampler,
   MAPPING_CLASS_PRECEDENCE, aggregateMappings, assertMappingByteConservation, classifyLinuxProcessRole,
-  classifyMapping, legacyRssSummary, parseProcStat, parseProcStatus, parseSmaps, parseSmapsRollup
+  classifyMapping, legacyRssSummary, parseProcStat, parseProcStatus, parseSmaps, parseSmapsRollup,
+  processIdentityRoster, sameProcessIdentityRoster
 } from "./lib/linux-process-memory.mjs";
 
 const K = 1024;
@@ -153,6 +154,32 @@ test("pinned sampler fails closed for replacement, additions, drops, and unreada
       assert.throws(() => new LinuxProcessMemorySampler({ rootPid: 30, outDir: join(bad, "out"), procRoot: bad }).capture(), /required proc evidence/);
     } finally { rmSync(bad, { recursive: true, force: true }); }
   } finally { rmSync(root, { recursive: true, force: true }); }
+});
+
+test("continuous sampler permits an expected startup roster change between race-checked samples", () => {
+  const root = fixtureRoot(); const out = join(root, "out");
+  try {
+    processFixture(root, { pid: 40, ppid: 1, exe: "launcher" });
+    processFixture(root, { pid: 41, ppid: 40, exe: "MiniBrowser" });
+    const sampler = new LinuxProcessMemorySampler({ rootPid: 40, outDir: out, procRoot: root, pinIdentities: false });
+    assert.equal(sampler.capture({ label: "startup" }).processes.length, 2);
+    processFixture(root, { pid: 42, ppid: 40, exe: "WPEWebProcess" });
+    assert.equal(sampler.capture({ label: "page-ready" }).processes.length, 3);
+    assert.equal(sampler.pinnedIdentities, null);
+  } finally { rmSync(root, { recursive: true, force: true }); }
+});
+
+test("generation-bearing process identity rejects PID reuse and exec replacement", () => {
+  const base = processIdentityRoster({ processes: [
+    { pid: 2, ppid: 1, startTimeTicks: 100, exeBasename: "MiniBrowser", role: "browser" }
+  ] });
+  assert.equal(sameProcessIdentityRoster(base, processIdentityRoster({ processes: [
+    { pid: 2, ppid: 1, startTimeTicks: 101, exeBasename: "MiniBrowser", role: "browser" }
+  ] })), false);
+  assert.equal(sameProcessIdentityRoster(base, processIdentityRoster({ processes: [
+    { pid: 2, ppid: 1, startTimeTicks: 100, exeBasename: "WPEWebProcess", role: "web-content" }
+  ] })), false);
+  assert.equal(sameProcessIdentityRoster(base, structuredClone(base)), true);
 });
 
 test("legacy RSS projection is available for gradual probe integration", () => {

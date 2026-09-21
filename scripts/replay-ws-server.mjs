@@ -38,6 +38,7 @@
 
 import { existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { requireReproHeader } from "./lib/repro-recording.mjs";
+import { replaySession } from "./lib/replay-session.mjs";
 import { tmpdir } from "node:os";
 import { createServer, request as httpRequest } from "node:http";
 import { createHash } from "node:crypto";
@@ -69,6 +70,7 @@ function parseArgs(argv) {
     assetsOrigin: null,
     astcCache: null,
     loop: false,
+    respectWatch: false,
     selfTest: false,
     help: false,
   };
@@ -86,6 +88,7 @@ function parseArgs(argv) {
       case "--assets-origin": a.assetsOrigin = val(); break;
       case "--astc-cache": a.astcCache = val(); break;
       case "--loop": a.loop = true; break;
+      case "--respect-watch": a.respectWatch = true; break;
       case "--self-test": a.selfTest = true; break;
       case "--help": case "-h": a.help = true; break;
       default: console.error(`Unknown argument: ${arg}`); a.help = true;
@@ -447,10 +450,14 @@ function handleConnection(conn, ctx) {
   let idx = 0;
   let credits = 1;
   let closed = false;
+  let watching = !ctx.respectWatch || new URL(conn.url ?? "/ws", "http://localhost").searchParams.get("watch") !== "0";
+  let replaying = false;
+  let replayTimer = null;
   const timers = new Set();
 
   const rawSend = (data) => {
     if (closed) return;
+    if (!watching && isSceneDelta(data)) return;
     conn.send(data);
     stats.msgsSent++;
     stats.bytesSent += Buffer.byteLength(data, "utf8");
@@ -474,7 +481,8 @@ function handleConnection(conn, ctx) {
   // directView". A recording that carries its own directView session would deliver it at its RECORDED time —
   // potentially after the keyframe — and the client would have thrown that keyframe away. Sending it up front
   // regardless is idempotent on the client (directView is latched) and removes the ordering hazard entirely.
-  sendNow('{"type":"session","directView":true}');
+  const admissionSession = replaySession(msgs);
+  sendNow(admissionSession);
 
   const maybeDropDelta = (keyframe) =>
     !keyframe && ctx.chaos.drop > 0 && Math.random() < ctx.chaos.drop;
@@ -483,7 +491,7 @@ function handleConnection(conn, ctx) {
   let startWall = performance.now();
   let loops = 0;
   const scheduleRecorded = () => {
-    if (closed) return;
+    if (closed || !watching) return;
     if (idx >= msgs.length) {
       if (ctx.loop) {
         loops++;
@@ -499,6 +507,8 @@ function handleConnection(conn, ctx) {
     const wait = Math.max(0, msgs[idx].t - (performance.now() - startWall));
     const t = setTimeout(() => {
       timers.delete(t);
+      replayTimer = null;
+      if (!watching) return;
       const now = performance.now() - startWall;
       while (idx < msgs.length && msgs[idx].t <= now) {
         const d = msgs[idx].data;
@@ -513,12 +523,13 @@ function handleConnection(conn, ctx) {
       }
       scheduleRecorded();
     }, wait);
+    replayTimer = t;
     timers.add(t);
   };
 
   // pace=max: 1-credit flow control.
   const pumpMax = () => {
-    if (closed) return;
+    if (closed || !watching) return;
     while (idx < msgs.length) {
       const d = msgs[idx].data;
       const delta = isSceneDelta(d);
@@ -533,17 +544,40 @@ function handleConnection(conn, ctx) {
     ctx.log(`[conn ${id}] recording exhausted (max, ${stats.deltasSent} deltas sent)`);
   };
 
+  // Opt-in for app-shell attribution: an unwatched client must receive no scene bytes at all. Starting the
+  // original timeline only after admission preserves the full keyframe and recorded cadence independently of
+  // render acknowledgements. A later off/on edge starts a fresh complete replay, like a host watch resync.
+  const startReplay = () => {
+    if (closed || !watching || replaying) return;
+    replaying = true;
+    idx = 0;
+    credits = 1;
+    startWall = performance.now();
+    if (ctx.pace === "max") pumpMax();
+    else scheduleRecorded();
+  };
+
   conn.on("message", (raw) => {
     let msg = null;
     try { msg = JSON.parse(raw); } catch { return; }
     const type = msg && msg.type;
+    if (type === "watch" && ctx.respectWatch && typeof msg.on === "boolean") {
+      if (watching === msg.on) return;
+      watching = msg.on;
+      if (!watching) {
+        if (replayTimer !== null) { clearTimeout(replayTimer); timers.delete(replayTimer); replayTimer = null; }
+        replaying = false;
+      } else startReplay();
+      ctx.log(`[conn ${id}] watch=${watching}`);
+      return;
+    }
     if (type === "scene-ack") {
       stats.acks++;
       if (ctx.pace === "max") { credits++; pumpMax(); }
       return;
     }
     if (type === "join") {
-      sendNow('{"type":"session","directView":true}');
+      sendNow(admissionSession);
       return;
     }
     if (type === "ping") {
@@ -569,8 +603,7 @@ function handleConnection(conn, ctx) {
     );
   });
 
-  if (ctx.pace === "max") pumpMax();
-  else scheduleRecorded();
+  startReplay();
 }
 
 // =============================================================================================
@@ -600,20 +633,21 @@ function loadRecording(path) {
   return { abs, meta, hasDirectView, messages };
 }
 
-function buildCtx({ messages, hasDirectView, pace, chaos, log, loop }) {
+function buildCtx({ messages, hasDirectView, pace, chaos, log, loop, respectWatch }) {
   return {
     messages: messages.filter((m) => !isServerReload(m.data)),
     hasDirectView,
     pace,
     chaos,
     loop: !!loop,
+    respectWatch: !!respectWatch,
     connSeq: 0,
     log,
   };
 }
 
-function startServer({ messages, hasDirectView, pace, chaos, port, host, log, assetsOrigin, astcCache, loop }) {
-  const ctx = buildCtx({ messages, hasDirectView, pace, chaos, log, loop });
+function startServer({ messages, hasDirectView, pace, chaos, port, host, log, assetsOrigin, astcCache, loop, respectWatch }) {
+  const ctx = buildCtx({ messages, hasDirectView, pace, chaos, log, loop, respectWatch });
   const { httpServer, sockets, impl } = makeTransport((conn) => handleConnection(conn, ctx), assetsOrigin, astcCache);
   return new Promise((res) => {
     httpServer.listen(port, host, () => {
@@ -663,6 +697,30 @@ async function runSelfTest() {
   ];
   const noChaos = { latency: 0, drop: 0 };
   const countDeltas = (arr) => arr.filter((d) => d.includes('"type":"scene-delta"')).length;
+
+  // An app shell receives no scene traffic. Admission starts the identical bytes without waiting for ACKs.
+  {
+    const srv = await startServer({ messages: synthetic, hasDirectView: false, pace: "recorded", chaos: noChaos,
+      port: 0, host: "127.0.0.1", log: silent, respectWatch: true });
+    const received = [];
+    const ws = new WebSocket(`ws://127.0.0.1:${srv.port}/ws?watch=0`);
+    ws.addEventListener("message", event => received.push(event.data));
+    await once(ws, "open");
+    ws.send('{"type":"watch","on":false}');
+    ws.send('{"type":"scene-ack"}');
+    await delay(200);
+    assert(countDeltas(received) === 0, "watch: no stream before admission, even with ACK");
+    assert(received.some(data => data.includes('"directView":true')), "watch: session remains available");
+    ws.send('{"type":"watch","on":true}');
+    await delay(200);
+    assert(JSON.stringify(received.filter(isSceneDelta)) === JSON.stringify([kf, d1, d2]), "watch: exact stream after admission without ACK");
+    ws.send('{"type":"watch","on":false}');
+    ws.send('{"type":"watch","on":true}');
+    await delay(200);
+    assert(countDeltas(received) === 6, "watch: re-admission supplies a complete keyframe replay");
+    ws.close();
+    await srv.close();
+  }
 
   // ---- Test A: recorded pace — all 3 deltas + synthesized session + pong echo; reload stripped. ----
   {
@@ -759,7 +817,7 @@ async function runSelfTest() {
 
   if (failures.length === 0) {
     console.log(
-      "SELF-TEST: PASS (recorded pacing + max credit gating + chaos drop + pong echo + reload strip + repro/1 load)");
+      "SELF-TEST: PASS (recorded pacing + watch admission + max credit gating + chaos drop + pong echo + reload strip + repro/1 load)");
     process.exit(0);
   }
   console.error("SELF-TEST: FAIL\n  " + failures.join("\n  "));
@@ -780,6 +838,7 @@ const HELP = `replay-ws-server.mjs — real-WebSocket replay server for recorded
   --assets-origin <url> reverse-proxy non-upgrade GETs (/res asset fetches) to this origin (e.g. http://host:13337)
   --astc-cache <dir>   serve ?fmt=astc GETs from <dir>/astc/<sha256>.cctx (Track F2a; else strip fmt + proxy origin)
   --loop               (recorded pace) restart the recording from t0 on exhaustion — continuous stream
+  --respect-watch      withhold recording until watch is enabled; off/on replays from the full keyframe
   --self-test          spin an in-process server + client and assert pacing/ack/pong/reload behaviour
   --help
 
@@ -820,6 +879,7 @@ async function main() {
     assetsOrigin: args.assetsOrigin,
     astcCache: args.astcCache,
     loop: args.loop,
+    respectWatch: args.respectWatch,
   });
 
   const strippedCount = rec.messages.filter((m) => !isServerReload(m.data)).length;

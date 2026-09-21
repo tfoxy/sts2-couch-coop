@@ -177,26 +177,10 @@ export interface MirrorSettings {
   // unless `?backstopOcclude=off`; MirrorView forces a full re-walk on change (the cover PRE-FILTER runs in the
   // walk, so a flip has to re-visit every node before the pass can see the new candidate set).
   backstopOcclusion: boolean;
-  // CLIENT render (browser-only) — "Static background": show the host-rendered 2520x1080 PNG of the combat
-  // background scene (the session envelope's `staticBackground` descriptor → StaticBackground.vue) and hide the
-  // live bg subtree (mirrorRenderer's staticBgSuppressedRootIds, engaged only once the image is CONFIRMED shown —
-  // load+decode — so there is never a hole). Combat scenery is one of the most expensive things a phone draws;
-  // this is the single biggest GPU win. Seeded ON unless `?staticBg=off`.
+  // CLIENT render (browser-only) — "Static background": replace covered combat, event, and shop scenery with a
+  // host-rendered still. While enabled the renderer never builds those live roots, even when the still is pending,
+  // failed, or timed out; a missing still leaves the stage blank. Seeded ON unless `?staticBg=off`.
   staticBgEnabled: boolean;
-  // CLIENT render state (browser-only, NEVER persisted) — the static-background image could not be fetched or
-  // decoded for the current target AND that target's family FAILS OPEN. While true the live subtree is showing
-  // despite the setting being ON, so the wire value pushed to the host (`staticBg`, see staticBgWireValue) reports
-  // false and a host that was skipping the bg subtree from its producer walk re-admits it for this instance.
-  // Cleared by the next successful decode (a later room's image), which re-arms the skip. Written ONLY on real
-  // transitions by StaticBackground.vue, so the SERVER_SETTING_KEYS watch fires exactly once per failure/recovery.
-  //
-  // "FAILS OPEN" is now a per-family question, which is why this is no longer named `staticBgFailed`: a failed
-  // COMBAT still does NOT set this. Combat holds unconditionally — the viewer gets the digest-less still, the
-  // previous still for the same room, or a blank stage, never the live scenery — so the host must KEEP skipping
-  // that subtree, and a latch here would tell it the opposite. Event backdrops and the shop keep the old
-  // behaviour and are the only writers. A combat failure is still counted (staticBgReport.ts); it just does not
-  // move this flag. Read by the two render backends' hold arms and by staticBgWireValue.
-  staticBgFailedOpen: boolean;
   // CLIENT diagnostics (browser-only) — the REPRO RECORDER (reproRecorder.ts). While on, this browser keeps a
   // rolling in-memory recording of BOTH halves of what drives the mirror (the incoming scene stream and the
   // viewer's own pointer/wheel/key events) so a bug can be saved as a replayable file instead of described. Off
@@ -240,10 +224,8 @@ export interface MirrorSettings {
 }
 
 // The server-side keys, in payload order. Watching this list is what triggers a `settings` send; iterating it
-// keeps `serverSettingsPayload` and any change-watch in lockstep with the payload shape. Two exceptions to the
-// key-name identity, both documented at their fields: the staticBg* PAIR folds into the single wire field
-// `staticBg` (staticBgWireValue), so a panel toggle AND a fail-open transition both wake the watch and ride the
-// same field; and `trailDriveCapable` is sent as `trailDrive` (the host's vocabulary for the same capability).
+// keeps `serverSettingsPayload` and any change-watch in lockstep with the payload shape. Two keys differ from
+// their payload names: `staticBgEnabled` is sent as `staticBg`, and `trailDriveCapable` as `trailDrive`.
 export const SERVER_SETTING_KEYS = [
   "refreshRate",
   "freezeParticles",
@@ -251,7 +233,6 @@ export const SERVER_SETTING_KEYS = [
   "freezeDecor",
   "tweenReplay",
   "staticBgEnabled",
-  "staticBgFailedOpen",
   "trailDriveCapable"
 ] as const;
 
@@ -322,9 +303,6 @@ export const NEVER_PERSISTED_SETTING_KEYS = [
   "freezeParticles",
   "freezeSpines",
   "freezeDecor",
-  // staticBgFailedOpen — a per-session fetch/decode failure latch (fail-open state), not a preference; a reload
-  // retries the image from scratch, so saving it would only pin a stale failure.
-  "staticBgFailedOpen",
   // trailDriveCapable — a CAPABILITY of the build that is running, not a viewer choice. Saving it would let an old
   // stored `true` speak for a build that can no longer drive the trail root (and a stored `false` would silently
   // hold the host's lever off for every viewer on this device, forever, with no panel control to clear it).
@@ -522,23 +500,14 @@ export function seedServerSettingsFromSession(
   return seeded;
 }
 
-// The `staticBg` wire value is the viewer's setting folded with the FAIL-OPEN latch. It answers exactly one
-// question for the host: is this viewer still covering the background subtree, so the producer walk may keep
-// skipping it? This is what rides the connect URL (`?staticBg=1` when true — see mirrorClient's URL builders)
-// and the `settings` payload below.
-//
-// It folds `staticBgFailedOpen`, NOT "did anything fail": a failed COMBAT still leaves this viewer covering the
-// subtree (it shows a fallback still or nothing at all, never the live scenery), so the host must keep skipping
-// it. Folding a combat failure here is in fact what made the permanent-404 self-sustaining — the fold pushed
-// `staticBg:false`, which re-armed a deferred probe that could publish a different digest and strand the next
-// URL too. Event backdrops and the shop still fail open, and there this correctly reports false.
+// The `staticBg` wire value is exactly the viewer's setting. Image failures never change it: while the setting is
+// on the host may keep skipping every covered live subtree, and the browser shows a still or a blank stage.
 export function staticBgWireValue(settings: MirrorSettings): boolean {
-  return settings.staticBgEnabled && !settings.staticBgFailedOpen;
+  return settings.staticBgEnabled;
 }
 
 // Extract just the SERVER-side fields as a `settings` payload (drops the client-only render toggles + UI state).
-// Two entries' payload keys differ from their store keys, and only these two:
-// `staticBgEnabled`/`staticBgFailedOpen` fold into the ONE wire field `staticBg` (see staticBgWireValue), and
+// Two entries' payload keys differ from their store keys: `staticBgEnabled` is sent as `staticBg`, and
 // `trailDriveCapable` is sent as `trailDrive`.
 export function serverSettingsPayload(settings: MirrorSettings): MirrorSettingsPayload {
   return {
@@ -614,8 +583,6 @@ export function createMirrorSettings(
     spineMode: parseSpineMode(params.get("spineMode")),
     backstopOcclusion: urlOffFlag(params, "backstopOcclude") ?? saved.backstopOcclusion ?? true,
     staticBgEnabled: urlOffFlag(params, "staticBg") ?? saved.staticBgEnabled ?? true,
-    // Fail-open latch, always fresh per page load (a reload retries the image from scratch).
-    staticBgFailedOpen: false,
     // REPRO RECORDER. `?repro=on|off` wins for the session; otherwise the viewer's saved choice — but ONLY in a
     // build that still shows the switch. In an excluded build the saved value is dropped rather than layered, so
     // a `true` left behind by a previous build cannot arm a recorder the viewer has no way to see or stop. Note

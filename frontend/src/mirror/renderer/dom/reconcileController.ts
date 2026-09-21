@@ -48,6 +48,8 @@ export interface ReconcileControllerPorts {
   occlusionRuntime: OcclusionRuntime;
   spineTimeline: SpineGeoclipTimeline;
   staticBgRuntime: StaticBackgroundRuntime;
+  beginSceneAblationWalk(nodes: ReadonlyMap<string, MirrorNode>, rootIds: readonly string[]): void;
+  sceneAblationChangedIds(): readonly string[];
   animationRuntime: AnimationRuntime;
   svgDefs: SvgDefs;
   landingLog: LandingLog;
@@ -211,6 +213,13 @@ export function createReconcileController(
         current = state.nodes.get(current)?.parentId ?? null;
       }
     }
+    for (const id of p.sceneAblationChangedIds()) {
+      let current: string | null = id;
+      while (current != null && !dirty.has(current)) {
+        dirty.add(current);
+        current = state.nodes.get(current)?.parentId ?? null;
+      }
+    }
     return dirty;
   }
 
@@ -273,6 +282,14 @@ export function createReconcileController(
       }
     } else if (mode === "full" || childIdsByParent.size === 0) {
       rebuildStructure(state);
+    }
+    p.beginSceneAblationWalk(state.nodes, rootIds);
+    if (mode !== "full" && p.sceneAblationChangedIds().length > 0) {
+      // A reparent can move an already-built subtree across an ablation boundary without changing the node object.
+      // A full ownership sweep releases every descendant record/effect below the newly held root in this same walk.
+      mode = "full";
+      fullCause = "ablation";
+      diff = null;
     }
 
     p.stats.walks++;

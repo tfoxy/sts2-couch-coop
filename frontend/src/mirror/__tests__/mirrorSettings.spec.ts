@@ -509,12 +509,10 @@ describe("serverSettingsPayload", () => {
       staticBg: true,
       trailDrive: true
     });
-    // Lockstep with the watch list: every payload key is fed by SERVER_SETTING_KEYS entries. Exactly TWO documented
-    // exceptions to name identity — the staticBg* pair folds into the ONE wire field `staticBg` (staticBgWireValue),
-    // so both a panel toggle and a fail-open transition wake the watch; and `trailDriveCapable` is sent under the
-    // host's name for it, `trailDrive`.
+    // Lockstep with the watch list: every payload key is fed by SERVER_SETTING_KEYS entries. The two documented
+    // name differences are staticBgEnabled → staticBg and trailDriveCapable → trailDrive.
     const expectedPayloadKeys = SERVER_SETTING_KEYS.map((key) => {
-      if (key === "staticBgEnabled" || key === "staticBgFailedOpen") return "staticBg";
+      if (key === "staticBgEnabled") return "staticBg";
       if (key === "trailDriveCapable") return "trailDrive";
       return key;
     });
@@ -531,37 +529,22 @@ describe("serverSettingsPayload", () => {
     expect(SERVER_SETTING_KEYS as readonly string[]).not.toContain("latencyOverlay");
   });
 
-  // Stage-B walk skip: the `staticBg` wire field is the viewer's setting FOLDED with the FAIL-OPEN latch — it
-  // answers "is this viewer still covering the bg subtree, so the producer walk may keep skipping it?".
-  //
-  // CONTRACT CHANGE (combat-only unconditional hold): the fold is `staticBgFailedOpen`, which only an
-  // event/shop failure sets. A failed COMBAT still leaves the viewer covering the subtree — it shows a fallback
-  // still or nothing, never the live scenery — so the host must keep skipping, and this must stay true.
-  it("carries staticBg = setting && !failedOpen (the fail-open fold)", () => {
+  it("carries staticBg exactly from the setting", () => {
     const s = build();
     expect(staticBgWireValue(s)).toBe(true);
     expect(serverSettingsPayload(s).staticBg).toBe(true);
 
-    s.staticBgFailedOpen = true; // an event/shop fetch-decode failure: this viewer IS showing live scenery
-    expect(staticBgWireValue(s)).toBe(false);
-    expect(serverSettingsPayload(s).staticBg).toBe(false);
-
-    s.staticBgFailedOpen = false; // a later room's image decoded — re-arms the skip
-    expect(serverSettingsPayload(s).staticBg).toBe(true);
-
-    s.staticBgEnabled = false; // the panel toggle wins regardless of the latch
+    s.staticBgEnabled = false;
     expect(staticBgWireValue(s)).toBe(false);
     expect(serverSettingsPayload(s).staticBg).toBe(false);
   });
 
-  it("both staticBg store keys ride the watch list (panel toggle AND fail-open each trigger a push)", () => {
+  it("has no image-failure setting or watch key", () => {
     expect(SERVER_SETTING_KEYS as readonly string[]).toContain("staticBgEnabled");
-    expect(SERVER_SETTING_KEYS as readonly string[]).toContain("staticBgFailedOpen");
-    // The latch is per-session state, never a saved preference.
-    expect(NEVER_PERSISTED_SETTING_KEYS as readonly string[]).toContain("staticBgFailedOpen");
+    expect(SERVER_SETTING_KEYS as readonly string[]).not.toContain("staticBgFailedOpen");
+    expect(NEVER_PERSISTED_SETTING_KEYS as readonly string[]).not.toContain("staticBgFailedOpen");
     expect(PERSISTED_SETTING_KEYS as readonly string[]).not.toContain("staticBgFailedOpen");
-    // A fresh store always starts un-failed (a reload retries the image from scratch).
-    expect(build().staticBgFailedOpen).toBe(false);
+    expect(build()).not.toHaveProperty("staticBgFailedOpen");
   });
 
   // The capability rides the same `settings` channel under the host's name and is NEVER saved: it describes the

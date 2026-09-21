@@ -171,15 +171,13 @@ export interface MirrorWalkStats {
   // depending on who got there first.
   reclaimedRoots: number;
   // R12 STATIC-BG BUILD HOLD instrumentation.
-  // `staticBgHeldRoots` is a GAUGE — how many combat bg scene roots the renderer is holding unbuilt RIGHT NOW
-  // (re-derived per walk, the `dormantRoots` idiom, because a settled combat skip-cleans its held root).
+  // `staticBgHeldRoots` is a GAUGE — how many covered scenery roots the renderer is holding unbuilt RIGHT NOW
+  // (re-derived per walk, the `dormantRoots` idiom, because a settled screen skip-cleans its held root).
   // `staticBgHoldSkippedBuilds` is the cumulative COUNTER of boundary returns caused by the hold: this is the
   // number that PROVES the live bg subtree was never built (a bench arm reading 0 in a combat recording means the
   // hold was not engaged at all — the setting was off — and must be labelled as such).
-  // `staticBgHoldExpiries` counts per-path belt releases. It is now STRUCTURALLY 0 for combat, which no longer
-  // arms a deadline at all: the combat hold is unconditional, so there is no race for the component to win. The
-  // belt survives only for the families that still fail open (event backdrops, the shop), where a non-zero value
-  // is still a bug report.
+  // `staticBgHoldExpiries` is retained for report compatibility and is structurally zero: no covered family has
+  // a release deadline.
   staticBgHeldRoots: number;
   staticBgHoldSkippedBuilds: number;
   staticBgHoldExpiries: number;
@@ -316,7 +314,7 @@ export interface MirrorWalkStats {
   //   or this device's GPU accepting, and one number cannot tell those apart.
   // `geoclipMounts` — geoclip paint elements successfully created (`createGeoclipNode`), i.e. creatures actually
   //   drawn from geometry. THE ANTI-VACUITY COUNTER: every other number here is meaningless on a run where nothing
-  //   mounted, and a bench arm reading 0 mounts is a fail-open run that must be labelled as such rather than
+  //   mounted, and a bench arm reading 0 mounts is an unengaged run that must be labelled as such rather than
   //   reported as a fast one.
   geoclipProbeMs: number;
   geoclipUploadMs: number;
@@ -351,6 +349,7 @@ function zeroFullWalkCauses(): Record<FullWalkCause, number> {
     fixup: 0,
     occlusion: 0,
     staticBg: 0,
+    ablation: 0,
     uiScale: 0
   };
 }

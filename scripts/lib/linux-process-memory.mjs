@@ -157,6 +157,15 @@ const sameIdentity = (left, right) => left.pid === right.pid && left.ppid === ri
 
 const keySetEquals = (left, right) => left.length === right.length && left.every((item, index) => sameIdentity(item, right[index]));
 
+export function processIdentityRoster(summary) {
+  return (summary?.processes ?? []).map(process => ({
+    pid: process.pid, ppid: process.ppid, startTimeTicks: process.startTimeTicks,
+    exeBasename: process.exeBasename, role: process.role
+  })).sort((left, right) => left.pid - right.pid);
+}
+
+export const sameProcessIdentityRoster = (left, right) => keySetEquals(left ?? [], right ?? []);
+
 /**
  * A synchronous, race-detecting sampler. `procRoot` may point at a fixture tree, which makes tests independent
  * of process timing. The injected fs only needs the node fs synchronous methods used below.
@@ -166,14 +175,16 @@ export class LinuxProcessMemorySampler {
   #procRoot;
   #fs;
   #pinned = null;
+  #pinIdentities;
 
-  constructor({ rootPid, mode = "rollup", outDir = null, procRoot = "/proc", fs = null } = {}) {
+  constructor({ rootPid, mode = "rollup", outDir = null, procRoot = "/proc", fs = null, pinIdentities = true } = {}) {
     if (!Number.isInteger(rootPid) || rootPid <= 0) throw new TypeError("rootPid must be a positive integer");
     this.#rootPid = rootPid;
     this.mode = mode;
     this.outDir = outDir;
     this.#procRoot = procRoot;
     this.#fs = fs ?? { readFileSync, readdirSync, readlinkSync, mkdirSync, writeFileSync, chmodSync };
+    this.#pinIdentities = pinIdentities;
   }
 
   get pinnedIdentities() { return this.#pinned?.map(identity => ({ ...identity })) ?? null; }
@@ -283,8 +294,8 @@ export class LinuxProcessMemorySampler {
     }
     const secondIdentities = this.#identityRows(secondTree, secondDetails);
     if (!keySetEquals(firstIdentities, secondIdentities)) throw new LinuxProcessMemoryError("process tree changed during sample");
-    if (this.#pinned && !keySetEquals(this.#pinned, firstIdentities)) throw new LinuxProcessMemoryError("process tree differs from pinned successful sample");
-    this.#pinned ??= firstIdentities;
+    if (this.#pinIdentities && this.#pinned && !keySetEquals(this.#pinned, firstIdentities)) throw new LinuxProcessMemoryError("process tree differs from pinned successful sample");
+    if (this.#pinIdentities) this.#pinned ??= firstIdentities;
 
     const processes = firstIdentities.map(identity => {
       const detail = details.get(identity.pid);

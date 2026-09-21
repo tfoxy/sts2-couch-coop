@@ -45,6 +45,11 @@ export class ProtocolCommandError extends Error {
   }
 }
 
+/** Only the first target transition while the initial navigation is pending is expected. */
+export function classifyTargetTransition({ navigationPending, hasInitialNavigationTransition }) {
+  return navigationPending && !hasInitialNavigationTransition ? "initial-navigation" : "unexpected-replacement";
+}
+
 const withTimeout = (promise, label, timeoutMs) => new Promise((resolve, reject) => {
   const timer = setTimeout(() => reject(new ProtocolTimeoutError(label, timeoutMs)), timeoutMs);
   promise.then(value => { clearTimeout(timer); resolve(value); }, error => { clearTimeout(timer); reject(error); });
@@ -60,6 +65,9 @@ export class WebKitInspector extends EventEmitter {
   #framer = new NulJsonFramer();
   #closed = false;
   #expectedClose = false;
+  #transportDrain;
+  #resolveTransportDrain;
+  #transportDrainSettled = false;
   pageProxyId = null;
   targetId = null;
   boundTargetId = null;
@@ -70,15 +78,19 @@ export class WebKitInspector extends EventEmitter {
   constructor({ stdin, stdout, stderr, onClose }) {
     super();
     this.#stdin = stdin;
+    this.#transportDrain = new Promise(resolve => { this.#resolveTransportDrain = resolve; });
     stdout.on("data", chunk => {
       try { for (const message of this.#framer.push(chunk)) this.#receive(message); }
-      catch (error) { this.#fatal(error); }
+      catch (error) { this.#finishTransportDrain(error); this.#fatal(error); }
     });
     stderr?.on("data", chunk => this.emit("stderr", chunk.toString("utf8")));
     stdout.on("end", () => {
-      try { this.#framer.finish(); } catch (error) { this.#fatal(error); return; }
+      try { this.#framer.finish(); }
+      catch (error) { this.#finishTransportDrain(error); this.#fatal(error); return; }
+      this.#finishTransportDrain();
       this.#fatal(new Error("WebKit inspector pipe closed"));
     });
+    stdout.on("error", error => { this.#finishTransportDrain(error); this.#fatal(error); });
     onClose?.(() => this.#fatal(new Error("WebKit process exited")));
   }
 
@@ -155,6 +167,17 @@ export class WebKitInspector extends EventEmitter {
       await this.outer("Playwright.close", {}, timeoutMs);
     } catch { /* browser can close before replying */ }
     this.#stdin.end();
+  }
+
+  async waitForTransportDrain(timeoutMs = 2_000) {
+    const error = await withTimeout(this.#transportDrain, "inspector transport drain", timeoutMs);
+    if (error) throw error;
+  }
+
+  #finishTransportDrain(error = null) {
+    if (this.#transportDrainSettled) return;
+    this.#transportDrainSettled = true;
+    this.#resolveTransportDrain(error);
   }
 
   #request(map, payload, label, timeoutMs) {

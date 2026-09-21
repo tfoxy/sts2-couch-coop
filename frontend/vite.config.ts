@@ -82,8 +82,8 @@ const gsw = (p: string) => fromHere(`../../godot-scene-web/packages/${p}`);
 
 // R12 DEV ONLY — the host-rendered static combat background (`/bg/<id>.png`). Without an entry for it a dev server
 // (and therefore the CDP replay bench, which drives one) falls through to the SPA's index.html: the decode rejects,
-// StaticBackground.vue latches `staticBgFailed`, and the whole session silently measures the fail-open LIVE-bg path
-// — i.e. exactly the arm the static-background feature exists to avoid. With a live game up, `/bg` now proxies to
+// StaticBackground.vue leaves the scenery blank, so the session cannot establish visual parity. With a live game
+// up, `/bg` proxies to
 // the real producer like `/res`; with no game up, point COUCHCOOP_DEV_BG_FIXTURE at a directory of PNGs instead.
 //
 // ARTIFACT POLICY: a `/bg/` PNG is official STS2 art. Fixtures live OUTSIDE the repo tree (`.sts2/` is gitignored,

@@ -21,6 +21,7 @@ import {
 } from "@/mirror/clientVitals";
 import { publishAtlasManifest } from "@/mirror/imagePrefetch";
 import { reproRecorder } from "@/mirror/reproRecorder";
+import { sceneAblation } from "@/mirror/sceneAblation";
 import { publishAssetVersion } from "@/join/assetVersion";
 import { hostWsUrl } from "@/join/hostBase";
 import { readVisitId } from "@/join/visitId";
@@ -126,9 +127,9 @@ export interface MirrorSettingsPayload {
   freezeSpines?: boolean;
   freezeDecor?: boolean;
   tweenReplay?: boolean;
-  // Stage-B walk skip: this viewer's EFFECTIVE "Static background" state (setting AND the image actually shows —
-  // the fetch/decode fail-open folds in as false). Per-connection unanimity input on the host: the combat bg
-  // subtree is skipped from the producer walk only while EVERY streaming mirror connection reports true. C# twin:
+  // Stage-B walk skip: this viewer's "Static background" setting, independent of image readiness or failure.
+  // Per-connection unanimity input on the host: covered scenery is skipped from the producer walk only while
+  // EVERY streaming mirror connection reports true. C# twin:
   // BrowserSettingsRequestEnvelope.StaticBg.
   staticBg?: boolean;
   // R14: this viewer's TRAIL-DRIVE capability (it places the card-flight trail root from the declarative flight
@@ -295,10 +296,14 @@ export function connectMirrorClient(options: {
   // TEST SEAM for the client-vitals census: where it reads the page from. Production leaves it unset and gets
   // `defaultClientVitalsSources()`, which reads the real document, window and settings store.
   vitalsSources?: ClientVitalsSources;
+  // DEV attribution seam. Production and application callers use the module singleton; focused tests may inject
+  // an isolated receipt owner without mutating the pre-navigation global.
+  sceneAblationRuntime?: Pick<typeof sceneAblation, "noteSceneDelta" | "noteCreditReturned">;
 } = {}): MirrorClient {
   const sourceLocation = options.location ?? window.location;
   const vitalsSources = options.vitalsSources ?? defaultClientVitalsSources();
   const WebSocketCtor = options.WebSocketCtor ?? WebSocket;
+  const sceneAblationRuntime = options.sceneAblationRuntime ?? sceneAblation;
   const diagnosticSocketRole = lifecycleSocketRole(options.url !== undefined);
   const state = createMirrorState();
   const latency: MirrorLatency = emptyMirrorLatency();
@@ -491,9 +496,9 @@ export function connectMirrorClient(options: {
     }
   }
 
-  // Flow control: the host holds ONE send credit, spends it on each coalesced delta, and gets it back from this
-  // ack (CouchCoopWebSocketConnection.GrantSceneCredit). So exactly one ack per delta the host actually sent is
-  // required — and, equally, is all that is required.
+  // Flow control: the host holds ONE binary send credit and this ack grants it idempotently
+  // (CouchCoopWebSocketConnection.GrantSceneCredit). One ack closes every delta applied since the prior ack;
+  // timeout-delivered bursts can therefore produce several applied deltas for one acknowledgement.
   //
   // The caller is "a frame was rendered", which is NOT the same thing: a render is also scheduled by a texture's
   // natural size resolving, an atlas region finishing its bake, the aspect/spread change, and the spine /
@@ -554,6 +559,7 @@ export function connectMirrorClient(options: {
     deltasSinceAck = 0;
     try {
       socket.send(SCENE_ACK);
+      sceneAblationRuntime.noteCreditReturned();
       sceneCheckpoint("ack-sent");
     } catch {
       // Racing close — drop it; the host's self-heal timeout re-grants credit if an ack is lost.
@@ -791,6 +797,7 @@ export function connectMirrorClient(options: {
     if (delta) {
       sceneCheckpoint("scene-received");
       applySceneDelta(state, delta);
+      sceneAblationRuntime.noteSceneDelta(data);
       // The host spent a send credit on this delta; the next rendered frame owes it an ack (see sendSceneAck).
       deltasSinceAck += 1;
       notify();

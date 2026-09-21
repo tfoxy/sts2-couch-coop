@@ -303,16 +303,16 @@ function fakeCache(): FakeCache {
     released,
     failNext: (key) => failing.add(key),
     stats,
-    white: () => ({ texture: {} as WebGLTexture, width: 1, height: 1 }),
+    white: () => ({ texture: {} as WebGLTexture, width: 1, height: 1, revision: 1 }),
     peek: (key) => entries.get(key),
     acquire: (key, source) => {
       if (failing.has(key)) {
         failing.delete(key);
-        entries.set(key, { texture: {} as WebGLTexture, width: 1, height: 1 });
+        entries.set(key, { texture: {} as WebGLTexture, width: 1, height: 1, revision: 1 });
         throw new Error("tainted source");
       }
       const src = source as { width?: number; height?: number };
-      const handle = { texture: {} as WebGLTexture, width: src.width ?? 1, height: src.height ?? 1 };
+      const handle = { texture: {} as WebGLTexture, width: src.width ?? 1, height: src.height ?? 1, revision: 1 };
       entries.set(key, handle);
       stats.entries++;
       stats.uploads++;

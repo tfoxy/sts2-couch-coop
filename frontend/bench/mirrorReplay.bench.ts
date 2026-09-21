@@ -43,11 +43,11 @@ const { createMirrorRenderer, isCombatBackgroundSceneRoot } = rendererModule;
 //
 // This bench never called `setStaticBackgroundShown`, so it had always measured the LIVE-bg path by accident.
 // R12 makes the build hold renderer-derived from `mirrorSettings` (default on), so with no arm the bench would
-// silently flip to measuring the HELD path — and then flip back mid-run when the 8s belt expired, making old and
-// new numbers incomparable with no signal at all. So the arm is explicit and no number is ever reported without it:
+// silently flip to measuring the HELD path, making old and new numbers incomparable with no signal at all. So the
+// arm is explicit and no number is ever reported without it:
 //   `off` — `staticBgEnabled = false`: today's live-bg path, so the historical series stays comparable.
-//   `on`  — the hold engaged for the whole run (the belt pinned to Infinity so it cannot expire mid-measurement),
-//           standing in for StaticBackground.vue by confirming each room's image as its bg root appears.
+//   `on`  — the unconditional hold engaged for the whole run, standing in for StaticBackground.vue by confirming
+//           each room's image as its bg root appears.
 type StaticBgArm = "on" | "off";
 
 function staticBgArms(): StaticBgArm[] {
@@ -251,11 +251,7 @@ function runReconcileVariant(
   }
   const state = createMirrorState();
 
-  // The arm. `staticBgFailedOpen` is cleared either way — a previous run's fail-open latch must not leak into this one.
   mirrorSettings.staticBgEnabled = staticBg === "on";
-  mirrorSettings.staticBgFailedOpen = false;
-  // Pin the renderer's belt-and-braces clock so the hold cannot expire PART WAY through a measured run (which would
-  // silently mix both arms into one number). The component's stand-in below is what a real session relies on.
 
   // StaticBackground.vue's stand-in: confirm the mounted room's image as soon as its bg root appears on the wire.
   // Only re-scanned when the structure moved (orderedIds identity), the same rule the component's fallback uses.
@@ -473,7 +469,6 @@ describe("mirror combat replay bench (tier i)", () => {
     });
     // Leave the store the way the process found it (vitest may run other files in this worker).
     mirrorSettings.staticBgEnabled = true;
-    mirrorSettings.staticBgFailedOpen = false;
 
     // --- Walk stats (defensive — a later workstream adds mirrorWalkStats) ---------------------------------
     const walkStats = (rendererModule as Record<string, unknown>).mirrorWalkStats as
@@ -533,12 +528,12 @@ describe("mirror combat replay bench (tier i)", () => {
     for (const r of reconcileResults) {
       if (r.staticBg === "on" && r.staticBgHoldSkippedBuilds === 0) {
         emit(
-          `  !! ${r.label}: static bg was NOT engaged (0 held builds) — this is a FAIL-OPEN run; ` +
+          `  !! ${r.label}: static bg was NOT engaged (0 held builds); ` +
             "the recording has no combat bg root, or the hold released. Do not compare it as an `on` number."
         );
       }
       if (r.staticBgHoldExpiries > 0) {
-        emit(`  !! ${r.label}: ${r.staticBgHoldExpiries} belt expiries — the hold released mid-run (bug report).`);
+        emit(`  !! ${r.label}: ${r.staticBgHoldExpiries} hold expiries — expected structurally zero.`);
       }
     }
     emit(`walkStats: ${walkStatsSnapshot ? JSON.stringify(walkStatsSnapshot) : "n/a"}`);
