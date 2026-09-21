@@ -77,17 +77,19 @@ public sealed class LobbySupportCheckpoints
 {
     public const int PatchTargetCount = 2;
 
-    // The three reason strings spirectl's runtime factory can publish on the `live-sts2-host` capability,
-    // copied because they are not exported yet: two are private consts in
-    // Spirectl.Sts2.Sts2EmbeddableRuntimeFactory and the third is the default argument of
-    // Spirectl.Sts2.Embedding.EmbeddableRuntimeOptions.LiveSts2HostUnsupportedReason. Once spirectl publishes
-    // them, each initializer below becomes `= <spirectl constant>;` — one line each, nothing else moves,
-    // because ClassifyLiveHostReason and its tests only ever see these names.
+    // The three reason strings spirectl publishes on the `live-sts2-host` capability. spirectl DOES export
+    // them — Spirectl.Sts2.Embedding.LiveSts2HostUnsupportedReasons — and these are still local copies on
+    // purpose, not out of ignorance of that.
     //
-    // Before flipping, note that THIS FILE is source-linked into tests/CouchCoop.MacOs.Tests, which carries no
-    // spirectl (or any) reference on purpose; the flip therefore also needs that project to gain one, or the
-    // pin belongs in a spirectl-aware suite instead. Drift is not silent in either direction: an unmatched
-    // string classifies as `unknown`, which reads as "spirectl changed its wording", not as a pass-through.
+    // THIS FILE IS SOURCE-LINKED INTO tests/CouchCoop.MacOs.Tests, which carries no project references at all
+    // by design: it is the game-free suite that runs on macOS CI with no STS2 install beside it. Naming a
+    // Spirectl.Sts2 type here would break that project's compile, so the wording lives here and the comparison
+    // against the real constants lives in a spirectl-aware suite instead — SpirectlEmbeddedAssemblyBoundaryTests
+    // .PinLiveHostReasonWording, which feeds each published constant through ClassifyLiveHostReason and fails
+    // if it no longer lands on its token. Keep that pin in step with any edit below.
+    //
+    // Drift is not silent in either direction: an unmatched string classifies as `unknown`, which reads as
+    // "spirectl changed its wording", never as a pass-through of runtime-derived text.
     private const string OutsideGameProcessReason =
         "This live-host build is not running inside an initialized STS2/Godot process.";
     private const string NonLiveBuildReason =
