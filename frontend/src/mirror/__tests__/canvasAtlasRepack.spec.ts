@@ -54,7 +54,7 @@ function fakeCache(): FakeCache {
     sources,
     released,
     stats,
-    white: () => ({ texture: {} as WebGLTexture, width: 1, height: 1, revision: 1 }),
+    white: () => ({ texture: {} as WebGLTexture, width: 1, height: 1 }),
     peek: (key) => entries.get(key),
     acquire: (key, source) => {
       const existing = entries.get(key);
@@ -63,8 +63,7 @@ function fakeCache(): FakeCache {
       const handle = {
         texture: {} as WebGLTexture,
         width: src.naturalWidth ?? src.width ?? 1,
-        height: src.naturalHeight ?? src.height ?? 1,
-        revision: 1
+        height: src.naturalHeight ?? src.height ?? 1
       };
       entries.set(key, handle);
       uploaded.push(key);

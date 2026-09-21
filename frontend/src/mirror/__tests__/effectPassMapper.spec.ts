@@ -8,7 +8,7 @@ import {
 } from "@/mirror/canvas/effectPassMapper";
 import type { MirrorNode, MirrorShaderParam } from "@/mirror/sceneTree";
 
-const handle = { texture: {} as WebGLTexture, width: 32, height: 16, revision: 1 };
+const handle = { texture: {} as WebGLTexture, width: 32, height: 16 };
 
 function param(overrides: Partial<MirrorShaderParam>): MirrorShaderParam {
   return {
@@ -85,7 +85,7 @@ describe("effectPassMapper", () => {
   });
 
   it("matches TextureRect contain/cover UV fitting and refuses atlas-page sampling", async () => {
-    const wide = { texture: {} as WebGLTexture, width: 200, height: 100, revision: 1 };
+    const wide = { texture: {} as WebGLTexture, width: 200, height: 100 };
     const mapper = createEffectPassMapper({
       textures: textures(() => ({ status: "ready", texture: wide, identity: "wide" })),
       loadShaderSource: async () => "shader_type canvas_item; void fragment() { COLOR = texture(TEXTURE, UV); }",

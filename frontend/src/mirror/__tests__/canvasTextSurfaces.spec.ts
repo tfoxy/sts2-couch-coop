@@ -250,7 +250,7 @@ function fakeCache(): FakeCache {
     pageBytes,
     regionWrites,
     stats,
-    white: () => ({ texture: {} as WebGLTexture, width: 1, height: 1, revision: 1 }),
+    white: () => ({ texture: {} as WebGLTexture, width: 1, height: 1 }),
     peek: (key) => entries.get(key),
     acquire: (key, source) => {
       if (failing.has(key)) {
@@ -258,7 +258,7 @@ function fakeCache(): FakeCache {
         throw new Error("the driver would not take this source");
       }
       const src = source as { width?: number; height?: number };
-      const handle = { texture: {} as WebGLTexture, width: src.width ?? 1, height: src.height ?? 1, revision: 1 };
+      const handle = { texture: {} as WebGLTexture, width: src.width ?? 1, height: src.height ?? 1 };
       entries.set(key, handle);
       stats.entries++;
       stats.uploads++;
@@ -267,7 +267,7 @@ function fakeCache(): FakeCache {
     },
     // R6 P6-D2 — an ATLAS PAGE is allocated from zeroed bytes; only the LABEL rasters are canvas elements.
     acquireBytes: (key, pixels, width, height) => {
-      const handle = { texture: {} as WebGLTexture, width, height, revision: 1 };
+      const handle = { texture: {} as WebGLTexture, width, height };
       entries.set(key, handle);
       pageBytes.set(key, { w: width, h: height });
       stats.entries++;
