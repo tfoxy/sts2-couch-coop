@@ -1,5 +1,5 @@
 import { mount } from "@vue/test-utils";
-import { afterEach, beforeEach, describe, expect, it } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { nextTick } from "vue";
 
 import MirrorApp from "@/mirror/MirrorApp.vue";
@@ -222,6 +222,23 @@ describe("MirrorApp — Host performance seeding", () => {
     mirrorSettings.refreshRate = DEFAULT_REFRESH_RATE;
     globalThis.localStorage?.clear();
     (globalThis as unknown as { WebSocket: unknown }).WebSocket = realWebSocket;
+  });
+
+  it("does not reconnect when unmount closes the active socket", async () => {
+    vi.useFakeTimers();
+    try {
+      app = mount(MirrorApp);
+      await settle();
+      const socket = latest();
+      const count = MockWebSocket.instances.length;
+      app.unmount();
+      app = null;
+      await vi.advanceTimersByTimeAsync(20_000);
+      expect(socket.readyState).toBe(3);
+      expect(MockWebSocket.instances).toHaveLength(count);
+    } finally {
+      vi.useRealTimers();
+    }
   });
 
   // THE user report: watching the host's own game, the boxes claimed three freezes the host does not have.

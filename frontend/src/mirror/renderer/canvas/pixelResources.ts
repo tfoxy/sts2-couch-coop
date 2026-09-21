@@ -26,8 +26,6 @@ import type { FxSurfaceRegistry } from "@/mirror/canvas/fxSurfaces";
 import type { SpineSurfaceRegistry } from "@/mirror/canvas/spineSurfaces";
 import { mirrorSettings } from "@/mirror/mirrorSettings";
 import {
-  isCombatBackgroundScenePath,
-  isCombatBackgroundSceneRoot,
   isStaticBackgroundSuppressibleRoot,
   staticBgTargetPathOf,
 } from "@/mirror/renderer/staticBackgroundPolicy";
@@ -232,9 +230,6 @@ export const TEXTURE_PACE_DEFAULTS = {
   tiny: TEXTURE_TINY_BYTES_DEFAULT,
 } as const;
 
-const STATIC_BG_HOLD_MAX_MS = 8000;
-const STATIC_BG_HOLD_EXPIRED = -1;
-
 /** Canvas-only static-picture state; DOM background state deliberately remains separate. */
 export function createCanvasStaticBackgroundResources(options: {
   bridge: TextureBridge;
@@ -251,7 +246,6 @@ export function createCanvasStaticBackgroundResources(options: {
   let readyCallback: ((ready: boolean) => void) | undefined;
   let readyCallbackUrl: string | null = null;
   const resolvedUrls = new Set<string>();
-  const deadlines = new Map<string, number>();
   const skipRoots = new Set<string>();
   const view: QuadView = {
     m: new Float32Array(6),
@@ -357,58 +351,23 @@ export function createCanvasStaticBackgroundResources(options: {
       ready = true;
       if (readyCallbackUrl === active.url) readyCallback?.(true);
     },
-    // The canvas twin of the DOM staticBackgroundRuntime's hold — same two regimes, same reasons; see the
-    // comments there. COMBAT skips unconditionally while the setting is on (no failure fold, no deadline);
-    // every other family keeps the fail-open latch and its per-path belt.
-    refresh(next: MirrorState, at: number): void {
-      const enabled = mirrorSettings.staticBgEnabled;
-      const failedOpen = mirrorSettings.staticBgFailedOpen;
+    // Canvas twin of the DOM build hold. Image readiness is not consulted: every covered root stays out of the
+    // draw list while the setting is on, including pending, failed, and timed-out stills.
+    refresh(next: MirrorState, _at: number): void {
       skipRoots.clear();
-      if (!enabled || failedOpen) {
-        // Same release-edge deadline clear the DOM runtime does: a belt already running when the fail-open latch
-        // engaged must not come back already-expired on recovery.
-        deadlines.clear();
-        if (!enabled) return;
-      }
+      if (!mirrorSettings.staticBgEnabled) return;
       for (const node of next.nodes.values()) {
-        const path = staticBgTargetPathOf(node, next.nodes);
         if (
-          path === null ||
+          staticBgTargetPathOf(node, next.nodes) === null ||
           !isStaticBackgroundSuppressibleRoot(node, next.nodes)
         )
           continue;
-        if (
-          path !== shown &&
-          shown !== null &&
-          isCombatBackgroundScenePath(shown) &&
-          !isCombatBackgroundSceneRoot(node, next.nodes)
-        )
-          continue;
-        // COMBAT: unconditional (past the suppressible-root gate a combat-convention path IS a combat root).
-        if (isCombatBackgroundScenePath(path)) {
-          skipRoots.add(node.id);
-          continue;
-        }
-        if (failedOpen) continue;
-        if (path === shown) {
-          skipRoots.add(node.id);
-          continue;
-        }
-        const deadline = deadlines.get(path);
-        if (deadline === STATIC_BG_HOLD_EXPIRED) continue;
-        if (deadline === undefined)
-          deadlines.set(path, at + STATIC_BG_HOLD_MAX_MS);
-        else if (at >= deadline) {
-          deadlines.set(path, STATIC_BG_HOLD_EXPIRED);
-          continue;
-        }
         skipRoots.add(node.id);
       }
     },
     setShown(scenePath: string | null): boolean {
       if (shown === scenePath) return false;
       shown = scenePath;
-      if (scenePath !== null) deadlines.delete(scenePath);
       return true;
     },
     setSource(

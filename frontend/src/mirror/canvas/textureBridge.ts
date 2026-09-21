@@ -357,7 +357,7 @@ export interface TextureBridgeOptions {
   cache: CanvasTextureCache;
   /** Called when a url finishes loading — the renderer's cue to rebuild and repaint. Batched by the caller. */
   onResolved(url: string): void;
-  /** A source could not fetch/decode. The canvas static-background bridge uses this to fail open. */
+  /** A source could not fetch/decode. The canvas static-background bridge uses this to stop that image request. */
   onFailed?(url: string): void;
   /**
    * Called at the end of a build that left decoded urls unuploaded, i.e. "come back for the rest". The caller MUST

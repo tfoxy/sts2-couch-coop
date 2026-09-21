@@ -6,12 +6,8 @@
 // nobody thought they were measuring. Round 6's phone matrix logged ~16 `/bg/` 404s per cell and the question
 // "did it fire" could not be answered from any artifact it left.
 //
-// WHAT A FAILURE NOW COSTS, because it is no longer one thing. Event backdrops and the shop still FAIL OPEN:
-// `staticBgFailedOpen` latches, the hold is released and the live backdrop renders instead. COMBAT does not —
-// it holds unconditionally and walks a picture-only ladder (digest-less URL → the same room's previous still →
-// a bare stage), so a combat failure moves NO setting and never brings the live subtree back. That is why these
-// counters are the only evidence a combat failure leaves: `failures` and `lastFailedUrl` are what name a `/bg/`
-// 404 in a session whose settings all read normal.
+// A failure never releases covered live scenery. Combat may walk a picture-only retry ladder; every family then
+// keeps a valid same-target still or leaves the stage blank. These counters name that otherwise silent outcome.
 //
 // A REPORTER, NOT A RETRY. `/bg/` is a HOST route — `serve-res-root.mjs` serves `/res/**` only — so on a bench
 // leg without the host there is nothing behind the URL and retrying it buys nothing but latency. The failure is
@@ -41,10 +37,8 @@ export interface MirrorStaticBgReport {
   /**
    * Live gauge: does this viewer have NO still on screen for the current target right now?
    *
-   * NOT the same as "the live subtree is rendering" any more, and not the same as `staticBgFailedOpen`. On
-   * events/the shop the two coincide (a failure there fails open). On combat the subtree stays held either way,
-   * and this reads false whenever the ladder still had a picture to show — the digest-less variant, or the same
-   * room's previous still.
+   * The live subtree remains held either way. This reads false whenever the request or retry ladder left a valid
+   * same-target still on screen.
    */
   latched: boolean;
   /** The most recent URL attempted, whatever became of it — the one field that names WHAT 404'd. */

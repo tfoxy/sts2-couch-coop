@@ -299,10 +299,10 @@ describe("stream gate", () => {
   });
 });
 
-// SCENE-ACK FLOW CONTROL, client half. The host holds ONE send credit, spends it per coalesced delta and gets it
-// back from this ack (CouchCoopWebSocketConnection.GrantSceneCredit → DrainSceneAsync). So the contract is
-// one-ack-per-delta-the-host-sent: acking less would stall the stream until the host's 500ms self-heal, and acking
-// more just re-grants a credit the host is not holding — which is what a per-RENDERED-FRAME ack did, because a
+// SCENE-ACK FLOW CONTROL, client half. The host holds ONE binary send credit and this ack grants it
+// idempotently (CouchCoopWebSocketConnection.GrantSceneCredit → DrainSceneAsync). Each ack closes a nonempty
+// batch of applied deltas, including bursts delivered by the host's 500ms self-heal. An empty-batch ack
+// just re-grants credit — which is what a per-RENDERED-FRAME ack did, because a
 // render is also scheduled by texture sizes resolving, atlas bakes completing, and the spread/spine/occlusion/
 // static-bg watchers (~0.32ms per send on a Moto G86, and the first two fire constantly in combat).
 describe("scene-ack flow control", () => {

@@ -38,6 +38,7 @@ import {
   type LandingProbe
 } from "@/mirror/landingLog";
 import { mirrorSettings } from "@/mirror/mirrorSettings";
+import { sceneAblation, type SceneAblationRuntime } from "@/mirror/sceneAblation";
 import {
   nodePlacementTransform,
   type RenderItem
@@ -79,8 +80,6 @@ import { domSpreadPainterAt, domTouchStackAt, mapPointElementIdAt } from "@/mirr
 import { rewardFocusSnapshotFromScene } from "@/mirror/rewardFocusSnapshot";
 import { isCombatPileContainer } from "@/mirror/renderer/interactionPolicy";
 import {
-  isCombatBackgroundScenePath,
-  isCombatBackgroundSceneRoot,
   isStaticBackgroundSuppressibleRoot,
   staticBgTargetPathOf,
 } from "@/mirror/renderer/staticBackgroundPolicy";
@@ -99,8 +98,6 @@ import { createNodeController } from "@/mirror/renderer/dom/nodeController";
 import { createNodeWalker, type NodeWalker } from "@/mirror/renderer/dom/nodeWalker";
 import { createReconcileController, type ReconcileController } from "@/mirror/renderer/dom/reconcileController";
 
-const STATIC_BG_HOLD_EXPIRED = -1;
-const STATIC_BG_HOLD_MAX_MS = 8000;
 import type { RenderRecord } from "@/mirror/renderer/dom/recordModel";
 import { FX_DIRTY_SHADER, FX_DIRTY_PARTICLE } from "@/mirror/renderer/dom/style";
 import { cancelParityWatch } from "@/mirror/renderer/dom/handParity";
@@ -125,7 +122,11 @@ import {
 } from "@/mirror/renderer/dom/elementLifecycle";
 // --- the reconciler ---------------------------------------------------------------------------------------
 
-function createMirrorRenderer(stage: HTMLElement, defs: SVGElement): MirrorRenderer {
+function createMirrorRenderer(
+  stage: HTMLElement,
+  defs: SVGElement,
+  ablation: SceneAblationRuntime = sceneAblation
+): MirrorRenderer {
   const records = new Map<string, RenderRecord>();
   let tickScheduler: TickScheduler | null = null;
   function scheduleTick(): void {
@@ -233,17 +234,10 @@ function createMirrorRenderer(stage: HTMLElement, defs: SVGElement): MirrorRende
     nodes: () => reconcileController.nodes(),
     records: () => records,
     staticBgEnabled: () => mirrorSettings.staticBgEnabled,
-    staticBgFailedOpen: () => mirrorSettings.staticBgFailedOpen,
-    now: () => reconcileController.walkNow(),
-    holdMaxMs: () => STATIC_BG_HOLD_MAX_MS,
-    expiredDeadline: STATIC_BG_HOLD_EXPIRED,
     targetPath: staticBgTargetPathOf,
     isSuppressibleRoot: isStaticBackgroundSuppressibleRoot,
-    isCombatPath: isCombatBackgroundScenePath,
-    isCombatRoot: isCombatBackgroundSceneRoot,
     writeDisplay: writeRecordDisplay,
-    markEffectsDirty,
-    noteHoldExpiry: () => { mirrorWalkStats.staticBgHoldExpiries++; }
+    markEffectsDirty
   });
   let sceneIdentity!: ReturnType<typeof createSceneIdentity>;
   let scaleController!: ScaleController;
@@ -374,8 +368,7 @@ function createMirrorRenderer(stage: HTMLElement, defs: SVGElement): MirrorRende
   // decoded), the live bg subtree is display:none'd at its ROOT (root-only — the cascade hides the whole subtree). The
   // component owns BOTH engage conditions (setting ON via mirrorSettings.staticBgEnabled + image shown) and
   // reports them as ONE signal: the scenePath of the image currently displayed, or null (setting off / no image /
-  // fetch error / unmount) — null clears every suppression, so the failure mode is always the live subtree
-  // returning (fail-open). Direct display flips via writeRecordDisplay (the occlusion-gate idiom), because a
+  // fetch error / unmount). Direct display flips via writeRecordDisplay (the occlusion-gate idiom), because a
   // settled combat walks nothing; visit-time maintenance below keeps membership fresh for roots that (re)appear
   // mid-stream.
   //
@@ -832,6 +825,8 @@ function createMirrorRenderer(stage: HTMLElement, defs: SVGElement): MirrorRende
     occlusionRuntime,
     spineTimeline,
     staticBgRuntime,
+    beginSceneAblationWalk: (nodes, rootIds) => ablation.beginWalk(nodes, rootIds),
+    sceneAblationChangedIds: () => ablation.changedIds(),
     animationRuntime,
     svgDefs,
     landingLog,
@@ -871,6 +866,10 @@ function createMirrorRenderer(stage: HTMLElement, defs: SVGElement): MirrorRende
     staticBgSuppressedRootIds: () => staticBgRuntime.suppressedRootIds,
     staticBgHold,
     staticBgSuppress,
+    sceneAblationDisposition: (id) => ablation.disposition(id),
+    sceneAblationChanged: (id) => ablation.changed(id),
+    sceneAblationHeldIds: () => ablation.heldIds(),
+    noteSceneAblationElementCreated: (id, structural) => ablation.noteElementCreated(id, structural),
     computeSceneInfo,
     resolveVisualOwnerId,
     hitTestShift,

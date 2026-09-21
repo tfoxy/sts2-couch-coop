@@ -9,17 +9,13 @@ import {
   staticBgReport
 } from "@/mirror/staticBgReport";
 
-// R7 W1 fix (e). `?staticBg` is fail-open by design: a picture that cannot be fetched or decoded latches
-// `staticBgFailed`, the suppression is released and the LIVE background subtree renders instead. That is correct
-// and deliberately silent — which is the problem. On combat the two states differ by 22 fx surfaces (10 vs 32) and
-// 28.5 MB of textures (80.3 vs 108.8), so a session that latched unnoticed produced numbers describing a scene
-// nobody chose to measure. Round 6's phone matrix logged ~16 `/bg/` 404s per cell and left no artifact that could
-// answer "did it fire".
+// Static backgrounds fail closed: a picture failure leaves a valid same-target still or a blank stage while the
+// live scenery remains held. The reporter records that otherwise silent image outcome without changing settings.
 //
 // A REPORTER, NOT A RETRY: `/bg/` is a HOST route and `serve-res-root.mjs` serves `/res/**` only, so on a bench leg
 // without the host there is nothing behind the URL and a retry buys latency. The failure is environmental; what
 // was missing was the ability to see it.
-describe("staticBg fail-open reporter", () => {
+describe("staticBg image reporter", () => {
   beforeEach(() => {
     __resetStaticBgReportForTest();
   });

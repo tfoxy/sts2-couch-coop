@@ -60,6 +60,7 @@ import { MIRROR_RENDERER_KEY } from "@/mirror/rendererKey";
 import { activateDisplayLayout, displaySpaceLayout, setLayoutScale, stageFitMode } from "@/mirror/stageFit";
 import { effectiveRaiseHandCards, setHandRaiseLayer } from "@/mirror/handRaiseUi";
 import { mirrorSettings, type EffectMode } from "@/mirror/mirrorSettings";
+import { sceneAblation } from "@/mirror/sceneAblation";
 import { isAdaptiveEligible, renderQuality } from "@/render/quality";
 import {
   effectiveParticleMode,
@@ -365,6 +366,10 @@ let runtimeSafetyTimer = 0;
 // this costs a re-encode, never a disqualification.
 type ReconcileReason = "frame" | "change" | "safety";
 function reconcileRuntimes(reason: ReconcileReason = "frame"): void {
+  if (!sceneAblation.effectsStartupEnabled) {
+    renderer?.consumeEffectsDirty();
+    return;
+  }
   // A later strict-capability refusal swaps the renderer inside `reconcile`.
   // Recreate DOM producers in that same rendered turn so the whole-stage
   // fallback is complete, rather than leaving shader/particle nodes blank
@@ -687,6 +692,19 @@ function mountScene(): void {
       shader: shaderRuntime && typeof shaderRuntime.stats === "function" ? shaderRuntime.stats() : null,
       particle: particleRuntime && typeof particleRuntime.stats === "function" ? particleRuntime.stats() : null
     });
+    sceneAblation.setLiveCounts(() => {
+      const shaderStats = shaderRuntime && typeof shaderRuntime.stats === "function" ? shaderRuntime.stats() : null;
+      const particleStats = particleRuntime && typeof particleRuntime.stats === "function" ? particleRuntime.stats() : null;
+      return {
+        liveSceneElements: stage.value?.querySelectorAll(".mirror-node").length ?? 0,
+        shaderMarkers: stage.value?.querySelectorAll("[data-godot-shader-webgl]").length ?? 0,
+        particleMarkers: stage.value?.querySelectorAll("[data-godot-particle-runtime]").length ?? 0,
+        shaderRuntime: shaderRuntime !== null,
+        particleRuntime: particleRuntime !== null,
+        shaderStats,
+        particleStats
+      };
+    });
     // Surface census seam, same idiom as __mirrorShaderStats: the <canvas> elements ranked by BACKING-STORE
     // bytes (width*height*4 — the allocation the GPU process holds, which a CSS size does not tell you), each
     // named by the nearest ancestor's data-scene-file / data-node-path stamp. "How many canvases" is already
@@ -936,7 +954,7 @@ function syncEffectsHost(shaders: boolean, particles: boolean): HtmlEffectsHost 
 // sets frozen mode (Static ⇒ setStaticShaders) + backing-store scale (½/¼ ⇒ setRenderScale). No-op in tests / the
 // `off` tier where WebGL2 is unavailable (create returns a no-op runtime).
 function applyShaderMode(mode: EffectMode): void {
-  if (!stage.value) return;
+  if (!stage.value || !sceneAblation.effectsStartupEnabled) return;
   // Strict canvas owns effect pixels through its stage resources. Constructing
   // gsw's DOM runtime here would create child canvases even on a scene that
   // otherwise passed admission. A capability fallback flips `activeStageBackend`
@@ -952,6 +970,7 @@ function applyShaderMode(mode: EffectMode): void {
   if (!shaderRuntime) {
     shaderRuntime = syncEffectsHost(true, particleRuntime !== null)?.shaders ?? null;
     if (!shaderRuntime) return;
+    sceneAblation.noteEffectRuntimeStarted("shader");
     shaderRuntime.reconcile();
     // The construction options carry the pin's SEED (shaderResources.ts), which is right for the first
     // runtime but stale for one created after a fullscreen-landscape measurement corrected the target — so
@@ -969,7 +988,7 @@ function applyShaderMode(mode: EffectMode): void {
 
 // The PARTICLE sibling of applyShaderMode (Static ⇒ setStaticParticles — the gsw runtime's frozen-frame mode).
 function applyParticleMode(mode: EffectMode): void {
-  if (!stage.value) return;
+  if (!stage.value || !sceneAblation.effectsStartupEnabled) return;
   if (mode === "off") {
     syncEffectsHost(shaderRuntime !== null, false);
     return;
@@ -977,6 +996,7 @@ function applyParticleMode(mode: EffectMode): void {
   if (!particleRuntime) {
     particleRuntime = syncEffectsHost(shaderRuntime !== null, true)?.particles ?? null;
     if (!particleRuntime) return;
+    sceneAblation.noteEffectRuntimeStarted("particle");
     particleRuntime.reconcile();
     pushStaticPins(); // same seed-vs-corrected reason as the shader side
   }
@@ -1199,20 +1219,13 @@ watch(
   () => scheduleRender(true, "occlusion")
 );
 
-// R12 STATIC-BG BUILD HOLD. The renderer's hold is a pure function of exactly these two flags,
+// STATIC-BG BUILD HOLD. The renderer's hold is a pure function of the setting,
 // and a HELD root is skip-clean by construction — same node object, same cached ctx — so an update walk would
 // swallow the release. A FULL walk is therefore mandatory in BOTH directions: `structural` bypasses `visit`'s
 // skip-clean gate, and the same walk's reclaim hands back any subtree that was built while the hold was off.
-// Covers: the setting toggled off (live bg rebuilds), an event/shop decode failure latching `staticBgFailedOpen`
-// (that live backdrop rebuilds), and a later room's decode clearing that latch (the hold re-engages and the
-// subtree is reclaimed).
-//
-// WATCHED AS A PAIR, not as the old `enabled && !failed` conjunction. The hold is no longer that conjunction:
-// `beginWalk` keys on the SETTING alone and the latch is folded per-path (combat holds through a failure). The
-// conjunction hid one real edge — the setting coming back ON while the latch is engaged, where the combat hold
-// re-engages but `enabled && !failed` stays false and no walk would be scheduled.
+// so the setting edge is the only event that may release or reclaim a covered live subtree.
 watch(
-  [() => mirrorSettings.staticBgEnabled, () => mirrorSettings.staticBgFailedOpen],
+  () => mirrorSettings.staticBgEnabled,
   () => scheduleRender(true, "staticBg")
 );
 
@@ -1223,6 +1236,7 @@ onBeforeUnmount(() => {
   // The gauges outlive nothing: with the runtimes gone they would keep calling into disposed handles.
   setStaticStillGauge(null);
   setStaticStillCountersGauge(null);
+  sceneAblation.setLiveCounts(null);
   // Same rule for the pressure supplier: an unmounted view's `renderRaf` is a closure over a dead component.
   unregisterRenderPressure?.();
   unregisterRenderPressure = null;

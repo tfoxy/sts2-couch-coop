@@ -51,7 +51,7 @@ export interface NodeController {
   unregisterElement(el: HTMLElement): void;
   stampIdentityAttrs(el: HTMLElement, id: string, node: MirrorNode): void;
   bobPhaseMs(binding: PresentationAnimationBinding, gNode: Affine): number;
-  createEl(record: RenderRecord, id: string, node: MirrorNode, gNode: Affine): void;
+  createEl(record: RenderRecord, id: string, node: MirrorNode, gNode: Affine, structuralOnly?: boolean): void;
   setCachedCtx(record: RenderRecord, ctx: WalkCtx): void;
   ctxUnchanged(record: RenderRecord, ctx: WalkCtx): boolean;
   pinTintChanged(record: RenderRecord, ctx: WalkCtx): boolean;
@@ -411,15 +411,15 @@ export function createNodeController(p: NodeControllerPorts): NodeController {
   // A flame binding is retained because shader paint is a direct sibling of the animated self layer. The later
   // sublayer operation mirrors that binding only if the shader mount exists, preserving the fallback path when a
   // shader is deferred, dieted, or unavailable.
-  function createEl(record: RenderRecord, id: string, node: MirrorNode, gNode: Affine): void {
+  function createEl(record: RenderRecord, id: string, node: MirrorNode, gNode: Affine, structuralOnly = false): void {
     p.stats.createEl++;
     const el = document.createElement("div");
     el.className = "mirror-node";
     el.setAttribute("data-node-type", node.nodeType);
     stampIdentityAttrs(el, id, node);
-    if (nodeTypeLeaf(node.nodeType) === CARD_FLIGHT_VFX_TYPE) p.cardFlights().addVfxId(id);
+    if (!structuralOnly && nodeTypeLeaf(node.nodeType) === CARD_FLIGHT_VFX_TYPE) p.cardFlights().addVfxId(id);
 
-    let animBinding = nodeAnimBinding(p.computeSceneInfo(id)?.relPath ?? null, node.nodeType);
+    let animBinding = structuralOnly ? null : nodeAnimBinding(p.computeSceneInfo(id)?.relPath ?? null, node.nodeType);
     if (animBinding) {
       ensureAnimationStyles(document);
       record.staticAnimBinding = animBinding;
@@ -434,7 +434,7 @@ export function createNodeController(p: NodeControllerPorts): NodeController {
       }
     }
     // Remote followers stream fresh transforms but no tween hints; keep their direct transition out of the style cache.
-    if (isRemoteFollower(node)) el.style.transition = "transform 80ms linear";
+    if (!structuralOnly && isRemoteFollower(node)) el.style.transition = "transform 80ms linear";
     record.el = el;
     registerElement(el, record);
   }
