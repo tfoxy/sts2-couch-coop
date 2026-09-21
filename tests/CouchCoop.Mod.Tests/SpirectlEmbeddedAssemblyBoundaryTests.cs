@@ -1,4 +1,5 @@
 using System.Reflection;
+using CouchCoop.Mod.HostUi;
 using CouchCoop.Mod.Runtime;
 using Spirectl.Sts2;
 using Spirectl.Sts2.Embedding;
@@ -145,7 +146,49 @@ internal static class SpirectlEmbeddedAssemblyBoundaryTests
             modifiers: null);
         Expect(fromFactory?.ReturnType == typeof(CouchCoopRuntimeDependencies), "Couch keeps its ten-port FromFactory adapter");
 
+        PinLiveHostReasonWording();
+
         Console.WriteLine("SpirectlEmbeddedAssemblyBoundaryTests: ok");
+    }
+
+    /// <summary>
+    /// The drift check for the `live-host-runtime` support checkpoint: every reason string spirectl publishes
+    /// must still classify onto its bounded token.
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// WHY THE PIN IS HERE AND NOT BESIDE THE CLASSIFIER. <c>LobbySupportCheckpoints.cs</c> and
+    /// <c>LobbySupportCheckpointsTests.cs</c> are both source-linked into <c>CouchCoop.MacOs.Tests</c>, which
+    /// carries NO project references at all on purpose — it is the game-free suite that runs on macOS CI with
+    /// no STS2 install. Naming a <c>Spirectl.Sts2.*</c> constant in either file breaks that project's compile,
+    /// so the classifier keeps private literals and the comparison against the real constants lives here, in a
+    /// spirectl-aware suite. That is why the classifier's copies are not simply <c>= &lt;spirectl constant&gt;</c>.
+    /// </para>
+    /// <para>
+    /// It asserts BEHAVIOUR, not storage: feeding spirectl's own constant through the classifier proves the
+    /// wording still matches without needing the private literals to be visible. A re-worded constant upstream
+    /// falls to <see cref="LiveHostRuntimeReason.Unknown"/> and fails here — which is the point, because the
+    /// live failure it would otherwise cause is a macOS support log that says `reason=unknown` instead of
+    /// naming the gate that refused.
+    /// </para>
+    /// </remarks>
+    private static void PinLiveHostReasonWording()
+    {
+        (string Reason, LiveHostRuntimeReason Expected)[] published =
+        [
+            (LiveSts2HostUnsupportedReasons.OutsideGameProcess, LiveHostRuntimeReason.OutsideGameProcess),
+            (LiveSts2HostUnsupportedReasons.NonLiveHostBuild, LiveHostRuntimeReason.NonLiveBuild),
+            (LiveSts2HostUnsupportedReasons.NotALiveHostAdapter, LiveHostRuntimeReason.NotLiveAdapter),
+        ];
+
+        foreach (var (reason, expected) in published)
+        {
+            Expect(
+                LobbySupportCheckpoints.ClassifyLiveHostReason(reason) == expected,
+                $"spirectl's published live-host reason still classifies as {expected} (got "
+                + $"{LobbySupportCheckpoints.ClassifyLiveHostReason(reason)}); spirectl re-worded it, so "
+                + "LobbySupportCheckpoints' private copy must be updated to match");
+        }
     }
 
     private static void Expect(bool condition, string message)
