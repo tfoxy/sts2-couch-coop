@@ -40,7 +40,6 @@ import {
   type CanvasPatchRuntime,
 } from "@/mirror/renderer/canvas/patchRuntime";
 import type { CanvasStageLifecycle } from "@/mirror/renderer/canvas/stageRuntime";
-import type { RetainedSubtreeRuntime } from "@/mirror/renderer/canvas/retainedSubtreeRuntime";
 import type { CanvasVisualState } from "@/mirror/renderer/canvas/visualState";
 import type { createCanvasTextRuntime } from "@/mirror/renderer/canvas/textRuntime";
 import type { createEffectsOverlayRuntime } from "@/mirror/renderer/canvas/effectsOverlayRuntime";
@@ -69,7 +68,6 @@ export interface CanvasFrameAssemblyOptions {
     readonly paintOrderCache: PaintOrderCache;
     readonly hitMemo: HitMemo;
     readonly scratch: PaintScratch;
-    readonly retained?: RetainedSubtreeRuntime;
   };
   readonly resources: {
     readonly bridge: TextureBridge;
@@ -108,7 +106,7 @@ export function createCanvasFrameAssembly(
   const { lifecycle: stageLifecycle } = stage;
   const {
     list, buildList, executor, compiled, paintGuard, projection,
-    paintOrderCache, hitMemo, scratch, retained,
+    paintOrderCache, hitMemo, scratch,
   } = draw;
   const { bridge, textures, pixel: pixelResources, text: textRuntime } = resources;
   const { runtime: effectsRuntime, stageOwned: stageEffects } = effects;
@@ -225,7 +223,6 @@ export function createCanvasFrameAssembly(
         visual.bankAppliedAlphas();
       },
       onBuildTiming: diagnostics.noteBuildTiming,
-      retained,
     },
     basePixelEpoch: () => {
       const textureStats = textures.stats;
@@ -239,9 +236,6 @@ export function createCanvasFrameAssembly(
     onDirectPaintTiming: diagnostics.noteDirectPaint,
     onPaintUnavailable: () => {},
     onPaintSkipped: () => {},
-    onPainted: (drew) => {
-      if (drew) retained?.noteExecution(executor.stats);
-    },
   });
   options.onPresentationCreated(presentation);
   frameRuntime = presentation.frame;

@@ -3,7 +3,6 @@ import type {
   CanvasTextureCache,
   CompiledDrawList,
   ExecutorTexture,
-  RetainedRangeCache,
 } from "@godot-scene-web/canvas";
 import { DRAW_NINE_PATCH, DRAW_POLYLINE } from "@godot-scene-web/canvas";
 import { PATCH_CHAIN_MAX, PATCH_TRANSFORM_CHAIN_MAX } from "@/mirror/canvas/listPatch";
@@ -31,7 +30,6 @@ import type {
 } from "@/mirror/renderer/canvas/patchRuntime";
 import type { CanvasFrameScheduler } from "@/mirror/renderer/canvas/frameScheduler";
 import type { CanvasStageLifecycle, CanvasStageRuntime } from "@/mirror/renderer/canvas/stageRuntime";
-import type { RetainedSubtreeRuntime } from "@/mirror/renderer/canvas/retainedSubtreeRuntime";
 import type { CanvasVisualState } from "@/mirror/renderer/canvas/visualState";
 import type { WireDeltaGraph } from "@/mirror/canvas/wireDeltaGraph";
 import type { createEffectsOverlayRuntime } from "@/mirror/renderer/canvas/effectsOverlayRuntime";
@@ -80,10 +78,6 @@ export interface CanvasDiagnosticStatsBindings {
     /** String-facing list view used only by the gated paint dump. */
     readonly dumpList: CanvasDumpInput["list"];
   };
-  readonly retained: {
-    readonly runtime: RetainedSubtreeRuntime;
-    readonly cache: RetainedRangeCache;
-  };
   readonly schedule: CanvasFrameScheduler;
   readonly visual: CanvasVisualState;
   readonly patch: {
@@ -118,7 +112,6 @@ export interface CanvasStatsSnapshot {
   readonly policy: CanvasDiagnosticStatsBindings["policy"];
   readonly stage: CanvasDiagnosticStatsBindings["stage"];
   readonly frame: CanvasDiagnosticStatsBindings["frame"];
-  readonly retained: CanvasDiagnosticStatsBindings["retained"];
   readonly schedule: CanvasFrameScheduler;
   readonly visual: CanvasVisualState;
   readonly patch: CanvasDiagnosticStatsBindings["patch"];
@@ -164,7 +157,7 @@ export interface CanvasDumpInput {
  * grouped snapshot, never an untyped property bag.
  */
 function flattenCanvasStatsSnapshot(snapshot: CanvasStatsSnapshot) {
-  const { identity, policy, stage, frame, retained, schedule, visual, patch, resources, effects, interaction, text, metrics } = snapshot;
+  const { identity, policy, stage, frame, schedule, visual, patch, resources, effects, interaction, text, metrics } = snapshot;
   const frameSnapshot = frame.runtime.snapshot;
   const build: DrawListBuild | null = frameSnapshot?.build ?? null;
   const visualStats = visual.stats();
@@ -237,8 +230,6 @@ function flattenCanvasStatsSnapshot(snapshot: CanvasStatsSnapshot) {
     pulledReconciles: schedule.pulledReconciles,
     rafDeliverySamples: schedule.rafDeliverySamples,
     rampFrames: interaction.rampFrames,
-    retainedCache: retained.cache,
-    retainedRuntime: retained.runtime,
     skippedPaints: frame.presentation.skippedPaints,
     sourcePatchedFrames: patch.execution.stats.sourcePatchedFrames,
     sourcePatchedNodes: patch.execution.stats.sourcePatchedNodes,
@@ -304,7 +295,7 @@ function canvasFxStats(
 /** Formats the complete canvas diagnostics envelope without scheduling or acknowledging work. */
 export function canvasStats(snapshot: CanvasStatsSnapshot): unknown {
   const source = flattenCanvasStatsSnapshot(snapshot);
-  const { IDLE_PERIOD_MIN_SAMPLES, TEXTURE_PACE_BYTES_DEFAULT, TEXTURE_PACE_COUNT_DEFAULT, TEXTURE_TINY_BYTES_DEFAULT, animFrames, armedParks, armedRafs, backingH, backingSnapped, backingW, bridge, build, buildMsSamples, builds, canvasRendererCreatedAtMs, canvasRendererInstanceId, compiledList, contextLost, directPaintMsSamples, disposed, executor, frameMsSamples, fx, fxQuadBuilds, fxQuadPeak, fxScreenTexture, glyphBlocks, glyphs, hintTransformRebased, idleAnimFps, idleEntries, idleFrames, idleInvisible, idleLoopCount, idlePatched, idlePeriodSamples, idleRebuilds, idleStageAdmittedEarlySlack, idleStageAdmittedGaps, idleStageAdmittedPassive, idleStageBypasses, idleStageMinAdmittedGap, idleStageMissingPassive, idleStagePhaseResets, idleStageSkippedEarly, intentEntries, intentSwaps, loop, mapStrokeLocals, mapStrokePinReuses, offsetBuilds, offsetCoalesced, overlayCounts, overlayMsSamples, pace, paceTiny, paintGuard, paintMsSamples, paintedFrames, parkWakeups, patchBailouts, patchChainMax, patchMsSamples, patchedFrames, patchedNodes, patchedQuads, pulledReconciles, rafDeliverySamples, rampFrames, retainedCache, retainedRuntime, skippedPaints, sourcePatchedFrames, sourcePatchedNodes, sourcePatchedQuads, spine, spineHoisted, spineQuadPeak, stageRuntime, staticBgStageActive, staticBgStageCommand, staticBgStageFailures, staticBgStagePending, staticBgStageReady, textRuntime, texts, textures, trailStats, transformChainMax, transformCommands, transformFrames, transformHits, transformRecords, transformRoots, tweenReparentDropped, wireBuildCauses, wireChangedCommands, wireDirectPatches, wireNodesVisited, wireSourcePatches, withheldPeak } = source;
+  const { IDLE_PERIOD_MIN_SAMPLES, TEXTURE_PACE_BYTES_DEFAULT, TEXTURE_PACE_COUNT_DEFAULT, TEXTURE_TINY_BYTES_DEFAULT, animFrames, armedParks, armedRafs, backingH, backingSnapped, backingW, bridge, build, buildMsSamples, builds, canvasRendererCreatedAtMs, canvasRendererInstanceId, compiledList, contextLost, directPaintMsSamples, disposed, executor, frameMsSamples, fx, fxQuadBuilds, fxQuadPeak, fxScreenTexture, glyphBlocks, glyphs, hintTransformRebased, idleAnimFps, idleEntries, idleFrames, idleInvisible, idleLoopCount, idlePatched, idlePeriodSamples, idleRebuilds, idleStageAdmittedEarlySlack, idleStageAdmittedGaps, idleStageAdmittedPassive, idleStageBypasses, idleStageMinAdmittedGap, idleStageMissingPassive, idleStagePhaseResets, idleStageSkippedEarly, intentEntries, intentSwaps, loop, mapStrokeLocals, mapStrokePinReuses, offsetBuilds, offsetCoalesced, overlayCounts, overlayMsSamples, pace, paceTiny, paintGuard, paintMsSamples, paintedFrames, parkWakeups, patchBailouts, patchChainMax, patchMsSamples, patchedFrames, patchedNodes, patchedQuads, pulledReconciles, rafDeliverySamples, rampFrames, skippedPaints, sourcePatchedFrames, sourcePatchedNodes, sourcePatchedQuads, spine, spineHoisted, spineQuadPeak, stageRuntime, staticBgStageActive, staticBgStageCommand, staticBgStageFailures, staticBgStagePending, staticBgStageReady, textRuntime, texts, textures, trailStats, transformChainMax, transformCommands, transformFrames, transformHits, transformRecords, transformRoots, tweenReparentDropped, wireBuildCauses, wireChangedCommands, wireDirectPatches, wireNodesVisited, wireSourcePatches, withheldPeak } = source;
   const p50 = (samples: readonly number[]): number => {
     if (samples.length === 0) return 0;
     const sorted = [...samples].sort((a, b) => a - b);
@@ -347,20 +338,6 @@ export function canvasStats(snapshot: CanvasStatsSnapshot): unknown {
         // that never raises a hand, and the evidence that the raise GLIDES rather than teleporting.
         schedule: { rafs: armedRafs, parks: armedParks, parkWakeups, pulled: pulledReconciles, rampFrames },
         commands: build?.stats.commands ?? 0,
-        retainedSubtrees: {
-          ...retainedRuntime.stats,
-          execution: { ...retainedRuntime.stats.execution },
-          invalidations: { ...retainedRuntime.stats.invalidations },
-          rejected: { ...retainedRuntime.stats.rejected },
-          cache: {
-            ...retainedCache.stats,
-            rebuildReasons: { ...retainedCache.stats.rebuildReasons },
-            fallbackReasons: { ...retainedCache.stats.fallbackReasons },
-          },
-          // Process attribution is joined by the device harness. Null is a
-          // real "unavailable" value and must never become a convincing zero.
-          device: { rendererCpu: null, gpuProcessCpu: null, processRssBytes: null },
-        },
         quads: ex.quads,
         batches: ex.batches,
         textureBinds: ex.textureBinds,
@@ -885,7 +862,6 @@ function snapshotForDiagnostics(
     policy: bindings.policy,
     stage: bindings.stage,
     frame: bindings.frame,
-    retained: bindings.retained,
     schedule: bindings.schedule,
     visual: bindings.visual,
     patch: bindings.patch,
