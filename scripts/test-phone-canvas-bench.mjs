@@ -13,12 +13,48 @@ const root = mkdtempSync(join(tmpdir(), "phone-canvas-bench-"));
 const arms = ["dom", "canvas", "canvas", "dom"];
 const workloads = ["idle", "discard", "reshuffle", "dense"];
 
-function writeMatrix(dir, { canvasFps = 70 } = {}) {
+function retainedWindow({
+  enabled = true,
+  selected = 1,
+  entries = 1,
+  bytes = 4 * 1024 * 1024,
+  peakBytes = 6 * 1024 * 1024,
+  realHitsBefore = 10,
+  realHitsAfter = 11,
+  substitutedBefore = 100,
+  substitutedAfter = 108,
+  compositesBefore = 10,
+  compositesAfter = 11,
+} = {}) {
+  const snapshot = (realHits, substitutedCommands, composites) => ({
+    enabled,
+    selected,
+    execution: { substitutedCommands },
+    cache: { entries, bytes, peakBytes, realHits, composites },
+  });
+  const before = snapshot(realHitsBefore, substitutedBefore, compositesBefore);
+  const after = snapshot(realHitsAfter, substitutedAfter, compositesAfter);
+  return { before, after, current: after };
+}
+
+function writeMatrix(dir, {
+  canvasFps = 70,
+  matrixArms = arms,
+  controlName = "dom",
+  candidateName = "canvas",
+  controlQuery = "stage=dom",
+  candidateQuery = "stage=canvas&paintDump=1",
+  candidateTotalMemory = 3_000,
+  controlTotalMemory = 1_000,
+  retained = null,
+  controlIdleFps = 80,
+  controlActiveFps = 60,
+} = {}) {
   mkdirSync(dir, { recursive: true });
   for (const workload of workloads) {
-    for (const [i, arm] of arms.entries()) {
-      const isCanvas = arm === "canvas";
-      const isDom = arm === "dom";
+    for (const [i, arm] of matrixArms.entries()) {
+      const isCanvas = arm === candidateName;
+      const isDom = arm === controlName;
       const idle = workload === "idle";
       const metrics = {
         schema: "phone-canvas-cell-metrics/2",
@@ -26,13 +62,13 @@ function writeMatrix(dir, { canvasFps = 70 } = {}) {
           label: `${workload}-${i + 1}`,
           workload: { id: workload, recording: `/fixtures/${workload}.ndjson` }, arm, sequence: i + 1,
           run: { repeats: 1, effects: "on", effectMode: "static", quality: "static" },
-          query: isCanvas ? "stage=canvas&paintDump=1" : "stage=dom",
+          query: isCanvas ? candidateQuery : controlQuery,
           artifacts: { result: join(dir, `${workload}-${i + 1}.result.json`) }
         },
         phase: idle ? "idle" : "active",
         traceWindow: { windowMs: idle ? 5_000 : 3_500 },
-        submitted: { source: "drawframe", count: 100, fps: isCanvas ? canvasFps : idle && isDom ? 80 : 60 },
-        actualPresented: { count: 100, fps: isCanvas ? canvasFps : idle && isDom ? 80 : 60, gapP50Ms: 16, gapP95Ms: 20, gapMaxMs: 25,
+        submitted: { source: "drawframe", count: 100, fps: isCanvas ? canvasFps : idle && isDom ? controlIdleFps : controlActiveFps },
+        actualPresented: { count: 100, fps: isCanvas ? canvasFps : idle && isDom ? controlIdleFps : controlActiveFps, gapP50Ms: 16, gapP95Ms: 20, gapMaxMs: 25,
           surface: "ChromeSurface", provenance: { source: "perfetto-frame-timeline-actual", surface: "ChromeSurface", attributionKey: "layer_name", eventNames: ["ActualFrameTimelineSlice"] } },
         display: { viewport: "1220x2712", devicePixelRatio: 3.4876 },
         cpu: {
@@ -42,8 +78,9 @@ function writeMatrix(dir, { canvasFps = 70 } = {}) {
         frameGaps: { p95: isCanvas ? 20 : 20 },
         sceneAckLatency: { p95: isCanvas ? 10 : 10 },
         // Deliberately make total RSS wildly different: only the GPU-process component is an acceptance gate.
-        memoryMb: { gpu: isCanvas ? 540 : 500, total: isCanvas ? 3_000 : 1_000 },
-        health: { benchExit: 0, lmk: false, contextLoss: false, processRestart: false, assetFailure: false, pageCrash: false, thermalThrottle: false, foregroundPre: true, foregroundPost: true }
+        memoryMb: { gpu: isCanvas ? 540 : 500, total: isCanvas ? candidateTotalMemory : controlTotalMemory },
+        retainedSubtrees: isCanvas ? retained : null,
+        health: { benchExit: 0, lmk: false, contextLoss: false, processRestart: false, assetFailure: false, pageCrash: false, thermalThrottle: false, foregroundPre: true, foregroundPost: true, installOverlayAbsent: true }
       };
       writeFileSync(metrics.cell.artifacts.result, JSON.stringify({ label: metrics.cell.label }));
       writeFileSync(metrics.cell.artifacts.result.replace(".result.json", ".png"), Buffer.concat([onePixelPng, Buffer.from(metrics.cell.label)]));
@@ -104,6 +141,33 @@ function writeVisualReview(dir, matrix, { verdict = "pass", pairVerdict = verdic
   return manifest;
 }
 
+function writeNamedVisualReview(dir, matrix, { verdict = "pass", pairVerdict = verdict } = {}) {
+  mkdirSync(dir, { recursive: true });
+  const manifest = join(dir, "review.json");
+  writeFileSync(manifest, JSON.stringify({
+    schema: VISUAL_QUALITY_SCHEMA,
+    verdict,
+    notes: "External reviewer compared the named control and candidate captures.",
+    imagePairs: workloads.map((workload) => {
+      const candidate = join(matrix, `${workload}-3.metrics.json`);
+      const control = join(matrix, `${workload}-4.metrics.json`);
+      const image = (metric) => JSON.parse(readFileSync(metric, "utf8")).cell.artifacts.result.replace(".result.json", ".png");
+      return {
+        id: `named-${workload}`,
+        workload,
+        candidate: { metric: relative(dir, candidate), metricSha256: sha256(candidate), imageSha256: sha256(image(candidate)) },
+        control: { metric: relative(dir, control), metricSha256: sha256(control), imageSha256: sha256(image(control)) },
+        marker: workload === "idle"
+          ? { before: "cc-idle-start", after: "cc-idle-end" }
+          : { before: "cc-report-start", after: "cc-report-end" },
+        verdict: pairVerdict,
+        notes: "Named arm images match visually."
+      };
+    })
+  }));
+  return manifest;
+}
+
 try {
   const runner = readFileSync(resolve("scripts/bench-phone-canvas-ab.sh"), "utf8");
   // `tab_ok` is a shell success flag (1), while `foreground_post` is deliberately the JSON-word boolean.
@@ -111,7 +175,20 @@ try {
   assert.match(runner, /FOREGROUND_PRE="\$tab_ok" FOREGROUND_POST="\$foreground_post"/);
   assert.match(runner, /foregroundPre:process\.env\.FOREGROUND_PRE==="1", foregroundPost:process\.env\.FOREGROUND_POST==="true"/);
   assert.doesNotMatch(runner, /--proc-mem/);
-  assert.match(runner, /canvas\) query="stage=canvas&paintDump=1"/);
+  assert.match(runner, /CONTROL_QUERY="stage=dom"/);
+  assert.match(runner, /CANDIDATE_QUERY="stage=canvas&paintDump=1"/);
+  assert.match(runner, /--control-query\) CONTROL_QUERY="\$\{2#\\\?\}"/);
+  assert.match(runner, /--candidate-query\) CANDIDATE_QUERY="\$\{2#\\\?\}"/);
+  assert.match(runner, /ARMS="\$CONTROL_NAME,\$CANDIDATE_NAME,\$CANDIDATE_NAME,\$CONTROL_NAME"/);
+  assert.match(runner, /phone-bench-install-overlay\.mjs" save-and-snooze/);
+  assert.match(runner, /phone-bench-install-overlay\.mjs" restore/);
+  assert.match(runner, /local entry_status=\$\?/);
+  assert.match(runner, /if \[ "\$entry_status" -ne 0 \]; then exit "\$entry_status"; fi/);
+  assert.match(runner, /if \[ "\$restore_failed" -ne 0 \]; then exit 1; fi/);
+  assert.match(runner, /installOverlayAbsent:process\.env\.INSTALL_OVERLAY_ABSENT==="true"/);
+  const overlayHelper = readFileSync(resolve("scripts/phone-bench-install-overlay.mjs"), "utf8");
+  assert.match(overlayHelper, /url\.origin === expected\.origin/);
+  assert.doesNotMatch(overlayHelper, /url\.port === expected\.port/);
   assert.match(runner, /set \+e\n\s*node "\$SCRIPT_DIR\/bench-mirror-replay\.mjs"[\s\S]*?bench_exit=\$\{PIPESTATUS\[0\]\}\n\s*set -e/,
     "a failing bench pipeline must still reach PIPESTATUS capture and finalization");
   assert.match(runner, /r\.pageCrashed===true \|\| \(r\.crashedRepeats\|\|\[\]\)\.some\(Boolean\)/,
@@ -181,6 +258,23 @@ try {
   assert.equal(deviceMetric.memory.source, "android-ps-rss-settled");
   assert.equal(buildMetrics(metricMeta, metricResult, metricWindow, metricTrace, null).memoryMb, null);
   assert.deepEqual(buildMetrics(metricMeta, metricResult, metricWindow, metricTrace).memoryMb, { gpu: 999, renderers: 888, total: 777 });
+  const retainedDiagnostic = { enabled: true, selected: 1, cache: { entries: 1, bytes: 1234, peakBytes: 5678 } };
+  const markerRetained = {
+    before: { ...retainedDiagnostic, cache: { ...retainedDiagnostic.cache, realHits: 2 } },
+    after: { ...retainedDiagnostic, cache: { ...retainedDiagnostic.cache, realHits: 3 } },
+    current: retainedDiagnostic,
+  };
+  const retainedMetric = buildMetrics(metricMeta, {
+    ...metricResult,
+    retainedSubtrees: markerRetained,
+    census: { canvasStats: { retainedSubtrees: { cache: { bytes: 9999 } } } }
+  }, metricWindow, metricTrace, ledger);
+  assert.deepEqual(retainedMetric.retainedSubtrees, markerRetained);
+  const censusOnlyRetainedMetric = buildMetrics(metricMeta, {
+    ...metricResult,
+    census: { canvasStats: { retainedSubtrees: retainedDiagnostic } }
+  }, metricWindow, metricTrace, ledger);
+  assert.deepEqual(censusOnlyRetainedMetric.retainedSubtrees, { before: null, after: null, current: retainedDiagnostic });
   const markerCpu = { cpuMs: 350, cpuPct: 35, source: "chrome-trace-marker-thread-ticks" };
   const cpuMetric = buildMetrics(metricMeta, metricResult, metricWindow, { ...metricTrace, threads: [{ label: "Renderer/CrRendererMain", cpuMs: 320 }] }, ledger, null, markerCpu);
   assert.equal(cpuMetric.cpu.rendererMainCpuMs, 350);
@@ -237,14 +331,14 @@ try {
   const missingImageRun = run(["--input", matrix], missingImageVisual);
   writeFileSync(missingImagePath, missingImageBytes);
   assert.equal(missingImageRun.status, 1, missingImageRun.stderr);
-  assert.match(missingImageRun.stdout, /canvas metric is absent from this matrix or lacks result\/image artifacts/);
+  assert.match(missingImageRun.stdout, /candidate metric is absent from this matrix or lacks result\/image artifacts/);
 
   const otherMatrix = join(root, "other-matrix");
   writeMatrix(otherMatrix);
   const wrongMatrixVisual = writeVisualReview(join(root, "visual-quality-wrong-matrix"), otherMatrix);
   const wrongMatrixRun = run(["--input", matrix], wrongMatrixVisual);
   assert.equal(wrongMatrixRun.status, 1, wrongMatrixRun.stderr);
-  assert.match(wrongMatrixRun.stdout, /canvas metric is absent from this matrix/);
+  assert.match(wrongMatrixRun.stdout, /candidate metric is absent from this matrix/);
 
   const staleMatrix = join(root, "visual-quality-stale-matrix");
   writeMatrix(staleMatrix);
@@ -253,7 +347,7 @@ try {
   writeFileSync(staleMetric, `${readFileSync(staleMetric, "utf8")}\n`);
   const staleRun = run(["--input", staleMatrix], staleVisual);
   assert.equal(staleRun.status, 1, staleRun.stderr);
-  assert.match(staleRun.stdout, /canvas metric SHA-256 does not match/);
+  assert.match(staleRun.stdout, /candidate metric SHA-256 does not match/);
 
   const incompleteVisual = writeVisualReview(join(root, "visual-quality-incomplete"), matrix, { workloadsToReview: ["idle"] });
   const incompleteRun = run(["--input", matrix], incompleteVisual);
@@ -272,6 +366,8 @@ try {
   assert.equal(summary.passed, true);
   assert.equal(summary.gates.filter((row) => row.status !== "PASS").length, 0);
   assert.equal(summary.aggregate.idle.fps, 70);
+  assert.deepEqual(summary.expectedOrder, arms);
+  assert.equal(summary.comparison.defaultMode, true);
   assert.equal(summary.visualQuality.valid, true);
   assert.deepEqual(summary.visualQuality.coveredWorkloads, [...workloads].sort());
   assert.deepEqual(summary.visualQuality.imagePairs.map((pair) => pair.id), workloads.map((workload) => `strict-card-description-${workload}`));
@@ -308,6 +404,238 @@ try {
   const inspected = run(["--allow-fail", "--input", failing]);
   assert.equal(inspected.status, 0, inspected.stderr);
   assert.match(inspected.stdout, /idle: canvas actual-presented fps ≥ 60/);
+
+  const named = join(root, "named");
+  const namedArms = ["cache-off", "cache-on", "cache-on", "cache-off"];
+  const retained = retainedWindow();
+  writeMatrix(named, {
+    matrixArms: namedArms,
+    controlName: "cache-off",
+    candidateName: "cache-on",
+    controlQuery: "stage=canvas&canvasSubtreeCache=off",
+    candidateQuery: "stage=canvas&canvasSubtreeCache=on",
+    candidateTotalMemory: 1_050,
+    controlIdleFps: 70,
+    retained,
+  });
+  const namedVisual = writeNamedVisualReview(join(root, "named-visual"), named);
+  const namedOut = join(root, "named-summary.json");
+  const namedRun = run(["--input", named, "--out", namedOut], namedVisual);
+  assert.equal(namedRun.status, 0, `${namedRun.stderr}\n${namedRun.stdout}`);
+  const namedSummary = JSON.parse(readFileSync(namedOut, "utf8"));
+  assert.deepEqual(namedSummary.expectedOrder, namedArms);
+  assert.deepEqual(namedSummary.comparison, {
+    control: { name: "cache-off", query: "stage=canvas&canvasSubtreeCache=off" },
+    candidate: { name: "cache-on", query: "stage=canvas&canvasSubtreeCache=on" },
+    defaultMode: false,
+    expectedOrder: namedArms,
+    problems: [],
+    valid: true,
+  });
+  assert.match(JSON.stringify(namedSummary.gates), /candidate FPS or present-p95 improves at least 5%/);
+  assert.match(JSON.stringify(namedSummary.gates), /retained resident bytes ≤ 12 MiB/);
+  assert.match(namedRun.stdout, /retained real-hit marker delta > 0[\s\S]*?"status": "PASS"/);
+  assert.match(namedRun.stdout, /retained substituted-command marker delta > 0[\s\S]*?"status": "PASS"/);
+  assert.match(namedRun.stdout, /retained composite marker delta > 0[\s\S]*?"status": "PASS"/);
+  assert.match(namedRun.stdout, /idle: cache-on scene-ack p95 ≤105% of cache-off[\s\S]*?"status": "PASS"/);
+  assert.ok(namedSummary.visualQuality.imagePairs.every((pair) => pair.candidate && pair.control));
+
+  const selectorOff = join(root, "named-selector-off");
+  writeMatrix(selectorOff, {
+    matrixArms: namedArms,
+    controlName: "cache-off",
+    candidateName: "cache-on",
+    controlQuery: "stage=canvas&canvasSubtreeCache=off",
+    candidateQuery: "stage=canvas&canvasSubtreeCache=on",
+    candidateTotalMemory: 1_050,
+    controlIdleFps: 70,
+    retained: retainedWindow({ enabled: false }),
+  });
+  const selectorOffRun = run(["--allow-fail", "--input", selectorOff], null);
+  assert.equal(selectorOffRun.status, 0, selectorOffRun.stderr);
+  assert.match(selectorOffRun.stdout, /retained cache enabled[\s\S]*?"status": "FAIL"/);
+
+  const emptySelection = join(root, "named-empty-selection");
+  writeMatrix(emptySelection, {
+    matrixArms: namedArms,
+    controlName: "cache-off",
+    candidateName: "cache-on",
+    controlQuery: "stage=canvas&canvasSubtreeCache=off",
+    candidateQuery: "stage=canvas&canvasSubtreeCache=on",
+    candidateTotalMemory: 1_050,
+    controlIdleFps: 70,
+    retained: retainedWindow({ selected: 0, entries: 0, bytes: 0, peakBytes: 0 }),
+  });
+  const emptySelectionRun = run(["--allow-fail", "--input", emptySelection], null);
+  assert.equal(emptySelectionRun.status, 0, emptySelectionRun.stderr);
+  assert.match(emptySelectionRun.stdout, /retained selection and live entries are nonempty[\s\S]*?"status": "FAIL"/);
+
+  const zeroActivity = join(root, "named-zero-retained-activity");
+  writeMatrix(zeroActivity, {
+    matrixArms: namedArms,
+    controlName: "cache-off",
+    candidateName: "cache-on",
+    controlQuery: "stage=canvas&canvasSubtreeCache=off",
+    candidateQuery: "stage=canvas&canvasSubtreeCache=on",
+    candidateTotalMemory: 1_050,
+    controlIdleFps: 70,
+    retained: retainedWindow({ realHitsAfter: 10, substitutedAfter: 100, compositesAfter: 10 }),
+  });
+  const zeroActivityRun = run(["--allow-fail", "--input", zeroActivity], null);
+  assert.equal(zeroActivityRun.status, 0, zeroActivityRun.stderr);
+  assert.match(zeroActivityRun.stdout, /retained real-hit marker delta > 0[\s\S]*?"status": "FAIL"/);
+  assert.match(zeroActivityRun.stdout, /retained substituted-command marker delta > 0[\s\S]*?"status": "FAIL"/);
+  assert.match(zeroActivityRun.stdout, /retained composite marker delta > 0[\s\S]*?"status": "FAIL"/);
+
+  const missingRetainedWindow = join(root, "named-missing-retained-window");
+  writeMatrix(missingRetainedWindow, {
+    matrixArms: namedArms,
+    controlName: "cache-off",
+    candidateName: "cache-on",
+    controlQuery: "stage=canvas&canvasSubtreeCache=off",
+    candidateQuery: "stage=canvas&canvasSubtreeCache=on",
+    candidateTotalMemory: 1_050,
+    controlIdleFps: 70,
+    retained: { before: null, after: null, current: retained.current },
+  });
+  const missingRetainedWindowRun = run(["--allow-fail", "--input", missingRetainedWindow], null);
+  assert.equal(missingRetainedWindowRun.status, 0, missingRetainedWindowRun.stderr);
+  assert.match(missingRetainedWindowRun.stdout, /retained real-hit marker delta > 0[\s\S]*?"status": "MISSING"/);
+
+  const missingRetained = join(root, "named-missing-retained");
+  writeMatrix(missingRetained, {
+    matrixArms: namedArms,
+    controlName: "cache-off",
+    candidateName: "cache-on",
+    controlQuery: "stage=canvas&canvasSubtreeCache=off",
+    candidateQuery: "stage=canvas&canvasSubtreeCache=on",
+    candidateTotalMemory: 1_050,
+    controlIdleFps: 70,
+  });
+  const missingRetainedRun = run(["--allow-fail", "--input", missingRetained], null);
+  assert.equal(missingRetainedRun.status, 0, missingRetainedRun.stderr);
+  assert.match(missingRetainedRun.stdout, /retained resident bytes ≤ 12 MiB[\s\S]*?"status": "MISSING"/);
+
+  const unstableNamed = join(root, "named-unstable-query");
+  writeMatrix(unstableNamed, {
+    matrixArms: namedArms,
+    controlName: "cache-off",
+    candidateName: "cache-on",
+    controlQuery: "stage=canvas&canvasSubtreeCache=off",
+    candidateQuery: "stage=canvas&canvasSubtreeCache=on",
+    candidateTotalMemory: 1_050,
+    controlIdleFps: 70,
+    retained,
+  });
+  const unstablePath = join(unstableNamed, "dense-3.metrics.json");
+  const unstable = JSON.parse(readFileSync(unstablePath, "utf8"));
+  unstable.cell.query = "stage=canvas&canvasSubtreeCache=off";
+  writeFileSync(unstablePath, JSON.stringify(unstable));
+  const unstableRun = run(["--allow-fail", "--input", unstableNamed], null);
+  assert.equal(unstableRun.status, 0, unstableRun.stderr);
+  assert.match(unstableRun.stdout, /stable named ABBA arms and queries[\s\S]*?dense is not a control/);
+
+  const noImprovement = join(root, "named-no-improvement");
+  writeMatrix(noImprovement, {
+    canvasFps: 60,
+    matrixArms: namedArms,
+    controlName: "cache-off",
+    candidateName: "cache-on",
+    controlQuery: "stage=canvas&canvasSubtreeCache=off",
+    candidateQuery: "stage=canvas&canvasSubtreeCache=on",
+    candidateTotalMemory: 1_050,
+    controlIdleFps: 60,
+    retained,
+  });
+  const noImprovementRun = run(["--allow-fail", "--input", noImprovement], null);
+  assert.equal(noImprovementRun.status, 0, noImprovementRun.stderr);
+  assert.match(noImprovementRun.stdout, /candidate FPS or present-p95 improves at least 5%[\s\S]*?"status": "FAIL"/);
+
+  const presentImprovement = join(root, "named-present-improvement");
+  writeMatrix(presentImprovement, {
+    canvasFps: 60,
+    matrixArms: namedArms,
+    controlName: "cache-off",
+    candidateName: "cache-on",
+    controlQuery: "stage=canvas&canvasSubtreeCache=off",
+    candidateQuery: "stage=canvas&canvasSubtreeCache=on",
+    candidateTotalMemory: 1_050,
+    controlIdleFps: 60,
+    retained,
+  });
+  for (const workload of ["discard", "reshuffle", "dense"]) for (const sequence of [2, 3]) {
+    const path = join(presentImprovement, `${workload}-${sequence}.metrics.json`);
+    const metric = JSON.parse(readFileSync(path, "utf8"));
+    metric.actualPresented.gapP95Ms = 19;
+    writeFileSync(path, JSON.stringify(metric));
+  }
+  const presentVisual = writeNamedVisualReview(join(root, "named-present-visual"), presentImprovement);
+  const presentRun = run(["--input", presentImprovement], presentVisual);
+  assert.equal(presentRun.status, 0, `${presentRun.stderr}\n${presentRun.stdout}`);
+  assert.match(presentRun.stdout, /candidate FPS or present-p95 improves at least 5%[\s\S]*?"status": "PASS"/);
+
+  const idleRegression = join(root, "named-idle-regression");
+  writeMatrix(idleRegression, {
+    matrixArms: namedArms,
+    controlName: "cache-off",
+    candidateName: "cache-on",
+    controlQuery: "stage=canvas&canvasSubtreeCache=off",
+    candidateQuery: "stage=canvas&canvasSubtreeCache=on",
+    candidateTotalMemory: 1_050,
+    controlIdleFps: 70,
+    retained,
+  });
+  for (const sequence of [2, 3]) {
+    const path = join(idleRegression, `idle-${sequence}.metrics.json`);
+    const metric = JSON.parse(readFileSync(path, "utf8"));
+    metric.actualPresented.gapP95Ms = 22;
+    metric.frameGaps.p95 = 22;
+    metric.sceneAckLatency.p95 = 11;
+    metric.cpu.rendererMainPct = 55;
+    writeFileSync(path, JSON.stringify(metric));
+  }
+  const idleRegressionRun = run(["--allow-fail", "--input", idleRegression], null);
+  assert.equal(idleRegressionRun.status, 0, idleRegressionRun.stderr);
+  assert.match(idleRegressionRun.stdout, /idle: cache-on actual-presented gap p95 ≤105% of cache-off[\s\S]*?"status": "FAIL"/);
+  assert.match(idleRegressionRun.stdout, /idle: cache-on scene-ack p95 ≤105% of cache-off[\s\S]*?"status": "FAIL"/);
+  assert.match(idleRegressionRun.stdout, /idle: cache-on renderer-main CPU ≤105% of cache-off[\s\S]*?"status": "FAIL"/);
+
+  const idleMissingAck = join(root, "named-idle-missing-ack");
+  writeMatrix(idleMissingAck, {
+    matrixArms: namedArms,
+    controlName: "cache-off",
+    candidateName: "cache-on",
+    controlQuery: "stage=canvas&canvasSubtreeCache=off",
+    candidateQuery: "stage=canvas&canvasSubtreeCache=on",
+    candidateTotalMemory: 1_050,
+    controlIdleFps: 70,
+    retained,
+  });
+  for (const sequence of [2, 3]) {
+    const path = join(idleMissingAck, `idle-${sequence}.metrics.json`);
+    const metric = JSON.parse(readFileSync(path, "utf8"));
+    delete metric.sceneAckLatency;
+    writeFileSync(path, JSON.stringify(metric));
+  }
+  const idleMissingAckRun = run(["--allow-fail", "--input", idleMissingAck], null);
+  assert.equal(idleMissingAckRun.status, 0, idleMissingAckRun.stderr);
+  assert.match(idleMissingAckRun.stdout, /idle: cache-on scene-ack p95 ≤105% of cache-off[\s\S]*?"status": "MISSING"/);
+
+  const overBudget = join(root, "named-over-budget");
+  writeMatrix(overBudget, {
+    matrixArms: namedArms,
+    controlName: "cache-off",
+    candidateName: "cache-on",
+    controlQuery: "stage=canvas&canvasSubtreeCache=off",
+    candidateQuery: "stage=canvas&canvasSubtreeCache=on",
+    candidateTotalMemory: 1_200,
+    controlIdleFps: 70,
+    retained: retainedWindow({ bytes: 12 * 1024 * 1024 + 1, peakBytes: 16 * 1024 * 1024 + 1 }),
+  });
+  const overBudgetRun = run(["--allow-fail", "--input", overBudget], null);
+  assert.equal(overBudgetRun.status, 0, overBudgetRun.stderr);
+  assert.match(overBudgetRun.stdout, /retained resident bytes ≤ 12 MiB[\s\S]*?"status": "FAIL"/);
+  assert.match(overBudgetRun.stdout, /Chrome process RSS within max\(10%, 64MiB\)[\s\S]*?"status": "FAIL"/);
   console.log("phone canvas benchmark summary tests passed");
 } finally {
   rmSync(root, { recursive: true, force: true });

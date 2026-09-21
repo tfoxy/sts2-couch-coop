@@ -2,8 +2,8 @@
 # bench-phone-canvas-ab.sh — the canvas-vs-DOM phone matrix, on the phone's own GPU.
 #
 # WHY FOUR BALANCED CELLS. A phone is not a stable measuring instrument: it warms up and throttles during a
-# session. The required DOM → canvas → canvas → DOM order puts each current implementation at matching
-# early/late positions. It is deliberately not configurable: changing this order invalidates the comparison.
+# session. The required control → candidate → candidate → control order puts each implementation at matching
+# early/late positions. DOM/canvas remains the default; named query arms change identities, never the ABBA order.
 #
 # WHAT IS COMPARED. RAW frame gaps (p50 / p95), never `droppedPct`. Dropped% is derived by dividing by a
 # DETECTED vsync period, and this panel changes refresh rate between 60 and 90Hz on its own (measured this
@@ -18,6 +18,9 @@
 #
 # Usage:
 #   scripts/bench-phone-canvas-ab.sh --out-dir .sts2/bench/canvas-four-cell
+#   scripts/bench-phone-canvas-ab.sh --control-name cache-off --control-query 'stage=canvas&canvasSubtreeCache=off' \
+#     --candidate-name cache-on --candidate-query 'stage=canvas&canvasSubtreeCache=on'
+# Options: --control-name, --candidate-name, --control-query, --candidate-query, --workloads, --out-dir.
 #
 # Env: ADB_SERIAL (ZY32LL2X8W), DEV_PORT (5190), SERVE_PORT (8123), CDP_PORT (9222), REPEATS (1), EFFECTS (on),
 #      EFFECT_MODE (static), QUALITY (static), COUCHCOOP_DEV_BG_FIXTURE and
@@ -72,8 +75,13 @@ REPO_ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
 
 OUT_DIR="$REPO_ROOT/.sts2/bench/canvas-ab"
 WORKLOADS="idle,discard,reshuffle,dense"
-# This sequence is an acceptance requirement, not a tuning knob.
+# These defaults preserve the original DOM/canvas acceptance matrix. Named
+# queries let a bounded experiment reuse every device and admission gate.
 ARMS="dom,canvas,canvas,dom"
+CONTROL_NAME="dom"
+CANDIDATE_NAME="canvas"
+CONTROL_QUERY="stage=dom"
+CANDIDATE_QUERY="stage=canvas&paintDump=1"
 # `--report`'s default trace is streamed through its bounded collector and retains exactly the markers,
 # RunTask CPU, DrawFrame, and metadata this gate reads. Set this only when an op-level investigation is needed:
 # full raw GPU categories are much larger and can overflow the phone trace buffer.
@@ -87,6 +95,10 @@ while [ $# -gt 0 ]; do
   case "$1" in
     --out-dir) OUT_DIR="$2"; shift 2 ;;
     --workloads) WORKLOADS="$2"; shift 2 ;;
+    --control-name) CONTROL_NAME="$2"; shift 2 ;;
+    --candidate-name) CANDIDATE_NAME="$2"; shift 2 ;;
+    --control-query) CONTROL_QUERY="${2#\?}"; shift 2 ;;
+    --candidate-query) CANDIDATE_QUERY="${2#\?}"; shift 2 ;;
     --recordings)
       echo "bench-phone-canvas-ab: --recordings was replaced by the named bounded --workloads matrix" >&2
       exit 2 ;;
@@ -95,6 +107,15 @@ while [ $# -gt 0 ]; do
     *) echo "unknown argument: $1" >&2; exit 2 ;;
   esac
 done
+
+if ! [[ "$CONTROL_NAME" =~ ^[A-Za-z0-9][A-Za-z0-9._-]*$ ]] ||
+   ! [[ "$CANDIDATE_NAME" =~ ^[A-Za-z0-9][A-Za-z0-9._-]*$ ]] ||
+   [ "$CONTROL_NAME" = "$CANDIDATE_NAME" ] ||
+   [ -z "$CONTROL_QUERY" ] || [ -z "$CANDIDATE_QUERY" ]; then
+  echo "bench-phone-canvas-ab: control/candidate names must be distinct filename-safe values and queries non-empty" >&2
+  exit 2
+fi
+ARMS="$CONTROL_NAME,$CANDIDATE_NAME,$CANDIDATE_NAME,$CONTROL_NAME"
 
 if [ "$TRACE_RAW_FULL" != "on" ] && [ "$TRACE_RAW_FULL" != "off" ]; then
   echo "bench-phone-canvas-ab: TRACE_RAW_FULL must be on or off" >&2
@@ -139,6 +160,7 @@ if [ -d "$OUT_DIR" ] && [ -n "$(ls -A "$OUT_DIR")" ]; then
   exit 2
 fi
 mkdir -p "$OUT_DIR"
+OVERLAY_STATE="$OUT_DIR/install-overlay-storage.json"
 
 # Verify delegated ownership before any device command. The Mali/CDP session is independent of game instances,
 # but both endpoints are exclusive and every live consumer shares the installed mod against deployment.
@@ -205,11 +227,24 @@ ensure_mappings() {
   done
 }
 cleanup() {
+  local entry_status=$?
+  local restore_failed=0
   # The child owns its gatord cleanup trap. Only signal the profile this shell
   # started; never broadly kill another operator's profiler.
   if [ -n "$profile_pid" ] && kill -0 "$profile_pid" 2>/dev/null; then kill -TERM -- "-$profile_pid" 2>/dev/null || true; fi
   if [ -n "$perfetto_prefix" ] && [ -f "$perfetto_prefix.perfetto-state.json" ]; then
     node "$SCRIPT_DIR/phone-frame-capture.mjs" cancel --serial "$ADB_SERIAL" --out-prefix "$perfetto_prefix" || true
+  fi
+  # Restore the benchmark origin's exact pre-run value (including null) while
+  # the owned CDP mapping and final benchmark tab still exist.
+  if [ -f "$OVERLAY_STATE" ]; then
+    if ! node "$SCRIPT_DIR/phone-bench-install-overlay.mjs" restore \
+      --url "http://127.0.0.1:$DEV_PORT/" --state-file "$OVERLAY_STATE" \
+      --serial "$ADB_SERIAL" --cdp-port "$CDP_PORT" \
+      > "$OUT_DIR/install-overlay-restore.json" 2> "$OUT_DIR/install-overlay-restore.log"; then
+      restore_failed=1
+      echo "bench-phone-canvas-ab: WARNING: exact install-overlay storage restore failed; see install-overlay-restore.log" >&2
+    fi
   fi
   if [ "$owned_forward" = 1 ] && [ "$(forward_target)" = localabstract:chrome_devtools_remote ]; then
     adb -s "$ADB_SERIAL" forward --remove "tcp:$CDP_PORT" || true
@@ -220,6 +255,13 @@ cleanup() {
   if [ "$owned_serve_reverse" = 1 ] && [ "$(reverse_target "$SERVE_PORT")" = "tcp:$SERVE_PORT" ]; then
     adb -s "$ADB_SERIAL" reverse --remove "tcp:$SERVE_PORT" || true
   fi
+  # EXIT traps otherwise preserve the entry status even when cleanup failed.
+  # Make a restore failure fatal only when it is the first failure, and never
+  # replace a more specific status from the matrix itself.
+  trap - EXIT
+  if [ "$entry_status" -ne 0 ]; then exit "$entry_status"; fi
+  if [ "$restore_failed" -ne 0 ]; then exit 1; fi
+  exit 0
 }
 trap cleanup EXIT
 trap 'exit 130' INT
@@ -321,13 +363,27 @@ for workload in "${WORKLOAD_ARR[@]}"; do
       continue
     fi
 
-    # The two shipped implementations are DOM and strict single-canvas.
+    # Capture the exact original value once, then reapply the temporary snooze
+    # to every fresh tab before the arm-specific benchmark navigation.
+    if ! node "$SCRIPT_DIR/phone-bench-install-overlay.mjs" save-and-snooze \
+      --url "http://127.0.0.1:$DEV_PORT/" --state-file "$OVERLAY_STATE" \
+      --serial "$ADB_SERIAL" --cdp-port "$CDP_PORT" \
+      > "$OUT_DIR/${label}.install-overlay.json" 2> "$OUT_DIR/${label}.install-overlay.log"; then
+      echo "bench-phone-canvas-ab: could not save/snooze the Install overlay for $label" >&2
+      exit 2
+    fi
+
+    # Defaults remain the two shipped implementations. Named arms may instead
+    # compare two query-selected policies in the same built renderer.
     query_args=()
-    case "$arm" in
-      dom) query="stage=dom" ;;
-      canvas) query="stage=canvas&paintDump=1" ;;
-      *) echo "bench-phone-canvas-ab: internal unknown arm '$arm'" >&2; exit 2 ;;
-    esac
+    if [ "$arm" = "$CONTROL_NAME" ]; then
+      query="$CONTROL_QUERY"
+    elif [ "$arm" = "$CANDIDATE_NAME" ]; then
+      query="$CANDIDATE_QUERY"
+    else
+      echo "bench-phone-canvas-ab: internal unknown arm '$arm'" >&2
+      exit 2
+    fi
     query_args=(--query "$query")
     echo "  cell query: ${query_args[*]:-(none)}"
 
@@ -344,7 +400,7 @@ for workload in "${WORKLOAD_ARR[@]}"; do
     RECORDING="$rec" PHASE="$phase" RESULT_PATH="$result" REPORT_PATH="$report" TRACE_PATH="$trace" \
     DISPLAY_PATH="$OUT_DIR/${label}.display" REPEATS="$REPEATS" EFFECTS="$EFFECTS" EFFECT_MODE="$EFFECT_MODE" \
     QUALITY="$QUALITY" DEV_BG_FIXTURE="$DEV_BG_FIXTURE" ASSET_CACHE_ROOT="$ASSET_CACHE_ROOT" MALI_PROFILE="$MALI_PROFILE" \
-    ASSET_PREFLIGHT_URLS="$ASSET_PREFLIGHT_URLS" BG_PREFLIGHT_URL="$BG_PREFLIGHT_URL" node -e '
+    ASSET_PREFLIGHT_URLS="$ASSET_PREFLIGHT_URLS" BG_PREFLIGHT_URL="$BG_PREFLIGHT_URL" OVERLAY_STATE="$OVERLAY_STATE" node -e '
       const { writeFileSync } = require("node:fs");
       writeFileSync(process.env.META_PATH, JSON.stringify({
         schema: "phone-canvas-cell/1", label: process.env.LABEL, arm: process.env.ARM,
@@ -355,8 +411,10 @@ for workload in "${WORKLOAD_ARR[@]}"; do
           assets: { source: "recovered-project+production-asset-cache", assetCacheRoot: process.env.ASSET_CACHE_ROOT,
             requiredUrls: process.env.ASSET_PREFLIGHT_URLS.split(",") },
           staticBackground: { source: "COUCHCOOP_DEV_BG_FIXTURE", fixtureDir: process.env.DEV_BG_FIXTURE,
-            requiredUrl: process.env.BG_PREFLIGHT_URL } },
-        artifacts: { result: process.env.RESULT_PATH, report: process.env.REPORT_PATH, trace: process.env.TRACE_PATH, display: process.env.DISPLAY_PATH },
+            requiredUrl: process.env.BG_PREFLIGHT_URL },
+          installOverlay: { storageKey: "couchcoop.installPrompt.snoozedUntil", savedState: process.env.OVERLAY_STATE } },
+        artifacts: { result: process.env.RESULT_PATH, report: process.env.REPORT_PATH, trace: process.env.TRACE_PATH, display: process.env.DISPLAY_PATH,
+          installOverlayState: process.env.OVERLAY_STATE },
         maliProfile: { enabled: process.env.MALI_PROFILE === "on", scope: "global Mali hardware counters; not Chrome hardware attribution" }
       }, null, 2) + "\n");
     '
@@ -475,27 +533,29 @@ for workload in "${WORKLOAD_ARR[@]}"; do
     fi
     lmk=false; grep -Eqi 'Kill .*com\.android\.chrome|com\.android\.chrome.*(killed|kill)' "$OUT_DIR/${label}.lmk" && lmk=true || true
     context_loss=false; grep -Eqi 'lost the GPU|context lost|GpuProcessHost.*(crash|restart)' "$OUT_DIR/${label}.gpulog" && context_loss=true || true
-    page_crash=false; asset_failure=false; known_nonpainting_asset_errors='[]'
+    page_crash=false; asset_failure=false; known_nonpainting_asset_errors='[]'; install_overlay_absent=false
     if [ -s "$result" ]; then
-      read -r page_crash asset_failure known_nonpainting_asset_errors < <(RESULT_PATH="$result" node -e '
+      read -r page_crash asset_failure known_nonpainting_asset_errors install_overlay_absent < <(RESULT_PATH="$result" node -e '
         const r=require(process.env.RESULT_PATH);
         const crash=r.pageCrashed===true || (r.crashedRepeats||[]).some(Boolean);
         const known=new Set(["/res/scenes/game.tscn%3A%3AGradientTexture2D_5newe","/res/scenes/screens/settings_screen.tscn%3A%3AGradientTexture2D_hcj65"]);
         const errors=(r.responseErrors||[]).filter(x => Number(x.status)>=400);
         const knownErrors=errors.filter(x => known.has(x.pathname));
         const asset=errors.some(x => !known.has(x.pathname));
-        console.log(`${crash} ${asset} ${JSON.stringify(knownErrors)}`);
+        const overlay=r.installOverlay?.absentAtAllMarkers===true;
+        console.log(`${crash} ${asset} ${JSON.stringify(knownErrors)} ${overlay}`);
       ')
     else page_crash=true; asset_failure=true; fi
     META_PATH="$meta" BENCH_EXIT="$bench_exit" LMK="$lmk" CONTEXT="$context_loss" RESTART="$process_restart" \
     PAGE_CRASH="$page_crash" ASSET_FAILURE="$asset_failure" KNOWN_NONPAINTING_ASSET_ERRORS="$known_nonpainting_asset_errors" GPU_BEFORE="$gpu_before" GPU_AFTER="$gpu_after" \
+    INSTALL_OVERLAY_ABSENT="$install_overlay_absent" \
     FOREGROUND_PRE="$tab_ok" FOREGROUND_POST="$foreground_post" THERMAL="$thermal_throttle" \
     PROCS_BEFORE="$OUT_DIR/${label}.procs.before" PROCS_AFTER="$OUT_DIR/${label}.procs" FOREGROUND_PRE_RAF="$OUT_DIR/${label}.foreground.pre-raf" FOREGROUND_BEFORE="$OUT_DIR/${label}.foreground.before" FOREGROUND_AFTER="$OUT_DIR/${label}.foreground.after" \
     THERMAL_BEFORE="$OUT_DIR/${label}.thermal.before" THERMAL_AFTER="$OUT_DIR/${label}.thermal.after" \
     LMK_PATH="$OUT_DIR/${label}.lmk" GPU_LOG="$OUT_DIR/${label}.gpulog" node -e '
       const fs=require("node:fs"), m=JSON.parse(fs.readFileSync(process.env.META_PATH,"utf8"));
       m.artifacts={...m.artifacts, thermalBefore:process.env.THERMAL_BEFORE, thermalAfter:process.env.THERMAL_AFTER, procsBefore:process.env.PROCS_BEFORE, procsAfter:process.env.PROCS_AFTER, foregroundPreRaf:process.env.FOREGROUND_PRE_RAF, foregroundBefore:process.env.FOREGROUND_BEFORE, foregroundAfter:process.env.FOREGROUND_AFTER, lmk:process.env.LMK_PATH, gpuLog:process.env.GPU_LOG};
-      m.health={benchExit:Number(process.env.BENCH_EXIT), lmk:process.env.LMK==="true", contextLoss:process.env.CONTEXT==="true", processRestart:process.env.RESTART==="true", pageCrash:process.env.PAGE_CRASH==="true", assetFailure:process.env.ASSET_FAILURE==="true", knownNonpaintingAssetErrors:JSON.parse(process.env.KNOWN_NONPAINTING_ASSET_ERRORS||"[]"), thermalThrottle:process.env.THERMAL==="true", foregroundPre:process.env.FOREGROUND_PRE==="1", foregroundPost:process.env.FOREGROUND_POST==="true", gpuPidsBefore:process.env.GPU_BEFORE, gpuPidsAfter:process.env.GPU_AFTER};
+      m.health={benchExit:Number(process.env.BENCH_EXIT), lmk:process.env.LMK==="true", contextLoss:process.env.CONTEXT==="true", processRestart:process.env.RESTART==="true", pageCrash:process.env.PAGE_CRASH==="true", assetFailure:process.env.ASSET_FAILURE==="true", knownNonpaintingAssetErrors:JSON.parse(process.env.KNOWN_NONPAINTING_ASSET_ERRORS||"[]"), installOverlayAbsent:process.env.INSTALL_OVERLAY_ABSENT==="true", thermalThrottle:process.env.THERMAL==="true", foregroundPre:process.env.FOREGROUND_PRE==="1", foregroundPost:process.env.FOREGROUND_POST==="true", gpuPidsBefore:process.env.GPU_BEFORE, gpuPidsAfter:process.env.GPU_AFTER};
       fs.writeFileSync(process.env.META_PATH, JSON.stringify(m,null,2)+"\n");
     '
     if [ -s "$trace" ] && [ -s "$result" ]; then

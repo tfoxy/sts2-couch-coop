@@ -6,6 +6,7 @@ ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 RUNNER="$ROOT/scripts/bench-phone-query-ab.sh"
 WRAPPER="$ROOT/scripts/bench-phone-canvas-ab.sh"
 TAB_TOOL="$ROOT/scripts/phone-bench-tab.mjs"
+OVERLAY_TOOL="$ROOT/scripts/phone-bench-install-overlay.mjs"
 fail=0
 check() {
   local name="$1"
@@ -33,8 +34,14 @@ check "SIGINT exits rather than continuing the matrix" grep -Fq "trap 'exit 130'
 check "SIGTERM exits rather than continuing the matrix" grep -Fq "trap 'exit 143' TERM" <<<"$source"
 check "cleanup is only on EXIT (no signal trap continuation)" bash -c '! grep -Fq "trap cleanup EXIT INT TERM" "$1" && grep -Fq "trap cleanup EXIT" "$1"' _ "$RUNNER"
 check "generic runner is a separate entrypoint" bash -c '[ "$1" != "$2" ] && [ -x "$1" ]' _ "$RUNNER" "$WRAPPER"
-check "four-cell DOM/canvas gate stays independent" grep -Fq 'ARMS="dom,canvas,canvas,dom"' "$WRAPPER"
-check "canvas arm is canonical" grep -Fq 'canvas) query="stage=canvas&paintDump=1"' "$WRAPPER"
+check "four-cell DOM/canvas defaults stay canonical" bash -c 'grep -Fq '\''CONTROL_QUERY="stage=dom"'\'' "$1" && grep -Fq '\''CANDIDATE_QUERY="stage=canvas&paintDump=1"'\'' "$1"' _ "$WRAPPER"
+check "named control/candidate ABBA is pinned" grep -Fq 'ARMS="$CONTROL_NAME,$CANDIDATE_NAME,$CANDIDATE_NAME,$CONTROL_NAME"' "$WRAPPER"
+check "install overlay exact state is restored" grep -Fq 'phone-bench-install-overlay.mjs" restore' "$WRAPPER"
+check "install overlay page match uses the exact origin" grep -Fq 'url.origin === expected.origin' "$OVERLAY_TOOL"
+check "install overlay page match never aliases hosts by port" bash -c '! grep -Fq "url.port === expected.port" "$1"' _ "$OVERLAY_TOOL"
+check "install overlay restore failure becomes the exit status" grep -Fq 'if [ "$restore_failed" -ne 0 ]; then exit 1; fi' "$WRAPPER"
+check "install overlay restore does not mask an earlier failure" grep -Fq 'if [ "$entry_status" -ne 0 ]; then exit "$entry_status"; fi' "$WRAPPER"
+check "install overlay is marker-gated" grep -Fq 'installOverlayAbsent:process.env.INSTALL_OVERLAY_ABSENT==="true"' "$WRAPPER"
 check "deleted canvas selectors stay absent" bash -c '! grep -Eq "pureCanvas|canvasRetained|canvasStaticBg|retainedForceDecline|retained-marker-timing" "$1"' _ "$WRAPPER"
 # Keep the timestamp format as one remote-shell command. Passing the format as a separate
 # adb argument makes Android toybox date see two operands because of its embedded space.

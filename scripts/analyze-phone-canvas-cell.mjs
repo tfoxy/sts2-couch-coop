@@ -208,6 +208,16 @@ function buildMetrics(meta, result, window, trace, deviceMemory = undefined, act
   // Do not manufacture direct-path timing from a whole-frame timing. The first set field is preserved so the
   // matrix gate can fail closed until the canvas diagnostic publishes the requested direct p95.
   const canvasStats = result.census?.canvasStats ?? result.census?.canvas ?? result.idle?.stage ?? null;
+  const retainedCurrent = canvasStats?.retainedSubtrees ?? null;
+  const retainedSubtrees = result.retainedSubtrees
+    ? {
+        before: result.retainedSubtrees.before ?? null,
+        after: result.retainedSubtrees.after ?? null,
+        current: result.retainedSubtrees.current ?? null,
+      }
+    : retainedCurrent
+      ? { before: null, after: null, current: retainedCurrent }
+      : null;
   return {
     schema: "phone-canvas-cell-metrics/2",
     cell: meta,
@@ -269,6 +279,10 @@ function buildMetrics(meta, result, window, trace, deviceMemory = undefined, act
           gpuRows: memory.gpuRows ?? null, rendererRows: memory.rendererRows ?? null, unit: memory.unit }
       : null,
     canvasStats,
+    // Preserve the marker window so acceptance can prove real retained work,
+    // not merely a nonzero resident allocation. A census-only diagnostic has
+    // no marker boundaries, so its before/after values stay explicitly null.
+    retainedSubtrees,
     windowedFallback: result.census?.windowedFallback ?? result.census?.canvasStats?.windowedFallback ?? null,
     health: meta.health ?? null,
     resultPath: meta.artifacts?.result ?? null,

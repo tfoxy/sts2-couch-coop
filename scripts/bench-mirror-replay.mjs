@@ -86,13 +86,22 @@ function beginActiveMarkerWindowInPage(input) {
   if (Array.isArray(window.__benchSceneAckPending)) window.__benchSceneAckPending.length = 0;
   if (input.marker) console.timeStamp(input.marker);
   const stats = typeof window.__mirrorCanvasStats === "function" ? window.__mirrorCanvasStats() : null;
-  return { nodes: document.querySelectorAll(".mirror-node").length, canvasStats: stats, sampledAtMs: performance.now() };
+  return {
+    nodes: document.querySelectorAll(".mirror-node").length,
+    canvasStats: stats,
+    installOverlayPresent: document.querySelector('[data-testid="install-button"]') !== null,
+    sampledAtMs: performance.now(),
+  };
 }
 
 function endActiveMarkerWindowInPage(input) {
   if (input.marker) console.timeStamp(input.marker);
   const stats = typeof window.__mirrorCanvasStats === "function" ? window.__mirrorCanvasStats() : null;
-  return { atMs: performance.now(), canvasStats: stats };
+  return {
+    atMs: performance.now(),
+    canvasStats: stats,
+    installOverlayPresent: document.querySelector('[data-testid="install-button"]') !== null,
+  };
 }
 
 function idleMarkerWindowInPage(input) {
@@ -101,7 +110,10 @@ function idleMarkerWindowInPage(input) {
   console.timeStamp(input.label);
   try { performance.mark(input.label); } catch { /* older engines */ }
   if (input.label === "cc-idle-end") window.__benchIdleFrameGaps = [...(window.__benchFrameGaps ?? [])];
-  return at;
+  return {
+    atMs: at,
+    installOverlayPresent: document.querySelector('[data-testid="install-button"]') !== null,
+  };
 }
 
 function parseArgs(argv) {
@@ -3970,6 +3982,11 @@ async function runOnce(context, pageUrl, opts) {
       })
     : null;
   const readyMs = opts.report ? markerClose?.atMs ?? null : null;
+  let retainedSubtrees = {
+    before: markerOpen?.canvasStats?.retainedSubtrees ?? null,
+    after: markerClose?.canvasStats?.retainedSubtrees ?? null,
+    current: markerClose?.canvasStats?.retainedSubtrees ?? null,
+  };
   let bridgeStats = (() => {
     const before = markerOpen?.canvasStats;
     const after = markerClose?.canvasStats;
@@ -4140,7 +4157,8 @@ async function runOnce(context, pageUrl, opts) {
                 glyphs: s.textGlyphs.pass.glyphs ?? null
               }
             : null,
-          schedule: s.schedule ?? null
+          schedule: s.schedule ?? null,
+          retainedSubtrees: s.retainedSubtrees ?? null
         };
       });
     // Start tracing before the first counter sample, then take the samples as
@@ -4149,10 +4167,15 @@ async function runOnce(context, pageUrl, opts) {
     // and then divided by --idle.
     if (markerTrace.scope?.phase === "idle") await markerTrace.start();
     const stageBefore = await readStage();
-    const markerStartAtMs = await mark("cc-idle-start");
+    const markerStart = await mark("cc-idle-start");
     await page.waitForTimeout(opts.idle);
-    const markerEndAtMs = await mark("cc-idle-end");
+    const markerEnd = await mark("cc-idle-end");
     const stageAfter = await readStage();
+    retainedSubtrees = {
+      before: stageBefore.retainedSubtrees ?? null,
+      after: stageAfter.retainedSubtrees ?? null,
+      current: stageAfter.retainedSubtrees ?? null,
+    };
     // An idle report's trace window is the idle marker pair, not the earlier
     // replay bracket. Replace its evidence with these matching samples.
     if (markerTrace.scope?.phase === "idle") {
@@ -4169,7 +4192,7 @@ async function runOnce(context, pageUrl, opts) {
       tracePath = completed.tracePath;
       traceMetrics = completed.traceMetrics;
     }
-    const markerWindowMs = markerEndAtMs - markerStartAtMs;
+    const markerWindowMs = markerEnd.atMs - markerStart.atMs;
     const stageSampleWindowMs = stageAfter.sampledAtMs - stageBefore.sampledAtMs;
     idle = {
       windowMs: opts.idle,
@@ -4184,7 +4207,12 @@ async function runOnce(context, pageUrl, opts) {
       shots: null,
       stage: null,
       stageDeltas: null,
-      stageMismatch: null
+      stageMismatch: null,
+      installOverlay: {
+        before: markerStart.installOverlayPresent,
+        after: markerEnd.installOverlayPresent,
+        absentAtBothMarkers: markerStart.installOverlayPresent === false && markerEnd.installOverlayPresent === false,
+      },
     };
     if (stageBefore.available && stageAfter.available) {
       if (stageBefore.instanceId !== stageAfter.instanceId) {
@@ -4726,6 +4754,12 @@ async function runOnce(context, pageUrl, opts) {
     }
   }
 
+  const installOverlay = idle?.installOverlay ?? {
+    before: markerOpen.installOverlayPresent,
+    after: markerClose?.installOverlayPresent ?? null,
+    absentAtBothMarkers:
+      markerOpen.installOverlayPresent === false && markerClose?.installOverlayPresent === false,
+  };
   const wall = (wallB - wallA) / 1000; // seconds
   const dTask = a.task !== null && b.task !== null ? b.task - a.task : null;
   const delta = {
@@ -4771,6 +4805,8 @@ async function runOnce(context, pageUrl, opts) {
     handParity,
     flightLiveness,
     droppedCardFlights,
+    installOverlay,
+    retainedSubtrees,
     idle,
     animAuditPath: opts.animAudit && opts.animAuditOut ? opts.animAuditOut : null,
     animAuditCounts: animAudit ? animAudit.counts : null,
@@ -4814,6 +4850,9 @@ async function runOnce(context, pageUrl, opts) {
     if (!discard && !(round(readyMs, 1) > 0)) discard = "readyMs was not a positive number";
     if (!discard && !geometry) discard = "geometry block was not built";
     if (!discard && !presented) discard = "presence guard produced no result";
+    if (!discard && installOverlay.absentAtBothMarkers !== true) {
+      discard = "PWA install overlay was present or unmeasured at a marker boundary";
+    }
 
     const report = {
       initialRenderMs: round(initialRenderMs, 1),
@@ -5511,6 +5550,12 @@ const result = {
   perRepeatFrameGaps: runs.map((r) => r.frameGaps ?? null),
   // First acknowledgement after each delivered scene delta. See fakeWebSocketInit for coalescing semantics.
   perRepeatSceneAckLatency: runs.map((r) => r.sceneAckLatency ?? null),
+  installOverlay: {
+    absentAtAllMarkers: runs.length > 0 && runs.every((run) => run.installOverlay?.absentAtBothMarkers === true),
+    perRepeat: runs.map((run) => run.installOverlay ?? null),
+  },
+  retainedSubtrees: runs.find((run) => run.retainedSubtrees?.current)?.retainedSubtrees ?? null,
+  perRepeatRetainedSubtrees: runs.map((run) => run.retainedSubtrees ?? null),
   perRepeatWalks: runs.map((r) =>
     r.walkStats
       ? {

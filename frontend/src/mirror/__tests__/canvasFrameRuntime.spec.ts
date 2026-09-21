@@ -1,5 +1,15 @@
 import { describe, expect, it } from "vitest";
-import { createDrawList, type DrawList, type ExecutorTexture, type StageProjection } from "@godot-scene-web/canvas";
+import {
+  compileDrawList,
+  createDrawList,
+  createQuadView,
+  type CompiledRefreshResult,
+  type DrawList,
+  type ExecuteOptions,
+  type ExecutorTexture,
+  type RetainedRangeSubstitutionPlan,
+  type StageProjection,
+} from "@godot-scene-web/canvas";
 
 import { buildDrawList } from "@/mirror/canvas/buildDrawList";
 import { createPaintGuard } from "@/mirror/canvas/paintGuard";
@@ -24,6 +34,65 @@ const projection: StageProjection = {
 };
 
 describe("canvas frame runtime", () => {
+  it("shares one compiled refresh between retained planning and final execution without changing the logical list", () => {
+    const list = createDrawList<ExecutorTexture | null>();
+    const compiled = compileDrawList(list);
+    const quad = createQuadView();
+    quad.w = quad.h = quad.srcW = quad.srcH = 8;
+    const substitution = {} as RetainedRangeSubstitutionPlan;
+    let preparedRefresh: CompiledRefreshResult | null = null;
+    let executeOptions: ExecuteOptions | undefined;
+    const runtime = createCanvasFrameRuntime({
+      list,
+      buildList: list as unknown as DrawList<string>,
+      executor: {
+        execute: (_list, _projection, options) => {
+          executeOptions = options;
+          return true;
+        },
+      },
+      projection: () => projection,
+      paintGuard: createPaintGuard<ExecutorTexture | null>(),
+      paintSkipEnabled: false,
+      isUnavailable: () => false,
+      pixelEpoch: () => 0,
+      inputEpoch: () => 0,
+      textureReadyEpoch: () => "ready",
+      now: () => 0,
+      buildScene: buildDrawList,
+      makeBuildOptions: () => ({ resetList: false }),
+      prepareBuild: () => {},
+      collectCaptureIds: () => {},
+      emitBuildPrefix: (target) => target.pushQuad(quad, null),
+      admitBuild: () => true,
+      finalizeBuild: () => {},
+      finalizeDerived: () => {},
+      captureWireGraph: () => null,
+      onBuildTiming: () => {},
+      onPaintTiming: () => {},
+      beforeDirectPaint: () => {},
+      onPaintUnavailable: () => {},
+      onPaintSkipped: () => {},
+      onPainted: () => {},
+      retained: {
+        planBuild: () => {},
+        prepare: (_list, _projection, refresh) => {
+          preparedRefresh = refresh;
+          return substitution;
+        },
+      },
+    });
+
+    expect(runtime.runBuild(createMirrorState())).toBe(true);
+    expect(list.count).toBe(1);
+    runtime.paint({ compiled });
+
+    expect(preparedRefresh).not.toBeNull();
+    expect(executeOptions?.compiledRefresh).toBe(preparedRefresh);
+    expect(executeOptions?.substitutions).toBe(substitution);
+    expect(list.count).toBe(1);
+  });
+
   it("keeps a rejected presentation candidate out of finalization, overlay, paint, and chrome paths", () => {
     let admitted = true;
     let finalized = 0;
