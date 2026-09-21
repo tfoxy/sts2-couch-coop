@@ -24,7 +24,7 @@ RECORDINGS=""
 BEFORE_NAME="dom"
 AFTER_NAME="canvas"
 BEFORE_QUERY="stage=dom"
-AFTER_QUERY="stage=canvas"
+AFTER_QUERY="stage=canvas&paintDump=1"
 WINDOW=""
 
 usage() {
@@ -150,10 +150,17 @@ for rec in "${REC_ARR[@]}"; do
     # Reassert after any unrelated Android interruption.  The tab tool sweeps only this origin before attaching,
     # avoiding the one stale mirror tab that can wedge browser-wide connectOverCDP.
     if ! install_tunnels; then echo "tunnel failure" | tee "$log"; cell_failed=1; continue; fi
-    cell_t0="$(adb -s "$ADB_SERIAL" shell date '+%m-%d %H:%M:%S.000' 2>/dev/null | tr -d '\r')"
+    cell_t0="$(adb -s "$ADB_SERIAL" shell "date '+%m-%d %H:%M:%S.000'" 2>/dev/null | tr -d '\r')"
     adb -s "$ADB_SERIAL" shell am force-stop com.motorola.ccc.ota 2>/dev/null || true
-    if ! node "$SCRIPT_DIR/phone-bench-tab.mjs" open --url "http://127.0.0.1:$DEV_PORT/" --serial "$ADB_SERIAL" --cdp-port "$CDP_PORT" >"$OUT_DIR/${label}.foreground-before" 2>&1; then
+    if node "$SCRIPT_DIR/phone-bench-tab.mjs" open --url "http://127.0.0.1:$DEV_PORT/" --serial "$ADB_SERIAL" --cdp-port "$CDP_PORT" >"$OUT_DIR/${label}.foreground-before" 2>&1; then
+      :
+    else
+      tab_status=$?
       cat "$OUT_DIR/${label}.foreground-before" | tee "$log"
+      if [ "$tab_status" -eq 3 ]; then
+        echo "FATAL: tab teardown evidence failed; refusing unguarded next cell" >> "$log"
+        exit 3
+      fi
       echo "SKIPPED: fresh Android-intent tab was not foreground/scheduled" >> "$log"
       printf '{"status":"skipped","reason":"foreground-before-failed"}\n' > "$OUT_DIR/${label}.json"
       capture_cell_artifacts "$label" "$cell_t0"
@@ -165,11 +172,15 @@ for rec in "${REC_ARR[@]}"; do
     [ "$EFFECTS" = off ] && effect_args=(--effects off)
     window_args=()
     [ -n "$WINDOW" ] && window_args=(--window "$WINDOW")
+    # android-webview-lib.sh enables -e. Keep this cell alive long enough to
+    # capture PIPESTATUS and finalize its evidence when the bench itself fails.
+    set +e
     node "$SCRIPT_DIR/bench-mirror-replay.mjs" \
       --connect-cdp "http://127.0.0.1:$CDP_PORT" --serve-port "$SERVE_PORT" --url "http://127.0.0.1:$DEV_PORT" \
       --recording "$rec" --pace recorded --quality "$QUALITY" "${effect_args[@]}" --repeats "$REPEATS" \
       --census --res-root --query "$query" "${window_args[@]}" 2>&1 | tee "$log"
     bench_status=${PIPESTATUS[0]}
+    set -e
     grep -h '^BENCH_RESULT ' "$log" | tail -1 > "$OUT_DIR/${label}.json" || true
 
     capture_cell_artifacts "$label" "$cell_t0"

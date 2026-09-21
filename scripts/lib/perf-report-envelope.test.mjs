@@ -4,6 +4,7 @@ import test from "node:test";
 import {
   buildGeometry,
   buildPerfReport,
+  canvasTextureBridgeWindow,
   medianCpu,
   medianMetrics,
   medianOf,
@@ -180,6 +181,32 @@ test("medianMetrics: nullable ratio drops null repeats, keeps the invariant", ()
 test("medianMetrics: a required metric absent in every repeat throws (no misleading zero)", () => {
   const runs = [syntheticRun({ contentUpdateHz: null }), syntheticRun({ contentUpdateHz: undefined })];
   assert.throws(() => medianMetrics(runs), /contentUpdateHz/);
+});
+
+test("canvasTextureBridgeWindow: only one positive renderer lifetime can supply bridge evidence", () => {
+  const before = { instance: { id: 7 }, sampledAtMs: 10, pageDecodes: 1, pageDecodeFailed: 0, pageDecodeMs: 2, pageOwnedUploads: 1, pageElementUploads: 0, uploads: 1, uploadMs: 1 };
+  const after = { instance: { id: 7 }, sampledAtMs: 30, pageDecodes: 3, pageDecodeFailed: 1, pageDecodeMs: 6, pageOwnedUploads: 3, pageElementUploads: 0, uploads: 3, uploadMs: 4 };
+  assert.deepEqual(canvasTextureBridgeWindow(before, after), {
+    source: "canvas.textureBridge.window", instanceId: 7, sampleWindowMs: 20,
+    pageDecodes: 2, pageDecodeFailed: 1, pageDecodeMs: 4, pageOwnedUploads: 2,
+    pageElementUploads: 0, uploads: 2, uploadMs: 3,
+  });
+  assert.equal(canvasTextureBridgeWindow(before, { ...after, instance: { id: 8 } }), null);
+  assert.equal(canvasTextureBridgeWindow(before, { ...after, pageDecodeMs: 1 }), null);
+});
+
+test("medianMetrics: bridge evidence keeps trace fields zero and aggregates bridge counters", () => {
+  const bridge = (id, failed, elements) => syntheticRun({ decode: {
+    count: 0, totalMs: 0, maxMs: 0, codecRuns: 0, codecMs: 0, distinctImages: 0, redecodeCount: 0,
+    redecodeMs: 0, inRasterCount: 0, inRasterMs: 0, cacheFamily: "unknown", imagesExpected: true,
+    provenance: "canvas-texture-bridge", source: "canvas.textureBridge.window", codecSource: null,
+    bridgeWindow: { source: "canvas.textureBridge.window", instanceId: id, sampleWindowMs: 1000, pageDecodes: 2, pageDecodeFailed: failed, pageDecodeMs: 4, pageOwnedUploads: 2, pageElementUploads: elements, uploads: 2, uploadMs: 3 },
+  }});
+  const metrics = medianMetrics([bridge(7, 0, 0), bridge(8, 1, 2)]);
+  assert.equal(metrics.decode.totalMs, 0);
+  assert.equal(metrics.decode.provenance, "canvas-texture-bridge");
+  assert.equal(metrics.decode.bridgeWindow.pageDecodeFailed, 1);
+  assert.equal(metrics.decode.bridgeWindow.pageElementUploads, 2);
 });
 
 // --------------------------------------------------------------------------

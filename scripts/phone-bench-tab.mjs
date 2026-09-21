@@ -30,7 +30,10 @@
 
 import { createRequire } from "node:module";
 import { execFileSync } from "node:child_process";
+import { androidRemoteCommand } from "./lib/android-remote-command.mjs";
+import { sampleRafUntilForeground } from "./lib/phone-bench-tab-raf.mjs";
 import { isHttpPageAtPrefixOrPort, isHttpPageOnPort, waitForPageTarget } from "./lib/phone-bench-tab-target.mjs";
+import { chromeSandboxedRendererPids, waitForBenchTargetTeardown } from "./lib/phone-bench-tab-teardown.mjs";
 import { assertLease } from "./live-qa-lock.mjs";
 
 const require = createRequire(new URL("../frontend/package.json", import.meta.url));
@@ -128,8 +131,21 @@ async function httpCloseOrigin(port, origin) {
       closed++;
     } catch { /* best effort */ }
   }
-  if (closed) await new Promise((r) => setTimeout(r, 1500));
   return closed;
+}
+
+async function waitForClosedBenchPort(port, benchUrl, preCloseRendererPids) {
+  const benchPort = new URL(benchUrl).port;
+  const endpoint = `http://127.0.0.1:${port}/json/list`;
+  return waitForBenchTargetTeardown({
+    benchPort,
+    preCloseRendererPids,
+    listTargets: async () => (await fetch(endpoint, { signal: AbortSignal.timeout(5000) })).json(),
+    // A target vanishing is not enough on Android: its renderer can survive
+    // for about a minute. Require a pre-close renderer to exit, then observe
+    // the remaining renderer/GPU set; never kill or alter user Chrome state.
+    sampleProcesses: () => adb("shell", androidRemoteCommand(["ps", "-A", "-o", "PID,RSS,NAME"])),
+  });
 }
 
 // Chrome can canonicalize a localhost benchmark tab to worky.local while preserving its port. For a new benchmark
@@ -153,7 +169,6 @@ async function httpCloseBenchPort(port, benchUrl) {
       closed++;
     } catch { /* best effort */ }
   }
-  if (closed) await new Promise((r) => setTimeout(r, 1500));
   return closed;
 }
 
@@ -173,19 +188,34 @@ async function rafRate(page) {
 
 /** Foreground a URL. `create_new_tab` is what stops Chrome navigating whatever tab the user was reading. */
 function intentOpen(url, newTab) {
-  const out = adb(
-    "shell", "am", "start", "-a", "android.intent.action.VIEW", "-d", url,
+  const command = androidRemoteCommand([
+    "am", "start", "-a", "android.intent.action.VIEW", "-d", url,
     "-n", "com.android.chrome/com.google.android.apps.chrome.Main",
-    ...(newTab ? ["--ez", "create_new_tab", "true"] : [])
-  );
+    ...(newTab ? ["--ez", "create_new_tab", "true"] : []),
+  ]);
+  const out = adb("shell", command);
   return out.trim();
 }
 
 // SWEEP BEFORE ATTACHING (see httpCloseOrigin): the bench's own leftover tabs are exactly the ones that can
 // wedge `connectOverCDP`, so they go first, over plain HTTP, while attaching is still possible.
 if (args.cmd === "open" && args.url) {
+  const preCloseRendererPids = chromeSandboxedRendererPids(
+    adb("shell", androidRemoteCommand(["ps", "-A", "-o", "PID,RSS,NAME"])),
+  );
   const n = await httpCloseBenchPort(args.cdpPort, args.url);
-  if (n) console.error(`phone-bench-tab: swept ${n} stale bench tab(s) on port ${new URL(args.url).port} before attaching`);
+  if (n) {
+    console.error(`phone-bench-tab: swept ${n} stale bench tab(s) on port ${new URL(args.url).port} before attaching`);
+    try {
+      const settled = await waitForClosedBenchPort(args.cdpPort, args.url, preCloseRendererPids);
+      console.error(`phone-bench-tab: previous bench renderer/GPU set quiescent after ${settled.elapsedMs}ms`);
+    } catch (error) {
+      console.error(`phone-bench-tab: ${error.message}; refusing to overlap A/B cells`);
+      // The caller must not retry this: the owned tab is already closed and a
+      // retry would open another cell without the renderer-exit evidence.
+      process.exit(3);
+    }
+  }
 } else if (args.cmd === "restore" && args.closeOrigin) {
   const n = await httpCloseOrigin(args.cdpPort, args.closeOrigin);
   if (n) console.error(`phone-bench-tab: swept ${n} stale bench tab(s) on ${args.closeOrigin} before attaching`);
@@ -231,10 +261,18 @@ if (args.cmd === "list") {
   }
   if (!page) { console.error(`phone-bench-tab: no tab appeared on port ${benchPort} after 20s.`); process.exit(1); }
   await sleep(1500);
-  const r = await rafRate(page);
-  console.log(`opened  ${page.url().slice(0, 100)}\nrAF     ${r} frames/s`);
-  if (r < args.minRaf) {
-    console.error(`phone-bench-tab: the new tab is THROTTLED (${r} fps < ${args.minRaf}). Is the screen on and Chrome foreground?`);
+  // A new, owned page can start around 15fps while Chrome restores it, then
+  // reach its normal foreground cadence a second later. Keep that same page
+  // (and its warmed renderer) through a fixed, bounded proof rather than
+  // reopening another cold tab. A frozen/background page remains below the
+  // threshold for every window.
+  const foreground = await sampleRafUntilForeground({
+    sample: () => rafRate(page),
+    minRaf: args.minRaf,
+  });
+  console.log(`opened  ${page.url().slice(0, 100)}\nrAF     ${foreground.rates.join(", ")} frames/s`);
+  if (!foreground.foreground) {
+    console.error(`phone-bench-tab: the new tab is THROTTLED (${foreground.best} fps < ${args.minRaf} after ${foreground.rates.length} samples). Is the screen on and Chrome foreground?`);
     process.exit(1);
   }
 } else if (args.cmd === "verify") {

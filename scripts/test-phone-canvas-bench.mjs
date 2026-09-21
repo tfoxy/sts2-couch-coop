@@ -26,7 +26,7 @@ function writeMatrix(dir, { canvasFps = 70 } = {}) {
           label: `${workload}-${i + 1}`,
           workload: { id: workload, recording: `/fixtures/${workload}.ndjson` }, arm, sequence: i + 1,
           run: { repeats: 1, effects: "on", effectMode: "static", quality: "static" },
-          query: isCanvas ? "stage=canvas" : "stage=dom",
+          query: isCanvas ? "stage=canvas&paintDump=1" : "stage=dom",
           artifacts: { result: join(dir, `${workload}-${i + 1}.result.json`) }
         },
         phase: idle ? "idle" : "active",
@@ -111,7 +111,14 @@ try {
   assert.match(runner, /FOREGROUND_PRE="\$tab_ok" FOREGROUND_POST="\$foreground_post"/);
   assert.match(runner, /foregroundPre:process\.env\.FOREGROUND_PRE==="1", foregroundPost:process\.env\.FOREGROUND_POST==="true"/);
   assert.doesNotMatch(runner, /--proc-mem/);
-  assert.match(runner, /canvas\) query="stage=canvas"/);
+  assert.match(runner, /canvas\) query="stage=canvas&paintDump=1"/);
+  assert.match(runner, /set \+e\n\s*node "\$SCRIPT_DIR\/bench-mirror-replay\.mjs"[\s\S]*?bench_exit=\$\{PIPESTATUS\[0\]\}\n\s*set -e/,
+    "a failing bench pipeline must still reach PIPESTATUS capture and finalization");
+  assert.match(runner, /r\.pageCrashed===true \|\| \(r\.crashedRepeats\|\|\[\]\)\.some\(Boolean\)/,
+    "ordinary page errors are not renderer crashes");
+  assert.match(runner, /knownNonpaintingAssetErrors:JSON\.parse/);
+  assert.match(runner, /GradientTexture2D_5newe[\s\S]*?GradientTexture2D_hcj65/,
+    "only the two reviewed nonpainting routes are exempted");
   assert.doesNotMatch(runner, /pureCanvas|canvasRetained|canvasStaticBg|retainedForceDecline|RETAINED_DECLINE_PROBE|retained-marker-timing/);
   assert.match(runner, /COUCHCOOP_DEV_BG_FIXTURE must name the ignored external background-fixture directory/);
   assert.match(runner, /COUCHCOOP_DEV_ASSET_CACHE_ROOT must name the production asset-cache schema directory/);
@@ -126,8 +133,12 @@ try {
     "cell artifact paths must be absolute before Node loads the result JSON");
   assert.match(runner, /phone-bench-tab\.mjs" open --url "http:\/\/127\.0\.0\.1:\$DEV_PORT\/"/,
     "the pre-cell foreground proof must open a stable mirror route, before the arm-specific navigation");
-  assert.match(runner, /from urllib\.parse import urlsplit[\s\S]*?u\.port == port/,
-    "the pre-cell sweep must close canonicalized HTTP(S) benchmark tabs by port, not literal hostname");
+  assert.doesNotMatch(runner, /\/json\/close\//,
+    "the wrapper must not pre-close targets and erase phone-bench-tab's renderer-PID evidence");
+  assert.match(runner, /phone-bench-tab\.mjs owns the whole stale-tab handoff/,
+    "the phone tab tool is the sole pre-open cleanup and quiescence owner");
+  assert.match(runner, /else\n\s*tab_status=\$\?\n\s*fi\n\s*if \[ "\$tab_status" -eq 3 \]; then[\s\S]*?exit 3/,
+    "teardown-evidence failure must be fatal before a foreground retry can open unguarded");
   assert.match(runner, /--url "http:\/\/127\.0\.0\.1:\$DEV_PORT"[\s\S]*?"\$\{query_args\[@\]\}"/,
     "the replay keeps its per-arm query navigation after the mirror-only pre-cell proof");
   // Bash syntax validation does not parse the embedded Node programs.

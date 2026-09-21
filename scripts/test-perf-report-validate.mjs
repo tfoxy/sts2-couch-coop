@@ -33,7 +33,10 @@ const GSW_ROOT = process.env.GODOT_SCENE_WEB_SOURCE_ROOT
 
 function validatorAvailable() {
   if (!existsSync(join(GSW_ROOT, "package.json"))) return false;
-  const probe = spawnSync("mise", ["exec", "--", "pnpm", "-C", GSW_ROOT, "perf", "--", "--help"], {
+  // `mise exec` is the documented command, but a sibling worktree can be
+  // deliberately outside mise's trust/config scope. `pnpm -C` still invokes
+  // the exact checked-out validator, so use it for the portable contract test.
+  const probe = spawnSync("pnpm", ["-C", GSW_ROOT, "perf", "--", "--help"], {
     encoding: "utf8",
     timeout: 120_000,
   });
@@ -42,8 +45,8 @@ function validatorAvailable() {
 
 function runValidator(reportPath) {
   return execFileSync(
-    "mise",
-    ["exec", "--", "pnpm", "-C", GSW_ROOT, "perf", "--", "validate-report", reportPath],
+    "pnpm",
+    ["-C", GSW_ROOT, "perf", "--", "validate-report", reportPath],
     { encoding: "utf8", timeout: 120_000 },
   );
 }
@@ -113,4 +116,27 @@ test("the validator actually rejects a broken envelope (guards against a no-op c
   } finally {
     rmSync(dir, { recursive: true, force: true });
   }
+});
+
+test("the shared validator accepts direct-canvas bridge evidence and rejects malformed or mixed evidence", { skip }, () => {
+  const bridge = (id) => syntheticRun({ decode: {
+    count: 0, totalMs: 0, maxMs: 0, codecRuns: 0, codecMs: 0, distinctImages: 0, redecodeCount: 0,
+    redecodeMs: 0, inRasterCount: 0, inRasterMs: 0, cacheFamily: "unknown", imagesExpected: true,
+    provenance: "canvas-texture-bridge", source: "canvas.textureBridge.window", codecSource: null,
+    bridgeWindow: { source: "canvas.textureBridge.window", instanceId: id, sampleWindowMs: 1000, pageDecodes: 0, pageDecodeFailed: 0, pageDecodeMs: 0, pageOwnedUploads: 0, pageElementUploads: 0, uploads: 0, uploadMs: 0 },
+  }});
+  const report = buildPerfReport({ runs: [bridge(11), bridge(12)], env: syntheticEnv(), params: syntheticParams(), artifacts: syntheticArtifacts(), scenario: "bridge" });
+  const dir = mkdtempSync(join(tmpdir(), "perf-report-bridge-"));
+  try {
+    const valid = join(dir, "valid.json"); writeFileSync(valid, JSON.stringify(report));
+    assert.match(runValidator(valid), /conforms to perf-report\/1/);
+    const mixed = structuredClone(report);
+    mixed.runs[1].decode = structuredClone(syntheticRun().decode);
+    const mixedFile = join(dir, "mixed.json"); writeFileSync(mixedFile, JSON.stringify(mixed));
+    assert.throws(() => runValidator(mixedFile), /Command failed|provenance/,
+      "the shared validator must reject a bridge aggregate with a cc-trace run");
+    report.runs[0].decode.bridgeWindow.instanceId = 0;
+    const malformed = join(dir, "malformed.json"); writeFileSync(malformed, JSON.stringify(report));
+    assert.throws(() => runValidator(malformed), /Command failed|instanceId/);
+  } finally { rmSync(dir, { recursive: true, force: true }); }
 });

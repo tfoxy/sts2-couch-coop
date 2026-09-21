@@ -32,7 +32,8 @@ import { BENCH_ASSET_FAMILIES, isBenchAssetRoute } from "./lib/bench-asset-route
 import { effectiveConnectPageUrl, selectConnectBenchPageIndex } from "./lib/connect-bench-page.mjs";
 import { computeCpuBlock } from "./lib/trace-cpu-block.mjs";
 import { checkPresence } from "./lib/screenshot-presence.mjs";
-import { buildGeometry, buildPerfReport, sameGeometry } from "./lib/perf-report-envelope.mjs";
+import { traceDecodeEvidenceError } from "./lib/bridge-trace-evidence.mjs";
+import { buildGeometry, buildPerfReport, canvasTextureBridgeWindow, sameGeometry } from "./lib/perf-report-envelope.mjs";
 import { requireReproHeader } from "./lib/repro-recording.mjs";
 import { RECOVERED_RESOURCE_ROOT, REPO_ROOT } from "./lib/repo-layout.mjs";
 
@@ -84,12 +85,14 @@ function beginActiveMarkerWindowInPage(input) {
   if (Array.isArray(window.__benchSceneAckLatencies)) window.__benchSceneAckLatencies.length = 0;
   if (Array.isArray(window.__benchSceneAckPending)) window.__benchSceneAckPending.length = 0;
   if (input.marker) console.timeStamp(input.marker);
-  return document.querySelectorAll(".mirror-node").length;
+  const stats = typeof window.__mirrorCanvasStats === "function" ? window.__mirrorCanvasStats() : null;
+  return { nodes: document.querySelectorAll(".mirror-node").length, canvasStats: stats, sampledAtMs: performance.now() };
 }
 
 function endActiveMarkerWindowInPage(input) {
   if (input.marker) console.timeStamp(input.marker);
-  return performance.now();
+  const stats = typeof window.__mirrorCanvasStats === "function" ? window.__mirrorCanvasStats() : null;
+  return { atMs: performance.now(), canvasStats: stats };
 }
 
 function idleMarkerWindowInPage(input) {
@@ -3111,7 +3114,7 @@ function createTraceCollector({ onKeep = null, keepCpuComplete = false } = {}) {
 //     renderer main thread EXACTLY (they were emitted from it), which is what makes per-thread attribution
 //     honest on a page with several renderer processes' worth of threads in the trace.
 //   - anything the trace does not actually carry is reported as null. Never a zero standing in for "unknown".
-function computeTraceMetrics(collector, scope = ACTIVE_TRACE_WINDOW) {
+function computeTraceMetrics(collector, scope = ACTIVE_TRACE_WINDOW, bridgeWindow = null) {
   const { events, threadNames, processNames } = collector;
   const markerWindow = markerWindowOrError(events, scope);
   if (markerWindow.error) {
@@ -3428,9 +3431,11 @@ function computeTraceMetrics(collector, scope = ACTIVE_TRACE_WINDOW) {
   if (renderSurfaceListPasses === 0) {
     return { error: "no CalculateRenderSurfaceLayerList events — the cc render-surface census never ran, so `renderSurfaces` is UNMEASURED (add the `cc` trace category)" };
   }
-  if (decodes.length === 0) {
-    return { error: `no ${CANONICAL_DECODE.join("/")} events matched (cacheFamily=${cacheFamily}) — image decode is UNMEASURED, not fast; re-check the decode-cache event names for this Chrome` };
-  }
+  // DOM retains the strict zero-decode rejection. The only exception is the
+  // already-validated bridge sample from THIS marker scope; it is not inferred
+  // from canvas mode or accepted during cleanup.
+  const decodeEvidenceError = traceDecodeEvidenceError(decodes.length, cacheFamily, CANONICAL_DECODE, bridgeWindow);
+  if (decodeEvidenceError) return { error: decodeEvidenceError };
   if (cpu.byThread.length === 0) {
     return { error: "no RunTask/tdur events in the window across any process — the cross-process `cpu` block could not be built" };
   }
@@ -3628,7 +3633,7 @@ function createMarkerScopedTrace(cdp, opts) {
     }
   };
 
-  const stop = async () => {
+  const stop = async ({ bridgeWindow = null } = {}) => {
     if (!started) return { tracePath: null, traceMetrics: null };
     const done = new Promise((res) => cdp.once("Tracing.tracingComplete", res));
     let complete;
@@ -3645,7 +3650,7 @@ function createMarkerScopedTrace(cdp, opts) {
     let traceMetrics = null;
     let markerError = null;
     if (collector) {
-      traceMetrics = computeTraceMetrics(collector, scope);
+      traceMetrics = computeTraceMetrics(collector, scope, bridgeWindow);
       if (traceMetrics.error) markerError = traceMetrics.error;
       if (rawTraceStream) {
         await closeRawTrace();
@@ -3896,9 +3901,10 @@ async function runOnce(context, pageUrl, opts) {
   if (markerTrace.scope?.phase === "active") await markerTrace.start();
   const wallA = performance.now();
   const a = await getMetrics();
-  const nodesA = await page.evaluate(beginActiveMarkerWindowInPage, {
+  const markerOpen = await page.evaluate(beginActiveMarkerWindowInPage, {
     marker: markerTrace.scope?.phase === "active" ? REPORT_MARK_START : null
   });
+  const nodesA = markerOpen.nodes;
   // Walk counters are CUMULATIVE since page load and `walkStats` below is read post-settle, so a windowed run
   // needs both ends to state what the window itself cost (C2 reads fullWalkCauses.bail over the shuffle).
   const walkStatsAtOpen = opts.window ? await page.evaluate(cloneWalkStatsInPage) : null;
@@ -3958,14 +3964,28 @@ async function runOnce(context, pageUrl, opts) {
   const b = await getMetrics();
   // readyMs: navigation start -> the whole recorded stream delivered AND settled (the same instant the
   // measured window closes). Page clock again, and the closing trace marker rides the same evaluate.
-  const readyAtMarker = (opts.report || markerTrace.scope?.phase === "active")
+  const markerClose = (opts.report || markerTrace.scope?.phase === "active")
     ? await probePage(endActiveMarkerWindowInPage, {
         marker: markerTrace.scope?.phase === "active" ? REPORT_MARK_END : null
       })
     : null;
-  const readyMs = opts.report ? readyAtMarker : null;
+  const readyMs = opts.report ? markerClose?.atMs ?? null : null;
+  let bridgeStats = (() => {
+    const before = markerOpen?.canvasStats;
+    const after = markerClose?.canvasStats;
+    if (!before && !after) return { kind: "dom", window: null };
+    // The page seam is cumulative and is read exactly once on each marker boundary.
+    // Only the bridge's own counters are admitted; trace fields stay literal zeroes.
+    return { kind: "canvas", window: canvasTextureBridgeWindow(
+      // diagnostics.ts exposes the stable owner at stats.instance.id and the
+      // cumulative capture/upload counters under stats.textures. Do not use
+      // the legacy canvasRendererInstanceId alias.
+      before && { instance: markerOpen.canvasStats.instance, ...before.textures, sampledAtMs: markerOpen.sampledAtMs },
+      after && { instance: markerClose?.canvasStats?.instance, ...after.textures, sampledAtMs: markerClose?.atMs },
+    ) };
+  })();
   if (markerTrace.scope?.phase === "active") {
-    const completed = await markerTrace.stop();
+    const completed = await markerTrace.stop({ bridgeWindow: bridgeStats.window });
     tracePath = completed.tracePath;
     traceMetrics = completed.traceMetrics;
   }
@@ -4105,6 +4125,7 @@ async function runOnce(context, pageUrl, opts) {
           instanceId: s.instance?.id ?? null,
           instanceCreatedAtMs: s.instance?.createdAtMs ?? null,
           instanceDisposed: s.instance?.disposed ?? null,
+          textures: s.textures ?? null,
           frames: s.frames ?? 0,
           animFrames: s.animFrames ?? 0,
           fxUploads: s.fx ? s.fx.uploads : null,
@@ -4132,8 +4153,19 @@ async function runOnce(context, pageUrl, opts) {
     await page.waitForTimeout(opts.idle);
     const markerEndAtMs = await mark("cc-idle-end");
     const stageAfter = await readStage();
+    // An idle report's trace window is the idle marker pair, not the earlier
+    // replay bracket. Replace its evidence with these matching samples.
     if (markerTrace.scope?.phase === "idle") {
-      const completed = await markerTrace.stop();
+      bridgeStats = {
+        kind: stageBefore.available || stageAfter.available ? "canvas" : "dom",
+        window: canvasTextureBridgeWindow(
+          stageBefore.available && { instance: { id: stageBefore.instanceId }, ...stageBefore.textures, sampledAtMs: stageBefore.sampledAtMs },
+          stageAfter.available && { instance: { id: stageAfter.instanceId }, ...stageAfter.textures, sampledAtMs: stageAfter.sampledAtMs },
+        ),
+      };
+    }
+    if (markerTrace.scope?.phase === "idle") {
+      const completed = await markerTrace.stop({ bridgeWindow: bridgeStats.window });
       tracePath = completed.tracePath;
       traceMetrics = completed.traceMetrics;
     }
@@ -4768,6 +4800,9 @@ async function runOnce(context, pageUrl, opts) {
     const longAnimationFrames = typeof loafCount === "number" ? loafCount : null;
 
     let discard = reportDiscard || traceError || null;
+    if (!discard && bridgeStats.kind === "canvas" && !bridgeStats.window) {
+      discard = "canvas texture bridge samples missing, invalid, or from different renderer instances";
+    }
     if (!discard && layerCount === null) {
       discard = "layerCount UNMEASURED — the LayerTree snapshot returned no tree (heavy CPU throttle?)";
     }
@@ -4780,7 +4815,7 @@ async function runOnce(context, pageUrl, opts) {
     if (!discard && !geometry) discard = "geometry block was not built";
     if (!discard && !presented) discard = "presence guard produced no result";
 
-    return {
+    const report = {
       initialRenderMs: round(initialRenderMs, 1),
       readyMs: round(readyMs, 1),
       longTaskCount,
@@ -4800,6 +4835,16 @@ async function runOnce(context, pageUrl, opts) {
       ...(traceMetrics ?? {}),
       ...(discard ? { __discard: discard } : {})
     };
+    if (bridgeStats.kind === "canvas") {
+      report.decode = {
+        count: 0, totalMs: 0, maxMs: 0, codecRuns: 0, codecMs: 0,
+        distinctImages: 0, redecodeCount: 0, redecodeMs: 0, inRasterCount: 0, inRasterMs: 0,
+        imageKey: "none", cacheFamily: "unknown", imagesExpected: true,
+        provenance: "canvas-texture-bridge", source: "canvas.textureBridge.window", codecSource: null,
+        bridgeWindow: bridgeStats.window,
+      };
+    }
+    return report;
   }
 
   if (cdp) await cdp.detach().catch(() => {});

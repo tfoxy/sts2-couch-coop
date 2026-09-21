@@ -297,25 +297,22 @@ for workload in "${WORKLOAD_ARR[@]}"; do
     # package is on the vendor's non-disableable list, so the only defence is eviction: force-stop it
     # before every cell. Harmless when it is not running.
     adb -s "$ADB_SERIAL" shell am force-stop com.motorola.ccc.ota 2>/dev/null || true
-    # SWEEP THE BENCH'S OWN TABS FIRST (R6 P6-H, learned the hard way): a cell whose renderer crashed
-    # leaves a dead tab, and ONE dead mirror tab wedges connectOverCDP from ~2s to past its 60s timeout —
-    # after which every remaining cell of the whole matrix "fails" at the tab step. Each cell therefore
-    # starts from zero tabs on this DEV_PORT and lets the intent open a fresh one. Chrome can canonicalize
-    # 127.0.0.1 to worky.local, so ownership is every HTTP(S) page on this benchmark port; other user tabs stay.
-    for tid in $(curl -s "http://127.0.0.1:$CDP_PORT/json/list" | python3 -c "import json,sys
-from urllib.parse import urlsplit
-port = int(sys.argv[1])
-for t in json.load(sys.stdin):
-    try:
-        u = urlsplit(t.get('url', ''))
-        if t.get('type') == 'page' and u.scheme in ('http', 'https') and u.port == port: print(t['id'])
-    except ValueError: pass" "$DEV_PORT" 2>/dev/null); do
-      curl -s "http://127.0.0.1:$CDP_PORT/json/close/$tid" > /dev/null
-    done
+    # phone-bench-tab.mjs owns the whole stale-tab handoff: it closes only this benchmark port,
+    # observes the closed tab's renderer PID exit, and waits for the remaining renderer/GPU set to
+    # stabilize before opening the next cell. Do not pre-close here: doing so erases its PID evidence.
     tab_ok=0
     for attempt in 1 2; do
       if node "$SCRIPT_DIR/phone-bench-tab.mjs" open --url "http://127.0.0.1:$DEV_PORT/" \
-           --serial "$ADB_SERIAL" --cdp-port "$CDP_PORT" > "$OUT_DIR/${label}.foreground.pre-raf" 2>&1; then tab_ok=1; break; fi
+           --serial "$ADB_SERIAL" --cdp-port "$CDP_PORT" > "$OUT_DIR/${label}.foreground.pre-raf" 2>&1; then
+        tab_ok=1
+        break
+      else
+        tab_status=$?
+      fi
+      if [ "$tab_status" -eq 3 ]; then
+        echo "bench-phone-canvas-ab: teardown evidence failed for $label; refusing unguarded retry" >&2
+        exit 3
+      fi
       echo "  (tab attempt $attempt failed; retrying)" >&2
       sleep 5
     done
@@ -328,7 +325,7 @@ for t in json.load(sys.stdin):
     query_args=()
     case "$arm" in
       dom) query="stage=dom" ;;
-      canvas) query="stage=canvas" ;;
+      canvas) query="stage=canvas&paintDump=1" ;;
       *) echo "bench-phone-canvas-ab: internal unknown arm '$arm'" >&2; exit 2 ;;
     esac
     query_args=(--query "$query")
@@ -337,7 +334,7 @@ for t in json.load(sys.stdin):
     # THE CELL'S OWN CLOCK, read from the DEVICE (its clock is the one logcat timestamps are in). Everything
     # this cell later greps out of logcat is bounded by this instant, so a kill from ten minutes and four cells
     # ago can never be re-reported as this cell's.
-    CELL_T0="$(adb -s "$ADB_SERIAL" shell date '+%m-%d %H:%M:%S.000' 2>/dev/null | tr -d '\r')"
+    CELL_T0="$(adb -s "$ADB_SERIAL" shell "date '+%m-%d %H:%M:%S.000'" 2>/dev/null | tr -d '\r')"
     adb -s "$ADB_SERIAL" shell dumpsys thermalservice 2>/dev/null > "$OUT_DIR/${label}.thermal.before" || true
     adb -s "$ADB_SERIAL" shell ps -A -o PID,RSS,NAME 2>/dev/null | grep -i "com.android.chrome" > "$OUT_DIR/${label}.procs.before" || true
     adb -s "$ADB_SERIAL" shell dumpsys display 2>/dev/null > "$OUT_DIR/${label}.display" || true
@@ -384,6 +381,9 @@ for t in json.load(sys.stdin):
       profile_pid=$!
     fi
     node "$SCRIPT_DIR/phone-frame-capture.mjs" start --serial "$ADB_SERIAL" --out-prefix "$perfetto_prefix" --package com.android.chrome > "$perfetto_prefix.start.log" 2>&1 || { echo "FrameTimeline start failed: $perfetto_prefix.start.log" >&2; exit 2; }
+    # android-webview-lib.sh enables -e. Disable it only across this pipeline so
+    # PIPESTATUS can be captured and Perfetto/health/artifact finalization still runs.
+    set +e
     node "$SCRIPT_DIR/bench-mirror-replay.mjs" \
       --connect-cdp "http://127.0.0.1:$CDP_PORT" \
       --keep-connected-page \
@@ -404,6 +404,7 @@ for t in json.load(sys.stdin):
       "${trace_args[@]}" \
       "${query_args[@]}" 2>&1 | tee "$log"
     bench_exit=${PIPESTATUS[0]}
+    set -e
     if [ -f "$trace_source" ]; then cp "$trace_source" "$trace"; fi
     node "$SCRIPT_DIR/phone-frame-capture.mjs" stop --serial "$ADB_SERIAL" --out-prefix "$perfetto_prefix" --meta "$meta" --trace-processor "$TRACE_PROCESSOR" > "$perfetto_prefix.stop.log" 2>&1 || { echo "FrameTimeline stop failed: $perfetto_prefix.stop.log" >&2; exit 2; }
     if [ "$MALI_PROFILE" = on ]; then
@@ -474,23 +475,27 @@ for t in json.load(sys.stdin):
     fi
     lmk=false; grep -Eqi 'Kill .*com\.android\.chrome|com\.android\.chrome.*(killed|kill)' "$OUT_DIR/${label}.lmk" && lmk=true || true
     context_loss=false; grep -Eqi 'lost the GPU|context lost|GpuProcessHost.*(crash|restart)' "$OUT_DIR/${label}.gpulog" && context_loss=true || true
-    page_crash=false; asset_failure=false
+    page_crash=false; asset_failure=false; known_nonpainting_asset_errors='[]'
     if [ -s "$result" ]; then
-      read -r page_crash asset_failure < <(RESULT_PATH="$result" node -e '
-        const r=require(process.env.RESULT_PATH); const crash=(r.crashedRepeats||[]).length>0 || r.pageErrorCount>0;
-        const asset=(r.responseErrors||[]).some(x => Number(x.status) >= 400);
-        console.log(`${crash} ${asset}`);
+      read -r page_crash asset_failure known_nonpainting_asset_errors < <(RESULT_PATH="$result" node -e '
+        const r=require(process.env.RESULT_PATH);
+        const crash=r.pageCrashed===true || (r.crashedRepeats||[]).some(Boolean);
+        const known=new Set(["/res/scenes/game.tscn%3A%3AGradientTexture2D_5newe","/res/scenes/screens/settings_screen.tscn%3A%3AGradientTexture2D_hcj65"]);
+        const errors=(r.responseErrors||[]).filter(x => Number(x.status)>=400);
+        const knownErrors=errors.filter(x => known.has(x.pathname));
+        const asset=errors.some(x => !known.has(x.pathname));
+        console.log(`${crash} ${asset} ${JSON.stringify(knownErrors)}`);
       ')
     else page_crash=true; asset_failure=true; fi
     META_PATH="$meta" BENCH_EXIT="$bench_exit" LMK="$lmk" CONTEXT="$context_loss" RESTART="$process_restart" \
-    PAGE_CRASH="$page_crash" ASSET_FAILURE="$asset_failure" GPU_BEFORE="$gpu_before" GPU_AFTER="$gpu_after" \
+    PAGE_CRASH="$page_crash" ASSET_FAILURE="$asset_failure" KNOWN_NONPAINTING_ASSET_ERRORS="$known_nonpainting_asset_errors" GPU_BEFORE="$gpu_before" GPU_AFTER="$gpu_after" \
     FOREGROUND_PRE="$tab_ok" FOREGROUND_POST="$foreground_post" THERMAL="$thermal_throttle" \
     PROCS_BEFORE="$OUT_DIR/${label}.procs.before" PROCS_AFTER="$OUT_DIR/${label}.procs" FOREGROUND_PRE_RAF="$OUT_DIR/${label}.foreground.pre-raf" FOREGROUND_BEFORE="$OUT_DIR/${label}.foreground.before" FOREGROUND_AFTER="$OUT_DIR/${label}.foreground.after" \
     THERMAL_BEFORE="$OUT_DIR/${label}.thermal.before" THERMAL_AFTER="$OUT_DIR/${label}.thermal.after" \
     LMK_PATH="$OUT_DIR/${label}.lmk" GPU_LOG="$OUT_DIR/${label}.gpulog" node -e '
       const fs=require("node:fs"), m=JSON.parse(fs.readFileSync(process.env.META_PATH,"utf8"));
       m.artifacts={...m.artifacts, thermalBefore:process.env.THERMAL_BEFORE, thermalAfter:process.env.THERMAL_AFTER, procsBefore:process.env.PROCS_BEFORE, procsAfter:process.env.PROCS_AFTER, foregroundPreRaf:process.env.FOREGROUND_PRE_RAF, foregroundBefore:process.env.FOREGROUND_BEFORE, foregroundAfter:process.env.FOREGROUND_AFTER, lmk:process.env.LMK_PATH, gpuLog:process.env.GPU_LOG};
-      m.health={benchExit:Number(process.env.BENCH_EXIT), lmk:process.env.LMK==="true", contextLoss:process.env.CONTEXT==="true", processRestart:process.env.RESTART==="true", pageCrash:process.env.PAGE_CRASH==="true", assetFailure:process.env.ASSET_FAILURE==="true", thermalThrottle:process.env.THERMAL==="true", foregroundPre:process.env.FOREGROUND_PRE==="1", foregroundPost:process.env.FOREGROUND_POST==="true", gpuPidsBefore:process.env.GPU_BEFORE, gpuPidsAfter:process.env.GPU_AFTER};
+      m.health={benchExit:Number(process.env.BENCH_EXIT), lmk:process.env.LMK==="true", contextLoss:process.env.CONTEXT==="true", processRestart:process.env.RESTART==="true", pageCrash:process.env.PAGE_CRASH==="true", assetFailure:process.env.ASSET_FAILURE==="true", knownNonpaintingAssetErrors:JSON.parse(process.env.KNOWN_NONPAINTING_ASSET_ERRORS||"[]"), thermalThrottle:process.env.THERMAL==="true", foregroundPre:process.env.FOREGROUND_PRE==="1", foregroundPost:process.env.FOREGROUND_POST==="true", gpuPidsBefore:process.env.GPU_BEFORE, gpuPidsAfter:process.env.GPU_AFTER};
       fs.writeFileSync(process.env.META_PATH, JSON.stringify(m,null,2)+"\n");
     '
     if [ -s "$trace" ] && [ -s "$result" ]; then

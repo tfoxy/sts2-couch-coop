@@ -271,7 +271,7 @@ function validateComparability(rows) {
     gates.push(gate(`metric contract: ${row.cell?.label ?? "unknown"}`, row.schema === "phone-canvas-cell-metrics/2",
       row.schema === "phone-canvas-cell-metrics/2" ? "surface-attributed presentation contract" : `requires phone-canvas-cell-metrics/2; got ${row.schema ?? "missing"}`));
     const arm = row.cell?.arm;
-    const expected = arm === "dom" ? "stage=dom" : arm === "canvas" ? "stage=canvas" : null;
+    const expected = arm === "dom" ? "stage=dom" : arm === "canvas" ? "stage=canvas&paintDump=1" : null;
     gates.push(gate(`query invariant: ${row.cell?.label ?? `${row.cell?.workload?.id ?? "?"}/${arm ?? "?"}`}`,
       expected === null ? null : row.cell?.query === expected,
       `expected ${expected ?? "unrecognized arm"}; got ${row.cell?.query ?? "missing"}`));

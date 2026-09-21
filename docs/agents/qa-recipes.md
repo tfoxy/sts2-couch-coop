@@ -277,7 +277,8 @@ in this repo — read it before designing a new bench). Quick pointers:
 
 Use the maintained named-query runner for a backend comparison. Its defaults fix the order to **DOM → canvas →
 canvas → DOM**, open and prove a foreground Android tab for each cell, and use the canonical `stage=dom` and
-`stage=canvas` selectors. Do not substitute removed per-effect URL arms or hand-run a different order.
+`stage=canvas&paintDump=1` selectors. The canvas selector keeps the snapshot seam required for its evidence.
+Do not substitute removed per-effect URL arms or hand-run a different order.
 
 ```bash
 PRIMARY="$(dirname "$(git rev-parse --path-format=absolute --git-common-dir)")"
