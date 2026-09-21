@@ -664,7 +664,7 @@ public sealed partial class HeadlessClientManager : IDisposable
 
                 if (_processBySlot.ContainsKey(slot))
                 {
-                    CouchCoopLog.Stderr($"headless reuse (netId-bound) slot={slot} netId={SlotToNetId(slot)} name={name} newSession={sessionId:N}");
+                    CouchCoopLog.Stderr($"headless reuse (netId-bound) slot={slot} pid={SlotPidLocked(slot)} netId={SlotToNetId(slot)} name={name} newSession={sessionId:N}");
                     ReportSlotBound(onSlotBound, slot, name);
                     return new(SlotToPort(slot), NewProcess: false);
                 }
@@ -685,7 +685,7 @@ public sealed partial class HeadlessClientManager : IDisposable
                 if (_processBySlot.ContainsKey(slot))
                 {
                     // Headless still live → share it (e.g. a second browser tab with the same name).
-                    CouchCoopLog.Stderr($"headless reuse slot={slot} name={name} newSession={sessionId:N}");
+                    CouchCoopLog.Stderr($"headless reuse slot={slot} pid={SlotPidLocked(slot)} name={name} newSession={sessionId:N}");
                     // Still a BINDING (this session now owns the slot), so report it: the live instance's netId
                     // may have lost its name override in the meantime (e.g. a lobby disconnect cleared it), and
                     // re-asserting costs one idempotent action.
@@ -1128,7 +1128,7 @@ public sealed partial class HeadlessClientManager : IDisposable
             if (_processBySlot.ContainsKey(slot))
             {
                 _detachedSlots.Add(slot);
-                CouchCoopLog.Stderr($"headless detached (kept alive mid-run) slot={slot} netId={SlotToNetId(slot)}");
+                CouchCoopLog.Stderr($"headless detached (kept alive mid-run) slot={slot} pid={SlotPidLocked(slot)} netId={SlotToNetId(slot)}");
             }
         }
     }
@@ -1148,7 +1148,7 @@ public sealed partial class HeadlessClientManager : IDisposable
             var freed = new List<ulong>();
             foreach (var slot in _detachedSlots.ToList())
             {
-                CouchCoopLog.Stderr($"reaping detached headless on run-end slot={slot} netId={SlotToNetId(slot)}");
+                CouchCoopLog.Stderr($"reaping detached headless on run-end slot={slot} pid={SlotPidLocked(slot)} netId={SlotToNetId(slot)}");
                 RemoveNameForSlotLocked(slot);
                 if (ShutdownSlotLocked(slot, graceful: false))
                 {
@@ -1447,6 +1447,23 @@ public sealed partial class HeadlessClientManager : IDisposable
     {
         var name = ClaimedNameForSlotLocked(slot);
         if (name is not null) _nameToSlot.Remove(name);
+    }
+
+    /// <summary>
+    /// The OS process id of the seat currently on <paramref name="slot"/>, for the lifecycle log lines that have to
+    /// be reconcilable with an OS-level crash report. <c>headless spawned</c> records the pid once at launch, but a
+    /// seat is REUSED across reconnects and torn down later, so across a long session there was no line tying a pid
+    /// back to the slot it belonged to — which is exactly what defeated an external crash report (issue #3).
+    ///
+    /// Never throws: a seat's identity in a log line is not worth failing a join or a teardown over, and
+    /// <see cref="IHeadlessProcess.Id"/> reads through a handle that can go away underneath us — the surrounding
+    /// process inspection guards the same way. Caller holds <c>_lock</c>.
+    /// </summary>
+    private string SlotPidLocked(int slot)
+    {
+        if (!_processBySlot.TryGetValue(slot, out var proc)) return "none";
+        try { return proc.Id.ToString(CultureInfo.InvariantCulture); }
+        catch { return "unknown"; }
     }
 
     /// <summary>
