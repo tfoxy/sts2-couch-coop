@@ -17,6 +17,14 @@ using CouchCoop.Mod.Runtime;
 // exists only while that registry is occupied; the network services wait for a HOST lobby to be on screen.
 // The controller itself is Godot-bound, so what is asserted here is the pure half — the registry's arm/disarm
 // contract, the patch's target resolution, and the host-UI deferral over real loopback sockets.
+//
+//   3. …and "only while that registry is occupied" turned out to be the WHOLE SESSION. The game readies its
+//      character-select screen during main-menu load and never frees that node, so the registry never emptied
+//      and the 0.25s chain, once started at the main menu, ran for the rest of the process on both platforms.
+//      Each tick was cheap after (1) — a prune plus one IsVisibleInTree per screen — but it never parked.
+//      Presence is now PUSHED (the game's active-screen event + Godot's visibility_changed) and the timer
+//      exists only while a lobby screen is the CURRENT screen. LobbyEvaluationPlanner is that rule, kept
+//      Godot-free for the same reason LobbyScreenRegistry is.
 internal static class IdleHostCostTests
 {
     public static async Task RunAsync(string rootPath)
@@ -25,6 +33,7 @@ internal static class IdleHostCostTests
         FirstScreenArmsTheTickAndOnlyTheFirst();
         AFreedScreenIsPrunedAndParksTheTick();
         AHiddenOrDetachedScreenKeepsItsEntry();
+        LobbyEvaluationContract();
         MountPlanContract();
         MountTargetsResolve();
         MountPatchRefusesAnInheritedReady();
@@ -89,6 +98,115 @@ internal static class IdleHostCostTests
         var registry = new LobbyScreenRegistry(_ => true); // alive, whatever the tree says
         _ = registry.Add(11);
         Expect(registry.Live() is [11], "a screen that is merely hidden or detached keeps its registration");
+    }
+
+    // ---- LobbyEvaluationPlanner: what wakes the evaluation, and when state is pulled ------------------
+
+    // Internal for the same reason as MountPlanContract below: the `-- host-guards` verb runs this slice alone,
+    // and this is the rule that decides whether the lobby gets a QR button at all.
+    internal static void LobbyEvaluationContract()
+    {
+        NoScreensMeansNoTimerAtAll();
+        AVisibleButNotCurrentLobbyIsLeftAlone();
+        ACurrentLobbyPullsStateAndTicks();
+        AHiddenLobbyGivesUpItsPanelAndParks();
+        WithoutTheScreenEventNothingIsGated();
+    }
+
+    // The registry empties only when every screen has been FREED, which is why this is not the case that
+    // mattered — but it is still the floor: nothing registered, nothing to do.
+    private static void NoScreensMeansNoTimerAtAll()
+    {
+        var plan = LobbyEvaluationPlanner.Decide([], currentScreenKnown: true);
+
+        Expect(!plan.PullState, "no lobby screen, no state pull");
+        Expect(!plan.KeepTicking, "no lobby screen, no timer");
+        Expect(plan.Alert == LobbyAlertUpdate.Rearm, "no lobby on screen re-arms the once-per-mount alert latch");
+    }
+
+    // THE CASE THE CHANGE EXISTS FOR, and the one with a trap in it. A lobby screen sitting VISIBLE underneath
+    // the screen the player is actually on (a submenu, a modal) must cost nothing: no state pull, no timer. But
+    // it must also keep its PANEL — the game's current-screen answer is whatever is on top, including a modal
+    // opened over the lobby, and CouchCoop's own dialog is a child of that panel, so "not current ⇒ remove"
+    // would close the player's dialog out from under them every time. Removal stays keyed on VISIBILITY.
+    private static void AVisibleButNotCurrentLobbyIsLeftAlone()
+    {
+        var parked = new LobbyScreenFacts(Id: 11, Visible: true, Current: false);
+        var plan = LobbyEvaluationPlanner.Decide([parked], currentScreenKnown: true);
+
+        Expect(!plan.PullState, "a lobby that is not the current screen does NOT pull state");
+        Expect(!plan.KeepTicking, "…and does not keep a timer alive either");
+        Expect(
+            LobbyEvaluationPlanner.IsParkedUnderAnotherScreen(parked, currentScreenKnown: true),
+            "…and the screen is left entirely alone, panel included");
+        Expect(
+            plan.Alert == LobbyAlertUpdate.Hold,
+            "a modal over the lobby is not an unmount: re-arming here would pop the transport alert again "
+            + "every time the player closed a dialog");
+    }
+
+    // The only state in which the expensive half runs. netGameType flips live while the host sits in the lobby
+    // (a singleplayer lobby becoming a host lobby), so presence alone cannot be read once and trusted — that is
+    // the whole reason a bounded tick survives, and it survives ONLY here.
+    private static void ACurrentLobbyPullsStateAndTicks()
+    {
+        var current = new LobbyScreenFacts(Id: 22, Visible: true, Current: true);
+        var plan = LobbyEvaluationPlanner.Decide([current], currentScreenKnown: true);
+
+        Expect(plan.PullState, "the current lobby screen is the one case that pulls state");
+        Expect(plan.KeepTicking, "…and the only one that keeps the 0.25s netGameType re-read alive");
+        Expect(plan.Alert == LobbyAlertUpdate.Decide, "the alert is decided from whatever panel was mounted");
+        Expect(
+            !LobbyEvaluationPlanner.IsParkedUnderAnotherScreen(current, currentScreenKnown: true),
+            "the current screen is never skipped");
+
+        // BOTH lobby screens can be registered at once, and only one of them is ever current. The gate is an
+        // ANY over the registry, not a property of the first entry.
+        var mixed = LobbyEvaluationPlanner.Decide(
+            [new LobbyScreenFacts(11, Visible: true, Current: false), current],
+            currentScreenKnown: true);
+        Expect(mixed.PullState && mixed.KeepTicking, "a current screen anywhere in the registry arms the evaluation");
+    }
+
+    // Leaving the lobby hides the screen; it is NOT freed, so the registry keeps it (Godot runs _Ready once, so
+    // dropping it would lose a screen we could never be told about again). Before this change that left the
+    // chain ticking forever. Now: the panel goes, the alert latch re-arms, and the timer stops.
+    private static void AHiddenLobbyGivesUpItsPanelAndParks()
+    {
+        var hidden = new LobbyScreenFacts(Id: 11, Visible: false, Current: false);
+        var plan = LobbyEvaluationPlanner.Decide([hidden], currentScreenKnown: true);
+
+        Expect(!plan.PullState, "a hidden lobby screen has nothing to decide");
+        Expect(!plan.KeepTicking, "…and parks the timer instead of running it for the rest of the session");
+        Expect(
+            !LobbyEvaluationPlanner.IsParkedUnderAnotherScreen(hidden, currentScreenKnown: true),
+            "a hidden screen is NOT left alone — it gives up its panel, exactly as before this change");
+        Expect(plan.Alert == LobbyAlertUpdate.Rearm, "backing out to the menu re-arms the alert latch");
+    }
+
+    // THE SAFETY VALVE. `currentScreenKnown` is false when the game's active-screen event could not be
+    // subscribed, or when the current screen cannot be resolved at that moment. "Not current" and "could not
+    // tell" are the same bit in the facts and must not mean the same thing: without a subscription nothing
+    // would ever wake an evaluation, so gating on current would cost the lobby its QR button on a game build
+    // whose seam has moved. The answer degrades to exactly the pre-change behaviour.
+    private static void WithoutTheScreenEventNothingIsGated()
+    {
+        var visible = new LobbyScreenFacts(Id: 11, Visible: true, Current: false);
+        var plan = LobbyEvaluationPlanner.Decide([visible], currentScreenKnown: false);
+
+        Expect(plan.PullState, "with no screen event the pull falls back to the visibility gate");
+        Expect(plan.KeepTicking, "…and the 0.25s chain runs unconditionally, as it did before");
+        Expect(plan.Alert == LobbyAlertUpdate.Decide, "…and the alert is decided, not held");
+        Expect(
+            !LobbyEvaluationPlanner.IsParkedUnderAnotherScreen(visible, currentScreenKnown: false),
+            "…and no screen is skipped for being 'not current', because nothing knows which one is");
+
+        var hidden = LobbyEvaluationPlanner.Decide(
+            [new LobbyScreenFacts(11, Visible: false, Current: false)],
+            currentScreenKnown: false);
+        Expect(!hidden.PullState, "the fallback still skips the pull when nothing is visible");
+        Expect(hidden.KeepTicking, "…while keeping the unconditional chain, which is what it is falling back TO");
+        Expect(hidden.Alert == LobbyAlertUpdate.Rearm, "…and still re-arms the alert latch with nothing on screen");
     }
 
     // ---- LobbyScreenMountPlan: a failed patch is retried, a successful one never is -------------------

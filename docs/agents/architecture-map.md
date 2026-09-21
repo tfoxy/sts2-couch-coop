@@ -645,13 +645,37 @@ The always-on QR overlay is gone. A game-styled button opens a dialog instead.
   modal chrome), `CouchCoopQrDialog.cs`, `CouchCoopHostTransportAlertDialog.cs`, `HostTransportAlert.cs`,
   `CouchCoopQrHostSelect.cs`, `CouchCoopEventButton.cs` / `CouchCoopSkipButton.cs` (both
   `CouchCoopTextureButton` → `NButton`), `CouchCoopQrHotkeyHint.cs` (controller glyph),
-  `CouchCoopQrHostPanelController.cs` (0.25s scan + gate),
+  `CouchCoopQrHostPanelController.cs` (event-driven presence + gate) with `LobbyScreenRegistry.cs` and
+  `LobbyEvaluationPlan.cs` (the pure gate),
   `CouchCoopLobbyHostGate.cs`, `QrHostOptions.cs`, `QrHoverTipCopy.cs` + `CouchCoopQrHoverTips.cs`
   (per-option hover-tip pair through the game's `NHoverTipSet`), `CouchCoopQrSelectionPreference.cs`
   (persisted pick, `qr-prefs.json`), `QrRaster.cs`, `CouchCoopStreamSkip.cs`.
 - **Gate**: `ShouldShow(listenerBaseUri, state)` = browser server bound AND
   `state is { Run: null, CharacterSelect.Lobby.NetGameType: "host" }`. That single predicate covers BOTH
   `NCharacterSelectScreen` and `NMultiplayerLoadGameScreen`; a singleplayer/client lobby is refused.
+- **Presence is pushed, not polled** (controller): screens arrive by `Patches/LobbyScreenMountPatch.cs`
+  (Harmony on each screen's declared `_Ready`) into `LobbyScreenRegistry`, whose liveness is "not freed",
+  never "in the tree". An evaluation is woken by `Sts2ScreenContext.SubscribeUpdated` (spirectl's read-only
+  seam onto the game's active-screen event), by Godot's `visibility_changed` on each registered screen, and
+  by a mount; it runs on a `CreateTimer` callback, so a signal raised mid-transition still installs from the
+  same safe point the tick always did. The **0.25s chain survives only while a lobby screen is visible AND
+  `Sts2ScreenContext.IsCurrent`** — it exists purely because `netGameType` flips live in the lobby — and
+  parks otherwise. This replaced a chain that never parked: the game readies its character-select screen at
+  main-menu **load** and never frees that node, so the registry was occupied for the whole session and the
+  timer ran 4×/s through combat, the map and the menu. `lobby-screen-mounted` therefore fires **once**, at
+  main-menu load, and entering the lobby reuses that node — absence of a mount line is not absence of a
+  lobby.
+- **A visible-but-not-current lobby keeps its panel.** Removal is keyed on visibility alone. The game's
+  current-screen answer is whatever is on top, *including a modal over the lobby*, and CouchCoop's own open
+  dialog is a child of the panel — "not current ⇒ remove" would close the player's dialog. Not-current only
+  suppresses the state pull and the timer, and holds `HostTransportAlert`'s once-per-mount latch rather than
+  re-arming it. Closing the modal raises the event, which re-evaluates.
+- **Fallback**: if the active-screen event cannot be subscribed, or the current screen cannot be resolved,
+  the evaluation degrades to the pre-existing rule — pull on visible, tick unconditionally — and logs
+  `screen context unavailable` once. Nothing about screen detection may cost the lobby its QR button.
+  The gate is `HostUi/LobbyEvaluationPlan.cs`, Godot-free and tested in `IdleHostCostTests`
+  (`-- host-guards`); `Spirectl.Sts2.Live.Sts2ScreenContext` is pinned in
+  `SpirectlEmbeddedAssemblyBoundaryTests`.
 - **Node contract** (what the probes assert): `CouchCoopQrHostPanel` (FullRect, `Ignore`) →
   `CouchCoopQrButton` (rect **226,732 → 578,868**, design space, on BOTH lobby screens; label
   "Couch Co-Op QR Code") and `CouchCoopQrDialog` (hidden) → `CouchCoopQrDialogScrim` (`Stop`, closes),

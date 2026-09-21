@@ -2,6 +2,7 @@ using CouchCoop.Mod.Session;
 using Godot;
 using System;
 using CouchCoop.Mod.Localization;
+using Spirectl.Sts2.Live;
 
 namespace CouchCoop.Mod.HostUi;
 
@@ -11,35 +12,71 @@ namespace CouchCoop.Mod.HostUi;
 /// </summary>
 /// <remarks>
 /// <para>
-/// The state pull is the expensive half of the tick, so this controller owns the sole native host surface.
+/// The state pull is the expensive half of an evaluation, so this controller owns the sole native host surface.
 /// </para>
 /// <para>
-/// The 0.25s tick GATES as well as installs: <see cref="CouchCoopLobbyHostGate"/> is evaluated every
-/// tick and the panel is installed or removed from the answer, so there is no separate teardown path
-/// that could miss a transition. <c>netGameType</c> flips live while the host sits in the lobby, which
-/// is why a tick is still the right shape here rather than a one-shot install.
+/// An evaluation GATES as well as installs: <see cref="CouchCoopLobbyHostGate"/> is evaluated every time and the
+/// panel is installed or removed from the answer, so there is no separate teardown path that could miss a
+/// transition. <c>netGameType</c> flips live while the host sits in the lobby, which is why a bounded 0.25s tick
+/// survives at all rather than a one-shot install — but it now runs ONLY while a lobby screen is the current
+/// screen, and parks the moment it is not.
 /// </para>
 /// <para>
-/// WHAT THE TICK NO LONGER DOES — and this is the point of the whole file. It used to FIND its screens
-/// by recursively walking the entire scene tree from <c>SceneTree.Root</c>, every 0.25s, forever, on the
-/// game main thread: in combat, on the map, on the main menu, with a browser client connected or with
-/// none ever connected. Per node that was a native <c>IsInstanceValid</c>, a <c>GetType()</c> and a
-/// <c>GetChildren()</c> that allocates a Godot array and marshals a managed wrapper per child, so on a
-/// multi-thousand-node combat tree it was a periodic main-thread hitch that an unmodded game does not
-/// pay. The mod's contract is that an unused install is indistinguishable from no install, and that walk
-/// was the largest breach of it. Screens now arrive by <see cref="Patches.LobbyScreenMountPatch"/> and
-/// live in <see cref="LobbyScreenRegistry"/>; the timer exists ONLY while that registry is occupied, so
-/// outside a lobby this controller does nothing at all. The recursive walk survives as a ONE-SHOT
-/// startup seed (and the shutdown sweep) — see <see cref="Initialize"/>.
+/// WHAT THE EVALUATION NO LONGER DOES — and this is the point of the whole file, in two rounds.
 /// </para>
 /// <para>
-/// That same tick is the mod's only mount/unmount signal, so it also drives
+/// ROUND ONE removed the SEARCH. It used to FIND its screens by recursively walking the entire scene tree from
+/// <c>SceneTree.Root</c>, every 0.25s, forever, on the game main thread: in combat, on the map, on the main menu,
+/// with a browser client connected or with none ever connected. Per node that was a native
+/// <c>IsInstanceValid</c>, a <c>GetType()</c> and a <c>GetChildren()</c> that allocates a Godot array and
+/// marshals a managed wrapper per child, so on a multi-thousand-node combat tree it was a periodic main-thread
+/// hitch that an unmodded game does not pay. Screens now arrive by
+/// <see cref="Patches.LobbyScreenMountPatch"/> and live in <see cref="LobbyScreenRegistry"/>. The recursive walk
+/// survives as a ONE-SHOT startup seed (and the shutdown sweep) — see <see cref="Initialize"/>.
+/// </para>
+/// <para>
+/// ROUND TWO removed the TIMER. The registry-gated chain was documented as existing "only while the registry is
+/// occupied", and that turned out to be the whole session: the game readies its character-select screen during
+/// main-menu LOAD and never frees that node, so <see cref="LobbyScreenRegistry.Live"/> never emptied and the
+/// chain never parked. The early-out made each tick cheap — a prune plus one <c>IsVisibleInTree</c> per screen —
+/// but 4 Hz of cheap, forever, is still a timer an unmodded game does not run. Presence is PUSHED now:
+/// <c>Sts2ScreenContext.SubscribeUpdated</c> (the game's own "the active screen may have changed" event) plus
+/// Godot's <c>visibility_changed</c> on each registered screen wake <see cref="Evaluate"/>, and the tick exists
+/// only between them, while a lobby screen is actually current.
+/// </para>
+/// <para>
+/// CURRENT, NOT MERELY VISIBLE. The gate on the state pull is
+/// <c>visible AND Sts2ScreenContext.IsCurrent(screen)</c>. A screen parked visible underneath the one the player
+/// is on is not the current screen, so the pull stops there — but such a screen KEEPS ITS PANEL. Removal is
+/// driven by visibility and nothing else, because the game's current-screen answer is whatever is on top,
+/// including a modal opened over the lobby, and CouchCoop's own dialog is a child of the panel that would be
+/// torn down with it. See <see cref="LobbyEvaluationPlanner"/>, where that rule lives and is tested.
+/// </para>
+/// <para>
+/// THE SAFETY VALVE. Everything above is optional by construction. If the active-screen event cannot be
+/// subscribed (an older or newer game build), or the current screen cannot be resolved at that moment, the
+/// evaluation falls back to EXACTLY the pre-existing behaviour — pull on visible, tick unconditionally — and
+/// says so once on stderr. A screen-detection change must not be able to cost the lobby its QR button.
+/// </para>
+/// <para>
+/// That same evaluation is the mod's only mount/unmount signal, so it also drives
 /// <see cref="HostTransportAlert"/>'s once-per-mount latch. The latch is this in-memory field and
 /// nothing else — see that type's remarks for why there is deliberately no persistence.
 /// </para>
 /// </remarks>
 public static class CouchCoopQrHostPanelController
 {
+    /// <summary>The bounded re-read that covers a live <c>netGameType</c> flip, while a lobby is current.</summary>
+    private const double TickSeconds = 0.25;
+
+    /// <summary>
+    /// First delay after a WAKE. Zero, so the evaluation lands on the next processed frame: a Godot signal or the
+    /// game's screen event can be raised mid-transition, and the timer callback is the same safe point the tick
+    /// has always installed from. It also coalesces a burst of events into one evaluation, because the
+    /// <see cref="_scanScheduled"/> latch holds until the timer fires.
+    /// </summary>
+    private const double WakeSeconds = 0.0;
+
     private static readonly object Gate = new();
     private static bool _initialized;
     private static bool _scanScheduled;
@@ -47,6 +84,22 @@ public static class CouchCoopQrHostPanelController
     // Keep the pending timer wrapper with the controller until its callback has run; the scan chain owns this
     // callback and must not rely on a temporary local surviving until the next tick.
     private static SceneTreeTimer? _scanTimer;
+
+    /// <summary>
+    /// The handle on the game's "active screen may have changed" event, or null when that seam is unavailable.
+    /// </summary>
+    private static IDisposable? _screenContextSubscription;
+
+    /// <summary>
+    /// Whether presence is actually being PUSHED to us. Read on the evaluation path; written once by
+    /// <see cref="Initialize"/> and cleared by <see cref="Shutdown"/>, hence volatile.
+    /// </summary>
+    /// <remarks>
+    /// The whole current-screen gate hangs off this. Without a subscription nothing would ever wake the
+    /// evaluation, so gating on "is this the current screen?" would strand the panel — the fallback is not an
+    /// optimisation to skip, it is the correctness condition for the gate.
+    /// </remarks>
+    private static volatile bool _screenContextSubscribed;
 
     /// <summary>
     /// The lobby screens currently alive, fed by <see cref="Patches.LobbyScreenMountPatch"/>. The tick runs
@@ -59,14 +112,14 @@ public static class CouchCoopQrHostPanelController
     private static HostTransportAlertState _alertState = HostTransportAlertState.Initial;
 
     /// <summary>
-    /// Raised (main thread) on the first tick that finds a HOST lobby on screen — the moment co-op is
+    /// Raised (main thread) on the first evaluation that finds a HOST lobby on screen — the moment co-op is
     /// plausibly about to be used.
     /// </summary>
     /// <remarks>
     /// This is the arming signal for the LAN/WAN services that used to start unconditionally at mod init:
     /// see <see cref="CouchCoopHostUiServices.StartDiscoveryServices"/>. It fires on a HOST lobby only — a
     /// singleplayer character-select is not a co-op session and must arm nothing — which is why it is raised
-    /// from the tick, where the state gate has already been evaluated, rather than from the mount patch.
+    /// from the evaluation, where the state gate has already been answered, rather than from the mount patch.
     /// </remarks>
     public static event Action? HostLobbyPresented;
 
@@ -100,6 +153,8 @@ public static class CouchCoopQrHostPanelController
                 $"lobby screen mount retry failed: {exception.GetType().Name}: {exception.Message}");
         }
 
+        SubscribeScreenContext();
+
         try
         {
             if (Engine.GetMainLoop() is not SceneTree { Root: { } root })
@@ -128,6 +183,7 @@ public static class CouchCoopQrHostPanelController
                 if (registration.Added)
                 {
                     seeded++;
+                    ConnectVisibility(screen);
                     if (CheckpointKind(screen) is { } kind)
                     {
                         Checkpoints.ScreenMounted(screen.GetInstanceId(), kind);
@@ -136,10 +192,9 @@ public static class CouchCoopQrHostPanelController
             }
 
             CouchCoopLog.Stderr($"qr host panel armed seeded={seeded}");
-            if (Screens.IsOccupied)
-            {
-                EnsureScanScheduled(root);
-            }
+            // Arms only if one of the seeded screens is ALREADY the current screen (a hot-reload generation, a
+            // patch that landed late). Otherwise nothing runs until a wake says otherwise.
+            ArmIfLobbyIsCurrent();
         }
         catch (Exception exception)
         {
@@ -149,12 +204,21 @@ public static class CouchCoopQrHostPanelController
 
     /// <summary>
     /// A lobby screen has just been readied. Called from <see cref="Patches.LobbyScreenMountPatch"/> on the
-    /// game main thread; starts the scan timer if it was parked.
+    /// game main thread; connects the screen's visibility signal and evaluates if it is already the current
+    /// screen.
     /// </summary>
     /// <remarks>
+    /// <para>
     /// Registers even before <see cref="Initialize"/> has run (a screen readied that early is vanishingly
-    /// unlikely, but dropping it would cost the lobby its panels for the rest of the process): the timer is
-    /// then started by <see cref="Initialize"/>'s own occupancy check.
+    /// unlikely, but dropping it would cost the lobby its panels for the rest of the process): the evaluation is
+    /// then armed by <see cref="Initialize"/>'s own pass over the registry.
+    /// </para>
+    /// <para>
+    /// A MOUNT IS NOT A LOBBY. The game readies its character-select screen during main-menu load and reuses
+    /// that same node when the player later opens the lobby — no second <c>_Ready</c>, so no second call here.
+    /// This is therefore only ever the moment a screen becomes KNOWN; whether it is on screen is
+    /// <see cref="Evaluate"/>'s question, asked again on every wake.
+    /// </para>
     /// </remarks>
     public static void NoteLobbyScreenMounted(Node? screen)
     {
@@ -166,8 +230,10 @@ public static class CouchCoopQrHostPanelController
         var registration = Screens.Add(screen.GetInstanceId());
         if (!registration.Added)
         {
-            return; // already known — a re-ready must not start a second timer chain
+            return; // already known — a re-ready must not connect a second signal or start a second timer chain
         }
+
+        ConnectVisibility(screen);
 
         if (CheckpointKind(screen) is { } kind)
         {
@@ -182,9 +248,142 @@ public static class CouchCoopQrHostPanelController
             initialized = _initialized;
         }
 
-        if (initialized && registration.BecameOccupied && Engine.GetMainLoop() is SceneTree { Root: { } root })
+        if (initialized)
         {
+            ArmIfLobbyIsCurrent();
+        }
+    }
+
+    /// <summary>
+    /// Take the game's "the active screen may have changed" event, if it is there.
+    /// </summary>
+    /// <remarks>
+    /// Runs once, from <see cref="Initialize"/>, which is latched — so the fallback line below is logged at most
+    /// once per process. <c>SubscribeUpdated</c> is documented to return null rather than throw when the seam is
+    /// unavailable; the catch is belt-and-braces, because a throw escaping here would cost the seed walk and
+    /// every later arm.
+    /// </remarks>
+    private static void SubscribeScreenContext()
+    {
+        IDisposable? subscription = null;
+        try
+        {
+            subscription = Sts2ScreenContext.SubscribeUpdated(OnScreenContextUpdated);
+        }
+        catch (Exception exception)
+        {
+            CouchCoopLog.Stderr(
+                $"qr host panel screen context subscribe failed: {exception.GetType().Name}: {exception.Message}");
+        }
+
+        lock (Gate)
+        {
+            _screenContextSubscription = subscription;
+        }
+
+        _screenContextSubscribed = subscription is not null;
+        if (subscription is null)
+        {
+            // THE SAFETY VALVE, and the one line that tells you it opened. Without the event nothing would wake
+            // an evaluation, so the current-screen gate is abandoned wholesale and the 0.25s chain reverts to
+            // running unconditionally while a screen is registered — the pre-change behaviour, cost and all.
+            CouchCoopLog.Stderr(
+                "qr host panel screen context unavailable: falling back to the unconditional 0.25s scan");
+        }
+    }
+
+    /// <summary>The game says the screen on top may have changed.</summary>
+    private static void OnScreenContextUpdated() => ArmIfLobbyIsCurrent();
+
+    /// <summary>A registered lobby screen was shown or hidden (Godot's <c>visibility_changed</c>).</summary>
+    /// <remarks>
+    /// Only the SHOWN direction needs this: while a lobby screen is current the tick chain is running, so every
+    /// transition away from that state — hidden, freed, or no longer current — is already seen by its next tick.
+    /// Handling both directions keeps the handler free of that reasoning and costs nothing, because a wake with
+    /// a chain already running returns immediately.
+    /// </remarks>
+    private static void OnLobbyScreenVisibilityChanged() => ArmIfLobbyIsCurrent();
+
+    /// <summary>
+    /// Connect a newly registered screen's visibility signal.
+    /// </summary>
+    /// <remarks>
+    /// Connected exactly once per registration (<see cref="LobbyScreenRegistry.Add"/> reports whether the id was
+    /// new), and never disconnected on the live path: freeing the node drops the connection with it, which is
+    /// also why the registry's liveness probe is "not freed" rather than "in the tree". The handler is static, so
+    /// the connection holds no reference back to anything that could keep a screen alive.
+    /// </remarks>
+    private static void ConnectVisibility(Node screen)
+    {
+        if (screen is not CanvasItem canvasItem)
+        {
+            return;
+        }
+
+        try
+        {
+            canvasItem.VisibilityChanged += OnLobbyScreenVisibilityChanged;
+        }
+        catch (Exception exception)
+        {
+            // Not fatal: the game's own screen event covers the same transitions, and the fallback covers the
+            // case where neither is there.
+            CouchCoopLog.Stderr(
+                $"qr host panel visibility connect failed: {exception.GetType().Name}: {exception.Message}");
+        }
+    }
+
+    /// <summary>
+    /// A wake: arm the evaluation chain if — and only if — a registered lobby screen is on screen AND current.
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// The pre-check is the whole point of being event-driven: a wake that finds no current lobby must cost a
+    /// registry prune, one <c>IsVisibleInTree</c> per screen and one current-screen resolve, and then stop. The
+    /// game raises its screen event on map open/close and every submenu push, so during a run this runs often
+    /// and must stay silent — no state pull, no timer, no log line.
+    /// </para>
+    /// <para>
+    /// Nothing is skipped by refusing to arm here. The chain is running whenever a lobby screen is visible and
+    /// current, so every transition OUT of that state is observed by its next tick; a wake only ever has to
+    /// catch a transition INTO it.
+    /// </para>
+    /// </remarks>
+    private static void ArmIfLobbyIsCurrent()
+    {
+        try
+        {
+            lock (Gate)
+            {
+                if (_scanScheduled)
+                {
+                    return; // a chain is already running and re-asks this question within a tick
+                }
+            }
+
+            if (!Screens.IsOccupied)
+            {
+                return;
+            }
+
+            if (Engine.GetMainLoop() is not SceneTree { Root: { } root } || !GodotObject.IsInstanceValid(root))
+            {
+                return;
+            }
+
+            var screens = ResolveScreens(Screens.Live());
+            var facts = Survey(screens, out var currentScreenKnown);
+            if (!LobbyEvaluationPlanner.Decide(facts, currentScreenKnown).KeepTicking)
+            {
+                return;
+            }
+
             EnsureScanScheduled(root);
+        }
+        catch (Exception exception)
+        {
+            CouchCoopLog.Stderr(
+                $"qr host panel wake failed: {exception.GetType().Name}: {exception.Message}");
         }
     }
 
@@ -206,8 +405,16 @@ public static class CouchCoopQrHostPanelController
     }
 
     /// <summary>
-    /// Ask every installed QR panel to re-apply its layout on the next scan tick.
+    /// Ask every installed QR panel to re-apply its layout on the next evaluation.
     /// </summary>
+    /// <remarks>
+    /// A FLAG, AND DELIBERATELY NOTHING ELSE — this is the one entry point here that is NOT main-thread. The
+    /// hot-reload shell calls it by reflection (<c>CouchCoopHotReloadProtocol.RefreshOverlayLayout</c>) from
+    /// whichever thread served the reload request, and the locale hook calls it under its own lock, so touching
+    /// a Godot object from here would be a cross-thread call into the engine. It does not need to wake an
+    /// evaluation either: a re-layout only has an effect while a panel is on screen, and while a lobby is
+    /// current the 0.25s chain is running and picks the flag up within a tick.
+    /// </remarks>
     public static void RefreshAll()
     {
         lock (Gate)
@@ -218,6 +425,7 @@ public static class CouchCoopQrHostPanelController
 
     public static void Shutdown()
     {
+        IDisposable? subscription;
         lock (Gate)
         {
             _initialized = false;
@@ -225,16 +433,35 @@ public static class CouchCoopQrHostPanelController
             _refreshRequested = false;
             _scanTimer = null;
             _alertState = HostTransportAlertState.Initial;
+            subscription = _screenContextSubscription;
+            _screenContextSubscription = null;
+        }
+
+        _screenContextSubscribed = false;
+        try
+        {
+            subscription?.Dispose();
+        }
+        catch (Exception exception)
+        {
+            CouchCoopLog.Stderr(
+                $"qr host panel screen context unsubscribe failed: {exception.GetType().Name}: {exception.Message}");
         }
 
         // A live tick chain checks _scanScheduled only when it re-arms, so an in-flight timer may still fire
-        // once after this. Emptying the registry is what makes that last tick a no-op: it parks itself.
-        Screens.Clear();
-
+        // once after this. Emptying the registry is what makes that last tick a no-op: it parks itself — so it
+        // happens on BOTH arms below, tree or no tree.
         if (Engine.GetMainLoop() is not SceneTree { Root: { } root } || !GodotObject.IsInstanceValid(root))
         {
+            Screens.Clear();
             return;
         }
+
+        // Drop the visibility connections BEFORE the registry forgets which screens have one, so a later
+        // Initialize (a hot-reload generation) re-registering the same surviving node cannot connect twice and
+        // double-fire. A freed screen took its connection with it and is pruned by Live() here.
+        DisconnectVisibility();
+        Screens.Clear();
 
         foreach (var screen in FindLobbyScreens(root))
         {
@@ -252,7 +479,7 @@ public static class CouchCoopQrHostPanelController
         node.GetNodeOrNull<CouchCoopQrHostPanel>(CouchCoopQrHostPanel.NodeName)?.QueueFree();
     }
 
-    /// <summary>Start the tick chain unless one is already running.</summary>
+    /// <summary>Start the tick chain unless one is already running. First evaluation lands next frame.</summary>
     private static void EnsureScanScheduled(Node root)
     {
         lock (Gate)
@@ -266,7 +493,35 @@ public static class CouchCoopQrHostPanelController
         }
 
         CouchCoopLog.Stderr("qr host panel scan scheduled");
-        ScheduleScan(root);
+        ScheduleScan(root, WakeSeconds);
+    }
+
+    /// <summary>
+    /// Forget every visibility connection this controller made, for the screens that still exist.
+    /// </summary>
+    /// <remarks>
+    /// Paired exactly with <see cref="ConnectVisibility"/>: the registry is connected on <c>Add</c> and cleared
+    /// only by <see cref="Shutdown"/>, so the ids surviving <see cref="LobbyScreenRegistry.Live"/> here are
+    /// precisely the live screens that were connected.
+    /// </remarks>
+    private static void DisconnectVisibility()
+    {
+        foreach (var id in Screens.Live())
+        {
+            try
+            {
+                if (GodotObject.InstanceFromId(id) is CanvasItem canvasItem
+                    && GodotObject.IsInstanceValid(canvasItem))
+                {
+                    canvasItem.VisibilityChanged -= OnLobbyScreenVisibilityChanged;
+                }
+            }
+            catch (Exception exception)
+            {
+                CouchCoopLog.Stderr(
+                    $"qr host panel visibility disconnect failed: {exception.GetType().Name}: {exception.Message}");
+            }
+        }
     }
 
     /// <summary>Mark the chain stopped so the next mount can start a fresh one.</summary>
@@ -279,7 +534,7 @@ public static class CouchCoopQrHostPanelController
         }
     }
 
-    private static void ScheduleScan(Node root)
+    private static void ScheduleScan(Node root, double delaySeconds)
     {
         if (!GodotObject.IsInstanceValid(root))
         {
@@ -287,7 +542,7 @@ public static class CouchCoopQrHostPanelController
             return;
         }
 
-        var timer = root.GetTree().CreateTimer(0.25,
+        var timer = root.GetTree().CreateTimer(delaySeconds,
             processAlways: true,
             ignoreTimeScale: true);
         lock (Gate)
@@ -312,47 +567,39 @@ public static class CouchCoopQrHostPanelController
 
             // Default TRUE on a throw: a transient fault must not park the chain permanently, which would
             // cost the lobby its panels for the rest of the process. The occupancy answer that CAN park it
-            // is taken inside Scan, before anything fallible runs.
+            // is taken inside Evaluate, before anything fallible runs.
             var keepTicking = true;
             try
             {
-                keepTicking = Scan();
+                keepTicking = Evaluate();
             }
             catch (Exception exception)
             {
-                // A throw here would kill the timer chain and with it every future scan, so the panel
+                // A throw here would kill the timer chain and with it every future evaluation, so the panel
                 // would never appear again this session. Log and keep the loop alive instead.
                 CouchCoopLog.Stderr($"qr host panel scan tick failed: {exception.GetType().Name}: {exception.Message}");
             }
 
             if (!keepTicking)
             {
-                // No lobby screen left alive: stop ticking entirely. This is the idle state an unmodded
-                // game is being compared against — the next _Ready postfix restarts the chain.
+                // No lobby screen is current any more: stop ticking entirely. This is the idle state an
+                // unmodded game is being compared against — a wake restarts the chain. Both reasons are
+                // logged because they are different bugs when one of them is wrong: an empty registry means
+                // the screens were freed, a non-current one means the player navigated away.
                 ParkScan();
-                CouchCoopLog.Stderr("qr host panel scan parked (no lobby screen)");
+                CouchCoopLog.Stderr(Screens.IsOccupied
+                    ? "qr host panel scan parked (lobby screen not current)"
+                    : "qr host panel scan parked (no lobby screen)");
                 return;
             }
 
-            ScheduleScan(root);
+            ScheduleScan(root, TickSeconds);
         };
     }
 
-    /// <summary>One tick. Returns whether the chain should keep running.</summary>
-    private static bool Scan()
+    /// <summary>The nodes behind a set of registered ids, skipping any that went stale in between.</summary>
+    private static List<Node> ResolveScreens(IReadOnlyList<ulong> ids)
     {
-        // FIRST, and infallible: prune freed screens and take the occupancy answer before any Godot call
-        // that could throw, so "should I keep ticking?" is never decided by a transient fault.
-        var ids = Screens.Live();
-        if (ids.Count == 0)
-        {
-            // No lobby in the tree at all is an unmount as far as the alert is concerned, and this is the
-            // early return the rest of the scan takes on the main menu and mid-run — so the latch has to
-            // be re-armed HERE, not only below.
-            DecideHostTransportAlert(null);
-            return false;
-        }
-
         var screens = new List<Node>(ids.Count);
         foreach (var id in ids)
         {
@@ -362,25 +609,79 @@ public static class CouchCoopQrHostPanelController
             }
         }
 
-        // The visibility gate, hoisted out of the per-screen loop. When NOTHING is visible, ScanScreen takes
-        // the `!visible` arm for both panels regardless of the two state gates, so the outcome is identical
-        // with or without the state pull — and the pull is the expensive half of this tick. A lobby screen
-        // that is merely hidden (backed out to the menu, a submenu on top) therefore costs one
-        // IsVisibleInTree per screen and nothing else.
-        var anyVisible = false;
-        foreach (var screen in screens)
+        return screens;
+    }
+
+    /// <summary>
+    /// Read the two engine facts the gate needs, per screen, plus whether the current-screen seam could answer
+    /// at all. The returned list is index-aligned with <paramref name="screens"/>.
+    /// </summary>
+    /// <remarks>
+    /// <c>Sts2ScreenContext.Current</c> is resolved ONCE per evaluation and compared by reference — which is
+    /// exactly what <c>Sts2ScreenContext.IsCurrent</c> does per call — because the evaluation also has to
+    /// distinguish "this screen is not the current one" from "the seam cannot tell me what the current one is".
+    /// Only the first is a reason to skip work; the second is the fallback, and asking per screen would throw
+    /// that distinction away.
+    /// </remarks>
+    private static List<LobbyScreenFacts> Survey(List<Node> screens, out bool currentScreenKnown)
+    {
+        object? current = null;
+        try
         {
-            if (IsVisibleInTree(screen))
-            {
-                anyVisible = true;
-                break;
-            }
+            current = Sts2ScreenContext.Current;
+        }
+        catch
+        {
+            // Documented as total, but a null answer is the safe reading either way: it opens the fallback.
         }
 
-        if (!anyVisible)
+        currentScreenKnown = _screenContextSubscribed && current is not null;
+
+        var facts = new List<LobbyScreenFacts>(screens.Count);
+        foreach (var screen in screens)
         {
-            foreach (var screen in screens)
+            facts.Add(new LobbyScreenFacts(
+                screen.GetInstanceId(),
+                IsVisibleInTree(screen),
+                ReferenceEquals(screen, current)));
+        }
+
+        return facts;
+    }
+
+    /// <summary>One evaluation. Returns whether the bounded tick chain should keep running.</summary>
+    private static bool Evaluate()
+    {
+        // FIRST, and infallible: prune freed screens and take the occupancy answer before any Godot call
+        // that could throw, so "should I keep ticking?" is never decided by a transient fault.
+        var ids = Screens.Live();
+        if (ids.Count == 0)
+        {
+            // No lobby in the tree at all is an unmount as far as the alert is concerned, and this is the
+            // early return the rest of the evaluation takes on the main menu and mid-run — so the latch has
+            // to be re-armed HERE, not only below.
+            DecideHostTransportAlert(null);
+            return false;
+        }
+
+        var screens = ResolveScreens(ids);
+        var facts = Survey(screens, out var currentScreenKnown);
+        var plan = LobbyEvaluationPlanner.Decide(facts, currentScreenKnown);
+
+        if (!plan.PullState)
+        {
+            // Nothing is both visible and current, so the state pull — the expensive half — would decide
+            // nothing. Hidden screens still give up their panels: removal is keyed on VISIBILITY, exactly as
+            // before, so a lobby parked visible under a modal keeps its panel (and with it CouchCoop's own
+            // open dialog, which is that panel's child).
+            for (var index = 0; index < screens.Count; index++)
             {
+                if (facts[index].Visible)
+                {
+                    continue;
+                }
+
+                var screen = screens[index];
                 if (CheckpointKind(screen) is { } kind)
                 {
                     Checkpoints.EndVisibleEpoch(screen.GetInstanceId(), kind);
@@ -388,12 +689,16 @@ public static class CouchCoopQrHostPanelController
                 RemoveFrom(screen);
             }
 
-            DecideHostTransportAlert(null);
-            return true;
+            if (plan.Alert == LobbyAlertUpdate.Rearm)
+            {
+                DecideHostTransportAlert(null);
+            }
+
+            return plan.KeepTicking;
         }
 
-        // Only pull state once a lobby screen is actually on screen — the state read is the expensive half
-        // of this tick, and on the main menu or mid-combat there is nothing to decide.
+        // Only pull state once a lobby screen is actually the screen the player is on — the state read is the
+        // expensive half of an evaluation, and on the main menu or mid-combat there is nothing to decide.
         var snapshot = CouchCoopMod.HostUiSnapshot;
         var lobbyState = CouchCoopMod.TryGetLobbyState();
         // Keep the QR entry point reachable when the browser listener failed. The dialog's empty state
@@ -428,18 +733,30 @@ public static class CouchCoopQrHostPanelController
         }
 
         CouchCoopQrHostPanel? mounted = null;
-        foreach (var screen in screens)
+        for (var index = 0; index < screens.Count; index++)
         {
+            var screen = screens[index];
             try
             {
-                if (IsVisibleInTree(screen) && CheckpointKind(screen) is { } kind)
+                // Index-aligned with `screens` by construction: Survey emits one fact per screen, in order.
+                var screenFacts = facts[index];
+
+                // A lobby parked visible UNDERNEATH the current screen is left entirely alone — panel
+                // included. See LobbyEvaluationPlanner.IsParkedUnderAnotherScreen for why removal must not
+                // follow "not current".
+                if (LobbyEvaluationPlanner.IsParkedUnderAnotherScreen(screenFacts, currentScreenKnown))
+                {
+                    continue;
+                }
+
+                if (screenFacts.Visible && CheckpointKind(screen) is { } kind)
                 {
                     Checkpoints.VisibleHostLobbyEvaluated(screen.GetInstanceId(), kind, evaluation);
                 }
 
                 // Unconditional: `mounted ??= ScanScreen(...)` would short-circuit and skip installing on a
                 // second visible lobby screen. Only the FIRST panel is remembered, as the alert's host.
-                var panel = ScanScreen(screen, snapshot, shouldShow, refresh);
+                var panel = ScanScreen(screen, snapshot, shouldShow, refresh, screenFacts.Visible);
                 mounted ??= panel;
             }
             catch (Exception exception)
@@ -458,21 +775,26 @@ public static class CouchCoopQrHostPanelController
     }
 
     /// <summary>
-    /// One screen's half of <see cref="Scan"/>, isolated so a stale node cannot poison the whole tick.
+    /// One screen's half of <see cref="Evaluate"/>, isolated so a stale node cannot poison the whole
+    /// evaluation.
     /// </summary>
+    /// <param name="visible">
+    /// This screen's <c>IsVisibleInTree</c>, as surveyed for the gate. Passed rather than re-read so the panel
+    /// decision and the gate decision cannot disagree about what was on screen this evaluation.
+    /// </param>
     /// <returns>The QR panel mounted on this screen, or <see langword="null"/> if none is usable yet.</returns>
     private static CouchCoopQrHostPanel? ScanScreen(
         Node screen,
         CouchCoopHostUiSnapshot snapshot,
         bool shouldShow,
-        bool refresh)
+        bool refresh,
+        bool visible)
     {
         if (!GodotObject.IsInstanceValid(screen))
         {
             return null;
         }
 
-        var visible = IsVisibleInTree(screen);
         CouchCoopQrHostPanel? mounted = null;
 
         // Isolate installation so a transient node failure cannot stop later refreshes.
@@ -509,12 +831,17 @@ public static class CouchCoopQrHostPanelController
     }
 
     /// <summary>
-    /// Runs the once-per-mount latch and pops the alert on the tick it says to.
+    /// Runs the once-per-mount latch and pops the alert on the evaluation it says to.
     /// </summary>
     /// <param name="mounted">
     /// The visible host-lobby panel, or <see langword="null"/> for "no host lobby on screen" — which
     /// re-arms the latch, so backing out to the menu and coming back shows the alert again.
     /// </param>
+    /// <remarks>
+    /// NOT called at all when a lobby is visible but not current (<see cref="LobbyAlertUpdate.Hold"/>): a modal
+    /// opening over the lobby is not an unmount, and passing null there would re-arm the latch and pop the alert
+    /// again every time the player closed a dialog.
+    /// </remarks>
     private static void DecideHostTransportAlert(CouchCoopQrHostPanel? mounted)
     {
         // A panel that went stale between install and here is NOT a mount: treating it as one would both

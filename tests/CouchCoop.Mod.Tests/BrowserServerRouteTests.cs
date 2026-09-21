@@ -109,6 +109,9 @@ if (args is ["host-guards", ..])
     // again, but the regression it guards (one failed patch attempt costing the lobby its QR button for the
     // whole process) is invisible until someone opens a lobby, so it is worth reaching without a full run.
     IdleHostCostTests.MountPlanContract();
+    // The gate that decides whether a lobby screen is evaluated at all — same standing (pure, no engine), and
+    // the same invisible-until-someone-opens-a-lobby failure mode.
+    IdleHostCostTests.LobbyEvaluationContract();
     LobbySupportCheckpointsTests.Run();
     Console.WriteLine("host guards: ok");
     return;

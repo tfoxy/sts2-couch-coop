@@ -36,6 +36,10 @@ internal static class SpirectlEmbeddedAssemblyBoundaryTests
         "Spirectl.Sts2.Live.Sts2RenderEncodeBudget",
         "Spirectl.Sts2.Live.Sts2RenderPhaseProfile",
         "Spirectl.Sts2.Live.Sts2ContentKey",
+        // The read-only active-screen seam. CouchCoopQrHostPanelController subscribes to its Updated event
+        // instead of polling, and gates the lobby state pull on IsCurrent — so losing it from the embedded
+        // runtime would silently return the mod to a 0.25s tick that never parks.
+        "Spirectl.Sts2.Live.Sts2ScreenContext",
     ];
 
     private static readonly string[] RemovedTypeNames =
