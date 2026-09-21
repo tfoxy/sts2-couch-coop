@@ -105,19 +105,35 @@ scripts/macos-support-diagnostics.sh \
 It prints redacted OS/architecture and locations, the `release_info.json` version, allowlisted package-layout
 verdicts, hashes/modes for allowlisted CouchCoop files, summarized `codesign`/`spctl` outcomes, and only anchored,
 fully validated CouchCoop checkpoint lines. Besides the loader/version/payload/invoke/init and Harmony-probe
-records, the allowlist covers bounded lobby patch attempts/results, listener availability, controller arming,
-the two supported lobby kinds, host-state classification, and QR-panel installation entry/result. It writes
-nothing into the app and neither copies nor walks arbitrary game content; URLs, ports, paths, player data,
-exceptions, stack traces, unknown enum values, and arbitrary suffixes are rejected.
+records, the allowlist covers whether the embedded spirectl runtime is a live STS2 host (with a bounded refusal
+reason when it is not), bounded lobby patch attempts/results, listener availability, controller arming, the two
+supported lobby kinds, host-state classification, and QR-panel installation entry/result. It writes nothing into
+the app and neither copies nor walks arbitrary game content; URLs, ports, paths, player data, exceptions, stack
+traces, unknown enum values, and arbitrary suffixes are rejected — the spirectl-owned refusal reason is mapped
+onto a fixed token set, never logged as the string spirectl published.
 
 Interpret the last bounded checkpoint as follows:
 
+- **`live-host-runtime result=unsupported reason=<token>` — read this one first.** The embedded spirectl runtime
+  is a placeholder with no state provider, so every observation after it is a fabricated main menu that is
+  byte-identical to a real one. Everything below is then a *consequence*, not a finding: the lobby classifies as
+  `not-host` forever, no QR button is built, and browsers never reach the player-name form. `outside-game-process`
+  means the build can host but was not recognised as running inside the game; `non-live-build` means the payload
+  was compiled without live-host references (a lane or packaging fault); `not-live-adapter` means the runtime was
+  composed from something that is not a live host adapter; `unreported` and `unknown` mean the capability said
+  nothing, or said something this build does not recognise. `result=supported` is the only value that makes the
+  rest of the list worth reading.
 - No `loader-entry`: the bootstrap was not discovered or invoked.
 - `loader-entry` without `loader-invoke`: lane selection, payload validation, or bootstrap handoff stopped first.
 - Failed Harmony probe or an exhausted lobby patch: native patching was refused or no supported mount callback
   remained; there is no fallback hook.
+- **A missing `lobby-screen-mounted` line does not mean the lobby never appeared.** It fires **once**, at
+  main-menu load, and entering the host lobby **reuses that same node** — no second `_Ready`, so no second mount
+  line, and on at least one platform a character-select screen sits parked *visible* in the tree at the main menu.
+  Read mount lines as "the hook installed", never as "a lobby is on screen now". Assuming otherwise cost hours.
 - Lobby mounted with `result=unavailable` or `result=not-host`: the hook ran, but readable state did not identify a
-  host lobby.
+  host lobby. Confirm `live-host-runtime result=supported` first — a placeholder runtime produces exactly this
+  line for a genuine host, which is why that checkpoint heads this list.
 - `result=host` followed by `qr-panel-install-failed`: the bounded category identifies the failed install stage.
 - `qr-panel-install-complete`: the panel attached and survived initial activation. Check listener availability
   separately because the panel intentionally installs even when the listener is unavailable.

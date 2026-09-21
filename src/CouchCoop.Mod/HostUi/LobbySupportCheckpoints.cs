@@ -37,6 +37,34 @@ public enum LobbyPatchRetryState
 }
 
 /// <summary>
+/// Why the embedded spirectl runtime refused to be a LIVE STS2 host — i.e. why this process got a placeholder
+/// runtime with no state provider instead of the real one.
+/// </summary>
+/// <remarks>
+/// The distinction costs co-op entirely and is otherwise invisible: a placeholder runtime answers every state
+/// observation with a fabricated main menu that is byte-identical to a real one, so the lobby is classified
+/// <c>not-host</c> forever and no QR button is ever built. These tokens are the only thing that separates
+/// "the player is a guest" from "the runtime cannot answer".
+/// </remarks>
+public enum LiveHostRuntimeReason
+{
+    /// <summary>The build can host, but this process was not recognised as the game's own process.</summary>
+    OutsideGameProcess,
+
+    /// <summary>The payload was compiled without live-host references at all — a lane/packaging fault.</summary>
+    NonLiveBuild,
+
+    /// <summary>The runtime was composed from something other than a live host adapter.</summary>
+    NotLiveAdapter,
+
+    /// <summary>The capability was absent, or present with no reason attached.</summary>
+    Unreported,
+
+    /// <summary>A reason was reported that this build does not recognise. Never the reason text itself.</summary>
+    Unknown,
+}
+
+/// <summary>
 /// Writes the deliberately small, machine-checkable lobby support checkpoint vocabulary.
 /// </summary>
 /// <remarks>
@@ -49,6 +77,24 @@ public sealed class LobbySupportCheckpoints
 {
     public const int PatchTargetCount = 2;
 
+    // The three reason strings spirectl's runtime factory can publish on the `live-sts2-host` capability,
+    // copied because they are not exported yet: two are private consts in
+    // Spirectl.Sts2.Sts2EmbeddableRuntimeFactory and the third is the default argument of
+    // Spirectl.Sts2.Embedding.EmbeddableRuntimeOptions.LiveSts2HostUnsupportedReason. Once spirectl publishes
+    // them, each initializer below becomes `= <spirectl constant>;` — one line each, nothing else moves,
+    // because ClassifyLiveHostReason and its tests only ever see these names.
+    //
+    // Before flipping, note that THIS FILE is source-linked into tests/CouchCoop.MacOs.Tests, which carries no
+    // spirectl (or any) reference on purpose; the flip therefore also needs that project to gain one, or the
+    // pin belongs in a spirectl-aware suite instead. Drift is not silent in either direction: an unmatched
+    // string classifies as `unknown`, which reads as "spirectl changed its wording", not as a pass-through.
+    private const string OutsideGameProcessReason =
+        "This live-host build is not running inside an initialized STS2/Godot process.";
+    private const string NonLiveBuildReason =
+        "This build was compiled without live STS2 host references.";
+    private const string NotLiveAdapterReason =
+        "This runtime was not created from a live STS2 host adapter.";
+
     private readonly Action<string> _stderr;
     private readonly Action<string> _info;
     private readonly Action<string> _error;
@@ -58,6 +104,40 @@ public sealed class LobbySupportCheckpoints
         _stderr = stderr ?? throw new ArgumentNullException(nameof(stderr));
         _info = info ?? throw new ArgumentNullException(nameof(info));
         _error = error ?? throw new ArgumentNullException(nameof(error));
+    }
+
+    /// <summary>The embedded spirectl runtime is the live one; every later checkpoint is worth reading.</summary>
+    public void LiveHostRuntimeSupported() => Routine("live-host-runtime result=supported");
+
+    /// <summary>
+    /// The embedded spirectl runtime is a placeholder. ERROR, not a warning: nothing downstream of this can
+    /// work, and every later <c>host-lobby-evaluated result=not-host</c> is a consequence of it rather than a
+    /// finding of its own.
+    /// </summary>
+    public void LiveHostRuntimeUnsupported(LiveHostRuntimeReason reason)
+        => Failure($"live-host-runtime result=unsupported reason={LiveHostReason(reason)}");
+
+    /// <summary>
+    /// Map the reason string spirectl publishes on the <c>live-sts2-host</c> capability onto a bounded token.
+    /// Pure, total, and deliberately never a pass-through: an unrecognised reason becomes
+    /// <see cref="LiveHostRuntimeReason.Unknown"/> so that no runtime-derived text — a path, a type name, an
+    /// exception message — can reach a support snapshot through this route.
+    /// </summary>
+    public static LiveHostRuntimeReason ClassifyLiveHostReason(string? reason)
+    {
+        var trimmed = reason?.Trim();
+        if (string.IsNullOrEmpty(trimmed))
+        {
+            return LiveHostRuntimeReason.Unreported;
+        }
+
+        return trimmed switch
+        {
+            OutsideGameProcessReason => LiveHostRuntimeReason.OutsideGameProcess,
+            NonLiveBuildReason => LiveHostRuntimeReason.NonLiveBuild,
+            NotLiveAdapterReason => LiveHostRuntimeReason.NotLiveAdapter,
+            _ => LiveHostRuntimeReason.Unknown,
+        };
     }
 
     public void LobbyPatchAttempt(LobbyPatchAttemptPhase phase, int pending)
@@ -149,6 +229,16 @@ public sealed class LobbySupportCheckpoints
         LobbyPatchAttemptPhase.Initial => "initial",
         LobbyPatchAttemptPhase.Retry => "retry",
         _ => throw new ArgumentOutOfRangeException(nameof(phase)),
+    };
+
+    private static string LiveHostReason(LiveHostRuntimeReason reason) => reason switch
+    {
+        LiveHostRuntimeReason.OutsideGameProcess => "outside-game-process",
+        LiveHostRuntimeReason.NonLiveBuild => "non-live-build",
+        LiveHostRuntimeReason.NotLiveAdapter => "not-live-adapter",
+        LiveHostRuntimeReason.Unreported => "unreported",
+        LiveHostRuntimeReason.Unknown => "unknown",
+        _ => throw new ArgumentOutOfRangeException(nameof(reason)),
     };
 
     private static string Retry(LobbyPatchRetryState retry) => retry switch

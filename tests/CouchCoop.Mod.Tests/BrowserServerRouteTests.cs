@@ -653,6 +653,11 @@ SecureHeadlessRedirectTests.RunAsync();
 // incl. compression pointers, case-insensitive match, multicast/legacy/QU response bytes, TTL-0 goodbye) plus
 // the kill-switch. Opens no socket — live multicast behaviour is verified against avahi by hand.
 MdnsResponderTests.Run();
+// The bounded support-log vocabulary that EXPLAINS the gate below — including `live-host-runtime`, which says
+// whether the runtime could answer the gate's question at all. Registered here as well as in `host-guards`:
+// until now the full sequence never reached it, so the grammar a support snapshot is allowlisted against was
+// only proven by the macOS suite and by an argument nobody passes by default.
+LobbySupportCheckpointsTests.Run();
 // WS-2 QR dialog: when the "Couch Co-Op QR Code" button exists (and, just as importantly, when it does not).
 CouchCoopLobbyHostGateTests.Run();
 // F1 host connectivity log: the ring, the player-facing copy (asserted literally — it is a QA contract
