@@ -752,16 +752,26 @@ Dismiss. Verify Steam Deck Game Mode clipboard on actual hardware, or explicitly
 ```
 sts2 --json test run tests/scenarios/pc-lobby-qr-overlay.sts2.yaml
 sts2 --json test run tests/scenarios/lobby-actions-remain-available.sts2.yaml
+sts2 --json test run tests/scenarios/pause-menu-qr.sts2.yaml
 ```
 
-Both are self-contained: `game.deploy` (build + restart + verify) → `dev.delay` → the probe hook. They drive
-a REAL game, so they take the live lock themselves.
+All three are self-contained: `game.deploy` (build + restart + verify) → `dev.delay` → the probe hook. They
+drive a REAL game, so they take the live lock themselves.
 
 | piece | path |
 | --- | --- |
 | shared probe helpers | `scripts/probe-lib-lobby-qr.mjs` |
 | button/dialog/mirror probe | `scripts/probe-pc-lobby-qr-overlay.mjs` (screenshots `01..08` + `result.json` under `.sts2/artifacts/pc-lobby-qr-overlay/`) |
 | semantic-actions probe | `scripts/probe-lobby-actions-remain-available.mjs` (available → blocked → available) |
+| pause-menu row probe | `scripts/probe-pause-menu-qr.mjs` (screenshots `01..04` + `result.json` under `.sts2/artifacts/pause-menu-qr/`) |
+
+The pause-menu probe is the one that has to **embark a run**, and that shapes it: the gate requires
+`run.netGameType == "host"`, and a `run:` fixture is always the singleplayer `SetUpNewSingleplayer` path (§4),
+so the only way to the positive case is `pc-lobby-host.sts2.fixture.yaml` → `sts2 act ready --player-id p:1`
+(readying every seat IS the embark; there is no `start-run` verb). Its positive legs run BEFORE the negative
+one because that embark is the only flaky-by-nature step in it. It measures "the container laid the row out"
+by comparing the row's x/width against a **game-owned sibling row's**, not against a hardcoded rect — a rect
+constant would pass just as well for a row the mod had positioned itself.
 
 There was a third, `pc-lobby-activity-log`, and it is **retired**: the lobby activity panel it drove was replaced
 by the connections panel, and nothing mounted it any more, so the probe could only ever time out. Its one

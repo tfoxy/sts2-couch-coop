@@ -1093,6 +1093,72 @@ panel is no longer mounted; its internal narration remains available for diagnos
   boundary and basic network checks. Native strings are localized in all supported catalogs; diagnostic
   codes and copied report fields remain stable.
 
+## Pause-menu QR entry (the mid-run twin)
+
+The lobby button is gone the moment a run embarks, so a device that joined and then LOST its browser — locked
+phone, closed tab, dropped Wi-Fi — had no way back to the join URL without abandoning the run. The pause menu
+is the one screen reachable from anywhere mid-run.
+
+- **Files**: `HostUi/CouchCoopPauseMenuQrEntry.cs` (the row + the dialog host),
+  `HostUi/CouchCoopPauseMenuGate.cs` (the pure gate), `Patches/PauseMenuMountPatch.cs` +
+  `Patches/PauseMenuMountTargets.cs` (the seam). It REUSES `CouchCoopQrDialog` unchanged, and
+  `CouchCoopQrHostPanel.ButtonText` for its wording, so the two entry points cannot drift apart.
+- **Gate**: `CouchCoopPauseMenuGate.ShouldShow(listenerBaseUri, state)` = browser server bound AND
+  `state is { Run.NetGameType: "host" }`. Deliberately DISJOINT from `CouchCoopLobbyHostGate`, which requires
+  `Run: null` — the lobby gate answers "can a NEW device join?", this one answers "is the URL worth anything to
+  a device that already has a seat?". `CouchCoopPauseMenuGateTests` asserts they never both say yes.
+  Singleplayer and client runs are refused, matching how the game itself hides Give Up / Disconnect per net
+  type. Refusal HIDES the row (`Visible = false`), it does not remove it.
+- **The row is the GAME'S widget.** It is an instance of `res://scenes/pause_menu/pause_menu_button.tscn`, so
+  it carries that scene's plate, hsv shader, font and hover/press choreography, and — because the instance keeps
+  the game's own `CSharpScript` — the engine dispatches its lifecycle normally. None of `CouchCoopTextureButton`'s
+  no-script-dispatch machinery applies: that exists for nodes built with `new` in OUR assembly. Two dressing
+  steps the base scene does not do for itself, because the PARENT scene does them for its own rows:
+  `SizeFlagsHorizontal = ShrinkCenter` + `FocusMode = All`, and hsv `h=1,s=1,v=1` (GiveUp's `h=0.5` is the hue
+  rotation that makes it read red, and is deliberately not copied). The label is written with MegaLabel's
+  `SetTextAutoSize`, **not** `Label.Text` — the latter skips `AdjustFontSize` and the longer translations of
+  `couchcoop_qr_button` overflow the 372×80 plate at the scene's 32pt default.
+- **Inserted, never positioned.** `AddChild` into `%ButtonContainer` (falling back to
+  `PanelContainer/ButtonContainer`) then `MoveChild` to `GiveUp`'s index. The `VBoxContainer` lays it out and
+  the outer column grows; nothing in the mod sets an anchor, offset or position on it. No `GiveUp` (a game
+  update) leaves it last rather than failing.
+- **Focus ring.** `NPauseMenu._Ready` rings its SIX known rows and cannot see an injected one, so the entry
+  re-splices itself: left/right pin to itself, top/bottom to the wrapped index neighbours, and those two
+  neighbours are repointed back at it. Read by INDEX, not by name, so the wiring does not re-encode the row
+  order. Godot chain-follows a hidden or unfocusable neighbour, which is how the ring already survives GiveUp /
+  Disconnect / SaveAndQuit being hidden — and how it survives this row being hidden by the gate. This is why
+  the row needs no hotkey where the lobby button did.
+- **Mount, and no tick.** Harmony postfix on `NPauseMenu`'s declared `_Ready`, through the same
+  `GodotNodeMountHook` the lobby uses; applied only when `!IsHeadlessClient`, with one second-chance retry from
+  `CouchCoopMod.InitializeQrHostPanel`'s call sites. After that the gate is re-evaluated ONLY on the pause
+  menu's `visibility_changed` — there is no timer. The lobby's 0.25s chain exists because `netGameType` flips
+  live in a lobby; a run's does not. Hiding also closes the dialog: `NPauseMenu.OnSubmenuClosed` only sets
+  `Visible = false`, so an open modal would keep its cancel binding pushed and focus parked.
+- **The FIRST gate evaluation hops off the `_Ready` frame** (`ScheduleFirstRefresh`), and that is not a tick —
+  it is a `CreateTimer(0.0, processAlways: true, ignoreTimeScale: true)` that fires once. The structural half
+  of the mount (instance the row scene, `AddChild`, `MoveChild`, re-splice the focus ring, connect
+  `visibility_changed`) asks the game nothing and stays inside the postfix; the gate asks
+  `CouchCoopMod.TryGetLobbyState()`, which reflects into a game still assembling the screen that is readying.
+  That is the `7c354a88` fault — an uncatchable null dereference that lands as a bare kernel segfault with no
+  managed stack, which the surrounding `try` cannot see — and it is why the pre-check that commit deleted from
+  `CouchCoopQrHostPanelController.WakeEvaluation` must not be reinvented here. `processAlways: true` is the one
+  place this timer differs from the lobby's: the tree is PAUSED whenever this menu exists, so a pause-honouring
+  timer would never fire. The mount still needs that first answer because the menu can be readied already
+  visible, and `visibility_changed` never arrives for a state the node is already in.
+- **No `ReassertWhileOpen` heartbeat, deliberately.** `OnSubmenuOpened` calls `AddBlockingScreen`, which pushes
+  a swallow-everything binding for every action — but the menu was already open long before the player could
+  reach the row, so this dialog's own cancel/pauseAndBack push lands on top of it. That is the distinction the
+  Steam Deck round measured: a modal that opens by ITSELF during a screen's setup gets out-ranked; one the
+  player opens afterwards does not.
+- **Node contract** (what the probe asserts): `CouchCoopPauseMenuQrEntry` (child of `NPauseMenu`, FullRect,
+  `Ignore`, hosts `CouchCoopQrDialog`) and `CouchCoopPauseMenuQrButton` (inside the menu's own
+  `ButtonContainer`, immediately above `GiveUp`, label "Couch Co-Op QR Code"). **Both are
+  `CouchCoopStreamSkip`-stamped before `AddChild`** — they are separate subtrees, so one stamp would not cover
+  the other, and a viewer who picked "watch the host" mirrors this tree and drives it with real injected input.
+- **Tests**: `CouchCoopPauseMenuGateTests` (`-- host-ui`), `IdleHostCostTests.PauseMenuMountTargetsResolve`
+  (`-- host-guards`, `-- beta-targets`, and the game-free metadata lane), and the live
+  `tests/scenarios/pause-menu-qr.sts2.yaml`.
+
 ## Suites / build (quick index — full detail in qa-recipes.md)
 - `dotnet run --project tests/CouchCoop.MirrorProtocol.Tests` and `dotnet run --project tests/CouchCoop.Mod.Tests`
   — custom `Exe` runners, NOT `dotnet test` (suites self-register in each `Program.cs`).

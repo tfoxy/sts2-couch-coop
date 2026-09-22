@@ -1,0 +1,29 @@
+name: pause-menu-qr
+description: >-
+  Validates the pause menu's "Couch Co-Op QR Code" row -- the mid-run entry point to the join dialog,
+  which exists because the lobby button is gone once a run embarks. Proves the row is carried by the
+  game's own button column directly above "Give Up", that the CONTAINER laid it out (its x/width match
+  a game-owned sibling's), that it opens and closes CouchCoopQrDialog, that the gate hides it in a
+  singleplayer run, and that no injected node reaches a mirror client.
+
+steps:
+  # Builds via game.deployBuildCommand into <repo>/dist/couchcoop, deploys that into the game's mods
+  # dir, then restarts and verifies the bridge -- so the probe always runs against the current tree.
+  - game.deploy:
+      path: ../../src/CouchCoop.Mod.Loader
+      build: true
+      restart: true
+      verify: true
+      timeoutMs: 120000
+
+  # The probe loads its own fixtures (host lobby, singleplayer run, main menu) and takes the shared
+  # live-session lock itself.
+  # The restarted game keeps finishing its own boot flow (logo / FTUE / leaderboard) for several
+  # seconds, and that flow pushes the main menu -- popping any lobby a fixture created in the
+  # meantime. Let it settle before the probe starts driving screens. This is NOT interchangeable with
+  # game.deploy's waitQuiescentMs, which returns quiescent well inside that window.
+  - dev.delay:
+      ms: 20000
+
+  - project.hook:
+      name: couchcoop.pause-menu-qr-probe

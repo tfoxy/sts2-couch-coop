@@ -795,7 +795,7 @@ async function sts2AtSocket(socketPath, args, { mode = "dangerous" } = {}) {
  * refuses it. Never throws: the full response of every attempt is the evidence this probe exists to
  * produce, so a refusal is returned, not raised.
  */
-async function actForPlayer(playerId, args, seatsByPlayerId) {
+export async function actForPlayer(playerId, args, seatsByPlayerId) {
   const attempts = [];
   let payload = null;
   try {
