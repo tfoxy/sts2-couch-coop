@@ -1,5 +1,7 @@
 import { shallowRef, type ShallowRef } from "vue";
 
+import { isIosPlatform } from "@/platform";
+
 /**
  * Android install affordance.
  *
@@ -64,17 +66,10 @@ const DISMISS_KEY = "couchcoop.installPrompt.snoozedUntil";
  */
 const DISMISS_SNOOZE_MS = 7 * 24 * 60 * 60 * 1000;
 
-/**
- * iPhone/iPad, including iPadOS 13+ which reports a desktop "Macintosh" UA and is only distinguishable
- * by having touch points. Deliberately a local copy rather than an import from `join/joinModel.ts`:
- * that file belongs to another workstream, and a two-line UA test is cheaper to duplicate than a
- * cross-workstream coupling is to maintain.
- */
-export function isIosPlatform(userAgent: string | null | undefined, maxTouchPoints = 0): boolean {
-  if (typeof userAgent !== "string") return false;
-  if (/iPad|iPhone|iPod/.test(userAgent)) return true;
-  return userAgent.includes("Macintosh") && maxTouchPoints > 1;
-}
+// The iOS test now lives in the leaf `@/platform` — `render/quality.ts` needs the same answer (it seeds both
+// effect modes off there) and cannot import this module, which pulls vue in. Re-exported rather than moved
+// outright because this is where the install workstream asks for it.
+export { isIosPlatform };
 
 /**
  * Already running as an installed app?

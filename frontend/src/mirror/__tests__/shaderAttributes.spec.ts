@@ -511,6 +511,7 @@ describe("nodeShaderAttributes — shaders off (true floor)", () => {
     maxTrailPoints: 0,
     staticShaderScale: 1,
     staticParticleScale: 1,
+    ios: false,
     source: "query"
   };
 
@@ -568,6 +569,7 @@ describe("isShaderInputNode", () => {
       maxTrailPoints: 0,
       staticShaderScale: 1,
       staticParticleScale: 1,
+      ios: false,
       source: "query"
     });
     expect(isShaderInputNode(node)).toBe(true);

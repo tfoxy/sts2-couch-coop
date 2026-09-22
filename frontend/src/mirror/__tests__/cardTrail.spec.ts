@@ -1290,6 +1290,7 @@ describe("cardTrail — interior decimation in the renderer", () => {
     maxTrailPoints: 8,
     staticShaderScale: 1,
     staticParticleScale: 1,
+    ios: false,
     source: "query"
   };
 
