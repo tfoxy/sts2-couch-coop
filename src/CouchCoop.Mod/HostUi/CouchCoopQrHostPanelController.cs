@@ -75,11 +75,22 @@ public static class CouchCoopQrHostPanelController
     /// has always installed from. It also coalesces a burst of events into one evaluation, because the
     /// <see cref="_scanScheduled"/> latch holds until the timer fires.
     /// </summary>
+    /// <remarks>
+    /// This frame boundary is not a nicety, it is the crash guard: it is the whole of what separates a game
+    /// callback from reading engine state the game has not finished writing. Keep every wake path on the near
+    /// side of it — see <see cref="WakeEvaluation"/>.
+    /// </remarks>
     private const double WakeSeconds = 0.0;
 
     private static readonly object Gate = new();
     private static bool _initialized;
     private static bool _scanScheduled;
+
+    /// <summary>
+    /// Whether the running chain has actually found a current lobby. Purely a log gate: a wake arms without
+    /// asking the engine anything, so "a chain started" is no longer news — "a chain reached a lobby" is.
+    /// </summary>
+    private static bool _chainProductive;
     private static bool _refreshRequested;
     // Keep the pending timer wrapper with the controller until its callback has run; the scan chain owns this
     // callback and must not rely on a temporary local surviving until the next tick.
@@ -192,9 +203,10 @@ public static class CouchCoopQrHostPanelController
             }
 
             CouchCoopLog.Stderr($"qr host panel armed seeded={seeded}");
-            // Arms only if one of the seeded screens is ALREADY the current screen (a hot-reload generation, a
-            // patch that landed late). Otherwise nothing runs until a wake says otherwise.
-            ArmIfLobbyIsCurrent();
+            // Only does anything if the seed found a screen at all (a hot-reload generation, a patch that
+            // landed late); the evaluation it schedules then parks itself unless that screen is current.
+            // Otherwise nothing runs until a wake says otherwise.
+            WakeEvaluation();
         }
         catch (Exception exception)
         {
@@ -204,8 +216,7 @@ public static class CouchCoopQrHostPanelController
 
     /// <summary>
     /// A lobby screen has just been readied. Called from <see cref="Patches.LobbyScreenMountPatch"/> on the
-    /// game main thread; connects the screen's visibility signal and evaluates if it is already the current
-    /// screen.
+    /// game main thread; connects the screen's visibility signal and wakes an evaluation for the next frame.
     /// </summary>
     /// <remarks>
     /// <para>
@@ -218,6 +229,12 @@ public static class CouchCoopQrHostPanelController
     /// that same node when the player later opens the lobby — no second <c>_Ready</c>, so no second call here.
     /// This is therefore only ever the moment a screen becomes KNOWN; whether it is on screen is
     /// <see cref="Evaluate"/>'s question, asked again on every wake.
+    /// </para>
+    /// <para>
+    /// That main-menu load is also why nothing here may ask the game about its screens: this body runs inside
+    /// the character-select <c>_Ready</c>, which the game invokes from underneath
+    /// <c>NSceneContainer.SetCurrentScene</c> — the current screen is mid-assignment and reading it faults
+    /// hard. Register, connect, wake; see <see cref="WakeEvaluation"/>.
     /// </para>
     /// </remarks>
     public static void NoteLobbyScreenMounted(Node? screen)
@@ -250,7 +267,7 @@ public static class CouchCoopQrHostPanelController
 
         if (initialized)
         {
-            ArmIfLobbyIsCurrent();
+            WakeEvaluation();
         }
     }
 
@@ -293,7 +310,11 @@ public static class CouchCoopQrHostPanelController
     }
 
     /// <summary>The game says the screen on top may have changed.</summary>
-    private static void OnScreenContextUpdated() => ArmIfLobbyIsCurrent();
+    /// <remarks>
+    /// Raised from inside the game's own screen transition, so this must not ask the game anything — see
+    /// <see cref="WakeEvaluation"/>. It schedules; the frame boundary is what makes the answer safe to read.
+    /// </remarks>
+    private static void OnScreenContextUpdated() => WakeEvaluation();
 
     /// <summary>A registered lobby screen was shown or hidden (Godot's <c>visibility_changed</c>).</summary>
     /// <remarks>
@@ -302,7 +323,7 @@ public static class CouchCoopQrHostPanelController
     /// Handling both directions keeps the handler free of that reasoning and costs nothing, because a wake with
     /// a chain already running returns immediately.
     /// </remarks>
-    private static void OnLobbyScreenVisibilityChanged() => ArmIfLobbyIsCurrent();
+    private static void OnLobbyScreenVisibilityChanged() => WakeEvaluation();
 
     /// <summary>
     /// Connect a newly registered screen's visibility signal.
@@ -334,22 +355,35 @@ public static class CouchCoopQrHostPanelController
     }
 
     /// <summary>
-    /// A wake: arm the evaluation chain if — and only if — a registered lobby screen is on screen AND current.
+    /// A wake: schedule ONE evaluation on the next processed frame, unless a chain is already running.
     /// </summary>
     /// <remarks>
     /// <para>
-    /// The pre-check is the whole point of being event-driven: a wake that finds no current lobby must cost a
-    /// registry prune, one <c>IsVisibleInTree</c> per screen and one current-screen resolve, and then stop. The
-    /// game raises its screen event on map open/close and every submenu push, so during a run this runs often
-    /// and must stay silent — no state pull, no timer, no log line.
+    /// A WAKE ASKS THE ENGINE NOTHING. It takes the two answers it already owns — is a chain running, is the
+    /// registry occupied — and schedules the deferred evaluation. Whether a lobby is actually current is
+    /// <see cref="Evaluate"/>'s question, answered one frame later, and a wake that turns out to have found
+    /// nothing costs exactly one evaluation that parks itself.
     /// </para>
     /// <para>
-    /// Nothing is skipped by refusing to arm here. The chain is running whenever a lobby screen is visible and
-    /// current, so every transition OUT of that state is observed by its next tick; a wake only ever has to
-    /// catch a transition INTO it.
+    /// WHY THE CURRENT-SCREEN PRE-CHECK IS GONE, and it must not come back. Every wake source fires from
+    /// inside the game: the mount postfix runs within the screen's own <c>_Ready</c>, and the game raises its
+    /// active-screen event mid-transition. Resolving <c>Sts2ScreenContext.Current</c> there reaches into
+    /// <c>ActiveScreenContext</c> while the game is still assigning the current screen — during main-menu load
+    /// the character-select <c>_Ready</c> runs underneath <c>NSceneContainer.SetCurrentScene</c>, so the
+    /// answer does not exist yet and the read is a null dereference. In this runtime that is NOT a catchable
+    /// <see cref="NullReferenceException"/>: the signal-handler chain is broken, so it takes the process down
+    /// with a bare kernel <c>segfault … in memfd:doublemapper</c> and no managed stack. The <c>try</c> below
+    /// cannot save it and neither can the one in <see cref="Survey"/>. Deferring by a frame is the fix —
+    /// <see cref="WakeSeconds"/> already existed for exactly this reason, and the pre-check defeated it.
+    /// </para>
+    /// <para>
+    /// Nothing is skipped by scheduling unconditionally. The chain is running whenever a lobby screen is
+    /// visible and current, so every transition OUT of that state is observed by its next tick; a wake only
+    /// ever has to catch a transition INTO it, and <see cref="_scanScheduled"/> coalesces a burst of events
+    /// into one evaluation.
     /// </para>
     /// </remarks>
-    private static void ArmIfLobbyIsCurrent()
+    private static void WakeEvaluation()
     {
         try
         {
@@ -367,13 +401,6 @@ public static class CouchCoopQrHostPanelController
             }
 
             if (Engine.GetMainLoop() is not SceneTree { Root: { } root } || !GodotObject.IsInstanceValid(root))
-            {
-                return;
-            }
-
-            var screens = ResolveScreens(Screens.Live());
-            var facts = Survey(screens, out var currentScreenKnown);
-            if (!LobbyEvaluationPlanner.Decide(facts, currentScreenKnown).KeepTicking)
             {
                 return;
             }
@@ -430,6 +457,7 @@ public static class CouchCoopQrHostPanelController
         {
             _initialized = false;
             _scanScheduled = false;
+            _chainProductive = false;
             _refreshRequested = false;
             _scanTimer = null;
             _alertState = HostTransportAlertState.Initial;
@@ -492,7 +520,6 @@ public static class CouchCoopQrHostPanelController
             _scanScheduled = true;
         }
 
-        CouchCoopLog.Stderr("qr host panel scan scheduled");
         ScheduleScan(root, WakeSeconds);
     }
 
@@ -524,13 +551,19 @@ public static class CouchCoopQrHostPanelController
         }
     }
 
-    /// <summary>Mark the chain stopped so the next mount can start a fresh one.</summary>
-    private static void ParkScan()
+    /// <summary>
+    /// Mark the chain stopped so the next mount can start a fresh one. Returns whether the chain had reached a
+    /// current lobby, which is what makes this park worth a log line.
+    /// </summary>
+    private static bool ParkScan()
     {
         lock (Gate)
         {
+            var wasProductive = _chainProductive;
             _scanScheduled = false;
             _scanTimer = null;
+            _chainProductive = false;
+            return wasProductive;
         }
     }
 
@@ -580,16 +613,37 @@ public static class CouchCoopQrHostPanelController
                 CouchCoopLog.Stderr($"qr host panel scan tick failed: {exception.GetType().Name}: {exception.Message}");
             }
 
-            if (!keepTicking)
+            // The first evaluation to find a current lobby announces the chain; the rest say nothing. A wake
+            // arms unconditionally (see WakeEvaluation), so most chains are one evaluation that parks again
+            // immediately — logging those would put a line pair on stderr for every map open, submenu push and
+            // screen change in the game.
+            if (keepTicking)
+            {
+                bool announce;
+                lock (Gate)
+                {
+                    announce = !_chainProductive;
+                    _chainProductive = true;
+                }
+
+                if (announce)
+                {
+                    CouchCoopLog.Stderr("qr host panel scan running (lobby screen current)");
+                }
+            }
+            else
             {
                 // No lobby screen is current any more: stop ticking entirely. This is the idle state an
                 // unmodded game is being compared against — a wake restarts the chain. Both reasons are
                 // logged because they are different bugs when one of them is wrong: an empty registry means
                 // the screens were freed, a non-current one means the player navigated away.
-                ParkScan();
-                CouchCoopLog.Stderr(Screens.IsOccupied
-                    ? "qr host panel scan parked (lobby screen not current)"
-                    : "qr host panel scan parked (no lobby screen)");
+                if (ParkScan())
+                {
+                    CouchCoopLog.Stderr(Screens.IsOccupied
+                        ? "qr host panel scan parked (lobby screen not current)"
+                        : "qr host panel scan parked (no lobby screen)");
+                }
+
                 return;
             }
 
@@ -617,11 +671,20 @@ public static class CouchCoopQrHostPanelController
     /// at all. The returned list is index-aligned with <paramref name="screens"/>.
     /// </summary>
     /// <remarks>
+    /// <para>
     /// <c>Sts2ScreenContext.Current</c> is resolved ONCE per evaluation and compared by reference — which is
     /// exactly what <c>Sts2ScreenContext.IsCurrent</c> does per call — because the evaluation also has to
     /// distinguish "this screen is not the current one" from "the seam cannot tell me what the current one is".
     /// Only the first is a reason to skip work; the second is the fallback, and asking per screen would throw
     /// that distinction away.
+    /// </para>
+    /// <para>
+    /// CALLERS MUST BE AT A FRAME BOUNDARY — i.e. inside the <see cref="ScheduleScan"/> timer callback, which
+    /// is the only caller. Resolving the current screen from within a game callback (a <c>_Ready</c> postfix,
+    /// the active-screen event) reads <c>ActiveScreenContext</c> mid-transition and faults; the <c>catch</c>
+    /// below does not help, because this runtime cannot turn that fault into a managed exception. See
+    /// <see cref="WakeEvaluation"/> for the full account.
+    /// </para>
     /// </remarks>
     private static List<LobbyScreenFacts> Survey(List<Node> screens, out bool currentScreenKnown)
     {
