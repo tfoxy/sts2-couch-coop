@@ -1,11 +1,19 @@
 # Baked effect stills
 
-Three PNGs the mirror paints where a WebGL effect would be, when that effect's family is switched **off** —
-the `minimum` quality rung, and the hard-off floor a software-WebGL phone lands on. Without them those
-devices lose a gameplay cue entirely: the card glow that says a card is playable, and the rarity shimmer
-behind an uncommon or rare card. See [`../../mirror/bakedEffects.ts`](../../mirror/bakedEffects.ts) for how
-they are selected and placed, and [`../../../../scripts/bake-effect-stills.py`](../../../../scripts/bake-effect-stills.py)
-for how they are produced.
+Three PNGs the mirror paints where a WebGL effect would be, whenever that effect's family is **off** or
+**static**. See [`../../mirror/bakedEffects.ts`](../../mirror/bakedEffects.ts) for how they are selected and
+placed, and [`../../../../scripts/bake-effect-stills.py`](../../../../scripts/bake-effect-stills.py) for how
+they are produced.
+
+**Off** — the `minimum` quality rung, and the hard-off floor a software-WebGL phone lands on — would otherwise
+lose a gameplay cue entirely: the card glow that says a card is playable, and the rarity shimmer behind an
+uncommon or rare card.
+
+**Static** is the product default on every device, and there these PNGs are a saving rather than a fallback:
+that mode renders one frozen frame per surface and then reads it back off the GPU and PNG-encodes it to swap
+the canvas for an `<img>`. These bakes *are* those frames, already encoded — so the ripple and the two glows
+cost one decode instead of a readback each, and `card_ripple` (whose frozen frame used to be re-encoded on
+every `width` tween) leaves that fleet entirely. The dynamic modes are untouched: they exist to animate.
 
 | File | Effect | Node-local rect | Bake notes |
 | --- | --- | --- | --- |

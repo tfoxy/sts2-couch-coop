@@ -7,8 +7,6 @@
 //
 // Self-contained per the mirror decoupling rule: gsw + `@/mirror/*` only (its own `mirrorResourceUrl`).
 
-import { computed, type ComputedRef } from "vue";
-
 import type { GodotNode, GodotResource, GodotResourceRefValue } from "@godot-scene-web/core";
 import type {
   GodotResolvedResource,
@@ -17,10 +15,15 @@ import type {
 } from "@godot-scene-web/html";
 import type { GodotHtmlMountOptions } from "@godot-scene-web/html/runtime";
 
+import {
+  CARD_RIPPLE_SHADER_IDS,
+  effectiveParticleMode,
+  effectiveShaderMode,
+  stageOwnsEffectPixelsNow
+} from "@/mirror/effectPolicy";
 import { mirrorFramePressure } from "@/mirror/framePressure";
 import { particlesHardOff, renderQuality, shadersHardOff } from "@/render/quality";
 import { qualityParticleOptions, qualityShaderOptions } from "@/render/renderOptions";
-import { mirrorSettings, type EffectMode } from "@/mirror/mirrorSettings";
 import { mirrorResourceUrl } from "@/mirror/sceneTree";
 import { staticParticlePinRatio, staticShaderPinRatio } from "@/mirror/staticPin";
 
@@ -29,13 +32,19 @@ import { staticParticlePinRatio, staticShaderPinRatio } from "@/mirror/staticPin
 // presentation catalog's `hsvAdjustShaders`. Every OTHER shader runs generically on WebGL (`webglShaderIds: ["*"]`).
 export const HSV_SHADER_IDS = ["res://shaders/hsv.gdshader", "uid://c66gb6g7tup3n"];
 
-// The card glow/ripple shader. Its visibility is driven entirely by the `width` uniform: it is tweened up to
-// 0.075 to show the ripple and back to 0 to hide it. At width 0 the transpiled
-// `smoothstep(1.0 - width, width + (1.0 - width), brightness)` collapses to `smoothstep(1.0, 1.0, …)` — a
-// degenerate (÷0) step that leaks a faint sliver at the SDF border on WebGL, where Godot draws nothing. So
-// `shaderAttributes` suppresses the WebGL render when width ≈ 0, matching the game's hidden state. Both the
-// res:// path and the uid:// alias appear depending on how the producer resolved the material's shader ref.
-export const CARD_RIPPLE_SHADER_IDS = ["res://shaders/card_ripple.gdshader", "uid://bikvsfwlbp43n"];
+// The card-ripple shader id + its `width` semantics, and the two effect-mode computeds + the canvas-stage latch,
+// all live one layer down in `effectPolicy.ts` and are RE-EXPORTED here: this module is the documented entry
+// point for shader/particle policy, but it CONSTRUCTS at import time (the pin-ratio seeds below), and the binding
+// builders that read a mode are reachable from `sceneTree`'s own initialization. See that module's header.
+export {
+  CARD_RIPPLE_SHADER_IDS,
+  effectiveParticleMode,
+  effectiveShaderMode,
+  rippleEffectivelyOff,
+  rippleShownWidth,
+  setStageOwnsEffectPixels,
+  stageOwnsEffectPixelsNow
+} from "@/mirror/effectPolicy";
 
 // The game's SCREEN-TRANSITION overlay node (`Game/GameTransitionRect`). Its visibility is driven entirely by the
 // material's `threshold` uniform, and EVERY transition shader resolves the fragment alpha from it alone:
@@ -145,9 +154,11 @@ const effectsRenderer = "auto";
 //     proved load-bearing: a family-wide freeze that any effects-dirty reconcile undid made focusing a card
 //     resurrect every effect canvas for ~3.5s.
 //   * `onInvalidate: "retry"` — NEVER block. gsw's default disqualifies a surface for the life of its binding
-//     the first time its content key churns. Our biggest frozen population is `card_ripple`, whose key churns on
-//     `width` (the churn bench found it one of only two churning families) — "block" would disqualify exactly
-//     those nodes forever. `retry` also covers a failed encode, which is rescheduled rather than given up on.
+//     the first time its content key churns, and the churn bench found two churning families. `card_ripple` used
+//     to be the larger one and is no longer in this fleet AT ALL: a committed still now stands in for it in `off`
+//     and `static` (bakedEffects.ts — the mode gate there suppresses the binding, so there is no surface to
+//     freeze), and every dynamic mode is refused by `canFreezeSurface` below. What `retry` still buys is the
+//     OTHER churning family, plus a failed encode, which is rescheduled rather than given up on.
 //   * `encode: slice 4 / 120ms / smallest-first` — rc5's 736ms fix: kicking all 72 fleet encodes at once parked
 //     the main thread for 736ms. Small-first lands the bulk of the fleet (tiny particle canvases) in the early
 //     slices and leaves the room-sized ~4821×2156 shader monsters for their own late slices. The rest of the
@@ -168,7 +179,8 @@ const effectsRenderer = "auto";
 // stage resize, a spread re-layout): the direct replacement for the old `thawStaticStills()`.
 //
 // THE CANVAS-STAGE VETO (M2, Aug 27). Latched by `canvas/canvasRenderer.ts` when it builds an fx registry, i.e.
-// when the active canvas stage owns effect pixels.
+// when the active canvas stage owns effect pixels — the latch itself is `effectPolicy.stageOwnsEffectPixelsNow`,
+// which the baked stills read for the same fact.
 //
 // The swap exists to REMOVE A COMPOSITOR LAYER: a quiet effect canvas becomes an `<img>` so the browser stops
 // giving it its own layer. On the canvas stage under M2 there is no layer to remove — the effect's host is
@@ -181,21 +193,6 @@ const effectsRenderer = "auto";
 //
 // PARTICLES ARE VETOED TOO, for the same reason and with no exception for the flight-stills arm: an armed flight
 // emitter on this stage is also a hidden host whose pixels are a quad.
-//
-// A LATCH RATHER THAN AN IMPORT. `rendererFactory` -> `canvasRenderer` -> `shaderAttributes` -> this module is an
-// existing edge; reading the factory from here would close it into a cycle. The canvas renderer pushes instead,
-// and a DOM-stage page never calls the setter, so it stays exactly as it was.
-let stageOwnsEffectPixels = false;
-
-/** Does the STAGE own effect pixels this page? Set by the canvas renderer when its fx registry exists. */
-export function setStageOwnsEffectPixels(owns: boolean): void {
-  stageOwnsEffectPixels = owns;
-}
-
-/** Exported for the spec — the veto's input, without a renderer to build. */
-export function stageOwnsEffectPixelsNow(): boolean {
-  return stageOwnsEffectPixels;
-}
 
 // The quiet window a surface's own draws must hold still before it is swapped (see the policy notes above).
 const STATIC_SURFACE_QUIET_MS = 1000;
@@ -364,7 +361,7 @@ function staticSurfacePolicy(family: "shader" | "particle"): StaticSurfaceOption
     // exists to remove does not exist on that stage, and the readbacks it takes to remove it read a surface the
     // draw list has already claimed. Read LIVE like the effect mode.
     canFreezeSurface: () =>
-      !stageOwnsEffectPixels &&
+      !stageOwnsEffectPixelsNow() &&
       (family === "shader" ? effectiveShaderMode.value : effectiveParticleMode.value) === "static"
   };
 }
@@ -453,7 +450,8 @@ if (typeof window !== "undefined") {
 //
 // A PLAIN object (not reactive): the attribute stamper (shaderAttributes.ts) reads it synchronously per node, so
 // its shape/`enableWebglShaders` stays tier-fixed. The per-viewer live effect MODE is a SEPARATE reactive computed
-// (`effectiveShaderMode` below) that only drives runtime create/dispose/retune in MirrorView — the markers still stamp.
+// (`effectiveShaderMode`, re-exported above from `effectPolicy`) that drives runtime create/dispose/retune in
+// MirrorView — and, for the two families a baked still covers, whether a binding is built at all.
 export const mirrorShaderRenderOptions: GodotHtmlMountOptions = {
   ...qualityShaderOptions(quality),
   // CLAMP LIFT (mirror only — the shared qualityShaderOptions stays tier-faithful for the recon view, which has
@@ -550,20 +548,3 @@ export const mirrorParticleRenderOptions: GodotHtmlMountOptions = {
   // The particle half of the same census — a malformed spec degrades just as quietly as a refused shader.
   onUnsupported: noteUnsupportedRender
 };
-
-// The EFFECTIVE per-viewer effect mode the settings panel drives. The panel's mode IS the effective mode on every
-// tier with a usable GPU path; only the HARD-OFF lane (?debug auto-player / ?quality=minimum / software-WebGL phone —
-// see quality.ts) forces `off`, because there the runtimes would rasterize on the CPU for nothing and no DOM
-// markers are stamped for them to find.
-//
-// This used to be an AND-gate against the tier's own enable flags, which is what made particles unreachable from
-// the panel on the mobile `static` tier (and made the same panel setting mean different things on a phone and a
-// desktop). MirrorView watches these to create/dispose + retune the shader + particle runtimes live without a
-// reload (off ⇒ dispose; static ⇒ setStaticShaders/setStaticParticles; ½/¼ ⇒ setRenderScale) — the plain option
-// objects above stay the tier-fixed construction options.
-export const effectiveShaderMode: ComputedRef<EffectMode> = computed(() =>
-  shadersHardOff(quality) ? "off" : mirrorSettings.shaderMode
-);
-export const effectiveParticleMode: ComputedRef<EffectMode> = computed(() =>
-  particlesHardOff(quality) ? "off" : mirrorSettings.particleMode
-);

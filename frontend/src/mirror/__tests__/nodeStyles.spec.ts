@@ -1135,7 +1135,20 @@ describe("nodeStyle baked effect stills", () => {
   });
 
   it("paints nothing while a mode that renders the real shader is selected", () => {
+    for (const mode of ["dynamic", "dynamic-half", "dynamic-quarter"] as const) {
+      mirrorSettings.shaderMode = mode;
+      expect(nodeStyle(item(highlight(0.075))).backgroundImage).toBeUndefined();
+    }
+  });
+
+  it("paints the still in STATIC too, where the client used to bake the same frame itself", () => {
+    // `static` renders one frozen frame per surface and then reads it back + PNG-encodes it to swap the canvas
+    // for an `<img>`. The committed bake IS that frame, so the readback buys nothing.
     mirrorSettings.shaderMode = "static";
-    expect(nodeStyle(item(highlight(0.075))).backgroundImage).toBeUndefined();
+    const style = nodeStyle(item(highlight(0.075)));
+
+    expect(style.backgroundImage).toMatch(/card-ripple/);
+    expect(style.mixBlendMode).toBe("plus-lighter");
+    expect(style.backgroundImage).not.toContain("card_frame_sdf");
   });
 });

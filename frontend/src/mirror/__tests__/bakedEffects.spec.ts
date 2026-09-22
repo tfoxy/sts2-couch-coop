@@ -5,12 +5,13 @@ import { fileURLToPath } from "node:url";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 
 import {
+  bakedStillCoversNode,
   bakedStillFor,
   bakedStillNeedsOwnLayer,
   CARD_RIPPLE_SHOWN_WIDTH
 } from "@/mirror/bakedEffects";
-import { mirrorSettings, type EffectMode } from "@/mirror/mirrorSettings";
-import { CARD_RIPPLE_SHADER_IDS } from "@/mirror/shaderResources";
+import { mirrorSettings, EFFECT_MODES, type EffectMode } from "@/mirror/mirrorSettings";
+import { CARD_RIPPLE_SHADER_IDS, setStageOwnsEffectPixels } from "@/mirror/shaderResources";
 import type { MirrorNode, MirrorShaderParam } from "@/mirror/sceneTree";
 
 // The two glow emitters, spelled exactly as the producer streams them (confirmed against a recorded mirror
@@ -50,10 +51,16 @@ beforeEach(() => {
 afterEach(() => {
   mirrorSettings.shaderMode = savedShaderMode;
   mirrorSettings.particleMode = savedParticleMode;
+  setStageOwnsEffectPixels(false);
 });
 
+/** The modes a still stands in for, and the modes that still render the real effect. */
+const STILL_MODES: readonly EffectMode[] = ["off", "static"];
+const LIVE_MODES = EFFECT_MODES.filter((mode) => !STILL_MODES.includes(mode));
+
 describe("bakedStillFor — the card ripple", () => {
-  it("stands in for a SHOWN ripple while shaders are off", () => {
+  it.each(STILL_MODES)("stands in for a SHOWN ripple while shaders are %s", (mode) => {
+    mirrorSettings.shaderMode = mode;
     const still = bakedStillFor(rippleNode(CARD_RIPPLE_SHOWN_WIDTH));
 
     expect(still).not.toBeNull();
@@ -90,7 +97,10 @@ describe("bakedStillFor — the card ripple", () => {
   });
 
   it("paints nothing in any mode that still renders the real shader", () => {
-    for (const mode of ["dynamic", "dynamic-half", "dynamic-quarter", "static"] as const) {
+    // The three DYNAMIC modes only. They exist to animate, and a still is not a cheaper animation — which is
+    // exactly the line `static` crossed when it joined `off`.
+    expect(LIVE_MODES).toEqual(["dynamic", "dynamic-half", "dynamic-quarter"]);
+    for (const mode of LIVE_MODES) {
       mirrorSettings.shaderMode = mode;
       expect(bakedStillFor(rippleNode(CARD_RIPPLE_SHOWN_WIDTH))).toBeNull();
     }
@@ -104,7 +114,8 @@ describe("bakedStillFor — the card ripple", () => {
 });
 
 describe("bakedStillFor — the rarity glows", () => {
-  it("stands in for each emitter while particles are off", () => {
+  it.each(STILL_MODES)("stands in for each emitter while particles are %s", (mode) => {
+    mirrorSettings.particleMode = mode;
     const uncommon = bakedStillFor(glowNode(UNCOMMON_GLOW));
     const rare = bakedStillFor(glowNode(RARE_GLOW));
 
@@ -134,7 +145,7 @@ describe("bakedStillFor — the rarity glows", () => {
   });
 
   it("paints nothing in any mode that still simulates particles", () => {
-    for (const mode of ["dynamic", "dynamic-half", "dynamic-quarter", "static"] as const) {
+    for (const mode of LIVE_MODES) {
       mirrorSettings.particleMode = mode;
       expect(bakedStillFor(glowNode(UNCOMMON_GLOW))).toBeNull();
     }
@@ -151,19 +162,73 @@ describe("bakedStillFor — the rarity glows", () => {
 
 describe("bakedStillFor — the families are independent", () => {
   it("shaders off does not enable the glow stills", () => {
-    mirrorSettings.particleMode = "static";
+    mirrorSettings.particleMode = "dynamic";
     expect(bakedStillFor(rippleNode(CARD_RIPPLE_SHOWN_WIDTH))).not.toBeNull();
     expect(bakedStillFor(glowNode(RARE_GLOW))).toBeNull();
   });
 
   it("particles off does not enable the ripple still", () => {
-    mirrorSettings.shaderMode = "static";
+    mirrorSettings.shaderMode = "dynamic";
     expect(bakedStillFor(glowNode(RARE_GLOW))).not.toBeNull();
     expect(bakedStillFor(rippleNode(CARD_RIPPLE_SHOWN_WIDTH))).toBeNull();
   });
 
   it("answers null on one field read for an ordinary node", () => {
     expect(bakedStillFor(mkNode())).toBeNull();
+  });
+});
+
+// THE PAIR THAT MUST NOT DRIFT. `bakedStillCoversNode` is what stops the live binding being built, and
+// `bakedStillFor` is what paints instead. A node where the first is true and the second is null renders NOTHING
+// AT ALL — no canvas, no still — which is the single failure mode this design has. They are one entry helper and
+// one mode helper apart precisely so that cannot happen; these tests say so out loud.
+describe("bakedStillCoversNode", () => {
+  const cases = (): MirrorNode[] => [
+    rippleNode(CARD_RIPPLE_SHOWN_WIDTH),
+    rippleNode(CARD_RIPPLE_SHOWN_WIDTH / 2),
+    rippleNode(0), // the game's HIDDEN ripple — NOT covered, so its dormant binding survives
+    rippleNode(null), // unmeasurable — NOT covered, so the real shader keeps running
+    glowNode(UNCOMMON_GLOW),
+    glowNode(RARE_GLOW),
+    glowNode("MegaCrit.Sts2.Core.Nodes.Vfx.NSomeOtherVfx"),
+    mkNode()
+  ];
+
+  it("answers exactly `bakedStillFor(node) !== null`, in every mode", () => {
+    for (const shaderMode of EFFECT_MODES) {
+      for (const particleMode of EFFECT_MODES) {
+        mirrorSettings.shaderMode = shaderMode;
+        mirrorSettings.particleMode = particleMode;
+        for (const node of cases()) {
+          expect(bakedStillCoversNode(node)).toBe(bakedStillFor(node) !== null);
+        }
+      }
+    }
+  });
+
+  it("covers a SHOWN ripple and both glows in the still modes, and nothing in the dynamic ones", () => {
+    for (const mode of STILL_MODES) {
+      mirrorSettings.shaderMode = mode;
+      mirrorSettings.particleMode = mode;
+      expect(bakedStillCoversNode(rippleNode(CARD_RIPPLE_SHOWN_WIDTH))).toBe(true);
+      expect(bakedStillCoversNode(glowNode(UNCOMMON_GLOW))).toBe(true);
+      expect(bakedStillCoversNode(glowNode(RARE_GLOW))).toBe(true);
+    }
+    for (const mode of LIVE_MODES) {
+      mirrorSettings.shaderMode = mode;
+      mirrorSettings.particleMode = mode;
+      expect(bakedStillCoversNode(rippleNode(CARD_RIPPLE_SHOWN_WIDTH))).toBe(false);
+      expect(bakedStillCoversNode(glowNode(RARE_GLOW))).toBe(false);
+    }
+  });
+
+  it("never covers a ripple the game has hidden or one it cannot measure", () => {
+    // Both keep their (dormant, or fully live) WebGL binding — suppressing those would be the failure above.
+    for (const mode of STILL_MODES) {
+      mirrorSettings.shaderMode = mode;
+      expect(bakedStillCoversNode(rippleNode(0))).toBe(false);
+      expect(bakedStillCoversNode(rippleNode(null))).toBe(false);
+    }
   });
 });
 
@@ -188,5 +253,27 @@ describe("canvas stage scope", () => {
 
     expect(source).not.toContain("bakedEffects");
     expect(source).not.toContain("bakedStillFor");
+  });
+
+  // …and the module REFUSES to answer there, which became load-bearing when the stills started suppressing the
+  // live binding. On that stage `paintSpec.fxHostIsLive` IS "the builder returned a binding", so a suppression
+  // would delete the effect outright rather than substitute for it — the stage draws the gsw surface as a quad.
+  it("covers nothing while the stage owns the effect pixels", () => {
+    for (const mode of STILL_MODES) {
+      mirrorSettings.shaderMode = mode;
+      mirrorSettings.particleMode = mode;
+      setStageOwnsEffectPixels(true);
+
+      expect(bakedStillCoversNode(rippleNode(CARD_RIPPLE_SHOWN_WIDTH))).toBe(false);
+      expect(bakedStillCoversNode(glowNode(RARE_GLOW))).toBe(false);
+      expect(bakedStillFor(rippleNode(CARD_RIPPLE_SHOWN_WIDTH))).toBeNull();
+      expect(bakedStillFor(glowNode(RARE_GLOW))).toBeNull();
+
+      // Read LIVE, like the mode itself: un-latching (a canvas renderer being disposed for the DOM fallback)
+      // hands the stills straight back.
+      setStageOwnsEffectPixels(false);
+      expect(bakedStillCoversNode(rippleNode(CARD_RIPPLE_SHOWN_WIDTH))).toBe(true);
+      expect(bakedStillFor(glowNode(RARE_GLOW))).not.toBeNull();
+    }
   });
 });

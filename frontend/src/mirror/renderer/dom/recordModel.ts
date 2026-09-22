@@ -478,7 +478,7 @@ interface RenderRecord {
   placeholderTimer: ReturnType<typeof setTimeout> | null;
   placeholderFailed: boolean;
   // BAKED EFFECT STILL (see mirror/bakedEffects.ts) — the committed PNG that stands in for a rarity-glow emitter
-  // while particles are OFF. Only the BOXLESS families land here: a `GPUParticles2D` has no `localRect`, so its
+  // while particles are OFF or STATIC. Only the BOXLESS families land here: a `GPUParticles2D` has no `localRect`, so its
   // still cannot be a background on the element and needs its own positioned `<img>`. `bakedStillKey` caches the
   // (url, box) it was last placed at, so a glow that is merely being re-styled rewrites nothing.
   bakedStillImg: HTMLImageElement | null;

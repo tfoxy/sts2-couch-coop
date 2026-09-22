@@ -30,7 +30,7 @@ that answers your question**, not the whole file.
 | changing a browser-server boundary, resource route, cache, or network limit | [../security.md](../security.md) | — |
 | building, deploying or driving a **second game install** (a beta or older game branch) | [../configuration.md](../configuration.md) "Two game installs on one machine" | `scripts/with-game-branch.sh` — never `sts2 --config` alone |
 | writing a commit message, merging a branch to `main`, cutting a release, or uploading to the Steam Workshop | [../commit-and-release.md](../commit-and-release.md) | `release-notes` skill |
-| picking up either open effect-stills round | [handoff-iphone-effects-default-off.md](handoff-iphone-effects-default-off.md), [handoff-baked-stills-in-static-mode.md](handoff-baked-stills-in-static-mode.md) | the brief is the whole document; both are unstarted |
+| picking up the open effect-stills round | [handoff-iphone-effects-default-off.md](handoff-iphone-effects-default-off.md) | the brief is the whole document; unstarted. Its sibling (stills in `static`) has landed — see architecture-map.md "Baked effect stills" |
 
 ## Subagents and skills
 

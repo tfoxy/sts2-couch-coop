@@ -6,6 +6,7 @@
 // unrelated systems. `_epoch` is an extra key gsw ignores; it only exists to vary the signature.
 
 import { particlesHardOff, renderQuality } from "@/render/quality";
+import { bakedStillCoversNode } from "@/mirror/bakedEffects";
 import type { MirrorNode, MirrorShaderParam } from "@/mirror/sceneTree";
 
 export interface MirrorParticleBinding {
@@ -266,6 +267,17 @@ export function nodeParticleAttributes(node: MirrorNode): MirrorParticleBinding 
   // picked (no markers ⇒ nothing for the runtime to attach to). The panel decides now; the tier only seeds it.
   if (!spec || particlesHardOff(renderQuality())) {
     return null; // no particle node, or the hard-off lane (no usable GPU path at all)
+  }
+  // A BAKED STILL is standing in for this emitter (bakedEffects.ts): the two card rarity glows, while particles
+  // are `off` or `static`. Stamp no markers — gsw's particle runtime selects on `[data-godot-particle-runtime]`,
+  // so without them it never attaches, and there is no canvas to simulate into, freeze or read back. Otherwise
+  // the viewer would get the still AND the canvas.
+  //
+  // AHEAD OF `specsJsonCache` DELIBERATELY. The memo is keyed on the spec OBJECT, which does not move when the
+  // settings panel does; gating behind it would serve a stale binding across a mode flip. (Its shader twin has
+  // no such refuge — see `shaderContentKey`, which had to grow the mode as a key term.)
+  if (bakedStillCoversNode(node)) {
+    return null;
   }
   const cached = specsJsonCache.get(spec);
   if (cached && cached.emitting === node.particleEmitting && cached.epoch === node.particleRestartEpoch) {

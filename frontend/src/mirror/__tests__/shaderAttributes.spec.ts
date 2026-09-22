@@ -1,4 +1,4 @@
-import { afterEach, describe, expect, it } from "vitest";
+import { afterEach, beforeEach, describe, expect, it } from "vitest";
 
 import { SHADER_DORMANT_ATTR } from "@godot-scene-web/html";
 
@@ -8,6 +8,7 @@ import {
   nodeShaderAttributes,
   stretchModeToBackgroundSize
 } from "@/mirror/shaderAttributes";
+import { mirrorSettings, EFFECT_MODES, type EffectMode } from "@/mirror/mirrorSettings";
 import { __setRenderQualityForTest, type RenderQuality } from "@/render/quality";
 import type { MirrorNode, MirrorShaderParam } from "@/mirror/sceneTree";
 
@@ -237,7 +238,20 @@ describe("nodeShaderAttributes", () => {
     expect(binding?.style.filter).toMatch(/^url\(#mhsv-\d+\)$/);
   });
 
+  // THE MODE PIN. Everything below is about the LIVE WebGL ripple, and the live ripple is now a DYNAMIC-mode
+  // subject: in `off` and `static` a committed still stands in for it and no binding is built at all (see the
+  // `baked stills own the ripple` block underneath, and bakedEffects.ts). The module default is `static`, so
+  // without this pin these tests would be asserting against the still path by accident.
   describe("card_ripple width gate", () => {
+    let savedShaderMode: EffectMode;
+    beforeEach(() => {
+      savedShaderMode = mirrorSettings.shaderMode;
+      mirrorSettings.shaderMode = "dynamic";
+    });
+    afterEach(() => {
+      mirrorSettings.shaderMode = savedShaderMode;
+    });
+
     // A non-playable card (reward/deck/etc.) streams width 0 — the game's HIDDEN ripple. R10-B3: instead of
     // dropping the binding (which made gsw dispose it, so the next playability flip rebuilt it + paid a
     // syncCanvasSize forced layout), the node keeps its full attribute set and is marked DORMANT — gsw parks the
@@ -266,6 +280,52 @@ describe("nodeShaderAttributes", () => {
         shaderNode({ shaderId: "res://shaders/screen_vfx.gdshader", shaderParams: [numberParam("width", 0)] })
       );
       expect(binding?.attributes["data-godot-shader-webgl"]).toBe("1");
+    });
+  });
+
+  // THE STILL MODES OWN THE RIPPLE (bakedEffects.ts). In `off` and `static` a committed PNG stands in for it, so
+  // building the binding would give the viewer the still AND a canvas — in `static`, a canvas that then pays a
+  // GPU→CPU readback and a PNG encode to be swapped for an `<img>` of a picture we already shipped.
+  describe("baked stills own the ripple in the still modes", () => {
+    let savedShaderMode: EffectMode;
+    beforeEach(() => {
+      savedShaderMode = mirrorSettings.shaderMode;
+    });
+    afterEach(() => {
+      mirrorSettings.shaderMode = savedShaderMode;
+    });
+
+    it.each(["off", "static"] as const)("builds NO binding for a shown ripple while shaders are %s", (mode) => {
+      mirrorSettings.shaderMode = mode;
+      expect(nodeShaderAttributes(shaderNode({ shaderParams: [numberParam("width", 0.075)] }))).toBeNull();
+    });
+
+    // …and only for the node the still actually covers. A HIDDEN ripple gets no still (painting one would light
+    // up every unplayable card), so it must keep its dormant binding — suppressing it would render nothing at all
+    // and cost the next playability flip a rebuild.
+    it.each(["off", "static"] as const)("keeps the dormant binding of a HIDDEN ripple in %s", (mode) => {
+      mirrorSettings.shaderMode = mode;
+      const binding = nodeShaderAttributes(shaderNode({ shaderParams: [numberParam("width", 0)] }));
+      expect(binding?.attributes["data-godot-shader-webgl"]).toBe("1");
+      expect(binding?.attributes[SHADER_DORMANT_ATTR]).toBe("1");
+    });
+
+    // A ripple whose `width` is not streamed cannot be measured, so no still is invented for it — and for the
+    // same reason its live binding must survive.
+    it.each(["off", "static"] as const)("keeps the binding of an unmeasurable ripple in %s", (mode) => {
+      mirrorSettings.shaderMode = mode;
+      const binding = nodeShaderAttributes(shaderNode({ shaderParams: null }));
+      expect(binding?.attributes["data-godot-shader-webgl"]).toBe("1");
+    });
+
+    // The node stays "structurally a WebGL node" throughout — that predicate is what suppresses the raw
+    // `card_frame_sdf.exr` paint in nodeStyles/paintSpec, and moving the gate into it would put a grey rectangle
+    // under every still.
+    it("leaves isWebglShaderNode alone in every mode", () => {
+      for (const mode of EFFECT_MODES) {
+        mirrorSettings.shaderMode = mode;
+        expect(isWebglShaderNode(shaderNode({ shaderParams: [numberParam("width", 0.075)] }))).toBe(true);
+      }
     });
   });
 
@@ -526,9 +586,17 @@ describe("nodeShaderAttributes — shaders off (true floor)", () => {
   });
 
   it("uses the real WebGL self-layer (data-godot-shader-webgl) when shaders are ON", () => {
-    const binding = nodeShaderAttributes(shaderNode({ shaderParams: [numberParam("width", 4)] }));
-    expect(binding?.attributes["data-godot-shader-webgl"]).toBe("1");
-    expect(binding?.style.boxShadow).toBeUndefined();
+    // A DYNAMIC mode, because this is the contrast case for the tier floor above: `off` and `static` route the
+    // ripple to its baked still instead of a canvas, which would make this assertion about the wrong path.
+    const savedShaderMode = mirrorSettings.shaderMode;
+    mirrorSettings.shaderMode = "dynamic";
+    try {
+      const binding = nodeShaderAttributes(shaderNode({ shaderParams: [numberParam("width", 4)] }));
+      expect(binding?.attributes["data-godot-shader-webgl"]).toBe("1");
+      expect(binding?.style.boxShadow).toBeUndefined();
+    } finally {
+      mirrorSettings.shaderMode = savedShaderMode;
+    }
   });
 });
 

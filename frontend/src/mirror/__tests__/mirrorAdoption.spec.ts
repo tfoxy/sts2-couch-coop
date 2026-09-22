@@ -7,6 +7,7 @@ import {
   type MirrorRenderer
 } from "@/mirror/mirrorRenderer";
 import { applySceneDelta, createMirrorState, parseSceneDelta, type MirrorState } from "@/mirror/sceneTree";
+import { mirrorSettings, type EffectMode } from "@/mirror/mirrorSettings";
 
 // R10-B3 ELEMENT ADOPTION across pooled-node recycling.
 //
@@ -140,6 +141,8 @@ function mirrorNodeCount(stage: HTMLElement): number {
 }
 
 let created: MirrorRenderer[] = [];
+/** Set by a test that pins the effect mode for its own duration (see the shader-binding case). */
+let restoreShaderMode: (() => void) | null = null;
 
 beforeEach(() => {
   mirrorWalkStats.reset();
@@ -151,6 +154,8 @@ afterEach(() => {
   }
   created = [];
   document.body.innerHTML = "";
+  restoreShaderMode?.();
+  restoreShaderMode = null;
 });
 
 function build(): { stage: HTMLElement; renderer: MirrorRenderer; state: MirrorState } {
@@ -213,6 +218,12 @@ describe("element adoption across a pooled-shell recycle", () => {
   });
 
   it("leaves gsw's shader-binding element set untouched across the recycle", () => {
+    // A DYNAMIC mode: the card's shader here is `card_ripple` at a SHOWN width, and in the still modes
+    // (`off`/`static`, the module default) a baked still stands in for it and no binding is built at all — the
+    // adoption contract this test states would then be asserted over an empty set. See bakedEffects.ts.
+    const savedShaderMode: EffectMode = mirrorSettings.shaderMode;
+    mirrorSettings.shaderMode = "dynamic";
+    restoreShaderMode = () => { mirrorSettings.shaderMode = savedShaderMode; };
     const { stage, renderer } = harness();
     created.push(renderer);
     const state = createMirrorState();
