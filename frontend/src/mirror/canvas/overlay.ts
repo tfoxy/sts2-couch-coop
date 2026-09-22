@@ -102,6 +102,7 @@
 // runtime could see actually moved, which is what `consumeEffectsDirty` answers with.
 
 import { SELF_LAYER_CLASS } from "@godot-scene-web/html";
+import { ensureRichTextEffectStyles } from "@spirectl/presentation/render";
 
 import { affineCss, type Affine } from "@/mirror/affine";
 import { ensureNodeFonts } from "@/mirror/fonts";
@@ -1280,6 +1281,10 @@ export function createMirrorOverlay(
       inner = doc.createElement(rich ? "div" : "span");
       if (rich) {
         inner.className = "godot-scene-node godot-type-RichTextLabel mirror-rich";
+        // Same sheet the DOM backend asks for. A label reaches this overlay on the canvas arm only when the
+        // stage REFUSED it, and gsw's built-in effects are one of the refusals — so a hoisted label really can
+        // be carrying animated markup, including an STS2 tag nested inside it.
+        ensureRichTextEffectStyles(doc);
       }
       div.appendChild(inner);
       entry.textInner = inner;

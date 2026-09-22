@@ -1,7 +1,7 @@
 // DOM-only sublayer assembly. RenderRecord remains the retained owner of every element and cache.
 
 import { SELF_LAYER_CLASS, regionBackgroundStyle } from "@godot-scene-web/html";
-import { applyAnimationBinding } from "@spirectl/presentation/render";
+import { applyAnimationBinding, ensureRichTextEffectStyles } from "@spirectl/presentation/render";
 import type { Affine } from "@/mirror/affine";
 import {
   atlasPageSize,
@@ -655,6 +655,10 @@ export function createDomSubLayers(ports: DomSubLayerPorts): DomSubLayers {
       if (node.richText) {
         if (!record.textInner || record.textInner.tagName !== "DIV") {
           record.textInner?.remove();
+          // The keyframes behind STS2's animated bbcode tags ([sine]/[jitter]/[thinky_dots]). Idempotent and
+          // keyed by element id, so the cost is one lookup per rich label built; asking here rather than at boot
+          // keeps a lobby that never renders a rich label from carrying the sheet at all.
+          ensureRichTextEffectStyles(document);
           record.textInner = document.createElement("div");
           record.textInner.className =
             "godot-scene-node godot-type-RichTextLabel mirror-rich";

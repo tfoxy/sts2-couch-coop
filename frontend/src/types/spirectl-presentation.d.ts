@@ -24,8 +24,9 @@ declare module "@spirectl/presentation/render" {
     catalog: unknown;
   }) => string | undefined;
 
-  // The STS2 custom BBCode tag table (color aliases like [gold]/[red] + no-op effect tags). Pure data;
-  // the mirror passes it to richTextLayeredHtml as `customTags`.
+  // The STS2 custom BBCode tag table: color aliases like [gold]/[red], the three ANIMATED effect tags
+  // ([sine]/[jitter]/[thinky_dots], which carry the RICH_FX_* class names below), and three inert one-shot
+  // reveals. Pure data; the mirror passes it to richTextLayeredHtml as `customTags`.
   export const DEFAULT_BBCODE_TAGS: Record<
     string,
     | { kind: "color"; value: string }
@@ -37,6 +38,18 @@ declare module "@spirectl/presentation/render" {
         className?: string;
       }
   >;
+
+  // The CSS behind the three animated bbcode tags. `ensureRichTextEffectStyles` injects a keyed <style> into the
+  // document once (idempotent, like ensureAnimationStyles); the rules key on the classes gsw stamps from the tag
+  // table and on gsw's per-character `--i`.
+  export function ensureRichTextEffectStyles(root: ParentNode): void;
+  export const RICH_FX_SINE: string;
+  export const RICH_FX_JITTER: string;
+  export const RICH_FX_THINKY_DOTS: string;
+  // The attribute a host writes on any ancestor of its labels to mirror the game's Settings → Text Effects
+  // switch. Value "off" stands down the two effects the GAME itself gates (`sine`, `thinky_dots`); the tremble
+  // and Godot's own built-ins keep running, because they do in the game too.
+  export const RICH_TEXT_EFFECTS_ATTRIBUTE: string;
 
   // Global presentation font-size scale (1.08). The mirror drives `--godot-text-scale` to this and emits font
   // sizes as `calc(px * var(--godot-text-scale, 1))`.

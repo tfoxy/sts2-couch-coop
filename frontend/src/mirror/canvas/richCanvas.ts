@@ -418,12 +418,19 @@ export function parseRichCanvas(
       index = end;
       continue;
     }
-    if (kind === "style") {
+    if (kind === "style" || kind === "effect") {
       const descriptor = tags[tag.name];
-      if (
-        descriptor?.kind === "style" &&
-        Object.keys(descriptor.css ?? {}).length === 0
-      ) {
+      // Two pass-through cases, both of which draw the same words in the same colours as gsw would:
+      //   an EMPTY style block  — a span with no declarations, so there is nothing to express;
+      //   a CUSTOM effect       — an animation, and this stage has no way to move a placed run. Its characters
+      //                           are unchanged, only displaced, so a still rendering of them is right rather
+      //                           than approximate. gsw's own BUILT-IN effects are not in this table and keep
+      //                           refusing below: those sweep the run's COLOUR too.
+      const passThrough =
+        descriptor?.kind === "effect" ||
+        (descriptor?.kind === "style" &&
+          Object.keys(descriptor.css ?? {}).length === 0);
+      if (passThrough) {
         const failure = tag.close
           ? close(tag, "passthrough")
           : (stack.push({ id: tag.name, type: "passthrough" }), null);

@@ -150,6 +150,12 @@ export interface BrowserSessionEnvelope extends BrowserEnvelopeBase {
   freezeParticles?: boolean | null;
   freezeSpines?: boolean | null;
   freezeDecor?: boolean | null;
+  // The GAME's own Settings → Text Effects preference on the instance serving this connection, so the mirror's
+  // animated rich text (the wavy and bouncing tags) obeys the switch the player at the keyboard set. It has to be
+  // told: the game leaves the effect markup in the label's string and skips the per-character transform instead,
+  // so identical BBCode reaches the browser whichever way the setting is set. null/absent = UNKNOWN (a Godot-less
+  // host, an older one) ⇒ the client keeps its own default of ENABLED, which is the game's default too.
+  textEffects?: boolean | null;
   // Relative URL of the host-served native Android client APK ("/couchcoop-client.apk"). Present only when the
   // locally-built APK is deployed on the host; the join screens render an install link from it on Android.
   androidApkUrl?: string | null;

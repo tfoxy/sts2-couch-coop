@@ -204,6 +204,27 @@ This map records current contracts, not retired implementation alternatives.
   `<style id=mirror-text-scale>` sheet, while the canvas resolves text declarations on the next build.
 - Tests: `TextScaleTests.cs`. Web: `textScaleClasses.spec.ts`, `uiScalingSwitch.spec.ts` (U4, the sheet flip).
 
+## Animated rich text (the game's bbcode effect tags)
+- The game's wavy / shaky / bouncing tags reach the browser VERBATIM — the game leaves the markup in the label's
+  string and skips the per-character transform instead — so the mirror both renders them and gates them itself.
+- Ownership, and none of it is repo-local CSS: the three animated STS2 tags and their keyframes are
+  `@spirectl/presentation`'s (`render/bbcodeTags.ts` + `render/richTextEffects.ts`), and Godot's own built-ins
+  (`[rainbow]`, `[shake]`, …) are godot-scene-web's (`packages/html/src/base-css.ts`). This repo supplies the
+  `ensureRichTextEffectStyles(document)` call at each rich-element mount (`renderer/dom/subLayers.ts`,
+  `canvas/overlay.ts`) and one attribute on `.mirror-stage`.
+- The gate is the game's **Settings → Text Effects**, streamed on the `session` envelope
+  (`BrowserEnvelope.TextEffects` ← `CouchCoopGamePrefs`), adopted by `adoptGameTextEffects` and stamped as
+  `data-spirectl-text-effects`. Adopted on EVERY envelope, NOT once per connection like the freezes beside it —
+  it is game truth with no panel control, so there is no viewer edit for a re-read to stomp, and re-reading is
+  what makes a mid-run toggle reach a phone already watching (the host re-sends a session envelope on a screen
+  change — `ResendSessionsIfSceneScreenChanged`). It gates exactly the two tags the GAME gates; the shaky one and
+  the built-ins keep animating with the setting off, because they do in the game too.
+- DOM only. On `?stage=canvas` a custom effect tag passes through FLAT (`canvas/richSimple.ts`): the stage bakes
+  rasters and cannot move one, and the effect displaces characters rather than changing them. gsw's built-in
+  effects still refuse there (they sweep colour), so those labels keep a DOM overlay element and animate.
+- Tests: `richTextEffects.spec.ts`, `canvasRichSimple.spec.ts`, `TextEffectsEnvelopeTests.cs`; the rules
+  themselves in `spirectl/presentation/web/test/richTextEffects.test.ts` and gsw's `html.test.ts`.
+
 ## Spine clip pipeline
 - Files: baked clips served at `/spines` (producer, `../spirectl`), keyed
   node→anim→skin→skeleton→policy→version (absent response = byte-identical to game). Native store:

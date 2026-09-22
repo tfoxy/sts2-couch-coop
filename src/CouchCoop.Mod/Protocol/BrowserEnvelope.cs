@@ -48,6 +48,13 @@ public sealed record BrowserEnvelope(
     bool? FreezeParticles = null,
     bool? FreezeSpines = null,
     bool? FreezeDecor = null,
+    // The game's own Settings -> Text Effects preference on THIS instance, so the mirror's animated rich text
+    // (wavy / bouncing) obeys the same switch the player at the keyboard set. It cannot be inferred client-side:
+    // the game leaves the effect markup in the label's string and skips the per-character transform instead, so a
+    // viewer receives identical BBCode whichever way the setting is set. Omitted (null) when the preference can't
+    // be read at all — a Godot-less host, e.g. the hosted-server test harness — and the client then keeps its own
+    // default of enabled, which is the game's default too.
+    bool? TextEffects = null,
     // Relative URL of the host-served native Android client APK ("/couchcoop-client.apk"), present only when the
     // locally-built APK is deployed next to the SPA. The browser join page renders an install link from it; the
     // native client's SessionEnvelope.Parse ignores it (unknown fields are tolerated).

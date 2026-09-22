@@ -139,4 +139,21 @@ describe("MirrorView with minimal runtime capabilities", () => {
     expect(shaderRt.dispose).toHaveBeenCalledTimes(1);
     expect(particleRt.dispose).toHaveBeenCalledTimes(1);
   });
+
+  it("stamps the game's Text Effects preference on the stage, live", async () => {
+    // One attribute on `.mirror-stage` gates @spirectl/presentation's animated rich-text rules for every label
+    // under it — the DOM renderer's nodes and the canvas backend's overlay elements alike. It must TRACK the
+    // store rather than being read once at mount: a session envelope re-seeds it whenever the game changes screen.
+    mirrorSettings.textEffects = true;
+    const wrapper = mount(MirrorView, { props: { state: createMirrorState(), revision: 1 } });
+    const stage = wrapper.find(".mirror-stage");
+    expect(stage.attributes("data-spirectl-text-effects")).toBe("on");
+
+    mirrorSettings.textEffects = false;
+    await nextTick();
+    expect(stage.attributes("data-spirectl-text-effects")).toBe("off");
+
+    mirrorSettings.textEffects = true;
+    wrapper.unmount();
+  });
 });
