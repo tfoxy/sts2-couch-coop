@@ -558,6 +558,10 @@ await ConnectionAttemptLogsTests.Run();
 await ConnectionControlTests.RunAsync();
     await HeadlessConnectionLifecycleTests.RunAsync();
 InputMappingTests.Run();
+// …and the gamepad half of the same translation (`kind: "pad"`): token + edge onto spirectl's controller-input
+// action, and — the assertions that matter — nothing else. A pad press addresses no point on screen, so a
+// coordinate leaking onto one would be a silently different action.
+PadInputMappingTests.Run();
 SceneDeltaCoalescerTests.Run();
 CouchCoopSceneObserverTests.Run();
 BrowserSceneDeltaMessageTests.Run();

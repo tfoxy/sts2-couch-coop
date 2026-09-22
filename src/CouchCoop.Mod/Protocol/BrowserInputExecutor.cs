@@ -21,7 +21,7 @@ public sealed class BrowserInputExecutor(ISemanticActionSource actions)
 
     public BrowserActionResultEnvelope? Execute(BrowserInputRequestEnvelope request)
     {
-        // Any input (hover/click/key) counts as activity — resumes a headless client's idle-suspended spine +
+        // Any input (hover/click/key/pad) counts as activity — resumes a headless client's idle-suspended spine +
         // particle simulation. Cheap Volatile write; a no-op reader on the host.
         HeadlessIdleActivity.Mark();
         // Restore the idle-throttled frame rate immediately (lower latency than the ~250ms idle-check tick) so the
@@ -38,6 +38,7 @@ public sealed class BrowserInputExecutor(ISemanticActionSource actions)
                 BrowserInputKinds.Hover => BuildPointer(requestId, SemanticActionKind.HoverElement, request),
                 BrowserInputKinds.Click => BuildPointer(requestId, SemanticActionKind.MouseClick, request),
                 BrowserInputKinds.Key => BuildKey(requestId, request),
+                BrowserInputKinds.Pad => BuildPad(requestId, request),
                 _ => null
             };
         }
@@ -99,6 +100,25 @@ public sealed class BrowserInputExecutor(ISemanticActionSource actions)
             SemanticActionKind.KeyInput,
             Key: request.Key,
             KeyModifiers: request.Modifiers,
+            KeyPressed: request.Pressed);
+
+    // Gamepad edge → spirectl's controller-input injection. Deliberately the narrowest request in this file: a
+    // token and an edge, and nothing else. No coordinate, button, offset, element or wheel count is set, because
+    // a pad press addresses no point on screen — the game's own focus decides what the input applies to, which is
+    // the entire reason this is a controller input rather than a synthesized click somewhere.
+    //
+    // The edge reuses `KeyPressed` (spirectl's own field for it): true = down, false = up, absent = a tap
+    // (press+release in one turn). Absent must stay absent — defaulting it to `true` would leave a button latched
+    // down with no release ever coming.
+    //
+    // The token is passed through UNVALIDATED on purpose. spirectl's Sts2BrowserPadMap owns the vocabulary and
+    // answers a token against the running game build's registered actions; a couch-side allowlist could only
+    // restate a table it cannot see and would start refusing valid tokens the day spirectl adds one.
+    internal static EmbeddableActionRequest BuildPad(string requestId, BrowserInputRequestEnvelope request)
+        => new(
+            requestId,
+            SemanticActionKind.ControllerInput,
+            ControllerInput: request.Input,
             KeyPressed: request.Pressed);
 
     private static int? ToPixel(double? value)
