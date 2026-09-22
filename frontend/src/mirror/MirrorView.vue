@@ -15,6 +15,7 @@ import { playZoneThreshold } from "@spirectl/presentation/render";
 import { createAdaptiveController, type AdaptiveController } from "@/mirror/adaptiveQuality";
 import { createEagerScroll, type EagerScroll } from "@/mirror/eagerScroll";
 import { noteMirrorFrame, registerPressureSource } from "@/mirror/framePressure";
+import { createGamepadCapture, type GamepadCapture } from "@/mirror/gamepadCapture";
 import { createInputCapture, type InputCapture } from "@/mirror/inputCapture";
 import { lastPressModality, onPressModalityChange } from "@/inputModality";
 import {
@@ -191,6 +192,10 @@ const canvasUnderlayRequired = computed(
     rendererRef.value.setStaticBackgroundSource === undefined
 );
 let inputCapture: InputCapture | null = null;
+// The BROWSER GAMEPAD capture (gamepadCapture.ts) — created beside inputCapture and under the same gate, so a
+// receive-only mirror (no `sendInput`) never polls a pad, and inert on any browser without the secure-context-only
+// Gamepad API. It shares nothing with inputCapture but the send path.
+let gamepadCapture: GamepadCapture | null = null;
 let rewardFocusCoordinator: RewardFocusCoordinator | null = null;
 let unsubscribePressModality: (() => void) | null = null;
 // R10 WS-E — the eager-scroll engine. Created alongside inputCapture (it needs the renderer AND the send path),
@@ -825,6 +830,13 @@ function mountScene(): void {
         // stage answers from its draw list, where there are no elements to walk.
         renderer
       );
+      // BROWSER GAMEPAD. No stage, no renderer, no coordinate — a pad token is not a place — so it takes only the
+      // send path and the live setting. Construction is safe everywhere: without the Gamepad API (every plain-HTTP
+      // origin) it attaches nothing and polls nothing.
+      gamepadCapture = createGamepadCapture({
+        send: (message) => sendInput(message),
+        enabled: () => mirrorSettings.gamepad
+      });
       rewardFocusCoordinator = createRewardFocusCoordinator({
         modality: lastPressModality,
         canControl: () => props.sendInput !== undefined,
@@ -1126,6 +1138,14 @@ watch(
   }
 );
 
+// BROWSER GAMEPAD: the capture reads the setting live per poll, so turning it OFF is picked up on the next frame
+// (and releases anything held). Turning it back ON needs the nudge — a parked capture has no frame in which to
+// notice — which is all this watch is for.
+watch(
+  () => mirrorSettings.gamepad,
+  () => gamepadCapture?.refresh()
+);
+
 // Start the adaptive render-quality controller when eligible (pure auto mode + effects on + a runtime exists).
 // It drives the gsw runtime setters live, so a downgrade re-tunes resolution/FPS without a dispose+recreate.
 function startAdaptiveQuality(): void {
@@ -1257,6 +1277,10 @@ onBeforeUnmount(() => {
   delete (window as unknown as Record<string, unknown>).__mirrorRewardFocus;
   inputCapture?.dispose();
   inputCapture = null;
+  // Releases anything the pad is still holding on its way out — an unmount mid-press must not leave the seat
+  // holding a button.
+  gamepadCapture?.dispose();
+  gamepadCapture = null;
   eagerScroll?.dispose();
   eagerScroll = null;
   if (renderRaf) {

@@ -2,13 +2,16 @@ import { mount } from "@vue/test-utils";
 import { afterEach, describe, expect, it, vi } from "vitest";
 
 import BrowserAdvisory from "@/join/BrowserAdvisory.vue";
+import GamepadAdvisory from "@/join/GamepadAdvisory.vue";
 import IosInstallOverlay from "@/join/IosInstallOverlay.vue";
-import { __resetComposerForTest, createBrowserI18n } from "@/i18n";
+import { __resetComposerForTest, createBrowserI18n, messages } from "@/i18n";
 import {
   BROWSER_ADVISORY_DISMISSED_STORAGE_KEY,
   BROWSER_ADVISORY_MESSAGE,
+  GAMEPAD_ADVISORY_DISMISSED_STORAGE_KEY,
   IOS_INSTALL_DISMISSED_STORAGE_KEY,
   type BrowserAdvisoryEnv,
+  type GamepadAdvisoryEnv,
   type IosInstallOverlayEnv
 } from "@/join/joinModel";
 
@@ -370,5 +373,44 @@ describe("BrowserAdvisory", () => {
     const buttons = wrapper.findAll("button");
     expect(buttons).toHaveLength(1);
     expect(buttons[0].attributes("data-testid")).toBe("browser-advisory-dismiss");
+  });
+});
+
+describe("GamepadAdvisory", () => {
+  // A pad is in play, the page is plain HTTP, and the Gamepad API is therefore absent — the one case worth a line.
+  const INSECURE_WITH_PAD: GamepadAdvisoryEnv = {
+    secureContext: false,
+    gamepadApi: false,
+    padExpected: true
+  };
+
+  function mountAdvisory(env: GamepadAdvisoryEnv, storage = recordingStorage()) {
+    return { wrapper: mount(GamepadAdvisory, { props: { env, storage } }), storage };
+  }
+
+  it("tells the player to rejoin over the secure link, and only where that is the fix", () => {
+    expect(mountAdvisory(INSECURE_WITH_PAD).wrapper.text()).toContain(messages.en["advisory.gamepad"]);
+    for (const env of [
+      { ...INSECURE_WITH_PAD, padExpected: false },
+      { ...INSECURE_WITH_PAD, secureContext: true },
+      { ...INSECURE_WITH_PAD, gamepadApi: true },
+      { ...INSECURE_WITH_PAD, dismissed: true }
+    ]) {
+      expect(mountAdvisory(env).wrapper.find('[data-testid="gamepad-advisory"]').exists()).toBe(false);
+    }
+  });
+
+  it("dismisses to nothing and records it under its OWN key", async () => {
+    const { wrapper, storage } = mountAdvisory(INSECURE_WITH_PAD);
+    await wrapper.get('[data-testid="gamepad-advisory-dismiss"]').trigger("click");
+    expect(wrapper.find('[data-testid="gamepad-advisory"]').exists()).toBe(false);
+    expect(storage.writes).toEqual([GAMEPAD_ADVISORY_DISMISSED_STORAGE_KEY]);
+  });
+
+  // NEVER A GATE — same rule as the browser advisory: nothing here may stand between the player and the seat list.
+  it("adds no blocking control — one dismiss button and nothing else", () => {
+    const buttons = mountAdvisory(INSECURE_WITH_PAD).wrapper.findAll("button");
+    expect(buttons).toHaveLength(1);
+    expect(buttons[0].attributes("data-testid")).toBe("gamepad-advisory-dismiss");
   });
 });

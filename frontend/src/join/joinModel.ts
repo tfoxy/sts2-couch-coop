@@ -567,6 +567,71 @@ export function shouldShowBrowserAdvisory(env: BrowserAdvisoryEnv): boolean {
   return env.dismissed !== true && shouldRecommendBrowser(env.userAgent);
 }
 
+// ---- gamepad advisory ----------------------------------------------------------------------------------------
+//
+// THE PROBLEM THIS EXISTS FOR. `navigator.getGamepads` is SECURE-CONTEXT ONLY: on the mod's default plain-HTTP LAN
+// join the method is simply absent (Firefox removes it outright), no `gamepadconnected` ever fires, and the whole
+// browser-gamepad path (mirror/gamepadCapture.ts) is inert. To a player holding a controller that is
+// indistinguishable from a broken feature — nothing happens, and nothing says why. The host already serves two
+// origins where it DOES work (the TLS listener and the web-link origin), both offered as their own QR row, so the
+// fix is one line of advice: rejoin from the secure link.
+//
+// ADVISORY, NEVER A GATE — the same rule as the browser advisory above. Joining and playing are untouched.
+
+export const GAMEPAD_ADVISORY_DISMISSED_STORAGE_KEY = "couchCoop:gamepadAdvisoryDismissed";
+
+/**
+ * Whether the URL asks for the gamepad path (`?gamepad`, `?gamepad=on`, … — anything but `off`).
+ *
+ * This is the RELIABLE half of "is a pad plausibly present": on an insecure origin no API can answer that question,
+ * so a player who cannot get their pad working has to be able to SAY so and be told why. `?gamepad=off` is the one
+ * value that means the opposite, and it is the same param `mirrorSettings` reads.
+ */
+export function gamepadRequestedByUrl(search: string | null | undefined): boolean {
+  if (!search) return false;
+  try {
+    const params = new URLSearchParams(search);
+    return params.has("gamepad") && params.get("gamepad") !== "off";
+  } catch {
+    return false;
+  }
+}
+
+/**
+ * Whether this UA is a CONTROLLER-FIRST browser — today, the Steam client's own browser (a Steam Deck in Game Mode
+ * is the case this whole feature is for, and the Steam overlay browser is the one already in the player's hands).
+ *
+ * Best-effort and partial, exactly like {@link shouldRecommendBrowser}: a Deck running Chrome or Firefox as a
+ * non-Steam app reports an ordinary Linux UA with no token to match, so this catches some Deck players and not
+ * others. That is acceptable because the consequence of a MISS is the status quo (nothing shown, `?gamepad=on`
+ * still reaches the advice) and the consequence of a HIT that was wrong is one dismissible line of text.
+ */
+export function isControllerFirstBrowser(userAgent: string | null | undefined): boolean {
+  return typeof userAgent === "string" && /Valve Steam|SteamOS|Steam ?Deck/i.test(userAgent);
+}
+
+export interface GamepadAdvisoryEnv {
+  /** `window.isSecureContext`. The fixable half: HTTPS (or localhost) is where the API exists at all. */
+  secureContext: boolean;
+  /** Whether `navigator.getGamepads` exists at all. */
+  gamepadApi: boolean;
+  /** A pad is plausibly in play: the URL asked for one, or this is a controller-first browser. */
+  padExpected: boolean;
+  dismissed?: boolean;
+}
+
+/**
+ * ADVISORY ONLY. Shown when a pad is plausibly in play AND this page is insecure AND the API is genuinely missing.
+ *
+ * Both of the last two conditions matter. `!secureContext` keeps the advice to the case the player can actually
+ * FIX (rejoin over the secure link); an engine that exposes `getGamepads` on plain HTTP anyway would make the pad
+ * work, and telling that player to move origins would be wrong. A secure page whose browser still has no Gamepad
+ * API says nothing at all — there is no action to recommend.
+ */
+export function shouldShowGamepadAdvisory(env: GamepadAdvisoryEnv): boolean {
+  return env.dismissed !== true && env.padExpected && !env.secureContext && !env.gamepadApi;
+}
+
 // ---- reading the live browser environment --------------------------------------------------------------------
 //
 // The ONE place that touches `navigator` / `window.matchMedia` / `localStorage` for the gates above, so the gates
@@ -574,10 +639,12 @@ export function shouldShowBrowserAdvisory(env: BrowserAdvisoryEnv): boolean {
 // is how the components are mounted in unit tests without redefining globals. Guarded for non-DOM environments.
 
 export interface LiveEnvSeams {
-  navigator?: (Pick<Navigator, "userAgent"> & { standalone?: boolean }) | null;
-  window?: Pick<Window, "matchMedia"> | null;
+  navigator?: (Pick<Navigator, "userAgent"> & { standalone?: boolean; getGamepads?: unknown }) | null;
+  window?: (Pick<Window, "matchMedia"> & { isSecureContext?: boolean }) | null;
   /** The DISMISSAL jar (`localStorage`), separate from the name memory's `sessionStorage`. */
   storage?: Pick<Storage, "getItem"> | null;
+  /** The page URL's query string, for the gamepad advisory's `?gamepad=` intent signal. */
+  search?: string | null;
 }
 
 function liveNavigator(seams: LiveEnvSeams): LiveEnvSeams["navigator"] {
@@ -651,6 +718,28 @@ export function readBrowserAdvisoryEnv(seams: LiveEnvSeams = {}): BrowserAdvisor
   return {
     userAgent: liveNavigator(seams)?.userAgent ?? null,
     dismissed: readDismissedFlag(liveStorage(seams), BROWSER_ADVISORY_DISMISSED_STORAGE_KEY)
+  };
+}
+
+function liveSearch(seams: LiveEnvSeams): string {
+  if (seams.search !== undefined) return seams.search ?? "";
+  try {
+    return typeof window === "undefined" ? "" : window.location.search;
+  } catch {
+    return "";
+  }
+}
+
+export function readGamepadAdvisoryEnv(seams: LiveEnvSeams = {}): GamepadAdvisoryEnv {
+  const nav = liveNavigator(seams);
+  const win = liveWindow(seams);
+  return {
+    // A seam that says nothing about security is treated as SECURE, so a partial test env (and any non-DOM one)
+    // shows nothing rather than advising a move the page may not need.
+    secureContext: win?.isSecureContext !== false,
+    gamepadApi: typeof nav?.getGamepads === "function",
+    padExpected: gamepadRequestedByUrl(liveSearch(seams)) || isControllerFirstBrowser(nav?.userAgent),
+    dismissed: readDismissedFlag(liveStorage(seams), GAMEPAD_ADVISORY_DISMISSED_STORAGE_KEY)
   };
 }
 
