@@ -13,6 +13,7 @@ internal static class QrHoverTipCopyTests
     {
         EveryAdapterAndMethodHasATitleAndADescription();
         SelectorTipIsRegisteredAndDistinct();
+        CopyLinkTipIsRegisteredAndDistinct();
         OptionTipsPutTheMethodFirst();
         TitleKeysCarryTheNamespacePrefix();
         DescriptionsStayInTheGamerRegister();
@@ -48,6 +49,7 @@ internal static class QrHoverTipCopyTests
         }
 
         yield return QrHoverTipCopy.NetworkConnectionDescription;
+        yield return QrHoverTipCopy.CopyLinkDescription;
     }
 
     private static void EveryAdapterAndMethodHasATitleAndADescription()
@@ -83,7 +85,7 @@ internal static class QrHoverTipCopyTests
 
     private static void TitleKeysCarryTheNamespacePrefix()
     {
-        Expect(QrHoverTipCopy.TitleEntries.Count >= 9, "all nine tips are registered");
+        Expect(QrHoverTipCopy.TitleEntries.Count >= 10, "all ten tips are registered");
         foreach (var key in QrHoverTipCopy.TitleEntries.Keys)
         {
             Expect(key.StartsWith(QrHoverTipCopy.TitleKeyPrefix, StringComparison.Ordinal),
@@ -109,6 +111,30 @@ internal static class QrHoverTipCopyTests
         Expect(selectorSpecs.Count == 1 && selectorSpecs[0].TitleKey == titleKey
             && selectorSpecs[0].Description == description,
             "the closed selector uses only its generic tip");
+    }
+
+    // The copy affordance under the QR is a faint, wordless icon: this tip is the ONLY thing that tells a
+    // player what pressing it does, so "has a description" is a product requirement here rather than
+    // tidiness. Distinctness matters for the same reason it does for the pairs above — the game dedupes a
+    // set by its title's table.key, so a shared key silently drops a tip.
+    private static void CopyLinkTipIsRegisteredAndDistinct()
+    {
+        var (titleKey, description) = QrHoverTipCopy.CopyLinkTip;
+        Expect(titleKey == QrHoverTipCopy.CopyLinkTitleKey, "the copy affordance uses its dedicated title key");
+        Expect(QrHoverTipCopy.TitleEntries.TryGetValue(titleKey, out var title) && title!.Length > 0,
+            "the copy affordance has a registered title");
+        Expect(description.Length > 0, "the copy affordance has a description");
+        Expect(titleKey != QrHoverTipCopy.NetworkConnectionTitleKey, "distinct from the selector tip");
+
+        foreach (var kind in Enum.GetValues<QrHostOptionKind>())
+        {
+            Expect(titleKey != QrHoverTipCopy.MethodTipFor(OptionOf(kind)).TitleKey,
+                $"the copy tip is distinct from the {kind} option tip");
+        }
+
+        var specs = CouchCoopQrHoverTips.CopyLinkTipSpecs;
+        Expect(specs.Count == 1 && specs[0].TitleKey == titleKey && specs[0].Description == description,
+            "the copy affordance shows exactly one tip");
     }
 
     private static void OptionTipsPutTheMethodFirst()
@@ -172,6 +198,9 @@ internal static class QrHoverTipCopyTests
         Expect(QrHoverTipCopy.MethodMdnsDescription
             == "Uses this PC's name instead of numbers — easy to remember and type by hand. But many phones and routers can't find these names, so it's the least reliable option. If it won't load, use one of the addresses above.",
             "the PC-name tip retains hand-entry, reliability, and address fallback guidance");
+        Expect(QrHoverTipCopy.CopyLinkDescription
+            == "Copies this address to your clipboard, so you can paste it into a chat message or type it into a phone's browser.",
+            "the copy tip names both things a copied address is actually for");
     }
 
     private static void MethodTipFoldsInTheLiveState()

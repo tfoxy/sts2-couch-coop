@@ -262,6 +262,9 @@ if (args is ["host-ui", ..])
     CouchCoopButtonActivationTests.Run();
     CouchCoopModalFocusTests.Run();
     CouchCoopModalFocusChainTests.Run();
+    // The copy affordance under the QR: the generated glyph (which has no other gate but a screenshot)
+    // and the row arithmetic that keeps it beside the address instead of on top of it.
+    CouchCoopQrCopyAffordanceTests.Run();
     Console.WriteLine("host ui: ok");
     return;
 }

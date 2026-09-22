@@ -360,6 +360,33 @@ async function assertStartRunLobby() {
     constantExtent: QR_DISPLAY_EXTENT
   });
 
+  // --- copy affordance: inside the URL row, to the RIGHT of the address ------------------------
+  // It is deliberately faint, which means a placement bug is nearly invisible in a screenshot: an icon
+  // that drifted onto the address, or below the row into the notice line, still LOOKS like a dim smudge
+  // in the right general area. The geometry is the only thing that can say which.
+  const copyNode = await nodeDetails(at(panelPath, `${DIALOG_PANEL}/${NAMES.copyButton}`));
+  assert(isVisible(copyNode), "the copy button must be visible once an address is selected");
+  const copyRect = globalRect(copyNode);
+  assert(
+    copyRect.position.y >= urlRect.position.y &&
+    copyRect.position.y + copyRect.size.y <= urlRect.position.y + urlRect.size.y,
+    `the copy button (y ${copyRect.position.y}..${copyRect.position.y + copyRect.size.y}) must ride inside the URL ` +
+    `row (y ${urlRect.position.y}..${urlRect.position.y + urlRect.size.y}); outside it, it is eating the notice row's budget`
+  );
+  // The label is centred in the column, so the address ends at its midpoint plus half the rendered text.
+  // Without the text width to hand, the weaker-but-sufficient claim is that the icon starts past centre.
+  const urlCentre = urlRect.position.x + (urlRect.size.x / 2);
+  assert(
+    copyRect.position.x > urlCentre,
+    `the copy button (x ${copyRect.position.x}) must sit to the RIGHT of the centred address (centre ${urlCentre})`
+  );
+  assert(
+    copyRect.position.x + copyRect.size.x <= urlRect.position.x + urlRect.size.x + 1,
+    `the copy button (right ${copyRect.position.x + copyRect.size.x}) must stay inside the text column ` +
+    `(right ${urlRect.position.x + urlRect.size.x})`
+  );
+  record("copy-affordance", { copyRect, urlRect, urlCentre });
+
   // --- 6. list shape (methods per adapter, mdns last), hover tips, switch -> URL + QR change ----
   const qrBefore = await shot("03a-qr-before-switch.png", "QR for the plain-address default, baseline for the ROI diff");
 

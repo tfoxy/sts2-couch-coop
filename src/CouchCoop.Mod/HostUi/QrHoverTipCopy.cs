@@ -41,6 +41,7 @@ public static class QrHoverTipCopy
     public const string MethodMdnsTitleKey = TitleKeyPrefix + "method_mdns";
     public const string MethodOverrideTitleKey = TitleKeyPrefix + "method_override";
     public const string NetworkConnectionTitleKey = TitleKeyPrefix + "network_connection";
+    public const string CopyLinkTitleKey = TitleKeyPrefix + "copy_link";
 
     /// <summary>Key → active-locale title for consumers that require an explicit title map.</summary>
     public static IReadOnlyDictionary<string, string> TitleEntries => new Dictionary<string, string>
@@ -50,9 +51,12 @@ public static class QrHoverTipCopy
         [MethodWebTitleKey] = L("couchcoop_qr_method_web_title"), [MethodSecureTitleKey] = L("couchcoop_qr_method_secure_title"),
         [MethodMdnsTitleKey] = L("couchcoop_qr_method_mdns_title"), [MethodOverrideTitleKey] = L("couchcoop_qr_method_override_title"),
         [NetworkConnectionTitleKey] = L("couchcoop_qr_network_connection_title"),
+        [CopyLinkTitleKey] = L("couchcoop_qr_copy_link_title"),
     };
 
     public static string NetworkConnectionDescription => L("couchcoop_qr_network_connection_description");
+
+    public static string CopyLinkDescription => L("couchcoop_qr_copy_link_description");
 
     public static string AdapterEthernetDescription => L("couchcoop_qr_adapter_ethernet_description");
 
@@ -79,6 +83,13 @@ public static class QrHoverTipCopy
     /// <summary>The single explanatory tip for the closed network-connection selector.</summary>
     public static (string TitleKey, string Description) NetworkConnectionTip
         => (NetworkConnectionTitleKey, NetworkConnectionDescription);
+
+    /// <summary>
+    /// The tip for the copy affordance beside the printed address. It carries the whole of that button's
+    /// explanation: the icon is deliberately faint and wordless, so this is the only place that says what
+    /// pressing it does.
+    /// </summary>
+    public static (string TitleKey, string Description) CopyLinkTip => (CopyLinkTitleKey, CopyLinkDescription);
 
     /// <summary>The adapter half of an option's tip pair.</summary>
     public static (string TitleKey, string Description) AdapterTipFor(QrAdapterKind kind) => kind switch

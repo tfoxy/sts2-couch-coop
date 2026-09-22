@@ -6,6 +6,8 @@
   "couchcoop_qr_no_address": "No host address available — check the browser server started.",
   "couchcoop_qr_network_connection_title": "Network connection",
   "couchcoop_qr_network_connection_description": "Choose which network connection and link type phones use to join. Change this if a phone cannot connect, or if you want to try a faster, more reliable option.",
+  "couchcoop_qr_copy_link_title": "Copy link",
+  "couchcoop_qr_copy_link_description": "Copies this address to your clipboard, so you can paste it into a chat message or type it into a phone's browser.",
   "couchcoop_alert_title": "Heads up",
   "couchcoop_alert_continue": "Continue",
   "couchcoop_steam_offline": "Steam offline — remote friends can't join. Couch/LAN play only.",

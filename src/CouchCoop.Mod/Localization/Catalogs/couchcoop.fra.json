@@ -6,6 +6,8 @@
   "couchcoop_qr_no_address": "Aucune adresse d'hôte disponible : vérifiez le serveur de navigateur démarré.",
   "couchcoop_qr_network_connection_title": "Connexion réseau",
   "couchcoop_qr_network_connection_description": "Choisissez la connexion réseau et le type de lien utilisés par les téléphones pour rejoindre la partie. Changez cette option si un téléphone ne peut pas se connecter ou si vous voulez essayer une option plus rapide et plus fiable.",
+  "couchcoop_qr_copy_link_title": "Copier le lien",
+  "couchcoop_qr_copy_link_description": "Copie cette adresse dans le presse-papiers, pour que vous puissiez la coller dans un message de chat ou la taper dans le navigateur d'un téléphone.",
   "couchcoop_alert_title": "Attention",
   "couchcoop_alert_continue": "Continuer",
   "couchcoop_steam_offline": "Steam hors ligne : les amis distants ne peuvent pas rejoindre le groupe. Lecture sur canapé/LAN uniquement.",

@@ -6,6 +6,8 @@
   "couchcoop_qr_no_address": "利用可能なホスト アドレスがありません — ブラウザ サーバーが起動していることを確認してください。",
   "couchcoop_qr_network_connection_title": "ネットワーク接続",
   "couchcoop_qr_network_connection_description": "スマートフォンが参加に使うネットワーク接続とリンクの種類を選びます。接続できないときや、より速く安定した方法を試したいときに変更してください。",
+  "couchcoop_qr_copy_link_title": "リンクをコピー",
+  "couchcoop_qr_copy_link_description": "このアドレスをクリップボードにコピーします。チャットに貼り付けたり、スマートフォンのブラウザーに入力したりできます。",
   "couchcoop_alert_title": "注意してください",
   "couchcoop_alert_continue": "続ける",
   "couchcoop_steam_offline": "Steam がオフライン — 離れた場所にいる友達は参加できません。カウチ/LANプレイのみ。",

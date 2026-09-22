@@ -71,6 +71,8 @@ if (args is ["--host-ui"])
     CouchCoopModalFocusTests.Run();
     Console.WriteLine("host ui: modal focus chain");
     CouchCoopModalFocusChainTests.Run();
+    Console.WriteLine("host ui: qr copy affordance");
+    CouchCoopQrCopyAffordanceTests.Run();
     Console.WriteLine("host ui: localization");
     CouchCoopLocalizationTests.Run();
     Console.WriteLine("host ui: connections");

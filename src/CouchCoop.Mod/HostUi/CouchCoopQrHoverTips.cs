@@ -55,8 +55,15 @@ internal static class CouchCoopQrHoverTips
     public static bool ShowSelector(Control owner)
         => ShowSpecs(owner, SelectorTipSpecs);
 
+    /// <summary>Show the tip that explains the faint copy affordance beside the printed address.</summary>
+    public static bool ShowCopyLink(Control owner)
+        => ShowSpecs(owner, CopyLinkTipSpecs);
+
     internal static IReadOnlyList<(string TitleKey, string Description)> SelectorTipSpecs
         => [QrHoverTipCopy.NetworkConnectionTip];
+
+    internal static IReadOnlyList<(string TitleKey, string Description)> CopyLinkTipSpecs
+        => [QrHoverTipCopy.CopyLinkTip];
 
     /// <summary>
     /// Builds the option tip order without touching Godot, so the method-before-interface contract is
