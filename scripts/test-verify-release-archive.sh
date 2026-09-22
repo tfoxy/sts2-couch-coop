@@ -264,6 +264,18 @@ for stray in build-info.json .build-info.json extra.json; do
     "$verifier" --payload "$case_dir" --version 1.2.3 "${all_lane_args[@]}"
 done
 
+# ...and depth is no escape either, because the scan RECURSES. `frontend/.vite/manifest.json` is the
+# one that actually shipped in 0.2.3 -- Vite wrote it, the allowlist waved it through on the belief
+# that a dot-dir is hidden, and every Windows player's log carried a failed manifest load for it.
+for stray in frontend/.vite/manifest.json frontend/extra.json frontend/app/chunk.json; do
+  label="nested-stray-$(printf '%s' "$stray" | tr './' '--')"
+  case_dir="$(clone_payload "$label")"
+  mkdir -p "$(dirname "$case_dir/$stray")"
+  cp "$case_dir/build-info.txt" "$case_dir/$stray"
+  expect_reject_saying "$label" 'scans as a mod manifest' \
+    "$verifier" --payload "$case_dir" --version 1.2.3 "${all_lane_args[@]}"
+done
+
 # The pre-merge shape: one {lane, id, version} object. It can only ever describe one lane, so a
 # payload still carrying it must fail rather than be read as "the lane it happens to name".
 v1_build_info="$(clone_payload v1-build-info)"

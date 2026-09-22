@@ -133,8 +133,11 @@ function devBgFromFs(dir: string): Plugin {
 // the host: the hashed entry module, the CSS the entry pulls in, and a build id.
 //
 // The URL is `/app-boot.json`, but the file emitted to disk is `app-boot` (NO extension). The build's
-// outDir is the installed mod's `frontend/` dir, and STS2's ModManager scans every non-dot-dir `*.json`
-// under the mod as a candidate manifest and logs an `[ERROR]` for each one missing an `id`. The mod's
+// outDir is the installed mod's `frontend/` dir, and STS2's ModManager recurses that tree and reads every
+// name ending in `.json` as a candidate mod manifest, logging an `[ERROR]` for each one missing an `id`.
+// A dot-directory is NOT an escape hatch: Godot's hidden-file test is a dot prefix on Unix but
+// FILE_ATTRIBUTE_HIDDEN on Windows, which a zip-extracted or Workshop-synced directory never carries, so
+// on Windows the scan reaches everything. Dropping the extension is the only escape hatch. The mod's
 // browser server owns the `/app-boot.json` route and re-emits this file field by field
 // (CouchCoopBrowserServer.HandleBootManifestRequestAsync), reading `StaticSpaFileProvider.BootManifestDiskName`.
 //
@@ -193,11 +196,13 @@ export default defineConfig({
   build: {
     assetsDir: "app",
     emptyOutDir: true,
-    // The bootstrap cannot guess the entry's content hash, so the build has to publish it. Vite's own
-    // manifest is the source of truth; `couchCoopBootManifest` below distils it into the `app-boot` file
-    // served at /app-boot.json. (Vite writes its own manifest to `.vite/manifest.json` — a dot-dir, so
-    // STS2's mod-manifest scan skips it; ours must not carry a `.json` extension, see that plugin.)
-    manifest: true,
+    // Vite's own manifest stays OFF. `couchCoopBootManifest` below reads the entry chunk straight off
+    // `generateBundle`'s bundle object, so nothing needs the file — and `build.manifest: true` would write
+    // it to `.vite/manifest.json` INSIDE the payload, where STS2's mod-manifest scan finds it and every
+    // Windows player gets `Mod manifest …/frontend/.vite/manifest.json is missing the 'id' field! … The
+    // mod will not be loaded.` in their log on every launch (reported from the field, game v0.107.1). The
+    // dot-dir does not hide it there; see the `couchCoopBootManifest` header. If a future build ever does
+    // need the manifest, emit it EXTENSIONLESS the way `app-boot` is.
     // Keep source maps for local/live QA, but never place embedded sibling/dependency source in a release payload.
     sourcemap: !releaseBuild,
     outDir: defaultOutDir()
