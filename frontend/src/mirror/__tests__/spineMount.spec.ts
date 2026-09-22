@@ -180,7 +180,7 @@ describe("mirror SpineSprite clip playback", () => {
   });
 
   it("fetches NOTHING and renders no element when the tier disables clips (fetch-or-flat degrade)", () => {
-    __setRenderQualityForTest(resolveRenderQuality({ search: "?quality=off", gpu: UNKNOWN_GPU }));
+    __setRenderQualityForTest(resolveRenderQuality({ search: "?quality=minimum", gpu: UNKNOWN_GPU }));
     const { stage, renderer } = harness();
     const state = createMirrorState();
     full(state, [spineNode()], ["spine"]);

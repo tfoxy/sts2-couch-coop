@@ -696,7 +696,7 @@ export function nodeStyle(item: RenderItem): Record<string, string> {
   // and HSV shader nodes are NOT WebGL nodes (isWebglShaderNode is false), so they keep their CSS paint.
   // A particle node also streams its sprite `texture` at top level (ReadPrimaryTexture reads GpuParticles2D.Texture),
   // but that's the per-particle sprite — the gsw canvas paints it, so don't also paint it as a CSS background.
-  // On the true `off` tier (shaders disabled) there's no canvas, but a shader-INPUT texture (an SDF) is still a
+  // On the `minimum` tier (shaders disabled) there's no canvas, but a shader-INPUT texture (an SDF) is still a
   // meaningless blob — suppress it generically (paint nothing) rather than show the gray rectangle.
   const shadersOff = !renderQuality().shadersEnabled;
   const paintsTexture =

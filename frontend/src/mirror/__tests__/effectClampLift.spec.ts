@@ -15,11 +15,11 @@ import {
   type MirrorNode
 } from "@/mirror/sceneTree";
 
-// R10 WS-A: THE PANEL DECIDES. A mid-range phone auto-resolves to the `static` tier, which seeds
+// R10 WS-A: THE PANEL DECIDES. A mid-range phone auto-resolves to the `very-low` tier, which seeds
 // `particlesEnabled: false` — and that used to be a CLAMP in two places (no DOM markers stamped, and the
 // effective particle mode forced `off`), so the Particles select in the settings panel did nothing at all on
 // exactly the devices that see it most, while the same select worked on a desktop. Only the hard-off lane
-// (?debug / ?quality=off / a software-WebGL phone) may still veto the panel.
+// (?debug / ?quality=minimum / a software-WebGL phone) may still veto the panel.
 
 const WEAK_MOBILE_GPU: GpuInfo = { renderer: "Mali-G57 MC2", software: false, unavailable: false };
 const SOFTWARE_GPU: GpuInfo = { renderer: "Google SwiftShader", software: true, unavailable: false };
@@ -82,29 +82,29 @@ afterEach(() => {
 });
 
 describe("particle marker stamping — the tier is a seed, not a clamp", () => {
-  it("STAMPS on the mobile `static` tier, whose particlesEnabled is false", () => {
+  it("STAMPS on the mobile `very-low` tier, whose particlesEnabled is false", () => {
     const q = phoneQuality();
-    expect(q.tier).toBe("static");
+    expect(q.tier).toBe("very-low");
     expect(q.particlesEnabled).toBe(false); // the seed the panel starts from…
     __setRenderQualityForTest(q);
     // …and the markers are stamped anyway, so the runtime has something to attach to when the viewer picks a mode.
     expect(nodeParticleAttributes(particleNode())).not.toBeNull();
   });
 
-  it("STAMPS on `min` and `low` (the other reduced mobile tiers) and on a desktop `high`", () => {
-    for (const search of ["?quality=min", "?quality=low", "?quality=high"]) {
+  it("STAMPS on `low` and `medium` (the other reduced mobile tiers) and on a desktop `high`", () => {
+    for (const search of ["?quality=low", "?quality=medium", "?quality=high"]) {
       __setRenderQualityForTest(resolveRenderQuality({ search, gpu: WEAK_MOBILE_GPU, mobile: true }));
       expect(nodeParticleAttributes(particleNode())).not.toBeNull();
     }
   });
 
-  it("stays DEAD in the hard-off lane (?debug auto-player, ?quality=off, software-WebGL phone)", () => {
+  it("stays DEAD in the hard-off lane (?debug auto-player, ?quality=minimum, software-WebGL phone)", () => {
     for (const q of [
       resolveRenderQuality({ search: "?debug", gpu: WEAK_MOBILE_GPU }),
-      resolveRenderQuality({ search: "?quality=off", gpu: WEAK_MOBILE_GPU }),
+      resolveRenderQuality({ search: "?quality=minimum", gpu: WEAK_MOBILE_GPU }),
       resolveRenderQuality({ search: "", gpu: SOFTWARE_GPU, mobile: true })
     ]) {
-      expect(q.tier).toBe("off");
+      expect(q.tier).toBe("minimum");
       __setRenderQualityForTest(q);
       expect(nodeParticleAttributes(particleNode())).toBeNull();
     }
@@ -123,7 +123,7 @@ async function loadForTier(q: RenderQuality) {
 }
 
 describe("effective effect modes — the panel decides on every live tier", () => {
-  it("constructs BOTH runtimes on the mobile `static` tier and follows the panel's particle mode", async () => {
+  it("constructs BOTH runtimes on the mobile `very-low` tier and follows the panel's particle mode", async () => {
     const { resources, settings } = await loadForTier(phoneQuality());
     expect(resources.mirrorParticleRenderOptions.enableParticles).toBe(true);
     expect(resources.mirrorShaderRenderOptions.enableWebglShaders).toBe(true);

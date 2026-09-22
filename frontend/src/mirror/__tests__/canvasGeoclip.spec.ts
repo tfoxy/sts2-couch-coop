@@ -394,7 +394,7 @@ describe("the canvas overlay's geoclip path", () => {
 describe("a live canvas auto → static switch", () => {
   it("releases active geometry even when both modes use the same baked-still URL", async () => {
     __setRenderQualityForTest(
-      resolveRenderQuality({ search: "?quality=min", gpu: { renderer: "", software: false, unavailable: true } })
+      resolveRenderQuality({ search: "?quality=low", gpu: { renderer: "", software: false, unavailable: true } })
     );
     mirrorSettings.spineMode = "auto";
     const geoclipNode = mountGeoclip();

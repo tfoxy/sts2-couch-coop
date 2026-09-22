@@ -4,6 +4,9 @@
 // saturate a weak GPU (~86% busy, frame loop throttled to ~20fps), while the CPU sits >50% idle. This
 // module picks a tier so low-end devices stay playable:
 //
+// THE LADDER, most expensive first. The five rungs are a single monotone scale, so the id, the `?quality=`
+// value and the label the settings panel shows a player are all the same word:
+//
 //   high → full fidelity: full internal resolution (renderScale 1) with the per-frame effect loops
 //          capped at 30fps (shaders, particles, spine clip playback). The caps are NOT a fidelity
 //          cut — a phone trace showed the gsw shader/particle/spine loops re-rendering every rAF on
@@ -11,31 +14,37 @@
 //          soft glows/drifts; 30fps of them is indistinguishable from 60). Resolution stays the
 //          fidelity lever; fps is the idle lever. Override with `?shaderFps=0` / `?spineClipFps=0`
 //          for uncapped (0 = uncapped) when debugging.
-//   low  → keep the effects but cheap: half internal resolution (~4× less GPU fill + blit) + capped
+//   medium → keep the effects but cheap: half internal resolution (~4× less GPU fill + blit) + capped
 //          shader/particle FPS. The big lever that preserves visuals; fine on most weak laptops.
-//   min  → even cheaper, effects STILL on: one-eighth resolution (~64× less fill than high) but fps kept HIGH
+//   low  → even cheaper, effects STILL on: one-eighth resolution (~64× less fill than high) but fps kept HIGH
 //          (the empirical lever is renderScale, not fps — see tierConfig). For phones a GPU trace showed are
-//          WebGL-fill-bound on `low` — the step to try before dropping to `static`.
-//   static → shaders render as a single FROZEN frame (the gsw runtime's staticShaders mode): the REAL shader,
+//          WebGL-fill-bound on `medium` — the step to try before dropping to `very-low`.
+//   very-low → shaders render as a single FROZEN frame (the gsw runtime's staticShaders mode): the REAL shader,
 //          run once at a pinned TIME, so cards/glows/transitions look correct (additive blends still glow) at
 //          ~zero ongoing GPU cost. Particles off. Replaces a per-shader CSS approximation; the normal low-end
 //          path on a weak phone GPU.
-//   off  → no live WebGL shaders or particles at all; nodes render via their CSS/SVG/texture fallback (a shader-
-//          INPUT texture, e.g. an SDF, paints nothing rather than a gray blob — see nodeStyles). The floor for
-//          WebGL-unavailable / software-WebGL-on-mobile / `?debug`. HSV feColorMatrix unaffected.
+//   minimum → no live WebGL shaders or particles at all; nodes render via their CSS/SVG/texture fallback (a
+//          shader-INPUT texture, e.g. an SDF, paints nothing rather than a gray blob — see nodeStyles). The floor
+//          for WebGL-unavailable / software-WebGL-on-mobile / `?debug`. HSV feColorMatrix unaffected.
 //
-// Tier comes from (in priority order): the `?debug` QA flag (always off — a headless/automated browser runs
-// WebGL on the CPU), an explicit `?quality=high|low|min|off` query override,
-// or auto-detection from device signals. Auto-detection spans the full ladder: a DESKTOP only ever lands
-// high/low (a weak laptop stays low, never silently min/off), but a MOBILE device can step down to min/off
-// (phones are fill/thermal-limited under the CSS mirror) — see autoTier.
+// RENAMED (the ladder above used to be high/low/min/static/off, which is not a ladder and puts the word "off" in
+// front of a player as a quality level). `parseOverride` still accepts the three old spellings that map cleanly —
+// `min`→low, `static`→very-low, `off`→minimum — so older links and bench invocations keep meaning what they meant.
+// The one that cannot be aliased is `low`, which now names the rung below the one it used to.
+//
+// Tier comes from (in priority order): the `?debug` QA flag (always `minimum` — a headless/automated browser runs
+// WebGL on the CPU), an explicit `?quality=high|medium|low|very-low|minimum` query override, THIS VIEWER'S SAVED
+// PANEL CHOICE (mirrorSettings' `quality`, which is why auto-detection stops once a player picks a rung), or
+// auto-detection from device signals. Auto-detection spans the full ladder: a DESKTOP only ever lands
+// high/medium (a weak laptop stays medium, never silently low/minimum), but a MOBILE device can step down to
+// low/very-low/minimum (phones are fill/thermal-limited under the CSS mirror) — see autoTier.
 //
 // WHAT A TIER STILL DECIDES (mirror): the per-effect fields below are a SEED, not a verdict. The mirror's
 // settings panel owns the live effect mode per viewer (mirrorSettings' shaderMode/particleMode), and a given mode
-// must behave identically on every device — so a `static`/`min` phone gets real particles the moment its viewer
+// must behave identically on every device — so a `very-low`/`low` phone gets real particles the moment its viewer
 // picks a particle mode, at the same fps cap and the same backing-store scale a desktop uses. The tier keeps the
 // levers a panel mode does NOT express (spine clips, texture-upload cap, screen-texture capture) and the one
-// clamp the panel cannot lift: the `off` lane (see shadersHardOff/particlesHardOff).
+// clamp the panel cannot lift: the `minimum` lane (see shadersHardOff/particlesHardOff).
 //
 // Any resolved tier can be hand-tuned with query overrides (applied ON TOP of the tier), so a device's
 // exact smooth point can be found live without a rebuild — e.g. on the phone:
@@ -44,16 +53,28 @@
 
 import { describeGpu, type GpuInfo } from "@godot-scene-web/html";
 
-export type RenderQualityTier = "high" | "low" | "min" | "static" | "off";
+import { defaultSettingsStorage, readSettingsRecord } from "@/mirror/settingsStorage";
+
+/** The quality ladder, most expensive first. See the header — one vocabulary for the id, `?quality=` and the
+ *  label the settings panel shows. */
+export type RenderQualityTier = "high" | "medium" | "low" | "very-low" | "minimum";
+
+export const RENDER_QUALITY_TIERS: readonly RenderQualityTier[] = [
+  "high",
+  "medium",
+  "low",
+  "very-low",
+  "minimum"
+] as const;
 
 export interface RenderQuality {
   tier: RenderQualityTier;
-  /** tier !== "off" — when false, shader nodes fall back to CSS/texture and the runtime isn't created. */
+  /** tier !== "minimum" — when false, shader nodes fall back to CSS/texture and the runtime isn't created. */
   shadersEnabled: boolean;
-  /** tier === "static" — shaders render as a single FROZEN frame (no per-frame loop). Below "min", above
-   *  "off": correct stills for any shader at ~zero ongoing GPU cost (the gsw runtime's staticShaders mode). */
+  /** tier === "very-low" — shaders render as a single FROZEN frame (no per-frame loop). Below "low", above
+   *  "minimum": correct stills for any shader at ~zero ongoing GPU cost (the gsw runtime's staticShaders mode). */
   shadersStatic: boolean;
-  /** tier !== "off" — when false, particle nodes render nothing (no static preview in the mirror). */
+  /** tier !== "minimum" — when false, particle nodes render nothing (no static preview in the mirror). */
   particlesEnabled: boolean;
   /** Whether THIS device fetches + plays Spine animation clips. A SpineSprite's clip is a multi-MB download
    *  (decode-heavy too), so weak/mobile tiers default OFF: the client degrades by NOT requesting the clip
@@ -64,7 +85,7 @@ export interface RenderQuality {
   /** Playback advance cap (fps) for clip frames between track-time syncs (0 = uncapped; the clip's own sample
    *  fps caps it anyway). A lever for weak devices that play clips but shouldn't repaint every rAF. */
   spineClipFps: number;
-  /** Backing-store resolution multiplier handed to both gsw runtimes (0.5 on low → ~4× cheaper fill). */
+  /** Backing-store resolution multiplier handed to both gsw runtimes (0.5 on medium → ~4× cheaper fill). */
   renderScale: number;
   /** gsw shaderFps cap (0 = uncapped). */
   shaderFps: number;
@@ -84,17 +105,18 @@ export interface RenderQuality {
   staticShaderScale: number;
   /** Backing-store scale for the STATIC (frozen-frame) PARTICLE mode — see STATIC_PARTICLE_SCALE_MOBILE. */
   staticParticleScale: number;
-  /** Where the tier came from, for diagnostics. */
-  source: "debug" | "query" | "auto" | "default";
+  /** Where the tier came from, for diagnostics. `stored` is this viewer's own panel choice, which — like
+   *  `query` — takes the device out of auto-detection (see isAdaptiveEligible). */
+  source: "debug" | "query" | "stored" | "auto" | "default";
 }
 
 // THE STATIC BACKING-STORE SCALES — the one place a phone still renders an effect smaller than a desktop does.
 //
-// `static` is a FROZEN frame, so it has no per-frame loop… but the producer streams scene-deltas continuously and a
+// `very-low` is a FROZEN frame, so it has no per-frame loop… but the producer streams scene-deltas continuously and a
 // shader node whose uniforms jitter per delta misses the static-frame cache and RE-renders its one frame. At scale 1
 // on a phone that is a full-resolution fragment pass per delta: an Aug-11 Mali-G57 trace of the MAP screen measured
 // StartDrawToSwapStart p50 = 126ms (19× the 6.5ms of the previous build, which rendered the same frozen shaders at
-// the `static` tier's 0.25) with 74% of frames dropped. Fill is quadratic in the scale, so 0.5 is ~4× cheaper and
+// the `very-low` tier's 0.25) with 74% of frames dropped. Fill is quadratic in the scale, so 0.5 is ~4× cheaper and
 // 0.25 ~16×; the visible cost is a slightly softer glow on a frozen backdrop.
 //
 // Desktops keep 1 (they were never fill-bound and a frozen frame is free there), so a mode still means the same
@@ -131,13 +153,18 @@ export interface RenderQualitySignals {
   hardwareConcurrency?: number;
   deviceMemory?: number;
   /** Phone/tablet (UA-CH `mobile` or UA regex). Mobile GPUs are fill/thermal-limited under the CSS mirror, so
-   *  the SAME weakness signals step FURTHER down the ladder than on desktop — this is what lets auto reach min/off. */
+   *  the SAME weakness signals step FURTHER down the ladder than on desktop — this is what lets auto reach the
+   *  bottom three rungs. */
   mobile?: boolean;
+  /** This viewer's SAVED panel choice (mirrorSettings' `quality`), verbatim from storage — a tier name, "auto",
+   *  or anything at all from a hand-edited blob, so it is validated here. Beaten by `?debug` and `?quality=`,
+   *  beats auto-detection: a player who has picked a rung has taken this device out of detection. */
+  storedQuality?: unknown;
 }
 
 function tierConfig(tier: RenderQualityTier): TierConfig {
   switch (tier) {
-    case "off":
+    case "minimum":
       return {
         shadersEnabled: false,
         shadersStatic: false,
@@ -150,7 +177,7 @@ function tierConfig(tier: RenderQualityTier): TierConfig {
         maxTextureDim: 2048,
         maxTrailPoints: TRAIL_POINT_BUDGET_WEAK,
       };
-    case "static":
+    case "very-low":
       // Shaders ON but FROZEN (rendered once at a pinned TIME via the gsw runtime's staticShaders mode), so
       // there's no per-frame loop. But the producer streams scene-deltas continuously, and a shader node whose
       // uniforms jitter per delta misses the static-frame cache and RE-renders its one frame each time — so on a
@@ -172,7 +199,7 @@ function tierConfig(tier: RenderQualityTier): TierConfig {
         maxTextureDim: 2048,
         maxTrailPoints: TRAIL_POINT_BUDGET_WEAK,
       };
-    case "low":
+    case "medium":
       return {
         shadersEnabled: true,
         shadersStatic: false,
@@ -181,7 +208,7 @@ function tierConfig(tier: RenderQualityTier): TierConfig {
         spineClipFps: 30,
         renderScale: 0.5,
         shaderFps: 30,
-        // 30 everywhere (was 25 here and on `min`). The effect fps caps are no longer a per-tier lever: the
+        // 30 everywhere (was 25 here and on `low`). The effect fps caps are no longer a per-tier lever: the
         // mirror's panel picks the effect mode and the same mode must look the same on every device, so a
         // phone-only 25 was a hidden mobile/desktop divergence. RESOLUTION stays the per-device lever
         // (renderScale below, and the panel's ½/¼ modes); `?particleFps=`/`?shaderFps=` still override.
@@ -189,7 +216,7 @@ function tierConfig(tier: RenderQualityTier): TierConfig {
         maxTextureDim: 2048,
         maxTrailPoints: TRAIL_POINT_BUDGET_WEAK,
       };
-    case "min":
+    case "low":
       // Effects still ON, pushed as low as they go before disabling. Empirically (phone testing) the GPU lever
       // is RESOLUTION, not FPS: renderScale has a big GPU impact but is barely visible (blurrier glow), while
       // fps caps cost little GPU but choppiness is very visible — so drop renderScale hard (0.125 = ~64× less
@@ -201,7 +228,7 @@ function tierConfig(tier: RenderQualityTier): TierConfig {
         spineClipsEnabled: false,
         spineClipFps: 0,
         renderScale: 0.125,
-        // 30, like every other live tier — see the `low` note: same effect mode ⇒ same pacing on every device.
+        // 30, like every other live tier — see the `medium` note: same effect mode ⇒ same pacing on every device.
         shaderFps: 30,
         particleFps: 30,
         maxTextureDim: 2048,
@@ -232,35 +259,42 @@ function tierConfig(tier: RenderQualityTier): TierConfig {
 // THE HARD-OFF LANE — the one effect clamp a settings panel cannot lift.
 //
 // Everywhere else the tier only SEEDS what a viewer sees: the mirror's panel picks the live effect mode and the
-// same mode must behave identically on every device (a phone that resolved to `static`/`min` gets working
-// particles the moment its viewer asks for them). The exception is the `off` tier — `?debug`, an explicit
-// `?quality=off`, and a software-WebGL phone — where there is no usable GPU path at all: creating the
+// same mode must behave identically on every device (a phone that resolved to `very-low`/`low` gets working
+// particles the moment its viewer asks for them). The exception is the `minimum` tier — `?debug`, an explicit
+// `?quality=minimum`, and a software-WebGL phone — where there is no usable GPU path at all: creating the
 // runtimes there would peg the CPU (SwiftShader) for nothing, so those effects stay dead however the panel is set.
 //
-// An EXPLICIT per-effect override still wins even there (`?quality=off&shaders=dynamic` re-enables shaders),
+// An EXPLICIT per-effect override still wins even there (`?quality=minimum&shaders=dynamic` re-enables shaders),
 // because `applyOverrides` has already set the matching enable flag — which is exactly what these two read.
 export function shadersHardOff(quality: RenderQuality): boolean {
-  return quality.tier === "off" && !quality.shadersEnabled;
+  return quality.tier === "minimum" && !quality.shadersEnabled;
 }
 
 export function particlesHardOff(quality: RenderQuality): boolean {
-  return quality.tier === "off" && !quality.particlesEnabled;
+  return quality.tier === "minimum" && !quality.particlesEnabled;
 }
 
-// Parse an explicit tier override. `?quality=high|low|min|off`.
-function parseOverride(search: string): RenderQualityTier | null {
-  const params = new URLSearchParams(search);
-  const quality = params.get("quality")?.toLowerCase();
-  if (
-    quality === "high" ||
-    quality === "low" ||
-    quality === "min" ||
-    quality === "static" ||
-    quality === "off"
-  ) {
-    return quality;
+// The pre-rename spellings of three rungs, still accepted so a bookmarked QA link, a recorded bench cell or an
+// older round note keeps selecting the SAME configuration it used to. There is deliberately no entry for the old
+// `low`: that word is now the rung below the one it named, and an alias cannot say both things at once.
+const LEGACY_TIER_NAMES: Record<string, RenderQualityTier> = {
+  min: "low",
+  static: "very-low",
+  off: "minimum"
+};
+
+/** A tier name (or one of the legacy spellings above), or null for anything else. */
+export function parseRenderQualityTier(raw: string | null | undefined): RenderQualityTier | null {
+  const value = raw?.toLowerCase() ?? "";
+  if ((RENDER_QUALITY_TIERS as readonly string[]).includes(value)) {
+    return value as RenderQualityTier;
   }
-  return null;
+  return LEGACY_TIER_NAMES[value] ?? null;
+}
+
+// Parse an explicit tier override. `?quality=high|medium|low|very-low|minimum`.
+function parseOverride(search: string): RenderQualityTier | null {
+  return parseRenderQualityTier(new URLSearchParams(search).get("quality"));
 }
 
 // A finite-number query param, or null when absent/unparseable.
@@ -389,22 +423,22 @@ function applyOverrides(config: TierConfig, search: string): TierConfig {
   return out;
 }
 
-// Auto-detect a tier from device signals across the FULL ladder (high → low → min → off). Few cores or little
-// memory count as one weakness point each; a weak GPU string is a strong signal.
+// Auto-detect a tier from device signals across the FULL ladder (high → medium → low → very-low → minimum). Few
+// cores or little memory count as one weakness point each; a weak GPU string is a strong signal.
 //
-// DESKTOP path is unchanged from before: a weak GPU (+2) or two weak signals → low, else high (never min/off —
-// a desktop on a heuristic should keep effects; a laptop that's fine on low stays low).
+// DESKTOP path is unchanged from before: a weak GPU (+2) or two weak signals → medium, else high (never the
+// bottom three — a desktop on a heuristic should keep effects; a laptop that's fine on medium stays medium).
 //
 // MOBILE phones/tablets are GPU-fill + thermally limited under the per-node CSS mirror, so the same signals step
-// further down: a weak mobile GPU → off (effects off — e.g. a Mali/Adreno mid-ranger), other weakness → min, an
-// otherwise-capable phone → low. This is what makes auto reach min/off (a phone trace showed `low` was still
-// fill-bound while `off` was smooth). `off`/`min` remain desktop-opt-in.
+// further down: a weak mobile GPU → very-low (frozen effects — e.g. a Mali/Adreno mid-ranger), other weakness →
+// low, an otherwise-capable phone → medium. This is what makes auto reach the bottom rungs (a phone trace showed
+// `medium` was still fill-bound while frozen effects were smooth). They remain desktop-opt-in.
 function autoTier(signals: RenderQualitySignals): RenderQualityTier {
   const { gpu, hardwareConcurrency, deviceMemory, mobile } = signals;
   // Software WebGL (SwiftShader/llvmpipe): the GPU path runs on the CPU. On a phone that pegs the CPU for no
-  // gain → `off` (CSS/texture fallback); on desktop keep the effects but cheap (`low`).
+  // gain → `minimum` (CSS/texture fallback); on desktop keep the effects but cheap (`medium`).
   if (gpu.software) {
-    return mobile ? "off" : "low";
+    return mobile ? "minimum" : "medium";
   }
   const weakGpu = Boolean(gpu.renderer && WEAK_GPU_RE.test(gpu.renderer));
   let score = 0;
@@ -417,21 +451,21 @@ function autoTier(signals: RenderQualitySignals): RenderQualityTier {
   if (mobile) {
     if (weakGpu) {
       // Positively-weak mobile GPU (Mali/Adreno mid-range, …): an animated per-frame loop is too costly, but a
-      // single FROZEN shader frame is cheap and still shows the real effect → `static` (not `off`).
-      return "static";
+      // single FROZEN shader frame is cheap and still shows the real effect → `very-low` (not `minimum`).
+      return "very-low";
     }
     // Mobile browsers often MASK the renderer string (no `gpu.renderer`): we can't confirm the phone is
-    // capable, so default to min (effects reduced, still on) rather than low. Only a phone that POSITIVELY
-    // reports a non-weak GPU with ample cores/mem earns low.
+    // capable, so default to low (effects reduced, still on) rather than medium. Only a phone that POSITIVELY
+    // reports a non-weak GPU with ample cores/mem earns medium.
     if (!gpu.renderer || score >= 1) {
-      return "min";
+      return "low";
     }
-    return "low";
+    return "medium";
   }
   if (weakGpu) {
     score += 2;
   }
-  return score >= 2 ? "low" : "high";
+  return score >= 2 ? "medium" : "high";
 }
 
 // Clamp a backing-store scale to the same sane band `?renderScale=` uses. Null stays null (absent param).
@@ -462,7 +496,8 @@ function staticScales(signals: RenderQualitySignals): Pick<
 }
 
 // Pure resolver (testable): given the device signals, produce the quality. Tier comes from debug > query >
-// auto; per-field query overrides (renderScale/shaderFps/particleFps/shaders/particles) are then applied on top.
+// the viewer's saved panel choice > auto; per-field query overrides (renderScale/shaderFps/particleFps/
+// shaders/particles) are then applied on top.
 export function resolveRenderQuality(signals: RenderQualitySignals): RenderQuality {
   const { tier, source } = resolveTier(signals);
   return { tier, source, ...applyOverrides(tierConfig(tier), signals.search), ...staticScales(signals) };
@@ -483,9 +518,10 @@ const ADAPTIVE_PINNING_KEYS = [
   "debug",
 ];
 
-// Whether the live adaptive controller may run for this resolved quality. Only in PURE auto mode (the tier
-// came from auto-detect, not an explicit `?quality`/`?debug`), with effects actually on (not the `off` tier),
-// and with NO per-field override pinned. A pinned value is the user's measured point — leave it alone.
+// Whether the live adaptive controller may run for this resolved quality. Only in PURE auto mode (the tier came
+// from auto-detect — not an explicit `?quality`/`?debug`, and not this viewer's own saved panel choice, which is
+// what "auto-detection stops once a player picks a rung" means), with effects actually on (not the `minimum`
+// tier), and with NO per-field override pinned. A pinned value is the user's measured point — leave it alone.
 export function isAdaptiveEligible(quality: RenderQuality, search: string): boolean {
   if (quality.source !== "auto" && quality.source !== "default") {
     return false;
@@ -493,7 +529,7 @@ export function isAdaptiveEligible(quality: RenderQuality, search: string): bool
   if (!quality.shadersEnabled && !quality.particlesEnabled) {
     return false;
   }
-  // The static tier has no per-frame loop to measure or downgrade — it's already a floor rung.
+  // The frozen-effect tier has no per-frame loop to measure or downgrade — it's already a floor rung.
   if (quality.shadersStatic) {
     return false;
   }
@@ -504,11 +540,17 @@ export function isAdaptiveEligible(quality: RenderQuality, search: string): bool
 function resolveTier(signals: RenderQualitySignals): { tier: RenderQualityTier; source: RenderQuality["source"] } {
   // `?debug` (the QA lever for a headless/software-GL browser) keeps WebGL off — SwiftShader pegs the CPU.
   if (new URLSearchParams(signals.search).has("debug")) {
-    return { tier: "off", source: "debug" };
+    return { tier: "minimum", source: "debug" };
   }
   const override = parseOverride(signals.search);
   if (override) {
     return { tier: override, source: "query" };
+  }
+  // The viewer's own panel choice, saved on this device. "auto" (and an absent/garbled value) falls through to
+  // detection; a rung takes the device OUT of detection, here and in isAdaptiveEligible above.
+  const stored = typeof signals.storedQuality === "string" ? parseRenderQualityTier(signals.storedQuality) : null;
+  if (stored) {
+    return { tier: stored, source: "stored" };
   }
   const tier = autoTier(signals);
   return { tier, source: tier === "high" ? "default" : "auto" };
@@ -530,6 +572,10 @@ function readSignals(): RenderQualitySignals {
     hardwareConcurrency: nav.hardwareConcurrency,
     deviceMemory: nav.deviceMemory,
     mobile,
+    // The panel's saved `quality`, read straight out of the mirror-settings blob. Deliberately NOT an import of
+    // `@/mirror/mirrorSettings` (that module imports this one): `settingsStorage` is a leaf with no imports of
+    // its own, so there is no cycle and no load-order question about which module builds first.
+    storedQuality: readSettingsRecord(defaultSettingsStorage())?.quality,
   };
 }
 
@@ -546,8 +592,8 @@ export function renderQuality(): RenderQuality {
   // software-renderer gate that refuses to create a GL context at all on SwiftShader/llvmpipe —
   // unless told otherwise via its documented `globalThis.__gswForceWebglShaders` escape hatch. That
   // gate would otherwise silently veto a tier we already decided should run effects (e.g. desktop +
-  // software GL resolves to "low", not "off" — see autoTier). Forward our decision so the two agree;
-  // only when this tier actually wants shaders/particles, so an "off" tier doesn't force GL context
+  // software GL resolves to "medium", not "minimum" — see autoTier). Forward our decision so the two agree;
+  // only when this tier actually wants shaders/particles, so a "minimum" tier doesn't force GL context
   // creation gsw would never use. Must run before any consumer creates a runtime (getShared latches
   // its result on first call) — renderQuality() is memoized and called first by every consumer.
   if (cached.shadersEnabled || cached.particlesEnabled) {
@@ -572,6 +618,25 @@ export function renderQuality(): RenderQuality {
 /** TEST-ONLY: force a resolved quality (or clear it) so a test can exercise a specific tier. */
 export function __setRenderQualityForTest(quality: RenderQuality | undefined): void {
   cached = quality;
+}
+
+let cachedDetected: RenderQualityTier | undefined;
+
+/**
+ * What AUTO-DETECTION makes of this device, ignoring `?debug`, `?quality=` and the viewer's saved choice.
+ *
+ * The settings panel labels its Auto entry with this ("Auto (Medium)"), which is the whole point: a player who
+ * has not chosen a rung can still see which one the device was judged to be, and a player who HAS chosen one can
+ * see what they are overriding. Memoized like `renderQuality()` — the device signals don't change mid-session.
+ */
+export function detectedRenderQualityTier(): RenderQualityTier {
+  cachedDetected ??= autoTier(readSignals());
+  return cachedDetected;
+}
+
+/** TEST-ONLY: forget the memoized auto-detection above. */
+export function __resetDetectedTierForTest(): void {
+  cachedDetected = undefined;
 }
 
 /**

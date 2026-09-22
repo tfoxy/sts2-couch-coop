@@ -1277,7 +1277,7 @@ describe("cardTrail — interior decimation", () => {
 describe("cardTrail — interior decimation in the renderer", () => {
   // A budget small enough that a handful of samples reaches it, so the A/B is visible in ONE flight.
   const BUDGETED: RenderQuality = {
-    tier: "low",
+    tier: "medium",
     shadersEnabled: true,
     shadersStatic: false,
     particlesEnabled: true,

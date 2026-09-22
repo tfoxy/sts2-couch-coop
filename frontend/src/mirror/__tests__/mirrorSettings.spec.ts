@@ -8,6 +8,7 @@ import {
   clearStoredMirrorSettings,
   createMirrorSettings,
   DEFAULT_PARTICLE_MODE,
+  DEFAULT_QUALITY_CHOICE,
   DEFAULT_REFRESH_RATE,
   DEFAULT_SHADER_MODE,
   hasStoredMirrorSetting,
@@ -91,12 +92,12 @@ describe("createMirrorSettings — unified effect defaults (mobile == desktop)",
 
   it("gives every LIVE tier the same two defaults — the tier no longer seeds a mode", () => {
     // Including the tiers a phone auto-resolves to: `static` (weak mobile GPU) seeds particlesEnabled FALSE and
-    // `min` seeds a 0.125 renderScale, and neither may leak into what the panel offers this viewer.
+    // `low` seeds a 0.125 renderScale, and neither may leak into what the panel offers this viewer.
     const tiers: Partial<RenderQuality>[] = [
       { tier: "high", renderScale: 1 },
-      { tier: "low", renderScale: 0.5 },
-      { tier: "min", renderScale: 0.125 },
-      { tier: "static", shadersStatic: true, particlesEnabled: false, renderScale: 0.25 }
+      { tier: "medium", renderScale: 0.5 },
+      { tier: "low", renderScale: 0.125 },
+      { tier: "very-low", shadersStatic: true, particlesEnabled: false, renderScale: 0.25 }
     ];
     for (const overrides of tiers) {
       const s = build(quality(overrides));
@@ -118,7 +119,7 @@ describe("createMirrorSettings — unified effect defaults (mobile == desktop)",
       hardwareConcurrency: 16,
       deviceMemory: 16
     });
-    expect(phone.tier).toBe("static"); // the mobile tier whose particles used to be unreachable
+    expect(phone.tier).toBe("very-low"); // the mobile tier whose particles used to be unreachable
     expect(desktop.tier).toBe("high");
     for (const q of [phone, desktop]) {
       const s = build(q);
@@ -127,8 +128,8 @@ describe("createMirrorSettings — unified effect defaults (mobile == desktop)",
     }
   });
 
-  it("floors BOTH modes to off in the hard-off lane (?debug / ?quality=off), saved value or not", () => {
-    const off = quality({ tier: "off", shadersEnabled: false, particlesEnabled: false });
+  it("floors BOTH modes to off in the hard-off lane (?debug / ?quality=minimum), saved value or not", () => {
+    const off = quality({ tier: "minimum", shadersEnabled: false, particlesEnabled: false });
     const s = build(off);
     expect(s.shaderMode).toBe("off");
     expect(s.particleMode).toBe("off");
@@ -136,6 +137,49 @@ describe("createMirrorSettings — unified effect defaults (mobile == desktop)",
     const saved = build(off, "", fakeStorage({ shaderMode: "dynamic", particleMode: "dynamic" }));
     expect(saved.shaderMode).toBe("off");
     expect(saved.particleMode).toBe("off");
+  });
+});
+
+describe("createMirrorSettings — the quality row", () => {
+  it("defaults to `auto`: an untouched device is the one auto-detection decides", () => {
+    expect(build().quality).toBe("auto");
+    expect(DEFAULT_QUALITY_CHOICE).toBe("auto");
+  });
+
+  it("reads a saved rung back", () => {
+    expect(build(quality(), "", fakeStorage({ quality: "medium" })).quality).toBe("medium");
+    expect(build(quality(), "", fakeStorage({ quality: "auto" })).quality).toBe("auto");
+  });
+
+  it("accepts a rung saved under its PRE-RENAME name (min/static/off)", () => {
+    expect(build(quality(), "", fakeStorage({ quality: "static" })).quality).toBe("very-low");
+    expect(build(quality(), "", fakeStorage({ quality: "off" })).quality).toBe("minimum");
+  });
+
+  it("drops a value this panel could never have produced", () => {
+    for (const bogus of ["minimal", "very low", 3, null, {}]) {
+      expect(build(quality(), "", fakeStorage({ quality: bogus })).quality).toBe("auto");
+    }
+  });
+
+  it("is seeded by `?quality=` for the session, so the row tells the truth about the tier in force", () => {
+    // quality.ts resolved the page's tier from this same param; the row would otherwise claim `auto` while the
+    // page ran something else. Legacy spellings land on their renamed rung here too.
+    expect(build(quality(), "?quality=low").quality).toBe("low");
+    expect(build(quality(), "?quality=off").quality).toBe("minimum");
+    // URL beats a saved rung (for the session) and never writes back — see the storage spec.
+    expect(build(quality(), "?quality=high", fakeStorage({ quality: "minimum" })).quality).toBe("high");
+  });
+
+  it("does NOT let `?quality=` apply the preset rows", () => {
+    // `?quality=high` has always meant "tier high, rows as configured", and bench cells pair it with
+    // `?shaders=`/`?particles=`. Only operating the panel control writes rows (qualityPreset.spec.ts).
+    const s = build(quality(), "?quality=high");
+    expect([s.shaderMode, s.particleMode, s.staticBgEnabled]).toEqual([
+      DEFAULT_SHADER_MODE,
+      DEFAULT_PARTICLE_MODE,
+      true
+    ]);
   });
 });
 
@@ -322,10 +366,10 @@ describe("createMirrorSettings — persistence layering", () => {
 
   it("the tier floor beats both (hard-off lane), while a LIVE tier defers to them entirely", () => {
     const storage = fakeStorage({ shaderMode: "dynamic" });
-    const offTier = quality({ tier: "off", shadersEnabled: false, particlesEnabled: false });
+    const offTier = quality({ tier: "minimum", shadersEnabled: false, particlesEnabled: false });
     expect(build(offTier, "?shaders=dynamic", storage).shaderMode).toBe("off");
-    // The `static` tier is NOT a floor — a saved Dynamic survives it (this is the mobile clamp that was lifted).
-    const staticTier = quality({ tier: "static", shadersStatic: true, particlesEnabled: false });
+    // The `very-low` tier is NOT a floor — a saved Dynamic survives it (this is the mobile clamp that was lifted).
+    const staticTier = quality({ tier: "very-low", shadersStatic: true, particlesEnabled: false });
     expect(build(staticTier, "", fakeStorage({ particleMode: "dynamic" })).particleMode).toBe("dynamic");
   });
 

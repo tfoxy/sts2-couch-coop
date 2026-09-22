@@ -9,12 +9,16 @@ import {
   EFFECT_MODES,
   mirrorSettings,
   persistMirrorSetting,
+  QUALITY_CHOICES,
   REFRESH_RATE_MAX,
   REFRESH_RATE_MIN,
   type EffectMode,
   type MirrorSettings,
-  type PersistedSettingKey
+  type PersistedSettingKey,
+  type QualityChoice
 } from "@/mirror/mirrorSettings";
+import { applyQualityChoice } from "@/mirror/qualityPreset";
+import { detectedRenderQualityTier, type RenderQualityTier } from "@/render/quality";
 
 // Panel labels for the per-viewer effect modes (Dynamic / ½ / ¼ / Static / Off), in EFFECT_MODES order.
 const EFFECT_MODE_LABELS: Record<EffectMode, "settings.dynamic" | "settings.dynamicHalf" | "settings.dynamicQuarter" | "settings.static" | "settings.off"> = {
@@ -23,6 +27,16 @@ const EFFECT_MODE_LABELS: Record<EffectMode, "settings.dynamic" | "settings.dyna
   "dynamic-quarter": "settings.dynamicQuarter",
   static: "settings.static",
   off: "settings.off"
+};
+
+// Panel labels for the quality ladder. One word per rung, matching the ids and the `?quality=` values exactly —
+// High / Medium / Low / Very low / Minimum — so a player and a support log are naming the same thing.
+const QUALITY_TIER_LABELS: Record<RenderQualityTier, import("@/i18n").MessageKey> = {
+  high: "settings.qualityHigh",
+  medium: "settings.qualityMedium",
+  low: "settings.qualityLow",
+  "very-low": "settings.qualityVeryLow",
+  minimum: "settings.qualityMinimum"
 };
 
 // The mirror's OWN chrome (NOT a game-scene element): the settings DROPDOWN, hanging from the gear button at the
@@ -70,6 +84,25 @@ function bind<K extends PersistedSettingKey>(key: K): WritableComputedRef<Mirror
       persistMirrorSetting(key, value);
     }
   });
+}
+
+// THE QUALITY ROW is not a plain `bind`: picking a rung also writes the three rows it implies (qualityPreset),
+// each saved through the same per-field write `bind` uses. Reading it back is still just the store, so a viewer
+// who then changes one of those rows sees the quality they picked stay put — it is this device's tier, not a
+// summary of the rows.
+const quality = computed<QualityChoice>({
+  get: () => settings.quality,
+  set: (value) => applyQualityChoice(settings, value)
+});
+
+// The rung auto-detection makes of THIS device, for the Auto entry's label ("Auto (Medium)"). Read once —
+// `detectedRenderQualityTier` is memoized and the device's signals don't change mid-session.
+const detectedTier = detectedRenderQualityTier();
+
+function qualityLabel(choice: QualityChoice): string {
+  return choice === "auto"
+    ? t("settings.qualityAuto", { tier: t(QUALITY_TIER_LABELS[detectedTier]) })
+    : t(QUALITY_TIER_LABELS[choice]);
 }
 
 const shaderMode = bind("shaderMode");
@@ -128,6 +161,7 @@ const hostPerfNote = computed(() =>
 // ---------------------------------------------------------------------------------------------------------
 
 type HelpId =
+  | "quality"
   | "shaders"
   | "particles"
   | "staticBg"
@@ -152,6 +186,7 @@ type HelpId =
 // One description per row: what it does, and what it trades (performance vs fidelity). Kept in ONE object so a
 // row added without help text is obvious at review time.
 const HELP_KEYS: Record<HelpId, import("@/i18n").MessageKey> = {
+  quality: "settings.help.quality",
   shaders: "settings.help.shaders", particles: "settings.help.particles", staticBg: "settings.help.staticBg",
   stretch: "settings.help.stretch", raiseCard: "settings.help.raiseCard", unfocus: "settings.help.unfocus",
   tapFocus: "settings.help.tapFocus", confirmTap: "settings.help.confirmTap", raiseHand: "settings.help.raiseHand",
@@ -245,6 +280,17 @@ onBeforeUnmount(() => setHelpListeners(false));
 
       <div class="settings-group">
         <p class="settings-group-label">{{ t('settings.thisDevice') }}</p>
+        <!-- FIRST in the group on purpose: it is the one lever a player reaches for, and picking a rung sets the
+             three rows below it (shaders, particles, static background) to match. -->
+        <div class="settings-item">
+          <label class="settings-row settings-row-select">
+            <span>{{ t('settings.quality') }}</span>
+            <select v-model="quality" data-testid="mirror-quality">
+              <option v-for="choice in QUALITY_CHOICES" :key="choice" :value="choice">{{ qualityLabel(choice) }}</option>
+            </select>
+          </label>
+          <SettingsHelpTip v-bind="help('quality', t('settings.quality'))" />
+        </div>
         <div class="settings-item">
           <label class="settings-row settings-row-select">
             <span>{{ t('settings.shaders') }}</span>

@@ -6,7 +6,7 @@
 //
 //   * a SLOW first bake — the host bakes per (rig, anim), so a cold room entry is a real wait;
 //   * a FAILED bake — `requestAnimatedClip`'s rejection path leaves the node blank forever;
-//   * `?quality=off` (and the `?debug` auto-player / a software-WebGL phone) — the off tier requests no clip at
+//   * `?quality=minimum` (and the `?debug` auto-player / a software-WebGL phone) — that tier requests no clip at
 //     all, so nothing is ever coming.
 //
 // The stand-in is the game's own `the_adversary_placeholder.png`, STRETCHED to fill the creature's box exactly.

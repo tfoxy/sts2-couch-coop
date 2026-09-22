@@ -286,15 +286,15 @@ describe("creature placeholder — the tier and mode gates", () => {
     expect(creatureArtIsUnavailable(node)).toBe(false);
   });
 
-  it("is claimed AND permanent on the hard-off tier (?quality=off), which requests no clip at all", () => {
-    __setRenderQualityForTest(resolveRenderQuality({ search: "?quality=off", gpu: UNKNOWN_GPU }));
+  it("is claimed AND permanent on the hard-off tier (?quality=minimum), which requests no clip at all", () => {
+    __setRenderQualityForTest(resolveRenderQuality({ search: "?quality=minimum", gpu: UNKNOWN_GPU }));
     const node = ironclad().nodes.get("spine")!;
     expect(isCreaturePlaceholderNode(node)).toBe(true);
     expect(creatureArtIsUnavailable(node)).toBe(true);
   });
 
   it("stays out entirely under the dev `?spineMode=off` override", () => {
-    __setRenderQualityForTest(resolveRenderQuality({ search: "?quality=off", gpu: UNKNOWN_GPU }));
+    __setRenderQualityForTest(resolveRenderQuality({ search: "?quality=minimum", gpu: UNKNOWN_GPU }));
     mirrorSettings.spineMode = "off";
     const node = ironclad().nodes.get("spine")!;
     expect(isCreaturePlaceholderNode(node)).toBe(false);

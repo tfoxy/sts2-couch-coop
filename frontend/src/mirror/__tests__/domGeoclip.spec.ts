@@ -312,7 +312,7 @@ describe("a geoclip only wakes the DOM renderer's animation loop if it has frame
 describe("a live DOM auto → static switch", () => {
   it("releases active geometry even when both modes use the same baked-still URL", async () => {
     __setRenderQualityForTest({
-      ...resolveRenderQuality({ search: "?quality=min", gpu: UNKNOWN_GPU }),
+      ...resolveRenderQuality({ search: "?quality=low", gpu: UNKNOWN_GPU }),
       spineClipFps: 0
     });
     mirrorSettings.spineMode = "auto";

@@ -212,7 +212,7 @@ let particleRuntime: ParticleRuntime | null = null;
 // In PURE auto mode (no `?quality`/`?renderScale`/… override), an adaptive controller measures the real
 // frame rate after load settles and ratchets the GPU-fill knobs down (renderScale first, then the FPS caps
 // to a 25 floor) until the device holds a smooth rate — self-correcting per device + thermal state where the
-// static heuristic can only guess. Null when an override is pinned, on the `off` tier, or without WebGL.
+// static heuristic can only guess. Null when an override is pinned, on the `minimum` tier, or without WebGL.
 let adaptiveController: AdaptiveController | null = null;
 // `renderQuality()` is the immutable seed; adaptive quality mutates live runtimes without changing it.
 // Unsubscribe for the targeted texture-size listener (see onMounted).
@@ -402,7 +402,7 @@ function reconcileRuntimes(reason: ReconcileReason = "frame"): void {
 
 // Arm the one-shot safety reconcile. Called from the render rAF, so it only ever exists while frames are being
 // produced: it fires once ~1s later and does NOT re-arm — the next render arms it again. With no runtime to
-// reconcile (effects off / the `off` tier) nothing is armed at all.
+// reconcile (effects off / the `minimum` tier) nothing is armed at all.
 function armRuntimeSafety(): void {
   if (runtimeSafetyTimer || (!shaderRuntime && !particleRuntime)) {
     return;
@@ -964,7 +964,7 @@ function syncEffectsHost(shaders: boolean, particles: boolean): HtmlEffectsHost 
 // Apply the effective SHADER mode to the live runtime: `off` disposes it (tears down the per-node canvases without
 // a reload); any other mode creates it if needed (re-attaching to the markers the reconciler already stamped) then
 // sets frozen mode (Static ⇒ setStaticShaders) + backing-store scale (½/¼ ⇒ setRenderScale). No-op in tests / the
-// `off` tier where WebGL2 is unavailable (create returns a no-op runtime).
+// `minimum` tier where WebGL2 is unavailable (create returns a no-op runtime).
 function applyShaderMode(mode: EffectMode): void {
   if (!stage.value || !sceneAblation.effectsStartupEnabled) return;
   // Strict canvas owns effect pixels through its stage resources. Constructing
@@ -1104,6 +1104,21 @@ watch(effectiveParticleMode, (mode) => {
   reconcileRuntimes("change");
   pinEffects();
 });
+
+// The QUALITY row (settings panel) pins too, and not only via the two watches above. Picking a rung normally
+// moves both effect modes, but it need not: choosing `Very low` while the rows already read Static changes
+// nothing they watch, and that still has to count as the viewer taking manual control — otherwise the auto
+// downgrade controller would keep ratcheting underneath a quality the player just chose by hand. (`auto` is
+// excluded: it is the request to be auto-detected, which is the opposite of a pin. It returns the DEVICE levers
+// to detection on the next load; the sampler this session is already running or already stopped.)
+watch(
+  () => mirrorSettings.quality,
+  (choice) => {
+    if (choice !== "auto") {
+      pinEffects();
+    }
+  }
+);
 
 // Flipping the "raise held card" setting off mid-drag must clear the lift immediately, not just stop future
 // reports (the touch drag itself keeps running — inputCapture doesn't know/care about the setting).

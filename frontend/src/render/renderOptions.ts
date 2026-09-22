@@ -8,7 +8,7 @@ import type { GodotHtmlMountOptions } from "@godot-scene-web/html/runtime";
 
 import { renderQuality, type RenderQuality } from "@/render/quality";
 
-// The representative TIME (seconds) the frozen `static` tier renders each shader at. Pinned so looping
+// The representative TIME (seconds) the frozen `very-low` tier renders each shader at. Pinned so looping
 // shaders (glow/scroll/pulse) land on a visible phase rather than a trough. Cheap to retune.
 export const STATIC_SHADER_TIME = 1;
 
@@ -25,9 +25,9 @@ export function qualityShaderOptions(
     staticShaderTime: STATIC_SHADER_TIME,
     maxTextureDimension: quality.maxTextureDim,
     // SCREEN_TEXTURE post-process shaders (water reflections, …) need the gsw runtime's throttled
-    // DOM-composite capture pass. Only the tiers that run full animated effects pay for it; on
-    // min/static/off those shaders keep their CSS/texture fallback.
-    enableScreenTextureCapture: quality.tier === "high" || quality.tier === "low"
+    // DOM-composite capture pass. Only the two top rungs, which run full animated effects, pay for it; from
+    // `low` down those shaders keep their CSS/texture fallback.
+    enableScreenTextureCapture: quality.tier === "high" || quality.tier === "medium"
   };
 }
 

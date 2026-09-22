@@ -342,14 +342,14 @@ describe("quality — spine clip fetch-or-flat gate", () => {
 
   it("enables clips on high/low, disables on min/static/off (protect weak-device wifi)", () => {
     expect(resolveRenderQuality(signals({ search: "?quality=high" })).spineClipsEnabled).toBe(true);
-    expect(resolveRenderQuality(signals({ search: "?quality=low" })).spineClipsEnabled).toBe(true);
-    expect(resolveRenderQuality(signals({ search: "?quality=min" })).spineClipsEnabled).toBe(false);
-    expect(resolveRenderQuality(signals({ search: "?quality=static" })).spineClipsEnabled).toBe(false);
-    expect(resolveRenderQuality(signals({ search: "?quality=off" })).spineClipsEnabled).toBe(false);
+    expect(resolveRenderQuality(signals({ search: "?quality=medium" })).spineClipsEnabled).toBe(true);
+    expect(resolveRenderQuality(signals({ search: "?quality=low" })).spineClipsEnabled).toBe(false);
+    expect(resolveRenderQuality(signals({ search: "?quality=very-low" })).spineClipsEnabled).toBe(false);
+    expect(resolveRenderQuality(signals({ search: "?quality=minimum" })).spineClipsEnabled).toBe(false);
   });
 
   it("honors ?spineClips + ?spineClipFps overrides on top of the tier", () => {
-    expect(resolveRenderQuality(signals({ search: "?quality=min&spineClips=on" })).spineClipsEnabled).toBe(true);
+    expect(resolveRenderQuality(signals({ search: "?quality=low&spineClips=on" })).spineClipsEnabled).toBe(true);
     expect(resolveRenderQuality(signals({ search: "?quality=high&spineClips=off" })).spineClipsEnabled).toBe(false);
     expect(resolveRenderQuality(signals({ search: "?quality=high&spineClipFps=12" })).spineClipFps).toBe(12);
   });

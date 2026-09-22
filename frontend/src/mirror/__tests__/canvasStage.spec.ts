@@ -680,7 +680,7 @@ describe("the canvas stage's sizing law", () => {
     stubWebgl2();
     vi.stubGlobal("devicePixelRatio", 3);
     __setStageBackendForTest("canvas");
-    for (const search of ["?quality=high", "?quality=low", "?quality=min", "?quality=static", "?quality=off"]) {
+    for (const search of ["?quality=high", "?quality=medium", "?quality=low", "?quality=very-low", "?quality=minimum"]) {
       __setRenderQualityForTest(
         resolveRenderQuality({ search, gpu: { renderer: "", software: false, unavailable: true }, mobile: true })
       );
