@@ -772,7 +772,7 @@ describe("nodeStyle WebGL shader base paint", () => {
 
 describe("nodeStyle shader-input paint when shaders are OFF (true floor)", () => {
   const OFF: RenderQuality = {
-    tier: "off",
+    tier: "minimum",
     shadersEnabled: false,
     shadersStatic: false,
     particlesEnabled: false,

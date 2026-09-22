@@ -98,6 +98,7 @@ beforeEach(() => {
   mirrorSettings.shaderMode = "dynamic";
   mirrorSettings.particleMode = "dynamic";
   mirrorSettings.effectModePinned = false;
+  mirrorSettings.quality = "auto";
 });
 
 describe("MirrorView effect-mode wiring", () => {
@@ -125,6 +126,27 @@ describe("MirrorView effect-mode wiring", () => {
     expect(shaderRt.setStaticShaders).toHaveBeenLastCalledWith(true);
     expect(particleRt.setStaticParticles).toHaveBeenLastCalledWith(true);
     // A deliberate panel selection pins so the adaptive controller steps aside.
+    expect(mirrorSettings.effectModePinned).toBe(true);
+
+    wrapper.unmount();
+  });
+
+  it("a QUALITY rung pins the effect quality even when it moves no effect mode", async () => {
+    // Picking `very-low` while both rows already read Static changes nothing the two mode watches can see, and
+    // that still has to count as the viewer taking control — otherwise the adaptive sampler keeps ratcheting
+    // underneath a quality they chose by hand. `auto` is the opposite request and must NOT pin.
+    const wrapper = mount(MirrorView, { props: { state: emptyState(), revision: 1 } });
+    mirrorSettings.shaderMode = "static";
+    mirrorSettings.particleMode = "static";
+    await nextTick();
+    mirrorSettings.effectModePinned = false;
+
+    mirrorSettings.quality = "auto";
+    await nextTick();
+    expect(mirrorSettings.effectModePinned).toBe(false);
+
+    mirrorSettings.quality = "very-low";
+    await nextTick();
     expect(mirrorSettings.effectModePinned).toBe(true);
 
     wrapper.unmount();
@@ -165,7 +187,7 @@ describe("MirrorView effect-mode wiring", () => {
   // frozen shader still re-renders per scene-delta, and a full-res one took a Mali-G57 map screen to 126ms
   // StartDrawToSwapStart p50.
   it("maps Static to the DEVICE's static scale (½/¼ on a phone) and re-applies the tier's fps caps", async () => {
-    // The `static` tier a weak-GPU phone auto-resolves to: renderScale 0.25, both caps 30.
+    // The `very-low` tier a weak-GPU phone auto-resolves to: renderScale 0.25, both caps 30.
     const phone = resolveRenderQuality({
       search: "",
       gpu: { renderer: "Mali-G57 MC2", software: false, unavailable: false },
@@ -173,7 +195,7 @@ describe("MirrorView effect-mode wiring", () => {
       hardwareConcurrency: 8,
       deviceMemory: 8
     });
-    expect(phone.tier).toBe("static");
+    expect(phone.tier).toBe("very-low");
     expect(phone.renderScale).toBe(0.25);
     __setRenderQualityForTest(phone);
     try {

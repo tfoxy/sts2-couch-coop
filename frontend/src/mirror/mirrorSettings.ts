@@ -10,11 +10,13 @@
 //   UI — panel open/closed + the latency overlay toggle (both gate the latency probe's cadence; see MirrorApp).
 //
 // LAYERING (lowest to highest), applied once per page load in `createMirrorSettings`:
-//   1. built-in defaults — the product defaults below (shaders Static, particles Static, …). The SAME values
-//      on every device: a setting must mean the same thing on a phone and on a desktop (see quality.ts — the one
-//      device-dependent part of a static mode is the backing-store scale it renders its single frame at).
-//   2. device tier seed — now only the hard-off floor (`?debug` / `?quality=off` / a software-WebGL phone has no
-//      usable GPU path, so both effect modes read `off` there and the panel says so honestly). Everything the
+//   1. built-in defaults — the product defaults below (quality Auto, shaders Static, particles Static, …). The
+//      SAME values on every device: a setting must mean the same thing on a phone and on a desktop (see
+//      quality.ts — the one device-dependent part of a static mode is the backing-store scale it renders its
+//      single frame at). Note what this means for the QUALITY row: `auto` decides the device levers only and
+//      never pushes rows, so detection cannot silently change what a viewer sees.
+//   2. device tier seed — now only the hard-off floor (`?debug` / `?quality=minimum` / a software-WebGL phone has
+//      no usable GPU path, so both effect modes read `off` there and the panel says so honestly). Everything the
 //      tier used to seed per-device is a shared product default now.
 //   3. localStorage — what this viewer last chose IN THE PANEL (`couchcoop.mirrorSettings.v1`). Only fields the
 //      viewer can actually set are stored, and only the field they touched is written (see persistMirrorSetting).
@@ -31,11 +33,20 @@ import { reactive } from "vue";
 
 import { REPRO_UI_ENABLED } from "@/mirror/buildFlags";
 import {
+  defaultSettingsStorage,
+  MIRROR_SETTINGS_STORAGE_KEY,
+  readSettingsRecord,
+  type MirrorSettingsStorage
+} from "@/mirror/settingsStorage";
+import {
   effectModeOverride,
+  parseRenderQualityTier,
   particlesHardOff,
   renderQuality,
+  RENDER_QUALITY_TIERS,
   shadersHardOff,
-  type RenderQuality
+  type RenderQuality,
+  type RenderQualityTier
 } from "@/render/quality";
 import type { MirrorSettingsPayload } from "@/mirror/mirrorClient";
 
@@ -47,6 +58,20 @@ export const DEFAULT_REFRESH_RATE = 24;
 // slider and the stored-value validator can't drift apart.
 export const REFRESH_RATE_MIN = 4;
 export const REFRESH_RATE_MAX = 60;
+
+// THE QUALITY ROW's vocabulary: the render-quality ladder (render/quality.ts — High / Medium / Low / Very low /
+// Minimum) plus `auto`, which is the default and means "let this device be detected".
+//
+// One value, two jobs, which is what makes it a single quality setting rather than a second one:
+//   * it IS this device's tier once set (quality.ts' `resolveTier` reads it out of storage, ahead of
+//     auto-detection), so the levers no panel row expresses — texture-upload cap, Spine clip fetch, card-trail
+//     budget, frozen-effect backing scale, the hard-off floor — follow the rung the player picked;
+//   * picking a rung writes the rows that rung implies (qualityPreset.ts), which is what a player sees change.
+export type QualityChoice = "auto" | RenderQualityTier;
+
+export const QUALITY_CHOICES: readonly QualityChoice[] = ["auto", ...RENDER_QUALITY_TIERS] as const;
+
+export const DEFAULT_QUALITY_CHOICE: QualityChoice = "auto";
 
 // Per-viewer effect mode for the two live WebGL effect families (shaders + particles). A tri-state
 // Dynamic / Static / Off, PLUS two web-only reduced-resolution DYNAMIC variants (½-res, ¼-res) that trade
@@ -84,10 +109,11 @@ export const DEFAULT_PARTICLE_MODE: EffectMode = "static";
 // single largest wire + decode cost for a benefit almost nobody could see on a phone, so the panel no longer
 // offers the choice at all; the four values survive only as a DEV override (`?spineMode=`) and as the vocabulary
 // the two gates in spineAttributes.ts speak:
-//   auto    : the tier decides (desktop fetches the animated clip, a weak tier one still, the `off` floor nothing).
+//   auto    : the tier decides (desktop fetches the animated clip, a weak tier one still, the `minimum` floor
+//             nothing).
 //   dynamic : always fetch + play the full animated clip, on any tier — the dev escape hatch.
 //   static  : fetch a single STILL frame (&still=1) and paint it once — no rAF advance, no multi-MB clip. THE
-//             DEFAULT. Still honours the `off` floor tier (WebGL-unavailable / the ?debug auto-player), which
+//             DEFAULT. Still honours the `minimum` floor tier (WebGL-unavailable / the ?debug auto-player), which
 //             renders no spines at all — exactly what `auto` did there before this became the default.
 //   off     : don't render spines at all (the node is not a spine-clip node, so it also leaves NO zero-box element —
 //             see nodeStyles' shared isSpineClipNode gate).
@@ -107,6 +133,15 @@ export function parseSpineMode(raw: string | null): SpineMode {
 // it reports low-ppem glyph runs without changing the selected text path.
 
 export interface MirrorSettings {
+  // CLIENT render (browser-only) — THE QUALITY ROW (see QualityChoice). `auto` (the default) leaves this device to
+  // auto-detection and leaves every row below at its product default; a rung is this device's tier AND a preset
+  // over the three rows it implies (shaders, particles, static background — qualityPreset.ts). The rows stay
+  // individually editable afterwards, so this is a starting point, not a lock.
+  //
+  // Seeded from `?quality=` for the session (which never writes back, so a shared QA link can't redefine a
+  // phone's saved choice) — note the URL param seeds only the FIELD, never the preset: `?quality=high` has always
+  // meant "tier high, rows as configured", and bench cells depend on that.
+  quality: QualityChoice;
   // CLIENT render (browser-only) — the per-viewer effect mode for each family (product defaults above; the tier
   // only floors them to `off` in the hard-off lane). MirrorView watches these to create/dispose + retune the WebGL
   // shader + particle runtimes live (static ⇒ setStaticShaders/setStaticParticles, ½/¼ ⇒ setRenderScale,
@@ -246,20 +281,16 @@ export const SERVER_SETTING_KEYS = [
 // ---------------------------------------------------------------------------------------------------------
 // Web-storage layer
 // ---------------------------------------------------------------------------------------------------------
+//
+// The key, the seam and the raw blob read live in `settingsStorage.ts` — a leaf `render/quality.ts` can also
+// import (it resolves this device's tier from the saved `quality` below). Re-exported here because this module
+// is where everything else asks for them.
 
-// VERSIONED on purpose: a future schema change bumps the suffix, which resets every viewer to the new defaults
-// instead of trying to migrate values whose meaning moved. Old keys are simply orphaned (a few bytes).
-export const MIRROR_SETTINGS_STORAGE_KEY = "couchcoop.mirrorSettings.v1";
-
-/** The web-storage seam (injectable so tests can fake it; `null` means "this build has no storage"). */
-export interface MirrorSettingsStorage {
-  getItem(key: string): string | null;
-  setItem(key: string, value: string): void;
-  removeItem?(key: string): void;
-}
+export { MIRROR_SETTINGS_STORAGE_KEY, type MirrorSettingsStorage };
 
 /** Fields a viewer can set IN THE PANEL — exactly the fields that are saved. */
 export type PersistedSettingKey =
+  | "quality"
   | "shaderMode"
   | "particleMode"
   | "stretchEnabled"
@@ -277,6 +308,9 @@ export type PersistedSettingKey =
   | "tweenReplay";
 
 export const PERSISTED_SETTING_KEYS: readonly PersistedSettingKey[] = [
+  // PERSISTED, and load-bearing beyond the panel: quality.ts reads this same saved value to resolve the device
+  // tier before auto-detection (see QualityChoice).
+  "quality",
   "shaderMode",
   "particleMode",
   "stretchEnabled",
@@ -324,18 +358,21 @@ export const NEVER_PERSISTED_SETTING_KEYS = [
 
 export type StoredMirrorSettings = Partial<Pick<MirrorSettings, PersistedSettingKey>>;
 
-// localStorage where it exists. Access itself can THROW (Safari private mode, a sandboxed frame), so it is
-// wrapped — a browser without storage degrades to the RAM-only behavior this store used to have.
-function defaultStorage(): MirrorSettingsStorage | null {
-  try {
-    return (globalThis as { localStorage?: MirrorSettingsStorage }).localStorage ?? null;
-  } catch {
-    return null;
-  }
-}
-
 function boolValue(raw: unknown): boolean | undefined {
   return typeof raw === "boolean" ? raw : undefined;
+}
+
+// A saved quality choice. "auto" is a real value here (not an absent one), so a viewer who deliberately hands the
+// device back to auto-detection keeps that across reloads. The legacy tier spellings are accepted through the
+// same parser the URL uses, so a choice saved before the ladder was renamed still selects the same rung.
+function qualityChoiceValue(raw: unknown): QualityChoice | undefined {
+  if (typeof raw !== "string") {
+    return undefined;
+  }
+  if (raw.toLowerCase() === "auto") {
+    return "auto";
+  }
+  return parseRenderQualityTier(raw) ?? undefined;
 }
 
 function effectModeValue(raw: unknown): EffectMode | undefined {
@@ -356,6 +393,7 @@ function refreshRateValue(raw: unknown): number | undefined {
 // Per-key validation, so a hand-edited / half-written / older-schema blob can only ever DROP fields — never feed
 // the store a mode string the renderer doesn't know or an fps the host would refuse.
 const STORED_VALIDATORS: { [K in PersistedSettingKey]: (raw: unknown) => MirrorSettings[K] | undefined } = {
+  quality: qualityChoiceValue,
   shaderMode: effectModeValue,
   particleMode: effectModeValue,
   stretchEnabled: boolValue,
@@ -373,34 +411,11 @@ const STORED_VALIDATORS: { [K in PersistedSettingKey]: (raw: unknown) => MirrorS
   tweenReplay: boolValue
 };
 
-function readRecord(storage: MirrorSettingsStorage | null): Record<string, unknown> | null {
-  if (!storage) {
-    return null;
-  }
-  let text: string | null = null;
-  try {
-    text = storage.getItem(MIRROR_SETTINGS_STORAGE_KEY);
-  } catch {
-    return null; // storage exists but reading threw (private mode / disabled cookies)
-  }
-  if (!text) {
-    return null;
-  }
-  try {
-    const parsed: unknown = JSON.parse(text);
-    return parsed !== null && typeof parsed === "object" && !Array.isArray(parsed)
-      ? (parsed as Record<string, unknown>)
-      : null;
-  } catch {
-    return null; // not JSON at all — ignore it; the next panel change overwrites it
-  }
-}
-
 /** The viewer's saved panel choices: only known keys, only values that pass validation. Never throws. */
 export function readStoredMirrorSettings(
-  storage: MirrorSettingsStorage | null = defaultStorage()
+  storage: MirrorSettingsStorage | null = defaultSettingsStorage()
 ): StoredMirrorSettings {
-  const record = readRecord(storage);
+  const record = readSettingsRecord(storage);
   const out: StoredMirrorSettings = {};
   if (!record) {
     return out;
@@ -418,7 +433,7 @@ export function readStoredMirrorSettings(
 /** Whether this viewer has a SAVED value for one field (MirrorApp asks about `refreshRate` — see its seed rule). */
 export function hasStoredMirrorSetting(
   key: PersistedSettingKey,
-  storage: MirrorSettingsStorage | null = defaultStorage()
+  storage: MirrorSettingsStorage | null = defaultSettingsStorage()
 ): boolean {
   return readStoredMirrorSettings(storage)[key] !== undefined;
 }
@@ -434,7 +449,7 @@ export function hasStoredMirrorSetting(
 export function persistMirrorSetting<K extends PersistedSettingKey>(
   key: K,
   value: MirrorSettings[K],
-  storage: MirrorSettingsStorage | null = defaultStorage()
+  storage: MirrorSettingsStorage | null = defaultSettingsStorage()
 ): void {
   if (!storage) {
     return;
@@ -448,7 +463,7 @@ export function persistMirrorSetting<K extends PersistedSettingKey>(
 }
 
 /** Forget every saved choice (tests, and a future "reset to defaults" affordance). */
-export function clearStoredMirrorSettings(storage: MirrorSettingsStorage | null = defaultStorage()): void {
+export function clearStoredMirrorSettings(storage: MirrorSettingsStorage | null = defaultSettingsStorage()): void {
   if (!storage) {
     return;
   }
@@ -567,9 +582,15 @@ export function createMirrorSettings(
   options: CreateMirrorSettingsOptions = {}
 ): MirrorSettings {
   const params = new URLSearchParams(search);
-  const saved = readStoredMirrorSettings(options.storage === undefined ? defaultStorage() : options.storage);
+  const saved = readStoredMirrorSettings(options.storage === undefined ? defaultSettingsStorage() : options.storage);
   const reproUiEnabled = options.reproUiEnabled ?? REPRO_UI_ENABLED;
   return reactive<MirrorSettings>({
+    // THE QUALITY ROW. `?quality=` wins for the session so the panel tells the truth about the tier this page is
+    // actually running (quality.ts resolved it from the same param), then the viewer's saved rung, then `auto`.
+    // Seeding the FIELD is all this does — the preset rows are written only when a control in the panel is
+    // operated, because `?quality=high` has always meant "tier high, rows as configured" and bench cells that
+    // pair it with `?shaders=`/`?particles=` depend on that.
+    quality: parseRenderQualityTier(params.get("quality")) ?? saved.quality ?? DEFAULT_QUALITY_CHOICE,
     // `?shaders=` / `?particles=` win for the session (the documented way to A/B an effect from a link); then the
     // viewer's saved choice; then the shared product default. The tier contributes ONE thing: the hard-off lane,
     // applied as a floor so the panel never offers a mode that physically cannot run.

@@ -13,7 +13,7 @@ const root = mkdtempSync(join(tmpdir(), "phone-canvas-bench-"));
 const arms = ["dom", "canvas", "canvas", "dom"];
 const workloads = ["idle", "discard", "reshuffle", "dense"];
 
-function writeMatrix(dir, { canvasFps = 70 } = {}) {
+function writeMatrix(dir, { canvasFps = 70, quality = "very-low" } = {}) {
   mkdirSync(dir, { recursive: true });
   for (const workload of workloads) {
     for (const [i, arm] of arms.entries()) {
@@ -25,7 +25,7 @@ function writeMatrix(dir, { canvasFps = 70 } = {}) {
         cell: {
           label: `${workload}-${i + 1}`,
           workload: { id: workload, recording: `/fixtures/${workload}.ndjson` }, arm, sequence: i + 1,
-          run: { repeats: 1, effects: "on", effectMode: "static", quality: "static" },
+          run: { repeats: 1, effects: "on", effectMode: "static", quality },
           query: isCanvas ? "stage=canvas&paintDump=1" : "stage=dom",
           artifacts: { result: join(dir, `${workload}-${i + 1}.result.json`) }
         },
@@ -300,6 +300,15 @@ try {
   assert.equal(invalidRun.status, 0, invalidRun.stderr);
   assert.match(invalidRun.stdout, /display invariant: identical viewport and DPR/);
   assert.match(invalidRun.stdout, /missing\/failed post-cell foreground proof/);
+
+  // The frozen-effect rung is `very-low` since the quality ladder was renamed; a matrix recorded under its old
+  // spelling (`static`) must still satisfy the fidelity gate, or every pre-rename artifact stops comparing.
+  const legacyQuality = join(root, "legacy-quality");
+  writeMatrix(legacyQuality, { quality: "static" });
+  const legacyVisual = writeVisualReview(join(root, "visual-quality-legacy"), legacyQuality);
+  const legacyRun = run(["--input", legacyQuality], legacyVisual);
+  assert.equal(legacyRun.status, 0, `${legacyRun.stderr}\n${legacyRun.stdout}`);
+  assert.match(legacyRun.stdout, /fidelity invariant: one repeat, static quality\/effects/);
 
   const failing = join(root, "failing");
   writeMatrix(failing, { canvasFps: 30 });

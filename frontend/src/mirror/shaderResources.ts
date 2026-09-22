@@ -105,8 +105,10 @@ export async function resolveShaderSource(path?: string): Promise<string | undef
 }
 
 // The device's render-quality tier decides how much of the (GPU-bound) live WebGL pipeline runs. It
-// folds in the old `?debug` disable (the auto-player tier is "off"), plus the low-end resolution/FPS
-// knobs and a hard off switch. Read once at module load (a tier change is a reload). See `quality.ts`.
+// folds in the old `?debug` disable (the auto-player tier is "minimum"), plus the low-end resolution/FPS
+// knobs and a hard off switch. Read once at module load, which is why the settings panel's Quality row applies
+// its ROWS immediately (they are reactive, below) while the tier-derived construction knobs here follow on the
+// next page load. See `quality.ts`.
 const quality = renderQuality();
 
 // Capped loops park on a timer in both gsw effect runtimes.
@@ -457,7 +459,7 @@ export const mirrorShaderRenderOptions: GodotHtmlMountOptions = {
   // CLAMP LIFT (mirror only — the shared qualityShaderOptions stays tier-faithful for the recon view, which has
   // no panel to decide with). The tier seeds the panel's initial mode; from there the PANEL decides, so the
   // runtime must be constructible on every tier that has a usable GPU path. Only the hard-off lane (?debug /
-  // ?quality=off / software-WebGL phone) stays dead.
+  // ?quality=minimum / software-WebGL phone) stays dead.
   enableWebglShaders: !shadersHardOff(quality),
   webglShaderIds: ["*"],
   hsvAdjustShaderIds: HSV_SHADER_IDS,
@@ -550,7 +552,7 @@ export const mirrorParticleRenderOptions: GodotHtmlMountOptions = {
 };
 
 // The EFFECTIVE per-viewer effect mode the settings panel drives. The panel's mode IS the effective mode on every
-// tier with a usable GPU path; only the HARD-OFF lane (?debug auto-player / ?quality=off / software-WebGL phone —
+// tier with a usable GPU path; only the HARD-OFF lane (?debug auto-player / ?quality=minimum / software-WebGL phone —
 // see quality.ts) forces `off`, because there the runtimes would rasterize on the CPU for nothing and no DOM
 // markers are stamped for them to find.
 //

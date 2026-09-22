@@ -22,10 +22,11 @@ const latency: MirrorLatency = {
   gameCount: 0
 };
 
-// Every row the panel offers, in DOM order: the 15 controls plus the two latency readouts. `repro` is the one
+// Every row the panel offers, in DOM order: the 16 controls plus the two latency readouts. `repro` is the one
 // row that a BUILD can remove (VITE_REPRO_UI=off, see buildFlags) — it is listed here because vitest runs with
 // the flag unset, i.e. as the local/dev build that ships it.
 const HELP_IDS = [
+  "quality",
   "shaders",
   "particles",
   "staticBg",

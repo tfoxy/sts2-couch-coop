@@ -341,7 +341,9 @@ if (args.help) {
                         MEMORY HAZARD: without --report the trace is buffered as ONE STREAM and written whole, so
                         these categories can make a 30s capture hundreds of MB. Prefer a short --limit-ms window,
                         or --report (which filters events on arrival and writes incrementally).
-  --quality <tier>      mirror render tier in the page URL (default high; use 'static' for a phone-representative run)
+  --quality <tier>      mirror render tier in the page URL: high|medium|low|very-low|minimum (default high;
+                        use 'very-low' for a phone-representative run). The pre-rename spellings min/static/off
+                        still select the same rungs (low/very-low/minimum).
   --cull                enable off-screen leaf culling (candidate C1) via ?cull=on (default off)
   --hover-sweep         drive ~60Hz mousemoves across the stage during replay (exercises input hover)
   --trace <file>        write a CDP timeline trace to .sts2/bench/traces/<file>

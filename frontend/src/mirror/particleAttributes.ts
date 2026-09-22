@@ -260,8 +260,8 @@ let specsJsonCache = new WeakMap<
 // The stamped particle binding for a node, or null when it isn't a particle node.
 export function nodeParticleAttributes(node: MirrorNode): MirrorParticleBinding | null {
   const spec = node.particleSpec;
-  // The gate is the HARD-OFF lane only (?debug auto-player / ?quality=off / software-WebGL phone). It used to be
-  // the tier's `particlesEnabled`, which silently skipped stamping on the `static` tier a mid-range phone
+  // The gate is the HARD-OFF lane only (?debug auto-player / ?quality=minimum / software-WebGL phone). It used to
+  // be the tier's `particlesEnabled`, which silently skipped stamping on the `very-low` tier a mid-range phone
   // auto-resolves to — so the settings panel's Particles select did nothing there no matter what the viewer
   // picked (no markers ⇒ nothing for the runtime to attach to). The panel decides now; the tier only seeds it.
   if (!spec || particlesHardOff(renderQuality())) {

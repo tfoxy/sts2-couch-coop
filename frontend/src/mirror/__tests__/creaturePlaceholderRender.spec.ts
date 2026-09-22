@@ -18,7 +18,7 @@ import { resolveRenderQuality, __setRenderQualityForTest } from "@/render/qualit
 //
 //   WHEN   nothing for the first second, the stand-in after it, and nothing at all once real pixels commit;
 //   NEVER  a creature whose art arrived in time never shows one, and a rig outside the policy never shows one;
-//   ALWAYS permanent when the fetch was refused, and permanent on `?quality=off` — where it is not a deadline at
+//   ALWAYS permanent when the fetch was refused, and permanent on `?quality=minimum` — where it is not a deadline at
 //          all, because no clip was ever requested and none is coming.
 //
 // The clock is faked throughout: the deadline is a real `setTimeout` and the decision re-reads `performance.now()`,
@@ -337,7 +337,7 @@ describe("creature stand-in — DOM backend", () => {
   });
 
   it("is permanent on the hard-off tier, WITHOUT requesting a clip", () => {
-    __setRenderQualityForTest(resolveRenderQuality({ search: "?quality=off", gpu: UNKNOWN_GPU }));
+    __setRenderQualityForTest(resolveRenderQuality({ search: "?quality=minimum", gpu: UNKNOWN_GPU }));
     const stage = domHarness();
     renderer!.reconcile(build(CREATURE_TREE));
 
@@ -349,7 +349,7 @@ describe("creature stand-in — DOM backend", () => {
   });
 
   it("stays out entirely under the dev `?spineMode=off` override", () => {
-    __setRenderQualityForTest(resolveRenderQuality({ search: "?quality=off", gpu: UNKNOWN_GPU }));
+    __setRenderQualityForTest(resolveRenderQuality({ search: "?quality=minimum", gpu: UNKNOWN_GPU }));
     mirrorSettings.spineMode = "off";
     const stage = domHarness();
     renderer!.reconcile(build(CREATURE_TREE));
@@ -472,7 +472,7 @@ describe("creature stand-in — canvas backend", () => {
   });
 
   it("is permanent on the hard-off tier, WITHOUT requesting a clip", () => {
-    __setRenderQualityForTest(resolveRenderQuality({ search: "?quality=off", gpu: UNKNOWN_GPU }));
+    __setRenderQualityForTest(resolveRenderQuality({ search: "?quality=minimum", gpu: UNKNOWN_GPU }));
     const container = canvasHarness();
     const state = build(CREATURE_TREE);
     overlay!.reconcile([spineRecordFor(state)], state.nodes);

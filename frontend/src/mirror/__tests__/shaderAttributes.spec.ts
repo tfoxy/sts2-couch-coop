@@ -498,7 +498,7 @@ describe("nodeShaderAttributes", () => {
 
 describe("nodeShaderAttributes — shaders off (true floor)", () => {
   const OFF: RenderQuality = {
-    tier: "off",
+    tier: "minimum",
     shadersEnabled: false,
     shadersStatic: false,
     particlesEnabled: false,
@@ -519,7 +519,7 @@ describe("nodeShaderAttributes — shaders off (true floor)", () => {
   it("returns no shader binding for any shader node (no WebGL canvas, no per-shader CSS hack)", () => {
     __setRenderQualityForTest(OFF);
     // The card glow node (card_ripple) no longer synthesizes a bespoke CSS halo — its raw paint is suppressed
-    // generically by nodeStyles (isShaderInputNode), and the normal low-end path is the `static` tier instead.
+    // generically by nodeStyles (isShaderInputNode), and the normal low-end path is the `very-low` tier instead.
     expect(nodeShaderAttributes(shaderNode({ shaderParams: [numberParam("width", 4)] }))).toBeNull();
     expect(nodeShaderAttributes(shaderNode({ shaderId: "res://shaders/relic.gdshader" }))).toBeNull();
   });
@@ -555,7 +555,7 @@ describe("isShaderInputNode", () => {
   it("does not depend on the quality tier (true whether shaders are on or off)", () => {
     const node = shaderNode();
     __setRenderQualityForTest({
-      tier: "off",
+      tier: "minimum",
       shadersEnabled: false,
       shadersStatic: false,
       particlesEnabled: false,

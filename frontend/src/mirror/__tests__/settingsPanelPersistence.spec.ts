@@ -36,6 +36,7 @@ function saved(): Record<string, unknown> {
 beforeEach(() => {
   localStorage.clear();
   mirrorSettings.panelOpen = true;
+  mirrorSettings.quality = "auto";
   mirrorSettings.shaderMode = "static";
   mirrorSettings.particleMode = "dynamic-quarter";
   mirrorSettings.stretchEnabled = true;
@@ -59,6 +60,52 @@ afterEach(() => {
 });
 
 describe("SettingsPanel — saving a viewer's choices", () => {
+  it("saves a QUALITY rung together with the three rows it sets", async () => {
+    // The quality row is the one control that writes more than its own field — and every one of those writes has
+    // to be saved, or a reload would show the rung next to rows it does not imply.
+    const wrapper = mountPanel();
+    await wrapper.get('[data-testid="mirror-quality"]').setValue("high");
+    expect(saved()).toEqual({
+      quality: "high",
+      shaderMode: "dynamic",
+      particleMode: "dynamic",
+      staticBgEnabled: false
+    });
+    expect([mirrorSettings.shaderMode, mirrorSettings.particleMode, mirrorSettings.staticBgEnabled]).toEqual([
+      "dynamic",
+      "dynamic",
+      false
+    ]);
+    wrapper.unmount();
+  });
+
+  it("saves `auto` on its own — handing the device back to detection touches no row", async () => {
+    const wrapper = mountPanel();
+    await wrapper.get('[data-testid="mirror-quality"]').setValue("minimum");
+    await wrapper.get('[data-testid="mirror-quality"]').setValue("auto");
+    expect(saved()).toEqual({
+      quality: "auto",
+      // the rows the `minimum` pick wrote stay written — they are the viewer's now
+      shaderMode: "off",
+      particleMode: "off",
+      staticBgEnabled: true
+    });
+    wrapper.unmount();
+  });
+
+  it("a row changed after a rung overrides just that row, and the rung stays picked", async () => {
+    const wrapper = mountPanel();
+    await wrapper.get('[data-testid="mirror-quality"]').setValue("very-low");
+    await wrapper.get('[data-testid="mirror-particle-mode"]').setValue("dynamic-quarter");
+    expect(saved()).toEqual({
+      quality: "very-low",
+      shaderMode: "static",
+      particleMode: "dynamic-quarter",
+      staticBgEnabled: true
+    });
+    wrapper.unmount();
+  });
+
   it("saves an effect mode picked from either select", async () => {
     const wrapper = mountPanel();
     await wrapper.get('[data-testid="mirror-shader-mode"]').setValue("dynamic");

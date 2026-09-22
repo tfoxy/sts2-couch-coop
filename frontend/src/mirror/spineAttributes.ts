@@ -26,8 +26,8 @@ import { hostUrl } from "@/join/hostBase";
 //   dynamic — the DEV escape hatch (`?spineMode=dynamic`): renders on any tier, floor included, because the only
 //             way to ask for it is to type it.
 //   static  — the PRODUCT DEFAULT, so it must not quietly promote the floor tier into rendering spines: it renders
-//             a still on every tier EXCEPT `off` (WebGL-unavailable / the ?debug auto-player), which is exactly
-//             what `auto` answered there when `auto` was the default.
+//             a still on every tier EXCEPT `minimum` (WebGL-unavailable / the ?debug auto-player), which is
+//             exactly what `auto` answered there when `auto` was the default.
 export function isSpineClipNode(node: MirrorNode): boolean {
   if (node.spineSceneResPath == null || !node.spineCurrentAnim) {
     return false;
@@ -40,19 +40,19 @@ export function isSpineClipNode(node: MirrorNode): boolean {
     return true;
   }
   if (mode === "static") {
-    return renderQuality().tier !== "off";
+    return renderQuality().tier !== "minimum";
   }
-  // auto (dev-only now): high/low fetch the full animated clip. static/min (and any tier with clips force-disabled)
-  // still fetch ONE STATIC frame (spineClipUrl appends &still=1) — so a weak/mobile device shows the character as a
-  // single cheap image (the "something is here" indicator the recon view gives) rather than NOTHING. Only the `off`
-  // floor (WebGL-unavailable / the ?debug auto-player) fetches nothing at all.
+  // auto (dev-only now): high/medium fetch the full animated clip. low/very-low (and any tier with clips
+  // force-disabled) still fetch ONE STATIC frame (spineClipUrl appends &still=1) — so a weak/mobile device shows
+  // the character as a single cheap image (the "something is here" indicator the recon view gives) rather than
+  // NOTHING. Only the `minimum` floor (WebGL-unavailable / the ?debug auto-player) fetches nothing at all.
   const q = renderQuality();
-  return q.spineClipsEnabled || q.tier !== "off";
+  return q.spineClipsEnabled || q.tier !== "minimum";
 }
 
 // True when this device should request a STILL (single frame) rather than the animated clip. That is the DEFAULT
-// (`spineMode` static) — and also what a tier that renders spines without full clips (static/min) asks for under
-// `auto`. Drives the &still=1 query + the no-rAF paint. `?spineMode=dynamic` pins it false even on a still-mode
+// (`spineMode` static) — and also what a tier that renders spines without full clips (low/very-low) asks for
+// under `auto`. Drives the &still=1 query + the no-rAF paint. `?spineMode=dynamic` pins it false even on a still-mode
 // tier (the dev asked for the animation); Off is moot (isSpineClipNode already returned false) but answers false
 // for a well-defined value.
 export function isSpineStillMode(): boolean {
@@ -61,7 +61,7 @@ export function isSpineStillMode(): boolean {
     return mode === "static";
   }
   const q = renderQuality();
-  return !q.spineClipsEnabled && q.tier !== "off";
+  return !q.spineClipsEnabled && q.tier !== "minimum";
 }
 
 // Geometry clips are an explicit developer/benchmark experiment, not an enhancement to the product still lane.

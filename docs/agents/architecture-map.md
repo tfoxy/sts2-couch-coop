@@ -1014,9 +1014,12 @@ panel is no longer mounted; its internal narration remains available for diagnos
 
 ## Mirror settings panel (web)
 - Files: store `frontend/src/mirror/mirrorSettings.ts` (defaults, the localStorage layer, the server payload),
-  panel `frontend/src/mirror/SettingsPanel.vue`, per-row help `frontend/src/mirror/SettingsHelpTip.vue`, the
-  toggle + fullscreen chrome `frontend/src/components/SettingsGearButton.vue` / `FullscreenButton.vue` (both take
-  a `compact` prop for the browser-space picker placement), wiring `frontend/src/mirror/MirrorApp.vue`.
+  storage leaf `frontend/src/mirror/settingsStorage.ts` (key + seam + raw read, imported by BOTH the store and
+  `render/quality.ts`, which is why it has no imports of its own), quality presets
+  `frontend/src/mirror/qualityPreset.ts`, panel `frontend/src/mirror/SettingsPanel.vue`, per-row help
+  `frontend/src/mirror/SettingsHelpTip.vue`, the toggle + fullscreen chrome
+  `frontend/src/components/SettingsGearButton.vue` / `FullscreenButton.vue` (both take a `compact` prop for the
+  browser-space picker placement), wiring `frontend/src/mirror/MirrorApp.vue`.
 - Seeding order (one pass, in `createMirrorSettings`): built-in defaults < device tier floor < localStorage <
   URL query. URL wins for the SESSION and never writes back; only operating a control in the panel saves, and
   only that one field (`persistMirrorSetting`). Storage key is versioned: `couchcoop.mirrorSettings.v1`.
@@ -1025,19 +1028,39 @@ panel is no longer mounted; its internal narration remains available for diagnos
   `NEVER_PERSISTED_SETTING_KEYS` must together cover every store key — a spec asserts it.
 - `refreshRate`/`tweenReplay` ARE persisted although they are server-tied: a saved value beats the `session`
   envelope's baseline and the one-shot push carries it to the game (MirrorApp's `refreshRateSeeded` rule).
+- **THE QUALITY ROW** (`quality`, first in "This device") is both halves of one setting. It is persisted, and
+  `quality.ts` reads that same saved value when resolving the tier — order there is `?debug` > `?quality=` >
+  stored choice (`source: "stored"`) > auto-detect — so a picked rung takes the device out of detection AND out
+  of the live adaptive downgrade controller (`isAdaptiveEligible` requires `source` auto/default). Picking a rung
+  also writes the three rows it implies (`QUALITY_PRESETS`: shaders / particles / static background), each saved
+  through the same per-field write; the rows stay individually editable and the rung stays put when one moves.
+  `auto` (the default) writes no rows — detection is a guess about hardware and must not change what a viewer
+  sees, which is what keeps the product defaults device-independent. The panel prints the detected rung in the
+  Auto entry (`detectedRenderQualityTier()`), and `?quality=` seeds only the FIELD, never the preset (bench cells
+  pair it with `?shaders=`/`?particles=`). Rows apply live; the tier's own levers (texture cap, spine clips,
+  trail budget, frozen-effect backing scale, hard-off lane) are latched at module load and follow on the next
+  page load.
+- **THE LADDER IS `high | medium | low | very-low | minimum`** (renamed from `high | low | min | static | off`:
+  ids, `?quality=` values and player-facing labels are now one monotone vocabulary, and no quality level is
+  presented to a player as "Off"). `parseRenderQualityTier` still accepts the three old spellings that map
+  cleanly — `min`→`low`, `static`→`very-low`, `off`→`minimum`. **`low` changed meaning**: it now names the rung
+  the old `min` named, so an old `?quality=low` link or bench report is one rung off. The phone-canvas bench
+  gates on the recorded string and accepts both `very-low` and `static` for exactly that reason.
 - Effect mode defaults are device-independent: shaders `static`, particles `static`. The quality tier only owns the
   hard-off lane (`shadersHardOff`/`particlesHardOff` in
-  `render/quality.ts`: the `off` tier from `?debug` / `?quality=off` / a software-WebGL phone). Everything else —
-  marker stamping (`particleAttributes.ts`), runtime construction + effective mode (`shaderResources.ts`), render
-  scale and fps caps (`MirrorView.applyShaderMode/applyParticleMode`) — follows the PANEL.
+  `render/quality.ts`: the `minimum` tier from `?debug` / `?quality=minimum` / a software-WebGL phone). Everything
+  else — marker stamping (`particleAttributes.ts`), runtime construction + effective mode (`shaderResources.ts`),
+  render scale and fps caps (`MirrorView.applyShaderMode/applyParticleMode`) — follows the PANEL.
 - Consequence to preserve: fps caps are 30 on every live tier, and the ½/¼ DYNAMIC modes are 0.5/0.25 on every
   device — the same panel selection behaves identically on a phone and a desktop.
-- The one device-dependent scale is STATIC's backing store (`quality.ts` `staticShaderScale`/
+- The one device-dependent scale is the FROZEN (`very-low`) backing store (`quality.ts` `staticShaderScale`/
   `staticParticleScale`, consumed by `MirrorView.scaleForMode(mode, family)`): mobile = 0.5 shaders / 0.25
   particles, desktop = 1. Frozen effects still redraw on scene deltas, so backing-store fill cost matters.
-- Tests: `mirrorSettings.spec.ts` (layering + storage), `settingsPanelPersistence.spec.ts` (what a control
-  writes), `settingsPanelHelp.spec.ts` (tips), `effectClampLift.spec.ts` (panel-decides), `pickerChrome.spec.ts`
-  (gear + fullscreen on the picker), `quality.spec.ts`, `mirrorViewEffectModes.spec.ts`.
+- Tests: `mirrorSettings.spec.ts` (layering + storage), `qualityPreset.spec.ts` (the rung→rows table and what a
+  pick writes), `settingsPanelPersistence.spec.ts` (what a control writes), `settingsPanelClientControls.spec.ts`
+  (the quality row's ladder + Auto label), `settingsPanelHelp.spec.ts` (tips), `effectClampLift.spec.ts`
+  (panel-decides), `pickerChrome.spec.ts` (gear + fullscreen on the picker), `quality.spec.ts` (ladder, aliases,
+  stored choice), `mirrorViewEffectModes.spec.ts`.
 
 ## Composited-layer count
 

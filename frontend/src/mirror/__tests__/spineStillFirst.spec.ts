@@ -11,7 +11,7 @@ import { mirrorSettings } from "@/mirror/mirrorSettings";
 // frame 0 in ~0.5-1s), then CHAINS the full animated clip and hot-swaps it in. These specs drive the reconciler
 // against a mocked loadSpineClip that returns DIFFERENT clips for the still URL (&still=1) vs the animated URL, so
 // we can assert: the still fires before the clip; the deliberate 1-frame still skips retry=1 escalation; the
-// animated clip swaps in; a late still can't clobber the swapped-in animation; and a static/min tier is
+// animated clip swaps in; a late still can't clobber the swapped-in animation; and a low/very-low tier is
 // byte-identical (its own still-only path is unchanged).
 const { loadSpineClipMock, dropCacheEntryMock } = vi.hoisted(() => ({
   loadSpineClipMock: vi.fn(),
@@ -267,8 +267,8 @@ describe("mirror spine first-frame-immediate streaming", () => {
   it("the DEFAULT static spine mode is one still-only fetch, no still-first double request", async () => {
     // No `useAnimatedSpineLane()` here: this is what an ordinary viewer gets. isSpineStillMode() is true (the
     // default mode is `static`), which gates still-first OFF, so there is exactly ONE fetch and no chained clip —
-    // and it is the same single-fetch shape the static/min TIER produced before the mode default changed.
-    __setRenderQualityForTest(resolveRenderQuality({ search: "?quality=static", gpu: UNKNOWN_GPU }));
+    // and it is the same single-fetch shape the low/very-low TIER produced before the mode default changed.
+    __setRenderQualityForTest(resolveRenderQuality({ search: "?quality=very-low", gpu: UNKNOWN_GPU }));
     loadSpineClipMock.mockImplementation((url: string) =>
       Promise.resolve(isStillUrl(url) ? stillClip() : animClip())
     );

@@ -35,35 +35,35 @@ describe("qualityShaderOptions / qualityParticleOptions", () => {
     });
   });
 
-  it("disables both runtimes on the off tier (?debug)", () => {
+  it("disables both runtimes on the minimum tier (?debug)", () => {
     const q = resolveRenderQuality({ search: "?debug", gpu: UNKNOWN_GPU });
     expect(qualityShaderOptions(q).enableWebglShaders).toBe(false);
     expect(qualityParticleOptions(q).enableParticles).toBe(false);
   });
 
   it("carries the low-end RESOLUTION lever from the tier — the fps caps are the shared 30", () => {
-    const q = resolveRenderQuality({ search: "?quality=low", gpu: UNKNOWN_GPU });
+    const q = resolveRenderQuality({ search: "?quality=medium", gpu: UNKNOWN_GPU });
     const shader = qualityShaderOptions(q);
     const particle = qualityParticleOptions(q);
     expect(shader.renderScale).toBe(0.5);
     expect(shader.shaderFps).toBe(30);
     // 30, not the old 25: an effect mode picked in the mirror's panel must pace identically on every device, so
-    // the fps caps no longer vary per tier (resolution still does). See quality.ts' low/min tiers.
+    // the fps caps no longer vary per tier (resolution still does). See quality.ts' medium/low tiers.
     expect(particle.particleFps).toBe(30);
     expect(particle.renderScale).toBe(0.5);
   });
 
-  it("renders shaders as a single frozen frame on the static tier, particles off", () => {
-    const q = resolveRenderQuality({ search: "?quality=static", gpu: UNKNOWN_GPU });
+  it("renders shaders as a single frozen frame on the very-low tier, particles off", () => {
+    const q = resolveRenderQuality({ search: "?quality=very-low", gpu: UNKNOWN_GPU });
     expect(qualityShaderOptions(q).staticShaders).toBe(true);
     expect(qualityParticleOptions(q).enableParticles).toBe(false);
   });
 
   it("pays for SCREEN_TEXTURE capture only on the full-effect tiers", () => {
+    const medium = resolveRenderQuality({ search: "?quality=medium", gpu: UNKNOWN_GPU });
     const low = resolveRenderQuality({ search: "?quality=low", gpu: UNKNOWN_GPU });
-    const min = resolveRenderQuality({ search: "?quality=min", gpu: UNKNOWN_GPU });
-    expect(qualityShaderOptions(low).enableScreenTextureCapture).toBe(true);
-    expect(qualityShaderOptions(min).enableScreenTextureCapture).toBe(false);
+    expect(qualityShaderOptions(medium).enableScreenTextureCapture).toBe(true);
+    expect(qualityShaderOptions(low).enableScreenTextureCapture).toBe(false);
   });
 
   it("honors per-field query overrides applied on top of a tier", () => {

@@ -20,7 +20,7 @@
 #   scripts/bench-phone-canvas-ab.sh --out-dir .sts2/bench/canvas-four-cell
 #
 # Env: ADB_SERIAL (ZY32LL2X8W), DEV_PORT (5190), SERVE_PORT (8123), CDP_PORT (9222), REPEATS (1), EFFECTS (on),
-#      EFFECT_MODE (static), QUALITY (static), COUCHCOOP_DEV_BG_FIXTURE and
+#      EFFECT_MODE (static), QUALITY (very-low), COUCHCOOP_DEV_BG_FIXTURE and
 #      COUCHCOOP_DEV_ASSET_CACHE_ROOT. The latter two are ignored external inputs served by Vite and
 #      serve-res-root respectively; they are required and recorded so a canvas result cannot silently use the
 #      live fallback or render with missing generated textures. Optional exact URL checks are comma-separated in
@@ -59,8 +59,10 @@ EFFECT_MODE="${EFFECT_MODE:-static}"
 # `static` is the phone-representative tier and the published protocol's setting. The bench's own URL
 # default is `high`, and running the DOM arm at high on this device does not degrade — it KILLS the
 # renderer at page load (measured round 6: 8/8 DOM cells dead, audit-shop in warmup, at high; the same
-# cells complete at static). Override only when the question is explicitly "what does high cost".
-QUALITY="${QUALITY:-static}"
+# cells complete at the frozen-effect rung). Override only when the question is explicitly "what does high
+# cost". That rung is spelled `very-low` since the ladder was renamed; `static` still selects it, and cells
+# recorded under the old spelling still satisfy the gate in summarize-phone-canvas-bench.mjs.
+QUALITY="${QUALITY:-very-low}"
 TRACE_PROCESSOR="${TRACE_PROCESSOR:-$(command -v trace_processor_shell || true)}"
 # Optional global Mali capture. This records hardware counters for the entire
 # phone, not Chrome-attributed utilization; it is deliberately off by default.
@@ -126,8 +128,8 @@ DEV_BG_FIXTURE="$(realpath -m "$DEV_BG_FIXTURE")"
 ASSET_CACHE_ROOT="$(realpath -m "$ASSET_CACHE_ROOT")"
 # This is an acceptance matrix, not a knob sweep. A lower quality/effect tier would make a faster
 # implementation indistinguishable from a less faithful one.
-if [ "$EFFECTS" != "on" ] || [ "$EFFECT_MODE" != "static" ] || [ "$QUALITY" != "static" ]; then
-  echo "bench-phone-canvas-ab: acceptance cells require EFFECTS=on, EFFECT_MODE=static, and QUALITY=static" >&2
+if [ "$EFFECTS" != "on" ] || [ "$EFFECT_MODE" != "static" ] || { [ "$QUALITY" != "very-low" ] && [ "$QUALITY" != "static" ]; }; then
+  echo "bench-phone-canvas-ab: acceptance cells require EFFECTS=on, EFFECT_MODE=static, and QUALITY=very-low (or its old spelling, static)" >&2
   exit 2
 fi
 # Keep every artifact path absolute. Besides making the cell metadata portable, this is required by the

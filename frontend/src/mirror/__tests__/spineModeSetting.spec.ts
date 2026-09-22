@@ -39,9 +39,9 @@ function quality(overrides: Partial<RenderQuality> = {}): RenderQuality {
 
 // A full-clip desktop tier vs the weak-phone tier that renders spines but fetches only ONE still frame.
 const FULL_CLIP_TIER = quality();
-const STILL_TIER = quality({ tier: "min", spineClipsEnabled: false });
+const STILL_TIER = quality({ tier: "low", spineClipsEnabled: false });
 // The floor tier (WebGL unavailable / the ?debug auto-player): fetches nothing at all.
-const OFF_TIER = quality({ tier: "off", spineClipsEnabled: false });
+const OFF_TIER = quality({ tier: "minimum", spineClipsEnabled: false });
 
 function spineNode(over: Record<string, unknown> = {}): MirrorNode {
   return {

@@ -264,9 +264,12 @@ function validateComparability(rows) {
   gates.push(gate("display invariant: identical viewport and DPR", sameValue(display.filter((d) => d.viewport !== null && d.dpr !== null).length === display.length ? display : []),
     sameValue(display.filter((d) => d.viewport !== null && d.dpr !== null).length === display.length ? display : []) === null ? "viewport/DPR missing" : JSON.stringify(display[0])));
   const run = rows.map((row) => row.cell?.run ?? null);
-  const staticRun = run.length && run.every((r) => r?.repeats === 1 && r.effects === "on" && r.effectMode === "static" && r.quality === "static");
+  // The frozen-effect rung is spelled `very-low` since the quality ladder was renamed (it was `static`). BOTH
+  // are accepted here so cells recorded before the rename still satisfy their own gate and stay comparable.
+  const frozenQuality = (q) => q === "very-low" || q === "static";
+  const staticRun = run.length && run.every((r) => r?.repeats === 1 && r.effects === "on" && r.effectMode === "static" && frozenQuality(r.quality));
   gates.push(gate("fidelity invariant: one repeat, static quality/effects", run.length ? staticRun : null,
-    staticRun ? "all cells use repeats=1, effects=on/static, quality=static" : "missing or non-static run configuration"));
+    staticRun ? "all cells use repeats=1, effects=on/static, quality=very-low" : "missing or non-static run configuration"));
   for (const row of rows) {
     gates.push(gate(`metric contract: ${row.cell?.label ?? "unknown"}`, row.schema === "phone-canvas-cell-metrics/2",
       row.schema === "phone-canvas-cell-metrics/2" ? "surface-attributed presentation contract" : `requires phone-canvas-cell-metrics/2; got ${row.schema ?? "missing"}`));
