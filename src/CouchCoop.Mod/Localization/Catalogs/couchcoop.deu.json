@@ -6,6 +6,8 @@
   "couchcoop_qr_no_address": "Keine Hostadresse verfügbar – überprüfen Sie, ob der Browser-Server gestartet ist.",
   "couchcoop_qr_network_connection_title": "Netzwerkverbindung",
   "couchcoop_qr_network_connection_description": "Wählen Sie, welche Netzwerkverbindung und welcher Linktyp von den Telefonen zum Beitreten verwendet werden. Ändern Sie dies, wenn ein Telefon keine Verbindung herstellen kann oder Sie eine schnellere, zuverlässigere Option ausprobieren möchten.",
+  "couchcoop_qr_copy_link_title": "Link kopieren",
+  "couchcoop_qr_copy_link_description": "Kopiert diese Adresse in die Zwischenablage, damit Sie sie in eine Chatnachricht einfügen oder im Browser eines Telefons eintippen können.",
   "couchcoop_alert_title": "Achtung",
   "couchcoop_alert_continue": "Weiter",
   "couchcoop_steam_offline": "Steam offline – Remote-Freunde können nicht beitreten. Nur Couch/LAN-Spiel.",

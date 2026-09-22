@@ -6,6 +6,8 @@
   "couchcoop_qr_no_address": "Ana bilgisayar adresi yok — başlatılan tarayıcı sunucusunu kontrol edin.",
   "couchcoop_qr_network_connection_title": "Ağ bağlantısı",
   "couchcoop_qr_network_connection_description": "Telefonların katılmak için kullanacağı ağ bağlantısını ve bağlantı türünü seçin. Telefon bağlanamıyorsa veya daha hızlı ve güvenilir bir seçeneği denemek istiyorsanız bunu değiştirin.",
+  "couchcoop_qr_copy_link_title": "Bağlantıyı kopyala",
+  "couchcoop_qr_copy_link_description": "Bu adresi panoya kopyalar; böylece bir sohbet mesajına yapıştırabilir veya telefonun tarayıcısına yazabilirsiniz.",
   "couchcoop_alert_title": "Dikkat",
   "couchcoop_alert_continue": "Devam et",
   "couchcoop_steam_offline": "Çevrimdışı Steam — uzak arkadaşlar katılamaz. Yalnızca kanepe/LAN oynatma.",

@@ -6,6 +6,8 @@
   "couchcoop_qr_no_address": "Brak dostępnego adresu hosta — sprawdź, czy serwer przeglądarki został uruchomiony.",
   "couchcoop_qr_network_connection_title": "Połączenie sieciowe",
   "couchcoop_qr_network_connection_description": "Wybierz połączenie sieciowe i typ łącza, których telefony użyją, aby dołączyć. Zmień tę opcję, jeśli telefon nie może się połączyć lub chcesz wypróbować szybszą i bardziej niezawodną opcję.",
+  "couchcoop_qr_copy_link_title": "Kopiuj link",
+  "couchcoop_qr_copy_link_description": "Kopiuje ten adres do schowka, dzięki czemu możesz wkleić go w wiadomości na czacie lub wpisać w przeglądarce telefonu.",
   "couchcoop_alert_title": "Głowa do góry",
   "couchcoop_alert_continue": "Kontynuuj",
   "couchcoop_steam_offline": "Steam offline — zdalni znajomi nie mogą dołączyć. Tylko gra na kanapie/w sieci LAN.",

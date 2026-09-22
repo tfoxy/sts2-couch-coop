@@ -1,5 +1,6 @@
 using Godot;
 using CouchCoop.Mod.Localization;
+using CouchCoop.Mod.Session;
 
 namespace CouchCoop.Mod.HostUi;
 
@@ -38,6 +39,7 @@ internal sealed partial class CouchCoopQrDialog : CouchCoopModalDialog
     public const string TitleLabelName = "CouchCoopQrDialogTitleLabel";
     public const string QrTextureName = "CouchCoopQrDialogQrTexture";
     public const string UrlLabelName = "CouchCoopQrDialogUrlLabel";
+    public const string CopyButtonName = CouchCoopQrCopyButton.NodeName;
     public const string NoticeLabelName = "CouchCoopQrDialogNoticeLabel";
 
     public static string TitleText => CouchCoopLocalization.Resolve("couchcoop_qr_title");
@@ -86,6 +88,7 @@ internal sealed partial class CouchCoopQrDialog : CouchCoopModalDialog
     private readonly Label _url = new() { Name = UrlLabelName };
     private readonly Label _notice = new() { Name = NoticeLabelName };
     private readonly TextureRect _qr = new() { Name = QrTextureName };
+    private readonly CouchCoopQrCopyButton _copy = new();
     private readonly CouchCoopQrHostSelect _select = new();
     private readonly CouchCoopConnectionPanel _connections = new();
 
@@ -128,9 +131,18 @@ internal sealed partial class CouchCoopQrDialog : CouchCoopModalDialog
         ConfigureLabel(_notice, HorizontalAlignment.Center, new Color(1f, 0.79f, 0.35f, 1f));
         _notice.Visible = false;
 
+        // Hidden until a selection has actually rendered an address, so the focus ring built at Install()
+        // time cannot have a stop on a button with nothing behind it.
+        _copy.Visible = false;
+        // The selected option stays the single source of truth for what gets copied, exactly as it is for
+        // what the QR encodes and what the label prints — the button holds no address of its own.
+        _copy.Payload = () => _select.Selected is { Enabled: true, Port: > 0 } option ? option.ToUri().ToString() : null;
+        _copy.Engaged = engaged => ShowTip(_copy, engaged, CouchCoopQrHoverTips.ShowCopyLink);
+
         Card.AddChild(_title);
         Card.AddChild(_qr);
         Card.AddChild(_url);
+        Card.AddChild(_copy);
         Card.AddChild(_notice);
         // Added last so the expanded option list draws over the QR rather than under it.
         Card.AddChild(_select);
@@ -143,12 +155,14 @@ internal sealed partial class CouchCoopQrDialog : CouchCoopModalDialog
     protected override void InstallBody()
     {
         _select.Install();
+        _copy.Install();
         _connections.Install();
     }
 
     /// <summary>
     /// What a d-pad walks in this dialog, top to bottom: the selector's closed row, the selectable option
-    /// rows while the list is expanded, and then (appended by the base) the close button.
+    /// rows while the list is expanded, the copy affordance under the QR, and then (appended by the base)
+    /// the close button.
     /// </summary>
     /// <remarks>
     /// The rows were always focusable — <c>CouchCoopQrHostSelect</c> gives every selectable one
@@ -161,6 +175,14 @@ internal sealed partial class CouchCoopQrDialog : CouchCoopModalDialog
     {
         _connections.AppendFocusChain(chain);
         _select.AppendFocusChain(chain);
+
+        // Not declared while the option list is expanded over it: the rows draw on top of this row, so a
+        // walk onto the copy button would light a focus ring nobody can see. Both the expand and the
+        // collapse already re-pin the chain through _select.FocusChainChanged.
+        if (_copy.Visible && !_select.IsOpen)
+        {
+            chain.Add(_copy);
+        }
     }
 
     public void RefreshConnections()
@@ -173,6 +195,8 @@ internal sealed partial class CouchCoopQrDialog : CouchCoopModalDialog
     {
         DismissText = CloseButtonText;
         _title.Text = TitleText;
+        // The copy button is wordless, so its title is the only thing a screen reader has to go on.
+        _copy.AccessibilityName = CouchCoopLocalization.Resolve("couchcoop_qr_copy_link_title");
         CouchCoopGameUiTheme.ApplyFont(_title, CouchCoopGameUiTheme.KreonBoldGlyphSpaceOne, Layout.TitleFontSize + 16);
         CouchCoopGameUiTheme.ApplyFont(_url, CouchCoopGameUiTheme.KreonBoldGlyphSpaceOne, Layout.UrlFontSize);
         CouchCoopGameUiTheme.ApplyFont(_notice, CouchCoopGameUiTheme.KreonBoldGlyphSpaceOne, Math.Max(Layout.UrlFontSize - 8, 8));
@@ -219,6 +243,7 @@ internal sealed partial class CouchCoopQrDialog : CouchCoopModalDialog
     protected override void OnClosing()
     {
         _select.Close();
+        _copy.ResetFeedback();
         ClearTips();
     }
 
@@ -257,6 +282,10 @@ internal sealed partial class CouchCoopQrDialog : CouchCoopModalDialog
 
     private void RenderSelection()
     {
+        // A tick left over from the previous address would claim the clipboard holds THIS one.
+        var couldCopy = _copy.Visible;
+        _copy.ResetFeedback();
+
         // ONE code, whose payload is the selected row and nothing else. The URL label and the QR
         // texture are both built from this one value, so the scanned code and the typed fallback
         // cannot disagree even in principle.
@@ -265,15 +294,20 @@ internal sealed partial class CouchCoopQrDialog : CouchCoopModalDialog
             _url.Text = NoAddressText;
             _qr.Texture = null;
             _qr.Visible = false;
+            // There is no address to put on a clipboard, so the affordance is not merely disabled: it is
+            // gone, and out of the focus ring with it.
+            _copy.Visible = false;
             _qrCacheKey = null;
             ApplyNotice();
             LayoutContent();
+            RefreshCopyReach(couldCopy);
             return;
         }
 
         var uri = option.ToUri();
         _url.Text = uri.ToString();
         _qr.Visible = true;
+        _copy.Visible = true;
 
         var cacheKey = $"{uri}|quiet={Layout.QuietZoneModules}|extent={Layout.ResolvedQrDialogExtent}";
         if (!string.Equals(_qrCacheKey, cacheKey, StringComparison.Ordinal))
@@ -288,37 +322,38 @@ internal sealed partial class CouchCoopQrDialog : CouchCoopModalDialog
 
         ApplyNotice();
         LayoutContent();
+        RefreshCopyReach(couldCopy);
+    }
+
+    /// <summary>Re-pin the focus ring when the copy affordance came or went; it is a stop on that ring.</summary>
+    private void RefreshCopyReach(bool couldCopy)
+    {
+        if (couldCopy != _copy.Visible)
+        {
+            RefreshFocusChain();
+        }
     }
 
     private void OnRowHover(Control row, QrHostOption option, bool hovered)
-    {
-        // Always tear down first: hover-enter can arrive twice without a leave (mouse + controller
-        // focus), and the game throws on a second set for the same owner.
-        CouchCoopQrHoverTips.Remove(row);
-        if (_tipOwner == row)
-        {
-            _tipOwner = null;
-        }
+        => ShowTip(row, hovered, owner => CouchCoopQrHoverTips.ShowOption(owner, option));
 
-        if (!hovered)
-        {
-            return;
-        }
-
-        // One pair at a time: a stale set on another row (its leave got swallowed by a relayout)
-        // must not stack beside the fresh one.
-        ClearTips();
-        if (CouchCoopQrHoverTips.ShowOption(row, option))
-        {
-            _tipOwner = row;
-        }
-    }
-
+    // The closed row describes the selector as a control, not the option currently displayed in it.
     private void OnSelectorHover(Control row, bool hovered)
+        => ShowTip(row, hovered, CouchCoopQrHoverTips.ShowSelector);
+
+    /// <summary>
+    /// Put <paramref name="owner"/>'s tip set up on hover-enter and take it down on hover-leave.
+    /// </summary>
+    /// <remarks>
+    /// Always tears down FIRST: hover-enter can arrive twice without a leave (mouse plus controller
+    /// focus), and the game throws on a second set for the same owner. Then <see cref="ClearTips"/>,
+    /// because one set is on screen at a time — a stale set on another control, whose leave got swallowed
+    /// by a relayout, must not stack beside the fresh one.
+    /// </remarks>
+    private void ShowTip(Control owner, bool hovered, Func<Control, bool> show)
     {
-        // The closed row describes the selector as a control, not the option currently displayed in it.
-        CouchCoopQrHoverTips.Remove(row);
-        if (_tipOwner == row)
+        CouchCoopQrHoverTips.Remove(owner);
+        if (_tipOwner == owner)
         {
             _tipOwner = null;
         }
@@ -329,9 +364,9 @@ internal sealed partial class CouchCoopQrDialog : CouchCoopModalDialog
         }
 
         ClearTips();
-        if (CouchCoopQrHoverTips.ShowSelector(row))
+        if (show(owner))
         {
-            _tipOwner = row;
+            _tipOwner = owner;
         }
     }
 
@@ -370,8 +405,46 @@ internal sealed partial class CouchCoopQrDialog : CouchCoopModalDialog
         _url.Position = new Vector2(padding, urlTop);
         _url.Size = new Vector2(textWidth, UrlHeight);
 
+        // Inside the URL row, so the copy affordance costs the card no vertical budget at all — the stack
+        // below is already tight (see the geometry note at the top). It rides the rendered width of the
+        // address rather than the column's edge; CouchCoopQrCopyRowPlacement owns that arithmetic.
+        var placement = CouchCoopQrCopyRowPlacement.For(
+            padding,
+            textWidth,
+            urlTop,
+            UrlHeight,
+            MeasureUrlWidth(),
+            CouchCoopQrCopyButton.IconEdge,
+            CouchCoopQrCopyButton.TextGap);
+        _copy.Position = new Vector2(placement.X, placement.Y);
+        _copy.Size = new Vector2(CouchCoopQrCopyButton.IconEdge, CouchCoopQrCopyButton.IconEdge);
+
         _notice.Position = new Vector2(padding, urlTop + UrlHeight + NoticeGap);
         _notice.Size = new Vector2(textWidth, NoticeHeight);
+    }
+
+    /// <summary>
+    /// How wide the address actually renders, or 0 when the engine cannot say.
+    /// </summary>
+    /// <remarks>
+    /// Measured rather than assumed because the label centres its text in the full column: the icon's
+    /// place is a function of the address's length, and the two URLs this dialog produces differ by a
+    /// wide margin. Fenced because the fallback is graceful — a right-aligned icon on the correct row —
+    /// and a missing font must not cost the dialog its layout pass.
+    /// </remarks>
+    private float MeasureUrlWidth()
+    {
+        try
+        {
+            return _url.GetThemeFont("font") is { } font
+                ? font.GetStringSize(_url.Text, HorizontalAlignment.Left, -1f, _url.GetThemeFontSize("font_size")).X
+                : 0f;
+        }
+        catch (Exception exception)
+        {
+            CouchCoopLog.Stderr($"qr url measure failed detail={exception.GetType().Name}: {exception.Message}");
+            return 0f;
+        }
     }
 
     // An open option list is the nearer "layer": dismiss that first rather than tearing down the whole

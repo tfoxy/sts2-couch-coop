@@ -207,6 +207,12 @@ internal static class CouchCoopQrLayoutContractTests
             $"the notice row (bottom {noticeBottom}) clears the close button (top {closeTop}) by at least "
             + $"{MinimumRowClearance} at the constant extent");
         Expect(closeTop + closeHeight <= panelHeight, "the close button stays inside the card");
+
+        // The copy affordance rides INSIDE the URL row, which is the whole reason it cost the stack above
+        // nothing. An icon taller than that row would push the notice and close rows into each other in a
+        // card that has 4 units of slack to give.
+        Expect(CouchCoopQrCopyButton.IconEdge <= urlHeight,
+            $"the copy icon ({CouchCoopQrCopyButton.IconEdge}) fits inside the URL row ({urlHeight}) and so costs the stack nothing");
         Expect(panelHeight <= designSpaceHeight,
             $"the card ({panelHeight}) still fits the {designSpaceHeight}-tall design space");
 

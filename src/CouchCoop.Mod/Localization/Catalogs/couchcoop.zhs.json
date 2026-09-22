@@ -6,6 +6,8 @@
   "couchcoop_qr_no_address": "没有可用的主机地址——请检查浏览器服务器是否已启动。",
   "couchcoop_qr_network_connection_title": "网络连接",
   "couchcoop_qr_network_connection_description": "选择手机加入时使用的网络连接和链接类型。如果手机无法连接，或你想尝试更快、更可靠的选项，请更改此设置。",
+  "couchcoop_qr_copy_link_title": "复制链接",
+  "couchcoop_qr_copy_link_description": "将此地址复制到剪贴板，方便你粘贴到聊天消息中，或在手机浏览器里输入。",
   "couchcoop_alert_title": "请注意",
   "couchcoop_alert_continue": "继续",
   "couchcoop_steam_offline": "Steam 离线——远程好友无法加入。仅可进行 Couch/LAN 游戏。",

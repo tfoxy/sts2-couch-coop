@@ -711,7 +711,8 @@ The always-on QR overlay is gone. A game-styled button opens a dialog instead.
   "Couch Co-Op QR Code") and `CouchCoopQrDialog` (hidden) → `CouchCoopQrDialogScrim` (`Stop`, closes),
   `CouchCoopQrDialogPanel` (1000×936 centred, `Stop`, does NOT close) → `CouchCoopQrDialogTitleLabel`,
   `CouchCoopQrDialogQrTexture` (`Stop`, does NOT close), `CouchCoopQrDialogUrlLabel`,
-  `CouchCoopQrDialogNoticeLabel` (hidden unless Steam-offline), `CouchCoopQrCloseButton`,
+  `CouchCoopQrDialogCopyButton` (inside the URL row, right of the rendered address; hidden when there is
+  no address), `CouchCoopQrDialogNoticeLabel` (hidden unless Steam-offline), `CouchCoopQrCloseButton`,
   `CouchCoopQrHostSelect` → `CouchCoopQrHostSelectCurrent` + `CouchCoopQrHostSelectList` (hidden) →
   `CouchCoopQrHostOption0..N`. Plus, since Aug-15, a sibling `CouchCoopHostTransportAlert` (hidden) →
   `…Scrim` / `…Panel` → `…TitleLabel`, `…BodyLabel`, `…DismissButton`.

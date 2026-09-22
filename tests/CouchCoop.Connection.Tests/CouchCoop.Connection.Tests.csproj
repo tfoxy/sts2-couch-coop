@@ -66,6 +66,7 @@
     <Compile Include="../CouchCoop.Mod.Tests/CouchCoopButtonActivationTests.cs" Link="CouchCoopButtonActivationTests.cs" />
     <Compile Include="../CouchCoop.Mod.Tests/CouchCoopModalFocusTests.cs" Link="CouchCoopModalFocusTests.cs" />
     <Compile Include="../CouchCoop.Mod.Tests/CouchCoopModalFocusChainTests.cs" Link="CouchCoopModalFocusChainTests.cs" />
+    <Compile Include="../CouchCoop.Mod.Tests/CouchCoopQrCopyAffordanceTests.cs" Link="CouchCoopQrCopyAffordanceTests.cs" />
     <Compile Include="../CouchCoop.Mod.Tests/CouchCoopLocalizationTests.cs" Link="CouchCoopLocalizationTests.cs" />
   </ItemGroup>
 </Project>

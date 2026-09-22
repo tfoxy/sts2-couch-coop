@@ -6,6 +6,8 @@
   "couchcoop_qr_no_address": "사용 가능한 호스트 주소가 없습니다. 브라우저 서버가 시작되었는지 확인하세요.",
   "couchcoop_qr_network_connection_title": "네트워크 연결",
   "couchcoop_qr_network_connection_description": "휴대폰이 참여할 때 사용할 네트워크 연결과 링크 유형을 선택합니다. 휴대폰이 연결되지 않거나 더 빠르고 안정적인 옵션을 시도하려면 변경하세요.",
+  "couchcoop_qr_copy_link_title": "링크 복사",
+  "couchcoop_qr_copy_link_description": "이 주소를 클립보드에 복사합니다. 채팅 메시지에 붙여넣거나 휴대폰 브라우저에 입력할 수 있습니다.",
   "couchcoop_alert_title": "주의",
   "couchcoop_alert_continue": "계속",
   "couchcoop_steam_offline": "Steam 오프라인 — 원격 친구는 참여할 수 없습니다. 소파/LAN 플레이만 가능합니다.",

@@ -55,6 +55,7 @@ export const NAMES = {
   title: "CouchCoopQrDialogTitleLabel",
   qrTexture: "CouchCoopQrDialogQrTexture",
   urlLabel: "CouchCoopQrDialogUrlLabel",
+  copyButton: "CouchCoopQrDialogCopyButton",
   noticeLabel: "CouchCoopQrDialogNoticeLabel",
   closeButton: "CouchCoopQrCloseButton",
   hostSelect: "CouchCoopQrHostSelect",

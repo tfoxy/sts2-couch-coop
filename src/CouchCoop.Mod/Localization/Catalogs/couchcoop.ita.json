@@ -6,6 +6,8 @@
   "couchcoop_qr_no_address": "Nessun indirizzo host disponibile: controlla il server del browser avviato.",
   "couchcoop_qr_network_connection_title": "Connessione di rete",
   "couchcoop_qr_network_connection_description": "Scegli quale connessione di rete e tipo di collegamento useranno i telefoni per unirsi. Cambia questa opzione se un telefono non riesce a connettersi o se vuoi provare un'opzione più veloce e affidabile.",
+  "couchcoop_qr_copy_link_title": "Copia collegamento",
+  "couchcoop_qr_copy_link_description": "Copia questo indirizzo negli appunti, così puoi incollarlo in un messaggio di chat o digitarlo nel browser di un telefono.",
   "couchcoop_alert_title": "Attenzione",
   "couchcoop_alert_continue": "Continua",
   "couchcoop_steam_offline": "Steam offline: gli amici remoti non possono unirsi. Solo riproduzione tramite divano/LAN.",
