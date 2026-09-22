@@ -68,15 +68,16 @@ something in the tree has been cited for it.
 | **opening the address on the host PC proves nothing about the firewall** | [windows-connection-fingerprints.md](../agents/windows-connection-fingerprints.md) §5: with an inbound Block rule in force the guest answered **its own LAN address** with HTTP 200 while the blocked peer got three 10 s timeouts and no RST. Windows does not filter a machine's traffic to itself |
 | a log contains a **SteamID64 and the OS user name**, no passwords, no other player's account | Swept this machine's host log and all seven per-slot seat logs: one unique SteamID64 (the host's own, up to 144 occurrences, in `user://steam/<id>/…` paths), OS user name in file paths, LAN/VPN-range IPs only. The single `token` match is `PublicKeyToken=null`, a .NET artifact; the heartbeat's per-attempt token is never logged |
 
-**One line is still unconfirmed on real hardware: the Windows `%APPDATA%\SlayTheSpire2\logs\godot.log`
-path.** The code builds it from `user://logs/godot.log`
-(`ProjectSettings.GlobalizePath`, `src/CouchCoop.Mod/CouchCoopMod.cs`). The `use_custom_user_dir`
-question an earlier draft left open **is already answered in the tree**: `HeadlessUserDirSeeder` records
-that the game sets `use_custom_user_dir=true` / `custom_user_dir_name="SlayTheSpire2"`, and that Godot
-resolves that directory from `XDG_DATA_HOME` on Linux, **`APPDATA` on Windows**, and
-`$HOME/Library/Application Support` on macOS. So the path in the post is what the code implies; what is
-outstanding is only one look at a real Windows install, which is the Windows stage of
-`~/.claude/plans/some-people-are-having-wise-seal.md`.
+**The Windows paths are now confirmed on real hardware (2026-09-22).** Both
+`%APPDATA%\SlayTheSpire2\logs\godot.log` and the per-player
+`%APPDATA%\SlayTheSpire2\couch-coop\headless-slots\slot-<N>\SlayTheSpire2\logs\godot.log` were read off a
+physical Windows 10 Home 22H2 install with the mod running — doubled directory name and all. The code
+builds them from `user://logs/godot.log` (`ProjectSettings.GlobalizePath`,
+`src/CouchCoop.Mod/CouchCoopMod.cs`), and `HeadlessUserDirSeeder` records that the game sets
+`use_custom_user_dir=true` / `custom_user_dir_name="SlayTheSpire2"`, which Godot resolves from
+`XDG_DATA_HOME` on Linux, **`APPDATA` on Windows**, and `$HOME/Library/Application Support` on macOS. So
+the post's paths are both what the code implies and what a real install does. Rig and method:
+[windows-home-rig.md](../agents/windows-home-rig.md).
 
 The same gap applies to the **per-player log paths**: the Linux one is confirmed against a real install,
 and the Windows and macOS ones are the same code path resolved through `APPDATA` and
