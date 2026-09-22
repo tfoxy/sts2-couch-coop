@@ -59,6 +59,11 @@ export type FullWalkCause =
   | "staticBg"
   | "ablation"
   | "uiScale"
+  // The per-viewer effect mode moved (the settings panel's Shaders / Particles rows). Retuning the two gsw
+  // runtimes is not enough on its own: entering or leaving `off` also changes what the WALK emits, because that
+  // is when a baked effect still stands in for the effect (see bakedEffects.ts) — and a settled screen visits no
+  // nodes, so without a full walk the flip would not land until something else moved.
+  | "effects"
   // `?stageFit=display` only: the stage's fit scale moved, and on that arm the fit is baked into every node's box
   // and matrix rather than carried by one transform — so every emitted style is stale. Never fires on the default
   // arm (see stageFit.ts's `setLayoutScale`).

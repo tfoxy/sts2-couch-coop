@@ -1107,11 +1107,16 @@ watch(effectiveShaderMode, (mode) => {
   // WS-2: a create/dispose/retune must re-attach to the markers already in the DOM. The "change" pass also hands
   // any standing frozen surfaces back — leaving Static must not leave a stale `<img>` over a re-animating canvas.
   reconcileRuntimes("change");
+  // …and a FULL walk, because entering or leaving `off` changes what the walk EMITS, not just how the runtimes
+  // are tuned: that is the mode in which a baked still stands in for the effect (bakedEffects.ts). A settled
+  // screen visits no nodes, so without this the flip would not land until something else happened to move.
+  scheduleRender(true, "effects");
   pinEffects();
 });
 watch(effectiveParticleMode, (mode) => {
   applyParticleMode(mode);
   reconcileRuntimes("change");
+  scheduleRender(true, "effects");
   pinEffects();
 });
 
@@ -1851,6 +1856,24 @@ const underlayStyle = computed(() => ({
    one rule serves the DOM stage and the canvas stage's overlay alike. CouchCoop's own mirror chrome, not
    @spirectl/presentation DOM. */
 .mirror-spine-placeholder {
+  position: absolute;
+  left: 0;
+  top: 0;
+  transform-origin: 0 0;
+  pointer-events: none;
+  object-fit: fill;
+}
+
+/* BAKED EFFECT STILL (mirror/bakedEffects.ts) — the committed PNG that stands in for a rarity-glow emitter while
+   particles are OFF. Same placement contract as the stand-in above: absolutely placed, `transform-origin: 0 0`,
+   and no `scale()` in its transform, because the renderer writes the box in the EMITTER's own local units and the
+   node element's matrix already supplies whatever scale the game put on it.
+
+   `mix-blend-mode` is deliberately NOT here. These stills are additive, but the emitters this rule serves stream
+   an additive CanvasItemMaterial that `nodeStyle` already maps to `plus-lighter` on the node element — so the
+   blend applies to this image through its parent, and repeating it here would blend it twice.
+   CouchCoop's own mirror chrome, not @spirectl/presentation DOM. */
+.mirror-baked-still {
   position: absolute;
   left: 0;
   top: 0;

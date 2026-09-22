@@ -350,7 +350,8 @@ function zeroFullWalkCauses(): Record<FullWalkCause, number> {
     occlusion: 0,
     staticBg: 0,
     ablation: 0,
-    uiScale: 0
+    uiScale: 0,
+    effects: 0
   };
 }
 

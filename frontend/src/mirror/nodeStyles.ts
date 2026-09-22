@@ -16,6 +16,7 @@ import { richTextLayeredHtml } from "@godot-scene-web/html";
 import { DEFAULT_BBCODE_TAGS } from "@spirectl/presentation/render";
 
 import { affineCss, affineMul, affineMulInto, nodeMatrix, nodeMatrixInto, type Affine } from "@/mirror/affine";
+import { bakedStillFor } from "@/mirror/bakedEffects";
 import { isCardTrailNode, isCardTrailRootNode } from "@/mirror/cardTrail";
 import { isSpineSurfaceNode } from "@/mirror/creaturePlaceholder";
 import { ninePatchAtlasSlices as computeNinePatchAtlasSlices } from "@/mirror/ninePatch";
@@ -705,6 +706,27 @@ export function nodeStyle(item: RenderItem): Record<string, string> {
     !isWebglShaderNode(node) &&
     !node.particleSpec &&
     !(shadersOff && isShaderInputNode(node));
+  // …and where the effect family is OFF and nothing is going to paint at all, a BAKED STILL of the effect stands
+  // in for it (bakedEffects.ts). Only the `"localRect"` kind lands here — the still was captured at the node's own
+  // box, so the element paints it across itself. A boxless emitter's still needs its own positioned layer and is
+  // mounted by the renderer instead.
+  //
+  // `plus-lighter` because these stills are the game's ADDITIVE output; the node's own `filter: url(#mtint-…)` is
+  // left exactly as it is, because the ripple still is neutral and that filter IS what colours it.
+  const baked = bakedStillFor(node);
+  if (baked && baked.box === "localRect") {
+    style.backgroundImage = `url("${baked.url}")`;
+    style.backgroundSize = "100% 100%";
+    style.backgroundRepeat = "no-repeat";
+    if (baked.additive) {
+      style.mixBlendMode = "plus-lighter";
+    }
+    if (baked.opacityScale < 1) {
+      // The node is a LEAF (a card highlight has no children), so scaling its element opacity cannot cascade —
+      // see `bakedStillFor` for what the scale reproduces.
+      style.opacity = String(item.opacity * baked.opacityScale);
+    }
+  }
   if (paintsTexture) {
     if (isNinePatchAtlas(node)) {
       // Box already placed above; 9-slice spans paint it (rendered by the component template).
