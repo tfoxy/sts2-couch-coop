@@ -60,6 +60,36 @@ This map records current contracts, not retired implementation alternatives.
   'inputCapture.spec.ts'` to confirm).
 - Web twin: `frontend/src/mirror/inputCapture.ts` (includes `computeTouchInfo`).
 
+### Gamepad input (`kind: "pad"`)
+- **Path.** Browser Gamepad API poll (`frontend/src/mirror/gamepadCapture.ts`) → the existing `input` WebSocket
+  message with `kind: "pad"`, a device-neutral `input` token and the `pressed` edge
+  (`src/CouchCoop.Mod/Protocol/BrowserActionEnvelope.cs`) → `BrowserInputExecutor.BuildPad`
+  (`Protocol/BrowserInputExecutor.cs`) → spirectl `SemanticActionKind.ControllerInput` → the seat's input bus.
+  The token vocabulary and its refusals live in spirectl (`../spirectl` →
+  `bridge-mod/src/Spirectl.Sts2/Live/Sts2BrowserPadMap.cs`, injected by `Sts2ActionHandler.Input.cs`); couch
+  forwards the token verbatim and keeps no copy of the table.
+- **Why an action and not a synthetic joypad event.** The game's own controller layer already maps abstract
+  controller inputs onto the actions its screens react to, honouring the player's rebinds — so naming the input
+  and letting the game decide re-implements nothing, which is the same argument as "Real input, not semantic
+  actions" below. (`ControllerInput` is an *input replay*, not a commit path: it presses what has focus, it does
+  not reach into a screen and finish a choice.) A synthetic joypad event would instead have to be translated
+  through the seat's `InputMap`, which is exactly what the next bullet erases.
+- **Orthogonal to the seat's joypad isolation, by construction.** `Session/HeadlessJoypadInputMapIsolation.cs`
+  strips a headless seat's joypad *bindings* so a controller plugged into the host machine cannot steer a seat;
+  the injected action never consults those bindings, so browser pad input works with the strip fully in place and
+  **that file needed no change**. Its test is `tests/CouchCoop.Mod.Tests/HeadlessJoypadInputMapIsolationTests.cs`
+  (alone: `dotnet run --project tests/CouchCoop.Mod.Tests -- headless-input`).
+- **Secure context only.** `navigator.getGamepads` is gated on a secure context, so the default plain-HTTP LAN QR
+  cannot see a pad at all; the TLS listener (`Server/SecureBrowserListener.cs`) and the web-link origin
+  (`Server/CouchCoopWebOrigin.cs`) are the two join paths where this works.
+- **Queue.** Pad edges take the ordinary discrete-input path through `Server/InputCoalescer.cs`: they never
+  coalesce (only hovers replace a trailing hover, only wheel clicks merge), so both edges of a press arrive, in
+  order, exactly like a key press.
+- Tests: `tests/CouchCoop.Mod.Tests/PadInputMappingTests.cs` (beside `InputMappingTests.cs`).
+- Game internals — which of the game's action names a token resolves to, why that resolution is a candidate list,
+  and the Steam-Input hole the engine-side isolation does not cover — are in
+  `.sts2/research/gamepad-web-client-feasibility-sep21.md`, not here.
+
 ## Real input, not semantic actions
 - **The rule** (CLAUDE.md → Architecture Rules): a viewer's gesture becomes the same hover / press / release /
   key events a player at the keyboard produces, replayed at a resolved coordinate; the game's own widget

@@ -37,6 +37,7 @@ public sealed record BrowserJoinRequestEnvelope(
 // the injection; element-addressed pointer input carries `ElementId` (+ optional normalized 0..1 offset),
 // while empty-space/cursor input carries a design-space (1920x1080) `CoordX/CoordY`. Keyboard input carries a
 // browser `KeyboardEvent.code` in `Key` (+ comma-separated `Modifiers`, and `Pressed`: down/up, null = a tap).
+// Gamepad input carries a device-neutral token in `Input` and reuses the same `Pressed` edge.
 public sealed record BrowserInputRequestEnvelope(
     string Type,
     string RequestId,
@@ -55,13 +56,31 @@ public sealed record BrowserInputRequestEnvelope(
     // notches it accumulated in one animation frame into ONE message rather than emitting up to a dozen, because the
     // host injects strictly one input per game-thread turn. Absent (the CLI, the pre-feature browser, `?eagerScroll=off`)
     // means exactly one tick and a byte-identical wire; the host clamps to 1..20 on the way into spirectl.
-    int? Count = null);
+    int? Count = null,
+    // GAMEPAD TOKEN (`kind: "pad"` only). A device-neutral name for the button or direction the viewer's pad
+    // reports — "faceSouth", "dpadUp", "leftBumper", "start", "stickLeft" — in the browser Gamepad API's standard
+    // mapping, minus the device branding, because the client cannot know which glyph set the player expects. The
+    // EDGE rides `Pressed` above (true = down, false = up, null = a tap), so a message is a key OR a pad input,
+    // never both.
+    //
+    // What it is NOT. Not a button index, not a keyboard code, and not a coordinate: a pad message addresses
+    // nothing on screen, so `ElementId` / `CoordX` / `CoordY` / `Button` / `Count` mean nothing on one and the
+    // executor never sets them. Nor is the vocabulary validated here — spirectl owns the token table
+    // (`Sts2BrowserPadMap`) and refuses an unknown token, and a token this game build cannot honour, with two
+    // distinct messages. A copy of that table in couch would be a second answer to the same question, and the
+    // one that drifts.
+    //
+    // Absent on every non-pad message, so the wire stays byte-identical for every existing client.
+    string? Input = null);
 
 public static class BrowserInputKinds
 {
     public const string Hover = "hover";
     public const string Click = "click";
     public const string Key = "key";
+    // Abstract controller input from a viewer's gamepad. Carries `Input` (the token) + `Pressed` (the edge) and
+    // no coordinate — see BrowserInputRequestEnvelope.Input.
+    public const string Pad = "pad";
 }
 
 public sealed record BrowserActionResultEnvelope(
