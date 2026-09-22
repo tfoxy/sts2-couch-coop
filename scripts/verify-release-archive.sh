@@ -71,9 +71,26 @@ is_allowed_payload_file() {
       [[ "$leaf" != */* && -n "$leaf" ]]
       return
       ;;
+    # Vite's bundle directory (`assetsDir: "app"`), one level deep, content-hashed names.
     frontend/app/*.js|frontend/app/*.css|frontend/app/*.wasm)
       leaf="${path#frontend/app/}"
       [[ "$leaf" != */* && -n "$leaf" ]]
+      return
+      ;;
+    frontend/app/*.png)
+      # The app BUNDLES images: the baked effect stills (frontend/src/assets/effects, see
+      # bakedEffects.ts) are imported from TypeScript, so Vite emits them beside the js/css rather
+      # than under frontend/icons/, where the unhashed PWA icons ship.
+      #
+      # Named ONE BY ONE rather than allowed by extension. Shipping official STS2 art is a deliberate,
+      # maintainer-approved exception to this repo's artifact policy (frontend/src/assets/effects/README.md
+      # says so, and says nothing else may grow on that precedent), so the release gate should be the
+      # place that notices a FOURTH image appearing in the bundle — not wave it through because the
+      # first three taught it to accept `.png`. Vite content-hashes the name, so only the stem can be
+      # pinned: a re-bake changes `-<hash>` and must not need an edit here. Adding an image is a
+      # one-line change to this list, made on purpose.
+      leaf="${path#frontend/app/}"
+      [[ "$leaf" =~ ^(card-ripple|glow-rare|glow-uncommon)-[A-Za-z0-9_-]+\.png$ ]]
       return
       ;;
     *) return 1 ;;

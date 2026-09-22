@@ -104,6 +104,16 @@ make_valid_payload() { # make_valid_payload <root> [lane]...
   write_build_info "$root" 1.2.3 "${lanes[@]}"
   printf '<!doctype html>\n' > "$root/frontend/index.html"
   printf 'app/index-fixture.js\n' > "$root/frontend/app-boot"
+  # Vite's bundle directory, with one file of every kind it actually emits (`npx vite build` into a
+  # scratch dir prints the real list). This fixture used to stop at `app-boot`, so the whole
+  # `frontend/app/*` allowlist arm was never exercised by a valid payload — and the round that started
+  # bundling the baked effect stills only found out at `package-release.sh --snapshot`, where the first
+  # `.png` was rejected. A kind missing from here is a kind nothing tests.
+  mkdir -p "$root/frontend/app"
+  for file in index-fixture.js atlasBakeWorker-fixture.js index-fixture.css hb-gpu-fixture.wasm \
+    card-ripple-fixture.png glow-rare-fixture.png glow-uncommon-fixture.png; do
+    printf 'fixture\n' > "$root/frontend/app/$file"
+  done
   for file in \
     QRCoder-1.6.0-MIT.txt DeviceDetector.NET-6.5.2-Apache-2.0.txt LiteDB-5.0.21-MIT.txt \
     Microsoft.Extensions.DependencyInjection.Abstractions-10.0.10-MIT.txt Microsoft.Extensions.Logging.Abstractions-10.0.10-MIT.txt \
@@ -273,6 +283,21 @@ for stray in frontend/.vite/manifest.json frontend/extra.json frontend/app/chunk
   mkdir -p "$(dirname "$case_dir/$stray")"
   cp "$case_dir/build-info.txt" "$case_dir/$stray"
   expect_reject_saying "$label" 'scans as a mod manifest' \
+    "$verifier" --payload "$case_dir" --version 1.2.3 "${all_lane_args[@]}"
+done
+
+# The bundle directory stays a FLAT list of the kinds Vite emits. `.png` belongs, but only for the
+# effect stills NAMED in the allowlist: shipping official game art is a one-off exception, so a
+# fourth image must fail here rather than inherit the first three's permission. An arbitrary
+# extension does not belong either, and neither does a subdirectory -- the arm is one level deep on
+# purpose, so a nested tree cannot ride in behind an allowed extension.
+for stray in frontend/app/notes.txt frontend/app/nested/card-ripple-fixture.png \
+  frontend/app/kitten-fixture.png frontend/app/card-ripple.png; do
+  label="app-dir-$(printf '%s' "$stray" | tr './' '--')"
+  case_dir="$(clone_payload "$label")"
+  mkdir -p "$(dirname "$case_dir/$stray")"
+  printf 'fixture\n' > "$case_dir/$stray"
+  expect_reject_saying "$label" 'not allowlisted' \
     "$verifier" --payload "$case_dir" --version 1.2.3 "${all_lane_args[@]}"
 done
 
