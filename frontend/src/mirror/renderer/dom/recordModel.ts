@@ -459,6 +459,24 @@ interface RenderRecord {
   // Both reset on every anim/skin change (a new identity re-runs the still→clip chain).
   spineStillPainted: boolean;
   spineAnimatedShown: boolean;
+  // IS THERE SPINE ART ON THIS ELEMENT RIGHT NOW? Set the moment pixels commit — a still's `<img>` src written, a
+  // clip frame blitted, a geoclip mounted — and cleared only when the layer is torn down. Deliberately NOT derived
+  // from the identity flags above: those all reset on an anim change while the previous animation's pixels are
+  // still on screen (the still `<img>` keeps its src until the incoming one has decoded — that is the whole point
+  // of the decode gate), so deriving it would flash a stand-in over a creature the viewer can plainly see.
+  spineArtPainted: boolean;
+  // CREATURE PLACEHOLDER (see mirror/creaturePlaceholder.ts) — the stand-in `<img>` a creature or the shop
+  // merchant shows while its baked art is late, after it has failed, or forever on the hard-off tier.
+  // `placeholderImg` is the element (null = not mounted); `placeholderKey` caches its placement so an idling
+  // creature rewrites no styles; `placeholderArmedMs` is the wall clock the current clip identity started
+  // waiting at (null = nothing is being waited for) and `placeholderTimer` its one-shot deadline;
+  // `placeholderFailed` is the LATCH set once every fetch path for this identity has been refused, which is what
+  // turns the stand-in permanent. All four reset on an identity change, exactly like the escalation flags above.
+  placeholderImg: HTMLImageElement | null;
+  placeholderKey: string | null;
+  placeholderArmedMs: number | null;
+  placeholderTimer: ReturnType<typeof setTimeout> | null;
+  placeholderFailed: boolean;
   // Geoclip playback (see mirror/geoclipPlayer.ts). `geoclipState` is the live
   // per-identity playback (null = this node is on the raster path); `geoclipDisabled` is the ONE-WAY revert —
   // once anything about geoclip playback fails for this node it stays on the raster clip for the rest of the

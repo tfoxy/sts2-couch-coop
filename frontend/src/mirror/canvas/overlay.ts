@@ -117,11 +117,26 @@ import {
   type GeoclipPlacement,
   type GpuClip
 } from "@/mirror/geoclipPlayer";
+import {
+  CREATURE_PLACEHOLDER_CLASS,
+  CREATURE_PLACEHOLDER_DELAY_MS,
+  CREATURE_PLACEHOLDER_RES,
+  creatureArtIsUnavailable,
+  creaturePlaceholderBox,
+  creaturePlaceholderKey,
+  isCreaturePlaceholderNode
+} from "@/mirror/creaturePlaceholder";
 import { richHtml, textStyle } from "@/mirror/nodeStyles";
 import { nodeParticleAttributes } from "@/mirror/particleAttributes";
-import type { MirrorNode } from "@/mirror/sceneTree";
+import { mirrorResourceUrl, type MirrorNode } from "@/mirror/sceneTree";
 import { nodeShaderAttributes, type MirrorShaderBinding } from "@/mirror/shaderAttributes";
-import { geoclipUrl, isGeoclipPlaybackEnabled, isSpineStillMode, spineClipUrl } from "@/mirror/spineAttributes";
+import {
+  geoclipUrl,
+  isGeoclipPlaybackEnabled,
+  isSpineClipNode,
+  isSpineStillMode,
+  spineClipUrl
+} from "@/mirror/spineAttributes";
 import {
   frameIndexAt,
   imageMime,
@@ -158,6 +173,9 @@ export const OVERLAY_CONTAINER_CLASS = "mirror-canvas-overlay";
  * which is four properties per element at create time and no shared statement to keep in sync.
  */
 export const OVERLAY_NODE_CLASS = "mirror-overlay-node";
+
+/** Shared empty answer for `childrenOfLazy`, so a childless lookup allocates nothing. */
+const EMPTY_CHILD_IDS: readonly string[] = [];
 
 export interface OverlayCounts {
   text: number;
@@ -669,6 +687,22 @@ interface OverlayEl {
   spinePlaying: boolean;
   /** Bumped on every clip swap; a load that resolves against a stale generation is dropped. */
   spineGeneration: number;
+  /**
+   * Are there spine PIXELS on this element right now? Set the moment they commit and cleared only on teardown —
+   * the DOM backend's `RenderRecord.spineArtPainted`, for the same reason: the identity fields all reset on an
+   * animation change while the previous still is still painting, so deriving this from them would flash a
+   * creature stand-in over a creature the viewer can see.
+   */
+  spineArtPainted: boolean;
+  // --- creature placeholder (see mirror/creaturePlaceholder.ts) ---
+  /** The stand-in `<img>` and the placement last written on it. */
+  placeholderImg: HTMLImageElement | null;
+  placeholderKey: string | null;
+  /** When the current clip identity started waiting, and its one-shot deadline. Null = nothing is being awaited. */
+  placeholderArmedMs: number | null;
+  placeholderTimer: ReturnType<typeof setTimeout> | null;
+  /** LATCH: the fetch for this identity was refused, so the stand-in is permanent rather than a grace period. */
+  placeholderFailed: boolean;
   // --- geoclip ---
   geoclipState: GeoclipEntryState | null;
   /**
@@ -736,6 +770,34 @@ export function createMirrorOverlay(
    */
   let disposed = false;
   let playingSpine = 0;
+  /**
+   * The node map of the build in progress, latched so a creature stand-in's DEADLINE — which fires from a timer,
+   * between builds — can still resolve its box against a live scene rather than a captured snapshot.
+   */
+  let liveNodes: Map<string, MirrorNode> | null = null;
+  /**
+   * A parent → children index over `liveNodes`, built AT MOST ONCE PER BUILD and only if something asks.
+   *
+   * A creature states its box on a different node from the one that paints it, so resolving the stand-in needs to
+   * look up a named child. This backend has no walk-maintained child index to borrow (the DOM one does), and
+   * scanning ~4 000 nodes on every build to answer a question almost no build asks would be a real cost — so it
+   * is lazy, and the only builds that pay for it are the ones where a creature is actually missing its art.
+   */
+  let childIndex: Map<string, string[]> | null = null;
+  function childrenOfLazy(id: string): readonly string[] {
+    if (childIndex === null) {
+      childIndex = new Map();
+      if (liveNodes !== null) {
+        for (const candidate of liveNodes.values()) {
+          if (candidate.parentId === null) continue;
+          const list = childIndex.get(candidate.parentId);
+          if (list !== undefined) list.push(candidate.id);
+          else childIndex.set(candidate.parentId, [candidate.id]);
+        }
+      }
+    }
+    return childIndex.get(id) ?? EMPTY_CHILD_IDS;
+  }
   /** Spine nodes the LAST build drew as stage quads — see {@link MirrorOverlay.setSpineDrawn}. */
   let spineDrawnIds: ReadonlySet<string> | null = null;
   /** See {@link MirrorOverlay.spineQuadVersion}. Bumped only by `setSpineShownStill`, which is the one funnel. */
@@ -804,6 +866,12 @@ export function createMirrorOverlay(
       spineLooping: true,
       spinePlaying: false,
       spineGeneration: 0,
+      spineArtPainted: false,
+      placeholderImg: null,
+      placeholderKey: null,
+      placeholderArmedMs: null,
+      placeholderTimer: null,
+      placeholderFailed: false,
       geoclipState: null,
       geoclipDisabled: false
     };
@@ -815,6 +883,10 @@ export function createMirrorOverlay(
     // so the only thing that ends it is the element going away (or newer pixels replacing it).
     setSpineShownStill(entry, null);
     entry.spineImgUrl = null;
+    // The stand-in's pending deadline goes with the element: a live `setTimeout` would keep a destroyed entry
+    // (and its element) reachable until it fired.
+    resetPlaceholder(entry);
+    entry.spineArtPainted = false;
     entry.el.remove();
     elements.delete(entry.id);
   }
@@ -1301,55 +1373,187 @@ export function createMirrorOverlay(
   // walk. See the module header for the honest statement of that gap.
 
   function syncSpine(entry: OverlayEl, node: MirrorNode): void {
-    const url = spineClipUrl(node, { still: isSpineStillMode() });
-    // A static raster URL can be identical to auto's still-tier URL. Release independently of URL identity so
-    // a live mode switch never leaves geometry mounted above the raster still.
-    const geoclipEnabled = isGeoclipPlaybackEnabled();
-    if (!geoclipEnabled) {
+    // A node can be a "spine" overlay for TWO reasons now (see `paintSpec.overlayKindOf`): it plays a clip, or it
+    // is a creature/merchant rig on the hard-off tier that exists only to host the stand-in. The second kind must
+    // request NOTHING — that tier's whole contract is that no clip is fetched — so every line below the gate is
+    // reached only by the first.
+    if (isSpineClipNode(node)) {
+      const url = spineClipUrl(node, { still: isSpineStillMode() });
+      // A static raster URL can be identical to auto's still-tier URL. Release independently of URL identity so
+      // a live mode switch never leaves geometry mounted above the raster still.
+      const geoclipEnabled = isGeoclipPlaybackEnabled();
+      if (!geoclipEnabled) {
+        releaseGeoclip(entry);
+      }
+      entry.spinePaused = node.spinePaused;
+      entry.spineLooping = node.spineLooping;
+      if (url !== entry.spineUrl) {
+        releaseSpine(entry);
+        entry.spineUrl = url;
+        entry.spineTrackMs = Math.max(0, node.spineTrackTime * 1000);
+        entry.spineWallMs = now();
+        if (url) {
+          // The creature stand-in's grace period starts beside the request it waits on — see the DOM twin in
+          // `spineLayerController`. A previous identity's failure latch is cleared with it.
+          armPlaceholder(entry);
+          const generation = entry.spineGeneration;
+          const fetchRaster = (): void => {
+            void loadSpineClip(url, { stillImg: true })
+              .then((clip) => {
+                if (disposed || entry.spineGeneration !== generation || entry.spineUrl !== url) {
+                  // A NEWER clip won the race. Deliberately NOT released: this entry never retained it, and the
+                  // refcount belongs to whoever is painting it. The cache still holds it, so the next request for
+                  // the same url is free and an eviction can close it normally.
+                  return;
+                }
+                setSpineClip(entry, clip);
+                refreshSpinePlaying(entry);
+                mountSpine(entry);
+              })
+              .catch(() => {
+                // A clip the host cannot bake used to leave the node empty, exactly as it left the DOM backend's
+                // node empty. It is now the latch that makes a creature's stand-in permanent instead.
+                if (disposed || entry.spineGeneration !== generation || entry.spineUrl !== url) {
+                  return; // a stale identity's failure says nothing about the one on screen
+                }
+                entry.placeholderFailed = true;
+                syncPlaceholder(entry, node);
+              });
+          };
+          fetchRaster();
+        }
+      }
+      // Keep this independent of the raster URL: auto on a still-only tier and static both ask for `&still=1`,
+      // while only auto is an explicit geometry opt-in. Existing state is the per-identity latch, so an unchanged
+      // routine reconcile neither re-probes nor replaces a pending upload.
+      if (geoclipEnabled && entry.geoclipState === null && !entry.geoclipDisabled) {
+        armGeoclip(entry, node);
+      }
+      // A pause/unpause can flip the demand without changing the clip at all (the treasure chest freezes its own
+      // track), so the playing set is re-derived on every sync rather than only at load.
+      refreshSpinePlaying(entry);
+      if (entry.spineClip) {
+        mountSpine(entry);
+      }
+    } else {
       releaseGeoclip(entry);
     }
-    entry.spinePaused = node.spinePaused;
-    entry.spineLooping = node.spineLooping;
-    if (url !== entry.spineUrl) {
-      releaseSpine(entry);
-      entry.spineUrl = url;
-      entry.spineTrackMs = Math.max(0, node.spineTrackTime * 1000);
-      entry.spineWallMs = now();
-      if (url) {
-        const generation = entry.spineGeneration;
-        const fetchRaster = (): void => {
-          void loadSpineClip(url, { stillImg: true })
-            .then((clip) => {
-              if (disposed || entry.spineGeneration !== generation || entry.spineUrl !== url) {
-                // A NEWER clip won the race. Deliberately NOT released: this entry never retained it, and the
-                // refcount belongs to whoever is painting it. The cache still holds it, so the next request for
-                // the same url is free and an eviction can close it normally.
-                return;
-              }
-              setSpineClip(entry, clip);
-              refreshSpinePlaying(entry);
-              mountSpine(entry);
-            })
-            .catch(() => {
-              // A clip the host cannot bake leaves the node empty, exactly as it leaves the DOM backend's node
-              // empty. The creature is missing; nothing else is.
-            });
-        };
-        fetchRaster();
+    syncPlaceholder(entry, node);
+  }
+
+  // --- creature placeholder --------------------------------------------------------------------------------------
+  //
+  // The canvas twin of `renderer/dom/spineLayerController`'s half, sharing the same policy module: same grace
+  // period, same permanence rules, same `.mirror-spine-placeholder` element and therefore the same one CSS rule.
+  // It belongs in the overlay rather than in the draw list because that is where this backend already paints a
+  // spine still — an `<img>` in the node's own overlay element — so the stand-in lands in exactly the slot the
+  // art it substitutes for would have taken.
+
+  function clearPlaceholderTimer(entry: OverlayEl): void {
+    if (entry.placeholderTimer !== null) {
+      clearTimeout(entry.placeholderTimer);
+      entry.placeholderTimer = null;
+    }
+  }
+
+  function detachPlaceholder(entry: OverlayEl): void {
+    if (entry.placeholderImg === null) {
+      return;
+    }
+    entry.placeholderImg.remove();
+    entry.placeholderImg = null;
+    entry.placeholderKey = null;
+  }
+
+  function resetPlaceholder(entry: OverlayEl): void {
+    clearPlaceholderTimer(entry);
+    detachPlaceholder(entry);
+    entry.placeholderArmedMs = null;
+    entry.placeholderFailed = false;
+  }
+
+  function armPlaceholder(entry: OverlayEl): void {
+    clearPlaceholderTimer(entry);
+    entry.placeholderArmedMs = now();
+    entry.placeholderFailed = false;
+  }
+
+  /** Spine pixels committed on this entry — retires the stand-in and stops it coming back for this identity. */
+  function noteSpineArtPainted(entry: OverlayEl): void {
+    if (entry.spineArtPainted) {
+      return;
+    }
+    entry.spineArtPainted = true;
+    clearPlaceholderTimer(entry);
+    detachPlaceholder(entry);
+  }
+
+  function syncPlaceholder(entry: OverlayEl, node: MirrorNode): void {
+    if (!isCreaturePlaceholderNode(node)) {
+      resetPlaceholder(entry);
+      return;
+    }
+    // PIXELS ON SCREEN BEAT EVERYTHING — see the DOM twin in `spineLayerController` for why the failure latch
+    // does not get to cover a creature whose previous animation is still painting.
+    if (entry.spineArtPainted) {
+      clearPlaceholderTimer(entry);
+      detachPlaceholder(entry);
+      return;
+    }
+    if (!entry.placeholderFailed && !creatureArtIsUnavailable(node)) {
+      if (entry.placeholderArmedMs === null) {
+        clearPlaceholderTimer(entry);
+        detachPlaceholder(entry);
+        return;
+      }
+      const remaining = entry.placeholderArmedMs + CREATURE_PLACEHOLDER_DELAY_MS - now();
+      if (remaining > 0) {
+        detachPlaceholder(entry);
+        if (entry.placeholderTimer === null) {
+          entry.placeholderTimer = setTimeout(() => {
+            entry.placeholderTimer = null;
+            // Re-read the node: the deadline outlives the build that armed it, and the box is resolved from the
+            // live map either way. A node that has left the scene has no entry to paint into any more.
+            const fresh = liveNodes?.get(entry.id);
+            if (!disposed && fresh !== undefined && elements.get(entry.id) === entry) {
+              syncPlaceholder(entry, fresh);
+            }
+          }, remaining);
+        }
+        return;
       }
     }
-    // Keep this independent of the raster URL: auto on a still-only tier and static both ask for `&still=1`,
-    // while only auto is an explicit geometry opt-in. Existing state is the per-identity latch, so an unchanged
-    // routine reconcile neither re-probes nor replaces a pending upload.
-    if (geoclipEnabled && entry.geoclipState === null && !entry.geoclipDisabled) {
-      armGeoclip(entry, node);
+    clearPlaceholderTimer(entry);
+    const box = liveNodes === null ? null : creaturePlaceholderBox(liveNodes, childrenOfLazy, node);
+    if (box === null) {
+      // The creature's box has not streamed yet. Paint nothing and ask again next build rather than guessing.
+      detachPlaceholder(entry);
+      return;
     }
-    // A pause/unpause can flip the demand without changing the clip at all (the treasure chest freezes its own
-    // track), so the playing set is re-derived on every sync rather than only at load.
-    refreshSpinePlaying(entry);
-    if (entry.spineClip) {
-      mountSpine(entry);
+    let img = entry.placeholderImg;
+    if (img === null) {
+      img = doc.createElement("img");
+      img.className = CREATURE_PLACEHOLDER_CLASS;
+      img.decoding = "async";
+      img.alt = "";
+      img.src = mirrorResourceUrl(CREATURE_PLACEHOLDER_RES);
+      entry.el.appendChild(img);
+      entry.placeholderImg = img;
+      entry.placeholderKey = null;
     }
+    // The box is already in the spine node's own local units, so the entry element's matrix supplies the rig
+    // scale and no `scale()` belongs here. `object-fit: fill` (the shared CSS rule) does the stretching.
+    const key = creaturePlaceholderKey(box);
+    if (entry.placeholderKey !== key) {
+      entry.placeholderKey = key;
+      img.style.width = `${box.width}px`;
+      img.style.height = `${box.height}px`;
+      img.style.transform = `translate(${box.x}px, ${box.y}px)`;
+    }
+    // Deliberately NO `onSpineReady`. That signal exists to wake the stage for pixels the CANVAS owes — a clip
+    // frame to blit, a still to upload as a quad. The stand-in is a composited `<img>` the browser paints on its
+    // own, and this runs on every build while it is up, so arming a local paint here would hold a settled screen
+    // awake for the entire time a creature is missing.
   }
 
   function mountSpine(entry: OverlayEl): void {
@@ -1496,6 +1700,7 @@ export function createMirrorOverlay(
       applyStillPlacement(img, w, h, tx, ty, scale);
       // The DISPLAYED clip is retained apart from `spineClip`, which is swapped the instant a newer one arrives.
       setSpineShownStill(entry, clip);
+      noteSpineArtPainted(entry); // real pixels are on screen — retire any creature stand-in
       options?.onSpineReady?.(entry.id);
     });
   }
@@ -1526,6 +1731,7 @@ export function createMirrorOverlay(
     }
     ctx.clearRect(0, 0, canvas.width, canvas.height);
     ctx.drawImage(frame.bitmap, frame.offsetX, frame.offsetY);
+    noteSpineArtPainted(entry); // ditto — a blitted frame retires the creature stand-in
   }
 
   // --- geoclip playback ------------------------------------------------------------------------------------
@@ -1620,6 +1826,7 @@ export function createMirrorOverlay(
       // (`.mirror-geoclip-live > .mirror-spine-canvas|.mirror-spine-img`), so the two can never both paint.
       entry.el.appendChild(mounted.el);
       entry.el.classList.add(GEOCLIP_LIVE_CLASS);
+      noteSpineArtPainted(entry); // geometry is mounted — retire the creature stand-in with it
       // THE ANTI-DOUBLE-DRAW HALF OF THE BOOKKEEPING. `spineQuads()` now answers differently for this entry (it
       // is excluded), and the renderer banks that map's version at build time to decide whether its frame-level
       // patch may reuse the last list. Without the bump the stage could keep painting the baked still as a quad
@@ -1765,6 +1972,10 @@ export function createMirrorOverlay(
       counts.backstopWithheld = 0;
       counts.coveredText = 0;
       counts.coveredSpine = 0;
+      // Latch the build's scene for the creature stand-in, and drop the previous build's child index with it —
+      // the map is mutated in place, so identity cannot be trusted to invalidate the derived one.
+      liveNodes = nodes;
+      childIndex = null;
       // PRESENCE IS THE FLAG — see `OverlayFxSource`. Hoisted once so the flag-off path reads exactly as it did.
       const fxCanvas = fx != null;
       let shaderDirty = false;
@@ -2122,6 +2333,10 @@ export function createMirrorOverlay(
       }
       elements.clear();
       playingSpine = 0;
+      // Drop the latched scene with everything else: it is the whole node map, and holding it past disposal
+      // would keep a dead overlay's tree alive for as long as anything held the overlay.
+      liveNodes = null;
+      childIndex = null;
       tintSvg?.remove();
       tintSvg = null;
       tintDefs = null;

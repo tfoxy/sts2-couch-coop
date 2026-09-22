@@ -37,7 +37,7 @@
 
 import { isCardTrailNode, isCardTrailRootNode } from "@/mirror/cardTrail";
 import { MIRROR_DESIGN_WIDTH, type MirrorNode } from "@/mirror/sceneTree";
-import { isSpineClipNode } from "@/mirror/spineAttributes";
+import { isSpineSurfaceNode } from "@/mirror/creaturePlaceholder";
 
 /** A 6-element Transform2D, in the wire's `[a, b, c, d, tx, ty]` order. Read-only here: nothing is mutated. */
 export type SpreadAffine = readonly number[];
@@ -236,7 +236,7 @@ export function spreadDrawBox(node: MirrorNode): SpreadBox | null {
     node.linePoints != null ||
     isCardTrailNode(node) ||
     isCardTrailRootNode(node) ||
-    isSpineClipNode(node)
+    isSpineSurfaceNode(node)
       ? SPREAD_ZERO_ORIGIN
       : null)
   );
@@ -341,7 +341,7 @@ export function computeSpread(
     // A node paints/anchors its OWN visual when it has a real (positive-width) box, or is a particle/spine
     // point-anchor. Everything else with children is a pure grouping positioner (boxless).
     const hasPaintBox = node.localRect != null && node.localRect.width > 0;
-    const pointAnchor = node.particleSpec != null || isSpineClipNode(node);
+    const pointAnchor = node.particleSpec != null || isSpineSurfaceNode(node);
     const boxlessPositioner = !hasPaintBox && !pointAnchor;
     // The squeeze field itself lives in `fieldDxAtOriginX` / `fieldDxAtCenter` above (same clamp, same rate, same
     // centre construction), evaluated at `gNode` — this node's GLOBAL transform — by the two branches that claim it.

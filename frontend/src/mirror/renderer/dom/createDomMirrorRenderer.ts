@@ -349,7 +349,9 @@ function createMirrorRenderer(
     now: nowMs,
     schedule: scheduleTick,
     thaw: (canvas) => occlusionRuntime.thaw(canvas),
-    timeline: () => spineTimeline
+    timeline: () => spineTimeline,
+    nodes: () => reconcileController.nodes(),
+    childrenOf: (id) => reconcileController.childIdsByParent().get(id) ?? EMPTY_CHILDREN
   });
   // Cache a node's rendered design global for local renderer consumers, bumping the epoch when it
   // actually moved. Compared by VALUE: `gNodeStretched` is a fresh array whenever the node carries a spread shift.
@@ -438,6 +440,7 @@ function createMirrorRenderer(
     setSpineShownStill: spineLayerController.setShownStill,
     dropSeenSpineUrls: spineLayerController.dropSeenUrls,
     setSpineClip: spineLayerController.setClip,
+    resetPlaceholder: spineLayerController.resetPlaceholder,
     releaseGeoclip: (record) => spineTimeline.releaseGeoclip(record),
     onBeforeSweep: (record) => { handController.removeTargeting(record.id); handController.forgetRecord(record.id); },
     stats: mirrorWalkStats
@@ -472,7 +475,8 @@ function createMirrorRenderer(
     syncFrozenCanvasStyle: (canvas) => occlusionRuntime.syncFrozenStyle(canvas),
     setMechanism: spineLayerController.setMechanism,
     setShownStill: spineLayerController.setShownStill,
-    applyRasterPlacement: (record, clip) => spineTimeline.applyPlacement(record, clip)
+    applyRasterPlacement: (record, clip) => spineTimeline.applyPlacement(record, clip),
+    noteArtPainted: spineLayerController.noteArtPainted
   });
   occlusionRuntime = createOcclusionRuntime({
     nodes: () => reconcileController.nodes(),

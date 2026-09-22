@@ -22,6 +22,7 @@ export interface ElementLifecycleEnv {
   setSpineShownStill: (record: RenderRecord, clip: null) => void;
   dropSeenSpineUrls: (record: RenderRecord) => void;
   setSpineClip: (record: RenderRecord, clip: null) => void;
+  resetPlaceholder: (record: RenderRecord) => void;
   releaseGeoclip: (record: RenderRecord) => void;
   thaw: (canvas: HTMLCanvasElement | null) => void;
   cancelParityWatch: (record: RenderRecord) => void;
@@ -202,6 +203,10 @@ export function createElementLifecycle(env: ElementLifecycleEnv): ElementLifecyc
     record.spinePlacementKey = null;
     record.spineStillPainted = false;
     record.spineAnimatedShown = false;
+    record.spineArtPainted = false;
+    // The creature stand-in's pending DEADLINE has to go with the element: a live `setTimeout` would otherwise
+    // keep a destroyed record (and its whole subtree) reachable until it fired.
+    env.resetPlaceholder(record);
     env.releaseGeoclip(record);
     record.npSlices = [];
     record.npSliceStyles = [];
