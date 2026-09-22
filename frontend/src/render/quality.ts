@@ -46,6 +46,10 @@
 // levers a panel mode does NOT express (spine clips, texture-upload cap, screen-texture capture) and the one
 // clamp the panel cannot lift: the `minimum` lane (see shadersHardOff/particlesHardOff).
 //
+// This module also answers one DEVICE question that is not a tier at all: whether an untouched viewer starts with
+// the two effect families off (see shadersSeedOff/particlesSeedOff — the iOS seed). That is a first-visit default
+// the panel overrides, not a clamp, and it is deliberately kept out of every field above.
+//
 // Any resolved tier can be hand-tuned with query overrides (applied ON TOP of the tier), so a device's
 // exact smooth point can be found live without a rebuild — e.g. on the phone:
 //   ?renderScale=0.2   ?shaderFps=12   ?particleFps=8   ?shaders=off   ?particles=off
@@ -54,6 +58,7 @@
 import { describeGpu, type GpuInfo } from "@godot-scene-web/html";
 
 import { defaultSettingsStorage, readSettingsRecord } from "@/mirror/settingsStorage";
+import { isIosPlatform } from "@/platform";
 
 /** The quality ladder, most expensive first. See the header — one vocabulary for the id, `?quality=` and the
  *  label the settings panel shows. */
@@ -105,6 +110,10 @@ export interface RenderQuality {
   staticShaderScale: number;
   /** Backing-store scale for the STATIC (frozen-frame) PARTICLE mode — see STATIC_PARTICLE_SCALE_MOBILE. */
   staticParticleScale: number;
+  /** Whether this device runs WebKit-on-iOS (iPhone/iPad, every browser there). Carried so the effect SEED below
+   *  is memoized with the rest of the resolution instead of re-sniffing the UA per caller. Read by
+   *  shadersSeedOff/particlesSeedOff and by NOTHING ELSE — it decides no field above, no tier and no scale. */
+  ios: boolean;
   /** Where the tier came from, for diagnostics. `stored` is this viewer's own panel choice, which — like
    *  `query` — takes the device out of auto-detection (see isAdaptiveEligible). */
   source: "debug" | "query" | "stored" | "auto" | "default";
@@ -138,8 +147,12 @@ export const STATIC_SCALE_DESKTOP = 1;
 export const STATIC_SHADER_SCALE_MOBILE = 0.5;
 export const STATIC_PARTICLE_SCALE_MOBILE = 0.25;
 
-/** The tier-derived fields (everything except where the tier came from and the device-derived static scales). */
-type TierConfig = Omit<RenderQuality, "tier" | "source" | "staticShaderScale" | "staticParticleScale">;
+/** The tier-derived fields (everything except where the tier came from, the device-derived static scales, and
+ *  the device's engine — a tier has no opinion about any of those). */
+type TierConfig = Omit<
+  RenderQuality,
+  "tier" | "source" | "staticShaderScale" | "staticParticleScale" | "ios"
+>;
 
 // GPU renderer substrings that indicate an integrated / mobile / old GPU likely to be fill-bound by
 // full-screen fragment shaders. Deliberately conservative (a single match is one signal, not a verdict)
@@ -156,6 +169,11 @@ export interface RenderQualitySignals {
    *  the SAME weakness signals step FURTHER down the ladder than on desktop — this is what lets auto reach the
    *  bottom three rungs. */
   mobile?: boolean;
+  /** iPhone/iPad — i.e. WebKit, whatever the browser is called there (see `@/platform`'s isIosPlatform). Distinct
+   *  from `mobile` above and deliberately not folded into it: `mobile` asks how big the screen is and drives the
+   *  tier ladder, this asks which ENGINE is running and drives only the effect seed. They disagree for an
+   *  iPadOS-13+ tablet, which reports a desktop `Macintosh` UA. */
+  ios?: boolean;
   /** This viewer's SAVED panel choice (mirrorSettings' `quality`), verbatim from storage — a tier name, "auto",
    *  or anything at all from a hand-edited blob, so it is validated here. Beaten by `?debug` and `?quality=`,
    *  beats auto-detection: a player who has picked a rung has taken this device out of detection. */
@@ -272,6 +290,33 @@ export function shadersHardOff(quality: RenderQuality): boolean {
 
 export function particlesHardOff(quality: RenderQuality): boolean {
   return quality.tier === "minimum" && !quality.particlesEnabled;
+}
+
+// THE iOS EFFECT SEED — a first-visit DEFAULT for the two effect families on iPhone/iPad, and nothing more.
+//
+// NOT THE SAME THING AS THE LANE ABOVE, and the difference is the whole design. A hard-off is a clamp the panel
+// cannot lift, applied wherever an effective mode is computed. This is a SEED: mirrorSettings.createMirrorSettings
+// reads it in the slot the product default used to occupy — BELOW the viewer's saved choice and below `?shaders=`/
+// `?particles=` — so an iPhone viewer starts with both families off, can turn either back on in the panel, and
+// that choice survives every later load. Nothing outside that one seeding expression may read these two; a read in
+// shaderResources' effective-mode computeds would quietly convert the default into a floor.
+//
+// WHAT THE EVIDENCE SAYS, because the next reader will want to know whether this is a fix. On a physical iPhone,
+// 18 particle canvases were 87% of a 439 MB LayerTree peak, and a local WebKit A-B-B-A flipping only
+// `particles=static` → `particles=off` cut process-tree PSS peak from ~2396/2312 MB to ~1197/1184 MB — a
+// separation far larger than replicate drift. What was NOT established: that this is the iPhone allocator, that
+// it ends the jetsam kill, or that SHADERS are implicated at all (they were never measured). So this is a
+// defensive default on the platform that is being killed, chosen because the cost of being wrong is one settings
+// toggle and the cost of being right is the client staying alive. It is not a proved fix.
+//
+// Hence TWO predicates over one: particles carry the evidence, shaders are precautionary, and a later measurement
+// must be able to re-enable one without unpicking the other.
+export function particlesSeedOff(quality: RenderQuality): boolean {
+  return quality.ios;
+}
+
+export function shadersSeedOff(quality: RenderQuality): boolean {
+  return quality.ios;
 }
 
 // The pre-rename spellings of three rungs, still accepted so a bookmarked QA link, a recorded bench cell or an
@@ -500,7 +545,15 @@ function staticScales(signals: RenderQualitySignals): Pick<
 // shaders/particles) are then applied on top.
 export function resolveRenderQuality(signals: RenderQualitySignals): RenderQuality {
   const { tier, source } = resolveTier(signals);
-  return { tier, source, ...applyOverrides(tierConfig(tier), signals.search), ...staticScales(signals) };
+  return {
+    tier,
+    source,
+    // Carried, never consulted here: the engine decides the effect SEED (shadersSeedOff/particlesSeedOff), and
+    // deliberately nothing the tier resolution above produces.
+    ios: signals.ios === true,
+    ...applyOverrides(tierConfig(tier), signals.search),
+    ...staticScales(signals)
+  };
 }
 
 // The per-field query keys that, when present, PIN a value the user dialed in — any of them disables the
@@ -566,12 +619,18 @@ function readSignals(): RenderQualitySignals {
     typeof nav.userAgentData?.mobile === "boolean"
       ? nav.userAgentData.mobile
       : /Mobi|Android|iPhone|iPad|iPod/i.test(nav.userAgent ?? "");
+  // No UA-CH equivalent to prefer: `navigator.userAgentData` is Chromium-only, so on Safari the branch above is
+  // always `undefined` and the regex is what runs — which is exactly the device population this seed is about.
+  // `maxTouchPoints` is not optional here: an iPadOS 13+ tablet sends a desktop `Macintosh` UA and that is the
+  // only term that catches it.
+  const ios = isIosPlatform(nav.userAgent, nav.maxTouchPoints);
   return {
     search: typeof window !== "undefined" ? window.location.search : "",
     gpu: describeGpu(),
     hardwareConcurrency: nav.hardwareConcurrency,
     deviceMemory: nav.deviceMemory,
     mobile,
+    ios,
     // The panel's saved `quality`, read straight out of the mirror-settings blob. Deliberately NOT an import of
     // `@/mirror/mirrorSettings` (that module imports this one): `settingsStorage` is a leaf with no imports of
     // its own, so there is no cycle and no load-order question about which module builds first.

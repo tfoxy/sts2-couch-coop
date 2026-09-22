@@ -1133,11 +1133,22 @@ panel is no longer mounted; its internal narration remains available for diagnos
   cleanly — `min`→`low`, `static`→`very-low`, `off`→`minimum`. **`low` changed meaning**: it now names the rung
   the old `min` named, so an old `?quality=low` link or bench report is one rung off. The phone-canvas bench
   gates on the recorded string and accepts both `very-low` and `static` for exactly that reason.
-- Effect mode defaults are device-independent: shaders `static`, particles `static`. The quality tier only owns the
-  hard-off lane (`shadersHardOff`/`particlesHardOff` in
-  `render/quality.ts`: the `minimum` tier from `?debug` / `?quality=minimum` / a software-WebGL phone). Everything
-  else — marker stamping (`particleAttributes.ts`), runtime construction + effective mode (`shaderResources.ts`),
-  render scale and fps caps (`MirrorView.applyShaderMode/applyParticleMode`) — follows the PANEL.
+- Effect mode defaults are device-independent: shaders `static`, particles `static`. The device owns two things
+  either side of those constants, and they are different kinds of thing:
+  - the hard-off **lane** (`shadersHardOff`/`particlesHardOff` in `render/quality.ts`: the `minimum` tier from
+    `?debug` / `?quality=minimum` / a software-WebGL phone), a clamp applied wherever an effective mode is
+    computed, which the panel cannot lift;
+  - the iOS **seed** (`shadersSeedOff`/`particlesSeedOff`, keyed on `RenderQuality.ios` ← `@/platform`'s
+    `isIosPlatform`, which also catches an iPadOS 13+ tablet behind its desktop `Macintosh` UA): both families
+    start `off` on iPhone/iPad. It sits in `createMirrorSettings` exactly where the constant sat — BELOW the saved
+    choice and below `?shaders=`/`?particles=` — so a viewer turns them back on once and keeps them. Defensive,
+    not proved: particles are the measured population on the device, shaders were never measured, hence two
+    predicates so one can be re-enabled without the other. Read by that one seeding expression and nothing else —
+    a read in `shaderResources`' effective-mode computeds would convert it into a floor.
+
+  Everything else — marker stamping (`particleAttributes.ts`), runtime construction + effective mode
+  (`shaderResources.ts`), render scale and fps caps (`MirrorView.applyShaderMode/applyParticleMode`) — follows the
+  PANEL.
 - Consequence to preserve: fps caps are 30 on every live tier, and the ½/¼ DYNAMIC modes are 0.5/0.25 on every
   device — the same panel selection behaves identically on a phone and a desktop.
 - The one device-dependent scale is the FROZEN (`very-low`) backing store (`quality.ts` `staticShaderScale`/

@@ -45,8 +45,8 @@ function fakeStorage(): MirrorSettingsStorage & { raw(): string | null } {
   };
 }
 
-function store(storage: MirrorSettingsStorage | null): MirrorSettings {
-  const quality: RenderQuality = resolveRenderQuality({ search: "", gpu: UNKNOWN_GPU });
+function store(storage: MirrorSettingsStorage | null, ios = false): MirrorSettings {
+  const quality: RenderQuality = resolveRenderQuality({ search: "", gpu: UNKNOWN_GPU, ios });
   return createMirrorSettings(quality, "", { storage });
 }
 
@@ -99,6 +99,25 @@ describe("applyQualityChoice", () => {
     expect(settings.shaderMode).toBe("off");
     expect(settings.particleMode).toBe("off");
     expect(settings.staticBgEnabled).toBe(true);
+  });
+
+  it("writes the SAME rows on an iOS device — the seed only ever decides an unset field", () => {
+    // The iOS effect seed (mirrorSettings) starts an untouched iPhone at off/off. Picking a rung is the viewer
+    // speaking, so the rung's rows must land verbatim — a table that quietly meant something else on one engine
+    // would be the device-dependent mode the whole design forbids.
+    for (const tier of RENDER_QUALITY_TIERS) {
+      const storage = fakeStorage();
+      const settings = store(storage, true);
+      expect([settings.shaderMode, settings.particleMode]).toEqual(["off", "off"]);
+      applyQualityChoice(settings, tier, storage);
+      const rows = QUALITY_PRESETS[tier];
+      expect([settings.shaderMode, settings.particleMode, settings.staticBgEnabled]).toEqual([
+        rows.shaderMode,
+        rows.particleMode,
+        rows.staticBgEnabled
+      ]);
+      expect(readStoredMirrorSettings(storage)).toEqual({ quality: tier, ...rows });
+    }
   });
 
   it("SAVES the choice and each row it wrote, and nothing else", () => {

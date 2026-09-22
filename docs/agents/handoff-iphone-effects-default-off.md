@@ -3,7 +3,23 @@
 **Ask (maintainer, 2026-09-22):** iPhones should start with Shaders and Particles **off**, because the way the
 mirror does `static` shaders/particles crashes WebKit there.
 
-**Status:** not started. This document is the whole brief; nothing has been written.
+**Status: LANDED (2026-09-22), except the device leg.** The seed ships as
+`shadersSeedOff`/`particlesSeedOff` in [quality.ts](../../frontend/src/render/quality.ts), keyed on a new carried
+`RenderQuality.ios` that `readSignals` fills from the extracted leaf [`@/platform`](../../frontend/src/platform.ts);
+`createMirrorSettings` reads it through `seededShaderMode`/`seededParticleMode`, in the slot the constant occupied.
+Two predicates rather than one, per §3. Verified by `vue-tsc` + the full vitest suite (specs in
+`mirror/__tests__/{quality,mirrorSettings,qualityPreset}.spec.ts` and the new `src/__tests__/platform.spec.ts`)
+and by a real-WebKit run under Playwright's `iPhone 13` profile: first visit `off`/`off`, a desktop-Safari control
+`static`/`static`, and a panel pick surviving two reloads.
+
+**Still owed:** §5's device leg. There is no owned iPhone (`.agents/memory/iphone-qa-access-and-relay.md` — Safari
+is relayed from a borrowed device), and a Linux-WebKit verdict is a lead, not a confirmation. §4 also stands: if
+the baked-stills round changes what `static` costs on the device, **re-measure** rather than assume the seed is
+still needed — dropping it is a legitimate outcome.
+
+---
+
+*Original brief follows.*
 
 ---
 

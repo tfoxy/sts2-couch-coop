@@ -786,6 +786,7 @@ describe("nodeStyle shader-input paint when shaders are OFF (true floor)", () =>
     maxTrailPoints: 32,
     staticShaderScale: 1,
     staticParticleScale: 1,
+    ios: false,
     source: "query"
   };
   afterEach(() => __setRenderQualityForTest(undefined));

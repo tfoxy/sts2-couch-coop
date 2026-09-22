@@ -32,6 +32,7 @@ function quality(overrides: Partial<RenderQuality> = {}): RenderQuality {
     maxTrailPoints: 0,
     staticShaderScale: 1,
     staticParticleScale: 1,
+    ios: false,
     source: "default",
     ...overrides
   };

@@ -7,8 +7,11 @@ import {
   isAdaptiveEligible,
   parseRenderQualityTier,
   particlesHardOff,
+  particlesSeedOff,
+  renderQuality,
   resolveRenderQuality,
   shadersHardOff,
+  shadersSeedOff,
   stagePixelRatio,
   __resetDetectedTierForTest,
   __setRenderQualityForTest,
@@ -349,6 +352,69 @@ describe("shadersHardOff / particlesHardOff", () => {
     expect(q.tier).toBe("minimum");
     expect(shadersHardOff(q)).toBe(false); // the viewer asked for it by name
     expect(particlesHardOff(q)).toBe(true); // …and said nothing about particles
+  });
+});
+
+// THE iOS EFFECT SEED — the other device answer this module carries, and the one that is NOT a clamp. The seeding
+// half (what an untouched viewer, a saved choice and a URL override each produce) is mirrorSettings.spec.ts';
+// what belongs here is that the seed is visible, that it is separate from the hard-off lane, and that it changes
+// nothing else about the resolution.
+describe("shadersSeedOff / particlesSeedOff (the iOS seed)", () => {
+  const IPHONE_UA =
+    "Mozilla/5.0 (iPhone; CPU iPhone OS 17_5 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.5 Mobile/15E148 Safari/604.1";
+  const MAC_SHAPED_UA =
+    "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.5 Safari/605.1.15";
+
+  afterEach(() => {
+    vi.unstubAllGlobals();
+    __setRenderQualityForTest(undefined);
+  });
+
+  it("is true for an iOS device on every tier, and false everywhere else", () => {
+    for (const search of ["", "?quality=high", "?quality=medium", "?quality=low", "?quality=very-low", "?debug"]) {
+      const ios = resolveRenderQuality(signals({ search, ios: true, mobile: true }));
+      expect([shadersSeedOff(ios), particlesSeedOff(ios)]).toEqual([true, true]);
+      const other = resolveRenderQuality(signals({ search, mobile: true }));
+      expect([shadersSeedOff(other), particlesSeedOff(other)]).toEqual([false, false]);
+    }
+  });
+
+  it("is NOT the hard-off lane — an iPhone on a live tier can still be asked for effects", () => {
+    // The distinction the whole design rests on: hard-off is a clamp read wherever an effective mode is computed
+    // (shaderResources, particleAttributes), the seed is a first-visit default the panel overrides. An iPhone that
+    // resolves to a live tier must stay OUT of the clamp, or turning effects back on in the panel would do nothing.
+    const phone = resolveRenderQuality(signals({ gpu: STRONG_GPU, ios: true, mobile: true }));
+    expect(phone.tier).not.toBe("minimum");
+    expect([shadersHardOff(phone), particlesHardOff(phone)]).toEqual([false, false]);
+    expect([shadersSeedOff(phone), particlesSeedOff(phone)]).toEqual([true, true]);
+  });
+
+  it("changes NOTHING else about the resolution — not the tier, not a lever, not a scale", () => {
+    // `ios` is carried, never consulted by the tier resolution. If this ever fails, a device sniff has leaked into
+    // the ladder and a mode has stopped meaning the same thing on a phone as on a desktop.
+    for (const overrides of [{}, { mobile: true }, { gpu: WEAK_GPU, mobile: true }, { search: "?quality=medium" }]) {
+      const plain = resolveRenderQuality(signals(overrides));
+      const ios = resolveRenderQuality(signals({ ...overrides, ios: true }));
+      expect(ios).toEqual({ ...plain, ios: true });
+    }
+  });
+
+  it("reads the real navigator: an iPhone UA, and an iPad hiding behind a `Macintosh` one", () => {
+    // The wiring `readSignals` does. `navigator.userAgentData` is Chromium-only, so on Safari the UA-CH branch is
+    // always undefined and this is the path that actually runs on the devices the seed is for.
+    const cases: [string, number, boolean][] = [
+      [IPHONE_UA, 5, true],
+      [MAC_SHAPED_UA, 5, true], // iPadOS 13+
+      [MAC_SHAPED_UA, 0, false], // a real Mac
+      ["Mozilla/5.0 (Linux; Android 14; Pixel 7) Chrome/126.0.0.0 Mobile Safari/537.36", 5, false]
+    ];
+    for (const [userAgent, maxTouchPoints, expected] of cases) {
+      __setRenderQualityForTest(undefined);
+      localStorage.clear(); // no saved rung may decide the tier under us
+      vi.stubGlobal("navigator", { userAgent, maxTouchPoints, hardwareConcurrency: 8, deviceMemory: 8 });
+      vi.stubGlobal("window", { location: { search: "" } });
+      expect([userAgent, maxTouchPoints, renderQuality().ios]).toEqual([userAgent, maxTouchPoints, expected]);
+    }
   });
 });
 

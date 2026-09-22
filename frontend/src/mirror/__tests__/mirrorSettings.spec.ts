@@ -44,6 +44,7 @@ function quality(overrides: Partial<RenderQuality> = {}): RenderQuality {
     maxTrailPoints: 0,
     staticShaderScale: 1,
     staticParticleScale: 1,
+    ios: false,
     source: "default",
     ...overrides
   };
@@ -126,6 +127,55 @@ describe("createMirrorSettings — unified effect defaults (mobile == desktop)",
       expect(s.shaderMode).toBe("static");
       expect(s.particleMode).toBe("static");
     }
+  });
+
+  // THE ONE EXCEPTION, and the reason it does not contradict the describe above: iOS gets a SEED, in the slot the
+  // constant occupied, not a different meaning for a mode. WebKit there is being jetsam-killed on this page and
+  // the measured population is particle surfaces (quality.ts carries the numbers and what they do not prove), so
+  // an untouched iPhone starts with both families off — and can leave that state from the panel, permanently.
+  it("seeds BOTH families off on iOS, and only there", () => {
+    const iphone = build(quality({ ios: true }));
+    expect([iphone.shaderMode, iphone.particleMode]).toEqual(["off", "off"]);
+    // The same tier on any other engine is untouched, and the product defaults themselves have not moved.
+    const other = build(quality());
+    expect([other.shaderMode, other.particleMode]).toEqual(["static", "static"]);
+    expect([DEFAULT_SHADER_MODE, DEFAULT_PARTICLE_MODE]).toEqual(["static", "static"]);
+    // A seed is not a pin — the adaptive controller must still see an untouched viewer.
+    expect(iphone.effectModePinned).toBe(false);
+  });
+
+  it("seeds off on every tier an iPhone can resolve to (the seed is not a tier)", () => {
+    for (const tier of ["high", "medium", "low", "very-low"] as const) {
+      const s = build(quality({ tier, ios: true }));
+      expect([tier, s.shaderMode, s.particleMode]).toEqual([tier, "off", "off"]);
+    }
+  });
+
+  // THE SEED IS NOT A FLOOR. This is the case that distinguishes the two, and the reason `off` was chosen over the
+  // `minimum` tier's hard-off lane: a viewer who disagrees sets the row in the panel, and the saved value wins on
+  // that load and on every later one. Ship the wrong thing here and an iPhone can never have effects again.
+  it("loses to this viewer's SAVED choice, on iOS, for both families", () => {
+    const saved = build(quality({ ios: true }), "", fakeStorage({ shaderMode: "static", particleMode: "dynamic" }));
+    expect([saved.shaderMode, saved.particleMode]).toEqual(["static", "dynamic"]);
+    // …and per family: an iPhone that turned only shaders back on keeps the seed for particles.
+    const partial = build(quality({ ios: true }), "", fakeStorage({ shaderMode: "dynamic-quarter" }));
+    expect([partial.shaderMode, partial.particleMode]).toEqual(["dynamic-quarter", "off"]);
+  });
+
+  it("loses to `?shaders=` / `?particles=` as well — a QA link still describes the page it opens", () => {
+    const url = build(quality({ ios: true }), "?shaders=dynamic&particles=static");
+    expect([url.shaderMode, url.particleMode]).toEqual(["dynamic", "static"]);
+    // The URL outranks the saved value too, exactly as it does on every other device.
+    const both = build(quality({ ios: true }), "?shaders=dynamic", fakeStorage({ shaderMode: "off" }));
+    expect(both.shaderMode).toBe("dynamic");
+  });
+
+  it("still loses to the hard-off lane on an iOS device that has no GPU path", () => {
+    // Both answer "off" here; what matters is which one is in charge, so ask for the effects by name. The lane
+    // holds (the panel must not offer a mode that cannot run), where the seed would have yielded.
+    const floored = quality({ tier: "minimum", shadersEnabled: false, particlesEnabled: false, ios: true });
+    const s = build(floored, "?shaders=dynamic&particles=dynamic");
+    expect([s.shaderMode, s.particleMode]).toEqual(["off", "off"]);
   });
 
   it("floors BOTH modes to off in the hard-off lane (?debug / ?quality=minimum), saved value or not", () => {

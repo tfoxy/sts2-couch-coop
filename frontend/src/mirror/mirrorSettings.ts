@@ -15,8 +15,10 @@
 //      quality.ts — the one device-dependent part of a static mode is the backing-store scale it renders its
 //      single frame at). Note what this means for the QUALITY row: `auto` decides the device levers only and
 //      never pushes rows, so detection cannot silently change what a viewer sees.
-//   2. device tier seed — now only the hard-off floor (`?debug` / `?quality=minimum` / a software-WebGL phone has
-//      no usable GPU path, so both effect modes read `off` there and the panel says so honestly). Everything the
+//   2. device seed — two things, and they are not the same kind of thing. The hard-off FLOOR (`?debug` /
+//      `?quality=minimum` / a software-WebGL phone has no usable GPU path, so both effect modes read `off` there
+//      and the panel says so honestly), which layers 3 and 4 cannot lift; and the iOS EFFECT SEED (both families
+//      start `off` on iPhone/iPad — see DEFAULT_SHADER_MODE below), which they can and must. Everything else the
 //      tier used to seed per-device is a shared product default now.
 //   3. localStorage — what this viewer last chose IN THE PANEL (`couchcoop.mirrorSettings.v1`). Only fields the
 //      viewer can actually set are stored, and only the field they touched is written (see persistMirrorSetting).
@@ -42,9 +44,11 @@ import {
   effectModeOverride,
   parseRenderQualityTier,
   particlesHardOff,
+  particlesSeedOff,
   renderQuality,
   RENDER_QUALITY_TIERS,
   shadersHardOff,
+  shadersSeedOff,
   type RenderQuality,
   type RenderQualityTier
 } from "@/render/quality";
@@ -87,8 +91,10 @@ export const EFFECT_MODES: readonly EffectMode[] = [
   "off",
 ] as const;
 
-// THE PRODUCT DEFAULTS for the two effect families — deliberately device-INDEPENDENT (the tier no longer seeds a
-// mode; see the layering note above and quality.ts' "what a tier still decides").
+// THE PRODUCT DEFAULTS for the two effect families — deliberately device-INDEPENDENT (the tier still seeds no
+// mode; see the layering note above and quality.ts' "what a tier still decides"). The one device answer that
+// reaches these families is the iOS seed immediately below, which picks between these constants and `off` for a
+// viewer who has never chosen — it does not redefine what either constant MEANS.
 //
 // BOTH families default to STATIC everywhere, desktop included: the real effect, rendered once at a pinned time, so
 // cards/glows/transitions look correct at ~zero ongoing GPU cost. Animated effects are the opt-in (the panel's
@@ -103,6 +109,26 @@ export const EFFECT_MODES: readonly EffectMode[] = [
 // device question (quality.ts: staticShaderScale / staticParticleScale, ½ / ¼ on a phone, full on a desktop).
 export const DEFAULT_SHADER_MODE: EffectMode = "static";
 export const DEFAULT_PARTICLE_MODE: EffectMode = "static";
+
+// THE ONE EXCEPTION, and it is a SEED rather than a second default: on iOS both families start `off`.
+//
+// Read the layering note above before reading this as a contradiction. The two constants are still what `static`
+// means on every device, and every LATER layer is untouched — the seed sits exactly where the constant sat, below
+// the viewer's saved choice and below `?shaders=`/`?particles=`, so an iPhone viewer who turns effects back on in
+// the panel keeps them, on that visit and every later one. What it is NOT is the `minimum` tier's hard-off lane,
+// which the panel cannot lift; the whole point of choosing a seed is that a player can disagree with it.
+//
+// WHY iOS and why now: WebKit there is being jetsam-killed on this page, and the measured population is particle
+// surfaces (quality.ts' shadersSeedOff/particlesSeedOff carries the numbers and, just as importantly, what they
+// do not prove). A device-specific first-visit default is the narrowest thing that could help; it costs a viewer
+// who disagrees one tap.
+function seededShaderMode(quality: RenderQuality): EffectMode {
+  return shadersSeedOff(quality) ? "off" : DEFAULT_SHADER_MODE;
+}
+
+function seededParticleMode(quality: RenderQuality): EffectMode {
+  return particlesSeedOff(quality) ? "off" : DEFAULT_PARTICLE_MODE;
+}
 
 // SpineSprite clip playback mode. **The product default is `static`** — every spine renders as a single
 // server-baked still frame, on every device. Animated spine clips are multi-MB per node and were the mirror's
@@ -638,14 +664,16 @@ export function createMirrorSettings(
     // pair it with `?shaders=`/`?particles=` depend on that.
     quality: parseRenderQualityTier(params.get("quality")) ?? saved.quality ?? DEFAULT_QUALITY_CHOICE,
     // `?shaders=` / `?particles=` win for the session (the documented way to A/B an effect from a link); then the
-    // viewer's saved choice; then the shared product default. The tier contributes ONE thing: the hard-off lane,
+    // viewer's saved choice; then the seeded product default (`static`, or `off` on iOS — seededShaderMode).
+    // Note the position of that last term: it is where the bare constant used to be, so a saved choice and a URL
+    // override both still outrank it. The device contributes one thing ABOVE all of them, the hard-off lane,
     // applied as a floor so the panel never offers a mode that physically cannot run.
     shaderMode: shadersHardOff(quality)
       ? "off"
-      : (effectModeOverride(search, "shaders") ?? saved.shaderMode ?? DEFAULT_SHADER_MODE),
+      : (effectModeOverride(search, "shaders") ?? saved.shaderMode ?? seededShaderMode(quality)),
     particleMode: particlesHardOff(quality)
       ? "off"
-      : (effectModeOverride(search, "particles") ?? saved.particleMode ?? DEFAULT_PARTICLE_MODE),
+      : (effectModeOverride(search, "particles") ?? saved.particleMode ?? seededParticleMode(quality)),
     effectModePinned: false,
     stretchEnabled: urlOffFlag(params, "stretch") ?? saved.stretchEnabled ?? true,
     raiseHeldCard: urlOffFlag(params, "raiseCard") ?? saved.raiseHeldCard ?? true,
