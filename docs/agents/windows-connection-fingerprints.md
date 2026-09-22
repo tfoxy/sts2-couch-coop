@@ -1,5 +1,10 @@
 # Windows connection fingerprints (Stage 2)
 
+> **Stage 3 exists now (2026-09-22).** Everything this document defers to "Stage 3 on physical Windows"
+> has a home: [windows-home-rig.md](windows-home-rig.md) — a real Windows 10 box with a real GPU, a real
+> Steam install and real Workshop mods, reachable over SSH. Go there for the product fingerprint, for
+> crash evidence, and for the Windows log paths this document could only confirm on a GPU-less guest.
+
 What a deliberately broken join looks like on Windows, measured rather than assumed. Companion to
 [local-network-access.md](local-network-access.md) and to the player-facing
 [phone-connection-troubleshooting.md](../workshop/phone-connection-troubleshooting.md).

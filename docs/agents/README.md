@@ -24,6 +24,8 @@ that answers your question**, not the whole file.
 | working on host-side render/encode cost | [host-render-cost-aug22.md](host-render-cost-aug22.md), [host-render-cost-aug22-round2.md](host-render-cost-aug22-round2.md) | — |
 | working on phone access, HTTPS, PWA, the public origin | [local-network-access.md](local-network-access.md) | — |
 | diagnosing a join failure on Windows, or touching a loopback probe timeout | [windows-connection-fingerprints.md](windows-connection-fingerprints.md) | — |
+| driving the **physical Windows** rig, or getting logs/crash evidence off it | [windows-home-rig.md](windows-home-rig.md) | `ssh win-home`, `scripts/windows/couchcoop-qa-bootstrap.ps1` |
+| chasing a crash that logged nothing **on Windows** | [windows-home-rig.md](windows-home-rig.md) §1 | event ID **1026** carries the managed stack; event 1000's module/offset is shared across unrelated managed crashes and must not be used to tell them apart |
 | interpreting or running the game-free macOS / iPhone integration checks | [steam-free-macos-iphone.md](steam-free-macos-iphone.md) | hosted proof boundaries, local opt-ins, artifact policy |
 | changing browser UI copy, locale selection, manifests, or offline-page text | [../browser-localization.md](../browser-localization.md) | — |
 | changing native in-game CouchCoop strings | [../native-localization.md](../native-localization.md) | — |
