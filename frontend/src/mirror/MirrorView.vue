@@ -1747,8 +1747,10 @@ const underlayStyle = computed(() => ({
    `.mirror-clip-self`, so this stays scoped to the geoclip node and cannot blank a child node's spine. */
 .mirror-geoclip-live > .mirror-spine-canvas,
 .mirror-geoclip-live > .mirror-spine-img,
+.mirror-geoclip-live > .mirror-spine-placeholder,
 .mirror-geoclip-live > .mirror-clip-self > .mirror-spine-canvas,
-.mirror-geoclip-live > .mirror-clip-self > .mirror-spine-img {
+.mirror-geoclip-live > .mirror-clip-self > .mirror-spine-img,
+.mirror-geoclip-live > .mirror-clip-self > .mirror-spine-placeholder {
   display: none;
 }
 
@@ -1761,6 +1763,25 @@ const underlayStyle = computed(() => ({
   top: 0;
   transform-origin: 0 0;
   pointer-events: none;
+}
+
+/* CREATURE PLACEHOLDER (mirror/creaturePlaceholder.ts) — the stand-in a creature or the shop merchant shows
+   while its baked art is late, after it has failed, or permanently on the hard-off tier where none is fetched.
+   The same placement contract as the two layers above, and no `scale()` in its transform: the renderer writes
+   the box in the spine node's OWN local units, so the node element's matrix already supplies the rig scale.
+
+   An <img>'s default `object-fit: fill` is doing real work here — the source is one fixed 200x200 image and
+   every creature's box is a different size and aspect, so it is STRETCHED on both axes to fill the box exactly
+   (which is what was asked for) rather than letter-boxed inside it. Both backends mount this same class, so this
+   one rule serves the DOM stage and the canvas stage's overlay alike. CouchCoop's own mirror chrome, not
+   @spirectl/presentation DOM. */
+.mirror-spine-placeholder {
+  position: absolute;
+  left: 0;
+  top: 0;
+  transform-origin: 0 0;
+  pointer-events: none;
+  object-fit: fill;
 }
 
 /* Aug-25 SPINE SUBTREE PAINT CULL. On a high-DPR phone (measured: Moto G86 / Chrome 151 / dpr 3.4876) Blink stops

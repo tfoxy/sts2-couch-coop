@@ -72,10 +72,21 @@ const BUILD = "cc-testbuild000001";
 const B = `?b=${BUILD}`;
 
 const ATLAS = (name: string): string => `/res/images/atlases/${name}.png${B}`;
+/**
+ * The warm chain's two non-atlas ends, in call order.
+ *
+ * The creature stand-in (`creaturePlaceholder.ts`) goes FIRST, ahead of every atlas: it was measured live
+ * mounting with `complete === false` when it rode the tail, which left the creature's box as empty as it had
+ * been without the feature — on precisely the cold load it exists for. The targeting-arrow halves stay at the
+ * tail, where a mid-combat aim can afford them.
+ */
+const PLACEHOLDER_FIRST = [`/res/images/monsters/the_adversary_placeholder.png${B}`];
 const ARROWS = [
   `/res/images/ui/combat/targeting_arrow_head.png${B}`,
   `/res/images/ui/combat/targeting_arrow_segment.png${B}`
 ];
+/** Everything `warmImage` should have been handed, in order, once the chain has run to completion. */
+const WARMED = [...PLACEHOLDER_FIRST, ...ARROWS];
 
 /** The full shipped priority list, in order (the SPEC of the order, not a copy of the module's array). */
 const NAMES = [
@@ -197,7 +208,7 @@ describe("prefetchMirrorImages scheduling", () => {
     drain();
 
     expect(preloadedUrls()).toEqual(ORDER);
-    expect(warmImage.mock.calls.map((call) => call[0])).toEqual(ARROWS);
+    expect(warmImage.mock.calls.map((call) => call[0])).toEqual(WARMED);
     expect(stats().list).toEqual(ORDER);
     expect(stats().index).toBe(ORDER.length);
     expect(stats().started).toBe(ORDER.length);
@@ -222,7 +233,10 @@ describe("prefetchMirrorImages scheduling", () => {
 
     flushIdle();
     expect(preloadedUrls()).toEqual([ATLAS("ui_atlas_0"), ATLAS("ui_atlas_1")]);
-    expect(warmImage).not.toHaveBeenCalled(); // the arrows are the LAST step, not a parallel one
+    // The stand-in rode the FIRST step, ahead of ui_atlas_0 — and nothing else has warmed: the arrows are the
+    // LAST step, not a parallel one. `warmImage` is not a page load, so neither end of the chain takes a slot
+    // from the one-page-in-flight rule this case exists to pin.
+    expect(warmImage.mock.calls.map((call) => call[0])).toEqual(PLACEHOLDER_FIRST);
   });
 
   it("falls back to a timer when the host has no requestIdleCallback (Safari)", () => {
@@ -268,7 +282,7 @@ describe("prefetchMirrorImages and the demand path", () => {
 
     expect(preloadedUrls()).toEqual(ORDER);
     expect(stats().failed).toBe(1);
-    expect(warmImage.mock.calls.map((call) => call[0])).toEqual(ARROWS);
+    expect(warmImage.mock.calls.map((call) => call[0])).toEqual(WARMED);
   });
 });
 
@@ -291,7 +305,7 @@ describe("?atlasPrefetch", () => {
 
     expect(preloadedUrls()).toEqual(ORDER.slice(0, 3));
     expect(stats().list).toEqual(ORDER.slice(0, 3));
-    expect(warmImage.mock.calls.map((call) => call[0])).toEqual(ARROWS);
+    expect(warmImage.mock.calls.map((call) => call[0])).toEqual(WARMED);
   });
 
   it("ignores junk and keeps the full shipped list", () => {
@@ -325,7 +339,7 @@ describe("prefetchMirrorImages and the host's atlas manifest", () => {
     expect(stats().list).toEqual(ORDER.filter((url) => url !== ATLAS("card_atlas_2")));
     expect(stats().absent).toBe(0);
     // …and the arrows still warm: dropping a page must not truncate the chain.
-    expect(warmImage.mock.calls.map((call) => call[0])).toEqual(ARROWS);
+    expect(warmImage.mock.calls.map((call) => call[0])).toEqual(WARMED);
   });
 
   it("keeps the shipped priority order across the pages that survive", () => {
@@ -368,7 +382,7 @@ describe("prefetchMirrorImages and the host's atlas manifest", () => {
     expect(stats().absent).toBe(1);
     expect(stats().started).toBe(ORDER.length - 1);
     expect(stats().failed).toBe(0);
-    expect(warmImage.mock.calls.map((call) => call[0])).toEqual(ARROWS);
+    expect(warmImage.mock.calls.map((call) => call[0])).toEqual(WARMED);
   });
 
   // A manifest for some OTHER directory says nothing about these pages, and a host that stops sending one has
@@ -424,7 +438,7 @@ describe("prefetchMirrorImages and the host's game build", () => {
     for (const url of preloadedUrls()) {
       expect(url).toContain(`?b=${BUILD}`);
     }
-    expect(warmImage.mock.calls.map((call) => call[0])).toEqual(ARROWS);
+    expect(warmImage.mock.calls.map((call) => call[0])).toEqual(WARMED);
   });
 
   // A host too old to send a token at all. Prefetching is speculative, so "we never learned the build" degrades

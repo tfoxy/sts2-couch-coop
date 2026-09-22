@@ -2,7 +2,18 @@
 // spineGeoclipTimeline owns playback and geoclip behavior. This leaf owns only DOM layer mechanism
 // plus clip request, cache and refcount orchestration on retained records.
 
-import type { MirrorNode } from "@/mirror/sceneTree";
+import { mirrorResourceUrl, type MirrorNode } from "@/mirror/sceneTree";
+import {
+  CREATURE_PLACEHOLDER_CLASS,
+  CREATURE_PLACEHOLDER_DELAY_MS,
+  CREATURE_PLACEHOLDER_RES,
+  creatureArtIsUnavailable,
+  creaturePlaceholderBox,
+  creaturePlaceholderKey,
+  isCreaturePlaceholderNode,
+  type PlaceholderBox,
+} from "@/mirror/creaturePlaceholder";
+import { pxCss } from "@/mirror/stageFit";
 import {
   isGeoclipPlaybackEnabled,
   isSpineClipNode,
@@ -23,6 +34,11 @@ export interface SpineLayerControllerPorts {
   thaw(canvas: HTMLCanvasElement | null): void;
   // This getter deliberately resolves the live timeline at each use: construction precedes timeline setup.
   timeline(): SpineGeoclipTimeline;
+  // The retained scene index. A creature's box is stated on a DIFFERENT node from the one that paints it (the
+  // creature root's `Hitbox`, the merchant button's own rect), so the stand-in cannot be placed from the spine
+  // node alone — see `creaturePlaceholder.ts`.
+  nodes(): ReadonlyMap<string, MirrorNode>;
+  childrenOf(id: string): readonly string[];
 }
 
 export interface SpineLayerController {
@@ -30,10 +46,167 @@ export interface SpineLayerController {
   updateLayer(record: RenderRecord, node: MirrorNode, deferHiddenLayers: boolean): void;
   setClip(record: RenderRecord, clip: LoadedSpineClip | null): void;
   setShownStill(record: RenderRecord, clip: LoadedSpineClip | null): void;
+  noteArtPainted(record: RenderRecord): void;
+  resetPlaceholder(record: RenderRecord): void;
   dropSeenUrls(record: RenderRecord): void;
 }
 
 export function createSpineLayerController(ports: SpineLayerControllerPorts): SpineLayerController {
+  // ---- CREATURE PLACEHOLDER -----------------------------------------------------------------------------------
+  //
+  // The stand-in a creature (or the shop merchant) shows while its baked art is late, after every fetch path for
+  // it has been refused, and permanently on the hard-off tier where none was ever requested. WHICH nodes and
+  // WHERE the box is live in `creaturePlaceholder.ts`, shared with the canvas backend; this half is mechanism.
+  //
+  // The deadline is a `setTimeout`, not a frame-scheduler wakeup. A screen carries a handful of creatures, and a
+  // node waiting on a bake is by definition producing no frames of its own to hang a deadline off — arming the
+  // stage's tick for it would be paying a repaint to discover that nothing has changed.
+
+  function clearPlaceholderTimer(record: RenderRecord): void {
+    if (record.placeholderTimer !== null) {
+      clearTimeout(record.placeholderTimer);
+      record.placeholderTimer = null;
+    }
+  }
+
+  /** Take the `<img>` down but keep the wait/latch state — the "art arrived, or is not due yet" case. */
+  function detachPlaceholder(record: RenderRecord): void {
+    const img = record.placeholderImg;
+    if (img === null) {
+      return;
+    }
+    record.placeholderImg = null;
+    record.placeholderKey = null;
+    img.remove();
+    const at = record.subLayers.indexOf(img);
+    if (at >= 0) {
+      record.subLayers.splice(at, 1);
+    }
+  }
+
+  /** Forget everything about the stand-in: a new clip identity, or the node ceasing to be a spine node. */
+  function resetPlaceholder(record: RenderRecord): void {
+    clearPlaceholderTimer(record);
+    detachPlaceholder(record);
+    record.placeholderArmedMs = null;
+    record.placeholderFailed = false;
+  }
+
+  /** Start (or restart) the grace period. Called wherever a request for a fresh clip identity goes out. */
+  function armPlaceholder(record: RenderRecord): void {
+    clearPlaceholderTimer(record);
+    record.placeholderArmedMs = ports.now();
+    record.placeholderFailed = false;
+  }
+
+  function mountPlaceholder(record: RenderRecord, box: PlaceholderBox): void {
+    const el = record.el;
+    if (el === null) {
+      return;
+    }
+    let img = record.placeholderImg;
+    if (img === null) {
+      img = document.createElement("img");
+      img.className = CREATURE_PLACEHOLDER_CLASS;
+      img.decoding = "async";
+      img.alt = "";
+      img.src = mirrorResourceUrl(CREATURE_PLACEHOLDER_RES);
+      record.placeholderImg = img;
+      record.placeholderKey = null;
+      // Attached beside the clip layer when there is one, else straight onto the element. Either way the next
+      // walk's ordering pass puts it in its deterministic slot (see subLayers' paintEls) — this only has to be
+      // right for a mount that happens with NO walk behind it, which is the normal case here: the deadline fires
+      // from a timer on a settled screen.
+      const sibling = record.spineLayer;
+      if (sibling !== null && sibling.parentNode !== null) {
+        sibling.parentNode.insertBefore(img, sibling.nextSibling);
+      } else {
+        el.appendChild(img);
+      }
+    }
+    // LAYOUT SPACE (stageFit.ts): the box is already in the spine node's own local units, so the element's own
+    // matrix supplies the rig scale and no `scale()` belongs here. An `<img>`'s default `object-fit: fill` is
+    // what stretches the 200x200 source to the creature's box exactly.
+    const key = creaturePlaceholderKey(box);
+    if (record.placeholderKey !== key) {
+      record.placeholderKey = key;
+      img.style.width = pxCss(box.width);
+      img.style.height = pxCss(box.height);
+      img.style.transform = `translate(${pxCss(box.x)}, ${pxCss(box.y)})`;
+    }
+  }
+
+  /**
+   * Reflect this node's CURRENT stand-in state. Idempotent and safe to call from anywhere — a reconcile, a fetch
+   * rejection, or the deadline timer — because it derives everything from the record plus the live scene index.
+   */
+  function syncPlaceholder(record: RenderRecord, node: MirrorNode, deferHiddenLayers = false): void {
+    if (record.el === null || !isCreaturePlaceholderNode(node)) {
+      resetPlaceholder(record);
+      return;
+    }
+    // Under a hidden ancestor, don't stand one UP — the same rule (and the same reason) as the clip layer below:
+    // the element, the image decode and the placement are all for pixels inside a `display:none` subtree. An
+    // already-mounted stand-in is left alone, and a reveal re-dirties the node so this runs again.
+    if (deferHiddenLayers && record.placeholderImg === null) {
+      return;
+    }
+    // PIXELS ON SCREEN BEAT EVERYTHING, the failure latch included. An animation change re-requests the clip
+    // and that request can fail — but the PREVIOUS animation's still is still painting (the decode gate keeps
+    // it until a replacement has decoded), so the creature is visible and covering it with a stand-in would be
+    // a regression dressed as a fallback. The stand-in is for a creature that is NOT THERE.
+    if (record.spineArtPainted) {
+      clearPlaceholderTimer(record);
+      detachPlaceholder(record);
+      return;
+    }
+    // PERMANENT: either every fetch path for this identity was refused, or the tier never asks for one at all.
+    if (!record.placeholderFailed && !creatureArtIsUnavailable(node)) {
+      if (record.placeholderArmedMs === null) {
+        clearPlaceholderTimer(record);
+        detachPlaceholder(record);
+        return;
+      }
+      const remaining = record.placeholderArmedMs + CREATURE_PLACEHOLDER_DELAY_MS - ports.now();
+      if (remaining > 0) {
+        detachPlaceholder(record);
+        if (record.placeholderTimer === null) {
+          record.placeholderTimer = setTimeout(() => {
+            record.placeholderTimer = null;
+            // Re-read the node, and re-read the record's id to find it: the deadline outlives the walk that
+            // armed it, and a pooled shell can have been ADOPTED onto a different id in between (which is also
+            // why the freshly-read node is what the decision runs on, not a captured one). A node that has left
+            // the scene simply has nothing to paint into any more.
+            const fresh = ports.nodes().get(record.id);
+            if (fresh !== undefined) {
+              syncPlaceholder(record, fresh);
+            }
+          }, remaining);
+        }
+        return;
+      }
+    }
+    clearPlaceholderTimer(record);
+    const box = creaturePlaceholderBox(ports.nodes(), ports.childrenOf, node);
+    if (box === null) {
+      // The creature's box has not streamed yet (a keyframe can land the rig before its bounds). Paint nothing
+      // and ask again next reconcile rather than guessing an extent.
+      detachPlaceholder(record);
+      return;
+    }
+    mountPlaceholder(record, box);
+  }
+
+  /** Spine pixels committed on this record — see `RenderRecord.spineArtPainted`. */
+  function noteArtPainted(record: RenderRecord): void {
+    if (record.spineArtPainted) {
+      return;
+    }
+    record.spineArtPainted = true;
+    clearPlaceholderTimer(record);
+    detachPlaceholder(record);
+  }
+
   // Swap this node's spine paint element between the <canvas> (dynamic clips) and an <img> (a
   // single-frame still). The outgoing element is REPLACED in place, so paint order survives a swap that lands
   // asynchronously (a clip resolving between walks) — and `record.subLayers`, which the end-of-walk reorder pass
@@ -139,8 +312,13 @@ export function createSpineLayerController(ports: SpineLayerControllerPorts): Sp
         record.spinePlacementKey = null;
         record.spineStillPainted = false;
         record.spineAnimatedShown = false;
+        record.spineArtPainted = false;
         ports.timeline().remove(record); // a parked clip that lost its layer must not re-arm on reveal
       }
+      // …and only NOW decide about the stand-in. This branch is reached for two very different nodes: one that
+      // stopped being a spine node (no placeholder — `syncPlaceholder` resets it), and a creature on the hard-off
+      // tier, which never had a clip layer to tear down and whose stand-in is the whole of its rendering.
+      syncPlaceholder(record, node, deferHiddenLayers);
       return;
     }
 
@@ -260,6 +438,10 @@ export function createSpineLayerController(ports: SpineLayerControllerPorts): Sp
       // The previous animation's geometry cannot survive an identity change. The desired-state check below
       // re-arms only after the new identity is fully recorded.
       ports.timeline().releaseGeoclip(record);
+      // The creature stand-in's grace period starts HERE, beside the request it is waiting on, so "one second
+      // since the real art started loading" means exactly that. A failure latch from the previous identity is
+      // cleared with it: the new anim gets its own chance.
+      armPlaceholder(record);
       // A pre-armed skel retry (memoised address, above) goes straight to the working `&skel=` url — which also
       // skips the still-first placeholder, since that would just be another 404 for this address.
       const fetchRaster = (): void =>
@@ -272,6 +454,7 @@ export function createSpineLayerController(ports: SpineLayerControllerPorts): Sp
     if (geoclipEnabled && record.geoclipState === null && !record.geoclipDisabled) {
       ports.timeline().armGeoclip(record, node);
     }
+    syncPlaceholder(record, node, deferHiddenLayers);
   }
 
   // The ONLY place `record.spineClip` is assigned: refcounts the decoded clip so an LRU eviction can never close
@@ -455,13 +638,13 @@ export function createSpineLayerController(ports: SpineLayerControllerPorts): Sp
         // (a distinct url → the extractor bakes straight from the skeleton). Otherwise the node stays blank
         // (loadSpineClip already dropped the cache entry so a later anim re-tries). Bounded via record.spineSkelRetried.
         if (
-          record.spineAnim === anim &&
-          record.spineSkin === skin &&
-          record.spineStillT === stillT &&
-          record.spineLayer &&
-          !record.spineSkelRetried &&
-          node.spineSkelResPath
+          record.spineAnim !== anim ||
+          record.spineSkin !== skin ||
+          record.spineStillT !== stillT
         ) {
+          return; // a stale identity's failure says nothing about the one on screen
+        }
+        if (record.spineLayer && !record.spineSkelRetried && node.spineSkelResPath) {
           record.spineSkelRetried = true;
           // Remember the address so a later identity (the chest's open animation, a re-entered map) requests the
           // working `&skel=` url first time. Marked on the RETRY, not on its success: the scene lane has already
@@ -471,10 +654,15 @@ export function createSpineLayerController(ports: SpineLayerControllerPorts): Sp
             skel: node.spineSkelResPath,
             retry: record.spineRetried,
           });
+          return;
         }
+        // THE LAST FETCH PATH FOR THIS IDENTITY IS GONE. Before the stand-in this was where a creature went
+        // permanently blank; now it is the latch that makes the stand-in permanent rather than a one-second wait.
+        record.placeholderFailed = true;
+        syncPlaceholder(record, node);
       },
     );
   }
 
-  return { setMechanism, updateLayer, setClip, setShownStill, dropSeenUrls };
+  return { setMechanism, updateLayer, setClip, setShownStill, noteArtPainted, resetPlaceholder, dropSeenUrls };
 }

@@ -17,9 +17,9 @@ import { DEFAULT_BBCODE_TAGS } from "@spirectl/presentation/render";
 
 import { affineCss, affineMul, affineMulInto, nodeMatrix, nodeMatrixInto, type Affine } from "@/mirror/affine";
 import { isCardTrailNode, isCardTrailRootNode } from "@/mirror/cardTrail";
+import { isSpineSurfaceNode } from "@/mirror/creaturePlaceholder";
 import { ninePatchAtlasSlices as computeNinePatchAtlasSlices } from "@/mirror/ninePatch";
 import { isShaderInputNode, isWebglShaderNode, stretchModeToBackgroundSize } from "@/mirror/shaderAttributes";
-import { isSpineClipNode } from "@/mirror/spineAttributes";
 import { pxCss, scaleAffineTranslationInPlace } from "@/mirror/stageFit";
 import { uiScalingEnabled } from "@/mirror/uiScaling";
 import { renderQuality } from "@/render/quality";
@@ -276,7 +276,8 @@ export function nodePaintsContent(node: MirrorNode, effectiveOpacity: number): b
   if (node.text != null) {
     return true;
   }
-  if (isSpineClipNode(node)) {
+  // A creature/merchant rig paints EITHER its baked clip or the stand-in for one — see `isSpineSurfaceNode`.
+  if (isSpineSurfaceNode(node)) {
     return true;
   }
   if (isWebglShaderNode(node) || node.shaderId != null) {
@@ -391,7 +392,10 @@ export function placementBox(node: MirrorNode): { x: number; y: number; width: n
     node.linePoints != null ||
     isCardTrailNode(node) ||
     isCardTrailRootNode(node) ||
-    isSpineClipNode(node)
+    // A stand-in is placed in the spine node's OWN local space, so that node must carry its transform even on a
+    // tier that requests no clip — without the zero box the element is a pass-through group and the stand-in
+    // would land in the parent's space instead. See `isSpineSurfaceNode`.
+    isSpineSurfaceNode(node)
       ? { x: 0, y: 0, width: 0, height: 0 }
       : null)
   );

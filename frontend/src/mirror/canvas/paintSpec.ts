@@ -41,6 +41,7 @@ import type { GlyphsView, NinePatchView, PolylineView, QuadView } from "@godot-s
 
 import { affineMul, nodeMatrix, type Affine } from "@/mirror/affine";
 import { isCardTrailNode, isCardTrailRootNode, type TrailStrip } from "@/mirror/cardTrail";
+import { isSpineSurfaceNode } from "@/mirror/creaturePlaceholder";
 import {
   atlasFitAffine,
   clipCornerRadius,
@@ -60,7 +61,6 @@ import {
   stretchModeToBackgroundSize
 } from "@/mirror/shaderAttributes";
 import type { MirrorColor, MirrorNode } from "@/mirror/sceneTree";
-import { isSpineClipNode } from "@/mirror/spineAttributes";
 import { fxAxisScale } from "@/mirror/canvas/fxPixelRatio";
 import { SPINE_KEY_PREFIX } from "@/mirror/canvas/spineSurfaces";
 import { TEXT_KEY_PREFIX } from "@/mirror/canvas/textSurfaces";
@@ -337,7 +337,9 @@ export function overlayKindOf(node: MirrorNode): OverlayKind | null {
   if (node.text != null) {
     return "text";
   }
-  if (isSpineClipNode(node)) {
+  // The stand-in rides the SPINE surface — the same overlay `<img>` mechanism, in the same node, so the two can
+  // never both paint. See `isSpineSurfaceNode`.
+  if (isSpineSurfaceNode(node)) {
     return "spine";
   }
   if (node.particleSpec != null) {

@@ -718,6 +718,12 @@ export function createDomSubLayers(ports: DomSubLayerPorts): DomSubLayers {
     if (record.spineLayer) {
       paintEls.push(record.spineLayer);
     }
+    // The creature stand-in takes the slot immediately IN FRONT of the clip layer it substitutes for. The two are
+    // never up at the same time (see creaturePlaceholder.ts), so the order only has to be deterministic — and on
+    // the hard-off tier there is no clip layer at all, which is why this is its own slot rather than a swap.
+    if (record.placeholderImg) {
+      paintEls.push(record.placeholderImg);
+    }
     for (const span of record.npSlices) {
       paintEls.push(span);
     }

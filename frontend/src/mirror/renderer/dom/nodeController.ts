@@ -10,7 +10,7 @@ import { MIRROR_DESIGN_HEIGHT, MIRROR_DESIGN_WIDTH, nodeTypeLeaf, type MirrorNod
 import { isRemoteFollower } from "@/mirror/renderer/interactionPolicy";
 import type { MirrorWalkStats } from "@/mirror/renderer/walkStats";
 import { particleVisibleRect, particleVisibleRectAttr } from "@/mirror/particleVisibleRect";
-import { isSpineClipNode } from "@/mirror/spineAttributes";
+import { isSpineSurfaceNode } from "@/mirror/creaturePlaceholder";
 import { uvWindowAttr, visibleUvWindow } from "@/mirror/visibleWindow";
 import { CARD_FLIGHT_VFX_TYPE, EMPTY_ELS } from "./flightTrailPolicy";
 import type { RenderRecord, WalkCtx } from "./recordModel";
@@ -328,6 +328,12 @@ export function createNodeController(p: NodeControllerPorts): NodeController {
       spinePlacementKey: null,
       spineStillPainted: false,
       spineAnimatedShown: false,
+      spineArtPainted: false,
+      placeholderImg: null,
+      placeholderKey: null,
+      placeholderArmedMs: null,
+      placeholderTimer: null,
+      placeholderFailed: false,
       geoclipState: null,
       geoclipDisabled: false,
       npSlices: [],
@@ -659,7 +665,7 @@ export function createNodeController(p: NodeControllerPorts): NodeController {
   function needsOwnEl(node: MirrorNode): boolean {
     return node.localRect != null || node.text != null || node.clipChildren > 0 ||
       node.particleSpec != null || node.linePoints != null ||
-      isCardTrailNode(node) || isSpineClipNode(node);
+      isCardTrailNode(node) || isSpineSurfaceNode(node);
   }
 
   // Disposal deliberately follows elementLifecycle plus the renderer's removeEl sweep, so teardown can still map owners.

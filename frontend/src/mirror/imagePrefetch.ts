@@ -49,6 +49,7 @@
 import { whenAssetVersion } from "@/join/assetVersion";
 import { atlasPageSize, preloadAtlas, whenAtlasSettled } from "@/mirror/atlasBaker";
 import { mirrorResourceUrl } from "@/mirror/sceneTree";
+import { CREATURE_PLACEHOLDER_RES } from "@/mirror/creaturePlaceholder";
 import { warmImage } from "@/mirror/textureCache";
 import type { BrowserAtlasManifestDescriptor } from "@/protocol/browserEnvelope";
 
@@ -66,6 +67,19 @@ const PREFETCH_ATLASES = [
   "res://images/atlases/relic_outline_atlas.png",
   "res://images/atlases/potion_outline_atlas.png"
 ] as const;
+
+// THE CREATURE STAND-IN (creaturePlaceholder.ts) IS WARMED FIRST — ahead of every atlas.
+//
+// LIVE-FOUND, 2026-09-21. On a first-ever page load the stand-in's own `<img>` mounted with `complete === false`
+// and `naturalWidth === 0`: the element was there, and the creature's box was as empty as it had been without
+// the feature. The stand-in exists precisely for a cold load, so warming it BEHIND ~12 atlas pages of megabytes
+// made it late exactly when it was the whole point. It is 12 KB against those megabytes, so moving it to the
+// front of the chain costs the atlases nothing measurable — and on the hard-off tier it is the only creature
+// image the page will ever load.
+//
+// It still waits for the build token like everything else here: `mirrorResourceUrl` stamps `?b=`, so warming
+// before the token lands would fetch a DIFFERENT url from the one the element later asks for, and warm nothing.
+const PREFETCH_FIRST = [CREATURE_PLACEHOLDER_RES] as const;
 
 // Not atlases: the targeting arrow is assembled from two whole images, so it warms through the ordinary texture
 // cache (one Image per url, no region cropping). Warmed as the chain's LAST step — same priority argument.
@@ -301,7 +315,20 @@ function beginPrefetchWalk(): void {
   }
   const startedAt = now();
   let at = 0;
+  let warmedFirst = false;
   const step = (): void => {
+    // The creature stand-in, ahead of the first atlas — see PREFETCH_FIRST. INSIDE the idle step and BEHIND the
+    // `planned === null` return above, both deliberately: this module's contract is that it requests nothing on
+    // the caller's task and that `?atlasPrefetch=off` prefetches nothing at all, and a 12 KB image is not a
+    // reason to make it lie about either. It rides in the same slot as the first page rather than taking a slot
+    // of its own, on the same footing as the arrows at the tail: `warmImage` is not a page load, so the
+    // one-page-in-flight rule has nothing to say about it.
+    if (!warmedFirst) {
+      warmedFirst = true;
+      for (const path of PREFETCH_FIRST) {
+        warmImage(mirrorResourceUrl(path));
+      }
+    }
     if (at >= planned.length) {
       for (const path of PREFETCH_IMAGES) {
         warmImage(mirrorResourceUrl(path));

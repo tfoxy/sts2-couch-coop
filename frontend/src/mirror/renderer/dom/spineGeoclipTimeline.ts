@@ -30,6 +30,8 @@ export interface SpineGeoclipTimelinePorts {
   setMechanism(record: RenderRecord, mode: "canvas" | "img"): void;
   setShownStill(record: RenderRecord, clip: LoadedSpineClip | null): void;
   applyRasterPlacement(record: RenderRecord, clip: LoadedSpineClip): void;
+  /** Spine pixels just committed on this record — see `RenderRecord.spineArtPainted`. */
+  noteArtPainted(record: RenderRecord): void;
 }
 
 export interface SpineGeoclipTimeline {
@@ -128,6 +130,7 @@ export function createSpineGeoclipTimeline(ports: SpineGeoclipTimelinePorts): Sp
       record.spinePlacementKey = key;
       applyStillPlacement(img, w, h, tx, ty, scale);
       ports.setShownStill(record, clip);
+      ports.noteArtPainted(record); // real pixels are on screen — retire any creature stand-in
       mirrorWalkStats.spineStillCommits += 1;
     });
   }
@@ -181,6 +184,7 @@ export function createSpineGeoclipTimeline(ports: SpineGeoclipTimelinePorts): Sp
     ports.noteCanvasRepaint(canvas);
     ctx.clearRect(0, 0, canvas.width, canvas.height);
     ctx.drawImage(frame.bitmap, frame.offsetX, frame.offsetY);
+    ports.noteArtPainted(record); // ditto — a blitted frame retires the creature stand-in
   }
 
   function armGeoclip(record: RenderRecord, node: MirrorNode): void {
@@ -228,6 +232,7 @@ export function createSpineGeoclipTimeline(ports: SpineGeoclipTimelinePorts): Sp
       state.frame = -1;
       el.appendChild(mounted.el);
       el.classList.add(GEOCLIP_LIVE_CLASS);
+      ports.noteArtPainted(record); // geometry is mounted — retire the creature stand-in with it
       if (state.clip.frames.length > 1) {
         activeSpine.add(record);
         ports.schedule();

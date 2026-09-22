@@ -1,0 +1,35 @@
+schemaVersion: spirectl.fixture/v0
+name: knights-elite-4p
+description: >-
+  Four players against the KNIGHTS_ELITE encounter (Knight Gang) — eight creature rigs on one screen once the
+  Necrobinder's summon is up, which is the densest creature layout the mirror has to render.
+
+  Authored for the creature-placeholder QA leg (mirror/creaturePlaceholder.ts). A cold host has to bake eight
+  `/spines/` stills before the screen is complete, so this is where the stand-in's one-second deadline is
+  actually observable, and under `?quality=off` it is where every creature box is filled by the stand-in at
+  once. Four distinct characters so each player's box is a different size and the stretch-to-fit is visible
+  rather than assumed.
+
+  THE 4-PLAYER SHOP IS REACHED FROM HERE, not from a fixture of its own. spirectl's fixture loader gives the
+  shop screen `PlayerRule::SinglePlayer` (only combat, event, treasure, rest-site and rewards accept a
+  multi-player roster), so a `currentRoom.shop` fixture with four players is refused at validation. Load this
+  one and then jump:
+
+      sts2 dev fixture load tests/fixtures/knights-elite-4p.sts2.fixture.yaml
+      sts2 --mode dev dev console room Shop
+
+  which is how the shop evidence under `.sts2/artifacts/creature-placeholder/` was captured.
+
+  A `run:` fixture always loads through the no-ENet singleplayer path, so this is safe to load into an isolated
+  instance beside a live host (it never touches the ENet port).
+run:
+  seed: knights-elite-4p
+  currentActIndex: 0
+  players:
+    - characterId: IRONCLAD
+    - characterId: SILENT
+    - characterId: DEFECT
+    - characterId: NECROBINDER
+  currentRoom:
+    combat:
+      encounterId: KNIGHTS_ELITE
