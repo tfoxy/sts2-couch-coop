@@ -237,6 +237,18 @@ describe("createMirrorSettings — URL overrides", () => {
     expect(build(quality(), "").spineMode).toBe("static");
   });
 
+  // BROWSER GAMEPAD: on by default everywhere — a pad the browser can see is a pad the player meant to use, and
+  // on the plain-HTTP LAN origin there is no pad to see at all (the API is secure-context only). `?gamepad=off`
+  // is the one lever, and nothing is saved (see the denylist).
+  it("seeds the gamepad capture ON, with `?gamepad=off` the only way to hold it off", () => {
+    expect(build(quality(), "").gamepad).toBe(true);
+    expect(build(quality(), "?gamepad=off").gamepad).toBe(false);
+    expect(build(quality(), "?gamepad=on").gamepad).toBe(true);
+    expect(build(quality(), "?gamepad").gamepad).toBe(true);
+    expect(NEVER_PERSISTED_SETTING_KEYS as readonly string[]).toContain("gamepad");
+    expect(PERSISTED_SETTING_KEYS as readonly string[]).not.toContain("gamepad");
+  });
+
   it("returns a reactive store whose mutations propagate to derived state", () => {
     const s = build();
     expect(isReactive(s)).toBe(true);

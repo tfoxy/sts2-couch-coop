@@ -45,12 +45,19 @@ export type MirrorClientStatus = "connecting" | "connected" | "disconnected";
 // comma-separated `modifiers`, `pressed`: down/up, omitted = a tap). Mirrors the host's BrowserInputRequestEnvelope
 // (which still ALSO accepts `elementId`/offset for the spirectl CLI — the mirror client just never sends them).
 export interface MirrorInputMessage {
-  kind: "hover" | "click" | "key";
+  // `pad` is the BROWSER GAMEPAD leg (gamepadCapture.ts): a device-neutral controller token in `input` plus the
+  // `pressed` edge, and nothing else — no coordinate, because a pad press is not a place on the stage. The host
+  // names the game's own abstract controller input from the token, so the seat enters native controller mode.
+  kind: "hover" | "click" | "key" | "pad";
   button?: "left" | "right" | "middle" | "wheel-up" | "wheel-down";
   coordX?: number;
   coordY?: number;
   key?: string;
   modifiers?: string;
+  // The `pad` kind's token (`faceSouth`, `dpadUp`, `leftTrigger`, `stickLeft`, … — see gamepadCapture's PadToken).
+  // OPTIONAL, and set by nothing but that kind, so every pointer/keyboard message serialises byte-identically to
+  // the pre-gamepad wire. C# twin: BrowserInputRequestEnvelope.Input.
+  input?: string;
   pressed?: boolean;
   // R10 WS-E — COALESCED WHEEL TICKS. How many identical notches this ONE message stands for. The eager-scroll
   // wheel path folds every notch accumulated within an animation frame into a single send (the host injects one

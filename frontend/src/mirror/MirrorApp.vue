@@ -9,6 +9,7 @@ import SettingsGearButton from "@/components/SettingsGearButton.vue";
 import { useFullscreen } from "@/composables/useFullscreen";
 import { shouldUseFixedChrome, usePortraitViewport } from "@/composables/usePortraitViewport";
 import BrowserAdvisory from "@/join/BrowserAdvisory.vue";
+import GamepadAdvisory from "@/join/GamepadAdvisory.vue";
 import IosInstallOverlay from "@/join/IosInstallOverlay.vue";
 import { REPRO_UI_ENABLED } from "@/mirror/buildFlags";
 import { reproRecorder } from "@/mirror/reproRecorder";
@@ -1455,6 +1456,11 @@ onBeforeUnmount(() => {
            the advisory owns its own). -->
       <div class="mirror-join-advisory">
         <BrowserAdvisory />
+        <!-- The GAMEPAD advisory shares this wrapper (and costs exactly nothing when it has nothing to say): a
+             controller only works on the secure origins, and the moment to say so is BEFORE the player joins,
+             while the host's other QR rows are still one screen away. Both own their own top margin, so the two
+             stack correctly on the rare browser that earns both lines. -->
+        <GamepadAdvisory />
       </div>
       <!-- F3 — the seat viewer's WAITING screen, in the picker's place. `?name=Ann` on a host screen with no seat
            to give (main menu / singleplayer character select / singleplayer run): there is nothing to pick, no

@@ -3,9 +3,12 @@ import { afterEach, describe, expect, it } from "vitest";
 import {
   BROWSER_ADVISORY_DISMISSED_STORAGE_KEY,
   computeGenieTransform,
+  GAMEPAD_ADVISORY_DISMISSED_STORAGE_KEY,
+  gamepadRequestedByUrl,
   IOS_INSTALL_DISMISSED_STORAGE_KEY,
   IOS_INSTALL_FORCED_UA,
   iosMajorVersion,
+  isControllerFirstBrowser,
   isRunningStandalone,
   isStandaloneEnv,
   __setIosInstallForceForTest,
@@ -13,9 +16,11 @@ import {
   readDismissedFlag,
   readDisplayEnv,
   readElementFullscreenSupported,
+  readGamepadAdvisoryEnv,
   readIosInstallOverlayEnv,
   shouldRecommendBrowser,
   shouldShowBrowserAdvisory,
+  shouldShowGamepadAdvisory,
   shouldShowIosInstallHint,
   shouldShowIosInstallOverlay,
   showsOpenAsWebAppToggle,
@@ -114,6 +119,79 @@ describe("browser advisory", () => {
     expect(shouldShowBrowserAdvisory({ userAgent: SAMSUNG_UA })).toBe(true);
     expect(shouldShowBrowserAdvisory({ userAgent: SAMSUNG_UA, dismissed: true })).toBe(false);
     expect(shouldShowBrowserAdvisory({ userAgent: CHROME_ANDROID_UA })).toBe(false);
+  });
+});
+
+// The GAMEPAD advisory. `navigator.getGamepads` is secure-context only, so on the default plain-HTTP LAN join a
+// controller is invisible to the page — indistinguishable, to the player, from a broken feature. These pin WHEN
+// the one line of advice is worth showing, and (more importantly) when it is not.
+describe("gamepad advisory", () => {
+  const insecure = { secureContext: false, gamepadApi: false, padExpected: true } as const;
+
+  it("reads the `?gamepad=` param as the player SAYING a pad is in play", () => {
+    expect(gamepadRequestedByUrl("?gamepad")).toBe(true);
+    expect(gamepadRequestedByUrl("?gamepad=on")).toBe(true);
+    expect(gamepadRequestedByUrl("?name=Ann&gamepad=1")).toBe(true);
+    // `off` is the opposite request — a player switching the pad path off must not be advised to chase it.
+    expect(gamepadRequestedByUrl("?gamepad=off")).toBe(false);
+    expect(gamepadRequestedByUrl("?name=Ann")).toBe(false);
+    expect(gamepadRequestedByUrl("")).toBe(false);
+    expect(gamepadRequestedByUrl(null)).toBe(false);
+  });
+
+  it("sniffs the Steam client's browser, and nothing else", () => {
+    expect(isControllerFirstBrowser(`${DESKTOP_UA} Valve Steam GameOverlay/1758400000`)).toBe(true);
+    expect(isControllerFirstBrowser("Mozilla/5.0 (X11; Linux x86_64; SteamOS) Chrome/126.0.0.0")).toBe(true);
+    // A Deck running Chrome/Firefox as a non-Steam app reports an ordinary Linux UA: a MISS here is the status
+    // quo (`?gamepad=on` still reaches the advice), which is why the sniff is allowed to be partial.
+    expect(isControllerFirstBrowser(DESKTOP_UA)).toBe(false);
+    expect(isControllerFirstBrowser(CHROME_ANDROID_UA)).toBe(false);
+    expect(isControllerFirstBrowser(null)).toBe(false);
+  });
+
+  it("advises only where the player can act: a pad expected, an insecure page, no API", () => {
+    expect(shouldShowGamepadAdvisory(insecure)).toBe(true);
+    expect(shouldShowGamepadAdvisory({ ...insecure, dismissed: true })).toBe(false);
+    // Nobody signalled a pad — every ordinary phone on the LAN QR stays silent.
+    expect(shouldShowGamepadAdvisory({ ...insecure, padExpected: false })).toBe(false);
+    // Already secure: the pad path is available, so there is nothing to advise.
+    expect(shouldShowGamepadAdvisory({ ...insecure, secureContext: true })).toBe(false);
+    // Insecure but the API is there anyway (an engine that never gated it): the pad works, saying otherwise
+    // would send the player to another origin for nothing.
+    expect(shouldShowGamepadAdvisory({ ...insecure, gamepadApi: true })).toBe(false);
+  });
+
+  it("lifts the live inputs, and treats an unknown security state as secure (say nothing)", () => {
+    const deck = {
+      navigator: { userAgent: `${DESKTOP_UA} Valve Steam GameOverlay/1`, standalone: false },
+      window: { matchMedia: () => ({ matches: false }) as MediaQueryList, isSecureContext: false },
+      storage: fakeStorage(),
+      search: ""
+    };
+    expect(readGamepadAdvisoryEnv(deck)).toEqual({
+      secureContext: false,
+      gamepadApi: false,
+      padExpected: true,
+      dismissed: false
+    });
+    expect(shouldShowGamepadAdvisory(readGamepadAdvisoryEnv(deck))).toBe(true);
+
+    // A page that HAS the API is reported as having it, whatever else is true.
+    const withApi = { ...deck, navigator: { ...deck.navigator, getGamepads: () => [] } };
+    expect(readGamepadAdvisoryEnv(withApi).gamepadApi).toBe(true);
+
+    // No window at all (a non-DOM env): unknown security reads as secure, so nothing is advised.
+    expect(readGamepadAdvisoryEnv({ navigator: null, window: null, storage: null, search: "?gamepad=on" })).toEqual({
+      secureContext: true,
+      gamepadApi: false,
+      padExpected: true,
+      dismissed: false
+    });
+
+    // Its own dismissal key, separate from the browser advisory's.
+    const dismissed = { ...deck, storage: fakeStorage({ [GAMEPAD_ADVISORY_DISMISSED_STORAGE_KEY]: "1" }) };
+    expect(readGamepadAdvisoryEnv(dismissed).dismissed).toBe(true);
+    expect(readBrowserAdvisoryEnv(dismissed).dismissed).toBe(false);
   });
 });
 

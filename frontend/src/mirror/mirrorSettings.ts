@@ -161,6 +161,13 @@ export interface MirrorSettings {
   // Purely client-side on BOTH stage backends — nothing is sent to the game, and the DOM hit boxes / the
   // canvas `mGame` never move (only the view-scale INPUT registry, which is empty with the switch off).
   uiScaling: boolean;
+  // CLIENT input (browser-only) — the BROWSER GAMEPAD capture (gamepadCapture.ts). On, a pad attached to this
+  // device replays its controller inputs into this viewer's seat and the seat enters the game's native controller
+  // mode. Default ON everywhere: a pad the browser can see is a pad the player meant to use, and on the plain-HTTP
+  // LAN origin there is no pad to see at all (the API is secure-context only), so the default costs nothing there.
+  // `?gamepad=off` is the lever for the one case that wants it off — a pad that is driving something else. Read
+  // live by the capture, so a flip lands on the next frame.
+  gamepad: boolean;
   // CLIENT render (browser-only) — the spine playback mode (see SpineMode). Seeded from the DEV-only
   // `?spineMode=`, default "static" (server-baked stills everywhere; no panel control, never persisted).
   // Consulted at the two spine gates in spineAttributes.ts; MirrorView forces a full re-walk on change so live
@@ -297,9 +304,13 @@ export const PERSISTED_SETTING_KEYS: readonly PersistedSettingKey[] = [
 //   panelOpen/Anchor — momentary UI (and the anchor is a measured pixel of a layout that no longer exists).
 //   effectModePinned — a per-session flag for the adaptive controller, not a preference.
 //   spineMode        — dev-only `?spineMode=` override; no panel control, so nothing user-set to save.
+//   gamepad          — same shape as spineMode: a `?gamepad=off` lever with no panel control (see the field), so
+//                      there is no viewer-set value to remember. It moves to the saved set the day the panel
+//                      grows a checkbox for it.
 export const NEVER_PERSISTED_SETTING_KEYS = [
   "effectModePinned",
   "spineMode",
+  "gamepad",
   "freezeParticles",
   "freezeSpines",
   "freezeDecor",
@@ -580,6 +591,8 @@ export function createMirrorSettings(
     // READABILITY SCALING (see the field): ON everywhere by default — the enlargements are what make the mirror
     // playable on a phone, and a desktop viewer comparing against the game turns them off deliberately.
     uiScaling: urlOffFlag(params, "uiScale") ?? saved.uiScaling ?? true,
+    // BROWSER GAMEPAD: on unless the URL says otherwise. Nothing saved to layer over — see the denylist entry.
+    gamepad: urlOffFlag(params, "gamepad") ?? true,
     spineMode: parseSpineMode(params.get("spineMode")),
     backstopOcclusion: urlOffFlag(params, "backstopOcclude") ?? saved.backstopOcclusion ?? true,
     staticBgEnabled: urlOffFlag(params, "staticBg") ?? saved.staticBgEnabled ?? true,
