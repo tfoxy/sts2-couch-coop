@@ -88,16 +88,30 @@ OpenSSH Server, key-only from the Linux box, scoped to the LAN.
 
 - **Install**: `Add-WindowsCapability -Online -Name OpenSSH.Server~~~~0.0.1.0`. If the capability store
   refuses (metered or WSUS-managed), fall back to the Win32-OpenSSH release zip plus its `install-sshd.ps1`.
-- **`sshd` must be `Automatic`.** A fresh install is left `Manual` on some boxes, which works perfectly
-  until the first reboot and then looks like the machine is gone. Check with `sc qc sshd` — you want
-  `START_TYPE : 2 AUTO_START`, not `3 DEMAND_START`.
+- **`sshd` startup type is a security decision, not a default to set and forget.** A fresh install is left
+  `Manual` on some boxes, so an always-available channel needs `Automatic` — but on a personal machine
+  `Manual` is the safer posture, because the service is then off after every reboot and the exposure window
+  is only when the owner deliberately starts it. Check with `sc qc sshd`
+  (`2 AUTO_START` vs `3 DEMAND_START`), and **record which one this rig is on**, because on a `Manual` box a
+  failed connection after a reboot is expected rather than a fault. Ask the owner before changing it.
+- **Prefer key-only over an always-on service.** The stock Windows OpenSSH config enables
+  `PasswordAuthentication`, so the account is open to password guessing from anywhere the firewall rule
+  allows, with no rate limiting. `PasswordAuthentication no` + `KbdInteractiveAuthentication no` removes
+  that entirely and is worth more than any startup-type choice.
+  **Insert those before the first `Match` line** — Windows OpenSSH ships a `Match Group administrators`
+  block at the end of `sshd_config`, and appending there scopes the directives to admins only while looking
+  like it worked. Then **`sshd -t` before restarting**: a malformed config means sshd never comes back, and
+  on a remote box that costs a console trip. Confirm on the wire afterwards — a correct result offers
+  `publickey` alone.
 - **Authorize the key in the right file.** For an **admin** account sshd ignores `~\.ssh\authorized_keys`
   entirely and reads only `%ProgramData%\ssh\administrators_authorized_keys`, and it refuses that file if
   its ACL is too open:
   `icacls <file> /inheritance:r /grant "Administrators:F" "SYSTEM:F"`. Writing only the per-user file is
   the single most common reason key auth "silently does not work" here.
 - **Firewall**: one inbound Allow rule, TCP/22, `-RemoteAddress LocalSubnet`. The `win11` guest uses `Any`
-  because it is NAT-only; a physical laptop on a real LAN should not.
+  because it is NAT-only; a physical laptop on a real LAN should not. Note the **OpenSSH capability installs
+  its own `OpenSSH SSH Server (sshd)` rule scoped `Any`**, so if the owner installed the feature themselves
+  there is already a wide-open rule and your narrow one is not the only one in play — check for both.
 - Reuse the existing `couchcoop-qa` key rather than minting another. Its private half lives in `~/.ssh` —
   **never a scratchpad**, which is exactly how access to the VM was lost once already.
 
