@@ -34,6 +34,16 @@ warn() {
 }
 has() { printf '%s' "$cmd" | grep -Eq "$1"; }
 
+# Game displays: block explicit Xvfb servers and known game commands in Xvfb wrappers.
+# Browser-only GPU test wrappers remain valid. This checks command text, not shell semantics.
+if has '(^|[;&|])[[:space:]]*((env|setsid|nohup)[[:space:]]+([^;&|]*[[:space:]])?)?(/[^[:space:]]*/)?Xvfb([[:space:]]|$)' \
+   || { has '(xvfb-run|run-gpu\.sh)' \
+        && has '(SlayTheSpire2|Godot[^[:space:]]*|(^|[[:space:];&|/])godot([[:space:]]|$)|(^|[[:space:];&|/])sts2([[:space:]]|$))'; }; then
+  deny "Xvfb is forbidden for game instances. Use Godot --headless for nonvisual checks, or gamescope --backend headless for screenshots and GPU rendering (preferred; verify NVIDIA RTX 2060 on this workstation).
+
+Verify the private display connection and compositor PID/start identity, and stop the owned game if the compositor dies. Never fall back to the desktop. A visible game requires explicit user permission before launch. See AGENTS.md and qa-recipes section 2.x."
+fi
+
 # A command that explicitly reaches into a sibling repo is that repo's business, not ours.
 targets_sibling() { has '(\.\./|/)(spirectl|godot-scene-web)(/|$)'; }
 

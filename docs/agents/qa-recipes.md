@@ -26,9 +26,10 @@ for roughly ten minutes before a documented takeover.
 
 ## 2. Isolated game instance launch
 
-Run `sts2` from the **couch-coop repo root** (not `frontend/`) — `sts2.local.yaml` (gamescope
-`launchWrapper`, `launchArgs: ["--display-driver","wayland"]`) is cwd-discovered; launching elsewhere starts
-the game bare and disrupts the desktop.
+Automated games must use Godot `--headless` or `gamescope --backend headless`. **Never use Xvfb for
+an instance.** Prefer headless gamescope for screenshots and GPU rendering; see §2.x below. Resolve
+`sts2` configuration before launch: cwd-discovered `sts2.local.yaml` can inject a visible launch wrapper.
+Use an explicit scratch config from a scratch cwd, preserving `game.assembliesDir` and instance isolation.
 
 Per-instance isolation (already wired into `HeadlessClientManager.LaunchReal` for co-op headless seats; apply
 the same idea for a standalone probe instance):
@@ -60,9 +61,10 @@ the same idea for a standalone probe instance):
   bridge/CLI-facing copy) **and** `scripts/build-local-mod.sh` (the embedded copy the running game/browser
   path at `:13337` actually serves — the two are separate assemblies, `CouchCoop.Spirectl.dll` vs
   `Spirectl.Sts2.dll`; `install-bridge` alone does NOT update what the browser mirror sees).
-- Recreate a 2-player browser-seat run after a restart: `sts2 game launch -- --display-driver wayland -fastmp
-  host_standard` (NOT the main-menu solo option — that lobby has no multiplayer seats). **This is still the QA
-  recipe** and still behaves byte-identically to before the Aug-8 transport round: `-fastmp host_standard`
+- Recreate a 2-player browser-seat run after a restart by adding `-fastmp host_standard` to the game's
+  arguments **inside the verified private headless-gamescope lifecycle in §2.x**, preserving that display's
+  driver and scratch configuration. Never use a bare launch from the repo's desktop configuration.
+  The main-menu solo option has no multiplayer seats. `-fastmp host_standard`
   forces Platform None, so the session is plain ENet with no Steam lobby, which is what you want for a
   deterministic local test. What CHANGED is that normal menu hosting now ALSO really hosts (Steam lobby +
   parallel ENet couch side, see architecture-map "Host transport"), so "the mod only works under fastmp" is no
@@ -122,41 +124,36 @@ the same idea for a standalone probe instance):
   ```
   Without that explicit socket path the bridge binds under the game's own cwd and `sts2` cannot reach it.
 
-### 2.x Launching an instance under xvfb (the desktop stays the operator's)
+### 2.x Hidden game displays
 
-**Never put a game window on the operator's desktop, and never wait for the operator's own game to exit**
-(deploying while it runs is safe — its DLLs are in memory; your measurements go to an isolated instance;
-port 13337 and the default profile's `couch-coop/browser-port` are the operator's — read your instance's
-walked port from its own port+pid file). For a HEADED instance, wrap the launch the way
-`scripts/run-gpu.sh` does:
+**Never use Xvfb for game instances.** The supported automated modes are Godot `--headless` and
+`gamescope --backend headless`. A game window on the user's desktop requires their explicit permission
+before launch; a request for live QA is not that permission. Never wait for their own game to exit or
+stop it: use your own isolated instance.
 
-```
-env -u WAYLAND_DISPLAY XDG_SESSION_TYPE=x11 xvfb-run -a -s "-screen 0 2560x1440x24" <launch command>
-```
+Prefer **headless gamescope** for screenshots, visual checks, and GPU measurements. The compositor has no
+desktop surface while the game retains its normal renderer. Verify its log selects the NVIDIA RTX 2060
+on this workstation and record the actual device. Use Godot `--headless` only for checks that do not need
+rendered graphics: the dummy renderer does not support screenshots, and rendering/idle behavior differs.
+Do not pool measurements from the two modes.
 
-Two traps, both load-bearing:
-- **The wayland trap**: `xvfb-run` sets `DISPLAY` (X11) but the app follows `WAYLAND_DISPLAY` straight past
-  the virtual display onto the real compositor — the `env -u WAYLAND_DISPLAY XDG_SESSION_TYPE=x11` prefix is
-  what actually keeps the window off the desktop.
-- **`sts2.local.yaml` fights you**: it is cwd-discovered and injects the gamescope `launchWrapper` and
-  `launchArgs: ["--display-driver","wayland"]`. For xvfb launches run `sts2` from a scratch cwd carrying a
-  modified copy (same `game.assembliesDir`, NO gamescope wrapper, x11 or no display-driver arg), or launch
-  the binary yourself under the wrapper above.
+Use `scripts/bring-up-gamescope-instance.sh` as the launch/lifecycle reference. Before launch, acquire the
+instance lease and resolve a scratch configuration from a scratch cwd. Remove inherited `DISPLAY` and
+`WAYLAND_DISPLAY` from the compositor launch, explicitly select `--backend headless`, and supervise it in
+its own session. Obtain the private display from its child; launch the game against that display with the
+matching driver and no inherited desktop Wayland route. Never fall back to Xvfb or a desktop backend.
 
-Use headed-under-xvfb rather than `--headless` whenever measurement comparability matters: windowless mode
-arms the visual suspender and idle frame caps, which change per-frame costs and can flatter a benchmark into
-a false pass. Scope any "a game is already running" refusal to YOUR instances (attribute by user-dir/env) —
-the operator's game is expected and exempt.
+Readiness requires all of these, and measurements must keep checking liveness:
 
-**Xvfb is measurement-valid only WITHIN itself — never for cross-lane wall-clock verdicts.** Measured
-(phase-7 gate, P7G vs P7Q vs the desktop leg): an Xvfb-hosted instance prices an awaited engine frame
-~20× higher than the desktop (ForceDraw 27→595 ms per 8 draws; CPU phases ~1×), and the machine being
-loaded vs quiet changes nothing (two 16-arm legs within 0.5%). Any comparison between lanes with
-DIFFERENT frame-await profiles (e.g. a multi-frame bake vs a single-render still) is distorted ~2.5×
-against the frame-awaiting lane and will manufacture a false verdict. A/B comparisons where both arms
-await the same frames remain valid under xvfb; functional/correctness legs are always fine. A wall-clock
-gate that grades one lane against another needs a real-display run — ask the operator for a desktop slot
-rather than shipping an xvfb number.
+- The recorded compositor PID and start identity are alive after the game reaches its browser port.
+- Its log confirms the headless backend and selected GPU.
+- The game's display connection belongs to that compositor's private display server. Environment values
+  alone are insufficient proof; inspect the server/socket ownership or its client/window tree.
+- No desktop display route was inherited. Stop only your owned game if its compositor dies, invalidate
+  the affected measurement, and preserve the failure evidence before retrying.
+
+Screenshots use the game's normal renderer inside headless gamescope; do not pass Godot `--headless`
+for `--shot`. Nonvisual state dumps, connect soaks, and tests may use Godot `--headless`.
 
 ### 2.y Five-player instance bring-up (`scripts/bring-up-five-player-instance.sh`)
 
@@ -945,8 +942,8 @@ works. Things worth knowing before reading its output:
   thing that takes Steam down with it; and you find out that the game ignores `SIGTERM` (twice, ~25s) and needs
   `-KILL`.
 - **`--shot` needs a real display, never `--headless`.** Under `--headless` the dummy renderer never fires
-  `FramePostDraw`, so the capture path hangs until a hard timeout. Use a per-agent `Xvfb :6x -screen 0
-  <WxH>x24` (own display number per concurrent agent) — never the user's live `DISPLAY=:1`. Non-shot runs
+  `FramePostDraw`, so the capture path hangs until a hard timeout. Use private `gamescope --backend headless`
+  with verified GPU rendering and compositor liveness (§2.x). Never use Xvfb or the desktop. Non-shot runs
   (`--dump-final-state`, `--connect` soaks, tests) are fine under `--headless`.
 - **Godot CLI binary**: the mono build is at
   `~/.local/godot-4.5.1-mono/Godot_v4.5.1-stable_mono_linux_x86_64/Godot_v4.5.1-stable_mono_linux.x86_64`. The

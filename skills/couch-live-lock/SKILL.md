@@ -53,6 +53,14 @@ takeover in the new lease owner. A live PID always means wait or coordinate.
 The operator's default game is not implicitly a blocker. Address it as `game:default` only when inspecting or
 driving that game; otherwise use an isolated named instance.
 
+## Hidden game launches
+
+Game instances must use Godot `--headless` or `gamescope --backend headless`; **never Xvfb**. Prefer
+headless gamescope for screenshots and GPU rendering, verifying NVIDIA RTX 2060 selection on this
+workstation. A visible desktop game requires explicit user permission before launch. Verify the private
+display connection and compositor PID/start identity, monitor its liveness, and stop the owned game if
+it dies. Do not fall back to a visible backend. See [qa-recipes §2.x](../../docs/agents/qa-recipes.md#2x-hidden-game-displays).
+
 ## Release checklist
 
 1. Restore the `spirectl` and `godot-scene-web` sibling checkouts next to the primary checkout to clean `main`.

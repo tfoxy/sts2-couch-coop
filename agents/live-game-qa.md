@@ -33,13 +33,14 @@ launch, fixtures) and §7 (gotchas).
    port+pid file. Scope any "a game is already running" refusal guard to YOUR instances (attribute by user-dir/env);
    the operator's game is expected and exempt. Paired within-run statistics absorb the operator's steady load;
    contamination drop rules catch spikes; flag absolute numbers as not quiet-machine-comparable.
-5. **No visible game window on the operator's desktop, ever.** A headed instance goes under xvfb with the wayland
-   trap defused — `scripts/run-gpu.sh` is the recipe (`env -u WAYLAND_DISPLAY XDG_SESSION_TYPE=x11 xvfb-run -a …`;
-   xvfb-run sets DISPLAY but the app follows WAYLAND_DISPLAY onto the real compositor). `sts2.local.yaml` injects a
-   gamescope launchWrapper and `--display-driver wayland` — run `sts2` from a scratch cwd with a modified copy
-   (no wrapper, x11/no driver arg) for xvfb launches; see qa-recipes §2. Use headed-under-xvfb, not `--headless`,
-   whenever measurement comparability matters: windowless mode arms the visual suspender and idle frame caps, which
-   change per-frame costs and can flatter a benchmark into a false pass.
+5. **Game instances must use Godot `--headless` or `gamescope --backend headless`; never Xvfb.**
+   Prefer headless gamescope for screenshots and GPU/rendering checks, with Godot's normal renderer and
+   verified NVIDIA RTX 2060 selection on this workstation. Godot `--headless` changes rendering and idle
+   behavior; use it only for checks that do not need rendered graphics. A desktop window requires the user's
+   explicit permission **before launch**; ordinary live-QA authorization does not grant it. Never fall back
+   to the desktop or Xvfb. Use a scratch config/cwd so inherited launch wrappers cannot override this mode.
+   Verify the game's actual private display connection and compositor PID/start identity, and monitor
+   compositor liveness throughout the run; stop the owned game on compositor death. See qa-recipes §2.x.
 
 ## Deploy, and proving what is installed
 
@@ -67,7 +68,7 @@ Use the `couch-deploy` skill. The short version:
 - `dotnet build godot-client/CouchCoop.GodotClient.csproj` before **every** godot-client launch — Godot's CLI runs
   the last-built assembly, not a fresh JIT.
 - **`--shot` needs a real display, never `--headless`** (the dummy renderer never fires `FramePostDraw`, so the
-  capture hangs). Use a per-agent `Xvfb :6x` — never the operator's `DISPLAY=:1`. `--dump-final-state`, `--connect`
+  capture hangs). Use a private `gamescope --backend headless` with verified GPU rendering. `--dump-final-state`, `--connect`
   soaks and tests are fine headless.
 - Game argv: `Godot.OS.GetCmdlineArgs()`, not `Environment.GetCommandLineArgs()` (dead in the embedded host).
   `godot.log` does not capture `Console.Error`, so `GD.Print` is still what makes a line show up THERE — but

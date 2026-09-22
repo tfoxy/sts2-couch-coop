@@ -14,6 +14,18 @@ This is the clean v2 rewrite of the Slay the Spire 2 Couch Co-op mod.
 - Project memory is `.agents/memory/MEMORY.md` (in a worktree, a symlink to the main checkout's store). Read that
   index before non-trivial work; record what you learn with the `project-memory` skill.
 
+## Automated game displays
+
+- **Never use Xvfb for game instances.** Use Godot `--headless` or `gamescope --backend headless`.
+- **Prefer headless gamescope for screenshots and rendered/GPU checks.** Keep Godot's normal renderer and
+  verify the compositor selects the NVIDIA RTX 2060 on this workstation. Godot `--headless` is for checks
+  that do not need rendered graphics; it changes rendering and idle behavior.
+- **Never open a game window on the user's desktop without asking and receiving permission first.**
+  Live-QA authorization is not permission for a visible window. No fallback to the desktop or Xvfb.
+- Verify the private compositor's PID/start identity, the game's display connection, and ongoing compositor
+  liveness. Remove inherited desktop display routes; `DISPLAY` alone is not proof. Stop the owned game if
+  its compositor dies. See [qa-recipes.md §2.x](docs/agents/qa-recipes.md#2x-hidden-game-displays).
+
 ## Commits
 
 Full rules, and the release runbook, in [docs/commit-and-release.md](docs/commit-and-release.md).

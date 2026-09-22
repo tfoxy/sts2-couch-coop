@@ -66,7 +66,8 @@ Claude Code's `autoMemoryDirectory` is pointed there by the installer. Read `MEM
 
 A PreToolUse hook (`scripts/claude-guard-bash.sh`) blocks the documented footguns — the frontend build that
 deploys, `dotnet test` on the custom runners, an instance-less `sts2 game close`, self-matching `pkill -f`, nested
-xvfb, and an unset-scratch build from a worktree. It fires in every permission mode, and the **same script** is
+xvfb, direct Xvfb servers or game launch wrappers, and an unset-scratch build from a worktree.
+It fires in every permission mode, and the **same script** is
 registered for both CLIs (`.claude/settings.json` and `.codex/hooks.json`), so the verdict is identical under
 either. Its two-sided self-test is `scripts/test-claude-guard.sh`, which asserts that on both envelopes.
 
