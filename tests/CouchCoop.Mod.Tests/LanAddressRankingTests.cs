@@ -2,20 +2,20 @@ using System.Net;
 using System.Net.NetworkInformation;
 using CouchCoop.Mod.HostUi;
 
-// WS-F: the advertised-LAN-IPv4 ranking. The reported defect is "on Windows with Tailscale installed the lobby
-// shows the Tailscale IP instead of the wifi IP" — the old code took the first IPv4 on the first Up, non-loopback
+// WS-F: the advertised-LAN-IPv4 ranking. The reported defect is "on Windows with a mesh VPN installed the lobby
+// shows the tunnel's IP instead of the wifi IP" — the old code took the first IPv4 on the first Up, non-loopback
 // interface in OS enumeration order, so it was pure luck which adapter won.
 //
 // Every case below drives the PURE ranker with synthetic descriptors, because the interesting topologies (a
-// Tailscale tunnel that reports NetworkInterfaceType.Ethernet on Windows, an APIPA-only NIC, an up Docker bridge)
+// CGNAT tunnel that reports NetworkInterfaceType.Ethernet on Windows, an APIPA-only NIC, an up Docker bridge)
 // cannot be produced on the build host without changing host networking. The suite also prints the REAL ranked
 // candidate list for this machine as informational output — no assertion, since it is machine-dependent.
 internal static class LanAddressRankingTests
 {
     public static void Run()
     {
-        TailscaleCgnatLosesToRealWifi();
-        TailscaleWithEthernetTypeStillLosesWhenItIsFirstInEnumerationOrder();
+        CgnatTunnelLosesToRealWifi();
+        CgnatTunnelWithEthernetTypeStillLosesWhenItIsFirstInEnumerationOrder();
         EthernetBeatsWifi();
         DockerBridgeLosesToWifi();
         ApipaOnlyIsStillOfferedAsALastResort();
@@ -49,9 +49,9 @@ internal static class LanAddressRankingTests
         bool loopback = false)
         => new(name, type, status, loopback, IPAddress.Parse(address), prefixOrigin, gateway);
 
-    // Tailscale on Windows: reports Ethernet, has NO default gateway, address in CGNAT 100.64.0.0/10.
-    private static LanAddressCandidate Tailscale(string address = "100.86.76.72")
-        => Nic("Tailscale", address, NetworkInterfaceType.Ethernet, gateway: false);
+    // A mesh-VPN tunnel on Windows: reports Ethernet, has NO default gateway, address in CGNAT 100.64.0.0/10.
+    private static LanAddressCandidate MeshVpn(string address = "100.86.76.72")
+        => Nic("Mesh VPN", address, NetworkInterfaceType.Ethernet, gateway: false);
 
     private static LanAddressCandidate Wifi(string address = "192.168.0.42")
         => Nic("Wi-Fi", address, NetworkInterfaceType.Wireless80211, gateway: true, prefixOrigin: PrefixOrigin.Dhcp);
@@ -61,23 +61,23 @@ internal static class LanAddressRankingTests
 
     // ---- ranking --------------------------------------------------------------------------------------------
 
-    // THE reported bug. Tailscale is enumerated first and claims Ethernet type, so both the old first-match rule
+    // THE reported bug. The tunnel is enumerated first and claims Ethernet type, so both the old first-match rule
     // and a type-only rule would pick it. It loses on the dominant rule: no IPv4 default gateway.
-    private static void TailscaleCgnatLosesToRealWifi()
+    private static void CgnatTunnelLosesToRealWifi()
     {
-        var best = LanAddressRanking.Best([Tailscale(), Wifi()]);
-        Expect(best?.Address.ToString() == "192.168.0.42", $"wifi beats the Tailscale CGNAT address (got {best?.Address.ToString() ?? "none"})");
+        var best = LanAddressRanking.Best([MeshVpn(), Wifi()]);
+        Expect(best?.Address.ToString() == "192.168.0.42", $"wifi beats the tunnel's CGNAT address (got {best?.Address.ToString() ?? "none"})");
     }
 
     // Same topology, but pinned explicitly on enumeration order to prove the fix is not accidentally relying on
     // the OS listing the good NIC first (which is what made this machine-dependent in the first place).
-    private static void TailscaleWithEthernetTypeStillLosesWhenItIsFirstInEnumerationOrder()
+    private static void CgnatTunnelWithEthernetTypeStillLosesWhenItIsFirstInEnumerationOrder()
     {
-        var tailscaleFirst = LanAddressRanking.Rank([Tailscale(), Wifi(), Ethernet()]);
-        Expect(tailscaleFirst.Count == 3, "all three are eligible");
-        Expect(tailscaleFirst[0].InterfaceName == "Ethernet", "ethernet ranks first");
-        Expect(tailscaleFirst[1].InterfaceName == "Wi-Fi", "wifi ranks second");
-        Expect(tailscaleFirst[2].InterfaceName == "Tailscale", "the tunnel ranks LAST despite being enumerated first");
+        var tunnelFirst = LanAddressRanking.Rank([MeshVpn(), Wifi(), Ethernet()]);
+        Expect(tunnelFirst.Count == 3, "all three are eligible");
+        Expect(tunnelFirst[0].InterfaceName == "Ethernet", "ethernet ranks first");
+        Expect(tunnelFirst[1].InterfaceName == "Wi-Fi", "wifi ranks second");
+        Expect(tunnelFirst[2].InterfaceName == "Mesh VPN", "the tunnel ranks LAST despite being enumerated first");
     }
 
     private static void EthernetBeatsWifi()
@@ -119,10 +119,10 @@ internal static class LanAddressRankingTests
 
         // ...but anything routable outranks it.
         Expect(LanAddressRanking.Best([apipa, Wifi()])?.InterfaceName == "Wi-Fi", "APIPA loses to a real wifi address");
-        // ...including a Tailscale address, since neither has a gateway and CGNAT vs APIPA are both penalised, so
-        // the Ethernet tier decides. Pin it so the behaviour is at least deliberate.
+        // ...including a CGNAT tunnel address, since neither has a gateway and CGNAT vs APIPA are both penalised,
+        // so the Ethernet tier decides. Pin it so the behaviour is at least deliberate.
         var apipaWireless = Nic("Wi-Fi", "169.254.11.9", NetworkInterfaceType.Wireless80211, gateway: false);
-        Expect(LanAddressRanking.Best([apipaWireless, Tailscale()])?.InterfaceName == "Tailscale",
+        Expect(LanAddressRanking.Best([apipaWireless, MeshVpn()])?.InterfaceName == "Mesh VPN",
             "with no gateway anywhere, the ethernet-typed tunnel outranks an APIPA wifi (documented limitation)");
     }
 
@@ -177,7 +177,7 @@ internal static class LanAddressRankingTests
     //    dominant rule works — it is, if anything, a cleaner "has a default route" than Linux's /proc parse.
     //  * PrefixOrigin throws PlatformNotSupportedException (UnixUnicastIPAddressInformation), so the DHCP
     //    tie-break is inert there. That is why every descriptor below is PrefixOrigin.Other.
-    //  * utun* is IFT_OTHER, which MapHardwareType leaves as Unknown — tier 0, unlike Tailscale on Windows,
+    //  * utun* is IFT_OTHER, which MapHardwareType leaves as Unknown — tier 0, unlike a Windows tunnel adapter,
     //    which claims Ethernet. macOS is the EASIER case for this ranker, not the harder one.
     //
     // Verdict: no misordering to fix. These exist so a later change cannot break macOS silently.
@@ -213,7 +213,7 @@ internal static class LanAddressRankingTests
 
     // A full-tunnel VPN installs a default route on utun, so unlike a bridge it DOES satisfy the dominant rule.
     // It still loses, because utun is type Unknown (tier 0) where the wifi NIC is tier 1. This is the macOS
-    // counterpart of the reported Tailscale defect, and it resolves more cleanly: on Windows the tunnel claims
+    // counterpart of the reported tunnel defect, and it resolves more cleanly: on Windows the tunnel claims
     // Ethernet and has to be beaten on the gateway rule instead.
     private static void MacFullTunnelVpnLosesToWifi()
     {
@@ -223,10 +223,10 @@ internal static class LanAddressRankingTests
         Expect(LanAddressRanking.Best([utun, wifi])?.InterfaceName == "en0",
             "a VPN tunnel with its own default route still loses to the wifi NIC on the type tier");
 
-        // Tailscale on macOS is the same shape but CGNAT-addressed, so it also takes the range penalty.
-        var tailscale = MacNic("utun5", "100.86.76.72", NetworkInterfaceType.Unknown, gateway: false);
-        Expect(LanAddressRanking.Best([tailscale, wifi])?.InterfaceName == "en0",
-            "…and Tailscale's macOS utun loses on the gateway rule as well");
+        // A mesh VPN on macOS is the same shape but CGNAT-addressed, so it also takes the range penalty.
+        var meshVpn = MacNic("utun5", "100.86.76.72", NetworkInterfaceType.Unknown, gateway: false);
+        Expect(LanAddressRanking.Best([meshVpn, wifi])?.InterfaceName == "en0",
+            "…and a mesh VPN's macOS utun loses on the gateway rule as well");
     }
 
     private static void MacWiredBeatsWifiJustLikeEverywhereElse()
@@ -256,7 +256,7 @@ internal static class LanAddressRankingTests
         Expect(LanAddressRanking.ValidateAdvertisedHostOverride("  192.168.1.50  ") == "192.168.1.50", "surrounding whitespace is trimmed");
         Expect(LanAddressRanking.ValidateAdvertisedHostOverride("couch.local") == "couch.local", "a DNS hostname is accepted");
         Expect(LanAddressRanking.ValidateAdvertisedHostOverride("[fd7a:115c:a1e0::1]") == "fd7a:115c:a1e0::1", "a bracketed IPv6 literal is unwrapped");
-        // Deliberately allowed: an operator who WANTS the Tailscale address should be able to pin it.
+        // Deliberately allowed: an operator who WANTS the tunnel's address should be able to pin it.
         Expect(LanAddressRanking.ValidateAdvertisedHostOverride("100.86.76.72") == "100.86.76.72", "the override can pin an address the ranker would demote");
 
         // The override wins over the ranking — verified through the real env var, restored afterwards.
@@ -339,13 +339,13 @@ internal static class LanAddressRankingTests
         Console.WriteLine($"  [real-machine] legacy first-match (OS order)       = {LegacyFirstMatch(gathered) ?? "<none>"}");
         Console.WriteLine($"  [real-machine] legacy first-match (REVERSED order) = {LegacyFirstMatch(reversedGather) ?? "<none>"}");
 
-        // If a CGNAT (Tailscale-range) address is present on this machine, prove the demotion end to end: the old
+        // If a CGNAT (tunnel-range) address is present on this machine, prove the demotion end to end: the old
         // rule hands it out under the reversed order, the new ranker never does.
         var cgnat = ranked.FirstOrDefault(candidate => candidate.Address.GetAddressBytes() is [100, >= 64 and <= 127, _, _]);
         if (cgnat is not null && ranked.Count > 1)
         {
             Console.WriteLine($"  [real-machine] CGNAT NIC present ({cgnat.Address} on {cgnat.InterfaceName}) — checking demotion");
-            Expect(!ranked[0].Address.Equals(cgnat.Address), "the ranker never advertises the real CGNAT/Tailscale address");
+            Expect(!ranked[0].Address.Equals(cgnat.Address), "the ranker never advertises the real CGNAT tunnel address");
             Expect(!reversed[0].Address.Equals(cgnat.Address), "...not even when it is enumerated first");
             Expect(LegacyFirstMatch(reversedGather) == cgnat.Address.ToString(),
                 "the REPLACED first-match rule really would have advertised it under a reversed enumeration order");

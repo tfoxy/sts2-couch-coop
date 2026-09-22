@@ -8,9 +8,9 @@ namespace CouchCoop.Mod.HostUi;
 // the LAN discovery reply — all four read the SAME value)?
 //
 // The old answer was "the first IPv4 on the first Up, non-loopback interface the OS happens to enumerate", i.e. no
-// ranking at all. On a Windows machine with Tailscale installed that hands out the Tailscale CGNAT address
-// (100.64.0.0/10), which no phone on the wifi can reach — the QR scans, then hangs. Tailscale's Windows adapter
-// reports NetworkInterfaceType.Ethernet, so interface type alone does NOT demote it.
+// ranking at all. On a Windows machine with a mesh-VPN client installed that hands out the tunnel's CGNAT address
+// (100.64.0.0/10), which no phone on the wifi can reach — the QR scans, then hangs. That kind of tunnel adapter
+// reports NetworkInterfaceType.Ethernet on Windows, so interface type alone does NOT demote it.
 //
 // This file splits the decision into two halves so it is testable without real NICs:
 //   * GatherFromOs()  — the impure half: walk the OS interface list into flat LanAddressCandidate descriptors.
@@ -86,7 +86,7 @@ public static class LanAddressRanking
     };
 
     // Rule 3: ranges that are never the address a phone on the couch should be handed.
-    //   100.64.0.0/10  CGNAT — Tailscale's range.
+    //   100.64.0.0/10  CGNAT — the range mesh-VPN tunnels hand out.
     //   169.254.0.0/16 APIPA — a link-local self-assignment, i.e. DHCP failed.
     //   172.17.0.0/16  the default Docker bridge.
     private static bool IsPenalisedRange(IPAddress address)

@@ -15,7 +15,7 @@ namespace CouchCoop.Mod.HostUi;
 /// </para>
 /// <para>
 /// <b>The list is the cross product of adapter × method, in a fixed order.</b> One entry group per
-/// network adapter (ethernet first, then wifi, then everything else — Tailscale, docker, VPNs), and
+/// network adapter (ethernet first, then wifi, then everything else — tunnels, docker, VPNs), and
 /// inside each group the three ways a phone can reach that adapter's IPv4: the plain address, the
 /// public web link carrying it in <c>?h=</c>, and the <c>local-ip.co</c> HTTPS name derived from it.
 /// The <c>.local</c> name is always the LAST row: it is the only option that regularly fails outright
