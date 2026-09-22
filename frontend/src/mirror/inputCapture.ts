@@ -1,4 +1,5 @@
-// Captures pointer + keyboard input over the mirror stage and forwards it upstream (single controller). Input is
+// Captures POINTER input over the mirror stage and forwards it upstream (single controller). The keyboard is its
+// own upstream source now (keyboardCapture.ts) — it shares nothing with this file but the send path. Input is
 // COORDINATE-ONLY on the wire: every event resolves to a GAME design-space coordinate (1920x1080) and the game
 // hit-tests it natively — robust, because the game's own input honors `mouse_filter`, and no element addressing is
 // needed since the mirror lays the tree out to match.
@@ -91,19 +92,6 @@ export interface InputCapture {
   invalidateStageRect(): void;
 }
 
-// Keys that would scroll the page; suppressed unless a ctrl/meta shortcut is in play (so refresh/devtools work).
-const SCROLL_KEYS = new Set([
-  "Space",
-  "ArrowUp",
-  "ArrowDown",
-  "ArrowLeft",
-  "ArrowRight",
-  "PageUp",
-  "PageDown",
-  "Home",
-  "End"
-]);
-
 function clamp01(value: number): number {
   return value < 0 ? 0 : value > 1 ? 1 : value;
 }
@@ -112,13 +100,6 @@ function clamp01(value: number): number {
 // spine-clip clock is, so a `performance`-less environment degrades to Date.now() rather than throwing.
 function nowMs(): number {
   return typeof performance !== "undefined" && typeof performance.now === "function" ? performance.now() : Date.now();
-}
-
-function isEditable(element: Element | null): boolean {
-  if (!(element instanceof HTMLElement)) {
-    return false;
-  }
-  return element.tagName === "INPUT" || element.tagName === "TEXTAREA" || element.isContentEditable;
 }
 
 function buttonName(button: number): "left" | "right" | "middle" | null {
@@ -2290,24 +2271,6 @@ export function createInputCapture(
     event.preventDefault();
   }
 
-  function onKeyDown(event: KeyboardEvent): void {
-    if (event.repeat || isEditable(document.activeElement)) {
-      return;
-    }
-    const modifiers = [
-      event.ctrlKey ? "ctrl" : "",
-      event.shiftKey ? "shift" : "",
-      event.altKey ? "alt" : "",
-      event.metaKey ? "meta" : ""
-    ]
-      .filter(Boolean)
-      .join(",");
-    send({ kind: "key", key: event.code, modifiers: modifiers || undefined });
-    if (!event.ctrlKey && !event.metaKey && SCROLL_KEYS.has(event.code)) {
-      event.preventDefault();
-    }
-  }
-
   stage.addEventListener("pointermove", onPointerMove);
   stage.addEventListener("pointerdown", onPointerDown);
   stage.addEventListener("pointerup", onPointerUp);
@@ -2315,7 +2278,6 @@ export function createInputCapture(
   stage.addEventListener("contextmenu", onContextMenu);
   // passive:false so preventDefault stops the page from scrolling/zooming — we forward the tick to the game.
   stage.addEventListener("wheel", onWheel, { passive: false });
-  window.addEventListener("keydown", onKeyDown);
   // The cached stage rect goes stale on resize/scroll/zoom (the letterbox refits, the page pans) — drop it so
   // the next hover re-measures once. Passive + capture so it never blocks scrolling and catches nested scrolls.
   window.addEventListener("resize", invalidateRect);
@@ -2350,7 +2312,6 @@ export function createInputCapture(
       stage.removeEventListener("pointercancel", onPointerCancel);
       stage.removeEventListener("contextmenu", onContextMenu);
       stage.removeEventListener("wheel", onWheel);
-      window.removeEventListener("keydown", onKeyDown);
       window.removeEventListener("resize", invalidateRect);
       window.removeEventListener("scroll", invalidateRect, { capture: true } as EventListenerOptions);
       // CONFIRM TAP: a torn-down capture must not stay reachable through the shared module, and a button left up

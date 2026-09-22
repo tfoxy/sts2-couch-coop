@@ -58,7 +58,8 @@ This map records current contracts, not retired implementation alternatives.
   `EndTurnScanTests.cs` — run via `dotnet run --project tests/CouchCoop.MirrorProtocol.Tests`. Web:
   `frontend/src/mirror/__tests__/inputCapture.spec.ts` (or the top-level test dir if moved — `find frontend -iname
   'inputCapture.spec.ts'` to confirm).
-- Web twin: `frontend/src/mirror/inputCapture.ts` (includes `computeTouchInfo`).
+- Web twin: `frontend/src/mirror/inputCapture.ts` (includes `computeTouchInfo`). POINTER only — the keyboard is its
+  own upstream source (see "Keyboard input" below), as the pad is.
 
 ### Gamepad input (`kind: "pad"`)
 - **Path.** Browser Gamepad API poll (`frontend/src/mirror/gamepadCapture.ts`) → the existing `input` WebSocket
@@ -89,6 +90,48 @@ This map records current contracts, not retired implementation alternatives.
 - Game internals — which of the game's action names a token resolves to, why that resolution is a candidate list,
   and the Steam-Input hole the engine-side isolation does not cover — are in
   `.sts2/research/gamepad-web-client-feasibility-sep21.md`, not here.
+
+### Keyboard input (`kind: "key"`)
+- **Path.** `frontend/src/mirror/keyboardCapture.ts` (window key events, no stage and no coordinate) → the same
+  `input` WebSocket message with `kind: "key"`, a `KeyboardEvent.code`, optional `modifiers` and the `pressed`
+  edge → `BrowserInputExecutor.BuildKey` → spirectl `SemanticActionKind.KeyInput` → a real `InputEventKey` on the
+  seat's input bus. The game maps the physical key onto its own shortcut, **rebinds included**, so couch names no
+  game action.
+- **Edges, not taps.** A press sends `pressed:true` and a release `pressed:false`; browser auto-repeat is dropped,
+  which matches the game (it ignores echo keys). The capture releases everything it holds on blur, a hidden tab,
+  `pagehide`, the setting going off and dispose — and a release is never gated by the filters a press passes
+  through, because a filtered release is a key stuck down in someone's run.
+- **KNOWN LIMIT — the game window must hold focus.** The game only acts on a key while its own window is focused
+  (`NGame.IsGameFocusedWindow()`), and it enforces that at *two* layers: the key→abstract-input translation, and
+  again in the consumer that turns the input into a screen action. So a browser driving the **host's own game**
+  from the same machine gets nothing from the keyboard while the browser holds focus — the mouse is unaffected,
+  because pointer routing has no focus gate, which is exactly why this reads as "keys are broken, mouse is fine".
+  Measured live 2026-09-22 (A/B/A on one instance, one build: focused → `A` opens the draw pile; unfocused →
+  nothing; refocused → works).
+  **A joined player is unaffected**: seats run `--headless`, and Godot's headless display server hard-returns
+  "focused", so both gates pass — verified live on a headless instance. Naming the game's own abstract input
+  instead of the key does **not** get past this (the second gate is in the consumer); only a Harmony patch of the
+  gate would, and that was deliberately not taken — the same gate is the only thing keeping a *physical* pad at
+  the host machine (which the OS does not window-gate on Linux) out of an unfocused game. The pad path has the
+  same limit.
+- **Which keys reach the wire.** spirectl's `Sts2BrowserKeyMap` owns the vocabulary and refuses what it cannot
+  name; `keyboardCapture` carries a conservative mirror of it so an unmappable key costs no error envelope per
+  edge. Ctrl/meta chords are never forwarded — they are the browser's and the OS's, and the game binds none.
+- **Focus guard.** Only TEXT entry swallows a key (a text-ish `<input>`, a `<textarea>`, `contenteditable`), plus
+  `Space`/`Enter` while a focusable control has focus. Treating *every* `<input>` as text entry is what made the
+  keyboard dead for a whole session once a settings checkbox had been clicked: the stage's `pointerdown` calls
+  `preventDefault()`, which suppresses the focus change that would otherwise have moved focus off it.
+- **Lever.** `?keyboard=off` (default on, read live, never persisted) — the gamepad's shape, no panel control.
+- **What a key actually does, measured** (2026-09-22, isolated instances): `A`/`S` open the draw/discard pile,
+  `Escape` closes it, `E` ends the turn (round 1→2, the enemies acted, player HP 75→54). A **number key picks the
+  card up** and a second press of the same key puts it back — that is the game's own two-step (the play it starts
+  watches the same input as its cancel), so completing the play is the pointer's job, not the key's. Read `sts2
+  state` with care here: a held card shows in neither `view.selectedCard` nor the hand count, so the pick-up is
+  only visible as the holder RE-PARENTING (`CardHolderContainer` → `Hand`) in the scene stream.
+- Tests: `frontend/src/mirror/__tests__/keyboardCapture.spec.ts`, the wire half in
+  `tests/CouchCoop.Mod.Tests/InputMappingTests.cs`.
+- Game internals — the shape of the translation, its gates, and the live evidence — are in
+  `.sts2/research/keyboard-web-client-sep22.md`, not here.
 
 ## Real input, not semantic actions
 - **The rule** (CLAUDE.md → Architecture Rules): a viewer's gesture becomes the same hover / press / release /

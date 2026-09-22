@@ -358,7 +358,10 @@ function onWheel(event: Event): void {
   });
 }
 
-// keydown only: the mirror's key channel is a tap (`pressed` omitted), so a keyup carries nothing a replay needs.
+// keydown only. The mirror's key channel carries EDGES now (keyboardCapture.ts), but a recorded press is still
+// enough to reproduce one: `scripts/replay-repro.mjs` dispatches `rawKeyDown` + `keyUp` per recorded line, so the
+// replayed page produces both edges itself. What a press-only recording cannot reproduce is how LONG a key was
+// held — a held key replays as an immediate tap.
 function onKeyDown(event: Event): void {
   if (!recording) {
     return;
