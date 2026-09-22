@@ -10,7 +10,7 @@ import {
 } from "@godot-scene-web/html/runtime";
 import { MAX_PINNED_BACKING_DIM } from "@godot-scene-web/html";
 
-import { playZoneThreshold } from "@spirectl/presentation/render";
+import { playZoneThreshold, RICH_TEXT_EFFECTS_ATTRIBUTE } from "@spirectl/presentation/render";
 
 import { createAdaptiveController, type AdaptiveController } from "@/mirror/adaptiveQuality";
 import { createEagerScroll, type EagerScroll } from "@/mirror/eagerScroll";
@@ -1340,6 +1340,16 @@ const stageStyle = computed(() =>
       }
 );
 
+// THE GAME'S TEXT-EFFECTS SWITCH, as one attribute on the stage.
+//
+// The rules it gates are @spirectl/presentation's (the wavy / bouncing rich text), and they read it off ANY
+// ancestor — so one write here reaches every label on both arms: the DOM renderer's nodes and the canvas backend's
+// overlay elements are both inside `.mirror-stage`. Bound as an object rather than spelled out in the template so
+// the attribute NAME stays the presentation package's to choose.
+const textEffectsAttribute = computed(() => ({
+  [RICH_TEXT_EFFECTS_ATTRIBUTE]: mirrorSettings.textEffects ? "on" : "off"
+}));
+
 /**
  * THE CHROME'S DESIGN-SPACE LAYER (display arm only).
  *
@@ -1404,7 +1414,13 @@ const underlayStyle = computed(() => ({
       <template v-if="!canvasUnderlayRequired"><slot name="underlay" /></template>
       <div ref="canvasHost" class="mirror-canvas-host" :style="canvasHostStyle"></div>
     </template>
-    <div ref="stage" class="mirror-stage" :class="{ 'mirror-stage-over-canvas': canvasHostLayout }" :style="stageStyle">
+    <div
+      ref="stage"
+      class="mirror-stage"
+      :class="{ 'mirror-stage-over-canvas': canvasHostLayout }"
+      :style="stageStyle"
+      v-bind="textEffectsAttribute"
+    >
       <!-- On the DOM arm the underlay slot renders here, exactly where its content has always been: a foreign
            stage child whose own most-negative z-index (not DOM order) puts it beneath the mirror nodes.
            DISPLAY ARM: it is design-space content like the chrome, so it rides the same kind of scaled layer — but

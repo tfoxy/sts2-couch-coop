@@ -88,6 +88,23 @@ public sealed class BrowserStateEnvelopeFactory(
             maxFps = 0;
         }
 
+        // The game's Settings -> Text Effects preference, so the mirror's animated rich text obeys the switch the
+        // player at the keyboard set. Its own try/catch rather than the one above, because the two readings are
+        // independent: a suspender that cannot be resolved says nothing about the save system, and coupling them
+        // would silently drop this field whenever that one degraded. Same guard clause, for the same reason (a
+        // Godot-typed call site resolves — and can fail — HERE, not inside the method).
+        bool? textEffects = null;
+        try
+        {
+            textEffects = await CouchCoopGamePrefs.GetTextEffectsEnabledAsync().ConfigureAwait(false);
+        }
+        catch (Exception exception) when (
+            exception is FileNotFoundException or FileLoadException or TypeLoadException or BadImageFormatException
+                or MissingMemberException or TypeInitializationException)
+        {
+            textEffects = null;
+        }
+
         var notices = _runtimeHost.Notices.ToList();
         var stateV2 = CreateStateV2(notices);
         var assignment = BrowserAssignmentClassifier.Classify(stateV2, _sessions, viewerName, session, _mirrorSeats);
@@ -125,6 +142,7 @@ public sealed class BrowserStateEnvelopeFactory(
             FreezeParticles: freezeParticles,
             FreezeSpines: freezeSpines,
             FreezeDecor: freezeDecor,
+            TextEffects: textEffects,
             AndroidApkUrl: _androidApkUrl?.Invoke(),
             // WS-U: clients key their asset caches by this token — the native client its disk cache namespace, the
             // browser the `?b=` on every asset url it mints (plus its service-worker /res/ store) — and it changes

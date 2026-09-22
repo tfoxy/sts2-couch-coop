@@ -81,10 +81,24 @@ describe("parseSimpleRich — what it accepts", () => {
     expect(r.value.spans).toEqual([{ start: 7, end: 12, color: "#efc851" }]);
   });
 
-  it("passes an STS2 effect tag through as INERT, because its css block is empty", () => {
-    // The whole six-tag argument in one assertion: cc feeds gsw the DEFAULT table, whose effect names are
-    // `{kind:"style", css:{}}` — a span with no declarations. Contributing nothing is exactly right.
+  it("draws an STS2 effect tag FLAT — it displaces characters, it does not change them", () => {
+    // `thinky_dots` is an ANIMATED descriptor in the default table (the DOM backend hops its characters), and
+    // `ancient_banner` is still an inert empty-css one. Both pass through here: this backend bakes a raster and
+    // cannot move it, and neither tag changes which characters are drawn or what colour they are.
     expect(annotate("[thinky_dots]...[/thinky_dots]")).toBe("...");
+    expect(annotate("[ancient_banner]x[/ancient_banner]")).toBe("x");
+    expect(annotate("[sine]wavy[/sine] and [jitter]shaky[/jitter]")).toBe("wavy and shaky");
+  });
+
+  it("still refuses gsw's own built-in effects, which sweep COLOUR as well as position", () => {
+    // A flat raster of `[rainbow]` would be the wrong pixels rather than still ones, so the label keeps its DOM
+    // element. `[shake]` is the other one this game actually uses (WHISPERING_EARRING).
+    for (const markup of ["[rainbow freq=0.3 sat=0.8 val=1]hue[/rainbow]", "[shake]x[/shake]"]) {
+      const r = parse(markup);
+      expect(r.ok, markup).toBe(false);
+      if (r.ok) return;
+      expect(r.refusal).toBe("effect");
+    }
   });
 
   it("refuses a style descriptor that carries an ACTUAL declaration", () => {

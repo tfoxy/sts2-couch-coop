@@ -39,14 +39,30 @@
 // makes this tokenizer and the DOM backend's renderer agree by construction rather than by review. What IS named
 // below is gsw's own standard grammar, which it does not export.
 //
-// AND THE ONE SUBTLETY IN THAT TABLE, because it decides six tags: STS2's effect names are `{kind:"style", css:{}}`
-// in `DEFAULT_BBCODE_TAGS` — an EMPTY css block. The animated descriptors live in a separate live-only table that
-// cc does not use. So in this mirror those six tags are visually INERT: gsw wraps their content in a span with no
-// declarations. A run list can therefore pass them through, contributing nothing, and be exactly right. That is
-// checked here rather than assumed: an empty css block passes through, a NON-empty one refuses as `style`.
+// AND THE ONE SUBTLETY IN THAT TABLE, because it decides six tags. STS2's six effect names split two ways there:
+// three are `{kind:"style", css:{}}` — an EMPTY css block, a span with no declarations — and three
+// (`sine`/`jitter`/`thinky_dots`) are `{kind:"effect"}` descriptors the DOM backend animates per character. BOTH
+// halves pass through here, contributing nothing, and both are exactly right on THIS backend, for two different
+// reasons:
+//
+//   empty css   there is nothing to draw differently. Checked rather than assumed — a NON-empty css block refuses
+//               as `style`, because that WOULD be a visible difference this run list cannot express.
+//   custom fx   this backend cannot animate at all (a texture keyed by a digest does not move), and the effect
+//               changes only WHERE each character sits, never WHICH characters they are. So the flat raster draws
+//               the right words in the right colours, and the motion is simply absent — which is what the
+//               canvas arm is for. Refusing instead would hoist every `[jitter]` label in combat back into a DOM
+//               element, which is the cost this backend exists to avoid.
+//
+// gsw's OWN built-in effects (`[rainbow]`, `[shake]`, …) keep refusing, unchanged: they are a per-character
+// COLOUR sweep as much as a displacement, and a flat raster of one would be the wrong pixels rather than still
+// ones.
 
 import { DEFAULT_BBCODE_TAGS } from "@spirectl/presentation/render";
-import { godotBbcodeTagKind, type GodotBbcodeTagDescriptor } from "@godot-scene-web/html";
+import {
+  GODOT_BBCODE_BUILT_IN_EFFECTS,
+  godotBbcodeTagKind,
+  type GodotBbcodeTagDescriptor
+} from "@godot-scene-web/html";
 
 export type RichRefusal =
   | "font-swap"
@@ -198,7 +214,9 @@ export function parseSimpleRich(
       return refuse("font-swap", `[${name}]`);
     }
     if (kind === "image") return refuse("img", "[img]");
-    if (kind === "effect") return refuse("effect", `[${name}] is an effect descriptor`);
+    if (kind === "effect" && GODOT_BBCODE_BUILT_IN_EFFECTS[name]) {
+      return refuse("effect", `[${name}] is a built-in animated effect`);
+    }
     if (kind === "void") return refuse("style", `[${name}] is a block construct`);
     if (kind === "indent" || kind === "bgcolor" || kind === "url" || kind === "font_size") {
       return refuse("style", `[${name}]`);
@@ -272,11 +290,17 @@ export function parseSimpleRich(
       continue;
     }
     if (kind === "style" && descriptor?.kind === "style") {
-      // THE EMPTY-CSS PROOF, checked rather than assumed. See the module header: STS2's six effect names are
-      // `{kind:"style", css:{}}` in this table, and an empty declaration block is a span that changes nothing.
+      // THE EMPTY-CSS PROOF, checked rather than assumed. See the module header: three of STS2's six effect names
+      // are `{kind:"style", css:{}}` in this table, and an empty declaration block is a span that changes nothing.
       if (Object.keys(descriptor.css ?? {}).length > 0) {
         return refuse("style", `[${name}] carries ${Object.keys(descriptor.css).join(",")}`);
       }
+      stack.push({ name, color: null, start: out.length });
+      continue;
+    }
+    if (kind === "effect" && descriptor?.kind === "effect") {
+      // A CUSTOM animated effect, drawn flat. See the module header: it displaces characters, it does not change
+      // them, and this backend has no way to move a baked raster anyway.
       stack.push({ name, color: null, start: out.length });
       continue;
     }

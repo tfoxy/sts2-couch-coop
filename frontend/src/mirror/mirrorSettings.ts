@@ -248,6 +248,13 @@ export interface MirrorSettings {
   freezeSpines: boolean;
   freezeDecor: boolean;
   tweenReplay: boolean;
+  // GAME TRUTH, one-way — the game's own Settings → Text Effects preference on the serving instance, mirrored so
+  // the wavy / bouncing rich text stops here when the player stops it there. Read-only in every sense: it is never
+  // in `serverSettingsPayload`, has no panel control, and is never persisted (a saved copy would speak for a game
+  // whose setting has since moved). Defaults to TRUE, which is the game's default and the safe answer for a host
+  // that cannot report. Reaches the DOM as `data-spirectl-text-effects` on the stage; the rules that read it are
+  // @spirectl/presentation's.
+  textEffects: boolean;
   // SERVER (game) — this client's TRAIL-DRIVE CAPABILITY: it places the card-flight trail root from the
   // declarative flight hint. Not a preference and not a panel control: the current client declares this capability.
   // Never persisted — a capability is a
@@ -348,6 +355,9 @@ export const NEVER_PERSISTED_SETTING_KEYS = [
   "freezeParticles",
   "freezeSpines",
   "freezeDecor",
+  // textEffects — the GAME's setting, not this viewer's. Same reasoning as the freezes: a saved copy would speak
+  // for a preference that has since moved, and there is no panel control here to correct it with.
+  "textEffects",
   // trailDriveCapable — a CAPABILITY of the build that is running, not a viewer choice. Saving it would let an old
   // stored `true` speak for a build that can no longer drive the trail root (and a stored `false` would silently
   // hold the host's lever off for every viewer on this device, forever, with no panel control to clear it).
@@ -487,6 +497,9 @@ export interface ReportedHostFreezes {
   freezeParticles?: boolean | null;
   freezeSpines?: boolean | null;
   freezeDecor?: boolean | null;
+  // Not a freeze and not seeded with them — same envelope, same tri-state contract, different lifetime. See
+  // `adoptGameTextEffects`.
+  textEffects?: boolean | null;
 }
 
 // Reconcile the "Host performance" checkboxes with what the serving instance actually has frozen. Called ONCE per
@@ -524,6 +537,30 @@ export function seedServerSettingsFromSession(
     seeded = true;
   }
   return seeded;
+}
+
+/**
+ * Adopt the GAME's Settings → Text Effects preference from a `session` envelope.
+ *
+ * DELIBERATELY NOT PART OF `seedServerSettingsFromSession`, even though it rides the same envelope, because it
+ * has the opposite lifetime. The freezes are seeded ONCE per connection: they are levers the viewer then owns in
+ * the panel, so a later re-seed would stomp an edit they just made. This one has no panel control and is never
+ * the viewer's, so it is re-read on EVERY envelope — which is exactly what makes a mid-run toggle land. The host
+ * re-sends a session envelope when the game changes screen, so leaving the game's own settings screen refreshes
+ * it with no reconnect.
+ *
+ * An unreported preference leaves the store alone: absent means "this host cannot say", never "off".
+ * Returns true when a value was adopted.
+ */
+export function adoptGameTextEffects(
+  settings: MirrorSettings,
+  reported: ReportedHostFreezes | null | undefined
+): boolean {
+  if (typeof reported?.textEffects !== "boolean") {
+    return false;
+  }
+  settings.textEffects = reported.textEffects;
+  return true;
 }
 
 // The `staticBg` wire value is exactly the viewer's setting. Image failures never change it: while the setting is
@@ -635,6 +672,9 @@ export function createMirrorSettings(
     freezeSpines: true,
     freezeDecor: true,
     tweenReplay: saved.tweenReplay ?? true,
+    // The game's default, and the right answer for a host that cannot report its preference: a viewer who has
+    // never turned text effects off should see the text move.
+    textEffects: true,
     // Capability, declared by the build rather than chosen by the viewer: the current browser always drives
     // the trail root. Deliberately NOT layered over a saved value — see the denylist entry.
     trailDriveCapable: true,

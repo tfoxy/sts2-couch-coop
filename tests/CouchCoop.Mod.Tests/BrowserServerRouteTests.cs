@@ -595,6 +595,10 @@ AssetCacheTokenEnvelopeTests.Run();
 // WS-2 host-performance truth: the `session` envelope reports the freezes THIS instance actually applies (all off
 // on a windowed host, which never installs the suspender), so the mirror panel's checkboxes stop lying.
 HostPerformanceEnvelopeTests.Run();
+// The GAME's Settings -> Text Effects preference, carried on the same envelope so the mirror's animated rich text
+// obeys the switch the player at the keyboard set. Covers the degraded path this runner can reach: unknown OMITS,
+// so a Godot-less host never tells a viewer to stop animating.
+TextEffectsEnvelopeTests.Run();
 // R13 host hint counters: the `session` envelope carries the embedded producer's per-family emit/decline tallies, so
 // a passive `/ws?watch=0&staticBg=0&cardFlight=1&handTween=1&trailDrive=0` read answers "did the host emit hints, and if not which gate ate them".
 // FIX 2b: a single-frame &still=1 clip parses (client decoder) to a paintable frame with non-degenerate Local* placement.

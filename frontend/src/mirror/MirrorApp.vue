@@ -36,6 +36,7 @@ import {
 } from "@/mirror/mirrorClient";
 import type { MirrorActionMessage } from "@/mirror/mapNodeTap";
 import {
+  adoptGameTextEffects,
   hasStoredMirrorSetting,
   mirrorSettings,
   seedServerSettingsFromSession,
@@ -471,7 +472,17 @@ const hostPerfSeeded = new WeakSet<MirrorClient>();
 // Step 1 must precede step 2 on every path, which it does structurally: both call sites below seed first, and the
 // session parse in mirrorClient sets `client.session` before it notifies (so `c.session` is the envelope that
 // triggered this callback, never the previous one).
+// The GAME's Text Effects preference, adopted on EVERY session envelope rather than once per connection. It is
+// not a lever this viewer owns (no panel control, never persisted), so there is no edit for a re-read to stomp —
+// and re-reading is the whole point: the host re-sends a session envelope on a screen change, which is how a
+// player toggling the setting mid-run reaches the phones watching them. Called from both `seedHostPerf` sites,
+// deliberately OUTSIDE its once-per-connection guard.
+function adoptTextEffects(c: MirrorClient): void {
+  adoptGameTextEffects(mirrorSettings, c.session);
+}
+
 function seedHostPerf(c: MirrorClient): void {
+  adoptTextEffects(c);
   if (hostPerfSeeded.has(c)) return;
   // Only a reported state counts as seeded; an unavailable measurement leaves the local defaults in place and stays
   // eligible, so a later reported state still wins.
