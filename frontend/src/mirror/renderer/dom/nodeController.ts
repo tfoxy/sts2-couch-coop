@@ -334,6 +334,8 @@ export function createNodeController(p: NodeControllerPorts): NodeController {
       placeholderArmedMs: null,
       placeholderTimer: null,
       placeholderFailed: false,
+      bakedStillImg: null,
+      bakedStillKey: null,
       geoclipState: null,
       geoclipDisabled: false,
       npSlices: [],

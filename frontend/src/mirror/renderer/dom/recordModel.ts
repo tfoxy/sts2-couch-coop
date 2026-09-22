@@ -477,6 +477,12 @@ interface RenderRecord {
   placeholderArmedMs: number | null;
   placeholderTimer: ReturnType<typeof setTimeout> | null;
   placeholderFailed: boolean;
+  // BAKED EFFECT STILL (see mirror/bakedEffects.ts) — the committed PNG that stands in for a rarity-glow emitter
+  // while particles are OFF. Only the BOXLESS families land here: a `GPUParticles2D` has no `localRect`, so its
+  // still cannot be a background on the element and needs its own positioned `<img>`. `bakedStillKey` caches the
+  // (url, box) it was last placed at, so a glow that is merely being re-styled rewrites nothing.
+  bakedStillImg: HTMLImageElement | null;
+  bakedStillKey: string | null;
   // Geoclip playback (see mirror/geoclipPlayer.ts). `geoclipState` is the live
   // per-identity playback (null = this node is on the raster path); `geoclipDisabled` is the ONE-WAY revert —
   // once anything about geoclip playback fails for this node it stays on the raster clip for the rest of the

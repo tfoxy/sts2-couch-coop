@@ -287,10 +287,33 @@ This map records current contracts, not retired implementation alternatives.
   `SPIRECTL_SPINE_CLIP_SKIN_UNION`, `SPIRECTL_SPINE_CLIP_DOWNSCALE`, and `SPIRECTL_SPINE_SETANIM_HOOK`.
   They do not create alternate browser wire contracts.
 
+## Baked effect stills (shaders / particles OFF)
+- Files: policy `frontend/src/mirror/bakedEffects.ts`, committed art + provenance
+  `frontend/src/assets/effects/` (see its `README.md`), bake `scripts/bake-effect-stills.py`. Mounted by
+  `nodeStyles.ts` (the card ripple, as the node's own background) and `renderer/dom/subLayers.ts`
+  (`syncBakedStill`, for the boxless rarity-glow emitters).
+- **What they are for.** `Shaders: Off` / `Particles: Off` is what `QUALITY_PRESETS.minimum` writes and what
+  the hard-off floor forces on a software-WebGL phone. Before these, that configuration rendered NOTHING for
+  the card playable-glow (`card_ripple`) and the rarity shimmers — both gameplay cues, not decoration.
+- **Three contracts, each load-bearing.** (1) The stills are ADDITIVE: captured over opaque black and converted
+  to straight alpha, so `rgb × alpha` is the contribution and they need `plus-lighter`. The glows get that from
+  their own streamed `canvasBlendMode: 1`; the ripple's blend is declared by the SHADER, so `bakedEffects` asks
+  for it explicitly. (2) No modulate is baked in — the ripple still is NEUTRAL and the mirror's existing
+  per-node `#mtint-` multiply is what makes it cyan / gold / red. (3) The node-local rect in `bakedEffects.ts`
+  is the rect the bake captured; `scripts/bake-effect-stills.py` prints it after every run.
+- **Scope: the DOM stage only.** `?stage=canvas` deliberately does not consult them (pinned by a test).
+- A mode flip needs a FULL walk (`scheduleRender(true, "effects")` in MirrorView) — entering/leaving `off`
+  changes what the walk emits, and a settled screen visits no nodes.
+- Tests: `frontend/src/mirror/__tests__/bakedEffects.spec.ts` (selection), `bakedEffectMount.spec.ts` (mount +
+  placement + where the blend comes from, driven by an emitter lifted verbatim out of a recorded session),
+  plus the `nodeStyle baked effect stills` block in `nodeStyles.spec.ts`.
+
 ## Particles
 - Files: `godot-client/src/Scene/Effects/ParticleAttachment.cs` and
   `frontend/src/mirror/particleAttributes.ts`; the web runtime is reconciled by its normalized spec signature,
   and `_epoch` re-triggers one-shot bursts.
+- With the family OFF a particle node paints nothing at all — except the two card rarity glows, which fall back
+  to a committed still (see **Baked effect stills** above).
 - Coverage is selected from the shader contract, not inferred from texture alpha. Normalization supplies the
   required coverage, UV, erosion, and mask fields before the reusable web renderer consumes the spec.
 - Headless hosts may freeze a one-shot while its producer state still appears active. The producer retires the

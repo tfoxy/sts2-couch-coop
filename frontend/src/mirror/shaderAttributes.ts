@@ -103,14 +103,34 @@ function colorVariant(color: MirrorColor | null): GodotVariant | undefined {
   return color ? { type: "Color", args: [color.r, color.g, color.b, color.a] } : undefined;
 }
 
-// True when a card_ripple node's `width` uniform is streamed AND ≈ 0 — i.e. the game has the ripple HIDDEN
-// (NCardHighlight at rest; only playable cards / the reward-screen flash tween it up to ~0.075). At width 0 the
-// WebGL render leaks a sliver (degenerate smoothstep), so the renderer skips it. Only suppress when the value is
+// The `width` below which the game's ripple counts as HIDDEN (NCardHighlight at rest; only playable cards / the
+// reward-screen flash tween it up to ~0.075). At width 0 the WebGL render leaks a sliver (degenerate smoothstep),
+// so the renderer skips it.
+const RIPPLE_HIDDEN_WIDTH = 0.005;
+
+// True when a card_ripple node's `width` uniform is streamed AND ≈ 0. Only suppress when the value is
 // explicitly known near-zero: a missing `width` (shaderParams absent) falls through to the normal WebGL path so
 // a ripple we can't measure is never wrongly hidden.
 function rippleEffectivelyOff(node: MirrorNode): boolean {
   const width = node.shaderParams?.find((p) => p.name === "width")?.number;
-  return width != null && width < 0.005;
+  return width != null && width < RIPPLE_HIDDEN_WIDTH;
+}
+
+/**
+ * The streamed `width` of a ripple the game currently has SHOWN, or null.
+ *
+ * The positive twin of `rippleEffectivelyOff`, exported so `bakedEffects.ts` can ask the same question of the
+ * same uniform against the same floor instead of re-deriving it — the two must agree, or the shaders-off still
+ * would paint on cards whose WebGL binding is parked (and vice versa).
+ *
+ * Null covers BOTH "the game has it hidden" and "the uniform is not streamed": a ripple that cannot be measured
+ * is not painted, which is the conservative direction here. (The WebGL path makes the opposite call for the same
+ * unmeasurable node, and deliberately so — there a missing uniform must not wrongly HIDE a live effect, while
+ * here it must not wrongly INVENT one.)
+ */
+export function rippleShownWidth(node: MirrorNode): number | null {
+  const width = node.shaderParams?.find((p) => p.name === "width")?.number;
+  return width != null && width >= RIPPLE_HIDDEN_WIDTH ? width : null;
 }
 
 // True when this node is the game's screen-transition overlay AND its `threshold` uniform is streamed AND ≈ 0 —

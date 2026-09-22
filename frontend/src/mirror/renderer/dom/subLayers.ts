@@ -10,6 +10,7 @@ import {
   drawAtlasRegion,
   preloadAtlas,
 } from "@/mirror/atlasBaker";
+import { bakedStillFor } from "@/mirror/bakedEffects";
 import { isCardTrailNode, trailProfile } from "@/mirror/cardTrail";
 import {
   atlasCanvasPlacement,
@@ -22,7 +23,7 @@ import {
 } from "@/mirror/nodeStyles";
 import type { MirrorNode } from "@/mirror/sceneTree";
 import type { MirrorShaderBinding } from "@/mirror/shaderAttributes";
-import { px } from "@/mirror/stageFit";
+import { px, pxCss } from "@/mirror/stageFit";
 import { naturalSize, warmImage } from "@/mirror/textureCache";
 import {
   ATLAS_STICKY_CANVAS_REVERTS,
@@ -117,6 +118,54 @@ export function createDomSubLayers(ports: DomSubLayerPorts): DomSubLayers {
     walk,
     updateSpineLayer,
   } = ports;
+  /**
+   * Mount, place, or tear down this node's baked effect still — the `<img>` that stands in for a BOXLESS effect
+   * (a rarity-glow emitter) while its family is OFF. See `bakedEffects.ts` for which nodes qualify and why.
+   *
+   * Idempotent, and keyed on (url, box) so a glow being re-styled for an unrelated reason — a card moving, a
+   * modulate tween — rewrites no styles at all.
+   */
+  function syncBakedStill(record: RenderRecord, node: MirrorNode, deferHiddenLayers: boolean): void {
+    const el = record.el;
+    const still = el === null ? null : bakedStillFor(node);
+    // `"localRect"` stills are painted as the element's own background by `nodeStyle`; only boxless ones mount here.
+    const box = still !== null && still.box !== "localRect" ? still.box : null;
+    if (still === null || box === null) {
+      if (record.bakedStillImg !== null) {
+        record.bakedStillImg.remove();
+        record.bakedStillImg = null;
+        record.bakedStillKey = null;
+      }
+      return;
+    }
+    if (deferHiddenLayers && record.bakedStillImg === null) {
+      return;
+    }
+
+    let img = record.bakedStillImg;
+    if (img === null) {
+      img = document.createElement("img");
+      img.className = "mirror-baked-still";
+      img.decoding = "async";
+      img.alt = "";
+      img.src = still.url;
+      record.bakedStillImg = img;
+      record.bakedStillKey = null;
+      el!.appendChild(img);
+    }
+
+    // LAYOUT SPACE (stageFit.ts): the box is already in the node's own local units, so the element's own matrix
+    // supplies any scale the game put on the emitter (a rarity glow carries a 1.35 y-scale) and no `scale()`
+    // belongs here — which is exactly why the bake pinned the node to identity.
+    const key = `${still.url}|${box.x},${box.y},${box.width},${box.height}`;
+    if (record.bakedStillKey !== key) {
+      record.bakedStillKey = key;
+      img.style.width = pxCss(box.width);
+      img.style.height = pxCss(box.height);
+      img.style.transform = `translate(${pxCss(box.x)}, ${pxCss(box.y)})`;
+    }
+  }
+
   function updateSubLayers(
     record: RenderRecord,
     node: MirrorNode,
@@ -617,6 +666,15 @@ export function createDomSubLayers(ports: DomSubLayerPorts): DomSubLayers {
       spineTimeline.noteDomShapeChanged(); // an effect surface left
     }
 
+    // BAKED EFFECT STILL for a BOXLESS effect (bakedEffects.ts): the rarity-glow emitters, while particles are
+    // OFF. A `GPUParticles2D` streams no `localRect`, so `placementBox` gives it a zero box at its transform
+    // origin — a background on the element would have nothing to paint into, and the still has to be its own
+    // `<img>` sized and placed in NODE-LOCAL units, exactly like the creature stand-in.
+    //
+    // Deferred under a hidden ancestor for the same reason as the layers around it: an image decode and a
+    // placement for pixels inside a `display:none` subtree, and a reveal re-dirties the node so this runs again.
+    syncBakedStill(record, node, deferHiddenLayers);
+
     // Spine clip self-layer (mirror-managed; NOT a gsw self-layer, so no SELF_LAYER_CLASS — the renderer paints
     // + advances the frames itself off the live track-time signal).
     updateSpineLayer(record, node, deferHiddenLayers);
@@ -718,6 +776,13 @@ export function createDomSubLayers(ports: DomSubLayerPorts): DomSubLayers {
     // either a map stroke or an NCardTrail, never both).
     if (record.trailDiv) {
       paintEls.push(record.trailDiv);
+    }
+    // The baked effect still takes the slot the effect's own surface would have had: in the node's own background
+    // band, in front of its sprite paint and behind the spine clip. It is mutually exclusive with the gsw canvas
+    // it replaces (it only exists while that family is OFF, which is exactly when no canvas is mounted), so the
+    // order only has to be deterministic.
+    if (record.bakedStillImg) {
+      paintEls.push(record.bakedStillImg);
     }
     if (record.spineLayer) {
       paintEls.push(record.spineLayer);

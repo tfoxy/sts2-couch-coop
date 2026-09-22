@@ -30,6 +30,7 @@ import {
   textStyle,
   type RenderItem
 } from "@/mirror/nodeStyles";
+import { mirrorSettings } from "@/mirror/mirrorSettings";
 import { __setRenderQualityForTest, type RenderQuality } from "@/render/quality";
 import type { MirrorNode } from "@/mirror/sceneTree";
 import * as textureCache from "@/mirror/textureCache";
@@ -1078,5 +1079,62 @@ describe("splitAnimStyle", () => {
     expect(container.width).toBe("128px");
     // Paint keys must NOT leak back onto the parent (else the frozen texture double-paints, static, under the spin).
     expect(container.backgroundImage).toBeUndefined();
+  });
+});
+
+// THE SHADERS-OFF STAND-IN. A card highlight's own texture is shader INPUT (the card SDF), so nodeStyle
+// deliberately paints NOTHING for it — and with shaders off there is no canvas either, which is the gap the baked
+// still fills. See bakedEffects.ts; the still's own selection rules are pinned by bakedEffects.spec.ts.
+describe("nodeStyle baked effect stills", () => {
+  const RIPPLE_SHADER = "res://shaders/card_ripple.gdshader";
+
+  function highlight(width: number): MirrorNode {
+    return mkNode({
+      nodeType: "MegaCrit.Sts2.Core.Nodes.Cards.NCardHighlight",
+      shaderId: RIPPLE_SHADER,
+      shaderParams: [{ name: "width", kind: "number", number: width }] as MirrorNode["shaderParams"],
+      textureUrl: "/res/images/packed/card_template/card_frame_sdf.exr",
+      textureStretchMode: 5,
+      ninePatch: false,
+      ninePatchMargins: null,
+      localRect: { x: 0, y: 0, width: 759, height: 951 }
+    });
+  }
+
+  afterEach(() => {
+    mirrorSettings.shaderMode = "static";
+  });
+
+  it("paints the still, additively, and never the raw SDF", () => {
+    mirrorSettings.shaderMode = "off";
+    const style = nodeStyle(item(highlight(0.075)));
+
+    expect(style.backgroundImage).toMatch(/card-ripple/);
+    expect(style.backgroundSize).toBe("100% 100%");
+    // `blend_add` in the game, and the shader — not a material — is what declares it, so nothing streams it.
+    expect(style.mixBlendMode).toBe("plus-lighter");
+    // The SDF must never appear: it is a meaningless grey blob without its shader.
+    expect(style.backgroundImage).not.toContain("card_frame_sdf");
+  });
+
+  it("leaves the node's own tint filter alone, because that filter IS the glow's colour", () => {
+    // The still is baked NEUTRAL; the mirror's existing per-node modulate multiply turns it cyan / gold / red.
+    // A second tint here would square the colour.
+    mirrorSettings.shaderMode = "off";
+    const style = nodeStyle({ ...item(highlight(0.075)), tintId: "0_243_251" });
+
+    expect(style.filter).toBe("url(#mtint-0_243_251)");
+  });
+
+  it("paints nothing at all while the game has the ripple hidden", () => {
+    mirrorSettings.shaderMode = "off";
+    const style = nodeStyle(item(highlight(0)));
+
+    expect(style.backgroundImage).toBeUndefined();
+  });
+
+  it("paints nothing while a mode that renders the real shader is selected", () => {
+    mirrorSettings.shaderMode = "static";
+    expect(nodeStyle(item(highlight(0.075))).backgroundImage).toBeUndefined();
   });
 });
