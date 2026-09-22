@@ -203,6 +203,13 @@ export interface MirrorSettings {
   // `?gamepad=off` is the lever for the one case that wants it off — a pad that is driving something else. Read
   // live by the capture, so a flip lands on the next frame.
   gamepad: boolean;
+  // CLIENT input (browser-only) — the BROWSER KEYBOARD capture (keyboardCapture.ts). On, a key pressed on this
+  // device is replayed into this viewer's seat as a real key and the GAME maps it onto its own shortcut, rebinds
+  // included. Default ON everywhere: a viewer typing over a game they are driving means the key to go to the game,
+  // and a device with no keyboard produces no key events to forward, so the default costs nothing on a phone.
+  // `?keyboard=off` is the lever for the case that wants it off — a viewer using the page's own keyboard controls,
+  // or a second client that should not steer. Read live by the capture, so a flip lands on the next keystroke.
+  keyboard: boolean;
   // CLIENT render (browser-only) — the spine playback mode (see SpineMode). Seeded from the DEV-only
   // `?spineMode=`, default "static" (server-baked stills everywhere; no panel control, never persisted).
   // Consulted at the two spine gates in spineAttributes.ts; MirrorView forces a full re-walk on change so live
@@ -348,10 +355,12 @@ export const PERSISTED_SETTING_KEYS: readonly PersistedSettingKey[] = [
 //   gamepad          — same shape as spineMode: a `?gamepad=off` lever with no panel control (see the field), so
 //                      there is no viewer-set value to remember. It moves to the saved set the day the panel
 //                      grows a checkbox for it.
+//   keyboard         — the keyboard capture's twin of `gamepad`, for the same reason and on the same terms.
 export const NEVER_PERSISTED_SETTING_KEYS = [
   "effectModePinned",
   "spineMode",
   "gamepad",
+  "keyboard",
   "freezeParticles",
   "freezeSpines",
   "freezeDecor",
@@ -651,6 +660,8 @@ export function createMirrorSettings(
     uiScaling: urlOffFlag(params, "uiScale") ?? saved.uiScaling ?? true,
     // BROWSER GAMEPAD: on unless the URL says otherwise. Nothing saved to layer over — see the denylist entry.
     gamepad: urlOffFlag(params, "gamepad") ?? true,
+    // BROWSER KEYBOARD: the same, on the same terms.
+    keyboard: urlOffFlag(params, "keyboard") ?? true,
     spineMode: parseSpineMode(params.get("spineMode")),
     backstopOcclusion: urlOffFlag(params, "backstopOcclude") ?? saved.backstopOcclusion ?? true,
     staticBgEnabled: urlOffFlag(params, "staticBg") ?? saved.staticBgEnabled ?? true,

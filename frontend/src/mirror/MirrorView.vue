@@ -17,6 +17,7 @@ import { createEagerScroll, type EagerScroll } from "@/mirror/eagerScroll";
 import { noteMirrorFrame, registerPressureSource } from "@/mirror/framePressure";
 import { createGamepadCapture, type GamepadCapture } from "@/mirror/gamepadCapture";
 import { createInputCapture, type InputCapture } from "@/mirror/inputCapture";
+import { createKeyboardCapture, type KeyboardCapture } from "@/mirror/keyboardCapture";
 import { lastPressModality, onPressModalityChange } from "@/inputModality";
 import {
   createRewardFocusCoordinator,
@@ -196,6 +197,9 @@ let inputCapture: InputCapture | null = null;
 // receive-only mirror (no `sendInput`) never polls a pad, and inert on any browser without the secure-context-only
 // Gamepad API. It shares nothing with inputCapture but the send path.
 let gamepadCapture: GamepadCapture | null = null;
+// The BROWSER KEYBOARD capture (keyboardCapture.ts) — the third upstream source, created under the same gate as
+// the other two. Window-level key events, no stage and no coordinate.
+let keyboardCapture: KeyboardCapture | null = null;
 let rewardFocusCoordinator: RewardFocusCoordinator | null = null;
 let unsubscribePressModality: (() => void) | null = null;
 // R10 WS-E — the eager-scroll engine. Created alongside inputCapture (it needs the renderer AND the send path),
@@ -837,6 +841,12 @@ function mountScene(): void {
         send: (message) => sendInput(message),
         enabled: () => mirrorSettings.gamepad
       });
+      // BROWSER KEYBOARD. Same deal: the send path and the live setting, nothing else — a key names no place on
+      // the stage, and the GAME maps it onto its own shortcut.
+      keyboardCapture = createKeyboardCapture({
+        send: (message) => sendInput(message),
+        enabled: () => mirrorSettings.keyboard
+      });
       rewardFocusCoordinator = createRewardFocusCoordinator({
         modality: lastPressModality,
         canControl: () => props.sendInput !== undefined,
@@ -1161,6 +1171,13 @@ watch(
   () => gamepadCapture?.refresh()
 );
 
+// BROWSER KEYBOARD: the capture reads the setting live per keystroke, so turning it OFF needs no watch to stop it
+// sending — this is here to let go of anything held at the moment of the flip.
+watch(
+  () => mirrorSettings.keyboard,
+  () => keyboardCapture?.refresh()
+);
+
 // Start the adaptive render-quality controller when eligible (pure auto mode + effects on + a runtime exists).
 // It drives the gsw runtime setters live, so a downgrade re-tunes resolution/FPS without a dispose+recreate.
 function startAdaptiveQuality(): void {
@@ -1296,6 +1313,9 @@ onBeforeUnmount(() => {
   // holding a button.
   gamepadCapture?.dispose();
   gamepadCapture = null;
+  // Same symmetry for the keyboard: an unmount mid-press releases the key rather than leaving the seat holding it.
+  keyboardCapture?.dispose();
+  keyboardCapture = null;
   eagerScroll?.dispose();
   eagerScroll = null;
   if (renderRaf) {

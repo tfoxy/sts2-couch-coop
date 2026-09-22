@@ -293,6 +293,17 @@ describe("createMirrorSettings — URL overrides", () => {
     expect(PERSISTED_SETTING_KEYS as readonly string[]).not.toContain("gamepad");
   });
 
+  // BROWSER KEYBOARD: the gamepad's twin, on the same terms — a key pressed over a game this viewer is driving
+  // means the game, and a device with no keyboard sends nothing to forward.
+  it("seeds the keyboard capture ON, with `?keyboard=off` the only way to hold it off", () => {
+    expect(build(quality(), "").keyboard).toBe(true);
+    expect(build(quality(), "?keyboard=off").keyboard).toBe(false);
+    expect(build(quality(), "?keyboard=on").keyboard).toBe(true);
+    expect(build(quality(), "?keyboard").keyboard).toBe(true);
+    expect(NEVER_PERSISTED_SETTING_KEYS as readonly string[]).toContain("keyboard");
+    expect(PERSISTED_SETTING_KEYS as readonly string[]).not.toContain("keyboard");
+  });
+
   it("returns a reactive store whose mutations propagate to derived state", () => {
     const s = build();
     expect(isReactive(s)).toBe(true);

@@ -681,20 +681,12 @@ describe("createInputCapture — misc", () => {
     expect(sent.at(-1)).toMatchObject({ kind: "click", button: "left", pressed: false });
   });
 
-  it("sends a key message with modifiers and ignores key repeats", () => {
-    window.dispatchEvent(new KeyboardEvent("keydown", { code: "KeyE", shiftKey: true }));
-    expect(sent.at(-1)).toMatchObject({ kind: "key", key: "KeyE", modifiers: "shift" });
-
-    sent = [];
-    window.dispatchEvent(new KeyboardEvent("keydown", { code: "KeyE", repeat: true }));
-    expect(sent).toHaveLength(0);
-  });
-
-  it("does not capture keys while typing in an editable field", () => {
-    const input = document.createElement("input");
-    document.body.appendChild(input);
-    input.focus();
-    window.dispatchEvent(new KeyboardEvent("keydown", { code: "KeyA" }));
+  // The keyboard is no longer this module's: it has its own upstream source (keyboardCapture.ts, specced in
+  // keyboardCapture.spec.ts). A pointer capture must therefore be deaf to keys — including the ones it used to
+  // claim — so a page with both captures up can never send a keystroke twice.
+  it("sends nothing for a key press (the keyboard is keyboardCapture's)", () => {
+    window.dispatchEvent(new KeyboardEvent("keydown", { code: "KeyE", shiftKey: true, bubbles: true }));
+    window.dispatchEvent(new KeyboardEvent("keyup", { code: "KeyE", bubbles: true }));
     expect(sent.filter((m) => m.kind === "key")).toHaveLength(0);
   });
 
