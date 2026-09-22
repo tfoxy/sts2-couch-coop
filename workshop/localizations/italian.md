@@ -25,6 +25,9 @@ Il ciclo di gioco principale è giocabile, ma alcune schermate e azioni presenta
 [*][b]Steam Deck[/b] - il gioco può bloccarsi mentre fa da host. Se succede, pubblica il tuo godot.log nella [url=https://steamcommunity.com/workshop/filedetails/discussion/3799476240/563668239243120957/]discussione del Workshop[/url].
 [/list]
 
+[h2]Prima di giocare[/h2]
+L'audio esce solo dal computer host - chi gioca dal browser non ha alcun suono sul proprio dispositivo.
+
 Tutti i client nel browser devono poter raggiungere l'host sulla stessa rete locale, di solito la stessa rete Wi-Fi. Usa CouchCoop solo su una rete locale condivisa con persone di cui ti fidi.
 
 Codice sorgente e supporto: https://github.com/tfoxy/sts2-couch-coop

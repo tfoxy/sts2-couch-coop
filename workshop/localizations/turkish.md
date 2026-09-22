@@ -25,6 +25,9 @@ Temel oyun döngüsü oynanabilir durumda, ancak bazı ekranlarda ve eylemlerde 
 [*][b]Steam Deck[/b] - oyun, host olarak çalışırken çökebilir. Böyle bir durumda lütfen godot.log dosyanızı [url=https://steamcommunity.com/workshop/filedetails/discussion/3799476240/563668239243120957/]Workshop tartışmasına[/url] gönderin.
 [/list]
 
+[h2]Oynamadan önce[/h2]
+Ses yalnızca host bilgisayardan çıkar - tarayıcıdan oynayanlar kendi cihazlarında ses duymaz.
+
 Tüm tarayıcı istemcileri aynı yerel ağ üzerinden, genellikle aynı Wi-Fi üzerinden, host bilgisayara ulaşabilmelidir. CouchCoop'u yalnızca güvendiğiniz kişilerle paylaştığınız bir yerel ağda kullanın.
 
 Kaynak kodu ve destek: https://github.com/tfoxy/sts2-couch-coop
