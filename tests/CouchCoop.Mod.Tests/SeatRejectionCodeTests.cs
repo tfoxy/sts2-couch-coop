@@ -50,7 +50,12 @@ internal static class SeatRejectionCodeTests
                      SeatReadinessVerdict.PortTakenCode,
                      SeatReadinessVerdict.PortBlockedCode,
                      SeatReadinessVerdict.NetworkPathCode,
-                     HeadlessClientManager.SeatControlBlockedCode
+                     HeadlessClientManager.SeatControlBlockedCode,
+                     // The fifth: the whole LOBBY has no couch transport, so no seat can be started for anyone.
+                     // It reuses the port-conflict copy on the phone (MIRROR_REJECTION_SEAT_CAUSES) for the same
+                     // reason `seat-control-blocked` reuses host-local-block: from this device the news is
+                     // identical — nothing here is wrong, and only the host can fix it.
+                     CouchSeatAvailability.NoCouchListenerCode
                  })
         {
             var refused = CouchCoopWebSocketConnection.ClassifyFailedSpawn(

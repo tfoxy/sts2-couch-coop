@@ -399,6 +399,27 @@ describe("MirrorApp join rejection copy", () => {
     expect(joinMessage().exists()).toBe(false);
   });
 
+  // The host's fifth named cause, and the broadest: the lobby has no couch transport at all, because the port
+  // it needs was taken when the host started hosting. Measured Sep-22 2026 — an orphaned game process owned
+  // that port and every join died in 141 ms under `spawn-failed`, i.e. "please try again", for a condition
+  // that no retry on this device can change. It reuses the port-conflict copy because that copy is already
+  // word-for-word correct here, in all 14 languages.
+  it("tells a couch-deaf lobby apart from a view that merely failed to start", async () => {
+    await rejectAJoin({
+      joinRejection: "host-no-couch-listener",
+      joinRejectionDetail:
+        "The couch co-op listener could not bind UDP port 33771 on this computer, so no player's game can be "
+        + "started for this lobby."
+    });
+
+    expect(app!.find('[data-testid="mirror-seat-notice-summary"]').text())
+      .toBe("Another program on the host computer is using the port your game needs.");
+    expect(app!.find('[data-testid="mirror-seat-notice-action"]').text())
+      .toBe("Nothing to change on this device — ask whoever is hosting to restart Slay the Spire 2, then try again.");
+    expect(app!.find('[data-testid="mirror-seat-notice-detail"]').text()).toContain("33771");
+    expect(joinMessage().exists()).toBe(false);
+  });
+
   it("leaves every other code exactly as it was", async () => {
     await rejectAJoin({ joinRejection: "spawn-failed", joinRejectionDetail: "Join deadline expired." });
     expect(joinMessage().text()).toBe("Couldn't start your game view — please try again.");

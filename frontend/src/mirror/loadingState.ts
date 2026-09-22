@@ -181,7 +181,14 @@ export const MIRROR_REJECTION_SEAT_CAUSES = {
   // be changed, and the fix is whoever is hosting allowing the game through their firewall or security
   // software — which is word-for-word what `seat.notice.hostBlockFix` already says, in all 14 catalogs. The
   // host's own English detail renders under it and carries the part that IS different.
-  "seat-control-blocked": "host-local-block"
+  "seat-control-blocked": "host-local-block",
+  // A FIFTH host code onto the FIRST cause. `host-no-couch-listener` is the host reporting that its lobby has
+  // no couch transport at all — the port the couch side needs was already owned by something else when it
+  // started hosting, so no player's game can be started for this lobby at all. From this device that is the
+  // same situation as a single seat's port being taken, and `seat.notice.portConflict` already describes it
+  // exactly — "Another program on the host computer is using the port your game needs" / "ask whoever is
+  // hosting to restart Slay the Spire 2" — in all 14 languages. The host's English detail names the port.
+  "host-no-couch-listener": "port-conflict"
 } as const satisfies Record<string, SeatNoticeCause>;
 
 /**

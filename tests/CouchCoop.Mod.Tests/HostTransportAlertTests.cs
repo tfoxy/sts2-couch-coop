@@ -1,4 +1,5 @@
 using CouchCoop.Mod.HostUi;
+using CouchCoop.Mod.Localization;
 using CouchCoop.Mod.Session;
 
 // When does the host get a MODAL about a degraded hosting transport?
@@ -24,6 +25,7 @@ internal static class HostTransportAlertTests
         AHealthyTransportNeverOpens();
         ANoteThatArrivesLateInTheSameMountStillOpens();
         TheTextIsTheTransportsOwnNote();
+        TheCouchSideFailingToBindAlsoOpensTheAlert();
         NothingIsRememberedAcrossAFreshState();
 
         Console.WriteLine("HostTransportAlertTests: ok");
@@ -165,6 +167,32 @@ internal static class HostTransportAlertTests
         finally
         {
             CouchCoopHostUiNotices.HostTransportNote = previous;
+        }
+    }
+
+    // The OTHER degraded transport, and the reason this alert now has two producers. A Steam lobby can come up
+    // while the couch side fails to bind its port — the exact mirror of Steam-offline: remote friends can join
+    // and nobody in the room can. Until Sep-22 2026 that condition armed nothing at all, so the first anyone
+    // heard of it was a phone failing to join with "No further cause is available".
+    private static void TheCouchSideFailingToBindAlsoOpensTheAlert()
+    {
+        var note = CouchCoopHostTransport.CouchSeatsUnavailableText.Resolve();
+        Expect(!string.IsNullOrWhiteSpace(note), "the couch-seats note resolves to real copy");
+        Expect(note != CouchCoopHostTransport.SteamOfflineNote,
+            "…and is its own sentence — the two conditions have opposite fixes and must not share copy");
+
+        var decision = HostTransportAlert.Decide(HostTransportAlertState.Initial, true, note);
+        Expect(decision.Open, "a couch-deaf lobby opens the alert");
+        Expect(decision.Text == note, "the modal renders exactly the note the transport published");
+        Expect(!HostTransportAlert.Decide(decision.Next, true, note).Open,
+            "…and is once-per-mount like the other note, since both ride the same latch");
+
+        // Every catalog, because a host reading a blank modal learns nothing.
+        foreach (var language in CouchCoopLocalization.SupportedLanguages)
+        {
+            Expect(!string.IsNullOrWhiteSpace(
+                    CouchCoopHostTransport.CouchSeatsUnavailableText.ResolveForLanguage(language)),
+                $"the couch-seats note is translated in {language}");
         }
     }
 

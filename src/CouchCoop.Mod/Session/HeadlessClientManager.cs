@@ -843,9 +843,22 @@ public sealed partial class HeadlessClientManager : IDisposable
 
             if (proc is null)
             {
-                CouchCoop.Mod.Connections.ConnectionRegistry.Shared.Fail(sessionId, "launch-refused",
-                    "The game process did not start.", "Make sure the host lobby is accepting couch players, then retry.",
-                    "The process launcher returned no process handle. No further cause is available.");
+                // A null launcher result is not always a mystery. The ONE condition that makes `LaunchReal`
+                // refuse before it does any work — this host having no couch ENet listener — has been known
+                // since the lobby started hosting, and used to be thrown away here: the player's report read
+                // "No further cause is available" while the host could have named the port and the likely
+                // process. Anything else (a genuine Process.Start returning null) keeps the generic sentence,
+                // which is honest, because for that there really is no further cause.
+                var (code, summary, action, detail) = CouchSeatAvailability.UnavailableDetail is { } couchSeatRefusal
+                    ? (CouchSeatAvailability.NoCouchListenerCode,
+                        CouchSeatAvailability.IssueSummary,
+                        CouchSeatAvailability.IssueAction,
+                        couchSeatRefusal)
+                    : ("launch-refused",
+                        "The game process did not start.",
+                        "Make sure the host lobby is accepting couch players, then retry.",
+                        "The process launcher returned no process handle. No further cause is available.");
+                CouchCoop.Mod.Connections.ConnectionRegistry.Shared.Fail(sessionId, code, summary, action, detail);
                 ForgetConnectionLocked(slot);
                 // Spawn failed: drop this session. Only forget the claim if WE just created it (a new name) —
                 // a reconnect's pre-existing claim is left intact so the player can retry on the same netId.

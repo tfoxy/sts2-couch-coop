@@ -98,7 +98,7 @@ internal sealed class DualNetHost : SteamHost
             var error = _enet.StartHost(port, maxClients);
             if (error.HasValue)
             {
-                CouchCoopHostTransport.Log(
+                CouchCoopHostTransport.LogWarning(
                     $"ENet side failed to bind port {port} ({error.Value}) — continuing Steam-only (no couch seats). "
                     + "Another game instance is the usual cause.");
                 return false;
@@ -106,7 +106,7 @@ internal sealed class DualNetHost : SteamHost
         }
         catch (Exception exception)
         {
-            CouchCoopHostTransport.Log(
+            CouchCoopHostTransport.LogWarning(
                 $"ENet side threw while binding port {port} ({exception.GetType().Name}: {exception.Message}) — continuing Steam-only.");
             return false;
         }
