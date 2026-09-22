@@ -493,6 +493,11 @@ public sealed class ConnectionRegistry
                 // answer, and a host whose patches never applied produces reports that otherwise look like an
                 // ordinary network failure — no QR button, no seat can join, nothing saying why.
                 ["patchHealth"] = CouchCoopPatchHealth.Describe(),
+                // Beside patchHealth for the same reason it is here: this condition is decided at HOST START,
+                // long before the attempt, so the log excerpt below — post-attempt errors only — structurally
+                // cannot show it. A report from a lobby with no couch transport otherwise looks like an
+                // ordinary launch failure.
+                ["couchSeats"] = Session.CouchSeatAvailability.UnavailableDetail ?? "available",
                 ["gameVersion"] = e.Facts.GetValueOrDefault("gameVersion") ?? HostGameVersion ?? "unknown"
             };
             report = new ConnectionReportContent

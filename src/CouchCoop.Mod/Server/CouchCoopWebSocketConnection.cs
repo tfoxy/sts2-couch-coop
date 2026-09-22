@@ -549,7 +549,13 @@ public sealed class CouchCoopWebSocketConnection
             // for the same reason as the three above — the viewer would otherwise get "spawn-failed", which
             // invites the one thing that cannot help (retrying), for a cause whose only fix is on the host's
             // machine. The page maps it onto the copy it already has for a host-side block.
-            or HeadlessClientManager.SeatControlBlockedCode)
+            or HeadlessClientManager.SeatControlBlockedCode
+            // The fifth: this host's lobby has no couch listener at all, because the ENet side could not bind
+            // its port. Same shape as the four above — a real cause, with a fix that is not on this device —
+            // and the page maps it onto the port-conflict copy it already has, which is word-for-word right
+            // ("ask whoever is hosting to restart Slay the Spire 2"). Without this arm it collapses into
+            // "spawn-failed", i.e. "please try again", for a condition no retry can change.
+            or CouchSeatAvailability.NoCouchListenerCode)
         {
             // A cause with a fix. `failure.Code` is non-null inside this pattern.
             return (failure.Code, evidence);

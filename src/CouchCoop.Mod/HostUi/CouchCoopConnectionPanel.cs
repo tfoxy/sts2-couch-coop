@@ -500,6 +500,10 @@ internal sealed partial class CouchCoopConnectionPanel : Panel
         Session.SeatReadinessVerdict.PortBlockedCode => "seat_port_blocked",
         Session.SeatReadinessVerdict.NetworkPathCode => "seat_network",
         "launch-exception" or "launch-refused" or "startup-timeout" or "process-monitor-failed" => "launch",
+        // Split out of "launch" for the same reason seat_run_in_progress was: the launch copy says "try joining
+        // again", and no retry can bind a port another process owns. This row is also raised against the HOST
+        // itself at host start, where "try joining again" would be addressed to nobody.
+        Session.CouchSeatAvailability.NoCouchListenerCode => "host_no_couch_seats",
         "native-join-rejected" or "native-disconnected" or "child-status-lost" => "join",
         // Split OUT of "join" deliberately. The generic join copy tells the host to check that game and mod
         // versions match, which is wrong twice over for a run already in progress: nothing is mismatched, and

@@ -28,6 +28,8 @@ internal static class SeatPortTruthTests
         await ASteppedAroundSeatPortIsVisibleToTheHost();
         await APinnedSeatFailsImmediatelyInsteadOfSpawning();
         await APinnedSeatFailureKeepsTheReconnectClaim();
+        await ARefusedLaunchNamesTheCouchTransportWhenThatIsTheCause();
+        await ARefusedLaunchWithNoKnownCauseKeepsTheGenericSentence();
         ASeatMayNotWalkOffItsAssignedPort();
         AHostStillWalks();
         TheSeatsOwnRefusalBecomesThePortTakenIssue();
@@ -221,6 +223,80 @@ internal static class SeatPortTruthTests
             Assert(await harness.Manager.EnsureHeadlessAsync(BeginAttempt(), "Ann", default)
                     == HeadlessClientManager.SlotToPort(2),
                 "freeing the port lets the same player back onto the seat they held");
+        }
+        finally { ConnectionRegistry.Shared.Clear(); }
+    }
+
+    // ---- 3b. a refused LAUNCH says why, when the host knows why ------------------------------------------------
+    //
+    // Measured Sep-22 2026 during release validation. An orphaned game process from an earlier session still
+    // owned the couch transport's UDP port, so `DualNetHost.TryStartEnetSide` could not bind and
+    // `MaySpawnCouchSeat` went false. Every phone join then failed in 141 ms with
+    // "The process launcher returned no process handle. No further cause is available." — while the host had
+    // known the cause since the moment it started hosting, and its godot.log carried 32 [couchcoop] lines
+    // about everything except the transport.
+    //
+    // The launcher returning null is the FACT; why it did is `CouchSeatAvailability`'s to say. These two pin
+    // both halves, because the generic sentence is still correct for a launcher that failed for a reason
+    // nobody recorded.
+
+    private static async Task ARefusedLaunchNamesTheCouchTransportWhenThatIsTheCause()
+    {
+        var harness = new SeatHarness(launchRefused: true);
+        var session = BeginAttempt();
+        CouchSeatAvailability.UnavailableDetail =
+            "The couch co-op listener could not bind UDP port 33771 on this computer, so no player's game can be "
+            + "started for this lobby. Another copy of Slay the Spire 2 still running on this computer is the "
+            + "usual cause.";
+        try
+        {
+            Assert(await harness.Manager.EnsureHeadlessAsync(session, "Ann", default) is null,
+                "a launcher that returns no process handle still refuses the join");
+            Assert(harness.Launched.Count == 1, "…having actually attempted the launch");
+
+            var row = ConnectionRegistry.Shared.Snapshot().Rows.Single(entry => entry.Id == session);
+            Assert(row.Issue?.Code == CouchSeatAvailability.NoCouchListenerCode,
+                "the refusal carries the couch-transport code, not the generic launch-refused");
+            Assert(row.Issue!.Detail!.Contains("33771", StringComparison.Ordinal),
+                "the detail names the port somebody has to go and free");
+            Assert(!row.Issue.Detail.Contains("No further cause is available", StringComparison.Ordinal),
+                "…and never claims to have no cause while holding one");
+            // NOT "retry". No retry can bind a port another process owns; the fix is on the host's machine.
+            Assert(row.Issue.Action.Contains("Close any other copy", StringComparison.Ordinal),
+                "the next action is the one that can actually work");
+
+            // The English the report carries is word-for-word the English catalog entry the panel renders above
+            // it — the same rule the three readiness causes are held to below. The host raises this row from two
+            // places (here, and at host start) and both go through these constants, so they cannot drift.
+            var english = CouchCoopLocalization.CatalogFor("eng");
+            Assert(row.Issue.Summary == CouchSeatAvailability.IssueSummary
+                    && row.Issue.Action == CouchSeatAvailability.IssueAction,
+                "both call sites report through the shared constants");
+            Assert(english["couchcoop_connection_error_host_no_couch_seats_summary"] == CouchSeatAvailability.IssueSummary,
+                "…and the report's summary is the catalog's, word for word");
+            Assert(english["couchcoop_connection_error_host_no_couch_seats_action"] == CouchSeatAvailability.IssueAction,
+                "…as is its next action");
+        }
+        finally
+        {
+            CouchSeatAvailability.Clear();
+            ConnectionRegistry.Shared.Clear();
+        }
+    }
+
+    private static async Task ARefusedLaunchWithNoKnownCauseKeepsTheGenericSentence()
+    {
+        var harness = new SeatHarness(launchRefused: true);
+        var session = BeginAttempt();
+        CouchSeatAvailability.Clear();
+        try
+        {
+            Assert(await harness.Manager.EnsureHeadlessAsync(session, "Ann", default) is null, "still refused");
+            var row = ConnectionRegistry.Shared.Snapshot().Rows.Single(entry => entry.Id == session);
+            Assert(row.Issue?.Code == "launch-refused",
+                "a launcher that failed for an unrecorded reason keeps the generic code");
+            Assert(row.Issue!.Detail!.Contains("No further cause is available", StringComparison.Ordinal),
+                "…and says so honestly rather than borrowing a cause that does not apply");
         }
         finally { ConnectionRegistry.Shared.Clear(); }
     }
@@ -586,6 +662,15 @@ internal static class SeatPortTruthTests
             // this computer, and `seat_silent`'s copy would send the operator after the seat instead.
             "couchcoop_connection_error_seat_control_summary",
             "couchcoop_connection_error_seat_control_action",
+            // The sixth pair, for a lobby that can start NO seat at all because the couch transport never bound
+            // its port. Its own key rather than `launch`, whose action is "try joining again" — the one thing
+            // that cannot help — and rather than `seat_port`, which is about one player's port on a lobby that
+            // is otherwise working.
+            "couchcoop_connection_error_host_no_couch_seats_summary",
+            "couchcoop_connection_error_host_no_couch_seats_action",
+            // The note the same condition raises on the HOST's own surfaces (the QR dialog's tip line and the
+            // once-per-mount lobby modal), which is how a host learns before anybody's phone tries.
+            "couchcoop_couch_seats_unavailable",
         ];
         Assert(CouchCoopLocalization.SupportedLanguages.Count == 14, "there are still fourteen catalogs to fill");
         foreach (var language in CouchCoopLocalization.SupportedLanguages)
@@ -723,11 +808,16 @@ internal static class SeatPortTruthTests
         public readonly HashSet<int> Occupied;
         public readonly HeadlessClientManager Manager;
 
-        public SeatHarness(IEnumerable<int>? occupied = null)
+        public SeatHarness(IEnumerable<int>? occupied = null, bool launchRefused = false)
         {
             Occupied = [.. occupied ?? []];
             Manager = new HeadlessClientManager(
-                launcher: slot => { Launched.Add(slot); return new FakeProcess(slot); },
+                launcher: slot =>
+                {
+                    Launched.Add(slot);
+                    // The shape `LaunchReal` produces when it refuses before doing any work — the ENet guard.
+                    return launchRefused ? null : new FakeProcess(slot);
+                },
                 readinessProbe: (_, _) => Task.FromResult(true),
                 maxSeatsProbe: () => 3,
                 seatPortProbe: (port, _) => Task.FromResult(

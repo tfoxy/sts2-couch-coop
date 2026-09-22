@@ -127,11 +127,50 @@ internal static class CouchCoopHostTransport
     internal static readonly Localization.CouchCoopText SteamOfflineText = new("couchcoop_steam_offline");
     internal static string SteamOfflineNote => SteamOfflineText.Resolve();
 
+    /// <summary>
+    /// The mirror image of <see cref="SteamOfflineText"/>: the Steam lobby came up and the COUCH side did not,
+    /// so remote friends can join and nobody on this sofa can. Raised on the same surfaces (the QR dialog's tip
+    /// line and the once-per-mount lobby modal) because it answers the same question — "why can't they join?" —
+    /// for the other half of the room.
+    /// </summary>
+    internal static readonly Localization.CouchCoopText CouchSeatsUnavailableText = new("couchcoop_couch_seats_unavailable");
+
+    /// <summary>
+    /// Say — everywhere — that this lobby cannot start couch seats. Called when the ENet side failed to bind,
+    /// which is the one way a live hosting session can end up with no couch transport at all.
+    /// <para>
+    /// FOUR SURFACES, ONE CAUSE, and none of them used to fire. The host got nothing (the transport logged its
+    /// refusal to stderr and carried on), the panel got nothing, and the player got "The process launcher
+    /// returned no process handle. No further cause is available." The point of doing all four here is that the
+    /// first two happen at HOST START — a host learns their lobby is couch-deaf before anyone picks up a phone,
+    /// rather than after somebody's join has already failed.
+    /// </para>
+    /// </summary>
+    private static void NoteCouchSeatsUnavailable()
+    {
+        var detail =
+            $"The couch co-op listener could not bind UDP port {EnetPort} on this computer, so no player's game "
+            + "can be started for this lobby. Another copy of Slay the Spire 2 still running on this computer is "
+            + "the usual cause.";
+        CouchSeatAvailability.UnavailableDetail = detail;
+        HostUi.CouchCoopHostUiNotices.HostTransportNote = CouchSeatsUnavailableText;
+        // A WARNING, not a failure: this host's own session is healthy and its Steam lobby is live. Couch co-op
+        // is the part that is degraded, which is exactly the distinction ReportHostIssue's isWarning draws (the
+        // same one HostReachabilityWatch and the shared-profile row use).
+        Connections.ConnectionRegistry.Shared.ReportHostIssue(
+            CouchSeatAvailability.NoCouchListenerCode,
+            CouchSeatAvailability.IssueSummary,
+            CouchSeatAvailability.IssueAction,
+            detail,
+            isWarning: true);
+    }
+
     /// <summary>Forget the current host's transport facts.</summary>
     internal static void ResetTransportState()
     {
         ClearSavedRunHostNetId();
         ClearSavedRunFallbackHostIdentity();
+        CouchSeatAvailability.Clear();
         HostNetId = 1UL;
         EnetAvailable = false;
         SteamLobbyId = null;
@@ -162,6 +201,10 @@ internal static class CouchCoopHostTransport
 
         ClearSavedRunHostNetId();
         ClearSavedRunFallbackHostIdentity();
+        // This path reaches us with a listener already bound, so whatever an earlier host start concluded about
+        // couch seats is stale. Cleared explicitly because this is the one success path that does NOT run
+        // through ResetTransportState first.
+        CouchSeatAvailability.Clear();
         HostNetId = 1UL;
         EnetAvailable = true;
         SteamLobbyId = null;
@@ -229,6 +272,11 @@ internal static class CouchCoopHostTransport
 
         Log($"steam host started lobby={SteamLobbyId ?? "<none>"} hostNetId={HostNetId} "
             + $"couchSeats={(EnetAvailable ? $"ENet:{EnetPort}" : "unavailable")}.");
+        if (!EnetAvailable)
+        {
+            NoteCouchSeatsUnavailable();
+        }
+
         return null;
     }
 
@@ -471,5 +519,31 @@ internal static class CouchCoopHostTransport
     private static void LogEffectiveCapacity(int effective, int requested, string source)
         => Log($"effective maxClients={effective} (requested={requested}, source={source})");
 
-    internal static void Log(string message) => CouchCoopLog.Stderr("host-transport " + message);
+    /// <summary>
+    /// A host-transport line, in BOTH sinks.
+    /// <para>
+    /// stderr stays because it is a contract: <c>scripts/probe-steam-host-join.mjs</c> parses
+    /// <c>[couchcoop] host-transport</c> lines out of the host's captured stderr (<c>--host-stderr</c>) to grade
+    /// which branch a host took. But a STEAM-launched game has no stderr capture, so on the copy a player
+    /// actually runs every one of these lines used to evaporate — including the two that name the reason couch
+    /// co-op is unavailable. <c>godot.log</c> is the file a support report harvests and the one a host can be
+    /// asked for, so the same sentence now lands there too. (<see cref="CouchCoopLog.Info"/> no-ops without a
+    /// Godot engine, which keeps the unit suites silent.)
+    /// </para>
+    /// </summary>
+    internal static void Log(string message)
+    {
+        CouchCoopLog.Stderr("host-transport " + message);
+        CouchCoopLog.Info("host-transport " + message);
+    }
+
+    /// <summary>
+    /// The same line, tagged <c>[WARN]</c> in <c>godot.log</c>: a hosting session that came up DEGRADED. Kept
+    /// byte-identical on stderr so the probe's parser sees no difference between this and <see cref="Log"/>.
+    /// </summary>
+    internal static void LogWarning(string message)
+    {
+        CouchCoopLog.Stderr("host-transport " + message);
+        CouchCoopLog.Warn("host-transport " + message);
+    }
 }
