@@ -36,6 +36,7 @@ internal static class IdleHostCostTests
         LobbyEvaluationContract();
         MountPlanContract();
         MountTargetsResolve();
+        PauseMenuMountTargetsResolve();
         MountPatchRefusesAnInheritedReady();
         await DeferredHostUiKeepsTheListenerButNotTheNetworkAsync(rootPath);
 
@@ -294,6 +295,25 @@ internal static class IdleHostCostTests
         foreach (var typeName in LobbyScreenMountPatch.ScreenTypeNames)
         {
             var target = LobbyScreenMountPatch.ResolveDeclaredReady(typeName);
+            Expect(target is not null, $"{typeName}._Ready resolves against the installed STS2 assemblies");
+            Expect(
+                target!.DeclaringType?.FullName == typeName,
+                $"{typeName} DECLARES _Ready — an inherited one would be Godot.Node's, and patching that hooks every node in the game");
+        }
+    }
+
+    // ---- PauseMenuMountPatch: the other game seam ----------------------------------------------------
+    //
+    // Same contract, same consequence, one screen: if a game update renames NPauseMenu or stops declaring
+    // _Ready, this fails the build rather than silently costing the pause menu its QR row. Internal for the
+    // same reason as MountTargetsResolve above — the `-- beta-targets` verb runs this leg rather than a copy.
+    internal static void PauseMenuMountTargetsResolve()
+    {
+        Expect(PauseMenuMountPatch.ScreenTypeNames.Count == 1, "the pause menu is the one patch target");
+
+        foreach (var typeName in PauseMenuMountPatch.ScreenTypeNames)
+        {
+            var target = PauseMenuMountPatch.ResolveDeclaredReady(typeName);
             Expect(target is not null, $"{typeName}._Ready resolves against the installed STS2 assemblies");
             Expect(
                 target!.DeclaringType?.FullName == typeName,

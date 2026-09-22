@@ -19,6 +19,7 @@
     <Compile Include="MetadataOnlyLobbyScreenMountTests.cs" />
     <Compile Include="MetadataOnlyFixtures.cs" />
     <Compile Include="../../src/CouchCoop.Mod/Patches/LobbyScreenMountTargets.cs" Link="LobbyScreenMountTargets.cs" />
+    <Compile Include="../../src/CouchCoop.Mod/Patches/PauseMenuMountTargets.cs" Link="PauseMenuMountTargets.cs" />
   </ItemGroup>
 
   <ItemGroup Condition="'$(CouchCoopBetaTargetsMode)' != 'metadata'">

@@ -12,7 +12,9 @@ internal static class MetadataOnlyLobbyScreenMountTests
             throw new FileNotFoundException("staged STS2 metadata assembly was not found", assemblyPath);
         }
 
-        foreach (var target in LobbyScreenMountTargets.Targets)
+        // Both mount families, against the same staged assembly: the two lobby screens that carry the QR
+        // button, and the pause menu that carries the mid-run QR row.
+        foreach (var target in LobbyScreenMountTargets.Targets.Concat(PauseMenuMountTargets.Targets))
         {
             Assert(HasDirectZeroArgumentMethod(assemblyPath, target.TypeName, target.MethodName),
                 $"{target.TypeName} must directly declare zero-argument {target.MethodName}");

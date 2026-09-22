@@ -112,6 +112,9 @@ if (args is ["host-guards", ..])
     // The gate that decides whether a lobby screen is evaluated at all — same standing (pure, no engine), and
     // the same invisible-until-someone-opens-a-lobby failure mode.
     IdleHostCostTests.LobbyEvaluationContract();
+    // The pause menu's mount point. Same standing again, and its failure is invisible until someone pauses a
+    // run — later still than opening a lobby, which is why it is worth reaching without a full run.
+    IdleHostCostTests.PauseMenuMountTargetsResolve();
     LobbySupportCheckpointsTests.Run();
     Console.WriteLine("host guards: ok");
     return;
@@ -265,6 +268,11 @@ if (args is ["host-ui", ..])
     // The copy affordance under the QR: the generated glyph (which has no other gate but a screenshot)
     // and the row arithmetic that keeps it beside the address instead of on top of it.
     CouchCoopQrCopyAffordanceTests.Run();
+    // The two gates that decide where a QR entry point may appear — the lobby button's, and the pause menu
+    // row's. Pure predicates over a state snapshot, and deliberately run TOGETHER: the pause-menu suite
+    // asserts the two never answer yes at once, which is only meaningful beside the lobby one.
+    CouchCoopLobbyHostGateTests.Run();
+    CouchCoopPauseMenuGateTests.Run();
     Console.WriteLine("host ui: ok");
     return;
 }
@@ -430,6 +438,8 @@ if (args is ["beta-targets", ..])
     Leg(nameof(SeatCloudSaveIsolationTargetsTests), SeatCloudSaveIsolationTargetsTests.Run);
     Leg(nameof(HeadlessDisconnectExitTests), () => HeadlessDisconnectExitTests.RunAsync().GetAwaiter().GetResult());
     Leg("IdleHostCostTests.MountTargets", IdleHostCostTests.MountTargetsResolve);
+    // …and the pause menu's mount point, which is the mid-run QR row's only seam.
+    Leg("IdleHostCostTests.PauseMenuMountTargets", IdleHostCostTests.PauseMenuMountTargetsResolve);
 
     Console.WriteLine(failures.Count == 0
         ? "beta-targets: every patch target resolves"
@@ -674,6 +684,9 @@ MdnsResponderTests.Run();
 LobbySupportCheckpointsTests.Run();
 // WS-2 QR dialog: when the "Couch Co-Op QR Code" button exists (and, just as importantly, when it does not).
 CouchCoopLobbyHostGateTests.Run();
+// …and its mid-run twin, which decides the same thing for the pause menu's row. Beside the lobby gate on
+// purpose: it shares those snapshot builders, and it asserts the two gates never answer yes at once.
+CouchCoopPauseMenuGateTests.Run();
 // F1 host connectivity log: the ring, the player-facing copy (asserted literally — it is a QA contract
 // shared with the live probe) and the bbcode escaping that keeps a browser-typed display name from
 // re-styling the host's television. Runs FIRST of the log-touching suites and resets the process-global

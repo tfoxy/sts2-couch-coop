@@ -110,9 +110,20 @@ export async function run(command, args, options = {}) {
   return { code, stdout, stderr, command: [command, ...args].join(" ") };
 }
 
+/**
+ * Global `sts2` flags every call in a probe should carry, from `COUCHCOOP_PROBE_STS2_PREFIX`.
+ *
+ * Unset (the default) this is empty and every probe talks to the cwd-discovered configuration and the default
+ * bridge — exactly as before. Set, it is how a probe is pointed at an ISOLATED instance instead of at the
+ * operator's own game: `--config <scratch yaml> --instance <name>`, the same pair
+ * `bring-up-gamescope-instance.sh` prints. Global flags must precede the verb, which is why this is spliced in
+ * here rather than appended by callers.
+ */
+const STS2_PREFIX = (process.env.COUCHCOOP_PROBE_STS2_PREFIX ?? "").trim().split(/\s+/).filter(Boolean);
+
 /** Runs `sts2` and parses JSON. Throws ProbeError on a nonzero exit or unparseable output. */
 export async function sts2(args, { mode = "dangerous" } = {}) {
-  const result = await run("sts2", ["--mode", mode, "--json", ...args]);
+  const result = await run("sts2", [...STS2_PREFIX, "--mode", mode, "--json", ...args]);
   if (result.code !== 0) {
     throw new ProbeError(`${result.command} failed: ${(result.stderr || result.stdout).slice(0, 800)}`);
   }
@@ -129,7 +140,7 @@ export async function sts2(args, { mode = "dangerous" } = {}) {
  * the EXPECTED outcome, so the payload has to be readable on the failure path too.
  */
 export async function sts2Tolerant(args, { mode = "dangerous" } = {}) {
-  const result = await run("sts2", ["--mode", mode, "--json", ...args]);
+  const result = await run("sts2", [...STS2_PREFIX, "--mode", mode, "--json", ...args]);
   try {
     return { ok: result.code === 0, value: JSON.parse(result.stdout), result };
   } catch {
@@ -152,12 +163,19 @@ export const sleep = ms => new Promise(resolve => setTimeout(resolve, ms));
 // ---------------------------------------------------------------------------------------------
 
 /**
- * Acquires or inherits the exact resources these probes drive: the default game and a shared installed mod.
+ * The game instance a probe drives, as the lease names it. `default` — the operator's own game — unless
+ * `COUCHCOOP_PROBE_GAME_INSTANCE` names an isolated one, which is set together with
+ * `COUCHCOOP_PROBE_STS2_PREFIX` when a probe runs inside a private compositor.
+ */
+export const PROBE_GAME_INSTANCE = process.env.COUCHCOOP_PROBE_GAME_INSTANCE?.trim() || "default";
+
+/**
+ * Acquires or inherits the exact resources these probes drive: one game and a shared installed mod.
  */
 export async function acquireLiveLock(owner) {
   const inheritedOwner = process.env.COUCHCOOP_LIVEQA_OWNER;
   const inheritedPid = Number(process.env.COUCHCOOP_LIVEQA_PID ?? 0);
-  const resources = ["shared:install", "exclusive:game:default"];
+  const resources = ["shared:install", `exclusive:game:${PROBE_GAME_INSTANCE}`];
   if (inheritedOwner && inheritedPid > 0) {
     assertLease({ owner: inheritedOwner, pid: inheritedPid, resources });
     return { held: true, owned: false, holder: inheritedOwner, pid: inheritedPid, note: "inherited scoped leases" };

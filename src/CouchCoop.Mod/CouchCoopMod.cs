@@ -174,6 +174,7 @@ public static class CouchCoopMod
                 // its mirror isn't a square-viewport mis-frame; a windowed host keeps its own NGame display apply.
                 if (IsHeadlessClient || IsHeadlessDisplay()) HeadlessViewportConfigurator.Configure();
                 if (!IsHeadlessClient) InitializeQrHostPanel();
+                if (!IsHeadlessClient) RetryPauseMenuMountPatch();
                 return _runtime;
             }
 
@@ -224,6 +225,11 @@ public static class CouchCoopMod
             // headless seat renders no panels — and mounted here, with the other patches, because it must be
             // installed before the first lobby screen runs its _Ready.
             if (!IsHeadlessClient) LobbyScreenMountPatch.Apply();
+            // …and the same for the pause menu, which is where a device that already joined and then LOST its
+            // browser gets the join URL back — the lobby button is gone once the run embarks. Host-only for the
+            // same reason as the line above: a headless seat renders this for nobody. Its absence costs a
+            // convenience, not co-op, so it reports `costsCoop: false`.
+            if (!IsHeadlessClient) PauseMenuMountPatch.Apply();
             // Patch ENetClient.Update() to skip while _isConnected == false, preventing the
             // NetServiceUpdateLoop from draining and discarding the handshake-ack before
             // SendAndWaitForNetIdAck can consume it (fixes headless join timeout).
@@ -313,6 +319,7 @@ public static class CouchCoopMod
             // mirror isn't a square-viewport mis-frame; a windowed host keeps its own NGame display apply.
             if (IsHeadlessClient || IsHeadlessDisplay()) HeadlessViewportConfigurator.Configure();
             if (!IsHeadlessClient) InitializeQrHostPanel();
+            if (!IsHeadlessClient) RetryPauseMenuMountPatch();
             return _runtime;
         }
     }
@@ -508,6 +515,7 @@ public static class CouchCoopMod
             _bgPrerenderStarted = false;
 
             CouchCoopQrHostPanelController.Shutdown();
+            CouchCoopPauseMenuQrEntry.Shutdown();
             CouchCoopLocalization.Shutdown();
 
             if (_hostUi is not null)
@@ -1003,6 +1011,26 @@ public static class CouchCoopMod
         catch (Exception exception)
         {
             CouchCoopLog.Stderr($"host-ui diagnostic code={CouchCoopHostUiServices.HostUiOverlayStartupFailedCode} detail={exception.GetType().Name}: {exception.Message}");
+        }
+    }
+
+    /// <summary>
+    /// SECOND CHANCE at the pause-menu mount patch, and the last one — the twin of the retry
+    /// <see cref="CouchCoopQrHostPanelController.Initialize"/> gives the lobby patch, and here for the same
+    /// reason: the patch block runs at the very top of <see cref="Init"/>, and a native precondition that was not
+    /// satisfied there (MonoMod's exec-helper dlopen) may well be by the time the runtime has been composed. A
+    /// target already installed is not touched again, and this still runs long before any pause menu is readied.
+    /// </summary>
+    private static void RetryPauseMenuMountPatch()
+    {
+        try
+        {
+            PauseMenuMountPatch.Apply();
+        }
+        catch (Exception exception)
+        {
+            CouchCoopLog.Stderr(
+                $"pause menu mount retry failed: {exception.GetType().Name}: {exception.Message}");
         }
     }
 }

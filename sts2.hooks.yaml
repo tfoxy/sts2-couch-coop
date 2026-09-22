@@ -5,6 +5,12 @@ hooks:
   couchcoop.pc-lobby-qr-overlay-probe:
     description: Probe the live PC host lobby CouchCoop QR button/dialog contract, input blocking, and mirror exclusion.
     command: scripts/probe-pc-lobby-qr-overlay.mjs
+  couchcoop.pause-menu-qr-probe:
+    description: >-
+      Probe the pause menu's Couch Co-Op QR Code row: its placement above Give Up in the game's own
+      button column, the dialog it opens, the gate that hides it in a singleplayer run, and mirror
+      exclusion.
+    command: scripts/probe-pause-menu-qr.mjs
   couchcoop.lobby-actions-remain-available-probe:
     description: Probe live PC host lobby semantic actions across the QR dialog available/blocked/available legs.
     command: scripts/probe-lobby-actions-remain-available.mjs
