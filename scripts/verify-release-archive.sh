@@ -62,7 +62,7 @@ is_allowed_payload_file() {
       done
       return 1
       ;;
-    frontend/index.html|frontend/offline.html|frontend/sw.js|frontend/app-boot|frontend/.vite/manifest.json) return 0 ;;
+    frontend/index.html|frontend/offline.html|frontend/sw.js|frontend/app-boot) return 0 ;;
     frontend/manifest.webmanifest|frontend/manifest.*.webmanifest) return 0 ;;
     frontend/icons/icon.svg|frontend/icons/icon-*.png) return 0 ;;
     licenses/QRCoder-1.6.0-MIT.txt|licenses/DeviceDetector.NET-6.5.2-Apache-2.0.txt|licenses/LiteDB-5.0.21-MIT.txt|licenses/Microsoft.Extensions.DependencyInjection.Abstractions-10.0.10-MIT.txt|licenses/Microsoft.Extensions.Logging.Abstractions-10.0.10-MIT.txt|licenses/System.Diagnostics.DiagnosticSource-10.0.10-MIT.txt|licenses/YamlDotNet-18.1.0-MIT.txt|licenses/spirectl-LICENSE|licenses/spirectl-NOTICE|licenses/godot-scene-web-LICENSE|licenses/HarfBuzz-LICENSE|licenses/Emscripten-LICENSE|licenses/OpenSans-LICENSE|licenses/npm-dependencies.tsv) return 0 ;;
@@ -157,16 +157,17 @@ verify_file_list() {
         }
         ;;
     esac
-    # STS2 lists a mod directory and reads EVERY name ending in .json as a mod manifest, and Godot's
-    # hidden-file test is platform-split -- a dot prefix hides a file on Linux but not on Windows,
-    # where a zip-extracted file carries no FILE_ATTRIBUTE_HIDDEN. So a second root-level .json (or a
-    # dot-prefixed one) loads as a manifest on every Windows player's machine and fails with no id.
-    # This is why the build metadata ships as build-info.txt; do not "fix" the extension back.
+    # STS2 reads EVERY name ending in .json as a mod manifest, and it RECURSES -- so depth is no escape,
+    # and neither is a dot-directory: Godot's hidden-file test is platform-split, a dot prefix hides a
+    # file on Linux but not on Windows, where a zip-extracted file carries no FILE_ATTRIBUTE_HIDDEN. Any
+    # second .json anywhere under the payload loads as a manifest on every Windows player's machine and
+    # fails with no id. This is why the build metadata ships as build-info.txt and the boot manifest ships
+    # as the extensionless `app-boot`; do not "fix" either extension back. A shipped
+    # frontend/.vite/manifest.json is exactly what a v0.2.3 player reported from the field.
     case "$path" in
-      */*) ;;
       couchcoop.json) ;;
       *.json)
-        echo "release payload root holds a second .json, which STS2 scans as a mod manifest: $path" >&2
+        echo "release payload holds a second .json, which STS2 scans as a mod manifest: $path" >&2
         return 1
         ;;
     esac
