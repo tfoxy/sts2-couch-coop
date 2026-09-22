@@ -1,4 +1,4 @@
-import { describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 // Seed atlas-page natural sizes for the nine-patch slicing tests (warmImage's real Image() load is a no-op in
 // jsdom, so naturalSize would otherwise always be null and no slice would ever be emitted). Unseeded urls behave
@@ -22,6 +22,7 @@ import {
   resetShaderDocCache
 } from "@/mirror/shaderAttributes";
 import { nodeParticleAttributes } from "@/mirror/particleAttributes";
+import { mirrorSettings, type EffectMode } from "@/mirror/mirrorSettings";
 import {
   createMirrorRenderer,
   type MirrorRenderer
@@ -206,6 +207,17 @@ describe("card-ripple dormancy", () => {
   const ripple = (width: number): MirrorNode =>
     shaderNode({ shaderId: "res://shaders/card_ripple.gdshader", shaderParams: [numberParam("width", width)] });
 
+  // Dormancy is a LIVE-path contract, so the block runs in a dynamic mode: in `off`/`static` a shown ripple has
+  // no binding to park at all (bakedEffects.ts stands a committed still in for it).
+  let savedShaderMode: EffectMode;
+  beforeEach(() => {
+    savedShaderMode = mirrorSettings.shaderMode;
+    mirrorSettings.shaderMode = "dynamic";
+  });
+  afterEach(() => {
+    mirrorSettings.shaderMode = savedShaderMode;
+  });
+
   it("keeps the full attribute set and adds the dormant marker at rest", () => {
     const off = nodeShaderAttributes(ripple(0))!;
     const on = nodeShaderAttributes(ripple(0.075))!;
@@ -218,6 +230,26 @@ describe("card-ripple dormancy", () => {
 
   it("keeps the marker out of the key-equal answer for a non-ripple shader", () => {
     expect(nodeShaderAttributes(shaderNode())!.attributes[SHADER_DORMANT_ATTR]).toBeUndefined();
+  });
+
+  // THE CACHE TRAP, pinned. The L2 memo is keyed on CONTENT, and the effect mode is not on the node — it was
+  // keyed on the quality tier's `shadersEnabled`, which does not move when the settings panel does. So the moment
+  // the binding builder started consulting the mode (a covered ripple returns NO binding), a viewer flipping
+  // Static → Dynamic would have been served the cached `null` for the rest of the session and their shaders would
+  // never have come back. The node content is IDENTICAL across the flip here — that is the whole point.
+  it("re-answers when the effect mode moves, for identical node content", () => {
+    const shown = ripple(0.075);
+
+    mirrorSettings.shaderMode = "static";
+    expect(nodeShaderAttributes(shown)).toBeNull(); // the baked still owns it
+
+    mirrorSettings.shaderMode = "dynamic";
+    const live = nodeShaderAttributes(rebuilt(shown));
+    expect(live?.attributes["data-godot-shader-webgl"]).toBe("1");
+
+    // …and back, so the entry the flip created cannot shadow the still either.
+    mirrorSettings.shaderMode = "static";
+    expect(nodeShaderAttributes(rebuilt(shown))).toBeNull();
   });
 });
 

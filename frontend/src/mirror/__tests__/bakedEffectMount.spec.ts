@@ -18,6 +18,8 @@
 import { mount } from "@vue/test-utils";
 import { afterEach, beforeAll, beforeEach, describe, expect, it } from "vitest";
 
+import { SELF_LAYER_CLASS } from "@godot-scene-web/html";
+
 import MirrorView from "@/mirror/MirrorView.vue";
 import { mirrorSettings, type EffectMode } from "@/mirror/mirrorSettings";
 import { applySceneDelta, createMirrorState, parseSceneDelta, type MirrorState } from "@/mirror/sceneTree";
@@ -132,12 +134,105 @@ describe("MirrorView baked glow still", () => {
   });
 
   it("mounts no still at all while particles are simulating", () => {
-    mirrorSettings.particleMode = "static";
+    mirrorSettings.particleMode = "dynamic";
     const wrapper = mount(MirrorView, { props: { state: glowState(), revision: 1 } });
 
     expect(wrapper.find("img.mirror-baked-still").exists()).toBe(false);
     // The real particle path is untouched: the runtime marker is still stamped for gsw to find.
     expect(wrapper.find('[data-node-id="glow"]').attributes("data-godot-particle-runtime")).toBe("1");
+
+    wrapper.unmount();
+  });
+
+  // STATIC IS THE PRODUCT DEFAULT, and the whole point of extending the stills to it is that the emitter stops
+  // being simulated-then-frozen-then-read-back at all. That is only true if the MARKERS go too: gsw's particle
+  // runtime selects on `[data-godot-particle-runtime]`, so a stamped marker means a canvas, a frozen frame and a
+  // PNG encode no matter how good the still over it looks.
+  it("in STATIC, mounts the still and stamps no particle markers for gsw to attach to", () => {
+    mirrorSettings.particleMode = "static";
+    const wrapper = mount(MirrorView, { props: { state: glowState(), revision: 1 } });
+
+    const host = wrapper.find('[data-node-id="glow"]');
+    expect(host.find("img.mirror-baked-still").exists()).toBe(true);
+    expect(host.attributes("data-godot-particle-runtime")).toBeUndefined();
+    expect(host.attributes("data-godot-particle-specs")).toBeUndefined();
+    // The blend still comes from the node's own streamed material, exactly as in `off`.
+    expect((host.element as HTMLElement).style.mixBlendMode).toBe("plus-lighter");
+
+    wrapper.unmount();
+  });
+});
+
+// THE RIPPLE'S TWIN. Its still is the node's own BACKGROUND rather than an `<img>` (it was baked at the node's
+// localRect), so the thing to prove at mount is the other half: that the WebGL binding is gone with it. The node
+// below is an `NCardHighlight` the way the producer streams one — its texture is `card_frame_sdf.exr`, which is
+// shader INPUT, and must never be painted raw.
+const RECORDED_CARD_HIGHLIGHT = {
+  id: "hl",
+  parentId: null,
+  name: "Highlight",
+  nodeType: "MegaCrit.Sts2.Core.Nodes.Cards.NCardHighlight",
+  texture: { resourcePath: "res://images/packed/card_template/card_frame_sdf.exr" },
+  textureStretchMode: 5,
+  shader: { resourcePath: "res://shaders/card_ripple.gdshader", resourceType: "Shader" },
+  shaderParameters: [{ name: "width", kind: "number", number: 0.075 }],
+  modulate: { html: "#00f3fbff" },
+  transform: { xAxis: { x: 1, y: 0 }, yAxis: { x: 0, y: 1 }, origin: { x: 100, y: 100 } },
+  localRect: { position: { x: 0, y: 0 }, size: { x: 759, y: 951 } },
+  visible: true
+};
+
+function highlightState(): MirrorState {
+  const state = createMirrorState();
+  applySceneDelta(
+    state,
+    parseSceneDelta({
+      type: "scene-delta",
+      full: true,
+      screenType: "run",
+      orderedIds: ["hl"],
+      upserts: [RECORDED_CARD_HIGHLIGHT]
+    })!
+  );
+  return state;
+}
+
+let savedShaderMode: EffectMode;
+
+describe("MirrorView baked ripple still", () => {
+  beforeEach(() => {
+    savedShaderMode = mirrorSettings.shaderMode;
+  });
+  afterEach(() => {
+    mirrorSettings.shaderMode = savedShaderMode;
+  });
+
+  it("in STATIC, paints the still and builds no WebGL binding", () => {
+    mirrorSettings.shaderMode = "static";
+    const wrapper = mount(MirrorView, { props: { state: highlightState(), revision: 1 } });
+
+    const host = wrapper.find('[data-node-id="hl"]');
+    const style = (host.element as HTMLElement).style;
+    expect(style.backgroundImage).toMatch(/card-ripple/);
+    expect(style.mixBlendMode).toBe("plus-lighter");
+    // No binding ⇒ no markers for gsw to select on, and no self-layer for it to mount a canvas into.
+    expect(host.attributes("data-godot-shader-webgl")).toBeUndefined();
+    expect(host.find(`.${SELF_LAYER_CLASS}`).exists()).toBe(false);
+    // …and the raw SDF is STILL suppressed. `isWebglShaderNode` deliberately stays true for this node; if the
+    // binding gate had been written there instead, this is where a grey rectangle would appear under the glow.
+    expect(style.backgroundImage).not.toContain("card_frame_sdf");
+
+    wrapper.unmount();
+  });
+
+  it("in DYNAMIC, does the exact reverse", () => {
+    mirrorSettings.shaderMode = "dynamic";
+    const wrapper = mount(MirrorView, { props: { state: highlightState(), revision: 1 } });
+
+    const host = wrapper.find('[data-node-id="hl"]');
+    expect(host.attributes("data-godot-shader-webgl")).toBe("1");
+    expect(host.find(`.${SELF_LAYER_CLASS}`).exists()).toBe(true);
+    expect((host.element as HTMLElement).style.backgroundImage).not.toMatch(/card-ripple/);
 
     wrapper.unmount();
   });

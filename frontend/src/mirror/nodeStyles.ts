@@ -706,10 +706,11 @@ export function nodeStyle(item: RenderItem): Record<string, string> {
     !isWebglShaderNode(node) &&
     !node.particleSpec &&
     !(shadersOff && isShaderInputNode(node));
-  // …and where the effect family is OFF and nothing is going to paint at all, a BAKED STILL of the effect stands
-  // in for it (bakedEffects.ts). Only the `"localRect"` kind lands here — the still was captured at the node's own
-  // box, so the element paints it across itself. A boxless emitter's still needs its own positioned layer and is
-  // mounted by the renderer instead.
+  // …and where the effect family is OFF or STATIC, a BAKED STILL of the effect stands in for it (bakedEffects.ts):
+  // in `off` nothing would paint at all, and in `static` the committed PNG replaces a frame the client was
+  // otherwise rendering and reading back itself. Only the `"localRect"` kind lands here — the still was captured at
+  // the node's own box, so the element paints it across itself. A boxless emitter's still needs its own positioned
+  // layer and is mounted by the renderer instead.
   //
   // `plus-lighter` because these stills are the game's ADDITIVE output; the node's own `filter: url(#mtint-…)` is
   // left exactly as it is, because the ripple still is neutral and that filter IS what colours it.

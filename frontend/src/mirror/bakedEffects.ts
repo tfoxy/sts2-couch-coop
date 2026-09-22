@@ -1,4 +1,5 @@
-// BAKED EFFECT STILLS — what the mirror paints where a WebGL effect would be, when that effect family is OFF.
+// BAKED EFFECT STILLS — what the mirror paints where a WebGL effect would be, when that effect family is OFF or
+// STATIC.
 //
 // THE GAP THIS FILLS. `Shaders: Off` / `Particles: Off` is not a debug lane. It is what the `minimum` quality rung
 // writes (`qualityPreset.ts`) and what the hard-off floor forces on a software-WebGL phone, so it is the
@@ -16,6 +17,19 @@
 // THE ANSWER is one PNG per effect, rendered ONCE by the real game (`scripts/bake-effect-stills.py`), committed,
 // and bundled into the app by Vite. Zero GPU cost, one decode, and the cue survives on the devices that need the
 // saving most.
+//
+// AND THE SAME PNG SERVES `static`, THE PRODUCT DEFAULT — which is where it stops being a fallback and starts
+// being a saving. In `static` gsw renders one frozen frame per binding and `shaderResources.staticSurfacePolicy`
+// then swaps each quiet canvas for an `<img>`: a GPU→CPU READBACK plus a PNG encode, per surface. Nearly every
+// tuned constant in that file exists to bound the damage — kicking all 72 fleet encodes at once parked the main
+// thread for 736 ms; a reshuffle trace caught single tasks of 285 ms and 1,163 ms at 97% self-time inside native
+// `toBlob`, for surfaces that cost 6-13 ms each unloaded — and its `onInvalidate: "retry"` note named the biggest
+// offender: `card_ripple`, whose content key churns on `width`, so a hand re-encodes through every playability
+// tween. A committed still replaces that whole population with one decode, and the bakes ARE the frames the
+// client was paying to produce.
+//
+// THE THREE DYNAMIC MODES KEEP THE LIVE PATH. `dynamic`, `dynamic-half` and `dynamic-quarter` exist to animate,
+// and a still is not a cheaper animation.
 //
 // ---------------------------------------------------------------------------------------------------------------
 // WHAT THE STILLS ARE, AND THE TWO CONTRACTS A CONSUMER MUST HONOUR
@@ -41,10 +55,14 @@
 // every run so the two can be checked against each other.
 //
 // ONE POLICY, ONE MECHANISM-FREE MODULE (the `creaturePlaceholder.ts` shape): this file decides WHETHER a node
-// gets a still and WHERE it goes. The DOM renderer owns how it is mounted.
+// gets a still and WHERE it goes. The DOM renderer owns how it is mounted, and the two effect-binding builders
+// (`shaderAttributes` / `particleAttributes`) ask {@link bakedStillCoversNode} whether to build a binding at all.
 //
 // SCOPE: the DOM stage (`?stage=dom`, the shipping default). The opt-in `?stage=canvas` backend is deliberately
-// untouched — see `canvas/paintSpec.ts`'s note and `bakedEffects.spec.ts`.
+// untouched — see `canvas/paintSpec.ts`'s note and `bakedEffects.spec.ts` — and that is enforced here rather than
+// only documented: on that stage the gsw binding IS what the draw list blits (`paintSpec.fxHostIsLive` is
+// literally "the builder returned a binding"), so suppressing one there would delete the effect outright instead
+// of substituting for it. Hence the `stageOwnsEffectPixelsNow()` term in {@link stillsCover}.
 //
 // Self-contained per the mirror decoupling rule: `@/mirror/*` only.
 
@@ -52,8 +70,16 @@ import cardRippleStill from "@/assets/effects/card-ripple.png";
 import glowRareStill from "@/assets/effects/glow-rare.png";
 import glowUncommonStill from "@/assets/effects/glow-uncommon.png";
 
-import { effectiveParticleMode, effectiveShaderMode, CARD_RIPPLE_SHADER_IDS } from "@/mirror/shaderResources";
-import { rippleShownWidth } from "@/mirror/shaderAttributes";
+// `effectPolicy`, NOT `shaderResources` (which re-exports all four): this module is reached from the binding
+// builders, and `particleAttributes` is reached from `sceneTree`'s own initialization — see effectPolicy's header
+// for why importing the gsw mount options from there would be a module-init hazard.
+import {
+  effectiveParticleMode,
+  effectiveShaderMode,
+  rippleShownWidth,
+  stageOwnsEffectPixelsNow,
+  CARD_RIPPLE_SHADER_IDS
+} from "@/mirror/effectPolicy";
 import type { MirrorNode } from "@/mirror/sceneTree";
 
 /** A node-local rectangle, in the same units the producer streams `localRect` in. */
@@ -111,52 +137,101 @@ function isCardRippleNode(node: MirrorNode): boolean {
   return node.shaderId != null && CARD_RIPPLE_SHADER_IDS.includes(node.shaderId);
 }
 
+/** A node's entitlement to a still, and the effect family whose mode decides whether it is served. */
+interface BakedStillEntry {
+  still: BakedStill;
+  family: "shader" | "particle";
+}
+
 /**
- * The baked still this node should paint, or null.
+ * The still this node WOULD paint, ignoring the effect mode entirely — identity, box, blend, opacity.
  *
  * Null for the overwhelming majority of nodes, and the gate is ordered so they pay almost nothing: a node with
  * neither a shader nor a particle spec returns on one field read.
- *
- * The mode gate reads the EFFECTIVE per-viewer mode rather than the device tier, which is what makes this cover
- * both ways a viewer reaches Off — choosing it in the panel on a capable device, and the hard-off floor where no
- * WebGL path exists at all. A tier flag alone would miss the first.
  */
-export function bakedStillFor(node: MirrorNode): BakedStill | null {
+function bakedStillEntryFor(node: MirrorNode): BakedStillEntry | null {
   if (node.shaderId != null) {
-    if (!isCardRippleNode(node) || effectiveShaderMode.value !== "off") {
+    if (!isCardRippleNode(node)) {
       return null;
     }
     // The game hides the ripple by tweening `width` to 0, so a still painted regardless would light up every
     // unplayable card. `rippleShownWidth` answers null when the uniform is not streamed at all, and an effect we
     // cannot measure is left unpainted rather than guessed at — the same rule the WebGL path's dormancy gate uses.
+    // It is MODE-INDEPENDENT on purpose: it is also what keeps such a node's live binding (see
+    // `bakedStillCoversNode`), so an unmeasurable ripple renders the real shader rather than nothing at all.
     const width = rippleShownWidth(node);
     if (width == null) {
       return null;
     }
     return {
-      url: cardRippleStill,
-      // The bake captured the node's own 759x951 `localRect`, so the element paints it across itself 1:1.
-      box: "localRect",
-      // Declared by the shader's `render_mode blend_add`, which nothing streams — see the header.
-      additive: true,
-      // Reproduces the 0.5 s AnimShow/AnimHide fade instead of popping the glow on at every energy change.
-      // Clamped for `AnimFlash`, which overshoots to 0.15.
-      opacityScale: Math.min(1, width / CARD_RIPPLE_SHOWN_WIDTH)
+      family: "shader",
+      still: {
+        url: cardRippleStill,
+        // The bake captured the node's own 759x951 `localRect`, so the element paints it across itself 1:1.
+        box: "localRect",
+        // Declared by the shader's `render_mode blend_add`, which nothing streams — see the header.
+        additive: true,
+        // Reproduces the 0.5 s AnimShow/AnimHide fade instead of popping the glow on at every energy change.
+        // Clamped for `AnimFlash`, which overshoots to 0.15.
+        opacityScale: Math.min(1, width / CARD_RIPPLE_SHOWN_WIDTH)
+      }
     };
   }
 
-  if (node.particleSpec == null || effectiveParticleMode.value !== "off") {
+  if (node.particleSpec == null) {
     return null;
   }
   if (node.nodeType === UNCOMMON_GLOW_NODE_TYPE) {
     // `additive: false` — the emitter's `canvas_item_material_additive_shared.tres` already reaches the DOM as
     // `canvasBlendMode: 1`, and `nodeStyle` maps that to `plus-lighter` for us.
-    return { url: glowUncommonStill, box: UNCOMMON_GLOW_BOX, additive: false, opacityScale: 1 };
+    return {
+      family: "particle",
+      still: { url: glowUncommonStill, box: UNCOMMON_GLOW_BOX, additive: false, opacityScale: 1 }
+    };
   }
   if (node.nodeType === RARE_GLOW_NODE_TYPE) {
-    return { url: glowRareStill, box: RARE_GLOW_BOX, additive: false, opacityScale: 1 };
+    return { family: "particle", still: { url: glowRareStill, box: RARE_GLOW_BOX, additive: false, opacityScale: 1 } };
   }
   return null;
+}
+
+/**
+ * Does a committed still stand in for this FAMILY right now?
+ *
+ * The mode gate reads the EFFECTIVE per-viewer mode rather than the device tier, which is what makes this cover
+ * both ways a viewer reaches Off — choosing it in the panel on a capable device, and the hard-off floor where no
+ * WebGL path exists at all. A tier flag alone would miss the first.
+ *
+ * `static` joins `off` because in that mode the client was BAKING these same frames itself, once per surface, at
+ * a readback + PNG encode each (see the header). The three dynamic modes are excluded: they exist to animate.
+ *
+ * The stage term is the DOM-stage scope, enforced rather than documented — see the header.
+ */
+function stillsCover(family: "shader" | "particle"): boolean {
+  if (stageOwnsEffectPixelsNow()) {
+    return false;
+  }
+  const mode = family === "shader" ? effectiveShaderMode.value : effectiveParticleMode.value;
+  return mode === "off" || mode === "static";
+}
+
+/** The baked still this node should paint, or null. */
+export function bakedStillFor(node: MirrorNode): BakedStill | null {
+  const entry = bakedStillEntryFor(node);
+  return entry !== null && stillsCover(entry.family) ? entry.still : null;
+}
+
+/**
+ * True when a committed still is standing in for this node's live effect — so the effect's own BINDING must not
+ * be built (`shaderAttributes` / `particleAttributes` both gate on this).
+ *
+ * Deliberately the same answer as `bakedStillFor(node) !== null`, by construction rather than by agreement: a
+ * node whose binding is suppressed but whose still declines to paint would render NOTHING, which is the one
+ * failure mode this pair has. Hence one entry helper, one mode helper, two thin readers.
+ */
+export function bakedStillCoversNode(node: MirrorNode): boolean {
+  const entry = bakedStillEntryFor(node);
+  return entry !== null && stillsCover(entry.family);
 }
 
 /** True when this node paints a baked still INSTEAD of a boxless effect surface (the glow emitters). */

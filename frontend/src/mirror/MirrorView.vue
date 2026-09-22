@@ -1107,9 +1107,10 @@ watch(effectiveShaderMode, (mode) => {
   // WS-2: a create/dispose/retune must re-attach to the markers already in the DOM. The "change" pass also hands
   // any standing frozen surfaces back — leaving Static must not leave a stale `<img>` over a re-animating canvas.
   reconcileRuntimes("change");
-  // …and a FULL walk, because entering or leaving `off` changes what the walk EMITS, not just how the runtimes
-  // are tuned: that is the mode in which a baked still stands in for the effect (bakedEffects.ts). A settled
-  // screen visits no nodes, so without this the flip would not land until something else happened to move.
+  // …and a FULL walk, because crossing between the STILL modes (`off`/`static`) and the dynamic ones changes what
+  // the walk EMITS, not just how the runtimes are tuned: in the still modes a baked still stands in for the effect
+  // and its live binding is not built at all (bakedEffects.ts). A settled screen visits no nodes, so without this
+  // the flip would not land until something else happened to move.
   scheduleRender(true, "effects");
   pinEffects();
 });

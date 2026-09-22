@@ -17,13 +17,17 @@ import {
 } from "@godot-scene-web/html";
 
 import { renderQuality } from "@/render/quality";
+import { bakedStillCoversNode } from "@/mirror/bakedEffects";
 import type { MirrorColor, MirrorNode, MirrorShaderParam } from "@/mirror/sceneTree";
 import {
   CARD_RIPPLE_SHADER_IDS,
   HSV_SHADER_IDS,
   LOW_HP_BORDER_NODE_TYPE,
   TRANSITION_NODE_TYPE,
-  mirrorShaderRenderOptions
+  effectiveShaderMode,
+  mirrorShaderRenderOptions,
+  rippleEffectivelyOff,
+  stageOwnsEffectPixelsNow
 } from "@/mirror/shaderResources";
 
 // Ripple dormancy keeps an invisible card's binding parked instead of rebuilding it on every energy update.
@@ -101,36 +105,6 @@ const SYNTH_MATERIAL_PATH = "mirror://shader-material";
 
 function colorVariant(color: MirrorColor | null): GodotVariant | undefined {
   return color ? { type: "Color", args: [color.r, color.g, color.b, color.a] } : undefined;
-}
-
-// The `width` below which the game's ripple counts as HIDDEN (NCardHighlight at rest; only playable cards / the
-// reward-screen flash tween it up to ~0.075). At width 0 the WebGL render leaks a sliver (degenerate smoothstep),
-// so the renderer skips it.
-const RIPPLE_HIDDEN_WIDTH = 0.005;
-
-// True when a card_ripple node's `width` uniform is streamed AND ≈ 0. Only suppress when the value is
-// explicitly known near-zero: a missing `width` (shaderParams absent) falls through to the normal WebGL path so
-// a ripple we can't measure is never wrongly hidden.
-function rippleEffectivelyOff(node: MirrorNode): boolean {
-  const width = node.shaderParams?.find((p) => p.name === "width")?.number;
-  return width != null && width < RIPPLE_HIDDEN_WIDTH;
-}
-
-/**
- * The streamed `width` of a ripple the game currently has SHOWN, or null.
- *
- * The positive twin of `rippleEffectivelyOff`, exported so `bakedEffects.ts` can ask the same question of the
- * same uniform against the same floor instead of re-deriving it — the two must agree, or the shaders-off still
- * would paint on cards whose WebGL binding is parked (and vice versa).
- *
- * Null covers BOTH "the game has it hidden" and "the uniform is not streamed": a ripple that cannot be measured
- * is not painted, which is the conservative direction here. (The WebGL path makes the opposite call for the same
- * unmeasurable node, and deliberately so — there a missing uniform must not wrongly HIDE a live effect, while
- * here it must not wrongly INVENT one.)
- */
-export function rippleShownWidth(node: MirrorNode): number | null {
-  const width = node.shaderParams?.find((p) => p.name === "width")?.number;
-  return width != null && width >= RIPPLE_HIDDEN_WIDTH ? width : null;
 }
 
 // True when this node is the game's screen-transition overlay AND its `threshold` uniform is streamed AND ≈ 0 —
@@ -348,6 +322,8 @@ let shaderBindingCache = new WeakMap<MirrorNode, MirrorShaderBinding | null>();
 //   * the WebGL eligibility gates: particleSpec presence, textureUrl, fillColor, textureRegion,
 //   * the base-texture fit input (textureStretchMode),
 //   * the global quality tier's `shadersEnabled` (isWebglShaderNode reads it live),
+//   * the baked-still gate's own inputs — the effective per-viewer shader mode and the canvas-stage latch — since
+//     a covered node returns NO binding at all,
 //   * the ripple-dormancy switch, which changes the SHAPE of the returned binding, and
 //   * for the HSV family only, the NEnergyCounter-ancestor skip bit — the one input that isn't on the node.
 // The returned binding object is treated as IMMUTABLE by every caller (mergedNodeStyle spreads `shader.style`,
@@ -397,7 +373,14 @@ function shaderContentKey(node: MirrorNode, energyAncestor: boolean): string {
     // the type string itself is deliberately NOT concatenated, since only "is this the transition overlay" matters.
     `|${node.nodeType === TRANSITION_NODE_TYPE ? 1 : 0}` +
     // The low-HP vignette gate keys exactly the same way (its `alpha_multiplier` is already in `params`).
-    `|${node.nodeType === LOW_HP_BORDER_NODE_TYPE ? 1 : 0}`
+    `|${node.nodeType === LOW_HP_BORDER_NODE_TYPE ? 1 : 0}` +
+    // THE BAKED-STILL GATE'S TWO INPUTS, and they are the reason this whole key exists to be exhaustive. The
+    // `shadersEnabled` term above is the TIER flag, which does NOT move when the settings panel does — so without
+    // the EFFECTIVE MODE here, a viewer flipping Static → Dynamic would be served the cached `null` this key
+    // already holds and their shaders would never come back. The stage latch is the gate's other input
+    // (`stageOwnsEffectPixelsNow`, flipped on canvas-renderer construct/dispose); it is a page constant in
+    // practice, and it is keyed anyway for the reason stated at the top of this block: correctness over hit rate.
+    `|${effectiveShaderMode.value}|${stageOwnsEffectPixelsNow() ? 1 : 0}`
   );
 }
 
@@ -493,6 +476,19 @@ function computeShaderAttributes(node: MirrorNode, nodes?: Map<string, MirrorNod
   //   - atlas-sprite shaders (`textureRegion`): the self-layer would sample the FULL packed page and garble
   //     the icon (region-aware sampling is future work); the CSS crop in nodeStyle stays as the fallback.
   if (!isWebglShaderNode(node)) {
+    return null;
+  }
+
+  // A BAKED STILL is standing in for this node (bakedEffects.ts): the card ripple, while shaders are `off` or
+  // `static`. Build no binding at all — with no `data-godot-shader-*` attributes gsw never selects the node, so
+  // there is no canvas, no frozen-frame readback and no PNG encode, and the still is the only thing painted.
+  // Without this gate the viewer would get the still AND the canvas.
+  //
+  // `isWebglShaderNode` stays TRUE for the node and is deliberately NOT touched: it is what suppresses the raw
+  // `card_frame_sdf.exr` paint (in `nodeStyles.paintsTexture` and in `canvas/paintSpec`), and its other
+  // suppression term reads the TIER flag, which is true in `static`. Make it false here and both stages would
+  // start painting the bare SDF as a grey rectangle under the still.
+  if (bakedStillCoversNode(node)) {
     return null;
   }
 

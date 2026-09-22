@@ -120,7 +120,8 @@ export function createDomSubLayers(ports: DomSubLayerPorts): DomSubLayers {
   } = ports;
   /**
    * Mount, place, or tear down this node's baked effect still — the `<img>` that stands in for a BOXLESS effect
-   * (a rarity-glow emitter) while its family is OFF. See `bakedEffects.ts` for which nodes qualify and why.
+   * (a rarity-glow emitter) while its family is OFF or STATIC. See `bakedEffects.ts` for which nodes qualify and
+   * why.
    *
    * Idempotent, and keyed on (url, box) so a glow being re-styled for an unrelated reason — a card moving, a
    * modulate tween — rewrites no styles at all.
@@ -667,7 +668,7 @@ export function createDomSubLayers(ports: DomSubLayerPorts): DomSubLayers {
     }
 
     // BAKED EFFECT STILL for a BOXLESS effect (bakedEffects.ts): the rarity-glow emitters, while particles are
-    // OFF. A `GPUParticles2D` streams no `localRect`, so `placementBox` gives it a zero box at its transform
+    // OFF or STATIC. A `GPUParticles2D` streams no `localRect`, so `placementBox` gives it a zero box at its transform
     // origin — a background on the element would have nothing to paint into, and the still has to be its own
     // `<img>` sized and placed in NODE-LOCAL units, exactly like the creature stand-in.
     //
