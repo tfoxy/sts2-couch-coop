@@ -51,7 +51,30 @@ import { atlasPageSize, preloadAtlas, whenAtlasSettled } from "@/mirror/atlasBak
 import { mirrorResourceUrl } from "@/mirror/sceneTree";
 import { CREATURE_PLACEHOLDER_RES } from "@/mirror/creaturePlaceholder";
 import { warmImage } from "@/mirror/textureCache";
-import type { BrowserAtlasManifestDescriptor } from "@/protocol/browserEnvelope";
+import type { BrowserAtlasManifestDescriptor, BrowserStaticBackgroundDescriptor } from "@/protocol/browserEnvelope";
+
+const NEOW_STATIC_BACKGROUND_SCENE = "res://scenes/events/background_scenes/neow.tscn";
+
+export interface MirrorImagePrefetchGate {
+  resolve(descriptor: BrowserStaticBackgroundDescriptor | null | undefined, staticBackgroundsEnabled: boolean): void;
+}
+
+/**
+ * Wait for the first active view before starting speculative warming. Static Neow uses its own still path, so
+ * its initial view keeps the independent atlas walk pending; a later resolved view starts the existing
+ * one-shot walk. Demand reads do not pass through this gate.
+ */
+export function createMirrorImagePrefetchGate(start: () => void = prefetchMirrorImages): MirrorImagePrefetchGate {
+  let started = false;
+  return {
+    resolve(descriptor, staticBackgroundsEnabled) {
+      if (started) return;
+      if (staticBackgroundsEnabled && descriptor?.scenePath === NEOW_STATIC_BACKGROUND_SCENE) return;
+      started = true;
+      start();
+    }
+  };
+}
 
 const PREFETCH_ATLASES = [
   "res://images/atlases/ui_atlas_0.png",

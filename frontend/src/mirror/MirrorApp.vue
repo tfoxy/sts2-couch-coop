@@ -62,7 +62,7 @@ import {
   mirrorSeatNoticeCopy,
   seatNoticeForRejection
 } from "@/mirror/loadingState";
-import { prefetchMirrorImages } from "@/mirror/imagePrefetch";
+import { createMirrorImagePrefetchGate } from "@/mirror/imagePrefetch";
 import { sceneAblation } from "@/mirror/sceneAblation";
 import { createMirrorState } from "@/mirror/sceneTree";
 import type { BrowserJoinProgress, BrowserSeatNotice, BrowserSessionEnvelope } from "@/protocol/browserEnvelope";
@@ -142,7 +142,10 @@ const JOIN_TIMEOUT_MS = 90_000;
 // and replies with `headlessMirrorPort`; the app reconnects there so the player sees their own game view —
 // `activeClient` is replaced and `mirrorState` updated.
 
-if (sceneAblation.prefetchEnabled) prefetchMirrorImages();
+// Independent warming waits for the first ACTIVE connection's resolved view. Static Neow uses a still and holds
+// its packed scenery out of the DOM, so warming its unrelated atlases at the same time only raises
+// the initial lifetime peak. The gate is one-shot: leaving that view starts the existing sequence exactly once.
+const imagePrefetchGate = sceneAblation.prefetchEnabled ? createMirrorImagePrefetchGate() : null;
 
 // `?latency=1` turns on the ping→pong RTT probe + the on-screen readout (off by default, zero overhead).
 const latencyEnabled =
@@ -548,6 +551,12 @@ function makeClient(url?: string, watchStream = false): MirrorClient {
         c.sendSceneAck();
       }
       joinSession.value = c.session;
+      // Only a live session from the active client resolves a view. The active-client guard above excludes stale
+      // redirect callbacks; the connected/session checks keep disconnect and unmount from releasing a pending
+      // Neow gate.
+      if (c.status === "connected" && c.session) {
+        imagePrefetchGate?.resolve(c.session.staticBackground, mirrorSettings.staticBgEnabled);
+      }
       // A healthy connection resets the backoff ladder; a dead one starts the fallback (which replaces
       // `activeClient`, so nothing below this line applies to a connection that just went away).
       if (c.status === "connected") {
@@ -802,6 +811,16 @@ activeClient = makeClient();
 mirrorState.value = activeClient.state;
 status.value = activeClient.status;
 revision.value = activeClient.state.revision;
+
+// Turning static backgrounds off removes the Neow suppression condition even when no new session envelope is
+// needed. Re-read only the active, connected session; a dropped or torn-down connection must leave the gate held.
+watch(
+  () => mirrorSettings.staticBgEnabled,
+  (enabled) => {
+    if (unmounted || status.value !== "connected" || !activeClient.session) return;
+    imagePrefetchGate?.resolve(activeClient.session.staticBackground, enabled);
+  }
+);
 sceneAblation.setStateCounts(() => ({
   revision: activeClient.state.revision,
   nodes: activeClient.state.nodes.size,

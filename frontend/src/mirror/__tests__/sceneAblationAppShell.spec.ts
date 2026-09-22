@@ -5,6 +5,13 @@ import MirrorApp from "@/mirror/MirrorApp.vue";
 import { sceneAblation } from "@/mirror/sceneAblation";
 import { replaySession } from "../../../../scripts/lib/replay-session.mjs";
 
+const prefetchGate = vi.hoisted(() => vi.fn(() => ({ resolve: vi.fn() })));
+
+vi.mock("@/mirror/imagePrefetch", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("@/mirror/imagePrefetch")>();
+  return { ...actual, createMirrorImagePrefetchGate: prefetchGate };
+});
+
 vi.mock("@/mirror/sceneAblation", async (importOriginal) => {
   const actual = await importOriginal<typeof import("@/mirror/sceneAblation")>();
   return { ...actual, sceneAblation: actual.createSceneAblationRuntime({ dev: true,
@@ -27,7 +34,7 @@ class Socket extends EventTarget {
 }
 
 let app: ReturnType<typeof mount> | undefined;
-afterEach(() => { app?.unmount(); vi.unstubAllGlobals(); });
+afterEach(() => { app?.unmount(); prefetchGate.mockClear(); vi.unstubAllGlobals(); });
 
 it("keeps a redirected app-shell socket unwatched from its first handshake", async () => {
   vi.stubGlobal("WebSocket", Socket);
@@ -45,4 +52,5 @@ it("keeps a redirected app-shell socket unwatched from its first handshake", asy
   expect(sceneAblation.receipt().state.watching).toBe(false);
   expect(sceneAblation.receipt().stream.appliedBytes).toBe(0);
   expect(sceneAblation.receipt().stream.appliedRevisions).toBe(0);
+  expect(prefetchGate).not.toHaveBeenCalled();
 });

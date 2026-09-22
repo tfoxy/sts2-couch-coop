@@ -53,6 +53,7 @@ const warmImage = vi.hoisted(() => vi.fn());
 vi.mock("@/mirror/textureCache", () => ({ warmImage }));
 
 import {
+  createMirrorImagePrefetchGate,
   prefetchMirrorImages,
   publishAtlasManifest,
   __resetAtlasManifestForTest,
@@ -104,6 +105,8 @@ const NAMES = [
   "potion_outline_atlas"
 ];
 const ORDER = NAMES.map(ATLAS);
+const NEOW = { scenePath: "res://scenes/events/background_scenes/neow.tscn", url: "/bg/events/neow?v=1" };
+const OTHER_VIEW = { scenePath: "res://scenes/events/background_scenes/darv.tscn", url: "/bg/events/darv?v=1" };
 
 // --- the host's published manifest -----------------------------------------------------------------------------
 
@@ -253,6 +256,60 @@ describe("prefetchMirrorImages scheduling", () => {
     expect(preloadedUrls()).toEqual([ATLAS("ui_atlas_0")]); // still scheduled, still not synchronous
     vi.advanceTimersByTime(50);
     expect(preloadedUrls()).toEqual([ATLAS("ui_atlas_0"), ATLAS("ui_atlas_1")]);
+  });
+});
+
+describe("initial-view prefetch gate", () => {
+  it("holds an initial static Neow view through repeated session updates", () => {
+    const start = vi.fn();
+    const gate = createMirrorImagePrefetchGate(start);
+
+    gate.resolve(NEOW, true);
+    gate.resolve(NEOW, true);
+
+    expect(start).not.toHaveBeenCalled();
+  });
+
+  it("starts immediately for an initial non-Neow view", () => {
+    const start = vi.fn();
+    createMirrorImagePrefetchGate(start).resolve(OTHER_VIEW, true);
+
+    expect(start).toHaveBeenCalledTimes(1);
+  });
+
+  it("starts immediately when static backgrounds are off, including on Neow", () => {
+    const start = vi.fn();
+    createMirrorImagePrefetchGate(start).resolve(NEOW, false);
+
+    expect(start).toHaveBeenCalledTimes(1);
+  });
+
+  it("starts once when the resolved view leaves static Neow", () => {
+    const start = vi.fn();
+    const gate = createMirrorImagePrefetchGate(start);
+
+    gate.resolve(NEOW, true);
+    gate.resolve(OTHER_VIEW, true);
+    gate.resolve(OTHER_VIEW, true);
+    gate.resolve(NEOW, true);
+
+    expect(start).toHaveBeenCalledTimes(1);
+  });
+
+  it("leaves demand loading live while independent warming is held", () => {
+    const gate = createMirrorImagePrefetchGate();
+    gate.resolve(NEOW, true);
+    expect(baker.preloadAtlas).not.toHaveBeenCalled();
+
+    // A real sprite asks for a page while Neow holds the independent walk. The cache load succeeds normally.
+    baker.ensure(ATLAS("card_atlas_0"));
+    settle(ATLAS("card_atlas_0"), { width: 4032, height: 4072 });
+    expect(baker.loads).toEqual([ATLAS("card_atlas_0")]);
+
+    gate.resolve(OTHER_VIEW, true);
+    drain();
+    expect(baker.loads.filter((url) => url === ATLAS("card_atlas_0"))).toHaveLength(1);
+    expect(preloadedUrls()).toEqual(ORDER);
   });
 });
 
