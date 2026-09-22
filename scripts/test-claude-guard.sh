@@ -78,6 +78,12 @@ expect deny "pkill -f COUCHCOOP_HEADLESS_CLIENT"
 expect deny "pkill -9 -f sts2-couch-coop/frontend"
 expect deny 'xvfb-run -a scripts/run-gpu.sh node scripts/bench-mirror-replay.mjs'
 expect deny 'scripts/run-gpu.sh pnpm test:webgpu-composite'
+expect deny 'Xvfb :68 -screen 0 1920x1080x24'
+expect deny 'env -u WAYLAND_DISPLAY /usr/bin/Xvfb :68'
+expect deny 'xvfb-run -a sts2 --instance qa game launch'
+expect deny 'xvfb-run -a /tmp/gameroot/SlayTheSpire2'
+expect deny 'scripts/run-gpu.sh godot --path godot-client --shot /tmp/shot.png'
+expect deny 'scripts/run-gpu.sh /opt/Godot_v4.5-mono --path godot-client'
 if [ -n "$WORKTREE" ]; then
   expect deny 'dotnet build CouchCoop.sln' "$WORKTREE"
   # The rule has to fire from a SUBDIRECTORY of the worktree too — that is where a Codex hook runs.
@@ -116,6 +122,12 @@ expect allow 'cd ../godot-scene-web && mise exec -- pnpm build'
 expect allow 'dotnet build CouchCoop.sln'
 expect allow 'COUCHCOOP_GAME_MODS_DIR=/tmp/scratch dotnet build CouchCoop.sln' "${WORKTREE:-$MAIN}"
 expect allow 'bash scripts/install-agent-config.sh'
+expect allow 'env -u DISPLAY -u WAYLAND_DISPLAY gamescope --backend headless -- sleep infinity'
+expect allow '/tmp/gameroot/SlayTheSpire2 --headless'
+expect allow 'godot --headless --path godot-client --dump-final-state'
+expect allow 'xvfb-run -a npx vitest run browser.test.ts'
+expect allow 'rg -n Xvfb agents docs'
+expect allow 'cat docs/agents/qa-recipes.md'
 
 echo "== must allow: every shell line in the committed agent docs =="
 # Expected-deny: the docs quote these to forbid them. Anything else denied here is a false positive.

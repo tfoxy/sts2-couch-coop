@@ -204,7 +204,7 @@ YAML
 # Ozone or SDL auto-detection prefers Wayland and sails straight past the private display onto the real
 # desktop.
 GS_START_MS=$(date +%s%3N)
-env -u WAYLAND_DISPLAY XDG_SESSION_TYPE=x11 \
+env -u DISPLAY -u WAYLAND_DISPLAY XDG_SESSION_TYPE=x11 \
   setsid gamescope --backend headless -W "$WIDTH" -H "$HEIGHT" -w "$WIDTH" -h "$HEIGHT" \
   -- sh -c 'echo "GAMESCOPE_CHILD_DISPLAY=$DISPLAY"; sleep infinity' \
   > "$GS_LOG" 2>&1 &
