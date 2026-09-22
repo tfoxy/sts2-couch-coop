@@ -81,6 +81,12 @@ internal abstract partial class CouchCoopModalDialog : Control
     private readonly List<Control> _declared = [];
     private readonly List<Control> _chain = [];
 
+    // The InputMap actions THIS dialog created, so unbinding erases only those. The three names are
+    // instance-id scoped, so nothing collides today -- but "erase whatever is registered under this name"
+    // is the shape of a bug that deletes a game action permanently and leaves the engine logging a missing
+    // action for every input event afterwards, which is not a failure a player could ever attribute to us.
+    private readonly HashSet<StringName> _ownedInputActions = [];
+
     private HostLobbyQrOverlayLayout _layout = HostLobbyQrOverlayLayout.Default;
     private Control? _restoreFocus;
     private bool _cancelBound;
@@ -847,12 +853,13 @@ internal abstract partial class CouchCoopModalDialog : Control
         }
     }
 
-    private static void BindKeyboardAction(NHotkeyManager manager, StringName action, Key key, Action callback)
+    private void BindKeyboardAction(NHotkeyManager manager, StringName action, Key key, Action callback)
     {
         if (!InputMap.HasAction(action))
         {
             InputMap.AddAction(action);
             InputMap.ActionAddEvent(action, new InputEventKey { Keycode = key });
+            _ownedInputActions.Add(action);
         }
         manager.PushHotkeyPressedBinding(action, callback);
     }
@@ -863,10 +870,12 @@ internal abstract partial class CouchCoopModalDialog : Control
         manager.PushHotkeyPressedBinding(action, callback);
     }
 
-    private static void UnbindKeyboardAction(NHotkeyManager? manager, StringName action, Action callback)
+    private void UnbindKeyboardAction(NHotkeyManager? manager, StringName action, Action callback)
     {
         manager?.RemoveHotkeyPressedBinding(action, callback);
-        if (InputMap.HasAction(action)) InputMap.EraseAction(action);
+        // Only what this dialog created. An action registered by the game (or another mod) under the same
+        // name is theirs to erase, not ours.
+        if (_ownedInputActions.Remove(action) && InputMap.HasAction(action)) InputMap.EraseAction(action);
     }
 
     private void MoveKeyboardFocus()
