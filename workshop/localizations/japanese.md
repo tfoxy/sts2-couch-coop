@@ -25,6 +25,9 @@
 [*][b]Steam Deck[/b] - ホスト中にゲームがクラッシュすることがあります。その場合は godot.log を [url=https://steamcommunity.com/workshop/filedetails/discussion/3799476240/563668239243120957/]ワークショップのディスカッション[/url] に投稿してください。
 [/list]
 
+[h2]遊ぶ前に[/h2]
+音が出るのはホストPCだけです。ブラウザで参加するプレイヤーの端末からは音は出ません。
+
 すべてのブラウザクライアントから、同じローカルネットワーク（通常は同じWi-Fi）上のホストに接続できる必要があります。CouchCoop は、信頼できる人だけが共有するローカルネットワークで使用してください。
 
 ソースコードとサポート: https://github.com/tfoxy/sts2-couch-coop

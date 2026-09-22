@@ -25,6 +25,9 @@ El ciclo principal del juego ya se puede jugar, pero algunas pantallas y accione
 [*][b]Steam Deck[/b]: el juego puede cerrarse de forma inesperada mientras hace de anfitrión. Si te pasa, publica tu godot.log en [url=https://steamcommunity.com/workshop/filedetails/discussion/3799476240/563668239243120957/]la discusión del Workshop[/url].
 [/list]
 
+[h2]Antes de jugar[/h2]
+El sonido sale únicamente de la computadora anfitriona: quienes juegan desde el navegador no tienen audio en su propio dispositivo.
+
 Todos los clientes del navegador deben poder conectarse al anfitrión a través de la misma red local, normalmente la misma red Wi-Fi. Usa CouchCoop únicamente en una red local compartida con personas de confianza.
 
 Código fuente y soporte: https://github.com/tfoxy/sts2-couch-coop

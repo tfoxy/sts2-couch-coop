@@ -25,6 +25,9 @@ Der grundlegende Spielablauf ist spielbar, aber einige Bildschirme und Aktionen 
 [*][b]Steam Deck[/b] - das Spiel kann beim Hosten abstürzen. Poste in diesem Fall bitte deine godot.log in [url=https://steamcommunity.com/workshop/filedetails/discussion/3799476240/563668239243120957/]der Workshop-Diskussion[/url].
 [/list]
 
+[h2]Bevor du loslegst[/h2]
+Der Ton kommt nur aus dem Host-Computer - Browser-Spieler hören auf ihrem eigenen Gerät nichts.
+
 Alle Browser-Clients müssen den Host im selben lokalen Netzwerk erreichen können, normalerweise im selben WLAN. Verwende CouchCoop nur in einem lokalen Netzwerk, das du mit Personen teilst, denen du vertraust.
 
 Quellcode und Support: https://github.com/tfoxy/sts2-couch-coop

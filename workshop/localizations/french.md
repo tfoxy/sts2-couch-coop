@@ -25,6 +25,9 @@ La boucle de jeu principale est jouable, mais certains écrans et certaines acti
 [*][b]Steam Deck[/b] - le jeu peut planter pendant l'hébergement. Si cela arrive, publiez votre godot.log dans [url=https://steamcommunity.com/workshop/filedetails/discussion/3799476240/563668239243120957/]la discussion du Workshop[/url].
 [/list]
 
+[h2]Avant de jouer[/h2]
+Le son sort uniquement de l'ordinateur hôte - les joueurs dans le navigateur n'ont aucun son sur leur propre appareil.
+
 Tous les clients dans le navigateur doivent pouvoir joindre l'hôte sur le même réseau local, généralement le même réseau Wi-Fi. N'utilisez CouchCoop que sur un réseau local partagé avec des personnes de confiance.
 
 Code source et assistance : https://github.com/tfoxy/sts2-couch-coop

@@ -25,6 +25,9 @@ Podstawowa pętla rozgrywki jest grywalna, ale niektóre ekrany i akcje nadal ma
 [*][b]Steam Deck[/b] - gra może się zawiesić podczas hostowania. Jeśli tak się stanie, opublikuj swój plik godot.log w [url=https://steamcommunity.com/workshop/filedetails/discussion/3799476240/563668239243120957/]dyskusji na Warsztacie[/url].
 [/list]
 
+[h2]Zanim zagrasz[/h2]
+Dźwięk wydobywa się tylko z komputera hosta - gracze w przeglądarce nie słyszą nic na swoim urządzeniu.
+
 Wszystkie klienty przeglądarkowe muszą mieć dostęp do hosta w tej samej sieci lokalnej, zwykle w tej samej sieci Wi-Fi. Używaj CouchCoop wyłącznie w sieci lokalnej współdzielonej z osobami, którym ufasz.
 
 Kod źródłowy i pomoc: https://github.com/tfoxy/sts2-couch-coop

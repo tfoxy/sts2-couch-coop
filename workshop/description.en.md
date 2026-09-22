@@ -25,6 +25,9 @@ The core game loop is playable, but some screens and actions still have bugs, vi
 [*][b]Steam Deck[/b] - the game may crash while hosting. If it does, please post your godot.log in [url=https://steamcommunity.com/workshop/filedetails/discussion/3799476240/563668239243120957/]the Workshop discussion[/url].
 [/list]
 
+[h2]Before you play[/h2]
+Sound comes out of the host computer only - browser players get no audio on their own device.
+
 All browser clients must be able to reach the host on the same local network, usually the same Wi-Fi. Only use CouchCoop on a local network shared with people you trust.
 
 Source and support: https://github.com/tfoxy/sts2-couch-coop

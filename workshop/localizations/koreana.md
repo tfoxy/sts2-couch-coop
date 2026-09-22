@@ -25,6 +25,9 @@
 [*][b]Steam Deck[/b] - 호스팅 중에 게임이 강제 종료될 수 있습니다. 그런 경우 godot.log 파일을 [url=https://steamcommunity.com/workshop/filedetails/discussion/3799476240/563668239243120957/]창작마당 토론[/url]에 올려 주세요.
 [/list]
 
+[h2]플레이하기 전에[/h2]
+소리는 호스트 컴퓨터에서만 나옵니다. 브라우저로 참가하는 플레이어의 기기에서는 소리가 나지 않습니다.
+
 모든 브라우저 클라이언트는 같은 로컬 네트워크(보통 같은 Wi-Fi)에서 호스트에 연결할 수 있어야 합니다. CouchCoop은 신뢰할 수 있는 사람들과 공유하는 로컬 네트워크에서만 사용하세요.
 
 소스 코드 및 지원: https://github.com/tfoxy/sts2-couch-coop
