@@ -158,8 +158,8 @@ internal static class QrHoverTipCopyTests
             == "Choose which network connection and link type phones use to join. Change this if a phone cannot connect, or if you want to try a faster, more reliable option.",
             "the selector tip explains what the input changes and when to change it");
         Expect(QrHoverTipCopy.AdapterOtherDescription
-            == "A VPN or virtual network (Tailscale, a work VPN, and the like). Only phones on that same network can use this address — on normal home Wi-Fi, pick one of the options above instead.",
-            "the other-network tip retains its concrete VPN examples and home-Wi-Fi advice");
+            == "A VPN or virtual network (a work VPN, a virtual machine, and the like). Only phones on that same network can use this address — on normal home Wi-Fi, pick one of the options above instead.",
+            "the other-network tip retains its examples — kinds of network, never a named product — and its home-Wi-Fi advice");
         Expect(QrHoverTipCopy.MethodIpv4Description
             == "The simplest link, and the only one that needs no internet at all. The phone runs a bit slower on it — a secure (https) link lets the browser use extra speed features, which means better fps and battery. Can't be installed as an app (except on iPhone).",
             "the plain-address tip retains performance and install caveats");

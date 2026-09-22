@@ -222,7 +222,7 @@ internal static class WindowsFirewallProbeTests
         var vpnBeside = WindowsFirewallProbe.Classify(
             Facts(
                 [Rule(GamePath, "Slay the Spire 2", true, "Allow", "Private")],
-                [Network("Home", "Private"), Network("Tailscale", "Public")]),
+                [Network("Home", "Private"), Network("Mesh VPN", "Public")]),
             GamePath);
         Expect(vpnBeside.Verdict == WindowsFirewallVerdict.Allowed,
             "one covered network is enough — an uncovered second adapter is not an accusation");

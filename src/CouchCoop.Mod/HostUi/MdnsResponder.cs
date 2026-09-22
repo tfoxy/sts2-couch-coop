@@ -385,7 +385,7 @@ public sealed class MdnsResponder : IAsyncDisposable
     }
 
     // One IPv4 per usable interface: the best-scoring address on it, reusing the advertised-address
-    // ranking so a docker/Tailscale alias on a real NIC does not become that NIC's answer.
+    // ranking so a docker/tunnel alias on a real NIC does not become that NIC's answer.
     private static List<MdnsInterface> GatherInterfaces()
     {
         var result = new List<MdnsInterface>();

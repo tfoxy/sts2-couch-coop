@@ -451,7 +451,7 @@ public sealed class CouchCoopHostUiServices : IAsyncDisposable
     }
 
     // WS-F: was "first IPv4 on the first Up, non-loopback interface" — pure enumeration order, which on a Windows
-    // box with Tailscale installed advertises the unreachable 100.64/10 CGNAT address. Now ranked (see
+    // box with a mesh VPN installed advertises the unreachable 100.64/10 CGNAT address. Now ranked (see
     // LanAddressRanking): default gateway first, then ethernet > wifi > other, then range penalties.
     private IPAddress? FindLanIpv4Address()
     {

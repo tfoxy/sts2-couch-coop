@@ -40,7 +40,7 @@
   "couchcoop_qr_method_override_title": "固定地址",
   "couchcoop_qr_adapter_ethernet_description": "此电脑通过网线连接——这是最稳定、延迟最低的选择。手机仍通过 Wi-Fi 加入，但电脑这一端的连接质量最佳。",
   "couchcoop_qr_adapter_wifi_description": "此电脑使用 Wi-Fi。它可以工作，但不如网线稳定；远离路由器时可能有更多延迟或卡顿。若有有线选项，请优先使用。",
-  "couchcoop_qr_adapter_other_description": "这是 VPN 或虚拟网络（例如 Tailscale、工作 VPN 等）。只有同一网络上的手机才能使用此地址——在普通家庭 Wi-Fi 上，请改选上面的选项之一。",
+  "couchcoop_qr_adapter_other_description": "这是 VPN 或虚拟网络（例如工作 VPN、虚拟机等）。只有同一网络上的手机才能使用此地址——在普通家庭 Wi-Fi 上，请改选上面的选项之一。",
   "couchcoop_qr_method_ipv4_description": "这是最简单的链接，也是唯一完全不需要互联网的链接。手机通过它运行会稍慢一些——安全（https）链接可让浏览器使用额外的速度功能，从而获得更好的帧率和续航。无法安装为应用（iPhone 除外）。",
   "couchcoop_qr_method_web_description": "先从互联网加载，然后直接连接此电脑。手机会请求允许该网站访问你的本地网络——这只允许它访问明确接受来自此网站连接的程序，例如本游戏。帧率和续航最佳。手机需要互联网，且暂不支持 iPhone。",
   "couchcoop_qr_method_secure_description": "这是直接连接此电脑的安全（https）链接——比普通地址拥有更好的帧率和续航，手机还可以像真正的应用一样安装。某些路由器或互联网服务商会阻止这种地址；如果无法加载，请选择其他选项。需要互联网。",

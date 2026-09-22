@@ -620,7 +620,7 @@ MirrorSeatRosterTests.Run();
 // Player names on a seat: what the host publishes (itself + remote Steam players, which a seat cannot resolve),
 // how that merges into the durable mp_names.json roster, and how a running seat picks up later joiners.
 PlayerNameRosterTests.Run();
-// WS-F: advertised LAN IPv4 ranking (Tailscale/docker/APIPA demotion) + the COUCHCOOP_ADVERTISED_HOST override.
+// WS-F: advertised LAN IPv4 ranking (tunnel/docker/APIPA demotion) + the COUCHCOOP_ADVERTISED_HOST override.
 LanAddressRankingTests.Run();
 // WS-2 QR dialog: the option list the dialog offers (adapter x method cross product, tier-first grouping,
 // mdns always last, per-adapter link rows, disabled-with-blocker availability, selection restore, .local

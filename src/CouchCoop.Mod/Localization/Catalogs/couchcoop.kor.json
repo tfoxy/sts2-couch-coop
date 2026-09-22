@@ -40,7 +40,7 @@
   "couchcoop_qr_method_override_title": "고정 주소",
   "couchcoop_qr_adapter_ethernet_description": "이 PC는 지연이 가장 적고 가장 안정적인 옵션인 케이블로 연결되어 있습니다. 휴대폰은 여전히 ​​Wi-Fi를 통해 연결되지만 PC 연결의 절반은 가능한 한 좋습니다.",
   "couchcoop_qr_adapter_wifi_description": "이 PC는 Wi-Fi에 연결되어 있습니다. 작동하지만 케이블보다 안정성이 낮습니다. 특히 라우터에서 멀리 떨어져 있으면 약간의 지연이나 끊김이 발생할 수 있습니다. PC에 유선 옵션도 있는 경우 유선 옵션을 선호하세요.",
-  "couchcoop_qr_adapter_other_description": "VPN 또는 가상 네트워크(Tailscale, 업무용 VPN 등) 동일한 네트워크에 있는 전화기만 이 주소를 사용할 수 있습니다. 일반 가정용 Wi-Fi에서는 대신 위 옵션 중 하나를 선택하세요.",
+  "couchcoop_qr_adapter_other_description": "VPN 또는 가상 네트워크(업무용 VPN, 가상 머신 등) 동일한 네트워크에 있는 전화기만 이 주소를 사용할 수 있습니다. 일반 가정용 Wi-Fi에서는 대신 위 옵션 중 하나를 선택하세요.",
   "couchcoop_qr_method_ipv4_description": "가장 간단한 링크이자 인터넷이 전혀 필요하지 않은 유일한 링크입니다. 전화기는 약간 느리게 실행됩니다. 보안(https) 링크를 통해 브라우저는 추가 속도 기능을 사용할 수 있으며 이는 더 나은 fps와 배터리를 의미합니다. 앱으로 설치할 수 없습니다(iPhone 제외).",
   "couchcoop_qr_method_web_description": "인터넷에서 로드한 다음 이 PC에 바로 연결합니다. 휴대전화는 사이트가 로컬 네트워크에 연결할 수 있는 권한을 요청합니다. 이는 이 게임과 같이 이 사이트의 연결을 명시적으로 수락하는 프로그램에만 연결할 수 있도록 허용하는 것입니다. 최고의 FPS와 배터리. 전화로 인터넷이 필요하지만 아직 iPhone에서는 작동하지 않습니다.",
   "couchcoop_qr_method_secure_description": "이 PC에 바로 연결되는 보안(https) 링크 - 일반 주소보다 더 나은 FPS와 배터리를 제공하며 휴대폰에 실제 앱처럼 설치할 수 있습니다. 일부 라우터나 인터넷 제공업체에서는 이러한 종류의 주소를 차단합니다. 로드되지 않으면 다른 옵션을 선택하세요. 인터넷이 필요합니다.",
