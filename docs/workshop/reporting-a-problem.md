@@ -69,7 +69,7 @@ Replace `PLACEHOLDER_PHONE_URL` with the phone post's live URL from [README.md](
 
 This is the place for anything that goes wrong - crashes, a player that never finishes joining, something rendering incorrectly, a run that breaks.
 
-[b]If your phone or tablet can't reach the join page at all[/b], read [url=PLACEHOLDER_PHONE_URL]Can't connect from a phone?[/url] first - that covers Wi-Fi, firewalls and routers in detail, and most connection problems are solved there.
+[b]If your phone or tablet can't reach the join page at all[/b], read [url=https://steamcommunity.com/workshop/filedetails/discussion/3799476240/563668239243032720/]Can't connect from a phone?[/url] first - that covers Wi-Fi, firewalls and routers in detail, and most connection problems are solved there.
 
 [hr][/hr]
 [h1]What to include[/h1]
