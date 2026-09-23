@@ -636,6 +636,10 @@ await NetworkHardeningTests.RunAsync();
 // the macOS Local Network permission or the application firewall is silently eating inbound connections.
 HostReachabilityWatchTests.Run();
 WindowsFirewallProbeTests.Run();
+// The live lobby's player cap, and the notice for when it will not read. Unknown is ORDINARY at lobby open
+// (issue #2 saw -1 from a healthy macOS host), so the notice has to survive being told that without crying
+// wolf, and has to retract when the cap comes back.
+LobbyCapNoticeTests.Run();
 HeadlessUserDirSeederTests.Run();
 HostProfileBackupTests.Run();
 // M3 WS-T host-discovery responder (real UDP loopback round-trip). Runs before the flaky network suite below.
