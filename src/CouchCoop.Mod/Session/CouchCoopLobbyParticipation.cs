@@ -19,8 +19,31 @@ public sealed class CouchCoopLobbyParticipation(CouchCoopRuntimeHost runtimeHost
 {
     private readonly CouchCoopRuntimeHost _runtimeHost = runtimeHost ?? throw new ArgumentNullException(nameof(runtimeHost));
 
-    /// <summary>One-shot latch for <see cref="LobbyCapOf"/>'s notice — the cap is read on every allocation.</summary>
+    /// <summary>
+    /// How long a lobby may report no usable cap before <see cref="LobbyCapOf"/> says so. A lobby that has just
+    /// opened has not negotiated one yet, so the first observation is evidence of nothing.
+    /// </summary>
+    internal static readonly TimeSpan UnreadableLobbyCapGrace = TimeSpan.FromSeconds(30);
+
+    /// <summary>
+    /// Clock behind <see cref="UnreadableLobbyCapGrace"/>. A settable seam rather than a constructor parameter
+    /// because the state it measures is static — this type is allocated fresh on every cap read, by three
+    /// separate call sites, which is why the notice cannot remember anything on an instance.
+    /// </summary>
+    internal static Func<DateTimeOffset> LobbyCapClock = () => DateTimeOffset.UtcNow;
+
+    /// <summary>When the cap first read back unusable, or null while it is readable.</summary>
+    private static DateTimeOffset? _lobbyCapUnreadableSince;
+
+    /// <summary>Whether <see cref="LobbyCapOf"/> has spoken and still owes a line saying the cap came back.</summary>
     private static bool _warnedUnreadableLobbyCap;
+
+    /// <summary>Forgets an earlier lobby's cap history. For tests, which share one process across suites.</summary>
+    internal static void ResetLobbyCapNotice()
+    {
+        _lobbyCapUnreadableSince = null;
+        _warnedUnreadableLobbyCap = false;
+    }
 
     /// <summary>
     /// Ensure a live lobby player exists for <paramref name="name"/>, so the joining browser binds
@@ -276,24 +299,56 @@ public sealed class CouchCoopLobbyParticipation(CouchCoopRuntimeHost runtimeHost
     /// One lobby snapshot's player cap, or <see langword="null"/> when the snapshot does not carry a usable one.
     /// </summary>
     /// <remarks>
-    /// A snapshot reports 0 when the read behind it failed, and a lobby that admits one player is not a lobby
-    /// anyone can join — either way there is no cap here to size anything by. Unlike "no lobby at all", this IS
-    /// anomalous (the bridge refuses to start without the member), so it says so once per process rather than
-    /// passing for an ordinary absence.
+    /// <para>
+    /// A cap of 0 is a read that failed, and a lobby admitting one player is not a lobby anyone can join —
+    /// either way there is nothing here to size by, and the answer is UNKNOWN. Returning null is deliberately
+    /// fail-open; <see cref="CanAdmitAnotherPlayer"/> explains why guessing low is the one error the game
+    /// cannot correct.
+    /// </para>
+    /// <para>
+    /// IT IS NOT ANOMALOUS ON ITS OWN, which is what this used to get wrong. A lobby that has only just opened
+    /// has not negotiated a cap yet: issue #2 caught a real macOS host reporting <c>-1</c>, at startup, in a
+    /// session that then played for an hour — the cap read back on its own and nothing was ever mis-sized. The
+    /// old notice fired on that first observation and latched for the process, so a healthy host left a
+    /// permanent-looking error in its log and no line to say it had resolved.
+    /// </para>
+    /// <para>
+    /// So the notice has to be EARNED: it speaks only once the cap has stayed unusable across
+    /// <see cref="UnreadableLobbyCapGrace"/>, and says so again when it reads back. Being read-driven rather
+    /// than timed, a host nobody is asking about never trips it at all — which is right, because with no
+    /// caller there is no decision being taken without a cap, and therefore nothing to warn anyone about.
+    /// </para>
+    /// <para>
+    /// The two statics race on a thread-pool caller; the worst a race can produce is a duplicate line, and a
+    /// lock around a diagnostic would cost more than the duplicate it prevents.
+    /// </para>
     /// </remarks>
-    private static int? LobbyCapOf(StateCharacterSelectLobbySnapshot lobby)
+    internal static int? LobbyCapOf(StateCharacterSelectLobbySnapshot lobby)
     {
         if (lobby.MaxPlayers > 1)
         {
+            if (_warnedUnreadableLobbyCap)
+            {
+                CouchCoopLog.Stderr(
+                    $"the live lobby now reports a player cap of {lobby.MaxPlayers} — seat limits, the ENet "
+                    + "listener size and browser admission are sized by it again.");
+            }
+
+            _warnedUnreadableLobbyCap = false;
+            _lobbyCapUnreadableSince = null;
             return lobby.MaxPlayers;
         }
 
-        if (!_warnedUnreadableLobbyCap)
+        var now = LobbyCapClock();
+        _lobbyCapUnreadableSince ??= now;
+
+        if (!_warnedUnreadableLobbyCap && now - _lobbyCapUnreadableSince.Value >= UnreadableLobbyCapGrace)
         {
             _warnedUnreadableLobbyCap = true;
             CouchCoopLog.Stderr(
-                $"the live lobby reports a player cap of {lobby.MaxPlayers} — seat limits, the ENet "
-                + "listener size and browser admission are all running WITHOUT a known cap until it reads back.");
+                $"the live lobby has reported a player cap of {lobby.MaxPlayers} for over "
+                + $"{UnreadableLobbyCapGrace.TotalSeconds:0}s — seat limits, the ENet listener size and browser "
+                + "admission are all running WITHOUT a known cap until it reads back.");
         }
 
         return null;
