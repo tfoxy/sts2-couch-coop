@@ -36,14 +36,29 @@ heading_for() { # heading_for <type>
   esac
 }
 
+# The commit's first `Changelog:` trailer, flattened to one line.
+#
+# A trailer whose value WRAPS reaches us as several lines, and so does a commit carrying several
+# trailers. Under `separator=%x0A` those two cases are indistinguishable, so taking the first line
+# dropped every continuation -- which is how v0.3.0 published "...so a player whose phone dropped
+# out can", mid-clause, to the GitHub Release and the Workshop change note.
+#
+# Separating MULTIPLE trailers with a byte no trailer can contain tells them apart again: after
+# that, every remaining newline is a continuation and folds to a space.
+changelog_trailer() { # changelog_trailer <sha>
+  git log -1 --format='%(trailers:key=Changelog,valueonly,separator=%x1F)' "$1" \
+    | tr '\n' ' ' \
+    | cut -d$'\x1f' -f1 \
+    | sed -e 's/[[:space:]]\{1,\}/ /g' -e 's/^ //' -e 's/ $//'
+}
+
 emitted=0
 for want in feat fix perf; do
   section=""
   while IFS=$'\t' read -r sha subject; do
     [ -n "$sha" ] || continue
     printf '%s' "$subject" | grep -Eq "^$want(\(|!|:)" || continue
-    entry="$(git log -1 --format='%(trailers:key=Changelog,valueonly,separator=%x0A)' "$sha" \
-             | sed -e 's/[[:space:]]\{1,\}/ /g' -e 's/^ //' -e 's/ $//' | grep -v '^$' | head -1)"
+    entry="$(changelog_trailer "$sha")"
     [ -n "$entry" ] || continue
     [ "$entry" = "none" ] && continue
     section+="- $entry"$'\n'

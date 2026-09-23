@@ -17,7 +17,7 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and
 - A keyboard attached to the browser client now plays the game.
 - Quality is now a mirror setting: pick a level and the effect options follow it.
 - The join QR screen can turn off a mod for browser players when it crashes their game.
-- The join QR code is now in the pause menu, so a player whose phone dropped out can
+- The join QR code is now in the pause menu, so a player whose phone dropped out can scan back in without abandoning the run.
 - Couch Co-Op now copies your save profile aside before the first browser player joins.
 - When co-op can't start because the game runtime never attached, the log now says exactly that instead of reporting the lobby as "not host".
 - Add stand in for a creature whose spine art is late or absent

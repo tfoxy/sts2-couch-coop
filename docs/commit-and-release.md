@@ -70,8 +70,16 @@ Rules that keep it cheap:
   it makes "is this user-visible?" a decision rather than an omission.
 - Write it for the reader of the release, not for the reviewer of the diff. Couch: what a player
   notices at the table. spirectl and godot-scene-web: what an integrator notices in their build.
+- **It may wrap.** Continuation lines are indented, and the collector rejoins them into one
+  sentence. A trailer is not limited to what fits in the first line — v0.3.0 published
+  "…so a player whose phone dropped out can", stopping mid-clause, because the collector used to
+  keep only that first line. `scripts/test-collect-changelog.sh` now holds that case.
 - `Refs: spirectl@<sha>` is an optional second trailer for work that spans the sibling repos, which
   `release-dependencies.json` pins by commit.
+- **A sibling-repo fix earns no line here.** The collector walks this repo's commits only, so a fix
+  landed in spirectl or godot-scene-web reaches couch's notes only if a couch commit carries its own
+  trailer. When a sibling fix is what closes a user-facing issue here, write that line on the couch
+  commit that picks it up — otherwise the release ships the fix and never tells anyone.
 
 ## Branches and merging
 
@@ -106,6 +114,11 @@ The coordinator writes the squash message, with the whole branch diff in hand.
    It prints the trailers grouped under Keep a Changelog headings, then lists every `feat`/`fix`/
    `perf` commit with **no** trailer. Decide about each of those before moving on — that list is the
    only thing standing between a user-visible fix and its silent omission.
+
+   Self-test, over a throwaway fixture repo — no network, no tags:
+   `bash scripts/test-collect-changelog.sh`. Run it after any change to the collector. What it
+   guards is that a published note cannot be silently mangled: a Workshop revision's change note
+   cannot be edited after the fact, so a trailer the collector mishandles ships permanently.
 
 2. Rewrite the draft in the reader's voice under a new `## [x.y.z] - YYYY-MM-DD` heading in
    `CHANGELOG.md`, and move `[Unreleased]` above it. The `release-notes` skill does this step.
