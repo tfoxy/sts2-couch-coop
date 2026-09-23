@@ -19,11 +19,7 @@ Host instaluje CouchCoop. Pozostali gracze dołączają, skanując kod QR lub wp
 [h2]Ta modyfikacja jest w wersji beta[/h2]
 [i]Modyfikacja, nie gra - CouchCoop działa zarówno na stabilnej gałęzi gry, jak i na jej gałęzi otwartej bety.[/i]
 
-Podstawowa pętla rozgrywki jest grywalna, ale niektóre ekrany i akcje nadal mają błędy, różnice wizualne, niedopracowane elementy lub problemy z wydajnością. Dwie rzeczy warto wiedzieć przed startem:
-[list]
-[*][b]BaseLib[/b] - gdy ta modyfikacja jest zainstalowana razem z CouchCoop, sterowanie z przeglądarki może nie być wykrywane u części graczy.
-[*][b]Steam Deck[/b] - gra może się zawiesić podczas hostowania. Jeśli tak się stanie, opublikuj swój plik godot.log w [url=https://steamcommunity.com/workshop/filedetails/discussion/3799476240/563668239243120957/]dyskusji na Warsztacie[/url].
-[/list]
+Podstawowa pętla rozgrywki jest grywalna, ale niektóre ekrany i akcje nadal mają błędy, różnice wizualne, niedopracowane elementy lub problemy z wydajnością.
 
 [h2]Zanim zagrasz[/h2]
 Dźwięk wydobywa się tylko z komputera hosta - gracze w przeglądarce nie słyszą nic na swoim urządzeniu.

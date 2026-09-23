@@ -19,11 +19,7 @@ O host instala o CouchCoop. Os outros jogadores entram escaneando um código QR 
 [h2]Este mod está em beta[/h2]
 [i]O mod, não o jogo - o CouchCoop funciona tanto no ramo estável do jogo quanto no ramo de beta pública.[/i]
 
-O ciclo principal do jogo já pode ser jogado, mas algumas telas e ações ainda têm bugs, diferenças visuais, partes pouco polidas ou problemas de desempenho. Duas coisas valem a pena saber antes de começar:
-[list]
-[*][b]BaseLib[/b] - com esse mod também instalado, os comandos feitos no navegador podem não ser detectados para alguns jogadores.
-[*][b]Steam Deck[/b] - o jogo pode travar enquanto está hospedando. Se isso acontecer, poste o seu godot.log na [url=https://steamcommunity.com/workshop/filedetails/discussion/3799476240/563668239243120957/]discussão do Workshop[/url].
-[/list]
+O ciclo principal do jogo já pode ser jogado, mas algumas telas e ações ainda têm bugs, diferenças visuais, partes pouco polidas ou problemas de desempenho.
 
 [h2]Antes de jogar[/h2]
 O som sai apenas do computador do host - quem joga pelo navegador não tem áudio no próprio dispositivo.

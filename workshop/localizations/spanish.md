@@ -19,11 +19,7 @@ El anfitrión instala CouchCoop. Los demás jugadores se unen escaneando un cód
 [h2]Este mod está en beta[/h2]
 [i]El mod, no el juego: CouchCoop funciona igual en la rama estable del juego y en su rama beta pública.[/i]
 
-El ciclo de juego principal ya se puede jugar, pero algunas pantallas y acciones todavía tienen errores, diferencias visuales, detalles sin pulir o problemas de rendimiento. Conviene saber dos cosas antes de empezar:
-[list]
-[*][b]BaseLib[/b]: si también tienes ese mod instalado, es posible que el juego no detecte lo que algunos jugadores hacen desde el navegador.
-[*][b]Steam Deck[/b]: el juego puede cerrarse de forma inesperada mientras hace de anfitrión. Si te pasa, publica tu godot.log en [url=https://steamcommunity.com/workshop/filedetails/discussion/3799476240/563668239243120957/]la discusión del Workshop[/url].
-[/list]
+El ciclo de juego principal ya se puede jugar, pero algunas pantallas y acciones todavía tienen errores, diferencias visuales, detalles sin pulir o problemas de rendimiento.
 
 [h2]Antes de jugar[/h2]
 El sonido sale únicamente del ordenador anfitrión: quienes juegan desde el navegador no tienen audio en su propio dispositivo.
