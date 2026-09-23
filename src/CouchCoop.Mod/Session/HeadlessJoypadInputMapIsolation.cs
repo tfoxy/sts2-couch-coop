@@ -6,6 +6,8 @@ namespace CouchCoop.Mod.Session;
 /// Removes controller bindings from a spawned headless seat's input map.
 /// A seat has no local player, so leaving its joypad actions installed lets a controller connected to the host
 /// steer that seat as well. Keyboard and mouse actions remain available for the browser-input bridge.
+/// This closes the ENGINE joypad route only. A controller Steam Input reports never goes through the InputMap;
+/// <see cref="Patches.SeatSteamControllerIsolationPatch"/> closes that route.
 /// </summary>
 internal static class HeadlessJoypadInputMapIsolation
 {
