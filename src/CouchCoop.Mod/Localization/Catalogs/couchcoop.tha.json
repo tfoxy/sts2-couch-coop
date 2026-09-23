@@ -126,5 +126,19 @@
   "couchcoop_connection_outcome_detail_failed": "ความพยายามนี้หยุดลงแล้ว ทำตามขั้นตอนที่แนะนำแล้วเชื่อมต่อใหม่",
   "couchcoop_connection_outcome_detail_recovered": "หน้าจอเกมใช้งานได้แล้ว คำเตือนก่อนหน้านี้ถูกบันทึกไว้เพื่ออ้างอิง",
   "couchcoop_connection_outcome_detail_ended": "การเชื่อมต่อนี้สิ้นสุดลงก่อนที่ความล่าช้าจะหมดไป",
-  "couchcoop_connection_outcome_detail_degraded": "โหมดร่วมมือกำลังทำงานโดยมีข้อจำกัด ระบบบันทึกไว้ที่นี่เพื่อใช้อ้างอิง"
+  "couchcoop_connection_outcome_detail_degraded": "โหมดร่วมมือกำลังทำงานโดยมีข้อจำกัด ระบบบันทึกไว้ที่นี่เพื่อใช้อ้างอิง",
+  "couchcoop_seatmods_title": "ม็อดสำหรับผู้เล่นผ่านเบราว์เซอร์",
+  "couchcoop_seatmods_purpose": "หากม็อดใดทำให้เกมของผู้เล่นผ่านเบราว์เซอร์แครช ให้ปิดม็อดนั้นสำหรับพวกเขาที่นี่",
+  "couchcoop_seatmods_visuals": "พวกเขาจะเห็นเกมโดยไม่มีม็อดนั้น รวมถึงไม่มีองค์ประกอบด้านภาพของม็อดนั้นด้วย",
+  "couchcoop_seatmods_declared": "แสดงเฉพาะม็อดที่ผู้สร้างระบุว่าไม่เปลี่ยนแปลงการเล่นเกมเท่านั้น นี่เป็นเพียงคำกล่าวของผู้สร้าง ไม่ใช่การรับประกัน",
+  "couchcoop_seatmods_applies_to_new": "การเปลี่ยนแปลงจะมีผลกับผู้เล่นที่เข้าร่วมนับจากนี้ ผู้ที่เชื่อมต่ออยู่แล้วจะยังคงใช้ม็อดชุดเดิมที่มีตอนเข้าร่วม",
+  "couchcoop_seatmods_confirm": "ปิดทั้งหมด",
+  "couchcoop_seatmods_cancel": "ยกเลิก",
+  "couchcoop_seatmods_row_on": "เปิด",
+  "couchcoop_seatmods_row_off": "ปิด",
+  "couchcoop_seatmods_row_locked": "เปิด · ล็อกโดย {mod}",
+  "couchcoop_seatmods_row_off_with": "ปิด · ปิดพร้อมกับ {mods}",
+  "couchcoop_seatmods_detail_locked": "{mod} ยังคงเปิดอยู่เพราะ {dependent} ต้องใช้ม็อดนี้ และ {dependent} เปลี่ยนแปลงการเล่นเกม",
+  "couchcoop_seatmods_detail_off_with": "{mod} ปิดอยู่เพราะต้องใช้ {mods} เปิด {mods} อีกครั้งเพื่อให้ม็อดนี้กลับมา",
+  "couchcoop_seatmods_confirm_prompt": "การปิด {mod} จะปิดม็อดที่ต้องใช้ม็อดนี้ไปด้วย: {mods}"
 }

@@ -126,5 +126,19 @@
   "couchcoop_connection_outcome_detail_failed": "This attempt stopped. Follow the suggested steps, then reconnect.",
   "couchcoop_connection_outcome_detail_recovered": "The game view is now working. This earlier warning is saved for reference.",
   "couchcoop_connection_outcome_detail_ended": "This connection ended before the delay cleared.",
-  "couchcoop_connection_outcome_detail_degraded": "Co-op is running with a limitation. It is saved here for reference."
+  "couchcoop_connection_outcome_detail_degraded": "Co-op is running with a limitation. It is saved here for reference.",
+  "couchcoop_seatmods_title": "Mods for browser players",
+  "couchcoop_seatmods_purpose": "If a mod crashes browser players' games, turn it off for them here.",
+  "couchcoop_seatmods_visuals": "They'll see the game without it, including its visuals.",
+  "couchcoop_seatmods_declared": "Only mods whose authors say they don't change gameplay are listed. That's the author's word, not a guarantee.",
+  "couchcoop_seatmods_applies_to_new": "Changes apply to players who join from now on. Anyone already connected keeps the mods they joined with.",
+  "couchcoop_seatmods_confirm": "Turn off all",
+  "couchcoop_seatmods_cancel": "Cancel",
+  "couchcoop_seatmods_row_on": "On",
+  "couchcoop_seatmods_row_off": "Off",
+  "couchcoop_seatmods_row_locked": "On · locked by {mod}",
+  "couchcoop_seatmods_row_off_with": "Off · turned off with {mods}",
+  "couchcoop_seatmods_detail_locked": "{mod} stays on because {dependent} needs it, and {dependent} changes gameplay.",
+  "couchcoop_seatmods_detail_off_with": "{mod} is off because it needs {mods}. Turn {mods} back on to bring it back.",
+  "couchcoop_seatmods_confirm_prompt": "Turning off {mod} also turns off the mods that need it: {mods}."
 }

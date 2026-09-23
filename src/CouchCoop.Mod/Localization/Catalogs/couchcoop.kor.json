@@ -126,5 +126,19 @@
   "couchcoop_connection_outcome_detail_failed": "이 시도는 중지되었습니다. 제안된 단계를 따른 다음 다시 연결하세요.",
   "couchcoop_connection_outcome_detail_recovered": "게임 화면이 이제 작동합니다. 이 이전 경고는 참고용으로 저장됩니다.",
   "couchcoop_connection_outcome_detail_ended": "지연이 해소되기 전에 이 연결이 종료되었습니다.",
-  "couchcoop_connection_outcome_detail_degraded": "협동 플레이가 제한된 상태로 실행 중입니다. 참고용으로 여기에 저장됩니다."
+  "couchcoop_connection_outcome_detail_degraded": "협동 플레이가 제한된 상태로 실행 중입니다. 참고용으로 여기에 저장됩니다.",
+  "couchcoop_seatmods_title": "브라우저 플레이어용 모드",
+  "couchcoop_seatmods_purpose": "모드 때문에 브라우저 플레이어의 게임이 충돌하면 여기에서 해당 플레이어들을 위해 그 모드를 끄세요.",
+  "couchcoop_seatmods_visuals": "해당 플레이어는 시각 효과를 포함해 그 모드가 없는 상태로 게임을 보게 됩니다.",
+  "couchcoop_seatmods_declared": "제작자가 게임플레이를 바꾸지 않는다고 밝힌 모드만 표시됩니다. 이는 제작자의 말일 뿐, 보장은 아닙니다.",
+  "couchcoop_seatmods_applies_to_new": "변경 사항은 지금부터 참가하는 플레이어에게 적용됩니다. 이미 연결된 플레이어는 참가할 때의 모드를 그대로 유지합니다.",
+  "couchcoop_seatmods_confirm": "모두 끄기",
+  "couchcoop_seatmods_cancel": "취소",
+  "couchcoop_seatmods_row_on": "켜짐",
+  "couchcoop_seatmods_row_off": "꺼짐",
+  "couchcoop_seatmods_row_locked": "켜짐 · {mod}에 의해 잠김",
+  "couchcoop_seatmods_row_off_with": "꺼짐 · {mods} 모드와 함께 꺼짐",
+  "couchcoop_seatmods_detail_locked": "{mod} 모드는 켜진 상태로 유지됩니다. {dependent} 모드가 이 모드를 필요로 하며, {dependent} 모드는 게임플레이를 바꾸기 때문입니다.",
+  "couchcoop_seatmods_detail_off_with": "{mod} 모드는 {mods} 모드가 필요하므로 꺼져 있습니다. 다시 켜려면 {mods} 모드를 다시 켜세요.",
+  "couchcoop_seatmods_confirm_prompt": "{mod} 모드를 끄면 이 모드가 필요한 모드도 함께 꺼집니다: {mods}"
 }

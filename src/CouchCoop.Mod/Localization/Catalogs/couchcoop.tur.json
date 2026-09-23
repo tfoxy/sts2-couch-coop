@@ -126,5 +126,19 @@
   "couchcoop_connection_outcome_detail_failed": "Bu deneme durdu. Önerilen adımları uygulayın, sonra yeniden bağlanın.",
   "couchcoop_connection_outcome_detail_recovered": "Oyun görünümü artık çalışıyor. Bu önceki uyarı başvuru için kaydedildi.",
   "couchcoop_connection_outcome_detail_ended": "Bu bağlantı gecikme giderilmeden önce sona erdi.",
-  "couchcoop_connection_outcome_detail_degraded": "Ortak oynanış bir sınırlamayla çalışıyor. Başvurmanız için burada saklanır."
+  "couchcoop_connection_outcome_detail_degraded": "Ortak oynanış bir sınırlamayla çalışıyor. Başvurmanız için burada saklanır.",
+  "couchcoop_seatmods_title": "Tarayıcı oyuncuları için modlar",
+  "couchcoop_seatmods_purpose": "Bir mod tarayıcı oyuncularının oyununu çökertirse, onlar için buradan kapatın.",
+  "couchcoop_seatmods_visuals": "Oyunu, görsel öğeleri de dahil olmak üzere o mod olmadan görürler.",
+  "couchcoop_seatmods_declared": "Yalnızca yazarlarının oynanışı değiştirmediğini söylediği modlar listelenir. Bu, yazarın beyanıdır; bir garanti değildir.",
+  "couchcoop_seatmods_applies_to_new": "Değişiklikler bundan sonra katılan oyunculara uygulanır. Zaten bağlı olan herkes, katıldığı sıradaki modları korur.",
+  "couchcoop_seatmods_confirm": "Tümünü kapat",
+  "couchcoop_seatmods_cancel": "İptal Et",
+  "couchcoop_seatmods_row_on": "Açık",
+  "couchcoop_seatmods_row_off": "Kapalı",
+  "couchcoop_seatmods_row_locked": "Açık · {mod} tarafından kilitli",
+  "couchcoop_seatmods_row_off_with": "Kapalı · {mods} ile birlikte kapatıldı",
+  "couchcoop_seatmods_detail_locked": "{mod} açık kalıyor, çünkü {dependent} için gerekli ve {dependent} oynanışı değiştiriyor.",
+  "couchcoop_seatmods_detail_off_with": "{mod} kapalı, çünkü ona {mods} gerekiyor. Geri getirmek için {mods} yeniden açılmalı.",
+  "couchcoop_seatmods_confirm_prompt": "{mod} kapatılırsa ona ihtiyaç duyan modlar da kapanır: {mods}."
 }

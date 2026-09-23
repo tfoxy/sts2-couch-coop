@@ -126,5 +126,19 @@
   "couchcoop_connection_outcome_detail_failed": "この試行は停止しました。提案された手順に従ってから、もう一度接続してください。",
   "couchcoop_connection_outcome_detail_recovered": "ゲーム画面は現在動作しています。この以前の警告は参照用に保存されています。",
   "couchcoop_connection_outcome_detail_ended": "この接続は遅延が解消される前に終了しました。",
-  "couchcoop_connection_outcome_detail_degraded": "協力プレイは制限付きで動作しています。この内容は参考として保存されます。"
+  "couchcoop_connection_outcome_detail_degraded": "協力プレイは制限付きで動作しています。この内容は参考として保存されます。",
+  "couchcoop_seatmods_title": "ブラウザで参加するプレイヤーのMOD",
+  "couchcoop_seatmods_purpose": "MODが原因でブラウザで参加するプレイヤーのゲームがクラッシュする場合は、ここでそのプレイヤー向けにオフにしてください。",
+  "couchcoop_seatmods_visuals": "そのプレイヤーには、見た目の変更も含めて、そのMODがない状態のゲームが表示されます。",
+  "couchcoop_seatmods_declared": "ゲームプレイを変更しないと作者が申告しているMODのみが表示されます。これは作者の申告であり、保証ではありません。",
+  "couchcoop_seatmods_applies_to_new": "変更は、これから参加するプレイヤーに適用されます。すでに接続しているプレイヤーは、参加したときのMODをそのまま使います。",
+  "couchcoop_seatmods_confirm": "すべてオフにする",
+  "couchcoop_seatmods_cancel": "キャンセル",
+  "couchcoop_seatmods_row_on": "オン",
+  "couchcoop_seatmods_row_off": "オフ",
+  "couchcoop_seatmods_row_locked": "オン · {mod}によりロック中",
+  "couchcoop_seatmods_row_off_with": "オフ · {mods}と一緒にオフ",
+  "couchcoop_seatmods_detail_locked": "{mod}はオンのままです。{dependent}がこのMODを必要としており、{dependent}はゲームプレイを変更するためです。",
+  "couchcoop_seatmods_detail_off_with": "{mod}は{mods}を必要とするため、オフになっています。元に戻すには{mods}を再びオンにしてください。",
+  "couchcoop_seatmods_confirm_prompt": "{mod}をオフにすると、このMODを必要とする次のMODもオフになります: {mods}"
 }

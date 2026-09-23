@@ -14,6 +14,10 @@
          while preventing a macOS-only copy from drifting away from the mod's actual seeder. -->
     <Compile Include="../../src/CouchCoop.Mod/Session/HeadlessUserDirSeeder.cs" Link="HeadlessUserDirSeeder.cs" />
     <Compile Include="../../src/CouchCoop.Mod/Session/HeadlessSeatModSelection.cs" Link="HeadlessSeatModSelection.cs" />
+    <!-- The mod-list reader/rewriter the seat pin runs on, and the id comparer it matches rows with. Both
+         BCL-only; they are here because HeadlessSeatModSelection names them, not for tests of their own. -->
+    <Compile Include="../../src/CouchCoop.Mod/Session/SeatModList.cs" Link="SeatModList.cs" />
+    <Compile Include="../../src/CouchCoop.Mod/Session/SeatModSelectionPlan.cs" Link="SeatModSelectionPlan.cs" />
     <Compile Include="../../src/CouchCoop.Mod/Connections/CouchCoopModBuildIdentity.cs" Link="CouchCoopModBuildIdentity.cs" />
     <!-- The shipping loader has to pick a payload before any game-bound implementation assembly is loaded.
          Source-link it here so synthetic .app trees test that exact code on every host OS. -->

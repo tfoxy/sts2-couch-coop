@@ -126,5 +126,19 @@
   "couchcoop_connection_outcome_detail_failed": "Questo tentativo si è interrotto. Segui i passaggi suggeriti, quindi riconnettiti.",
   "couchcoop_connection_outcome_detail_recovered": "La visuale di gioco ora funziona. Questo avviso precedente viene conservato come riferimento.",
   "couchcoop_connection_outcome_detail_ended": "Questa connessione è terminata prima che il ritardo si risolvesse.",
-  "couchcoop_connection_outcome_detail_degraded": "La co-op funziona con una limitazione. È salvata qui come riferimento."
+  "couchcoop_connection_outcome_detail_degraded": "La co-op funziona con una limitazione. È salvata qui come riferimento.",
+  "couchcoop_seatmods_title": "Mod per i giocatori da browser",
+  "couchcoop_seatmods_purpose": "Se una mod manda in crash il gioco dei giocatori da browser, disattivala qui per loro.",
+  "couchcoop_seatmods_visuals": "Vedranno il gioco senza quella mod, anche senza i suoi elementi visivi.",
+  "couchcoop_seatmods_declared": "Sono elencate solo le mod i cui autori dichiarano che non cambiano il gameplay. È la parola dell'autore, non una garanzia.",
+  "couchcoop_seatmods_applies_to_new": "Le modifiche si applicano ai giocatori che si uniscono da ora in poi. Chi è già connesso mantiene le mod con cui si è unito.",
+  "couchcoop_seatmods_confirm": "Disattiva tutte",
+  "couchcoop_seatmods_cancel": "Annulla",
+  "couchcoop_seatmods_row_on": "Attivata",
+  "couchcoop_seatmods_row_off": "Disattivata",
+  "couchcoop_seatmods_row_locked": "Attivata · bloccata da {mod}",
+  "couchcoop_seatmods_row_off_with": "Disattivata · disattivata insieme a {mods}",
+  "couchcoop_seatmods_detail_locked": "{mod} resta attivata perché {dependent} ne ha bisogno, e {dependent} cambia il gameplay.",
+  "couchcoop_seatmods_detail_off_with": "{mod} è disattivata perché richiede {mods}. Riattiva {mods} per ripristinarla.",
+  "couchcoop_seatmods_confirm_prompt": "Disattivando {mod} si disattivano anche le mod che la richiedono: {mods}."
 }

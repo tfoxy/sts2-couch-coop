@@ -91,6 +91,7 @@ internal sealed partial class CouchCoopQrDialog : CouchCoopModalDialog
     private readonly CouchCoopQrCopyButton _copy = new();
     private readonly CouchCoopQrHostSelect _select = new();
     private readonly CouchCoopConnectionPanel _connections = new();
+    private readonly CouchCoopSeatModPanel _seatMods = new() { Source = SeatModSelectionService.Shared };
 
     private string? _qrCacheKey;
     // The row a live hover-tip set hangs off, if any. Tracked so the set can be taken down on paths
@@ -150,6 +151,10 @@ internal sealed partial class CouchCoopQrDialog : CouchCoopModalDialog
         // A sibling of the central card, deliberately: its fixed left edge clears the QR card rather
         // than competing for the QR, URL or close-button vertical budget.
         AddChild(_connections);
+        // Its mirror on the right, a sibling for the same reason: the mods the host may turn off for the games
+        // it runs for browser players. Hidden unless this machine has one to offer.
+        _seatMods.FocusChainChanged = RefreshFocusChain;
+        AddChild(_seatMods);
     }
 
     protected override void InstallBody()
@@ -157,12 +162,13 @@ internal sealed partial class CouchCoopQrDialog : CouchCoopModalDialog
         _select.Install();
         _copy.Install();
         _connections.Install();
+        _seatMods.Install();
     }
 
     /// <summary>
     /// What a d-pad walks in this dialog, top to bottom: the selector's closed row, the selectable option
-    /// rows while the list is expanded, the copy affordance under the QR, and then (appended by the base)
-    /// the close button.
+    /// rows while the list is expanded, the copy affordance under the QR, the seat-mod rows on the right-hand
+    /// card, and then (appended by the base) the close button.
     /// </summary>
     /// <remarks>
     /// The rows were always focusable — <c>CouchCoopQrHostSelect</c> gives every selectable one
@@ -183,6 +189,10 @@ internal sealed partial class CouchCoopQrDialog : CouchCoopModalDialog
         {
             chain.Add(_copy);
         }
+
+        // After the copy button, so a walk down from the QR crosses to the right-hand card before it reaches
+        // close. The card declares nothing while it is hidden, and its confirm pair only while one is pending.
+        _seatMods.AppendFocusChain(chain);
     }
 
     public void RefreshConnections()
@@ -201,6 +211,7 @@ internal sealed partial class CouchCoopQrDialog : CouchCoopModalDialog
         CouchCoopGameUiTheme.ApplyFont(_url, CouchCoopGameUiTheme.KreonBoldGlyphSpaceOne, Layout.UrlFontSize);
         CouchCoopGameUiTheme.ApplyFont(_notice, CouchCoopGameUiTheme.KreonBoldGlyphSpaceOne, Math.Max(Layout.UrlFontSize - 8, 8));
         RefreshDialogFont();
+        _seatMods.RefreshLocalization();
         if (IsOpen)
         {
             RefreshOptions(snapshot);
@@ -235,6 +246,9 @@ internal sealed partial class CouchCoopQrDialog : CouchCoopModalDialog
         ApplyLayout();
         RefreshOptions(snapshot);
         RefreshConnections();
+        // Here and NOT in RefreshConnections, which the lobby scan calls four times a second: the inventory can
+        // read manifests off disk, and the card applies its own presses while the dialog is up.
+        _seatMods.Refresh();
         OpenModal();
     }
 

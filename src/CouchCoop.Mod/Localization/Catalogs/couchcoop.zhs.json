@@ -126,5 +126,19 @@
   "couchcoop_connection_outcome_detail_failed": "此尝试已停止。请按照建议的步骤操作，然后重新连接。",
   "couchcoop_connection_outcome_detail_recovered": "游戏画面现已正常工作。此较早的警告会保留供参考。",
   "couchcoop_connection_outcome_detail_ended": "此连接在延迟消除前结束。",
-  "couchcoop_connection_outcome_detail_degraded": "同屏联机正在受限状态下运行。此信息保存于此以供参考。"
+  "couchcoop_connection_outcome_detail_degraded": "同屏联机正在受限状态下运行。此信息保存于此以供参考。",
+  "couchcoop_seatmods_title": "浏览器玩家的模组",
+  "couchcoop_seatmods_purpose": "如果某个模组导致浏览器玩家的游戏崩溃，可以在这里为他们关闭该模组。",
+  "couchcoop_seatmods_visuals": "他们看到的游戏将不含该模组，包括其视觉效果。",
+  "couchcoop_seatmods_declared": "只列出作者声称不改变游戏玩法的模组。这只是作者的说法，并非保证。",
+  "couchcoop_seatmods_applies_to_new": "更改将应用于此后加入的玩家。已连接的玩家会保留他们加入时使用的模组。",
+  "couchcoop_seatmods_confirm": "全部关闭",
+  "couchcoop_seatmods_cancel": "取消",
+  "couchcoop_seatmods_row_on": "开启",
+  "couchcoop_seatmods_row_off": "关闭",
+  "couchcoop_seatmods_row_locked": "开启 · 被 {mod} 锁定",
+  "couchcoop_seatmods_row_off_with": "关闭 · 随 {mods} 一起关闭",
+  "couchcoop_seatmods_detail_locked": "{mod} 保持开启，因为 {dependent} 需要它，而 {dependent} 会改变游戏玩法。",
+  "couchcoop_seatmods_detail_off_with": "{mod} 已关闭，因为它需要 {mods}。重新开启 {mods} 即可恢复它。",
+  "couchcoop_seatmods_confirm_prompt": "关闭 {mod} 也会关闭需要它的模组：{mods}。"
 }

@@ -126,5 +126,19 @@
   "couchcoop_connection_outcome_detail_failed": "Cette tentative s'est arrêtée. Suivez les étapes suggérées, puis reconnectez-vous.",
   "couchcoop_connection_outcome_detail_recovered": "La vue du jeu fonctionne maintenant. Cet avertissement précédent est conservé à titre de référence.",
   "couchcoop_connection_outcome_detail_ended": "Cette connexion s'est terminée avant que le délai ne soit résolu.",
-  "couchcoop_connection_outcome_detail_degraded": "Le mode coopératif fonctionne avec une limitation. Elle est conservée ici à titre d'information."
+  "couchcoop_connection_outcome_detail_degraded": "Le mode coopératif fonctionne avec une limitation. Elle est conservée ici à titre d'information.",
+  "couchcoop_seatmods_title": "Mods pour les joueurs sur navigateur",
+  "couchcoop_seatmods_purpose": "Si un mod fait planter le jeu des joueurs sur navigateur, désactivez-le ici pour eux.",
+  "couchcoop_seatmods_visuals": "Ils verront le jeu sans ce mod, y compris sans ses éléments visuels.",
+  "couchcoop_seatmods_declared": "Seuls les mods dont les auteurs affirment qu'ils ne modifient pas le gameplay sont listés. C'est la parole de l'auteur, pas une garantie.",
+  "couchcoop_seatmods_applies_to_new": "Les changements s'appliquent aux joueurs qui rejoignent la partie à partir de maintenant. Toute personne déjà connectée garde les mods avec lesquels elle a rejoint la partie.",
+  "couchcoop_seatmods_confirm": "Tout désactiver",
+  "couchcoop_seatmods_cancel": "Annuler",
+  "couchcoop_seatmods_row_on": "Activé",
+  "couchcoop_seatmods_row_off": "Désactivé",
+  "couchcoop_seatmods_row_locked": "Activé · verrouillé par {mod}",
+  "couchcoop_seatmods_row_off_with": "Désactivé · désactivé avec {mods}",
+  "couchcoop_seatmods_detail_locked": "{mod} reste activé car {dependent} en a besoin, et {dependent} modifie le gameplay.",
+  "couchcoop_seatmods_detail_off_with": "{mod} est désactivé car il a besoin de {mods}. Réactivez {mods} pour le rétablir.",
+  "couchcoop_seatmods_confirm_prompt": "Désactiver {mod} désactive aussi les mods qui en ont besoin : {mods}."
 }

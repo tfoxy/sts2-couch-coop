@@ -30,8 +30,21 @@ internal static class CouchCoopQrLayoutContractTests
         TheCardStillHasRoomForTheConstantExtent();
         ButtonRectMatchesTheAgreedGeometry();
         ConnectionCompanionClearsTheQrCard();
+        SeatModCompanionMirrorsTheConnectionCard();
 
         Console.WriteLine("CouchCoopQrLayoutContractTests: ok");
+    }
+
+    /// <summary>
+    /// The two companion cards' geometry alone, for `-- host-ui`: pure constants, none of the hot-reload
+    /// assembly load the rest of this suite needs.
+    /// </summary>
+    public static void RunCompanions()
+    {
+        ConnectionCompanionClearsTheQrCard();
+        SeatModCompanionMirrorsTheConnectionCard();
+
+        Console.WriteLine("CouchCoopQrLayoutContractTests (companion cards): ok");
     }
 
     private static JsonSerializerOptions JsonOptions { get; } = new(JsonSerializerDefaults.Web);
@@ -261,6 +274,53 @@ internal static class CouchCoopQrLayoutContractTests
             "the scaled 1280-wide companion still clears the QR card");
         Expect(MathF.Abs((scaledQrLeft - scaledCompanionRight) - CouchCoopConnectionLayout.Gap * scale) < 0.01f,
             "the scaled companion keeps the QR-card gap");
+    }
+
+    // The seat-mod card is the connection card's mirror image about x=960, so the QR card between them stays
+    // centred and both companions get the same room. Read from the constants, not re-typed, for the reason the
+    // geometry note above gives — and the QR card's width is checked against the dialog's own, because the
+    // companions carry a copy of it.
+    private static void SeatModCompanionMirrorsTheConnectionCard()
+    {
+        const float designWidth = 1920f;
+        const float qrRight = (designWidth + CouchCoopQrDialog.PanelWidth) / 2f;
+        const float left = CouchCoopSeatModLayout.Left;
+        const float right = CouchCoopSeatModLayout.Left + CouchCoopSeatModLayout.Width;
+
+        Expect(CouchCoopConnectionLayout.MainCardWidth == CouchCoopQrDialog.PanelWidth,
+            "the companions' copy of the QR card width is the dialog's own");
+        Expect(left == qrRight + CouchCoopConnectionLayout.Gap,
+            $"the seat-mod card starts one gap to the right of the QR card (left {left}, QR right {qrRight})");
+        Expect(right <= designWidth, $"the seat-mod card stays inside the {designWidth}-wide design space (right {right})");
+        Expect(designWidth - right == CouchCoopConnectionLayout.Left,
+            "its right margin equals the connection card's left margin: the two mirror each other about x=960");
+        Expect(CouchCoopSeatModLayout.Width == CouchCoopConnectionLayout.Width
+            && CouchCoopSeatModLayout.Top == CouchCoopConnectionLayout.Top
+            && CouchCoopSeatModLayout.Height == CouchCoopConnectionLayout.Height,
+            "both companions share one size and the QR card's vertical extent");
+
+        // Same uniform scale check as the connection card: the gap survives the Deck-friendly 1280 viewport.
+        const float scale = 1280f / 1920f;
+        Expect(MathF.Abs((left * scale - qrRight * scale) - CouchCoopConnectionLayout.Gap * scale) < 0.01f,
+            "the scaled seat-mod card keeps the QR-card gap");
+
+        // The interior stack: title, list, explanation box, confirm pair — none overlapping, all inside the card
+        // whichever way the box is sized.
+        Expect(CouchCoopSeatModLayout.TitleTop + CouchCoopSeatModLayout.TitleHeight <= CouchCoopSeatModLayout.ListTop,
+            "the title clears the list");
+        Expect(CouchCoopSeatModLayout.ListTop + CouchCoopSeatModLayout.ListHeight < CouchCoopSeatModLayout.DetailTop,
+            "the list clears the explanation box");
+        Expect(CouchCoopSeatModLayout.DetailTop + CouchCoopSeatModLayout.DetailHeightFor(confirming: true) < CouchCoopSeatModLayout.ButtonTop,
+            "while a confirm is pending, the explanation box clears the confirm pair");
+        Expect(CouchCoopSeatModLayout.DetailTop + CouchCoopSeatModLayout.DetailHeightFor(confirming: false)
+                <= CouchCoopSeatModLayout.Height - CouchCoopSeatModLayout.Padding,
+            "otherwise it runs to the card's padded floor and no further");
+        Expect(CouchCoopSeatModLayout.ButtonTop + CouchCoopSeatModLayout.ButtonHeight <= CouchCoopSeatModLayout.Height - CouchCoopSeatModLayout.Padding,
+            "the confirm pair stays inside the card");
+        Expect(CouchCoopSeatModLayout.ButtonWidth * 2 <= CouchCoopSeatModLayout.InnerWidth,
+            "confirm and cancel fit side by side");
+        Expect(CouchCoopSeatModLayout.ListHeight >= CouchCoopSeatModLayout.RowHeight * 4,
+            "the list shows several rows before it scrolls");
     }
 
     private static void Expect(bool condition, string because)

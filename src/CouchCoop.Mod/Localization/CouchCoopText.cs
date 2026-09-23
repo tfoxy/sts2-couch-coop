@@ -36,7 +36,9 @@ public readonly record struct CouchCoopText
     {
         if (arguments.Length == 0)
         {
-            return new CouchCoopText(key);
+            // The named argument is load-bearing: inside this type a bare `new CouchCoopText(key)` binds to the
+            // private LITERAL constructor, which would print the key itself instead of resolving it.
+            return new CouchCoopText(key, arguments: null);
         }
 
         var values = new Dictionary<string, CouchCoopTextArgument>(arguments.Length, StringComparer.Ordinal);

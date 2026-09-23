@@ -126,5 +126,19 @@
   "couchcoop_connection_outcome_detail_failed": "Ta próba została zatrzymana. Wykonaj sugerowane kroki, a następnie połącz się ponownie.",
   "couchcoop_connection_outcome_detail_recovered": "Widok gry już działa. To wcześniejsze ostrzeżenie zachowano jako odniesienie.",
   "couchcoop_connection_outcome_detail_ended": "To połączenie zakończyło się, zanim opóźnienie ustąpiło.",
-  "couchcoop_connection_outcome_detail_degraded": "Kooperacja działa z ograniczeniem. Zapisano je tutaj w celach informacyjnych."
+  "couchcoop_connection_outcome_detail_degraded": "Kooperacja działa z ograniczeniem. Zapisano je tutaj w celach informacyjnych.",
+  "couchcoop_seatmods_title": "Mody dla graczy w przeglądarce",
+  "couchcoop_seatmods_purpose": "Jeśli mod powoduje awarię gry u graczy w przeglądarce, wyłącz go tutaj dla nich.",
+  "couchcoop_seatmods_visuals": "Zobaczą grę bez tego moda, także bez jego elementów wizualnych.",
+  "couchcoop_seatmods_declared": "Wyświetlane są tylko mody, których autorzy deklarują, że nie zmieniają rozgrywki. To słowo autora, a nie gwarancja.",
+  "couchcoop_seatmods_applies_to_new": "Zmiany dotyczą graczy, którzy dołączą od teraz. Kto jest już połączony, zachowuje mody, z którymi dołączył.",
+  "couchcoop_seatmods_confirm": "Wyłącz wszystkie",
+  "couchcoop_seatmods_cancel": "Anuluj",
+  "couchcoop_seatmods_row_on": "Włączony",
+  "couchcoop_seatmods_row_off": "Wyłączony",
+  "couchcoop_seatmods_row_locked": "Włączony · zablokowany przez {mod}",
+  "couchcoop_seatmods_row_off_with": "Wyłączony · wyłączony razem z {mods}",
+  "couchcoop_seatmods_detail_locked": "{mod} pozostaje włączony, ponieważ {dependent} go potrzebuje, a {dependent} zmienia rozgrywkę.",
+  "couchcoop_seatmods_detail_off_with": "{mod} jest wyłączony, ponieważ wymaga {mods}. Włącz ponownie {mods}, aby go przywrócić.",
+  "couchcoop_seatmods_confirm_prompt": "Wyłączenie moda {mod} wyłączy też mody, które go wymagają: {mods}."
 }

@@ -230,6 +230,22 @@ if (args is ["seat-build", ..])
     return;
 }
 
+// `dotnet run --project tests/CouchCoop.Mod.Tests -- seat-mods` runs HOST-CHOSEN seat mod selection ALONE: which
+// mods a host may switch off for its seats (never a gameplay mod, never a library a gameplay mod needs), the
+// cascade and what re-enabling brings back, the inventory read from the host's mod_list and the manifests on disk
+// (failing safe on anything unreadable), the explicit-choice store, and the settings.save rewrite that lands the
+// result in both of a seat's profiles beside the couchcoop copy pin. Pure — strings and temp directories, no
+// game, no engine — so it stands alone like `seat-build` above, and it also runs in the full sequence below. Its
+// own verb because the full sequence is long, and this is the focused way to verify a change to what a seat is
+// launched with; it runs `seat-build` too, because the copy pin and the host's choices share one rewrite.
+if (args is ["seat-mods", ..])
+{
+    SeatModSelectionTests.Run();
+    SeatModBuildTests.Run();
+    Console.WriteLine("seat mods: ok");
+    return;
+}
+
 // `dotnet run --project tests/CouchCoop.Mod.Tests -- lanes` runs the LOADER's lane selection ALONE: which
 // `lanes/<floor version>/` directory one Workshop payload picks for the running game, and when it refuses to
 // pick at all. Pure — temp directories, fabricated release_info.json files, no game and no Steam — because the
@@ -273,6 +289,11 @@ if (args is ["host-ui", ..])
     // asserts the two never answer yes at once, which is only meaningful beside the lobby one.
     CouchCoopLobbyHostGateTests.Run();
     CouchCoopPauseMenuGateTests.Run();
+    // The QR dialog's seat-mod card: every decision it draws (which mods, locked / held-off / cascade, what a
+    // press writes), plus the geometry that makes it the connection card's mirror. Both pure — the card itself
+    // is a Godot node this runner cannot construct. The layout half is also in the full contract suite below.
+    SeatModPanelModelTests.Run();
+    CouchCoopQrLayoutContractTests.RunCompanions();
     Console.WriteLine("host ui: ok");
     return;
 }
@@ -489,6 +510,9 @@ CouchCoopModalFocusTests.Run();
 // ...and WHICH controls a d-pad can walk to inside that modal: the closed chain that makes the QR dialog's
 // host-select rows reachable without letting focus escape onto the lobby behind the scrim.
 CouchCoopModalFocusChainTests.Run();
+// The QR dialog's seat-mod card: what it lists and what a press writes. Pure C# over plain records, so it sits
+// up here with the other host-UI decisions. Also reachable alone as `-- host-ui`.
+SeatModPanelModelTests.Run();
 // …and the seat rule that protects the player's SAVES rather than their session: the verdict a failed cloud
 // isolation becomes, its test lever and its copy. Pure strings, so it sits up here with the rest, above the
 // suite that can take this process down. Also reachable alone as `-- connections`.
@@ -497,6 +521,10 @@ SeatCloudIsolationGuardTests.Run();
 // Up here with the other pure suites for the same reason — everything from HeadlessAudioMuteTargetsTests
 // below was unreachable while that stretch aborted. Also reachable alone as `-- seat-build`.
 SeatModBuildTests.Run();
+// Host-chosen seat mod selection: the rule, the inventory, the store and the rewrite that shares the copy pin's
+// parser. Pure strings and temp directories, so it sits up here with the rest. Also reachable alone as
+// `-- seat-mods`.
+SeatModSelectionTests.Run();
 // Workshop single-payload round: which implementation lane the loader picks for the running game build, and
 // when it refuses. Pure temp directories, no game — up here with the other pure suites, and also reachable
 // alone as `-- lanes`.

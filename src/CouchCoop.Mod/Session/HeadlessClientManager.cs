@@ -1775,7 +1775,12 @@ public sealed partial class HeadlessClientManager : IDisposable
         //
         // RESOLVED BEFORE THE COMMAND LINE IS BUILT, because the answer decides it: a seat with no isolation of
         // its own must be handed an explicit --log-file, or starting it truncates the host's live log.
-        var preparedUserDir = HeadlessUserDirSeeder.Prepare(slot);
+        //
+        // The mods the host switched off for its seats are resolved HERE and handed in as rows, because the
+        // seeder is source-linked into the game-free macOS suite and the inventory behind them is not. Read per
+        // spawn, so a change in the panel applies to the next seat; a seat already running keeps what it
+        // launched with. Never throws — a failure is an empty list, i.e. every mod on.
+        var preparedUserDir = HeadlessUserDirSeeder.Prepare(slot, SeatModSelectionService.Shared.HostChosenSeatRows());
         var seatLogPath = preparedUserDir is null
             ? PrepareSeatLogPath(slot)
             : Path.Combine(preparedUserDir.SlotUserDir, "logs", "godot.log");
