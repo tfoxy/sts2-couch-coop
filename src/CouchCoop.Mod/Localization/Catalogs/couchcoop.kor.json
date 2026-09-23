@@ -79,7 +79,7 @@
   "couchcoop_connection_error_mod_mismatch_summary": "이 플레이어의 게임이 다른 CouchCoop 사본을 불러왔습니다.",
   "couchcoop_connection_error_mod_mismatch_action": "모드 사본을 하나만 남기고 게임을 다시 시작한 후 다시 시도하세요.",
   "couchcoop_connection_error_seat_cloud_isolation_summary": "이 플레이어의 게임이 당신의 Steam 클라우드 저장 파일을 건드리지 않는다고 보장하지 못했습니다.",
-  "couchcoop_connection_error_seat_cloud_isolation_action": "아무것도 기록하기 전에 중지되었습니다. 게임을 다시 시작한 후 다시 시도하고, 또 발생하면 이 보고서를 복사하세요.",
+  "couchcoop_connection_error_seat_cloud_isolation_action": "중지되었습니다. 게임을 다시 시작한 후 다시 시도하고, 또 발생하면 이 보고서를 복사하세요.",
   "couchcoop_connection_error_seat_silent_summary": "이 플레이어의 게임이 시작되어 참가했지만, 이후 응답하지 않았습니다.",
   "couchcoop_connection_error_seat_silent_action": "다시 시도하세요. 계속 발생하면 해당 플레이어의 로그(경로는 이 보고서에 있습니다)를 확인하고 다른 모드를 비활성화한 뒤 다시 시도하세요.",
   "couchcoop_connection_error_seat_control_summary": "이 플레이어의 게임은 실행 중이지만, 호스트 게임에 상태를 전달하지 못하고 있습니다.",

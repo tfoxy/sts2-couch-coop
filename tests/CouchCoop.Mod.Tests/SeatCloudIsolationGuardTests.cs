@@ -97,8 +97,18 @@ internal static class SeatCloudIsolationGuardTests
             "a seat that never declared is described as silent on the point, not as having refused");
         var silent = HeadlessClientManager.NoSeatContactDetail(TimeSpan.FromSeconds(20));
         Assert(silent.Contains("20 seconds", StringComparison.Ordinal)
-            && silent.Contains("CouchCoop is not running", StringComparison.Ordinal),
-            "a seat that never spoke is described as a game with no CouchCoop in it, with the deadline named");
+            && silent.Contains("cannot confirm CouchCoop is running", StringComparison.Ordinal)
+            && !silent.Contains("CouchCoop is not running", StringComparison.Ordinal),
+            "a seat that never spoke is described as one the host cannot vouch for, not as proven unmodded — a "
+            + "healthy seat on a slow machine is outside the lobby at this deadline too");
+        Assert(silent.Contains("may already have run its own startup cloud sync", StringComparison.Ordinal)
+            && silent.Contains("couch-coop/save-backups/", StringComparison.Ordinal),
+            "…and says plainly that stopping it may have been too late, and where the host's backup is");
+
+        // The ACTION is shared by every shape above, including a seat that never spoke — which may already have
+        // synced before it was stopped. So it must not promise that nothing was written.
+        Assert(!issue.Action.Contains("before it could write", StringComparison.Ordinal),
+            "the shared action promises nothing about what the seat did before it was stopped");
     }
 
     private static void Assert(bool condition, string label)

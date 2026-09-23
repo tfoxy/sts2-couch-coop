@@ -93,7 +93,7 @@
   "couchcoop_connection_error_mod_mismatch_summary": "This player's game loaded a different copy of CouchCoop.",
   "couchcoop_connection_error_mod_mismatch_action": "Keep only one copy of the mod installed, restart the game, then try again.",
   "couchcoop_connection_error_seat_cloud_isolation_summary": "This player's game could not promise to leave your Steam Cloud saves alone.",
-  "couchcoop_connection_error_seat_cloud_isolation_action": "It was stopped before it could write anything. Restart the game and try again, and copy this report if it happens again.",
+  "couchcoop_connection_error_seat_cloud_isolation_action": "It was stopped. Restart the game and try again, and copy this report if it happens again.",
   "couchcoop_connection_error_seat_silent_summary": "This player's game started and joined, then stopped responding.",
   "couchcoop_connection_error_seat_silent_action": "Try again. If it keeps happening, check that player's own log (its path is in this report) and try again with other mods disabled.",
   "couchcoop_connection_error_seat_control_summary": "This player's game is running, but it cannot report back to your game.",

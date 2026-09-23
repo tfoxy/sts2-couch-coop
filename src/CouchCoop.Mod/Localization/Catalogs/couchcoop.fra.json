@@ -79,7 +79,7 @@
   "couchcoop_connection_error_mod_mismatch_summary": "La partie de ce joueur a chargé une autre copie de CouchCoop.",
   "couchcoop_connection_error_mod_mismatch_action": "Ne gardez qu'une seule copie du mod installée, redémarrez le jeu, puis réessayez.",
   "couchcoop_connection_error_seat_cloud_isolation_summary": "La partie de ce joueur n'a pas pu garantir qu'elle laisserait vos sauvegardes Steam Cloud intactes.",
-  "couchcoop_connection_error_seat_cloud_isolation_action": "Elle a été arrêtée avant de pouvoir écrire quoi que ce soit. Redémarrez le jeu et réessayez, et copiez ce rapport si cela se reproduit.",
+  "couchcoop_connection_error_seat_cloud_isolation_action": "Elle a été arrêtée. Redémarrez le jeu et réessayez, et copiez ce rapport si cela se reproduit.",
   "couchcoop_connection_error_seat_silent_summary": "La partie de ce joueur a démarré et a rejoint la partie, puis a cessé de répondre.",
   "couchcoop_connection_error_seat_silent_action": "Réessayez. Si cela se reproduit, consultez le journal de ce joueur (son chemin figure dans ce rapport) et réessayez avec les autres mods désactivés.",
   "couchcoop_connection_error_seat_control_summary": "La partie de ce joueur fonctionne, mais elle ne parvient pas à communiquer avec la vôtre.",

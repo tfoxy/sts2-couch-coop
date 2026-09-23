@@ -143,12 +143,13 @@ public sealed partial class HeadlessClientManager : IDisposable
     /// readiness deadline finding out whether it will ever serve a browser.
     /// </para>
     /// <para>
-    /// WHAT the silence MEANS is decided elsewhere, on host lobby membership — see
-    /// <see cref="SeatSilentAfterJoinCode"/>. A non-member had none of our code in it (the mod never loaded, its
-    /// lane was refused, a foreign copy won the assembly load, or the loader's blanket catch swallowed a
-    /// bootstrap failure) and has the host account's Steam Cloud save storage attached with nothing installed to
-    /// keep it out, which is the exposure this deadline exists to cut short. A member is a seat CouchCoop did run
-    /// in, and is a different fault with a different remedy.
+    /// WHAT the silence MEANS is decided elsewhere — see <c>ClassifySilentSeat</c>. A member is a seat CouchCoop
+    /// did run in (see <see cref="SeatSilentAfterJoinCode"/>), and is a different fault with a different remedy. A
+    /// non-member is NOT thereby a seat with none of our code in it: a healthy seat on a slow machine is still
+    /// outside the lobby at this deadline, so it is cleared only by its own port record. Without one, it may be a
+    /// game the mod never loaded in (its lane was refused, a foreign copy won the assembly load, or the loader's
+    /// blanket catch swallowed a bootstrap failure) with the host account's Steam Cloud save storage attached and
+    /// nothing installed to keep it out — the exposure this deadline exists to cut short.
     /// </para>
     /// <para>
     /// 35 AND NOT 20, AND NOW THERE IS A MEASUREMENT BEHIND THAT. Live leg 2026-09-17, dev desktop (12 threads),

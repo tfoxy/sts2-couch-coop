@@ -36,8 +36,10 @@ internal static class SeatControlChannelEvidenceTests
         await ARefusedStatusIsRecordedAsARefusalRatherThanSilence();
         ThePortFileIsReadBackAndAStaleOneIsNotBelieved();
         TheSilentSeatDecisionRestsOnEvidenceRatherThanAssumption();
+        ASeatOutsideTheLobbyIsClearedOnlyByItsOwnRecord();
         TheStatusRecordIsOnlyBelievedWhenItIsOursAndSigned();
         await TheStatusRecordIsWrittenOnlyWhileTheChannelIsFailing();
+        await AHelloThatRunsOutOfTimeStillLeavesItsRecord();
         TheEvidenceTailNamesTheChannelThatDelivered();
         TheForcedFailureLeverIsAnExactMatch();
         Console.WriteLine("SeatControlChannelEvidenceTests: ok");
@@ -297,8 +299,65 @@ internal static class SeatControlChannelEvidenceTests
             "…and the probe's own failure reason reaches the report verbatim, as it does on the readiness path");
     }
 
+    /// <summary>
+    /// The same silence from a seat the host's lobby does NOT list — where the stakes are different, because the
+    /// fallback answer is "this player's game may be writing into your Steam Cloud saves".
+    /// </summary>
+    /// <remarks>
+    /// Membership proves CouchCoop ran; its absence proves nothing, because a healthy seat on a slow machine is
+    /// still outside the lobby at the contact deadline. What clears such a seat is its own port record, which only
+    /// our browser server writes and only after the cloud isolation guard — and nothing else may clear it, because
+    /// "your saves were protected" is not a claim to make on the strength of something answering on a port.
+    /// </remarks>
+    private static void ASeatOutsideTheLobbyIsClearedOnlyByItsOwnRecord()
+    {
+        const int expected = 13357;
+        const int pid = 27212;
+        var answered = new SeatListenerProbeResult(true, null, SeatPortReachability.NotProbed);
+
+        // 1. Its own record, on the port it was given: CouchCoop is running there and the saves were protected.
+        var recorded = Classify(pid, (expected, pid), probe: null, expected, member: false);
+        Assert(recorded.Code == HeadlessClientManager.SeatControlBlockedCode,
+            "a non-member whose own record names the port it was given is a blocked control channel");
+        Assert(recorded.Detail!.Contains("has not joined the host's lobby yet", StringComparison.Ordinal)
+                && recorded.Detail.Contains("your saves were protected", StringComparison.Ordinal)
+                && !recorded.Detail.Contains("joined the host's lobby and", StringComparison.Ordinal),
+            "…whose detail does not claim a join that did not happen, and says what the record establishes");
+        Assert(recorded.Detail.Contains("not made", StringComparison.Ordinal),
+            "…and says no probe was spent on a seat whose verdict could not rest on one");
+
+        // 2. Its own record, on ANOTHER port: still ours, so still not the cloud issue — the port conflict.
+        Assert(Classify(pid, (13360, pid), probe: null, expected, member: false).Code
+                == SeatReadinessVerdict.PortTakenCode,
+            "a non-member serving a port other than the one the browser is sent to is a port conflict");
+
+        // 3. Everything else keeps the cloud verdict — and now says what was seen.
+        var nothing = Classify(pid, null, probe: null, expected, member: false);
+        var stale = Classify(pid, (expected, pid + 1), probe: null, expected, member: false);
+        var unknownPid = Classify(0, (expected, pid), probe: null, expected, member: false);
+        var answeredOnly = Classify(pid, null, answered, expected, member: false);
+        foreach (var (issue, label) in new[]
+                 {
+                     (nothing, "no record at all"),
+                     (stale, "a record left by another process"),
+                     (unknownPid, "a record when the host cannot say which process it started"),
+                     (answeredOnly, "a port that answers with no record of the seat's own"),
+                 })
+        {
+            Assert(issue.Code == HeadlessClientManager.SeatCloudIsolationCode,
+                $"{label} does not clear a seat outside the lobby");
+            Assert(issue.Detail!.Contains("cannot confirm CouchCoop is running", StringComparison.Ordinal)
+                    && issue.Detail.Contains("Observed:", StringComparison.Ordinal)
+                    && issue.Detail.Contains("CONTROL-EVIDENCE", StringComparison.Ordinal),
+                $"…and its detail ({label}) says what the host cannot confirm, then what it observed");
+        }
+        Assert(nothing.Detail!.Contains("has recorded no bound port", StringComparison.Ordinal),
+            "a seat that left no record is described as exactly that");
+    }
+
     private static ConnectionIssue Classify(
-        int seatPid, (int Port, int Pid)? record, SeatListenerProbeResult probe, int expectedPort)
+        int seatPid, (int Port, int Pid)? record, SeatListenerProbeResult? probe, int expectedPort,
+        bool member = true)
         => HeadlessClientManager.ClassifySilentSeat(
             slot: 2,
             expectedPort: expectedPort,
@@ -306,7 +365,8 @@ internal static class SeatControlChannelEvidenceTests
             portRecord: record,
             probe: probe,
             controlChannel: "CONTROL-EVIDENCE",
-            deadline: TimeSpan.FromSeconds(35));
+            deadline: TimeSpan.FromSeconds(35),
+            member: member);
 
     // ---- 7. the record that crosses the same gap without a socket --------------------------------------------
 
@@ -420,6 +480,59 @@ internal static class SeatControlChannelEvidenceTests
         finally
         {
             HeadlessConnectionControl.Shared.Unregister(96, 11);
+            SeatStatusFile.PathOverride = null;
+            Directory.Delete(dir, recursive: true);
+        }
+    }
+
+    /// <summary>
+    /// A hello that runs out of TIME is a failure like any other, and must leave both its record and its line.
+    /// </summary>
+    /// <remarks>
+    /// The shape the file fallback was built for, and the one it used to miss: something on this computer is
+    /// filtering the loopback connect, so the POST neither fails nor succeeds — it hangs until the caller's
+    /// deadline. The hello's deadline is two seconds, the same as the client's own timeout, so that deadline
+    /// always fires first, and the catch used to exclude it: no record on disk and no line in godot.log until
+    /// the live reporter's first heartbeat, far down mod init. A listener that accepts and never answers is that
+    /// filter, without one.
+    /// </remarks>
+    private static async Task AHelloThatRunsOutOfTimeStillLeavesItsRecord()
+    {
+        var dir = Path.Combine(Path.GetTempPath(), "couch-status-deadline-" + Guid.NewGuid().ToString("N"));
+        Directory.CreateDirectory(dir);
+        var path = Path.Combine(dir, SeatStatusFile.FileNameFor(2));
+        SeatStatusFile.PathOverride = () => path;
+        var silent = new TcpListener(IPAddress.Loopback, 0);
+        silent.Start();
+        try
+        {
+            var endpoint = $"http://127.0.0.1:{((IPEndPoint)silent.LocalEndpoint).Port}/internal/client-status";
+            var lines = await CaptureAsync(endpoint, "deadline-token", "12", async () =>
+            {
+                using var deadline = new CancellationTokenSource(TimeSpan.FromMilliseconds(300));
+                try
+                {
+                    await HeadlessConnectionReporter.ReportSeatHelloAsync(true, deadline.Token);
+                    Assert(false, "a hello nobody answers cannot report success");
+                }
+                catch (OperationCanceledException)
+                {
+                    // Expected: the caller's contract is unchanged — SayHello already catches this.
+                }
+            });
+
+            var carried = SeatStatusFile.Read(path, "deadline-token", Environment.ProcessId, 12);
+            Assert(carried is { NativePhase: HeadlessConnectionReporter.HelloPhase, CloudSaveIsolated: true },
+                "a hello that ran out of time leaves the status where the host will look, declaration intact");
+            Assert(lines.Count == 1
+                    && lines[0].Contains("no answer before this report's deadline", StringComparison.Ordinal)
+                    && lines[0].Contains(endpoint, StringComparison.Ordinal),
+                $"…and says so in the seat's own log, naming the endpoint (got {lines.Count} line(s))");
+            Assert(!lines[0].Contains("deadline-token", StringComparison.Ordinal), "…and never the bearer token");
+        }
+        finally
+        {
+            silent.Stop();
             SeatStatusFile.PathOverride = null;
             Directory.Delete(dir, recursive: true);
         }
