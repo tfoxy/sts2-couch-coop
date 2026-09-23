@@ -9,6 +9,42 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and
 
 ## [Unreleased]
 
+## [0.3.0] - 2026-09-22
+
+### Added
+
+- A gamepad now plays the browser client — phone or Steam Deck — over an HTTPS join link.
+- A keyboard attached to the browser client now plays the game.
+- Quality is now a mirror setting: pick a level and the effect options follow it.
+- The join QR screen can turn off a mod for browser players when it crashes their game.
+- The join QR code is now in the pause menu, so a player whose phone dropped out can
+- Couch Co-Op now copies your save profile aside before the first browser player joins.
+- When co-op can't start because the game runtime never attached, the log now says exactly that instead of reporting the lobby as "not host".
+- Add stand in for a creature whose spine art is late or absent
+- Add a quiet copy button beside the QR dialog's join URL
+- Animate the game's rich-text effects in the browser client
+
+### Fixed
+
+- A player's game is stopped if it cannot promise to leave your Steam Cloud saves alone.
+- A player's game that joins then stops responding is no longer reported as a save problem.
+- Headless co-op seats no longer respond to the host controller.
+- A hand card no longer dips below its place in the fan and drifts back when it stops being focused.
+- A hand card no longer dips below its place in the fan and drifts back when it stops being focused on the canvas stage.
+- Browser diagnostics now show stage fit without accumulating duplicate animation rules.
+- Static backgrounds no longer restore live scenery when a still image fails to load.
+- Fixed a crash that could take the game down a few seconds after startup.
+- Windows players no longer get a "mod will not be loaded" error in their log at launch.
+- Browser players' games no longer crash as a run starts with a mod like Minty Spire 2 on.
+- A browser player's game now loads its mods in the same order as the host's.
+
+### Changed
+
+- The mod no longer keeps a timer running four times a second for the whole session — it now only does work while a co-op lobby is actually on screen.
+- Reduce initial browser memory use when joining the Neow event.
+- Start iPhones with shaders and particles off to avoid crashes. Show baked stills when shaders or particles are off (card ripple and glow)
+- Add an opt-in retained canvas subtree cache for performance validation.
+
 ## [0.2.3] - 2026-09-16
 
 ### Fixed
@@ -79,7 +115,8 @@ First public release. Turn the phones, tablets and laptops on your network into 
 a local Slay the Spire 2 co-op session — no app to install on the other devices, and no `sts2` CLI
 needed to run the mod.
 
-[Unreleased]: https://github.com/tfoxy/sts2-couch-coop/compare/v0.2.3...HEAD
+[Unreleased]: https://github.com/tfoxy/sts2-couch-coop/compare/v0.3.0...HEAD
+[0.3.0]: https://github.com/tfoxy/sts2-couch-coop/releases/tag/v0.3.0
 [0.2.3]: https://github.com/tfoxy/sts2-couch-coop/releases/tag/v0.2.3
 [0.2.2]: https://github.com/tfoxy/sts2-couch-coop/releases/tag/v0.2.2
 [0.2.1]: https://github.com/tfoxy/sts2-couch-coop/releases/tag/v0.2.1
