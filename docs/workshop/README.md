@@ -10,11 +10,11 @@ is first published.
 | post | live discussion |
 | --- | --- |
 | [phone-connection-troubleshooting.md](phone-connection-troubleshooting.md) — "Can't connect from a phone? Read this first" | https://steamcommunity.com/workshop/filedetails/discussion/3799476240/563668239243032720/ |
-| [reporting-a-problem.md](reporting-a-problem.md) — "Having a problem? Post it here" | *not yet published* |
+| [reporting-a-problem.md](reporting-a-problem.md) — "Having a problem? Post it here" | https://steamcommunity.com/workshop/filedetails/discussion/3799476240/563668239243120957/ |
 
 The two cross-link each other: the phone post sends non-connection problems to the reporting post, and
-the reporting post sends "my phone can't reach the page at all" the other way. When the reporting post
-is published, replace `PLACEHOLDER_REPORTING_URL` in the phone post with its real URL.
+the reporting post sends "my phone can't reach the page at all" the other way. Both links use the live URLs
+in the table above; update both posts if either discussion moves.
 
 ## House rules for every post here
 
