@@ -75,11 +75,16 @@ This map records current contracts, not retired implementation alternatives.
   actions" below. (`ControllerInput` is an *input replay*, not a commit path: it presses what has focus, it does
   not reach into a screen and finish a choice.) A synthetic joypad event would instead have to be translated
   through the seat's `InputMap`, which is exactly what the next bullet erases.
-- **Orthogonal to the seat's joypad isolation, by construction.** `Session/HeadlessJoypadInputMapIsolation.cs`
-  strips a headless seat's joypad *bindings* so a controller plugged into the host machine cannot steer a seat;
-  the injected action never consults those bindings, so browser pad input works with the strip fully in place and
-  **that file needed no change**. Its test is `tests/CouchCoop.Mod.Tests/HeadlessJoypadInputMapIsolationTests.cs`
-  (alone: `dotnet run --project tests/CouchCoop.Mod.Tests -- headless-input`).
+- **Orthogonal to the seat's joypad isolation, by construction.** A controller plugged into the host machine has
+  two routes into a seat, closed separately. The **engine** route: `Session/HeadlessJoypadInputMapIsolation.cs`
+  strips a headless seat's joypad *bindings*. The **Steam Input** route, which never consults the InputMap:
+  `Patches/SeatSteamControllerIsolationPatch.cs` makes a seat never take a Steam controller, while Steam itself
+  stays up for Workshop discovery. On Windows a seat has no engine joypad driver, so that patch is the whole
+  isolation there. The injected browser action takes neither route, so browser pads work with both in place and
+  needed no exception in either. A patch miss degrades (`costsCoop: false`); it does not refuse the seat. Tests:
+  `tests/CouchCoop.Mod.Tests/HeadlessJoypadInputMapIsolationTests.cs` and `SeatSteamControllerIsolationTargetsTests.cs`
+  — both alone with `dotnet run --project tests/CouchCoop.Mod.Tests -- headless-input`; the patch targets also
+  run under `-- beta-targets`.
 - **Secure context only.** `navigator.getGamepads` is gated on a secure context, so the default plain-HTTP LAN QR
   cannot see a pad at all; the TLS listener (`Server/SecureBrowserListener.cs`) and the web-link origin
   (`Server/CouchCoopWebOrigin.cs`) are the two join paths where this works.
@@ -88,7 +93,7 @@ This map records current contracts, not retired implementation alternatives.
   order, exactly like a key press.
 - Tests: `tests/CouchCoop.Mod.Tests/PadInputMappingTests.cs` (beside `InputMappingTests.cs`).
 - Game internals — which of the game's action names a token resolves to, why that resolution is a candidate list,
-  and the Steam-Input hole the engine-side isolation does not cover — are in
+  and how the game reaches a controller through Steam Input — are in
   `.sts2/research/gamepad-web-client-feasibility-sep21.md`, not here.
 
 ### Keyboard input (`kind: "key"`)

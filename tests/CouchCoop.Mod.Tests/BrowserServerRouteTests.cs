@@ -73,11 +73,14 @@ if (args is [ManagedCacheProcessTests.ChildVerb, ..])
     Environment.Exit(await ManagedCacheProcessTests.RunChildAsync(args));
 }
 
-// Runs the headless seat's joypad InputMap isolation checks alone. This pure suite uses type metadata and ordinary
-// collections only, so it is safe without an engine and stays independently green of the later QR-layout contract.
+// Runs both halves of the headless seat's pad isolation alone: the joypad InputMap strip (the engine route) and the
+// Steam Input patch's targets (the route that never consults the InputMap). Both are pure — type metadata and
+// ordinary collections only — so they are safe without an engine and stay independently green of the later
+// QR-layout contract.
 if (args is ["headless-input", ..])
 {
     HeadlessJoypadInputMapIsolationTests.Run();
+    SeatSteamControllerIsolationTargetsTests.Run();
     Console.WriteLine("headless input: ok");
     return;
 }
@@ -457,6 +460,9 @@ if (args is ["beta-targets", ..])
     // The seat's Steam-Cloud write paths. Same standing as the FMOD forwards above, and the same consequence if
     // a member moves and nobody notices — except that here the damage lands in the player's own save storage.
     Leg(nameof(SeatCloudSaveIsolationTargetsTests), SeatCloudSaveIsolationTargetsTests.Run);
+    // The seat's Steam Input route. A miss here degrades rather than refuses, so without this leg a renamed or
+    // reshaped target would surface only as a host pad driving every seat again after a game update.
+    Leg(nameof(SeatSteamControllerIsolationTargetsTests), SeatSteamControllerIsolationTargetsTests.Run);
     Leg(nameof(HeadlessDisconnectExitTests), () => HeadlessDisconnectExitTests.RunAsync().GetAwaiter().GetResult());
     Leg("IdleHostCostTests.MountTargets", IdleHostCostTests.MountTargetsResolve);
     // …and the pause menu's mount point, which is the mid-run QR row's only seam.
@@ -538,7 +544,7 @@ AtlasManifestEnvelopeTests.Run();
 //
 // THE RULE THIS SEQUENCE LIVES BY, and the one that cost six days when it was not written down: a test may
 // REFLECT over a game type all it likes, but it must not CONSTRUCT one. Reflection reads metadata and is safe
-// with no engine — that is all the next two suites do. Construction runs game code, and game code reaches
+// with no engine — that is all the next three suites do. Construction runs game code, and game code reaches
 // GodotSharp entry points that a running engine fills in at startup and that are null in a bare test process:
 // the call lands on address 0 and the process dies (exit 139, `segfault at 0 ip 0000000000000000`). It is an
 // uncatchable SIGSEGV with no managed stack, and it takes every suite below it down with it. This is the same
@@ -554,6 +560,9 @@ HeadlessAudioMuteTargetsTests.Run();
 // The seat's Steam-Cloud write paths, reflected over the same way. Also reachable as `-- beta-targets`, which
 // stays the fast way to ask the per-game-build question on its own.
 SeatCloudSaveIsolationTargetsTests.Run();
+// The seat's Steam Input route (the other half of the joypad strip above), reflected over the same way. Also
+// reachable as `-- beta-targets` and `-- headless-input`.
+SeatSteamControllerIsolationTargetsTests.Run();
 // WS-1 networking/hosting: every game member the host-transport / CLI-override / host-netId / save-compat patches
 // bind to must still resolve, including the two private NetHostGameService seams the composite host rewrites.
 NetTransportPatchTargetsTests.Run();

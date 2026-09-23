@@ -120,7 +120,8 @@ public static class CouchCoopMod
 
             // A spawned seat has no local player. Its copy of the global input map must not retain joypad actions,
             // or one controller connected to the host can drive both the host and its headless seat. Do this before
-            // any game screen can consume input; the host's map is deliberately untouched.
+            // any game screen can consume input; the host's map is deliberately untouched. This closes the ENGINE
+            // joypad route only; Steam Input is closed by SeatSteamControllerIsolationPatch in the patch block below.
             if (IsHeadlessClient)
             {
                 var removedJoypadBindings = HeadlessJoypadInputMapIsolation.RemoveJoypadBindings();
@@ -238,6 +239,13 @@ public static class CouchCoopMod
             // --headless does NOT silence, so mute it at the source. Host-only patch. This severs every game→FMOD
             // forward but does NOT stop FMOD's always-on native mixer/DSP thread — HeadlessFmodShutdown does that.
             if (IsHeadlessClient) HeadlessAudioMutePatch.Apply();
+            // The other half of the seat's pad isolation. The InputMap strip at the top of Init closes the engine
+            // joypad route; Steam Input never consults the InputMap, so a host pad Steam reports still reached every
+            // seat — and on Windows, where a seat has no engine joypad driver, it was the only route. Seat-only. Mod
+            // init can land after the game has already taken a Steam controller (a Workshop query can hold mod
+            // loading); the prefix then drops it at the next refresh, about a second later and still during the
+            // seat's load, and releases anything it left held. Its loss degrades, never refuses.
+            if (IsHeadlessClient) SeatSteamControllerIsolationPatch.Apply();
             // A headless instance that permanently loses its ENet connection (host process died, or dropped it
             // mid-run) has no human to dismiss STS2's network-error / "report a bug" modal and no retry of its
             // own — it used to sit behind that dialog forever, holding its seat's slot. Suppress the popup and
