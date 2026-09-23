@@ -43,7 +43,7 @@ internal sealed record SeatModListRow(string Id, string Source, bool IsEnabled)
 /// <param name="Updated">The rewritten file, or <see langword="null"/> when it must be left byte-identical.</param>
 /// <param name="NotDisabled">
 /// Requested rows the file does NOT end up disabling — only ever rows that were missing from a list this code
-/// declined to append into (see <see cref="SeatModList.Disable"/>). Empty when every requested row is off.
+/// declined to add rows to (see <see cref="SeatModList.Disable"/>). Empty when every requested row is off.
 /// </param>
 /// <param name="Refusal">
 /// Why the whole file was left alone, or <see langword="null"/>. A refusal is a list this code has no business
@@ -153,13 +153,26 @@ internal static class SeatModList
     /// would quietly cancel that migration in the seat.
     /// </para>
     /// <para>
-    /// A row that does not exist is APPENDED rather than inserted. The list doubles as the player's manual load
-    /// order, so appending leaves every existing row at the index it already had. Appending a row for a copy of a
-    /// mod this machine does not have is inert — the game only consults the list for mods it discovered, and
-    /// rewrites the list from those same mods afterwards. But a row is only appended into a file that already
-    /// writes <c>source</c> as a string: a row in a shape this file does not use is a row the game may fail to
-    /// deserialize, and an unreadable <c>settings.save</c> is quarantined wholesale, which would cost the seat
-    /// every setting rather than just this one. Such a row is reported in
+    /// A row that does not exist is added WHERE IT MOVES NO MOD'S LOAD POSITION, because the list doubles as the
+    /// load order. The game loads dependencies first and breaks every remaining tie by list position — and it
+    /// takes a mod's position from the LAST row carrying that mod's id, disabled rows included (observed live:
+    /// a disabled row for the other copy of <c>couchcoop</c> at the end of the list made CouchCoop initialize
+    /// after every other mod, although its enabled row came first). So a row for an id that already has one
+    /// goes IMMEDIATELY AFTER that id's last row: every other id's last row is before both or after both, so
+    /// the order of all ids by last row — the load order — is exactly what it was. Appending it would make it
+    /// the id's new last row and load that mod after all the rest, which for the copy pin is a seat
+    /// initializing CouchCoop at a different point than its host, the one thing the pin exists to prevent.
+    /// Only a row whose id has no row at all is appended: the game did not discover that mod when it last wrote
+    /// this list, so it has no position to keep, and at the end it moves no one else's. Existing rows are never
+    /// moved; a row that only needs its flag flipped stays where it is. Several added rows keep the order the
+    /// caller named them in wherever they land together, and rows placed beside their id precede appended ones.
+    /// </para>
+    /// <para>
+    /// A row for a copy of a mod this machine does not have changes no enable flag — the game only consults the
+    /// list for mods it discovered, and rewrites the list from those same mods afterwards. But a row is only
+    /// added to a file that already writes <c>source</c> as a string: a row in a shape this file does not use
+    /// is a row the game may fail to deserialize, and an unreadable <c>settings.save</c> is quarantined
+    /// wholesale, which would cost the seat every setting rather than just this one. Such a row is reported in
     /// <see cref="SeatModListEdit.NotDisabled"/> instead.
     /// </para>
     /// <para>
@@ -184,10 +197,14 @@ internal static class SeatModList
 
         var wanted = new HashSet<SeatModRowKey>(requested);
         var present = new HashSet<SeatModRowKey>();
+        // The index of each id's LAST row: where the game places that mod in its load order (see the remarks).
+        var lastRowOfId = new Dictionary<string, int>(SeatModSelectionPlan.IdComparer);
         var needsFlip = false;
         var writesSourceAsString = false;
+        var index = -1;
         foreach (var entry in modList.EnumerateArray())
         {
+            index++;
             if (entry.ValueKind == JsonValueKind.Object
                 && entry.TryGetProperty("source", out var anySource)
                 && anySource.ValueKind == JsonValueKind.String)
@@ -195,15 +212,22 @@ internal static class SeatModList
                 writesSourceAsString = true;
             }
 
+            if (TryId(entry, out var id)) lastRowOfId[id] = index;
             if (!TryKey(entry, out var key) || !wanted.Contains(key)) continue;
             present.Add(key);
             if (!IsDisabled(entry)) needsFlip = true;
         }
 
         var missing = requested.Where(key => !present.Contains(key)).ToList();
-        var toAppend = writesSourceAsString ? missing : [];
+        var toAdd = writesSourceAsString ? missing : [];
         var notDisabled = writesSourceAsString ? [] : missing;
-        if (!needsFlip && toAppend.Count == 0) return new SeatModListEdit(null, notDisabled, null);
+        if (!needsFlip && toAdd.Count == 0) return new SeatModListEdit(null, notDisabled, null);
+
+        // ToLookup keeps the caller's order within each group, and so does the Where.
+        var addAfterRow = toAdd
+            .Where(key => lastRowOfId.ContainsKey(key.Id))
+            .ToLookup(key => lastRowOfId[key.Id]);
+        var addAtEnd = toAdd.Where(key => !lastRowOfId.ContainsKey(key.Id)).ToList();
 
         using var stream = new MemoryStream();
         // UnsafeRelaxedJsonEscaping, because this is a REWRITE of somebody else's file: the default encoder
@@ -221,7 +245,7 @@ internal static class SeatModList
                 if (property.NameEquals("mod_settings"))
                 {
                     writer.WritePropertyName(property.Name);
-                    WriteModSettings(writer, property.Value, wanted, toAppend);
+                    WriteModSettings(writer, property.Value, wanted, addAfterRow, addAtEnd);
                 }
                 else
                 {
@@ -310,11 +334,28 @@ internal static class SeatModList
         return true;
     }
 
+    // A row's id alone, whatever shape its source is in: the load position is looked up by id, so any row that
+    // names an id counts toward where that id sits. Matched with IdComparer, like every other id in this file.
+    private static bool TryId(JsonElement entry, out string id)
+    {
+        id = string.Empty;
+        if (entry.ValueKind != JsonValueKind.Object
+            || !entry.TryGetProperty("id", out var idElement)
+            || idElement.ValueKind != JsonValueKind.String)
+        {
+            return false;
+        }
+
+        id = idElement.GetString() ?? string.Empty;
+        return id.Length > 0;
+    }
+
     private static bool IsDisabled(JsonElement entry)
         => entry.TryGetProperty("is_enabled", out var enabled) && enabled.ValueKind == JsonValueKind.False;
 
-    // Order-preserving, so the rows appended to a list land in the order the caller named them, and blank keys
-    // (which no list row can match) are dropped rather than appended as rows the game cannot use.
+    // Order-preserving, so rows added to a list land in the order the caller named them wherever several land
+    // together, and blank keys (which no list row can match) are dropped rather than added as rows the game
+    // cannot use.
     private static List<SeatModRowKey> DistinctUsable(IEnumerable<SeatModRowKey> rows)
     {
         var seen = new HashSet<SeatModRowKey>();
@@ -332,7 +373,8 @@ internal static class SeatModList
         Utf8JsonWriter writer,
         JsonElement modSettings,
         HashSet<SeatModRowKey> wanted,
-        IReadOnlyList<SeatModRowKey> toAppend)
+        ILookup<int, SeatModRowKey> addAfterRow,
+        IReadOnlyList<SeatModRowKey> addAtEnd)
     {
         writer.WriteStartObject();
         foreach (var property in modSettings.EnumerateObject())
@@ -340,7 +382,7 @@ internal static class SeatModList
             if (property.NameEquals("mod_list") && property.Value.ValueKind == JsonValueKind.Array)
             {
                 writer.WritePropertyName(property.Name);
-                WriteModList(writer, property.Value, wanted, toAppend);
+                WriteModList(writer, property.Value, wanted, addAfterRow, addAtEnd);
             }
             else
             {
@@ -355,46 +397,59 @@ internal static class SeatModList
         Utf8JsonWriter writer,
         JsonElement modList,
         HashSet<SeatModRowKey> wanted,
-        IReadOnlyList<SeatModRowKey> toAppend)
+        ILookup<int, SeatModRowKey> addAfterRow,
+        IReadOnlyList<SeatModRowKey> addAtEnd)
     {
         writer.WriteStartArray();
+        var index = -1;
         foreach (var entry in modList.EnumerateArray())
         {
-            if (!TryKey(entry, out var key) || !wanted.Contains(key))
+            index++;
+            if (TryKey(entry, out var key) && wanted.Contains(key))
+            {
+                WriteDisabledCopy(writer, entry);
+            }
+            else
             {
                 entry.WriteTo(writer);
-                continue;
             }
 
-            // Copy the row, forcing only `is_enabled`. `id` and `source` identify WHICH copy the row is and are
-            // never rewritten — not even to the caller's spelling of the id; anything else the game may have
-            // added to a row is carried through.
-            writer.WriteStartObject();
-            foreach (var property in entry.EnumerateObject())
-            {
-                if (property.NameEquals("is_enabled"))
-                {
-                    writer.WriteBoolean(property.Name, false);
-                }
-                else
-                {
-                    property.WriteTo(writer);
-                }
-            }
-
-            if (!entry.TryGetProperty("is_enabled", out _)) writer.WriteBoolean("is_enabled", false);
-            writer.WriteEndObject();
+            // Straight after the id's last row, so that id keeps its load position (see Disable's remarks).
+            foreach (var added in addAfterRow[index]) WriteAddedRow(writer, added);
         }
 
-        foreach (var key in toAppend)
-        {
-            writer.WriteStartObject();
-            writer.WriteString("id", key.Id);
-            writer.WriteBoolean("is_enabled", false);
-            writer.WriteString("source", key.Source);
-            writer.WriteEndObject();
-        }
-
+        foreach (var added in addAtEnd) WriteAddedRow(writer, added);
         writer.WriteEndArray();
+    }
+
+    // Copy the row, forcing only `is_enabled`. `id` and `source` identify WHICH copy the row is and are never
+    // rewritten — not even to the caller's spelling of the id; anything else the game may have added to a row is
+    // carried through.
+    private static void WriteDisabledCopy(Utf8JsonWriter writer, JsonElement entry)
+    {
+        writer.WriteStartObject();
+        foreach (var property in entry.EnumerateObject())
+        {
+            if (property.NameEquals("is_enabled"))
+            {
+                writer.WriteBoolean(property.Name, false);
+            }
+            else
+            {
+                property.WriteTo(writer);
+            }
+        }
+
+        if (!entry.TryGetProperty("is_enabled", out _)) writer.WriteBoolean("is_enabled", false);
+        writer.WriteEndObject();
+    }
+
+    private static void WriteAddedRow(Utf8JsonWriter writer, SeatModRowKey key)
+    {
+        writer.WriteStartObject();
+        writer.WriteString("id", key.Id);
+        writer.WriteBoolean("is_enabled", false);
+        writer.WriteString("source", key.Source);
+        writer.WriteEndObject();
     }
 }
