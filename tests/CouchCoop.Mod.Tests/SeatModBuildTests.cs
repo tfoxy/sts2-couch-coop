@@ -189,7 +189,7 @@ internal static class SeatModBuildTests
             "the appended row disables the Workshop copy");
         Assert(rows[0].GetProperty("id").GetString() == "spirectlbridge"
             && rows[1].GetProperty("id").GetString() == "couchcoop",
-            "appending leaves every existing row at the index it already had");
+            "the row lands after the id's existing row — here the last — so every existing row keeps its index");
     }
 
     private static void PinLeavesAnAlreadyDisabledRowAlone()

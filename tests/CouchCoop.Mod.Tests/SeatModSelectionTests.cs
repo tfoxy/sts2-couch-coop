@@ -60,6 +60,10 @@ internal static class SeatModSelectionTests
         // 4. The rewrite.
         RewriteDisablesSeveralRowsAndTouchesNothingElse();
         RewriteAppendsMissingRowsAndLeavesADoneFileAlone();
+        RewritePlacesACopyPinRowBesideItsIdNotAtTheEnd();
+        RewritePlacesARowAfterTheLastOfSeveralRowsOfItsId();
+        RewritePlacesSeveralRowsEachBesideItsOwnId();
+        RewriteNeverMovesARowItOnlyFlips();
         RewriteRefusesWhatThePinAlwaysRefused();
         SeedingAppliesHostChoicesBesideTheCopyPinInBothProfileRoots();
         SeedingWithNothingChosenStillPinsAndStaysOffTheErrorChannel();
@@ -781,7 +785,7 @@ internal static class SeatModSelectionTests
             && rows[1].GetProperty("id").GetString() == "MintySpire2"
             && rows[2].GetProperty("id").GetString() == "BaseLib"
             && Enabled(rows, "MintySpire2", Workshop) == false,
-            "missing rows are appended disabled, in the order asked, after every existing row");
+            "rows whose id has no row at all are appended disabled, in the order asked, after every existing row");
 
         var again = SeatModList.Disable(edit.Updated!, [new SeatModRowKey("MintySpire2", Workshop), new SeatModRowKey("BaseLib", Workshop)]);
         Assert(again.Updated is null && again.Applied, "a file that already disables every row is left byte-identical");
@@ -791,6 +795,137 @@ internal static class SeatModSelectionTests
         Assert(refusedAppend.Updated is null && !refusedAppend.Applied
             && refusedAppend.NotDisabled.SequenceEqual([new SeatModRowKey("MintySpire2", Workshop)]),
             "no row is appended into a list that does not write source as a string — and the row is reported as not disabled");
+    }
+
+    // The game breaks load-order ties by list position and takes a mod's position from its LAST row, disabled rows
+    // included — so an added row must never become a new last row somewhere else in the list.
+    private static void RewritePlacesACopyPinRowBesideItsIdNotAtTheEnd()
+    {
+        // The live shape: an ordinary subscriber, whose list has only the Workshop couchcoop row, mid-list. A
+        // host running the Workshop build pins its seats to that copy by disabling the LOCAL one — a row this
+        // list lacks.
+        var original = Settings(Rows(
+            Row("BaseLib", Workshop, true),
+            Row("couchcoop", Workshop, true),
+            Row("MintySpire2", Workshop, true)));
+        var edit = SeatModList.Disable(original, [new SeatModRowKey("couchcoop", Local)]);
+        Assert(edit.Applied && edit.Updated is not null, "the missing copy-pin row is added");
+
+        var before = ModList(original);
+        var after = ModList(edit.Updated!);
+        Assert(Shape(after).SequenceEqual(
+            [$"BaseLib/{Workshop}/on", $"couchcoop/{Workshop}/on", $"couchcoop/{Local}/off", $"MintySpire2/{Workshop}/on"]),
+            "the new row lands straight after its id's existing row, not at the end of the list");
+        var newRow = Shape(after).IndexOf($"couchcoop/{Local}/off");
+        Assert(newRow > 0 && Shape(after)[newRow - 1] == $"couchcoop/{Workshop}/on", "…adjacent to it");
+        Assert(SameIds(OrderByLastRow(after), OrderByLastRow(before)),
+            "the order of ids by their LAST row — the game's load-order tie-break — is unchanged");
+        Assert(SameIds(OrderByLastRow(after), ["BaseLib", "couchcoop", "MintySpire2"]),
+            "so the seat still initializes CouchCoop before MintySpire2, as its host does");
+
+        Assert(HeadlessSeatModSelection.Pin(original, Local) == edit.Updated,
+            "the copy pin itself writes exactly this list");
+    }
+
+    private static void RewritePlacesARowAfterTheLastOfSeveralRowsOfItsId()
+    {
+        // Two rows of one id, split by another mod and spelled differently. Sources are opaque to the rewrite, so a
+        // third one isolates the placement rule.
+        const string OtherSource = "another_source";
+        var original = Settings(Rows(
+            Row("BaseLib", Local, true),
+            Row("MintySpire2", Workshop, true),
+            Row("baselib", Workshop, true),
+            Row("intentgraph2", Workshop, true)));
+        var edit = SeatModList.Disable(original, [new SeatModRowKey("BASELIB", OtherSource)]);
+        Assert(edit.Applied && edit.Updated is not null, "the missing row is added");
+
+        var after = ModList(edit.Updated!);
+        Assert(Shape(after).SequenceEqual(
+            [$"BaseLib/{Local}/on", $"MintySpire2/{Workshop}/on", $"baselib/{Workshop}/on", $"BASELIB/{OtherSource}/off",
+                $"intentgraph2/{Workshop}/on"]),
+            "the new row lands after the id's LAST row (ids matched case-insensitively), not after its first");
+        Assert(SameIds(OrderByLastRow(after), OrderByLastRow(ModList(original))),
+            "the order of ids by their last row is unchanged");
+    }
+
+    private static void RewritePlacesSeveralRowsEachBesideItsOwnId()
+    {
+        var original = Settings(Rows(
+            Row("godotexplorer", Local, true),
+            Row("couchcoop", Workshop, true),
+            Row("BaseLib", Local, true),
+            Row("MintySpire2", Workshop, true)));
+        SeatModRowKey[] request =
+        [
+            new("NotInstalled", Workshop),
+            new("MintySpire2", Local),
+            new("couchcoop", Local),
+            new("BaseLib", Workshop),
+            new("AlsoNotInstalled", Workshop),
+        ];
+        var edit = SeatModList.Disable(original, request);
+        Assert(edit.Applied && edit.Updated is not null, "every missing row is added");
+
+        var before = ModList(original);
+        var after = ModList(edit.Updated!);
+        Assert(Shape(after).SequenceEqual(
+            [
+                $"godotexplorer/{Local}/on",
+                $"couchcoop/{Workshop}/on", $"couchcoop/{Local}/off",
+                $"BaseLib/{Local}/on", $"BaseLib/{Workshop}/off",
+                $"MintySpire2/{Workshop}/on", $"MintySpire2/{Local}/off",
+                $"NotInstalled/{Workshop}/off", $"AlsoNotInstalled/{Workshop}/off",
+            ]),
+            "each row lands after its own id's last row; ids with no row are appended after all of them, as asked");
+        Assert(SameIds(OrderByLastRow(after), [.. OrderByLastRow(before), "NotInstalled", "AlsoNotInstalled"]),
+            "every id already listed keeps its load position; only ids with no row follow, at the end");
+
+        Assert(SeatModList.Disable(original, request).Updated == edit.Updated, "the same request writes the same bytes");
+        Assert(SeatModList.Disable(edit.Updated!, request) is { Updated: null, Applied: true },
+            "once placed, the same request is a byte-identical no-op");
+
+        var reversed = ModList(SeatModList.Disable(original, Enumerable.Reverse(request)).Updated!);
+        Assert(Shape(reversed).SequenceEqual(
+            [
+                $"godotexplorer/{Local}/on",
+                $"couchcoop/{Workshop}/on", $"couchcoop/{Local}/off",
+                $"BaseLib/{Local}/on", $"BaseLib/{Workshop}/off",
+                $"MintySpire2/{Workshop}/on", $"MintySpire2/{Local}/off",
+                $"AlsoNotInstalled/{Workshop}/off", $"NotInstalled/{Workshop}/off",
+            ]),
+            "a row beside its id lands there whatever order it was asked in; appended rows follow the order asked");
+
+        var twoForOne = ModList(SeatModList.Disable(original,
+            [new SeatModRowKey("BaseLib", "source_b"), new SeatModRowKey("BaseLib", "source_a")]).Updated!);
+        Assert(Shape(twoForOne).SequenceEqual(
+            [
+                $"godotexplorer/{Local}/on", $"couchcoop/{Workshop}/on",
+                $"BaseLib/{Local}/on", "BaseLib/source_b/off", "BaseLib/source_a/off",
+                $"MintySpire2/{Workshop}/on",
+            ]),
+            "two rows for one id land together after its last row, in the order asked");
+    }
+
+    private static void RewriteNeverMovesARowItOnlyFlips()
+    {
+        var original = Settings(Rows(
+            Row("BaseLib", Workshop, true),
+            Row("MintySpire2", Workshop, true),
+            Row("intentgraph2", Workshop, true)));
+
+        var flipOnly = ModList(SeatModList.Disable(original, [new SeatModRowKey("MintySpire2", Workshop)]).Updated!);
+        Assert(Shape(flipOnly).SequenceEqual(
+            [$"BaseLib/{Workshop}/on", $"MintySpire2/{Workshop}/off", $"intentgraph2/{Workshop}/on"]),
+            "a row that only needs its flag flipped keeps its index");
+
+        var flipAndAdd = ModList(SeatModList.Disable(original,
+            [new SeatModRowKey("intentgraph2", Workshop), new SeatModRowKey("BaseLib", Local)]).Updated!);
+        Assert(Shape(flipAndAdd).SequenceEqual(
+            [$"BaseLib/{Workshop}/on", $"BaseLib/{Local}/off", $"MintySpire2/{Workshop}/on", $"intentgraph2/{Workshop}/off"]),
+            "a flipped row is not moved by a row added in the same call — nothing is reordered");
+        Assert(SameIds(OrderByLastRow(flipAndAdd), OrderByLastRow(ModList(original))),
+            "and the order of ids by their last row is unchanged");
     }
 
     private static void RewriteRefusesWhatThePinAlwaysRefused()
@@ -1123,6 +1258,23 @@ internal static class SeatModSelectionTests
         => $$"""{"id": "{{id}}", "is_enabled": {{(enabled ? "true" : "false")}}, "source": "{{source}}"}""";
 
     private static string Rows(params string[] rows) => "[" + string.Join(", ", rows) + "]";
+
+    // Every row as "id/source/on|off", in list order: the literal shape of a list.
+    private static List<string> Shape(List<JsonElement> rows)
+        => rows.Select(row => $"{row.GetProperty("id").GetString()}/{row.GetProperty("source").GetString()}/"
+            + (row.GetProperty("is_enabled").GetBoolean() ? "on" : "off")).ToList();
+
+    // Every distinct id, ordered by the index of its LAST row, disabled rows included: the position the game
+    // breaks load-order ties by, and so the property an added row must never disturb.
+    private static List<string> OrderByLastRow(List<JsonElement> rows)
+    {
+        var lastRow = new Dictionary<string, int>(SeatModSelectionPlan.IdComparer);
+        for (var i = 0; i < rows.Count; i++) lastRow[rows[i].GetProperty("id").GetString()!] = i;
+        return lastRow.OrderBy(pair => pair.Value).Select(pair => pair.Key).ToList();
+    }
+
+    private static bool SameIds(IEnumerable<string> actual, IEnumerable<string> expected)
+        => actual.SequenceEqual(expected, SeatModSelectionPlan.IdComparer);
 
     private static bool? Enabled(List<JsonElement> rows, string id, string source)
     {
