@@ -93,7 +93,7 @@ an unconfirmed path is survivable here.
 
 Most connection problems come down to a handful of causes. This list is roughly ordered from most to least common, so it is worth going in order.
 
-[i]If your phone reaches the join page fine and the trouble is something else - a crash, a player that never finishes joining, something wrong in the game itself - post in [url=PLACEHOLDER_REPORTING_URL]Having a problem? Post it here[/url] instead.[/i]
+[i]If your phone reaches the join page fine and the trouble is something else - a crash, a player that never finishes joining, something wrong in the game itself - post in [url=https://steamcommunity.com/workshop/filedetails/discussion/3799476240/563668239243120957/]Having a problem? Post it here[/url] instead.[/i]
 
 [hr][/hr]
 [h1]Things to try[/h1]
