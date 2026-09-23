@@ -31,7 +31,8 @@ This map records current contracts, not retired implementation alternatives.
   `geoclip/1`; operator files are optional overrides, then the managed store under the branch cache's
   `geoclips/`. A failed probe falls back to the spine raster path rather than leaving a blank node.
 - **Static backgrounds and cache:** combat URLs are `/bg/{id}?layers={digest}&v=1`; event and room backgrounds
-  use `/bg/events/{id}?v=1` and `/bg/rooms/{id}?frame={frame}&v=1`. Their codec is named by `Content-Type`.
+  use `/bg/events/{id}?v=1` and `/bg/rooms/{id}?frame={frame}&v=1`. Their codec is named by `Content-Type`. A seat
+  viewer always shows the HOST's descriptor, never its seat's (`docs/agents/host-render-cost-aug22.md` "Seats").
   Host caches live at `user://couch-coop/cache/<version>/` — one directory per GAME VERSION, each stamped with
   the build and cache generations that wrote it and emptied when either moves. At most two survive; the lowest
   version is retired, and a name that is not a version is reclaimed outright. Nothing consults the Steam branch,

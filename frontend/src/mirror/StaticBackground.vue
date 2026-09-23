@@ -21,6 +21,10 @@
 //   * WHAT HAPPENS WHEN NO PICTURE CAN BE HAD: every family fails closed. Combat first retries its digest-less
 //     deterministic URL. After that, and immediately for event/shop, keep a valid still already shown for this
 //     same target or show the stage's #181818. A failure never restores live scenery or changes the host wire.
+//   * HOST-AUTHORITATIVE (a seat view): the descriptor is the HOST's (MirrorApp admits it against the seat's own
+//     scene), and it is the ONLY source. No wire-minted URL — that would be a picture derived from the seat's
+//     tree — and a descriptor the wire disagrees with shows nothing rather than a picture the host did not
+//     publish. The combat ladder's digest-less rung still applies: it is a host-rendered URL for the host's scene.
 import { computed, inject, onBeforeUnmount, ref, shallowRef, watch } from "vue";
 
 import {
@@ -53,6 +57,9 @@ const props = defineProps<{
   // The retained mirror state + its revision counter — only read for the descriptor-less FALLBACK scan.
   state: MirrorState;
   revision: number;
+  // A SEAT view: the descriptor is the host's and the only acceptable source (see the header contract).
+  // Omitted/false everywhere the serving socket is the host itself.
+  hostAuthoritative?: boolean;
 }>();
 
 const renderer = inject(MIRROR_RENDERER_KEY, shallowRef(null));
@@ -157,6 +164,11 @@ const target = computed<BrowserStaticBackgroundDescriptor | null>(() => {
   const d = props.descriptor && staticBgCoversScenePath(props.descriptor.scenePath) ? props.descriptor : null;
   if (d && (wireScenePath.value === null || d.scenePath === wireScenePath.value)) {
     return d;
+  }
+  // A seat view never falls through to the wire: a wire-minted URL is a picture of the SEAT's tree, and a stale
+  // host descriptor is not the room on screen. Blank until the host describes the mounted room.
+  if (props.hostAuthoritative) {
+    return null;
   }
   return wireFallback.value ?? d;
 });

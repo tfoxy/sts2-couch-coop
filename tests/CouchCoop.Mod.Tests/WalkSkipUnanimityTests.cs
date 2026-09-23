@@ -83,6 +83,19 @@ internal static class WalkSkipUnanimityTests
         Assert(
             !CouchCoopBrowserServer.ComputeBgSkipDesired([(false, true)]),
             "a gated staticBg viewer alone does not engage the skip");
+        // …but the WARM gate is a different question, and there a gated staticBg viewer DOES count: it is a seat
+        // viewer's host socket, and the still that viewer shows is the host's publish. The skip must not move.
+        Assert(
+            CouchCoopBrowserServer.HasStaticBgViewer([(false, true)]),
+            "a gated staticBg viewer DOES admit the warm (the seat viewer shows the host's still)");
+        Assert(
+            CouchCoopBrowserServer.ComputeBgSkipDesired([(true, true), (false, true)])
+                && CouchCoopBrowserServer.HasStaticBgViewer([(true, true), (false, true)]),
+            "a gated staticBg viewer beside a unanimous streamer changes neither verdict's direction");
+        Assert(
+            !CouchCoopBrowserServer.ComputeBgSkipDesired([(true, false), (false, true)])
+                && CouchCoopBrowserServer.HasStaticBgViewer([(true, false), (false, true)]),
+            "…and cannot engage the skip over a streamer who needs the live subtree, while still admitting the warm");
 
     }
 

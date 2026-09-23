@@ -32,7 +32,8 @@ public sealed class CouchCoopBrowserServer(
     ConnectionArrivalLog? arrivals = null,
     BrowserLifecycleDiagnostics? lifecycleDiagnostics = null,
     string? lifecycleSocketRole = null,
-    Action? onSceneAck = null) : IAsyncDisposable
+    Action? onSceneAck = null,
+    Func<Action, IDisposable?>? subscribeScreenUpdated = null) : IAsyncDisposable
 {
     /// <summary>Harness-only synthetic seat port injected into the control document; null in product hosting.</summary>
     public int? SyntheticSeatPort { get; set; }
@@ -80,6 +81,22 @@ public sealed class CouchCoopBrowserServer(
     // The last desired-skip value handed to the tracker, so the (deferred, main-thread) stamp work is scheduled on
     // real transitions only. Guarded by _observerGate.
     private bool _bgSkipDesired;
+    // How many GATED connections (not streaming) declare the static background — in practice the host socket a
+    // seat viewer keeps open after joining a headless seat (it streams nothing, but the still it shows is the
+    // HOST's publish, delivered on this socket's `session` re-sends). Recomputed from the live connection set in
+    // RefreshBgSkipLocked alongside the needed count. Feeds the warm gate and the screen-event probe; NEVER the
+    // skip unanimity (a gated viewer receives no scene bytes, so it has no vote on what the walk streams).
+    // Guarded by _observerGate.
+    private int _gatedStaticBgViewerCount;
+    // The HOST's subscription to the game's "the screen on top may have changed" event, held while anybody shows a
+    // still (RefreshScreenProbeLocked). Its handler only asks the tracker for a probe, which is what keeps the
+    // host's publish — the one every seat viewer displays — live while no host socket streams. `_screenProbeArmed`
+    // records that we WANT it (the seam may return null — the event unavailable — and must not be retried on every
+    // refresh). Both guarded by _observerGate.
+    private readonly Func<Action, IDisposable?> _subscribeScreenUpdated =
+        subscribeScreenUpdated ?? SubscribeGameScreenUpdated;
+    private IDisposable? _screenProbeSubscription;
+    private bool _screenProbeArmed;
     private TcpListener? _listener;
     // Non-null on the host (slot 1); null on headless client instances (they only serve one
     // browser player and never spawn further headless instances). The eviction callback lets a reconnect
@@ -138,8 +155,9 @@ public sealed class CouchCoopBrowserServer(
     // Static-background tracker: Stage-A probe/publish half (fed screen changes off the scene stream, publishes
     // the current combat bg descriptor, re-sends sessions when it changes) + Stage-B stamping half (deferred
     // main-thread walk-skip stamping driven by the unanimity aggregate). Built lazily because the resend callback
-    // needs `this`; TWO creation paths now race (the scene-observer thread via BroadcastSceneDelta, and whichever
-    // thread runs RefreshBgSkipLocked's first real transition), so creation is CAS-guarded — see StaticBgTracker.
+    // needs `this`; several creation paths race (the scene-observer thread via BroadcastSceneDelta, and whichever
+    // thread runs RefreshBgSkipLocked's first real transition or arms the screen-event probe), so creation is
+    // CAS-guarded — see StaticBgTracker.
     private CouchCoopStaticBackgroundTracker? _staticBgTracker;
 
     // The one tracker instance (CAS-guarded lazy creation; the loser's instance is discarded before it holds any
@@ -352,18 +370,33 @@ public sealed class CouchCoopBrowserServer(
     // bits flip on different threads, and iteration under the gate cannot drift. A connection that is registered
     // in _connections but not yet stream-counted only ever errs toward needed>0 — i.e. toward NOT skipping — which
     // is the safe direction.
+    //
+    // The same pass counts the GATED static-bg viewers (the warm gate's and the screen-event probe's input, never
+    // the skip's), and re-evaluates the screen-event probe, so every transition that can change who shows a still
+    // — connect, disconnect, gate flip, a `settings` staticBg flip on ANY connection — re-arms or drops it here.
     private void RefreshBgSkipLocked()
     {
         var needed = 0;
+        var gatedStaticBg = 0;
         foreach (var connection in _connections.Values)
         {
-            if (NeedsBgStream(connection.WantsSceneStream, connection.WantsStaticBg))
+            var wantsSceneStream = connection.WantsSceneStream;
+            var wantsStaticBg = connection.WantsStaticBg;
+            if (NeedsBgStream(wantsSceneStream, wantsStaticBg))
             {
                 needed++;
+            }
+
+            if (IsGatedStaticBgViewer(wantsSceneStream, wantsStaticBg))
+            {
+                gatedStaticBg++;
             }
         }
 
         _bgStreamNeededCount = needed;
+        _gatedStaticBgViewerCount = gatedStaticBg;
+        RefreshScreenProbeLocked();
+
         var desired = ComputeBgSkipDesired(_streamingMirrorConnectionCount, needed);
         if (desired == _bgSkipDesired)
         {
@@ -410,14 +443,140 @@ public sealed class CouchCoopBrowserServer(
         return ComputeBgSkipDesired(streaming, needed);
     }
 
-    // WARM-AT-PUBLISH admission: is at least one STREAMING viewer showing the static image right now? Derived
-    // from the two counts the skip aggregate already keeps, with no second pass over the connection set: `needed`
-    // is exactly "streaming AND NOT staticBg", so `streaming - needed` is "streaming AND staticBg". Deliberately
-    // WEAKER than ComputeBgSkipDesired's unanimity: a mixed room (one viewer on the still, one on the live
-    // scenery) still has somebody waiting on the picture, and warming for them is the whole point. Pure so the
-    // truth table is unit-testable.
-    internal static bool HasStaticBgViewer(int streamingMirrorConnections, int bgStreamNeededCount)
-        => streamingMirrorConnections > bgStreamNeededCount;
+    // The warm gate's per-connection classification for the viewers the skip unanimity ignores: a GATED
+    // connection (it streams nothing) that declares the static background. That is the host socket a seat viewer
+    // keeps open — the still it shows is the HOST's publish, so the host must keep that publish live and warm for
+    // it even though it never votes on the walk. Pure so the rule is unit-testable beside NeedsBgStream.
+    internal static bool IsGatedStaticBgViewer(bool wantsSceneStream, bool wantsStaticBg)
+        => !wantsSceneStream && wantsStaticBg;
+
+    // WARM-AT-PUBLISH admission (and the screen-event probe's): is anybody showing the static image right now?
+    // Two populations. STREAMING viewers on the still are derived from the two counts the skip aggregate already
+    // keeps — `needed` is exactly "streaming AND NOT staticBg", so `streaming - needed` is "streaming AND
+    // staticBg". GATED viewers on the still (a seat viewer's host socket) are counted separately, because the
+    // skip never sees them. Deliberately WEAKER than ComputeBgSkipDesired's unanimity: a mixed room (one viewer on
+    // the still, one on the live scenery) still has somebody waiting on the picture, and so does a room whose only
+    // still-viewer watches from a seat. Pure so the truth table is unit-testable.
+    internal static bool HasStaticBgViewer(
+        int streamingMirrorConnections,
+        int bgStreamNeededCount,
+        int gatedStaticBgViewers)
+        => streamingMirrorConnections > bgStreamNeededCount || gatedStaticBgViewers > 0;
+
+    // Scenario overload in the tuple form ComputeBgSkipDesired's tests speak, composing the same per-connection
+    // rules so the warm gate and the skip verdict can be asserted over one connection list.
+    internal static bool HasStaticBgViewer(
+        IReadOnlyList<(bool WantsSceneStream, bool WantsStaticBg)> mirrorConnections)
+    {
+        var streaming = 0;
+        var needed = 0;
+        var gatedStaticBg = 0;
+        foreach (var (wantsSceneStream, wantsStaticBg) in mirrorConnections)
+        {
+            if (wantsSceneStream)
+            {
+                streaming++;
+            }
+
+            if (NeedsBgStream(wantsSceneStream, wantsStaticBg))
+            {
+                needed++;
+            }
+
+            if (IsGatedStaticBgViewer(wantsSceneStream, wantsStaticBg))
+            {
+                gatedStaticBg++;
+            }
+        }
+
+        return HasStaticBgViewer(streaming, needed, gatedStaticBg);
+    }
+
+    // THE HOST'S SCREEN-EVENT PROBE: hold the game-screen subscription exactly while somebody shows a still, and
+    // drop it when nobody does. Called from RefreshBgSkipLocked, i.e. on every transition that can change that.
+    //
+    // WHY: the tracker's other probe triggers are scene deltas (only while a host socket STREAMS) and desired-skip
+    // flips. A seat viewer's host socket is gated, so without this the host's publish — the descriptor every seat
+    // viewer displays — would freeze at whatever it was when the last host stream stopped, and the /bg/ route
+    // (which renders only the CURRENT publish) would refuse the stale URL.
+    //
+    // COST: host-only and viewer-gated, so a host with no browser — or none on a still — subscribes nothing (the
+    // idle-host rule). With one, the game raises the event a handful of times a minute and never at idle; each
+    // raise costs one folded probe plus one bounded follow-up.
+    //
+    // Arming also requests one probe immediately: the publish may be stale from before anybody was watching.
+    private void RefreshScreenProbeLocked()
+    {
+        var wanted = !_isHeadlessClient
+            && envelopeFactory is not null
+            && HasStaticBgViewer(_streamingMirrorConnectionCount, _bgStreamNeededCount, _gatedStaticBgViewerCount);
+        if (wanted == _screenProbeArmed)
+        {
+            return;
+        }
+
+        if (!wanted)
+        {
+            StopScreenProbeLocked();
+            return;
+        }
+
+        _screenProbeArmed = true;
+        var tracker = StaticBgTracker;
+        try
+        {
+            // The handler is the tracker's RequestProbe and NOTHING else: the game raises this event from inside
+            // its own screen transition, where reading engine state can take the process down (see RequestProbe).
+            _screenProbeSubscription = _subscribeScreenUpdated(tracker.RequestProbe);
+        }
+        catch (Exception exception)
+        {
+            // The seam is documented total; this is belt-and-braces. Without the event, scene deltas still probe
+            // for streaming viewers — only seat viewers lose liveness.
+            _screenProbeSubscription = null;
+            _log($"static-bg screen probe subscribe failed: {exception.GetType().Name}: {exception.Message}");
+        }
+
+        // One line per transition, and only in a real game (a test host would print it per socket): the support
+        // log's answer to "was the host keeping its background live for the seats?".
+        if (CouchCoopMod.EngineAvailable)
+        {
+            _log(_screenProbeSubscription is null
+                ? "static-bg screen probe unavailable: seat viewers' backgrounds follow streamed screen changes only"
+                : "static-bg screen probe armed");
+        }
+
+        tracker.RequestProbe();
+    }
+
+    // Drop the screen-event subscription and any follow-up probe it earned. Idempotent.
+    private void StopScreenProbeLocked()
+    {
+        if (_screenProbeArmed && CouchCoopMod.EngineAvailable)
+        {
+            _log("static-bg screen probe disarmed");
+        }
+
+        _screenProbeArmed = false;
+        var subscription = _screenProbeSubscription;
+        _screenProbeSubscription = null;
+        try
+        {
+            subscription?.Dispose();
+        }
+        catch (Exception exception)
+        {
+            _log($"static-bg screen probe unsubscribe failed: {exception.GetType().Name}: {exception.Message}");
+        }
+
+        _staticBgTracker?.CancelFollowUps();
+    }
+
+    // The shipped subscription: the game's "the screen on top may have changed" event, through spirectl's total
+    // seam (null, never a throw, when the event cannot be resolved). Only inside a real game process — the seam
+    // resolves a game type by reflection, which a test host must never reach.
+    private static IDisposable? SubscribeGameScreenUpdated(Action handler)
+        => CouchCoopMod.EngineAvailable ? Spirectl.Sts2.Live.Sts2ScreenContext.SubscribeUpdated(handler) : null;
 
     /// <summary>
     /// WARM-AT-PUBLISH (the tracker's <c>warmVariant</c> callback): render the just-published QUALIFIED variant
@@ -438,13 +597,14 @@ public sealed class CouchCoopBrowserServer(
     /// on the live host at ~282 ms wall / ~111 ms of it blocking the game's main thread, 280 KB (see
     /// <c>/perf/bg.json</c>). Bounded three ways: only a qualified variant warms
     /// (<see cref="CouchCoopStaticBackgroundTracker.IsWarmableVariant"/>), only while somebody is actually showing
-    /// a still (<see cref="HasStaticBgViewer"/>), and only through the SHARED
+    /// a still — streaming, or watching from a seat through a gated host socket (<see cref="HasStaticBgViewer(int, int, int)"/>)
+    /// — and only through the SHARED
     /// <see cref="CouchCoopAssetExtractionGate"/>, so it can never overlap a spine bake.
     /// </para>
     /// <para>
     /// THREADING: called from the tracker's publish, which runs on the GODOT MAIN THREAD. Everything here must
     /// return immediately — hence the <c>Task.Run</c>; the render itself marshals back to the main thread inside
-    /// the provider and would deadlock if awaited here. The two counts are read WITHOUT <c>_observerGate</c> on
+    /// the provider and would deadlock if awaited here. The three counts are read WITHOUT <c>_observerGate</c> on
     /// purpose: blocking the game's main thread on a lock that observer start/stop holds is not worth a warm
     /// heuristic, and a stale read costs at most one render that nobody needed (or skips one somebody did).
     /// </para>
@@ -456,7 +616,7 @@ public sealed class CouchCoopBrowserServer(
             return; // a seat process cannot render; asset HTTP goes to the host origin anyway
         }
 
-        if (!HasStaticBgViewer(_streamingMirrorConnectionCount, _bgStreamNeededCount))
+        if (!HasStaticBgViewer(_streamingMirrorConnectionCount, _bgStreamNeededCount, _gatedStaticBgViewerCount))
         {
             return;
         }
@@ -512,8 +672,9 @@ public sealed class CouchCoopBrowserServer(
         return Interlocked.CompareExchange(ref _staticBackgrounds, created, null) ?? created;
     }
 
-    // Stage-B walk skip: one connection's staticBg declaration flipped via the `settings` message. Recompute under
-    // the same gate every other transition uses.
+    // One connection's staticBg declaration flipped via the `settings` message — a streaming viewer's (the skip
+    // unanimity, Stage B) or a GATED one's (a seat viewer's host socket: the warm gate and the screen-event probe).
+    // Recompute under the same gate every other transition uses; RefreshBgSkipLocked re-derives all three counts.
     private void OnConnectionStaticBgChanged(bool wantsStaticBg)
     {
         _ = wantsStaticBg; // the aggregate recomputes from the live connection set
@@ -529,6 +690,24 @@ public sealed class CouchCoopBrowserServer(
         lock (_observerGate)
         {
             return (_streamingMirrorConnectionCount, _bgStreamNeededCount, _bgSkipDesired);
+        }
+    }
+
+    /// <summary>Test seam: the tracker, if anything has created it yet (never creates one).</summary>
+    internal CouchCoopStaticBackgroundTracker? StaticBgTrackerForTest => Volatile.Read(ref _staticBgTracker);
+
+    /// <summary>
+    /// Test seam: the warm-gate side of the same aggregate — the gated static-bg viewer count, the warm verdict,
+    /// and whether the screen-event probe is armed — read under the gate.
+    /// </summary>
+    internal (int GatedStaticBgViewers, bool HasStaticBgViewer, bool ScreenProbeArmed) StaticBgViewerStateForTest()
+    {
+        lock (_observerGate)
+        {
+            return (
+                _gatedStaticBgViewerCount,
+                HasStaticBgViewer(_streamingMirrorConnectionCount, _bgStreamNeededCount, _gatedStaticBgViewerCount),
+                _screenProbeArmed);
         }
     }
 
@@ -827,6 +1006,10 @@ public sealed class CouchCoopBrowserServer(
         // Drop the screen baseline with the generation that produced it: the next generation starts because a
         // client just turned its stream on off a FRESH session, so its first delta needs no announcement.
         Volatile.Write(ref _lastSceneScreenSignature, null);
+        // …and the TRACKER's baseline, for the opposite reason: its first delta must PROBE. Without this a stream
+        // restarted on the same screen matched the stale signature and never re-probed, so the publish stayed
+        // whatever it was when the stream stopped — even if the room changed in between. Not created if absent.
+        _staticBgTracker?.ResetScreenBaseline();
     }
 
     // Hand each connection the raw delta; the connection COALESCES (latest-wins per node, bounded to one
@@ -853,11 +1036,13 @@ public sealed class CouchCoopBrowserServer(
 
         ResendSessionsIfSceneScreenChanged(delta);
 
-        // Static background (Stage A): probe the live combat bg root on the same screen-signature cadence. The
-        // tracker publishes {scenePath, layerSet, digest, url} for the session envelope's descriptor and re-sends
-        // sessions (the accessor's callback) when the published value changes, so already-connected viewers learn
-        // the new /bg/ URL without waiting for a roster change. Stage B rides the same probe: it re-applies the
-        // current walk-skip stamp on the newly located bg root (a fresh room's root is a fresh, unstamped node).
+        // Static background (Stage A): probe the live bg root on the same screen-signature cadence. The tracker
+        // publishes {scenePath, layerSet, digest, url} for the session envelope's descriptor and re-sends sessions
+        // (the accessor's callback) when the published value changes, so already-connected viewers learn the new
+        // /bg/ URL without waiting for a roster change. Stage B rides the same probe: it re-applies the current
+        // walk-skip stamp on the newly located bg root (a fresh room's root is a fresh, unstamped node). This is
+        // the STREAMING trigger only; the game's screen event (RefreshScreenProbeLocked) keeps the publish live
+        // when nothing streams, and the two fold into one probe when both fire.
         StaticBgTracker.OnSceneDelta(delta);
     }
 
@@ -1095,9 +1280,12 @@ public sealed class CouchCoopBrowserServer(
         {
             _mirrorConnectionCount = 0;
             _streamingMirrorConnectionCount = 0;
+            _gatedStaticBgViewerCount = 0;
             StopSceneObserverLocked();
             StopStateObserverLocked();
             StopMirrorHintCollectorLocked();
+            // Hot reload must not leak the game-event handler into the next generation.
+            StopScreenProbeLocked();
         }
 
         var connections = _connections.Values.ToArray();
@@ -1106,6 +1294,14 @@ public sealed class CouchCoopBrowserServer(
 
         _connections.Clear();
 
+        // Again, now that the set is empty: a connection's teardown can run RefreshBgSkipLocked while the closes
+        // above are in flight, see a still-registered static-bg viewer, and re-arm the subscription. With the set
+        // empty, nothing can re-arm it after this.
+        lock (_observerGate)
+        {
+            _gatedStaticBgViewerCount = 0;
+            StopScreenProbeLocked();
+        }
     }
 
     public async Task HandleClientAsync(TcpClient client, CancellationToken cancellationToken)

@@ -1160,6 +1160,145 @@ describe("StaticBackground.vue — decode gate + shown-signal ordering", () => {
 });
 
 // ================================================================================================================
+// HOST-AUTHORITATIVE (a seat view). The descriptor is the HOST's — MirrorApp admits it against the seat's own scene —
+// and it is the only acceptable source: the background the host has is the background every seat has. A URL minted
+// from the seat's wire is a picture of the seat's tree, so it is never used; a descriptor the wire disagrees with
+// shows nothing. The non-authoritative twins of these cases above ("STALE descriptor loses to the wire", "derives
+// the … URL from the wire") must stay exactly as they are.
+// ================================================================================================================
+describe("StaticBackground.vue — host-authoritative (seat view)", () => {
+  interface ShownCall {
+    scenePath: string | null;
+  }
+
+  function mountSeatBg(
+    calls: ShownCall[],
+    descriptor: { scenePath: string; url: string } | null,
+    state: MirrorState = createMirrorState()
+  ) {
+    return mount(StaticBackground, {
+      props: { descriptor, state, revision: state.revision, hostAuthoritative: true },
+      global: {
+        provide: {
+          [MIRROR_RENDERER_KEY as symbol]: shallowRef({
+            setStaticBackgroundShown: (scenePath: string | null) => calls.push({ scenePath })
+          } as unknown as MirrorRenderer)
+        }
+      }
+    });
+  }
+
+  function recordingDecoder(ok: (url: string) => boolean = () => true): string[] {
+    const decoded: string[] = [];
+    __setStillDecoderForTest((url, ready) => {
+      decoded.push(url);
+      ready(ok(url));
+    });
+    return decoded;
+  }
+
+  const hostFamilies = [
+    { name: "combat", scenePath: UNDERDOCKS_BG, url: "/bg/underdocks?layers=0123456789abcdef&v=1", nodes: combatNodes, order: COMBAT_ORDER },
+    { name: "event", scenePath: NEOW_BG, url: "/bg/events/neow?frame=0,0,1920,1080&v=1", nodes: eventNodes, order: EVENT_ORDER },
+    { name: "shop", scenePath: MERCHANT_ROOM, url: "/bg/rooms/merchant_room?frame=290,20,1340,1040&v=1", nodes: shopNodes, order: SHOP_ORDER }
+  ] as const;
+
+  it.each(hostFamilies)("$name: the host descriptor shows when the wire agrees with it", async (family) => {
+    const decoded = recordingDecoder();
+    const calls: ShownCall[] = [];
+    const state = createMirrorState();
+    full(state, family.nodes(), [...family.order]);
+    const wrapper = mountSeatBg(calls, { scenePath: family.scenePath, url: family.url }, state);
+    await nextTick();
+    expect(decoded).toEqual([family.url]);
+    expect(wrapper.get('[data-testid="mirror-static-bg-image"]').attributes("src")).toBe(family.url);
+    expect(calls[calls.length - 1]).toEqual({ scenePath: family.scenePath });
+    wrapper.unmount();
+  });
+
+  it.each(hostFamilies)("$name: the host descriptor shows when the wire carries no bg root (Stage-B)", async (family) => {
+    const decoded = recordingDecoder();
+    const wrapper = mountSeatBg([], { scenePath: family.scenePath, url: family.url });
+    await nextTick();
+    expect(decoded).toEqual([family.url]);
+    expect(wrapper.get('[data-testid="mirror-static-bg-image"]').attributes("src")).toBe(family.url);
+    wrapper.unmount();
+  });
+
+  it.each(hostFamilies)("$name: no descriptor ⇒ nothing, never a URL minted from the seat's wire", async (family) => {
+    const decoded = recordingDecoder();
+    const calls: ShownCall[] = [];
+    const state = createMirrorState();
+    full(state, family.nodes(), [...family.order]);
+    const wrapper = mountSeatBg(calls, null, state);
+    await nextTick();
+    expect(decoded).toEqual([]);
+    expect(wrapper.find('[data-testid="mirror-static-bg-image"]').exists()).toBe(false);
+    expect(calls.every((c) => c.scenePath === null)).toBe(true);
+    wrapper.unmount();
+  });
+
+  // The authoritative twin of "a STALE descriptor loses to the wire": the wire says SPIRE, the descriptor still
+  // says UNDERDOCKS. Neither is shown — the wire's picture is not the host's, and the host's is not this room.
+  it("a descriptor the wire disagrees with shows nothing — neither it nor the wire's URL", async () => {
+    const decoded = recordingDecoder();
+    const calls: ShownCall[] = [];
+    const state = createMirrorState();
+    full(state, combatNodes("bg", SPIRE_BG, "res://scenes/backgrounds/spire/layers/spire_bg_00_c.tscn"), COMBAT_ORDER);
+    const wrapper = mountSeatBg(calls, { scenePath: UNDERDOCKS_BG, url: "/bg/underdocks?v=1" }, state);
+    await nextTick();
+    expect(decoded).toEqual([]);
+    expect(wrapper.find('[data-testid="mirror-static-bg-image"]').exists()).toBe(false);
+    wrapper.unmount();
+  });
+
+  it("a wire room change takes the shown host still down and waits for the host's descriptor", async () => {
+    const decoded = recordingDecoder();
+    const state = createMirrorState();
+    full(state, combatNodes(), COMBAT_ORDER);
+    const host = { scenePath: UNDERDOCKS_BG, url: "/bg/underdocks?layers=aaaaaaaaaaaaaaaa&v=1" };
+    const wrapper = mountSeatBg([], host, state);
+    await nextTick();
+    expect(wrapper.get('[data-testid="mirror-static-bg-image"]').attributes("src")).toBe(host.url);
+
+    // The seat's wire moves to the Neow screen before any descriptor names it.
+    full(state, eventNodes(), EVENT_ORDER);
+    await wrapper.setProps({ revision: state.revision });
+    expect(wrapper.find('[data-testid="mirror-static-bg-image"]').exists()).toBe(false);
+    expect(decoded).toEqual([host.url]);
+
+    // The host's descriptor for the mounted room arrives: that, and only that, is shown.
+    const neow = { scenePath: NEOW_BG, url: "/bg/events/neow?frame=0,0,1920,1080&v=1" };
+    await wrapper.setProps({ descriptor: neow });
+    expect(decoded).toEqual([host.url, neow.url]);
+    expect(wrapper.get('[data-testid="mirror-static-bg-image"]').attributes("src")).toBe(neow.url);
+    wrapper.unmount();
+  });
+
+  // The combat digest-less rung is still the host's own rendering of the host's scene, so a seat keeps it.
+  it("LADDER: a failed digest-qualified host combat URL still retries the digest-less one", async () => {
+    const decoded = recordingDecoder((url) => !url.includes("layers="));
+    const wrapper = mountSeatBg([], { scenePath: UNDERDOCKS_BG, url: "/bg/underdocks?layers=6f2d501405db6ef5&v=1" });
+    await nextTick();
+    expect(decoded).toEqual(["/bg/underdocks?layers=6f2d501405db6ef5&v=1", "/bg/underdocks?v=1"]);
+    expect(wrapper.get('[data-testid="mirror-static-bg-image"]').attributes("src")).toBe("/bg/underdocks?v=1");
+    wrapper.unmount();
+  });
+
+  it.each([
+    { name: "event", scenePath: NEOW_BG, url: "/bg/events/neow?frame=0,0,1920,1080&v=1" },
+    { name: "shop", scenePath: MERCHANT_ROOM, url: "/bg/rooms/merchant_room?frame=290,20,1340,1040&v=1" }
+  ])("$name: a failed host URL leaves the stage blank (no rung, no wire URL)", async (family) => {
+    const decoded = recordingDecoder(() => false);
+    const wrapper = mountSeatBg([], family);
+    await nextTick();
+    expect(decoded).toEqual([family.url]);
+    expect(wrapper.find('[data-testid="mirror-static-bg-image"]').exists()).toBe(false);
+    wrapper.unmount();
+  });
+});
+
+// ================================================================================================================
 // EVENT BACKDROPS — strict convention predicate and unconditional build hold.
 // ================================================================================================================
 describe("event backdrops — predicate", () => {

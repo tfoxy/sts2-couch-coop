@@ -19,24 +19,38 @@ public sealed record CouchCoopStaticBackgroundState(
     IReadOnlyList<string> LayerPaths,
     string? Digest,
     string Url,
-    // EVENTS only: the probed live backdrop frame spec riding the Url ("x,y,scale" in 1080-design units — see
-    // CouchCoopStaticBackgroundProvider.FormatEventFrameSpec). The route's stale-frame rule compares against
-    // this, exactly the way the combat digest rule compares against Digest. Null for combat and for an event
-    // probe that could not read a transform (the Url is then the deterministic reference-lerp variant).
+    // EVENTS and ROOMS only: the probed live backdrop frame spec riding the Url ("x,y,scale" in the 1920x1080
+    // reference — see CouchCoopStaticBackgroundTracker.NormalizeProbedFrameSpec). The route's stale-frame rule
+    // compares against this, exactly the way the combat digest rule compares against Digest. Null for combat and
+    // for a probe that could not read a transform (the Url is then the deterministic reference-lerp variant).
     string? EventFrame = null);
 
 // The static-background tracker, two halves sharing ONE deferred main-thread probe:
 //
-// Stage-A probe/publish: watches the mirror scene stream's SCREEN signature (the same discriminator
-// ResendSessionsIfSceneScreenChanged keys on), and on every change schedules the probe, which locates the live
-// background root — the COMBAT background (child of `BgContainer` under `CombatSceneContainer` whose
-// SceneFilePath matches the res://scenes/backgrounds/<id>/<id>_background.tscn convention; combat wins when both
-// are mounted, e.g. EventRoom-wrapped combat) or, failing that, the EVENT backdrop (the shallowest node whose
-// SceneFilePath matches res://scenes/events/background_scenes/<id>.tscn). For combat it reads the layer
-// sub-scenes actually MOUNTED and publishes {scenePath, layerSet, digest, url}; an event backdrop mounts no
-// variants, so it publishes digest-less. Screens with neither root (map, rest site, menus) publish null; the
-// The server re-sends `session` envelopes when the
-// published value changes, so clients learn the new URL.
+// Stage-A probe/publish: the probe locates the live background root — the COMBAT background (child of
+// `BgContainer` under `CombatSceneContainer` whose SceneFilePath matches the
+// res://scenes/backgrounds/<id>/<id>_background.tscn convention; combat wins when both are mounted, e.g.
+// EventRoom-wrapped combat), failing that the EVENT backdrop (the shallowest node whose SceneFilePath matches
+// res://scenes/events/background_scenes/<id>.tscn), failing that a ROOM backdrop (the committed
+// RoomBackgroundSubtrees table — the shop). For combat it reads the layer sub-scenes actually MOUNTED and publishes
+// {scenePath, layerSet, digest, url}; an event or room backdrop mounts no variants, so it publishes digest-less
+// with a probed frame. Screens with none of the three (map, rest site, menus) publish null. The server re-sends
+// `session` envelopes to EVERY connection — gated ones included — when the published value changes, so clients
+// learn the new URL.
+//
+// THE HOST'S PUBLISH IS THE SOURCE OF TRUTH for every viewer of the run, seat viewers included: a browser on a
+// headless seat shows the HOST's descriptor (received over its gated host socket), never one derived from the
+// seat's own tree. So the probe has to run whenever anybody is showing a still, not only while a host socket
+// streams. Three triggers schedule it, all folding into the one queued probe
+// (CouchCoopStaticBackgroundProbeScheduler):
+//   1. OnSceneDelta — the mirror scene stream's SCREEN signature changed (the discriminator
+//      ResendSessionsIfSceneScreenChanged keys on), or a late event/room backdrop mounted. Runs only while a
+//      host socket streams, because that is when the scene observer exists.
+//   2. RequestProbe — the game's own "the screen on top may have changed" event, which the host's browser server
+//      subscribes to while any viewer shows a still (CouchCoopBrowserServer.RefreshScreenProbeLocked). This is
+//      what keeps the publish live for seat viewers, whose host socket is gated and streams nothing. Each such
+//      probe earns ONE bounded follow-up for backdrops that mount after the event; no timer runs at idle.
+//   3. SetDesiredSkip — the Stage-B verdict flipped (below).
 //
 // Stage-B walk skip (the stamping half): the server's unanimity aggregate hands the tracker a DESIRED-SKIP flag
 // (SetDesiredSkip — every streaming mirror viewer shows the static image), and the probe applies it to the located
@@ -51,41 +65,63 @@ public sealed record CouchCoopStaticBackgroundState(
 // stream-skip configuration.
 //
 // Threading: OnSceneDelta runs on the single scene-observer thread; SetDesiredSkip on whatever thread flips the
-// server aggregate (accept loop / receive loop / teardown); the probe body — locate, stamp, publish — runs on the
-// Godot main thread (Callable.From(...).CallDeferred(), the CouchCoopHeadlessVisualSuspender idiom — reading live
-// Node state off-thread is unsafe). The publish slot is a process-wide volatile (one host process serves one
-// game), read by BrowserStateEnvelopeFactory on whatever thread builds a session envelope.
-public sealed class CouchCoopStaticBackgroundTracker(
-    Action? onPublishedChanged = null,
-    Action<string>? log = null,
-    Action<CouchCoopStaticBackgroundState>? warmVariant = null)
+// server aggregate (accept loop / receive loop / teardown); RequestProbe on the game's main thread, from inside
+// the game's own screen transition (so it only schedules — see its remarks), and once from a server thread when
+// the server arms the screen-event probe; the probe body — locate, stamp,
+// publish — runs on the Godot main thread (Callable.From(...).CallDeferred(), the
+// CouchCoopHeadlessVisualSuspender idiom — reading live Node state off-thread is unsafe). The publish slot is a
+// process-wide volatile (one host process serves one game), read by BrowserStateEnvelopeFactory on whatever
+// thread builds a session envelope.
+public sealed class CouchCoopStaticBackgroundTracker
 {
     private static CouchCoopStaticBackgroundState? _published;
 
     /// <summary>The tracker's published volatile: the current combat bg descriptor source, null when unknown.</summary>
     public static CouchCoopStaticBackgroundState? Published => Volatile.Read(ref _published);
 
+    /// <summary>
+    /// How long after an event-driven probe the one follow-up probe runs. Long enough for a backdrop that mounts a
+    /// frame or more after the game's screen event, short enough that a seat viewer is not left without a picture.
+    /// </summary>
+    public const double FollowUpProbeDelaySeconds = 0.5;
+
     // The engine latch this probe path needs is CouchCoopMod.EngineAvailable — one flag, one writer (Init), read
     // here and by every other native-call gate in the mod. It used to be stored on THIS type, which made it a
     // per-assembly static: Server/*.cs is link-compiled into CouchCoop.Mod.HotReload too, so the reloaded copy
     // could never be set and silently read false. See the flag's own remarks.
 
-    private readonly Action? _onPublishedChanged = onPublishedChanged;
-    private readonly Action<string> _log = log ?? CouchCoopLog.Stderr;
+    private readonly Action? _onPublishedChanged;
+    private readonly Action<string> _log;
 
     // WARM-AT-PUBLISH (see PublishAndNotify): hands the freshly published QUALIFIED variant to whoever can render
     // it. Null in every host that has no renderer behind it (test harnesses, the standalone server), which is why
     // the tracker keeps no provider reference of its own.
-    private readonly Action<CouchCoopStaticBackgroundState>? _warmVariant = warmVariant;
+    private readonly Action<CouchCoopStaticBackgroundState>? _warmVariant;
 
-    // The screen fingerprint last seen (scene-observer thread only). Unlike the session-resend twin, the FIRST
-    // delta of a generation DOES probe: a viewer connecting mid-combat needs the descriptor immediately.
+    // The ONE deferred main-thread probe's fold, and the follow-up an event-driven request earns. Every trigger
+    // (screen signature, game screen event, desired-skip flip) funnels through it, so a burst of any mix of them
+    // costs one probe; the probe reads the LIVE tree and the LIVE desired-skip flag, so it always answers for the
+    // newest state anyway.
+    private readonly CouchCoopStaticBackgroundProbeScheduler _scheduler;
+
+    public CouchCoopStaticBackgroundTracker(
+        Action? onPublishedChanged = null,
+        Action<string>? log = null,
+        Action<CouchCoopStaticBackgroundState>? warmVariant = null)
+    {
+        _onPublishedChanged = onPublishedChanged;
+        _log = log ?? CouchCoopLog.Stderr;
+        _warmVariant = warmVariant;
+        _scheduler = new CouchCoopStaticBackgroundProbeScheduler(
+            ScheduleProbeOnMainThread,
+            ArmFollowUpTimerOnMainThread,
+            _log);
+    }
+
+    // The screen fingerprint last seen (scene-observer thread; cleared by ResetScreenBaseline when the observer
+    // stops). Unlike the session-resend twin, the FIRST delta of a generation DOES probe: a viewer connecting
+    // mid-combat needs the descriptor immediately.
     private string? _lastScreenSignature;
-
-    // 0/1: a probe is already queued for the main thread; further screen flips (or desired-skip flips) before it
-    // runs are folded into it (the probe reads the LIVE tree and the LIVE desired-skip flag, so it always answers
-    // for the newest state anyway).
-    private int _probeScheduled;
 
     // Stage-B: the server's unanimity verdict (every streaming mirror viewer shows the static image). Written by
     // SetDesiredSkip on server threads, read by the main-thread probe.
@@ -116,24 +152,48 @@ public sealed class CouchCoopStaticBackgroundTracker(
             return; // Godot-less server process: nothing to stamp, and native calls would crash
         }
 
-        if (Interlocked.Exchange(ref _probeScheduled, 1) == 1)
-        {
-            return; // a queued probe reads the fresh flag
-        }
-
-        try
-        {
-            ScheduleProbeOnMainThread();
-        }
-        catch (Exception exception)
-        {
-            Volatile.Write(ref _probeScheduled, 0);
-            _log($"static-bg skip scheduling failed: {exception.GetType().Name}: {exception.Message}");
-        }
+        _scheduler.TrySchedule("skip"); // a probe already queued reads the fresh flag
     }
 
     /// <summary>Test seam: the latched desired-skip verdict (SetDesiredSkip must latch even Godot-less).</summary>
     internal bool DesiredSkipForTest => _desiredSkip;
+
+    /// <summary>
+    /// EVENT-DRIVEN probe: the game says the screen on top may have changed. Schedules the (folded) main-thread
+    /// probe plus ONE bounded follow-up for a backdrop that mounts after the event. This is what keeps the host's
+    /// publish live while nobody streams — a seat viewer's host socket is gated, so no scene delta ever arrives.
+    /// </summary>
+    /// <remarks>
+    /// Called from INSIDE the game's own screen transition, so it must ask the engine nothing: no tree read, no
+    /// current-screen read. Reading the game's active screen at that point is the process-killing segfault
+    /// recorded at <c>CouchCoopQrHostPanelController.WakeEvaluation</c>. Everything here is a latch read, two
+    /// interlocked flags and a <c>CallDeferred</c> post; the probe reads the tree a frame boundary later.
+    /// </remarks>
+    public void RequestProbe()
+    {
+        if (!CouchCoopMod.EngineAvailable)
+        {
+            return; // Godot-less server process (test harnesses): nothing to probe, and native calls would crash
+        }
+
+        _scheduler.Request();
+    }
+
+    /// <summary>
+    /// Drop any pending follow-up probe (any thread). The server calls this when it drops its screen-event
+    /// subscription, so a stopped generation cannot probe after it is gone.
+    /// </summary>
+    public void CancelFollowUps() => _scheduler.CancelFollowUps();
+
+    /// <summary>
+    /// Forget the screen signature <see cref="OnSceneDelta"/> last saw. The server calls this when the scene
+    /// observer stops, so a restarted observer on the SAME screen probes on its first delta instead of treating
+    /// it as already announced — the publish may have gone stale while nothing was streaming.
+    /// </summary>
+    public void ResetScreenBaseline() => Volatile.Write(ref _lastScreenSignature, null);
+
+    /// <summary>Test seam: the screen signature <see cref="OnSceneDelta"/> last recorded (null = no baseline).</summary>
+    internal string? LastScreenSignatureForTest => Volatile.Read(ref _lastScreenSignature);
 
     /// <summary>
     /// Feed one mirror scene delta (scene-observer thread). Probes on screen-signature change — and on the
@@ -148,34 +208,21 @@ public sealed class CouchCoopStaticBackgroundTracker(
     public void OnSceneDelta(RuntimeSceneDelta delta)
     {
         var signature = delta.ScreenType + "|" + delta.ScreenInstanceId;
-        if (string.Equals(signature, _lastScreenSignature, StringComparison.Ordinal)
+        if (string.Equals(signature, Volatile.Read(ref _lastScreenSignature), StringComparison.Ordinal)
             && !CarriesUnpublishedEventBackdrop(delta))
         {
             return;
         }
 
-        _lastScreenSignature = signature;
+        Volatile.Write(ref _lastScreenSignature, signature);
         if (!CouchCoopMod.EngineAvailable)
         {
             return; // Godot-less server process (test harnesses): nothing to probe, and native calls would crash
         }
 
-        if (Interlocked.Exchange(ref _probeScheduled, 1) == 1)
-        {
-            return;
-        }
-
-        try
-        {
-            ScheduleProbeOnMainThread();
-        }
-        catch (Exception exception)
-        {
-            // Godot-less host (the hosted-server test harness) or a teardown race: no live tree to probe. Leave
-            // the published value untouched — it can only ever have been set by a real probe in this process.
-            Volatile.Write(ref _probeScheduled, 0);
-            _log($"static-bg probe scheduling failed: {exception.GetType().Name}: {exception.Message}");
-        }
+        // A scheduling failure (a teardown race) leaves the published value untouched — it can only ever have been
+        // set by a real probe in this process.
+        _scheduler.TrySchedule("probe");
     }
 
     // True when this delta upserts an event-backdrop scene root the current publish does not already name —
@@ -199,26 +246,26 @@ public sealed class CouchCoopStaticBackgroundTracker(
         return false;
     }
 
-    // Godot-typed, isolated + NoInlining so a Godot-less process fails HERE (caught above) instead of poisoning
-    // the caller's JIT — the same contract as SpirectlAssetBinaryCache.TryResolveGameDataDir.
+    // Godot-typed, isolated + NoInlining so a Godot-less process fails HERE (caught by the scheduler) instead of
+    // poisoning the caller's JIT — the same contract as SpirectlAssetBinaryCache.TryResolveGameDataDir.
     [MethodImpl(MethodImplOptions.NoInlining)]
     private void ScheduleProbeOnMainThread()
+        => Callable.From(() => _scheduler.RunProbe(ProbeOnMainThread)).CallDeferred();
+
+    // Main thread only (the scheduler arms the follow-up from inside RunProbe). A one-shot SceneTreeTimer that the
+    // tree frees after it fires — never a repeating one. processAlways so a paused tree (a pause menu over the
+    // room) still gets its follow-up; ignoreTimeScale so a slowed game does not stretch it.
+    [MethodImpl(MethodImplOptions.NoInlining)]
+    private static bool ArmFollowUpTimerOnMainThread(Action onElapsed)
     {
-        Callable.From(() =>
+        if (Engine.GetMainLoop() is not SceneTree tree)
         {
-            try
-            {
-                ProbeOnMainThread();
-            }
-            catch (Exception exception)
-            {
-                _log($"static-bg probe failed: {exception.GetType().Name}: {exception.Message}");
-            }
-            finally
-            {
-                Volatile.Write(ref _probeScheduled, 0);
-            }
-        }).CallDeferred();
+            return false;
+        }
+
+        tree.CreateTimer(FollowUpProbeDelaySeconds, processAlways: true, processInPhysics: false, ignoreTimeScale: true)
+            .Timeout += onElapsed;
+        return true;
     }
 
     // Runs on the game main thread (deferred).
@@ -328,21 +375,13 @@ public sealed class CouchCoopStaticBackgroundTracker(
 
         bgRoot = found.Node;
         // The probed LIVE frame: the backdrop root's global transform (its container carries the game's
-        // placement; everything above streams identity), normalized to 1080-design units so a host at any
-        // window height mints the same spec. The recovered placement lerp has DRIFTED from the shipped game
-        // (measured container y 99.4 vs the lerp's 40 on Neow), so the still renders from the measurement,
-        // not the prediction; a probe that cannot read a transform publishes the frame-less reference URL.
-        string? frame = null;
-        if (found.Node is CanvasItem canvasItem)
-        {
-            var transform = canvasItem.GetGlobalTransform();
-            var viewportHeight = canvasItem.GetViewportRect().Size.Y;
-            var normalize = viewportHeight > 0 ? 1080f / viewportHeight : 1f;
-            frame = CouchCoopStaticBackgroundProvider.FormatEventFrameSpec(
-                transform.Origin.X * normalize,
-                transform.Origin.Y * normalize,
-                transform.X.Length() * normalize);
-        }
+        // placement; everything above streams identity), expressed in the 1920x1080 reference the renderer
+        // composes in (NormalizeProbedFrameSpec), so a host at any window size and aspect mints a spec that
+        // lands the still where that host shows the backdrop. The recovered placement lerp has DRIFTED from the
+        // shipped game (measured container y 99.4 vs the lerp's 40 on Neow), so the still renders from the
+        // measurement, not the prediction; a probe that cannot read a transform publishes the frame-less
+        // reference URL.
+        var frame = ProbeFrameSpec(found.Node);
 
         return new CouchCoopStaticBackgroundState(
             found.ScenePath,
@@ -417,17 +456,7 @@ public sealed class CouchCoopStaticBackgroundTracker(
             return null;
         }
 
-        string? frame = null;
-        if (subtree is CanvasItem canvasItem)
-        {
-            var transform = canvasItem.GetGlobalTransform();
-            var viewportHeight = canvasItem.GetViewportRect().Size.Y;
-            var normalize = viewportHeight > 0 ? 1080f / viewportHeight : 1f;
-            frame = CouchCoopStaticBackgroundProvider.FormatEventFrameSpec(
-                transform.Origin.X * normalize,
-                transform.Origin.Y * normalize,
-                transform.X.Length() * normalize);
-        }
+        var frame = ProbeFrameSpec(subtree);
 
         bgRoot = subtree;
         return new CouchCoopStaticBackgroundState(
@@ -436,6 +465,76 @@ public sealed class CouchCoopStaticBackgroundTracker(
             Digest: null,
             CouchCoopStaticBackgroundProvider.BuildImageUrl(StaticBackgroundFamily.Rooms, found.Id, null, frame),
             EventFrame: frame);
+    }
+
+    // Main thread only. The probed frame spec of a live backdrop node, or null when it is not a CanvasItem (no
+    // transform to read). Both lengths come from the SAME space: GetGlobalTransform is in canvas units, and
+    // GetViewportRect is the viewport's visible rect in canvas units — under the game's canvas_items stretch that
+    // is the DESIGN-space size (1920x1080 at any 16:9 window, whatever its pixel size; 1080 tall and wider on a
+    // wider window; 1920 wide and taller on a taller one), never window pixels.
+    private static string? ProbeFrameSpec(Node node)
+    {
+        if (node is not CanvasItem canvasItem)
+        {
+            return null;
+        }
+
+        var transform = canvasItem.GetGlobalTransform();
+        var viewport = canvasItem.GetViewportRect().Size;
+        return NormalizeProbedFrameSpec(
+            transform.Origin.X,
+            transform.Origin.Y,
+            transform.X.Length(),
+            viewport.X,
+            viewport.Y);
+    }
+
+    /// <summary>
+    /// The width the still's frame spec is expressed in: the renderer places a probed frame by assuming it was
+    /// measured in a 1920-wide, 1080-tall reference centred in its wider capture (spirectl's CenterFrame adds half
+    /// the capture's extra width back).
+    /// </summary>
+    public const float FrameReferenceWidth = 1920f;
+
+    /// <summary>The height the still's frame spec is normalized to (the game's design height).</summary>
+    public const float FrameReferenceHeight = 1080f;
+
+    /// <summary>
+    /// A probed backdrop transform (origin + uniform scale, in the viewport's canvas units) as the <c>frame=</c>
+    /// spec the <c>/bg/</c> renderer expects: scaled to a 1080-tall viewport, then shifted so x is measured in
+    /// the 1920-wide reference centred in it.
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// WHY THE SHIFT. The renderer re-centres a probed frame into its 2520-wide capture by adding half the
+    /// capture's extra width over 1920 — it assumes the frame came from a 16:9 layout. A host whose normalized
+    /// viewport is wider (21:9: 2520) or narrower (16:10: 1728) than 1920 would otherwise have that half-margin
+    /// counted twice or not at all, and its still would land off to one side of where the host shows the
+    /// backdrop. Subtracting <c>(normalizedWidth − 1920) / 2</c> here is the inverse of that re-centre, so the
+    /// still composites where the host's own screen has it: a node at the host's horizontal centre maps to 960.
+    /// </para>
+    /// <para>
+    /// A NO-OP AT 16:9, byte for byte. There the normalized width is exactly 1920, the shift is exactly zero, and
+    /// the arithmetic is the same single-precision chain the probe always ran — so a seat (forced to 1920x1080)
+    /// and a 16:9 host keep minting the very URLs they minted before, and their cached stills stay valid.
+    /// </para>
+    /// </remarks>
+    public static string NormalizeProbedFrameSpec(
+        float originX,
+        float originY,
+        float scale,
+        float viewportWidth,
+        float viewportHeight)
+    {
+        var normalize = viewportHeight > 0 ? FrameReferenceHeight / viewportHeight : 1f;
+        // Only with a real viewport: an unreadable size keeps the unshifted spec rather than inventing a margin.
+        var referenceMargin = viewportHeight > 0 && viewportWidth > 0
+            ? ((viewportWidth * normalize) - FrameReferenceWidth) / 2f
+            : 0f;
+        return CouchCoopStaticBackgroundProvider.FormatEventFrameSpec(
+            (originX * normalize) - referenceMargin,
+            originY * normalize,
+            scale * normalize);
     }
 
     // The MOUNTED layer variant, in paint order. The bg root's direct children are the PLACEHOLDER containers the

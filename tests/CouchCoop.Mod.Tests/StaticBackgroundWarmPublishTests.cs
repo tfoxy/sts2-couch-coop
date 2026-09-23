@@ -128,15 +128,33 @@ internal static class StaticBackgroundWarmPublishTests
     // (ComputeBgSkipDesired): a mixed room — one viewer on the still, one on the live scenery — still has
     // somebody waiting on the picture, and warming for them is the entire point. Derived from the two counts the
     // skip aggregate already keeps: `needed` is "streaming AND NOT staticBg", so `streaming - needed` is
-    // "streaming AND staticBg".
+    // "streaming AND staticBg" — plus the GATED static-bg viewers the skip never sees (a seat viewer's host
+    // socket: it streams nothing, but the still it shows is the host's publish).
     private static void WarmAdmissionCountsAnyStaticBgViewer()
     {
-        Assert(!CouchCoopBrowserServer.HasStaticBgViewer(0, 0), "nobody streaming ⇒ nothing to warm for");
-        Assert(!CouchCoopBrowserServer.HasStaticBgViewer(1, 1), "one streaming viewer, and they want the live scenery ⇒ no warm");
-        Assert(CouchCoopBrowserServer.HasStaticBgViewer(1, 0), "one streaming viewer showing the still ⇒ warm");
-        Assert(CouchCoopBrowserServer.HasStaticBgViewer(2, 1), "MIXED: one still + one live ⇒ still warm, unlike the skip verdict");
+        Assert(!CouchCoopBrowserServer.HasStaticBgViewer(0, 0, 0), "nobody streaming, nobody gated on a still ⇒ nothing to warm for");
+        Assert(!CouchCoopBrowserServer.HasStaticBgViewer(1, 1, 0), "one streaming viewer, and they want the live scenery ⇒ no warm");
+        Assert(CouchCoopBrowserServer.HasStaticBgViewer(1, 0, 0), "one streaming viewer showing the still ⇒ warm");
+        Assert(CouchCoopBrowserServer.HasStaticBgViewer(2, 1, 0), "MIXED: one still + one live ⇒ still warm, unlike the skip verdict");
         Assert(!CouchCoopBrowserServer.ComputeBgSkipDesired(2, 1), "…which the unanimity rule would refuse, as it must");
-        Assert(CouchCoopBrowserServer.HasStaticBgViewer(3, 0), "every streaming viewer on the still ⇒ warm");
+        Assert(CouchCoopBrowserServer.HasStaticBgViewer(3, 0, 0), "every streaming viewer on the still ⇒ warm");
+
+        // THE SEAT VIEWER: nobody streams from the host, but a gated host socket declares the still. The host's
+        // publish is the picture that viewer shows, so it must warm — while the skip stays off (nobody streams).
+        Assert(CouchCoopBrowserServer.HasStaticBgViewer(0, 0, 1), "a GATED static-bg viewer alone ⇒ warm (the seat viewer)");
+        Assert(!CouchCoopBrowserServer.ComputeBgSkipDesired(0, 0), "…while the skip it has no vote on stays off");
+        Assert(CouchCoopBrowserServer.HasStaticBgViewer(1, 1, 1), "a live-scenery streamer beside a seat viewer ⇒ still warm");
+
+        // The per-connection classification behind that count.
+        Assert(CouchCoopBrowserServer.IsGatedStaticBgViewer(wantsSceneStream: false, wantsStaticBg: true), "gated + staticBg ⇒ counted");
+        Assert(!CouchCoopBrowserServer.IsGatedStaticBgViewer(wantsSceneStream: false, wantsStaticBg: false), "gated without the still ⇒ not counted");
+        Assert(!CouchCoopBrowserServer.IsGatedStaticBgViewer(wantsSceneStream: true, wantsStaticBg: true), "a STREAMING still-viewer is counted by the streaming arm, not twice");
+
+        // The scenario form over one connection list, side by side with the skip verdict.
+        Assert(CouchCoopBrowserServer.HasStaticBgViewer([(false, true)]), "[gated staticBg] ⇒ warm");
+        Assert(!CouchCoopBrowserServer.ComputeBgSkipDesired([(false, true)]), "[gated staticBg] ⇒ no skip");
+        Assert(!CouchCoopBrowserServer.HasStaticBgViewer([(false, false), (true, false)]), "[gated picker, live streamer] ⇒ nobody on a still");
+        Assert(!CouchCoopBrowserServer.HasStaticBgViewer([]), "no connections ⇒ no warm");
     }
 
     private static CouchCoopStaticBackgroundState Combat(string? digest)

@@ -18,7 +18,8 @@ measurements and retired URL forms.
   thread through the shared `CouchCoopAssetExtractionGate`. Without this the immutable-URL rule and the "only the
   current variant may render" rule combine into a permanent 404: the host keeps no `digest → layer paths`
   history, so a fetch that arrives one publish late can never be served. The warm is gated on at least one
-  streaming viewer having `staticBg` on, and unqualified variants are skipped (the prerender sweep bakes those).
+  viewer having `staticBg` on — a streaming host viewer, or a seat viewer's gated host socket (see Seats below)
+  — and unqualified variants are skipped (the prerender sweep bakes those).
 
 `CouchCoopStaticBackgroundProvider` owns URL construction and cache identity. `StaticBackground.vue` must use
 the streamed URL rather than reconstructing it — with one exception, below.
@@ -29,18 +30,35 @@ Rendered bytes are held in the managed asset cache whose schema comes from spire
 The cache is bounded by the server's managed-cache quota; a cache failure must leave existing readable entries
 available.
 
-Client failure behaviour is **split by family**, and combat is the exception to the "use the streamed URL" rule
-above. Do not "fix" either half back to a single rule.
+Every family fails **closed** — a failure never restores the live scenery or changes the host wire. They differ
+only in whether a second URL exists, and combat's is the exception to the "use the streamed URL" rule above.
 
 | Family | A still that cannot be fetched or decoded |
 | --- | --- |
 | Combat | **The live subtree never returns.** The hold is unconditional while the setting is on. The client ladder is: the descriptor's qualified URL → the digest-less `/bg/{id}?v=1` derived from the same scene path (always renderable, and what the prerender sweep bakes; it may show a different layer variant, which is invisible at background scale) → the still already on screen if it is this same room's → nothing, showing `.mirror-stage`'s `#181818`. |
-| Event, Room | Unchanged fail-open. The client latches `staticBgFailedOpen`, which folds `staticBg:false` onto the wire, the host re-admits the subtree, and the live backdrop renders. Their stills are qualified by a live-probed frame and the frame-less reference variant is visibly mis-placed, so a wrong picture is worse than none. |
+| Event, Room | **The live subtree never returns either** (fail-open was removed Sep-21). No second URL: their stills are qualified by a live-probed frame and the frame-less reference variant is visibly mis-placed, so the ladder is the descriptor's URL → the still already on screen if it is this same room's → nothing. |
 
-Why combat differs: performance is the entire point of the setting, and the combat background subtree is the
-most expensive thing the phone composites (~500 elements versus one `<img>`). Folding a combat failure onto the
-wire was also self-sustaining — the fold re-armed a deferred probe that could publish a different digest and
-strand the next URL too.
+Why fail closed: performance is the entire point of the setting, and a background subtree is the most expensive
+thing the phone composites (~500 elements versus one `<img>`). Folding a failure onto the wire was also
+self-sustaining — the fold re-armed a deferred probe that could publish a different variant and strand the next
+URL too.
+
+## Seats: every viewer shows the host's picture
+
+The background the host has is the background every seat shows — combat, events and rooms alike. A browser that
+joined as a player streams from its own headless seat, but the seat's descriptor is **never** displayed: its
+`frame=`/digest was probed from the seat's tree, and the host's route renders only the host's current publish.
+
+- **Client.** A redirected browser keeps its gated (`watch=0`) host socket, and the host keeps re-sending its
+  `session` (with `staticBackground`) there. `MirrorApp` shows the HOST's descriptor, admitted only while its
+  `scenePath` equals the one the seat's own session names (`hostStaticBackground.ts`); a host a room ahead keeps
+  the last admitted one, a seat a room ahead shows nothing until the host catches up. `StaticBackground`'s
+  `hostAuthoritative` mode never falls back to a wire-minted URL.
+- **Host.** The tracker also probes on the game's own screen-changed event, so the host publishes with no host
+  viewer streaming (the scene observer is far too expensive to run for this). A seat viewer's gated host socket
+  declaring `staticBg` counts toward the warm gate — never toward walk-skip unanimity.
+- **`staticBg` to the host socket is sent alone.** A `settings` message applies its refresh-rate and freeze levers
+  to the process that receives it, so a seat viewer's full settings payload would throttle the host's game.
 
 `X-Cache` reports the provider result. Treat it as diagnostic evidence, not a request to bypass the variant
 contract. The normal route is safe to cache indefinitely because a changed payload changes its URL identity.
