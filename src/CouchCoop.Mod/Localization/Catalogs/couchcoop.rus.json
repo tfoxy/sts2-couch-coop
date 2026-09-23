@@ -126,5 +126,19 @@
   "couchcoop_connection_outcome_detail_failed": "Эта попытка остановлена. Выполните предложенные шаги, затем подключитесь снова.",
   "couchcoop_connection_outcome_detail_recovered": "Экран игры теперь работает. Это предыдущее предупреждение сохранено для справки.",
   "couchcoop_connection_outcome_detail_ended": "Это подключение завершилось до устранения задержки.",
-  "couchcoop_connection_outcome_detail_degraded": "Совместная игра работает с ограничением. Оно сохранено здесь для справки."
+  "couchcoop_connection_outcome_detail_degraded": "Совместная игра работает с ограничением. Оно сохранено здесь для справки.",
+  "couchcoop_seatmods_title": "Моды для игроков в браузере",
+  "couchcoop_seatmods_purpose": "Если мод вызывает сбой игры у игроков в браузере, отключите его для них здесь.",
+  "couchcoop_seatmods_visuals": "Они увидят игру без этого мода, в том числе без его визуальных элементов.",
+  "couchcoop_seatmods_declared": "Здесь перечислены только моды, авторы которых заявляют, что они не меняют игровой процесс. Это слова автора, а не гарантия.",
+  "couchcoop_seatmods_applies_to_new": "Изменения применяются к игрокам, которые присоединятся с этого момента. Все, кто уже подключён, сохраняют моды, с которыми присоединились.",
+  "couchcoop_seatmods_confirm": "Отключить все",
+  "couchcoop_seatmods_cancel": "Отмена",
+  "couchcoop_seatmods_row_on": "Включён",
+  "couchcoop_seatmods_row_off": "Отключён",
+  "couchcoop_seatmods_row_locked": "Включён · заблокирован модом {mod}",
+  "couchcoop_seatmods_row_off_with": "Отключён · отключён вместе с {mods}",
+  "couchcoop_seatmods_detail_locked": "Мод {mod} остаётся включённым, потому что он нужен моду {dependent}, а {dependent} меняет игровой процесс.",
+  "couchcoop_seatmods_detail_off_with": "Мод {mod} отключён, потому что зависит от {mods}. Снова включите {mods}, чтобы вернуть его.",
+  "couchcoop_seatmods_confirm_prompt": "Отключение мода {mod} также отключит моды, которым он нужен: {mods}."
 }

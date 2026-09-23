@@ -126,5 +126,19 @@
   "couchcoop_connection_outcome_detail_failed": "Este intento se detuvo. Sigue los pasos sugeridos y vuelve a conectarte.",
   "couchcoop_connection_outcome_detail_recovered": "La vista del juego ya funciona. Esta advertencia anterior se guarda como referencia.",
   "couchcoop_connection_outcome_detail_ended": "Esta conexión terminó antes de que desapareciera la demora.",
-  "couchcoop_connection_outcome_detail_degraded": "El modo cooperativo funciona con una limitación. Se guarda aquí como referencia."
+  "couchcoop_connection_outcome_detail_degraded": "El modo cooperativo funciona con una limitación. Se guarda aquí como referencia.",
+  "couchcoop_seatmods_title": "Mods para jugadores en el navegador",
+  "couchcoop_seatmods_purpose": "Si un mod hace que falle el juego de los jugadores en el navegador, desactívalo aquí para ellos.",
+  "couchcoop_seatmods_visuals": "Verán el juego sin ese mod, también sin sus elementos visuales.",
+  "couchcoop_seatmods_declared": "Solo aparecen en la lista los mods cuyos autores dicen que no cambian la jugabilidad. Es la palabra del autor, no una garantía.",
+  "couchcoop_seatmods_applies_to_new": "Los cambios se aplican a los jugadores que se unan a partir de ahora. Quien ya esté conectado conserva los mods con los que se unió.",
+  "couchcoop_seatmods_confirm": "Desactivar todos",
+  "couchcoop_seatmods_cancel": "Cancelar",
+  "couchcoop_seatmods_row_on": "Activado",
+  "couchcoop_seatmods_row_off": "Desactivado",
+  "couchcoop_seatmods_row_locked": "Activado · bloqueado por {mod}",
+  "couchcoop_seatmods_row_off_with": "Desactivado · desactivado junto con {mods}",
+  "couchcoop_seatmods_detail_locked": "{mod} sigue activado porque {dependent} lo necesita, y {dependent} cambia la jugabilidad.",
+  "couchcoop_seatmods_detail_off_with": "{mod} está desactivado porque necesita {mods}. Vuelve a activar {mods} para recuperarlo.",
+  "couchcoop_seatmods_confirm_prompt": "Desactivar {mod} también desactiva los mods que lo necesitan: {mods}."
 }

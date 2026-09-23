@@ -54,7 +54,8 @@ internal static class HeadlessUserDirSeeder
     // flags (`mod_settings.mod_list`, one row per (mod id, source) pair in steam/<id>/settings.save). Those the
     // host REWRITES from the mods it found, after it has already decided which ones to load — so the copy is a
     // record of what the host discovered, not of what it chose. The seat's CouchCoop row is therefore pinned
-    // explicitly after the copy; see HeadlessSeatModSelection.
+    // explicitly after the copy, along with any mod the host switched off for its seats; see
+    // HeadlessSeatModSelection.
     private static readonly string[] SeedCopyDirs = ["default", "mod_configs", "steam"];
 
     /// <summary>
@@ -135,26 +136,38 @@ internal static class HeadlessUserDirSeeder
     /// host currently has — language, fps, fast mode — are what the new instance starts with.
     /// Best-effort: returns null if the slot dir can't be prepared (the caller then launches without isolation).
     /// </summary>
-    public static HeadlessUserDirPrepareResult? Prepare(int slot)
+    /// <param name="hostChosenSeatModRows">
+    /// The mod-list rows the host switched off for its seats, already resolved and cascaded. Handed in as data
+    /// rather than read here, because this file is source-linked into the game-free macOS suite and the
+    /// inventory behind them is not. Empty means none — and is still worth passing, because it is what makes
+    /// the seat's "which mods were disabled" line say so affirmatively.
+    /// </param>
+    public static HeadlessUserDirPrepareResult? Prepare(int slot, IReadOnlyCollection<SeatModRowKey> hostChosenSeatModRows)
         => Prepare(
             slot,
             CurrentPlatform(),
             Environment.GetEnvironmentVariable,
             Environment.GetFolderPath,
-            HeadlessSeatModSelection.SourceToDisableForThisHost());
+            HeadlessSeatModSelection.SourceToDisableForThisHost(),
+            hostChosenSeatModRows);
 
     /// <param name="seatModSourceToDisable">
     /// The <c>couchcoop</c> mod-list row source the seeded profiles must disable, so the seat loads the same copy
-    /// of the mod as this host. <see langword="null"/> leaves the seeded mod list exactly as copied — which is
-    /// what the pure seeding tests want, and what a host that cannot tell where its own CouchCoop came from must
-    /// do rather than guess.
+    /// of the mod as this host. <see langword="null"/> leaves that row exactly as copied — which is what the
+    /// pure seeding tests want, and what a host that cannot tell where its own CouchCoop came from must do
+    /// rather than guess.
+    /// </param>
+    /// <param name="hostChosenSeatModRows">
+    /// See the public overload. <see langword="null"/> (the pure seeding tests) applies no host choice and
+    /// writes no per-seat line.
     /// </param>
     internal static HeadlessUserDirPrepareResult? Prepare(
         int slot,
         HeadlessUserDirPlatform platform,
         Func<string, string?> getEnvironmentVariable,
         Func<Environment.SpecialFolder, string> getFolderPath,
-        string? seatModSourceToDisable = null)
+        string? seatModSourceToDisable = null,
+        IReadOnlyCollection<SeatModRowKey>? hostChosenSeatModRows = null)
     {
         try
         {
@@ -258,10 +271,11 @@ internal static class HeadlessUserDirSeeder
             }
 
             // AFTER the copy, and only over the copy: the seat's own settings.save now says which copy of
-            // CouchCoop it may load, instead of inheriting a mod list the host rewrote from discovery.
-            if (seatModSourceToDisable is not null)
+            // CouchCoop it may load, instead of inheriting a mod list the host rewrote from discovery — and which
+            // mods the host switched off for its seats.
+            if (seatModSourceToDisable is not null || hostChosenSeatModRows is not null)
             {
-                HeadlessSeatModSelection.PinSeatProfiles(slotUserDir, seatModSourceToDisable, slot);
+                HeadlessSeatModSelection.ApplyToSeat(slotUserDir, seatModSourceToDisable, hostChosenSeatModRows, slot);
             }
 
             return new HeadlessUserDirPrepareResult(slotBase, slotUserDir, policy.EnvironmentVariables, hostUserDir);

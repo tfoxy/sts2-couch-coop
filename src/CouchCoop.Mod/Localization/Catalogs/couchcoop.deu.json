@@ -126,5 +126,19 @@
   "couchcoop_connection_outcome_detail_failed": "Dieser Versuch wurde beendet. Folge den vorgeschlagenen Schritten und verbinde dich dann erneut.",
   "couchcoop_connection_outcome_detail_recovered": "Die Spielansicht funktioniert jetzt. Diese frühere Warnung bleibt als Hinweis gespeichert.",
   "couchcoop_connection_outcome_detail_ended": "Diese Verbindung endete, bevor die Verzögerung behoben war.",
-  "couchcoop_connection_outcome_detail_degraded": "Couch-Koop läuft mit einer Einschränkung. Sie wird hier zur Information gespeichert."
+  "couchcoop_connection_outcome_detail_degraded": "Couch-Koop läuft mit einer Einschränkung. Sie wird hier zur Information gespeichert.",
+  "couchcoop_seatmods_title": "Mods für Browser-Spieler",
+  "couchcoop_seatmods_purpose": "Wenn eine Mod die Spiele von Browser-Spielern abstürzen lässt, deaktivieren Sie sie hier für diese Spieler.",
+  "couchcoop_seatmods_visuals": "Diese Spieler sehen das Spiel dann ohne die Mod, auch ohne ihre visuellen Elemente.",
+  "couchcoop_seatmods_declared": "Aufgeführt sind nur Mods, deren Autoren angeben, dass sie das Gameplay nicht verändern. Das ist die Aussage des Autors, keine Garantie.",
+  "couchcoop_seatmods_applies_to_new": "Änderungen gelten für Spieler, die ab jetzt beitreten. Wer bereits verbunden ist, behält die Mods, mit denen er beigetreten ist.",
+  "couchcoop_seatmods_confirm": "Alle deaktivieren",
+  "couchcoop_seatmods_cancel": "Abbrechen",
+  "couchcoop_seatmods_row_on": "An",
+  "couchcoop_seatmods_row_off": "Aus",
+  "couchcoop_seatmods_row_locked": "An · gesperrt durch {mod}",
+  "couchcoop_seatmods_row_off_with": "Aus · zusammen mit {mods} deaktiviert",
+  "couchcoop_seatmods_detail_locked": "{mod} bleibt aktiviert, weil {dependent} sie benötigt und {dependent} das Gameplay verändert.",
+  "couchcoop_seatmods_detail_off_with": "{mod} ist deaktiviert, weil sie {mods} benötigt. Aktivieren Sie {mods} wieder, um diese Mod zurückzuholen.",
+  "couchcoop_seatmods_confirm_prompt": "Wenn Sie {mod} deaktivieren, werden auch die Mods deaktiviert, die sie benötigen: {mods}."
 }
