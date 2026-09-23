@@ -195,13 +195,21 @@ run `clrstack -all` there, and copy the *text* back.
 
 Usually you do not need to: for a managed crash, event 1026 already gave you the stack.
 
+**Which module faulted does not need Windows at all.** A minidump's exception stream and module list are
+plain data: the pure-Python `minidump` package reads them on Linux and maps the faulting address to a module
+and offset, no symbols needed. Prefer the **crashpad** dump from the seat's own `sentry/reports/` for this: it
+is captured at the original fault, while the WER dump of the same process records CoreCLR's
+unhandled-exception path — the same lie as event 1000.
+
 ## 6. What this rig has already settled
 
-- A browser player's headless seat can be killed at run start by the game's **Ancient event visual
-  instantiation** — the Neow event uses that layout, which is why it presents as "crashes when the run
-  starts". spirectl already diagnosed and guarded this crash, but its guard sits under `BridgeOnly/` and is
-  installed only by the bridge runtime, so CouchCoop's seats never get it. Full stack, build identity, the
-  loaded third-party mods and the open questions are in
-  `.sts2/research/windows-seat-neow-crash-20260922/results.md`.
+- A browser player's headless seat was killed at run start, at the Neow event, by an **audio call into the
+  FMOD system the seat had already released** — not by the event's visuals, which is what the managed stack
+  first suggested. Another mod that initialized before CouchCoop had Harmony-patched the event layout, and a
+  vanilla audio forward was inlined into its wrapper before CouchCoop's seat audio mute existed, so the mute
+  never saw it. **Mod load order is the variable, not Windows**: the same A/B reproduces on Linux. The
+  crashpad dump named the FMOD GDExtension where event 1000 named `coreclr.dll` — read the crashpad dump
+  first. Fixed by closing the audio proxy in `HeadlessFmodShutdown` before release. Evidence, the Linux
+  A/B and the full chain are in `.sts2/research/windows-seat-neow-crash-20260922/root-cause.md`.
 - The Windows log paths in §2, including the per-slot seat path, are now confirmed on real hardware rather
   than inferred.

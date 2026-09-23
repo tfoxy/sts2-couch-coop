@@ -1,4 +1,5 @@
 using Godot;
+using MegaCrit.Sts2.Core.Nodes.Audio;
 using System;
 using System.Collections.Generic;
 using System.Linq;
@@ -41,6 +42,18 @@ namespace CouchCoop.Mod.Session;
 /// releasing the system, leaving no window in between. Read that class for the ladder and for the residual
 /// risk we knowingly keep.
 ///
+/// THE MUTE PATCH HAS A SECOND HOLE, AND IT IS IN VANILLA CODE. A Harmony prefix rewrites a method's own body,
+/// never a copy the JIT already inlined into a caller. When a mod that initializes BEFORE CouchCoop patches some
+/// method, that method's replacement is JIT-compiled right then, and its small callees — a vanilla audio forward
+/// among them — can be inlined into it, frozen un-muted before our prefix exists. Measured 2026-09-22 on a
+/// Windows seat whose mod order put CouchCoop last: at the Neow event such a copy called the audio manager's
+/// <c>Proxy</c> GDScript, which had bound the FMOD singleton at compile time (so the name stub never reached
+/// it), and the seat died with a native access violation inside the FMOD library. So <see cref="Teardown"/>
+/// closes that NODE too (<see cref="FmodSingletonStub.CloseProxyDoorway"/>) — first, before anything else is
+/// touched — and releases nothing if it cannot verify the closure. Readiness therefore waits for the proxy as
+/// well as for FMOD. The per-run music controller's proxy does not exist yet at teardown;
+/// <see cref="HeadlessAudioMutePatch"/> closes it as each run builds it.
+///
 /// A second, quieter ordering hazard: the addon's <c>FmodListener2D</c>/<c>FmodListener3D</c> nodes call
 /// <c>FmodServer.remove_listener()</c> from their own <c>_exit_tree</c>. Left attached, that only fires when the
 /// whole <see cref="SceneTree"/> tears down at process exit — long after <c>shutdown()</c> already ran — and
@@ -52,9 +65,10 @@ namespace CouchCoop.Mod.Session;
 /// Implementation mirrors <see cref="CouchCoopHeadlessVisualSuspender"/> / <see cref="CouchCoopHeadlessCpuProfiler"/>:
 /// the mod has no Godot source generator so a custom <c>Node._Process</c> never fires; a background <see cref="Task"/>
 /// waits for the SceneTree root, then a built-in <see cref="Godot.Timer"/> drives an on-main-thread PROBE that waits
-/// until <c>FmodServer</c> + <c>FmodManager</c> are both ready (plus a short settle for startup banks) and performs
-/// the one-shot teardown. All tree/singleton access happens on the game main thread. Output via
-/// <see cref="CouchCoopLog"/> lands (tagged <c>[INFO]</c>) in the per-slot <c>user://logs/godot.log</c>.
+/// until <c>FmodServer</c>, <c>FmodManager</c> and the audio manager's proxy are all present (plus a short settle
+/// for startup banks) and performs the one-shot teardown. All tree/singleton access happens on the game main
+/// thread. Output via <see cref="CouchCoopLog"/> lands (tagged <c>[INFO]</c>) in the per-slot
+/// <c>user://logs/godot.log</c>.
 ///
 /// Installed from <see cref="CouchCoopMod"/>.Init's headless branch, after
 /// <see cref="HeadlessAudioMutePatch.Apply"/>.
@@ -92,6 +106,11 @@ public static class HeadlessFmodShutdown
     private static bool _done;
     private static int _readinessProbes;
     private static int _settleProbes;
+    private static bool _released;
+
+    /// <summary>Whether <c>shutdown()</c> has been called on this seat. Main thread only. Read by the per-run
+    /// proxy closure so its failure line can say whether an open doorway is a crash or merely a stray sound.</summary>
+    internal static bool SystemReleased => _released;
 
     /// <summary>Idempotent.</summary>
     public static void Install()
@@ -154,11 +173,14 @@ public static class HeadlessFmodShutdown
         };
         timer.Timeout += () => Probe(root, timer);
         root.AddChild(timer);
-        CouchCoopLog.Info("[fmod] headless FMOD-disable armed; waiting for FmodServer + FmodManager to be ready.");
+        CouchCoopLog.Info(
+            "[fmod] headless FMOD-disable armed; waiting for FmodServer + FmodManager + the audio manager's "
+            + "proxy to be ready.");
     }
 
-    // Runs on the game main thread (Timer.Timeout). Waits until the FmodServer singleton AND the FmodManager autoload
-    // both exist (+ a short settle for startup banks), then performs the one-shot teardown and removes the timer.
+    // Runs on the game main thread (Timer.Timeout). Waits until the FmodServer singleton, the FmodManager autoload
+    // and the audio manager's proxy all exist (+ a short settle for startup banks), then performs the one-shot
+    // teardown and removes the timer.
     private static void Probe(Node root, Godot.Timer timer)
     {
         if (_done || !GodotObject.IsInstanceValid(root))
@@ -168,16 +190,35 @@ public static class HeadlessFmodShutdown
         }
 
         var fmodManager = root.GetNodeOrNull(FmodManagerAutoloadPath);
-        var ready = Engine.HasSingleton(FmodServerSingleton)
-            && fmodManager is not null
-            && GodotObject.IsInstanceValid(fmodManager);
+        var hasServer = Engine.HasSingleton(FmodServerSingleton);
+        var hasManager = fmodManager is not null && GodotObject.IsInstanceValid(fmodManager);
+        // The audio manager's forwarding node is part of readiness, not an afterthought of teardown: releasing the
+        // system while it still forwards is the crash this class exists to avoid (see the class doc), and waiting
+        // here costs nothing on a seat where the game simply has not built its audio manager yet.
+        var audioProxy = FindAudioManagerProxy();
 
-        if (!ready)
+        if (!hasServer || !hasManager || audioProxy is null)
         {
             if (++_readinessProbes > MaxReadinessProbes)
             {
-                CouchCoopLog.Info(
-                    "[fmod] gave up waiting for FmodServer/FmodManager — FMOD left running (nothing disabled).");
+                var missing = string.Join(", ", new[]
+                {
+                    hasServer ? null : "the FmodServer singleton",
+                    hasManager ? null : "the FmodManager autoload",
+                    audioProxy is not null ? null : $"the audio manager's '{FmodSingletonStub.ProxyNodeName}' node",
+                }.Where(static part => part is not null));
+                var line = $"[fmod] gave up waiting for {missing} — FMOD left running (nothing disabled).";
+                // A missing proxy on a build that DOES have FMOD means the game moved the node this seat relies on
+                // to make a release safe. Survivable (FMOD stays up), but it is the line to find afterwards.
+                if (hasServer && hasManager)
+                {
+                    CouchCoopLog.Warn(line);
+                }
+                else
+                {
+                    CouchCoopLog.Info(line);
+                }
+
                 _done = true;
                 CleanupTimer(timer);
             }
@@ -191,16 +232,51 @@ public static class HeadlessFmodShutdown
             return;
         }
 
-        Teardown(root, fmodManager!);
+        Teardown(root, fmodManager!, audioProxy);
         _done = true;
         CleanupTimer(timer);
+    }
+
+    // Main thread. Through the manager's public instance, never through anything it keeps privately: that is the
+    // node the game resolves its own forwards to, and the object a frozen copy of a forward still points at.
+    private static Node? FindAudioManagerProxy()
+    {
+        var manager = NAudioManager.Instance;
+        if (manager is null || !GodotObject.IsInstanceValid(manager))
+        {
+            return null;
+        }
+
+        var proxy = manager.GetNodeOrNull(FmodSingletonStub.ProxyNodeName);
+        return proxy is not null && GodotObject.IsInstanceValid(proxy) ? proxy : null;
     }
 
     // Runs on the game main thread. ORDER IS THE SAFETY CONTRACT: stop the per-frame FmodServer.update() driver
     // BEFORE releasing the system, so nothing calls update() on freed state (the prior SIGSEGV cause). Reached only
     // when fmodManager is a valid node — the invariant "never shutdown() unless the update() driver was neutralized".
-    private static void Teardown(Node root, Node fmodManager)
+    // The same invariant now covers the forwarding node: never shutdown() unless its doorway is verifiably closed.
+    private static void Teardown(Node root, Node fmodManager, Node audioProxy)
     {
+        // 0) Close the audio manager's forwarding node FIRST, before anything else is touched, so that if it cannot
+        // be closed FMOD is left exactly as it was — initialized, still driven by update(), fully working.
+        //
+        // FALLBACK, decided deliberately: an unclosable proxy means we do NOT release the system. The two failure
+        // costs are not comparable. A live doorway to a RELEASED system is a dead seat the first time anything
+        // calls through it — and the caller we cannot stop is a copy frozen into another mod's patch, which fires
+        // on an ordinary game event (it did, at Neow). A live system behind that doorway is at worst a stray sound
+        // on a seat nobody listens to, plus the mixer thread's CPU we were trying to reclaim. Keeping a seat
+        // alive outranks the CPU win, so the win is what we give up. Logged as an ERROR, never silently.
+        var closure = FmodSingletonStub.CloseProxyDoorway(
+            audioProxy,
+            "audio manager",
+            "NOT releasing FMOD on this seat: a live doorway to a released system crashes it the first time a "
+            + "forward reaches it, while a live system is at worst a stray sound. FMOD left running and untouched "
+            + "(update() still driven, listeners attached).");
+        if (closure.Outcome != FmodProxyOutcome.Stubbed)
+        {
+            return; // CloseProxyDoorway already logged the one ERROR line for this outcome.
+        }
+
         // 1) Kill the update() driver: the FmodManager autoload's per-frame _process.
         fmodManager.SetProcess(false);
         fmodManager.SetPhysicsProcess(false);
@@ -243,6 +319,7 @@ public static class HeadlessFmodShutdown
         if (server is not null && GodotObject.IsInstanceValid(server) && server.HasMethod(ShutdownMethod))
         {
             server.Call(ShutdownMethod);
+            _released = true;
             CouchCoopLog.Info(
                 "[fmod] FmodServer.shutdown() called — mixer/DSP thread released; headless audio fully off.");
         }
