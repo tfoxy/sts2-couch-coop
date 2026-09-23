@@ -128,6 +128,11 @@ public static class CouchCoopMod
                 CouchCoopLog.Info($"headless input map: removed {removedJoypadBindings} joypad binding(s)");
             }
 
+            // Browser input needs the root window to keep embedding its subwindows, and a mod that opens its own OS
+            // window (BaseLib's log window) turns that off: every browser tap then does nothing, and on a seat every
+            // key too. Host and seats alike, and early, before any mod can open a window. Idempotent.
+            RootWindowEmbeddingGuard.Install();
+
             CouchCoopLocalization.Initialize();
 
             // Resolve (and, when the game build or a cache generation has moved, purge) the on-disk cache before

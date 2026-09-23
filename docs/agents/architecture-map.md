@@ -173,6 +173,20 @@ This map records current contracts, not retired implementation alternatives.
   | `set-scroll-offset` | `frontend/src/mirror/MirrorApp.vue`, the eager-scroll absolute channel | in use, awaiting the maintainer's call. View state only — it moves a scroll container, it does not commit a player choice |
 - Read-only spirectl surfaces — state reads, the scene stream, screenshots, inspection — are unaffected. This
   rule is about causing state changes.
+- **Injected input needs the root window to embed its subwindows** — the game's shipped setting, which another
+  mod can turn off to open a separate OS window of its own (BaseLib's log window, `OpenLogWindowOnStartup` /
+  `OpenLogWindowOnError`). With embedding off, Godot takes hover from the real OS pointer instead of the event,
+  so an injected hover lands nowhere and a press never focuses the hover-first widget: every browser tap does
+  nothing. On a `--headless` seat it is worse: the headless display server gives the "native" window the main
+  window's id and its single input-callback slot, so that window receives ALL of the seat's input, keys and pad
+  included. Seats copy the host's `mod_configs/`, so they open the window whenever the host does.
+  [`RootWindowEmbeddingGuard`](../../src/CouchCoop.Mod/Session/RootWindowEmbeddingGuard.cs) turns embedding back
+  on — from the root's `child_entered_tree`, which fires while such a window is still hidden, plus a 1 s
+  backstop. On a desktop the mod's window gets `ForceNative` and stays a separate OS window; on a seat it is kept
+  hidden and the root's input callback is restored. Every repair logs a `root window embedding guard:`
+  begin/end pair. Limit: if an *embedded* window is open in the game view when the mod asks, Godot refuses the
+  request and the mod's window embeds in the game view with embedding never turned off — the same with the mod
+  alone, and nothing for the guard to repair.
 
 ## View scale
 - Files: table `src/CouchCoop.MirrorProtocol/SceneModel/ViewScale.cs`, pure stamp index
