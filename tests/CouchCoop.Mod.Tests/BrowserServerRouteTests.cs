@@ -395,8 +395,9 @@ if (args is ["seat-timeout", ..])
 }
 
 // `dotnet run --project tests/CouchCoop.Mod.Tests -- static-bg` runs the whole STATIC BACKGROUND family ALONE:
-// the /bg/ image producer, the event and room families, the tracker's mounted-layer probe, warm-at-publish, and
-// the Stage-B walk-skip unanimity. Same rationale as `host-guards` / `beta-targets` above, and it is not
+// the /bg/ image producer, the event and room families, the tracker's mounted-layer probe, warm-at-publish, the
+// host-authority probe (scheduler fold + follow-up, frame normalization, the gated seat viewer's warm gate and
+// screen-event subscription over real sockets), and the Stage-B walk-skip unanimity. Same rationale as `host-guards` / `beta-targets` above, and it is not
 // optional here: all five of these are registered near the END of the normal sequence, which is long and which
 // aborted before reaching them until 2026-09-17 (see the note above HeadlessAudioMuteTargetsTests). This verb
 // is what makes a static-background change cheap to verify on its own.
@@ -406,6 +407,7 @@ if (args is ["static-bg", ..])
     await StaticBackgroundEventsTests.RunAsync();
     StaticBackgroundLayerProbeTests.Run();
     StaticBackgroundWarmPublishTests.Run();
+    StaticBackgroundHostProbeTests.Run();
     StaticBackgroundRenderMetricsTests.Run();
     WalkSkipUnanimityTests.Run();
     // …and the ROUTE half over a real listener (grammar, digest/frame currency, X-Cache, the codec headers).
@@ -754,6 +756,9 @@ StaticBackgroundLayerProbeTests.Run();
 // …and WARM-AT-PUBLISH: the qualified variant is rendered the moment it is published, which is what stops a
 // digest/frame-qualified URL from 404ing forever once the tracker has moved on.
 StaticBackgroundWarmPublishTests.Run();
+// …and the HOST-AUTHORITY halves: the probe scheduler's fold and bounded follow-up (the game-screen-event trigger
+// that keeps the host's publish live for seat viewers) and the host-aspect-safe frame normalization.
+StaticBackgroundHostProbeTests.Run();
 // Stage-B walk skip: the pure unanimity decision, the `?staticBg=` polarity, the settings-envelope wire twins,
 // the tracker's Godot-less desired-skip latch and the retained-map re-admission shape. The live socket half
 // (accept parse, live flips, disconnects, valve) rides BrowserServerRouteTests below.
@@ -1066,6 +1071,8 @@ internal sealed class BrowserServerRouteTests
         // Stage-A static background: the /bg/ route belt and the session envelope's descriptor, on DEDICATED
         // servers (the tracker's published slot is process-wide and the env valve is scoped per assert).
         await AssertStaticBackgroundRoutesAsync(root.Path);
+        // …and the host-authority half: a gated seat viewer keeps the host's publish live and warm.
+        await AssertGatedStaticBgViewerKeepsHostPublishLiveAsync(root.Path);
         await AssertStaticBackgroundEnvelopeAsync();
         // S9/S10 perf report routes (same reason for a dedicated server: both recorders are process-wide).
         await AssertPerfReportRoutesAsync(root.Path);
@@ -1847,7 +1854,196 @@ internal sealed class BrowserServerRouteTests
     {
         using var root = new TempStaticRoot();
         await AssertStaticBackgroundRoutesAsync(root.Path);
+        await AssertGatedStaticBgViewerKeepsHostPublishLiveAsync(root.Path);
         Console.WriteLine("static background routes: ok");
+    }
+
+    // HOST AUTHORITY over real sockets. A browser on a headless seat keeps its HOST socket open gated (`watch=0`)
+    // and shows the host's published still, delivered on that socket's `session` re-sends — so the host must keep
+    // that publish live and warm for a viewer that streams nothing. Observed through the server's seams: the gated
+    // static-bg count, the warm verdict, and the screen-event subscription (the game event itself is injected; the
+    // handler it is handed is the tracker's RequestProbe, inert in this Godot-less process). The skip aggregate
+    // must not move: a gated viewer has no vote on what the walk streams.
+    private static async Task AssertGatedStaticBgViewerKeepsHostPublishLiveAsync(string staticRoot)
+    {
+        var subscribes = 0;
+        var disposes = 0;
+        Action? handler = null;
+        IDisposable? Subscribe(Action onUpdated)
+        {
+            subscribes++;
+            handler = onUpdated;
+            return new CallbackDisposable(() => disposes++);
+        }
+
+        using var cacheRoot = new TempResourceCacheRoot();
+        var runtime = new RecordingSpirectlRuntime { Mode = RuntimeStateMode.MultiplayerRun };
+        var envelopeFactory = new BrowserStateEnvelopeFactory(new CouchCoopRuntimeHost(new CouchCoopRuntimeDependencies(runtime, runtime, runtime, runtime, runtime, runtime, runtime, runtime, runtime, runtime)));
+        await using var server = new CouchCoopBrowserServer(
+            new StaticSpaFileProvider(staticRoot),
+            new CapturingAssetAdapter(),
+            envelopeFactory,
+            resourceCacheRoot: cacheRoot.Path,
+            isHeadlessClient: false,
+            log: _ => { },
+            subscribeScreenUpdated: Subscribe);
+        var baseUri = await server.StartAsync();
+
+        Expect(
+            server.StaticBgViewerStateForTest() is { GatedStaticBgViewers: 0, HasStaticBgViewer: false, ScreenProbeArmed: false },
+            "a host with no browser holds no screen subscription (the idle-host rule)");
+        Expect(subscribes == 0, "…and never asked for one");
+
+        // ---- 1. the seat viewer's host socket: gated, on the still ----------------------------------------
+        using var seatViewer = new ClientWebSocket();
+        await seatViewer.ConnectAsync(
+            new UriBuilder(baseUri) { Scheme = "ws", Path = "/ws", Query = "watch=0&staticBg=1&cardFlight=1&handTween=1&trailDrive=0" }.Uri,
+            CancellationToken.None);
+        using (var session = JsonDocument.Parse(await ReadWsMessageAsync(seatViewer)))
+        {
+            AssertAnonymousConnectSession(session.RootElement);
+        }
+
+        Expect(
+            await WaitForAsync(() => server.StaticBgViewerStateForTest().GatedStaticBgViewers == 1),
+            "a gated `?staticBg=1` connection is counted as a gated static-bg viewer");
+        var armed = server.StaticBgViewerStateForTest();
+        Expect(armed.HasStaticBgViewer, "…and admits the warm, although nobody streams");
+        Expect(armed.ScreenProbeArmed && subscribes == 1, $"…and arms the host's screen-event probe once (subscribes={subscribes})");
+        var skip = server.BgSkipStateForTest();
+        Expect(
+            skip is { StreamingMirrorConnections: 0, BgStreamNeeded: 0, BgSkipDesired: false },
+            "the skip unanimity is untouched: a gated viewer does not engage the walk skip");
+        Expect(server.StaticBgTrackerForTest is not null, "arming created the tracker the handler targets");
+
+        // The game raising its screen event: the handler must be callable from anywhere and, Godot-less, inert.
+        Expect(handler is not null, "the subscription was handed a handler");
+        handler!();
+        handler!();
+
+        // ---- 2. a `settings` staticBg flip on the GATED socket re-evaluates the counts ------------------------
+        await SendStaticBgSettingsAsync(seatViewer, false);
+        Expect(
+            await WaitForAsync(() => server.StaticBgViewerStateForTest().GatedStaticBgViewers == 0),
+            "`settings staticBg:false` on a gated socket drops it from the gated static-bg count");
+        Expect(
+            server.StaticBgViewerStateForTest() is { HasStaticBgViewer: false, ScreenProbeArmed: false } && disposes == 1,
+            $"…nobody shows a still any more, so the warm gate closes and the subscription is disposed (disposes={disposes})");
+
+        await SendStaticBgSettingsAsync(seatViewer, true);
+        Expect(
+            await WaitForAsync(() => server.StaticBgViewerStateForTest().ScreenProbeArmed),
+            "`settings staticBg:true` (the staticBg-only push a joined browser sends its host socket) re-arms it");
+        Expect(subscribes == 2 && disposes == 1, $"…with exactly one fresh subscription (subscribes={subscribes}, disposes={disposes})");
+
+        // ---- 3. a gated picker viewer WITHOUT the still changes nothing ------------------------------------
+        using var picker = new ClientWebSocket();
+        await picker.ConnectAsync(
+            new UriBuilder(baseUri) { Scheme = "ws", Path = "/ws", Query = "watch=0&staticBg=0&cardFlight=1&handTween=1&trailDrive=0" }.Uri,
+            CancellationToken.None);
+        _ = await ReadWsMessageAsync(picker);
+        await Task.Delay(100);
+        Expect(
+            server.StaticBgViewerStateForTest() is { GatedStaticBgViewers: 1, ScreenProbeArmed: true } && subscribes == 2,
+            "a gated viewer without the still is not counted and does not re-subscribe");
+
+        // ---- 3b. a host stream stopping resets the tracker's screen baseline --------------------------------
+        // Otherwise a stream restarted on the SAME screen would match the stale signature and never re-probe.
+        using (var watcher = new ClientWebSocket())
+        {
+            await watcher.ConnectAsync(
+                new UriBuilder(baseUri) { Scheme = "ws", Path = "/ws", Query = "watch=1&staticBg=1&cardFlight=1&handTween=1&trailDrive=0" }.Uri,
+                CancellationToken.None);
+            _ = await ReadWsMessageAsync(watcher);
+            Expect(await WaitForSceneSubscriptionAsync(runtime, active: true), "the host stream started");
+            runtime.PushSceneDelta(BuildSampleSceneDelta());
+            Expect(
+                await WaitForAsync(() => server.StaticBgTrackerForTest?.LastScreenSignatureForTest == "run|instance-1"),
+                "the streamed delta recorded the tracker's screen baseline");
+            await CloseWebSocketSilentlyAsync(watcher);
+            Expect(await WaitForSceneSubscriptionAsync(runtime, active: false), "the host stream stopped");
+            Expect(
+                await WaitForAsync(() => server.StaticBgTrackerForTest?.LastScreenSignatureForTest is null),
+                "stopping the scene observer reset the tracker's screen baseline");
+        }
+
+        Expect(
+            server.StaticBgViewerStateForTest() is { GatedStaticBgViewers: 1, ScreenProbeArmed: true } && subscribes == 2,
+            "the streamer coming and going left the seat viewer's subscription alone");
+
+        // ---- 4. the seat viewer leaving drops the subscription; a generation stop cannot leak it ---------
+        await CloseWebSocketSilentlyAsync(seatViewer);
+        Expect(
+            await WaitForAsync(() => !server.StaticBgViewerStateForTest().ScreenProbeArmed),
+            "the last still-viewer disconnecting disposes the subscription");
+        Expect(disposes == 2, $"…exactly once more (disposes={disposes})");
+
+        using var returning = new ClientWebSocket();
+        await returning.ConnectAsync(
+            new UriBuilder(baseUri) { Scheme = "ws", Path = "/ws", Query = "watch=0&staticBg=1&cardFlight=1&handTween=1&trailDrive=0" }.Uri,
+            CancellationToken.None);
+        _ = await ReadWsMessageAsync(returning);
+        Expect(
+            await WaitForAsync(() => server.StaticBgViewerStateForTest().ScreenProbeArmed) && subscribes == 3,
+            "a returning seat viewer re-arms it");
+
+        var readReload = ReadNextWsMessageOfTypeAsync(returning, "server-reload");
+        var stop = server.StopGenerationAsync("server-reload");
+        _ = await readReload;
+        await CloseWebSocketSilentlyAsync(returning);
+        await CloseWebSocketSilentlyAsync(picker);
+        await stop;
+        Expect(
+            server.StaticBgViewerStateForTest() is { GatedStaticBgViewers: 0, HasStaticBgViewer: false, ScreenProbeArmed: false },
+            "a generation stop (hot reload) drops the subscription and the gated count");
+        Expect(disposes == 3, $"…disposing the live subscription exactly once (disposes={disposes}, subscribes={subscribes})");
+        await Task.Delay(200);
+        Expect(
+            subscribes == 3 && !server.StaticBgViewerStateForTest().ScreenProbeArmed,
+            "…and the closing sockets' teardown cannot re-arm it behind the stop");
+
+        // ---- 5. host-only: a SEAT process never subscribes, whoever connects to it ---------------------------
+        var seatSubscribes = 0;
+        await using var seatServer = new CouchCoopBrowserServer(
+            new StaticSpaFileProvider(staticRoot),
+            new CapturingAssetAdapter(),
+            envelopeFactory,
+            resourceCacheRoot: cacheRoot.Path,
+            isHeadlessClient: true,
+            log: _ => { },
+            subscribeScreenUpdated: _ =>
+            {
+                seatSubscribes++;
+                return null;
+            });
+        var seatUri = await seatServer.StartAsync();
+        using var seatSocket = new ClientWebSocket();
+        await seatSocket.ConnectAsync(
+            new UriBuilder(seatUri) { Scheme = "ws", Path = "/ws", Query = "watch=1&staticBg=1&cardFlight=1&handTween=1&trailDrive=0" }.Uri,
+            CancellationToken.None);
+        _ = await ReadWsMessageAsync(seatSocket);
+        Expect(
+            await WaitForAsync(() => seatServer.BgSkipStateForTest().StreamingMirrorConnections == 1),
+            "the seat's own streaming viewer registered");
+        Expect(
+            seatSubscribes == 0 && !seatServer.StaticBgViewerStateForTest().ScreenProbeArmed,
+            "a headless seat never subscribes to the screen event (the host's publish is the only source of truth)");
+        await CloseWebSocketSilentlyAsync(seatSocket);
+
+        Console.WriteLine("gated static-bg viewer (host authority): ok");
+    }
+
+    private sealed class CallbackDisposable(Action onDispose) : IDisposable
+    {
+        private int _disposed;
+
+        public void Dispose()
+        {
+            if (Interlocked.Exchange(ref _disposed, 1) == 0)
+            {
+                onDispose();
+            }
+        }
     }
 
     private static async Task AssertStaticBackgroundRoutesAsync(string staticRoot)

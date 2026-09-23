@@ -219,7 +219,9 @@ export interface MirrorClient {
   sendJoin(name: string, playerId?: string): void;
   // Send a SERVER-side settings change (refresh rate / freeze toggles / tween-replay / FMOD) over the `settings`
   // control channel. Fire-and-forget; no-op when the socket isn't open. Only the JOINED (headless) connection
-  // should be sent to — the caller gates on that so the shared host game is never mutated.
+  // should be sent to — the caller gates on that so the shared host game is never mutated. Absent fields are
+  // no-ops on the host, so the one exception is a `staticBg`-ONLY payload to a seat viewer's gated host socket,
+  // which sets that connection's own flag and touches no process lever (MirrorApp's syncHostStaticBg).
   sendSettings(payload: MirrorSettingsPayload): void;
   // Start/stop/reschedule the latency probe at runtime (ms; 0 = off). Used to run the ping→pong probe only while
   // the settings panel is open, without reconnecting. Clears and re-arms the ping timer.

@@ -63,9 +63,19 @@ import {
   seatNoticeForRejection
 } from "@/mirror/loadingState";
 import { createMirrorImagePrefetchGate } from "@/mirror/imagePrefetch";
+import {
+  admitHostStaticBackground,
+  sameStaticBackground,
+  type HostStaticBackgroundLatch
+} from "@/mirror/hostStaticBackground";
 import { sceneAblation } from "@/mirror/sceneAblation";
 import { createMirrorState } from "@/mirror/sceneTree";
-import type { BrowserJoinProgress, BrowserSeatNotice, BrowserSessionEnvelope } from "@/protocol/browserEnvelope";
+import type {
+  BrowserJoinProgress,
+  BrowserSeatNotice,
+  BrowserSessionEnvelope,
+  BrowserStaticBackgroundDescriptor
+} from "@/protocol/browserEnvelope";
 import MirrorJoinPicker from "@/mirror/MirrorJoinPicker.vue";
 import MirrorHostWaiting from "@/mirror/MirrorHostWaiting.vue";
 import {
@@ -231,6 +241,11 @@ const latency = ref<MirrorLatency>(emptyMirrorLatency());
 const mirrorState = shallowRef(createMirrorState()); // replaced with activeClient.state immediately below
 // The latest `session` from the HOST connection — feeds the shared join screen (roster + screen kind).
 const joinSession = shallowRef<BrowserSessionEnvelope | null>(null);
+// The latest `session` from the HOST socket specifically, whichever socket is active. Differs from `joinSession`
+// only after a seat redirect, when `joinSession` is the SEAT's session and this is still the host's: the host
+// keeps sending it to the gated socket we hold open, and it is the one source of the static background a seat
+// viewer shows (see `seatViewBackground`).
+const hostSession = shallowRef<BrowserSessionEnvelope | null>(null);
 // True only after the host assigns us a headless game instance and we've reconnected to it.
 // Prevents the host's scene stream from showing before the player has joined.
 const joined = ref(false);
@@ -240,6 +255,50 @@ const joined = ref(false);
 // thing they share, and here it addresses the host's OWN game, which the panel says out loud (`directView` is
 // passed to SettingsPanel for exactly that).
 const directView = ref(false);
+
+// THE STATIC BACKGROUND A SEAT VIEWER SHOWS is the HOST's descriptor, admitted against the scene the seat has
+// mounted (see @/mirror/hostStaticBackground for the rule, the latch and the two ways the sockets can disagree).
+// Maintained by a SYNC watcher rather than a computed so the latch sees every host and seat envelope in order,
+// including those that land while nothing is reading the result (no scene on screen yet). Null while not joined:
+// a direct-view / host-watch / picker viewer is already on the host socket, and its own session is the host's.
+let hostBackgroundLatch: HostStaticBackgroundLatch | null = null;
+const seatViewBackground = shallowRef<BrowserStaticBackgroundDescriptor | null>(null);
+watch(
+  [joined, () => joinSession.value?.staticBackground ?? null, () => hostSession.value?.staticBackground ?? null],
+  ([isJoined, seat, host]) => {
+    const next = isJoined
+      ? admitHostStaticBackground(seat, host, hostBackgroundLatch)
+      : { descriptor: null, latch: null };
+    hostBackgroundLatch = next.latch;
+    if (!sameStaticBackground(next.descriptor, seatViewBackground.value)) {
+      seatViewBackground.value = next.descriptor;
+    }
+  },
+  { flush: "sync", immediate: true }
+);
+// What StaticBackground is given: the admitted host descriptor for a seat view, the serving session's own
+// otherwise (the serving socket IS the host there).
+const stageBackground = computed<BrowserStaticBackgroundDescriptor | null>(() =>
+  joined.value ? seatViewBackground.value : joinSession.value?.staticBackground ?? null
+);
+
+// Resolve the one-shot image-prefetch gate against the view the ACTIVE connection is showing, from the same
+// descriptor the stage shows. Only a live session resolves a view: a disconnected or session-less active socket
+// (a seat that has opened but not yet spoken) leaves the gate held. A seat view whose scene the host has not
+// described yet is not resolved either — its picture is still coming, and resolving on "no picture" would start
+// the atlas walk under a Neow still that is about to appear.
+function resolveInitialView(enabled: boolean = mirrorSettings.staticBgEnabled): void {
+  if (!imagePrefetchGate || unmounted) return;
+  const session = activeClient.status === "connected" ? activeClient.session : null;
+  if (!session) return;
+  if (!joined.value) {
+    imagePrefetchGate.resolve(session.staticBackground, enabled);
+    return;
+  }
+  const view = seatViewBackground.value;
+  if (view === null && enabled && session.staticBackground) return; // pending on the host
+  imagePrefetchGate.resolve(view, enabled);
+}
 // Rejection message shown on the picker when a join name isn't servable (wrong `?name=`, mid-run newcomer, …).
 const joinMessage = ref<string | null>(null);
 // The host's own fault text under that message — only ever set for a server-side failure ("join-failed" or the
@@ -505,7 +564,28 @@ function pushServerSettings(c: MirrorClient): void {
   const encoded = JSON.stringify(payload);
   if (lastSettingsSent.get(c) === encoded) return;
   lastSettingsSent.set(c, encoded);
+  staticBgDeclared.set(c, payload.staticBg ?? false);
   c.sendSettings(payload);
+}
+
+// The `staticBg` value each connection was last told — its connect URL's, then any `settings` message since.
+const staticBgDeclared = new WeakMap<MirrorClient, boolean>();
+
+// KEEP THE HOST SOCKET'S `staticBg` CURRENT FOR A SEAT VIEWER. The gated host socket is what tells the host this
+// device shows the host's stills (it warms them on publish for such a viewer), and after a redirect the store
+// watch below only reaches the SEAT socket. So a flip — or one made on the picker before the redirect — is sent
+// to the host socket too, as a `staticBg`-ONLY message.
+//
+// NEVER `pushServerSettings(hostClient)` here. The host's `settings` handler applies the refresh-rate and freeze
+// levers to the process that RECEIVES the message; for the host socket that is the host's own game, which a seat
+// viewer's panel must never throttle or freeze. Absent fields are no-ops there, so a lone `staticBg` touches only
+// this connection's own flag.
+function syncHostStaticBg(): void {
+  if (!joined.value || hostClient === activeClient || hostClient.status !== "connected") return;
+  const staticBg = staticBgWireValue(mirrorSettings);
+  if (staticBgDeclared.get(hostClient) === staticBg) return;
+  staticBgDeclared.set(hostClient, staticBg);
+  hostClient.sendSettings({ staticBg });
 }
 
 function makeClient(url?: string, watchStream = false): MirrorClient {
@@ -540,6 +620,13 @@ function makeClient(url?: string, watchStream = false): MirrorClient {
       // ABOVE the staleness guard on purpose: "did this socket ever open?" is a fact about the CLIENT, not about
       // whether it happens to be the active one when it is asked. See `everConnected`.
       if (c.status === "connected") everConnected.add(c);
+      // Also above it: after a seat redirect the host socket is no longer active, and its sessions are exactly
+      // what a seat viewer's static background comes from. A host session that lets a pending seat view resolve
+      // its picture also resolves the prefetch gate (a no-op until the seat socket has a session of its own).
+      if (c === hostClient) {
+        hostSession.value = c.session;
+        if (activeClient !== c) resolveInitialView();
+      }
       if (activeClient !== c) return; // stale callback from a superseded client
       status.value = c.status;
       revision.value = c.state.revision;
@@ -552,11 +639,9 @@ function makeClient(url?: string, watchStream = false): MirrorClient {
       }
       joinSession.value = c.session;
       // Only a live session from the active client resolves a view. The active-client guard above excludes stale
-      // redirect callbacks; the connected/session checks keep disconnect and unmount from releasing a pending
-      // Neow gate.
-      if (c.status === "connected" && c.session) {
-        imagePrefetchGate?.resolve(c.session.staticBackground, mirrorSettings.staticBgEnabled);
-      }
+      // redirect callbacks; the connected/session checks (inside) keep disconnect and unmount from releasing a
+      // pending Neow gate.
+      resolveInitialView();
       // A healthy connection resets the backoff ladder; a dead one starts the fallback (which replaces
       // `activeClient`, so nothing below this line applies to a connection that just went away).
       if (c.status === "connected") {
@@ -804,6 +889,8 @@ function makeClient(url?: string, watchStream = false): MirrorClient {
   // No `url` means the page's own origin, i.e. the host. Recorded here rather than at each call site so the two
   // places that open a host connection (first connect, and the reconnect fallback) cannot disagree.
   if (url === undefined) hostClient = c;
+  // Both connect URLs carry the current setting (the seat's is built by openSeatView from the same value).
+  staticBgDeclared.set(c, staticBgWireValue(mirrorSettings));
   return c;
 }
 
@@ -816,10 +903,7 @@ revision.value = activeClient.state.revision;
 // needed. Re-read only the active, connected session; a dropped or torn-down connection must leave the gate held.
 watch(
   () => mirrorSettings.staticBgEnabled,
-  (enabled) => {
-    if (unmounted || status.value !== "connected" || !activeClient.session) return;
-    imagePrefetchGate?.resolve(activeClient.session.staticBackground, enabled);
-  }
+  (enabled) => resolveInitialView(enabled)
 );
 sceneAblation.setStateCounts(() => ({
   revision: activeClient.state.revision,
@@ -1063,6 +1147,11 @@ watch(
     }
   }
 );
+// …and a seat viewer's `staticBg` flip reaches the gated HOST socket as well, alone (see syncHostStaticBg).
+watch(
+  () => mirrorSettings.staticBgEnabled,
+  () => syncHostStaticBg()
+);
 
 // ---- the chromeless path (WS1/WS2/WS5) ----------------------------------------------------------------------
 //
@@ -1171,6 +1260,9 @@ function openSeatView(port: number): void {
     (window as unknown as { __mirrorLatency?: () => MirrorLatency }).__mirrorLatency =
       () => ({ ...activeClient.latency });
   }
+  // A flip made on the picker never reached the host socket (no settings channel there yet); catch it up now
+  // that the host socket is the gated one this seat viewer keeps.
+  syncHostStaticBg();
 }
 
 // THE HOLD. This device's seat socket never opened; keep the seat and retry the port instead of restarting the
@@ -1233,6 +1325,7 @@ function handleActiveClientDrop(): void {
   directViewRequested = false;
   pendingName.value = null;
   joinSession.value = null;
+  hostSession.value = null;
   // And the seat itself is gone with it: `reconnectToHost` closes the host socket, which is what ends the seat
   // process, so there is no port left to hold. The host assigns a fresh one on the next redirect.
   seatViewPort = null;
@@ -1420,14 +1513,17 @@ onBeforeUnmount(() => {
       <!-- STAGE-A "Static background": the host-rendered combat bg image. Beneath everything via its own
            most-negative z-index (slot DOM order is NOT stable — the reconciler's full-walk reorder moves the
            mirror roots ahead of all foreign stage children, e.g. on a resize/fullscreen toggle).
-           Descriptor = the SERVING connection's latest session envelope (after a redirect that is the seat's own
-           headless instance, whose server publishes its own tracker state).
+           Descriptor = `stageBackground`: the serving connection's own session envelope on the host socket; for
+           a SEAT view, the HOST's descriptor admitted against the scene the seat has mounted (the seat's own URL
+           is never shown — the host's `/bg/` route does not render it). A seat view is also host-authoritative:
+           no wire-minted URL, and a wire/descriptor disagreement leaves the stage blank.
            IN THE `underlay` SLOT, which is the one piece of stage content that has to paint UNDER the game rather
            than over it: on the canvas arm MirrorView renders that slot in its own design-space layer below the
            stage canvas, and on the DOM arm it renders it in the stage exactly where it has always been. -->
       <template #underlay>
         <StaticBackground
-          :descriptor="joinSession?.staticBackground ?? null"
+          :descriptor="stageBackground"
+          :host-authoritative="joined"
           :state="mirrorState"
           :revision="revision"
         />
