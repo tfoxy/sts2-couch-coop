@@ -19,11 +19,7 @@ Der Host installiert CouchCoop. Die anderen Spieler treten bei, indem sie einen 
 [h2]Diese Mod ist in der Beta[/h2]
 [i]Die Mod, nicht das Spiel - CouchCoop läuft auf dem stabilen Zweig des Spiels ebenso wie auf dessen öffentlichem Beta-Zweig.[/i]
 
-Der grundlegende Spielablauf ist spielbar, aber einige Bildschirme und Aktionen haben noch Fehler, optische Abweichungen, unfertige Stellen oder Leistungsprobleme. Zwei Dinge solltest du vorher wissen:
-[list]
-[*][b]BaseLib[/b] - ist diese Mod ebenfalls installiert, werden Eingaben im Browser bei manchen Spielern nicht erkannt.
-[*][b]Steam Deck[/b] - das Spiel kann beim Hosten abstürzen. Poste in diesem Fall bitte deine godot.log in [url=https://steamcommunity.com/workshop/filedetails/discussion/3799476240/563668239243120957/]der Workshop-Diskussion[/url].
-[/list]
+Der grundlegende Spielablauf ist spielbar, aber einige Bildschirme und Aktionen haben noch Fehler, optische Abweichungen, unfertige Stellen oder Leistungsprobleme.
 
 [h2]Bevor du loslegst[/h2]
 Der Ton kommt nur aus dem Host-Computer - Browser-Spieler hören auf ihrem eigenen Gerät nichts.

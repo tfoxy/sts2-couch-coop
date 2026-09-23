@@ -19,11 +19,7 @@ L'hôte installe CouchCoop. Les autres joueurs rejoignent la partie en scannant 
 [h2]Ce mod est en bêta[/h2]
 [i]Le mod, pas le jeu - CouchCoop fonctionne aussi bien sur la branche stable du jeu que sur sa branche bêta publique.[/i]
 
-La boucle de jeu principale est jouable, mais certains écrans et certaines actions présentent encore des bugs, des différences visuelles, des finitions imparfaites ou des problèmes de performances. Deux points méritent d'être connus avant de commencer :
-[list]
-[*][b]BaseLib[/b] - si ce mod est lui aussi installé, les commandes dans le navigateur peuvent ne pas être détectées pour certains joueurs.
-[*][b]Steam Deck[/b] - le jeu peut planter pendant l'hébergement. Si cela arrive, publiez votre godot.log dans [url=https://steamcommunity.com/workshop/filedetails/discussion/3799476240/563668239243120957/]la discussion du Workshop[/url].
-[/list]
+La boucle de jeu principale est jouable, mais certains écrans et certaines actions présentent encore des bugs, des différences visuelles, des finitions imparfaites ou des problèmes de performances.
 
 [h2]Avant de jouer[/h2]
 Le son sort uniquement de l'ordinateur hôte - les joueurs dans le navigateur n'ont aucun son sur leur propre appareil.

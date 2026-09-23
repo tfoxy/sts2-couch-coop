@@ -19,11 +19,7 @@ The host installs CouchCoop. Other players join by scanning a QR code or enterin
 [h2]This mod is in beta[/h2]
 [i]The mod, not the game - CouchCoop runs on the game's stable branch and on its public beta branch alike.[/i]
 
-The core game loop is playable, but some screens and actions still have bugs, visual differences, rough edges, or performance issues. Two are worth knowing before you start:
-[list]
-[*][b]BaseLib[/b] - with that mod also installed, browser input can go undetected for some players.
-[*][b]Steam Deck[/b] - the game may crash while hosting. If it does, please post your godot.log in [url=https://steamcommunity.com/workshop/filedetails/discussion/3799476240/563668239243120957/]the Workshop discussion[/url].
-[/list]
+The core game loop is playable, but some screens and actions still have bugs, visual differences, rough edges, or performance issues.
 
 [h2]Before you play[/h2]
 Sound comes out of the host computer only - browser players get no audio on their own device.

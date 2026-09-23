@@ -19,11 +19,7 @@ Oyunu barındıran kişi (host) CouchCoop'u kurar. Diğer oyuncular QR kodunu ta
 [h2]Bu mod beta aşamasında[/h2]
 [i]Beta olan mod, oyun değil - CouchCoop hem oyunun kararlı dalında hem de herkese açık beta dalında çalışır.[/i]
 
-Temel oyun döngüsü oynanabilir durumda, ancak bazı ekranlarda ve eylemlerde hâlâ hatalar, görsel farklılıklar, tam olarak düzeltilmemiş noktalar veya performans sorunları bulunuyor. Başlamadan önce bilinmesi gereken iki şey var:
-[list]
-[*][b]BaseLib[/b] - bu mod da kuruluysa bazı oyuncuların tarayıcıdan verdiği girdiler algılanmayabilir.
-[*][b]Steam Deck[/b] - oyun, host olarak çalışırken çökebilir. Böyle bir durumda lütfen godot.log dosyanızı [url=https://steamcommunity.com/workshop/filedetails/discussion/3799476240/563668239243120957/]Workshop tartışmasına[/url] gönderin.
-[/list]
+Temel oyun döngüsü oynanabilir durumda, ancak bazı ekranlarda ve eylemlerde hâlâ hatalar, görsel farklılıklar, tam olarak düzeltilmemiş noktalar veya performans sorunları bulunuyor.
 
 [h2]Oynamadan önce[/h2]
 Ses yalnızca host bilgisayardan çıkar - tarayıcıdan oynayanlar kendi cihazlarında ses duymaz.
