@@ -2236,8 +2236,8 @@ internal sealed class BrowserServerRouteTests
             var garbledFrame = await GetAsync(baseUri, "/bg/events/neow?frame=nonsense&v=1");
             Expect(garbledFrame.StatusLine.Contains("400 BadRequest", StringComparison.Ordinal), "a garbled frame spec is malformed");
 
-            // ROOMS family: /bg/rooms/<id>?v=1 renders the committed subtree via a scene-subtree:// key.
-            var room = await GetRawAsync(baseUri, "/bg/rooms/merchant_room?v=1");
+            // ROOMS family: /bg/rooms/<id>?v=2 renders the committed subtree via a scene-subtree:// key.
+            var room = await GetRawAsync(baseUri, "/bg/rooms/merchant_room?v=2");
             Expect(room.StatusLine.Contains("200 OK", StringComparison.Ordinal), "the room backdrop request renders");
             Expect(
                 runtime.LastAssetRequest?.Key == "scene-subtree://res://scenes/rooms/merchant_room.tscn?node=SceneContainer%2FBgContainer",
@@ -2245,7 +2245,7 @@ internal sealed class BrowserServerRouteTests
             Expect(
                 runtime.LastAssetRequest is { RenderWidth: 2520, RenderHeight: 1080 },
                 "…at the fixed policy size");
-            var roomDigest = await GetAsync(baseUri, "/bg/rooms/merchant_room?layers=abc&v=1");
+            var roomDigest = await GetAsync(baseUri, "/bg/rooms/merchant_room?layers=abc&v=2");
             Expect(roomDigest.StatusLine.Contains("400 BadRequest", StringComparison.Ordinal), "a room URL carrying layers= is malformed");
         }
         finally

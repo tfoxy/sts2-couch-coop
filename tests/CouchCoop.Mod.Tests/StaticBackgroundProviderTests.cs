@@ -278,6 +278,22 @@ internal static class StaticBackgroundProviderTests
         Assert(
             CouchCoopStaticBackgroundProvider.KeyVersion == "1",
             "KeyVersion is 1; the frontend fallback must match");
+        // Rooms moved to their own namespace when the mis-anchored shop renders were fixed; the frontend's room
+        // fallback hardcodes this `v=` too, and a room URL must never reach the v=1 bytes a browser still holds.
+        Assert(
+            CouchCoopStaticBackgroundProvider.RoomsKeyVersion == "2",
+            "RoomsKeyVersion is 2; the frontend room fallback must match");
+        Assert(
+            CouchCoopStaticBackgroundProvider.BuildImageUrl(StaticBackgroundFamily.Rooms, "merchant_room", null, "-10.0,20.0,1.010")
+                == $"/bg/rooms/merchant_room?frame={Uri.EscapeDataString("-10.0,20.0,1.010")}&v=2{build}",
+            "the room URL grammar is /bg/rooms/<id>?frame=<spec>&v=2&b=<build>");
+        Assert(
+            CouchCoopStaticBackgroundProvider.BuildCacheKey(StaticBackgroundFamily.Rooms, "merchant_room", null)
+                == "bg://rooms/merchant_room?w=2520&h=1080&v=2",
+            "the room cache key rides v=2, never the mis-anchored v=1 bytes");
+        Assert(
+            CouchCoopStaticBackgroundProvider.BuildImageUrl(StaticBackgroundFamily.Events, "neow", null) == $"/bg/events/neow?v=1{build}",
+            "events keep v=1 — only rooms moved");
 
         // Variant fan-out: distinct digests mint distinct keys (and neither collides with the digest-less one).
         var other = CouchCoopStaticBackgroundProvider.ComputeLayersDigest([Layers[0]])!;

@@ -64,8 +64,8 @@ const HOST_NEOW = { scenePath: NEOW, url: "/bg/events/neow?frame=0,0,1920,1080&v
 const SEAT_NEOW = { scenePath: NEOW, url: "/bg/events/neow?frame=7,7,1906,1066&v=1" };
 const HOST_UNDERDOCKS = { scenePath: UNDERDOCKS, url: "/bg/underdocks?layers=aaaaaaaaaaaaaaaa&v=1" };
 const SEAT_UNDERDOCKS = { scenePath: UNDERDOCKS, url: "/bg/underdocks?layers=bbbbbbbbbbbbbbbb&v=1" };
-const HOST_SHOP = { scenePath: SHOP, url: "/bg/rooms/merchant_room?frame=290,20,1340,1040&v=1" };
-const SEAT_SHOP = { scenePath: SHOP, url: "/bg/rooms/merchant_room?frame=291,21,1340,1040&v=1" };
+const HOST_SHOP = { scenePath: SHOP, url: "/bg/rooms/merchant_room?frame=290,20,1340,1040&v=2" };
+const SEAT_SHOP = { scenePath: SHOP, url: "/bg/rooms/merchant_room?frame=291,21,1340,1040&v=2" };
 
 function sessionMessage(over: Record<string, unknown> = {}) {
   return {
@@ -191,7 +191,7 @@ describe("MirrorApp seat view — the host's static background", () => {
   it("follows the host's later envelopes on the gated host socket", async () => {
     await joinSeat(HOST_SHOP, SEAT_SHOP);
     // The host re-publishes the same room under a new frame (it probed again).
-    const republished = { scenePath: SHOP, url: "/bg/rooms/merchant_room?frame=300,20,1340,1040&v=1" };
+    const republished = { scenePath: SHOP, url: "/bg/rooms/merchant_room?frame=300,20,1340,1040&v=2" };
     hostSocket().emit(sessionMessage({ staticBackground: republished }));
     await settle();
     expect(shownUrl()).toBe(republished.url);
