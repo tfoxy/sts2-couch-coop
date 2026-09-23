@@ -77,6 +77,14 @@ if (args is [ManagedCacheProcessTests.ChildVerb, ..])
 // Steam Input patch's targets (the route that never consults the InputMap). Both are pure — type metadata and
 // ordinary collections only — so they are safe without an engine and stay independently green of the later
 // QR-layout contract.
+// The guard that keeps the root window embedding its subwindows when a mod opens its own OS window: planner and
+// breaker only, pure.
+if (args is ["root-window", ..])
+{
+    RootWindowEmbeddingGuardTests.Run();
+    return;
+}
+
 if (args is ["headless-input", ..])
 {
     HeadlessJoypadInputMapIsolationTests.Run();
@@ -496,6 +504,9 @@ CouchCoopLogPrefixTests.Run();
 // A headless seat strips controller bindings from its own InputMap before the game can consume input. This suite
 // uses types and ordinary collections only: constructing Godot objects in this runner can segfault.
 HeadlessJoypadInputMapIsolationTests.Run();
+// The root-window embedding guard's repair planner and breaker: generic over the window handle, so no Godot
+// object is ever constructed. Also reachable alone as `-- root-window`.
+RootWindowEmbeddingGuardTests.Run();
 // The GDScript source generated for the no-op FMOD singleton stub — pure strings, no Godot types, and placed
 // this high for the usual reason: everything from HeadlessAudioMuteTargetsTests down was unreachable while
 // that stretch aborted. Also reachable alone as `-- fmod-stub`.
