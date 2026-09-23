@@ -1,6 +1,7 @@
 using System;
 using System.Collections.Generic;
 using System.Reflection;
+using Godot;
 using HarmonyLib;
 using MegaCrit.Sts2.Core.Nodes.Audio;
 
@@ -32,6 +33,17 @@ namespace CouchCoop.Mod.Patches;
 /// 2026-09-16. Surviving an unknown caller is a different mechanism, and it lives in
 /// <see cref="Session.FmodSingletonStub"/>: the engine singleton NAME is re-pointed at a no-op stub before the
 /// native system is released, so a caller nobody listed gets <c>null</c> instead of freed memory.
+///
+/// <b>It cannot reach a forward that was inlined, either — even a vanilla one.</b> A prefix rewrites the method's
+/// own body; a copy of that body the JIT already inlined into some caller is untouched and cannot be patched at
+/// all. A mod that initializes before CouchCoop and patches a method gets its replacement JIT-compiled at that
+/// moment, small callees inlined — so a vanilla forward reached through it runs UN-MUTED, forever. That killed a
+/// Windows seat at the Neow event on 2026-09-22 (another mod's postfix carried an inlined ambient-loop forward).
+/// The list is still the first line — it saves the calls, and it is the whole defence on a seat with no other
+/// mods — but the forwards all land on a GDScript child named <c>Proxy</c>, so that node is closed as a doorway
+/// too: <see cref="Session.HeadlessFmodShutdown"/> closes the audio manager's before it releases anything, and
+/// the postfix on <see cref="ProxyClosureTargets"/> closes the music controller's as each run builds it
+/// (see <see cref="Session.FmodSingletonStub.CloseProxyDoorway"/>).
 ///
 /// Coverage is <see cref="Targets"/> — one list, read both by <see cref="Apply"/> and by the reflection guard test,
 /// so the thing we patch and the thing we assert can no longer drift apart.
@@ -107,6 +119,17 @@ internal static class HeadlessAudioMutePatch
         (typeof(NRunMusicController), "UnloadActBanks", []),
     ];
 
+    /// <summary>
+    /// Lifecycle methods after which a forwarding node exists that <see cref="Session.HeadlessFmodShutdown"/>
+    /// could not have reached: the music controller is built per run, long after teardown, and it resolves its
+    /// <c>Proxy</c> child in <c>_Ready</c>. A postfix there closes that child as a doorway. Must be DECLARED by the
+    /// type — an inherited <c>_Ready</c> would be <c>Node._Ready</c>, and the postfix would land on every node.
+    /// </summary>
+    internal static IReadOnlyList<(Type Type, string Name, Type[] Args)> ProxyClosureTargets { get; } =
+    [
+        (typeof(NRunMusicController), "_Ready", []),
+    ];
+
     internal static void Apply()
     {
         lock (_sync)
@@ -121,14 +144,78 @@ internal static class HeadlessAudioMutePatch
                 PatchSkip(harmony, type, name, args, refused);
             }
 
+            foreach (var (type, name, args) in ProxyClosureTargets)
+            {
+                PatchProxyClosure(harmony, type, name, args, refused);
+            }
+
             if (refused.Count > 0)
             {
                 throw new InvalidOperationException(
-                    Session.CouchCoopLog.Line("HeadlessAudioMutePatch could not mute ")
-                    + $"{refused.Count} of {Targets.Count} game→FMOD forwards on this build, so a headless seat "
-                    + "would keep driving a torn-down FMOD server. Refusing rather than running half-muted: "
-                    + string.Join("; ", refused));
+                    Session.CouchCoopLog.Line("HeadlessAudioMutePatch could not install ")
+                    + $"{refused.Count} of {Targets.Count + ProxyClosureTargets.Count} game→FMOD guards on this "
+                    + "build, so a headless seat would keep driving a torn-down FMOD server. Refusing rather than "
+                    + "running half-muted: " + string.Join("; ", refused));
             }
+        }
+    }
+
+    private static void PatchProxyClosure(
+        Harmony harmony, Type type, string name, Type[] args, ICollection<string> refused)
+    {
+        var label = $"{type.Name}.{name}({string.Join(", ", Array.ConvertAll(args, a => a.Name))})";
+        var target = AccessTools.DeclaredMethod(type, name, args);
+        if (target is null)
+        {
+            refused.Add($"{label} is not declared by {type.Name} on the installed STS2 assemblies");
+            return;
+        }
+
+        try
+        {
+            var postfix = typeof(HeadlessAudioMutePatch)
+                .GetMethod(nameof(CloseOwnProxy), BindingFlags.NonPublic | BindingFlags.Static);
+            harmony.Patch(target, postfix: new HarmonyMethod(postfix));
+        }
+        catch (Exception ex)
+        {
+            refused.Add($"Harmony postfix on {label} failed ({ex.GetType().Name}: {ex.Message})");
+        }
+    }
+
+    /// <summary>
+    /// Harmony postfix: the node has just resolved its <c>Proxy</c> child; swap that child's script for the no-op
+    /// stub. Runs inside the game's own <c>_Ready</c>, so it never throws — and every outcome is one log line
+    /// (<see cref="Session.FmodSingletonStub.CloseProxyDoorway"/> logs CLOSED/OPEN itself).
+    /// </summary>
+    private static void CloseOwnProxy(Node __instance)
+    {
+        var owner = __instance is NRunMusicController ? "run music controller" : __instance.GetType().Name;
+        try
+        {
+            // The consequence depends on whether teardown already happened, and only this moment knows that.
+            var consequence = Session.HeadlessFmodShutdown.SystemReleased
+                ? "FMOD is already released on this seat, so a forward that reaches this node — a copy another "
+                  + "mod's patch inlined included — can crash it."
+                : "FMOD is still running on this seat, so a forward through it is at worst a stray (muted) sound.";
+
+            var proxy = __instance.GetNodeOrNull(Session.FmodSingletonStub.ProxyNodeName);
+            if (proxy is null || !GodotObject.IsInstanceValid(proxy))
+            {
+                Session.CouchCoopLog.Error(
+                    $"[fmod] PROXY DOORWAY UNKNOWN for the {owner}: it has no "
+                    + $"'{Session.FmodSingletonStub.ProxyNodeName}' child, so this build forwards somewhere this "
+                    + $"seat does not know to close. {consequence}");
+                return;
+            }
+
+            Session.FmodSingletonStub.CloseProxyDoorway(proxy, owner, consequence);
+        }
+        catch (Exception exception)
+        {
+            Session.CouchCoopLog.Error(
+                $"[fmod] PROXY DOORWAY OPEN for the {owner}: closing it threw "
+                + $"{exception.GetType().Name}: {exception.Message}.");
         }
     }
 

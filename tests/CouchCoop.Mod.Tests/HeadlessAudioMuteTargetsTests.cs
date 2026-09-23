@@ -13,6 +13,7 @@ internal static class HeadlessAudioMuteTargetsTests
         AllPatchTargetsResolve();
         EveryTargetHasASkipValue();
         CoversBothForwarders();
+        ProxyClosureTargetsAreDeclaredByTheirType();
     }
 
     private static void AllPatchTargetsResolve()
@@ -61,6 +62,25 @@ internal static class HeadlessAudioMuteTargetsTests
             "target list includes NRunMusicController.LoadActBank (per-act bank load into a torn-down server must be a no-op)");
         Assert(HeadlessAudioMutePatch.Targets.Any(t => t.Type.Name == "NRunMusicController" && t.Name == "UnloadActBanks"),
             "target list includes NRunMusicController.UnloadActBanks");
+    }
+
+    // The postfix that closes the per-run music controller's `Proxy` node as a doorway. It must bind to a method
+    // the type DECLARES: if the game ever dropped its own `_Ready` override, an inherited lookup would resolve to
+    // Node._Ready and the postfix would run on every node in the process. The patch itself resolves with
+    // DeclaredMethod for that reason; this pins that the declared method is still there.
+    private static void ProxyClosureTargetsAreDeclaredByTheirType()
+    {
+        Assert(HeadlessAudioMutePatch.ProxyClosureTargets.Count > 0, "there is at least one proxy closure target");
+        foreach (var (type, name, args) in HeadlessAudioMutePatch.ProxyClosureTargets)
+        {
+            var declared = AccessTools.DeclaredMethod(type, name, args);
+            Assert(declared is not null && declared.DeclaringType == type,
+                $"{type.Name}.{name} is declared by {type.Name} itself, so the proxy-closure postfix stays on "
+                + "that one type");
+        }
+
+        Assert(HeadlessAudioMutePatch.ProxyClosureTargets.Any(t => t.Type.Name == "NRunMusicController"),
+            "the per-run music controller's proxy is closed as each run builds it");
     }
 
     private static void Assert(bool condition, string label)
