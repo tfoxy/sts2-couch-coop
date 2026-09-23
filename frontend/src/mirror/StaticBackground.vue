@@ -123,11 +123,13 @@ const wireFallback = computed<BrowserStaticBackgroundDescriptor | null>(() => {
       continue;
     }
     if (familyCandidate === null && isRoomBackgroundSubtreeRoot(node, props.state.nodes)) {
-      // Room backdrops key on the ROOM scene path (the subtree node itself carries none).
+      // Room backdrops key on the ROOM scene path (the subtree node itself carries none). Rooms ride their own
+      // v=2 (CouchCoopStaticBackgroundProvider.RoomsKeyVersion): the v=1 URL may still answer from a browser's
+      // year-long cache with a mis-anchored render.
       const roomPath = staticBgTargetPathOf(node, props.state.nodes)!;
       familyCandidate = {
         scenePath: roomPath,
-        url: hostUrl(`/bg/rooms/${tryParseRoomBackgroundSceneId(roomPath)}?v=1`)
+        url: hostUrl(`/bg/rooms/${tryParseRoomBackgroundSceneId(roomPath)}?v=2`)
       };
     }
   }

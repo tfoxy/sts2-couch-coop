@@ -758,7 +758,7 @@ describe("StaticBackground.vue — decode gate + shown-signal ordering", () => {
   const imageFamilies = [
     { name: "combat", scenePath: UNDERDOCKS_BG, url: "/bg/underdocks?v=1" },
     { name: "event", scenePath: NEOW_BG, url: "/bg/events/neow?frame=0,0,1&v=1" },
-    { name: "shop", scenePath: MERCHANT_ROOM, url: "/bg/rooms/merchant_room?frame=0,0,1&v=1" }
+    { name: "shop", scenePath: MERCHANT_ROOM, url: "/bg/rooms/merchant_room?frame=0,0,1&v=2" }
   ] as const;
 
   it.each(imageFamilies)("$name stays blank while pending and shows only after success", async (family) => {
@@ -1122,6 +1122,20 @@ describe("StaticBackground.vue — decode gate + shown-signal ordering", () => {
     wrapper.unmount();
   });
 
+  it("derives the /bg/rooms URL on the ROOMS namespace (v=2) when the host sent no descriptor (shop)", async () => {
+    __setStillDecoderForTest((_url, ready) => ready(true));
+    const calls: ShownCall[] = [];
+    const state = createMirrorState();
+    full(state, shopNodes(), SHOP_ORDER);
+    const wrapper = mountBg(calls, null, state);
+    await wrapper.vm.$nextTick();
+    // v=1 room URLs may still answer from a browser's immutable cache with the old mis-anchored render; the
+    // server's CouchCoopStaticBackgroundProvider.RoomsKeyVersion pins the same "2".
+    expect(wrapper.get('[data-testid="mirror-static-bg-image"]').attributes("src")).toBe("/bg/rooms/merchant_room?v=2");
+    expect(calls[calls.length - 1]).toEqual({ scenePath: MERCHANT_ROOM });
+    wrapper.unmount();
+  });
+
   it("COMBAT WINS the wire scan when both families are mounted (EventRoom-wrapped combat)", async () => {
     const decoded: string[] = [];
     __setStillDecoderForTest((url, ready) => {
@@ -1200,7 +1214,7 @@ describe("StaticBackground.vue — host-authoritative (seat view)", () => {
   const hostFamilies = [
     { name: "combat", scenePath: UNDERDOCKS_BG, url: "/bg/underdocks?layers=0123456789abcdef&v=1", nodes: combatNodes, order: COMBAT_ORDER },
     { name: "event", scenePath: NEOW_BG, url: "/bg/events/neow?frame=0,0,1920,1080&v=1", nodes: eventNodes, order: EVENT_ORDER },
-    { name: "shop", scenePath: MERCHANT_ROOM, url: "/bg/rooms/merchant_room?frame=290,20,1340,1040&v=1", nodes: shopNodes, order: SHOP_ORDER }
+    { name: "shop", scenePath: MERCHANT_ROOM, url: "/bg/rooms/merchant_room?frame=290,20,1340,1040&v=2", nodes: shopNodes, order: SHOP_ORDER }
   ] as const;
 
   it.each(hostFamilies)("$name: the host descriptor shows when the wire agrees with it", async (family) => {
@@ -1287,7 +1301,7 @@ describe("StaticBackground.vue — host-authoritative (seat view)", () => {
 
   it.each([
     { name: "event", scenePath: NEOW_BG, url: "/bg/events/neow?frame=0,0,1920,1080&v=1" },
-    { name: "shop", scenePath: MERCHANT_ROOM, url: "/bg/rooms/merchant_room?frame=290,20,1340,1040&v=1" }
+    { name: "shop", scenePath: MERCHANT_ROOM, url: "/bg/rooms/merchant_room?frame=290,20,1340,1040&v=2" }
   ])("$name: a failed host URL leaves the stage blank (no rung, no wire URL)", async (family) => {
     const decoded = recordingDecoder(() => false);
     const wrapper = mountSeatBg([], family);

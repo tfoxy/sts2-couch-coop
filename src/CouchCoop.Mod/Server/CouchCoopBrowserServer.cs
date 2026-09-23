@@ -2941,7 +2941,9 @@ public sealed class CouchCoopBrowserServer(
                 + CouchCoopStaticBackgroundProvider.KeyVersion
                 + " (combat) or /bg/events/{id}?v="
                 + CouchCoopStaticBackgroundProvider.KeyVersion
-                + " (event backdrops, no layers); the id is the lowercase background name and layers is an "
+                + " (event backdrops, no layers) or /bg/rooms/{id}?v="
+                + CouchCoopStaticBackgroundProvider.RoomsKeyVersion
+                + " (room backdrops, no layers); the id is the lowercase background name and layers is an "
                 + "optional combat-only hex digest. The image's Content-Type names its codec.",
                 cancellationToken).ConfigureAwait(false);
             return;

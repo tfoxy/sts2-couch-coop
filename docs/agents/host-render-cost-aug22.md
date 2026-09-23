@@ -7,7 +7,8 @@ measurements and retired URL forms.
 
 - Combat: `/bg/{id}?layers={digest}&v=1`; `layers` is optional and only valid for combat.
 - Event: `/bg/events/{id}?v=1`.
-- Room: `/bg/rooms/{id}?frame={frame}&v=1`.
+- Room: `/bg/rooms/{id}?frame={frame}&v=2`. Rooms have their own namespace (`RoomsKeyVersion`): the first shop
+  stills were rendered shifted by half the render and are still held under the immutable v=1 URL.
 - The URL names a specific variant, not an image format. The response `Content-Type` names the codec; callers
   must not append an image extension or infer one.
 - Current URLs are immutable. A variant which is no longer current may use matching cached bytes or return a

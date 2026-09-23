@@ -79,6 +79,16 @@ public sealed class CouchCoopStaticBackgroundProvider(
     // policy changes so URLs and disk keys move to a fresh byte namespace together.
     public const string KeyVersion = "1";
 
+    // The ROOMS family's own namespace. The first shop stills were rendered with the subtree root shifted by half
+    // the render (a centre-anchored root re-resolved its detached position when it was attached), and those bytes
+    // sit on hosts' disks and in browsers' HTTP caches under an `immutable` v=1 URL. Correct renders therefore need
+    // a key AND a URL no stale copy can answer; combat and events never had the defect, so their caches stay.
+    public const string RoomsKeyVersion = "2";
+
+    /// <summary>The <c>v=</c> a family's keys and URLs carry — <see cref="RoomsKeyVersion"/> for rooms.</summary>
+    public static string KeyVersionFor(StaticBackgroundFamily family)
+        => family == StaticBackgroundFamily.Rooms ? RoomsKeyVersion : KeyVersion;
+
     // How many hex chars of the SHA-256 the layer digest keeps. 16 (64 bits) is comfortably collision-free for the
     // handful of layer variants a background randomizes over, and keeps URLs readable.
     private const int LayersDigestLength = 16;
@@ -174,8 +184,8 @@ public sealed class CouchCoopStaticBackgroundProvider(
     public static string BuildCacheKey(string id, string? layersDigest)
         => BuildCacheKey(StaticBackgroundFamily.Combat, id, layersDigest);
 
-    // The EVENT family keys ride a `bg://events/` namespace — a brand-new key space (no v1 bytes to invalidate),
-    // which is why KeyVersion stays "2". `layers=` never appears there: event backdrops mount no layer variants.
+    // The EVENT family keys ride a `bg://events/` namespace — a brand-new key space (no older bytes to invalidate),
+    // so it shares KeyVersion. `layers=` never appears there: event backdrops mount no layer variants.
     // `frame=` is the events COUNTERPART of the combat digest: the LIVE backdrop container transform the tracker
     // probed (the recovered placement lerp has drifted from the shipped game — measured container y 99.4 vs the
     // lerp's 40 on Neow), qualifying a variant exactly the way a layer digest does. Frame-less = the
@@ -184,7 +194,7 @@ public sealed class CouchCoopStaticBackgroundProvider(
         => $"bg://{FamilyPathPrefix(family)}{id}?w={RenderWidthPx}&h={RenderHeightPx}"
            + (layersDigest is null ? string.Empty : $"&layers={layersDigest}")
            + (eventFrame is null ? string.Empty : $"&frame={eventFrame}")
-           + $"&v={KeyVersion}";
+           + $"&v={KeyVersionFor(family)}";
 
     private static string FamilyPathPrefix(StaticBackgroundFamily family)
         => family switch
@@ -244,7 +254,7 @@ public sealed class CouchCoopStaticBackgroundProvider(
         => $"/bg/{FamilyPathPrefix(family)}{id}?"
            + (layersDigest is null ? string.Empty : $"layers={layersDigest}&")
            + (eventFrame is null ? string.Empty : $"frame={Uri.EscapeDataString(eventFrame)}&")
-           + $"v={KeyVersion}"
+           + $"v={KeyVersionFor(family)}"
            + CouchCoopAssetVersion.QuerySuffix(hasQuery: true);
 
     /// <summary>
