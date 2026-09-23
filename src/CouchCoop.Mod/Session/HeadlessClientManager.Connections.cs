@@ -218,19 +218,22 @@ public sealed partial class HeadlessClientManager
             LogFirstContact(owned, status);
             var member = _membershipProbe(SlotToNetId(slot));
             // NOT ONE WORD from this process, well past the point where our own guard says hello, and the
-            // remaining 40 seconds of the readiness deadline buy nothing. WHICH failure that is turns entirely
-            // on whether the host's lobby has this seat, so the membership probe above moved ahead of it:
-            //   * NOT a member — nothing of ours ran, so this is a game holding the account's Steam Cloud save
-            //     storage with no protection installed. That is the exposure the deadline exists to cut short.
+            // remaining 40 seconds of the readiness deadline buy nothing. WHICH failure that is turns first on
+            // whether the host's lobby has this seat, so the membership probe above moved ahead of it:
             //   * a member — CouchCoop DID run: only CommandLineOverridePatch could have made it join, and the
             //     cloud isolation guard runs before that patch and exits on failure, so the saves are provably
             //     covered. See SeatSilentAfterJoinCode for why saying otherwise here would be a false alarm.
-            //     WHETHER IT IS STILL RUNNING is then asked rather than assumed — see ClassifySilentSeatAsync.
+            //   * NOT a member — and that is NOT proof that nothing of ours ran. Membership proves CouchCoop; its
+            //     absence proves nothing, because a seat joins only after the game's own asset preload, and on a
+            //     slow machine a perfectly healthy seat is still outside the lobby at this deadline. So the seat's
+            //     own port record is asked first: only our browser server writes it, and only after the guard.
+            //     Without one, this is a game holding the account's Steam Cloud save storage with no protection
+            //     this host can confirm — the exposure the deadline exists to cut short.
+            // Either way the evidence is gathered rather than assumed — see ClassifySilentSeatAsync.
             if (status?.Status is null && Stopwatch.GetElapsedTime(started) >= contactDeadline)
             {
-                owned.Failure ??= member
-                    ? await ClassifySilentSeatAsync(owned, port.Value, contactDeadline, ct).ConfigureAwait(false)
-                    : SeatCloudIsolationIssue(NoSeatContactDetail(contactDeadline));
+                owned.Failure ??= await ClassifySilentSeatAsync(owned, port.Value, member, contactDeadline, ct)
+                    .ConfigureAwait(false);
                 await StopFailedConnectionAsync(owned).ConfigureAwait(false);
                 return null;
             }
@@ -970,8 +973,11 @@ public sealed partial class HeadlessClientManager
         => new(
             SeatCloudIsolationCode,
             "This player's game could not promise to leave your Steam Cloud saves alone.",
-            "It was stopped before it could write anything. Restart the game and try again, and copy this report "
-                + "if it happens again.",
+            // NOT "before it could write anything", which this used to say. That holds for a seat whose own guard
+            // refused, and not for one that never spoke: a game with no CouchCoop in it may have run its own
+            // startup cloud sync inside the contact deadline (see NoSeatContactDetail). One code covers both, so
+            // the copy claims only what is true of both.
+            "It was stopped. Restart the game and try again, and copy this report if it happens again.",
             detail);
 
     /// <summary>
@@ -1042,18 +1048,32 @@ public sealed partial class HeadlessClientManager
     /// printed `host loopback probe of the assigned port: not yet probed` on a seat that would have answered it.
     /// Its result is stored on the connection so the evidence tail and the monitor can read it afterwards.
     /// </para>
+    /// <para>
+    /// A SEAT OUTSIDE THE LOBBY IS NOT PROBED. Its verdict can rest only on the port record (see
+    /// <see cref="ClassifySilentSeat"/>), so the probe would add a sentence to the report and nothing to the
+    /// decision — and it costs up to several seconds on Windows, where a refused loopback connect takes ~2 s to
+    /// say so. That is several more seconds for a game that may have no protection in it at all, which is the
+    /// exposure this deadline exists to cut short.
+    /// </para>
     /// </remarks>
     private async Task<ConnectionIssue> ClassifySilentSeatAsync(
         OwnedConnection owned,
         int expectedPort,
+        bool member,
         TimeSpan deadline,
         CancellationToken cancellationToken)
     {
         var record = BrowserPortFile.Read(owned.SeatPortFilePath);
-        var probe = await _readinessProbe(expectedPort, cancellationToken).ConfigureAwait(false);
-        owned.ListenerResponding = probe.Responding;
-        owned.ListenerProbeFailure = probe.Failure;
-        owned.ListenerReachability = probe.Reachability;
+        SeatListenerProbeResult? probe = null;
+        if (member)
+        {
+            var answer = await _readinessProbe(expectedPort, cancellationToken).ConfigureAwait(false);
+            owned.ListenerResponding = answer.Responding;
+            owned.ListenerProbeFailure = answer.Failure;
+            owned.ListenerReachability = answer.Reachability;
+            probe = answer;
+        }
+
         return ClassifySilentSeat(
             owned.Slot,
             expectedPort,
@@ -1061,7 +1081,8 @@ public sealed partial class HeadlessClientManager
             record,
             probe,
             DescribeControlChannel(HeadlessConnectionControl.Shared.Snapshot(owned.Slot, owned.Generation)),
-            deadline);
+            deadline,
+            member);
     }
 
     /// <summary>
@@ -1073,14 +1094,19 @@ public sealed partial class HeadlessClientManager
     /// record), and a diagnosis nobody can test is how the wrong one ships. The wiring above it — which file,
     /// which port, which probe — is what the live leg proves.
     /// </remarks>
+    /// <param name="probe">This host's own request to the seat's port, or <see langword="null"/> when it was not
+    /// made — see <see cref="ClassifySilentSeatAsync"/> for why a seat outside the lobby is not probed.</param>
+    /// <param name="member">Whether the host's lobby lists this seat. See <see cref="SeatSilentAfterJoinCode"/>
+    /// for what that proves, and the non-member arm below for what its absence does not.</param>
     internal static ConnectionIssue ClassifySilentSeat(
         int slot,
         int expectedPort,
         int seatProcessId,
         (int Port, int Pid)? portRecord,
-        SeatListenerProbeResult probe,
+        SeatListenerProbeResult? probe,
         string controlChannel,
-        TimeSpan deadline)
+        TimeSpan deadline,
+        bool member)
     {
         // Believed only when the record is THIS process's: it outlives a killed seat by design, so a stale one
         // must never read as a live listener. See BrowserPortFile.
@@ -1105,8 +1131,21 @@ public sealed partial class HeadlessClientManager
                 + "something that is not their game. " + evidence);
         }
 
-        return probe.Responding || boundHere
-            ? SeatControlBlockedIssue(ControlBlockedDetail(deadline, expectedPort) + " " + evidence)
+        // OUTSIDE THE LOBBY, ONLY THE SEAT'S OWN RECORD CAN CLEAR IT. Lobby membership proves CouchCoop ran; its
+        // absence proves nothing, because a seat joins only after the game's own asset preload and a healthy one
+        // on a slow machine is still outside the lobby at this deadline. The record is the proof that remains:
+        // only our browser server writes it, only after the cloud isolation guard has passed, and it is believed
+        // only under the pid this host started. A probe answer is NOT enough here, unlike for a member — any
+        // program can answer on a port, and the claim being cleared is that a player's saves were protected.
+        if (!member)
+        {
+            return boundHere
+                ? SeatControlBlockedIssue(ControlBlockedDetail(deadline, expectedPort, member: false) + " " + evidence)
+                : SeatCloudIsolationIssue(NoSeatContactDetail(deadline) + " " + evidence);
+        }
+
+        return probe is { Responding: true } || boundHere
+            ? SeatControlBlockedIssue(ControlBlockedDetail(deadline, expectedPort, member: true) + " " + evidence)
             : SeatSilentAfterJoinIssue(SilentAfterJoinDetail(deadline, slot) + " " + evidence);
     }
 
@@ -1119,7 +1158,7 @@ public sealed partial class HeadlessClientManager
         bool ours,
         bool boundHere,
         int expectedPort,
-        SeatListenerProbeResult probe,
+        SeatListenerProbeResult? probe,
         string controlChannel)
     {
         var port = expectedPort.ToString(System.Globalization.CultureInfo.InvariantCulture);
@@ -1142,7 +1181,11 @@ public sealed partial class HeadlessClientManager
             : "this player's game has recorded no bound port of its own";
         return "Observed: " + file
             + "; this computer's own request to port " + port + ": "
-            + (probe.Responding ? "answered" : $"no answer ({probe.Failure ?? "no failure detail was captured"})")
+            + (probe is not { } asked
+                ? "not made (a game outside the host's lobby is judged on its own port record alone)"
+                : asked.Responding
+                    ? "answered"
+                    : $"no answer ({asked.Failure ?? "no failure detail was captured"})")
             + "; " + controlChannel
             + ".";
     }
@@ -1214,12 +1257,23 @@ public sealed partial class HeadlessClientManager
     /// Says what the wire is — two processes of one game, on one computer, over the loopback address — because
     /// without that the reader has no way to know that none of the usual suspects (the router, the Wi-Fi, the
     /// player's device, the seat's own port) can be involved. See <see cref="SeatControlBlockedCode"/>.
+    /// <para>
+    /// The opening differs for a seat the lobby does not list yet, because what licenses "it is running" differs:
+    /// for a member it is the join; outside the lobby it is only the seat's own port record, which is also what
+    /// establishes that its saves were protected — the reader of this text was, until this arm existed, told the
+    /// opposite about the same seat.
+    /// </para>
     /// </remarks>
-    internal static string ControlBlockedDetail(TimeSpan deadline, int expectedPort)
-        => "This player's game joined the host's lobby and is serving on port "
-            + expectedPort.ToString(System.Globalization.CultureInfo.InvariantCulture)
-            + ", so it started correctly and is still running — but it could not report a single status to the "
-            + "host within "
+    internal static string ControlBlockedDetail(TimeSpan deadline, int expectedPort, bool member)
+        => (member
+                ? "This player's game joined the host's lobby and is serving on port "
+                    + expectedPort.ToString(System.Globalization.CultureInfo.InvariantCulture)
+                    + ", so it started correctly and is still running"
+                : "This player's game has not joined the host's lobby yet, but it recorded that it is serving on port "
+                    + expectedPort.ToString(System.Globalization.CultureInfo.InvariantCulture)
+                    + ", which only CouchCoop does and only once its Steam Cloud save protection is installed — so "
+                    + "CouchCoop is running inside it and your saves were protected")
+            + " — but it could not report a single status to the host within "
             + ((long)deadline.TotalSeconds).ToString(System.Globalization.CultureInfo.InvariantCulture)
             + " seconds. That report is an ordinary local request from one copy of the game to the other over "
             + "this computer's own loopback address (127.0.0.1), so nothing outside this computer is involved: "
@@ -1266,24 +1320,30 @@ public sealed partial class HeadlessClientManager
 
     /// <summary>
     /// The detail for a seat that never said anything at all within
-    /// <see cref="SeatContactTimeoutEnvironmentVariable"/>'s deadline AND never reached the host's lobby. The
-    /// membership half of that condition is what lets this text assert "CouchCoop is not running inside it";
-    /// a silent seat the lobby DOES list gets <see cref="SilentAfterJoinDetail"/> instead, because there the
-    /// same assertion would be false.
+    /// <see cref="SeatContactTimeoutEnvironmentVariable"/>'s deadline, never reached the host's lobby, AND left no
+    /// port record of its own. It says the host CANNOT CONFIRM CouchCoop is running there, not that it is absent:
+    /// a seat is outside the lobby until well after the game's asset preload, so a healthy seat whose reports and
+    /// status file both failed ends up here too. A silent seat the lobby DOES list gets
+    /// <see cref="SilentAfterJoinDetail"/>, and one that recorded its port gets <see cref="ControlBlockedDetail"/>.
     /// </summary>
     /// <remarks>
     /// HONEST ABOUT WHAT THIS IS. It SHRINKS the window; it does not close it. A seat with no CouchCoop in it
     /// runs the game's own startup cloud sync at the game's own startup time, which is inside this deadline — so
-    /// killing it at 20 seconds is not a guarantee that it wrote nothing, only that it stopped long before the
-    /// 75-second readiness deadline would have noticed. The actual safety net is a host-side backup of the
-    /// profile taken BEFORE the seat is spawned, which is a separate work item.
+    /// stopping it here is not a guarantee that it wrote nothing, only that it stopped long before the 75-second
+    /// readiness deadline would have noticed. The text says so, and points at the actual safety net,
+    /// <see cref="HostProfileBackup"/>, taken before the first seat of a session is spawned. It describes what that
+    /// backup does rather than claiming one was taken: the backup is best-effort and records no outcome this
+    /// text could read.
     /// </remarks>
     internal static string NoSeatContactDetail(TimeSpan deadline)
         => "This player's game did not report anything to the host within "
             + ((long)deadline.TotalSeconds).ToString(System.Globalization.CultureInfo.InvariantCulture)
-            + " seconds of being started, so CouchCoop is not running inside it. A game without CouchCoop in it "
-            + "shares this computer's Steam Cloud save storage with the host, so it is stopped instead of being "
-            + "given the rest of the startup deadline.";
+            + " seconds of being started and had not joined the host's lobby, so this host cannot confirm "
+            + "CouchCoop is running inside it. A game without CouchCoop in it shares this computer's Steam Cloud "
+            + "save storage with the host and may already have run its own startup cloud sync, so it is stopped "
+            + "instead of being given the rest of the startup deadline. Before the first player's game of a "
+            + "session starts, Couch Co-Op copies the host's save profile into couch-coop/save-backups/ — look "
+            + "there first if the host's progress ever looks wrong.";
 
     /// <summary>
     /// Whether <paramref name="code"/> is one of the catch-all native failures — the ones recorded when the seat

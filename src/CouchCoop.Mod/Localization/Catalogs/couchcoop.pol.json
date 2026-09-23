@@ -79,7 +79,7 @@
   "couchcoop_connection_error_mod_mismatch_summary": "Gra tego gracza wczytała inną kopię CouchCoop.",
   "couchcoop_connection_error_mod_mismatch_action": "Zostaw zainstalowaną tylko jedną kopię moda, uruchom grę ponownie i spróbuj jeszcze raz.",
   "couchcoop_connection_error_seat_cloud_isolation_summary": "Gra tego gracza nie mogła zagwarantować, że nie ruszy Twoich zapisów w Steam Cloud.",
-  "couchcoop_connection_error_seat_cloud_isolation_action": "Została zatrzymana, zanim cokolwiek zapisała. Uruchom grę ponownie i spróbuj jeszcze raz, a jeśli się powtórzy, skopiuj ten raport.",
+  "couchcoop_connection_error_seat_cloud_isolation_action": "Została zatrzymana. Uruchom grę ponownie i spróbuj jeszcze raz, a jeśli się powtórzy, skopiuj ten raport.",
   "couchcoop_connection_error_seat_silent_summary": "Gra tego gracza uruchomiła się i dołączyła, a potem przestała odpowiadać.",
   "couchcoop_connection_error_seat_silent_action": "Spróbuj ponownie. Jeśli będzie się to powtarzać, sprawdź własny dziennik tego gracza (jego ścieżka znajduje się w tym raporcie) i spróbuj ponownie z wyłączonymi pozostałymi modami.",
   "couchcoop_connection_error_seat_control_summary": "Gra tego gracza działa, ale nie może przekazać informacji do Twojej gry.",

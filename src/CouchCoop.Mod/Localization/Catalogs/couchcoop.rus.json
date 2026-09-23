@@ -79,7 +79,7 @@
   "couchcoop_connection_error_mod_mismatch_summary": "Игра этого игрока загрузила другую копию CouchCoop.",
   "couchcoop_connection_error_mod_mismatch_action": "Оставьте установленной только одну копию мода, перезапустите игру и повторите попытку.",
   "couchcoop_connection_error_seat_cloud_isolation_summary": "Игра этого игрока не смогла гарантировать, что не тронет ваши сохранения в Steam Cloud.",
-  "couchcoop_connection_error_seat_cloud_isolation_action": "Она была остановлена до того, как что-либо записала. Перезапустите игру и попробуйте снова, а если повторится — скопируйте этот отчёт.",
+  "couchcoop_connection_error_seat_cloud_isolation_action": "Она была остановлена. Перезапустите игру и попробуйте снова, а если повторится — скопируйте этот отчёт.",
   "couchcoop_connection_error_seat_silent_summary": "Игра этого игрока запустилась и подключилась, но затем перестала отвечать.",
   "couchcoop_connection_error_seat_silent_action": "Попробуйте снова. Если это повторяется, проверьте собственный журнал этого игрока (путь указан в этом отчёте) и попробуйте снова, отключив остальные моды.",
   "couchcoop_connection_error_seat_control_summary": "Игра этого игрока работает, но не может сообщить о себе вашей игре.",

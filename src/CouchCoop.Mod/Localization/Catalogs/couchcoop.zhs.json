@@ -79,7 +79,7 @@
   "couchcoop_connection_error_mod_mismatch_summary": "该玩家的游戏加载了不同的 CouchCoop 副本。",
   "couchcoop_connection_error_mod_mismatch_action": "只保留一个模组副本，重启游戏后重试。",
   "couchcoop_connection_error_seat_cloud_isolation_summary": "该玩家的游戏无法保证不会动你的 Steam 云存档。",
-  "couchcoop_connection_error_seat_cloud_isolation_action": "它在写入任何内容之前已被停止。请重启游戏后重试；若再次出现，请复制此报告。",
+  "couchcoop_connection_error_seat_cloud_isolation_action": "它已被停止。请重启游戏后重试；若再次出现，请复制此报告。",
   "couchcoop_connection_error_seat_silent_summary": "该玩家的游戏已启动并加入，但随后停止响应。",
   "couchcoop_connection_error_seat_silent_action": "请重试。如果仍然发生，请查看该玩家自己的日志（路径见本报告），并在禁用其他模组后重试。",
   "couchcoop_connection_error_seat_control_summary": "该玩家的游戏正在运行，但无法向你的游戏回报状态。",

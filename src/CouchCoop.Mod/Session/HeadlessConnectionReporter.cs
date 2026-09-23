@@ -598,9 +598,17 @@ public sealed class HeadlessConnectionReporter : IDisposable
             ClearFallback();
             return true;
         }
-        catch (Exception exception) when (!cancellationToken.IsCancellationRequested)
+        catch (Exception exception)
         {
-            Report(endpoint, "control-status-failed", Describe(exception), started);
+            // THE CALLER'S DEADLINE IS A FAILURE TOO, and the commonest one. Every caller passes a deadline, not a
+            // cancel: the hello's is two seconds, the same as Client.Timeout, and a connect that something on this
+            // computer is filtering — or refusing on Windows, which takes ~2 s to say so — always loses that race.
+            // This catch used to exclude it, so exactly the seat the fallback exists for had no record on disk and
+            // no line in godot.log until the live reporter's first heartbeat, a hundred lines further down mod init
+            // — and a host that has heard nothing at 35 s calls that seat one with no CouchCoop in it.
+            Report(endpoint, "control-status-failed",
+                cancellationToken.IsCancellationRequested ? "no answer before this report's deadline" : Describe(exception),
+                started);
             // BEFORE the rethrow, and this is the earliest the fallback can possibly be written: this path
             // carries the seat's hello, sent from the cloud-isolation guard at mod init, seconds before the live
             // reporter exists. A seat whose channel is dead from the start therefore has a record on disk within

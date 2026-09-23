@@ -79,7 +79,7 @@
   "couchcoop_connection_error_mod_mismatch_summary": "เกมของผู้เล่นนี้โหลด CouchCoop คนละสำเนากับโฮสต์",
   "couchcoop_connection_error_mod_mismatch_action": "ให้ติดตั้ง CouchCoop ไว้เพียงสำเนาเดียว รีสตาร์ทเกม แล้วลองอีกครั้ง",
   "couchcoop_connection_error_seat_cloud_isolation_summary": "เกมของผู้เล่นนี้ไม่สามารถรับประกันได้ว่าจะไม่แตะไฟล์เซฟบน Steam Cloud ของคุณ",
-  "couchcoop_connection_error_seat_cloud_isolation_action": "เกมถูกหยุดก่อนที่จะเขียนอะไรลงไป รีสตาร์ทเกมแล้วลองอีกครั้ง และหากเกิดขึ้นอีกให้คัดลอกรายงานนี้",
+  "couchcoop_connection_error_seat_cloud_isolation_action": "เกมถูกหยุดแล้ว รีสตาร์ทเกมแล้วลองอีกครั้ง และหากเกิดขึ้นอีกให้คัดลอกรายงานนี้",
   "couchcoop_connection_error_seat_silent_summary": "เกมของผู้เล่นนี้เริ่มทำงานและเข้าร่วมแล้ว แต่จากนั้นก็หยุดตอบสนอง",
   "couchcoop_connection_error_seat_silent_action": "ลองอีกครั้ง หากยังเกิดขึ้นอีก ให้ตรวจสอบบันทึกของผู้เล่นคนนั้น (เส้นทางอยู่ในรายงานนี้) แล้วลองใหม่โดยปิดใช้งานม็อดอื่น ๆ",
   "couchcoop_connection_error_seat_control_summary": "เกมของผู้เล่นนี้ทำงานอยู่ แต่ไม่สามารถรายงานกลับไปยังเกมของคุณได้",

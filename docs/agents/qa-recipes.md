@@ -861,12 +861,17 @@ works. Things worth knowing before reading its output:
   save isolation installed" on every heartbeat; a heartbeat without that declaration fails the seat on arrival,
   and total silence past `COUCHCOOP_SEAT_CONTACT_TIMEOUT_SECONDS` (default 35) does the same — so a seat that
   used to sit on "Joining…" for 75 seconds because its mod failed to load now stops early and says why.
-  **Silence splits on host lobby membership** (`77b2f7e1`): a silent seat the lobby does NOT list ran none of
-  our code, so it keeps `seat-cloud-isolation-unconfirmed`; a silent seat the lobby DOES list got there through
-  `CommandLineOverridePatch`, which only runs after the isolation guard, so its saves are provably covered and
-  it is failed as `seat-silent-after-join` instead, pointing at the seat's own log and the mods beside us.
-  Expect the cloud-isolation code from a missing declaration or from an unmodded seat, and never from a seat
-  that reached the lobby. To exercise the
+  **Silence splits on host lobby membership, then on the seat's own port record** (`77b2f7e1`,
+  `ClassifySilentSeat`): a silent seat the lobby DOES list got there through `CommandLineOverridePatch`, which
+  only runs after the isolation guard, so its saves are provably covered and it is failed as
+  `seat-silent-after-join` (or `seat-control-blocked` while it still serves). **Not being listed proves
+  nothing**: a seat joins only after the game's asset preload, so a healthy one on a slow machine is still
+  outside the lobby at 35s. A non-member whose pid-matched `browser-port-slot-N` record exists is running our
+  code (only our browser server writes it, after the guard) and is failed as `seat-control-blocked`; only a
+  non-member with no record keeps `seat-cloud-isolation-unconfirmed`, whose detail says the host *cannot
+  confirm* CouchCoop is running and ends in the same `Observed:` evidence tail as the other arms. Expect the
+  cloud-isolation code from a missing declaration, an unmodded seat, or a seat whose report, status file and
+  port record all failed — never from a seat that reached the lobby. To exercise the
   refusal itself, launch the host with `COUCHCOOP_FORCE_SEAT_ISOLATION_FAILURE=1` (exactly `1`); it is inherited
   by the seats it spawns, forces the verdict without opening any write path, and is inert unset.
 

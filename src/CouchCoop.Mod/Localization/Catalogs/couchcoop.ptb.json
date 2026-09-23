@@ -79,7 +79,7 @@
   "couchcoop_connection_error_mod_mismatch_summary": "O jogo deste jogador carregou uma cópia diferente do CouchCoop.",
   "couchcoop_connection_error_mod_mismatch_action": "Mantenha apenas uma cópia do mod instalada, reinicie o jogo e tente novamente.",
   "couchcoop_connection_error_seat_cloud_isolation_summary": "O jogo deste jogador não pôde garantir que não mexeria nos seus saves da Steam Cloud.",
-  "couchcoop_connection_error_seat_cloud_isolation_action": "Ele foi interrompido antes de escrever qualquer coisa. Reinicie o jogo e tente novamente, e copie este relatório se acontecer de novo.",
+  "couchcoop_connection_error_seat_cloud_isolation_action": "Ele foi interrompido. Reinicie o jogo e tente novamente, e copie este relatório se acontecer de novo.",
   "couchcoop_connection_error_seat_silent_summary": "O jogo deste jogador iniciou e entrou, mas depois parou de responder.",
   "couchcoop_connection_error_seat_silent_action": "Tente novamente. Se continuar acontecendo, verifique o log do próprio jogador (o caminho está neste relatório) e tente de novo com os outros mods desativados.",
   "couchcoop_connection_error_seat_control_summary": "O jogo deste jogador está em execução, mas não consegue se comunicar com o seu jogo.",

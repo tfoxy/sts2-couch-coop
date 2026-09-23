@@ -26,6 +26,7 @@ internal static class HeadlessConnectionLifecycleTests
         await ASeatThatCannotIsolateCloudSavesIsItsOwnIssue();
         await AHeartbeatWithoutTheCloudDeclarationStopsTheSeat();
         await ASilentSeatIsStoppedAtTheContactDeadline();
+        await ASilentSeatOutsideTheLobbyThatRecordedItsPortIsNotBlamedOnCloudSaves();
         await ASilentSeatThatJoinedIsNotBlamedOnCloudSaves();
         await ASilentSeatThatIsStillServingBlamesTheControlChannel();
         await ASeatWhoseReportIsBlockedStillJoinsThroughItsStatusFile();
@@ -385,17 +386,41 @@ internal static class HeadlessConnectionLifecycleTests
     //
     // THE MEMBERSHIP PROBE IS `false` ON PURPOSE, and this pair of tests is the reason the argument matters.
     // A game with no CouchCoop in it cannot appear in the host's lobby at all: joining is synthesized by
-    // CommandLineOverridePatch, which is ours. So a silent NON-member is the unmodded seat, and a silent
-    // member is a different failure with a different name — the test below.
+    // CommandLineOverridePatch, which is ours. So a silent member is a different failure with a different name —
+    // the test below. The converse does NOT hold, which is the leg after it: a healthy seat on a slow machine is
+    // still outside the lobby at this deadline, so a non-member is only the cloud issue when it has left no
+    // port record of its own either.
     private static Task ASilentSeatIsStoppedAtTheContactDeadline()
         => AssertSilentSeatAtContactDeadline(
             member: false,
-            // Nothing this host can reach on the port changes this verdict: a seat the lobby never listed had
-            // none of our code in it, whatever else is answering.
+            // Nothing this host can reach on the port changes this verdict: any program can answer on a port, and
+            // the claim to be cleared is that the player's saves were protected.
             serving: true,
             expectedCode: HeadlessClientManager.SeatCloudIsolationCode,
-            expectedDetailFragment: "did not report anything",
-            because: "a silent seat the lobby never listed is the cloud-isolation issue");
+            expectedDetailFragment: "cannot confirm CouchCoop is running",
+            because: "a silent seat the lobby never listed, with no port record of its own, is the cloud-isolation issue");
+
+    /// <summary>
+    /// The false alarm in the Sep-23 field report's shape: a seat outside the lobby that DID record the port it
+    /// bound. Only our browser server writes that record, and only after the cloud isolation guard has passed, so
+    /// this seat is running CouchCoop with the saves protected — and was being told the opposite.
+    /// </summary>
+    private static async Task ASilentSeatOutsideTheLobbyThatRecordedItsPortIsNotBlamedOnCloudSaves()
+    {
+        var row = await AssertSilentSeatAtContactDeadline(
+            member: false,
+            serving: false,
+            expectedCode: HeadlessClientManager.SeatControlBlockedCode,
+            expectedDetailFragment: "has not joined the host's lobby yet",
+            because: "a seat outside the lobby that recorded its own port is a blocked control channel",
+            recordsItsPort: true);
+        Assert(!row.Issue!.Summary.Contains("Steam Cloud", StringComparison.Ordinal)
+                && row.Issue.Detail!.Contains("your saves were protected", StringComparison.Ordinal),
+            "…and is told its saves were protected, because the record is only written once they are");
+        Assert(row.Issue.Detail.Contains("recorded that it bound port", StringComparison.Ordinal)
+                && row.Issue.Detail.Contains("not made", StringComparison.Ordinal),
+            "…with the evidence tail saying what cleared it, and that no probe was spent on a non-member");
+    }
 
     // The mirror image, and the one that split exists for: the lobby HAS this seat, so CouchCoop demonstrably
     // ran in it (only our patch could have made it join) and the cloud isolation guard demonstrably passed
@@ -532,7 +557,8 @@ internal static class HeadlessConnectionLifecycleTests
     }
 
     private static async Task<ConnectionStatusRow> AssertSilentSeatAtContactDeadline(
-        bool member, bool serving, string expectedCode, string expectedDetailFragment, string because)
+        bool member, bool serving, string expectedCode, string expectedDetailFragment, string because,
+        bool recordsItsPort = false)
     {
         var priorContact = Environment.GetEnvironmentVariable(HeadlessClientManager.SeatContactTimeoutEnvironmentVariable);
         var priorReady = Environment.GetEnvironmentVariable(HeadlessClientManager.SeatReadyTimeoutEnvironmentVariable);
@@ -541,12 +567,25 @@ internal static class HeadlessConnectionLifecycleTests
         Environment.SetEnvironmentVariable(HeadlessClientManager.SeatReadyTimeoutEnvironmentVariable, "60");
         var id = BeginAttempt();
         var process = new FakeProcess(42);
+        var dir = Path.Combine(Path.GetTempPath(), "couch-seat-silent-" + Guid.NewGuid().ToString("N"));
         using var manager = NewManager(_ => process, () => member, () => serving);
         try
         {
             var started = Stopwatch.GetTimestamp();
-            var result = await manager.EnsureHeadlessAsync(id, "silent", CancellationToken.None)
-                .WaitAsync(TimeSpan.FromSeconds(20));
+            var pending = manager.EnsureHeadlessAsync(id, "silent", CancellationToken.None);
+            if (recordsItsPort)
+            {
+                // What the seat's browser server writes the moment it binds, under the pid this host started — the
+                // FakeProcess's — so the pid rule is exercised rather than bypassed.
+                var control = await WaitForControlAsync(id);
+                Directory.CreateDirectory(Path.Combine(dir, HeadlessUserDirSeeder.CouchCoopDirName));
+                manager.CaptureSeatFiles(control.Slot, dir);
+                File.WriteAllText(
+                    Path.Combine(dir, HeadlessUserDirSeeder.CouchCoopDirName, BrowserPortFile.FileNameFor(control.Slot)),
+                    $"{{\"port\":{HeadlessClientManager.SlotToPort(control.Slot)},\"pid\":{process.Id}}}\n");
+            }
+
+            var result = await pending.WaitAsync(TimeSpan.FromSeconds(20));
             Assert(result is null, "a seat that never says anything is not redirected to");
             Assert(Stopwatch.GetElapsedTime(started) < TimeSpan.FromSeconds(30),
                 "…and dies on the contact deadline rather than the readiness one");
@@ -562,6 +601,10 @@ internal static class HeadlessConnectionLifecycleTests
                         && row.Issue.Code != HeadlessClientManager.SeatCloudIsolationCode,
                     "a seat that joined is never accused of touching the account's Steam Cloud saves");
             }
+            // Every silent-seat verdict is an interpretation, the cloud one included, so each carries what it rests
+            // on — the cloud one used to be the only one that did not.
+            Assert(row.Issue!.Detail!.Contains("Observed:", StringComparison.Ordinal),
+                "…and its detail carries the evidence it was decided on");
             Assert(process.Killed, "the silent seat is actually terminated");
             return row;
         }
@@ -571,6 +614,7 @@ internal static class HeadlessConnectionLifecycleTests
             Environment.SetEnvironmentVariable(HeadlessClientManager.SeatReadyTimeoutEnvironmentVariable, priorReady);
             CleanupControl(id);
             ConnectionRegistry.Shared.Clear();
+            try { Directory.Delete(dir, recursive: true); } catch (IOException) { }
         }
     }
 
