@@ -2,6 +2,8 @@
 // Real-input response bench against an OWNED, already prepared combat hand.
 // COUCHCOOP_VALIDATE_URL=http://... node scripts/measure-latency.mjs --out <artifact-dir>
 // Or --cdp <url> to use an already joined owned browser page (instrumentation requires a reload).
+// --first-return may start with a neutral hand; --require-focused-return-setup
+// additionally proves one focused-to-neutral pre-disconnect transition.
 // Take the game/browser live-QA leases first. This script does not create a fixture or deploy.
 //
 // A sample needs: real pointer event -> exactly one input request -> the target holder's authoritative
@@ -27,6 +29,7 @@ import {
   responseMatches,
   selectCdpPage,
 } from "./lib/input-response-latency.mjs";
+import { acceptHandHitStack, selectHandTarget, selectNeutralParkingPoint } from "./lib/latency-hand-target.mjs";
 const require = createRequire(new URL("../frontend/package.json", import.meta.url));
 const { chromium } = require("@playwright/test");
 const args = process.argv.slice(2);
@@ -59,6 +62,7 @@ if (pageIndex !== null && (!Number.isInteger(pageIndex) || pageIndex < 0 || !cdp
 const expectedPages = Number(option("--expected-pages", "1"));
 const companionHoverHz = Number(option("--companion-hover-hz", "0"));
 const firstReturn = args.includes("--first-return");
+const requireFocusedReturnSetup = args.includes("--require-focused-return-setup");
 const FIRST_RETURN_READY_TO_INPUT_LIMIT_MS = 100;
 const disconnectMs = Number(option("--disconnect-ms", "1500"));
 if (!Number.isInteger(expectedPages) || expectedPages < 1 || !Number.isFinite(companionHoverHz) ||
@@ -68,6 +72,8 @@ if (!Number.isInteger(expectedPages) || expectedPages < 1 || !Number.isFinite(co
 if (firstReturn && (!cdpUrl || count !== 1 || expectedPages !== 1 || companionHoverHz !== 0 ||
     !Number.isFinite(disconnectMs) || disconnectMs < 1000))
   throw new Error("--first-return requires one CDP page, one sample, no companions, and >=1000ms disconnected");
+if (requireFocusedReturnSetup && !firstReturn)
+  throw new Error("--require-focused-return-setup requires --first-return");
 const synthetic = args.includes("--synthetic-fixture");
 const syntheticAckDelayMs = Number(option("--synthetic-ack-delay-ms", "0"));
 const syntheticOmitFirstAcks = Number(option("--synthetic-omit-first-acks", "0"));
@@ -193,14 +199,34 @@ try {
   });
   traceStarted = true;
 
-  const installWitness = (matches, word, pointerPrefix, responsePrefix) => {
+  const installWitness = (matches, word, pointerPrefix, responsePrefix, chooseTarget, checkHitStack, chooseParkingPoint) => {
     const clock = () => performance.timeOrigin + performance.now();
     const socketIdentity = new WeakMap();
     const bench = window.__responseBench = { current: null, streamOpenAt: null,
       firstFullSceneAt: null, firstFullScene: null, nextSocketId: 0,
       lastSeatInputAt: null,
-      preSampleInputCount: 0, preSampleInputs: [],
+      preSampleInputCount: 0, preSampleInputs: [], neutralRects: null,
       clockResolutionMs: crossOriginIsolated ? .005 : .1 };
+    bench.pickParkingPoint = () => {
+      const stage = document.querySelector(".mirror-stage");
+      const hand = window.__mirrorHandPoses?.().holders ?? [];
+      const rects = window.__mirrorInteractiveRects?.() ?? [];
+      if (!stage || typeof window.__mirrorHitProbe !== "function") return null;
+      const box = stage.getBoundingClientRect();
+      const scale = box.width / stage.offsetWidth;
+      const point = chooseParkingPoint({ holders: hand, rects,
+        stageWidth: stage.offsetWidth, stageHeight: stage.offsetHeight,
+        acceptPoint: ({ gx, gy }) => {
+          const cx = box.left + gx * scale, cy = box.top + gy * scale;
+          const stack = window.__mirrorHitProbe(cx, cy, stage.offsetWidth, gx, gy)?.stack;
+          return { accepted: Array.isArray(stack?.ids) && stack.ids.length === 0 &&
+            stack.blocked === false, stack };
+        } });
+      return point ? { ...point, x: box.left + point.gx * scale,
+        y: box.top + point.gy * scale,
+        stageRect: { left: box.left, top: box.top, width: box.width, height: box.height,
+          designWidth: stage.offsetWidth, designHeight: stage.offsetHeight } } : null;
+    };
     bench.pickTarget = () => {
       const stage = document.querySelector(".mirror-stage");
       if (!stage) {
@@ -213,25 +239,43 @@ try {
       const holders = hand.filter(h => h.zIndex !== 1 && !h.channelLive);
       const priorFocusedIds = hand.filter(h => h.zIndex === 1).map(h => h.id);
       const rects = window.__mirrorInteractiveRects?.() ?? [];
+      if (!bench.neutralRects && priorFocusedIds.length === 0 &&
+          hand.length >= 2 && hand.every(h => !h.channelLive && h.hitboxId)) {
+        const byId = new Map(rects.map(r => [r.id, r]));
+        if (hand.every(h => byId.has(h.hitboxId))) {
+          bench.neutralRects = Object.fromEntries(hand.map(h =>
+            [h.id, structuredClone(byId.get(h.hitboxId))]));
+        }
+      }
       const state = { at: clock(), handCount: hand.length, focusedCount: priorFocusedIds.length,
         unsettledCount: hand.filter(h => h.zIndex !== 1 && h.channelLive).length,
         eligibleCount: holders.length, rectCount: rects.length, matchedRectCount: 0,
-        onstageCount: 0, stageWidth: stage.offsetWidth, stageHeight: stage.offsetHeight };
-      // Use an upper-centre point to avoid neighbouring cards overlapping the bottom of the fan.
-      for (const holder of holders.slice().sort((a, b) => a.mDrawn[4] - b.mDrawn[4])) {
-        const rect = rects.find(r => r.id === holder.hitboxId);
-        if (!rect) continue;
-        state.matchedRectCount++;
-        const m = rect.transform, r = rect.localRect;
-        const lx = r.x + r.width / 2, ly = r.y + r.height * .25;
-        const gx = m[0] * lx + m[2] * ly + m[4] + rect.spreadDx;
-        const gy = m[1] * lx + m[3] * ly + m[5] + rect.raiseDy;
-        if (gx < 2 || gy < 2 || gx > stage.offsetWidth - 2 || gy > stage.offsetHeight - 2) continue;
-        state.onstageCount++;
+        onstageCount: 0, stageWidth: stage.offsetWidth, stageHeight: stage.offsetHeight,
+        neutralCount: Object.keys(bench.neutralRects ?? {}).length };
+      state.matchedRectCount = holders.filter(h => rects.some(r => r.id === h.hitboxId)).length;
+      const chosen = chooseTarget({ holders: hand, rects, neutralRects: bench.neutralRects,
+        stageWidth: stage.offsetWidth, stageHeight: stage.offsetHeight,
+        acceptPoint: (holder, point) => {
+          if (typeof window.__mirrorHitProbe !== "function") return { accepted: true, source: "unavailable" };
+          const cx = box.left + point.gx * scale, cy = box.top + point.gy * scale;
+          const stack = window.__mirrorHitProbe(cx, cy, stage.offsetWidth, point.gx, point.gy)?.stack;
+          const otherCards = hand.filter(h => h.id !== holder.id).map(h => h.cardId);
+          return checkHitStack(stack, holder.cardId, otherCards);
+        } });
+      if (chosen) {
+        state.onstageCount = 1;
         bench.lastPickState = state;
+        const { holder, rect, neutral, point, acceptance } = chosen;
         return { targetId: holder.id, contentKey: holder.cardContentKey, priorFocusedIds,
           targetBeforeZIndex: holder.zIndex, targetBeforeChannelLive: holder.channelLive,
-          x: box.left + gx * scale, y: box.top + gy * scale };
+          x: box.left + point.gx * scale, y: box.top + point.gy * scale,
+          selectionProof: { at: state.at, holderId: holder.id, hitboxId: holder.hitboxId,
+            pointDesign: [point.gx, point.gy], localFraction: [point.fx, point.fy],
+            currentMargin: point.currentMargin, neutralMargin: point.neutralMargin,
+            currentRect: structuredClone(rect), neutralRect: neutral ? structuredClone(neutral) : null,
+            hitStack: acceptance,
+            priorFocusedIds, stageRect: { left: box.left, top: box.top, width: box.width,
+              height: box.height, designWidth: stage.offsetWidth, designHeight: stage.offsetHeight } } };
       }
       bench.lastPickState = state;
       return null;
@@ -371,7 +415,7 @@ try {
       }
     }, true);
   };
-  await page.addInitScript({ content: `(${installWitness.toString()})(${responseMatches.toString()}, ${markerWord.toString()}, ${JSON.stringify(POINTER_TRACE_PREFIX)}, ${JSON.stringify(RESPONSE_TRACE_PREFIX)})` });
+  await page.addInitScript({ content: `(${installWitness.toString()})(${responseMatches.toString()}, ${markerWord.toString()}, ${JSON.stringify(POINTER_TRACE_PREFIX)}, ${JSON.stringify(RESPONSE_TRACE_PREFIX)}, ${selectHandTarget.toString()}, ${acceptHandHitStack.toString()}, ${selectNeutralParkingPoint.toString()})` });
   cdp.on("Page.screencastFrame", event => {
     // Ack immediately; decoding and disk I/O must not stall admission of the next frame.
     const ack = () => void cdp.send("Page.screencastFrameAck", { sessionId: event.sessionId }).catch(() => {});
@@ -394,18 +438,54 @@ try {
   // screencast admission. The barcode map stays disarmed until the new document is ready.
   await cdp.send("Page.startScreencast", { format: "png", everyNthFrame: 1 });
   if (firstReturn) {
-    if (freshPage) {
-      await page.goto(url, { waitUntil: "domcontentloaded" });
-      await page.waitForFunction(() => window.__mirrorHandPoses?.().holders.some(h => h.inFan), null, { timeout: 120000 });
-    }
-    // Park the cursor outside the stage, then close the viewer socket. No reset hover is sent
-    // after return: the next pointer event is the first controlled input of the new subscription.
-    await page.mouse.move(0, 0);
+    // Install the witness on the pre-disconnect document too. Its one setup
+    // hover must neutralize the streamed hand before this viewer leaves.
+    await page.goto(url, { waitUntil: "domcontentloaded" });
+    await page.waitForFunction(() => window.__mirrorHandPoses?.().holders.some(h => h.inFan), null, { timeout: 120000 });
+    if (requireFocusedReturnSetup)
+      await page.waitForFunction(() => window.__mirrorHandPoses?.().holders.some(h => h.inFan && h.zIndex === 1),
+        null, { timeout: 2000 });
+    const beforePark = await page.evaluate(() => {
+      const bench = window.__responseBench;
+      const hand = window.__mirrorHandPoses().holders.filter(h => h.inFan);
+      return { point: bench.pickParkingPoint(), at: performance.timeOrigin + performance.now(),
+        hand: hand.map(h => ({ id: h.id, hitboxId: h.hitboxId, zIndex: h.zIndex,
+          channelLive: h.channelLive, contentKey: h.cardContentKey })),
+        preSampleInputCount: bench.preSampleInputCount };
+    });
+    await writeFile(path.join(out, "pre-disconnect-park.json"), JSON.stringify({ before: beforePark }, null, 2) + "\n");
+    if (requireFocusedReturnSetup && !beforePark.hand.some(h => h.zIndex === 1))
+      throw new Error("pre-disconnect hand was not focused; focused-to-neutral setup was not exercised");
+    if (beforePark.preSampleInputCount !== 0)
+      throw new Error("pre-disconnect setup already sent an input before the controlled park");
+    if (!beforePark.point) throw new Error("no unclaimed inside-stage parking point before disconnect");
+    await page.mouse.move(beforePark.point.x, beforePark.point.y);
+    const afterPark = await (await page.waitForFunction(beforeCount => {
+      const bench = window.__responseBench;
+      const hand = window.__mirrorHandPoses?.().holders.filter(h => h.inFan) ?? [];
+      if (!hand.length || hand.some(h => h.zIndex === 1 || h.channelLive || !h.hitboxId) ||
+          bench.preSampleInputCount !== beforeCount + 1 ||
+          bench.preSampleInputs.at(-1)?.kind !== "hover") return false;
+      const rects = window.__mirrorInteractiveRects?.() ?? [];
+      if (!hand.every(h => rects.some(r => r.id === h.hitboxId))) return false;
+      // Capture the neutral pose in this document for audit only. The returned
+      // document creates a fresh cache; no geometry is carried across return.
+      bench.pickTarget();
+      if (Object.keys(bench.neutralRects ?? {}).length !== hand.length) return false;
+      return { at: performance.timeOrigin + performance.now(),
+        hand: hand.map(h => ({ id: h.id, hitboxId: h.hitboxId, zIndex: h.zIndex,
+          channelLive: h.channelLive, contentKey: h.cardContentKey })),
+        preSampleInputCount: bench.preSampleInputCount,
+        setupInput: bench.preSampleInputs.at(-1), neutralRects: bench.neutralRects };
+    }, beforePark.preSampleInputCount, { timeout: 2000 })).jsonValue();
+    const preDisconnectPark = { before: beforePark, after: afterPark };
+    await writeFile(path.join(out, "pre-disconnect-park.json"), JSON.stringify(preDisconnectPark, null, 2) + "\n");
     await page.screenshot({ path: path.join(out, "before-return.png") });
     await page.goto("about:blank", { waitUntil: "domcontentloaded" });
     const disconnectedAtMs = Date.now();
     await new Promise(resolve => setTimeout(resolve, disconnectMs));
-    returnLifecycle = { disconnectedAtMs, disconnectMs, returnNavigationAtMs: Date.now() };
+    returnLifecycle = { requireFocusedReturnSetup, preDisconnectPark,
+      disconnectedAtMs, disconnectMs, returnNavigationAtMs: Date.now() };
   }
   await page.goto(url, { waitUntil: "domcontentloaded" });
   let firstReturnPreparedTarget = null;
@@ -692,7 +772,7 @@ finally {
   const summarize = (population, field = "inputToPresentedMs") =>
     percentiles(samples.filter(s => s.valid && s.population === population).map(s => s[field]));
   const harnessFiles = {};
-  for (const file of ["measure-latency.mjs", "lib/input-response-latency.mjs", "lib/png.mjs",
+  for (const file of ["measure-latency.mjs", "lib/input-response-latency.mjs", "lib/latency-hand-target.mjs", "lib/png.mjs",
     "lib/latency-frame-decoder-worker.mjs"]) {
     const bytes = await readFile(new URL(`./${file}`, import.meta.url));
     harnessFiles[`scripts/${file}`] = createHash("sha256").update(bytes).digest("hex");
@@ -703,7 +783,7 @@ finally {
     instance, url, matchUrlPrefix, pageUrl: page.url(), pageIndex, selectedPageIndex,
     freshPage, requestedViewport: freshViewport, preSampleInputs,
     harnessFiles,
-    firstReturn, returnLifecycle,
+    firstReturn, requireFocusedReturnSetup, returnLifecycle,
     expectedPages, companionHoverHz, companions: companionStats.map(({ session, stage, page, ...stat }) => stat),
     viewport: geometryBefore, viewportAfter: geometryAfter, preInputScreencastFrames, screencastFrames,
     decoderStats,
