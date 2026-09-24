@@ -63,4 +63,4 @@ Los jugadores se numeran a partir del 2, así que la primera persona que se une 
 
 ## Algo que conviene saber antes de reportar
 
-Iniciar la partida de un jugador puede tardar hasta un minuto, y en una computadora más lenta va a usar casi todo ese tiempo. Es normal, no una falla. Mientras trabaja, la página para unirse va contando y cambiando de etapa debajo de *Unirse…*; si esa línea sigue moviéndose, todavía no falló nada, así que deja la página abierta.
+Iniciar la partida de un jugador puede tardar hasta un minuto, y en una computadora más lenta va a usar casi todo ese tiempo. Es normal, no una falla. Mientras trabaja, la página para unirse va contando y cambiando de etapa debajo de *Uniéndote…*; si esa línea sigue moviéndose, todavía no falló nada, así que deja la página abierta.

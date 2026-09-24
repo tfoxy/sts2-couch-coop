@@ -6,7 +6,7 @@ Host instaluje CouchCoop. Pozostali gracze dołączają, skanując kod QR lub wp
 [olist]
 [*]Zainstaluj CouchCoop na komputerze hosta.
 [*]Rozpocznij lub wczytaj rozgrywkę wieloosobową.
-[*]W lobby hosta wybierz [b]Kod QR do współpracy na kanapie[/b].
+[*]W lobby hosta wybierz [b]Kod QR Couch Co-Op[/b].
 [*]Na każdym dodatkowym urządzeniu zeskanuj kod QR lub wpisz wyświetlony adres URL.
 [/olist]
 
@@ -14,7 +14,7 @@ Telefon lub tablet nie może się połączyć? Zobacz [url=https://github.com/tf
 
 [h2]Pierwszy raz z modyfikacjami?[/h2]
 [list]
-[*][b]Nie widzisz przycisku Kod QR do współpracy na kanapie?[/b] Upewnij się, że modyfikacje są włączone w [b]Ustawienia -> Ogólne -> Ustawienia modyfikacji[/b], a potem uruchom grę ponownie.
+[*][b]Nie widzisz przycisku Kod QR Couch Co-Op?[/b] Upewnij się, że modyfikacje są włączone w [b]Ustawienia -> Ogólne -> Ustawienia modyfikacji[/b], a potem uruchom grę ponownie.
 [*][b]Postępy wyglądają na skasowane?[/b] Twoje zapisy nie zniknęły. Gra trzyma postępy z modyfikacjami i bez nich osobno. Na stabilnej gałęzi gry możesz użyć [url=https://steamcommunity.com/sharedfiles/filedetails/?id=3747503308]Import Vanilla Saves[/url], aby skopiować dotychczasowe postępy do profilu z modyfikacjami; na gałęzi otwartej bety gra robi to sama przy pierwszym uruchomieniu z modyfikacjami.
 [/list]
 

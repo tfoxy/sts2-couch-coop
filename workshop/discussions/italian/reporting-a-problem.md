@@ -63,4 +63,4 @@ I giocatori sono numerati a partire da 2, quindi la prima persona che si unisce 
 
 ## Una cosa da sapere prima di segnalare
 
-Avviare la partita di un giocatore può richiedere fino a un minuto, e su una macchina più lenta ne userà la maggior parte. È normale, non è un guasto. Mentre è in corso, la pagina per unirsi conta i secondi e cambia fase sotto *Partecipazione…*: se quella riga si muove ancora, non è andato storto niente, quindi tieni aperta la pagina.
+Avviare la partita di un giocatore può richiedere fino a un minuto, e su una macchina più lenta ne userà la maggior parte. È normale, non è un guasto. Mentre è in corso, la pagina per unirsi conta i secondi e cambia fase sotto *Unione alla partita…*: se quella riga si muove ancora, non è andato storto niente, quindi tieni aperta la pagina.

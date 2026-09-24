@@ -14,7 +14,7 @@ El anfitrión instala CouchCoop. Los demás jugadores se unen escaneando un cód
 
 [h2]¿Es tu primera vez con mods?[/h2]
 [list]
-[*][b]¿No aparece el botón Código QR de Couch Co-Op?[/b] Fíjate que los mods estén activados en [b]Ajustes -> General -> Ajustes de mods[/b] y reinicia el juego.
+[*][b]¿No aparece el botón Código QR de Couch Co-Op?[/b] Fíjate que los mods estén activados en [b]Ajustes -> General -> Configuración de mods[/b] y reinicia el juego.
 [*][b]¿Parece que perdiste tu progreso?[/b] Tus partidas guardadas siguen ahí. El juego mantiene separado el progreso con mods y sin ellos. En la rama estable del juego puedes usar [url=https://steamcommunity.com/sharedfiles/filedetails/?id=3747503308]Import Vanilla Saves[/url] para copiar tu progreso al perfil con mods; en la rama beta pública el juego lo hace solo la primera vez que lo abres con mods.
 [/list]
 

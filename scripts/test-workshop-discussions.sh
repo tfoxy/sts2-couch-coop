@@ -15,7 +15,7 @@ for command in jq grep find sort cp; do command -v "$command" >/dev/null || fail
 
 languages=(english french italian german spanish japanese koreana polish brazilian russian schinese latam thai turkish)
 # Same pairing as scripts/render-workshop-localizations.sh: native catalog ids are not Steam language ids.
-catalogs=(en fra ita deu esp jpn kor pol ptb rus zhs spa tha tur)
+catalogs=(en fra ita deu spa jpn kor pol ptb rus zhs esp tha tur)
 posts=(phone-connection-troubleshooting reporting-a-problem)
 # The mod labels both posts name. A catalog change to any of them strands every translation that quotes it.
 labels=(couchcoop_qr_button couchcoop_connection_title couchcoop_connection_copy_report)

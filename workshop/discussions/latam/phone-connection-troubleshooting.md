@@ -16,7 +16,7 @@ La pantalla del QR tiene un selector con varias formas de llegar al anfitrión. 
 
 Usa de preferencia la dirección numérica simple (algo como **192.168.1.5:13337**). Es la que tiene menos piezas que puedan fallar. El nombre **.local** y el enlace web dependen de cosas externas al mod (tu router, una conexión a internet, los permisos del navegador), así que pueden fallar en una red donde la dirección numérica funciona perfectamente.
 
-**En un iPhone o iPad, no uses para nada la opción *Enlace web*.** Safari (y cualquier otro navegador de iOS, porque en el fondo todos son Safari) no permite que una página cargada desde internet acceda a nada de tu red de casa. Es una regla del navegador, no una configuración, así que no hay nada que permitir ni nada que cambiar: la página va a cargar y después te va a decir que el juego no respondió, en cualquier red y sin importar cómo esté configurado tu firewall. En un iPhone o iPad, usa **dirección simple** o **Enlace seguro**. (Ahora la propia página te lo avisa, si llegas hasta ahí).
+**En un iPhone o iPad, no uses para nada la opción *Enlace web*.** Safari (y cualquier otro navegador de iOS, porque en el fondo todos son Safari) no permite que una página cargada desde internet acceda a nada de tu red de casa. Es una regla del navegador, no una configuración, así que no hay nada que permitir ni nada que cambiar: la página va a cargar y después te va a decir que el juego no respondió, en cualquier red y sin importar cómo esté configurado tu firewall. En un iPhone o iPad, usa **Dirección simple** o **Enlace seguro**. (Ahora la propia página te lo avisa, si llegas hasta ahí).
 
 ### 2. Revisa que el teléfono realmente esté en la misma red
 
@@ -26,26 +26,26 @@ Usa de preferencia la dirección numérica simple (algo como **192.168.1.5:13337
 
 ### 3. Lee lo que te dice la página mientras se une
 
-Iniciar la partida de un jugador puede tardar hasta un minuto, y eso es normal, no una falla. Mientras tanto, la página ahora te muestra en qué punto va, en una línea debajo de *Unirse…*:
+Iniciar la partida de un jugador puede tardar hasta un minuto, y eso es normal, no una falla. Mientras tanto, la página ahora te muestra en qué punto va, en una línea debajo de *Uniéndote…*:
 
 *Conectando con el anfitrión: paso 1 de 6, 14 s hasta ahora. Esto puede tardar hasta un minuto, así que deja esta página abierta.*
 
-Si esa línea va contando y cambiando de etapa, está funcionando: deja la página abierta. Las seis etapas son: conectando con el anfitrión, esperando al anfitrión, iniciando la partida de este jugador, conectando a este jugador con la partida, cargando la vista de la partida y casi listo.
+Si esa línea va contando y cambiando de etapa, está funcionando: deja la página abierta. Las seis etapas son: conectando con el anfitrión, esperando al anfitrión, iniciando el juego de este jugador, conectando a este jugador con la partida, cargando la vista del juego y casi listo.
 
 ### 4. Si se detiene, ahora la página te dice POR QUÉ
 
 Cuando algo realmente sale mal, tu dispositivo recibe un aviso que indica cuál de varios problemas sin relación entre sí ocurrió, en dos oraciones más una línea técnica en gris. **Incluye todo eso en cualquier reporte.** Hay tres posibles, y cada uno necesita una solución totalmente diferente:
 
-- “**Tu partida está en marcha en el equipo anfitrión, pero este dispositivo no logró conectarse a ella.**”\
+- “**Tu juego está en marcha en la computadora anfitriona, pero este dispositivo no pudo conectarse a él.**”\
   Es la ruta de red entre tu teléfono y el anfitrión: una red Wi-Fi de invitados, una VPN o un router que mantiene aislados los dispositivos. La partida del anfitrión no tiene ningún problema. Revisa las secciones 2 y 6.
-- “**Otro programa del equipo anfitrión está usando el puerto que necesita tu partida.**”\
+- “**Otro programa de la computadora anfitriona está usando el puerto que necesita tu juego.**”\
   No hay nada que cambiar en tu dispositivo. En el anfitrión, algo más está ocupando uno de los puertos que necesita cada jugador; casi siempre es un proceso de jugador que quedó abierto de una sesión anterior. Quien sea el anfitrión debe cerrarlo (reiniciar Slay the Spire 2 lo resuelve).
-- “**El equipo anfitrión está bloqueando el puerto en el que se sirve tu partida.**”\
+- “**La computadora anfitriona está bloqueando el puerto que usa tu juego.**”\
   Tampoco hay nada que cambiar en tu dispositivo. Lo está bloqueando el propio firewall o el software de seguridad del anfitrión; revisa la sección 5.
 
-**El caso de bloqueo más común ni siquiera muestra *Unirse…*.** Si tu dispositivo llegó al anfitrión pero no puede llegar al puerto que se le asignó a tu propio jugador, la unión *funciona*, y después la página cambia a *Cargando…* y se queda ahí. En esa pantalla no hay línea de progreso ni cuenta regresiva, porque, del lado del anfitrión, nada falló. Lo primero útil que vas a ver es el mensaje “**no logró conectarse a ella**” de arriba, unos **20 segundos** después de que cambie la página. Así que, si te quedas trabado en *Cargando…*, espera medio minuto a que aparezca ese mensaje en vez de recargar: si recargas, toda la espera vuelve a empezar.
+**El caso de bloqueo más común ni siquiera muestra *Uniéndote…*.** Si tu dispositivo llegó al anfitrión pero no puede llegar al puerto que se le asignó a tu propio jugador, la unión *funciona*, y después la página cambia a *Cargando…* y se queda ahí. En esa pantalla no hay línea de progreso ni cuenta regresiva, porque, del lado del anfitrión, nada falló. Lo primero útil que vas a ver es el mensaje “**no pudo conectarse a él**” de arriba, unos **20 segundos** después de que cambie la página. Así que, si te quedas trabado en *Cargando…*, espera medio minuto a que aparezca ese mensaje en vez de recargar: si recargas, toda la espera vuelve a empezar.
 
-Si, en cambio, se queda en *Unirse…* y nunca cambia, el anfitrión se rinde a los 75 segundos con *No se pudo iniciar la vista del juego. Inténtalo de nuevo.* y una línea gris debajo. Esa es una falla distinta de la anterior. En cualquier caso, copia lo que diga.
+Si, en cambio, se queda en *Uniéndote…* y nunca cambia, el anfitrión se rinde a los 75 segundos con *No se pudo iniciar la vista del juego. Inténtalo de nuevo.* y una línea gris debajo. Esa es una falla distinta de la anterior. En cualquier caso, copia lo que diga.
 
 ### 5. Cada jugador usa su propio puerto
 
@@ -108,8 +108,8 @@ Es lo más útil que me puedes decir, porque cada respuesta apunta a una causa d
 
 - el navegador nunca carga nada
 - la página carga, pero la lista de jugadores nunca aparece
-- puedes elegir un nombre, pero se queda en “Unirse…”: dime qué decía la línea de progreso de abajo y qué mensaje te apareció si esperaste
-- pasa de ahí y se queda en “**Cargando…**”: este es el caso del puerto o del firewall, y es el más común. Dime si apareció el mensaje “no logró conectarse a ella” después de unos 20 segundos
+- puedes elegir un nombre, pero se queda en “Uniéndote…”: dime qué decía la línea de progreso de abajo y qué mensaje te apareció si esperaste
+- pasa de ahí y se queda en “**Cargando…**”: este es el caso del puerto o del firewall, y es el más común. Dime si apareció el mensaje “no pudo conectarse a él” después de unos 20 segundos
 - se conectó bien y después se desconectó durante la partida
 
 ### Cualquier otra cosa que puedas agregar
@@ -125,7 +125,7 @@ Es lo más útil que me puedes decir, porque cada respuesta apunta a una causa d
 
 - **El panel de conexiones.** En el anfitrión, abre la pantalla **Código QR de Couch Co-Op**: el panel **Conexiones** está ahí, debajo del código. Aparecen los dispositivos que llegaron lo suficientemente lejos, y todo lo que salió mal se guarda en **Problemas de conexión** (con un número al lado). Selecciona la fila y usa **Copiar informe**: eso copia un informe que ya incluye el paso que falla, los tiempos y el diagnóstico del propio anfitrión. Pégalo directamente en tu comentario. También indica la ruta exacta de los dos archivos de registro de abajo, así te ahorras buscarlos.
 - **El archivo de registro principal.** En Windows, `%APPDATA%\SlayTheSpire2\logs\godot.log`. En Linux, `~/.local/share/SlayTheSpire2/logs/godot.log`. En macOS, `~/Library/Application Support/SlayTheSpire2/logs/godot.log`.
-- **El registro de cada jugador.** Cada jugador que se une tiene su propia copia del juego corriendo en segundo plano en el anfitrión, y cada una guarda su propio registro. **Si la unión llegó a *Unirse…* y después se agotó el tiempo de espera, este es el archivo que explica por qué**; el registro principal de arriba normalmente no lo explica. Los jugadores se numeran a partir del 2, así que la primera persona que se une es **`slot-2`**: en Linux, es `~/.local/share/SlayTheSpire2/couch-coop/headless-slots/slot-2/SlayTheSpire2/logs/godot.log` (sí, `SlayTheSpire2` dos veces; no es un error de tipeo), y las rutas de Windows y macOS siguen la misma estructura dentro de sus carpetas de arriba. En algunas configuraciones, en cambio, es un solo archivo en `couch-coop/seat-logs/slot-2.log`.
+- **El registro de cada jugador.** Cada jugador que se une tiene su propia copia del juego corriendo en segundo plano en el anfitrión, y cada una guarda su propio registro. **Si la unión llegó a *Uniéndote…* y después se agotó el tiempo de espera, este es el archivo que explica por qué**; el registro principal de arriba normalmente no lo explica. Los jugadores se numeran a partir del 2, así que la primera persona que se une es **`slot-2`**: en Linux, es `~/.local/share/SlayTheSpire2/couch-coop/headless-slots/slot-2/SlayTheSpire2/logs/godot.log` (sí, `SlayTheSpire2` dos veces; no es un error de tipeo), y las rutas de Windows y macOS siguen la misma estructura dentro de sus carpetas de arriba. En algunas configuraciones, en cambio, es un solo archivo en `couch-coop/seat-logs/slot-2.log`.
 
 **Qué líneas importan.** En cualquiera de los dos registros, las útiles contienen `[couchcoop]` (se ven así: `[INFO] [couchcoop] ...`), además de cualquier línea `[ERROR]`, aunque no mencione couchcoop. Normalmente con esas alcanza.
 

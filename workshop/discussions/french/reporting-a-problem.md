@@ -16,11 +16,11 @@ Pas besoin de répondre à tout - les deux premiers points valent plus que tout 
 
 Une ou deux phrases suffisent. S'il y avait un message d'erreur à l'écran, citez-le exactement, y compris l'éventuelle ligne grise plus petite en dessous. Une photo ou une capture d'écran, c'est parfait.
 
-### 2. Si le problème survient en rejoignant la partie ou dans le salon : le rapport de connexion
+### 2. Si le problème survient en rejoignant la partie ou dans la salle d'attente : le rapport de connexion
 
 *Si votre problème survient plus tard - pendant une partie, ou dans le jeu lui-même -, passez directement à l'étape 3.*
 
-Depuis le salon, ouvrez l'écran **Code QR de Couch Co-Op**. Le panneau **Relations** s'y trouve, sous le code. Tout ce qui a mal tourné est conservé sous **Problèmes de connexion** (suivi d'un nombre).
+Depuis la salle d'attente, ouvrez l'écran **Code QR de Couch Co-Op**. Le panneau **Connexions** s'y trouve, sous le code. Tout ce qui a mal tourné est conservé sous **Problèmes de connexion** (suivi d'un nombre).
 
 Sélectionnez la ligne en échec et cliquez sur **Copier le rapport**, puis collez-le dans votre commentaire. Quand le problème survient en rejoignant la partie, c'est de loin l'élément le plus utile que vous puissiez joindre : il contient déjà l'étape en échec, les durées, le diagnostic de l'hôte lui-même et les chemins des fichiers journaux décrits ci-dessous.
 
@@ -63,4 +63,4 @@ Les joueurs sont numérotés à partir de 2, donc la première personne qui vous
 
 ## Une chose à savoir avant de signaler un problème
 
-Lancer la partie d'un joueur peut prendre jusqu'à une minute, et sur une machine plus lente, cela en prendra la majeure partie. C'est normal, ce n'est pas une panne. Pendant ce temps, la page pour rejoindre la partie compte les secondes et change d'étape sous *Rejoindre…* - si cette ligne bouge encore, rien n'a mal tourné pour l'instant, alors gardez la page ouverte.
+Lancer la partie d'un joueur peut prendre jusqu'à une minute, et sur une machine plus lente, cela en prendra la majeure partie. C'est normal, ce n'est pas une panne. Pendant ce temps, la page pour rejoindre la partie compte les secondes et change d'étape sous *Connexion à la partie…* - si cette ligne bouge encore, rien n'a mal tourné pour l'instant, alors gardez la page ouverte.

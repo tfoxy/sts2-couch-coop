@@ -26,30 +26,30 @@ Privilégiez l'adresse numérique simple (quelque chose comme **192.168.1.5:1333
 
 ### 3. Lisez ce que la page affiche pendant qu'elle rejoint la partie
 
-Lancer la partie d'un joueur peut prendre jusqu'à une minute, et c'est normal, pas une panne. Pendant ce temps, la page indique désormais où elle en est, sur une ligne sous *Rejoindre…* :
+Lancer la partie d'un joueur peut prendre jusqu'à une minute, et c'est normal, pas une panne. Pendant ce temps, la page indique désormais où elle en est, sur une ligne sous *Connexion à la partie…* :
 
 *Connexion à l'hôte — étape 1 sur 6, 14 s écoulées. Cela peut prendre jusqu'à une minute, gardez cette page ouverte.*
 
-Si cette ligne compte les secondes et change d'étape, tout fonctionne - gardez la page ouverte. Les six étapes sont « Connexion à l'hôte », « En attente de l'hôte », « Démarrage de la partie de ce joueur », « Connexion de ce joueur à la partie », « Chargement de la vue de jeu » et « Presque prêt ».
+Si cette ligne compte les secondes et change d'étape, tout fonctionne - gardez la page ouverte. Les six étapes sont « Connexion à l'hôte », « En attente de l'hôte », « Démarrage du jeu de ce joueur », « Connexion de ce joueur à la partie », « Chargement de la vue de jeu » et « Presque prêt ».
 
 ### 4. Si ça bloque, la page vous dit désormais POURQUOI
 
 Quand quelque chose tourne vraiment mal, votre appareil apprend de laquelle de plusieurs causes sans rapport entre elles il s'agit - en deux phrases, plus une ligne technique grise. **Merci de tout inclure dans votre signalement.** Il y a trois messages possibles, et ils demandent des solutions complètement différentes :
 
-- « **Votre partie tourne sur l'ordinateur hôte, mais cet appareil n'a pas réussi à l'atteindre.** »\
+- « **Votre jeu tourne sur l'ordinateur hôte, mais cet appareil n'a pas réussi à l'atteindre.** »\
   C'est le chemin réseau entre votre téléphone et l'hôte - Wi-Fi invité, VPN ou routeur qui isole les appareils les uns des autres. La partie de l'hôte n'a aucun problème. Voir les sections 2 et 6.
-- « **Un autre programme de l'ordinateur hôte utilise le port dont votre partie a besoin.** »\
+- « **Un autre programme de l'ordinateur hôte utilise le port dont votre jeu a besoin.** »\
   Rien à changer sur votre appareil. Sur l'hôte, autre chose occupe l'un des ports dont chaque joueur a besoin - le plus souvent un processus de joueur resté d'une session précédente. La personne qui héberge doit le fermer (redémarrer Slay the Spire 2 suffit à le faire disparaître).
-- « **L'ordinateur hôte bloque le port sur lequel votre partie est diffusée.** »\
+- « **L'ordinateur hôte bloque le port sur lequel votre jeu est diffusé.** »\
   Là non plus, rien à changer sur votre appareil. C'est le pare-feu ou le logiciel de sécurité de l'hôte lui-même qui le bloque - voir la section 5.
 
-**Le cas de blocage le plus courant n'affiche pas du tout *Rejoindre…*.** Si votre appareil a atteint l'hôte mais ne peut pas atteindre le port attribué à votre propre joueur, vous *parvenez* à rejoindre la partie - puis la page passe à *Chargement…* et y reste. Il n'y a ni ligne de progression ni compte à rebours sur cet écran, car du point de vue de l'hôte, rien n'a échoué. La première chose utile que vous verrez est le message « **n'a pas réussi à l'atteindre** » ci-dessus, environ **20 secondes** après le changement de page. Donc, si vous êtes bloqué sur *Chargement…*, attendez une demi-minute que ce message apparaisse plutôt que de recharger - recharger relance toute l'attente.
+**Le cas de blocage le plus courant n'affiche pas du tout *Connexion à la partie…*.** Si votre appareil a atteint l'hôte mais ne peut pas atteindre le port attribué à votre propre joueur, vous *parvenez* à rejoindre la partie - puis la page passe à *Chargement…* et y reste. Il n'y a ni ligne de progression ni compte à rebours sur cet écran, car du point de vue de l'hôte, rien n'a échoué. La première chose utile que vous verrez est le message « **n'a pas réussi à l'atteindre** » ci-dessus, environ **20 secondes** après le changement de page. Donc, si vous êtes bloqué sur *Chargement…*, attendez une demi-minute que ce message apparaisse plutôt que de recharger - recharger relance toute l'attente.
 
-Si au contraire la page reste sur *Rejoindre…* sans jamais changer, l'hôte abandonne au bout de 75 secondes avec « *Impossible de démarrer l'affichage du jeu. Veuillez réessayer.* » et une ligne grise en dessous. C'est un échec différent de celui ci-dessus. Dans les deux cas, copiez ce qui est affiché.
+Si au contraire la page reste sur *Connexion à la partie…* sans jamais changer, l'hôte abandonne au bout de 75 secondes avec « *Impossible de démarrer l'affichage du jeu. Veuillez réessayer.* » et une ligne grise en dessous. C'est un échec différent de celui ci-dessus. Dans les deux cas, copiez ce qui est affiché.
 
 ### 5. Chaque joueur utilise son propre port
 
-Le salon est sur le port **13337**, puis chaque joueur utilise **13357**, **13367**, **13377** et ainsi de suite. Une règle de pare-feu qui n'ouvre que le 13337 vous permet d'atteindre la liste des joueurs, puis échoue à la deuxième étape. Si vous (ou un guide que vous avez suivi) en avez ajouté une, supprimez-la et autorisez plutôt **le programme du jeu** - cela couvre tous les ports dont il a besoin.
+La salle d'attente est sur le port **13337**, puis chaque joueur utilise **13357**, **13367**, **13377** et ainsi de suite. Une règle de pare-feu qui n'ouvre que le 13337 vous permet d'atteindre la liste des joueurs, puis échoue à la deuxième étape. Si vous (ou un guide que vous avez suivi) en avez ajouté une, supprimez-la et autorisez plutôt **le programme du jeu** - cela couvre tous les ports dont il a besoin.
 
 ### 6. Windows : autorisez le jeu à travers le pare-feu
 
@@ -108,7 +108,7 @@ C'est l'information la plus utile que vous puissiez me donner, car chaque répon
 
 - le navigateur ne charge jamais rien du tout
 - la page se charge, mais la liste des joueurs n'apparaît jamais
-- vous pouvez choisir un nom, mais ça reste sur « Rejoindre… » - dites-moi ce qu'indiquait la ligne de progression en dessous, et quel message vous avez eu si vous avez attendu
+- vous pouvez choisir un nom, mais ça reste sur « Connexion à la partie… » - dites-moi ce qu'indiquait la ligne de progression en dessous, et quel message vous avez eu si vous avez attendu
 - ça passe cette étape et reste plutôt sur « **Chargement…** » - c'est le cas port/pare-feu, et c'est le plus courant. Dites-moi si le message « n'a pas réussi à l'atteindre » est apparu au bout d'environ 20 secondes
 - la connexion a bien fonctionné, puis a été coupée pendant la partie
 
@@ -123,9 +123,9 @@ C'est l'information la plus utile que vous puissiez me donner, car chaque répon
 
 ### Trois choses que l'ordinateur hôte peut vous fournir
 
-- **Le panneau des connexions.** Sur l'hôte, ouvrez l'écran **Code QR de Couch Co-Op** - le panneau **Relations** s'y trouve, sous le code. Les appareils qui sont allés assez loin pour y apparaître sont listés, et tout ce qui a mal tourné est conservé sous **Problèmes de connexion** (suivi d'un nombre). Sélectionnez la ligne et utilisez **Copier le rapport** - cela copie un rapport qui contient déjà l'étape en échec, les durées et le diagnostic de l'hôte lui-même. Collez-le directement dans votre commentaire. Il indique aussi le chemin exact des deux fichiers journaux ci-dessous, ce qui vous évite de les chercher.
+- **Le panneau des connexions.** Sur l'hôte, ouvrez l'écran **Code QR de Couch Co-Op** - le panneau **Connexions** s'y trouve, sous le code. Les appareils qui sont allés assez loin pour y apparaître sont listés, et tout ce qui a mal tourné est conservé sous **Problèmes de connexion** (suivi d'un nombre). Sélectionnez la ligne et utilisez **Copier le rapport** - cela copie un rapport qui contient déjà l'étape en échec, les durées et le diagnostic de l'hôte lui-même. Collez-le directement dans votre commentaire. Il indique aussi le chemin exact des deux fichiers journaux ci-dessous, ce qui vous évite de les chercher.
 - **Le fichier journal principal.** Sous Windows, `%APPDATA%\SlayTheSpire2\logs\godot.log`. Sous Linux, `~/.local/share/SlayTheSpire2/logs/godot.log`. Sous macOS, `~/Library/Application Support/SlayTheSpire2/logs/godot.log`.
-- **Le journal de chaque joueur.** Chaque joueur qui rejoint obtient sa propre copie du jeu, qui tourne en arrière-plan sur l'hôte, et chacune tient son propre journal. **Si la page a atteint *Rejoindre…* puis a expiré, c'est ce fichier qui explique pourquoi** - le journal principal ci-dessus, en général, non. Les joueurs sont numérotés à partir de 2, donc la première personne qui rejoint est `slot-2` : sous Linux, c'est `~/.local/share/SlayTheSpire2/couch-coop/headless-slots/slot-2/SlayTheSpire2/logs/godot.log` (oui, `SlayTheSpire2` deux fois - ce n'est pas une faute de frappe), et les chemins Windows et macOS suivent la même structure sous leurs dossiers ci-dessus. Sur certaines configurations, c'est plutôt un seul fichier, `couch-coop/seat-logs/slot-2.log`.
+- **Le journal de chaque joueur.** Chaque joueur qui rejoint obtient sa propre copie du jeu, qui tourne en arrière-plan sur l'hôte, et chacune tient son propre journal. **Si la page a atteint *Connexion à la partie…* puis a expiré, c'est ce fichier qui explique pourquoi** - le journal principal ci-dessus, en général, non. Les joueurs sont numérotés à partir de 2, donc la première personne qui rejoint est `slot-2` : sous Linux, c'est `~/.local/share/SlayTheSpire2/couch-coop/headless-slots/slot-2/SlayTheSpire2/logs/godot.log` (oui, `SlayTheSpire2` deux fois - ce n'est pas une faute de frappe), et les chemins Windows et macOS suivent la même structure sous leurs dossiers ci-dessus. Sur certaines configurations, c'est plutôt un seul fichier, `couch-coop/seat-logs/slot-2.log`.
 
 **Quelles lignes comptent.** Dans l'un ou l'autre journal, les lignes utiles contiennent `[couchcoop]` - elles ressemblent à `[INFO] [couchcoop] ...` -, ainsi que toutes les lignes `[ERROR]`, même celles qui ne mentionnent pas couchcoop. Elles suffisent généralement à elles seules.
 

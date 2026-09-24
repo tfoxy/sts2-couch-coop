@@ -13,8 +13,10 @@ with nonblank values and identical named placeholders. Add product copy as a cat
 
 `CouchCoopLocalization` follows `LocManager.Instance.Language`. The supported game codes are `eng`, `zhs`,
 `deu`, `esp`, `fra`, `ita`, `jpn`, `kor`, `pol`, `ptb`, `rus`, `spa`, `tha`, and `tur`; unavailable or future
-game locales use English. It merges the active catalog into the existing
-`static_hover_tips` table and uses `LocString` when that game table is available, with the embedded
+game locales use English. **The two Spanish codes read backwards:** `esp` is Español (Latinoamérica),
+Steam's `latam`, and `spa` is Español (España), Steam's `spanish`. The game's own language picker names
+them that way, and each catalog is written in its players' variety. It merges the active catalog into the
+existing `static_hover_tips` table and uses `LocString` when that game table is available, with the embedded
 catalog as a safe fallback. Locale changes increment its revision and request native panels to refresh.
 
 `CouchCoopGameUiTheme` asks the game's bold substitute-font API for `zhs`, `jpn`, `kor`, `rus`, and `tha`; all other locales retain

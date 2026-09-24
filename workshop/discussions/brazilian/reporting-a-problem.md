@@ -20,7 +20,7 @@ Uma ou duas frases bastam. Se apareceu uma mensagem de erro na tela, copie-a exa
 
 *Se o seu problema acontece mais tarde — durante uma partida ou no próprio jogo —, pule direto para o passo 3.*
 
-Na sala, abra a tela **Código QR da cooperativa de sofá**. O painel **Conexões** fica nela, abaixo do código. Tudo o que deu errado fica guardado em **Problemas de conexão** (com um número depois).
+Na sala, abra a tela **Código QR do Couch Co-Op**. O painel **Conexões** fica nela, abaixo do código. Tudo o que deu errado fica guardado em **Problemas de conexão** (com um número depois).
 
 Selecione a linha que falhou e pressione **Copiar relatório**, depois cole no seu comentário. Para um problema ao entrar, essa é a coisa mais útil que você pode anexar: ela já contém a etapa que falhou, os tempos, o diagnóstico do próprio host e os caminhos dos arquivos de log descritos abaixo.
 
@@ -63,4 +63,4 @@ Os jogadores são numerados a partir de 2, então a primeira pessoa que entra na
 
 ## Uma coisa que vale saber antes de relatar
 
-Iniciar o jogo de um jogador pode levar até um minuto, e numa máquina mais lenta ele vai usar a maior parte desse tempo. Isso é normal, não um defeito. Enquanto está trabalhando, a página de entrada vai contando e mudando de etapa abaixo de *Juntando-se…* — se essa linha ainda estiver se mexendo, nada deu errado ainda, então mantenha a página aberta.
+Iniciar o jogo de um jogador pode levar até um minuto, e numa máquina mais lenta ele vai usar a maior parte desse tempo. Isso é normal, não um defeito. Enquanto está trabalhando, a página de entrada vai contando e mudando de etapa abaixo de *Entrando…* — se essa linha ainda estiver se mexendo, nada deu errado ainda, então mantenha a página aberta.
