@@ -10,6 +10,8 @@ The host installs CouchCoop. Other players join by scanning a QR code or enterin
 [*]Scan the QR code or enter the displayed URL on each additional device.
 [/olist]
 
+Phone or tablet can't connect? See [url=https://steamcommunity.com/workshop/filedetails/discussion/3799476240/563668239243032720/]Can't connect from a phone? Read this first[/url].
+
 [h2]First time using mods?[/h2]
 [list]
 [*][b]No Couch Co-Op QR Code button?[/b] Make sure mods are enabled in the game's [b]Settings -> General -> Mod Settings[/b], then restart.
@@ -20,6 +22,8 @@ The host installs CouchCoop. Other players join by scanning a QR code or enterin
 [i]The mod, not the game - CouchCoop runs on the game's stable branch and on its public beta branch alike.[/i]
 
 The core game loop is playable, but some screens and actions still have bugs, visual differences, rough edges, or performance issues.
+
+Found a bug, or something not working? Report it in [url=https://steamcommunity.com/workshop/filedetails/discussion/3799476240/563668239243120957/]Having a problem? Post it here[/url].
 
 [h2]Before you play[/h2]
 Sound comes out of the host computer only - browser players get no audio on their own device.

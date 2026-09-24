@@ -10,6 +10,8 @@
 [*]추가할 각 기기에서 QR 코드를 스캔하거나 표시된 URL을 입력합니다.
 [/olist]
 
+휴대폰이나 태블릿이 연결되지 않나요? [url=https://github.com/tfoxy/sts2-couch-coop/blob/main/workshop/discussions/koreana/phone-connection-troubleshooting.md]휴대폰이나 태블릿에서 연결이 안 되나요?[/url] 문서를 참고하세요.
+
 [h2]모드를 처음 사용하시나요?[/h2]
 [list]
 [*][b]소파 협동 QR 코드 버튼이 보이지 않나요?[/b] [b]설정 -> 일반 -> 모드 설정[/b]에서 모드가 켜져 있는지 확인한 뒤 게임을 다시 시작하세요.
@@ -20,6 +22,8 @@
 [i]게임이 아니라 모드가 베타입니다. CouchCoop은 게임의 안정 브랜치와 공개 베타 브랜치 모두에서 작동합니다.[/i]
 
 핵심 게임 흐름은 플레이할 수 있지만, 일부 화면과 동작에는 아직 버그, 시각적 차이, 다듬어지지 않은 부분 또는 성능 문제가 있습니다.
+
+버그를 발견했거나 무언가 제대로 작동하지 않나요? [url=https://github.com/tfoxy/sts2-couch-coop/blob/main/workshop/discussions/koreana/reporting-a-problem.md]문제가 생겼나요? Steam 토론에 올려 주세요[/url] 문서를 참고하세요.
 
 [h2]플레이하기 전에[/h2]
 소리는 호스트 컴퓨터에서만 나옵니다. 브라우저로 참가하는 플레이어의 기기에서는 소리가 나지 않습니다.

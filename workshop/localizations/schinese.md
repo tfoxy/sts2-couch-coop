@@ -10,6 +10,8 @@
 [*]在每台额外设备上扫描二维码或输入显示的 URL。
 [/olist]
 
+手机或平板电脑连不上？请参阅 [url=https://github.com/tfoxy/sts2-couch-coop/blob/main/workshop/discussions/schinese/phone-connection-troubleshooting.md]手机或平板电脑无法连接？[/url]。
+
 [h2]第一次使用模组？[/h2]
 [list]
 [*][b]找不到 Couch Co-Op 二维码按钮？[/b] 请在 [b]设置 -> 游戏设置 -> 模组设置[/b] 中确认模组已启用，然后重启游戏。
@@ -20,6 +22,8 @@
 [i]处于测试阶段的是模组，不是游戏 —— CouchCoop 在游戏的稳定分支和公开测试分支上都能运行。[/i]
 
 核心游戏流程已经可以游玩，但部分界面和操作仍有错误、视觉差异、不够完善的地方或性能问题。
+
+发现了错误，或者有什么功能不正常？请参阅 [url=https://github.com/tfoxy/sts2-couch-coop/blob/main/workshop/discussions/schinese/reporting-a-problem.md]遇到问题？请到 Steam 讨论帖留言[/url]。
 
 [h2]开始游戏前[/h2]
 声音只从主机电脑发出 —— 通过浏览器游玩的玩家在自己的设备上听不到声音。

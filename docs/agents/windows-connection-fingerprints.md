@@ -7,7 +7,8 @@
 
 What a deliberately broken join looks like on Windows, measured rather than assumed. Companion to
 [local-network-access.md](local-network-access.md) and to the player-facing
-[phone-connection-troubleshooting.md](../workshop/phone-connection-troubleshooting.md).
+[phone connection post](../../workshop/discussions/english/phone-connection-troubleshooting.bbcode)
+(notes: [phone-connection-troubleshooting.md](../workshop/phone-connection-troubleshooting.md)).
 
 Measured 2026-09-17 on the libvirt `win11` guest — **Windows 11 Pro, build 10.0.26200.0**, 8 GB, two NICs
 (macvtap `192.168.0.7` on the real LAN, NAT `192.168.122.32` for host access). Rig details and the reason

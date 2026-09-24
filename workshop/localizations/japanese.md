@@ -10,6 +10,8 @@
 [*]追加する各端末でQRコードを読み取るか、表示されたURLを入力します。
 [/olist]
 
+スマートフォンやタブレットが接続できない場合は、[url=https://github.com/tfoxy/sts2-couch-coop/blob/main/workshop/discussions/japanese/phone-connection-troubleshooting.md]スマートフォンやタブレットから接続できませんか？[/url] をご覧ください。
+
 [h2]MODを使うのが初めてですか？[/h2]
 [list]
 [*][b]カウチ協力QRコードのボタンが見当たりませんか？[/b] [b]設定 -> 一般 -> MOD設定[/b] でMODが有効になっているか確認し、ゲームを再起動してください。
@@ -20,6 +22,8 @@
 [i]ベータ版なのはMODであってゲームではありません。CouchCoop はゲームの安定版ブランチでも公開ベータブランチでも動作します。[/i]
 
 ゲームの基本ループはプレイできますが、一部の画面や操作にはまだ不具合、見た目の違い、未完成な部分、またはパフォーマンス上の問題があります。
+
+不具合を見つけた、または何かがうまく動かない場合は、[url=https://github.com/tfoxy/sts2-couch-coop/blob/main/workshop/discussions/japanese/reporting-a-problem.md]問題が起きましたか？ Steam のディスカッションに投稿してください[/url] をご覧ください。
 
 [h2]遊ぶ前に[/h2]
 音が出るのはホストPCだけです。ブラウザで参加するプレイヤーの端末からは音は出ません。

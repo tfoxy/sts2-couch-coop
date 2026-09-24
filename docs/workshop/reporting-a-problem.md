@@ -1,8 +1,9 @@
 # Workshop post — "Having a problem? Post it here"
 
-The general bug-report post for the Steam Workshop discussion board, kept here so it is maintained with
-the code it describes. **It is not published from this repo** — paste it into a discussion by hand.
-Suggested title: **Having a problem? Post it here**. Index and house rules: [README.md](README.md).
+The notes behind the general bug-report post for the Steam Workshop discussion board. The post itself is
+under `workshop/discussions/` — see [The post](#the-post). **It is not published from this repo** — paste
+it into a discussion by hand. Discussion title: **Having a problem? Post it here**. Index and house rules:
+[README.md](README.md).
 
 ## Why it exists, and why it is separate
 
@@ -60,71 +61,10 @@ seen on a real install. The post gives the Linux path in full, describes the oth
 under their platform's folder, and leads with *the report names the exact path* — which is true
 everywhere and is what makes an unconfirmed path survivable.
 
-## The post, as Steam BBCode
+## The post
 
-Replace `PLACEHOLDER_PHONE_URL` with the phone post's live URL from [README.md](README.md).
-
-```
-[h1]Having a problem? Post it here[/h1]
-
-This is the place for anything that goes wrong - crashes, a player that never finishes joining, something rendering incorrectly, a run that breaks.
-
-[b]If your phone or tablet can't reach the join page at all[/b], read [url=https://steamcommunity.com/workshop/filedetails/discussion/3799476240/563668239243032720/]Can't connect from a phone?[/url] first - that covers Wi-Fi, firewalls and routers in detail, and most connection problems are solved there.
-
-[hr][/hr]
-[h1]What to include[/h1]
-
-No need to answer everything - the first two are worth more than the rest put together.
-
-[h3]1. What happened, and what you expected instead[/h3]
-One or two sentences is fine. If there was an error message on screen, quote it exactly, including any smaller grey line underneath it. A photo or screenshot is perfect.
-
-[h3]2. If the trouble is with joining or the lobby: the connection report[/h3]
-[i]If your problem happens later - during a run, or in the game itself - skip straight to step 3.[/i]
-
-From the lobby, open the [b]Couch Co-Op QR Code[/b] screen. The [b]Connections[/b] panel is on it, under the code. Anything that went wrong is kept under [b]Connection problems[/b] (with a count after it).
-
-Select the row that failed and press [b]Copy report[/b], then paste it into your post. For a joining problem this is the single most useful thing you can attach: it already contains the failing step, the timings, the host's own diagnosis, and the paths to the log files described below.
-
-[h3]3. The log files[/h3]
-There are two kinds, and which one matters depends on the problem.
-
-[b]The main game log[/b], on the host computer:
-[list]
-[*]Windows: [i]%APPDATA%\SlayTheSpire2\logs\godot.log[/i]
-[*]Linux: [i]~/.local/share/SlayTheSpire2/logs/godot.log[/i]
-[*]macOS: [i]~/Library/Application Support/SlayTheSpire2/logs/godot.log[/i]
-[/list]
-
-[b]The per-player log.[/b] Each player who joins gets their own copy of the game running in the background on the host computer, and each one keeps its own log. [b]If a player got stuck joining, this is the file that explains why[/b] - the main log above usually will not.
-
-Players are numbered from 2, so the first person who joins you is [b]slot-2[/b]. On Linux that player's log is at:
-
-[i]~/.local/share/SlayTheSpire2/couch-coop/headless-slots/slot-2/SlayTheSpire2/logs/godot.log[/i]
-
-(Yes, [i]SlayTheSpire2[/i] really does appear twice - that is not a typo.) On Windows and macOS it is the same shape, under the folder from the list above. On some setups it is a single file at [i]couch-coop/seat-logs/slot-2.log[/i] instead. Either way, [b]the report from step 2 names the exact path[/b], so copying that first saves you hunting.
-
-[b]Which lines matter.[/b] In either file, the useful ones contain [i][couchcoop][/i] - they look like [i][INFO] [couchcoop] ...[/i] - plus any [i][ERROR][/i] lines, even ones that don't mention couchcoop. Those lines are usually enough on their own.
-
-[b]Before you paste a whole log:[/b] this is a public board, and a log contains your own [b]SteamID64[/b] (a long number starting 7656, which points at your Steam profile) and your computer's [b]user name[/b], in file paths. It does [i]not[/i] contain passwords, and it does not contain other players' accounts - only yours. If you would rather not post that, a find-and-replace on those two before pasting is enough, or just post the [i][couchcoop][/i] and [i][ERROR][/i] lines and I'll ask if I need more.
-
-[h3]4. Versions and mods[/h3]
-[list]
-[*]Whether you are on the [b]stable[/b] or [b]public beta[/b] branch of the game.
-[*][b]Which other mods are installed.[/b] Each background player copy loads the same mods as the host, so another mod can stop a player from finishing joining even when the host's own game looks perfectly fine.
-[*]Host operating system.
-[*]The CouchCoop version, if you know it - otherwise I'll assume the latest.
-[/list]
-
-[h3]5. Anything that narrows it down[/h3]
-[list]
-[*]Does it happen every time, or only sometimes?
-[*]Does it happen for every player, or just one?
-[*]Did it ever work before, and did anything change since - a game update, a new mod?
-[/list]
-
-[hr][/hr]
-[h1]One thing worth knowing before you report[/h1]
-
-Starting a player's game can take up to a minute, and on a slower machine it will use most of that. That is normal, not a fault. While it is working, the join page counts up and changes stage underneath [i]Joining...[/i] - if that line is still moving, nothing has gone wrong yet, so keep the page open.
-```
+The English BBCode that is pasted into Steam is
+[`workshop/discussions/english/reporting-a-problem.bbcode`](../../workshop/discussions/english/reporting-a-problem.bbcode).
+Each other Steam language has a Markdown translation at `workshop/discussions/<language>/reporting-a-problem.md`,
+read on GitHub rather than posted to Steam. [README.md](README.md#translations) covers how they differ from
+the English and how to keep them in step.

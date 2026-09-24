@@ -10,6 +10,8 @@ Host instaluje CouchCoop. Pozostali gracze dołączają, skanując kod QR lub wp
 [*]Na każdym dodatkowym urządzeniu zeskanuj kod QR lub wpisz wyświetlony adres URL.
 [/olist]
 
+Telefon lub tablet nie może się połączyć? Zobacz [url=https://github.com/tfoxy/sts2-couch-coop/blob/main/workshop/discussions/polish/phone-connection-troubleshooting.md]Nie możesz połączyć się z telefonu lub tabletu?[/url].
+
 [h2]Pierwszy raz z modyfikacjami?[/h2]
 [list]
 [*][b]Nie widzisz przycisku Kod QR do współpracy na kanapie?[/b] Upewnij się, że modyfikacje są włączone w [b]Ustawienia -> Ogólne -> Ustawienia modyfikacji[/b], a potem uruchom grę ponownie.
@@ -20,6 +22,8 @@ Host instaluje CouchCoop. Pozostali gracze dołączają, skanując kod QR lub wp
 [i]Modyfikacja, nie gra - CouchCoop działa zarówno na stabilnej gałęzi gry, jak i na jej gałęzi otwartej bety.[/i]
 
 Podstawowa pętla rozgrywki jest grywalna, ale niektóre ekrany i akcje nadal mają błędy, różnice wizualne, niedopracowane elementy lub problemy z wydajnością.
+
+Błąd albo coś nie działa? Zobacz [url=https://github.com/tfoxy/sts2-couch-coop/blob/main/workshop/discussions/polish/reporting-a-problem.md]Masz problem? Napisz o nim w dyskusji na Steamie[/url].
 
 [h2]Zanim zagrasz[/h2]
 Dźwięk wydobywa się tylko z komputera hosta - gracze w przeglądarce nie słyszą nic na swoim urządzeniu.

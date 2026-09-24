@@ -10,6 +10,8 @@ Oyunu barındıran kişi (host) CouchCoop'u kurar. Diğer oyuncular QR kodunu ta
 [*]Her ek cihazda QR kodunu tarayın veya gösterilen URL'yi girin.
 [/olist]
 
+Telefon veya tablet bağlanamıyor mu? [url=https://github.com/tfoxy/sts2-couch-coop/blob/main/workshop/discussions/turkish/phone-connection-troubleshooting.md]Telefon veya tabletten bağlanamıyor musunuz?[/url] sayfasına bakın.
+
 [h2]İlk kez mod mu kullanıyorsunuz?[/h2]
 [list]
 [*][b]Kanepede İşbirliği QR Kodu düğmesi görünmüyor mu?[/b] Modların [b]Ayarlar -> Genel -> Mod Ayarları[/b] bölümünde açık olduğundan emin olun ve oyunu yeniden başlatın.
@@ -20,6 +22,8 @@ Oyunu barındıran kişi (host) CouchCoop'u kurar. Diğer oyuncular QR kodunu ta
 [i]Beta olan mod, oyun değil - CouchCoop hem oyunun kararlı dalında hem de herkese açık beta dalında çalışır.[/i]
 
 Temel oyun döngüsü oynanabilir durumda, ancak bazı ekranlarda ve eylemlerde hâlâ hatalar, görsel farklılıklar, tam olarak düzeltilmemiş noktalar veya performans sorunları bulunuyor.
+
+Bir hata mı buldunuz ya da bir şey çalışmıyor mu? [url=https://github.com/tfoxy/sts2-couch-coop/blob/main/workshop/discussions/turkish/reporting-a-problem.md]Bir sorun mu yaşıyorsunuz? Steam tartışmasına yazın[/url] sayfasına bakın.
 
 [h2]Oynamadan önce[/h2]
 Ses yalnızca host bilgisayardan çıkar - tarayıcıdan oynayanlar kendi cihazlarında ses duymaz.

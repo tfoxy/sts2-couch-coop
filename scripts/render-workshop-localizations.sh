@@ -52,6 +52,15 @@ actual_languages="$(jq -c 'if type == "object" then keys | sort else error("titl
   exit 1
 }
 
+# Every description links the two discussion posts: English links the Steam threads, every other language
+# links its own translation on GitHub. docs/workshop/README.md explains why translations are not threads.
+discussions="$source_dir/discussions/discussions.json"
+posts=(phone-connection-troubleshooting reporting-a-problem)
+repository="$(jq -er '.repository | strings | select(length > 0)' "$discussions" 2>/dev/null)" || {
+  echo "render-workshop-localizations: discussions/discussions.json must name the repository" >&2
+  exit 1
+}
+
 expected_descriptions=()
 for language in "${languages[@]:1}"; do expected_descriptions+=("$language.md"); done
 actual_descriptions="$(find "$source_dir/localizations" -maxdepth 1 -type f -name '*.md' -printf '%f\n' 2>/dev/null | sort | jq -R . | jq -sc .)"
@@ -80,6 +89,24 @@ for index in "${!languages[@]}"; do
     echo "render-workshop-localizations: $language description does not name its current QR button: $qr_label" >&2
     exit 1
   }
+  for post in "${posts[@]}"; do
+    if [[ "$language" == english ]]; then
+      link="$(jq -er --arg post "$post" '.posts[$post] | strings | select(length > 0)' "$discussions")" || {
+        echo "render-workshop-localizations: discussions.json has no Steam URL for $post" >&2
+        exit 1
+      }
+    else
+      link="$repository/workshop/discussions/$language/$post.md"
+      [[ -s "$source_dir/discussions/$language/$post.md" ]] || {
+        echo "render-workshop-localizations: $language translation of $post is missing" >&2
+        exit 1
+      }
+    fi
+    grep -Fq -- "[url=$link]" "$description" || {
+      echo "render-workshop-localizations: $language description does not link its $post post: $link" >&2
+      exit 1
+    }
+  done
 done
 
 localizations_tmp="$(mktemp "${TMPDIR:-/tmp}/couchcoop-workshop-localizations.XXXXXX")"
