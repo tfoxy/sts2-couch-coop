@@ -59,7 +59,7 @@ Prüfe zuerst den Netzwerktyp, denn allein der blockiert viele Verbindungen:
 
 Dann erlaube das Spiel:
 
-- **Einstellungen > Datenschutz und Sicherheit > Windows-Sicherheit > Firewall- & Netzwerkschutz > Zugriff von App durch Firewall zulassen**
+- **Einstellungen > Datenschutz und Sicherheit > Windows-Sicherheit > Firewall & Netzwerkschutz > Zugriff von App durch Firewall zulassen**
 - Suche **Slay the Spire 2** in der Liste und stelle sicher, dass **Privat** angehakt ist. Wenn es nicht in der Liste steht, verwende **Andere App zulassen...** und wähle die `.exe`-Datei des Spiels aus.
 
 Wenn du irgendwann bei einer Abfrage der Windows-Firewall auf „Abbrechen“ geklickt hast, merkt sich Windows das als Blockierregel und fragt nie wieder nach. In diesem Fall musst du den oben genannten Eintrag entfernen und neu hinzufügen.
@@ -70,7 +70,7 @@ Hake **Öffentlich** nur an, wenn dein Netzwerk auf Öffentlich eingestellt ist 
 
 ### 7. Der Router
 
-Manche Router verhindern, dass sich Geräte im selben WLAN gegenseitig erreichen. Such nach einer Einstellung namens **AP isolation**, **Client isolation** oder **Wireless isolation** (auf Deutsch oft „AP-Isolierung“ oder „Client-Isolierung“) und schalte sie aus.
+Manche Router verhindern, dass sich Geräte im selben WLAN gegenseitig erreichen. Such nach einer Einstellung namens **AP isolation**, **Client isolation** oder **Wireless isolation** (auf Deutsch oft „AP-Isolierung“) und schalte sie aus.
 
 Auch gut zu wissen: Ein WLAN-Repeater oder Powerline-Adapter, der im **Router**-Modus statt im **Bridge**- / **Access-Point**-Modus eingerichtet ist, bringt dein Handy in ein anderes Netzwerk als den Host, auch wenn der WLAN-Name gleich aussieht.
 
@@ -78,7 +78,7 @@ Auch gut zu wissen: Ein WLAN-Repeater oder Powerline-Adapter, der im **Router**-
 
 Manche Browser versuchen, jede Adresse auf HTTPS zu zwingen - und die einfache numerische Adresse nutzt kein HTTPS. (Die Zeile **Sicherer Link** auf dem QR-Bildschirm tut das - wenn also erzwungenes HTTPS das Problem ist, lohnt sich auch ein Versuch mit dieser Zeile.) Wenn die Adressleiste statt des Spiels eine Sicherheitswarnung zeigt, schalte diese Optionen aus und versuche es erneut:
 
-- Chrome: **Einstellungen > Datenschutz und Sicherheit > Sicherheit > Immer sichere Verbindungen verwenden**
+- Chrome: **Einstellungen > Datenschutz und Sicherheit > Sicherheit > Immer verschlüsselte Verbindungen verwenden**
 - Firefox: **Einstellungen > Datenschutz & Sicherheit > Nur-HTTPS-Modus**
 
 Prüfe auf dem iPhone außerdem unter **Einstellungen > Apps > Safari** das iCloud Privat-Relay und „IP-Adresse verbergen“.

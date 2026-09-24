@@ -22,7 +22,7 @@ Dê preferência ao endereço numérico simples (algo como **192.168.1.5:13337**
 
 - No mesmo Wi-Fi que o computador do host, e não na rede de **convidados**. Redes de convidados costumam impedir que os dispositivos se comuniquem entre si, que é exatamente o que é preciso aqui.
 - Sem usar dados móveis. Se o Wi-Fi não tiver acesso à internet, às vezes o celular muda sozinho para os dados móveis sem avisar.
-- **Desligue qualquer VPN no celular.** Isso pega muita gente. Bloqueadores de anúncios e apps de "DNS privado" que funcionam como VPN também contam.
+- **Desligue qualquer VPN no celular.** Isso pega muita gente. Bloqueadores de anúncios e apps de "DNS particular" que funcionam como VPN também contam.
 
 ### 3. Leia o que a página diz enquanto está entrando
 
@@ -70,7 +70,7 @@ Só marque **Pública** se a sua rede estiver definida como pública e você nã
 
 ### 7. O roteador
 
-Alguns roteadores impedem que dispositivos no mesmo Wi-Fi se comuniquem entre si. Procure uma configuração chamada **AP isolation**, **Client isolation** ou **Wireless isolation** (em português, "isolamento de AP", "isolamento de cliente" ou "isolamento sem fio") e desative-a.
+Alguns roteadores impedem que dispositivos no mesmo Wi-Fi se comuniquem entre si. Procure uma configuração chamada **AP isolation**, **Client isolation** ou **Wireless isolation** (em português, "isolamento AP" ou "isolação de clientes") e desative-a.
 
 Também vale saber: um repetidor de Wi-Fi ou adaptador powerline configurado no modo **router** (roteador) em vez do modo **bridge** / **access point** (ponte / ponto de acesso) coloca o seu celular numa rede separada da do host, mesmo que o nome do Wi-Fi pareça o mesmo.
 
@@ -79,7 +79,7 @@ Também vale saber: um repetidor de Wi-Fi ou adaptador powerline configurado no 
 Alguns navegadores tentam forçar HTTPS em todos os endereços, e o endereço numérico simples não usa HTTPS. (A opção **Link seguro** da tela do QR é a que usa — então, se o problema for o HTTPS forçado, também vale a pena testar essa opção.) Se a barra de endereço mostrar um aviso de segurança em vez do jogo, desative estas opções e tente de novo:
 
 - Chrome: **Configurações > Privacidade e segurança > Segurança > Sempre usar conexões seguras**
-- Firefox: **Configurações > Privacidade e segurança > Modo somente HTTPS**
+- Firefox: **Configurações > Privacidade e Segurança > Modo somente HTTPS**
 
 No iPhone, confira também em **Ajustes > Apps > Safari** a Retransmissão Privada do iCloud e a opção "Ocultar Endereço IP".
 

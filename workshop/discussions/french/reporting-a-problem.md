@@ -1,6 +1,6 @@
 # Un problème ? Signalez-le dans la discussion Steam
 
-> Ceci est une traduction de la discussion du Steam Workshop [Having a problem? Post it here](https://steamcommunity.com/workshop/filedetails/discussion/3799476240/563668239243120957/). Pour poser une question ou signaler un problème, laissez un commentaire dans cette discussion — inutile d'écrire en anglais, vous pouvez écrire en français.
+> Ceci est une traduction de la discussion du Workshop Steam [Having a problem? Post it here](https://steamcommunity.com/workshop/filedetails/discussion/3799476240/563668239243120957/). Pour poser une question ou signaler un problème, laissez un commentaire dans cette discussion — inutile d'écrire en anglais, vous pouvez écrire en français.
 
 [La discussion Steam](https://steamcommunity.com/workshop/filedetails/discussion/3799476240/563668239243120957/) est l'endroit pour tout ce qui ne va pas - plantages, un joueur qui ne finit jamais de rejoindre, quelque chose qui s'affiche mal, une partie qui se casse.
 

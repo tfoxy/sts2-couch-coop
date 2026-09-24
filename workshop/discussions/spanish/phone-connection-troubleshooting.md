@@ -1,10 +1,10 @@
 # ¿No puedes conectarte desde un teléfono o una tableta?
 
-> Esta es una traducción del debate del Workshop de Steam [Can't connect from a phone? Read this first](https://steamcommunity.com/workshop/filedetails/discussion/3799476240/563668239243032720/). Para hacer una pregunta o informar de un problema, deja un comentario en ese debate; no hace falta que escribas en inglés, puedes hacerlo en español.
+> Esta es una traducción de la discusión del Workshop de Steam [Can't connect from a phone? Read this first](https://steamcommunity.com/workshop/filedetails/discussion/3799476240/563668239243032720/). Para hacer una pregunta o informar de un problema, deja un comentario en esa discusión; no hace falta que escribas en inglés, puedes hacerlo en español.
 
 La mayoría de los problemas de conexión se deben a un puñado de causas. Esta lista está ordenada, más o menos, de la más habitual a la menos habitual, así que merece la pena seguirla en orden.
 
-*Si tu teléfono llega bien a la página para unirse y el problema es otro (un cierre inesperado, un jugador que nunca termina de unirse, algo que falla en el propio juego), consulta [¿Tienes algún problema? Publícalo en el debate de Steam](reporting-a-problem.md).*
+*Si tu teléfono llega bien a la página para unirse y el problema es otro (un cierre inesperado, un jugador que nunca termina de unirse, algo que falla en el propio juego), consulta [¿Tienes algún problema? Publícalo en la discusión de Steam](reporting-a-problem.md).*
 
 ---
 
@@ -59,7 +59,7 @@ Primero comprueba el tipo de red, porque esto por sí solo bloquea muchas conexi
 
 Después, permite el juego:
 
-- **Configuración > Privacidad y seguridad > Seguridad de Windows > Firewall y protección de red > Permitir una aplicación a través del firewall**
+- **Configuración > Privacidad y seguridad > Seguridad de Windows > Firewall y protección de red > Permitir a una aplicación atravesar el firewall**
 - Busca **Slay the Spire 2** en la lista y comprueba que la casilla **Privada** esté marcada. Si no aparece en la lista, usa **Permitir otra aplicación...** y busca el `.exe` del juego.
 
 Si en algún momento respondiste «Cancelar» a un aviso del firewall de Windows, Windows lo recuerda como una regla de bloqueo y no volverá a preguntarte nunca. En ese caso, tienes que eliminar la entrada de arriba y volver a añadirla.
@@ -70,7 +70,7 @@ Marca **Pública** solo si tu red está configurada como pública y no puedes ca
 
 ### 7. El router
 
-Algunos routers impiden que los dispositivos conectados a la misma red Wi-Fi se comuniquen entre sí. Busca un ajuste llamado **AP isolation**, **Client isolation** o **Wireless isolation** (en español, «aislamiento de AP», «aislamiento de clientes» o «aislamiento inalámbrico») y desactívalo.
+Algunos routers impiden que los dispositivos conectados a la misma red Wi-Fi se comuniquen entre sí. Busca un ajuste llamado **AP isolation**, **Client isolation** o **Wireless isolation** (en español, «aislamiento de AP») y desactívalo.
 
 También conviene saber que un repetidor Wi-Fi o un adaptador PLC configurado en modo **router** en lugar de en modo **bridge** / **access point** (puente / punto de acceso) pone tu teléfono en una red distinta de la del anfitrión, aunque el nombre de la red Wi-Fi parezca el mismo.
 
@@ -79,7 +79,7 @@ También conviene saber que un repetidor Wi-Fi o un adaptador PLC configurado en
 Algunos navegadores intentan forzar HTTPS en todas las direcciones, y la dirección numérica simple no lo usa. (La opción **Enlace seguro** de la pantalla del QR sí lo usa, así que, si el problema es que se fuerza HTTPS, también merece la pena probarla). Si la barra de direcciones muestra una advertencia de seguridad en lugar del juego, desactiva estas opciones y vuelve a intentarlo:
 
 - Chrome: **Configuración > Privacidad y seguridad > Seguridad > Usar siempre conexiones seguras**
-- Firefox: **Ajustes > Privacidad & Seguridad > Modo solo HTTPS**
+- Firefox: **Ajustes > Privacidad & Seguridad > Modo solo-HTTPS**
 
 En iPhone, revisa también en **Ajustes > Apps > Safari** el Relay privado de iCloud y «Ocultar dirección IP».
 
@@ -98,9 +98,9 @@ Si añadiste el cliente a la pantalla de inicio, lo que pase a continuación dep
 
 ---
 
-## ¿Sigue sin funcionar? Comenta en el debate de Steam
+## ¿Sigue sin funcionar? Comenta en la discusión de Steam
 
-Deja un comentario en [el debate de Steam](https://steamcommunity.com/workshop/filedetails/discussion/3799476240/563668239243032720/); no hace falta que respondas a todo. Con solo una o dos de estas respuestas, el informe ya es mucho más fácil de resolver, y la primera pregunta vale más que todas las demás juntas.
+Deja un comentario en [la discusión de Steam](https://steamcommunity.com/workshop/filedetails/discussion/3799476240/563668239243032720/); no hace falta que respondas a todo. Con solo una o dos de estas respuestas, el informe ya es mucho más fácil de resolver, y la primera pregunta vale más que todas las demás juntas.
 
 ### ¿Hasta dónde llega?
 
@@ -129,7 +129,7 @@ Es lo más útil que puedes decirme, porque cada respuesta apunta a una causa di
 
 **Qué líneas importan.** En cualquiera de los dos registros, las útiles contienen `[couchcoop]` (tienen este aspecto: `[INFO] [couchcoop] ...`), además de cualquier línea `[ERROR]`, aunque no mencione couchcoop. Normalmente bastan por sí solas.
 
-**Antes de pegar un registro entero:** el debate de Steam es público, y un registro contiene tu propio **SteamID64** (un número largo que empieza por 7656 y que lleva a tu perfil de Steam) y el **nombre de usuario** de tu ordenador, en las rutas de archivo. *No* contiene contraseñas, ni tampoco las cuentas de otros jugadores: solo la tuya. Si prefieres no publicar eso, basta con usar buscar y reemplazar en esos dos datos antes de pegarlo, o publica solo las líneas `[couchcoop]` y `[ERROR]` y, si necesito más, ya te lo pediré.
+**Antes de pegar un registro entero:** la discusión de Steam es pública, y un registro contiene tu propio **SteamID64** (un número largo que empieza por 7656 y que lleva a tu perfil de Steam) y el **nombre de usuario** de tu ordenador, en las rutas de archivo. *No* contiene contraseñas, ni tampoco las cuentas de otros jugadores: solo la tuya. Si prefieres no publicar eso, basta con usar buscar y reemplazar en esos dos datos antes de pegarlo, o publica solo las líneas `[couchcoop]` y `[ERROR]` y, si necesito más, ya te lo pediré.
 
 ---
 

@@ -23,7 +23,7 @@ El anfitrión instala CouchCoop. Los demás jugadores se unen escaneando un cód
 
 El ciclo de juego principal ya se puede jugar, pero algunas pantallas y acciones todavía tienen errores, diferencias visuales, detalles sin pulir o problemas de rendimiento.
 
-¿Has encontrado un error o hay algo que no funciona? Consulta [url=https://github.com/tfoxy/sts2-couch-coop/blob/main/workshop/discussions/spanish/reporting-a-problem.md]¿Tienes algún problema? Publícalo en el debate de Steam[/url].
+¿Has encontrado un error o hay algo que no funciona? Consulta [url=https://github.com/tfoxy/sts2-couch-coop/blob/main/workshop/discussions/spanish/reporting-a-problem.md]¿Tienes algún problema? Publícalo en la discusión de Steam[/url].
 
 [h2]Antes de jugar[/h2]
 El sonido sale únicamente del ordenador anfitrión: quienes juegan desde el navegador no tienen audio en su propio dispositivo.

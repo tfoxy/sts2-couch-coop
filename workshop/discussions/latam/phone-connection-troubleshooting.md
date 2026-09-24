@@ -59,7 +59,7 @@ Primero revisa el tipo de red, porque esto solo ya bloquea muchas conexiones:
 
 Después, permite el juego:
 
-- **Configuración > Privacidad y seguridad > Seguridad de Windows > Firewall y protección de red > Permitir una aplicación a través del firewall**
+- **Configuración > Privacidad y seguridad > Seguridad de Windows > Firewall y protección de red > Permitir a una aplicación atravesar el firewall**
 - Busca **Slay the Spire 2** en la lista y verifica que la casilla **Privada** esté marcada. Si no aparece en la lista, usa **Permitir otra aplicación...** y busca el `.exe` del juego.
 
 Si en algún momento respondiste "Cancelar" a un aviso del firewall de Windows, Windows lo recuerda como una regla de bloqueo y nunca más te va a volver a preguntar. En ese caso, tienes que borrar la entrada de arriba y volver a agregarla.
@@ -70,7 +70,7 @@ Marca **Pública** solo si tu red está configurada como pública y no puedes ca
 
 ### 7. El router
 
-Algunos routers impiden que los dispositivos conectados a la misma red Wi-Fi se comuniquen entre sí. Busca una opción llamada **AP isolation**, **Client isolation** o **Wireless isolation** (en español, "aislamiento de AP", "aislamiento de clientes" o "aislamiento inalámbrico") y desactívala.
+Algunos routers impiden que los dispositivos conectados a la misma red Wi-Fi se comuniquen entre sí. Busca una opción llamada **AP isolation**, **Client isolation** o **Wireless isolation** (en español, "aislamiento AP") y desactívala.
 
 También es bueno saber que un repetidor Wi-Fi o un adaptador powerline configurado en modo **router** en vez de en modo **bridge** / **access point** (puente / punto de acceso) pone tu teléfono en una red distinta de la del anfitrión, aunque el nombre de la red Wi-Fi se vea igual.
 
@@ -79,9 +79,9 @@ También es bueno saber que un repetidor Wi-Fi o un adaptador powerline configur
 Algunos navegadores intentan forzar HTTPS en todas las direcciones, y la dirección numérica simple no lo usa. (La opción **Enlace seguro** de la pantalla del QR sí lo usa, así que, si el problema es que se fuerza HTTPS, también vale la pena probarla). Si la barra de direcciones muestra una advertencia de seguridad en vez del juego, desactiva estas opciones y vuelve a intentarlo:
 
 - Chrome: **Configuración > Privacidad y seguridad > Seguridad > Usar siempre conexiones seguras**
-- Firefox: **Configuración > Privacidad y seguridad > Modo solo HTTPS**
+- Firefox: **Ajustes > Privacidad y seguridad > Modo solo HTTPS**
 
-En iPhone, revisa también en **Configuración > Apps > Safari** el Relay privado de iCloud y "Ocultar dirección IP".
+En iPhone, revisa también en **Configuración > Apps > Safari** la Retransmisión privada de iCloud y "Ocultar dirección IP".
 
 ### 9. Antivirus con su propio firewall
 
