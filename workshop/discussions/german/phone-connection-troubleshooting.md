@@ -79,9 +79,9 @@ Auch gut zu wissen: Ein WLAN-Repeater oder Powerline-Adapter, der im **Router**-
 Manche Browser versuchen, jede Adresse auf HTTPS zu zwingen - und die einfache numerische Adresse nutzt kein HTTPS. (Die Zeile **Sicherer Link** auf dem QR-Bildschirm tut das - wenn also erzwungenes HTTPS das Problem ist, lohnt sich auch ein Versuch mit dieser Zeile.) Wenn die Adressleiste statt des Spiels eine Sicherheitswarnung zeigt, schalte diese Optionen aus und versuche es erneut:
 
 - Chrome: **Einstellungen > Datenschutz und Sicherheit > Sicherheit > Immer verschlüsselte Verbindungen verwenden**
-- Firefox: **Einstellungen > Datenschutz & Sicherheit > Nur-HTTPS-Modus**
+- Firefox: **Einstellungen > Datenschutz & Sicherheit > Verbindungs- und Softwaresicherheit > Erweiterte Einstellungen > Nur-HTTPS-Modus**
 
-Prüfe auf dem iPhone außerdem unter **Einstellungen > Apps > Safari** das iCloud Privat-Relay und „IP-Adresse verbergen“.
+Prüfe auf dem iPhone außerdem **Einstellungen > *dein Name* > iCloud > Privat-Relay** und unter **Einstellungen > Apps > Safari** „IP-Adresse verbergen“.
 
 ### 9. Antivirenprogramme mit eigener Firewall
 

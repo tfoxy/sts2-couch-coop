@@ -79,9 +79,9 @@ Certains routeurs empêchent les appareils connectés au même Wi-Fi de communiq
 Certains navigateurs essaient d'imposer HTTPS pour toutes les adresses, ce que l'adresse numérique simple n'utilise pas. (La ligne **Lien sécurisé** de l'écran du code QR, elle, l'utilise - donc si le HTTPS forcé est en cause, cette ligne vaut aussi la peine d'être essayée.) Si la barre d'adresse affiche un avertissement de sécurité au lieu du jeu, désactivez ces options et réessayez :
 
 - Chrome : **Paramètres > Confidentialité et sécurité > Sécurité > Toujours utiliser une connexion sécurisée**
-- Firefox : **Paramètres > Vie privée et sécurité > Mode HTTPS uniquement**
+- Firefox : **Paramètres > Vie privée et sécurité > Sécurité logicielle et des connexions > Paramètres avancés > Mode HTTPS uniquement**
 
-Sur iPhone, vérifiez aussi dans **Réglages > Apps > Safari** le Relais privé iCloud et « Masquer l'adresse IP ».
+Sur iPhone, vérifiez aussi **Réglages > *votre nom* > iCloud > Relais privé**, ainsi que « Masquer l'adresse IP » dans **Réglages > Apps > Safari**.
 
 ### 9. Antivirus avec son propre pare-feu
 

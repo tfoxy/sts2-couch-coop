@@ -79,9 +79,9 @@ Bazı yönlendiriciler aynı Wi-Fi'daki cihazların birbirine ulaşmasını enge
 Bazı tarayıcılar her adresi HTTPS'ye zorlamaya çalışır; düz sayısal adres ise HTTPS kullanmaz. (QR ekranında HTTPS kullanan satır **Güvenli bağlantı** satırıdır — yani sorun HTTPS zorlamasıysa bu satırı da denemeye değer.) Adres çubuğunda oyun yerine bir güvenlik uyarısı görünüyorsa şunları kapatıp yeniden deneyin:
 
 - Chrome: **Ayarlar > Gizlilik ve güvenlik > Güvenlik > Her zaman güvenli bağlantılar kullan**
-- Firefox: **Ayarlar > Gizlilik ve güvenlik > Yalnızca HTTPS modu**
+- Firefox: **Ayarlar > Gizlilik ve güvenlik > Bağlantı ve yazılım güvenliği > Gelişmiş ayarlar > Yalnızca HTTPS modu**
 
-iPhone'da ayrıca **Ayarlar > Uygulamalar > Safari** bölümünde iCloud Özel Geçişi ve “IP Adresini Gizle” ayarlarını kontrol edin.
+iPhone'da ayrıca **Ayarlar > *adınız* > iCloud > Özel Geçiş** bölümünü ve **Ayarlar > Uygulamalar > Safari** bölümündeki “IP Adresini Gizle” ayarını kontrol edin.
 
 ### 9. Kendi güvenlik duvarı olan antivirüsler
 
