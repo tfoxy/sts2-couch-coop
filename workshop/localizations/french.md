@@ -6,7 +6,7 @@ L'hôte installe CouchCoop. Les autres joueurs rejoignent la partie en scannant 
 [olist]
 [*]Installez CouchCoop sur l'ordinateur hôte.
 [*]Lancez ou chargez une partie multijoueur.
-[*]Sélectionnez [b]Code QR de Couch Co-Op[/b] dans le salon de l'hôte.
+[*]Sélectionnez [b]Code QR de Couch Co-Op[/b] dans la salle d'attente de l'hôte.
 [*]Scannez le code QR ou saisissez l'URL affichée sur chaque appareil supplémentaire.
 [/olist]
 

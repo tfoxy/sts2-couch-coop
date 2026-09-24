@@ -123,7 +123,7 @@ ESET、Bitdefender、Norton、Kaspersky 和 Avast 等安全套件都有自己的
 
 ### 主机电脑可以提供的三样东西
 
-- **连接面板**。在主机上打开 **Couch Co-Op 二维码** 界面——**连接** 面板就在上面，位于二维码下方。走得足够远、出现在那里的设备都会列出来，出错的项目会保留在 **连接问题**（后面带有数量）下。选中那一行并使用 **复印报告**——这会复制一份报告，其中已经包含失败的步骤、耗时以及主机自己的诊断。把它直接粘贴到你的留言里。报告中还写明了下面两个日志文件的确切路径，省得你到处找。
+- **连接面板**。在主机上打开 **Couch Co-Op 二维码** 界面——**连接** 面板就在上面，位于二维码下方。走得足够远、出现在那里的设备都会列出来，出错的项目会保留在 **连接问题**（后面带有数量）下。选中那一行并使用 **复制报告**——这会复制一份报告，其中已经包含失败的步骤、耗时以及主机自己的诊断。把它直接粘贴到你的留言里。报告中还写明了下面两个日志文件的确切路径，省得你到处找。
 - **主日志文件**。Windows 上是 `%APPDATA%\SlayTheSpire2\logs\godot.log`，Linux 上是 `~/.local/share/SlayTheSpire2/logs/godot.log`，macOS 上是 `~/Library/Application Support/SlayTheSpire2/logs/godot.log`。
 - **每位玩家的日志**。每位加入的玩家都会在主机后台运行一份属于自己的游戏副本，每份副本都有自己的日志。**如果加入进行到“正在加入…”后超时，能解释原因的就是这个文件**——上面的主日志通常不会说明。玩家从 2 开始编号，所以第一位加入的人是 `slot-2`：在 Linux 上路径是 `~/.local/share/SlayTheSpire2/couch-coop/headless-slots/slot-2/SlayTheSpire2/logs/godot.log`（没错，`SlayTheSpire2` 出现了两次——不是笔误），Windows 和 macOS 的路径也是同样的结构，位于上面各自的文件夹下。在某些环境中，它则是位于 `couch-coop/seat-logs/slot-2.log` 的单个文件。
 

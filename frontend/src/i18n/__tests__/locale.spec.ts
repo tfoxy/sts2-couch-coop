@@ -67,6 +67,20 @@ describe("catalogue integrity", () => {
     }
   });
 
+  // The parity above reads `messages`, i.e. AFTER preservePlaceholders, which drops an unknown token and appends
+  // the English one — and whose ASCII `\w` never even sees `{値}`, so that token rendered literally. Every
+  // catalogue once shipped translated token names past it ({Wert}, {rótulo}, {ラベル}). Assert on what ships.
+  it("ships every placeholder under its English name, in any alphabet", () => {
+    const raw = import.meta.glob<Record<string, string>>("../catalogs/*.json", { eager: true, import: "default" });
+    expect(Object.keys(raw)).toHaveLength(12);
+    const tokens = (text: string) => [...new Set([...text.matchAll(/\{([^\s{}]+)\}/g)].map((match) => match[1]))].sort();
+    for (const [file, catalog] of Object.entries({ ...raw, zhHans: messages["zh-Hans"] })) {
+      for (const key of Object.keys(en) as Array<keyof typeof en>) {
+        expect(tokens(catalog[key] ?? ""), `${file} ${key}`).toEqual(tokens(en[key]));
+      }
+    }
+  });
+
   it("interpolates plain bootstrap strings without Vue", () => {
     expect(plainTranslate("zh-Hans", "picker.joinAs", { name: "Ada" })).toContain("Ada");
     expect(messages.en["picker.controllers"]).toContain("{count}");

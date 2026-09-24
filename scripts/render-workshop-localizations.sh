@@ -32,8 +32,9 @@ jq -e 'type == "object"' "$base" >/dev/null || { echo "render-workshop-localizat
 
 languages=(english french italian german spanish japanese koreana polish brazilian russian schinese latam thai turkish)
 # Catalog filenames are not identical to runtime locale ids: English's runtime id is `eng`, while
-# its embedded source file is `couchcoop.en.json`.
-catalogs=(en fra ita deu esp jpn kor pol ptb rus zhs spa tha tur)
+# its embedded source file is `couchcoop.en.json`. Spanish is crossed over: the game's `spa` is
+# Español (España), Steam's `spanish`, and its `esp` is Español (Latinoamérica), Steam's `latam`.
+catalogs=(en fra ita deu spa jpn kor pol ptb rus zhs esp tha tur)
 titles="$source_dir/titles.json"
 english_description="$source_dir/description.en.md"
 

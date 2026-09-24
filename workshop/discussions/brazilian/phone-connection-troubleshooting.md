@@ -26,11 +26,11 @@ Dê preferência ao endereço numérico simples (algo como **192.168.1.5:13337**
 
 ### 3. Leia o que a página diz enquanto está entrando
 
-Iniciar o jogo de um jogador pode levar até um minuto, e isso é normal, não um defeito. Enquanto isso acontece, a página agora mostra em que ponto está, numa linha abaixo de *Juntando-se…*:
+Iniciar o jogo de um jogador pode levar até um minuto, e isso é normal, não um defeito. Enquanto isso acontece, a página agora mostra em que ponto está, numa linha abaixo de *Entrando…*:
 
 *Conectando ao anfitrião — etapa 1 de 6, 14 s até agora. Isso pode levar até um minuto, então mantenha esta página aberta.*
 
-Se essa linha estiver contando e mudando de etapa, está funcionando — mantenha a página aberta. As seis etapas são: conectando ao anfitrião, aguardando o anfitrião, iniciando o jogo deste jogador, conectando este jogador ao jogo, carregando a visualização do jogo e quase pronto.
+Se essa linha estiver contando e mudando de etapa, está funcionando — mantenha a página aberta. As seis etapas são: conectando ao anfitrião, aguardando o anfitrião, iniciando o jogo deste jogador, conectando este jogador ao jogo, carregando a tela do jogo e quase pronto.
 
 ### 4. Se parar, agora a página diz POR QUÊ
 
@@ -43,9 +43,9 @@ Quando algo realmente dá errado, o seu dispositivo fica sabendo qual de várias
 - “**O computador anfitrião está bloqueando a porta em que seu jogo é servido.**”\
   Também não há nada para mudar no seu dispositivo. O próprio firewall ou software de segurança do host está bloqueando — veja a seção 5.
 
-**O caso de bloqueio mais comum nem chega a mostrar *Juntando-se…*.** Se o seu dispositivo chegou ao host, mas não consegue chegar à porta que o seu próprio jogador recebeu, a entrada *dá certo* — e então a página muda para *Carregando…* e fica parada ali. Não há linha de progresso nem contagem regressiva nessa tela, porque, do lado do host, nada falhou. A primeira coisa útil que você vai ver é a mensagem “**não conseguiu chegar até ele**” acima, cerca de **20 segundos** depois que a página mudar. Então, se estiver travado em *Carregando…*, espere meio minuto por essa mensagem em vez de recarregar — recarregar faz toda a espera começar de novo.
+**O caso de bloqueio mais comum nem chega a mostrar *Entrando…*.** Se o seu dispositivo chegou ao host, mas não consegue chegar à porta que o seu próprio jogador recebeu, a entrada *dá certo* — e então a página muda para *Carregando…* e fica parada ali. Não há linha de progresso nem contagem regressiva nessa tela, porque, do lado do host, nada falhou. A primeira coisa útil que você vai ver é a mensagem “**não conseguiu chegar até ele**” acima, cerca de **20 segundos** depois que a página mudar. Então, se estiver travado em *Carregando…*, espere meio minuto por essa mensagem em vez de recarregar — recarregar faz toda a espera começar de novo.
 
-Se, em vez disso, ficar parado em *Juntando-se…* sem nunca mudar, o host desiste depois de 75 segundos com *Não foi possível iniciar a visualização do jogo. Tente novamente.* e uma linha cinza abaixo. Essa é uma falha diferente da de cima. Em qualquer caso, copie o que aparecer.
+Se, em vez disso, ficar parado em *Entrando…* sem nunca mudar, o host desiste depois de 75 segundos com *Não foi possível iniciar a sua tela do jogo — tente novamente.* e uma linha cinza abaixo. Essa é uma falha diferente da de cima. Em qualquer caso, copie o que aparecer.
 
 ### 5. Cada jogador usa a sua própria porta
 
@@ -108,7 +108,7 @@ Essa é a coisa mais útil que você pode me contar, porque cada resposta aponta
 
 - o navegador nunca carrega nada
 - a página carrega, mas a lista de jogadores nunca aparece
-- dá para escolher um nome, mas fica parado em “Juntando-se…” — me diga o que a linha de progresso abaixo dizia e qual mensagem apareceu, se você esperou
+- dá para escolher um nome, mas fica parado em “Entrando…” — me diga o que a linha de progresso abaixo dizia e qual mensagem apareceu, se você esperou
 - passa disso e fica parado em “**Carregando…**” — este é o caso da porta/firewall, e é o mais comum. Me diga se a mensagem “não conseguiu chegar até ele” apareceu depois de uns 20 segundos
 - conectou normalmente e depois caiu durante a partida
 
@@ -123,9 +123,9 @@ Essa é a coisa mais útil que você pode me contar, porque cada resposta aponta
 
 ### Três coisas que o computador do host pode te dar
 
-- **O painel de conexões.** No host, abra a tela **Código QR da cooperativa de sofá** — o painel **Conexões** fica nela, abaixo do código. Os dispositivos que chegaram longe o bastante para aparecer ali ficam listados, e tudo o que deu errado fica guardado em **Problemas de conexão** (com um número depois). Selecione a linha e use **Copiar relatório** — isso copia um relatório que já inclui a etapa que falhou, os tempos e o diagnóstico do próprio host. Cole direto no seu comentário. Ele também informa o caminho exato dos dois arquivos de log abaixo, o que poupa você de ter que procurá-los.
+- **O painel de conexões.** No host, abra a tela **Código QR do Couch Co-Op** — o painel **Conexões** fica nela, abaixo do código. Os dispositivos que chegaram longe o bastante para aparecer ali ficam listados, e tudo o que deu errado fica guardado em **Problemas de conexão** (com um número depois). Selecione a linha e use **Copiar relatório** — isso copia um relatório que já inclui a etapa que falhou, os tempos e o diagnóstico do próprio host. Cole direto no seu comentário. Ele também informa o caminho exato dos dois arquivos de log abaixo, o que poupa você de ter que procurá-los.
 - **O arquivo de log principal.** No Windows, `%APPDATA%\SlayTheSpire2\logs\godot.log`. No Linux, `~/.local/share/SlayTheSpire2/logs/godot.log`. No macOS, `~/Library/Application Support/SlayTheSpire2/logs/godot.log`.
-- **O log de cada jogador.** Cada jogador que entra ganha a sua própria cópia do jogo rodando em segundo plano no host, e cada uma mantém o seu próprio log. **Se a entrada chegou a *Juntando-se…* e depois o tempo esgotou, este é o arquivo que explica o motivo** — o log principal acima normalmente não explica. Os jogadores são numerados a partir de 2, então a primeira pessoa que entra é **`slot-2`**: no Linux, é `~/.local/share/SlayTheSpire2/couch-coop/headless-slots/slot-2/SlayTheSpire2/logs/godot.log` (sim, `SlayTheSpire2` duas vezes — não é erro de digitação), e os caminhos do Windows e do macOS seguem o mesmo formato dentro das pastas acima. Em algumas configurações, em vez disso, é um único arquivo em `couch-coop/seat-logs/slot-2.log`.
+- **O log de cada jogador.** Cada jogador que entra ganha a sua própria cópia do jogo rodando em segundo plano no host, e cada uma mantém o seu próprio log. **Se a entrada chegou a *Entrando…* e depois o tempo esgotou, este é o arquivo que explica o motivo** — o log principal acima normalmente não explica. Os jogadores são numerados a partir de 2, então a primeira pessoa que entra é **`slot-2`**: no Linux, é `~/.local/share/SlayTheSpire2/couch-coop/headless-slots/slot-2/SlayTheSpire2/logs/godot.log` (sim, `SlayTheSpire2` duas vezes — não é erro de digitação), e os caminhos do Windows e do macOS seguem o mesmo formato dentro das pastas acima. Em algumas configurações, em vez disso, é um único arquivo em `couch-coop/seat-logs/slot-2.log`.
 
 **Quais linhas importam.** Em qualquer um dos logs, as úteis contêm `[couchcoop]` — elas têm esta cara: `[INFO] [couchcoop] ...` —, além de qualquer linha `[ERROR]`, mesmo as que não mencionam couchcoop. Normalmente elas bastam sozinhas.
 

@@ -20,7 +20,7 @@ Wystarczą jedno lub dwa zdania. Jeśli na ekranie pojawił się komunikat o bł
 
 *Jeśli problem występuje później - w trakcie rozgrywki albo w samej grze - przejdź od razu do kroku 3.*
 
-W lobby otwórz ekran **Kod QR do współpracy na kanapie**. Pod kodem znajduje się panel **Znajomości**. Wszystko, co poszło nie tak, trafia pod **Problemy z połączeniem** (z liczbą obok).
+W lobby otwórz ekran **Kod QR Couch Co-Op**. Pod kodem znajduje się panel **Połączenia**. Wszystko, co poszło nie tak, trafia pod **Problemy z połączeniem** (z liczbą obok).
 
 Zaznacz wiersz, który się nie powiódł, i naciśnij **Skopiuj raport**, a potem wklej raport do swojego komentarza. Przy problemie z dołączaniem to najbardziej przydatna rzecz, jaką możesz załączyć: zawiera już krok, na którym wystąpił błąd, czasy, diagnozę samego hosta i ścieżki do opisanych niżej plików logów.
 
@@ -44,7 +44,7 @@ Gracze są numerowani od 2, więc pierwsza osoba, która do ciebie dołącza, to
 
 **Które wiersze są ważne.** W obu plikach przydatne są te, które zawierają `[couchcoop]` - wyglądają jak `[INFO] [couchcoop] ...` - oraz wszystkie wiersze `[ERROR]`, nawet te, które nie wspominają o couchcoop. Zwykle te wiersze same w sobie wystarczą.
 
-**Zanim wkleisz cały log:** dyskusja na Steamie jest publiczna, a log zawiera twój własny **SteamID64** (długą liczbę zaczynającą się od 7656, która wskazuje na twój profil Steam) i **nazwę użytkownika** twojego komputera w ścieżkach plików. *Nie* zawiera haseł ani kont innych graczy - tylko twoje. Jeśli wolisz tego nie publikować, wystarczy przed wklejeniem użyć funkcji „znajdź i zamień” na tych dwóch rzeczach albo po prostu wkleić tylko wiersze `[couchcoop]` i `[ERROR]` - jeśli będę potrzebował więcej, zapytam.
+**Zanim wkleisz cały log:** dyskusja na Steamie jest publiczna, a log zawiera twój własny **SteamID64** (długą liczbę zaczynającą się od 7656, która wskazuje na twój profil Steam) i **nazwę użytkownika** twojego komputera w ścieżkach plików. *Nie* zawiera haseł ani kont innych graczy - tylko twoje. Jeśli wolisz tego nie publikować, wystarczy przed wklejeniem użyć funkcji „znajdź i zamień” na tych dwóch rzeczach albo po prostu wkleić tylko wiersze `[couchcoop]` i `[ERROR]` - jeśli będę potrzebować więcej, zapytam.
 
 ### 4. Wersje i modyfikacje
 
@@ -63,4 +63,4 @@ Gracze są numerowani od 2, więc pierwsza osoba, która do ciebie dołącza, to
 
 ## Jedna rzecz, o której warto wiedzieć przed zgłoszeniem
 
-Uruchomienie gry gracza może potrwać nawet minutę, a na wolniejszym komputerze zajmie większość tego czasu. To normalne, a nie usterka. W tym czasie strona dołączania nalicza sekundy i zmienia etapy pod napisem *Dołączam…* - jeśli ten wiersz wciąż się zmienia, nic jeszcze nie poszło źle, więc nie zamykaj strony.
+Uruchomienie gry gracza może potrwać nawet minutę, a na wolniejszym komputerze zajmie większość tego czasu. To normalne, a nie usterka. W tym czasie strona dołączania nalicza sekundy i zmienia etapy pod napisem *Dołączanie…* - jeśli ten wiersz wciąż się zmienia, nic jeszcze nie poszło źle, więc nie zamykaj strony.

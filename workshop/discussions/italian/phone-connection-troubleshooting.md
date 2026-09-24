@@ -26,26 +26,26 @@ Preferisci il semplice indirizzo numerico (qualcosa come **192.168.1.5:13337**).
 
 ### 3. Leggi cosa dice la pagina mentre ti unisci
 
-Avviare la partita di un giocatore può richiedere fino a un minuto, ed è normale, non un guasto. Nel frattempo la pagina ora ti dice a che punto è arrivata, in una riga sotto *Partecipazione…*:
+Avviare la partita di un giocatore può richiedere fino a un minuto, ed è normale, non un guasto. Nel frattempo la pagina ora ti dice a che punto è arrivata, in una riga sotto *Unione alla partita…*:
 
 *Connessione all'host — passaggio 1 di 6, 14 s finora. Può richiedere fino a un minuto, quindi tieni aperta questa pagina.*
 
-Se quella riga continua a contare e cambia fase, sta funzionando: tieni aperta la pagina. Le sei fasi sono «Connessione all'host», «In attesa dell'host», «Avvio della partita di questo giocatore», «Collegamento di questo giocatore alla partita», «Caricamento della vista di gioco» e «Quasi pronto».
+Se quella riga continua a contare e cambia fase, sta funzionando: tieni aperta la pagina. Le sei fasi sono «Connessione all'host», «In attesa dell'host», «Avvio del gioco di questo giocatore», «Collegamento di questo giocatore alla partita», «Caricamento della vista di gioco» e «Quasi pronto».
 
 ### 4. Se si blocca, ora la pagina ti dice PERCHÉ
 
 Quando qualcosa va davvero storto, il tuo dispositivo viene informato di quale tra diversi problemi non collegati tra loro si tratta - in due frasi, più una riga tecnica grigia. **Includi tutto in qualsiasi segnalazione.** Puoi riceverne tre, e richiedono soluzioni completamente diverse:
 
-- «**La tua partita è in esecuzione sul computer host, ma questo dispositivo non è riuscito a raggiungerla.**»\
+- «**Il tuo gioco è in esecuzione sul computer host, ma questo dispositivo non è riuscito a raggiungerlo.**»\
   È il percorso di rete tra il telefono e l'host - Wi-Fi ospite, una VPN o un router che tiene separati i dispositivi. Il gioco dell'host non ha nessun problema. Vedi le sezioni 2 e 6.
-- «**Un altro programma sul computer host sta usando la porta di cui ha bisogno la tua partita.**»\
+- «**Un altro programma sul computer host sta usando la porta di cui ha bisogno il tuo gioco.**»\
   Non c'è niente da cambiare sul tuo dispositivo. Sull'host, qualcos'altro sta occupando una delle porte di cui ha bisogno ogni giocatore - il più delle volte un processo di un giocatore rimasto da una sessione precedente. Chi ospita dovrebbe chiuderlo (riavviare Slay the Spire 2 lo elimina).
-- «**Il computer host sta bloccando la porta su cui viene servita la tua partita.**»\
+- «**Il computer host sta bloccando la porta su cui viene servito il tuo gioco.**»\
   Anche qui non c'è niente da cambiare sul tuo dispositivo. A bloccarla è il firewall o il software di sicurezza dell'host stesso - vedi la sezione 5.
 
-**Il caso di blocco più comune non mostra affatto *Partecipazione…*.** Se il tuo dispositivo ha raggiunto l'host ma non riesce a raggiungere la porta assegnata al tuo giocatore, l'ingresso nella partita *riesce* - e poi la pagina passa a *Caricamento…* e resta lì. In quella schermata non c'è né una riga di avanzamento né un conto alla rovescia, perché dal punto di vista dell'host non è fallito nulla. La prima cosa utile che vedrai è il messaggio «**non è riuscito a raggiungerla**» qui sopra, circa **20 secondi** dopo il cambio di pagina. Quindi, se sei bloccato su *Caricamento…*, aspetta mezzo minuto quel messaggio invece di ricaricare: ricaricare fa ripartire tutta l'attesa.
+**Il caso di blocco più comune non mostra affatto *Unione alla partita…*.** Se il tuo dispositivo ha raggiunto l'host ma non riesce a raggiungere la porta assegnata al tuo giocatore, l'ingresso nella partita *riesce* - e poi la pagina passa a *Caricamento…* e resta lì. In quella schermata non c'è né una riga di avanzamento né un conto alla rovescia, perché dal punto di vista dell'host non è fallito nulla. La prima cosa utile che vedrai è il messaggio «**non è riuscito a raggiungerlo**» qui sopra, circa **20 secondi** dopo il cambio di pagina. Quindi, se sei bloccato su *Caricamento…*, aspetta mezzo minuto quel messaggio invece di ricaricare: ricaricare fa ripartire tutta l'attesa.
 
-Se invece resta su *Partecipazione…* e non cambia mai, l'host si arrende dopo 75 secondi con «*Impossibile avviare la visualizzazione del gioco: riprova.*» e una riga grigia sotto. È un errore diverso da quello descritto sopra. In entrambi i casi, copia quello che dice.
+Se invece resta su *Unione alla partita…* e non cambia mai, l'host si arrende dopo 75 secondi con «*Impossibile avviare la visualizzazione del gioco: riprova.*» e una riga grigia sotto. È un errore diverso da quello descritto sopra. In entrambi i casi, copia quello che dice.
 
 ### 5. Ogni giocatore usa la propria porta
 
@@ -108,8 +108,8 @@ Lascia un commento nella [discussione di Steam](https://steamcommunity.com/works
 
 - il browser non carica mai niente
 - la pagina si carica, ma l'elenco dei giocatori non compare mai
-- puoi scegliere un nome, ma resta su «Partecipazione…» - dimmi cosa diceva la riga di avanzamento sotto, e quale messaggio hai ricevuto se hai aspettato
-- supera quel punto e resta invece su «**Caricamento…**» - questo è il caso porta/firewall, ed è il più comune. Dimmi se il messaggio «non è riuscito a raggiungerla» è comparso dopo circa 20 secondi
+- puoi scegliere un nome, ma resta su «Unione alla partita…» - dimmi cosa diceva la riga di avanzamento sotto, e quale messaggio hai ricevuto se hai aspettato
+- supera quel punto e resta invece su «**Caricamento…**» - questo è il caso porta/firewall, ed è il più comune. Dimmi se il messaggio «non è riuscito a raggiungerlo» è comparso dopo circa 20 secondi
 - si è connesso senza problemi, poi è caduto durante la partita
 
 ### Qualsiasi altra cosa puoi aggiungere
@@ -125,7 +125,7 @@ Lascia un commento nella [discussione di Steam](https://steamcommunity.com/works
 
 - **Il pannello delle connessioni.** Sull'host, apri la schermata **Codice QR di Couch Co-Op**: il pannello **Connessioni** si trova lì, sotto il codice. Vi sono elencati i dispositivi arrivati abbastanza avanti da comparire, e tutto ciò che è andato storto viene conservato sotto **Problemi di connessione** (seguito da un numero). Seleziona la riga e usa **Copia rapporto**: copia un rapporto che contiene già il passaggio fallito, i tempi e la diagnosi dell'host stesso. Incollalo direttamente nel tuo commento. Indica anche il percorso esatto di entrambi i file di log qui sotto, così non devi cercarli.
 - **Il file di log principale.** Su Windows, `%APPDATA%\SlayTheSpire2\logs\godot.log`. Su Linux, `~/.local/share/SlayTheSpire2/logs/godot.log`. Su macOS, `~/Library/Application Support/SlayTheSpire2/logs/godot.log`.
-- **Il log di ogni giocatore.** Ogni giocatore che si unisce ottiene una propria copia del gioco in esecuzione in background sull'host, e ognuna tiene il proprio log. **Se l'ingresso è arrivato a *Partecipazione…* e poi è scaduto il tempo, è questo il file che spiega perché** - il log principale qui sopra di solito no. I giocatori sono numerati a partire da 2, quindi la prima persona che si unisce è `slot-2`: su Linux è `~/.local/share/SlayTheSpire2/couch-coop/headless-slots/slot-2/SlayTheSpire2/logs/godot.log` (sì, `SlayTheSpire2` due volte: non è un errore di battitura), e i percorsi di Windows e macOS hanno la stessa struttura sotto le rispettive cartelle indicate sopra. In alcune configurazioni, invece, è un unico file in `couch-coop/seat-logs/slot-2.log`.
+- **Il log di ogni giocatore.** Ogni giocatore che si unisce ottiene una propria copia del gioco in esecuzione in background sull'host, e ognuna tiene il proprio log. **Se l'ingresso è arrivato a *Unione alla partita…* e poi è scaduto il tempo, è questo il file che spiega perché** - il log principale qui sopra di solito no. I giocatori sono numerati a partire da 2, quindi la prima persona che si unisce è `slot-2`: su Linux è `~/.local/share/SlayTheSpire2/couch-coop/headless-slots/slot-2/SlayTheSpire2/logs/godot.log` (sì, `SlayTheSpire2` due volte: non è un errore di battitura), e i percorsi di Windows e macOS hanno la stessa struttura sotto le rispettive cartelle indicate sopra. In alcune configurazioni, invece, è un unico file in `couch-coop/seat-logs/slot-2.log`.
 
 **Quali righe contano.** In entrambi i log, quelle utili contengono `[couchcoop]` - hanno un aspetto come `[INFO] [couchcoop] ...` - più tutte le righe `[ERROR]`, anche quelle che non menzionano couchcoop. Di solito bastano da sole.
 

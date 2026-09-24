@@ -26,26 +26,26 @@ Nimm am besten die einfache numerische Adresse (etwa **192.168.1.5:13337**). Bei
 
 ### 3. Lies, was die Seite beim Beitreten anzeigt
 
-Das Spiel eines Spielers zu starten kann bis zu einer Minute dauern, und das ist normal und kein Fehler. Währenddessen zeigt dir die Seite jetzt in einer Zeile unter *Beitritt…* an, wie weit sie ist:
+Das Spiel eines Spielers zu starten kann bis zu einer Minute dauern, und das ist normal und kein Fehler. Währenddessen zeigt dir die Seite jetzt in einer Zeile unter *Beitreten…* an, wie weit sie ist:
 
-*Verbindung zum Gastgeber wird hergestellt – Schritt 1 von 6, bisher 14 s. Das kann bis zu einer Minute dauern, lassen Sie diese Seite geöffnet.*
+*Verbindung zum Host wird hergestellt – Schritt 1 von 6, bisher 14 s. Das kann bis zu einer Minute dauern, lass diese Seite also geöffnet.*
 
-Wenn diese Zeile hochzählt und die Phase wechselt, läuft alles - lass die Seite offen. Die sechs Phasen sind „Verbindung zum Gastgeber wird hergestellt“, „Warten auf den Gastgeber“, „Das Spiel dieses Spielers wird gestartet“, „Dieser Spieler tritt dem Spiel bei“, „Die Spielansicht wird geladen“ und „Fast fertig“.
+Wenn diese Zeile hochzählt und die Phase wechselt, läuft alles - lass die Seite offen. Die sechs Phasen sind „Verbindung zum Host wird hergestellt“, „Warten auf den Host“, „Das Spiel dieses Spielers wird gestartet“, „Dieser Spieler tritt dem Spiel bei“, „Die Spielansicht wird geladen“ und „Fast fertig“.
 
 ### 4. Wenn es hängen bleibt, sagt dir die Seite jetzt, WARUM
 
 Wenn tatsächlich etwas schiefgeht, erfährt dein Gerät, welche von mehreren voneinander unabhängigen Ursachen es war - in zwei Sätzen plus einer grauen technischen Zeile. **Bitte gib bei jeder Meldung alles davon an.** Es gibt drei mögliche Meldungen, und sie brauchen völlig unterschiedliche Lösungen:
 
-- „**Ihr Spiel läuft auf dem Host-Computer, aber dieses Gerät konnte es nicht erreichen.**“\
+- „**Dein Spiel läuft auf dem Host-Computer, aber dieses Gerät konnte es nicht erreichen.**“\
   Hier geht es um den Netzwerkweg zwischen deinem Handy und dem Host - Gast-WLAN, ein VPN oder ein Router, der Geräte voneinander trennt. Mit dem Spiel des Hosts ist alles in Ordnung. Siehe Abschnitte 2 und 6.
-- „**Ein anderes Programm auf dem Host-Computer belegt den Port, den Ihr Spiel benötigt.**“\
+- „**Ein anderes Programm auf dem Host-Computer belegt den Port, den dein Spiel benötigt.**“\
   Auf deinem Gerät musst du nichts ändern. Auf dem Host belegt etwas anderes einen der Ports, die jeder Spieler braucht - meistens ein übrig gebliebener Spielerprozess aus einer früheren Sitzung. Wer hostet, sollte ihn beenden (ein Neustart von Slay the Spire 2 räumt ihn weg).
-- „**Der Host-Computer blockiert den Port, über den Ihr Spiel bereitgestellt wird.**“\
+- „**Der Host-Computer blockiert den Port, über den dein Spiel bereitgestellt wird.**“\
   Auch hier musst du auf deinem Gerät nichts ändern. Die Firewall oder Sicherheitssoftware des Hosts selbst blockiert ihn - siehe Abschnitt 5.
 
-**Der häufigste Blockierfall zeigt überhaupt kein *Beitritt…* an.** Wenn dein Gerät den Host erreicht hat, aber nicht den Port, der deinem eigenen Spieler zugewiesen wurde, *gelingt* der Beitritt - und die Seite wechselt dann zu *Laden…* und bleibt dort stehen. Auf diesem Bildschirm gibt es weder eine Fortschrittszeile noch einen Countdown, weil aus Sicht des Hosts nichts fehlgeschlagen ist. Das Erste, was du Nützliches siehst, ist die obige Meldung „**konnte es nicht erreichen**“, etwa **20 Sekunden** nachdem die Seite gewechselt hat. Also: Wenn du bei *Laden…* hängst, warte eine halbe Minute auf diese Meldung, statt neu zu laden - ein Neuladen startet die ganze Wartezeit von vorn.
+**Der häufigste Blockierfall zeigt überhaupt kein *Beitreten…* an.** Wenn dein Gerät den Host erreicht hat, aber nicht den Port, der deinem eigenen Spieler zugewiesen wurde, *gelingt* der Beitritt - und die Seite wechselt dann zu *Laden…* und bleibt dort stehen. Auf diesem Bildschirm gibt es weder eine Fortschrittszeile noch einen Countdown, weil aus Sicht des Hosts nichts fehlgeschlagen ist. Das Erste, was du Nützliches siehst, ist die obige Meldung „**konnte es nicht erreichen**“, etwa **20 Sekunden** nachdem die Seite gewechselt hat. Also: Wenn du bei *Laden…* hängst, warte eine halbe Minute auf diese Meldung, statt neu zu laden - ein Neuladen startet die ganze Wartezeit von vorn.
 
-Wenn die Seite dagegen bei *Beitritt…* stehen bleibt und sich nie ändert, gibt der Host nach 75 Sekunden mit „*Die Spielansicht konnte nicht gestartet werden. Bitte versuchen Sie es erneut.*“ und einer grauen Zeile darunter auf. Das ist ein anderer Fehler als der obige. So oder so: Kopiere, was dort steht.
+Wenn die Seite dagegen bei *Beitreten…* stehen bleibt und sich nie ändert, gibt der Host nach 75 Sekunden mit „*Deine Spielansicht konnte nicht gestartet werden – bitte versuche es erneut.*“ und einer grauen Zeile darunter auf. Das ist ein anderer Fehler als der obige. So oder so: Kopiere, was dort steht.
 
 ### 5. Jeder Spieler nutzt einen eigenen Port
 
@@ -108,7 +108,7 @@ Das ist das Nützlichste, was du mir sagen kannst, weil jede Antwort auf eine an
 
 - der Browser lädt überhaupt nichts
 - die Seite lädt, aber die Spielerliste erscheint nie
-- du kannst einen Namen wählen, aber es bleibt bei „Beitritt…“ stehen - sag mir, was die Fortschrittszeile darunter anzeigte und welche Meldung du bekommen hast, falls du gewartet hast
+- du kannst einen Namen wählen, aber es bleibt bei „Beitreten…“ stehen - sag mir, was die Fortschrittszeile darunter anzeigte und welche Meldung du bekommen hast, falls du gewartet hast
 - es kommt darüber hinaus und bleibt stattdessen bei „**Laden…**“ stehen - das ist der Port-/Firewall-Fall, und er ist der häufigste. Sag mir, ob nach etwa 20 Sekunden die Meldung „konnte es nicht erreichen“ erschienen ist
 - die Verbindung klappte, brach dann aber während des Runs ab
 
@@ -125,7 +125,7 @@ Das ist das Nützlichste, was du mir sagen kannst, weil jede Antwort auf eine an
 
 - **Das Verbindungs-Panel.** Öffne auf dem Host den Bildschirm **Couch Co-Op-QR-Code** - dort findest du unter dem Code das Panel **Verbindungen**. Geräte, die weit genug gekommen sind, um dort aufzutauchen, werden aufgelistet, und alles, was schiefgegangen ist, wird unter **Verbindungsprobleme** (mit einer Anzahl dahinter) aufbewahrt. Wähle die Zeile aus und nutze **Bericht kopieren** - das kopiert einen Bericht, der den fehlgeschlagenen Schritt, die Zeiten und die Diagnose des Hosts selbst bereits enthält. Füge ihn direkt in deinen Kommentar ein. Er nennt auch den genauen Pfad der beiden Logdateien unten, sodass du nicht danach suchen musst.
 - **Die Haupt-Logdatei.** Unter Windows `%APPDATA%\SlayTheSpire2\logs\godot.log`. Unter Linux `~/.local/share/SlayTheSpire2/logs/godot.log`. Unter macOS `~/Library/Application Support/SlayTheSpire2/logs/godot.log`.
-- **Das Log pro Spieler.** Jeder Spieler, der beitritt, bekommt seine eigene Kopie des Spiels, die im Hintergrund auf dem Host läuft, und jede führt ihr eigenes Log. **Wenn die Seite bis *Beitritt…* gekommen ist und es dann zu einer Zeitüberschreitung kam, erklärt diese Datei, warum** - das Haupt-Log oben meist nicht. Die Spieler werden ab 2 nummeriert, der erste Mitspieler, der beitritt, ist also `slot-2`: Unter Linux ist das `~/.local/share/SlayTheSpire2/couch-coop/headless-slots/slot-2/SlayTheSpire2/logs/godot.log` (ja, zweimal `SlayTheSpire2` - kein Tippfehler), und die Pfade unter Windows und macOS folgen demselben Aufbau unter den oben genannten Ordnern. Bei manchen Setups ist es stattdessen eine einzelne Datei unter `couch-coop/seat-logs/slot-2.log`.
+- **Das Log pro Spieler.** Jeder Spieler, der beitritt, bekommt seine eigene Kopie des Spiels, die im Hintergrund auf dem Host läuft, und jede führt ihr eigenes Log. **Wenn die Seite bis *Beitreten…* gekommen ist und es dann zu einer Zeitüberschreitung kam, erklärt diese Datei, warum** - das Haupt-Log oben meist nicht. Die Spieler werden ab 2 nummeriert, der erste Mitspieler, der beitritt, ist also `slot-2`: Unter Linux ist das `~/.local/share/SlayTheSpire2/couch-coop/headless-slots/slot-2/SlayTheSpire2/logs/godot.log` (ja, zweimal `SlayTheSpire2` - kein Tippfehler), und die Pfade unter Windows und macOS folgen demselben Aufbau unter den oben genannten Ordnern. Bei manchen Setups ist es stattdessen eine einzelne Datei unter `couch-coop/seat-logs/slot-2.log`.
 
 **Welche Zeilen wichtig sind.** In beiden Logs enthalten die nützlichen Zeilen `[couchcoop]` - sie sehen aus wie `[INFO] [couchcoop] ...` -, dazu alle `[ERROR]`-Zeilen, auch solche, die couchcoop nicht erwähnen. Die reichen meist schon für sich.
 

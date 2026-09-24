@@ -386,7 +386,7 @@ internal sealed partial class CouchCoopPauseMenuQrEntry : Control
     /// </summary>
     /// <remarks>
     /// <c>SetTextAutoSize</c>, not <c>Text</c>: assigning the property skips <c>AdjustFontSize</c>, and the
-    /// longer translations of this string ("Kanepede İşbirliği QR Kodu", "Kod QR do współpracy na kanapie")
+    /// longer translations of this string ("Codice QR di Couch Co-Op", "Código QR do Couch Co-Op")
     /// overflow the row's 372×80 plate at the scene's 32pt default. The game sets every other row's label the
     /// same way for the same reason.
     /// </remarks>

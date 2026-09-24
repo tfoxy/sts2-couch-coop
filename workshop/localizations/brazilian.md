@@ -6,7 +6,7 @@ O host instala o CouchCoop. Os outros jogadores entram escaneando um código QR 
 [olist]
 [*]Instale o CouchCoop no computador que será o host.
 [*]Inicie ou carregue uma partida multiplayer.
-[*]Na sala do host, selecione [b]Código QR da cooperativa de sofá[/b].
+[*]Na sala do host, selecione [b]Código QR do Couch Co-Op[/b].
 [*]Em cada dispositivo adicional, escaneie o código QR ou digite a URL exibida.
 [/olist]
 
@@ -14,7 +14,7 @@ O celular ou tablet não conecta? Veja [url=https://github.com/tfoxy/sts2-couch-
 
 [h2]É a primeira vez que você usa mods?[/h2]
 [list]
-[*][b]Não apareceu o botão Código QR da cooperativa de sofá?[/b] Confira se os mods estão ativados em [b]Configurações -> Geral -> Configurações de Mods[/b] e reinicie o jogo.
+[*][b]Não apareceu o botão Código QR do Couch Co-Op?[/b] Confira se os mods estão ativados em [b]Configurações -> Geral -> Configurações de Mods[/b] e reinicie o jogo.
 [*][b]Seu progresso parece ter sumido?[/b] Seus saves continuam aí. O jogo mantém o progresso com e sem mods separados. No ramo estável do jogo, você pode usar o [url=https://steamcommunity.com/sharedfiles/filedetails/?id=3747503308]Import Vanilla Saves[/url] para copiar seu progresso atual para o perfil com mods; no ramo de beta pública o jogo faz isso sozinho na primeira vez que você abre com mods.
 [/list]
 

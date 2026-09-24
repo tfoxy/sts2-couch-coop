@@ -300,6 +300,6 @@ describe("MirrorApp seat notice", () => {
     hostSocket().emit(noticeFrame());
     await settle();
     expect(summary()).toBe("你的游戏已在主机电脑上运行，但本设备无法连接到它。");
-    expect(action()).toBe("请让主持游戏的人在防火墙或安全软件中放行《杀戮尖塔 2》，并确认你连接的是主机所在的 Wi-Fi（不是访客网络）且已关闭 VPN。");
+    expect(action()).toBe("请让房主在防火墙或安全软件中放行 Slay the Spire 2，并确认你连接的是主机所在的 Wi-Fi（不是访客网络）且已关闭 VPN。");
   });
 });

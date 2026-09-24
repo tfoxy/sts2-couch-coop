@@ -16,7 +16,7 @@ QR ekranında, host bilgisayara ulaşmanın birkaç yolunu sunan bir seçici var
 
 Mümkünse düz sayısal adresi tercih edin (**192.168.1.5:13337** gibi bir şey). En az bileşene dayanan seçenek budur. **.local** adı ve web bağlantısı, modun dışındaki şeylere bağlıdır — yönlendiriciniz, internet bağlantısı, tarayıcı izinleri — bu yüzden sayısal adresin sorunsuz çalıştığı bir ağda bile başarısız olabilirler.
 
-**iPhone veya iPad'de *Web bağlantısı* satırını hiç kullanmayın.** Safari — ve iOS'taki diğer tüm tarayıcılar, çünkü hepsinin altında aslında Safari vardır — internetten yüklenen bir sayfanın ev ağınızdaki hiçbir şeye ulaşmasına izin vermez. Bu bir ayar değil, tarayıcının kuralıdır; yani izin verilecek ya da değiştirilecek bir şey yoktur: sayfa yüklenir ve ardından, hangi ağda olursanız olun ve güvenlik duvarınız nasıl ayarlanmış olursa olsun, oyunun yanıt vermediğini söyler. iPhone veya iPad'de **Açık adres** ya da **Güvenli bağlantı** satırını kullanın. (O noktaya kadar gelirseniz sayfa artık bunu kendisi de söylüyor.)
+**iPhone veya iPad'de *Web bağlantısı* satırını hiç kullanmayın.** Safari — ve iOS'taki diğer tüm tarayıcılar, çünkü hepsinin altında aslında Safari vardır — internetten yüklenen bir sayfanın ev ağınızdaki hiçbir şeye ulaşmasına izin vermez. Bu bir ayar değil, tarayıcının kuralıdır; yani izin verilecek ya da değiştirilecek bir şey yoktur: sayfa yüklenir ve ardından, hangi ağda olursanız olun ve güvenlik duvarınız nasıl ayarlanmış olursa olsun, oyunun yanıt vermediğini söyler. iPhone veya iPad'de **Düz adres** ya da **Güvenli bağlantı** satırını kullanın. (O noktaya kadar gelirseniz sayfa artık bunu kendisi de söylüyor.)
 
 ### 2. Telefonun gerçekten aynı ağda olduğundan emin olun
 
@@ -28,24 +28,24 @@ Mümkünse düz sayısal adresi tercih edin (**192.168.1.5:13337** gibi bir şey
 
 Bir oyuncunun oyununu başlatmak bir dakikayı bulabilir; bu bir arıza değil, normal bir durumdur. Bu sırada sayfa artık, *Katılıyor…* yazısının altındaki bir satırda nereye kadar geldiğini gösteriyor:
 
-*Sunucuya bağlanılıyor — adım 1/6, şu ana kadar 14 sn. Bu bir dakikayı bulabilir, lütfen bu sayfayı açık bırakın.*
+*Oda sahibine ulaşılıyor — adım 1/6, şu ana kadar 14 sn. Bu bir dakikayı bulabilir, lütfen bu sayfayı açık bırak.*
 
-Bu satırdaki süre artıyor ve aşama değişiyorsa işlem devam ediyordur — sayfayı açık tutun. Altı aşama şunlardır: sunucuya bağlanılıyor, sunucu bekleniyor, bu oyuncunun oyunu başlatılıyor, bu oyuncu oyuna bağlanıyor, oyun görünümü yükleniyor, neredeyse hazır.
+Bu satırdaki süre artıyor ve aşama değişiyorsa işlem devam ediyordur — sayfayı açık tutun. Altı aşama şunlardır: oda sahibine ulaşılıyor, oda sahibi bekleniyor, bu oyuncunun oyunu başlatılıyor, bu oyuncu oyuna bağlanıyor, oyun görünümü yükleniyor, neredeyse hazır.
 
 ### 4. Durursa, sayfa artık NEDENİNİ söylüyor
 
 Bir şey gerçekten ters gittiğinde, cihazınıza birbiriyle ilgisiz birkaç sorundan hangisinin yaşandığı söylenir — iki cümle ve gri bir teknik satırla. **Lütfen her raporda bunların hepsini ekleyin.** Karşılaşabileceğiniz üç mesaj var ve her biri tamamen farklı bir çözüm gerektirir:
 
-- **“Oyununuz ana bilgisayarda çalışıyor ancak bu cihaz ona ulaşamadı.”**\
+- **“Oyunun, oda sahibinin bilgisayarında çalışıyor ama bu cihaz ona ulaşamadı.”**\
   Sorun, telefonunuzla host bilgisayar arasındaki ağ yolundadır — misafir Wi-Fi, bir VPN ya da cihazları birbirinden ayıran bir yönlendirici. Host bilgisayardaki oyunda bir sorun yok. 2. ve 6. bölümlere bakın.
-- **“Ana bilgisayardaki başka bir program, oyununuzun ihtiyaç duyduğu bağlantı noktasını kullanıyor.”**\
+- **“Oda sahibinin bilgisayarındaki başka bir program, oyununun ihtiyaç duyduğu bağlantı noktasını kullanıyor.”**\
   Cihazınızda değiştirilecek bir şey yok. Host bilgisayarda başka bir şey, oyuncuların ihtiyaç duyduğu portlardan birini tutuyor — çoğunlukla önceki bir oturumdan kalmış bir oyuncu işlemi. Oyunu barındıran kişi bunu kapatmalıdır (Slay the Spire 2'yi yeniden başlatmak sorunu giderir).
-- **“Ana bilgisayar, oyununuzun sunulduğu bağlantı noktasını engelliyor.”**\
+- **“Oda sahibinin bilgisayarı, oyununun sunulduğu bağlantı noktasını engelliyor.”**\
   Burada da cihazınızda değiştirilecek bir şey yok. Portu engelleyen, host bilgisayarın kendi güvenlik duvarı veya güvenlik yazılımıdır — 5. bölüme bakın.
 
 **En yaygın engelleme durumunda *Katılıyor…* hiç görünmez.** Cihazınız host bilgisayara ulaştıysa ama kendi oyuncunuza verilen porta ulaşamıyorsa, katılma *başarılı olur* — ardından sayfa *Yükleniyor…* ekranına geçer ve orada kalır. Bu ekranda ne ilerleme satırı ne de geri sayım vardır, çünkü host tarafında hiçbir şey başarısız olmamıştır. Göreceğiniz ilk işe yarar şey, sayfa değiştikten yaklaşık **20 saniye** sonra çıkan, yukarıdaki **“bu cihaz ona ulaşamadı”** mesajıdır. Yani *Yükleniyor…* ekranında takıldıysanız, sayfayı yenilemek yerine bu mesaj için yarım dakika bekleyin — yenilemek tüm bekleme süresini baştan başlatır.
 
-Sayfa bunun yerine *Katılıyor…* ekranında kalıp hiç değişmiyorsa, host 75 saniyede pes eder ve *Oyun görünümünüz başlatılamadı; lütfen tekrar deneyin.* mesajını, altında gri bir satırla gösterir. Bu, yukarıdakinden farklı bir hatadır. Her iki durumda da ekranda yazanları kopyalayın.
+Sayfa bunun yerine *Katılıyor…* ekranında kalıp hiç değişmiyorsa, host 75 saniyede pes eder ve *Oyun görünümün başlatılamadı — lütfen tekrar dene.* mesajını, altında gri bir satırla gösterir. Bu, yukarıdakinden farklı bir hatadır. Her iki durumda da ekranda yazanları kopyalayın.
 
 ### 5. Her oyuncu kendi portunu kullanır
 
@@ -123,7 +123,7 @@ Bana söyleyebileceğiniz en faydalı şey budur, çünkü her yanıt farklı bi
 
 ### Host bilgisayardan alabileceğiniz üç şey
 
-- **Bağlantı paneli.** Host bilgisayarda **Kanepede İşbirliği QR Kodu** ekranını açın — **Bağlantılar** paneli bu ekranda, kodun altındadır. Orada görünecek kadar ilerleyen cihazlar listelenir ve ters giden her şey **Bağlantı sorunları** altında tutulur (yanında bir sayıyla). Satırı seçin ve **Raporu kopyala** düğmesini kullanın — bu, başarısız olan adımı, süreleri ve host bilgisayarın kendi teşhisini zaten içeren bir rapor kopyalar. Raporu doğrudan yorumunuza yapıştırın. Rapor ayrıca aşağıdaki iki log dosyasının tam yolunu da belirtir, böylece onları aramak zorunda kalmazsınız.
+- **Bağlantı paneli.** Host bilgisayarda **Couch Co-Op QR Kodu** ekranını açın — **Bağlantılar** paneli bu ekranda, kodun altındadır. Orada görünecek kadar ilerleyen cihazlar listelenir ve ters giden her şey **Bağlantı sorunları** altında tutulur (yanında bir sayıyla). Satırı seçin ve **Raporu kopyala** düğmesini kullanın — bu, başarısız olan adımı, süreleri ve host bilgisayarın kendi teşhisini zaten içeren bir rapor kopyalar. Raporu doğrudan yorumunuza yapıştırın. Rapor ayrıca aşağıdaki iki log dosyasının tam yolunu da belirtir, böylece onları aramak zorunda kalmazsınız.
 - **Ana log dosyası.** Windows'ta `%APPDATA%\SlayTheSpire2\logs\godot.log`. Linux'ta `~/.local/share/SlayTheSpire2/logs/godot.log`. macOS'ta `~/Library/Application Support/SlayTheSpire2/logs/godot.log`.
 - **Oyuncu başına log.** Katılan her oyuncu için host bilgisayarda arka planda oyunun ayrı bir kopyası çalışır ve her kopya kendi log dosyasını tutar. **Katılma *Katılıyor…* aşamasına ulaşıp ardından zaman aşımına uğradıysa, nedenini açıklayan dosya budur** — yukarıdaki ana log genellikle bunu açıklamaz. Oyuncular 2'den başlayarak numaralandırılır, bu yüzden ilk katılan kişi `slot-2` olur: Linux'ta bu `~/.local/share/SlayTheSpire2/couch-coop/headless-slots/slot-2/SlayTheSpire2/logs/godot.log` dosyasıdır (evet, iki kez `SlayTheSpire2` — yazım hatası değil); Windows ve macOS yolları da yukarıdaki klasörlerin altında aynı yapıyı izler. Bazı kurulumlarda bunun yerine `couch-coop/seat-logs/slot-2.log` konumunda tek bir dosyadır.
 

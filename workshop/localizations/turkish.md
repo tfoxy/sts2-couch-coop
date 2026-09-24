@@ -6,7 +6,7 @@ Oyunu barındıran kişi (host) CouchCoop'u kurar. Diğer oyuncular QR kodunu ta
 [olist]
 [*]CouchCoop'u host bilgisayara kurun.
 [*]Çok oyunculu bir koşu başlatın veya yükleyin.
-[*]Host lobisinde [b]Kanepede İşbirliği QR Kodu[/b] seçeneğini seçin.
+[*]Host lobisinde [b]Couch Co-Op QR Kodu[/b] seçeneğini seçin.
 [*]Her ek cihazda QR kodunu tarayın veya gösterilen URL'yi girin.
 [/olist]
 
@@ -14,7 +14,7 @@ Telefon veya tablet bağlanamıyor mu? [url=https://github.com/tfoxy/sts2-couch-
 
 [h2]İlk kez mod mu kullanıyorsunuz?[/h2]
 [list]
-[*][b]Kanepede İşbirliği QR Kodu düğmesi görünmüyor mu?[/b] Modların [b]Ayarlar -> Genel -> Mod Ayarları[/b] bölümünde açık olduğundan emin olun ve oyunu yeniden başlatın.
+[*][b]Couch Co-Op QR Kodu düğmesi görünmüyor mu?[/b] Modların [b]Ayarlar -> Genel -> Mod Ayarları[/b] bölümünde açık olduğundan emin olun ve oyunu yeniden başlatın.
 [*][b]İlerlemeniz sıfırlanmış gibi mi görünüyor?[/b] Kayıtlarınız kaybolmadı. Oyun, modlu ve modsuz ilerlemeyi ayrı tutar. Oyunun kararlı dalında mevcut ilerlemenizi modlu profile kopyalamak için [url=https://steamcommunity.com/sharedfiles/filedetails/?id=3747503308]Import Vanilla Saves[/url] kullanabilirsiniz; herkese açık beta dalında oyun bunu modlarla ilk açılışınızda kendisi yapar.
 [/list]
 

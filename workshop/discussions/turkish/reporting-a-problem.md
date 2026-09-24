@@ -20,7 +20,7 @@ Bir iki cümle yeterli. Ekranda bir hata mesajı varsa, altındaki daha küçük
 
 *Sorununuz daha sonra — bir koşu sırasında veya oyunun kendisinde — ortaya çıkıyorsa doğrudan 3. adıma geçin.*
 
-Lobiden **Kanepede İşbirliği QR Kodu** ekranını açın. **Bağlantılar** paneli bu ekranda, kodun altındadır. Ters giden her şey **Bağlantı sorunları** altında tutulur (yanında bir sayıyla).
+Lobiden **Couch Co-Op QR Kodu** ekranını açın. **Bağlantılar** paneli bu ekranda, kodun altındadır. Ters giden her şey **Bağlantı sorunları** altında tutulur (yanında bir sayıyla).
 
 Başarısız olan satırı seçin ve **Raporu kopyala** düğmesine basın, ardından raporu yorumunuza yapıştırın. Katılma sorunlarında ekleyebileceğiniz en faydalı şey budur: başarısız olan adımı, süreleri, host bilgisayarın kendi teşhisini ve aşağıda anlatılan log dosyalarının yollarını zaten içerir.
 

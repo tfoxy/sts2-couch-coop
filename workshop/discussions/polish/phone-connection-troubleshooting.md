@@ -26,26 +26,26 @@ Najlepiej wybierz zwykły adres numeryczny (coś w rodzaju **192.168.1.5:13337**
 
 ### 3. Czytaj, co strona pokazuje podczas dołączania
 
-Uruchomienie gry gracza może potrwać nawet minutę i jest to normalne, a nie usterka. W tym czasie strona pokazuje teraz, na jakim jest etapie, w wierszu pod napisem *Dołączam…*:
+Uruchomienie gry gracza może potrwać nawet minutę i jest to normalne, a nie usterka. W tym czasie strona pokazuje teraz, na jakim jest etapie, w wierszu pod napisem *Dołączanie…*:
 
-*Łączenie z gospodarzem — krok 1 z 6, dotychczas 14 s. Może to potrwać nawet minutę, więc zostaw tę stronę otwartą.*
+*Łączenie z hostem — krok 1 z 6, minęło 14 s. Może to potrwać nawet minutę, więc nie zamykaj tej strony.*
 
-Jeśli licznik sekund w tym wierszu rośnie, a etapy się zmieniają, wszystko działa - nie zamykaj strony. Sześć etapów to: „Łączenie z gospodarzem”, „Oczekiwanie na gospodarza”, „Uruchamianie gry tego gracza”, „Dołączanie tego gracza do gry”, „Ładowanie widoku gry” i „Już prawie gotowe”.
+Jeśli licznik sekund w tym wierszu rośnie, a etapy się zmieniają, wszystko działa - nie zamykaj strony. Sześć etapów to: „Łączenie z hostem”, „Oczekiwanie na hosta”, „Uruchamianie gry tego gracza”, „Dołączanie tego gracza do gry”, „Wczytywanie widoku gry” i „Już prawie gotowe”.
 
 ### 4. Jeśli się zatrzyma, strona mówi teraz DLACZEGO
 
 Gdy coś naprawdę pójdzie nie tak, twoje urządzenie dowiaduje się, która z kilku niezwiązanych ze sobą przyczyn za tym stoi - w dwóch zdaniach oraz szarym wierszu technicznym. **Dołącz to wszystko do każdego zgłoszenia.** Możesz dostać jeden z trzech komunikatów, a każdy wymaga zupełnie innego rozwiązania:
 
-- „**Twoja gra działa na komputerze gospodarza, ale to urządzenie nie mogło się z nią połączyć.**”\
+- „**Twoja gra działa na komputerze hosta, ale to urządzenie nie mogło się z nią połączyć.**”\
   Chodzi o ścieżkę sieciową między twoim telefonem a hostem - sieć Wi-Fi dla gości, VPN albo router, który izoluje urządzenia od siebie. Z grą na hoście wszystko jest w porządku. Zobacz sekcje 2 i 6.
-- „**Inny program na komputerze gospodarza używa portu, którego potrzebuje twoja gra.**”\
+- „**Inny program na komputerze hosta używa portu, którego potrzebuje twoja gra.**”\
   Na twoim urządzeniu nic nie trzeba zmieniać. Na hoście coś innego zajmuje jeden z portów potrzebnych każdemu graczowi - najczęściej pozostały proces gracza z wcześniejszej sesji. Osoba, która hostuje, powinna go zamknąć (ponowne uruchomienie Slay the Spire 2 to naprawia).
-- „**Komputer gospodarza blokuje port, na którym udostępniana jest twoja gra.**”\
+- „**Komputer hosta blokuje port, na którym udostępniana jest twoja gra.**”\
   Tu również nic nie trzeba zmieniać na twoim urządzeniu. Blokuje go zapora lub oprogramowanie zabezpieczające samego hosta - zobacz sekcję 5.
 
-**Najczęstszy przypadek blokady w ogóle nie pokazuje napisu *Dołączam…*.** Jeśli twoje urządzenie dotarło do hosta, ale nie może połączyć się z portem przydzielonym twojemu graczowi, dołączenie się *udaje* - a strona przełącza się potem na *Ładowanie…* i na tym utyka. Na tym ekranie nie ma wiersza postępu ani odliczania, bo z punktu widzenia hosta nic nie zawiodło. Pierwszą przydatną rzeczą, jaką zobaczysz, będzie powyższy komunikat „**nie mogło się z nią połączyć**”, około **20 sekund** po zmianie strony. Jeśli więc strona utknęła na *Ładowanie…*, poczekaj pół minuty na ten komunikat zamiast odświeżać - odświeżenie rozpoczyna całe czekanie od nowa.
+**Najczęstszy przypadek blokady w ogóle nie pokazuje napisu *Dołączanie…*.** Jeśli twoje urządzenie dotarło do hosta, ale nie może połączyć się z portem przydzielonym twojemu graczowi, dołączenie się *udaje* - a strona przełącza się potem na *Wczytywanie…* i na tym utyka. Na tym ekranie nie ma wiersza postępu ani odliczania, bo z punktu widzenia hosta nic nie zawiodło. Pierwszą przydatną rzeczą, jaką zobaczysz, będzie powyższy komunikat „**nie mogło się z nią połączyć**”, około **20 sekund** po zmianie strony. Jeśli więc strona utknęła na *Wczytywanie…*, poczekaj pół minuty na ten komunikat zamiast odświeżać - odświeżenie rozpoczyna całe czekanie od nowa.
 
-Jeśli natomiast strona stoi na *Dołączam…* i nic się nie zmienia, host poddaje się po 75 sekundach z komunikatem „*Nie można uruchomić widoku gry — spróbuj ponownie.*” i szarym wierszem pod nim. To inna awaria niż ta opisana wyżej. Tak czy inaczej, skopiuj to, co jest napisane.
+Jeśli natomiast strona stoi na *Dołączanie…* i nic się nie zmienia, host poddaje się po 75 sekundach z komunikatem „*Nie udało się uruchomić twojego widoku gry — spróbuj ponownie.*” i szarym wierszem pod nim. To inna awaria niż ta opisana wyżej. Tak czy inaczej, skopiuj to, co jest napisane.
 
 ### 5. Każdy gracz używa własnego portu
 
@@ -108,8 +108,8 @@ To najbardziej przydatna rzecz, jaką możesz mi przekazać, bo każda odpowied�
 
 - przeglądarka w ogóle niczego nie wczytuje
 - strona się wczytuje, ale lista graczy nigdy się nie pojawia
-- możesz wybrać nazwę, ale wszystko stoi na „Dołączam…” - napisz mi, co pokazywał wiersz postępu pod spodem i jaki komunikat pojawił się po odczekaniu
-- udaje się przejść dalej, ale zamiast tego wszystko stoi na „**Ładowanie…**” - to przypadek portu/zapory i jest najczęstszy. Napisz mi, czy po około 20 sekundach pojawił się komunikat „nie mogło się z nią połączyć”
+- możesz wybrać nazwę, ale wszystko stoi na „Dołączanie…” - napisz mi, co pokazywał wiersz postępu pod spodem i jaki komunikat pojawił się po odczekaniu
+- udaje się przejść dalej, ale zamiast tego wszystko stoi na „**Wczytywanie…**” - to przypadek portu/zapory i jest najczęstszy. Napisz mi, czy po około 20 sekundach pojawił się komunikat „nie mogło się z nią połączyć”
 - połączenie działało, a potem zerwało się w trakcie rozgrywki
 
 ### Co jeszcze możesz dodać
@@ -123,13 +123,13 @@ To najbardziej przydatna rzecz, jaką możesz mi przekazać, bo każda odpowied�
 
 ### Trzy rzeczy, które może dać ci komputer hosta
 
-- **Panel połączeń.** Na hoście otwórz ekran **Kod QR do współpracy na kanapie** - pod kodem znajduje się panel **Znajomości**. Wymienione są w nim urządzenia, które dotarły na tyle daleko, żeby się tam pojawić, a wszystko, co poszło nie tak, trafia pod **Problemy z połączeniem** (z liczbą obok). Zaznacz wiersz i użyj **Skopiuj raport** - skopiujesz w ten sposób raport, który zawiera już krok, na którym wystąpił błąd, czasy i diagnozę samego hosta. Wklej go od razu do swojego komentarza. Raport podaje też dokładną ścieżkę obu poniższych plików logu, więc nie musisz ich szukać.
+- **Panel połączeń.** Na hoście otwórz ekran **Kod QR Couch Co-Op** - pod kodem znajduje się panel **Połączenia**. Wymienione są w nim urządzenia, które dotarły na tyle daleko, żeby się tam pojawić, a wszystko, co poszło nie tak, trafia pod **Problemy z połączeniem** (z liczbą obok). Zaznacz wiersz i użyj **Skopiuj raport** - skopiujesz w ten sposób raport, który zawiera już krok, na którym wystąpił błąd, czasy i diagnozę samego hosta. Wklej go od razu do swojego komentarza. Raport podaje też dokładną ścieżkę obu poniższych plików logu, więc nie musisz ich szukać.
 - **Główny plik logu.** W Windows: `%APPDATA%\SlayTheSpire2\logs\godot.log`. W Linuksie: `~/.local/share/SlayTheSpire2/logs/godot.log`. W macOS: `~/Library/Application Support/SlayTheSpire2/logs/godot.log`.
-- **Log każdego gracza.** Każdy dołączający gracz dostaje własną kopię gry działającą w tle na hoście i każda z nich prowadzi własny log. **Jeśli dołączanie doszło do *Dołączam…*, a potem upłynął limit czasu, to właśnie ten plik wyjaśnia dlaczego** - powyższy główny log zwykle tego nie robi. Gracze są numerowani od 2, więc pierwsza osoba, która dołącza, to `slot-2`: w Linuksie jest to `~/.local/share/SlayTheSpire2/couch-coop/headless-slots/slot-2/SlayTheSpire2/logs/godot.log` (tak, `SlayTheSpire2` dwa razy - to nie literówka), a ścieżki w Windows i macOS mają ten sam układ w ich folderach podanych wyżej. W niektórych konfiguracjach jest to zamiast tego pojedynczy plik `couch-coop/seat-logs/slot-2.log`.
+- **Log każdego gracza.** Każdy dołączający gracz dostaje własną kopię gry działającą w tle na hoście i każda z nich prowadzi własny log. **Jeśli strona doszła do napisu *Dołączanie…*, a potem upłynął limit czasu, to właśnie ten plik wyjaśnia dlaczego** - powyższy główny log zwykle tego nie robi. Gracze są numerowani od 2, więc pierwsza osoba, która dołącza, to `slot-2`: w Linuksie jest to `~/.local/share/SlayTheSpire2/couch-coop/headless-slots/slot-2/SlayTheSpire2/logs/godot.log` (tak, `SlayTheSpire2` dwa razy - to nie literówka), a ścieżki w Windows i macOS mają ten sam układ w ich folderach podanych wyżej. W niektórych konfiguracjach jest to zamiast tego pojedynczy plik `couch-coop/seat-logs/slot-2.log`.
 
 **Które wiersze są ważne.** W obu logach przydatne są te, które zawierają `[couchcoop]` - wyglądają jak `[INFO] [couchcoop] ...` - oraz wszystkie wiersze `[ERROR]`, nawet te, które nie wspominają o couchcoop. Zwykle same w sobie wystarczą.
 
-**Zanim wkleisz cały log:** dyskusja na Steamie jest publiczna, a log zawiera twój własny **SteamID64** (długą liczbę zaczynającą się od 7656, która wskazuje na twój profil Steam) i **nazwę użytkownika** twojego komputera w ścieżkach plików. *Nie* zawiera haseł ani kont innych graczy - tylko twoje. Jeśli wolisz tego nie publikować, wystarczy przed wklejeniem użyć funkcji „znajdź i zamień” na tych dwóch rzeczach albo po prostu wkleić tylko wiersze `[couchcoop]` i `[ERROR]` - jeśli będę potrzebował więcej, zapytam.
+**Zanim wkleisz cały log:** dyskusja na Steamie jest publiczna, a log zawiera twój własny **SteamID64** (długą liczbę zaczynającą się od 7656, która wskazuje na twój profil Steam) i **nazwę użytkownika** twojego komputera w ścieżkach plików. *Nie* zawiera haseł ani kont innych graczy - tylko twoje. Jeśli wolisz tego nie publikować, wystarczy przed wklejeniem użyć funkcji „znajdź i zamień” na tych dwóch rzeczach albo po prostu wkleić tylko wiersze `[couchcoop]` i `[ERROR]` - jeśli będę potrzebować więcej, zapytam.
 
 ---
 

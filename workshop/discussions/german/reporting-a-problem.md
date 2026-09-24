@@ -63,4 +63,4 @@ Die Spieler werden ab 2 nummeriert, der erste Mitspieler, der dir beitritt, ist 
 
 ## Eine Sache, die du vor einer Meldung wissen solltest
 
-Das Spiel eines Spielers zu starten kann bis zu einer Minute dauern, und auf einem langsameren Rechner wird der Großteil davon auch gebraucht. Das ist normal und kein Fehler. Während es läuft, zählt die Beitrittsseite unter *Beitritt…* hoch und wechselt die Phase - solange sich diese Zeile noch bewegt, ist noch nichts schiefgegangen, also lass die Seite offen.
+Das Spiel eines Spielers zu starten kann bis zu einer Minute dauern, und auf einem langsameren Rechner wird der Großteil davon auch gebraucht. Das ist normal und kein Fehler. Während es läuft, zählt die Beitrittsseite unter *Beitreten…* hoch und wechselt die Phase - solange sich diese Zeile noch bewegt, ist noch nichts schiefgegangen, also lass die Seite offen.
