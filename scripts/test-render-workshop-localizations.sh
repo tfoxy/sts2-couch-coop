@@ -78,4 +78,16 @@ if bash "$renderer" --base "$base" --source "$bad_source" --output "$test_root/b
 fi
 grep -qF 'title for french is blank' "$test_root/blank.out" || fail "blank-title refusal was unclear"
 
+# A mistyped post link would ship a dead link in one language's description; it must refuse instead.
+cp "$repo_root/workshop/titles.json" "$bad_source/titles.json"
+latam_link="/workshop/discussions/latam/phone-connection-troubleshooting.md]"
+grep -qF -- "$latam_link" "$bad_source/localizations/latam.md" || fail "latam description no longer links its phone post"
+latam_description="$(<"$bad_source/localizations/latam.md")"
+printf '%s\n' "${latam_description//"$latam_link"/"/workshop/discussions/latam/phone.md]"}" > "$bad_source/localizations/latam.md"
+if bash "$renderer" --base "$base" --source "$bad_source" --output "$test_root/bad.json" >"$test_root/link.out" 2>&1; then
+  fail "renderer accepted a description with a broken post link"
+fi
+grep -qF 'latam description does not link its phone-connection-troubleshooting post' "$test_root/link.out" ||
+  fail "broken-link refusal was unclear"
+
 echo "test-render-workshop-localizations: ok"

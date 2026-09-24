@@ -267,7 +267,11 @@ The public item's title and description are generated from the tracked `workshop
 English is the primary Steam language; the other 13 current STS2 languages are submitted as Steam
 metadata-only updates. Edit the relevant Markdown description or `workshop/titles.json`, then run
 `bash scripts/test-render-workshop-localizations.sh` before publishing. The renderer also checks
-that every Quick Start label remains identical to the native `couchcoop_qr_button` localization.
+that every Quick Start label remains identical to the native `couchcoop_qr_button` localization, and
+that each description links the two discussion posts: the English one links the Steam threads in
+`workshop/discussions/discussions.json`, and every other language links its own translations under
+`workshop/discussions/<language>/` on GitHub. Those translations are only reachable once `main` is
+pushed. The posts themselves are covered in [workshop/README.md](workshop/README.md).
 
 Mega Crit's uploader support is still PR #12 rather than an upstream release. Once per local tooling
 install, run `scripts/install-localized-workshop-uploader.sh`; it builds pinned commit
