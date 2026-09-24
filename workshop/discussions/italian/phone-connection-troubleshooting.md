@@ -1,6 +1,6 @@
 # Non riesci a connetterti da un telefono o un tablet?
 
-> Questa è una traduzione della discussione dello Steam Workshop [Can't connect from a phone? Read this first](https://steamcommunity.com/workshop/filedetails/discussion/3799476240/563668239243032720/). Per fare una domanda o segnalare un problema, lascia un commento in quella discussione: non serve scrivere in inglese, puoi scrivere in italiano.
+> Questa è una traduzione della discussione del Workshop di Steam [Can't connect from a phone? Read this first](https://steamcommunity.com/workshop/filedetails/discussion/3799476240/563668239243032720/). Per fare una domanda o segnalare un problema, lascia un commento in quella discussione: non serve scrivere in inglese, puoi scrivere in italiano.
 
 La maggior parte dei problemi di connessione si riduce a una manciata di cause. Questo elenco va più o meno dalla più comune alla meno comune, quindi conviene seguirlo in ordine.
 
@@ -20,7 +20,7 @@ Preferisci il semplice indirizzo numerico (qualcosa come **192.168.1.5:13337**).
 
 ### 2. Assicurati che il telefono sia davvero sulla stessa rete
 
-- La stessa rete Wi-Fi del computer host, e non la rete **Ospite**. Le reti ospiti di solito impediscono ai dispositivi di comunicare tra loro, che è proprio ciò che serve qui.
+- La stessa rete Wi-Fi del computer host, e non la **rete ospiti**. Le reti ospiti di solito impediscono ai dispositivi di comunicare tra loro, che è proprio ciò che serve qui.
 - Non con i dati mobili. Se il Wi-Fi non ha accesso a Internet, a volte i telefoni passano da soli ai dati mobili senza avvisarti.
 - **Disattiva qualsiasi VPN sul telefono.** È un errore in cui cadono in tanti. Contano anche gli ad blocker e le app di «DNS privato» che funzionano come una VPN.
 
@@ -59,7 +59,7 @@ Per prima cosa controlla il tipo di rete, perché già questo blocca molte conne
 
 Poi consenti il gioco:
 
-- **Impostazioni > Privacy e sicurezza > Sicurezza di Windows > Protezione firewall e della rete > Consenti app attraverso il firewall**
+- **Impostazioni > Privacy e sicurezza > Sicurezza di Windows > Firewall e protezione rete > Consenti app tramite firewall**
 - Trova **Slay the Spire 2** nell'elenco e assicurati che **Privato** sia selezionato. Se non è nell'elenco, usa **Consenti un'altra app...** e cerca il file `.exe` del gioco.
 
 Se a un certo punto hai risposto «Annulla» a una richiesta del firewall di Windows, Windows lo ricorda come una regola di blocco e non te lo chiederà mai più. In quel caso devi rimuovere la voce sopra e aggiungerla di nuovo.
@@ -70,7 +70,7 @@ Seleziona **Pubblico** solo se la tua rete è impostata come pubblica e non puoi
 
 ### 7. Il router
 
-Alcuni router impediscono ai dispositivi sulla stessa rete Wi-Fi di raggiungersi a vicenda. Cerca un'impostazione chiamata **AP isolation**, **Client isolation** o **Wireless isolation** (in italiano spesso «isolamento AP» o «isolamento client») e disattivala.
+Alcuni router impediscono ai dispositivi sulla stessa rete Wi-Fi di raggiungersi a vicenda. Cerca un'impostazione chiamata **AP isolation**, **Client isolation** o **Wireless isolation** (in italiano spesso «isolamento AP») e disattivala.
 
 Buono a sapersi, inoltre: un ripetitore Wi-Fi o un adattatore powerline configurato in modalità **router** invece che **bridge** / **access point** mette il telefono su una rete separata da quella dell'host, anche se il nome del Wi-Fi sembra lo stesso.
 
@@ -78,10 +78,10 @@ Buono a sapersi, inoltre: un ripetitore Wi-Fi o un adattatore powerline configur
 
 Alcuni browser cercano di forzare HTTPS su ogni indirizzo, e il semplice indirizzo numerico non lo usa. (La riga **Collegamento sicuro** nella schermata del codice QR è quella che lo usa: quindi, se il problema è l'HTTPS forzato, vale la pena provare anche quella riga.) Se la barra degli indirizzi mostra un avviso di sicurezza invece del gioco, disattiva queste opzioni e riprova:
 
-- Chrome: **Impostazioni > Privacy e sicurezza > Sicurezza > Usa sempre connessioni sicure**
+- Chrome: **Impostazioni > Privacy e sicurezza > Sicurezza > Utilizza sempre connessioni sicure**
 - Firefox: **Impostazioni > Privacy e sicurezza > Modalità solo HTTPS**
 
-Su iPhone, controlla anche in **Impostazioni > App > Safari** Relay privato di iCloud e «Nascondi indirizzo IP».
+Su iPhone, controlla anche in **Impostazioni > App > Safari** Relay privato iCloud e «Nascondi indirizzo IP».
 
 ### 9. Antivirus con un proprio firewall
 

@@ -22,7 +22,7 @@ Mümkünse düz sayısal adresi tercih edin (**192.168.1.5:13337** gibi bir şey
 
 - Host bilgisayarla aynı Wi-Fi ağında olmalı ve **Misafir** ağında olmamalı. Misafir ağları genellikle cihazların birbiriyle konuşmasını engeller; oysa burada tam olarak buna ihtiyaç var.
 - Mobil veride olmamalı. Wi-Fi'ın internet erişimi yoksa telefonlar bazen size haber vermeden kendiliğinden mobil veriye geçer.
-- **Telefondaki tüm VPN'leri kapatın.** Pek çok kişi buna takılıyor. VPN olarak çalışan reklam engelleyiciler ve “özel DNS” uygulamaları da buna dahildir.
+- **Telefondaki tüm VPN'leri kapatın.** Pek çok kişi buna takılıyor. VPN olarak çalışan reklam engelleyiciler ve “Gizli DNS” uygulamaları da buna dahildir.
 
 ### 3. Katılırken sayfanın size söylediklerini okuyun
 
@@ -55,11 +55,11 @@ Lobi **13337** numaralı porttadır, ardından her oyuncu **13357**, **13367**, 
 
 Önce ağ türünü kontrol edin, çünkü tek başına bu bile pek çok bağlantıyı engeller:
 
-- **Ayarlar > Ağ ve internet > Wi-Fi** (veya Ethernet) > ağınıza tıklayın > **Ağ profili türü** ayarını **Özel ağ** yapın.
+- **Ayarlar > Ağ ve İnternet > Wi-Fi** (veya Ethernet) > ağınıza tıklayın > **Ağ profili türü** ayarını **Özel ağ** yapın.
 
 Ardından oyuna izin verin:
 
-- **Ayarlar > Gizlilik ve güvenlik > Windows Güvenliği > Güvenlik duvarı ve ağ koruması > Güvenlik duvarında bir uygulamaya izin ver**
+- **Ayarlar > Gizlilik ve güvenlik > Windows Güvenliği > Güvenlik duvarı ve ağ koruması > Bir uygulamaya güvenlik duvarı üzerinden izin ver**
 - Listede **Slay the Spire 2** oyununu bulun ve **Özel** kutusunun işaretli olduğundan emin olun. Listede yoksa **Başka bir uygulamaya izin ver...** seçeneğini kullanın ve oyunun `.exe` dosyasını seçin.
 
 Bir noktada Windows güvenlik duvarı uyarısında “İptal” düğmesine bastıysanız, Windows bunu bir engelleme kuralı olarak hatırlar ve bir daha asla sormaz. Bu durumda yukarıdaki girişi kaldırıp yeniden eklemeniz gerekir.
@@ -70,7 +70,7 @@ Bir noktada Windows güvenlik duvarı uyarısında “İptal” düğmesine bast
 
 ### 7. Yönlendirici
 
-Bazı yönlendiriciler aynı Wi-Fi'daki cihazların birbirine ulaşmasını engeller. **AP isolation**, **Client isolation** veya **Wireless isolation** adlı bir ayar arayın (Türkçe arayüzlerde “AP yalıtımı”, “istemci yalıtımı” ya da “kablosuz yalıtım” olarak da geçebilir) ve kapatın.
+Bazı yönlendiriciler aynı Wi-Fi'daki cihazların birbirine ulaşmasını engeller. **AP isolation**, **Client isolation** veya **Wireless isolation** adlı bir ayar arayın (Türkçe arayüzlerde “AP İzolasyonu” olarak da geçebilir) ve kapatın.
 
 Şunu da bilmekte fayda var: **bridge** (köprü) / **access point** (erişim noktası) modu yerine **router** (yönlendirici) modunda kurulmuş bir Wi-Fi genişletici veya powerline adaptörü, Wi-Fi adı aynı görünse bile telefonunuzu host bilgisayardan ayrı bir ağa koyar.
 
@@ -78,10 +78,10 @@ Bazı yönlendiriciler aynı Wi-Fi'daki cihazların birbirine ulaşmasını enge
 
 Bazı tarayıcılar her adresi HTTPS'ye zorlamaya çalışır; düz sayısal adres ise HTTPS kullanmaz. (QR ekranında HTTPS kullanan satır **Güvenli bağlantı** satırıdır — yani sorun HTTPS zorlamasıysa bu satırı da denemeye değer.) Adres çubuğunda oyun yerine bir güvenlik uyarısı görünüyorsa şunları kapatıp yeniden deneyin:
 
-- Chrome: **Ayarlar > Gizlilik ve güvenlik > Güvenlik > Her zaman güvenli bağlantıları kullan**
-- Firefox: **Ayarlar > Gizlilik ve Güvenlik > Yalnızca HTTPS modu**
+- Chrome: **Ayarlar > Gizlilik ve güvenlik > Güvenlik > Her zaman güvenli bağlantılar kullan**
+- Firefox: **Ayarlar > Gizlilik ve güvenlik > Yalnızca HTTPS modu**
 
-iPhone'da ayrıca **Ayarlar > Uygulamalar > Safari** bölümünde iCloud Özel Geçiş ve “IP Adresini Gizle” ayarlarını kontrol edin.
+iPhone'da ayrıca **Ayarlar > Uygulamalar > Safari** bölümünde iCloud Özel Geçişi ve “IP Adresini Gizle” ayarlarını kontrol edin.
 
 ### 9. Kendi güvenlik duvarı olan antivirüsler
 

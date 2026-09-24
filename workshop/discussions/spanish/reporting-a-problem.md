@@ -1,8 +1,8 @@
-# ¿Tienes algún problema? Publícalo en el debate de Steam
+# ¿Tienes algún problema? Publícalo en la discusión de Steam
 
-> Esta es una traducción del debate del Workshop de Steam [Having a problem? Post it here](https://steamcommunity.com/workshop/filedetails/discussion/3799476240/563668239243120957/). Para hacer una pregunta o informar de un problema, deja un comentario en ese debate; no hace falta que escribas en inglés, puedes hacerlo en español.
+> Esta es una traducción de la discusión del Workshop de Steam [Having a problem? Post it here](https://steamcommunity.com/workshop/filedetails/discussion/3799476240/563668239243120957/). Para hacer una pregunta o informar de un problema, deja un comentario en esa discusión; no hace falta que escribas en inglés, puedes hacerlo en español.
 
-[El debate de Steam](https://steamcommunity.com/workshop/filedetails/discussion/3799476240/563668239243120957/) es el sitio para cualquier cosa que vaya mal: cierres inesperados, un jugador que nunca termina de unirse, algo que se ve mal en pantalla, una partida que se rompe.
+[La discusión de Steam](https://steamcommunity.com/workshop/filedetails/discussion/3799476240/563668239243120957/) es el sitio para cualquier cosa que vaya mal: cierres inesperados, un jugador que nunca termina de unirse, algo que se ve mal en pantalla, una partida que se rompe.
 
 **Si tu teléfono o tableta no llega ni siquiera a la página para unirse**, lee primero [¿No puedes conectarte desde un teléfono o una tableta?](phone-connection-troubleshooting.md): ahí se explican en detalle la red Wi-Fi, los firewalls y los routers, y la mayoría de los problemas de conexión se resuelven con eso.
 
@@ -44,7 +44,7 @@ Los jugadores se numeran a partir del 2, así que la primera persona que se une 
 
 **Qué líneas importan.** En cualquiera de los dos archivos, las útiles contienen `[couchcoop]` (tienen este aspecto: `[INFO] [couchcoop] ...`), además de cualquier línea `[ERROR]`, aunque no mencione couchcoop. Normalmente esas líneas bastan por sí solas.
 
-**Antes de pegar un registro entero:** el debate de Steam es público, y un registro contiene tu propio **SteamID64** (un número largo que empieza por 7656 y que lleva a tu perfil de Steam) y el **nombre de usuario** de tu ordenador, en las rutas de archivo. *No* contiene contraseñas, ni tampoco las cuentas de otros jugadores: solo la tuya. Si prefieres no publicar eso, basta con usar buscar y reemplazar en esos dos datos antes de pegarlo, o publica solo las líneas `[couchcoop]` y `[ERROR]` y, si necesito más, ya te lo pediré.
+**Antes de pegar un registro entero:** la discusión de Steam es pública, y un registro contiene tu propio **SteamID64** (un número largo que empieza por 7656 y que lleva a tu perfil de Steam) y el **nombre de usuario** de tu ordenador, en las rutas de archivo. *No* contiene contraseñas, ni tampoco las cuentas de otros jugadores: solo la tuya. Si prefieres no publicar eso, basta con usar buscar y reemplazar en esos dos datos antes de pegarlo, o publica solo las líneas `[couchcoop]` y `[ERROR]` y, si necesito más, ya te lo pediré.
 
 ### 4. Versiones y mods
 

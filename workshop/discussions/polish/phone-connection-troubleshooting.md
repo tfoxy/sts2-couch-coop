@@ -55,12 +55,12 @@ Lobby działa na porcie **13337**, a potem każdy gracz używa portu **13357**, 
 
 Najpierw sprawdź typ sieci, bo już samo to blokuje wiele połączeń:
 
-- **Ustawienia > Sieć i Internet > Wi-Fi** (lub Ethernet) > kliknij swoją sieć > ustaw **Typ profilu sieciowego** na **Sieć prywatna**.
+- **Ustawienia > Sieć i Internet > Wi-Fi** (lub Ethernet) > kliknij swoją sieć > ustaw **Typ profilu sieci** na **Sieć prywatna**.
 
 Następnie zezwól na grę:
 
 - **Ustawienia > Prywatność i zabezpieczenia > Zabezpieczenia Windows > Zapora i ochrona sieci > Zezwalaj aplikacji na dostęp przez zaporę**
-- Znajdź na liście **Slay the Spire 2** i upewnij się, że pole **Prywatna** jest zaznaczone. Jeśli gry nie ma na liście, użyj opcji **Zezwalaj na dostęp innej aplikacji...** i wskaż plik `.exe` gry.
+- Znajdź na liście **Slay the Spire 2** i upewnij się, że pole **Prywatna** jest zaznaczone. Jeśli gry nie ma na liście, użyj opcji **Zezwalaj innej aplikacji...** i wskaż plik `.exe` gry.
 
 Jeśli kiedyś w okienku zapory Windows kliknięto „Anuluj”, Windows zapamiętuje to jako regułę blokowania i już nigdy nie zapyta. W takim przypadku musisz usunąć powyższy wpis i dodać go ponownie.
 
@@ -70,7 +70,7 @@ Zaznaczaj **Publiczna** tylko wtedy, gdy twoja sieć jest ustawiona jako publicz
 
 ### 7. Router
 
-Niektóre routery nie pozwalają urządzeniom w tej samej sieci Wi-Fi łączyć się ze sobą. Poszukaj ustawienia o nazwie **AP isolation**, **Client isolation** lub **Wireless isolation** (po polsku często „izolacja AP” lub „izolacja klientów”) i je wyłącz.
+Niektóre routery nie pozwalają urządzeniom w tej samej sieci Wi-Fi łączyć się ze sobą. Poszukaj ustawienia o nazwie **AP isolation**, **Client isolation** lub **Wireless isolation** (po polsku często „izolacja AP”) i je wyłącz.
 
 Warto też wiedzieć: wzmacniacz Wi-Fi lub adapter PLC (powerline) skonfigurowany w trybie **routera** zamiast w trybie **mostu** (bridge) / **punktu dostępowego** (access point) umieszcza twój telefon w innej sieci niż host, nawet jeśli nazwa Wi-Fi wygląda tak samo.
 
@@ -81,7 +81,7 @@ Niektóre przeglądarki próbują wymuszać HTTPS dla każdego adresu, a zwykły
 - Chrome: **Ustawienia > Prywatność i bezpieczeństwo > Bezpieczeństwo > Zawsze używaj bezpiecznych połączeń**
 - Firefox: **Ustawienia > Prywatność i bezpieczeństwo > Tryb używania wyłącznie protokołu HTTPS**
 
-Na iPhonie sprawdź też w **Ustawienia > Aplikacje > Safari** opcje Przekazywanie prywatne iCloud i „Ukryj adres IP”.
+Na iPhonie sprawdź też w **Ustawienia > Aplikacje > Safari** opcje Przekazywanie prywatne iCloud i „Ukrywaj adres IP”.
 
 ### 9. Antywirus z własną zaporą
 

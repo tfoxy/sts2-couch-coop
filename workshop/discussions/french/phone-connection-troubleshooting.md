@@ -1,6 +1,6 @@
 # Impossible de se connecter depuis un téléphone ou une tablette ?
 
-> Ceci est une traduction de la discussion du Steam Workshop [Can't connect from a phone? Read this first](https://steamcommunity.com/workshop/filedetails/discussion/3799476240/563668239243032720/). Pour poser une question ou signaler un problème, laissez un commentaire dans cette discussion — inutile d'écrire en anglais, vous pouvez écrire en français.
+> Ceci est une traduction de la discussion du Workshop Steam [Can't connect from a phone? Read this first](https://steamcommunity.com/workshop/filedetails/discussion/3799476240/563668239243032720/). Pour poser une question ou signaler un problème, laissez un commentaire dans cette discussion — inutile d'écrire en anglais, vous pouvez écrire en français.
 
 La plupart des problèmes de connexion se résument à une poignée de causes. Cette liste va à peu près de la plus fréquente à la plus rare, donc mieux vaut la suivre dans l'ordre.
 
@@ -59,7 +59,7 @@ Vérifiez d'abord le type de réseau, car cela seul bloque beaucoup de connexion
 
 Ensuite, autorisez le jeu :
 
-- **Paramètres > Confidentialité et sécurité > Sécurité Windows > Pare-feu et protection du réseau > Autoriser une application via le pare-feu**
+- **Paramètres > Confidentialité et sécurité > Sécurité Windows > Pare-feu et protection réseau > Autoriser une application via le pare-feu**
 - Trouvez **Slay the Spire 2** dans la liste et vérifiez que **Privé** est coché. S'il n'est pas dans la liste, utilisez **Autoriser une autre application...** et parcourez jusqu'au fichier `.exe` du jeu.
 
 Si vous avez un jour répondu « Annuler » à une invite du pare-feu Windows, Windows l'a mémorisé comme une règle de blocage et ne vous posera plus jamais la question. Dans ce cas, vous devez supprimer l'entrée ci-dessus et l'ajouter à nouveau.
@@ -70,7 +70,7 @@ Ne cochez **Public** que si votre réseau est configuré en Public et que vous n
 
 ### 7. Le routeur
 
-Certains routeurs empêchent les appareils connectés au même Wi-Fi de communiquer entre eux. Cherchez un réglage appelé **AP isolation**, **Client isolation** ou **Wireless isolation** (souvent « isolation AP » ou « isolation des clients » en français) et désactivez-le.
+Certains routeurs empêchent les appareils connectés au même Wi-Fi de communiquer entre eux. Cherchez un réglage appelé **AP isolation**, **Client isolation** ou **Wireless isolation** (souvent « isolation AP » ou « AP isolé » en français) et désactivez-le.
 
 À savoir aussi : un répéteur Wi-Fi ou un adaptateur CPL configuré en mode **routeur** plutôt qu'en mode **pont** (bridge) / **point d'accès** (access point) place votre téléphone sur un réseau distinct de celui de l'hôte, même si le nom du Wi-Fi semble identique.
 
@@ -78,7 +78,7 @@ Certains routeurs empêchent les appareils connectés au même Wi-Fi de communiq
 
 Certains navigateurs essaient d'imposer HTTPS pour toutes les adresses, ce que l'adresse numérique simple n'utilise pas. (La ligne **Lien sécurisé** de l'écran du code QR, elle, l'utilise - donc si le HTTPS forcé est en cause, cette ligne vaut aussi la peine d'être essayée.) Si la barre d'adresse affiche un avertissement de sécurité au lieu du jeu, désactivez ces options et réessayez :
 
-- Chrome : **Paramètres > Confidentialité et sécurité > Sécurité > Toujours utiliser des connexions sécurisées**
+- Chrome : **Paramètres > Confidentialité et sécurité > Sécurité > Toujours utiliser une connexion sécurisée**
 - Firefox : **Paramètres > Vie privée et sécurité > Mode HTTPS uniquement**
 
 Sur iPhone, vérifiez aussi dans **Réglages > Apps > Safari** le Relais privé iCloud et « Masquer l'adresse IP ».

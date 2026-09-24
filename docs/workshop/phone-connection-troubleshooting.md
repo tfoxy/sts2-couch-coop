@@ -87,6 +87,48 @@ as "the same shape under their folders above" rather than spelling out two paths
 it leads with **Copy report names the exact path**, which is true on every platform and is the reason
 an unconfirmed path is survivable here.
 
+### Localized menu names
+
+Checked 2026-09-24 in all 13 translations. Every Windows, browser, iPhone and router menu name in a
+translated post is the product's own string in that language, looked up rather than recalled. The source
+for each product:
+
+| product | where the localized names came from |
+| --- | --- |
+| Windows 11 | Microsoft Support's localized articles (`support.microsoft.com/<ll-cc>/windows/…`: the essential network settings article, and "Risks of allowing apps through Windows Firewall"), checked against the [Microsoft Terminology Collection](https://learn.microsoft.com/en-us/globalization/reference/microsoft-terminology). The articles are machine-translated: they leave "&" inside names ("Red & Internet") and garble ru/tr/th, so where the two disagree, the Terminology Collection wins |
+| Chrome | Chrome Help, [Always use secure connections](https://support.google.com/chrome/answer/10468685), `?hl=<lang>` |
+| Firefox | Firefox's own shipped strings, `mozilla-l10n/firefox-l10n` `<locale>/browser/browser/preferences/preferences.ftl`. The support site blocks automated reads |
+| iPhone, Safari, iCloud | Apple's localized iPhone User Guide, `support.apple.com/<ll-cc>/guide/iphone/…` |
+| Android Private DNS | Android Help, `support.google.com/android/answer/9654714?hl=<lang>` |
+| guest network, AP isolation, router modes | A major router maker's localized support site (TP-Link, ASUS, NEC Aterm, Keenetic). A local name is used only where one of them uses it; otherwise the English name stays |
+| Steam's *Workshop* and *discussion* | The discussion page itself, with `?l=<steam language>` |
+
+**No official source, so the translators' wording stands:**
+- The **Private / Public** tick-box columns in the allowed-apps list, in every language. No Microsoft page
+  names them. The Italian posts say *Privato / Pubblico*; one third-party guide says *Privata / Pubblica*.
+- **Privacy & security** in Windows. The localized articles keep the English "&", so the posts use the
+  language's "and" instead, by analogy with the Terminology Collection's "Network & Internet". This is
+  least certain in German, where Windows Security's own names do keep "&".
+- **Cancel** on the firewall prompt. The word comes from the Terminology Collection's generic button; no
+  article quotes the prompt itself.
+- **Windows names in the Latin American Spanish posts.** Microsoft has no `es-mx` support pages (they
+  redirect to `es-es`), so the Spain Spanish names are used.
+- **Turkish Public profile.** The firewall article says *Ortak ağ* and the Settings article says *Genel ağ
+  (Önerilen)*. The posts are unchanged.
+- **Russian Allow an app through firewall.** Two Microsoft articles disagree, so the post's wording is
+  unchanged.
+- **Japanese Allow another app, and Privacy & security in ja/ko/zh.** These rest on PC makers' Windows
+  support pages (NEC, Samsung, Lenovo), not on Microsoft's.
+
+A Windows 11 install in the language would settle any of these.
+
+**Two paths in the English post are out of date, and so are all 13 translations.** Neither has been
+changed yet:
+- Current Firefox names the pane *Privacy and security* and puts HTTPS-Only Mode under Connection and
+  software security > Advanced settings, per its shipped `preferences.ftl`.
+- On iPhone, only *Hide IP Address* is under Settings > Apps > Safari. iCloud Private Relay is under
+  Settings > [your name] > iCloud.
+
 ## The post
 
 The English BBCode that is pasted into Steam is

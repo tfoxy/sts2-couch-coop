@@ -1,6 +1,6 @@
 # Hai un problema? Scrivilo nella discussione di Steam
 
-> Questa è una traduzione della discussione dello Steam Workshop [Having a problem? Post it here](https://steamcommunity.com/workshop/filedetails/discussion/3799476240/563668239243120957/). Per fare una domanda o segnalare un problema, lascia un commento in quella discussione: non serve scrivere in inglese, puoi scrivere in italiano.
+> Questa è una traduzione della discussione del Workshop di Steam [Having a problem? Post it here](https://steamcommunity.com/workshop/filedetails/discussion/3799476240/563668239243120957/). Per fare una domanda o segnalare un problema, lascia un commento in quella discussione: non serve scrivere in inglese, puoi scrivere in italiano.
 
 La [discussione di Steam](https://steamcommunity.com/workshop/filedetails/discussion/3799476240/563668239243120957/) è il posto giusto per qualsiasi cosa vada storta: crash, un giocatore che non finisce mai di unirsi, qualcosa visualizzato in modo errato, una partita che si rompe.
 
