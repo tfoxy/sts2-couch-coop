@@ -83,6 +83,7 @@
   "a11y.about": "{label}について",
   "advisory.browser": "このブラウザでは一部のテキストが正しく表示されない可能性があります。Chrome または Firefox を推奨します。",
   "advisory.gamepad": "ゲームパッドを使うには安全な接続が必要です。ホストの HTTPS または Web リンクの QR コードから参加し直してください。",
+  "settings.heading": "ミラー設定",
   "settings.thisDevice": "このデバイス",
   "settings.streamThisPlayer": "ストリーム（このプレイヤー）",
   "settings.latency": "レイテンシ",

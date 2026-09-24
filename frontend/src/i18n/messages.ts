@@ -118,6 +118,9 @@ export const en = {
   "a11y.about": "About {label}",
   "advisory.browser": "Some text may not render correctly in this browser — Chrome or Firefox is recommended.",
   "advisory.gamepad": "Gamepads only work over a secure connection — rejoin from the host's HTTPS or web-link QR code.",
+  // One key, not `app.mirror` + `common.settings` side by side: that pair reads backwards in most languages
+  // ("Spiegel Einstellungen", "Miroir Paramètres"), and no catalogue value can reorder two keys.
+  "settings.heading": "Mirror Settings",
   "settings.thisDevice": "This device",
   "settings.streamThisPlayer": "Stream (this player)",
   "settings.latency": "Latency",
@@ -346,6 +349,7 @@ export const zhHans: LocaleCatalog = {
   "settings.networkRtt": "网络往返延迟",
   "settings.gameRtt": "游戏延迟",
   "settings.latencyOverlay": "显示浮层",
+  "settings.heading": "镜像设置",
   "settings.thisDevice": "本设备",
   "settings.streamThisPlayer": "串流（此玩家）",
   "settings.latency": "延迟",

@@ -83,6 +83,7 @@
   "a11y.about": "À propos de {label}",
   "advisory.browser": "Certains textes peuvent ne pas s'afficher correctement dans ce navigateur : Chrome ou Firefox sont recommandés.",
   "advisory.gamepad": "Les manettes ne fonctionnent qu'avec une connexion sécurisée : rejoignez de nouveau la partie avec le code QR HTTPS ou lien web de l'hôte.",
+  "settings.heading": "Paramètres du miroir",
   "settings.thisDevice": "Cet appareil",
   "settings.streamThisPlayer": "Flux (ce joueur)",
   "settings.latency": "Latence",

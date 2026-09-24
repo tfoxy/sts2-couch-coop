@@ -83,6 +83,15 @@ describe("SettingsPanel — per-row help tips", () => {
     wrapper.unmount();
   });
 
+  // The heading used to be `app.mirror` + `common.settings`, which read "Spiegel Einstellungen": word order
+  // belongs to the language, so the whole heading is one key.
+  it("titles the panel from one heading key, in the language's own word order", () => {
+    createBrowserI18n("?lang=de", { languages: ["en"] });
+    const wrapper = mountPanel();
+    expect(wrapper.get(".settings-heading").text()).toBe("Spiegel-Einstellungen");
+    wrapper.unmount();
+  });
+
   it("gives EVERY row a tip, and every tip a real description", () => {
     const wrapper = mountPanel();
     const buttons = wrapper.findAll("[data-testid^='mirror-help-']:not([data-testid^='mirror-help-bubble'])");

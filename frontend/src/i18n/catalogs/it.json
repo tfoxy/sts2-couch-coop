@@ -83,6 +83,7 @@
   "a11y.about": "Informazioni su {label}",
   "advisory.browser": "Parte del testo potrebbe non essere visualizzata correttamente in questo browser: si consiglia Chrome o Firefox.",
   "advisory.gamepad": "I controller funzionano solo con una connessione sicura: unisciti di nuovo usando il codice QR HTTPS o del collegamento web dell'host.",
+  "settings.heading": "Impostazioni dello specchio",
   "settings.thisDevice": "Questo dispositivo",
   "settings.streamThisPlayer": "Streaming (questo giocatore)",
   "settings.latency": "Latenza",

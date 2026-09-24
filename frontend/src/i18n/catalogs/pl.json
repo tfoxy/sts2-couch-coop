@@ -83,6 +83,7 @@
   "a11y.about": "Informacje: {label}",
   "advisory.browser": "Niektóre teksty mogą nie być poprawnie renderowane w tej przeglądarce — zalecana jest przeglądarka Chrome lub Firefox.",
   "advisory.gamepad": "Kontrolery działają tylko przez bezpieczne połączenie — dołącz ponownie, skanując kod QR hosta z linkiem HTTPS lub linkiem internetowym.",
+  "settings.heading": "Ustawienia lustra",
   "settings.thisDevice": "To urządzenie",
   "settings.streamThisPlayer": "Transmisja (ten gracz)",
   "settings.latency": "Opóźnienie",

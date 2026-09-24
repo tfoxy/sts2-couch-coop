@@ -83,6 +83,7 @@
   "a11y.about": "เกี่ยวกับ {label}",
   "advisory.browser": "ข้อความบางส่วนอาจแสดงผลไม่ถูกต้องในเบราว์เซอร์นี้ - แนะนำให้ใช้ Chrome หรือ Firefox",
   "advisory.gamepad": "เกมแพดใช้ได้เฉพาะบนการเชื่อมต่อที่ปลอดภัย — เข้าร่วมใหม่ด้วยรหัส QR แบบ HTTPS หรือเว็บลิงก์ของเจ้าของห้อง",
+  "settings.heading": "การตั้งค่ากระจกเงา",
   "settings.thisDevice": "อุปกรณ์นี้",
   "settings.streamThisPlayer": "สตรีม (ผู้เล่นนี้)",
   "settings.latency": "ความหน่วง",
