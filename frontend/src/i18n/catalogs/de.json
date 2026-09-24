@@ -83,6 +83,7 @@
   "a11y.about": "Über {label}",
   "advisory.browser": "Einige Texte werden in diesem Browser möglicherweise nicht richtig dargestellt. Chrome oder Firefox werden empfohlen.",
   "advisory.gamepad": "Gamepads funktionieren nur über eine sichere Verbindung – tritt über den HTTPS- oder Weblink-QR-Code des Hosts erneut bei.",
+  "settings.heading": "Spiegel-Einstellungen",
   "settings.thisDevice": "Dieses Gerät",
   "settings.streamThisPlayer": "Stream (dieser Spieler)",
   "settings.latency": "Latenz",

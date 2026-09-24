@@ -83,6 +83,7 @@
   "a11y.about": "Sobre {label}",
   "advisory.browser": "Alguns textos podem não ser renderizados corretamente neste navegador. Recomenda-se o Chrome ou o Firefox.",
   "advisory.gamepad": "Controles só funcionam em conexão segura — entre de novo pelo código QR do Link seguro ou do Link da web do anfitrião.",
+  "settings.heading": "Configurações do espelho",
   "settings.thisDevice": "Este dispositivo",
   "settings.streamThisPlayer": "Transmissão (este jogador)",
   "settings.latency": "Latência",

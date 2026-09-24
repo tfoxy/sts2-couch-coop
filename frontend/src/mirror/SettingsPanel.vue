@@ -276,7 +276,7 @@ onBeforeUnmount(() => setHelpListeners(false));
       data-testid="mirror-settings-panel"
       @scroll="closeHelp"
     >
-      <h2 class="settings-heading">{{ t('app.mirror') }} {{ t('common.settings') }}</h2>
+      <h2 class="settings-heading">{{ t('settings.heading') }}</h2>
 
       <div class="settings-group">
         <p class="settings-group-label">{{ t('settings.thisDevice') }}</p>

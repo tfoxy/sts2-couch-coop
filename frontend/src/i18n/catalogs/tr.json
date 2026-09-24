@@ -83,6 +83,7 @@
   "a11y.about": "{label} hakkında",
   "advisory.browser": "Bazı metinler bu tarayıcıda düzgün görüntülenmeyebilir — Chrome veya Firefox önerilir.",
   "advisory.gamepad": "Oyun kumandaları yalnızca güvenli bağlantıda çalışır — oda sahibinin Güvenli bağlantı veya Web bağlantısı QR koduyla yeniden katıl.",
+  "settings.heading": "Ayna ayarları",
   "settings.thisDevice": "Bu cihaz",
   "settings.streamThisPlayer": "Akış (bu oyuncu)",
   "settings.latency": "Gecikme",
