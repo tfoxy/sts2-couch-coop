@@ -299,7 +299,7 @@ export const zhHans: LocaleCatalog = {
   "seat.notice.networkPath": "你的游戏已在主机电脑上运行，但本设备无法连接到它。",
   "seat.notice.networkPathFix": "请让房主在防火墙或安全软件中放行 Slay the Spire 2，并确认你连接的是主机所在的 Wi-Fi（不是访客网络）且已关闭 VPN。",
   "seat.notice.portConflict": "主机电脑上的另一个程序正占用你的游戏所需的端口。",
-  "seat.notice.portConflictFix": "本设备无需改动——请让房主重启 Slay the Spire 2 后再试一次。",
+  "seat.notice.portConflictFix": "本设备无需改动——请让房主重启《杀戮尖塔2》后再试一次。",
   "seat.notice.hostBlock": "主机电脑正在阻止你的游戏所使用的端口。",
   "seat.notice.hostBlockFix": "本设备无需改动——请让房主在防火墙或安全软件中放行 Slay the Spire 2。",
   "loading.connecting": "正在连接…",

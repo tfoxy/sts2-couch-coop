@@ -1,7 +1,7 @@
 {
   "name": "STS2 Couch Co-op",
   "short_name": "STS2 CouchCoop",
-  "description": "Slay the Spire 2 的本地多人合作——通过手机或浏览器加入。",
+  "description": "《杀戮尖塔2》的本地多人合作——通过手机或浏览器加入。",
   "display": "fullscreen",
   "orientation": "landscape",
   "start_url": "/",

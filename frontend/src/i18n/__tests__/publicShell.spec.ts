@@ -70,13 +70,13 @@ describe("public-origin localization shell", () => {
     const offline = read("public/offline.html");
     expect(offline).toContain("for (var i = 0; i < tags.length; i += 1)");
     expect(offline).not.toContain("tags.some(");
-    expect(offline).toContain("Slay the Spire 2 主机没有响应");
+    expect(offline).toContain("《杀戮尖塔2》主机没有响应");
     expect(offline).toContain('address: "此地址"');
 
     const manifest = JSON.parse(read("public/manifest.zh-Hans.webmanifest")) as Record<string, string>;
     expect(manifest.start_url).toBe("/");
     expect(manifest.id).toBe("/");
-    expect(manifest.description).toContain("Slay the Spire 2");
+    expect(manifest.description).toContain("《杀戮尖塔2》");
     expect(read("pages/public/sw.js")).toContain('"/manifest.zh-Hans.webmanifest"');
   });
 });
