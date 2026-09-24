@@ -79,9 +79,9 @@ También conviene saber que un repetidor Wi-Fi o un adaptador PLC configurado en
 Algunos navegadores intentan forzar HTTPS en todas las direcciones, y la dirección numérica simple no lo usa. (La opción **Enlace seguro** de la pantalla del QR sí lo usa, así que, si el problema es que se fuerza HTTPS, también merece la pena probarla). Si la barra de direcciones muestra una advertencia de seguridad en lugar del juego, desactiva estas opciones y vuelve a intentarlo:
 
 - Chrome: **Configuración > Privacidad y seguridad > Seguridad > Usar siempre conexiones seguras**
-- Firefox: **Ajustes > Privacidad & Seguridad > Modo solo-HTTPS**
+- Firefox: **Ajustes > Privacidad & Seguridad > Seguridad de la conexión y del software > Configuración avanzada > Modo solo-HTTPS**
 
-En iPhone, revisa también en **Ajustes > Apps > Safari** el Relay privado de iCloud y «Ocultar dirección IP».
+En iPhone, revisa también **Ajustes > *tu nombre* > iCloud > Relay privado** y «Ocultar dirección IP» en **Ajustes > Apps > Safari**.
 
 ### 9. Antivirus con su propio firewall
 

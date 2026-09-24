@@ -79,9 +79,9 @@ Warto też wiedzieć: wzmacniacz Wi-Fi lub adapter PLC (powerline) skonfigurowan
 Niektóre przeglądarki próbują wymuszać HTTPS dla każdego adresu, a zwykły adres numeryczny z niego nie korzysta. (Korzysta z niego wiersz **Bezpieczny link** na ekranie kodu QR - więc jeśli problemem jest wymuszanie HTTPS, warto spróbować także tego wiersza.) Jeśli pasek adresu zamiast gry pokazuje ostrzeżenie o bezpieczeństwie, wyłącz te opcje i spróbuj ponownie:
 
 - Chrome: **Ustawienia > Prywatność i bezpieczeństwo > Bezpieczeństwo > Zawsze używaj bezpiecznych połączeń**
-- Firefox: **Ustawienia > Prywatność i bezpieczeństwo > Tryb używania wyłącznie protokołu HTTPS**
+- Firefox: **Ustawienia > Prywatność i bezpieczeństwo > Bezpieczeństwo połączeń i oprogramowania > Ustawienia zaawansowane > Tryb używania wyłącznie protokołu HTTPS**
 
-Na iPhonie sprawdź też w **Ustawienia > Aplikacje > Safari** opcje Przekazywanie prywatne iCloud i „Ukrywaj adres IP”.
+Na iPhonie sprawdź też **Ustawienia > *Twoje imię i nazwisko* > iCloud > Przekazywanie prywatne**, a także opcję „Ukrywaj adres IP” w **Ustawienia > Aplikacje > Safari**.
 
 ### 9. Antywirus z własną zaporą
 

@@ -79,9 +79,9 @@ Buono a sapersi, inoltre: un ripetitore Wi-Fi o un adattatore powerline configur
 Alcuni browser cercano di forzare HTTPS su ogni indirizzo, e il semplice indirizzo numerico non lo usa. (La riga **Collegamento sicuro** nella schermata del codice QR è quella che lo usa: quindi, se il problema è l'HTTPS forzato, vale la pena provare anche quella riga.) Se la barra degli indirizzi mostra un avviso di sicurezza invece del gioco, disattiva queste opzioni e riprova:
 
 - Chrome: **Impostazioni > Privacy e sicurezza > Sicurezza > Utilizza sempre connessioni sicure**
-- Firefox: **Impostazioni > Privacy e sicurezza > Modalità solo HTTPS**
+- Firefox: **Impostazioni > Privacy e sicurezza > Sicurezza connessione e software > Impostazioni avanzate > Modalità solo HTTPS**
 
-Su iPhone, controlla anche in **Impostazioni > App > Safari** Relay privato iCloud e «Nascondi indirizzo IP».
+Su iPhone, controlla anche **Impostazioni > *Il tuo nome* > iCloud > Relay privato**, e «Nascondi indirizzo IP» in **Impostazioni > App > Safari**.
 
 ### 9. Antivirus con un proprio firewall
 

@@ -122,12 +122,16 @@ for each product:
 
 A Windows 11 install in the language would settle any of these.
 
-**Two paths in the English post are out of date, and so are all 13 translations.** Neither has been
-changed yet:
-- Current Firefox names the pane *Privacy and security* and puts HTTPS-Only Mode under Connection and
-  software security > Advanced settings, per its shipped `preferences.ftl`.
-- On iPhone, only *Hide IP Address* is under Settings > Apps > Safari. iCloud Private Relay is under
-  Settings > [your name] > iCloud.
+**Two paths were corrected on 2026-09-24, in the English post and all 13 translations:**
+- **Firefox.** The path follows the redesigned settings, which are on by default in release Firefox (checked
+  on 157.0: `browser.settings-redesign.enabled` is `true` in the release branch's
+  `browser/app/profile/firefox.js`). The Privacy and security page has a *Connection and software security*
+  row, and its **Advanced settings** button opens the sub-page that holds the HTTPS-Only Mode group (the
+  `connectionSecurity` entry in `browser/components/preferences/preferences.js`). The old *Privacy &
+  Security > HTTPS-Only Mode* path is the pre-redesign layout.
+- **iPhone.** iCloud Private Relay is at Settings > *[your name]* > iCloud > Private Relay, per Apple's
+  "Protect web browsing with iCloud Private Relay" guide page. Only *Hide IP address* is under Settings >
+  Apps > Safari ("Browse privately in Safari"). The post used to send readers to Safari for both.
 
 ## The post
 

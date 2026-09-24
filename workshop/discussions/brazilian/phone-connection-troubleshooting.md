@@ -79,9 +79,9 @@ Também vale saber: um repetidor de Wi-Fi ou adaptador powerline configurado no 
 Alguns navegadores tentam forçar HTTPS em todos os endereços, e o endereço numérico simples não usa HTTPS. (A opção **Link seguro** da tela do QR é a que usa — então, se o problema for o HTTPS forçado, também vale a pena testar essa opção.) Se a barra de endereço mostrar um aviso de segurança em vez do jogo, desative estas opções e tente de novo:
 
 - Chrome: **Configurações > Privacidade e segurança > Segurança > Sempre usar conexões seguras**
-- Firefox: **Configurações > Privacidade e Segurança > Modo somente HTTPS**
+- Firefox: **Configurações > Privacidade e Segurança > Conexão e segurança de software > Configurações avançadas > Modo somente HTTPS**
 
-No iPhone, confira também em **Ajustes > Apps > Safari** a Retransmissão Privada do iCloud e a opção "Ocultar Endereço IP".
+No iPhone, confira também **Ajustes > *seu nome* > iCloud > Retransmissão Privada** e a opção "Ocultar Endereço IP" em **Ajustes > Apps > Safari**.
 
 ### 9. Antivírus com firewall próprio
 
