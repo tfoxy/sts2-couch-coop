@@ -141,6 +141,7 @@ if (args is ["host-guards", ..])
 if (args is ["seats", ..])
 {
     await HeadlessClientManagerTests.RunAsync();
+    ConnectionHostingDemandTests.Run();
     // The seat ROSTER's transition bookkeeping — which seat the picker offers, and the statuses it remembers
     // between evaluations. Registered here for the reason this whole verb exists: it sits late in the full
     // sequence, which used to abort above it (see the note above HeadlessAudioMuteTargetsTests), and a focused
@@ -183,6 +184,23 @@ if (args is ["network", ..])
     // because it is otherwise registered only in the full sequence below, which does not reach it.
     SecureBrowserListenerTests.RunAsync();
     Console.WriteLine("network: ok");
+    return;
+}
+
+// Dormant host services over real loopback sockets, without WAN or multicast side effects.
+if (args is ["idle-host", ..])
+{
+    Environment.SetEnvironmentVariable("COUCHCOOP_SECURE_ORIGIN", "0");
+    Environment.SetEnvironmentVariable("COUCHCOOP_MDNS_RESPONDER", "0");
+    var idleRoot = Path.Combine(Path.GetTempPath(), "couchcoop-idle-host-" + Guid.NewGuid().ToString("N"));
+    Directory.CreateDirectory(idleRoot);
+    try
+    {
+        await IdleHostCostTests.DeferredHostUiKeepsTheListenerButNotTheNetworkAsync(idleRoot);
+        await IdleHostCostTests.PendingDiscoveryCannotPublishAfterStopAsync(idleRoot);
+        Console.WriteLine("idle-host: ok");
+    }
+    finally { Directory.Delete(idleRoot, recursive: true); }
     return;
 }
 
@@ -790,6 +808,7 @@ WalkSkipUnanimityTests.Run();
 var tests = new BrowserServerRouteTests();
 await tests.RunAsync();
 await HeadlessClientManagerTests.RunAsync();
+ConnectionHostingDemandTests.Run();
 // The readiness deadline that manager waits on: the clamp band, the progress line, the untouched early exit.
 await SeatReadyTimeoutTests.RunAsync();
 Console.WriteLine("""{"ok":true,"hostedServerRoutes":true}""");
@@ -858,7 +877,23 @@ internal sealed class BrowserServerRouteTests
         var assets = new CapturingAssetAdapter();
         var runtime = new RecordingSpirectlRuntime();
         var envelopeFactory = new BrowserStateEnvelopeFactory(new CouchCoopRuntimeHost(new CouchCoopRuntimeDependencies(runtime, runtime, runtime, runtime, runtime, runtime, runtime, runtime, runtime, runtime)));
-        await using var server = new CouchCoopBrowserServer(new StaticSpaFileProvider(root.Path), assets, envelopeFactory, resourceCacheRoot: cacheRoot.Path);
+        var streamingDemand = new StreamingViewerDemand();
+        var streamingReporter = streamingDemand.CreateReporter();
+        var observerGate = typeof(CouchCoopBrowserServer).GetField(
+            "_observerGate", System.Reflection.BindingFlags.Instance | System.Reflection.BindingFlags.NonPublic)!;
+        var callbacksInsideObserverGate = 0;
+        CouchCoopBrowserServer? serverForCallback = null;
+        await using var server = new CouchCoopBrowserServer(
+            new StaticSpaFileProvider(root.Path), assets, envelopeFactory, resourceCacheRoot: cacheRoot.Path,
+            onSceneStreamingDemandChanged: (count, generation) =>
+            {
+                if (System.Threading.Monitor.IsEntered(observerGate.GetValue(serverForCallback!)!))
+                {
+                    Interlocked.Increment(ref callbacksInsideObserverGate);
+                }
+                streamingReporter(count, generation);
+            });
+        serverForCallback = server;
         var baseUri = await server.StartAsync();
         Expect(baseUri.Host == "127.0.0.1", "server binds to loopback");
         Expect(baseUri.Port >= 13337, "server uses default port range");
@@ -1078,15 +1113,17 @@ internal sealed class BrowserServerRouteTests
         await AssertSceneBroadcastAsync(baseUri, runtime);
         // WS-B stream gate. Runs after the scene broadcast (it depends on the same pushed-delta plumbing) and
         // before the server-reload teardown.
-        await AssertSceneStreamGateAsync(baseUri, runtime);
+        await AssertSceneStreamGateAsync(baseUri, runtime, streamingDemand);
         await AssertStaticBgWalkSkipAggregateAsync(server, baseUri, runtime);
         await AssertInboundWebSocketLimitsAsync(baseUri, runtime);
         // The client-vitals census, over a REAL socket: the receipt branch, the parse, and the report fact. The
         // unit legs cover the rendering and the registry; only this one covers the wiring between them.
         await AssertClientVitalsReceiptAsync(baseUri);
-        await AssertServerReloadClosesWebSocketAsync(server, baseUri);
+        await AssertServerReloadClosesWebSocketAsync(server, baseUri, streamingDemand);
 
         await server.StopAsync();
+        Expect(Volatile.Read(ref callbacksInsideObserverGate) == 0,
+            "streaming-demand callbacks run outside the observer gate on watch, disconnect and server teardown");
 
         await AssertInternalServerErrorsAreStructuredAsync(root.Path);
         await AssertAppIconFailsOpenAsync(root.Path);
@@ -3263,7 +3300,8 @@ internal sealed class BrowserServerRouteTests
     //
     // Every "the gated socket received nothing" assertion below is made while a SECOND, watching mirror is being
     // served frames from the same broadcast, so it proves the per-connection predicate rather than an idle host.
-    private static async Task AssertSceneStreamGateAsync(Uri baseUri, RecordingSpirectlRuntime runtime)
+    private static async Task AssertSceneStreamGateAsync(
+        Uri baseUri, RecordingSpirectlRuntime runtime, StreamingViewerDemand streamingDemand)
     {
         runtime.Mode = RuntimeStateMode.MultiplayerRun;
 
@@ -3272,6 +3310,8 @@ internal sealed class BrowserServerRouteTests
         Expect(
             await WaitForSceneSubscriptionAsync(runtime, active: false),
             "the scene observer stops once the previous suite's last mirror client disconnects");
+        Expect(await WaitForAsync(() => !streamingDemand.HasViewers),
+            "the visual-freeze root walks park with that last viewer");
 
         // ---- 1. a GATED connection never starts the producer -----------------------------------------------
         using var gated = new ClientWebSocket();
@@ -3287,6 +3327,7 @@ internal sealed class BrowserServerRouteTests
         Expect(
             !runtime.SceneSubscriptionActive,
             "a `watch=0` mirror connection does not start the scene observer (no producer walk while every viewer is on the picker)");
+        Expect(!streamingDemand.HasViewers, "a gated socket does not start visual-freeze root walks");
 
         // The orphaned observer from the previous generation still drives the server's fan-out, so this exercises
         // the real per-connection predicate rather than merely an absent producer.
@@ -3306,6 +3347,8 @@ internal sealed class BrowserServerRouteTests
         Expect(
             await WaitForSceneSubscriptionAsync(runtime, active: true),
             "a mirror connection with `watch=1` streams and starts the scene observer");
+        Expect(await WaitForAsync(() => streamingDemand.HasViewers),
+            "watch on resumes periodic visual-freeze scans");
 
         // A keyframe both clients' hosts can be measured against: node 1001 at originX 100.
         runtime.PushSceneDelta(BuildSampleSceneDelta());
@@ -3397,16 +3440,22 @@ internal sealed class BrowserServerRouteTests
         Expect(
             await WaitForSceneSubscriptionAsync(runtime, active: false),
             "the scene observer stops when the last WATCHING viewer leaves, even though a (gated) mirror client is still connected");
+        Expect(await WaitForAsync(() => !streamingDemand.HasViewers),
+            "the last watcher parks visual-freeze scans even with a gated socket connected");
 
         await SendWatchAsync(gated, true);
         Expect(
             await WaitForSceneSubscriptionAsync(runtime, active: true),
             "a gate flip alone restarts the scene observer (the streaming count is maintained across flips, not just connects)");
+        Expect(await WaitForAsync(() => streamingDemand.HasViewers),
+            "watch on after a gap resumes periodic visual-freeze scans");
 
         await CloseWebSocketSilentlyAsync(gated);
         Expect(
             await WaitForSceneSubscriptionAsync(runtime, active: false),
             "disconnecting a STREAMING connection gives its streaming count back (teardown reports the final gate state)");
+        Expect(await WaitForAsync(() => !streamingDemand.HasViewers),
+            "a streaming disconnect parks visual-freeze scans");
     }
 
     // Stage-B walk skip: the UNANIMITY AGGREGATE end to end over real sockets — `?staticBg=1` parsed at accept,
@@ -4177,7 +4226,8 @@ internal sealed class BrowserServerRouteTests
 
     private static async Task AssertServerReloadClosesWebSocketAsync(
         CouchCoopBrowserServer server,
-        Uri baseUri)
+        Uri baseUri,
+        StreamingViewerDemand streamingDemand)
     {
         using var socket = new ClientWebSocket();
         await socket.ConnectAsync(new UriBuilder(baseUri) { Scheme = "ws", Path = "/ws", Query = "watch=0&staticBg=0&cardFlight=1&handTween=1&trailDrive=0" }.Uri, CancellationToken.None);
@@ -4187,6 +4237,38 @@ internal sealed class BrowserServerRouteTests
         var message = await readReload;
         await CloseWebSocketSilentlyAsync(socket);
         await stop;
+        Expect(await WaitForAsync(() => !streamingDemand.HasViewers),
+            "server reload releases all visual-freeze scan demand");
+        // Model an already-dispatched old-generation WS reaching registration after StopGenerationAsync took
+        // its connection snapshot. Its local version would be newer than teardown's without the stop guard.
+        typeof(CouchCoopBrowserServer).GetMethod(
+            "RegisterSceneStreaming", System.Reflection.BindingFlags.Instance | System.Reflection.BindingFlags.NonPublic)!
+            .Invoke(server, [true]);
+        Expect(!streamingDemand.HasViewers && server.BgSkipStateForTest().StreamingMirrorConnections == 0,
+            "a late old-generation stream registration cannot revive zero-viewer scans");
+        // The same stopped-generation check is at WebSocket admission: a request dispatched by the old
+        // generation after its connection snapshot must terminate, not linger open without scene updates.
+        using (var late = new ClientWebSocket())
+        {
+            try
+            {
+                await late.ConnectAsync(new UriBuilder(baseUri)
+                {
+                    Scheme = "ws", Path = "/ws",
+                    Query = "watch=1&staticBg=0&cardFlight=1&handTween=1&trailDrive=0"
+                }.Uri, CancellationToken.None);
+                using var deadline = new CancellationTokenSource(TimeSpan.FromSeconds(3));
+                var first = await ReadWsMessageAsync(late, deadline.Token);
+                var second = first.Length == 0 ? first : await ReadWsMessageAsync(late, deadline.Token);
+                Expect(second.Length == 0, "an old-generation socket closes after its reload admission check");
+            }
+            catch (WebSocketException)
+            {
+                // Closing before ClientWebSocket completes its handshake is the same rejected admission.
+            }
+        }
+        Expect(!streamingDemand.HasViewers,
+            "the rejected old-generation socket cannot resume visual-freeze scans");
         using var document = JsonDocument.Parse(message);
         Expect(document.RootElement.GetProperty("type").GetString() == "server-reload", "server reload sends a structured WebSocket reload signal");
         Expect(document.RootElement.GetProperty("reason").GetString() == "server-reload", "server reload signal carries reload reason");

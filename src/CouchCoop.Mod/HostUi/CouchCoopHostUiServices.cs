@@ -27,6 +27,7 @@ public sealed class CouchCoopHostUiServices : IAsyncDisposable
     private readonly Action<string> _log;
     private readonly LobbySupportCheckpoints? _checkpoints;
     private readonly bool _deferDiscoveryServices;
+    private readonly Func<SecureOriginCertificates> _createCertificates;
     private readonly List<CouchCoopHostUiDiagnostic> _diagnostics = [];
     private readonly object _discoveryGate = new();
     private HotReloadableBrowserServerHost? _browserServer;
@@ -40,6 +41,23 @@ public sealed class CouchCoopHostUiServices : IAsyncDisposable
     private Uri? _listenerBaseUri;
     private Uri? _joinBaseUri;
     private bool _discoveryStarted;
+    private bool _discoveryRequested;
+    private long _discoveryGeneration;
+    private CancellationTokenSource? _discoveryStop;
+    private Task _discoveryTeardown = Task.CompletedTask;
+    private Task _discoveryNetworkTeardown = Task.CompletedTask;
+    private Task _secureOriginTask = Task.CompletedTask;
+    private Task _discoveryStartup = Task.CompletedTask;
+
+    internal Task DiscoveryServicesReady
+    {
+        get { lock (_discoveryGate) return _discoveryStartup; }
+    }
+
+    internal bool DiscoveryServicesRunning
+    {
+        get { lock (_discoveryGate) return _discoveryStarted; }
+    }
 
     /// <param name="deferDiscoveryServices">
     /// When <see langword="true"/>, <see cref="StartAsync"/> brings up ONLY the browser listener and leaves
@@ -58,7 +76,8 @@ public sealed class CouchCoopHostUiServices : IAsyncDisposable
         int preferredPort = 13337,
         Action<string>? log = null,
         bool deferDiscoveryServices = false,
-        LobbySupportCheckpoints? checkpoints = null)
+        LobbySupportCheckpoints? checkpoints = null,
+        Func<SecureOriginCertificates>? createCertificates = null)
     {
         _runtime = runtime ?? throw new ArgumentNullException(nameof(runtime));
         _staticRoot = staticRoot ?? DefaultStaticRoot();
@@ -67,6 +86,7 @@ public sealed class CouchCoopHostUiServices : IAsyncDisposable
         _log = log ?? CouchCoopLog.Stderr;
         _deferDiscoveryServices = deferDiscoveryServices;
         _checkpoints = checkpoints;
+        _createCertificates = createCertificates ?? (() => new SecureOriginCertificates(log: _log));
     }
 
     public CouchCoopHostUiSnapshot Snapshot => _snapshot;
@@ -138,7 +158,7 @@ public sealed class CouchCoopHostUiServices : IAsyncDisposable
 
     /// <summary>
     /// Bring up the LAN discovery responder, the <c>.local</c> mDNS name and the secure-origin fetch. Safe to
-    /// call repeatedly and from any thread; the first call wins and the rest return immediately.
+    /// call repeatedly and from any thread; each hosting session starts the services once.
     /// </summary>
     /// <remarks>
     /// <para>
@@ -156,10 +176,9 @@ public sealed class CouchCoopHostUiServices : IAsyncDisposable
     /// and the port file plus every QA harness expect the port to exist from launch.
     /// </para>
     /// <para>
-    /// ONCE UP, NEVER TORN DOWN — not even when the lobby closes. A phone that drops mid-run has to be able
-    /// to re-resolve <c>&lt;machine&gt;.local</c> and re-discover the host long after the lobby is gone, so
-    /// tying these to the lobby's LIFETIME (rather than to its first appearance) would break exactly the
-    /// reconnect they exist to serve.
+    /// Leaving the lobby for a run keeps discovery alive, including while seats are detached. Only the
+    /// end of hosting stops these services. The HTTP listener and any ready TLS listener remain available;
+    /// they have no periodic discovery work and may still serve browsers showing the connection screen.
     /// </para>
     /// <para>
     /// No-op when the listener never bound: with no <c>_listenerBaseUri</c> there is no port to advertise,
@@ -168,19 +187,42 @@ public sealed class CouchCoopHostUiServices : IAsyncDisposable
     /// </remarks>
     public void StartDiscoveryServices()
     {
-        Uri? listenerBaseUri;
-        Uri? joinBaseUri;
         lock (_discoveryGate)
         {
-            if (_discoveryStarted || _listenerBaseUri is null)
+            if (_discoveryRequested || _listenerBaseUri is null) return;
+            _discoveryRequested = true;
+            var generation = ++_discoveryGeneration;
+            if (_discoveryNetworkTeardown.IsCompleted)
             {
-                return;
+                StartDiscoveryServicesCore(generation);
+                _discoveryStartup = Task.CompletedTask;
             }
-
-            _discoveryStarted = true;
-            listenerBaseUri = _listenerBaseUri;
-            joinBaseUri = _joinBaseUri;
+            else
+            {
+                // A previous mDNS goodbye must finish before the new session announces the same name.
+                // Completion wakes this directly; no polling interval is added to startup or input.
+                _discoveryStartup = RestartDiscoveryAfterTeardownAsync(generation, _discoveryNetworkTeardown);
+            }
         }
+    }
+
+    private async Task RestartDiscoveryAfterTeardownAsync(long generation, Task teardown)
+    {
+        await teardown.ConfigureAwait(false);
+        lock (_discoveryGate)
+        {
+            if (_discoveryRequested && generation == _discoveryGeneration && _listenerBaseUri is not null)
+                StartDiscoveryServicesCore(generation);
+        }
+    }
+
+    // Called only under _discoveryGate, so publication cannot race an end-of-hosting transition.
+    private void StartDiscoveryServicesCore(long generation)
+    {
+        var listenerBaseUri = _listenerBaseUri!;
+        var joinBaseUri = _joinBaseUri;
+        _discoveryStarted = true;
+        _discoveryStop = new CancellationTokenSource();
 
         // M3 WS-T: answer LAN host-discovery probes on the SAME numeric port the TCP listener chose (port-walk
         // parity). The reply is connect-ready — the advertised LAN IPv4 the QR already computed + the real port
@@ -226,7 +268,7 @@ public sealed class CouchCoopHostUiServices : IAsyncDisposable
         // nothing else here ever notices: the plain-HTTP listener, the discovery responder and the mDNS name
         // are all already up and are untouched by the outcome. The QR dialog already renders a Pending
         // "checking…" state, which is what makes arriving at the lobby (rather than at launch) invisible.
-        StartSecureOriginAsync(joinBaseUri);
+        _secureOriginTask = StartSecureOriginAsync(joinBaseUri, generation, _discoveryStop.Token);
 
         // WS4 macOS: start the "bound but unreachable" clock HERE and nowhere else. The listener itself came up
         // at mod init and stays up for the whole process, so a threshold measured from the bind would warn every
@@ -264,15 +306,17 @@ public sealed class CouchCoopHostUiServices : IAsyncDisposable
     /// reads the new one. The dialog recomputes on every open, so no invalidation is needed.
     /// </para>
     /// </remarks>
-    private void StartSecureOriginAsync(Uri? joinBaseUri)
+    private Task StartSecureOriginAsync(Uri? joinBaseUri, long generation, CancellationToken cancellationToken)
     {
+        if (_browserServer?.SecurePort > 0 && _secureCertificates is not null)
+            return Task.CompletedTask;
         if (!SecureOriginCertificates.Enabled)
         {
             _snapshot = _snapshot with
             {
                 SecureUnavailableReason = CouchCoopSecureText.Disabled(SecureOriginCertificates.EnabledEnvironmentVariable),
             };
-            return;
+            return Task.CompletedTask;
         }
 
         // Nothing to derive a secure name from: the wildcard maps a dashed IPv4 label, so the fetch is
@@ -288,49 +332,59 @@ public sealed class CouchCoopHostUiServices : IAsyncDisposable
                 .Any(candidate => SecureOriginHost.IsSecureOriginEligible(candidate.Address)))
         {
             _snapshot = _snapshot with { SecureUnavailableReason = CouchCoopSecureText.AddressIneligible };
-            return;
+            return Task.CompletedTask;
         }
 
-        var certificates = new SecureOriginCertificates(log: _log);
-        _secureCertificates = certificates;
+        var certificates = _createCertificates();
         _snapshot = _snapshot with { SecureDomain = certificates.Domain };
 
-        _ = Task.Run(async () =>
+        return Task.Run(async () =>
         {
+            var retained = false;
             try
             {
-                await certificates.StartAsync().ConfigureAwait(false);
-
-                var status = certificates.Status;
-                if (!status.IsReady || _browserServer is null)
+                await certificates.StartAsync(cancellationToken).ConfigureAwait(false);
+                lock (_discoveryGate)
                 {
-                    _snapshot = _snapshot with { SecureUnavailableReason = status.Text };
-                    return;
-                }
-
-                if (_browserServer.TryStartSecureListener(certificates))
-                {
-                    _snapshot = _snapshot with
+                    if (generation != _discoveryGeneration || !_discoveryStarted || cancellationToken.IsCancellationRequested)
+                        return;
+                    var status = certificates.Status;
+                    if (!status.IsReady || _browserServer is null)
                     {
-                        SecurePort = _browserServer.SecurePort,
-                        SecureDomain = certificates.Domain,
-                        SecureUnavailableReason = null,
-                    };
-                    // B4. Arrives SECONDS after B1 by design (the certificate is a WAN round-trip), which is
-                    // precisely why it is its own line rather than a field on the startup one.
-                }
-                else
-                {
-                    _snapshot = _snapshot with { SecureUnavailableReason = CouchCoopSecureText.PortFailed };
+                        _snapshot = _snapshot with { SecureUnavailableReason = status.Text };
+                        return;
+                    }
+
+                    if (_browserServer.TryStartSecureListener(certificates))
+                    {
+                        _secureCertificates = certificates;
+                        retained = true;
+                        _snapshot = _snapshot with
+                        {
+                            SecurePort = _browserServer.SecurePort,
+                            SecureDomain = certificates.Domain,
+                            SecureUnavailableReason = null,
+                        };
+                    }
+                    else
+                    {
+                        _snapshot = _snapshot with { SecureUnavailableReason = CouchCoopSecureText.PortFailed };
+                    }
                 }
             }
             catch (Exception exception)
             {
-                // Catch-all on a detached task: an escaping exception here would be an unobserved
-                // TaskException, and the whole contract of this feature is that it cannot hurt the host.
-                _snapshot = _snapshot with { SecureUnavailableReason = CouchCoopSecureText.SetupFailed };
+                lock (_discoveryGate)
+                {
+                    if (generation != _discoveryGeneration || !_discoveryStarted) return;
+                    _snapshot = _snapshot with { SecureUnavailableReason = CouchCoopSecureText.SetupFailed };
+                }
                 _log($"host-ui diagnostic code={SecureOriginCertificates.UnavailableCode} "
                     + $"detail={exception.GetType().Name}: {exception.Message}");
+            }
+            finally
+            {
+                if (!retained) certificates.Dispose();
             }
         });
     }
@@ -347,41 +401,67 @@ public sealed class CouchCoopHostUiServices : IAsyncDisposable
 
 
 
-    private async ValueTask DisposeBrowserServerAsync()
+    /// <summary>Stop hosting-only work after the hosting session ends, never on a viewer disconnect.</summary>
+    public ValueTask StopDiscoveryServicesAsync()
     {
-        // B6. Gated on IsRunning, not on non-null: this method is also the unwind path for a FAILED start
-        // (see the catch in StartAsync), where "Phone connection stopped." immediately after "Couldn't start
-        // the phone connection service." would be noise contradicting itself.
-        if (_browserServer is { IsRunning: true })
-        {
-        }
-
-        // Re-arm the one-shot latch with the services it guards, so a restarted host UI can bring them up
-        // again. Also covers the unwind path of a start that threw AFTER the non-deferred
-        // StartDiscoveryServices call, which would otherwise leave the latch set over disposed responders.
         lock (_discoveryGate)
         {
+            _discoveryRequested = false;
+            ++_discoveryGeneration;
+            Connections.HostReachabilityWatch.Shared.Disarm();
+            if (!_discoveryStarted) return new ValueTask(_discoveryTeardown);
             _discoveryStarted = false;
+            var mdns = _mdns;
+            var discovery = _discovery;
+            var stop = _discoveryStop;
+            var secureTask = _secureOriginTask;
+            _mdns = null;
+            _discovery = null;
+            _discoveryStop = null;
+            _secureOriginTask = Task.CompletedTask;
+            stop?.Cancel();
+            // Dispose detached instances only. A late completion cannot touch a later session's fields.
+            _discoveryNetworkTeardown = Task.WhenAll(DisposeOneAsync(mdns), DisposeOneAsync(discovery));
+            _discoveryTeardown = DisposeDiscoveryAsync(
+                _discoveryNetworkTeardown, secureTask, stop, _discoveryTeardown);
+            return new ValueTask(_discoveryTeardown);
+        }
+    }
+
+    private async Task DisposeDiscoveryAsync(Task networkTeardown, Task secureTask,
+        CancellationTokenSource? stop, Task previousTeardown)
+    {
+        try
+        {
+            // A cancelled provider can finish late. Keep cleanup accounted for without delaying the
+            // next session's LAN announcement or QR readiness behind an old WAN request.
+            await Task.WhenAll(networkTeardown, secureTask, previousTeardown).ConfigureAwait(false);
+        }
+        catch (Exception exception)
+        {
+            _log($"host discovery teardown failed: {exception.GetType().Name}: {exception.Message}");
+        }
+        finally { stop?.Dispose(); }
+    }
+
+    private async Task DisposeOneAsync(IAsyncDisposable? service)
+    {
+        if (service is null) return;
+        try { await service.DisposeAsync().ConfigureAwait(false); }
+        catch (Exception exception)
+        {
+            _log($"host discovery dispose failed: {exception.GetType().Name}: {exception.Message}");
+        }
+    }
+
+    private async ValueTask DisposeBrowserServerAsync()
+    {
+        lock (_discoveryGate)
+        {
             _listenerBaseUri = null;
             _joinBaseUri = null;
         }
-
-        // …and with them the reachability clock, so a failed start or a host restart does not leave a pending
-        // warning (or a standing row) about a listener that no longer exists.
-        Connections.HostReachabilityWatch.Shared.Disarm();
-
-        if (_mdns is not null)
-        {
-            // Disposed first so the goodbye packet (TTL 0) goes out while the network stack is still ours.
-            await _mdns.DisposeAsync().ConfigureAwait(false);
-            _mdns = null;
-        }
-
-        if (_discovery is not null)
-        {
-            await _discovery.DisposeAsync().ConfigureAwait(false);
-            _discovery = null;
-        }
+        await StopDiscoveryServicesAsync().ConfigureAwait(false);
 
         if (_browserServer is not null)
         {

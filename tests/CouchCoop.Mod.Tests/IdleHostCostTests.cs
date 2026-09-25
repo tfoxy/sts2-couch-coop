@@ -2,6 +2,7 @@ using System.Net;
 using CouchCoop.Mod.HostUi;
 using CouchCoop.Mod.Patches;
 using CouchCoop.Mod.Runtime;
+using CouchCoop.Mod.Server;
 
 // THE IDLE-HOST CONTRACT. With the mod installed and nobody connected, a player's machine must behave like an
 // unmodded one — that is the product requirement, and these are the two places it used to be broken:
@@ -39,6 +40,7 @@ internal static class IdleHostCostTests
         PauseMenuMountTargetsResolve();
         MountPatchRefusesAnInheritedReady();
         await DeferredHostUiKeepsTheListenerButNotTheNetworkAsync(rootPath);
+        await PendingDiscoveryCannotPublishAfterStopAsync(rootPath);
 
         Console.WriteLine("IdleHostCostTests: ok");
     }
@@ -338,7 +340,7 @@ internal static class IdleHostCostTests
     // The deferral, over real loopback sockets. StartAsync must still bind the browser listener (that is the
     // idle server the product accepts, and every QA harness expects the port from launch) while leaving the
     // LAN discovery responder, the mDNS name and the WAN certificate fetch for the first host lobby.
-    private static async Task DeferredHostUiKeepsTheListenerButNotTheNetworkAsync(string rootPath)
+    public static async Task DeferredHostUiKeepsTheListenerButNotTheNetworkAsync(string rootPath)
     {
         var logs = new List<string>();
         await using var services = new CouchCoopHostUiServices(
@@ -369,6 +371,116 @@ internal static class IdleHostCostTests
         Expect(
             logs.Count(log => log.Contains("host discovery services started", StringComparison.Ordinal)) == 1,
             "re-arming is idempotent — a 4 Hz tick must not open a second mDNS socket every 250ms");
+
+        var port = snapshot.ListenerBaseUri!.Port;
+        Expect(await DiscoveryRepliesAsync(port), "hosting discovery answers a real loopback probe");
+        for (var cycle = 0; cycle < 3; cycle++)
+        {
+            await services.StopDiscoveryServicesAsync();
+            Expect(!services.DiscoveryServicesRunning, "ending hosting stops its discovery services");
+            Expect(!await DiscoveryRepliesAsync(port), "a stopped hosting session answers no discovery probe");
+            using var client = new System.Net.Sockets.TcpClient();
+            await client.ConnectAsync(IPAddress.Loopback, port);
+            Expect(client.Connected, "the parked browser listener remains ready");
+            services.StartDiscoveryServices();
+            await services.DiscoveryServicesReady;
+            Expect(await DiscoveryRepliesAsync(port), "the next hosting session is immediately discoverable");
+        }
+
+        // Start again before the old asynchronous socket teardown finishes. Its late completion must not
+        // dispose the new responders or publish an old certificate result into the new session.
+        var stopping = services.StopDiscoveryServicesAsync();
+        services.StartDiscoveryServices();
+        await stopping;
+        await services.DiscoveryServicesReady;
+        Expect(services.DiscoveryServicesRunning && await DiscoveryRepliesAsync(port),
+            "a quick hosting restart survives completion of the old teardown");
+        await services.StopDiscoveryServicesAsync();
+        await services.StopDiscoveryServicesAsync();
+        Expect(!await DiscoveryRepliesAsync(port), "repeated stop is idempotent");
+    }
+
+    public static async Task PendingDiscoveryCannotPublishAfterStopAsync(string rootPath)
+    {
+        var oldEnabled = Environment.GetEnvironmentVariable(SecureOriginCertificates.EnabledEnvironmentVariable);
+        var oldHost = Environment.GetEnvironmentVariable(LanAddressRanking.AdvertisedHostEnvironmentVariable);
+        var oldProvider = new DelayedProvider("old.example");
+        var newProvider = new DelayedProvider("new.example");
+        CouchCoopHostUiServices? services = null;
+        try
+        {
+            Environment.SetEnvironmentVariable(SecureOriginCertificates.EnabledEnvironmentVariable, "1");
+            Environment.SetEnvironmentVariable(LanAddressRanking.AdvertisedHostEnvironmentVariable, "192.168.50.20");
+            var stub = new AssetCacheTokenEnvelopeTests.StubRuntime("idle-host-pending-test");
+            var runtime = new CouchCoopRuntimeHost(new CouchCoopRuntimeDependencies(
+                stub, stub, stub, stub, stub, stub, stub, stub, stub, stub), _ => { });
+            var attempts = 0;
+            services = new CouchCoopHostUiServices(runtime, rootPath, IPAddress.Loopback,
+                ReserveEphemeralPort(), _ => { }, deferDiscoveryServices: true,
+                createCertificates: () => new SecureOriginCertificates(
+                    ++attempts == 1 ? oldProvider : newProvider,
+                    Path.Combine(rootPath, "certificate-cache-" + Guid.NewGuid().ToString("N")), _ => { }));
+            await services.StartAsync();
+            services.StartDiscoveryServices();
+            await oldProvider.Entered.Task.WaitAsync(TimeSpan.FromSeconds(5));
+            var stopping = services.StopDiscoveryServicesAsync().AsTask();
+            Expect(oldProvider.Cancellation.IsCancellationRequested, "ending hosting cancels its pending certificate fetch");
+            services.StartDiscoveryServices();
+            await services.DiscoveryServicesReady.WaitAsync(TimeSpan.FromSeconds(5));
+            await newProvider.Entered.Task.WaitAsync(TimeSpan.FromSeconds(5));
+            Expect(attempts == 2 && !stopping.IsCompleted,
+                "the next session starts without waiting for an old WAN request to finish");
+            oldProvider.Complete.TrySetResult(null);
+            await stopping.WaitAsync(TimeSpan.FromSeconds(5));
+            Expect(services.Snapshot.SecureDomain == newProvider.Domain,
+                "the old certificate result cannot replace the restarted session's snapshot");
+            Expect(services.DiscoveryServicesRunning
+                && await DiscoveryRepliesAsync(services.Snapshot.ListenerBaseUri!.Port),
+                "the new discovery generation survives delayed old completion");
+            newProvider.Complete.TrySetResult(null);
+            await services.StopDiscoveryServicesAsync();
+        }
+        finally
+        {
+            oldProvider.Complete.TrySetResult(null);
+            newProvider.Complete.TrySetResult(null);
+            Environment.SetEnvironmentVariable(SecureOriginCertificates.EnabledEnvironmentVariable, oldEnabled);
+            Environment.SetEnvironmentVariable(LanAddressRanking.AdvertisedHostEnvironmentVariable, oldHost);
+            if (services is not null) await services.DisposeAsync();
+        }
+    }
+
+    private sealed class DelayedProvider(string domain) : ISecureOriginCertificateProvider
+    {
+        public string Id => "delayed-test";
+        public string Domain => domain;
+        public CancellationToken Cancellation { get; private set; }
+        public TaskCompletionSource Entered { get; } = new(TaskCreationOptions.RunContinuationsAsynchronously);
+        public TaskCompletionSource<SecureCertificateBundle?> Complete { get; } = new(TaskCreationOptions.RunContinuationsAsynchronously);
+        public Task<SecureCertificateBundle?> FetchAsync(HttpClient http, CancellationToken cancellationToken)
+        {
+            Cancellation = cancellationToken;
+            Entered.TrySetResult();
+            // Deliberately complete after cancellation to exercise stale asynchronous publication.
+            return Complete.Task;
+        }
+    }
+
+    private static async Task<bool> DiscoveryRepliesAsync(int port)
+    {
+        using var client = new System.Net.Sockets.UdpClient(System.Net.Sockets.AddressFamily.InterNetwork);
+        client.Client.Bind(new IPEndPoint(IPAddress.Loopback, 0));
+        var probe = CouchCoop.MirrorProtocol.Discovery.HostDiscovery.EncodeProbe();
+        await client.SendAsync(probe, new IPEndPoint(IPAddress.Loopback, port));
+        using var deadline = new CancellationTokenSource(TimeSpan.FromMilliseconds(300));
+        try
+        {
+            var reply = await client.ReceiveAsync(deadline.Token);
+            return CouchCoop.MirrorProtocol.Discovery.HostDiscovery.TryDecodeReply(reply.Buffer)?.Port == port;
+        }
+        catch (OperationCanceledException) { return false; }
+        catch (System.Net.Sockets.SocketException exception)
+            when (exception.SocketErrorCode == System.Net.Sockets.SocketError.ConnectionReset) { return false; }
     }
 
     private static int ReserveEphemeralPort()

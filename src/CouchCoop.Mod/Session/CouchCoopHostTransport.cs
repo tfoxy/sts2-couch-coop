@@ -24,6 +24,7 @@ namespace CouchCoop.Mod.Session;
 /// </summary>
 internal static class CouchCoopHostTransport
 {
+    internal static event Action? HostingEnded;
     // StartHost(SerializableRun) records the saved local host id immediately before the game's async host path
     // calls StartSteamHost. It is a one-shot handoff: StartHostAsync consumes it before choosing Steam or ENet,
     // and every reset path clears it so a saved Steam id can never escape into a later new lobby.
@@ -183,6 +184,17 @@ internal static class CouchCoopHostTransport
     internal static void ResetSession()
     {
         ResetTransportState();
+        foreach (Action listener in HostingEnded?.GetInvocationList() ?? [])
+        {
+            try
+            {
+                listener();
+            }
+            catch (Exception exception)
+            {
+                CouchCoopLog.Stderr($"hosting-ended callback failed: {exception.GetType().Name}: {exception.Message}");
+            }
+        }
     }
 
     /// <summary>

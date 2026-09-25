@@ -19,6 +19,7 @@ internal static class RootWindowEmbeddingGuardTests
         OnlyAWindowHoldingTheMainIdTakesTheRootInputBack();
         TheBreakerAdmitsFiveRepairsAMinuteThenStaysTripped();
         SpacedRepairsNeverTripTheBreaker();
+        BrowserDemandSurvivesOverlappingHostsAndRejectsRetiredNotifications();
         Console.WriteLine("RootWindowEmbeddingGuardTests: ok");
     }
 
@@ -130,6 +131,31 @@ internal static class RootWindowEmbeddingGuardTests
         {
             Assert(breaker.TryAdmit(i * 20_000L), $"a repair every 20s is always admitted (repair {i + 1})");
         }
+    }
+
+    private static void BrowserDemandSurvivesOverlappingHostsAndRejectsRetiredNotifications()
+    {
+        Assert(!RootWindowEmbeddingGuard.HasBrowserDemand, "an empty host starts without backstop demand");
+        var first = RootWindowEmbeddingGuard.CreateBrowserDemandReporter();
+        var second = RootWindowEmbeddingGuard.CreateBrowserDemandReporter();
+        first(1, 1);
+        second(1, 1);
+        first(0, 2);
+        Assert(RootWindowEmbeddingGuard.HasBrowserDemand, "another server still has a browser");
+        second(0, 2);
+        Assert(!RootWindowEmbeddingGuard.HasBrowserDemand, "last browser removes backstop demand");
+        second(1, 1);
+        Assert(!RootWindowEmbeddingGuard.HasBrowserDemand, "a stale join cannot reactivate the backstop");
+        first(1, 3);
+        Assert(RootWindowEmbeddingGuard.HasBrowserDemand, "a new browser restores demand");
+        first(0, long.MaxValue);
+        first(1, 4);
+        Assert(!RootWindowEmbeddingGuard.HasBrowserDemand, "a retired server cannot revive demand");
+        var replacement = RootWindowEmbeddingGuard.CreateBrowserDemandReporter();
+        replacement(1, 1);
+        Assert(RootWindowEmbeddingGuard.HasBrowserDemand, "a replacement server has its own generation");
+        replacement(0, long.MaxValue);
+        Assert(!RootWindowEmbeddingGuard.HasBrowserDemand, "replacement disposal removes demand");
     }
 
     private static RootWindowEmbeddingGuard.RepairPlan<TestWindow> Plan(

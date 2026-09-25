@@ -74,7 +74,8 @@ public sealed class CouchCoopHotServerGeneration : ICouchCoopHotGeneration
             headlessManager: headlessManager,
             isHeadlessClient: host.IsHeadlessClient,
             log: host.Log,
-            admission: (host as HotReloadableBrowserServerHost)?.Admission);
+            admission: (host as HotReloadableBrowserServerHost)?.Admission,
+            onBrowserDemandChanged: (host as IHotBrowserDemandHost)?.CreateBrowserDemandReporter());
     }
 
     public string DescribeOverlayLayoutJson() => CouchCoopHotLogic.DescribeOverlayLayoutJson();

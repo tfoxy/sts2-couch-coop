@@ -232,6 +232,9 @@ public sealed partial class HeadlessClientManager : IDisposable
     // sampled at construction would be a lie for the whole session. Null (a standalone server, a test) reads as
     // "no run", which is the historical behaviour — see RunInProgress.
     private readonly Func<bool>? _runInProgressProbe;
+    private readonly Action<int, long>? _ownedSeatCountChanged;
+    private int _publishedOwnedSeatCount;
+    private long _ownedSeatDemandGeneration;
     private readonly string? _gameExe;
     private readonly string? _headlessWrapper;
     private bool _disposed;
@@ -446,7 +449,8 @@ public sealed partial class HeadlessClientManager : IDisposable
         Func<int?>? maxSeatsProbe = null,
         Func<int, CancellationToken, Task<string?>>? seatPortProbe = null,
         Func<bool>? runInProgressProbe = null,
-        TimeProvider? seatNoticeTime = null)
+        TimeProvider? seatNoticeTime = null,
+        Action<int, long>? ownedSeatCountChanged = null)
     {
         _seatNoticeTime = seatNoticeTime;
         _launcher = launcher ?? throw new ArgumentNullException(nameof(launcher));
@@ -468,6 +472,7 @@ public sealed partial class HeadlessClientManager : IDisposable
         // A unit harness that says nothing about ports gets "every port is free", which is the behaviour every
         // pre-existing seat test was written against.
         _seatPortProbe = seatPortProbe ?? ((_, _) => Task.FromResult<string?>(null));
+        _ownedSeatCountChanged = ownedSeatCountChanged;
     }
 
     private HeadlessClientManager(
@@ -475,7 +480,8 @@ public sealed partial class HeadlessClientManager : IDisposable
         string? headlessWrapper,
         Action<ulong>? evictStalePeer,
         Func<int?>? maxSeatsProbe,
-        Func<bool>? runInProgressProbe)
+        Func<bool>? runInProgressProbe,
+        Action<int, long>? ownedSeatCountChanged)
     {
         _runInProgressProbe = runInProgressProbe;
         _gameExe = gameExe;
@@ -485,6 +491,7 @@ public sealed partial class HeadlessClientManager : IDisposable
         _evictStalePeer = evictStalePeer;
         _maxSeatsProbe = maxSeatsProbe;
         _seatPortProbe = SeatPortAvailability.DescribeOwnerAsync;
+        _ownedSeatCountChanged = ownedSeatCountChanged;
     }
 
     /// <summary>
@@ -501,12 +508,14 @@ public sealed partial class HeadlessClientManager : IDisposable
     public static HeadlessClientManager? TryCreate(
         Action<ulong>? evictStalePeer = null,
         Func<int?>? maxSeatsProbe = null,
-        Func<bool>? runInProgressProbe = null)
+        Func<bool>? runInProgressProbe = null,
+        Action<int, long>? ownedSeatCountChanged = null)
     {
         var exe = System.Diagnostics.Process.GetCurrentProcess().MainModule?.FileName;
         if (string.IsNullOrEmpty(exe)) return null;
         var wrapper = Environment.GetEnvironmentVariable("COUCHCOOP_HEADLESS_WRAPPER");
-        return new HeadlessClientManager(exe, wrapper, evictStalePeer, maxSeatsProbe, runInProgressProbe);
+        return new HeadlessClientManager(
+            exe, wrapper, evictStalePeer, maxSeatsProbe, runInProgressProbe, ownedSeatCountChanged);
     }
 
     // Trim + case-fold display names so reconnects/dedup are stable regardless of incidental
@@ -868,6 +877,7 @@ public sealed partial class HeadlessClientManager : IDisposable
                 return null;
             }
             _processBySlot[slot] = proc;
+            QueueOwnedSeatCountChangedLocked();
             if (_ownedConnections.TryGetValue(slot, out var owned))
             {
                 owned.Process = proc;
@@ -1543,9 +1553,46 @@ public sealed partial class HeadlessClientManager : IDisposable
             return false;
         }
         _processBySlot.Remove(slot);
+        QueueOwnedSeatCountChangedLocked();
         ForgetConnectionLocked(slot);
         proc.Dispose();
         return true;
+    }
+
+    /// <summary>
+    /// Publish process ownership changes without invoking foreign code under <see cref="_lock"/>. A generation
+    /// accompanies the count because an old queued zero may run after a replacement seat has already been added;
+    /// consumers ignore such stale notifications. Detached seats remain in <see cref="_processBySlot"/> and
+    /// therefore continue to demand hosting supervision until they are actually reaped.
+    /// </summary>
+    private void QueueOwnedSeatCountChangedLocked()
+    {
+        var count = _processBySlot.Count;
+        if (count == _publishedOwnedSeatCount)
+        {
+            return;
+        }
+
+        _publishedOwnedSeatCount = count;
+        var generation = ++_ownedSeatDemandGeneration;
+        var callback = _ownedSeatCountChanged;
+        if (callback is null)
+        {
+            return;
+        }
+
+        _ = Task.Run(() =>
+        {
+            try
+            {
+                callback(count, generation);
+            }
+            catch (Exception exception)
+            {
+                CouchCoopLog.Stderr(
+                    $"owned-seat demand callback failed: {exception.GetType().Name}: {exception.Message}");
+            }
+        });
     }
 
     /// <summary>
