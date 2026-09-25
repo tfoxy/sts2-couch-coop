@@ -69,7 +69,7 @@
       copy without conflict. Namespaces are unaffected — the types stay Spirectl.Sts2.*.
     -->
     <ProjectReference
-      Include="../../../spirectl/bridge-mod/src/Spirectl.Sts2/Spirectl.Sts2.csproj"
+      Include="$(CouchCoopSpirectlRoot)/bridge-mod/src/Spirectl.Sts2/Spirectl.Sts2.csproj"
       AdditionalProperties="EnableSts2LiveHost=true;Sts2AssembliesDir=$(Sts2AssembliesDir);AssemblyName=CouchCoop.Spirectl" />
     <ProjectReference Include="../CouchCoop.Mod.Contracts/CouchCoop.Mod.Contracts.csproj" />
     <!-- Shared, game-free wire protocol layer (scene model, envelopes, moved browser DTOs). -->

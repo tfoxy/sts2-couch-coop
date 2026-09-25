@@ -34,8 +34,8 @@
     <!-- HotReloadInteropTests exercises the concrete reflection control, which now lives in the bridge assembly
          rather than the game-runtime assembly referenced below. Alias the canonical bridge pair so it cannot
          collide with CouchCoop's deliberately private CouchCoop.Spirectl copy. -->
-    <ProjectReference Include="../../../spirectl/bridge-mod/src/Spirectl.BridgeMod/Spirectl.BridgeMod.csproj" Aliases="bridge" />
-    <ProjectReference Include="../../../spirectl/bridge-mod/src/Spirectl.Sts2/Spirectl.Sts2.csproj" Aliases="bridgecore" />
+    <ProjectReference Include="$(CouchCoopSpirectlRoot)/bridge-mod/src/Spirectl.BridgeMod/Spirectl.BridgeMod.csproj" Aliases="bridge" />
+    <ProjectReference Include="$(CouchCoopSpirectlRoot)/bridge-mod/src/Spirectl.Sts2/Spirectl.Sts2.csproj" Aliases="bridgecore" />
     <ProjectReference
       Include="../../src/CouchCoop.Mod.HotReload/CouchCoop.Mod.HotReload.csproj"
       ReferenceOutputAssembly="false"
