@@ -160,6 +160,15 @@ if (args is ["seats", ..])
 // these (see the note above HeadlessAudioMuteTargetsTests), so a networking change is verified here rather
 // than only through a full run. They are engine-free: loopback sockets and synthetic NIC descriptors, no
 // game, no Godot, and nothing that touches port 5353.
+if (args is ["host-transport", ..])
+{
+    await NetworkHardeningTests.RunAsync();
+    BrowserSceneDeltaMessageTests.Run();
+    await BrowserServerRouteTests.RunInboundWebSocketLimitsAsync();
+    Console.WriteLine("host transport: ok");
+    return;
+}
+
 if (args is ["network", ..])
 {
     LanAddressRankingTests.Run();
@@ -2920,6 +2929,66 @@ internal sealed class BrowserServerRouteTests
                 $"a binary message is rejected immediately with close 1003 (type={result.MessageType}, status={result.CloseStatus})");
         }
 
+        using (var fragmentedUtf8 = new ClientWebSocket())
+        {
+            await fragmentedUtf8.ConnectAsync(WsUri(baseUri), CancellationToken.None);
+            _ = await DrainConnectAsync(fragmentedUtf8);
+            var payload = Encoding.UTF8.GetBytes("{\"type\":\"ping\",\"t0\":42,\"label\":\"Zoë\"}");
+            var split = Array.IndexOf(payload, (byte)0xc3) + 1;
+            Expect(split > 1 && payload[split] == 0xab, "the UTF-8 test split lands inside ë");
+            await fragmentedUtf8.SendAsync(payload.AsMemory(0, split), WebSocketMessageType.Text,
+                WebSocketMessageFlags.None, CancellationToken.None);
+            await fragmentedUtf8.SendAsync(payload.AsMemory(split), WebSocketMessageType.Text,
+                WebSocketMessageFlags.EndOfMessage, CancellationToken.None);
+            using var pong = JsonDocument.Parse(await ReadNextWsMessageOfTypeAsync(fragmentedUtf8, "pong"));
+            Expect(pong.RootElement.GetProperty("t0").GetDouble() == 42,
+                "a multibyte UTF-8 code point split across WebSocket fragments parses from the pooled message");
+            await CloseWebSocketSilentlyAsync(fragmentedUtf8);
+        }
+
+        using (var exactLimit = new ClientWebSocket())
+        {
+            await exactLimit.ConnectAsync(WsUri(baseUri), CancellationToken.None);
+            _ = await DrainConnectAsync(exactLimit);
+            var payload = new byte[CouchCoopWebSocketConnection.MaxInboundMessageBytes];
+            Array.Fill(payload, (byte)' ');
+            Encoding.UTF8.GetBytes("{\"type\":\"ping\",\"t0\":44}").CopyTo(payload, 0);
+            await exactLimit.SendAsync(payload, WebSocketMessageType.Text,
+                WebSocketMessageFlags.None, CancellationToken.None);
+            await exactLimit.SendAsync(ReadOnlyMemory<byte>.Empty, WebSocketMessageType.Text,
+                WebSocketMessageFlags.None, CancellationToken.None);
+            await exactLimit.SendAsync(ReadOnlyMemory<byte>.Empty, WebSocketMessageType.Text,
+                WebSocketMessageFlags.EndOfMessage, CancellationToken.None);
+            using var pong = JsonDocument.Parse(await ReadNextWsMessageOfTypeAsync(exactLimit, "pong"));
+            Expect(pong.RootElement.GetProperty("t0").GetDouble() == 44,
+                "an exact-limit message accepts empty continuations without corrupting its JSON");
+
+            await exactLimit.SendAsync(Encoding.UTF8.GetBytes("{\"type\":\"ping\",\"t0\":45}"),
+                WebSocketMessageType.Text, WebSocketMessageFlags.EndOfMessage, CancellationToken.None);
+            using var nextPong = JsonDocument.Parse(await ReadNextWsMessageOfTypeAsync(exactLimit, "pong"));
+            Expect(nextPong.RootElement.GetProperty("t0").GetDouble() == 45,
+                "the receive buffer is reusable after an exact-limit fragmented message");
+            await CloseWebSocketSilentlyAsync(exactLimit);
+        }
+
+        using (var invalidJson = new ClientWebSocket())
+        {
+            await invalidJson.ConnectAsync(WsUri(baseUri), CancellationToken.None);
+            _ = await DrainConnectAsync(invalidJson);
+            await invalidJson.SendAsync(Encoding.UTF8.GetBytes("{\"type\":\"ping\","), WebSocketMessageType.Text,
+                WebSocketMessageFlags.EndOfMessage, CancellationToken.None);
+            using var refusal = JsonDocument.Parse(await ReadNextWsMessageOfTypeAsync(invalidJson, "action-result"));
+            Expect(refusal.RootElement.GetProperty("code").GetString() == BrowserActionErrorCodes.InvalidMessage,
+                "malformed JSON is rejected as an invalid message");
+
+            await invalidJson.SendAsync(Encoding.UTF8.GetBytes("{\"type\":\"ping\",\"t0\":43}"),
+                WebSocketMessageType.Text, WebSocketMessageFlags.EndOfMessage, CancellationToken.None);
+            using var recoveredPong = JsonDocument.Parse(await ReadNextWsMessageOfTypeAsync(invalidJson, "pong"));
+            Expect(recoveredPong.RootElement.GetProperty("t0").GetDouble() == 43,
+                "the pooled receive buffer remains usable after malformed JSON");
+            await CloseWebSocketSilentlyAsync(invalidJson);
+        }
+
         using (var oversized = new ClientWebSocket())
         {
             await oversized.ConnectAsync(WsUri(baseUri), CancellationToken.None);
@@ -2964,6 +3033,25 @@ internal sealed class BrowserServerRouteTests
         Expect(session.GetProperty("type").GetString() == "session",
             "a valid peer is admitted after rejected peers release their WebSocket slots");
         await CloseWebSocketSilentlyAsync(recovered);
+    }
+
+    internal static async Task RunInboundWebSocketLimitsAsync()
+    {
+        using var root = new TempStaticRoot();
+        using var cacheRoot = new TempResourceCacheRoot();
+        var runtime = new RecordingSpirectlRuntime();
+        var envelopeFactory = new BrowserStateEnvelopeFactory(
+            new CouchCoopRuntimeHost(new CouchCoopRuntimeDependencies(
+                runtime, runtime, runtime, runtime, runtime,
+                runtime, runtime, runtime, runtime, runtime)));
+        await using var server = new CouchCoopBrowserServer(
+            new StaticSpaFileProvider(root.Path),
+            new CapturingAssetAdapter(),
+            envelopeFactory,
+            resourceCacheRoot: cacheRoot.Path);
+        var baseUri = await server.StartAsync();
+        await AssertInboundWebSocketLimitsAsync(baseUri, runtime);
+        await server.StopAsync();
     }
 
     /// <summary>

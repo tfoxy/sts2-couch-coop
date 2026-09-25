@@ -1363,9 +1363,12 @@ public sealed class CouchCoopBrowserServer(
     {
         ArgumentNullException.ThrowIfNull(stream);
         CouchCoopHttpRequest? request = null;
+        CouchCoopHttpReadResult? requestRead = null;
         try
         {
-            request = await CouchCoopHttpRequest.TryReadAsync(stream, cancellationToken).ConfigureAwait(false);
+            requestRead = await CouchCoopHttpRequest.TryReadWithPrefixAsync(stream, cancellationToken).ConfigureAwait(false);
+            request = requestRead?.Request;
+            var requestStream = requestRead?.Stream ?? stream;
             NetworkAdmissionLimiter.Lease? webSocketLease = null;
             if (request?.IsWebSocketUpgrade == true)
             {
@@ -1382,7 +1385,7 @@ public sealed class CouchCoopBrowserServer(
 
             using (webSocketLease)
             {
-                await HandleRequestAsync(stream, request, isSecure, remoteAddress, cancellationToken).ConfigureAwait(false);
+                await HandleRequestAsync(requestStream, request, isSecure, remoteAddress, cancellationToken).ConfigureAwait(false);
             }
         }
         catch (HttpHeaderLimitException)
@@ -1427,6 +1430,10 @@ public sealed class CouchCoopBrowserServer(
                     "browser-server diagnostic code=internal-server-error-write-failed "
                     + $"detail={writeException.GetType().Name}: {writeException.Message}");
             }
+        }
+        finally
+        {
+            requestRead?.Dispose();
         }
     }
 
