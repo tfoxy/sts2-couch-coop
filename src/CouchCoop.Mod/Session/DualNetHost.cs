@@ -19,6 +19,13 @@ internal enum DualHostSide
 internal static class DualHostRouting
 {
     /// <summary>
+    /// Steam's receive channel is not an ENet channel. The game assigns ENet channels by transfer mode, so
+    /// derive one at the transport boundary instead of forwarding the source transport's channel.
+    /// </summary>
+    internal static int EnetChannelFor(NetTransferMode mode, int sourceChannel)
+        => mode.ToChannelId();
+
+    /// <summary>
     /// Routes a peer by MEMBERSHIP of the Steam side, and sends everything else — including ids we have never
     /// heard of — to ENet.
     /// <para>
@@ -146,7 +153,7 @@ internal sealed class DualNetHost : SteamHost
     {
         if (_enetStarted && DualHostRouting.RouteFor(peerId, base.ConnectedPeerIds) == DualHostSide.Enet)
         {
-            _enet.SendMessageToClient(peerId, bytes, length, mode, channel);
+            _enet.SendMessageToClient(peerId, bytes, length, mode, DualHostRouting.EnetChannelFor(mode, channel));
             return;
         }
 
@@ -158,7 +165,7 @@ internal sealed class DualNetHost : SteamHost
         base.SendMessageToAll(bytes, length, mode, channel);
         if (_enetStarted)
         {
-            _enet.SendMessageToAll(bytes, length, mode, channel);
+            _enet.SendMessageToAll(bytes, length, mode, DualHostRouting.EnetChannelFor(mode, channel));
         }
     }
 
