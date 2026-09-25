@@ -7,7 +7,7 @@ using CouchCoop.Mod.Session;
 
 namespace CouchCoop.Mod.Server;
 
-public sealed class HotReloadableBrowserServerHost : IHotServerHost, IAsyncDisposable
+public sealed class HotReloadableBrowserServerHost : IHotServerHost, IHotBrowserDemandHost, IAsyncDisposable
 {
     private readonly CouchCoopRuntimeHost _runtime;
     private readonly IPAddress _bindAddress;
@@ -15,6 +15,8 @@ public sealed class HotReloadableBrowserServerHost : IHotServerHost, IAsyncDispo
     private readonly Action<string> _log;
     private readonly object _generationGate = new();
     private readonly HeadlessClientManager? _headlessManager;
+    private readonly CouchCoop.Mod.Connections.BrowserDemandLedger _browserDemand;
+    private readonly Action<int, long> _inputGuardDemand = RootWindowEmbeddingGuard.CreateBrowserDemandReporter();
     private TcpListener? _listener;
     private CancellationTokenSource? _stop;
     private Task? _acceptLoop;
@@ -46,12 +48,20 @@ public sealed class HotReloadableBrowserServerHost : IHotServerHost, IAsyncDispo
                 lobby.MaxCouchSeats,
                 // Once the host is in a run its netcode refuses any client that is not already connected, so no
                 // seat process may be launched — see HeadlessClientManager.RunInProgress.
-                lobby.IsRunInProgress);
+                lobby.IsRunInProgress,
+                (count, generation) => _connectionHosting?.SetOwnedSeatDemand(count, generation));
         _headlessManager?.ConfigureConnectionMonitoring(lobby.IsGamePlayerConnected, () => BaseUri?.Port ?? 0);
         Admission = new NetworkAdmissionLimiter(() => new CouchCoopLobbyParticipation(_runtime).MaxLobbyPlayers());
-        _generation = new BuiltInBrowserServerGeneration(this);
+        _browserDemand = new((count, generation) =>
+        {
+            _inputGuardDemand(count, generation);
+            _connectionHosting?.SetBrowserDemand(count, generation);
+        });
         if (!IsHeadlessClient) _connectionHosting = new(_runtime, _headlessManager);
+        _generation = new BuiltInBrowserServerGeneration(this);
     }
+
+    public Action<int, long> CreateBrowserDemandReporter() => _browserDemand.CreateReporter();
 
     public object RuntimeHost => _runtime;
 
@@ -269,6 +279,7 @@ public sealed class HotReloadableBrowserServerHost : IHotServerHost, IAsyncDispo
 
     public async ValueTask DisposeAsync()
     {
+        _inputGuardDemand(0, long.MaxValue);
         _connectionHosting?.Dispose();
         _connectionHosting = null;
         if (_secureListener is not null)
@@ -436,7 +447,8 @@ public sealed class HotReloadableBrowserServerHost : IHotServerHost, IAsyncDispo
             headlessManager: host._headlessManager,
             isHeadlessClient: host.IsHeadlessClient,
             log: host.Log,
-            admission: host.Admission);
+            admission: host.Admission,
+            onBrowserDemandChanged: host.CreateBrowserDemandReporter());
 
         public string DescribeOverlayLayoutJson()
             => string.Empty;

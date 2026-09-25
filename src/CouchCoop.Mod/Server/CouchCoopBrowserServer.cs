@@ -33,7 +33,9 @@ public sealed class CouchCoopBrowserServer(
     BrowserLifecycleDiagnostics? lifecycleDiagnostics = null,
     string? lifecycleSocketRole = null,
     Action? onSceneAck = null,
-    Func<Action, IDisposable?>? subscribeScreenUpdated = null) : IAsyncDisposable
+    Func<Action, IDisposable?>? subscribeScreenUpdated = null,
+    Action<int, long>? onBrowserDemandChanged = null,
+    Action<int, long>? onSceneStreamingDemandChanged = null) : IAsyncDisposable
 {
     /// <summary>Harness-only synthetic seat port injected into the control document; null in product hosting.</summary>
     public int? SyntheticSeatPort { get; set; }
@@ -48,6 +50,9 @@ public sealed class CouchCoopBrowserServer(
         ? lifecycleSocketRole
         : null;
     private readonly Action? _onSceneAck = onSceneAck;
+    private readonly Action<int, long>? _onBrowserDemandChanged = onBrowserDemandChanged;
+    private readonly Action<int, long> _onSceneStreamingDemandChanged =
+        onSceneStreamingDemandChanged ?? CouchCoopHeadlessVisualSuspender.CreateStreamingDemandReporter();
     private readonly bool _isHeadlessClient = isHeadlessClient ?? CouchCoopMod.IsHeadlessClient;
     private readonly bool _ownsHeadlessManager = headlessManager is null;
     private readonly BrowserSessionRegistry _sessionRegistry = new();
@@ -66,12 +71,19 @@ public sealed class CouchCoopBrowserServer(
     // own buffer, drained (destructively) by BroadcastSceneDelta.
     private CouchCoopAnimationHintCollector? _mirrorHintCollector;
     private int _mirrorConnectionCount;
+    private long _browserDemandGeneration;
     // WS-B stream gate: how many of the mirror connections above currently WANT the scene stream. The scene
     // observer (the producer's whole-tree walk — by far the most expensive thing this host does) is driven by
     // THIS number, not by _mirrorConnectionCount: while every viewer sits on the join picker the walk stops
     // entirely. The remainder (_mirrorConnectionCount - _streamingMirrorConnectionCount) is the GATED count,
     // which conversely keeps the (much cheaper) state observer alive — see RefreshObserversLocked.
     private int _streamingMirrorConnectionCount;
+    private long _sceneStreamingDemandGeneration;
+    // A dispatched old-generation WS can reach stream registration after StopGenerationAsync snapshots its
+    // connections. Never let that late registration revive this generation's process-wide visual-scan demand.
+    // StartAsync clears this only for a standalone server explicitly started again; the shipped hot-reload
+    // generation does not call StartAsync.
+    private bool _generationStopped;
     // Stage-B walk skip: how many STREAMING mirror connections still NEED the live combat bg subtree (their
     // staticBg declaration is off). Recomputed from the live
     // connection set in RefreshObserversLocked (no balanced bookkeeping: connect/disconnect/gate-flip all funnel
@@ -258,6 +270,7 @@ public sealed class CouchCoopBrowserServer(
     // line here would put "Phone connection ready" on a host's television once per test server.
     public async Task<Uri> StartAsync(CancellationToken cancellationToken = default)
     {
+        lock (_observerGate) _generationStopped = false;
         // Warm it here too so a standalone-server host pays the build before its first request rather than on it.
         // Not load-bearing any more — MirrorSeats() builds on demand — but harmless and keeps the cost off the
         // connection path.
@@ -295,19 +308,44 @@ public sealed class CouchCoopBrowserServer(
 
     private void RegisterConnection()
     {
+        int count;
+        long generation;
         lock (_observerGate)
         {
+            // A dispatched old-generation request may finish its handshake after StopGenerationAsync took
+            // the connection snapshot. Reject it before it can remain usable without a scene stream.
+            if (_generationStopped) throw new OperationCanceledException("Browser server generation stopped.");
             _mirrorConnectionCount++;
             RefreshObserversLocked();
+            count = _mirrorConnectionCount;
+            generation = ++_browserDemandGeneration;
         }
+        PublishBrowserDemand(count, generation);
     }
 
     private void UnregisterConnection()
     {
+        int count;
+        long generation;
         lock (_observerGate)
         {
             _mirrorConnectionCount = Math.Max(0, _mirrorConnectionCount - 1);
             RefreshObserversLocked();
+            count = _mirrorConnectionCount;
+            generation = ++_browserDemandGeneration;
+        }
+        PublishBrowserDemand(count, generation);
+    }
+
+    private void PublishBrowserDemand(int count, long generation)
+    {
+        try
+        {
+            _onBrowserDemandChanged?.Invoke(count, generation);
+        }
+        catch (Exception exception)
+        {
+            _log($"browser demand callback failed: {exception.GetType().Name}: {exception.Message}");
         }
     }
 
@@ -316,12 +354,30 @@ public sealed class CouchCoopBrowserServer(
     // gate flips and disconnects alike.
     private void RegisterSceneStreaming(bool streaming)
     {
+        int count;
+        long generation;
         lock (_observerGate)
         {
+            if (_generationStopped) return;
             _streamingMirrorConnectionCount = streaming
                 ? _streamingMirrorConnectionCount + 1
                 : Math.Max(0, _streamingMirrorConnectionCount - 1);
             RefreshObserversLocked();
+            count = _streamingMirrorConnectionCount;
+            generation = ++_sceneStreamingDemandGeneration;
+        }
+        PublishSceneStreamingDemand(count, generation);
+    }
+
+    private void PublishSceneStreamingDemand(int count, long generation)
+    {
+        try
+        {
+            _onSceneStreamingDemandChanged(count, generation);
+        }
+        catch (Exception exception)
+        {
+            _log($"scene streaming demand callback failed: {exception.GetType().Name}: {exception.Message}");
         }
     }
 
@@ -1276,17 +1332,24 @@ public sealed class CouchCoopBrowserServer(
         string reason = "server-reload",
         CancellationToken cancellationToken = default)
     {
+        long browserDemandGeneration;
+        long sceneStreamingDemandGeneration;
         lock (_observerGate)
         {
+            _generationStopped = true;
             _mirrorConnectionCount = 0;
             _streamingMirrorConnectionCount = 0;
             _gatedStaticBgViewerCount = 0;
+            sceneStreamingDemandGeneration = ++_sceneStreamingDemandGeneration;
             StopSceneObserverLocked();
             StopStateObserverLocked();
             StopMirrorHintCollectorLocked();
             // Hot reload must not leak the game-event handler into the next generation.
             StopScreenProbeLocked();
+            browserDemandGeneration = ++_browserDemandGeneration;
         }
+        PublishSceneStreamingDemand(0, sceneStreamingDemandGeneration);
+        PublishBrowserDemand(0, browserDemandGeneration);
 
         var connections = _connections.Values.ToArray();
         await Task.WhenAll(connections.Select(connection =>

@@ -1,7 +1,10 @@
 using Godot;
+using CouchCoop.Mod.Connections;
+using Spirectl.Sts2.Live;
 using System;
 using System.Collections.Generic;
 using System.Linq;
+using System.Threading;
 using System.Threading.Tasks;
 
 namespace CouchCoop.Mod.Session;
@@ -31,9 +34,9 @@ namespace CouchCoop.Mod.Session;
 /// <para>
 /// Two triggers. The root's <c>child_entered_tree</c> fires while a window added the usual way is still hidden,
 /// so the repair lands before that window is first shown: no flicker, and no taken input slot on a seat. A
-/// one-second backstop covers every other route. In a session where nothing turns embedding off, the whole cost
-/// is one bool read per second. A repair mutates engine-global state, so it logs a begin/end pair, and five
-/// repairs inside a minute trip a breaker instead of fighting a mod forever.
+/// one-second backstop covers every other route while browsers are connected, and throughout a headless seat's
+/// lifetime. An empty host has no backstop ticking. A repair mutates engine-global state, so it logs a begin/end
+/// pair, and five repairs inside a minute trip a breaker instead of fighting a mod forever.
 /// </para>
 /// <para>
 /// Known limit: if an EMBEDDED window is open in the game view at the moment a mod asks for embedding off, Godot
@@ -57,11 +60,47 @@ public static class RootWindowEmbeddingGuard
     private static readonly object Gate = new();
     private static readonly RepairBreaker Breaker = new(BreakerMaxRepairs, BreakerWindowMs);
     private static readonly HashSet<ulong> KeptHiddenIds = [];
+    private static readonly BrowserDemandLedger BrowserDemand = new(PublishBrowserDemand);
+    private static long _browserDemandGeneration = -1;
+    private static bool _hasBrowserDemand;
     private static bool _started;
     private static bool _repairing;
     private static bool _gaveUpLogged;
     private static Window? _root;
     private static Callable? _rootInputForwarder;
+    private static Godot.Timer? _backstopTimer;
+    private static Callable? _reconcileBackstopDemand;
+
+    internal static bool HasBrowserDemand => Volatile.Read(ref _hasBrowserDemand);
+
+    // Each server lifetime owns a reporter, so a new server or hot-reload generation cannot be mistaken for a
+    // stale notification from a previous one. Retire a server's reporter with (0, long.MaxValue) on disposal.
+    internal static Action<int, long> CreateBrowserDemandReporter() => BrowserDemand.CreateReporter();
+
+    private static void PublishBrowserDemand(int count, long generation)
+    {
+        Callable? reconcile;
+        lock (Gate)
+        {
+            if (generation <= _browserDemandGeneration) return;
+            _browserDemandGeneration = generation;
+            var demanded = count > 0;
+            if (_hasBrowserDemand == demanded) return;
+            Volatile.Write(ref _hasBrowserDemand, demanded);
+            reconcile = _reconcileBackstopDemand;
+        }
+        if (reconcile is { } callback)
+        {
+            // Share the input FIFO: an already-scheduled dispatcher drain can consume newly arrived input
+            // before a separate Godot deferred call. InvokeAsync enqueues before registration returns, so
+            // even the first input after idle runs after repair without waiting for another frame or timer.
+            _ = Sts2MainThreadDispatcher.InvokeAsync(() =>
+            {
+                callback.Call();
+                return Task.FromResult(true);
+            });
+        }
+    }
 
     /// <summary>
     /// Idempotent. Called from <c>CouchCoopMod.Init</c>, on the main thread: attaches at once when the scene tree
@@ -213,6 +252,7 @@ public static class RootWindowEmbeddingGuard
 
         _root = root;
         root.ChildEnteredTree += OnRootChildEnteredTree;
+        lock (Gate) _reconcileBackstopDemand = Callable.From(ReconcileBackstopDemand);
 
         // The mod has no Godot source generator, so no _Process override would ever run; a Timer's signal does.
         var timer = new Godot.Timer
@@ -220,21 +260,42 @@ public static class RootWindowEmbeddingGuard
             Name = BackstopTimerName,
             WaitTime = BackstopIntervalSeconds,
             OneShot = false,
-            Autostart = true,
+            Autostart = false,
             ProcessMode = Node.ProcessModeEnum.Always,
         };
+        _backstopTimer = timer;
         timer.Timeout += OnBackstop;
         if (addTimerDeferred)
         {
-            root.CallDeferred(Node.MethodName.AddChild, timer);
+            Callable.From(() =>
+            {
+                root.AddChild(timer);
+                ReconcileBackstopDemand();
+            }).CallDeferred();
         }
         else
         {
             root.AddChild(timer);
+            ReconcileBackstopDemand();
         }
 
         CouchCoopLog.Info($"root window embedding guard: installed (root embedding={root.GuiEmbedSubwindows})");
         Repair(root, trigger: null, reason: "install");
+    }
+
+    private static void ReconcileBackstopDemand()
+    {
+        if (_backstopTimer is not { } timer || !GodotObject.IsInstanceValid(timer) || !timer.IsInsideTree()) return;
+        if (CouchCoopMod.IsHeadlessClient || HasBrowserDemand)
+        {
+            // Repair on activation; the first browser must not wait for the one-second backstop.
+            OnBackstop();
+            if (!timer.IsProcessingInternal()) timer.Start();
+        }
+        else
+        {
+            timer.Stop();
+        }
     }
 
     private static void OnRootChildEnteredTree(Node node)
@@ -247,6 +308,7 @@ public static class RootWindowEmbeddingGuard
 
     private static void OnBackstop()
     {
+        if (!CouchCoopMod.IsHeadlessClient && !HasBrowserDemand) return;
         if (_root is { } root && GodotObject.IsInstanceValid(root) && !root.GuiEmbedSubwindows)
         {
             Repair(root, trigger: null, reason: "backstop");

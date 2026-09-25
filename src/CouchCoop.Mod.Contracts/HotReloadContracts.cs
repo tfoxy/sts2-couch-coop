@@ -26,6 +26,12 @@ public interface IHotServerHost
     void Log(string message);
 }
 
+// Optional capability so older generation contracts remain loadable.
+public interface IHotBrowserDemandHost
+{
+    Action<int, long> CreateBrowserDemandReporter();
+}
+
 public sealed record HotReloadActivationContext(
     int Generation,
     string ModDirectory,

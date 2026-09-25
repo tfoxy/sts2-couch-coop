@@ -13,10 +13,10 @@ namespace CouchCoop.Mod.Session;
 /// <see cref="Node.ProcessModeEnum.Disabled"/>; the decorative freeze picks per type between that and the
 /// narrower <see cref="Node.SetProcess"/>(false), because ProcessMode=Disabled ALSO pauses the node's own
 /// TWEEN_PAUSE_BOUND tweens (see <see cref="DecorativeAnimatorTypes"/> — this is what used to strand the combat
-/// energy orb off-position). All three are ALWAYS-ON and never restored (freed on scene teardown). The one
-/// remaining idle-GATED lever is the frame-rate throttle: after
-/// <see cref="IdleThresholdMs"/> of no activity it also drops <see cref="Engine.MaxFps"/> and restores it on the
-/// next input/scene-delta.
+/// energy orb off-position). Once applied, all three freezes remain until scene teardown. Periodic scans for
+/// new nodes run only while a browser mirror streams. The remaining idle-gated lever is the frame-rate throttle:
+/// after <see cref="IdleThresholdMs"/> of no activity it drops <see cref="Engine.MaxFps"/> and restores it on
+/// the next input/scene-delta.
 ///
 /// Why this reclaims CPU: the profiler proved the live <c>--headless</c> flow spends its per-frame budget on the
 /// game's SCRIPT simulation — spine skeletal mesh deformation (which spine-godot runs in
@@ -71,8 +71,9 @@ namespace CouchCoop.Mod.Session;
 /// runs on a once-per-<see cref="RescanIntervalMs"/> scan, so a node has ~1s to build its skeleton before it is
 /// frozen — the same timing the old idle freeze used).
 ///
-/// Late-appearing nodes: every always-on freeze re-scans the tree once per <see cref="RescanIntervalMs"/>, so
-/// nodes that spawn later (a combat scene loading, a summoned enemy) are caught on the next scan. Each scan skips
+/// Late-appearing nodes: while a mirror streams, every freeze re-scans the tree once per <see cref="RescanIntervalMs"/>,
+/// so nodes that spawn later (a combat scene loading, a summoned enemy) are caught on the next scan. A returning
+/// viewer receives a full scene keyframe; scans resume on the normal due Timer tick. Each scan skips
 /// already-frozen nodes (per-category instance-id set), so it is a cheap allocation-free tree walk.
 ///
 /// Implementation mirrors <see cref="CouchCoopHeadlessCpuProfiler"/>: the mod has no Godot source generator, so
@@ -86,22 +87,28 @@ namespace CouchCoop.Mod.Session;
 /// a WINDOWED host never runs the startup Install, so nothing here is applied there — which is exactly why
 /// <see cref="EffectiveFreezes"/> (installed-aware), not the raw <c>_freeze*</c> flags, is what the <c>session</c>
 /// envelope reports to the panel. (2) When a viewer does turn one on there, <see cref="EnsureFreezeMachinery"/>
-/// installs in RESCAN-ONLY mode: the Timer + the once-per-<see cref="RescanIntervalMs"/> freeze rescan and nothing
-/// else — no idle <see cref="Engine.MaxFps"/> throttle, no baseline capture — so the freeze also catches nodes that
-/// spawn later without dropping the frame rate of a game a human is watching. On such an instance the freeze is
-/// VISIBLE (it is the host's own screen); the panel says so.
+/// installs in RESCAN-ONLY mode: the Timer, viewer-gated once-per-<see cref="RescanIntervalMs"/> freeze rescan and
+/// owed finish nudges — no idle <see cref="Engine.MaxFps"/> throttle or baseline capture — so the freeze catches
+/// nodes that spawn later without dropping the frame rate of a game a human is watching. On such an instance the
+/// freeze is VISIBLE (it is the host's own screen); the panel says so.
 /// </summary>
 public static class CouchCoopHeadlessVisualSuspender
 {
     public const string NodeName = "CouchCoopHeadlessVisualSuspender";
 
-    // Check often enough that resume latency on activity is small, but idle enough to cost nothing when steady:
-    // the steady tick is a single timestamp compare; the (cheap, alloc-free) tree walk runs only on the idle
-    // transition and then at most once per RescanIntervalMs while suspended. 200ms tick ⇒ up to ~200ms to resume
-    // after input, acceptable for this idle-focused step.
+    // Check often enough that resume latency on activity is small. The periodic root walks are viewer-gated and
+    // at most once per RescanIntervalMs; finish nudges and headless FPS supervision keep their 200ms cadence.
     private const double CheckIntervalSeconds = 0.2;
     private const long IdleThresholdMs = 1000;
     private const long RescanIntervalMs = 1000;
+
+    // A browser-server generation reports its balanced scene-stream count through a process-wide ledger.
+    // A windowed host parks its rescan-only Timer at zero viewers once every owed finish nudge has fired.
+    // Headless seats retain their continuous FPS/input supervision.
+    private static readonly StreamingViewerDemand StreamingViewers = new(QueueTimerDemandReconcile);
+    // BCL-only boundary: BrowserServer.cs is linked into the hot-reload assembly, but the ledger and Timer
+    // live in the process-owned mod assembly so every generation updates the SAME demand state.
+    public static Action<int, long> CreateStreamingDemandReporter() => StreamingViewers.CreateReporter();
 
     // Idle frame-rate throttle: while idle we ALSO drop Engine.MaxFps to a low value, which linearly cuts every
     // per-frame cost at once (FMOD's native update callback, decorative _Process animations, the engine's tick
@@ -115,11 +122,13 @@ public static class CouchCoopHeadlessVisualSuspender
     // Written under Gate, read from any thread (the effective-state accessor the session envelope calls, and the
     // runtime setters) — volatile so a browser thread never sees a stale "not installed".
     private static volatile bool _started;
-    // RESCAN-ONLY install (see EnsureFreezeMachinery): the Timer + the once-per-second freeze rescan run, and
-    // NOTHING else — no idle Engine.MaxFps throttle, no baseline capture. This is the mode a WINDOWED host gets
+    // RESCAN-ONLY install (see EnsureFreezeMachinery): the Timer, viewer-gated once-per-second freeze rescan,
+    // and owed finish nudges run; there is no idle Engine.MaxFps throttle or baseline capture. A WINDOWED host gets
     // when a viewer turns a freeze on from the browser Settings panel; the windowless startup path installs the
     // full suspender (rescan + idle throttle) as before.
     private static volatile bool _rescanOnly;
+    // Main-thread-only. A demand change before attachment is picked up when the Timer joins the tree.
+    private static Godot.Timer? _tickTimer;
     private static int _idleFps; // resolved in Install: 0 = throttle disabled; >0 = idle Engine.MaxFps cap
 
     // Main-thread-only state (all mutated inside Tick, which runs on the game main thread via the Timer signal).
@@ -428,16 +437,56 @@ public static class CouchCoopHeadlessVisualSuspender
             Name = NodeName,
             WaitTime = CheckIntervalSeconds,
             OneShot = false,
-            Autostart = true,
+            Autostart = !_rescanOnly,
             // Always so the idle check keeps running even if the tree pauses; also keeps THIS timer node out of
             // the set of things that could ever freeze itself (it's a Timer, not a spine/particle node anyway).
             ProcessMode = Node.ProcessModeEnum.Always,
         };
         timer.Timeout += () => Tick(root);
         root.AddChild(timer);
+        _tickTimer = timer;
+        ReconcileTimerDemandOnMainThread();
         CouchCoopLog.Info(
             $"[suspend] headless idle visual suspend ready (idle>={IdleThresholdMs}ms, check={CheckIntervalSeconds:0.##}s, "
             + $"idle fps cap={(_idleFps > 0 ? _idleFps.ToString() : "off")})");
+    }
+
+    // Browser demand arrives from a worker. Only the deferred main-thread callback touches the Godot Timer.
+    // It reads current demand, so an older queued callback cannot undo a newer viewer transition.
+    private static void QueueTimerDemandReconcile()
+    {
+        if (_started && _rescanOnly)
+        {
+            Callable.From(ReconcileTimerDemandOnMainThread).CallDeferred();
+        }
+    }
+
+    public static bool ShouldRunTimer(bool rescanOnly, bool hasViewers, bool hasPendingFinishNudges) =>
+        !rescanOnly || hasViewers || hasPendingFinishNudges;
+
+    private static void ReconcileTimerDemandOnMainThread()
+    {
+        if (!_rescanOnly || _tickTimer is not { } timer || !GodotObject.IsInstanceValid(timer)
+            || !timer.IsInsideTree())
+        {
+            return;
+        }
+
+        bool hasPendingFinishNudges;
+        lock (_nudgeGate)
+        {
+            hasPendingFinishNudges = _pendingFinishNudges.Count > 0;
+        }
+
+        if (ShouldRunTimer(_rescanOnly, StreamingViewers.HasViewers, hasPendingFinishNudges))
+        {
+            // An overdue repeating Timer can report IsStopped=true while still processing internally.
+            if (!timer.IsProcessingInternal()) timer.Start();
+        }
+        else
+        {
+            timer.Stop();
+        }
     }
 
     // Runs on the game main thread (Timer.Timeout). One timestamp compare per tick; the tree walk runs only on
@@ -460,14 +509,14 @@ public static class CouchCoopHeadlessVisualSuspender
             _baselineMaxFps = Engine.MaxFps;
         }
 
-        // ALWAYS-ON (regardless of idle): freeze decorative per-frame animators (so their transform churn stops
-        // driving the mirror producer every frame), every particle node (the browser re-runs the particle sim
-        // itself), and every spine node (the browser plays a baked clip off wall-clock; anim-type changes still
-        // reach the mirror via the producer's CreatureAnimator hook). All three share one throttled
-        // once-per-RescanIntervalMs scan; each is individually kill-switched and a cheap no-op once the combat
+        // While a mirror is streaming (regardless of idle), freeze decorative per-frame animators (so their
+        // transform churn stops driving the mirror producer every frame), every particle node (the browser
+        // re-runs the particle sim itself), and every spine node (the browser plays a baked clip off wall-clock;
+        // anim-type changes still reach the mirror via the producer's CreatureAnimator hook). All three share one
+        // scan throttled to once per RescanIntervalMs; each is individually kill-switched and a cheap no-op once the combat
         // scene's nodes are all frozen.
         var nowDeco = System.Environment.TickCount64;
-        if (nowDeco - _lastDecorativeScanMs >= RescanIntervalMs)
+        if (StreamingViewers.HasViewers && nowDeco - _lastDecorativeScanMs >= RescanIntervalMs)
         {
             _lastDecorativeScanMs = nowDeco;
             if (_freezeDecor) FreezeDecorativeAnimators(root);
@@ -480,11 +529,14 @@ public static class CouchCoopHeadlessVisualSuspender
         // and the `Emitting` clear that stops the mirror drawing an ended burst. Empty-map fast path.
         FlushFinishNudges(nowDeco);
 
-        // Rescan-only (browser-toggled freeze on a non-headless instance): the freezes above are the WHOLE job.
+        // Rescan-only (browser-toggled freeze on a non-headless instance): the viewer-gated freezes and owed
+        // finish nudges above are the WHOLE job.
         // Everything below is the headless idle FPS throttle, which a windowed host must never get — its frame
         // rate is what a human is watching.
         if (_rescanOnly)
         {
+            // Flush first: the last owed finished signal must be delivered before the timer parks.
+            ReconcileTimerDemandOnMainThread();
             return;
         }
 
@@ -755,6 +807,7 @@ public static class CouchCoopHeadlessVisualSuspender
         {
             _pendingFinishNudges[instanceId] = dueMs;
         }
+        ReconcileTimerDemandOnMainThread();
     }
 
     /// <summary>
@@ -1240,6 +1293,7 @@ public static class CouchCoopHeadlessVisualSuspender
         {
             CouchCoopLog.Info($"[suspend] runtime toggle — dropped {dropped} pending particle finish-nudge(s)");
         }
+        ReconcileTimerDemandOnMainThread();
     }
 
     /// <summary>Toggle the always-on spine freeze at runtime. OFF resumes frozen skeletons; ON re-freezes.</summary>

@@ -782,7 +782,7 @@ public static class CouchCoopMod
     private static bool _discoveryArmSubscribed;
 
     /// <summary>
-    /// Subscribe the deferred LAN/WAN services to the panel controller's first host-lobby tick.
+    /// Start deferred LAN/WAN services for hosting and stop their monitoring when hosting ends.
     /// </summary>
     /// <remarks>
     /// Subscribed once per process (the handler is idempotent, and <c>StartDiscoveryServices</c> self-latches,
@@ -808,6 +808,15 @@ public static class CouchCoopMod
             }
 
             hostUi?.StartDiscoveryServices();
+        };
+        CouchCoopHostTransport.HostingEnded += () =>
+        {
+            CouchCoopHostUiServices? hostUi;
+            lock (Gate)
+            {
+                hostUi = _hostUi;
+            }
+            if (hostUi is not null) _ = hostUi.StopDiscoveryServicesAsync();
         };
     }
 

@@ -1,5 +1,6 @@
 using CouchCoop.Mod.Server;
 using CouchCoop.Mod.Session;
+using System.Collections.Concurrent;
 using System.Diagnostics;
 
 // Unit checks for HeadlessClientManager's slot bookkeeping: allocation, same-name reuse (the dedup that
@@ -21,6 +22,8 @@ internal static class HeadlessClientManagerTests
         await SlotsAreCappedAtThree();
         await DisposeHardKillsAllLiveProcesses();
         await MarkDetachedKeepsProcessAliveUntilReap();
+        await OwnedSeatDemandSurvivesDetachAndStopsOnReap();
+        await FailedLaunchNeverCreatesOwnedSeatDemand();
         await DetachedSlotIsReusedLiveOnReconnect();
         await SlotBindingIsReportedBeforeTheLauncherRuns();
         await ReconnectReportsSlotBindingOnBothReuseBranches();
@@ -118,7 +121,7 @@ internal static class HeadlessClientManagerTests
         // the rejoin flow that genuinely works stays open under this gate.
         public bool RunInProgress;
 
-        public Harness(int? maxSeats = 3)
+        public Harness(int? maxSeats = 3, Action<int, long>? ownedSeatCountChanged = null)
         {
             // The host connectivity log is a process-global ring, so every harness starts from empty. (A
             // test that builds TWO harnesses therefore clears the first one's narration — none of the
@@ -135,7 +138,8 @@ internal static class HeadlessClientManagerTests
                 // Instant "ready" so EnsureHeadlessAsync returns the port without a real HTTP poll.
                 readinessProbe: (_, _) => Task.FromResult(true),
                 maxSeatsProbe: () => MaxSeats,
-                runInProgressProbe: () => RunInProgress);
+                runInProgressProbe: () => RunInProgress,
+                ownedSeatCountChanged: ownedSeatCountChanged);
         }
 
         // Records the slot-bound callback into the same ordered trace as the launcher.
@@ -287,6 +291,41 @@ internal static class HeadlessClientManagerTests
         // Reaping dropped the name claim → the slot is free for a brand-new player.
         var reused = await h.Manager.EnsureHeadlessAsync(Guid.NewGuid(), "Cara", default);
         Assert(reused == HeadlessClientManager.SlotToPort(2), "the reaped slot is free for the next player");
+    }
+
+    private static async Task OwnedSeatDemandSurvivesDetachAndStopsOnReap()
+    {
+        var changes = new ConcurrentQueue<(int Count, long Generation)>();
+        var h = new Harness(ownedSeatCountChanged: (count, generation) => changes.Enqueue((count, generation)));
+        var session = Guid.NewGuid();
+
+        await h.Manager.EnsureHeadlessAsync(session, "Ann", default);
+        Assert(SpinWait.SpinUntil(() => changes.Any(change => change.Count == 1), TimeSpan.FromSeconds(2)),
+            "a successfully owned process publishes one-seat hosting demand");
+
+        h.Manager.MarkDetached(session);
+        Assert(changes.Last().Count == 1,
+            "detaching a browser leaves its live seat counted for hosting supervision");
+
+        h.Manager.ReapDetachedSlots();
+        Assert(SpinWait.SpinUntil(() => changes.Any(change => change.Count == 0), TimeSpan.FromSeconds(2)),
+            "reaping the detached process releases owned-seat hosting demand");
+        var ordered = changes.OrderBy(change => change.Generation).ToArray();
+        Assert(ordered.Select(change => change.Count).SequenceEqual([1, 0]),
+            "owned-seat demand publishes one monotonic live-to-zero transition");
+    }
+
+    private static async Task FailedLaunchNeverCreatesOwnedSeatDemand()
+    {
+        var changes = new ConcurrentQueue<(int Count, long Generation)>();
+        using var manager = new HeadlessClientManager(
+            launcher: _ => null,
+            readinessProbe: (_, _) => Task.FromResult(true),
+            ownedSeatCountChanged: (count, generation) => changes.Enqueue((count, generation)));
+
+        var port = await manager.EnsureHeadlessAsync(Guid.NewGuid(), "Ann", default);
+        Assert(port is null, "the failed launch is surfaced to the joiner");
+        Assert(changes.IsEmpty, "a failed launch never creates owned-seat hosting demand");
     }
 
     // A browser that reconnects (same name) BEFORE the run ends re-claims the SAME live headless — no respawn,
