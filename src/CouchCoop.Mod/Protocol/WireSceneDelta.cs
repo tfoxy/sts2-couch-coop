@@ -1,3 +1,4 @@
+using System.Text.Json.Serialization;
 using CouchCoop.Mod.Server;
 using Spirectl.Sts2.Core.SceneInspection;
 
@@ -233,6 +234,11 @@ public sealed record WireSceneDelta(
     // here, so a client that does not know a kind still gets a replayable flight instead of a dropped one.
     IReadOnlyList<CardFlightHintDelta>? CardFlights)
 {
+    // Keep the discriminator last so the one-pass serializer remains byte-for-byte compatible with the former
+    // suffix splice and with checked-in browser fixtures.
+    [JsonPropertyOrder(int.MaxValue)]
+    public string Type => "scene-delta";
+
     public static WireSceneDelta FromDelta(RuntimeSceneDelta delta, SceneOrderPatch? orderPatch = null)
     {
         var upserts = new List<WireNodeDelta>(delta.Upserts.Count);

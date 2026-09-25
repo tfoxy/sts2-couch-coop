@@ -1,3 +1,4 @@
+using System.Buffers;
 using System.Collections.Concurrent;
 using System.Net;
 using System.Net.WebSockets;
@@ -111,6 +112,8 @@ public sealed class CouchCoopWebSocketConnection
     private readonly object _seatNoticeLock = new();
     private Task _seatNoticeSends = Task.CompletedTask;
     internal const int MaxInboundMessageBytes = 256 * 1024;
+    private const int InitialInboundBufferBytes = 8 * 1024;
+    private const int RetainedInboundBufferBytes = 32 * 1024;
     private readonly Guid _id = Guid.NewGuid();
     private WebSocket? _socket;
     private readonly HeadlessClientManager? _headlessManager;
@@ -811,17 +814,38 @@ public sealed class CouchCoopWebSocketConnection
 
     private async Task ReceiveLoopAsync(WebSocket socket, BrowserSessionHandle session, CancellationToken cancellationToken)
     {
-        var buffer = new byte[8192];
+        using var pooledBuffer = new PooledInboundBuffer(InitialInboundBufferBytes);
+        var buffer = pooledBuffer.Bytes;
         while (!cancellationToken.IsCancellationRequested && socket.State == WebSocketState.Open)
         {
-            using var memory = new MemoryStream();
-            WebSocketReceiveResult result;
+            // A rare diagnostic/action message may approach the 256 KiB cap. Release that oversized rent before
+            // waiting for the socket's next ordinary message instead of pinning it for the connection lifetime.
+            if (buffer.Length > RetainedInboundBufferBytes)
+            {
+                buffer = pooledBuffer.Resize(InitialInboundBufferBytes, copyCount: 0);
+            }
+
+            var messageLength = 0;
+            ValueWebSocketReceiveResult result;
             do
             {
-                result = await socket.ReceiveAsync(buffer, cancellationToken).ConfigureAwait(false);
+                var atLimit = messageLength == MaxInboundMessageBytes;
+                if (!atLimit && messageLength == buffer.Length)
+                {
+                    buffer = pooledBuffer.Resize(
+                        Math.Min(MaxInboundMessageBytes, buffer.Length * 2), messageLength);
+                }
+
+                // At the limit, an empty final continuation still completes a valid message. Reuse one byte
+                // only to detect overflow: any write makes the whole message invalid and closes it below,
+                // while a zero-byte continuation leaves the accumulated JSON intact. Never grow past the cap.
+                var receiveMemory = atLimit
+                    ? buffer.AsMemory(0, 1)
+                    : buffer.AsMemory(messageLength, Math.Min(buffer.Length - messageLength, MaxInboundMessageBytes - messageLength));
+                result = await socket.ReceiveAsync(receiveMemory, cancellationToken).ConfigureAwait(false);
                 if (result.MessageType == WebSocketMessageType.Close)
                 {
-                    if (!CouchCoopMod.IsHeadlessClient && (result.CloseStatus is null or WebSocketCloseStatus.NormalClosure
+                    if (!CouchCoopMod.IsHeadlessClient && (socket.CloseStatus is null or WebSocketCloseStatus.NormalClosure
                         or WebSocketCloseStatus.EndpointUnavailable or WebSocketCloseStatus.Empty))
                         ConnectionRegistry.Shared.TransportClosing(session.Id);
                     await CloseBoundedAsync(socket, WebSocketCloseStatus.NormalClosure, "closed", cancellationToken).ConfigureAwait(false);
@@ -834,13 +858,13 @@ public sealed class CouchCoopWebSocketConnection
                     return;
                 }
 
-                if (result.Count > MaxInboundMessageBytes - memory.Length)
+                if (result.Count > MaxInboundMessageBytes - messageLength)
                 {
                     await CloseBoundedAsync(socket, WebSocketCloseStatus.MessageTooBig, "message-too-large", cancellationToken).ConfigureAwait(false);
                     return;
                 }
 
-                memory.Write(buffer, 0, result.Count);
+                messageLength += result.Count;
             }
             while (!result.EndOfMessage);
 
@@ -854,14 +878,12 @@ public sealed class CouchCoopWebSocketConnection
                 continue;
             }
 
-            var text = Encoding.UTF8.GetString(memory.ToArray());
-            // The inbound message's own requestId, hoisted out of the try so the catch below can CORRELATE its
-            // error reply to the request that caused it. It used to mint a fresh GUID for every fault, which made
-            // an escaping error impossible to tie back to anything the client had sent.
+            // Parse the occupied UTF-8 memory directly. The document is disposed before this pooled array is
+            // reused or returned, including every continue and exception path below.
             string? inboundRequestId = null;
             try
             {
-                using var document = JsonDocument.Parse(text);
+                using var document = JsonDocument.Parse(buffer.AsMemory(0, messageLength));
                 var type = document.RootElement.TryGetProperty("type", out var typeElement)
                     ? typeElement.GetString()
                     : null;
@@ -1033,7 +1055,7 @@ public sealed class CouchCoopWebSocketConnection
                 if (string.Equals(type, "input", StringComparison.Ordinal))
                 {
                     if (!ConnectionInputAvailability.IsAvailable) continue;
-                    if (memory.Length > MaxInputMessageBytes)
+                    if (messageLength > MaxInputMessageBytes)
                     {
                         await SendResultAsync(new BrowserActionResultEnvelope(
                             "input-result",
@@ -1080,6 +1102,32 @@ public sealed class CouchCoopWebSocketConnection
                 MessageDiagnostics.Write("invalid-message", $"websocket message failed: {ex}");
                 await SendResultAsync(InvalidMessage(inboundRequestId, "The game could not process this message.")).ConfigureAwait(false);
             }
+        }
+    }
+
+    private sealed class PooledInboundBuffer : IDisposable
+    {
+        public PooledInboundBuffer(int minimumLength)
+        {
+            Bytes = ArrayPool<byte>.Shared.Rent(minimumLength);
+        }
+
+        public byte[] Bytes { get; private set; }
+
+        public byte[] Resize(int minimumLength, int copyCount)
+        {
+            var replacement = ArrayPool<byte>.Shared.Rent(minimumLength);
+            Bytes.AsSpan(0, copyCount).CopyTo(replacement);
+            ArrayPool<byte>.Shared.Return(Bytes);
+            Bytes = replacement;
+            return replacement;
+        }
+
+        public void Dispose()
+        {
+            var bytes = Bytes;
+            Bytes = [];
+            if (bytes.Length > 0) ArrayPool<byte>.Shared.Return(bytes);
         }
     }
 
