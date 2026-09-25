@@ -196,6 +196,50 @@ The mod configuration is the part that is not obvious:
 `--plan` does everything except launch the game (config, compositor, seed, loadout), so the mod
 configuration is provable without the live lock. Helpers are unit-tested by `scripts/test-mp5-bringup.sh`.
 
+### 2.z Session soak (`scripts/run-session-soak.mjs`)
+
+A whole hosted session you own: private headless gamescope, a host launched from an **isolated game root**
+(a farm: symlinked install + a real `mods/`), N browser seats joined through `joinSeats()` from
+`probe-five-player-run.mjs`, an embark, a declarative route, per-process `/proc` sampling, and a pid-only teardown.
+Built to be reused by the full-run E2E: swap the route's `dev-console` steps for `real-input` ones once an executor
+exists (`REAL_INPUT_CONTRACT` in `scripts/lib/run-route.mjs`).
+
+```
+node scripts/run-session-soak.mjs --instance soak --game-root <farm>/game --seed-dir <farm>/seed --run-dir <fresh dir> \
+  --route scripts/fixtures/session-soak-act1-boss-to-act2.route.json --plan        # prints everything, launches nothing
+node scripts/live-qa-lock.mjs with --owner <you> --resource shared:install \
+  --resource exclusive:game:soak --resource exclusive:port:33771 \
+  -- node scripts/run-session-soak.mjs <same flags> --i-hold-the-live-lock
+node scripts/test-run-session-soak.mjs                                            # game-free self-test
+```
+
+- **Outputs** under `--run-dir`: `stream.ndjson` (`couchcoop-session-soak/1`: per-process CPU %, main-thread CPU %,
+  RSS, threads by role — `host`, `seat-<slot>`, `compositor`, `chromium-*`, `harness` — plus the foreign-load
+  channel, route events and checks) and `receipt.json` (build identity with mod DLL hashes and `Loading assembly`
+  lines, leases, route hash, preflight, contamination, teardown). The instance user dir lands there too — put
+  `--run-dir` on a disk with room.
+- **Launch** is direct by default: the harness spawns `<game-root>/SlayTheSpire2` itself with private XDG dirs, its
+  own bridge socket and a scrubbed environment, and the profile comes only from `--seed-dir` (a dir holding
+  `SlayTheSpire2/`). `--launch-mode cli` uses `sts2 --instance … game launch` instead — which also repairs the bridge
+  inside `<game-root>/mods` and matches running games by executable, so never point it at a shared farm.
+- **Embark** readies every player through its OWN bridge with `sts2 act ready` — the only semantic action the
+  harness sends. A seat's bridge path (`/tmp/spirectl-bridge-slot-<N>.sock`) is the same for every host on the
+  machine, so the socket is proved to be held by that seat's pid, and nothing else, before it is used.
+- **Routes in a hosted run.** Networked console commands replicate to every peer. Prefer `room MONSTER|ELITE|BOSS`
+  to `fight <id>`: `fight` can compose some encounters differently per peer. Issue `room`/`fight`/`act` outside
+  combat or after `win`. Each console step must be proven: the host answers `Enqueued …` and every peer's own
+  `godot.log` echoes the line; an unproven step fails the route (`--replication-optional` to only record it).
+- **End-of-session checks** fail the session: any divergence line in any peer log, or a seat whose read-only
+  state (through its own bridge) disagrees with the host's on act, floor, deck sizes, gold or HP.
+- **Preflight** refuses when UDP 33771 is already bound, or when another session's seats hold enough of the
+  seat ports (13357, 13367, …) that the lobby cannot seat `--seats` players — the host skips a taken port, so a
+  4-player lobby next to one foreign seat seats two, not three.
+- **Driving the instance by hand** during a run: `cd <run-dir>` first. The CLI derives an instance's bridge socket
+  from the nearest `.git` ancestor of its cwd, and the harness runs every `sts2` call from the run dir with
+  `--config <run-dir>/sts2.<instance>.yaml --instance <instance>`.
+- The mod's browser server refuses loopback for viewer routes, so seats join at the LAN address (`--lan-host`,
+  detected by default).
+
 ## 3. QA TCP channel (native godot-client)
 
 Full protocol + current verb table: **`godot-client/docs/qa-channel.md`** (read that file — verbs/settings

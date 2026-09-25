@@ -1302,6 +1302,9 @@ async function tryScreenshot(targets, name) {
 
 let browser = null;
 const openContexts = [];
+// One entry per seat page this module opened, so a long-running caller (scripts/run-session-soak.mjs) can
+// read per-viewer CDP counters off the SAME pages the join drove, instead of opening a second set.
+const openSeatPages = [];
 
 async function chromium() {
   // Resolved lazily out of frontend/node_modules (this dir has none) so the pure helpers above stay
@@ -1312,6 +1315,7 @@ async function chromium() {
 
 /** Exported so a focused probe can reuse this live-proven seat join rather than grow a second one. */
 export async function closeBrowsers() {
+  openSeatPages.splice(0);
   for (const context of openContexts.splice(0)) {
     try { await context.close(); } catch { /* already gone */ }
   }
@@ -1322,12 +1326,21 @@ export async function closeBrowsers() {
 }
 
 /**
+ * The seat pages {@link joinSeats} opened and {@link closeBrowsers} has not closed yet, as
+ * `{name, context, page}`. A copy: closing is still closeBrowsers()'s job.
+ */
+export function seatPages() {
+  return openSeatPages.map(entry => ({ ...entry }));
+}
+
+/**
  * Joins `targets.seats` browser seats, at most `targets.seatConcurrency` at a time.
  *
  * Exported (with {@link closeBrowsers}) so `scripts/probe-steam-host-join.mjs` drives the SAME join
  * path this probe has run live, including its per-seat ENet evidence -- a second implementation of the
  * seat join is a second thing to be wrong. `targets` needs only
- * `{seats, seatConcurrency, baseUrl, browserPort, portBases, userDir, seatTimeoutMs, outDir}`.
+ * `{seats, seatConcurrency, baseUrl, browserPort, portBases, userDir, seatTimeoutMs, outDir}`, plus an
+ * optional `viewport` (`{width, height}`, default 960x600) for callers that emulate a phone-sized seat.
  */
 export async function joinSeats(targets, evidence) {
   if (!browser) {
@@ -1345,9 +1358,10 @@ export async function joinSeats(targets, evidence) {
 async function joinOneSeat(targets, name, evidence) {
   const started = Date.now();
   const seat = { name, ok: false, detail: null, slot: null, port: null, portBase: null, playerId: null, logPath: null, socketUrls: [], screenshots: [], ms: 0 };
-  const context = await browser.newContext({ viewport: { width: 960, height: 600 } });
+  const context = await browser.newContext({ viewport: targets.viewport ?? { width: 960, height: 600 } });
   openContexts.push(context);
   const page = await context.newPage();
+  openSeatPages.push({ name, context, page });
   // The seat redirect happens INSIDE the page (a WebSocket reconnect to the headless instance's port),
   // never in the page URL -- so the socket URLs are the only client-side evidence of which port the
   // host handed this seat.
