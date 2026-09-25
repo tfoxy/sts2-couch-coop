@@ -1,4 +1,5 @@
 using CouchCoop.Mod.Session;
+using MegaCrit.Sts2.Core.Multiplayer.Transport;
 
 // The composite host's peer→transport decision, and the lobby's free-slot guard. Both are pure and both are the
 // kind of rule that only bites in production, so they are pinned here.
@@ -19,6 +20,7 @@ internal static class HostPeerRoutingTests
         CouchSeatsRouteToEnet();
         UnknownPeersRouteToEnetNeverSteam();
         AnEmptySteamSideSendsEverythingToEnet();
+        CrossTransportChannelsNormalizeForEnet();
         FreeSlotGuardCountsConnectingPeers();
     }
 
@@ -54,6 +56,17 @@ internal static class HostPeerRoutingTests
     {
         Assert(DualHostRouting.RouteFor(SteamPeerA, []) == DualHostSide.Enet,
             "with no Steam peers connected, even a known Steam id routes to ENet (nothing to send it through)");
+    }
+
+    private static void CrossTransportChannelsNormalizeForEnet()
+    {
+        foreach (var sourceChannel in new[] { -1, 0, 1, 17 })
+        {
+            Assert(DualHostRouting.EnetChannelFor(NetTransferMode.Reliable, sourceChannel) == 0,
+                $"reliable Steam channel {sourceChannel} maps to ENet's reliable channel");
+            Assert(DualHostRouting.EnetChannelFor(NetTransferMode.Unreliable, sourceChannel) == 1,
+                $"unreliable Steam channel {sourceChannel} maps to ENet's unreliable channel");
+        }
     }
 
     // Slots used to be a couch-only resource; on a Steam-hosted session they are SHARED with remote players.
