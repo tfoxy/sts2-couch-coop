@@ -23,6 +23,7 @@ that answers your question**, not the whole file.
 | touching `clip_contents` or anything with a wide blast radius | [clip-contents-blast-radius.md](clip-contents-blast-radius.md) | — |
 | working on host-side render/encode cost | [host-render-cost-aug22.md](host-render-cost-aug22.md), [host-render-cost-aug22-round2.md](host-render-cost-aug22-round2.md) | — |
 | continuing host CPU work after the dormant-runtime fixes | [handoff-host-cpu.md](handoff-host-cpu.md) | bounded active-polling trial; preserve input latency |
+| searching for engine/renderer signals to replace scene polling | [handoff-scene-observer.md](handoff-scene-observer.md) | separate observer research; report CPU/added latency before runtime merge |
 | working on phone access, HTTPS, PWA, the public origin | [local-network-access.md](local-network-access.md) | — |
 | diagnosing a join failure on Windows, or touching a loopback probe timeout | [windows-connection-fingerprints.md](windows-connection-fingerprints.md) | — |
 | driving the **physical Windows** rig, or getting logs/crash evidence off it | [windows-home-rig.md](windows-home-rig.md) | `ssh win-home`, `scripts/windows/couchcoop-qa-bootstrap.ps1` |

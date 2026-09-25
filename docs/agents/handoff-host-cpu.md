@@ -3,6 +3,12 @@
 Prepared 2026-09-25. This is a handoff for a bounded CPU investigation, not authorization to restart the
 previous multi-day measurement campaign. No further implementation or game launch was done for this handoff.
 
+For the separately requested search for engine/renderer observation, see
+[Replace scene polling](handoff-scene-observer.md). That investigation has a conditional allowance for one
+or two additional frames, strictly under 50 ms added latency, in exchange for significant CPU savings;
+the user must review the result before a runtime merge. The polling-cache trial below retains its existing
+no-added-latency scope and is not a prerequisite for starting that separate research.
+
 ## Objective and boundaries
 
 Find a substantial reduction in CPU consumed by the host game and its headless seats during active streaming.
