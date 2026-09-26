@@ -58,7 +58,7 @@ public sealed class HotReloadableBrowserServerHost : IHotServerHost, IHotBrowser
             _inputGuardDemand(count, generation);
             _connectionHosting?.SetBrowserDemand(count, generation);
         });
-        if (!IsHeadlessClient) _connectionHosting = new(_runtime, _headlessManager);
+        if (!IsHeadlessClient) _connectionHosting = new(_headlessManager);
         _generation = new BuiltInBrowserServerGeneration(this);
     }
 

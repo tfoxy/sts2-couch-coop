@@ -1,7 +1,5 @@
-using CouchCoop.Mod.Runtime;
 using CouchCoop.Mod.Session;
 using Godot;
-using Spirectl.Sts2.Embedding;
 using Spirectl.Sts2.Live;
 using Timer = System.Threading.Timer;
 
@@ -11,17 +9,21 @@ namespace CouchCoop.Mod.Connections;
 /// <remarks>
 /// While monitoring, the tracker is driven by the game's own "the active screen may have changed" event
 /// (<see cref="Sts2ScreenContext.SubscribeUpdated"/>) rather than a poll: a hosting session's end is a screen
-/// transition (back to the menu), so there is nothing to catch between two screen-changed events. Only when that
-/// seam cannot be resolved does it fall back to spirectl's full state subscription, capability-gated and existing
-/// only while a browser or an owned headless seat needs hosting supervision. A detached browser seat still owns a
-/// live process and therefore keeps this monitor alive until run-end reaping. With zero demand, neither path nor
-/// the one-second expiry timer exists.
+/// transition (back to the menu), so there is nothing to catch between two screen-changed events. It exists only
+/// while a browser or an owned headless seat needs hosting supervision. A detached browser seat still owns a live
+/// process and therefore keeps this monitor alive until run-end reaping. With zero demand, neither the
+/// subscription nor the one-second expiry timer exists.
+/// <para>
+/// There is deliberately no backstop for a game build whose screen event cannot be resolved: the tracker then
+/// logs that once and does nothing, and hosting ends only through the transport's own end signal
+/// (<see cref="CouchCoopHostTransport.HostingEnded"/>). Polling game state to cover that case is what this class
+/// used to do, and it is the recurring full-state read the empty-host dormancy rule exists to prevent.
+/// </para>
 /// </remarks>
 internal sealed class ConnectionHostingTracker : IDisposable
 {
     private readonly object _hostingEndGate = new();
     private readonly object _gate = new();
-    private readonly CouchCoopRuntimeHost _runtime;
     private readonly HeadlessClientManager? _manager;
     private readonly IHostingSessionFacts _facts;
     private readonly Func<Action, IDisposable?> _subscribeScreenChanged;
@@ -37,13 +39,12 @@ internal sealed class ConnectionHostingTracker : IDisposable
     private bool _disposed;
     private bool _hasHosted;
     private long? _leftAt;
-    // "Log the screen-trigger fallback once" — same log-once idiom as CouchCoopHostTransport's
-    // _peerReadFailureLogged, so a process that never resolves the game's screen event says so a single time
-    // rather than once per monitoring start.
-    private static int _fallbackLogged;
+    // Same log-once idiom as CouchCoopHostTransport's _peerReadFailureLogged, so a process that never resolves the
+    // game's screen event says so a single time rather than once per monitoring start.
+    private static int _triggerUnavailableLogged;
 
-    public ConnectionHostingTracker(CouchCoopRuntimeHost runtime, HeadlessClientManager? manager)
-        : this(runtime, manager, new HostingSessionFacts(), SubscribeGameScreenUpdated,
+    public ConnectionHostingTracker(HeadlessClientManager? manager)
+        : this(manager, new HostingSessionFacts(), SubscribeGameScreenUpdated,
                ScheduleOnNextFrame, TimeProvider.System)
     {
     }
@@ -56,10 +57,9 @@ internal sealed class ConnectionHostingTracker : IDisposable
         => CouchCoopMod.EngineAvailable ? Sts2ScreenContext.SubscribeUpdated(handler) : null;
 
     internal ConnectionHostingTracker(
-        CouchCoopRuntimeHost runtime, HeadlessClientManager? manager, IHostingSessionFacts facts,
+        HeadlessClientManager? manager, IHostingSessionFacts facts,
         Func<Action, IDisposable?> subscribeScreenChanged, Action<Action> scheduleEvaluation, TimeProvider time)
     {
-        _runtime = runtime;
         _manager = manager;
         _facts = facts;
         _subscribeScreenChanged = subscribeScreenChanged;
@@ -94,7 +94,7 @@ internal sealed class ConnectionHostingTracker : IDisposable
 
     private void SetDemand(int count, long generation, bool browser)
     {
-        // Serialize a new demand generation with the fallback's destructive EndHosting call. The manager publishes
+        // Serialize a new demand generation with the expiry tick's destructive EndHosting call. The manager publishes
         // its resulting seat-count changes asynchronously, so this ordering cannot re-enter us through its lock.
         lock (_hostingEndGate)
         {
@@ -164,40 +164,25 @@ internal sealed class ConnectionHostingTracker : IDisposable
     private void StartMonitoring(long generation)
     {
         IDisposable? subscription = null;
-        var usedScreenTrigger = false;
         try
         {
             subscription = _subscribeScreenChanged(() => ScheduleEvaluation(generation));
-            usedScreenTrigger = subscription is not null;
         }
         catch (Exception exception)
         {
             CouchCoopLog.Stderr($"connection hosting screen trigger failed: {exception.GetType().Name}: {exception.Message}");
         }
 
-        if (!usedScreenTrigger)
+        if (subscription is null)
         {
-            if (Interlocked.Exchange(ref _fallbackLogged, 1) == 0)
+            // Nothing can arm the expiry countdown without the trigger, so there is nothing for a timer to do either.
+            if (Interlocked.Exchange(ref _triggerUnavailableLogged, 1) == 0)
             {
-                CouchCoopLog.Stderr("connection hosting screen trigger unavailable: falling back to the state subscription");
+                CouchCoopLog.Stderr(
+                    "connection hosting screen trigger unavailable: hosting will end only on the transport's own signal");
             }
 
-            if (_runtime.HasCapability(CouchCoopRuntimeHost.StateCapability))
-            {
-                try
-                {
-                    subscription = _runtime.SubscribeCurrentState(new CurrentStateSubscriptionRequest(
-                        EmitInitial: true,
-                        MinCaptureInterval: TimeSpan.FromMilliseconds(500),
-                        MaxIdleInterval: TimeSpan.FromSeconds(2)),
-                        observed => ObserveState(generation, observed));
-                }
-                catch (Exception exception)
-                {
-                    CouchCoopLog.Stderr(
-                        $"connection hosting state monitor unavailable: {exception.GetType().Name}: {exception.Message}");
-                }
-            }
+            return;
         }
 
         var timer = new Timer(_ => Tick(generation), null, Timeout.InfiniteTimeSpan, Timeout.InfiniteTimeSpan);
@@ -217,14 +202,11 @@ internal sealed class ConnectionHostingTracker : IDisposable
         if (!keep)
         {
             timer.Dispose();
-            subscription?.Dispose();
+            subscription.Dispose();
             return;
         }
 
-        if (usedScreenTrigger)
-        {
-            ScheduleEvaluation(generation); // once at start, deferred a frame like every other evaluation
-        }
+        ScheduleEvaluation(generation); // once at start, deferred a frame like every other evaluation
     }
 
     private void ScheduleEvaluation(long generation)
@@ -264,37 +246,11 @@ internal sealed class ConnectionHostingTracker : IDisposable
             return true; // Invoke<T> requires a return value.
         });
 
-    private void ObserveState(long generation, CurrentStateWatchEvent observed)
-    {
-        if (observed.State is not { } state)
-        {
-            return;
-        }
-
-        lock (_gate)
-        {
-            if (_disposed || !HasDemandLocked || _activeGeneration != generation)
-            {
-                return;
-            }
-
-            if (state.CharacterSelect?.Lobby?.NetGameType == "host"
-                || state.Run?.Players.Any(player => player.IsHost && player.IsLocal) == true)
-            {
-                _hasHosted = true;
-                _leftAt = null;
-            }
-            else if (_hasHosted && state.Run is null && state.CharacterSelect is null && state.RootScene == "screens/main_menu")
-            {
-                _leftAt ??= _time.GetTimestamp();
-            }
-        }
-    }
-
     /// <summary>
-    /// Reads the three cheap hosting facts and applies the same latch/countdown rule <see cref="ObserveState"/>
-    /// applies from a full state snapshot. Facts are read OUTSIDE <see cref="_gate"/> — they touch live game
-    /// objects — and only their result is applied under the lock.
+    /// Reads the three cheap hosting facts and applies the latch/countdown rule: hosting latches once a net host is
+    /// installed and the game is in a run or on a lobby screen, and the expiry countdown starts when it is in
+    /// neither. Facts are read OUTSIDE <see cref="_gate"/> — they touch live game objects — and only their result is
+    /// applied under the lock.
     /// </summary>
     private void EvaluateFacts(long generation)
     {

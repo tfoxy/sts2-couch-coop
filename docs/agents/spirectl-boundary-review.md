@@ -319,9 +319,10 @@ The first step is small and independently useful; every later step can be stoppe
   Two loose ends: it was compiled against the v111 lane only, and the release workflow packages v107. The v107
   decompile corpus (`.sts2/toolchain-public`) declares the same public run-in-progress member, so the risk is small,
   but no v107 compile has run; the stable reference SDK package (`eng/Sts2.ReferenceSdk/stable`) is cached locally,
-  so one can. And its fallback clause (keep the state subscription if
-  `SubscribeUpdated` cannot be resolved) keeps one `Core.State` consumer alive, so P2 waits for that clause to be
-  dropped or accepted as a known exception.
+  so one can. The fallback clause (keep the state subscription if `SubscribeUpdated` cannot be resolved) has since
+  been **removed by the maintainer's decision**: an unresolvable screen event now logs once and hosting ends only on
+  the transport's own signal, and the tracker no longer takes the runtime host at all. That leaves four `Core.State`
+  consumers, none of them a poll.
 - **[handoff-zero-client-guard.md](handoff-zero-client-guard.md): choose the choke point CouchCoop owns.** Every
   state and scene entry already flows through one CouchCoop type: `CouchCoopRuntimeDependencies.FromFactory`
   (`Runtime/CouchCoopRuntimePorts.cs`) adapts the embedded runtime once, and `CouchCoopRuntimeHost` implements the

@@ -1,5 +1,4 @@
 using CouchCoop.Mod.Connections;
-using CouchCoop.Mod.Runtime;
 using CouchCoop.Mod.Session;
 
 internal static class ConnectionHostingDemandTests
@@ -17,8 +16,7 @@ internal static class ConnectionHostingDemandTests
 
     private static void StartsDormantAndStopsAtZeroAggregateDemand()
     {
-        using var runtime = Runtime();
-        using var tracker = new ConnectionHostingTracker(runtime, manager: null);
+        using var tracker = ConnectionHostingTrackerStateTests.NewIdleTracker();
 
         Assert(!tracker.IsMonitoring, "construction does not start the hosting monitor");
         tracker.SetBrowserDemand(1, generation: 1);
@@ -32,8 +30,7 @@ internal static class ConnectionHostingDemandTests
 
     private static void StaleCleanupCannotStopNewerDemand()
     {
-        using var runtime = Runtime();
-        using var tracker = new ConnectionHostingTracker(runtime, manager: null);
+        using var tracker = ConnectionHostingTrackerStateTests.NewIdleTracker();
 
         tracker.SetBrowserDemand(1, generation: 8);
         tracker.SetBrowserDemand(0, generation: 7);
@@ -44,8 +41,7 @@ internal static class ConnectionHostingDemandTests
 
     private static void OverlappingServerGenerationsKeepIndependentCounts()
     {
-        using var runtime = Runtime();
-        using var tracker = new ConnectionHostingTracker(runtime, manager: null);
+        using var tracker = ConnectionHostingTrackerStateTests.NewIdleTracker();
         var reports = new List<(int Count, long Generation)>();
         var ledger = new BrowserDemandLedger((count, generation) =>
         {
@@ -66,13 +62,6 @@ internal static class ConnectionHostingDemandTests
             "the final current-generation socket releases supervision");
         Assert(reports.Select(row => row.Generation).SequenceEqual(new long[] { 1, 2, 3, 4 }),
             "all source versions become a monotonic host-wide sequence");
-    }
-
-    private static CouchCoopRuntimeHost Runtime()
-    {
-        var stub = new AssetCacheTokenEnvelopeTests.StubRuntime("hosting-demand-test");
-        return new CouchCoopRuntimeHost(new CouchCoopRuntimeDependencies(
-            stub, stub, stub, stub, stub, stub, stub, stub, stub, stub));
     }
 
     private static void SceneStreamingDemandTracksWatchAndTeardown()
