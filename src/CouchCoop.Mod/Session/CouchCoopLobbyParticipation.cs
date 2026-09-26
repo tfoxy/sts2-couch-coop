@@ -249,23 +249,29 @@ public sealed class CouchCoopLobbyParticipation(CouchCoopRuntimeHost runtimeHost
     public int? MaxCouchSeats() => MaxLobbyPlayers() is { } maxLobbyPlayers ? maxLobbyPlayers - 1 : null;
 
     /// <summary>
-    /// The live lobby's own player cap, host seat included — <see cref="MaxCouchSeats"/>'s source, and what the
-    /// host transport sizes its ENet listener from. <see langword="null"/> means UNKNOWN, and every caller has to
-    /// say what it does with that.
+    /// The live lobby's own player cap, host seat included — <see cref="MaxCouchSeats"/>'s source, what browser
+    /// admission sizes its socket ceiling from, and what the host transport sizes its ENet listener from.
+    /// <see langword="null"/> means UNKNOWN, and every caller has to say what it does with that.
     /// </summary>
     /// <remarks>
     /// It used to answer the stock 4 instead, which was the wrong kind of wrong: the whole reason this reads the
     /// lobby is that a 5-to-8-player game caps at whatever the limit mod wrote, so a fabricated 4 does not
-    /// degrade the feature, it silently revokes it. The value is also no longer OURS to default — the bridge
-    /// lane-pins the member behind it and refuses at startup on a build that does not expose it, so a host that
-    /// is running at all has a real cap whenever it has a lobby, and the honest answer the rest of the time is
+    /// degrade the feature, it silently revokes it. The honest answer when there is no lobby screen on top is
     /// "there is no lobby".
+    /// <para>
+    /// Read from the lobby on the current screen, live, on the game's main thread, from whichever thread asks:
+    /// no game state snapshot is built for it (see <see cref="CouchCoopGameFacts.ReadLobbyCap"/>). The static
+    /// <see cref="ReadMaxLobbyPlayers"/> serves a caller that holds no instance.
+    /// </para>
     /// </remarks>
-    public int? MaxLobbyPlayers()
-        => CurrentState()?.CharacterSelect?.Lobby is { } lobby ? LobbyCapOf(lobby) : null;
+    public int? MaxLobbyPlayers() => ReadMaxLobbyPlayers();
+
+    /// <summary><see cref="MaxLobbyPlayers"/>, for a caller with no instance to ask (the host transport at host start).</summary>
+    public static int? ReadMaxLobbyPlayers()
+        => CouchCoopGameFacts.ReadLobbyCap() is { } cap ? LobbyCapOf(cap) : null;
 
     /// <summary>
-    /// One lobby snapshot's player cap, or <see langword="null"/> when the snapshot does not carry a usable one.
+    /// One lobby's reported player cap, or <see langword="null"/> when it is not a usable one.
     /// </summary>
     /// <remarks>
     /// <para>
@@ -294,20 +300,20 @@ public sealed class CouchCoopLobbyParticipation(CouchCoopRuntimeHost runtimeHost
     /// lock around a diagnostic would cost more than the duplicate it prevents.
     /// </para>
     /// </remarks>
-    internal static int? LobbyCapOf(StateCharacterSelectLobbySnapshot lobby)
+    internal static int? LobbyCapOf(int reportedCap)
     {
-        if (lobby.MaxPlayers > 1)
+        if (reportedCap > 1)
         {
             if (_warnedUnreadableLobbyCap)
             {
                 CouchCoopLog.Stderr(
-                    $"the live lobby now reports a player cap of {lobby.MaxPlayers} — seat limits, the ENet "
+                    $"the live lobby now reports a player cap of {reportedCap} — seat limits, the ENet "
                     + "listener size and browser admission are sized by it again.");
             }
 
             _warnedUnreadableLobbyCap = false;
             _lobbyCapUnreadableSince = null;
-            return lobby.MaxPlayers;
+            return reportedCap;
         }
 
         var now = LobbyCapClock();
@@ -317,7 +323,7 @@ public sealed class CouchCoopLobbyParticipation(CouchCoopRuntimeHost runtimeHost
         {
             _warnedUnreadableLobbyCap = true;
             CouchCoopLog.Stderr(
-                $"the live lobby has reported a player cap of {lobby.MaxPlayers} for over "
+                $"the live lobby has reported a player cap of {reportedCap} for over "
                 + $"{UnreadableLobbyCapGrace.TotalSeconds:0}s — seat limits, the ENet listener size and browser "
                 + "admission are all running WITHOUT a known cap until it reads back.");
         }

@@ -19,7 +19,7 @@ namespace CouchCoop.Mod.Runtime;
 /// engine. Like <see cref="GameScreenContext"/>, this lives in <c>Runtime/</c>, which the hot-reload assembly does
 /// not link, so the tripwire's counters exist once.
 /// </remarks>
-public static class CouchCoopGameFacts
+public static partial class CouchCoopGameFacts
 {
     /// <summary>Test seam. Production is <see cref="GameFactsReader"/>.</summary>
     internal static IGameFacts Source { get; set; } = GameFactsReader.Instance;
@@ -74,7 +74,7 @@ public static class CouchCoopGameFacts
 /// The production reader: the run manager and the current lobby screen, typed against the game assemblies. The
 /// same members exist, with the same shapes, on both API lanes, so there is no lane split here.
 /// </summary>
-internal sealed class GameFactsReader : IGameFacts
+internal sealed partial class GameFactsReader : IGameFacts
 {
     internal static GameFactsReader Instance { get; } = new();
 

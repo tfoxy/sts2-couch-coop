@@ -1,5 +1,4 @@
 using CouchCoop.Mod.Session;
-using Spirectl.Sts2.Core.State;
 
 // What the host says when the live lobby will not tell it how many players fit.
 //
@@ -113,7 +112,7 @@ internal static class LobbyCapNoticeTests
         Expect(afterGrace.Length == 1, "the second outage speaks once its own grace has passed");
     }
 
-    // 0 means the read behind the snapshot failed. Same answer, same notice -- the caller cannot size
+    // 0 means the read behind the reported cap failed. Same answer, same notice -- the caller cannot size
     // anything either way.
     private static void AZeroCapIsTreatedLikeAnyOtherUnreadableOne()
     {
@@ -156,7 +155,7 @@ internal static class LobbyCapNoticeTests
     private static int? Cap(int maxPlayers, DateTimeOffset at)
     {
         CouchCoopLobbyParticipation.LobbyCapClock = () => at;
-        return CouchCoopLobbyParticipation.LobbyCapOf(Lobby(maxPlayers));
+        return CouchCoopLobbyParticipation.LobbyCapOf(maxPlayers);
     }
 
     private static string[] Capture(Action act)
@@ -176,21 +175,6 @@ internal static class LobbyCapNoticeTests
         return buffer.ToString()
             .Split('\n', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries);
     }
-
-    private static StateCharacterSelectLobbySnapshot Lobby(int maxPlayers)
-        => new(
-            NetGameType: "host",
-            LocalPlayerId: "p:1",
-            HostPlayerId: "p:1",
-            ConnectingPlayerCount: 0,
-            Ascension: 0,
-            MaxAscension: 20,
-            Act1: "random",
-            Seed: null,
-            ModifierIds: [],
-            Players: [],
-            SavedRun: null,
-            MaxPlayers: maxPlayers);
 
     private static void Expect(bool condition, string what)
     {

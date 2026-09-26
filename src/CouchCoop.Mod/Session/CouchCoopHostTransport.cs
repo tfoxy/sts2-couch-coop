@@ -64,12 +64,24 @@ internal static class CouchCoopHostTransport
     /// <para>
     /// It is still not enough on its own, which is why this probe stays. Hosting starts BEFORE the lobby exists,
     /// so at that moment there is nothing to ask and the probe reports null — a raise that only ever lands on the
-    /// lobby would be invisible here. This is the backstop for everything that happens later: a cap raised after
-    /// host start, or by a mod that touches the lobby alone. A listener sized for 4 while the lobby admits 16
-    /// refuses the fifth seat at the transport, which is exactly the failure this avoids.
+    /// lobby would be invisible here. A listener sized for 4 while the lobby admits 16 refuses the fifth seat at
+    /// the transport, which is exactly the failure this avoids. Read once per host start, so it answers only for a
+    /// host started while a lobby screen is current; "Lobby player cap" in docs/agents/architecture-map.md says
+    /// what that means in practice.
     /// </para>
     /// </summary>
     internal static Func<int?>? MaxLobbyPlayersProbe { get; set; }
+
+    /// <summary>
+    /// The probe the mod installs as <see cref="MaxLobbyPlayersProbe"/>: the player cap of the lobby on the current
+    /// lobby screen, or null when there is none. Read once per host start, on the main thread, before any client
+    /// exists, which is why it names an allowance rather than counting as work done for a client.
+    /// </summary>
+    internal static int? ReadLobbyCapAtHostStart()
+    {
+        using var permit = Runtime.ZeroClientGuard.Permit(Runtime.ZeroClientAllowances.HostTransportSizing);
+        return CouchCoopLobbyParticipation.ReadMaxLobbyPlayers();
+    }
 
     /// <summary>
     /// The client cap the CURRENT hosting session's transports were actually built for, or null when no host

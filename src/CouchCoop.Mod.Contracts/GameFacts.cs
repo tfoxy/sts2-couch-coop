@@ -67,4 +67,21 @@ public interface IGameFacts
     /// anyway, and a disconnect that cannot tell falls back to releasing the seat.
     /// </remarks>
     bool? ReadRunInProgress();
+
+    // ---- WP3 path 5: the lobby player cap -------------------------------------------------------------------
+
+    /// <summary>
+    /// The player cap the lobby on the screen that is current RIGHT NOW reports, host seat included, exactly as the
+    /// game holds it: the new-run lobby's own cap, or for the saved-run lobby the number of players in the save
+    /// (it admits exactly those). <see langword="null"/> when no lobby screen is current, its lobby is not assigned
+    /// yet, or the read could not be made. A value of 1 or less is a lobby that has not settled on a cap, which is
+    /// the caller's to judge (see <c>CouchCoopLobbyParticipation.LobbyCapOf</c>), not this reader's.
+    /// </summary>
+    /// <remarks>
+    /// Unlike <see cref="ReadGates"/> this may be called from ANY thread and takes no screen: it runs where the game
+    /// can be touched and looks at the current screen there. The admission limiter asks once per WebSocket
+    /// upgrade, on a listener thread, so the answer must be live rather than remembered. A caller must not hold a
+    /// lock the game's main thread could be waiting for.
+    /// </remarks>
+    int? ReadLobbyCap();
 }

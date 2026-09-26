@@ -65,6 +65,22 @@ internal static class CouchCoopGameFactsTests
             Volatile.Write(ref _runReadThread, Environment.CurrentManagedThreadId);
             return RunRead?.Invoke();
         }
+
+        // ---- WP3 path 5: the lobby player cap --------------------------------------------------------------------
+
+        private int _capReads;
+
+        /// <summary>What the lobby-cap read answers; unset reads as "no lobby". Mutable so a test can raise it mid-run.</summary>
+        public Func<int?>? CapRead { get; set; }
+
+        /// <summary>How many lobby-cap reads reached the reader (atomic: callers run on listener threads).</summary>
+        public int CapReads => Volatile.Read(ref _capReads);
+
+        public int? ReadLobbyCap()
+        {
+            Interlocked.Increment(ref _capReads);
+            return CapRead?.Invoke();
+        }
     }
 
     // Runs `body` with the front pointed at `source`, the zero-client tripwire quiet (its own suite owns those
@@ -318,6 +334,16 @@ internal static class CouchCoopGameFactsTests
             Expect(postfix is not null, $"{label}: postfix {binding.Postfix} exists");
             Expect(postfix!.GetParameters().Any(parameter => parameter.Name == "__instance"),
                 $"{label}: its postfix takes the screen as __instance");
+
+            // The saved-run screen's postfixes also take the initializer's second argument, by position and type:
+            // it is what the recorded saved-run player count (the lobby's cap) is read from later.
+            if (target.Role is not null)
+            {
+                var second = postfix!.GetParameters().SingleOrDefault(parameter => parameter.Name == "__1");
+                Expect(second is not null, $"{label}: its postfix takes the initializer's second argument as __1");
+                Expect(second!.ParameterType == binding.Parameters[1],
+                    $"{label}: __1 has exactly the type of the initializer's own second parameter");
+            }
         }
 
         // Only the saved-run screen's two initializers record a role; the new-run screen exposes its lobby and its

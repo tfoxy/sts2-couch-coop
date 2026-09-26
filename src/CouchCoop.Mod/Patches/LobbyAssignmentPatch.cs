@@ -17,9 +17,10 @@ namespace CouchCoop.Mod.Patches;
 /// <remarks>
 /// <para>
 /// TWO JOBS, ONE POSTFIX SHAPE. On the saved-run screen the postfix RECORDS the role the assignment implies (host or
-/// client), because that screen keeps its lobby private and this is the only typed way to know it. On every target
-/// it WAKES the evaluation, because an assignment on a screen that is already current is a change the game's screen
-/// event would not announce, and the gate facts are read only when something pushes.
+/// client) and the save the lobby was given (whose player count is that lobby's player cap), because that screen
+/// keeps its lobby private and this is the only typed way to know either. On every target it WAKES the evaluation,
+/// because an assignment on a screen that is already current is a change the game's screen event would not
+/// announce, and the gate facts are read only when something pushes.
 /// </para>
 /// <para>
 /// A POSTFIX DOES NOTHING ELSE. It records, then wakes. It never resolves the current screen and never reads game
@@ -155,17 +156,27 @@ internal static class LobbyAssignmentPatch
 
     private static void PostfixWake(object __instance) => Note(__instance, role: null);
 
-    private static void PostfixLoadRunAsHost(object __instance) => Note(__instance, NetTypeNames.Host);
+    // The second argument is taken by position (__1) and by type, so it is the one the game passes to the
+    // initializer whatever its parameter is called; TargetsResolve pins that the type matches the target's own.
+    private static void PostfixLoadRunAsHost(object __instance, SerializableRun __1)
+        => Note(__instance, NetTypeNames.Host, __1);
 
-    private static void PostfixLoadRunAsClient(object __instance) => Note(__instance, NetTypeNames.Client);
+    private static void PostfixLoadRunAsClient(object __instance, ClientLoadJoinResponseMessage __1)
+        => Note(__instance, NetTypeNames.Client, __1);
 
-    private static void Note(object screen, string? role)
+    private static void Note(object screen, string? role, object? savedRun = null)
     {
         try
         {
             if (role is not null)
             {
                 LobbyAssignmentRecord.Record(screen, role);
+            }
+
+            // Kept as handed over: counting its players is a read, and a postfix does not read.
+            if (savedRun is not null)
+            {
+                LobbyAssignmentRecord.RecordSavedRun(screen, savedRun);
             }
 
             CouchCoopQrHostPanelController.NoteLobbyAssigned();

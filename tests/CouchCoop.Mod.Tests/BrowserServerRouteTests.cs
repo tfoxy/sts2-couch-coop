@@ -130,6 +130,10 @@ if (args is ["host-guards", ..])
     // client role) from these five methods, so a renamed or reshaped one silently costs the saved-run lobby its
     // button. Same standing as the mount points above: pure metadata reflection.
     CouchCoopGameFactsTests.TargetsResolve();
+    // The lobby player cap, read without a state snapshot: the front, the admission ceiling, host-start sizing, the
+    // saved-run record, the parity oracle, and the one member the reader looks up by name. Pure, no engine.
+    LobbyCapReadTests.Run();
+    LobbyCapReadTests.LobbyCapMemberResolves();
     LobbySupportCheckpointsTests.Run();
     Console.WriteLine("host guards: ok");
     return;
@@ -540,6 +544,9 @@ if (args is ["beta-targets", ..])
     // …and the five methods that assign a lobby to a lobby screen: the wake for a lobby assignment, and the only
     // typed way to learn whether the saved-run lobby is a host lobby.
     Leg("CouchCoopGameFactsTests.AssignmentTargets", CouchCoopGameFactsTests.TargetsResolve);
+    // …and the one game member CouchCoop reads by name (a granted exception on the v111 lane) or calls directly (the
+    // v107 lane): the start-run lobby's player cap.
+    Leg("LobbyCapReadTests.LobbyCapMember", LobbyCapReadTests.LobbyCapMemberResolves);
 
     Console.WriteLine(failures.Count == 0
         ? "beta-targets: every patch target resolves"
@@ -714,6 +721,9 @@ WindowsFirewallProbeTests.Run();
 // (issue #2 saw -1 from a healthy macOS host), so the notice has to survive being told that without crying
 // wolf, and has to retract when the cap comes back.
 LobbyCapNoticeTests.Run();
+// …and where that cap now comes from: the current lobby screen through CouchCoop's own reader, not a state snapshot.
+LobbyCapReadTests.Run();
+LobbyCapReadTests.LobbyCapMemberResolves();
 HeadlessUserDirSeederTests.Run();
 HostProfileBackupTests.Run();
 // M3 WS-T host-discovery responder (real UDP loopback round-trip). Runs before the flaky network suite below.
@@ -1189,6 +1199,8 @@ internal sealed class BrowserServerRouteTests
         // beside AssertHostUiServicesAsync because it stands up a host UI of its own on a loopback port.
         await IdleHostCostTests.RunAsync(root.Path);
         await AssertHotReloadableServerHostSwapAsync(root.Path);
+        // The WebSocket admission the listener really uses reads the lobby's cap without a state snapshot.
+        AssertUpgradeAdmissionReadsNoStateSnapshot(root.Path);
         // F1 host connectivity log, viewer channel. Dedicated server for the same reason as the neighbours
         // above: the log is a process-global ring, so this leg resets it and must not share one with a
         // connection another assert left open.
@@ -2969,6 +2981,48 @@ internal sealed class BrowserServerRouteTests
         }
     }
 
+
+    // A WebSocket upgrade asks the admission limiter for a place, and the limiter sizes its ceiling from the lobby's
+    // player cap. That used to be a full game-state snapshot per upgrade, built on the game's main thread. This drives
+    // the limiter exactly as the host wires it (the same object the listener's dispatch acquires from) with a state
+    // source that counts snapshot reads, and asserts the upgrades cost none.
+    private static void AssertUpgradeAdmissionReadsNoStateSnapshot(string rootPath)
+    {
+        var runtime = new RecordingSpirectlRuntime { Mode = RuntimeStateMode.Lobby, LobbyNetGameType = "host" };
+        var facts = new CouchCoopGameFactsTests.FakeFacts { CapRead = () => 20 };
+        var previous = CouchCoopGameFacts.Source;
+        CouchCoopGameFacts.Source = facts;
+        try
+        {
+            using var host = new CouchCoopRuntimeHost(new CouchCoopRuntimeDependencies(runtime, runtime, runtime, runtime, runtime, runtime, runtime, runtime, runtime, runtime));
+            var hotHost = new HotReloadableBrowserServerHost(host, rootPath, IPAddress.Loopback, ReserveEphemeralPort());
+            try
+            {
+                var stateReadsBefore = runtime.StateReads;
+                var leases = new List<NetworkAdmissionLimiter.Lease>();
+                for (var upgrade = 0; upgrade < 80; upgrade++)
+                {
+                    var lease = hotHost.Admission.TryAcquireWebSocket();
+                    Expect(lease is not null, $"upgrade {upgrade + 1} of a 20-player lobby's 80 is admitted");
+                    leases.Add(lease!);
+                }
+
+                Expect(hotHost.Admission.TryAcquireWebSocket() is null, "the 81st upgrade is refused at four sockets per player");
+                Expect(facts.CapReads == 81, $"each upgrade asks for the cap once (got {facts.CapReads})");
+                Expect(runtime.StateReads == stateReadsBefore,
+                    $"81 upgrades built no state snapshot (before {stateReadsBefore}, after {runtime.StateReads})");
+                foreach (var lease in leases) lease.Dispose();
+            }
+            finally
+            {
+                hotHost.DisposeAsync().AsTask().GetAwaiter().GetResult();
+            }
+        }
+        finally
+        {
+            CouchCoopGameFacts.Source = previous;
+        }
+    }
 
     private static int ReserveEphemeralPort()
     {
