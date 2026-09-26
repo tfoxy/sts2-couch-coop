@@ -32,4 +32,28 @@ public static partial class CouchCoopGameFacts
             return null;
         }
     }
+
+    /// <summary>
+    /// The roster and the lobby's player cap for one browser join, read in ONE hop onto the game main thread (inline
+    /// when already there), so the two describe the same frame and a join pays a single marshal for both. Each half is
+    /// read through its own front, so each keeps its own failure semantics: an unreadable roster is
+    /// <see langword="null"/> (never "nobody is here") and an unreadable cap is <see langword="null"/> (never a small
+    /// number). Callable from ANY thread, and under the same rule as <see cref="ReadRoster"/>: never while holding a mod
+    /// lock, never inside a game callback. An on-demand read for a user action, never something to poll.
+    /// </summary>
+    public static JoinRead ReadRosterAndLobbyCap(
+        [CallerMemberName] string? caller = null,
+        [CallerFilePath] string? file = null)
+    {
+        ZeroClientGuard.Enter(ZeroClientEntries.HostFactsRead, caller, file);
+        try
+        {
+            return GameMainThread.Invoke(() => new JoinRead(ReadRoster(caller, file), ReadLobbyCap(caller, file)), caller, file);
+        }
+        catch (Exception exception)
+        {
+            CouchCoopLog.Stderr($"join facts read failed detail={exception.GetType().Name}: {exception.Message}");
+            return default;
+        }
+    }
 }

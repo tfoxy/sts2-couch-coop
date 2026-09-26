@@ -8,7 +8,6 @@ using MegaCrit.Sts2.Core.Multiplayer.Game.Lobby;
 using MegaCrit.Sts2.Core.Multiplayer.Messages.Lobby;
 using MegaCrit.Sts2.Core.Saves;
 using MegaCrit.Sts2.Core.Saves.Runs;
-using Spirectl.Sts2.Core.State;
 
 // The lobby's player cap, read without a full game-state snapshot (WP3 path 5).
 //
@@ -32,7 +31,6 @@ internal static class LobbyCapReadTests
         HostStartSizingReadsTheSameCapThroughTheSeam();
         HostStartReadIsAnAllowedZeroDemandRead();
         SavedRunCapIsTheSavesPlayerCount();
-        ParityWithTheDeletedSnapshotRead();
         Console.WriteLine("LobbyCapReadTests: ok");
     }
 
@@ -296,73 +294,6 @@ internal static class LobbyCapReadTests
             "a later assignment on the same screen replaces the earlier one");
     }
 
-    // ---- parity with the deleted read (TEST ONLY) ---------------------------------------------------------
-    //
-    // DELETE THIS SECTION WITH `ProjectCap` WHEN THE LAST WP3 READ PATH LANDS. It exists so the move from the state
-    // snapshot to the typed reader is provably a no-op on every fixture the suite already owns: `ProjectCap` reads a
-    // snapshot the way the typed reader reports the same game, and `OldMaxLobbyPlayers` is the retired method verbatim.
-
-    /// <summary>The cap the typed reader would report for the game a snapshot describes.</summary>
-    internal static int? ProjectCap(StateSnapshot? state) => state?.CharacterSelect?.Lobby.MaxPlayers;
-
-    private static int? OldMaxLobbyPlayers(StateSnapshot? state)
-        => state?.CharacterSelect?.Lobby is { } lobby ? CouchCoopLobbyParticipation.LobbyCapOf(lobby.MaxPlayers) : null;
-
-    private static StateSnapshot WithCap(StateSnapshot state, int cap)
-        => state with { CharacterSelect = state.CharacterSelect! with { Lobby = state.CharacterSelect.Lobby with { MaxPlayers = cap } } };
-
-    private static IEnumerable<(StateSnapshot? State, string What)> CapFixtures()
-    {
-        foreach (var fixture in CouchCoopLobbyHostGateTests.Fixtures())
-        {
-            yield return fixture;
-        }
-
-        foreach (var cap in new[] { -1, 0, 1, 2, 3, 4, 8, 16, 99 })
-        {
-            yield return (WithCap(CouchCoopLobbyHostGateTests.Lobby("host"), cap), $"host lobby capped at {cap}");
-        }
-
-        // The saved-run lobby's snapshot cap is its saved roster; the typed reader reports the save's player count.
-        foreach (var players in new[] { 1, 2, 3, 4 })
-        {
-            var saved = new StateCharacterSelectSavedRunSnapshot(
-                CurrentActIndex: 0,
-                ActFloor: 3,
-                Players: Enumerable.Range(0, players)
-                    .Select(index => new StateCharacterSelectSavedRunPlayerSnapshot($"p:{1000 + index}", 40, 80, 120))
-                    .ToArray());
-            yield return (WithCap(CouchCoopLobbyHostGateTests.Lobby("host", saved), players), $"saved-run lobby of {players}");
-        }
-    }
-
-    private static void ParityWithTheDeletedSnapshotRead()
-    {
-        var count = 0;
-        foreach (var (state, what) in CapFixtures())
-        {
-            CouchCoopLobbyParticipation.ResetLobbyCapNotice();
-            var old = OldMaxLobbyPlayers(state);
-
-            int? fresh = null;
-            var fake = Cap(() => ProjectCap(state));
-            WithSource(fake, () => fresh = CouchCoopLobbyParticipation.ReadMaxLobbyPlayers());
-
-            Expect(fake.CapReads == 1, $"the typed side asked once on {what}");
-            Expect(fresh == old, $"cap parity on {what} (old {Show(old)}, typed {Show(fresh)})");
-            count++;
-        }
-
-        // 14 shared gate fixtures + 9 capped host lobbies + 4 saved-run lobbies.
-        Expect(count == 27, $"the parity oracle covered every fixture (got {count})");
-
-        // The projection is only an oracle if it agrees with what the reader really emits, written out by hand.
-        Expect(ProjectCap(CouchCoopLobbyHostGateTests.MainMenu()) is null, "main menu has no lobby cap");
-        Expect(ProjectCap(CouchCoopLobbyHostGateTests.RunInProgress("host")) is null, "a run has no lobby cap");
-        Expect(ProjectCap(WithCap(CouchCoopLobbyHostGateTests.Lobby("host"), 16)) == 16, "a 16-player lobby reports 16");
-        Expect(ProjectCap(null) is null, "no state is no cap");
-    }
-
     // ---- the member the reader looks up by name (pinned against the installed game build) ------------------
 
     // Pure metadata reflection over the STS2 assemblies this build was compiled against: no Harmony install, no game.
@@ -416,7 +347,7 @@ internal static class LobbyCapReadTests
     private static CouchCoopRuntimeHost NoStateRuntimeHost()
     {
         var stub = new AssetCacheTokenEnvelopeTests.StubRuntime("test-game");
-        return new CouchCoopRuntimeHost(new CouchCoopRuntimeDependencies(stub, stub, stub, stub, stub, stub, stub, stub, stub, stub));
+        return new CouchCoopRuntimeHost(new CouchCoopRuntimeDependencies(stub, stub, stub, stub, stub, stub, stub, stub, stub));
     }
 
     private static bool Dispose(IDisposable lease)

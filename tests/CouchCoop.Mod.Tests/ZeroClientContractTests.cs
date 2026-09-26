@@ -11,7 +11,6 @@ using Spirectl.Sts2.Core.Artifacts;
 using Spirectl.Sts2.Core.Models;
 using Spirectl.Sts2.Core.Protocol;
 using Spirectl.Sts2.Core.SceneInspection;
-using Spirectl.Sts2.Core.State;
 using Spirectl.Sts2.Embedding;
 
 // THE ZERO-CLIENT CONTRACT. The standing rule is that a host nobody is connected to does no recurring work:
@@ -22,7 +21,7 @@ using Spirectl.Sts2.Embedding;
 //
 // This suite is the whole-host version. It composes the REAL host services the mod builds at init
 // (CouchCoopHostUiServices -> HotReloadableBrowserServerHost -> the hosting tracker, the seat manager, the browser
-// server generation and its observers) over COUNTING doubles for the only ways they can reach the game: the ten
+// server generation and its observers) over COUNTING doubles for the only ways they can reach the game: the nine
 // runtime ports (CouchCoopRuntimeDependencies) and the two CouchCoop-owned fronts for spirectl's statics
 // (GameScreenContext, GameMainThread). It drives the phases a player's machine spends its life in and asserts, for
 // each, that nothing ran that nobody asked for.
@@ -91,44 +90,44 @@ internal static class ZeroClientContractTests
         // A client or an owned seat means the work is asked for: one integer read, nothing recorded.
         Fresh();
         ZeroClientGuard.ClientOpened();
-        ZeroClientGuard.Enter(ZeroClientEntries.StateRead);
+        ZeroClientGuard.Enter(ZeroClientEntries.HostFactsRead);
         ZeroClientGuard.EnterPort(ZeroClientEntries.SceneSubscribe);
         Expect(ZeroClientGuard.Violations == 0 && lines.Count == 0, "work while a client is served is silent");
         ZeroClientGuard.ClientClosed();
 
         // Zero demand: counted, and named. The line carries the caller from the compiler and the entry name.
         Fresh();
-        ZeroClientGuard.Enter(ZeroClientEntries.StateRead);
-        Expect(ZeroClientGuard.Violations == 1 && ZeroClientEntries.StateRead.Hits == 1, "a zero-demand use is counted once");
+        ZeroClientGuard.Enter(ZeroClientEntries.HostFactsRead);
+        Expect(ZeroClientGuard.Violations == 1 && ZeroClientEntries.HostFactsRead.Hits == 1, "a zero-demand use is counted once");
         Expect(lines.Count == 1
-            && lines[0].StartsWith("[idle-work] ZeroClientContractTests.GuardContract state.read", StringComparison.Ordinal),
+            && lines[0].StartsWith("[idle-work] ZeroClientContractTests.GuardContract host-facts.read", StringComparison.Ordinal),
             $"the line names the caller and the entry point (got: {string.Join(" | ", lines)})");
         Expect(CouchCoopLog.Line(lines[0]).StartsWith("[couchcoop][idle-work] ", StringComparison.Ordinal),
             "through the log seam the line reads [couchcoop][idle-work] <caller> <entry point>");
 
         // Rate limit: a poller costs one line a minute per caller and entry, not one per call.
-        for (var i = 0; i < 200; i++) ZeroClientGuard.Enter(ZeroClientEntries.StateRead);
+        for (var i = 0; i < 200; i++) ZeroClientGuard.Enter(ZeroClientEntries.HostFactsRead);
         Expect(lines.Count == 1 && ZeroClientGuard.Violations == 201, "the counter keeps counting; the log line does not repeat");
         clock.Advance(TimeSpan.FromSeconds(61));
-        ZeroClientGuard.Enter(ZeroClientEntries.StateRead);
+        ZeroClientGuard.Enter(ZeroClientEntries.HostFactsRead);
         Expect(lines.Count == 2, "the same caller is reported again after the interval");
         ZeroClientGuard.Enter(ZeroClientEntries.ScreenRead);
         Expect(lines.Count == 3, "another entry point is its own line");
 
         // A caller resolved from the stack (the port path) names the code that called through the interface.
         Fresh();
-        ClassifyPortCaller(ZeroClientEntries.StateSubscribe);
-        Expect(lines.Count == 1 && lines[0].Contains("ZeroClientContractTests.ClassifyPortCaller state.subscribe", StringComparison.Ordinal),
+        ClassifyPortCaller(ZeroClientEntries.SceneSubscribe);
+        Expect(lines.Count == 1 && lines[0].Contains("ZeroClientContractTests.ClassifyPortCaller scene.subscribe", StringComparison.Ordinal),
             $"a port entry is attributed to its caller by stack (got: {string.Join(" | ", lines)})");
 
         // Grace: the tail of in-flight work after the last client leaves is teardown, not a leak.
         Fresh();
         ZeroClientGuard.ClientOpened();
         ZeroClientGuard.ClientClosed();
-        ZeroClientGuard.Enter(ZeroClientEntries.StateRead);
+        ZeroClientGuard.Enter(ZeroClientEntries.HostFactsRead);
         Expect(ZeroClientGuard.Violations == 0, "work inside the release grace is excused");
         clock.Advance(ZeroClientGuard.ReleaseGrace + TimeSpan.FromSeconds(1));
-        ZeroClientGuard.Enter(ZeroClientEntries.StateRead);
+        ZeroClientGuard.Enter(ZeroClientEntries.HostFactsRead);
         Expect(ZeroClientGuard.Violations == 1, "the same work after the grace is idle work");
 
         // Allowances: only the named entries, only inside the scope, and the scope restores what was there.
@@ -137,7 +136,7 @@ internal static class ZeroClientContractTests
         {
             ZeroClientGuard.Enter(ZeroClientEntries.ScreenRead);
             Expect(ZeroClientGuard.Violations == 0 && ZeroClientAllowances.QrHostPanel.Hits == 1, "a covered entry inside its scope is excused and counted");
-            ZeroClientGuard.Enter(ZeroClientEntries.StateRead);
+            ZeroClientGuard.Enter(ZeroClientEntries.HostFactsRead);
             Expect(ZeroClientGuard.Violations == 1, "an entry the allowance does not cover is still idle work");
             using (ZeroClientGuard.Permit(ZeroClientAllowances.LobbyGateFacts))
             {
@@ -157,13 +156,13 @@ internal static class ZeroClientContractTests
 
         // Disarmed (a spawned seat) is silent, and owned seats are demand with the ledger's generation rules.
         Fresh(armed: false);
-        ZeroClientGuard.Enter(ZeroClientEntries.StateRead);
+        ZeroClientGuard.Enter(ZeroClientEntries.HostFactsRead);
         Expect(ZeroClientGuard.Violations == 0, "a disarmed guard (a spawned seat) never reports");
 
         Fresh();
         var seatOwner = ZeroClientGuard.CreateOwnedSeatReporter();
         seatOwner(1, 5);
-        ZeroClientGuard.Enter(ZeroClientEntries.StateRead);
+        ZeroClientGuard.Enter(ZeroClientEntries.HostFactsRead);
         Expect(ZeroClientGuard.Violations == 0 && ZeroClientGuard.HasDemand, "an owned seat is demand");
         seatOwner(0, 4);
         Expect(ZeroClientGuard.HasDemand, "an older zero cannot remove a newer seat count");
@@ -263,13 +262,10 @@ internal static class ZeroClientContractTests
         {
             Expect(await rig.WaitAsync(() => CouchCoopRosterObserver.LiveCount >= 1 && CouchCoopRosterSignals.ListenerCount >= 1),
                 "a picker-parked viewer keeps the roster observer alive (it is demand, so the tripwire allows it)");
-            Expect(rig.Runtime.StateLive == 0 && rig.Runtime.StateSubscribes == 0,
-                "…and it subscribes to no game state: the roster is read from typed facts on signals");
             Expect(await rig.WaitAsync(() => rig.Runtime.SceneLive >= 1 && rig.Runtime.HintLive >= 1),
                 "a streaming viewer starts the scene producer and the hint collector");
             Expect(await rig.WaitAsync(() => rig.Screens.Live >= 2),
                 "the hosting tracker and the static-background probe both subscribe to the screen event while a viewer is served");
-            Expect(rig.Runtime.StateCaptures >= 1, "the handshake read the game state for the viewer's session");
             Expect(await rig.WaitAsync(() => rig.MainThread.Dispatches >= 1), "the tracker's first evaluation is a main-thread dispatch");
             Expect(ZeroClientGuard.Violations == 0, "all of that work was demanded, so the tripwire says nothing");
             Expect(rig.Server.IsHostingSupervisionActive, "hosting supervision runs while a viewer is served");
@@ -318,8 +314,6 @@ internal static class ZeroClientContractTests
         // method for a CouchCoop front (taken from the compiler along with the file name).
         var drivers = new Dictionary<ZeroClientEntry, (Func<Rig, IDisposable> Drive, string Caller)>
         {
-            [ZeroClientEntries.StateRead] = (rig => new RogueStateReader(rig.Host), "RogueStateReader.ctor"),
-            [ZeroClientEntries.StateSubscribe] = (rig => new RogueStateSubscriber(rig.Host), "RogueStateSubscriber.ctor"),
             [ZeroClientEntries.SceneSubscribe] = (rig => new RogueSceneSubscriber(rig.Host), "RogueSceneSubscriber.ctor"),
             [ZeroClientEntries.AnimationHintSubscribe] = (rig => new RogueHintSubscriber(rig.Host), "RogueHintSubscriber.ctor"),
             [ZeroClientEntries.MultiplayerConnectionRead] = (rig => new RogueConnectionReader(rig.Host), "RogueConnectionReader.ctor"),
@@ -366,12 +360,12 @@ internal static class ZeroClientContractTests
     // The exact regression that shipped: a component built at init that subscribes to state and stays subscribed.
     private static async Task RogueAlwaysOnSubscriberFailsTheWholeHostContractAsync(string root)
     {
-        await using var rig = await Rig.StartAsync(root, compose: r => new RogueStateSubscriber(r.Host));
+        await using var rig = await Rig.StartAsync(root, compose: r => new RogueSceneSubscriber(r.Host));
         var failure = Record(() => rig.AssertQuiet("startup", baseline: default, window: null));
         Expect(failure is ZeroClientContractViolation violation
-                && violation.Message.Contains("state subscriptions", StringComparison.Ordinal),
-            $"an always-on state subscriber built at init fails the startup phase (got: {failure?.Message})");
-        Expect(rig.TripwireLines.Any(line => line.StartsWith("[idle-work] RogueStateSubscriber.ctor state.subscribe", StringComparison.Ordinal)),
+                && violation.Message.Contains("scene subscriptions", StringComparison.Ordinal),
+            $"an always-on scene subscriber built at init fails the startup phase (got: {failure?.Message})");
+        Expect(rig.TripwireLines.Any(line => line.StartsWith("[idle-work] RogueSceneSubscriber.ctor scene.subscribe", StringComparison.Ordinal)),
             $"the tripwire names it: {string.Join(" | ", rig.TripwireLines)}");
         Console.WriteLine("  always-on subscriber is rejected: ok");
     }
@@ -379,11 +373,11 @@ internal static class ZeroClientContractTests
     // A polling timer is invisible to a subscription counter; the worker-thread census is what catches it.
     private static async Task RogueTimerFailsTheWholeHostContractAsync(string root)
     {
-        await using var rig = await Rig.StartAsync(root, compose: r => new RogueStatePoller(r.Host));
+        await using var rig = await Rig.StartAsync(root, compose: r => new RogueHostFactsPoller());
         var failure = Record(() => rig.AssertQuiet("menu, observed", baseline: rig.Snapshot(), window: QuietWindow));
         Expect(failure is ZeroClientContractViolation,
             $"a recurring poll fails the observed window (got: {failure?.Message ?? "no failure"})");
-        Expect(failure!.Message.Contains("state captures", StringComparison.Ordinal),
+        Expect(failure!.Message.Contains("tripwire violations", StringComparison.Ordinal),
             $"the failure says what leaked: {failure.Message}");
         Expect(failure.Message.Contains("active timers", StringComparison.Ordinal),
             $"a polling timer is caught by the exact timer census, not only by what it read: {failure.Message}");
@@ -405,32 +399,11 @@ internal static class ZeroClientContractTests
 
     // ---- rogue components: each one is "somebody added this without demand" -------------------------------
 
-    private sealed class RogueStateSubscriber : IDisposable
-    {
-        private readonly IDisposable _subscription;
-
-        [MethodImpl(MethodImplOptions.NoInlining)]
-        public RogueStateSubscriber(CouchCoopRuntimeHost runtime)
-            => _subscription = runtime.SubscribeCurrentState(new CurrentStateSubscriptionRequest(EmitInitial: true), _ => { });
-
-        public void Dispose() => _subscription.Dispose();
-    }
-
-    private sealed class RogueStateReader : IDisposable
-    {
-        [MethodImpl(MethodImplOptions.NoInlining)]
-        public RogueStateReader(CouchCoopRuntimeHost runtime) => _ = runtime.GetCurrentState(new CurrentStateRequest());
-
-        public void Dispose() { }
-    }
-
-    private sealed class RogueStatePoller : IDisposable
+    private sealed class RogueHostFactsPoller : IDisposable
     {
         private readonly Timer _timer;
-
-        public RogueStatePoller(CouchCoopRuntimeHost runtime)
-            => _timer = new Timer(_ => runtime.GetCurrentState(new CurrentStateRequest()), null, TimeSpan.Zero, TimeSpan.FromMilliseconds(100));
-
+        public RogueHostFactsPoller()
+            => _timer = new Timer(_ => CouchCoopGameFacts.ReadRoster(), null, TimeSpan.Zero, TimeSpan.FromMilliseconds(100));
         public void Dispose() => _timer.Dispose();
     }
 
@@ -547,8 +520,6 @@ internal static class ZeroClientContractTests
 
     /// <summary>What a phase is allowed to have done, and the readings it is compared against.</summary>
     private readonly record struct Counters(
-        long StateCaptures,
-        long StateSubscribes,
         long SceneSubscribes,
         long HintSubscribes,
         long ConnectionUses,
@@ -616,7 +587,7 @@ internal static class ZeroClientContractTests
             var mainThread = new FakeMainThread();
             var host = new CouchCoopRuntimeHost(
                 new CouchCoopRuntimeDependencies(
-                    runtime, runtime, runtime, runtime, runtime, runtime, runtime, runtime, runtime, runtime,
+                    runtime, runtime, runtime, runtime, runtime, runtime, runtime, runtime, runtime,
                     Lifetime: null, MultiplayerConnection: runtime),
                 _ => { });
             var services = new CouchCoopHostUiServices(
@@ -654,8 +625,6 @@ internal static class ZeroClientContractTests
         }
 
         public Counters Snapshot() => new(
-            Runtime.StateCaptures,
-            Runtime.StateSubscribes,
             Runtime.SceneSubscribes,
             Runtime.HintSubscribes,
             Runtime.ConnectionUses,
@@ -668,12 +637,12 @@ internal static class ZeroClientContractTests
             CouchCoopRosterObserver.StartedCount);
 
         public bool IsFullyParked()
-            => Runtime.StateLive == 0 && Runtime.SceneLive == 0 && Runtime.HintLive == 0
+            => Runtime.SceneLive == 0 && Runtime.HintLive == 0
                && Screens.Live == 0 && !Server.IsHostingSupervisionActive
                && CouchCoopRosterObserver.LiveCount == 0 && CouchCoopRosterSignals.ListenerCount == 0;
 
         public string Describe()
-            => $"stateLive={Runtime.StateLive} sceneLive={Runtime.SceneLive} hintLive={Runtime.HintLive} "
+            => $"sceneLive={Runtime.SceneLive} hintLive={Runtime.HintLive} "
                + $"screenLive={Screens.Live} supervision={Server.IsHostingSupervisionActive} "
                + $"rosterObservers={CouchCoopRosterObserver.LiveCount} rosterListeners={CouchCoopRosterSignals.ListenerCount}";
 
@@ -700,7 +669,7 @@ internal static class ZeroClientContractTests
             }
             else if (baseline == default)
             {
-                baseline = new Counters(0, 0, 0, 0, 0, 0, 0, 0, 0, BaselineTimers, ThreadPool.CompletedWorkItemCount, BaselineRosterStarted);
+                baseline = new Counters(0, 0, 0, 0, 0, 0, 0, BaselineTimers, ThreadPool.CompletedWorkItemCount, BaselineRosterStarted);
             }
 
             var now = Snapshot();
@@ -710,8 +679,6 @@ internal static class ZeroClientContractTests
                 if (delta > allowed) problems.Add($"{delta} {what}" + (allowed > 0 ? $" (allowed {allowed})" : string.Empty));
             }
 
-            Check("state captures", now.StateCaptures - baseline.StateCaptures);
-            Check("state subscriptions", now.StateSubscribes - baseline.StateSubscribes);
             Check("scene subscriptions", now.SceneSubscribes - baseline.SceneSubscribes);
             Check("animation-hint subscriptions", now.HintSubscribes - baseline.HintSubscribes);
             Check("multiplayer-connection uses", now.ConnectionUses - baseline.ConnectionUses);
@@ -970,26 +937,20 @@ internal static class ZeroClientContractTests
     /// Every port of the runtime host, all supported, counting each use of a state or scene entry. Live counts fall
     /// when the subscription is disposed, which is how "released" is observed.
     /// </summary>
-    private sealed class CountingRuntime : IRuntimeCapabilitySource, IRuntimeAssetSource, IRuntimeStateSource,
+    private sealed class CountingRuntime : IRuntimeCapabilitySource, IRuntimeAssetSource,
         IAnimationHintSource, IRuntimeSceneDeltaSource, IGameModelSource, ISpineCatalogSource, ISpineGeoClipBaker,
         ISemanticActionSource, IRuntimeSceneWatchControlSource, IRuntimeMultiplayerConnectionSource
     {
-        private long _stateCaptures;
-        private long _stateSubscribes;
         private long _sceneSubscribes;
         private long _hintSubscribes;
         private long _connectionUses;
-        private int _stateLive;
         private int _sceneLive;
         private int _hintLive;
 
         public string Mode { get; set; } = "main-menu";
-        public long StateCaptures => Interlocked.Read(ref _stateCaptures);
-        public long StateSubscribes => Interlocked.Read(ref _stateSubscribes);
         public long SceneSubscribes => Interlocked.Read(ref _sceneSubscribes);
         public long HintSubscribes => Interlocked.Read(ref _hintSubscribes);
         public long ConnectionUses => Interlocked.Read(ref _connectionUses);
-        public int StateLive => Volatile.Read(ref _stateLive);
         public int SceneLive => Volatile.Read(ref _sceneLive);
         public int HintLive => Volatile.Read(ref _hintLive);
 
@@ -1014,29 +975,6 @@ internal static class ZeroClientContractTests
 
         private static EmbeddableRuntimeCapability Supported(string id)
             => new(id, id, Supported: true, Provisional: false, UnsupportedReason: null);
-
-        public CurrentStateResult GetCurrentState(CurrentStateRequest request)
-        {
-            Interlocked.Increment(ref _stateCaptures);
-            return new CurrentStateResult(true, new StateSnapshot(StateSnapshot.CurrentSchemaVersion, "en", Mode, null, null), null);
-        }
-
-        public IDisposable SubscribeCurrentState(
-            CurrentStateSubscriptionRequest request, Action<CurrentStateWatchEvent> onEvent, Action<EmbeddableRuntimeError>? onError = null)
-        {
-            Interlocked.Increment(ref _stateSubscribes);
-            Interlocked.Increment(ref _stateLive);
-            return new Release(() => Interlocked.Decrement(ref _stateLive));
-        }
-
-        public async IAsyncEnumerable<CurrentStateWatchEvent> WatchCurrentStateAsync(
-            CurrentStateSubscriptionRequest request,
-            [System.Runtime.CompilerServices.EnumeratorCancellation] CancellationToken cancellationToken = default)
-        {
-            Interlocked.Increment(ref _stateSubscribes);
-            await Task.CompletedTask;
-            yield break;
-        }
 
         public IDisposable SubscribeAnimationHints(
             AnimationHintSubscriptionRequest request, Action<TweenAnimationHint> onHint, Action<EmbeddableRuntimeError>? onError = null)

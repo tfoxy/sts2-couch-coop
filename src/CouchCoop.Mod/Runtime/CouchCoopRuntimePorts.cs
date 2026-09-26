@@ -20,7 +20,6 @@ public interface ICouchCoopCapabilityPolicy
 public sealed record CouchCoopRuntimeDependencies(
     IRuntimeCapabilitySource Capabilities,
     IRuntimeAssetSource Assets,
-    IRuntimeStateSource State,
     IAnimationHintSource AnimationHints,
     IRuntimeSceneDeltaSource SceneDelta,
     IGameModelSource Models,
@@ -37,7 +36,7 @@ public sealed record CouchCoopRuntimeDependencies(
     public static CouchCoopRuntimeDependencies FromFactory(ISpirectlRuntime runtime)
     {
         ArgumentNullException.ThrowIfNull(runtime);
-        return new CouchCoopRuntimeDependencies(runtime, runtime, runtime, runtime, runtime, runtime, runtime, runtime, runtime, runtime, runtime as IDisposable, runtime);
+        return new CouchCoopRuntimeDependencies(runtime, runtime, runtime, runtime, runtime, runtime, runtime, runtime, runtime, runtime as IDisposable, runtime);
     }
 
 }

@@ -133,7 +133,7 @@ internal static class HostPerformanceEnvelopeTests
 
     private static BrowserEnvelope CreateSessionEnvelope()
         => new BrowserStateEnvelopeFactory(
-                new CouchCoopRuntimeHost(new CouchCoopRuntimeDependencies(new AssetCacheTokenEnvelopeTests.StubRuntime("game-1.0"), new AssetCacheTokenEnvelopeTests.StubRuntime("game-1.0"), new AssetCacheTokenEnvelopeTests.StubRuntime("game-1.0"), new AssetCacheTokenEnvelopeTests.StubRuntime("game-1.0"), new AssetCacheTokenEnvelopeTests.StubRuntime("game-1.0"), new AssetCacheTokenEnvelopeTests.StubRuntime("game-1.0"), new AssetCacheTokenEnvelopeTests.StubRuntime("game-1.0"), new AssetCacheTokenEnvelopeTests.StubRuntime("game-1.0"), new AssetCacheTokenEnvelopeTests.StubRuntime("game-1.0"), new AssetCacheTokenEnvelopeTests.StubRuntime("game-1.0"))))
+                new CouchCoopRuntimeHost(new CouchCoopRuntimeDependencies(new AssetCacheTokenEnvelopeTests.StubRuntime("game-1.0"), new AssetCacheTokenEnvelopeTests.StubRuntime("game-1.0"), new AssetCacheTokenEnvelopeTests.StubRuntime("game-1.0"), new AssetCacheTokenEnvelopeTests.StubRuntime("game-1.0"), new AssetCacheTokenEnvelopeTests.StubRuntime("game-1.0"), new AssetCacheTokenEnvelopeTests.StubRuntime("game-1.0"), new AssetCacheTokenEnvelopeTests.StubRuntime("game-1.0"), new AssetCacheTokenEnvelopeTests.StubRuntime("game-1.0"), new AssetCacheTokenEnvelopeTests.StubRuntime("game-1.0"))))
             .CreateSessionEnvelope("Alice", "session", null).GetAwaiter().GetResult();
 
     // Drive the suspender's private statics for the duration of one assertion, then put them back — the runner is a

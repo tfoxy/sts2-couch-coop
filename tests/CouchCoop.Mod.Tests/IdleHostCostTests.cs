@@ -347,7 +347,7 @@ internal static class IdleHostCostTests
     {
         var logs = new List<string>();
         await using var services = new CouchCoopHostUiServices(
-            new CouchCoopRuntimeHost(new CouchCoopRuntimeDependencies(new AssetCacheTokenEnvelopeTests.StubRuntime("idle-host-test"), new AssetCacheTokenEnvelopeTests.StubRuntime("idle-host-test"), new AssetCacheTokenEnvelopeTests.StubRuntime("idle-host-test"), new AssetCacheTokenEnvelopeTests.StubRuntime("idle-host-test"), new AssetCacheTokenEnvelopeTests.StubRuntime("idle-host-test"), new AssetCacheTokenEnvelopeTests.StubRuntime("idle-host-test"), new AssetCacheTokenEnvelopeTests.StubRuntime("idle-host-test"), new AssetCacheTokenEnvelopeTests.StubRuntime("idle-host-test"), new AssetCacheTokenEnvelopeTests.StubRuntime("idle-host-test"), new AssetCacheTokenEnvelopeTests.StubRuntime("idle-host-test")), logs.Add),
+            new CouchCoopRuntimeHost(new CouchCoopRuntimeDependencies(new AssetCacheTokenEnvelopeTests.StubRuntime("idle-host-test"), new AssetCacheTokenEnvelopeTests.StubRuntime("idle-host-test"), new AssetCacheTokenEnvelopeTests.StubRuntime("idle-host-test"), new AssetCacheTokenEnvelopeTests.StubRuntime("idle-host-test"), new AssetCacheTokenEnvelopeTests.StubRuntime("idle-host-test"), new AssetCacheTokenEnvelopeTests.StubRuntime("idle-host-test"), new AssetCacheTokenEnvelopeTests.StubRuntime("idle-host-test"), new AssetCacheTokenEnvelopeTests.StubRuntime("idle-host-test"), new AssetCacheTokenEnvelopeTests.StubRuntime("idle-host-test")), logs.Add),
             rootPath,
             IPAddress.Loopback,
             preferredPort: ReserveEphemeralPort(),
@@ -416,7 +416,7 @@ internal static class IdleHostCostTests
             Environment.SetEnvironmentVariable(LanAddressRanking.AdvertisedHostEnvironmentVariable, "192.168.50.20");
             var stub = new AssetCacheTokenEnvelopeTests.StubRuntime("idle-host-pending-test");
             var runtime = new CouchCoopRuntimeHost(new CouchCoopRuntimeDependencies(
-                stub, stub, stub, stub, stub, stub, stub, stub, stub, stub), _ => { });
+                stub, stub, stub, stub, stub, stub, stub, stub, stub), _ => { });
             var attempts = 0;
             services = new CouchCoopHostUiServices(runtime, rootPath, IPAddress.Loopback,
                 ReserveEphemeralPort(), _ => { }, deferDiscoveryServices: true,

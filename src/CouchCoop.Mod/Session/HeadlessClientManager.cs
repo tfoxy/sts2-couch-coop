@@ -1,3 +1,4 @@
+using CouchCoop.Mod.Contracts;
 using CouchCoop.Mod.Connections;
 using System.Diagnostics;
 using System.Globalization;
@@ -317,8 +318,8 @@ public sealed partial class HeadlessClientManager : IDisposable
     /// </para>
     /// <para>
     /// NEVER evaluate this while holding <c>_lock</c>. The probe (CouchCoopLobbyParticipation.MaxCouchSeats) is a
-    /// state pull that BLOCKS on a marshal to the game's main thread, and the main thread itself takes <c>_lock</c>
-    /// (<see cref="DescribeSeats"/> via the screen-change session resend, <see cref="Dispose"/> at shutdown) — so a
+    /// lobby-cap read that BLOCKS on a marshal to the game's main thread, and the main thread itself takes <c>_lock</c>
+    /// (<see cref="DescribeSeats()"/> via the screen-change session resend, <see cref="Dispose"/> at shutdown) — so a
     /// probe under the lock is an ABBA deadlock that freezes the whole game. That was the room-load freeze: a room
     /// change fires the session resend on BOTH the scene-watcher thread and the main thread; the watcher won the
     /// lock, evaluated this inside it, and parked forever on a main thread that was parked on the lock. Public
@@ -353,11 +354,27 @@ public sealed partial class HeadlessClientManager : IDisposable
                 }
             }
 
-            var ceiling = SlotCeiling - MinSlot + 1;
-            var effective = seats ?? (probed ? ceiling : DefaultSeats);
-            return MinSlot - 1 + Math.Clamp(effective, 1, ceiling);
+            return SlotForSeats(seats, probed);
         }
     }
+
+    // The top slot for a lobby with room for `seats` couch seats: `probed` says whether anyone asked the lobby at all
+    // (see MaxSlot's remarks for why unprobed and probed-and-unknown differ).
+    private static int SlotForSeats(int? seats, bool probed)
+    {
+        var ceiling = SlotCeiling - MinSlot + 1;
+        var effective = seats ?? (probed ? ceiling : DefaultSeats);
+        return MinSlot - 1 + Math.Clamp(effective, 1, ceiling);
+    }
+
+    /// <summary>
+    /// <see cref="MaxSlot"/> for a caller that has ALREADY read the live lobby's couch-seat room (with the roster, in
+    /// one hop to the main thread) and hands it in, so this asks the game nothing. A manager built with no probe was
+    /// never told there is a lobby to ask and keeps the stock three seats whatever it is handed, exactly as
+    /// <see cref="MaxSlot"/> does; a manager with a probe treats a null answer as "no lobby to ask right now".
+    /// </summary>
+    private int MaxSlotFromCap(int? maxCouchSeats)
+        => _maxSeatsProbe is null ? SlotForSeats(null, probed: false) : SlotForSeats(maxCouchSeats, probed: true);
 
     /// <summary>
     /// Whether the host's game is currently INSIDE a run (anything past character select). The one question that
@@ -957,7 +974,20 @@ public sealed partial class HeadlessClientManager : IDisposable
     {
         // Snapshot BEFORE taking _lock — the main thread calls in here on every screen change, so a probe under
         // the lock is the room-load deadlock (see MaxSlot's doc).
-        var maxSlot = MaxSlot;
+        return DescribeSeatsUpTo(MaxSlot);
+    }
+
+    /// <summary>
+    /// <see cref="DescribeSeats()"/> for a caller that has already read the live lobby's couch-seat room, which is how the
+    /// session envelope asks: it reads the roster and the cap in ONE hop to the main thread and hands the cap in, so
+    /// describing the seats costs no hop of its own (the probe form cost one per call, per connection, per resend). Null
+    /// means no cap is known (see <see cref="MaxSlotFromCap"/>).
+    /// </summary>
+    public IReadOnlyList<MirrorSeatDescription> DescribeSeats(int? maxCouchSeats)
+        => DescribeSeatsUpTo(MaxSlotFromCap(maxCouchSeats));
+
+    private IReadOnlyList<MirrorSeatDescription> DescribeSeatsUpTo(int maxSlot)
+    {
         lock (_lock)
         {
             var seats = new List<MirrorSeatDescription>(maxSlot - MinSlot + 1);
@@ -990,6 +1020,28 @@ public sealed partial class HeadlessClientManager : IDisposable
     }
 
     /// <summary>
+    /// How many seat instances are running right now: every slot with a headless process that has not exited. It reads
+    /// only the bookkeeping, so it costs no state snapshot and no hop to the game's main thread, which is why the spine
+    /// bake budget asks this instead of describing every seat (that also needs the lobby's cap, which it does not).
+    /// Counts a live process on ANY slot, in or out of the lobby's current range: a running instance loads the
+    /// machine whatever the lobby now allows.
+    /// </summary>
+    public int CountLiveSeatProcesses()
+    {
+        lock (_lock)
+        {
+            var live = 0;
+            foreach (var proc in _processBySlot.Values)
+            {
+                try { if (!proc.HasExited) live++; }
+                catch { /* a throwing handle is a dead one, as in DescribeSeats */ }
+            }
+
+            return live;
+        }
+    }
+
+    /// <summary>
     /// Kill the headless instance owning <paramref name="netId"/> and drop that slot's name claim, returning true
     /// when a live process was actually killed. This is the ZOMBIE REAP: an instance that is up but has no live ENet
     /// connection to the host's game can neither play nor be rejoined, and it squats on the slot so that even a
@@ -999,12 +1051,17 @@ public sealed partial class HeadlessClientManager : IDisposable
     /// Unlike <see cref="Release"/> — which deliberately KEEPS the name claim so a departing player's netId stays
     /// reserved for their reconnect — this drops the claim, because the point is to leave nothing of the broken
     /// instance behind. Sessions still pointing at the slot are dropped so their later <see cref="Release"/> is a
-    /// no-op. No-op (false) for a netId outside <see cref="TryNetIdToSlot"/>'s range or a slot with no process.
+    /// no-op. No-op (false) for a netId outside the seat guard band or a slot with no process.
+    /// </para>
+    /// <para>
+    /// The range check is the guard band (<see cref="SlotCeiling"/>), NOT the live lobby's current cap: a slot that holds
+    /// a process is what makes a reap meaningful, and asking the cap would cost a hop to the game's main thread for a
+    /// fact this method does not need. (A cap that has shrunk since the seat was spawned no longer hides a zombie there.)
     /// </para>
     /// </summary>
     public bool ReapSeat(ulong netId)
     {
-        if (!TryNetIdToSlot(netId, out var slot))
+        if (!TryNetIdToSlot(netId, SlotCeiling, out var slot))
         {
             return false;
         }

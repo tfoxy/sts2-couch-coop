@@ -787,6 +787,118 @@ seat names, and reaps detached seats once the run and any lobby are over. It use
   `roster read #N <signature>` to `godot.log`: one burst of joins is one read, and at a settled checkpoint the last
   signature must equal the game's real roster; a mismatch is a missed signal, to be reported, not papered over with a poll.
 
+## Session envelope (what one `session` costs)
+
+Every connection is sent a `session` envelope (identity, capabilities and notices, the join screen's roster, the seats'
+statuses) on connect, on the join reply, on `watch`, and again on every roster change, screen change and static-background
+change. It is built from **one roster read and never from a full state snapshot** (WP3 path 3).
+
+- **The read.** `BrowserStateEnvelopeFactory.ReadSessionFacts(seats)` calls `CouchCoopGameFacts.ReadSessionFacts(withLobbyCap)`
+  (`Runtime/CouchCoopGameFacts.Session.cs`, result `SessionFacts(Roster, LobbyCap)` in `CouchCoop.Mod.Contracts`): the roster
+  (`IGameFacts.ReadRoster`) and, only when the seat directory has a seat table to size (`MirrorSeatDirectory.DescribesSeats`),
+  the raw lobby cap (`IGameFacts.ReadLobbyCap`), read together inside ONE `GameMainThread.Invoke`, so the cap's own marshal runs
+  inline. That is one hop per envelope from any other thread and none from the game main thread. Each half fails on its own
+  (a throw is `null`, which for the roster is "unavailable", never "nobody here"). No new `IGameFacts` member: the front
+  composes the two existing reads. Never call it while holding a mod lock (the `DescribeSeats` deadlock).
+- **Classification is pure** (`Session/BrowserAssignmentState.cs`, source-linked into the hot-reload assembly, so game-free):
+  `BrowserAssignmentClassifier.Classify(RosterFacts?, registry, name, handle, seats, maxCouchSeats)`. `RosterFacts.Lobby` present
+  is the old "character select present", so the classifier still asks the LOBBY first while `MirrorModeFor` asks the RUN first
+  (a run starting under its lobby screen is a lobby-kind screen in the `mp-run` mode; pinned by name in the parity suite).
+  A `null` roster classifies exactly as a failed snapshot did (an `unsupported` screen, no players, the `main-menu` mirror
+  mode) and the envelope adds the `state` capability notice "Runtime state is unavailable.". The envelope no longer gates on the
+  spirectl `state` capability: it does not use spirectl's state.
+- **The cap rides the read.** `CouchCoopLobbyParticipation.MaxCouchSeatsOf(rawCap)` (`LobbyCapOf` applied, minus the host seat,
+  so the "unreadable cap" notice is still fed by every read that reaches the seat table) goes to `MirrorSeatDirectory.Evaluate`
+  → `HeadlessClientManager.DescribeSeats(int? maxCouchSeats)`, which sizes the seat table from it and asks nothing. The
+  parameterless `DescribeSeats()` (probe form) remains for callers with no cap in hand; a manager with no probe keeps the
+  historical three seats whatever it is handed. `ReapSeat` checks the guard band, not the cap, and
+  `CountLiveSeatProcesses()` (used by `SpineBakeBudget.CountGameInstances` and the spine bake admission) counts the seat
+  processes without describing a seat: neither reads the cap.
+- **Fan-outs read once.** `CouchCoopBrowserServer.ResendSessions()` is the one helper behind the roster reaction, the scene
+  screen-change re-send and the static-background publish: it returns at once with no connection, otherwise reads
+  `SessionFacts` once and hands it to every `CouchCoopWebSocketConnection.ResendSessionAsync(facts, ct)` (each classifies
+  against its own session). Threading is unchanged (the roster worker, the scene observer's thread, and the main thread
+  for a static-background publish, where the read is inline): moving it off the caller's thread could reorder two changes'
+  envelopes on one connection, so it was left alone.
+- **What a connect still costs**: the envelope's one hop, plus the upgrade's admission cap read (path 5, a second hop on a
+  listener thread). The envelope also still pays two deferred main-thread reads that are not game state
+  (`CouchCoopHeadlessVisualSuspender.GetEffectiveBaselineMaxFpsAsync` on a windowed host, `CouchCoopGamePrefs`' text-effects
+  preference); folding them into `SessionFacts` would make a fan-out one hop in total.
+- **Test seam.** `BrowserStateEnvelopeFactory(readSessionFacts: Func<bool, SessionFacts>)` (the hosted-server harness gives
+  each server its own fake game; route tests use `RecordingSpirectlRuntime.NewEnvelopeFactory()`); the per-connection factories
+  the server builds inherit it. The default is the front, and the route suite `RunSessionEnvelopeReadRoutesAsync` drives that
+  default through a fake `IGameFacts` and a counting main thread.
+- **Tests**: `RosterClassifierParityTests` + `LegacySnapshotClassifier` (the retired snapshot classifier, TEST ONLY: identical
+  output for the projected roster over every shared fixture, requested names, session handles, remembered names, seat tables
+  across cap changes; deleted with the last WP3 path), `BrowserAssignmentClassifierTests`, `MirrorSeatRosterTests`,
+  `HeadlessClientManagerTests` (`DescribeSeats(cap)`, `ReapSeat`, `CountLiveSeatProcesses` ask no probe), `SpineBakeBudgetTests`,
+  and `BrowserServerRouteTests.RunSessionEnvelopeReadRoutesAsync` (`-- seats`: `StateReads` stays 0 and the counters move on the
+  controls, for connect, the join reply, `watch`, and a roster, screen and static-background fan-out to N connections, which
+  cost ONE roster read, one cap read and one hop; zero connections read nothing; an unreadable roster is unavailable).
+
+### What a browser join reads of the game (WP3 path 4)
+
+A `join` message used to build a full game-state snapshot for its context and then ask the seat manager's own probes
+(the seat range's cap, run presence). It now reads the game **once** and hands the seat manager what it read. All of it
+is an on-demand read for a user action, never polled, and none of it runs at zero demand.
+
+- **The read.** `CouchCoopLobbyParticipation.DescribeJoin()` (`Session/CouchCoopLobbyParticipation.cs`, source-linked into
+  the hot-reload assembly, so game-free) calls `CouchCoopGameFacts.ReadRosterAndLobbyCap()`
+  (`Runtime/CouchCoopGameFacts.Roster.cs`): the roster and the lobby cap in **one** hop onto the main thread, so they
+  describe one frame; run presence (`ReadRunInProgress`, a plain member read) rides beside them with no hop. Any thread,
+  never while holding a mod lock, never inside a game callback. The DTOs (`JoinRead`, `JoinSeatFacts`) are in
+  `CouchCoop.Mod.Contracts/JoinFacts.cs`; no new `IGameFacts` member and no new zero-client entry (it is `host-facts.read`).
+- **The context** is pure: `DescribeMirrorJoinContext(RosterFacts?)`. The run wins over the lobby a run starts under.
+  `SpawnAllowed` is "a lobby whose net type is host" and never true for a run; `IsSingleplayerRun` is a run whose net type is
+  singleplayer; the host name is the run's host seat, or the lobby seat whose id is `HostPlayerId`, trimmed, blank meaning none;
+  `SeatNetIds` are the run's seats, or the lobby's seats plus the saved run's (a saved seat that has not arrived and a seat
+  that dropped out are both seats: they are the respawns a returning device may make); `RosterNames` is
+  `RosterNames(RosterFacts)`. **An unreadable roster (`null`) is the EMPTY context** (`false, false, null`, no seat table, no
+  names), exactly what a failed snapshot gave, so the join then refuses a stranger as `not-a-session-player`.
+- **The seat manager takes what was read.** `EnsureHeadlessAsync(..., hostFacts: JoinSeatFacts)`: `MaxCouchSeats` (the cap
+  minus the host's seat, through `LobbyCapOf`; null is unknown and opens the whole guard band) and `RunInProgress`. Given
+  facts it asks its `maxSeatsProbe` / `runInProgressProbe` nothing; a manager built with no probes stays UNPROBED (the stock
+  three seats, no run refusal) whatever it is handed; a caller with no join in hand (a test, a standalone server) passes none
+  and keeps the probes. The facts are the join decision's own instant: the probes used to be re-read after any pending seat
+  cleanup was awaited, which the join no longer does. The reads happen before `EnsureHeadlessAsync` takes its `_lock`.
+- **The reply envelope is separate.** It still builds its own read (the session envelope, WP3 path 3), so the tests hold the
+  join to "no more than the envelope alone costs", measured directly, instead of to zero.
+- **The hosted-server harness** (`tests/CouchCoop.HostedServerHarness`) has no game, so it points the typed facts at its fake
+  runtime (`HarnessGameFacts`, through `InternalsVisibleTo`), or the host's own
+  picker row (the one join it completes) would be refused.
+- **Tests**: `JoinFactsTests` (parity of the context with the retired snapshot read over the shared fixtures, TEST ONLY and
+  deleted with the last WP3 path; the rules written out by hand; the unreadable roster; the cap and its changes; one hop;
+  the manager handed facts) in `-- seats` and the full run; `BrowserServerRouteTests.RunJoinRoutesAsync` (a real socket join
+  that launches, one that is refused and one with an unreadable game: no snapshot beyond the envelope's, one read of the
+  game) in `-- seats`.
+
+### Seat join wait and seat monitor (WP3 path 6)
+
+Both are existing polling and both are left exactly as they were (the ~200 ms readiness loop in `EnsureHeadlessAsync`,
+the 250 ms per-seat `MonitorConnectionAsync`); what changed is that each iteration no longer builds a game-state snapshot.
+
+- **Lobby membership** (`CouchCoopLobbyParticipation.IsGamePlayerConnected`, the readiness loop's `_membershipProbe`) is one
+  `ReadRoster()` and the pure `IsPlayerConnected(RosterFacts?, netId)`: a lobby or run seat with that id that the roster
+  marks connected. A lobby seat is connected only if it is the local player, in the host's peer list, or (saved-run
+  lobby) admitted by the lobby; a run seat fails open. A peer is connected before the lobby admits it, so this is
+  deliberately NOT a peer-list read. An unreadable roster is "not connected".
+- **The monitor's peer check** (`IsSeatPeerConnected`, `_monitorMembershipProbe`) is one hop onto the main thread that asks
+  `CouchCoopHostPeers.IsPeerConnected` (the peer list of the host CouchCoop's transport installed) and, when there is none,
+  falls to the roster read **inside the same hop**. That fallback is live on the game's own ENet host (`-fastmp`, Steam not
+  initialised, the debug multiplayer screen): `NoteEnetHostStarted` never installs a host, so the peer read answers "unknown"
+  there. It used to be a full snapshot every 250 ms per seat.
+- **Why the roster and not `RosterHostService`.** The service the lobby constructors recorded is weak and is the *last
+  lobby's*, so a peer read from it alone can come from a finished session, and it says nothing about which lobby is on the
+  current screen; the roster read resolves the current screen's own service. The extra cost is a seat list, not a snapshot.
+- **Could the join wait be push-driven?** Path 2's signals (a peer connecting or disconnecting, a screen change) are exactly
+  what makes lobby membership change, so a membership wake-up is available. It would not replace the 200 ms tick, though: the
+  same loop also waits on the seat's heartbeat, its status file and its HTTP listener, none of which signals. Not built.
+- **Tests**: `JoinFactsTests` (membership parity with the retired snapshot check over the shared fixtures, one roster read per
+  question, the stock-ENet fallback in one hop, a failing main thread, and the real seat manager driven through both loops
+  with `RecordingSpirectlRuntime.StateReads` at 0 and a control that moves it) in `-- seats` and the full run;
+  `HeadlessConnectionLifecycleTests.MonitorAsksThePeerProbeOnceJoined` keeps pinning that the monitor asks the peer probe.
+
+
 ## Host transport
 
 A normally-created multiplayer session is the game session, and couch seats ride alongside it.
@@ -807,7 +919,8 @@ A normally-created multiplayer session is the game session, and couch seats ride
   "Steam offline" notice via `CouchCoopHostUiNotices`.
 - Slot cap is REAL: `slotId` is serialized in 2 bits, so 4 players INCLUDING the host, shared between Steam
   remotes and couch seats (`CouchCoopLobbyParticipation.MaxCouchSeats` reads the lobby's own cap for
-  `HeadlessClientManager`; see "Lobby player cap" below for where that number comes from).
+  `HeadlessClientManager`'s allocation; the session envelope hands the manager the cap it read with the roster instead, see
+  "Session envelope" above; "Lobby player cap" below covers where that number comes from).
 - **Tests**: `tests/CouchCoop.Mod.Tests/HostTransportCapacityTests.cs` (the `Priority.Last` ordering and the
   capacity decision, offline) and `tests/scenarios/steam-host-join.sts2.yaml` (the only automated seat join
   that takes the **Steam** branch — every other join test takes the ENet one, where `HostNetIdPatch` is inert
@@ -823,7 +936,7 @@ classes) and never through a state snapshot (WP3 path 5). It replaced `CurrentSt
 - **Callers** (all on demand, none polls): `CouchCoopLobbyParticipation.MaxLobbyPlayers` / static `ReadMaxLobbyPlayers`
   apply `LobbyCapOf` (a reported cap of 1 or less is UNKNOWN = `null`, with the 30 s "unreadable" notice) and serve
   the browser admission limiter (`NetworkAdmissionLimiter`, once per WebSocket upgrade on a listener thread; ceiling
-  `max(32, 4 * cap)`), `MaxCouchSeats` (`cap - 1`, per seat allocation), and host-start sizing
+  `max(32, 4 * cap)`), `MaxCouchSeats` (`cap - 1`, per seat allocation; the session envelope reads the raw cap in the same hop as its roster and applies `MaxCouchSeatsOf`), and host-start sizing
   (`CouchCoopHostTransport.ReadLobbyCapAtHostStart`, wired as `MaxLobbyPlayersProbe`, under the
   `host-transport-sizing` allowance).
 - **Any thread.** The reader marshals through `GameMainThread` (inline when already on it) and resolves the current
@@ -991,7 +1104,7 @@ spawned seat.
 | --- | --- |
 | `state.read`, `state.subscribe`, `scene.subscribe`, `animation-hints.subscribe`, `multiplayer-connection.read/.subscribe` | the ports of `CouchCoopRuntimeHost` (`ZeroClientGuard.EnterPort`); the caller is read from the stack, and only when a violation is reported |
 | `screen-context.subscribe/.read` | `Runtime/CouchCoopGameSeams.cs` `GameScreenContext`, the CouchCoop front for `Sts2ScreenContext` (tracker, browser-server static-background probe, QR host panel) |
-| `host-facts.read` | `Runtime/CouchCoopGameFacts.cs` `CouchCoopGameFacts`, the CouchCoop front for its own typed reader `IGameFacts` (QR host panel, pause-menu row, run presence for a browser disconnect and a seat launch, the hosting tracker, `ReadLobbyCap` for admission, seat allocation and host start, and `ReadRoster`, the lobby and run roster read) |
+| `host-facts.read` | `Runtime/CouchCoopGameFacts.cs` `CouchCoopGameFacts`, the CouchCoop front for typed `IGameFacts` reads, including roster, lobby cap, run presence, session facts and join facts |
 | `roster.subscribe` | `Runtime/CouchCoopRosterObserver.cs` `Subscribe`, the one way to listen for roster changes (the browser server, while a viewer is parked on the join picker) |
 | `main-thread.dispatch` | the same file's `GameMainThread`, the front for `Sts2MainThreadDispatcher` (tracker, seat peer check, root-window guard, windowless viewport loop) |
 

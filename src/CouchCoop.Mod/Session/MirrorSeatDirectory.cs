@@ -4,7 +4,7 @@ namespace CouchCoop.Mod.Session;
 
 /// <summary>
 /// One couch-coop seat as the host's <see cref="HeadlessClientManager"/> currently sees it. Produced by
-/// <see cref="HeadlessClientManager.DescribeSeats"/>; consumed by <see cref="MirrorSeatDirectory"/> to derive the
+/// <see cref="HeadlessClientManager.DescribeSeats(int?)"/>; consumed by <see cref="MirrorSeatDirectory"/> to derive the
 /// per-seat status the clients render.
 /// </summary>
 /// <param name="NetId">The seat's ENet netId (<c>1000 + slot</c>) — the identity the game gates a rejoin on.</param>
@@ -138,15 +138,16 @@ public sealed class MirrorSeatDirectory
     // The last evaluation's verdict per seat, so the JOIN handler can refuse a seat the picker would not have
     // offered (see RefuseJoin). Every join is preceded by the session envelope that built this, on the same screen.
     private Dictionary<ulong, MirrorSeatStatus> _lastStatuses = [];
-    private readonly Func<IReadOnlyList<MirrorSeatDescription>>? _describeSeats;
+    private readonly Func<int?, IReadOnlyList<MirrorSeatDescription>>? _describeSeats;
     private readonly Action<ulong>? _reapSeat;
     private readonly Func<DateTimeOffset> _clock;
 
     /// <param name="describeSeats">
-    /// Reads the host's live seat table (<see cref="HeadlessClientManager.DescribeSeats"/>). Null on a HEADLESS
-    /// client instance (it owns no seats) and when the host could not resolve its game exe — the directory then
-    /// reports every seat ready, which is the correct degradation: joinability is decided by the game, and we simply
-    /// have nothing extra to say about it.
+    /// Reads the host's live seat table (<see cref="HeadlessClientManager.DescribeSeats(int?)"/>), given the couch-seat
+    /// room of the live lobby the caller read with the roster (null when no cap is known), so describing the seats
+    /// reads no cap of its own. Null on a HEADLESS client instance (it owns no seats) and when the host could not
+    /// resolve its game exe — the directory then reports every seat ready, which is the correct degradation:
+    /// joinability is decided by the game, and we simply have nothing extra to say about it.
     /// </param>
     /// <param name="reapSeat">
     /// Invoked once per seat that crosses into <c>stuck</c>: kills that seat's headless and cleans up after it (the
@@ -154,7 +155,7 @@ public sealed class MirrorSeatDirectory
     /// </param>
     /// <param name="clock">Injectable time source for tests; defaults to <see cref="DateTimeOffset.UtcNow"/>.</param>
     public MirrorSeatDirectory(
-        Func<IReadOnlyList<MirrorSeatDescription>>? describeSeats = null,
+        Func<int?, IReadOnlyList<MirrorSeatDescription>>? describeSeats = null,
         Action<ulong>? reapSeat = null,
         Func<DateTimeOffset>? clock = null)
     {
@@ -164,10 +165,17 @@ public sealed class MirrorSeatDirectory
     }
 
     /// <summary>
+    /// Whether this directory reads a seat table, and so sizes it from the live lobby's cap. A caller that is about to
+    /// read the game for an envelope asks the game for the cap only when this is true: a headless seat, or a host with
+    /// no seat manager, owns no seats to size.
+    /// </summary>
+    public bool DescribesSeats => _describeSeats is not null;
+
+    /// <summary>
     /// Resolve the status of every mirror seat, given which netIds the GAME currently reports as connected.
-    /// <paramref name="gameConnectedNetIds"/> comes from the state snapshot's own connectedness
-    /// (<c>StateCharacterSelectPlayerSnapshot.IsConnected</c> in a lobby, <c>StateRunPlayerSnapshot.IsConnected</c>
-    /// in a run) — the seats the host's netcode actually has peers for. A netId absent from that set is not
+    /// <paramref name="gameConnectedNetIds"/> comes from the roster's own connectedness
+    /// (the lobby seat's connected flag in a lobby, the run seat's in a run) — the seats the host's netcode actually
+    /// has peers for. A netId absent from that set is not
     /// connected as far as the game is concerned. Being PRESENT in it does not by itself make a seat ready: the
     /// game keeps dead peers flagged connected (see "PROCESS LIVENESS IS AUTHORITATIVE" in the class remarks), so a
     /// seat whose headless process is gone is judged on the process, not on this set.
@@ -182,13 +190,19 @@ public sealed class MirrorSeatDirectory
     /// including null, an older/unknown screen, or a lobby — keeps the lobby column, which is the safe default
     /// (spawn-on-demand stays offered rather than a seat being wrongly locked out).
     /// </param>
+    /// <param name="maxCouchSeats">
+    /// The couch-seat room of the live lobby (its player cap minus the host's seat), as the caller read it with the
+    /// roster, or null when no cap is known. It sizes the seat table and nothing else; a directory built without a seat
+    /// table ignores it.
+    /// </param>
     public IReadOnlyDictionary<ulong, MirrorSeatStatus> Evaluate(
         IReadOnlySet<ulong> gameConnectedNetIds,
-        string? mirrorMode = null)
+        string? mirrorMode = null,
+        int? maxCouchSeats = null)
     {
         ArgumentNullException.ThrowIfNull(gameConnectedNetIds);
 
-        var seats = SafeDescribeSeats();
+        var seats = SafeDescribeSeats(maxCouchSeats);
         if (seats.Count == 0)
         {
             lock (_gate)
@@ -362,7 +376,7 @@ public sealed class MirrorSeatDirectory
         return MirrorSeatStatuses.UnavailableRejection;
     }
 
-    private IReadOnlyList<MirrorSeatDescription> SafeDescribeSeats()
+    private IReadOnlyList<MirrorSeatDescription> SafeDescribeSeats(int? maxCouchSeats)
     {
         if (_describeSeats is null)
         {
@@ -371,7 +385,7 @@ public sealed class MirrorSeatDirectory
 
         try
         {
-            return _describeSeats() ?? [];
+            return _describeSeats(maxCouchSeats) ?? [];
         }
         catch (Exception ex)
         {

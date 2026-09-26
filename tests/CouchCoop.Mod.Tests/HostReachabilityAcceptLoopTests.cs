@@ -48,7 +48,7 @@ internal static class HostReachabilityAcceptLoopTests
             var runtime = new StubRuntimeSource();
             await using var host = new HotReloadableBrowserServerHost(
                 new CouchCoopRuntimeHost(new CouchCoopRuntimeDependencies(
-                    runtime, runtime, runtime, null!, null!, null!, null!, null!, null!, null!),
+                    runtime, runtime, null!, null!, null!, null!, null!, null!, null!),
                     _ => { }),
                 root.Path,
                 IPAddress.Loopback,
@@ -109,7 +109,7 @@ internal static class HostReachabilityAcceptLoopTests
     // state one), an asset provider, and a state subscription that never emits. Nothing in this test drives
     // gameplay, so everything else stays unimplemented rather than faked.
     private sealed class StubRuntimeSource
-        : IRuntimeCapabilitySource, IRuntimeAssetSource, IRuntimeStateSource, ISpirectlAssetProvider
+        : IRuntimeCapabilitySource, IRuntimeAssetSource, ISpirectlAssetProvider
     {
         public ISpirectlAssetProvider Assets => this;
 
@@ -124,23 +124,6 @@ internal static class HostReachabilityAcceptLoopTests
         public EmbeddableAssetBatchResult GetPresentationAssets(PresentationAssetBatchRequest request)
             => throw new NotSupportedException();
 
-        public CurrentStateResult GetCurrentState(CurrentStateRequest request) => throw new NotSupportedException();
-
-        public IDisposable SubscribeCurrentState(
-            CurrentStateSubscriptionRequest request,
-            Action<CurrentStateWatchEvent> onEvent,
-            Action<EmbeddableRuntimeError>? onError = null) => new NoSubscription();
-
-        public IAsyncEnumerable<CurrentStateWatchEvent> WatchCurrentStateAsync(
-            CurrentStateSubscriptionRequest request,
-            CancellationToken cancellationToken = default) => throw new NotSupportedException();
-
-        private sealed class NoSubscription : IDisposable
-        {
-            public void Dispose()
-            {
-            }
-        }
     }
 
     private static void Expect(bool condition, string message)

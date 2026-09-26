@@ -1,7 +1,6 @@
 using CouchCoop.Mod.Connections;
 using CouchCoop.Mod.Runtime;
 using CouchCoop.Mod.Session;
-using Spirectl.Sts2.Core.State;
 using Spirectl.Sts2.Embedding;
 
 // Run presence for a browser disconnect and a seat launch: one typed member read instead of a full state snapshot.
@@ -33,7 +32,6 @@ internal static class RunPresenceTests
         await ALaunchAfterAnUnreadableAnswerIsNotRefused();
         await DisconnectAndLaunchRefusalCostNoStateSnapshotAndNoMainThreadHop();
         await TheReadRunsOnTheCallersThread();
-        ParityWithTheRetiredSnapshotPredicate();
         ReadIsDemandFreeInsideAServedConnectionAndTheReleaseGrace();
         Console.WriteLine("RunPresenceTests: ok");
     }
@@ -146,7 +144,7 @@ internal static class RunPresenceTests
         public Rig()
         {
             Host = new CouchCoopRuntimeHost(new CouchCoopRuntimeDependencies(
-                Runtime, Runtime, Runtime, Runtime, Runtime, Runtime, Runtime, Runtime, Runtime, Runtime));
+                Runtime, Runtime, Runtime, Runtime, Runtime, Runtime, Runtime, Runtime, Runtime));
             Manager = new HeadlessClientManager(
                 launcher: slot =>
                 {
@@ -347,10 +345,6 @@ internal static class RunPresenceTests
         {
             await CouchCoopGameFactsTests.WithSourceAsync(rig.Facts, async () =>
             {
-                // The counter would see a snapshot: a plain pull through the same runtime host is one.
-                _ = rig.Host.GetCurrentState(new CurrentStateRequest());
-                Expect(rig.Runtime.StateReads == 1, "control: a state pull through the runtime host is counted");
-                var baseline = rig.Runtime.StateReads;
 
                 // A launch, a launch refusal in a run, a mid-run disconnect, and a lobby disconnect.
                 var mid = Guid.NewGuid();
@@ -366,8 +360,6 @@ internal static class RunPresenceTests
                 await manager.EnsureHeadlessAsync(lobbySession, "Bob", default);
                 rig.Disconnect(lobbySession);
 
-                Expect(rig.Runtime.StateReads == baseline,
-                    $"a disconnect and a launch refusal cost zero state snapshots (saw {rig.Runtime.StateReads - baseline})");
                 Expect(mainThread.Dispatches == 0, "and never hop to the game's main thread");
                 Expect(rig.Facts.RunReads >= 4, "while the typed read was asked for each decision");
             });
@@ -406,37 +398,6 @@ internal static class RunPresenceTests
         Expect(answer == true, "a pool thread gets the answer");
         Expect(fake.RunReadThread == callerThread && callerThread != 0, "the reader ran on the caller's own thread");
         Expect(mainThread.Dispatches == 0, "with no main-thread dispatch");
-    }
-
-    // ---- the parity oracle (TEST ONLY) -----------------------------------------------------------------------------
-    //
-    // DELETE WITH THE LAST WP3 READ PATH, together with CouchCoopLobbyHostGateTests.Project. `OldIsRunInProgress` is
-    // the retired predicate verbatim; the typed read is faked with the run presence the same fixture's facts carry.
-    // The snapshot's run block is built exactly when the run manager reports a run, which is why the two agree.
-
-    private static bool OldIsRunInProgress(StateSnapshot? state) => state?.Run is not null;
-
-    private static void ParityWithTheRetiredSnapshotPredicate()
-    {
-        var runtime = new BrowserServerRouteTests.RecordingSpirectlRuntime();
-        var count = 0;
-        foreach (var (state, what) in CouchCoopLobbyHostGateTests.Fixtures())
-        {
-            // A snapshot that could not be read is an unavailable typed read.
-            var fake = new CouchCoopGameFactsTests.FakeFacts { RunRead = () => CouchCoopLobbyHostGateTests.Project(state)?.RunInProgress };
-            CouchCoopGameFactsTests.WithSource(fake, () =>
-            {
-                Expect(Participation(runtime).IsRunInProgress() == OldIsRunInProgress(state), $"run presence parity on {what}");
-                if (state is not null)
-                {
-                    // An unreadable snapshot makes the tracker skip its evaluation, so it has no answer to compare.
-                    Expect(new HostingSessionFacts().IsRunInProgress() == OldIsRunInProgress(state), $"hosting tracker parity on {what}");
-                }
-            });
-            count++;
-        }
-
-        Expect(count == 14, "the parity oracle covered every shared fixture");
     }
 
     // ---- zero-client ------------------------------------------------------------------------------------------------
@@ -483,7 +444,7 @@ internal static class RunPresenceTests
 
     private static CouchCoopLobbyParticipation Participation(BrowserServerRouteTests.RecordingSpirectlRuntime runtime)
         => new(new CouchCoopRuntimeHost(new CouchCoopRuntimeDependencies(
-            runtime, runtime, runtime, runtime, runtime, runtime, runtime, runtime, runtime, runtime)));
+            runtime, runtime, runtime, runtime, runtime, runtime, runtime, runtime, runtime)));
 
     private static void Expect(bool condition, string because)
     {

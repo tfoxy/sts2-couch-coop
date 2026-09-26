@@ -47,6 +47,8 @@ internal static class RosterSignalPatch
 #if STS2_API_V111
         new(typeof(NCharacterSelectScreen), nameof(NCharacterSelectScreen.PlayerConnected),
             [typeof(StartRunLobbyPlayer)], nameof(PostfixWake)),
+        new(typeof(NCharacterSelectScreen), nameof(NCharacterSelectScreen.PlayerChanged),
+            [typeof(StartRunLobbyPlayer), typeof(bool)], nameof(PostfixWake)),
         new(typeof(NCharacterSelectScreen), nameof(NCharacterSelectScreen.RemotePlayerDisconnected),
             [typeof(StartRunLobbyPlayer)], nameof(PostfixWake)),
         new(typeof(NMultiplayerLoadGameScreen), nameof(NMultiplayerLoadGameScreen.PlayerConnected),
@@ -54,6 +56,8 @@ internal static class RosterSignalPatch
 #else
         new(typeof(NCharacterSelectScreen), nameof(NCharacterSelectScreen.PlayerConnected),
             [typeof(LobbyPlayer)], nameof(PostfixWake)),
+        new(typeof(NCharacterSelectScreen), nameof(NCharacterSelectScreen.PlayerChanged),
+            [typeof(LobbyPlayer), typeof(bool)], nameof(PostfixWake)),
         new(typeof(NCharacterSelectScreen), nameof(NCharacterSelectScreen.RemotePlayerDisconnected),
             [typeof(LobbyPlayer)], nameof(PostfixWake)),
         new(typeof(NMultiplayerLoadGameScreen), nameof(NMultiplayerLoadGameScreen.PlayerConnected),

@@ -7,7 +7,6 @@ using Spirectl.Sts2.Core.Perspective;
 using Spirectl.Sts2.Core.Protocol;
 using Spirectl.Sts2.Core.Reference;
 using Spirectl.Sts2.Core.SceneInspection;
-using Spirectl.Sts2.Core.State;
 using Spirectl.Sts2.Embedding;
 
 /// <summary>
@@ -539,7 +538,7 @@ internal static class EncounterGeoclipPrerenderTests
     }
 
     private static CouchCoopRuntimeDependencies Dependencies(SceneRuntime runtime)
-        => new(runtime, runtime, runtime, runtime, runtime, runtime, runtime, runtime, runtime, runtime);
+        => new(runtime, runtime, runtime, runtime, runtime, runtime, runtime, runtime, runtime);
 
     private static CouchCoopRuntimeHost Host()
     {
@@ -759,7 +758,7 @@ internal static class EncounterGeoclipPrerenderTests
 
     /// <summary>The uninteresting surface of the runtime ports, so the one stub above stays readable.</summary>
     private abstract class StubRuntimeBase
-        : IRuntimeCapabilitySource, IRuntimeAssetSource, IRuntimeStateSource, IAnimationHintSource,
+        : IRuntimeCapabilitySource, IRuntimeAssetSource, IAnimationHintSource,
           IRuntimeSceneDeltaSource, IGameModelSource, ISpineCatalogSource, ISpineGeoClipBaker,
           ISemanticActionSource, IRuntimeSceneWatchControlSource
     {
@@ -791,17 +790,6 @@ internal static class EncounterGeoclipPrerenderTests
 
         public SpineGeoClipBakeResultSnapshot BakeSpineGeoClip(SpineGeoClipBakeRequestSnapshot request)
             => throw new NotSupportedException();
-
-        public CurrentStateResult GetCurrentState(CurrentStateRequest request) => throw new NotSupportedException();
-
-        public IDisposable SubscribeCurrentState(
-            CurrentStateSubscriptionRequest request,
-            Action<CurrentStateWatchEvent> onEvent,
-            Action<EmbeddableRuntimeError>? onError = null) => throw new NotSupportedException();
-
-        public IAsyncEnumerable<CurrentStateWatchEvent> WatchCurrentStateAsync(
-            CurrentStateSubscriptionRequest request,
-            CancellationToken cancellationToken = default) => throw new NotSupportedException();
 
         public IDisposable SubscribeCombatEvents(
             CombatEventSubscriptionRequest request,

@@ -16,13 +16,13 @@ internal readonly record struct RosterSignalTarget(string TypeName, string Metho
 /// <remarks>
 /// <para>
 /// What each one means on screen. <c>PlayerConnected</c> and <c>RemotePlayerDisconnected</c> on the two lobby screens:
-/// someone joined or left the lobby. The two lobby constructors: the game has just built a lobby (the new-run one, or the
+/// someone joined or left the lobby. <c>PlayerChanged</c> on the new-run screen: a lobby player changed character or
+/// another displayed roster fact. The two lobby constructors: the game has just built a lobby (the new-run one, or the
 /// saved-run one whose screen exposes nothing), which also names the net service the host's peer connections are
 /// reported on. <c>RunManager.CleanUp</c>: the run has ended and the game is on its way to the menu.
 /// </para>
 /// <para>
-/// Not hooked, deliberately: a player changing character or readiness. Nothing acts on either (the join screen's
-/// re-send is keyed on who is present and connected, and a read always sees the current character). The screen event,
+/// Readiness does not change the roster facts. The screen event,
 /// the run-started event, the host's peer events and the display-name change are the other signals; they are events,
 /// not patches, and are wired in <see cref="Runtime.GameRosterSignals"/>.
 /// </para>
@@ -44,6 +44,7 @@ internal static class RosterSignalTargets
     internal static IReadOnlyList<RosterSignalTarget> Targets { get; } =
     [
         new(CharacterSelectScreen, "PlayerConnected", 1),
+        new(CharacterSelectScreen, "PlayerChanged", 2),
         new(CharacterSelectScreen, "RemotePlayerDisconnected", 1),
         new(LoadRunScreen, "PlayerConnected", 1),
         new(LoadRunScreen, "RemotePlayerDisconnected", 1),

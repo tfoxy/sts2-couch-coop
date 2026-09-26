@@ -71,25 +71,19 @@ public static class SpineBakeBudget
     /// <summary>
     /// How many STS2 instances are alive on this machine, INCLUDING this one.
     /// <para>
-    /// On the HOST that is 1 (itself) + every seat whose headless process is live — the host's seat table is
-    /// authoritative. On a spawned HEADLESS client there is no seat table (it owns no seats), so its slot number is
-    /// the best available LOWER BOUND: slots are handed out lowest-free-first from
-    /// <c>HeadlessClientManager</c>'s 2..4 range, so "I am slot N" means the host plus at least N-1 seats exist.
+    /// On the HOST that is 1 (itself) + <paramref name="liveSeatProcesses"/>, the number of seat processes the host's
+    /// seat manager reports running (<see cref="HeadlessClientManager.CountLiveSeatProcesses"/>) — the host's own
+    /// bookkeeping is authoritative, and counting needs neither a description of every seat nor the lobby's player cap
+    /// (which is a hop to the game's main thread per bake admission). On a spawned HEADLESS client there is no seat table
+    /// (it owns no seats, so the count is null), so its slot number is the best available LOWER BOUND: slots are handed
+    /// out lowest-free-first from <c>HeadlessClientManager</c>'s 2..4 range, so "I am slot N" means the host plus at
+    /// least N-1 seats exist.
     /// </para>
     /// </summary>
-    public static int CountGameInstances(IReadOnlyList<MirrorSeatDescription>? seats, string? headlessSlot)
+    public static int CountGameInstances(int? liveSeatProcesses, string? headlessSlot)
     {
-        if (seats is not null)
+        if (liveSeatProcesses is { } live)
         {
-            var live = 0;
-            foreach (var seat in seats)
-            {
-                if (seat.ProcessLive)
-                {
-                    live++;
-                }
-            }
-
             return 1 + live;
         }
 

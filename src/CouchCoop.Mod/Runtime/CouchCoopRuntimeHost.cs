@@ -6,7 +6,7 @@ using Spirectl.Sts2.Embedding;
 
 namespace CouchCoop.Mod.Runtime;
 
-public sealed class CouchCoopRuntimeHost : IDisposable, ICouchCoopCapabilityPolicy, IRuntimeAssetSource, IRuntimeStateSource, IAnimationHintSource, ISemanticActionSource
+public sealed class CouchCoopRuntimeHost : IDisposable, ICouchCoopCapabilityPolicy, IRuntimeAssetSource, IAnimationHintSource, ISemanticActionSource
 {
     // The ids spirectl publishes, taken from its own constants rather than re-spelled here: a literal that
     // drifts from the published list reads as "no such capability" and refuses every call behind it, silently.
@@ -32,12 +32,11 @@ public sealed class CouchCoopRuntimeHost : IDisposable, ICouchCoopCapabilityPoli
     public const string AnimationHintsCapability = EmbeddableCapabilityIds.AnimationHints;
 
     // Live runtime scene-tree stream — the transport the mirror renders off. Kept independent of
-    // StateCapability, which only the on-demand state reads (the `session` envelope's identity pull) still use.
+    // StateCapability; CouchCoop uses typed game facts for roster and join decisions.
     public const string SceneCapability = EmbeddableCapabilityIds.SceneWatch;
 
     private readonly IRuntimeCapabilitySource _capabilitiesSource;
     private readonly IRuntimeAssetSource _assetsSource;
-    private readonly IRuntimeStateSource _stateSource;
     private readonly IAnimationHintSource _animationHintSource;
     private readonly IRuntimeSceneDeltaSource _sceneDeltaSource;
     private readonly IGameModelSource _modelSource;
@@ -55,7 +54,6 @@ public sealed class CouchCoopRuntimeHost : IDisposable, ICouchCoopCapabilityPoli
         ArgumentNullException.ThrowIfNull(runtime);
         _capabilitiesSource = runtime.Capabilities;
         _assetsSource = runtime.Assets;
-        _stateSource = runtime.State;
         _animationHintSource = runtime.AnimationHints;
         _sceneDeltaSource = runtime.SceneDelta;
         _modelSource = runtime.Models;
@@ -139,38 +137,6 @@ public sealed class CouchCoopRuntimeHost : IDisposable, ICouchCoopCapabilityPoli
 
     public EmbeddableRuntimeCapabilities GetCapabilities() => Capabilities;
 
-    // THE ZERO-CLIENT CHOKE POINT. Every state and scene entry the host offers passes through one of the
-    // ZeroClientGuard.EnterPort calls below, so a caller added tomorrow is watched without knowing it. Each
-    // call is one integer read while a client or an owned seat exists; see ZeroClientGuard.
-    public CurrentStateResult GetCurrentState(CurrentStateRequest request)
-    {
-        ZeroClientGuard.EnterPort(ZeroClientEntries.StateRead);
-        RequireCapability(StateCapability);
-        return _stateSource.GetCurrentState(request);
-    }
-
-    // The runtime port's live state watcher; the callback fires on a background thread whenever the game state
-    // changes. CouchCoop itself no longer subscribes (the roster observer is driven by game signals and reads typed
-    // facts), so this exists only as the port adapter and is what the zero-client contract's rogue subscriber drives.
-    // Returns the subscription's IDisposable.
-    public IDisposable SubscribeCurrentState(
-        CurrentStateSubscriptionRequest request,
-        Action<CurrentStateWatchEvent> onEvent,
-        Action<EmbeddableRuntimeError>? onError = null)
-    {
-        ZeroClientGuard.EnterPort(ZeroClientEntries.StateSubscribe);
-        RequireCapability(StateCapability);
-        return _stateSource.SubscribeCurrentState(request, onEvent, onError);
-    }
-
-    public IAsyncEnumerable<CurrentStateWatchEvent> WatchCurrentStateAsync(
-        CurrentStateSubscriptionRequest request, CancellationToken cancellationToken = default)
-    {
-        ZeroClientGuard.EnterPort(ZeroClientEntries.StateSubscribe);
-        RequireCapability(StateCapability);
-        return _stateSource.WatchCurrentStateAsync(request, cancellationToken);
-    }
-
     // Subscribe ONCE to the live Godot-tween timing HINT stream. Distinct from the state and
     // combat-event subscriptions: hints are a hot, ephemeral, non-buffered PRE-ARM signal (no
     // sequence / ring / replay) used only to arm CSS transition timings. The FIRST subscription
@@ -197,7 +163,7 @@ public sealed class CouchCoopRuntimeHost : IDisposable, ICouchCoopCapabilityPoli
 
     // Subscribe ONCE to the live scene-DELTA stream (the "mirror" transport). The callback fires on a
     // background thread whenever the live tree changes; the first emission is a Full keyframe, then
-    // incremental deltas. Independent of the state port — a mirror-only deployment never touches it.
+    // incremental deltas. This is the read-only transport the mirror consumes.
     public IDisposable SubscribeRuntimeSceneDelta(
         RuntimeSceneSubscriptionRequest request,
         Action<RuntimeSceneDelta> onDelta,

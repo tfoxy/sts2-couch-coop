@@ -37,6 +37,10 @@ internal static class HeadlessClientManagerTests
         await NetIdBoundJoinOnAnUnclaimedSeatObeysAllowNewSlot();
         await DescribeSeatsReportsClaimsAndLiveness();
         await ReapSeatKillsTheInstanceAndDropsTheClaim();
+        await DescribeSeatsGivenTheCapIsSizedByItAndAsksNoProbe();
+        await DescribeSeatsGivenTheCapNeverWaitsOnTheSeatCapProbe();
+        await ReapSeatAsksTheLobbyNothingAndIgnoresAShrunkenCap();
+        await CountLiveSeatProcessesCountsProcessesAndAsksTheLobbyNothing();
         await DescribeSeatsDoesNotHoldTheLockAcrossTheSeatCapProbe();
         await EnsureHeadlessDoesNotHoldTheLockAcrossTheSeatCapProbe();
         await NetIdBoundEnsureDoesNotHoldTheLockAcrossTheSeatCapProbe();
@@ -120,6 +124,10 @@ internal static class HeadlessClientManagerTests
         // browser comes back. FALSE is both the default and what the load-saved-run lobby reports, which is why
         // the rejoin flow that genuinely works stays open under this gate.
         public bool RunInProgress;
+        // How many times the manager asked the lobby for its cap through the probe. The session envelope reads the cap
+        // itself, once, with the roster, and hands it to DescribeSeats(cap), so this must not move for it.
+        private int _probeCalls;
+        public int ProbeCalls => Volatile.Read(ref _probeCalls);
 
         public Harness(int? maxSeats = 3, Action<int, long>? ownedSeatCountChanged = null)
         {
@@ -137,7 +145,11 @@ internal static class HeadlessClientManagerTests
                 },
                 // Instant "ready" so EnsureHeadlessAsync returns the port without a real HTTP poll.
                 readinessProbe: (_, _) => Task.FromResult(true),
-                maxSeatsProbe: () => MaxSeats,
+                maxSeatsProbe: () =>
+                {
+                    Interlocked.Increment(ref _probeCalls);
+                    return MaxSeats;
+                },
                 runInProgressProbe: () => RunInProgress,
                 ownedSeatCountChanged: ownedSeatCountChanged);
         }
@@ -585,9 +597,84 @@ internal static class HeadlessClientManagerTests
         Assert(h.Spawned.Count == 2, "…with a genuinely new process");
     }
 
+    // The session envelope reads the lobby's cap once, WITH the roster, and hands it to the manager: describing the seats is
+    // then a read of the manager's own bookkeeping and asks the game nothing. (The probe form cost a hop to the game's
+    // main thread per call, and an envelope is built per connection on every roster, screen and background change.)
+    private static Task DescribeSeatsGivenTheCapIsSizedByItAndAsksNoProbe()
+    {
+        var h = new Harness(maxSeats: 3);
+        h.MaxSeats = 99; // the probe would say something else entirely, if it were asked
+        Assert(h.Manager.DescribeSeats(3).Count == 3, "a stock lobby's three couch seats are described");
+        var seven = h.Manager.DescribeSeats(7);
+        Assert(seven.Count == 7 && seven[0].NetId == 1002 && seven[^1].NetId == 1008, "a raised cap describes the seats it opens");
+        var unknown = h.Manager.DescribeSeats(null);
+        Assert(unknown.Count == 98 && unknown[^1].NetId == 1099,
+            "no known cap leaves the guard band as the only limit, exactly as a probe that reports no lobby did");
+        Assert(h.Manager.DescribeSeats(5000).Count == 98, "a cap wider than the guard band is clamped to it");
+        Assert(h.Manager.DescribeSeats(0).Count == 1, "a cap that leaves no seat still describes the first slot, as the probe form did");
+        Assert(h.ProbeCalls == 0, "describing the seats from a cap the caller read asked the lobby nothing");
+
+        // CONTROL: the parameterless form still asks, and the two agree for the same cap.
+        h.MaxSeats = 7;
+        var byProbe = h.Manager.DescribeSeats();
+        Assert(h.ProbeCalls == 1, "control: the probe form asks the lobby once per call");
+        Assert(byProbe.SequenceEqual(h.Manager.DescribeSeats(7)), "the two forms describe the same seats for the same cap");
+
+        // A manager nobody gave a probe was never told there is a lobby, and keeps the stock three whatever it is handed.
+        using var unprobed = new HeadlessClientManager(launcher: _ => null);
+        Assert(unprobed.DescribeSeats(15).Count == 3 && unprobed.DescribeSeats(null).Count == 3,
+            "an unprobed manager keeps the historical three seats");
+        return Task.CompletedTask;
+    }
+
+    // The lock rule the room-load freeze taught: nothing under the manager's lock, or before it, may wait on the game's main
+    // thread. A DescribeSeats that is handed the cap must not reach the probe at all, so a probe parked forever cannot park it.
+    private static async Task DescribeSeatsGivenTheCapNeverWaitsOnTheSeatCapProbe()
+    {
+        using var probeEntered = new ManualResetEventSlim();
+        using var release = new ManualResetEventSlim();
+        var manager = BlockingProbeManager(probeEntered, release);
+        var describe = Task.Run(() => manager.DescribeSeats(3).Count);
+        Assert(await Task.WhenAny(describe, Task.Delay(TimeSpan.FromSeconds(2))) == describe && describe.Result == 3,
+            "describing with a cap completes while the probe would be parked");
+        Assert(!probeEntered.IsSet, "…because it never enters the probe");
+        release.Set();
+    }
+
+    // A reap needs to know which slot a netId names and whether a process lives there; the lobby's current cap is neither. A
+    // seat spawned under a raised cap is still a zombie to reap after the cap has fallen back.
+    private static async Task ReapSeatAsksTheLobbyNothingAndIgnoresAShrunkenCap()
+    {
+        var h = new Harness(maxSeats: 15);
+        await h.Manager.EnsureHeadlessAsync(Guid.NewGuid(), "Eve", default, targetNetId: 1005);
+        h.MaxSeats = 3; // the lobby shrank below the seat's slot
+        var asked = h.ProbeCalls;
+        Assert(h.Manager.ReapSeat(1005), "a zombie is reaped even though the cap has since fallen below its slot");
+        Assert(h.Spawned[0].HardKilled, "…and it is really killed");
+        Assert(h.ProbeCalls == asked, "reaping asked the lobby nothing");
+        Assert(!h.Manager.ReapSeat(1100) && !h.Manager.ReapSeat(1) && !h.Manager.ReapSeat(1001),
+            "a netId outside the guard band is still a no-op");
+        Assert(!h.Manager.TryNetIdToSlot(1005, out _), "control: the range-checked lookup still honours the cap (path 4 owns that one)");
+    }
+
+    // The spine bake budget only wants how many seat processes are running: a count of the bookkeeping, not a description of
+    // every seat sized by the lobby's cap.
+    private static async Task CountLiveSeatProcessesCountsProcessesAndAsksTheLobbyNothing()
+    {
+        var h = new Harness(maxSeats: 3);
+        Assert(h.Manager.CountLiveSeatProcesses() == 0, "a fresh manager runs nothing");
+        await h.Manager.EnsureHeadlessAsync(Guid.NewGuid(), "Ann", default);
+        await h.Manager.EnsureHeadlessAsync(Guid.NewGuid(), "Bob", default);
+        var asked = h.ProbeCalls;
+        Assert(h.Manager.CountLiveSeatProcesses() == 2, "two live seats are two instances");
+        h.Spawned[0].ForceExit();
+        Assert(h.Manager.CountLiveSeatProcesses() == 1, "a claimed seat whose process is gone is not an instance: it costs the machine nothing");
+        Assert(h.ProbeCalls == asked, "counting asked the lobby nothing");
+    }
+
     // ---- seat-cap probe vs the manager lock --------------------------------------------------------------------
     //
-    // The max-seats probe is CouchCoopLobbyParticipation.MaxCouchSeats: a state pull that BLOCKS on a marshal to
+    // The max-seats probe is CouchCoopLobbyParticipation.MaxCouchSeats: a lobby-cap read that BLOCKS on a marshal to
     // the game's main thread. The main thread itself takes this manager's lock (DescribeSeats via the screen-change
     // session resend, Dispose at shutdown), so any entry point that evaluates the probe while holding the lock is
     // an ABBA deadlock that freezes the whole game — which is exactly what happened on room loads with a mirror

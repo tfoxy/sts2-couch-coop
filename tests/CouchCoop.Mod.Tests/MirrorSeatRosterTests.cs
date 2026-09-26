@@ -1,6 +1,6 @@
 using CouchCoop.Mod.Session;
 using CouchCoop.MirrorProtocol.Envelopes;
-using Spirectl.Sts2.Core.State;
+using CouchCoop.Mod.Contracts;
 
 // Checks for the SEAT half of the mirror join screen: the per-seat status the host derives (MirrorSeatDirectory —
 // including the grace window that stops a slow cold start being mistaken for a zombie, and the auto-reap) and the
@@ -54,7 +54,7 @@ internal static class MirrorSeatRosterTests
         var reaped = new List<ulong>();
         var live = seats.ToList();
         var directory = new MirrorSeatDirectory(
-            describeSeats: () => live,
+            describeSeats: _ => live,
             reapSeat: netId =>
             {
                 reaped.Add(netId);
@@ -152,7 +152,7 @@ internal static class MirrorSeatRosterTests
         params MirrorSeatDescription[] seats)
     {
         var live = seats.ToList();
-        return (new MirrorSeatDirectory(describeSeats: () => live), live);
+        return (new MirrorSeatDirectory(describeSeats: _ => live), live);
     }
 
 
@@ -361,7 +361,7 @@ internal static class MirrorSeatRosterTests
             saved: ["p:1", "p:1002", "p:1003"]);
 
         var players = WithNames(new Dictionary<ulong, string> { [1002] = "Ann" },
-            () => BrowserAssignmentClassifier.Classify(state, new BrowserSessionRegistry(), requestedName: null).Players);
+            () => ClassifyState(state).Players);
 
         Assert(players.Count == 3, "the lobby's host plus the two absent saved seats");
         var seat1002 = Find(players, "p:1002");
@@ -385,16 +385,14 @@ internal static class MirrorSeatRosterTests
             saved: ["p:1", "p:1002"]);
 
         var lobbyPlayers = WithNames(new Dictionary<ulong, string> { [1002] = "Ann" },
-            () => BrowserAssignmentClassifier.Classify(lobbyState, new BrowserSessionRegistry(), requestedName: null).Players);
+            () => ClassifyState(lobbyState).Players);
 
         Assert(Find(lobbyPlayers, "p:1").CharacterId == "ironclad", "a live lobby entry publishes its character");
         // A saved seat nobody has rejoined has no LIVE lobby entry to read a character from, and the save
         // snapshot carries none — so the field is absent rather than guessed, and the row simply has no icon.
         Assert(Find(lobbyPlayers, "p:1002").CharacterId is null, "an absent saved seat publishes no character rather than a guess");
 
-        var runPlayers = BrowserAssignmentClassifier
-            .Classify(Run(RunPlayer("p:1", "Hosty", isHost: true, connected: true)), new BrowserSessionRegistry(), requestedName: null)
-            .Players;
+        var runPlayers = ClassifyState(Run(RunPlayer("p:1", "Hosty", isHost: true, connected: true))).Players;
         Assert(Find(runPlayers, "p:1").CharacterId == "ironclad", "a run player publishes its character too");
     }
 
@@ -405,11 +403,11 @@ internal static class MirrorSeatRosterTests
         // The save file stores NO display names anywhere, so with nothing remembered the seat still has to be
         // legible — "Player 1003" beats the raw "p:1003" player id the old code fell back to.
         var unnamed = WithNames(new Dictionary<ulong, string>(),
-            () => BrowserAssignmentClassifier.Classify(state, new BrowserSessionRegistry(), requestedName: null).Players);
+            () => ClassifyState(state).Players);
         Assert(Find(unnamed, "p:1003").Name == "Player 1003", "an unknown saved seat synthesizes a legible label");
 
         var remembered = WithNames(new Dictionary<ulong, string> { [1003] = "Bea" },
-            () => BrowserAssignmentClassifier.Classify(state, new BrowserSessionRegistry(), requestedName: null).Players);
+            () => ClassifyState(state).Players);
         Assert(Find(remembered, "p:1003").Name == "Bea", "a remembered name wins over the synthesized one");
     }
 
@@ -421,7 +419,7 @@ internal static class MirrorSeatRosterTests
             saved: ["p:1002", "p:1003"]);
 
         var players = WithNames(new Dictionary<ulong, string> { [1002] = "STALE" },
-            () => BrowserAssignmentClassifier.Classify(state, new BrowserSessionRegistry(), requestedName: null).Players);
+            () => ClassifyState(state).Players);
 
         Assert(players.Count == 3, "the union deduplicates by netId, not by list");
         var back = Find(players, "p:1002");
@@ -440,7 +438,7 @@ internal static class MirrorSeatRosterTests
             RunPlayer("p:1000", "Remote", isHost: false, connected: true));
 
         var players = WithNames(new Dictionary<ulong, string>(),
-            () => BrowserAssignmentClassifier.Classify(state, new BrowserSessionRegistry(), requestedName: null).Players);
+            () => ClassifyState(state).Players);
 
         Assert(Find(players, "p:1002").IsMirrorSeat, "1002 is a mirror seat");
         Assert(!Find(players, "p:1002").Disconnected,
@@ -454,10 +452,13 @@ internal static class MirrorSeatRosterTests
 
     // ---- helpers ---------------------------------------------------------------------------------------------
 
+    private static BrowserAssignmentState ClassifyState(RosterFacts? roster)
+        => BrowserAssignmentClassifier.Classify(roster, new BrowserSessionRegistry(), requestedName: null);
+
     // Run `body` with a throwaway working directory containing the given mp_names.json roster, so the classifier's
     // ReadMultiplayerNames() call resolves against it instead of whatever is next to the test binary. The tests run
     // sequentially, so swapping the process CWD is safe; it is always restored.
-    private static T WithNames<T>(IReadOnlyDictionary<ulong, string> names, Func<T> body)
+    internal static T WithNames<T>(IReadOnlyDictionary<ulong, string> names, Func<T> body)
     {
         var previous = System.IO.Directory.GetCurrentDirectory();
         var temp = Path.Combine(Path.GetTempPath(), "couchcoop-mpnames-" + Guid.NewGuid().ToString("N"));
@@ -480,81 +481,20 @@ internal static class MirrorSeatRosterTests
         => players.FirstOrDefault(player => player.PlayerId == playerId)
             ?? throw new InvalidOperationException($"roster is missing {playerId}: [{string.Join(", ", players.Select(p => p.PlayerId))}]");
 
-    internal static StateCharacterSelectPlayerSnapshot LobbyPlayer(string id, string? name, bool connected)
-        => new(id, 0, "ironclad", IsReady: false, MaxMultiplayerAscensionUnlocked: 20, DisplayName: name, IsConnected: connected);
+    internal static RosterLobbySeat LobbyPlayer(string id, string? name, bool connected)
+        => new(id, name, "ironclad", connected);
 
-    internal static StateSnapshot LoadGameLobby(
-        IReadOnlyList<StateCharacterSelectPlayerSnapshot> lobby,
+    internal static RosterFacts LoadGameLobby(
+        IReadOnlyList<RosterLobbySeat> lobby,
         IReadOnlyList<string> saved)
-        => new(
-            StateSnapshot.CurrentSchemaVersion,
-            Language: null,
-            RootScene: "screens/character_select_screen",
-            CharacterSelect: new StateCharacterSelectSnapshot(
-                new StateCharacterSelectLobbySnapshot(
-                    "host",
-                    LocalPlayerId: "p:1",
-                    HostPlayerId: "p:1",
-                    ConnectingPlayerCount: 0,
-                    Ascension: 0,
-                    MaxAscension: 20,
-                    Act1: "random",
-                    Seed: null,
-                    ModifierIds: [],
-                    Players: lobby,
-                    SavedRun: new StateCharacterSelectSavedRunSnapshot(
-                        CurrentActIndex: 0,
-                        ActFloor: 3,
-                        Players: saved.Select(id => new StateCharacterSelectSavedRunPlayerSnapshot(id, 40, 80, 120)).ToArray())),
-                CharacterButtons: [],
-                View: null),
-            Run: null);
+        => new(RosterRootScenes.LoadGame,
+            new RosterLobby("host", "p:1", true, lobby, saved), null);
 
-    internal static StateRunPlayerSnapshot RunPlayer(string id, string name, bool isHost, bool connected)
-        => new(
-            id,
-            "test",
-            NetId: null,
-            DisplayName: name,
-            CharacterId: "ironclad",
-            IsLocal: isHost,
-            IsHost: isHost,
-            IsRemote: !isHost,
-            Creature: null,
-            Gold: 0,
-            Deck: null,
-            Relics: [],
-            InventoryComplete: true,
-            Notices: [],
-            IsConnected: connected);
+    internal static RosterRunSeat RunPlayer(string id, string name, bool isHost, bool connected)
+        => new(id, name, "ironclad", isHost, connected);
 
-    internal static StateSnapshot Run(params StateRunPlayerSnapshot[] players)
-        => new(
-            StateSnapshot.CurrentSchemaVersion,
-            Language: null,
-            RootScene: "run",
-            CharacterSelect: null,
-            Run: new StateRunSnapshot(
-                "test",
-                "test",
-                "multiplayer",
-                "standard",
-                "seed:test",
-                AscensionLevel: 0,
-                ActId: "act1",
-                CurrentActIndex: 0,
-                ActFloor: 0,
-                TotalFloor: 0,
-                BossEncounterId: null,
-                SecondBossEncounterId: null,
-                CurrentMapCoord: null,
-                CurrentMapPointId: null,
-                VisitedMapCoords: [],
-                Players: players,
-                Map: null,
-                CurrentRoom: null,
-                Notices: [],
-                View: new StateRunViewSnapshot("p:1", null)));
+    internal static RosterFacts Run(params RosterRunSeat[] players)
+        => new(RosterRootScenes.Run, null, new RosterRun("multiplayer", "p:1", players));
 
     private static void Assert(bool condition, string message)
     {

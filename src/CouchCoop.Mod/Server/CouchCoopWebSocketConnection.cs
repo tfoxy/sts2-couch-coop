@@ -571,7 +571,11 @@ public sealed class CouchCoopWebSocketConnection
             }
             else
             {
-                var ctx = _lobby.DescribeMirrorJoinContext();
+                // ONE read of the game for the whole join: the roster the spawn decision below is made on and, in the
+                // same hop onto the main thread, the lobby cap and run presence the seat manager launches on (handed to
+                // EnsureHeadlessAsync so it does not ask again). No game-state snapshot is built for any of it.
+                var joinRead = _lobby.DescribeJoin();
+                var ctx = joinRead.Context;
                 // Publish who the HOST can name (itself — a SteamID64 on a Steam-hosted session — plus
                 // every remote player) to the durable roster BEFORE any spawn decision below, so the
                 // seat we may be about to launch reads a complete mp_names.json at construction and
@@ -658,7 +662,8 @@ public sealed class CouchCoopWebSocketConnection
                         onSlotBound: RegisterClientNameAtSlotBind,
                         // Bind the instance to the PICKED seat's netId rather than letting the allocator
                         // choose by name. Null for a free-text name submit (no seat yet).
-                        targetNetId: targetNetId).ConfigureAwait(false);
+                        targetNetId: targetNetId,
+                        hostFacts: joinRead.Seats).ConfigureAwait(false);
                     if (headlessPort is int readyPort)
                     {
                         // The headless's REAL ENet player IS this browser's player. Name that real netId
@@ -1238,7 +1243,9 @@ public sealed class CouchCoopWebSocketConnection
 
     // Re-send this connection's `session` envelope (identity + roster + run status). The server calls it when
     // the lobby roster / run status changes so the shared join screen stays live. Best-effort: no-op if the session handle isn't set yet or the socket is gone.
-    public async Task ResendSessionAsync(CancellationToken cancellationToken)
+    // `facts` is what the server's fan-out read ONCE for every connection (CouchCoopBrowserServer.ResendSessions); this
+    // connection still classifies it against its own session. Null reads the roster here.
+    public async Task ResendSessionAsync(SessionFacts? facts, CancellationToken cancellationToken)
     {
         var session = _session;
         if (session is null || _socket is not { State: WebSocketState.Open })
@@ -1252,7 +1259,8 @@ public sealed class CouchCoopWebSocketConnection
                 _viewerName,
                 "session",
                 session,
-                cancellationToken: cancellationToken).ConfigureAwait(false)).ConfigureAwait(false);
+                cancellationToken: cancellationToken,
+                facts: facts).ConfigureAwait(false)).ConfigureAwait(false);
         }
         catch
         {

@@ -1,10 +1,9 @@
 using System.Text.Json;
+using CouchCoop.Mod.Contracts;
 using CouchCoop.MirrorProtocol.Envelopes;
 using CouchCoop.Mod.Runtime;
 using CouchCoop.Mod.Server;
 using CouchCoop.Mod.Session;
-using Spirectl.Sts2.Core.State;
-using Spirectl.Sts2.Embedding;
 
 namespace CouchCoop.Mod.Protocol;
 
@@ -19,14 +18,41 @@ public sealed class BrowserStateEnvelopeFactory(
     // across connections — it carries the grace-window bookkeeping a per-connection instance would keep resetting —
     // so the server owns one and hands the same reference to every connection factory. Null on a headless client
     // instance (it owns no seats) and in tests; every seat then reports ready.
-    MirrorSeatDirectory? mirrorSeats = null)
+    MirrorSeatDirectory? mirrorSeats = null,
+    // Reads the roster (and, when asked, the lobby cap) one envelope is classified from. Null (the default, and every
+    // shipped path) reads the game through CouchCoopGameFacts. A seam for the hosted-server harness and the route
+    // tests, which have no game behind them and say what "the game" reports per server. The bool is whether the seat
+    // table needs the lobby's cap.
+    Func<bool, SessionFacts>? readSessionFacts = null)
 {
     private readonly CouchCoopRuntimeHost _runtimeHost = runtimeHost ?? throw new ArgumentNullException(nameof(runtimeHost));
     private readonly BrowserSessionRegistry _sessions = sessions ?? new();
     private readonly Func<string?>? _androidApkUrl = androidApkUrl;
     private readonly MirrorSeatDirectory? _mirrorSeats = mirrorSeats;
+    private readonly Func<bool, SessionFacts>? _readSessionFacts = readSessionFacts;
 
     internal CouchCoopRuntimeHost RuntimeHost => _runtimeHost;
+
+    /// <summary>The reader this factory was given, so the server's per-connection factories read as it does.</summary>
+    internal Func<bool, SessionFacts>? SessionFactsReader => _readSessionFacts;
+
+    /// <summary>
+    /// Read what one <c>session</c> envelope is classified from: the roster, and the lobby cap when
+    /// <paramref name="seats"/> has a seat table to size from it, in one hop to the game's main thread. A fan-out to many
+    /// connections calls this once and hands the result to each (<see cref="CreateSessionEnvelope"/>'s
+    /// <c>facts</c>), so N envelopes cost one read; classification stays per connection because it depends on that
+    /// connection's session.
+    /// <para>
+    /// NEVER CALL IT WHILE HOLDING A MOD LOCK: it waits on the game's main thread, which may be waiting on that lock.
+    /// </para>
+    /// </summary>
+    internal SessionFacts ReadSessionFacts(MirrorSeatDirectory? seats)
+    {
+        var withLobbyCap = seats?.DescribesSeats == true;
+        return _readSessionFacts is { } read
+            ? read(withLobbyCap)
+            : CouchCoopGameFacts.ReadSessionFacts(withLobbyCap);
+    }
 
     /// <summary>
     /// The <c>joinRejection</c> code for a mirror join that targets <paramref name="targetNetId"/>, or null when it
@@ -36,8 +62,9 @@ public sealed class BrowserStateEnvelopeFactory(
     internal string? RefuseSeatJoin(ulong? targetNetId) => _mirrorSeats?.RefuseJoin(targetNetId);
 
     // Build the per-client `session` message: identity + capabilities/notices + the lobby/run assignment.
-    // The rendered game state (stateV2) is NOT in here. The current game state is still PULLED here (identity-only)
-    // so a just-joined seat is resolved immediately, rather than trusting whatever the roster observer last read.
+    // The rendered game state is NOT in here. The roster the assignment is classified from is READ here (or handed in by
+    // a fan-out that already read it for every connection), so a just-joined seat is resolved immediately, rather than
+    // trusting whatever the roster observer last read. It is one roster read, and never a full state snapshot.
     public async Task<BrowserEnvelope> CreateSessionEnvelope(
         string? viewerName,
         string requestId,
@@ -48,7 +75,9 @@ public sealed class BrowserStateEnvelopeFactory(
         // Server-fault text for joinRejection == "join-failed" only; ignored (and omitted from the wire) otherwise.
         string? joinRejectionDetail = null,
         string? connectionAttemptId = null,
-        CancellationToken cancellationToken = default)
+        CancellationToken cancellationToken = default,
+        // What a fan-out read once for all of its connections (see ReadSessionFacts). Null reads it here.
+        SessionFacts? facts = null)
     {
         cancellationToken.ThrowIfCancellationRequested();
 
@@ -105,8 +134,26 @@ public sealed class BrowserStateEnvelopeFactory(
         }
 
         var notices = _runtimeHost.Notices.ToList();
-        var stateV2 = CreateStateV2(notices);
-        var assignment = BrowserAssignmentClassifier.Classify(stateV2, _sessions, viewerName, session, _mirrorSeats);
+        var read = facts ?? ReadSessionFacts(_mirrorSeats);
+        if (read.Roster is null)
+        {
+            // Unreadable, which is "unavailable" and never "nobody here": the screen classifies as unsupported and the
+            // envelope says why, as it did when the full state snapshot failed.
+            notices.Add(new CouchCoopRuntimeNotice(
+                CouchCoopRuntimeHost.StateCapability,
+                Supported: false,
+                Provisional: true,
+                UnsupportedReason: "Runtime state is unavailable."));
+        }
+
+        var assignment = BrowserAssignmentClassifier.Classify(
+            read.Roster,
+            _sessions,
+            viewerName,
+            session,
+            _mirrorSeats,
+            // The seat table's size, from the cap read with the roster: describing the seats asks the game nothing.
+            _mirrorSeats?.DescribesSeats == true ? CouchCoopLobbyParticipation.MaxCouchSeatsOf(read.LobbyCap) : null);
         // A REFUSED join must not also report itself joined. The classifier answers a different question than the
         // join handler does — it binds the viewer's NAME to a roster option, which is what `session.joined` reports
         // — while `joinRejection` says the mirror join itself was turned away, so a refusal used to ride out
@@ -179,26 +226,4 @@ public sealed class BrowserStateEnvelopeFactory(
 
     private static JsonElement ToJsonElement<T>(T value)
         => JsonSerializer.SerializeToElement(value, BrowserJson.Options);
-
-    private StateSnapshot? CreateStateV2(List<CouchCoopRuntimeNotice> notices)
-    {
-        if (!_runtimeHost.HasCapability(CouchCoopRuntimeHost.StateCapability))
-        {
-            return null;
-        }
-
-        var result = _runtimeHost.GetCurrentState(new CurrentStateRequest());
-        if (result.Success && result.State is not null)
-        {
-            return result.State;
-        }
-
-        var error = result.Error;
-        notices.Add(new CouchCoopRuntimeNotice(
-            CouchCoopRuntimeHost.StateCapability,
-            Supported: false,
-            Provisional: true,
-            UnsupportedReason: error?.Message ?? "Runtime state is unavailable."));
-        return null;
-    }
 }

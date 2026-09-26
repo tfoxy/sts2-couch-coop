@@ -34,6 +34,7 @@ internal static class CouchCoopRosterObserverTests
         SignalListenersAreBalancedAndSwallowFailures();
         ProductionSubscriptionIsReadOnSignalsAndReleasedOnDispose();
         ReactionRepublishesAndResendsOncePerChange();
+        ReactionResendsWhenRosterDetailsChange();
         ReactionResetMakesTheNextRosterAChange();
         ReactionReapsOnlyAfterTheRunAndLobbyEnd();
         ReactionSurvivesAFailingNamePublish();
@@ -510,6 +511,64 @@ internal static class CouchCoopRosterObserverTests
         Expect(noManager.Resent == 1, "a headless client (no manager) still re-sends sessions");
     }
 
+    private static void ReactionResendsWhenRosterDetailsChange()
+    {
+        var rig = new ReactionRig();
+        var lobby = Roster(2);
+        rig.Reaction.Apply(lobby);
+        var renamedLobby = lobby with
+        {
+            Lobby = lobby.Lobby! with
+            {
+                Seats = [lobby.Lobby.Seats[0], lobby.Lobby.Seats[1] with { DisplayName = "Renamed" }],
+            },
+        };
+        rig.Reaction.Apply(renamedLobby);
+        Expect(rig.Resent == 2 && rig.Published == 2, "a lobby name change with the same ids and connectivity re-sends once");
+        var changedLobbyCharacter = renamedLobby with
+        {
+            Lobby = renamedLobby.Lobby! with
+            {
+                Seats = [renamedLobby.Lobby.Seats[0], renamedLobby.Lobby.Seats[1] with { CharacterId = "DEFECT" }],
+            },
+        };
+        rig.Reaction.Apply(changedLobbyCharacter);
+        Expect(rig.Resent == 3, "a lobby character change with the same ids and connectivity re-sends once");
+        rig.Reaction.Apply(changedLobbyCharacter with { Lobby = changedLobbyCharacter.Lobby! with { Seats = [.. changedLobbyCharacter.Lobby.Seats] } });
+        Expect(rig.Resent == 3, "a separate value-equal lobby read does not re-send");
+
+        var run = InRun();
+        rig.Reaction.Apply(run);
+        Expect(rig.Resent == 4, "entering the run re-sends");
+        var changedRunName = run with
+        {
+            Run = run.Run! with { Seats = [run.Run.Seats[0], run.Run.Seats[1] with { DisplayName = "Run name" }] },
+        };
+        rig.Reaction.Apply(changedRunName);
+        Expect(rig.Resent == 5, "a run name change with the same ids and connectivity re-sends");
+        var changedRunCharacter = changedRunName with
+        {
+            Run = changedRunName.Run! with
+            {
+                Seats = [changedRunName.Run.Seats[0], changedRunName.Run.Seats[1] with { CharacterId = "DEFECT" }],
+            },
+        };
+        rig.Reaction.Apply(changedRunCharacter);
+        Expect(rig.Resent == 6, "a run character change with the same ids and connectivity re-sends");
+        rig.Reaction.Apply(changedRunCharacter with
+        {
+            Run = changedRunCharacter.Run! with
+            {
+                Seats = [changedRunCharacter.Run.Seats[0], changedRunCharacter.Run.Seats[1] with { IsHost = true }],
+            },
+        });
+        Expect(rig.Resent == 7, "a host-role change with the same ids and connectivity re-sends");
+        rig.Reaction.Apply(InRun());
+        Expect(rig.Resent == 8, "returning to a previously seen roster is a change from the latest read");
+        rig.Reaction.Apply(InRun());
+        Expect(rig.Resent == 8, "a separate value-equal run read does not re-send");
+    }
+
     // The next observer is free to re-broadcast the first roster it reads.
     private static void ReactionResetMakesTheNextRosterAChange()
     {
@@ -557,7 +616,7 @@ internal static class CouchCoopRosterObserverTests
     {
         var data = RosterSignalTargets.Targets;
         var bindings = RosterSignalPatch.Bindings;
-        Expect(data.Count == 7 && bindings.Count == data.Count, "seven roster methods are hooked");
+        Expect(data.Count == 8 && bindings.Count == data.Count, "eight roster methods are hooked");
 
         for (var index = 0; index < data.Count; index++)
         {
@@ -595,9 +654,12 @@ internal static class CouchCoopRosterObserverTests
             "every other hook only wakes, and takes nothing from the game");
         Expect(data.Select(target => target.Key).Distinct().Count() == data.Count, "targets are unique");
         Expect(data.Count(target => target.TypeName == RosterSignalTargets.RunManager) == 1
-                && data.Count(target => target.TypeName == RosterSignalTargets.CharacterSelectScreen) == 2
+                && data.Count(target => target.TypeName == RosterSignalTargets.CharacterSelectScreen) == 3
                 && data.Count(target => target.TypeName == RosterSignalTargets.LoadRunScreen) == 2,
-            "the run clean-up, the two new-run screen callbacks and the two saved-run screen callbacks are all hooked");
+            "the run clean-up, the three new-run screen callbacks and the two saved-run screen callbacks are all hooked");
+        Expect(data.Count(target => target.TypeName == RosterSignalTargets.CharacterSelectScreen
+                && target.MethodName == nameof(MegaCrit.Sts2.Core.Nodes.Screens.CharacterSelect.NCharacterSelectScreen.PlayerChanged)) == 1,
+            "the character-change callback wakes the roster observer");
     }
 
     /// <summary>

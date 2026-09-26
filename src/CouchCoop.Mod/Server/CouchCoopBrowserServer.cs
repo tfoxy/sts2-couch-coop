@@ -14,7 +14,6 @@ using CouchCoop.Mod.Session;
 using CouchCoop.MirrorProtocol.Assets;
 using CouchCoop.MirrorProtocol.SceneModel;
 using Spirectl.Sts2.Core.SceneInspection;
-using Spirectl.Sts2.Core.State;
 using Spirectl.Sts2.Embedding;
 
 namespace CouchCoop.Mod.Server;
@@ -191,13 +190,7 @@ public sealed class CouchCoopBrowserServer(
             }
 
             var created = new CouchCoopStaticBackgroundTracker(
-                onPublishedChanged: () =>
-                {
-                    foreach (var connection in _connections.Values)
-                    {
-                        _ = connection.ResendSessionAsync(CancellationToken.None);
-                    }
-                },
+                onPublishedChanged: ResendSessions,
                 log: _log,
                 warmVariant: WarmPublishedStaticBackground);
             return Interlocked.CompareExchange(ref _staticBgTracker, created, null) ?? created;
@@ -892,19 +885,41 @@ public sealed class CouchCoopBrowserServer(
         }
     }
 
+    /// <summary>
+    /// Re-send every connection's <c>session</c> envelope, reading what they are classified from ONCE for all of them:
+    /// a roster change, a screen change and a static-background change each used to cost every connection its own game
+    /// read (times the seat table's own cap read), so N phones cost N marshals to the game's main thread per change.
+    /// Classification stays per connection because it depends on that connection's session. With no connection there is
+    /// nothing to send and nothing is read.
+    /// <para>
+    /// The read waits on the game's main thread, so nothing here may hold a mod lock, and the sends are fire-and-forget
+    /// exactly as before: each connection's envelope is built and written on whichever thread the caller is on, up to
+    /// its first real await. Its callers run on the roster worker, the scene observer's thread and (for a static
+    /// background change) the game's main thread, where the read is inline. Moving the fan-out off the caller's thread
+    /// would let two changes' envelopes reach one connection out of order, so it is deliberately left as it was.
+    /// </para>
+    /// </summary>
+    internal void ResendSessions()
+    {
+        if (_connections.IsEmpty || envelopeFactory is null)
+        {
+            return;
+        }
+
+        var facts = envelopeFactory.ReadSessionFacts(MirrorSeats());
+        foreach (var connection in _connections.Values)
+        {
+            _ = connection.ResendSessionAsync(facts, CancellationToken.None);
+        }
+    }
+
     // What a roster read makes the server do (see CouchCoopRosterReaction). Built with the observer, under
     // _observerGate; the effects run later on the serial roster worker, never under a lock.
     private CouchCoopRosterReaction CreateRosterReaction()
         => new(
             // Host only: a headless client has no manager and publishes no names.
             publishNames: _headlessManager is { } manager ? manager.PublishRosterNames : null,
-            resendSessions: () =>
-            {
-                foreach (var connection in _connections.Values)
-                {
-                    _ = connection.ResendSessionAsync(CancellationToken.None);
-                }
-            },
+            resendSessions: ResendSessions,
             reapDetachedSeats: _headlessManager is not null && envelopeFactory is not null ? ReapDetachedHeadless : null,
             log: _log);
 
@@ -1118,10 +1133,7 @@ public sealed class CouchCoopBrowserServer(
             return; // first delta of this observer generation — record the baseline, don't announce it
         }
 
-        foreach (var connection in _connections.Values)
-        {
-            _ = connection.ResendSessionAsync(CancellationToken.None);
-        }
+        ResendSessions();
     }
 
     // WS-3: forward the declarative card flights the producer started this tick, keyed to mirror nodes by exact
@@ -1620,7 +1632,8 @@ public sealed class CouchCoopBrowserServer(
                     : "/" + StaticSpaFileProvider.AndroidApkFileName,
                 // The host's ONE seat directory (see _mirrorSeats): its grace-window bookkeeping must outlive any
                 // single connection, so the same instance is shared rather than one built per socket.
-                mirrorSeats: MirrorSeats());
+                mirrorSeats: MirrorSeats(),
+                readSessionFacts: envelopeFactory.SessionFactsReader);
             var diagnosticVisit = request.QueryValues.GetValueOrDefault(BrowserLifecycleDiagnostics.WebSocketVisitSelector);
             if (_lifecycleSocketRole is { } socketRole)
                 _lifecycleDiagnostics?.RecordSocketEvent(diagnosticVisit, socketRole, "open");
@@ -1941,7 +1954,7 @@ public sealed class CouchCoopBrowserServer(
                 new SpirectlAssetBinaryCache(resourceCacheRoot),
                 _log,
                 () => SpineBakeBudget.CountGameInstances(
-                    _headlessManager?.DescribeSeats(),
+                    _headlessManager?.CountLiveSeatProcesses(),
                     Environment.GetEnvironmentVariable("COUCHCOOP_HEADLESS_SLOT")));
 
             var clip = await _spineClips.GetClipAsync(spineKey, cancellationToken).ConfigureAwait(false);
@@ -2887,7 +2900,7 @@ public sealed class CouchCoopBrowserServer(
             new SpirectlAssetBinaryCache(resourceCacheRoot),
             _log,
             () => SpineBakeBudget.CountGameInstances(
-                _headlessManager?.DescribeSeats(),
+                _headlessManager?.CountLiveSeatProcesses(),
                 Environment.GetEnvironmentVariable("COUCHCOOP_HEADLESS_SLOT")));
 
         var key = request.QueryValues.TryGetValue("key", out var keyValue) ? keyValue.Trim() : string.Empty;

@@ -2,7 +2,6 @@ using CouchCoop.Mod.Contracts;
 using CouchCoop.Mod.Runtime;
 using CouchCoop.MirrorProtocol.Envelopes;
 using Spirectl.Sts2.Core.Actions;
-using Spirectl.Sts2.Core.State;
 using Spirectl.Sts2.Embedding;
 
 namespace CouchCoop.Mod.Session;
@@ -12,8 +11,9 @@ namespace CouchCoop.Mod.Session;
 /// lobby's player cap, which netIds already hold a seat, and the names the host can put to them. It also carries
 /// the two per-peer actions a couch seat needs, evicting its ENet peer and overriding its display name. The seats
 /// are real networked clients, so there is no lobby player to add or remove here. There are NO direct
-/// Godot/Harmony calls in this type; the game integration lives in spirectl, and this only reads its state and
-/// invokes its actions on the existing seam.
+/// Godot/Harmony calls and no game types in this type (it is source-linked into the hot-reload assembly): the reads go
+/// through <see cref="CouchCoopGameFacts"/>, CouchCoop's own typed reader, and the actions through spirectl's on the
+/// existing seam. None of them builds a full game-state snapshot.
 /// </summary>
 public sealed class CouchCoopLobbyParticipation(CouchCoopRuntimeHost runtimeHost)
 {
@@ -114,10 +114,10 @@ public sealed class CouchCoopLobbyParticipation(CouchCoopRuntimeHost runtimeHost
     public void ClearClientName(ulong netId) => SetClientName(netId, null);
 
     /// <summary>
-    /// Every netId this process can put a NAME to right now, read from a snapshot the caller already holds (the
-    /// join handler's, or the one the roster observer built, so publishing the roster costs no second state pull), for
+    /// Every netId this process can put a NAME to right now, read from a snapshot the caller already holds, for
     /// publishing to the couch seats (<see cref="HeadlessClientManager.PublishRosterNames"/> →
-    /// <c>mp_names.json</c>). Pure, so it is unit-testable.
+    /// <c>mp_names.json</c>). Pure, so it is unit-testable. This snapshot form is the retired read, kept as the
+    /// test-only parity oracle for <see cref="RosterNames(RosterFacts)"/> until the last WP3 read path lands.
     /// <para>
     /// WHY THE HOST HAS TO PUBLISH THIS. A name is never sent over the wire: every label the game draws goes
     /// through <c>PlatformUtil.GetPlayerNameRaw(NetService.Platform, netId)</c>, and a couch seat's platform is
@@ -132,17 +132,7 @@ public sealed class CouchCoopLobbyParticipation(CouchCoopRuntimeHost runtimeHost
     /// (<see cref="SetClientName"/>) — both behind spirectl's lobby name resolver.
     /// </para>
     /// </summary>
-    public static IReadOnlyList<(ulong NetId, string Name)> RosterNames(StateSnapshot state)
-        // The lobby is read even during a run: nothing populates both, so this is simply "whichever the host is
-        // in". A saved run's players carry no name at all (the save has NetIds only), which is exactly what the
-        // durable roster remembers FOR them — so there is nothing to add from SavedRun here.
-        => CollectRosterNames(
-            (state.Run?.Players ?? []).Select(player => ((string?)player.Id, player.DisplayName))
-                .Concat((state.CharacterSelect?.Lobby?.Players ?? []).Select(player => ((string?)player.Id, player.DisplayName))));
-
-    /// <summary>
-    /// The same names as <see cref="RosterNames(StateSnapshot)"/>, read from a roster instead of a state snapshot.
-    /// </summary>
+    /// <summary>The names in the typed roster, without another game read.</summary>
     public static IReadOnlyList<(ulong NetId, string Name)> RosterNames(RosterFacts roster)
     {
         ArgumentNullException.ThrowIfNull(roster);
@@ -200,51 +190,59 @@ public sealed class CouchCoopLobbyParticipation(CouchCoopRuntimeHost runtimeHost
     /// <summary>
     /// Whether the game currently lists <paramref name="netId"/> as a CONNECTED player of the lobby or the run.
     /// This is lobby membership, which is what the join wait needs: a peer is connected before the lobby admits
-    /// it. Builds the whole game state for the answer; a seat that has already joined uses
-    /// <see cref="IsSeatPeerConnected"/> instead.
+    /// it, so a seat that is not on the lobby's list yet is not a member. One roster read (see
+    /// <see cref="CouchCoopGameFacts.ReadRoster"/>), asked every ~200 ms while a seat joins. A seat that has already
+    /// joined uses <see cref="IsSeatPeerConnected"/> instead.
     /// </summary>
-    public bool IsGamePlayerConnected(ulong netId)
-    {
-        var state = CurrentState();
-        return (state?.CharacterSelect?.Lobby?.Players ?? []).Any(player => player.IsConnected
-                && MirrorSeatNetIds.TryParsePlayerId(player.Id, out var id) && id == netId)
-            || (state?.Run?.Players ?? []).Any(player => player.IsConnected
-                && MirrorSeatNetIds.TryParsePlayerId(player.Id, out var id) && id == netId);
-    }
+    /// <remarks>
+    /// An unreadable roster is "not connected", the answer an unreadable game state always gave here.
+    /// </remarks>
+    public bool IsGamePlayerConnected(ulong netId) => IsPlayerConnected(CouchCoopGameFacts.ReadRoster(), netId);
+
+    /// <summary>
+    /// <see cref="IsGamePlayerConnected"/> over a roster the caller already holds. A lobby seat counts only when the
+    /// roster marks it connected (the local player, or in the host's peer list, or admitted by the saved-run lobby); a
+    /// run seat counts when it is marked connected, which fails open when the game cannot say. Pure.
+    /// </summary>
+    public static bool IsPlayerConnected(RosterFacts? roster, ulong netId)
+        => (roster?.Lobby?.Seats ?? []).Any(seat => seat.IsConnected
+                && MirrorSeatNetIds.TryParsePlayerId(seat.Id, out var id) && id == netId)
+            || (roster?.Run?.Seats ?? []).Any(seat => seat.IsConnected
+                && MirrorSeatNetIds.TryParsePlayerId(seat.Id, out var id) && id == netId);
 
     private static int _seatPeerCheckFailureLogged;
 
     /// <summary>
     /// The seat monitor's membership check: whether the host's net layer still has <paramref name="netId"/>
-    /// connected. One main-thread read of the host's peer list, where <see cref="IsGamePlayerConnected"/> builds the
-    /// whole game state for the same answer. Falls back to that read when this process's host transport is not the
-    /// one running or its peer list cannot be read.
+    /// connected. One main-thread read of the host's peer list, where <see cref="IsGamePlayerConnected"/> asks the
+    /// roster for the same answer. Falls back to the roster read when this process's host transport is not the one
+    /// running (the game's own ENet host, which never passes through CouchCoop's transport) or its peer list cannot be
+    /// read.
     /// </summary>
     /// <remarks>
     /// Only for a seat that has already joined. Peer connectivity is not lobby membership: a peer is connected
     /// before the lobby admits it, so the join wait keeps asking <see cref="IsGamePlayerConnected"/>. Once joined,
-    /// the two agree, and the monitor asks this every 250 ms per seat for the seat's whole life, which made the
-    /// state read most of the host's state captures with phones connected (Sep-24 lag round).
+    /// the two agree, and the monitor asks this every 250 ms per seat for the seat's whole life. Both the peer read
+    /// and the roster fallback run in ONE hop onto the main thread (the peer list is the net layer's live state),
+    /// and this never holds a mod lock.
     /// </remarks>
     public bool IsSeatPeerConnected(ulong netId)
     {
-        bool? connected;
         try
         {
-            connected = GameMainThread.Invoke(() => CouchCoopHostPeers.IsPeerConnected(netId));
+            return GameMainThread.Invoke(
+                () => CouchCoopHostPeers.IsPeerConnected(netId) ?? IsGamePlayerConnected(netId));
         }
         catch (Exception exception)
         {
             // Asked every 250 ms per seat, so say it once rather than flood the log.
             if (Interlocked.Exchange(ref _seatPeerCheckFailureLogged, 1) == 0)
             {
-                CouchCoopLog.Stderr($"seat peer check failed ({exception.GetType().Name}: {exception.Message}); using the state read.");
+                CouchCoopLog.Stderr($"seat peer check failed ({exception.GetType().Name}: {exception.Message}); using the roster read.");
             }
 
-            connected = null;
+            return IsGamePlayerConnected(netId);
         }
-
-        return connected ?? IsGamePlayerConnected(netId);
     }
 
     /// <summary>
@@ -259,7 +257,16 @@ public sealed class CouchCoopLobbyParticipation(CouchCoopRuntimeHost runtimeHost
     /// the host mod is constructed.
     /// </para>
     /// </summary>
-    public int? MaxCouchSeats() => MaxLobbyPlayers() is { } maxLobbyPlayers ? maxLobbyPlayers - 1 : null;
+    public int? MaxCouchSeats() => MaxCouchSeatsOf(CouchCoopGameFacts.ReadLobbyCap());
+
+    /// <summary>
+    /// <see cref="MaxCouchSeats"/> for a caller that has already read the raw lobby cap (the session envelope reads it
+    /// with the roster, in one hop): the cap judged usable by <see cref="LobbyCapOf"/> (which owns the "unreadable
+    /// for too long" notice, so every read that reaches the seat table still feeds it), minus the host's seat. Null when
+    /// the cap is unknown or unusable.
+    /// </summary>
+    internal static int? MaxCouchSeatsOf(int? rawLobbyCap)
+        => rawLobbyCap is { } reported && LobbyCapOf(reported) is { } usable ? usable - 1 : null;
 
     /// <summary>
     /// The live lobby's own player cap, host seat included — <see cref="MaxCouchSeats"/>'s source, what browser
@@ -346,7 +353,7 @@ public sealed class CouchCoopLobbyParticipation(CouchCoopRuntimeHost runtimeHost
 
     /// <summary>
     /// One-shot snapshot of the inputs the mirror join handler needs to decide DIRECT_VIEW vs SPAWN/REUSE vs REJECT,
-    /// read from a SINGLE state pull for consistency. <see cref="IsSingleplayerRun"/> is a TRUE singleplayer run
+    /// read from a SINGLE roster read for consistency. <see cref="IsSingleplayerRun"/> is a TRUE singleplayer run
     /// (<c>NetGameType == "singleplayer"</c>) — nothing can join it, so the viewer watches the host directly.
     /// <see cref="SpawnAllowed"/> is the window in which the host's session accepts a NEW peer: no run is in
     /// progress and the game is in a multiplayer character-select or load-saved-game lobby
@@ -369,7 +376,7 @@ public sealed class CouchCoopLobbyParticipation(CouchCoopRuntimeHost runtimeHost
         bool SpawnAllowed,
         string? HostName,
         IReadOnlySet<ulong>? SeatNetIds = null,
-        // Every netId the host can name right now (see RosterNames), carried on the SAME state pull that answered
+        // Every netId the host can name right now (see RosterNames), carried on the SAME roster read that answered
         // the join question so publishing the roster to the seats costs no extra main-thread marshal.
         IReadOnlyList<(ulong NetId, string Name)>? RosterNames = null)
     {
@@ -405,41 +412,72 @@ public sealed class CouchCoopLobbyParticipation(CouchCoopRuntimeHost runtimeHost
         public bool MayRejoinNetId(ulong netId) => SeatNetIds is not null && SeatNetIds.Contains(netId);
     }
 
-    public MirrorJoinContext DescribeMirrorJoinContext()
+    /// <summary>
+    /// What a join decides on, read from ONE roster read (<see cref="CouchCoopGameFacts.ReadRoster"/>). An unreadable
+    /// roster is the empty context: no run, no spawn window, no host name and no seat table.
+    /// </summary>
+    public MirrorJoinContext DescribeMirrorJoinContext() => DescribeMirrorJoinContext(CouchCoopGameFacts.ReadRoster());
+
+    /// <summary>
+    /// Everything the join handler reads of the game in one hop: the <see cref="MirrorJoinContext"/> its spawn
+    /// decision is made on, and the two <see cref="JoinSeatFacts"/> the seat manager launches on. The roster and the
+    /// lobby cap come from one marshal onto the main thread (<see cref="CouchCoopGameFacts.ReadRosterAndLobbyCap"/>)
+    /// and run presence from its own unmarshalled member read, so a join asks the game once and hands the manager what
+    /// it already knows. Never call it while holding a mod lock.
+    /// </summary>
+    public JoinDescription DescribeJoin()
     {
-        var state = CurrentState();
-        if (state?.Run is { } run)
+        var read = CouchCoopGameFacts.ReadRosterAndLobbyCap();
+        return DescribeJoin(read, IsRunInProgress());
+    }
+
+    /// <summary><see cref="DescribeJoin()"/> over reads the caller already holds. Pure apart from the cap notice.</summary>
+    public static JoinDescription DescribeJoin(JoinRead read, bool runInProgress)
+        => new(
+            DescribeMirrorJoinContext(read.Roster),
+            new JoinSeatFacts(read.LobbyCap is { } cap && LobbyCapOf(cap) is { } lobbyCap ? lobbyCap - 1 : null, runInProgress));
+
+    /// <summary>The join handler's whole read of the game: the spawn decision's context and the seat manager's facts.</summary>
+    public readonly record struct JoinDescription(MirrorJoinContext Context, JoinSeatFacts Seats);
+
+    /// <summary>
+    /// <see cref="DescribeMirrorJoinContext()"/> over a roster the caller already holds. Pure. The run wins over the
+    /// lobby, exactly as the roster reports them: the new-peer window is shut for a run, and open for a lobby only when
+    /// this process is its host.
+    /// </summary>
+    public static MirrorJoinContext DescribeMirrorJoinContext(RosterFacts? roster)
+    {
+        if (roster?.Run is { } run)
         {
-            var runHost = run.Players.FirstOrDefault(player => player.IsHost)?.DisplayName?.Trim();
+            var runHost = run.Seats.FirstOrDefault(seat => seat.IsHost)?.DisplayName?.Trim();
             return new MirrorJoinContext(
-                IsSingleplayerRun: string.Equals(run.NetGameType, "singleplayer", StringComparison.Ordinal),
+                IsSingleplayerRun: string.Equals(run.NetType, NetTypeNames.Singleplayer, StringComparison.Ordinal),
                 SpawnAllowed: false,
                 HostName: string.IsNullOrEmpty(runHost) ? null : runHost,
-                SeatNetIds: NetIdsOf(run.Players.Select(player => player.Id)),
-                RosterNames: RosterNames(state));
+                SeatNetIds: NetIdsOf(run.Seats.Select(seat => seat.Id)),
+                RosterNames: RosterNames(roster));
         }
 
-        if (state?.CharacterSelect?.Lobby is { } lobby)
+        if (roster?.Lobby is { } lobby)
         {
-            var lobbyHost = lobby.Players
-                .FirstOrDefault(player => string.Equals(player.Id, lobby.HostPlayerId, StringComparison.Ordinal))
+            var lobbyHost = lobby.Seats
+                .FirstOrDefault(seat => string.Equals(seat.Id, lobby.HostPlayerId, StringComparison.Ordinal))
                 ?.DisplayName?.Trim();
             return new MirrorJoinContext(
                 IsSingleplayerRun: false,
-                SpawnAllowed: string.Equals(lobby.NetGameType, "host", StringComparison.Ordinal),
+                SpawnAllowed: string.Equals(lobby.NetType, NetTypeNames.Host, StringComparison.Ordinal),
                 HostName: string.IsNullOrEmpty(lobbyHost) ? null : lobbyHost,
                 // The saved run's seats count as seats HERE: on the load-game screen the host is typically alone in
                 // the lobby while the save still expects everyone, and those absent netIds are exactly the ones the
                 // returning devices must be able to spawn into.
-                SeatNetIds: NetIdsOf(lobby.Players.Select(player => player.Id)
-                    .Concat((lobby.SavedRun?.Players ?? []).Select(player => player.Id))),
-                RosterNames: RosterNames(state));
+                SeatNetIds: NetIdsOf(lobby.Seats.Select(seat => seat.Id).Concat(lobby.SavedRunSeatIds)),
+                RosterNames: RosterNames(roster));
         }
 
         return new MirrorJoinContext(false, false, null);
     }
 
-    // Every player id in a StateSnapshot is "p:{netId}"; anything that doesn't parse is not a seat we can spawn.
+    // Every player id in a roster is "p:{netId}"; anything that doesn't parse is not a seat we can spawn.
     private static IReadOnlySet<ulong> NetIdsOf(IEnumerable<string?> playerIds)
     {
         var netIds = new HashSet<ulong>();
@@ -452,16 +490,5 @@ public sealed class CouchCoopLobbyParticipation(CouchCoopRuntimeHost runtimeHost
         }
 
         return netIds;
-    }
-
-    private StateSnapshot? CurrentState()
-    {
-        if (!_runtimeHost.HasCapability(CouchCoopRuntimeHost.StateCapability))
-        {
-            return null;
-        }
-
-        var result = _runtimeHost.GetCurrentState(new CurrentStateRequest());
-        return result.Success ? result.State : null;
     }
 }

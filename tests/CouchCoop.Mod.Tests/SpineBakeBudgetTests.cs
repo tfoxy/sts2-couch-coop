@@ -16,19 +16,15 @@ internal static class SpineBakeBudgetTests
         NeverDegradesAStillRequest();
     }
 
-    private static MirrorSeatDescription Seat(ulong netId, bool live) => new(netId, null, live, false);
-
-    // The HOST owns the seat table: itself plus every seat whose headless PROCESS is up. A claimed-but-dead seat is
-    // not an instance (it consumes no CPU), so it must not push the budget toward degradation.
+    // The HOST owns the seat manager: itself plus every seat whose headless PROCESS is up. The manager counts those
+    // (HeadlessClientManager.CountLiveSeatProcesses, pinned in HeadlessClientManagerTests: a claimed-but-dead seat is
+    // not an instance, it consumes no CPU, so it must not push the budget toward degradation).
     private static void CountsHostPlusLiveSeats()
     {
-        Assert(SpineBakeBudget.CountGameInstances([], null) == 1, "no seats ⇒ the host alone");
-        Assert(
-            SpineBakeBudget.CountGameInstances([Seat(2, true), Seat(3, true), Seat(4, true)], null) == 4,
-            "host + 3 live headless seats = 4 instances");
-        Assert(
-            SpineBakeBudget.CountGameInstances([Seat(2, true), Seat(3, false), Seat(4, false)], null) == 2,
-            "a seat whose process is gone is not an instance");
+        Assert(SpineBakeBudget.CountGameInstances(0, null) == 1, "no seats ⇒ the host alone");
+        Assert(SpineBakeBudget.CountGameInstances(3, null) == 4, "host + 3 live headless seats = 4 instances");
+        Assert(SpineBakeBudget.CountGameInstances(1, "4") == 2,
+            "a host that owns a seat table is counted from it, whatever slot the environment names");
     }
 
     // A spawned HEADLESS client has no seat table of its own; slots are handed out lowest-free-first from 2..4, so
