@@ -17,6 +17,7 @@ internal static class HeadlessConnectionLifecycleTests
     public static async Task RunAsync()
     {
         await RequiresHttpMembershipAndAuthenticatedStatus();
+        await MonitorAsksThePeerProbeOnceJoined();
         await FailureDuringListenerProbeRefusesRedirect();
         await MembershipChangeDuringListenerProbeKeepsWaiting();
         await HealthyChildDoesNotCompleteBeforeBrowserAcknowledgement();
@@ -147,6 +148,36 @@ internal static class HeadlessConnectionLifecycleTests
             var row = ConnectionRegistry.Shared.Snapshot().Rows.Single(entry => entry.Id == id);
             Assert(row.Stage != ConnectionStage.Complete,
                 "host membership and child liveness never substitute for the source browser first-frame acknowledgement");
+        }
+        finally { CleanupControl(id); ConnectionRegistry.Shared.Clear(); }
+    }
+
+    // The join wait proves LOBBY membership; the monitor that runs for the seat's whole life afterwards asks the
+    // cheaper peer probe instead, and must stop asking the lobby-membership one (a full game-state read in the mod).
+    private static async Task MonitorAsksThePeerProbeOnceJoined()
+    {
+        var id = BeginAttempt();
+        var process = new FakeProcess(330);
+        var lobbyChecks = 0;
+        var peerChecks = 0;
+        using var manager = new HeadlessClientManager(_ => process, (_, _) => Task.FromResult(true));
+        manager.ConfigureConnectionMonitoring(
+            _ => { Interlocked.Increment(ref lobbyChecks); return true; },
+            () => 12345,
+            _ => { Interlocked.Increment(ref peerChecks); return true; });
+        try
+        {
+            var pending = manager.EnsureHeadlessAsync(id, "peer-probe", CancellationToken.None);
+            var control = await WaitForControlAsync(id);
+            RegisterKnown(control, id, "peer-probe-token");
+            HeadlessConnectionControl.Shared.Observe("peer-probe-token", control.Generation,
+                new HeadlessConnectionStatus(1, "Connecting", null, null, 0, CloudSaveIsolated: true));
+            Assert(await pending.WaitAsync(TimeSpan.FromSeconds(2)) is not null, "the seat joins");
+            var lobbyChecksAtJoin = Volatile.Read(ref lobbyChecks);
+            Assert(lobbyChecksAtJoin > 0, "the join wait asks lobby membership");
+            await Task.Delay(700);
+            Assert(Volatile.Read(ref peerChecks) >= 2, "the monitor asks the peer probe on its ticks");
+            Assert(Volatile.Read(ref lobbyChecks) == lobbyChecksAtJoin, "the monitor no longer asks lobby membership");
         }
         finally { CleanupControl(id); ConnectionRegistry.Shared.Clear(); }
     }

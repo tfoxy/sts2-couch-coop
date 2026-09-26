@@ -50,7 +50,8 @@ public sealed class HotReloadableBrowserServerHost : IHotServerHost, IHotBrowser
                 // seat process may be launched — see HeadlessClientManager.RunInProgress.
                 lobby.IsRunInProgress,
                 (count, generation) => _connectionHosting?.SetOwnedSeatDemand(count, generation));
-        _headlessManager?.ConfigureConnectionMonitoring(lobby.IsGamePlayerConnected, () => BaseUri?.Port ?? 0);
+        _headlessManager?.ConfigureConnectionMonitoring(
+            lobby.IsGamePlayerConnected, () => BaseUri?.Port ?? 0, lobby.IsSeatPeerConnected);
         Admission = new NetworkAdmissionLimiter(() => new CouchCoopLobbyParticipation(_runtime).MaxLobbyPlayers());
         _browserDemand = new((count, generation) =>
         {
