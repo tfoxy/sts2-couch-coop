@@ -280,12 +280,14 @@ The first step is small and independently useful; every later step can be stoppe
 
 - **P0. Wording (no code).** Adopt §9. Effect: agents stop asking permission for CouchCoop-side reads, and the
   geoclip exception is on record.
-- **P1. Retire the five `Core.State` consumers CouchCoop-side.** Start with the hosting tracker
-  ([handoff-hosting-tracker-state.md](handoff-hosting-tracker-state.md), already specified), then the run-end reap and
-  roster signature (`CouchCoopStateObserver`), the lobby gates, `CouchCoopLobbyParticipation`, and the session
-  envelope's assignment state. Effect on its own: removes the recurring full-state captures (the tracker's alone
-  measured about 9.65 ms/s of main thread with four players in the Sep-24 lag round), which serves the empty-host
-  dormancy priority. Estimate 3–5 days for all five; the first is about half a day.
+- **P1. Retire the five `Core.State` consumers CouchCoop-side.** **The first, the hosting tracker, landed as
+  `b6a1ec12`** ([handoff-hosting-tracker-state.md](handoff-hosting-tracker-state.md)). Four remain: the run-end reap
+  and roster signature (`CouchCoopStateObserver`), the lobby gates, `CouchCoopLobbyParticipation`, and the session
+  envelope's assignment state. **The recurring captures are already gone**: the tracker was the last poll (about
+  9.65 ms/s of main thread with four players in the Sep-24 lag round), `CouchCoopStateObserver` runs only while a
+  viewer is parked on the join picker, and the other three are event-driven reads (a join, a session envelope). So
+  the four that remain buy little on their own; their value is that they are what P2 waits on, plus fewer full
+  walks per join. Estimate 2–4 days for the four.
 - **P2. A compile profile in spirectl, once P1 has landed.** One spirectl change: an MSBuild-property profile that
   the embedded reference selects and the bridge does not; a composition-factory variant that does not construct or
   install the dead lanes; explicit item lists instead of the stale `Exclude` mirror; the 4 KB drift check replaced
@@ -313,10 +315,11 @@ The first step is small and independently useful; every later step can be stoppe
   +1145/-0, no provider) is not merged; the roster read finishes CouchCoop-side, as `7d089e03` (5 files, +137/-4,
   85 minutes later) began. What the round wrote is useful as a list of the facts wanted, not as code. Deleting the
   branch is the maintainer's call.
-- **[handoff-hosting-tracker-state.md](handoff-hosting-tracker-state.md) proceeds as written** and is P1's first
-  step and template. Its fallback clause ("keep today's state subscription if `SubscribeUpdated` cannot be
-  resolved") keeps one `Core.State` consumer alive; P2 waits for that clause to be dropped or accepted as a known
-  exception.
+- **[handoff-hosting-tracker-state.md](handoff-hosting-tracker-state.md) is done** (`b6a1ec12`) and is P1's template.
+  Two loose ends: it was verified against the v111 lane only, and the release workflow packages v107, so the v107
+  compile of the run-in-progress read is unchecked; and its fallback clause (keep the state subscription if
+  `SubscribeUpdated` cannot be resolved) keeps one `Core.State` consumer alive, so P2 waits for that clause to be
+  dropped or accepted as a known exception.
 - **[handoff-zero-client-guard.md](handoff-zero-client-guard.md): choose the choke point CouchCoop owns.** Every
   state and scene entry already flows through one CouchCoop type: `CouchCoopRuntimeDependencies.FromFactory`
   (`Runtime/CouchCoopRuntimePorts.cs`) adapts the embedded runtime once, and `CouchCoopRuntimeHost` implements the
