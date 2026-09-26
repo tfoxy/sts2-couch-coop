@@ -5170,7 +5170,12 @@ if (assetServingEnabled && !connectMode) {
 // Where the in-page fake socket fetches the stream from. Launched mode keeps the relative path the context route
 // answers; connect mode hands it the bench server's ABSOLUTE loopback URL (see the server above).
 const recordingUrl = connectMode ? `http://127.0.0.1:${args.servePort}/recording` : "/__bench/recording";
-await context.addInitScript(fakeWebSocketInit, {
+// In connect mode the init scripts go on the BENCH TAB only. A context-wide addInitScript is sent to every tab of
+// the attached browser — the phone owner's own tabs included — and one frozen background tab never answers, which
+// hangs the cell before warm-up (seen on the Moto G86: >20 s, never returns). Page-scoped scripts still cover every
+// navigation the run makes, because they all happen on the bench tab.
+const initTarget = connectMode && connectPage ? connectPage : context;
+await initTarget.addInitScript(fakeWebSocketInit, {
   recordingUrl,
   pace: args.pace,
   ackPacedMs: args.ackPacedMs ?? 0,
@@ -5178,16 +5183,16 @@ await context.addInitScript(fakeWebSocketInit, {
   synthesizeDirectView: !hasRecordedDirectView,
   window: args.window
 });
-await context.addInitScript(longTaskInit);
-await context.addInitScript(tickSamplerInit);
+await initTarget.addInitScript(longTaskInit);
+await initTarget.addInitScript(tickSamplerInit);
 if (args.flightLiveness) {
-  await context.addInitScript(flightLivenessInit);
+  await initTarget.addInitScript(flightLivenessInit);
 }
 if (args.census) {
-  await context.addInitScript(censusInit);
+  await initTarget.addInitScript(censusInit);
 }
 if (args.churnCensus) {
-  await context.addInitScript(churnCensusInit);
+  await initTarget.addInitScript(churnCensusInit);
 }
 
 const opts = {
