@@ -280,14 +280,16 @@ The first step is small and independently useful; every later step can be stoppe
 
 - **P0. Wording (no code).** Adopt §9. Effect: agents stop asking permission for CouchCoop-side reads, and the
   geoclip exception is on record.
-- **P1. Retire the five `Core.State` consumers CouchCoop-side.** **The first, the hosting tracker, landed as
-  `b6a1ec12`** ([handoff-hosting-tracker-state.md](handoff-hosting-tracker-state.md)). Four remain: the run-end reap
-  and roster signature (`CouchCoopStateObserver`), the lobby gates, `CouchCoopLobbyParticipation`, and the session
-  envelope's assignment state. **The recurring captures are already gone**: the tracker was the last poll (about
-  9.65 ms/s of main thread with four players in the Sep-24 lag round), `CouchCoopStateObserver` runs only while a
-  viewer is parked on the join picker, and the other three are event-driven reads (a join, a session envelope). So
-  the four that remain buy little on their own; their value is that they are what P2 waits on, plus fewer full
-  walks per join. Estimate 2–4 days for the four.
+- **P1. Retire the remaining full-state reads CouchCoop-side.** The first, the hosting tracker, landed as `b6a1ec12`,
+  and its state-subscription fallback was then removed by the maintainer's decision (`a9f382b6`); the tracker no
+  longer takes the runtime host. What remains is best counted by **read path**, not by file (the "five consumer
+  sites" above group them): the QR host panel and pause-menu lobby gates, `CouchCoopStateObserver`, the session
+  envelope, the join path, admission and the player cap, the seat join wait, and the browser-disconnect run check.
+  **One bounded recurring read remains**: the QR host panel's 0.25 s chain pulls the full lobby state on every tick
+  while a lobby screen is current, and the observer runs a 50 ms subscription while a viewer is parked on the join
+  picker. The tracker was the last *unbounded* poll. So the lobby gates are the most valuable path, and the rest
+  matter mainly because P2 waits on them. [handoff-spirectl-boundary-implementation.md](handoff-spirectl-boundary-implementation.md)
+  lists each path. Estimate 1–2 weeks for all of them, one commit per path; the first is a day or two.
 - **P2. A compile profile in spirectl, once P1 has landed.** One spirectl change: an MSBuild-property profile that
   the embedded reference selects and the bridge does not; a composition-factory variant that does not construct or
   install the dead lanes; explicit item lists instead of the stale `Exclude` mirror; the 4 KB drift check replaced
@@ -321,8 +323,9 @@ The first step is small and independently useful; every later step can be stoppe
   but no v107 compile has run; the stable reference SDK package (`eng/Sts2.ReferenceSdk/stable`) is cached locally,
   so one can. The fallback clause (keep the state subscription if `SubscribeUpdated` cannot be resolved) has since
   been **removed by the maintainer's decision**: an unresolvable screen event now logs once and hosting ends only on
-  the transport's own signal, and the tracker no longer takes the runtime host at all. That leaves four `Core.State`
-  consumers, none of them a poll.
+  the transport's own signal, and the tracker no longer takes the runtime host at all. The read paths that remain are
+  listed under P1; two of them are recurring but bounded (the QR host panel's lobby tick and the join-picker
+  observer).
 - **[handoff-zero-client-guard.md](handoff-zero-client-guard.md): choose the choke point CouchCoop owns.** Every
   state and scene entry already flows through one CouchCoop type: `CouchCoopRuntimeDependencies.FromFactory`
   (`Runtime/CouchCoopRuntimePorts.cs`) adapts the embedded runtime once, and `CouchCoopRuntimeHost` implements the
