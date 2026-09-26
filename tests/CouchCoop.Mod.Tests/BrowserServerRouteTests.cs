@@ -3988,10 +3988,11 @@ internal sealed class BrowserServerRouteTests
     }
 
     // A client's CloseAsync completes when the server's close ACK is received, which happens BEFORE the server's
-    // receive-loop teardown (`finally`) runs DisconnectSession / LeaveLobbyPlayer. So the browser roster is only
-    // eventually consistent after a socket closes: a fresh observer connecting immediately can still read the
-    // departing player as connected (or a lobby-only identity as present). Poll fresh throwaway observers until the
-    // roster settles to the expected shape, so the follow-up connect+assert reads a stable roster deterministically.
+    // receive-loop teardown (`finally`, then the session handle's disposal) releases the identity. So the browser
+    // roster is only eventually consistent after a socket closes: a fresh observer connecting immediately can still
+    // read the departing player as connected (or a lobby-only identity as present). Poll fresh throwaway observers
+    // until the roster settles to the expected shape, so the follow-up connect+assert reads a stable roster
+    // deterministically.
     private static async Task WaitForRosterAsync(Uri baseUri, Func<JsonElement, bool> settled, int timeoutMs = 5000)
     {
         var deadline = Environment.TickCount64 + timeoutMs;

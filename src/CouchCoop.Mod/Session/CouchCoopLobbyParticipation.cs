@@ -8,13 +8,12 @@ using Spirectl.Sts2.Live;
 namespace CouchCoop.Mod.Session;
 
 /// <summary>
-/// Bridges a browser viewer's join/leave to a REAL player in the live game's character-select
-/// lobby, using spirectl's existing semantic actions (<see cref="SemanticActionKind.JoinLobbyPlayer"/>
-/// / <see cref="SemanticActionKind.LeaveLobbyPlayer"/>). spirectl adds a synthetic host-local
-/// <c>LobbyPlayer</c> to the live <c>StartRunLobby</c> and surfaces it back through StateV2
-/// (<c>characterSelect.lobby.players</c>), so the browser session binds to it by name and renders
-/// the per-viewer view. There are NO direct Godot/Harmony calls here — the game integration lives
-/// in spirectl; this only invokes it on the existing action seam.
+/// What the host side of a browser join needs from the live game: whether a run or a lobby is current, the
+/// lobby's player cap, which netIds already hold a seat, and the names the host can put to them. It also carries
+/// the two per-peer actions a couch seat needs, evicting its ENet peer and overriding its display name. The seats
+/// are real networked clients, so there is no lobby player to add or remove here. There are NO direct
+/// Godot/Harmony calls in this type; the game integration lives in spirectl, and this only reads its state and
+/// invokes its actions on the existing seam.
 /// </summary>
 public sealed class CouchCoopLobbyParticipation(CouchCoopRuntimeHost runtimeHost)
 {
@@ -47,65 +46,9 @@ public sealed class CouchCoopLobbyParticipation(CouchCoopRuntimeHost runtimeHost
     }
 
     /// <summary>
-    /// Ensure a live lobby player exists for <paramref name="name"/>, so the joining browser binds
-    /// to a real <c>p:N</c> player (and the player appears in the live game). Idempotent — spirectl
-    /// dedupes by display name. Returns true when a matching lobby player exists or was created;
-    /// false (no-op) when semantic actions are unavailable or the game is not in a character-select
-    /// lobby (then the viewer stays a spectator, as before).
-    /// </summary>
-    public bool EnsureLobbyPlayer(string? name)
-    {
-        var trimmed = name?.Trim();
-        if (string.IsNullOrEmpty(trimmed)
-            || !_runtimeHost.HasCapability(CouchCoopRuntimeHost.SemanticActionsCapability))
-        {
-            return false;
-        }
-
-        // Already a lobby player (e.g. reconnect, or the host's own name) — nothing to add.
-        if (FindPlayerIdByName(trimmed) is not null)
-        {
-            return true;
-        }
-
-        // Only joinable while a character-select lobby is live.
-        if (CurrentState()?.CharacterSelect?.Lobby is null)
-        {
-            return false;
-        }
-
-        var result = _runtimeHost.ExecuteAction(new EmbeddableActionRequest(
-            RequestId: Guid.NewGuid().ToString("N"),
-            Kind: SemanticActionKind.JoinLobbyPlayer,
-            DisplayName: trimmed));
-
-        return result.Success && FindPlayerIdByName(trimmed) is not null;
-    }
-
-    /// <summary>
-    /// Remove a synthetic lobby player when its last browser disconnects (matches the browser
-    /// contract: a lobby-only player is removed at zero browser connections). No-op without the
-    /// semantic-actions capability or a blank id.
-    /// </summary>
-    public void LeaveLobbyPlayer(string? playerId)
-    {
-        if (string.IsNullOrWhiteSpace(playerId)
-            || !_runtimeHost.HasCapability(CouchCoopRuntimeHost.SemanticActionsCapability))
-        {
-            return;
-        }
-
-        _ = _runtimeHost.ExecuteAction(new EmbeddableActionRequest(
-            RequestId: Guid.NewGuid().ToString("N"),
-            Kind: SemanticActionKind.LeaveLobbyPlayer,
-            PlayerId: playerId));
-    }
-
-    /// <summary>
-    /// Force-disconnect a remote ENet peer by its netId when its browser/headless goes away. Mirrors
-    /// <see cref="LeaveLobbyPlayer"/> but evicts the real ENet peer from the host's net server (a SIGKILL'd
-    /// headless leaves its peer registered, holding the netId, so the next headless reusing it fails its ENet
-    /// join). No-op without the semantic-actions capability.
+    /// Force-disconnect a remote ENet peer by its netId when its browser/headless goes away. A SIGKILL'd
+    /// headless leaves its peer registered in the host's net server, holding the netId, so the next headless
+    /// reusing it fails its ENet join. No-op without the semantic-actions capability.
     /// </summary>
     public void DisconnectClient(ulong netId) => DisconnectClient(netId, requireSuccess: false);
 
@@ -133,8 +76,8 @@ public sealed class CouchCoopLobbyParticipation(CouchCoopRuntimeHost runtimeHost
     /// <summary>
     /// Override the display name the live game shows for a REAL networked client (the headless ENet peer that
     /// joined as <paramref name="netId"/>), so the host lobby + per-viewer mirror render the browser-chosen name
-    /// instead of the raw netId. Unlike <see cref="EnsureLobbyPlayer"/> this adds NO synthetic seat — the headless
-    /// IS the player — so it does not create a duplicate lobby entry. No-op without the semantic-actions capability.
+    /// instead of the raw netId. It names the seat that client already holds and adds none — the headless IS the
+    /// player, so a second lobby entry would be a duplicate. No-op without the semantic-actions capability.
     /// </summary>
     /// <returns>
     /// True when the override actually landed. Callers that CACHE what they have applied (the seat-side
@@ -166,8 +109,10 @@ public sealed class CouchCoopLobbyParticipation(CouchCoopRuntimeHost runtimeHost
     public void ClearClientName(ulong netId) => SetClientName(netId, null);
 
     /// <summary>
-    /// Every netId this process can put a NAME to right now, for publishing to the couch seats
-    /// (<see cref="HeadlessClientManager.PublishRosterNames"/> → <c>mp_names.json</c>).
+    /// Every netId this process can put a NAME to right now, read from a snapshot the caller already holds (the
+    /// join handler's, or the state observer's, so publishing the roster costs no second state pull), for
+    /// publishing to the couch seats (<see cref="HeadlessClientManager.PublishRosterNames"/> →
+    /// <c>mp_names.json</c>). Pure, so it is unit-testable.
     /// <para>
     /// WHY THE HOST HAS TO PUBLISH THIS. A name is never sent over the wire: every label the game draws goes
     /// through <c>PlatformUtil.GetPlayerNameRaw(NetService.Platform, netId)</c>, and a couch seat's platform is
@@ -181,13 +126,6 @@ public sealed class CouchCoopLobbyParticipation(CouchCoopRuntimeHost runtimeHost
     /// the Steam persona lookup, and a couch seat through the display-name override registry
     /// (<see cref="SetClientName"/>) — both behind spirectl's lobby name resolver.
     /// </para>
-    /// </summary>
-    public IReadOnlyList<(ulong NetId, string Name)> RosterNames()
-        => CurrentState() is { } state ? RosterNames(state) : [];
-
-    /// <summary>
-    /// <see cref="RosterNames()"/> from a snapshot the caller already holds (the state observer's, so the roster
-    /// can be republished on a roster change without a second state pull). Pure, so it is unit-testable.
     /// </summary>
     public static IReadOnlyList<(ulong NetId, string Name)> RosterNames(StateSnapshot state)
     {
@@ -241,33 +179,10 @@ public sealed class CouchCoopLobbyParticipation(CouchCoopRuntimeHost runtimeHost
     public bool IsRunInProgress() => CurrentState()?.Run is not null;
 
     /// <summary>
-    /// True when the host may LAUNCH A NEW headless client right now: no run is in progress AND the game is in a
-    /// multiplayer character-select / load-saved-game lobby (<c>NetGameType == "host"</c>). These are the only
-    /// moments the host's ENet session accepts a newly joining peer. Once a run starts, or in singleplayer / on the
-    /// main menu, no NEW mirror client may be instanced — a same-name reconnect to an already-live headless is still
-    /// allowed (that reuses an existing slot, it does not launch). The multiplayer load-saved-game screen is also a
-    /// <c>CharacterSelect</c> lobby with <c>NetGameType=="host"</c> (<c>SavedRun != null</c>), so this single
-    /// predicate covers both lobby variants.
-    /// <para>
-    /// This is the NEW-PEER window only. A RESPAWN of a seat that already exists in the current run or the loaded
-    /// save is a different question and is answered by <see cref="MirrorJoinContext.MayRejoinNetId"/> — see there.
-    /// </para>
-    /// </summary>
-    public bool MayLaunchNewHeadless()
-        => CurrentState() is { Run: null, CharacterSelect.Lobby: { NetGameType: "host" } lobby }
-            && HasFreeLobbySlot(lobby.Players.Count, lobby.ConnectingPlayerCount, LobbyCapOf(lobby));
-
-    /// <summary>
-    /// How many COUCH SEATS the live lobby has room for: its own player cap minus the host's seat, or
-    /// <see langword="null"/> when there is no lobby to ask (main menu, mid-run, no state capability). Asked of
-    /// the game rather than hardcoded — the stock lobby caps at four players, but the multiplayer limit mods
-    /// raise it ("Multiplayer Limit Break" writes 16 onto the lobby; "Unlimited" overrides the cap the lobby is
-    /// built with), and a hardcoded 3 here was what kept a fifth player out of a 16-player lobby.
-    /// <para>
-    /// Wired into <see cref="HeadlessClientManager"/> as its max-seats probe, so it is re-read per allocation
-    /// rather than sampled once — Limit Break raises the cap lazily, from its own join/connect hooks, well after
-    /// the host mod is constructed.
-    /// </para>
+    /// Whether the game currently lists <paramref name="netId"/> as a CONNECTED player of the lobby or the run.
+    /// This is lobby membership, which is what the join wait needs: a peer is connected before the lobby admits
+    /// it. Builds the whole game state for the answer; a seat that has already joined uses
+    /// <see cref="IsSeatPeerConnected"/> instead.
     /// </summary>
     public bool IsGamePlayerConnected(ulong netId)
     {
@@ -313,6 +228,18 @@ public sealed class CouchCoopLobbyParticipation(CouchCoopRuntimeHost runtimeHost
         return connected ?? IsGamePlayerConnected(netId);
     }
 
+    /// <summary>
+    /// How many COUCH SEATS the live lobby has room for: its own player cap minus the host's seat, or
+    /// <see langword="null"/> when there is no lobby to ask (main menu, mid-run, no state capability). Asked of
+    /// the game rather than hardcoded — the stock lobby caps at four players, but the multiplayer limit mods
+    /// raise it ("Multiplayer Limit Break" writes 16 onto the lobby; "Unlimited" overrides the cap the lobby is
+    /// built with), and a hardcoded 3 here was what kept a fifth player out of a 16-player lobby.
+    /// <para>
+    /// Wired into <see cref="HeadlessClientManager"/> as its max-seats probe, so it is re-read per allocation
+    /// rather than sampled once — Limit Break raises the cap lazily, from its own join/connect hooks, well after
+    /// the host mod is constructed.
+    /// </para>
+    /// </summary>
     public int? MaxCouchSeats() => MaxLobbyPlayers() is { } maxLobbyPlayers ? maxLobbyPlayers - 1 : null;
 
     /// <summary>
@@ -338,8 +265,10 @@ public sealed class CouchCoopLobbyParticipation(CouchCoopRuntimeHost runtimeHost
     /// <para>
     /// A cap of 0 is a read that failed, and a lobby admitting one player is not a lobby anyone can join —
     /// either way there is nothing here to size by, and the answer is UNKNOWN. Returning null is deliberately
-    /// fail-open; <see cref="CanAdmitAnotherPlayer"/> explains why guessing low is the one error the game
-    /// cannot correct.
+    /// fail-open: a caller with no cap must not refuse anyone on a guess, because the game is the admission
+    /// authority and refuses with a <c>NetError</c> either way. Guessing LOW is the one error the game cannot
+    /// correct — it would refuse a seat the lobby had room for, which is exactly how a 5-to-8-player game gets
+    /// capped at four.
     /// </para>
     /// <para>
     /// IT IS NOT ANOMALOUS ON ITS OWN, which is what this used to get wrong. A lobby that has only just opened
@@ -391,34 +320,17 @@ public sealed class CouchCoopLobbyParticipation(CouchCoopRuntimeHost runtimeHost
     }
 
     /// <summary>
-    /// Whether a NEW peer could still be admitted. Slots used to be a couch-only resource (three seats beside the
-    /// host); with Steam hosting they are SHARED with remote players, so the host must ask the lobby rather than
-    /// assume. Peers still mid-handshake are counted: they hold a slot the moment the lobby accepts them, and a
-    /// seat launched into the gap would be rejected on arrival after a ~30s startup.
-    /// <para>
-    /// <paramref name="maxLobbyPlayers"/> is the lobby's OWN cap (<c>StartRunLobby.MaxPlayers</c>), not a constant
-    /// of ours. It used to be hardcoded to 4, justified by the slotId being serialized in two bits — but both
-    /// multiplayer limit mods rewrite that serialization (Limit Break ships its own lobby codec, Unlimited
-    /// transpiles the packed bit widths), so the wire is no longer the limit and the lobby is the only honest
-    /// source.
-    /// </para>
-    /// <para>
-    /// An UNKNOWN cap (<see langword="null"/>) admits. This check exists to save a joiner the ~30s of starting a
-    /// seat the lobby will refuse on arrival — it is not the admission authority, the game is, and the game
-    /// refuses with a <c>NetError</c> either way. Guessing a low cap here would be the one outcome the game
-    /// cannot correct: it would refuse a seat the lobby had room for, which is exactly how a 5-to-8-player game
-    /// gets capped at four.
-    /// </para>
-    /// </summary>
-    internal static bool HasFreeLobbySlot(int playerCount, uint connectingPlayerCount, int? maxLobbyPlayers)
-        => maxLobbyPlayers is not { } max || playerCount + (long)connectingPlayerCount < max;
-
-    /// <summary>
     /// One-shot snapshot of the inputs the mirror join handler needs to decide DIRECT_VIEW vs SPAWN/REUSE vs REJECT,
     /// read from a SINGLE state pull for consistency. <see cref="IsSingleplayerRun"/> is a TRUE singleplayer run
     /// (<c>NetGameType == "singleplayer"</c>) — nothing can join it, so the viewer watches the host directly.
-    /// <see cref="SpawnAllowed"/> mirrors <see cref="MayLaunchNewHeadless"/>. <see cref="HostName"/> is the display
-    /// name of the host seat so the handler can recognise "the host was selected" → watch directly, never spawn.
+    /// <see cref="SpawnAllowed"/> is the window in which the host's session accepts a NEW peer: no run is in
+    /// progress and the game is in a multiplayer character-select or load-saved-game lobby
+    /// (<c>NetGameType == "host"</c>; the load-saved-game screen is the same lobby shape with a saved run
+    /// attached, so one predicate covers both). Once a run starts, or in singleplayer or on the main menu, no NEW
+    /// mirror client may be instanced; a same-name reconnect to an already-live headless still reuses its slot,
+    /// and a RESPAWN of a seat that already exists is <see cref="MayRejoinNetId"/>'s question, not this one's.
+    /// <see cref="HostName"/> is the display name of the host seat so the handler can recognise "the host was
+    /// selected" → watch directly, never spawn.
     /// (A couch-coop host always reports <c>NetGameType=="host"</c> even solo — a multiplayer host is a host
     /// whatever transport it runs on, Steam lobby or ENet — so a 1-player couch-coop run is NOT
     /// <see cref="IsSingleplayerRun"/>.)
@@ -515,26 +427,6 @@ public sealed class CouchCoopLobbyParticipation(CouchCoopRuntimeHost runtimeHost
         }
 
         return netIds;
-    }
-
-    private string? FindPlayerIdByName(string name)
-    {
-        var players = CurrentState()?.CharacterSelect?.Lobby?.Players;
-        if (players is null)
-        {
-            return null;
-        }
-
-        foreach (var player in players)
-        {
-            if (!string.IsNullOrWhiteSpace(player.Id)
-                && string.Equals(player.DisplayName?.Trim(), name, StringComparison.Ordinal))
-            {
-                return player.Id;
-            }
-        }
-
-        return null;
     }
 
     private StateSnapshot? CurrentState()

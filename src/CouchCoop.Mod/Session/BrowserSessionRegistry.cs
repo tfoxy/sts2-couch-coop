@@ -169,33 +169,6 @@ public sealed class BrowserSessionRegistry
         }
     }
 
-    // Disconnect this handle and, if it was the LAST connection for a synthetic lobby-only player
-    // (non-run identity, now removed), return that player's id so the caller can remove it from the
-    // live game lobby (LeaveLobbyPlayer). Run players are kept (marked disconnected) and return null.
-    // Clears the handle so a later Dispose -> Disconnect is a harmless no-op.
-    internal string? DisconnectAndCaptureRemoval(BrowserSessionHandle handle)
-    {
-        ArgumentNullException.ThrowIfNull(handle);
-        lock (_gate)
-        {
-            var name = handle.AssignedName;
-            handle.AssignedName = null;
-            if (name is null || !_identities.TryGetValue(name, out var identity))
-            {
-                return null;
-            }
-
-            identity.ConnectionCount = Math.Max(0, identity.ConnectionCount - 1);
-            if (identity.ConnectionCount == 0 && !identity.IsRunPlayer)
-            {
-                _identities.Remove(name);
-                return identity.PlayerId;
-            }
-
-            return null;
-        }
-    }
-
     internal string? IdentityPlayerId(string? name)
     {
         lock (_gate)

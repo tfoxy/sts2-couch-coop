@@ -17,7 +17,6 @@ internal static class CouchCoopLobbyHostGateTests
         RunInProgressIsRefused();
         UnknownStateIsRefused();
         MissingListenerIsRefused();
-        GateMatchesTheHeadlessLaunchWindow();
 
         Console.WriteLine("CouchCoopLobbyHostGateTests: ok");
     }
@@ -65,27 +64,6 @@ internal static class CouchCoopLobbyHostGateTests
     {
         // No browser server means no URL to encode at all — the dialog would have nothing to show.
         Expect(!CouchCoopLobbyHostGate.ShouldShow(null, Lobby("host")), "no listener means no button");
-    }
-
-    // The gate deliberately reuses MayLaunchNewHeadless's predicate: the moments a phone may join are
-    // exactly the moments the QR should be reachable. If these ever diverge, the QR either advertises a
-    // join that will be refused or hides during one that would succeed.
-    private static void GateMatchesTheHeadlessLaunchWindow()
-    {
-        foreach (var (state, label) in new (StateSnapshot?, string)[]
-        {
-            (Lobby("host"), "host lobby"),
-            (Lobby("singleplayer"), "singleplayer lobby"),
-            (Lobby("client"), "client lobby"),
-            (RunInProgress(), "run in progress"),
-            (MainMenu(), "main menu"),
-            (null, "no state"),
-        })
-        {
-            var mayLaunch = state is { Run: null, CharacterSelect.Lobby.NetGameType: "host" };
-            Expect(CouchCoopLobbyHostGate.IsHostLobby(state) == mayLaunch,
-                $"the gate agrees with the headless-launch window ({label})");
-        }
     }
 
     // ---- builders -------------------------------------------------------------------------------------------

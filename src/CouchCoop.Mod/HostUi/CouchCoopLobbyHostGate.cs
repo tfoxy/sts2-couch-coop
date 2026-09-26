@@ -42,8 +42,8 @@ public static class CouchCoopLobbyHostGate
         => listenerBaseUri is not null && IsHostLobby(state);
 
     /// <summary>
-    /// The lobby predicate, matching <c>CouchCoopLobbyParticipation.MayLaunchNewHeadless</c>: no run in
-    /// progress, and a character-select lobby whose net game type is <c>host</c>.
+    /// The lobby predicate, the same window as <c>MirrorJoinContext.SpawnAllowed</c> (the moments a phone may
+    /// join): no run in progress, and a character-select lobby whose net game type is <c>host</c>.
     /// <para>
     /// This covers BOTH lobby screens on purpose. The multiplayer load-saved-game screen
     /// (<c>NMultiplayerLoadGameScreen</c>) reports a <c>CharacterSelect</c> lobby with

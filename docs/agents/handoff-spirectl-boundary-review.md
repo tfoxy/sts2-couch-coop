@@ -62,7 +62,7 @@ What CouchCoop imports today (`using` counts across `src/`; verify and complete)
 | `Live` (15) | main-thread dispatcher, `Sts2ScreenContext`, scene watcher, render phase/encode budget, offscreen extraction, Spine hooks/stills/geoclip, browser pad map, MonoMod native dependencies, build identity |
 | `Core.SceneInspection` (12) | the scene-delta DTOs the mirror is built on |
 | `Core.State` (8) | the full `StateSnapshot`, being retired |
-| `Core.Artifacts`, `Core.Actions`, `Core.Models`, `Core.Logging` | geoclip baker; actions still used: `MouseClick`, `JoinLobbyPlayer`, `LeaveLobbyPlayer`, `DisconnectClient`, name overrides |
+| `Core.Artifacts`, `Core.Actions`, `Core.Models`, `Core.Logging` | geoclip baker; actions still used: `MouseClick`, `DisconnectClient`, name overrides |
 
 Build-level coupling:
 
