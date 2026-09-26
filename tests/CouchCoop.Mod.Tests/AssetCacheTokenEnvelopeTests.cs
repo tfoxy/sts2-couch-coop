@@ -191,15 +191,6 @@ internal static class AssetCacheTokenEnvelopeTests
                 [],
                 []);
 
-        public IDisposable SubscribeCombatEvents(
-            CombatEventSubscriptionRequest request,
-            Action<CombatWatchEvent> onEvent,
-            Action<EmbeddableRuntimeError>? onError = null) => throw new NotSupportedException();
-
-        public IAsyncEnumerable<CombatWatchEvent> WatchCombatEventsAsync(
-            CombatEventSubscriptionRequest request,
-            CancellationToken cancellationToken = default) => throw new NotSupportedException();
-
         public IDisposable SubscribeAnimationHints(
             AnimationHintSubscriptionRequest request,
             Action<TweenAnimationHint> onHint,

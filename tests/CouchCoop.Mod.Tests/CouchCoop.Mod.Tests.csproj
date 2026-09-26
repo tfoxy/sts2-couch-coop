@@ -45,7 +45,7 @@
       OutputItemType="Content"
       CopyToOutputDirectory="PreserveNewest" />
     <ProjectReference Include="../../src/CouchCoop.Mod.Loader/CouchCoop.Mod.Loader.csproj" />
-    <!-- Tests use bridge types (ISpirectlRuntime, CombatWatchEvent, ...) directly. CouchCoop.Mod produces
+    <!-- Tests use embedded runtime types (ISpirectlRuntime, RuntimeSceneDelta, ...) directly. CouchCoop.Mod produces
          the shared runtime as CouchCoop.Spirectl.dll; reference that output instead of rebuilding the
          spirectl project with a competing assembly name. -->
     <Reference Include="CouchCoop.Spirectl">
