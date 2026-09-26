@@ -1153,6 +1153,31 @@ public static class CouchCoopQrHostPanelController
                 or "MegaCrit.Sts2.Core.Nodes.Screens.CharacterSelect.NMultiplayerLoadGameScreen";
     }
 
+    /// <summary>
+    /// Whether the screen the player is on right now is one of the registered lobby screens. Every id in
+    /// <see cref="Screens"/> already passed <see cref="IsLobbyScreen"/> at mount time, so this adds no new
+    /// screen-type knowledge — it only asks which of the already-known screens is current.
+    /// </summary>
+    /// <remarks>
+    /// CALLERS MUST BE AT A FRAME BOUNDARY, same rule as <see cref="Survey"/> and for the same reason — see
+    /// <see cref="WakeEvaluation"/>'s remarks (lines 368-378). Do not call this synchronously from inside a game
+    /// screen-transition callback.
+    /// </remarks>
+    internal static bool IsAnyLobbyScreenCurrent()
+    {
+        foreach (var id in Screens.Live())
+        {
+            if (GodotObject.InstanceFromId(id) is Node node
+                && GodotObject.IsInstanceValid(node)
+                && Sts2ScreenContext.IsCurrent(node))
+            {
+                return true;
+            }
+        }
+
+        return false;
+    }
+
     private static bool IsVisibleInTree(Node node)
         => node is not CanvasItem canvasItem || canvasItem.IsVisibleInTree();
 }
