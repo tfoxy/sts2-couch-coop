@@ -334,24 +334,25 @@ The first step is small and independently useful; every later step can be stoppe
   `Sts2ScreenContext.SubscribeUpdated` would be one. Put the tripwire at those call sites too, or behind a
   CouchCoop-owned facade over them, and it also catches the next subscriber P1 adds.
 
-## 9. Proposed wording for `CLAUDE.md`
+## 9. Approved wording for `AGENTS.md` (`CLAUDE.md` symlinks here)
 
-Not applied. Current text, then proposed replacement.
+Applied 2026-09-26 after maintainer approval. The active ownership rule is in the repository's `AGENTS.md` under
+Project Intent and Architecture Rules. The wording preserves the separate real-input and no-polling rules below.
 
 **Line 68** (Project Intent)
 
 - Current: `Reuse embeddable spirectl libraries for generic STS2 runtime state, semantic actions, and asset extraction where possible.`
-- Proposed: `Reuse spirectl where another tool already shares the code: asset extraction, the game-API lane table and the runtime hook substrate. Runtime behavior only CouchCoop needs (scene observation, roster and per-viewer facts, browser input, seat and lobby handling) lives in this repo.`
+- Applied: `Reuse spirectl where another tool already shares the code: asset extraction, the game-API lane table and the runtime hook substrate. Runtime behavior only CouchCoop needs (scene observation, roster and per-viewer facts, browser input, seat and lobby handling) lives in this repo.`
 
 **Line 76** (Architecture Rules)
 
 - Current: `spirectl owns reusable STS2 tooling: generic runtime inspection, semantic action execution, asset extraction, fixtures/scenarios, render snapshots, screenshots, screenshot diff, diagnostics, and reusable validation helpers.`
-- Proposed: `spirectl owns the STS2 tooling it has a consumer for today: runtime inspection and semantic actions for the CLI and QA bridge, asset extraction, fixtures/scenarios, render snapshots, screenshots, screenshot diff, diagnostics, and validation helpers. Reuse is earned: code moves to spirectl when a second consumer exists, not before. Named exception: geoclip (cheap animated Spines without the Spine library) stays in spirectl as a tool in the making, until its first spirectl consumer lands.`
+- Applied: `spirectl owns the STS2 tooling it has a consumer for today: runtime inspection and semantic actions for the CLI and QA bridge, asset extraction, fixtures/scenarios, render snapshots, screenshots, screenshot diff, diagnostics, and validation helpers. Reuse is earned: code moves to spirectl when a second consumer exists, not before. Named exception: geoclip (cheap animated Spines without the Spine library) stays in spirectl as a tool in the making, until its first spirectl consumer lands.`
 
 **Line 77** (Architecture Rules)
 
 - Current: `Missing reusable STS2 support belongs in ../spirectl; do not add CouchCoop-local reflection, asset extraction, encounter fixture, render, screenshot, or diff shims for reusable STS2 behavior.`
-- Proposed: `Support the CLI or QA bridge also needs belongs in ../spirectl; do not add CouchCoop-local asset extraction, encounter fixture, render, screenshot, or diff shims for it. Support only CouchCoop needs starts here, using typed access with the game-lane split like the rest of the mod, and its Harmony targets and any by-name reads go through the existing gates (beta-targets, code verify-references). Do not add unused lanes to the embedded copy.`
+- Applied: `Support the CLI or QA bridge also needs belongs in ../spirectl; do not add CouchCoop-local asset extraction, encounter fixture, render, screenshot, or diff shims for it. Support only CouchCoop needs starts here, using typed access with the game-lane split like the rest of the mod, and its Harmony targets and any by-name reads go through the existing gates (beta-targets, code verify-references). Do not add unused lanes to the embedded copy.`
 
 ## 10. Adjacent, note only: `@spirectl/presentation` and `godot-scene-web`
 
