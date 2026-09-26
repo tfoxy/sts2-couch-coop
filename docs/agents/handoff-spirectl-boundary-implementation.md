@@ -1,28 +1,48 @@
 # Implement the spirectl boundary recommendations
 
 Prepared 2026-09-26. A bounded implementation handoff for [spirectl-boundary-review.md](spirectl-boundary-review.md)
-(the "memo"). Nothing here has been started except what is listed under "Where things stand". Steps marked
-**maintainer** are decisions, not agent work.
+(the "memo"). This document now records the implementation status; the original work-package descriptions below
+remain as design and verification reference. Steps marked **maintainer** are decisions, not agent work.
 
 ## Where things stand
 
-- **Landed:** the hosting tracker is event-driven (`b6a1ec12`), its state-subscription fallback is gone (`a9f382b6`),
-  and the memo is committed (`7c2ad70a`).
-- **`a9f382b6` was done before it was asked for.** The maintainer's decision was "the fallback must be removed",
-  not "remove it now". It is local, unpushed, one commit, and verified (`seats`, `idle-host`, `connections` in a
-  clean worktree). Keep it unless the maintainer says otherwise; `git revert a9f382b6` undoes it cleanly. This
-  handoff treats it as landed.
-- **Decided by the maintainer:** geoclip stays in spirectl (a tool in the making: cheap animated Spines without the
-  Spine library); no backstop poll for hosting end; roster observation is push-only and the run-end reap fires only
-  once the game has left both the run and any lobby, with the end-of-run summary still counting as in-run
-  (memory `roster-push-only-run-end-rule`).
-- **Still the maintainer's:** approving the `CLAUDE.md` / `AGENTS.md` wording (memo §9); whether the scene stream or
-  animation hooks are earmarked for a spirectl consumer (gates WP6); the `ClaimReward` allow-list and the two
-  "awaiting the maintainer's call" browser actions; deleting the paused `roster-port` branch.
-- **Correction to earlier notes:** the recurring full-state captures are **not** all gone. The tracker was the last
-  *unbounded* poll. One bounded recurring read remains: the QR host panel's 0.25 s chain pulls the full lobby state on
-  every tick while a lobby screen is the current screen (WP3 item 1). `CouchCoopStateObserver` also runs a 50 ms
-  subscription while a viewer is parked on the join picker.
+WP1, WP2, WP3, WP4a, WP7 and WP8 are complete. The WP3 integration branch removes the runtime state port and
+temporary snapshot parity oracles and adds a metadata gate against full-state references in both mod assemblies.
+Its focused tests and v107/v111 compile lanes passed. The roster reaction now compares every `RosterFacts` value;
+a typed character-change callback wakes a one-frame deferred read. The integrated work passed the full mod,
+MirrorProtocol and Connection suites, the paired boundary check, and v107/v111 Release builds. It is landed on
+local CouchCoop `main`. Nothing has been pushed or tagged.
+
+WP4b landed on local spirectl `main` as `6a922914`, and CouchCoop pins it. Independent review
+caught and fixed four state-only game-API manifest requirements before landing. Full and Embedded profiles compiled
+on v107 and v111. After landing, `bridge-tests` passed 2,088 tests, the live-host gate passed 2,390 with four
+skipped, and the paired boundary check confirmed Embedded's 213 compile items versus Full's 288. Same-SDK
+method-body IL fell from 1,190,261 bytes at the WP4a baseline to 991,218 after WP4b (−16.72%); Full is
+1,416,456 bytes. Measurement: `.sts2/research/spirectl-boundary-review-sep26/wp4b/wp4b-embedded-final.csv`.
+
+Both private-headless live legs are complete. QA1 exposed the missing character wake on the older build; QA2 proved
+that a real browser character change advances the host roster and updates another viewer's mirror with unchanged
+seat IDs and connectivity. QA1 recorded 27 roster reads, QA2 recorded 18 and 27 over two launches; both saw zero
+reads before viewer demand and zero idle-work or tripwire entries. Joins, leave/rejoin, hosted start, ordinary
+browser reconnect, load-run and hosted QR, hosted Save and Quit to menu, and singleplayer summary/no-QR checks ran.
+QA2 installed and proved both bridge-facing and embedded assemblies in a private farm because another live owner
+held the shared-install lease. See `.sts2/research/spirectl-boundary-review-sep26/wp3-live-qa1/QA1-REPORT.md` and
+`.sts2/research/spirectl-boundary-review-sep26/wp4b-live-qa2/QA2-REPORT.md` for identities, read counts and images.
+
+**Verification follow-up:** the first full CouchCoop mod-suite build found test fakes that still named
+combat-event types removed from Embedded. The test-only fakes and boundary assertions were corrected; the full mod,
+MirrorProtocol, Connection and focused Embedded boundary suites now pass. Run-name-only editing and a hosted
+run-to-summary-to-menu transition were not
+exercised end to end. A separate forced headless-seat death left its player unavailable in the reconnect picker;
+ordinary browser close/reopen passed. These limits and the distinct forced-death evidence are in the QA reports.
+
+**Retained polling:** the existing QR host-panel 0.25 s heartbeat and seat readiness loops remain at their existing
+cadence. No new polling was added.
+
+**Maintainer decisions remain open:** memo §9 wording; whether scene or animation hooks are earmarked for a spirectl
+consumer; the `ClaimReward` allow-list and the two browser actions awaiting a call; whether to remove the host-start
+cap probe that reads null in stock flows; and deletion of the paused `roster-port` branch/worktrees. No decision is
+made here.
 
 ## Rules for every work package
 
@@ -43,40 +63,26 @@ Prepared 2026-09-26. A bounded implementation handoff for [spirectl-boundary-rev
   (WP1's recipe) before a release cut.
 - Never push, never tag. `main` gets one squash commit per change; multi-step work goes on a branch.
 
-## WP1: compile the tracker on the v107 lane (small, independent)
+## WP1: compile the tracker on the v107 lane (complete)
 
-`b6a1ec12` and `a9f382b6` were compiled against v111 only. The v107 decompile corpus (`.sts2/toolchain-public`)
-declares the same public run-in-progress member, so the risk is small, but no v107 compile has run. Both reference
-packages are cached in the local NuGet store. In a **worktree** (the release script wipes every `src/**/{bin,obj}`
-before a lane, and the two lanes must not share intermediates):
+The mod compiled against v107 without a compatibility fix; v111 also compiles. The SDK recipe from the original
+handoff is omitted here because the result is recorded above and the standard lane procedure lives in
+`scripts/package-release.sh`.
 
-1. Stage the SDK: `dotnet build eng/Sts2.ReferenceSdk/stable/Sts2.ReferenceSdk.stable.csproj -c Release -o <scratch>/sdk
-   -p:RestoreLockedMode=true -p:ContinuousIntegrationBuild=true -p:DebugSymbols=false -p:DebugType=None`.
-2. Build the mod against it: `dotnet build src/CouchCoop.Mod/CouchCoop.Mod.csproj -c Release
-   -p:CouchCoopBuildToLocalMods=false -p:Sts2AssembliesDir=<scratch>/sdk -p:Sts2GameApi=v107
-   -p:EnableSts2LiveHost=true`, with `DOTNET_ROLL_FORWARD=Major`.
+## WP2: delete the dead connecting-player path (complete)
 
-This mirrors the lane loop in `scripts/package-release.sh` (which builds the Loader project, and so the mod). It
-proves compilation only; the SDK is declaration-only, so no test can run against it. Report the result either way.
+The dead connecting-player path was removed in `c4cfeca2`; the lobby gate remains live. The original proposal was
+intentionally narrowed after caller review: the lobby gate was a live path and stayed. Focused suites passed when
+this change landed.
 
-## WP2: delete the dead connecting-player path (small, independent)
+## WP3: retire the remaining full-state reads (complete; memo P1)
 
-Recorded as a maintainer decision on 2026-09-25 in the paused roster round. Delete `MayLaunchNewHeadless`,
-`HasFreeLobbySlot`, `EnsureLobbyPlayer`, `FindPlayerIdByName` and the instance `RosterNames()` from
-`Session/CouchCoopLobbyParticipation.cs`, the gate in `HostUi/CouchCoopLobbyHostGate.cs` that mirrors
-`MayLaunchNewHeadless`, and their tests (`CouchCoopLobbyHostGateTests`, `HostPeerRoutingTests`,
-`HeadlessClientManagerTests`). Today only comments reference the first two outside that file; **re-verify each has
-no live caller before deleting it**, including the hot-reload build. It also makes two semantic-action uses
-unreachable: `JoinLobbyPlayer` (its only caller is `EnsureLobbyPlayer`) and `LeaveLobbyPlayer` (called from
-`CouchCoopWebSocketConnection` on disconnect, and always refused because CouchCoop's seats are real ENet clients).
-Remove those calls and the matching comment in `BrowserSessionRegistry`. This shrinks WP3's surface first.
-Suites: `seats`, `host-guards`, `host-ui`, `connections`.
-
-## WP3: retire the remaining full-state reads (memo P1)
-
-Goal: CouchCoop never calls `GetCurrentState` or `SubscribeCurrentState`. That is what lets WP4b stop compiling
-the state builders, the screen inspectors and `StateSnapshot` (about 12K LOC). Work **by read path**, one commit
-each, most valuable first. Re-check each row against the code before starting; line numbers drift.
+**Completed:** the seven read paths were replaced by CouchCoop typed facts and signals. The runtime state port and
+temporary parity oracles are removed. A metadata test rejects full-state references in both mod assemblies. The
+combined branch passed its focused path suites, zero-client contract, boundary check, and v107/v111 builds. QA1
+and QA2 completed as described above. Goal: CouchCoop never calls `GetCurrentState` or `SubscribeCurrentState`.
+WP4b then excluded the state builders, screen inspectors and `StateSnapshot` from Embedded. The table below is the
+historical read-path inventory and rationale.
 
 | # | Read path | Runs | Facts it needs |
 | --- | --- | --- | --- |
@@ -93,7 +99,9 @@ The whole set of fields CouchCoop reads is about 20 leaves: the root screen (fou
 saved-run seat ids, run presence and net game type, run seats `{id, name, character, is host, is local,
 connected}`. Ids stay `p:{netId}` (`MirrorSeatNetIds.TryParsePlayerId`). A run seat's connected flag fails open.
 
-**Design direction, not a spec.** A CouchCoop-owned reader of those facts, typed against the game assemblies with the
+**Implemented direction:** CouchCoop-owned readers of typed facts replaced these full-state paths; a metadata test
+rejects full-state references in both mod assemblies. Temporary snapshot parity oracles were removed. The original
+design used a CouchCoop-owned reader typed against the game assemblies with the
 existing lane `#if` split, **not** by-name reflection. Build on what already exists: `HostingSessionFacts`,
 `LobbyScreenRegistry` and `Sts2ScreenContext` (the start-run and load-run lobby screens), and the host peer list
 `7d089e03` added to `CouchCoopHostTransport`. Path 1 is the natural first target: "host lobby" is roughly "a host is
@@ -119,20 +127,17 @@ Constraints, each learned the hard way:
 - Keep the QR panel's behavior for a listener that failed to bind (the button stays reachable) and the
   once-per-mount alert latch.
 
-Tests: a fake facts provider per path (the tracker's `FakeFacts` and `FakeScreenTrigger` in
-`tests/CouchCoop.Mod.Tests/ConnectionHostingTrackerStateTests.cs` are the pattern), with time injected. For parity,
-keep the old full-snapshot read as a **test-only oracle** until the last path lands and assert the new facts equal
-its projection on the existing fixtures. Add the tripwire from [handoff-zero-client-guard.md](handoff-zero-client-guard.md)
-before the last path so a regression is visible. One headless live session per path (private compositor only, see
-`CLAUDE.md` "Automated game displays") with before and after read counts.
-
-Acceptance: `grep -rn "GetCurrentState\|SubscribeCurrentState\|WatchCurrentStateAsync" src` finds nothing outside the
-runtime-ports adapter; every suite above passes on v111 and compiles on v107; a hosted run shows no full-state
-capture on the game thread outside a join.
+The original verification design used a fake facts provider per path (the tracker's `FakeFacts` and `FakeScreenTrigger` in
+`tests/CouchCoop.Mod.Tests/ConnectionHostingTrackerStateTests.cs` are the pattern), with time injected. The completed
+implementation migrated historical fixtures to `RosterFacts` and removed the temporary full-snapshot oracles. The
+zero-client tripwire is part of the focused gates. Static source and metadata checks, focused suites and both compile
+lanes passed in the integration worktree. QA1 and QA2 read-count and signal evidence is recorded above.
 
 ## WP4: compile profile in spirectl (memo P2)
 
-One spirectl change, in two parts, so the embedded copy stops compiling and installing code CouchCoop cannot reach.
+**4a completed:** the embedded compile profile landed, with its initial size reduction below the memo estimate.
+**4b completed on local spirectl `main`:** one spirectl change trims the embedded copy
+so it stops compiling and installing code CouchCoop cannot reach.
 The bridge and CLI keep the **full** profile, byte-for-byte unchanged in behavior.
 
 - **4a. Dead today (about 16K LOC, 19% of the IL); can start now, independent of WP3:** the legacy state-extractor
@@ -141,14 +146,16 @@ The bridge and CLI keep the **full** profile, byte-for-byte unchanged in behavio
   partials (`CardPile`, `Combat`, `DeckView`, `HandSelection`, `InspectRelic`, `TopBar`, and most of `ScreenIntents`
   and `RewardCommit`). The dispatcher's switch statically references all 64 action kinds, so the profile needs its
   own dispatcher list; CouchCoop uses 8.
-- **4b. Dead once WP3 lands (about 12K LOC, 14%):** `StateSnapshot`, the state builders and projection, the screen
-  and overlay inspectors (the scene watcher keeps only the screen locator).
+- **4b outcome:** `StateSnapshot`, state builders/projection, screen and overlay inspectors, the state-only preview
+  core and fixture-only helpers are excluded from Embedded. This includes the unused fixture helper and main-menu
+  helper; profile tests pin their absence. Full retains those lanes and helpers. The Embedded game-API manifest also
+  drops the four state-only member requirements identified in review; the Full manifest keeps them.
 
-Mechanism: an MSBuild property the CouchCoop project reference selects and the bridge does not; explicit item lists
+Implementation uses an MSBuild property the CouchCoop project reference selects and the bridge does not; explicit item lists
 in place of the hand-maintained `Exclude` mirror on the `Live/**` glob (five entries there name files that no longer
 exist, and `Live/Sts2SceneSubtreeStillKey.cs` is compiled twice); a composition-factory variant that neither
-constructs nor installs the excluded lanes; game-API manifest requirements that only the excluded lanes read dropped
-from the embedded profile (about 8 of 20; a miss there is fatal at startup today); and
+constructs nor installs the excluded lanes; the four state-only game-API member requirements dropped from the
+Embedded manifest while Full retains them; and
 `scripts/validate-spirectl-embedded-boundary.sh`'s 4 KB drift check replaced by "the embedded profile equals the
 upstream build of the same profile".
 
@@ -164,16 +171,11 @@ memo (confidence in brackets):
 | `Sts2MultiplayerConnectionHooks`, `Sts2SyntheticLobbyNameHooks` | keep: connection reporting and client-name overrides are live |
 | `Sts2ParticleRestartHooks`, `Sts2SpineAnimationHooks`, `Sts2TweenRecorderHooks`, `Sts2CardFlightHooks`, `Sts2DiscardFlightHooks`, `Sts2HandHolderHooks` | keep: they feed the mirror's animation hints and scene stream |
 
-Spirectl's own process applies (see the `spirectl` skill and its docs): pair-root worktrees so CouchCoop builds
-against the branch (`CouchCoopSpirectlRoot`), `scripts/validate.sh bridge-tests` **alone**, `bridge-build` with an
-explicit `-p:EnableSts2LiveHost=true`, and the live-host test leg with the `Sts2HostTests` exclusion, compared **by
-failing test name** against the 9 known failures at `386c7ed6` (`Sts2MainMenuStartRunTests` x3,
-`EncounterVisualCatalogTests` x1, `Sts2EmbeddableAssetProviderTests` x5), never by count. Both game lanes' manifests
-change and both must be pinned. Then a CouchCoop pin bump with a `Refs:` trailer, the boundary script, the couch
-suites, and a redeploy of **both** copies (bridge and mod). Re-run the memo's IL measurement (the local tool under
-`.sts2/research/spirectl-boundary-review-sep26/size/tool`) and report before and after. Acceptance: the embedded IL
-falls by about the figures above; the bridge, CLI and `bridge-tests` behave as before; a game update can no longer
-stop CouchCoop from starting over a member only an excluded lane read.
+The paired worktrees let CouchCoop build against the reviewed spirectl source without switching the shared sibling
+checkout. After landing, `scripts/validate.sh bridge-tests` ran alone and passed; `bridge-build` with
+`EnableSts2LiveHost=true` and the live-host gate passed. The CouchCoop pin has a `Refs:` trailer, and the paired
+boundary check passed. Both installed copies were proved in a private game farm; the shared install was held by
+other live owners and was not overwritten. The full mod, MirrorProtocol and Connection suites passed.
 
 ## WP5: make geoclip cheap to validate where it lives (memo P2b, contingent)
 
@@ -194,7 +196,9 @@ a small public substrate (dispatcher, screen locator, introspection, build ident
 `verify-reflected-game-members.sh` has a runner covering both source trees (WP8) before any by-name read moves. The
 geoclip baker and the Spine hooks, inspector and materials it stands on do **not** move.
 
-## WP7: zero-client guard
+## WP7: zero-client guard (complete)
+
+The zero-client tripwire and whole-host contract test landed in `626335f1`; its focused `-- zero-client` gate passes.
 
 [handoff-zero-client-guard.md](handoff-zero-client-guard.md) proceeds independently. Its choke point is
 `CouchCoopRuntimeDependencies.FromFactory` and `CouchCoopRuntimeHost` for the runtime ports, **plus** the direct
@@ -204,27 +208,16 @@ subscriber WP3 adds.
 
 ## WP8: housekeeping
 
-- Give `scripts/verify-reflected-game-members.sh` (spirectl) a runner and make it cover both trees: nothing runs it.
-- The live-host test leg is red on a clean checkout (9 failures). Fix or quarantine them so it can be a gate.
-- Keep [architecture-map.md](architecture-map.md) accurate as code moves; update the subsystem entries in the same
-  commit.
+- The reflected-members runner covers the CouchCoop and spirectl source trees.
+- The live-host test leg is now a passing gate.
+- Keep [architecture-map.md](architecture-map.md) accurate as code moves; the current roster and WP4b status is
+  recorded there and in this handoff.
 - **Maintainer:** delete the `roster-port` branch (`77d5f2dc`) and the leftover round worktrees when ready.
-
-## Order
-
-```
-WP1 ─┐
-WP2 ─┼─► WP3 (path 1 first, one commit per path) ─► WP4b ─► WP6 (on touch)
-WP4a ┘        WP7 in parallel; the tripwire lands before WP3's last path
-WP5 only if geoclip work resumes;  WP8 alongside;  maintainer's wording approval anytime
-```
-
-Start with WP1, WP2 and WP4a in parallel: none depends on another, and each is small.
 
 ## Questions for the maintainer
 
 1. Approve or amend the wording in memo §9 (it decides whether agents still ask permission for CouchCoop-side reads).
 2. Is the scene stream, the animation-hint stream, or the browser input maps earmarked for a spirectl consumer?
-3. Keep or revert `a9f382b6`?
-4. `ClaimReward` is allow-listed but no longer sent by the frontend; `SelectMapNode` and `SetScrollOffset` are still
-   "awaiting your call". Retire, keep or ratify each?
+3. `ClaimReward` is allow-listed but no longer sent by the frontend; `SelectMapNode` and `SetScrollOffset` are still
+  "awaiting your call". Retire, keep or ratify each?
+4. Remove the host-start cap probe, which reads null in stock flows?

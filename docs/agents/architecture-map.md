@@ -150,8 +150,9 @@ This map records current contracts, not retired implementation alternatives.
   builders (two members stay), the full action-descriptor catalog, the reference-data provider implementation (its
   DTOs and port stay: `ISpirectlRuntime` inherits them), the host-local seat watchers, the VFX-spawn hook, and every
   action body no embedded dispatch route reaches. Types moved out are split verbatim into `*.Full.cs` partials the
-  full profile still compiles. Its game-API manifest lists only what a compiled lane reads (v111: 13 of 20). The
-  omitted files are one list, the "Embedded profile" item group in
+  full profile still compiles. WP4b also excludes the full-state builders, screen and overlay inspectors, state-only
+  preview core and fixture-only helpers. Its game-API manifest omits requirements read only by excluded lanes.
+  The omitted files are one list, the "Embedded profile" item group in
   `../spirectl/bridge-mod/src/Spirectl.Sts2/Spirectl.Sts2.csproj`.
 - **The embedded dispatcher routes only the kinds CouchCoop sends**: hover, mouse click, key and controller input,
   `select-map-node`, `set-scroll-offset`, `claim-reward` (still on `BrowserActionExecutor`'s allow-list),
@@ -173,6 +174,12 @@ This map records current contracts, not retired implementation alternatives.
   the retained types.
 - **A change that names a type the profile left out fails the couch build** (`CS0246`), not at run time — and the
   file's OTHER types count: check every type a file declares against `src/` and `tests/`, not just its first.
+- **Boundary handoff status (2026-09-26).** WP3 removed CouchCoop's runtime state port and temporary snapshot
+  parity oracles; a metadata test rejects full-state references in both mod assemblies. WP4b landed on local
+  spirectl `main` as `6a922914` and CouchCoop pins it. Both private live QA legs completed,
+  including a bridge-and-mod install proof. Same-SDK method-body IL measured 1,190,261 bytes at the WP4a baseline
+  and 991,218 bytes after WP4b (−16.72%); Full is 1,416,456 bytes. See
+  [the handoff](handoff-spirectl-boundary-implementation.md) for current verification status.
 
 ## Real input, not semantic actions
 - **The rule** (CLAUDE.md → Architecture Rules): a viewer's gesture becomes the same hover / press / release /
@@ -744,7 +751,7 @@ seat names, and reaps detached seats once the run and any lobby are over. It use
   overrides apply, not the BBCode-escaping `GetPlayerName` wrapper.
 - **Signals, and only signals** (`Runtime/GameRosterSignals.cs`, woken into `CouchCoopRosterObserver`): the game's
   active-screen event (`GameScreenContext.SubscribeUpdated`); typed postfixes (`Patches/RosterSignalPatch.cs` +
-  `RosterSignalTargets.cs`) on `NCharacterSelectScreen.PlayerConnected`/`RemotePlayerDisconnected`,
+  `RosterSignalTargets.cs`) on `NCharacterSelectScreen.PlayerConnected`/`PlayerChanged`/`RemotePlayerDisconnected`,
   `NMultiplayerLoadGameScreen.PlayerConnected`/`RemotePlayerDisconnected`, the `StartRunLobby` and `LoadRunLobby`
   constructors and `RunManager.CleanUp`; `RunManager.RunStarted`; the host net service's `ClientConnected` /
   `ClientDisconnected` (the service is the one the lobby constructors recorded in `Runtime/RosterHostService.cs`, bound
@@ -754,14 +761,16 @@ seat names, and reaps detached seats once the run and any lobby are over. It use
   so a burst of signals is one read. The first read after `Start` is the baseline and counts as a change. There is no
   timer, no retry and no backstop: a failed read is delivered as `null` and the next signal reads again.
   Declared methods only, typed `nameof`/`typeof` bindings per lane (`#if STS2_API_V111` for the lobby-player parameter
-  types), pending-set retry, second chance at the end of `CouchCoopMod.Init`. Player character/readiness changes are
-  not hooked: nothing acts on them (the re-send signature ignores both, and a read always sees the current character).
+  types), pending-set retry, second chance at the end of `CouchCoopMod.Init`. QA1 found that the older build lacked a
+  direct character-change wake. The typed hook and deferred read in commit `fa72a840` passed QA2: a real browser
+  character change advanced the host roster and updated another viewer with unchanged seat IDs/connectivity.
   **Known unsignalled gaps** (push only, so reported instead of polled): a remote player's platform name resolving late,
   and a mod that edits a lobby's players directly.
 - **What the server does with a read** (`Server/CouchCoopRosterReaction.cs`, pure and injected; the observer hands each
-  roster to a serial worker off the game thread, and a read from a stopped observer is dropped by generation): on a
-  changed `CouchCoopRosterChange.Signature` (the retired snapshot fingerprint, unchanged: seats' id/name/connected, the
-  saved seat ids and the scene) republish the names (`PublishRosterNames`, host only) then re-send every session; and,
+  roster to a serial worker off the game thread, and a read from a stopped observer is dropped by generation): value
+  equality over `RosterFacts` detects every roster fact change, including run seat name/character/host role and lobby
+  character changes with unchanged seat ids and connectivity. A changed roster republishes names (`PublishRosterNames`,
+  host only) then re-sends every session; and,
   on every read, reap detached seats when `CouchCoopRosterChange.HasLeftRunAndLobby` (**no run AND no lobby**: the main
   menu and epoch screens; the end-of-run death/Architect summary is still the run, and a lobby screen is not the run
   having ended). A `null` roster does nothing.
@@ -774,16 +783,17 @@ seat names, and reaps detached seats once the run and any lobby are over. It use
   `HostUi/LobbyAssignmentRecord.cs` (the lobby table), `Server/CouchCoopRosterChange.cs`, `Server/CouchCoopRosterReaction.cs`.
   `Server/` is linked into the hot-reload assembly, so those two are game-free and everything that touches a game type
   or a static that must exist once lives in `Runtime/`, `Patches/` or `HostUi/`.
-- **Tests**: `RosterFactsTests` (facts, parity oracle over the shared snapshot fixtures for the signature, the published
-  names and the reap predicate — TEST ONLY, deleted with the last WP3 path — and the front's threading) and
+- **Tests**: `RosterFactsTests` (facts, value-equality reaction cases and the front's threading) and
   `CouchCoopRosterObserverTests` (observer, signal hub, reaction, hook targets, dormancy) in `-- host-ui`;
   `CouchCoopRosterObserverTests.TargetsResolve` in `-- host-guards` and `-- beta-targets` (and
   `RosterSignalTargets` in the metadata-only lane); `BrowserServerRouteTests.AssertRosterObserverDrivesTheServerAsync` and
   `AssertMirrorOnlyHostKeepsSessionsLiveAsync` (real listener, real seat manager, fake seat process) in `-- seats`;
   `CouchCoopRosterObserverTests.RosterIsDormantWithoutDemand` in `-- idle-host`; `-- zero-client` (the `roster.subscribe`
   rogue and a rogue roster read).
-- **Live QA to run** (the reap rule needs a game, not a fixture): a death and an Architect summary must NOT reap detached
-  seats, a lobby must not, leaving to the main menu must. With `COUCHCOOP_ROSTER_TRACE=1` each read logs
+- **Live QA** (QA1 and QA2 reports are linked from the handoff): a death and an Architect summary must NOT reap detached
+  seats, a lobby must not, leaving to the main menu must. The two legs covered a singleplayer summary and hosted
+  menu transition separately; they did not drive a hosted run-to-summary-to-menu path end to end. With
+  `COUCHCOOP_ROSTER_TRACE=1` each read logs
   `roster read #N <signature>` to `godot.log`: one burst of joins is one read, and at a settled checkpoint the last
   signature must equal the game's real roster; a mismatch is a missed signal, to be reported, not papered over with a poll.
 
@@ -828,9 +838,7 @@ change. It is built from **one roster read and never from a full state snapshot*
   each server its own fake game; route tests use `RecordingSpirectlRuntime.NewEnvelopeFactory()`); the per-connection factories
   the server builds inherit it. The default is the front, and the route suite `RunSessionEnvelopeReadRoutesAsync` drives that
   default through a fake `IGameFacts` and a counting main thread.
-- **Tests**: `RosterClassifierParityTests` + `LegacySnapshotClassifier` (the retired snapshot classifier, TEST ONLY: identical
-  output for the projected roster over every shared fixture, requested names, session handles, remembered names, seat tables
-  across cap changes; deleted with the last WP3 path), `BrowserAssignmentClassifierTests`, `MirrorSeatRosterTests`,
+- **Tests**: `BrowserAssignmentClassifierTests`, `MirrorSeatRosterTests`,
   `HeadlessClientManagerTests` (`DescribeSeats(cap)`, `ReapSeat`, `CountLiveSeatProcesses` ask no probe), `SpineBakeBudgetTests`,
   and `BrowserServerRouteTests.RunSessionEnvelopeReadRoutesAsync` (`-- seats`: `StateReads` stays 0 and the counters move on the
   controls, for connect, the join reply, `watch`, and a roster, screen and static-background fan-out to N connections, which
@@ -866,8 +874,7 @@ is an on-demand read for a user action, never polled, and none of it runs at zer
 - **The hosted-server harness** (`tests/CouchCoop.HostedServerHarness`) has no game, so it points the typed facts at its fake
   runtime (`HarnessGameFacts`, through `InternalsVisibleTo`), or the host's own
   picker row (the one join it completes) would be refused.
-- **Tests**: `JoinFactsTests` (parity of the context with the retired snapshot read over the shared fixtures, TEST ONLY and
-  deleted with the last WP3 path; the rules written out by hand; the unreadable roster; the cap and its changes; one hop;
+- **Tests**: `JoinFactsTests` (the rules written out by hand; the unreadable roster; the cap and its changes; one hop;
   the manager handed facts) in `-- seats` and the full run; `BrowserServerRouteTests.RunJoinRoutesAsync` (a real socket join
   that launches, one that is refused and one with an unreadable game: no snapshot beyond the envelope's, one read of the
   game) in `-- seats`.
@@ -958,16 +965,14 @@ classes) and never through a state snapshot (WP3 path 5). It replaced `CurrentSt
   beta-targets`, full run: v111 requires an instance `int` field of that name and no public `MaxPlayers`; v107 the
   public property), `LobbyCapTargets` in the metadata-only lane (`-- beta-targets <staged sts2.dll>` on both lanes),
   and a read that throws is "no cap known", never a guess. `sts2 code verify-references` does not see it (a string
-  name is not an IL reference), and spirectl's manifest entry for the same member protects only while the embedded
-  profile still carries it: if WP4b drops the state builders and that entry, this pin is the only guard.
+  name is not an IL reference), and the profile boundary metadata test guards the compiled member references.
 - **Host start is always "no lobby".** The game starts hosting (`StartENetHost` / `StartSteamHost`, our prefix sizes
   the listener there) before it creates the lobby screen, so at that moment no lobby screen is current and the read
   reports `null` in every stock flow (live logs show `source=host-start` lines with `requested == effective`; the
   `lobby admits N players` line appears only in test logs). It is kept as it was: swapping its source changed no
   behaviour. Removing it, or re-sizing the listener when the lobby appears, is the maintainer's call.
 - **Tests**: `LobbyCapReadTests` (front, unknown rule, admission ceiling through the limiter, host-start sizing, the
-  zero-client allowance, saved-run record, and the snapshot-to-cap parity oracle, test-only and deleted with the last
-  WP3 path), `BrowserServerRouteTests.AssertUpgradeAdmissionReadsNoStateSnapshot` (`RecordingSpirectlRuntime.StateReads`
+  zero-client allowance and saved-run record), `BrowserServerRouteTests.AssertUpgradeAdmissionReadsNoStateSnapshot` (`RecordingSpirectlRuntime.StateReads`
   stays flat across 81 upgrades), `LobbyCapNoticeTests`, `HostTransportCapacityTests`.
 
 ### Headless seat launch contract (no CLI args)
@@ -1126,8 +1131,7 @@ ZeroClientEntry.Register("area.verb");` to `ZeroClientEntries`, call `ZeroClient
 (caller comes from the compiler; use `EnterPort` inside a method that implements a runtime port) on the way into
 it, and add a rogue driver to `EveryEntryPointHasARogueThatFailsTheContractAsync` — the test fails until you do, so
 the contract can always see the new entry. Wrap a new direct static the way `GameScreenContext` does rather than
-calling spirectl's static from a call site. Once the CouchCoop-owned host-facts reader lands (WP3), register its
-read the same way.
+calling spirectl's static from a call site. The CouchCoop-owned host-facts reader is registered as `host-facts.read`.
 
 - **Files**: `Runtime/ZeroClientGuard.cs`, `Runtime/CouchCoopGameSeams.cs`, `Runtime/CouchCoopRuntimeHost.cs`
   (the port calls), `Server/HotReloadableBrowserServerHost.cs` (demand feed).
@@ -1145,7 +1149,7 @@ read the same way.
   only catches a hot loop. Do not tighten it; the exact signal is `Timer.ActiveCount`. The test's viewers are raw
   sockets because an `HttpClient` request in the same process adds pool work of its own (one stray item ~10 s
   later), which the census would blame on the host.
-- **Tests**: `-- zero-client`; the named-component suites it complements are `IdleHostCostTests` (`-- idle-host`,
+- **Landed (WP7):** the runtime tripwire and whole-host contract test are committed; `-- zero-client` passes. The named-component suites it complements are `IdleHostCostTests` (`-- idle-host`,
   `-- host-guards`) and `ConnectionHostingDemandTests` (`-- seats`).
 
 ## Lobby QR host panel
@@ -1172,7 +1176,7 @@ The always-on QR overlay is gone. A game-styled button opens a dialog instead.
   live in `CouchCoop.Mod.Contracts/GameFacts.cs`; the game-typed reader is `GameFactsReader` in
   `Runtime/CouchCoopGameFacts.cs`, reached only through the `CouchCoopGameFacts` front (zero-client tripwire, a
   throw becomes "unavailable", `CouchCoopMod.EngineAvailable`-guarded and split so no game type is JIT-compiled
-  without an engine). Later WP3 paths add methods to the same interface. Where each fact comes from: run present
+  without an engine). The typed facts interface now covers the roster, cap, session envelope, join context, run presence and seat membership. Where each fact comes from: run present
   = `RunManager.Instance.IsInProgress`; run net type = `RunManager.Instance.NetService?.Type`; new-run lobby =
   the current `NCharacterSelectScreen`'s `Lobby?.NetService.Type`; **saved-run lobby = the role recorded by the
   typed postfixes on `NMultiplayerLoadGameScreen.InitializeAsHost` / `InitializeAsClient`**, because that screen
@@ -1200,7 +1204,7 @@ Host transport). A fact is never learned by polling: the screen handed to the re
   as `host-facts.read`, and a disconnect runs inside its own served connection (demand, then the release grace).
   Tests: `RunPresenceTests` (`-- seats`, full run): failure semantics per caller, detach/release/launch legs,
   zero `RecordingSpirectlRuntime.StateReads` and zero `GameMainThread` dispatches per disconnect and launch refusal,
-  a test-only `StateSnapshot.Run != null` parity oracle (deleted with the last WP3 path).
+  with full-state references blocked by the metadata boundary test.
 - **Facts are read on push signals only** (`LobbyGateFactsCache`): the game's screen event, a screen mount, a
   screen's `visibility_changed`, and the assignment hooks each `MarkDirty()` (inside `WakeEvaluation`, before the
   coalescing latch, so a wake dropped by a running chain still makes its next evaluation read). The next
