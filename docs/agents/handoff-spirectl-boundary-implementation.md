@@ -39,8 +39,12 @@ ordinary browser close/reopen passed. These limits and the distinct forced-death
 **Retained polling:** the existing QR host-panel 0.25 s heartbeat and seat readiness loops remain at their existing
 cadence. No new polling was added.
 
+**Browser-action decisions (2026-09-26):** `ClaimReward` is retired from the browser contract; reward rows use real
+input. `SetScrollOffset` is retained with the maintainer's approval so the game follows the client's final absolute
+scroll position without correcting an inaccurate local prediction.
+
 **Maintainer decisions remain open:** memo §9 wording; whether scene or animation hooks are earmarked for a spirectl
-consumer; the `ClaimReward` allow-list and the two browser actions awaiting a call; whether to remove the host-start
+consumer; the remaining `SelectMapNode` browser action pending investigation; whether to remove the host-start
 cap probe that reads null in stock flows; and deletion of the paused `roster-port` branch/worktrees. No decision is
 made here.
 
@@ -167,7 +171,7 @@ memo (confidence in brackets):
 | --- | --- |
 | `Sts2HostLocalSeatSyncWatcher`, `Sts2HostLocalSeatTurnWatcher` | dead: synthetic seats only [high] |
 | `Sts2DamageEventHooks`, `Sts2CardUpgradeEventHooks`, `Sts2VfxSpawnEventHooks` | dead: combat-event hub has no subscriber [high] |
-| `Sts2ChooseACardOverlayHooks`, `Sts2HandSelectionHooks`, `Sts2EndTurnReadinessHooks`, `Sts2RewardsCaptureHooks` | probably dead: outputs feed only dead lanes or `ClaimReward` [medium; `ClaimReward` is still allow-listed] |
+| `Sts2ChooseACardOverlayHooks`, `Sts2HandSelectionHooks`, `Sts2EndTurnReadinessHooks`, `Sts2RewardsCaptureHooks` | probably dead for CouchCoop: outputs feed only dead lanes or `ClaimReward` [medium; `ClaimReward` remains in shared tooling but is denied by the browser] |
 | `Sts2MultiplayerConnectionHooks`, `Sts2SyntheticLobbyNameHooks` | keep: connection reporting and client-name overrides are live |
 | `Sts2ParticleRestartHooks`, `Sts2SpineAnimationHooks`, `Sts2TweenRecorderHooks`, `Sts2CardFlightHooks`, `Sts2DiscardFlightHooks`, `Sts2HandHolderHooks` | keep: they feed the mirror's animation hints and scene stream |
 
@@ -218,6 +222,6 @@ subscriber WP3 adds.
 
 1. Approve or amend the wording in memo §9 (it decides whether agents still ask permission for CouchCoop-side reads).
 2. Is the scene stream, the animation-hint stream, or the browser input maps earmarked for a spirectl consumer?
-3. `ClaimReward` is allow-listed but no longer sent by the frontend; `SelectMapNode` and `SetScrollOffset` are still
-  "awaiting your call". Retire, keep or ratify each?
+3. Can `SelectMapNode` be replaced by real input while preserving map voting and the travelable gate? Investigate
+   before changing it.
 4. Remove the host-start cap probe, which reads null in stock flows?

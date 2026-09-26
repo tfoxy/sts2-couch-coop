@@ -3365,6 +3365,11 @@ internal sealed partial class BrowserServerRouteTests
         Expect(root.GetProperty("session").GetProperty("connectionCount").GetInt32() == 0,
             "an anonymous session has no assigned-player connection count");
         Expect(root.GetProperty("capabilities").GetProperty("capabilities").GetArrayLength() >= 4, "session includes runtime capabilities");
+        var browserActions = root.GetProperty("capabilities").GetProperty("supportedActions")
+            .EnumerateArray().Select(action => (SemanticActionKind)action.GetProperty("kind").GetInt32()).ToArray();
+        Expect(browserActions.Contains(SemanticActionKind.SelectMapNode) && browserActions.Contains(SemanticActionKind.SetScrollOffset),
+            "session advertises the browser's active semantic actions");
+        Expect(!browserActions.Contains(SemanticActionKind.ClaimReward), "session does not advertise reward claiming through a semantic action");
         Expect(root.GetProperty("notices")[0].GetProperty("capabilityId").GetString() == CouchCoopRuntimeHost.StateCapability, "session includes structured notices");
         Expect(root.GetProperty("screen").GetProperty("kind").GetString() == "run", "session classifies the current screen");
         Expect(!root.TryGetProperty("lobbyState", out _), "session message omits the redundant lobbyState re-encoding");
@@ -4250,7 +4255,7 @@ internal sealed partial class BrowserServerRouteTests
                 viewerPlayerId = "p:1002",
                 args = new { elementId = "42", mapNodeId = "map-node:1:2", offsetY = -1800, playerId = "p:1003" }
             });
-            if (kind is SemanticActionKind.SelectMapNode or SemanticActionKind.SetScrollOffset or SemanticActionKind.ClaimReward)
+            if (kind is SemanticActionKind.SelectMapNode or SemanticActionKind.SetScrollOffset)
             {
                 Expect(runtime.LastActionRequest?.Kind == kind, "the product action reaches the runtime: " + token);
                 Expect(string.IsNullOrEmpty(runtime.LastActionRequest?.PlayerId), "a mirror action uses process-local identity: " + token);
@@ -5178,8 +5183,15 @@ internal sealed partial class BrowserServerRouteTests
                     Capability(CouchCoopRuntimeHost.SpineCatalogCapability),
                     Capability(CouchCoopRuntimeHost.SceneCapability)
                 ],
-                []);
+                [
+                    Action(SemanticActionKind.SelectMapNode),
+                    Action(SemanticActionKind.SetScrollOffset),
+                    Action(SemanticActionKind.ClaimReward),
+                ]);
         }
+
+        private static ActionDescriptorSnapshot Action(SemanticActionKind kind)
+            => new(kind.ToString(), kind, kind.ToString(), "", false, ActionImplementationStatus.Implemented, []);
 
         public SpineCatalogOperationResult GetSpineCatalog(SpineCatalogRequestSnapshot request)
         {

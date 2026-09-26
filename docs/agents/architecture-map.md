@@ -154,17 +154,16 @@ This map records current contracts, not retired implementation alternatives.
   preview core and fixture-only helpers. Its game-API manifest omits requirements read only by excluded lanes.
   The omitted files are one list, the "Embedded profile" item group in
   `../spirectl/bridge-mod/src/Spirectl.Sts2/Spirectl.Sts2.csproj`.
-- **The embedded dispatcher routes only the kinds CouchCoop sends**: hover, mouse click, key and controller input,
-  `select-map-node`, `set-scroll-offset`, `claim-reward` (still on `BrowserActionExecutor`'s allow-list),
+- **The embedded dispatcher routes the kinds CouchCoop needs plus the retained shared reward action**: hover, mouse click, key and controller input,
+  `select-map-node`, `set-scroll-offset`, `claim-reward` (retained in the shared dispatcher, denied by CouchCoop's browser),
   `DisconnectClient` and `SetClientName`. Any other kind answers `InvalidAction`, and `SemanticActionKind` itself
   stays complete. **Sending a new kind from CouchCoop therefore needs its route added in spirectl**
   (`Profiles/Embedded/Sts2ActionHandler.Dispatch.cs`, a table of kind, descriptor and body) — plus the
   maintainer's go-ahead for a semantic action, per the rule below.
-- **`capabilities.supportedActions` in the `session` envelope is that same table.** The embedded runtime lists the
-  nine routed kinds (it used to list the full catalog's 53). No product code reads the field (the frontend types
-  `capabilities` as `unknown`, and the only mentions in `src/`, `tests/` and `frontend/src` are the boundary test
-  that pins the list), so the change is invisible to the product; a future reader can trust the list to mean "the
-  kinds the dispatcher carries out".
+- **`capabilities.supportedActions` in the browser `session` envelope filters that table.** The embedded runtime
+  lists nine routed kinds (it used to list the full catalog's 53); CouchCoop omits `ClaimReward` from the browser
+  envelope because its browser action executor refuses it. No product code reads the field (the frontend types
+  `capabilities` as `unknown`), but a future reader can trust the browser list to exclude the retired action.
 - **Gates.** `scripts/validate-spirectl-embedded-boundary.sh` proves the embedded profile equals the upstream
   build of the same profile: the reference's own `AdditionalProperties` minus `AssemblyName` drive an evaluated
   `-getItem:Compile` comparison (no size tolerance decides equality), then both artifacts must carry the
@@ -210,9 +209,9 @@ This map records current contracts, not retired implementation alternatives.
 - **Current semantic-action inventory in the browser client** — keep this list honest when it changes:
   | Action | Where | Status |
   | --- | --- | --- |
-  | `claim-reward` | — | **removed** — reward rows are claimed by real input, so the game's own button runs its claim and its refusal |
+  | `claim-reward` | — | **removed from the browser contract** — reward rows are claimed by real input, so the game's own button runs its claim and its refusal |
   | `select-map-node` | `frontend/src/mirror/mapNodeTap.ts` | in use, awaiting the maintainer's call. Not a straight swap: it carries a travelable gate and injects the run-global map vote for synthetic host-local seats, which have no map screen of their own for raw input to land on |
-  | `set-scroll-offset` | `frontend/src/mirror/MirrorApp.vue`, the eager-scroll absolute channel | in use, awaiting the maintainer's call. View state only — it moves a scroll container, it does not commit a player choice |
+  | `set-scroll-offset` | `frontend/src/mirror/MirrorApp.vue`, the eager-scroll absolute channel | retained with maintainer approval — sends the client's final absolute scroll position so the game follows precisely, avoiding a client correction when local prediction differs. View state only; it does not commit a player choice |
 - Read-only spirectl surfaces — state reads, the scene stream, screenshots, inspection — are unaffected. This
   rule is about causing state changes.
 - **Injected input needs the root window to embed its subwindows** — the game's shipped setting, which another
