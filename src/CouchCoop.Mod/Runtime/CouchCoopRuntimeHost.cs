@@ -78,9 +78,16 @@ public sealed class CouchCoopRuntimeHost : IDisposable, ICouchCoopCapabilityPoli
         => _assetsSource.GetPresentationAssets(request);
     public IRuntimeSceneWatchControls SceneWatchControls => _sceneWatchControlSource.SceneWatchControls;
     public MultiplayerConnectionSnapshot? GetCurrentMultiplayerConnection()
-        => _multiplayerConnection.GetCurrentMultiplayerConnection();
+    {
+        ZeroClientGuard.EnterPort(ZeroClientEntries.MultiplayerConnectionRead);
+        return _multiplayerConnection.GetCurrentMultiplayerConnection();
+    }
+
     public IDisposable SubscribeMultiplayerConnection(Action<MultiplayerConnectionSnapshot> onEvent)
-        => _multiplayerConnection.SubscribeMultiplayerConnection(onEvent);
+    {
+        ZeroClientGuard.EnterPort(ZeroClientEntries.MultiplayerConnectionSubscribe);
+        return _multiplayerConnection.SubscribeMultiplayerConnection(onEvent);
+    }
 
     private sealed class EmptyMultiplayerConnectionSource : IRuntimeMultiplayerConnectionSource
     {
@@ -132,8 +139,12 @@ public sealed class CouchCoopRuntimeHost : IDisposable, ICouchCoopCapabilityPoli
 
     public EmbeddableRuntimeCapabilities GetCapabilities() => Capabilities;
 
+    // THE ZERO-CLIENT CHOKE POINT. Every state and scene entry the host offers passes through one of the
+    // ZeroClientGuard.EnterPort calls below, so a caller added tomorrow is watched without knowing it. Each
+    // call is one integer read while a client or an owned seat exists; see ZeroClientGuard.
     public CurrentStateResult GetCurrentState(CurrentStateRequest request)
     {
+        ZeroClientGuard.EnterPort(ZeroClientEntries.StateRead);
         RequireCapability(StateCapability);
         return _stateSource.GetCurrentState(request);
     }
@@ -146,6 +157,7 @@ public sealed class CouchCoopRuntimeHost : IDisposable, ICouchCoopCapabilityPoli
         Action<CurrentStateWatchEvent> onEvent,
         Action<EmbeddableRuntimeError>? onError = null)
     {
+        ZeroClientGuard.EnterPort(ZeroClientEntries.StateSubscribe);
         RequireCapability(StateCapability);
         return _stateSource.SubscribeCurrentState(request, onEvent, onError);
     }
@@ -153,6 +165,7 @@ public sealed class CouchCoopRuntimeHost : IDisposable, ICouchCoopCapabilityPoli
     public IAsyncEnumerable<CurrentStateWatchEvent> WatchCurrentStateAsync(
         CurrentStateSubscriptionRequest request, CancellationToken cancellationToken = default)
     {
+        ZeroClientGuard.EnterPort(ZeroClientEntries.StateSubscribe);
         RequireCapability(StateCapability);
         return _stateSource.WatchCurrentStateAsync(request, cancellationToken);
     }
@@ -168,6 +181,7 @@ public sealed class CouchCoopRuntimeHost : IDisposable, ICouchCoopCapabilityPoli
         Action<TweenAnimationHint> onHint,
         Action<EmbeddableRuntimeError>? onError = null)
     {
+        ZeroClientGuard.EnterPort(ZeroClientEntries.AnimationHintSubscribe);
         RequireCapability(AnimationHintsCapability);
         return _animationHintSource.SubscribeAnimationHints(request, onHint, onError);
     }
@@ -175,6 +189,7 @@ public sealed class CouchCoopRuntimeHost : IDisposable, ICouchCoopCapabilityPoli
     public IAsyncEnumerable<TweenAnimationHint> WatchAnimationHintsAsync(
         AnimationHintSubscriptionRequest request, CancellationToken cancellationToken = default)
     {
+        ZeroClientGuard.EnterPort(ZeroClientEntries.AnimationHintSubscribe);
         RequireCapability(AnimationHintsCapability);
         return _animationHintSource.WatchAnimationHintsAsync(request, cancellationToken);
     }
@@ -188,6 +203,7 @@ public sealed class CouchCoopRuntimeHost : IDisposable, ICouchCoopCapabilityPoli
         Action<RuntimeSceneDelta> onDelta,
         Action<EmbeddableRuntimeError>? onError = null)
     {
+        ZeroClientGuard.EnterPort(ZeroClientEntries.SceneSubscribe);
         RequireCapability(SceneCapability);
         return _sceneDeltaSource.SubscribeRuntimeSceneDelta(request, onDelta, onError);
     }

@@ -314,8 +314,13 @@ public static class CouchCoopMod
             // Let the host transport size its ENet listener from the LIVE lobby cap instead of the maxClients it
             // is handed — see CouchCoopHostTransport.MaxLobbyPlayersProbe for why that argument cannot be trusted
             // once a multiplayer limit mod is installed. Safe to set on a seat too (it never hosts).
-            Session.CouchCoopHostTransport.MaxLobbyPlayersProbe =
-                new Session.CouchCoopLobbyParticipation(_runtime).MaxLobbyPlayers;
+            var lobbyParticipation = new Session.CouchCoopLobbyParticipation(_runtime);
+            Session.CouchCoopHostTransport.MaxLobbyPlayersProbe = () =>
+            {
+                // One read per host start, on the lobby being created, before any client exists (named allowance).
+                using var permit = ZeroClientGuard.Permit(ZeroClientAllowances.HostTransportSizing);
+                return lobbyParticipation.MaxLobbyPlayers();
+            };
             // Seat-only: keep this instance's player names in step with the host's durable roster
             // (mp_names.json), which the game itself reads only once at startup — otherwise everyone who joined
             // AFTER this seat booted renders as a raw netId. See HeadlessClientNameSync for why it owns its own
@@ -442,6 +447,9 @@ public static class CouchCoopMod
 
         try
         {
+            // The two callers are host UI on a screen the player is looking at (the lobby QR panel, the pause-menu
+            // row), which is why the zero-client tripwire excuses the read at zero demand. See the allowance.
+            using var permit = ZeroClientGuard.Permit(ZeroClientAllowances.LobbyPanelStateRead);
             var result = runtime.GetCurrentState(new CurrentStateRequest());
             return result.Success ? result.State : null;
         }

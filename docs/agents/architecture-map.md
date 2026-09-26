@@ -803,6 +803,84 @@ The per-mod enable flag lives in `steam/<id>/settings.save` (and `default/<n>/se
 *decision*, because the host rewrites the list from what it discovered after it has already chosen. Tests:
 `-- seat-build` (also in `-- connections` and `-- cache`).
 
+## Zero-client guard (an empty host does no work)
+
+The standing rule is that a host nobody is connected to does no recurring work: no game-state capture, no scene or
+state subscription, no main-thread wake-up, no timer. The Sep-13 hosting tracker broke it for two releases because
+every test pinned a named component. This is the whole-host version, in two halves that share one vocabulary.
+
+- **Runtime tripwire — `Runtime/ZeroClientGuard.cs`.** While demand is zero, any use of a registered entry point
+  increments its counter and writes one rate-limited line, `[couchcoop][idle-work] <caller> <entry point> hits=N`
+  (the `[couchcoop]` prefix comes from `CouchCoopLog`, the sink is `CouchCoopLog.Info`, so it reaches `godot.log`).
+  It never fails, throws or blocks. The hot path is **one volatile integer read**; everything else runs only at zero
+  demand. A live check is `grep idle-work godot.log` over a zero-client window: zero hits passes.
+- **Contract test — `tests/CouchCoop.Mod.Tests/ZeroClientContractTests.cs`** (`-- zero-client`, also in the full
+  sequence). It composes the real `CouchCoopHostUiServices` → `HotReloadableBrowserServerHost` → tracker / seat
+  manager / browser-server generation over counting doubles and drives startup, a hosting lobby opened then closed,
+  an active run with no viewers, a 0→1→0 viewer cycle (real sockets: a picker-parked viewer and a streaming one) and
+  a detached seat. It asserts zero state captures, zero state/scene/hint subscriptions, zero screen-event
+  subscriptions, zero main-thread dispatches, zero tripwire hits, and **no managed timer** beyond the allow-list
+  (`Timer.ActiveCount`, exact for `Timer`, `Task.Delay`, `CancelAfter` and `PeriodicTimer`) — plus a coarse
+  worker-pool census that only catches a hot loop.
+
+**Demand** is the number of client connections the listener is serving (opened when `DispatchClientAsync` /
+`DispatchSecureClientAsync` starts, closed when it returns) plus the owned-seat count
+(`HotReloadableBrowserServerHost.ReportOwnedSeatDemand`, fed by the seat manager). It is deliberately **not**
+`BrowserDemandLedger` / `StreamingViewerDemand`: those publish after a WebSocket registers, which is after the
+handshake's own `session` state read and after the first observer starts, so they would flag the first viewer's own
+work. Every ledger count is a subset of a served connection. A **picker-parked viewer is demand** (an open socket),
+which is what keeps `CouchCoopStateObserver`'s 50 ms subscription legitimate; it is not an allow-list entry. After
+demand falls to zero the tripwire is quiet for `ReleaseGrace` (5 s) so the tail of teardown, such as a queued
+evaluation that runs one frame late, is not reported. The tripwire is armed on a player's host only, never on a
+spawned seat.
+
+**Choke points** (a caller added tomorrow is watched without knowing it):
+
+| Entry (`ZeroClientEntries`) | Where it is counted |
+| --- | --- |
+| `state.read`, `state.subscribe`, `scene.subscribe`, `animation-hints.subscribe`, `multiplayer-connection.read/.subscribe` | the ports of `CouchCoopRuntimeHost` (`ZeroClientGuard.EnterPort`); the caller is read from the stack, and only when a violation is reported |
+| `screen-context.subscribe/.read` | `Runtime/CouchCoopGameSeams.cs` `GameScreenContext`, the CouchCoop front for `Sts2ScreenContext` (tracker, browser-server static-background probe, QR host panel) |
+| `main-thread.dispatch` | the same file's `GameMainThread`, the front for `Sts2MainThreadDispatcher` (tracker, seat peer check, root-window guard, windowless viewport loop) |
+
+**Allow-list — `ZeroClientAllowances`, the review point.** Each entry names work that touches game state at zero
+demand, and its `reason` argument is required (the test rejects a one-line reason and pins the count):
+`qr-host-panel` (screen subscription and current-screen read: the join affordance itself, event-driven),
+`lobby-panel-state-read` (`CouchCoopMod.TryGetLobbyState`: the lobby panel's 0.25 s chain while a lobby screen is
+current, and the pause-menu row once per visibility change), `host-transport-sizing` (one lobby-cap read per host
+start), `windowless-viewport` (only a headless seat or `--headless` host starts it). A call site excuses itself with
+`using ZeroClientGuard.Permit(ZeroClientAllowances.X)` around a **synchronous** call (thread-local; it does not
+follow an `await`). What demand already covers, and so is not listed: the hosting tracker, the browser server's
+observers and static-background probe, detached active-run seat supervision, and the listener's accept loop. The
+contract test's own timer allowances are the tracker's 1 Hz tick during detached-seat supervision and the
+reachability watch's single 90 s delay while a hosting lobby is open.
+
+**Registering a new entry point is one line.** Add a `public static readonly ZeroClientEntry X =
+ZeroClientEntry.Register("area.verb");` to `ZeroClientEntries`, call `ZeroClientGuard.Enter(ZeroClientEntries.X)`
+(caller comes from the compiler; use `EnterPort` inside a method that implements a runtime port) on the way into
+it, and add a rogue driver to `EveryEntryPointHasARogueThatFailsTheContractAsync` — the test fails until you do, so
+the contract can always see the new entry. Wrap a new direct static the way `GameScreenContext` does rather than
+calling spirectl's static from a call site. Once the CouchCoop-owned host-facts reader lands (WP3), register its
+read the same way.
+
+- **Files**: `Runtime/ZeroClientGuard.cs`, `Runtime/CouchCoopGameSeams.cs`, `Runtime/CouchCoopRuntimeHost.cs`
+  (the port calls), `Server/HotReloadableBrowserServerHost.cs` (demand feed).
+- **Per-assembly statics**: the guard lives in `Runtime/`, which `CouchCoop.Mod.HotReload` does not link, so both
+  assemblies reach one set of counters (the reason the engine latch lives on `CouchCoopMod`). Never put a
+  counter on a `Server/` type; the contract test pins that the hot-reload csproj does not link `Runtime/`.
+- **Not composed in the test** (anything constructing Godot nodes segfaults a test process): the QR host panel, the
+  pause-menu row and the lobby mount patch are covered by the allowances above, not by a phase. Windowless-only
+  machinery (`HeadlessViewportConfigurator`, the visual suspender) is windowless-instance cost, not a player-host
+  cost, and only the former goes through a wrapped entry.
+- **Traps**: a new subscriber that runs at zero demand shows up as `[idle-work]` in a player's log, so a false
+  positive means "add an allowance with a reason or gate the caller", never "silence the tripwire". The worker-pool
+  counter is coarse on purpose: after a viewer cycle the pool completes one to three stray items over the next
+  ~15 s (measured on the dev box; none of them a timer, `Timer.ActiveCount` stays 0; source not identified), so it
+  only catches a hot loop. Do not tighten it; the exact signal is `Timer.ActiveCount`. The test's viewers are raw
+  sockets because an `HttpClient` request in the same process adds pool work of its own (one stray item ~10 s
+  later), which the census would blame on the host.
+- **Tests**: `-- zero-client`; the named-component suites it complements are `IdleHostCostTests` (`-- idle-host`,
+  `-- host-guards`) and `ConnectionHostingDemandTests` (`-- seats`).
+
 ## Lobby QR host panel
 
 The always-on QR overlay is gone. A game-styled button opens a dialog instead.

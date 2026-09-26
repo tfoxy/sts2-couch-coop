@@ -1,5 +1,5 @@
+using CouchCoop.Mod.Runtime;
 using Godot;
-using Spirectl.Sts2.Live;
 using System;
 using System.Threading.Tasks;
 
@@ -88,8 +88,10 @@ public static class HeadlessViewportConfigurator
         threw = false;
         try
         {
-            // ApplyOnce runs on the game main thread (the dispatcher posts to the captured game context).
-            return Sts2MainThreadDispatcher.Invoke(ApplyOnce);
+            // ApplyOnce runs on the game main thread (the dispatcher posts to the captured game context). Only a
+            // windowless instance reaches here, which is why the zero-client tripwire excuses it (see the allowance).
+            using var permit = ZeroClientGuard.Permit(ZeroClientAllowances.WindowlessViewport);
+            return GameMainThread.Invoke(ApplyOnce);
         }
         catch (Exception exception)
         {
