@@ -2,6 +2,9 @@
 
 Prepared 2026-09-25. A decision handoff: **analyze and recommend. Do not move code.** The maintainer decides.
 
+**Answered 2026-09-26 by [spirectl-boundary-review.md](spirectl-boundary-review.md).** This file is the brief; the
+memo holds the inventory, measurements, recommendation and proposed wording.
+
 ## The question
 
 `CLAUDE.md` makes spirectl the owner of reusable STS2 runtime code. It says to reuse the embeddable spirectl
