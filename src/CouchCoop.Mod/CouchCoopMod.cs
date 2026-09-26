@@ -181,6 +181,7 @@ public static class CouchCoopMod
                 if (IsHeadlessClient || IsHeadlessDisplay()) HeadlessViewportConfigurator.Configure();
                 if (!IsHeadlessClient) InitializeQrHostPanel();
                 if (!IsHeadlessClient) RetryPauseMenuMountPatch();
+                RetryRosterSignalPatch();
                 return _runtime;
             }
 
@@ -235,6 +236,12 @@ public static class CouchCoopMod
             // lobby assignment the screen event would not announce, and record the role of the saved-run screen's
             // lobby, which the game exposes no other typed way to read. Host-only, for the same reason.
             if (!IsHeadlessClient) LobbyAssignmentPatch.Apply();
+            // …and the hooks that tell the roster observer when the game changes who is in a lobby or a run: the two
+            // lobby screens' join and leave callbacks, the two lobby constructors (which also name the net service
+            // the host's peer events arrive on) and the run's clean-up. Every hook only records and wakes; nothing
+            // runs unless a viewer parked on the join picker is listening. Unlike the panel hooks these are not
+            // host-only: a seat's own browser server runs the same observer. A miss costs a stale picker, not co-op.
+            RosterSignalPatch.Apply();
             // …and the same for the pause menu, which is where a device that already joined and then LOST its
             // browser gets the join URL back — the lobby button is gone once the run embarks. Host-only for the
             // same reason as the line above: a headless seat renders this for nobody. Its absence costs a
@@ -322,7 +329,7 @@ public static class CouchCoopMod
             // Seat-only: keep this instance's player names in step with the host's durable roster
             // (mp_names.json), which the game itself reads only once at startup — otherwise everyone who joined
             // AFTER this seat booted renders as a raw netId. See HeadlessClientNameSync for why it owns its own
-            // clock rather than riding the browser server's state observer.
+            // clock rather than riding the browser server's roster observer.
             if (IsHeadlessClient) Session.HeadlessClientNameSync.Start(_runtime);
             if (IsHeadlessClient) Session.HeadlessConnectionReporter.Initialize(
                 _runtime,
@@ -336,6 +343,7 @@ public static class CouchCoopMod
             if (IsHeadlessClient || IsHeadlessDisplay()) HeadlessViewportConfigurator.Configure();
             if (!IsHeadlessClient) InitializeQrHostPanel();
             if (!IsHeadlessClient) RetryPauseMenuMountPatch();
+            RetryRosterSignalPatch();
             return _runtime;
         }
     }
@@ -1011,6 +1019,24 @@ public static class CouchCoopMod
     /// satisfied there (MonoMod's exec-helper dlopen) may well be by the time the runtime has been composed. A
     /// target already installed is not touched again, and this still runs long before any pause menu is readied.
     /// </summary>
+    /// <summary>
+    /// SECOND CHANCE at the roster signal hooks, for the same reason as <see cref="RetryPauseMenuMountPatch"/>: a native
+    /// precondition that was not satisfied at the top of <see cref="Init"/> may be by the time the runtime is composed,
+    /// and a target already installed is not touched again. Still long before any lobby is built.
+    /// </summary>
+    private static void RetryRosterSignalPatch()
+    {
+        try
+        {
+            RosterSignalPatch.Apply();
+        }
+        catch (Exception exception)
+        {
+            CouchCoopLog.Stderr(
+                $"roster signal patch retry failed: {exception.GetType().Name}: {exception.Message}");
+        }
+    }
+
     private static void RetryPauseMenuMountPatch()
     {
         try

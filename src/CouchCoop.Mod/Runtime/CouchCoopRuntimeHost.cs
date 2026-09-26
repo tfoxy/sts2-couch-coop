@@ -32,7 +32,7 @@ public sealed class CouchCoopRuntimeHost : IDisposable, ICouchCoopCapabilityPoli
     public const string AnimationHintsCapability = EmbeddableCapabilityIds.AnimationHints;
 
     // Live runtime scene-tree stream — the transport the mirror renders off. Kept independent of
-    // StateCapability: the state path exists only to keep the `session` envelope live.
+    // StateCapability, which only the on-demand state reads (the `session` envelope's identity pull) still use.
     public const string SceneCapability = EmbeddableCapabilityIds.SceneWatch;
 
     private readonly IRuntimeCapabilitySource _capabilitiesSource;
@@ -149,9 +149,10 @@ public sealed class CouchCoopRuntimeHost : IDisposable, ICouchCoopCapabilityPoli
         return _stateSource.GetCurrentState(request);
     }
 
-    // Subscribe ONCE to the live state watcher; the callback fires on a background thread whenever the
-    // game state changes (and is force-refreshed after every accepted action). The browser server caches
-    // the latest snapshot and broadcasts it to all clients. Returns the subscription's IDisposable.
+    // The runtime port's live state watcher; the callback fires on a background thread whenever the game state
+    // changes. CouchCoop itself no longer subscribes (the roster observer is driven by game signals and reads typed
+    // facts), so this exists only as the port adapter and is what the zero-client contract's rogue subscriber drives.
+    // Returns the subscription's IDisposable.
     public IDisposable SubscribeCurrentState(
         CurrentStateSubscriptionRequest request,
         Action<CurrentStateWatchEvent> onEvent,
@@ -196,8 +197,7 @@ public sealed class CouchCoopRuntimeHost : IDisposable, ICouchCoopCapabilityPoli
 
     // Subscribe ONCE to the live scene-DELTA stream (the "mirror" transport). The callback fires on a
     // background thread whenever the live tree changes; the first emission is a Full keyframe, then
-    // incremental deltas. Independent of SubscribeCurrentState — a mirror-only deployment never touches
-    // the state path.
+    // incremental deltas. Independent of the state port — a mirror-only deployment never touches it.
     public IDisposable SubscribeRuntimeSceneDelta(
         RuntimeSceneSubscriptionRequest request,
         Action<RuntimeSceneDelta> onDelta,

@@ -26,7 +26,6 @@ public sealed class CouchCoopWebSocketConnection
     private readonly BrowserInputExecutor _inputExecutor;
     private readonly CouchCoopLobbyParticipation _lobby;
     private readonly ConcurrentDictionary<Guid, CouchCoopWebSocketConnection> _connections;
-    private readonly Func<CouchCoopStateObserver?> _getStateObserver;
     private readonly Func<CouchCoopSceneObserver?> _getSceneObserver;
     private readonly Action _onConnectionOpened;
     private readonly Action _onConnectionClosed;
@@ -141,7 +140,6 @@ public sealed class CouchCoopWebSocketConnection
     private CouchCoopWebSocketConnection(
         BrowserStateEnvelopeFactory envelopeFactory,
         ConcurrentDictionary<Guid, CouchCoopWebSocketConnection> connections,
-        Func<CouchCoopStateObserver?> getStateObserver,
         Func<CouchCoopSceneObserver?> getSceneObserver,
         Action onConnectionOpened,
         Action onConnectionClosed,
@@ -157,7 +155,6 @@ public sealed class CouchCoopWebSocketConnection
     {
         _envelopeFactory = envelopeFactory ?? throw new ArgumentNullException(nameof(envelopeFactory));
         _connections = connections ?? throw new ArgumentNullException(nameof(connections));
-        _getStateObserver = getStateObserver ?? throw new ArgumentNullException(nameof(getStateObserver));
         _getSceneObserver = getSceneObserver ?? throw new ArgumentNullException(nameof(getSceneObserver));
         _onConnectionOpened = onConnectionOpened ?? throw new ArgumentNullException(nameof(onConnectionOpened));
         _onConnectionClosed = onConnectionClosed ?? throw new ArgumentNullException(nameof(onConnectionClosed));
@@ -210,7 +207,6 @@ public sealed class CouchCoopWebSocketConnection
         CouchCoopHttpRequest request,
         BrowserStateEnvelopeFactory envelopeFactory,
         ConcurrentDictionary<Guid, CouchCoopWebSocketConnection> connections,
-        Func<CouchCoopStateObserver?> getStateObserver,
         Func<CouchCoopSceneObserver?> getSceneObserver,
         Action onConnectionOpened,
         Action onConnectionClosed,
@@ -252,7 +248,6 @@ public sealed class CouchCoopWebSocketConnection
         await new CouchCoopWebSocketConnection(
                 envelopeFactory,
                 connections,
-                getStateObserver,
                 getSceneObserver,
                 onConnectionOpened,
                 onConnectionClosed,
@@ -399,7 +394,8 @@ public sealed class CouchCoopWebSocketConnection
 
             // Headless lifecycle on browser disconnect, gated on whether a RUN is in progress (BrowserDisconnectSeat):
             // mid-run the seat is kept and marked detached, in the lobby it is released and its peer evicted. The
-            // run-presence read is one typed member read, not a state snapshot.
+            // run-presence read is one typed member read, not a state snapshot. A detached seat is reaped once the host
+            // has left both the run and any lobby (the roster observer's reap), or with the game.
             if (_headlessManager is not null)
             {
                 BrowserDisconnectSeat.Apply(

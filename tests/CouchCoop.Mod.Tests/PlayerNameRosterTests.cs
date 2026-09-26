@@ -249,10 +249,10 @@ internal static class PlayerNameRosterTests
     private static string? NameFor(IEnumerable<HeadlessClientManager.MultiplayerNameEntry> entries, ulong netId)
         => entries.FirstOrDefault(entry => entry.net_id == netId)?.name;
 
-    private static StateCharacterSelectPlayerSnapshot LobbyPlayer(string id, string? name)
+    internal static StateCharacterSelectPlayerSnapshot LobbyPlayer(string id, string? name)
         => new(id, 0, "ironclad", IsReady: false, MaxMultiplayerAscensionUnlocked: 20, DisplayName: name);
 
-    private static StateSnapshot Lobby(params StateCharacterSelectPlayerSnapshot[] players)
+    internal static StateSnapshot Lobby(params StateCharacterSelectPlayerSnapshot[] players)
         => new(
             StateSnapshot.CurrentSchemaVersion,
             Language: null,
@@ -273,7 +273,7 @@ internal static class PlayerNameRosterTests
                 View: null),
             Run: null);
 
-    private static StateRunPlayerSnapshot RunPlayer(string id, string name, bool isHost)
+    internal static StateRunPlayerSnapshot RunPlayer(string id, string name, bool isHost)
         => new(
             id,
             "test",
@@ -290,7 +290,7 @@ internal static class PlayerNameRosterTests
             InventoryComplete: true,
             Notices: []);
 
-    private static StateSnapshot Run(params StateRunPlayerSnapshot[] players)
+    internal static StateSnapshot Run(params StateRunPlayerSnapshot[] players)
         => new(
             StateSnapshot.CurrentSchemaVersion,
             Language: null,

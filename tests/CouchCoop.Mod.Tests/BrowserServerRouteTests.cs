@@ -134,6 +134,9 @@ if (args is ["host-guards", ..])
     // saved-run record, the parity oracle, and the one member the reader looks up by name. Pure, no engine.
     LobbyCapReadTests.Run();
     LobbyCapReadTests.LobbyCapMemberResolves();
+    // The roster hooks: who is in a lobby or a run is learned from these seven methods, so a renamed or reshaped one
+    // silently leaves the join picker stale. Same standing: pure metadata reflection.
+    CouchCoopRosterObserverTests.TargetsResolve();
     LobbySupportCheckpointsTests.Run();
     Console.WriteLine("host guards: ok");
     return;
@@ -152,6 +155,9 @@ if (args is ["seats", ..])
     // Run presence for a browser disconnect and a seat launch: the typed read, its failure semantics, and that a
     // disconnect and a launch refusal cost no state snapshot. Beside the seat manager because it drives one.
     await RunPresenceTests.RunAsync();
+    // What the server does with the rosters its observer reads: the re-send, the reap rule (only after the run AND any
+    // lobby end) and stale reads, over a real listener and a real seat manager with a fake seat process.
+    await BrowserServerRouteTests.RunRosterObserverRoutesAsync();
     ConnectionHostingDemandTests.Run();
     ConnectionHostingTrackerStateTests.Run();
     // The seat ROSTER's transition bookkeeping — which seat the picker offers, and the statuses it remembers
@@ -210,6 +216,8 @@ if (args is ["idle-host", ..])
     {
         await IdleHostCostTests.DeferredHostUiKeepsTheListenerButNotTheNetworkAsync(idleRoot);
         await IdleHostCostTests.PendingDiscoveryCannotPublishAfterStopAsync(idleRoot);
+        // With nobody served the roster observer does not exist: no listener, no subscription, no timer.
+        CouchCoopRosterObserverTests.RosterIsDormantWithoutDemand();
         Console.WriteLine("idle-host: ok");
     }
     finally { Directory.Delete(idleRoot, recursive: true); }
@@ -364,6 +372,11 @@ if (args is ["host-ui", ..])
     // What those gates decide on and when it is read: the typed facts front, the assignment record, and the cache
     // that makes the panel's heartbeat tick reuse the last read instead of asking the game again.
     CouchCoopGameFactsTests.Run();
+    // Who is in the lobby or the run: the roster facts, their parity with the retired snapshot read, the front's
+    // threading, the observer that reads them once per burst of signals, and the server-side reaction (re-send once
+    // per change, reap only after the run and lobby end). All pure: fakes stand where the game and its signals would.
+    RosterFactsTests.Run();
+    CouchCoopRosterObserverTests.Run();
     // The QR dialog's seat-mod card: every decision it draws (which mods, locked / held-off / cascade, what a
     // press writes), plus the geometry that makes it the connection card's mirror. Both pure — the card itself
     // is a Godot node this runner cannot construct. The layout half is also in the full contract suite below.
@@ -547,6 +560,9 @@ if (args is ["beta-targets", ..])
     // …and the one game member CouchCoop reads by name (a granted exception on the v111 lane) or calls directly (the
     // v107 lane): the start-run lobby's player cap.
     Leg("LobbyCapReadTests.LobbyCapMember", LobbyCapReadTests.LobbyCapMemberResolves);
+    // …and the seven methods the roster observer is told by: the join and leave callbacks of both lobby screens, both
+    // lobby constructors (which also name the host's net service) and the run's clean-up.
+    Leg("CouchCoopRosterObserverTests.RosterSignalTargets", CouchCoopRosterObserverTests.TargetsResolve);
 
     Console.WriteLine(failures.Count == 0
         ? "beta-targets: every patch target resolves"
@@ -816,6 +832,10 @@ CouchCoopLobbyHostGateTests.Run();
 CouchCoopPauseMenuGateTests.Run();
 // …and what they decide on: the typed gate facts, when they are read, and the assignment hooks' contract.
 CouchCoopGameFactsTests.Run();
+// Who is in the lobby or the run: the roster facts and their parity with the retired snapshot, the observer that reads
+// them once per burst of signals, and the server-side reaction. The route half rides the route sequence below.
+RosterFactsTests.Run();
+CouchCoopRosterObserverTests.Run();
 // Run presence for a browser disconnect and a seat launch (the same typed facts, a different caller).
 await RunPresenceTests.RunAsync();
 // F1 host connectivity log: the ring, the player-facing copy (asserted literally — it is a QA contract
@@ -1183,6 +1203,8 @@ internal sealed class BrowserServerRouteTests
         await AssertAppIconFailsOpenAsync(root.Path);
         // WS-B prerequisite, on a DEDICATED server so no stateful connection can mask it.
         await AssertMirrorOnlyHostKeepsSessionsLiveAsync(root.Path);
+        // …and the server's reaction to what the roster observer reads: re-sends, the reap rule, stale reads.
+        await AssertRosterObserverDrivesTheServerAsync(root.Path);
         // Stage-A static background: the /bg/ route belt and the session envelope's descriptor, on DEDICATED
         // servers (the tracker's published slot is process-wide and the env valve is scoped per assert).
         await AssertStaticBackgroundRoutesAsync(root.Path);
@@ -3651,10 +3673,10 @@ internal sealed class BrowserServerRouteTests
     /// <para>
     /// The gate is client-driven off the session's `screen.mirrorMode`, so if that value can never change the gate
     /// latches shut: a viewer that arrived while the host was on a multiplayer screen would sit on the picker
-    /// forever, even after the host quit to the main menu. Session re-sends are driven from BroadcastState, and
-    /// before this change the state observer only ran for STATEFUL clients — so on a host whose only clients are
-    /// mirrors, an already-open picker went stale (a returning client never noticed, because it opens a fresh
-    /// socket and gets fresh data on connect).
+    /// forever, even after the host quit to the main menu. Session re-sends are driven from the roster observer
+    /// (CouchCoopRosterReaction), which runs for a viewer parked on the picker — so on a host whose only clients are
+    /// mirrors, an already-open picker stays current (a returning client never noticed staleness, because it opens a
+    /// fresh socket and gets fresh data on connect).
     /// </para>
     /// <para>
     /// Asserted on a DEDICATED server so there is provably no stateful connection propping the observer up.
@@ -3663,14 +3685,16 @@ internal sealed class BrowserServerRouteTests
     private static async Task AssertMirrorOnlyHostKeepsSessionsLiveAsync(string rootPath)
     {
         var runtime = new RecordingSpirectlRuntime { Mode = RuntimeStateMode.MultiplayerRun };
+        var roster = new CouchCoopRosterObserverTests.FakeRosterFeed();
         await using var server = new CouchCoopBrowserServer(
             new StaticSpaFileProvider(rootPath),
             new CapturingAssetAdapter(),
             new BrowserStateEnvelopeFactory(new CouchCoopRuntimeHost(new CouchCoopRuntimeDependencies(runtime, runtime, runtime, runtime, runtime, runtime, runtime, runtime, runtime, runtime))),
-            preferredPort: ReserveEphemeralPort());
+            preferredPort: ReserveEphemeralPort(),
+            subscribeRoster: roster.Subscribe);
         var baseUri = await server.StartAsync();
 
-        Expect(!runtime.StateSubscriptionActive, "no clients → no state observer");
+        Expect(!roster.Active, "no clients → no roster observer");
 
         // ONE mirror client, GATED (the join-picker case). No stateful client exists on this server at all.
         using var gated = new ClientWebSocket();
@@ -3683,13 +3707,14 @@ internal sealed class BrowserServerRouteTests
         }
 
         Expect(
-            await WaitForAsync(() => runtime.StateSubscriptionActive),
-            "a GATED mirror connection keeps the state observer alive (the only source of session re-sends on a mirror-only host)");
+            await WaitForAsync(() => roster.Active),
+            "a GATED mirror connection keeps the roster observer alive (the only source of session re-sends on a mirror-only host)");
         Expect(!runtime.SceneSubscriptionActive, "...while the expensive SCENE observer stays stopped");
+        Expect(!runtime.StateSubscriptionActive, "...and no game-state subscription exists at all: the roster is read on signals");
 
         // The host leaves the run: the gated viewer must be TOLD, or its gate can never re-open.
         runtime.Mode = RuntimeStateMode.Lobby;
-        runtime.PushState();
+        roster.Push(CouchCoopRosterObserverTests.Roster(2));
         using (var resent = JsonDocument.Parse(await ReadNextSessionWithScreenKindAsync(gated, "lobby")))
         {
             Expect(
@@ -3699,13 +3724,12 @@ internal sealed class BrowserServerRouteTests
 
         await CloseWebSocketSilentlyAsync(gated);
         Expect(
-            await WaitForAsync(() => !runtime.StateSubscriptionActive),
-            "the state observer stops again once the last (gated) mirror client leaves");
+            await WaitForAsync(() => !roster.Active),
+            "the roster observer stops again once the last (gated) mirror client leaves");
 
-        // The GATE IS THE WHOLE RULE. `GatedMirrorConnectionsLocked > 0` is now the observer's ONLY start
-        // condition (the structured-client arm that used to be the other one is gone), so a viewer that is
-        // WATCHING must not start it: a streaming viewer learns about a screen change from the scene stream
-        // itself (ResendSessionsIfSceneScreenChanged), and paying for a second observer on top of the producer
+        // The GATE IS THE WHOLE RULE. `GatedMirrorConnectionsLocked > 0` is the observer's ONLY start condition, so a
+        // viewer that is WATCHING must not start it: a streaming viewer learns about a screen change from the scene
+        // stream itself (ResendSessionsIfSceneScreenChanged), and paying for a second observer on top of the producer
         // walk is exactly what the gate exists to avoid.
         using (var streaming = new ClientWebSocket())
         {
@@ -3718,12 +3742,137 @@ internal sealed class BrowserServerRouteTests
                 "a WATCHING mirror connection starts the scene observer");
             await Task.Delay(200);
             Expect(
-                !runtime.StateSubscriptionActive,
-                "…and does NOT start the state observer — only a GATED viewer does");
+                !roster.Active,
+                "…and does NOT keep the roster observer — only a GATED viewer does (it may exist for the instant between the connection registering and its stream gate opening)");
             await CloseWebSocketSilentlyAsync(streaming);
         }
 
         await server.StopAsync();
+    }
+
+    /// <summary>
+    /// The roster observer's route half, on servers of their own (the `seats` verb).
+    /// </summary>
+    internal static async Task RunRosterObserverRoutesAsync()
+    {
+        using var root = new TempStaticRoot();
+        await AssertMirrorOnlyHostKeepsSessionsLiveAsync(root.Path);
+        await AssertRosterObserverDrivesTheServerAsync(root.Path);
+        Console.WriteLine("roster observer routes: ok");
+    }
+
+    // The server acts on the observer's rosters, through the real listener, a real seat manager and a fake seat process:
+    //   * the first roster and every CHANGED one re-send the gated viewer's session, once; a repeat sends nothing;
+    //   * a roster the observer could not read (null) does nothing at all, and nothing retries it;
+    //   * detached seats are reaped only once the game has left BOTH the run and any lobby;
+    //   * a roster read by an observer that has since stopped is dropped.
+    private static async Task AssertRosterObserverDrivesTheServerAsync(string rootPath)
+    {
+        var runtime = new RecordingSpirectlRuntime { Mode = RuntimeStateMode.Lobby };
+        var roster = new CouchCoopRosterObserverTests.FakeRosterFeed();
+        var seat = new SeatProcessStub();
+        using var manager = new HeadlessClientManager(
+            launcher: _ => seat,
+            readinessProbe: (_, _) => Task.FromResult(true),
+            maxSeatsProbe: () => 3);
+        var browser = Guid.NewGuid();
+        Expect(await manager.EnsureHeadlessAsync(browser, "Ann", default) is not null, "a seat is launched for the browser");
+        manager.MarkDetached(browser); // the browser dropped mid-run and never came back
+        await using var server = new CouchCoopBrowserServer(
+            new StaticSpaFileProvider(rootPath),
+            new CapturingAssetAdapter(),
+            new BrowserStateEnvelopeFactory(new CouchCoopRuntimeHost(new CouchCoopRuntimeDependencies(runtime, runtime, runtime, runtime, runtime, runtime, runtime, runtime, runtime, runtime))),
+            headlessManager: manager,
+            isHeadlessClient: false,
+            preferredPort: ReserveEphemeralPort(),
+            subscribeRoster: roster.Subscribe);
+        var baseUri = await server.StartAsync();
+
+        using var gated = new ClientWebSocket();
+        await gated.ConnectAsync(
+            new UriBuilder(baseUri) { Scheme = "ws", Path = "/ws", Query = "watch=0&staticBg=0&cardFlight=1&handTween=1&trailDrive=0" }.Uri,
+            CancellationToken.None);
+        _ = await ReadWsMessageAsync(gated); // the anonymous connect session
+        Expect(await WaitForAsync(() => roster.Active), "the gated viewer starts the roster observer");
+
+        // 1. A roster change re-sends the session once. A repeat, and an unreadable roster, send nothing.
+        roster.Push(CouchCoopRosterObserverTests.Roster(1));
+        _ = await ReadNextWsMessageOfTypeAsync(gated, "session");
+        roster.Push(CouchCoopRosterObserverTests.Roster(1));
+        roster.Push(null);
+        Expect(await SessionsUntilPongAsync(gated, settleMs: 400) == 0, "an unchanged roster, and an unreadable one, re-send nothing");
+        roster.Push(CouchCoopRosterObserverTests.Roster(2));
+        _ = await ReadNextWsMessageOfTypeAsync(gated, "session");
+        Expect(await SessionsUntilPongAsync(gated, settleMs: 300) == 0, "a changed roster re-sends exactly once");
+
+        // 2. No reap while the game is in a lobby, in the run (including its end-of-run summary), or could not be read.
+        roster.Push(CouchCoopRosterObserverTests.InRun());
+        _ = await ReadNextWsMessageOfTypeAsync(gated, "session");
+        roster.Push(CouchCoopRosterObserverTests.Roster(2));
+        _ = await ReadNextWsMessageOfTypeAsync(gated, "session");
+        roster.Push(null);
+        await Task.Delay(300);
+        Expect(!seat.Killed, "a lobby, a run and an unreadable roster all leave the detached seat alone");
+
+        // 3. A roster read by an observer that has since stopped is dropped: the viewer leaves, and only then does the
+        //    stale menu roster arrive.
+        await CloseWebSocketSilentlyAsync(gated);
+        Expect(await WaitForAsync(() => !roster.Active), "the roster observer stops with the last gated viewer");
+        roster.PushToSubscription(0, CouchCoopRosterObserverTests.Menu());
+        await Task.Delay(300);
+        Expect(!seat.Killed, "a roster from a stopped observer is dropped: it reaps nothing");
+
+        // 4. The next viewer starts a fresh observer, and leaving to the menu reaps the detached seat.
+        using var second = new ClientWebSocket();
+        await second.ConnectAsync(
+            new UriBuilder(baseUri) { Scheme = "ws", Path = "/ws", Query = "watch=0&staticBg=0&cardFlight=1&handTween=1&trailDrive=0" }.Uri,
+            CancellationToken.None);
+        _ = await ReadWsMessageAsync(second);
+        Expect(await WaitForAsync(() => roster.Active && roster.Subscribes == 2), "a new viewer starts a new observer");
+        var actionsBefore = runtime.Calls.Count(call => call == "ExecuteAction");
+        roster.Push(CouchCoopRosterObserverTests.Menu());
+        Expect(await WaitForAsync(() => seat.Killed), "leaving to the menu reaps the detached seat");
+        Expect(await WaitForAsync(() => runtime.Calls.Count(call => call == "ExecuteAction") >= actionsBefore + 2),
+            "…evicts its peer and clears its name override through the host's actions");
+        await CloseWebSocketSilentlyAsync(second);
+        await server.StopAsync();
+    }
+
+    // Send a fence `ping` after letting the host settle, then count the `session` frames that arrive before its `pong`.
+    private static async Task<int> SessionsUntilPongAsync(ClientWebSocket socket, int settleMs)
+    {
+        await Task.Delay(settleMs);
+        var ping = Encoding.UTF8.GetBytes($"{{\"type\":\"ping\",\"t0\":{Environment.TickCount64 % 1_000_000}}}");
+        await socket.SendAsync(ping, WebSocketMessageType.Text, WebSocketMessageFlags.EndOfMessage, CancellationToken.None);
+        var sessions = 0;
+        using var cancellationSource = new CancellationTokenSource(5000);
+        while (true)
+        {
+            using var document = JsonDocument.Parse(await ReadWsMessageAsync(socket, cancellationSource.Token));
+            var type = document.RootElement.GetProperty("type").GetString();
+            if (type == "pong")
+            {
+                return sessions;
+            }
+
+            if (type == "session")
+            {
+                sessions++;
+            }
+        }
+    }
+
+    // A seat process that only remembers being killed.
+    private sealed class SeatProcessStub : IHeadlessProcess
+    {
+        private int _killed;
+        public bool Killed => Volatile.Read(ref _killed) != 0;
+        public int Id => 20002;
+        public bool HasExited => Killed;
+        public int ExitCode => 0;
+        public bool RequestGracefulStop() => false;
+        public void Kill() => Interlocked.Exchange(ref _killed, 1);
+        public void Dispose() { }
     }
 
     // Read until a `session` frame reporting the given screen kind (skipping any earlier re-send).
@@ -4076,7 +4225,7 @@ internal sealed class BrowserServerRouteTests
     {
         var bytes = Encoding.UTF8.GetBytes(JsonSerializer.Serialize(new { type = "join", requestId, name }, BrowserJson.Options));
         await socket.SendAsync(bytes, WebSocketMessageType.Text, WebSocketMessageFlags.EndOfMessage, CancellationToken.None);
-        // Every connection now streams the scene by default, and the state observer re-sends `session` envelopes
+        // Every connection now streams the scene by default, and the roster observer re-sends `session` envelopes
         // on roster changes, so both a `scene-delta` and an unsolicited `session` (requestId "session") can land
         // between the join request and its reply. Correlate on the REQUEST ID rather than assuming ordering.
         using var document = JsonDocument.Parse(await ReadCorrelatedReplyAsync(socket, requestId));
@@ -4990,9 +5139,9 @@ internal sealed class BrowserServerRouteTests
         private int _stateSubscribeCount;
         private int _stateDisposeCount;
 
-        // WS-B: whether the server currently holds a LIVE state-watch subscription. On a MIRROR-ONLY host this is
-        // what keeps `session` envelopes flowing (RebroadcastSessionsIfRosterChanged) — i.e. the only way a viewer
-        // parked on the picker ever learns the host left the multiplayer screen, so the gate can't latch shut.
+        // Whether the server currently holds a LIVE state-watch subscription. It must never hold one on its own account
+        // any more: the roster observer keeps `session` envelopes flowing from game signals and typed facts, so the tests
+        // assert this stays false (the zero-client rogue subscriber is the only thing that drives it).
         public bool StateSubscriptionActive
             => Volatile.Read(ref _stateSubscribeCount) > Volatile.Read(ref _stateDisposeCount);
 
@@ -5012,10 +5161,6 @@ internal sealed class BrowserServerRouteTests
             // so a test can keep driving state at the server without racing an asynchronous teardown.
             return new CountingDisposable(this, state: true);
         }
-
-        // Re-emit the current state to the observer — the test's stand-in for the live watcher's
-        // tick/force-refresh, used to exercise the server's broadcast fan-out.
-        public void PushState() => EmitState();
 
         private void EmitState()
         {

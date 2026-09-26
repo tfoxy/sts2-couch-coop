@@ -22,6 +22,7 @@
     <Compile Include="../../src/CouchCoop.Mod/Patches/PauseMenuMountTargets.cs" Link="PauseMenuMountTargets.cs" />
     <Compile Include="../../src/CouchCoop.Mod/Patches/LobbyAssignmentTargets.cs" Link="LobbyAssignmentTargets.cs" />
     <Compile Include="../../src/CouchCoop.Mod/Runtime/LobbyCapTargets.cs" Link="LobbyCapTargets.cs" />
+    <Compile Include="../../src/CouchCoop.Mod/Patches/RosterSignalTargets.cs" Link="RosterSignalTargets.cs" />
   </ItemGroup>
 
   <ItemGroup Condition="'$(CouchCoopBetaTargetsMode)' != 'metadata'">

@@ -14,8 +14,8 @@ public static class BrowserDisconnectSeat
     /// <description>
     /// DURING A RUN: KEEP the seat process alive (mark it detached). It stays ENet-joined to the host's run as its
     /// netId, so when the browser reconnects it re-claims the SAME live seat and instantly sees the live run: no
-    /// respawn, no ENet rejoin. A detached seat is reaped when the game leaves both the run and any lobby (the host
-    /// state observer's run-end reap) or when the game quits (<see cref="HeadlessClientManager.Dispose"/>).
+    /// respawn, no ENet rejoin. A detached seat is reaped when the game leaves both the run and any lobby (the roster
+    /// observer's reap) or when the game quits (<see cref="HeadlessClientManager.Dispose"/>).
     /// </description>
     /// </item>
     /// <item>

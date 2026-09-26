@@ -480,10 +480,10 @@ internal static class MirrorSeatRosterTests
         => players.FirstOrDefault(player => player.PlayerId == playerId)
             ?? throw new InvalidOperationException($"roster is missing {playerId}: [{string.Join(", ", players.Select(p => p.PlayerId))}]");
 
-    private static StateCharacterSelectPlayerSnapshot LobbyPlayer(string id, string? name, bool connected)
+    internal static StateCharacterSelectPlayerSnapshot LobbyPlayer(string id, string? name, bool connected)
         => new(id, 0, "ironclad", IsReady: false, MaxMultiplayerAscensionUnlocked: 20, DisplayName: name, IsConnected: connected);
 
-    private static StateSnapshot LoadGameLobby(
+    internal static StateSnapshot LoadGameLobby(
         IReadOnlyList<StateCharacterSelectPlayerSnapshot> lobby,
         IReadOnlyList<string> saved)
         => new(
@@ -510,7 +510,7 @@ internal static class MirrorSeatRosterTests
                 View: null),
             Run: null);
 
-    private static StateRunPlayerSnapshot RunPlayer(string id, string name, bool isHost, bool connected)
+    internal static StateRunPlayerSnapshot RunPlayer(string id, string name, bool isHost, bool connected)
         => new(
             id,
             "test",
@@ -528,7 +528,7 @@ internal static class MirrorSeatRosterTests
             Notices: [],
             IsConnected: connected);
 
-    private static StateSnapshot Run(params StateRunPlayerSnapshot[] players)
+    internal static StateSnapshot Run(params StateRunPlayerSnapshot[] players)
         => new(
             StateSnapshot.CurrentSchemaVersion,
             Language: null,

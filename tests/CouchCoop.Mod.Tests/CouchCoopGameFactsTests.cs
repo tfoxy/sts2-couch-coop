@@ -81,6 +81,27 @@ internal static class CouchCoopGameFactsTests
             Interlocked.Increment(ref _capReads);
             return CapRead?.Invoke();
         }
+
+        // ---- WP3 path 2: the lobby and run roster ----------------------------------------------------------------
+
+        private int _rosterReads;
+        private int _rosterReadThread;
+
+        /// <summary>What the roster read answers; unset reads as unavailable. Mutable so a test can play a sequence.</summary>
+        public Func<RosterFacts?>? RosterRead { get; set; }
+
+        /// <summary>How many roster reads reached the reader (atomic: callers run on socket threads).</summary>
+        public int RosterReads => Volatile.Read(ref _rosterReads);
+
+        /// <summary>The managed thread the last roster read ran on.</summary>
+        public int RosterReadThread => Volatile.Read(ref _rosterReadThread);
+
+        public RosterFacts? ReadRoster()
+        {
+            Interlocked.Increment(ref _rosterReads);
+            Volatile.Write(ref _rosterReadThread, Environment.CurrentManagedThreadId);
+            return RosterRead?.Invoke();
+        }
     }
 
     // Runs `body` with the front pointed at `source`, the zero-client tripwire quiet (its own suite owns those

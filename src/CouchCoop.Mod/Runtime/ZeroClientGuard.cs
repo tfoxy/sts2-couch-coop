@@ -94,6 +94,9 @@ public static class ZeroClientEntries
     /// <summary>A read of CouchCoop's own typed host facts (the run and lobby facts the QR gates decide on).</summary>
     public static readonly ZeroClientEntry HostFactsRead = ZeroClientEntry.Register("host-facts.read");
 
+    /// <summary>A subscription to the signals that say the lobby or run roster changed (the roster observer).</summary>
+    public static readonly ZeroClientEntry RosterSubscribe = ZeroClientEntry.Register("roster.subscribe");
+
     public static IReadOnlyList<ZeroClientEntry> All => ZeroClientEntry.AllRegistered;
 }
 
@@ -214,9 +217,9 @@ public static class ZeroClientAllowances
 /// listener is currently serving (opened when a socket is dispatched, closed when its handler returns), and the
 /// owned-seat count. The connection count is deliberately not <see cref="BrowserDemandLedger"/> or
 /// <see cref="StreamingViewerDemand"/>: those publish only after a WebSocket has registered, which is after the
-/// handshake's own session read and after the first state observer starts, so they would flag the first viewer's
+/// handshake's own session read and after the first roster observer starts, so they would flag the first viewer's
 /// own work. A picker-parked viewer is a served connection and therefore demand, and is what keeps
-/// <c>CouchCoopStateObserver</c>'s 50 ms subscription legitimate.
+/// <see cref="CouchCoopRosterObserver"/>'s signal subscription legitimate.
 /// </para>
 /// <para>
 /// THE HOT PATH is one volatile integer read. Everything else (grace, allowance, counters, log) is behind it and

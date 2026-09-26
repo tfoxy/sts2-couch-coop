@@ -15,11 +15,12 @@ namespace CouchCoop.Mod.Session;
 /// display-name override registry (<see cref="CouchCoopLobbyParticipation.SetClientName"/>, resolved by
 /// spirectl's <c>GetPlayerNameRaw</c> hook) is what closes that gap.</para>
 ///
-/// <para><b>Why it polls instead of riding the state observer.</b> It used to be a <c>StateChanged</c> handler on
-/// <c>CouchCoopBrowserServer</c>'s state observer — which is exactly why it silently stopped working: that
-/// observer is refcounted on connections that want STATE, and a seat being played has only a streaming mirror
-/// connection (<c>WantsState == false</c>), so the observer is stopped for the entire time the seat is in use. It
-/// ran only while the viewer sat on the pre-join picker. A seat's name map must not depend on what its browser
+/// <para><b>Why it polls instead of riding the server's roster observer.</b> It used to be a <c>StateChanged</c>
+/// handler on <c>CouchCoopBrowserServer</c>'s (since replaced) state observer — which is exactly why it silently
+/// stopped working: that observer is refcounted on connections that want STATE, and a seat being played has only a
+/// streaming mirror connection (<c>WantsState == false</c>), so the observer is stopped for the entire time the seat is
+/// in use. It ran only while the viewer sat on the pre-join picker. The roster observer that replaced it has the same
+/// lifetime, so the same reasoning holds. A seat's name map must not depend on what its browser
 /// happens to be doing, so the sync owns its own clock.</para>
 ///
 /// <para><b>Timing.</b> The host writes the roster BEFORE it launches a newcomer's seat, and that seat needs

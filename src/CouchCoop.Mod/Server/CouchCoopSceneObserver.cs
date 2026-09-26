@@ -11,8 +11,8 @@ namespace CouchCoop.Mod.Server;
 // retained map is lock-guarded. When the scene-watch capability is unsupported the observer never
 // subscribes (no broadcast).
 //
-// Deliberately a separate type from CouchCoopStateObserver: the mirror path shares no state with the
-// semantic reconstruction path, so either can be deleted independently.
+// Deliberately a separate type from the roster observer (CouchCoopRosterObserver): the mirror path shares no state
+// with the roster path, so either can be deleted independently.
 public sealed class CouchCoopSceneObserver(CouchCoopRuntimeHost runtimeHost) : IDisposable
 {
     private readonly CouchCoopRuntimeHost _runtimeHost = runtimeHost ?? throw new ArgumentNullException(nameof(runtimeHost));
