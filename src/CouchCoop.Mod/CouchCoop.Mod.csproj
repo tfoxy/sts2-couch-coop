@@ -67,10 +67,17 @@
       wins. Overriding AssemblyName here (passed as an MSBuild global property, which overrides the
       project's own AssemblyName) gives the mod a distinct identity that coexists with the bridge's
       copy without conflict. Namespaces are unaffected — the types stay Spirectl.Sts2.*.
+
+      Sts2Profile=Embedded selects spirectl's embedded compile profile: the copy leaves out the lanes this mod
+      cannot reach (the legacy state extractor, the reference-data provider, the synthetic-seat watchers, the
+      action bodies behind the semantic action kinds CouchCoop never sends) and declares only the game members
+      the rest reads. The bridge and the CLI keep the Full default. The default profile lives in spirectl's
+      project, so a reference that omits the property silently gets Full — scripts/validate-csharp-scaffold.sh
+      checks that this one names it.
     -->
     <ProjectReference
       Include="$(CouchCoopSpirectlRoot)/bridge-mod/src/Spirectl.Sts2/Spirectl.Sts2.csproj"
-      AdditionalProperties="EnableSts2LiveHost=true;Sts2AssembliesDir=$(Sts2AssembliesDir);AssemblyName=CouchCoop.Spirectl" />
+      AdditionalProperties="EnableSts2LiveHost=true;Sts2Profile=Embedded;Sts2AssembliesDir=$(Sts2AssembliesDir);AssemblyName=CouchCoop.Spirectl" />
     <ProjectReference Include="../CouchCoop.Mod.Contracts/CouchCoop.Mod.Contracts.csproj" />
     <!-- Shared, game-free wire protocol layer (scene model, envelopes, moved browser DTOs). -->
     <ProjectReference Include="../CouchCoop.MirrorProtocol/CouchCoop.MirrorProtocol.csproj" />

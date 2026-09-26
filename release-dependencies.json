@@ -3,7 +3,7 @@
   "dependencies": {
     "spirectl": {
       "repository": "https://github.com/tfoxy/spirectl.git",
-      "commit": "386c7ed62f26f0b84e16d2165681344130b28921"
+      "commit": "eb16071cf41800dffb60ac25a9d3b9888ed6a72a"
     },
     "godot-scene-web": {
       "repository": "https://github.com/tfoxy/godot-scene-web.git",

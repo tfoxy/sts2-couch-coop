@@ -139,6 +139,31 @@ This map records current contracts, not retired implementation alternatives.
 - Game internals — the shape of the translation, its gates, and the live evidence — are in
   `.sts2/research/keyboard-web-client-sep22.md`, not here.
 
+## Embedded spirectl copy (compile profile)
+- **What ships.** `CouchCoop.Spirectl.dll` is `../spirectl`'s `Spirectl.Sts2` built as its **Embedded** compile
+  profile, selected by `Sts2Profile=Embedded` in the project reference in `src/CouchCoop.Mod/CouchCoop.Mod.csproj`.
+  The bridge, the CLI and the NuGet pack keep the **Full** default, which lives inside spirectl's project, so a
+  reference that forgets the property silently builds Full — `scripts/validate-csharp-scaffold.sh` text-checks it.
+- **What the profile leaves out**: the legacy state-extractor lane and the observation provider, resolvers and
+  inspectors only it called, the reference-data provider implementation (its DTOs and port stay: `ISpirectlRuntime`
+  inherits them), the host-local seat watchers, the VFX-spawn hook, and every action body no embedded dispatch arm
+  reaches. Its game-API manifest lists only what a compiled lane reads (v111: 13 of 20). The omitted files are one
+  list, the "Embedded profile" item group in `../spirectl/bridge-mod/src/Spirectl.Sts2/Spirectl.Sts2.csproj`.
+- **The embedded dispatcher routes only the kinds CouchCoop sends**: hover, mouse click, key and controller input,
+  `select-map-node`, `set-scroll-offset`, `claim-reward` (still on `BrowserActionExecutor`'s allow-list),
+  `DisconnectClient` and `SetClientName`. Any other kind answers `InvalidAction`, and `SemanticActionKind` itself
+  stays complete. **Sending a new kind from CouchCoop therefore needs its arm added in spirectl**
+  (`Profiles/Embedded/Sts2ActionHandler.Dispatch.cs`) — plus the maintainer's go-ahead for a semantic action, per
+  the rule below.
+- **Gates.** `scripts/validate-spirectl-embedded-boundary.sh` proves the embedded profile equals the upstream
+  build of the same profile: the reference's own `AdditionalProperties` minus `AssemblyName` drive an evaluated
+  `-getItem:Compile` comparison (no size tolerance decides equality), then both artifacts must carry the
+  `SpirectlSts2Profile=Embedded` stamp. `SpirectlEmbeddedAssemblyBoundaryTests` (`-- embedded-boundary`) pins the
+  built assembly: the stamp, the retained types, the excluded lanes, the action bodies that must and must not be
+  there. `Spirectl.Sts2.Live.Sts2ScreenContext` is among the retained types.
+- **A change that names a type the profile left out fails the couch build** (`CS0246`), not at run time — and the
+  file's OTHER types count: check every type a file declares against `src/` and `tests/`, not just its first.
+
 ## Real input, not semantic actions
 - **The rule** (CLAUDE.md → Architecture Rules): a viewer's gesture becomes the same hover / press / release /
   key events a player at the keyboard produces, replayed at a resolved coordinate; the game's own widget
