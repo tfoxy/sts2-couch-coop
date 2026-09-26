@@ -125,7 +125,6 @@ public sealed class BrowserActionExecutor(CouchCoopRuntimeHost runtimeHost, Acti
         {
             SemanticActionKind.SelectMapNode,
             SemanticActionKind.SetScrollOffset,
-            SemanticActionKind.ClaimReward,
         })
         {
             var token = ToKebabCase(candidate.ToString());
