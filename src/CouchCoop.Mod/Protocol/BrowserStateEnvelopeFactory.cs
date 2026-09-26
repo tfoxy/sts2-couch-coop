@@ -4,7 +4,6 @@ using CouchCoop.MirrorProtocol.Envelopes;
 using CouchCoop.Mod.Runtime;
 using CouchCoop.Mod.Server;
 using CouchCoop.Mod.Session;
-using Spirectl.Sts2.Core.Actions;
 
 namespace CouchCoop.Mod.Protocol;
 
@@ -173,13 +172,7 @@ public sealed class BrowserStateEnvelopeFactory(
         var envelope = new BrowserEnvelope(
             "session",
             requestId,
-            // The shared embedded runtime also serves tooling consumers. Omit the retired browser reward action;
-            // reward rows are committed through the game's input path instead.
-            Capabilities: ToJsonElement(_runtimeHost.Capabilities with
-            {
-                SupportedActions = _runtimeHost.Capabilities.SupportedActions
-                    .Where(action => action.Kind != SemanticActionKind.ClaimReward).ToArray()
-            }),
+            Capabilities: ToJsonElement(_runtimeHost.Capabilities),
             Notices: ToJsonElement(notices),
             Session: assignment.Session,
             Players: assignment.Players,

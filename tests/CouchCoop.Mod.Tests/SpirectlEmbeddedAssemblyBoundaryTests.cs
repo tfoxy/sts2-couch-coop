@@ -3,6 +3,7 @@ using System.Reflection.PortableExecutable;
 using System.Reflection;
 using CouchCoop.Mod.HostUi;
 using CouchCoop.Mod.Runtime;
+using Spirectl.Sts2.Core.Actions;
 using Spirectl.Sts2;
 using Spirectl.Sts2.Embedding;
 
@@ -155,7 +156,7 @@ internal static class SpirectlEmbeddedAssemblyBoundaryTests
     private static readonly string[] EmbeddedActionMethods =
     [
         "ExecuteHoverElement", "ExecuteMouseClick", "ExecuteKeyInput", "ExecuteControllerInput",
-        "ExecuteSelectMapNode", "ExecuteSetScrollOffset", "ExecuteClaimReward",
+        "ExecuteSelectMapNode", "ExecuteSetScrollOffset",
         "ExecuteDisconnectClient", "ExecuteSetClientName",
     ];
 
@@ -163,7 +164,7 @@ internal static class SpirectlEmbeddedAssemblyBoundaryTests
     [
         "ExecutePlayCard", "ExecuteEndTurn", "ExecuteChoose", "ExecuteSelectCard", "ExecuteBuyCard",
         "ExecuteViewDrawPile", "ExecuteSelectHandCard", "ExecuteInspectRelic", "ExecuteToggleDeck",
-        "ExecuteJoinLobbyPlayer", "ExecuteLeaveLobbyPlayer",
+        "ExecuteJoinLobbyPlayer", "ExecuteLeaveLobbyPlayer", "ExecuteClaimReward",
     ];
 
     private static readonly string[] RemovedTypeNames =
@@ -378,6 +379,8 @@ internal static class SpirectlEmbeddedAssemblyBoundaryTests
             ?? throw new InvalidOperationException("SpirectlEmbeddedAssemblyBoundaryTests: the dispatcher has no route table"));
 
         var kinds = advertised.Select(descriptor => descriptor.Kind.ToString()).Order(StringComparer.Ordinal).ToArray();
+        Expect(!kinds.Contains(nameof(SemanticActionKind.ClaimReward), StringComparer.Ordinal),
+            "the embedded runtime does not advertise the retired reward action");
         var sent = EmbeddedActionMethods.Select(method => method["Execute".Length..]).Order(StringComparer.Ordinal).ToArray();
         Expect(kinds.SequenceEqual(sent),
             $"the embedded runtime advertises exactly the action kinds its dispatcher routes (advertised: {string.Join(", ", kinds)}; routed: {string.Join(", ", sent)})");

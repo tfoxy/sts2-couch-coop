@@ -154,16 +154,14 @@ This map records current contracts, not retired implementation alternatives.
   preview core and fixture-only helpers. Its game-API manifest omits requirements read only by excluded lanes.
   The omitted files are one list, the "Embedded profile" item group in
   `../spirectl/bridge-mod/src/Spirectl.Sts2/Spirectl.Sts2.csproj`.
-- **The embedded dispatcher routes the kinds CouchCoop needs plus the retained shared reward action**: hover, mouse click, key and controller input,
-  `select-map-node`, `set-scroll-offset`, `claim-reward` (retained in the shared dispatcher, denied by CouchCoop's browser),
-  `DisconnectClient` and `SetClientName`. Any other kind answers `InvalidAction`, and `SemanticActionKind` itself
+- **The embedded dispatcher routes the kinds CouchCoop needs**: hover, mouse click, key and controller input,
+  `select-map-node`, `set-scroll-offset`, `DisconnectClient` and `SetClientName`. Any other kind answers `InvalidAction`, and `SemanticActionKind` itself
   stays complete. **Sending a new kind from CouchCoop therefore needs its route added in spirectl**
   (`Profiles/Embedded/Sts2ActionHandler.Dispatch.cs`, a table of kind, descriptor and body) — plus the
   maintainer's go-ahead for a semantic action, per the rule below.
-- **`capabilities.supportedActions` in the browser `session` envelope filters that table.** The embedded runtime
-  lists nine routed kinds (it used to list the full catalog's 53); CouchCoop omits `ClaimReward` from the browser
-  envelope because its browser action executor refuses it. No product code reads the field (the frontend types
-  `capabilities` as `unknown`), but a future reader can trust the browser list to exclude the retired action.
+- **`capabilities.supportedActions` in the browser `session` envelope is the embedded route table.** The embedded
+  runtime lists eight routed kinds and excludes `ClaimReward`. The browser action executor also refuses that kind.
+  No product code reads the field (the frontend types `capabilities` as `unknown`).
 - **Gates.** `scripts/validate-spirectl-embedded-boundary.sh` proves the embedded profile equals the upstream
   build of the same profile: the reference's own `AdditionalProperties` minus `AssemblyName` drive an evaluated
   `-getItem:Compile` comparison (no size tolerance decides equality), then both artifacts must carry the
@@ -175,9 +173,10 @@ This map records current contracts, not retired implementation alternatives.
   file's OTHER types count: check every type a file declares against `src/` and `tests/`, not just its first.
 - **Boundary handoff status (2026-09-26).** WP3 removed CouchCoop's runtime state port and temporary snapshot
   parity oracles; a metadata test rejects full-state references in both mod assemblies. WP4b landed on local
-  spirectl `main` as `6a922914` and CouchCoop pins it. Both private live QA legs completed,
-  including a bridge-and-mod install proof. Same-SDK method-body IL measured 1,190,261 bytes at the WP4a baseline
-  and 991,218 bytes after WP4b (−16.72%); Full is 1,416,456 bytes. See
+  spirectl `main` as `6a922914`; CouchCoop now pins `fab2dca1`, which also removes Embedded `ClaimReward`.
+  Both private live QA legs completed before that final reward trim, including a bridge-and-mod install proof.
+  Same-SDK method-body IL measured 1,190,261 bytes at the WP4a baseline, 991,218 after WP4b, and 980,544 after
+  the reward trim (−17.62% cumulative); Full is 1,416,456 bytes. See
   [the handoff](handoff-spirectl-boundary-implementation.md) for current verification status.
 
 ## Real input, not semantic actions
@@ -210,7 +209,7 @@ This map records current contracts, not retired implementation alternatives.
   | Action | Where | Status |
   | --- | --- | --- |
   | `claim-reward` | — | **removed from the browser contract** — reward rows are claimed by real input, so the game's own button runs its claim and its refusal |
-  | `select-map-node` | `frontend/src/mirror/mapNodeTap.ts` | in use, awaiting the maintainer's call. Not a straight swap: it carries a travelable gate and injects the run-global map vote for synthetic host-local seats, which have no map screen of their own for raw input to land on |
+  | `select-map-node` | `frontend/src/mirror/mapNodeTap.ts` | in use; retains a travelable gate and map-vote behavior. Current mirror seats are real headless ENet clients. A focused live raw-input A/B must establish whether their map screens accept equivalent taps before changing this action |
   | `set-scroll-offset` | `frontend/src/mirror/MirrorApp.vue`, the eager-scroll absolute channel | retained with maintainer approval — sends the client's final absolute scroll position so the game follows precisely, avoiding a client correction when local prediction differs. View state only; it does not commit a player choice |
 - Read-only spirectl surfaces — state reads, the scene stream, screenshots, inspection — are unaffected. This
   rule is about causing state changes.
@@ -941,7 +940,7 @@ classes) and never through a state snapshot (WP3 path 5). It replaced `CurrentSt
 
 - **Callers** (all on demand, none polls): `CouchCoopLobbyParticipation.MaxLobbyPlayers` / static `ReadMaxLobbyPlayers`
   apply `LobbyCapOf` (a reported cap of 1 or less is UNKNOWN = `null`, with the 30 s "unreadable" notice) and serve
-  the browser admission limiter (`NetworkAdmissionLimiter`, once per WebSocket upgrade on a listener thread; ceiling
+  the WebSocket connection flood limiter (`NetworkAdmissionLimiter`, once per upgrade on a listener thread; ceiling
   `max(32, 4 * cap)`), `MaxCouchSeats` (`cap - 1`, per seat allocation; the session envelope reads the raw cap in the same hop as its roster and applies `MaxCouchSeatsOf`), and host-start sizing
   (`CouchCoopHostTransport.ReadLobbyCapAtHostStart`, wired as `MaxLobbyPlayersProbe`, under the
   `host-transport-sizing` allowance).
@@ -965,12 +964,15 @@ classes) and never through a state snapshot (WP3 path 5). It replaced `CurrentSt
   public property), `LobbyCapTargets` in the metadata-only lane (`-- beta-targets <staged sts2.dll>` on both lanes),
   and a read that throws is "no cap known", never a guess. `sts2 code verify-references` does not see it (a string
   name is not an IL reference), and the profile boundary metadata test guards the compiled member references.
-- **Host start is always "no lobby".** The game starts hosting (`StartENetHost` / `StartSteamHost`, our prefix sizes
-  the listener there) before it creates the lobby screen, so at that moment no lobby screen is current and the read
+- **Host start is always "no lobby".** This transport-sizing probe is separate from the later per-join lobby-cap
+  read that limits seat allocation to `cap - 1` and stops an extra seat from trying to enter a full lobby. The game
+  starts hosting (`StartENetHost` / `StartSteamHost`, our prefix sizes the listener there) before it creates the
+  lobby screen, so at that moment no lobby screen is current and the read
   reports `null` in every stock flow (live logs show `source=host-start` lines with `requested == effective`; the
   `lobby admits N players` line appears only in test logs). It is kept as it was: swapping its source changed no
-  behaviour. Removing it, or re-sizing the listener when the lobby appears, is the maintainer's call.
-- **Tests**: `LobbyCapReadTests` (front, unknown rule, admission ceiling through the limiter, host-start sizing, the
+  behaviour. No join-cap bug was found. Removing this host-start probe, or re-sizing the listener when the lobby
+  appears, is a separate decision.
+- **Tests**: `LobbyCapReadTests` (front, unknown rule, WebSocket flood ceiling through the limiter, host-start sizing, the
   zero-client allowance and saved-run record), `BrowserServerRouteTests.AssertUpgradeAdmissionReadsNoStateSnapshot` (`RecordingSpirectlRuntime.StateReads`
   stays flat across 81 upgrades), `LobbyCapNoticeTests`, `HostTransportCapacityTests`.
 

@@ -13,14 +13,18 @@ a typed character-change callback wakes a one-frame deferred read. The integrate
 MirrorProtocol and Connection suites, the paired boundary check, and v107/v111 Release builds. It is landed on
 local CouchCoop `main`. Nothing has been pushed or tagged.
 
-WP4b landed on local spirectl `main` as `6a922914`, and CouchCoop pins it. Independent review
-caught and fixed four state-only game-API manifest requirements before landing. Full and Embedded profiles compiled
-on v107 and v111. After landing, `bridge-tests` passed 2,088 tests, the live-host gate passed 2,390 with four
-skipped, and the paired boundary check confirmed Embedded's 213 compile items versus Full's 288. Same-SDK
-method-body IL fell from 1,190,261 bytes at the WP4a baseline to 991,218 after WP4b (−16.72%); Full is
-1,416,456 bytes. Measurement: `.sts2/research/spirectl-boundary-review-sep26/wp4b/wp4b-embedded-final.csv`.
+WP4b landed on local spirectl `main` as `6a922914`; the subsequent Embedded `ClaimReward` trim landed as
+`fab2dca1`, which CouchCoop pins. Independent review caught and fixed four state-only game-API manifest
+requirements before WP4b landed. Full and Embedded profiles compiled on v107 and v111, and the reward trim
+repassed both lanes. After WP4b, `bridge-tests` passed 2,088 tests, the live-host gate passed 2,390 with four
+skipped, and the paired boundary check confirmed Embedded's 213 compile items versus Full's 288. The reward trim
+also passed `bridge-tests`, the live-host gate, and the paired boundary check. Same-SDK method-body IL fell from
+1,190,261 bytes at the WP4a baseline to 991,218 after WP4b, then 980,544 after the reward trim (−17.62%
+cumulative); Full is 1,416,456 bytes. Current measurement:
+`.sts2/research/spirectl-boundary-review-sep26/wp4b/fab2dca1-il-readme.md`.
 
-Both private-headless live legs are complete. QA1 exposed the missing character wake on the older build; QA2 proved
+Both private-headless live legs completed before the final reward trim. QA1 exposed the missing character wake on
+the older build; QA2 proved
 that a real browser character change advances the host roster and updates another viewer's mirror with unchanged
 seat IDs and connectivity. QA1 recorded 27 roster reads, QA2 recorded 18 and 27 over two launches; both saw zero
 reads before viewer demand and zero idle-work or tripwire entries. Joins, leave/rejoin, hosted start, ordinary
@@ -39,20 +43,22 @@ ordinary browser close/reopen passed. These limits and the distinct forced-death
 **Retained polling:** the existing QR host-panel 0.25 s heartbeat and seat readiness loops remain at their existing
 cadence. No new polling was added.
 
-**Browser-action decisions (2026-09-26):** `ClaimReward` is retired from the browser contract; reward rows use real
-input. `SetScrollOffset` is retained with the maintainer's approval so the game follows the client's final absolute
-scroll position without correcting an inaccurate local prediction.
+**Browser-action decisions (2026-09-26):** `ClaimReward` is retired from the browser contract and Embedded action
+catalog; reward rows use real input. `SetScrollOffset` is retained with the maintainer's approval so the game follows
+the client's final absolute scroll position without correcting an inaccurate local prediction. `SelectMapNode`
+remains in use pending investigation of map voting and the travelable gate.
 
-**Maintainer decisions remain open:** memo §9 wording; whether scene or animation hooks are earmarked for a spirectl
-consumer; the remaining `SelectMapNode` browser action pending investigation; whether to remove the host-start
-cap probe that reads null in stock flows; and deletion of the paused `roster-port` branch/worktrees. No decision is
-made here.
+**Ownership wording approved:** memo §9's "reuse is earned" rule is in `AGENTS.md` (`922caf2e`).
+
+**Maintainer decisions remain open:** whether scene or animation hooks are earmarked for a spirectl consumer;
+the remaining `SelectMapNode` browser action pending investigation; whether to remove the host-start transport
+cap probe that reads null in stock flows; and deletion of the paused `roster-port` branch/worktrees. The later
+per-join live lobby-cap read already limits seat allocation to `cap - 1`; no join-cap bug was found.
 
 ## Rules for every work package
 
-- **Do not edit `CLAUDE.md` or `AGENTS.md`.** Until the maintainer approves the new wording, the current rule
-  stands (spirectl owns reusable code; an exception needs the maintainer's go-ahead). The two exceptions granted so
-  far are the seat peer-list read (`7d089e03`) and the hosting tracker.
+- **Ownership wording is approved.** Follow the current `AGENTS.md` rule: support only CouchCoop needs starts here;
+  move it to spirectl when another consumer exists. The named geoclip exception stays in spirectl.
 - Follow `CLAUDE.md` "Verify What You Touched": the `couch-worktree` skill for a worktree, every dotnet command as
   `flock --close /tmp/sts2-dotnet-build.lock …`, a scratch `COUCHCOOP_GAME_MODS_DIR`, and
   `dotnet run --project tests/CouchCoop.Mod.Tests -- <verb>` (`dotnet test` is a no-op here). `npm run build`
@@ -171,7 +177,7 @@ memo (confidence in brackets):
 | --- | --- |
 | `Sts2HostLocalSeatSyncWatcher`, `Sts2HostLocalSeatTurnWatcher` | dead: synthetic seats only [high] |
 | `Sts2DamageEventHooks`, `Sts2CardUpgradeEventHooks`, `Sts2VfxSpawnEventHooks` | dead: combat-event hub has no subscriber [high] |
-| `Sts2ChooseACardOverlayHooks`, `Sts2HandSelectionHooks`, `Sts2EndTurnReadinessHooks`, `Sts2RewardsCaptureHooks` | probably dead for CouchCoop: outputs feed only dead lanes or `ClaimReward` [medium; `ClaimReward` remains in shared tooling but is denied by the browser] |
+| `Sts2ChooseACardOverlayHooks`, `Sts2HandSelectionHooks`, `Sts2EndTurnReadinessHooks`, `Sts2RewardsCaptureHooks` | probably dead for CouchCoop: outputs feed only dead lanes or `ClaimReward` [medium; `ClaimReward` remains in Full tooling and is absent from Embedded] |
 | `Sts2MultiplayerConnectionHooks`, `Sts2SyntheticLobbyNameHooks` | keep: connection reporting and client-name overrides are live |
 | `Sts2ParticleRestartHooks`, `Sts2SpineAnimationHooks`, `Sts2TweenRecorderHooks`, `Sts2CardFlightHooks`, `Sts2DiscardFlightHooks`, `Sts2HandHolderHooks` | keep: they feed the mirror's animation hints and scene stream |
 
@@ -220,8 +226,8 @@ subscriber WP3 adds.
 
 ## Questions for the maintainer
 
-1. Approve or amend the wording in memo §9 (it decides whether agents still ask permission for CouchCoop-side reads).
-2. Is the scene stream, the animation-hint stream, or the browser input maps earmarked for a spirectl consumer?
-3. Can `SelectMapNode` be replaced by real input while preserving map voting and the travelable gate? Investigate
+1. Is the scene stream, the animation-hint stream, or the browser input maps earmarked for a spirectl consumer?
+2. Can `SelectMapNode` be replaced by real input while preserving map voting and the travelable gate? Investigate
    before changing it.
-4. Remove the host-start cap probe, which reads null in stock flows?
+3. Remove the host-start transport cap probe, which reads null in stock flows? This is separate from the working
+   per-join live lobby-cap read that bounds seat allocation to `cap - 1`.
