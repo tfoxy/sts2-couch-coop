@@ -316,8 +316,10 @@ The first step is small and independently useful; every later step can be stoppe
   85 minutes later) began. What the round wrote is useful as a list of the facts wanted, not as code. Deleting the
   branch is the maintainer's call.
 - **[handoff-hosting-tracker-state.md](handoff-hosting-tracker-state.md) is done** (`b6a1ec12`) and is P1's template.
-  Two loose ends: it was verified against the v111 lane only, and the release workflow packages v107, so the v107
-  compile of the run-in-progress read is unchecked; and its fallback clause (keep the state subscription if
+  Two loose ends: it was compiled against the v111 lane only, and the release workflow packages v107. The v107
+  decompile corpus (`.sts2/toolchain-public`) declares the same public run-in-progress member, so the risk is small,
+  but no v107 compile has run; the stable reference SDK package (`eng/Sts2.ReferenceSdk/stable`) is cached locally,
+  so one can. And its fallback clause (keep the state subscription if
   `SubscribeUpdated` cannot be resolved) keeps one `Core.State` consumer alive, so P2 waits for that clause to be
   dropped or accepted as a known exception.
 - **[handoff-zero-client-guard.md](handoff-zero-client-guard.md): choose the choke point CouchCoop owns.** Every
