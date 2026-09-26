@@ -131,10 +131,10 @@ public sealed partial class HeadlessClientManager
         // all over again. This needs no slot and nothing the lock protects, so it has no business under it. The
         // trade — this entry is also reached by joins that reuse or are refused — is argued in EnsureForThisHostOnce.
         HostProfileBackup.EnsureForThisHostOnce();
-        // ALL THREE of these are settled BEFORE _lock is taken, and for the same reason: the MaxSlot and
-        // RunInProgress probes marshal to the game's main thread, and the port survey can block on a dropped
-        // packet. The main thread takes _lock on every screen change, so any of them evaluated under it stalls
-        // (the state probes deadlock) the game.
+        // ALL THREE of these are settled BEFORE _lock is taken, and for the same reason: the MaxSlot probe marshals
+        // to the game's main thread (RunInProgress is a plain typed read today, but is an injected probe and keeps
+        // the same discipline), and the port survey can block on a dropped packet. The main thread takes _lock on
+        // every screen change, so any of them evaluated under it stalls (the state probes deadlock) the game.
         var maxSlot = MaxSlot;
         var runInProgress = RunInProgress;
         var occupiedSeatPorts = await SurveySeatPortsAsync(maxSlot, displayName, targetNetId, ct).ConfigureAwait(false);

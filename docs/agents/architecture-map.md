@@ -865,7 +865,7 @@ spawned seat.
 | --- | --- |
 | `state.read`, `state.subscribe`, `scene.subscribe`, `animation-hints.subscribe`, `multiplayer-connection.read/.subscribe` | the ports of `CouchCoopRuntimeHost` (`ZeroClientGuard.EnterPort`); the caller is read from the stack, and only when a violation is reported |
 | `screen-context.subscribe/.read` | `Runtime/CouchCoopGameSeams.cs` `GameScreenContext`, the CouchCoop front for `Sts2ScreenContext` (tracker, browser-server static-background probe, QR host panel) |
-| `host-facts.read` | `Runtime/CouchCoopGameFacts.cs` `CouchCoopGameFacts`, the CouchCoop front for its own typed reader `IGameFacts` (QR host panel, pause-menu row) |
+| `host-facts.read` | `Runtime/CouchCoopGameFacts.cs` `CouchCoopGameFacts`, the CouchCoop front for its own typed reader `IGameFacts` (QR host panel, pause-menu row, run presence for a browser disconnect and a seat launch, the hosting tracker) |
 | `main-thread.dispatch` | the same file's `GameMainThread`, the front for `Sts2MainThreadDispatcher` (tracker, seat peer check, root-window guard, windowless viewport loop) |
 
 **Allow-list — `ZeroClientAllowances`, the review point.** Each entry names work that touches game state at zero
@@ -939,6 +939,26 @@ The always-on QR overlay is gone. A game-styled button opens a dialog instead.
   service). No by-name reflection. A fact is never learned by polling: the screen handed to the reader is the one
   the evaluation already resolved, and staleness of a recorded role after the game clears the lobby is irrelevant
   (a cleared lobby is a screen change, and no lobby means no panel).
+- **Run presence is one typed read shared by every caller** (WP3 path 7). `IGameFacts.ReadRunInProgress()` /
+  `CouchCoopGameFacts.ReadRunInProgress()` is `bool?` (`null` = unavailable: no engine, or the read threw); the
+  reader is `RunManager.Instance.IsInProgress`, declared identically on both API lanes (checked in both decompile
+  corpora and compiled on v107), and `GameFactsReader.ReadGatesFromGame`, `HostingSessionFacts` (hosting tracker) and
+  the two callers below all go through it. It stays true through the end-of-run death/Architect summary and is false
+  on every lobby screen, the load-saved-run lobby included. **It is safe on any thread and under a mod lock, and
+  never marshals**: the member is a plain read of one reference with no engine call behind it, so the WebSocket and
+  listener threads that ask it need no `GameMainThread` hop (the retired read was a full snapshot marshalled to the
+  main thread). It is an on-demand read for a user action, never polled. Callers:
+  `CouchCoopLobbyParticipation.IsRunInProgress()` (`== true`, so **unavailable reads as "not in a run"**, the answer
+  an unreadable state always gave) feeds `HeadlessClientManager`'s `runInProgressProbe` (the launch refusal: once the
+  host is in a run its netcode refuses any client not already connected; snapshotted before `_lock`) and
+  `BrowserDisconnectSeat.Apply` (`Session/BrowserDisconnectSeat.cs`, called from `CouchCoopWebSocketConnection`'s
+  teardown: in a run `MarkDetached` keeps the seat process, otherwise `Release` + evict the ENet peer + clear the
+  name only if no claim remains). `HostingSessionFacts.IsRunInProgress()` instead THROWS on unavailable, so the
+  tracker skips the evaluation rather than counting it toward hosting end. No new zero-client entry: the read counts
+  as `host-facts.read`, and a disconnect runs inside its own served connection (demand, then the release grace).
+  Tests: `RunPresenceTests` (`-- seats`, full run): failure semantics per caller, detach/release/launch legs,
+  zero `RecordingSpirectlRuntime.StateReads` and zero `GameMainThread` dispatches per disconnect and launch refusal,
+  a test-only `StateSnapshot.Run != null` parity oracle (deleted with the last WP3 path).
 - **Facts are read on push signals only** (`LobbyGateFactsCache`): the game's screen event, a screen mount, a
   screen's `visibility_changed`, and the assignment hooks each `MarkDirty()` (inside `WakeEvaluation`, before the
   coalescing latch, so a wake dropped by a running chain still makes its next evaluation read). The next
