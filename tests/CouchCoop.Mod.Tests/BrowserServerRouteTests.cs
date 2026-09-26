@@ -5186,7 +5186,6 @@ internal sealed partial class BrowserServerRouteTests
                 [
                     Action(SemanticActionKind.SelectMapNode),
                     Action(SemanticActionKind.SetScrollOffset),
-                    Action(SemanticActionKind.ClaimReward),
                 ]);
         }
 
