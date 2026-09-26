@@ -1,4 +1,4 @@
-using Spirectl.Sts2.Core.State;
+using CouchCoop.Mod.Contracts;
 
 namespace CouchCoop.Mod.HostUi;
 
@@ -29,12 +29,12 @@ public static class CouchCoopPauseMenuGate
     /// reasoning as the lobby gate: "we have a server on a known port" is the real precondition for a scannable
     /// URL, and the dialog surfaces a missing LAN address itself rather than having the entry point hidden.
     /// </param>
-    /// <param name="state">
-    /// Latest runtime state, or <see langword="null"/> when the state capability is unavailable — then the row
-    /// stays hidden, because we cannot prove we are hosting.
+    /// <param name="facts">
+    /// The gate facts, or <see langword="null"/> when they could not be read — then the row stays hidden, because
+    /// we cannot prove we are hosting.
     /// </param>
-    public static bool ShouldShow(Uri? listenerBaseUri, StateSnapshot? state)
-        => listenerBaseUri is not null && IsHostRun(state);
+    public static bool ShouldShow(Uri? listenerBaseUri, GateFacts? facts)
+        => listenerBaseUri is not null && IsHostRun(facts);
 
     /// <summary>
     /// A live run this instance is HOSTING.
@@ -51,6 +51,6 @@ public static class CouchCoopPauseMenuGate
     /// companion dropped out — the exact moment they need it.
     /// </para>
     /// </remarks>
-    public static bool IsHostRun(StateSnapshot? state)
-        => state is { Run.NetGameType: CouchCoopLobbyHostGate.HostNetGameType };
+    public static bool IsHostRun(GateFacts? facts)
+        => facts is { RunInProgress: true, RunNetType: CouchCoopLobbyHostGate.HostNetGameType };
 }

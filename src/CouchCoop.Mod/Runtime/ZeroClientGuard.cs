@@ -91,6 +91,9 @@ public static class ZeroClientEntries
     /// <summary>Work marshalled onto the game's main thread through the dispatcher.</summary>
     public static readonly ZeroClientEntry MainThreadDispatch = ZeroClientEntry.Register("main-thread.dispatch");
 
+    /// <summary>A read of CouchCoop's own typed host facts (the run and lobby facts the QR gates decide on).</summary>
+    public static readonly ZeroClientEntry HostFactsRead = ZeroClientEntry.Register("host-facts.read");
+
     public static IReadOnlyList<ZeroClientEntry> All => ZeroClientEntry.AllRegistered;
 }
 
@@ -171,13 +174,14 @@ public static class ZeroClientAllowances
         ZeroClientEntries.ScreenSubscribe,
         ZeroClientEntries.ScreenRead);
 
-    public static readonly ZeroClientAllowance LobbyPanelStateRead = ZeroClientAllowance.Register(
-        "lobby-panel-state-read",
-        "The lobby QR panel re-reads the lobby state on its 0.25 s chain, but only while a lobby screen is the current "
-        + "screen (LobbyEvaluationPlanner parks the chain otherwise), and the pause-menu row reads it once per "
-        + "visibility change. In both the host player looking at that screen is the demand, and the read is bounded "
-        + "by the screen staying open. The read itself goes away when the panel moves to the cheap host-facts reader.",
-        ZeroClientEntries.StateRead);
+    public static readonly ZeroClientAllowance LobbyGateFacts = ZeroClientAllowance.Register(
+        "lobby-gate-facts",
+        "The lobby QR panel reads the run and lobby facts its gate decides on when the game pushes that they may have "
+        + "changed (a screen change, a lobby mount, a lobby assignment) and a lobby screen is the current screen; the "
+        + "pause-menu row reads them once per visibility change. Both are two typed member reads and a weak-map lookup "
+        + "with no state capture, and in both the host player looking at that screen is the demand: no read is made "
+        + "on a timer or while no lobby or pause menu is on screen.",
+        ZeroClientEntries.HostFactsRead);
 
     public static readonly ZeroClientAllowance HostTransportSizing = ZeroClientAllowance.Register(
         "host-transport-sizing",

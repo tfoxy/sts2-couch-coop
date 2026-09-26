@@ -1,3 +1,4 @@
+using CouchCoop.Mod.Contracts;
 using CouchCoop.Mod.Runtime;
 using CouchCoop.Mod.Session;
 using Godot;
@@ -12,14 +13,22 @@ namespace CouchCoop.Mod.HostUi;
 /// </summary>
 /// <remarks>
 /// <para>
-/// The state pull is the expensive half of an evaluation, so this controller owns the sole native host surface.
+/// This controller owns the sole native host surface: it decides from a few typed facts read through
+/// <see cref="CouchCoopGameFacts"/>, never from a full state snapshot.
 /// </para>
 /// <para>
 /// An evaluation GATES as well as installs: <see cref="CouchCoopLobbyHostGate"/> is evaluated every time and the
 /// panel is installed or removed from the answer, so there is no separate teardown path that could miss a
-/// transition. <c>netGameType</c> flips live while the host sits in the lobby, which is why a bounded 0.25s tick
-/// survives at all rather than a one-shot install — but it now runs ONLY while a lobby screen is the current
-/// screen, and parks the moment it is not.
+/// transition. The bounded 0.25s tick is the mounted panel's HEARTBEAT (see <see cref="LobbyEvaluationPlan"/>), and it
+/// runs ONLY while a lobby screen is the current screen, parking the moment it is not.
+/// </para>
+/// <para>
+/// THE GATE FACTS ARE PUSHED, NOT POLLED. What the gate decides on (is a run in progress, and is the lobby on
+/// screen a host lobby) is read through <see cref="CouchCoopGameFacts"/> only when something pushed that it may
+/// have changed: the game's screen event, a screen mount, a screen's visibility change, or the hook on a lobby
+/// assignment (<see cref="Patches.LobbyAssignmentPatch"/>). Each of those marks the facts dirty; the next evaluation
+/// reads once and remembers the answer (<see cref="LobbyGateFactsCache"/>), and a heartbeat tick with nothing
+/// pushed reuses it. There is no full state snapshot on this path at all.
 /// </para>
 /// <para>
 /// WHAT THE EVALUATION NO LONGER DOES — and this is the point of the whole file, in two rounds.
@@ -45,7 +54,7 @@ namespace CouchCoop.Mod.HostUi;
 /// only between them, while a lobby screen is actually current.
 /// </para>
 /// <para>
-/// CURRENT, NOT MERELY VISIBLE. The gate on the state pull is
+/// CURRENT, NOT MERELY VISIBLE. The gate on the facts read is
 /// <c>visible AND Sts2ScreenContext.IsCurrent(screen)</c>. A screen parked visible underneath the one the player
 /// is on is not the current screen, so the pull stops there — but such a screen KEEPS ITS PANEL. Removal is
 /// driven by visibility and nothing else, because the game's current-screen answer is whatever is on top,
@@ -119,6 +128,9 @@ public static class CouchCoopQrHostPanelController
     private static readonly LobbyScreenRegistry Screens = new(IsAliveNode);
     private static readonly LobbyCheckpointState Checkpoints = new(CouchCoopMod.LobbyCheckpoints);
 
+    /// <summary>The last gate facts read for the current lobby screen; see the class remarks.</summary>
+    private static readonly LobbyGateFactsCache GateFactsCache = new();
+
     // Main-thread only (the scan timer), like the panels themselves.
     private static HostTransportAlertState _alertState = HostTransportAlertState.Initial;
 
@@ -162,6 +174,17 @@ public static class CouchCoopQrHostPanelController
             // arm — the panel would be gone for the process over a retry that was only ever a second chance.
             CouchCoopLog.Stderr(
                 $"lobby screen mount retry failed: {exception.GetType().Name}: {exception.Message}");
+        }
+
+        // The same second chance for the lobby-assignment hooks (see Patches.LobbyAssignmentPatch).
+        try
+        {
+            Patches.LobbyAssignmentPatch.Apply();
+        }
+        catch (Exception exception)
+        {
+            CouchCoopLog.Stderr(
+                $"lobby assignment retry failed: {exception.GetType().Name}: {exception.Message}");
         }
 
         SubscribeScreenContext();
@@ -265,6 +288,32 @@ public static class CouchCoopQrHostPanelController
             initialized = _initialized;
         }
 
+        if (initialized)
+        {
+            WakeEvaluation();
+        }
+    }
+
+    /// <summary>
+    /// The game has just assigned a lobby to a lobby screen (<see cref="Patches.LobbyAssignmentPatch"/>). Called on
+    /// the game main thread from inside the game's own initializer; wakes an evaluation for the next frame.
+    /// </summary>
+    /// <remarks>
+    /// This asks the game nothing, for the reason <see cref="NoteLobbyScreenMounted"/> spells out: the initializer is
+    /// a game callback, and reading engine state from inside one faults the process. The role of a saved-run lobby
+    /// is recorded by the patch before this is called; the evaluation one frame later is what reads it.
+    /// </remarks>
+    public static void NoteLobbyAssigned()
+    {
+        bool initialized;
+        lock (Gate)
+        {
+            initialized = _initialized;
+        }
+
+        // Before Initialize there is nothing to evaluate; its own seed pass wakes the first evaluation. Still mark
+        // the facts, so that evaluation reads.
+        GateFactsCache.MarkDirty();
         if (initialized)
         {
             WakeEvaluation();
@@ -387,13 +436,18 @@ public static class CouchCoopQrHostPanelController
     /// </remarks>
     private static void WakeEvaluation()
     {
+        // FIRST, and before the coalescing latch below can return: every wake is a push saying the gate facts may
+        // have changed, and a wake dropped because a chain is already running must still make that chain's next
+        // evaluation read them. Marking asks the engine nothing.
+        GateFactsCache.MarkDirty();
+
         try
         {
             lock (Gate)
             {
                 if (_scanScheduled)
                 {
-                    return; // a chain is already running and re-asks this question within a tick
+                    return; // a chain is already running; its next evaluation sees the mark and re-reads
                 }
             }
 
@@ -463,6 +517,9 @@ public static class CouchCoopQrHostPanelController
             _refreshRequested = false;
             _scanTimer = null;
             _alertState = HostTransportAlertState.Initial;
+            // Whatever was remembered belongs to the generation being torn down; the next one reads afresh.
+            GateFactsCache.Invalidate();
+            GateFactsCache.MarkDirty();
             subscription = _screenContextSubscription;
             _screenContextSubscription = null;
         }
@@ -726,6 +783,7 @@ public static class CouchCoopQrHostPanelController
             // No lobby in the tree at all is an unmount as far as the alert is concerned, and this is the
             // early return the rest of the evaluation takes on the main menu and mid-run — so the latch has
             // to be re-armed HERE, not only below.
+            GateFactsCache.Invalidate();
             DecideHostTransportAlert(null);
             return false;
         }
@@ -736,10 +794,12 @@ public static class CouchCoopQrHostPanelController
 
         if (!plan.PullState)
         {
-            // Nothing is both visible and current, so the state pull — the expensive half — would decide
-            // nothing. Hidden screens still give up their panels: removal is keyed on VISIBILITY, exactly as
-            // before, so a lobby parked visible under a modal keeps its panel (and with it CouchCoop's own
-            // open dialog, which is that panel's child).
+            // Nothing is both visible and current, so there is no lobby whose gate facts could be decided; what
+            // was remembered describes a lobby the player is no longer on, and the next one reads afresh. Hidden
+            // screens still give up their panels: removal is keyed on VISIBILITY, exactly as before, so a lobby
+            // parked visible under a modal keeps its panel (and with it CouchCoop's own open dialog, which is that
+            // panel's child).
+            GateFactsCache.Invalidate();
             for (var index = 0; index < screens.Count; index++)
             {
                 if (facts[index].Visible)
@@ -763,22 +823,21 @@ public static class CouchCoopQrHostPanelController
             return plan.KeepTicking;
         }
 
-        // Only pull state once a lobby screen is actually the screen the player is on — the state read is the
-        // expensive half of an evaluation, and on the main menu or mid-combat there is nothing to decide.
+        // A lobby screen is the screen the player is on. The gate facts come from the last push (see the class
+        // remarks): read now if something pushed since, otherwise the remembered answer. A heartbeat tick with
+        // nothing pushed reads nothing from the game here.
         var snapshot = CouchCoopMod.HostUiSnapshot;
-        var lobbyState = CouchCoopMod.TryGetLobbyState();
+        var gateFacts = ResolveGateFacts(screens, facts, currentScreenKnown);
         // Keep the QR entry point reachable when the browser listener failed. The dialog's empty state
         // names that failure; hiding the only host-facing explanation stranded controller users in the lobby.
-        var shouldShow = CouchCoopLobbyHostGate.IsHostLobby(lobbyState);
-        var evaluation = lobbyState is null
-            ? LobbyCheckpointEvaluation.Unavailable
-            : shouldShow ? LobbyCheckpointEvaluation.Host : LobbyCheckpointEvaluation.NotHost;
+        var shouldShow = CouchCoopLobbyHostGate.IsHostLobby(gateFacts);
+        var evaluation = CouchCoopLobbyHostGate.Classify(gateFacts);
         // A host lobby is on screen: arm the LAN/WAN services that no longer start at mod init. Raised on
         // IsHostLobby (not ShouldShow) so a host whose listener failed to bind still gets them — and never
         // on a singleplayer lobby, which is the whole point of gating here rather than at the mount patch.
         // The subscriber is idempotent and self-latching, so re-raising it every tick is harmless; keeping
         // the raise unconditional means there is no "already armed?" flag here to fall out of sync.
-        if (CouchCoopLobbyHostGate.IsHostLobby(lobbyState))
+        if (shouldShow)
         {
             try
             {
@@ -838,6 +897,36 @@ public static class CouchCoopQrHostPanelController
 
         DecideHostTransportAlert(mounted);
         return true;
+    }
+
+    /// <summary>
+    /// The gate facts for the lobby screen this evaluation is about: remembered, or read through
+    /// <see cref="CouchCoopGameFacts"/> when something pushed since the last read.
+    /// </summary>
+    /// <remarks>
+    /// The screen handed to the reader is the one <see cref="Survey"/> already found current, so the game's current
+    /// screen is resolved once per evaluation and no second seam is consulted. When the current-screen seam could not
+    /// answer (<paramref name="currentScreenKnown"/> false: the existing safety valve) there is no push to mark, so the
+    /// facts are read on every evaluation exactly as that valve always pulled — with the typed reader in place of
+    /// the old state snapshot.
+    /// </remarks>
+    private static GateFacts? ResolveGateFacts(
+        List<Node> screens,
+        List<LobbyScreenFacts> facts,
+        bool currentScreenKnown)
+    {
+        var index = LobbyEvaluationPlanner.GateScreenIndex(facts, currentScreenKnown);
+        var gateScreen = index >= 0 ? screens[index] : null;
+        var screenId = gateScreen is not null ? gateScreen.GetInstanceId() : 0UL;
+        return GateFactsCache.Resolve(
+            screenId,
+            alwaysRead: !currentScreenKnown,
+            read: () =>
+            {
+                // A lobby screen is on screen and current: that host player is the demand (named allowance).
+                using var permit = ZeroClientGuard.Permit(ZeroClientAllowances.LobbyGateFacts);
+                return CouchCoopGameFacts.ReadGates(gateScreen);
+            });
     }
 
     /// <summary>

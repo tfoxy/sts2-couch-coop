@@ -14,3 +14,8 @@ public class InheritedReadyBase
 }
 
 public class InheritedReady : InheritedReadyBase { }
+
+public class TwoArguments
+{
+    public void Assign(int first, string second) { }
+}

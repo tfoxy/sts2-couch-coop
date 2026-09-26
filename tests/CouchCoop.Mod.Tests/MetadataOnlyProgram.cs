@@ -9,5 +9,5 @@ if (args is not ["beta-targets", var assemblyPath])
 MetadataOnlyLobbyScreenMountTests.RunFixtureCases();
 MetadataOnlyLobbyScreenMountTests.AssertMetadataOnlyDependencyPolicy();
 MetadataOnlyLobbyScreenMountTests.RunProductionTargets(assemblyPath);
-Console.WriteLine("beta-targets metadata: both lobby _Ready declarations resolve, and the pause menu's");
+Console.WriteLine("beta-targets metadata: both lobby _Ready declarations, the pause menu's, and the five lobby-assignment methods resolve");
 return 0;

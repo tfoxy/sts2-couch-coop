@@ -1,10 +1,11 @@
+using CouchCoop.Mod.Contracts;
 using CouchCoop.Mod.HostUi;
 using Spirectl.Sts2.Core.State;
 
 // When does the pause menu's "Couch Co-Op QR Code" row exist?
 //
-// The entry re-evaluates this every time the pause menu becomes visible and shows or hides the row from the
-// answer, so this predicate is also the row's teardown path — there is no second "hide it now" branch that could
+// The entry re-evaluates this every time the pause menu becomes visible (and only then) and shows or hides the row
+// from the answer, so this predicate is also the row's teardown path — there is no second "hide it now" branch that could
 // fall out of sync. The negative cases are the interesting ones, for the same reason they are in
 // CouchCoopLobbyHostGateTests: a row left on a singleplayer run is a QR that promises a join nobody can perform.
 internal static class CouchCoopPauseMenuGateTests
@@ -29,7 +30,7 @@ internal static class CouchCoopPauseMenuGateTests
     private static void HostRunWithAListenerShows()
     {
         Expect(
-            CouchCoopPauseMenuGate.ShouldShow(Listener, Run("host")),
+            CouchCoopPauseMenuGate.ShouldShow(Listener, Facts(Run("host"))),
             "a hosted run with a listener shows the row");
     }
 
@@ -38,7 +39,7 @@ internal static class CouchCoopPauseMenuGateTests
     private static void SingleplayerRunIsRefused()
     {
         Expect(
-            !CouchCoopPauseMenuGate.ShouldShow(Listener, Run("singleplayer")),
+            !CouchCoopPauseMenuGate.ShouldShow(Listener, Facts(Run("singleplayer"))),
             "a singleplayer run is refused");
     }
 
@@ -47,7 +48,7 @@ internal static class CouchCoopPauseMenuGateTests
     private static void ClientRunIsRefused()
     {
         Expect(
-            !CouchCoopPauseMenuGate.ShouldShow(Listener, Run("client")),
+            !CouchCoopPauseMenuGate.ShouldShow(Listener, Facts(Run("client"))),
             "a run we joined as a client is refused");
     }
 
@@ -56,22 +57,22 @@ internal static class CouchCoopPauseMenuGateTests
     private static void LobbyIsRefused()
     {
         Expect(
-            !CouchCoopPauseMenuGate.ShouldShow(Listener, CouchCoopLobbyHostGateTests.Lobby("host")),
+            !CouchCoopPauseMenuGate.ShouldShow(Listener, Facts(CouchCoopLobbyHostGateTests.Lobby("host"))),
             "a host LOBBY is not a host run");
     }
 
     private static void UnknownStateIsRefused()
     {
-        Expect(!CouchCoopPauseMenuGate.ShouldShow(Listener, null), "unknown state is refused");
+        Expect(!CouchCoopPauseMenuGate.ShouldShow(Listener, null), "facts that could not be read are refused");
         Expect(
-            !CouchCoopPauseMenuGate.ShouldShow(Listener, CouchCoopLobbyHostGateTests.MainMenu()),
+            !CouchCoopPauseMenuGate.ShouldShow(Listener, Facts(CouchCoopLobbyHostGateTests.MainMenu())),
             "the main menu is refused");
     }
 
     // No browser server means no URL to encode, so the dialog would have nothing to show.
     private static void MissingListenerIsRefused()
     {
-        Expect(!CouchCoopPauseMenuGate.ShouldShow(null, Run("host")), "no listener means no row");
+        Expect(!CouchCoopPauseMenuGate.ShouldShow(null, Facts(Run("host"))), "no listener means no row");
     }
 
     // The two gates are deliberately DISJOINT: the lobby one requires `Run: null` because it answers "can a NEW
@@ -92,11 +93,14 @@ internal static class CouchCoopPauseMenuGateTests
         })
         {
             Expect(
-                !(CouchCoopLobbyHostGate.ShouldShow(Listener, state)
-                    && CouchCoopPauseMenuGate.ShouldShow(Listener, state)),
+                !(CouchCoopLobbyHostGate.ShouldShow(Listener, Facts(state))
+                    && CouchCoopPauseMenuGate.ShouldShow(Listener, Facts(state))),
                 $"at most one QR entry point is gated on ({label})");
         }
     }
+
+    // The snapshot fixtures are shared with the lobby gate's suite; this is its parity-oracle projection.
+    private static GateFacts? Facts(StateSnapshot? state) => CouchCoopLobbyHostGateTests.Project(state);
 
     private static StateSnapshot Run(string netGameType)
         => CouchCoopLobbyHostGateTests.RunInProgress(netGameType);
