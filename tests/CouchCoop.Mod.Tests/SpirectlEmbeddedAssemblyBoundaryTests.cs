@@ -45,8 +45,9 @@ internal static class SpirectlEmbeddedAssemblyBoundaryTests
         "Spirectl.Sts2.Live.Sts2ScreenContext",
         // What the embedded profile keeps standing in for what it leaves out: the composition entry point, the
         // action handler with its embedded dispatcher, the state provider the facade reads, and the placeholder
-        // and port types that the extractor and reference-data slots hold. ISpirectlRuntime inherits the
-        // reference port, so its DTOs must stay even though the provider behind them does not.
+        // and port types that the reference-data slot holds. ISpirectlRuntime inherits the reference port, so its
+        // DTOs must stay even though the provider behind them does not. (The extractor slot is gone altogether:
+        // nothing in this mod names IGameStateExtractor or a GameStateSnapshot.)
         "Spirectl.Sts2.Live.Sts2RuntimeFactory",
         "Spirectl.Sts2.Live.Sts2ActionHandler",
         "Spirectl.Sts2.Live.Sts2StateProvider",
@@ -54,9 +55,6 @@ internal static class SpirectlEmbeddedAssemblyBoundaryTests
         "Spirectl.Sts2.Core.Actions.SemanticActionKind",
         "Spirectl.Sts2.Core.Reference.IReferenceDataProvider",
         "Spirectl.Sts2.Core.Reference.PlaceholderReferenceDataProvider",
-        "Spirectl.Sts2.Core.State.IGameStateExtractor",
-        "Spirectl.Sts2.Core.State.PlaceholderStateExtractor",
-        "Spirectl.Sts2.Core.State.GameStateSnapshot",
         "Spirectl.Sts2.Sts2HostLocalSeatRegistry",
     ];
 
@@ -80,6 +78,43 @@ internal static class SpirectlEmbeddedAssemblyBoundaryTests
         "Spirectl.Sts2.Sts2UnsupportedScreenNotice",
         "Spirectl.Sts2.Core.Models.RandomCharacterFacts",
         "Spirectl.Sts2.Core.State.StateResourceReferenceCollector",
+        // The state-extractor port, its placeholder and scaffold, and the snapshot types only that port carried
+        // (the rest of GameStateSnapshot.cs is what the live StateSnapshot uses, and stays).
+        "Spirectl.Sts2.Core.State.IGameStateExtractor",
+        "Spirectl.Sts2.Core.State.PlaceholderStateExtractor",
+        "Spirectl.Sts2.Core.State.PresentationScaffoldState",
+        "Spirectl.Sts2.Core.State.PresentationScaffoldSnapshot",
+        "Spirectl.Sts2.Core.State.MultiplayerPresentationScaffoldSnapshot",
+        "Spirectl.Sts2.Core.State.AvailableActionSnapshot",
+        "Spirectl.Sts2.Core.State.BundleSelectionStateSnapshot",
+        "Spirectl.Sts2.Core.State.CardOverlayStateSnapshot",
+        "Spirectl.Sts2.Core.State.CardSelectionStateSnapshot",
+        "Spirectl.Sts2.Core.State.CombatPlayerStateSnapshot",
+        "Spirectl.Sts2.Core.State.CombatStateSnapshot",
+        "Spirectl.Sts2.Core.State.DebugStateSnapshot",
+        "Spirectl.Sts2.Core.State.DeckCardSelectionStateSnapshot",
+        "Spirectl.Sts2.Core.State.EncounterVisualPartStateSnapshot",
+        "Spirectl.Sts2.Core.State.EncounterVisualsStateSnapshot",
+        "Spirectl.Sts2.Core.State.EncounterVisualTransitionEventSnapshot",
+        "Spirectl.Sts2.Core.State.EnemyIntentSnapshot",
+        "Spirectl.Sts2.Core.State.EnemyStateSnapshot",
+        "Spirectl.Sts2.Core.State.EnemyVisualMetadataSnapshot",
+        "Spirectl.Sts2.Core.State.EventRoomStateSnapshot",
+        "Spirectl.Sts2.Core.State.GameStateQuery",
+        "Spirectl.Sts2.Core.State.GameStateSnapshot",
+        "Spirectl.Sts2.Core.State.MapStateSnapshot",
+        "Spirectl.Sts2.Core.State.MenuStateSnapshot",
+        "Spirectl.Sts2.Core.State.MultiplayerLobbyStateSnapshot",
+        "Spirectl.Sts2.Core.State.OverlayAffordanceSnapshot",
+        "Spirectl.Sts2.Core.State.OverlayBreadcrumbSnapshot",
+        "Spirectl.Sts2.Core.State.RelicSelectionStateSnapshot",
+        "Spirectl.Sts2.Core.State.RestSiteStateSnapshot",
+        "Spirectl.Sts2.Core.State.RewardsStateSnapshot",
+        "Spirectl.Sts2.Core.State.ShopStateSnapshot",
+        "Spirectl.Sts2.Core.State.SimpleCardSelectionStateSnapshot",
+        "Spirectl.Sts2.Core.State.TreasureRoomStateSnapshot",
+        "Spirectl.Sts2.Core.State.VisibleControlStateSnapshot",
+        "Spirectl.Sts2.Core.State.VisibleItemStateSnapshot",
         // The full composition (the embedded factory builds its own) and the reference-data implementation.
         "Spirectl.Sts2.Live.Sts2ReusableLiveComposition",
         "Spirectl.Sts2.Live.Sts2ReusableLiveCompositionFactory",
@@ -102,6 +137,12 @@ internal static class SpirectlEmbeddedAssemblyBoundaryTests
         "Spirectl.Sts2.Live.Sts2ActionHandler+ResolvedCombatCard",
         "Spirectl.Sts2.Live.Sts2ActionHandler+LobbySeatOwnership",
     ];
+
+    /// <summary>
+    /// The state-side action catalog keeps two members (the main-menu choice id and the map-node gate); its
+    /// AvailableAction builders belong to the full profile, because only the legacy lane called them.
+    /// </summary>
+    private static readonly string[] OmittedActionCatalogMethods = ["MainMenuActions", "CombatActions", "LobbyActions", "RewardActions"];
 
     /// <summary>
     /// The semantic action kinds this mod sends, by the private method that carries each out. Read from the
@@ -222,6 +263,23 @@ internal static class SpirectlEmbeddedAssemblyBoundaryTests
             Expect(handler.GetMethod(method, declared) is null, $"the embedded action handler does not compile a body Couch never asks for: {method}");
         }
 
+        var stateCatalog = shared.GetType("Spirectl.Sts2.Sts2ActionCatalog")
+            ?? throw new InvalidOperationException("SpirectlEmbeddedAssemblyBoundaryTests: Sts2ActionCatalog is missing");
+        Expect(stateCatalog.GetMethod("CanSelectMapNode", BindingFlags.Public | BindingFlags.Static) is not null,
+            "the state-side action catalog keeps the map-node gate a live arm reads");
+        foreach (var method in OmittedActionCatalogMethods)
+        {
+            Expect(stateCatalog.GetMethod(method, BindingFlags.Public | BindingFlags.Static) is null,
+                $"the state-side action catalog does not compile a builder only the legacy lane called: {method}");
+        }
+
+        var services = shared.GetType("Spirectl.Sts2.Embedding.SpirectlRuntimeServices")
+            ?? throw new InvalidOperationException("SpirectlEmbeddedAssemblyBoundaryTests: SpirectlRuntimeServices is missing");
+        Expect(services.GetProperty("StateExtractor", BindingFlags.Instance | BindingFlags.Public | BindingFlags.NonPublic) is null,
+            "the embedded runtime services have no state-extractor slot");
+
+        PinAdvertisedActionsToTheDispatcher(shared, handler);
+
         foreach (var typeName in RemovedTypeNames)
         {
             Expect(!allTypeNames.Contains(typeName), $"bridge-only type no longer leaks into the embedded runtime: {typeName}");
@@ -254,6 +312,36 @@ internal static class SpirectlEmbeddedAssemblyBoundaryTests
         PinLiveHostReasonWording();
 
         Console.WriteLine("SpirectlEmbeddedAssemblyBoundaryTests: ok");
+    }
+
+    /// <summary>
+    /// The capabilities' <c>SupportedActions</c> is the dispatcher's own route table: the runtime advertises exactly
+    /// the kinds it carries out, and those are the kinds this mod sends (<see cref="EmbeddedActionMethods"/>).
+    /// </summary>
+    /// <remarks>
+    /// The catalog reaches the browser as <c>capabilities.supportedActions</c> in every <c>session</c> envelope;
+    /// nothing in this repo reads it. What this pins is that an advertised kind is never one the dispatcher
+    /// answers InvalidAction for, and the reverse.
+    /// </remarks>
+    private static void PinAdvertisedActionsToTheDispatcher(Assembly shared, Type handler)
+    {
+        const BindingFlags any = BindingFlags.Static | BindingFlags.Public | BindingFlags.NonPublic;
+        var catalog = shared.GetType("Spirectl.Sts2.Sts2ActionDescriptorCatalog")
+            ?? throw new InvalidOperationException("SpirectlEmbeddedAssemblyBoundaryTests: the embedded action-descriptor catalog is missing");
+        var advertised = (IReadOnlyList<Spirectl.Sts2.Core.Actions.ActionDescriptorSnapshot>)(catalog
+            .GetMethod("Build", any)?.Invoke(null, [true, false])
+            ?? throw new InvalidOperationException("SpirectlEmbeddedAssemblyBoundaryTests: the action-descriptor catalog has no Build"));
+        var routed = (IReadOnlyList<Spirectl.Sts2.Core.Actions.ActionDescriptorSnapshot>)(handler
+            .GetProperty("RoutedActionDescriptors", any)?.GetValue(null)
+            ?? throw new InvalidOperationException("SpirectlEmbeddedAssemblyBoundaryTests: the dispatcher has no route table"));
+
+        var kinds = advertised.Select(descriptor => descriptor.Kind.ToString()).Order(StringComparer.Ordinal).ToArray();
+        var sent = EmbeddedActionMethods.Select(method => method["Execute".Length..]).Order(StringComparer.Ordinal).ToArray();
+        Expect(kinds.SequenceEqual(sent),
+            $"the embedded runtime advertises exactly the action kinds its dispatcher routes (advertised: {string.Join(", ", kinds)}; routed: {string.Join(", ", sent)})");
+        Expect(advertised.SequenceEqual(routed), "the advertised descriptors are the dispatcher's own route table");
+        Expect(advertised.All(descriptor => !string.IsNullOrWhiteSpace(descriptor.Id) && !string.IsNullOrWhiteSpace(descriptor.Summary)),
+            "every advertised action kind carries an id and a summary");
     }
 
     /// <summary>

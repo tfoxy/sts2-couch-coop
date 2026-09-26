@@ -144,23 +144,33 @@ This map records current contracts, not retired implementation alternatives.
   profile, selected by `Sts2Profile=Embedded` in the project reference in `src/CouchCoop.Mod/CouchCoop.Mod.csproj`.
   The bridge, the CLI and the NuGet pack keep the **Full** default, which lives inside spirectl's project, so a
   reference that forgets the property silently builds Full — `scripts/validate-csharp-scaffold.sh` text-checks it.
-- **What the profile leaves out**: the legacy state-extractor lane and the observation provider, resolvers and
-  inspectors only it called, the reference-data provider implementation (its DTOs and port stay: `ISpirectlRuntime`
-  inherits them), the host-local seat watchers, the VFX-spawn hook, and every action body no embedded dispatch arm
-  reaches. Its game-API manifest lists only what a compiled lane reads (v111: 13 of 20). The omitted files are one
-  list, the "Embedded profile" item group in `../spirectl/bridge-mod/src/Spirectl.Sts2/Spirectl.Sts2.csproj`.
+- **What the profile leaves out**: the legacy state-extractor lane (the `IGameStateExtractor` port and its slot in
+  the runtime services, the placeholder, the observation provider, resolvers and inspectors only it called, and
+  the 30 snapshot types in `GameStateSnapshot.cs` only that port carried), the state-side `Sts2ActionCatalog`
+  builders (two members stay), the full action-descriptor catalog, the reference-data provider implementation (its
+  DTOs and port stay: `ISpirectlRuntime` inherits them), the host-local seat watchers, the VFX-spawn hook, and every
+  action body no embedded dispatch route reaches. Types moved out are split verbatim into `*.Full.cs` partials the
+  full profile still compiles. Its game-API manifest lists only what a compiled lane reads (v111: 13 of 20). The
+  omitted files are one list, the "Embedded profile" item group in
+  `../spirectl/bridge-mod/src/Spirectl.Sts2/Spirectl.Sts2.csproj`.
 - **The embedded dispatcher routes only the kinds CouchCoop sends**: hover, mouse click, key and controller input,
   `select-map-node`, `set-scroll-offset`, `claim-reward` (still on `BrowserActionExecutor`'s allow-list),
   `DisconnectClient` and `SetClientName`. Any other kind answers `InvalidAction`, and `SemanticActionKind` itself
-  stays complete. **Sending a new kind from CouchCoop therefore needs its arm added in spirectl**
-  (`Profiles/Embedded/Sts2ActionHandler.Dispatch.cs`) — plus the maintainer's go-ahead for a semantic action, per
-  the rule below.
+  stays complete. **Sending a new kind from CouchCoop therefore needs its route added in spirectl**
+  (`Profiles/Embedded/Sts2ActionHandler.Dispatch.cs`, a table of kind, descriptor and body) — plus the
+  maintainer's go-ahead for a semantic action, per the rule below.
+- **`capabilities.supportedActions` in the `session` envelope is that same table.** The embedded runtime lists the
+  nine routed kinds (it used to list the full catalog's 53). No product code reads the field (the frontend types
+  `capabilities` as `unknown`, and the only mentions in `src/`, `tests/` and `frontend/src` are the boundary test
+  that pins the list), so the change is invisible to the product; a future reader can trust the list to mean "the
+  kinds the dispatcher carries out".
 - **Gates.** `scripts/validate-spirectl-embedded-boundary.sh` proves the embedded profile equals the upstream
   build of the same profile: the reference's own `AdditionalProperties` minus `AssemblyName` drive an evaluated
   `-getItem:Compile` comparison (no size tolerance decides equality), then both artifacts must carry the
   `SpirectlSts2Profile=Embedded` stamp. `SpirectlEmbeddedAssemblyBoundaryTests` (`-- embedded-boundary`) pins the
   built assembly: the stamp, the retained types, the excluded lanes, the action bodies that must and must not be
-  there. `Spirectl.Sts2.Live.Sts2ScreenContext` is among the retained types.
+  there, and that the advertised action kinds equal the routed ones. `Spirectl.Sts2.Live.Sts2ScreenContext` is among
+  the retained types.
 - **A change that names a type the profile left out fails the couch build** (`CS0246`), not at run time — and the
   file's OTHER types count: check every type a file declares against `src/` and `tests/`, not just its first.
 
