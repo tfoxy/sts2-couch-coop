@@ -397,51 +397,13 @@ public sealed class CouchCoopWebSocketConnection
             SyncStreamingRegistration();
             _onConnectionClosed();
 
-            // Headless lifecycle on browser disconnect, gated on whether a RUN is in progress:
-            //  - DURING A RUN: KEEP the headless alive (mark it detached). It stays ENet-joined to the host's run
-            //    as its netId, so when the browser reconnects it re-claims the SAME live headless and instantly
-            //    sees the live run — no respawn, no ENet rejoin. The detached headless is reaped when the host
-            //    quits the run (host state observer → ReapDetachedSlots) or the game (HeadlessClientManager.Dispose).
-            //  - IN THE LOBBY (or main menu): kill it now and evict its ENet peer, freeing the netId and removing
-            //    the phantom lobby player (the original behavior).
+            // Headless lifecycle on browser disconnect, gated on whether a RUN is in progress (BrowserDisconnectSeat):
+            // mid-run the seat is kept and marked detached, in the lobby it is released and its peer evicted. The
+            // run-presence read is one typed member read, not a state snapshot.
             if (_headlessManager is not null)
             {
-                if (_lobby.IsRunInProgress())
-                {
-                    _headlessManager.MarkDetached(session.Id);
-                }
-                else
-                {
-                    var freedNetId = _headlessManager.Release(session.Id);
-                    if (freedNetId is ulong evictNetId)
-                    {
-                        // The SIGKILL'd headless leaves its peer registered in the host's ENet server holding this
-                        // netId until ENet's ~20-40s timeout; evicting frees it immediately so a same-name rejoin
-                        // isn't rejected at the handshake (IdCollision → timeout).
-                        _lobby.DisconnectClient(evictNetId);
-                        // Drop the display-name override ONLY when this seat is genuinely gone — i.e. no name still
-                        // CLAIMS the slot behind this netId.
-                        //
-                        // The rule, and why it isn't just "always clear on disconnect": clearing hands the nameplate
-                        // back to the game's fallback source, PlatformUtil.GetPlayerNameRaw → the durable
-                        // mp_names.json roster as this host process parsed it at ITS start, which may still name an
-                        // EARLIER holder of this netId. So a premature clear doesn't blank the name, it resurrects
-                        // an older one. (The roster itself is intentionally persistent — it is the only netId→name
-                        // memory a saved run can be relabelled from — so the fix is to keep the override, never to
-                        // erase the file.) Release() above deliberately keeps the departing player's name→slot claim
-                        // (their netId stays reserved for a reconnect), and the mid-run branch (MarkDetached) keeps
-                        // the claim AND the process, so in both cases the seat is "vacant, still theirs" and the
-                        // override must stay. A netId that is genuinely taken over by a DIFFERENT player needs no
-                        // clear either: EnsureHeadlessAsync reports the new binding (onSlotBound) and we
-                        // SetClientName it before that headless starts.
-                        // What remains — a claim that was actually dropped (run-end reap, slot steal) — is the only
-                        // case that clears, and CouchCoopBrowserServer's run-end reap already covers the reap half.
-                        if (!_headlessManager.HasClaimForNetId(evictNetId))
-                        {
-                            _lobby.ClearClientName(evictNetId);
-                        }
-                    }
-                }
+                BrowserDisconnectSeat.Apply(
+                    _headlessManager, session.Id, _lobby.IsRunInProgress, _lobby.DisconnectClient, _lobby.ClearClientName);
             }
 
             // The browser identity's connection is released last, by `using var session` above

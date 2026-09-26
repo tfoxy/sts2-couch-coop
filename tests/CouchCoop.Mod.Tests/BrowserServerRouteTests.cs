@@ -145,6 +145,9 @@ if (args is ["host-guards", ..])
 if (args is ["seats", ..])
 {
     await HeadlessClientManagerTests.RunAsync();
+    // Run presence for a browser disconnect and a seat launch: the typed read, its failure semantics, and that a
+    // disconnect and a launch refusal cost no state snapshot. Beside the seat manager because it drives one.
+    await RunPresenceTests.RunAsync();
     ConnectionHostingDemandTests.Run();
     ConnectionHostingTrackerStateTests.Run();
     // The seat ROSTER's transition bookkeeping — which seat the picker offers, and the statuses it remembers
@@ -803,6 +806,8 @@ CouchCoopLobbyHostGateTests.Run();
 CouchCoopPauseMenuGateTests.Run();
 // …and what they decide on: the typed gate facts, when they are read, and the assignment hooks' contract.
 CouchCoopGameFactsTests.Run();
+// Run presence for a browser disconnect and a seat launch (the same typed facts, a different caller).
+await RunPresenceTests.RunAsync();
 // F1 host connectivity log: the ring, the player-facing copy (asserted literally — it is a QA contract
 // shared with the live probe) and the bbcode escaping that keeps a browser-typed display name from
 // re-styling the host's television. Runs FIRST of the log-touching suites and resets the process-global
@@ -4717,7 +4722,8 @@ internal sealed class BrowserServerRouteTests
         }
     }
 
-    private enum RuntimeStateMode
+    // internal: RunPresenceTests drives the recorder directly to count state reads.
+    internal enum RuntimeStateMode
     {
         MultiplayerRun,
         Lobby,
@@ -4726,7 +4732,7 @@ internal sealed class BrowserServerRouteTests
         SingleplayerSafe
     }
 
-    private sealed class RecordingSpirectlRuntime : IRuntimeCapabilitySource, IRuntimeAssetSource, IRuntimeStateSource, IAnimationHintSource, IRuntimeSceneDeltaSource, IGameModelSource, ISpineCatalogSource, ISpineGeoClipBaker, ISemanticActionSource, IRuntimeSceneWatchControlSource
+    internal sealed class RecordingSpirectlRuntime : IRuntimeCapabilitySource, IRuntimeAssetSource, IRuntimeStateSource, IAnimationHintSource, IRuntimeSceneDeltaSource, IGameModelSource, ISpineCatalogSource, ISpineGeoClipBaker, ISemanticActionSource, IRuntimeSceneWatchControlSource
     {
         public IRuntimeSceneWatchControls SceneWatchControls => Spirectl.Sts2.Live.Sts2RuntimeSceneWatchControls.Instance;
         private readonly RecordingAssetProvider _assets;
@@ -4809,8 +4815,18 @@ internal sealed class BrowserServerRouteTests
         public SpineGeoClipBakeResultSnapshot BakeSpineGeoClip(SpineGeoClipBakeRequestSnapshot request)
             => throw new NotSupportedException();
 
+        private int _stateReads;
+
+        /// <summary>
+        /// How many full state snapshots have been pulled from this runtime. Counted apart from <see cref="Calls"/>
+        /// (a plain list) so a test can read it while server threads are running; the WP3 read paths assert it does
+        /// not move for a disconnect or a launch refusal.
+        /// </summary>
+        public int StateReads => Volatile.Read(ref _stateReads);
+
         public CurrentStateResult GetCurrentState(CurrentStateRequest request)
         {
+            Interlocked.Increment(ref _stateReads);
             Calls.Add("GetCurrentState");
             return new CurrentStateResult(
                 true,

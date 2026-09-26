@@ -44,6 +44,30 @@ public static class CouchCoopGameFacts
             return null;
         }
     }
+
+    // ---- WP3 path 7: run presence for a browser disconnect and a seat launch -----------------------------------
+
+    /// <summary>
+    /// Whether the host's game is in a run, or <see langword="null"/> when that could not be read (see
+    /// <see cref="IGameFacts.ReadRunInProgress"/>). Safe from any thread and under a mod lock: the read is one
+    /// member of the run manager and neither marshals to the main thread nor touches an engine object. It is an
+    /// on-demand read for a user action (a browser disconnect, a seat launch), never something to poll.
+    /// </summary>
+    public static bool? ReadRunInProgress(
+        [CallerMemberName] string? caller = null,
+        [CallerFilePath] string? file = null)
+    {
+        ZeroClientGuard.Enter(ZeroClientEntries.HostFactsRead, caller, file);
+        try
+        {
+            return Source.ReadRunInProgress();
+        }
+        catch (Exception exception)
+        {
+            CouchCoopLog.Stderr($"run presence read failed detail={exception.GetType().Name}: {exception.Message}");
+            return null;
+        }
+    }
 }
 
 /// <summary>
@@ -69,16 +93,34 @@ internal sealed class GameFactsReader : IGameFacts
     [MethodImpl(MethodImplOptions.NoInlining)]
     private static GateFacts? ReadGatesFromGame(object? currentScreen)
     {
-        var manager = RunManager.Instance;
-        if (manager is null)
+        if (RunInProgressFromGame() is not { } running)
         {
             return null;
         }
 
-        var running = manager.IsInProgress;
-        var runNetType = running ? NetTypeName(manager.NetService?.Type) : null;
+        var runNetType = running ? NetTypeName(RunManager.Instance?.NetService?.Type) : null;
         return new GateFacts(running, LobbyNetType(currentScreen), runNetType);
     }
+
+    // ---- WP3 path 7: run presence for a browser disconnect and a seat launch -----------------------------------
+
+    public bool? ReadRunInProgress()
+        => CouchCoopMod.EngineAvailable ? RunInProgressFromGame() : null;
+
+    /// <summary>
+    /// THE one read of run presence, shared by the QR gates, the hosting tracker (through the front) and the
+    /// disconnect and seat-launch callers. It is the run manager's own presence flag, so it is true through the
+    /// end-of-run summary and false on every lobby screen. Both API lanes declare the member identically.
+    /// </summary>
+    /// <remarks>
+    /// Thread-safe by construction, which is why callers on WebSocket and listener threads may use it directly:
+    /// the manager is a process-wide singleton and the flag is a plain read of one reference, with no engine call
+    /// behind it. A read that races a run starting or ending returns one side of that change, exactly as the
+    /// marshalled full-state read it replaces did.
+    /// </remarks>
+    [MethodImpl(MethodImplOptions.NoInlining)]
+    private static bool? RunInProgressFromGame()
+        => RunManager.Instance is { } manager ? manager.IsInProgress : null;
 
     /// <summary>
     /// The net game type of the lobby on <paramref name="screen"/>, or null when it is not a lobby screen or its

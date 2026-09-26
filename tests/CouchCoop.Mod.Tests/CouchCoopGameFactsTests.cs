@@ -31,7 +31,9 @@ internal static class CouchCoopGameFactsTests
 
     // ---- the front ---------------------------------------------------------------------------------------
 
-    private sealed class FakeFacts(Func<object?, GateFacts?> read) : IGameFacts
+    // internal: the ONE IGameFacts fake in the suite. A new read path adds its member here (a second implementer
+    // elsewhere would stop compiling the moment another path adds a member to the interface).
+    internal sealed class FakeFacts(Func<object?, GateFacts?>? read = null) : IGameFacts
     {
         public int Calls { get; private set; }
         public object? LastScreen { get; private set; }
@@ -40,13 +42,34 @@ internal static class CouchCoopGameFactsTests
         {
             Calls++;
             LastScreen = currentScreen;
-            return read(currentScreen);
+            return read?.Invoke(currentScreen);
+        }
+
+        // ---- WP3 path 7: run presence for a browser disconnect and a seat launch ---------------------------------
+
+        private int _runReads;
+        private int _runReadThread;
+
+        /// <summary>What the run-presence read answers; unset reads as unavailable. Mutable so a test can play a sequence.</summary>
+        public Func<bool?>? RunRead { get; set; }
+
+        /// <summary>How many run-presence reads reached the reader (atomic: callers run on socket threads).</summary>
+        public int RunReads => Volatile.Read(ref _runReads);
+
+        /// <summary>The managed thread the last run-presence read ran on.</summary>
+        public int RunReadThread => Volatile.Read(ref _runReadThread);
+
+        public bool? ReadRunInProgress()
+        {
+            Interlocked.Increment(ref _runReads);
+            Volatile.Write(ref _runReadThread, Environment.CurrentManagedThreadId);
+            return RunRead?.Invoke();
         }
     }
 
     // Runs `body` with the front pointed at `source`, the zero-client tripwire quiet (its own suite owns those
     // counters) and everything put back afterwards.
-    private static void WithSource(IGameFacts source, Action body)
+    internal static void WithSource(IGameFacts source, Action body)
     {
         var previous = CouchCoopGameFacts.Source;
         ZeroClientGuard.ResetForTests(armed: false);
@@ -54,6 +77,23 @@ internal static class CouchCoopGameFactsTests
         try
         {
             body();
+        }
+        finally
+        {
+            CouchCoopGameFacts.Source = previous;
+            ZeroClientGuard.ResetForTests();
+        }
+    }
+
+    // The same, for a body that awaits.
+    internal static async Task WithSourceAsync(IGameFacts source, Func<Task> body)
+    {
+        var previous = CouchCoopGameFacts.Source;
+        ZeroClientGuard.ResetForTests(armed: false);
+        CouchCoopGameFacts.Source = source;
+        try
+        {
+            await body().ConfigureAwait(false);
         }
         finally
         {
@@ -97,6 +137,7 @@ internal static class CouchCoopGameFactsTests
         Expect(!CouchCoop.Mod.CouchCoopMod.EngineAvailable, "this process has no engine");
         Expect(GameFactsReader.Instance.ReadGates(null) is null, "no engine: no run facts");
         Expect(GameFactsReader.Instance.ReadGates(new object()) is null, "no engine: no lobby facts either");
+        Expect(GameFactsReader.Instance.ReadRunInProgress() is null, "no engine: run presence is unavailable, not \"no run\"");
     }
 
     private static void NetTypeNamesCoverEveryGameValue()

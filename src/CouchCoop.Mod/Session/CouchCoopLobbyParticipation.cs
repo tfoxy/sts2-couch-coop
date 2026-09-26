@@ -170,12 +170,19 @@ public sealed class CouchCoopLobbyParticipation(CouchCoopRuntimeHost runtimeHost
     }
 
     /// <summary>
-    /// True when a RUN is in progress (combat / map / event / reward — anything past character select). Used to
-    /// gate the headless lifecycle on browser disconnect: mid-run we KEEP the player's headless alive (so the
-    /// browser reconnects instantly to the live run) instead of killing it; in the lobby we kill it as before.
-    /// Null/unknown state (no capability, main menu) reads as "not in a run".
+    /// True when a RUN is in progress (combat / map / event / reward — anything past character select, through the
+    /// end-of-run summary). Used to gate the headless lifecycle on browser disconnect: mid-run we KEEP the
+    /// player's headless alive (so the browser reconnects instantly to the live run) instead of killing it; in the
+    /// lobby we kill it as before. It also refuses a seat LAUNCH once the host is in a run.
+    /// <para>
+    /// One typed member read through <see cref="CouchCoopGameFacts"/>, with no state snapshot and no marshal to
+    /// the main thread, so it is safe from a WebSocket or listener thread and cheap enough to ask on every
+    /// disconnect and every launch. An unreadable answer (no engine behind the process, or the read threw) reads
+    /// as "not in a run", the same answer an unreadable state has always given here: a launch the game would
+    /// refuse is refused by the game itself, and a disconnect that cannot tell releases the seat.
+    /// </para>
     /// </summary>
-    public bool IsRunInProgress() => CurrentState()?.Run is not null;
+    public bool IsRunInProgress() => CouchCoopGameFacts.ReadRunInProgress() == true;
 
     /// <summary>
     /// Whether the game currently lists <paramref name="netId"/> as a CONNECTED player of the lobby or the run.

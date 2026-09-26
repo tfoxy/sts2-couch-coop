@@ -1,3 +1,4 @@
+using CouchCoop.Mod.Runtime;
 using CouchCoop.Mod.Session;
 
 namespace CouchCoop.Mod.Connections;
@@ -20,11 +21,14 @@ internal sealed class HostingSessionFacts : IHostingSessionFacts
 {
     public bool IsHostActive() => CouchCoopHostPeers.IsHostActive;
 
-    // MegaCrit.Sts2.Core.Runs.RunManager.Instance.IsInProgress reads identically on both API lanes (spirectl's
-    // bridge-mod already reads this member the same way with no lane split — see
-    // Sts2DevelopmentActionHandler.cs). Re-verify against the installed v111 build before merging; if it
-    // disagrees, split with #if STS2_API_V107 / STS2_API_V111 the way HostNetIdPatch.cs does.
-    public bool IsRunInProgress() => MegaCrit.Sts2.Core.Runs.RunManager.Instance?.IsInProgress == true;
+    // Run presence is CouchCoop's one typed read, shared with the QR gates and the browser-disconnect and seat-launch
+    // decisions (CouchCoopGameFacts.ReadRunInProgress); the member behind it is declared identically on both API
+    // lanes. An unreadable answer throws instead of reading "no run": the tracker treats "left every run and lobby"
+    // as evidence hosting ended, so a failed read must skip the evaluation (its catch logs it), never count toward
+    // that.
+    public bool IsRunInProgress()
+        => CouchCoopGameFacts.ReadRunInProgress()
+           ?? throw new InvalidOperationException("The run manager's presence could not be read.");
 
     public bool IsOnLobbyScreen()
     {

@@ -39,9 +39,9 @@ public readonly record struct GateFacts(bool RunInProgress, string? CurrentLobby
 /// spirectl's full state. One interface, one method per read path, added as each path stops using the snapshot.
 /// </summary>
 /// <remarks>
-/// Every method may reach into the game, so a caller must be at a frame boundary and never inside a game
-/// callback. A method returns <see langword="null"/> when the read could not be made (no engine behind the
-/// process, or the game threw): that is "unavailable", which is not the same answer as "no lobby".
+/// Unless a method says otherwise, it may reach into the game, so a caller must be at a frame boundary and never
+/// inside a game callback. A method returns <see langword="null"/> when the read could not be made (no engine behind
+/// the process, or the game threw): that is "unavailable", which is not the same answer as "no lobby".
 /// </remarks>
 public interface IGameFacts
 {
@@ -51,4 +51,20 @@ public interface IGameFacts
     /// menu, which is only interested in the run).
     /// </summary>
     GateFacts? ReadGates(object? currentScreen);
+
+    // ---- WP3 path 7: run presence for a browser disconnect and a seat launch -----------------------------------
+
+    /// <summary>
+    /// Whether the host's game is in a run right now: <see langword="true"/> from the moment a run exists (past
+    /// character select) through the end-of-run death or Architect summary, <see langword="false"/> at the main
+    /// menu and on a lobby screen (the load-saved-run lobby included), and <see langword="null"/> when it could not
+    /// be read. Unlike the other reads, this one is a plain member read that touches no engine object, so it may
+    /// be called from any thread, with or without a mod lock held; it never marshals to the main thread.
+    /// </summary>
+    /// <remarks>
+    /// Callers decide what unavailable means for them. The disconnect and seat-launch callers treat it as "no run",
+    /// which is what an unreadable state has always meant to them: the game refuses a launch it cannot take
+    /// anyway, and a disconnect that cannot tell falls back to releasing the seat.
+    /// </remarks>
+    bool? ReadRunInProgress();
 }

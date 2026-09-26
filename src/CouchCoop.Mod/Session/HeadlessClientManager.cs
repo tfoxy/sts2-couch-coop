@@ -370,9 +370,10 @@ public sealed partial class HeadlessClientManager : IDisposable
     /// the rejoin flow that works.
     /// </para>
     /// <para>
-    /// NEVER evaluate this while holding <c>_lock</c>, for exactly the reason <see cref="MaxSlot"/> spells out:
-    /// the probe is a state pull that blocks on a marshal to the game's main thread, and the main thread takes
-    /// <c>_lock</c>. Public entry points snapshot it before locking and hand the value down.
+    /// Do not evaluate this while holding <c>_lock</c>; public entry points snapshot it before locking and hand the
+    /// value down. The production probe is one typed member read (no state snapshot, no marshal), so today it could
+    /// not deadlock; the discipline stays because the probe is an injected delegate, and one that waited on the
+    /// game's main thread — which takes <c>_lock</c> — would bring back the deadlock <see cref="MaxSlot"/> spells out.
     /// </para>
     /// <para>
     /// A missing probe, or one that throws, reads as NO RUN. The gate exists to refuse a launch the host would
@@ -576,7 +577,7 @@ public sealed partial class HeadlessClientManager : IDisposable
     /// </param>
     /// <param name="runInProgress">
     /// The caller's PRE-LOCK snapshot of <see cref="RunInProgress"/> — taken by the caller for the same reason
-    /// <paramref name="maxSlot"/> is (the probe marshals to the game's main thread, which takes <c>_lock</c>).
+    /// <paramref name="maxSlot"/> is (see <see cref="RunInProgress"/>).
     /// True refuses every LAUNCH here; it never touches the reuse of a process that is already running.
     /// </param>
     /// <param name="occupiedSeatPorts">
