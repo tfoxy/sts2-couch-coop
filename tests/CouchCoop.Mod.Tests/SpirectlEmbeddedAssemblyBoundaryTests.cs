@@ -10,6 +10,9 @@ using Spirectl.Sts2.Embedding;
 /// </summary>
 internal static class SpirectlEmbeddedAssemblyBoundaryTests
 {
+    /// <summary>Runs this suite alone: <c>dotnet run --project tests/CouchCoop.Mod.Tests -- embedded-boundary</c>.</summary>
+    public const string Verb = "embedded-boundary";
+
     private static readonly string[] RetainedTypes =
     [
         "Spirectl.Sts2.Sts2EmbeddableRuntimeFactory",
@@ -40,6 +43,83 @@ internal static class SpirectlEmbeddedAssemblyBoundaryTests
         // instead of polling, and gates the lobby state pull on IsCurrent — so losing it from the embedded
         // runtime would silently return the mod to a 0.25s tick that never parks.
         "Spirectl.Sts2.Live.Sts2ScreenContext",
+        // What the embedded profile keeps standing in for what it leaves out: the composition entry point, the
+        // action handler with its embedded dispatcher, the state provider the facade reads, and the placeholder
+        // and port types that the extractor and reference-data slots hold. ISpirectlRuntime inherits the
+        // reference port, so its DTOs must stay even though the provider behind them does not.
+        "Spirectl.Sts2.Live.Sts2RuntimeFactory",
+        "Spirectl.Sts2.Live.Sts2ActionHandler",
+        "Spirectl.Sts2.Live.Sts2StateProvider",
+        "Spirectl.Sts2.Live.GameApi.Sts2GameApiProbe",
+        "Spirectl.Sts2.Core.Actions.SemanticActionKind",
+        "Spirectl.Sts2.Core.Reference.IReferenceDataProvider",
+        "Spirectl.Sts2.Core.Reference.PlaceholderReferenceDataProvider",
+        "Spirectl.Sts2.Core.State.IGameStateExtractor",
+        "Spirectl.Sts2.Core.State.PlaceholderStateExtractor",
+        "Spirectl.Sts2.Core.State.GameStateSnapshot",
+        "Spirectl.Sts2.Sts2HostLocalSeatRegistry",
+    ];
+
+    /// <summary>
+    /// Types spirectl's embedded compile profile (<c>Sts2Profile=Embedded</c>) does not compile, because nothing
+    /// this mod can reach calls them. The full profile, which the bridge and the CLI build, still has them, so a
+    /// name here reappearing means the project reference lost the profile or the profile lost a file.
+    /// </summary>
+    private static readonly string[] EmbeddedProfileExcludedTypes =
+    [
+        // The legacy state-extractor lane and everything only it called.
+        "Spirectl.Sts2.Core.State.ObservedGameStateExtractor",
+        "Spirectl.Sts2.Core.State.RuntimeStateMapper",
+        "Spirectl.Sts2.Core.State.ScaffoldRuntimeObservationProvider",
+        "Spirectl.Sts2.Core.State.IRuntimeObservationProvider",
+        "Spirectl.Sts2.Core.State.BridgeRuntimeObservation",
+        "Spirectl.Sts2.Live.Sts2RuntimeObservationProvider",
+        "Spirectl.Sts2.Live.Sts2LobbyPresentationGeometryResolver",
+        "Spirectl.Sts2.Live.Sts2PresentationStateResolver",
+        "Spirectl.Sts2.Live.Sts2CardOverlayInspector",
+        "Spirectl.Sts2.Sts2UnsupportedScreenNotice",
+        "Spirectl.Sts2.Core.Models.RandomCharacterFacts",
+        "Spirectl.Sts2.Core.State.StateResourceReferenceCollector",
+        // The full composition (the embedded factory builds its own) and the reference-data implementation.
+        "Spirectl.Sts2.Live.Sts2ReusableLiveComposition",
+        "Spirectl.Sts2.Live.Sts2ReusableLiveCompositionFactory",
+        "Spirectl.Sts2.Live.Sts2ReferenceDataProvider",
+        // Synthetic host-local seats and the VFX-spawn hook.
+        "Spirectl.Sts2.Live.Sts2HostLocalSeatSyncWatcher",
+        "Spirectl.Sts2.Live.Sts2HostLocalSeatTurnWatcher",
+        "Spirectl.Sts2.Live.Sts2VfxSpawnEventHooks",
+        // Left with no caller once the action bodies are gone.
+        "Spirectl.Sts2.Live.Sts2MainMenuStartRunHooks",
+        "Spirectl.Sts2.Live.Sts2CrystalSphereScreenInspector",
+        "Spirectl.Sts2.Sts2LobbyCharacterButtonInvoker",
+        "Spirectl.Sts2.Sts2PartialChoiceNotice",
+        "Spirectl.Sts2.Core.Map.Sts2MapDrawingTransform",
+        "Spirectl.Sts2.Live.EncounterVisuals.Sts2EncounterVisualEventStore",
+        "Spirectl.Sts2.Live.EncounterVisuals.Sts2KaiserCrabVisualHooks",
+        // Nested types that moved out with the action bodies no embedded dispatch arm reaches.
+        "Spirectl.Sts2.Live.Sts2ActionHandler+CombatActionContext",
+        "Spirectl.Sts2.Live.Sts2ActionHandler+ShopActionContext",
+        "Spirectl.Sts2.Live.Sts2ActionHandler+ResolvedCombatCard",
+        "Spirectl.Sts2.Live.Sts2ActionHandler+LobbySeatOwnership",
+    ];
+
+    /// <summary>
+    /// The semantic action kinds this mod sends, by the private method that carries each out. Read from the
+    /// mod's own source: <c>grep -rn SemanticActionKind src</c>. The embedded dispatcher routes exactly these,
+    /// and nothing else's body is compiled into the assembly.
+    /// </summary>
+    private static readonly string[] EmbeddedActionMethods =
+    [
+        "ExecuteHoverElement", "ExecuteMouseClick", "ExecuteKeyInput", "ExecuteControllerInput",
+        "ExecuteSelectMapNode", "ExecuteSetScrollOffset", "ExecuteClaimReward",
+        "ExecuteDisconnectClient", "ExecuteSetClientName",
+    ];
+
+    private static readonly string[] OmittedActionMethods =
+    [
+        "ExecutePlayCard", "ExecuteEndTurn", "ExecuteChoose", "ExecuteSelectCard", "ExecuteBuyCard",
+        "ExecuteViewDrawPile", "ExecuteSelectHandCard", "ExecuteInspectRelic", "ExecuteToggleDeck",
+        "ExecuteJoinLobbyPlayer", "ExecuteLeaveLobbyPlayer",
     ];
 
     private static readonly string[] RemovedTypeNames =
@@ -114,11 +194,32 @@ internal static class SpirectlEmbeddedAssemblyBoundaryTests
             .ToHashSet(StringComparer.Ordinal);
 
         Expect(shared.GetName().Name == "CouchCoop.Spirectl", "Couch loads the shared runtime under its private assembly identity");
+        var profile = shared.GetCustomAttributes<AssemblyMetadataAttribute>()
+            .SingleOrDefault(attribute => attribute.Key == "SpirectlSts2Profile")?.Value;
+        Expect(profile == "Embedded", $"Couch's private copy is spirectl's embedded compile profile (got '{profile}'): the project reference must pass Sts2Profile=Embedded");
         Expect(Path.GetFileName(shared.Location) == "CouchCoop.Spirectl.dll", "loaded shared runtime artifact keeps the Couch filename");
 
         foreach (var typeName in RetainedTypes)
         {
             Expect(allTypeNames.Contains(typeName), $"Couch-required shared type remains available: {typeName}");
+        }
+
+        foreach (var typeName in EmbeddedProfileExcludedTypes)
+        {
+            Expect(!allTypeNames.Contains(typeName), $"the embedded profile leaves out a lane Couch cannot reach: {typeName}");
+        }
+
+        var handler = shared.GetType("Spirectl.Sts2.Live.Sts2ActionHandler")
+            ?? throw new InvalidOperationException("SpirectlEmbeddedAssemblyBoundaryTests: the embedded action handler is missing");
+        const BindingFlags declared = BindingFlags.Instance | BindingFlags.Public | BindingFlags.NonPublic | BindingFlags.DeclaredOnly;
+        foreach (var method in EmbeddedActionMethods)
+        {
+            Expect(handler.GetMethod(method, declared) is not null, $"the embedded dispatcher still carries an action Couch sends: {method}");
+        }
+
+        foreach (var method in OmittedActionMethods)
+        {
+            Expect(handler.GetMethod(method, declared) is null, $"the embedded action handler does not compile a body Couch never asks for: {method}");
         }
 
         foreach (var typeName in RemovedTypeNames)

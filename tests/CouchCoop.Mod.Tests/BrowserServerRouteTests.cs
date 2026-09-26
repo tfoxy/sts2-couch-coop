@@ -315,6 +315,16 @@ if (args is [CouchCoopLogPrefixTests.Verb, ..])
     return;
 }
 
+// `dotnet run --project tests/CouchCoop.Mod.Tests -- embedded-boundary` checks the built CouchCoop.Spirectl
+// assembly ALONE: reflection over the loaded assembly, no Godot engine and no live game. It also runs in the
+// normal sequence below.
+if (args is [SpirectlEmbeddedAssemblyBoundaryTests.Verb, ..])
+{
+    SpirectlEmbeddedAssemblyBoundaryTests.Run();
+    Console.WriteLine("embedded-boundary: ok");
+    return;
+}
+
 if (args is ["lanes", ..])
 {
     LoaderLaneSelectionTests.Run();
