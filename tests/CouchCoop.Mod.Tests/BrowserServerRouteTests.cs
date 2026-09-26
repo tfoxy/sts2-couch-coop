@@ -205,6 +205,18 @@ if (args is ["idle-host", ..])
     return;
 }
 
+// `dotnet run --project tests/CouchCoop.Mod.Tests -- zero-client` runs the WHOLE-HOST zero-client contract ALONE:
+// the real host services the mod builds at init, composed over counting doubles for every state and scene entry,
+// driven through startup, a hosting lobby, an active run with no viewers, a 0-1-0 viewer cycle and a detached seat,
+// plus the rogue-subscriber legs that prove it can fail and the runtime tripwire's own contract. Loopback sockets
+// only, no engine, no WAN and no multicast. It also runs in the full sequence below.
+if (args is [ZeroClientContractTests.Verb, ..])
+{
+    await ZeroClientContractTests.RunAsync();
+    Console.WriteLine("zero-client: ok");
+    return;
+}
+
 if (args is ["lifecycle", ..])
 {
     BrowserLifecycleDiagnosticsTests.Run();
@@ -811,6 +823,9 @@ await tests.RunAsync();
 await HeadlessClientManagerTests.RunAsync();
 ConnectionHostingDemandTests.Run();
 ConnectionHostingTrackerStateTests.Run();
+// The whole-host zero-client contract and the tripwire behind it (also reachable alone as `-- zero-client`): the
+// named-component suites above pin the parts, this one pins that the parts add up to nothing.
+await ZeroClientContractTests.RunAsync();
 // The readiness deadline that manager waits on: the clamp band, the progress line, the untouched early exit.
 await SeatReadyTimeoutTests.RunAsync();
 Console.WriteLine("""{"ok":true,"hostedServerRoutes":true}""");

@@ -9,6 +9,7 @@ using CouchCoop.Mod.Connections;
 using CouchCoop.Mod.Diagnostics;
 using CouchCoop.Mod.Contracts;
 using CouchCoop.Mod.Protocol;
+using CouchCoop.Mod.Runtime;
 using CouchCoop.Mod.Session;
 using CouchCoop.MirrorProtocol.Assets;
 using CouchCoop.MirrorProtocol.SceneModel;
@@ -632,7 +633,7 @@ public sealed class CouchCoopBrowserServer(
     // seam (null, never a throw, when the event cannot be resolved). Only inside a real game process — the seam
     // resolves a game type by reflection, which a test host must never reach.
     private static IDisposable? SubscribeGameScreenUpdated(Action handler)
-        => CouchCoopMod.EngineAvailable ? Spirectl.Sts2.Live.Sts2ScreenContext.SubscribeUpdated(handler) : null;
+        => GameScreenContext.SubscribeUpdated(handler);
 
     /// <summary>
     /// WARM-AT-PUBLISH (the tracker's <c>warmVariant</c> callback): render the just-published QUALIFIED variant

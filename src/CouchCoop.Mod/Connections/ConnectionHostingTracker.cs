@@ -1,6 +1,6 @@
+using CouchCoop.Mod.Runtime;
 using CouchCoop.Mod.Session;
 using Godot;
-using Spirectl.Sts2.Live;
 using Timer = System.Threading.Timer;
 
 namespace CouchCoop.Mod.Connections;
@@ -8,7 +8,7 @@ namespace CouchCoop.Mod.Connections;
 /// <summary>Retains connection history through scene transitions and expires it when hosting ends.</summary>
 /// <remarks>
 /// While monitoring, the tracker is driven by the game's own "the active screen may have changed" event
-/// (<see cref="Sts2ScreenContext.SubscribeUpdated"/>) rather than a poll: a hosting session's end is a screen
+/// (<see cref="GameScreenContext.SubscribeUpdated"/>) rather than a poll: a hosting session's end is a screen
 /// transition (back to the menu), so there is nothing to catch between two screen-changed events. It exists only
 /// while a browser or an owned headless seat needs hosting supervision. A detached browser seat still owns a live
 /// process and therefore keeps this monitor alive until run-end reaping. With zero demand, neither the
@@ -50,11 +50,12 @@ internal sealed class ConnectionHostingTracker : IDisposable
     }
 
     /// <summary>
-    /// Unguarded, this seam can reach an uninitialized engine outside a running game process and crash
-    /// uncatchably; see <c>CouchCoopBrowserServer.SubscribeGameScreenUpdated</c>'s identical guard.
+    /// The game's screen event through CouchCoop's own front, which returns null outside a running game process
+    /// (the raw seam can reach an uninitialized engine there and crash uncatchably) and reports any use at zero
+    /// demand to the zero-client tripwire.
     /// </summary>
     private static IDisposable? SubscribeGameScreenUpdated(Action handler)
-        => CouchCoopMod.EngineAvailable ? Sts2ScreenContext.SubscribeUpdated(handler) : null;
+        => GameScreenContext.SubscribeUpdated(handler);
 
     internal ConnectionHostingTracker(
         HeadlessClientManager? manager, IHostingSessionFacts facts,
@@ -233,7 +234,7 @@ internal sealed class ConnectionHostingTracker : IDisposable
     /// the evaluation.
     /// </remarks>
     private static void ScheduleOnNextFrame(Action evaluate)
-        => Sts2MainThreadDispatcher.Invoke(() =>
+        => GameMainThread.Invoke(() =>
         {
             if (Engine.GetMainLoop() is SceneTree { Root: { } root } && GodotObject.IsInstanceValid(root))
             {

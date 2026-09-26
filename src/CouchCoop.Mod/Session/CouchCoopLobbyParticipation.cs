@@ -3,7 +3,6 @@ using CouchCoop.MirrorProtocol.Envelopes;
 using Spirectl.Sts2.Core.Actions;
 using Spirectl.Sts2.Core.State;
 using Spirectl.Sts2.Embedding;
-using Spirectl.Sts2.Live;
 
 namespace CouchCoop.Mod.Session;
 
@@ -212,7 +211,7 @@ public sealed class CouchCoopLobbyParticipation(CouchCoopRuntimeHost runtimeHost
         bool? connected;
         try
         {
-            connected = Sts2MainThreadDispatcher.Invoke(() => CouchCoopHostPeers.IsPeerConnected(netId));
+            connected = GameMainThread.Invoke(() => CouchCoopHostPeers.IsPeerConnected(netId));
         }
         catch (Exception exception)
         {

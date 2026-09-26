@@ -1,8 +1,8 @@
+using CouchCoop.Mod.Runtime;
 using CouchCoop.Mod.Session;
 using Godot;
 using System;
 using CouchCoop.Mod.Localization;
-using Spirectl.Sts2.Live;
 
 namespace CouchCoop.Mod.HostUi;
 
@@ -285,7 +285,9 @@ public static class CouchCoopQrHostPanelController
         IDisposable? subscription = null;
         try
         {
-            subscription = Sts2ScreenContext.SubscribeUpdated(OnScreenContextUpdated);
+            // The panel is the join affordance, so its subscription is excused at zero demand (named allowance).
+            using var permit = ZeroClientGuard.Permit(ZeroClientAllowances.QrHostPanel);
+            subscription = GameScreenContext.SubscribeUpdated(OnScreenContextUpdated);
         }
         catch (Exception exception)
         {
@@ -691,7 +693,8 @@ public static class CouchCoopQrHostPanelController
         object? current = null;
         try
         {
-            current = Sts2ScreenContext.Current;
+            using var permit = ZeroClientGuard.Permit(ZeroClientAllowances.QrHostPanel);
+            current = GameScreenContext.GetCurrent();
         }
         catch
         {
@@ -1169,7 +1172,7 @@ public static class CouchCoopQrHostPanelController
         {
             if (GodotObject.InstanceFromId(id) is Node node
                 && GodotObject.IsInstanceValid(node)
-                && Sts2ScreenContext.IsCurrent(node))
+                && GameScreenContext.IsCurrent(node))
             {
                 return true;
             }

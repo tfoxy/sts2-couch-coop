@@ -17,6 +17,7 @@ public sealed class HotReloadableBrowserServerHost : IHotServerHost, IHotBrowser
     private readonly HeadlessClientManager? _headlessManager;
     private readonly CouchCoop.Mod.Connections.BrowserDemandLedger _browserDemand;
     private readonly Action<int, long> _inputGuardDemand = RootWindowEmbeddingGuard.CreateBrowserDemandReporter();
+    private readonly Action<int, long> _zeroClientSeatDemand = ZeroClientGuard.CreateOwnedSeatReporter();
     private TcpListener? _listener;
     private CancellationTokenSource? _stop;
     private Task? _acceptLoop;
@@ -49,7 +50,7 @@ public sealed class HotReloadableBrowserServerHost : IHotServerHost, IHotBrowser
                 // Once the host is in a run its netcode refuses any client that is not already connected, so no
                 // seat process may be launched — see HeadlessClientManager.RunInProgress.
                 lobby.IsRunInProgress,
-                (count, generation) => _connectionHosting?.SetOwnedSeatDemand(count, generation));
+                ReportOwnedSeatDemand);
         _headlessManager?.ConfigureConnectionMonitoring(
             lobby.IsGamePlayerConnected, () => BaseUri?.Port ?? 0, lobby.IsSeatPeerConnected);
         Admission = new NetworkAdmissionLimiter(() => new CouchCoopLobbyParticipation(_runtime).MaxLobbyPlayers());
@@ -63,6 +64,19 @@ public sealed class HotReloadableBrowserServerHost : IHotServerHost, IHotBrowser
     }
 
     public Action<int, long> CreateBrowserDemandReporter() => _browserDemand.CreateReporter();
+
+    /// <summary>
+    /// The seat manager's owned-seat count, fanned out to its two consumers. The tripwire hears first: the hosting
+    /// tracker starts supervising as soon as it is told, and that must already be demand.
+    /// </summary>
+    internal void ReportOwnedSeatDemand(int count, long generation)
+    {
+        _zeroClientSeatDemand(count, generation);
+        _connectionHosting?.SetOwnedSeatDemand(count, generation);
+    }
+
+    /// <summary>Whether the hosting tracker is currently supervising (test and diagnostics read).</summary>
+    internal bool IsHostingSupervisionActive => _connectionHosting?.IsMonitoring == true;
 
     public object RuntimeHost => _runtime;
 
@@ -139,6 +153,20 @@ public sealed class HotReloadableBrowserServerHost : IHotServerHost, IHotBrowser
     // streams) is answered honestly with 503 rather than being handed a socket it would try to re-read from
     // scratch. Hot-reload is a development path; the shipped built-in generation implements the stream seam.
     private async Task DispatchSecureClientAsync(TcpClient client, Stream stream, CancellationToken cancellationToken)
+    {
+        // A served connection is demand for the zero-client tripwire from before its first byte is read.
+        ZeroClientGuard.ClientOpened();
+        try
+        {
+            await DispatchSecureClientCoreAsync(client, stream, cancellationToken).ConfigureAwait(false);
+        }
+        finally
+        {
+            ZeroClientGuard.ClientClosed();
+        }
+    }
+
+    private async Task DispatchSecureClientCoreAsync(TcpClient client, Stream stream, CancellationToken cancellationToken)
     {
         ICouchCoopHotGeneration? generation;
         lock (_generationGate)
@@ -281,6 +309,7 @@ public sealed class HotReloadableBrowserServerHost : IHotServerHost, IHotBrowser
     public async ValueTask DisposeAsync()
     {
         _inputGuardDemand(0, long.MaxValue);
+        _zeroClientSeatDemand(0, long.MaxValue);
         _connectionHosting?.Dispose();
         _connectionHosting = null;
         if (_secureListener is not null)
@@ -384,6 +413,9 @@ public sealed class HotReloadableBrowserServerHost : IHotServerHost, IHotBrowser
 
     private async Task DispatchClientAsync(TcpClient client, CancellationToken cancellationToken)
     {
+        // A served connection is demand for the zero-client tripwire from before its first byte is read, and stays
+        // demand for as long as its handler runs (a WebSocket's handler is its whole lifetime).
+        ZeroClientGuard.ClientOpened();
         try
         {
             ICouchCoopHotGeneration? generation;
@@ -419,6 +451,7 @@ public sealed class HotReloadableBrowserServerHost : IHotServerHost, IHotBrowser
             // A generation normally takes ownership of the attached lease. If it failed before doing so (or no
             // generation was active), reclaim it here so the listener's bounded task slot cannot leak.
             Admission.TakeAttachedHttp(client)?.Dispose();
+            ZeroClientGuard.ClientClosed();
         }
     }
 

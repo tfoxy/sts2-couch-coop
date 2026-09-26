@@ -1,6 +1,6 @@
 using Godot;
 using CouchCoop.Mod.Connections;
-using Spirectl.Sts2.Live;
+using CouchCoop.Mod.Runtime;
 using System;
 using System.Collections.Generic;
 using System.Linq;
@@ -94,7 +94,7 @@ public static class RootWindowEmbeddingGuard
             // Share the input FIFO: an already-scheduled dispatcher drain can consume newly arrived input
             // before a separate Godot deferred call. InvokeAsync enqueues before registration returns, so
             // even the first input after idle runs after repair without waiting for another frame or timer.
-            _ = Sts2MainThreadDispatcher.InvokeAsync(() =>
+            _ = GameMainThread.InvokeAsync(() =>
             {
                 callback.Call();
                 return Task.FromResult(true);
