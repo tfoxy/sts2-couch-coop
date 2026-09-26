@@ -865,13 +865,14 @@ spawned seat.
 | --- | --- |
 | `state.read`, `state.subscribe`, `scene.subscribe`, `animation-hints.subscribe`, `multiplayer-connection.read/.subscribe` | the ports of `CouchCoopRuntimeHost` (`ZeroClientGuard.EnterPort`); the caller is read from the stack, and only when a violation is reported |
 | `screen-context.subscribe/.read` | `Runtime/CouchCoopGameSeams.cs` `GameScreenContext`, the CouchCoop front for `Sts2ScreenContext` (tracker, browser-server static-background probe, QR host panel) |
+| `host-facts.read` | `Runtime/CouchCoopGameFacts.cs` `CouchCoopGameFacts`, the CouchCoop front for its own typed reader `IGameFacts` (QR host panel, pause-menu row) |
 | `main-thread.dispatch` | the same file's `GameMainThread`, the front for `Sts2MainThreadDispatcher` (tracker, seat peer check, root-window guard, windowless viewport loop) |
 
 **Allow-list — `ZeroClientAllowances`, the review point.** Each entry names work that touches game state at zero
 demand, and its `reason` argument is required (the test rejects a one-line reason and pins the count):
 `qr-host-panel` (screen subscription and current-screen read: the join affordance itself, event-driven),
-`lobby-panel-state-read` (`CouchCoopMod.TryGetLobbyState`: the lobby panel's 0.25 s chain while a lobby screen is
-current, and the pause-menu row once per visibility change), `host-transport-sizing` (one lobby-cap read per host
+`lobby-gate-facts` (the `host-facts.read` entry: the QR panel's push-driven read of the run and lobby facts while a
+lobby screen is current, and the pause-menu row once per visibility change), `host-transport-sizing` (one lobby-cap read per host
 start), `windowless-viewport` (only a headless seat or `--headless` host starts it). A call site excuses itself with
 `using ZeroClientGuard.Permit(ZeroClientAllowances.X)` around a **synchronous** call (thread-local; it does not
 follow an `await`). What demand already covers, and so is not listed: the hosting tracker, the browser server's
@@ -916,20 +917,50 @@ The always-on QR overlay is gone. A game-styled button opens a dialog instead.
   `CouchCoopTextureButton` → `NButton`), `CouchCoopQrHotkeyHint.cs` (controller glyph),
   `CouchCoopQrHostPanelController.cs` (event-driven presence + gate) with `LobbyScreenRegistry.cs` and
   `LobbyEvaluationPlan.cs` (the pure gate),
-  `CouchCoopLobbyHostGate.cs`, `QrHostOptions.cs`, `QrHoverTipCopy.cs` + `CouchCoopQrHoverTips.cs`
+  `CouchCoopLobbyHostGate.cs`, `LobbyGateFactsCache.cs` (the remembered gate facts), `LobbyAssignmentRecord.cs`,
+  `Patches/LobbyAssignmentPatch.cs` + `LobbyAssignmentTargets.cs`, `QrHostOptions.cs`,
+  `QrHoverTipCopy.cs` + `CouchCoopQrHoverTips.cs`
   (per-option hover-tip pair through the game's `NHoverTipSet`), `CouchCoopQrSelectionPreference.cs`
   (persisted pick, `qr-prefs.json`), `QrRaster.cs`, `CouchCoopStreamSkip.cs`.
-- **Gate**: `ShouldShow(listenerBaseUri, state)` = browser server bound AND
-  `state is { Run: null, CharacterSelect.Lobby.NetGameType: "host" }`. That single predicate covers BOTH
-  `NCharacterSelectScreen` and `NMultiplayerLoadGameScreen`; a singleplayer/client lobby is refused.
+- **Gate**: `ShouldShow(listenerBaseUri, facts)` = browser server bound AND
+  `facts is { RunInProgress: false, CurrentLobbyNetType: "host" }` (`CouchCoopLobbyHostGate`, pure). That single
+  predicate covers BOTH `NCharacterSelectScreen` and `NMultiplayerLoadGameScreen`; a singleplayer/client lobby is
+  refused, and `null` facts (the read failed) refuse too and are recorded as `Unavailable`, not `NotHost`.
+- **The gate facts are CouchCoop's own typed read, not a spirectl state snapshot** (WP3 path 1; the maintainer's
+  granted design: a CouchCoop-owned typed reader, no spirectl state read). `IGameFacts` and the `GateFacts` DTO
+  live in `CouchCoop.Mod.Contracts/GameFacts.cs`; the game-typed reader is `GameFactsReader` in
+  `Runtime/CouchCoopGameFacts.cs`, reached only through the `CouchCoopGameFacts` front (zero-client tripwire, a
+  throw becomes "unavailable", `CouchCoopMod.EngineAvailable`-guarded and split so no game type is JIT-compiled
+  without an engine). Later WP3 paths add methods to the same interface. Where each fact comes from: run present
+  = `RunManager.Instance.IsInProgress`; run net type = `RunManager.Instance.NetService?.Type`; new-run lobby =
+  the current `NCharacterSelectScreen`'s `Lobby?.NetService.Type`; **saved-run lobby = the role recorded by the
+  typed postfixes on `NMultiplayerLoadGameScreen.InitializeAsHost` / `InitializeAsClient`**, because that screen
+  keeps its lobby private (`RunManager.NetService` is only assigned at run start, so it is NOT the lobby's
+  service). No by-name reflection. A fact is never learned by polling: the screen handed to the reader is the one
+  the evaluation already resolved, and staleness of a recorded role after the game clears the lobby is irrelevant
+  (a cleared lobby is a screen change, and no lobby means no panel).
+- **Facts are read on push signals only** (`LobbyGateFactsCache`): the game's screen event, a screen mount, a
+  screen's `visibility_changed`, and the assignment hooks each `MarkDirty()` (inside `WakeEvaluation`, before the
+  coalescing latch, so a wake dropped by a running chain still makes its next evaluation read). The next
+  evaluation reads once; a heartbeat tick with nothing pushed reuses the remembered facts. The five hooks in
+  `Patches/LobbyAssignmentPatch.cs` (declared methods only, typed `nameof`/`typeof` bindings, pending-set retry like
+  the mount patch, second chance from the controller's `Initialize`) are `NCharacterSelectScreen`
+  `InitializeMultiplayerAsHost`/`InitializeMultiplayerAsClient`/`InitializeSingleplayer` (wake only) and the two
+  saved-run methods above (record, then wake). **A postfix only records and wakes**: it never resolves the current
+  screen or reads game state (that segfaults inside a game callback), and the wake defers one frame. Pinned by
+  `CouchCoopGameFactsTests.TargetsResolve` (`-- host-guards`, `-- beta-targets`) and, in the metadata-only lane,
+  by `LobbyAssignmentTargets` (declared, same parameter count). Existing polling left in place: the 0.25 s chain
+  below (see its bullet), and the valve fallback that reads the facts every evaluation.
 - **Presence is pushed, not polled** (controller): screens arrive by `Patches/LobbyScreenMountPatch.cs`
   (Harmony on each screen's declared `_Ready`) into `LobbyScreenRegistry`, whose liveness is "not freed",
   never "in the tree". An evaluation is woken by `Sts2ScreenContext.SubscribeUpdated` (spirectl's read-only
   seam onto the game's active-screen event), by Godot's `visibility_changed` on each registered screen, and
   by a mount; it runs on a `CreateTimer` callback, so a signal raised mid-transition still installs from the
   same safe point the tick always did. The **0.25s chain survives only while a lobby screen is visible AND
-  `Sts2ScreenContext.IsCurrent`** — it exists purely because `netGameType` flips live in the lobby — and
-  parks otherwise. This replaced a chain that never parked: the game readies its character-select screen at
+  current** and parks otherwise. It is the mounted panel's **heartbeat** (existing polling, left in place): each
+  tick re-applies the host snapshot, advances the open dialog's connection list and timers, updates the
+  connection-attention badge, re-asserts a modal's cancel binding and focus, and picks up a locale or layout
+  refresh — it does NOT read the gate facts, and it is not there for `netGameType`. This replaced a chain that never parked: the game readies its character-select screen at
   main-menu **load** and never frees that node, so the registry was occupied for the whole session and the
   timer ran 4×/s through combat, the map and the menu. `lobby-screen-mounted` therefore fires **once**, at
   main-menu load, and entering the lobby reuses that node — absence of a mount line is not absence of a
@@ -937,10 +968,10 @@ The always-on QR overlay is gone. A game-styled button opens a dialog instead.
 - **A visible-but-not-current lobby keeps its panel.** Removal is keyed on visibility alone. The game's
   current-screen answer is whatever is on top, *including a modal over the lobby*, and CouchCoop's own open
   dialog is a child of the panel — "not current ⇒ remove" would close the player's dialog. Not-current only
-  suppresses the state pull and the timer, and holds `HostTransportAlert`'s once-per-mount latch rather than
+  suppresses the facts read and the timer, and holds `HostTransportAlert`'s once-per-mount latch rather than
   re-arming it. Closing the modal raises the event, which re-evaluates.
 - **Fallback**: if the active-screen event cannot be subscribed, or the current screen cannot be resolved,
-  the evaluation degrades to the pre-existing rule — pull on visible, tick unconditionally — and logs
+  the evaluation degrades to the pre-existing rule — read the facts on every visible evaluation, tick unconditionally — and logs
   `screen context unavailable` once. Nothing about screen detection may cost the lobby its QR button.
   The gate is `HostUi/LobbyEvaluationPlan.cs`, Godot-free and tested in `IdleHostCostTests`
   (`-- host-guards`); `Spirectl.Sts2.Live.Sts2ScreenContext` is pinned in
@@ -1227,8 +1258,9 @@ is the one screen reachable from anywhere mid-run.
   `HostUi/CouchCoopPauseMenuGate.cs` (the pure gate), `Patches/PauseMenuMountPatch.cs` +
   `Patches/PauseMenuMountTargets.cs` (the seam). It REUSES `CouchCoopQrDialog` unchanged, and
   `CouchCoopQrHostPanel.ButtonText` for its wording, so the two entry points cannot drift apart.
-- **Gate**: `CouchCoopPauseMenuGate.ShouldShow(listenerBaseUri, state)` = browser server bound AND
-  `state is { Run.NetGameType: "host" }`. Deliberately DISJOINT from `CouchCoopLobbyHostGate`, which requires
+- **Gate**: `CouchCoopPauseMenuGate.ShouldShow(listenerBaseUri, facts)` = browser server bound AND
+  `facts is { RunInProgress: true, RunNetType: "host" }` (the same `GateFacts` read through `CouchCoopGameFacts`
+  with no screen: `RunManager` only). Deliberately DISJOINT from `CouchCoopLobbyHostGate`, which requires
   `Run: null` — the lobby gate answers "can a NEW device join?", this one answers "is the URL worth anything to
   a device that already has a seat?". `CouchCoopPauseMenuGateTests` asserts they never both say yes.
   Singleplayer and client runs are refused, matching how the game itself hides Give Up / Disconnect per net
@@ -1255,14 +1287,13 @@ is the one screen reachable from anywhere mid-run.
 - **Mount, and no tick.** Harmony postfix on `NPauseMenu`'s declared `_Ready`, through the same
   `GodotNodeMountHook` the lobby uses; applied only when `!IsHeadlessClient`, with one second-chance retry from
   `CouchCoopMod.InitializeQrHostPanel`'s call sites. After that the gate is re-evaluated ONLY on the pause
-  menu's `visibility_changed` — there is no timer. The lobby's 0.25s chain exists because `netGameType` flips
-  live in a lobby; a run's does not. Hiding also closes the dialog: `NPauseMenu.OnSubmenuClosed` only sets
+  menu's `visibility_changed` — there is no timer, and the read is the typed run-facts read, not a state snapshot. Hiding also closes the dialog: `NPauseMenu.OnSubmenuClosed` only sets
   `Visible = false`, so an open modal would keep its cancel binding pushed and focus parked.
 - **The FIRST gate evaluation hops off the `_Ready` frame** (`ScheduleFirstRefresh`), and that is not a tick —
   it is a `CreateTimer(0.0, processAlways: true, ignoreTimeScale: true)` that fires once. The structural half
   of the mount (instance the row scene, `AddChild`, `MoveChild`, re-splice the focus ring, connect
   `visibility_changed`) asks the game nothing and stays inside the postfix; the gate asks
-  `CouchCoopMod.TryGetLobbyState()`, which reflects into a game still assembling the screen that is readying.
+  `CouchCoopGameFacts.ReadGates`, which reaches into a game still assembling the screen that is readying.
   That is the `7c354a88` fault — an uncatchable null dereference that lands as a bare kernel segfault with no
   managed stack, which the surrounding `try` cannot see — and it is why the pre-check that commit deleted from
   `CouchCoopQrHostPanelController.WakeEvaluation` must not be reinvented here. `processAlways: true` is the one

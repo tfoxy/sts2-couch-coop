@@ -126,6 +126,10 @@ if (args is ["host-guards", ..])
     // The pause menu's mount point. Same standing again, and its failure is invisible until someone pauses a
     // run — later still than opening a lobby, which is why it is worth reaching without a full run.
     IdleHostCostTests.PauseMenuMountTargetsResolve();
+    // The lobby-assignment hooks: the QR panel learns of a lobby assignment (and the saved-run screen's host or
+    // client role) from these five methods, so a renamed or reshaped one silently costs the saved-run lobby its
+    // button. Same standing as the mount points above: pure metadata reflection.
+    CouchCoopGameFactsTests.TargetsResolve();
     LobbySupportCheckpointsTests.Run();
     Console.WriteLine("host guards: ok");
     return;
@@ -350,6 +354,9 @@ if (args is ["host-ui", ..])
     // asserts the two never answer yes at once, which is only meaningful beside the lobby one.
     CouchCoopLobbyHostGateTests.Run();
     CouchCoopPauseMenuGateTests.Run();
+    // What those gates decide on and when it is read: the typed facts front, the assignment record, and the cache
+    // that makes the panel's heartbeat tick reuse the last read instead of asking the game again.
+    CouchCoopGameFactsTests.Run();
     // The QR dialog's seat-mod card: every decision it draws (which mods, locked / held-off / cascade, what a
     // press writes), plus the geometry that makes it the connection card's mirror. Both pure — the card itself
     // is a Godot node this runner cannot construct. The layout half is also in the full contract suite below.
@@ -527,6 +534,9 @@ if (args is ["beta-targets", ..])
     Leg("IdleHostCostTests.MountTargets", IdleHostCostTests.MountTargetsResolve);
     // …and the pause menu's mount point, which is the mid-run QR row's only seam.
     Leg("IdleHostCostTests.PauseMenuMountTargets", IdleHostCostTests.PauseMenuMountTargetsResolve);
+    // …and the five methods that assign a lobby to a lobby screen: the wake for a lobby assignment, and the only
+    // typed way to learn whether the saved-run lobby is a host lobby.
+    Leg("CouchCoopGameFactsTests.AssignmentTargets", CouchCoopGameFactsTests.TargetsResolve);
 
     Console.WriteLine(failures.Count == 0
         ? "beta-targets: every patch target resolves"
@@ -791,6 +801,8 @@ CouchCoopLobbyHostGateTests.Run();
 // …and its mid-run twin, which decides the same thing for the pause menu's row. Beside the lobby gate on
 // purpose: it shares those snapshot builders, and it asserts the two gates never answer yes at once.
 CouchCoopPauseMenuGateTests.Run();
+// …and what they decide on: the typed gate facts, when they are read, and the assignment hooks' contract.
+CouchCoopGameFactsTests.Run();
 // F1 host connectivity log: the ring, the player-facing copy (asserted literally — it is a QA contract
 // shared with the live probe) and the bbcode escaping that keeps a browser-typed display name from
 // re-styling the host's television. Runs FIRST of the log-touching suites and resets the process-global

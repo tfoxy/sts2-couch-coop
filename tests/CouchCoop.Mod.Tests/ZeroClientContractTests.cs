@@ -139,9 +139,11 @@ internal static class ZeroClientContractTests
             Expect(ZeroClientGuard.Violations == 0 && ZeroClientAllowances.QrHostPanel.Hits == 1, "a covered entry inside its scope is excused and counted");
             ZeroClientGuard.Enter(ZeroClientEntries.StateRead);
             Expect(ZeroClientGuard.Violations == 1, "an entry the allowance does not cover is still idle work");
-            using (ZeroClientGuard.Permit(ZeroClientAllowances.LobbyPanelStateRead))
+            using (ZeroClientGuard.Permit(ZeroClientAllowances.LobbyGateFacts))
             {
-                ZeroClientGuard.Enter(ZeroClientEntries.StateRead);
+                ZeroClientGuard.Enter(ZeroClientEntries.HostFactsRead);
+                Expect(ZeroClientGuard.Violations == 1 && ZeroClientAllowances.LobbyGateFacts.Hits == 1,
+                    "the lobby gate's facts read is excused inside its own allowance, and counted");
             }
 
             ZeroClientGuard.Enter(ZeroClientEntries.ScreenRead);
@@ -150,6 +152,8 @@ internal static class ZeroClientContractTests
 
         ZeroClientGuard.Enter(ZeroClientEntries.ScreenRead);
         Expect(ZeroClientGuard.Violations == 2, "outside the scope the same entry is idle work again");
+        ZeroClientGuard.Enter(ZeroClientEntries.HostFactsRead);
+        Expect(ZeroClientGuard.Violations == 3, "a host-facts read outside its allowance is idle work");
 
         // Disarmed (a spawned seat) is silent, and owned seats are demand with the ledger's generation rules.
         Fresh(armed: false);
@@ -321,6 +325,7 @@ internal static class ZeroClientContractTests
             [ZeroClientEntries.ScreenSubscribe] = (_ => new RogueScreenWatcher(), "ZeroClientContractTests.Start"),
             [ZeroClientEntries.ScreenRead] = (_ => new RogueScreenPoller(), "ZeroClientContractTests.Poll"),
             [ZeroClientEntries.MainThreadDispatch] = (_ => new RogueMainThreadWaker(), "ZeroClientContractTests.Wake"),
+            [ZeroClientEntries.HostFactsRead] = (_ => new RogueHostFactsReader(), "ZeroClientContractTests.Read"),
         };
 
         foreach (var entry in ZeroClientEntries.All)
@@ -474,6 +479,17 @@ internal static class ZeroClientContractTests
 
         [MethodImpl(MethodImplOptions.NoInlining)]
         private static void Poll() => GameScreenContext.GetCurrent();
+
+        public void Dispose() { }
+    }
+
+    // The next poller of the game's run and lobby facts: reads them through the CouchCoop front from its own method.
+    private sealed class RogueHostFactsReader : IDisposable
+    {
+        public RogueHostFactsReader() => Read();
+
+        [MethodImpl(MethodImplOptions.NoInlining)]
+        private static void Read() => CouchCoopGameFacts.ReadGates(currentScreen: null);
 
         public void Dispose() { }
     }

@@ -19,10 +19,24 @@ internal static class MetadataOnlyLobbyScreenMountTests
             Assert(HasDirectZeroArgumentMethod(assemblyPath, target.TypeName, target.MethodName),
                 $"{target.TypeName} must directly declare zero-argument {target.MethodName}");
         }
+
+        // The methods that assign a lobby to those screens: each must still be DECLARED by its screen with the same
+        // number of parameters (their parameter types are pinned by the typed binding in the full lane).
+        foreach (var target in LobbyAssignmentTargets.Targets)
+        {
+            Assert(HasDirectMethod(assemblyPath, target.TypeName, target.MethodName, target.ParameterCount),
+                $"{target.TypeName} must directly declare {target.MethodName} with {target.ParameterCount} parameter(s)");
+        }
     }
 
     internal static void RunFixtureCases()
     {
+        var parameterized = typeof(CouchCoop.Mod.Tests.MetadataOnlyFixtures.DirectReady).Assembly.Location;
+        Assert(HasDirectMethod(parameterized, "CouchCoop.Mod.Tests.MetadataOnlyFixtures.TwoArguments", "Assign", 2),
+            "a declared two-argument fixture method resolves by its parameter count");
+        Assert(!HasDirectMethod(parameterized, "CouchCoop.Mod.Tests.MetadataOnlyFixtures.TwoArguments", "Assign", 1),
+            "a different parameter count refuses");
+
         var fixture = typeof(CouchCoop.Mod.Tests.MetadataOnlyFixtures.DirectReady).Assembly.Location;
         Assert(HasDirectZeroArgumentMethod(
                 fixture,
@@ -66,6 +80,9 @@ internal static class MetadataOnlyLobbyScreenMountTests
     }
 
     internal static bool HasDirectZeroArgumentMethod(string assemblyPath, string fullTypeName, string methodName)
+        => HasDirectMethod(assemblyPath, fullTypeName, methodName, parameterCount: 0);
+
+    internal static bool HasDirectMethod(string assemblyPath, string fullTypeName, string methodName, int parameterCount)
     {
         using var stream = File.OpenRead(assemblyPath);
         using var pe = new PEReader(stream);
@@ -85,7 +102,7 @@ internal static class MetadataOnlyLobbyScreenMountTests
 
             return type.GetMethods().Select(metadata.GetMethodDefinition).Any(method =>
                 string.Equals(metadata.GetString(method.Name), methodName, StringComparison.Ordinal)
-                && ParameterCount(metadata, method) == 0);
+                && ParameterCount(metadata, method) == parameterCount);
         }
 
         return false;

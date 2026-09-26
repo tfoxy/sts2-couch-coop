@@ -231,6 +231,10 @@ public static class CouchCoopMod
             // headless seat renders no panels — and mounted here, with the other patches, because it must be
             // installed before the first lobby screen runs its _Ready.
             if (!IsHeadlessClient) LobbyScreenMountPatch.Apply();
+            // …and the hooks on the methods that assign a lobby to those screens. They tell the panel about a
+            // lobby assignment the screen event would not announce, and record the role of the saved-run screen's
+            // lobby, which the game exposes no other typed way to read. Host-only, for the same reason.
+            if (!IsHeadlessClient) LobbyAssignmentPatch.Apply();
             // …and the same for the pause menu, which is where a device that already joined and then LOST its
             // browser gets the join URL back — the lobby button is gone once the run embarks. Host-only for the
             // same reason as the line above: a headless seat renders this for nobody. Its absence costs a
@@ -419,44 +423,6 @@ public static class CouchCoopMod
         lock (Gate)
         {
             CouchCoopQrHostPanelController.RefreshAll();
-        }
-    }
-
-    /// <summary>
-    /// Latest runtime state for the lobby gate, or <see langword="null"/> when the state capability is
-    /// unavailable. Same seam <see cref="Session.CouchCoopLobbyParticipation"/> reads through, so the
-    /// button's visibility and the headless-launch window can never be answered from different sources.
-    /// </summary>
-    /// <remarks>
-    /// The runtime reference is taken under the lock but the state pull happens OUTSIDE it: the pull
-    /// marshals onto the Godot main thread, and holding the mod's gate across that is how you deadlock
-    /// a shutdown that is already holding it.
-    /// </remarks>
-    public static StateSnapshot? TryGetLobbyState()
-    {
-        CouchCoopRuntimeHost? runtime;
-        lock (Gate)
-        {
-            runtime = _runtime;
-        }
-
-        if (runtime is null || !runtime.HasCapability(CouchCoopRuntimeHost.StateCapability))
-        {
-            return null;
-        }
-
-        try
-        {
-            // The two callers are host UI on a screen the player is looking at (the lobby QR panel, the pause-menu
-            // row), which is why the zero-client tripwire excuses the read at zero demand. See the allowance.
-            using var permit = ZeroClientGuard.Permit(ZeroClientAllowances.LobbyPanelStateRead);
-            var result = runtime.GetCurrentState(new CurrentStateRequest());
-            return result.Success ? result.State : null;
-        }
-        catch (Exception exception)
-        {
-            CouchCoopLog.Stderr($"lobby state read failed detail={exception.GetType().Name}: {exception.Message}");
-            return null;
         }
     }
 
@@ -796,8 +762,8 @@ public static class CouchCoopMod
     /// Subscribed once per process (the handler is idempotent, and <c>StartDiscoveryServices</c> self-latches,
     /// so the tick can raise it every 0.25s for free). Reads <c>_hostUi</c> through the field rather than
     /// capturing the instance, so a hot-reload that replaces the services still arms the live one — and takes
-    /// <c>Gate</c> only to read that field, never across the call, for the reason
-    /// <see cref="TryGetLobbyState"/> spells out.
+    /// <c>Gate</c> only to read that field, never across the call: the call can marshal onto the Godot main
+    /// thread, and holding the mod's gate across that is how you deadlock a shutdown that is already holding it.
     /// </remarks>
     private static void ArmDiscoveryOnFirstHostLobby()
     {

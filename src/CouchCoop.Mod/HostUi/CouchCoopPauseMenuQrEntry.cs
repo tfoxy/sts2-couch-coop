@@ -1,4 +1,6 @@
+using CouchCoop.Mod.Contracts;
 using CouchCoop.Mod.Localization;
+using CouchCoop.Mod.Runtime;
 using CouchCoop.Mod.Session;
 using Godot;
 using MegaCrit.Sts2.addons.mega_text;
@@ -228,8 +230,8 @@ internal sealed partial class CouchCoopPauseMenuQrEntry : Control
     /// <remarks>
     /// <para>
     /// EVERYTHING ABOVE IS SAFE IN A <c>_Ready</c> FRAME AND THIS IS NOT. Instancing a scene, parenting it and
-    /// connecting a signal ask the game nothing. <see cref="Refresh"/> reads
-    /// <c>CouchCoopMod.TryGetLobbyState()</c>, which reflects into the running game while the screen that is
+    /// connecting a signal ask the game nothing. <see cref="Refresh"/> reads the run facts through
+    /// <see cref="CouchCoopGameFacts"/>, which reaches into the running game while the screen that is
     /// readying is still being assembled. That is exactly the fault removed from
     /// <see cref="CouchCoopQrHostPanelController"/> — read its <c>WakeEvaluation</c> remarks: in this runtime
     /// the resulting null dereference is NOT a catchable <see cref="NullReferenceException"/>, because the
@@ -560,8 +562,8 @@ internal sealed partial class CouchCoopPauseMenuQrEntry : Control
     /// One evaluation: is the row worth showing, is its wording current, and is the dialog still wanted?
     /// </summary>
     /// <remarks>
-    /// The state pull is the expensive half and happens ONLY here — on a visibility change, a handful of times
-    /// per run. There is no tick.
+    /// The run facts are read ONLY here — on a visibility change, a handful of times per run, and it is a typed
+    /// read of the run manager with no state snapshot. There is no tick.
     /// </remarks>
     private void Refresh()
     {
@@ -579,9 +581,11 @@ internal sealed partial class CouchCoopPauseMenuQrEntry : Control
         var snapshot = CouchCoopMod.HostUiSnapshot;
         if (_row is not null && GodotObject.IsInstanceValid(_row))
         {
+            // The pause menu is on screen and the host player opened it: that player is the demand (named allowance).
+            using var permit = ZeroClientGuard.Permit(ZeroClientAllowances.LobbyGateFacts);
             _row.Visible = CouchCoopPauseMenuGate.ShouldShow(
                 snapshot.ListenerBaseUri,
-                CouchCoopMod.TryGetLobbyState());
+                CouchCoopGameFacts.ReadGates(currentScreen: null));
         }
 
         RefreshLocalization(snapshot);

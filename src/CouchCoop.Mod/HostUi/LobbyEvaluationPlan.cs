@@ -36,19 +36,23 @@ internal enum LobbyAlertUpdate
 
 /// <summary>What one evaluation should do, decided before anything fallible runs.</summary>
 /// <param name="PullState">
-/// Whether to read <c>CouchCoopMod.TryGetLobbyState()</c> — the expensive half of an evaluation, and the only
-/// thing that can answer host-vs-not.
+/// Whether a lobby screen is on screen and current, so the evaluation has gate facts to decide: the facts the
+/// controller remembers from its last push, read afresh only if something pushed since. It is no longer a state
+/// pull: the full state snapshot this once named is gone from this path.
 /// </param>
 /// <param name="KeepTicking">
-/// Whether the bounded 0.25s chain should keep running. It exists for ONE reason: <c>netGameType</c> flips live
-/// while the host sits in the lobby (a singleplayer lobby becoming a host lobby), so presence alone cannot be
-/// read once and trusted. Outside a current lobby there is nothing for it to re-read, so it parks.
+/// Whether the bounded 0.25s chain should keep running. It is the mounted QR panel's HEARTBEAT, and it is the only
+/// thing on this path that runs on a timer. Each tick re-applies the latest host snapshot to the panel, advances an
+/// open dialog's connection list and elapsed timers, updates the connection-attention badge, re-asserts a modal's
+/// cancel binding and controller focus (the mod has no other heartbeat in a lobby), picks up a locale or layout
+/// refresh, and re-resolves which screen is current so the chain can park itself. It does NOT read the gate facts:
+/// those are pushed (see <c>LobbyGateFactsCache</c>), so a lobby assignment that changes them wakes the evaluation
+/// itself. Outside a current lobby there is nothing for the heartbeat to drive, so it parks.
 /// </param>
-/// <param name="Alert">See <see cref="LobbyAlertUpdate"/>.</param>
 internal readonly record struct LobbyEvaluationPlan(bool PullState, bool KeepTicking, LobbyAlertUpdate Alert);
 
 /// <summary>
-/// The rule that decides whether a lobby evaluation pulls state and whether the tick chain survives it.
+/// The rule that decides whether a lobby evaluation has gate facts to decide and whether the tick chain survives it.
 /// </summary>
 /// <remarks>
 /// <para>
@@ -125,13 +129,32 @@ internal static class LobbyEvaluationPlanner
     }
 
     /// <summary>
+    /// Which screen the gate facts describe: the first one that is visible AND current, or, when the current-screen
+    /// seam could not answer (the safety valve), the first that is merely visible — the screen the pre-existing
+    /// fallback read state for. -1 when there is none, which is when <see cref="Decide"/> pulls nothing.
+    /// </summary>
+    public static int GateScreenIndex(IReadOnlyList<LobbyScreenFacts> screens, bool currentScreenKnown)
+    {
+        for (var index = 0; index < screens.Count; index++)
+        {
+            var screen = screens[index];
+            if (screen.Visible && (!currentScreenKnown || screen.Current))
+            {
+                return index;
+            }
+        }
+
+        return -1;
+    }
+
+    /// <summary>
     /// Whether this screen must be left ENTIRELY alone this evaluation — panel included.
     /// </summary>
     /// <remarks>
     /// The game's current-screen answer is whatever is on top, which includes a modal opened OVER the lobby. So
     /// "not current ⇒ remove the panel" would tear the panel down the moment any modal appeared — and CouchCoop's
     /// own QR dialog is a CHILD of that panel, so it would take the dialog with it. Removal therefore stays keyed
-    /// on VISIBILITY, exactly as before this change, and not-current only suppresses the state pull. Closing the
+    /// on VISIBILITY, exactly as before this change, and not-current only suppresses the gate-facts read. Closing the
     /// modal raises the active-screen event, which re-evaluates, so nothing is lost by waiting.
     /// </remarks>
     public static bool IsParkedUnderAnotherScreen(LobbyScreenFacts screen, bool currentScreenKnown)
