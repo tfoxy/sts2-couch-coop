@@ -196,8 +196,8 @@ public sealed partial class HeadlessClientManager : IDisposable
     private readonly Dictionary<ulong, string> _publishedNames = [];
     // Slots whose browser disconnected DURING A RUN: the headless is intentionally KEPT ALIVE (still ENet-joined
     // to the host's run as its netId) so the browser reconnects instantly to the live run instead of re-spawning
-    // and rejoining. Reaped (killed) when the host quits the run (ReapDetachedSlots, driven by the host state
-    // observer) or the game (Dispose); cleared when the browser reconnects and re-claims the slot.
+    // and rejoining. Reaped (killed) once the host has left both the run and any lobby (ReapDetachedSlots, driven by
+    // the roster observer) or the game (Dispose); cleared when the browser reconnects and re-claims the slot.
     private readonly HashSet<int> _detachedSlots = [];
     private readonly Func<int, IHeadlessProcess?> _launcher;
     // Probe used by WaitForReadyAsync to decide when a freshly spawned headless is serving on its port.
@@ -1160,9 +1160,9 @@ public sealed partial class HeadlessClientManager : IDisposable
 
     /// <summary>
     /// Reap every DETACHED slot — kill its kept-alive headless and drop its name claim — and return the freed
-    /// netIds so the caller can evict the (already game-disconnected) ENet peers. Called when the host quits the
-    /// run (the host state observer sees the run end), so kept-alive headless from departed browsers don't linger
-    /// as phantom players into the next lobby. Detached slots whose browser already reconnected were removed from
+    /// netIds so the caller can evict the (already game-disconnected) ENet peers. Called once the host has left both
+    /// the run and any lobby (the roster observer sees the game on the menu), so kept-alive headless from departed
+    /// browsers don't linger as phantom players into the next lobby. Detached slots whose browser already reconnected were removed from
     /// the set by <see cref="EnsureHeadlessAsync"/>, so they're untouched.
     /// </summary>
     public IReadOnlyList<ulong> ReapDetachedSlots()

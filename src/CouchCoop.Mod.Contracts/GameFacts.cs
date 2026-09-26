@@ -43,7 +43,7 @@ public readonly record struct GateFacts(bool RunInProgress, string? CurrentLobby
 /// inside a game callback. A method returns <see langword="null"/> when the read could not be made (no engine behind
 /// the process, or the game threw): that is "unavailable", which is not the same answer as "no lobby".
 /// </remarks>
-public interface IGameFacts
+public partial interface IGameFacts
 {
     /// <summary>
     /// The facts the QR gates need. <paramref name="currentScreen"/> is the screen on top, resolved by the caller

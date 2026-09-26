@@ -261,8 +261,10 @@ internal static class ZeroClientContractTests
         await using (var picker = await rig.ConnectViewerAsync(watch: false, staticBackground: true))
         await using (var streaming = await rig.ConnectViewerAsync(watch: true, staticBackground: false))
         {
-            Expect(await rig.WaitAsync(() => rig.Runtime.StateLive >= 1),
-                "a picker-parked viewer keeps the state observer alive (it is demand, so the tripwire allows it)");
+            Expect(await rig.WaitAsync(() => CouchCoopRosterObserver.LiveCount >= 1 && CouchCoopRosterSignals.ListenerCount >= 1),
+                "a picker-parked viewer keeps the roster observer alive (it is demand, so the tripwire allows it)");
+            Expect(rig.Runtime.StateLive == 0 && rig.Runtime.StateSubscribes == 0,
+                "…and it subscribes to no game state: the roster is read from typed facts on signals");
             Expect(await rig.WaitAsync(() => rig.Runtime.SceneLive >= 1 && rig.Runtime.HintLive >= 1),
                 "a streaming viewer starts the scene producer and the hint collector");
             Expect(await rig.WaitAsync(() => rig.Screens.Live >= 2),
@@ -326,6 +328,7 @@ internal static class ZeroClientContractTests
             [ZeroClientEntries.ScreenRead] = (_ => new RogueScreenPoller(), "ZeroClientContractTests.Poll"),
             [ZeroClientEntries.MainThreadDispatch] = (_ => new RogueMainThreadWaker(), "ZeroClientContractTests.Wake"),
             [ZeroClientEntries.HostFactsRead] = (_ => new RogueHostFactsReader(), "ZeroClientContractTests.Read"),
+            [ZeroClientEntries.RosterSubscribe] = (_ => new RogueRosterSubscriber(), "ZeroClientContractTests.SubscribeRoster"),
         };
 
         foreach (var entry in ZeroClientEntries.All)
@@ -343,6 +346,18 @@ internal static class ZeroClientContractTests
             Expect(entry.Hits >= 1, $"the tripwire counted the rogue '{entry.Name}' (hits={entry.Hits})");
             Expect(rig.TripwireLines.Any(line => line.StartsWith($"[idle-work] {caller} {entry.Name}", StringComparison.Ordinal)),
                 $"the tripwire names the rogue's caller for '{entry.Name}' (lines: {string.Join(" | ", rig.TripwireLines)})");
+        }
+
+        // The roster read shares the host-facts entry with the gate read, so the table above (one driver per entry) cannot
+        // hold a second rogue for it. It gets its own: a poller of the roster through the front must fail the contract too.
+        await using (var rig = await Rig.StartAsync(root, compose: _ => new RogueRosterReader()))
+        {
+            var failure = Record(() => rig.AssertQuiet("rogue roster read", baseline: default, window: null));
+            Expect(failure is ZeroClientContractViolation,
+                $"the whole-host contract rejects a rogue roster read (got: {failure?.GetType().Name ?? "no failure"})");
+            Expect(ZeroClientEntries.HostFactsRead.Hits >= 1, "the tripwire counted the rogue roster read as a host-facts read");
+            Expect(rig.TripwireLines.Any(line => line.StartsWith("[idle-work] ZeroClientContractTests.Read host-facts.read", StringComparison.Ordinal)),
+                $"the tripwire names the rogue roster reader (lines: {string.Join(" | ", rig.TripwireLines)})");
         }
 
         Console.WriteLine("  every entry point has a rogue that fails the contract: ok");
@@ -494,6 +509,30 @@ internal static class ZeroClientContractTests
         public void Dispose() { }
     }
 
+    // The next roster listener: subscribes to the roster signals through the observer's factory, from its own method.
+    private sealed class RogueRosterSubscriber : IDisposable
+    {
+        private readonly IDisposable _subscription;
+
+        public RogueRosterSubscriber() => _subscription = SubscribeRoster();
+
+        [MethodImpl(MethodImplOptions.NoInlining)]
+        private static IDisposable SubscribeRoster() => CouchCoopRosterObserver.Subscribe(_ => { });
+
+        public void Dispose() => _subscription.Dispose();
+    }
+
+    // The next poller of the lobby and run roster: reads it through the CouchCoop front from its own method.
+    private sealed class RogueRosterReader : IDisposable
+    {
+        public RogueRosterReader() => Read();
+
+        [MethodImpl(MethodImplOptions.NoInlining)]
+        private static void Read() => CouchCoopGameFacts.ReadRoster();
+
+        public void Dispose() { }
+    }
+
     private sealed class RogueMainThreadWaker : IDisposable
     {
         public RogueMainThreadWaker() => Wake();
@@ -518,7 +557,8 @@ internal static class ZeroClientContractTests
         long Dispatches,
         long Violations,
         long Timers,
-        long PoolItems);
+        long PoolItems,
+        long RosterObservers);
 
     private sealed class ZeroClientContractViolation(string message) : Exception(message);
 
@@ -558,6 +598,9 @@ internal static class ZeroClientContractTests
 
         /// <summary>Managed timers alive before the composed host existed: other suites' leftovers are not the host's.</summary>
         public long BaselineTimers { get; private set; }
+
+        /// <summary>Roster observers ever started before the composed host existed: other suites' leftovers are not the host's.</summary>
+        public long BaselineRosterStarted { get; private set; }
         public IReadOnlyList<string> TripwireLines => _tripwire;
 
         public HotReloadableBrowserServerHost Server
@@ -579,7 +622,11 @@ internal static class ZeroClientContractTests
             var services = new CouchCoopHostUiServices(
                 host, root, IPAddress.Loopback, ReserveEphemeralPort(), _ => { }, deferDiscoveryServices: true);
 
-            var rig = new Rig(runtime, screens, mainThread, clock, host, services) { BaselineTimers = Timer.ActiveCount };
+            var rig = new Rig(runtime, screens, mainThread, clock, host, services)
+            {
+                BaselineTimers = Timer.ActiveCount,
+                BaselineRosterStarted = CouchCoopRosterObserver.StartedCount,
+            };
             ZeroClientGuard.ResetForTests(armed: true);
             ZeroClientGuard.Clock = () => clock.Now;
             ZeroClientGuard.LogSink = line => { lock (rig._tripwire) rig._tripwire.Add(line); };
@@ -617,15 +664,18 @@ internal static class ZeroClientContractTests
             MainThread.Dispatches,
             ZeroClientGuard.Violations,
             Timer.ActiveCount,
-            ThreadPool.CompletedWorkItemCount);
+            ThreadPool.CompletedWorkItemCount,
+            CouchCoopRosterObserver.StartedCount);
 
         public bool IsFullyParked()
             => Runtime.StateLive == 0 && Runtime.SceneLive == 0 && Runtime.HintLive == 0
-               && Screens.Live == 0 && !Server.IsHostingSupervisionActive;
+               && Screens.Live == 0 && !Server.IsHostingSupervisionActive
+               && CouchCoopRosterObserver.LiveCount == 0 && CouchCoopRosterSignals.ListenerCount == 0;
 
         public string Describe()
             => $"stateLive={Runtime.StateLive} sceneLive={Runtime.SceneLive} hintLive={Runtime.HintLive} "
-               + $"screenLive={Screens.Live} supervision={Server.IsHostingSupervisionActive}";
+               + $"screenLive={Screens.Live} supervision={Server.IsHostingSupervisionActive} "
+               + $"rosterObservers={CouchCoopRosterObserver.LiveCount} rosterListeners={CouchCoopRosterSignals.ListenerCount}";
 
         /// <summary>
         /// THE CONTRACT. Everything since <paramref name="baseline"/> (or since construction, for the default) must be
@@ -639,7 +689,8 @@ internal static class ZeroClientContractTests
             TimeSpan? window,
             long allowedScreenSubscribes = 0,
             long allowedDispatches = 0,
-            long allowedTimers = 0)
+            long allowedTimers = 0,
+            long allowedRosterListeners = 0)
         {
             if (window is { } observe)
             {
@@ -649,7 +700,7 @@ internal static class ZeroClientContractTests
             }
             else if (baseline == default)
             {
-                baseline = new Counters(0, 0, 0, 0, 0, 0, 0, 0, 0, BaselineTimers, ThreadPool.CompletedWorkItemCount);
+                baseline = new Counters(0, 0, 0, 0, 0, 0, 0, 0, 0, BaselineTimers, ThreadPool.CompletedWorkItemCount, BaselineRosterStarted);
             }
 
             var now = Snapshot();
@@ -666,6 +717,8 @@ internal static class ZeroClientContractTests
             Check("multiplayer-connection uses", now.ConnectionUses - baseline.ConnectionUses);
             Check("screen-event subscriptions", now.ScreenSubscribes - baseline.ScreenSubscribes, allowedScreenSubscribes);
             Check("screen reads", now.ScreenReads - baseline.ScreenReads);
+            Check("roster observers", now.RosterObservers - baseline.RosterObservers);
+            Check("roster signal listeners", CouchCoopRosterSignals.ListenerCount, allowedRosterListeners);
             Check("main-thread dispatches", now.Dispatches - baseline.Dispatches, allowedDispatches);
             Check("tripwire violations", now.Violations - baseline.Violations);
             // EXACT for every managed timer (System.Threading.Timer, Task.Delay, CancelAfter, PeriodicTimer all sit on

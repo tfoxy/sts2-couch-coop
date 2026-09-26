@@ -39,6 +39,9 @@ internal static class IdleHostCostTests
         MountTargetsResolve();
         PauseMenuMountTargetsResolve();
         MountPatchRefusesAnInheritedReady();
+        // The roster observer exists only while a viewer is parked on the join picker: with nobody served it has no
+        // listener, no subscription and no timer, and a raised signal reaches nobody.
+        CouchCoopRosterObserverTests.RosterIsDormantWithoutDemand();
         await DeferredHostUiKeepsTheListenerButNotTheNetworkAsync(rootPath);
         await PendingDiscoveryCannotPublishAfterStopAsync(rootPath);
 

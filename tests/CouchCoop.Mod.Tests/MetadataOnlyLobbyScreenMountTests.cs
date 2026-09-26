@@ -37,6 +37,14 @@ internal static class MetadataOnlyLobbyScreenMountTests
                 || HasInstanceIntGetter(assemblyPath, LobbyCapTargets.StartRunLobbyType, LobbyCapTargets.PropertyGetterName),
             $"{LobbyCapTargets.StartRunLobbyType} must declare an int field {LobbyCapTargets.FieldName} or an int "
             + $"property getter {LobbyCapTargets.PropertyGetterName}");
+        // The methods the roster observer is told by: each must still be DECLARED by its type with the same number of
+        // parameters (their parameter types are pinned by the typed binding in the full lane). A constructor is the
+        // method named `.ctor`.
+        foreach (var target in RosterSignalTargets.Targets)
+        {
+            Assert(HasDirectMethod(assemblyPath, target.TypeName, target.MethodName, target.ParameterCount),
+                $"{target.TypeName} must directly declare {target.MethodName} with {target.ParameterCount} parameter(s)");
+        }
     }
 
     internal static void RunFixtureCases()

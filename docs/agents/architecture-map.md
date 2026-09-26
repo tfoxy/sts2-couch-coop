@@ -695,8 +695,9 @@ statics set; any new standalone host of this server needs the same two lines.
   the connect sequence in order (reset → open gate → register as streaming → FULL keyframe → release the pump).
 - CPU: `CouchCoopBrowserServer._streamingMirrorConnectionCount` — not the connection count — drives the scene
   observer, so the producer's whole-tree walk stops while every viewer is on the picker. Conversely a GATED
-  mirror keeps the (cheaper) STATE observer alive, because `RebroadcastSessionsIfRosterChanged` is the only
-  source of `session` re-sends on a mirror-only host — without it the gate would latch shut. The streaming path
+  mirror keeps the (much cheaper) ROSTER observer alive (see "Roster observer" below), because its
+  `CouchCoopRosterReaction` is the only source of `session` re-sends on a mirror-only host — without it the gate
+  would latch shut. The streaming path
   additionally re-sends sessions on a screen change seen in the scene delta
   (`ResendSessionsIfSceneScreenChanged`), which is what closes the gate when the host ENTERS a multiplayer screen.
 - Tests: `BrowserServerRouteTests.AssertSceneStreamGateAsync` (+ `AssertMirrorOnlyHostKeepsSessionsLiveAsync`),
@@ -704,6 +705,77 @@ statics set; any new standalone host of this server needs the same two lines.
   the `seatIntent` block), `frontend/src/mirror/__tests__/mirrorClientWatch.spec.ts`, and the seat-intent leg in
   `frontend/src/mirror/__tests__/mirrorJoinUrl.spec.ts` (asserts what is actually on the wire: the last
   `{"type":"watch"}` flip, or the connect query when there is none).
+
+## Roster observer (who is in the lobby or the run)
+
+The browser server re-sends every connection's `session` envelope when the lobby or run roster changes, republishes the
+seat names, and reaps detached seats once the run and any lobby are over. It used to hold a full-snapshot subscription
+(`CouchCoopStateObserver`, 50 ms floor) for that; it now holds a **signal subscription** and reads typed facts.
+
+- **Demand.** `CouchCoopBrowserServer.RefreshObserversLocked` starts the observer only while a GATED (picker-parked)
+  mirror viewer exists and stops it with the last one (`StartRosterObserverLocked` / `StopRosterObserverLocked`; the
+  server's test seam is the `subscribeRoster` constructor argument). At zero demand there is no listener, no
+  subscription and no timer. A viewer that is streaming does not start it.
+- **The read.** `IGameFacts.ReadRoster()` (`CouchCoop.Mod.Contracts/RosterFacts.cs`) returns `RosterFacts?`
+  (`null` = unavailable, which is not "no lobby"): `RootScene` (the four snapshot strings, `RosterRootScenes`),
+  `RosterLobby?` (`NetType`, `HostPlayerId`, `IsSavedRun`, `Seats` of id, display name, character id, connected, and
+  `SavedRunSeatIds`) and `RosterRun?` (`NetType`, `HostPlayerId`, `Seats` of id, display name, character id, is host,
+  connected). Ids stay `p:{netId}`; value equality holds element by element. The front is `CouchCoopGameFacts.ReadRoster()`
+  (`Runtime/CouchCoopGameFacts.Roster.cs`): callable from ANY thread, marshalled through `GameMainThread` and inline when
+  already on it, a throw becomes `null`, never while holding a mod lock and never inside a game callback. The typed
+  reader is `Runtime/GameFactsReader.Roster.cs`, every game type behind the `CouchCoopMod.EngineAvailable` guard.
+  Sources: run = `RunManager` (presence through the shared `RunInProgressFromGame`, `DebugOnlyGetState().Players`, the
+  run's `NetService`); new-run lobby = the current `NCharacterSelectScreen.Lobby`; **saved-run lobby = the lobby object
+  that a postfix on `LoadRunLobby`'s constructor recorded for its screen** (`LobbyAssignmentRecord.RecordLobby`, beside
+  the role and the save the assignment hooks record), because the screen keeps it private; it is the lobby, not just the
+  recorded save, because only the lobby knows who it has admitted. A lobby seat is connected only if it is the local player or the host's peer list holds it
+  (saved-run lobby: the lobby's own admitted-player list, `ConnectedPlayerIds` on v0.107.1 and `PlayerIds` on v0.111.0);
+  a run seat's connectedness FAILS OPEN. Names are read through `PlatformUtil.GetPlayerNameRaw`, where the display-name
+  overrides apply, not the BBCode-escaping `GetPlayerName` wrapper.
+- **Signals, and only signals** (`Runtime/GameRosterSignals.cs`, woken into `CouchCoopRosterObserver`): the game's
+  active-screen event (`GameScreenContext.SubscribeUpdated`); typed postfixes (`Patches/RosterSignalPatch.cs` +
+  `RosterSignalTargets.cs`) on `NCharacterSelectScreen.PlayerConnected`/`RemotePlayerDisconnected`,
+  `NMultiplayerLoadGameScreen.PlayerConnected`/`RemotePlayerDisconnected`, the `StartRunLobby` and `LoadRunLobby`
+  constructors and `RunManager.CleanUp`; `RunManager.RunStarted`; the host net service's `ClientConnected` /
+  `ClientDisconnected` (the service is the one the lobby constructors recorded in `Runtime/RosterHostService.cs`, bound
+  just before each read and unbound with the observer); and CouchCoop's own display-name change
+  (`CouchCoopLobbyParticipation.SetClientName` → `CouchCoopRosterSignals.NoteNameChanged`). **A postfix only records and
+  wakes**; a signal marks the roster dirty and asks for ONE read on the game's next frame (`Runtime/GameNextFrame.cs`),
+  so a burst of signals is one read. The first read after `Start` is the baseline and counts as a change. There is no
+  timer, no retry and no backstop: a failed read is delivered as `null` and the next signal reads again.
+  Declared methods only, typed `nameof`/`typeof` bindings per lane (`#if STS2_API_V111` for the lobby-player parameter
+  types), pending-set retry, second chance at the end of `CouchCoopMod.Init`. Player character/readiness changes are
+  not hooked: nothing acts on them (the re-send signature ignores both, and a read always sees the current character).
+  **Known unsignalled gaps** (push only, so reported instead of polled): a remote player's platform name resolving late,
+  and a mod that edits a lobby's players directly.
+- **What the server does with a read** (`Server/CouchCoopRosterReaction.cs`, pure and injected; the observer hands each
+  roster to a serial worker off the game thread, and a read from a stopped observer is dropped by generation): on a
+  changed `CouchCoopRosterChange.Signature` (the retired snapshot fingerprint, unchanged: seats' id/name/connected, the
+  saved seat ids and the scene) republish the names (`PublishRosterNames`, host only) then re-send every session; and,
+  on every read, reap detached seats when `CouchCoopRosterChange.HasLeftRunAndLobby` (**no run AND no lobby**: the main
+  menu and epoch screens; the end-of-run death/Architect summary is still the run, and a lobby screen is not the run
+  having ended). A `null` roster does nothing.
+- **Differences from the retired snapshot observer**: it re-read on every state change (50 ms floor), so it also saw
+  changes nothing signals (the gaps above); the reap was `Run is null` and is now `Run is null && Lobby is null`, and an
+  unreadable roster never reaps; a platform name containing `[` is no longer BBCode-escaped (raw, like the overrides
+  always were); spirectl's host-local synthetic seats no longer count as connected (CouchCoop's seats are real ENet peers).
+- **Files**: `Runtime/CouchCoopRosterObserver.cs`, `Runtime/GameRosterSignals.cs`, `Runtime/CouchCoopRosterSignals.cs`,
+  `Runtime/RosterHostService.cs`, `Runtime/GameNextFrame.cs`, `Patches/RosterSignalPatch.cs` + `RosterSignalTargets.cs`,
+  `HostUi/LobbyAssignmentRecord.cs` (the lobby table), `Server/CouchCoopRosterChange.cs`, `Server/CouchCoopRosterReaction.cs`.
+  `Server/` is linked into the hot-reload assembly, so those two are game-free and everything that touches a game type
+  or a static that must exist once lives in `Runtime/`, `Patches/` or `HostUi/`.
+- **Tests**: `RosterFactsTests` (facts, parity oracle over the shared snapshot fixtures for the signature, the published
+  names and the reap predicate — TEST ONLY, deleted with the last WP3 path — and the front's threading) and
+  `CouchCoopRosterObserverTests` (observer, signal hub, reaction, hook targets, dormancy) in `-- host-ui`;
+  `CouchCoopRosterObserverTests.TargetsResolve` in `-- host-guards` and `-- beta-targets` (and
+  `RosterSignalTargets` in the metadata-only lane); `BrowserServerRouteTests.AssertRosterObserverDrivesTheServerAsync` and
+  `AssertMirrorOnlyHostKeepsSessionsLiveAsync` (real listener, real seat manager, fake seat process) in `-- seats`;
+  `CouchCoopRosterObserverTests.RosterIsDormantWithoutDemand` in `-- idle-host`; `-- zero-client` (the `roster.subscribe`
+  rogue and a rogue roster read).
+- **Live QA to run** (the reap rule needs a game, not a fixture): a death and an Architect summary must NOT reap detached
+  seats, a lobby must not, leaving to the main menu must. With `COUCHCOOP_ROSTER_TRACE=1` each read logs
+  `roster read #N <signature>` to `godot.log`: one burst of joins is one read, and at a settled checkpoint the last
+  signature must equal the game's real roster; a mismatch is a missed signal, to be reported, not papered over with a poll.
 
 ## Host transport
 
@@ -898,7 +970,7 @@ every test pinned a named component. This is the whole-host version, in two halv
 `BrowserDemandLedger` / `StreamingViewerDemand`: those publish after a WebSocket registers, which is after the
 handshake's own `session` state read and after the first observer starts, so they would flag the first viewer's own
 work. Every ledger count is a subset of a served connection. A **picker-parked viewer is demand** (an open socket),
-which is what keeps `CouchCoopStateObserver`'s 50 ms subscription legitimate; it is not an allow-list entry. After
+which is what keeps the roster observer's signal subscription legitimate; it is not an allow-list entry. After
 demand falls to zero the tripwire is quiet for `ReleaseGrace` (5 s) so the tail of teardown, such as a queued
 evaluation that runs one frame late, is not reported. The tripwire is armed on a player's host only, never on a
 spawned seat.
@@ -909,7 +981,8 @@ spawned seat.
 | --- | --- |
 | `state.read`, `state.subscribe`, `scene.subscribe`, `animation-hints.subscribe`, `multiplayer-connection.read/.subscribe` | the ports of `CouchCoopRuntimeHost` (`ZeroClientGuard.EnterPort`); the caller is read from the stack, and only when a violation is reported |
 | `screen-context.subscribe/.read` | `Runtime/CouchCoopGameSeams.cs` `GameScreenContext`, the CouchCoop front for `Sts2ScreenContext` (tracker, browser-server static-background probe, QR host panel) |
-| `host-facts.read` | `Runtime/CouchCoopGameFacts.cs` `CouchCoopGameFacts`, the CouchCoop front for its own typed reader `IGameFacts` (QR host panel, pause-menu row, run presence for a browser disconnect and a seat launch, the hosting tracker, and `ReadLobbyCap` for admission, seat allocation and host start) |
+| `host-facts.read` | `Runtime/CouchCoopGameFacts.cs` `CouchCoopGameFacts`, the CouchCoop front for its own typed reader `IGameFacts` (QR host panel, pause-menu row, run presence for a browser disconnect and a seat launch, the hosting tracker, `ReadLobbyCap` for admission, seat allocation and host start, and `ReadRoster`, the lobby and run roster read) |
+| `roster.subscribe` | `Runtime/CouchCoopRosterObserver.cs` `Subscribe`, the one way to listen for roster changes (the browser server, while a viewer is parked on the join picker) |
 | `main-thread.dispatch` | the same file's `GameMainThread`, the front for `Sts2MainThreadDispatcher` (tracker, seat peer check, root-window guard, windowless viewport loop) |
 
 **Allow-list — `ZeroClientAllowances`, the review point.** Each entry names work that touches game state at zero

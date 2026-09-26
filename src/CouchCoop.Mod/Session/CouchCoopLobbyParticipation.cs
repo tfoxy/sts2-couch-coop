@@ -1,3 +1,4 @@
+using CouchCoop.Mod.Contracts;
 using CouchCoop.Mod.Runtime;
 using CouchCoop.MirrorProtocol.Envelopes;
 using Spirectl.Sts2.Core.Actions;
@@ -100,6 +101,11 @@ public sealed class CouchCoopLobbyParticipation(CouchCoopRuntimeHost runtimeHost
         {
             CouchCoopLog.Stderr($"SetClientName({netId}, '{displayName}') failed: {result.Result?.Message ?? result.Error?.Message}");
         }
+        else
+        {
+            // The name the roster reports for this seat just changed; the game raises nothing for it, so say so.
+            CouchCoopRosterSignals.NoteNameChanged();
+        }
 
         return result.Success;
     }
@@ -109,7 +115,7 @@ public sealed class CouchCoopLobbyParticipation(CouchCoopRuntimeHost runtimeHost
 
     /// <summary>
     /// Every netId this process can put a NAME to right now, read from a snapshot the caller already holds (the
-    /// join handler's, or the state observer's, so publishing the roster costs no second state pull), for
+    /// join handler's, or the one the roster observer built, so publishing the roster costs no second state pull), for
     /// publishing to the couch seats (<see cref="HeadlessClientManager.PublishRosterNames"/> →
     /// <c>mp_names.json</c>). Pure, so it is unit-testable.
     /// <para>
@@ -127,43 +133,50 @@ public sealed class CouchCoopLobbyParticipation(CouchCoopRuntimeHost runtimeHost
     /// </para>
     /// </summary>
     public static IReadOnlyList<(ulong NetId, string Name)> RosterNames(StateSnapshot state)
+        // The lobby is read even during a run: nothing populates both, so this is simply "whichever the host is
+        // in". A saved run's players carry no name at all (the save has NetIds only), which is exactly what the
+        // durable roster remembers FOR them — so there is nothing to add from SavedRun here.
+        => CollectRosterNames(
+            (state.Run?.Players ?? []).Select(player => ((string?)player.Id, player.DisplayName))
+                .Concat((state.CharacterSelect?.Lobby?.Players ?? []).Select(player => ((string?)player.Id, player.DisplayName))));
+
+    /// <summary>
+    /// The same names as <see cref="RosterNames(StateSnapshot)"/>, read from a roster instead of a state snapshot.
+    /// </summary>
+    public static IReadOnlyList<(ulong NetId, string Name)> RosterNames(RosterFacts roster)
+    {
+        ArgumentNullException.ThrowIfNull(roster);
+        return CollectRosterNames(
+            (roster.Run?.Seats ?? []).Select(seat => ((string?)seat.Id, seat.DisplayName))
+                .Concat((roster.Lobby?.Seats ?? []).Select(seat => ((string?)seat.Id, seat.DisplayName))));
+    }
+
+    private static IReadOnlyList<(ulong NetId, string Name)> CollectRosterNames(
+        IEnumerable<(string? PlayerId, string? DisplayName)> players)
     {
         var names = new List<(ulong NetId, string Name)>();
         var seen = new HashSet<ulong>();
 
-        void Add(string? playerId, string? displayName)
+        foreach (var (playerId, displayName) in players)
         {
             var name = displayName?.Trim();
             if (string.IsNullOrEmpty(name)
                 || !MirrorSeatNetIds.TryParsePlayerId(playerId, out var netId)
                 || !seen.Add(netId))
             {
-                return;
+                continue;
             }
 
             // Both platform strategies fall back to `playerId.ToString()` when they cannot name a player
             // (SteamPlatformUtilStrategy on an empty persona, NullPlatformUtilStrategy on an unknown netId), so a
-            // "name" that IS the netId means "unknown" — publishing it would bake that placeholder into the
-            // durable roster and then override the real name once it resolved.
+            // "name" that IS the netId means "unknown" — publishing it would bake that placeholder into the durable
+            // roster and then override the real name once it resolved.
             if (string.Equals(name, netId.ToString(System.Globalization.CultureInfo.InvariantCulture), StringComparison.Ordinal))
             {
-                return;
+                continue;
             }
 
             names.Add((netId, name));
-        }
-
-        foreach (var player in state.Run?.Players ?? [])
-        {
-            Add(player.Id, player.DisplayName);
-        }
-
-        // The lobby is read even during a run: nothing populates both, so this is simply "whichever the host is
-        // in". A saved run's players carry no name at all (the save has NetIds only), which is exactly what the
-        // durable roster remembers FOR them — so there is nothing to add from SavedRun here.
-        foreach (var player in state.CharacterSelect?.Lobby?.Players ?? [])
-        {
-            Add(player.Id, player.DisplayName);
         }
 
         return names;

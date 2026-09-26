@@ -34,6 +34,7 @@ internal static class LobbyAssignmentRecord
 {
     private static readonly ConditionalWeakTable<object, string> Roles = new();
     private static readonly ConditionalWeakTable<object, object> SavedRuns = new();
+    private static readonly ConditionalWeakTable<object, object> Lobbies = new();
 
     /// <summary>Remember (or replace) the role assigned to <paramref name="screen"/>.</summary>
     internal static void Record(object screen, string role)
@@ -77,6 +78,35 @@ internal static class LobbyAssignmentRecord
         }
 
         payload = null;
+        return false;
+    }
+
+    /// <summary>
+    /// Remember (or replace) the saved-run LOBBY OBJECT the game built for <paramref name="screen"/>, as its constructor
+    /// hook (<see cref="Patches.RosterSignalPatch"/>) saw it. Not inspected here.
+    /// </summary>
+    /// <remarks>
+    /// This is what the roster read needs beyond the save: which players the lobby has ADMITTED, which the save cannot say
+    /// (a peer is connected before the lobby admits it, and only the admitted are seated). The lobby also carries the save
+    /// it was built around, so the same entry answers the seat list.
+    /// </remarks>
+    internal static void RecordLobby(object screen, object lobby)
+    {
+        ArgumentNullException.ThrowIfNull(screen);
+        ArgumentNullException.ThrowIfNull(lobby);
+        Lobbies.AddOrUpdate(screen, lobby);
+    }
+
+    /// <summary>The lobby object last recorded for the saved-run <paramref name="screen"/>, or false when none was.</summary>
+    internal static bool TryGetLobby(object screen, [NotNullWhen(true)] out object? lobby)
+    {
+        if (screen is not null && Lobbies.TryGetValue(screen, out var found))
+        {
+            lobby = found;
+            return true;
+        }
+
+        lobby = null;
         return false;
     }
 }

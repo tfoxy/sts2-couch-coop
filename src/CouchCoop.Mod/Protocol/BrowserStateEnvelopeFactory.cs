@@ -36,9 +36,8 @@ public sealed class BrowserStateEnvelopeFactory(
     internal string? RefuseSeatJoin(ulong? targetNetId) => _mirrorSeats?.RefuseJoin(targetNetId);
 
     // Build the per-client `session` message: identity + capabilities/notices + the lobby/run assignment.
-    // The rendered game state (stateV2) is NOT in here — it rides the shared `state` broadcast. The current
-    // game state is still PULLED here (cheap, identity-only) so a just-joined seat is resolved immediately
-    // (the observer cache can lag a tick behind a roster change).
+    // The rendered game state (stateV2) is NOT in here. The current game state is still PULLED here (identity-only)
+    // so a just-joined seat is resolved immediately, rather than trusting whatever the roster observer last read.
     public async Task<BrowserEnvelope> CreateSessionEnvelope(
         string? viewerName,
         string requestId,

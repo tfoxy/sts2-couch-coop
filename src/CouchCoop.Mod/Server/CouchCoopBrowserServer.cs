@@ -36,7 +36,8 @@ public sealed class CouchCoopBrowserServer(
     Action? onSceneAck = null,
     Func<Action, IDisposable?>? subscribeScreenUpdated = null,
     Action<int, long>? onBrowserDemandChanged = null,
-    Action<int, long>? onSceneStreamingDemandChanged = null) : IAsyncDisposable
+    Action<int, long>? onSceneStreamingDemandChanged = null,
+    Func<Action<RosterFacts?>, IDisposable?>? subscribeRoster = null) : IAsyncDisposable
 {
     /// <summary>Harness-only synthetic seat port injected into the control document; null in product hosting.</summary>
     public int? SyntheticSeatPort { get; set; }
@@ -61,7 +62,11 @@ public sealed class CouchCoopBrowserServer(
     private readonly NetworkAdmissionLimiter _admission = admission ?? new NetworkAdmissionLimiter(
         () => envelopeFactory is null ? null : new CouchCoopLobbyParticipation(envelopeFactory.RuntimeHost).MaxLobbyPlayers());
     private readonly object _observerGate = new();
-    private CouchCoopStateObserver? _observer;
+    // The roster observer's subscription, held while a viewer is parked on the join picker (RefreshObserversLocked).
+    // `subscribeRoster` is the test seam; production reads the game through CouchCoopRosterObserver.
+    private readonly Func<Action<RosterFacts?>, IDisposable?> _subscribeRoster =
+        subscribeRoster ?? (handler => CouchCoopRosterObserver.Subscribe(handler));
+    private IDisposable? _rosterSubscription;
     private CouchCoopSceneObserver? _sceneObserver;
     // Encounter-load geoclip prerender (OFF by default — COUCHCOOP_PRERENDER_ENCOUNTER_GEOCLIPS=1). Its lifetime is
     // deliberately the scene observer's: it reads the observer's retained keyframe for its roster, and the observer
@@ -77,7 +82,7 @@ public sealed class CouchCoopBrowserServer(
     // observer (the producer's whole-tree walk — by far the most expensive thing this host does) is driven by
     // THIS number, not by _mirrorConnectionCount: while every viewer sits on the join picker the walk stops
     // entirely. The remainder (_mirrorConnectionCount - _streamingMirrorConnectionCount) is the GATED count,
-    // which conversely keeps the (much cheaper) state observer alive — see RefreshObserversLocked.
+    // which conversely keeps the (much cheaper) roster observer alive — see RefreshObserversLocked.
     private int _streamingMirrorConnectionCount;
     private long _sceneStreamingDemandGeneration;
     // A dispatched old-generation WS can reach stream registration after StopGenerationAsync snapshots its
@@ -388,19 +393,19 @@ public sealed class CouchCoopBrowserServer(
 
     private void RefreshObserversLocked()
     {
-        // A GATED mirror viewer is the ONLY thing that keeps the STATE observer alive, and it must:
-        // RebroadcastSessionsIfRosterChanged is driven solely from here, and a re-sent `session` is the ONLY way a
-        // viewer sitting on the picker learns the host left the multiplayer screen (its `screen.mirrorMode` is what
+        // A GATED mirror viewer is the ONLY thing that keeps the ROSTER observer alive, and it must:
+        // the roster observer is what re-sends a `session` when the roster changes, and a re-sent `session` is the ONLY
+        // way a viewer sitting on the picker learns the host left the multiplayer screen (its `screen.mirrorMode` is what
         // the client's gate decision reads). Without this the gate would latch shut — the scene observer it used to
         // ride on is exactly the thing the gate just switched off. This is also the fix for the picker's roster
-        // going stale on an already-open connection.
+        // going stale on an already-open connection. The observer is woken by game signals and reads nothing on a timer.
         if (GatedMirrorConnectionsLocked > 0)
         {
-            StartStateObserverLocked();
+            StartRosterObserverLocked();
         }
         else
         {
-            StopStateObserverLocked();
+            StopRosterObserverLocked();
         }
 
         // STREAMING mirror connections — not merely connected ones — drive the scene producer.
@@ -792,49 +797,123 @@ public sealed class CouchCoopBrowserServer(
         collector.Dispose();
     }
 
-    // Subscribe ONCE to the live state watcher. Nothing on this path is broadcast as game state any more — the
-    // observer exists so a GATED mirror viewer's `session` envelope stays live (roster / run status /
-    // `screen.mirrorMode`) and so a run end can reap detached headless seats. Lazy: it runs only while at least
-    // one mirror viewer is parked on the join picker (see RefreshObserversLocked).
-    private void StartStateObserverLocked()
+    // Subscribe ONCE to the roster signals. Nothing on this path is broadcast as game state: the observer exists so a
+    // GATED mirror viewer's `session` envelope stays live (roster / run status / `screen.mirrorMode`) and so the end of
+    // the run and lobby can reap detached headless seats. Lazy: it runs only while at least one mirror viewer is
+    // parked on the join picker (see RefreshObserversLocked). The subscription only attaches signals and arms the
+    // baseline read; it is safe under _observerGate (nothing here marshals to the game thread and waits).
+    private void StartRosterObserverLocked()
     {
-        if (envelopeFactory is null || _observer is not null)
+        if (envelopeFactory is null || _rosterSubscription is not null)
         {
             return;
         }
 
-        var observer = new CouchCoopStateObserver(envelopeFactory.RuntimeHost, envelopeFactory.RuntimeHost);
-        observer.StateChanged += BroadcastState;
-        // Host-only: when the run ends (state.Run goes null → back to lobby / main menu), reap any headless we
-        // kept alive for a browser that disconnected mid-run. Otherwise those kept-alive instances would linger
-        // as phantom players into the next lobby. No-op while in a run or when nothing is detached.
-        observer.StateChanged += ReapDetachedHeadlessOnRunEnd;
-        _observer = observer;
-        observer.Start();
+        var generation = Interlocked.Increment(ref _rosterGeneration);
+        _rosterReaction ??= CreateRosterReaction();
+        try
+        {
+            _rosterSubscription = _subscribeRoster(roster => OnRosterRead(generation, roster));
+        }
+        catch (Exception exception)
+        {
+            _rosterSubscription = null;
+            _log($"roster observer could not start: {exception.GetType().Name}: {exception.Message}");
+        }
     }
 
-    private void StopStateObserverLocked()
+    private void StopRosterObserverLocked()
     {
-        var observer = _observer;
-        if (observer is null)
+        var subscription = _rosterSubscription;
+        if (subscription is null)
         {
             return;
         }
 
-        _observer = null;
-        observer.Dispose();
+        _rosterSubscription = null;
+        // Anything the stopped observer already queued belongs to a dead generation and is dropped.
+        Interlocked.Increment(ref _rosterGeneration);
+        try
+        {
+            subscription.Dispose();
+        }
+        catch (Exception exception)
+        {
+            _log($"roster observer stop failed: {exception.GetType().Name}: {exception.Message}");
+        }
+
         // Forget the roster fingerprint with the observer that produced it: the next generation must be free to
-        // re-broadcast the very first snapshot it sees rather than compare against a signature from a previous,
+        // re-broadcast the very first roster it reads rather than compare against a signature from a previous,
         // possibly long-gone generation.
-        Volatile.Write(ref _lastRosterSignature, null);
+        _rosterReaction?.Reset();
     }
 
-    // Reaps kept-alive (detached) headless instances once the host leaves a run. The HeadlessClientManager only
-    // holds detached slots after a mid-run browser disconnect; a reconnect clears them, so this fires only for
-    // browsers that never came back. Runs on the observer's background thread (host only — null on headless).
-    private void ReapDetachedHeadlessOnRunEnd(StateSnapshot snapshot)
+    // The roster read, delivered on the thread that made it (the game main thread): hand it to the serial worker and
+    // return, because everything the roster triggers (a names file write, session re-sends, killing seat processes)
+    // must not run on the game's frame. One at a time and in order, so a stale roster is never applied over a newer one.
+    private void OnRosterRead(long generation, RosterFacts? roster)
     {
-        if (_headlessManager is null || envelopeFactory is null || snapshot.Run is not null)
+        if (roster is null)
+        {
+            // UNAVAILABLE is not "no lobby and no run": nothing changed that we know of, and nothing may be reaped. The
+            // next signal reads again; there is no retry.
+            return;
+        }
+
+        lock (_rosterWorkGate)
+        {
+            _rosterWork = _rosterWork.ContinueWith(
+                _ => ApplyRoster(generation, roster),
+                CancellationToken.None,
+                TaskContinuationOptions.None,
+                TaskScheduler.Default);
+        }
+    }
+
+    private long _rosterGeneration;
+    private readonly object _rosterWorkGate = new();
+    private Task _rosterWork = Task.CompletedTask;
+    private CouchCoopRosterReaction? _rosterReaction;
+
+    private void ApplyRoster(long generation, RosterFacts roster)
+    {
+        try
+        {
+            if (generation != Interlocked.Read(ref _rosterGeneration))
+            {
+                return; // the observer that read this has stopped
+            }
+
+            _rosterReaction?.Apply(roster);
+        }
+        catch (Exception exception)
+        {
+            _log($"roster handling failed: {exception.GetType().Name}: {exception.Message}");
+        }
+    }
+
+    // What a roster read makes the server do (see CouchCoopRosterReaction). Built with the observer, under
+    // _observerGate; the effects run later on the serial roster worker, never under a lock.
+    private CouchCoopRosterReaction CreateRosterReaction()
+        => new(
+            // Host only: a headless client has no manager and publishes no names.
+            publishNames: _headlessManager is { } manager ? manager.PublishRosterNames : null,
+            resendSessions: () =>
+            {
+                foreach (var connection in _connections.Values)
+                {
+                    _ = connection.ResendSessionAsync(CancellationToken.None);
+                }
+            },
+            reapDetachedSeats: _headlessManager is not null && envelopeFactory is not null ? ReapDetachedHeadless : null,
+            log: _log);
+
+    // Reaps kept-alive (detached) headless instances. The HeadlessClientManager only holds detached slots after a mid-run
+    // browser disconnect; a reconnect clears them, so this frees only browsers that never came back. The caller decides
+    // WHEN: once the game has left both the run and any lobby (see CouchCoopRosterChange.HasLeftRunAndLobby).
+    private void ReapDetachedHeadless()
+    {
+        if (_headlessManager is null || envelopeFactory is null)
         {
             return;
         }
@@ -862,66 +941,6 @@ public sealed class CouchCoopBrowserServer(
         }
     }
 
-    private void BroadcastState(StateSnapshot snapshot)
-    {
-        // Re-send each connection's `session` envelope when the lobby roster / run status changes, so the shared
-        // join screen stays live — this is what lets the mirror carry no full state and still see a later joiner /
-        // a lobby→run transition. Cheap signature gate so it fires only on real change.
-        RebroadcastSessionsIfRosterChanged(snapshot);
-    }
-
-    // The roster/run signature last broadcast, so RebroadcastSessionsIfRosterChanged re-sends sessions only on a
-    // real change (a player joining/leaving the lobby, a name resolving, or a lobby↔run transition) rather than
-    // on every 50ms state tick. Touched only from the observer's single background thread.
-    private string? _lastRosterSignature;
-
-    private void RebroadcastSessionsIfRosterChanged(StateSnapshot snapshot)
-    {
-        var signature = RosterSignature(snapshot);
-        if (string.Equals(signature, _lastRosterSignature, StringComparison.Ordinal))
-        {
-            return;
-        }
-
-        _lastRosterSignature = signature;
-
-        // Host-only: the roster just changed, so republish the netId→name map the couch seats read
-        // (mp_names.json). This is what names a player the seats CANNOT resolve themselves — the host (a
-        // SteamID64 on a Steam-hosted session) and any genuine remote Steam friend — on instances that are
-        // already running. Free here: the snapshot is in hand, and the signature gate above means it runs on a
-        // real roster change rather than every 50ms tick.
-        //
-        // The join handler publishes too (CouchCoopWebSocketConnection), which is the path that matters for a
-        // seat about to be spawned. Between them the only uncovered case is a remote player joining while NO
-        // browser is attached to the host at all — this observer is connection-driven, so there is nobody to
-        // drive it then, and the next join message closes the gap. Not worth a host-side polling timer.
-        if (_headlessManager is not null)
-        {
-            try
-            {
-                _headlessManager.PublishRosterNames(CouchCoopLobbyParticipation.RosterNames(snapshot));
-            }
-            catch (Exception exception)
-            {
-                // Naming is cosmetic: never let it break the session rebroadcast this method exists for.
-                CouchCoopLog.Stderr(
-                    $"publishing roster names failed: {exception.GetType().Name}: {exception.Message}");
-            }
-        }
-
-        foreach (var connection in _connections.Values)
-        {
-            _ = connection.ResendSessionAsync(CancellationToken.None);
-        }
-    }
-
-    // A cheap fingerprint of the join-screen-relevant state: run-vs-lobby, the lobby roster (id + display name),
-    // AND the root scene. The scene matters because the session's Screen block (the title/kind/mirrorMode the
-    // pre-join gate renders) is derived from it — without it, a viewer that connected on one screen kept a STALE
-    // gate title forever (e.g. "screens/main_menu" while a run streamed behind it: the run pre-dated the connect,
-    // so run-vs-lobby never changed and no session was re-sent). Scene transitions are infrequent, so the extra
-    // re-sends are cheap. Connection counts aren't here (they change on browser connect/disconnect, not on a
-    // state tick — the session reply on connect already carries the current count).
     // The host's shared seat directory (see _mirrorSeats). On a headless client instance — or a host that could not
     // resolve its own exe — there is no seat table to read, so the directory is built without one and reports every
     // seat ready: joinability is the game's call, and we simply have nothing extra to say.
@@ -975,37 +994,6 @@ public sealed class CouchCoopBrowserServer(
                 lobby.DisconnectClient(netId);
                 lobby.ClearClientName(netId);
             });
-    }
-
-    // Per-player CONNECTEDNESS is part of the signature on both branches (and the run branch has a per-player
-    // signature at all only because of it). A player dropping out of a live run is precisely the moment the join
-    // screen has to change — that seat becomes reclaimable, and the mirror picker is the only way back into it — and
-    // nothing else about the run roster moves when it happens, so without this the picker of an already-connected
-    // viewer stayed frozen on the pre-drop roster until some unrelated scene change shook it loose.
-    private static string RosterSignature(StateSnapshot snapshot)
-    {
-        string scene = "|scene:" + (snapshot.RootScene ?? "");
-        if (snapshot.Run is { } run)
-        {
-            return "run:" + string.Join(",", run.Players.Select(player => $"{player.Id}={player.IsConnected}")) + scene;
-        }
-
-        var lobby = snapshot.CharacterSelect?.Lobby;
-        var players = lobby?.Players;
-        if (players is null || players.Count == 0)
-        {
-            return "lobby:" + scene;
-        }
-
-        // The saved run's seats ride along on a load-game lobby: they are roster rows too (the union in
-        // BrowserAssignmentClassifier.LobbyPlayers), so a save being loaded/cleared must re-send the session.
-        var saved = lobby?.SavedRun is { } savedRun
-            ? "|saved:" + string.Join(",", savedRun.Players.Select(player => player.Id))
-            : "";
-        return "lobby:"
-            + string.Join(",", players.Select(player => $"{player.Id}={player.DisplayName}:{player.IsConnected}"))
-            + saved
-            + scene;
     }
 
     // Subscribe ONCE to the live runtime scene-tree watch and fan every revision out to connected mirror
@@ -1108,10 +1096,10 @@ public sealed class CouchCoopBrowserServer(
     // Touched only from the scene observer's single background thread, and reset when that observer stops.
     private string? _lastSceneScreenSignature;
 
-    // Keep `screen.mirrorMode` LIVE for a mirror-only host. The session envelope is otherwise re-sent solely from
-    // BroadcastState (RebroadcastSessionsIfRosterChanged), which needs the STATE observer — and that observer does
-    // not run for a host whose only clients are streaming mirrors. Without a re-send, a viewer watching the host's
-    // stream would never learn the host ENTERED a multiplayer screen, so the stream gate could never close.
+    // Keep `screen.mirrorMode` LIVE for a mirror-only host. The session envelope is otherwise re-sent solely by the roster
+    // reaction (CouchCoopRosterReaction), which needs the ROSTER observer — and that observer does not run for a host
+    // whose only clients are streaming mirrors. Without a re-send, a viewer watching the host's stream would never
+    // learn the host ENTERED a multiplayer screen, so the stream gate could never close.
     // The scene delta already carries the screen discriminator, so the change is free to detect here; only the
     // (rare) transition pays for the state pull inside ResendSessionAsync. Deliberately NOT calling
     // CouchCoopLobbyParticipation.DescribeMirrorJoinContext per delta — that marshals to the game thread.
@@ -1343,7 +1331,7 @@ public sealed class CouchCoopBrowserServer(
             _gatedStaticBgViewerCount = 0;
             sceneStreamingDemandGeneration = ++_sceneStreamingDemandGeneration;
             StopSceneObserverLocked();
-            StopStateObserverLocked();
+            StopRosterObserverLocked();
             StopMirrorHintCollectorLocked();
             // Hot reload must not leak the game-event handler into the next generation.
             StopScreenProbeLocked();
@@ -1643,7 +1631,6 @@ public sealed class CouchCoopBrowserServer(
                         request,
                         connectionEnvelopeFactory,
                         _connections,
-                        () => _observer,
                         () => _sceneObserver,
                         RegisterConnection,
                         UnregisterConnection,
