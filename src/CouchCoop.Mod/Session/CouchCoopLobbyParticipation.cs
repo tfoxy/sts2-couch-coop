@@ -3,6 +3,7 @@ using CouchCoop.MirrorProtocol.Envelopes;
 using Spirectl.Sts2.Core.Actions;
 using Spirectl.Sts2.Core.State;
 using Spirectl.Sts2.Embedding;
+using Spirectl.Sts2.Live;
 
 namespace CouchCoop.Mod.Session;
 
@@ -275,6 +276,41 @@ public sealed class CouchCoopLobbyParticipation(CouchCoopRuntimeHost runtimeHost
                 && MirrorSeatNetIds.TryParsePlayerId(player.Id, out var id) && id == netId)
             || (state?.Run?.Players ?? []).Any(player => player.IsConnected
                 && MirrorSeatNetIds.TryParsePlayerId(player.Id, out var id) && id == netId);
+    }
+
+    private static int _seatPeerCheckFailureLogged;
+
+    /// <summary>
+    /// The seat monitor's membership check: whether the host's net layer still has <paramref name="netId"/>
+    /// connected. One main-thread read of the host's peer list, where <see cref="IsGamePlayerConnected"/> builds the
+    /// whole game state for the same answer. Falls back to that read when this process's host transport is not the
+    /// one running or its peer list cannot be read.
+    /// </summary>
+    /// <remarks>
+    /// Only for a seat that has already joined. Peer connectivity is not lobby membership: a peer is connected
+    /// before the lobby admits it, so the join wait keeps asking <see cref="IsGamePlayerConnected"/>. Once joined,
+    /// the two agree, and the monitor asks this every 250 ms per seat for the seat's whole life, which made the
+    /// state read most of the host's state captures with phones connected (Sep-24 lag round).
+    /// </remarks>
+    public bool IsSeatPeerConnected(ulong netId)
+    {
+        bool? connected;
+        try
+        {
+            connected = Sts2MainThreadDispatcher.Invoke(() => CouchCoopHostPeers.IsPeerConnected(netId));
+        }
+        catch (Exception exception)
+        {
+            // Asked every 250 ms per seat, so say it once rather than flood the log.
+            if (Interlocked.Exchange(ref _seatPeerCheckFailureLogged, 1) == 0)
+            {
+                CouchCoopLog.Stderr($"seat peer check failed ({exception.GetType().Name}: {exception.Message}); using the state read.");
+            }
+
+            connected = null;
+        }
+
+        return connected ?? IsGamePlayerConnected(netId);
     }
 
     public int? MaxCouchSeats() => MaxLobbyPlayers() is { } maxLobbyPlayers ? maxLobbyPlayers - 1 : null;

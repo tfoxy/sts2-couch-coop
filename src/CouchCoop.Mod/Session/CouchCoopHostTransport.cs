@@ -25,6 +25,11 @@ namespace CouchCoop.Mod.Session;
 internal static class CouchCoopHostTransport
 {
     internal static event Action? HostingEnded;
+
+    // The net host this process installed for the current hosting session (dual Steam+ENet, or the ENet-only
+    // fallback), dropped with the other transport facts. Written and read on the game main thread.
+    private static volatile NetHost? _activeHost;
+    private static int _peerReadFailureLogged;
     // StartHost(SerializableRun) records the saved local host id immediately before the game's async host path
     // calls StartSteamHost. It is a one-shot handoff: StartHostAsync consumes it before choosing Steam or ENet,
     // and every reset path clears it so a saved Steam id can never escape into a later new lobby.
@@ -177,6 +182,7 @@ internal static class CouchCoopHostTransport
         SteamLobbyId = null;
         IsDual = false;
         EffectiveMaxClients = null;
+        _activeHost = null;
         HostUi.CouchCoopHostUiNotices.HostTransportNote = null;
     }
 
@@ -512,8 +518,53 @@ internal static class CouchCoopHostTransport
     /// refuses to install itself otherwise, so this throwing means a genuinely broken install.
     /// </summary>
     private static void AssignNetHost(NetHostGameService service, NetHost host)
-        => (NetHostField ?? throw new InvalidOperationException("NetHostGameService._netHost is unavailable."))
+    {
+        (NetHostField ?? throw new InvalidOperationException("NetHostGameService._netHost is unavailable."))
             .SetValue(service, host);
+        _activeHost = host;
+    }
+
+    /// <summary>
+    /// Whether <paramref name="netId"/> is a peer currently connected to the host this process installed, or null
+    /// when there is no such host (hosting has not started through this transport, or it has ended) or its peer
+    /// list cannot be read. Game main thread only: the peer list is the net layer's live state.
+    /// </summary>
+    /// <remarks>
+    /// This is what lets the seat monitor ask "does the host still have this seat connected?" without a full
+    /// game-state read. The peer list is the same source the state read's connectivity falls back to; a null here
+    /// tells the caller to use that read instead.
+    /// </remarks>
+    internal static bool? IsPeerConnected(ulong netId)
+    {
+        var host = _activeHost;
+        if (host is null)
+        {
+            return null;
+        }
+
+        try
+        {
+            foreach (var peerId in host.ConnectedPeerIds)
+            {
+                if (peerId == netId)
+                {
+                    return true;
+                }
+            }
+
+            return false;
+        }
+        catch (Exception exception)
+        {
+            // Asked every 250 ms per seat, so say it once rather than flood the log.
+            if (Interlocked.Exchange(ref _peerReadFailureLogged, 1) == 0)
+            {
+                CouchCoopLog.Stderr($"host peer read failed ({exception.GetType().Name}: {exception.Message}); using the state read.");
+            }
+
+            return null;
+        }
+    }
 
     private static void SetPlatform(NetHostGameService service, PlatformType platform)
         => (PlatformSetter ?? throw new InvalidOperationException("NetHostGameService.Platform setter is unavailable."))
@@ -558,4 +609,13 @@ internal static class CouchCoopHostTransport
         CouchCoopLog.Stderr("host-transport " + message);
         CouchCoopLog.Warn("host-transport " + message);
     }
+}
+
+/// <summary>
+/// The host's peer list, for code compiled into the hot-reload assembly as well (which cannot see the internal
+/// <see cref="CouchCoopHostTransport"/>). Same contract as <see cref="CouchCoopHostTransport.IsPeerConnected"/>.
+/// </summary>
+public static class CouchCoopHostPeers
+{
+    public static bool? IsPeerConnected(ulong netId) => CouchCoopHostTransport.IsPeerConnected(netId);
 }

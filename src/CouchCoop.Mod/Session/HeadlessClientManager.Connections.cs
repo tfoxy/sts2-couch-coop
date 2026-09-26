@@ -96,14 +96,19 @@ public sealed partial class HeadlessClientManager
     private readonly Dictionary<Guid, BrowserAttempt> _browserAttempts = [];
     private readonly Dictionary<int, Task> _connectionCleanup = [];
     private Func<ulong, bool>? _membershipProbe;
+    // What the monitor asks once a seat has joined; null means the join-wait probe above. Separate because the
+    // monitor asks every 250 ms for the seat's whole life, so it can use a cheaper question than lobby membership.
+    private Func<ulong, bool>? _monitorMembershipProbe;
     private Func<int>? _controlPort;
     private long _processGeneration;
 
-    internal void ConfigureConnectionMonitoring(Func<ulong, bool> membershipProbe, Func<int> controlPort)
+    internal void ConfigureConnectionMonitoring(
+        Func<ulong, bool> membershipProbe, Func<int> controlPort, Func<ulong, bool>? monitorMembershipProbe = null)
     {
         HeadlessConnectionControl.Shared.StatusChanged -= OnChildStatus;
         HeadlessConnectionControl.Shared.StatusChanged += OnChildStatus;
         _membershipProbe = membershipProbe;
+        _monitorMembershipProbe = monitorMembershipProbe;
         _controlPort = controlPort;
     }
 
@@ -693,7 +698,7 @@ public sealed partial class HeadlessClientManager
                     owned, HeadlessConnectionControl.Shared.Snapshot(owned.Slot, owned.Generation));
                 var native = status?.Status;
                 SetTerminalFailure(owned, native);
-                var member = _membershipProbe!(SlotToNetId(owned.Slot));
+                var member = (_monitorMembershipProbe ?? _membershipProbe!)(SlotToNetId(owned.Slot));
                 // The same four-cause verdict the join wait uses, kept running after the redirect. This is the
                 // only place the NETWORK PATH cause can be reached: the join returns as soon as the host itself
                 // can reach the seat, so "the seat is up, the host can talk to it, and no viewer ever arrived"
