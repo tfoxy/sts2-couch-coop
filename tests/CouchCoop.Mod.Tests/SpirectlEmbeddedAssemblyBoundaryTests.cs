@@ -22,7 +22,6 @@ internal static class SpirectlEmbeddedAssemblyBoundaryTests
         "Spirectl.Sts2.Embedding.ISpirectlRuntime",
         "Spirectl.Sts2.Embedding.IRuntimeCapabilitySource",
         "Spirectl.Sts2.Embedding.IRuntimeAssetSource",
-        "Spirectl.Sts2.Embedding.ICombatEventSource",
         "Spirectl.Sts2.Embedding.IAnimationHintSource",
         "Spirectl.Sts2.Embedding.IRuntimeSceneDeltaSource",
         "Spirectl.Sts2.Embedding.IGameModelSource",
@@ -45,13 +44,12 @@ internal static class SpirectlEmbeddedAssemblyBoundaryTests
         // runtime would silently return the mod to a 0.25s tick that never parks.
         "Spirectl.Sts2.Live.Sts2ScreenContext",
         // What the embedded profile keeps standing in for what it leaves out: the composition entry point, the
-        // action handler with its embedded dispatcher, the state provider the facade reads, and the placeholder
-        // and port types that the reference-data slot holds. ISpirectlRuntime inherits the reference port, so its
+        // action handler with its embedded dispatcher, and the placeholder and port types that the reference-data
+        // slot holds. ISpirectlRuntime inherits the reference port, so its
         // DTOs must stay even though the provider behind them does not. (The extractor slot is gone altogether:
         // nothing in this mod names IGameStateExtractor or a GameStateSnapshot.)
         "Spirectl.Sts2.Live.Sts2RuntimeFactory",
         "Spirectl.Sts2.Live.Sts2ActionHandler",
-        "Spirectl.Sts2.Live.Sts2StateProvider",
         "Spirectl.Sts2.Live.GameApi.Sts2GameApiProbe",
         "Spirectl.Sts2.Core.Actions.SemanticActionKind",
         "Spirectl.Sts2.Core.Reference.IReferenceDataProvider",
@@ -66,6 +64,10 @@ internal static class SpirectlEmbeddedAssemblyBoundaryTests
     /// </summary>
     private static readonly string[] EmbeddedProfileExcludedTypes =
     [
+        "Spirectl.Sts2.Embedding.ICombatEventSource",
+        "Spirectl.Sts2.Embedding.CombatEventSubscriptionRequest",
+        "Spirectl.Sts2.Embedding.CombatWatchEvent",
+        "Spirectl.Sts2.Live.Sts2StateProvider",
         // The legacy state-extractor lane and everything only it called.
         "Spirectl.Sts2.Core.State.ObservedGameStateExtractor",
         "Spirectl.Sts2.Core.State.RuntimeStateMapper",

@@ -5245,13 +5245,6 @@ internal sealed partial class BrowserServerRouteTests
             return new EmbeddableActionResult(false, null, new EmbeddableRuntimeError("semantic-failed", "semantic upstream failure"));
         }
 
-        // Required by ISpirectlRuntime; the host no longer subscribes, so this is an inert stub.
-        public IDisposable SubscribeCombatEvents(
-            CombatEventSubscriptionRequest request,
-            Action<CombatWatchEvent> onEvent,
-            Action<EmbeddableRuntimeError>? onError = null)
-            => new NoopDisposable();
-
         private Action<RuntimeSceneDelta>? _sceneObserver;
         private int _sceneSubscribeCount;
         private int _sceneDisposeCount;
@@ -5289,14 +5282,6 @@ internal sealed partial class BrowserServerRouteTests
         // to exercise the server's scene-delta broadcast fan-out.
         public void PushSceneDelta(RuntimeSceneDelta delta)
             => _sceneObserver?.Invoke(delta);
-
-        public async IAsyncEnumerable<CombatWatchEvent> WatchCombatEventsAsync(
-            CombatEventSubscriptionRequest request,
-            [System.Runtime.CompilerServices.EnumeratorCancellation] CancellationToken cancellationToken = default)
-        {
-            await Task.CompletedTask;
-            yield break;
-        }
 
         // Multiple independent subscribers, keyed by id, mirroring the real bridge's
         // EmbeddableAnimationHintHub: each SubscribeAnimationHints gets its own subscription and Publish fans
