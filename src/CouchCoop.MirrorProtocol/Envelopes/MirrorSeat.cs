@@ -77,9 +77,9 @@ public static class MirrorSeatNetIds
     // and the HOST is netId 1 on an ENet-hosted session or its own SteamID64 on a Steam-hosted one (either way
     // outside the band). Nothing else may be listed: the mirror can only ever serve seats it can instance.
     //
-    // Caveat, deliberately accepted: spirectl's SYNTHETIC host-local lobby seats (the stateful browser view's
-    // JoinLobbyPlayer) are numbered max(existing)+1, so with a mirror seat already at 1002 a synthetic seat can land
-    // at 1003 and read as a mirror seat here. That combination needs a stateful browser AND a mirror client on the
+    // Caveat, deliberately accepted: a SYNTHETIC host-local lobby seat added from outside CouchCoop (a tool driving
+    // spirectl's lobby actions; CouchCoop adds none) is numbered max(existing)+1, so with a mirror seat already at
+    // 1002 it can land at 1003 and read as a mirror seat here. That needs such a tool AND a mirror client on the
     // same host lobby, and the failure mode is a spurious extra picker row rather than a wrong join (the join still
     // resolves by netId). Narrowing it would mean asking the live game which peers are real, which is exactly the
     // reusable-STS2 reflection this repo must not grow.

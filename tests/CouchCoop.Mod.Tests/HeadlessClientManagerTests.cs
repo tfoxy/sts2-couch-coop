@@ -456,7 +456,7 @@ internal static class HeadlessClientManagerTests
         // to ask right now — mid-run, or on the main menu — and mid-run is exactly when the netId-BOUND respawn
         // path runs. Substituting the stock three there refused a rejoin by seat 1005 of an eight-player run as
         // "not a seat", so an unknown cap leaves the guard band as the only limit, which is the only one that is
-        // really ours. (Nothing here widens the NEW-peer window: MayLaunchNewHeadless still shuts it whenever
+        // really ours. (Nothing here widens the NEW-peer window: SpawnAllowed still shuts it whenever
         // there is no lobby.)
         var unknown = new Harness(maxSeats: null).Manager;
         Assert(unknown.TryNetIdToSlot(1005, out var unknown5) && unknown5 == 5,

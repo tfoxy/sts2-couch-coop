@@ -444,13 +444,10 @@ public sealed class CouchCoopWebSocketConnection
                 }
             }
 
-            // When the last browser for a synthetic lobby player disconnects, remove that player from the
-            // live game lobby (its leave action force-refreshes state → the removal is rebroadcast to all).
-            var removedPlayerId = _envelopeFactory.DisconnectSession(session);
-            if (removedPlayerId is not null)
-            {
-                _lobby.LeaveLobbyPlayer(removedPlayerId);
-            }
+            // The browser identity's connection is released last, by `using var session` above
+            // (BrowserSessionHandle.Dispose → BrowserSessionRegistry.Disconnect) as this method returns: a
+            // lobby-only identity leaves the browser roster at zero connections, a run identity stays marked
+            // disconnected. Seats are real networked clients, so the game has no lobby player to remove.
         }
     }
 

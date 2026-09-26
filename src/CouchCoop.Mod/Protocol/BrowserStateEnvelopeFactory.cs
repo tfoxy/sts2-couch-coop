@@ -38,7 +38,7 @@ public sealed class BrowserStateEnvelopeFactory(
     // Build the per-client `session` message: identity + capabilities/notices + the lobby/run assignment.
     // The rendered game state (stateV2) is NOT in here — it rides the shared `state` broadcast. The current
     // game state is still PULLED here (cheap, identity-only) so a just-joined seat is resolved immediately
-    // (the observer cache can lag a tick after EnsureLobbyPlayer).
+    // (the observer cache can lag a tick behind a roster change).
     public async Task<BrowserEnvelope> CreateSessionEnvelope(
         string? viewerName,
         string requestId,
@@ -175,10 +175,6 @@ public sealed class BrowserStateEnvelopeFactory(
     }
 
     public void Disconnect(string? viewerName) => _sessions.Disconnect(viewerName);
-
-    // Disconnect a session and return the synthetic lobby player id to remove from the live game
-    // (null when none / when a run player is kept). See BrowserSessionRegistry.DisconnectAndCaptureRemoval.
-    public string? DisconnectSession(BrowserSessionHandle session) => _sessions.DisconnectAndCaptureRemoval(session);
 
     public BrowserSessionHandle CreateSession() => _sessions.CreateHandle();
 

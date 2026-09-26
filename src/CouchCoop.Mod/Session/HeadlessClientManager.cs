@@ -335,8 +335,8 @@ public sealed partial class HeadlessClientManager : IDisposable
             // main menu — and the stock three would then be a cap we invented: the netId-BOUND respawn path is
             // live exactly then, so assuming three is how a mid-run rejoin by seat 1005 of an eight-player game
             // used to be refused as "not a seat". With no cap to apply, the guard band is the only real limit,
-            // which is what it is for. Nothing widens the NEW-peer window, which CouchCoopLobbyParticipation
-            // .MayLaunchNewHeadless still shuts whenever there is no lobby.
+            // which is what it is for. Nothing widens the NEW-peer window, which MirrorJoinContext.SpawnAllowed
+            // still shuts whenever there is no lobby.
             int? seats = null;
             var probed = false;
             if (_maxSeatsProbe is not null)
@@ -1236,7 +1236,7 @@ public sealed partial class HeadlessClientManager : IDisposable
     /// <see cref="MultiplayerNamesFile"/>. So the host itself (netId = its SteamID64 on a Steam-hosted session)
     /// and any genuine remote Steam friend are un-nameable on a seat unless they are in that file — which is why
     /// a seat used to render the host as a 17-digit number. See
-    /// <see cref="CouchCoopLobbyParticipation.RosterNames()"/> for where the names come from.
+    /// <see cref="CouchCoopLobbyParticipation.RosterNames"/> for where the names come from.
     /// </para>
     /// <para>
     /// Rewrites the file only when the roster actually changes something, so this is cheap enough to call on every

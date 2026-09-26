@@ -1,8 +1,8 @@
 using CouchCoop.Mod.Session;
 using MegaCrit.Sts2.Core.Multiplayer.Transport;
 
-// The composite host's peer→transport decision, and the lobby's free-slot guard. Both are pure and both are the
-// kind of rule that only bites in production, so they are pinned here.
+// The composite host's peer→transport decision. It is pure and is the kind of rule that only bites in production,
+// so it is pinned here.
 //
 // The routing rule is deliberately asymmetric: membership of the STEAM side decides, and everything else — every
 // couch seat and every id we have never heard of — goes to ENet. That is not a stylistic choice.
@@ -21,7 +21,6 @@ internal static class HostPeerRoutingTests
         UnknownPeersRouteToEnetNeverSteam();
         AnEmptySteamSideSendsEverythingToEnet();
         CrossTransportChannelsNormalizeForEnet();
-        FreeSlotGuardCountsConnectingPeers();
     }
 
     private static void SteamMembersRouteToSteam()
@@ -67,33 +66,6 @@ internal static class HostPeerRoutingTests
             Assert(DualHostRouting.EnetChannelFor(NetTransferMode.Unreliable, sourceChannel) == 1,
                 $"unreliable Steam channel {sourceChannel} maps to ENet's unreliable channel");
         }
-    }
-
-    // Slots used to be a couch-only resource; on a Steam-hosted session they are SHARED with remote players.
-    // The cap comes from the LOBBY, not from us: the stock game allows four players, and the multiplayer limit
-    // mods raise it. (It was hardcoded to 4 on the grounds that slotId is serialized in two bits — but those mods
-    // rewrite that serialization, so the wire is no longer the limit.)
-    private static void FreeSlotGuardCountsConnectingPeers()
-    {
-        const int Stock = 4;
-        Assert(CouchCoopLobbyParticipation.HasFreeLobbySlot(1, 0, Stock), "host alone → a seat may launch");
-        Assert(CouchCoopLobbyParticipation.HasFreeLobbySlot(3, 0, Stock), "three players → the fourth slot is free");
-        Assert(!CouchCoopLobbyParticipation.HasFreeLobbySlot(4, 0, Stock), "a full lobby refuses a new seat");
-        Assert(!CouchCoopLobbyParticipation.HasFreeLobbySlot(5, 0, Stock), "an over-full lobby refuses too (never negative-free)");
-        Assert(!CouchCoopLobbyParticipation.HasFreeLobbySlot(3, 1, Stock),
-            "a peer still mid-handshake holds the last slot — launching into that gap would spend ~30s to be rejected");
-        Assert(CouchCoopLobbyParticipation.HasFreeLobbySlot(2, 1, Stock), "two players + one connecting still leaves a slot");
-
-        // A raised lobby keeps admitting past four — this is the whole point of asking the lobby.
-        Assert(CouchCoopLobbyParticipation.HasFreeLobbySlot(4, 0, 16), "a 16-player lobby has room for a fifth");
-        Assert(CouchCoopLobbyParticipation.HasFreeLobbySlot(15, 0, 16), "…and for a sixteenth");
-        Assert(!CouchCoopLobbyParticipation.HasFreeLobbySlot(16, 0, 16), "but not a seventeenth");
-        // An UNKNOWN cap admits and lets the game refuse. This guard only exists to save a joiner ~30s of
-        // starting a seat the lobby will reject on arrival; it is not the admission authority. It used to
-        // substitute the stock four here, which is the one answer the game cannot correct — it refuses a seat a
-        // 5-to-8-player lobby had room for.
-        Assert(CouchCoopLobbyParticipation.HasFreeLobbySlot(4, 0, null), "an unknown cap admits, and the game decides");
-        Assert(CouchCoopLobbyParticipation.HasFreeLobbySlot(7, 1, null), "…however full the lobby already looks");
     }
 
     private static void Assert(bool condition, string label)
