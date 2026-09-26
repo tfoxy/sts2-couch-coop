@@ -11,7 +11,6 @@ using Spirectl.Sts2.Core.Perspective;
 using Spirectl.Sts2.Core.Protocol;
 using Spirectl.Sts2.Core.Reference;
 using Spirectl.Sts2.Core.SceneInspection;
-using Spirectl.Sts2.Core.State;
 using Spirectl.Sts2.Embedding;
 
 // WS-U (M3): the `session` envelope carries the client asset-cache invalidation token, composed from the host's
@@ -57,7 +56,7 @@ internal static class AssetCacheTokenEnvelopeTests
 
     private static void EnvelopeCarriesComposedToken()
     {
-        var factory = new BrowserStateEnvelopeFactory(new CouchCoopRuntimeHost(new CouchCoopRuntimeDependencies(new StubRuntime("game-42.7"), new StubRuntime("game-42.7"), new StubRuntime("game-42.7"), new StubRuntime("game-42.7"), new StubRuntime("game-42.7"), new StubRuntime("game-42.7"), new StubRuntime("game-42.7"), new StubRuntime("game-42.7"), new StubRuntime("game-42.7"), new StubRuntime("game-42.7"))));
+        var factory = new BrowserStateEnvelopeFactory(new CouchCoopRuntimeHost(new CouchCoopRuntimeDependencies(new StubRuntime("game-42.7"), new StubRuntime("game-42.7"), new StubRuntime("game-42.7"), new StubRuntime("game-42.7"), new StubRuntime("game-42.7"), new StubRuntime("game-42.7"), new StubRuntime("game-42.7"), new StubRuntime("game-42.7"), new StubRuntime("game-42.7"))));
         var envelope = factory.CreateSessionEnvelope("Alice", "session", null).GetAwaiter().GetResult();
 
         Assert(envelope.AssetCacheToken is not null, "session envelope carries an assetCacheToken");
@@ -143,9 +142,9 @@ internal static class AssetCacheTokenEnvelopeTests
     // Two hosts reporting different capability versions must now agree, because neither is consulted.
     private static void TheRuntimesReportedVersionIsNotTheSource()
     {
-        var a = new BrowserStateEnvelopeFactory(new CouchCoopRuntimeHost(new CouchCoopRuntimeDependencies(new StubRuntime("v-one"), new StubRuntime("v-one"), new StubRuntime("v-one"), new StubRuntime("v-one"), new StubRuntime("v-one"), new StubRuntime("v-one"), new StubRuntime("v-one"), new StubRuntime("v-one"), new StubRuntime("v-one"), new StubRuntime("v-one"))))
+        var a = new BrowserStateEnvelopeFactory(new CouchCoopRuntimeHost(new CouchCoopRuntimeDependencies(new StubRuntime("v-one"), new StubRuntime("v-one"), new StubRuntime("v-one"), new StubRuntime("v-one"), new StubRuntime("v-one"), new StubRuntime("v-one"), new StubRuntime("v-one"), new StubRuntime("v-one"), new StubRuntime("v-one"))))
             .CreateSessionEnvelope("Alice", "session", null).GetAwaiter().GetResult();
-        var b = new BrowserStateEnvelopeFactory(new CouchCoopRuntimeHost(new CouchCoopRuntimeDependencies(new StubRuntime("v-two"), new StubRuntime("v-two"), new StubRuntime("v-two"), new StubRuntime("v-two"), new StubRuntime("v-two"), new StubRuntime("v-two"), new StubRuntime("v-two"), new StubRuntime("v-two"), new StubRuntime("v-two"), new StubRuntime("v-two"))))
+        var b = new BrowserStateEnvelopeFactory(new CouchCoopRuntimeHost(new CouchCoopRuntimeDependencies(new StubRuntime("v-two"), new StubRuntime("v-two"), new StubRuntime("v-two"), new StubRuntime("v-two"), new StubRuntime("v-two"), new StubRuntime("v-two"), new StubRuntime("v-two"), new StubRuntime("v-two"), new StubRuntime("v-two"))))
             .CreateSessionEnvelope("Alice", "session", null).GetAwaiter().GetResult();
 
         Assert(a.AssetCacheToken == b.AssetCacheToken, "the runtime's reported version does not feed the token");
@@ -172,9 +171,10 @@ internal static class AssetCacheTokenEnvelopeTests
     }
 
     // A minimal ISpirectlRuntime whose only meaningful output is the game version (the rest is never exercised by
-    // CreateSessionEnvelope — no State capability is declared, so CreateStateV2 returns null before any state pull).
+    // CreateSessionEnvelope — the roster it classifies from comes from CouchCoop's own reader, which has no game behind it
+    // here and reports "unavailable" without reaching the game.
     // `internal` (not private) because HostPerformanceEnvelopeTests builds session envelopes the same way.
-    internal sealed class StubRuntime(string gameVersion) : IRuntimeCapabilitySource, IRuntimeAssetSource, IRuntimeStateSource, IAnimationHintSource, IRuntimeSceneDeltaSource, IGameModelSource, ISpineCatalogSource, ISpineGeoClipBaker, ISemanticActionSource, IRuntimeSceneWatchControlSource
+    internal sealed class StubRuntime(string gameVersion) : IRuntimeCapabilitySource, IRuntimeAssetSource, IAnimationHintSource, IRuntimeSceneDeltaSource, IGameModelSource, ISpineCatalogSource, ISpineGeoClipBaker, ISemanticActionSource, IRuntimeSceneWatchControlSource
     {
         public IRuntimeSceneWatchControls SceneWatchControls => Spirectl.Sts2.Live.Sts2RuntimeSceneWatchControls.Instance;
         public ISpirectlAssetProvider Assets { get; } = new StubAssetProvider();
@@ -190,17 +190,6 @@ internal static class AssetCacheTokenEnvelopeTests
                 Provisional: false,
                 [],
                 []);
-
-        public CurrentStateResult GetCurrentState(CurrentStateRequest request) => throw new NotSupportedException();
-
-        public IDisposable SubscribeCurrentState(
-            CurrentStateSubscriptionRequest request,
-            Action<CurrentStateWatchEvent> onEvent,
-            Action<EmbeddableRuntimeError>? onError = null) => throw new NotSupportedException();
-
-        public IAsyncEnumerable<CurrentStateWatchEvent> WatchCurrentStateAsync(
-            CurrentStateSubscriptionRequest request,
-            CancellationToken cancellationToken = default) => throw new NotSupportedException();
 
         public IDisposable SubscribeCombatEvents(
             CombatEventSubscriptionRequest request,

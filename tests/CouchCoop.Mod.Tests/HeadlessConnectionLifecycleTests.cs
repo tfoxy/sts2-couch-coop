@@ -153,7 +153,7 @@ internal static class HeadlessConnectionLifecycleTests
     }
 
     // The join wait proves LOBBY membership; the monitor that runs for the seat's whole life afterwards asks the
-    // cheaper peer probe instead, and must stop asking the lobby-membership one (a full game-state read in the mod).
+    // cheaper peer probe instead, and must stop asking the lobby-membership one (a roster read in the mod).
     private static async Task MonitorAsksThePeerProbeOnceJoined()
     {
         var id = BeginAttempt();
@@ -875,7 +875,8 @@ internal static class HeadlessConnectionLifecycleTests
         finally { CleanupControl(id); ConnectionRegistry.Shared.Clear(); }
     }
 
-    private static Guid BeginAttempt()
+    // internal: JoinFactsTests drives the production membership probes through the same join wait and monitor.
+    internal static Guid BeginAttempt()
     {
         var id = Guid.NewGuid();
         ConnectionRegistry.Shared.Clear();
@@ -899,10 +900,10 @@ internal static class HeadlessConnectionLifecycleTests
         return manager;
     }
 
-    private static void RegisterKnown(HeadlessConnectionControlSnapshot control, Guid id, string token)
+    internal static void RegisterKnown(HeadlessConnectionControlSnapshot control, Guid id, string token)
         => HeadlessConnectionControl.Shared.Register(control.Slot, control.Generation, id, token);
 
-    private static async Task<HeadlessConnectionControlSnapshot> WaitForControlAsync(Guid id)
+    internal static async Task<HeadlessConnectionControlSnapshot> WaitForControlAsync(Guid id)
     {
         HeadlessConnectionControlSnapshot? control = null;
         await WaitUntilAsync(() => (control = HeadlessConnectionControl.Shared.Snapshot()
@@ -930,13 +931,13 @@ internal static class HeadlessConnectionLifecycleTests
         public void Advance(TimeSpan duration) => Interlocked.Add(ref _timestamp, (long)duration.TotalMilliseconds);
     }
 
-    private static void CleanupControl(Guid id)
+    internal static void CleanupControl(Guid id)
     {
         foreach (var entry in HeadlessConnectionControl.Shared.Snapshot().Where(entry => entry.SourceSessionId == id))
             HeadlessConnectionControl.Shared.Unregister(entry.Slot, entry.Generation);
     }
 
-    private sealed class FakeProcess(int id, int exitCode = 0, bool throwOnKill = false) : IHeadlessProcess
+    internal sealed class FakeProcess(int id, int exitCode = 0, bool throwOnKill = false) : IHeadlessProcess
     {
         public int Id => id;
         public bool HasExited { get; private set; }

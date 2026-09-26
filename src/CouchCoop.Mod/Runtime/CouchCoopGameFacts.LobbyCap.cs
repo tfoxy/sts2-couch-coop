@@ -35,6 +35,15 @@ public static partial class CouchCoopGameFacts
         [CallerFilePath] string? file = null)
     {
         ZeroClientGuard.Enter(ZeroClientEntries.HostFactsRead, caller, file);
+        return ReadLobbyCapFromSource();
+    }
+
+    /// <summary>
+    /// The cap read and its failure rule, shared with the session read (which asks for the cap in the same hop as the
+    /// roster): a throw is "no cap known", logged once until a read succeeds again.
+    /// </summary>
+    private static int? ReadLobbyCapFromSource()
+    {
         try
         {
             var cap = Source.ReadLobbyCap();

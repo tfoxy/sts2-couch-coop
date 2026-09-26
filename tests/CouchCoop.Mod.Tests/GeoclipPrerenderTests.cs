@@ -9,7 +9,6 @@ using Spirectl.Sts2.Core.Perspective;
 using Spirectl.Sts2.Core.Protocol;
 using Spirectl.Sts2.Core.Reference;
 using Spirectl.Sts2.Core.SceneInspection;
-using Spirectl.Sts2.Core.State;
 using Spirectl.Sts2.Embedding;
 
 /// <summary>
@@ -1127,7 +1126,7 @@ internal static class GeoclipPrerenderTests
         => new(id, id, supported, Provisional: false, supported ? null : "stubbed unsupported");
 
     private static CouchCoopRuntimeHost Host(IReadOnlyList<SpineCatalogEntrySnapshot> entries)
-        => new CouchCoopRuntimeHost(new CouchCoopRuntimeDependencies(new CatalogRuntime(entries), new CatalogRuntime(entries), new CatalogRuntime(entries), new CatalogRuntime(entries), new CatalogRuntime(entries), new CatalogRuntime(entries), new CatalogRuntime(entries), new CatalogRuntime(entries), new CatalogRuntime(entries), new CatalogRuntime(entries)), _ => { });
+        => new CouchCoopRuntimeHost(new CouchCoopRuntimeDependencies(new CatalogRuntime(entries), new CatalogRuntime(entries), new CatalogRuntime(entries), new CatalogRuntime(entries), new CatalogRuntime(entries), new CatalogRuntime(entries), new CatalogRuntime(entries), new CatalogRuntime(entries), new CatalogRuntime(entries)), _ => { });
 
     private static byte[] Pixels(int seed, int length)
         => [.. Enumerable.Range(0, length).Select(index => (byte)((index * 31 + seed * 7) & 0xFF))];
@@ -1418,7 +1417,7 @@ internal static class GeoclipPrerenderTests
     }
 
     /// <summary>The uninteresting surface of <see cref="ISpirectlRuntime"/>, so each stub above stays readable.</summary>
-    private abstract class StubRuntimeBase : IRuntimeCapabilitySource, IRuntimeAssetSource, IRuntimeStateSource, IAnimationHintSource, IRuntimeSceneDeltaSource, IGameModelSource, ISpineCatalogSource, ISpineGeoClipBaker, ISemanticActionSource, IRuntimeSceneWatchControlSource
+    private abstract class StubRuntimeBase : IRuntimeCapabilitySource, IRuntimeAssetSource, IAnimationHintSource, IRuntimeSceneDeltaSource, IGameModelSource, ISpineCatalogSource, ISpineGeoClipBaker, ISemanticActionSource, IRuntimeSceneWatchControlSource
     {
         public IRuntimeSceneWatchControls SceneWatchControls => Spirectl.Sts2.Live.Sts2RuntimeSceneWatchControls.Instance;
         public ISpirectlAssetProvider Assets { get; } = new AssetCacheTokenEnvelopeTests.StubAssetProvider();
@@ -1442,17 +1441,6 @@ internal static class GeoclipPrerenderTests
                 Provisional: false,
                 capabilities,
                 []);
-
-        public CurrentStateResult GetCurrentState(CurrentStateRequest request) => throw new NotSupportedException();
-
-        public IDisposable SubscribeCurrentState(
-            CurrentStateSubscriptionRequest request,
-            Action<CurrentStateWatchEvent> onEvent,
-            Action<EmbeddableRuntimeError>? onError = null) => throw new NotSupportedException();
-
-        public IAsyncEnumerable<CurrentStateWatchEvent> WatchCurrentStateAsync(
-            CurrentStateSubscriptionRequest request,
-            CancellationToken cancellationToken = default) => throw new NotSupportedException();
 
         public IDisposable SubscribeCombatEvents(
             CombatEventSubscriptionRequest request,

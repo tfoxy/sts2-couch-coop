@@ -32,7 +32,7 @@ public sealed class ZeroClientEntry
         get
         {
             // Registration is a static-field initializer on ZeroClientEntries: touching it is what fills the list.
-            _ = ZeroClientEntries.StateRead;
+            _ = ZeroClientEntries.SceneSubscribe;
             lock (Registered) return [.. Registered];
         }
     }
@@ -64,12 +64,6 @@ public sealed class ZeroClientEntry
 /// </summary>
 public static class ZeroClientEntries
 {
-    /// <summary>A full game-state capture (<c>GetCurrentState</c>).</summary>
-    public static readonly ZeroClientEntry StateRead = ZeroClientEntry.Register("state.read");
-
-    /// <summary>A live game-state subscription or watch.</summary>
-    public static readonly ZeroClientEntry StateSubscribe = ZeroClientEntry.Register("state.subscribe");
-
     /// <summary>A live scene-delta subscription (the producer's whole-tree walk).</summary>
     public static readonly ZeroClientEntry SceneSubscribe = ZeroClientEntry.Register("scene.subscribe");
 

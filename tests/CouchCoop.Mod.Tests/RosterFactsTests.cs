@@ -4,16 +4,14 @@ using CouchCoop.Mod.HostUi;
 using CouchCoop.Mod.Runtime;
 using CouchCoop.Mod.Server;
 using CouchCoop.Mod.Session;
-using Spirectl.Sts2.Core.State;
 
 // The roster read (WP3 path 2): who is in the lobby or the run, as CouchCoop's own facts.
 //
 // What must hold, and where it is pinned:
 //   * the facts compare by value, element by element, so two reads of the same game are equal and a change is one
 //     unequal comparison;
-//   * every decision made from them equals the retired snapshot read on every fixture the suites already share (the
-//     parity oracle below, TEST ONLY): the change signature, the names published to the seats, and what counts as the
-//     game having left the run and the lobby;
+//   * the names and reap decision equal the retired snapshot read on every shared fixture (the parity oracle below,
+//     TEST ONLY); the diagnostic signature now includes all facts rather than the retired subset;
 //   * the front marshals to the game main thread from any other thread, runs inline on it, and turns a failed read
 //     into "unavailable" (null), which is never "nobody is here";
 //   * the production reader is unavailable without an engine, and the saved-run lobby record is per screen.
@@ -26,11 +24,9 @@ internal static class RosterFactsTests
     {
         FactsCompareByValue();
         RootScenesAreTheFourSnapshotStrings();
-        SignatureFormatIsTheRetiredOne();
+        SignatureDisplaysEveryRosterFact();
         LeavingTheRunAndLobbyIsTheReapPredicate();
         NamesAreNormalizedLikeTheSnapshotNames();
-        ParityWithTheRetiredSnapshot();
-        ProjectionEqualsTheFactsTheReaderProduces();
         FrontReturnsTheReadersFactsAndTurnsAFailureIntoUnavailable();
         FrontMarshalsToTheMainThreadFromAnyOtherThread();
         FrontRunsInlineOnTheMainThread();
@@ -85,36 +81,38 @@ internal static class RosterFactsTests
             "the root scenes keep the four strings the snapshot used, so the join screen's title and kind do not move");
     }
 
-    // ---- the change signature --------------------------------------------------------------------------------
+    // ---- the diagnostic signature -----------------------------------------------------------------------------
 
-    private static void SignatureFormatIsTheRetiredOne()
+    private static void SignatureDisplaysEveryRosterFact()
     {
-        Expect(CouchCoopRosterChange.Signature(SampleLobby())
-                == "lobby:p:1=Host:True,p:1002=Ann:True|scene:screens/character_select_screen",
-            "a lobby signature is its seats (id, name, connected) then the scene");
+        var lobby = SampleLobby();
+        var signature = CouchCoopRosterChange.Signature(lobby);
+        Expect(signature.Contains("\"RootScene\":\"screens/character_select_screen\"", StringComparison.Ordinal)
+                && signature.Contains("\"CharacterId\":\"SILENT\"", StringComparison.Ordinal)
+                && signature.Contains("\"DisplayName\":\"Ann\"", StringComparison.Ordinal),
+            "the trace shows scene, name and character");
+        Expect(signature != CouchCoopRosterChange.Signature(lobby with
+            {
+                Lobby = lobby.Lobby! with { Seats = [lobby.Lobby.Seats[0], lobby.Lobby.Seats[1] with { CharacterId = "DEFECT" }] },
+            }), "a character change is visible in the trace");
         Expect(CouchCoopRosterChange.Signature(new RosterFacts(RosterRootScenes.MainMenu, null, null))
-                == "lobby:|scene:screens/main_menu",
-            "no lobby and no run is an empty lobby signature with the scene");
+                == "{\"RootScene\":\"screens/main_menu\",\"Lobby\":null,\"Run\":null}",
+            "the trace shows that there is neither a lobby nor a run");
         var saved = new RosterFacts(
             RosterRootScenes.LoadGame,
             new RosterLobby(NetTypes.Host, "p:1", true, [new RosterLobbySeat("p:1", "Host", null, true)], ["p:1", "p:1002"]),
             null);
-        Expect(CouchCoopRosterChange.Signature(saved) == "lobby:p:1=Host:True|saved:p:1,p:1002|scene:screens/multiplayer_load_game_screen",
-            "a saved-run lobby carries its saved seat ids");
+        Expect(CouchCoopRosterChange.Signature(saved).Contains("\"SavedRunSeatIds\":[\"p:1\",\"p:1002\"]", StringComparison.Ordinal),
+            "a saved-run lobby trace carries its saved seat ids");
         var run = new RosterFacts(
             RosterRootScenes.Run,
             null,
             new RosterRun("host", "p:1", [new RosterRunSeat("p:1", "Host", null, true, true), new RosterRunSeat("p:1002", "Ann", null, false, false)]));
-        Expect(CouchCoopRosterChange.Signature(run) == "run:p:1=True,p:1002=False|scene:run",
-            "a run signature is each seat's connectedness, so a drop is a change");
+        Expect(CouchCoopRosterChange.Signature(run).Contains("\"IsHost\":true,\"IsConnected\":true", StringComparison.Ordinal),
+            "the run trace includes host role and connectivity");
         Expect(CouchCoopRosterChange.Signature(run) != CouchCoopRosterChange.Signature(
                 run with { Run = run.Run! with { Seats = [.. run.Run.Seats.Select(seat => seat with { IsConnected = true })] } }),
-            "a seat reconnecting changes the signature");
-        Expect(CouchCoopRosterChange.Signature(SampleLobby()) == CouchCoopRosterChange.Signature(SampleLobby() with
-            {
-                Lobby = SampleLobby().Lobby! with { Seats = [.. SampleLobby().Lobby!.Seats.Select(seat => seat with { CharacterId = "DEFECT" })] },
-            }),
-            "a character change is not a roster change: nothing acts on it");
+            "a seat reconnecting changes the trace");
     }
 
     // The rule the maintainer set: the reap fires only once the game has left BOTH the run and any lobby. The death or
@@ -145,152 +143,6 @@ internal static class RosterFactsTests
             "identifiers trim and blank is null");
         Expect(GameFactsReader.PlayerId(1002) == "p:1002" && GameFactsReader.PlayerId(76561198000000123UL) == "p:76561198000000123",
             "ids stay p:{netId}");
-    }
-
-    // ---- the parity oracle (TEST ONLY) -----------------------------------------------------------------------
-    //
-    // DELETE THIS SECTION WITH `Project` AND `OldSignature` WHEN THE LAST WP3 READ PATH LANDS. It exists so the move from
-    // the full state snapshot to the typed roster is provably a no-op on every fixture the suites already own:
-    // `Project` reads a snapshot the way the reader reports the same game, and `OldSignature` is the retired change
-    // fingerprint verbatim.
-
-    /// <summary>The roster the typed reader would report for the game a snapshot describes.</summary>
-    internal static RosterFacts? Project(StateSnapshot? state)
-    {
-        if (state is null)
-        {
-            return null;
-        }
-
-        var lobby = state.CharacterSelect?.Lobby is { } source
-            ? new RosterLobby(
-                source.NetGameType,
-                source.HostPlayerId,
-                IsSavedRun: source.SavedRun is not null,
-                [.. source.Players.Select(player => new RosterLobbySeat(player.Id, player.DisplayName, player.CharacterId, player.IsConnected))],
-                [.. source.SavedRun?.Players.Select(player => player.Id) ?? []])
-            : null;
-        var run = state.Run is { } sourceRun
-            ? new RosterRun(
-                sourceRun.NetGameType,
-                sourceRun.Players.FirstOrDefault(player => player.IsHost)?.Id,
-                [.. sourceRun.Players.Select(player => new RosterRunSeat(player.Id, player.DisplayName, player.CharacterId, player.IsHost, player.IsConnected))])
-            : null;
-        return new RosterFacts(state.RootScene ?? "", lobby, run);
-    }
-
-    // The retired CouchCoopBrowserServer.RosterSignature(StateSnapshot), verbatim.
-    private static string OldSignature(StateSnapshot snapshot)
-    {
-        string scene = "|scene:" + (snapshot.RootScene ?? "");
-        if (snapshot.Run is { } run)
-        {
-            return "run:" + string.Join(",", run.Players.Select(player => $"{player.Id}={player.IsConnected}")) + scene;
-        }
-
-        var lobby = snapshot.CharacterSelect?.Lobby;
-        var players = lobby?.Players;
-        if (players is null || players.Count == 0)
-        {
-            return "lobby:" + scene;
-        }
-
-        var saved = lobby?.SavedRun is { } savedRun
-            ? "|saved:" + string.Join(",", savedRun.Players.Select(player => player.Id))
-            : "";
-        return "lobby:"
-            + string.Join(",", players.Select(player => $"{player.Id}={player.DisplayName}:{player.IsConnected}"))
-            + saved
-            + scene;
-    }
-
-    /// <summary>Every snapshot the suites share that describes a lobby or a run, plus the roster shapes the classifier reads.</summary>
-    internal static IEnumerable<(StateSnapshot? State, string What)> Fixtures()
-    {
-        foreach (var fixture in CouchCoopLobbyHostGateTests.Fixtures())
-        {
-            yield return fixture;
-        }
-
-        // The player-name suite's lobby and run (host, a Steam friend, couch seats, blank and placeholder names).
-        yield return (PlayerNameRosterTests.Lobby(
-            PlayerNameRosterTests.LobbyPlayer("p:76561198000000123", "Plapla"),
-            PlayerNameRosterTests.LobbyPlayer("p:76561198000000999", "Remote Friend"),
-            PlayerNameRosterTests.LobbyPlayer("p:1002", "pla1"),
-            PlayerNameRosterTests.LobbyPlayer("p:1003", null),
-            PlayerNameRosterTests.LobbyPlayer("p:1004", "1004"),
-            PlayerNameRosterTests.LobbyPlayer("not-a-player-id", "Nope")), "named lobby");
-        yield return (PlayerNameRosterTests.Run(
-            PlayerNameRosterTests.RunPlayer("p:76561198000000123", "Plapla", isHost: true),
-            PlayerNameRosterTests.RunPlayer("p:1002", "pla1", isHost: false)), "named run");
-
-        // The seat suite's saved-run lobby (live and saved seats, some absent) and its run with a dropped seat.
-        yield return (MirrorSeatRosterTests.LoadGameLobby(
-            lobby: [MirrorSeatRosterTests.LobbyPlayer("p:1", "Hosty", connected: true)],
-            saved: ["p:1", "p:1002", "p:1003"]), "saved-run lobby with absent seats");
-        yield return (MirrorSeatRosterTests.LoadGameLobby(
-            lobby: [MirrorSeatRosterTests.LobbyPlayer("p:1", "Hosty", connected: true), MirrorSeatRosterTests.LobbyPlayer("p:1002", "Ann", connected: false)],
-            saved: ["p:1", "p:1002"]), "saved-run lobby with a disconnected live seat");
-        yield return (MirrorSeatRosterTests.Run(
-            MirrorSeatRosterTests.RunPlayer("p:1", "Hosty", isHost: true, connected: true),
-            MirrorSeatRosterTests.RunPlayer("p:1002", "Ann", isHost: false, connected: true),
-            MirrorSeatRosterTests.RunPlayer("p:1003", "Bea", isHost: false, connected: false)), "run with a dropped seat");
-    }
-
-    private static void ParityWithTheRetiredSnapshot()
-    {
-        var count = 0;
-        foreach (var (state, what) in Fixtures())
-        {
-            var facts = Project(state);
-            if (state is null)
-            {
-                Expect(facts is null, $"no state is unavailable ({what})");
-                count++;
-                continue;
-            }
-
-            Expect(CouchCoopRosterChange.Signature(facts!) == OldSignature(state), $"signature parity on {what}");
-            Expect(CouchCoopRosterChange.HasLeftRunAndLobby(facts!) == (state.Run is null && state.CharacterSelect is null),
-                $"run-and-lobby parity on {what}");
-            var oldNames = CouchCoopLobbyParticipation.RosterNames(state);
-            var newNames = CouchCoopLobbyParticipation.RosterNames(facts!);
-            Expect(oldNames.SequenceEqual(newNames), $"published names parity on {what}: [{string.Join(", ", oldNames)}] vs [{string.Join(", ", newNames)}]");
-            count++;
-        }
-
-        Expect(count == 19, $"the parity oracle covered every shared fixture (got {count})");
-    }
-
-    // The projection is only an oracle if it agrees with what the reader really emits. Each snapshot fixture is
-    // paired with the facts the typed reader reports for that situation, written out by hand.
-    private static void ProjectionEqualsTheFactsTheReaderProduces()
-    {
-        var lobby = PlayerNameRosterTests.Lobby(
-            PlayerNameRosterTests.LobbyPlayer("p:1", "Host"),
-            PlayerNameRosterTests.LobbyPlayer("p:1002", "Ann"));
-        Expect(Project(lobby) == new RosterFacts(
-                RosterRootScenes.CharacterSelect,
-                new RosterLobby(
-                    NetTypeNames.Host,
-                    "p:1",
-                    IsSavedRun: false,
-                    [new RosterLobbySeat("p:1", "Host", "ironclad", true), new RosterLobbySeat("p:1002", "Ann", "ironclad", true)],
-                    []),
-                Run: null),
-            "a new-run lobby");
-        var saved = MirrorSeatRosterTests.LoadGameLobby(
-            lobby: [MirrorSeatRosterTests.LobbyPlayer("p:1", "Hosty", connected: true)],
-            saved: ["p:1", "p:1003"]);
-        var projected = Project(saved)!;
-        Expect(projected.Lobby is { IsSavedRun: true } && projected.Lobby.SavedRunSeatIds.SequenceEqual(["p:1", "p:1003"]),
-            "a saved-run lobby keeps its saved seat ids");
-        var run = Project(MirrorSeatRosterTests.Run(
-            MirrorSeatRosterTests.RunPlayer("p:1", "Hosty", isHost: true, connected: true),
-            MirrorSeatRosterTests.RunPlayer("p:1003", "Bea", isHost: false, connected: false)))!;
-        Expect(run.Run is { HostPlayerId: "p:1" } && run.Run.Seats.SequenceEqual(
-                [new RosterRunSeat("p:1", "Hosty", "ironclad", true, true), new RosterRunSeat("p:1003", "Bea", "ironclad", false, false)]),
-            "a run keeps its host and each seat's connectedness");
     }
 
     // ---- the front ---------------------------------------------------------------------------------------
@@ -360,7 +212,7 @@ internal static class RosterFactsTests
 
     // A dedicated thread standing in for the game's main thread: Invoke posts to it and waits, except when the caller is
     // already on it, where it runs inline (which is the dispatcher's own contract).
-    private sealed class DedicatedThread : IGameMainThread, IDisposable
+    internal sealed class DedicatedThread : IGameMainThread, IDisposable
     {
         private readonly BlockingCollection<Action> _queue = [];
         private readonly Thread _thread;

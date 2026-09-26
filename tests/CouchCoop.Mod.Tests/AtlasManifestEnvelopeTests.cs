@@ -156,7 +156,7 @@ internal static class AtlasManifestEnvelopeTests
 
     private static BrowserEnvelope CreateSessionEnvelope()
         => new BrowserStateEnvelopeFactory(
-                new CouchCoopRuntimeHost(new CouchCoopRuntimeDependencies(new AssetCacheTokenEnvelopeTests.StubRuntime("game-1.0"), new AssetCacheTokenEnvelopeTests.StubRuntime("game-1.0"), new AssetCacheTokenEnvelopeTests.StubRuntime("game-1.0"), new AssetCacheTokenEnvelopeTests.StubRuntime("game-1.0"), new AssetCacheTokenEnvelopeTests.StubRuntime("game-1.0"), new AssetCacheTokenEnvelopeTests.StubRuntime("game-1.0"), new AssetCacheTokenEnvelopeTests.StubRuntime("game-1.0"), new AssetCacheTokenEnvelopeTests.StubRuntime("game-1.0"), new AssetCacheTokenEnvelopeTests.StubRuntime("game-1.0"), new AssetCacheTokenEnvelopeTests.StubRuntime("game-1.0"))))
+                new CouchCoopRuntimeHost(new CouchCoopRuntimeDependencies(new AssetCacheTokenEnvelopeTests.StubRuntime("game-1.0"), new AssetCacheTokenEnvelopeTests.StubRuntime("game-1.0"), new AssetCacheTokenEnvelopeTests.StubRuntime("game-1.0"), new AssetCacheTokenEnvelopeTests.StubRuntime("game-1.0"), new AssetCacheTokenEnvelopeTests.StubRuntime("game-1.0"), new AssetCacheTokenEnvelopeTests.StubRuntime("game-1.0"), new AssetCacheTokenEnvelopeTests.StubRuntime("game-1.0"), new AssetCacheTokenEnvelopeTests.StubRuntime("game-1.0"), new AssetCacheTokenEnvelopeTests.StubRuntime("game-1.0"))))
             .CreateSessionEnvelope("Alice", "session", null).GetAwaiter().GetResult();
 
     // CreateSessionEnvelope reads the host's baseline MaxFps, which on the desktop path hops to the Godot main

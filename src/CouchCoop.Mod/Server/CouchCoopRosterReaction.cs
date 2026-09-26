@@ -20,17 +20,17 @@ public sealed class CouchCoopRosterReaction(
 {
     private readonly Action<string> _log = log ?? CouchCoopLog.Stderr;
     private readonly object _gate = new();
-    private string? _lastSignature;
+    private RosterFacts? _lastRoster;
 
     /// <summary>
-    /// Forget the last roster signature, so the next roster read counts as a change. Called when the observer that
-    /// produced the signature stops: the next observer must be free to re-broadcast the very first roster it reads.
+    /// Forget the last roster, so the next read counts as a change. Called when the observer that produced it stops:
+    /// the next observer must be free to re-broadcast the very first roster it reads.
     /// </summary>
     public void Reset()
     {
         lock (_gate)
         {
-            _lastSignature = null;
+            _lastRoster = null;
         }
     }
 
@@ -47,21 +47,20 @@ public sealed class CouchCoopRosterReaction(
 
     private void RebroadcastIfChanged(RosterFacts roster)
     {
-        var signature = CouchCoopRosterChange.Signature(roster);
         lock (_gate)
         {
-            if (string.Equals(signature, _lastSignature, StringComparison.Ordinal))
+            if (roster == _lastRoster)
             {
                 return;
             }
 
-            _lastSignature = signature;
+            _lastRoster = roster;
         }
 
         // Host-only: the roster just changed, so republish the netId→name map the couch seats read (mp_names.json).
         // This is what names a player the seats CANNOT resolve themselves — the host (a SteamID64 on a Steam-hosted
         // session) and any genuine remote Steam friend — on instances that are already running. Free here: the roster
-        // is in hand, and the signature gate above means it runs on a real roster change rather than every read.
+        // is in hand, and the value-equality gate above means it runs on a real roster change rather than every read.
         //
         // The join handler publishes too (CouchCoopWebSocketConnection), which is the path that matters for a seat about
         // to be spawned. Between them the only uncovered case is a remote player joining while NO browser is attached to

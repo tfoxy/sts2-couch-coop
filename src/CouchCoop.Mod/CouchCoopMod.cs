@@ -6,7 +6,6 @@ using CouchCoop.Mod.Runtime;
 using CouchCoop.Mod.Server;
 using CouchCoop.Mod.Session;
 using Spirectl.Sts2;
-using Spirectl.Sts2.Core.State;
 using Spirectl.Sts2.Embedding;
 
 namespace CouchCoop.Mod;
@@ -656,7 +655,7 @@ public static class CouchCoopMod
         {
             var manager = (_hostUi?.HotServerHost as IHotServerHost)?.HeadlessManager as HeadlessClientManager;
             return SpineBakeBudget.CountGameInstances(
-                manager?.DescribeSeats(),
+                manager?.CountLiveSeatProcesses(),
                 Environment.GetEnvironmentVariable("COUCHCOOP_HEADLESS_SLOT"));
         }
         catch

@@ -1,6 +1,6 @@
 using CouchCoop.MirrorProtocol.Envelopes;
 using CouchCoop.Mod.Session;
-using Spirectl.Sts2.Core.State;
+using CouchCoop.Mod.Contracts;
 
 // F2: the wire's mirror-screen discriminator — `screen.mirrorMode`, produced by
 // BrowserAssignmentClassifier.MirrorModeFor and consumed by BOTH clients to decide whether a join form is shown
@@ -24,6 +24,7 @@ internal static class BrowserAssignmentClassifierTests
         TheSavedRunLobbyOutranksTheLobbyType();
         RunsKeepTheirOwnKinds();
         NoStateIsTheMainMenu();
+        AnUnreadableRosterIsAnUnsupportedScreen();
         TheSingleplayerLobbyIsStillALobbyScreen();
         EveryProducedKindSurvivesTheWireAllowlist();
 
@@ -63,9 +64,9 @@ internal static class BrowserAssignmentClassifierTests
     // multiplayer game — the one screen a returning player MUST be offered their old seat on.
     private static void TheSavedRunLobbyOutranksTheLobbyType()
     {
-        Expect(MirrorMode(CouchCoopLobbyHostGateTests.Lobby("host", SavedRun())) == "mp-load-game",
+        Expect(MirrorMode(CouchCoopLobbyHostGateTests.Lobby("host", ["p:1002"])) == "mp-load-game",
             "a host load-game lobby is mp-load-game");
-        Expect(MirrorMode(CouchCoopLobbyHostGateTests.Lobby("singleplayer", SavedRun())) == "mp-load-game",
+        Expect(MirrorMode(CouchCoopLobbyHostGateTests.Lobby("singleplayer", ["p:1002"])) == "mp-load-game",
             "a saved run outranks the singleplayer lobby type");
     }
 
@@ -85,6 +86,19 @@ internal static class BrowserAssignmentClassifierTests
         Expect(MirrorMode(CouchCoopLobbyHostGateTests.MainMenu()) == "main-menu", "and so does the main menu");
     }
 
+    // "Unavailable" (null: the reader could not read the game) is the retired unreadable-state answer, and never "nobody
+    // is here": an unsupported screen with no players, the main-menu mirror mode and the notice that says so.
+    private static void AnUnreadableRosterIsAnUnsupportedScreen()
+    {
+        var state = Classify(null);
+        Expect(state.Screen.Kind == "unsupported" && state.Screen.Type is null && state.Screen.Title is null,
+            "an unreadable roster is an unsupported screen with no type");
+        Expect(state.Screen.MirrorMode == "main-menu", "…in the main-menu mirror mode");
+        Expect(state.Players.Count == 0, "…with nobody on it");
+        Expect(state.Notices is [{ Code: BrowserAssignmentNoticeCodes.UnsupportedScreen }],
+            "…and the unsupported-screen notice");
+    }
+
     // `kind` and `mirrorMode` are independent axes: `kind` says what SHAPE the screen is (the stateful client
     // branches on it), `mirrorMode` says how JOINABLE it is. A singleplayer character select is still a lobby,
     // and nothing outside the mirror's gating may change because of this new kind.
@@ -101,18 +115,18 @@ internal static class BrowserAssignmentClassifierTests
     // must preserve every classifier kind through the session projection.
     private static void EveryProducedKindSurvivesTheWireAllowlist()
     {
-        foreach (var (state, label) in new (StateSnapshot?, string)[]
+        foreach (var (roster, label) in new (RosterFacts?, string)[]
         {
             (CouchCoopLobbyHostGateTests.Lobby("singleplayer"), "sp lobby"),
             (CouchCoopLobbyHostGateTests.Lobby("host"), "mp lobby"),
-            (CouchCoopLobbyHostGateTests.Lobby("host", SavedRun()), "load-game lobby"),
+            (CouchCoopLobbyHostGateTests.Lobby("host", ["p:1002"]), "load-game lobby"),
             (CouchCoopLobbyHostGateTests.RunInProgress("singleplayer"), "sp run"),
             (CouchCoopLobbyHostGateTests.RunInProgress("multiplayer"), "mp run"),
             (CouchCoopLobbyHostGateTests.MainMenu(), "main menu"),
             (null, "no state"),
         })
         {
-            var produced = MirrorMode(state);
+            var produced = MirrorMode(roster);
             var json = "{\"type\":\"session\",\"session\":{\"name\":null,\"status\":\"unassigned\",\"joined\":false,\"playerId\":null,\"connectionCount\":0},\"players\":[],\"screen\":{\"kind\":\"lobby\",\"type\":null,\"title\":null,\"mirrorMode\":\"" + produced + "\"},\"assetCacheToken\":\"cache\",\"hostName\":\"host\",\"scrollAction\":true}";
             var parsed = SessionEnvelope.Parse(System.Text.Encoding.UTF8.GetBytes(json));
             Expect(parsed?.Screen?.MirrorMode == produced,
@@ -122,16 +136,10 @@ internal static class BrowserAssignmentClassifierTests
 
     // ---- helpers ------------------------------------------------------------------------------------------------
 
-    private static BrowserAssignmentState Classify(StateSnapshot? state)
-        => BrowserAssignmentClassifier.Classify(state, new BrowserSessionRegistry(), requestedName: null);
+    private static BrowserAssignmentState Classify(RosterFacts? roster)
+        => BrowserAssignmentClassifier.Classify(roster, new BrowserSessionRegistry(), requestedName: null);
 
-    private static string? MirrorMode(StateSnapshot? state) => Classify(state).Screen.MirrorMode;
-
-    private static StateCharacterSelectSavedRunSnapshot SavedRun()
-        => new(
-            CurrentActIndex: 0,
-            ActFloor: 3,
-            Players: [new StateCharacterSelectSavedRunPlayerSnapshot("p:1002", 40, 80, 120)]);
+    private static string? MirrorMode(RosterFacts? roster) => Classify(roster).Screen.MirrorMode;
 
     private static void Expect(bool condition, string because)
     {

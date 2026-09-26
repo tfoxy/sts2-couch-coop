@@ -88,7 +88,7 @@ public static class MirrorSeatNetIds
 
     public static bool IsMirrorSeat(ulong netId) => netId >= MinNetId && netId <= MaxNetId;
 
-    /// <summary>The state-snapshot player id for a netId. Every player id in a StateSnapshot is <c>"p:{netId}"</c>.</summary>
+    /// <summary>The typed roster player id for a netId, formatted as <c>"p:{netId}"</c>.</summary>
     public static string ToPlayerId(ulong netId)
         => "p:" + netId.ToString(CultureInfo.InvariantCulture);
 

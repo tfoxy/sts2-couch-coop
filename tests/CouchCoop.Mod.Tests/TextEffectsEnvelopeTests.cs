@@ -57,7 +57,7 @@ internal static class TextEffectsEnvelopeTests
         var stub = new AssetCacheTokenEnvelopeTests.StubRuntime("game-1.0");
         return new BrowserStateEnvelopeFactory(
                 new CouchCoopRuntimeHost(new CouchCoopRuntimeDependencies(
-                    stub, stub, stub, stub, stub, stub, stub, stub, stub, stub)))
+                    stub, stub, stub, stub, stub, stub, stub, stub, stub)))
             .CreateSessionEnvelope("Alice", "session", null).GetAwaiter().GetResult();
     }
 

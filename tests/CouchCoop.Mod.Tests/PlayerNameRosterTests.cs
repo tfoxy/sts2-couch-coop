@@ -1,5 +1,5 @@
 using CouchCoop.Mod.Session;
-using Spirectl.Sts2.Core.State;
+using CouchCoop.Mod.Contracts;
 
 // The netId→name pipeline that stops a couch seat rendering other players as raw netIds.
 //
@@ -38,7 +38,7 @@ internal static class PlayerNameRosterTests
         var names = CouchCoopLobbyParticipation.RosterNames(Lobby(
             LobbyPlayer($"p:{steamHost}", "Plapla"),
             LobbyPlayer($"p:{steamFriend}", "Remote Friend"),
-            LobbyPlayer("p:1002", "pla1")));
+            LobbyPlayer("p:1002", "pla1")))!;
 
         Assert(names.Count == 3, "every named lobby player is published");
         Assert(names.Any(entry => entry.NetId == steamHost && entry.Name == "Plapla"),
@@ -49,7 +49,7 @@ internal static class PlayerNameRosterTests
 
         var runNames = CouchCoopLobbyParticipation.RosterNames(Run(
             RunPlayer($"p:{steamHost}", "Plapla", isHost: true),
-            RunPlayer("p:1002", "pla1", isHost: false)));
+            RunPlayer("p:1002", "pla1", isHost: false)))!;
         Assert(runNames.Count == 2 && runNames.Any(entry => entry.NetId == steamHost),
             "a live run publishes its players the same way (the lobby is gone by then)");
     }
@@ -64,7 +64,7 @@ internal static class PlayerNameRosterTests
             // roster and then beat the real name once it resolved.
             LobbyPlayer("p:1004", "1004"),
             LobbyPlayer("not-a-player-id", "Nope"),
-            LobbyPlayer("p:1005", "pla3")));
+            LobbyPlayer("p:1005", "pla3")))!;
 
         Assert(names.Count == 1 && names[0].NetId == 1005UL && names[0].Name == "pla3",
             "unnamed, blank, netId-placeholder and unparseable players are all skipped");
@@ -249,74 +249,18 @@ internal static class PlayerNameRosterTests
     private static string? NameFor(IEnumerable<HeadlessClientManager.MultiplayerNameEntry> entries, ulong netId)
         => entries.FirstOrDefault(entry => entry.net_id == netId)?.name;
 
-    internal static StateCharacterSelectPlayerSnapshot LobbyPlayer(string id, string? name)
-        => new(id, 0, "ironclad", IsReady: false, MaxMultiplayerAscensionUnlocked: 20, DisplayName: name);
+    internal static RosterLobbySeat LobbyPlayer(string id, string? name)
+        => new(id, name, "ironclad", IsConnected: false);
 
-    internal static StateSnapshot Lobby(params StateCharacterSelectPlayerSnapshot[] players)
-        => new(
-            StateSnapshot.CurrentSchemaVersion,
-            Language: null,
-            RootScene: "screens/character_select_screen",
-            CharacterSelect: new StateCharacterSelectSnapshot(
-                new StateCharacterSelectLobbySnapshot(
-                    "host",
-                    LocalPlayerId: "p:1",
-                    HostPlayerId: "p:1",
-                    ConnectingPlayerCount: 0,
-                    Ascension: 0,
-                    MaxAscension: 20,
-                    Act1: "random",
-                    Seed: null,
-                    ModifierIds: [],
-                    Players: players),
-                CharacterButtons: [],
-                View: null),
-            Run: null);
+    internal static RosterFacts Lobby(params RosterLobbySeat[] players)
+        => new(RosterRootScenes.CharacterSelect,
+            new RosterLobby("host", "p:1", false, players, []), null);
 
-    internal static StateRunPlayerSnapshot RunPlayer(string id, string name, bool isHost)
-        => new(
-            id,
-            "test",
-            NetId: null,
-            DisplayName: name,
-            CharacterId: "ironclad",
-            IsLocal: isHost,
-            IsHost: isHost,
-            IsRemote: !isHost,
-            Creature: null,
-            Gold: 0,
-            Deck: null,
-            Relics: [],
-            InventoryComplete: true,
-            Notices: []);
+    internal static RosterRunSeat RunPlayer(string id, string name, bool isHost)
+        => new(id, name, "ironclad", isHost, IsConnected: true);
 
-    internal static StateSnapshot Run(params StateRunPlayerSnapshot[] players)
-        => new(
-            StateSnapshot.CurrentSchemaVersion,
-            Language: null,
-            RootScene: "run",
-            CharacterSelect: null,
-            Run: new StateRunSnapshot(
-                "test",
-                "test",
-                "multiplayer",
-                "standard",
-                "seed:test",
-                AscensionLevel: 0,
-                ActId: "act1",
-                CurrentActIndex: 0,
-                ActFloor: 0,
-                TotalFloor: 0,
-                BossEncounterId: null,
-                SecondBossEncounterId: null,
-                CurrentMapCoord: null,
-                CurrentMapPointId: null,
-                VisitedMapCoords: [],
-                Players: players,
-                Map: null,
-                CurrentRoom: null,
-                Notices: [],
-                View: new StateRunViewSnapshot("p:1", null)));
+    internal static RosterFacts Run(params RosterRunSeat[] players)
+        => new(RosterRootScenes.Run, null, new RosterRun("multiplayer", "p:1", players));
 
     private static void Assert(bool condition, string message)
     {

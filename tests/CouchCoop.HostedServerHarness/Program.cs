@@ -1,5 +1,6 @@
 using System.Net;
 using System.Text.Json;
+using CouchCoop.Mod.Contracts;
 using CouchCoop.Mod.HostUi;
 using CouchCoop.Mod.Protocol;
 using CouchCoop.Mod.Runtime;
@@ -56,10 +57,14 @@ var diagnostics = options.ArtifactDirectory is null ? null : new BrowserLifecycl
 var runtime = new FakeSpirectlRuntime(options.Mode == HarnessMode.IphoneBurst
     ? HarnessMode.IphoneBurstControl
     : options.Mode, options.IphoneProfile);
+// A browser join reads the game through CouchCoop's typed facts (roster, lobby cap, run presence), not through the runtime's
+// state snapshot. This harness has no game behind it, so the fake runtime's game is described to those facts here: without
+// it the join would see an empty game and refuse the host's own row, which is the one join this harness completes.
+CouchCoopGameFacts.Source = new HarnessGameFacts(runtime);
 await using var server = new CouchCoopBrowserServer(
     new StaticSpaFileProvider(options.StaticRoot),
     new FakeAssetAdapter(),
-    new BrowserStateEnvelopeFactory(new CouchCoopRuntimeHost(Dependencies(runtime))),
+    new BrowserStateEnvelopeFactory(new CouchCoopRuntimeHost(Dependencies(runtime)), readSessionFacts: runtime.ReadSessionFacts),
     bindAddress: IPAddress.Loopback,
     preferredPort: options.Port,
     resourceCacheRoot: Environment.GetEnvironmentVariable("COUCHCOOP_CACHE_ROOT"),
@@ -74,7 +79,7 @@ var seatRuntime = options.Mode == HarnessMode.IphoneBurst ? new FakeSpirectlRunt
 await using var seatServer = options.Mode == HarnessMode.IphoneBurst
     ? new CouchCoopBrowserServer(
         new StaticSpaFileProvider(options.StaticRoot), new FakeAssetAdapter(),
-        new BrowserStateEnvelopeFactory(new CouchCoopRuntimeHost(Dependencies(seatRuntime!))),
+        new BrowserStateEnvelopeFactory(new CouchCoopRuntimeHost(Dependencies(seatRuntime!)), readSessionFacts: seatRuntime!.ReadSessionFacts),
         bindAddress: IPAddress.Loopback, preferredPort: 0,
         resourceCacheRoot: Environment.GetEnvironmentVariable("COUCHCOOP_CACHE_ROOT"),
         lifecycleDiagnostics: diagnostics, lifecycleSocketRole: "seat",
@@ -449,6 +454,41 @@ internal sealed class FakeAssetAdapter : ICouchCoopAssetHttpAdapter
     }
 }
 
+/// <summary>
+/// CouchCoop's typed game facts over the fake runtime's game: the roster the typed reader would report for the state the
+/// runtime describes. The retired snapshot-to-roster projection the unit suites use as their parity oracle, kept small.
+/// </summary>
+internal sealed class HarnessGameFacts(FakeSpirectlRuntime runtime) : IGameFacts
+{
+    public GateFacts? ReadGates(object? currentScreen) => null;
+
+    public bool? ReadRunInProgress() => State().Run is not null;
+
+    public int? ReadLobbyCap() => null;
+
+    public RosterFacts? ReadRoster()
+    {
+        var state = State();
+        var lobby = state.CharacterSelect?.Lobby is { } source
+            ? new RosterLobby(
+                source.NetGameType,
+                source.HostPlayerId,
+                IsSavedRun: source.SavedRun is not null,
+                [.. source.Players.Select(player => new RosterLobbySeat(player.Id, player.DisplayName, player.CharacterId, player.IsConnected))],
+                [.. source.SavedRun?.Players.Select(player => player.Id) ?? []])
+            : null;
+        var run = state.Run is { } sourceRun
+            ? new RosterRun(
+                sourceRun.NetGameType,
+                sourceRun.Players.FirstOrDefault(player => player.IsHost)?.Id,
+                [.. sourceRun.Players.Select(player => new RosterRunSeat(player.Id, player.DisplayName, player.CharacterId, player.IsHost, player.IsConnected))])
+            : null;
+        return new RosterFacts(state.RootScene ?? "", lobby, run);
+    }
+
+    private StateSnapshot State() => runtime.GetCurrentState(new CurrentStateRequest()).State!;
+}
+
 internal sealed class FakeSpirectlRuntime : IRuntimeCapabilitySource, IRuntimeAssetSource, IRuntimeStateSource, IAnimationHintSource, IRuntimeSceneDeltaSource, IGameModelSource, ISpineCatalogSource, ISpineGeoClipBaker, ISemanticActionSource, IRuntimeSceneWatchControlSource
 {
     private readonly HarnessMode _mode;
@@ -489,6 +529,43 @@ internal sealed class FakeSpirectlRuntime : IRuntimeCapabilitySource, IRuntimeAs
             Provisional: false,
             capabilities,
             []);
+    }
+
+    /// <summary>
+    /// What the game's typed reader would report for the screen this harness plays: the roster a `session` envelope is
+    /// classified from. This harness has no game behind it, so each server is handed its own runtime's answer (the
+    /// iphone-burst mode runs a lobby host and a run seat in one process) instead of the process-wide game reader.
+    /// </summary>
+    public SessionFacts ReadSessionFacts(bool withLobbyCap)
+    {
+        _ = withLobbyCap; // the harness owns no seat table to size
+        var isControlLobby = _mode is HarnessMode.Lobby or HarnessMode.IphoneBurstControl;
+        return new SessionFacts(
+            isControlLobby
+                ? new RosterFacts(
+                    RosterRootScenes.CharacterSelect,
+                    new RosterLobby(
+                        "multiplayer",
+                        "p:1",
+                        IsSavedRun: false,
+                        [
+                            new RosterLobbySeat("p:1", "Host", "ironclad", IsConnected: true),
+                            new RosterLobbySeat("p:1002", "Alice", "silent", IsConnected: false),
+                        ],
+                        []),
+                    Run: null)
+                : new RosterFacts(
+                    RosterRootScenes.Run,
+                    Lobby: null,
+                    new RosterRun(
+                        "multiplayer",
+                        "Host",
+                        [
+                            new RosterRunSeat("Host", "Host", "ironclad", IsHost: true, IsConnected: true),
+                            new RosterRunSeat("Alice", "Alice", "silent", IsHost: false, IsConnected: true),
+                            new RosterRunSeat("Bob", "Bob", "silent", IsHost: false, IsConnected: true),
+                        ])),
+            null);
     }
 
     public CurrentStateResult GetCurrentState(CurrentStateRequest request)

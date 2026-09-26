@@ -1,3 +1,5 @@
+using System.Reflection.Metadata;
+using System.Reflection.PortableExecutable;
 using System.Reflection;
 using CouchCoop.Mod.HostUi;
 using CouchCoop.Mod.Runtime;
@@ -20,7 +22,6 @@ internal static class SpirectlEmbeddedAssemblyBoundaryTests
         "Spirectl.Sts2.Embedding.ISpirectlRuntime",
         "Spirectl.Sts2.Embedding.IRuntimeCapabilitySource",
         "Spirectl.Sts2.Embedding.IRuntimeAssetSource",
-        "Spirectl.Sts2.Embedding.IRuntimeStateSource",
         "Spirectl.Sts2.Embedding.ICombatEventSource",
         "Spirectl.Sts2.Embedding.IAnimationHintSource",
         "Spirectl.Sts2.Embedding.IRuntimeSceneDeltaSource",
@@ -307,11 +308,50 @@ internal static class SpirectlEmbeddedAssemblyBoundaryTests
             binder: null,
             types: [typeof(ISpirectlRuntime)],
             modifiers: null);
-        Expect(fromFactory?.ReturnType == typeof(CouchCoopRuntimeDependencies), "Couch keeps its ten-port FromFactory adapter");
+        Expect(fromFactory?.ReturnType == typeof(CouchCoopRuntimeDependencies), "Couch keeps its typed runtime FromFactory adapter");
+
+        AssertNoFullStateReferences(typeof(CouchCoopRuntimeDependencies).Assembly.Location);
+        AssertNoFullStateReferences(Path.Combine(AppContext.BaseDirectory, "CouchCoop.Mod.HotReload.dll"));
 
         PinLiveHostReasonWording();
 
         Console.WriteLine("SpirectlEmbeddedAssemblyBoundaryTests: ok");
+    }
+
+    private static readonly HashSet<string> FullStateMethods =
+    ["GetCurrentState", "SubscribeCurrentState", "WatchCurrentStateAsync"];
+
+    private static void AssertNoFullStateReferences(string assemblyPath)
+    {
+        using var stream = File.OpenRead(assemblyPath);
+        using var pe = new PEReader(stream);
+        var metadata = pe.GetMetadataReader();
+        foreach (var handle in metadata.TypeReferences)
+        {
+            var reference = metadata.GetTypeReference(handle);
+            var name = metadata.GetString(reference.Name);
+            var ns = metadata.GetString(reference.Namespace);
+            var fullName = $"{ns}.{name}";
+            Expect(fullName != "Spirectl.Sts2.Embedding.IRuntimeStateSource"
+                   && !(ns == "Spirectl.Sts2.Core.State" &&
+                        (name.Contains("StateSnapshot", StringComparison.Ordinal) ||
+                         name.StartsWith("CurrentState", StringComparison.Ordinal))),
+                $"{Path.GetFileName(assemblyPath)} must not reference the full-state path: {fullName}");
+        }
+        foreach (var handle in metadata.MemberReferences)
+        {
+            var member = metadata.GetMemberReference(handle);
+            var name = metadata.GetString(member.Name);
+            Expect(!FullStateMethods.Contains(name),
+                $"{Path.GetFileName(assemblyPath)} must not call the full-state path: {name}");
+        }
+        foreach (var handle in metadata.MethodDefinitions)
+        {
+            var method = metadata.GetMethodDefinition(handle);
+            var name = metadata.GetString(method.Name);
+            Expect(!FullStateMethods.Contains(name),
+                $"{Path.GetFileName(assemblyPath)} must not declare a full-state adapter: {name}");
+        }
     }
 
     /// <summary>

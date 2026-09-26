@@ -61,7 +61,7 @@ internal static class ConnectionStatusTests
     {
         var source = new CleanupActionSource();
         using var runtime = new CouchCoopRuntimeHost(new CouchCoopRuntimeDependencies(
-            source, source, null!, null!, null!, null!, null!, null!, source, null!));
+            source, source, null!, null!, null!, null!, null!, source, null!));
         var lobby = new CouchCoopLobbyParticipation(runtime);
         // An unsuccessful action is a returned result, not an exception from the transport.
         source.Result = new(false, null, new("cleanup-refused", "Peer removal was refused."));

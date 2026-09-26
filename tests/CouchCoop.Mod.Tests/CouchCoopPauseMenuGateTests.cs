@@ -1,6 +1,5 @@
 using CouchCoop.Mod.Contracts;
 using CouchCoop.Mod.HostUi;
-using Spirectl.Sts2.Core.State;
 
 // When does the pause menu's "Couch Co-Op QR Code" row exist?
 //
@@ -30,7 +29,7 @@ internal static class CouchCoopPauseMenuGateTests
     private static void HostRunWithAListenerShows()
     {
         Expect(
-            CouchCoopPauseMenuGate.ShouldShow(Listener, Facts(Run("host"))),
+            CouchCoopPauseMenuGate.ShouldShow(Listener, Facts(true, null, "host")),
             "a hosted run with a listener shows the row");
     }
 
@@ -39,7 +38,7 @@ internal static class CouchCoopPauseMenuGateTests
     private static void SingleplayerRunIsRefused()
     {
         Expect(
-            !CouchCoopPauseMenuGate.ShouldShow(Listener, Facts(Run("singleplayer"))),
+            !CouchCoopPauseMenuGate.ShouldShow(Listener, Facts(true, null, "singleplayer")),
             "a singleplayer run is refused");
     }
 
@@ -48,7 +47,7 @@ internal static class CouchCoopPauseMenuGateTests
     private static void ClientRunIsRefused()
     {
         Expect(
-            !CouchCoopPauseMenuGate.ShouldShow(Listener, Facts(Run("client"))),
+            !CouchCoopPauseMenuGate.ShouldShow(Listener, Facts(true, null, "client")),
             "a run we joined as a client is refused");
     }
 
@@ -57,7 +56,7 @@ internal static class CouchCoopPauseMenuGateTests
     private static void LobbyIsRefused()
     {
         Expect(
-            !CouchCoopPauseMenuGate.ShouldShow(Listener, Facts(CouchCoopLobbyHostGateTests.Lobby("host"))),
+            !CouchCoopPauseMenuGate.ShouldShow(Listener, Facts(false, "host", null)),
             "a host LOBBY is not a host run");
     }
 
@@ -65,14 +64,14 @@ internal static class CouchCoopPauseMenuGateTests
     {
         Expect(!CouchCoopPauseMenuGate.ShouldShow(Listener, null), "facts that could not be read are refused");
         Expect(
-            !CouchCoopPauseMenuGate.ShouldShow(Listener, Facts(CouchCoopLobbyHostGateTests.MainMenu())),
+            !CouchCoopPauseMenuGate.ShouldShow(Listener, Facts(false, null, null)),
             "the main menu is refused");
     }
 
     // No browser server means no URL to encode, so the dialog would have nothing to show.
     private static void MissingListenerIsRefused()
     {
-        Expect(!CouchCoopPauseMenuGate.ShouldShow(null, Facts(Run("host"))), "no listener means no row");
+        Expect(!CouchCoopPauseMenuGate.ShouldShow(null, Facts(true, null, "host")), "no listener means no row");
     }
 
     // The two gates are deliberately DISJOINT: the lobby one requires `Run: null` because it answers "can a NEW
@@ -81,29 +80,25 @@ internal static class CouchCoopPauseMenuGateTests
     // change made this one inherit the lobby's `Run: null`, the row would never appear at all.
     private static void TheTwoGatesCoverDifferentMoments()
     {
-        foreach (var (state, label) in new (StateSnapshot?, string)[]
+        foreach (var (facts, label) in new (GateFacts? Facts, string Label)[]
         {
-            (CouchCoopLobbyHostGateTests.Lobby("host"), "host lobby"),
-            (CouchCoopLobbyHostGateTests.Lobby("singleplayer"), "singleplayer lobby"),
-            (Run("host"), "hosted run"),
-            (Run("singleplayer"), "singleplayer run"),
-            (Run("client"), "client run"),
-            (CouchCoopLobbyHostGateTests.MainMenu(), "main menu"),
-            (null, "no state"),
+            (Facts(false, "host", null), "host lobby"),
+            (Facts(false, "singleplayer", null), "singleplayer lobby"),
+            (Facts(true, null, "host"), "hosted run"),
+            (Facts(true, null, "singleplayer"), "singleplayer run"),
+            (Facts(true, null, "client"), "client run"),
+            (Facts(false, null, null), "main menu"),
+            (null, "unavailable facts"),
         })
         {
             Expect(
-                !(CouchCoopLobbyHostGate.ShouldShow(Listener, Facts(state))
-                    && CouchCoopPauseMenuGate.ShouldShow(Listener, Facts(state))),
+                !(CouchCoopLobbyHostGate.ShouldShow(Listener, facts)
+                    && CouchCoopPauseMenuGate.ShouldShow(Listener, facts)),
                 $"at most one QR entry point is gated on ({label})");
         }
     }
 
-    // The snapshot fixtures are shared with the lobby gate's suite; this is its parity-oracle projection.
-    private static GateFacts? Facts(StateSnapshot? state) => CouchCoopLobbyHostGateTests.Project(state);
-
-    private static StateSnapshot Run(string netGameType)
-        => CouchCoopLobbyHostGateTests.RunInProgress(netGameType);
+    private static GateFacts Facts(bool run, string? lobby, string? runType) => new(run, lobby, runType);
 
     private static void Expect(bool condition, string because)
     {

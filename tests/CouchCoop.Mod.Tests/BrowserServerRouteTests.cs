@@ -22,7 +22,6 @@ using Spirectl.Sts2.Core.Perspective;
 using Spirectl.Sts2.Core.Protocol;
 using Spirectl.Sts2.Core.Reference;
 using Spirectl.Sts2.Core.SceneInspection;
-using Spirectl.Sts2.Core.State;
 using Spirectl.Sts2.Embedding;
 
 // WS8: `dotnet run --project tests/CouchCoop.Mod.Tests -- mdns-harness [seconds] [name]` runs ONLY the mDNS
@@ -158,6 +157,9 @@ if (args is ["seats", ..])
     // What the server does with the rosters its observer reads: the re-send, the reap rule (only after the run AND any
     // lobby end) and stale reads, over a real listener and a real seat manager with a fake seat process.
     await BrowserServerRouteTests.RunRosterObserverRoutesAsync();
+    await BrowserServerRouteTests.RunSessionEnvelopeReadRoutesAsync();
+    await BrowserServerRouteTests.RunJoinRoutesAsync();
+    await JoinFactsTests.RunAsync();
     ConnectionHostingDemandTests.Run();
     ConnectionHostingTrackerStateTests.Run();
     // The seat ROSTER's transition bookkeeping — which seat the picker offers, and the statuses it remembers
@@ -377,6 +379,10 @@ if (args is ["host-ui", ..])
     // per change, reap only after the run and lobby end). All pure: fakes stand where the game and its signals would.
     RosterFactsTests.Run();
     CouchCoopRosterObserverTests.Run();
+    // The roster and the lobby cap one `session` envelope is built from, read in one hop.
+    SessionFactsTests.Run();
+    // The session envelope's classifier over that roster, held to the retired classifier over the snapshot.
+    BrowserAssignmentClassifierTests.Run();
     // The QR dialog's seat-mod card: every decision it draws (which mods, locked / held-off / cascade, what a
     // press writes), plus the geometry that makes it the connection card's mirror. Both pure — the card itself
     // is a Godot node this runner cannot construct. The layout half is also in the full contract suite below.
@@ -838,6 +844,8 @@ RosterFactsTests.Run();
 CouchCoopRosterObserverTests.Run();
 // Run presence for a browser disconnect and a seat launch (the same typed facts, a different caller).
 await RunPresenceTests.RunAsync();
+// The browser join's read of the game (context, seat facts) and the seat wait's membership check, from the same facts.
+await JoinFactsTests.RunAsync();
 // F1 host connectivity log: the ring, the player-facing copy (asserted literally — it is a QA contract
 // shared with the live probe) and the bbcode escaping that keeps a browser-typed display name from
 // re-styling the host's television. Runs FIRST of the log-touching suites and resets the process-global
@@ -846,6 +854,10 @@ await RunPresenceTests.RunAsync();
 // join form, or does it just mirror?". Shares CouchCoopLobbyHostGateTests' snapshot builders, so it runs beside
 // it: the QR gate and the mirror kind are two readings of the same lobby shape.
 BrowserAssignmentClassifierTests.Run();
+// The roster and the lobby cap one `session` envelope is built from, read together in one hop.
+SessionFactsTests.Run();
+// …and that classifier over CouchCoop's own roster instead of the snapshot: identical on every fixture, by the retired
+// classifier kept as the oracle (delete both with the last WP3 read path).
 // WS-2 QR dialog: the four-way overlay layout contract (runtime default, hot-reload logic, shell copy,
 // validator) plus the constant-extent invariant. Runs BEFORE any hot-reload test so the shell still
 // reports its compiled-in default.
@@ -887,7 +899,7 @@ await ZeroClientContractTests.RunAsync();
 await SeatReadyTimeoutTests.RunAsync();
 Console.WriteLine("""{"ok":true,"hostedServerRoutes":true}""");
 
-internal sealed class BrowserServerRouteTests
+internal sealed partial class BrowserServerRouteTests
 {
     internal const string JoinFaultVerb = "join-fault-harness";
 
@@ -922,11 +934,13 @@ internal sealed class BrowserServerRouteTests
         // "host" is what makes DescribeMirrorJoinContext report SpawnAllowed — without it the join is refused
         // earlier (not-a-session-player) and never reaches the launcher we want to blow up.
         var runtime = new RecordingSpirectlRuntime { Mode = RuntimeStateMode.Lobby, LobbyNetGameType = "host" };
+        // The join reads the game through the typed facts now, so the harness's game is described to them as well.
+        using var facts = runtime.InstallGameFacts();
         using var manager = new HeadlessClientManager(launcher: _ => throw new KeyNotFoundException(faultText));
         await using var server = new CouchCoopBrowserServer(
             new StaticSpaFileProvider(staticRoot),
             new CapturingAssetAdapter(),
-            new BrowserStateEnvelopeFactory(new CouchCoopRuntimeHost(new CouchCoopRuntimeDependencies(runtime, runtime, runtime, runtime, runtime, runtime, runtime, runtime, runtime, runtime))),
+            runtime.NewEnvelopeFactory(),
             preferredPort: port,
             headlessManager: manager,
             isHeadlessClient: false);
@@ -950,7 +964,8 @@ internal sealed class BrowserServerRouteTests
         using var cacheRoot = new TempResourceCacheRoot();
         var assets = new CapturingAssetAdapter();
         var runtime = new RecordingSpirectlRuntime();
-        var envelopeFactory = new BrowserStateEnvelopeFactory(new CouchCoopRuntimeHost(new CouchCoopRuntimeDependencies(runtime, runtime, runtime, runtime, runtime, runtime, runtime, runtime, runtime, runtime)));
+        using var gameFacts = runtime.InstallGameFacts();
+        var envelopeFactory = runtime.NewEnvelopeFactory();
         var streamingDemand = new StreamingViewerDemand();
         var streamingReporter = streamingDemand.CreateReporter();
         var observerGate = typeof(CouchCoopBrowserServer).GetField(
@@ -1205,6 +1220,8 @@ internal sealed class BrowserServerRouteTests
         await AssertMirrorOnlyHostKeepsSessionsLiveAsync(root.Path);
         // …and the server's reaction to what the roster observer reads: re-sends, the reap rule, stale reads.
         await AssertRosterObserverDrivesTheServerAsync(root.Path);
+        // …and what a `session` envelope costs to build: one roster read, no snapshot, one read per fan-out.
+        await RunSessionEnvelopeReadRoutesAsync();
         // Stage-A static background: the /bg/ route belt and the session envelope's descriptor, on DEDICATED
         // servers (the tracker's published slot is process-wide and the env valve is scoped per assert).
         await AssertStaticBackgroundRoutesAsync(root.Path);
@@ -1230,6 +1247,7 @@ internal sealed class BrowserServerRouteTests
         AssertAssignmentDtos();
         AssertJoinRejectionDetailPlumbing();
         await AssertJoinFaultReachesTheViewerAsync(root.Path);
+        await AssertJoinReadsTheGameOnceAndBuildsNoStateSnapshotAsync(root.Path);
         AssertRuntimeHostCallsCapabilitiesFirst();
         await AssertSpirectlAssetAdapterAsync();
         await HotReloadProtocolAssertions();
@@ -1485,7 +1503,7 @@ internal sealed class BrowserServerRouteTests
                     notes: [])
             };
             var logs = new List<string>();
-            var host = new CouchCoopRuntimeHost(new CouchCoopRuntimeDependencies(runtime, runtime, runtime, runtime, runtime, runtime, runtime, runtime, runtime, runtime));
+            var host = new CouchCoopRuntimeHost(new CouchCoopRuntimeDependencies(runtime, runtime, runtime, runtime, runtime, runtime, runtime, runtime, runtime));
             var provider = new CouchCoopSpineClipProvider(host.Assets, new SpirectlAssetBinaryCache(root));
             var first = await new CouchCoopSpinePrerenderJob(host, provider, logs.Add).RunAsync();
 
@@ -1542,7 +1560,7 @@ internal sealed class BrowserServerRouteTests
             {
                 SpineCatalogException = new InvalidOperationException("catalog probe failed")
             };
-            var failedHost = new CouchCoopRuntimeHost(new CouchCoopRuntimeDependencies(failedRuntime, failedRuntime, failedRuntime, failedRuntime, failedRuntime, failedRuntime, failedRuntime, failedRuntime, failedRuntime, failedRuntime));
+            var failedHost = new CouchCoopRuntimeHost(new CouchCoopRuntimeDependencies(failedRuntime, failedRuntime, failedRuntime, failedRuntime, failedRuntime, failedRuntime, failedRuntime, failedRuntime, failedRuntime));
             var failedProvider = new CouchCoopSpineClipProvider(failedHost.Assets, new SpirectlAssetBinaryCache(root));
             var failed = await new CouchCoopSpinePrerenderJob(failedHost, failedProvider, new List<string>().Add).RunAsync();
             Expect(failed.Status == "failed", "a catalog scan exception yields a failed summary");
@@ -1565,7 +1583,7 @@ internal sealed class BrowserServerRouteTests
                     failures: [],
                     notes: [])
             };
-            var writeFailHost = new CouchCoopRuntimeHost(new CouchCoopRuntimeDependencies(writeFailRuntime, writeFailRuntime, writeFailRuntime, writeFailRuntime, writeFailRuntime, writeFailRuntime, writeFailRuntime, writeFailRuntime, writeFailRuntime, writeFailRuntime));
+            var writeFailHost = new CouchCoopRuntimeHost(new CouchCoopRuntimeDependencies(writeFailRuntime, writeFailRuntime, writeFailRuntime, writeFailRuntime, writeFailRuntime, writeFailRuntime, writeFailRuntime, writeFailRuntime, writeFailRuntime));
             var writeFailProvider = new CouchCoopSpineClipProvider(writeFailHost.Assets, new SpirectlAssetBinaryCache(blockingFile));
             var writeFailLogs = new List<string>();
             var writeFail = await new CouchCoopSpinePrerenderJob(writeFailHost, writeFailProvider, writeFailLogs.Add).RunAsync();
@@ -1791,7 +1809,7 @@ internal sealed class BrowserServerRouteTests
         {
             using var cacheRoot = new TempResourceCacheRoot();
             var runtime = new RecordingSpirectlRuntime();
-            var envelopeFactory = new BrowserStateEnvelopeFactory(new CouchCoopRuntimeHost(new CouchCoopRuntimeDependencies(runtime, runtime, runtime, runtime, runtime, runtime, runtime, runtime, runtime, runtime)));
+            var envelopeFactory = runtime.NewEnvelopeFactory();
             await using var server = new CouchCoopBrowserServer(
                 new StaticSpaFileProvider(staticRoot),
                 new CapturingAssetAdapter(),
@@ -2017,7 +2035,7 @@ internal sealed class BrowserServerRouteTests
 
         using var cacheRoot = new TempResourceCacheRoot();
         var runtime = new RecordingSpirectlRuntime { Mode = RuntimeStateMode.MultiplayerRun };
-        var envelopeFactory = new BrowserStateEnvelopeFactory(new CouchCoopRuntimeHost(new CouchCoopRuntimeDependencies(runtime, runtime, runtime, runtime, runtime, runtime, runtime, runtime, runtime, runtime)));
+        var envelopeFactory = runtime.NewEnvelopeFactory();
         await using var server = new CouchCoopBrowserServer(
             new StaticSpaFileProvider(staticRoot),
             new CapturingAssetAdapter(),
@@ -2192,7 +2210,7 @@ internal sealed class BrowserServerRouteTests
         {
             using var cacheRoot = new TempResourceCacheRoot();
             var runtime = new RecordingSpirectlRuntime();
-            var envelopeFactory = new BrowserStateEnvelopeFactory(new CouchCoopRuntimeHost(new CouchCoopRuntimeDependencies(runtime, runtime, runtime, runtime, runtime, runtime, runtime, runtime, runtime, runtime)));
+            var envelopeFactory = runtime.NewEnvelopeFactory();
             await using var server = new CouchCoopBrowserServer(
                 new StaticSpaFileProvider(staticRoot),
                 new CapturingAssetAdapter(),
@@ -2262,7 +2280,7 @@ internal sealed class BrowserServerRouteTests
             await using (var coldServer = new CouchCoopBrowserServer(
                 new StaticSpaFileProvider(staticRoot),
                 new CapturingAssetAdapter(),
-                new BrowserStateEnvelopeFactory(new CouchCoopRuntimeHost(new CouchCoopRuntimeDependencies(coldRuntime, coldRuntime, coldRuntime, coldRuntime, coldRuntime, coldRuntime, coldRuntime, coldRuntime, coldRuntime, coldRuntime))),
+                coldRuntime.NewEnvelopeFactory(),
                 resourceCacheRoot: cacheRoot.Path))
             {
                 var coldBase = await coldServer.StartAsync();
@@ -2400,7 +2418,7 @@ internal sealed class BrowserServerRouteTests
         CouchCoopStaticBackgroundTracker.ResetForTest();
         try
         {
-            var factory = new BrowserStateEnvelopeFactory(new CouchCoopRuntimeHost(new CouchCoopRuntimeDependencies(new RecordingSpirectlRuntime(), new RecordingSpirectlRuntime(), new RecordingSpirectlRuntime(), new RecordingSpirectlRuntime(), new RecordingSpirectlRuntime(), new RecordingSpirectlRuntime(), new RecordingSpirectlRuntime(), new RecordingSpirectlRuntime(), new RecordingSpirectlRuntime(), new RecordingSpirectlRuntime())));
+            var factory = new RecordingSpirectlRuntime().NewEnvelopeFactory();
             var absent = await factory.CreateSessionEnvelope("Alice", "browser:req:bg-absent", session: null);
             Expect(absent.StaticBackground is null, "the descriptor is null while nothing is published");
             Expect(
@@ -2430,7 +2448,7 @@ internal sealed class BrowserServerRouteTests
         using var cacheRoot = new TempResourceCacheRoot();
         var logs = new List<string>();
         var runtime = new RecordingSpirectlRuntime();
-        var envelopeFactory = new BrowserStateEnvelopeFactory(new CouchCoopRuntimeHost(new CouchCoopRuntimeDependencies(runtime, runtime, runtime, runtime, runtime, runtime, runtime, runtime, runtime, runtime), logs.Add));
+        var envelopeFactory = runtime.NewEnvelopeFactory(hostLog: logs.Add);
         await using var server = new CouchCoopBrowserServer(
             new StaticSpaFileProvider(staticRoot),
             new ThrowingAssetAdapter(),
@@ -2496,7 +2514,7 @@ internal sealed class BrowserServerRouteTests
     private static void AssertAssignmentDtos()
     {
         var runtime = new RecordingSpirectlRuntime();
-        var factory = new BrowserStateEnvelopeFactory(new CouchCoopRuntimeHost(new CouchCoopRuntimeDependencies(runtime, runtime, runtime, runtime, runtime, runtime, runtime, runtime, runtime, runtime)));
+        var factory = runtime.NewEnvelopeFactory();
 
         var trimmed = factory.CreateSessionEnvelope("  Alice  ", "session", null).GetAwaiter().GetResult();
         using var trimmedJson = JsonDocument.Parse(BrowserJson.Serialize(trimmed));
@@ -2542,7 +2560,7 @@ internal sealed class BrowserServerRouteTests
     // inside ReceiveLoopAsync and is covered by the live check, not by a socket harness).
     private static void AssertJoinRejectionDetailPlumbing()
     {
-        var factory = new BrowserStateEnvelopeFactory(new CouchCoopRuntimeHost(new CouchCoopRuntimeDependencies(new RecordingSpirectlRuntime(), new RecordingSpirectlRuntime(), new RecordingSpirectlRuntime(), new RecordingSpirectlRuntime(), new RecordingSpirectlRuntime(), new RecordingSpirectlRuntime(), new RecordingSpirectlRuntime(), new RecordingSpirectlRuntime(), new RecordingSpirectlRuntime(), new RecordingSpirectlRuntime())));
+        var factory = new RecordingSpirectlRuntime().NewEnvelopeFactory();
 
         var failed = factory
             .CreateSessionEnvelope("Alice", "session", null, null, null, "join-failed", "boom: the host threw")
@@ -2582,7 +2600,8 @@ internal sealed class BrowserServerRouteTests
         // A HOSTING lobby: the one state in which the join handler really reaches the spawn path, which is what
         // makes the injected launcher fault reproduce the shipped defect instead of a rejection taken earlier.
         var runtime = new RecordingSpirectlRuntime { Mode = RuntimeStateMode.Lobby, LobbyNetGameType = "host" };
-        var envelopeFactory = new BrowserStateEnvelopeFactory(new CouchCoopRuntimeHost(new CouchCoopRuntimeDependencies(runtime, runtime, runtime, runtime, runtime, runtime, runtime, runtime, runtime, runtime)));
+        using var gameFacts = runtime.InstallGameFacts();
+        var envelopeFactory = runtime.NewEnvelopeFactory();
         using var manager = new HeadlessClientManager(launcher: _ => throw new KeyNotFoundException(faultText));
         await using var server = new CouchCoopBrowserServer(
             new StaticSpaFileProvider(staticRoot),
@@ -2624,7 +2643,6 @@ internal sealed class BrowserServerRouteTests
 
     private static void AssertRuntimeHostCallsCapabilitiesFirst()
     {
-        AssertRuntimeCallOrder(host => host.GetCurrentState(new CurrentStateRequest()), "GetCurrentState");
         AssertRuntimeCallOrder(host => host.GetModels(new ModelCatalogRequestSnapshot("characters", ["ironclad"])), "GetModels");
         AssertRuntimeCallOrder(host => host.ExecuteAction(new EmbeddableActionRequest("request:test", SemanticActionKind.EndTurn)), "ExecuteAction");
         AssertRuntimeCallOrder(host => host.Assets.GetAsset(new EmbeddableAssetRequest("asset:key")), "Assets.GetAsset");
@@ -2634,7 +2652,7 @@ internal sealed class BrowserServerRouteTests
     {
         var fake = new RecordingSpirectlRuntime();
         var logs = new List<string>();
-        var host = new CouchCoopRuntimeHost(new CouchCoopRuntimeDependencies(fake, fake, fake, fake, fake, fake, fake, fake, fake, fake), logs.Add);
+        var host = new CouchCoopRuntimeHost(new CouchCoopRuntimeDependencies(fake, fake, fake, fake, fake, fake, fake, fake, fake), logs.Add);
 
         invoke(host);
 
@@ -2652,7 +2670,7 @@ internal sealed class BrowserServerRouteTests
     private static async Task AssertRasterResourceFormatAsync()
     {
         var runtime = new RecordingSpirectlRuntime();
-        var adapter = new SpirectlAssetHttpAdapter(runtime.Assets, new CouchCoopRuntimeHost(new CouchCoopRuntimeDependencies(runtime, runtime, runtime, runtime, runtime, runtime, runtime, runtime, runtime, runtime)));
+        var adapter = new SpirectlAssetHttpAdapter(runtime.Assets, new CouchCoopRuntimeHost(new CouchCoopRuntimeDependencies(runtime, runtime, runtime, runtime, runtime, runtime, runtime, runtime, runtime)));
         const string tresKey = "res://images/atlases/intent_atlas.sprites/attack/intent_attack_3.tres";
 
         var raster = await adapter.TryGetAssetAsync(tresKey, CouchCoopResourceFormat.Png);
@@ -2671,7 +2689,7 @@ internal sealed class BrowserServerRouteTests
     private static async Task AssertSpirectlAssetAdapterAsync()
     {
         var runtime = new RecordingSpirectlRuntime();
-        var adapter = new SpirectlAssetHttpAdapter(runtime.Assets, new CouchCoopRuntimeHost(new CouchCoopRuntimeDependencies(runtime, runtime, runtime, runtime, runtime, runtime, runtime, runtime, runtime, runtime)));
+        var adapter = new SpirectlAssetHttpAdapter(runtime.Assets, new CouchCoopRuntimeHost(new CouchCoopRuntimeDependencies(runtime, runtime, runtime, runtime, runtime, runtime, runtime, runtime, runtime)));
 
         var asset = await adapter.TryGetAssetAsync("asset:key%2Fopaque");
         Expect(asset.Error is null, "spirectl asset adapter succeeds when runtime returns bytes");
@@ -2694,7 +2712,7 @@ internal sealed class BrowserServerRouteTests
         Expect(missing.Error?.Notices?.Count == 1, "spirectl asset adapter exposes asset error notices");
 
         var unsupportedRuntime = new RecordingSpirectlRuntime { AssetExtractionSupported = false };
-        var unsupported = await new SpirectlAssetHttpAdapter(unsupportedRuntime.Assets, new CouchCoopRuntimeHost(new CouchCoopRuntimeDependencies(unsupportedRuntime, unsupportedRuntime, unsupportedRuntime, unsupportedRuntime, unsupportedRuntime, unsupportedRuntime, unsupportedRuntime, unsupportedRuntime, unsupportedRuntime, unsupportedRuntime))).TryGetAssetAsync("asset:key");
+        var unsupported = await new SpirectlAssetHttpAdapter(unsupportedRuntime.Assets, new CouchCoopRuntimeHost(new CouchCoopRuntimeDependencies(unsupportedRuntime, unsupportedRuntime, unsupportedRuntime, unsupportedRuntime, unsupportedRuntime, unsupportedRuntime, unsupportedRuntime, unsupportedRuntime, unsupportedRuntime))).TryGetAssetAsync("asset:key");
         Expect(unsupported.Error?.Code == CouchCoopRuntimeHost.AssetExtractionCapability, "unsupported asset capability is structured");
         Expect(unsupported.Error?.Notices?.Count > 0, "unsupported asset capability exposes runtime notices");
     }
@@ -2924,7 +2942,7 @@ internal sealed class BrowserServerRouteTests
         await using var server = new CouchCoopBrowserServer(
             new StaticSpaFileProvider(rootPath),
             new CapturingAssetAdapter(),
-            new BrowserStateEnvelopeFactory(new CouchCoopRuntimeHost(new CouchCoopRuntimeDependencies(new RecordingSpirectlRuntime(), new RecordingSpirectlRuntime(), new RecordingSpirectlRuntime(), new RecordingSpirectlRuntime(), new RecordingSpirectlRuntime(), new RecordingSpirectlRuntime(), new RecordingSpirectlRuntime(), new RecordingSpirectlRuntime(), new RecordingSpirectlRuntime(), new RecordingSpirectlRuntime()))),
+            new RecordingSpirectlRuntime().NewEnvelopeFactory(),
             preferredPort: preferred);
         var baseUri = await server.StartAsync();
         Expect(baseUri.Port > preferred, "server advances when preferred port is unavailable");
@@ -2943,7 +2961,7 @@ internal sealed class BrowserServerRouteTests
         // machine with a different network shape.
         Uri? advertised = null;
         await using (var services = new CouchCoopHostUiServices(
-                         new CouchCoopRuntimeHost(new CouchCoopRuntimeDependencies(new RecordingSpirectlRuntime(), new RecordingSpirectlRuntime(), new RecordingSpirectlRuntime(), new RecordingSpirectlRuntime(), new RecordingSpirectlRuntime(), new RecordingSpirectlRuntime(), new RecordingSpirectlRuntime(), new RecordingSpirectlRuntime(), new RecordingSpirectlRuntime(), new RecordingSpirectlRuntime()), logs.Add),
+                         new CouchCoopRuntimeHost(new CouchCoopRuntimeDependencies(new RecordingSpirectlRuntime(), new RecordingSpirectlRuntime(), new RecordingSpirectlRuntime(), new RecordingSpirectlRuntime(), new RecordingSpirectlRuntime(), new RecordingSpirectlRuntime(), new RecordingSpirectlRuntime(), new RecordingSpirectlRuntime(), new RecordingSpirectlRuntime()), logs.Add),
                          rootPath,
                          IPAddress.Loopback,
                          preferredPort: preferred,
@@ -2964,7 +2982,7 @@ internal sealed class BrowserServerRouteTests
 
         var failureLogs = new List<string>();
         await using var unavailable = new CouchCoopHostUiServices(
-            new CouchCoopRuntimeHost(new CouchCoopRuntimeDependencies(new RecordingSpirectlRuntime(), new RecordingSpirectlRuntime(), new RecordingSpirectlRuntime(), new RecordingSpirectlRuntime(), new RecordingSpirectlRuntime(), new RecordingSpirectlRuntime(), new RecordingSpirectlRuntime(), new RecordingSpirectlRuntime(), new RecordingSpirectlRuntime(), new RecordingSpirectlRuntime()), failureLogs.Add),
+            new CouchCoopRuntimeHost(new CouchCoopRuntimeDependencies(new RecordingSpirectlRuntime(), new RecordingSpirectlRuntime(), new RecordingSpirectlRuntime(), new RecordingSpirectlRuntime(), new RecordingSpirectlRuntime(), new RecordingSpirectlRuntime(), new RecordingSpirectlRuntime(), new RecordingSpirectlRuntime(), new RecordingSpirectlRuntime()), failureLogs.Add),
             rootPath,
             IPAddress.Loopback,
             preferredPort: ushort.MaxValue + 1,
@@ -2980,7 +2998,7 @@ internal sealed class BrowserServerRouteTests
     {
         var preferred = ReserveEphemeralPort();
         await using (var host = new HotReloadableBrowserServerHost(
-            new CouchCoopRuntimeHost(new CouchCoopRuntimeDependencies(new RecordingSpirectlRuntime(), new RecordingSpirectlRuntime(), new RecordingSpirectlRuntime(), new RecordingSpirectlRuntime(), new RecordingSpirectlRuntime(), new RecordingSpirectlRuntime(), new RecordingSpirectlRuntime(), new RecordingSpirectlRuntime(), new RecordingSpirectlRuntime(), new RecordingSpirectlRuntime())),
+            new CouchCoopRuntimeHost(new CouchCoopRuntimeDependencies(new RecordingSpirectlRuntime(), new RecordingSpirectlRuntime(), new RecordingSpirectlRuntime(), new RecordingSpirectlRuntime(), new RecordingSpirectlRuntime(), new RecordingSpirectlRuntime(), new RecordingSpirectlRuntime(), new RecordingSpirectlRuntime(), new RecordingSpirectlRuntime())),
             rootPath,
             IPAddress.Loopback,
             preferred))
@@ -3016,11 +3034,10 @@ internal sealed class BrowserServerRouteTests
         CouchCoopGameFacts.Source = facts;
         try
         {
-            using var host = new CouchCoopRuntimeHost(new CouchCoopRuntimeDependencies(runtime, runtime, runtime, runtime, runtime, runtime, runtime, runtime, runtime, runtime));
+            using var host = new CouchCoopRuntimeHost(new CouchCoopRuntimeDependencies(runtime, runtime, runtime, runtime, runtime, runtime, runtime, runtime, runtime));
             var hotHost = new HotReloadableBrowserServerHost(host, rootPath, IPAddress.Loopback, ReserveEphemeralPort());
             try
             {
-                var stateReadsBefore = runtime.StateReads;
                 var leases = new List<NetworkAdmissionLimiter.Lease>();
                 for (var upgrade = 0; upgrade < 80; upgrade++)
                 {
@@ -3031,8 +3048,6 @@ internal sealed class BrowserServerRouteTests
 
                 Expect(hotHost.Admission.TryAcquireWebSocket() is null, "the 81st upgrade is refused at four sockets per player");
                 Expect(facts.CapReads == 81, $"each upgrade asks for the cap once (got {facts.CapReads})");
-                Expect(runtime.StateReads == stateReadsBefore,
-                    $"81 upgrades built no state snapshot (before {stateReadsBefore}, after {runtime.StateReads})");
                 foreach (var lease in leases) lease.Dispose();
             }
             finally
@@ -3197,10 +3212,7 @@ internal sealed class BrowserServerRouteTests
         using var root = new TempStaticRoot();
         using var cacheRoot = new TempResourceCacheRoot();
         var runtime = new RecordingSpirectlRuntime();
-        var envelopeFactory = new BrowserStateEnvelopeFactory(
-            new CouchCoopRuntimeHost(new CouchCoopRuntimeDependencies(
-                runtime, runtime, runtime, runtime, runtime,
-                runtime, runtime, runtime, runtime, runtime)));
+        var envelopeFactory = runtime.NewEnvelopeFactory();
         await using var server = new CouchCoopBrowserServer(
             new StaticSpaFileProvider(root.Path),
             new CapturingAssetAdapter(),
@@ -3225,8 +3237,7 @@ internal sealed class BrowserServerRouteTests
         using var root = new TempStaticRoot();
         using var cacheRoot = new TempResourceCacheRoot();
         var runtime = new RecordingSpirectlRuntime();
-        var envelopeFactory = new BrowserStateEnvelopeFactory(
-            new CouchCoopRuntimeHost(new CouchCoopRuntimeDependencies(runtime, runtime, runtime, runtime, runtime, runtime, runtime, runtime, runtime, runtime)));
+        var envelopeFactory = runtime.NewEnvelopeFactory();
         await using var server = new CouchCoopBrowserServer(
             new StaticSpaFileProvider(root.Path),
             new CapturingAssetAdapter(),
@@ -3689,7 +3700,7 @@ internal sealed class BrowserServerRouteTests
         await using var server = new CouchCoopBrowserServer(
             new StaticSpaFileProvider(rootPath),
             new CapturingAssetAdapter(),
-            new BrowserStateEnvelopeFactory(new CouchCoopRuntimeHost(new CouchCoopRuntimeDependencies(runtime, runtime, runtime, runtime, runtime, runtime, runtime, runtime, runtime, runtime))),
+            runtime.NewEnvelopeFactory(),
             preferredPort: ReserveEphemeralPort(),
             subscribeRoster: roster.Subscribe);
         var baseUri = await server.StartAsync();
@@ -3710,7 +3721,6 @@ internal sealed class BrowserServerRouteTests
             await WaitForAsync(() => roster.Active),
             "a GATED mirror connection keeps the roster observer alive (the only source of session re-sends on a mirror-only host)");
         Expect(!runtime.SceneSubscriptionActive, "...while the expensive SCENE observer stays stopped");
-        Expect(!runtime.StateSubscriptionActive, "...and no game-state subscription exists at all: the roster is read on signals");
 
         // The host leaves the run: the gated viewer must be TOLD, or its gate can never re-open.
         runtime.Mode = RuntimeStateMode.Lobby;
@@ -3751,6 +3761,124 @@ internal sealed class BrowserServerRouteTests
     }
 
     /// <summary>
+    /// The join's route half, on a server of its own (the `seats` verb): what a browser join asks of the game.
+    /// </summary>
+    internal static async Task RunJoinRoutesAsync()
+    {
+        using var root = new TempStaticRoot();
+        await AssertJoinReadsTheGameOnceAndBuildsNoStateSnapshotAsync(root.Path);
+        Console.WriteLine("join routes: ok");
+    }
+
+    // A browser join reads the roster and lobby cap in one hop, with run presence beside them, and hands those facts
+    // to the seat manager. The reply envelope reads separately. This route checks the resulting read counts and
+    // confirms the seat manager adds no cap or run probe of its own.
+    private static async Task AssertJoinReadsTheGameOnceAndBuildsNoStateSnapshotAsync(string rootPath)
+    {
+        var runtime = new RecordingSpirectlRuntime { Mode = RuntimeStateMode.Lobby, LobbyNetGameType = "host", LobbyCap = 4 };
+        var facts = runtime.GameFacts();
+        using var installed = runtime.InstallGameFacts(facts);
+        var seat = new SeatProcessStub();
+        var capProbes = 0;
+        var runProbes = 0;
+        using var manager = new HeadlessClientManager(
+            launcher: _ => seat,
+            readinessProbe: (_, _) => Task.FromResult(true),
+            maxSeatsProbe: () => { Interlocked.Increment(ref capProbes); return 3; },
+            runInProgressProbe: () => { Interlocked.Increment(ref runProbes); return false; });
+        var envelopeFactory = new BrowserStateEnvelopeFactory(new CouchCoopRuntimeHost(new CouchCoopRuntimeDependencies(runtime, runtime, runtime, runtime, runtime, runtime, runtime, runtime, runtime)));
+        // The roster observer is a reader of the same roster (it reads on signals, and the join's own name change is one):
+        // a feed of our own keeps it out of the join's count, which is what is being measured here.
+        var rosterFeed = new CouchCoopRosterObserverTests.FakeRosterFeed();
+        await using var server = new CouchCoopBrowserServer(
+            new StaticSpaFileProvider(rootPath),
+            new CapturingAssetAdapter(),
+            envelopeFactory,
+            headlessManager: manager,
+            isHeadlessClient: false,
+            preferredPort: ReserveEphemeralPort(),
+            subscribeRoster: rosterFeed.Subscribe);
+        var baseUri = await server.StartAsync();
+
+        // Measure the reply envelope with the same seat directory so the manager's own probes can be attributed
+        // separately from the join decision.
+        var controlFactory = new BrowserStateEnvelopeFactory(envelopeFactory.RuntimeHost, mirrorSeats: server.MirrorSeats());
+        async Task<(int CapProbes, int RunProbes)> EnvelopeCostAsync(string name, int? port, string? rejection)
+        {
+            var cap = Volatile.Read(ref capProbes);
+            var run = Volatile.Read(ref runProbes);
+            _ = await controlFactory.CreateSessionEnvelope(name, "control", null, port, null, rejection);
+            return (Volatile.Read(ref capProbes) - cap, Volatile.Read(ref runProbes) - run);
+        }
+
+        // One socket per join: a session already bound to a seat is answered with that seat's port, not judged again.
+        async Task<ClientWebSocket> ConnectMirrorAsync()
+        {
+            var socket = new ClientWebSocket();
+            await socket.ConnectAsync(
+                new UriBuilder(baseUri) { Scheme = "ws", Path = "/ws", Query = "watch=1&staticBg=0&cardFlight=1&handTween=1&trailDrive=0" }.Uri,
+                CancellationToken.None);
+            _ = await ReadWsMessageAsync(socket); // the anonymous connect session
+            return socket;
+        }
+
+        using var mirror = await ConnectMirrorAsync();
+
+        // A join that LAUNCHES a seat.
+        var rosterBefore = facts.RosterReads;
+        var capBefore = facts.CapReads;
+        var runBefore = facts.RunReads;
+        var capProbesBefore = Volatile.Read(ref capProbes);
+        var runProbesBefore = Volatile.Read(ref runProbes);
+        var spawned = await SendJoinAsync(mirror, "browser:req:join-zed", "Zed");
+        var joinCapProbes = Volatile.Read(ref capProbes) - capProbesBefore;
+        var joinRunProbes = Volatile.Read(ref runProbes) - runProbesBefore;
+        var joinRoster = facts.RosterReads - rosterBefore;
+        var joinCap = facts.CapReads - capBefore;
+        var joinRun = facts.RunReads - runBefore;
+        Expect(spawned.TryGetProperty("headlessMirrorPort", out var port) && port.GetInt32() == HeadlessClientManager.SlotToPort(2),
+            "a join in a hosting lobby launches a seat and hands back its port");
+        var envelope = await EnvelopeCostAsync("Zed", port.GetInt32(), null);
+        Expect(joinRoster == 2, $"join and reply each read the roster once (got {joinRoster})");
+        Expect(joinCap == 2, $"…and each read the lobby cap once (got {joinCap})");
+        Expect(joinRun == 1, $"…and run presence once (got {joinRun})");
+        Expect(joinCapProbes == envelope.CapProbes && joinRunProbes == envelope.RunProbes,
+            "the seat manager asked its own probes nothing for the launch: the join handed it what it had read "
+            + $"(cap probes {joinCapProbes}, run probes {joinRunProbes}; the envelope alone asks {envelope.CapProbes}/{envelope.RunProbes})");
+
+        // A lobby this host does not own refuses a new seat; the join and reply still read typed facts.
+        runtime.LobbyNetGameType = "client";
+        using var refusedSocket = await ConnectMirrorAsync();
+        rosterBefore = facts.RosterReads;
+        capBefore = facts.CapReads;
+        capProbesBefore = Volatile.Read(ref capProbes);
+        runProbesBefore = Volatile.Read(ref runProbes);
+        var refused = await SendJoinAsync(refusedSocket, "browser:req:join-yan", "Yan");
+        joinCapProbes = Volatile.Read(ref capProbes) - capProbesBefore;
+        joinRunProbes = Volatile.Read(ref runProbes) - runProbesBefore;
+        Expect(refused.TryGetProperty("joinRejection", out var refusal) && refusal.GetString() == "not-a-session-player",
+            "a lobby the host does not run refuses the newcomer: "
+            + string.Join(",", refused.EnumerateObject().Where(p => p.Name is not ("capabilities" or "notices" or "players")).Select(p => p.Name + "=" + p.Value.GetRawText()[..Math.Min(80, p.Value.GetRawText().Length)])));
+        var refusedEnvelope = await EnvelopeCostAsync("Yan", null, "not-a-session-player");
+        Expect(facts.RosterReads - rosterBefore is >= 2 and <= 3 && facts.CapReads - capBefore == facts.RosterReads - rosterBefore,
+            $"…and read once for join, once for reply, plus at most one overlapping resend (roster {facts.RosterReads - rosterBefore}, cap {facts.CapReads - capBefore})");
+        Expect(joinCapProbes == refusedEnvelope.CapProbes && joinRunProbes == refusedEnvelope.RunProbes,
+            "…and asked the manager's probes nothing beyond the envelope's own");
+
+        // An unreadable game gives an empty context and refuses a stranger while keeping the socket alive.
+        facts.RosterRead = () => null;
+        facts.CapRead = () => null;
+        using var unreadableSocket = await ConnectMirrorAsync();
+        var unreadable = await SendJoinAsync(unreadableSocket, "browser:req:join-xan", "Xan");
+        Expect(unreadable.GetProperty("joinRejection").GetString() == "not-a-session-player",
+            "an unreadable game refuses a stranger like a failed snapshot did (no spawn window, no host name)");
+
+        await CloseWebSocketSilentlyAsync(mirror);
+        await CloseWebSocketSilentlyAsync(refusedSocket);
+        await CloseWebSocketSilentlyAsync(unreadableSocket);
+    }
+
+    /// <summary>
     /// The roster observer's route half, on servers of their own (the `seats` verb).
     /// </summary>
     internal static async Task RunRosterObserverRoutesAsync()
@@ -3781,7 +3909,7 @@ internal sealed class BrowserServerRouteTests
         await using var server = new CouchCoopBrowserServer(
             new StaticSpaFileProvider(rootPath),
             new CapturingAssetAdapter(),
-            new BrowserStateEnvelopeFactory(new CouchCoopRuntimeHost(new CouchCoopRuntimeDependencies(runtime, runtime, runtime, runtime, runtime, runtime, runtime, runtime, runtime, runtime))),
+            runtime.NewEnvelopeFactory(),
             headlessManager: manager,
             isHeadlessClient: false,
             preferredPort: ReserveEphemeralPort(),
@@ -4100,7 +4228,7 @@ internal sealed class BrowserServerRouteTests
             {
                 ["elementId"] = JsonSerializer.SerializeToElement("669410934510")
             });
-        var mirrorTravel = await new BrowserActionExecutor(new CouchCoopRuntimeHost(new CouchCoopRuntimeDependencies(runtime, runtime, runtime, runtime, runtime, runtime, runtime, runtime, runtime, runtime))).ExecuteAsync(
+        var mirrorTravel = await new BrowserActionExecutor(new CouchCoopRuntimeHost(new CouchCoopRuntimeDependencies(runtime, runtime, runtime, runtime, runtime, runtime, runtime, runtime, runtime))).ExecuteAsync(
             mirrorTravelRequest);
         Expect(mirrorTravel.Code is null, "a mirror connection may act without a bound viewer id");
         Expect(runtime.LastActionRequest?.Kind == SemanticActionKind.SelectMapNode, "select-map-node resolves to the SelectMapNode kind");
@@ -4151,13 +4279,13 @@ internal sealed class BrowserServerRouteTests
             Expect(runtime.LastActionRequest is null, "an alternate action-id spelling cannot reach runtime");
         }
 
-        var inputFailure = new BrowserInputExecutor(new CouchCoopRuntimeHost(new CouchCoopRuntimeDependencies(runtime, runtime, runtime, runtime, runtime, runtime, runtime, runtime, runtime, runtime))).Execute(
+        var inputFailure = new BrowserInputExecutor(new CouchCoopRuntimeHost(new CouchCoopRuntimeDependencies(runtime, runtime, runtime, runtime, runtime, runtime, runtime, runtime, runtime))).Execute(
             new BrowserInputRequestEnvelope("input", "input-private-error", BrowserInputKinds.Key, Key: "KeyA"));
         Expect(inputFailure?.Code == BrowserActionErrorCodes.InternalFailure
             && inputFailure.Message == "The game could not apply the input.",
             "raw input failures retain stable codes and keep runtime diagnostics off the wire");
 
-        var executor = new BrowserActionExecutor(new CouchCoopRuntimeHost(new CouchCoopRuntimeDependencies(runtime, runtime, runtime, runtime, runtime, runtime, runtime, runtime, runtime, runtime)));
+        var executor = new BrowserActionExecutor(new CouchCoopRuntimeHost(new CouchCoopRuntimeDependencies(runtime, runtime, runtime, runtime, runtime, runtime, runtime, runtime, runtime)));
         runtime.ResetActionProbe();
         await executor.ExecuteAsync(mirrorTravelRequest with { ViewerId = "forged", ViewerPlayerId = "p:1002" });
         Expect(string.IsNullOrEmpty(runtime.LastActionRequest?.PlayerId), "forged browser identity fields cannot override the process-local perspective");
@@ -4689,7 +4817,7 @@ internal sealed class BrowserServerRouteTests
     private static async Task SeatDirectoryIsLiveOnTheConnectionPathWithoutStartAsync()
     {
         using var root = new TempStaticRoot();
-        var envelopeFactory = new BrowserStateEnvelopeFactory(new CouchCoopRuntimeHost(new CouchCoopRuntimeDependencies(new RecordingSpirectlRuntime(), new RecordingSpirectlRuntime(), new RecordingSpirectlRuntime(), new RecordingSpirectlRuntime(), new RecordingSpirectlRuntime(), new RecordingSpirectlRuntime(), new RecordingSpirectlRuntime(), new RecordingSpirectlRuntime(), new RecordingSpirectlRuntime(), new RecordingSpirectlRuntime())));
+        var envelopeFactory = new RecordingSpirectlRuntime().NewEnvelopeFactory();
         using var manager = new HeadlessClientManager(launcher: _ => null);
         await using var server = new CouchCoopBrowserServer(
             new StaticSpaFileProvider(root.Path),
@@ -4935,7 +5063,7 @@ internal sealed class BrowserServerRouteTests
         SingleplayerSafe
     }
 
-    internal sealed class RecordingSpirectlRuntime : IRuntimeCapabilitySource, IRuntimeAssetSource, IRuntimeStateSource, IAnimationHintSource, IRuntimeSceneDeltaSource, IGameModelSource, ISpineCatalogSource, ISpineGeoClipBaker, ISemanticActionSource, IRuntimeSceneWatchControlSource
+    internal sealed class RecordingSpirectlRuntime : IRuntimeCapabilitySource, IRuntimeAssetSource, IAnimationHintSource, IRuntimeSceneDeltaSource, IGameModelSource, ISpineCatalogSource, ISpineGeoClipBaker, ISemanticActionSource, IRuntimeSceneWatchControlSource
     {
         public IRuntimeSceneWatchControls SceneWatchControls => Spirectl.Sts2.Live.Sts2RuntimeSceneWatchControls.Instance;
         private readonly RecordingAssetProvider _assets;
@@ -4964,6 +5092,55 @@ internal sealed class BrowserServerRouteTests
         // handler to actually reach HeadlessClientManager sets it. Defaults to the pre-existing "multiplayer" so
         // every other assert in this file sees the state it always did.
         public string LobbyNetGameType { get; set; } = "multiplayer";
+        // The typed roster for the screen `Mode` describes. The session envelope reads this through
+        // `NewEnvelopeFactory`; route tests can change Mode without constructing a game snapshot.
+        public RosterFacts? Roster()
+            => Mode switch
+            {
+                RuntimeStateMode.Lobby => new RosterFacts(
+                    "screens/character_select_screen",
+                    new RosterLobby(
+                        LobbyNetGameType,
+                        "Alice",
+                        IsSavedRun: false,
+                        [new RosterLobbySeat("Alice", "Alice", "ironclad", true), new RosterLobbySeat("Bob", "Bob", "silent", true)],
+                        []),
+                    Run: null),
+                RuntimeStateMode.Unsupported => new RosterFacts("main-menu", null, null),
+                RuntimeStateMode.SingleplayerAmbiguous => new RosterFacts("run", null, RunRoster("singleplayer", "Alice")),
+                RuntimeStateMode.SingleplayerSafe => new RosterFacts("run", null, RunRoster("multiplayer", "Alice")),
+                _ => new RosterFacts("run", null, RunRoster("multiplayer", "Alice", "Bob")),
+            };
+
+        private static RosterRun RunRoster(string netType, params string[] playerIds)
+            => new(
+                netType,
+                "Alice",
+                [.. playerIds.Select(id => new RosterRunSeat(id, id, id == "Alice" ? "ironclad" : "silent", IsHost: id == "Alice", IsConnected: true))]);
+
+        /// <summary>The lobby cap the fake game reports; null is "no lobby screen".</summary>
+        public int? LobbyCap { get; set; }
+
+        /// <summary>How many session reads (roster plus, when asked, the cap) this fake game has answered.</summary>
+        public int SessionReads => Volatile.Read(ref _sessionReads);
+        private int _sessionReads;
+
+        public SessionFacts SessionFactsFor(bool withLobbyCap)
+        {
+            Interlocked.Increment(ref _sessionReads);
+            return new SessionFacts(Roster(), withLobbyCap ? LobbyCap : null);
+        }
+
+        /// <summary>
+        /// The envelope factory a route test hands its server: this runtime for everything the spirectl ports carry, and
+        /// this fake game as the reader of the roster the session envelope is classified from.
+        /// </summary>
+        public BrowserStateEnvelopeFactory NewEnvelopeFactory(MirrorSeatDirectory? mirrorSeats = null, Action<string>? hostLog = null)
+            => new(
+                new CouchCoopRuntimeHost(new CouchCoopRuntimeDependencies(this, this, this, this, this, this, this, this, this), hostLog),
+                mirrorSeats: mirrorSeats,
+                readSessionFacts: SessionFactsFor);
+
         public ManualResetEventSlim? ExecuteActionGate { get; set; }
         public EmbeddableActionRequest? LastActionRequest { get; private set; }
         public EmbeddableAssetRequest? LastAssetRequest { get; set; }
@@ -5018,106 +5195,40 @@ internal sealed class BrowserServerRouteTests
         public SpineGeoClipBakeResultSnapshot BakeSpineGeoClip(SpineGeoClipBakeRequestSnapshot request)
             => throw new NotSupportedException();
 
-        private int _stateReads;
+        /// <summary>
+        /// The roster the typed reader would report for the game this runtime describes (the parity oracle's projection,
+        /// TEST ONLY like the oracle), re-derived on every call so a test that changes <see cref="Mode"/> mid-run sees the
+        /// change. Counts no state read.
+        /// </summary>
+        public RosterFacts? CurrentRoster() => Roster();
 
         /// <summary>
-        /// How many full state snapshots have been pulled from this runtime. Counted apart from <see cref="Calls"/>
-        /// (a plain list) so a test can read it while server threads are running; the WP3 read paths assert it does
-        /// not move for a disconnect or a launch refusal.
+        /// The typed facts a join reads (the roster, run presence, the lobby cap) answering for the game this runtime
+        /// describes. A test that joins over a socket installs it (<see cref="InstallGameFacts"/>) because the join no
+        /// longer reads the game through the state source.
         /// </summary>
-        public int StateReads => Volatile.Read(ref _stateReads);
+        public CouchCoopGameFactsTests.FakeFacts GameFacts()
+            => new()
+            {
+                RosterRead = CurrentRoster,
+                RunRead = () => Roster()?.Run is not null,
+                CapRead = () => LobbyCap,
+            };
 
-        public CurrentStateResult GetCurrentState(CurrentStateRequest request)
+        /// <summary>
+        /// Points the typed facts front at <paramref name="facts"/> (default: <see cref="GameFacts"/>) until the returned
+        /// scope is disposed.
+        /// </summary>
+        public IDisposable InstallGameFacts(CouchCoopGameFactsTests.FakeFacts? facts = null)
         {
-            Interlocked.Increment(ref _stateReads);
-            Calls.Add("GetCurrentState");
-            return new CurrentStateResult(
-                true,
-                new StateSnapshot(
-                    StateSnapshot.CurrentSchemaVersion,
-                    "en",
-                    Mode switch
-                    {
-                        RuntimeStateMode.Lobby => "screens/character_select_screen",
-                        RuntimeStateMode.Unsupported => "main-menu",
-                        _ => "run"
-                    },
-                    Mode == RuntimeStateMode.Lobby ? CreateStateCharacterSelect(LobbyNetGameType) : null,
-                    Mode switch
-                    {
-                        RuntimeStateMode.SingleplayerAmbiguous => CreateStateRun(["Alice"], "singleplayer"),
-                        RuntimeStateMode.SingleplayerSafe => CreateStateRun(["Alice"], "multiplayer"),
-                        RuntimeStateMode.MultiplayerRun => CreateStateRun(["Alice", "Bob"], "multiplayer"),
-                        _ => null
-                    }),
-                null);
+            var previous = CouchCoopGameFacts.Source;
+            CouchCoopGameFacts.Source = facts ?? GameFacts();
+            return new FactsScope(previous);
         }
 
-        private static StateCharacterSelectSnapshot CreateStateCharacterSelect(string netGameType)
-            => new(
-                new StateCharacterSelectLobbySnapshot(
-                    netGameType,
-                    "Alice",
-                    "Alice",
-                    ConnectingPlayerCount: 0,
-                    Ascension: 0,
-                    MaxAscension: 20,
-                    Act1: "random",
-                    Seed: null,
-                    ModifierIds: [],
-                    Players:
-                    [
-                        new StateCharacterSelectPlayerSnapshot("Alice", 0, "ironclad", false, 20, "Alice"),
-                        new StateCharacterSelectPlayerSnapshot("Bob", 1, "silent", true, 20, "Bob")
-                    ]),
-                CharacterButtons:
-                [
-                    new StateCharacterButtonSnapshot("button:ironclad", "ironclad", false),
-                    new StateCharacterButtonSnapshot("button:silent", "silent", true)
-                ],
-                View: new StateCharacterSelectViewSnapshot("Alice", null));
-
-        private static StateRunSnapshot CreateStateRun(IReadOnlyList<string> playerIds, string netGameType)
+        private sealed class FactsScope(IGameFacts previous) : IDisposable
         {
-            var players = playerIds
-                .Select(playerId => new StateRunPlayerSnapshot(
-                    playerId,
-                    "test",
-                    NetId: null,
-                    DisplayName: playerId,
-                    CharacterId: playerId == "Alice" ? "ironclad" : "silent",
-                    IsLocal: playerId == "Alice",
-                    IsHost: playerId == "Alice",
-                    IsRemote: playerId != "Alice",
-                    Creature: null,
-                    Gold: 99,
-                    Deck: null,
-                    Relics: [],
-                    InventoryComplete: true,
-                    Notices: []))
-                .ToArray();
-
-            return new StateRunSnapshot(
-                "test",
-                "test",
-                netGameType,
-                "standard",
-                "seed:test",
-                AscensionLevel: 0,
-                ActId: "act1",
-                CurrentActIndex: 0,
-                ActFloor: 0,
-                TotalFloor: 0,
-                BossEncounterId: null,
-                SecondBossEncounterId: null,
-                CurrentMapCoord: null,
-                CurrentMapPointId: null,
-                VisitedMapCoords: [],
-                Players: players,
-                Map: null,
-                CurrentRoom: null,
-                Notices: [],
-                View: new StateRunViewSnapshot("Alice", null));
+            public void Dispose() => CouchCoopGameFacts.Source = previous;
         }
 
         public EmbeddableAssetBatchResult GetPresentationAssets(PresentationAssetBatchRequest request)
@@ -5132,60 +5243,6 @@ internal sealed class BrowserServerRouteTests
             LastActionRequest = request;
             ExecuteActionGate?.Wait(TimeSpan.FromSeconds(5));
             return new EmbeddableActionResult(false, null, new EmbeddableRuntimeError("semantic-failed", "semantic upstream failure"));
-        }
-
-        private Action<CurrentStateWatchEvent>? _stateObserver;
-
-        private int _stateSubscribeCount;
-        private int _stateDisposeCount;
-
-        // Whether the server currently holds a LIVE state-watch subscription. It must never hold one on its own account
-        // any more: the roster observer keeps `session` envelopes flowing from game signals and typed facts, so the tests
-        // assert this stays false (the zero-client rogue subscriber is the only thing that drives it).
-        public bool StateSubscriptionActive
-            => Volatile.Read(ref _stateSubscribeCount) > Volatile.Read(ref _stateDisposeCount);
-
-        public IDisposable SubscribeCurrentState(
-            CurrentStateSubscriptionRequest request,
-            Action<CurrentStateWatchEvent> onEvent,
-            Action<EmbeddableRuntimeError>? onError = null)
-        {
-            _stateObserver = onEvent;
-            Interlocked.Increment(ref _stateSubscribeCount);
-            if (request.EmitInitial)
-            {
-                EmitState();
-            }
-
-            // As with the scene subscription: dispose is COUNTED but `_stateObserver` is deliberately left wired,
-            // so a test can keep driving state at the server without racing an asynchronous teardown.
-            return new CountingDisposable(this, state: true);
-        }
-
-        private void EmitState()
-        {
-            var observer = _stateObserver;
-            var state = GetCurrentState(new CurrentStateRequest()).State;
-            if (observer is not null && state is not null)
-            {
-                observer(new CurrentStateWatchEvent(
-                    CurrentStateWatchEventType.Initial,
-                    1,
-                    DateTimeOffset.UnixEpoch,
-                    "fingerprint",
-                    1,
-                    state,
-                    null,
-                    null));
-            }
-        }
-
-        public async IAsyncEnumerable<CurrentStateWatchEvent> WatchCurrentStateAsync(
-            CurrentStateSubscriptionRequest request,
-            [System.Runtime.CompilerServices.EnumeratorCancellation] CancellationToken cancellationToken = default)
-        {
-            await Task.CompletedTask;
-            yield break;
         }
 
         // Required by ISpirectlRuntime; the host no longer subscribes, so this is an inert stub.
@@ -5215,28 +5272,16 @@ internal sealed class BrowserServerRouteTests
             // Deliberately does NOT clear `_sceneObserver` on dispose: a test can then keep driving deltas at the
             // (orphaned) observer to prove the server's fan-out itself drops them for a gated connection, without
             // racing an earlier connection's asynchronous teardown.
-            return new CountingDisposable(this, state: false);
+            return new CountingDisposable(this);
         }
 
-        private sealed class CountingDisposable(RecordingSpirectlRuntime owner, bool state) : IDisposable
+        private sealed class CountingDisposable(RecordingSpirectlRuntime owner) : IDisposable
         {
             private int _disposed;
-
             public void Dispose()
             {
-                if (Interlocked.Exchange(ref _disposed, 1) != 0)
-                {
-                    return;
-                }
-
-                if (state)
-                {
-                    Interlocked.Increment(ref owner._stateDisposeCount);
-                }
-                else
-                {
+                if (Interlocked.Exchange(ref _disposed, 1) == 0)
                     Interlocked.Increment(ref owner._sceneDisposeCount);
-                }
             }
         }
 

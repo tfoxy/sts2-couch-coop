@@ -1,13 +1,14 @@
 using System.Globalization;
+using CouchCoop.Mod.Contracts;
 using CouchCoop.MirrorProtocol.Envelopes;
-using Spirectl.Sts2.Core.State;
 
 namespace CouchCoop.Mod.Session;
 
 // The browser DTO records (BrowserSessionDto / BrowserPlayerOption / BrowserScreenDto / BrowserAssignmentNotice)
 // moved to the shared CouchCoop.MirrorProtocol library (namespace CouchCoop.MirrorProtocol.Envelopes) so the native
 // Godot client and the mod share one definition; the wire bytes are unchanged. BrowserAssignmentState + the
-// classifier stay here (they depend on spirectl StateSnapshot).
+// classifier stay here. The classifier reads CouchCoop's own RosterFacts, never a game state snapshot, and is pure:
+// this file is linked into the hot-reload assembly, so no game type may appear in it.
 public sealed record BrowserAssignmentState(
     BrowserSessionDto Session,
     IReadOnlyList<BrowserPlayerOption> Players,
@@ -28,38 +29,52 @@ public static class BrowserAssignmentNoticeCodes
 public static class BrowserAssignmentClassifier
 {
     public static BrowserAssignmentState Classify(
-        StateSnapshot? state,
+        RosterFacts? roster,
         BrowserSessionRegistry registry,
         string? requestedName)
-        => Classify(state, registry, requestedName, handle: null);
+        => Classify(roster, registry, requestedName, handle: null);
 
+    /// <param name="roster">
+    /// Who is in the lobby or the run, or <see langword="null"/> when it could not be read. An unreadable roster
+    /// classifies exactly as the retired unreadable state did: an unsupported screen, no players, the main-menu mirror
+    /// mode.
+    /// </param>
+    /// <param name="maxCouchSeats">
+    /// How many couch seats the live lobby has room for (its cap minus the host's seat), or null when no lobby cap is
+    /// known. It is handed to the seat directory, which sizes the seat table from it, so classifying reads no cap of
+    /// its own.
+    /// </param>
     public static BrowserAssignmentState Classify(
-        StateSnapshot? state,
+        RosterFacts? roster,
         BrowserSessionRegistry registry,
         string? requestedName,
         BrowserSessionHandle? handle,
         // Derives the per-seat joinability the clients render (and auto-reaps a zombie instance). Null → every seat
         // reports ready, which is how a headless client instance and the unit tests classify.
-        MirrorSeatDirectory? seats = null)
+        MirrorSeatDirectory? seats = null,
+        int? maxCouchSeats = null)
     {
         ArgumentNullException.ThrowIfNull(registry);
 
-        var screenType = NullIfBlank(state?.RootScene);
+        var screenType = NullIfBlank(roster?.RootScene);
         var screenTitle = ScreenTitle(screenType);
-        var mirrorMode = MirrorModeFor(state);
-        if (state?.CharacterSelect is not null)
+        var mirrorMode = MirrorModeFor(roster);
+        // THE ORDER IS A QUIRK, KEPT ON PURPOSE: the lobby is asked first here, while MirrorModeFor asks the run first.
+        // A run starting under its lobby screen (both present for a moment) therefore classifies as a lobby screen
+        // with the run's mirror mode, exactly as it did before the roster replaced the snapshot.
+        if (roster?.Lobby is { } lobby)
         {
-            var players = LobbyPlayers(state, registry);
+            var players = LobbyPlayers(lobby, registry);
             var lobbyScreen = new BrowserScreenDto("lobby", screenType, screenTitle, mirrorMode);
             var assignment = handle is not null
                 ? registry.JoinHandle(handle, requestedName, players, lobbyScreen, hostInRun: false)
                 : registry.JoinLobby(requestedName, players, lobbyScreen);
-            return StampSeats(assignment, LobbyConnectedNetIds(state), seats, mirrorMode);
+            return StampSeats(assignment, LobbyConnectedNetIds(lobby), seats, mirrorMode, maxCouchSeats);
         }
 
-        if (state?.Run is not null)
+        if (roster?.Run is { } run)
         {
-            var runPlayers = RunPlayers(state, registry);
+            var runPlayers = RunPlayers(run, registry);
             var runScreen = new BrowserScreenDto("run", screenType, screenTitle, mirrorMode);
             // Singleplayer runs are browser-controllable too: the local bridge can execute the local
             // player's actions (the "local-only-degraded" orchestration capability). The auto-player
@@ -67,7 +82,7 @@ public static class BrowserAssignmentClassifier
             var assignment = handle is not null
                 ? registry.JoinHandle(handle, requestedName, runPlayers, runScreen, hostInRun: true)
                 : registry.JoinRun(requestedName, runPlayers, runScreen);
-            return StampSeats(assignment, RunConnectedNetIds(state), seats, mirrorMode);
+            return StampSeats(assignment, RunConnectedNetIds(run), seats, mirrorMode, maxCouchSeats);
         }
 
         return registry.Unjoined(
@@ -87,19 +102,23 @@ public static class BrowserAssignmentClassifier
     // Stamp the mirror-seat facts onto every roster option, AFTER the registry has merged its own bookkeeping in.
     // Doing it as a post-pass (rather than threading the fields through BrowserSessionRegistry) keeps the registry's
     // name/connection semantics untouched and means there is exactly ONE place the wire-visible seat contract is
-    // decided. netId is recovered from the option's own player id — every state-snapshot player id is "p:{netId}",
+    // decided. netId is recovered from the option's own player id — every roster player id is "p:{netId}",
     // so no extra plumbing is needed and the registry's synthetic lobby-only options (whose id is the raw display
     // name) correctly fail to parse and stay non-seats.
-    private static BrowserAssignmentState StampSeats(
+    //
+    // Internal so focused classifier tests can pin the seat stamping rule.
+    internal static BrowserAssignmentState StampSeats(
         BrowserAssignmentState assignment,
         IReadOnlySet<ulong> gameConnectedNetIds,
         MirrorSeatDirectory? seats,
         // The host screen this roster describes. The directory needs it because what the GAME will accept differs
         // between screens: mid-run (mp-run) a seat without a live, game-connected instance is genuinely unusable,
         // while on a lobby screen the same seat is spawn-on-demand. See MirrorSeatDirectory's matrix.
-        string? mirrorMode)
+        string? mirrorMode,
+        // The live lobby's couch-seat room, for the seat table. Read by the caller with the roster, in the same hop.
+        int? maxCouchSeats = null)
     {
-        var statuses = seats?.Evaluate(gameConnectedNetIds, mirrorMode);
+        var statuses = seats?.Evaluate(gameConnectedNetIds, mirrorMode, maxCouchSeats);
         var stamped = new List<BrowserPlayerOption>(assignment.Players.Count);
         foreach (var player in assignment.Players)
         {
@@ -140,14 +159,15 @@ public static class BrowserAssignmentClassifier
     }
 
     // The netIds the GAME reports as connected in a character-select lobby. Note this is the lobby's own
-    // ConnectedPlayerIds (via spirectl), NOT couch-coop's browser-session bookkeeping: for a mirror seat the real
-    // ENet peer IS the headless instance, so the game is the authority on whether that seat is live.
-    private static IReadOnlySet<ulong> LobbyConnectedNetIds(StateSnapshot state)
+    // connectedness (the host's peer list, or the saved-run lobby's admitted players), NOT couch-coop's
+    // browser-session bookkeeping: for a mirror seat the real ENet peer IS the headless instance, so the game is the
+    // authority on whether that seat is live.
+    private static IReadOnlySet<ulong> LobbyConnectedNetIds(RosterLobby lobby)
     {
         var connected = new HashSet<ulong>();
-        foreach (var player in state.CharacterSelect?.Lobby?.Players ?? [])
+        foreach (var seat in lobby.Seats)
         {
-            if (player.IsConnected && MirrorSeatNetIds.TryParsePlayerId(player.Id, out var netId))
+            if (seat.IsConnected && MirrorSeatNetIds.TryParsePlayerId(seat.Id, out var netId))
             {
                 connected.Add(netId);
             }
@@ -156,15 +176,14 @@ public static class BrowserAssignmentClassifier
         return connected;
     }
 
-    // The run-time counterpart, from spirectl's StateRunPlayerSnapshot.IsConnected (resolved from the host net
-    // service's live peer registry). That field defaults TRUE and stays true whenever connectedness cannot be
-    // determined, so an unknown never reads as a false "disconnected" here either.
-    private static IReadOnlySet<ulong> RunConnectedNetIds(StateSnapshot state)
+    // The run-time counterpart. A run seat's connected flag FAILS OPEN (true whenever connectedness cannot be
+    // determined), so an unknown never reads as a false "disconnected" here either.
+    private static IReadOnlySet<ulong> RunConnectedNetIds(RosterRun run)
     {
         var connected = new HashSet<ulong>();
-        foreach (var player in state.Run?.Players ?? [])
+        foreach (var seat in run.Seats)
         {
-            if (player.IsConnected && MirrorSeatNetIds.TryParsePlayerId(player.Id, out var netId))
+            if (seat.IsConnected && MirrorSeatNetIds.TryParsePlayerId(seat.Id, out var netId))
             {
                 connected.Add(netId);
             }
@@ -191,14 +210,8 @@ public static class BrowserAssignmentClassifier
     /// (it has the real display name and the live connected flag).
     /// </para>
     /// </summary>
-    private static IReadOnlyList<BrowserPlayerOption> LobbyPlayers(StateSnapshot state, BrowserSessionRegistry registry)
+    private static IReadOnlyList<BrowserPlayerOption> LobbyPlayers(RosterLobby lobby, BrowserSessionRegistry registry)
     {
-        var lobby = state.CharacterSelect?.Lobby;
-        if (lobby is null)
-        {
-            return [];
-        }
-
         var hostPlayerId = NullIfBlank(lobby.HostPlayerId);
         // The durable netId→name roster, read ONCE per classification (it is a small file read). This is the only
         // place a player's chosen name survives the host quitting: the game's save stores NetIds but NO display names
@@ -223,40 +236,38 @@ public static class BrowserAssignmentClassifier
                 isRunPlayer: false,
                 characterId);
             // A lobby seat the game does not currently have a peer for renders dimmed ("free to reclaim"). Until now
-            // StateCharacterSelectPlayerSnapshot.IsConnected was ignored entirely, so every saved/absent seat looked
+            // the lobby seat's connected flag was ignored entirely, so every saved/absent seat looked
             // live. (StampSeats re-applies the same rule for run screens; doing it here too keeps a lobby option
             // honest even for the non-seat rows StampSeats leaves alone.)
             byPlayerId[playerId] = isConnected ? option : option with { Disconnected = true };
             ordered.Add(playerId);
         }
 
-        foreach (var player in lobby.Players)
+        foreach (var seat in lobby.Seats)
         {
-            if (NullIfBlank(player.Id) is { } playerId)
+            if (NullIfBlank(seat.Id) is { } playerId)
             {
-                Add(playerId, player.DisplayName, player.IsConnected, player.CharacterId);
+                Add(playerId, seat.DisplayName, seat.IsConnected, seat.CharacterId);
             }
         }
 
-        foreach (var saved in lobby.SavedRun?.Players ?? [])
+        foreach (var savedId in lobby.SavedRunSeatIds)
         {
-            if (NullIfBlank(saved.Id) is { } playerId)
+            if (NullIfBlank(savedId) is { } playerId)
             {
                 // A saved seat that is not in the lobby has, by definition, nobody connected to it — that IS the
                 // rejoin case. The save carries no name at all, so ResolveDisplayName falls through to mp_names.json
                 // and finally to a synthesized "Player 1003".
                 //
-                // …nor a CHARACTER, on this list: StateCharacterSelectSavedRunPlayerSnapshot is the load-run
-                // InfoPanel's hp/gold summary and carries no character id. It does not need one — a load-run
-                // lobby's `lobby.Players` is itself derived from the SAVE's player list (spirectl's
-                // Sts2StateProvider.ResolveLoadRunPlayers, which reads the saved player's own CharacterId), so
+                // …nor a CHARACTER, on this list: the saved-run seat ids carry no character. It does not need one —
+                // a load-run lobby's own seats are read from the SAVE's player list (each with its character), so
                 // every saved seat has already been Added above WITH its character. This loop only ever adds a
                 // seat the lobby list somehow missed, and for that one an icon is genuinely unknown.
                 Add(playerId, displayName: null, isConnected: false, characterId: null);
             }
         }
 
-        // BrowserSessionRegistry.MergePlayers keys its merge dictionary by NAME, so duplicate names would throw.
+    // BrowserSessionRegistry.MergePlayers keys its merge dictionary by NAME, so duplicate names would throw.
         // Names are deduped LAST (after the identity union) so the union itself never collapses two distinct seats.
         var players = ordered.Select(id => byPlayerId[id]);
         return players
@@ -265,15 +276,15 @@ public static class BrowserAssignmentClassifier
             .ToArray();
     }
 
-    private static IReadOnlyList<BrowserPlayerOption> RunPlayers(StateSnapshot state, BrowserSessionRegistry registry)
+    private static IReadOnlyList<BrowserPlayerOption> RunPlayers(RosterRun run, BrowserSessionRegistry registry)
     {
         var players = new List<BrowserPlayerOption>();
-        var hostPlayerId = NullIfBlank(state.Run?.Players.FirstOrDefault(player => player.IsHost)?.Id);
+        var hostPlayerId = NullIfBlank(run.Seats.FirstOrDefault(seat => seat.IsHost)?.Id);
         var persistedNames = HeadlessClientManager.ReadMultiplayerNames();
 
-        foreach (var player in state.Run?.Players ?? [])
+        foreach (var seat in run.Seats)
         {
-            var playerId = NullIfBlank(player.Id);
+            var playerId = NullIfBlank(seat.Id);
             if (playerId is null)
             {
                 continue;
@@ -281,14 +292,14 @@ public static class BrowserAssignmentClassifier
 
             players.Add(registry.ToPlayerOption(
                 playerId,
-                // Same name resolution as the lobby: the run snapshot normally carries a real DisplayName, but where
+                // Same name resolution as the lobby: the run roster normally carries a real DisplayName, but where
                 // it doesn't the durable roster beats falling back to the raw "p:1003" the old code showed.
-                ResolveDisplayName(playerId, player.DisplayName, persistedNames),
-                player.IsHost || string.Equals(playerId, hostPlayerId, StringComparison.Ordinal),
+                ResolveDisplayName(playerId, seat.DisplayName, persistedNames),
+                seat.IsHost || string.Equals(playerId, hostPlayerId, StringComparison.Ordinal),
                 isRunPlayer: true,
                 // A run player always has a character — that is what the seat IS mid-run — so the picker's icon
                 // is populated for every mp-run row.
-                player.CharacterId));
+                seat.CharacterId));
         }
 
         return players
@@ -300,7 +311,7 @@ public static class BrowserAssignmentClassifier
     // The label for a seat, in descending order of trustworthiness: the live display name the game reports; else the
     // durable mp_names.json roster (the ONLY persistent netId→name map — the save file stores no names at all);
     // else a synthesized "Player {netId}", which is still far more legible than the raw "p:1003" player id.
-    private static string ResolveDisplayName(
+    internal static string ResolveDisplayName(
         string playerId,
         string? displayName,
         IReadOnlyDictionary<ulong, string> persistedNames)
@@ -324,7 +335,7 @@ public static class BrowserAssignmentClassifier
     }
 
     // Screen discriminator for the mirror view. Both lobby variants (start-run character-select and
-    // load-saved-game) are CharacterSelect snapshots; only the load-game one carries a SavedRun, so it is
+    // load-saved-game) are lobbies in the roster; only the load-game one is a saved-run lobby, so it is
     // distinguished here. A TRUE singleplayer run (NetGameType "singleplayer") is separated from a multiplayer
     // run so the mirror can enter it directly (nothing can join it). Everything else reads as the main menu.
     //
@@ -342,18 +353,22 @@ public static class BrowserAssignmentClassifier
     //     multiplayer context and stays "mp-character-select".
     //   * it sits BELOW the SavedRun arm, so a load-saved-game lobby keeps "mp-load-game" whatever its
     //     NetGameType reads.
-    private static string MirrorModeFor(StateSnapshot? state)
-        => state switch
+    //
+    // THIS ONE ASKS THE RUN FIRST, while Classify asks the lobby first: see the note there.
+    //
+    // Internal so focused classifier tests can pin every mirror mode.
+    internal static string MirrorModeFor(RosterFacts? roster)
+        => roster switch
         {
-            { Run.NetGameType: "singleplayer" } => "singleplayer-run",
+            { Run.NetType: NetTypeNames.Singleplayer } => "singleplayer-run",
             { Run: not null } => "mp-run",
-            { CharacterSelect.Lobby.SavedRun: not null } => "mp-load-game",
-            { CharacterSelect.Lobby.NetGameType: "singleplayer" } => "sp-character-select",
-            { CharacterSelect: not null } => "mp-character-select",
+            { Lobby.IsSavedRun: true } => "mp-load-game",
+            { Lobby.NetType: NetTypeNames.Singleplayer } => "sp-character-select",
+            { Lobby: not null } => "mp-character-select",
             _ => "main-menu",
         };
 
-    private static string? ScreenTitle(string? screenType)
+    internal static string? ScreenTitle(string? screenType)
         => screenType switch
         {
             "screens/character_select_screen" => "Character Select",
@@ -363,6 +378,6 @@ public static class BrowserAssignmentClassifier
             _ => screenType
         };
 
-    private static string? NullIfBlank(string? value)
+    internal static string? NullIfBlank(string? value)
         => string.IsNullOrWhiteSpace(value) ? null : value.Trim();
 }

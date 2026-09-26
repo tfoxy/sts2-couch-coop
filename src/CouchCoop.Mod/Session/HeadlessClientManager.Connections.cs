@@ -1,6 +1,7 @@
 using System.Diagnostics;
 using System.Security.Cryptography;
 using CouchCoop.Mod.Connections;
+using CouchCoop.Mod.Contracts;
 using CouchCoop.Mod.Server;
 
 namespace CouchCoop.Mod.Session;
@@ -112,8 +113,15 @@ public sealed partial class HeadlessClientManager
         _controlPort = controlPort;
     }
 
+    /// <param name="hostFacts">
+    /// The lobby cap and run presence the caller has ALREADY read for this join (the join handler reads them in the same
+    /// hop as the roster its spawn decision is made on), so this entry point does not ask the game again. Null keeps the
+    /// manager's own probes, which is what every caller without a join in hand (a test, a standalone server) uses. A
+    /// manager that was given no probe stays unprobed either way: the stock three seats and no run refusal.
+    /// </param>
     public async Task<int?> EnsureHeadlessAsync(Guid sessionId, string? displayName, CancellationToken ct,
-        bool allowNewSlot = true, Action<ulong, string?>? onSlotBound = null, ulong? targetNetId = null)
+        bool allowNewSlot = true, Action<ulong, string?>? onSlotBound = null, ulong? targetNetId = null,
+        JoinSeatFacts? hostFacts = null)
     {
         Task[] cleanup;
         lock (_lock) cleanup = _connectionCleanup.Values.ToArray();
@@ -134,9 +142,15 @@ public sealed partial class HeadlessClientManager
         // ALL THREE of these are settled BEFORE _lock is taken, and for the same reason: the MaxSlot probe marshals
         // to the game's main thread (RunInProgress is a plain typed read today, but is an injected probe and keeps
         // the same discipline), and the port survey can block on a dropped packet. The main thread takes _lock on
-        // every screen change, so any of them evaluated under it stalls (the state probes deadlock) the game.
-        var maxSlot = MaxSlot;
-        var runInProgress = RunInProgress;
+        // every screen change, so any of them evaluated under it stalls (the cap probe deadlocks) the game.
+        // A join that already read the cap and run presence hands them in (hostFacts), and then nothing here asks the
+        // game again: one read per join instead of one for the join context and one for each probe.
+        var maxSlot = hostFacts is { } knownCap && _maxSeatsProbe is not null
+            ? MaxSlotFromCap(knownCap.MaxCouchSeats)
+            : MaxSlot;
+        var runInProgress = hostFacts is { } knownRun && _runInProgressProbe is not null
+            ? knownRun.RunInProgress
+            : RunInProgress;
         var occupiedSeatPorts = await SurveySeatPortsAsync(maxSlot, displayName, targetNetId, ct).ConfigureAwait(false);
         foreach (var (occupiedSlot, owner) in occupiedSeatPorts)
         {
