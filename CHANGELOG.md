@@ -9,6 +9,20 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and
 
 ## [Unreleased]
 
+## [0.3.3] - 2026-09-25
+
+### Fixed
+
+- Fixed couch players getting stuck at run start when a Steam friend joins.
+- Stop idle scene monitoring when browsers disconnect while keeping active multiplayer seats available for reconnection with a fresh scene.
+- Every translation was reviewed: mistranslated and machine-sounding text is fixed in all 13 languages, the Couch Co-Op name is no longer translated, and phone screens no longer show raw placeholders such as {値}.
+- The phone's settings panel title now reads naturally in every language.
+- The mod now calls the game 《杀戮尖塔2》 in Simplified Chinese, as the game itself does.
+
+### Changed
+
+- Hosting with phones connected does much less background work per phone, reducing stutter and memory growth during long sessions.
+
 ## [0.3.2] - 2026-09-23
 
 ### Fixed
@@ -130,7 +144,8 @@ First public release. Turn the phones, tablets and laptops on your network into 
 a local Slay the Spire 2 co-op session — no app to install on the other devices, and no `sts2` CLI
 needed to run the mod.
 
-[Unreleased]: https://github.com/tfoxy/sts2-couch-coop/compare/v0.3.2...HEAD
+[Unreleased]: https://github.com/tfoxy/sts2-couch-coop/compare/v0.3.3...HEAD
+[0.3.3]: https://github.com/tfoxy/sts2-couch-coop/releases/tag/v0.3.3
 [0.3.2]: https://github.com/tfoxy/sts2-couch-coop/releases/tag/v0.3.2
 [0.3.1]: https://github.com/tfoxy/sts2-couch-coop/releases/tag/v0.3.1
 [0.3.0]: https://github.com/tfoxy/sts2-couch-coop/releases/tag/v0.3.0
