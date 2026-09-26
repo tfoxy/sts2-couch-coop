@@ -185,9 +185,12 @@ public static class ZeroClientAllowances
 
     public static readonly ZeroClientAllowance HostTransportSizing = ZeroClientAllowance.Register(
         "host-transport-sizing",
-        "Starting a hosting session sizes its ENet listener from the live lobby's player cap: one read per host start, "
-        + "on the lobby that is being created, before any client exists. It is not recurring.",
-        ZeroClientEntries.StateRead);
+        "Starting a hosting session sizes its ENet listener from the player cap of the lobby screen that is current, if "
+        + "one is: one typed read per host start, on the main thread, before any client exists. It is not recurring, "
+        + "and it is a screen lookup and a member read with no state capture.",
+        ZeroClientEntries.HostFactsRead,
+        ZeroClientEntries.ScreenRead,
+        ZeroClientEntries.MainThreadDispatch);
 
     public static readonly ZeroClientAllowance WindowlessViewport = ZeroClientAllowance.Register(
         "windowless-viewport",

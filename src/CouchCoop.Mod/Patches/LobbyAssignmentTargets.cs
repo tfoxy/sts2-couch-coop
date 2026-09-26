@@ -11,9 +11,9 @@ internal readonly record struct LobbyAssignmentTarget(string TypeName, string Me
 
 /// <summary>
 /// The game methods that assign a lobby to one of the two lobby screens. The QR panel hooks each one: the saved-run
-/// screen's two methods also RECORD which role the lobby got, because that screen exposes no lobby to read, and
-/// every method WAKES the evaluation, because an assignment on a screen that is already current is a change the
-/// screen event alone would not announce.
+/// screen's two methods also RECORD which role the lobby got and which save it was given (its player count is the
+/// lobby's player cap), because that screen exposes no lobby to read, and every method WAKES the evaluation,
+/// because an assignment on a screen that is already current is a change the screen event alone would not announce.
 /// </summary>
 /// <remarks>
 /// Kept as plain data, with no game type, so the metadata-only reference lane can verify that each is still declared

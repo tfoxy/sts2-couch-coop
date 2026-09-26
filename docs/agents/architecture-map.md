@@ -724,12 +724,56 @@ A normally-created multiplayer session is the game session, and couch seats ride
   plain ENet; Steam init-but-offline → silent ENet fallback, and the QR dialog raises a
   "Steam offline" notice via `CouchCoopHostUiNotices`.
 - Slot cap is REAL: `slotId` is serialized in 2 bits, so 4 players INCLUDING the host, shared between Steam
-  remotes and couch seats (`CouchCoopLobbyParticipation.MaxCouchSeats` reads the lobby's own cap for `HeadlessClientManager`).
+  remotes and couch seats (`CouchCoopLobbyParticipation.MaxCouchSeats` reads the lobby's own cap for
+  `HeadlessClientManager`; see "Lobby player cap" below for where that number comes from).
 - **Tests**: `tests/CouchCoop.Mod.Tests/HostTransportCapacityTests.cs` (the `Priority.Last` ordering and the
   capacity decision, offline) and `tests/scenarios/steam-host-join.sts2.yaml` (the only automated seat join
   that takes the **Steam** branch — every other join test takes the ENet one, where `HostNetIdPatch` is inert
   because `hostNetId == 1`). The probe grades the branch from the `host-transport` log lines below and fails
   rather than degrade to ENet; see [qa-recipes.md](qa-recipes.md) §6 "A new game build".
+
+### Lobby player cap (CouchCoop's own typed read)
+
+The lobby's player cap, host seat included, is read through `CouchCoopGameFacts.ReadLobbyCap()`
+(`IGameFacts.ReadLobbyCap`; front and reader in `Runtime/CouchCoopGameFacts.LobbyCap.cs`, a `partial` of the path-1
+classes) and never through a state snapshot (WP3 path 5). It replaced `CurrentState()?.CharacterSelect?.Lobby.MaxPlayers`.
+
+- **Callers** (all on demand, none polls): `CouchCoopLobbyParticipation.MaxLobbyPlayers` / static `ReadMaxLobbyPlayers`
+  apply `LobbyCapOf` (a reported cap of 1 or less is UNKNOWN = `null`, with the 30 s "unreadable" notice) and serve
+  the browser admission limiter (`NetworkAdmissionLimiter`, once per WebSocket upgrade on a listener thread; ceiling
+  `max(32, 4 * cap)`), `MaxCouchSeats` (`cap - 1`, per seat allocation), and host-start sizing
+  (`CouchCoopHostTransport.ReadLobbyCapAtHostStart`, wired as `MaxLobbyPlayersProbe`, under the
+  `host-transport-sizing` allowance).
+- **Any thread.** The reader marshals through `GameMainThread` (inline when already on it) and resolves the current
+  screen on that frame with `GameScreenContext`, so a caller must not hold a mod lock the main thread can wait on
+  (the `DescribeSeats` deadlock). No engine behind the process, or a throw, is `null`; a throwing build logs once
+  until a read succeeds again.
+- **Where the number comes from.** New-run lobby: the current `NCharacterSelectScreen`'s `Lobby`. Saved-run lobby (no
+  cap of its own; it admits exactly the players in the save): the number of players in the save the screen's
+  initializer was handed, recorded by the SAME two typed postfixes that record the host/client role
+  (`LobbyAssignmentPatch`, `__1` by position and type; `LobbyAssignmentRecord.RecordSavedRun` keeps the object, the
+  reader counts at a frame boundary, a postfix still only records).
+- **THE GRANTED BY-NAME EXCEPTION (v111 lane only).** On v107 `StartRunLobby.MaxPlayers` is a public property and the
+  reader calls it typed. On v111 the cap is a private field with no public route (searched: the lobby, its screen,
+  the join messages and the net host expose nothing that carries it), so `GameFactsReader.StartRunLobbyCap` reads
+  `_maxPlayers` by name behind `#if STS2_API_V111`, in one small method. It is the maintainer-approved exception to
+  "no by-name reflection", alongside the seat peer-list read (`7d089e03`), and only this one: a value recorded at
+  lobby construction is NOT equivalent, because a multiplayer limit mod (Multiplayer Limit Break) raises the field
+  later from its own hooks. Pinned three ways: `LobbyCapReadTests.LobbyCapMemberResolves` (`-- host-guards`, `--
+  beta-targets`, full run: v111 requires an instance `int` field of that name and no public `MaxPlayers`; v107 the
+  public property), `LobbyCapTargets` in the metadata-only lane (`-- beta-targets <staged sts2.dll>` on both lanes),
+  and a read that throws is "no cap known", never a guess. `sts2 code verify-references` does not see it (a string
+  name is not an IL reference), and spirectl's manifest entry for the same member protects only while the embedded
+  profile still carries it: if WP4b drops the state builders and that entry, this pin is the only guard.
+- **Host start is always "no lobby".** The game starts hosting (`StartENetHost` / `StartSteamHost`, our prefix sizes
+  the listener there) before it creates the lobby screen, so at that moment no lobby screen is current and the read
+  reports `null` in every stock flow (live logs show `source=host-start` lines with `requested == effective`; the
+  `lobby admits N players` line appears only in test logs). It is kept as it was: swapping its source changed no
+  behaviour. Removing it, or re-sizing the listener when the lobby appears, is the maintainer's call.
+- **Tests**: `LobbyCapReadTests` (front, unknown rule, admission ceiling through the limiter, host-start sizing, the
+  zero-client allowance, saved-run record, and the snapshot-to-cap parity oracle, test-only and deleted with the last
+  WP3 path), `BrowserServerRouteTests.AssertUpgradeAdmissionReadsNoStateSnapshot` (`RecordingSpirectlRuntime.StateReads`
+  stays flat across 81 upgrades), `LobbyCapNoticeTests`, `HostTransportCapacityTests`.
 
 ### Headless seat launch contract (no CLI args)
 
@@ -865,15 +909,16 @@ spawned seat.
 | --- | --- |
 | `state.read`, `state.subscribe`, `scene.subscribe`, `animation-hints.subscribe`, `multiplayer-connection.read/.subscribe` | the ports of `CouchCoopRuntimeHost` (`ZeroClientGuard.EnterPort`); the caller is read from the stack, and only when a violation is reported |
 | `screen-context.subscribe/.read` | `Runtime/CouchCoopGameSeams.cs` `GameScreenContext`, the CouchCoop front for `Sts2ScreenContext` (tracker, browser-server static-background probe, QR host panel) |
-| `host-facts.read` | `Runtime/CouchCoopGameFacts.cs` `CouchCoopGameFacts`, the CouchCoop front for its own typed reader `IGameFacts` (QR host panel, pause-menu row, run presence for a browser disconnect and a seat launch, the hosting tracker) |
+| `host-facts.read` | `Runtime/CouchCoopGameFacts.cs` `CouchCoopGameFacts`, the CouchCoop front for its own typed reader `IGameFacts` (QR host panel, pause-menu row, run presence for a browser disconnect and a seat launch, the hosting tracker, and `ReadLobbyCap` for admission, seat allocation and host start) |
 | `main-thread.dispatch` | the same file's `GameMainThread`, the front for `Sts2MainThreadDispatcher` (tracker, seat peer check, root-window guard, windowless viewport loop) |
 
 **Allow-list — `ZeroClientAllowances`, the review point.** Each entry names work that touches game state at zero
 demand, and its `reason` argument is required (the test rejects a one-line reason and pins the count):
 `qr-host-panel` (screen subscription and current-screen read: the join affordance itself, event-driven),
 `lobby-gate-facts` (the `host-facts.read` entry: the QR panel's push-driven read of the run and lobby facts while a
-lobby screen is current, and the pause-menu row once per visibility change), `host-transport-sizing` (one lobby-cap read per host
-start), `windowless-viewport` (only a headless seat or `--headless` host starts it). A call site excuses itself with
+lobby screen is current, and the pause-menu row once per visibility change), `host-transport-sizing` (one lobby-cap
+read per host start: the `host-facts.read`, `screen-context.read` and `main-thread.dispatch` entries it makes),
+`windowless-viewport` (only a headless seat or `--headless` host starts it). A call site excuses itself with
 `using ZeroClientGuard.Permit(ZeroClientAllowances.X)` around a **synchronous** call (thread-local; it does not
 follow an `await`). What demand already covers, and so is not listed: the hosting tracker, the browser server's
 observers and static-background probe, detached active-run seat supervision, and the listener's accept loop. The
@@ -936,7 +981,8 @@ The always-on QR overlay is gone. A game-styled button opens a dialog instead.
   the current `NCharacterSelectScreen`'s `Lobby?.NetService.Type`; **saved-run lobby = the role recorded by the
   typed postfixes on `NMultiplayerLoadGameScreen.InitializeAsHost` / `InitializeAsClient`**, because that screen
   keeps its lobby private (`RunManager.NetService` is only assigned at run start, so it is NOT the lobby's
-  service). No by-name reflection. A fact is never learned by polling: the screen handed to the reader is the one
+  service). No by-name reflection (the one granted exception is the v111 lobby-cap read, see "Lobby player cap" under
+Host transport). A fact is never learned by polling: the screen handed to the reader is the one
   the evaluation already resolved, and staleness of a recorded role after the game clears the lobby is irrelevant
   (a cleared lobby is a screen change, and no lobby means no panel).
 - **Run presence is one typed read shared by every caller** (WP3 path 7). `IGameFacts.ReadRunInProgress()` /
