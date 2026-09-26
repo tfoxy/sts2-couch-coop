@@ -25,6 +25,8 @@ that answers your question**, not the whole file.
 | continuing host CPU work after the dormant-runtime fixes | [handoff-host-cpu.md](handoff-host-cpu.md) | bounded active-polling trial; preserve input latency |
 | searching for engine/renderer signals to replace scene polling | [handoff-scene-observer.md](handoff-scene-observer.md) | separate observer research; report CPU/added latency before runtime merge |
 | adding a guard so an empty host can never again run state/scene work without demand | [handoff-zero-client-guard.md](handoff-zero-client-guard.md) | whole-host zero-client contract test + `[couchcoop][idle-work]` tripwire; unstarted |
+| taking the hosting tracker off spirectl's full state snapshot | [handoff-hosting-tracker-state.md](handoff-hosting-tracker-state.md) | CouchCoop-side facts + screen-change trigger; keep demand, 5 s grace, native end; unstarted |
+| deciding whether CouchCoop's runtime should keep living in spirectl | [handoff-spirectl-boundary-review.md](handoff-spirectl-boundary-review.md) | analysis + one recommendation; no code moves; do not edit CLAUDE.md; unstarted |
 | attributing the headless seats' GC pauses and their 1.7–2.0 s stall at the act change | [handoff-seat-gc.md](handoff-seat-gc.md) | same-session A/B per seat (start with the seat memory tuning); report RSS with every GC number; unstarted |
 | working on phone access, HTTPS, PWA, the public origin | [local-network-access.md](local-network-access.md) | — |
 | diagnosing a join failure on Windows, or touching a loopback probe timeout | [windows-connection-fingerprints.md](windows-connection-fingerprints.md) | — |
