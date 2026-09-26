@@ -66,6 +66,11 @@ Diff **failing test names** against a saved baseline, never raw counts.
 
 ## Stop conditions
 
+**No polling.** If your item needs to learn that something in the game changed, find the game's own hook (an
+event, a screen change, a typed Harmony postfix) — never a timer, loop or repeated read. If no hook resolves, stop
+and report what you looked for. Polling needs the maintainer's explicit allowance for that specific case (see
+`AGENTS.md`, "No polling: find the hook").
+
 A hard attempt budget on any live-game or device objective: N failed launches → stop and report the blocker, not an
 open-ended retry loop. If your item turns out to depend on another agent's in-flight change, say so and stop rather
 than reaching into their files.
