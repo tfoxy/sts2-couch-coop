@@ -142,6 +142,7 @@ if (args is ["seats", ..])
 {
     await HeadlessClientManagerTests.RunAsync();
     ConnectionHostingDemandTests.Run();
+    ConnectionHostingTrackerStateTests.Run();
     // The seat ROSTER's transition bookkeeping — which seat the picker offers, and the statuses it remembers
     // between evaluations. Registered here for the reason this whole verb exists: it sits late in the full
     // sequence, which used to abort above it (see the note above HeadlessAudioMuteTargetsTests), and a focused
@@ -809,6 +810,7 @@ var tests = new BrowserServerRouteTests();
 await tests.RunAsync();
 await HeadlessClientManagerTests.RunAsync();
 ConnectionHostingDemandTests.Run();
+ConnectionHostingTrackerStateTests.Run();
 // The readiness deadline that manager waits on: the clamp band, the progress line, the untouched early exit.
 await SeatReadyTimeoutTests.RunAsync();
 Console.WriteLine("""{"ok":true,"hostedServerRoutes":true}""");

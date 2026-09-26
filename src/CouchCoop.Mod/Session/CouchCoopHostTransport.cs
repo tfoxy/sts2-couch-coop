@@ -566,6 +566,13 @@ internal static class CouchCoopHostTransport
         }
     }
 
+    /// <summary>
+    /// Whether this process currently has an installed net host (dual Steam+ENet, or the ENet-only fallback).
+    /// Not "still in a hosted lobby or run" by itself — see ConnectionHostingTracker, which ANDs this with the
+    /// run/lobby-screen facts before treating a session as active.
+    /// </summary>
+    internal static bool IsHostActive => _activeHost is not null;
+
     private static void SetPlatform(NetHostGameService service, PlatformType platform)
         => (PlatformSetter ?? throw new InvalidOperationException("NetHostGameService.Platform setter is unavailable."))
             .Invoke(service, [platform]);
@@ -618,4 +625,7 @@ internal static class CouchCoopHostTransport
 public static class CouchCoopHostPeers
 {
     public static bool? IsPeerConnected(ulong netId) => CouchCoopHostTransport.IsPeerConnected(netId);
+
+    /// <summary>Same contract as <see cref="CouchCoopHostTransport.IsHostActive"/>, for the hot-reload assembly.</summary>
+    public static bool IsHostActive => CouchCoopHostTransport.IsHostActive;
 }
