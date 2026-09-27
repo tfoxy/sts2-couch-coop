@@ -9,6 +9,21 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and
 
 ## [Unreleased]
 
+## [0.3.4] - 2026-09-26
+
+### Fixed
+
+- Drive hosting-end detection off the screen event, not a poll, improving performance
+- Read the roster on game signals, not a state subscription
+- Read the lobby player cap without a full state snapshot
+- Decide detach-versus-release without a full state snapshot
+- Read the lobby gates without a full state snapshot
+- Lobby character and name changes now reach every connected viewer.
+
+### Changed
+
+- Couch seats that dropped mid-run are now cleared only after you leave the run and lobby.
+
 ## [0.3.3] - 2026-09-25
 
 ### Fixed
@@ -144,7 +159,8 @@ First public release. Turn the phones, tablets and laptops on your network into 
 a local Slay the Spire 2 co-op session — no app to install on the other devices, and no `sts2` CLI
 needed to run the mod.
 
-[Unreleased]: https://github.com/tfoxy/sts2-couch-coop/compare/v0.3.3...HEAD
+[Unreleased]: https://github.com/tfoxy/sts2-couch-coop/compare/v0.3.4...HEAD
+[0.3.4]: https://github.com/tfoxy/sts2-couch-coop/releases/tag/v0.3.4
 [0.3.3]: https://github.com/tfoxy/sts2-couch-coop/releases/tag/v0.3.3
 [0.3.2]: https://github.com/tfoxy/sts2-couch-coop/releases/tag/v0.3.2
 [0.3.1]: https://github.com/tfoxy/sts2-couch-coop/releases/tag/v0.3.1
