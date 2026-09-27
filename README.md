@@ -19,17 +19,6 @@ Turn phones, tablets, and laptops on your local network into browser-based clien
 
 You can also use CouchCoop by yourself and play from your phone. Slay the Spire 2 must still be running on the host computer.
 
-<details>
-<summary>Verify a GitHub Release download</summary>
-
-Official releases include SHA-256 checksums and a GitHub build attestation. To verify a downloaded ZIP with the [GitHub CLI](https://cli.github.com/), run:
-
-```sh
-gh attestation verify <zip> -R tfoxy/sts2-couch-coop
-```
-
-</details>
-
 ## Features
 
 - **Browser-based clients:** join from a recent version of Chrome, Firefox, or Safari without installing the game or mod on each device.
@@ -49,7 +38,7 @@ These are tested configurations for a four-player session, not guaranteed hardwa
 | Lowest tested | Intel Core i5-6200U | 8 GB | Playable, with occasional lag for all players |
 | Recommended | Intel Core i7-11370H | 16 GB | Played without noticeable issues |
 
-The GPU requirements are similar to the base game. Windows and Linux are tested; macOS is not, and has some extra setup — see [macOS](#macos) below.
+The GPU requirements are similar to the base game. Windows and Linux are tested configurations; users have also confirmed CouchCoop works on macOS.
 
 <details>
 <summary>Host resource usage</summary>
@@ -57,34 +46,6 @@ The GPU requirements are similar to the base game. Windows and Linux are tested;
 Each browser player requires a separate headless game client on the host. In testing, each additional player used roughly 20% more CPU and 50% more RAM than the base game, although short CPU spikes can be higher. A four-player session therefore used about 60% more CPU and 150% more RAM.
 
 </details>
-
-### macOS
-
-Slay the Spire 2 has a native macOS build, and nothing in CouchCoop refuses to run on it — but nobody has yet played a full session on a Mac, so treat what follows as untested rather than supported. If you try it, please [report what you find](https://github.com/tfoxy/sts2-couch-coop/issues/new?template=bug_report.yml).
-
-**Install from the Steam Workshop.** On macOS the game's `mods` folder is inside the application bundle, at `SlayTheSpire2.app/Contents/MacOS/mods`, which Finder only opens after right-clicking the app and choosing **Show Package Contents** — and writing anything into a signed bundle breaks its signature. Steam installs Workshop content outside the bundle instead, so a subscription avoids the folder and the signature both. The manual ZIP still works if you prefer it; just know what it touches.
-
-**Two permission prompts stand between the host and your phones.** macOS asks about local network access and, if the firewall is on, about incoming connections. If either is answered "no", the host still starts and the QR code still scans — the phone simply waits and then times out, with nothing on the host to say why.
-
-- **Local Network** lives in System Settings → Privacy & Security → Local Network. Because Steam launches the game, the prompt can be attributed to Steam rather than to Slay the Spire 2, can have been answered long before you installed CouchCoop, or can be drawn behind the fullscreen game. Check that both entries are switched on.
-- **The firewall** lives in System Settings → Network → Firewall. When it is on, macOS asks once whether to accept incoming connections for the game, and remembers a "Deny". Firewall → Options is where to change that answer, and "Block all incoming connections" overrides everything else.
-
-**Back up your saves first.** Each browser player gets an isolated local Godot profile. On macOS CouchCoop gives
-each seat a fake `$HOME` and links ordinary home files back to the host while keeping
-`Library/Application Support/SlayTheSpire2` private. CI verifies that stock Godot honors this layout, but nobody
-has yet played a full game session on a Mac. Steam, FMOD, or code using `getpwuid` may still choose paths outside
-`$HOME`; report any Mac session result, especially a save or mod-loading problem.
-
-For a startup failure, the read-only `scripts/macos-support-diagnostics.sh` helper can summarize the package,
-signature verdicts, and allowlisted startup checkpoints without copying or walking game content. Its explicit
-arguments and the limits of hosted Mac/iPhone checks are documented in
-[Steam-free macOS and iPhone checks](docs/agents/steam-free-macos-iphone.md).
-
-### Steam Deck
-
-Steam Deck can host CouchCoop, in Game Mode as well as Desktop Mode. The lobby's **Couch Co-op QR Code** button cannot be reached by the controller's normal menu navigation, so it has its own binding: press the west face button (**X** on the Deck) while the lobby is on screen. The button shows that glyph whenever a controller is in use.
-
-The Deck's four cores share a 15 W power budget with the GPU, so plan for one or two browser players rather than four — each one adds a full headless game process (see host resource usage above). A player's game also takes noticeably longer to start there than on a desktop, which is normal; the lobby says so while it waits. Finally, a nearly full storage device leaves less than the managed cache's 2 GiB free-space reserve (see the [security model](docs/security.md)), so newly generated assets fall back to an in-memory or raster path instead of persisting to disk.
 
 ### Client devices
 
