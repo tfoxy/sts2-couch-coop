@@ -29,6 +29,25 @@ function annotate(raw: string): string {
 }
 
 describe("parseSimpleRich — what it accepts", () => {
+  it("returns nested font roles, colours, and inline image positions when Rust enables them", () => {
+    const raw = "[gold][b]Title [i]both[/i][/b][/gold]\nGain [img]res://icons/energy.png[/img] now";
+    const parsed = parseSimpleRich(raw, { color: accept, fontRoles: true, inlineImages: true });
+    expect(parsed.ok).toBe(true);
+    if (!parsed.ok) return;
+    expect(parsed.value.text).toBe("Title both\nGain \uFFFC now");
+    expect(parsed.value.roles).toEqual([
+      { start: 0, end: 6, role: "bold" },
+      { start: 6, end: 10, role: "bold-italic" }
+    ]);
+    expect(parsed.value.spans).toEqual([{ start: 0, end: 10, color: "#efc851" }]);
+    expect(parsed.value.images).toEqual([{ start: 16, path: "res://icons/energy.png", valign: "middle" }]);
+  });
+
+  it("still refuses unsupported image options and decorations in the role-enabled path", () => {
+    for (const value of ["[img width=12]res://x.png[/img]", "[u]underlined[/u]", "[s]strike[/s]"]) {
+      expect(parseSimpleRich(value, { fontRoles: true, inlineImages: true }).ok).toBe(false);
+    }
+  });
   it("passes a markup-free string through unchanged, with no spans", () => {
     const r = parse("Gain 5 Block.");
     expect(r.ok).toBe(true);

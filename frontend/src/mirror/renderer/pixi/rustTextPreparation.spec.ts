@@ -56,6 +56,75 @@ function assertPrepared(result: PreparedText | TextPrepRefusal): PreparedText {
 }
 
 describe("resolveSemanticTextSpec + buildPreparedText — the pure half", () => {
+  it("prepares mixed bold, coloured, and inline-image runs for Rust", () => {
+    const root = node("root", null, { sceneFilePath: "res://scenes/ui/event_option_button.tscn" });
+    const boldFont = { ...FONT, family: "kreon_bold", url: "res://fonts/kreon_bold.ttf" };
+    const label = node("label", "root", { richText: true, richBoldFont: boldFont,
+      richBoldFontSpacingPx: 1, text: { ...node("unused", null).text,
+        text: "[gold][b]Power[/b][/gold]\nGain [img]res://icons/energy.png[/img] now" } });
+    const resolved = resolveSemanticTextSpec(label, nodeMap([root, label]), true);
+    expect("refusal" in resolved).toBe(false);
+    if ("refusal" in resolved) return;
+    const prepared = assertPrepared(buildPreparedText(resolved, 0, FONT, measure, measureLineMetrics,
+      (face, value) => value.length * (face.font.family === "kreon_bold" ? 12 : 10) + value.length * face.spacingPx,
+      () => ({ width: 24, height: 24 })));
+    expect(prepared.layout.lines.map((line) => line.text)).toEqual(["Power", "Gain \uFFFC now"]);
+    expect(prepared.runs.find((run) => run.text === "Power")?.style).toMatchObject({
+      fontFamily: "kreon_bold", letterSpacing: 1, fill: "#efc851" });
+    expect(prepared.runs.find((run) => run.text === "\uFFFC")?.inlineImage).toMatchObject({ width: 24, height: 24 });
+    expect(composePreparedTextRecords(prepared, "label", 0,
+      { transform: [1, 0, 0, 1, 0, 0], opacity: 1, tintR: 1, tintG: 1, tintB: 1 }, 0)
+      .some((record) => "inlineImage" in record)).toBe(true);
+  });
+
+  it("uses the normal face after a streamed role face fails", () => {
+    const root = node("root", null, { sceneFilePath: "res://scenes/ui/event_option_button.tscn" });
+    const label = node("label", "root", { richText: true,
+      richBoldFont: { ...FONT, family: "kreon_bold" },
+      text: { ...node("unused", null).text, text: "[b]Power[/b]" } });
+    const resolved = resolveSemanticTextSpec(label, nodeMap([root, label]), true, new Set(["kreon_bold"]));
+    if ("refusal" in resolved) throw new Error(resolved.refusal);
+    const prepared = assertPrepared(buildPreparedText(resolved, 0, FONT, measure, measureLineMetrics,
+      (face, value) => value.length * (face.font.family === "kreon_bold" ? 12 : 10)));
+    expect(prepared.fallbackRoles).toEqual(["bold"]);
+    expect(prepared.runs[0].style.fontFamily).toBe("kreon_regular");
+  });
+
+  it("retries an inline image after it loads instead of caching the pending refusal", () => {
+    const root = node("root", null, { sceneFilePath: "res://scenes/ui/event_option_button.tscn" });
+    const label = node("label", "root", { richText: true,
+      text: { ...node("unused", null).text, text: "Gain [img]res://icons/energy.png[/img]" } });
+    const nodes = nodeMap([root, label]);
+    const cache = createTextPrepCache();
+    let loaded = false;
+    const compute = () => {
+      const resolved = resolveSemanticTextSpec(label, nodes, true);
+      if ("refusal" in resolved) return resolved;
+      return buildPreparedText(resolved, 0, FONT, measure, measureLineMetrics,
+        undefined, () => loaded ? { width: 24, height: 24 } : null);
+    };
+    expect(cache.resolve(label, nodes, 0, "native", false, compute)).toEqual({ refusal: "image-pending" });
+    loaded = true;
+    expect("refusal" in cache.resolve(label, nodes, 0, "native", false, compute)).toBe(false);
+    expect(cache.stats().misses).toBe(2);
+  });
+
+  it("replays matching parsed breaks for a bold label and rejects stale breaks", () => {
+    const root = node("root", null, { sceneFilePath: "res://scenes/ui/event_option_button.tscn" });
+    const plain = "Alpha Beta Gamma";
+    const wrap = { basis: "parsed" as const, parsedText: plain, sourceLength: plain.length,
+      sourceHash: fnv1a32(plain), lines: [{ start: 0, end: 10 }, { start: 11, end: plain.length }] };
+    const label = node("label", "root", { richText: true, localRect: { x: 0, y: 0, width: 80, height: 60 },
+      text: { ...node("unused", null).text, text: `[b]${plain}[/b]` }, textWrap: wrap });
+    const render = (current: MirrorNode) => {
+      const resolved = resolveSemanticTextSpec(current, nodeMap([root, current]), true);
+      if ("refusal" in resolved) throw new Error(resolved.refusal);
+      return assertPrepared(buildPreparedText(resolved, 0, FONT, measure, measureLineMetrics,
+        (_face, value) => measure(value))).layout.lines.map((line) => line.text);
+    };
+    expect(render(label)).toEqual(["Alpha Beta", "Gamma"]);
+    expect(render({ ...label, textWrap: { ...wrap, parsedText: "stale" } })).not.toEqual(["Alpha Beta", "Gamma"]);
+  });
   it("resolves a plain label to a spec with no spans and one run per line", () => {
     const root = node("root", null, { sceneFilePath: "res://scenes/ui/x.tscn" });
     const label = node("label", "root");
