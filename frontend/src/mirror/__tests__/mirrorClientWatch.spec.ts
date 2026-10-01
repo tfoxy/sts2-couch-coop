@@ -5,6 +5,11 @@ import {
   buildMirrorWebSocketUrl,
   connectMirrorClient
 } from "@/mirror/mirrorClient";
+import type { WarmAckTraceEvent } from "@/mirror/warmAckTrace";
+
+const traceGlobal = globalThis as typeof globalThis & {
+  __benchWarmAckTrace?: (event: WarmAckTraceEvent) => void
+};
 
 // WS-B STREAM GATE (web client half). The host must send nothing to a viewer sitting on the join picker, and the
 // client must neither ASK for it nor apply anything that slips through. The gate's INITIAL value rides the connect
@@ -65,8 +70,49 @@ const keyframe = {
 };
 
 afterEach(() => {
+  delete traceGlobal.__benchWarmAckTrace;
   vi.useRealTimers();
   vi.restoreAllMocks();
+});
+
+describe("warm ack guard observation", () => {
+  it("reports empty and sent branches without changing credit, even if the observer throws", () => {
+    const events: WarmAckTraceEvent[] = [];
+    traceGlobal.__benchWarmAckTrace = event => events.push(event);
+    const { client, socket } = connect(true);
+    expect(client.diagnosticTraceId).toEqual(expect.any(Number));
+    client.sendSceneAck();
+    expect(events.slice(-2).map(event => [event.kind,event.guard])).toEqual([
+      ["ack-attempt",undefined],["ack-guard","empty"]
+    ]);
+    socket.emit(keyframe);
+    traceGlobal.__benchWarmAckTrace = () => { throw new Error("diagnostic callback failed"); };
+    expect(() => client.sendSceneAck()).not.toThrow();
+    expect(socket.sentOfType("scene-ack")).toHaveLength(1);
+    traceGlobal.__benchWarmAckTrace = event => events.push(event);
+    client.sendSceneAck();
+    expect(events.at(-1)?.guard).toBe("empty");
+    client.close();
+  });
+
+  it("distinguishes watch-off and closed-socket guards with a pending delta", () => {
+    const events: WarmAckTraceEvent[] = [];
+    traceGlobal.__benchWarmAckTrace = event => events.push(event);
+    const { client, socket } = connect(true);
+    socket.emit(keyframe);
+    client.sendWatch(false);
+    client.sendSceneAck();
+    expect(events.at(-1)).toMatchObject({kind:"ack-guard",guard:"watch-off",deltasSinceAck:1,
+      watching:false,readyState:MockWebSocket.OPEN});
+    client.sendWatch(true);
+    socket.readyState = 3;
+    client.sendSceneAck();
+    expect(events.at(-1)).toMatchObject({kind:"ack-guard",guard:"socket-not-open",deltasSinceAck:1,
+      watching:true,readyState:3});
+    socket.readyState = MockWebSocket.OPEN;
+    client.sendSceneAck();
+    expect(socket.sentOfType("scene-ack")).toHaveLength(1);
+  });
 });
 
 describe("connection diagnostic receipts", () => {

@@ -78,6 +78,15 @@
 //     node scripts/validate-touch-live.mjs --checks H1,H3 --combos mouse-1920
 //     node scripts/validate-touch-live.mjs --list                # print the combo/check names and exit
 //     node scripts/validate-touch-live.mjs --observe --keep      # bring-up ONLY, no gestures, leave it up
+//     node scripts/validate-touch-live.mjs --plan --sts2-config /tmp/touchqa/sts2.yaml \
+//       --sts2-cwd /tmp/touchqa                              # inspect scratch routing; no launch
+//     node scripts/validate-touch-live.mjs --check-port --sts2-config /tmp/touchqa/sts2.yaml \
+//       --sts2-cwd /tmp/touchqa                              # inspect owned browser port; no launch
+//
+// For a private live run, pass BOTH scratch options. The config must give this instance an isolated
+// `instances.dir` of `<scratch-cwd>/.sts2/instances`, a short `transport.ipcPath`, and
+// `instances.symlinkUserDataDirs: []`. All sts2 calls then run from that cwd with that explicit config.
+// `COUCHCOOP_GSW_ROOT` is inherited by the Vite child and selects an isolated renderer source worktree.
 //
 // `--observe` (BRING-UP WITHOUT GESTURES)
 // ---------------------------------------
@@ -157,15 +166,16 @@
 
 import { spawn, spawnSync } from "node:child_process";
 import { createRequire } from "node:module";
-import { mkdirSync, writeFileSync } from "node:fs";
+import { mkdirSync, readFileSync, realpathSync, statSync, writeFileSync } from "node:fs";
 import { connect } from "node:net";
-import { dirname, resolve } from "node:path";
+import { dirname, isAbsolute, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 
-import { waitForInstancePort } from "./lib/instance-port.mjs";
+import { BROWSER_PORT_RELATIVE, readInstanceMeta } from "./lib/instance-port.mjs";
 import { acquireLease, releaseLease } from "./live-qa-lock.mjs";
 import { assessClientConfirm, selectMirrorModuleBundle } from "./lib/h17-client-confirm-readiness.mjs";
 import { CORRECTION_PX, scoreCorrections } from "./lib/handLandingScore.mjs";
+import { classifyRestCommit } from "./lib/handLandingRestFence.mjs";
 import { h15CoordinateVerdict, h15FocusedGrabFailure, planH15FifthPlay } from "./lib/h15-plan.mjs";
 
 const REPO_ROOT = resolve(dirname(fileURLToPath(import.meta.url)), "..");
@@ -261,6 +271,10 @@ function parseArgs(argv) {
     keep: false,
     list: false,
     observe: false,
+    plan: false,
+    checkPort: false,
+    sts2Config: null,
+    sts2Cwd: null,
     out: `${REPO_ROOT}/.sts2/artifacts/touch-harness`,
     launchTimeoutMs: 240000,
     stage: "dom",
@@ -283,6 +297,10 @@ function parseArgs(argv) {
       case "--out": a.out = resolve(next()); break;
       case "--keep": a.keep = true; break;
       case "--observe": a.observe = true; break;
+      case "--plan": a.plan = true; break;
+      case "--check-port": a.checkPort = true; break;
+      case "--sts2-config": a.sts2Config = next(); break;
+      case "--sts2-cwd": a.sts2Cwd = next(); break;
       case "--list": a.list = true; break;
       case "-h": case "--help": a.list = true; break;
       default: throw new Error(`unknown flag ${arg}`);
@@ -301,10 +319,62 @@ function parseArgs(argv) {
   if (unknownCheck) throw new Error(`unknown check ${unknownCheck} (known: ${ALL_CHECKS.join(",")})`);
   const unknownCombo = a.combos.find((c) => !COMBOS.some((x) => x.name === c));
   if (unknownCombo) throw new Error(`unknown combo ${unknownCombo} (known: ${COMBOS.map((c) => c.name).join(",")})`);
+  if ((a.sts2Config === null) !== (a.sts2Cwd === null)) {
+    throw new Error("--sts2-config and --sts2-cwd must be supplied together");
+  }
+  if (a.sts2Config !== null) {
+    if (!isAbsolute(a.sts2Config) || !isAbsolute(a.sts2Cwd)) {
+      throw new Error("--sts2-config and --sts2-cwd must be absolute paths");
+    }
+    if (!statSync(a.sts2Config, { throwIfNoEntry: false })?.isFile()) {
+      throw new Error(`--sts2-config is not a file: ${a.sts2Config}`);
+    }
+    if (!statSync(a.sts2Cwd, { throwIfNoEntry: false })?.isDirectory()) {
+      throw new Error(`--sts2-cwd is not a directory: ${a.sts2Cwd}`);
+    }
+    a.sts2Config = realpathSync(a.sts2Config);
+    a.sts2Cwd = realpathSync(a.sts2Cwd);
+  }
   return a;
 }
 
 const args = parseArgs(process.argv.slice(2));
+
+const FIXTURES = {
+  combat: "scripts/fixtures/touch-live-combat.sts2.fixture.yaml",
+  handFive: "scripts/fixtures/touch-live-hand-five.sts2.fixture.yaml",
+  handSelect: "scripts/fixtures/touch-live-hand-select.sts2.fixture.yaml",
+  rest: "scripts/fixtures/touch-live-rest.sts2.fixture.yaml",
+  rewards: "scripts/fixtures/touch-live-rewards.sts2.fixture.yaml",
+  rewardFocus: "scripts/fixtures/touch-live-reward-focus.sts2.fixture.yaml",
+  shopRemoval: "scripts/fixtures/touch-live-shop-removal.sts2.fixture.yaml"
+};
+
+function sts2Invocation(commandArgs) {
+  return {
+    command: "sts2",
+    args: [...(args.sts2Config ? ["--config", args.sts2Config] : []), "--instance", args.instance, ...commandArgs],
+    cwd: args.sts2Cwd ?? REPO_ROOT
+  };
+}
+
+function runSts2(commandArgs, options) {
+  const invocation = sts2Invocation(commandArgs);
+  return spawnSync(invocation.command, invocation.args, { cwd: invocation.cwd, ...options });
+}
+
+if (args.plan) {
+  console.log(JSON.stringify({
+    instance: args.instance,
+    instanceRecordRoot: args.sts2Cwd ?? REPO_ROOT,
+    gameLaunch: sts2Invocation(["game", "launch", "--timeout-ms", String(args.launchTimeoutMs), "--", "--headless"]),
+    fixtureLoad: sts2Invocation(["--mode", "dangerous", "dev", "fixture", "load", resolve(REPO_ROOT, FIXTURES.combat)]),
+    gameState: sts2Invocation(["--json", "state"]),
+    gameClose: sts2Invocation(["game", "close"]),
+    vite: { cwd: `${REPO_ROOT}/frontend`, gswRoot: process.env.COUCHCOOP_GSW_ROOT ?? null }
+  }, null, 2));
+  process.exit(0);
+}
 
 if (args.list) {
   console.log("checks:", ALL_CHECKS.join(", "));
@@ -345,6 +415,41 @@ async function waitForPort(port, timeoutMs, label) {
   throw new Error(`${label} never came up on :${port} within ${timeoutMs}ms`);
 }
 
+async function ownedInstancePort() {
+  const meta = await readInstanceMeta(args.sts2Cwd ?? REPO_ROOT, args.instance);
+  if (typeof meta?.userDir !== "string") return null;
+  try {
+    const record = JSON.parse(readFileSync(join(meta.userDir, BROWSER_PORT_RELATIVE), "utf8"));
+    if (!Number.isInteger(record.port) || record.port < 1 || record.port > 65535 ||
+        !Number.isInteger(record.pid) || record.pid < 1) return null;
+    // A seeded instance may contain the operator's still-live browser-port record. Liveness alone would allow
+    // the harness to drive that game. The writer must be running from THIS instance's isolated user directory.
+    const env = readFileSync(`/proc/${record.pid}/environ`, "utf8").split("\0");
+    if (!env.includes(`XDG_DATA_HOME=${meta.userDir}`)) return null;
+    return await portOpen(record.port) ? record.port : null;
+  } catch {
+    return null;
+  }
+}
+
+async function waitForOwnedInstancePort(preferred, timeoutMs) {
+  const deadline = now() + timeoutMs;
+  while (now() < deadline) {
+    const port = await ownedInstancePort();
+    if (port !== null) {
+      if (port !== preferred) log(`[setup] instance '${args.instance}' walked past :${preferred} and bound :${port}`);
+      return port;
+    }
+    await sleep(250);
+  }
+  throw new Error(`instance '${args.instance}' never published an owned browser port within ${timeoutMs}ms`);
+}
+
+if (args.checkPort) {
+  console.log(JSON.stringify({ instance: args.instance, ownedPort: await ownedInstancePort() }));
+  process.exit(0);
+}
+
 // ---------------------------------------------------------------------------------------------------
 // Lifecycle. Everything here is scoped to OUR instance and OUR ports; see the safety rules in the header.
 // ---------------------------------------------------------------------------------------------------
@@ -352,27 +457,20 @@ async function waitForPort(port, timeoutMs, label) {
 const spawned = { game: false, vite: null };
 const lease = { held: false, owner: `touch-input-qa-${process.pid}` };
 
-const FIXTURES = {
-  combat: "scripts/fixtures/touch-live-combat.sts2.fixture.yaml",
-  handFive: "scripts/fixtures/touch-live-hand-five.sts2.fixture.yaml",
-  handSelect: "scripts/fixtures/touch-live-hand-select.sts2.fixture.yaml",
-  rest: "scripts/fixtures/touch-live-rest.sts2.fixture.yaml",
-  rewards: "scripts/fixtures/touch-live-rewards.sts2.fixture.yaml",
-  rewardFocus: "scripts/fixtures/touch-live-reward-focus.sts2.fixture.yaml",
-  shopRemoval: "scripts/fixtures/touch-live-shop-removal.sts2.fixture.yaml"
-};
-
 async function ensureGame() {
-  if (await portOpen(args.gamePort)) {
-    log(`[setup] reusing the game already serving :${args.gamePort} (not ours to shut down)`);
+  const existing = await ownedInstancePort();
+  if (existing !== null) {
+    args.gamePort = existing;
+    log(`[setup] reusing instance '${args.instance}' already serving :${existing} (not ours to shut down)`);
     return;
   }
+  if (await portOpen(args.gamePort)) {
+    throw new Error(`preferred game port :${args.gamePort} belongs to an unverified process`);
+  }
   log(`[setup] launching instance '${args.instance}' headless, browser server on :${args.gamePort} ...`);
-  const res = spawnSync(
-    "sts2",
-    ["--instance", args.instance, "game", "launch", "--timeout-ms", String(args.launchTimeoutMs), "--", "--headless"],
+  const res = runSts2(
+    ["game", "launch", "--timeout-ms", String(args.launchTimeoutMs), "--", "--headless"],
     {
-      cwd: REPO_ROOT,
       encoding: "utf8",
       timeout: args.launchTimeoutMs + 30000,
       env: {
@@ -391,7 +489,9 @@ async function ensureGame() {
   // waiting on `args.gamePort` alone cannot tell "still booting" from "up on a port nothing told us about" — and
   // the second one looks exactly like an infinite boot. The mod writes the port it bound into its own user dir;
   // this resolves it and REBINDS `args.gamePort` so the vite proxy and every page URL follow the real one.
-  args.gamePort = await waitForInstancePort(REPO_ROOT, args.instance, args.gamePort, 180000, log);
+  // The scratch config's instances.dir is <scratch-cwd>/.sts2/instances. The writer must also prove its
+  // XDG_DATA_HOME, since a seeded browser-port file may still point at the operator's running game.
+  args.gamePort = await waitForOwnedInstancePort(args.gamePort, 180000);
   log(`[setup] instance '${args.instance}' up on :${args.gamePort}`);
 }
 
@@ -432,17 +532,16 @@ function shutdown() {
   }
   if (spawned.game) {
     log(`[teardown] closing instance '${args.instance}' (ours; never the developer's :13337 game)`);
-    spawnSync("sts2", ["--instance", args.instance, "game", "close"], { cwd: REPO_ROOT, encoding: "utf8", timeout: 60000 });
+    runSts2(["game", "close"], { encoding: "utf8", timeout: 60000 });
   }
 }
 
 let loadedFixture = null;
 function loadFixture(key, { force = false } = {}) {
   if (!force && loadedFixture === key) return;
-  const res = spawnSync(
-    "sts2",
-    ["--instance", args.instance, "--mode", "dangerous", "dev", "fixture", "load", FIXTURES[key]],
-    { cwd: REPO_ROOT, encoding: "utf8", timeout: 180000 }
+  const res = runSts2(
+    ["--mode", "dangerous", "dev", "fixture", "load", resolve(REPO_ROOT, FIXTURES[key])],
+    { encoding: "utf8", timeout: 180000 }
   );
   if (res.status !== 0) {
     throw new Error(`fixture load '${key}' failed (${res.status}):\n${(res.stderr || res.stdout || "").slice(-1500)}`);
@@ -456,11 +555,7 @@ function loadFixture(key, { force = false } = {}) {
  * removal service opened, and that a picker tap staged exactly one card without committing it.
  */
 function currentGameState() {
-  const res = spawnSync(
-    "sts2",
-    ["--instance", args.instance, "--json", "state"],
-    { cwd: REPO_ROOT, encoding: "utf8", timeout: 30000 }
-  );
+  const res = runSts2(["--json", "state"], { encoding: "utf8", timeout: 30000 });
   if (res.status !== 0) {
     throw new Error(`sts2 state failed (${res.status}):\n${(res.stderr || res.stdout || "").slice(-1200)}`);
   }
@@ -2255,11 +2350,15 @@ async function awaitPoseRest(page, { timeoutMs = 3000, requireWhole = true } = {
 
 /** Score one resting state: the worst |drawn − game·field| over the holders that are still in the fan. */
 async function scoreLanding(page, label, { includeOutOfFan = false } = {}) {
-  const report = await readPoses(page);
-  if (!report || report.holders.length === 0) {
-    return { label, rows: [], worstPx: null, note: "no hand on screen" };
-  }
-  const rows = report.holders
+  // Read geometry and its committed-frame identity in one browser turn. A canvas pose reader may
+  // retire a local channel before the next picture is committed; only that exact next picture can
+  // resolve the apparent mismatch. A later favorable frame cannot erase a bad first commit.
+  const readSample = () => page.evaluate(() => ({
+    report: window.__mirrorHandPoses?.() ?? null,
+    frame: window.__mirrorFrameIdentity?.() ?? null,
+    rendererInstance: window.__mirrorRendererDiagnostics?.().instance ?? null
+  }));
+  const rowsOf = (report) => report.holders
     .filter((h) => includeOutOfFan || h.inFan)
     .map((h) => {
       // `handPoseProbe.landingDrift`, restated for the page: mode 1 (a hand holder — a zero-size positioner
@@ -2287,8 +2386,50 @@ async function scoreLanding(page, label, { includeOutOfFan = false } = {}) {
         distPx: Math.round(Math.hypot(dx, dy) * 100) / 100
       };
     });
+  let sample = await readSample();
+  if (!sample.report || sample.report.holders.length === 0) {
+    return { label, rows: [], worstPx: null, note: "no hand on screen" };
+  }
+  let rows = rowsOf(sample.report);
+  let restFence = null;
+  const worstOf = (values) => values.reduce((a, b) => (b.distPx > (a?.distPx ?? -1) ? b : a), null);
+  const witness = (value, measured) => ({
+    stage: value.report?.stage ?? null,
+    presentEpoch: value.frame?.presentEpoch ?? null,
+    rendererInstance: value.rendererInstance,
+    live: value.report?.holders.some((h) => h.channelLive) ?? false,
+    mismatchPx: worstOf(measured)?.distPx ?? null,
+    rows: measured,
+    game: value.report?.holders.map((h) => ({ id: h.id, inFan: h.inFan, x: h.mGame[4], y: h.mGame[5] })) ?? []
+  });
+  const first = witness(sample, rows);
+  if (first.stage === "canvas" && !first.live && (first.mismatchPx ?? 0) > LANDING_TOLERANCE_PX) {
+    let outcome = { status: "wait" };
+    let current = first;
+    const deadline = now() + 2000;
+    while (outcome.status === "wait" && now() < deadline) {
+      await sleep(30);
+      const next = await readSample();
+      if (!next.report) {
+        outcome = { status: "fail", reason: "hand pose probe disappeared during rest fence" };
+        break;
+      }
+      const nextRows = rowsOf(next.report);
+      current = witness(next, nextRows);
+      current.gameStable = current.game.length === first.game.length && current.game.every((row, i) => {
+        const prior = first.game[i];
+        return row.id === prior.id && row.inFan === prior.inFan &&
+          Math.abs(row.x - prior.x) <= 1 && Math.abs(row.y - prior.y) <= 1;
+      });
+      outcome = classifyRestCommit(first, current);
+      if (outcome.status === "score") { sample = next; rows = nextRows; }
+    }
+    if (outcome.status === "wait") outcome = classifyRestCommit(first, { ...current, deadlinePassed: true });
+    restFence = { status: outcome.status, reason: outcome.reason ?? null, first, committed: current };
+  }
   const worst = rows.reduce((a, b) => (b.distPx > (a?.distPx ?? -1) ? b : a), null);
-  return { label, stage: report.stage, spreadFactor: report.spreadFactor, rows, worstPx: worst?.distPx ?? null, worst };
+  return { label, stage: sample.report.stage, spreadFactor: sample.report.spreadFactor, rows,
+    worstPx: worst?.distPx ?? null, worst, restFence };
 }
 
 
@@ -2318,9 +2459,12 @@ async function startLandingTrace(page) {
       if (window.__landStop) return;
       const report = window.__mirrorHandPoses ? window.__mirrorHandPoses() : null;
       if (report) {
+        const frame = window.__mirrorFrameIdentity?.() ?? null;
         window.__landTrace.push({
           t: Math.round(performance.now() * 10) / 10,
           f: report.spreadFactor,
+          stage: report.stage ?? null,
+          presentEpoch: frame?.presentEpoch ?? null,
           h: report.holders.map((h) => ({
             id: h.id,
             name: h.name,
@@ -2331,6 +2475,7 @@ async function startLandingTrace(page) {
             gy: h.mGame[5],
             sd: h.spreadDx,
             rd: h.raiseDy,
+            z: h.zIndex,
             live: h.channelLive,
             fan: h.inFan,
             // WHERE THE LIVE CHANNEL IS HEADED — the only statement about a landing that does not depend on when
@@ -2460,8 +2605,24 @@ async function checkH11(ctx) {
   const fail = (why, extra) => bad(why, { states, ...extra });
 
   const trace = await stopLandingTrace(page);
-  const corrections = scoreCorrections(trace);
+  // The landing log belongs to this gesture. A short replacement channel can begin and end
+  // between two canvas frames, so its explicit supersession identity is needed to score the
+  // old endpoint against the right rest without relaxing the stale-endpoint control.
+  const landingLog = await page.evaluate(() => window.__mirrorLandingLog?.() ?? null);
+  const corrections = scoreCorrections(trace, landingLog?.rows ?? []);
   const jumps = corrections.filter((c) => c.overruled);
+  const phase2Evidence = {
+    distinctCanvasRestPairs: corrections.distinctCanvasRestPairs,
+    canvasRestPairEvidence: corrections.canvasRestPairEvidence,
+    invalidFrameIdentity: corrections.invalidFrameIdentity
+  };
+  if (corrections.invalidFrameIdentity.length > 0) {
+    const first = corrections.invalidFrameIdentity[0];
+    return fail(`invalid canvas frame identity at trace frame ${first.frame} (${first.reason})`, { phase2Evidence });
+  }
+  const failedFence = states.find((state) => state.restFence?.status === "fail");
+  if (failedFence) return fail(`no valid committed rest frame for ${failedFence.label}: ${failedFence.restFence.reason}`,
+    { restFence: failedFence.restFence });
 
   const measured = states.filter((s) => s.worstPx !== null);
   if (measured.length === 0) return skip("no resting state produced a hand to measure");
@@ -2475,7 +2636,12 @@ async function checkH11(ctx) {
         `${corrections.length > 0 ? corrections[0].residualPx : 0}px from where the card rested, tolerance ` +
         `${CORRECTION_PX}px); ${corrections.confirmed} more the producer confirmed outright, ` +
         `${corrections.unpredicted} with no endpoint published, ${corrections.unsettled} that never came to rest, ` +
-        `${corrections.outOfFan} the game had taken out of the fan`
+        `${corrections.outOfFan} the game had taken out of the fan; ` +
+        `${corrections.distinctCanvasRestPairs} canvas rest pairs used distinct committed pictures`,
+      { restFences: states.filter((state) => state.restFence !== null).map((state) => ({
+          label: state.label, ...state.restFence
+        })), superseded: corrections.superseded ?? 0, focusCatchups: corrections.focusCatchups ?? 0,
+        phase2Evidence }
     );
   }
   if (offenders.length === 0) {
@@ -2491,7 +2657,8 @@ async function checkH11(ctx) {
         unpredicted: corrections.unpredicted,
         unsettled: corrections.unsettled,
         outOfFan: corrections.outOfFan,
-        frames: trace.length
+        frames: trace.length,
+        phase2Evidence
       }
     );
   }
@@ -2503,6 +2670,7 @@ async function checkH11(ctx) {
     {
       offenders: offenders.map((s) => ({ label: s.label, worstPx: s.worstPx, rows: s.rows })),
       jumps: jumps.slice(0, 12),
+      phase2Evidence,
       // …and every frame of the WORST offender's own holder, for the same reason the jumps carry `around`: a
       // resting pose that is wrong was drawn wrong at some identifiable moment, and the run-up is where that is.
       worstTrace: trace

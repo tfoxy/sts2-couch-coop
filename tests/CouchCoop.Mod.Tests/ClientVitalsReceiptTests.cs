@@ -32,6 +32,11 @@ internal static class ClientVitalsReceiptTests
         // Every field reaches the line, and the two stage backends arrive as a PAIR: they differ exactly when the
         // canvas backend was asked for and could not be built, which nothing else in the product reports.
         Assert(line!.Contains("stage=canvas->dom", StringComparison.Ordinal), $"stage pair (actual: {line})");
+        var rustLine = Render(Valid.Replace("\"stageActive\": \"dom\"", "\"stageActive\": \"rust\"", StringComparison.Ordinal));
+        Assert(rustLine is not null && rustLine.Contains("stage=canvas->rust", StringComparison.Ordinal),
+            $"requested canvas and active Rust are distinct (actual: {rustLine ?? "null"})");
+        Assert(Render(Valid.Replace("\"stageRequested\": \"canvas\"", "\"stageRequested\": \"rust\"", StringComparison.Ordinal)) is null,
+            "Rust is an active backend, not a public stage choice");
         Assert(line.Contains("stageFit=display", StringComparison.Ordinal), $"effective stage-fit arm (actual: {line})");
         Assert(line.Contains("dpr=3.49", StringComparison.Ordinal), $"fractional dpr survives (actual: {line})");
         Assert(line.Contains("viewport=390x844", StringComparison.Ordinal), $"viewport (actual: {line})");

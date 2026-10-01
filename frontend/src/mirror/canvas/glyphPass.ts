@@ -269,6 +269,8 @@ export interface GlyphPassRegistry {
    * of the caller because this module cannot see a record.
    */
   blockFor(spec: TextSpec, layout: TextLayout, font: MirrorFont, deviceScale: number): GlyphBlock | null;
+  /** Local-space union of all encoded run ink, outline and shadow included. */
+  boundsFor(block: GlyphBlock): { x: number; y: number; width: number; height: number } | null;
   /** Close the build. A no-op today; see {@link GlyphPassStats.labels} for why the counters are cumulative. */
   endBuild(): void;
   /** CONTEXT LOSS: drop the renderer's GL objects WITHOUT calling into the dead driver. */
@@ -627,6 +629,28 @@ export function createGlyphPassRegistry(options: GlyphPassOptions): GlyphPassReg
         const pass = live;
         return withGlyphUnpack(() => pass.drawRun(run, projection));
       }
+    },
+
+    boundsFor(block) {
+      if (!live) return null;
+      const probe = createGlyphsView(1);
+      probe.pixelsPerEm = block.pixelsPerEm;
+      let minX = Infinity, minY = Infinity, maxX = -Infinity, maxY = -Infinity;
+      for (let i = 0; i < block.runCount; i++) {
+        const start = block.spans[i * 2], count = block.spans[i * 2 + 1];
+        if (!count) continue;
+        probe.slots = block.slots.subarray(start, start + count);
+        probe.positions = block.positions.subarray(start * 2, (start + count) * 2);
+        probe.glyphCount = count;
+        const bounds = live.inkBounds(probe);
+        if (!bounds) return null;
+        const spread = block.spreads[i];
+        minX = Math.min(minX, block.origins[i * 2] + bounds.x - spread);
+        minY = Math.min(minY, block.origins[i * 2 + 1] + bounds.y - spread);
+        maxX = Math.max(maxX, block.origins[i * 2] + bounds.x + bounds.width + spread);
+        maxY = Math.max(maxY, block.origins[i * 2 + 1] + bounds.y + bounds.height + spread);
+      }
+      return minX <= maxX && minY <= maxY ? { x: minX, y: minY, width: maxX - minX, height: maxY - minY } : null;
     },
 
     blockFor(spec, layout, font, _deviceScale) {

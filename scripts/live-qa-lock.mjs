@@ -28,6 +28,18 @@ function alive(pid) {
   try { process.kill(Number(pid), 0); return true; } catch { return false; }
 }
 
+function processIdentity(pid) {
+  try {
+    const stat = readFileSync(`/proc/${Number(pid)}/stat`, "utf8");
+    const close = stat.lastIndexOf(")");
+    if (close < 0 || Number(stat.slice(0, stat.indexOf(" "))) !== Number(pid)) return null;
+    const fields = stat.slice(close + 2).trim().split(/\s+/);
+    const state = fields[0], startIdentity = fields[19];
+    return /^[A-Za-z]$/.test(state ?? "") && /^\d+$/.test(startIdentity ?? "")
+      ? { state, startIdentity } : null;
+  } catch { return null; }
+}
+
 function sleep(ms) {
   Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, ms);
 }
@@ -115,6 +127,7 @@ export function acquireLease({ owner, pid = process.pid, resources, config = DEF
       version: 1,
       owner,
       pid: Number(pid),
+      processStartIdentity: prior ? prior.processStartIdentity ?? null : processIdentity(pid)?.startIdentity ?? null,
       acquiredAt: prior?.acquiredAt ?? new Date().toISOString(),
       updatedAt: new Date().toISOString(),
       resources: merged
@@ -137,6 +150,17 @@ export function assertLease({ owner, pid = process.pid, resources, config = DEFA
     if (!have || (want.mode === "exclusive" && have.mode !== "exclusive")) {
       fail(`lease ${owner} (${pid}) does not hold ${want.mode}:${want.name}`);
     }
+  }
+  return lease;
+}
+
+// Strict capture gate. Legacy leases without a recorded start identity cannot prove liveness.
+export function assertLiveLease(args) {
+  const lease = assertLease(args);
+  const current = processIdentity(lease.pid);
+  if (!lease.processStartIdentity || !current ||
+      current.startIdentity !== lease.processStartIdentity || !['R', 'S', 'D', 'I'].includes(current.state)) {
+    fail(`live-QA lease ${lease.owner} (${lease.pid}) has missing, dead, reused, or non-running process identity`);
   }
   return lease;
 }

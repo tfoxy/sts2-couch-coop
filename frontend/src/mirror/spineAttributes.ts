@@ -8,8 +8,7 @@
 // here — exactly like `mirrorResourceUrl` in sceneTree.ts builds `/res/…` — rather than importing
 // `spineClipRoute` from @/protocol.
 
-import { renderQuality } from "@/render/quality";
-import { mirrorSettings } from "@/mirror/mirrorSettings";
+import { effectiveMirrorQuality, effectiveMirrorRenderSettings, mirrorSettings } from "@/mirror/mirrorSettings";
 import type { MirrorNode } from "@/mirror/sceneTree";
 import { assetVersionSuffix } from "@/join/assetVersion";
 import { hostUrl } from "@/join/hostBase";
@@ -32,7 +31,7 @@ export function isSpineClipNode(node: MirrorNode): boolean {
   if (node.spineSceneResPath == null || !node.spineCurrentAnim) {
     return false;
   }
-  const mode = mirrorSettings.spineMode;
+  const mode = effectiveMirrorRenderSettings(mirrorSettings).spineMode;
   if (mode === "off") {
     return false;
   }
@@ -40,13 +39,13 @@ export function isSpineClipNode(node: MirrorNode): boolean {
     return true;
   }
   if (mode === "static") {
-    return renderQuality().tier !== "minimum";
+    return effectiveMirrorQuality().tier !== "minimum";
   }
   // auto (dev-only now): high/medium fetch the full animated clip. low/very-low (and any tier with clips
   // force-disabled) still fetch ONE STATIC frame (spineClipUrl appends &still=1) — so a weak/mobile device shows
   // the character as a single cheap image (the "something is here" indicator the recon view gives) rather than
   // NOTHING. Only the `minimum` floor (WebGL-unavailable / the ?debug auto-player) fetches nothing at all.
-  const q = renderQuality();
+  const q = effectiveMirrorQuality();
   return q.spineClipsEnabled || q.tier !== "minimum";
 }
 
@@ -56,11 +55,11 @@ export function isSpineClipNode(node: MirrorNode): boolean {
 // tier (the dev asked for the animation); Off is moot (isSpineClipNode already returned false) but answers false
 // for a well-defined value.
 export function isSpineStillMode(): boolean {
-  const mode = mirrorSettings.spineMode;
+  const mode = effectiveMirrorRenderSettings(mirrorSettings).spineMode;
   if (mode !== "auto") {
     return mode === "static";
   }
-  const q = renderQuality();
+  const q = effectiveMirrorQuality();
   return !q.spineClipsEnabled && q.tier !== "minimum";
 }
 
@@ -69,7 +68,7 @@ export function isSpineStillMode(): boolean {
 // tier-driven experiment without making ordinary viewers touch `/geoclips/`. Keeping this gate next to the spine
 // mode gates means both renderers make the same decision before a manifest probe can ask the host to bake one.
 export function isGeoclipPlaybackEnabled(): boolean {
-  const mode = mirrorSettings.spineMode;
+  const mode = effectiveMirrorRenderSettings(mirrorSettings).spineMode;
   return mode === "dynamic" || mode === "auto";
 }
 

@@ -37,7 +37,7 @@ function fakeCache(): FakeCache {
     uploaded,
     released,
     stats,
-    white: () => ({ texture: {} as WebGLTexture, width: 1, height: 1 }),
+    white: () => ({ texture: {} as WebGLTexture, width: 1, height: 1, revision: 1 }),
     peek: (key) => entries.get(key),
     acquire: (key, source) => {
       const existing = entries.get(key);
@@ -46,7 +46,8 @@ function fakeCache(): FakeCache {
       const handle = {
         texture: {} as WebGLTexture,
         width: src.naturalWidth ?? 1,
-        height: src.naturalHeight ?? 1
+        height: src.naturalHeight ?? 1,
+        revision: 1
       };
       entries.set(key, handle);
       uploaded.push(key);
@@ -211,7 +212,7 @@ describe("texture bridge resident cap", () => {
     const getContext = vi.spyOn(HTMLCanvasElement.prototype, "getContext").mockReturnValue({
       globalCompositeOperation: "source-over",
       drawImage: vi.fn()
-    } as unknown as CanvasRenderingContext2D);
+    } as never);
     const bridge = createTextureBridge({
       cache,
       onResolved: vi.fn(),

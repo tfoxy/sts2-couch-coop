@@ -13,12 +13,15 @@
 // design box + scale, and the one piece of stage content that has to paint UNDER the canvas — the static
 // background, through the `underlay` slot — lands in the design-space layer below it rather than in the stage.
 import { mount } from "@vue/test-utils";
+import { defineComponent, h, inject, nextTick, ref, type ShallowRef } from "vue";
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
 
 import MirrorView from "@/mirror/MirrorView.vue";
 import { mirrorSettings } from "@/mirror/mirrorSettings";
 import { __setStageBackendForTest, requestedStageBackend, type StageBackend } from "@/mirror/rendererFactory";
-import { createMirrorState, type MirrorState } from "@/mirror/sceneTree";
+import { MIRROR_RENDERER_KEY } from "@/mirror/rendererKey";
+import type { MirrorRenderer } from "@/mirror/renderer/contracts";
+import { applySceneDelta, createMirrorState, parseSceneDelta, type MirrorState } from "@/mirror/sceneTree";
 
 // The frame box the next recomputeScale measures (jsdom has no layout, so the rect is stubbed like every other
 // MirrorView spec does it). Every box below is chosen so the fit is exact in binary — a 0.75 scale, not
@@ -168,6 +171,51 @@ describe("MirrorView on the DOM arm", () => {
     expect(stageEl()!.classList.contains("mirror-stage-over-canvas")).toBe(false);
     expect(stageEl()!.style.width).toBe("1920px");
     expect(stageEl()!.style.transform).toBe("scale(0.75)");
+    wrapper.unmount();
+  });
+
+  it("disposes the old renderer and reconciles the retained scene after a view-only remount", async () => {
+    const state = createMirrorState();
+    applySceneDelta(state, parseSceneDelta({
+      type: "scene-delta", full: true, screenType: "lobby",
+      upserts: [{ id: "retained-root", parentId: null, name: "RetainedRoot", nodeType: "Control", visible: true,
+        transform: { xAxis: { x: 1, y: 0 }, yAxis: { x: 0, y: 1 }, origin: { x: 0, y: 0 } },
+        localRect: { position: { x: 0, y: 0 }, size: { x: 1920, y: 1080 } } }],
+      orderedIds: ["retained-root"]
+    })!);
+    const viewKey = ref(0);
+    const rendererRefs: ShallowRef<MirrorRenderer | null>[] = [];
+    const Probe = defineComponent({
+      setup() {
+        const rendererRef = inject(MIRROR_RENDERER_KEY);
+        if (!rendererRef) throw new Error("MirrorView did not provide its renderer");
+        rendererRefs.push(rendererRef as ShallowRef<MirrorRenderer | null>);
+        return () => h("i");
+      }
+    });
+    const Parent = defineComponent({
+      setup: () => () => h(MirrorView, { key: viewKey.value, state, revision: 1 }, {
+        underlay: () => h(Probe)
+      })
+    });
+    const wrapper = mount(Parent, { attachTo: document.body });
+    await nextTick();
+    const first = rendererRefs[0]?.value;
+    expect(first).toBeTruthy();
+    const dispose = vi.spyOn(first!, "dispose");
+    const oldNode = document.querySelector('[data-node-id="retained-root"]');
+    expect(oldNode).not.toBeNull();
+
+    viewKey.value++;
+    await nextTick();
+    expect(dispose).toHaveBeenCalledOnce();
+    expect(rendererRefs[0]?.value).toBeNull();
+    expect(rendererRefs[1]?.value).toBeTruthy();
+    expect(rendererRefs[1]?.value).not.toBe(first);
+    const newNode = document.querySelector('[data-node-id="retained-root"]');
+    expect(newNode).not.toBeNull();
+    expect(newNode).not.toBe(oldNode);
+    expect(state.nodes.has("retained-root")).toBe(true);
     wrapper.unmount();
   });
 });

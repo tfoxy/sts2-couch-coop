@@ -8,7 +8,7 @@ import { parseGodotTextScene } from "@godot-scene-web/tscn-parser";
 
 // GPU pixels are stubbed; public model, DOM mount, host lifecycle and canvas stage are real.
 const bindings = vi.hoisted(() => ({ create: vi.fn(), dispose: vi.fn() }));
-vi.mock("../../../../../godot-scene-web/packages/html/src/particles/runtime", () => ({
+vi.mock("@godot-scene-web/html/particles/runtime", () => ({
   createParticleRuntime(stage: HTMLElement) {
     bindings.create();
     const canvases = new Map<Element, HTMLCanvasElement>();
@@ -59,7 +59,7 @@ text = "DOM caption"
   expect(upper.querySelectorAll("[data-mixed-effect]")).toHaveLength(0);
   const viewport = vi.fn();
   const gl = { drawingBufferWidth: 0, drawingBufferHeight: 0, viewport } as unknown as WebGL2RenderingContext;
-  vi.spyOn(canvas, "getContext").mockReturnValue(gl);
+  vi.spyOn(canvas, "getContext").mockReturnValue(gl as never);
   const stage = createCanvasStage({ canvas, designWidth: 200, designHeight: 100 });
   expect(stage).not.toBeNull();
   stage!.setStageSize(400, 200);

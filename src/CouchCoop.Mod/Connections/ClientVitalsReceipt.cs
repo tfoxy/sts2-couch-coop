@@ -37,8 +37,11 @@ public static class ClientVitalsReceipt
     /// <summary>The report fact key. One key, overwritten each census, so the report shows the latest reading.</summary>
     public const string FactKey = "clientVitals";
 
-    /// <summary>The stage backends the mirror can run — <c>?stage=dom|canvas</c>, matching rendererFactory.ts.</summary>
-    private static readonly string[] StageBackends = ["dom", "canvas"];
+    /// <summary>The viewer's public stage choices, matching mirrorSettings.ts.</summary>
+    private static readonly string[] RequestedStages = ["dom", "canvas"];
+
+    /// <summary>The backends that can actually present the stage, matching rendererFactory.ts.</summary>
+    private static readonly string[] ActiveStages = ["dom", "rust"];
 
     /// <summary>The layout arms the mirror can grant, matching stageFit.ts.</summary>
     private static readonly string[] StageFits = ["design", "display"];
@@ -63,8 +66,8 @@ public static class ClientVitalsReceipt
     {
         if (root.ValueKind != JsonValueKind.Object) return null;
 
-        if (!TryEnum(root, "stageRequested", StageBackends, out var stageRequested)
-            || !TryEnum(root, "stageActive", StageBackends, out var stageActive)
+        if (!TryEnum(root, "stageRequested", RequestedStages, out var stageRequested)
+            || !TryEnum(root, "stageActive", ActiveStages, out var stageActive)
             || !TryEnum(root, "stageFit", StageFits, out var stageFit)
             || !TryEnum(root, "shaderMode", EffectModes, out var shaderMode)
             || !TryEnum(root, "particleMode", EffectModes, out var particleMode)

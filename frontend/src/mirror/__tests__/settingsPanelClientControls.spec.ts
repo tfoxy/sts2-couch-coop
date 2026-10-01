@@ -78,9 +78,10 @@ describe("SettingsPanel — quality row", () => {
       "very-low",
       "minimum"
     ]);
-    // First control in the group: the lever a player reaches for before the individual rows.
+    // Stage is the first choice; quality remains above the rows whose preset it controls.
     const selects = wrapper.findAll(".settings-group select");
-    expect(selects[0].attributes("data-testid")).toBe("mirror-quality");
+    expect(selects[0].attributes("data-testid")).toBe("mirror-stage");
+    expect(selects[1].attributes("data-testid")).toBe("mirror-quality");
   });
 
   it("labels each rung with the word the id and ?quality= use — and never the word Off", () => {

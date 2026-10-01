@@ -125,6 +125,10 @@ export interface LandingArm {
   atMs: number;
 }
 
+export interface LandingPresentation {
+  publish(): void;
+}
+
 export interface CanvasVisualState {
   readonly loop: TweenLoop;
   readonly transformOverrides: Map<string, number[]>;
@@ -168,7 +172,7 @@ export interface CanvasVisualState {
   applyInputs(next: MirrorState, at: number): void;
   sample(at: number): void;
   advance(at: number): void;
-  idleDeadline(at: number, fps: number, phaseDeadline: number): number;
+  idleDeadline(at: number, fps: number, phaseDeadline: number, displayPaced?: boolean): number;
   consumeLandingArms(): LandingArm[];
   /** Bank alpha overrides after a full build, never after an in-place patch. */
   bankAppliedAlphas(): void;
@@ -176,8 +180,16 @@ export interface CanvasVisualState {
   flushLandingArms(next: MirrorState): void;
   /** Score arms against the published painted frame. */
   settleLanding(at: number): void;
+  /** Freeze one candidate's landing evidence before asynchronous presentation. */
+  captureLandingPresentation(next: MirrorState, at: number,
+    captured: ReadonlyMap<string, CapturedGlobal>, lifts: ReadonlyMap<string, { dy: number }>): LandingPresentation;
+  collectLandingCaptureIds(out: Set<string>): void;
+  readonly landingGeneration: number;
+  hasOpenLanding(): boolean;
   /** Read also settles due rows, preserving the diagnostics seam's contract. */
   landingLogReport(): LandingLogReport;
+  /** Read without ticking; asynchronous renderers settle only on publication. */
+  passiveLandingLogReport(): LandingLogReport;
   /** A diagnostic-only report; undefined when the audit was never armed. */
   spreadAuditReport(): ReturnType<typeof spreadAuditReport> | undefined;
   intentNode(id: string): MirrorNode | undefined;
@@ -260,6 +272,10 @@ export function createCanvasVisualState(
   // `state()`: runBuild receives its candidate before all consumers publish it.
   let viewScaleNodes: ReadonlyMap<string, MirrorNode> = new Map();
   const active = new Set<string>();
+  // A renderer can be mounted over a retained scene whose wire-delta markers
+  // were consumed by the previous view. Seed local loop/source registrations
+  // from the whole scene once; later calls remain proportional to changedIds.
+  let inputsSeeded = false;
   const sampleTransform = [1, 0, 0, 1, 0, 0];
   const sampleAlphas = [1, 1];
   const streamedGlobal = [1, 0, 0, 1, 0, 0];
@@ -354,11 +370,24 @@ export function createCanvasVisualState(
   };
 
   const landingLog = createLandingLog();
+  const noLandingPublication: LandingPresentation = { publish() {} };
+  let landingGeneration = 0;
+  let lastRewriteRevision = -1;
+  let lastRewriteOrder: readonly string[] | null = null;
+  // Re-emits are detected by reference identity; a token preserves that identity
+  // without leaving a mutable producer transform inside an async candidate.
+  const streamedPoseTokens = new WeakMap<object, object>();
+  const streamedPoseToken = (pose: unknown): unknown => {
+    if (pose === null || typeof pose !== "object") return pose;
+    let token = streamedPoseTokens.get(pose);
+    if (!token) { token = {}; streamedPoseTokens.set(pose, token); }
+    return token;
+  };
   const landingProbe: LandingProbe = {
     drawnGlobal: (id) => ports.capturedGlobal(id)?.drawn ?? null,
     raiseDy: (id) => ports.cosmeticOffsetDy(id),
     channelLive: (id) => loop.ownsTransform(id),
-    streamedTransform: (id) => ports.state()?.nodes.get(id)?.transform ?? null,
+    streamedTransform: (id) => streamedPoseToken(ports.state()?.nodes.get(id)?.transform ?? null),
     streamedGlobal: (id) => {
       const state = ports.state();
       if (state === null || !streamedGlobalInto(state, id, landingScratch)) {
@@ -531,8 +560,9 @@ export function createCanvasVisualState(
     }
   }
 
-  function flushLandingArms(next: MirrorState): void {
-    for (const pending of landingArms.splice(0)) {
+  function priceLandingArms(next: MirrorState, pendingArms: readonly LandingArm[]) {
+    const priced: Parameters<typeof landingLog.noteArm>[0][] = [];
+    for (const pending of pendingArms) {
       const node = next.nodes.get(pending.nodeId);
       if (!node) continue;
       const mode = spreadFieldModeByNode.get(pending.nodeId) ?? -1;
@@ -548,7 +578,7 @@ export function createCanvasVisualState(
               spreadFactor,
             )
           : walkedDx;
-      landingLog.noteArm({
+      priced.push({
         id: pending.nodeId,
         name: node.name,
         atMs: pending.atMs,
@@ -572,9 +602,57 @@ export function createCanvasVisualState(
         fieldMode: mode,
         durationMs: pending.durationMs,
         parentId: node.parentId ?? null,
-        streamedAtArm: node.transform,
+        streamedAtArm: streamedPoseToken(node.transform),
       });
     }
+    return priced;
+  }
+
+  function flushLandingArms(next: MirrorState): void {
+    for (const arm of priceLandingArms(next, landingArms.splice(0))) landingLog.noteArm(arm);
+  }
+
+  function captureLandingPresentation(next: MirrorState, at: number,
+    captured: ReadonlyMap<string, CapturedGlobal>, lifts: ReadonlyMap<string, { dy: number }>): LandingPresentation {
+    if (landingLog.openCount() === 0 && landingArms.length === 0) return noLandingPublication;
+    const candidateGeneration = landingGeneration;
+    const pending = landingArms.slice();
+    const arms = priceLandingArms(next, pending);
+    const ids = new Set([...landingLog.openIds(), ...arms.map((arm) => arm.id)]);
+    const drawn = new Map<string, Affine | null>();
+    const raise = new Map<string, number>();
+    const channel = new Map<string, boolean>();
+    const streamed = new Map<string, unknown>();
+    const game = new Map<string, Affine | null>();
+    for (const id of ids) {
+      const pose = captured.get(id)?.drawn;
+      drawn.set(id, pose ? [...pose] as Affine : null);
+      raise.set(id, lifts.get(id)?.dy ?? 0);
+      channel.set(id, landingProbe.channelLive(id));
+      streamed.set(id, streamedPoseToken(next.nodes.get(id)?.transform ?? null));
+      game.set(id, streamedGlobalInto(next, id, landingScratch) ? [...landingScratch] as Affine : null);
+    }
+    const probe: LandingProbe = {
+      drawnGlobal: (id) => drawn.get(id) ?? null,
+      raiseDy: (id) => raise.get(id) ?? 0,
+      channelLive: (id) => channel.get(id) ?? true,
+      streamedTransform: (id) => streamed.get(id) ?? null,
+      streamedGlobal: (id) => game.get(id) ?? null,
+    };
+    const removePending = () => {
+      for (const arm of pending) {
+        const index = landingArms.indexOf(arm);
+        if (index >= 0) landingArms.splice(index, 1);
+      }
+    };
+    return {
+      publish() {
+        if (landingGeneration !== candidateGeneration) return;
+        removePending();
+        for (const arm of arms) landingLog.noteArm(arm);
+        landingLog.tick(at, probe);
+      },
+    };
   }
 
   function settleLanding(at: number): void {
@@ -583,6 +661,10 @@ export function createCanvasVisualState(
 
   function landingLogReport(): LandingLogReport {
     settleLanding(options.now());
+    return passiveLandingLogReport();
+  }
+
+  function passiveLandingLogReport(): LandingLogReport {
     return {
       stage: "canvas",
       spreadFactor,
@@ -821,7 +903,16 @@ export function createCanvasVisualState(
   }
 
   function applyInputs(next: MirrorState, at: number): void {
+    const inputIds = inputsSeeded ? next.changedIds : [...next.nodes.keys()];
+    inputsSeeded = true;
     if (next.sceneRewrite) {
+      if (lastRewriteRevision !== next.revision || lastRewriteOrder !== next.orderedIds) {
+        landingGeneration++;
+        lastRewriteRevision = next.revision;
+        lastRewriteOrder = next.orderedIds;
+        landingArms.length = 0;
+        landingLog.clear();
+      }
       loop.clearHideLatches();
       transformOverrides.clear();
       alphaOverrides.clear();
@@ -834,9 +925,8 @@ export function createCanvasVisualState(
       frameSubstitutes.clear();
       idleActive = 0;
       ports.onRewrite();
-      landingLog.clear();
     }
-    for (const id of next.changedIds) {
+    for (const id of inputIds) {
       const node = next.nodes.get(id);
       if (node === undefined) {
         dropNode(id, at);
@@ -919,7 +1009,7 @@ export function createCanvasVisualState(
       loop.applyFlights(next.pendingCardFlights, at);
       next.pendingCardFlights.length = 0;
     }
-    for (const id of next.changedIds) {
+    for (const id of inputIds) {
       const node = next.nodes.get(id);
       refreshIdle(id, node, next, at);
       refreshIntent(id, node, at);
@@ -1017,10 +1107,12 @@ export function createCanvasVisualState(
     advance(at) {
       loop.advance(at);
     },
-    idleDeadline(at, fps, phaseDeadline) {
+    idleDeadline(at, fps, phaseDeadline, displayPaced = false) {
       return Math.min(
         idleActive === 0
           ? Number.POSITIVE_INFINITY
+          : displayPaced
+            ? at
           : fps >= 60 && phaseDeadline > 0
             ? phaseDeadline
             : lastIdleFrameAt + 1000 / fps,
@@ -1033,7 +1125,15 @@ export function createCanvasVisualState(
     bankAppliedAlphas,
     flushLandingArms,
     settleLanding,
+    captureLandingPresentation,
+    get landingGeneration() { return landingGeneration; },
+    collectLandingCaptureIds(out) {
+      for (const id of landingLog.openIds()) out.add(id);
+      for (const arm of landingArms) out.add(arm.nodeId);
+    },
+    hasOpenLanding: () => landingLog.openCount() > 0 || landingArms.length > 0,
     landingLogReport,
+    passiveLandingLogReport,
     spreadAuditReport() {
       return spreadAudit === null ? undefined : spreadAuditReport(spreadAudit);
     },

@@ -310,6 +310,18 @@ describe("the landing log — what the verdict says", () => {
     expect(classifyLanding(row, F), "the field is checked before the game's change of mind").toBe("endpoint-field");
   });
 
+  it("still rejects a deliberately wrong endpoint on a successfully committed landing", () => {
+    const row = playOne(
+      { endpointDrawn: at(840, -209), spreadDxApplied: 40 },
+      { gameX: 800, gameY: -209, drawn: at(1000, -209) }
+    );
+    expect(row.closedBy).toBe("settle");
+    expect(row.settledGame).toEqual(at(800, -209));
+    expect(classifyLanding(row, F), "a successful renderer commit does not make its wrong endpoint acceptable")
+      .toBe("endpoint-field");
+    expect(scoredLandings([row], F)).toHaveLength(1);
+  });
+
   it("has no field opinion about a node that does not claim the origin field", () => {
     const row = playOne({ fieldMode: 0 }, { gameX: 800, gameY: -209, drawn: at(1000, -209) });
     expect(endpointFieldResidual(row, F), "mode 0's shift is not a function of its own X").toBeNull();

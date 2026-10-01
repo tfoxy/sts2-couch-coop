@@ -4,9 +4,11 @@ import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import SettingsPanel from "@/mirror/SettingsPanel.vue";
 import {
   clearStoredMirrorSettings,
+  effectiveMirrorRenderSettings,
   mirrorSettings,
   MIRROR_SETTINGS_STORAGE_KEY,
-  readStoredMirrorSettings
+  readStoredMirrorSettings,
+  serverSettingsPayload
 } from "@/mirror/mirrorSettings";
 import type { MirrorLatency } from "@/mirror/mirrorClient";
 
@@ -60,6 +62,35 @@ afterEach(() => {
 });
 
 describe("SettingsPanel — saving a viewer's choices", () => {
+  it("persists the public stage, forces Rust values, then restores the saved DOM choices and host payload", async () => {
+    mirrorSettings.quality = "high";
+    mirrorSettings.shaderMode = "dynamic";
+    mirrorSettings.particleMode = "dynamic-half";
+    mirrorSettings.staticBgEnabled = false;
+    mirrorSettings.runtimeStage = "dom";
+    mirrorSettings.stage = "dom";
+    const wrapper = mountPanel();
+
+    await wrapper.get('[data-testid="mirror-stage"]').setValue("canvas");
+    expect(saved()).toEqual({ stage: "canvas" });
+    expect(effectiveMirrorRenderSettings(mirrorSettings)).toMatchObject({
+      quality: "very-low", shaderMode: "off", particleMode: "off", staticBgEnabled: true
+    });
+    expect((wrapper.get('[data-testid="mirror-quality"]').element as HTMLSelectElement).disabled).toBe(true);
+    expect((wrapper.get('[data-testid="mirror-static-bg"]').element as HTMLInputElement).disabled).toBe(true);
+    expect(serverSettingsPayload(mirrorSettings).staticBg).toBe(true);
+
+    await wrapper.get('[data-testid="mirror-stage"]').setValue("dom");
+    expect(saved()).toEqual({ stage: "dom" });
+    expect(effectiveMirrorRenderSettings(mirrorSettings)).toMatchObject({
+      quality: "high", shaderMode: "dynamic", particleMode: "dynamic-half", staticBgEnabled: false
+    });
+    expect((wrapper.get('[data-testid="mirror-quality"]').element as HTMLSelectElement).disabled).toBe(false);
+    expect((wrapper.get('[data-testid="mirror-static-bg"]').element as HTMLInputElement).disabled).toBe(false);
+    expect(serverSettingsPayload(mirrorSettings).staticBg).toBe(false);
+    wrapper.unmount();
+  });
+
   it("saves a QUALITY rung together with the three rows it sets", async () => {
     // The quality row is the one control that writes more than its own field — and every one of those writes has
     // to be saved, or a reload would show the rung next to rows it does not imply.

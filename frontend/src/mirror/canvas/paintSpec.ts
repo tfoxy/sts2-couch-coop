@@ -65,7 +65,7 @@ import { fxAxisScale } from "@/mirror/canvas/fxPixelRatio";
 import { SPINE_KEY_PREFIX } from "@/mirror/canvas/spineSurfaces";
 import { TEXT_KEY_PREFIX } from "@/mirror/canvas/textSurfaces";
 import { naturalSize } from "@/mirror/textureCache";
-import { renderQuality } from "@/render/quality";
+import { effectiveMirrorQuality } from "@/mirror/mirrorSettings";
 import { emitTrailStripQuads } from "@/mirror/canvas/trailQuads";
 
 import type { FxSurface } from "@/mirror/canvas/fxSurfaces";
@@ -460,13 +460,13 @@ export function intersectOverlayClip(
  * — a placement matrix applied to the box's four corners — so they share `placedAabb` rather than restating it.
  * Returns false when the node has no placeable box, which is the "no extent to compare" answer both callers want.
  */
-export function placedBoxAabbInto(input: NodePaintInput, out: Float64Array, at: number): boolean {
+export function placedBoxAabbInto(input: NodePaintInput, out: Float64Array, at: number, global: Affine = input.global): boolean {
   const lr = placementBox(input.node);
   if (!lr) {
     return false;
   }
   const w = input.renderWidthOverride && input.renderWidthOverride > 0 ? input.renderWidthOverride : lr.width;
-  const box = placedAabb(nodeMatrix(input.global, lr), w, lr.height);
+  const box = placedAabb(nodeMatrix(global, lr), w, lr.height);
   out[at] = box.minX;
   out[at + 1] = box.minY;
   out[at + 2] = box.maxX;
@@ -821,6 +821,10 @@ export function emitSpineQuad(
 export interface TextQuadBox {
   /** The raster digest — the `text://` key's suffix, and the thing that makes two identical labels one upload. */
   digest: string;
+  /** Same-context GPU bake may supply its own stage texture key. */
+  textureKey?: string;
+  /** Framebuffer-backed textures have bottom-origin UVs. */
+  flipV?: boolean;
   /** The raster's origin and size in the label's own BOX space. */
   dx: number;
   dy: number;
@@ -851,6 +855,7 @@ export interface TextQuadBox {
  * is known.
  */
 export interface TextQuadSource {
+  fallback?(reason: "unsupported" | "unready"): void;
   boxFor(record: OverlayRecord): TextQuadBox | null;
 }
 
@@ -1018,15 +1023,15 @@ export function emitTextQuad(
   view.srcW = box.texW;
   view.srcH = box.texH;
   view.flipH = false;
-  view.flipV = false;
+  view.flipV = box.flipV === true;
   view.hasColorMatrix = false;
-  view.blend = node ? canvasBlend(node) : (0 as QuadView["blend"]);
+  view.blend = box.textureKey ? (0 as QuadView["blend"]) : node ? canvasBlend(node) : (0 as QuadView["blend"]);
   const alpha = clamp01(record.opacity);
   view.a = alpha;
   view.r = clampChannel(record.tintR) * alpha;
   view.g = clampChannel(record.tintG) * alpha;
   view.b = clampChannel(record.tintB) * alpha;
-  sink.quad(view, TEXT_KEY_PREFIX + box.digest);
+  sink.quad(view, box.textureKey ?? TEXT_KEY_PREFIX + box.digest);
   return 1;
 }
 
@@ -1277,13 +1282,12 @@ export function emitTextGlyphs(
     view.glyphCount = count;
     // The shaper intentionally owns only slots and pen positions. It does not
     // expose every glyph outline's local extrema, so the label box is the
-    // conservative bound available at this integration boundary. It is still
-    // substantially safer than the former implicit `undefined` (serialized as
-    // NaN), which forced every retained patch containing text down the unknown
-    // path. The run's spread and the one-pixel replay raster outset cover the
-    // stroke/AA reach; a shadow remains inside this full label box by design.
-    view.localInkX = 0;
-    view.localInkY = 0;
+    // conservative bound available at this integration boundary. A glyph
+    // run's model origin is its pen baseline, not the label's upper-left;
+    // express the label box relative to that origin or a retained target can
+    // crop ascenders. The spread and raster outset cover stroke/AA reach.
+    view.localInkX = -block.origins[i * 2];
+    view.localInkY = -block.origins[i * 2 + 1];
     view.localInkWidth = record.w;
     view.localInkHeight = record.h;
     // GSW adds `spreadPx` itself when deriving command damage. This field is
@@ -1449,11 +1453,11 @@ function paintsTexture(node: MirrorNode): boolean {
   if (!node.textureUrl || node.clipChildren === 1 || isWebglShaderNode(node) || node.particleSpec != null) {
     return false;
   }
-  return renderQuality().shadersEnabled || !isShaderInputNode(node);
+  return effectiveMirrorQuality().shadersEnabled || !isShaderInputNode(node);
 }
 
 /** Godot `CanvasItem.BlendMode` IS the draw list's `BlendMode` (0 Mix / 1 Add / 2 Sub / 3 Mul) — no mapping. */
-function canvasBlend(node: MirrorNode): QuadView["blend"] {
+export function canvasBlend(node: MirrorNode): QuadView["blend"] {
   const mode = node.canvasBlendMode;
   return (mode === 1 || mode === 2 || mode === 3 ? mode : 0) as QuadView["blend"];
 }

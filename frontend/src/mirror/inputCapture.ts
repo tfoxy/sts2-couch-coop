@@ -347,6 +347,7 @@ export function createInputCapture(
   // and to synthesize a release on pointercancel (so a button can never get stuck down in the game).
   let heldButton: "left" | "right" | "middle" | null = null;
   let heldPointerId: number | null = null;
+  let mouseLastClient: { x: number; y: number } | null = null;
   // R11 WS-M — the LEFT mouse press's client point (null when no left button is down). The release compares against
   // it so only a CLICK (not a map pan / a card drag) can route a map-node tap.
   let mouseDownClient: { x: number; y: number } | null = null;
@@ -1377,6 +1378,7 @@ export function createInputCapture(
       onTouchMove(event);
       return;
     }
+    if (heldButton !== null) mouseLastClient = { x: event.clientX, y: event.clientY };
     // T2 — latch "this gesture is a DRAG" the first time the cursor leaves the tap slop while a button is held.
     // A latch and not an endpoint test, because the gesture the drop-cancel exists for comes BACK to its press
     // point (see mouseDragged).
@@ -1539,6 +1541,7 @@ export function createInputCapture(
     }
     heldButton = button;
     heldPointerId = event.pointerId;
+    mouseLastClient = { x: event.clientX, y: event.clientY };
     // R11 WS-M: remember where a LEFT press started, so the release can tell a click from a drag (a left-drag on the
     // map is a pan) before routing a map-node tap. Cleared on release/cancel.
     mouseDownClient = button === "left" ? { x: event.clientX, y: event.clientY } : null;
@@ -1832,6 +1835,7 @@ export function createInputCapture(
     mouseHandCardPress = false;
     heldButton = null;
     heldPointerId = null;
+    mouseLastClient = null;
     clearFreeze();
   }
 
@@ -2167,6 +2171,7 @@ export function createInputCapture(
       pressWithheld = false;
       heldButton = null;
       heldPointerId = null;
+      mouseLastClient = null;
       clearFreeze();
       return;
     }
@@ -2174,6 +2179,7 @@ export function createInputCapture(
     send({ kind: "click", button, pressed: false, ...frozenCoord(event.clientX, event.clientY) });
     heldButton = null;
     heldPointerId = null;
+    mouseLastClient = null;
     clearFreeze();
   }
 
@@ -2299,11 +2305,15 @@ export function createInputCapture(
         cancelAnimationFrame(rafId);
         rafId = 0;
       }
-      for (const p of touchPointers.values()) {
-        if (p.peekTimer !== null) {
-          clearTimeout(p.peekTimer);
-          p.peekTimer = null;
-        }
+      pending = null;
+      // A renderer fallback remounts this view but keeps its game seat alive. Retract any press already sent
+      // before removing the listeners; the old capture cannot receive the later physical pointer-up.
+      if (heldButton !== null) {
+        const point = mouseLastClient ?? mouseDownClient ?? { x: 0, y: 0 };
+        onPointerCancel({ pointerType: "mouse", clientX: point.x, clientY: point.y } as PointerEvent);
+      }
+      for (const [pointerId, p] of [...touchPointers]) {
+        onTouchCancel({ pointerId, clientX: p.lastX, clientY: p.lastY } as PointerEvent);
       }
       releaseCapture();
       stage.removeEventListener("pointermove", onPointerMove);

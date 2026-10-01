@@ -320,6 +320,8 @@ export interface TextureBridge {
    * asking for one that is unknown STARTS the load — so a scene naming a new sprite warms it by drawing it.
    */
   sizeOf(url: string): { width: number; height: number } | null;
+  /** Read the decoded size without starting a load or changing residency. */
+  peekSize(url: string): { width: number; height: number } | null;
   /**
    * Resolve a source rect only when its exact page/crop mapping is already resident.
    *
@@ -516,6 +518,8 @@ interface Entry {
   retriedPlain: boolean;
   /** Decoded, wanted by the build that just ran, and held back by the pacer. Counted into `stats.paced`. */
   awaitingUpload: boolean;
+  /** At least one region on this page was deferred in the current build. */
+  pacedThisBuild: boolean;
   /**
    * Owned pixels for a WHOLE-page upload, held only between the capture resolving and the upload spending it.
    * Exists only when a bitmap decoder is available.
@@ -812,6 +816,7 @@ export function createTextureBridge(options: TextureBridgeOptions): TextureBridg
         lastSeen: build,
         retriedPlain: false,
         awaitingUpload: false,
+        pacedThisBuild: false,
         bitmap: null,
         decoding: false,
         bitmapFailed: false
@@ -1128,13 +1133,14 @@ export function createTextureBridge(options: TextureBridgeOptions): TextureBridg
         const region = repack.regionFor(url, source, entry.width, entry.height, src);
         if (region.kind === "region") {
           // The url is SERVED, so it must stop counting as owed a frame even though its page never uploaded.
-          clearAwaiting(entry);
+          if (!entry.pacedThisBuild) clearAwaiting(entry);
           resolved.handle = region.handle;
           resolved.dx = region.dx;
           resolved.dy = region.dy;
           return resolved;
         }
         if (region.kind === "paced") {
+          entry.pacedThisBuild = true;
           // Same bookkeeping as a paced page: the quad paints transparent, the url reads as still coming, and
           // `endBuild` books the frame that finishes it.
           if (!entry.awaitingUpload) {
@@ -1214,6 +1220,11 @@ export function createTextureBridge(options: TextureBridgeOptions): TextureBridg
     const entry = entryFor(url);
     entry.lastSeen = build;
     return entry.state === "ready" ? { width: entry.width, height: entry.height } : null;
+  }
+
+  function peekSize(url: string): { width: number; height: number } | null {
+    const entry = entries.get(url);
+    return entry?.state === "ready" ? { width: entry.width, height: entry.height } : null;
   }
 
   /**
@@ -1408,6 +1419,7 @@ export function createTextureBridge(options: TextureBridgeOptions): TextureBridg
 
   return {
     sizeOf,
+    peekSize,
     residentSource,
     isResident(url) {
       if (stageTextures.has(url)) {
@@ -1482,6 +1494,7 @@ export function createTextureBridge(options: TextureBridgeOptions): TextureBridg
         // the queue) or fails it, and a url the scene stopped naming is dropped above.
         options.onPaced?.();
       }
+      for (const entry of entries.values()) entry.pacedThisBuild = false;
     },
     invalidate() {
       stageTextures.clear();

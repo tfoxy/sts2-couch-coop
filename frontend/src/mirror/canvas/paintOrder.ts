@@ -76,6 +76,9 @@ export interface PaintOrderCacheStats {
   reusedParents: number;
   /** Sibling arrays dropped by a z / show-behind change on one of their children. */
   invalidatedParents: number;
+  /** Complete immutable orders reused or rebuilt by the opt-in path. */
+  completeHits: number;
+  completeMisses: number;
 }
 
 /**
@@ -124,6 +127,10 @@ interface InternalCache extends PaintOrderCache {
   sorted: Map<ParentKey, SortedKids>;
   sig: Map<string, ChildSignature>;
   lastOrderedIds: readonly string[] | null;
+  completeOrder: PaintOrder | null;
+  completeNodes: ReadonlyMap<string, MirrorNode> | null;
+  validatedRevision: number;
+  completeDirty: boolean;
   mutableStats: PaintOrderCacheStats;
 }
 
@@ -134,23 +141,33 @@ export function createPaintOrderCache(): PaintOrderCache {
     rebuilds: 0,
     sortedParents: 0,
     reusedParents: 0,
-    invalidatedParents: 0
+    invalidatedParents: 0,
+    completeHits: 0,
+    completeMisses: 0
   };
   const cache: InternalCache = {
     sorted,
     sig,
     lastOrderedIds: null,
+    completeOrder: null,
+    completeNodes: null,
+    validatedRevision: -1,
+    completeDirty: false,
     mutableStats,
     get stats() {
       return mutableStats;
     },
     invalidateAll() {
+      cache.completeOrder = null;
+      cache.completeNodes = null;
+      cache.completeDirty = true;
       sorted.clear();
       sig.clear();
       cache.lastOrderedIds = null;
       mutableStats.rebuilds++;
     },
     invalidateParent(parentId: ParentKey) {
+      cache.completeDirty = true;
       if (sorted.delete(parentId)) {
         mutableStats.invalidatedParents++;
       }
@@ -167,6 +184,9 @@ export function createPaintOrderCache(): PaintOrderCache {
         const node = state.nodes.get(id);
         const previous = sig.get(id);
         if (!node) {
+          // A removed parent can turn an unchanged child into a root. Refuse
+          // complete-order reuse even when this id had no cached sibling sort.
+          cache.completeDirty = true;
           // Removed: its former parent's child list is short one entry.
           if (previous) {
             drop(previous.parentId);
@@ -178,12 +198,18 @@ export function createPaintOrderCache(): PaintOrderCache {
         if (previous && sameSignature(previous, next)) {
           continue;
         }
+        // Missing signatures include previously unreachable nodes. Do not
+        // infer a complete-order hit from whether a sibling array was cached.
+        cache.completeDirty = true;
         if (previous && previous.parentId !== next.parentId) {
           drop(previous.parentId); // a reparent dirties BOTH lists
         }
         drop(next.parentId);
         sig.set(id, next);
       }
+      // A revision with unreported changes must miss; only this complete
+      // changed-id pass validates a newer wire revision for reuse.
+      cache.validatedRevision = state.revision;
       return dropped;
     }
   };
@@ -221,6 +247,8 @@ export interface BuildPaintOrderOptions {
    * a dev build, in vitest and under the offline gate; off in a production bundle, where the walk is hot.
    */
   assert?: boolean;
+  /** Reuse a complete order after a validated unchanged topology. Default off. */
+  reuseCompleteOrder?: boolean;
 }
 
 /**
@@ -246,8 +274,38 @@ export function buildPaintOrder(
     // below cannot leave the cache claiming to describe an order it never built.
     internal.sorted.clear();
     internal.sig.clear();
+    internal.completeOrder = null;
+    internal.completeNodes = null;
+    internal.completeDirty = true;
     internal.mutableStats.rebuilds++;
     internal.lastOrderedIds = state.orderedIds;
+  }
+
+  if (internal && options.reuseCompleteOrder) {
+    if (internal.completeNodes !== state.nodes || internal.validatedRevision !== state.revision) {
+      // A build reached us before noteChanged, or with a different node map.
+      // The sibling sorts are also unvalidated: sameIdList checks membership,
+      // not z/behind values. Recompute them instead of banking a stale sort.
+      internal.sorted.clear();
+      internal.sig.clear();
+      internal.completeOrder = null;
+      internal.completeDirty = true;
+    }
+    if (internal.completeOrder !== null && !internal.completeDirty &&
+        internal.completeNodes === state.nodes &&
+        internal.lastOrderedIds === state.orderedIds &&
+        internal.validatedRevision === state.revision) {
+      internal.mutableStats.completeHits++;
+      if (options.assert ?? paintOrderAssertsOn()) assertContiguousSpans(internal.completeOrder);
+      return internal.completeOrder;
+    }
+    internal.mutableStats.completeMisses++;
+  } else if (internal) {
+    // An intervening ordinary build must not leave an old complete order
+    // available if a caller later opts back in with the same cache.
+    internal.completeOrder = null;
+    internal.completeNodes = null;
+    internal.validatedRevision = -1;
   }
 
   const nodes = state.nodes;
@@ -349,6 +407,12 @@ export function buildPaintOrder(
 
   if (options.assert ?? paintOrderAssertsOn()) {
     assertContiguousSpans(order);
+  }
+  if (internal && options.reuseCompleteOrder) {
+    internal.completeOrder = order;
+    internal.completeNodes = state.nodes;
+    internal.validatedRevision = state.revision;
+    internal.completeDirty = false;
   }
   return order;
 }

@@ -23,6 +23,7 @@
       "@godot-scene-web/layout/anchors": ["../../godot-scene-web/packages/layout/src/anchor-grammar.ts"],
       "@godot-scene-web/scene-graph": ["../../godot-scene-web/packages/scene-graph/src/index.ts"],
       "@godot-scene-web/canvas": ["../../godot-scene-web/packages/canvas/src/index.ts"],
+      "@godot-scene-web/canvas/pixi": ["../../godot-scene-web/packages/canvas/src/pixi-renderer.ts"],
       "@godot-scene-web/canvas/glyphs": ["../../godot-scene-web/packages/canvas/src/glyph-pass-hbgpu.ts"],
       "@godot-scene-web/canvas-effects/webgl": ["../../godot-scene-web/packages/canvas-effects/src/webgl.ts"],
       "@godot-scene-web/canvas-effects/webgpu": ["../../godot-scene-web/packages/canvas-effects/src/webgpu.ts"],

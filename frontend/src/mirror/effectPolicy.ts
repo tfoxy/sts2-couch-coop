@@ -105,8 +105,8 @@ export function stageOwnsEffectPixelsNow(): boolean {
 // reload (off ⇒ dispose; static ⇒ setStaticShaders/setStaticParticles; ½/¼ ⇒ setRenderScale) — the plain option
 // objects in `shaderResources` stay the tier-fixed construction options.
 export const effectiveShaderMode: ComputedRef<EffectMode> = computed(() =>
-  shadersHardOff(quality) ? "off" : mirrorSettings.shaderMode
+  mirrorSettings.runtimeStage === "canvas" || shadersHardOff(quality) ? "off" : mirrorSettings.shaderMode
 );
 export const effectiveParticleMode: ComputedRef<EffectMode> = computed(() =>
-  particlesHardOff(quality) ? "off" : mirrorSettings.particleMode
+  mirrorSettings.runtimeStage === "canvas" || particlesHardOff(quality) ? "off" : mirrorSettings.particleMode
 );

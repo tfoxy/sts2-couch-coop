@@ -7,6 +7,7 @@ import { beforeEach, describe, expect, it } from "vitest";
 
 import { collectClientVitals, defaultClientVitalsSources, type ClientVitalsSources } from "@/mirror/clientVitals";
 import { __resetImagePrefetchStatsForTest } from "@/mirror/imagePrefetch";
+import { mirrorSettings } from "@/mirror/mirrorSettings";
 import { __resetStageFitForTest, __setStageFitForTest } from "@/mirror/stageFit";
 
 function sources(overrides: Partial<ClientVitalsSources> = {}): ClientVitalsSources {
@@ -52,6 +53,19 @@ describe("collectClientVitals", () => {
 
     expect(vitals.stageRequested).toBe("canvas");
     expect(vitals.stageActive).toBe("dom");
+  });
+
+  it("keeps the saved Rust request in production vitals after a DOM fallback", () => {
+    const previous = mirrorSettings.stage;
+    const previousRuntime = mirrorSettings.runtimeStage;
+    try {
+      mirrorSettings.stage = "canvas";
+      mirrorSettings.runtimeStage = "dom";
+      expect(defaultClientVitalsSources().requestedStage()).toBe("canvas");
+    } finally {
+      mirrorSettings.stage = previous;
+      mirrorSettings.runtimeStage = previousRuntime;
+    }
   });
 
   it("reports the effective stage-fit arm, not the requested URL arm", () => {

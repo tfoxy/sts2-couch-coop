@@ -33,8 +33,8 @@
 import { FX_RESIDENT_BYTES_DEFAULT } from "@/mirror/canvas/fxSurfaces";
 import { TEXTURE_RESIDENT_BYTES_DEFAULT } from "@/mirror/canvas/textureBridge";
 import { atlasResidencyStats, atlasResidentCapBytes } from "@/mirror/atlasBaker";
-import { mirrorSettings, type EffectMode } from "@/mirror/mirrorSettings";
-import { activeStageBackend, requestedStageBackend, type StageBackend } from "@/mirror/rendererFactory";
+import { effectiveMirrorRenderSettings, mirrorSettings, type EffectMode } from "@/mirror/mirrorSettings";
+import { activeStageBackend, type StageBackend } from "@/mirror/rendererFactory";
 import { displaySpaceLayout, type StageFitMode } from "@/mirror/stageFit";
 
 /** The census, as sent. Every value is a finite number or one of three closed enums. */
@@ -169,7 +169,7 @@ function safely<T>(read: () => T, fallback: T): T {
 /** The production sources. Split out so `collectClientVitals` itself stays pure for vitest. */
 export function defaultClientVitalsSources(): ClientVitalsSources {
   return {
-    requestedStage: requestedStageBackend,
+    requestedStage: () => mirrorSettings.stage,
     activeStage: activeStageBackend,
     // This must report the granted arm: `?stageFit=display&stage=canvas` still lays out in design space.
     stageFit: () => (displaySpaceLayout() ? "display" : "design"),
@@ -187,7 +187,10 @@ export function defaultClientVitalsSources(): ClientVitalsSources {
       pages: atlasResidencyStats.residentPages,
       cap: atlasResidentCapBytes()
     }),
-    effectModes: () => ({ shaderMode: mirrorSettings.shaderMode, particleMode: mirrorSettings.particleMode }),
+    effectModes: () => {
+      const effective = effectiveMirrorRenderSettings(mirrorSettings);
+      return { shaderMode: effective.shaderMode, particleMode: effective.particleMode };
+    },
     doc: () => (typeof document === "undefined" ? null : document),
     view: () => (typeof window === "undefined" ? null : window)
   };

@@ -22,9 +22,10 @@
 //      tier used to seed per-device is a shared product default now.
 //   3. localStorage — what this viewer last chose IN THE PANEL (`couchcoop.mirrorSettings.v1`). Only fields the
 //      viewer can actually set are stored, and only the field they touched is written (see persistMirrorSetting).
-//   4. URL query — always wins FOR THE SESSION (`?shaders=dynamic`, `?stretch=off`, …) and never writes back: a
+//   4. URL query — wins FOR THE SESSION (`?shaders=dynamic`, `?stretch=off`, …) and never writes back: a
 //      shared debug link must not silently redefine the phone's saved preference. Change the setting in the panel
 //      afterwards and THAT is saved, as always.
+//   5. The Rust canvas runtime overrides incompatible render values without changing the DOM preferences.
 //
 // NEVER PERSISTED (see NEVER_PERSISTED_SETTING_KEYS): the three `freeze*` fields are HOST truth, re-seeded per
 // connection from the serving instance; `panelOpen`/`panelAnchorTop` are momentary UI; `effectModePinned` is a
@@ -43,6 +44,7 @@ import {
 import {
   effectModeOverride,
   parseRenderQualityTier,
+  rustCanvasRenderQuality,
   particlesHardOff,
   particlesSeedOff,
   renderQuality,
@@ -159,6 +161,10 @@ export function parseSpineMode(raw: string | null): SpineMode {
 // it reports low-ppem glyph runs without changing the selected text path.
 
 export interface MirrorSettings {
+  /** Public stage choice; a fresh viewer starts on DOM. */
+  stage: "dom" | "canvas";
+  /** The live renderer request. A failed Rust canvas can use DOM without changing the saved choice. */
+  runtimeStage: "dom" | "canvas";
   // CLIENT render (browser-only) — THE QUALITY ROW (see QualityChoice). `auto` (the default) leaves this device to
   // auto-detection and leaves every row below at its product default; a rung is this device's tier AND a preset
   // over the three rows it implies (shaders, particles, static background — qualityPreset.ts). The rows stay
@@ -330,6 +336,7 @@ export { MIRROR_SETTINGS_STORAGE_KEY, type MirrorSettingsStorage };
 
 /** Fields a viewer can set IN THE PANEL — exactly the fields that are saved. */
 export type PersistedSettingKey =
+  | "stage"
   | "quality"
   | "shaderMode"
   | "particleMode"
@@ -348,6 +355,7 @@ export type PersistedSettingKey =
   | "tweenReplay";
 
 export const PERSISTED_SETTING_KEYS: readonly PersistedSettingKey[] = [
+  "stage",
   // PERSISTED, and load-bearing beyond the panel: quality.ts reads this same saved value to resolve the device
   // tier before auto-detection (see QualityChoice).
   "quality",
@@ -383,6 +391,7 @@ export const PERSISTED_SETTING_KEYS: readonly PersistedSettingKey[] = [
 //                      grows a checkbox for it.
 //   keyboard         — the keyboard capture's twin of `gamepad`, for the same reason and on the same terms.
 export const NEVER_PERSISTED_SETTING_KEYS = [
+  "runtimeStage",
   "effectModePinned",
   "spineMode",
   "gamepad",
@@ -438,6 +447,7 @@ function refreshRateValue(raw: unknown): number | undefined {
 // Per-key validation, so a hand-edited / half-written / older-schema blob can only ever DROP fields — never feed
 // the store a mode string the renderer doesn't know or an fps the host would refuse.
 const STORED_VALIDATORS: { [K in PersistedSettingKey]: (raw: unknown) => MirrorSettings[K] | undefined } = {
+  stage: (raw) => raw === "dom" || raw === "canvas" ? raw : undefined,
   quality: qualityChoiceValue,
   shaderMode: effectModeValue,
   particleMode: effectModeValue,
@@ -598,10 +608,36 @@ export function adoptGameTextEffects(
   return true;
 }
 
-// The `staticBg` wire value is exactly the viewer's setting. Image failures never change it: while the setting is
-// on the host may keep skipping every covered live subtree, and the browser shows a still or a blank stage.
+// Rust canvas requires a host static background. Runtime fallback to DOM restores the viewer's own setting;
+// image failures do not change the value sent to the host.
 export function staticBgWireValue(settings: MirrorSettings): boolean {
-  return settings.staticBgEnabled;
+  return settings.runtimeStage === "canvas" || settings.staticBgEnabled;
+}
+
+/** Rust's supported scene contract is an overlay, never a write to DOM preferences. */
+type EffectiveMirrorRenderSettings = {
+  quality: QualityChoice; shaderMode: EffectMode; particleMode: EffectMode;
+  staticBgEnabled: boolean; spineMode: SpineMode;
+};
+const RUST_RENDER_SETTINGS: EffectiveMirrorRenderSettings = {
+  quality: "very-low", shaderMode: "off", particleMode: "off",
+  staticBgEnabled: true, spineMode: "static"
+};
+
+export function effectiveMirrorRenderSettings(settings: MirrorSettings): EffectiveMirrorRenderSettings {
+  return settings.runtimeStage === "canvas" ? RUST_RENDER_SETTINGS : settings;
+}
+
+let rustQualityBase: RenderQuality | undefined;
+let rustQualityCached: RenderQuality | undefined;
+export function effectiveMirrorQuality(settings: MirrorSettings = mirrorSettings): RenderQuality {
+  const base = renderQuality();
+  if (settings.runtimeStage !== "canvas") return base;
+  if (rustQualityBase !== base || !rustQualityCached) {
+    rustQualityBase = base;
+    rustQualityCached = rustCanvasRenderQuality(base);
+  }
+  return rustQualityCached;
 }
 
 // Extract just the SERVER-side fields as a `settings` payload (drops the client-only render toggles + UI state).
@@ -656,7 +692,11 @@ export function createMirrorSettings(
   const params = new URLSearchParams(search);
   const saved = readStoredMirrorSettings(options.storage === undefined ? defaultSettingsStorage() : options.storage);
   const reproUiEnabled = options.reproUiEnabled ?? REPRO_UI_ENABLED;
+  const stage = params.get("stage") === "dom" || params.get("stage") === "canvas"
+    ? params.get("stage") as "dom" | "canvas" : saved.stage ?? "dom";
   return reactive<MirrorSettings>({
+    stage,
+    runtimeStage: stage,
     // THE QUALITY ROW. `?quality=` wins for the session so the panel tells the truth about the tier this page is
     // actually running (quality.ts resolved it from the same param), then the viewer's saved rung, then `auto`.
     // Seeding the FIELD is all this does — the preset rows are written only when a control in the panel is

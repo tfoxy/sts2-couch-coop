@@ -144,7 +144,10 @@ export interface CanvasInteractionRuntime {
   /** Build-time state only. Called before candidate construction can publish. */
   prepareBuild(): void;
   /** Bind build-derived interaction values to the exact successful frame. */
-  publishBuild(snapshot: DrawnSceneSnapshot): void;
+  captureBuild(): FrameData;
+  publishBuild(snapshot: DrawnSceneSnapshot, candidate?: FrameData): void;
+  cosmeticOffsetsFor(snapshot: DrawnSceneSnapshot): ReadonlyMap<string, CosmeticOffset>;
+  cosmeticOffsetsMatch(snapshot: DrawnSceneSnapshot): boolean;
   /** A patch retains build products; carry their exact interaction sidecar forward. */
   publishPatch(previous: DrawnSceneSnapshot | null, snapshot: DrawnSceneSnapshot): void;
   invalidateInputCaches(): void;
@@ -626,8 +629,8 @@ export function createCanvasInteractionRuntime(ports: CanvasInteractionRuntimePo
     cosmeticVersionAtBuild = cosmeticVersion;
   }
 
-  function publishBuild(snapshot: DrawnSceneSnapshot): void {
-    snapshotData.set(snapshot, {
+  function captureBuild(): FrameData {
+    return {
       // The plan and offset maps describe the geometry that this exact build
       // received. Later retained-state writes must not reinterpret its hits.
       raisePlan: copyPlan(raisePlan),
@@ -642,7 +645,25 @@ export function createCanvasInteractionRuntime(ports: CanvasInteractionRuntimePo
       viewScaleInputStamps: null,
       children: null,
       handHolderParts: new Map(),
-    });
+    };
+  }
+
+  function publishBuild(snapshot: DrawnSceneSnapshot, candidate = captureBuild()): void {
+    snapshotData.set(snapshot, candidate);
+  }
+
+  function cosmeticOffsetsFor(snapshot: DrawnSceneSnapshot): ReadonlyMap<string, CosmeticOffset> {
+    return dataFor(snapshot).cosmeticOffsets;
+  }
+
+  function cosmeticOffsetsMatch(snapshot: DrawnSceneSnapshot): boolean {
+    const committed = cosmeticOffsetsFor(snapshot);
+    if (committed.size !== cosmeticOffsets.size) return false;
+    for (const [id, offset] of cosmeticOffsets) {
+      const drawn = committed.get(id);
+      if (!drawn || drawn.dx !== offset.dx || drawn.dy !== offset.dy) return false;
+    }
+    return true;
   }
 
   function publishPatch(previous: DrawnSceneSnapshot | null, snapshot: DrawnSceneSnapshot): void {
@@ -1371,7 +1392,10 @@ export function createCanvasInteractionRuntime(ports: CanvasInteractionRuntimePo
     get offsetCoalesced() { return offsetCoalesced; },
     get rampFrames() { return rampFrames; },
     prepareBuild,
+    captureBuild,
     publishBuild,
+    cosmeticOffsetsFor,
+    cosmeticOffsetsMatch,
     publishPatch,
     invalidateInputCaches: invalidateSnapshotInputCaches,
     collectCaptureIds,

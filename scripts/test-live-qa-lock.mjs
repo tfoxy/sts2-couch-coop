@@ -1,12 +1,12 @@
 #!/usr/bin/env node
 
 import assert from "node:assert/strict";
-import { mkdtempSync, rmSync } from "node:fs";
+import { mkdtempSync, rmSync, readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
 import { spawnSync } from "node:child_process";
 
-import { acquireLease, assertLease, listLeases, releaseLease } from "./live-qa-lock.mjs";
+import { acquireLease, assertLease, assertLiveLease, listLeases, releaseLease } from "./live-qa-lock.mjs";
 
 const root = mkdtempSync(join(tmpdir(), "couch-live-lock-test-"));
 const config = {
@@ -48,6 +48,26 @@ try {
   assert.equal(listLeases(config).leases.find((lease) => lease.owner === "stale")?.alive, false);
   rejects(() => acquireLease({ owner: "stale-taker", pid: 10111, resources: ["shared:game:stale"], config }), /conflicts/);
   releaseLease({ owner: "stale", pid: 99999999, config });
+
+  const live = acquireLease({ owner: "live-capture", pid: process.pid,
+    resources: ["exclusive:bench:desktop"], config });
+  assert.match(live.processStartIdentity, /^\d+$/);
+  assert.equal(assertLiveLease({ owner: "live-capture", pid: process.pid,
+    resources: ["exclusive:bench:desktop"], config }).processStartIdentity, live.processStartIdentity);
+  const livePath = listLeases(config).leases.find((lease) => lease.owner === "live-capture").file;
+  const stored = JSON.parse(readFileSync(livePath, "utf8"));
+  writeFileSync(livePath, JSON.stringify({ ...stored, processStartIdentity: "1" }));
+  rejects(() => assertLiveLease({ owner: "live-capture", pid: process.pid,
+    resources: ["exclusive:bench:desktop"], config }), /missing, dead, reused/);
+  writeFileSync(livePath, JSON.stringify({ ...stored, processStartIdentity: null }));
+  rejects(() => assertLiveLease({ owner: "live-capture", pid: process.pid,
+    resources: ["exclusive:bench:desktop"], config }), /missing, dead, reused/);
+  releaseLease({ owner: "live-capture", pid: process.pid, config });
+  acquireLease({ owner: "dead-capture", pid: 99999999,
+    resources: ["exclusive:bench:desktop"], config });
+  rejects(() => assertLiveLease({ owner: "dead-capture", pid: 99999999,
+    resources: ["exclusive:bench:desktop"], config }), /missing, dead, reused/);
+  releaseLease({ owner: "dead-capture", pid: 99999999, config });
 
   const wrapped = spawnSync(
     process.execPath,

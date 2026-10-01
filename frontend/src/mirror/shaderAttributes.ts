@@ -16,7 +16,7 @@ import {
   materialColorMatrix
 } from "@godot-scene-web/html";
 
-import { renderQuality } from "@/render/quality";
+import { effectiveMirrorQuality } from "@/mirror/mirrorSettings";
 import { bakedStillCoversNode } from "@/mirror/bakedEffects";
 import type { MirrorColor, MirrorNode, MirrorShaderParam } from "@/mirror/sceneTree";
 import {
@@ -259,7 +259,7 @@ function isWebglEligible(node: MirrorNode): boolean {
 // `static` tier shaders ARE enabled (rendered as a single frozen frame), so this stays true — the canvas paints
 // the still frame.
 export function isWebglShaderNode(node: MirrorNode): boolean {
-  if (!renderQuality().shadersEnabled) {
+  if (!effectiveMirrorQuality().shadersEnabled) {
     return false; // low-end "off" tier: WebGL shaders disabled → the node's raw paint is suppressed instead
     // (see isShaderInputNode, used by nodeStyles' paintsTexture gate). The HSV feColorMatrix path in
     // nodeShaderAttributes is BEFORE this gate and unaffected — cheap CSS tint stays on.
@@ -367,7 +367,7 @@ function shaderContentKey(node: MirrorNode, energyAncestor: boolean): string {
     `|${node.textureUrl ?? ""}|${colorKey(node.fillColor)}` +
     `|${region ? `${region.x},${region.y},${region.width},${region.height}` : ""}` +
     `|${node.textureStretchMode ?? ""}|${node.particleSpec ? 1 : 0}` +
-    `|${renderQuality().shadersEnabled ? 1 : 0}|${energyAncestor ? 1 : 0}` +
+    `|${effectiveMirrorQuality().shadersEnabled ? 1 : 0}|${energyAncestor ? 1 : 0}` +
     // The transition gate reads the node TYPE (the one binding input outside shaderId/params/modulate), plus its
     // own switch — both change the SHAPE of the returned binding, so both must key it. One comparison, one char:
     // the type string itself is deliberately NOT concatenated, since only "is this the transition overlay" matters.

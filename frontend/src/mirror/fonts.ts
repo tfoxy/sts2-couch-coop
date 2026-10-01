@@ -6,6 +6,32 @@ import type { MirrorFont } from "@/mirror/sceneTree";
 // client imports), and a no-op when there's no DOM (e.g. unit tests).
 const injected = new Set<string>();
 let styleEl: HTMLStyleElement | null = null;
+type FontRegistration = { family: string; url: string; weight: string | null; style: string | null;
+  cssRule: string; attempts: Array<{ url: string; weight: string | null; style: string | null }>;
+  loads: Array<{ font: string; text: string; loadedFaces: Array<{ family: string; weight: string; style: string;
+    stretch: string; status: string }> }> };
+const diagnosticRegistrations = new Map<string, FontRegistration>();
+const corpusDiagnosticEnabled = () => typeof window !== "undefined" &&
+  new URLSearchParams(window.location.search).get("rustTextInkCorpus") === "1";
+
+/** Diagnostic receipt for the CSS rule actually injected by this adapter. */
+export function mirrorFontRegistration(family: string): FontRegistration | null {
+  const row = diagnosticRegistrations.get(family);
+  return row ? structuredClone(row) : null;
+}
+
+/** Keep the producer's existing FontFaceSet.load call observable in corpus diagnostics. */
+export function loadMirrorFont(fonts: FontFaceSet, font: string, text: string,
+  family: string): Promise<FontFace[]> {
+  const result = fonts.load(font, text);
+  if (!corpusDiagnosticEnabled()) return result;
+  return result.then((faces) => {
+    const row = diagnosticRegistrations.get(family);
+    row?.loads.push({ font, text, loadedFaces: faces.map((face) => ({ family: face.family,
+      weight: face.weight, style: face.style, stretch: face.stretch, status: face.status })) });
+    return faces;
+  });
+}
 
 /**
  * Register every face ONE NODE will ask for: its own, plus the three rich role faces.
@@ -64,6 +90,10 @@ export function ensureNodeFonts(node: {
  * Land it in its OWN commit and re-capture the text table, because the premise moves.
  */
 export function ensureFontFace(family: string, url: string, weight?: string | null, style?: string | null): void {
+  if (corpusDiagnosticEnabled()) {
+    const row = diagnosticRegistrations.get(family);
+    row?.attempts.push({ url, weight: weight ?? null, style: style ?? null });
+  }
   if (!family || !url || injected.has(family)) {
     return;
   }
@@ -80,11 +110,11 @@ export function ensureFontFace(family: string, url: string, weight?: string | nu
   // resolved .ttf is one weight/style, so family↔weight is 1:1).
   const weightDecl = weight ? `font-weight:${weight};` : "";
   const styleDecl = style ? `font-style:${style};` : "";
-  styleEl.appendChild(
-    document.createTextNode(
-      `@font-face{font-family:"${cssEscape(family)}";src:url("${url}");${weightDecl}${styleDecl}font-display:swap;}`
-    )
-  );
+  const cssRule = `@font-face{font-family:"${cssEscape(family)}";src:url("${url}");${weightDecl}${styleDecl}font-display:swap;}`;
+  styleEl.appendChild(document.createTextNode(cssRule));
+  if (corpusDiagnosticEnabled()) diagnosticRegistrations.set(family, { family, url,
+    weight: weight ?? null, style: style ?? null, cssRule,
+    attempts: [{ url, weight: weight ?? null, style: style ?? null }], loads: [] });
 }
 
 function cssEscape(value: string): string {

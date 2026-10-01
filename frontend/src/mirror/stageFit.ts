@@ -86,7 +86,8 @@ function canvasBackendRequested(): boolean {
   if (typeof window === "undefined") {
     return false;
   }
-  return new URLSearchParams(window.location.search).get("stage") === "canvas";
+  const backend = new URLSearchParams(window.location.search).get("stage");
+  return backend === "canvas" || backend === "pixi" || backend === "rust";
 }
 
 let mode: StageFitMode = readStageFit();
