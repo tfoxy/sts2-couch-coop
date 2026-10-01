@@ -20,6 +20,37 @@ afterEach(() => {
 });
 
 describe("Rust execution phase diagnostic", () => {
+  it("presents supported drawings after another drawing's texture fails", async () => {
+    window.history.replaceState({}, "", "/?rustDiagnostics=1");
+    vi.stubGlobal("fetch", vi.fn().mockResolvedValue({ ok: false, status: 404, statusText: "Not Found" }));
+    const admit = vi.fn(() => JSON.stringify({ accepted: true, revision: 1, unsupportedCommands: 0, resourcePending: 0 }));
+    (globalThis as Record<string, unknown>).__rustProjectionTest = { engine: {
+      backend: "WebGL2", resize: () => {}, dispose: () => {}, upload_rgba_batch: () => 0,
+      admit_scene: admit, apply_patch: () => "{}",
+      present: async () => JSON.stringify({ presented: true, revision: 1, draws: 1,
+        resourcePending: 0, unsupportedCommands: 0 }),
+    } };
+    vi.stubEnv("VITE_RUST_PROTOTYPE_MODULE_URL", moduleUrl(
+      "export default async function init(){return {}};export class RustRenderer{static async create(){return globalThis.__rustProjectionTest.engine}}",
+    ));
+    vi.stubEnv("VITE_RUST_SCENE_SERIALIZER_URL", moduleUrl(
+      "export function encodeRustScene(input){const omitted=!input.resolveTexture('/lost.png');return {bytes:new Uint8Array([1]),scene:{version:2,revision:1,width:1,height:1,designWidth:1,designHeight:1,resources:[],commands:[{id:'supported',kind:'quad'}]},resources:[],textUploads:[],unsupportedCommands:omitted?1:0,omittedKinds:omitted?{unresolvedResource:1}:{}}};export function encodeRustPatch(){return null};export function encodeRustResources(){return new Uint8Array(0)}",
+    ));
+    const renderer = await createRustDrawListExecutor({ canvas: document.createElement("canvas"), width: 1,
+      height: 1, designWidth: 1, designHeight: 1, onInvalidate: () => {} });
+    try {
+      const list = createDrawList<string>();
+      const quad = createQuadView(); quad.w = quad.h = quad.srcW = quad.srcH = 1;
+      list.pushQuad(quad, "/lost.png"); list.pushQuad(quad);
+      expect(await renderer.render(list, [])).toBe(false);
+      await vi.waitFor(() => expect(renderer.stats.textureFailures).toBe(1));
+      expect(await renderer.render(list, [])).toBe(true);
+      expect(admit).toHaveBeenCalledOnce();
+      expect((window as unknown as { __mirrorRustStats: () => { omittedKinds: Record<string, number> } }).__mirrorRustStats()
+        .omittedKinds).toMatchObject({ unresolvedResource: 1 });
+    } finally { renderer.dispose(); }
+  });
+
   it("presents supported content when the serializer omits two unsupported drawings", async () => {
     window.history.replaceState({}, "", "/?rustDiagnostics=1");
     const admit = vi.fn(() => JSON.stringify({ accepted: true, revision: 1, unsupportedCommands: 0, resourcePending: 0 }));

@@ -996,10 +996,9 @@ export const createRustDrawListExecutor: MirrorDrawExecutorFactory = async ({ ca
       }
     }
     stats.resourcePending = pending.size;
-    if (pending.size || failures.size) {
-      diagnostic?.({ stage: failures.size ? "texture-failed" : "texture-pending",
-        dependencyKeys: failures.size ? [...failures.keys()] : [...pending.keys()] });
-      return { presented: false, reason: failures.size ? [...failures].map(([url, cause]) => `${url}: ${cause}`).join(" | ") : "resource pending" };
+    if (pending.size) {
+      diagnostic?.({ stage: "texture-pending", dependencyKeys: [...pending.keys()] });
+      return { presented: false, reason: "resource pending" };
     }
     logRust("encode", list.count, text.length, nextRevision + 1);
     const revision = ++nextRevision;

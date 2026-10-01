@@ -12,8 +12,8 @@
 // gsw renders an unrecognised tag LITERALLY. So a tokenizer here that disagrees with gsw's does not produce a
 // slightly-wrong label — it produces the WRONG WORDS on screen, either by swallowing markup gsw would have shown
 // or by showing markup gsw would have consumed. That is the one failure mode a text path must never ship, and it
-// is strictly worse than the alternative, which is that the label keeps its DOM element and renders exactly as it
-// does today. One hoisted label is the price of certainty and it is a cheap price.
+// is strictly worse than refusing that one label. The legacy canvas path can keep its DOM element; the Rust
+// stage omits the label and continues to render the scene.
 //
 // Each refusal is named, so a census can say WHICH construct is holding a screen back rather than how many labels
 // failed:
@@ -29,8 +29,7 @@
 //   nested-align / non-wrapping-align   alignment that is not one span over the whole string. A paragraph
 //               construct inside a line is a block-layout problem, not a run problem.
 //   unbalanced  a close tag that does not match the innermost open of the same name. Deliberately STRICTER than
-//               gsw (which searches the stack): erring toward a refusal errs toward the label rendering as it
-//               does today, which is the safe direction.
+//               gsw (which searches the stack): refusing the label avoids drawing the wrong words.
 //   bad-color   a colour value the browser itself would not accept. See `createColorValidator`.
 //
 // ---------------------------------------------------------------------------------------------------------------

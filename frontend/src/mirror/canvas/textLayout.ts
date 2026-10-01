@@ -12,24 +12,21 @@
 // by construction and only the box model has to be reproduced. Reimplementing shaping would be a different
 // project with a worse result.
 //
-// WHAT THE WIRE DOES NOT CARRY, measured (scripts/probe-text-census.mjs, all six standard screens): `autowrap_mode`
-// and `clip_text` are not streamed at all, and `text.layout.lines` — Godot's own wrap result — arrives EMPTY in
-// every one of 1,650 text upserts. There is therefore no wrap oracle to match. `white-space: pre-wrap` over the
-// streamed box IS the specification, and the greedy line breaker below reproduces THAT rather than Godot's.
+// When a validated streamed wrap is present, replay it. Otherwise `white-space: pre-wrap` over the streamed box
+// is the specification, and the breaker below approximates the browser's layout.
 //
-// THE FOUR REFUSALS, and why refusing is a feature. A refused label stays on the DOM overlay and renders exactly
-// as it does today, so a refusal costs one hoisted element and never a wrong word. Wrong wrapping is wrong WORDS,
-// which is the one failure mode a text path must not ship:
+// THE REMAINING REFUSALS prevent drawing wrong words. The legacy canvas path can leave a refused label in its DOM
+// overlay; Rust omits that one label and continues to draw the rest of the scene:
 //   * RICH — this round's scope line. A `[b]` span swaps to a different font FILE and `[img]` embeds a real
 //     inline image; both are gsw's `richTextLayeredHtml` doing DOM layout, and reproducing them on a canvas is
 //     separate work.
-//   * `text-wrap: balance` — the two reward-row rules ask the browser to re-balance line lengths after wrapping,
-//     which is a different (and unspecified) algorithm from greedy. Guessing would move words between lines.
 //   * UNBREAKABLE SCRIPTS — CJK/Thai/kana have no spaces and break on character or dictionary rules. A greedy
 //     space-breaker does not wrap them at all; it overflows the box silently. Zero across the recorded set, which
 //     is why this is a guard rather than a feature.
 //   * NO STREAMED FACE — with no family there is nothing to ask the browser for, and `textStyle` correspondingly
 //     emits no `font-family` and lets the element inherit. Also zero across the set.
+// `text-wrap: balance` is drawable: a bounded narrower-width search keeps the greedy line count while making
+// short labels' lines more even.
 
 import { OUTLINE_SCALE } from "@/mirror/nodeStyles";
 import type { MirrorNode } from "@/mirror/sceneTree";
@@ -44,8 +41,8 @@ import { godotLines, type GodotLine } from "@/mirror/textWrap";
  *  and diverge from the browser's — and the browser is what this backend is trying to match. */
 export const LINE_PITCH_RATIO = 1.1;
 
-/** Why this label cannot be rastered. See the module header — each one keeps it on the DOM overlay, correct. */
-export type TextRefusal = "rich" | "balance" | "unbreakable" | "no-font";
+/** Why this label cannot be rastered. See the module header. */
+export type TextRefusal = "rich" | "unbreakable" | "no-font";
 
 /** Scripts a greedy space-breaking wrapper cannot break. Same set the offline census counts. */
 const UNBREAKABLE = /[ᄀ-ᇿ⺀-䶿一-鿿ꥠ-꥿가-퟿豈-﫿︰-﹏＀-￯฀-๿]/;
@@ -87,6 +84,8 @@ export interface TextSpec {
   boxH: number;
   /** The width lines actually wrap against: `boxW` less any `padding-right` the scale table applied. */
   contentW: number;
+  /** Balance soft-wrapped lines when there is no validated streamed break to replay. */
+  balance: boolean;
   /**
    * Absolute WRAPPED-line pitch in px. `LINE_PITCH_RATIO * fontPx` unless the scale table overrode it.
    *
@@ -358,37 +357,31 @@ export function resolveTextSpec(node: MirrorNode, decls: TextScaleDecls): TextSp
   const tableAlign = self["text-align"];
   const align = inlineAlign ?? (tableAlign === "center" || tableAlign === "right" ? tableAlign : "left");
 
-  // GODOT'S OWN LINE BREAKING, when the producer measured THIS string (see `@/mirror/textWrap`). Restricted to a
-  // `"text"` basis here because the plain path rasters `t.text`: a `"parsed"` basis addresses a bbcode label's
-  // markup-stripped content, which is a different string and belongs to the rich wave.
-  const wrapLines = node.textWrap?.basis === "text" ? godotLines(node.textWrap, t.text) : null;
+  // GODOT'S OWN LINE BREAKING, when the producer measured THIS string (see `@/mirror/textWrap`). A parsed-basis
+  // wrap is usable only after rich parsing produced precisely the string the producer measured.
+  const wrap = node.textWrap;
+  const wrapLines = wrap?.basis === "text" || (wrap?.basis === "parsed" && wrap.parsedText === t.text)
+    ? godotLines(wrap, t.text) : null;
 
-  // TWO OF THE FOUR REFUSALS ARE ABOUT THE BREAKER, NOT ABOUT THE LABEL — so having the engine's own breaks
-  // retires them, and that is the point of the channel rather than a side effect.
+  // The unbreakable-script refusal is about the breaker, not the label: the engine's own breaks retire it.
   //
-  //   * `balance` — `text-wrap: balance` asks the BROWSER to re-balance line lengths after wrapping. Godot has
-  //     no such mode and never balances, so with its breaks in hand there is nothing left to reproduce: the
-  //     declaration is a CSS-side artefact of how the DOM stage renders, and the mirror's parity target is the
-  //     game.
   //   * `unbreakable` — a greedy SPACE breaker cannot wrap CJK/Thai/kana at all and would overflow the box
   //     silently. Godot's TextServer breaks them on their own rules and we now receive the result.
   //
-  // The other two stand and are not about breaking: `rich` is a different wave (the markup still has to be laid
+  // The other refusals stand and are not about breaking: `rich` is a different wave (the markup still has to be laid
   // out), and `no-font` means there is no face to raster with at all. `no-font` therefore moves AHEAD of the wrap
   // short-circuit — a streamed wrap says where the lines go, not what to draw them with — which also makes it the
-  // reported class for a label that would once have been reported as `balance`. That is the more accurate of the
-  // two answers: knowing where the breaks go does not help a label with no typeface.
+  // reported class for a label that might also request balance. Knowing where the breaks go does not help a
+  // label with no typeface.
   const refusal: TextRefusal | null = node.richText
     ? "rich"
     : font == null
       ? "no-font"
       : wrapLines !== null
         ? null
-        : self["text-wrap"] === "balance"
-          ? "balance"
-          : UNBREAKABLE.test(t.text)
-            ? "unbreakable"
-            : null;
+        : UNBREAKABLE.test(t.text)
+          ? "unbreakable"
+          : null;
 
   const weight = font?.weight ?? "";
   const style = font?.style ?? "";
@@ -417,6 +410,7 @@ export function resolveTextSpec(node: MirrorNode, decls: TextScaleDecls): TextSp
     // The reward rules reserve 10% of the box on the right, which narrows what lines wrap against — the one
     // padding in the table, and it changes where words go, so it cannot be ignored.
     contentW: Math.max(0, boxW - lengthPx(self["padding-right"], boxW)),
+    balance: self["text-wrap"] === "balance",
     // PITCH, in the DOM's own precedence, because the two declarations reach a label by different routes:
     //
     //   `line-height` on `> .mirror-text`      — an ORDINARY declaration; the browser applies it to the label's
@@ -553,6 +547,25 @@ function breakLine(line: string, width: number, measure: MeasureText): Piece[] {
   return out;
 }
 
+/** Keep the greedy line count while shortening its longest line. Eight probes bound the extra layout work. */
+function balanceLine(line: string, width: number, measure: MeasureText): Piece[] {
+  let best = breakLine(line, width, measure);
+  if (best.length < 2 || width <= 0) return best;
+  let low = 0;
+  let high = width;
+  for (let probe = 0; probe < 8; probe++) {
+    const middle = (low + high) / 2;
+    const candidate = breakLine(line, middle, measure);
+    if (candidate.length === best.length) {
+      best = candidate;
+      high = middle;
+    } else {
+      low = middle;
+    }
+  }
+  return best;
+}
+
 /**
  * `white-space: normal`'s collapsing, WITH the index map back to the source.
  *
@@ -614,6 +627,12 @@ function blockOffset(align: "start" | "center" | "end", free: number): number {
  * either (browsers justify, but the streamed value is rare enough that matching left is honest and stated).
  */
 export function layoutText(spec: TextSpec, measure: MeasureText, spans?: readonly TextSpan[]): TextLayout {
+  const measured = spec.balance && spec.godotLines === null ? new Map<string, number>() : null;
+  const measureLine: MeasureText = measured === null ? measure : (value) => {
+    let width = measured.get(value);
+    if (width === undefined) { width = measure(value); measured.set(value, width); }
+    return width;
+  };
   // SOURCE OFFSETS, so a colour span can address a placed line. `collapseWithMap` is only reached under
   // `white-space: normal`, and only its map differs from the plain path — the text it produces is identical.
   const collapsed = spec.whiteSpace === "normal" ? collapseWithMap(spec.text) : null;
@@ -657,7 +676,9 @@ export function layoutText(spec: TextSpec, measure: MeasureText, spans?: readonl
         broken.push(line);
         continue;
       }
-      const pieces = breakLine(line.text, spec.contentW, measure);
+      const pieces = spec.balance
+        ? balanceLine(line.text, spec.contentW, measureLine)
+        : breakLine(line.text, spec.contentW, measureLine);
       if (pieces.length > 1) {
         wrapped = true;
       }
@@ -668,7 +689,7 @@ export function layoutText(spec: TextSpec, measure: MeasureText, spans?: readonl
     }
   }
 
-  const widths = broken.map((piece) => measure(trimEnd(piece.text)));
+  const widths = broken.map((piece) => measureLine(trimEnd(piece.text)));
   const maxWidth = widths.length > 0 ? Math.max(...widths) : 0;
   // STAGE 1 — shrink-to-fit, or the full content width once anything wrapped OR the lines are not left-aligned.
   //
@@ -717,7 +738,7 @@ export function layoutText(spec: TextSpec, measure: MeasureText, spans?: readonl
     const x = blockX + alignOffset(spec.align, blockW - widths[i]);
     const line: PlacedLine = { text: piece.text, width: widths[i], x, y: blockY + tops[i] };
     if (useRuns) {
-      const runs = runsFor(piece, x, spans, collapsed?.map ?? null, measure);
+      const runs = runsFor(piece, x, spans, collapsed?.map ?? null, measureLine);
       // ONLY when the spans actually reach this line. A line with one colour is one run, which is the same call
       // sequence a rasterizer already makes — so it is left absent rather than expressed as a single-run list.
       if (runs !== null) {
@@ -922,13 +943,8 @@ export function textDigest(spec: TextSpec, rasterScale: number, spans?: readonly
     spec.godotLines === null
       ? ""
       : `\u0000w\u0000${spec.godotLines.map((l) => `${l.start},${l.end}`).join(";")}`;
-  if (spans === undefined || spans.length === 0) {
-    return base + wrapSuffix;
-  }
-  // A COLLISION BETWEEN THE FOUR SHAPES IS IMPOSSIBLE BY COUNTING, not by luck: the base is eleven NUL-joined
-  // fields and therefore contains exactly ten NULs, a spanned digest eleven, a wrapped one twelve and a
-  // spanned-and-wrapped one thirteen. No two can ever be equal whatever the strings say — which is the same structural argument the base fields
-  // rest on, extended rather than replaced. (`textSurfaces` counts collisions anyway; this is what makes its
-  // zero a consequence.)
-  return `${base}\u0000${spans.map((s) => `${s.start},${s.end},${s.color}`).join(";")}${wrapSuffix}`;
+  const balanceSuffix = spec.balance ? "\u0000b" : "";
+  if (spans === undefined || spans.length === 0) return base + wrapSuffix + balanceSuffix;
+  // The span, wrap, and balance suffixes have distinct markers, so each layout shape has a distinct digest.
+  return `${base}\u0000${spans.map((s) => `${s.start},${s.end},${s.color}`).join(";")}${wrapSuffix}${balanceSuffix}`;
 }

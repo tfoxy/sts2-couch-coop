@@ -210,14 +210,14 @@ describe("resolveTextSpec — the raster descriptor", () => {
   });
 });
 
-describe("resolveTextSpec — the four refusals", () => {
+describe("resolveTextSpec — supported balance and remaining refusals", () => {
   it("refuses RICH text: a [b] span is a different font FILE and [img] is a real image", () => {
     expect(specOf({ ...textWire("The [b]Ancient[/b] shrine"), richText: true }).refusal).toBe("rich");
   });
 
-  it("refuses `text-wrap: balance` rather than guessing a different wrap algorithm", () => {
+  it("accepts `text-wrap: balance` as a canvas layout mode", () => {
     const decls = { self: { "text-wrap": "balance" }, text: {} };
-    expect(specOf(textWire("Add a card to your deck"), decls).refusal).toBe("balance");
+    expect(specOf(textWire("Add a card to your deck"), decls)).toMatchObject({ refusal: null, balance: true });
   });
 
   it("refuses a script a space-breaking wrapper cannot break", () => {
@@ -788,12 +788,16 @@ describe("layoutText replays Godot's own line breaks", () => {
     ]);
   });
 
-  it("retires the `balance` refusal, because Godot has no such mode to reproduce", () => {
+  it("uses a validated streamed wrap before estimating balanced lines", () => {
     const decls = { self: { "text-wrap": "balance" }, text: {} };
-    // Without a wrap the reward row is still refused, exactly as before.
-    expect(specOf(textWire(BODY), decls).refusal).toBe("balance");
-    // With one there is nothing left to guess: `text-wrap: balance` is a CSS-side artefact of the DOM stage.
-    expect(specOf({ ...textWire(BODY), ...wrapWire(BODY, [[0, 24], [25, 51]]) }, decls).refusal).toBeNull();
+    const estimated = specOf(textWire(BODY), decls);
+    expect(estimated.refusal).toBeNull();
+    expect(estimated.godotLines).toBeNull();
+    expect(layoutText(estimated, measureFixed).lines).toHaveLength(3);
+    const streamed = specOf({ ...textWire(BODY), ...wrapWire(BODY, [[0, 24], [25, 51]]) }, decls);
+    expect(streamed.refusal).toBeNull();
+    expect(layoutText(streamed, measureFixed).lines.map((line) => line.text))
+      .toEqual(["Damage ALL other enemies", "equal to the damage dealt."]);
   });
 
   it("retires the `unbreakable` refusal, because the engine broke the script we cannot", () => {

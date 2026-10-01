@@ -16,6 +16,7 @@ import {
 } from "@/mirror/canvas/textSurfaces";
 import { createTextureBridge } from "@/mirror/canvas/textureBridge";
 import { applySceneDelta, createMirrorState, parseSceneDelta, type MirrorNode } from "@/mirror/sceneTree";
+import { fnv1a32 } from "@/mirror/textWrap";
 
 // THE FOURTH TEXTURE REGISTRY. jsdom has no 2D context, so the scratch canvas is stood in for by a recorder that
 // reports a fixed metric and logs every draw call — which is what lets these specs assert the RASTER's structure
@@ -364,6 +365,53 @@ describe("the text raster key space", () => {
   it("does not claim a key belonging to another population", () => {
     expect(textDigestFromKey("spine:///spines/iron")).toBeNull();
     expect(textDigestFromKey("/res/cards.png")).toBeNull();
+  });
+});
+
+describe("balanced canvas text", () => {
+  const phrase = "Alpha Beta Gamma Delta";
+  const balanced = () => resolveTextSpec(
+    nodeOf({ text: { text: phrase, fontSize: 20, textColor: { html: "#ffffffff" } } }),
+    { self: { "text-wrap": "balance" }, text: {} }
+  )!;
+
+  it("keeps the greedy line count and evens the line widths", () => {
+    const spec = balanced();
+    const plain = layoutText({ ...spec, balance: false }, (s) => s.length * CH);
+    const measured = new Set<string>();
+    const better = layoutText(spec, (s) => {
+      expect(measured.has(s), `measured ${JSON.stringify(s)} twice during bounded balance`).toBe(false);
+      measured.add(s);
+      return s.length * CH;
+    });
+    expect(spec.refusal).toBeNull();
+    expect(plain.lines.map((line) => line.text.trim())).toEqual(["Alpha Beta Gamma", "Delta"]);
+    expect(better.lines.map((line) => line.text.trim())).toEqual(["Alpha Beta", "Gamma Delta"]);
+    expect(better.lines).toHaveLength(plain.lines.length);
+    expect(textDigest(spec, 1)).not.toBe(textDigest({ ...spec, balance: false }, 1));
+  });
+
+  it("replays matching streamed breaks and balances after a stale wrap", () => {
+    const spec = balanced();
+    const source = phrase;
+    const wrap = { basis: "text" as const, parsedText: null, sourceLength: source.length,
+      sourceHash: fnv1a32(source), lines: [{ start: 0, end: 16 }, { start: 17, end: source.length }] };
+    const node = { ...nodeOf({ text: { text: phrase, fontSize: 20, textColor: { html: "#ffffffff" } } }), textWrap: wrap };
+    const replay = resolveTextSpec(node, { self: { "text-wrap": "balance" }, text: {} })!;
+    expect(layoutText(replay, (s) => s.length * CH).lines.map((line) => line.text)).toEqual(["Alpha Beta Gamma", "Delta"]);
+    const stale = resolveTextSpec({ ...node, textWrap: { ...wrap, sourceHash: 0 } },
+      { self: { "text-wrap": "balance" }, text: {} })!;
+    expect(layoutText(stale, (s) => s.length * CH).lines.map((line) => line.text.trim()))
+      .toEqual(["Alpha Beta", "Gamma Delta"]);
+    expect(textDigest(replay, 1)).not.toBe(textDigest(stale, 1));
+  });
+
+  it("leaves an unbreakable word and ordinary greedy wrapping unchanged", () => {
+    const spec = balanced();
+    expect(layoutText({ ...spec, text: "Supercalifragilisticexpialidocious" }, (s) => s.length * CH).lines)
+      .toHaveLength(1);
+    expect(layoutText({ ...spec, balance: false }, (s) => s.length * CH).lines.map((line) => line.text.trim()))
+      .toEqual(["Alpha Beta Gamma", "Delta"]);
   });
 });
 

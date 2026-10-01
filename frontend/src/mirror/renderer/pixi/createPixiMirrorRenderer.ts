@@ -83,6 +83,7 @@ export interface PixiRendererDiagnostics {
   readiness: Readiness;
   ready: boolean;
   failure?: string;
+  omissions?: { nodes: Record<string, string>; textures: readonly string[] };
   refinementFailure?: string;
   admittedRevision?: number;
   asyncSubmissionRevision?: number | null;
@@ -610,6 +611,7 @@ if (isPromiseLike<PresentationResult>(result)) {
           .catch(() => { if (!disposed) fontFailed.add(prepared.spec.cssFont); })
           .finally(() => { fontPending.delete(prepared.spec.cssFont); wakeForResource(); });
       }
+      if (fontFailed.has(prepared.spec.cssFont)) { semanticFailures.set(node.id, "font-load"); return false; }
       const nativeParts = composePreparedTextRecords(prepared, node.id, insertionIndex, record, canvasBlend(node));
       const textStart = texts.length;
       if (textMode === "native" || nativeParts.length === 0) {
@@ -654,6 +656,7 @@ if (isPromiseLike<PresentationResult>(result)) {
         .catch(() => { if (!disposed) fontFailed.add(spec.cssFont); })
         .finally(() => { fontPending.delete(spec.cssFont); wakeForResource(); });
     }
+    if (fontFailed.has(spec.cssFont)) { semanticFailures.set(node.id, "font-load"); return false; }
     const layoutKey = JSON.stringify([fontVersion, node.font, spec, spans]);
     let prepared = retainedMode ? textLayoutCache.get(node.id) : undefined;
     if (prepared?.key !== layoutKey) {
@@ -738,6 +741,7 @@ if (isPromiseLike<PresentationResult>(result)) {
         .finally(() => { spinePending.delete(url); wakeForResource(); });
       return;
     }
+    if (spineFailed.has(url)) { semanticFailures.set(input.node.id, "spine-load"); return; }
     if (!clip?.stillUrl || clip.frames.length !== 1) return;
     const frame = clip.frames[0]; const scale = clip.canvasWidth > 0 && clip.localWidth > 0 ? clip.localWidth / clip.canvasWidth : 1;
     const q = scratch.quad; const m = record.transform; const tx = clip.localX + frame.offsetX * scale; const ty = clip.localY + frame.offsetY * scale;
@@ -903,7 +907,7 @@ const producerStarted = rustPhaseTimingMode || producerReasonMode ? performance.
       capturedGlobals, interactionCandidate.cosmeticOffsets);
     const candidateLandingGeneration = visual.landingGeneration;
     if (profileIdentity) { profile!.outcome(profileIdentity, "built"); profile!.counter(profileIdentity, { commands: list.count, textRecords: texts.length }); }
-    if (fontFailed.size > 0 || spineFailed.size > 0 || semanticFailures.size > 0) {
+    if (backend !== "rust" && (fontFailed.size > 0 || spineFailed.size > 0 || semanticFailures.size > 0)) {
       if (profileIdentity) profile!.outcome(profileIdentity, "failed", "resource or semantic failure");
       if (buildId !== undefined) {
         if (fontFailed.size || spineFailed.size) producerReasons!.finish(buildId, "stopped-resource-failed",
@@ -1003,7 +1007,7 @@ const producerStarted = rustPhaseTimingMode || producerReasonMode ? performance.
       }
       if (!resultPresented(submitted)) {
         if (buildId !== undefined) producerReasons?.finishIfOpen(buildId, "refused");
-        if ((pixi?.stats.textureFailures ?? 0) > 0) publishStatus("failed", pixi?.textureFailureDetails().join(" | ") || "Pixi texture failed");
+        if (backend !== "rust" && (pixi?.stats.textureFailures ?? 0) > 0) publishStatus("failed", pixi?.textureFailureDetails().join(" | ") || "Pixi texture failed");
         else if ((pixi?.stats.blockedRefusedFrames ?? 0) > 0) publishStatus("failed", "Pixi refused a scene drawing command");
         lifecycle?.finish("pending", completedDraws());
         return false;
@@ -1457,7 +1461,9 @@ if (isPromiseLike<PresentationResult>(result)) { trackAsyncRetainedPatch(result,
         viewScaleEnv: visual.viewScaleEnv, tipScaleEnv: visual.tipScaleEnv, pinnedLocals: visual.pinnedLocals,
         cosmeticOffsets: inputs.offsets, semanticText,
         semanticOverlay: (input, record, index) => semanticOverlay(input, record, index, shadow), assert: false });
-      if (semanticFailures.size) refused = `semantic ${[...semanticFailures][0].join(":")}`;
+      if (semanticFailures.size !== liveFailures.length ||
+          [...semanticFailures].some(([id, reason]) => liveFailures.find(([liveId]) => liveId === id)?.[1] !== reason))
+        refused = "semantic omissions changed during shadow build";
     } catch (error) {
       refused = error instanceof Error ? error.message : String(error);
     } finally {
@@ -1621,7 +1627,7 @@ const traceId = nextTraceFrame();
   const executorOptions: ExecutorOptions = { canvas, width: backingW, height: backingH,
     designWidth: Math.max(1, stage.clientWidth), designHeight: Math.max(1, stage.clientHeight),
     startupRendererInstance: startupCommitHook ? instance : undefined, onInvalidate, profile };
-  const init = sliceSupported ? options.createExecutor ? options.createExecutor(executorOptions) : Promise.all([
+  const init = sliceSupported && (backend !== "rust" || measureContext !== null) ? options.createExecutor ? options.createExecutor(executorOptions) : Promise.all([
     import("@godot-scene-web/canvas/pixi"),
     textMode === "native" ? Promise.resolve(null) : import("@/mirror/canvas/glyphPass").catch(() => null),
   ]).then(([{ createPixiDrawListRenderer }, glyphModule]) => createPixiDrawListRenderer<string>({ canvas, width: backingW, height: backingH, designWidth: Math.max(1, stage.clientWidth), designHeight: Math.max(1, stage.clientHeight), resolution: 1, antialias: false,
@@ -1645,7 +1651,7 @@ const traceId = nextTraceFrame();
       glyphRegistry = registry;
       return registry;
     },
-  })) : Promise.reject(new Error(failure));
+  })) : Promise.reject(new Error(failure || "2D text measurement context unavailable"));
   void init.then((created) => {
     if (disposed) { created.dispose(); return; }
     pixi = created; readiness = "ready"; resize();
@@ -1667,9 +1673,11 @@ const traceId = nextTraceFrame();
   };
   const diagnostics = (): PixiRendererDiagnostics => ({
     backend, instance,
-    readiness: readiness === "ready" && (pixi?.stats.textureFailures ?? 0) > 0 ? "failed" : readiness,
-    ready: readiness === "ready" && pixi?.stats.contextReady === true && pixi.stats.presentationValid === true && (pixi.stats.completedFrames ?? 0) > 0 && (pixi.stats.resourcePending ?? 0) === 0 && glyphPending() === 0 && !refinementPending && !refinementFailure && (pixi.stats.textureFailures ?? 0) === 0,
-    ...((failure || pixi?.textureFailureDetails().length) ? { failure: failure ?? pixi?.textureFailureDetails().join(" | ") } : {}),
+    readiness: backend !== "rust" && readiness === "ready" && (pixi?.stats.textureFailures ?? 0) > 0 ? "failed" : readiness,
+    ready: readiness === "ready" && pixi?.stats.contextReady === true && pixi.stats.presentationValid === true && (pixi.stats.completedFrames ?? 0) > 0 && (pixi.stats.resourcePending ?? 0) === 0 && glyphPending() === 0 && !refinementPending && !refinementFailure && (backend === "rust" || (pixi.stats.textureFailures ?? 0) === 0),
+    ...((failure || (backend !== "rust" && pixi?.textureFailureDetails().length)) ? { failure: failure ?? pixi?.textureFailureDetails().join(" | ") } : {}),
+    ...(backend === "rust" && (semanticFailures.size || (pixi?.stats.textureFailures ?? 0) > 0)
+      ? { omissions: { nodes: Object.fromEntries(semanticFailures), textures: pixi?.textureFailureDetails() ?? [] } } : {}),
     ...(refinementFailure ? { refinementFailure } : {}),
     admittedRevision: snapshot?.stateRevision,
     asyncSubmissionRevision, asyncPresentedRevision, asyncAwaitingAckRevision,
@@ -1722,7 +1730,7 @@ const traceId = nextTraceFrame();
       paintOrderPreparation: { completeHits: paintOrderCache.stats.completeHits, completeMisses: paintOrderCache.stats.completeMisses } },
     text: pixi?.textOutcomes() ?? null,
     glyphs: glyphRegistry?.stats() ?? null,
-    ...(semanticFailures.size ? { failure: [...semanticFailures].map(([id, reason]) => `${id}:${reason}`).join(",") } : {}),
+    ...(backend !== "rust" && semanticFailures.size ? { failure: [...semanticFailures].map(([id, reason]) => `${id}:${reason}`).join(",") } : {}),
   });
   const globals = window as unknown as Record<string, unknown>;
   globals.__mirrorRendererDiagnostics = diagnostics;
@@ -1766,7 +1774,7 @@ const traceId = nextTraceFrame();
     const deadline = window.setTimeout(() => abort("deadline exceeded"), 5_000);
     const assertActive = () => {
       if (disposed) abort("renderer disposed");
-      if (readiness === "failed" || (pixi?.stats.textureFailures ?? 0) > 0)
+      if (readiness === "failed" || (backend !== "rust" && (pixi?.stats.textureFailures ?? 0) > 0))
         abort(failure ?? pixi?.textureFailureDetails().join(" | ") ?? "resource failed");
       if (abortReason !== null) {
         const identity = diagnostics().frameIdentity;
