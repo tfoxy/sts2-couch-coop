@@ -462,7 +462,7 @@ describe("the frame-level patch refusals", () => {
 
   function mount(search = "/?stage=canvas"): MirrorRenderer {
     window.history.replaceState(null, "", search);
-    renderer = createMirrorRendererFor(stageAt(1920, 1080), defsEl());
+    renderer = createMirrorRendererFor(stageAt(1920, 1080), defsEl())!;
     return renderer;
   }
 

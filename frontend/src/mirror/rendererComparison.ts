@@ -75,7 +75,7 @@ export function comparisonEnabled(search = typeof window === "undefined" ? "" : 
 
 /**
  * Public settings intentionally persist only DOM/Canvas. The developer-only Pixi and Rust routes are
- * honored on a comparison URL load without changing either the saved choice or runtime fallback state.
+ * honored on a comparison URL load without changing the saved public stage choice.
  */
 export function rendererBackendForPageLoad(
   search: string,

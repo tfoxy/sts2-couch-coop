@@ -267,7 +267,7 @@ describe("the canvas stage's unchanged-picture paint skip", () => {
 
   function mountRenderer(query = "/?stage=canvas"): MirrorRenderer {
     window.history.replaceState(null, "", query);
-    renderer = createMirrorRendererFor(stageAt(DESIGN_W, DESIGN_H), defsEl());
+    renderer = createMirrorRendererFor(stageAt(DESIGN_W, DESIGN_H), defsEl())!;
     return renderer;
   }
 
@@ -296,7 +296,7 @@ describe("the canvas stage's unchanged-picture paint skip", () => {
     const original = rendererFactory.createMirrorRendererFor;
     let deferred = true;
     vi.spyOn(rendererFactory, "createMirrorRendererFor").mockImplementation((...args) => {
-      const real = original(...args);
+      const real = original(...args)!;
       const reconcile = real.reconcile.bind(real);
       real.reconcile = (...values) => deferred ? false : reconcile(...values);
       return real;

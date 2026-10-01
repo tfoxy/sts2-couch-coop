@@ -14,12 +14,12 @@
 //
 // STAGE GATE: a `?stage=canvas`/`?stage=rust` URL is a REQUEST for the Rust backend, not a guarantee — if the
 // Wasm module 403s (e.g. a worktree's `.sts2/rust-prototype-web` is a symlink outside Vite's `server.fs.allow`,
-// or an env var the page needs to find the module is unset) the page silently falls back to the DOM renderer
-// and every number below describes the WRONG backend while looking perfectly normal. So every cell is gated on
+// or an env var the page needs to find the module is unset) the selected stage fails and produces no valid
+// measurement. So every cell is gated on
 // `perRepeat[0].rendererWindow.{before,after}.backend` equalling the expected backend (inferred "rust" from
 // `stage=canvas`/`stage=rust` in the URL, override with `--expect-backend`), both `.ready === true`, and — for
 // the "rust" backend specifically — `result.walkStats.walks === 0` (the legacy DOM walk reconciler must never
-// run under the Rust backend; a nonzero count is exactly the DOM-fallback tell). A cell also fails on any
+// run under the Rust backend; a nonzero count means the wrong renderer ran). A cell also fails on any
 // recorded non-2xx response for a `.wasm`/`rust_prototype` URL (`result.responseErrors`). A gate failure is a
 // FAILED cell, same as a crash: its numbers stay in the per-cell row for debugging but are excluded from every
 // arm mean.
@@ -248,7 +248,7 @@ export function evaluateStageGate(result, expectBackend) {
   if (expectBackend === "rust") {
     const walks = result?.walkStats?.walks;
     if (walks !== 0) {
-      return `stage gate: walkStats.walks=${walks ?? "n/a"} (expected 0 under the rust backend — DOM walk reconciler ran, a fallback tell)`;
+      return `stage gate: walkStats.walks=${walks ?? "n/a"} (expected 0 under the rust backend — DOM walk reconciler ran)`;
     }
   }
   const badResources = (result?.responseErrors ?? []).filter((e) =>

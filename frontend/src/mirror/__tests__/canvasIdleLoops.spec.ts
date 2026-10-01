@@ -395,7 +395,7 @@ describe("the renderer's idle loops", () => {
   });
 
   function mount(): MirrorRenderer {
-    renderer = createMirrorRendererFor(stageAt(1920, 1080), defsEl());
+    renderer = createMirrorRendererFor(stageAt(1920, 1080), defsEl())!;
     return renderer;
   }
 

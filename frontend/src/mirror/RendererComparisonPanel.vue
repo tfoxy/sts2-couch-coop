@@ -140,7 +140,7 @@ function apply(): void {
     <p class="comparison-hint">{{ t('compare.idleHint') }}</p>
     <button type="button" :disabled="!canApply" data-testid="renderer-apply" @click="apply">{{ t('compare.apply') }}</button>
     <p class="comparison-hint">{{ t('compare.applyHint') }}</p>
-    <button v-if="status.phase === 'failed'" type="button" data-testid="renderer-recover" @click="navigate(PRESETS.canvas)">{{ t('compare.recover') }}</button>
+    <button v-if="status.phase === 'failed'" type="button" data-testid="renderer-recover" @click="navigate(status.requested)">{{ t('boot.tryAgain') }}</button>
   </details>
 </template>
 

@@ -192,7 +192,7 @@ test("evaluateStageGate requires rendererWindow.before/after", () => {
   assert.match(evaluateStageGate({ perRepeat: [{}] }, "rust"), /rendererWindow.*missing/);
 });
 
-test("evaluateStageGate fails on a backend mismatch (the DOM-fallback case)", () => {
+test("evaluateStageGate fails when a DOM run is mislabeled as Rust", () => {
   const result = {
     perRepeat: [{ rendererWindow: { before: { backend: "dom", ready: true }, after: { backend: "dom", ready: true } } }],
     walkStats: { walks: 682 },

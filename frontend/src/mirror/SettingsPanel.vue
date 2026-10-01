@@ -74,8 +74,8 @@ const props = withDefaults(
 
 const settings = mirrorSettings;
 const canvasActive = computed(() => settings.runtimeStage === "canvas");
-const fallbackReason = computed(() => settings.stage === "canvas" && settings.runtimeStage === "dom"
-  ? rendererRuntimeStatus.reason : null);
+const failureReason = computed(() => settings.stage === "canvas" && rendererRuntimeStatus.requested.backend === "canvas" &&
+  rendererRuntimeStatus.phase === "failed" ? rendererRuntimeStatus.reason : null);
 
 function selectStage(value: "dom" | "canvas"): void {
   settings.stage = value;
@@ -319,8 +319,8 @@ onBeforeUnmount(() => setHelpListeners(false));
           </label>
           <SettingsHelpTip v-bind="help('stage', t('settings.stage'))" />
         </div>
-        <p v-if="fallbackReason" role="status" data-testid="mirror-stage-fallback">
-          {{ t('settings.stageFallback', { reason: fallbackReason }) }}
+        <p v-if="failureReason" role="status" data-testid="mirror-stage-failure">
+          {{ t('settings.stageFailure', { reason: failureReason }) }}
           <button type="button" @click="retryCanvas">{{ t('boot.tryAgain') }}</button>
         </p>
         <!-- Quality sits below Stage and above the render rows whose preset it controls. -->

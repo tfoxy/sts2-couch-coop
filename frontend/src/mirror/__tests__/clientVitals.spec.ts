@@ -46,21 +46,19 @@ beforeEach(() => {
 });
 
 describe("collectClientVitals", () => {
-  it("reports both stage backends so a silent canvas fallback is visible", () => {
-    // The pair differing is the ONLY report of a hard fallback: `?stage=canvas` is a request, and a phone whose
-    // WebGL2 context cannot be created gets the DOM backend with nothing above rendererFactory told about it.
-    const vitals = collectClientVitals(sources({ requestedStage: () => "canvas", activeStage: () => "dom" }));
+  it("reports the public canvas request and its Rust backend", () => {
+    const vitals = collectClientVitals(sources({ requestedStage: () => "canvas", activeStage: () => "rust" }));
 
     expect(vitals.stageRequested).toBe("canvas");
-    expect(vitals.stageActive).toBe("dom");
+    expect(vitals.stageActive).toBe("rust");
   });
 
-  it("keeps the saved Rust request in production vitals after a DOM fallback", () => {
+  it("keeps the saved Rust request in production vitals after a renderer failure", () => {
     const previous = mirrorSettings.stage;
     const previousRuntime = mirrorSettings.runtimeStage;
     try {
       mirrorSettings.stage = "canvas";
-      mirrorSettings.runtimeStage = "dom";
+      mirrorSettings.runtimeStage = "canvas";
       expect(defaultClientVitalsSources().requestedStage()).toBe("canvas");
     } finally {
       mirrorSettings.stage = previous;

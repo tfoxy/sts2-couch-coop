@@ -91,6 +91,31 @@ describe("renderer comparison panel", () => {
     }
   });
 
+  it.each(["canvas", "pixi", "rust"] as const)("retries failed %s without selecting DOM", async (backend) => {
+    const before = { ...rendererComparisonConfig }, status = { ...rendererRuntimeStatus };
+    const revision = rendererComparisonViewRevision.value;
+    const requested = { ...RENDERER_COMPARISON_PRESETS[backend] };
+    Object.assign(rendererComparisonConfig, requested);
+    setComparisonStageBackend(backend);
+    setRendererRuntimeStatus({ requested, actualBackend: backend, actualConfig: null,
+      phase: "failed", reason: "context lost" });
+    const wrapper = mount(RendererComparisonPanel);
+    try {
+      await wrapper.find('[data-testid="renderer-recover"]').trigger("click");
+      expect(rendererComparisonViewRevision.value).toBe(revision + 1);
+      expect(rendererComparisonConfig.backend).toBe(backend);
+      expect(rendererRuntimeStatus.requested.backend).toBe(backend);
+      expect(rendererRuntimeStatus.phase).toBe("initializing");
+    } finally {
+      wrapper.unmount();
+      Object.assign(rendererComparisonConfig, before);
+      rendererComparisonViewRevision.value = revision;
+      setComparisonStageBackend(before.backend);
+      setRendererRuntimeStatus(status);
+      window.history.replaceState(null, "", "/");
+    }
+  });
+
   it("offers independent CPU preparation switches and the combined preset", async () => {
     const wrapper = mount(RendererComparisonPanel);
     await wrapper.find('[data-testid="renderer-preset"]').setValue("cpuPrep");

@@ -656,15 +656,15 @@ committing to that machinery. Record an accepted result in
 [docs/agents/renderer-optimization-ledger.md](renderer-optimization-ledger.md).
 
 **STAGE GATE, read this first.** A `?stage=canvas`/`?stage=rust` URL is a REQUEST for the Rust backend, not
-proof it loaded — if the Wasm module 404s/403s the page silently falls back to the DOM renderer and every CPU
-number from that cell describes the wrong backend while looking completely normal (this happened on the first
+proof it loaded — if the Wasm module 404s/403s the selected stage fails and yields no valid CPU measurement.
+The old fallback once made a wrong backend look completely normal (this happened on the first
 cut of this recipe: a worktree's `.sts2/rust-prototype-web` was a symlink whose REALPATH pointed outside Vite's
 `server.fs.allow`, so `/@fs/.../rust_prototype_bg.wasm` 403'd, the page fell back to DOM, and the runner reported
 a plausible-looking ~1.3s "renderer CPU" that was actually the DOM reconciler walking 682 times). So every cell
 is gated: `perRepeat[0].rendererWindow.{before,after}.backend` must equal the expected backend (inferred `rust`
 from `stage=canvas`/`stage=rust` in the URL; override with `--expect-backend`), both `.ready` must be `true`,
 `result.walkStats.walks` must be `0` under the rust backend specifically (the legacy DOM walk reconciler must
-never run there — a nonzero count IS the fallback tell), and no `.wasm`/`rust_prototype` URL may show a non-2xx
+never run there — a nonzero count means the wrong renderer ran), and no `.wasm`/`rust_prototype` URL may show a non-2xx
 in `result.responseErrors`. A gate failure is a FAILED cell, excluded from every arm mean; its numbers stay in
 the per-cell row only so you can see what the wrong backend looked like.
 

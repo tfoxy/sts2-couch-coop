@@ -51,7 +51,7 @@ afterEach(() => {
   document.body.replaceChildren();
 });
 
-describe("public Rust stage fallback", () => {
+describe("GPU stage failure without DOM fallback", () => {
   it("selects an explicit Rust comparison URL at factory module initialization without persisting it", async () => {
     const priorUrl = window.location.href;
     const storageKey = "couchcoop.mirrorSettings.v1";
@@ -79,45 +79,59 @@ describe("public Rust stage fallback", () => {
     }
   });
 
-  it("recovers to DOM and records a renderer construction failure", () => {
-    setComparisonStageBackend("canvas");
-    mirrorSettings.stage = "canvas";
-    backendMocks.rust.mockImplementationOnce(() => { throw new Error("WebGL2 unavailable"); });
+  it.each(["canvas", "pixi", "rust"] as const)("keeps %s selected after a construction failure", (backend) => {
+    setComparisonStageBackend(backend);
+    backendMocks[backend === "canvas" ? "rust" : backend].mockImplementationOnce(() => { throw new Error("WebGL2 unavailable"); });
     const { stage, defs } = hosts();
 
-    expect(createMirrorRendererFor(stage, defs)).toBe(fakeRenderer);
-    expect(backendMocks.dom).toHaveBeenCalledOnce();
-    expect(requestedStageBackend()).toBe("dom");
-    expect(activeStageBackend()).toBe("dom");
-    expect(mirrorSettings.stage).toBe("canvas");
-    expect(mirrorSettings.runtimeStage).toBe("dom");
-    expect(rendererRuntimeStatus).toMatchObject({ actualBackend: "dom", phase: "active", reason: "WebGL2 unavailable" });
+    expect(createMirrorRendererFor(stage, defs)).toBeNull();
+    expect(backendMocks.dom).not.toHaveBeenCalled();
+    expect(requestedStageBackend()).toBe(backend);
+    expect(activeStageBackend()).toBe(backend === "canvas" ? "rust" : backend);
+    expect(rendererRuntimeStatus).toMatchObject({ actualBackend: backend === "canvas" ? "rust" : backend,
+      phase: "failed", reason: "WebGL2 unavailable" });
+    if (backend === "canvas") expect(mirrorSettings.runtimeStage).toBe("canvas");
   });
 
-  it("falls back once on runtime failure and ignores a stale status callback after recovery", async () => {
-    setComparisonStageBackend("canvas");
-    mirrorSettings.stage = "canvas";
+  it.each(["canvas", "pixi", "rust"] as const)("keeps %s mounted after a runtime failure", (backend) => {
+    setComparisonStageBackend(backend);
     const revision = rendererComparisonViewRevision.value;
     let onStatus!: (phase: "initializing" | "ready" | "failed", reason?: string) => void;
-    backendMocks.rust.mockImplementationOnce((_stage, _defs, _host, callback) => {
+    backendMocks[backend === "canvas" ? "rust" : backend].mockImplementationOnce((_stage, _defs, _host, callback) => {
       onStatus = callback;
       return fakeRenderer;
     });
     const { stage, defs } = hosts();
 
-    const renderer = createMirrorRendererFor(stage, defs);
-    expect(activeStageBackend()).toBe("rust");
+    const renderer = createMirrorRendererFor(stage, defs)!;
     onStatus("failed", "context lost");
-    await Promise.resolve();
-    expect(activeStageBackend()).toBe("dom");
-    expect(mirrorSettings.stage).toBe("canvas");
-    expect(mirrorSettings.runtimeStage).toBe("dom");
-    expect(rendererComparisonViewRevision.value).toBe(revision + 1);
-    expect(rendererRuntimeStatus).toMatchObject({ actualBackend: "rust", phase: "failed", reason: "context lost" });
+    expect(activeStageBackend()).toBe(backend === "canvas" ? "rust" : backend);
+    expect(rendererComparisonViewRevision.value).toBe(revision);
+    expect(rendererRuntimeStatus).toMatchObject({ actualBackend: backend === "canvas" ? "rust" : backend,
+      phase: "failed", reason: "context lost" });
+    expect(backendMocks.dom).not.toHaveBeenCalled();
 
     onStatus("ready");
-    await Promise.resolve();
-    expect(rendererComparisonViewRevision.value).toBe(revision + 1);
+    expect(rendererRuntimeStatus.phase).toBe("failed");
+    renderer.dispose();
+  });
+
+  it.each(["canvas", "pixi", "rust"] as const)("reports %s context loss without switching backends", (backend) => {
+    setComparisonStageBackend(backend);
+    const actual = backend === "canvas" ? "rust" : backend;
+    backendMocks[actual].mockImplementationOnce((stage: HTMLElement) => {
+      const canvas = document.createElement("canvas");
+      canvas.className = `mirror-${actual}-stage`;
+      stage.append(canvas);
+      return fakeRenderer;
+    });
+    const { stage, defs } = hosts();
+    const renderer = createMirrorRendererFor(stage, defs)!;
+    const event = new Event("webglcontextlost", { cancelable: true });
+    stage.querySelector("canvas")!.dispatchEvent(event);
+    expect(event.defaultPrevented).toBe(true);
+    expect(rendererRuntimeStatus).toMatchObject({ actualBackend: actual, phase: "failed", reason: "WebGL context lost" });
+    expect(backendMocks.dom).not.toHaveBeenCalled();
     renderer.dispose();
   });
 
@@ -131,7 +145,7 @@ describe("public Rust stage fallback", () => {
       return fakeRenderer;
     });
     const { stage, defs } = hosts();
-    const renderer = createMirrorRendererFor(stage, defs);
+    const renderer = createMirrorRendererFor(stage, defs)!;
     renderer.dispose();
 
     onStatus("failed", "late failure");
@@ -139,5 +153,16 @@ describe("public Rust stage fallback", () => {
     expect(rendererComparisonViewRevision.value).toBe(revision);
     expect(mirrorSettings.runtimeStage).toBe("canvas");
     expect(backendMocks.dom).not.toHaveBeenCalled();
+  });
+
+  it("uses DOM only after the viewer selects it", () => {
+    setComparisonStageBackend("canvas");
+    backendMocks.rust.mockImplementationOnce(() => { throw new Error("WebGL2 unavailable"); });
+    const { stage, defs } = hosts();
+    expect(createMirrorRendererFor(stage, defs)).toBeNull();
+    setComparisonStageBackend("dom");
+    expect(createMirrorRendererFor(stage, defs)).toBe(fakeRenderer);
+    expect(backendMocks.dom).toHaveBeenCalledOnce();
+    expect(rendererRuntimeStatus.phase).toBe("active");
   });
 });

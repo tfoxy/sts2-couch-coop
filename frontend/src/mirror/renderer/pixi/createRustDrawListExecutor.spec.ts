@@ -20,6 +20,33 @@ afterEach(() => {
 });
 
 describe("Rust execution phase diagnostic", () => {
+  it("presents supported content when the serializer omits two unsupported drawings", async () => {
+    window.history.replaceState({}, "", "/?rustDiagnostics=1");
+    const admit = vi.fn(() => JSON.stringify({ accepted: true, revision: 1, unsupportedCommands: 0, resourcePending: 0 }));
+    (globalThis as Record<string, unknown>).__rustProjectionTest = { engine: {
+      backend: "WebGL2", resize: () => {}, dispose: () => {}, upload_rgba_batch: () => 0,
+      admit_scene: admit, apply_patch: () => "{}",
+      present: async () => JSON.stringify({ presented: true, revision: 1, draws: 1,
+        resourcePending: 0, unsupportedCommands: 0 }),
+    } };
+    vi.stubEnv("VITE_RUST_PROTOTYPE_MODULE_URL", moduleUrl(
+      "export default async function init(){return {}};export class RustRenderer{static async create(){return globalThis.__rustProjectionTest.engine}}",
+    ));
+    vi.stubEnv("VITE_RUST_SCENE_SERIALIZER_URL", moduleUrl(
+      "export function encodeRustScene(){return {bytes:new Uint8Array([1]),scene:{version:2,revision:1,width:1,height:1,designWidth:1,designHeight:1,resources:[],commands:[{id:'q',kind:'quad'}]},resources:[],textUploads:[],unsupportedCommands:2,omittedKinds:{polyline:2}}};export function encodeRustPatch(){return null};export function encodeRustResources(){return new Uint8Array(0)}",
+    ));
+    const renderer = await createRustDrawListExecutor({ canvas: document.createElement("canvas"), width: 1,
+      height: 1, designWidth: 1, designHeight: 1, onInvalidate: () => {} });
+    const list = createDrawList<string>();
+    const quad = createQuadView(); quad.w = quad.h = quad.srcW = quad.srcH = 1; list.pushQuad(quad);
+    expect(await renderer.render(list, [])).toBe(true);
+    expect(admit).toHaveBeenCalledOnce();
+    expect(renderer.stats.scenePreflightFailures).toBe(0);
+    expect((window as unknown as { __mirrorRustStats: () => { omittedCommands: number; omittedKinds: Record<string, number> } }).__mirrorRustStats())
+      .toMatchObject({ omittedCommands: 2, omittedKinds: { polyline: 2 } });
+    renderer.dispose();
+  });
+
   it("joins upload, admission and present to the full tuple and clears refusal identity", async () => {
     const calls: string[] = [];
     const profile = createCouchCanvasProfile(3, "profile-run");
