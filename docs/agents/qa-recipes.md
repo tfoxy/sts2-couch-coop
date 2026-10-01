@@ -680,6 +680,9 @@ place, a plain `npx vite` needs **no** `VITE_RUST_*`/`COUCHCOOP_*` env vars at a
 points at an ARTIFACT LIVING SOMEWHERE ELSE entirely (e.g. the primary checkout's `.sts2/rust-prototype-web`
 from a different worktree) — only reach for them when you deliberately want that.
 
+The Rust producer controls in `rustFastFlags.ts` are on by default: to compare against the old path, use
+`--arm OFF=rustFast=0`, or `<switch>=0` to take one item out.
+
 ```bash
 # 1. dev server from the checkout UNDER TEST — plain npx vite, no scratch-server ceremony, no env vars (see
 #    the stage-gate note above for when .sts2/rust-prototype-web needs to be populated first).

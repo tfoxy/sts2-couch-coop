@@ -70,6 +70,24 @@ describe("rewardFocusSnapshotFromScene", () => {
     expect(canvas).toEqual(dom);
   });
 
+  it("answers the same from a rectangle getter, read once and only when a reward screen is present", () => {
+    const state = scene();
+    const rects = [rect("row-a-self", 500, 500), rect("hit-a", 100, 200), rect("hit-b", 300, 400)];
+    const calls: string[] = [];
+    const cover = (id: string) => { calls.push(`cover:${id}`); return id === "row-b"; };
+    const eager = rewardFocusSnapshotFromScene(state.nodes, state.orderedIds, rects, (id) => id === "row-b");
+    const lazy = rewardFocusSnapshotFromScene(state.nodes, state.orderedIds, () => { calls.push("rects"); return rects; }, cover);
+    expect(lazy).toEqual(eager);
+    // An eager caller gathered the rectangles before any cover query; the getter keeps that order.
+    expect(calls).toEqual(["rects", "cover:row-b", "cover:row-a"]);
+
+    const hidden = scene(false);
+    let read = 0;
+    expect(rewardFocusSnapshotFromScene(hidden.nodes, hidden.orderedIds, () => { read++; return rects; }, () => false))
+      .toEqual(rewardFocusSnapshotFromScene(hidden.nodes, hidden.orderedIds, rects, () => false));
+    expect(read).toBe(0);
+  });
+
   it("ignores a retained but effectively hidden rewards screen", () => {
     const state = scene(false);
     expect(rewardFocusSnapshotFromScene(state.nodes, state.orderedIds, [], () => false)).toEqual({

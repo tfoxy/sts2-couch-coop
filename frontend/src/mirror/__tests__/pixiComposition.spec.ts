@@ -44,7 +44,7 @@ vi.mock("@/mirror/canvas/glyphPass", () => ({ createGlyphPassRegistry: (options:
     blockFor: () => { control.glyphBlockCalls++; return control.glyphReady ? borrowed : (refusedNotReady++, null); },
     boundsFor: () => ({ x: 0, y: 0, width: 20, height: 20 }) };
 } }));
-vi.mock("@/mirror/fonts", () => ({ ensureNodeFonts: vi.fn(), loadMirrorFont: (...args: unknown[]) => fontLoader.load(...args) }));
+vi.mock("@/mirror/fonts", () => ({ ensureNodeFonts: vi.fn(), fontFaceInjectionVersion: () => 0, loadMirrorFont: (...args: unknown[]) => fontLoader.load(...args) }));
 vi.mock("@/mirror/rewardFocusSnapshot", () => ({ rewardFocusSnapshotFromScene: rewardSpy }));
 vi.mock("@/mirror/renderer/canvas/frameScheduler", async (importOriginal) => {
   const actual = await importOriginal<typeof import("@/mirror/renderer/canvas/frameScheduler")>();
