@@ -33,6 +33,15 @@ function gameCenter(rect: InteractiveRect): { x: number; y: number } | null {
     : null;
 }
 
+/** Superset node-id candidates (`rustSceneIndex`) restricting the two `orderedIds` scans below. Optional: omitted
+ *  (or `null`), the scans run over every id exactly as before. A candidate set that MISSES a real match would be a
+ *  bug — see `sceneCandidateIndex.ts` — but an extra, stale candidate only costs one wasted node lookup, since
+ *  every candidate is re-verified against `nodes` here regardless. */
+export interface RewardFocusCandidates {
+  readonly screens: ReadonlySet<string>;
+  readonly buttons: ReadonlySet<string>;
+}
+
 /**
  * Builds the reward-list facts from renderer-owned native geometry. DOM and canvas pass the same retained scene,
  * interactive rectangles, and cover-order answer, so neither backend needs a browser-layout approximation.
@@ -42,10 +51,12 @@ export function rewardFocusSnapshotFromScene(
   nodes: ReadonlyMap<string, MirrorNode>,
   orderedIds: readonly string[],
   interactiveRects: readonly InteractiveRect[] | (() => readonly InteractiveRect[]),
-  coverAbove: (id: string) => boolean
+  coverAbove: (id: string) => boolean,
+  candidates?: RewardFocusCandidates | null
 ): RewardFocusSnapshot {
   let screenId: string | null = null;
   for (const id of orderedIds) {
+    if (candidates && !candidates.screens.has(id)) continue;
     const node = nodes.get(id);
     if (node && nodeTypeLeaf(node.nodeType) === "NRewardsScreen" && effectivelyVisible(nodes, node)) {
       screenId = id;
@@ -57,6 +68,7 @@ export function rewardFocusSnapshotFromScene(
 
   const rows: RewardFocusRow[] = [];
   for (const id of orderedIds) {
+    if (candidates && !candidates.buttons.has(id)) continue;
     const node = nodes.get(id);
     if (
       node &&

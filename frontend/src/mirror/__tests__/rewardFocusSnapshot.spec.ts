@@ -95,4 +95,53 @@ describe("rewardFocusSnapshotFromScene", () => {
       rows: []
     });
   });
+
+  // `candidates` (R2-P3, `rustSceneIndex`): a superset restricting the two `orderedIds` scans. A caller passes it
+  // only as a HINT — every candidate is still re-checked against the node, so a candidate set with extra, wrong
+  // members changes nothing about the answer, only how many ids get looked at.
+  describe("candidates", () => {
+    it("gives the same answer as an unrestricted scan when every real candidate is present", () => {
+      const state = scene();
+      const unrestricted = rewardFocusSnapshotFromScene(
+        state.nodes, state.orderedIds, [rect("hit-a", 100, 200), rect("hit-b", 300, 400)], (id) => id === "row-b"
+      );
+      const restricted = rewardFocusSnapshotFromScene(
+        state.nodes, state.orderedIds, [rect("hit-a", 100, 200), rect("hit-b", 300, 400)], (id) => id === "row-b",
+        { screens: new Set(["screen"]), buttons: new Set(["row-a", "row-b"]) }
+      );
+      expect(restricted).toEqual(unrestricted);
+    });
+
+    it("misses a real screen/row dropped from its candidate set — candidates narrow, they do not widen", () => {
+      const state = scene();
+      // Neither candidate set names the real ids, so both scans see nothing to check: the index is only ever
+      // SAFE when it is a superset, and this spells out the other direction so the contract stays legible.
+      expect(rewardFocusSnapshotFromScene(state.nodes, state.orderedIds, [], () => false,
+        { screens: new Set(), buttons: new Set(["row-a", "row-b"]) }))
+        .toEqual({ screenId: null, rows: [] });
+      expect(rewardFocusSnapshotFromScene(state.nodes, state.orderedIds, [], () => false,
+        { screens: new Set(["screen"]), buttons: new Set() }))
+        .toEqual({ screenId: "screen", rows: [] });
+    });
+
+    it("tolerates a stale candidate that no longer matches — verified, not trusted, at query time", () => {
+      const state = scene();
+      const withExtra = rewardFocusSnapshotFromScene(
+        state.nodes, state.orderedIds, [rect("hit-a", 100, 200), rect("hit-b", 300, 400)], (id) => id === "row-b",
+        // "hit-a" (a plain Control, never a reward type) and a nonexistent id are harmless extra candidates.
+        { screens: new Set(["screen", "ghost"]), buttons: new Set(["row-a", "row-b", "hit-a", "nope"]) }
+      );
+      const unrestricted = rewardFocusSnapshotFromScene(
+        state.nodes, state.orderedIds, [rect("hit-a", 100, 200), rect("hit-b", 300, 400)], (id) => id === "row-b"
+      );
+      expect(withExtra).toEqual(unrestricted);
+    });
+
+    it("omitted (undefined/null) behaves exactly like today — a full scan", () => {
+      const state = scene();
+      const base = rewardFocusSnapshotFromScene(state.nodes, state.orderedIds, [], () => false);
+      expect(rewardFocusSnapshotFromScene(state.nodes, state.orderedIds, [], () => false, undefined)).toEqual(base);
+      expect(rewardFocusSnapshotFromScene(state.nodes, state.orderedIds, [], () => false, null)).toEqual(base);
+    });
+  });
 });

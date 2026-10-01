@@ -213,7 +213,16 @@ Vite dev build, with n=6 cells per arm alternated. Evidence:
 | Oct 1 | `ccPaintOrderReuse`, `rustFastSerializer`, `rustTextPrepCache`, `rustFontCheckCache`, `rustSnapshotReuse`, `rustDrawStateDedupe` | per-build JS overheads; wgpu `set_pipeline` churn | reuse the complete paint order; `jsonEqual` diff plus a group index in the GSW encoder; cache text preparation and true font checks (event-invalidated); skip O(N) copies; set the pipeline only on change | ON | together about −0.65 s (~15% of OFF); individually below cell noise (±250 ms). The Rust phases barely moved (238 → 221 ms) | REPORT.md |
 | Oct 1 | `rustHiddenMemo` | hidden-subtree walk metadata | replay recorded metadata for unchanged hidden subtrees | ON (inside noise) | offline node hit rate 95.7%, live only 41% (root hit rate 92.6%, but misses fall on ~393-node subtrees: absent, taint, span, context); −150 to −295 ms, within noise; 52,478 roots verified, 0 mismatches | REPORT.md |
 
-**What remains with ON** (JS profile, sample counts; `profiled/`):
+| Oct 1 | `rustHiddenMemoCaptures` (round 2) | hidden memo walked the hidden map screen every build | an eager-scroll capture inside the hidden map tainted its 1,793-node subtree; the memo now replays captured globals and validates capture membership | ON | window node hit rate 42% → 99.97% (~1 hidden node walked per build instead of ~1,794) | `.sts2/bench/rust-fast2-oct1/REPORT.md` |
+| Oct 1 | `rustHeldOverridePatch` (round 2) | every busy frame was a full build | tween overrides that stopped moving (held since the committed build) no longer refuse retained patches; wire changes on/above/under an override, anim roots above one, and fades crossing the 0.02 paint threshold still rebuild; wire patches compare colour objects by value | ON | 481 of 488 window frames became retained patches (7 builds left); renderer CPU 2,485 → 912 ms per 7 s vs round 1 (−63%), **4,324 → 912 ms vs all-off (−79%)**; GPU process unchanged; held-override verify 0 after the threshold fix (it first caught a near-invisible fade keeping 2 text records); touch harness: no regression | `.sts2/bench/rust-fast2-oct1/REPORT.md`, `held-verify-fix/` |
+| Oct 1 | `rustSceneIndex` (round 2) | per-render O(scene) scans | candidate indexes for reward focus and hand/cover, per-node static-background predicate memo, cached font-diagnostic query parse | ON | small; verify 0 | same |
+
+**Found along the way (pre-existing, not caused by rustFast):**
+- On `main` since `36788b75`, the canvas reward screen can go black: the Rust stage refuses `rich:balance` text and now stays selected instead of falling back to DOM (`MEM touch-harness-rust-stage-oct1`).
+- The plain retained opacity patch (used with `rustHeldOverridePatch=0` and with `rustFast=0`) ignores the 0.02 paint threshold, so a fade can keep or miss a node until the next build.
+- Applied alphas are banked at publish, so they can be sampled while an async build is in flight.
+
+**What remained after round 1** (JS profile, sample counts; `profiled/`). Round 2 removed most of it; what is left after round 2 is per-tick scheduling and glue, the retained-patch encode and Wasm submit, plus the bench's own replay shim:
 - `buildDrawList` `walk` is still the largest JS item (22% inclusive). Native work with no JS frame is ~51% of busy samples, Wasm ~4%.
 - Small leaks: `rewardFocusSnapshotFromScene`, `staticBgTargetPathOf`, and a `URLSearchParams` parse per font check in `fonts.ts` `corpusDiagnosticEnabled`.
 - The bench's own WebSocket replay shim accounts for ~8% in both arms.

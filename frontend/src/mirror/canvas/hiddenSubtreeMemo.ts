@@ -35,30 +35,45 @@
 // The incoming clip chain is not compared: under a hidden root it reaches only overlay records and hit entries,
 // and a hidden node produces neither.
 //
-// THE TAINT SET. A per-id option (transform/alpha override, local anim, frame substitute, cosmetic offset, capture
-// id, skip root, render-width override) can change any node in a subtree without changing a node object, so the
-// inclusive ancestors of every such key are TAINTED for the build. A tainted root walks normally and is neither
-// replayed nor recorded.
+// THE TAINT SET. A per-id option (transform/alpha override, local anim, frame substitute, cosmetic offset, skip
+// root, render-width override) can change any node in a subtree without changing a node object, so the inclusive
+// ancestors of every such key are TAINTED for the build. A tainted root walks normally and is neither replayed nor
+// recorded.
+//
+// CAPTURE IDS (`captureGlobals`) are taint keys too, unless the memo was created with `captures` on
+// (`rustHiddenMemoCaptures`). A capture changes no pose: the value the walk banks for a node is its spread-shifted
+// and drawn globals, its parent's drawn Y and its own modulation, all fixed by the rules above and the rest of the
+// taint set. Only WHICH span nodes capture is the caller's per-build choice, so with captures on a recording keeps
+// the `(id, value)` pairs its walk banked, a replay sets them again in that order at the root's position (the walk
+// banks a subtree's captures together, so the capture map's insertion order is the walk's), and a root whose span
+// holds a different set of capture ids than the recording misses with `capture`. The eager-scroll ids are why
+// this matters: the map container is captured every build while its screen is hidden.
 //
 // THE REFUSALS. A recording is discarded when its walk latched a map-stroke local (stateful, per stream), entered
-// the hover-tip branch (it asks the caller about nodes outside the subtree), banked a local-anim frame or a capture
-// (both tainted, refused as a belt), classified a node as anything but `skip`, pushed a command, hit entry or
-// overlay record, walked a frame substitute, or visited a different node sequence than the span. The whole memo
-// sits out a build that spreads the stage, runs the hidden-walk diagnostic or the spread audit, or whose paint
-// order has duplicate child entries.
+// the hover-tip branch (it asks the caller about nodes outside the subtree), banked a local-anim frame (tainted,
+// refused as a belt) or, with captures off, a capture (the same belt), classified a node as anything but `skip`,
+// pushed a command, hit entry or overlay record, walked a frame substitute, or visited a different node sequence
+// than the span. The whole memo sits out a build that spreads the stage, runs the hidden-walk diagnostic or the
+// spread audit, or whose paint order has duplicate child entries.
 //
 // BOUNDED: an entry not visited in a build is dropped at the end of it. A root whose recording keeps failing (on
 // anything but an environment flip) or keeps being refused stops recording for a doubling number of builds, up to
 // `MAX_HOLD`; that decides only WHETHER to record, never what a build publishes.
 //
-// VERIFY (`rustFastVerify`): a validated root is walked anyway, and the walk's own publications are compared with
-// the recording. The walked result is what the build uses.
+// VERIFY (`rustFastVerify`): a validated root is walked anyway, and the walk's own publications (captures
+// included) are compared with the recording. The walked result is what the build uses.
 
 import type { Affine } from "@/mirror/affine";
 import type { PaintOrder, PaintOrderEntry } from "@/mirror/canvas/paintOrder";
 import type { NodeClass, NodePaintInput } from "@/mirror/canvas/paintSpec";
 import type { MirrorNode } from "@/mirror/sceneTree";
 import type { ViewScaleStamp } from "@/mirror/viewScaleLayout";
+
+/**
+ * One `captureGlobals` value (`buildDrawList`'s `CapturedGlobal`, not imported: that module imports this one). The
+ * memo only stores it, publishes it again and, under verify, compares it shallowly.
+ */
+type CaptureValue = object;
 
 export interface HiddenSubtreeMemoStats {
   /** Builds the memo took part in, and builds it sat out (spreading, diagnostics, duplicate order entries). */
@@ -72,6 +87,8 @@ export interface HiddenSubtreeMemoStats {
   /** Nodes published from a recording, and nodes under an outermost hidden root that were walked. */
   replayedNodes: number;
   walkedHiddenNodes: number;
+  /** `captureGlobals` entries published from a recording (captures on only). */
+  replayedCaptures: number;
   /** Recordings kept, and the reasons a walked root left no recording. */
   recorded: number;
   notRecorded: Record<string, number>;
@@ -99,6 +116,9 @@ export interface HiddenMemoRecording {
   /** `onNode` / `semanticNode` calls, in paint order: the id, and the index of its input in `inputs`. */
   emitIds: string[];
   emitIdx: number[];
+  /** `captureGlobals` writes, in walk order. */
+  captureIds: string[];
+  captures: CaptureValue[];
   /** Set by the walk when this subtree did something a recording cannot reproduce. */
   refuse: string | null;
 }
@@ -109,6 +129,8 @@ export interface HiddenMemoSink {
   viewScaleStamps: Map<string, ViewScaleStamp>;
   viewScaleCandidates: Set<string>;
   stats: { skip: number };
+  /** The build's `captureGlobals` output, when it has one. */
+  captureOut: Map<string, CaptureValue> | null;
   onNode?: (id: string, cls: NodeClass) => void;
   semanticNode?: (input: NodePaintInput, cls: NodeClass, start: number, end: number) => void;
 }
@@ -127,6 +149,8 @@ export interface HiddenMemoBuildInput {
   pinnedLocals: unknown;
   /** The per-id option key sets whose inclusive ancestors are tainted. */
   taintKeys: ReadonlyArray<Iterable<string> | null | undefined>;
+  /** The build's `captureGlobals` ids: one more taint key set with captures off, validated membership with them on. */
+  captureIds: ReadonlySet<string> | null;
   sink: HiddenMemoSink;
 }
 
@@ -173,6 +197,8 @@ interface RecordedSubtree {
   stamps: readonly ViewScaleStamp[];
   candidates: readonly string[];
   emitIdx: readonly number[];
+  captureIds: readonly string[];
+  captures: readonly CaptureValue[];
 }
 
 interface MemoEntry {
@@ -196,6 +222,8 @@ interface ActiveRecording extends HiddenMemoRecording {
 }
 
 interface InternalMemo extends HiddenSubtreeMemo {
+  /** Record and replay captures rather than tainting on them. Fixed for the memo's life. */
+  captures: boolean;
   entries: Map<string, MemoEntry>;
   generation: number;
   lastOrder: PaintOrder | null;
@@ -210,8 +238,10 @@ const CTX_LEN = 37;
 /** Longest backoff, in builds, for a root whose recordings keep failing. */
 const MAX_HOLD = 16;
 
-export function createHiddenSubtreeMemo(): HiddenSubtreeMemo {
+/** `captures`: record and replay `captureGlobals` writes instead of walking every root that holds a capture id. */
+export function createHiddenSubtreeMemo(options: { captures?: boolean } = {}): HiddenSubtreeMemo {
   const memo: InternalMemo = {
+    captures: options.captures === true,
     stats: {
       builds: 0,
       bypassedBuilds: 0,
@@ -221,6 +251,7 @@ export function createHiddenSubtreeMemo(): HiddenSubtreeMemo {
       missReasons: {},
       replayedNodes: 0,
       walkedHiddenNodes: 0,
+      replayedCaptures: 0,
       recorded: 0,
       notRecorded: {},
       verified: 0,
@@ -276,8 +307,8 @@ export function beginHiddenMemoBuild(memoIn: HiddenSubtreeMemo, input: HiddenMem
   const envEpoch = memo.envEpoch;
 
   const taint = new Set<string>();
-  for (const keys of input.taintKeys) {
-    if (keys == null) continue;
+  const climb = (keys: Iterable<string> | null | undefined): void => {
+    if (keys == null) return;
     for (const key of keys) {
       // Climb the walk's own parent rule (a parent counts while it is live), stopping at the first id already in.
       let cur: string | null = key;
@@ -285,6 +316,21 @@ export function beginHiddenMemoBuild(memoIn: HiddenSubtreeMemo, input: HiddenMem
         taint.add(cur);
         const parentId: string | null | undefined = nodes.get(cur)?.parentId;
         cur = parentId != null && nodes.has(parentId) ? parentId : null;
+      }
+    }
+  };
+  for (const keys of input.taintKeys) climb(keys);
+  // With captures on, each capture id's own paint index instead, once per build (a handful of ids); a root's
+  // capture set is then the ids whose index falls in its span.
+  const captureIds: string[] = [];
+  const captureAt: number[] = [];
+  if (!memo.captures) climb(input.captureIds);
+  else if (input.captureIds !== null) {
+    for (const id of input.captureIds) {
+      const at = order.orderOf(id);
+      if (at >= 0) {
+        captureIds.push(id);
+        captureAt.push(at);
       }
     }
   }
@@ -306,6 +352,16 @@ export function beginHiddenMemoBuild(memoIn: HiddenSubtreeMemo, input: HiddenMem
     ancestors: readonly (MirrorNode | undefined)[]): string | null => {
     if (data.envEpoch !== envEpoch) return "env";
     if (span.spanStart !== data.spanStart || span.spanEnd - span.spanStart !== data.spanLen) return "span";
+    // The span's capture ids must be exactly the recorded ones (recorded ids are distinct: each node walks once).
+    if (captureAt.length > 0 || data.captureIds.length > 0) {
+      let inside = 0;
+      for (let i = 0; i < captureAt.length; i++) {
+        if (captureAt[i] < span.spanStart || captureAt[i] >= span.spanEnd) continue;
+        if (!data.captureIds.includes(captureIds[i])) return "capture";
+        inside++;
+      }
+      if (inside !== data.captureIds.length) return "capture";
+    }
     for (let i = 0; i < CTX_LEN; i++) if (!Object.is(ctx[i], data.ctx[i])) return "context";
     if (ancestors.length !== data.ancestors.length) return "ancestor";
     for (let i = 0; i < ancestors.length; i++) if (ancestors[i] !== data.ancestors[i]) return "ancestor";
@@ -324,6 +380,9 @@ export function beginHiddenMemoBuild(memoIn: HiddenSubtreeMemo, input: HiddenMem
     for (let i = 0; i < data.inputIds.length; i++) nodePaintInputs.set(data.inputIds[i], data.inputs[i]);
     for (let i = 0; i < data.stampIds.length; i++) viewScaleStamps.set(data.stampIds[i], data.stamps[i]);
     for (const id of data.candidates) viewScaleCandidates.add(id);
+    // Validation found these ids in the build's capture set, so it has an output map.
+    for (let i = 0; i < data.captureIds.length; i++) sink.captureOut!.set(data.captureIds[i], data.captures[i]);
+    stats.replayedCaptures += data.captureIds.length;
     if (onNode !== undefined || semanticNode !== undefined) {
       for (let k = 0; k < data.ids.length; k++) {
         onNode?.(data.ids[k], "skip");
@@ -377,9 +436,9 @@ export function beginHiddenMemoBuild(memoIn: HiddenSubtreeMemo, input: HiddenMem
         return null;
       }
       const rec: ActiveRecording = {
-        inputIds: [], inputs: [], stampIds: [], stamps: [], candidates: [], emitIds: [], emitIdx: [], refuse: null,
-        rootId: id, spanStart: span.spanStart, spanLen, ctx: ctx.slice(), ancestors, listCount, hitCount,
-        overlayCount, verifyAgainst: reason === null ? data : null
+        inputIds: [], inputs: [], stampIds: [], stamps: [], candidates: [], emitIds: [], emitIdx: [], captureIds: [],
+        captures: [], refuse: null, rootId: id, spanStart: span.spanStart, spanLen, ctx: ctx.slice(), ancestors,
+        listCount, hitCount, overlayCount, verifyAgainst: reason === null ? data : null
       };
       return rec;
     },
@@ -388,6 +447,7 @@ export function beginHiddenMemoBuild(memoIn: HiddenSubtreeMemo, input: HiddenMem
       const rec = recIn as ActiveRecording;
       const entry = memo.entries.get(rec.rootId)!;
       let refuse = rec.refuse;
+      if (refuse === null && !memo.captures && rec.captureIds.length > 0) refuse = "capture";
       if (refuse === null && (listCount !== rec.listCount || hitCount !== rec.hitCount || overlayCount !== rec.overlayCount)) {
         refuse = "published";
       }
@@ -421,7 +481,9 @@ export function beginHiddenMemoBuild(memoIn: HiddenSubtreeMemo, input: HiddenMem
         stampIds: rec.stampIds,
         stamps: rec.stamps,
         candidates: rec.candidates,
-        emitIdx: rec.emitIdx
+        emitIdx: rec.emitIdx,
+        captureIds: rec.captureIds,
+        captures: rec.captures
       };
       if (rec.verifyAgainst === null) stats.recorded++;
     },
@@ -490,7 +552,10 @@ function sameRecording(walked: ActiveRecording, recorded: RecordedSubtree): bool
     walked.stamps.every((stamp, i) => sameShallow(stamp, recorded.stamps[i])) &&
     sameValues(walked.candidates, recorded.candidates) &&
     sameValues(walked.emitIds, recorded.ids) &&
-    sameValues(walked.emitIdx, recorded.emitIdx)
+    sameValues(walked.emitIdx, recorded.emitIdx) &&
+    sameValues(walked.captureIds, recorded.captureIds) &&
+    walked.captures.length === recorded.captures.length &&
+    walked.captures.every((captured, i) => sameShallow(captured, recorded.captures[i]))
   );
 }
 

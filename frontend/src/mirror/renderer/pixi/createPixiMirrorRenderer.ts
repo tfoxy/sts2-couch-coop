@@ -1,20 +1,22 @@
-import { createDrawList, createNinePatchView, createQuadView, createTexturedMeshView } from "@godot-scene-web/canvas";
+import { createClipRectView, createDrawList, createNinePatchView, createPolylineView, createQuadView, createTexturedMeshView } from "@godot-scene-web/canvas";
 import type { PixiDrawListRenderer, PixiGlyphProvider, PixiTextOutcomes, PixiTextRecord } from "@godot-scene-web/canvas/pixi";
-import { buildDrawList, streamedAlphasOf, type DrawListBuild } from "@/mirror/canvas/buildDrawList";
+import {
+  buildDrawList, streamedAlphasOf, type AlphaOverride, type BuildDrawListOptions, type CosmeticOffset, type DrawListBuild, type LocalAnim
+} from "@/mirror/canvas/buildDrawList";
 import { baselineOf, layoutText, resolveTextSpec, type TextSpan } from "@/mirror/canvas/textLayout";
 import { parseSimpleRich } from "@/mirror/canvas/richSimple";
 import { createPaintOrderCache } from "@/mirror/canvas/paintOrder";
 import { createHiddenSubtreeMemo } from "@/mirror/canvas/hiddenSubtreeMemo";
 import { createHitMemo, resolveSceneInfo } from "@/mirror/canvas/hitTest";
-import { canvasBlend, createPaintScratch, normalizeFlip, type NodePaintInput, type OverlayRecord } from "@/mirror/canvas/paintSpec";
+import { canvasBlend, createPaintScratch, nodeIsPainting, normalizeFlip, type NodePaintInput, type OverlayRecord } from "@/mirror/canvas/paintSpec";
 import { atlasFitAffine } from "@/mirror/nodeStyles";
 import { ensureNodeFonts, fontFaceInjectionVersion, loadMirrorFont } from "@/mirror/fonts";
 import { resolveTextScaleDecls } from "@/mirror/textScaleClasses";
 import { stageBackingSize } from "@/mirror/canvas/stageBacking";
 import { renderQuality, stagePixelRatio } from "@/render/quality";
-import { MIRROR_DESIGN_HEIGHT, MIRROR_DESIGN_WIDTH, type MirrorNode, type MirrorState } from "@/mirror/sceneTree";
-import type { CanvasHandRaiseChrome, InteractiveRect, MirrorRenderer, ReconcilePull, SpreadPainter, TouchStack } from "@/mirror/renderer/contracts";
-import { rewardFocusSnapshotFromScene } from "@/mirror/rewardFocusSnapshot";
+import { MIRROR_DESIGN_HEIGHT, MIRROR_DESIGN_WIDTH, nodeTypeLeaf, type MirrorNode, type MirrorState } from "@/mirror/sceneTree";
+import type { CanvasHandRaiseChrome, InteractiveRect, MirrorRenderer, ReconcilePull, RewardFocusSnapshot, SpreadPainter, TouchStack } from "@/mirror/renderer/contracts";
+import { rewardFocusSnapshotFromScene, type RewardFocusCandidates } from "@/mirror/rewardFocusSnapshot";
 import { setStageOwnsEffectPixels } from "@/mirror/shaderResources";
 import { setUiScalingEnabled } from "@/mirror/uiScaling";
 import { mapPointerToGame } from "@/mirror/pointerMap";
@@ -39,6 +41,8 @@ import { rendererComparisonConfig, setRendererRuntimeStatus } from "@/mirror/ren
 import { SAMPLE_LOCAL_ANIM, SAMPLE_OPACITY, SAMPLE_SELF_OPACITY, SAMPLE_SOURCE } from "@/mirror/canvas/tweenLoop";
 import { createRetainedPixiComposition, type RetainedPixiPatch } from "./retainedComposition";
 import { resolveRustFastFlags } from "./rustFastFlags";
+import { createSceneCandidateIndex } from "./sceneCandidateIndex";
+import { copyTransformOverrides, overrideAncestors, sameNodeExceptTransform, sameTransformOverrides, touchesOverrideLineage } from "./heldOverrides";
 import type { GlyphPassRegistry, GlyphPassStats } from "@/mirror/canvas/glyphPass";
 import { preparePixiGlyph } from "./pixiGlyphText";
 import {
@@ -185,6 +189,20 @@ export function createPixiMirrorRenderer(
   const documentFonts = stage.ownerDocument.fonts;
   const fontCheckCache = fast.fontCheckCache && typeof documentFonts?.addEventListener === "function"
     ? createFontCheckCache(documentFonts, fontFaceInjectionVersion) : null;
+  // R2-P3 (rustSceneIndex): a superset node-id index by leaf type, kept current from `next.changedIds` at
+  // `reconcile` — see sceneCandidateIndex.ts. Used today for the two reward-focus types; the two lines at
+  // `reconcile` below are the only place it is fed.
+  const rewardCandidateIndex = fast.sceneIndex
+    ? createSceneCandidateIndex((node) => {
+      const leaf = nodeTypeLeaf(node.nodeType);
+      return leaf === "NRewardsScreen" || leaf === "NRewardButton" ? [leaf] : [];
+    })
+    : null;
+  // A node's static-background skip-root answer depends on its PARENT and GRANDPARENT (scene identity, not just
+  // its own fields), so a changedIds-driven candidate set could miss a reclassification that only an ancestor's
+  // own upsert reports. Memoized by node OBJECT IDENTITY instead: `applySceneDelta` replaces a node's object on
+  // every upsert and never mutates one in place, so a cache hit can only ever be this exact node, unchanged.
+  const staticBgSkipRootMemo = fast.sceneIndex ? new WeakMap<MirrorNode, boolean>() : null;
   const traceFrames = backend === "pixi" && attributionQuery.get("ccTraceFrames") === "1";
   const traceStamp = traceFrames && typeof console.timeStamp === "function"
     ? (label: string) => console.timeStamp(label) : null;
@@ -220,7 +238,7 @@ export function createPixiMirrorRenderer(
   requireSingleProfileMode(!!profile, rustExecutionPhaseMode);
   const rustOmitStaticPixelCaches = fast.omitStaticPixelCaches;
   const rustSkipHiddenHitCandidates = backend === "rust" && attributionQuery.get("rustSkipHiddenHitCandidates") === "1";
-  const hiddenMemo = backend === "rust" && fast.hiddenMemo ? createHiddenSubtreeMemo() : null;
+  const hiddenMemo = backend === "rust" && fast.hiddenMemo ? createHiddenSubtreeMemo({ captures: fast.hiddenMemoCaptures }) : null;
   const rustStaticAdmissionPhaseMode = backend === "rust" && attributionQuery.get("rustStaticAdmissionPhase") === "1";
   // The reviewed ack repair stays opt-in until a warm view/client capture qualifies it for the product default.
   const rustPendingAckRetry = backend === "rust" && attributionQuery.get("rustPendingAckRetry") === "1";
@@ -314,6 +332,30 @@ export function createPixiMirrorRenderer(
   let snapshotNodesSource: ReadonlyMap<string, MirrorNode> | null = null;
   let staticSkipMemo: { nodes: ReadonlyMap<string, MirrorNode>; revision: number; background: object; roots: Set<string> } | null = null;
   let snapshotNodeReuses = 0, staticSkipRootReuses = 0, rewardFocusSkips = 0;
+  // rustSceneIndex, under rustFastVerify: every mismatch between a candidate-restricted/memoized answer (reward
+  // focus here; hand-present/cover-above in interactionRuntime.ts) and the full-scan ground truth. Zero on a
+  // correct build, always — this is the one counter `rustFastParity.spec.ts` asserts stays 0 under every query.
+  let sceneIndexVerifyMismatches = 0;
+  // rustHeldOverridePatch: a value copy of the transform overrides the committed full build applied. Publishing a
+  // full build is the only way `retainedValid` turns on, and it always replaces this bank; every path that turns it
+  // off clears it. Patches planned under held overrides are remembered for the counters and for verification.
+  let committedOverrides: ReadonlyMap<string, readonly number[]> | null = null;
+  type HeldPatchInputs = { overrides: Map<string, readonly number[]>; alphas: Map<string, AlphaOverride>;
+    anims: Map<string, LocalAnim>; substitutes: Map<string, MirrorNode>; offsets: Map<string, CosmeticOffset> };
+  const heldPatches = new WeakMap<RetainedPixiPatch, HeldPatchInputs | null>();
+  let heldOverridePatches = 0, heldOverrideVerifyRuns = 0, heldOverrideVerifyMismatches = 0, heldOverrideVerifyMaxError = 0;
+  let heldOverrideVerifyFirstMismatch: string | null = null;
+  const heldOverrideDeclines: Record<string, number> = {};
+  // rustFastVerify: every verify run that found a mismatch, with all of its notes and the builds and patches that
+  // led up to it (a short ring, recorded under verify only). Both bounded so a long session cannot grow them.
+  type HeldVerifyEntry = { run: number; revision: number; clock: number | null; notes: string[]; recent: string[] };
+  const heldOverrideVerifyLog: HeldVerifyEntry[] = [];
+  const heldOverrideRecent: string[] = [];
+  const noteHeldEvent = (event: () => string) => {
+    if (!fast.verify || !fast.heldOverridePatch) return;
+    heldOverrideRecent.push(event());
+    if (heldOverrideRecent.length > 24) heldOverrideRecent.shift();
+  };
   const retainedMode = rendererComparisonConfig.pixiScene === "retained";
   const textMode = backend === "rust" ? "native" : rendererComparisonConfig.pixiText;
   const asyncPresentation = createAsyncPresentationGate();
@@ -425,6 +467,7 @@ export function createPixiMirrorRenderer(
     spreadFactor: () => visual.spreadFactor, spreadDxByNode, spreadFieldModeByNode, loop: () => loop, streamedGlobalInto: visual.streamedGlobalInto,
     rebuildAndPaint: () => { if (state && readiness === "ready") paint(state, "local"); }, armAnimation: () => scheduler.armAnimation(performance.now()),
     builds: () => buildEpoch, paintedFrames: () => pixi?.stats.completedFrames ?? 0,
+    sceneIndex: fast.sceneIndex, sceneIndexVerify: fast.verify,
   });
   const probeOwner = {};
   installHandPoseProbe(interaction.handPoses, probeOwner);
@@ -679,7 +722,8 @@ if (isPromiseLike<PresentationResult>(result)) {
     return true;
   }
 
-  function semanticOverlay(input: NodePaintInput, record: OverlayRecord): void {
+  // `target` is the list being built: the live one, or a held-override verification shadow.
+  function semanticOverlay(input: NodePaintInput, record: OverlayRecord, _insertionIndex?: number, target = list): void {
     if (record.kind !== "spine") return;
     const url = spineClipUrl(input.node, { still: true });
     if (!url) { semanticFailures.set(input.node.id, "unresolved-spine-still"); return; }
@@ -701,8 +745,38 @@ if (isPromiseLike<PresentationResult>(result)) {
     q.m[4]=m[0]*tx+m[2]*ty+m[4]; q.m[5]=m[1]*tx+m[3]*ty+m[5]; q.w=frame.width; q.h=frame.height;
     q.srcX=0; q.srcY=0; q.srcW=frame.width; q.srcH=frame.height; q.a=record.opacity;
     q.r=record.tintR*record.opacity; q.g=record.tintG*record.opacity; q.b=record.tintB*record.opacity;
-    q.blend=canvasBlend(input.node); q.flipH=false; q.flipV=false; q.hasColorMatrix=false; list.pushQuad(q, clip.stillUrl);
+    q.blend=canvasBlend(input.node); q.flipH=false; q.flipV=false; q.hasColorMatrix=false; target.pushQuad(q, clip.stillUrl);
   }
+
+  // See `staticBgSkipRootMemo` above for why this is a per-node-object memo rather than a changedIds-driven
+  // candidate set. Under `fast.verify` a hit is recomputed and compared rather than trusted, so a stale entry
+  // left by a since-moved ancestor would show up as a counted mismatch instead of a silent wrong skip.
+  function isStaticBackgroundSkipRoot(node: MirrorNode, nodes: ReadonlyMap<string, MirrorNode>): boolean {
+    const direct = () => staticBgTargetPathOf(node, nodes) !== null && isStaticBackgroundSuppressibleRoot(node, nodes);
+    if (!staticBgSkipRootMemo) return direct();
+    const cached = staticBgSkipRootMemo.get(node);
+    if (cached !== undefined && !fast.verify) return cached;
+    const computed = direct();
+    if (fast.verify && cached !== undefined && cached !== computed) sceneIndexVerifyMismatches++;
+    staticBgSkipRootMemo.set(node, computed);
+    return computed;
+  }
+  // The hand-raise chrome painter, shared by full builds and the held-override verification shadow.
+  const handRaiseChromePainter: NonNullable<BuildDrawListOptions["handRaiseChrome"]> = {
+    emit(input, chromeScratch, sink) {
+      const chrome = handRaiseChrome!;
+      pixi?.bindPixelTexture(handRaiseChromeKey, chrome.source, chrome.revision);
+      const q = chromeScratch.quad;
+      const designWidth = input.renderWidthOverride && input.renderWidthOverride > 0
+        ? input.renderWidthOverride : (input.node.localRect?.width ?? MIRROR_DESIGN_WIDTH);
+      q.m.set(handRaiseChromeMatrix(input.global, designWidth, chrome));
+      q.w=chrome.width; q.h=chrome.height; q.srcX=0; q.srcY=0; q.srcW=chrome.source.width; q.srcH=chrome.source.height;
+      q.r=input.ownOpacity; q.g=input.ownOpacity; q.b=input.ownOpacity; q.a=input.ownOpacity;
+      q.blend=0; q.flipH=false; q.flipV=false; q.hasColorMatrix=false;
+      sink.quad(q, handRaiseChromeKey);
+      return 1;
+    },
+  };
 
   function paint(next: MirrorState, source: ProducerBuildSource, decline = "direct-build"): boolean {
     const profileIdentity = profile?.begin("full-build", next.revision, ++profileBuildAttempts);
@@ -726,6 +800,11 @@ if (isPromiseLike<PresentationResult>(result)) {
     lifecycle?.startPhase("prepare");
     if (traceId !== null) traceStamp!(`cc:frame:${traceId}:couch:prepare:start`);
     retainedValid = false;
+    // rustHeldOverridePatch: builds that run while overrides are applied or banked, by the decline that sent them.
+    if (fast.heldOverridePatch && (visual.transformOverrides.size || committedOverrides?.size))
+      heldOverrideDeclines[decline] = (heldOverrideDeclines[decline] ?? 0) + 1;
+    noteHeldEvent(() => `build r${next.revision} ${source}/${decline} overrides=[${[...visual.transformOverrides.keys()].join(",")}]`);
+    committedOverrides = null;
     paintGeneration++;
     texts.length = 0;
     textOwners.clear();
@@ -742,7 +821,10 @@ if (isPromiseLike<PresentationResult>(result)) {
       if (staticSkipMemo?.nodes === next.nodes && staticSkipMemo.revision === next.revision &&
         staticSkipMemo.background === staticBackground) { skipRoots = staticSkipMemo.roots; staticSkipRootReuses++; }
       else {
-        for (const node of next.nodes.values()) if (staticBgTargetPathOf(node, next.nodes) !== null && isStaticBackgroundSuppressibleRoot(node, next.nodes)) skipRoots.add(node.id);
+        for (const node of next.nodes.values())
+          if (fast.sceneIndex ? isStaticBackgroundSkipRoot(node, next.nodes)
+            : staticBgTargetPathOf(node, next.nodes) !== null && isStaticBackgroundSuppressibleRoot(node, next.nodes))
+            skipRoots.add(node.id);
         if (fast.snapshotReuse) staticSkipMemo = { nodes: next.nodes, revision: next.revision, background: staticBackground, roots: skipRoots };
       }
     }
@@ -758,19 +840,7 @@ if (isPromiseLike<PresentationResult>(result)) {
         if (hiddenWalkRows.length < 1024) hiddenWalkRows.push({ buildId: producerBuilds + 1, revision: next.revision, summary });
         else hiddenWalkOverflow = true;
       } : undefined,
-      handRaiseChrome: handRaiseChrome ? { emit(input, chromeScratch, sink) {
-        const chrome = handRaiseChrome!;
-        pixi?.bindPixelTexture(handRaiseChromeKey, chrome.source, chrome.revision);
-        const q = chromeScratch.quad;
-        const designWidth = input.renderWidthOverride && input.renderWidthOverride > 0
-          ? input.renderWidthOverride : (input.node.localRect?.width ?? MIRROR_DESIGN_WIDTH);
-        q.m.set(handRaiseChromeMatrix(input.global, designWidth, chrome));
-        q.w=chrome.width; q.h=chrome.height; q.srcX=0; q.srcY=0; q.srcW=chrome.source.width; q.srcH=chrome.source.height;
-        q.r=input.ownOpacity; q.g=input.ownOpacity; q.b=input.ownOpacity; q.a=input.ownOpacity;
-        q.blend=0; q.flipH=false; q.flipV=false; q.hasColorMatrix=false;
-        sink.quad(q, handRaiseChromeKey);
-        return 1;
-      } } : null,
+      handRaiseChrome: handRaiseChrome ? handRaiseChromePainter : null,
       textureSize: (url) => pixi?.textureSize(url) ?? null,
       semanticBegin: () => { semanticCandidate = []; },
       semanticNode: (input, cls, start, end) => {
@@ -795,6 +865,8 @@ if (isPromiseLike<PresentationResult>(result)) {
       viewScaleEnv: visual.viewScaleEnv, tipScaleEnv: visual.tipScaleEnv, pinnedLocals: visual.pinnedLocals,
       captureGlobals: captureIds.size ? { ids: captureIds, out: capturedGlobals } : null,
       cosmeticOffsets: interaction.cosmeticOffsets, semanticText, semanticOverlay, assert: false });
+    // rustHeldOverridePatch: the overrides this build applies, by value, banked when its frame publishes.
+    const appliedOverrides = fast.heldOverridePatch ? copyTransformOverrides(visual.transformOverrides) : null;
 const producerStarted = rustPhaseTimingMode || producerReasonMode ? performance.now() : 0;
     const tracedBuild = traceId === null ? buildScene : () => tracePhase(traceId, "build", buildScene);
     const phaseBuildId = producerBuilds + 1;
@@ -883,7 +955,7 @@ const producerStarted = rustPhaseTimingMode || producerReasonMode ? performance.
             if (buildId !== undefined) producerReasons?.finishIfOpen(buildId, "superseded");
             producerReasons?.noteNonBuild("full-presentation-stale");
             if (asyncSubmissionRevision === candidateRevision) asyncSubmissionRevision = null;
-            retainedValid = false;
+            retainedValid = false; committedOverrides = null;
             if (asyncAwaitingAckRevision === candidateRevision) asyncAwaitingAckRevision = null;
             scheduler.scheduleTexturePaint();
             return;
@@ -979,6 +1051,7 @@ const producerStarted = rustPhaseTimingMode || producerReasonMode ? performance.
     refinementFailure = null;
     publishTextOutcome();
     visual.bankAppliedAlphas();
+    committedOverrides = appliedOverrides;
     staticBackgroundReady?.(true); staticBackgroundReady = undefined;
     if (startupEnabled) noteStartupReady(candidateRevision);
     lifecycle?.endPhase("publish");
@@ -1021,6 +1094,9 @@ const producerStarted = rustPhaseTimingMode || producerReasonMode ? performance.
     if (startupEnabled) noteStartupReady(snapshot.stateRevision);
     drawnClock = at;
     signalDiagnosticWake();
+    noteHeldEvent(() => `patch r${snapshot!.stateRevision} held=${heldPatches.has(patch) ? 1 : 0} wire=${wire?.changedIds.size ?? 0} ` +
+      `primitives=${patch.primitives.length} alphas=${patch.primitives.filter((item) => item.alpha !== undefined).length} groups=${patch.groups.length}`);
+    if (heldPatches.has(patch)) { heldOverridePatches++; const inputs = heldPatches.get(patch); if (inputs) verifyHeldOverridePatch(inputs); }
     retainedPatches++;
     retainedPatchObjects += patch.primitives.length;
     lifecycle?.endPhase("publish");
@@ -1068,7 +1144,7 @@ const producerStarted = rustPhaseTimingMode || producerReasonMode ? performance.
         if (phaseSubmissionId !== undefined) producerReasons!.finishRetainedIfOpen(phaseSubmissionId, "superseded");
         producerReasons?.noteNonBuild("retained-presentation-stale");
         if (asyncSubmissionRevision === revision) asyncSubmissionRevision = null;
-        retainedValid = false;
+        retainedValid = false; committedOverrides = null;
         if (asyncAwaitingAckRevision === revision) asyncAwaitingAckRevision = null;
         scheduler.scheduleTexturePaint();
         return;
@@ -1077,7 +1153,7 @@ const producerStarted = rustPhaseTimingMode || producerReasonMode ? performance.
         if (phaseSubmissionId !== undefined) producerReasons!.finishRetainedIfOpen(phaseSubmissionId, "refused");
         producerReasons?.noteNonBuild("retained-presentation-refused");
         retainedPatchFallbacks++;
-        retainedValid = false;
+        retainedValid = false; committedOverrides = null;
         if (asyncSubmissionRevision === revision) asyncSubmissionRevision = null;
         const reason = outcome && typeof outcome === "object" ? (outcome as PresentationResult).reason : undefined;
         if (reason === "retained patch requires full scene admission") {
@@ -1118,7 +1194,7 @@ const producerStarted = rustPhaseTimingMode || producerReasonMode ? performance.
       if (phaseSubmissionId !== undefined) producerReasons!.finishRetainedIfOpen(phaseSubmissionId, "failed");
       producerReasons?.noteNonBuild("retained-presentation-error");
       retainedPatchFallbacks++;
-      retainedValid = false;
+      retainedValid = false; committedOverrides = null;
       if (asyncSubmissionRevision === revision) asyncSubmissionRevision = null;
       publishStatus("failed", error instanceof Error ? error.message : String(error));
       scheduler.scheduleTexturePaint();
@@ -1167,10 +1243,18 @@ const traceId = nextTraceFrame();
       return pose;
     };
     const spans: Array<{ start: number; end: number }> = [];
+    // rustHeldOverridePatch: a streamed delta is the drawn delta only away from held overrides. On or under one the
+    // node draws through the override's absolute pose; above one, the span would carry the overridden node along.
+    const heldLineage = fast.heldOverridePatch && visual.transformOverrides.size
+      ? overrideAncestors(visual.transformOverrides, next.nodes) : null;
     for (const id of next.changedIds) {
       const before = snapshot.scene.nodes.get(id), after = next.nodes.get(id);
       if (!before || !after || before.parentId !== after.parentId || !before.transform || !after.transform) return refuse("wire-structure");
-      for (const key of Object.keys(before) as Array<keyof typeof before>)
+      // A volatile upsert rebuilds its colour objects, so the held-override lane compares small values by value.
+      if (fast.heldOverridePatch) {
+        if (!sameNodeExceptTransform(before, after)) return refuse("wire-nontransform-change");
+        if (heldLineage && touchesOverrideLineage(id, visual.transformOverrides, heldLineage, next.nodes)) return refuse("wire-under-override");
+      } else for (const key of Object.keys(before) as Array<keyof typeof before>)
         if (key !== "transform" && before[key] !== after[key]) return refuse("wire-nontransform-change");
       const inverse = affineInverse(global(snapshot.scene.nodes, id));
       if (!inverse) return refuse("wire-noninvertible");
@@ -1211,13 +1295,24 @@ if (isPromiseLike<PresentationResult>(result)) { trackAsyncRetainedPatch(result,
     if (!retainedMode || !retainedValid || !snapshot || !retained || !pixi || readiness !== "ready") {
       retainedDecline = "invalid-retained-state"; return null;
     }
-    if (visual.transformOverrides.size) { retainedDecline = "transform-overrides"; return null; }
+    // rustHeldOverridePatch admits overrides held unchanged since the committed build: the same keys, bitwise.
+    if (fast.heldOverridePatch) {
+      if (!committedOverrides || !sameTransformOverrides(visual.transformOverrides, committedOverrides)) return refuse("transform-overrides");
+    } else if (visual.transformOverrides.size) { retainedDecline = "transform-overrides"; return null; }
     if ((visual.frameSampleMask & ~(SAMPLE_LOCAL_ANIM | SAMPLE_OPACITY | SAMPLE_SELF_OPACITY | SAMPLE_SOURCE)) !== 0) {
       retainedDecline = "unsupported-sample"; return null;
+    }
+    const held = fast.heldOverridePatch && visual.transformOverrides.size > 0;
+    // An overridden node draws at its absolute pose whatever its ancestors do, so a local animation above it must
+    // not carry it along. The build's frames never include a root that carries an override itself.
+    if (held) {
+      const ancestors = overrideAncestors(visual.transformOverrides, snapshot.scene.nodes);
+      for (const root of snapshot.build.localAnimFrames.keys()) if (ancestors.has(root)) return refuse("anim-over-override");
     }
     if (interaction.offsetPending || !interaction.cosmeticOffsetsMatch(snapshot)) { retainedDecline = "offset-pending"; return null; }
     const patch = retained.patch(visual.localAnims);
     if (!patch) { retainedDecline = "composition-refused"; return null; }
+    if (held) heldPatches.set(patch, fast.verify ? captureHeldInputs() : null);
     const byId = new Map(patch.primitives.map((entry) => [entry.id, entry]));
     const update = (id: string) => {
       let entry = byId.get(id);
@@ -1233,8 +1328,10 @@ if (isPromiseLike<PresentationResult>(result)) { trackAsyncRetainedPatch(result,
         if (!span) return refuse("opacity-missing-span");
         for (let i = span.spanStart; i < span.spanEnd; i++) touched.add(base.paintOrder.ids[i]);
       }
+      const mods: number[] = [];
       for (const id of touched) {
-        let ratio = 1;
+        let ratio = 1, ownSelf = 1;
+        mods.length = 0;
         const streamed = { mod: 1, self: 1 };
         for (let node = next.nodes.get(id); node; node = node.parentId ? next.nodes.get(node.parentId) : undefined) {
           const applied = visual.alphaApplied.get(node.id), current = visual.alphaOverrides.get(node.id);
@@ -1243,11 +1340,24 @@ if (isPromiseLike<PresentationResult>(result)) { trackAsyncRetainedPatch(result,
           const newMod = current?.mod ?? streamed.mod;
           if (oldMod <= 0 || !Number.isFinite(newMod)) return refuse("opacity-invalid-ratio");
           ratio *= newMod / oldMod;
+          mods.push(newMod);
           if (node.id === id) {
             const oldSelf = applied?.self ?? streamed.self;
             const newSelf = current?.self ?? streamed.self;
             if (oldSelf <= 0 || !Number.isFinite(newSelf)) return refuse("opacity-invalid-ratio");
             ratio *= newSelf / oldSelf;
+            ownSelf = newSelf;
+          }
+        }
+        // rustHeldOverridePatch: a build skips a node at or below the paint threshold, so carrying one across it adds
+        // or drops commands, text records and a painting hit surface that no alpha patch can express. The opacity
+        // here is what a build would compose now, multiplied root-first exactly as the walk does.
+        if (fast.heldOverridePatch) {
+          const input = base.build.nodePaintInputs.get(id), node = visual.frameSubstitutes.get(id) ?? next.nodes.get(id);
+          if (input && node && !input.hidden) {
+            let opacity = 1;
+            for (let i = mods.length - 1; i >= 0; i--) opacity *= mods[i];
+            if (nodeIsPainting(input.node, input.ownOpacity) !== nodeIsPainting(node, opacity * ownSelf)) return refuse("opacity-paint-threshold");
           }
         }
         const range = base.build.ranges.get(id);
@@ -1302,6 +1412,134 @@ if (isPromiseLike<PresentationResult>(result)) { trackAsyncRetainedPatch(result,
       patch.sourceReferences.push({ id: key, matrix });
     }
     return patch;
+  }
+
+  // rustFastVerify: the visual inputs a held-override patch was planned from, by value, so the shadow build of its
+  // picture sees the same sample even when the patch publishes asynchronously.
+  function captureHeldInputs(): HeldPatchInputs {
+    const anims = new Map<string, LocalAnim>();
+    for (const [id, anim] of visual.localAnims) anims.set(id, { pre: anim.pre?.slice() ?? null, post: anim.post?.slice() ?? null });
+    const alphas = new Map<string, AlphaOverride>();
+    for (const [id, alpha] of visual.alphaOverrides) alphas.set(id, { mod: alpha.mod, self: alpha.self });
+    const offsets = new Map<string, CosmeticOffset>();
+    for (const [id, offset] of interaction.cosmeticOffsets) offsets.set(id, { ...offset });
+    return { overrides: copyTransformOverrides(visual.transformOverrides), alphas, anims,
+      substitutes: new Map(visual.frameSubstitutes), offsets };
+  }
+
+  /**
+   * rustFastVerify: rebuild the picture a committed held-override patch claims to show, without submitting it, and
+   * compare matrices: every owned command (and clip rect), every text record and every hit entry's mFinal/mGame.
+   * The shadow writes its own draw list; it borrows the live text and spread scratch the build callbacks fill, and
+   * puts both back before returning. Tolerance is relative 1e-5: the list stores float32 while patches compose
+   * in float64, so the two spellings of one pose differ in the last bits.
+   */
+  function verifyHeldOverridePatch(inputs: HeldPatchInputs): void {
+    const current = state, drawn = snapshot, composition = retained;
+    if (!current || !drawn || !composition) return;
+    heldOverrideVerifyRuns++;
+    const shadow = createDrawList<string>();
+    const skipRoots = new Set<string>();
+    if (staticBackground) for (const node of current.nodes.values())
+      if (staticBgTargetPathOf(node, current.nodes) !== null && isStaticBackgroundSuppressibleRoot(node, current.nodes)) skipRoots.add(node.id);
+    const refill = <K, V>(map: Map<K, V>, entries: ReadonlyArray<[K, V]>) => { map.clear(); for (const [k, v] of entries) map.set(k, v); };
+    const liveTexts = texts.slice(), liveOwners = [...textOwners], liveKeys = [...textKeysByOwner], liveFailures = [...semanticFailures];
+    const liveDx = [...spreadDxByNode], liveModes = [...spreadFieldModeByNode], liveLayouts = nativeLayouts;
+    texts.length = 0; textOwners.clear(); textKeysByOwner.clear(); semanticFailures.clear(); spreadDxByNode.clear(); spreadFieldModeByNode.clear();
+    let reference: DrawListBuild | null = null, referenceTexts: PixiTextRecord[] = [], refused: string | null = null;
+    try {
+      reference = buildDrawList(current, shadow, { scratch: createPaintScratch(), skipRoots,
+        skipHiddenHitCandidates: rustSkipHiddenHitCandidates, handRaiseChrome: handRaiseChrome ? handRaiseChromePainter : null,
+        textureSize: (url) => pixi?.textureSize(url) ?? null, spreadFactor: visual.spreadFactor,
+        spreadRegistry: visual.spreadRegistry, spreadDxOut: spreadDxByNode, spreadFieldModeOut: spreadFieldModeByNode,
+        transformOverrides: inputs.overrides.size ? inputs.overrides : null, alphaOverrides: inputs.alphas.size ? inputs.alphas : null,
+        localAnims: inputs.anims.size ? inputs.anims : null, frameSubstitutes: inputs.substitutes.size ? inputs.substitutes : null,
+        viewScaleEnv: visual.viewScaleEnv, tipScaleEnv: visual.tipScaleEnv, pinnedLocals: visual.pinnedLocals,
+        cosmeticOffsets: inputs.offsets, semanticText,
+        semanticOverlay: (input, record, index) => semanticOverlay(input, record, index, shadow), assert: false });
+      if (semanticFailures.size) refused = `semantic ${[...semanticFailures][0].join(":")}`;
+    } catch (error) {
+      refused = error instanceof Error ? error.message : String(error);
+    } finally {
+      referenceTexts = texts.slice();
+      texts.length = 0; for (const text of liveTexts) texts.push(text);
+      refill(textOwners, liveOwners); refill(textKeysByOwner, liveKeys); refill(semanticFailures, liveFailures);
+      refill(spreadDxByNode, liveDx); refill(spreadFieldModeByNode, liveModes); nativeLayouts = liveLayouts;
+    }
+    let mismatches = 0;
+    const notes: string[] = [];
+    const note = (detail: string) => { mismatches++; heldOverrideVerifyFirstMismatch ??= detail; if (notes.length < 32) notes.push(detail); };
+    // What a mismatching owner looked like on each side: its opacity and hidden state as drawn and as rebuilt.
+    const ownerState = (id: string | undefined) => {
+      if (!id) return "owner=?";
+      const was = drawn.build.nodePaintInputs.get(id), now = reference?.nodePaintInputs.get(id), node = current.nodes.get(id);
+      return `owner=${id} ${node?.nodeType ?? "?"} visible=${node?.visible ?? "?"} opacity ${was?.ownOpacity ?? "-"}` +
+        `${was?.hidden ? "(hidden)" : ""}->${now?.ownOpacity ?? "-"}${now?.hidden ? "(hidden)" : ""}`;
+    };
+    const matches = (expected: ArrayLike<number>, actual: ArrayLike<number> | undefined, count = 6): boolean => {
+      if (!actual) return false;
+      let within = true;
+      for (let i = 0; i < count; i++) {
+        const error = Math.abs(expected[i] - actual[i]);
+        if (!(error <= 1e-5 * Math.max(1, Math.abs(expected[i]), Math.abs(actual[i])))) within = false;
+        if (!(error <= heldOverrideVerifyMaxError)) heldOverrideVerifyMaxError = Number.isNaN(error) ? Infinity : error;
+      }
+      return within;
+    };
+    if (refused !== null || !reference) note(`shadow build: ${refused}`);
+    else {
+      const quad = createQuadView(), nine = createNinePatchView(), mesh = createTexturedMeshView();
+      const clip = createClipRectView(), liveClip = createClipRectView(), line = createPolylineView(), liveLine = createPolylineView();
+      for (const owner of drawn.build.ranges.keys())
+        if (!reference.ranges.has(owner)) note(`commands drawn, not rebuilt: ${ownerState(owner)}`);
+      for (const [owner, range] of reference.ranges) {
+        const committedRange = drawn.build.ranges.get(owner), count = range.paintEnd - range.start;
+        if (!committedRange) { note(`commands rebuilt, not drawn: ${ownerState(owner)}`); continue; }
+        if (committedRange.paintEnd - committedRange.start !== count) { note(`${owner}: command count ${committedRange.paintEnd - committedRange.start} drawn, ${count} rebuilt`); continue; }
+        for (let ordinal = 0; ordinal < count; ordinal++) {
+          const index = range.start + ordinal, liveIndex = committedRange.start + ordinal;
+          const kind = shadow.kindNameAt(index), key = `${owner}:${kind}:${ordinal}`;
+          if (kind !== list.kindNameAt(liveIndex)) note(`${key}: kind`);
+          else if (kind === "quad" || kind === "ninePatch" || kind === "texturedMesh") {
+            const m = kind === "quad" ? shadow.readQuad(index, quad).m
+              : kind === "ninePatch" ? shadow.readNinePatch(index, nine).m : shadow.readTexturedMesh(index, mesh).m;
+            if (!matches(m, composition.logicalMatrix(key))) note(key);
+          } else if (kind === "polyline") {
+            // A polyline is baked in design space; its retained matrix is the delta applied since admission.
+            const delta = composition.logicalMatrix(key);
+            const rebuilt = shadow.readPolyline(index, line), committed = list.readPolyline(liveIndex, liveLine);
+            let within = !!delta && rebuilt.pointCount === committed.pointCount;
+            for (let p = 0; within && p < rebuilt.pointCount; p++) {
+              const x = committed.points[p * 2], y = committed.points[p * 2 + 1];
+              within = matches([rebuilt.points[p * 2], rebuilt.points[p * 2 + 1]],
+                [delta![0] * x + delta![2] * y + delta![4], delta![1] * x + delta![3] * y + delta![5]], 2);
+            }
+            if (!within) note(key);
+          } else if (kind === "clipPush") {
+            // Retained patches never move a clip rect, so the committed one must still be the rebuilt one.
+            const rebuilt = shadow.readClipRect(index, clip), committed = list.readClipRect(liveIndex, liveClip);
+            if (!matches([rebuilt.x, rebuilt.y, rebuilt.w, rebuilt.h], [committed.x, committed.y, committed.w, committed.h], 4)) note(key);
+          }
+        }
+      }
+      const drawnTexts = new Set(texts.map((record) => record.key)), rebuiltTexts = new Set(referenceTexts.map((record) => record.key));
+      for (const record of texts) if (!rebuiltTexts.has(record.key))
+        note(`text drawn, not rebuilt: ${record.key} alpha ${record.alpha ?? 1}->${retainedDiagnosticFields.get(`text:${record.key}`)?.alpha ?? "unpatched"} ${ownerState(textOwners.get(record.key))}`);
+      for (const record of referenceTexts) {
+        if (!drawnTexts.has(record.key)) note(`text rebuilt, not drawn: ${record.key} alpha ${record.alpha ?? 1} ${ownerState(record.labelId)}`);
+        else if (!matches(record.transform, composition.logicalMatrix(`text:${record.key}`))) note(`text:${record.key}`);
+      }
+      if (reference.hitEntries.length !== drawn.hitEntries.length)
+        note(`hit entries: ${drawn.hitEntries.length} drawn, ${reference.hitEntries.length} rebuilt`);
+      else for (let i = 0; i < drawn.hitEntries.length; i++) {
+        const rebuilt = reference.hitEntries[i], committed = drawn.hitEntries[i];
+        if (rebuilt.nodeId !== committed.nodeId || !matches(rebuilt.mFinal, committed.mFinal) ||
+          !matches(rebuilt.mGame, committed.mGame)) note(`hit:${committed.nodeId}${rebuilt.nodeId !== committed.nodeId ? ` vs ${rebuilt.nodeId}` : ""}`);
+      }
+    }
+    heldOverrideVerifyMismatches += mismatches;
+    if (notes.length && heldOverrideVerifyLog.length < 16)
+      heldOverrideVerifyLog.push({ run: heldOverrideVerifyRuns, revision: current.revision, clock: drawnClock, notes, recent: heldOverrideRecent.slice() });
   }
 
   function tryRetainedPatch(at: number): boolean {
@@ -1448,6 +1686,9 @@ const traceId = nextTraceFrame();
       ...(rustPhaseTimingMode ? { retainedPlanMs, producerBuildMs } : {}),
       ...(fast.lazyComposition ? { lazyCompositionIndexBuilds, lazyCompositionVerifyMismatches } : {}),
       ...(fast.snapshotReuse ? { snapshotNodeReuses, staticSkipRootReuses, rewardFocusSkips } : {}),
+      // rustSceneIndex: reward-focus candidates/the static-bg skip-root memo (both here) plus
+      // interactionRuntime's own hand-present/cover-above candidates (item 3) share one counter.
+      ...(fast.sceneIndex ? { sceneIndexVerifyMismatches: sceneIndexVerifyMismatches + interaction.sceneIndexVerifyMismatches } : {}),
       textures: pixi?.stats.textures ?? 0, frameTextures: pixi?.stats.frameTextures ?? 0, gpuTextures: pixi?.stats.gpuTextures ?? 0,
       textureLoads: pixi?.stats.textureLoads ?? 0, created: pixi?.stats.created ?? 0, updated: pixi?.stats.updated ?? 0,
       destroyed: pixi?.stats.destroyed ?? 0, textRasterizations: pixi?.stats.textRasterizations ?? 0,
@@ -1473,6 +1714,7 @@ const traceId = nextTraceFrame();
         rustStaticAdmissionPhase: rustStaticAdmissionPhaseMode, rustFast: { ...fast },
         rustTextPrepCache: { textPrep: textPrepCache?.stats() ?? null, fontCheck: fontCheckCache?.stats() ?? null } } : {}),
       ...(lazyCompositionVerifyFirstMismatch ? { lazyCompositionVerifyFirstMismatch } : {}),
+      ...(fast.heldOverridePatch ? { rustHeldOverride: { heldOverridePatches, heldOverrideDeclines: { ...heldOverrideDeclines }, ...(fast.verify ? { heldOverrideVerifyRuns, heldOverrideVerifyMismatches, heldOverrideVerifyMaxError, heldOverrideVerifyFirstMismatch, heldOverrideVerifyLog: heldOverrideVerifyLog.map((entry) => ({ ...entry, notes: [...entry.notes], recent: [...entry.recent] })) } : {}) } } : {}),
       ...(rustExecutionPhaseMode ? { rustExecutionPhases: true } : {}),
       ...(profile ? { canvasProfile: profile.snapshot() } : {}),
       ...(hiddenMemo ? { rustHiddenMemo: { ...hiddenMemo.stats, missReasons: { ...hiddenMemo.stats.missReasons },
@@ -1622,10 +1864,38 @@ const traceId = nextTraceFrame();
   // rustSnapshotReuse: a snapshot with no reward screen keeps that answer, and rectangles are gathered only for a
   // reward screen. Every publication installs a new snapshot object, so an answer never outlives its picture.
   const noRewardScreen = new WeakSet<DrawnSceneSnapshot>();
+  // rustSceneIndex: restricts both `orderedIds` scans inside rewardFocusSnapshotFromScene to the reward-screen /
+  // reward-button candidates `rewardCandidateIndex` already has on file — see the index's own comment for why this
+  // is exact (the predicate reads only the node's own type). Under rustFastVerify the unrestricted full scan is
+  // also run and USED, so a mismatch can never reach a caller; only the counter notices.
+  const rewardFocusCandidates = (): RewardFocusCandidates | undefined =>
+    rewardCandidateIndex
+      ? { screens: rewardCandidateIndex.idsIn("NRewardsScreen"), buttons: rewardCandidateIndex.idsIn("NRewardButton") }
+      : undefined;
+  const sameRewardFocus = (a: RewardFocusSnapshot, b: RewardFocusSnapshot): boolean =>
+    a.screenId === b.screenId && a.rows.length === b.rows.length && a.rows.every((row, i) => {
+      const other = b.rows[i];
+      return row.id === other.id && row.focused === other.focused && row.covered === other.covered &&
+        (row.gameCenter === null) === (other.gameCenter === null) &&
+        (row.gameCenter === null || (row.gameCenter.x === other.gameCenter!.x && row.gameCenter.y === other.gameCenter!.y));
+    });
+  const verifiedRewardFocus = (fastAnswer: RewardFocusSnapshot, computeTrusted: () => RewardFocusSnapshot): RewardFocusSnapshot => {
+    if (!rewardCandidateIndex || !fast.verify) return fastAnswer;
+    const trusted = computeTrusted();
+    if (!sameRewardFocus(fastAnswer, trusted)) sceneIndexVerifyMismatches++;
+    return trusted;
+  };
   const rewardFocusFor = (drawn: DrawnSceneSnapshot) => {
-    if (!fast.snapshotReuse) return rewardFocusSnapshotFromScene(drawn.scene.nodes, drawn.paintOrder.ids, rects(), interaction.coverAbove);
+    const candidates = rewardFocusCandidates();
+    if (!fast.snapshotReuse) {
+      const fastAnswer = rewardFocusSnapshotFromScene(drawn.scene.nodes, drawn.paintOrder.ids, rects(), interaction.coverAbove, candidates);
+      return verifiedRewardFocus(fastAnswer,
+        () => rewardFocusSnapshotFromScene(drawn.scene.nodes, drawn.paintOrder.ids, rects(), interaction.coverAbove));
+    }
     if (noRewardScreen.has(drawn)) { rewardFocusSkips++; return { screenId: null, rows: [] }; }
-    const focus = rewardFocusSnapshotFromScene(drawn.scene.nodes, drawn.paintOrder.ids, rects, interaction.coverAbove);
+    const fastAnswer = rewardFocusSnapshotFromScene(drawn.scene.nodes, drawn.paintOrder.ids, rects, interaction.coverAbove, candidates);
+    const focus = verifiedRewardFocus(fastAnswer,
+      () => rewardFocusSnapshotFromScene(drawn.scene.nodes, drawn.paintOrder.ids, rects, interaction.coverAbove));
     if (focus.screenId === null) noRewardScreen.add(drawn);
     return focus;
   };
@@ -1634,6 +1904,10 @@ const traceId = nextTraceFrame();
     reconcile(next) { lifecycle?.finish("skipped", completedDraws()); lifecycle?.begin("reconcile", next.revision, completedDraws()); lifecycle?.admit();
       if (next.sceneRewrite) paintOrderCache.invalidateAll();
       paintOrderCache.noteChanged(next, next.changedIds);
+      if (rewardCandidateIndex) {
+        if (next.sceneRewrite) rewardCandidateIndex.invalidateAll();
+        rewardCandidateIndex.noteChanged(next.nodes, next.changedIds);
+      }
       state = next; if (rustPendingAckRetry) pendingViewRevision = next.revision;
       const at = deterministicClock ?? performance.now();
       if (lifecycle) lifecycle.phase("input", () => { visual.applyInputs(next, at); interaction.applyHeldLift(); interaction.applyHandRaisePass(at); sampleVisual(at); });

@@ -24,9 +24,12 @@ import { createHiddenSubtreeMemo, type HiddenSubtreeMemo } from "@/mirror/canvas
 import { createHitMemo, resolveSceneInfo } from "@/mirror/canvas/hitTest";
 import { createPaintOrderCache, type PaintOrderCache } from "@/mirror/canvas/paintOrder";
 import type { NodeClass, NodePaintInput } from "@/mirror/canvas/paintSpec";
+import { scanEagerScrollIds, type EagerScrollLayoutEnv } from "@/mirror/eagerScrollLayout";
+import { HAND_HOLDER_TYPE } from "@/mirror/raise/constants";
 import {
   applySceneDelta,
   createMirrorState,
+  nodeTypeLeaf,
   parseSceneDelta,
   type MirrorDelta,
   type MirrorNode,
@@ -182,6 +185,8 @@ function sameBytes(a: ArrayBufferView, b: ArrayBufferView): boolean {
 interface Run {
   build: DrawListBuild;
   list: DrawList<string>;
+  /** The `captureGlobals` output, when the options asked for one. */
+  capture: Map<string, CapturedGlobal> | null;
   /** Everything the build published, as plain data (null when the run was not collected). */
   data: unknown;
 }
@@ -225,7 +230,7 @@ function mkBuilder(memo: HiddenSubtreeMemo | null, opts: { reuse?: boolean; veri
           : undefined,
         onNode: compare ? (id: string, cls: NodeClass) => visited.push([id, cls]) : undefined
       });
-      if (!compare) return { build, list, data: null };
+      if (!compare) return { build, list, capture: capture?.out ?? null, data: null };
       const { order, ...rest } = build;
       const data = plain(
         {
@@ -238,7 +243,7 @@ function mkBuilder(memo: HiddenSubtreeMemo | null, opts: { reuse?: boolean; veri
         },
         state
       );
-      return { build, list, data };
+      return { build, list, capture: capture?.out ?? null, data };
     }
   };
 }
@@ -544,8 +549,11 @@ describe("hidden-subtree memo", () => {
 
     const memo = createHiddenSubtreeMemo();
     const verifyMemo = createHiddenSubtreeMemo();
+    const captureMemo = createHiddenSubtreeMemo({ captures: true });
+    const captureVerifyMemo = createHiddenSubtreeMemo({ captures: true });
     const builders = [mkBuilder(null), mkBuilder(memo), mkBuilder(createHiddenSubtreeMemo(), { reuse: true }),
-      mkBuilder(verifyMemo, { verify: true })];
+      mkBuilder(verifyMemo, { verify: true }), mkBuilder(captureMemo),
+      mkBuilder(createHiddenSubtreeMemo({ captures: true }), { reuse: true }), mkBuilder(captureVerifyMemo, { verify: true })];
     let viewScaleOn = true;
     const viewScaleEnv = viewScaleEnvFor(state, () => viewScaleOn);
     // One override array is mutated IN PLACE between builds, the way a sampler may reuse its output.
@@ -622,15 +630,121 @@ describe("hidden-subtree memo", () => {
     expect(Object.keys(memo.stats.missReasons).length).toBeGreaterThan(3);
     expect(verifyMemo.stats.verified).toBeGreaterThan(50);
     expect(verifyMemo.stats.verifyMismatches).toBe(0);
+    // Captures on: the same sequence, still exact, and capture membership changes are among its misses.
+    expect(captureMemo.stats.hits).toBeGreaterThan(memo.stats.hits);
+    expect(captureMemo.stats.missReasons.capture).toBeGreaterThan(0);
+    expect(captureVerifyMemo.stats.verified).toBeGreaterThan(50);
+    expect(captureVerifyMemo.stats.verifyMismatches).toBe(0);
   }, 120_000);
+});
+
+// --- captures recorded and replayed (`rustHiddenMemoCaptures`) -----------------------------------------------------
+
+describe("hidden-subtree memo with captures", () => {
+  const capturing = () => createHiddenSubtreeMemo({ captures: true });
+  const setup = () => {
+    const state = stateOf(scene());
+    const memo = capturing();
+    const builders = [mkBuilder(null), mkBuilder(memo), mkBuilder(capturing(), { reuse: true })];
+    const options: BuildDrawListOptions = { viewScaleEnv: viewScaleEnvFor(state) };
+    return { state, memo, builders, options };
+  };
+  const capturingIds = (...ids: string[]): BuildDrawListOptions =>
+    ({ captureGlobals: { ids: new Set(ids), out: new Map() } });
+
+  it("replays captures under a hidden root in the walk's order, at the root's position", () => {
+    const { state, memo, builders, options } = setup();
+    // `h1a` is a behind-parent child and `h1c` sorts ahead of `h1b`, so walk order is not paint order; `panel` and
+    // `tail` bracket the hidden root, so a replay published anywhere but at the root would reorder the map.
+    const withCaptures = {
+      ...options, ...capturingIds("tail", "h1b", "h1a", "h1", "panel", "h1c", "h2a", "orphanKid")
+    };
+    const order = ["panel", "h1", "h1a", "h1c", "h1b", "h2a", "tail", "orphanKid"];
+    for (let i = 0; i < 3; i++) {
+      const runs = buildAll(builders, state, withCaptures);
+      for (const run of runs) expect([...run.capture!.keys()]).toStrictEqual(order);
+    }
+    expect(memo.stats.missReasons).toStrictEqual({ absent: 2 });
+    expect(memo.stats.hits).toBe(4);
+    expect(memo.stats.replayedNodes).toBe(2 * (7 + 2));
+  });
+
+  it("misses when the capture ids inside the span change, and replays the new set afterwards", () => {
+    const { memo, builders, state, options } = setup();
+    const steps: Array<[BuildDrawListOptions, number]> = [
+      [capturingIds("h1c"), 0],
+      [capturingIds("h1c", "h2a"), 1], // one more inside H
+      [{}, 2], // none at all
+      [capturingIds("h1a"), 3], // one again
+      [capturingIds("h1c"), 4], // the same count, a different id
+      [capturingIds("panel", "tail", "orphanKid"), 6] // none inside H, one inside the orphan
+    ];
+    for (const [extra, misses] of steps) {
+      buildAll(builders, state, { ...options, ...extra });
+      expect(memo.stats.missReasons.capture ?? 0).toBe(misses);
+      const hits = memo.stats.hits;
+      buildAll(builders, state, { ...options, ...extra });
+      expect(memo.stats.hits).toBe(hits + 2);
+    }
+    expect(memo.stats.missReasons.tainted).toBeUndefined();
+  });
+
+  it("misses when a captured value's context or node changes, and publishes the new value", () => {
+    // Each change moves `h1c`'s captured value without touching which ids capture.
+    const changes: Array<[string, (state: MirrorState, options: BuildDrawListOptions) => BuildDrawListOptions]> = [
+      ["context", (_, options) => ({ ...options, alphaOverrides: new Map([["root", { mod: 0.5, self: null }]]) })],
+      ["context", (_, options) => ({ ...options, cosmeticOffsets: new Map([["root", { dx: 0, dy: 12 }]]) })],
+      ["context", (state, options) => (replace(state, "root", { transform: [1, 0, 0, 1, 11, 21] }), options)],
+      ["node", (state, options) => (replace(state, "h1", { transform: [1, 0, 0, 1, 9, 9] }), options)]
+    ];
+    for (const [reason, change] of changes) {
+      const { memo, builders, state, options } = setup();
+      const withCapture = { ...options, ...capturingIds("h1c") };
+      const valueOf = (runs: Run[]) => runs[1].capture!.get("h1c")!;
+      const before = valueOf(buildAll(builders, state, withCapture));
+      // A replay publishes the recorded value object itself.
+      expect(valueOf(buildAll(builders, state, withCapture))).toBe(before);
+      const after = valueOf(buildAll(builders, state, change(state, withCapture)));
+      expect(memo.stats.missReasons[reason]).toBe(1);
+      expect(after).not.toStrictEqual(before);
+    }
+  });
+
+  it("verify mode compares captures: no difference, until a recorded value stops matching the walk", () => {
+    const state = stateOf(scene());
+    const memo = capturing();
+    const builders = [mkBuilder(null), mkBuilder(memo, { verify: true })];
+    const options = { viewScaleEnv: viewScaleEnvFor(state), ...capturingIds("h1", "h1c", "h2a", "orphanKid") };
+    for (let i = 0; i < 4; i++) buildAll(builders, state, options);
+    expect(memo.stats.verified).toBe(6);
+    expect(memo.stats.verifyMismatches).toBe(0);
+    expect(memo.stats.replayedNodes).toBe(0);
+    // The last walk's value objects are the recording's; a consumer writing into one is what verify must catch.
+    const [, verified] = buildAll(builders, state, options);
+    (verified.capture!.get("h1c") as { parentTy: number }).parentTy += 1;
+    buildAll(builders, state, options);
+    expect(memo.stats.verifyMismatches).toBe(1);
+  });
+
+  it("taints on captures with the switch off, exactly as before", () => {
+    const state = stateOf(scene());
+    const memo = createHiddenSubtreeMemo({ captures: false });
+    const builders = [mkBuilder(null), mkBuilder(memo)];
+    const options = { viewScaleEnv: viewScaleEnvFor(state), ...capturingIds("h1c") };
+    for (let i = 0; i < 3; i++) buildAll(builders, state, options);
+    expect(memo.stats.missReasons).toStrictEqual({ absent: 1, tainted: 3 });
+    expect(memo.stats.hits).toBe(2); // the orphan only
+  });
 });
 
 // --- a recorded busy stream ---------------------------------------------------------------------------------------
 //
 // Replays the dense-VFX end-turn recording (`.sts2/bench/canvas-gpu-sep21/`, local and uncommitted; the PRIMARY
-// checkout's when this runs in a worktree) delivery by delivery, building after each one with the memo off and on,
-// and logs the share of hidden-subtree nodes the memo replayed. Optimistic: it has no client tweens, so nothing a
-// sampler or a held card would taint is in play. Skipped when the file is absent.
+// checkout's when this runs in a worktree) delivery by delivery, building after each one with no memo, the memo
+// with captures off and the memo with captures on, and logs the share of hidden-subtree nodes each replayed. Every
+// build carries the live renderer's capture ids (see `streamCaptureIds`), which is what kept the captures-off memo
+// walking the hidden map. Still optimistic otherwise: there are no client tweens, so nothing a sampler or a held
+// card would taint is in play. Skipped when the file is absent.
 
 const RECORDING_REL = ".sts2/bench/canvas-gpu-sep21/dense-vfx-endturn.ndjson";
 
@@ -652,14 +766,43 @@ function recordingPath(): string | null {
 const RECORDING = recordingPath();
 const COMPARE_EVERY = Math.max(1, Number(process.env.COUCHCOOP_HIDDEN_MEMO_COMPARE_EVERY ?? 8) || 8);
 
+/**
+ * The live renderer's capture ids minus the client-only ones (a held card, cosmetic offsets, open landings): the
+ * eager-scroll containers from the renderer's own structure scan, and the hand holders. The scan does not test
+ * visibility, so the map container is captured while its screen is hidden.
+ */
+function streamCaptureIds(state: MirrorState): Set<string> {
+  const env: EagerScrollLayoutEnv = {
+    orderedIds: () => state.orderedIds,
+    nodeById: (id) => state.nodes.get(id),
+    childIdsOf: () => undefined,
+    typeLeafOf: (node) => nodeTypeLeaf(node.nodeType),
+    streamedGlobalOf: () => null,
+    hasHost: () => true,
+    spreadDxOf: () => 0,
+    renderedYOf: (_id, fallback) => fallback,
+    ancestorHidden: () => false,
+    transformPinned: () => false,
+    drawingToolActive: () => false
+  };
+  const ids = new Set(scanEagerScrollIds(env).map((candidate) => candidate.id));
+  for (const node of state.nodes.values()) if (nodeTypeLeaf(node.nodeType) === HAND_HOLDER_TYPE) ids.add(node.id);
+  return ids;
+}
+
 describe("hidden-subtree memo on a recorded busy stream", () => {
-  it.skipIf(RECORDING === null)("matches the full walk at every delivery and reports its hit rate", () => {
+  it.skipIf(RECORDING === null)("matches the full walk at every delivery, captures included, and reports hit rates", () => {
     const text = readFileSync(RECORDING!, "utf8");
     const state = createMirrorState();
-    const memo = createHiddenSubtreeMemo();
-    const builders = [mkBuilder(null), mkBuilder(memo, { reuse: true })];
+    const memos = { capturesOff: createHiddenSubtreeMemo(), capturesOn: createHiddenSubtreeMemo({ captures: true }) };
+    const builders = [mkBuilder(null), mkBuilder(memos.capturesOff, { reuse: true }),
+      mkBuilder(memos.capturesOn, { reuse: true })];
     const viewScaleEnv = viewScaleEnvFor(state);
     let deliveries = 0;
+    const options = (): BuildDrawListOptions => {
+      const ids = streamCaptureIds(state);
+      return { viewScaleEnv, captureGlobals: ids.size > 0 ? { ids, out: new Map() } : null };
+    };
     for (const line of text.split("\n")) {
       if (line.length === 0) continue;
       const envelope = JSON.parse(line) as { data?: unknown };
@@ -669,15 +812,20 @@ describe("hidden-subtree memo on a recorded busy stream", () => {
       applySceneDelta(state, parsed);
       deliveries++;
       // Every delivery is built (the memo sees the real sequence); every eighth is compared whole by default.
-      buildAll(builders, state, { viewScaleEnv }, deliveries % COMPARE_EVERY === 0);
+      buildAll(builders, state, options(), deliveries % COMPARE_EVERY === 0);
     }
-    buildAll(builders, state, { viewScaleEnv });
-    const s = memo.stats;
-    const rate = s.replayedNodes / Math.max(1, s.replayedNodes + s.walkedHiddenNodes);
-    console.info(`[hidden-memo] deliveries=${deliveries} roots=${s.roots} hits=${s.hits} misses=${s.misses} ` +
-      `replayedNodes=${s.replayedNodes} walkedHiddenNodes=${s.walkedHiddenNodes} nodeHitRate=${rate.toFixed(3)} ` +
-      `missReasons=${JSON.stringify(s.missReasons)} notRecorded=${JSON.stringify(s.notRecorded)} entries=${s.entries}`);
+    buildAll(builders, state, options());
+    const rateOf = (s: HiddenSubtreeMemo["stats"]) =>
+      s.replayedNodes / Math.max(1, s.replayedNodes + s.walkedHiddenNodes);
+    for (const [name, { stats: s }] of Object.entries(memos)) {
+      console.info(`[hidden-memo ${name}] deliveries=${deliveries} roots=${s.roots} hits=${s.hits} misses=${s.misses} ` +
+        `replayedNodes=${s.replayedNodes} walkedHiddenNodes=${s.walkedHiddenNodes} nodeHitRate=${rateOf(s).toFixed(3)} ` +
+        `replayedCaptures=${s.replayedCaptures} missReasons=${JSON.stringify(s.missReasons)} ` +
+        `notRecorded=${JSON.stringify(s.notRecorded)} entries=${s.entries}`);
+    }
     expect(deliveries).toBeGreaterThan(100);
-    expect(s.hits).toBeGreaterThan(0);
+    // The stream does capture under a hidden root, and with captures recorded the memo replays nearly all of it.
+    expect(memos.capturesOn.stats.replayedCaptures).toBeGreaterThan(0);
+    expect(rateOf(memos.capturesOn.stats)).toBeGreaterThanOrEqual(0.9);
   }, 300_000);
 });

@@ -21,8 +21,18 @@ type FontRegistration = { family: string; url: string; weight: string | null; st
   loads: Array<{ font: string; text: string; loadedFaces: Array<{ family: string; weight: string; style: string;
     stretch: string; status: string }> }> };
 const diagnosticRegistrations = new Map<string, FontRegistration>();
-const corpusDiagnosticEnabled = () => typeof window !== "undefined" &&
-  new URLSearchParams(window.location.search).get("rustTextInkCorpus") === "1";
+// Cached on `location.search` itself (R2-P3): this runs for every text node of every build via `semanticText` →
+// `ensureNodeFonts`, and the search string only ever changes on a navigation, never between two calls in the same
+// build. Exact by construction — a stale cache is impossible because the key IS the value being cached against.
+let corpusDiagnosticCache: { search: string; enabled: boolean } | null = null;
+const corpusDiagnosticEnabled = (): boolean => {
+  if (typeof window === "undefined") return false;
+  const search = window.location.search;
+  if (corpusDiagnosticCache === null || corpusDiagnosticCache.search !== search) {
+    corpusDiagnosticCache = { search, enabled: new URLSearchParams(search).get("rustTextInkCorpus") === "1" };
+  }
+  return corpusDiagnosticCache.enabled;
+};
 
 /** Diagnostic receipt for the CSS rule actually injected by this adapter. */
 export function mirrorFontRegistration(family: string): FontRegistration | null {

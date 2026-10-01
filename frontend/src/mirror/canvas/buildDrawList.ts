@@ -1430,9 +1430,12 @@ export function buildDrawList(
         pinnedLocals,
         taintKeys: [
           transformOverrides?.keys(), alphaOverrides?.keys(), localAnims?.keys(), frameSubstitutes?.keys(),
-          cosmeticOffsets?.keys(), capture?.ids, skipRoots, renderWidthOverrides?.keys()
+          cosmeticOffsets?.keys(), skipRoots, renderWidthOverrides?.keys()
         ],
-        sink: { nodePaintInputs, viewScaleStamps, viewScaleCandidates, stats, onNode, semanticNode: options.semanticNode }
+        // A taint key set too, or recorded and replayed — the memo's `captures` switch decides.
+        captureIds: capture?.ids ?? null,
+        sink: { nodePaintInputs, viewScaleStamps, viewScaleCandidates, stats, captureOut: capture?.out ?? null, onNode,
+          semanticNode: options.semanticNode }
       })
     : null;
   /** The recording the walk is appending to, while it is inside an outermost hidden root being recorded. */
@@ -1922,9 +1925,15 @@ export function buildDrawList(
       memoRec.inputs.push(input);
     }
     if (capture !== null && capture.ids.has(id)) {
-      capture.out.set(id, { g: gSpread, parentTy: parentDrawTy, drawn: gFinal, modulate: [ownR, ownG, ownB, ownOpacity] });
+      const captured: CapturedGlobal = {
+        g: gSpread, parentTy: parentDrawTy, drawn: gFinal, modulate: [ownR, ownG, ownB, ownOpacity]
+      };
+      capture.out.set(id, captured);
       if (diagnosticHidden) hiddenWalk!.captures++;
-      if (memoRec !== null) memoRec.refuse = "capture";
+      if (memoRec !== null) {
+        memoRec.captureIds.push(id);
+        memoRec.captures.push(captured);
+      }
     }
 
     // CLIP — opened before the whole subtree (behind children included: they are inside the clipper's box in the
