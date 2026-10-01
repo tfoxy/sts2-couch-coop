@@ -644,6 +644,94 @@ Traps: the map's resting offset in `probe-map-visible.ndjson` is `+204.79`, so a
 an upward one clamps at `MAP_LIMIT_HI` almost at once — pick the direction deliberately. And a gesture whose travel
 IS a whole multiple of 80px proves nothing about quantisation; the equality arm uses `deltaY: 37` for that reason.
 
+### 5.y Quick optimization A/B (`scripts/bench-rust-ab.mjs`)
+
+A deliberately LIGHTWEIGHT instrument for "does this query flag move renderer/GPU CPU" — no oracle, no freeze,
+no review gate, no hash ceremony. It runs N alternating cells through the existing `bench-mirror-replay.mjs`
+(one process per cell, `--repeats 1`), reads the numbers that bench already measures out of its `--result-json`,
+and prints a table. For the kind of pass/fail qualification campaign `rust-prototype` work used before (control
+configs, SHA-pinned oracles, `profile-mirror-rust.mjs capture`), see `.sts2/bench/*-controls-prep/` and the
+`mirror-bench` agent instead — this is the other end of the scale, for "is this worth pursuing at all" before
+committing to that machinery. Record an accepted result in
+[docs/agents/renderer-optimization-ledger.md](renderer-optimization-ledger.md).
+
+**STAGE GATE, read this first.** A `?stage=canvas`/`?stage=rust` URL is a REQUEST for the Rust backend, not
+proof it loaded — if the Wasm module 404s/403s the page silently falls back to the DOM renderer and every CPU
+number from that cell describes the wrong backend while looking completely normal (this happened on the first
+cut of this recipe: a worktree's `.sts2/rust-prototype-web` was a symlink whose REALPATH pointed outside Vite's
+`server.fs.allow`, so `/@fs/.../rust_prototype_bg.wasm` 403'd, the page fell back to DOM, and the runner reported
+a plausible-looking ~1.3s "renderer CPU" that was actually the DOM reconciler walking 682 times). So every cell
+is gated: `perRepeat[0].rendererWindow.{before,after}.backend` must equal the expected backend (inferred `rust`
+from `stage=canvas`/`stage=rust` in the URL; override with `--expect-backend`), both `.ready` must be `true`,
+`result.walkStats.walks` must be `0` under the rust backend specifically (the legacy DOM walk reconciler must
+never run there — a nonzero count IS the fallback tell), and no `.wasm`/`rust_prototype` URL may show a non-2xx
+in `result.responseErrors`. A gate failure is a FAILED cell, excluded from every arm mean; its numbers stay in
+the per-cell row only so you can see what the wrong backend looked like.
+
+The default `@couchcoop/rust-prototype-glue` Vite alias resolves `.sts2/rust-prototype-web/rust_prototype.js`
+**relative to the checkout actually serving the page** (`frontend/vite.config.ts`'s
+`fromHere("../.sts2/rust-prototype-web")`), and Vite's `server.fs.allow` is realpath-checked — so that
+directory must be a REAL file (or a symlink whose realpath lands inside `server.fs.allow`: the checkout root,
+`../spirectl`, `../godot-scene-web`). A worktree needs its own populated `.sts2/rust-prototype-web/` (built via
+`scripts/build-rust-prototype.sh`, or copied — not symlinked to a path outside those roots). With that in
+place, a plain `npx vite` needs **no** `VITE_RUST_*`/`COUCHCOOP_*` env vars at all. Those vars
+(`COUCHCOOP_GSW_ROOT`, `COUCHCOOP_DEV_BG_FIXTURE`, `VITE_RUST_PROTOTYPE_MODULE_URL`,
+`VITE_RUST_SCENE_SERIALIZER_URL`, …) exist for `scripts/profile-mirror-rust.mjs`'s OWN scratch server, which
+points at an ARTIFACT LIVING SOMEWHERE ELSE entirely (e.g. the primary checkout's `.sts2/rust-prototype-web`
+from a different worktree) — only reach for them when you deliberately want that.
+
+```bash
+# 1. dev server from the checkout UNDER TEST — plain npx vite, no scratch-server ceremony, no env vars (see
+#    the stage-gate note above for when .sts2/rust-prototype-web needs to be populated first).
+cd frontend && npx vite --host 127.0.0.1 --port 5371 --strictPort
+
+# 2. the A/B. --config reuses an existing control-config.json's url/resRoot/assetCacheRoot/recording/browser/
+#    benchArgs/quality/effects (see .sts2/bench/*-controls-prep/*-config.json for the shape); --arm NAME=<query>
+#    appends its query string onto the config's own URL, --order is the cell sequence. Cells are UNTRACED by
+#    default (--report --untraced-report) so Chrome tracing's own overhead never perturbs the CPU measured.
+node scripts/bench-rust-ab.mjs --config <control-config.json> \
+  --arm OFF= --arm ON=rustSomeFlag=1 --order OFF,ON,ON,OFF,OFF,ON,ON,OFF \
+  --out .sts2/bench/quick-ab-<name> --owner quickab --dry-run   # print the commands first
+node scripts/bench-rust-ab.mjs --config <control-config.json> \
+  --arm OFF= --arm ON=rustSomeFlag=1 --order OFF,ON,ON,OFF,OFF,ON,ON,OFF \
+  --out .sts2/bench/quick-ab-<name> --owner quickab
+
+# 3. one TRACED cell per arm (--traced writes <cell>/trace.json), for a phase breakdown instead of just a total.
+#    --traced and the config's --ordinal-window/--ordinal-*-sha256 flags are REJECTED together by
+#    bench-mirror-replay.mjs ("untraced warm --window" only) — drop the ordinal flags for a traced cell.
+node scripts/bench-rust-ab.mjs --config <control-config.json> --traced \
+  --arm ON=rustSomeFlag=1\&rustExecutionPhases=1\&rustProducerReasons=1 --order ON \
+  --out .sts2/bench/quick-ab-<name>-traced --owner quickab
+node scripts/analyze-phase-cpu.mjs .sts2/bench/quick-ab-<name>-traced/0-ON/trace.json
+
+# 4. a JS/Wasm sample-count breakdown of one cell:
+node scripts/bench-rust-ab.mjs --config <control-config.json> --arm ON=rustSomeFlag=1 --order ON \
+  --out .sts2/bench/quick-ab-<name>-profiled --owner quickab --extra-bench-args '--js-profile <name>.json'
+node scripts/summarize-js-profile.mjs .sts2/bench/profiles/<name>.json
+```
+
+Every cell runs under `scripts/live-qa-lock.mjs with` (see the `couch-live-lock` skill) using the config's own
+`requiredLeaseResources`, or `exclusive:bench:desktop` / `exclusive:browser:desktop-rust-replay` /
+`exclusive:port:<vite>` / `exclusive:port:<asset>` when there is none. `bench-rust-ab.mjs` always adds
+`--report <cell>/report.json` to every cell — that is the switch that turns on bench-mirror-replay's /proc
+`processIdentity` capture at all (the PRIMARY CPU source here: `processCpuMs` summed per role, deduped by pid —
+not the Chrome-trace `cpu.byProcess` block, which is only ever present on a `--traced` cell and only ever
+reported as `secondary`) — so a cell can exit 1 from the perf-report/1 envelope's own strict gates (most
+commonly "layerCount UNMEASURED", since this runner deliberately does not pass `--layers`) while still having
+written a perfectly good `result.json`; the runner treats that as success and only calls a cell FAILED on the
+stage gate above, a missing/unparsable `result.json`, a crashed repeat, or neither `cpu` nor `processIdentity`
+coming back at all. If a cell crashes on "no …DecodeImageIfNecessary/…ImageDecodeTask… events matched", add
+`--allow-unmeasured-decode` via `--extra-bench-args` — decode tracing is unrelated to the CPU totals this runner
+reads. Renderer MAIN-THREAD CPU needs a `CrRendererMain` thread name, which only a `--traced` cell's
+`processIdentity` rows carry — it reads "n/a" on every untraced (default) cell, by design.
+
+**Noise**: an OFF/OFF spread has historically run 2.5–11.6% on this box. Use at least 4 cells per arm, alternate
+the order (`OFF,ON,ON,OFF,...`, never `OFF,OFF,OFF,ON,ON,ON`), and read `summary.json`'s per-arm `spread`
+alongside the mean — a Δ% smaller than the spread is not a finding.
+
+**`npm run build` DEPLOYS — never run it for this.** The dev server above (`npx vite`) is the only server command
+this recipe uses.
+
 ## 6. Test-suite commands
 
 | Suite | Command | Notes |
