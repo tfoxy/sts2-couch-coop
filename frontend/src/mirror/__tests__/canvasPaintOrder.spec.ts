@@ -11,13 +11,15 @@ import { beforeEach, describe, expect, it } from "vitest";
 import {
   assertContiguousSpans,
   buildPaintOrder,
-  createPaintOrderCache
+  createPaintOrderCache,
+  type PaintOrder
 } from "@/mirror/canvas/paintOrder";
 import { createMirrorRenderer, type MirrorRenderer } from "@/mirror/mirrorRenderer";
 import {
   applySceneDelta,
   createMirrorState,
   parseSceneDelta,
+  type MirrorDelta,
   type MirrorNode,
   type MirrorState
 } from "@/mirror/sceneTree";
@@ -313,6 +315,233 @@ describe("PaintOrderCache", () => {
     buildPaintOrder(state, cache);
     state.nodes.delete("k");
     expect(cache.noteChanged(state, ["k"])).toBe(1);
+  });
+});
+
+// --- complete-order reuse (`ccPaintOrderReuse`) ---------------------------------------------------------------
+//
+// The reuse path hands back the PREVIOUS PaintOrder object whenever the reconciler's changed-id pass says nothing
+// that orders the scene moved. Each case drives it the way the renderer does — `applySceneDelta`, then
+// `invalidateAll` on a keyframe and `noteChanged` with the accumulated changed ids, then a build — and requires the
+// answer to equal a fresh, cache-free `buildPaintOrder` of the same state.
+
+function orderShape(order: PaintOrder): unknown {
+  const parents: (string | null)[] = [null, ...order.ids];
+  return {
+    ids: [...order.ids],
+    rootIds: [...order.rootIds],
+    entries: [...order.entries],
+    children: parents.map((id) => [id, [...order.childrenOf(id)], order.behindCountOf(id)])
+  };
+}
+
+function orderDelta(
+  upserts: MirrorNode[],
+  removedIds: string[] = [],
+  orderedIds: string[] | null = null,
+  full = false
+): MirrorDelta {
+  return { full, screenType: "combat", upserts, removedIds, orderedIds, orderPatch: null, hints: [], cardFlights: [] };
+}
+
+describe("PaintOrderCache complete-order reuse", () => {
+  /** A renderer-shaped driver: one cache, one state, and the reconcile-then-build sequence. */
+  function driver(nodes: MirrorNode[]) {
+    const state = createMirrorState();
+    applySceneDelta(state, orderDelta(nodes, [], preOrder(nodes), true));
+    const cache = createPaintOrderCache();
+    const reconcile = () => {
+      if (state.sceneRewrite) cache.invalidateAll();
+      cache.noteChanged(state, state.changedIds);
+    };
+    /** Build with reuse, compare with a fresh build, and (by default) consume the changed ids like a presented paint. */
+    const build = (consume = true): PaintOrder => {
+      const reused = buildPaintOrder(state, cache, { reuseCompleteOrder: true });
+      expect(orderShape(reused)).toStrictEqual(orderShape(buildPaintOrder(state)));
+      if (consume) {
+        state.changedIds.clear();
+        state.sceneRewrite = false;
+      }
+      return reused;
+    };
+    const upsert = (id: string, over: Partial<MirrorNode>, orderedIds: string[] | null = null) =>
+      applySceneDelta(state, orderDelta([{ ...state.nodes.get(id)!, ...over }], [], orderedIds));
+    return { state, cache, reconcile, build, upsert };
+  }
+
+  const family = () => [
+    mkNode("P", null),
+    mkNode("a", "P"),
+    mkNode("b", "P"),
+    mkNode("c", "P", { showBehindParent: true }),
+    mkNode("a1", "a"),
+    mkNode("a2", "a"),
+    mkNode("Q", null),
+    mkNode("q1", "Q")
+  ];
+
+  it("reuses the same object across repeated builds at one revision, and after a volatile-only change", () => {
+    const { state, cache, reconcile, build, upsert } = driver(family());
+    reconcile();
+    const first = build();
+    reconcile();
+    expect(build()).toBe(first);
+    upsert("a1", { transform: [1, 0, 0, 1, 9, 9] });
+    reconcile();
+    expect(build()).toBe(first);
+    expect(cache.stats.completeHits).toBe(2);
+    expect(state.revision).toBe(2);
+  });
+
+  it("re-sorts on a z change of two siblings and on a show-behind flip", () => {
+    const { reconcile, build, upsert } = driver(family());
+    reconcile();
+    const first = build();
+    upsert("a", { zIndex: 5 });
+    upsert("b", { zIndex: -2 });
+    reconcile();
+    const second = build();
+    expect(second).not.toBe(first);
+    expect(second.childrenOf("P")).toEqual(["c", "b", "a"]);
+    upsert("a2", { showBehindParent: true });
+    reconcile();
+    expect(build().childrenOf("a")).toEqual(["a2", "a1"]);
+  });
+
+  it("follows a reparent, and a removal that leaves an orphan with the order untouched", () => {
+    const { state, reconcile, build, upsert } = driver(family());
+    reconcile();
+    build();
+    upsert("a1", { parentId: "Q" }, ["P", "a", "a2", "b", "c", "Q", "q1", "a1"]);
+    reconcile();
+    expect(build().childrenOf("Q")).toEqual(["q1", "a1"]);
+    // Removing `a` without a new order: `a2` keeps naming it and is held as a stage root.
+    applySceneDelta(state, orderDelta([], ["a"]));
+    reconcile();
+    const orphaned = build();
+    expect(orphaned.rootIds).toContain("a2");
+    reconcile();
+    expect(build()).toBe(orphaned);
+  });
+
+  it("rebuilds after a keyframe and an explicit invalidateAll", () => {
+    const { state, cache, reconcile, build } = driver(family());
+    reconcile();
+    const first = build();
+    applySceneDelta(state, orderDelta(family().reverse(), [], preOrder(family()).reverse().filter((id) => id !== "a1"), true));
+    reconcile();
+    const keyed = build();
+    expect(keyed).not.toBe(first);
+    cache.invalidateAll();
+    reconcile();
+    expect(build()).not.toBe(keyed);
+  });
+
+  it("refuses to reuse at a revision the changed-id pass has not validated", () => {
+    const { state, cache, reconcile, build, upsert } = driver(family());
+    reconcile();
+    const first = build();
+    // A delta lands and a build runs BEFORE the reconciler's pass (the clock path does this).
+    upsert("b", { zIndex: 7 });
+    const misses = cache.stats.completeMisses;
+    const early = build(false);
+    expect(early).not.toBe(first);
+    expect(cache.stats.completeMisses).toBe(misses + 1);
+    expect(early.childrenOf("P")).toEqual(["c", "a", "b"]);
+    // …and the late pass over the same ids keeps the order the unvalidated build already rebuilt.
+    reconcile();
+    expect(build()).toBe(early);
+    void state;
+  });
+
+  it("matches a fresh build through a randomized delta sequence", () => {
+    let seed = 0xc0ffee;
+    const rand = (): number => {
+      seed = (seed + 0x6d2b79f5) | 0;
+      let t = seed;
+      t = Math.imul(t ^ (t >>> 15), t | 1);
+      t ^= t + Math.imul(t ^ (t >>> 7), t | 61);
+      return ((t ^ (t >>> 14)) >>> 0) / 4294967296;
+    };
+    const pick = <T,>(items: readonly T[]): T => items[Math.floor(rand() * items.length)];
+    let serial = 0;
+    const fresh = (parentId: string | null) => mkNode(`n${serial++}`, parentId, {
+      zIndex: rand() < 0.2 ? Math.floor(rand() * 5) - 2 : null,
+      showBehindParent: rand() < 0.2
+    });
+    const nodes: MirrorNode[] = [];
+    for (let i = 0; i < 40; i++) nodes.push(fresh(nodes.length === 0 || rand() < 0.15 ? null : pick(nodes).id));
+    const { state, cache, reconcile, build } = driver(nodes);
+    const live = () => [...state.nodes.values()];
+    const descendants = (id: string): Set<string> => {
+      const out = new Set([id]);
+      let grew = true;
+      while (grew) {
+        grew = false;
+        for (const node of state.nodes.values()) {
+          if (node.parentId != null && out.has(node.parentId) && !out.has(node.id)) {
+            out.add(node.id);
+            grew = true;
+          }
+        }
+      }
+      return out;
+    };
+    const kinds: Record<string, number> = {};
+    for (let step = 0; step < 600; step++) {
+      const roll = rand();
+      const all = live();
+      let kind = "rebuild";
+      if (roll < 0.2 && all.length > 0) {
+        kind = "z";
+        const parentId = pick(all).parentId;
+        const siblings = all.filter((n) => n.parentId === parentId);
+        applySceneDelta(state, orderDelta([pick(siblings), pick(siblings)].map((n) => ({
+          ...n,
+          zIndex: Math.floor(rand() * 7) - 3,
+          showBehindParent: rand() < 0.5 ? n.showBehindParent : !n.showBehindParent
+        }))));
+      } else if (roll < 0.3 && all.length > 0) {
+        kind = "volatile";
+        const node = pick(all);
+        applySceneDelta(state, orderDelta([{ ...node, transform: [1, 0, 0, 1, rand(), rand()] }]));
+      } else if (roll < 0.38 && all.length > 2) {
+        kind = "reparent";
+        const node = pick(all);
+        const banned = descendants(node.id);
+        const target = pick([...all.filter((n) => !banned.has(n.id)).map((n) => n.id), null]);
+        const moved = live().map((n) => (n.id === node.id ? { ...n, parentId: target } : n));
+        applySceneDelta(state, orderDelta([{ ...node, parentId: target }], [], preOrder(moved)));
+      } else if (roll < 0.46) {
+        kind = "add";
+        const node = fresh(all.length > 0 && rand() < 0.9 ? pick(all).id : null);
+        applySceneDelta(state, orderDelta([node], [], preOrder([...live(), node])));
+      } else if (roll < 0.54 && all.length > 6) {
+        kind = rand() < 0.5 ? "remove-orphan" : "remove";
+        const id = pick(all).id;
+        applySceneDelta(state, orderDelta([], [id], kind === "remove" ? preOrder(live().filter((n) => n.id !== id)) : null));
+      } else if (roll < 0.57) {
+        kind = "keyframe";
+        applySceneDelta(state, orderDelta(live().map((n) => ({ ...n })), [], preOrder(live()), true));
+      } else if (roll < 0.6) {
+        kind = "invalidateAll";
+        cache.invalidateAll();
+      }
+      kinds[kind] = (kinds[kind] ?? 0) + 1;
+      if (rand() < 0.15) {
+        // An unvalidated build first: the changed-id pass has not run for this revision yet.
+        build(false);
+      }
+      reconcile();
+      build(rand() < 0.8); // a fifth of the builds leave the changed ids to accumulate, like an unpresented paint
+      if (rand() < 0.3) {
+        reconcile();
+        build();
+      }
+    }
+    expect(cache.stats.completeHits).toBeGreaterThan(100);
+    expect(cache.stats.completeMisses).toBeGreaterThan(100);
+    expect(Object.keys(kinds).length).toBe(9);
   });
 });
 

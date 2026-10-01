@@ -4,10 +4,11 @@ import { buildDrawList, streamedAlphasOf, type DrawListBuild } from "@/mirror/ca
 import { baselineOf, layoutText, resolveTextSpec, type TextSpan } from "@/mirror/canvas/textLayout";
 import { parseSimpleRich } from "@/mirror/canvas/richSimple";
 import { createPaintOrderCache } from "@/mirror/canvas/paintOrder";
+import { createHiddenSubtreeMemo } from "@/mirror/canvas/hiddenSubtreeMemo";
 import { createHitMemo, resolveSceneInfo } from "@/mirror/canvas/hitTest";
 import { canvasBlend, createPaintScratch, normalizeFlip, type NodePaintInput, type OverlayRecord } from "@/mirror/canvas/paintSpec";
 import { atlasFitAffine } from "@/mirror/nodeStyles";
-import { ensureNodeFonts, loadMirrorFont } from "@/mirror/fonts";
+import { ensureNodeFonts, fontFaceInjectionVersion, loadMirrorFont } from "@/mirror/fonts";
 import { resolveTextScaleDecls } from "@/mirror/textScaleClasses";
 import { stageBackingSize } from "@/mirror/canvas/stageBacking";
 import { renderQuality, stagePixelRatio } from "@/render/quality";
@@ -37,8 +38,13 @@ import { affineInverse, affineMul, type Affine } from "@/mirror/affine";
 import { rendererComparisonConfig, setRendererRuntimeStatus } from "@/mirror/rendererComparison";
 import { SAMPLE_LOCAL_ANIM, SAMPLE_OPACITY, SAMPLE_SELF_OPACITY, SAMPLE_SOURCE } from "@/mirror/canvas/tweenLoop";
 import { createRetainedPixiComposition, type RetainedPixiPatch } from "./retainedComposition";
+import { resolveRustFastFlags } from "./rustFastFlags";
 import type { GlyphPassRegistry, GlyphPassStats } from "@/mirror/canvas/glyphPass";
 import { preparePixiGlyph } from "./pixiGlyphText";
+import {
+  buildPreparedText, composePreparedTextRecords, createFontCheckCache, createTextPrepCache,
+  resolveSemanticTextSpec, type PreparedText, type TextPrepRefusal
+} from "./rustTextPreparation";
 import { createFrameLifecycleDiagnostic } from "./frameLifecycleDiagnostic";
 import { createAsyncPresentationGate } from "./asyncPresentationGate";
 import { emitBusyStartupEvent } from "./busyStartupEvent";
@@ -170,7 +176,15 @@ export function createPixiMirrorRenderer(
   let pixi: MirrorDrawExecutor | null = null;
   const attributionQuery = new URLSearchParams(window.location.search);
   const spreadAuditEnabled = attributionQuery.get("spreadAudit") === "1";
-  const paintOrderReuse = attributionQuery.get("ccPaintOrderReuse") === "1";
+  const fast = resolveRustFastFlags(attributionQuery, backend);
+  const paintOrderReuse = fast.paintOrderReuse;
+  // Text-preparation and font-check caches (rustFast). Each is null when its switch is off; see
+  // rustTextPreparation.ts for what each one validates. A font set without load events could never
+  // invalidate the check cache, so such a document keeps checking directly.
+  const textPrepCache = fast.textPrepCache ? createTextPrepCache() : null;
+  const documentFonts = stage.ownerDocument.fonts;
+  const fontCheckCache = fast.fontCheckCache && typeof documentFonts?.addEventListener === "function"
+    ? createFontCheckCache(documentFonts, fontFaceInjectionVersion) : null;
   const traceFrames = backend === "pixi" && attributionQuery.get("ccTraceFrames") === "1";
   const traceStamp = traceFrames && typeof console.timeStamp === "function"
     ? (label: string) => console.timeStamp(label) : null;
@@ -204,8 +218,9 @@ export function createPixiMirrorRenderer(
   let hiddenWalkOverflow = false;
   const rustExecutionPhaseMode = backend === "rust" && attributionQuery.get("rustExecutionPhases") === "1";
   requireSingleProfileMode(!!profile, rustExecutionPhaseMode);
-  const rustOmitStaticPixelCaches = backend === "rust" && attributionQuery.get("rustOmitStaticPixelCaches") === "1";
+  const rustOmitStaticPixelCaches = fast.omitStaticPixelCaches;
   const rustSkipHiddenHitCandidates = backend === "rust" && attributionQuery.get("rustSkipHiddenHitCandidates") === "1";
+  const hiddenMemo = backend === "rust" && fast.hiddenMemo ? createHiddenSubtreeMemo() : null;
   const rustStaticAdmissionPhaseMode = backend === "rust" && attributionQuery.get("rustStaticAdmissionPhase") === "1";
   // The reviewed ack repair stays opt-in until a warm view/client capture qualifies it for the product default.
   const rustPendingAckRetry = backend === "rust" && attributionQuery.get("rustPendingAckRetry") === "1";
@@ -286,6 +301,19 @@ export function createPixiMirrorRenderer(
   let retained = null as ReturnType<typeof createRetainedPixiComposition> | null;
   const retainedDiagnosticFields = new Map<string, { alpha?: number; source?: { texture: string | null; x: number; y: number; w: number; h: number } }>();
   let retainedValid = false;
+  // rustLazyComposition: a committed composition indexes its patch inputs on first use. `paintGeneration` moves
+  // whenever paint() starts rewriting the list, texts and owners that index would read.
+  let paintGeneration = 0, lazyCompositionIndexBuilds = 0, lazyCompositionVerifyMismatches = 0;
+  let lazyCompositionVerifyFirstMismatch: string | null = null;
+  const compositionLaziness = fast.lazyComposition ? { lazyPatchIndex: true, inputGeneration: () => paintGeneration,
+    strictInputs: import.meta.env.MODE === "test" || fast.verify, onPatchIndex: () => { lazyCompositionIndexBuilds++; },
+    verify: fast.verify ? { onMismatch: (method: string, detail: string) => {
+      lazyCompositionVerifyMismatches++; lazyCompositionVerifyFirstMismatch ??= `${method}: ${detail}`; } } : undefined } : {};
+  // rustSnapshotReuse: the live node map a pristine committed copy was taken from (null once a wire patch edits
+  // that copy), plus the static-background skip roots of one (node map, revision, background).
+  let snapshotNodesSource: ReadonlyMap<string, MirrorNode> | null = null;
+  let staticSkipMemo: { nodes: ReadonlyMap<string, MirrorNode>; revision: number; background: object; roots: Set<string> } | null = null;
+  let snapshotNodeReuses = 0, staticSkipRootReuses = 0, rewardFocusSkips = 0;
   const retainedMode = rendererComparisonConfig.pixiScene === "retained";
   const textMode = backend === "rust" ? "native" : rendererComparisonConfig.pixiText;
   const asyncPresentation = createAsyncPresentationGate();
@@ -510,6 +538,58 @@ if (isPromiseLike<PresentationResult>(result)) {
   function semanticText(input: NodePaintInput, record: OverlayRecord, insertionIndex: number): boolean {
     const node = input.node;
     ensureNodeFonts(node);
+    // Both caches are independent switches (rustFastFlags umbrella semantics), so `fontReady` is shared by both
+    // branches below rather than duplicated: with `fontCheckCache` off it is exactly `fonts.check(...)`, same as
+    // before this round: `fontReady` is only ever called from inside an `if (fonts && ...)` guard.
+    const fonts = document.fonts;
+    const fontReady = (cssFont: string, text: string): boolean =>
+      fontCheckCache ? fontCheckCache.check(cssFont, text, fontVersion, fast.verify) : fonts!.check(cssFont, text);
+
+    if (textPrepCache) {
+      const nodes = input.nodes ?? state?.nodes ?? new Map();
+      const prepared = textPrepCache.resolve(node, nodes, fontVersion, textMode, fast.verify, (): PreparedText | TextPrepRefusal => {
+        const resolved = resolveSemanticTextSpec(node, nodes);
+        if ("refusal" in resolved) return resolved;
+        if (!measureContext) return { refusal: "no-measure-context" };
+        nativeLayouts++;
+        return buildPreparedText(resolved, fontVersion, node.font!,
+          (value) => measureContext.measureText(value).width,
+          (cssFont) => { measureContext.font = cssFont; const sample = measureContext.measureText("Mg");
+            return { ascent: sample.fontBoundingBoxAscent || sample.actualBoundingBoxAscent,
+              descent: sample.fontBoundingBoxDescent || sample.actualBoundingBoxDescent }; });
+      });
+      if ("refusal" in prepared) { semanticFailures.set(node.id, prepared.refusal); return false; }
+      if (fonts && !fontReady(prepared.spec.cssFont, prepared.spec.text) &&
+          !fontPending.has(prepared.spec.cssFont) && !fontFailed.has(prepared.spec.cssFont)) {
+        fontPending.add(prepared.spec.cssFont);
+        void loadMirrorFont(fonts, prepared.spec.cssFont, prepared.spec.text, prepared.spec.family)
+          .then(() => { if (!disposed) { fontVersion++; textLayoutCache.clear(); } })
+          .catch(() => { if (!disposed) fontFailed.add(prepared.spec.cssFont); })
+          .finally(() => { fontPending.delete(prepared.spec.cssFont); wakeForResource(); });
+      }
+      const nativeParts = composePreparedTextRecords(prepared, node.id, insertionIndex, record, canvasBlend(node));
+      const textStart = texts.length;
+      if (textMode === "native" || nativeParts.length === 0) {
+        texts.push(...nativeParts);
+      } else {
+        const carrierKey = `${node.id}:glyph`;
+        const preparedGlyph = preparePixiGlyph(glyphRegistry, prepared.spec, prepared.layout, node.font!,
+          record.transform, dpr, prepared.layoutKey, canvasBlend(node) === 0);
+        texts.push({ ...nativeParts[0], key: carrierKey, transform: [...record.transform],
+          text: prepared.spec.text, glyph: preparedGlyph.glyph, fallbackReason: preparedGlyph.fallbackReason,
+          nativeFallback: nativeParts.map((part) => ({ ...part, alpha: 1, tint: 0xffffff, blend: 0 })) });
+      }
+      for (let i = textStart; i < texts.length; i++) {
+        const text = texts[i];
+        textOwners.set(text.key, node.id);
+        const keys = textKeysByOwner.get(node.id) ?? [];
+        keys.push(text.key);
+        textKeysByOwner.set(node.id, keys);
+      }
+      return true;
+    }
+
+    // --- default path: unchanged from before rustFast WP3 (textPrepCache off = byte-identical behavior) -------
     const scene = resolveSceneInfo(node.id, input.nodes ?? state?.nodes ?? new Map());
     const decls = resolveTextScaleDecls(scene?.file ?? null, scene?.relPath ?? null);
     let spec = resolveTextSpec(node, decls);
@@ -524,8 +604,7 @@ if (isPromiseLike<PresentationResult>(result)) {
       spans = parsed.value.spans.length ? parsed.value.spans : undefined;
     }
     if (spec.refusal || !measureContext) { semanticFailures.set(node.id, spec.refusal ?? "no-measure-context"); return false; }
-    const fonts = document.fonts;
-    if (fonts && !fonts.check(spec.cssFont, spec.text) && !fontPending.has(spec.cssFont) && !fontFailed.has(spec.cssFont)) {
+    if (fonts && !fontReady(spec.cssFont, spec.text) && !fontPending.has(spec.cssFont) && !fontFailed.has(spec.cssFont)) {
       fontPending.add(spec.cssFont);
       void loadMirrorFont(fonts, spec.cssFont, spec.text, spec.family)
         .then(() => { if (!disposed) { fontVersion++; textLayoutCache.clear(); } })
@@ -647,6 +726,7 @@ if (isPromiseLike<PresentationResult>(result)) {
     lifecycle?.startPhase("prepare");
     if (traceId !== null) traceStamp!(`cc:frame:${traceId}:couch:prepare:start`);
     retainedValid = false;
+    paintGeneration++;
     texts.length = 0;
     textOwners.clear();
     textKeysByOwner.clear();
@@ -654,11 +734,17 @@ if (isPromiseLike<PresentationResult>(result)) {
     const capturedGlobals = new Map(); const captureIds = new Set<string>(); interaction.collectCaptureIds(captureIds); visual.collectLandingCaptureIds(captureIds);
     visual.prepareBuild(next); interaction.prepareBuild(); spreadDxByNode.clear(); spreadFieldModeByNode.clear();
     list.reset();
-    const skipRoots = new Set<string>();
+    let skipRoots = new Set<string>();
     if (staticBackground) {
       const q = scratch.quad; q.m.set([1,0,0,1,(stage.clientWidth-2520)/2,0]); q.w=2520; q.h=1080; q.srcX=0; q.srcY=0; q.srcW=2520; q.srcH=1080;
       q.r=1; q.g=1; q.b=1; q.a=1; q.blend=0; q.flipH=false; q.flipV=false; q.hasColorMatrix=false; list.pushQuad(q, staticBackground.url);
-      for (const node of next.nodes.values()) if (staticBgTargetPathOf(node, next.nodes) !== null && isStaticBackgroundSuppressibleRoot(node, next.nodes)) skipRoots.add(node.id);
+      // Every node-map change bumps the revision, so one (map, revision) answers the scan for every rebuild.
+      if (staticSkipMemo?.nodes === next.nodes && staticSkipMemo.revision === next.revision &&
+        staticSkipMemo.background === staticBackground) { skipRoots = staticSkipMemo.roots; staticSkipRootReuses++; }
+      else {
+        for (const node of next.nodes.values()) if (staticBgTargetPathOf(node, next.nodes) !== null && isStaticBackgroundSuppressibleRoot(node, next.nodes)) skipRoots.add(node.id);
+        if (fast.snapshotReuse) staticSkipMemo = { nodes: next.nodes, revision: next.revision, background: staticBackground, roots: skipRoots };
+      }
     }
     lifecycle?.endPhase("prepare");
     if (traceId !== null) traceStamp!(`cc:frame:${traceId}:couch:prepare:end`);
@@ -667,6 +753,7 @@ if (isPromiseLike<PresentationResult>(result)) {
       profilePhase: profileIdentity ? (phase, run) => profile!.span(profileIdentity, `couch.draw-${phase}`, run) : undefined,
       structureReuse: paintOrderReuse, hitMemo, skipRoots,
       skipHiddenHitCandidates: rustSkipHiddenHitCandidates,
+      hiddenSubtreeMemo: hiddenMemo, hiddenSubtreeMemoVerify: fast.verify,
       hiddenWalkDiagnostic: hiddenWalkMode ? (summary) => {
         if (hiddenWalkRows.length < 1024) hiddenWalkRows.push({ buildId: producerBuilds + 1, revision: next.revision, summary });
         else hiddenWalkOverflow = true;
@@ -732,8 +819,13 @@ const producerStarted = rustPhaseTimingMode || producerReasonMode ? performance.
       windowPhase: typeof (window as unknown as { __benchWindowMark?: unknown }).__benchWindowMark === "number"
         ? (window as unknown as { __benchWindowMark: number }).__benchWindowMark : null });
     const frameBuild = build!;
-    const candidateNodes = new Map(next.nodes);
-    const candidateOrderedIds = frameBuild.order.ids.slice();
+    // A pristine committed copy of this same live map at this revision is the map a fresh copy would produce:
+    // only applySceneDelta edits the live map, and it always bumps the revision. A build's paint order and hit
+    // list are never edited after it returns, so snapshot reuse publishes them without copies.
+    const reuseNodes = fast.snapshotReuse && snapshotNodesSource === next.nodes && snapshot?.stateRevision === next.revision;
+    if (reuseNodes) snapshotNodeReuses++;
+    const candidateNodes = reuseNodes ? snapshot!.scene.nodes : new Map(next.nodes);
+    const candidateOrderedIds = fast.snapshotReuse ? frameBuild.order.ids : frameBuild.order.ids.slice();
     const interactionCandidate = interaction.captureBuild();
     const landingCandidate = visual.captureLandingPresentation(next, lastSampleClock ?? candidateClock ?? performance.now(),
       capturedGlobals, interactionCandidate.cosmeticOffsets);
@@ -766,7 +858,7 @@ const producerStarted = rustPhaseTimingMode || producerReasonMode ? performance.
           backend === "rust" ? { includeStaticPixelCaches: !rustOmitStaticPixelCaches,
             onStaticAdmission: rustStaticAdmissionPhaseMode
               ? (edge) => console.timeStamp(`cc:couch-exec:static-admission:${buildId ?? 0}:${edge}`)
-              : undefined } : undefined);
+              : undefined, ...compositionLaziness } : undefined);
           candidate = profileIdentity ? profile!.span(profileIdentity, "couch.retained-composition", compose) : compose(); }
         finally { if (rustExecutionPhaseMode) rustExecutionStamp(`cc:couch-exec:composition:${buildId ?? 0}:end`); }
       }
@@ -863,6 +955,7 @@ const producerStarted = rustPhaseTimingMode || producerReasonMode ? performance.
     if (!presentedOnce) { presentedOnce = true; publishStatus("ready"); }
     retained = candidate;
     retainedValid = retainedMode;
+    snapshotNodesSource = fast.snapshotReuse ? next.nodes : null;
     committedSizeEpoch = asyncPresentationSizeEpoch;
     committedFontVersion = fontVersion;
     committedTextureCount = pixi?.stats.textures ?? -1;
@@ -871,7 +964,7 @@ const producerStarted = rustPhaseTimingMode || producerReasonMode ? performance.
     frameEpoch++;
     traceWarmRenderer("renderer-published", candidateRevision);
     const committedSnapshot: DrawnSceneSnapshot = { scene: { nodes: candidateNodes, orderedIds: candidateOrderedIds }, build: frameBuild, paintOrder: frameBuild.order,
-      hitEntries: frameBuild.hitEntries.slice(), capturedGlobals, buildEpoch, stateRevision: candidateRevision,
+      hitEntries: fast.snapshotReuse ? frameBuild.hitEntries : frameBuild.hitEntries.slice(), capturedGlobals, buildEpoch, stateRevision: candidateRevision,
       inputEpoch: 0, resourceEpoch: 0, textureReadyEpoch: String(pixi?.stats.textures ?? 0),
       derived: { wireGraph: {}, wireHitsByNode: new Map(), wireOverlayOrders: new Set() } };
     snapshot = committedSnapshot;
@@ -913,6 +1006,7 @@ const producerStarted = rustPhaseTimingMode || producerReasonMode ? performance.
     traceWarmRenderer("renderer-published", wire?.revision ?? previous.stateRevision);
     if (wire) {
       const nodes = previous.scene.nodes as Map<string, MirrorNode>;
+      if (wire.changedIds.size) snapshotNodesSource = null;
       for (const id of wire.changedIds) {
         const node = wire.nodes.get(id);
         if (node) nodes.set(id, node); else nodes.delete(id);
@@ -1352,6 +1446,8 @@ const traceId = nextTraceFrame();
         frameSampleMask: visual.frameSampleMask, localAnimationCount: visual.localAnims.size,
         opacitySampleCount: visual.opacitySampledIds.size, sourceSampleCount: visual.sourceSampledIds.size } : {}),
       ...(rustPhaseTimingMode ? { retainedPlanMs, producerBuildMs } : {}),
+      ...(fast.lazyComposition ? { lazyCompositionIndexBuilds, lazyCompositionVerifyMismatches } : {}),
+      ...(fast.snapshotReuse ? { snapshotNodeReuses, staticSkipRootReuses, rewardFocusSkips } : {}),
       textures: pixi?.stats.textures ?? 0, frameTextures: pixi?.stats.frameTextures ?? 0, gpuTextures: pixi?.stats.gpuTextures ?? 0,
       textureLoads: pixi?.stats.textureLoads ?? 0, created: pixi?.stats.created ?? 0, updated: pixi?.stats.updated ?? 0,
       destroyed: pixi?.stats.destroyed ?? 0, textRasterizations: pixi?.stats.textRasterizations ?? 0,
@@ -1374,9 +1470,13 @@ const traceId = nextTraceFrame();
       ageMs: performance.now() - createdAt, buildEpoch, commands: list.count, pixiScene: retainedMode ? "retained" : "legacy", idleCadence: displayPaced ? "display" : "authored",
       paintOrderReuse: paintOrderReuse ? 1 : 0,
       ...(backend === "rust" ? { rustOmitStaticPixelCaches, rustSkipHiddenHitCandidates,
-        rustStaticAdmissionPhase: rustStaticAdmissionPhaseMode } : {}),
+        rustStaticAdmissionPhase: rustStaticAdmissionPhaseMode, rustFast: { ...fast },
+        rustTextPrepCache: { textPrep: textPrepCache?.stats() ?? null, fontCheck: fontCheckCache?.stats() ?? null } } : {}),
+      ...(lazyCompositionVerifyFirstMismatch ? { lazyCompositionVerifyFirstMismatch } : {}),
       ...(rustExecutionPhaseMode ? { rustExecutionPhases: true } : {}),
       ...(profile ? { canvasProfile: profile.snapshot() } : {}),
+      ...(hiddenMemo ? { rustHiddenMemo: { ...hiddenMemo.stats, missReasons: { ...hiddenMemo.stats.missReasons },
+        notRecorded: { ...hiddenMemo.stats.notRecorded } } } : {}),
       paintOrderPreparation: { completeHits: paintOrderCache.stats.completeHits, completeMisses: paintOrderCache.stats.completeMisses } },
     text: pixi?.textOutcomes() ?? null,
     glyphs: glyphRegistry?.stats() ?? null,
@@ -1519,6 +1619,16 @@ const traceId = nextTraceFrame();
   };
 
   const rects = interaction.interactiveRects;
+  // rustSnapshotReuse: a snapshot with no reward screen keeps that answer, and rectangles are gathered only for a
+  // reward screen. Every publication installs a new snapshot object, so an answer never outlives its picture.
+  const noRewardScreen = new WeakSet<DrawnSceneSnapshot>();
+  const rewardFocusFor = (drawn: DrawnSceneSnapshot) => {
+    if (!fast.snapshotReuse) return rewardFocusSnapshotFromScene(drawn.scene.nodes, drawn.paintOrder.ids, rects(), interaction.coverAbove);
+    if (noRewardScreen.has(drawn)) { rewardFocusSkips++; return { screenId: null, rows: [] }; }
+    const focus = rewardFocusSnapshotFromScene(drawn.scene.nodes, drawn.paintOrder.ids, rects, interaction.coverAbove);
+    if (focus.screenId === null) noRewardScreen.add(drawn);
+    return focus;
+  };
 
   const renderer: MirrorRenderer = {
     reconcile(next) { lifecycle?.finish("skipped", completedDraws()); lifecycle?.begin("reconcile", next.revision, completedDraws()); lifecycle?.admit();
@@ -1555,7 +1665,7 @@ const traceId = nextTraceFrame();
     handPoses: interaction.handPoses, landingLog: visual.passiveLandingLogReport, handRaiseDebug: interaction.raiseDebug,
     isCardTouchTarget: interaction.isCardTouchTarget, isHandCard: interaction.isHandCard, confirmTapTarget: interaction.confirmTapTarget,
     confirmTapAt: interaction.confirmTapAt, coverAbove: interaction.coverAbove,
-    rewardFocusSnapshot: () => snapshot ? rewardFocusSnapshotFromScene(snapshot.scene.nodes, snapshot.paintOrder.ids, rects(), interaction.coverAbove) : { screenId: null, rows: [] },
+    rewardFocusSnapshot: () => snapshot ? rewardFocusFor(snapshot) : { screenId: null, rows: [] },
     setConfirmCoverWatch() {}, handChoiceActive: interaction.handChoiceActive, mapDrawingToolActive: interaction.mapDrawingToolActive, interactiveRects: rects,
     viewScaleInputStamps: interaction.viewScaleInputStamps, endTurnBoxAt: interaction.endTurnBoxAt, eagerScrollTargets: interaction.eagerScrollTargets,
     isUnderNode: interaction.isUnderNode,
@@ -1564,7 +1674,7 @@ const traceId = nextTraceFrame();
     __drainDormantHatchForTest: () => false, __drainRevealStaggerForTest: () => 0,
     touchStackAt: interaction.touchStackAt, spreadPainterAt: interaction.spreadPainterAt,
     mapNodeAt: interaction.mapNodeAt, applyLocalOffset: interaction.applyLocalOffset, scrollRenderedY: interaction.scrollRenderedY,
-    dispose() { if (disposed) return; disposed = true; cancelDiagnosticClock?.("renderer disposed"); producerReasons?.disposeOpen(); asyncPresentation.dispose(); asyncPresentedRevision = null; asyncSubmissionRevision = null; asyncAwaitingAckRevision = null; asyncPresentCompletion = null; pendingViewRevision = null; if (refinementRaf !== null) cancelAnimationFrame(refinementRaf); observer?.disconnect(); stage.ownerDocument.fonts?.removeEventListener?.("loadingdone", onFontsLoaded); pixi?.dispose(); canvas.remove(); setStageOwnsEffectPixels(false);
+    dispose() { if (disposed) return; disposed = true; cancelDiagnosticClock?.("renderer disposed"); producerReasons?.disposeOpen(); asyncPresentation.dispose(); asyncPresentedRevision = null; asyncSubmissionRevision = null; asyncAwaitingAckRevision = null; asyncPresentCompletion = null; pendingViewRevision = null; if (refinementRaf !== null) cancelAnimationFrame(refinementRaf); observer?.disconnect(); stage.ownerDocument.fonts?.removeEventListener?.("loadingdone", onFontsLoaded); fontCheckCache?.dispose(); pixi?.dispose(); canvas.remove(); setStageOwnsEffectPixels(false);
       installHandPoseProbe(null, probeOwner); installLandingLogProbe(null, probeOwner); installSpreadAuditProbe(null, probeOwner);
       scheduler.dispose(); interaction.dispose(); loop.reset(); for (const clip of spineClips.values()) clip.release(); spineClips.clear();
       for (const key of ["__mirrorRendererDiagnostics", "__mirrorCanvasProfile", "__mirrorDrawListDump", "__pixiAttribution", "__pixiArmSkipGl", "__pixiArmSingleQuad", "__mirrorFrameLifecycle", "__mirrorLogicalPaint", "__mirrorFrameIdentity", "__mirrorSetDiagnosticClock", "__mirrorProductionMapProbe"]) delete globals[key]; },

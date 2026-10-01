@@ -28,14 +28,22 @@ export interface RetainedPixiPatch {
 export interface RetainedPixiCompositionOptions {
   includeStaticPixelCaches?: boolean;
   onStaticAdmission?: (edge: "start" | "end") => void;
+  /**
+   * Build the patch index (owner references, hit references, committed poses) on first use instead of at
+   * admission. The plan stays eager: admission serializes it, and it stamps the text parents the serializer reads.
+   */
+  lazyPatchIndex?: boolean;
+  /** The producer's input generation. A lazy index refuses to build once the list, texts or hits moved on. */
+  inputGeneration?: () => number;
+  /** Throw on moved inputs instead of refusing the patch (tests and shadow verification). */
+  strictInputs?: boolean;
+  /** Called once when a lazy index is built. */
+  onPatchIndex?: () => void;
+  /** Shadow-check a lazy index against an eager twin. The twin's answers are returned. */
+  verify?: { onMismatch(method: string, detail: string): void };
 }
 
-/** A build-time index. Sampling visits animation spans, never the whole command list. */
-export function createRetainedPixiComposition(
-  list: DrawList<string>, build: DrawListBuild, texts: readonly PixiTextRecord[],
-  textOwners: ReadonlyMap<string, string>, spreadDxByNode: ReadonlyMap<string, number>,
-  options: RetainedPixiCompositionOptions = {},
-): {
+export interface RetainedPixiComposition {
   plan: RetainedPixiPlan;
   patch(anims: ReadonlyMap<string, LocalAnim>): RetainedPixiPatch | null;
   patchWireTransform(id: string, delta: Affine): RetainedPixiPatch | null;
@@ -43,9 +51,16 @@ export function createRetainedPixiComposition(
   logicalMatrix(id: string): Affine | undefined;
   logicalNodeMatrix(id: string, base: Affine): Affine;
   sourceTransform(id: string, referenceMatrix: Affine, sampledMatrix?: Pose): Affine | null;
-} {
-  const byOwner = new Map<string, Reference[]>();
-  const ownerByPrimitive = new Map<string, string>();
+}
+
+/** A build-time index. Sampling visits animation spans, never the whole command list. */
+export function createRetainedPixiComposition(
+  list: DrawList<string>, build: DrawListBuild, texts: readonly PixiTextRecord[],
+  textOwners: ReadonlyMap<string, string>, spreadDxByNode: ReadonlyMap<string, number>,
+  options: RetainedPixiCompositionOptions = {},
+): RetainedPixiComposition {
+  if (options.lazyPatchIndex && options.verify)
+    return createVerifiedComposition(list, build, texts, textOwners, spreadDxByNode, options, options.verify);
   const ownerByIndex = new Map<number, string>();
   const plan: RetainedPixiPlan = { primitives: [], groups: [] };
   const quad = createQuadView();
@@ -55,27 +70,13 @@ export function createRetainedPixiComposition(
   // The scene build owns this full walk. The animation lane only visits the
   // indexed descendants of the small set of animated roots below.
   for (const [owner, range] of build.ranges) {
-    const references: Reference[] = [];
     for (let index = range.start; index < range.paintEnd; index++) {
       owned.add(index);
       ownerByIndex.set(index, owner);
       const kind = list.kindNameAt(index);
-      const id = `${owner}:${kind}:${index - range.start}`;
       if (kind === "quad" || kind === "ninePatch" || kind === "polyline" || kind === "texturedMesh")
-        plan.primitives.push({ id, index });
-      if (kind === "quad" || kind === "ninePatch") {
-        const view = kind === "quad" ? list.readQuad(index, quad) : list.readNinePatch(index, nine);
-        references.push({ id, owner, matrix: [...view.m] as Affine });
-        ownerByPrimitive.set(id, owner);
-      } else if (kind === "texturedMesh") {
-        references.push({ id, owner, matrix: [...list.readTexturedMesh(index, mesh).m] as Affine });
-        ownerByPrimitive.set(id, owner);
-      } else if (kind === "polyline") {
-        references.push({ id, owner, matrix: [1, 0, 0, 1, 0, 0] });
-        ownerByPrimitive.set(id, owner);
-      }
+        plan.primitives.push({ id: `${owner}:${kind}:${index - range.start}`, index });
     }
-    byOwner.set(owner, references);
   }
   for (let index = 0; index < list.count; index++) {
     if (owned.has(index)) continue;
@@ -83,22 +84,6 @@ export function createRetainedPixiComposition(
     if (kind === "quad" || kind === "ninePatch" || kind === "polyline" || kind === "texturedMesh")
       plan.primitives.push({ id: `unowned:${index}`, index });
   }
-  for (const text of texts) {
-    const owner = textOwners.get(text.key);
-    if (!owner) continue;
-    const references = byOwner.get(owner) ?? [];
-    references.push({ id: `text:${text.key}`, owner, matrix: [...text.transform] as Affine });
-    ownerByPrimitive.set(`text:${text.key}`, owner);
-    byOwner.set(owner, references);
-  }
-  const hitsByOwner = new Map<string, HitEntry[]>();
-  for (const hit of build.hitEntries) {
-    const entries = hitsByOwner.get(hit.nodeId) ?? [];
-    entries.push(hit);
-    hitsByOwner.set(hit.nodeId, entries);
-  }
-  const hitReferences = new Map<HitEntry, Affine>();
-  for (const hit of build.hitEntries) hitReferences.set(hit, [...hit.mFinal] as Affine);
   const roots = [...build.localAnimFrames].map(([id, frame]) => {
     const span = build.order.entries.get(id);
     const inverse = affineInverse(frame.drawn);
@@ -232,14 +217,75 @@ export function createRetainedPixiComposition(
     options.onStaticAdmission?.("end");
   }
   const lastRootPoses = new Map<string, Affine>();
-  const lastPrimitive = new Map<string, Affine>();
-  const lastHit = new Map<HitEntry, Affine>();
   const wireNodeMatrices = new Map<string, Affine>();
   for (const root of roots) lastRootPoses.set(root.id, [1, 0, 0, 1, 0, 0]);
-  for (const refs of byOwner.values()) for (const ref of refs) lastPrimitive.set(ref.id, ref.matrix);
-  for (const [hit, matrix] of hitReferences) lastHit.set(hit, matrix);
+
+  // The patch index reads the command matrices, text transforms, text owners and hit poses this admission saw.
+  // A lazy index is built on first use; the inputs it reads stay untouched until the producer's next build, and
+  // the generation tripwire refuses (or, when strict, throws) if that build already started.
+  const byOwner = new Map<string, Reference[]>();
+  const ownerByPrimitive = new Map<string, string>();
+  const hitsByOwner = new Map<string, HitEntry[]>();
+  const hitReferences = new Map<HitEntry, Affine>();
+  const lastPrimitive = new Map<string, Affine>();
+  const lastHit = new Map<HitEntry, Affine>();
+  const indexGeneration = options.inputGeneration?.();
+  const indexCommands = list.count, indexTexts = texts.length;
+  let indexState: "pending" | "built" | "stale" = "pending";
+  function buildIndex(): void {
+    for (const [owner, range] of build.ranges) {
+      const references: Reference[] = [];
+      for (let index = range.start; index < range.paintEnd; index++) {
+        const kind = list.kindNameAt(index);
+        const id = `${owner}:${kind}:${index - range.start}`;
+        if (kind === "quad" || kind === "ninePatch") {
+          const view = kind === "quad" ? list.readQuad(index, quad) : list.readNinePatch(index, nine);
+          references.push({ id, owner, matrix: [...view.m] as Affine });
+          ownerByPrimitive.set(id, owner);
+        } else if (kind === "texturedMesh") {
+          references.push({ id, owner, matrix: [...list.readTexturedMesh(index, mesh).m] as Affine });
+          ownerByPrimitive.set(id, owner);
+        } else if (kind === "polyline") {
+          references.push({ id, owner, matrix: [1, 0, 0, 1, 0, 0] });
+          ownerByPrimitive.set(id, owner);
+        }
+      }
+      byOwner.set(owner, references);
+    }
+    for (const text of texts) {
+      const owner = textOwners.get(text.key);
+      if (!owner) continue;
+      const references = byOwner.get(owner) ?? [];
+      references.push({ id: `text:${text.key}`, owner, matrix: [...text.transform] as Affine });
+      ownerByPrimitive.set(`text:${text.key}`, owner);
+      byOwner.set(owner, references);
+    }
+    for (const hit of build.hitEntries) {
+      const entries = hitsByOwner.get(hit.nodeId) ?? [];
+      entries.push(hit);
+      hitsByOwner.set(hit.nodeId, entries);
+    }
+    for (const hit of build.hitEntries) hitReferences.set(hit, [...hit.mFinal] as Affine);
+    for (const refs of byOwner.values()) for (const ref of refs) lastPrimitive.set(ref.id, ref.matrix);
+    for (const [hit, matrix] of hitReferences) lastHit.set(hit, matrix);
+    indexState = "built";
+  }
+  function ensureIndex(): boolean {
+    if (indexState === "built") return true;
+    if (indexState === "pending" && options.inputGeneration?.() === indexGeneration &&
+      list.count === indexCommands && texts.length === indexTexts) {
+      buildIndex();
+      options.onPatchIndex?.();
+      return true;
+    }
+    indexState = "stale";
+    if (options.strictInputs) throw new Error("retained composition inputs changed before its patch index was built");
+    return false;
+  }
+  if (!options.lazyPatchIndex) buildIndex();
 
   function patch(anims: ReadonlyMap<string, LocalAnim>): RetainedPixiPatch | null {
+    if (!ensureIndex()) return null;
     if ([...anims.keys()].some((id) => !build.localAnimFrames.has(id))) return null;
     const deltas: Array<{ start: number; end: number; delta: Affine; rootDx: number; vx: number; vy: number }> = [];
     const rootPoses = new Map<string, Affine>();
@@ -303,6 +349,8 @@ export function createRetainedPixiComposition(
     };
   }
   function commit(result: RetainedPixiPatch): void {
+    // A committed patch came from patch() or patchWireTransform(), so its index already exists.
+    if (!ensureIndex()) return;
     for (const [id, matrix] of result.rootPoses) lastRootPoses.set(id, matrix);
     for (const { id, transform } of result.primitives) if (transform) lastPrimitive.set(id, [...transform] as Affine);
     for (const { entry, matrix } of result.hits) lastHit.set(entry, matrix);
@@ -314,6 +362,7 @@ export function createRetainedPixiComposition(
     }
   }
   function patchWireTransform(id: string, delta: Affine): RetainedPixiPatch | null {
+    if (!ensureIndex()) return null;
     const span = build.order.entries.get(id);
     if (!span) return null;
     // Disjoint wire roots can advance beside local animation. An overlapping
@@ -338,6 +387,7 @@ export function createRetainedPixiComposition(
     return { primitives, groups: [], hits, nodeMatrices, sourceReferences: [], movedRoots: 1, rootPoses: new Map() };
   }
   function logicalMatrix(id: string): Affine | undefined {
+    if (!ensureIndex()) return undefined;
     const base = lastPrimitive.get(id);
     if (!base) return undefined;
     const owner = ownerByPrimitive.get(id);
@@ -365,6 +415,7 @@ export function createRetainedPixiComposition(
     return affineMul(composed, reference);
   }
   function sourceTransform(id: string, referenceMatrix: Affine, sampledMatrix?: Pose): Affine | null {
+    if (!ensureIndex()) return null;
     const owner = ownerByPrimitive.get(id);
     const ref = owner && byOwner.get(owner)?.find((item) => item.id === id);
     if (!ref) return null;
@@ -377,4 +428,62 @@ export function createRetainedPixiComposition(
     return old && inverse ? affineMul(affineMul(old, inverse), referenceMatrix) : null;
   }
   return { plan, patch, patchWireTransform, commit, logicalMatrix, logicalNodeMatrix, sourceTransform };
+}
+
+/**
+ * A lazy composition paired with an eager twin over the same inputs. Both stamp identical text parents; every
+ * answer comes from the twin, and any difference (or a lazy tripwire) is reported instead of thrown.
+ */
+function createVerifiedComposition(
+  list: DrawList<string>, build: DrawListBuild, texts: readonly PixiTextRecord[],
+  textOwners: ReadonlyMap<string, string>, spreadDxByNode: ReadonlyMap<string, number>,
+  options: RetainedPixiCompositionOptions, verify: NonNullable<RetainedPixiCompositionOptions["verify"]>,
+): RetainedPixiComposition {
+  const lazy = createRetainedPixiComposition(list, build, texts, textOwners, spreadDxByNode,
+    { ...options, verify: undefined, strictInputs: true });
+  const eager = createRetainedPixiComposition(list, build, texts, textOwners, spreadDxByNode,
+    { includeStaticPixelCaches: options.includeStaticPixelCaches });
+  if (!sameValue(lazy.plan, eager.plan)) verify.onMismatch("plan", "lazy plan differs from the eager plan");
+  const check = <T>(method: string, run: (composition: RetainedPixiComposition) => T): T => {
+    const expected = run(eager);
+    try {
+      if (!sameValue(run(lazy), expected)) verify.onMismatch(method, "lazy result differs from the eager result");
+    } catch (error) {
+      verify.onMismatch(method, error instanceof Error ? error.message : String(error));
+    }
+    return expected;
+  };
+  return {
+    plan: eager.plan,
+    patch: (anims) => check("patch", (composition) => composition.patch(anims)),
+    patchWireTransform: (id, delta) => check("patchWireTransform", (composition) => composition.patchWireTransform(id, delta)),
+    commit(result) {
+      eager.commit(result);
+      try { lazy.commit(result); }
+      catch (error) { verify.onMismatch("commit", error instanceof Error ? error.message : String(error)); }
+    },
+    logicalMatrix: (id) => check("logicalMatrix", (composition) => composition.logicalMatrix(id)),
+    logicalNodeMatrix: (id, base) => check("logicalNodeMatrix", (composition) => composition.logicalNodeMatrix(id, base)),
+    sourceTransform: (id, referenceMatrix, sampledMatrix) => check("sourceTransform",
+      (composition) => composition.sourceTransform(id, referenceMatrix, sampledMatrix)),
+  };
+}
+
+/** Structural equality; shared objects (hit entries) compare by identity first, numbers by `Object.is`. */
+function sameValue(a: unknown, b: unknown): boolean {
+  if (Object.is(a, b)) return true;
+  if (typeof a !== "object" || typeof b !== "object" || a === null || b === null) return false;
+  if (a instanceof Map || b instanceof Map) {
+    if (!(a instanceof Map) || !(b instanceof Map) || a.size !== b.size) return false;
+    for (const [key, value] of a) if (!b.has(key) || !sameValue(value, b.get(key))) return false;
+    return true;
+  }
+  if (Array.isArray(a) || Array.isArray(b)) {
+    if (!Array.isArray(a) || !Array.isArray(b) || a.length !== b.length) return false;
+    return a.every((value, index) => sameValue(value, b[index]));
+  }
+  const left = a as Record<string, unknown>, right = b as Record<string, unknown>;
+  const keys = Object.keys(left);
+  return keys.length === Object.keys(right).length &&
+    keys.every((key) => Object.prototype.hasOwnProperty.call(right, key) && sameValue(left[key], right[key]));
 }

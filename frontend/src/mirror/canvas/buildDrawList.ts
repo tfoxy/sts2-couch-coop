@@ -93,6 +93,7 @@ import {
   viewScaleNominalBox,
   viewScaleStampMatrix,
   type ViewScaleEnv,
+  type ViewScaleStamp,
   type ViewScaleStampIndex
 } from "@/mirror/viewScaleLayout";
 import { computeTipScaleStamp, type TipScaleEnv } from "@/mirror/tipScaleLayout";
@@ -123,6 +124,11 @@ import {
   type HitMemo
 } from "@/mirror/canvas/hitTest";
 import { buildPaintOrder, paintOrderAssertsOn, type PaintOrder, type PaintOrderCache } from "@/mirror/canvas/paintOrder";
+import {
+  beginHiddenMemoBuild,
+  type HiddenMemoRecording,
+  type HiddenSubtreeMemo
+} from "@/mirror/canvas/hiddenSubtreeMemo";
 import {
   FX_QUAD_KINDS,
   canvasBlend,
@@ -841,6 +847,13 @@ export interface BuildDrawListOptions {
   hitTest?: boolean;
   /** Default-off Rust experiment: avoid the candidate predicate when the composed node is hidden. */
   skipHiddenHitCandidates?: boolean;
+  /**
+   * Default-off exact memo of what outermost invisible/orphan subtrees publish (`hiddenSubtreeMemo.ts`). The same
+   * memo must live across builds; absent walks every hidden subtree, as before.
+   */
+  hiddenSubtreeMemo?: HiddenSubtreeMemo | null;
+  /** Walk memoized subtrees anyway and count where a replay would have differed. Costs the full walk. */
+  hiddenSubtreeMemoVerify?: boolean;
   /** Dev/test invariant assertions (default: `paintOrderAssertsOn()`). */
   assert?: boolean;
   /** Texture page sizes; defaults to `textureCache.naturalSize`. See `paintSpec`'s `EmitOptions`. */
@@ -1400,6 +1413,31 @@ export function buildDrawList(
 
   const emitOptions = { textureSize: options.textureSize };
 
+  // HIDDEN-SUBTREE MEMO — see `hiddenSubtreeMemo.ts`. Null unless a memo is supplied AND this build is one it can
+  // be exact for: no stage spread, no hidden-walk timing and no spread audit (each publishes per node under a
+  // hidden root in ways a recording does not carry).
+  const hiddenMemo = options.hiddenSubtreeMemo
+    ? beginHiddenMemoBuild(options.hiddenSubtreeMemo, {
+        eligible: hiddenWalk === null && spreadAudit === null && !spreading,
+        verify: options.hiddenSubtreeMemoVerify === true,
+        order,
+        nodes,
+        viewScaling,
+        viewScaleEnv,
+        tipScaling,
+        clipAxis: clipAxisOn(),
+        trackingLocalAnims,
+        pinnedLocals,
+        taintKeys: [
+          transformOverrides?.keys(), alphaOverrides?.keys(), localAnims?.keys(), frameSubstitutes?.keys(),
+          cosmeticOffsets?.keys(), capture?.ids, skipRoots, renderWidthOverrides?.keys()
+        ],
+        sink: { nodePaintInputs, viewScaleStamps, viewScaleCandidates, stats, onNode, semanticNode: options.semanticNode }
+      })
+    : null;
+  /** The recording the walk is appending to, while it is inside an outermost hidden root being recorded. */
+  let memoRec: HiddenMemoRecording | null = null;
+
   /**
    * THE TIP CHILD PRE-MEASURE: where the walk WOULD draw one direct child of a tip set, one step early.
    *
@@ -1491,6 +1529,19 @@ export function buildDrawList(
     // R6 — the animating glyph's own frame, if this node has one. A shallow clone that differs only in its
     // texture fields, so every other answer below is the wire node's.
     const node = frameSubstitutes === null ? wireNode : (frameSubstitutes.get(id) ?? wireNode);
+    // An OUTERMOST hidden root (the same test as `hidden` below, first on its path): the memo either replays
+    // what this subtree published last time and returns, or hands back a recording for the walk below to fill.
+    let memoRoot: HiddenMemoRecording | null = null;
+    if (hiddenMemo !== null && !ancestorHidden &&
+        (node.visible === false || (node.parentId != null && !nodes.has(node.parentId)))) {
+      const entered = hiddenMemo.enter(id, node, parentGame, parentFinal, cascadeAlpha, tintR, tintG, tintB, offX,
+        offY, parentDrawTy, vsIn, vsHitIn, inCardReward, parentDrawnMoved, parentAnimMoved, list.count,
+        hitEntries.length, overlayRecords.length);
+      if (entered === true) {
+        return;
+      }
+      memoRoot = memoRec = entered;
+    }
     const diagnosticHidden = hiddenWalk !== null &&
       (ancestorHidden || node.visible === false || (node.parentId != null && !nodes.has(node.parentId)));
     const outerHidden = diagnosticHidden && !ancestorHidden;
@@ -1509,10 +1560,9 @@ export function buildDrawList(
     // through `transformOverrides`. The guard is the DOM twin's, in its order: only a node that carries stroke
     // geometry can reach `isMapStrokeNode` at all, so every other node in the scene pays one hot property read.
     const wire = node.transform;
-    const own =
-      pinnedLocals !== null && wire != null && node.linePoints != null && isMapStrokeNode(node)
-        ? pinnedLocals.pin(id, wire as Affine)
-        : wire;
+    const pinned = pinnedLocals !== null && wire != null && node.linePoints != null && isMapStrokeNode(node);
+    if (pinned && memoRec !== null) memoRec.refuse = "pin";
+    const own = pinned ? pinnedLocals.pin(id, wire as Affine) : wire;
     const gGame: Affine = own == null ? parentGame : affineMul(parentGame, own as Affine);
     const override = transformOverrides?.get(id) ?? null;
     // THE IDLE LOOP (R4), and the whole of its composition law. `pre` is a PARENT-space translate applied ahead
@@ -1671,6 +1721,7 @@ export function buildDrawList(
           // BEFORE the stamp is measured, so a node that would GAIN one by moving is in the set too — see
           // `viewScaleCandidates`.
           viewScaleCandidates.add(id);
+          if (memoRec !== null) memoRec.candidates.push(id);
         }
         let box = designAabbOf(gSpread, node.localRect);
         // A card-reward `NCard` streams a 0x0 box (its art lives in descendants) — measure the nominal card.
@@ -1700,7 +1751,7 @@ export function buildDrawList(
             res.pivotX -= shiftX;
             res.pivotY -= shiftY;
           }
-          viewScaleStamps.set(id, {
+          const published: ViewScaleStamp = {
             pivotX: res.pivotX,
             pivotY: res.pivotY,
             k: entry.scale,
@@ -1709,7 +1760,12 @@ export function buildDrawList(
             box,
             spreadDx,
             isGroup: entry.isGroup
-          });
+          };
+          viewScaleStamps.set(id, published);
+          if (memoRec !== null) {
+            memoRec.stampIds.push(id);
+            memoRec.stamps.push(published);
+          }
           if (diagnosticHidden) hiddenWalk!.viewScaleStamps++;
           const stamp = viewScaleStampMatrix(entry.scale, res);
           vsSelf = vsIn === null ? stamp : affineMul(vsIn, stamp);
@@ -1742,6 +1798,7 @@ export function buildDrawList(
     // `blocked` to not-blocked, against a DOM arm that still blocked them. So the tip stamp reaches the paint and
     // nothing else.
     if (tipScaling && tipLayoutEnv !== null && nodeTypeLeaf(node.nodeType) === TOOLTIP_TYPE) {
+      if (memoRec !== null) memoRec.refuse = "tip";
       const tipKids = order.childrenOf(id);
       if (tipKids.length > 0) {
         tipChildBoxes.clear();
@@ -1813,6 +1870,7 @@ export function buildDrawList(
         spreadRebased: spreadRebase && drawnMoved
       });
       if (diagnosticHidden) hiddenWalk!.localAnimFrames++;
+      if (memoRec !== null) memoRec.refuse = "anim";
     }
 
     // The captured global is the node's DRAWN placement including its spread shift — the DOM twin reads the baked
@@ -1857,9 +1915,16 @@ export function buildDrawList(
     };
     nodePaintInputs.set(id, input);
     if (diagnosticHidden) hiddenWalk!.paintInputs++;
+    let memoInput = -1;
+    if (memoRec !== null) {
+      memoInput = memoRec.inputs.length;
+      memoRec.inputIds.push(id);
+      memoRec.inputs.push(input);
+    }
     if (capture !== null && capture.ids.has(id)) {
       capture.out.set(id, { g: gSpread, parentTy: parentDrawTy, drawn: gFinal, modulate: [ownR, ownG, ownB, ownOpacity] });
       if (diagnosticHidden) hiddenWalk!.captures++;
+      if (memoRec !== null) memoRec.refuse = "capture";
     }
 
     // CLIP — opened before the whole subtree (behind children included: they are inside the clipper's box in the
@@ -2060,6 +2125,11 @@ export function buildDrawList(
     const paintEnd = list.count;
     options.semanticNode?.(input, cls, paintStart, paintEnd);
     if (diagnosticHidden && options.semanticNode) hiddenWalk!.semanticNodes++;
+    if (memoRec !== null) {
+      memoRec.emitIds.push(id);
+      memoRec.emitIdx.push(memoInput);
+      if (cls !== "skip") memoRec.refuse = "class";
+    }
     if (paintEnd > paintStart) {
       ranges.set(id, { start: paintStart, paintEnd });
     }
@@ -2108,6 +2178,10 @@ export function buildDrawList(
       hiddenWalk!.hits += hitEntries.length - hiddenHitStart;
       hiddenWalk!.overlays += overlayRecords.length - hiddenOverlayStart;
     }
+    if (memoRoot !== null) {
+      hiddenMemo!.finish(memoRoot, list.count, hitEntries.length, overlayRecords.length);
+      memoRec = null;
+    }
   };
 
   const walkRoots = () => { for (const id of order.rootIds) {
@@ -2134,6 +2208,7 @@ export function buildDrawList(
   } };
   if (profilePhase) profilePhase("root-walk", walkRoots);
   else walkRoots();
+  hiddenMemo?.end();
 
   if (profilePhase) profilePhase("overlay-coverage", () => markCoveredOverlays(overlayRecords, spineSource));
   else markCoveredOverlays(overlayRecords, spineSource);

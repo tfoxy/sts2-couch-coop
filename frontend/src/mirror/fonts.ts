@@ -6,6 +6,16 @@ import type { MirrorFont } from "@/mirror/sceneTree";
 // client imports), and a no-op when there's no DOM (e.g. unit tests).
 const injected = new Set<string>();
 let styleEl: HTMLStyleElement | null = null;
+// Bumped every time `ensureFontFace` actually injects a new `@font-face` rule — never on a dedup no-op. A
+// font-readiness cache (rustTextPreparation's font-check cache) invalidates on this rather than polling: the
+// only way `document.fonts.check` can flip an already-cached TRUE to false-worthy-of-recheck is a new face
+// arriving for a family/weight it didn't know about, and every such arrival goes through this one function.
+let fontInjectionVersion = 0;
+
+/** See {@link fontInjectionVersion} above. Read-only outside this module. */
+export function fontFaceInjectionVersion(): number {
+  return fontInjectionVersion;
+}
 type FontRegistration = { family: string; url: string; weight: string | null; style: string | null;
   cssRule: string; attempts: Array<{ url: string; weight: string | null; style: string | null }>;
   loads: Array<{ font: string; text: string; loadedFaces: Array<{ family: string; weight: string; style: string;
@@ -101,6 +111,7 @@ export function ensureFontFace(family: string, url: string, weight?: string | nu
     return;
   }
   injected.add(family);
+  fontInjectionVersion++;
   if (!styleEl) {
     styleEl = document.createElement("style");
     styleEl.dataset.mirrorFonts = "";

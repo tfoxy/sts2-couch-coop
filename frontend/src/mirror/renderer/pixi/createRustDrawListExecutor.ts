@@ -7,6 +7,7 @@ import { emitBusyStartupEvent } from "./busyStartupEvent";
 import { ensureFontFace, loadMirrorFont, mirrorFontRegistration } from "@/mirror/fonts";
 import type { ProducerExecutorEvent } from "./producerBuildReasons";
 import { requireSingleProfileMode, type ProfileIdentity } from "./couchCanvasProfile";
+import { rustFastFlagsFromLocation } from "./rustFastFlags";
 
 type RustWasmRenderer = {
   backend: string;
@@ -17,6 +18,8 @@ type RustWasmRenderer = {
   set_phase_operation_id?(id: number): void;
   set_phase_identity?(runId: string, rendererInstanceId: string, operationId: number): void;
   gpuTimerCapability?(): string;
+  /** rustFast `drawStateDedupe` (being added in parallel): set once after `create`, never polled for support. */
+  set_draw_state_dedupe?(enabled: boolean): void;
   present(): Promise<string>;
   dispose(): void;
 };
@@ -28,13 +31,21 @@ type Serializer = {
     resolveTexture(texture: string): { key: string; width: number; height: number } | null;
     texts: readonly PixiTextRecord[]; resolveText(record: PixiTextRecord): { resource: { key: string; width: number; height: number }; pixels: Uint8Array; width: number; height: number; transform: readonly number[]; alpha?: number } | null;
     plan?: PixiScenePlan;
+    /** rustFast `fastSerializer` (being added in parallel in GSW). Feature-detected by always being optional. */
+    fast?: boolean;
   }): { bytes: Uint8Array; scene: RustSceneSnapshot; resources: { key: string; width: number; height: number }[]; textUploads: ResourcePixels[];
     unsupportedCommands: number; omittedKinds?: Record<string, number> };
   encodeRustResources(items: readonly ResourcePixels[]): Uint8Array;
-  encodeRustPatch(previous: RustSceneSnapshot, next: RustSceneSnapshot): Uint8Array | null;
+  encodeRustPatch(previous: RustSceneSnapshot, next: RustSceneSnapshot, hint?: unknown, options?: { fast?: boolean }): Uint8Array | null;
   encodeRustRetainedPatch?(base: RustSceneSnapshot, revision: number,
     updates: readonly { id: string; command: Record<string, unknown>; localTransform?: readonly number[] }[],
     groupTransforms?: readonly { id: string; transform: readonly number[] }[]): { bytes: Uint8Array; scene: RustSceneSnapshot; changedIndexes: readonly number[] } | null;
+  /**
+   * rustFast `fastSerializer` (being added in parallel in GSW): a cached command-id → command-index map for
+   * `scene`, so the executor does not have to rebuild one by walking `scene.commands` itself. Optional and
+   * feature-detected; absent on a GSW build that predates it, in which case the executor rebuilds as before.
+   */
+  rustSceneCommandIndex?(scene: RustSceneSnapshot): ReadonlyMap<string, number>;
 };
 
 const blankStats = (): PixiDrawListRendererStats => ({ frames: 0, completedFrames: 0, objects: 0, created: 0, updated: 0, destroyed: 0,
@@ -55,6 +66,7 @@ export const createRustDrawListExecutor: MirrorDrawExecutorFactory = async ({ ca
   const startupResourceHook = (window as unknown as { __benchStartupResourceEvent?: unknown }).__benchStartupResourceEvent;
   const startupResourceEvent = typeof startupResourceHook === "function"
     ? startupResourceHook as (name: string, detail: unknown) => void : null;
+  const fast = rustFastFlagsFromLocation("rust");
   const zeroCopyPixels = new URLSearchParams(window.location.search).get("rustZeroCopyPixels") === "1";
   const textInkReadFrequently = new URLSearchParams(window.location.search).get("rustTextInkReadFrequently") === "1";
   const textInkCorpus = new URLSearchParams(window.location.search).get("rustTextInkCorpus") === "1";
@@ -82,6 +94,9 @@ export const createRustDrawListExecutor: MirrorDrawExecutorFactory = async ({ ca
   startupEvent?.("rust.wasmInitialized", { elapsedMs: compiledAt - startedAt });
   logRust("wasm initialized");
   const engine = await wasmModule.RustRenderer.create(canvas);
+  // rustFast `drawStateDedupe`: set once, right after creation, never polled. The method itself is optional
+  // (added in parallel on the GSW/wasm side), so a glue build that predates it is a silent no-op here.
+  if (fast.drawStateDedupe) engine.set_draw_state_dedupe?.(true);
   const executionPhases = new URLSearchParams(window.location.search).get("rustExecutionPhases") === "1";
   requireSingleProfileMode(!!profile, executionPhases);
   if (executionPhases && typeof engine.set_phase_operation_id !== "function")
@@ -174,6 +189,9 @@ export const createRustDrawListExecutor: MirrorDrawExecutorFactory = async ({ ca
   let wasmBytesSent = 0;
   let retainedPatchEncodes = 0, retainedPatchEncodeMs = 0, retainedPatchQueueWaitMs = 0, retainedPatchPresentWaitMs = 0;
   let retainedPatchApplyMs = 0, sceneEncodeMs = 0, sceneDiffMs = 0, scenePatchApplyMs = 0;
+  // rustFast WP3 counters: style-string cache (`textPrepCache`) and prefetch-skip (`snapshotReuse`) hit counts.
+  let styleCacheHits = 0, styleCacheMisses = 0, prefetchSkips = 0;
+  const styleStringCache = new WeakMap<PixiTextRecord["style"], string>();
   let rustDrawCalls: number | null = null, rustBufferCreations: number | null = null, rustTextureCreations: number | null = null;
   let rustUploadBytes: number | null = null, rustCompletedPresents: number | null = null, rustWasmCalls: number | null = null;
   let rustInstanceUploadBytes: number | null = null, rustIncrementalPatches: number | null = null, rustGeometryRebuilds: number | null = null;
@@ -335,6 +353,7 @@ export const createRustDrawListExecutor: MirrorDrawExecutorFactory = async ({ ca
     committedResourceBytes: committedResourceByteLength,
     pendingResources: [...pendingDetails].map(([key, value]) => ({ key, ...value, elapsedMs: performance.now() - value.startedAt })),
     resourceFailures: [...failures].map(([key, reason]) => ({ key, reason })),
+    rustFast: { ...fast }, styleCacheHits, styleCacheMisses, prefetchSkips,
   });
   if (new URLSearchParams(window.location.search).get("rustDiagnostics") === "1") {
     globals.__mirrorRustRollbackProbe = async () => {
@@ -466,9 +485,22 @@ export const createRustDrawListExecutor: MirrorDrawExecutorFactory = async ({ ca
     pending.set(texture, task); stats.resourcePending = pending.size; stats.textureLoads++;
   }
 
+  // rustFast `textPrepCache`: `record.style` is the SAME object reference across builds only when the renderer's
+  // own text-prep cache is also on (see rustTextPreparation.ts's `PreparedTextRun.style`) — with the renderer's
+  // cache off this WeakMap simply never hits and costs one extra `.get`/`.set` per call, which is why this half
+  // is keyed off the identical `fast.textPrepCache` switch rather than a switch of its own.
+  const styleJson = (style: PixiTextRecord["style"]): string => {
+    if (!fast.textPrepCache) return JSON.stringify(style);
+    const cached = styleStringCache.get(style);
+    if (cached !== undefined) { styleCacheHits++; return cached; }
+    styleCacheMisses++;
+    const json = JSON.stringify(style);
+    styleStringCache.set(style, json);
+    return json;
+  };
   const textResourceKey = (record: PixiTextRecord) => {
     const revision = record.resourceRevision ?? record.contentKey ?? "";
-    return `text:${record.key}:${revision}:${record.text}:${JSON.stringify(record.style)}:${record.tint ?? 0xffffff}`;
+    return `text:${record.key}:${revision}:${record.text}:${styleJson(record.style)}:${record.tint ?? 0xffffff}`;
   };
   function rasterText(record: PixiTextRecord): { resource: { key: string; width: number; height: number }; pixels: Uint8Array; width: number; height: number; transform: readonly number[]; alpha?: number } | null {
     let row: CorpusRow | null = null;
@@ -946,10 +978,20 @@ export const createRustDrawListExecutor: MirrorDrawExecutorFactory = async ({ ca
     // reconcile must not erase the last successfully presented image or its matching hit geometry.
     if (list.count === 0 && text.length === 0) return { presented: false, reason: "empty scene pending" };
     let cardAtlasKey: string | null = null;
+    // rustFast `snapshotReuse`: `prefetch` already guards on `textures.has`/`pending.has`/`failures.has` (it is
+    // idempotent — confirmed by reading it), so skipping a call for a texture identical to the one just prefetched
+    // only saves those three `Map`/`Set` lookups on a run of commands sharing one atlas; it never changes which
+    // textures end up fetched.
+    let previousPrefetchTexture: string | null = null;
     for (let i = 0; i < list.count; i++) {
       const texture = list.textureAt(i);
       if (texture) {
-        prefetch(texture);
+        if (!fast.snapshotReuse || texture !== previousPrefetchTexture) {
+          prefetch(texture);
+          previousPrefetchTexture = texture;
+        } else {
+          prefetchSkips++;
+        }
         if (startupEvent && cardAtlasKey === null && isCardAtlas(texture)) cardAtlasKey = texture;
       }
     }
@@ -967,7 +1009,7 @@ export const createRustDrawListExecutor: MirrorDrawExecutorFactory = async ({ ca
     const encode = () => serializer.encodeRustScene({ drawList: list, revision, width: surfaceWidth, height: surfaceHeight,
       designWidth: sceneDesignWidth, designHeight: sceneDesignHeight,
       resolveTexture: (texture) => { const image = textures.get(texture); return image ? { key: image.key, width: image.width, height: image.height } : null; },
-      texts: text, resolveText: rasterText, plan });
+      texts: text, resolveText: rasterText, plan, ...(fast.fastSerializer ? { fast: true } : {}) });
     const encoded = profile && profileIdentity ? profile.span(profileIdentity, "couch.text-and-resource-prep", encode) : encode();
     if (profile && profileIdentity) { profile.counter(profileIdentity,
       { sceneBytes: encoded.bytes.byteLength, commands: list.count, textRecords: text.length }); }
@@ -1038,7 +1080,9 @@ export const createRustDrawListExecutor: MirrorDrawExecutorFactory = async ({ ca
         for (const item of uniqueUploads) { uploaded.add(item.key); uploadedPixels.set(item.key, item); }
       }
       const diffStarted = phaseTimingEnabled ? performance.now() : 0;
-      const patch = committedTypedScene ? serializer.encodeRustPatch(committedTypedScene, encoded.scene) : null;
+      const patch = committedTypedScene
+        ? serializer.encodeRustPatch(committedTypedScene, encoded.scene, undefined, fast.fastSerializer ? { fast: true } : undefined)
+        : null;
       diagnostic?.({ stage: "api-attempt", operationId: revision, mode: patch ? "scene-patch" : "full-scene" });
       if (phaseTimingEnabled) sceneDiffMs += performance.now() - diffStarted;
       const sceneBytes = !patch || fixtureEnabled ? encoded.bytes : null;
@@ -1086,7 +1130,14 @@ export const createRustDrawListExecutor: MirrorDrawExecutorFactory = async ({ ca
         if (firstPresentMs === null) firstPresentMs = performance.now() - startedAt;
         committedScene = sceneBytes;
         committedTypedScene = encoded.scene;
-        committedCommandIndexes = new Map((encoded.scene?.commands ?? []).map((command, index) => [String(command.id), index]));
+        // rustFast `fastSerializer`: reuse the serializer's own cached index when it offers one, instead of
+        // walking `scene.commands` + `String(command.id)` ourselves. Copied into a fresh, OWNED `Map` either way
+        // — `committedCommandIndexes` is mutated in place by `submitRetained` below, and a serializer-owned map
+        // may be cached/shared across calls, so writing into it directly would be unsafe.
+        const fastIndex = fast.fastSerializer ? serializer.rustSceneCommandIndex?.(encoded.scene) : undefined;
+        committedCommandIndexes = fastIndex
+          ? new Map(fastIndex)
+          : new Map((encoded.scene?.commands ?? []).map((command, index) => [String(command.id), index]));
         const nextResources = encoded.resources.map((resource) => uploadedPixels.get(resource.key)!).filter(Boolean);
         // Repacking all atlas pixels is a ~193 MB copy for the accepted quiet scene. Scene revisions often
         // change every replay message while their resource set is identical, so keep the last RSR1 bytes until

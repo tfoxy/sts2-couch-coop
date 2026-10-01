@@ -36,11 +36,12 @@ function gameCenter(rect: InteractiveRect): { x: number; y: number } | null {
 /**
  * Builds the reward-list facts from renderer-owned native geometry. DOM and canvas pass the same retained scene,
  * interactive rectangles, and cover-order answer, so neither backend needs a browser-layout approximation.
+ * The rectangles may be passed as a getter; it is called once, and only when a reward screen is present.
  */
 export function rewardFocusSnapshotFromScene(
   nodes: ReadonlyMap<string, MirrorNode>,
   orderedIds: readonly string[],
-  interactiveRects: readonly InteractiveRect[],
+  interactiveRects: readonly InteractiveRect[] | (() => readonly InteractiveRect[]),
   coverAbove: (id: string) => boolean
 ): RewardFocusSnapshot {
   let screenId: string | null = null;
@@ -51,6 +52,8 @@ export function rewardFocusSnapshotFromScene(
     }
   }
   if (screenId === null) return { screenId: null, rows: [] };
+  // Resolve a getter before any cover query, the order an eager caller already had.
+  const rects = typeof interactiveRects === "function" ? interactiveRects() : interactiveRects;
 
   const rows: RewardFocusRow[] = [];
   for (const id of orderedIds) {
@@ -68,7 +71,7 @@ export function rewardFocusSnapshotFromScene(
   // Prefer the conventional Hitbox descendant, then the row root itself, then any interactive descendant. The
   // chosen rectangle is always native game geometry; spread/raise are cosmetic and intentionally do not enter it.
   const best = new Map<string, { rank: number; point: { x: number; y: number } }>();
-  for (const rect of interactiveRects) {
+  for (const rect of rects) {
     const point = gameCenter(rect);
     const rectNode = nodes.get(rect.id);
     if (point === null || rectNode === undefined) continue;
