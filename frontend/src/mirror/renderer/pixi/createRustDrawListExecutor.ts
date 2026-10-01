@@ -28,7 +28,8 @@ type Serializer = {
     resolveTexture(texture: string): { key: string; width: number; height: number } | null;
     texts: readonly PixiTextRecord[]; resolveText(record: PixiTextRecord): { resource: { key: string; width: number; height: number }; pixels: Uint8Array; width: number; height: number; transform: readonly number[]; alpha?: number } | null;
     plan?: PixiScenePlan;
-  }): { bytes: Uint8Array; scene: RustSceneSnapshot; resources: { key: string; width: number; height: number }[]; textUploads: ResourcePixels[]; unsupportedCommands: number };
+  }): { bytes: Uint8Array; scene: RustSceneSnapshot; resources: { key: string; width: number; height: number }[]; textUploads: ResourcePixels[];
+    unsupportedCommands: number; omittedKinds?: Record<string, number> };
   encodeRustResources(items: readonly ResourcePixels[]): Uint8Array;
   encodeRustPatch(previous: RustSceneSnapshot, next: RustSceneSnapshot): Uint8Array | null;
   encodeRustRetainedPatch?(base: RustSceneSnapshot, revision: number,
@@ -169,6 +170,7 @@ export const createRustDrawListExecutor: MirrorDrawExecutorFactory = async ({ ca
   let presentationValid = false;
   let wasmUploadCalls = 0, wasmAdmissionCalls = 0, wasmPatchCalls = 0, wasmPresentCalls = 0, wasmResizeCalls = 0;
   let wasmUploadBytes = 0, wasmSceneBytes = 0, wasmPatchBytes = 0, unsupportedCommands = 0;
+  const omittedKinds: Record<string, number> = {};
   let wasmBytesSent = 0;
   let retainedPatchEncodes = 0, retainedPatchEncodeMs = 0, retainedPatchQueueWaitMs = 0, retainedPatchPresentWaitMs = 0;
   let retainedPatchApplyMs = 0, sceneEncodeMs = 0, sceneDiffMs = 0, scenePatchApplyMs = 0;
@@ -302,7 +304,8 @@ export const createRustDrawListExecutor: MirrorDrawExecutorFactory = async ({ ca
     firstCompletedPresentMs: firstPresentMs, wasmMemoryBytes: wasmExports.memory?.buffer.byteLength ?? null,
     uploadCalls: wasmUploadCalls, sceneAdmissions: wasmAdmissionCalls, scenePatches: wasmPatchCalls, presentCalls: wasmPresentCalls,
     jsToWasmCalls: wasmUploadCalls + wasmAdmissionCalls + wasmPatchCalls + wasmPresentCalls + wasmResizeCalls,
-    uploadBytes: wasmUploadBytes, sceneBytes: wasmSceneBytes, patchBytes: wasmPatchBytes, unsupportedCommands,
+    uploadBytes: wasmUploadBytes, sceneBytes: wasmSceneBytes, patchBytes: wasmPatchBytes,
+    omittedCommands: unsupportedCommands, omittedKinds: { ...omittedKinds },
     jsToWasmBytes: wasmBytesSent,
     rustDrawCalls, rustBufferCreations, rustTextureCreations,
     rustAllocations: rustBufferCreations === null || rustTextureCreations === null ? null : rustBufferCreations + rustTextureCreations,
@@ -978,9 +981,8 @@ export const createRustDrawListExecutor: MirrorDrawExecutorFactory = async ({ ca
       durationMs: performance.now() - encodeStarted, sceneBytes: encoded.bytes.byteLength,
       commands: list.count, resources: encoded.resources.length });
     textCount = text.length;
-    if (encoded.unsupportedCommands > 0) {
-      stats.blockedRefusedFrames++; stats.scenePreflightFailures++;
-      return { presented: false, reason: `${encoded.unsupportedCommands} unsupported DrawList/text command(s)` };
+    for (const [kind, count] of Object.entries(encoded.omittedKinds ?? {})) {
+      omittedKinds[kind] = (omittedKinds[kind] ?? 0) + count;
     }
     const uploads: ResourcePixels[] = [];
     for (const resource of encoded.resources) {

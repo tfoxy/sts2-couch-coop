@@ -39,7 +39,7 @@ import { displaySpaceLayout, type StageFitMode } from "@/mirror/stageFit";
 
 /** The census, as sent. Every value is a finite number or one of three closed enums. */
 export interface ClientVitals {
-  /** The backend this page ASKED for (`?stage=`), and the one actually serving after any hard fallback. */
+  /** The requested backend and the selected renderer. Failure status is reported separately. */
   stageRequested: StageBackend;
   stageActive: StageBackend;
   /** The layout arm actually in force, after the canvas backend's display-layout refusal. */

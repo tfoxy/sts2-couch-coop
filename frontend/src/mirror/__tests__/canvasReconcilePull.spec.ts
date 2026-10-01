@@ -448,7 +448,7 @@ describe("the canvas backend's animation frame, against a pending reconcile", ()
   });
 
   function mountRenderer(): MirrorRenderer {
-    renderer = createMirrorRendererFor(stageAt(1920, 1080), defsEl());
+    renderer = createMirrorRendererFor(stageAt(1920, 1080), defsEl())!;
     return renderer;
   }
 

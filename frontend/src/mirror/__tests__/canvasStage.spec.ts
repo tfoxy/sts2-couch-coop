@@ -563,7 +563,7 @@ describe("createMirrorRendererFor", () => {
     // The default with no query at all: what every viewer gets today.
     expect(requestedStageBackend()).toBe("dom");
     const stage = stageAt(1920, 1080, 0.5);
-    renderer = createMirrorRendererFor(stage, defsEl());
+    renderer = createMirrorRendererFor(stage, defsEl())!;
     renderer.reconcile(createMirrorState());
     expect(canvasIn(stage)).toBeNull();
   });
@@ -572,7 +572,7 @@ describe("createMirrorRendererFor", () => {
     stubWebgl2();
     __setStageBackendForTest("canvas");
     const stage = stageAt(1920, 1080, 0.5);
-    renderer = createMirrorRendererFor(stage, defsEl());
+    renderer = createMirrorRendererFor(stage, defsEl())!;
     expect(canvasIn(stage)).not.toBeNull();
     expect(renderer.handRaiseDebug()).toMatchObject({ backend: "canvas" });
     expect(stats().glyphs).toEqual({
@@ -586,10 +586,10 @@ describe("createMirrorRendererFor", () => {
   it("keeps the stats seam with its newer canvas renderer through an old dispose", () => {
     stubWebgl2();
     __setStageBackendForTest("canvas");
-    const first = createMirrorRendererFor(stageAt(1920, 1080, 0.5), defsEl());
+    const first = createMirrorRendererFor(stageAt(1920, 1080, 0.5), defsEl())!;
     const firstId = stats().instance.id;
 
-    renderer = createMirrorRendererFor(stageAt(1920, 1080, 0.5), defsEl());
+    renderer = createMirrorRendererFor(stageAt(1920, 1080, 0.5), defsEl())!;
     const secondId = stats().instance.id;
     expect(secondId).toBeGreaterThan(firstId);
 
@@ -604,18 +604,19 @@ describe("createMirrorRendererFor", () => {
     expect((window as unknown as { __mirrorCanvasStats?: unknown }).__mirrorCanvasStats).toBeUndefined();
   });
 
-  it("HARD-FALLS-BACK to the DOM backend when WebGL2 cannot be had, naming the reason", () => {
+  it("leaves the stage blank when WebGL2 cannot be had, naming the reason", () => {
     // jsdom's getContext is not implemented → the context is null, which is exactly the live failure mode on a
-    // blocklisted mobile GPU. The viewer must get a playable DOM stage, not a blank one.
+    // blocklisted mobile GPU. The selected canvas stage remains in place for an explicit retry.
     const info = vi.spyOn(console, "info").mockImplementation(() => {});
     __setStageBackendForTest("canvas");
     const stage = stageAt(1920, 1080, 0.5);
     renderer = createMirrorRendererFor(stage, defsEl());
     expect(canvasIn(stage)).toBeNull();
-    renderer.reconcile(createMirrorState()); // a working renderer, not a husk
+    expect(renderer).toBeNull();
+    expect(stage.querySelector(".mirror-node")).toBeNull();
     const said = info.mock.calls.map((c) => String(c[0])).join("\n");
     expect(said).toContain("WebGL2");
-    expect(said).toContain("dom");
+    expect(said).not.toContain("using dom");
   });
 
   // The default has geoclips disabled. The backend name is meaningful only after a developer explicitly opts in.
@@ -623,7 +624,7 @@ describe("createMirrorRendererFor", () => {
     it("names the shipped lane as disabled without assuming a spine paint mode", () => {
       const info = vi.spyOn(console, "info").mockImplementation(() => {});
       __setStageBackendForTest("dom");
-      renderer = createMirrorRendererFor(stageAt(1920, 1080, 1), defsEl());
+      renderer = createMirrorRendererFor(stageAt(1920, 1080, 1), defsEl())!;
       const said = info.mock.calls.map((c) => String(c[0])).join("\n");
       expect(said).toContain("geoclips: disabled");
       expect(said).not.toContain("raster-only");
@@ -635,7 +636,7 @@ describe("createMirrorRendererFor", () => {
       const info = vi.spyOn(console, "info").mockImplementation(() => {});
       mirrorSettings.spineMode = "dynamic";
       __setStageBackendForTest("canvas");
-      renderer = createMirrorRendererFor(stageAt(1920, 1080, 1), defsEl());
+      renderer = createMirrorRendererFor(stageAt(1920, 1080, 1), defsEl())!;
       const said = info.mock.calls.map((c) => String(c[0])).join("\n");
       expect(said).toContain("geoclips: active");
       expect(said).toContain("canvas");
@@ -646,7 +647,7 @@ describe("createMirrorRendererFor", () => {
       const info = vi.spyOn(console, "info").mockImplementation(() => {});
       mirrorSettings.spineMode = "auto";
       __setStageBackendForTest("dom");
-      renderer = createMirrorRendererFor(stageAt(1920, 1080, 1), defsEl());
+      renderer = createMirrorRendererFor(stageAt(1920, 1080, 1), defsEl())!;
       const said = info.mock.calls.map((c) => String(c[0])).join("\n");
       expect(said).toContain("geoclips: active");
       expect(said).toContain("DOM");
@@ -662,7 +663,7 @@ describe("the canvas stage's sizing law", () => {
     __setStageBackendForTest("canvas");
     // A 2400-wide (stretched) design box painted at 0.45 of its size — a phone in landscape.
     const stage = stageAt(2400, 1080, 0.45);
-    renderer = createMirrorRendererFor(stage, defsEl());
+    renderer = createMirrorRendererFor(stage, defsEl())!;
     const canvas = canvasIn(stage);
     expect(canvas).not.toBeNull();
     // CSS: the whole stage box, so the stage's own transform fits it exactly as it fits the DOM tree.
@@ -685,7 +686,7 @@ describe("the canvas stage's sizing law", () => {
         resolveRenderQuality({ search, gpu: { renderer: "", software: false, unavailable: true }, mobile: true })
       );
       const stage = stageAt(1920, 1080, 0.5);
-      const pinned = createMirrorRendererFor(stage, defsEl());
+      const pinned = createMirrorRendererFor(stage, defsEl())!;
       const canvas = canvasIn(stage)!;
       expect([canvas.width, canvas.height]).toEqual([2880, 1620]); // 1920 x 0.5 x 3, on every tier
       pinned.dispose();
@@ -699,7 +700,7 @@ describe("the canvas stage's sizing law", () => {
     __setStageBackendForTest("canvas");
     const observed = stubResizeObserver();
     const stage = stageAt(1920, 1080, 1);
-    renderer = createMirrorRendererFor(stage, defsEl());
+    renderer = createMirrorRendererFor(stage, defsEl())!;
     const canvas = canvasIn(stage)!;
     expect([canvas.width, canvas.height]).toEqual([1920, 1080]);
     // Both the stage (its DESIGN box) and its parent (whose layout box is what a window resize moves) are watched.
@@ -731,7 +732,7 @@ describe("the canvas stage's sizing law", () => {
       // The desktop arm the blur was found on: a 1.25 dpr from GNOME text scaling, a 0.8 letterbox fit.
       const stage = stageAt(1920, 1080, 0.8);
       const host = hostAt(1536, 864);
-      renderer = createMirrorRendererFor(stage, defsEl(), host);
+      renderer = createMirrorRendererFor(stage, defsEl(), host)!;
 
       const canvas = canvasIn(host);
       expect(canvas, "the canvas is laid out in the host").not.toBeNull();
@@ -751,7 +752,7 @@ describe("the canvas stage's sizing law", () => {
       vi.stubGlobal("devicePixelRatio", 1.25);
       __setStageBackendForTest("canvas");
       const stage = stageAt(1920, 1080, 0.8);
-      renderer = createMirrorRendererFor(stage, defsEl());
+      renderer = createMirrorRendererFor(stage, defsEl())!;
 
       const canvas = canvasIn(stage);
       expect(canvas, "no host ⇒ the canvas goes into the stage, exactly as before").not.toBeNull();
@@ -765,7 +766,7 @@ describe("the canvas stage's sizing law", () => {
       const observed = stubResizeObserver();
       const stage = stageAt(1920, 1080, 0.8);
       const host = hostAt(1536, 864);
-      renderer = createMirrorRendererFor(stage, defsEl(), host);
+      renderer = createMirrorRendererFor(stage, defsEl(), host)!;
       const canvas = canvasIn(host)!;
 
       // All three movers are watched: the stage's design box, the host's fitted box, and the letterbox frame.
@@ -787,7 +788,7 @@ describe("the canvas stage's sizing law", () => {
       __setStageBackendForTest("canvas");
       const observed = stubResizeObserver();
       const stage = stageAt(1920, 1080, 1);
-      renderer = createMirrorRendererFor(stage, defsEl());
+      renderer = createMirrorRendererFor(stage, defsEl())!;
       expect(observed.targets.filter((t) => t === stage)).toHaveLength(1);
     });
 
@@ -822,7 +823,7 @@ describe("the canvas stage's sizing law", () => {
       // height, so the host is 3033.33 wide and centred at left 203.33. `round(203.33 + 3033.33) - round(203.33)`
       // is 3237 - 203 = 3034, while `round(3033.33)` is 3033 — one pixel, and the whole surface resampled for it.
       const host = hostCentredIn(3440, 1300, 3033.333333, 1300);
-      renderer = createMirrorRendererFor(stage, defsEl(), host);
+      renderer = createMirrorRendererFor(stage, defsEl(), host)!;
       expect([canvasIn(host)!.width, canvasIn(host)!.height]).toEqual([3034, 1300]);
     });
 
@@ -838,7 +839,7 @@ describe("the canvas stage's sizing law", () => {
       const observed = stubResizeObserver();
       const stage = stageAt(2272, 1080, 1535.7 / 2272);
       const host = hostCentredIn(1536, 730, 1535.7, 730);
-      renderer = createMirrorRendererFor(stage, defsEl(), host);
+      renderer = createMirrorRendererFor(stage, defsEl(), host)!;
       const canvas = canvasIn(host)!;
       // 1535.7 x 1.25 = 1919.625 → the old law rounds to 1920 and the compositor paints 1920; the HEIGHT is where
       // this layout's residual is (912 under the old law, 913 painted).
@@ -864,7 +865,7 @@ describe("the canvas stage's sizing law", () => {
       const host = hostAt(1536, 864);
       const chrome = document.createElement("div"); // stands in for the confirm button / gear / hand-raise toggle
       stage.appendChild(chrome);
-      renderer = createMirrorRendererFor(stage, defsEl(), host);
+      renderer = createMirrorRendererFor(stage, defsEl(), host)!;
 
       const overlay = overlayIn(stage);
       expect(overlay, "the overlay stays in the DESIGN box its elements are positioned in").not.toBeNull();
@@ -878,7 +879,7 @@ describe("the canvas stage's sizing law", () => {
     const record = stubWebgl2();
     __setStageBackendForTest("canvas");
     const stage = stageAt(1920, 1080, 1);
-    const built = createMirrorRendererFor(stage, defsEl());
+    const built = createMirrorRendererFor(stage, defsEl())!;
     expect(canvasIn(stage)).not.toBeNull();
     built.dispose();
     expect(canvasIn(stage)).toBeNull();
@@ -895,7 +896,7 @@ describe("the frame", () => {
     vi.stubGlobal("devicePixelRatio", 1);
     __setStageBackendForTest("canvas");
     const stage = stageAt(1920, 1080, 1);
-    renderer = createMirrorRendererFor(stage, defsEl());
+    renderer = createMirrorRendererFor(stage, defsEl())!;
     return { stage, record, raf };
   }
 
@@ -1076,7 +1077,7 @@ describe("texture pacing", () => {
     vi.stubGlobal("devicePixelRatio", 1);
     window.history.replaceState(null, "", search);
     __setStageBackendForTest("canvas");
-    renderer = createMirrorRendererFor(stageAt(1920, 1080, 1), defsEl());
+    renderer = createMirrorRendererFor(stageAt(1920, 1080, 1), defsEl())!;
     return { raf, images };
   }
 
@@ -1256,7 +1257,7 @@ describe("the atlas re-packer", () => {
     vi.stubGlobal("devicePixelRatio", 1);
     window.history.replaceState(null, "", search);
     __setStageBackendForTest("canvas");
-    renderer = createMirrorRendererFor(stageAt(1920, 1080, 1), defsEl());
+    renderer = createMirrorRendererFor(stageAt(1920, 1080, 1), defsEl())!;
   }
 
   afterEach(() => {
@@ -1281,7 +1282,7 @@ describe("the DOM overlay", () => {
     stubRaf();
     __setStageBackendForTest("canvas");
     const stage = stageAt(1920, 1080, 1);
-    renderer = createMirrorRendererFor(stage, defsEl());
+    renderer = createMirrorRendererFor(stage, defsEl())!;
     return stage;
   }
 
@@ -1435,7 +1436,7 @@ describe("text into the canvas (M4)", () => {
       vi.stubGlobal("location", { search: query } as unknown as Location);
     }
     const stage = stageAt(1920, 1080, 1);
-    renderer = createMirrorRendererFor(stage, defsEl());
+    renderer = createMirrorRendererFor(stage, defsEl())!;
     return stage;
   }
 
@@ -1516,7 +1517,7 @@ describe("the stage backstop", () => {
     window.history.replaceState(null, "", search);
     __setStageBackendForTest("canvas");
     const stage = stageAt(1920, 1080, 1);
-    renderer = createMirrorRendererFor(stage, defsEl());
+    renderer = createMirrorRendererFor(stage, defsEl())!;
     return stage;
   }
 
@@ -1623,7 +1624,7 @@ describe("the retained method table", () => {
     stubRaf();
     __setStageBackendForTest("canvas");
     const stage = stageAt(1920, 1080, 1);
-    renderer = createMirrorRendererFor(stage, defsEl());
+    renderer = createMirrorRendererFor(stage, defsEl())!;
     return stage;
   }
 
@@ -1755,7 +1756,7 @@ describe("eager scroll targets", () => {
     stubRaf();
     __setStageBackendForTest("canvas");
     const stage = stageAt(1920, 1080, 1);
-    renderer = createMirrorRendererFor(stage, defsEl());
+    renderer = createMirrorRendererFor(stage, defsEl())!;
     return stage;
   }
 
@@ -1919,7 +1920,7 @@ describe("confirm tap", () => {
     stubRaf();
     __setStageBackendForTest("canvas");
     const stage = stageAt(1920, 1080, 1);
-    renderer = createMirrorRendererFor(stage, defsEl());
+    renderer = createMirrorRendererFor(stage, defsEl())!;
     return stage;
   }
 
@@ -2119,7 +2120,7 @@ describe("the paint dump", () => {
     stubRaf();
     __setStageBackendForTest("canvas");
     const stage = stageAt(1920, 1080, 1);
-    renderer = createMirrorRendererFor(stage, defsEl());
+    renderer = createMirrorRendererFor(stage, defsEl())!;
     return stage;
   }
 
@@ -2170,7 +2171,7 @@ describe("a tween arms from the node's RENDERED GLOBAL, never from its local mat
     vi.spyOn(performance, "now").mockImplementation(() => clock);
     __setStageBackendForTest("canvas");
     const stage = stageAt(1920, 1080, 1);
-    renderer = createMirrorRendererFor(stage, defsEl());
+    renderer = createMirrorRendererFor(stage, defsEl())!;
     return {
       stage,
       raf,
@@ -2491,7 +2492,7 @@ describe("cosmetic offsets", () => {
     offsetRaf = stubRaf();
     __setStageBackendForTest("canvas");
     const stage = stageAt(1920, 1080, 1);
-    renderer = createMirrorRendererFor(stage, defsEl());
+    renderer = createMirrorRendererFor(stage, defsEl())!;
     return stage;
   }
 
@@ -2762,7 +2763,7 @@ describe("effects into the canvas (M2)", () => {
     window.history.replaceState(null, "", search);
     __setStageBackendForTest("canvas");
     const stage = stageAt(1920, 1080, 1);
-    renderer = createMirrorRendererFor(stage, defsEl());
+    renderer = createMirrorRendererFor(stage, defsEl())!;
     return { stage, raf };
   }
 
@@ -2936,7 +2937,7 @@ describe("spine stills into the canvas (M3 A2 — default ON since round 9)", ()
     window.history.replaceState(null, "", search);
     __setStageBackendForTest("canvas");
     const stage = stageAt(1920, 1080, 1);
-    renderer = createMirrorRendererFor(stage, defsEl());
+    renderer = createMirrorRendererFor(stage, defsEl())!;
     return stage;
   }
 
@@ -3041,7 +3042,7 @@ describe("card trails into the canvas (M3 A4)", () => {
     window.history.replaceState(null, "", search);
     __setStageBackendForTest("canvas");
     const stage = stageAt(1920, 1080, 1);
-    renderer = createMirrorRendererFor(stage, defsEl());
+    renderer = createMirrorRendererFor(stage, defsEl())!;
     return {
       stage,
       raf,
@@ -3379,7 +3380,7 @@ describe("the animation scheduler's two arm modes (M3)", () => {
     window.history.replaceState(null, "", search);
     __setStageBackendForTest("canvas");
     const stage = stageAt(1920, 1080, 1);
-    renderer = createMirrorRendererFor(stage, defsEl());
+    renderer = createMirrorRendererFor(stage, defsEl())!;
     return { stage, raf, timers };
   }
 
@@ -3707,7 +3708,7 @@ describe("__mirrorCanvasSnapshot — reading the stage inside the painting task"
     vi.stubGlobal("devicePixelRatio", 1);
     window.history.replaceState(null, "", search);
     __setStageBackendForTest("canvas");
-    renderer = createMirrorRendererFor(stageAt(1920, 1080, 1), defsEl());
+    renderer = createMirrorRendererFor(stageAt(1920, 1080, 1), defsEl())!;
     return { raf };
   }
 
@@ -3790,7 +3791,7 @@ describe("readable-hand raise: the glide", () => {
     vi.spyOn(performance, "now").mockImplementation(() => clock);
     __setStageBackendForTest("canvas");
     const stage = stageAt(1920, 1080, 1);
-    renderer = createMirrorRendererFor(stage, defsEl());
+    renderer = createMirrorRendererFor(stage, defsEl())!;
     return { stage, raf, tick: (ms: number) => (clock += ms) };
   }
 

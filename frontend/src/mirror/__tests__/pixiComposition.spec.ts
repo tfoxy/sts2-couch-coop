@@ -696,7 +696,7 @@ describe("Pixi composition initialization", () => {
 
   it("reports an asynchronous Pixi failure without claiming an active preset", async () => {
     __setStageBackendForTest("pixi");
-    const renderer = createMirrorRendererFor(stage(), document.createElementNS("http://www.w3.org/2000/svg", "defs"));
+    const renderer = createMirrorRendererFor(stage(), document.createElementNS("http://www.w3.org/2000/svg", "defs"))!;
     expect(rendererRuntimeStatus.phase).toBe("initializing");
     await vi.waitFor(() => expect(control.pending).not.toBeNull());
     control.pending!.reject(new Error("no WebGL"));

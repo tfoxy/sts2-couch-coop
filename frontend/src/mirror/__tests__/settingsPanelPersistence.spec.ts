@@ -11,6 +11,8 @@ import {
   serverSettingsPayload
 } from "@/mirror/mirrorSettings";
 import type { MirrorLatency } from "@/mirror/mirrorClient";
+import { rendererComparisonViewRevision, rendererRuntimeStatus, setRendererRuntimeStatus } from "@/mirror/rendererComparison";
+import { setComparisonStageBackend } from "@/mirror/rendererFactory";
 
 // The WRITE half of the persistence feature (the read/layering half lives in mirrorSettings.spec): a change made
 // in THIS panel is saved, and nothing else ever is. These mount against the app-wide singleton and the real jsdom
@@ -37,6 +39,9 @@ function saved(): Record<string, unknown> {
 
 beforeEach(() => {
   localStorage.clear();
+  setComparisonStageBackend("dom");
+  mirrorSettings.stage = "dom";
+  setRendererRuntimeStatus({ actualBackend: null, actualConfig: null, phase: "initializing", reason: null });
   mirrorSettings.panelOpen = true;
   mirrorSettings.quality = "auto";
   mirrorSettings.shaderMode = "static";
@@ -62,6 +67,23 @@ afterEach(() => {
 });
 
 describe("SettingsPanel — saving a viewer's choices", () => {
+  it("shows a canvas failure and retries the same stage without selecting DOM", async () => {
+    mirrorSettings.stage = "canvas";
+    mirrorSettings.runtimeStage = "canvas";
+    setRendererRuntimeStatus({ requested: { ...rendererRuntimeStatus.requested, backend: "canvas" },
+      actualBackend: "rust", actualConfig: null, phase: "failed", reason: "WebGL context lost" });
+    const revision = rendererComparisonViewRevision.value;
+    const wrapper = mountPanel();
+    expect(wrapper.get('[data-testid="mirror-stage-failure"]').text()).toContain("WebGL context lost");
+    await wrapper.get('[data-testid="mirror-stage-failure"] button').trigger("click");
+    expect(mirrorSettings.runtimeStage).toBe("canvas");
+    expect(saved()).toEqual({ stage: "canvas" });
+    expect(rendererRuntimeStatus.phase).toBe("initializing");
+    expect(rendererComparisonViewRevision.value).toBe(revision + 1);
+    expect(wrapper.find('[data-testid="mirror-stage-failure"]').exists()).toBe(false);
+    wrapper.unmount();
+  });
+
   it("persists the public stage, forces Rust values, then restores the saved DOM choices and host payload", async () => {
     mirrorSettings.quality = "high";
     mirrorSettings.shaderMode = "dynamic";

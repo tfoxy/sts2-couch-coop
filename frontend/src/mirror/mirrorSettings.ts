@@ -608,8 +608,7 @@ export function adoptGameTextEffects(
   return true;
 }
 
-// Rust canvas requires a host static background. Runtime fallback to DOM restores the viewer's own setting;
-// image failures do not change the value sent to the host.
+// Rust canvas requires a host static background. Image failures do not change the value sent to the host.
 export function staticBgWireValue(settings: MirrorSettings): boolean {
   return settings.runtimeStage === "canvas" || settings.staticBgEnabled;
 }

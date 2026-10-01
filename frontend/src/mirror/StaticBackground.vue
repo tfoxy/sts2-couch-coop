@@ -64,8 +64,8 @@ const props = defineProps<{
 
 const renderer = inject(MIRROR_RENDERER_KEY, shallowRef(null));
 
-// Start in stage mode BEFORE MirrorView installs its renderer. A hard canvas fallback flips this to false once the
-// DOM renderer is installed, preserving the image recovery path.
+// Start in stage mode before MirrorView installs its renderer. A failed GPU construction
+// leaves this slot without a DOM image until the viewer retries or selects DOM.
 const usesStageTexture = computed(
   () =>
     (requestedStageBackend() === "canvas" || requestedStageBackend() === "pixi" || requestedStageBackend() === "rust") &&

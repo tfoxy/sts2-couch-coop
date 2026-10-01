@@ -17,8 +17,12 @@ import { defineComponent, h, inject, nextTick, ref, type ShallowRef } from "vue"
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
 
 import MirrorView from "@/mirror/MirrorView.vue";
+import { createMirrorRenderer } from "@/mirror/mirrorRenderer";
 import { mirrorSettings } from "@/mirror/mirrorSettings";
 import { __setStageBackendForTest, requestedStageBackend, type StageBackend } from "@/mirror/rendererFactory";
+import * as rendererFactory from "@/mirror/rendererFactory";
+import * as inputCaptureModule from "@/mirror/inputCapture";
+import { rendererRuntimeStatus, setRendererRuntimeStatus } from "@/mirror/rendererComparison";
 import { MIRROR_RENDERER_KEY } from "@/mirror/rendererKey";
 import type { MirrorRenderer } from "@/mirror/renderer/contracts";
 import { applySceneDelta, createMirrorState, parseSceneDelta, type MirrorState } from "@/mirror/sceneTree";
@@ -72,13 +76,13 @@ beforeEach(() => {
   backendAtStart = requestedStageBackend();
   frameBox = { width: 0, height: 0 };
   mirrorSettings.stretchEnabled = true;
-  // The canvas backend cannot be built in jsdom (no WebGL2) and hard-falls-back to the DOM one, naming the reason.
-  // That is the fallback the layout has to survive, not a failure — but its console line is noise here.
+  // The canvas backend cannot be built in jsdom (no WebGL2), so this view stays blank.
   vi.spyOn(console, "info").mockImplementation(() => {});
 });
 
 afterEach(() => {
   __setStageBackendForTest(backendAtStart);
+  setRendererRuntimeStatus({ actualBackend: null, actualConfig: null, phase: "initializing", reason: null });
   window.history.replaceState({}, "", "/");
   vi.restoreAllMocks();
   document.body.innerHTML = "";
@@ -135,21 +139,55 @@ describe("MirrorView's canvas host (`?stage=canvas`)", () => {
     wrapper.unmount();
   });
 
-  it("uses the fallback underlay only when jsdom rejects the requested canvas backend", async () => {
+  it("leaves the canvas stage blank when jsdom rejects its renderer", async () => {
     frameBox = { width: 1440, height: 810 };
     const wrapper = mountView();
     await wrapper.vm.$nextTick();
 
-    // jsdom has no WebGL2, so this test deliberately exercises the hard fallback. The product canvas arm's exact
-    // no-image mount contract is covered by StaticBackground's renderer-null lifecycle test; a fallback must put
-    // its legacy image in this fitted underlay, never in the bare frame slot.
+    // There is no canvas or DOM scene after construction fails. The stage host remains in place for retry.
     const kids = Array.from(document.querySelector<HTMLElement>(".mirror-frame")!.children);
     expect(kids.indexOf(hostEl()!)).toBeLessThan(kids.indexOf(stageEl()!));
-    expect(underlayEl()).not.toBeNull();
+    expect(underlayEl()).toBeNull();
+    expect(stageEl()!.querySelector(".mirror-node")).toBeNull();
 
-    // …which is also why the stage cannot keep painting the opaque "this room hasn't painted yet" fill: above the
-    // canvas it would hide the game. The class is what turns it off; the underlay carries it instead.
     expect(stageEl()!.classList.contains("mirror-stage-over-canvas")).toBe(true);
+    wrapper.unmount();
+  });
+
+  it("does not install input capture or acknowledge a blank GPU stage", async () => {
+    const sendInput = vi.fn();
+    const onSceneRendered = vi.fn();
+    const wrapper = mount(MirrorView, {
+      props: { state: emptyState(), revision: 1, sendInput, onSceneRendered },
+      attachTo: document.body
+    });
+    await nextTick();
+    stageEl()!.dispatchEvent(new MouseEvent("pointerdown", { bubbles: true, clientX: 20, clientY: 20 }));
+    window.dispatchEvent(new KeyboardEvent("keydown", { key: "Enter", bubbles: true }));
+    expect(sendInput).not.toHaveBeenCalled();
+    expect(onSceneRendered).not.toHaveBeenCalled();
+    wrapper.unmount();
+  });
+
+  it("releases input capture when a mounted GPU renderer fails", async () => {
+    const dispose = vi.fn();
+    const originalCapture = inputCaptureModule.createInputCapture;
+    vi.spyOn(inputCaptureModule, "createInputCapture").mockImplementation((...args) => {
+      const capture = originalCapture(...args);
+      const originalDispose = capture.dispose.bind(capture);
+      capture.dispose = () => { dispose(); originalDispose(); };
+      return capture;
+    });
+    vi.spyOn(rendererFactory, "createMirrorRendererFor").mockImplementation((stage, defs) => createMirrorRenderer(stage, defs));
+    const sendInput = vi.fn();
+    setRendererRuntimeStatus({ requested: { ...rendererRuntimeStatus.requested, backend: "canvas" },
+      actualBackend: "rust", phase: "active", reason: null });
+    const wrapper = mount(MirrorView, { props: { state: emptyState(), revision: 1, sendInput }, attachTo: document.body });
+    expect(dispose).not.toHaveBeenCalled();
+    setRendererRuntimeStatus({ phase: "failed", reason: "WebGL context lost" });
+    expect(dispose).toHaveBeenCalledOnce();
+    stageEl()!.dispatchEvent(new MouseEvent("pointerdown", { bubbles: true, clientX: 20, clientY: 20 }));
+    expect(sendInput).not.toHaveBeenCalled();
     wrapper.unmount();
   });
 

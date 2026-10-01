@@ -482,7 +482,7 @@ export function installHandStage(): HandStage {
       const defs = document.createElementNS("http://www.w3.org/2000/svg", "defs");
       svg.appendChild(defs);
       document.body.appendChild(svg);
-      const renderer = createMirrorRendererFor(stage, defs);
+      const renderer = createMirrorRendererFor(stage, defs)!;
       built.push(renderer);
       renderer.setStretch(spreadFactor);
       // READABLE-HAND MODE IS AN AXIS, not a setting a spec picks. It defaults ON for a touch-first device — the

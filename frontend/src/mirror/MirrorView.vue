@@ -56,6 +56,7 @@ import {
   createMirrorRendererFor,
   requestedStageBackend
 } from "@/mirror/rendererFactory";
+import { rendererRuntimeStatus } from "@/mirror/rendererComparison";
 import { MIRROR_RENDERER_KEY } from "@/mirror/rendererKey";
 // WHICH SPACE the DOM boxes are laid out in (`?stageFit=design|display`) — see stageFit.ts. This component owns
 // two things about it and nothing else: the backend GRANT (the canvas arm is never granted), and feeding the live
@@ -151,9 +152,8 @@ watch(() => props.connected, (connected) => {
  * `.sts2/canvas-blur-sep03/FINDINGS.md` (uncommittable, per checkout), and canvasRenderer's SIZING LAW.
  *
  * DECIDED AT SETUP, from the REQUESTED backend — the template is built before `createMirrorRendererFor` runs, so
- * this cannot wait for the factory's answer. A `?stage=canvas` that hard-falls-back to the DOM backend therefore
- * leaves an empty host in the page; it is `pointer-events: none` and paints nothing, and the DOM stage above it is
- * unchanged, so the fallback stays invisible exactly as the factory promises.
+ * this cannot wait for the factory's answer. A failed canvas construction leaves this host empty,
+ * and no DOM scene is mounted in its place.
  */
 const canvasHostLayout = requestedStageBackend() === "canvas" || requestedStageBackend() === "pixi" || requestedStageBackend() === "rust";
 /**
@@ -184,9 +184,8 @@ let renderer: MirrorRenderer | null = null;
 // same onMounted/onBeforeUnmount sites, so the two can never disagree.
 const rendererRef = shallowRef<MirrorRenderer | null>(null);
 provide(MIRROR_RENDERER_KEY, rendererRef);
-// A requested canvas backend can hard-fallback during construction. In that exceptional arm StaticBackground
-// reverts to its DOM image, which must use the fitted design-space underlay rather than becoming a frame-relative
-// bare slot. `rendererRef` is null only during the safe no-DOM mount interval.
+// The legacy canvas renderer may need a separate DOM underlay. A failed GPU construction keeps
+// rendererRef null, so its stage and underlay stay blank.
 const canvasUnderlayRequired = computed(
   () =>
     canvasHostLayout &&
@@ -380,10 +379,8 @@ function reconcileRuntimes(reason: ReconcileReason = "frame"): void {
     renderer?.consumeEffectsDirty();
     return;
   }
-  // A later strict-capability refusal swaps the renderer inside `reconcile`.
-  // Recreate DOM producers in that same rendered turn so the whole-stage
-  // fallback is complete, rather than leaving shader/particle nodes blank
-  // until a settings watcher happens to fire.
+  // The manually selected DOM backend owns its effect producers. A rendered
+  // turn can recreate either producer after a settings change.
   if (activeStageBackend() === "dom") {
     if (!shaderRuntime && effectiveShaderMode.value !== "off") {
       applyShaderMode(effectiveShaderMode.value);
@@ -500,13 +497,14 @@ function runScheduledRender(): "presented" | "pending" | "reentrant" {
       eagerScroll?.reset();
     }
     if (warmAckTraceEnabled()) emitWarmAckTrace({kind: "view-reconcile-entry", revision: props.state.revision});
+    if (rendererRuntimeStatus.phase === "failed" && activeStageBackend() !== "dom") return "pending";
     const presented = renderer?.reconcile(props.state, force ? { forceTextures: true, reason: reasonForWalk } : undefined);
     if (warmAckTraceEnabled()) emitWarmAckTrace({kind: "view-reconcile-result", revision: props.state.revision,
       result: !renderer ? "no-renderer" : presented === false ? "pending" : "presented"});
     // Strict single-canvas sources may still be decoding into stage-owned
     // textures. Nothing has been presented in that state, so doing post-frame
     // composition or acknowledging the wire would falsely release a delta.
-    if (presented === false) {
+    if (!renderer || presented === false || rendererRuntimeStatus.phase === "failed") {
       return "pending";
     }
     rewardFocusCoordinator?.afterReconcile(
@@ -593,6 +591,25 @@ function reconcileNow(): "presented" | "pending" | "reentrant" {
   return runScheduledRender();
 }
 
+watch(() => rendererRuntimeStatus.phase, (phase) => {
+  if (phase !== "failed" || activeStageBackend() === "dom") return;
+  // A failed or lost GPU stage can no longer prove where a touch lands. Release held inputs now;
+  // retry remounts the view and installs fresh capture without reconnecting its seat.
+  hideConfirmTap();
+  unsubscribePressModality?.();
+  unsubscribePressModality = null;
+  rewardFocusCoordinator?.dispose();
+  rewardFocusCoordinator = null;
+  inputCapture?.dispose();
+  inputCapture = null;
+  gamepadCapture?.dispose();
+  gamepadCapture = null;
+  keyboardCapture?.dispose();
+  keyboardCapture = null;
+  eagerScroll?.dispose();
+  eagerScroll = null;
+}, { flush: "sync" });
+
 onMounted(() => {
   try {
     mountScene();
@@ -630,6 +647,7 @@ function mountScene(): void {
     // LAID OUT; it is null on the DOM arm, which is exactly the "no host" the factory documents.
     renderer = createMirrorRendererFor(stage.value, defs.value, canvasHost.value);
     rendererRef.value = renderer;
+    if (!renderer || rendererRuntimeStatus.phase === "failed") return;
     // R6 P6-A — offer the app's scheduled walk to a backend with its own frame loop (see ReconcilePull). Wired
     // HERE, after the renderer exists, and never between `attachStage` and `createMirrorRendererFor`: the
     // recorder has to be the last thing that touched the stage before the renderer is built. Optional method —
@@ -643,7 +661,7 @@ function mountScene(): void {
     renderer.setRaiseHandCards(effectiveRaiseHandCards.value);
     // READABILITY SCALING: same rule, and it matters more here — the flag is module-level and SHARED by every
     // renderer this page builds, so a viewer who switched it off and then crossed a remount (a reconnect, a
-    // backend fallback) must not get a fresh renderer that quietly re-enlarges everything. Seeding from the store
+    // retry) must not get a fresh renderer that quietly re-enlarges everything. Seeding from the store
     // makes the setting, not the last renderer, the source of truth.
     renderer.setUiScaling(mirrorSettings.uiScaling);
     // Targeted texture-size re-styles. Subscribed before the first reconcile below (an image load
@@ -995,9 +1013,8 @@ function applyShaderMode(mode: EffectMode): void {
   if (!stage.value || !sceneAblation.effectsStartupEnabled) return;
   // Strict canvas owns effect pixels through its stage resources. Constructing
   // gsw's DOM runtime here would create child canvases even on a scene that
-  // otherwise passed admission. A capability fallback flips `activeStageBackend`
-  // before this function is reached on initial mount, so the DOM path still
-  // receives its normal runtime.
+  // otherwise passed admission. The DOM path receives its normal runtime only
+  // when the viewer selects DOM.
   if (false) {
     return;
   }
