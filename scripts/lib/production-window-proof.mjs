@@ -10,13 +10,17 @@ export function productionWindowProof(row, expectedWindow) {
   const window = row?.window;
   const ledger = delivery?.final?.deliveryLedger;
   const deliveryRows = ledger?.rows;
+  const ordinalClock = !!delivery?.final?.ordinalWindow;
   const inWindow = Array.isArray(deliveryRows) && expectedWindow
     ? deliveryRows.filter(item => item.recordedMs >= expectedWindow.startMs &&
       item.recordedMs <= expectedWindow.endMs) : [];
   const deliveredInWindow = Array.isArray(deliveryRows) &&
-    Number.isFinite(clock?.beginReplayMs) && Number.isFinite(clock?.endReplayMs)
-    ? deliveryRows.filter(item => item.deliveredAtMs >= clock.beginReplayMs &&
-      item.deliveredAtMs <= clock.endReplayMs) : [];
+    (ordinalClock
+      ? Number.isFinite(clock?.beginEpochUs) && Number.isFinite(clock?.endEpochUs)
+      : Number.isFinite(clock?.beginReplayMs) && Number.isFinite(clock?.endReplayMs))
+    ? deliveryRows.filter(item => ordinalClock
+      ? item.deliveredEpochUs >= clock.beginEpochUs && item.deliveredEpochUs <= clock.endEpochUs
+      : item.deliveredAtMs >= clock.beginReplayMs && item.deliveredAtMs <= clock.endReplayMs) : [];
   const sortedLateness = inWindow.map(item => item.latenessMs).sort((x,y) => x-y);
   const proof = {
     schema: 'production-window-proof/1',
@@ -65,9 +69,11 @@ export function productionWindowProof(row, expectedWindow) {
         !Number.isFinite(item.recordedMs) || !Number.isFinite(item.deliveredAtMs) ||
         !Number.isFinite(item.latenessMs) || item.latenessMs < -1 ||
         Math.abs(item.latenessMs-(item.deliveredAtMs-item.recordedMs)) > 1e-6 ||
+        (ordinalClock && !Number.isFinite(item.deliveredEpochUs)) ||
         (index > 0 && (item.index <= deliveryRows[index-1].index ||
           item.recordedMs < deliveryRows[index-1].recordedMs ||
-          item.deliveredAtMs < deliveryRows[index-1].deliveredAtMs))))
+          item.deliveredAtMs < deliveryRows[index-1].deliveredAtMs ||
+          (ordinalClock && item.deliveredEpochUs < deliveryRows[index-1].deliveredEpochUs)))))
     failures.push('recorded scene delivery timestamps incomplete or unordered');
   if (!window || window.startMs !== expectedWindow?.startMs || window.endMs !== expectedWindow?.endMs ||
       !Number.isFinite(window.spanMs) || window.spanMs <= 0)
@@ -77,6 +83,15 @@ export function productionWindowProof(row, expectedWindow) {
     failures.push('direct page marker clock unavailable');
   if (proof.ordinalWindow) {
     const ordinal = proof.ordinalWindow, contract = ordinal.contract;
+    const pageClockValid = Number.isFinite(clock?.beginPageMs) && Number.isFinite(clock?.endPageMs) &&
+      clock.endPageMs > clock.beginPageMs && Number.isFinite(clock.beginTimeOriginMs) &&
+      clock.beginTimeOriginMs === clock.endTimeOriginMs &&
+      clock.beginEpochUs === (clock.beginTimeOriginMs + clock.beginPageMs) * 1000 &&
+      clock.endEpochUs === (clock.endTimeOriginMs + clock.endPageMs) * 1000 &&
+      Array.isArray(deliveryRows) && deliveryRows.every(item =>
+        Number.isFinite(item.deliveredPageMs) &&
+        item.pageTimeOriginMs === clock.beginTimeOriginMs &&
+        item.deliveredEpochUs === (item.pageTimeOriginMs + item.deliveredPageMs) * 1000);
     const committedGate = (gate, frame) =>
       Number.isInteger(gate?.expectedRevision) && gate.expectedRevision === frame?.revision &&
       gate.frameIdentity?.revision === frame.revision &&
@@ -89,12 +104,11 @@ export function productionWindowProof(row, expectedWindow) {
       gate.commit?.presented === true && gate.commit.sceneRevision === frame.revision &&
       gate.commit.frameIdentity?.revision === frame.revision &&
       gate.commit.frameIdentity?.presentEpoch === frame.presentEpoch;
-    const inside = deliveryRows?.filter(item => item.deliveredAtMs >= clock?.beginReplayMs &&
-      item.deliveredAtMs <= clock?.endReplayMs) ?? [];
+    const inside = deliveredInWindow;
     const prior = deliveryRows?.find(item => item.index === contract?.firstIndex - 1);
     const next = deliveryRows?.find(item => item.index === contract?.lastIndex + 1);
     if (ordinal.stage !== 'closed' || ordinal.failure !== null || ordinal.requests !== 2 ||
-        !contract || !Number.isInteger(contract.firstIndex) ||
+        !pageClockValid || !contract || !Number.isInteger(contract.firstIndex) ||
         !Number.isInteger(contract.lastIndex) ||
         contract.sceneCount !== contract.lastIndex - contract.firstIndex + 1 ||
         !/^[0-9a-f]{64}$/.test(contract.recordingSha256 ?? '') ||
@@ -120,8 +134,8 @@ export function productionWindowProof(row, expectedWindow) {
         inside[0]?.index !== contract.firstIndex ||
         inside.at(-1)?.index !== contract.lastIndex ||
         inside.some((item,index) => item.index !== contract.firstIndex + index) ||
-        !(prior?.deliveredAtMs < clock?.beginReplayMs) ||
-        !(next?.deliveredAtMs > clock?.endReplayMs) ||
+        !(prior?.deliveredEpochUs < clock?.beginEpochUs) ||
+        !(next?.deliveredEpochUs > clock?.endEpochUs) ||
         !committedGate(ordinal.open.gate, a) || !committedGate(ordinal.close.gate, b))
       failures.push('ordinal boundary, exact committed work, or pause evidence unavailable');
   }

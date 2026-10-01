@@ -40,17 +40,27 @@ test('production proof separates recorded schedule from actual marker deliveries
   assert.equal(proof.deliveryTiming.firstDeliveredIndex,386);
   assert.equal(proof.deliveryTiming.lastDeliveredIndex,386);
 });
-test('ordinal proof admits exactly the pinned committed scenes and rejects the next scene', () => {
+test('ordinal proof uses the stable page clock across replay-origin pauses and rejects extra work', () => {
   const value = row();
   value.rendererWindow.before.frameIdentity.revision = 10;
   value.rendererWindow.after.frameIdentity.revision = 12;
-  value.pageMarkerClock.beginReplayMs = 12000;
-  value.pageMarkerClock.endReplayMs = 19010;
+  value.pageMarkerClock.beginEpochUs = 1_000_000;
+  value.pageMarkerClock.endEpochUs = 2_000_000;
+  value.pageMarkerClock.beginPageMs = 1_000;
+  value.pageMarkerClock.endPageMs = 2_000;
+  value.pageMarkerClock.beginTimeOriginMs = 0;
+  value.pageMarkerClock.endTimeOriginMs = 0;
+  value.pageMarkerClock.beginReplayMs = 12026.3;
+  value.pageMarkerClock.endReplayMs = 19030.9;
+  const delivered = (index,recordedMs,deliveredAtMs,deliveredPageMs) => ({
+    index,recordedMs,deliveredAtMs,latenessMs:deliveredAtMs-recordedMs,
+    deliveredPageMs,pageTimeOriginMs:0,deliveredEpochUs:deliveredPageMs*1000,
+  });
   value.replayDelivery.final.deliveryLedger.rows = [
-    {index:0,recordedMs:11999,deliveredAtMs:11999,latenessMs:0},
-    {index:1,recordedMs:12001,deliveredAtMs:12002,latenessMs:1},
-    {index:2,recordedMs:18999,deliveredAtMs:19000,latenessMs:1},
-    {index:3,recordedMs:19001,deliveredAtMs:19020,latenessMs:19},
+    delivered(0,11995,12000,999),
+    delivered(1,12024,12025.9,1001),
+    delivered(2,18997,19000,1999),
+    delivered(3,19013,19030.8,2001),
   ];
   value.replayDelivery.final.ordinalWindow = {
     stage:'closed',failure:null,requests:2,startPauseMs:15,endPauseMs:25,
@@ -69,12 +79,19 @@ test('ordinal proof admits exactly the pinned committed scenes and rejects the n
       frameIdentity:{revision:12,presentEpoch:865},
       commit:{presented:true,sceneRevision:12,frameIdentity:{revision:12,presentEpoch:865}}}},
   };
-  assert.equal(productionWindowProof(value,bounds).valid,true);
+  const proved = productionWindowProof(value,bounds);
+  assert.equal(proved.valid,true);
+  assert.equal(proved.deliveryTiming.deliveredInWindow,2);
+  assert.equal(proved.deliveryTiming.firstDeliveredIndex,1);
+  assert.equal(proved.deliveryTiming.lastDeliveredIndex,2);
   const extra = structuredClone(value);
-  extra.pageMarkerClock.endReplayMs = 19021;
-  extra.replayDelivery.after = 3;
-  extra.rendererWindow.after.frameIdentity.revision = 13;
+  extra.replayDelivery.final.deliveryLedger.rows[3].deliveredPageMs = 1999.5;
+  extra.replayDelivery.final.deliveryLedger.rows[3].deliveredEpochUs = 1_999_500;
   assert.match(productionWindowProof(extra,bounds).failures.join(),/ordinal boundary|timestamps/);
+  const early = structuredClone(value);
+  early.replayDelivery.final.deliveryLedger.rows[0].deliveredPageMs = 1000.5;
+  early.replayDelivery.final.deliveryLedger.rows[0].deliveredEpochUs = 1_000_500;
+  assert.match(productionWindowProof(early,bounds).failures.join(),/ordinal boundary|timestamps/);
   const missing = structuredClone(value);
   missing.replayDelivery.final.ordinalWindow.close.gate.commit.presented = false;
   assert.match(productionWindowProof(missing,bounds).failures.join(),/ordinal boundary/);
@@ -82,6 +99,18 @@ test('ordinal proof admits exactly the pinned committed scenes and rejects the n
   missing.replayDelivery.final.ordinalWindow.close.gate.pendingAckCount = 1;
   assert.match(productionWindowProof(missing,bounds).failures.join(),/ordinal boundary/);
   missing.replayDelivery.final.ordinalWindow.close.gate.pendingAckCount = 0;
+  missing.replayDelivery.final.ordinalWindow.close.gate.ackSerial = 6;
+  assert.match(productionWindowProof(missing,bounds).failures.join(),/ordinal boundary/);
+  missing.replayDelivery.final.ordinalWindow.close.gate.ackSerial = 7;
+  missing.replayDelivery.final.ordinalWindow.close.gate.commit.frameIdentity.presentEpoch = 864;
+  assert.match(productionWindowProof(missing,bounds).failures.join(),/ordinal boundary/);
+  missing.replayDelivery.final.ordinalWindow.close.gate.commit.frameIdentity.presentEpoch = 865;
   missing.replayDelivery.final.deliveryLedger.rows.splice(2,1);
   assert.match(productionWindowProof(missing,bounds).failures.join(),/ordinal boundary|timestamps/);
+  const noPageClock = structuredClone(value);
+  delete noPageClock.replayDelivery.final.deliveryLedger.rows[1].deliveredEpochUs;
+  assert.match(productionWindowProof(noPageClock,bounds).failures.join(),/timestamps/);
+  const mismatchedOrigin = structuredClone(value);
+  mismatchedOrigin.replayDelivery.final.deliveryLedger.rows[1].pageTimeOriginMs = 1;
+  assert.match(productionWindowProof(mismatchedOrigin,bounds).failures.join(),/ordinal boundary/);
 });

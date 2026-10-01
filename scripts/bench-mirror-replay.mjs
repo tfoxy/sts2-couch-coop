@@ -166,7 +166,8 @@ function beginActiveMarkerWindowInPage(input) {
     window.__benchSceneDeliveries = 0;
   }
   if (input.marker) console.timeStamp(input.marker);
-  const markerEpochUs = (performance.timeOrigin + performance.now()) * 1000;
+  const markerPageMs = performance.now();
+  const markerEpochUs = (performance.timeOrigin + markerPageMs) * 1000;
   const stats = typeof window.__mirrorCanvasStats === "function" ? window.__mirrorCanvasStats() : null;
   const renderer = typeof window.__mirrorRendererDiagnostics === "function" ? window.__mirrorRendererDiagnostics() : null;
   const staticBg = typeof window.__mirrorStaticBg === "function" ? window.__mirrorStaticBg() : null;
@@ -183,7 +184,8 @@ function beginActiveMarkerWindowInPage(input) {
   const contextAttributes = a ? { alpha: a.alpha, premultipliedAlpha: a.premultipliedAlpha, antialias: a.antialias } : null;
   return { nodes: document.querySelectorAll(".mirror-node").length, canvasStats: stats, renderer, staticBg, contextAttributes,
     installOverlayPresent: document.querySelector('[data-testid="install-button"]') !== null,
-    sampledAtMs: performance.now(), timeOriginMs: performance.timeOrigin, markerEpochUs,gpuIdentity,gpuTimerCapability,
+    sampledAtMs: performance.now(), markerPageMs, timeOriginMs: performance.timeOrigin,
+    markerEpochUs,gpuIdentity,gpuTimerCapability,
     replayElapsedMs:Number.isFinite(window.__benchWs?._recordedStartMs)
       ? performance.now()-window.__benchWs._recordedStartMs : null,
     rustGpuTimerCapability: window.__mirrorRustGpuTimerCapability ?? null,
@@ -203,7 +205,8 @@ function endActiveMarkerWindowInPage(input) {
     window.__benchWindowAt.endStreamMs = performance.now() - ws._recordedStartMs;
   }
   if (input.marker) console.timeStamp(input.marker);
-  const markerEpochUs = (performance.timeOrigin + performance.now()) * 1000;
+  const markerPageMs = performance.now();
+  const markerEpochUs = (performance.timeOrigin + markerPageMs) * 1000;
   const stats = typeof window.__mirrorCanvasStats === "function" ? window.__mirrorCanvasStats() : null;
   const renderer = typeof window.__mirrorRendererDiagnostics === "function" ? window.__mirrorRendererDiagnostics() : null;
   const staticBg = typeof window.__mirrorStaticBg === "function" ? window.__mirrorStaticBg() : null;
@@ -212,7 +215,7 @@ function endActiveMarkerWindowInPage(input) {
   const contextAttributes = a ? { alpha: a.alpha, premultipliedAlpha: a.premultipliedAlpha, antialias: a.antialias } : null;
   return { atMs: performance.now(), timeOriginMs: performance.timeOrigin, canvasStats: stats, renderer, staticBg,
     contextAttributes, installOverlayPresent: document.querySelector('[data-testid="install-button"]') !== null,
-    markerEpochUs, replayDelivered: window.__benchSceneDeliveries ?? null,
+    markerPageMs, markerEpochUs, replayDelivered: window.__benchSceneDeliveries ?? null,
     replayElapsedMs:Number.isFinite(window.__benchWs?._recordedStartMs)
       ? performance.now()-window.__benchWs._recordedStartMs : null,
     replayIndex: window.__benchWs?._i ?? null,
@@ -1883,10 +1886,15 @@ function fakeWebSocketInit(config) {
             this._ordinalArm("close", expected, ackBeforeDelivery, this._ordinalFinalPresentBefore);
           }
           if (isSceneDelta) {
-            const deliveredAtMs = performance.now() - t0;
+            const deliveredPageMs = performance.now();
+            const deliveredAtMs = deliveredPageMs - t0;
             if (this._recordedDeliveryLog.length < 20_000) this._recordedDeliveryLog.push({
               index:this._i,recordedMs:message.t,deliveredAtMs,
-              latenessMs:deliveredAtMs-message.t
+              latenessMs:deliveredAtMs-message.t,
+              // Ordinal pauses move t0. This page clock never moves, and shares the marker's clock domain.
+              ...(config.ordinalWindow ? { deliveredPageMs,
+                pageTimeOriginMs:performance.timeOrigin,
+                deliveredEpochUs:(performance.timeOrigin + deliveredPageMs) * 1000 } : {})
             });
             else this._recordedDeliveryDropped++;
           }
@@ -6857,6 +6865,10 @@ if (opts.preIdleWitness || opts.activeWindowWitness || opts.startupObservationOu
       }),
       pageMarkerClock: { beginEpochUs: markerOpen?.markerEpochUs ?? null,
         endEpochUs: markerClose?.markerEpochUs ?? null,
+        beginPageMs: markerOpen?.markerPageMs ?? null,
+        endPageMs: markerClose?.markerPageMs ?? null,
+        beginTimeOriginMs: markerOpen?.timeOriginMs ?? null,
+        endTimeOriginMs: markerClose?.timeOriginMs ?? null,
         beginReplayMs:markerOpen?.replayElapsedMs ?? null,
         endReplayMs:markerClose?.replayElapsedMs ?? null,
         openCallStartMs,openCallEndMs,closeCallStartMs,closeCallEndMs,
