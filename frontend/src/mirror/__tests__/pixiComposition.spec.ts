@@ -174,7 +174,7 @@ function measureStub() {
 
 const diagnostic = () => (window as unknown as {
   __mirrorRendererDiagnostics(): { draw: Record<string, number>; effective: Record<string, number>; frameIdentity: unknown;
-    glyphs: { ready: boolean | null; refusedNotReady: number } | null };
+    asyncSubmissionRevision: number | null; glyphs: { ready: boolean | null; refusedNotReady: number } | null };
 }).__mirrorRendererDiagnostics();
 
 async function clockAt(ms: number) {
@@ -827,6 +827,180 @@ describe("Pixi composition initialization", () => {
       expect(adapter.admitScene).toHaveBeenCalledTimes(2);
       expect(diagnostic().frameIdentity).toMatchObject({ revision: 10, clock: 500 });
       expect(committedScenes).not.toContain(9);
+    } finally { renderer.dispose(); }
+  });
+
+  it("wakes a Rust diagnostic clock from late texture completion instead of an animation-frame retry limit", async () => {
+    window.history.replaceState(null, "", "/?rendererCompare=1&stage=rust&rustDiagnostics=1");
+    Object.assign(rendererComparisonConfig, readRendererComparisonConfig());
+    let onInvalidate!: (reason: "resource" | "present") => void;
+    const renderer = createPixiMirrorRenderer(stage(), document.createElementNS("http://www.w3.org/2000/svg", "defs"), null,
+      undefined, { backend: "rust", createExecutor: async (options) => {
+        onInvalidate = options.onInvalidate;
+        return fakeAdapter(true) as never;
+      } });
+    try {
+      await vi.waitFor(() => expect(control.created).toHaveLength(1));
+      const adapter = control.created[0] as ReturnType<typeof fakeAdapter>;
+      const first = animatedColorScene(); first.revision = 40;
+      expect(renderer.reconcile(first)).toBe(false);
+      await vi.waitFor(() => expect(diagnostic().frameIdentity).toMatchObject({ revision: 40 }));
+      const admit = adapter.admitScene.getMockImplementation()!;
+      let textureReady = false;
+      adapter.admitScene.mockImplementation((...args) => textureReady
+        ? admit(...args) : Promise.resolve({ presented: false, reason: "texture pending" }) as never);
+      const next = animatedColorScene(); next.revision = 41; next.sceneRewrite = true;
+      expect(renderer.reconcile(next)).toBe(false);
+      await vi.waitFor(() => expect(diagnostic().asyncSubmissionRevision).toBeNull());
+      const clock = clockAt(500);
+      await vi.waitFor(() => expect(adapter.admitScene.mock.calls.length).toBeGreaterThanOrEqual(3));
+      const admissionsWithoutWake = adapter.admitScene.mock.calls.length;
+      await new Promise((resolve) => setTimeout(resolve, 180));
+      expect(diagnostic().frameIdentity).toMatchObject({ revision: 40 });
+      expect(adapter.admitScene).toHaveBeenCalledTimes(admissionsWithoutWake);
+      textureReady = true;
+      onInvalidate("resource");
+      onInvalidate("resource");
+      expect(await clock).toMatchObject({ revision: 41, clock: 500 });
+      expect(diagnostic().frameIdentity).toMatchObject({ revision: 41, clock: 500 });
+      expect(adapter.admitScene.mock.calls.length - admissionsWithoutWake).toBeLessThanOrEqual(2);
+    } finally { renderer.dispose(); }
+  });
+
+  it("does not miss a Rust resource wake that occurs during admission", async () => {
+    window.history.replaceState(null, "", "/?rendererCompare=1&stage=rust&rustDiagnostics=1");
+    Object.assign(rendererComparisonConfig, readRendererComparisonConfig());
+    let onInvalidate!: (reason: "resource" | "present") => void;
+    const renderer = createPixiMirrorRenderer(stage(), document.createElementNS("http://www.w3.org/2000/svg", "defs"), null,
+      undefined, { backend: "rust", createExecutor: async (options) => {
+        onInvalidate = options.onInvalidate;
+        return fakeAdapter(true) as never;
+      } });
+    try {
+      await vi.waitFor(() => expect(control.created).toHaveLength(1));
+      const adapter = control.created[0] as ReturnType<typeof fakeAdapter>;
+      const first = animatedColorScene(); first.revision = 42;
+      expect(renderer.reconcile(first)).toBe(false);
+      await vi.waitFor(() => expect(diagnostic().frameIdentity).toMatchObject({ revision: 42 }));
+      const admit = adapter.admitScene.getMockImplementation()!;
+      const next = animatedColorScene(); next.revision = 43; next.sceneRewrite = true;
+      adapter.admitScene.mockImplementationOnce(() => Promise.resolve({ presented: false, reason: "texture pending" }) as never);
+      expect(renderer.reconcile(next)).toBe(false);
+      await vi.waitFor(() => expect(diagnostic().asyncSubmissionRevision).toBeNull());
+      adapter.admitScene.mockImplementationOnce((...args) => {
+        onInvalidate("resource");
+        return Promise.resolve({ presented: false, reason: "texture pending" }) as never;
+      });
+      adapter.admitScene.mockImplementation(admit);
+      expect(await clockAt(600)).toMatchObject({ revision: 43, clock: 600 });
+    } finally { renderer.dispose(); }
+  });
+
+  it("ends a stalled Rust diagnostic clock on disposal without certifying an older picture", async () => {
+    window.history.replaceState(null, "", "/?rendererCompare=1&stage=rust&rustDiagnostics=1");
+    Object.assign(rendererComparisonConfig, readRendererComparisonConfig());
+    const renderer = createPixiMirrorRenderer(stage(), document.createElementNS("http://www.w3.org/2000/svg", "defs"), null,
+      undefined, { backend: "rust", createExecutor: async () => fakeAdapter(true) as never });
+    await vi.waitFor(() => expect(control.created).toHaveLength(1));
+    const adapter = control.created[0] as ReturnType<typeof fakeAdapter>;
+    const first = animatedColorScene(); first.revision = 44;
+    expect(renderer.reconcile(first)).toBe(false);
+    await vi.waitFor(() => expect(diagnostic().frameIdentity).toMatchObject({ revision: 44 }));
+    adapter.admitScene.mockImplementation(() => Promise.resolve({ presented: false, reason: "texture pending" }) as never);
+    const next = animatedColorScene(); next.revision = 45; next.sceneRewrite = true;
+    expect(renderer.reconcile(next)).toBe(false);
+    await vi.waitFor(() => expect(diagnostic().asyncSubmissionRevision).toBeNull());
+    const clock = clockAt(700);
+    renderer.dispose();
+    await expect(clock).rejects.toThrow(/renderer disposed/);
+  });
+
+  it("applies one deadline even when a Rust presentation promise never settles", async () => {
+    window.history.replaceState(null, "", "/?rendererCompare=1&stage=rust&rustDiagnostics=1");
+    Object.assign(rendererComparisonConfig, readRendererComparisonConfig());
+    const renderer = createPixiMirrorRenderer(stage(), document.createElementNS("http://www.w3.org/2000/svg", "defs"), null,
+      undefined, { backend: "rust", createExecutor: async () => fakeAdapter(true) as never });
+    try {
+      await vi.waitFor(() => expect(control.created).toHaveLength(1));
+      const adapter = control.created[0] as ReturnType<typeof fakeAdapter>;
+      const first = animatedColorScene(); first.revision = 46;
+      expect(renderer.reconcile(first)).toBe(false);
+      await vi.waitFor(() => expect(diagnostic().frameIdentity).toMatchObject({ revision: 46 }));
+      adapter.admitScene.mockImplementationOnce(() => new Promise(() => {}) as never);
+      const next = animatedColorScene(); next.revision = 47; next.sceneRewrite = true;
+      expect(renderer.reconcile(next)).toBe(false);
+      await vi.waitFor(() => expect(diagnostic().asyncSubmissionRevision).toBe(47));
+      await expect(clockAt(800)).rejects.toThrow(/deadline exceeded.*revision 46/);
+      expect(diagnostic().frameIdentity).toMatchObject({ revision: 46 });
+    } finally { renderer.dispose(); }
+  }, 8_000);
+
+  it("supersedes a Rust diagnostic request and certifies only the newer requested clock", async () => {
+    window.history.replaceState(null, "", "/?rendererCompare=1&stage=rust&rustDiagnostics=1");
+    Object.assign(rendererComparisonConfig, readRendererComparisonConfig());
+    let onInvalidate!: (reason: "resource" | "present") => void;
+    const renderer = createPixiMirrorRenderer(stage(), document.createElementNS("http://www.w3.org/2000/svg", "defs"), null,
+      undefined, { backend: "rust", createExecutor: async (options) => {
+        onInvalidate = options.onInvalidate;
+        return fakeAdapter(true) as never;
+      } });
+    try {
+      await vi.waitFor(() => expect(control.created).toHaveLength(1));
+      const adapter = control.created[0] as ReturnType<typeof fakeAdapter>;
+      const first = animatedColorScene(); first.revision = 48;
+      expect(renderer.reconcile(first)).toBe(false);
+      await vi.waitFor(() => expect(diagnostic().frameIdentity).toMatchObject({ revision: 48 }));
+      const admit = adapter.admitScene.getMockImplementation()!;
+      let ready = false;
+      adapter.admitScene.mockImplementation((...args) => ready
+        ? admit(...args) : Promise.resolve({ presented: false, reason: "texture pending" }) as never);
+      const next = animatedColorScene(); next.revision = 49; next.sceneRewrite = true;
+      expect(renderer.reconcile(next)).toBe(false);
+      await vi.waitFor(() => expect(diagnostic().asyncSubmissionRevision).toBeNull());
+      const older = clockAt(900);
+      const rejectedOlder = expect(older).rejects.toThrow(/superseded by a newer diagnostic clock/);
+      const newer = clockAt(950);
+      await rejectedOlder;
+      ready = true;
+      onInvalidate("resource");
+      expect(await newer).toMatchObject({ revision: 49, clock: 950 });
+      expect(diagnostic().frameIdentity).toMatchObject({ revision: 49, clock: 950 });
+    } finally { renderer.dispose(); }
+  });
+
+  it("restores the requested clock when superseding a blocked request with the last committed clock", async () => {
+    window.history.replaceState(null, "", "/?rendererCompare=1&stage=rust&rustDiagnostics=1");
+    Object.assign(rendererComparisonConfig, readRendererComparisonConfig());
+    let onInvalidate!: (reason: "resource" | "present") => void;
+    const renderer = createPixiMirrorRenderer(stage(), document.createElementNS("http://www.w3.org/2000/svg", "defs"), null,
+      undefined, { backend: "rust", createExecutor: async (options) => {
+        onInvalidate = options.onInvalidate;
+        return fakeAdapter(true) as never;
+      } });
+    try {
+      await vi.waitFor(() => expect(control.created).toHaveLength(1));
+      const adapter = control.created[0] as ReturnType<typeof fakeAdapter>;
+      const state = animatedColorScene(); state.revision = 50;
+      expect(renderer.reconcile(state)).toBe(false);
+      await vi.waitFor(() => expect(diagnostic().frameIdentity).toMatchObject({ revision: 50 }));
+      expect(await clockAt(100)).toMatchObject({ revision: 50, clock: 100 });
+      const admit = adapter.admitScene.getMockImplementation()!;
+      const patchesBefore = adapter.patchScene.mock.calls.length;
+      let resourceReady = false;
+      const pending = { presented: false, reason: "texture pending" };
+      adapter.patchScene.mockImplementation(() => Promise.resolve(pending) as never);
+      adapter.admitScene.mockImplementation((...args) => resourceReady
+        ? admit(...args) : Promise.resolve(pending) as never);
+      const older = clockAt(200);
+      const rejectedOlder = expect(older).rejects.toThrow(/superseded by a newer diagnostic clock/);
+      await vi.waitFor(() => expect(adapter.patchScene.mock.calls.length).toBeGreaterThan(patchesBefore));
+      const restored = clockAt(100);
+      await rejectedOlder;
+      resourceReady = true;
+      onInvalidate("resource");
+      expect(await restored).toMatchObject({ revision: 50, clock: 100 });
+      await new Promise((resolve) => setTimeout(resolve, 20));
+      expect(diagnostic().frameIdentity).toMatchObject({ revision: 50, clock: 100 });
     } finally { renderer.dispose(); }
   });
 

@@ -153,9 +153,19 @@ export function createPixiMirrorRenderer(
   const measureCanvas = stage.ownerDocument.createElement("canvas");
   const measureContext = measureCanvas.getContext("2d");
   const textLayoutCache = new Map<string, { key: string; layout: ReturnType<typeof layoutText>; metrics: { ascent: number; descent: number } }>();
+  // The replay clock waits for real renderer events. Its waiter is installed before a build so a
+  // resource that settles during admission cannot be missed; normal scheduling is unchanged.
+  let diagnosticWakeGeneration = 0;
+  const diagnosticWakeWaiters = new Set<() => void>();
+  let cancelDiagnosticClock: ((reason: string) => void) | null = null;
+  const signalDiagnosticWake = () => {
+    if (!cancelDiagnosticClock) return;
+    diagnosticWakeGeneration++;
+    for (const wake of [...diagnosticWakeWaiters]) wake();
+  };
   let fontVersion = 0;
   let nativeLayouts = 0;
-  const onFontsLoaded = () => { if (producerReasons) resourceEpoch++; fontVersion++; textLayoutCache.clear(); if (state && readiness === "ready") { pendingTextureSource = "resource"; scheduler.scheduleTexturePaint(); } };
+  const onFontsLoaded = () => { if (producerReasons) resourceEpoch++; fontVersion++; textLayoutCache.clear(); if (state && readiness === "ready") { pendingTextureSource = "resource"; scheduler.scheduleTexturePaint(); } signalDiagnosticWake(); };
   stage.ownerDocument.fonts?.addEventListener?.("loadingdone", onFontsLoaded);
   let pixi: MirrorDrawExecutor | null = null;
   const attributionQuery = new URLSearchParams(window.location.search);
@@ -255,6 +265,7 @@ export function createPixiMirrorRenderer(
     if (reason) failure = reason;
     startupEvent("renderer.status", { phase, reason: reason ?? null });
     onStatus?.(phase, reason);
+    if (phase === "failed") signalDiagnosticWake();
   }
   let disposed = false;
   let state: MirrorState | null = null;
@@ -439,7 +450,7 @@ export function createPixiMirrorRenderer(
     scheduler.armAnimation(at);
     return true;
   }
-  const wakeForResource = () => { if (disposed) return; if (producerReasons) resourceEpoch++; pendingTextureSource = "resource"; scheduler.scheduleTexturePaint(); if (reconcilePull?.pending()) { traceWarmRenderer("renderer-pull-resource", state?.revision ?? null); reconcilePull.now(); } };
+  const wakeForResource = () => { if (disposed) return; if (producerReasons) resourceEpoch++; pendingTextureSource = "resource"; scheduler.scheduleTexturePaint(); if (reconcilePull?.pending()) { traceWarmRenderer("renderer-pull-resource", state?.revision ?? null); reconcilePull.now(); } signalDiagnosticWake(); };
   const publishTextOutcome = () => {
     if (pixi) setRendererRuntimeStatus({ pixiText: pixi.textOutcomes() });
   };
@@ -868,6 +879,7 @@ const producerStarted = rustPhaseTimingMode || producerReasonMode ? performance.
       buildEpoch, presentEpoch: frameEpoch, completedFrames: pixi?.stats.completedFrames ?? null });
     semanticRows = semanticCandidate;
     drawnClock = candidateClock;
+    signalDiagnosticWake();
     interaction.publishBuild(committedSnapshot, interactionCandidate);
     landingCandidate.publish();
     refinementPending = refinementRaf !== null;
@@ -914,6 +926,7 @@ const producerStarted = rustPhaseTimingMode || producerReasonMode ? performance.
     publishTextOutcome();
     if (startupEnabled) noteStartupReady(snapshot.stateRevision);
     drawnClock = at;
+    signalDiagnosticWake();
     retainedPatches++;
     retainedPatchObjects += patch.primitives.length;
     lifecycle?.endPhase("publish");
@@ -1271,6 +1284,7 @@ const traceId = nextTraceFrame();
   const onInvalidate = (reason?: "resource" | "present") => {
     if (reason === "present") { scheduleRefinement(); return; }
     if (!disposed && state && pixi) { if (producerReasons) resourceEpoch++; scheduler.scheduleTexturePaint(); if (reconcilePull?.pending()) { traceWarmRenderer("renderer-pull-font", state.revision); reconcilePull.now(); } }
+    if (!disposed) signalDiagnosticWake();
   };
   const executorOptions: ExecutorOptions = { canvas, width: backingW, height: backingH,
     designWidth: Math.max(1, stage.clientWidth), designHeight: Math.max(1, stage.clientHeight),
@@ -1399,47 +1413,87 @@ const traceId = nextTraceFrame();
   async function setRustDiagnosticClock(ms: number | null): Promise<unknown> {
     // The replay transport delivers the next wire message only after this resolves. A presentation
     // already in flight may therefore finish stale when another local reconcile changes `state`.
-    // Wait for it, then retry against the latest wire snapshot instead of aborting the replay or
-    // claiming that an older picture was sampled at `ms`.
-    for (let attempt = 0; attempt < 8; attempt++) {
-      if (asyncSubmissionRevision !== null && asyncPresentCompletion) {
-        const pending = asyncPresentCompletion;
-        try { await pending; } catch { /* retry from the last committed picture */ }
-        if (asyncSubmissionRevision !== null && asyncPresentCompletion === pending) {
-          const abandonedRevision = asyncSubmissionRevision;
-          asyncSubmissionRevision = null;
-          if (asyncAwaitingAckRevision === abandonedRevision) asyncAwaitingAckRevision = null;
-          retainedValid = false;
-          scheduler.scheduleTexturePaint();
+    // Resource completion or publication wakes another attempt. One deadline covers all waits,
+    // including an executor promise that never settles; it never schedules another admission.
+    cancelDiagnosticClock?.("superseded by a newer diagnostic clock");
+    let abortReason: string | null = null;
+    let releaseAbort!: () => void;
+    const aborted = new Promise<void>((resolve) => { releaseAbort = resolve; });
+    const abort = (reason: string) => { if (abortReason !== null) return; abortReason = reason; releaseAbort(); };
+    cancelDiagnosticClock = abort;
+    const deadline = window.setTimeout(() => abort("deadline exceeded"), 5_000);
+    const assertActive = () => {
+      if (disposed) abort("renderer disposed");
+      if (readiness === "failed" || (pixi?.stats.textureFailures ?? 0) > 0)
+        abort(failure ?? pixi?.textureFailureDetails().join(" | ") ?? "resource failed");
+      if (abortReason !== null) {
+        const identity = diagnostics().frameIdentity;
+        throw new Error(`Rust diagnostic clock frame did not complete at ${String(ms)}: ${abortReason} ` +
+          `(revision ${identity?.revision ?? "none"}, clock ${identity?.clock ?? "none"}, ` +
+          `inFlight ${asyncSubmissionRevision ?? "none"}, pending ${JSON.stringify(diagnostics().pendingBreakdown)})`);
+      }
+    };
+    const awaitCompletion = async (pending: Promise<void>) => {
+      await Promise.race([pending.catch(() => { /* renderer status carries the failure */ }), aborted]);
+      assertActive();
+    };
+    const awaitWake = async (seen: number) => {
+      if (diagnosticWakeGeneration !== seen) return;
+      let wake!: () => void;
+      const signaled = new Promise<void>((resolve) => {
+        wake = () => { diagnosticWakeWaiters.delete(wake); resolve(); };
+        diagnosticWakeWaiters.add(wake);
+      });
+      if (diagnosticWakeGeneration !== seen) wake();
+      try { await Promise.race([signaled, aborted]); }
+      finally { diagnosticWakeWaiters.delete(wake); }
+      assertActive();
+    };
+    try {
+      let attempted = false;
+      for (;;) {
+        assertActive();
+        if (asyncSubmissionRevision !== null && asyncPresentCompletion) {
+          const pending = asyncPresentCompletion;
+          await awaitCompletion(pending);
+          if (asyncSubmissionRevision !== null && asyncPresentCompletion === pending)
+            throw new Error(`Rust diagnostic presentation remained in flight after settling at ${String(ms)}`);
+          continue;
         }
-        continue;
+        const current = state;
+        // Before the first scene there is no frame to certify; the replay's scene gate handles it.
+        if (!current || readiness !== "ready") return diagnostics().frameIdentity;
+        deterministicClock = ms;
+        // A resource callback may have published this clock while we waited. The first attempt
+        // still samples, and a superseding request first restores its own clock.
+        if (attempted) {
+          const alreadyPresented = diagnostics().frameIdentity;
+          if (alreadyPresented?.clock === ms && alreadyPresented.revision === current.revision)
+            return alreadyPresented;
+        }
+        attempted = true;
+        const seen = diagnosticWakeGeneration;
+        beginLocalFrame("clock");
+        const at = deterministicClock ?? performance.now();
+        if (lifecycle) lifecycle.phase("sample", () => { visual.applyInputs(current, at); interaction.applyHeldLift(); interaction.applyHandRaisePass(at); sampleVisual(at); });
+        else { visual.applyInputs(current, at); interaction.applyHeldLift(); interaction.applyHandRaisePass(at); sampleVisual(at); }
+        if (!snapshot || !tryRetainedPatch(at)) paint(current, "clock", retainedDecline);
+        const candidate = asyncSubmissionRevision !== null ? asyncPresentCompletion : null;
+        if (candidate) await awaitCompletion(candidate);
+        assertActive();
+        const identity = diagnostics().frameIdentity;
+        if (identity?.clock === ms && identity.revision === state?.revision && asyncSubmissionRevision === null)
+          return identity;
+        if (!snapshot && asyncSubmissionRevision === null) return identity;
+        if (asyncSubmissionRevision !== null && asyncPresentCompletion) continue;
+        // A completion during admission is already a reason to retry. Otherwise wait for the
+        // existing resource or publication callback, never for another animation frame.
+        await awaitWake(seen);
       }
-      if (disposed) return diagnostics().frameIdentity;
-      const current = state;
-      if (!current || readiness !== "ready") return diagnostics().frameIdentity;
-      deterministicClock = ms;
-      beginLocalFrame("clock");
-      const at = deterministicClock ?? performance.now();
-      if (lifecycle) lifecycle.phase("sample", () => { visual.applyInputs(current, at); interaction.applyHeldLift(); interaction.applyHandRaisePass(at); sampleVisual(at); });
-      else { visual.applyInputs(current, at); interaction.applyHeldLift(); interaction.applyHandRaisePass(at); sampleVisual(at); }
-      if (!snapshot || !tryRetainedPatch(at)) paint(current, "clock", retainedDecline);
-      const candidate = asyncSubmissionRevision !== null ? asyncPresentCompletion : null;
-      if (candidate) {
-        try { await candidate; } catch { /* checked against the committed identity below */ }
-      }
-      const identity = diagnostics().frameIdentity;
-      if (identity?.clock === ms && identity.revision === state?.revision && asyncSubmissionRevision === null)
-        return identity;
-      // A ready executor can still be waiting for the first successful resource-backed admission.
-      // Keep the stream moving without presenting the empty identity as a completed clock sample.
-      if (!snapshot && asyncSubmissionRevision === null) return identity;
-      if (asyncSubmissionRevision !== null && asyncPresentCompletion) continue;
-      // An admission may be waiting on a resource wakeup. Yield once before retrying it.
-      await new Promise<void>((resolve) => requestAnimationFrame(() => resolve()));
+    } finally {
+      window.clearTimeout(deadline);
+      if (cancelDiagnosticClock === abort) cancelDiagnosticClock = null;
     }
-    const identity = diagnostics().frameIdentity;
-    throw new Error(`Rust diagnostic clock frame did not complete at ${String(ms)} ` +
-      `(revision ${identity?.revision ?? "none"}, clock ${identity?.clock ?? "none"}, inFlight ${asyncSubmissionRevision ?? "none"})`);
   }
   globals.__mirrorSetDiagnosticClock = (ms: number | null) => {
     if (backend === "rust") return setRustDiagnosticClock(ms);
@@ -1510,7 +1564,7 @@ const traceId = nextTraceFrame();
     __drainDormantHatchForTest: () => false, __drainRevealStaggerForTest: () => 0,
     touchStackAt: interaction.touchStackAt, spreadPainterAt: interaction.spreadPainterAt,
     mapNodeAt: interaction.mapNodeAt, applyLocalOffset: interaction.applyLocalOffset, scrollRenderedY: interaction.scrollRenderedY,
-    dispose() { if (disposed) return; disposed = true; producerReasons?.disposeOpen(); asyncPresentation.dispose(); asyncPresentedRevision = null; asyncSubmissionRevision = null; asyncAwaitingAckRevision = null; asyncPresentCompletion = null; pendingViewRevision = null; if (refinementRaf !== null) cancelAnimationFrame(refinementRaf); observer?.disconnect(); stage.ownerDocument.fonts?.removeEventListener?.("loadingdone", onFontsLoaded); pixi?.dispose(); canvas.remove(); setStageOwnsEffectPixels(false);
+    dispose() { if (disposed) return; disposed = true; cancelDiagnosticClock?.("renderer disposed"); producerReasons?.disposeOpen(); asyncPresentation.dispose(); asyncPresentedRevision = null; asyncSubmissionRevision = null; asyncAwaitingAckRevision = null; asyncPresentCompletion = null; pendingViewRevision = null; if (refinementRaf !== null) cancelAnimationFrame(refinementRaf); observer?.disconnect(); stage.ownerDocument.fonts?.removeEventListener?.("loadingdone", onFontsLoaded); pixi?.dispose(); canvas.remove(); setStageOwnsEffectPixels(false);
       installHandPoseProbe(null, probeOwner); installLandingLogProbe(null, probeOwner); installSpreadAuditProbe(null, probeOwner);
       scheduler.dispose(); interaction.dispose(); loop.reset(); for (const clip of spineClips.values()) clip.release(); spineClips.clear();
       for (const key of ["__mirrorRendererDiagnostics", "__mirrorCanvasProfile", "__mirrorDrawListDump", "__pixiAttribution", "__pixiArmSkipGl", "__pixiArmSingleQuad", "__mirrorFrameLifecycle", "__mirrorLogicalPaint", "__mirrorFrameIdentity", "__mirrorSetDiagnosticClock", "__mirrorProductionMapProbe"]) delete globals[key]; },
