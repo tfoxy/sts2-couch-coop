@@ -29,7 +29,7 @@ if (process.env.COUCHCOOP_WARM_RECORDING) {
 
 async function scenario({ diagnosticClock = false, foreignFetch = false, staleMeasured = false,
   pendingAtRelease = false, watchGate = false, objectPrefetch = false, stalledGate = null,
-  traceFlood = false, clockFailure = false } = {}) {
+  traceEvents = 0, releaseTraceEvents = 0, clockFailure = false } = {}) {
   let revision = 0, presentEpoch = 0, buildEpoch = 0;
   let clockCalls = 0;
   let pendingSubmission = null;
@@ -73,7 +73,7 @@ async function scenario({ diagnosticClock = false, foreignFetch = false, staleMe
     delivered.push({ phase, data: event.data });
     if (event.data === full && phase === 'warm' && !textureCache.has(required)) {
       textureCache.add(required);
-      if (traceFlood) for (let index = 0; index < 8200; index++)
+      if (traceEvents) for (let index = 0; index < traceEvents; index++)
         windowObject.__benchWarmAckTrace({kind:'test-event',revision:index});
       if (foreignFetch) void windowObject.fetch(required);
       else if (objectPrefetch) {
@@ -112,15 +112,19 @@ async function scenario({ diagnosticClock = false, foreignFetch = false, staleMe
     assert.match(windowObject.__benchWsError,/resource warm pass failed/);
     return;
   }
-  if (traceFlood) {
+  if (traceEvents > 32768) {
     assert.equal(windowObject.__benchResourceWarmPass.status,'failed');
     assert.match(windowObject.__benchWsError,/warm ack trace ring overflow/);
-    assert.equal(windowObject.__benchWarmAckTraceOverflow,8);
+    assert.equal(windowObject.__benchWarmAckTraceCapacity,32768);
+    assert.equal(windowObject.__benchWarmAckTraceOverflow,traceEvents-32768);
+    assert.equal(windowObject.__benchResourceWarmPass.ackTraceCapacity,32768);
+    assert.equal(windowObject.__benchResourceWarmPass.ackTraceRetained,32768);
+    assert.equal(windowObject.__benchResourceWarmPass.ackTraceTotal,traceEvents);
     assert.equal(windowObject.__benchResourceWarmPass.ackTraceValid,false);
     const ordered = windowObject.__benchWarmAckTraceSnapshot();
-    assert.equal(ordered.length,8192);
-    assert.equal(ordered[0].revision,8);
-    assert.equal(ordered.at(-1).revision,8199);
+    assert.equal(ordered.length,32768);
+    assert.equal(ordered[0].revision,traceEvents-32768);
+    assert.equal(ordered.at(-1).revision,traceEvents-1);
     assert.equal(windowObject.__benchDone,undefined);
     return;
   }
@@ -164,6 +168,17 @@ async function scenario({ diagnosticClock = false, foreignFetch = false, staleMe
   assert.equal(windowObject.__benchDone,undefined,'measured replay cannot start before release');
   assert.equal(windowObject.__benchResourceWarmPass.sceneDeliveries,2);
   assert.equal(windowObject.__benchWarmFetchDropped,0);
+  if (traceEvents) {
+    const proof = windowObject.__benchResourceWarmPass;
+    assert.equal(proof.ackTraceCapacity,32768);
+    assert.equal(proof.ackTraceRetained,traceEvents);
+    assert.equal(proof.ackTraceTotal,traceEvents);
+    assert.equal(proof.ackTraceOverflow,0);
+    assert.equal(proof.ackTraceValid,true);
+    const ordered = windowObject.__benchWarmAckTraceSnapshot();
+    assert.equal(ordered.length,traceEvents);
+    for (let index = 0; index < traceEvents; index++) assert.equal(ordered[index].revision,index);
+  }
   if (!objectPrefetch) assert.equal(windowObject.__benchWarmFetches[0].rustExecutorOwned,true);
   if (objectPrefetch) {
     assert.equal(windowObject.__benchWarmFetches.find((row) => row.url === required)?.rustExecutorOwned,true);
@@ -173,7 +188,21 @@ async function scenario({ diagnosticClock = false, foreignFetch = false, staleMe
   }
   assert.deepEqual(delivered.map((row) => row.phase),['warm','warm']);
   if (pendingAtRelease) pendingSubmission = revision;
+  for (let index = 0; index < releaseTraceEvents; index++)
+    windowObject.__benchWarmAckTrace({kind:'late-test-event',revision:index});
   windowObject.__benchResourceWarmRelease();
+  if (releaseTraceEvents > 32768) {
+    await waitUntil(() => windowObject.__benchResourceWarmPass.status === 'failed');
+    const proof = windowObject.__benchResourceWarmPass;
+    assert.match(proof.failure,/warm ack trace ring overflow/);
+    assert.equal(proof.ackTraceRetained,32768);
+    assert.equal(proof.ackTraceTotal,releaseTraceEvents);
+    assert.equal(proof.ackTraceOverflow,releaseTraceEvents-32768);
+    assert.equal(proof.ackTraceValid,false);
+    assert.equal(proof.releasedEpochMs,null);
+    assert.equal(windowObject.__benchDone,undefined);
+    return;
+  }
   if (pendingAtRelease) {
     await waitUntil(() => windowObject.__benchResourceWarmPass.status === 'failed');
     assert.match(windowObject.__benchWsError,/still active at measured release/);
@@ -214,6 +243,9 @@ await scenario({objectPrefetch:true});
 await scenario({stalledGate:'revision'});
 await scenario({stalledGate:'presentation'});
 await scenario({stalledGate:'ack'});
-await scenario({traceFlood:true});
+await scenario({traceEvents:10514});
+await scenario({traceEvents:32768});
+await scenario({traceEvents:32769});
+await scenario({releaseTraceEvents:32769});
 await scenario({diagnosticClock:true,clockFailure:true});
 console.log('resource warm pass: revision-bound async ack, diagnostic offset, ownership and reset passed');

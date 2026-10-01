@@ -1278,12 +1278,17 @@ function fakeWebSocketInit(config) {
   const originalFetch = window.fetch;
   const realFetch = window.fetch.bind(window);
   if (config.resourceWarmPass) {
-    const limit = 8192;
+    // This fixed warm replay produced 10,514 causal ACK events. Retain the complete trace for
+    // independent review; any workload exceeding the bound still fails closed below.
+    const limit = 32768;
     window.__benchWarmAckTraceRows = [];
+    window.__benchWarmAckTraceCapacity = limit;
+    window.__benchWarmAckTraceTotal = 0;
     window.__benchWarmAckTraceOverflow = 0;
     window.__benchWarmAckTraceCursor = 0;
     window.__benchWarmAckTrace = (event) => {
       if (window.__benchResourceWarmPass?.phase !== "warm") return;
+      window.__benchWarmAckTraceTotal++;
       const rows = window.__benchWarmAckTraceRows;
       const row = { atEpochMs: performance.timeOrigin + performance.now(), ...event };
       if (rows.length < limit) rows.push(row);
@@ -1436,8 +1441,17 @@ function fakeWebSocketInit(config) {
         measuredFirstBuildEpoch: null, releaseBaseRevision: null, releaseBasePresentEpoch: null,
         releaseBaseBuildEpoch: null, fetchRestored: false, pendingAckAtRelease: null,
         status: "running", failure: null, lastCompletedGate: null, activeGate: null,
-        failureSnapshot: null, ackTraceOverflow: 0, ackTraceValid: true };
+        failureSnapshot: null, ackTraceCapacity: window.__benchWarmAckTraceCapacity ?? null,
+        ackTraceRetained: 0, ackTraceTotal: 0, ackTraceOverflow: 0, ackTraceValid: true };
       window.__benchResourceWarmPass = proof;
+      const refreshAckTraceProof = () => {
+        proof.ackTraceRetained = window.__benchWarmAckTraceRows?.length ?? 0;
+        proof.ackTraceTotal = window.__benchWarmAckTraceTotal ?? 0;
+        proof.ackTraceOverflow = window.__benchWarmAckTraceOverflow ?? 0;
+        proof.ackTraceValid = proof.ackTraceOverflow === 0 &&
+          proof.ackTraceRetained === proof.ackTraceTotal;
+        return proof.ackTraceValid;
+      };
       const until = async (predicate, label, onTimeout) => {
         const deadline = performance.now() + (config.resourceWarmTimeoutMs ?? 10_000);
         while (!predicate()) {
@@ -1539,7 +1553,7 @@ function fakeWebSocketInit(config) {
         await until(() => window.__benchWarmFetches.every((row) => row.endEpochMs !== null),
           "fetch response settlement");
         if (window.__benchWarmFetchDropped) throw new Error("renderer fetch evidence overflow");
-        if (window.__benchWarmAckTraceOverflow) throw new Error("warm ack trace ring overflow");
+        if (!refreshAckTraceProof()) throw new Error("warm ack trace ring overflow");
         const renderer = window.__mirrorRendererDiagnostics?.();
         proof.rendererAfter = renderer?.instance ?? null;
         if (renderer?.asyncSubmissionRevision != null || renderer?.asyncAwaitingAckRevision != null ||
@@ -1577,6 +1591,9 @@ function fakeWebSocketInit(config) {
         proof.releaseBaseRevision = releaseFrame.revision;
         proof.releaseBasePresentEpoch = releaseFrame.presentEpoch;
         proof.releaseBaseBuildEpoch = releaseFrame.buildEpoch;
+        // The trace remains active while the harness waits for release. A late overflow must
+        // reject before the measured phase starts, even if the earlier warm check passed.
+        if (!refreshAckTraceProof()) throw new Error("warm ack trace ring overflow");
         proof.releasedEpochMs = performance.timeOrigin + performance.now();
         proof.phase = "measured";
         proof.status = "released";
@@ -1593,8 +1610,8 @@ function fakeWebSocketInit(config) {
         window.__benchSceneDeliveries = 0;
       } catch (error) {
         proof.endEpochMs = performance.timeOrigin + performance.now();
-        proof.ackTraceOverflow = window.__benchWarmAckTraceOverflow ?? 0;
-        proof.ackTraceValid = proof.ackTraceOverflow === 0;
+        proof.ackTraceCapacity = window.__benchWarmAckTraceCapacity ?? null;
+        refreshAckTraceProof();
         proof.status = "failed";
         proof.failure = String(error);
         throw error;
