@@ -17,6 +17,9 @@ export interface RustFastFlags {
   fontCheckCache: boolean;
   snapshotReuse: boolean;
   drawStateDedupe: boolean;
+  hiddenMemoCaptures: boolean;
+  heldOverridePatch: boolean;
+  sceneIndex: boolean;
   verify: boolean;
 }
 
@@ -30,6 +33,9 @@ export const RUST_FAST_SWITCHES = {
   fontCheckCache: "rustFontCheckCache",
   snapshotReuse: "rustSnapshotReuse",
   drawStateDedupe: "rustDrawStateDedupe",
+  hiddenMemoCaptures: "rustHiddenMemoCaptures",
+  heldOverridePatch: "rustHeldOverridePatch",
+  sceneIndex: "rustSceneIndex",
 } as const satisfies Record<Exclude<keyof RustFastFlags, "verify">, string>;
 
 export function resolveRustFastFlags(query: URLSearchParams, backend: "pixi" | "rust"): RustFastFlags {

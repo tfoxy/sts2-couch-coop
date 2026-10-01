@@ -128,11 +128,18 @@ export interface CanvasInteractionRuntimePorts {
   readonly armAnimation: () => void;
   readonly builds: () => number;
   readonly paintedFrames: () => number;
+  /** R2-P3 (`rustSceneIndex`/`rustFastVerify`): restrict `handPresent`/`coverAbove` to incrementally-maintained
+   *  type/style candidates instead of a full node scan. Both default off — only the Rust backend ever sets them. */
+  readonly sceneIndex?: boolean;
+  readonly sceneIndexVerify?: boolean;
 }
 
 export interface CanvasInteractionRuntime {
   readonly cosmeticOffsets: ReadonlyMap<string, CosmeticOffset>;
   readonly handHolderIds: ReadonlySet<string>;
+  /** See `ports.sceneIndexVerify`: mismatches between the candidate-restricted and full-scan answers. Always 0
+   *  off verify; used by `createPixiMirrorRenderer.ts` to fold into its own `sceneIndexVerifyMismatches`. */
+  readonly sceneIndexVerifyMismatches: number;
   readonly cosmeticVersion: number;
   readonly cosmeticVersionAtBuild: number;
   readonly offsetPending: boolean;
@@ -268,6 +275,11 @@ export function createCanvasInteractionRuntime(ports: CanvasInteractionRuntimePo
   const offsetRamps = createOffsetRamps();
   const rampSample: OffsetRampSample = { dx: 0, dy: 0 };
   const handHolderIds = new Set<string>();
+  // R2-P3 (`rustSceneIndex`): `coverAbove`'s candidate set — ids whose CURRENT node carries a `fillColor` — kept
+  // exact the same incremental way `handHolderIds` already is (onNodePresent/onNodeRemoved/onRewrite, driven by
+  // the reconciler's own changedIds). `fillColor` is a node's own field, never an ancestor's, so this is exact.
+  const fillColorIds = new Set<string>();
+  let sceneIndexVerifyMismatches = 0;
   const snapshotData = new WeakMap<DrawnSceneSnapshot, FrameData>();
   // Queries compose one chain at a time on the JS event stack. Reuse the
   // ancestor scratch rather than allocating a temporary array per confirm or
@@ -747,13 +759,35 @@ export function createCanvasInteractionRuntime(ports: CanvasInteractionRuntimePo
     return out;
   }
 
+  // R2-P3 (`rustSceneIndex`): both scans below are full `nodes.values()` walks whose predicate only needs ids
+  // this module already tracks incrementally (`handHolderIds` / `fillColorIds`). `fullScan` stays the untouched
+  // original walk — used outright when the switch is off, and as the TRUSTED answer under `ports.sceneIndexVerify`
+  // (a mismatch only increments the counter; the candidate path never gets to produce a wrong answer).
   function handPresent(): boolean {
     const snapshot = snapshotOrNull();
     if (snapshot === null) return false;
-    for (const node of snapshot.scene.nodes.values()) {
-      if (nodeTypeLeaf(node.nodeType) === HAND_HOLDER_TYPE && effectiveVisible(snapshot.scene.nodes, node)) return true;
+    const nodes = snapshot.scene.nodes;
+    const fullScan = (): boolean => {
+      for (const node of nodes.values()) {
+        if (nodeTypeLeaf(node.nodeType) === HAND_HOLDER_TYPE && effectiveVisible(nodes, node)) return true;
+      }
+      return false;
+    };
+    if (!ports.sceneIndex) return fullScan();
+    const candidate = (): boolean => {
+      for (const id of handHolderIds) {
+        const node = nodes.get(id);
+        if (node && effectiveVisible(nodes, node)) return true;
+      }
+      return false;
+    };
+    if (ports.sceneIndexVerify) {
+      const fast = candidate();
+      const trusted = fullScan();
+      if (fast !== trusted) sceneIndexVerifyMismatches++;
+      return trusted;
     }
-    return false;
+    return candidate();
   }
 
   function coverAbove(id: string): boolean {
@@ -763,24 +797,40 @@ export function createCanvasInteractionRuntime(ports: CanvasInteractionRuntimePo
     if (targetIndex < 0) return false;
     const nodes = snapshot.scene.nodes;
     const designWidth = dataFor(snapshot).designWidth;
-    for (const node of nodes.values()) {
-      if (!node.fillColor || (node.shaderId !== null && node.shaderId !== undefined) || node.localRect === null || !node.visible) continue;
-      if (snapshot.paintOrder.orderOf(node.id) <= targetIndex || ancestorChainHidden(nodes, node)) continue;
+    const covers = (node: MirrorNode): boolean => {
+      if (!node.fillColor || (node.shaderId !== null && node.shaderId !== undefined) || node.localRect === null || !node.visible) return false;
+      if (snapshot.paintOrder.orderOf(node.id) <= targetIndex || ancestorChainHidden(nodes, node)) return false;
       const own = (node.modulate?.a ?? node.opacity) * (node.selfModulate?.a ?? 1) * node.fillColor.a;
       const alpha = composeCoverAlpha(nodes, node, () => own, (candidate) => candidate.modulate?.a ?? candidate.opacity, COVER_CHAIN_BUDGET);
-      if (alpha < BACKSTOP_COVER_MIN_ALPHA) continue;
+      if (alpha < BACKSTOP_COVER_MIN_ALPHA) return false;
       const transform = node.transform;
-      if (transform === null || transform === undefined || Math.abs(transform[1]) > 1e-4 || Math.abs(transform[2]) > 1e-4 || transform[0] <= 0 || transform[3] <= 0) continue;
+      if (transform === null || transform === undefined || Math.abs(transform[1]) > 1e-4 || Math.abs(transform[2]) > 1e-4 || transform[0] <= 0 || transform[3] <= 0) return false;
       const rect = node.localRect;
       const x0 = transform[4] + transform[0] * rect.x;
       const y0 = transform[5] + transform[3] * rect.y;
-      if (
-        x0 <= COVER_EDGE_EPS && y0 <= COVER_EDGE_EPS &&
+      return x0 <= COVER_EDGE_EPS && y0 <= COVER_EDGE_EPS &&
         x0 + rect.width * transform[0] >= designWidth - COVER_EDGE_EPS &&
-        y0 + rect.height * transform[3] >= MIRROR_DESIGN_HEIGHT - COVER_EDGE_EPS
-      ) return true;
+        y0 + rect.height * transform[3] >= MIRROR_DESIGN_HEIGHT - COVER_EDGE_EPS;
+    };
+    const fullScan = (): boolean => {
+      for (const node of nodes.values()) if (covers(node)) return true;
+      return false;
+    };
+    if (!ports.sceneIndex) return fullScan();
+    const candidateScan = (): boolean => {
+      for (const candidateId of fillColorIds) {
+        const node = nodes.get(candidateId);
+        if (node && covers(node)) return true;
+      }
+      return false;
+    };
+    if (ports.sceneIndexVerify) {
+      const fast = candidateScan();
+      const trusted = fullScan();
+      if (fast !== trusted) sceneIndexVerifyMismatches++;
+      return trusted;
     }
-    return false;
+    return candidateScan();
   }
 
   function handRaiseUiLayer(): HandRaiseUiLayer {
@@ -1196,14 +1246,17 @@ export function createCanvasInteractionRuntime(ports: CanvasInteractionRuntimePo
 
   function noteNodePresent(node: MirrorNode): void {
     if (nodeTypeLeaf(node.nodeType) === HAND_HOLDER_TYPE) handHolderIds.add(node.id);
+    if (node.fillColor) fillColorIds.add(node.id);
   }
 
   function noteNodeRemoved(id: string): void {
     handHolderIds.delete(id);
+    fillColorIds.delete(id);
   }
 
   function noteRewrite(): void {
     handHolderIds.clear();
+    fillColorIds.clear();
   }
 
   function liveChildIdsOf(id: string): readonly string[] | undefined {
@@ -1374,6 +1427,7 @@ export function createCanvasInteractionRuntime(ports: CanvasInteractionRuntimePo
     offsetFrameRaf = 0;
     offsetRamps.clear();
     handHolderIds.clear();
+    fillColorIds.clear();
     liveChildIds = null;
     liveEagerCandidates = null;
     snapshotGlobalChainScratch.length = 0;
@@ -1384,6 +1438,7 @@ export function createCanvasInteractionRuntime(ports: CanvasInteractionRuntimePo
   return {
     get cosmeticOffsets() { return cosmeticOffsets; },
     get handHolderIds() { return handHolderIds; },
+    get sceneIndexVerifyMismatches() { return sceneIndexVerifyMismatches; },
     get cosmeticVersion() { return cosmeticVersion; },
     get cosmeticVersionAtBuild() { return cosmeticVersionAtBuild; },
     get offsetPending() { return offsetPending; },
