@@ -1480,7 +1480,19 @@ function fakeWebSocketInit(config) {
             await until(() => window.__mirrorRendererDiagnostics?.()?.ready === true, "full scene mount");
             proof.rendererBefore ??= window.__mirrorRendererDiagnostics?.()?.instance ?? null;
           }
-          await this._setDiagnosticClock(message.t);
+          try { await this._setDiagnosticClock(message.t); }
+          catch (error) {
+            const renderer = window.__mirrorRendererDiagnostics?.() ?? null;
+            proof.failureSnapshot = { ...gate,
+              sampledEpochMs: performance.timeOrigin + performance.now(),
+              socketReadyState: this.readyState, watchOn: this._watchOn,
+              ackSerialAfter: this._sceneAckSerial,
+              pendingAckCount: window.__benchSceneAckPending?.length ?? null,
+              deliveredSceneCount: window.__benchSceneDeliveries ?? null,
+              frameIdentity: window.__mirrorFrameIdentity?.() ?? null,
+              renderer, clockError: String(error) };
+            throw error;
+          }
           // An ack on its own can belong to an older render. Require this exact newly applied scene revision
           // to complete a newer frame, then require its own post-delivery ack except for the mount keyframe.
           const gateSnapshot = () => {

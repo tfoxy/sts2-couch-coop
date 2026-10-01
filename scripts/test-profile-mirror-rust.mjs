@@ -410,6 +410,21 @@ test('receipt retains first-party hit proof when painter provenance is unknown',
     assert.equal(changed.receipt.output.hit.equal,false);
   } finally { rmSync(dir,{recursive:true,force:true}); }
 });
+test('visual seed with null image and hit references records unavailable output', () => {
+  const dir = mkdtempSync(join(tmpdir(),'canvas-seed-receipt-test-'));
+  try {
+    const config = {captureMode:'visual',captureOut:dir,
+      imageReferencePath:null,imageReferenceSha256:null,
+      hitReferencePath:null,hitReferenceSha256:null};
+    const result = receipt(config,'seed',{source:'a'}, {source:'a'},
+      {perRepeat:[{rendererWindow:{after:{}}}]},[],[]);
+    assert.equal(result.receipt.output.valid,false);
+    assert.equal(result.receipt.output.image.equal,false);
+    assert.equal(result.receipt.output.image.differentPixels,null);
+    assert.match(result.receipt.output.image.reason,/pinned image reference unavailable/);
+    assert.equal(result.receipt.output.hit,null);
+  } finally { rmSync(dir,{recursive:true,force:true}); }
+});
 test('pixel output proof requires a pinned file and an exact decoded-pixel count', () => {
   const dir = mkdtempSync(join(tmpdir(),'canvas-pixel-test-'));
   try {

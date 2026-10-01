@@ -29,17 +29,22 @@ if (process.env.COUCHCOOP_WARM_RECORDING) {
 
 async function scenario({ diagnosticClock = false, foreignFetch = false, staleMeasured = false,
   pendingAtRelease = false, watchGate = false, objectPrefetch = false, stalledGate = null,
-  traceFlood = false } = {}) {
+  traceFlood = false, clockFailure = false } = {}) {
   let revision = 0, presentEpoch = 0, buildEpoch = 0;
+  let clockCalls = 0;
   let pendingSubmission = null;
   const textureCache = new Set(), originalFetches = [], delivered = [];
   const windowObject = {
     __benchSceneAckPending: [], __benchSceneAckLatencies: [],
     __mirrorFrameIdentity: () => ({revision,presentEpoch,buildEpoch}),
-    __mirrorSetDiagnosticClock: async () => ({revision,presentEpoch,buildEpoch}),
+    __mirrorSetDiagnosticClock: async () => {
+      if (clockFailure && ++clockCalls === 4) throw new Error('diagnostic clock refused scene');
+      return {revision,presentEpoch,buildEpoch};
+    },
     __mirrorRendererDiagnostics: () => ({ instance: 7, ready: true, admittedRevision:revision,
       asyncSubmissionRevision:pendingSubmission,asyncAwaitingAckRevision:null,
-      resources: { pending: 0, failed: 0 } }),
+      resources: { pending: 0, failed: 0 },
+      rustProducerReasons: clockFailure ? {lastDecline:'texture-pending'} : undefined }),
     fetch: async (url) => {
       originalFetches.push(String(url));
       return String(url).includes('recording') ? { text: async () => recording } : { status: 200 };
@@ -96,6 +101,17 @@ async function scenario({ diagnosticClock = false, foreignFetch = false, staleMe
     }
   };
   await waitUntil(() => ['ready','failed'].includes(windowObject.__benchResourceWarmPass?.status));
+  if (clockFailure) {
+    const proof = windowObject.__benchResourceWarmPass;
+    assert.equal(proof.status,'failed');
+    assert.equal(proof.failureSnapshot.sceneOrdinal,2);
+    assert.equal(proof.failureSnapshot.expectedRevision,2);
+    assert.equal(proof.failureSnapshot.frameIdentity.revision,1);
+    assert.equal(proof.failureSnapshot.renderer.rustProducerReasons.lastDecline,'texture-pending');
+    assert.match(proof.failureSnapshot.clockError,/diagnostic clock refused scene/);
+    assert.match(windowObject.__benchWsError,/resource warm pass failed/);
+    return;
+  }
   if (traceFlood) {
     assert.equal(windowObject.__benchResourceWarmPass.status,'failed');
     assert.match(windowObject.__benchWsError,/warm ack trace ring overflow/);
@@ -199,4 +215,5 @@ await scenario({stalledGate:'revision'});
 await scenario({stalledGate:'presentation'});
 await scenario({stalledGate:'ack'});
 await scenario({traceFlood:true});
+await scenario({diagnosticClock:true,clockFailure:true});
 console.log('resource warm pass: revision-bound async ack, diagnostic offset, ownership and reset passed');

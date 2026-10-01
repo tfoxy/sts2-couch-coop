@@ -388,7 +388,8 @@ function receipt(config, runId, before, after, benchmark, captureCommand, artifa
     hitGridMatches(readFileSync(gridPath,'utf8'),readFileSync(resolve(config.hitReferencePath),'utf8'));
   const hitSemanticSha256 = hitGridValid ? hitGridSemanticHash(readFileSync(gridPath,'utf8')) : null;
   const imageReferenceHash = fileHash(config.imageReferencePath && resolve(config.imageReferencePath));
-  const imageDifference = config.captureOut && imageReferenceHash === config.imageReferenceSha256
+  const imageDifference = config.captureOut && imageReferenceHash &&
+      imageReferenceHash === config.imageReferenceSha256
     ? imagePixelDifference(join(resolve(config.captureOut),'final.png'),resolve(config.imageReferencePath))
     : {differentPixels:null,reason:'pinned image reference unavailable or hash mismatch'};
   const imageEqual = imageDifference.differentPixels === 0;
