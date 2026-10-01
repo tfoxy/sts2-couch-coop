@@ -170,3 +170,11 @@ operation with a falsifying test; require fixed-clock pixels/hits and ordinary
 output/work equality, then interleaved uninstrumented controls beyond spread
 and counter uncertainty. Keep phone, GPU execution, and physical presentation
 claims parked. Do not use prohibited ports, a visible game window, push, or tag.
+
+## Closing note
+
+The formal interleaved-control contract above remains available whenever a result needs to support a
+formal CPU/output claim. For faster day-to-day iteration, use quick alternating A/B runs via
+`scripts/bench-rust-ab.mjs` (landing separately) instead of standing up the full comparison harness
+for every candidate, and record every result — accepted, rejected, or unqualified — as a row in
+[renderer-optimization-ledger.md](renderer-optimization-ledger.md).

@@ -47,6 +47,10 @@ specific rejection**. Preserve an inconclusive result as inconclusive.
 Detailed receipts are in the named project-memory note and its ignored artifact
 path; the campaign readout supersedes older profiling summaries.
 
+[renderer-optimization-ledger.md](renderer-optimization-ledger.md) is the superset of this table —
+it also covers the custom WebGL2/TS canvas stage and Pixi, and gets a row for every attempt across
+all three renderers, not just this Rust native-profiler lane.
+
 | Approach already tried | Result and reopen condition |
 | --- | --- |
 | Text-ink `readFrequently` | Accepted phone busy presentation gain in both ABBA orders, roughly 8–12 to 19–21/s; renderer CPU rose. Keep ON as the current workload baseline. Modest glyph raster differences were user-accepted. `rust-text-ink-phone-sep28`. |
