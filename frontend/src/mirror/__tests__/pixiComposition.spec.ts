@@ -182,7 +182,7 @@ async function clockAt(ms: number) {
 }
 
 describe("Pixi composition initialization", () => {
-  beforeEach(() => { control.pending = null; control.options = null; control.glyphReady = false; control.glyphOnReady = null; control.glyphBlockCalls = 0; control.resizeObserver = null; control.created.length = 0; rewardSpy.mockClear(); schedulerControl.arms.mockClear(); schedulerControl.ports = null; fontLoader.load.mockReset(); fontLoader.load.mockResolvedValue(undefined); document.body.replaceChildren(); window.history.replaceState(null, "", "/?stage=pixi&pixiScene=retained"); Object.assign(rendererComparisonConfig, readRendererComparisonConfig()); });
+  beforeEach(() => { control.pending = null; control.options = null; control.glyphReady = false; control.glyphOnReady = null; control.glyphBlockCalls = 0; control.resizeObserver = null; control.created.length = 0; rewardSpy.mockClear(); schedulerControl.arms.mockClear(); schedulerControl.ports = null; fontLoader.load.mockReset(); fontLoader.load.mockResolvedValue(undefined); document.body.replaceChildren(); window.history.replaceState(null, "", "/?stage=pixi&pixiScene=retained"); Object.assign(rendererComparisonConfig, readRendererComparisonConfig()); measureStub(); });
   afterEach(() => { vi.restoreAllMocks(); vi.unstubAllGlobals(); window.history.replaceState(null, "", "/"); Object.assign(rendererComparisonConfig, readRendererComparisonConfig()); });
 
   async function createReadyHandRenderer() {
@@ -361,7 +361,7 @@ describe("Pixi composition initialization", () => {
     }
   );
 
-  it("turns the last pending font failure into a failed Rust status without another scene delta", async () => {
+  it("omits a label after its font fails without stopping the Rust stage", async () => {
     measureStub();
     const previousFonts = Object.getOwnPropertyDescriptor(document, "fonts");
     Object.defineProperty(document, "fonts", { configurable: true, value: { check: () => false } });
@@ -376,13 +376,60 @@ describe("Pixi composition initialization", () => {
       expect(fontLoader.load).toHaveBeenCalledOnce();
       expect(statuses).not.toContain("failed");
       rejectFont(new Error("font unavailable"));
-      await vi.waitFor(() => expect(statuses).toContain("failed"));
-      expect((control.created[0] as ReturnType<typeof fakeAdapter>).admitScene).not.toHaveBeenCalled();
+      await vi.waitFor(() => expect(statuses).toContain("ready"));
+      expect(statuses).not.toContain("failed");
+      expect((control.created[0] as ReturnType<typeof fakeAdapter>).admitScene).toHaveBeenCalled();
+      expect((window as unknown as { __mirrorRendererDiagnostics(): { omissions?: { nodes: Record<string, string> } } })
+        .__mirrorRendererDiagnostics().omissions?.nodes).toMatchObject({ label: "font-load" });
     } finally {
       renderer.dispose();
       if (previousFonts) Object.defineProperty(document, "fonts", previousFonts);
       else Reflect.deleteProperty(document, "fonts");
     }
+  });
+
+  it("fails Rust initialization when its text measurement context is unavailable", async () => {
+    vi.spyOn(HTMLCanvasElement.prototype, "getContext").mockReturnValue(null);
+    const statuses: string[] = [];
+    const createExecutor = vi.fn(async () => fakeAdapter(true) as never);
+    const renderer = createPixiMirrorRenderer(stage(), document.createElementNS("http://www.w3.org/2000/svg", "defs"), null,
+      (phase) => statuses.push(phase), { backend: "rust", createExecutor });
+    try {
+      await vi.waitFor(() => expect(statuses).toContain("failed"));
+      expect(createExecutor).not.toHaveBeenCalled();
+      expect((window as unknown as { __mirrorRendererDiagnostics(): { failure?: string } })
+        .__mirrorRendererDiagnostics().failure).toContain("text measurement context unavailable");
+    } finally { renderer.dispose(); }
+  });
+
+  it.each(["rustFast=0", "rustFast=1"])("keeps supported text and hits after a node refusal (%s)", async (query) => {
+    window.history.replaceState(null, "", `/?stage=canvas&${query}`);
+    Object.assign(rendererComparisonConfig, readRendererComparisonConfig());
+    measureStub();
+    const state = textScene();
+    const supported = state.nodes.get("label")!;
+    supported.mouseFilter = 0;
+    const unsupported = { ...supported, id: "unsupported", name: "Unsupported", font: null };
+    state.nodes.set(unsupported.id, unsupported);
+    state.orderedIds.push(unsupported.id);
+    state.changedIds.add(unsupported.id);
+    const statuses: string[] = [];
+    const renderer = createPixiMirrorRenderer(stage(), document.createElementNS("http://www.w3.org/2000/svg", "defs"), null,
+      (phase) => statuses.push(phase), { backend: "rust", createExecutor: async () => fakeAdapter(true) as never });
+    try {
+      await vi.waitFor(() => expect(control.created).toHaveLength(1));
+      expect(renderer.reconcile(state)).toBe(false);
+      await vi.waitFor(() => expect(statuses).toContain("ready"));
+      const adapter = control.created[0] as ReturnType<typeof fakeAdapter>;
+      const submitted = adapter.admitScene.mock.calls.at(-1)?.[1] as readonly TestPixiText[];
+      expect(submitted.some((record) => record.labelId === "label")).toBe(true);
+      expect(submitted.some((record) => record.labelId === "unsupported")).toBe(false);
+      expect(statuses).not.toContain("failed");
+      expect(renderer.interactiveRects().some((rect) => rect.id === "label")).toBe(true);
+      expect((window as unknown as { __mirrorRendererDiagnostics(): { ready: boolean;
+        omissions?: { nodes: Record<string, string> } } }).__mirrorRendererDiagnostics())
+        .toMatchObject({ ready: true, omissions: { nodes: { unsupported: "no-font" } } });
+    } finally { renderer.dispose(); }
   });
 
   it("reproduces a pending newer revision that publishes without an ack pull", async () => {

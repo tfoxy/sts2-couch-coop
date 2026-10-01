@@ -1,6 +1,7 @@
 import { describe, expect, it, vi } from "vitest";
 
 import type { MirrorFont, MirrorNode } from "@/mirror/sceneTree";
+import { fnv1a32 } from "@/mirror/textWrap";
 import {
   buildPreparedText,
   composePreparedTextRecords,
@@ -90,6 +91,29 @@ describe("resolveSemanticTextSpec + buildPreparedText — the pure half", () => 
     // The run touching the coloured span carries it in its style's `fill`; a later run falls back to the spec.
     const coloredRun = prepared.runs.find((run) => run.style.fill === "#ff0000");
     expect(coloredRun).toBeDefined();
+  });
+
+  it("draws a balanced rich reward label and replays matching parsed breaks", () => {
+    const root = node("root", null, { sceneFilePath: "res://scenes/rewards/reward_button.tscn" });
+    const container = node("container", "root", { name: "LabelContainer", text: null });
+    const plain = "Alpha Beta Gamma Delta";
+    const label = node("label", "container", { name: "Label", richText: true,
+      text: { text: `[color=#ff0000]Alpha Beta[/color] Gamma Delta`, colorHtml: "#ffffff", fontSizePx: 20,
+        halign: null, valign: null, outlineColorHtml: null, outlineSize: 0 } });
+    const nodes = nodeMap([root, container, label]);
+    const balanced = assertPrepared(resolve(label, nodes));
+    expect(balanced.spec).toMatchObject({ text: plain, balance: true, refusal: null });
+    expect(balanced.layout.lines.map((line) => line.text.trim())).toEqual(["Alpha Beta", "Gamma Delta"]);
+    expect(balanced.spans).toEqual([{ start: 0, end: 10, color: "#ff0000" }]);
+
+    const streamed = { basis: "parsed" as const, parsedText: plain, sourceLength: plain.length,
+      sourceHash: fnv1a32(plain), lines: [{ start: 0, end: 16 }, { start: 17, end: plain.length }] };
+    const withWrap = { ...label, textWrap: streamed };
+    expect(assertPrepared(resolve(withWrap, nodeMap([root, container, withWrap]))).layout.lines.map((line) => line.text))
+      .toEqual(["Alpha Beta Gamma", "Delta"]);
+    const stale = { ...label, textWrap: { ...streamed, parsedText: "stale parsed source" } };
+    expect(assertPrepared(resolve(stale, nodeMap([root, container, stale]))).layout.lines.map((line) => line.text.trim()))
+      .toEqual(["Alpha Beta", "Gamma Delta"]);
   });
 
   it("resolves a shadow into a pixi color/alpha pair and threads it into every run's style", () => {
