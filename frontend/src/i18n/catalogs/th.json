@@ -87,7 +87,7 @@
   "settings.thisDevice": "อุปกรณ์นี้",
   "settings.stage": "การแสดงผล",
   "settings.stageDom": "DOM",
-  "settings.stageCanvas": "Rust canvas",
+  "settings.stageCanvas": "Canvas",
   "settings.stageFallback": "เริ่ม Rust canvas ไม่ได้ มุมมองนี้จึงใช้ DOM {reason}",
   "settings.help.stage": "เลือกวิธีที่อุปกรณ์นี้ใช้วาดเกม Rust canvas จะตั้งคุณภาพไว้ที่ต่ำมาก ปิดเอฟเฟกต์ ใช้พื้นหลังและภาพตัวละครแบบนิ่ง ส่วน DOM จะคงการตั้งค่าที่บันทึกไว้",
   "settings.streamThisPlayer": "สตรีม (ผู้เล่นนี้)",

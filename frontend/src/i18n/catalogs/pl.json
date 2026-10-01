@@ -87,7 +87,7 @@
   "settings.thisDevice": "To urządzenie",
   "settings.stage": "Renderowanie",
   "settings.stageDom": "DOM",
-  "settings.stageCanvas": "Canvas Rust",
+  "settings.stageCanvas": "Canvas",
   "settings.stageFallback": "Nie udało się uruchomić canvasu Rust; ten widok używa DOM. {reason}",
   "settings.help.stage": "Wybierz sposób wyświetlania gry na tym urządzeniu. Canvas Rust zawsze używa bardzo niskiej jakości, wyłączonych efektów, statycznego tła i statycznych grafik postaci; DOM zachowuje zapisane ustawienia.",
   "settings.streamThisPlayer": "Transmisja (ten gracz)",

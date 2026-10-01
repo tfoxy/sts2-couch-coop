@@ -87,7 +87,7 @@
   "settings.thisDevice": "Это устройство",
   "settings.stage": "Отрисовка",
   "settings.stageDom": "DOM",
-  "settings.stageCanvas": "Canvas на Rust",
+  "settings.stageCanvas": "Canvas",
   "settings.stageFallback": "Не удалось запустить canvas на Rust; это представление использует DOM. {reason}",
   "settings.help.stage": "Выберите, как устройство будет отображать игру. Canvas на Rust всегда использует очень низкое качество, отключённые эффекты, статичный фон и статичные изображения персонажей; DOM сохраняет ваши настройки.",
   "settings.streamThisPlayer": "Трансляция (этот игрок)",

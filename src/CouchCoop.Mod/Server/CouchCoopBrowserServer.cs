@@ -1683,16 +1683,8 @@ public sealed class CouchCoopBrowserServer(
 
         if (request.RawPath.StartsWith("/res/", StringComparison.Ordinal))
         {
-            // R6 P6-F2 — A `::`-QUALIFIED SUB-RESOURCE REQUEST. Godot addresses a resource embedded inside a text
-            // resource as `<parent path>::<sub id>`, and the mirror streams those qualified paths verbatim, so
-            // they arrive here percent-encoded into the last path segment. Minted as-is they become a key naming a
-            // file that does not exist, and the answer is a 404 the client can only report as "source unresolved".
-            //
-            // There is no such asset to fetch, and there does not need to be: the sub-resource's text lives INSIDE
-            // the parent, which the seam serves already. So the request is split at the LAST `::` (a res:// path
-            // cannot contain one, and splitting last is what makes a hypothetical nested id come out whole), the
-            // PARENT is fetched through the identical path below — same guards, same 20s bound, same 503/404
-            // shapes — and the named sub-resource is extracted from those bytes.
+            // Validate both halves of a `::` path before forwarding the qualified key to the shared asset seam.
+            // It resolves the named resource inside the loaded parent and returns shader text or texture pixels.
             var decodedResourcePath = Uri.UnescapeDataString(request.RawPath["/res/".Length..]);
             var subMark = decodedResourcePath.LastIndexOf("::", StringComparison.Ordinal);
             string? subResourceId = null;
@@ -1714,16 +1706,14 @@ public sealed class CouchCoopBrowserServer(
                     return;
                 }
 
-            // `?format` selects how the PARENT document is rendered (raw, PNG), which is a question that has
-                // no meaning here: a sub-resource is extracted from the parent's raw text and answers as text.
-                // Refused rather than ignored, so a caller asking for something impossible is told so.
+                // The named resource determines its own representation; a format override is ambiguous here.
                 if (request.QueryValues.ContainsKey("format"))
                 {
                     await HttpResponseWriter.WriteJsonErrorAsync(
                         stream,
                         HttpStatusCode.BadRequest,
                         "invalid-resource-route",
-                        "?format is not supported for a ::-qualified sub-resource; it is served as raw text.",
+                        "?format is not supported for a ::-qualified sub-resource.",
                         cancellationToken).ConfigureAwait(false);
                     return;
                 }
@@ -1740,6 +1730,7 @@ public sealed class CouchCoopBrowserServer(
                     cancellationToken).ConfigureAwait(false);
                 return;
             }
+            var assetKey = subResourceId is null ? key : key + "::" + subResourceId;
 
             // The spirectl asset seam resolves res:// keys (scenes→GodotSceneState JSON,
             // localization→JSON, textures→PNG, fonts) behind one opaque key. The route mints the
@@ -1766,19 +1757,11 @@ public sealed class CouchCoopBrowserServer(
             var resourceFormat = string.Equals(formatValue, "png", StringComparison.OrdinalIgnoreCase)
                 ? CouchCoopResourceFormat.Png
                 : CouchCoopResourceFormat.Raw;
-            // A sub-resource is read out of the parent's own text, which is what Raw is. (`?format` was already
-            // refused above, so this can only be re-stating the default; stated anyway, because the extraction
-            // below is only correct over raw bytes.)
-            if (subResourceId is not null)
-            {
-                resourceFormat = CouchCoopResourceFormat.Raw;
-            }
-
             // Bound the extraction await (missing-textures fix 2026-07-19): asset extraction runs on the game's MAIN
             // thread, so while the game loads a run / churns a transition this await can stall indefinitely — which
             // used to hang the client's untimed HttpRequests and silently wedge its fetch pipeline. A busy host now
             // answers 503 asset-busy instead; clients treat 5xx as transient and retry (AssetFetchPolicy).
-            var assetTask = assets.TryGetAssetAsync(key, resourceFormat, cancellationToken: cancellationToken);
+            var assetTask = assets.TryGetAssetAsync(assetKey, resourceFormat, cancellationToken: cancellationToken);
             var completed = await Task.WhenAny(assetTask, Task.Delay(TimeSpan.FromSeconds(20), cancellationToken)).ConfigureAwait(false);
             if (!ReferenceEquals(completed, assetTask))
             {
@@ -1792,7 +1775,7 @@ public sealed class CouchCoopBrowserServer(
                         code = "asset-busy",
                         message = "The host is busy (loading/transitioning); retry shortly.",
                         field = "key",
-                        value = key
+                        value = assetKey
                     },
                     cancellationToken).ConfigureAwait(false);
                 return;
@@ -1822,51 +1805,6 @@ public sealed class CouchCoopBrowserServer(
                         field = asset.Error.Field,
                         value = asset.Error.Value,
                         notices = asset.Error.Notices
-                    },
-                    cancellationToken).ConfigureAwait(false);
-                return;
-            }
-
-            // R6 P6-F2 — the sub-resource half. The parent's bytes are in hand; read the named block out of them.
-            // Before the ASTC branch on purpose: a `.tres` is not a raster and this answer is text either way.
-            if (subResourceId is not null)
-            {
-                var parentText = asset.Bytes is { Length: > 0 } parentBytes
-                    ? Encoding.UTF8.GetString(parentBytes).TrimStart('﻿')
-                    : string.Empty;
-                var subResourceCode = ShaderResourceParser.TryGetSubResourceShaderCode(parentText, subResourceId);
-                if (subResourceCode is null)
-                {
-                    // The parent exists and does not contain this block: a genuine miss, and a DIFFERENT fact from
-                    // "no such resource" — which is exactly what the client could not tell before this route
-                    // existed. Named separately so a log says which one happened.
-                    await HttpResponseWriter.WriteJsonAsync(
-                        stream,
-                        HttpStatusCode.NotFound,
-                        new
-                        {
-                            type = "error",
-                            requestId = "http",
-                            code = "missing-subresource",
-                            message = "The resource does not contain a shader sub-resource with that id.",
-                            field = "key",
-                            value = key + "::" + subResourceId
-                        },
-                        cancellationToken).ConfigureAwait(false);
-                    return;
-                }
-
-                await HttpResponseWriter.WriteBytesAsync(
-                    stream,
-                    200,
-                    "OK",
-                    Encoding.UTF8.GetBytes(subResourceCode),
-                    "text/plain; charset=utf-8",
-                    new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase)
-                    {
-                        // The same immutable cache policy every other asset answer carries: the bytes are a
-                        // function of the key, and the key names a shipped file.
-                        ["Cache-Control"] = "public, max-age=31536000, immutable",
                     },
                     cancellationToken).ConfigureAwait(false);
                 return;
