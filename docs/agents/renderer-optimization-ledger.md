@@ -194,6 +194,29 @@ not inclusive wall sums — read the clock column before comparing two rows.
   directly around Rust's `present()` call (the extension is present and usable from JS; only the
   wgpu-internal `TIMESTAMP_QUERY` path is unsupported).
 
-## Oct 1 rustFast bundle (in progress)
+## Oct 1 rustFast bundle
 
-Results will be appended here when that round completes.
+All items are exact by construction and resolve in `rustFastFlags.ts`. `rustFast=1` enables them all;
+`<switch>=0` turns one back off. The code lives on Couch and GSW `experiment/rust-fast-oct1`, default
+off, and is not on `main`.
+
+**How it was measured:** `scripts/bench-rust-ab.mjs` with untraced `/proc` cells and a stage gate on
+every cell. The workload is `dense-vfx-endturn` at the 12–19 s busy window, 1920x1080, very-low tier,
+Vite dev build, with n=6 cells per arm alternated. Evidence:
+`.sts2/bench/rust-fast-oct1/REPORT.md` (main checkout).
+
+| Date | Switch/name | Target | What it changed | Outcome | Key numbers | Evidence |
+| --- | --- | --- | --- | --- | --- | --- |
+| Oct 1 | `rustFast=1` (whole bundle) | desktop busy renderer CPU | every row below at once | OFF (clear win; merge pending the user's decision) | renderer `/proc` 4,398 → 2,420 ms per 7 s (**−45%**); worst ON cell 2,720 < best OFF cell 3,840; CPU per stage frame 10.91 → 5.89 ms; GPU process −8.5% (inside spread); stage frames unchanged; verify counters 0; no pixel or hit difference beyond animation noise | REPORT.md |
+| Oct 1 | `rustLazyComposition` + `rustOmitStaticPixelCaches` | retained composition built on every full build | static pixel-cache admission skipped for Rust; patch index built lazily on first use (never in the busy window) | OFF (largest piece) | composition phase 1,028 → 39 ms of thread CPU per 7 s; leave-out costs +890 ms vs ON (~20–24% of OFF). Supersedes the Sep 28 static-only "unconfirmed −6%" as the composition lever | REPORT.md, `MEM rust-static-cache-desktop-sep28` |
+| Oct 1 | `ccPaintOrderReuse`, `rustFastSerializer`, `rustTextPrepCache`, `rustFontCheckCache`, `rustSnapshotReuse`, `rustDrawStateDedupe` | per-build JS overheads; wgpu `set_pipeline` churn | reuse the complete paint order; `jsonEqual` diff plus a group index in the GSW encoder; cache text preparation and true font checks (event-invalidated); skip O(N) copies; set the pipeline only on change | OFF | together about −0.65 s (~15% of OFF); individually below cell noise (±250 ms). The Rust phases barely moved (238 → 221 ms) | REPORT.md |
+| Oct 1 | `rustHiddenMemo` | hidden-subtree walk metadata | replay recorded metadata for unchanged hidden subtrees | OFF (inside noise) | offline node hit rate 95.7%, live only 41% (root hit rate 92.6%, but misses fall on ~393-node subtrees: absent, taint, span, context); −150 to −295 ms, within noise; 52,478 roots verified, 0 mismatches | REPORT.md |
+
+**What remains with ON** (JS profile, sample counts; `profiled/`):
+- `buildDrawList` `walk` is still the largest JS item (22% inclusive). Native work with no JS frame is ~51% of busy samples, Wasm ~4%.
+- Small leaks: `rewardFocusSnapshotFromScene`, `staticBgTargetPathOf`, and a `URLSearchParams` parse per font check in `fonts.ts` `corpusDiagnosticEnabled`.
+- The bench's own WebSocket replay shim accounts for ~8% in both arms.
+
+**Trap:** a worktree with a symlinked `.sts2/rust-prototype-web` 403s the Wasm, and the stage silently
+falls back to DOM. The first smoke of this round measured DOM at ~1.46 s. Gate every cell on
+`rendererWindow.backend === "rust"` (`MEM rust-wasm-worktree-dom-fallback`).
