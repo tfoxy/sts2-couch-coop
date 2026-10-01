@@ -147,6 +147,15 @@ const DEFAULT_SERVE_PORT = 8123;
 // Browser callbacks passed directly to Playwright. Keep the marker window independent of renderer internals:
 // the harness only resets its own observations and brackets the page clock for trace correlation.
 function beginActiveMarkerWindowInPage(input) {
+  if (input.ordinal) {
+    const ws = window.__benchWs;
+    if (!ws || ws._i !== input.ordinal.firstIndex || ws._ordinalState?.stage !== "opening" ||
+        window.__benchWindowMark !== 0) throw new Error("ordinal opening marker has wrong replay index or state");
+    ws._ordinalShiftClock();
+    window.__benchWindowMark = 1;
+    window.__benchWindowAt.startedAt = performance.now();
+    window.__benchWindowAt.startStreamMs = performance.now() - ws._recordedStartMs;
+  }
   if (!input.boundaryOwned) {
     if (Array.isArray(window.__benchLongTasks)) window.__benchLongTasks.length = 0;
     if (Array.isArray(window.__benchLoaf)) window.__benchLoaf.length = 0;
@@ -184,6 +193,15 @@ function beginActiveMarkerWindowInPage(input) {
 }
 
 function endActiveMarkerWindowInPage(input) {
+  if (input.ordinal) {
+    const ws = window.__benchWs;
+    if (!ws || ws._i !== input.ordinal.lastIndex + 1 || ws._ordinalState?.stage !== "closing" ||
+        window.__benchWindowMark !== 1) throw new Error("ordinal closing marker has wrong replay index or state");
+    ws._ordinalShiftClock();
+    window.__benchWindowMark = 2;
+    window.__benchWindowAt.endedAt = performance.now();
+    window.__benchWindowAt.endStreamMs = performance.now() - ws._recordedStartMs;
+  }
   if (input.marker) console.timeStamp(input.marker);
   const markerEpochUs = (performance.timeOrigin + performance.now()) * 1000;
   const stats = typeof window.__mirrorCanvasStats === "function" ? window.__mirrorCanvasStats() : null;
@@ -336,6 +354,9 @@ function parseArgs(argv) {
     reportTraceOnly: false,
     limitMs: null,
     window: null,
+    ordinalWindow: null,
+    ordinalRecordingSha256: null,
+    ordinalBoundarySha256: null,
     // `--window auto` defers the bracket to the recording's own meta.derived.suggestedWindow, which cannot be
     // read until the recording is loaded (below) — so the flag only records the intent here.
     windowAuto: false,
@@ -473,6 +494,14 @@ function parseArgs(argv) {
         a.window = { startMs: Number(m[1]), endMs: Number(m[2]) };
         break;
       }
+      case "--ordinal-window": {
+        const match = /^(\d+):(\d+)$/.exec(String(val()));
+        if (!match) { console.error("--ordinal-window must be <first-message-index>:<last-message-index>"); a.help = true; break; }
+        a.ordinalWindow = { firstIndex: Number(match[1]), lastIndex: Number(match[2]) };
+        break;
+      }
+      case "--ordinal-recording-sha256": a.ordinalRecordingSha256 = String(val()); break;
+      case "--ordinal-boundary-sha256": a.ordinalBoundarySha256 = String(val()); break;
       case "--connect-cdp": a.connectCdp = String(val()); break;
       case "--connect-blank-webview": a.connectBlankWebview = true; break;
       case "--keep-connected-page": a.keepConnectedPage = true; break;
@@ -814,6 +843,11 @@ if (args.help) {
                         GENERATED fixture (scripts/make-flight-fixture.mjs) publishes for the volley it built.
                         Errors out if the recording's meta carries no such field — a matrix cell must never
                         silently fall back to measuring the whole stream.
+  --ordinal-window <first>:<last>
+                        opt-in exact scene-index bracket for a pinned recorded warm replay. Requires
+                        --ordinal-recording-sha256 and --ordinal-boundary-sha256. The latter is four
+                        colon-separated SHA-256 values of message data UTF-8 at indices
+                        first-1:first:last:last+1, as listed in recording-boundaries.json.
   --report-scenario <s> scenario name in the envelope (default: the recording's file stem)
   --report-label <l>    env.label in the envelope (e.g. the branch/arm being measured)
   --report-env <kind>   env.kind in the envelope (default 'ci')
@@ -1035,6 +1069,19 @@ function checkWindowConstraints() {
   }
 }
 checkWindowConstraints();
+if (args.ordinalWindow && (args.pace !== "recorded" || !args.window || !args.resourceWarmPass ||
+    !args.skipWarmup || !args.report || !args.untracedReport ||
+    args.repeats !== 1 || args.trace || args.jsProfile || args.activeWindowWitness ||
+    args.startupObservationOut || args.growthCycles !== 1 ||
+    !Number.isSafeInteger(args.ordinalWindow.firstIndex) ||
+    !Number.isSafeInteger(args.ordinalWindow.lastIndex) ||
+    args.ordinalWindow.firstIndex < 1 ||
+    args.ordinalWindow.lastIndex < args.ordinalWindow.firstIndex ||
+    !/^[0-9a-f]{64}$/.test(args.ordinalRecordingSha256 ?? "") ||
+    !/^[0-9a-f]{64}(?::[0-9a-f]{64}){3}$/.test(args.ordinalBoundarySha256 ?? ""))) {
+  console.error("--ordinal-window requires a pinned recorded, single-repeat, untraced warm --window and four message data SHA-256 hashes (prior:first:last:next)");
+  process.exit(2);
+}
 if (args.connectCdp && (!Number.isFinite(args.servePort) || args.servePort <= 0 || args.servePort > 65535)) {
   console.error(`--serve-port must be a TCP port (got '${args.servePort}')`);
   process.exit(2);
@@ -1277,6 +1324,16 @@ function fakeWebSocketInit(config) {
   const OPEN = 1;
   const originalFetch = window.fetch;
   const realFetch = window.fetch.bind(window);
+  if (config.ordinalWindow) {
+    if (typeof window.__benchStartupCommittedPresentation === "function")
+      throw new Error("ordinal window cannot replace an existing presentation observer");
+    window.__benchOrdinalLastCommit = null;
+    window.__benchStartupCommittedPresentation = (detail) => {
+      if (detail?.presented !== true || !Number.isInteger(detail.sceneRevision)) return;
+      window.__benchOrdinalLastCommit = detail;
+      window.__benchWs?._ordinalWake?.();
+    };
+  }
   if (config.resourceWarmPass) {
     // This fixed warm replay produced 10,514 causal ACK events. Retain the complete trace for
     // independent review; any workload exceeding the bound still fails closed below.
@@ -1376,6 +1433,10 @@ function fakeWebSocketInit(config) {
       this._sceneAckSerial = 0;
       this._diagnosticSceneRevision = 0;
       this._startupSceneOrdinal = 0;
+      this._ordinalGate = null;
+      this._ordinalState = config.ordinalWindow ? { stage: "before", requests: 0,
+        startPauseMs: 0, endPauseMs: 0, firstIndex: config.ordinalWindow.firstIndex,
+        lastIndex: config.ordinalWindow.lastIndex, contract: config.ordinalWindow, failure: null } : null;
       // WATCH GATE — mirror the real host. The mirror app connects with `watch=0` (the pre-join stream gate,
       // see buildMirrorWebSocketUrl), so the host sends NO scene stream — not even the connect keyframe —
       // until the client sends `{"type":"watch","on":true}` after directView resolves. `max` pacing used to
@@ -1618,11 +1679,123 @@ function fakeWebSocketInit(config) {
       }
     }
 
+    _ordinalWake() {
+      const gate = this._ordinalGate;
+      if (!gate || this._closed || this.readyState !== OPEN) return;
+      const identity = window.__mirrorFrameIdentity?.();
+      const renderer = window.__mirrorRendererDiagnostics?.();
+      const commit = window.__benchOrdinalLastCommit;
+      if (identity?.revision !== gate.expectedRevision ||
+          !(identity.presentEpoch > gate.minPresentEpoch) ||
+          commit?.sceneRevision !== gate.expectedRevision ||
+          commit.frameIdentity?.revision !== gate.expectedRevision ||
+          commit.frameIdentity?.presentEpoch !== identity.presentEpoch ||
+          commit.presented !== true ||
+          (window.__benchSceneAckPending?.length ?? 0) !== 0 ||
+          renderer?.asyncSubmissionRevision != null ||
+          renderer?.asyncAwaitingAckRevision != null ||
+          (gate.ackBaseline != null && this._sceneAckSerial <= gate.ackBaseline)) return;
+      this._ordinalGate = null;
+      gate.resolve({ expectedRevision: gate.expectedRevision, presentEpoch: identity.presentEpoch,
+        ackSerial: this._sceneAckSerial, ackBaseline: gate.ackBaseline,
+        minPresentEpoch: gate.minPresentEpoch,
+        pendingAckCount: window.__benchSceneAckPending?.length ?? null,
+        asyncSubmissionRevision: renderer?.asyncSubmissionRevision ?? null,
+        asyncAwaitingAckRevision: renderer?.asyncAwaitingAckRevision ?? null,
+        frameIdentity: identity, commit });
+    }
+
+    _ordinalCancel(reason) {
+      const gate = this._ordinalGate;
+      this._ordinalGate = null;
+      if (gate) gate.reject(new Error(reason));
+      if (this._ordinalPrepared) clearTimeout(this._ordinalPrepared.timeout);
+      this._ordinalDeadlineReject?.(new Error(reason));
+      if (this._ordinalState) this._ordinalState.failure = String(reason);
+      if (this._ordinalState && typeof window.__benchOrdinalBoundaryRequest === "function")
+        void window.__benchOrdinalBoundaryRequest({ stage: "failed", reason: String(reason) }).catch(() => {});
+    }
+
+    _ordinalArm(stage, expectedRevision, ackBaseline, minPresentEpoch) {
+      if (this._ordinalPrepared || this._ordinalGate || this._closed || this.readyState !== OPEN)
+        throw new Error(`duplicate or closed ordinal ${stage} arm`);
+      let resolve, reject;
+      const promise = new Promise((yes, no) => { resolve = yes; reject = no; });
+      void promise.catch(() => {});
+      this._ordinalGate = { expectedRevision, ackBaseline, minPresentEpoch, resolve, reject };
+      this._ordinalPrepared = { stage, expectedRevision, ackBaseline, minPresentEpoch, promise,
+        timeout: setTimeout(() => this._fail(`ordinal ${stage} handshake timed out`), 10_000) };
+      this._ordinalWake();
+    }
+
+    async _ordinalBoundary(stage, expectedRevision, ackBaseline, minPresentEpoch) {
+      const state = this._ordinalState;
+      const prepared = this._ordinalPrepared;
+      if (!state || state.stage !== (stage === "open" ? "before" : "inside") ||
+          !prepared || prepared.stage !== stage ||
+          prepared.expectedRevision !== expectedRevision ||
+          prepared.ackBaseline !== ackBaseline ||
+          prepared.minPresentEpoch !== minPresentEpoch ||
+          this._closed || this.readyState !== OPEN)
+        throw new Error(`duplicate, stale, or closed ordinal ${stage} boundary: ` +
+          JSON.stringify({ state:state?.stage, prepared:prepared && {stage:prepared.stage,
+            revision:prepared.expectedRevision, ack:prepared.ackBaseline,
+            present:prepared.minPresentEpoch}, expectedRevision, ackBaseline, minPresentEpoch,
+          closed:this._closed, readyState:this.readyState }));
+      state.stage = stage === "open" ? "opening" : "closing";
+      state.requests++;
+      try {
+        this._ordinalWake();
+        const gate = await prepared.promise;
+        if (this._closed || state.failure) throw new Error(state.failure ?? "socket closed");
+        if (typeof window.__benchOrdinalBoundaryRequest !== "function")
+          throw new Error("ordinal Node boundary binding absent");
+        const result = await Promise.race([
+          window.__benchOrdinalBoundaryRequest({ stage, expectedRevision, ackSerial: gate.ackSerial,
+            presentEpoch: gate.presentEpoch, messageIndex: stage === "open" ? state.firstIndex : state.lastIndex }),
+          new Promise((_, reject) => { this._ordinalDeadlineReject = reject; })
+        ]);
+        if (this._closed || state.failure || result?.stage !== stage || result?.expectedRevision !== expectedRevision)
+          throw new Error(`ordinal ${stage} binding returned stale or canceled result`);
+        state.stage = stage === "open" ? "inside" : "closed";
+        state[stage] = { ...result, gate };
+        return result;
+      } catch (error) {
+        this._ordinalCancel(String(error));
+        throw error;
+      } finally {
+        clearTimeout(prepared.timeout);
+        if (this._ordinalPrepared === prepared) this._ordinalPrepared = null;
+        this._ordinalDeadlineReject = null;
+      }
+    }
+
     _pumpRecorded() {
-      const t0 = performance.now();
+      let t0 = performance.now();
       this._recordedStartMs = t0;
       this._recordedDeliveryLog = [];
       this._recordedDeliveryDropped = 0;
+      let pauseAt = null;
+      this._ordinalPause = (stage) => {
+        if (pauseAt !== null) throw new Error("ordinal replay pause already active");
+        pauseAt = performance.now();
+        this._ordinalPauseStage = stage;
+      };
+      this._ordinalShiftClock = () => {
+        if (pauseAt === null) return;
+        const now = performance.now();
+        const delta = Math.max(0, now - pauseAt);
+        t0 += delta;
+        this._recordedStartMs = t0;
+        const field = this._ordinalPauseStage === "open" ? "startPauseMs" : "endPauseMs";
+        this._ordinalState[field] += delta;
+        pauseAt = now;
+      };
+      this._ordinalResume = () => {
+        this._ordinalShiftClock();
+        pauseAt = null;
+        this._ordinalPauseStage = null;
+      };
       // --window: the measured bracket is expressed on the RECORDING's clock, and this pump is the only thing
       // that knows it — `t0` is recorded-time zero, so recorded ms and elapsed ms are the same number here.
       // Publish the crossings for the harness to poll (mark 0 = before, 1 = inside, 2 = past), from BOTH a
@@ -1658,14 +1831,39 @@ function fakeWebSocketInit(config) {
           if (streamMs >= win.startMs) cross(1, win.startMs, streamMs);
           if (streamMs >= win.endMs) cross(2, win.endMs, streamMs);
         };
-        setTimeout(() => this._crossWindow(config.activeWindowWitness ? performance.now() - t0 : win.startMs), win.startMs);
-        setTimeout(() => this._crossWindow(config.activeWindowWitness ? performance.now() - t0 : win.endMs), win.endMs);
+        if (!config.ordinalWindow) {
+          setTimeout(() => this._crossWindow(config.activeWindowWitness ? performance.now() - t0 : win.startMs), win.startMs);
+          setTimeout(() => this._crossWindow(config.activeWindowWitness ? performance.now() - t0 : win.endMs), win.endMs);
+        }
       }
       const tick = async () => {
         if (this._closed) return;
-        const now = performance.now() - t0;
-        if (this._crossWindow) this._crossWindow(now);
+        let now = performance.now() - t0;
+        if (this._crossWindow && !config.ordinalWindow) this._crossWindow(now);
         while (this._i < this._msgs.length && this._msgs[this._i].t <= now) {
+          if (config.ordinalWindow && this._i === config.ordinalWindow.firstIndex) {
+            try {
+              this._ordinalPause("open");
+              const expected = window.__benchResourceWarmPass.releaseBaseRevision + this._recordedDeliveryLog.length;
+              this._ordinalArm("open", expected, this._ordinalPriorAckBaseline,
+                this._ordinalPriorPresentBefore);
+              await this._ordinalBoundary("open", expected, this._ordinalPriorAckBaseline,
+                this._ordinalPriorPresentBefore);
+              this._ordinalResume();
+              now = performance.now() - t0;
+            } catch (error) { this._fail(String(error)); return; }
+          }
+          if (config.ordinalWindow && this._i === config.ordinalWindow.lastIndex + 1) {
+            try {
+              this._ordinalPause("close");
+              const expected = window.__benchResourceWarmPass.releaseBaseRevision + this._recordedDeliveryLog.length;
+              await this._ordinalBoundary("close", expected, this._ordinalFinalAckBaseline,
+                this._ordinalFinalPresentBefore);
+              this._ordinalResume();
+              now = performance.now() - t0;
+            } catch (error) { this._fail(String(error)); return; }
+          }
+          if (this._msgs[this._i].t > now) break;
           // Diagnostic replay must serialize clock admission with message delivery. Both renderer setters can
           // reconcile asynchronously; letting their promises overlap makes an older sampled animation frame
           // win after a newer one and produces width/load-dependent transforms at the same requested clock.
@@ -1674,6 +1872,16 @@ function fakeWebSocketInit(config) {
           const isSceneDelta = message.data.includes('"type":"scene-delta"');
           const isFullScene = isSceneDelta && message.data.includes('"full":true');
           const ackBeforeDelivery = this._sceneAckSerial;
+          if (config.ordinalWindow && this._i === config.ordinalWindow.firstIndex - 1) {
+            this._ordinalPriorAckBaseline = ackBeforeDelivery;
+            this._ordinalPriorPresentBefore = window.__mirrorFrameIdentity?.()?.presentEpoch ?? -1;
+          }
+          if (config.ordinalWindow && this._i === config.ordinalWindow.lastIndex) {
+            this._ordinalFinalAckBaseline = ackBeforeDelivery;
+            this._ordinalFinalPresentBefore = window.__mirrorFrameIdentity?.()?.presentEpoch ?? -1;
+            const expected = window.__benchResourceWarmPass.releaseBaseRevision + this._recordedDeliveryLog.length + 1;
+            this._ordinalArm("close", expected, ackBeforeDelivery, this._ordinalFinalPresentBefore);
+          }
           if (isSceneDelta) {
             const deliveredAtMs = performance.now() - t0;
             if (this._recordedDeliveryLog.length < 20_000) this._recordedDeliveryLog.push({
@@ -1842,6 +2050,7 @@ function fakeWebSocketInit(config) {
     _fail(reason) {
       this.readyState = 3;
       window.__benchWsError = reason;
+      this._ordinalCancel?.(reason);
       this._emit("error", new Event("error"));
     }
 
@@ -1861,6 +2070,7 @@ function fakeWebSocketInit(config) {
           }
           pending.length = 0;
         }
+        this._ordinalWake?.();
         if (config.pace === "max") {
           this._credits++;
           // --ack-paced: hold the next delivery until N ms AFTER the ack instead of resuming synchronously.
@@ -1904,6 +2114,8 @@ function fakeWebSocketInit(config) {
     close() {
       this._closed = true;
       this.readyState = 3;
+      if (this._ordinalState && this._ordinalState.stage !== "closed")
+        this._ordinalCancel("socket closed during ordinal boundary");
       this._emit("close", new CloseEvent("close"));
     }
 
@@ -4772,6 +4984,97 @@ if (opts.preIdleWitness || opts.activeWindowWitness || opts.startupObservationOu
   };
 
   const markerTrace = createMarkerScopedTrace(cdp, opts);
+  const ordinalBoundary = opts.ordinalWindow ? (() => {
+    let resolveOpen, rejectOpen, resolveClose, rejectClose, releaseOpen;
+    const opened = new Promise((resolve, reject) => { resolveOpen = resolve; rejectOpen = reject; });
+    const closed = new Promise((resolve, reject) => { resolveClose = resolve; rejectClose = reject; });
+    const openRelease = new Promise((resolve) => { releaseOpen = resolve; });
+    // Attach handlers now: a page failure may precede the harness's wait on either boundary.
+    void opened.catch(() => {});
+    void closed.catch(() => {});
+    const boundary = { state: "before", opened, closed, resolveOpen, rejectOpen, resolveClose, rejectClose,
+      releaseOpen, openRelease, open: null, close: null, failure: null };
+    boundary.cancel = (reason) => {
+      if (boundary.state === "closed" || boundary.state === "failed") return;
+      boundary.failure = String(reason);
+      boundary.state = "failed";
+      boundary.releaseOpen();
+      boundary.rejectOpen(new Error(boundary.failure));
+      boundary.rejectClose(new Error(boundary.failure));
+    };
+    const pageLoss = () => boundary.cancel("ordinal replay page closed or crashed");
+    page.on("close", pageLoss);
+    page.on("crash", pageLoss);
+    context.browser()?.on("disconnected", pageLoss);
+    boundary.wait = async (promise, stage) => {
+      let timer;
+      try {
+        return await Promise.race([promise, new Promise((_, reject) => {
+          timer = setTimeout(() => {
+            boundary.cancel(`ordinal ${stage} Node boundary timed out`);
+            reject(new Error(boundary.failure));
+          }, stage === "open" ? 45_000 : 20_000);
+        })]);
+      } finally { clearTimeout(timer); }
+    };
+    return boundary;
+  })() : null;
+  if (ordinalBoundary) await page.exposeBinding("__benchOrdinalBoundaryRequest", async (source, request) => {
+    const boundary = ordinalBoundary;
+    const fail = (reason) => {
+      boundary.cancel(reason);
+      throw new Error(boundary.failure);
+    };
+    if (source.frame !== page.mainFrame() || !request || typeof request !== "object")
+      return fail("ordinal boundary request has wrong document or shape");
+    if (request.stage === "failed") return fail(request.reason ?? "ordinal replay failed");
+    const plan = opts.ordinalWindow;
+    if (request.stage === "open") {
+      if (boundary.state !== "before" || request.messageIndex !== plan.firstIndex ||
+          !Number.isInteger(request.expectedRevision)) return fail("duplicate or stale ordinal opening request");
+      boundary.state = "opening";
+      const processStartsBeforeMarker = await captureBrowserProcessStarts(context);
+      if (boundary.state !== "opening" || !processStartsBeforeMarker) return fail("ordinal opening process sample unavailable");
+      const wallA = performance.now();
+      const a = await getMetrics();
+      const openCallStartMs = performance.now();
+      const markerOpen = await page.evaluate(beginActiveMarkerWindowInPage,
+        { marker: null, boundaryOwned: false, ordinal: plan });
+      const openCallEndMs = performance.now();
+      if (boundary.state !== "opening" || markerOpen?.renderer?.frameIdentity?.revision !== request.expectedRevision)
+        return fail("ordinal opening marker did not retain exact committed revision");
+      boundary.open = { processStartsBeforeMarker, wallA, a, openCallStartMs, openCallEndMs, markerOpen };
+      boundary.resolveOpen(boundary.open);
+      await boundary.openRelease;
+      if (boundary.state !== "opening") return fail("ordinal opening boundary canceled before delivery");
+      boundary.state = "inside";
+      return { stage: "open", expectedRevision: request.expectedRevision,
+        messageIndex: request.messageIndex };
+    }
+    if (request.stage === "close") {
+      if (boundary.state !== "inside" || request.messageIndex !== plan.lastIndex ||
+          request.expectedRevision !== boundary.open.markerOpen.renderer.frameIdentity.revision + plan.sceneCount)
+        return fail("duplicate, stale, or wrong-work ordinal closing request");
+      boundary.state = "closing";
+      const wallB = performance.now();
+      const b = await getMetrics();
+      const closeCallStartMs = performance.now();
+      const markerClose = await page.evaluate(endActiveMarkerWindowInPage,
+        { marker: null, ordinal: plan });
+      const closeCallEndMs = performance.now();
+      const processStartsAfterMarker = await captureBrowserProcessStarts(context);
+      if (boundary.state !== "closing" || !processStartsAfterMarker ||
+          markerClose?.renderer?.frameIdentity?.revision !== request.expectedRevision ||
+          markerClose.replayDelivered !== plan.sceneCount)
+        return fail("ordinal closing marker or process sample lost exact work");
+      boundary.close = { wallB, b, closeCallStartMs, closeCallEndMs, markerClose, processStartsAfterMarker };
+      boundary.state = "closed";
+      boundary.resolveClose(boundary.close);
+      return { stage: "close", expectedRevision: request.expectedRevision,
+        messageIndex: request.messageIndex };
+    }
+    return fail(`unknown ordinal boundary request ${request.stage}`);
+  });
   let tracePath = null;
   let traceMetrics = null;
   let activeTraceFailure = null;
@@ -4913,7 +5216,7 @@ if (opts.preIdleWitness || opts.activeWindowWitness || opts.startupObservationOu
   // --window: hold everything below until the recorded stream reaches the window's START. The fake socket
   // publishes the crossing (see _pumpRecorded); polling it costs one rAF-paced predicate on the page, and the
   // few ms of poll latency ride on BOTH ends of the bracket, so they cancel out of a before/after comparison.
-  if (opts.window) {
+  if (opts.window && !ordinalBoundary) {
     await page.waitForFunction(() => (window.__benchWindowMark ?? 0) >= 1, null, { timeout: 180_000 });
   }
 
@@ -4921,15 +5224,17 @@ if (opts.preIdleWitness || opts.activeWindowWitness || opts.startupObservationOu
   // Its CDP setup latency is deliberately outside the historical wall/Performance.getMetrics bracket below.
   // An idle run deliberately does not start here: its trace is reserved for the later quiet interval.
   if (markerTrace.scope?.phase === "active" && !opts.activeWindowWitness && !opts.startupObservationOut) await markerTrace.start();
-  const processStartsBeforeMarker = opts.report ? await captureBrowserProcessStarts(context) : null;
-  const wallA = performance.now();
-  const a = await getMetrics();
-  const openCallStartMs = performance.now();
-  const markerOpen = await page.evaluate(beginActiveMarkerWindowInPage, {
+  const ordinalOpen = ordinalBoundary ? await ordinalBoundary.wait(ordinalBoundary.opened, "open") : null;
+  const processStartsBeforeMarker = ordinalOpen?.processStartsBeforeMarker ??
+    (opts.report ? await captureBrowserProcessStarts(context) : null);
+  const wallA = ordinalOpen?.wallA ?? performance.now();
+  const a = ordinalOpen?.a ?? await getMetrics();
+  const openCallStartMs = ordinalOpen?.openCallStartMs ?? performance.now();
+  const markerOpen = ordinalOpen?.markerOpen ?? await page.evaluate(beginActiveMarkerWindowInPage, {
     marker: markerTrace.scope?.phase === "active" && !opts.activeWindowWitness && !opts.startupObservationOut ? REPORT_MARK_START : null,
     boundaryOwned: !!(opts.activeWindowWitness || opts.startupObservationOut),
   });
-  const openCallEndMs = performance.now();
+  const openCallEndMs = ordinalOpen?.openCallEndMs ?? performance.now();
   if (opts.jsProfile) {
     if (!cdp) throw new Error("--js-profile requires a CDP session");
     await cdp.send("Profiler.enable");
@@ -5015,13 +5320,16 @@ if (opts.preIdleWitness || opts.activeWindowWitness || opts.startupObservationOu
   // crosses the window's END (`__benchDone` is still accepted there, so a window that outlives the recording
   // closes instead of hanging). The stream keeps running past a window's close; it is drained further down,
   // before the post-settle probes, so those still describe the settled scene.
+  if (ordinalBoundary) ordinalBoundary.releaseOpen();
   try {
-    await waitAbortably(() => page.waitForFunction(
+    if (ordinalBoundary) await ordinalBoundary.wait(ordinalBoundary.closed, "close");
+    else await waitAbortably(() => page.waitForFunction(
       (windowed) => (windowed ? (window.__benchWindowMark ?? 0) >= 2 : false) || window.__benchDone === true,
       !!opts.window,
       { timeout: 180_000 }
     ));
-  } catch {
+  } catch (error) {
+    if (ordinalBoundary) throw error;
     campaignAbort?.throwIfAborted();
     const err = await probePage(() => window.__benchWsError ?? null);
     console.error(`  stream did not finish (fake WS error: ${err ?? "none"})`);
@@ -5067,8 +5375,8 @@ if (opts.preIdleWitness || opts.activeWindowWitness || opts.startupObservationOu
   sweepStop = true;
   await sweep;
 
-  const wallB = performance.now();
-  const b = await getMetrics();
+  const wallB = ordinalBoundary?.close?.wallB ?? performance.now();
+  const b = ordinalBoundary?.close?.b ?? await getMetrics();
   if (opts.jsProfile) {
     const { profile } = await cdp.send("Profiler.stop");
     await cdp.send("Profiler.disable");
@@ -5081,14 +5389,15 @@ if (opts.preIdleWitness || opts.activeWindowWitness || opts.startupObservationOu
   }
   // readyMs: navigation start -> the whole recorded stream delivered AND settled (the same instant the
   // measured window closes). Page clock again, and the closing trace marker rides the same evaluate.
-  const closeCallStartMs = performance.now();
-  const markerClose = (opts.report || markerTrace.scope?.phase === "active")
+  const closeCallStartMs = ordinalBoundary?.close?.closeCallStartMs ?? performance.now();
+  const markerClose = ordinalBoundary?.close?.markerClose ?? ((opts.report || markerTrace.scope?.phase === "active")
     ? await probePage(endActiveMarkerWindowInPage, {
         marker: markerTrace.scope?.phase === "active" && !opts.activeWindowWitness && !opts.startupObservationOut ? REPORT_MARK_END : null
       })
-    : null;
-  const closeCallEndMs = performance.now();
-  const processStartsAfterMarker = opts.report ? await captureBrowserProcessStarts(context) : null;
+    : null);
+  const closeCallEndMs = ordinalBoundary?.close?.closeCallEndMs ?? performance.now();
+  const processStartsAfterMarker = ordinalBoundary?.close?.processStartsAfterMarker ??
+    (opts.report ? await captureBrowserProcessStarts(context) : null);
   const readyMs = opts.report ? markerClose?.atMs ?? null : null;
   let bridgeStats = (() => {
     const before = markerOpen?.canvasStats;
@@ -5443,6 +5752,8 @@ if (opts.preIdleWitness || opts.activeWindowWitness || opts.startupObservationOu
     const digest = await crypto.subtle.digest('SHA-256',new TextEncoder().encode(JSON.stringify(prefix)));
     return { done:window.__benchDone === true,index:ws._i,count:ws._msgs.length,
       delivered:window.__benchSceneDeliveries ?? null,
+      ordinalWindow:ws._ordinalState ? { ...ws._ordinalState,
+        nextIndex:ws._i, recordedStartMs:ws._recordedStartMs } : null,
       deliveryLedger:ws._recordedDeliveryLog == null ? null : {
         rows:ws._recordedDeliveryLog,dropped:ws._recordedDeliveryDropped ?? null,
         clock:'performance.now relative to recorded replay start',
@@ -6749,6 +7060,44 @@ function sliceRecording(text, limitMs) {
 
 const sliced = sliceRecording(recordingText, args.limitMs);
 const replayText = sliced.text;
+const ordinalWindowPlan = args.ordinalWindow ? (() => {
+  if (recordingSha256 !== args.ordinalRecordingSha256)
+    throw new Error("ordinal window recording SHA-256 differs from pinned input");
+  const messages = replayText.split("\n").filter(Boolean).flatMap((line) => {
+    let row;
+    try { row = JSON.parse(line); } catch { return []; }
+    if (row.meta || row.dir === "out" || typeof row.data !== "string" ||
+        row.data.includes('"type":"server-reload"')) return [];
+    return [{ t: typeof row.t === "number" ? row.t : 0, data: row.data }];
+  });
+  const { firstIndex, lastIndex } = args.ordinalWindow;
+  const scene = (row) => row?.data.includes('"type":"scene-delta"') === true;
+  const selected = messages.slice(firstIndex, lastIndex + 1);
+  const boundaryIndices = [firstIndex - 1, firstIndex, lastIndex, lastIndex + 1];
+  const boundaryRows = boundaryIndices.map(messageIndex => ({
+    messageIndex,
+    recordedMs: messages[messageIndex]?.t,
+    dataUtf8Sha256: messages[messageIndex]?.data == null ? null :
+      createHash("sha256").update(messages[messageIndex].data, "utf8").digest("hex"),
+  }));
+  if (lastIndex + 1 >= messages.length || !scene(messages[firstIndex - 1]) ||
+      !scene(messages[firstIndex]) || !scene(messages[lastIndex]) ||
+      !scene(messages[lastIndex + 1]) || selected.length !== lastIndex - firstIndex + 1 ||
+      selected.some(row => !scene(row)) ||
+      messages[firstIndex - 1].t >= args.window.startMs ||
+      messages[firstIndex].t < args.window.startMs ||
+      messages[lastIndex].t > args.window.endMs ||
+      messages[lastIndex + 1].t <= args.window.endMs ||
+      boundaryRows.map(row => row.dataUtf8Sha256).join(":") !== args.ordinalBoundarySha256)
+    throw new Error("ordinal window indices, scene types, schedule, or boundary hashes differ from pinned recording");
+  return { firstIndex, lastIndex, sceneCount: selected.length, recordingSha256,
+    // Canonical slice identity: JSON.stringify of the selected data string array, UTF-8 SHA-256.
+    selectedDataJsonSha256: createHash("sha256")
+      .update(JSON.stringify(selected.map(row => row.data)), "utf8").digest("hex"),
+    boundaryRows, firstRecordedMs: selected[0].t,
+    lastRecordedMs: selected.at(-1).t, nextRecordedMs: messages[lastIndex + 1].t,
+    nonSceneIndices: [] };
+})() : null;
 const activeExpected = (args.activeWindowWitness || args.startupObservationOut) ? (() => {
   const messages = replayText.split("\n").filter(Boolean).flatMap((line) => {
     let obj;
@@ -7031,6 +7380,7 @@ await addBoundedInitScript("socket", fakeWebSocketInit, {
   synthesizeDirectView: !hasRecordedDirectView,
   synthesizedSession,
   window: args.window,
+  ordinalWindow: ordinalWindowPlan,
   diagnosticClock: replayDiagnosticClock(args),
   activeWindowWitness: !!(args.activeWindowWitness || args.startupObservationOut),
   startupObservation: !!args.startupObservationOut,
@@ -7109,6 +7459,7 @@ const opts = {
   campaignAbortOnLoss: args.campaignAbortOnLoss,
   parityAnimationSteps: args.parityAnimationSteps,
   window: args.window,
+  ordinalWindow: ordinalWindowPlan,
   report: !!args.report,
   untracedReport:args.untracedReport,
   traceOnly: args.reportTraceOnly,
@@ -7390,6 +7741,7 @@ const result = {
     coldStart: args.skipWarmup,
     resourceWarmPass: args.resourceWarmPass,
     resourceWarmRequired: args.resourceWarmRequired,
+    ordinalWindow: ordinalWindowPlan,
     url: pageUrl,
     requestedUrl: requestedPageUrl,
     effectiveUrl: pageUrl,

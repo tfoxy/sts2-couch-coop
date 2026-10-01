@@ -259,6 +259,8 @@ export function comparableProductionOutput(reference, cell) {
       !reference.resourceDelivery?.sha256 || !cell.resourceDelivery?.sha256)
     return false;
   return a.hit.semanticSha256 === b.hit.semanticSha256 &&
+    JSON.stringify(a.production?.ordinalWindow?.contract ?? null) ===
+      JSON.stringify(b.production?.ordinalWindow?.contract ?? null) &&
     a.visualOracle.imageSha256 === b.visualOracle.imageSha256 &&
     a.production.window?.startMs === b.production.window?.startMs &&
     a.production.window?.endMs === b.production.window?.endMs &&
@@ -771,6 +773,22 @@ export function validateCpuOutputReceipt(r, events, benchmark) {
   const match = index >= 0 ? /^(\d+):(\d+)$/.exec(args[index+1] ?? '') : null;
   const expected = match ? {startMs:Number(match[1]),endMs:Number(match[2])} : null;
   const raw = productionWindowProof(benchmark?.perRepeat?.[0],expected);
+  const ordinalArgs = r.effective?.config?.benchArgs ?? [];
+  const ordinalArg = (name) => { const at = ordinalArgs.indexOf(name); return at < 0 ? null : ordinalArgs[at + 1] ?? null; };
+  const ordinalEnabled = ordinalArg('--ordinal-window') !== null;
+  const ordinalRaw = benchmark?.perRepeat?.[0]?.replayDelivery?.final?.ordinalWindow ?? null;
+  const ordinalContract = benchmark?.config?.ordinalWindow ?? null;
+  if (ordinalEnabled !== !!ordinalContract ||
+      JSON.stringify(ordinalContract) !== JSON.stringify(ordinalRaw?.contract ?? null) ||
+      (ordinalEnabled && (
+        ordinalArg('--ordinal-window') !== `${ordinalContract?.firstIndex}:${ordinalContract?.lastIndex}` ||
+        ordinalArg('--ordinal-recording-sha256') !== ordinalContract?.recordingSha256 ||
+        ordinalArg('--ordinal-boundary-sha256') !==
+          ordinalContract?.boundaryRows?.map(row => row.dataUtf8Sha256).join(':') ||
+        !ordinalRaw || ordinalRaw.stage !== 'closed' ||
+        ordinalRaw.failure !== null || !raw.ordinalWindow ||
+        !raw.valid || ordinalRaw.requests !== 2)))
+    failures.push('pinned ordinal boundary contract or completed handshake unavailable');
   if (!expected || expected.startMs !== 12000 || expected.endMs !== 19000 ||
       !raw.valid || JSON.stringify(raw) !== JSON.stringify(r.output?.production))
     failures.push('raw 12–19 s ordinary output proof unavailable or differs from receipt');

@@ -41,6 +41,7 @@ export function productionWindowProof(row, expectedWindow) {
       p95LatenessMs:sortedLateness.length
         ? sortedLateness[Math.ceil(sortedLateness.length*0.95)-1] : null},
     frameGaps:row?.frameGaps ?? null,sceneAckLatency:row?.sceneAckLatency ?? null,
+    ordinalWindow:delivery?.final?.ordinalWindow ?? null,
   };
   const failures = [];
   if (proof.clockMode !== 'ordinary') failures.push('diagnostic clock in production window');
@@ -74,6 +75,56 @@ export function productionWindowProof(row, expectedWindow) {
   if (!Number.isFinite(clock?.beginEpochUs) || !Number.isFinite(clock?.endEpochUs) ||
       clock.endEpochUs <= clock.beginEpochUs)
     failures.push('direct page marker clock unavailable');
+  if (proof.ordinalWindow) {
+    const ordinal = proof.ordinalWindow, contract = ordinal.contract;
+    const committedGate = (gate, frame) =>
+      Number.isInteger(gate?.expectedRevision) && gate.expectedRevision === frame?.revision &&
+      gate.frameIdentity?.revision === frame.revision &&
+      gate.frameIdentity?.presentEpoch === frame.presentEpoch &&
+      gate.presentEpoch === frame.presentEpoch &&
+      gate.presentEpoch > gate.minPresentEpoch &&
+      Number.isInteger(gate.ackSerial) && Number.isInteger(gate.ackBaseline) &&
+      gate.ackSerial > gate.ackBaseline && gate.pendingAckCount === 0 &&
+      gate.asyncSubmissionRevision === null && gate.asyncAwaitingAckRevision === null &&
+      gate.commit?.presented === true && gate.commit.sceneRevision === frame.revision &&
+      gate.commit.frameIdentity?.revision === frame.revision &&
+      gate.commit.frameIdentity?.presentEpoch === frame.presentEpoch;
+    const inside = deliveryRows?.filter(item => item.deliveredAtMs >= clock?.beginReplayMs &&
+      item.deliveredAtMs <= clock?.endReplayMs) ?? [];
+    const prior = deliveryRows?.find(item => item.index === contract?.firstIndex - 1);
+    const next = deliveryRows?.find(item => item.index === contract?.lastIndex + 1);
+    if (ordinal.stage !== 'closed' || ordinal.failure !== null || ordinal.requests !== 2 ||
+        !contract || !Number.isInteger(contract.firstIndex) ||
+        !Number.isInteger(contract.lastIndex) ||
+        contract.sceneCount !== contract.lastIndex - contract.firstIndex + 1 ||
+        !/^[0-9a-f]{64}$/.test(contract.recordingSha256 ?? '') ||
+        !/^[0-9a-f]{64}$/.test(contract.selectedDataJsonSha256 ?? '') ||
+        !Array.isArray(contract.boundaryRows) || contract.boundaryRows.length !== 4 ||
+        contract.boundaryRows.some((row, index) =>
+          row.messageIndex !== [contract.firstIndex - 1, contract.firstIndex,
+            contract.lastIndex, contract.lastIndex + 1][index] ||
+          !Number.isFinite(row.recordedMs) ||
+          !/^[0-9a-f]{64}$/.test(row.dataUtf8Sha256 ?? '')) ||
+        !Array.isArray(contract.nonSceneIndices) || contract.nonSceneIndices.length !== 0 ||
+        !Number.isFinite(ordinal.startPauseMs) || ordinal.startPauseMs < 0 ||
+        !Number.isFinite(ordinal.endPauseMs) || ordinal.endPauseMs < 0 ||
+        ordinal.open?.stage !== 'open' || ordinal.close?.stage !== 'close' ||
+        ordinal.open.messageIndex !== contract.firstIndex ||
+        ordinal.close.messageIndex !== contract.lastIndex ||
+        ordinal.open.gate?.expectedRevision !== a?.revision ||
+        ordinal.close.gate?.expectedRevision !== b?.revision ||
+        ordinal.close.gate?.ackSerial <= ordinal.open.gate?.ackSerial ||
+        b?.revision - a?.revision !== contract.sceneCount ||
+        proof.delivery.after - proof.delivery.before !== contract.sceneCount ||
+        inside.length !== contract.sceneCount ||
+        inside[0]?.index !== contract.firstIndex ||
+        inside.at(-1)?.index !== contract.lastIndex ||
+        inside.some((item,index) => item.index !== contract.firstIndex + index) ||
+        !(prior?.deliveredAtMs < clock?.beginReplayMs) ||
+        !(next?.deliveredAtMs > clock?.endReplayMs) ||
+        !committedGate(ordinal.open.gate, a) || !committedGate(ordinal.close.gate, b))
+      failures.push('ordinal boundary, exact committed work, or pause evidence unavailable');
+  }
   // sceneAckLatency is read after the direct marker closes and can include
   // drained post-window deliveries. Keep it as a diagnostic, not a gate.
   proof.valid = failures.length === 0;
