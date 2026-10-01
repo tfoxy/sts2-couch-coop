@@ -87,7 +87,7 @@
   "settings.thisDevice": "Dieses Gerät",
   "settings.stage": "Darstellung",
   "settings.stageDom": "DOM",
-  "settings.stageCanvas": "Rust-Canvas",
+  "settings.stageCanvas": "Canvas",
   "settings.stageFallback": "Rust-Canvas konnte nicht gestartet werden; diese Ansicht verwendet DOM. {reason}",
   "settings.help.stage": "Wähle, wie dieses Gerät das Spiel zeichnet. Rust-Canvas verwendet fest die sehr niedrige Qualität, deaktivierte Effekte, einen statischen Hintergrund und statische Charaktergrafiken; DOM behält deine gespeicherten Einstellungen bei.",
   "settings.streamThisPlayer": "Stream (dieser Spieler)",

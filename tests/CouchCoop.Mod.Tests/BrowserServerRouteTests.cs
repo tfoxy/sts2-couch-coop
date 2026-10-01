@@ -1136,21 +1136,23 @@ internal sealed partial class BrowserServerRouteTests
         Expect(sceneResource.StatusLine.Contains("200 OK", StringComparison.Ordinal), "scene res path succeeds via the asset seam");
         Expect(assets.LastKey == "res://scenes/screens/character_select_screen.tscn", "scene res path is forwarded to the asset seam");
 
-        // R6 P6-F2 — `::`-QUALIFIED SUB-RESOURCES. Godot addresses a resource embedded inside a text resource as
-        // `<parent>::<sub id>`, and the mirror streams those qualified paths verbatim. Before this route they were
-        // minted whole, named a file that does not exist, and 404'd — which the web client could only report as
-        // "source unresolved". The parent is fetched through the ordinary path and the block is read out of it.
+        // Both shader text and texture pixels are resolved by the shared extractor from a qualified key.
         var subResource = await GetAsync(baseUri, "/res/shaders/subresource_fixture.tres%3A%3AShader_aaaaa");
         Expect(subResource.StatusLine.Contains("200 OK", StringComparison.Ordinal), "a ::-qualified sub-resource is served");
-        Expect(assets.LastKey == "res://shaders/subresource_fixture.tres", "the PARENT key is what reaches the seam — the sub id is not part of it");
-        Expect(assets.LastFormat == CouchCoopResourceFormat.Raw, "a sub-resource is read out of the parent's raw text");
+        Expect(assets.LastKey == "res://shaders/subresource_fixture.tres::Shader_aaaaa", "the qualified key reaches the seam");
+        Expect(assets.LastFormat == CouchCoopResourceFormat.Raw, "the default sub-resource format is raw");
         Expect(subResource.Body.Contains("uniform float a", StringComparison.Ordinal), "the named block's own source comes back");
         Expect(!subResource.Body.Contains("uniform float b", StringComparison.Ordinal), "and only that block");
         Expect(subResource.Headers.TryGetValue("Content-Type", out var subType) && subType.StartsWith("text/plain", StringComparison.Ordinal), "shader source is served as text");
         Expect(subResource.Headers.TryGetValue("Cache-Control", out var subCache) && subCache == "public, max-age=31536000, immutable", "a sub-resource carries the same immutable cache policy as any other asset");
 
-        // The block the parent's own `[resource]` section does NOT reference — the case that makes this a
-        // different question from parsing the material, and the one every transition material actually is.
+        var embeddedTexture = await GetRawAsync(baseUri, "/res/scenes/cards/card_grid.tscn%3A%3AGradientTexture2D_pcr5u?b=cc-test");
+        Expect(embeddedTexture.StatusLine.Contains("200 OK", StringComparison.Ordinal), "a scene-embedded texture is served");
+        Expect(assets.LastKey == "res://scenes/cards/card_grid.tscn::GradientTexture2D_pcr5u", "the build token is not part of the asset key");
+        Expect(embeddedTexture.Headers.TryGetValue("Content-Type", out var textureType) && textureType == "image/png", "the texture has a PNG content type");
+        Expect(embeddedTexture.Body.Take(8).SequenceEqual(new byte[] { 0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a }), "the texture response contains PNG bytes");
+
+        // A second sub-resource is addressed independently.
         var otherSub = await GetAsync(baseUri, "/res/shaders/subresource_fixture.tres%3A%3AShader_bbbbb");
         Expect(otherSub.StatusLine.Contains("200 OK", StringComparison.Ordinal), "an unreferenced sub-resource is served too");
         Expect(otherSub.Body.Contains("uniform float b", StringComparison.Ordinal), "…and it is the right one");
@@ -1162,6 +1164,9 @@ internal sealed partial class BrowserServerRouteTests
 
         var emptySub = await GetAsync(baseUri, "/res/shaders/subresource_fixture.tres%3A%3A");
         Expect(emptySub.StatusLine.Contains("400 BadRequest", StringComparison.Ordinal), "a `::` with nothing after it is a bad request");
+
+        var invalidSub = await GetAsync(baseUri, "/res/shaders/subresource_fixture.tres%3A%3AShader%5Cescape");
+        Expect(invalidSub.StatusLine.Contains("400 BadRequest", StringComparison.Ordinal), "a sub-resource id containing a backslash is rejected");
 
         // `?format` selects how the PARENT is rendered, a question with no meaning for the block inside it.
         var formattedSub = await GetAsync(baseUri, "/res/shaders/subresource_fixture.tres%3A%3AShader_aaaaa?format=json");
@@ -5033,23 +5038,27 @@ internal sealed partial class BrowserServerRouteTests
                     new Dictionary<string, string> { ["Cache-Control"] = "public, max-age=31536000, immutable" }));
             }
 
-            // R6 P6-F2 — a SYNTHETIC `.tres` carrying two shader sub-resources, for the `::` route below. Hand
-            // written (no game content), and served as raw text exactly as the real seam serves a `.tres`.
-            if (string.Equals(opaqueKey, "res://shaders/subresource_fixture.tres", StringComparison.Ordinal))
+            if (opaqueKey.StartsWith("res://shaders/subresource_fixture.tres::Shader_", StringComparison.Ordinal))
             {
-                const string body =
-                    "[gd_resource type=\"ShaderMaterial\" load_steps=3 format=3]\n\n" +
-                    "[sub_resource type=\"Shader\" id=\"Shader_aaaaa\"]\n" +
-                    "code = \"shader_type canvas_item;\nuniform float a = 1.0;\n\"\n\n" +
-                    "[sub_resource type=\"Shader\" id=\"Shader_bbbbb\"]\n" +
-                    "code = \"shader_type canvas_item;\nuniform float b = 2.0;\n\"\n\n" +
-                    "[resource]\n" +
-                    "shader = SubResource(\"Shader_aaaaa\")\n";
+                var body = opaqueKey.EndsWith("Shader_aaaaa", StringComparison.Ordinal)
+                    ? "shader_type canvas_item; uniform float a = 1.0;"
+                    : opaqueKey.EndsWith("Shader_bbbbb", StringComparison.Ordinal)
+                        ? "shader_type canvas_item; uniform float b = 2.0;"
+                        : null;
+                if (body is null)
+                    return Task.FromResult(CouchCoopAssetHttpResponse.Missing(new CouchCoopAssetHttpError(
+                        "missing-subresource", "The parent does not contain the named sub-resource.", "key", opaqueKey)));
                 return Task.FromResult(CouchCoopAssetHttpResponse.Found(
                     Encoding.UTF8.GetBytes(body),
                     "text/plain; charset=utf-8",
                     new Dictionary<string, string> { ["Cache-Control"] = "public, max-age=31536000, immutable" }));
             }
+
+            if (string.Equals(opaqueKey, "res://scenes/cards/card_grid.tscn::GradientTexture2D_pcr5u", StringComparison.Ordinal))
+                return Task.FromResult(CouchCoopAssetHttpResponse.Found(
+                    Convert.FromBase64String("iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+/aV8AAAAASUVORK5CYII="),
+                    "image/png",
+                    new Dictionary<string, string> { ["Cache-Control"] = "public, max-age=31536000, immutable" }));
 
             if (opaqueKey.Contains("missing", StringComparison.Ordinal))
             {

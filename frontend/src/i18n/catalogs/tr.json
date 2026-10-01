@@ -87,7 +87,7 @@
   "settings.thisDevice": "Bu cihaz",
   "settings.stage": "Görüntüleme",
   "settings.stageDom": "DOM",
-  "settings.stageCanvas": "Rust canvas",
+  "settings.stageCanvas": "Canvas",
   "settings.stageFallback": "Rust canvas başlatılamadı; bu görünüm DOM kullanıyor. {reason}",
   "settings.help.stage": "Bu cihazın oyunu nasıl çizeceğini seç. Rust canvas kaliteyi Çok düşükte sabitler, efektleri kapatır, statik arka plan ve statik karakter görselleri kullanır; DOM kaydettiğin ayarları korur.",
   "settings.streamThisPlayer": "Akış (bu oyuncu)",

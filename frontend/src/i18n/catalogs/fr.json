@@ -87,7 +87,7 @@
   "settings.thisDevice": "Cet appareil",
   "settings.stage": "Rendu",
   "settings.stageDom": "DOM",
-  "settings.stageCanvas": "Canvas Rust",
+  "settings.stageCanvas": "Canvas",
   "settings.stageFallback": "Impossible de démarrer le canvas Rust ; cette vue utilise DOM. {reason}",
   "settings.help.stage": "Choisissez comment cet appareil affiche le jeu. Le canvas Rust utilise toujours la qualité Très faible, les effets désactivés, un arrière-plan statique et des illustrations de personnages statiques ; DOM conserve vos réglages enregistrés.",
   "settings.streamThisPlayer": "Flux (ce joueur)",

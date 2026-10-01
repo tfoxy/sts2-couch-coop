@@ -87,7 +87,7 @@
   "settings.thisDevice": "このデバイス",
   "settings.stage": "描画方式",
   "settings.stageDom": "DOM",
-  "settings.stageCanvas": "Rust キャンバス",
+  "settings.stageCanvas": "Canvas",
   "settings.stageFallback": "Rust キャンバスを起動できなかったため、このビューでは DOM を使用しています。{reason}",
   "settings.help.stage": "このデバイスでゲームを描画する方法を選びます。Rust キャンバスでは画質を「非常に低い」に固定し、エフェクトをオフ、背景とキャラクター画像を静止表示にします。DOM では保存済みの設定を維持します。",
   "settings.streamThisPlayer": "ストリーム（このプレイヤー）",

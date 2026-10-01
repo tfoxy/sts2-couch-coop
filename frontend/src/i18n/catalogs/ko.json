@@ -87,7 +87,7 @@
   "settings.thisDevice": "이 기기",
   "settings.stage": "렌더링 방식",
   "settings.stageDom": "DOM",
-  "settings.stageCanvas": "Rust 캔버스",
+  "settings.stageCanvas": "Canvas",
   "settings.stageFallback": "Rust 캔버스를 시작할 수 없어 이 화면에서 DOM을 사용합니다. {reason}",
   "settings.help.stage": "이 기기에서 게임을 그리는 방식을 선택하세요. Rust 캔버스는 품질을 매우 낮음으로 고정하고 효과를 끄며 배경과 캐릭터 그림을 정적으로 표시합니다. DOM은 저장된 설정을 유지합니다.",
   "settings.streamThisPlayer": "스트림(이 플레이어)",
