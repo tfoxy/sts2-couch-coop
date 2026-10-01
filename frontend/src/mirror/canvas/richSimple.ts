@@ -1,10 +1,11 @@
-// SIMPLE RICH TEXT — the subset of bbcode a single-face raster can draw, and a LOUD refusal for everything else.
+// SIMPLE RICH TEXT — the subset of bbcode our canvas raster can draw, and a LOUD refusal for everything else.
 //
 // Treating every `RichTextLabel` as a refusal would be a large over-refusal, because `rich` is a wire boolean
 // (the node's type) rather than a statement about the string. Measured over the recorded corpus, most
 // rich strings carry no markup at all, and most of the rest carry only whole-string alignment and colour. Those
 // are drawable by a run list — one `fillText` per colour run instead of one per line — and nothing else about the
-// raster changes.
+// raster changes. Rust additionally enables streamed font roles and inline images; the legacy path keeps its
+// original subset.
 //
 // ---------------------------------------------------------------------------------------------------------------
 // WHY THE REFUSALS ARE THE FEATURE, and why they are per class rather than a boolean.
@@ -17,9 +18,10 @@
 //
 // Each refusal is named, so a census can say WHICH construct is holding a screen back rather than how many labels
 // failed:
-//   font-swap   `[b]` `[i]` `[u]` `[s]` `[code]` — a different font FILE, plus per-role letter spacing. A raster
-//               built from one `cssFont` cannot express it without a second face and a second measurement pass.
-//   img         `[img]` embeds a real inline image, laid out in the text flow. That is gsw doing DOM layout.
+//   font-swap   `[u]` `[s]` `[code]` still need decoration or a mono face. `[b]` and `[i]` are accepted when the
+//               caller enables role fonts and supplies the streamed faces during layout.
+//   img         Rust accepts plain `[img]path[/img]` with top/middle/bottom alignment; unsupported image options
+//               and missing paths still refuse. The legacy canvas path keeps its original refusal.
 //   style       `font_size` (a second measurement pass), `bgcolor` (a box behind the run), `outline_color` (a
 //               second stroke colour mid-line), `url` (an underline), and the structural `font`/`outline_size`/
 //               `indent`. Each is a real feature; none is a colour.
@@ -86,6 +88,10 @@ export interface RichSimple {
   text: string;
   /** Colour runs, in order, non-overlapping. EMPTY for a markup-free string, which is the common case. */
   spans: RichSpan[];
+  /** Non-overlapping styled-face ranges. Normal is implicit outside these ranges. */
+  roles: Array<{ start: number; end: number; role: "bold" | "italic" | "bold-italic" }>;
+  /** One U+FFFC placeholder in `text` per inline image. */
+  images: Array<{ start: number; path: string; valign: "top" | "middle" | "bottom" }>;
   /** Whole-string alignment, or null when the string carried none. */
   align: "left" | "center" | "right" | "justify" | null;
 }
@@ -160,13 +166,15 @@ const TAG_RE = /\[(\/?)([a-zA-Z_]+)((?:=|\s)[^\]]*)?\]/g;
  */
 export function parseSimpleRich(
   raw: string,
-  options: { tags?: Record<string, unknown>; color?: ColorValidator } = {}
+  options: { tags?: Record<string, unknown>; color?: ColorValidator; fontRoles?: boolean; inlineImages?: boolean } = {}
 ): RichParseResult {
   const table = (options.tags ?? DEFAULT_BBCODE_TAGS) as Record<string, GodotBbcodeTagDescriptor>;
   const validate = options.color ?? ((v: string) => v.trim() || null);
 
   let out = "";
   const spans: RichSpan[] = [];
+  const roles: RichSimple["roles"] = [];
+  const images: RichSimple["images"] = [];
   const stack: Frame[] = [];
   let align: RichSimple["align"] = null;
   /** Where the align tag opened and closed in the OUTPUT, so "did it wrap the whole string" is checkable. */
@@ -175,6 +183,18 @@ export function parseSimpleRich(
   let cursor = 0;
 
   const refuse = (refusal: RichRefusal, detail: string): RichParseResult => ({ ok: false, refusal, detail });
+  const append = (value: string): void => {
+    if (!value) return;
+    const bold = stack.some((frame) => frame.name === "b");
+    const italic = stack.some((frame) => frame.name === "i");
+    const role = bold && italic ? "bold-italic" : bold ? "bold" : italic ? "italic" : null;
+    if (role) {
+      const last = roles.at(-1);
+      if (last?.role === role && last.end === out.length) last.end += value.length;
+      else roles.push({ start: out.length, end: out.length + value.length, role });
+    }
+    out += value;
+  };
 
   /** Close a colour frame: everything it covered becomes a span, unless a nested frame already claimed it. */
   const closeFrame = (frame: Frame, end: number): void => {
@@ -198,7 +218,7 @@ export function parseSimpleRich(
 
   TAG_RE.lastIndex = 0;
   for (let m = TAG_RE.exec(raw); m !== null; m = TAG_RE.exec(raw)) {
-    out += raw.slice(cursor, m.index);
+    append(raw.slice(cursor, m.index));
     cursor = m.index + m[0].length;
     const close = m[1] === "/";
     const name = m[2].toLowerCase();
@@ -209,10 +229,32 @@ export function parseSimpleRich(
       // gsw would leave this LITERAL. Guessing is how a label ends up with `[foo]` printed in it.
       return refuse("unknown", `[${name}] is in neither grammar`);
     }
+    if ((kind === "bold" || kind === "italic") && options.fontRoles) {
+      if (close) {
+        const frame = stack.pop();
+        if (!frame || frame.name !== name) return refuse("unbalanced", `[/${name}]`);
+      } else stack.push({ name, color: null, start: out.length });
+      continue;
+    }
     if (kind === "bold" || kind === "italic" || kind === "underline" || kind === "strike" || kind === "code") {
       return refuse("font-swap", `[${name}]`);
     }
-    if (kind === "image") return refuse("img", "[img]");
+    if (kind === "image") {
+      if (!options.inlineImages) return refuse("img", "[img]");
+      if (close) continue; // Godot consumes the path at the opening tag; [/img] is optional.
+      const valign = argument ? argument.toLowerCase() : "middle";
+      if (valign !== "top" && valign !== "middle" && valign !== "bottom")
+        return refuse("img", `unsupported [img] options: ${argument}`);
+      const pathEnd = raw.indexOf("[", cursor);
+      const end = pathEnd < 0 ? raw.length : pathEnd;
+      const path = raw.slice(cursor, end).trim();
+      if (!path) return refuse("img", "empty [img] path");
+      images.push({ start: out.length, path, valign });
+      append("\uFFFC");
+      cursor = end;
+      TAG_RE.lastIndex = end;
+      continue;
+    }
     if (kind === "effect" && GODOT_BBCODE_BUILT_IN_EFFECTS[name]) {
       return refuse("effect", `[${name}] is a built-in animated effect`);
     }
@@ -305,7 +347,7 @@ export function parseSimpleRich(
     }
     return refuse("unknown", `[${name}] is in neither grammar`);
   }
-  out += raw.slice(cursor);
+  append(raw.slice(cursor));
 
   if (alignOpen && alignRange) {
     alignRange.end = out.length;
@@ -326,5 +368,5 @@ export function parseSimpleRich(
   }
 
   spans.sort((a, b) => a.start - b.start);
-  return { ok: true, value: { text: out, spans, align } };
+  return { ok: true, value: { text: out, spans, roles, images, align } };
 }

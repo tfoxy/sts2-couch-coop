@@ -502,7 +502,15 @@ export const createRustDrawListExecutor: MirrorDrawExecutorFactory = async ({ ca
     const revision = record.resourceRevision ?? record.contentKey ?? "";
     return `text:${record.key}:${revision}:${record.text}:${styleJson(record.style)}:${record.tint ?? 0xffffff}`;
   };
+  type InlineImageRecord = PixiTextRecord & { inlineImage?: { url: string; width: number; height: number } };
   function rasterText(record: PixiTextRecord): { resource: { key: string; width: number; height: number }; pixels: Uint8Array; width: number; height: number; transform: readonly number[]; alpha?: number } | null {
+    const inline = (record as InlineImageRecord).inlineImage;
+    if (inline) {
+      const pixels = textures.get(inline.url);
+      return pixels ? { resource: { key: pixels.key, width: pixels.width, height: pixels.height },
+        pixels: pixels.pixels, width: inline.width, height: inline.height,
+        transform: record.localTransform ?? record.transform, alpha: record.alpha } : null;
+    }
     let row: CorpusRow | null = null;
     if (textInkCorpus && !corpusSealed && !textCache.has(textResourceKey(record))) {
       if (corpusRows.length >= corpusLimit) { corpusOverflow = true; throw new Error(`Rust text corpus limit exceeded (${corpusLimit})`); }
@@ -555,7 +563,7 @@ export const createRustDrawListExecutor: MirrorDrawExecutorFactory = async ({ ca
         const style = record.style as PixiTextRecord["style"] & Record<string, unknown>;
         // The accepted producer emits one positioned record per line/run. Do not silently flatten Pixi-only
         // typography that this Canvas2D carrier cannot reproduce.
-        if ((style.align ?? "left") !== "left" || style.wordWrap === true || Number(style.letterSpacing ?? 0) !== 0 ||
+        if ((style.align ?? "left") !== "left" || style.wordWrap === true ||
             Number(style.leading ?? 0) !== 0 || style.breakWords === true) {
           if (raster) raster.outcome = "refused-style";
           return null;
@@ -566,6 +574,9 @@ export const createRustDrawListExecutor: MirrorDrawExecutorFactory = async ({ ca
         const measure = canvas.ownerDocument.createElement("canvas").getContext("2d");
         if (!measure) { if (raster) raster.outcome = "refused-measure-context"; return null; }
         measure.font = font;
+        const letterSpacing = Number(style.letterSpacing ?? 0);
+        if (!Number.isFinite(letterSpacing)) return null;
+        if (letterSpacing && "letterSpacing" in measure) measure.letterSpacing = `${letterSpacing}px`;
         const runs = record.runs?.length ? record.runs : [{ text: record.text }];
         const text = runs.map((run) => run.text).join("");
         const metrics = measure.measureText(text);
@@ -592,6 +603,7 @@ export const createRustDrawListExecutor: MirrorDrawExecutorFactory = async ({ ca
         if (!context) { if (raster) raster.outcome = "refused-ink-context"; return null; }
         if (raster) raster.inkContextAttributes = context.getContextAttributes?.() ?? null;
         context.font = font; context.textBaseline = "alphabetic"; context.textAlign = "left";
+        if (letterSpacing && "letterSpacing" in context) context.letterSpacing = `${letterSpacing}px`;
         const x = pad, y = pad + ascent;
         const inkDrawAt = raster ? performance.now() : 0;
         const drawn = drawRustTextRuns(context, runs, {
@@ -994,6 +1006,10 @@ export const createRustDrawListExecutor: MirrorDrawExecutorFactory = async ({ ca
         }
         if (startupEvent && cardAtlasKey === null && isCardAtlas(texture)) cardAtlasKey = texture;
       }
+    }
+    for (const record of text) {
+      const url = (record as InlineImageRecord).inlineImage?.url;
+      if (url) prefetch(url);
     }
     stats.resourcePending = pending.size;
     if (pending.size) {

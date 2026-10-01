@@ -84,6 +84,7 @@ export interface PixiRendererDiagnostics {
   ready: boolean;
   failure?: string;
   omissions?: { nodes: Record<string, string>; textures: readonly string[] };
+  degradations?: Record<string, string>;
   refinementFailure?: string;
   admittedRevision?: number;
   asyncSubmissionRevision?: number | null;
@@ -399,6 +400,8 @@ export function createPixiMirrorRenderer(
   let snapshot: DrawnSceneSnapshot | null = null;
   const fontPending = new Set<string>();
   const fontFailed = new Set<string>();
+  const failedRoleFamilies = new Set<string>();
+  const fontRoleDegradations = new Map<string, string>();
   const spinePending = new Set<string>();
   const spineFailed = new Set<string>();
   const spineClips = new Map<string, LoadedSpineClip>();
@@ -589,29 +592,51 @@ if (isPromiseLike<PresentationResult>(result)) {
     const fontReady = (cssFont: string, text: string): boolean =>
       fontCheckCache ? fontCheckCache.check(cssFont, text, fontVersion, fast.verify) : fonts!.check(cssFont, text);
 
-    if (textPrepCache) {
+    if (backend === "rust" || textPrepCache) {
       const nodes = input.nodes ?? state?.nodes ?? new Map();
-      const prepared = textPrepCache.resolve(node, nodes, fontVersion, textMode, fast.verify, (): PreparedText | TextPrepRefusal => {
-        const resolved = resolveSemanticTextSpec(node, nodes);
+      const compute = (): PreparedText | TextPrepRefusal => {
+        const resolved = resolveSemanticTextSpec(node, nodes, backend === "rust", failedRoleFamilies);
         if ("refusal" in resolved) return resolved;
         if (!measureContext) return { refusal: "no-measure-context" };
         nativeLayouts++;
         return buildPreparedText(resolved, fontVersion, node.font!,
           (value) => measureContext.measureText(value).width,
-          (cssFont) => { measureContext.font = cssFont; const sample = measureContext.measureText("Mg");
+          (cssFont) => { measureContext.font = cssFont; measureContext.letterSpacing = "0px";
+            const sample = measureContext.measureText("Mg");
             return { ascent: sample.fontBoundingBoxAscent || sample.actualBoundingBoxAscent,
-              descent: sample.fontBoundingBoxDescent || sample.actualBoundingBoxDescent }; });
-      });
+              descent: sample.fontBoundingBoxDescent || sample.actualBoundingBoxDescent }; },
+          (face, value) => { measureContext.font = face.cssFont;
+            measureContext.letterSpacing = `${face.spacingPx}px`; return measureContext.measureText(value).width; },
+          (url) => { pixi?.prefetch(url); return pixi?.textureSize(url) ??
+            (pixi?.textureFailureDetails().some((item) => item.startsWith(`${url}:`)) ? { width: 0, height: 0 } : null); });
+      };
+      const prepared = textPrepCache
+        ? textPrepCache.resolve(node, nodes, fontVersion, textMode, fast.verify, compute) : compute();
       if ("refusal" in prepared) { semanticFailures.set(node.id, prepared.refusal); return false; }
-      if (fonts && !fontReady(prepared.spec.cssFont, prepared.spec.text) &&
-          !fontPending.has(prepared.spec.cssFont) && !fontFailed.has(prepared.spec.cssFont)) {
-        fontPending.add(prepared.spec.cssFont);
-        void loadMirrorFont(fonts, prepared.spec.cssFont, prepared.spec.text, prepared.spec.family)
+      if (prepared.fallbackRoles?.length) fontRoleDegradations.set(node.id,
+        `font-role-fallback:${prepared.fallbackRoles.join(",")}`);
+      const fontsToCheck = [{ cssFont: prepared.spec.cssFont, text: prepared.spec.text,
+        family: prepared.spec.family, role: false },
+        ...Object.values(prepared.roleFaces ?? {}).filter((face) => face !== undefined).map((face) =>
+          ({ cssFont: face.cssFont, text: prepared.spec.text, family: face.font.family, role: true }))];
+      let waitingForFont = false;
+      for (const face of fontsToCheck) {
+        if (!fonts || fontFailed.has(face.cssFont) || failedRoleFamilies.has(face.family)) continue;
+        if (fontPending.has(face.cssFont)) { waitingForFont = true; continue; }
+        if (fontReady(face.cssFont, face.text)) continue;
+        waitingForFont = true;
+        fontPending.add(face.cssFont);
+        void loadMirrorFont(fonts, face.cssFont, face.text, face.family)
           .then(() => { if (!disposed) { fontVersion++; textLayoutCache.clear(); } })
-          .catch(() => { if (!disposed) fontFailed.add(prepared.spec.cssFont); })
-          .finally(() => { fontPending.delete(prepared.spec.cssFont); wakeForResource(); });
+          .catch(() => { if (!disposed) {
+            if (face.role) failedRoleFamilies.add(face.family);
+            else fontFailed.add(face.cssFont);
+            fontVersion++; textLayoutCache.clear();
+          } })
+          .finally(() => { fontPending.delete(face.cssFont); wakeForResource(); });
       }
       if (fontFailed.has(prepared.spec.cssFont)) { semanticFailures.set(node.id, "font-load"); return false; }
+      if (backend === "rust" && waitingForFont) { semanticFailures.set(node.id, "font-pending"); return false; }
       const nativeParts = composePreparedTextRecords(prepared, node.id, insertionIndex, record, canvasBlend(node));
       const textStart = texts.length;
       if (textMode === "native" || nativeParts.length === 0) {
@@ -814,6 +839,7 @@ if (isPromiseLike<PresentationResult>(result)) {
     textOwners.clear();
     textKeysByOwner.clear();
     semanticFailures.clear();
+    fontRoleDegradations.clear();
     const capturedGlobals = new Map(); const captureIds = new Set<string>(); interaction.collectCaptureIds(captureIds); visual.collectLandingCaptureIds(captureIds);
     visual.prepareBuild(next); interaction.prepareBuild(); spreadDxByNode.clear(); spreadFieldModeByNode.clear();
     list.reset();
@@ -1678,6 +1704,8 @@ const traceId = nextTraceFrame();
     ...((failure || (backend !== "rust" && pixi?.textureFailureDetails().length)) ? { failure: failure ?? pixi?.textureFailureDetails().join(" | ") } : {}),
     ...(backend === "rust" && (semanticFailures.size || (pixi?.stats.textureFailures ?? 0) > 0)
       ? { omissions: { nodes: Object.fromEntries(semanticFailures), textures: pixi?.textureFailureDetails() ?? [] } } : {}),
+    ...(backend === "rust" && fontRoleDegradations.size
+      ? { degradations: Object.fromEntries(fontRoleDegradations) } : {}),
     ...(refinementFailure ? { refinementFailure } : {}),
     admittedRevision: snapshot?.stateRevision,
     asyncSubmissionRevision, asyncPresentedRevision, asyncAwaitingAckRevision,

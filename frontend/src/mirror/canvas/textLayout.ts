@@ -17,9 +17,8 @@
 //
 // THE REMAINING REFUSALS prevent drawing wrong words. The legacy canvas path can leave a refused label in its DOM
 // overlay; Rust omits that one label and continues to draw the rest of the scene:
-//   * RICH — this round's scope line. A `[b]` span swaps to a different font FILE and `[img]` embeds a real
-//     inline image; both are gsw's `richTextLayeredHtml` doing DOM layout, and reproducing them on a canvas is
-//     separate work.
+//   * RICH — the Rust path parses streamed font roles and inline images. Unsupported markup still refuses the
+//     individual label; the legacy canvas path keeps its DOM fallback for that label.
 //   * UNBREAKABLE SCRIPTS — CJK/Thai/kana have no spaces and break on character or dictionary rules. A greedy
 //     space-breaker does not wrap them at all; it overflows the box silently. Zero across the recorded set, which
 //     is why this is a guard rather than a feature.
@@ -144,6 +143,16 @@ export interface TextSpan {
   color: string;
 }
 
+export type TextFontRole = "normal" | "bold" | "italic" | "bold-italic";
+export interface TextRoleSpan { start: number; end: number; role: Exclude<TextFontRole, "normal"> }
+/** Optional mixed-face measurement. All offsets address the parsed plain string. */
+export interface TextRoleLayout {
+  roles: readonly TextRoleSpan[];
+  images?: readonly { start: number; url: string; width: number; height: number; valign: "top" | "middle" | "bottom" }[];
+  measure: (role: TextFontRole, value: string) => number;
+  pitch: (role: TextFontRole) => number;
+}
+
 /** One contiguous stretch of a placed line drawn in a single colour. See {@link PlacedLine.runs}. */
 export interface TextRun {
   text: string;
@@ -152,6 +161,8 @@ export interface TextRun {
   width: number;
   /** The run's own colour, or null to use the spec's. */
   color: string | null;
+  role?: TextFontRole;
+  image?: { url: string; width: number; height: number; valign: "top" | "middle" | "bottom" };
 }
 
 export interface PlacedLine {
@@ -161,6 +172,7 @@ export interface PlacedLine {
   x: number;
   /** y of the line's BASELINE is `y + ascent`; this is the top of the line box. */
   y: number;
+  pitchPx?: number;
   /**
    * The line split into colour runs — PRESENT ONLY when the caller supplied spans that reach this line.
    *
@@ -494,8 +506,13 @@ interface Piece {
  * The "cannot be broken" case is not an error path: a single word wider than its box is real (a long relic name in
  * a narrow plaque), the DOM backend lets it overflow, and so does this.
  */
-function breakLine(line: string, width: number, measure: MeasureText): Piece[] {
-  if (width <= 0 || measure(trimEnd(line)) <= width) {
+function breakLine(line: string, width: number, measure: MeasureText, base = 0,
+  rangeMeasure?: (start: number, end: number) => number): Piece[] {
+  const widthOf = (start: number, end: number): number => {
+    const value = trimEnd(line.slice(start, end));
+    return rangeMeasure ? rangeMeasure(base + start, base + start + value.length) : measure(value);
+  };
+  if (width <= 0 || widthOf(0, line.length) <= width) {
     return [{ text: line, start: 0, end: line.length }];
   }
   const points = breakOpportunities(line);
@@ -520,7 +537,7 @@ function breakLine(line: string, width: number, measure: MeasureText): Piece[] {
     if (end <= start) {
       continue;
     }
-    if (measure(trimEnd(line.slice(start, end))) <= width) {
+    if (widthOf(start, end) <= width) {
       lastFit = end;
       continue;
     }
@@ -548,14 +565,15 @@ function breakLine(line: string, width: number, measure: MeasureText): Piece[] {
 }
 
 /** Keep the greedy line count while shortening its longest line. Eight probes bound the extra layout work. */
-function balanceLine(line: string, width: number, measure: MeasureText): Piece[] {
-  let best = breakLine(line, width, measure);
+function balanceLine(line: string, width: number, measure: MeasureText, base = 0,
+  rangeMeasure?: (start: number, end: number) => number): Piece[] {
+  let best = breakLine(line, width, measure, base, rangeMeasure);
   if (best.length < 2 || width <= 0) return best;
   let low = 0;
   let high = width;
   for (let probe = 0; probe < 8; probe++) {
     const middle = (low + high) / 2;
-    const candidate = breakLine(line, middle, measure);
+    const candidate = breakLine(line, middle, measure, base, rangeMeasure);
     if (candidate.length === best.length) {
       best = candidate;
       high = middle;
@@ -626,7 +644,8 @@ function blockOffset(align: "start" | "center" | "end", free: number): number {
  * but reproducing inter-word justification would need per-space stretching that the DOM backend does not do
  * either (browsers justify, but the streamed value is rare enough that matching left is honest and stated).
  */
-export function layoutText(spec: TextSpec, measure: MeasureText, spans?: readonly TextSpan[]): TextLayout {
+export function layoutText(spec: TextSpec, measure: MeasureText, spans?: readonly TextSpan[],
+  styled?: TextRoleLayout): TextLayout {
   const measured = spec.balance && spec.godotLines === null ? new Map<string, number>() : null;
   const measureLine: MeasureText = measured === null ? measure : (value) => {
     let width = measured.get(value);
@@ -637,6 +656,32 @@ export function layoutText(spec: TextSpec, measure: MeasureText, spans?: readonl
   // `white-space: normal`, and only its map differs from the plain path — the text it produces is identical.
   const collapsed = spec.whiteSpace === "normal" ? collapseWithMap(spec.text) : null;
   const source = collapsed ? collapsed.text : spec.text;
+  const roles: TextFontRole[] | null = styled && (styled.roles.length || styled.images?.length)
+    ? new Array(source.length).fill("normal") : null;
+  const images = new Map<number, NonNullable<TextRoleLayout["images"]>[number]>();
+  if (roles) for (let i = 0; i < source.length; i++) {
+    const original = collapsed?.map[i] ?? i;
+    for (const span of styled!.roles) if (original >= span.start && original < span.end) { roles[i] = span.role; break; }
+    const image = styled!.images?.find((item) => item.start === original);
+    if (image) images.set(i, image);
+  }
+  const measuredRanges = roles ? new Map<string, number>() : null;
+  const measureRange = roles ? (start: number, end: number): number => {
+    const key = `${start}:${end}`;
+    const hit = measuredRanges!.get(key);
+    if (hit !== undefined) return hit;
+    let width = 0;
+    for (let at = start; at < end;) {
+      const image = images.get(at);
+      if (image) { width += image.width; at++; continue; }
+      let next = at + 1;
+      while (next < end && roles[next] === roles[at] && !images.has(next)) next++;
+      width += styled!.measure(roles[at], source.slice(at, next));
+      at = next;
+    }
+    measuredRanges!.set(key, width);
+    return width;
+  } : null;
   const canWrap = spec.whiteSpace !== "pre";
 
   // Hard lines, each with where it starts in `source`.
@@ -677,8 +722,8 @@ export function layoutText(spec: TextSpec, measure: MeasureText, spans?: readonl
         continue;
       }
       const pieces = spec.balance
-        ? balanceLine(line.text, spec.contentW, measureLine)
-        : breakLine(line.text, spec.contentW, measureLine);
+        ? balanceLine(line.text, spec.contentW, measureLine, line.start, measureRange ?? undefined)
+        : breakLine(line.text, spec.contentW, measureLine, line.start, measureRange ?? undefined);
       if (pieces.length > 1) {
         wrapped = true;
       }
@@ -689,7 +734,9 @@ export function layoutText(spec: TextSpec, measure: MeasureText, spans?: readonl
     }
   }
 
-  const widths = broken.map((piece) => measureLine(trimEnd(piece.text)));
+  const widths = broken.map((piece) => measureRange
+    ? measureRange(piece.start, piece.start + trimEnd(piece.text).length)
+    : measureLine(trimEnd(piece.text)));
   const maxWidth = widths.length > 0 ? Math.max(...widths) : 0;
   // STAGE 1 — shrink-to-fit, or the full content width once anything wrapped OR the lines are not left-aligned.
   //
@@ -719,26 +766,34 @@ export function layoutText(spec: TextSpec, measure: MeasureText, spans?: readonl
   // that a wrapped line never contains one.
   const hardStarts = new Set(hard.map((line) => line.start));
   const tops: number[] = [];
-  let gapTotal = 0;
+  const pitches = broken.map((piece) => {
+    let pitch = spec.pitchPx;
+    if (roles) for (let i = piece.start; i < piece.start + piece.text.length; i++)
+      pitch = Math.max(pitch, styled!.pitch(roles[i]), images.get(i)?.height ?? 0);
+    return pitch;
+  });
+  let blockH = 0;
   for (let i = 0; i < broken.length; i++) {
     if (i > 0 && spec.paragraphGapPx > 0 && hardStarts.has(broken[i].start)) {
-      gapTotal += spec.paragraphGapPx;
+      blockH += spec.paragraphGapPx;
     }
-    tops.push(i * spec.pitchPx + gapTotal);
+    tops.push(blockH);
+    blockH += pitches[i];
   }
-  const blockH = broken.length * spec.pitchPx + gapTotal;
   // STAGE 2 — `justify-content` places the block, `align-items` places it vertically. `blockH` carries the gaps,
   // so a two-paragraph description centres on its TRUE height rather than on a height that pretends every break
   // is a wrap — which is the vertical half of the "card descriptions are not centered" report.
   const blockX = blockOffset(spec.blockAlign, spec.contentW - blockW);
   const blockY = blockOffset(spec.blockAlignY, spec.boxH - blockH);
 
-  const useRuns = spans !== undefined && spans.length > 0;
+  const useRuns = (spans !== undefined && spans.length > 0) || roles !== null;
   const lines: PlacedLine[] = broken.map((piece, i) => {
     const x = blockX + alignOffset(spec.align, blockW - widths[i]);
-    const line: PlacedLine = { text: piece.text, width: widths[i], x, y: blockY + tops[i] };
+    const line: PlacedLine = { text: piece.text, width: widths[i], x, y: blockY + tops[i],
+      ...(roles ? { pitchPx: pitches[i] } : {}) };
     if (useRuns) {
-      const runs = runsFor(piece, x, spans, collapsed?.map ?? null, measureLine);
+      const runs = runsFor(piece, x, spans ?? [], collapsed?.map ?? null, measureLine, roles,
+        measureRange ?? undefined, images);
       // ONLY when the spans actually reach this line. A line with one colour is one run, which is the same call
       // sequence a rasterizer already makes — so it is left absent rather than expressed as a single-run list.
       if (runs !== null) {
@@ -765,7 +820,10 @@ function runsFor(
   lineX: number,
   spans: readonly TextSpan[],
   map: number[] | null,
-  measure: MeasureText
+  measure: MeasureText,
+  roles: readonly TextFontRole[] | null = null,
+  measureRange?: (start: number, end: number) => number,
+  images: ReadonlyMap<number, NonNullable<TextRoleLayout["images"]>[number]> = new Map()
 ): TextRun[] | null {
   const text = piece.text;
   if (text.length === 0) {
@@ -782,7 +840,7 @@ function runsFor(
   };
   // Colour per character of this line, from the spans that overlap it.
   const colors: (string | null)[] = new Array(text.length).fill(null);
-  let touched = false;
+  let touched = roles !== null;
   for (const span of spans) {
     const from = Math.max(piece.start, at(span.start));
     const to = Math.min(piece.end, at(span.end));
@@ -800,15 +858,19 @@ function runsFor(
   const runs: TextRun[] = [];
   let start = 0;
   for (let k = 1; k <= text.length; k++) {
-    if (k < text.length && colors[k] === colors[start]) {
+    if (k < text.length && colors[k] === colors[start] &&
+        (roles === null || roles[piece.start + k] === roles[piece.start + start]) &&
+        !images.has(piece.start + k) && !images.has(piece.start + start)) {
       continue;
     }
-    const prefix = measure(text.slice(0, start));
+    const prefix = measureRange ? measureRange(piece.start, piece.start + start) : measure(text.slice(0, start));
     runs.push({
       text: text.slice(start, k),
       x: lineX + prefix,
-      width: measure(text.slice(0, k)) - prefix,
-      color: colors[start]
+      width: (measureRange ? measureRange(piece.start, piece.start + k) : measure(text.slice(0, k))) - prefix,
+      color: colors[start],
+      ...(roles ? { role: roles[piece.start + start] } : {}),
+      ...(images.has(piece.start + start) ? { image: images.get(piece.start + start) } : {})
     });
     start = k;
   }

@@ -20,16 +20,20 @@ import { parseSimpleRich } from "@/mirror/canvas/richSimple";
 import { resolveSceneInfo } from "@/mirror/canvas/hitTest";
 import {
   layoutText,
+  baselineOf,
   resolveTextSpec,
   type MeasureText,
   type TextLayout,
   type TextLineMetrics,
   type TextSpan,
-  type TextSpec
+  type TextSpec,
+  type TextFontRole,
+  type TextRoleSpan,
+  type TextRun
 } from "@/mirror/canvas/textLayout";
 import { resolveTextScaleDecls } from "@/mirror/textScaleClasses";
 import { nativeTextOriginCorrection, pixiShadowColor } from "@/mirror/renderer/semanticTextLayout";
-import type { MirrorFont, MirrorNode } from "@/mirror/sceneTree";
+import { mirrorResourceUrl, type MirrorFont, type MirrorNode } from "@/mirror/sceneTree";
 import type { PixiTextRecord } from "@godot-scene-web/canvas/pixi";
 
 /** Why this label cannot be rastered — mirrors the `semanticFailures` strings `semanticText` has always used. */
@@ -40,6 +44,26 @@ export interface TextPrepRefusal {
 export interface ResolvedTextSpec {
   spec: TextSpec;
   spans: readonly TextSpan[] | undefined;
+  roles?: readonly TextRoleSpan[];
+  roleFaces?: Partial<Record<TextFontRole, RoleFace>>;
+  fallbackRoles?: readonly TextFontRole[];
+  images?: readonly { start: number; url: string; valign: "top" | "middle" | "bottom" }[];
+}
+
+export interface RoleFace { font: MirrorFont; cssFont: string; fontPx: number; spacingPx: number; pitchPx: number }
+
+function fontRoleFace(node: MirrorNode, spec: TextSpec, role: TextFontRole, failed: ReadonlySet<string>): RoleFace {
+  const face = role === "bold" ? node.richBoldFont : role === "italic" ? node.richItalicFont
+    : role === "bold-italic" ? node.richBoldItalicFont : null;
+  const font = face && !failed.has(face.family) ? face : node.font!;
+  const roleSize = role === "bold" ? node.richBoldFontSizePx : role === "italic" ? node.richItalicFontSizePx
+    : role === "bold-italic" ? node.richBoldItalicFontSizePx : null;
+  const size = roleSize && node.text?.fontSizePx ? spec.fontPx * roleSize / node.text.fontSizePx : spec.fontPx;
+  const spacing = role === "bold" ? node.richBoldFontSpacingPx : role === "italic" ? node.richItalicFontSpacingPx
+    : role === "bold-italic" ? node.richBoldItalicFontSpacingPx : null;
+  return { font, cssFont: `${font.style ?? ""} ${font.weight ?? ""} ${size}px "${font.family}"`.replace(/\s+/g, " ").trim(),
+    fontPx: size, spacingPx: face && !failed.has(face.family) ? spacing ?? 0 : 0,
+    pitchPx: spec.pitchPx * size / Math.max(1, spec.fontPx) };
 }
 
 function isRefusal(value: ResolvedTextSpec | TextPrepRefusal | PreparedText): value is TextPrepRefusal {
@@ -53,23 +77,42 @@ function isRefusal(value: ResolvedTextSpec | TextPrepRefusal | PreparedText): va
  */
 export function resolveSemanticTextSpec(
   node: MirrorNode,
-  nodes: ReadonlyMap<string, MirrorNode>
+  nodes: ReadonlyMap<string, MirrorNode>,
+  allowFontRoles = false,
+  failedRoleFamilies: ReadonlySet<string> = new Set()
 ): ResolvedTextSpec | TextPrepRefusal {
   const scene = resolveSceneInfo(node.id, nodes);
   const decls = resolveTextScaleDecls(scene?.file ?? null, scene?.relPath ?? null);
   let spec = resolveTextSpec(node, decls);
   if (!spec || !node.font) return { refusal: !spec ? "unresolved-text" : "no-font" };
   let spans: readonly TextSpan[] | undefined;
+  let roles: readonly TextRoleSpan[] | undefined;
+  let roleFaces: ResolvedTextSpec["roleFaces"];
+  let fallbackRoles: TextFontRole[] | undefined;
+  let images: ResolvedTextSpec["images"];
   if (spec.refusal === "rich") {
-    const parsed = parseSimpleRich(spec.text, { color: (value) => value });
+    const parsed = parseSimpleRich(spec.text, { color: (value) => value, fontRoles: allowFontRoles,
+      inlineImages: allowFontRoles });
     if (!parsed.ok) return { refusal: `rich:${parsed.refusal}` };
     const plain = resolveTextSpec({ ...node, richText: false, text: { ...node.text!, text: parsed.value.text } }, decls);
     if (!plain || plain.refusal) return { refusal: `rich:${plain?.refusal ?? "post-parse"}` };
     spec = parsed.value.align === null ? plain : { ...plain, align: parsed.value.align };
     spans = parsed.value.spans.length ? parsed.value.spans : undefined;
+    roles = parsed.value.roles.length ? parsed.value.roles : undefined;
+    images = parsed.value.images.length ? parsed.value.images.map(({ start, path, valign }) =>
+      ({ start, url: mirrorResourceUrl(path), valign })) : undefined;
+    if (roles) {
+      roleFaces = {};
+      fallbackRoles = [];
+      for (const role of new Set(roles.map((span) => span.role))) {
+        roleFaces[role] = fontRoleFace(node, spec, role, failedRoleFamilies);
+        const original = role === "bold" ? node.richBoldFont : role === "italic" ? node.richItalicFont : node.richBoldItalicFont;
+        if (!original || failedRoleFamilies.has(original.family)) fallbackRoles.push(role);
+      }
+    }
   }
   if (spec.refusal) return { refusal: spec.refusal };
-  return { spec, spans };
+  return { spec, spans, roles, roleFaces, fallbackRoles, images };
 }
 
 /** One placed run, ready to be positioned by a live `record.transform` — see {@link composePreparedTextRecords}. */
@@ -86,11 +129,15 @@ export interface PreparedTextRun {
    * identity, so a fresh literal here would defeat it even with `fast.textPrepCache` on.
    */
   style: PixiTextRecord["style"];
+  inlineImage?: { url: string; width: number; height: number };
 }
 
 export interface PreparedText {
   spec: TextSpec;
   spans: readonly TextSpan[] | undefined;
+  roleFaces?: ResolvedTextSpec["roleFaces"];
+  fallbackRoles?: readonly TextFontRole[];
+  images?: readonly { start: number; url: string; width: number; height: number; valign: "top" | "middle" | "bottom" }[];
   /** `JSON.stringify([fontVersion, font, spec, spans])` — kept only as a cheap equality witness for `verify`. */
   layoutKey: string;
   layout: TextLayout;
@@ -110,31 +157,70 @@ export function buildPreparedText(
   fontVersion: number,
   font: MirrorFont,
   measure: MeasureText,
-  measureLineMetrics: (cssFont: string) => TextLineMetrics
+  measureLineMetrics: (cssFont: string) => TextLineMetrics,
+  roleMeasure?: (face: RoleFace, value: string) => number,
+  imageSize?: (url: string) => { width: number; height: number } | null
 ): PreparedText | TextPrepRefusal {
-  const { spec, spans } = resolved;
-  const layoutKey = JSON.stringify([fontVersion, font, spec, spans]);
+  const { spec, spans, roles, roleFaces, fallbackRoles } = resolved;
+  const images = resolved.images?.map((image) => {
+    const size = imageSize?.(image.url);
+    return size ? { ...image, width: size.width, height: size.height } : null;
+  });
+  if (images?.some((image) => image === null)) return { refusal: "image-pending" };
+  const resolvedImages = images as Exclude<PreparedText["images"], undefined> | undefined;
+  const layoutKey = roles || resolvedImages
+    ? JSON.stringify([fontVersion, font, spec, spans, roles, roleFaces, resolvedImages])
+    : JSON.stringify([fontVersion, font, spec, spans]);
   const metrics = measureLineMetrics(spec.cssFont);
-  const layout = layoutText(spec, measure, spans);
+  const normalFace: RoleFace = { font, cssFont: spec.cssFont, fontPx: spec.fontPx, spacingPx: 0, pitchPx: spec.pitchPx };
+  const faceOf = (role: TextFontRole): RoleFace => roleFaces?.[role] ?? normalFace;
+  const layout = layoutText(spec, measure, spans, roles || resolvedImages ? {
+    roles: roles ?? [], images: resolvedImages,
+    measure: (role, value) => roleMeasure ? roleMeasure(faceOf(role), value) : measure(value),
+    pitch: (role) => faceOf(role).pitchPx,
+  } : undefined);
   const shadow = spec.shadow ? pixiShadowColor(spec.shadow.color) : null;
   if (spec.shadow && !shadow) return { refusal: "invalid-shadow-color" };
-  const resourceRevision = `${fontVersion}:${JSON.stringify(font)}`;
+  const resourceRevision = `${fontVersion}:${JSON.stringify(roles || resolvedImages
+    ? [font, roleFaces, resolvedImages] : font)}`;
   const scale = spec.blockScale;
   const originCorrection = nativeTextOriginCorrection(spec.pitchPx, spec.outlinePx, metrics);
+  const roleMetrics = new Map<TextFontRole, TextLineMetrics>();
+  roleMetrics.set("normal", metrics);
+  if (roleFaces) for (const role of Object.keys(roleFaces) as TextFontRole[])
+    roleMetrics.set(role, measureLineMetrics(faceOf(role).cssFont));
   const runs: PreparedTextRun[] = [];
   for (let lineIndex = 0; lineIndex < layout.lines.length; lineIndex++) {
     const line = layout.lines[lineIndex];
-    const y = (1 - scale) * spec.boxH / 2 + (line.y + originCorrection.y) * scale;
-    const parts = line.runs?.length ? line.runs : [{ text: line.text, x: line.x, color: null }];
+    const parts: readonly TextRun[] = line.runs?.length ? line.runs
+      : [{ text: line.text, x: line.x, width: line.width, color: null }];
+    const lineMetrics = parts.reduce((acc, part) => {
+      const value = roleMetrics.get(part.role ?? "normal") ?? metrics;
+      return { ascent: Math.max(acc.ascent, value.ascent), descent: Math.max(acc.descent, value.descent) };
+    }, { ascent: 0, descent: 0 });
     for (let runIndex = 0; runIndex < parts.length; runIndex++) {
       const part = parts[runIndex];
+      const role = part.role ?? "normal";
+      const face = faceOf(role);
+      const runMetrics = roleMetrics.get(role) ?? metrics;
+      const pitch = line.pitchPx ?? spec.pitchPx;
+      const baseline = baselineOf(line.y, pitch, lineMetrics);
+      const strokeHalf = spec.outlinePx / 2;
+      const rasterBaseline = strokeHalf + runMetrics.ascent + Math.max(0, (pitch - runMetrics.ascent - runMetrics.descent) / 2);
+      const imageTop = part.image?.valign === "top" ? baseline - lineMetrics.ascent
+        : part.image?.valign === "bottom" ? baseline - part.image.height
+        : baseline - (part.image?.height ?? 0) / 2 - spec.fontPx * 0.344;
+      const y = (1 - scale) * spec.boxH / 2 + (part.image ? imageTop : baseline - rasterBaseline) * scale;
       const x = (1 - scale) * spec.boxW / 2 + (part.x + originCorrection.x) * scale;
       runs.push({
         lineIndex, runIndex, text: part.text, boxX: x, boxY: y,
+        ...(part.image && part.image.width > 0 && part.image.height > 0
+          ? { inlineImage: { url: part.image.url, width: part.image.width, height: part.image.height } } : {}),
         style: {
-          fontFamily: spec.family, fontSize: spec.fontPx,
-          fontStyle: (font.style || "normal") as "normal" | "italic" | "oblique",
-          fontWeight: (font.weight || "normal") as "normal", fill: part.color ?? spec.color,
+          fontFamily: face.font.family, fontSize: face.fontPx,
+          fontStyle: (face.font.style || "normal") as "normal" | "italic" | "oblique",
+          fontWeight: (face.font.weight || "normal") as "normal", fill: part.color ?? spec.color,
+          ...(face.spacingPx ? { letterSpacing: face.spacingPx } : {}),
           align: "left", wordWrap: false, lineHeight: spec.pitchPx,
           stroke: spec.outlineColor && spec.outlinePx > 0 ? { color: spec.outlineColor, width: spec.outlinePx } : undefined,
           dropShadow: spec.shadow && shadow ? { color: shadow.color, alpha: shadow.alpha,
@@ -143,7 +229,8 @@ export function buildPreparedText(
       });
     }
   }
-  return { spec, spans, layoutKey, layout, metrics, shadow, resourceRevision, runs };
+  return { spec, spans, roleFaces, fallbackRoles, images: resolvedImages, layoutKey, layout, metrics, shadow,
+    resourceRevision, runs };
 }
 
 /**
@@ -165,13 +252,15 @@ export function composePreparedTextRecords(
     Math.round(Math.max(0, Math.min(1, record.tintB)) * 255);
   const out: PixiTextRecord[] = [];
   for (const run of prepared.runs) {
+    if (run.text === "\uFFFC" && !run.inlineImage) continue;
     const transform = [m[0] * scale, m[1] * scale, m[2] * scale, m[3] * scale,
       m[0] * run.boxX + m[2] * run.boxY + m[4], m[1] * run.boxX + m[3] * run.boxY + m[5]];
     out.push({
       key: `${nodeId}:${run.lineIndex}:${run.runIndex}`, insertionIndex, text: run.text, transform,
       labelId: nodeId, resourceRevision: prepared.resourceRevision, style: run.style,
       alpha: record.opacity, blend, tint,
-    });
+      ...(run.inlineImage ? { inlineImage: run.inlineImage } : {}),
+    } as PixiTextRecord);
   }
   return out;
 }
@@ -247,7 +336,8 @@ export function createTextPrepCache(): TextPrepCache {
           const fresh = compute();
           if (!preparedResultsAgree(cached.result, fresh)) {
             verifyMismatches++;
-            store.set(node, { chain, fontVersion, textMode, result: fresh });
+            if (!("refusal" in fresh && fresh.refusal === "image-pending"))
+              store.set(node, { chain, fontVersion, textMode, result: fresh });
             return fresh;
           }
         }
@@ -255,7 +345,8 @@ export function createTextPrepCache(): TextPrepCache {
       }
       misses++;
       const result = compute();
-      store.set(node, { chain, fontVersion, textMode, result });
+      if (!("refusal" in result && result.refusal === "image-pending"))
+        store.set(node, { chain, fontVersion, textMode, result });
       return result;
     },
     stats: () => ({ hits, misses, verifyMismatches }),

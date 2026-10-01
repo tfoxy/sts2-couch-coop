@@ -72,7 +72,8 @@ function fakeAdapter(asynchronous = false) {
   const adapter = {
     stats: { completedFrames: 0, frames: 0, resourcePending: 0, textureFailures: 0, textures: 0,
       contextReady: true, presentationValid: false },
-    app: { renderer: {} }, resize: vi.fn(() => { adapter.stats.presentationValid = false; }), dispose: vi.fn(), textureSize: vi.fn(() => null),
+    app: { renderer: {} }, resize: vi.fn(() => { adapter.stats.presentationValid = false; }), dispose: vi.fn(),
+    textureSize: vi.fn((_url: string): { width: number; height: number } | null => null),
     setTraceFrameId: vi.fn(),
     prefetch: vi.fn(), textureFailureDetails: vi.fn(() => []),
     render: vi.fn(() => { adapter.stats.frames++; if (accept && adapter.stats.contextReady) adapter.stats.completedFrames++;
@@ -430,6 +431,70 @@ describe("Pixi composition initialization", () => {
         omissions?: { nodes: Record<string, string> } } }).__mirrorRendererDiagnostics())
         .toMatchObject({ ready: true, omissions: { nodes: { unsupported: "no-font" } } });
     } finally { renderer.dispose(); }
+  });
+
+  it.each(["rustFast=0", "rustFast=1"])("presents rich event options with their icon and hit target (%s)", async (query) => {
+    window.history.replaceState(null, "", `/?stage=canvas&${query}`);
+    Object.assign(rendererComparisonConfig, readRendererComparisonConfig());
+    measureStub();
+    const state = textScene();
+    state.nodes.get("root")!.sceneFilePath = "res://scenes/ui/event_option_button.tscn";
+    const label = state.nodes.get("label")!;
+    label.richText = true;
+    label.nodeType = "RichTextLabel";
+    label.mouseFilter = 0;
+    label.richBoldFont = { family: "BoldFace", url: "/bold.ttf", weight: null, style: null };
+    label.richBoldFontSpacingPx = 1;
+    label.text = { ...label.text!, text: "[gold][b]Spiked Gauntlets[/b][/gold]\nGain [img]res://icons/energy.png[/img] now" };
+    const adapter = fakeAdapter(true);
+    adapter.textureSize.mockImplementation((url: string) => url.includes("energy.png") ? { width: 24, height: 24 } : null);
+    const statuses: string[] = [];
+    const renderer = createPixiMirrorRenderer(stage(), document.createElementNS("http://www.w3.org/2000/svg", "defs"), null,
+      (phase) => statuses.push(phase), { backend: "rust", createExecutor: async () => adapter as never });
+    try {
+      await vi.waitFor(() => expect(control.created).toHaveLength(1));
+      expect(renderer.reconcile(state)).toBe(false);
+      await vi.waitFor(() => expect(statuses).toContain("ready"));
+      const records = adapter.admitScene.mock.calls.at(-1)?.[1] as readonly TestPixiText[];
+      expect(records.some((record) => record.key.startsWith("label:") &&
+        (record as unknown as { style: { fontFamily: string } }).style.fontFamily === "BoldFace")).toBe(true);
+      expect(records.some((record) => "inlineImage" in record)).toBe(true);
+      expect(renderer.interactiveRects().some((rect) => rect.id === "label")).toBe(true);
+      expect((window as unknown as { __mirrorRendererDiagnostics(): { omissions?: { nodes: Record<string, string> } } })
+        .__mirrorRendererDiagnostics().omissions?.nodes?.label).toBeUndefined();
+    } finally { renderer.dispose(); }
+  });
+
+  it("reports a failed bold face while drawing the event words in the normal face", async () => {
+    window.history.replaceState(null, "", "/?stage=canvas");
+    Object.assign(rendererComparisonConfig, readRendererComparisonConfig());
+    measureStub();
+    const previousFonts = Object.getOwnPropertyDescriptor(document, "fonts");
+    Object.defineProperty(document, "fonts", { configurable: true, value: {
+      check: (font: string) => !font.includes("BoldFace") } });
+    fontLoader.load.mockRejectedValueOnce(new Error("bold font unavailable"));
+    const state = textScene();
+    const label = state.nodes.get("label")!;
+    label.richText = true;
+    label.richBoldFont = { family: "BoldFace", url: "/bold.ttf", weight: null, style: null };
+    label.text = { ...label.text!, text: "[b]Event choice[/b]" };
+    const adapter = fakeAdapter(true);
+    const renderer = createPixiMirrorRenderer(stage(), document.createElementNS("http://www.w3.org/2000/svg", "defs"), null,
+      undefined, { backend: "rust", createExecutor: async () => adapter as never });
+    try {
+      await vi.waitFor(() => expect(control.created).toHaveLength(1));
+      expect(renderer.reconcile(state)).toBe(false);
+      await vi.waitFor(() => expect(adapter.admitScene).toHaveBeenCalled());
+      const records = adapter.admitScene.mock.calls.at(-1)?.[1] as readonly TestPixiText[];
+      expect(records.some((record) => (record as unknown as { style: { fontFamily: string } }).style.fontFamily ===
+        "TestFont")).toBe(true);
+      expect((window as unknown as { __mirrorRendererDiagnostics(): { degradations?: Record<string, string> } })
+        .__mirrorRendererDiagnostics().degradations).toMatchObject({ label: "font-role-fallback:bold" });
+    } finally {
+      renderer.dispose();
+      if (previousFonts) Object.defineProperty(document, "fonts", previousFonts);
+      else Reflect.deleteProperty(document, "fonts");
+    }
   });
 
   it("reproduces a pending newer revision that publishes without an ack pull", async () => {
