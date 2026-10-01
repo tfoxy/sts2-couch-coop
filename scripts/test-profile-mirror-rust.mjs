@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
-import { receipt, validate, validateSpeedReceipt, validateCpuOutputReceipt, markerCpuInterval, conservativeCpuSaving, duplicateProcessDisagreements, compareCpuOutputCells, validateTraceOnlyDiagnostic, validateVisualOnlyDiagnostic, cpuAttribution, validateV8Deltas, bindEvidence, servedArtifactMatches, visualOracleServedArtifactsMatch, hitGridMatches, hitGridSemanticHash, imagePixelDifference, postCaptureServerProof, qualifiedSamples, servedResourceHashes, verifyRustMarks, replayMessageDigest, procIntervalCpuMetric, comparableEnvironment, comparableProductionOutput } from './profile-mirror-rust.mjs';
+import { receipt, validate, validateSpeedReceipt, validateCpuOutputReceipt, requiredRustWarmFetch, markerCpuInterval, conservativeCpuSaving, duplicateProcessDisagreements, compareCpuOutputCells, validateTraceOnlyDiagnostic, validateVisualOnlyDiagnostic, cpuAttribution, validateV8Deltas, bindEvidence, servedArtifactMatches, visualOracleServedArtifactsMatch, hitGridMatches, hitGridSemanticHash, imagePixelDifference, postCaptureServerProof, qualifiedSamples, servedResourceHashes, verifyRustMarks, replayMessageDigest, procIntervalCpuMetric, comparableEnvironment, comparableProductionOutput } from './profile-mirror-rust.mjs';
 import { createHash } from 'node:crypto';
 import { mkdtempSync, readFileSync, writeFileSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
@@ -352,6 +352,16 @@ test('warm-resource CPU/output cells require the transition and raw phase eviden
   r.effective.config.benchArgs = ['--resource-warm-pass'];
   const failures = validateCpuOutputReceipt(r,[],{perRepeat:[{}]});
   assert.match(failures.join(),/warm-resource preparation, same renderer, or phase request ledger unavailable/);
+});
+test('required Rust warm fetch accepts method and function prefetch stacks only from the executor', () => {
+  const path = '/res/images/vfx/vfx_attack_slash/vfx_attack_slash_01.png';
+  const row = {url:`${path}?b=cache`,phase:'warm',status:200,rustExecutorOwned:true,
+    endEpochMs:10,initiator:'Error\n    at Object.prefetch (http://localhost/src/mirror/renderer/pixi/createRustDrawListExecutor.ts:602:5)'};
+  assert.equal(requiredRustWarmFetch(row,path,11),true);
+  assert.equal(requiredRustWarmFetch({...row,initiator:row.initiator.replace('Object.prefetch','prefetch')},path,11),true);
+  assert.equal(requiredRustWarmFetch({...row,rustExecutorOwned:false},path,11),false);
+  assert.equal(requiredRustWarmFetch({...row,initiator:row.initiator.replace('createRustDrawListExecutor.ts','foreign.ts')},path,11),false);
+  assert.equal(requiredRustWarmFetch({...row,endEpochMs:12},path,11),false);
 });
 test('conservative CPU saving must exceed full control interval spread once', () => {
   const controls = [{lowerMs:90,upperMs:100},{lowerMs:95,upperMs:105},

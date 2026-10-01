@@ -719,12 +719,8 @@ export function validateCpuOutputReceipt(r, events, benchmark) {
         !Array.isArray(proof.fetches) || proof.fetchDropped !== 0 ||
         proof.fetches?.some(row => !row.initiator || !Number.isFinite(row.startEpochMs) ||
           !Number.isFinite(row.endEpochMs) || row.endEpochMs < row.startEpochMs) ||
-        proof.requiredUrls?.some(path => !proof.fetches.some(row => row.phase === 'warm' &&
-          row.status === 200 && row.rustExecutorOwned === true &&
-          /\bat prefetch\b/.test(row.initiator ?? '') &&
-          /\/createRustDrawListExecutor\.ts(?:\?|:|\b)/.test(row.initiator ?? '') &&
-          row.endEpochMs <= proof.endEpochMs &&
-          new URL(row.url,'http://localhost').pathname === path)) ||
+        proof.requiredUrls?.some(path => !proof.fetches.some(row =>
+          requiredRustWarmFetch(row,path,proof.endEpochMs))) ||
         !artifact?.sha256 || JSON.stringify(warmRaw?.proof) !== JSON.stringify(proof) ||
         !resourceRecheck || resourceRaw?.sha256 !== r.resourceDelivery?.rawSha256 ||
         resourceRecheck.canonicalSha256 !== r.resourceDelivery?.sha256 ||
@@ -793,6 +789,14 @@ export function validateCpuOutputReceipt(r, events, benchmark) {
       unique.some(row => !markerCpuInterval(row,r.markers,r.hostIdentity?.logicalCpus)))
     failures.push('causal Node /proc process CPU interval unavailable');
   return [...new Set(failures)];
+}
+
+export function requiredRustWarmFetch(row, path, warmEndEpochMs) {
+  return row.phase === 'warm' && row.status === 200 && row.rustExecutorOwned === true &&
+    /\bat (?:Object\.)?prefetch\b/.test(row.initiator ?? '') &&
+    /\/createRustDrawListExecutor\.ts(?:\?|:|\b)/.test(row.initiator ?? '') &&
+    row.endEpochMs <= warmEndEpochMs &&
+    new URL(row.url,'http://localhost').pathname === path;
 }
 
 export function markerCpuInterval(row, markers, logicalCpus, thread = false) {
