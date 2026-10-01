@@ -681,6 +681,19 @@ describe("createInputCapture — misc", () => {
     expect(sent.at(-1)).toMatchObject({ kind: "click", button: "left", pressed: false });
   });
 
+  it("retracts a held mouse press when the view is disposed during renderer fallback", () => {
+    stage.dispatchEvent(new MouseEvent("pointerdown", { button: 0, clientX: 480, clientY: 270, bubbles: true }));
+    stage.dispatchEvent(new MouseEvent("pointermove", { clientX: 700, clientY: 500, bubbles: true }));
+    capture.dispose();
+    expect(sent.filter((m) => m.kind === "click")).toEqual([
+      expect.objectContaining({ button: "left", pressed: true }),
+      expect.objectContaining({ button: "left", pressed: false, coordX: 1400, coordY: 1000 }),
+    ]);
+    stage.dispatchEvent(new MouseEvent("pointerup", { button: 0, clientX: 700, clientY: 500, bubbles: true }));
+    capture.dispose();
+    expect(sent.filter((m) => m.kind === "click")).toHaveLength(2);
+  });
+
   // The keyboard is no longer this module's: it has its own upstream source (keyboardCapture.ts, specced in
   // keyboardCapture.spec.ts). A pointer capture must therefore be deaf to keys — including the ones it used to
   // claim — so a page with both captures up can never send a keystroke twice.
@@ -758,6 +771,19 @@ describe("createInputCapture — touch", () => {
     // Flushing frames adds nothing (the queued-hover slot was dropped on down — no duplicate at the same point).
     flushFrames();
     expect(sent).toEqual([{ kind: "hover", coordX: 960, coordY: 540 }]);
+  });
+
+  it("retracts a transmitted touch drag on disposal without committing a deferred tap", () => {
+    stage.dispatchEvent(touchEvent("pointerdown", { clientX: 0, clientY: 0 }));
+    stage.dispatchEvent(touchEvent("pointermove", { clientX: 480, clientY: 270 }));
+    expect(sent).toContainEqual(expect.objectContaining({ kind: "click", button: "left", pressed: true }));
+    capture.dispose();
+    expect(sent.filter((m) => m.kind === "click")).toEqual([
+      expect.objectContaining({ button: "left", pressed: true }),
+      expect.objectContaining({ button: "left", pressed: false, coordX: 960, coordY: 540 }),
+    ]);
+    stage.dispatchEvent(touchEvent("pointerup", { clientX: 480, clientY: 270 }));
+    expect(sent.filter((m) => m.kind === "click")).toHaveLength(2);
   });
 
   it("does NOT down-hover for a SECOND (two-finger) finger — only the primary hovers", () => {

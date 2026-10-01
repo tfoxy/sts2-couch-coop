@@ -1,46 +1,28 @@
-// WHICH BACKEND DRAWS THE STAGE.
-//
-// The mirror has two renderers behind one interface (MirrorRenderer): the shipping DOM backend, which builds an
-// element per scene node, and the single-canvas backend, which answers the same reconcile with one <canvas> and a
-// draw list. This module is the ONE place that picks between them — MirrorView calls this instead of
-// `createMirrorRenderer` directly, and nothing else in the app knows there is a choice.
-//
-// THE LEVER. `?stage=dom` (the default) or `?stage=canvas`. Read ONCE at module load like every other lever in this codebase — the choice of
-// renderer is a page-load decision by construction (a live swap means re-mounting the whole stage), and a
-// `__setStageBackendForTest` seam lets vitest flip it without touching `window.location`.
-//
-// THE HARD FALLBACK. `?stage=canvas` is a REQUEST, not a promise. If the canvas backend cannot be built at all —
-// today that means WebGL2 context creation failing, which is a real outcome on old/blocklisted mobile GPUs and
-// inside a headless CI browser — the viewer gets the DOM backend rather than a blank screen, plus one console line
-// naming the reason (the phone's console is the only diagnostic channel a live-QA session has). Nothing else in the
-// app is told: both objects satisfy the same interface, so the fallback is invisible above this line.
+// Public stage selection: DOM is the fresh-viewer default; canvas means Rust WebGL.
+// A failed Rust request remounts only MirrorView as DOM, preserving the seat and its connection.
+// The legacy canvas constructor below is reachable only through the unit-test override.
 
-import { createCanvasMirrorRenderer } from "@/mirror/canvas/canvasRenderer";
 import { createMirrorRenderer } from "@/mirror/mirrorRenderer";
+import { createCanvasMirrorRenderer } from "@/mirror/canvas/canvasRenderer";
+import { createPixiMirrorRenderer } from "@/mirror/renderer/pixi/createPixiMirrorRenderer";
+import { createRustMirrorRenderer } from "@/mirror/renderer/pixi/createRustMirrorRenderer";
 import type { MirrorRenderer } from "@/mirror/renderer/contracts";
 import { isGeoclipPlaybackEnabled } from "@/mirror/spineAttributes";
+import { mirrorSettings } from "@/mirror/mirrorSettings";
+import { normalizedComparisonConfig, rendererBackendForPageLoad, rendererComparisonConfig, rendererComparisonViewRevision, setRendererRuntimeStatus } from "@/mirror/rendererComparison";
 
-export type StageBackend = "dom" | "canvas";
+export type StageBackend = "dom" | "canvas" | "pixi" | "rust";
 
-// `?stage=dom|canvas`. Anything else (absent, misspelled, `?stage=svg`)
-// resolves to "dom": an unrecognised value must never cost a viewer their game screen.
+// Public settings resolve DOM/Canvas. Explicit developer comparison URLs may select Pixi/Rust for this page load.
 function readStageBackend(): StageBackend {
-  if (typeof window === "undefined") {
-    return "dom";
-  }
-  const params = new URLSearchParams(window.location.search);
-  const stage = params.get("stage");
-  if (stage === "canvas") {
-    return "canvas";
-  }
-  if (stage === "dom") {
-    return "dom";
-  }
-  return "dom";
+  const search = typeof window === "undefined" ? "" : window.location.search;
+  return rendererBackendForPageLoad(search, mirrorSettings.runtimeStage);
 }
 
 let stageBackend: StageBackend = readStageBackend();
 let activeBackend: StageBackend = stageBackend;
+let fallbackReason: string | null = null;
+let legacyCanvasTestOverride = false;
 
 /** The backend this page asked for (before any fallback) — for diagnostics and the bench harness. */
 export function requestedStageBackend(): StageBackend {
@@ -52,9 +34,21 @@ export function activeStageBackend(): StageBackend {
   return activeBackend;
 }
 
+/** Prepare the next scene-view mount after an in-document comparison change. */
+export function setComparisonStageBackend(backend: StageBackend): void {
+  stageBackend = backend;
+  legacyCanvasTestOverride = false;
+  if (backend === "dom" || backend === "canvas") {
+    mirrorSettings.runtimeStage = backend;
+    fallbackReason = null;
+  }
+}
+
 /** TEST ONLY: override the requested backend (never called in production). */
 export function __setStageBackendForTest(backend: StageBackend): void {
   stageBackend = backend;
+  // Existing legacy-canvas unit tests use this seam. The public URL and settings path always select Rust.
+  legacyCanvasTestOverride = backend === "canvas";
   activeBackend = backend;
 }
 
@@ -78,45 +72,112 @@ function noteGeoclipBackend(backend: StageBackend): void {
 }
 
 /**
- * Build the mirror renderer this page asked for. `dom` returns exactly what MirrorView used to construct inline;
- * `canvas` returns the single-canvas backend, falling back to `dom` (with a reason on the console) if it cannot be
- * built. The first two parameters ARE `createMirrorRenderer`'s, so the call site reads the same.
- *
- * `canvasHost` is the CANVAS BACKEND'S ONLY EXTRA: the untransformed element the stage canvas is laid out in
- * (MirrorView's `.mirror-canvas-host`, a sibling of the scaled stage — see canvasRenderer's SIZING LAW for the
- * compositor reason it exists). The DOM backend has no canvas and is not told about it; omitted, the canvas
- * backend puts its canvas in the scaled stage exactly as it did before the split.
+ * Build the current view's renderer. `canvasHost` is the untransformed host for Rust's canvas.
  */
 export function createMirrorRendererFor(
   stage: HTMLElement,
   defs: SVGElement,
   canvasHost?: HTMLElement | null
 ): MirrorRenderer {
+  if (import.meta.env.MODE === "test" && legacyCanvasTestOverride && stageBackend === "canvas") {
+    try {
+      const renderer = createCanvasMirrorRenderer(stage, defs, canvasHost);
+      activeBackend = "canvas";
+      console.info("[mirror] stage backend: canvas (unit-test seam)");
+      noteGeoclipBackend("canvas");
+      return renderer;
+    } catch (error) {
+      activeBackend = "dom";
+      console.info(`[mirror] stage backend: canvas requested but unavailable (${error instanceof Error ? error.message : String(error)}) — using dom`);
+      noteGeoclipBackend("dom");
+      return createMirrorRenderer(stage, defs);
+    }
+  }
+  setRendererRuntimeStatus({ requested: { ...rendererComparisonConfig, backend: stageBackend },
+    actualBackend: null, actualConfig: null, phase: "initializing", reason: fallbackReason, pixiText: null });
   if (stageBackend !== "canvas") {
+    if (stageBackend === "pixi") {
+      activeBackend = "pixi";
+      console.info("[mirror] stage backend: pixi (?stage=pixi)");
+      try {
+        const renderer = createPixiMirrorRenderer(stage, defs, canvasHost, (phase, reason) => {
+          setRendererRuntimeStatus({ actualBackend: "pixi", phase: phase === "ready" ? "active" : phase,
+            actualConfig: phase === "ready" ? normalizedComparisonConfig({ ...rendererComparisonConfig, backend: "pixi" }) : null,
+            reason: reason ?? null });
+        });
+        return renderer;
+      } catch (error) {
+        const reason = error instanceof Error ? error.message : String(error);
+        console.info(`[mirror] stage backend: pixi unavailable (${reason}) — using dom`);
+        activeBackend = "dom";
+        setRendererRuntimeStatus({ actualBackend: "dom", phase: "active", reason,
+          actualConfig: normalizedComparisonConfig({ ...rendererComparisonConfig, backend: "dom" }) });
+        return createMirrorRenderer(stage, defs);
+      }
+    }
+    if (stageBackend === "rust") {
+      activeBackend = "rust";
+      console.info("[mirror] stage backend: Rust/WASM prototype (?rendererCompare=1&stage=rust)");
+      try {
+        return createRustMirrorRenderer(stage, defs, canvasHost, (phase, reason) => {
+          setRendererRuntimeStatus({ actualBackend: "rust", phase: phase === "ready" ? "active" : phase,
+            actualConfig: phase === "ready" ? normalizedComparisonConfig({ ...rendererComparisonConfig, backend: "rust" }) : null,
+            reason: reason ?? null });
+        });
+      } catch (error) {
+        const reason = error instanceof Error ? error.message : String(error);
+        console.info(`[mirror] stage backend: Rust/WASM unavailable (${reason}) — using dom`);
+        activeBackend = "dom";
+        setRendererRuntimeStatus({ actualBackend: "dom", phase: "active", reason,
+          actualConfig: normalizedComparisonConfig({ ...rendererComparisonConfig, backend: "dom" }) });
+        return createMirrorRenderer(stage, defs);
+      }
+    }
     activeBackend = "dom";
     noteGeoclipBackend("dom");
+    setRendererRuntimeStatus({ actualBackend: "dom", phase: "active", reason: fallbackReason,
+      actualConfig: normalizedComparisonConfig({ ...rendererComparisonConfig, backend: "dom" }) });
     return createMirrorRenderer(stage, defs);
   }
   try {
-    const renderer = createCanvasMirrorRenderer(stage, defs, canvasHost);
-    activeBackend = "canvas";
-    if (typeof console !== "undefined") {
-      console.info("[mirror] stage backend: canvas (?stage=canvas)");
-    }
-    noteGeoclipBackend("canvas");
-    return renderer;
+    let live = true;
+    const recover = (reason: string): void => {
+      if (!live || stageBackend !== "canvas") return;
+      live = false;
+      fallbackReason = reason;
+      stageBackend = "dom";
+      activeBackend = "dom";
+      mirrorSettings.runtimeStage = "dom";
+      console.info(`[mirror] Rust canvas unavailable (${reason}) — using dom`);
+      // Replace only MirrorView; the seat-owning app and its connection stay mounted.
+      queueMicrotask(() => { rendererComparisonViewRevision.value++; });
+    };
+    const renderer = createRustMirrorRenderer(stage, defs, canvasHost, (phase, reason) => {
+      if (!live) return;
+      setRendererRuntimeStatus({ actualBackend: "rust", phase: phase === "ready" ? "active" : phase,
+        actualConfig: phase === "ready" ? normalizedComparisonConfig({ ...rendererComparisonConfig, backend: "rust" }) : null,
+        reason: reason ?? null });
+      if (phase === "failed") recover(reason ?? "renderer initialization failed");
+    });
+    activeBackend = "rust";
+    const rustCanvas = (canvasHost ?? stage).querySelector<HTMLCanvasElement>("canvas.mirror-rust-stage");
+    const contextLost = (event: Event): void => { event.preventDefault(); recover("WebGL context lost"); };
+    rustCanvas?.addEventListener("webglcontextlost", contextLost);
+    console.info("[mirror] stage backend: Rust canvas (?stage=canvas)");
+    return { ...renderer, dispose() {
+      live = false;
+      rustCanvas?.removeEventListener("webglcontextlost", contextLost);
+      renderer.dispose();
+    } };
   } catch (error) {
-    // Any construction failure falls back, not just a missing context: whatever went wrong, a DOM stage is a
-    // playable game and a half-built canvas stage is not.
-    if (typeof console !== "undefined") {
-      console.info(
-        `[mirror] stage backend: canvas requested but unavailable (${(error as Error)?.message ?? String(error)}) — using dom`
-      );
-    }
-    // …and the geoclip line names the path the viewer ACTUALLY got, not the one they asked for: a fallback lands
-    // on the DOM renderer, so this is the DOM path however the url was spelled.
+    fallbackReason = error instanceof Error ? error.message : String(error);
+    console.info(`[mirror] Rust canvas unavailable (${fallbackReason}) — using dom`);
+    stageBackend = "dom";
     activeBackend = "dom";
-    noteGeoclipBackend("dom");
+    mirrorSettings.runtimeStage = "dom";
+    setRendererRuntimeStatus({ actualBackend: "dom", phase: "active",
+      reason: fallbackReason,
+      actualConfig: normalizedComparisonConfig({ ...rendererComparisonConfig, backend: "dom" }) });
     return createMirrorRenderer(stage, defs);
   }
 }

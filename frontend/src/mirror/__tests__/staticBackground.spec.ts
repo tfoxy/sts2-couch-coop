@@ -839,6 +839,56 @@ describe("StaticBackground.vue — decode gate + shown-signal ordering", () => {
     __setStageBackendForTest(backendAtStart);
   });
 
+  it("Rust stage uses the shared static-background texture bridge", async () => {
+    const backendAtStart: StageBackend = requestedStageBackend();
+    __setStageBackendForTest("rust");
+    try {
+      const sourceCalls: Array<{ scenePath: string; url: string } | null> = [];
+      const shownCalls: Array<string | null> = [];
+      let ready: ((ok: boolean) => void) | undefined;
+      const provided = shallowRef({
+        setStaticBackgroundShown: (scenePath: string | null) => shownCalls.push(scenePath),
+        setStaticBackgroundSource: (
+          source: { scenePath: string; url: string } | null,
+          callback?: (ok: boolean) => void
+        ) => { sourceCalls.push(source); ready = callback; }
+      } as unknown as MirrorRenderer);
+      const descriptor = { scenePath: UNDERDOCKS_BG, url: "/bg/underdocks?v=1" };
+      const wrapper = mount(StaticBackground, {
+        props: { descriptor, state: createMirrorState(), revision: 0 },
+        global: { provide: { [MIRROR_RENDERER_KEY as symbol]: provided } }
+      });
+
+      expect(sourceCalls).toEqual([descriptor]);
+      expect(wrapper.find('[data-testid="mirror-static-bg-image"]').exists()).toBe(false);
+      ready!(true);
+      await nextTick();
+      expect(shownCalls).toEqual([UNDERDOCKS_BG]);
+      expect(wrapper.find('[data-testid="mirror-static-bg-image"]').exists()).toBe(false);
+      wrapper.unmount();
+      expect(sourceCalls[sourceCalls.length - 1]).toBeNull();
+      expect(shownCalls[shownCalls.length - 1]).toBeNull();
+    } finally {
+      __setStageBackendForTest(backendAtStart);
+    }
+  });
+
+  it("Rust stage without texture bridge falls back to the decoded DOM still", async () => {
+    const backendAtStart: StageBackend = requestedStageBackend();
+    __setStageBackendForTest("rust");
+    try {
+      __setStillDecoderForTest((_url, ready) => ready(true));
+      const calls: ShownCall[] = [];
+      const wrapper = mountBg(calls, { scenePath: UNDERDOCKS_BG, url: "/bg/underdocks?v=1" });
+      await nextTick();
+      expect(wrapper.get('[data-testid="mirror-static-bg-image"]').attributes("src")).toBe("/bg/underdocks?v=1");
+      expect(calls).toEqual([{ scenePath: UNDERDOCKS_BG }]);
+      wrapper.unmount();
+    } finally {
+      __setStageBackendForTest(backendAtStart);
+    }
+  });
+
   it("canvas stage clears an active cross-target texture before queuing the next descriptor", async () => {
     const backendAtStart: StageBackend = requestedStageBackend();
     __setStageBackendForTest("canvas");

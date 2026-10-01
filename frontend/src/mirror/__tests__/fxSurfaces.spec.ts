@@ -57,7 +57,7 @@ function fakeCache(): FakeCache {
     released,
     failNext: (key) => failing.add(key),
     stats,
-    white: () => ({ texture: {} as WebGLTexture, width: 1, height: 1 }),
+    white: () => ({ texture: {} as WebGLTexture, width: 1, height: 1, revision: 1 }),
     peek: (key) => entries.get(key),
     acquire: () => {
       throw new Error("fx surfaces never `acquire` — pixels change, so they `update`");
@@ -82,11 +82,11 @@ function fakeCache(): FakeCache {
       if (failing.has(key)) {
         failing.delete(key);
         // gsw's cache makes the entry BEFORE it uploads, so a throwing upload leaves one behind.
-        entries.set(key, { texture: {} as WebGLTexture, width: 1, height: 1 });
+        entries.set(key, { texture: {} as WebGLTexture, width: 1, height: 1, revision: 1 });
         throw new Error("tainted source");
       }
       const src = source as { width?: number; height?: number };
-      const handle = { texture: {} as WebGLTexture, width: src.width ?? 1, height: src.height ?? 1 };
+      const handle = { texture: {} as WebGLTexture, width: src.width ?? 1, height: src.height ?? 1, revision: 1 };
       const existing = entries.get(key);
       if (existing) {
         stats.bytes += handle.width * handle.height * 4 - existing.width * existing.height * 4;

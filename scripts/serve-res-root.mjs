@@ -12,7 +12,7 @@
 
 import { createHash } from "node:crypto";
 import { createServer } from "node:http";
-import { createReadStream, existsSync, readFileSync, statSync } from "node:fs";
+import { appendFileSync, createReadStream, existsSync, readFileSync, statSync, writeFileSync } from "node:fs";
 import { resolve, join, extname, sep } from "node:path";
 import { fileURLToPath } from "node:url";
 import { RECOVERED_RESOURCE_ROOT } from "./lib/repo-layout.mjs";
@@ -246,7 +246,7 @@ export function resolveAssetRequest({ root = DEFAULT_ROOT, assetCacheRoot = null
   return { status: 404, source: "missing", contentType: "text/plain", body: "not found", assetKey };
 }
 
-export function createResRootServer({ root = DEFAULT_ROOT, assetCacheRoot = null } = {}) {
+export function createResRootServer({ root = DEFAULT_ROOT, assetCacheRoot = null, servedManifest = null } = {}) {
   const stats = { served: 0, servedRecovered: 0, servedCache: 0, missing: 0 };
   const server = createServer((req, res) => {
     const answer = resolveAssetRequest({ root, assetCacheRoot, url: new URL(req.url, "http://127.0.0.1") });
@@ -260,7 +260,20 @@ export function createResRootServer({ root = DEFAULT_ROOT, assetCacheRoot = null
         "cache-control": answer.source === "cache" ? "public, max-age=31536000, immutable" : "public, max-age=3600",
         ...(answer.source === "cache" ? { "x-cache": "HIT" } : {})
       });
-      if (answer.filePath) createReadStream(answer.filePath).pipe(res); else res.end(answer.body);
+      if (answer.filePath) {
+        const stream = createReadStream(answer.filePath);
+        if (servedManifest) {
+          const digest = createHash("sha256"); let bytes = 0;
+          stream.on("data", chunk => { digest.update(chunk); bytes += chunk.length; });
+          stream.on("end", () => appendFileSync(servedManifest, JSON.stringify({url:req.url,source:answer.source,
+            path:answer.filePath,size:bytes,sha256:digest.digest("hex"),complete:bytes === answer.size})+"\n"));
+        }
+        stream.pipe(res);
+      } else {
+        if (servedManifest) appendFileSync(servedManifest, JSON.stringify({url:req.url,source:answer.source,
+          path:null,size:Buffer.byteLength(answer.body),sha256:createHash("sha256").update(answer.body).digest("hex"),complete:true})+"\n");
+        res.end(answer.body);
+      }
       return;
     }
     stats.missing++;
@@ -271,11 +284,12 @@ export function createResRootServer({ root = DEFAULT_ROOT, assetCacheRoot = null
 }
 
 function parseArgs(argv) {
-  const args = { port: 5195, root: DEFAULT_ROOT, assetCacheRoot: null, quiet: false };
+  const args = { port: 5195, root: DEFAULT_ROOT, assetCacheRoot: null, servedManifest: null, quiet: false };
   for (let i = 0; i < argv.length; i++) {
     if (argv[i] === "--port") args.port = Number(argv[++i]);
     else if (argv[i] === "--root") args.root = argv[++i];
     else if (argv[i] === "--asset-cache-root") args.assetCacheRoot = argv[++i];
+    else if (argv[i] === "--served-manifest") args.servedManifest = argv[++i];
     else if (argv[i] === "--quiet") args.quiet = true;
     else if (argv[i] === "--help" || argv[i] === "-h") {
       console.log("serve-res-root.mjs [--port 5195] [--root <resource-root>] [--asset-cache-root <SpirectlAssetBinaryCache.RootPath>] [--quiet]");
@@ -288,6 +302,7 @@ function parseArgs(argv) {
 
 if (process.argv[1] && resolve(process.argv[1]) === fileURLToPath(import.meta.url)) {
   const args = parseArgs(process.argv.slice(2));
+  if (args.servedManifest) writeFileSync(args.servedManifest, "");
   const server = createResRootServer(args);
   server.listen(args.port, "127.0.0.1", () => {
     console.log(`serve-res-root: http://127.0.0.1:${args.port}  ->  ${resolve(args.root)}${args.assetCacheRoot ? `  + cache ${resolve(args.assetCacheRoot)}` : ""}`);

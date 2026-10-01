@@ -17,7 +17,7 @@ interface ScheduledTimer {
 }
 
 /** A direct scheduler harness: no DOM, renderer, texture cache or Vue lifecycle. */
-function createHarness() {
+function createHarness(cpuIncremental = true, displayPacedPassive = false) {
   let now = 100;
   let nextHandle = 1;
   let state: TestState | null = { revision: 1 };
@@ -33,7 +33,9 @@ function createHarness() {
   let bypass: CanvasIdleStageBypass | null = null;
   let patchPainted = false;
   let buildAccepted = true;
+  let texturePainted = true;
   const log: string[] = [];
+  const sampleTimes: number[] = [];
   const rafs = new Map<number, FrameRequestCallback>();
   const issuedRafs = new Map<number, FrameRequestCallback>();
   const timers = new Map<number, ScheduledTimer>();
@@ -71,7 +73,9 @@ function createHarness() {
     state: () => state,
     disposed: () => disposed,
     revisionAtFrame: () => revisionAtFrame,
+    cpuIncremental,
     idleAnimFps: () => idleAnimFps,
+    displayPacedPassive,
     platform,
     deadlines: {
       offsetRampDeadline: () => offsetRampDue,
@@ -96,7 +100,7 @@ function createHarness() {
       noteIdleStageMissingPassive: () => log.push("missingPassive"),
       noteIdleStageSkippedEarly: () => log.push("skippedEarly"),
       noteIdleStageAdmission: () => log.push("admitPassive"),
-      sampleVisual: () => log.push("sample"),
+      sampleVisual: (at) => { log.push("sample"); sampleTimes.push(at); },
       noteTrailFlightHeads: () => log.push("trailHeads"),
       tickTrails: () => log.push("tickTrails"),
       mergeTrailLatches: () => log.push("mergeTrails"),
@@ -111,9 +115,9 @@ function createHarness() {
         return buildAccepted;
       },
       syncOverlay: () => log.push("sync"),
-      paintAction: () => log.push("paint"),
+      paintAction: () => { log.push("paint"); return true; },
       settleLanding: () => log.push("landing"),
-      rebuildAndPaintTexture: () => log.push("texture"),
+      rebuildAndPaintTexture: () => { log.push("texture"); return texturePainted; },
     },
   };
 
@@ -121,6 +125,7 @@ function createHarness() {
   return {
     scheduler,
     log,
+    sampleTimes,
     rafs,
     issuedRafs,
     timers,
@@ -142,10 +147,17 @@ function createHarness() {
     set bypass(value: CanvasIdleStageBypass | null) { bypass = value; },
     set patchPainted(value: boolean) { patchPainted = value; },
     set buildAccepted(value: boolean) { buildAccepted = value; },
+    set texturePainted(value: boolean) { texturePainted = value; },
     flushRafs(): void {
       const due = [...rafs.values()];
       rafs.clear();
       for (const callback of due) callback(now);
+    },
+    fireRaf(handle: number): void {
+      const callback = rafs.get(handle);
+      if (!callback) throw new Error(`rAF ${handle} is not pending`);
+      rafs.delete(handle);
+      callback(now);
     },
     fireTimer(handle: number): void {
       const timer = timers.get(handle);
@@ -157,6 +169,20 @@ function createHarness() {
 }
 
 describe("canvas frame scheduler", () => {
+  it("builds changed animation frames when CPU incrementality is disabled", () => {
+    const h = createHarness(false);
+    h.loopDue = h.now;
+    h.loopPerFrame = true;
+    h.bypass = "tween";
+    h.patchPainted = true;
+    h.scheduler.armAnimation(h.now);
+    h.log.length = 0;
+    h.flushRafs();
+    expect(h.log).not.toContain("patch");
+    expect(h.log).toContain("build");
+    expect(h.log).toContain("paint");
+  });
+
   it("parks only true future deadlines, never re-arms later, and pre-empts for an earlier one", () => {
     const h = createHarness();
     h.passiveDue = 180;
@@ -229,6 +255,34 @@ describe("canvas frame scheduler", () => {
     expect(immediate.log).toEqual([]);
   });
 
+  it("samples finite passive demand on every 90 Hz display frame and parks when it ends", () => {
+    const h = createHarness(true, true);
+    h.passiveDue = h.now + 1000; // a source-only deadline; no local idle loop or tween demand
+    h.idleNotBefore = h.now + 1000; // the authored 60 Hz phase must not reject these frames
+    h.patchPainted = true;
+    h.scheduler.armAnimation(h.now);
+    for (let frame = 1; frame <= 90; frame++) {
+      h.now = 100 + frame * (1000 / 90);
+      h.flushRafs();
+    }
+    expect(h.scheduler.animFrames).toBe(90);
+    expect(h.sampleTimes).toHaveLength(90);
+    expect(h.sampleTimes[0]).toBeCloseTo(100 + 1000 / 90, 8);
+    expect(h.sampleTimes.at(-1)).toBeCloseTo(1100, 8);
+    expect(h.log.filter((entry) => entry === "sample")).toHaveLength(90);
+    expect(h.log).not.toContain("skippedEarly");
+    expect(h.log).not.toContain("admitPassive");
+    expect(h.timers.size).toBe(0);
+    expect(h.rafs.size).toBe(1);
+
+    h.passiveDue = Infinity;
+    h.now += 1000 / 90;
+    h.flushRafs();
+    expect(h.rafs.size).toBe(0);
+    expect(h.timers.size).toBe(0);
+    expect(h.log.filter((entry) => entry === "sample")).toHaveLength(90);
+  });
+
   it("owns the full action-frame ordering without allocating a second build path", () => {
     const h = createHarness();
     h.loopDue = h.now;
@@ -243,6 +297,22 @@ describe("canvas frame scheduler", () => {
       "ramp", "bypass", "passive", "sample", "trailHeads", "tickTrails", "mergeTrails",
       "advance", "spine", "patch", "build", "sync", "paint", "landing",
     ]);
+    expect(h.scheduler.animFrames).toBe(1);
+  });
+
+  it("samples a due loop settle even when no passive animation deadline exists", () => {
+    const h = createHarness();
+    h.loopDue = h.now;
+    h.passiveDue = Infinity;
+    h.bypass = "settle";
+    h.scheduler.armAnimation(h.now);
+    h.log.length = 0;
+
+    h.flushRafs();
+
+    expect(h.log).toContain("sample");
+    expect(h.log).toContain("build");
+    expect(h.log).not.toContain("missingPassive");
     expect(h.scheduler.animFrames).toBe(1);
   });
 
@@ -282,6 +352,96 @@ describe("canvas frame scheduler", () => {
     // narrow resource repaint port instead.
     expect(h.log).toEqual(["texture"]);
     expect(h.scheduler.animFrames).toBe(0);
+  });
+
+  it("pulls a pending reconcile before texture repaint and skips the repaint when it drew the resource", () => {
+    const h = createHarness();
+    let pending = true;
+    h.scheduler.setReconcilePull({
+      pending: () => pending,
+      now: () => {
+        h.log.push("pull");
+        pending = false;
+        h.scheduler.noteTexturePresented(h.scheduler.textureDemandGeneration);
+      },
+    });
+    h.scheduler.scheduleTexturePaint();
+    h.scheduler.scheduleTexturePaint();
+    h.flushRafs();
+    expect(h.log).toEqual(["pull"]);
+    expect(h.scheduler.pulledReconciles).toBe(1);
+    expect(h.scheduler.textureDemandGeneration).toBe(2);
+  });
+
+  it("skips texture repaint when the booked scene reconcile ran first", () => {
+    const h = createHarness();
+    h.scheduler.scheduleTexturePaint();
+    const textureHandle = [...h.rafs.keys()][0];
+    h.log.push("reconcile");
+    h.scheduler.noteTexturePresented(h.scheduler.textureDemandGeneration);
+    h.fireRaf(textureHandle);
+    expect(h.log).toEqual(["reconcile"]);
+  });
+
+  it("skips texture repaint after an animation full build drew the resource", () => {
+    const h = createHarness();
+    h.loopDue = h.now;
+    h.loopPerFrame = true;
+    h.bypass = "tween";
+    h.scheduler.armAnimation(h.now);
+    const animationHandle = [...h.rafs.keys()][0];
+    h.scheduler.scheduleTexturePaint();
+    const textureHandle = [...h.rafs.keys()][1];
+    h.fireRaf(animationHandle);
+    h.fireRaf(textureHandle);
+    expect(h.log).toContain("build");
+    expect(h.log).toContain("paint");
+    expect(h.log).not.toContain("texture");
+  });
+
+  it("retains newer texture demand arriving during a reconcile and repaints it", () => {
+    const h = createHarness();
+    h.scheduler.setReconcilePull({
+      pending: () => true,
+      now: () => {
+        const buildingGeneration = h.scheduler.textureDemandGeneration;
+        h.log.push("pull");
+        h.scheduler.scheduleTexturePaint();
+        h.scheduler.noteTexturePresented(buildingGeneration);
+      },
+    });
+    h.scheduler.scheduleTexturePaint();
+    h.flushRafs();
+    expect(h.log).toEqual(["pull", "texture"]);
+    expect(h.scheduler.textureDemandGeneration).toBe(2);
+    expect(h.rafs.size).toBe(1); // the arrival during the pull booked the next callback
+    h.flushRafs();
+    expect(h.log).toEqual(["pull", "texture"]);
+  });
+
+  it("keeps demand after a failed or skipped presentation until a later successful one", () => {
+    const h = createHarness();
+    h.texturePainted = false;
+    h.scheduler.scheduleTexturePaint();
+    h.flushRafs();
+    expect(h.log).toEqual(["texture"]);
+    expect(h.rafs.size).toBe(0); // no static-scene retry spin
+    h.texturePainted = true;
+    h.scheduler.scheduleTexturePaint();
+    h.flushRafs();
+    expect(h.log).toEqual(["texture", "texture"]);
+    h.scheduler.scheduleTexturePaint();
+    h.scheduler.noteTexturePresented(h.scheduler.textureDemandGeneration);
+    h.flushRafs();
+    expect(h.log).toEqual(["texture", "texture"]);
+  });
+
+  it("does not count a successful reconcile that left the requested texture out", () => {
+    const h = createHarness();
+    h.scheduler.setReconcilePull({ pending: () => true, now: () => h.log.push("pull") });
+    h.scheduler.scheduleTexturePaint();
+    h.flushRafs();
+    expect(h.log).toEqual(["pull", "texture"]);
   });
 
   it("cancels animation, texture, and parked-timer callbacks on dispose and makes late delivery inert", () => {

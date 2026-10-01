@@ -9,6 +9,7 @@ import { effectiveConnectPageUrl, httpPagePort, selectConnectBenchPageIndex } fr
 assert.equal(traceWindowForOptions({ trace: null, report: null, idle: null }), null);
 assert.deepEqual(traceWindowForOptions({ report: "/tmp/cell.report.json", idle: null }), ACTIVE_TRACE_WINDOW);
 assert.deepEqual(traceWindowForOptions({ report: "/tmp/cell.report.json", idle: 5000 }), IDLE_TRACE_WINDOW);
+assert.equal(traceWindowForOptions({report:"/tmp/cell.report.json",untracedReport:true,idle:null}),null);
 
 const active = [
   { ts: 1, name: "TimeStamp", args: { data: { message: "cc-report-start" } } },
@@ -27,14 +28,17 @@ assert.match(replay, /function beginActiveMarkerWindowInPage\(input\) \{[\s\S]*?
   "the active marker must retain the harness-owned observation reset and trace bracket");
 assert.match(replay, /function idleMarkerWindowInPage\(input\) \{[\s\S]*?performance\.mark\(input\.label\)[\s\S]*?__benchIdleFrameGaps/,
   "the idle marker must retain its generic page-clock and frame-gap observations");
-assert.match(replay, /scope\?\.phase === "active"\) await markerTrace\.start\(\);\n  const wallA = performance\.now\(\);\n  const a = await getMetrics\(\);\n  const nodesA/);
+assert.match(replay, /scope\?\.phase === "active" && !opts\.activeWindowWitness && !opts\.startupObservationOut\) await markerTrace\.start\(\);\n  const processStartsBeforeMarker = opts\.report \? await captureBrowserProcessStarts\(context\) : null;\n  const wallA = performance\.now\(\);\n  const a = await getMetrics\(\);\n  const openCallStartMs = performance\.now\(\);\n  const markerOpen = await page\.evaluate\(beginActiveMarkerWindowInPage,[\s\S]*?const openCallEndMs = performance\.now\(\);[\s\S]*?const nodesA = markerOpen\.nodes;/,
+  "ordinary active trace must open before its page marker and renderer snapshot");
+assert.match(replay, /if \(opts\.activeWindowWitness \|\| opts\.startupObservationOut\) \{\n    if \(!cdp\)[\s\S]*?await markerTrace\.start\(\);\n  \}[\s\S]*?await waitAbortably\(\(\) => page\.goto\(pageUrl/,
+  "the witnessed active trace must start before navigation and page-owned boundary markers");
 assert.match(
   replay,
-  /if \(markerTrace\.scope\?\.phase === "idle"\) await markerTrace\.start\(\);\n    const stageBefore = await readStage\(\);\n    const markerStartAtMs = await mark\("cc-idle-start"\);/
+  /if \(markerTrace\.scope\?\.phase === "idle"\) await markerTrace\.start\(\);\n    const stageBefore = await readStage\(\);\n    const markerStart = await waitAbortably\(\(\) => mark\("cc-idle-start"\)\);/
 );
 assert.match(
   replay,
-  /const markerEndAtMs = await mark\("cc-idle-end"\);\n    const stageAfter = await readStage\(\);\n    if \(markerTrace\.scope\?\.phase === "idle"\) \{/,
+  /const markerEnd = await waitAbortably\(\(\) => mark\("cc-idle-end"\)\);[\s\S]*?const stageAfter = await readStage\(\);[\s\S]*?if \(markerTrace\.scope\?\.phase === "idle"\) \{/,
   "stage samples must exclude trace start/stop latency while staying outside the marker bracket"
 );
 assert.match(replay, /const sampledAtMs = performance\.now\(\);/);

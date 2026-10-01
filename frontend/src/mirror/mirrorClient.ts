@@ -22,6 +22,7 @@ import {
 import { publishAtlasManifest } from "@/mirror/imagePrefetch";
 import { reproRecorder } from "@/mirror/reproRecorder";
 import { sceneAblation } from "@/mirror/sceneAblation";
+import { emitWarmAckTrace, warmAckTraceEnabled } from "@/mirror/warmAckTrace";
 import { publishAssetVersion } from "@/join/assetVersion";
 import { hostWsUrl } from "@/join/hostBase";
 import { readVisitId } from "@/join/visitId";
@@ -38,6 +39,7 @@ import {
 // RETAINED node map (applying deltas in place) and bumps `state.revision` so the renderer recomputes.
 
 export type MirrorClientStatus = "connecting" | "connected" | "disconnected";
+let nextWarmTraceClientId = 0;
 
 // Upstream raw-input replay this (controlling) client sends to the host. Pointer input is COORDINATE-ONLY: a
 // design-space (1920x1080) `coordX/coordY` the game hit-tests natively (the mirror resolves it through the visual
@@ -170,6 +172,8 @@ function publishAssetCacheToken(token: string | null): void {
 }
 
 export interface MirrorClient {
+  /** Opaque, opt-in harness correlation only. */
+  diagnosticTraceId?: number;
   status: MirrorClientStatus;
   state: MirrorState;
   latency: MirrorLatency;
@@ -315,6 +319,7 @@ export function connectMirrorClient(options: {
   const sceneAblationRuntime = options.sceneAblationRuntime ?? sceneAblation;
   const diagnosticSocketRole = lifecycleSocketRole(options.url !== undefined);
   const state = createMirrorState();
+  const traceClientId = warmAckTraceEnabled() ? ++nextWarmTraceClientId : null;
   const latency: MirrorLatency = emptyMirrorLatency();
   // The gate's desired value, and what the HOST currently believes (seeded from the connect URL) so a flip is
   // sent exactly once and a pre-open change is flushed on open.
@@ -338,6 +343,7 @@ export function connectMirrorClient(options: {
     setPingInterval,
     close
   };
+  if (traceClientId !== null) client.diagnosticTraceId = traceClientId;
   const notify = () => options.onChange?.();
   const reloadOnServerReload = options.reloadOnServerReload ?? (() => globalThis.location.reload());
 
@@ -562,15 +568,28 @@ export function connectMirrorClient(options: {
   }
 
   function sendSceneAck(): void {
+    if (warmAckTraceEnabled()) emitWarmAckTrace({ kind: "ack-attempt", clientId: traceClientId,
+      socketId: traceClientId, revision: state.revision, deltasSinceAck, watching,
+      readyState: socket.readyState });
     if (deltasSinceAck === 0 || !watching || socket.readyState !== WebSocketCtor.OPEN) {
+      if (warmAckTraceEnabled()) emitWarmAckTrace({ kind: "ack-guard", clientId: traceClientId,
+        socketId: traceClientId, revision: state.revision, deltasSinceAck, watching,
+        readyState: socket.readyState, guard: deltasSinceAck === 0 ? "empty" :
+          !watching ? "watch-off" : "socket-not-open" });
       return;
     }
     deltasSinceAck = 0;
     try {
       socket.send(SCENE_ACK);
+      if (warmAckTraceEnabled()) emitWarmAckTrace({ kind: "ack-sent", clientId: traceClientId,
+        socketId: traceClientId, revision: state.revision, deltasSinceAck, watching,
+        readyState: socket.readyState });
       sceneAblationRuntime.noteCreditReturned();
       sceneCheckpoint("ack-sent");
     } catch {
+      if (warmAckTraceEnabled()) emitWarmAckTrace({ kind: "ack-send-error", clientId: traceClientId,
+        socketId: traceClientId, revision: state.revision, deltasSinceAck, watching,
+        readyState: socket.readyState });
       // Racing close — drop it; the host's self-heal timeout re-grants credit if an ack is lost.
     }
   }

@@ -116,7 +116,7 @@ export interface RenderQuality {
   ios: boolean;
   /** Where the tier came from, for diagnostics. `stored` is this viewer's own panel choice, which — like
    *  `query` — takes the device out of auto-detection (see isAdaptiveEligible). */
-  source: "debug" | "query" | "stored" | "auto" | "default";
+  source: "debug" | "query" | "stored" | "auto" | "default" | "stage";
 }
 
 // THE STATIC BACKING-STORE SCALES — the one place a phone still renders an effect smaller than a desktop does.
@@ -672,6 +672,12 @@ export function renderQuality(): RenderQuality {
     console.info(`[render] quality: ${q.tier} (${q.source})${detail}`);
   }
   return cached;
+}
+
+/** Fixed Rust canvas policy. This does not mutate the viewer's DOM quality choice. */
+export function rustCanvasRenderQuality(base: RenderQuality = renderQuality()): RenderQuality {
+  return { ...base, ...tierConfig("very-low"), tier: "very-low", source: "stage",
+    shadersEnabled: false, particlesEnabled: false, spineClipsEnabled: false };
 }
 
 /** TEST-ONLY: force a resolved quality (or clear it) so a test can exercise a specific tier. */

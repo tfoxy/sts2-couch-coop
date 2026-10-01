@@ -818,7 +818,7 @@ describe("spine still paint mechanism", () => {
     vi.spyOn(HTMLCanvasElement.prototype, "getContext").mockReturnValue({
       drawImage: vi.fn(),
       clearRect: vi.fn()
-    } as unknown as CanvasRenderingContext2D);
+    } as never);
   });
   afterEach(() => {
     vi.restoreAllMocks();

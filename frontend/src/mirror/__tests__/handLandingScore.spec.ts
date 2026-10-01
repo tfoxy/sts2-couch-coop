@@ -24,13 +24,21 @@ interface Row {
   rd: number;
   live: boolean;
   fan?: boolean;
+  z?: number;
+  presentEpoch?: number;
 }
 
 /** Build a one-holder trace in the shape `startLandingTrace` pushes, from readable rows. */
-function trace(rows: Row[], { f = 1, fm = 1, id = "H", name = "NHandCardHolder-CARD_BASH" } = {}) {
+function trace(
+  rows: Row[],
+  { f = 1, fm = 1, id = "H", name = "NHandCardHolder-CARD_BASH", stage = null }:
+    { f?: number; fm?: number; id?: string; name?: string; stage?: string | null } = {}
+) {
   return rows.map((r) => ({
     t: r.t,
     f,
+    stage,
+    presentEpoch: r.presentEpoch ?? null,
     h: [
       {
         id,
@@ -42,6 +50,7 @@ function trace(rows: Row[], { f = 1, fm = 1, id = "H", name = "NHandCardHolder-C
         gy: r.game[1],
         sd: r.sd,
         rd: r.rd,
+        z: r.z,
         live: r.live,
         fan: r.fan ?? true,
         ex: r.ep === null ? null : r.ep[0],
@@ -52,6 +61,7 @@ function trace(rows: Row[], { f = 1, fm = 1, id = "H", name = "NHandCardHolder-C
 }
 
 describe("H11 phase 2 — the landing is the channel's endpoint, not a sample of the ease", () => {
+  const matrix = (x: number, y: number) => [1, 0, 0, 1, x, y];
   // report-1789838330184, canvas-mouse-1920, @Control@606011. The old rule called this 57.45 design px
   // "unexplained"; the channel was headed for 1191 and the card rested at 1191.
   const easeStillRunningAtTheOnlyLiveSample = trace([
@@ -125,21 +135,146 @@ describe("H11 phase 2 — the landing is the channel's endpoint, not a sample of
   // card snaps 75 design px when the pin lifts. This is the only place the class is pinned: the URL levers that
   // used to reproduce it live (`?tweenReparent=keep`, `?spreadEndpoint=off`) no longer exist in the build.
   const staleEndpoint = trace([
-    { t: 1000, drawn: [1266, 922], game: [1266, 1041], ep: null, sd: 0, rd: -119, live: false },
-    { t: 1310, drawn: [1266, 922], game: [1266, 1041], ep: [1266, 1041], sd: 0, rd: -119, live: true },
-    { t: 1620, drawn: [1266, 922], game: [1191, 1041], ep: [1266, 1041], sd: 0, rd: -119, live: true },
-    { t: 1930, drawn: [1191, 922], game: [1191, 1041], ep: null, sd: 0, rd: -119, live: false },
-    { t: 2240, drawn: [1191, 922], game: [1191, 1041], ep: null, sd: 0, rd: -119, live: false }
-  ]);
+    { t: 1000, drawn: [1266, 922], game: [1266, 1041], ep: null, sd: 0, rd: -119, live: false, presentEpoch: 100 },
+    { t: 1310, drawn: [1266, 922], game: [1266, 1041], ep: [1266, 1041], sd: 0, rd: -119, live: true, presentEpoch: 101 },
+    { t: 1620, drawn: [1266, 922], game: [1191, 1041], ep: [1266, 1041], sd: 0, rd: -119, live: true, presentEpoch: 102 },
+    { t: 1930, drawn: [1191, 922], game: [1191, 1041], ep: null, sd: 0, rd: -119, live: false, presentEpoch: 103 },
+    { t: 2240, drawn: [1191, 922], game: [1191, 1041], ep: null, sd: 0, rd: -119, live: false, presentEpoch: 104 }
+  ], { stage: "canvas" });
 
   it("STILL reports a replay that ended on an endpoint the card then left", () => {
     const out = scoreCorrections(staleEndpoint);
     const jumps = out.filter((c: { overruled: boolean }) => c.overruled);
     expect(jumps).toHaveLength(1);
     expect(jumps[0].residualPx).toBe(75);
+    expect(out.distinctCanvasRestPairs).toBe(1);
+    expect(out.canvasRestPairEvidence[0]).toMatchObject({ firstEpoch: 103, settledEpoch: 104 });
     expect(jumps[0].endpointGame).toEqual([1266, 1041]);
     expect(jumps[0].aimedAt).toEqual([1266, 922]);
     expect(jumps[0].restedAt).toEqual([1191, 922]);
+  });
+
+  // h11-focus-provenance: old seq 51 (endpoint 1191,1041) is replaced by seq 57 at 22045ms;
+  // the trace samples the old endpoint at 22044.9ms and the committed focus endpoint at 22181.9ms.
+  it("uses the matching logged successor when its new arm falls inside the sampled gap", () => {
+    const capturedShape = trace([
+      { t: 21648.4, drawn: [1582.5, 922], game: [1266, 1041], ep: null, sd: 316.5, rd: -119, live: false },
+      { t: 22044.9, drawn: [1492.7, 922], game: [1266, 1041], ep: [1191, 1041], sd: 298.5, rd: -119, live: true },
+      { t: 22181.9, drawn: [1491.6, 871], game: [1192.9, 871], ep: [1191, 871], sd: 298.3, rd: 0, live: false },
+      { t: 22322.6, drawn: [1488.8, 871], game: [1192.9, 871], ep: null, sd: 297.8, rd: 0, live: false },
+      { t: 22458.8, drawn: [1488.8, 871], game: [1191, 871], ep: null, sd: 297.8, rd: 0, live: false }
+    ], { f: 1.25, id: "1513153894746", name: "@Control@4532" });
+    const rows = [
+      { seq: 51, id: "1513153894746", name: "@Control@4532", armAt: 21657, settleAt: 22045,
+        closedBy: "superseded", endpointGame: matrix(1191, 1041), endpointDrawn: matrix(1488.75, 1041), supersededBy: 57 },
+      { seq: 57, id: "1513153894746", name: "@Control@4532", armAt: 22045, settleAt: 22331.9,
+        closedBy: "settle", endpointGame: matrix(1191, 871), endpointDrawn: matrix(1488.75, 871), supersededBy: null }
+    ];
+    const out = scoreCorrections(capturedShape, rows);
+    expect(out).toHaveLength(0);
+    expect(out.superseded).toBe(1);
+    expect(out.focusCatchups).toBe(0);
+  });
+
+  it("does not exempt a superseded endpoint when the logged successor cannot explain rest", () => {
+    const sampled = trace([
+      { t: 1000, drawn: [1582.5, 922], game: [1266, 1041], ep: null, sd: 316.5, rd: -119, live: false },
+      { t: 1100, drawn: [1492, 922], game: [1266, 1041], ep: [1191, 1041], sd: 298, rd: -119, live: true },
+      { t: 1200, drawn: [1488.75, 871], game: [1191, 871], ep: [1191, 871], sd: 297.75, rd: 0, live: false },
+      { t: 1300, drawn: [1488.75, 871], game: [1191, 871], ep: null, sd: 297.75, rd: 0, live: false }
+    ], { f: 1.25 });
+    const rows = [
+      { seq: 51, id: "H", name: "NHandCardHolder-CARD_BASH", armAt: 1050, settleAt: 1150,
+        closedBy: "superseded", endpointGame: matrix(1191, 1041), endpointDrawn: matrix(1488.75, 1041), supersededBy: 57 },
+      { seq: 57, id: "H", name: "NHandCardHolder-CARD_BASH", armAt: 1150, settleAt: 1280,
+        closedBy: "settle", endpointGame: matrix(1191, 900), endpointDrawn: matrix(1488.75, 900), supersededBy: null }
+    ];
+    const out = scoreCorrections(sampled, rows);
+    expect(out.superseded).toBe(0);
+    expect(out.filter((row: { overruled: boolean }) => row.overruled)).toHaveLength(1);
+  });
+
+  it("does not trust a successor field that happens to match the wrong resting pose", () => {
+    const sampled = trace([
+      { t: 1000, drawn: [1582.5, 922], game: [1266, 1041], ep: null, sd: 316.5, rd: -119, live: false },
+      { t: 1100, drawn: [1492, 922], game: [1266, 1041], ep: [1191, 1041], sd: 298, rd: -119, live: true },
+      { t: 1200, drawn: [1582.5, 871], game: [1191, 871], ep: [1191, 871], sd: 297.75, rd: 0, live: false },
+      { t: 1300, drawn: [1582.5, 871], game: [1191, 871], ep: null, sd: 297.75, rd: 0, live: false }
+    ], { f: 1.25 });
+    const rows = [
+      { seq: 51, id: "H", name: "NHandCardHolder-CARD_BASH", armAt: 1050, settleAt: 1150,
+        closedBy: "superseded", endpointGame: matrix(1191, 1041), endpointDrawn: matrix(1488.75, 1041), supersededBy: 57 },
+      { seq: 57, id: "H", name: "NHandCardHolder-CARD_BASH", armAt: 1150, settleAt: 1280,
+        closedBy: "settle", endpointGame: matrix(1191, 871), endpointDrawn: matrix(1582.5, 871), supersededBy: null }
+    ];
+    const out = scoreCorrections(sampled, rows);
+    expect(out.superseded).toBe(0);
+    expect(out.filter((row: { overruled: boolean }) => row.overruled)).toHaveLength(1);
+  });
+
+  // h11-rust-fullcapture: timeout row 51 held endpoint y1041 through the sampled z-focus hand-off;
+  // the producer's new game pose y871 and the zero lift are adopted on the following committed frame.
+  it("recognizes a logged focus pin-catch-up only when z-order changes and the new pose plus lift is adopted", () => {
+    const sampled = trace([
+      { t: 24974.1, drawn: [1492.8, 922], game: [1266, 1041], ep: [1191, 1041], sd: 298.6, rd: -119, live: true, z: 0 },
+      { t: 25112, drawn: [1489.4, 922], game: [1191, 871], ep: [1191, 1041], sd: 297.9, rd: -119, live: true, z: 1 },
+      { t: 25251, drawn: [1488.8, 922], game: [1191, 871], ep: [1191, 871], sd: 297.8, rd: -119, live: false, z: 1 },
+      { t: 25395.7, drawn: [1488.8, 871], game: [1191, 871], ep: null, sd: 297.8, rd: 0, live: false, z: 1 },
+      { t: 25554.7, drawn: [1488.8, 871], game: [1191, 871], ep: null, sd: 297.8, rd: 0, live: false, z: 1 }
+    ], { f: 1.25, id: "4431030521116", name: "@Control@15262" });
+    const rows = [{ seq: 51, id: "4431030521116", name: "@Control@15262", armAt: 24577.7, settleAt: 26735.3,
+      closedBy: "timeout", endpointGame: matrix(1191, 1041), endpointDrawn: matrix(1488.75, 1041),
+      settledGame: matrix(1191, 871), supersededBy: null }];
+    const out = scoreCorrections(sampled, rows);
+    expect(out).toHaveLength(0);
+    expect(out.focusCatchups).toBe(1);
+  });
+
+  it("does not treat a timeout as a focus catch-up when the sampled focus pose was not adopted", () => {
+    const sampled = trace([
+      { t: 1000, drawn: [1488.75, 922], game: [1191, 1041], ep: [1191, 1041], sd: 297.75, rd: -119, live: true, z: 0 },
+      { t: 1100, drawn: [1488.75, 922], game: [1191, 871], ep: [1191, 1041], sd: 297.75, rd: -119, live: true, z: 1 },
+      { t: 1200, drawn: [1488.75, 900], game: [1191, 871], ep: null, sd: 297.75, rd: -119, live: false, z: 1 },
+      { t: 1300, drawn: [1488.75, 900], game: [1191, 871], ep: null, sd: 297.75, rd: -119, live: false, z: 1 }
+    ], { f: 1.25 });
+    const rows = [{ seq: 51, id: "H", name: "NHandCardHolder-CARD_BASH", armAt: 900, settleAt: 1700,
+      closedBy: "timeout", endpointGame: matrix(1191, 1041), endpointDrawn: matrix(1488.75, 1041),
+      settledGame: matrix(1191, 871), supersededBy: null }];
+    const out = scoreCorrections(sampled, rows);
+    expect(out.focusCatchups).toBe(0);
+    expect(out.filter((row: { overruled: boolean }) => row.overruled)).toHaveLength(1);
+  });
+
+  it("does not scan past an incorrect first focus adoption to a later corrected pose", () => {
+    const sampled = trace([
+      { t: 1000, drawn: [1488.75, 922], game: [1191, 1041], ep: [1191, 1041], sd: 297.75, rd: -119, live: true, z: 0 },
+      { t: 1100, drawn: [1488.75, 922], game: [1191, 871], ep: [1191, 1041], sd: 297.75, rd: -119, live: true, z: 1 },
+      { t: 1200, drawn: [1488.75, 900], game: [1191, 871], ep: [1191, 871], sd: 297.75, rd: 0, live: false, z: 1 },
+      { t: 1300, drawn: [1488.75, 871], game: [1191, 871], ep: null, sd: 297.75, rd: 0, live: false, z: 1 },
+      { t: 1400, drawn: [1488.75, 871], game: [1191, 871], ep: null, sd: 297.75, rd: 0, live: false, z: 1 }
+    ], { f: 1.25 });
+    const rows = [{ seq: 51, id: "H", name: "NHandCardHolder-CARD_BASH", armAt: 900, settleAt: 1700,
+      closedBy: "timeout", endpointGame: matrix(1191, 1041), endpointDrawn: matrix(1488.75, 1041),
+      settledGame: matrix(1191, 871), supersededBy: null }];
+    const out = scoreCorrections(sampled, rows);
+    expect(out.focusCatchups).toBe(0);
+    expect(out.filter((row: { overruled: boolean }) => row.overruled)).toHaveLength(1);
+  });
+
+  it("requires a known non-focused z sample before accepting the focus transition", () => {
+    const sampled = trace([
+      { t: 1000, drawn: [1488.75, 922], game: [1191, 1041], ep: [1191, 1041], sd: 297.75, rd: -119, live: true },
+      { t: 1100, drawn: [1488.75, 922], game: [1191, 871], ep: [1191, 1041], sd: 297.75, rd: -119, live: true, z: 1 },
+      { t: 1200, drawn: [1488.75, 922], game: [1191, 871], ep: [1191, 871], sd: 297.75, rd: -119, live: false, z: 1 },
+      { t: 1300, drawn: [1488.75, 871], game: [1191, 871], ep: null, sd: 297.75, rd: 0, live: false, z: 1 },
+      { t: 1400, drawn: [1488.75, 871], game: [1191, 871], ep: null, sd: 297.75, rd: 0, live: false, z: 1 }
+    ], { f: 1.25 });
+    const rows = [{ seq: 51, id: "H", name: "NHandCardHolder-CARD_BASH", armAt: 900, settleAt: 1700,
+      closedBy: "timeout", endpointGame: matrix(1191, 1041), endpointDrawn: matrix(1488.75, 1041),
+      settledGame: matrix(1191, 871), supersededBy: null }];
+    const out = scoreCorrections(sampled, rows);
+    expect(out.focusCatchups).toBe(0);
+    expect(out.filter((row: { overruled: boolean }) => row.overruled)).toHaveLength(1);
   });
 
   // THE LIFT RAMPING ACROSS THE HAND-OFF, with its real numbers: report-1789838330184's
@@ -285,6 +420,53 @@ describe("H11 phase 2 — the landing is the channel's endpoint, not a sample of
     it("gives up rather than calling a late pose a rest", () => {
       const slow = rows.map((r, i) => ({ ...r, t: i * 900 }));
       expect(findRest(slow, 1, 0)).toBe(-1);
+    });
+
+    it("does not count repeated canvas reads of one committed picture as stillness", () => {
+      const repeated = [
+        { t: 0, dx: 0, dy: 0, live: true, stage: "canvas", presentEpoch: 10 },
+        { t: 100, dx: 50, dy: 0, live: false, stage: "canvas", presentEpoch: 11 },
+        { t: 109.2, dx: 50, dy: 0, live: false, stage: "canvas", presentEpoch: 11 },
+        { t: 200, dx: 49.8, dy: 0, live: false, stage: "canvas", presentEpoch: 12 },
+        { t: 300, dx: 49.7, dy: 0, live: false, stage: "canvas", presentEpoch: 13 }
+      ];
+      expect(findRest(repeated, 1, 0)).toBe(3);
+    });
+
+    it("requires valid, increasing canvas commit identities", () => {
+      const noCommit = [
+        { t: 0, dx: 0, dy: 0, live: true, stage: "canvas", presentEpoch: 10 },
+        { t: 100, dx: 50, dy: 0, live: false, stage: "canvas", presentEpoch: null },
+        { t: 200, dx: 50, dy: 0, live: false, stage: "canvas", presentEpoch: null }
+      ];
+      const regressed = [
+        { t: 0, dx: 0, dy: 0, live: true, stage: "canvas", presentEpoch: 10 },
+        { t: 100, dx: 50, dy: 0, live: false, stage: "canvas", presentEpoch: 12 },
+        { t: 200, dx: 50, dy: 0, live: false, stage: "canvas", presentEpoch: 11 }
+      ];
+      expect(findRest(noCommit, 1, 0)).toBe(-1);
+      expect(findRest(regressed, 1, 0)).toBe(-1);
+    });
+
+    it("reports missing and regressing canvas identities as measurement errors", () => {
+      const missing = trace([
+        { t: 0, drawn: [1266, 922], game: [1266, 1041], ep: [1266, 1041], sd: 0, rd: -119, live: true, presentEpoch: 10 },
+        { t: 100, drawn: [1266, 922], game: [1266, 1041], ep: [1266, 1041], sd: 0, rd: -119, live: false },
+        { t: 200, drawn: [1266, 922], game: [1266, 1041], ep: null, sd: 0, rd: -119, live: false }
+      ], { stage: "canvas" });
+      const regressed = trace([
+        { t: 0, drawn: [1266, 922], game: [1266, 1041], ep: [1266, 1041], sd: 0, rd: -119, live: true, presentEpoch: 10 },
+        { t: 100, drawn: [1266, 922], game: [1266, 1041], ep: [1266, 1041], sd: 0, rd: -119, live: false, presentEpoch: 12 },
+        { t: 200, drawn: [1266, 922], game: [1266, 1041], ep: null, sd: 0, rd: -119, live: false, presentEpoch: 11 }
+      ], { stage: "canvas" });
+
+      expect(scoreCorrections(missing).invalidFrameIdentity).toEqual([
+        expect.objectContaining({ frame: 1, reason: "missing or invalid epoch" }),
+        expect.objectContaining({ frame: 2, reason: "missing or invalid epoch" })
+      ]);
+      expect(scoreCorrections(regressed).invalidFrameIdentity).toEqual([
+        expect.objectContaining({ frame: 2, previousEpoch: 12, presentEpoch: 11, reason: "epoch regressed" })
+      ]);
     });
   });
 });

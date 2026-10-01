@@ -29,6 +29,19 @@ export function selectConnectBenchPageIndex(pageUrls, requestedUrl) {
   throw new Error(`${matches.length} HTTP(S) pages on benchmark port ${expectedPort}; refusing ambiguous attached tabs: ${listed}`);
 }
 
+// The diagnostic timing WebView starts on about:blank so replay instrumentation can be installed before
+// the first HTTP navigation. Require one owned blank target; never use this path for a Chrome tab selection.
+export function selectBlankWebViewPageIndex(pageUrls, requestedUrl) {
+  const url = new URL(requestedUrl);
+  if (url.protocol !== "http:" || url.hostname !== "127.0.0.1" || !url.port) {
+    throw new Error("blank WebView target requires an explicit loopback HTTP page URL");
+  }
+  if (pageUrls.length !== 1 || pageUrls[0] !== "about:blank") {
+    throw new Error(`expected one blank WebView target, found ${pageUrls.join(", ") || "(none)"}`);
+  }
+  return 0;
+}
+
 // Preserve the requested candidate path/query while using the selected phone tab's canonical HTTP(S) origin.
 // Chrome's 127.0.0.1 -> worky.local rewrite otherwise creates a second navigation during warmup and tears down the
 // freshly installed replay instrumentation. The selection check already proves same-port ownership; repeat it here

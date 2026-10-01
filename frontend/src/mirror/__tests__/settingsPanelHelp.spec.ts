@@ -26,6 +26,7 @@ const latency: MirrorLatency = {
 // row that a BUILD can remove (VITE_REPRO_UI=off, see buildFlags) — it is listed here because vitest runs with
 // the flag unset, i.e. as the local/dev build that ships it.
 const HELP_IDS = [
+  "stage",
   "quality",
   "shaders",
   "particles",

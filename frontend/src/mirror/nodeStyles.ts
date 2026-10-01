@@ -23,7 +23,7 @@ import { ninePatchAtlasSlices as computeNinePatchAtlasSlices } from "@/mirror/ni
 import { isShaderInputNode, isWebglShaderNode, stretchModeToBackgroundSize } from "@/mirror/shaderAttributes";
 import { pxCss, scaleAffineTranslationInPlace } from "@/mirror/stageFit";
 import { uiScalingEnabled } from "@/mirror/uiScaling";
-import { renderQuality } from "@/render/quality";
+import { effectiveMirrorQuality } from "@/mirror/mirrorSettings";
 import { mirrorResourceUrl, type MirrorFont, type MirrorNode, type MirrorRect } from "@/mirror/sceneTree";
 import { naturalSize, textureSizeVersion } from "@/mirror/textureCache";
 
@@ -287,7 +287,7 @@ export function nodePaintsContent(node: MirrorNode, effectiveOpacity: number): b
   if (node.fillColor != null && node.fillColor.a > 0.02) {
     return true;
   }
-  const shadersOff = !renderQuality().shadersEnabled;
+  const shadersOff = !effectiveMirrorQuality().shadersEnabled;
   const paintsTexture =
     node.textureUrl != null &&
     node.clipChildren !== 1 &&
@@ -425,7 +425,7 @@ function paintsTextureInCss(node: MirrorNode): boolean {
       node.clipChildren !== 1 &&
       !isWebglShaderNode(node) &&
       !node.particleSpec &&
-      !(!renderQuality().shadersEnabled && isShaderInputNode(node))
+      !(!effectiveMirrorQuality().shadersEnabled && isShaderInputNode(node))
   );
 }
 
@@ -699,7 +699,7 @@ export function nodeStyle(item: RenderItem): Record<string, string> {
   // but that's the per-particle sprite — the gsw canvas paints it, so don't also paint it as a CSS background.
   // On the `minimum` tier (shaders disabled) there's no canvas, but a shader-INPUT texture (an SDF) is still a
   // meaningless blob — suppress it generically (paint nothing) rather than show the gray rectangle.
-  const shadersOff = !renderQuality().shadersEnabled;
+  const shadersOff = !effectiveMirrorQuality().shadersEnabled;
   const paintsTexture =
     node.textureUrl &&
     clipChildren !== 1 &&

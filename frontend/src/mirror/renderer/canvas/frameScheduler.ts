@@ -20,7 +20,7 @@
  * - a timer represents one true future deadline and, when it wakes, chains to
  *   exactly one display-aligned animation rAF; and
  * - resource residency uses its own coalesced rAF. It may repaint a scene, but
- *   it cannot acknowledge a streamed scene revision.
+ *   it can pull a pending scene reconcile, which owns any scene acknowledgement.
  *
  * This is also the home of schedule/cadence diagnostics. Measuring the rAF
  * handoff and the actual idle-frame period beside the handle state means a
@@ -96,12 +96,14 @@ export interface CanvasFrameSchedulerAnimationPorts<TState extends CanvasFrameSc
   runBuild(state: TState): boolean;
   syncOverlay(state: TState): void;
   /** An animation full build is synchronous, but never a scene acknowledgement. */
-  paintAction(): void;
+  /** True when the full build reached the display; legacy backends may not report it. */
+  paintAction(): boolean | void;
   /** Landing evidence is scored only after the frame's pixels are on screen. */
   settleLanding(at: number): void;
 
   /** A texture resource callback rebuilds and paints but never acknowledges a scene delta. */
-  rebuildAndPaintTexture(): void;
+  /** True only when the requested resource was included in a drawn frame. */
+  rebuildAndPaintTexture(): boolean | void;
 }
 
 export interface CanvasFrameSchedulerPorts<TState extends CanvasFrameSchedulerState> {
@@ -109,10 +111,16 @@ export interface CanvasFrameSchedulerPorts<TState extends CanvasFrameSchedulerSt
   readonly state: () => TState | null;
   readonly disposed: () => boolean;
   readonly revisionAtFrame: () => number;
+  /** Changed animation frames may reuse their drawn CPU command list. */
+  readonly cpuIncremental?: boolean;
   readonly deadlines: CanvasFrameSchedulerDeadlinePorts;
   readonly animation: CanvasFrameSchedulerAnimationPorts<TState>;
   readonly idleAnimFps: () => number;
+  /** Comparison-only passive animation pacing. Finite demand uses one display rAF. */
+  readonly displayPacedPassive?: boolean;
   readonly platform?: CanvasFrameSchedulerPlatform;
+  /** Optional observer; it cannot change admission or scheduling. */
+  readonly onFrameLifecycle?: (event: "offered" | "admitted" | "skipped" | "sample-start" | "sample-end", revision: number) => void;
 }
 
 export interface CanvasFrameScheduler {
@@ -120,6 +128,10 @@ export interface CanvasFrameScheduler {
   armAnimation(at: number): void;
   /** Resource arrival repaint: one independent rAF, never an acknowledgement. */
   scheduleTexturePaint(): void;
+  /** Capture demand before a synchronous build; a newer arrival must survive it. */
+  readonly textureDemandGeneration: number;
+  /** Report a successful full build and draw that consumed the captured demand. */
+  noteTexturePresented(generation: number): void;
   /** Offered by MirrorView after construction; absent means the normal animation path. */
   setReconcilePull(pull: ReconcilePull | null): void;
   /** The visual runtime reports idle periods through this scheduler-owned sample ring. */
@@ -182,6 +194,8 @@ export function createCanvasFrameScheduler<TState extends CanvasFrameSchedulerSt
 
   let animationRaf: number | null = null;
   let textureRaf: number | null = null;
+  let textureDemandGeneration = 0;
+  let texturePresentedGeneration = 0;
   let parkTimer: ReturnType<typeof setTimeout> | null = null;
   let parkDue = Number.POSITIVE_INFINITY;
   let rafBookedAt = 0;
@@ -279,6 +293,12 @@ export function createCanvasFrameScheduler<TState extends CanvasFrameSchedulerSt
       cancelPark();
       return;
     }
+    if (ports.displayPacedPassive) {
+      cancelPark();
+      armedRafs++;
+      bookAnimationFrame();
+      return;
+    }
 
     // Keep the expensive fast-passive predicate late. It may itself query
     // action sources, none of which matter when an unconditional arm won.
@@ -345,6 +365,7 @@ export function createCanvasFrameScheduler<TState extends CanvasFrameSchedulerSt
     if (stopped()) return;
     const state = ports.state();
     if (state === null) return;
+    ports.onFrameLifecycle?.("offered", state.revision);
 
     // A pending reconcile is a strict superset of an animation frame. Pull it
     // before any animation mutation/build work so it is the sole build, paint
@@ -366,36 +387,43 @@ export function createCanvasFrameScheduler<TState extends CanvasFrameSchedulerSt
     const idleOnlyFrame = bypass === null && Number.isFinite(passiveDue);
 
     if (bypass === null && !Number.isFinite(passiveDue)) {
+      ports.onFrameLifecycle?.("skipped", state.revision);
       ports.animation.noteIdleStageMissingPassive();
       armAnimation(at);
       return;
     }
     if (
-      idleOnlyFrame &&
+      idleOnlyFrame && !ports.displayPacedPassive &&
       at + CANVAS_IDLE_STAGE_EARLY_ADMISSION_MS < ports.deadlines.idleStageNotBefore()
     ) {
+      ports.onFrameLifecycle?.("skipped", state.revision);
       ports.animation.noteIdleStageSkippedEarly();
       armAnimation(at);
       return;
     }
 
+    ports.onFrameLifecycle?.("admitted", state.revision);
+
+    ports.onFrameLifecycle?.("sample-start", state.revision);
     ports.animation.sampleVisual(at);
     ports.animation.noteTrailFlightHeads(at);
     ports.animation.tickTrails(at);
     ports.animation.mergeTrailLatches();
     ports.animation.advanceVisual(at);
     ports.animation.tickSpine(at);
+    ports.onFrameLifecycle?.("sample-end", state.revision);
 
-    if (rampMoved || !ports.animation.tryPatchAndPaint(at)) {
+    if (rampMoved || ports.cpuIncremental === false || !ports.animation.tryPatchAndPaint(at)) {
+      const textureGenerationAtBuild = textureDemandGeneration;
       if (ports.animation.runBuild(state)) {
         ports.animation.syncOverlay(state);
-        ports.animation.paintAction();
+        if (ports.animation.paintAction() === true) noteTexturePresented(textureGenerationAtBuild);
       }
     }
 
     ports.animation.settleLanding(at);
     animationFrames++;
-    if (idleOnlyFrame) {
+    if (idleOnlyFrame && !ports.displayPacedPassive) {
       ports.animation.noteIdleStageAdmission(at, CANVAS_IDLE_STAGE_MIN_FRAME_MS);
     }
     noteSample(frameMsSamples, ports.now() - at, FRAME_SAMPLE_WINDOW);
@@ -403,20 +431,34 @@ export function createCanvasFrameScheduler<TState extends CanvasFrameSchedulerSt
   }
 
   /**
-   * A texture arrival is one independent, non-acknowledging repaint rAF.
+   * A texture arrival is one independent repaint rAF.
    *
    * A residency callback is not a scene delta. It may occur several times
    * while a paced atlas streams in, so coalescing prevents a resource burst
-   * from becoming a burst of browser callbacks. It invokes only the narrow
-   * repaint port and has no path to the animation body or reconcile pull.
+   * from becoming a burst of browser callbacks. A pending scene reconcile is
+   * pulled first, since it can consume the same resource demand and own the
+   * wire acknowledgement. A local fallback repaint never acknowledges it.
    */
   function scheduleTexturePaint(): void {
-    if (stopped() || textureRaf !== null || !animationFrameAvailable()) return;
+    if (stopped()) return;
+    textureDemandGeneration++;
+    if (textureRaf !== null || !animationFrameAvailable()) return;
     textureRaf = platform.requestAnimationFrame!(() => {
       textureRaf = null;
       if (stopped()) return;
-      ports.animation.rebuildAndPaintTexture();
+      if (texturePresentedGeneration >= textureDemandGeneration) return;
+      if (reconcilePull?.pending()) {
+        pulledReconciles++;
+        reconcilePull.now();
+        if (stopped() || texturePresentedGeneration >= textureDemandGeneration) return;
+      }
+      const generation = textureDemandGeneration;
+      if (ports.animation.rebuildAndPaintTexture() === true) noteTexturePresented(generation);
     });
+  }
+
+  function noteTexturePresented(generation: number): void {
+    texturePresentedGeneration = Math.max(texturePresentedGeneration, generation);
   }
 
   function noteIdlePeriod(at: number): void {
@@ -448,6 +490,8 @@ export function createCanvasFrameScheduler<TState extends CanvasFrameSchedulerSt
   return {
     armAnimation,
     scheduleTexturePaint,
+    get textureDemandGeneration() { return textureDemandGeneration; },
+    noteTexturePresented,
     setReconcilePull(pull) {
       reconcilePull = pull;
     },

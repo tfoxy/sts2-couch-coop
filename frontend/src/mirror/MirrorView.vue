@@ -39,6 +39,7 @@ import { installTextScaleSheet } from "@/mirror/textScaleClasses";
 import { onAtlasRegionsReady } from "@/mirror/atlasBaker";
 import { reproRecorder } from "@/mirror/reproRecorder";
 import { sceneCheckpoint } from "@/lifecycleTelemetry";
+import { emitWarmAckTrace, warmAckTraceEnabled } from "@/mirror/warmAckTrace";
 import type { MirrorInputMessage, MirrorScrollAck } from "@/mirror/mirrorClient";
 import type { FullWalkCause, MirrorRenderer } from "@/mirror/renderer/contracts";
 import {
@@ -61,7 +62,7 @@ import { MIRROR_RENDERER_KEY } from "@/mirror/rendererKey";
 // fit measurement in so every px emission downstream can convert.
 import { activateDisplayLayout, displaySpaceLayout, setLayoutScale, stageFitMode } from "@/mirror/stageFit";
 import { effectiveRaiseHandCards, setHandRaiseLayer } from "@/mirror/handRaiseUi";
-import { mirrorSettings, type EffectMode } from "@/mirror/mirrorSettings";
+import { effectiveMirrorRenderSettings, mirrorSettings, type EffectMode } from "@/mirror/mirrorSettings";
 import { sceneAblation } from "@/mirror/sceneAblation";
 import { isAdaptiveEligible, renderQuality } from "@/render/quality";
 import {
@@ -154,7 +155,7 @@ watch(() => props.connected, (connected) => {
  * leaves an empty host in the page; it is `pointer-events: none` and paints nothing, and the DOM stage above it is
  * unchanged, so the fallback stays invisible exactly as the factory promises.
  */
-const canvasHostLayout = requestedStageBackend() === "canvas";
+const canvasHostLayout = requestedStageBackend() === "canvas" || requestedStageBackend() === "pixi" || requestedStageBackend() === "rust";
 /**
  * THE DISPLAY-SPACE LAYOUT GRANT. `?stageFit=display` asks for DOM boxes in real display px and a stage with no
  * scale transform (stageFit.ts); it is granted only on the DOM backend, for the two reasons stageFit's header
@@ -481,9 +482,9 @@ function syncHandRaiseUi(): void {
  * second entry would ask for, and the caller that was refused still has its rAF (the pull cancels the booked
  * frame only AFTER this guard has let it through).
  */
-function runScheduledRender(): void {
+function runScheduledRender(): "presented" | "pending" | "reentrant" {
   if (renderRunning) {
-    return;
+    return "reentrant";
   }
   sceneCheckpoint("render-begin");
   renderRunning = true;
@@ -498,12 +499,15 @@ function runScheduledRender(): void {
     if (props.state.sceneRewrite) {
       eagerScroll?.reset();
     }
+    if (warmAckTraceEnabled()) emitWarmAckTrace({kind: "view-reconcile-entry", revision: props.state.revision});
     const presented = renderer?.reconcile(props.state, force ? { forceTextures: true, reason: reasonForWalk } : undefined);
+    if (warmAckTraceEnabled()) emitWarmAckTrace({kind: "view-reconcile-result", revision: props.state.revision,
+      result: !renderer ? "no-renderer" : presented === false ? "pending" : "presented"});
     // Strict single-canvas sources may still be decoding into stage-owned
     // textures. Nothing has been presented in that state, so doing post-frame
     // composition or acknowledging the wire would falsely release a delta.
     if (presented === false) {
-      return;
+      return "pending";
     }
     rewardFocusCoordinator?.afterReconcile(
       renderer?.rewardFocusSnapshot() ?? { screenId: null, rows: [] }
@@ -538,8 +542,13 @@ function runScheduledRender(): void {
     // Ack AFTER the frame is rendered so the host releases the next coalesced delta (flow control): the stream
     // self-paces to however fast this device can actually render.
     sceneCheckpoint("frame-presented");
+    if (warmAckTraceEnabled()) emitWarmAckTrace({kind: "view-on-scene-rendered", revision: props.state.revision,
+      result: "before"});
     props.onSceneRendered?.();
+    if (warmAckTraceEnabled()) emitWarmAckTrace({kind: "view-on-scene-rendered", revision: props.state.revision,
+      result: "after"});
     if (renderer) firstPresentation.rendered();
+    return "presented";
   } catch (error) {
     firstPresentation.failed(error);
     throw error;
@@ -573,15 +582,15 @@ function scheduleRender(forceTextures = false, reason?: FullWalkCause): void {
  *
  * The guard order matters: refuse re-entry BEFORE cancelling, so a refused pull cannot swallow the booked frame.
  */
-function reconcileNow(): void {
+function reconcileNow(): "presented" | "pending" | "reentrant" {
   if (renderRunning) {
-    return;
+    return "reentrant";
   }
   if (renderRaf) {
     cancelAnimationFrame(renderRaf);
     renderRaf = 0;
   }
-  runScheduledRender();
+  return runScheduledRender();
 }
 
 onMounted(() => {
@@ -625,7 +634,7 @@ function mountScene(): void {
     // HERE, after the renderer exists, and never between `attachStage` and `createMirrorRendererFor`: the
     // recorder has to be the last thing that touched the stage before the renderer is built. Optional method —
     // the DOM backend does not implement it, and this line is then a no-op.
-    renderer.setReconcilePull?.({ pending: () => renderRaf !== 0, now: reconcileNow });
+    renderer.setReconcilePull?.({ pending: () => renderRaf !== 0, now: reconcileNow, retryNow: reconcileNow });
     // Client chrome must collect full-stage cover candidates even when the optional occlusion pass is disabled.
     // Keep the cheap pre-filter armed for this renderer's lifetime so the first combat frame is already correct.
     renderer.setConfirmCoverWatch(true);
@@ -754,7 +763,10 @@ function mountScene(): void {
     // one host flow-control credit, so the initial reconcile must participate in the same diagnostic sequence and
     // return that credit just like a revision-driven reconcile does.
     sceneCheckpoint("render-begin");
+    if (warmAckTraceEnabled()) emitWarmAckTrace({kind: "view-mount-reconcile-entry", revision: props.state.revision});
     const initialPresented = renderer.reconcile(props.state);
+    if (warmAckTraceEnabled()) emitWarmAckTrace({kind: "view-mount-reconcile-result", revision: props.state.revision,
+      result: initialPresented === false ? "pending" : "presented"});
     syncHandRaiseUi();
     // Create + configure the live WebGL runtimes from the effective per-viewer effect mode. `off` (the low-end
     // "off" tier, or the panel's Off) creates nothing — no DOM markers are stamped/consumed, so a runtime would
@@ -886,7 +898,11 @@ function mountScene(): void {
     startAdaptiveQuality();
     if (initialPresented !== false) {
       sceneCheckpoint("frame-presented");
+      if (warmAckTraceEnabled()) emitWarmAckTrace({kind: "view-on-scene-rendered", revision: props.state.revision,
+        result: "before"});
       props.onSceneRendered?.();
+      if (warmAckTraceEnabled()) emitWarmAckTrace({kind: "view-on-scene-rendered", revision: props.state.revision,
+        result: "after"});
       firstPresentation.rendered();
     }
   }
@@ -1263,7 +1279,7 @@ watch(spreadFactor, (f) => {
 // url (the still-vs-animated answer is part of the clip identity — see mirrorRenderer's spineStill). Same idiom as
 // the spreadFactor/textureSizeVersion watches above (and the effect-mode watches, which retune their runtimes live).
 watch(
-  () => mirrorSettings.spineMode,
+  () => effectiveMirrorRenderSettings(mirrorSettings).spineMode,
   () => scheduleRender(true, "spine")
 );
 
@@ -1283,7 +1299,7 @@ watch(
 // skip-clean gate, and the same walk's reclaim hands back any subtree that was built while the hold was off.
 // so the setting edge is the only event that may release or reclaim a covered live subtree.
 watch(
-  () => mirrorSettings.staticBgEnabled,
+  () => effectiveMirrorRenderSettings(mirrorSettings).staticBgEnabled,
   () => scheduleRender(true, "staticBg")
 );
 

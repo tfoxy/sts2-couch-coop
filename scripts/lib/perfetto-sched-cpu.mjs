@@ -8,12 +8,12 @@ import { bootOffsetNs, queryTrace, validateTraceHealth } from "./perfetto-frame-
 
 const numbers = (rows, key) => rows.map((row) => Number(row[key])).filter(Number.isSafeInteger);
 
-export function perfettoSchedCpu({ processor, trace, chromeStartUs, chromeEndUs, gpuPids }) {
+export function perfettoProcessSchedCpu({ processor, trace, chromeStartUs, chromeEndUs, pids, processName = "process" }) {
   if (![processor, trace].every((value) => typeof value === "string" && value)
     || !Number.isFinite(chromeStartUs) || !Number.isFinite(chromeEndUs) || chromeEndUs <= chromeStartUs
-    || !Array.isArray(gpuPids) || !gpuPids.length || !gpuPids.every((pid) => Number.isSafeInteger(pid) && pid > 0)) return null;
-  const uniquePids = [...new Set(gpuPids)].sort((a, b) => a - b);
-  if (uniquePids.length !== gpuPids.length) throw Error("GPU PID ledger contains duplicates");
+    || !Array.isArray(pids) || !pids.length || !pids.every((pid) => Number.isSafeInteger(pid) && pid > 0)) return null;
+  const uniquePids = [...new Set(pids)].sort((a, b) => a - b);
+  if (uniquePids.length !== pids.length) throw Error(`${processName} PID ledger contains duplicates`);
 
   // Trace processor categorizes loss separately from generic errors. Both make
   // sched accounting incomplete; the narrow FrameEnd waiver below is the only
@@ -77,7 +77,7 @@ export function perfettoSchedCpu({ processor, trace, chromeStartUs, chromeEndUs,
     FROM process p LEFT JOIN thread t USING(upid) WHERE p.pid IN (${pidList}) GROUP BY p.pid, p.upid ORDER BY p.pid, p.upid`);
   if (mappings.length !== uniquePids.length || numbers(mappings, "pid").join(",") !== uniquePids.join(",")
     || mappings.some((row) => !Number.isSafeInteger(Number(row.upid)) || Number(row.upid) <= 0 || Number(row.thread_count) <= 0)) {
-    throw Error("GPU PID ledger does not map to one stable Perfetto process with threads");
+    throw Error(`${processName} PID ledger does not map to one stable Perfetto process with threads`);
   }
   const perPid = queryTrace(processor, trace, `SELECT p.pid, COUNT(s.id) AS slice_count,
       COALESCE(SUM(MAX(0, MIN(s.ts + s.dur, ${toNs}) - MAX(s.ts, ${fromNs}))), 0) AS cpu_ns
@@ -88,14 +88,14 @@ export function perfettoSchedCpu({ processor, trace, chromeStartUs, chromeEndUs,
   if (perPid.length !== uniquePids.length || numbers(perPid, "pid").join(",") !== uniquePids.join(",")
     || perPid.some((row) => !Number.isSafeInteger(Number(row.slice_count)) || Number(row.slice_count) < 0
       || !Number.isFinite(Number(row.cpu_ns)) || Number(row.cpu_ns) < 0)) {
-    throw Error("GPU sched slices are missing for one or more ledger PIDs");
+    throw Error(`${processName} sched slices are missing for one or more ledger PIDs`);
   }
   const cpuNs = perPid.reduce((total, row) => total + Number(row.cpu_ns), 0);
   const windowNs = toNs - fromNs;
   // Multiple threads can run concurrently, so aggregate process CPU can exceed
   // one wall-clock window. It is bounded by the number of mapped GPU threads.
   const threadCount = mappings.reduce((total, row) => total + Number(row.thread_count), 0);
-  if (!Number.isFinite(cpuNs) || cpuNs > windowNs * threadCount) throw Error("GPU sched CPU exceeds mapped thread capacity");
+  if (!Number.isFinite(cpuNs) || cpuNs > windowNs * threadCount) throw Error(`${processName} sched CPU exceeds mapped thread capacity`);
   return {
     source: "perfetto-linux-ftrace-sched-switch",
     cpuMs: +(cpuNs / 1_000_000).toFixed(3),
@@ -109,4 +109,8 @@ export function perfettoSchedCpu({ processor, trace, chromeStartUs, chromeEndUs,
       onlineCpus: onlineCpus.length, schedTimeline: "continuous-per-online-cpu", unmappedScheduledThreads: 0,
       processMapping: "one-upid-per-ledger-pid" }
   };
+}
+
+export function perfettoSchedCpu({ gpuPids, ...rest }) {
+  return perfettoProcessSchedCpu({ ...rest, pids: gpuPids, processName: "GPU" });
 }

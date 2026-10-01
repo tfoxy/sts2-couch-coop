@@ -237,6 +237,7 @@ export interface LandingLog {
   rows(): readonly LandingRow[];
   /** How many arms are still in flight. */
   openCount(): number;
+  openIds(): string[];
   /** Drop everything (a wire keyframe: every row describes a tree that no longer exists). */
   clear(): void;
 }
@@ -432,6 +433,7 @@ export function createLandingLog(capacity = LANDING_LOG_CAPACITY): LandingLog {
 
     rows: () => closed,
     openCount: () => open.size,
+    openIds: () => [...open.keys()],
     clear() {
       open.clear();
       closed.length = 0;

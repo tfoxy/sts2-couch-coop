@@ -37,7 +37,7 @@ import {
   tryParseRoomBackgroundSceneId
 } from "@/mirror/renderer/staticBackgroundPolicy";
 import { MIRROR_RENDERER_KEY } from "@/mirror/rendererKey";
-import { mirrorSettings } from "@/mirror/mirrorSettings";
+import { mirrorSettings, staticBgWireValue } from "@/mirror/mirrorSettings";
 import { requestedStageBackend } from "@/mirror/rendererFactory";
 import { decodeStill } from "@/mirror/stillDecode";
 // Image failures are deliberately silent in the UI, so the report is the evidence that a request failed.
@@ -68,7 +68,7 @@ const renderer = inject(MIRROR_RENDERER_KEY, shallowRef(null));
 // DOM renderer is installed, preserving the image recovery path.
 const usesStageTexture = computed(
   () =>
-    requestedStageBackend() === "canvas" &&
+    (requestedStageBackend() === "canvas" || requestedStageBackend() === "pixi" || requestedStageBackend() === "rust") &&
     (renderer.value === null || renderer.value?.setStaticBackgroundSource !== undefined)
 );
 
@@ -157,7 +157,7 @@ const wireScenePath = computed<string | null>(() => wireFallback.value?.scenePat
 // render the deterministic-first-sorted layer variant rather than the mounted one — strictly better than showing
 // the previous room's artwork.
 const target = computed<BrowserStaticBackgroundDescriptor | null>(() => {
-  if (!mirrorSettings.staticBgEnabled) {
+  if (!staticBgWireValue(mirrorSettings)) {
     return null;
   }
   // Filter descriptors through the currently supported background families: under the Stage-B steady state the

@@ -143,39 +143,30 @@ change. Do not run Couch `npm run build`, which deploys. Commit only complete,
 verified reusable changes on lane branches. Retain ignored raw evidence with
 hash manifests and a final handoff; it does not merge with Git.
 
-The current Couch and GSW `main` branches do **not** contain the Rust
-experiment baselines. **Before implementation planning**, inventory each
-full experiment-baseline-to-current-main dependency diff. Identify the minimal
-required product dependency set and every additional behavior/default it
-introduces. Read this handoff from the current Couch main checkout; an
-experiment-based worktree will not contain it until integration. A desktop CPU
-win does not waive baseline correctness, build/artifact, or combined-source
-acceptance gates. Bring accepted GSW
-product work through its reviewed integration branch first, then point Couch
-scratch aliases to that accepted commit and integrate Couch. After combined
-tests and Luna/Astra review, land the accepted dependency set and lane changes
-as one coherent squash commit per repository in the corresponding local
-`main` worktree. If the baseline or another required gate fails, leave `main`
-clean and report the blocker. The profiler lane's reusable tooling can land
-independently on current Couch main if it passes there. Do not push or tag.
-Rehash copied ignored artifacts if archived in the main worktree; never commit
-them.
+The Rust canvas stage lands independently of a desktop CPU saving. GSW's
+renderer and serializer land before the Couch adapter, settings, and serving
+path. Once both are on local `main`, freeze a **new** warm-resource oracle and
+ordinary-clock control cohort against those exact commits and served artifacts.
+The older C1/C2 pair and v12-v14 diagnostics cannot qualify that cohort.
+Require equal source, resources, deliveries, useful output, fixed-clock pixels
+and hits, and valid process-CPU brackets. A CPU candidate remains default-off
+until a separate diagnostic isolates its work and Astra approves the
+hypothesis. No candidate may become the Rust default without interleaved,
+uninstrumented controls whose conservative saving exceeds contemporary spread
+and uncertainty. If none passes, keep the merged stage and report no established
+desktop saving. Do not push or tag; retain raw artifacts only in ignored state.
 
 ## Copy/paste execution prompt
 
-Continue the desktop-first lane from this handoff. Use separate Sol and Luna
-worktrees: Sol for measurement and one scoped implementation at a time, Luna
-for independent raw/output/CPU review, and Astra for review and one next
-action at each gate. Start with repeatable,
-uninstrumented production-v6 controls and a distinct CPU/output comparator;
-freeze eligibility, order and conservative saving arithmetic first;
-fix resource, delivery and identity mismatches before candidate selection.
-Use isolated Couch/GSW worktrees, scratch aliases and shared desktop/browser/
-port leases. Preserve the profiler no-repeat ledger and all failed receipts.
-Implement only a measured default-off operation with a falsifying test; require
-fixed-clock pixels/hits and ordinary output/work equality, then interleaved
-uninstrumented controls beyond variation and counter uncertainty. Keep phone,
-GPU execution and physical presentation claims parked. Do not use prohibited
-ports, a visible game window, Couch build/deploy, push or tag. Integrate only
-verified changes through the Rust experiment baselines into local main;
-otherwise report the exact blocker and raw paths.
+Continue the desktop-first lane from this handoff after verifying both local
+`main` commits. Use separate Sol and Luna worktrees: Sol for measurements and
+one scoped implementation, Luna for independent raw/output/CPU review, and
+Astra for a candidate hypothesis and evidence review. Freeze a newly named
+warm-resource oracle and ordinary-clock controls before selecting a candidate;
+fix resource, delivery, identity, and output mismatches first. Use isolated
+worktrees and shared desktop/browser/port leases. Preserve the profiler
+no-repeat ledger and failed receipts. Implement only a measured default-off
+operation with a falsifying test; require fixed-clock pixels/hits and ordinary
+output/work equality, then interleaved uninstrumented controls beyond spread
+and counter uncertainty. Keep phone, GPU execution, and physical presentation
+claims parked. Do not use prohibited ports, a visible game window, push, or tag.

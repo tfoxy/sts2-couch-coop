@@ -255,6 +255,7 @@ export function medianMetrics(runs) {
   if (runs.some((r) => (r.decode?.provenance === "canvas-texture-bridge") !== bridge)) {
     throw new Error("medianMetrics: cannot combine cc-trace and canvas-texture-bridge evidence");
   }
+  const decodeUnmeasured = !bridge && runs.every((r) => r.decode?.provenance === "trace-unmeasured");
   const decode = bridge
     ? {
         count: 0, totalMs: 0, maxMs: 0, codecRuns: 0, codecMs: 0,
@@ -263,7 +264,15 @@ export function medianMetrics(runs) {
         provenance: "canvas-texture-bridge", source: "canvas.textureBridge.window", codecSource: null,
         bridgeWindow: medianBridgeWindow(runs),
       }
-    : {
+    : decodeUnmeasured
+      ? {
+          count: null, totalMs: null, maxMs: null, codecRuns: null, codecMs: null,
+          distinctImages: null, redecodeCount: null, redecodeMs: null, inRasterCount: null, inRasterMs: null,
+          imageKey: null, cacheFamily: rep.decode?.cacheFamily ?? "unknown", imagesExpected: true,
+          provenance: "trace-unmeasured", source: null, codecSource: null,
+          unmeasuredReason: rep.decode?.unmeasuredReason ?? "no canonical image-decode events in the marker window",
+        }
+      : {
       count: med(runs, "decode.count"), totalMs: med(runs, "decode.totalMs"), maxMs: med(runs, "decode.maxMs"),
       codecRuns: med(runs, "decode.codecRuns"), codecMs: med(runs, "decode.codecMs"),
       distinctImages: med(runs, "decode.distinctImages"), redecodeCount: med(runs, "decode.redecodeCount"),

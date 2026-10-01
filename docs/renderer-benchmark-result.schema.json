@@ -1,0 +1,368 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "urn:couchcoop:renderer-benchmark-result:1",
+  "title": "Renderer benchmark cell result",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["schemaVersion", "cellId", "renderer", "input", "window", "delivery", "milestones", "readiness", "processAccounting", "measurements", "visualWitness", "validity"],
+  "properties": {
+    "schemaVersion": { "const": "renderer-benchmark-result/1" },
+    "cellId": { "type": "string", "minLength": 1 },
+    "renderer": {
+      "type": "object", "additionalProperties": false,
+      "required": ["backend", "graphicsApi", "implementation", "sourceCommit", "buildHash", "environmentSha256", "environmentIdentity"],
+      "properties": {
+        "backend": { "enum": ["browser", "native"] },
+        "graphicsApi": { "enum": ["webgl", "webgpu", "vulkan", "other"] },
+        "implementation": { "type": "string", "minLength": 1 },
+        "sourceCommit": { "type": "string", "minLength": 7 },
+        "buildHash": { "$ref": "#/$defs/sha256" },
+        "environmentSha256": { "anyOf": [{ "$ref": "#/$defs/sha256" }, { "type": "null" }] },
+        "environmentIdentity": { "type": "string", "minLength": 1 }
+      }
+    },
+    "input": {
+      "type": "object", "additionalProperties": false,
+      "required": ["recordingSha256", "deliveredSliceSha256", "firstIndex", "lastIndexExclusive", "viewport", "settingsSha256", "resourcesSha256", "resourceIdentity", "method"],
+      "properties": {
+        "recordingSha256": { "$ref": "#/$defs/sha256" },
+        "deliveredSliceSha256": { "$ref": "#/$defs/sha256" },
+        "firstIndex": { "type": "integer", "minimum": 0 },
+        "lastIndexExclusive": { "type": "integer", "minimum": 1 },
+        "viewport": {
+          "type": "object", "additionalProperties": false,
+          "required": ["width", "height", "pixelRatio"],
+          "properties": {
+            "width": { "type": "integer", "minimum": 1 },
+            "height": { "type": "integer", "minimum": 1 },
+            "pixelRatio": { "type": "number", "exclusiveMinimum": 0 }
+          }
+        },
+        "settingsSha256": { "$ref": "#/$defs/sha256" },
+        "resourcesSha256": { "anyOf": [{ "$ref": "#/$defs/sha256" }, { "type": "null" }] },
+        "resourceIdentity": {
+          "type": "object", "additionalProperties": false,
+          "required": ["method", "coverage"],
+          "properties": {
+            "method": { "type": "string", "minLength": 1 },
+            "coverage": { "$ref": "#/$defs/coverage" }
+          }
+        },
+        "method": { "type": "string", "minLength": 1 }
+      }
+    },
+    "window": {
+      "type": "object", "additionalProperties": false,
+      "required": ["clockDomain", "startMarker", "endMarker", "startNs", "endNs", "spanMs", "mappingMethod", "mappingCoverage", "edgeWork"],
+      "properties": {
+        "clockDomain": { "type": "string", "minLength": 1 },
+        "startMarker": { "type": "string", "minLength": 1 },
+        "endMarker": { "type": "string", "minLength": 1 },
+        "startNs": { "$ref": "#/$defs/nullableTimestampNs" },
+        "endNs": { "$ref": "#/$defs/nullableTimestampNs" },
+        "spanMs": { "type": "number", "exclusiveMinimum": 0 },
+        "mappingMethod": { "type": "string", "minLength": 1 },
+        "mappingCoverage": { "$ref": "#/$defs/coverage" },
+        "edgeWork": { "type": "string" }
+      }
+    },
+    "delivery": {
+      "type": "object", "additionalProperties": false,
+      "required": ["messageCount", "sceneDeltaCount", "firstRevision", "lastRevision", "pendingAtEnd", "method"],
+      "properties": {
+        "messageCount": { "type": "integer", "minimum": 0 },
+        "sceneDeltaCount": { "type": "integer", "minimum": 0 },
+        "firstRevision": { "type": ["integer", "null"], "minimum": 0 },
+        "lastRevision": { "type": ["integer", "null"], "minimum": 0 },
+        "pendingAtEnd": { "type": "integer", "minimum": 0 },
+        "method": { "type": "string", "minLength": 1 }
+      }
+    },
+    "milestones": {
+      "type": "object", "additionalProperties": false,
+      "required": ["firstInput", "rendererReady", "firstCompletedDraw", "firstActualPresentation", "finalActualPresentation", "finalDeliveredRevision"],
+      "properties": {
+        "firstInput": { "$ref": "#/$defs/milestone" },
+        "rendererReady": { "$ref": "#/$defs/milestone" },
+        "firstCompletedDraw": { "$ref": "#/$defs/milestone" },
+        "firstActualPresentation": { "$ref": "#/$defs/milestone" },
+        "finalActualPresentation": { "$ref": "#/$defs/milestone" },
+        "finalDeliveredRevision": { "$ref": "#/$defs/milestone" }
+      }
+    },
+    "readiness": {
+      "type": "object", "additionalProperties": false,
+      "required": ["atStart", "atEnd"],
+      "properties": {
+        "atStart": { "$ref": "#/$defs/readiness" },
+        "atEnd": { "$ref": "#/$defs/readiness" }
+      }
+    },
+    "processAccounting": {
+      "type": "object", "additionalProperties": false,
+      "required": ["model", "identityMethod", "included", "excluded", "coverage"],
+      "properties": {
+        "model": { "enum": ["browser", "native"] },
+        "identityMethod": { "type": "string", "minLength": 1 },
+        "included": { "type": "array", "items": { "$ref": "#/$defs/process" } },
+        "excluded": { "type": "array", "items": { "$ref": "#/$defs/process" } },
+        "coverage": { "$ref": "#/$defs/coverage" }
+      }
+    },
+    "measurements": {
+      "type": "object", "additionalProperties": false,
+      "required": ["processCpu", "workloadCompletion", "completedDraws", "actualPresentations", "presentationTiming", "memoryAtStart", "memoryAtEnd", "memoryPeak", "gpuHardware"],
+      "properties": {
+        "processCpu": { "type": "array", "items": { "$ref": "#/$defs/processMetric" } },
+        "workloadCompletion": { "$ref": "#/$defs/measurement" },
+        "completedDraws": { "$ref": "#/$defs/measurement" },
+        "actualPresentations": { "$ref": "#/$defs/measurement" },
+        "presentationTiming": {
+          "type": "object", "additionalProperties": false,
+          "required": ["intervalsMs", "missedDeadlines", "method", "coverage"],
+          "properties": {
+            "intervalsMs": { "type": "array", "items": { "type": "number", "minimum": 0 } },
+            "missedDeadlines": { "$ref": "#/$defs/measurement" },
+            "method": { "type": "string", "minLength": 1 },
+            "coverage": { "$ref": "#/$defs/coverage" }
+          }
+        },
+        "memoryAtStart": { "$ref": "#/$defs/measurement" },
+        "memoryAtEnd": { "$ref": "#/$defs/measurement" },
+        "memoryPeak": { "$ref": "#/$defs/measurement" },
+        "gpuHardware": { "$ref": "#/$defs/measurement" }
+      }
+    },
+    "visualWitness": {
+      "type": "object", "additionalProperties": false,
+      "required": ["status", "method", "clockMapping", "clockCoverage", "coveredStartNs", "coveredEndNs", "artifacts", "blackIntervals", "outputParity", "hitGeometryParity", "reason"],
+      "properties": {
+        "status": { "$ref": "#/$defs/verdict" },
+        "method": { "type": "string", "minLength": 1 },
+        "clockMapping": { "type": "string", "minLength": 1 },
+        "clockCoverage": { "$ref": "#/$defs/coverage" },
+        "coveredStartNs": { "$ref": "#/$defs/nullableTimestampNs" },
+        "coveredEndNs": { "$ref": "#/$defs/nullableTimestampNs" },
+        "artifacts": { "type": "array", "items": { "$ref": "#/$defs/artifact" } },
+        "blackIntervals": { "type": "array", "items": { "$ref": "#/$defs/interval" } },
+        "outputParity": { "$ref": "#/$defs/verdict" },
+        "hitGeometryParity": { "$ref": "#/$defs/verdict" },
+        "reason": { "type": "string" }
+      }
+    },
+    "attribution": {
+      "type": "object", "additionalProperties": false,
+      "properties": {
+        "chromeCdp": { "$ref": "#/$defs/adapter" },
+        "rustWgpu": { "$ref": "#/$defs/adapter" }
+      }
+    },
+    "validity": {
+      "type": "object", "additionalProperties": false,
+      "required": ["status", "reasons"],
+      "properties": {
+        "status": { "$ref": "#/$defs/verdict" },
+        "reasons": { "type": "array", "items": { "type": "string", "minLength": 1 } }
+      }
+    }
+  },
+  "allOf": [
+    {
+      "if": { "properties": { "renderer": { "properties": { "backend": { "const": "browser" } } } } },
+      "then": { "properties": { "processAccounting": { "properties": { "model": { "const": "browser" } } } } },
+      "else": { "properties": { "processAccounting": { "properties": { "model": { "const": "native" } } } } }
+    },
+    {
+      "if": { "properties": { "visualWitness": { "properties": { "blackIntervals": { "minItems": 1 } } } } },
+      "then": { "properties": {
+        "visualWitness": { "properties": { "status": { "const": "invalid" } } },
+        "validity": { "properties": { "status": { "const": "invalid" } } }
+      } }
+    },
+    {
+      "if": { "properties": { "validity": { "properties": { "status": { "const": "pass" } } } } },
+      "then": { "properties": {
+        "input": { "properties": {
+          "resourcesSha256": { "$ref": "#/$defs/sha256" },
+          "resourceIdentity": { "properties": { "coverage": { "properties": { "status": { "const": "complete" } } } } }
+        } },
+        "renderer": { "properties": { "environmentSha256": { "$ref": "#/$defs/sha256" } } },
+        "delivery": { "properties": { "pendingAtEnd": { "const": 0 } } },
+        "window": { "properties": {
+          "startNs": { "type": "string" }, "endNs": { "type": "string" },
+          "mappingCoverage": { "properties": { "status": { "const": "complete" } } }
+        } },
+        "processAccounting": { "properties": {
+          "included": { "minItems": 1 },
+          "coverage": { "properties": { "status": { "const": "complete" } } }
+        } },
+        "readiness": { "properties": {
+          "atStart": { "$ref": "#/$defs/readyPass" },
+          "atEnd": { "$ref": "#/$defs/readyPass" }
+        } },
+        "milestones": { "properties": {
+          "firstInput": { "properties": { "timestampNs": { "type": "string" } } },
+          "firstActualPresentation": { "properties": { "timestampNs": { "type": "string" } } },
+          "finalActualPresentation": { "properties": { "timestampNs": { "type": "string" } } }
+        } },
+        "measurements": { "properties": {
+          "processCpu": { "minItems": 1, "items": { "properties": { "cpu": { "properties": {
+            "value": { "type": "number" },
+            "coverage": { "properties": { "status": { "const": "complete" } } }
+          } } } } },
+          "workloadCompletion": { "properties": {
+            "value": { "type": "number" },
+            "coverage": { "properties": { "status": { "const": "complete" } } }
+          } },
+          "completedDraws": { "properties": {
+            "value": { "type": "integer" },
+            "coverage": { "properties": { "status": { "const": "complete" } } }
+          } },
+          "actualPresentations": { "properties": {
+            "value": { "type": "integer", "minimum": 1 },
+            "coverage": { "properties": { "status": { "const": "complete" } } }
+          } },
+          "presentationTiming": { "properties": {
+            "coverage": { "properties": { "status": { "const": "complete" } } },
+            "missedDeadlines": { "properties": {
+              "value": { "type": "integer" },
+              "coverage": { "properties": { "status": { "const": "complete" } } }
+            } }
+          } }
+        } },
+        "visualWitness": { "properties": {
+          "status": { "const": "pass" }, "blackIntervals": { "maxItems": 0 },
+          "artifacts": { "contains": { "properties": { "kind": { "const": "video" } } } },
+          "clockCoverage": { "properties": { "status": { "const": "complete" } } },
+          "coveredStartNs": { "type": "string" }, "coveredEndNs": { "type": "string" },
+          "outputParity": { "const": "pass" }, "hitGeometryParity": { "const": "pass" }
+        } },
+        "validity": { "properties": { "reasons": { "maxItems": 0 } } }
+      } }
+    },
+    {
+      "if": { "properties": {
+        "validity": { "properties": { "status": { "const": "pass" } } },
+        "delivery": { "properties": { "sceneDeltaCount": { "minimum": 1 } } }
+      } },
+      "then": { "properties": {
+        "delivery": { "properties": {
+          "firstRevision": { "type": "integer" }, "lastRevision": { "type": "integer" }
+        } },
+        "measurements": { "properties": {
+          "actualPresentations": { "properties": { "value": { "minimum": 1 } } },
+          "completedDraws": { "properties": { "value": { "minimum": 1 } } }
+        } },
+        "milestones": { "properties": {
+          "firstInput": { "properties": { "timestampNs": { "type": "string" } } },
+          "firstCompletedDraw": { "properties": { "timestampNs": { "type": "string" } } },
+          "firstActualPresentation": { "properties": { "timestampNs": { "type": "string" } } },
+          "finalActualPresentation": { "properties": { "timestampNs": { "type": "string" } } },
+          "finalDeliveredRevision": { "properties": { "timestampNs": { "type": "string" } } }
+        } }
+      } }
+    }
+  ],
+  "$defs": {
+    "sha256": { "type": "string", "pattern": "^[a-f0-9]{64}$" },
+    "nullableTimestampNs": { "oneOf": [{ "type": "string", "pattern": "^[0-9]+$" }, { "type": "null" }] },
+    "readyPass": { "properties": {
+      "rendererReady": { "const": true }, "pendingResources": { "const": 0 },
+      "failedResources": { "const": 0 }, "presentationValid": { "const": true }
+    } },
+    "verdict": { "enum": ["pass", "invalid", "unverified"] },
+    "coverage": {
+      "type": "object", "additionalProperties": false,
+      "required": ["status", "detail"],
+      "properties": {
+        "status": { "enum": ["complete", "partial", "unavailable", "invalid"] },
+        "detail": { "type": "string" }
+      }
+    },
+    "measurement": {
+      "type": "object", "additionalProperties": false,
+      "required": ["value", "unit", "method", "coverage"],
+      "properties": {
+        "value": { "type": ["number", "null"], "minimum": 0 },
+        "unit": { "type": "string", "minLength": 1 },
+        "method": { "type": "string", "minLength": 1 },
+        "coverage": { "$ref": "#/$defs/coverage" }
+      }
+    },
+    "processMetric": {
+      "type": "object", "additionalProperties": false,
+      "required": ["role", "pid", "instance", "cpu"],
+      "properties": {
+        "role": { "type": "string", "minLength": 1 },
+        "pid": { "type": "integer", "minimum": 1 },
+        "instance": { "type": "string", "minLength": 1 },
+        "cpu": { "$ref": "#/$defs/measurement" }
+      }
+    },
+    "process": {
+      "type": "object", "additionalProperties": false,
+      "required": ["role", "pid", "instance"],
+      "properties": {
+        "role": { "type": "string", "minLength": 1 },
+        "pid": { "type": "integer", "minimum": 1 },
+        "instance": { "type": "string", "minLength": 1 }
+      }
+    },
+    "milestone": {
+      "type": "object", "additionalProperties": false,
+      "required": ["timestampNs", "source", "reason"],
+      "properties": {
+        "timestampNs": { "$ref": "#/$defs/nullableTimestampNs" },
+        "source": { "type": "string", "minLength": 1 },
+        "reason": { "type": "string" }
+      }
+    },
+    "readiness": {
+      "type": "object", "additionalProperties": false,
+      "required": ["rendererReady", "pendingResources", "failedResources", "presentationValid", "source"],
+      "properties": {
+        "rendererReady": { "type": "boolean" },
+        "pendingResources": { "type": "integer", "minimum": 0 },
+        "failedResources": { "type": "integer", "minimum": 0 },
+        "presentationValid": { "type": "boolean" },
+        "source": { "type": "string", "minLength": 1 }
+      }
+    },
+    "artifact": {
+      "type": "object", "additionalProperties": false,
+      "required": ["id", "sha256", "kind"],
+      "properties": {
+        "id": { "type": "string", "minLength": 1 },
+        "sha256": { "$ref": "#/$defs/sha256" },
+        "kind": { "enum": ["image", "video", "trace", "log"] }
+      }
+    },
+    "interval": {
+      "type": "object", "additionalProperties": false,
+      "required": ["clockDomain", "startNs", "endNs", "source"],
+      "properties": {
+        "clockDomain": { "type": "string", "minLength": 1 },
+        "startNs": { "type": "string", "pattern": "^[0-9]+$" },
+        "endNs": { "type": "string", "pattern": "^[0-9]+$" },
+        "source": { "type": "string", "minLength": 1 }
+      }
+    },
+    "adapter": {
+      "type": "object", "additionalProperties": false,
+      "required": ["method", "coverage", "artifacts"],
+      "properties": {
+        "method": { "type": "string", "minLength": 1 },
+        "coverage": { "$ref": "#/$defs/coverage" },
+        "artifacts": { "type": "array", "items": { "$ref": "#/$defs/artifact" } },
+        "spans": { "type": "array", "items": { "type": "object", "additionalProperties": false,
+          "required": ["name", "durationMs", "source"],
+          "properties": {
+            "name": { "type": "string", "minLength": 1 },
+            "durationMs": { "type": "number", "minimum": 0 },
+            "source": { "type": "string", "minLength": 1 }
+          }
+        } }
+      }
+    }
+  }
+}

@@ -9,6 +9,7 @@ import {
   createTextureBridge,
   type TextureBridge
 } from "@/mirror/canvas/textureBridge";
+import type { AtlasRepacker } from "@/mirror/canvas/atlasRepack";
 
 // TEXTURE-UPLOAD PACING. `cache.acquire` calls `texImage2D` on the calling thread, so a build that names every url
 // of a fresh screen uploads all of them inside that one task — the phone's 23.6 s first-textured-build storm. The
@@ -30,7 +31,7 @@ function fakeCache(opts: { throwFor?: readonly string[] } = {}): FakeCache {
   const cache: FakeCache = {
     uploaded,
     stats,
-    white: () => ({ texture: {} as WebGLTexture, width: 1, height: 1 }),
+    white: () => ({ texture: {} as WebGLTexture, width: 1, height: 1, revision: 1 }),
     peek: (key) => entries.get(key),
     acquire: (key, source) => {
       const existing = entries.get(key);
@@ -44,7 +45,8 @@ function fakeCache(opts: { throwFor?: readonly string[] } = {}): FakeCache {
       const handle = {
         texture: {} as WebGLTexture,
         width: src.naturalWidth ?? 1,
-        height: src.naturalHeight ?? 1
+        height: src.naturalHeight ?? 1,
+        revision: 1
       };
       entries.set(key, handle);
       uploaded.push(key);
@@ -216,6 +218,7 @@ function harness(
     throwFor?: readonly string[];
     /** Supply a capturer to exercise the owned-page path; omitted leaves bitmap capture unavailable. */
     captures?: Capturer;
+    repack?: () => AtlasRepacker;
   } = {}
 ): Harness {
   const cache = fakeCache({ throwFor: opts.throwFor });
@@ -237,7 +240,8 @@ function harness(
     // Most cases below predate the tiny-page exemption and are ABOUT the budget, so they opt out by default and
     // keep testing exactly what they used to; the exemption has its own section at the bottom of this file.
     paceTinyBytes: opts.paceTinyBytes ?? 0,
-    maxTextureDim: opts.maxTextureDim
+    maxTextureDim: opts.maxTextureDim,
+    repack: opts.repack
   });
   const list = createDrawList<ExecutorTexture | null>();
   const adapted = bridge.adapt(list);
@@ -442,6 +446,34 @@ describe("what paints while a texture is pending", () => {
 });
 
 describe("the repaint the pacer asks for", () => {
+  it("keeps a paced crop pending when a later crop from the same page is resident", async () => {
+    const handle = { texture: {} as WebGLTexture, width: 8, height: 8, revision: 1 };
+    let calls = 0;
+    const repack: AtlasRepacker = {
+      claims: () => true,
+      regionFor: () => ++calls === 1
+        ? { kind: "paced", handle: null, dx: 0, dy: 0 }
+        : { kind: "region", handle, dx: 0, dy: 0 },
+      residentFor: () => ({ kind: "paced", handle: null, dx: 0, dy: 0 }),
+      holds: () => false,
+      endBuild: vi.fn(),
+      invalidate: vi.fn(),
+      stats: () => ({}) as never,
+      dispose: vi.fn()
+    };
+    const h = harness({ repack: () => repack });
+    h.build(["atlas.png"]);
+    h.resolveOne("atlas.png", 4096, 4096);
+    await Promise.resolve();
+
+    h.build(["atlas.png", "atlas.png"]);
+    expect(h.bridge.stats.pending).toBe(1);
+    expect(h.onPaced).toHaveBeenCalledTimes(1);
+
+    h.build(["atlas.png", "atlas.png"]);
+    expect(h.bridge.stats.pending).toBe(0);
+  });
+
   it("asks for another frame while it is holding uploads back, and stops when the queue drains", () => {
     const h = harness({ paceBytes: 4 * MB, paceCount: 0 });
     const urls = ["a.png", "b.png"];

@@ -1,7 +1,7 @@
 #!/usr/bin/env node
 
 import assert from "node:assert/strict";
-import { mkdtempSync, mkdirSync, rmSync, writeFileSync } from "node:fs";
+import { mkdtempSync, mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join, dirname } from "node:path";
 import { createHash } from "node:crypto";
@@ -83,13 +83,18 @@ try {
   assert.equal(missingSpine.status, 404, "a spine cache miss must never fall through to its recovered .tscn source");
   assert.equal(missingSpine.source, "missing");
 
-  const server = createResRootServer({ root: recovered, assetCacheRoot: cache });
+  const servedManifest = join(root,"served.ndjson");
+  writeFileSync(servedManifest,"");
+  const server = createResRootServer({ root: recovered, assetCacheRoot: cache, servedManifest });
   await new Promise((resolve) => server.listen(0, "127.0.0.1", resolve));
   const base = `http://127.0.0.1:${server.address().port}`;
   try {
     const raw = await fetch(`${base}/res/project.godot`);
     assert.equal(raw.status, 200);
     assert.equal(await raw.text(), "; recovered raw wins\n");
+    const firstDelivery = JSON.parse(readFileSync(servedManifest,"utf8").trim().split("\n")[0]);
+    assert.equal(firstDelivery.source,"recovered");
+    assert.equal(firstDelivery.sha256,createHash("sha256").update("; recovered raw wins\n").digest("hex"));
 
     const rawResource = await fetch(`${base}/res/images/a.tres?format=raw`);
     assert.equal(rawResource.status, 200);

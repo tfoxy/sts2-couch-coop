@@ -13,12 +13,14 @@ import GamepadAdvisory from "@/join/GamepadAdvisory.vue";
 import IosInstallOverlay from "@/join/IosInstallOverlay.vue";
 import { REPRO_UI_ENABLED } from "@/mirror/buildFlags";
 import { reproRecorder } from "@/mirror/reproRecorder";
+import { emitWarmAckTrace, warmAckTraceEnabled } from "@/mirror/warmAckTrace";
 import LatencyOverlay from "@/mirror/LatencyOverlay.vue";
 import ReproBadge from "@/mirror/ReproBadge.vue";
 import SettingsPanel from "@/mirror/SettingsPanel.vue";
 import MirrorConfirmButton from "@/mirror/MirrorConfirmButton.vue";
 import MirrorHandRaiseButton from "@/mirror/MirrorHandRaiseButton.vue";
 import MirrorView from "@/mirror/MirrorView.vue";
+import { rendererComparisonViewRevision } from "@/mirror/rendererComparison";
 import StaticBackground from "@/mirror/StaticBackground.vue";
 import { designPx } from "@/mirror/stageFit";
 import {
@@ -287,7 +289,7 @@ const stageBackground = computed<BrowserStaticBackgroundDescriptor | null>(() =>
 // (a seat that has opened but not yet spoken) leaves the gate held. A seat view whose scene the host has not
 // described yet is not resolved either — its picture is still coming, and resolving on "no picture" would start
 // the atlas walk under a Neow still that is about to appear.
-function resolveInitialView(enabled: boolean = mirrorSettings.staticBgEnabled): void {
+function resolveInitialView(enabled: boolean = staticBgWireValue(mirrorSettings)): void {
   if (!imagePrefetchGate || unmounted) return;
   const session = activeClient.status === "connected" ? activeClient.session : null;
   if (!session) return;
@@ -902,7 +904,7 @@ revision.value = activeClient.state.revision;
 // Turning static backgrounds off removes the Neow suppression condition even when no new session envelope is
 // needed. Re-read only the active, connected session; a dropped or torn-down connection must leave the gate held.
 watch(
-  () => mirrorSettings.staticBgEnabled,
+  () => staticBgWireValue(mirrorSettings),
   (enabled) => resolveInitialView(enabled)
 );
 sceneAblation.setStateCounts(() => ({
@@ -1110,7 +1112,11 @@ const sendInput = (msg: MirrorInputMessage) => activeClient.sendInput(msg);
 const sendAction = (msg: MirrorActionMessage) => {
   activeClient.sendAction(msg);
 };
-const sendSceneAck = () => activeClient.sendSceneAck();
+const sendSceneAck = () => {
+  if (warmAckTraceEnabled()) emitWarmAckTrace({ kind: "app-ack-proxy", revision: activeClient.state.revision,
+    activeClientId: activeClient.diagnosticTraceId ?? null });
+  activeClient.sendSceneAck();
+};
 
 // R19 WP5 — SCROLL AUTHORITY. Same stable-proxy rule, and for the same reason as the action channel: the surface
 // being scrolled belongs to whichever game process this viewer is currently watching. Returns the requestId so the
@@ -1140,7 +1146,8 @@ watch(
 // Watching the value list fires exactly when one of the fields changes; the client no-ops if the socket isn't
 // open yet (values are held; the on-connect push in makeClient carries them once connected).
 watch(
-  () => SERVER_SETTING_KEYS.map((key) => mirrorSettings[key]),
+  () => SERVER_SETTING_KEYS.map((key) => key === "staticBgEnabled"
+    ? staticBgWireValue(mirrorSettings) : mirrorSettings[key]),
   () => {
     if (joined.value || directView.value) {
       pushServerSettings(activeClient);
@@ -1149,7 +1156,7 @@ watch(
 );
 // …and a seat viewer's `staticBg` flip reaches the gated HOST socket as well, alone (see syncHostStaticBg).
 watch(
-  () => mirrorSettings.staticBgEnabled,
+  () => staticBgWireValue(mirrorSettings),
   () => syncHostStaticBg()
 );
 
@@ -1498,6 +1505,7 @@ onBeforeUnmount(() => {
   >
     <MirrorView
       v-if="showScene"
+      :key="rendererComparisonViewRevision"
       :state="mirrorState"
       :revision="revision"
       :send-input="sendInput"

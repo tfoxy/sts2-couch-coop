@@ -140,3 +140,60 @@ test("the shared validator accepts direct-canvas bridge evidence and rejects mal
     assert.throws(() => runValidator(malformed), /Command failed|instanceId/);
   } finally { rmSync(dir, { recursive: true, force: true }); }
 });
+
+test("scoped warm-cache decode evidence remains explicitly outside perf-report/1", { skip }, () => {
+  const decode = {
+    count: null,
+    totalMs: null,
+    maxMs: null,
+    codecRuns: null,
+    codecMs: null,
+    distinctImages: null,
+    redecodeCount: null,
+    redecodeMs: null,
+    inRasterCount: null,
+    inRasterMs: null,
+    cacheFamily: "unknown",
+    imagesExpected: true,
+    provenance: "trace-unmeasured",
+    source: "cc.debug trace",
+    codecSource: null,
+    unmeasuredReason: "no canonical image-decode events in a warm-cache trace window",
+  };
+  const runs = [syntheticRun({ decode }), syntheticRun({ decode })];
+  const report = buildPerfReport({
+    runs,
+    failures: [],
+    env: syntheticEnv({ label: "warm-cache-device-contract" }),
+    params: syntheticParams(),
+    artifacts: syntheticArtifacts(),
+    scenario: "warm-cache-decode-unmeasured",
+    warmups: 1,
+  });
+  assert.equal(report.metrics.decode.count, null);
+  assert.equal(report.metrics.decode.provenance, "trace-unmeasured");
+  assert.ok(report.metrics.contentUpdateHz > 0);
+  assert.ok(report.metrics.presented.nonEmptyRatio > 0);
+  assert.ok(report.metrics.cpu.totalCpuMs > 0);
+
+  // perf-report/1 has no nullable/unmeasured decode representation. The phone
+  // bench keeps this as an explicit local extension and must not silently pass
+  // it off as a conforming shared report.
+  report.params.decodeAdmission = {
+    status: "unmeasured",
+    provenance: "trace-unmeasured",
+    reason: decode.unmeasuredReason,
+    repeats: 2,
+  };
+  report.schema = "couchcoop-phone-perf-report/1";
+  assert.notEqual(report.schema, "perf-report/1");
+
+  const dir = mkdtempSync(join(tmpdir(), "perf-report-warm-cache-"));
+  try {
+    const file = join(dir, "report.json");
+    writeFileSync(file, `${JSON.stringify(report, null, 2)}\n`);
+    assert.throws(() => runValidator(file), /Command failed|finite number|provenance/);
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+  }
+});

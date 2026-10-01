@@ -183,6 +183,22 @@ test("medianMetrics: a required metric absent in every repeat throws (no mislead
   assert.throws(() => medianMetrics(runs), /contentUpdateHz/);
 });
 
+test("medianMetrics: scoped warm-cache decode absence stays null while required metrics survive", () => {
+  const decode = {
+    source: null, count: null, totalMs: null, maxMs: null, codecSource: null, codecRuns: null,
+    codecMs: null, distinctImages: null, redecodeCount: null, redecodeMs: null,
+    inRasterCount: null, inRasterMs: null, imageKey: null, cacheFamily: "unknown",
+    imagesExpected: true, provenance: "trace-unmeasured",
+    unmeasuredReason: "no canonical image-decode events in the marker window",
+  };
+  const metrics = medianMetrics([syntheticRun({ decode }), syntheticRun({ decode })]);
+  assert.equal(metrics.decode.provenance, "trace-unmeasured");
+  assert.equal(metrics.decode.count, null);
+  assert.equal(metrics.decode.codecMs, null);
+  assert.ok(metrics.contentUpdateHz > 0);
+  assert.ok(metrics.presented.sampleHits > 0);
+});
+
 test("canvasTextureBridgeWindow: only one positive renderer lifetime can supply bridge evidence", () => {
   const before = { instance: { id: 7 }, sampledAtMs: 10, pageDecodes: 1, pageDecodeFailed: 0, pageDecodeMs: 2, pageOwnedUploads: 1, pageElementUploads: 0, uploads: 1, uploadMs: 1 };
   const after = { instance: { id: 7 }, sampledAtMs: 30, pageDecodes: 3, pageDecodeFailed: 1, pageDecodeMs: 6, pageOwnedUploads: 3, pageElementUploads: 0, uploads: 3, uploadMs: 4 };

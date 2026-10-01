@@ -5,8 +5,11 @@ import { translate as t } from "@/i18n";
 import { REPRO_UI_ENABLED } from "@/mirror/buildFlags";
 import type { MirrorLatency } from "@/mirror/mirrorClient";
 import SettingsHelpTip from "@/mirror/SettingsHelpTip.vue";
+import { applyViewerStage, rendererRuntimeStatus } from "@/mirror/rendererComparison";
+import { setComparisonStageBackend } from "@/mirror/rendererFactory";
 import {
   EFFECT_MODES,
+  effectiveMirrorRenderSettings,
   mirrorSettings,
   persistMirrorSetting,
   QUALITY_CHOICES,
@@ -70,6 +73,21 @@ const props = withDefaults(
 );
 
 const settings = mirrorSettings;
+const canvasActive = computed(() => settings.runtimeStage === "canvas");
+const fallbackReason = computed(() => settings.stage === "canvas" && settings.runtimeStage === "dom"
+  ? rendererRuntimeStatus.reason : null);
+
+function selectStage(value: "dom" | "canvas"): void {
+  settings.stage = value;
+  settings.runtimeStage = value;
+  persistMirrorSetting("stage", value);
+  setComparisonStageBackend(value);
+  applyViewerStage(value);
+}
+
+const stage = computed<"dom" | "canvas">({ get: () => settings.stage, set: selectStage });
+
+function retryCanvas(): void { selectStage("canvas"); }
 
 // A two-way binding for a SAVED field: writes the store (as v-model always did) and remembers the new value for
 // the next page load. Deliberately a computed SETTER rather than a `@change` handler or a watch on the store: the
@@ -91,8 +109,8 @@ function bind<K extends PersistedSettingKey>(key: K): WritableComputedRef<Mirror
 // who then changes one of those rows sees the quality they picked stay put — it is this device's tier, not a
 // summary of the rows.
 const quality = computed<QualityChoice>({
-  get: () => settings.quality,
-  set: (value) => applyQualityChoice(settings, value)
+  get: () => effectiveMirrorRenderSettings(settings).quality,
+  set: (value) => { if (!canvasActive.value) applyQualityChoice(settings, value); }
 });
 
 // The rung auto-detection makes of THIS device, for the Auto entry's label ("Auto (Medium)"). Read once —
@@ -105,9 +123,18 @@ function qualityLabel(choice: QualityChoice): string {
     : t(QUALITY_TIER_LABELS[choice]);
 }
 
-const shaderMode = bind("shaderMode");
-const particleMode = bind("particleMode");
-const staticBgEnabled = bind("staticBgEnabled");
+const shaderMode = computed<EffectMode>({
+  get: () => effectiveMirrorRenderSettings(settings).shaderMode,
+  set: (value) => { if (!canvasActive.value) { settings.shaderMode = value; persistMirrorSetting("shaderMode", value); } }
+});
+const particleMode = computed<EffectMode>({
+  get: () => effectiveMirrorRenderSettings(settings).particleMode,
+  set: (value) => { if (!canvasActive.value) { settings.particleMode = value; persistMirrorSetting("particleMode", value); } }
+});
+const staticBgEnabled = computed<boolean>({
+  get: () => effectiveMirrorRenderSettings(settings).staticBgEnabled,
+  set: (value) => { if (!canvasActive.value) { settings.staticBgEnabled = value; persistMirrorSetting("staticBgEnabled", value); } }
+});
 const stretchEnabled = bind("stretchEnabled");
 const raiseHeldCard = bind("raiseHeldCard");
 const unfocusOnRelease = bind("unfocusOnRelease");
@@ -161,6 +188,7 @@ const hostPerfNote = computed(() =>
 // ---------------------------------------------------------------------------------------------------------
 
 type HelpId =
+  | "stage"
   | "quality"
   | "shaders"
   | "particles"
@@ -186,6 +214,7 @@ type HelpId =
 // One description per row: what it does, and what it trades (performance vs fidelity). Kept in ONE object so a
 // row added without help text is obvious at review time.
 const HELP_KEYS: Record<HelpId, import("@/i18n").MessageKey> = {
+  stage: "settings.help.stage",
   quality: "settings.help.quality",
   shaders: "settings.help.shaders", particles: "settings.help.particles", staticBg: "settings.help.staticBg",
   stretch: "settings.help.stretch", raiseCard: "settings.help.raiseCard", unfocus: "settings.help.unfocus",
@@ -280,12 +309,25 @@ onBeforeUnmount(() => setHelpListeners(false));
 
       <div class="settings-group">
         <p class="settings-group-label">{{ t('settings.thisDevice') }}</p>
-        <!-- FIRST in the group on purpose: it is the one lever a player reaches for, and picking a rung sets the
-             three rows below it (shaders, particles, static background) to match. -->
+        <div class="settings-item">
+          <label class="settings-row settings-row-select">
+            <span>{{ t('settings.stage') }}</span>
+            <select v-model="stage" data-testid="mirror-stage">
+              <option value="dom">{{ t('settings.stageDom') }}</option>
+              <option value="canvas">{{ t('settings.stageCanvas') }}</option>
+            </select>
+          </label>
+          <SettingsHelpTip v-bind="help('stage', t('settings.stage'))" />
+        </div>
+        <p v-if="fallbackReason" role="status" data-testid="mirror-stage-fallback">
+          {{ t('settings.stageFallback', { reason: fallbackReason }) }}
+          <button type="button" @click="retryCanvas">{{ t('boot.tryAgain') }}</button>
+        </p>
+        <!-- Quality sits below Stage and above the render rows whose preset it controls. -->
         <div class="settings-item">
           <label class="settings-row settings-row-select">
             <span>{{ t('settings.quality') }}</span>
-            <select v-model="quality" data-testid="mirror-quality">
+            <select v-model="quality" :disabled="canvasActive" data-testid="mirror-quality">
               <option v-for="choice in QUALITY_CHOICES" :key="choice" :value="choice">{{ qualityLabel(choice) }}</option>
             </select>
           </label>
@@ -294,7 +336,7 @@ onBeforeUnmount(() => setHelpListeners(false));
         <div class="settings-item">
           <label class="settings-row settings-row-select">
             <span>{{ t('settings.shaders') }}</span>
-            <select v-model="shaderMode" data-testid="mirror-shader-mode">
+            <select v-model="shaderMode" :disabled="canvasActive" data-testid="mirror-shader-mode">
               <option v-for="mode in EFFECT_MODES" :key="mode" :value="mode">{{ t(EFFECT_MODE_LABELS[mode]) }}</option>
             </select>
           </label>
@@ -303,7 +345,7 @@ onBeforeUnmount(() => setHelpListeners(false));
         <div class="settings-item">
           <label class="settings-row settings-row-select">
             <span>{{ t('settings.particles') }}</span>
-            <select v-model="particleMode" data-testid="mirror-particle-mode">
+            <select v-model="particleMode" :disabled="canvasActive" data-testid="mirror-particle-mode">
               <option v-for="mode in EFFECT_MODES" :key="mode" :value="mode">{{ t(EFFECT_MODE_LABELS[mode]) }}</option>
             </select>
           </label>
@@ -311,7 +353,7 @@ onBeforeUnmount(() => setHelpListeners(false));
         </div>
         <div class="settings-item">
           <label class="settings-row">
-            <input type="checkbox" v-model="staticBgEnabled" data-testid="mirror-static-bg" />
+            <input type="checkbox" v-model="staticBgEnabled" :disabled="canvasActive" data-testid="mirror-static-bg" />
             <span>{{ t('settings.staticBg') }}</span>
           </label>
           <SettingsHelpTip v-bind="help('staticBg', t('settings.staticBg'))" />

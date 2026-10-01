@@ -93,10 +93,87 @@ function byHolder(trace) {
         list = [];
         rows.set(h.id, list);
       }
-      list.push({ t: frame.t, f: frame.f, ...h });
+      list.push({ t: frame.t, f: frame.f, stage: frame.stage, presentEpoch: frame.presentEpoch, ...h });
     }
   }
   return rows;
+}
+
+const MATCH_PX = CORRECTION_PX;
+
+function samePoint(a, x, y, tolerance = MATCH_PX) {
+  return Array.isArray(a) && Math.hypot(a[4] - x, a[5] - y) <= tolerance;
+}
+
+/** The log is tour-scoped by the caller; bind a sampled endpoint to its exact holder/endpoint row. */
+function matchingLandingRows(landingRows, sample) {
+  return landingRows.filter((row) => row.id === sample.id &&
+    (row.name === undefined || row.name === sample.name) &&
+    samePoint(row.endpointGame, sample.ex, sample.ey));
+}
+
+function successorExplainsRest(oldRows, landingRows, left, right, settled) {
+  for (const old of oldRows) {
+    if (old.closedBy !== "superseded" || old.supersededBy === null || old.supersededBy === undefined) continue;
+    const successor = landingRows.find((row) => row.id === old.id && row.seq === old.supersededBy);
+    if (!successor || successor.armAt < left.t || successor.armAt > right.t) continue;
+    const endpoint = successor.endpointGame;
+    if (!Array.isArray(endpoint) || (right.ex != null && !samePoint(endpoint, right.ex, right.ey))) continue;
+    // Reconstruct from the successor's game-space endpoint. Never let a wrong endpointDrawn measurement
+    // self-confirm the same wrong place; only the explicitly sampled field contract supplies the x offset.
+    const mode = right.fm;
+    const factor = settled.f ?? right.f ?? 1;
+    const shift = mode === 1 ? fieldDxAtOriginX(endpoint[4], factor) : settled.sd;
+    if (Math.hypot(settled.dx - (endpoint[4] + shift),
+      settled.dy - (endpoint[5] + settled.rd)) <= MATCH_PX) return true;
+  }
+  return false;
+}
+
+function focusCatchupExplainsRest(oldRows, rows, handoffIndex, restAt, settled, spreadFactor) {
+  for (const old of oldRows) {
+    if (old.closedBy !== "timeout" || old.supersededBy !== null || !Array.isArray(old.endpointDrawn)) continue;
+    const oldGame = old.endpointGame;
+    if (!Array.isArray(oldGame)) continue;
+    const end = Math.min(restAt, rows.length - 1);
+    for (let focus = handoffIndex - 1; focus <= end; focus++) {
+      const current = rows[focus], previous = rows[focus - 1];
+      if (!current || current.z !== 1 || !Number.isFinite(previous?.z) || previous.z === 1) continue;
+      if (current.t < old.armAt || current.t > old.settleAt) continue;
+      // The old endpoint must still own a sampled live frame after focus changes the game's streamed pose.
+      let held = -1;
+      for (let j = focus; j <= end; j++) {
+        const row = rows[j];
+        if (row.z !== 1 || !row.live || row.t > old.settleAt ||
+            Math.hypot(row.gx - oldGame[4], row.gy - oldGame[5]) <= MATCH_PX) continue;
+        const expectedX = oldGame[4] + (row.fm === 1 ? fieldDxAtOriginX(oldGame[4], row.f ?? spreadFactor) : row.sd);
+        const expectedY = oldGame[5] + row.rd;
+        if (Math.hypot(row.dx - expectedX, row.dy - expectedY) <= MATCH_PX) { held = j; break; }
+      }
+      if (held < 0) continue;
+      // Require an actual adopted focus pose: focus z-order, a changed lift, game/drawn agreement, and the
+      // timeout row's producer pose must all identify the same destination.
+      for (let j = held + 1; j <= end; j++) {
+        const row = rows[j];
+        if (row.z !== 1 || row.live) continue;
+        // The first non-live focus row that publishes a changed pose or lift is the adoption attempt. If
+        // that committed sample is wrong, a later correction cannot retroactively make the hand-off clean.
+        const oldShift = rows[held].fm === 1
+          ? fieldDxAtOriginX(oldGame[4], row.f ?? spreadFactor)
+          : rows[held].sd;
+        const stillHeld = Math.hypot(row.dx - (oldGame[4] + oldShift),
+          row.dy - (oldGame[5] + row.rd)) <= MATCH_PX;
+        const adoptionAttempt = Math.abs(row.rd - rows[held].rd) > MATCH_PX || !stillHeld;
+        if (!adoptionAttempt) continue;
+        const shift = row.fm === 1 ? fieldDxAtOriginX(row.gx, row.f ?? spreadFactor) : row.sd;
+        return Math.hypot(row.dx - (row.gx + shift), row.dy - (row.gy + row.rd)) <= MATCH_PX &&
+          Math.abs(row.rd - rows[held].rd) > MATCH_PX &&
+          samePoint(old.settledGame, row.gx, row.gy) &&
+          Math.hypot(settled.dx - row.dx, settled.dy - row.dy) <= STILL_PX;
+      }
+    }
+  }
+  return false;
 }
 
 /**
@@ -106,18 +183,55 @@ function byHolder(trace) {
  * Stops at the next live channel: a card the client starts replaying again is no longer resting from THIS
  * landing, and reading past it would score the next motion's endpoint against this one's.
  */
-export function findRest(rows, from, landingAtMs) {
+function findRestEvidence(rows, from, landingAtMs) {
   let previous = null;
   for (let j = from; j < rows.length; j++) {
     const row = rows[j];
     if (row.live) return -1;
     if (row.t - landingAtMs > SETTLE_DEADLINE_MS) return -1;
+    if (row.stage === "canvas") {
+      if (!Number.isSafeInteger(row.presentEpoch) || row.presentEpoch < 0) return -1;
+      // A trace tick can run while the canvas is still showing the same committed picture. Such
+      // duplicate reads are not two observations of rest; only compare poses from distinct commits.
+      if (previous !== null && row.presentEpoch === previous.presentEpoch) continue;
+      if (previous !== null && row.presentEpoch < previous.presentEpoch) return -1;
+    }
     if (previous !== null && Math.hypot(row.dx - previous.dx, row.dy - previous.dy) <= STILL_PX) {
-      return j;
+      return {
+        index: j,
+        commitPair: row.stage === "canvas" && previous.stage === "canvas"
+          ? { firstEpoch: previous.presentEpoch, settledEpoch: row.presentEpoch }
+          : null
+      };
     }
     previous = row;
   }
   return -1;
+}
+
+export function findRest(rows, from, landingAtMs) {
+  const result = findRestEvidence(rows, from, landingAtMs);
+  return result === -1 ? -1 : result.index;
+}
+
+function invalidCanvasFrameIdentities(trace) {
+  const errors = [];
+  let previousEpoch = null;
+  for (let i = 0; i < trace.length; i++) {
+    const frame = trace[i];
+    if (frame.stage !== "canvas") continue;
+    const epoch = frame.presentEpoch;
+    if (!Number.isSafeInteger(epoch) || epoch < 0) {
+      errors.push({ frame: i, t: frame.t, presentEpoch: epoch ?? null, reason: "missing or invalid epoch" });
+      continue;
+    }
+    if (previousEpoch !== null && epoch < previousEpoch) {
+      errors.push({ frame: i, t: frame.t, presentEpoch: epoch, previousEpoch, reason: "epoch regressed" });
+      continue;
+    }
+    previousEpoch = epoch;
+  }
+  return errors;
 }
 
 /**
@@ -137,13 +251,18 @@ export function findRest(rows, from, landingAtMs) {
  *   * `outOfFan` — the game had reparented the holder off the hand container at one end of the hand-off, so
  *     what it was carrying is not a fan landing (see the guard's own note).
  */
-export function scoreCorrections(trace) {
+export function scoreCorrections(trace, landingRows = []) {
   const holders = byHolder(trace);
   const corrections = [];
   let confirmedLandings = 0;
   let unpredicted = 0;
   let unsettled = 0;
   let outOfFan = 0;
+  let superseded = 0;
+  let focusCatchups = 0;
+  let distinctCanvasRestPairs = 0;
+  const canvasRestPairEvidence = [];
+  const invalidFrameIdentity = invalidCanvasFrameIdentities(trace);
 
   for (const [id, rows] of holders) {
     for (let i = 1; i < rows.length; i++) {
@@ -154,12 +273,22 @@ export function scoreCorrections(trace) {
         unpredicted++;
         continue;
       }
-      const restAt = findRest(rows, i, landing.t);
-      if (restAt < 0) {
+      const rest = findRestEvidence(rows, i, landing.t);
+      if (rest === -1) {
         unsettled++;
         continue;
       }
+      const restAt = rest.index;
       const settled = rows[restAt];
+      if (rest.commitPair !== null) {
+        distinctCanvasRestPairs++;
+        canvasRestPairEvidence.push({
+          id,
+          handoffAtMs: landing.t,
+          settledAfterMs: Math.round(settled.t - landing.t),
+          ...rest.commitPair
+        });
+      }
       // OUT OF THE FAN AT EITHER END, and therefore not a fan card's landing at all. `HandPoseSample.inFan`
       // states the contract this enforces: the game reparents a holder onto the hand ROOT while its card is
       // dragged or selected, and such a holder "keeps the game's pose exactly: it is neither raised nor
@@ -171,6 +300,16 @@ export function scoreCorrections(trace) {
         continue;
       }
       const spreadFactor = settled.f ?? landing.f ?? 1;
+      const logged = matchingLandingRows(landingRows, landing).filter((row) =>
+        row.armAt <= landing.t && row.settleAt >= landing.t);
+      if (successorExplainsRest(logged, landingRows, landing, rows[i], settled)) {
+        superseded++;
+        continue;
+      }
+      if (focusCatchupExplainsRest(logged, rows, i, restAt, settled, spreadFactor)) {
+        focusCatchups++;
+        continue;
+      }
       const want = predictedDrawn(landing, settled, spreadFactor);
       const dx = settled.dx - want.x;
       const dy = settled.dy - want.y;
@@ -246,5 +385,10 @@ export function scoreCorrections(trace) {
   corrections.unpredicted = unpredicted;
   corrections.unsettled = unsettled;
   corrections.outOfFan = outOfFan;
+  corrections.superseded = superseded;
+  corrections.focusCatchups = focusCatchups;
+  corrections.distinctCanvasRestPairs = distinctCanvasRestPairs;
+  corrections.canvasRestPairEvidence = canvasRestPairEvidence;
+  corrections.invalidFrameIdentity = invalidFrameIdentity;
   return corrections;
 }

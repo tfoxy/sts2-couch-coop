@@ -22,23 +22,92 @@
 // a headed/GPU run where you want them included.
 
 import { createRequire } from "node:module";
+import { createHash } from "node:crypto";
+import { execFileSync } from "node:child_process";
 import { createServer } from "node:http";
-import { readFileSync, readdirSync, statSync, mkdirSync, writeFileSync, createWriteStream } from "node:fs";
+import { appendFileSync, readFileSync, readdirSync, statSync, readlinkSync, realpathSync, mkdirSync, writeFileSync, createWriteStream } from "node:fs";
 import { basename, dirname, relative, resolve } from "node:path";
 import { startProcMemSampler, formatProcMem, procMemMb } from "./lib/proc-mem.mjs";
 import { ACTIVE_TRACE_WINDOW, traceWindowForOptions, markerWindowOrError } from "./bench-trace-lifecycle.mjs";
 import { resolveAssetRequest } from "./serve-res-root.mjs";
+import { parseExtraChromeArgs } from "./lib/chrome-args.mjs";
+import { emitBenchResult } from "./lib/bench-result-file.mjs";
+import { buildUntracedReport } from "./lib/untraced-report.mjs";
+import { parseStat, clockTicksPerSecond } from "./lib/process-sampler.mjs";
 import { BENCH_ASSET_FAMILIES, isBenchAssetRoute } from "./lib/bench-asset-route.mjs";
 import { effectiveConnectPageUrl, selectConnectBenchPageIndex } from "./lib/connect-bench-page.mjs";
+import { selectBlankWebViewPageIndex } from "./lib/connect-bench-page.mjs";
 import { computeCpuBlock } from "./lib/trace-cpu-block.mjs";
 import { checkPresence } from "./lib/screenshot-presence.mjs";
+import { stepCanvasParityAnimationInPage } from "./lib/canvas-parity-animation.mjs";
+import { createCampaignPageAbort, installCampaignContextLossHook, selectBenchInitScriptTarget } from "./lib/bench-campaign-abort.mjs";
 import { traceDecodeEvidenceError } from "./lib/bridge-trace-evidence.mjs";
+import { profileTimingHealth, alignProfileSamples } from "./lib/profile-timing-health.mjs";
+import { inspectRawTrace } from "./validate-gpu-attribution-trace.mjs";
 import { buildGeometry, buildPerfReport, canvasTextureBridgeWindow, sameGeometry } from "./lib/perf-report-envelope.mjs";
 import { requireReproHeader } from "./lib/repro-recording.mjs";
+import { replaySession } from "./lib/replay-session.mjs";
 import { RECOVERED_RESOURCE_ROOT, REPO_ROOT } from "./lib/repo-layout.mjs";
+import { capturePresentationSequence } from "./lib/presentation-captures.mjs";
+import { installWitnessDocumentNonce, requireReadyWitnessState, snapshotPreIdleWitnessInPage, runPreIdleWitness } from "./lib/pre-idle-witness.mjs";
+import { PostIdleWitnessError, postIdleRejectedRepeats, runPostIdleWitness } from "./lib/post-idle-witness.mjs";
+import { digestRecordedMessages, installActiveWindowBoundary, validateActiveWindowBoundary } from "./lib/active-window-boundary.mjs";
+import { ActiveWindowWitnessError, activeWindowRejectedRepeats, runActiveWindowWitness,
+  validateActiveVisualReference } from "./lib/active-window-witness.mjs";
+import { replayDiagnosticClock, startupTimingQueryError } from "./lib/active-replay-options.mjs";
+import { validatePinnedReplayShot } from "./lib/pinned-replay-shot.mjs";
+import { installBusyStartupTimeline, inspectBusyStartupTimeline, summarizeCardAtlasIngestion } from "./lib/busy-startup-timeline.mjs";
+import { inspectStartupRecordingPin, installStartupResourceReceipt, inspectStartupResources, inspectStartupWorkload, inspectStartupFinalState,
+  inspectStartupProcessAndTrace } from "./lib/startup-observation.mjs";
 
 const require = createRequire(new URL("../frontend/package.json", import.meta.url));
 const { chromium } = require("@playwright/test");
+const PROC_HZ = clockTicksPerSecond();
+function procThreadStartIdentity(pid, tid) {
+  try {
+    const stat = readFileSync(`/proc/${pid}/task/${tid}/stat`, "utf8");
+    const rest = stat.slice(stat.lastIndexOf(")") + 2).trim().split(/\s+/);
+    return rest[19] ?? null; // field 22, after PID and parenthesized command
+  } catch { return null; }
+}
+async function captureBrowserProcessStarts(context) {
+  try {
+    const session = await context.browser()?.newBrowserCDPSession();
+    if (!session) return null;
+    try {
+      const info = await session.send("SystemInfo.getProcessInfo");
+      const rows = [];
+      for (const process of info.processInfo ?? []) {
+        const pid = process.id;
+        if (!Number.isInteger(pid)) continue;
+        let processStat;
+        let processReadStartMs, processReadEndMs;
+        try {
+          processReadStartMs = performance.now();
+          processStat = parseStat(readFileSync(`/proc/${pid}/stat`,"utf8"));
+          processReadEndMs = performance.now();
+        } catch { continue; }
+        let tids;
+        try { tids = readdirSync(`/proc/${pid}/task`).map(Number); } catch { continue; }
+        for (const tid of tids) {
+          let threadStat = null, threadReadStartMs = null, threadReadEndMs = null;
+          try {
+            threadReadStartMs = performance.now();
+            threadStat = parseStat(readFileSync(`/proc/${pid}/task/${tid}/stat`,"utf8"));
+            threadReadEndMs = performance.now();
+          } catch {}
+          rows.push({pid,tid,role:process.type,
+            startIdentity:threadStat ? String(threadStat.startTicks) : null,
+            processStartIdentity:String(processStat.startTicks),
+            processCpuTicks:processStat.cpuTicks,cpuTicks:threadStat?.cpuTicks ?? null,
+            processReadStartMs,processReadEndMs,threadReadStartMs,threadReadEndMs,
+            sampledEpochUs:(performance.timeOrigin+performance.now())*1000});
+        }
+      }
+      return rows;
+    } finally { await session.detach().catch(() => {}); }
+  } catch { return null; }
+}
 
 // ---------------------------------------------------------------------------------------------------------
 // args
@@ -78,30 +147,116 @@ const DEFAULT_SERVE_PORT = 8123;
 // Browser callbacks passed directly to Playwright. Keep the marker window independent of renderer internals:
 // the harness only resets its own observations and brackets the page clock for trace correlation.
 function beginActiveMarkerWindowInPage(input) {
-  if (Array.isArray(window.__benchLongTasks)) window.__benchLongTasks.length = 0;
-  if (Array.isArray(window.__benchLoaf)) window.__benchLoaf.length = 0;
-  if (Array.isArray(window.__benchTicks)) window.__benchTicks.length = 0;
-  if (Array.isArray(window.__benchFrameGaps)) window.__benchFrameGaps.length = 0;
-  if (Array.isArray(window.__benchSceneAckLatencies)) window.__benchSceneAckLatencies.length = 0;
-  if (Array.isArray(window.__benchSceneAckPending)) window.__benchSceneAckPending.length = 0;
+  if (!input.boundaryOwned) {
+    if (Array.isArray(window.__benchLongTasks)) window.__benchLongTasks.length = 0;
+    if (Array.isArray(window.__benchLoaf)) window.__benchLoaf.length = 0;
+    if (Array.isArray(window.__benchTicks)) window.__benchTicks.length = 0;
+    if (Array.isArray(window.__benchFrameGaps)) window.__benchFrameGaps.length = 0;
+    if (Array.isArray(window.__benchSceneAckLatencies)) window.__benchSceneAckLatencies.length = 0;
+    if (Array.isArray(window.__benchSceneAckPending)) window.__benchSceneAckPending.length = 0;
+    window.__benchSceneDeliveries = 0;
+  }
   if (input.marker) console.timeStamp(input.marker);
+  const markerEpochUs = (performance.timeOrigin + performance.now()) * 1000;
   const stats = typeof window.__mirrorCanvasStats === "function" ? window.__mirrorCanvasStats() : null;
-  return { nodes: document.querySelectorAll(".mirror-node").length, canvasStats: stats, sampledAtMs: performance.now() };
+  const renderer = typeof window.__mirrorRendererDiagnostics === "function" ? window.__mirrorRendererDiagnostics() : null;
+  const staticBg = typeof window.__mirrorStaticBg === "function" ? window.__mirrorStaticBg() : null;
+  const gl = document.querySelector("canvas.mirror-canvas-stage")?.getContext("webgl2") ?? null;
+  const a = gl?.getContextAttributes?.() ?? null;
+  const debug = gl?.getExtension?.("WEBGL_debug_renderer_info") ?? null;
+  const gpuIdentity = gl ? {renderer:gl.getParameter(debug?.UNMASKED_RENDERER_WEBGL ?? gl.RENDERER),
+    vendor:gl.getParameter(debug?.UNMASKED_VENDOR_WEBGL ?? gl.VENDOR),
+    unmasked:!!debug,source:"actual mirror WebGL2 context at active marker"} : null;
+  const timer = gl?.getExtension?.("EXT_disjoint_timer_query_webgl2") ?? null;
+  const gpuTimerCapability = gl ? { context: "actual mirror WebGL2 canvas at active marker",
+    extension: !!timer, disjoint: timer ? !!gl.getParameter(timer.GPU_DISJOINT_EXT) : null,
+    elapsedNs: null, reason: "no timer interval submitted through the wgpu-owned context" } : null;
+  const contextAttributes = a ? { alpha: a.alpha, premultipliedAlpha: a.premultipliedAlpha, antialias: a.antialias } : null;
+  return { nodes: document.querySelectorAll(".mirror-node").length, canvasStats: stats, renderer, staticBg, contextAttributes,
+    installOverlayPresent: document.querySelector('[data-testid="install-button"]') !== null,
+    sampledAtMs: performance.now(), timeOriginMs: performance.timeOrigin, markerEpochUs,gpuIdentity,gpuTimerCapability,
+    replayElapsedMs:Number.isFinite(window.__benchWs?._recordedStartMs)
+      ? performance.now()-window.__benchWs._recordedStartMs : null,
+    rustGpuTimerCapability: window.__mirrorRustGpuTimerCapability ?? null,
+    replayDelivered: window.__benchSceneDeliveries ?? null,
+    replayIndex: window.__benchWs?._i ?? null,
+    replayCount: window.__benchWs?._msgs?.length ?? null };
 }
 
 function endActiveMarkerWindowInPage(input) {
   if (input.marker) console.timeStamp(input.marker);
+  const markerEpochUs = (performance.timeOrigin + performance.now()) * 1000;
   const stats = typeof window.__mirrorCanvasStats === "function" ? window.__mirrorCanvasStats() : null;
-  return { atMs: performance.now(), canvasStats: stats };
+  const renderer = typeof window.__mirrorRendererDiagnostics === "function" ? window.__mirrorRendererDiagnostics() : null;
+  const staticBg = typeof window.__mirrorStaticBg === "function" ? window.__mirrorStaticBg() : null;
+  const gl = document.querySelector("canvas.mirror-canvas-stage")?.getContext("webgl2") ?? null;
+  const a = gl?.getContextAttributes?.() ?? null;
+  const contextAttributes = a ? { alpha: a.alpha, premultipliedAlpha: a.premultipliedAlpha, antialias: a.antialias } : null;
+  return { atMs: performance.now(), timeOriginMs: performance.timeOrigin, canvasStats: stats, renderer, staticBg,
+    contextAttributes, installOverlayPresent: document.querySelector('[data-testid="install-button"]') !== null,
+    markerEpochUs, replayDelivered: window.__benchSceneDeliveries ?? null,
+    replayElapsedMs:Number.isFinite(window.__benchWs?._recordedStartMs)
+      ? performance.now()-window.__benchWs._recordedStartMs : null,
+    replayIndex: window.__benchWs?._i ?? null,
+    replayCount: window.__benchWs?._msgs?.length ?? null };
 }
 
 function idleMarkerWindowInPage(input) {
-  if (input.label === "cc-idle-start" && Array.isArray(window.__benchFrameGaps)) window.__benchFrameGaps.length = 0;
+  if (input.label === "cc-idle-start" && input.witness) {
+    const current = window.__mirrorRendererDiagnostics?.() ?? null;
+    const expected = input.witness;
+    const context = window.__mirrorGlContextEvents?.() ?? null;
+    const differences = [];
+    const check = (field, observed, wanted) => {
+      if (!Object.is(observed, wanted)) differences.push({ field, observed, expected: wanted });
+    };
+    check("documentNonce", window.__benchDocumentNonce ?? null, expected.documentNonce);
+    check("url", location.href, expected.url);
+    check("visibility.state", document.visibilityState, "visible");
+    check("visibility.hidden", document.hidden, false);
+    check("viewport.width", innerWidth, expected.viewport.width);
+    check("viewport.height", innerHeight, expected.viewport.height);
+    check("viewport.dpr", devicePixelRatio, expected.viewport.dpr);
+    check("renderer.instance", current?.instance?.id ?? current?.instance ?? null, expected.renderer.instance);
+    check("renderer.backend", current?.backend ?? null, expected.renderer.backend);
+    check("renderer.revision", current?.frameIdentity?.revision ?? current?.admittedRevision ?? null,
+      expected.renderer.revision);
+    check("renderer.readiness", current?.readiness ?? null, "ready");
+    check("renderer.ready", current?.ready ?? null, true);
+    check("renderer.failure", current?.failure ?? null, null);
+    check("renderer.resources.pending", current?.resources?.pending ?? null, 0);
+    check("renderer.resources.failed", current?.resources?.failed ?? null, 0);
+    check("renderer.lifecycle.contextReady", current?.lifecycle?.contextReady ?? null, 1);
+    check("renderer.lifecycle.presentationValid", current?.lifecycle?.presentationValid ?? null, 1);
+    check("context.losses", context?.losses ?? null, 0);
+    check("context.creationErrors", context?.creationErrors ?? null, 0);
+    check("savedSettings", localStorage.getItem("couchcoop.mirrorSettings.v1"), expected.savedSettings);
+    check("renderer.effective.quality", current?.effective?.quality ?? null, expected.renderer.effective.quality);
+    check("renderer.effective.shaders", current?.effective?.shaders ?? null, "off");
+    check("renderer.effective.particles", current?.effective?.particles ?? null, "off");
+    if (differences.length) {
+      throw new Error(`pre-idle witness page changed before idle marker: ${JSON.stringify(differences)}`);
+    }
+  }
+  if (input.label === "cc-idle-start") {
+    if (Array.isArray(window.__benchFrameGaps)) window.__benchFrameGaps.length = 0;
+    if (Array.isArray(window.__benchSceneAckLatencies)) window.__benchSceneAckLatencies.length = 0;
+    if (Array.isArray(window.__benchSceneAckPending)) window.__benchSceneAckPending.length = 0;
+    window.__benchSceneDeliveries = 0;
+  }
   const at = performance.now();
   console.timeStamp(input.label);
   try { performance.mark(input.label); } catch { /* older engines */ }
-  if (input.label === "cc-idle-end") window.__benchIdleFrameGaps = [...(window.__benchFrameGaps ?? [])];
-  return at;
+  if (input.label === "cc-idle-end") {
+    window.__benchIdleFrameGaps = [...(window.__benchFrameGaps ?? [])];
+    window.__benchIdleSceneAcks = {
+      delivered: window.__benchSceneDeliveries ?? 0,
+      latencies: [...(window.__benchSceneAckLatencies ?? [])],
+      pending: (window.__benchSceneAckPending ?? []).length,
+    };
+  }
+  const staticBg = typeof window.__mirrorStaticBg === "function" ? window.__mirrorStaticBg() : null;
+  return { atMs: at, staticBg, installOverlayPresent: document.querySelector('[data-testid="install-button"]') !== null };
 }
 
 function parseArgs(argv) {
@@ -113,6 +268,10 @@ function parseArgs(argv) {
     flightLiveness: false,
     flightStillMs: FLIGHT_DEFAULT_MAX_STILL_MS,
     repeats: 5,
+    skipWarmup: false,
+    growthCycles: 1,
+    resourceWarmPass: false,
+    resourceWarmRequired: [],
     recording: process.env.COUCHCOOP_BENCH_RECORDING ?? null,
     effects: false,
     effectMode: null,
@@ -123,27 +282,58 @@ function parseArgs(argv) {
     traceGpu: false,
     hoverSweep: false,
     trace: null,
+    jsProfile: null,
     layers: false,
     layerDetail: false,
     census: false,
     churnCensus: false,
     noReportShot: false,
+    allowUnmeasuredDecode: false,
     handParity: false,
     quality: "high",
+    freshDefaults: false,
     cull: false,
     idle: null,
+    idleWarmup: 0,
+    textCacheProbe: false,
     idleShots: null,
+    presentationCaptures: null,
+    presentationCaptureCount: 3,
+    presentationCaptureGapMs: 1000,
+    preIdleWitness: null,
+    postIdleWitness: false,
+    activeWindowWitness: null,
+    startupObservationOut: null,
+    startupExpectedRecordingSha256: null,
+    startupExpectedDeliveryCount: null,
+    startupExpectedDeliveryHash: null,
+    activeVisualReferenceOut: null,
+    activeVisualReference: null,
+    activeSourceSha256: null,
+    busyStartupTimelineOut: null,
+    witnessBrowserPackage: null,
+    witnessBrowserPid: null,
+    preIdleWitnessTimeoutMs: 30_000,
     idleShotGapMs: 600,
     animAudit: false,
     animAuditOut: null,
     query: null,
+    drawListDump: null,
+    rustExcerptDir: null,
+    adbShot: null,
     resRoot: null,
     assetCacheRoot: null,
     gpu: "auto",
+    browserExecutable: null,
+    browserExecutableSha256: null,
     revealBurst: false,
     revealShot: null,
     revealNode: "MapScreen",
     report: null,
+    untracedReport: false,
+    resultJson: null,
+    servedManifest: null,
+    reportTraceOnly: false,
     limitMs: null,
     window: null,
     // `--window auto` defers the bracket to the recording's own meta.derived.suggestedWindow, which cannot be
@@ -153,7 +343,13 @@ function parseArgs(argv) {
     hitGrid: null,
     hitGridStep: 96,
     raiseProbe: null,
+    parityCapture: null,
+    parityClockMs: null,
+    parityAnimationSteps: 0,
+    parityPairedToggle: null,
+    campaignAbortOnLoss: false,
     connectCdp: null,
+    connectBlankWebview: false,
     keepConnectedPage: false,
     servePort: DEFAULT_SERVE_PORT,
     reportScenario: null,
@@ -174,6 +370,10 @@ function parseArgs(argv) {
       case "--flight-liveness": a.flightLiveness = true; break;
       case "--flight-still-ms": a.flightStillMs = Number(val()); a.flightLiveness = true; break;
       case "--repeats": a.repeats = Number(val()); break;
+      case "--skip-warmup": a.skipWarmup = true; break;
+      case "--growth-cycles": a.growthCycles = Number(val()); break;
+      case "--resource-warm-pass": a.resourceWarmPass = true; break;
+      case "--resource-warm-required": a.resourceWarmRequired.push(String(val())); break;
       case "--recording": a.recording = val(); break;
       case "--effects": a.effects = /^(on|1|true|yes)$/i.test(String(val())); break;
       // A mode implies effects ON: `--effect-mode static` with the runtimes off would be a cell that measures
@@ -181,6 +381,8 @@ function parseArgs(argv) {
       case "--effect-mode": a.effectMode = String(val()).toLowerCase(); a.effects = true; break;
       case "--headed": a.headed = true; break;
       case "--gpu": a.gpu = String(val()).toLowerCase(); break;
+      case "--browser-executable": a.browserExecutable = resolve(val()); break;
+      case "--browser-executable-sha256": a.browserExecutableSha256 = val(); break;
       case "--viewport": {
         const m = /^(\d+)x(\d+)$/i.exec(String(val()));
         if (m) a.viewport = { width: Number(m[1]), height: Number(m[2]) };
@@ -196,27 +398,59 @@ function parseArgs(argv) {
       case "--trace-gpu": a.traceGpu = true; break;
       case "--hover-sweep": a.hoverSweep = true; break;
       case "--trace": a.trace = val(); break;
+      case "--js-profile": a.jsProfile = val(); break;
       case "--layers": a.layers = true; break;
       case "--layer-detail": a.layers = true; a.layerDetail = true; break;
       case "--census": a.census = true; break;
       case "--churn-census": a.churnCensus = true; break;
       case "--no-report-shot": a.noReportShot = true; break;
+      case "--allow-unmeasured-decode": a.allowUnmeasuredDecode = true; break;
       case "--hand-parity": a.handParity = true; break;
       case "--shot": a.shot = argv[++i]; break;
+      case "--shot-clock-ms": a.shotClockMs = Number(val()); break;
       case "--shot-force": a.shotForce = true; break;
       case "--dom-styles": a.domStyles = resolve(val()); break;
       case "--paint-dump": a.paintDump = resolve(val()); break;
       case "--hit-grid": a.hitGrid = resolve(val()); break;
       case "--raise-probe": a.raiseProbe = resolve(val()); break;
+      case "--parity-capture": a.parityCapture = resolve(val()); break;
+      case "--parity-after-drain": a.parityAfterDrain = true; break;
+      case "--parity-clock-ms": a.parityClockMs = Number(val()); break;
+      case "--parity-animation-steps": a.parityAnimationSteps = Number(val()); break;
+      case "--parity-paired-toggle": a.parityPairedToggle = resolve(val()); break;
+      case "--campaign-abort-on-loss": a.campaignAbortOnLoss = true; break;
       case "--hit-grid-step": a.hitGridStep = Number(val()); break;
       case "--quality": a.quality = val(); break;
+      case "--fresh-defaults": a.freshDefaults = true; break;
       case "--cull": a.cull = true; break;
       case "--idle": a.idle = Number(val()); break;
+      case "--idle-warmup": a.idleWarmup = Number(val()); break;
+      case "--text-cache-probe": a.textCacheProbe = true; break;
       case "--idle-shots": a.idleShots = resolve(val()); break;
+      case "--presentation-captures": a.presentationCaptures = resolve(val()); break;
+      case "--presentation-capture-count": a.presentationCaptureCount = Number(val()); break;
+      case "--presentation-capture-gap-ms": a.presentationCaptureGapMs = Number(val()); break;
+      case "--pre-idle-witness": a.preIdleWitness = resolve(val()); break;
+      case "--post-idle-witness": a.postIdleWitness = true; break;
+      case "--active-window-witness": a.activeWindowWitness = resolve(val()); break;
+      case "--startup-observation-out": a.startupObservationOut = resolve(val()); break;
+      case "--startup-expected-recording-sha256": a.startupExpectedRecordingSha256 = String(val()); break;
+      case "--startup-expected-delivery-count": a.startupExpectedDeliveryCount = Number(val()); break;
+      case "--startup-expected-delivery-hash": a.startupExpectedDeliveryHash = String(val()); break;
+      case "--active-visual-reference-out": a.activeVisualReferenceOut = resolve(val()); break;
+      case "--active-visual-reference": a.activeVisualReference = resolve(val()); break;
+      case "--active-source-sha256": a.activeSourceSha256 = String(val()); break;
+      case "--busy-startup-timeline-out": a.busyStartupTimelineOut = resolve(val()); break;
+      case "--witness-browser-package": a.witnessBrowserPackage = String(val()); break;
+      case "--witness-browser-pid": a.witnessBrowserPid = Number(val()); break;
+      case "--pre-idle-witness-timeout-ms": a.preIdleWitnessTimeoutMs = Number(val()); break;
       case "--idle-shot-gap": a.idleShotGapMs = Number(val()); break;
       case "--anim-audit": a.animAudit = true; break;
       case "--anim-audit-out": a.animAudit = true; a.animAuditOut = resolve(val()); break;
       case "--query": a.query = String(val()).replace(/^[?&]/, ""); break;
+      case "--draw-list-dump": a.drawListDump = resolve(val()); break;
+      case "--rust-excerpt-dir": a.rustExcerptDir = resolve(val()); break;
+      case "--adb-shot": a.adbShot = resolve(val()); break;
       case "--res-root": {
         // Bare `--res-root` means "the default resource root"; a following non-flag word is a custom root.
         const next = argv[i + 1];
@@ -225,6 +459,10 @@ function parseArgs(argv) {
       }
       case "--asset-cache-root": a.assetCacheRoot = resolve(val()); break;
       case "--report": a.report = resolve(val()); break;
+      case "--untraced-report": a.untracedReport = true; break;
+      case "--result-json": a.resultJson = resolve(val()); break;
+      case "--served-manifest": a.servedManifest = resolve(val()); break;
+      case "--trace-only": a.reportTraceOnly = true; break;
       case "--limit-ms": a.limitMs = Number(val()); break;
       case "--window": {
         // <startMs>:<endMs> on the RECORDING's own clock (see the flag's help text), or the literal `auto`.
@@ -236,6 +474,7 @@ function parseArgs(argv) {
         break;
       }
       case "--connect-cdp": a.connectCdp = String(val()); break;
+      case "--connect-blank-webview": a.connectBlankWebview = true; break;
       case "--keep-connected-page": a.keepConnectedPage = true; break;
       case "--serve-port": a.servePort = Number(val()); break;
       case "--report-scenario": a.reportScenario = String(val()); break;
@@ -248,6 +487,11 @@ function parseArgs(argv) {
       default: console.error(`Unknown argument: ${arg}`); a.help = true;
     }
   }
+  if (!!a.browserExecutable !== !!a.browserExecutableSha256 ||
+      (a.browserExecutableSha256 && !/^[0-9a-f]{64}$/.test(a.browserExecutableSha256)))
+    throw new Error('--browser-executable and --browser-executable-sha256 require each other');
+  if (a.connectCdp && a.browserExecutable)
+    throw new Error('pinned browser executable requires launch mode');
   return a;
 }
 
@@ -294,6 +538,16 @@ if (args.help) {
                         sampler reads a compositor animation through the MAIN thread — see the constant's note.
                         On a 60fps client use 120, which is the number the round's design specified.
   --repeats <n>         measured repeats, fresh page each, report medians (default 5)
+  --skip-warmup         skip the separate warmup navigation and mark the first run cold-start
+  --growth-cycles <n>   replay the recording n times in one page/renderer instance and retain
+                        per-cycle endpoint and peak renderer resource gauges (default 1/off)
+  --resource-warm-pass  opt-in same-renderer scene replay before the measured recorded replay; requires
+                        --skip-warmup, one repeat, and at least one --resource-warm-required path
+  --resource-warm-required <path>
+                        require this /res/ texture to be fetched and settled during preparation
+  --allow-unmeasured-decode
+                        report a missing trace decode family as null/unmeasured instead of discarding the
+                        whole repeat; scoped to warm-cache A/B runs and never changes health/readiness gates
   --recording <path>    NDJSON recording (default: env COUCHCOOP_BENCH_RECORDING, else newest .sts2/bench/*.ndjson)
   --effects <on|off>    include WebGL shaders/particles (default off — SwiftShader fakes GPU cost as CPU).
                         ON means DYNAMIC: it is the worst case, not the shipping one (see --effect-mode).
@@ -344,9 +598,13 @@ if (args.help) {
   --quality <tier>      mirror render tier in the page URL: high|medium|low|very-low|minimum (default high;
                         use 'very-low' for a phone-representative run). The pre-rename spellings min/static/off
                         still select the same rungs (low/very-low/minimum).
+  --fresh-defaults      clear saved mirror settings before each navigation, omit the quality URL override,
+                        and record the page's resolved settings and backend after the timed window.
   --cull                enable off-screen leaf culling (candidate C1) via ?cull=on (default off)
   --hover-sweep         drive ~60Hz mousemoves across the stage during replay (exercises input hover)
   --trace <file>        write a CDP timeline trace to .sts2/bench/traces/<file>
+  --js-profile <file>   capture CDP Profiler samples over the active markers (repeat 1); write a raw
+                        .cpuprofile file under .sts2/bench/profiles/. Requires --trace and active replay.
   --layers              snapshot compositor layer count + reasons after settle
   --layer-detail        --layers plus ONE LINE PER LAYER, in the compositor's own order (which is paint
                         order): size, Mpx, paintCount, drawsContent, the layer's compositingReasons and
@@ -364,6 +622,31 @@ if (args.help) {
                         Drift SHOULD be zero — a non-zero max is the "cards jump when the transition ends"
                         defect, and a card that only ever appears with drift is one that got stranded.
   --shot <file>         post-settle full-page screenshot from repeat #1 (visual-parity evidence for A/B runs).
+  --shot-clock-ms <ms>  after the measured window and full replay drain, present this exact diagnostic
+                        clock before --shot and --hit-grid; record and verify the completed frame identity.
+  --presentation-captures <prefix>  after the timed window, write 2–10 timestamped page screenshots and
+                        a JSON receipt with renderer identity/readiness/resources, context, visibility and viewport.
+                        This is CDP page capture for pairing with independent ADB screenshots; it does not redraw.
+  --presentation-capture-count <n>  screenshots (default 3); --presentation-capture-gap-ms <n> between shots (default 1000).
+  --pre-idle-witness <prefix>  phone-only: write an ignored request before the idle trace/marker, wait for a
+                        matching external physical-display witness ack, then recheck the same ready page.
+                        Requires --connect-cdp, --idle, --fresh-defaults, --repeats 1, and explicit browser
+                        package/PID flags. Writes <prefix>.request.json, .ack.json, .verified.json.
+  --witness-browser-package <p>  requested Android package; --witness-browser-pid <n> its verified browser PID.
+  --pre-idle-witness-timeout-ms <n>  bounded ack wait (default 30000, max 120000).
+  --post-idle-witness     after cc-idle-end, request independent motion captures and a complete Android
+                        process ledger before browser teardown; requires --pre-idle-witness.
+  --active-window-witness <prefix>  phone busy cell: own trace markers in the page at 2500:6500, record
+                        exact delivery/readiness proof, and reject late or incomplete bounds.
+  --startup-observation-out <file>  trace the same recorded 2500:6500 bounds from before navigation;
+                        permits unready startup at the first marker and writes a distinct diagnostic receipt.
+  --active-visual-reference-out <file>  untimed visual replay receipt after the same 6500ms recording prefix.
+  --active-visual-reference <file>  independent visual/video receipt required by an active-window witness.
+  --active-source-sha256 <hash>  explicit combined source/artifact ledger hash shared by visual and measured runs.
+  --busy-startup-timeline-out <file>  untimed visual replay only: event timeline for stream, Rust init,
+                        resources, first frames, readiness, context and the 2500:6500 boundaries.
+  --adb-shot <file>     device screencap at the settled checkpoint (requires --connect-cdp and
+                        COUCHCOOP_BENCH_ADB_SERIAL); use for phone WebGL canvases that CDP screenshots omit
                         On ?stage=canvas this writes the STAGE's own pixels (via the paint-dump-gated
                         __mirrorCanvasSnapshot seam — add --query 'paintDump=1') and the page screenshot beside
                         it as <file>.overlay.png. Without the seam it REFUSES rather than write a blank PNG.
@@ -395,6 +678,13 @@ if (args.help) {
                         backends (both implement the seams), so the canvas arm can be diffed against the DOM
                         arm with scripts/compare-hit-grids.mjs. Same same-viewport rule as --paint-dump; a
                         WIDE pair is the run that proves the input inverse agrees with the painter.
+  --parity-animation-steps <n>  with --parity-capture, advance 1–180 ordinary Canvas animation frames
+                        before frozen pixels/hits; uses actual command dump, never a CPU acceptance measurement.
+  --parity-after-drain   visual witness only: wait for all recorded messages before parity and final-frame probes.
+  --parity-paired-toggle <B.json>  with --parity-capture <A.json>, toggle reference reuse in the same page.
+                        Animation steps test actual patches; without steps, this is static fallback parity only.
+                        Writes A/B PNGs beside JSON.
+  --campaign-abort-on-loss  phone campaign only: abort warmup/idle promptly on a WebGL context loss or page crash.
   --hit-grid-step <px>  --hit-grid sample spacing in CSS px (default 96 => ~11x6 = 220 samples at 1920x1080).
   --raise-probe <file>  post-settle READABLE-HAND RAISE working from repeat #1, as JSON, in a shape BOTH stage
                         backends answer. On ?stage=canvas it is window.__mirrorRaiseProbe() (every term the
@@ -428,6 +718,11 @@ if (args.help) {
                         cc-idle-start / cc-idle-end. Combine with --trace: inside that window a page whose
                         idle animations are compositor-only must produce ZERO UpdateLayoutTree / Layerize /
                         Commit / PrePaint on the renderer main thread (see scripts/assert-idle-compositing.mjs).
+  --idle-warmup <ms>    settle with ordinary animation before starting idle markers (default 0).
+  --text-cache-probe    reset diagnostic window.__couchTextGpuProfile after warmup; snapshot and calibrate
+                        outside the idle markers. Diagnostic instrumented builds only.
+  --trace-only          with --report, stream sparse marker/metadata events without the report's screenshot
+                        and cc event contracts; presentation and process CPU need a separate Perfetto capture.
   --idle-shots <prefix> two viewport screenshots <prefix>-a.png / <prefix>-b.png, taken in the still-idle TAIL
                         right AFTER cc-idle-end (a screenshot forces a compositor frame, so it must not land
                         inside the window whose frame count is asserted). Markers: cc-shot-a / cc-shot-b.
@@ -492,6 +787,10 @@ if (args.help) {
                         headline), --trace allowed but the device's trace buffer is small, screenshots and
                         --layers best-effort. Nothing passes --disable-gpu here: the attached browser was
                         launched by someone else, and on a phone the GPU is the point.
+  --connect-blank-webview
+                        timing-wrapper probe only: attach to its sole about:blank CDP target so the fake
+                        replay WebSocket is installed before the first HTTP page navigation. Requires
+                        --connect-cdp and a 127.0.0.1 --url; ordinary Chrome tab selection is unchanged.
   --keep-connected-page
                         leave the attached page on the measured URL instead of parking it on about:blank.
                         Intended for a wrapper that immediately proves post-cell foreground scheduling and
@@ -565,6 +864,14 @@ if (!Number.isFinite(args.repeats) || args.repeats < 1) {
   console.error(`--repeats must be >= 1 (got '${args.repeats}')`);
   process.exit(2);
 }
+if (!Number.isInteger(args.growthCycles) || args.growthCycles < 1) {
+  console.error(`--growth-cycles must be an integer >= 1 (got '${args.growthCycles}')`);
+  process.exit(2);
+}
+if (args.growthCycles > 1 && (args.repeats !== 1 || args.pace !== "recorded" || args.window)) {
+  console.error("--growth-cycles > 1 requires --repeats 1, --pace recorded, and no --window");
+  process.exit(2);
+}
 if (args.ackPacedMs !== null && (!Number.isFinite(args.ackPacedMs) || args.ackPacedMs < 0)) {
   console.error(`--ack-paced must be a non-negative number of ms (got '${args.ackPacedMs}')`);
   process.exit(2);
@@ -595,12 +902,110 @@ if (args.headed && args.connectCdp) {
   console.error("--headed launches a browser; --connect-cdp attaches to one already running. Pick one.");
   process.exit(2);
 }
+if (args.adbShot && (!args.connectCdp || !process.env.COUCHCOOP_BENCH_ADB_SERIAL)) {
+  console.error("--adb-shot requires --connect-cdp and COUCHCOOP_BENCH_ADB_SERIAL"); process.exit(2);
+}
 if (args.idle !== null && (!Number.isFinite(args.idle) || args.idle < 0)) {
   console.error(`--idle must be a non-negative number of ms (got '${args.idle}')`);
   process.exit(2);
 }
+if (args.reportTraceOnly && !args.report) {
+  console.error("--trace-only requires --report <path> to stream a bounded marker trace");
+  process.exit(2);
+}
+if (!Number.isFinite(args.idleWarmup) || args.idleWarmup < 0 || (args.idleWarmup > 0 && !args.idle)) {
+  console.error("--idle-warmup requires a non-negative duration and --idle <ms>");
+  process.exit(2);
+}
+if (args.textCacheProbe && !args.idle) {
+  console.error("--text-cache-probe requires --idle <ms>");
+  process.exit(2);
+}
 if (args.idleShots && !args.idle) {
   console.error("--idle-shots requires --idle <ms> (the shots are taken in the idle tail)");
+  process.exit(2);
+}
+if (!Number.isInteger(args.presentationCaptureCount) || args.presentationCaptureCount < 2 || args.presentationCaptureCount > 10 ||
+    !Number.isInteger(args.presentationCaptureGapMs) || args.presentationCaptureGapMs < 0 || args.presentationCaptureGapMs > 10_000) {
+  console.error("--presentation-capture-count must be 2..10 and --presentation-capture-gap-ms must be 0..10000"); process.exit(2);
+}
+if (args.preIdleWitness && (!args.connectCdp || !args.idle || !args.freshDefaults || args.repeats !== 1 ||
+    !["com.android.chrome", "com.chrome.dev"].includes(args.witnessBrowserPackage) ||
+    !Number.isSafeInteger(args.witnessBrowserPid) || args.witnessBrowserPid <= 0 ||
+    !Number.isInteger(args.preIdleWitnessTimeoutMs) || args.preIdleWitnessTimeoutMs < 1 || args.preIdleWitnessTimeoutMs > 120_000)) {
+  console.error("--pre-idle-witness requires connected fresh-default idle replay, one repeat, and explicit package/PID"); process.exit(2);
+}
+if (args.postIdleWitness && !args.preIdleWitness) {
+  console.error("--post-idle-witness requires --pre-idle-witness"); process.exit(2);
+}
+if (args.resourceWarmPass && (args.connectCdp || !args.skipWarmup || args.pace !== "recorded" || args.repeats !== 1 ||
+    args.growthCycles !== 1 || args.resourceWarmRequired.length === 0 ||
+    args.resourceWarmRequired.some((path) => !/^\/res\/[A-Za-z0-9_./-]+$/.test(path)))) {
+  console.error("--resource-warm-pass requires launched cold navigation, recorded pace, one repeat, and explicit /res/ required paths");
+  process.exit(2);
+}
+if (args.shotClockMs !== undefined && (!Number.isFinite(args.shotClockMs) || args.shotClockMs < 0 ||
+    !args.shot || !args.hitGrid || args.repeats !== 1)) {
+  console.error("--shot-clock-ms requires a non-negative clock, --shot, --hit-grid and one repeat"); process.exit(2);
+}
+try { replayDiagnosticClock(args); }
+catch (error) { console.error(error.message); process.exit(2); }
+if (args.activeWindowWitness && (!args.connectCdp || !args.freshDefaults || args.repeats !== 1 ||
+    args.pace !== "recorded" || args.idle || args.preIdleWitness || args.postIdleWitness ||
+    args.window?.startMs !== 2500 || args.window?.endMs !== 6500 || args.limitMs !== 6500 ||
+    !args.activeVisualReference || !args.report || !args.trace)) {
+  console.error("--active-window-witness requires connected fresh-default recorded 2500:6500 window, 6500 limit, one repeat"); process.exit(2);
+}
+if (args.startupObservationOut && (!args.connectCdp || !args.freshDefaults || args.repeats !== 1 ||
+    args.pace !== "recorded" || args.idle || args.preIdleWitness || args.postIdleWitness ||
+    args.activeWindowWitness || args.activeVisualReferenceOut || args.busyStartupTimelineOut ||
+    args.window?.startMs !== 2500 || args.window?.endMs !== 6500 || args.limitMs !== 6500 ||
+    !args.report || !args.trace || args.reportTraceOnly || args.parityCapture ||
+    !process.env.COUCHCOOP_BENCH_ADB_SERIAL)) {
+  console.error("--startup-observation-out requires connected fresh-default recorded 2500:6500 window, report trace, one repeat, ADB serial, and no diagnostic clock"); process.exit(2);
+}
+if (args.startupObservationOut && (!/^[a-f0-9]{64}$/i.test(args.startupExpectedRecordingSha256 ?? "") ||
+    !Number.isSafeInteger(args.startupExpectedDeliveryCount) || args.startupExpectedDeliveryCount <= 0 ||
+    !/^[a-f0-9]{8}$/i.test(args.startupExpectedDeliveryHash ?? ""))) {
+  console.error("--startup-observation-out requires explicit expected recording SHA-256, delivered count, and 8-hex digest"); process.exit(2);
+}
+try {
+  const timingError = startupTimingQueryError(args);
+  if (timingError) { console.error(timingError); process.exit(2); }
+} catch (error) { console.error(`--startup-observation-out URL invalid: ${error}`); process.exit(2); }
+if (args.activeVisualReferenceOut && (!args.connectCdp || !args.freshDefaults || args.repeats !== 1 ||
+    args.pace !== "recorded" || args.idle || args.window || args.limitMs !== 6500 ||
+    args.activeWindowWitness)) {
+  console.error("--active-visual-reference-out requires untimed connected fresh-default recorded 6500 prefix, one repeat"); process.exit(2);
+}
+if (args.busyStartupTimelineOut && !args.activeVisualReferenceOut) {
+  console.error("--busy-startup-timeline-out requires --active-visual-reference-out"); process.exit(2);
+}
+if ((args.activeWindowWitness || args.activeVisualReferenceOut || args.startupObservationOut) &&
+    (!/^[a-f0-9]{64}$/i.test(args.activeSourceSha256 ?? "") ||
+     !["com.android.chrome", "com.chrome.dev"].includes(args.witnessBrowserPackage) ||
+     !Number.isSafeInteger(args.witnessBrowserPid) || args.witnessBrowserPid <= 0)) {
+  console.error("active visual/measured replay requires source SHA-256 and explicit browser package/PID"); process.exit(2);
+}
+if (!Number.isInteger(args.parityAnimationSteps) || args.parityAnimationSteps < 0 || args.parityAnimationSteps > 180 || (args.parityAnimationSteps && !args.parityCapture)) {
+  console.error("--parity-animation-steps requires --parity-capture and 1–180 steps"); process.exit(2);
+}
+if (args.parityPairedToggle && !args.parityCapture) {
+  console.error("--parity-paired-toggle requires --parity-capture"); process.exit(2);
+}
+if (args.parityPairedToggle && (!args.parityCapture.endsWith(".json") || !args.parityPairedToggle.endsWith(".json")
+  || args.parityCapture === args.parityPairedToggle)) {
+  console.error("paired parity needs distinct .json capture paths for control and candidate"); process.exit(2);
+}
+if (args.campaignAbortOnLoss && (!args.connectCdp || !args.idle)) {
+  console.error("--campaign-abort-on-loss requires --connect-cdp and --idle"); process.exit(2);
+}
+if ((args.parityCapture === null) !== (args.parityClockMs === null)) {
+  console.error("--parity-capture and --parity-clock-ms must be supplied together");
+  process.exit(2);
+}
+if (args.parityCapture && (args.repeats !== 1 || args.pace !== "recorded" || !Number.isFinite(args.parityClockMs))) {
+  console.error("--parity-capture requires --repeats 1, --pace recorded, and a finite --parity-clock-ms");
   process.exit(2);
 }
 // Factored out (unchanged checks, same messages) so `--window auto` — whose bounds only exist once the recording's
@@ -634,6 +1039,10 @@ if (args.connectCdp && (!Number.isFinite(args.servePort) || args.servePort <= 0 
   console.error(`--serve-port must be a TCP port (got '${args.servePort}')`);
   process.exit(2);
 }
+if (args.connectBlankWebview && (!args.connectCdp || new URL(args.url).hostname !== "127.0.0.1")) {
+  console.error("--connect-blank-webview requires --connect-cdp and a 127.0.0.1 page URL");
+  process.exit(2);
+}
 
 const CPU_THROTTLE = Number(process.env.COUCHCOOP_CPU_THROTTLE ?? "1");
 
@@ -646,7 +1055,7 @@ const CPU_THROTTLE = Number(process.env.COUCHCOOP_CPU_THROTTLE ?? "1");
 // COUCHCOOP_BENCH_CHROME_ARGS=--use-angle=vulkan is what reports the actual adapter
 // ("ANGLE (NVIDIA, Vulkan 1.4.329 (NVIDIA GeForce RTX 2060), NVIDIA)"). Use it for VISUAL evidence runs; leave it
 // unset for CPU benchmarking, where SwiftShader's determinism is the point.
-const EXTRA_CHROME_ARGS = (process.env.COUCHCOOP_BENCH_CHROME_ARGS ?? "").split(/\s+/).filter(Boolean);
+const EXTRA_CHROME_ARGS = parseExtraChromeArgs();
 
 // ---------------------------------------------------------------------------------------------------------
 // recording load
@@ -672,7 +1081,19 @@ if (!recordingPath) {
 }
 
 const recordingText = readFileSync(recordingPath, "utf8");
+const recordingSha256 = createHash("sha256").update(recordingText).digest("hex");
+if (args.startupObservationOut) {
+  const pinned = inspectStartupRecordingPin({ expectedRecordingSha256: args.startupExpectedRecordingSha256,
+    actualRecordingSha256: recordingSha256, expectedDeliveryCount: args.startupExpectedDeliveryCount,
+    expectedDeliveryHash: args.startupExpectedDeliveryHash });
+  if (!pinned.accepted) { console.error(`startup recording pin rejected: ${pinned.failures.join(",")}`); process.exit(2); }
+}
 const recordingHeader = requireReproHeader(recordingText, recordingPath);
+// The browser validates a direct-view grant as a complete session. Reuse the
+// recording's own host, screen, player, and asset metadata for that grant.
+const synthesizedSession = replaySession(recordingText.split("\n").filter(Boolean).map((line) => {
+  try { return JSON.parse(line); } catch { return null; }
+}).filter(Boolean));
 // Parse meta (line 1) + detect whether the recording already carries a directView session, so we only
 // synthesize one when the stream lacks it (a passive mirror recording never has directView — see the
 // server: directView is only granted in reply to a join).
@@ -854,7 +1275,75 @@ function buildRevealMessage(text, selector) {
 // JSON.parse cost); answers join → directView session, ping → pong; honours scene-ack credit in `max` pacing.
 function fakeWebSocketInit(config) {
   const OPEN = 1;
+  const originalFetch = window.fetch;
   const realFetch = window.fetch.bind(window);
+  if (config.resourceWarmPass) {
+    const limit = 8192;
+    window.__benchWarmAckTraceRows = [];
+    window.__benchWarmAckTraceOverflow = 0;
+    window.__benchWarmAckTraceCursor = 0;
+    window.__benchWarmAckTrace = (event) => {
+      if (window.__benchResourceWarmPass?.phase !== "warm") return;
+      const rows = window.__benchWarmAckTraceRows;
+      const row = { atEpochMs: performance.timeOrigin + performance.now(), ...event };
+      if (rows.length < limit) rows.push(row);
+      else {
+        rows[window.__benchWarmAckTraceCursor] = row;
+        window.__benchWarmAckTraceCursor = (window.__benchWarmAckTraceCursor + 1) % limit;
+        window.__benchWarmAckTraceOverflow++;
+      }
+    };
+    window.__benchWarmAckTraceSnapshot = () => {
+      const rows = window.__benchWarmAckTraceRows;
+      const cursor = window.__benchWarmAckTraceCursor;
+      return window.__benchWarmAckTraceOverflow ? rows.slice(cursor).concat(rows.slice(0, cursor)) : [...rows];
+    };
+  }
+  const rustExecutorFetch = (stack) => typeof stack === "string" &&
+    /\bat (?:Object\.)?prefetch\b/.test(stack) &&
+    /\/createRustDrawListExecutor\.ts(?:\?|:|\b)/.test(stack);
+  if (config.resourceWarmPass) {
+    // Record the renderer's own fetches, including their initiator stack. A harness fetch would bypass its
+    // decoded texture cache and cannot qualify the warm pass.
+    window.__benchWarmFetches = [];
+    window.__benchWarmFetchDropped = 0;
+    window.fetch = async function benchWarmFetch(input, init) {
+      const url = String(input?.url ?? input);
+      const row = { url, phase: window.__benchResourceWarmPass?.phase ?? "setup",
+        startEpochMs: performance.timeOrigin + performance.now(), initiator: new Error().stack ?? null,
+        status: null, endEpochMs: null };
+      row.rustExecutorOwned = rustExecutorFetch(row.initiator);
+      if (window.__benchWarmFetches.length < 20_000) window.__benchWarmFetches.push(row);
+      else window.__benchWarmFetchDropped++;
+      try {
+        const response = await realFetch(input, init);
+        row.status = response.status;
+        return response;
+      } finally { row.endEpochMs = performance.timeOrigin + performance.now(); }
+    };
+  }
+  if (config.diagnosticClock) {
+    // The renderer reads this seed while constructing its document-anchored
+    // animation clock. Record that one-time seed without changing the product.
+    let seed;
+    let clockObject;
+    const audit = [];
+    const record = (row) => { if (audit.length < 2048) audit.push(row); };
+    Object.defineProperty(window, "__benchDiagnosticClockMs", {
+      configurable: true,
+      get() { record({ kind: "seedRead", value: seed, wallMs: performance.now() }); return seed; },
+      set(value) { seed = value; record({ kind: "clockSet", value, wallMs: performance.now() }); },
+    });
+    Object.defineProperty(window, "__mirrorCanvasBenchClock", {
+      configurable: true,
+      get() { return clockObject; },
+      set(value) {
+        clockObject = value;
+        record({ kind: "rendererSeed", value: value?.nowMs ?? null, wallMs: performance.now() });
+      },
+    });
+    window.__benchClockSeedAudit = audit;
+  }
 
   class BenchWebSocket extends EventTarget {
     static CONNECTING = 0;
@@ -877,6 +1366,11 @@ function fakeWebSocketInit(config) {
       this._msgs = [];
       this._i = 0;
       this._credits = 1;
+      this._diagnosticClock = config.diagnosticClock === true;
+      this._diagnosticRendererReady = false;
+      this._sceneAckSerial = 0;
+      this._diagnosticSceneRevision = 0;
+      this._startupSceneOrdinal = 0;
       // WATCH GATE — mirror the real host. The mirror app connects with `watch=0` (the pre-join stream gate,
       // see buildMirrorWebSocketUrl), so the host sends NO scene stream — not even the connect keyframe —
       // until the client sends `{"type":"watch","on":true}` after directView resolves. `max` pacing used to
@@ -922,44 +1416,320 @@ function fakeWebSocketInit(config) {
       // A passive recording lacks a directView session, so the mirror stays on the join picker (showScene
       // needs joined||directView). Synthesize one up-front so a singleplayer-run mirror renders the scene.
       if (config.synthesizeDirectView) {
-        this._deliver('{"type":"session","directView":true}');
+        await this._setDiagnosticClock(0);
+        this._deliver(config.synthesizedSession);
+      }
+      if (config.resourceWarmPass) {
+        try { await this._warmResources(); }
+        catch (error) { this._fail(`resource warm pass failed: ${error}`); return; }
       }
       if (config.pace === "max") this._pumpMax();
       else this._pumpRecorded();
     }
 
+    async _warmResources() {
+      const proof = { phase: "warm", startEpochMs: performance.timeOrigin + performance.now(),
+        endEpochMs: null, releasedEpochMs: null, sceneDeliveries: 0, messageCount: this._msgs.length,
+        requiredUrls: config.resourceWarmRequired, rendererBefore: null, rendererAfter: null,
+        initialRevision: null, warmFinalRevision: null, warmFinalPresentEpoch: null,
+        warmFinalBuildEpoch: null, measuredFirstRevision: null, measuredFirstPresentEpoch: null,
+        measuredFirstBuildEpoch: null, releaseBaseRevision: null, releaseBasePresentEpoch: null,
+        releaseBaseBuildEpoch: null, fetchRestored: false, pendingAckAtRelease: null,
+        status: "running", failure: null, lastCompletedGate: null, activeGate: null,
+        failureSnapshot: null, ackTraceOverflow: 0, ackTraceValid: true };
+      window.__benchResourceWarmPass = proof;
+      const until = async (predicate, label, onTimeout) => {
+        const deadline = performance.now() + (config.resourceWarmTimeoutMs ?? 10_000);
+        while (!predicate()) {
+          if (this._closed || performance.now() >= deadline) {
+            if (onTimeout) proof.failureSnapshot = onTimeout();
+            throw new Error(`${label} timed out`);
+          }
+          await new Promise((resolve) => setTimeout(resolve, 16));
+        }
+      };
+      try {
+        let previousRevision = window.__mirrorRendererDiagnostics?.()?.admittedRevision ?? 0;
+        let previousPresentEpoch = window.__mirrorFrameIdentity?.()?.presentEpoch ?? -1;
+        proof.initialRevision = previousRevision;
+        for (let index = 0; index < this._msgs.length; index++) {
+          const message = this._msgs[index];
+          const scene = message.data.includes('"type":"scene-delta"');
+          const full = scene && message.data.includes('"full":true');
+          if (scene && proof.sceneDeliveries === 0) {
+            await until(() => this._watchOn, "direct-view watch gate");
+            await new Promise((resolve) => setTimeout(resolve, 0));
+          }
+          const ack = this._sceneAckSerial;
+          await this._setDiagnosticClock(message.t);
+          let gate = null;
+          if (scene) {
+            const bytes = new TextEncoder().encode(message.data);
+            const digest = await crypto.subtle.digest("SHA-256", bytes);
+            gate = { messageIndex: index, recordedTimeMs: message.t, sceneOrdinal: proof.sceneDeliveries + 1,
+              full, dataSha256: Array.from(new Uint8Array(digest), (byte) => byte.toString(16).padStart(2, "0")).join(""),
+              dataBytes: bytes.length, expectedRevision: previousRevision + 1,
+              previousRevision, previousPresentEpoch, ackSerialBefore: ack };
+            proof.activeGate = gate;
+          }
+          this._deliver(message.data);
+          if (!scene) continue;
+          proof.sceneDeliveries++;
+          const expectedRevision = previousRevision + 1;
+          if (full) {
+            await until(() => window.__mirrorRendererDiagnostics?.()?.ready === true, "full scene mount");
+            proof.rendererBefore ??= window.__mirrorRendererDiagnostics?.()?.instance ?? null;
+          }
+          await this._setDiagnosticClock(message.t);
+          // An ack on its own can belong to an older render. Require this exact newly applied scene revision
+          // to complete a newer frame, then require its own post-delivery ack except for the mount keyframe.
+          const gateSnapshot = () => {
+            const renderer = window.__mirrorRendererDiagnostics?.() ?? null;
+            const identity = window.__mirrorFrameIdentity?.() ?? null;
+            return { ...gate, sampledEpochMs: performance.timeOrigin + performance.now(),
+              socketReadyState: this.readyState, watchOn: this._watchOn, ackSerialAfter: this._sceneAckSerial,
+              pendingAckCount: window.__benchSceneAckPending?.length ?? null,
+              deliveredSceneCount: window.__benchSceneDeliveries ?? null,
+              // No product-side client-state diagnostic is exposed; delivered ordinal is not an applied revision.
+              clientRevision: null, frameIdentity: identity,
+              predicates: { revision: identity?.revision === expectedRevision,
+                newerPresentation: identity?.presentEpoch > previousPresentEpoch,
+                postDeliveryAck: full || this._sceneAckSerial > ack },
+              renderer: renderer && { instance: renderer.instance ?? null,
+                ready: renderer.ready ?? null, readiness: renderer.readiness ?? null,
+                admittedRevision: renderer.admittedRevision ?? null,
+                asyncSubmissionRevision: renderer.asyncSubmissionRevision ?? null,
+                asyncPresentedRevision: renderer.asyncPresentedRevision ?? null,
+                asyncAwaitingAckRevision: renderer.asyncAwaitingAckRevision ?? null,
+                frameIdentity: renderer.frameIdentity ?? null,
+                resources: renderer.resources ?? null,
+                pendingBreakdown: renderer.pendingBreakdown ?? null,
+                completedFrames: renderer.draw?.completedFrames ?? null,
+                failure: typeof renderer.failure === "string" ? renderer.failure.slice(0, 500) : null } };
+          };
+          await until(() => {
+            const identity = window.__mirrorFrameIdentity?.();
+            return identity?.revision === expectedRevision &&
+              identity?.presentEpoch > previousPresentEpoch &&
+              (full || this._sceneAckSerial > ack);
+          }, `scene ${index} revision ${expectedRevision} presentation`, gateSnapshot);
+          proof.lastCompletedGate = gateSnapshot();
+          proof.activeGate = null;
+          const identity = window.__mirrorFrameIdentity();
+          previousRevision = identity.revision;
+          previousPresentEpoch = identity.presentEpoch;
+        }
+        await until(() => {
+          const renderer = window.__mirrorRendererDiagnostics?.();
+          return renderer?.ready === true && renderer?.resources?.pending === 0 &&
+            renderer?.resources?.failed === 0;
+        }, "resource settlement");
+        await until(() => window.__benchWarmFetches.every((row) => row.endEpochMs !== null),
+          "fetch response settlement");
+        if (window.__benchWarmFetchDropped) throw new Error("renderer fetch evidence overflow");
+        if (window.__benchWarmAckTraceOverflow) throw new Error("warm ack trace ring overflow");
+        const renderer = window.__mirrorRendererDiagnostics?.();
+        proof.rendererAfter = renderer?.instance ?? null;
+        if (renderer?.asyncSubmissionRevision != null || renderer?.asyncAwaitingAckRevision != null ||
+            (window.__benchSceneAckPending?.length ?? 0) !== 0)
+          throw new Error("warm frame submission or scene ack remains pending");
+        if (!proof.rendererBefore || !proof.rendererAfter ||
+            JSON.stringify(proof.rendererBefore) !== JSON.stringify(proof.rendererAfter))
+          throw new Error("renderer instance changed during warm pass");
+        const fetched = () => new Set(window.__benchWarmFetches
+          .filter((row) => row.phase === "warm" && row.status === 200 &&
+            row.endEpochMs !== null && row.rustExecutorOwned === true)
+          .map((row) => new URL(row.url, location.href).pathname));
+        await until(() => config.resourceWarmRequired.every((path) => fetched().has(path)),
+          "required renderer resource requests");
+        const missing = config.resourceWarmRequired.filter((path) => !fetched().has(path));
+        if (missing.length) throw new Error(`required renderer fetch absent: ${missing.join(", ")}`);
+        proof.endEpochMs = performance.timeOrigin + performance.now();
+        proof.warmFinalRevision = previousRevision;
+        proof.warmFinalPresentEpoch = previousPresentEpoch;
+        proof.warmFinalBuildEpoch = window.__mirrorFrameIdentity?.()?.buildEpoch ?? null;
+        proof.status = "ready";
+        await new Promise((resolve) => { window.__benchResourceWarmRelease = resolve; });
+        if (this._closed) throw new Error("socket closed before measured replay");
+        const afterRelease = window.__mirrorRendererDiagnostics?.()?.instance ?? null;
+        if (JSON.stringify(afterRelease) !== JSON.stringify(proof.rendererAfter))
+          throw new Error("renderer instance changed before measured replay");
+        const releaseRenderer = window.__mirrorRendererDiagnostics?.();
+        const releaseFrame = window.__mirrorFrameIdentity?.();
+        if (releaseRenderer?.asyncSubmissionRevision != null ||
+            releaseRenderer?.asyncAwaitingAckRevision != null ||
+            releaseRenderer?.resources?.pending !== 0 || releaseRenderer?.resources?.failed !== 0 ||
+            (window.__benchSceneAckPending?.length ?? 0) !== 0 ||
+            releaseFrame?.revision !== proof.warmFinalRevision)
+          throw new Error("warm submission, ack or resource was still active at measured release");
+        proof.releaseBaseRevision = releaseFrame.revision;
+        proof.releaseBasePresentEpoch = releaseFrame.presentEpoch;
+        proof.releaseBaseBuildEpoch = releaseFrame.buildEpoch;
+        proof.releasedEpochMs = performance.timeOrigin + performance.now();
+        proof.phase = "measured";
+        proof.status = "released";
+        delete window.__benchWarmAckTrace;
+        window.fetch = originalFetch;
+        proof.fetchRestored = window.fetch === originalFetch;
+        proof.pendingAckAtRelease = window.__benchSceneAckPending?.length ?? null;
+        this._i = 0;
+        this._credits = 1;
+        this._sceneAckSerial = 0;
+        this._diagnosticSceneRevision = proof.releaseBaseRevision;
+        if (Array.isArray(window.__benchSceneAckPending)) window.__benchSceneAckPending.length = 0;
+        if (Array.isArray(window.__benchSceneAckLatencies)) window.__benchSceneAckLatencies.length = 0;
+        window.__benchSceneDeliveries = 0;
+      } catch (error) {
+        proof.endEpochMs = performance.timeOrigin + performance.now();
+        proof.ackTraceOverflow = window.__benchWarmAckTraceOverflow ?? 0;
+        proof.ackTraceValid = proof.ackTraceOverflow === 0;
+        proof.status = "failed";
+        proof.failure = String(error);
+        throw error;
+      }
+    }
+
     _pumpRecorded() {
       const t0 = performance.now();
+      this._recordedStartMs = t0;
+      this._recordedDeliveryLog = [];
+      this._recordedDeliveryDropped = 0;
       // --window: the measured bracket is expressed on the RECORDING's clock, and this pump is the only thing
       // that knows it — `t0` is recorded-time zero, so recorded ms and elapsed ms are the same number here.
       // Publish the crossings for the harness to poll (mark 0 = before, 1 = inside, 2 = past), from BOTH a
       // timer and the delivery loop: a bound that falls in a gap between two recorded messages must still fire
       // on time, and a bound the timer misses under load must still be observed at the next delivery.
-      const win = config.window;
+      const win = config.window ?? (config.activeVisualReference ? { startMs: 2500, endMs: 6500 } : null);
       if (win) {
         window.__benchWindowMark = 0;
         window.__benchWindowAt = { startedAt: null, endedAt: null, startStreamMs: null, endStreamMs: null };
-        const cross = (level, boundMs) => {
+        const cross = (level, boundMs, streamMs) => {
           if (this._closed || window.__benchWindowMark >= level) return;
+          if (config.activeWindowWitness) window.__benchActiveWindowCapture?.(level, boundMs, streamMs);
+          if (config.activeVisualReference) {
+            window.__benchActiveVisualBoundary ??= {};
+            window.__benchActiveVisualBoundary[level === 1 ? "start" : "end"] = {
+              boundMs, elapsedMs: streamMs, atPageMs: performance.now(),
+              atEpochMs: performance.timeOrigin + performance.now(),
+            };
+            if (config.busyStartupTimeline) window.__benchBusyStartupEvent?.(
+              level === 1 ? "stream.boundaryStart" : "stream.boundaryEnd",
+              { boundMs, elapsedMs: streamMs,
+                renderer: window.__mirrorRendererDiagnostics?.() ?? null,
+                visibility: { state: document.visibilityState, hidden: document.hidden },
+                viewport: { width: innerWidth, height: innerHeight, dpr: devicePixelRatio },
+                contextEvents: window.__mirrorGlContextEvents?.() ?? null });
+          }
           window.__benchWindowMark = level;
           const at = window.__benchWindowAt;
-          if (level === 1) { at.startedAt = performance.now(); at.startStreamMs = boundMs; }
-          else { at.endedAt = performance.now(); at.endStreamMs = boundMs; }
+          if (level === 1) { at.startedAt = performance.now(); at.startStreamMs = streamMs; }
+          else { at.endedAt = performance.now(); at.endStreamMs = streamMs; }
         };
         this._crossWindow = (streamMs) => {
-          if (streamMs >= win.startMs) cross(1, streamMs);
-          if (streamMs >= win.endMs) cross(2, streamMs);
+          if (streamMs >= win.startMs) cross(1, win.startMs, streamMs);
+          if (streamMs >= win.endMs) cross(2, win.endMs, streamMs);
         };
-        setTimeout(() => this._crossWindow(win.startMs), win.startMs);
-        setTimeout(() => this._crossWindow(win.endMs), win.endMs);
+        setTimeout(() => this._crossWindow(config.activeWindowWitness ? performance.now() - t0 : win.startMs), win.startMs);
+        setTimeout(() => this._crossWindow(config.activeWindowWitness ? performance.now() - t0 : win.endMs), win.endMs);
       }
-      const tick = () => {
+      const tick = async () => {
         if (this._closed) return;
         const now = performance.now() - t0;
         if (this._crossWindow) this._crossWindow(now);
         while (this._i < this._msgs.length && this._msgs[this._i].t <= now) {
-          this._deliver(this._msgs[this._i].data);
+          // Diagnostic replay must serialize clock admission with message delivery. Both renderer setters can
+          // reconcile asynchronously; letting their promises overlap makes an older sampled animation frame
+          // win after a newer one and produces width/load-dependent transforms at the same requested clock.
+          const message = this._msgs[this._i];
+          await this._setDiagnosticClock(message.t);
+          const isSceneDelta = message.data.includes('"type":"scene-delta"');
+          const isFullScene = isSceneDelta && message.data.includes('"full":true');
+          const ackBeforeDelivery = this._sceneAckSerial;
+          if (isSceneDelta) {
+            const deliveredAtMs = performance.now() - t0;
+            if (this._recordedDeliveryLog.length < 20_000) this._recordedDeliveryLog.push({
+              index:this._i,recordedMs:message.t,deliveredAtMs,
+              latenessMs:deliveredAtMs-message.t
+            });
+            else this._recordedDeliveryDropped++;
+          }
+          if (config.startupObservation && isFullScene) window.__benchStartupFullSceneBeforeDelivery?.(message);
+          this._deliver(message.data);
+          if (config.busyStartupTimeline && window.__benchBusyStartupEvent && isSceneDelta) {
+            let revision = null;
+            try { const parsed = JSON.parse(message.data);
+              revision = parsed.revision ?? parsed.stateRevision ?? null; } catch { /* keep unknown revision */ }
+            this._startupSceneOrdinal++;
+            window.__benchBusyStartupEvent?.(isFullScene ? "stream.fullScene" : "stream.sceneDelivered",
+              { t: message.t, index: this._i, sceneOrdinal: this._startupSceneOrdinal,
+                wireRevision: revision, full: isFullScene });
+          }
+          if (config.activeWindowWitness) window.__benchActiveWindowDelivery?.(message);
+          if (config.startupObservation) window.__benchStartupDelivered?.();
+          if (this._diagnosticClock && isSceneDelta) this._diagnosticSceneRevision++;
           this._i++;
+          // The first full scene causes MirrorView to mount asynchronously. Without this boundary, the next
+          // recorded delta can advance the seeded clock before Canvas constructs its document-anchored loop
+          // clock, making identical arms choose different animation origins under different CPU load.
+          if (this._diagnosticClock && !this._diagnosticRendererReady && isFullScene) {
+            const deadline = performance.now() + (config.diagnosticMountTimeoutMs ?? 10_000);
+            while (typeof window.__mirrorSetDiagnosticClock !== "function") {
+              if (performance.now() >= deadline) {
+                this._fail("diagnostic renderer did not mount after first full scene");
+                window.__benchDone = true;
+                return;
+              }
+              await new Promise((resolve) => setTimeout(resolve, 16));
+            }
+            this._diagnosticRendererReady = true;
+            await this._setDiagnosticClock(message.t);
+          }
+          if (config.resourceWarmPass && isFullScene) {
+            const warm = window.__benchResourceWarmPass;
+            const expected = warm.releaseBaseRevision + 1;
+            const deadline = performance.now() + (config.resourceWarmTimeoutMs ?? 10_000);
+            while (true) {
+              const identity = window.__mirrorFrameIdentity?.();
+              if (identity?.revision === expected &&
+                  identity.presentEpoch > warm.releaseBasePresentEpoch &&
+                  identity.buildEpoch > warm.releaseBaseBuildEpoch) {
+                warm.measuredFirstRevision = identity.revision;
+                warm.measuredFirstPresentEpoch = identity.presentEpoch;
+                warm.measuredFirstBuildEpoch = identity.buildEpoch;
+                break;
+              }
+              if (performance.now() >= deadline || this._closed) {
+                this._fail(`measured keyframe did not advance warm revision ${warm.warmFinalRevision}`);
+                window.__benchDone = true;
+                return;
+              }
+              await new Promise((resolve) => setTimeout(resolve, 16));
+            }
+          }
+          // The mount-time full scene may not send a scene-ack. Every later diagnostic delta must finish its
+          // reconcile before a newer timestamp is admitted: otherwise a delayed hint can seed from the next
+          // message's clock. The ordinary recorded pump retains its original wall-clock pacing.
+          if (this._diagnosticClock && isSceneDelta && !isFullScene) {
+            const deadline = performance.now() + (config.diagnosticAckTimeoutMs ?? 10_000);
+            while (true) {
+              const hasIdentity = typeof window.__mirrorFrameIdentity === "function";
+              const identity = window.__mirrorFrameIdentity?.() ?? null;
+              // A presented revision is stronger than an unversioned ack and also covers a delta consumed by
+              // mount-time reconcile, which the client deliberately does not ack. DOM has no frame identity,
+              // so its own scene-ack remains the completion proof there.
+              if (hasIdentity ? (identity?.revision ?? -1) === this._diagnosticSceneRevision
+                : this._sceneAckSerial > ackBeforeDelivery) break;
+              if (this._closed || performance.now() >= deadline) {
+                const renderer = window.__mirrorRendererDiagnostics?.() ?? null;
+                this._fail(`diagnostic scene-delta ${this._diagnosticSceneRevision} was not presented before clock advance ` +
+                  `(ack ${this._sceneAckSerial - ackBeforeDelivery}, frame ${identity?.revision ?? "none"}, ` +
+                  `backend ${renderer?.backend ?? "none"}, readiness ${renderer?.readiness ?? "none"})`);
+                window.__benchDone = true;
+                return;
+              }
+              await new Promise((resolve) => setTimeout(resolve, 16));
+            }
+          }
         }
         if (this._i < this._msgs.length) {
           const wait = Math.max(0, this._msgs[this._i].t - (performance.now() - t0));
@@ -1000,6 +1770,13 @@ function fakeWebSocketInit(config) {
       step();
     }
 
+    async _setDiagnosticClock(ms) {
+      if (!this._diagnosticClock) return;
+      window.__benchDiagnosticClockMs = ms;
+      if (window.__mirrorCanvasBenchClock && typeof window.__mirrorCanvasBenchClock === "object") window.__mirrorCanvasBenchClock.nowMs = ms;
+      if (typeof window.__mirrorSetDiagnosticClock === "function") await window.__mirrorSetDiagnosticClock(ms);
+    }
+
     _deliver(data) {
       // Keep this instrumentation inside the fake transport, rather than trying to infer an acknowledgement
       // from rAF cadence. A scene-ack means "the client presented a state at or after this delivery"; under
@@ -1007,6 +1784,7 @@ function fakeWebSocketInit(config) {
       // acknowledgement that could have covered it. The arrays are reset with the normal measured-window
       // instruments below and capped so a pathological replay cannot grow the page heap forever.
       if (data.includes('"type":"scene-delta"')) {
+        window.__benchSceneDeliveries = (window.__benchSceneDeliveries ?? 0) + 1;
         const pending = window.__benchSceneAckPending;
         if (Array.isArray(pending) && pending.length < 20_000) pending.push(performance.now());
       }
@@ -1043,6 +1821,7 @@ function fakeWebSocketInit(config) {
       try { msg = JSON.parse(data); } catch { return; }
       const type = msg && msg.type;
       if (type === "scene-ack") {
+        this._sceneAckSerial++;
         const pending = window.__benchSceneAckPending;
         const latencies = window.__benchSceneAckLatencies;
         if (Array.isArray(pending) && Array.isArray(latencies) && pending.length > 0) {
@@ -1081,7 +1860,7 @@ function fakeWebSocketInit(config) {
       if (type === "join") {
         // The mirror sends a join (empty name for a singleplayer-run direct view). Reply directView so the
         // client's join flow resolves exactly like the real server would for a solo run.
-        this._deliver('{"type":"session","directView":true}');
+        this._deliver(config.synthesizedSession);
         return;
       }
       if (type === "ping") {
@@ -1251,6 +2030,7 @@ function tickSamplerInit() {
   window.__benchFrameGaps = [];
   window.__benchSceneAckPending = [];
   window.__benchSceneAckLatencies = [];
+  window.__benchSceneDeliveries = 0;
   let lastFrameT = null;
   const raf = window.requestAnimationFrame.bind(window);
   window.requestAnimationFrame = (cb) =>
@@ -1319,9 +2099,11 @@ function summarizeFrameGaps(gaps) {
 // Scene-delivery → first subsequent scene-ack latency, collected by fakeWebSocketInit. This is deliberately
 // separate from frame gaps: an idle renderer can have perfect rAF cadence while an incoming delta still waits
 // behind a long reconcile. Null means the window carried no scene deltas or the transport was not instrumented.
-function summarizeSceneAckLatency(samples) {
-  if (!Array.isArray(samples) || samples.length === 0) return { count: 0, p50: null, p95: null, max: null };
-  return { ...distribution(samples, 2), count: samples.length };
+function summarizeSceneAckLatency(samples, accounting = null) {
+  const delivered = Number.isSafeInteger(accounting?.delivered) ? accounting.delivered : null;
+  const pending = Number.isSafeInteger(accounting?.pending) ? accounting.pending : null;
+  if (!Array.isArray(samples) || samples.length === 0) return { count: 0, p50: null, p95: null, max: null, delivered, acked: 0, pending, eventFree: delivered === 0 && pending === 0 };
+  return { ...distribution(samples, 2), count: samples.length, delivered, acked: samples.length, pending, eventFree: false };
 }
 
 function summarizeLongTasks(durations) {
@@ -2382,7 +3164,9 @@ function presenceProbeInPage() {
   const designBox = { width: stage.offsetWidth, height: stage.offsetHeight };
   const stageRect = { width: rect.width, height: rect.height };
   const canvasStats = typeof window.__mirrorCanvasStats === "function" ? window.__mirrorCanvasStats() : null;
-  const backend = canvasStats && canvasStats.backend === "canvas" ? "canvas" : "dom";
+  const rendererDiagnostics =
+    typeof window.__mirrorRendererDiagnostics === "function" ? window.__mirrorRendererDiagnostics() : null;
+  const backend = rendererDiagnostics?.backend ?? canvasStats?.backend ?? "dom";
 
   const inViewport = (x, y) => x >= 0 && y >= 0 && x <= viewport.width && y <= viewport.height;
   const viewportArea = viewport.width * viewport.height;
@@ -2432,7 +3216,7 @@ function presenceProbeInPage() {
     scored.sort((a, b) => b.area - a.area);
     for (const s of scored.slice(0, 20)) points.push({ x: s.x, y: s.y });
   } else {
-    // The canvas arm has no scene DOM. `window.__mirrorHitProbe` (the seam --hit-grid uses) answers, per
+    // Retained renderer arms have no scene DOM. `window.__mirrorHitProbe` (the seam --hit-grid uses) answers, per
     // viewport point, whether a node paints / hit-tests there — a real "content here" signal.
     const probe = window.__mirrorHitProbe;
     if (typeof probe === "function") {
@@ -3116,7 +3900,7 @@ function createTraceCollector({ onKeep = null, keepCpuComplete = false } = {}) {
 //     renderer main thread EXACTLY (they were emitted from it), which is what makes per-thread attribution
 //     honest on a page with several renderer processes' worth of threads in the trace.
 //   - anything the trace does not actually carry is reported as null. Never a zero standing in for "unknown".
-function computeTraceMetrics(collector, scope = ACTIVE_TRACE_WINDOW, bridgeWindow = null) {
+function computeTraceMetrics(collector, scope = ACTIVE_TRACE_WINDOW, bridgeWindow = null, allowUnmeasuredDecode = false) {
   const { events, threadNames, processNames } = collector;
   const markerWindow = markerWindowOrError(events, scope);
   if (markerWindow.error) {
@@ -3436,7 +4220,9 @@ function computeTraceMetrics(collector, scope = ACTIVE_TRACE_WINDOW, bridgeWindo
   // DOM retains the strict zero-decode rejection. The only exception is the
   // already-validated bridge sample from THIS marker scope; it is not inferred
   // from canvas mode or accepted during cleanup.
-  const decodeEvidenceError = traceDecodeEvidenceError(decodes.length, cacheFamily, CANONICAL_DECODE, bridgeWindow);
+  const decodeEvidenceError = allowUnmeasuredDecode
+    ? null
+    : traceDecodeEvidenceError(decodes.length, cacheFamily, CANONICAL_DECODE, bridgeWindow);
   if (decodeEvidenceError) return { error: decodeEvidenceError };
   if (cpu.byThread.length === 0) {
     return { error: "no RunTask/tdur events in the window across any process — the cross-process `cpu` block could not be built" };
@@ -3444,6 +4230,7 @@ function computeTraceMetrics(collector, scope = ACTIVE_TRACE_WINDOW, bridgeWindo
 
   return {
     windowMs: round(windowMs, 1),
+    traceMarkers: { begin: t0, end: t1, pid, tid: mainTid },
     mainThread: threadNames.get(`${pid}:${mainTid}`) ?? null,
     frameCostMs: distribution(frameCostMs, 2),
     taskCostMs: distribution(taskCostMs, 2),
@@ -3467,7 +4254,27 @@ function computeTraceMetrics(collector, scope = ACTIVE_TRACE_WINDOW, bridgeWindo
     presentedFramesSource: presentedSource,
     rasterMs: round(rasterMs, 1),
     rasterTasks: rasterTasks.length,
-    decode: {
+    decode: decodes.length === 0 && bridgeWindow === null && allowUnmeasuredDecode ? {
+      source: null,
+      count: null,
+      totalMs: null,
+      maxMs: null,
+      codecSource: null,
+      codecRuns: null,
+      codecMs: null,
+      codecMaxMs: null,
+      distinctImages: null,
+      redecodeCount: null,
+      redecodeMs: null,
+      inRasterCount: null,
+      inRasterMs: null,
+      imageKey: null,
+      cacheFamily,
+      imagesExpected: true,
+      provenance: "trace-unmeasured",
+      unmeasuredReason: "no canonical image-decode events in the marker window",
+      byName: decodeNames
+    } : {
       // Cache ENTRY POINTS (mostly hits — see the comment above): the cache traffic, not decode work.
       source: decodeSource,
       count: decodes.length,
@@ -3578,10 +4385,15 @@ function createMarkerScopedTrace(cdp, opts) {
   let rawTraceStream = null;
   let rawTraceCount = 0;
   let dataListener = null;
+  let bufferListener = null;
+  let maxBufferPercent = null;
+  let categories = [];
 
   const detachDataListener = () => {
     if (dataListener) cdp.off?.("Tracing.dataCollected", dataListener);
     dataListener = null;
+    if (bufferListener) cdp.off?.("Tracing.bufferUsage", bufferListener);
+    bufferListener = null;
   };
   const closeRawTrace = async () => {
     if (!rawTraceStream) return;
@@ -3593,10 +4405,11 @@ function createMarkerScopedTrace(cdp, opts) {
   const start = async () => {
     if (!scope || !cdp) return;
     if (started) throw new Error(`trace ${scope.phase} capture started twice`);
-    const categories = ["devtools.timeline", "disabled-by-default-devtools.timeline", "cc"];
-    if (scope.phase === "idle" || opts.animAudit) categories.push("blink.animations", "blink.user_timing");
-    if (opts.traceGpu) categories.push(...GPU_TRACE_CATEGORIES);
-    if (opts.report) categories.push(...REPORT_EXTRA_CATEGORIES);
+    categories = opts.startupObservationOut ? ["devtools.timeline", "blink.user_timing"]
+      : opts.traceOnly ? ["devtools.timeline"] : ["devtools.timeline", "disabled-by-default-devtools.timeline", "cc"];
+    if (!opts.startupObservationOut && !opts.traceOnly && (scope.phase === "idle" || opts.animAudit)) categories.push("blink.animations", "blink.user_timing");
+    if (!opts.startupObservationOut && opts.traceGpu) categories.push(...GPU_TRACE_CATEGORIES);
+    if (!opts.startupObservationOut && opts.report && !opts.traceOnly) categories.push(...REPORT_EXTRA_CATEGORIES);
 
     if (opts.report) {
       if (opts.trace) {
@@ -3611,20 +4424,24 @@ function createMarkerScopedTrace(cdp, opts) {
       };
       collector = createTraceCollector({
         onKeep: opts.traceRawFull ? null : writeEvent,
-        keepCpuComplete: true,
+        keepCpuComplete: !opts.traceOnly,
       });
       dataListener = (payload) => {
         if (opts.traceRawFull) for (const event of payload.value ?? []) writeEvent(event);
         collector.onData(payload);
       };
       cdp.on("Tracing.dataCollected", dataListener);
+      bufferListener = ({ percentFull }) => {
+        if (Number.isFinite(percentFull)) maxBufferPercent = Math.max(maxBufferPercent ?? 0, percentFull);
+      };
+      cdp.on("Tracing.bufferUsage", bufferListener);
     }
 
     try {
       await cdp.send(
         "Tracing.start",
         opts.report
-          ? { traceConfig: { recordMode: "recordAsMuchAsPossible", includedCategories: categories }, transferMode: "ReportEvents" }
+          ? { traceConfig: { recordMode: "recordAsMuchAsPossible", includedCategories: categories }, transferMode: "ReportEvents", bufferUsageReportingInterval: 1000 }
           : { categories: categories.join(","), transferMode: "ReturnAsStream" }
       );
       started = true;
@@ -3652,10 +4469,21 @@ function createMarkerScopedTrace(cdp, opts) {
     let traceMetrics = null;
     let markerError = null;
     if (collector) {
-      traceMetrics = computeTraceMetrics(collector, scope, bridgeWindow);
+      traceMetrics = opts.startupObservationOut
+        ? markerWindowOrError(collector.events, scope)
+        : opts.traceOnly
+        ? markerWindowOrError(collector.events, scope)
+        : computeTraceMetrics(collector, scope, bridgeWindow, opts.allowUnmeasuredDecode === true);
       if (traceMetrics.error) markerError = traceMetrics.error;
       if (rawTraceStream) {
         await closeRawTrace();
+        writeFileSync(`${tracePath}.meta.json`, JSON.stringify({
+          schema: "raw-cdp-trace/1", scope: scope.phase, categories,
+          rawEventCount: rawTraceCount, fullRawEvents: opts.traceRawFull === true,
+          dataLossOccurred: complete?.dataLossOccurred ?? null,
+          maxBufferPercent,
+          tracingComplete: true,
+        }, null, 2));
         console.error(`  trace -> ${tracePath} (${rawTraceCount} events; ${scope.startMarker} → ${scope.endMarker})`);
       }
     }
@@ -3677,6 +4505,13 @@ function createMarkerScopedTrace(cdp, opts) {
         const parsed = JSON.parse(raw);
         const events = Array.isArray(parsed) ? parsed : parsed.traceEvents;
         markerError = markerWindowOrError(events, scope).error ?? null;
+        writeFileSync(`${tracePath}.meta.json`, JSON.stringify({
+          schema: "raw-cdp-trace/1", scope: scope.phase, categories,
+          rawEventCount: events.length, fullRawEvents: true,
+          dataLossOccurred: complete?.dataLossOccurred ?? null,
+          maxBufferPercent,
+          tracingComplete: true,
+        }, null, 2));
       } catch {
         markerError = `trace ${scope.phase} artifact is not valid JSON`;
       }
@@ -3696,13 +4531,76 @@ function createMarkerScopedTrace(cdp, opts) {
 // one measured run
 // ---------------------------------------------------------------------------------------------------------
 
+const campaignContextHookPages = new WeakSet();
 async function runOnce(context, pageUrl, opts) {
   // --connect-cdp: drive the browser's EXISTING active tab (opts.connectPage) instead of opening one, and blank
   // it first — a real navigation is the only thing that re-reads the renderer's module-load lever consts, and
   // going straight from one bench URL to the same bench URL is not guaranteed to be one.
   const page = opts.connectPage ?? (await context.newPage());
+  const startupNavigation = opts.busyStartupTimelineOut ? {
+    clockDomain: "host", preexisting: await page.evaluate(() => ({
+      url: location.href, documentNonce: window.__benchDocumentNonce ?? null,
+      timeOrigin: performance.timeOrigin, atPageMs: performance.now(),
+      renderer: window.__mirrorRendererDiagnostics?.() ?? null,
+    })).catch((error) => ({ captureFailure: String(error) })), events: [],
+  } : null;
+  const noteStartupNavigation = (name, detail = {}) => {
+    if (startupNavigation) startupNavigation.events.push({ name, hostEpochMs: Date.now(), detail });
+  };
+  const onStartupFrameNavigated = (frame) => {
+    if (frame === page.mainFrame()) noteStartupNavigation("page.mainFrameNavigated", { url: frame.url() });
+  };
+  if (startupNavigation) page.on("framenavigated", onStartupFrameNavigated);
+  const activeVisualReference = opts.activeWindowWitness
+    ? JSON.parse(readFileSync(opts.activeVisualReference, "utf8")) : null;
+  if (activeVisualReference) {
+    const admission = validateActiveVisualReference(activeVisualReference, {
+      sourceSha256: opts.activeSourceSha256, recordingSha256,
+      browser: { packageName: opts.witnessBrowserPackage, pid: opts.witnessBrowserPid },
+    });
+    if (!admission.accepted) throw new Error(`active visual reference rejected: ${admission.failures.join(",")}`);
+  }
+  const pageViewport = opts.connect
+    ? await page.evaluate(() => ({ w: window.innerWidth, h: window.innerHeight, dpr: window.devicePixelRatio })).catch(() => null)
+    : null;
+  const campaignAbort = opts.campaignAbortOnLoss ? createCampaignPageAbort(page) : null;
+  const waitAbortably = run => {
+    campaignAbort?.throwIfAborted();
+    const work = run();
+    return campaignAbort ? campaignAbort.wait(work) : work;
+  };
+  try {
+  if (campaignAbort && !campaignContextHookPages.has(page)) {
+    let timer;
+    try {
+      await Promise.race([
+        page.addInitScript(installCampaignContextLossHook),
+        new Promise((_, reject) => { timer = setTimeout(() => reject(Error("campaign loss hook init timed out")), 8000); })
+      ]);
+    } finally { clearTimeout(timer); }
+    campaignContextHookPages.add(page);
+  }
+if (opts.preIdleWitness || opts.activeWindowWitness || opts.startupObservationOut || opts.activeVisualReferenceOut) {
+    let timer;
+    try {
+      await Promise.race([
+        page.addInitScript(installWitnessDocumentNonce),
+        new Promise((_, reject) => { timer = setTimeout(() => reject(new Error("pre-idle witness init script timed out")), 8000); }),
+      ]);
+    } finally { clearTimeout(timer); }
+  }
+  if (opts.busyStartupTimelineOut) {
+    let timer;
+    try {
+      await Promise.race([
+        page.addInitScript(installBusyStartupTimeline),
+        new Promise((_, reject) => { timer = setTimeout(() => reject(new Error("busy startup timeline init timed out")), 8000); }),
+      ]);
+    } finally { clearTimeout(timer); }
+  }
   if (opts.connectPage) {
-    await page.goto("about:blank", { waitUntil: "domcontentloaded" });
+    noteStartupNavigation("harness.gotoAboutBlank", { from: page.url() });
+    await waitAbortably(() => page.goto("about:blank", { waitUntil: "domcontentloaded" }));
   }
 
   // PAGE ERRORS. Until now an uncaught exception during the measured replay was invisible: the run either hung on
@@ -3727,7 +4625,7 @@ async function runOnce(context, pageUrl, opts) {
   page.on("pageerror", (error) => notePageError(error?.stack ?? error?.message ?? error));
   page.on("console", (message) => {
     if (message.type() === "error") notePageError(`console.error: ${message.text()}`);
-    else if (message.type() === "warning" && message.text().startsWith("[gsw")) notePageWarning(message.text());
+    else if (message.type() === "warning" && /^\[(?:gsw|pixi)\b/i.test(message.text())) notePageWarning(message.text());
   });
   // R7 W1-I1b — RENDERER DEATH as a reported field instead of an exception that ends the matrix. Round 6's phone
   // matrix lost 14 of 16 combat cells this way: the first cell whose renderer died threw "Target crashed" out of
@@ -3847,8 +4745,73 @@ async function runOnce(context, pageUrl, opts) {
   const markerTrace = createMarkerScopedTrace(cdp, opts);
   let tracePath = null;
   let traceMetrics = null;
+  let activeTraceFailure = null;
+  let activeWindowResult = null;
+  let startupObservation = null;
+  const startupLedger = (phase) => {
+    const serial = process.env.COUCHCOOP_BENCH_ADB_SERIAL;
+    const path = `${opts.startupObservationOut}.${phase}.ps.txt`;
+    mkdirSync(dirname(path), { recursive: true });
+    const capturedEpochMs = Number(execFileSync("adb", ["-s", serial, "shell", "date", "+%s%3N"],
+      { encoding: "utf8", timeout: 8000 }).trim());
+    const ps = execFileSync("adb", ["-s", serial, "shell", "ps", "-A", "-o", "PID,RSS,NAME"],
+      { encoding: "utf8", timeout: 8000 });
+    if (!Number.isFinite(capturedEpochMs)) throw new Error("startup observation device clock unavailable");
+    writeFileSync(path, ps);
+    return { path, capturedEpochMs };
+  };
+  let startupLedgerBefore = null;
+  let startupLedgerBeforeFailure = null;
+  if (opts.startupObservationOut) try { startupLedgerBefore = startupLedger("before"); }
+  catch (error) { startupLedgerBeforeFailure = String(error); }
+  let jsProfileArtifact = null;
 
-  await page.goto(pageUrl, { waitUntil: "domcontentloaded" });
+  if (opts.activeWindowWitness || opts.startupObservationOut) {
+    if (!cdp) throw new Error("active measured replay has no CDP tracing session");
+    await markerTrace.start();
+  }
+  const activeTargetId = opts.activeWindowWitness || opts.startupObservationOut || opts.activeVisualReferenceOut || opts.busyStartupTimelineOut
+    ? (await cdp?.send("Target.getTargetInfo"))?.targetInfo?.targetId ?? null : null;
+  if ((opts.activeWindowWitness || opts.startupObservationOut || opts.activeVisualReferenceOut || opts.busyStartupTimelineOut) && !activeTargetId) {
+    throw new Error("active visual/measured replay has no CDP target ID before delivery");
+  }
+  noteStartupNavigation("harness.gotoReplay", { url: pageUrl });
+  await waitAbortably(() => page.goto(pageUrl, { waitUntil: "domcontentloaded" }));
+  let resourceWarmPass = null;
+  if (opts.resourceWarmPass) {
+    await waitAbortably(() => page.waitForFunction(() =>
+      ["ready", "failed"].includes(window.__benchResourceWarmPass?.status), null, { timeout: 180_000 }));
+    resourceWarmPass = await page.evaluate(() => ({
+      ...window.__benchResourceWarmPass,
+      fetches: [...(window.__benchWarmFetches ?? [])],
+      fetchDropped: window.__benchWarmFetchDropped ?? null,
+      ackTrace: window.__benchWarmAckTraceSnapshot?.() ?? [],
+      ackTraceOverflow: window.__benchWarmAckTraceOverflow ?? null,
+      renderer: window.__mirrorRendererDiagnostics?.() ?? null,
+      socketError: window.__benchWsError ?? null,
+    }));
+    if (resourceWarmPass.status !== "ready")
+      throw new Error(`resource warm pass failed: ${JSON.stringify(resourceWarmPass)}`);
+    // This round trip is the causal boundary: all preparation and its fetches finished before replay starts.
+    opts.resourceWarmPhase?.("measured");
+    await page.evaluate(() => window.__benchResourceWarmRelease?.());
+  }
+
+  if (new URL(pageUrl).searchParams.get("rustDebug") === "1") {
+    for (let sample = 0; sample < 10; sample++) {
+      await page.waitForTimeout(1000);
+      const state = await page.evaluate(() => ({
+        renderer: typeof window.__mirrorRendererDiagnostics === "function" ? window.__mirrorRendererDiagnostics() : null,
+        rustStats: typeof window.__mirrorRustStats === "function" ? window.__mirrorRustStats() : null,
+        rustFixture: typeof window.__mirrorRustFixture === "function" ? !!window.__mirrorRustFixture() : null,
+        drawList: typeof window.__mirrorDrawListDump === "function" ? window.__mirrorDrawListDump() : null,
+        ws: window.__benchWsError ?? null,
+        wsProgress: window.__benchWs ? { index: window.__benchWs._i, messages: window.__benchWs._messages?.length, credits: window.__benchWs._credits } : null,
+      })).catch((error) => ({ probeError: String(error) }));
+      console.error(`  rust diagnostic ${sample + 1}/10: ${JSON.stringify(state)}`);
+      if (state.renderer?.ready || state.renderer?.readiness === "failed") break;
+    }
+  }
 
   // Connect mode only: PROVE the init scripts landed on this navigation before waiting two minutes for a mirror
   // tree that a page without the fake socket can never build. `__benchTicks` is installed by tickSamplerInit,
@@ -3865,13 +4828,28 @@ async function runOnce(context, pageUrl, opts) {
     }
   }
 
-  // Wait for the keyframe to render. TWO backends can satisfy that now and they leave completely different
+  // Wait for the selected renderer to admit and draw the keyframe. Prefer the
+  // backend-neutral contract; legacy DOM/canvas checks remain for older arms.
   // evidence behind: the DOM backend stamps `.mirror-node` per scene node (the original gate, untouched), while
   // the single-canvas backend (`?stage=canvas`) builds ONE canvas and would sit here for the full 120 s no matter
   // how well it was rendering. Its equivalent is its own painted-frame counter — a frame that really reached
   // `execute` carrying a scene's worth of quads — so the gate is the OR of the two.
-  await page.waitForFunction(
-    () => {
+  if (!opts.activeWindowWitness && !opts.startupObservationOut) try {
+    await waitAbortably(() => page.waitForFunction(
+      () => {
+        const readRenderer = window.__mirrorRendererDiagnostics;
+        if (typeof readRenderer === "function") {
+        const renderer = readRenderer();
+        if (renderer?.failed || renderer?.status === "failed" || renderer?.readiness === "failed" || renderer?.failure) {
+          throw new Error(`renderer failed during warmup: ${renderer?.failure ?? renderer?.readiness ?? renderer?.status}`);
+        }
+        const staticBg = typeof window.__mirrorStaticBg === "function" ? window.__mirrorStaticBg() : null;
+        const staticBgReady = renderer?.effective?.staticBg !== 1 ||
+          (staticBg?.latched === false && Number(staticBg?.decodes) > 0 && typeof staticBg?.lastUrl === "string" && staticBg.lastUrl.length > 0);
+        return staticBgReady && renderer?.ready === true && Number(renderer?.draw?.frames) > 0 &&
+          Number(renderer?.draw?.objects) > 0 && Number(renderer?.resources?.pending ?? 0) === 0 &&
+          Number(renderer?.resources?.failed ?? 0) === 0;
+      }
       if (document.querySelectorAll(".mirror-node").length > 50) {
         return true;
       }
@@ -3883,12 +4861,25 @@ async function runOnce(context, pageUrl, opts) {
       return stats.frames > 0 && stats.quads > 50;
     },
     null,
-    { timeout: 120_000 }
-  );
+      { timeout: Number(process.env.COUCHCOOP_BENCH_READY_TIMEOUT_MS ?? 120_000) }
+    ));
+  } catch (error) {
+    campaignAbort?.throwIfAborted();
+    const readiness = await page.evaluate(() => ({
+      renderer: typeof window.__mirrorRendererDiagnostics === "function" ? window.__mirrorRendererDiagnostics() : null,
+      staticBg: typeof window.__mirrorStaticBg === "function" ? window.__mirrorStaticBg() : null,
+      canvas: typeof window.__mirrorCanvasStats === "function" ? window.__mirrorCanvasStats() : null,
+      wsError: window.__benchWsError ?? null,
+      done: window.__benchDone === true,
+      mirrorNodes: document.querySelectorAll(".mirror-node").length,
+    })).catch(() => null);
+    throw new Error(`renderer readiness timeout: ${JSON.stringify(readiness)} (${error})`);
+  }
 
   // initialRenderMs: navigation start -> the first rendered mirror tree (>50 .mirror-node elements). Read from
   // the PAGE's clock (performance.now() is ms since its time origin), so no harness/IPC latency rides on it.
-  const initialRenderMs = opts.report ? await page.evaluate(() => performance.now()) : null;
+  let initialRenderMs = opts.report && !opts.activeWindowWitness && !opts.startupObservationOut
+    ? await page.evaluate(() => performance.now()) : null;
 
   // --window: hold everything below until the recorded stream reaches the window's START. The fake socket
   // publishes the crossing (see _pumpRecorded); polling it costs one rAF-paced predicate on the page, and the
@@ -3900,12 +4891,22 @@ async function runOnce(context, pageUrl, opts) {
   // The active trace starts immediately before the renderer-main opening marker, after all readiness work.
   // Its CDP setup latency is deliberately outside the historical wall/Performance.getMetrics bracket below.
   // An idle run deliberately does not start here: its trace is reserved for the later quiet interval.
-  if (markerTrace.scope?.phase === "active") await markerTrace.start();
+  if (markerTrace.scope?.phase === "active" && !opts.activeWindowWitness && !opts.startupObservationOut) await markerTrace.start();
+  const processStartsBeforeMarker = opts.report ? await captureBrowserProcessStarts(context) : null;
   const wallA = performance.now();
   const a = await getMetrics();
+  const openCallStartMs = performance.now();
   const markerOpen = await page.evaluate(beginActiveMarkerWindowInPage, {
-    marker: markerTrace.scope?.phase === "active" ? REPORT_MARK_START : null
+    marker: markerTrace.scope?.phase === "active" && !opts.activeWindowWitness && !opts.startupObservationOut ? REPORT_MARK_START : null,
+    boundaryOwned: !!(opts.activeWindowWitness || opts.startupObservationOut),
   });
+  const openCallEndMs = performance.now();
+  if (opts.jsProfile) {
+    if (!cdp) throw new Error("--js-profile requires a CDP session");
+    await cdp.send("Profiler.enable");
+    await cdp.send("Profiler.setSamplingInterval", { interval: 1000 });
+    await cdp.send("Profiler.start");
+  }
   const nodesA = markerOpen.nodes;
   // Walk counters are CUMULATIVE since page load and `walkStats` below is read post-settle, so a windowed run
   // needs both ends to state what the window itself cost (C2 reads fullWalkCauses.bail over the shuffle).
@@ -3942,35 +4943,123 @@ async function runOnce(context, pageUrl, opts) {
     }
   })();
 
+  // A growth qualification must keep the same page and renderer instance alive across complete replay cycles.
+  // Fresh-page --repeats intentionally cannot answer that question. Sample the renderer throughout every cycle
+  // so a transient peak cannot disappear behind an identical endpoint.
+  if (opts.growthCycles > 1) {
+    await page.evaluate(() => {
+      window.__benchGrowthCycle = 1;
+      window.__benchGrowthSamples = [];
+      const sample = (endpoint = false) => {
+        const d = typeof window.__mirrorRendererDiagnostics === "function" ? window.__mirrorRendererDiagnostics() : null;
+        const draw = d?.draw ?? null;
+        window.__benchGrowthSamples.push({
+          cycle: window.__benchGrowthCycle,
+          endpoint,
+          atMs: performance.now(),
+          instance: d?.instance ?? null,
+          ready: d?.ready ?? null,
+          readiness: d?.readiness ?? d?.status ?? null,
+          admittedRevision: d?.admittedRevision ?? d?.frameIdentity?.revision ?? null,
+          buildEpoch: d?.frameIdentity?.buildEpoch ?? d?.effective?.buildEpoch ?? null,
+          deliveredSceneMessages: window.__benchSceneDeliveries ?? null,
+          replayMessageIndex: window.__benchWs?._i ?? null,
+          replayMessageCount: window.__benchWs?._msgs?.length ?? null,
+          objects: draw?.objects ?? null,
+          textures: draw?.textures ?? null,
+          frameTextures: draw?.frameTextures ?? null,
+          gpuTextures: draw?.gpuTextures ?? null,
+          gpuTextureSlots: draw?.gpuTextureSlots ?? null,
+          textRasterizations: draw?.textRasterizations ?? null,
+          created: draw?.created ?? null,
+          destroyed: draw?.destroyed ?? null,
+          resourcesPending: d?.resources?.pending ?? null,
+          resourcesFailed: d?.resources?.failed ?? null,
+        });
+      };
+      window.__benchGrowthSample = sample;
+      window.__benchGrowthTimer = setInterval(sample, 100);
+    });
+  }
+
   // Wait until the fake WS finished delivering the stream, then settle — or, under --window, until the stream
   // crosses the window's END (`__benchDone` is still accepted there, so a window that outlives the recording
   // closes instead of hanging). The stream keeps running past a window's close; it is drained further down,
   // before the post-settle probes, so those still describe the settled scene.
   try {
-    await page.waitForFunction(
+    await waitAbortably(() => page.waitForFunction(
       (windowed) => (windowed ? (window.__benchWindowMark ?? 0) >= 2 : false) || window.__benchDone === true,
       !!opts.window,
       { timeout: 180_000 }
-    );
+    ));
   } catch {
+    campaignAbort?.throwIfAborted();
     const err = await probePage(() => window.__benchWsError ?? null);
     console.error(`  stream did not finish (fake WS error: ${err ?? "none"})`);
   }
   // The settle tail belongs to a whole-stream run: it is how "the recording is finished AND quiet" is defined.
   // A window closes on its own bound — adding 500ms of tail would measure 500ms that is not in the window.
   if (!opts.window) await page.waitForTimeout(500);
+
+  let sameInstanceGrowth = null;
+  if (opts.growthCycles > 1 && !pageGone()) {
+    await page.evaluate(() => window.__benchGrowthSample?.(true));
+    for (let cycle = 2; cycle <= opts.growthCycles; cycle++) {
+      await page.evaluate((nextCycle) => {
+        const ws = window.__benchWs;
+        if (!ws || typeof ws._pumpRecorded !== "function") throw new Error("fake WebSocket restart seam unavailable");
+        window.__benchGrowthCycle = nextCycle;
+        window.__benchDone = false;
+        ws._i = 0;
+        ws._credits = 1;
+        ws._pumpRecorded();
+      }, cycle);
+      await page.waitForFunction(() => window.__benchDone === true, null, { timeout: 180_000 });
+      await page.waitForTimeout(500);
+      await page.evaluate(() => window.__benchGrowthSample?.(true));
+    }
+    sameInstanceGrowth = await page.evaluate(() => {
+      clearInterval(window.__benchGrowthTimer);
+      const samples = window.__benchGrowthSamples ?? [];
+      const fields = ["objects", "textures", "frameTextures", "gpuTextures", "gpuTextureSlots", "textRasterizations", "created", "destroyed"];
+      const cycles = [];
+      for (let cycle = 1; cycle <= window.__benchGrowthCycle; cycle++) {
+        const rows = samples.filter((row) => row.cycle === cycle);
+        const endpoint = [...rows].reverse().find((row) => row.endpoint) ?? null;
+        const peak = Object.fromEntries(fields.map((field) => {
+          const values = rows.map((row) => row[field]).filter((value) => typeof value === "number");
+          return [field, values.length > 0 ? Math.max(...values) : null];
+        }));
+        cycles.push({ cycle, sampleCount: rows.length, endpoint, peak });
+      }
+      return { cycles, samples: samples.length };
+    });
+  }
   sweepStop = true;
   await sweep;
 
   const wallB = performance.now();
   const b = await getMetrics();
+  if (opts.jsProfile) {
+    const { profile } = await cdp.send("Profiler.stop");
+    await cdp.send("Profiler.disable");
+    const profileDir = resolve(REPO_ROOT, ".sts2/bench/profiles");
+    mkdirSync(profileDir, { recursive: true });
+    const profilePath = resolve(profileDir, basename(opts.jsProfile));
+    writeFileSync(profilePath, JSON.stringify(profile));
+    jsProfileArtifact = { profile, profilePath };
+    console.error(`  JS profile -> ${profilePath}`);
+  }
   // readyMs: navigation start -> the whole recorded stream delivered AND settled (the same instant the
   // measured window closes). Page clock again, and the closing trace marker rides the same evaluate.
+  const closeCallStartMs = performance.now();
   const markerClose = (opts.report || markerTrace.scope?.phase === "active")
     ? await probePage(endActiveMarkerWindowInPage, {
-        marker: markerTrace.scope?.phase === "active" ? REPORT_MARK_END : null
+        marker: markerTrace.scope?.phase === "active" && !opts.activeWindowWitness && !opts.startupObservationOut ? REPORT_MARK_END : null
       })
     : null;
+  const closeCallEndMs = performance.now();
+  const processStartsAfterMarker = opts.report ? await captureBrowserProcessStarts(context) : null;
   const readyMs = opts.report ? markerClose?.atMs ?? null : null;
   let bridgeStats = (() => {
     const before = markerOpen?.canvasStats;
@@ -3986,10 +5075,129 @@ async function runOnce(context, pageUrl, opts) {
       after && { instance: markerClose?.canvasStats?.instance, ...after.textures, sampledAtMs: markerClose?.atMs },
     ) };
   })();
+  let startupCompletionTimeout = null;
+  if (opts.startupObservationOut) try {
+    await waitAbortably(() => page.waitForFunction(() => window.__benchStartupWorkload?.end != null,
+      null, { timeout: 60_000 }));
+  } catch (error) { startupCompletionTimeout = String(error); }
   if (markerTrace.scope?.phase === "active") {
-    const completed = await markerTrace.stop({ bridgeWindow: bridgeStats.window });
-    tracePath = completed.tracePath;
-    traceMetrics = completed.traceMetrics;
+    try {
+      const completed = await markerTrace.stop({ bridgeWindow: bridgeStats.window });
+      tracePath = completed.tracePath;
+      traceMetrics = completed.traceMetrics;
+    } catch (error) {
+      if (!opts.activeWindowWitness && !opts.startupObservationOut) throw error;
+      activeTraceFailure = String(error);
+      if (opts.startupObservationOut && opts.trace)
+        tracePath = resolve(REPO_ROOT, ".sts2/bench/traces", opts.trace);
+    }
+  }
+  if (opts.activeWindowWitness) {
+    const rows = await page.evaluate(() => window.__benchActiveWindowBoundary ?? null);
+    initialRenderMs = rows?.start?.firstReadyAtMs ?? null;
+    const boundary = validateActiveWindowBoundary({ start: rows?.start, end: rows?.end,
+      expectedStart: opts.activeExpected.start, expectedEnd: opts.activeExpected.end });
+    boundary.nodeMarkerLatenessMs = {
+      start: markerOpen?.sampledAtMs != null && rows?.start?.atMs != null
+        ? markerOpen.sampledAtMs - rows.start.atMs : null,
+      end: markerClose?.atMs != null && rows?.end?.atMs != null
+        ? markerClose.atMs - rows.end.atMs : null,
+    };
+    for (const [name, ms] of Object.entries(boundary.nodeMarkerLatenessMs)) {
+      if (!Number.isFinite(ms) || ms < 0 || ms > boundary.maxLatenessMs) {
+        boundary.failures.push({ name: `${name}.nodeMarkerLatenessMs`, observed: ms });
+      }
+    }
+    if (activeTraceFailure) boundary.failures.push({ name: "trace", observed: activeTraceFailure });
+    boundary.accepted = boundary.failures.length === 0;
+    const witnessAbort = new AbortController();
+    const onNavigation = (frame) => { if (frame === page.mainFrame()) witnessAbort.abort(); };
+    const onClose = () => witnessAbort.abort();
+    page.on("framenavigated", onNavigation);
+    page.on("close", onClose);
+    page.on("crash", onClose);
+    try {
+      const witnessed = await runActiveWindowWitness({ prefix: opts.activeWindowWitness,
+        boundary, visualReference: activeVisualReference, sourceSha256: opts.activeSourceSha256,
+        recordingSha256, browser: { packageName: opts.witnessBrowserPackage,
+          pid: opts.witnessBrowserPid }, timeoutMs: opts.preIdleWitnessTimeoutMs,
+        signal: witnessAbort.signal,
+        capture: () => waitAbortably(() => page.evaluate(snapshotPreIdleWitnessInPage)),
+        targetId: async () => (await cdp?.send("Target.getTargetInfo"))?.targetInfo?.targetId ?? null,
+      });
+      activeWindowResult = { verified: true,
+        receiptPath: `${opts.activeWindowWitness}.post-active-verified.json`,
+        processLedger: witnessed.processLedger, boundary };
+    } finally {
+      page.off("framenavigated", onNavigation);
+      page.off("close", onClose);
+      page.off("crash", onClose);
+    }
+  }
+  if (opts.startupObservationOut) {
+    const rows = await probePage(() => window.__benchActiveWindowBoundary ?? null);
+    const boundary = validateActiveWindowBoundary({ start: rows?.start, end: rows?.end,
+      expectedStart: opts.activeExpected.start, expectedEnd: opts.activeExpected.end,
+      startupObservation: true });
+    const failures = [];
+    if (startupCompletionTimeout) failures.push(`completionTimeout:${startupCompletionTimeout}`);
+    if (startupLedgerBeforeFailure) failures.push(`processLedgerBefore:${startupLedgerBeforeFailure}`);
+    if (activeTraceFailure) failures.push("traceStop");
+    const workload = await probePage(() => window.__benchStartupWorkload ?? null);
+    const finalPage = await probePage(snapshotPreIdleWitnessInPage);
+    const finalDraw = await probePage(() => {
+      const state = window.__mirrorRendererDiagnostics?.() ?? null;
+      return { draw: state?.draw ?? null, frameIdentity: state?.frameIdentity ?? null };
+    });
+    const resources = await probePage(() => window.__benchStartupResources ?? null);
+    const workloadInspection = inspectStartupWorkload(workload, opts.activeExpected, resources);
+    if (!workloadInspection.accepted) failures.push(...workloadInspection.failures);
+    const copyControl = new URL(pageUrl).searchParams.get("rustZeroCopyPixels") === "1";
+    const resourceInspection = inspectStartupResources(resources, finalPage, copyControl, workload);
+    if (!resourceInspection.accepted) failures.push(...resourceInspection.failures);
+    let finalTargetId = null;
+    try { finalTargetId = (await cdp?.send("Target.getTargetInfo"))?.targetInfo?.targetId ?? null; }
+    catch (error) { failures.push(`finalTarget:${String(error)}`); }
+    const finalInspection = inspectStartupFinalState({ workload, finalPage,
+      targetBefore: activeTargetId, targetAfter: finalTargetId, copyControl });
+    if (!finalInspection.accepted) failures.push(...finalInspection.failures);
+    let startupLedgerAfter = null;
+    try { startupLedgerAfter = startupLedger("after"); }
+    catch (error) { failures.push(`processLedger:${String(error)}`); }
+    const processTrace = inspectStartupProcessAndTrace({ before: startupLedgerBefore,
+      after: startupLedgerAfter, browser: { packageName: opts.witnessBrowserPackage,
+        pid: opts.witnessBrowserPid }, tracePath, workload });
+    if (!processTrace.accepted) failures.push(...processTrace.failures);
+    if (pageErrors.length || responseErrors.size || pageCrashed) failures.push("pageFailure");
+    const receipt = { schema: "mirror-startup-observation/1", kind: "startup-observation",
+      admission: { fps: false, equivalence: false }, sourceSha256: opts.activeSourceSha256,
+      workload: { phase: "active", startMs: 2500, endMs: 6500, limitMs: 6500,
+        pacing: "recorded", diagnosticClock: false },
+      recordingSha256, browser: { packageName: opts.witnessBrowserPackage,
+        pid: opts.witnessBrowserPid }, targetId: activeTargetId,
+      frozenRecordingPin: { sha256: opts.startupExpectedRecordingSha256,
+        deliveredCount: opts.startupExpectedDeliveryCount,
+        deliveredHash: opts.startupExpectedDeliveryHash },
+      boundary, workloadCompletion: { ...workload, inspection: workloadInspection },
+      final: { page: finalPage, ...finalDraw, targetId: finalTargetId },
+      finalInspection, resourceInspection, resources, processTrace, tracePath,
+      pageErrors, responseErrors: [...responseErrors.values()],
+      accepted: failures.length === 0, failures, createdEpochMs: Date.now() };
+    mkdirSync(dirname(opts.startupObservationOut), { recursive: true });
+    writeFileSync(opts.startupObservationOut, JSON.stringify(receipt, null, 2) + "\n");
+    startupObservation = { accepted: receipt.accepted, path: opts.startupObservationOut, failures };
+  }
+  if (jsProfileArtifact) {
+    const traceInspection = await inspectRawTrace(tracePath);
+    const { profile, profilePath } = jsProfileArtifact;
+    writeFileSync(`${profilePath}.meta.json`, JSON.stringify({
+      schema: "marker-js-profile/1", trace: tracePath,
+      markers: { names: [REPORT_MARK_START, REPORT_MARK_END], ...traceInspection.markers },
+      traceValidity: { valid: traceInspection.valid, failures: traceInspection.failures },
+      pageClockMs: { start: markerOpen?.sampledAtMs ?? null, end: markerClose?.atMs ?? null },
+      timing: profileTimingHealth(profile),
+      markerSamples: alignProfileSamples(profile, traceInspection.markers),
+    }, null, 2));
   }
   // Close the churn bracket BEFORE the reads below: every evaluate from here on is harness traffic, and a walk
   // one of them provokes is not part of what the recording cost.
@@ -4010,6 +5218,118 @@ async function runOnce(context, pageUrl, opts) {
       })
     : null;
   const nodesB = await probePage(() => document.querySelectorAll(".mirror-node").length);
+  let parityCapture = null;
+  if (opts.parityCapture) {
+    if (opts.parityAfterDrain) await page.waitForFunction(() => window.__benchDone === true, null, { timeout: 180_000 });
+    const animationSteps = opts.parityAnimationSteps ? await page.evaluate(stepCanvasParityAnimationInPage, {
+      clockMs: opts.parityClockMs, steps: opts.parityAnimationSteps }) : null;
+    const captureParity = async ({ stepped, forceBuild = false, actualCommands = stepped }) => probePage(async ({ clockMs, stepped, forceBuild, actualCommands }) => {
+      if (typeof window.__mirrorSetDiagnosticClock !== "function") return {
+        accepted: false, reason: "deterministicClockUnavailable",
+        wsError: window.__benchWsError ?? null,
+        renderer: window.__mirrorRendererDiagnostics?.() ?? null,
+        deliveredSceneMessages: window.__benchSceneDeliveries ?? null,
+        replayMessageIndex: window.__benchWs?._i ?? null,
+      };
+      if (!stepped || forceBuild) await window.__mirrorSetDiagnosticClock(clockMs);
+      const identityBefore = window.__mirrorFrameIdentity?.() ?? null;
+      const logicalPaint = actualCommands ? window.__mirrorDrawListDump?.() ?? null : window.__mirrorLogicalPaint?.() ?? null;
+      const diagnostics = window.__mirrorRendererDiagnostics?.() ?? null;
+      const textCache = window.__mirrorCanvasStats?.()?.textCache ?? null;
+      const clockSeedAudit = window.__benchClockSeedAudit ?? null;
+      const staticBg = window.__mirrorStaticBg?.() ?? null;
+      const gl = document.querySelector("canvas.mirror-canvas-stage")?.getContext("webgl2") ?? null;
+      const context = gl?.getContextAttributes?.() ?? null;
+      const contextAttributes = context ? { alpha: context.alpha, premultipliedAlpha: context.premultipliedAlpha, antialias: context.antialias } : null;
+      const stage = document.querySelector(".mirror-stage");
+      const rect = stage?.getBoundingClientRect();
+      const width = Math.round(stage?.clientWidth ?? innerWidth), height = Math.round(stage?.clientHeight ?? innerHeight);
+      const hits = [];
+      const hitProbe = window.__mirrorHitProbe, mapProbe = window.__mirrorProductionMapProbe;
+      if (typeof hitProbe !== "function" || typeof mapProbe !== "function") return { accepted: false, reason: "hitOrProductionMapUnavailable" };
+      const sample = (x, y) => {
+        const clientX = (rect?.left ?? 0) + x * ((rect?.width ?? width) / width);
+        const clientY = (rect?.top ?? 0) + y * ((rect?.height ?? height) / height);
+        const mapped = mapProbe(clientX, clientY);
+        const gameX = mapped?.coordX, gameY = mapped?.coordY;
+        if (!Number.isFinite(gameX) || !Number.isFinite(gameY)) {
+          return { x, y, clientX, clientY, gameX: null, gameY: null, hit: { available: false, value: null }, productionMapping: { available: false, value: mapped ?? null } };
+        }
+        return { x, y, clientX, clientY, gameX, gameY, hit: { available: true, value: hitProbe(clientX, clientY, rect?.width ?? width, gameX, gameY) }, productionMapping: { available: true, value: mapped } };
+      };
+      for (let y = 48; y < height; y += 96) for (let x = 48; x < width; x += 96) hits.push(sample(x, y));
+      if (!hits.some((row) => row.x === 240 && row.y === 912)) hits.push(sample(240, 912));
+      const identityAfter = window.__mirrorFrameIdentity?.() ?? null;
+      let stateFingerprint = null;
+      if (identityBefore !== null && Array.isArray(logicalPaint)) {
+        // Backend-local frame clocks/counters identify the renderer instance, not the admitted scene.
+        // The requested diagnostic clock is compared separately by the parity comparator.
+        const semanticIdentity = { revision: identityBefore?.revision ?? null };
+        const text = JSON.stringify([semanticIdentity, logicalPaint]);
+        let hash = 0x811c9dc5;
+        for (let i = 0; i < text.length; i++) { hash ^= text.charCodeAt(i); hash = Math.imul(hash, 0x01000193); }
+        stateFingerprint = (hash >>> 0).toString(16).padStart(8, "0");
+      }
+      const staticBgReady = diagnostics?.effective?.staticBg !== 1 ||
+        (staticBg?.latched === false && Number(staticBg?.decodes) > 0 && typeof staticBg?.lastUrl === "string" && staticBg.lastUrl.length > 0);
+      const accepted = identityBefore !== null && identityAfter !== null && diagnostics?.ready === true && diagnostics?.resources?.pending === 0 && diagnostics?.resources?.failed === 0 && staticBgReady && Array.isArray(logicalPaint) && logicalPaint.length > 0 && hits.every((row) => row.hit.available && row.productionMapping.available) && JSON.stringify(identityBefore) === JSON.stringify(identityAfter);
+      return { accepted, reason: accepted ? null : staticBgReady ? "identityResourcesOrSeams" : "staticBackgroundNotReady", clockMs, identityBefore, identityAfter, stateFingerprint, logicalPaint, hits, diagnostics, textCache, clockSeedAudit, staticBg, contextAttributes };
+    }, { clockMs: opts.parityClockMs, stepped, forceBuild, actualCommands });
+    parityCapture = await captureParity({ stepped: !!animationSteps,
+      forceBuild: !!opts.parityPairedToggle, actualCommands: !!animationSteps || !!opts.parityPairedToggle });
+    if (animationSteps && parityCapture) parityCapture.animationSteps = animationSteps;
+    if (opts.parityPairedToggle && parityCapture) parityCapture.pairedMode = animationSteps ? "animated" : "static-fallback";
+    mkdirSync(dirname(opts.parityCapture), { recursive: true });
+    writeFileSync(opts.parityCapture, `${JSON.stringify({ schema: "mirror-renderer-parity/1", recording: basename(recordingPath), recordingSha256, viewport: pageViewport ?? opts.viewport, devicePixelRatio: pageViewport?.dpr ?? null, capture: parityCapture }, null, 2)}\n`);
+    if (!parityCapture?.accepted) throw new Error(`parity capture refused: ${parityCapture?.reason ?? "unknown"}`);
+    if (opts.parityPairedToggle) {
+      const aStats = animationSteps?.after;
+      if (aStats && (aStats.patch?.referenceReuse?.requested || aStats.patch?.referenceReuse?.applied))
+        throw Error("paired parity control arm unexpectedly requested reference reuse");
+      await page.screenshot({ path: opts.parityCapture.replace(/\.json$/i, ".png") });
+      const toggle = await page.evaluate(async () => {
+        const gear = document.querySelector('[data-testid="mirror-settings-toggle"]');
+        if (!(gear instanceof HTMLButtonElement)) return { accepted: false, reason: "settingsGearUnavailable" };
+        gear.click();
+        await new Promise(resolve => requestAnimationFrame(resolve));
+        const input = document.querySelector('[data-testid="renderer-animation-reference-reuse"]');
+        const apply = document.querySelector('[data-testid="renderer-apply"]');
+        if (!(input instanceof HTMLInputElement) || !(apply instanceof HTMLButtonElement) || input.checked)
+          return { accepted: false, reason: "comparisonToggleUnavailable",
+            input: !!input, apply: !!apply, checked: input?.checked ?? null };
+        const socket = window.__benchWs;
+        const instance = window.__mirrorCanvasStats?.()?.instance?.id;
+        input.click();
+        await new Promise(resolve => requestAnimationFrame(resolve));
+        if (apply.disabled) return { accepted: false, reason: "comparisonApplyDisabled" };
+        apply.click();
+        gear.click();
+        window.__benchPairedParityIdentity = { socket, instance };
+        return { accepted: true };
+      });
+      if (!toggle.accepted) throw Error(`paired parity toggle refused: ${toggle.reason}`);
+      await page.waitForFunction(() => window.__mirrorCanvasStats?.()?.patch?.referenceReuse?.requested === true,
+        null, { timeout: 5000 });
+      const pairedSteps = animationSteps ? await page.evaluate(stepCanvasParityAnimationInPage,
+        { clockMs: opts.parityClockMs, steps: opts.parityAnimationSteps }) : null;
+      const pairedCapture = await captureParity({ stepped: !!pairedSteps, forceBuild: !pairedSteps, actualCommands: true });
+      if (!pairedCapture) throw Error("paired parity candidate capture unavailable");
+      if (pairedSteps) pairedCapture.animationSteps = pairedSteps;
+      pairedCapture.pairedMode = animationSteps ? "animated" : "static-fallback";
+      const continuity = await page.evaluate(() => ({
+        sameSocket: window.__benchWs === window.__benchPairedParityIdentity?.socket,
+        sameRenderer: window.__mirrorCanvasStats?.()?.instance?.id === window.__benchPairedParityIdentity?.instance,
+        referenceRequested: window.__mirrorCanvasStats?.()?.patch?.referenceReuse?.requested === true,
+        urlEnabled: new URL(location.href).searchParams.get("cmpAnimation") === "reference"
+      }));
+      pairedCapture.continuity = continuity;
+      writeFileSync(opts.parityPairedToggle, `${JSON.stringify({ schema: "mirror-renderer-parity/1", recording: basename(recordingPath), recordingSha256, viewport: opts.viewport, capture: pairedCapture }, null, 2)}\n`);
+      await page.screenshot({ path: opts.parityPairedToggle.replace(/\.json$/i, ".png") });
+      if (!pairedCapture?.accepted || !Object.values(continuity).every(Boolean)
+        || (pairedSteps && (!pairedSteps.finalStepReferencePresented || pairedSteps.finalStepBuilt)))
+        throw Error("paired parity candidate failed continuity, capture, or reference-patch gate");
+    }
+  }
   // --flight-liveness: read the sampler at the same point as walkStats. Its per-element state is scoped to each
   // card's own travel (see flightLivenessInit), so reading it here — with the window closed but the page still
   // holding whatever it holds — cannot pick up post-landing stillness.
@@ -4025,7 +5345,8 @@ async function runOnce(context, pageUrl, opts) {
   // FRAME cadence over the same bracket (see summarizeFrameGaps): the metric that survives --connect-cdp, where
   // the Blink durations above may be null.
   const frameGaps = summarizeFrameGaps(await probePage(() => window.__benchFrameGaps ?? null));
-  const sceneAckLatency = summarizeSceneAckLatency(await probePage(() => window.__benchSceneAckLatencies ?? null));
+  const sceneAckAccounting = await probePage(() => ({ delivered: window.__benchSceneDeliveries ?? null, pending: (window.__benchSceneAckPending ?? []).length }));
+  const sceneAckLatency = summarizeSceneAckLatency(await probePage(() => window.__benchSceneAckLatencies ?? null), sceneAckAccounting);
   // Windowed runs: what the counters moved BY across the bracket (see walkStatsAtOpen). Never replaces the
   // cumulative `walkStats` field — consumers of that one (docs/mirror-combat-bench.md, probe scripts) read it
   // as "since page load" and must keep doing so.
@@ -4059,14 +5380,6 @@ async function runOnce(context, pageUrl, opts) {
   } catch (e) {
     console.error(`  flight canvas census failed: ${e}`);
   }
-  // --connect-cdp: the viewport is whatever the attached tab already is (no browser.newContext here), so record
-  // what the page ACTUALLY has rather than the --viewport the harness could not apply.
-  const pageViewport = opts.connect
-    ? await page
-        .evaluate(() => ({ w: window.innerWidth, h: window.innerHeight, dpr: window.devicePixelRatio }))
-        .catch(() => null)
-    : null;
-
   // Offline max-consumption rate (--pace=max only; null otherwise): the fake WS timestamps each credit-gated
   // delta delivery, and every one of those rode a scene-ack from a rendered frame — so deliveries/second IS
   // the effective mirror rate this page can sustain, measured with zero producer in the loop.
@@ -4092,6 +5405,22 @@ async function runOnce(context, pageUrl, opts) {
     }
     await page.waitForTimeout(500);
   }
+  // Read after the timed window: prove which recording bytes the fake transport
+  // actually advanced through, including a window that closed before stream end.
+  const replayFinal = opts.report ? await probePage(async () => {
+    const ws = window.__benchWs;
+    if (!ws || !Array.isArray(ws._msgs)) return null;
+    const prefix = ws._msgs.slice(0,ws._i).map(({t,data}) => ({t,data}));
+    const digest = await crypto.subtle.digest('SHA-256',new TextEncoder().encode(JSON.stringify(prefix)));
+    return { done:window.__benchDone === true,index:ws._i,count:ws._msgs.length,
+      delivered:window.__benchSceneDeliveries ?? null,
+      deliveryLedger:ws._recordedDeliveryLog == null ? null : {
+        rows:ws._recordedDeliveryLog,dropped:ws._recordedDeliveryDropped ?? null,
+        clock:'performance.now relative to recorded replay start',
+        method:'scene delta timestamp immediately before fake transport delivery'
+      },
+      prefixSha256:Array.from(new Uint8Array(digest),b => b.toString(16).padStart(2,'0')).join('') };
+  }) : null;
 
   // ---- idle window (--idle) -------------------------------------------------------------------------------
   // Runs AFTER the measured window closes (like --layers/--census/--shot) so the headline numbers never move.
@@ -4102,7 +5431,15 @@ async function runOnce(context, pageUrl, opts) {
   // R7 W1-I1b: the idle hold is an EVIDENCE block, and a dead page has no idle behaviour to describe. Skipping it
   // outright also saves the 4-8s hold on a cell that has already told us everything it is going to.
   if (opts.idle && !pageGone()) {
-    const mark = (label) => page.evaluate(idleMarkerWindowInPage, { label });
+    if (opts.idleWarmup) await waitAbortably(() => page.waitForTimeout(opts.idleWarmup));
+    if (opts.textCacheProbe) await page.evaluate(() => {
+      if (typeof window.__couchTextGpuProfile?.reset !== "function") throw Error("text cache diagnostic probe unavailable");
+      window.__couchTextGpuProfile.reset();
+    });
+    let idleWitness = null;
+    const mark = (label) => page.evaluate(idleMarkerWindowInPage, {
+      label, witness: label === "cc-idle-start" ? idleWitness?.after ?? null : null,
+    });
     // THE CANVAS STAGE'S OWN IDLE RATE, taken as a DELTA across the window rather than as a post-settle total.
     // `--census` reads cumulative counters, so on a settled screen it cannot tell a stage that parked from one
     // that has been repainting for eight seconds — the totals are dominated by the replay that came before. Two
@@ -4114,13 +5451,18 @@ async function runOnce(context, pageUrl, opts) {
         // is outside the marker bracket, so it cannot perturb the quiet
         // interval while still pricing the exact counter-delta span.
         const sampledAtMs = performance.now();
+        const storedSettings = localStorage.getItem("couchcoop.mirrorSettings.v1");
+        const renderer = typeof window.__mirrorRendererDiagnostics === "function" ? window.__mirrorRendererDiagnostics() : null;
+        const gl = document.querySelector("canvas.mirror-canvas-stage")?.getContext("webgl2") ?? null;
+        const a = gl?.getContextAttributes?.() ?? null;
+        const contextAttributes = a ? { alpha: a.alpha, premultipliedAlpha: a.premultipliedAlpha, antialias: a.antialias } : null;
         const read = window.__mirrorCanvasStats;
-        if (typeof read !== "function") return { sampledAtMs, available: false, geometry:{width:innerWidth,height:innerHeight,dpr:devicePixelRatio,backing:null} };
+        if (typeof read !== "function") return { sampledAtMs, storedSettings, available: renderer !== null, renderer, contextAttributes, geometry:{width:innerWidth,height:innerHeight,dpr:devicePixelRatio,backing:renderer?.effective ? `${renderer.effective.backingWidth}x${renderer.effective.backingHeight}` : null} };
         const s = read();
         return {
-          sampledAtMs,
+          sampledAtMs, storedSettings,
           geometry: {width:innerWidth,height:innerHeight,dpr:devicePixelRatio,backing:s.backingStore},
-          available: true,
+          available: true, renderer, contextAttributes,
           // Counters are meaningful only within one renderer lifetime. The
           // page-global seam can be replaced by a remount between these two
           // out-of-window reads, so carry its owner identity into the delta.
@@ -4128,6 +5470,7 @@ async function runOnce(context, pageUrl, opts) {
           instanceCreatedAtMs: s.instance?.createdAtMs ?? null,
           instanceDisposed: s.instance?.disposed ?? null,
           textures: s.textures ?? null,
+          textCache: s.textCache ?? null,
           frames: s.frames ?? 0,
           animFrames: s.animFrames ?? 0,
           fxUploads: s.fx ? s.fx.uploads : null,
@@ -4142,28 +5485,56 @@ async function runOnce(context, pageUrl, opts) {
                 glyphs: s.textGlyphs.pass.glyphs ?? null
               }
             : null,
-          schedule: s.schedule ?? null
+          schedule: s.schedule ?? null,
+          timingTotals: s.timingTotals ?? null,
+          builds: s.builds ?? null,
+          patch: s.patch ?? null,
+          textPreparation: s.textPreparation ?? null,
+          paintOrderPreparation: s.paintOrderPreparation ?? null
         };
       });
+    if (opts.preIdleWitness) {
+      const witnessAbort = new AbortController();
+      const onNavigation = (frame) => { if (frame === page.mainFrame()) witnessAbort.abort(); };
+      const onClose = () => witnessAbort.abort();
+      page.on("framenavigated", onNavigation);
+      page.on("close", onClose);
+      page.on("crash", onClose);
+      try {
+        idleWitness = await runPreIdleWitness({ prefix: opts.preIdleWitness,
+          browser: { packageName: opts.witnessBrowserPackage, pid: opts.witnessBrowserPid },
+          timeoutMs: opts.preIdleWitnessTimeoutMs, requireFreshDefaults: true, signal: witnessAbort.signal,
+          capture: () => waitAbortably(() => page.evaluate(snapshotPreIdleWitnessInPage)),
+          targetId: async () => (await cdp?.send("Target.getTargetInfo"))?.targetInfo?.targetId ?? null,
+        });
+      } finally {
+        page.off("framenavigated", onNavigation);
+        page.off("close", onClose);
+        page.off("crash", onClose);
+      }
+    }
     // Start tracing before the first counter sample, then take the samples as
     // tightly as possible around the marker-only interval. In particular do
     // not let CDP Tracing.start/Tracing.end latency get counted as stage work
     // and then divided by --idle.
     if (markerTrace.scope?.phase === "idle") await markerTrace.start();
     const stageBefore = await readStage();
-    const markerStartAtMs = await mark("cc-idle-start");
-    await page.waitForTimeout(opts.idle);
-    const markerEndAtMs = await mark("cc-idle-end");
+    const markerStart = await waitAbortably(() => mark("cc-idle-start"));
+    await waitAbortably(() => page.waitForTimeout(opts.idle));
+    const markerEnd = await waitAbortably(() => mark("cc-idle-end"));
+    const textProbeSnapshot = opts.textCacheProbe
+      ? await page.evaluate(() => window.__couchTextGpuProfile.snapshot()) : null;
     const stageAfter = await readStage();
     // An idle report's trace window is the idle marker pair, not the earlier
     // replay bracket. Replace its evidence with these matching samples.
     if (markerTrace.scope?.phase === "idle") {
+      const canvasBackend = stageBefore.renderer?.backend === "canvas" || stageAfter.renderer?.backend === "canvas";
       bridgeStats = {
-        kind: stageBefore.available || stageAfter.available ? "canvas" : "dom",
-        window: canvasTextureBridgeWindow(
+        kind: canvasBackend ? "canvas" : "dom",
+        window: canvasBackend ? canvasTextureBridgeWindow(
           stageBefore.available && { instance: { id: stageBefore.instanceId }, ...stageBefore.textures, sampledAtMs: stageBefore.sampledAtMs },
           stageAfter.available && { instance: { id: stageAfter.instanceId }, ...stageAfter.textures, sampledAtMs: stageAfter.sampledAtMs },
-        ),
+        ) : null,
       };
     }
     if (markerTrace.scope?.phase === "idle") {
@@ -4171,23 +5542,49 @@ async function runOnce(context, pageUrl, opts) {
       tracePath = completed.tracePath;
       traceMetrics = completed.traceMetrics;
     }
-    const markerWindowMs = markerEndAtMs - markerStartAtMs;
+    const textProbeCalibration = opts.textCacheProbe
+      ? await page.evaluate(() => window.__couchTextGpuProfile.calibrate()) : null;
+    const markerWindowMs = markerEnd.atMs - markerStart.atMs;
     const stageSampleWindowMs = stageAfter.sampledAtMs - stageBefore.sampledAtMs;
     idle = {
       windowMs: opts.idle,
       frameGaps: summarizeFrameGaps(await probePage(() => window.__benchIdleFrameGaps ?? null)),
+      sceneAckLatency: summarizeSceneAckLatency(
+        await probePage(() => window.__benchIdleSceneAcks?.latencies ?? null),
+        await probePage(() => window.__benchIdleSceneAcks ?? null),
+      ),
       markerWindowMs: round(markerWindowMs, 3),
       // The trace owns the same markers when requested. Keep its clock beside
       // the page clock: a meaningful disagreement is a trace/marker problem,
       // never a reason to silently alter the stage rate denominator.
       traceMarkerWindowMs: traceMetrics?.windowMs ?? null,
       stageSampleWindowMs: round(stageSampleWindowMs, 3),
-      stageSamples: { beforeAtMs: stageBefore.sampledAtMs, afterAtMs: stageAfter.sampledAtMs, beforeGeometry:stageBefore.geometry, afterGeometry:stageAfter.geometry },
+      textCacheProbe: opts.textCacheProbe ? { snapshot: textProbeSnapshot, calibration: textProbeCalibration } : null,
+      stageSamples: { beforeAtMs: stageBefore.sampledAtMs, afterAtMs: stageAfter.sampledAtMs, beforeGeometry:stageBefore.geometry, afterGeometry:stageAfter.geometry,
+        beforeStoredSettings:stageBefore.storedSettings, afterStoredSettings:stageAfter.storedSettings,
+        beforeTimingTotals: stageBefore.timingTotals, afterTimingTotals: stageAfter.timingTotals,
+        beforeBuilds: stageBefore.builds, afterBuilds: stageAfter.builds,
+        beforePatch: stageBefore.patch, afterPatch: stageAfter.patch,
+        beforeTextPreparation: stageBefore.textPreparation, afterTextPreparation: stageAfter.textPreparation,
+        beforePaintOrderPreparation: stageBefore.paintOrderPreparation, afterPaintOrderPreparation: stageAfter.paintOrderPreparation },
       shots: null,
       stage: null,
       stageDeltas: null,
       stageMismatch: null
     };
+    idle.rendererWindow = {
+      before: stageBefore.renderer ?? null,
+      after: stageAfter.renderer ?? null,
+      textCacheBefore: stageBefore.textCache ?? null,
+      textCacheAfter: stageAfter.textCache ?? null,
+      staticBgBefore: markerStart.staticBg ?? null,
+      staticBgAfter: markerEnd.staticBg ?? null,
+      contextAttributesBefore: stageBefore.contextAttributes ?? null,
+      contextAttributesAfter: stageAfter.contextAttributes ?? null,
+      frameDelta: typeof stageBefore.renderer?.draw?.frames === "number" && typeof stageAfter.renderer?.draw?.frames === "number" ? stageAfter.renderer.draw.frames - stageBefore.renderer.draw.frames : null,
+      textRasterizationDelta: typeof stageBefore.renderer?.draw?.textRasterizations === "number" && typeof stageAfter.renderer?.draw?.textRasterizations === "number" ? stageAfter.renderer.draw.textRasterizations - stageBefore.renderer.draw.textRasterizations : null,
+    };
+    idle.installOverlay = { before: markerStart.installOverlayPresent, after: markerEnd.installOverlayPresent, absentAtBothMarkers: markerStart.installOverlayPresent === false && markerEnd.installOverlayPresent === false };
     if (stageBefore.available && stageAfter.available) {
       if (stageBefore.instanceId !== stageAfter.instanceId) {
         // Never subtract counters from different renderer objects. Reporting
@@ -4235,6 +5632,29 @@ async function runOnce(context, pageUrl, opts) {
           animFrames: delta(stageBefore.animFrames, stageAfter.animFrames),
           glyphPass
         };
+      }
+    }
+    if (opts.postIdleWitness) {
+      const witnessAbort = new AbortController();
+      const onNavigation = (frame) => { if (frame === page.mainFrame()) witnessAbort.abort(); };
+      const onClose = () => witnessAbort.abort();
+      page.on("framenavigated", onNavigation);
+      page.on("close", onClose);
+      page.on("crash", onClose);
+      try {
+        const postWitness = await runPostIdleWitness({ prefix: opts.preIdleWitness,
+          preVerified: idleWitness,
+          idleMarkers: { startAtMs: markerStart.atMs, endAtMs: markerEnd.atMs },
+          timeoutMs: opts.preIdleWitnessTimeoutMs, signal: witnessAbort.signal,
+          capture: () => waitAbortably(() => page.evaluate(snapshotPreIdleWitnessInPage)),
+          targetId: async () => (await cdp?.send("Target.getTargetInfo"))?.targetInfo?.targetId ?? null,
+        });
+        idle.postIdleWitness = { verified: true, receiptPath: `${opts.preIdleWitness}.post-idle-verified.json`,
+          processLedger: postWitness.processLedger };
+      } finally {
+        page.off("framenavigated", onNavigation);
+        page.off("close", onClose);
+        page.off("crash", onClose);
       }
     }
     if (opts.idleShots) {
@@ -4365,6 +5785,52 @@ async function runOnce(context, pageUrl, opts) {
   // --report needs a layerCount, so it takes the same post-window snapshot --layers does.
   const layers = opts.layers || opts.report ? await snapshotLayers() : null;
 
+  if (opts.drawListDump) {
+    const dump = await page.evaluate(() => typeof window.__mirrorDrawListDump === "function"
+      ? window.__mirrorDrawListDump() : null);
+    if (!dump) throw new Error("--draw-list-dump requested but the Pixi DrawList dump seam is unavailable");
+    mkdirSync(dirname(opts.drawListDump), { recursive: true });
+    writeFileSync(opts.drawListDump, `${JSON.stringify({ schema: "mirror-draw-list-dump/1",
+      recording: basename(recordingPath), recordingSha256: createHash("sha256").update(recordingText).digest("hex"),
+      sourceUrl: pageUrl, viewport: opts.viewport, quality: opts.quality, capturedAt: new Date().toISOString(), dump }, null, 2)}\n`);
+    console.error(`  DrawList dump -> ${opts.drawListDump} (${dump.count} commands)`);
+  }
+
+  let rustFixtureForCapture = null;
+  let rustFixtureFrameIdentity = null;
+  let rustReplayProgress = null;
+  let deviceScreenshotPath = null;
+  let deviceScreenshotFrameIdentity = null;
+  const captureDeviceScreenshot = () => {
+    const serial = process.env.COUCHCOOP_BENCH_ADB_SERIAL;
+    if (!opts.adbShot || !serial) return;
+    const png = execFileSync("adb", ["-s", serial, "exec-out", "screencap", "-p"], { maxBuffer: 64 * 1024 * 1024, timeout: 15_000 });
+    if (png.length < 8 || png.subarray(0, 8).toString("hex") !== "89504e470d0a1a0a") {
+      throw new Error("adb screencap did not return a PNG image");
+    }
+    mkdirSync(dirname(opts.adbShot), { recursive: true });
+    writeFileSync(opts.adbShot, png);
+    deviceScreenshotPath = opts.adbShot;
+    console.error(`  device screenshot -> ${deviceScreenshotPath} (${png.length} bytes)`);
+  };
+  if (opts.rustExcerptDir) {
+    const captureState = await page.evaluate(() => ({
+      fixture: typeof window.__mirrorRustFixture === "function" ? window.__mirrorRustFixture() : null,
+      frameIdentity: window.__mirrorRendererDiagnostics?.()?.frameIdentity ?? null,
+      replay: {
+        deliveredMessageIndex: Number.isFinite(window.__benchWs?._i) ? window.__benchWs._i : null,
+        recordedMessages: Array.isArray(window.__benchWs?._messages) ? window.__benchWs._messages.length : null,
+      },
+    })).catch(() => null);
+    rustFixtureForCapture = captureState?.fixture ?? null;
+    rustFixtureFrameIdentity = captureState?.frameIdentity ?? null;
+    rustReplayProgress = captureState?.replay ?? null;
+    if (opts.adbShot) {
+      deviceScreenshotFrameIdentity = rustFixtureFrameIdentity;
+      captureDeviceScreenshot();
+    }
+  }
+
   // Post-settle full-page screenshot (visual-parity evidence for A/B runs). After the measured window like
   // --layers/--census, so it never perturbs the headline numbers. The stream is fully delivered and settled,
   // so equal code ⇒ equal pixels (modulo free-running spine/intent canvases — compare with a tolerance).
@@ -4380,9 +5846,28 @@ async function runOnce(context, pageUrl, opts) {
   // not reachable — no `?paintDump=1`, a lost context, an older bundle — it REFUSES rather than writing a blank
   // PNG that reads like a broken renderer. A refusal is a warning and a `shotRefused` reason in the report, not
   // an exit: the numbers of the run are still good. `--shot-force` writes the page screenshot anyway.
+  let shotClockProof = null;
+  if (opts.shotClockMs !== undefined) {
+    shotClockProof = await page.evaluate(async (clockMs) => {
+      const before = window.__mirrorFrameIdentity?.() ?? null;
+      const returned = await window.__mirrorSetDiagnosticClock?.(clockMs) ?? null;
+      return { before, returned, after: window.__mirrorFrameIdentity?.() ?? null,
+        renderer: window.__mirrorRendererDiagnostics?.() ?? null,
+        replay: { done: window.__benchDone === true, index: window.__benchWs?._i ?? null,
+          count: window.__benchWs?._msgs?.length ?? null } };
+    }, opts.shotClockMs);
+    const verdict = validatePinnedReplayShot(shotClockProof, opts.shotClockMs);
+    shotClockProof = { schema: "pinned-replay-shot/1", requestedClockMs: opts.shotClockMs,
+      ...shotClockProof, ...verdict };
+    if (!verdict.valid) throw new Error(`pinned final-frame proof failed: ${verdict.reason}`);
+  }
   let shotPath = null;
   let shotOverlayPath = null;
   let shotRefused = null;
+  if (opts.adbShot && !opts.rustExcerptDir) {
+    deviceScreenshotFrameIdentity = await page.evaluate(() => window.__mirrorRendererDiagnostics?.()?.frameIdentity ?? null).catch(() => null);
+    captureDeviceScreenshot();
+  }
   if (opts.shot) {
     // Which arm is this, and can it answer? Both questions in one evaluate so a page without the canvas backend
     // (the DOM arm, or a canvas arm whose context never came up) falls straight through to the old path.
@@ -4440,6 +5925,67 @@ async function runOnce(context, pageUrl, opts) {
         }
       }
     }
+  }
+
+  // Outside every timed marker. CDP screenshots can reveal a display/compositor discrepancy when paired with
+  // independent ADB screenshots, but they are not evidence of actual phone presentation by themselves.
+  const presentationCaptures = opts.presentationCaptures
+    ? await capturePresentationSequence(page, { prefix: opts.presentationCaptures,
+      count: opts.presentationCaptureCount, gapMs: opts.presentationCaptureGapMs,
+      metadata: { url: pageUrl, recordingSha256, repeat: opts.repeatIndex + 1 } })
+    : null;
+
+
+  if (opts.rustExcerptDir) {
+    const fixture = rustFixtureForCapture;
+    if (!fixture) throw new Error("--rust-excerpt-dir requested but no completed Rust scene/resource fixture was published");
+    const readFixtureBytes = async (kind, expectedBytes) => {
+      const chunks = [];
+      for (let offset = 0; offset < expectedBytes;) {
+        const chunk = await page.evaluate(({ kind, offset, length, revision }) =>
+          typeof window.__mirrorRustFixtureChunk === "function"
+            ? window.__mirrorRustFixtureChunk(kind, offset, length) : null,
+        { kind, offset, length: 1024 * 1024, revision: fixture.revision });
+        if (!chunk || chunk.revision !== fixture.revision || chunk.offset !== offset || chunk.total !== expectedBytes) {
+          throw new Error(`Rust fixture ${kind} chunk mismatch: ${JSON.stringify({ kind, offset,
+            total: chunk?.total ?? null, revision: chunk?.revision ?? null,
+            byteLength: typeof chunk?.base64 === "string" ? chunk.base64.length : null })}`);
+        }
+        const bytes = Buffer.from(chunk.base64, "base64");
+        if (!bytes.length) throw new Error(`Rust fixture ${kind} returned an empty chunk at ${offset}`);
+        chunks.push(bytes); offset += bytes.length;
+        const chunkCount = Math.ceil(offset / (1024 * 1024));
+        if (chunkCount % 16 === 0 || offset === expectedBytes) {
+          console.error(`  Rust excerpt ${kind}: ${offset}/${expectedBytes} bytes (${fixture.revision})`);
+        }
+      }
+      return Buffer.concat(chunks, expectedBytes);
+    };
+    const scene = await readFixtureBytes("scene", fixture.sceneBytes);
+    const resources = await readFixtureBytes("resources", fixture.resourcesBytes);
+    mkdirSync(opts.rustExcerptDir, { recursive: true });
+    writeFileSync(resolve(opts.rustExcerptDir, "scene.json"), scene);
+    writeFileSync(resolve(opts.rustExcerptDir, "textures.rsr1"), resources);
+    writeFileSync(resolve(opts.rustExcerptDir, "receipt.json"), `${JSON.stringify({
+      schema: fixture.schema, revision: fixture.revision, backend: fixture.backend,
+      captureMode: opts.coldStart ? "diagnostic-cold-start" : "post-repeat",
+      warmupSkipped: !!opts.coldStart, browserAssetCache: "not-controlled",
+      recording: basename(recordingPath), recordingSha256: createHash("sha256").update(recordingText).digest("hex"),
+      sceneSha256: createHash("sha256").update(scene).digest("hex"), resourcesSha256: createHash("sha256").update(resources).digest("hex"),
+      sourceUrl: pageUrl, viewport: pageViewport ?? opts.viewport, devicePixelRatio: pageViewport?.dpr ?? null,
+      frameIdentity: rustFixtureFrameIdentity,
+      replay: { pace: opts.pace, limitMs: opts.limitMs, idleRequestedMs: opts.idle,
+        idleMarkerWindowMs: idle?.markerWindowMs ?? null, ...rustReplayProgress },
+      source: { couchPinnedBase: process.env.COUCHCOOP_BENCH_COUCH_BASE ?? null,
+        couchWorktreeHead: process.env.COUCHCOOP_BENCH_COUCH_HEAD ?? null,
+        gswHead: process.env.COUCHCOOP_BENCH_GSW_HEAD ?? null,
+        assetManifestSha256: process.env.COUCHCOOP_BENCH_ASSET_MANIFEST_SHA256 ?? null },
+      screenshotPath: shotPath,
+      deviceScreenshotPath, deviceScreenshotFrameIdentity,
+      quality: opts.quality, window: opts.window,
+      capturedAt: new Date().toISOString(), resources: fixture.resources,
+    }, null, 2)}\n`);
+    console.error(`  Rust excerpt -> ${opts.rustExcerptDir} (revision ${fixture.revision}, ${scene.length} scene bytes, ${resources.length} resource bytes)`);
   }
 
   // Post-settle DOM style parity dump (see --dom-styles). Same placement as --shot: after the measured window.
@@ -4580,6 +6126,9 @@ async function runOnce(context, pageUrl, opts) {
       const canvasStats = await page.evaluate(() =>
         typeof window.__mirrorCanvasStats === "function" ? window.__mirrorCanvasStats() : null
       );
+      const rendererDiagnostics = await page.evaluate(() =>
+        typeof window.__mirrorRendererDiagnostics === "function" ? window.__mirrorRendererDiagnostics() : null
+      );
       // R7 W1 — three page-side reporters that exist because their subjects are otherwise SILENT.
       //   glContext  every context loss/restore ON THE PAGE, not just the stage's (fix d). A killed GPU process
       //              takes every canvas at once, so a per-renderer counter describes a fraction of the event.
@@ -4596,8 +6145,67 @@ async function runOnce(context, pageUrl, opts) {
         const p = window.__mirrorImagePrefetch;
         return p ? { ...p, list: p.list.length } : null;
       });
-      census = { ...counters, effectStats, dom, topSurfaces, canvasStats, glContext, staticBg, prefetch };
+      census = { ...counters, effectStats, dom, topSurfaces, canvasStats, rendererDiagnostics, glContext, staticBg, prefetch };
     } catch { /* best effort */ }
+  }
+
+  // Read after the timed window. These are the page's resolved settings, including Auto's device tier.
+  // The imports are served by the Vite benchmark origin, just like the app modules under test.
+  const effectiveSettings = opts.freshDefaults ? await page.evaluate(async () => {
+    const [qualityModule, settingsModule] = await Promise.all([
+      import("/src/render/quality.ts"), import("/src/mirror/mirrorSettings.ts")
+    ]);
+    const quality = qualityModule.renderQuality();
+    const settings = settingsModule.mirrorSettings;
+    const requestedStage = new URL(location.href).searchParams.get("stage") ?? "dom";
+    const renderer = typeof window.__mirrorRendererDiagnostics === "function" ? window.__mirrorRendererDiagnostics() : null;
+    return {
+      freshDefaults: window.__benchFreshDefaults ?? null,
+      savedSettingsAfter: localStorage.getItem("couchcoop.mirrorSettings.v1"),
+      qualityChoice: settings.quality,
+      quality: { tier: quality.tier, source: quality.source, maxTextureDim: quality.maxTextureDim,
+        spineClipsEnabled: quality.spineClipsEnabled, maxTrailPoints: quality.maxTrailPoints },
+      settings: { shaderMode: settings.shaderMode, particleMode: settings.particleMode,
+        staticBgEnabled: settings.staticBgEnabled, spineMode: settings.spineMode, textEffects: settings.textEffects },
+      backend: { requested: requestedStage, actual: renderer?.backend ?? (document.querySelector("canvas.mirror-canvas-stage") ? "unknown-canvas" : "dom"),
+        readiness: renderer?.readiness ?? null, failure: renderer?.failure ?? null },
+      viewport: { width: innerWidth, height: innerHeight, dpr: devicePixelRatio }
+    };
+  }) : null;
+  let activeVisualReceipt = null;
+  if (opts.busyStartupTimelineOut || opts.activeVisualReferenceOut) {
+    const timeline = opts.busyStartupTimelineOut
+      ? await page.evaluate(() => window.__benchBusyStartupTimeline ?? null) : null;
+    const pageState = await page.evaluate(snapshotPreIdleWitnessInPage).catch((error) => ({
+      captureFailure: String(error) }));
+    const visualBoundary = await page.evaluate(() => window.__benchActiveVisualBoundary ?? null);
+    if (opts.busyStartupTimelineOut) {
+      const artifact = { schema: "mirror-busy-startup-artifact/1",
+        runKind: opts.busyStartupRunKind ?? "visual-repeat",
+        sourceSha256: opts.activeSourceSha256, recordingSha256,
+        browser: { packageName: opts.witnessBrowserPackage, pid: opts.witnessBrowserPid },
+        targetId: activeTargetId, page: pageState, boundary: visualBoundary,
+        navigation: startupNavigation, inspection: inspectBusyStartupTimeline(timeline),
+        cardAtlasIngestion: summarizeCardAtlasIngestion(timeline), timeline };
+      mkdirSync(dirname(opts.busyStartupTimelineOut), { recursive: true });
+      writeFileSync(opts.busyStartupTimelineOut, JSON.stringify(artifact, null, 2) + "\n");
+    }
+    if (opts.activeVisualReferenceOut) {
+    requireReadyWitnessState(pageState, true);
+    if (visualBoundary?.start?.boundMs !== 2500 || visualBoundary?.end?.boundMs !== 6500 ||
+        !(visualBoundary.end.atPageMs > visualBoundary.start.atPageMs)) {
+      throw new Error("active visual replay did not cross both recorded boundaries");
+    }
+    const finalTargetId = (await cdp?.send("Target.getTargetInfo"))?.targetInfo?.targetId ?? null;
+    if (finalTargetId !== activeTargetId) throw new Error("active visual replay target changed during stream");
+    activeVisualReceipt = { schema: "mirror-active-visual-reference/1",
+      sourceSha256: opts.activeSourceSha256, recordingSha256,
+      browser: { packageName: opts.witnessBrowserPackage, pid: opts.witnessBrowserPid },
+      targetId: finalTargetId, page: pageState, boundary: visualBoundary,
+      video: null, createdEpochMs: Date.now() };
+    mkdirSync(dirname(opts.activeVisualReferenceOut), { recursive: true });
+    writeFileSync(opts.activeVisualReferenceOut, JSON.stringify(activeVisualReceipt, null, 2) + "\n");
+    }
   }
 
   // ---- reveal burst (--reveal-burst) ----------------------------------------------------------------------
@@ -4658,7 +6266,7 @@ async function runOnce(context, pageUrl, opts) {
   let presented = null;
   let geometry = null;
   let reportDiscard = null;
-  if (opts.report) {
+  if (opts.report && !opts.traceOnly) {
     try {
       const probe = await page.evaluate(presenceProbeInPage).catch((e) => ({ error: String(e?.message ?? e) }));
       if (!probe || probe.error) {
@@ -4728,6 +6336,19 @@ async function runOnce(context, pageUrl, opts) {
     }
   }
 
+  const installOverlay = idle?.installOverlay ?? {
+    before: markerOpen.installOverlayPresent,
+    after: markerClose?.installOverlayPresent ?? null,
+    absentAtBothMarkers: markerOpen.installOverlayPresent === false && markerClose?.installOverlayPresent === false,
+  };
+  if (opts.resourceWarmPass) resourceWarmPass = await probePage(() => ({
+    ...window.__benchResourceWarmPass,
+    fetches: [...(window.__benchWarmFetches ?? [])],
+    fetchDropped: window.__benchWarmFetchDropped ?? null,
+    ackTrace: window.__benchWarmAckTraceSnapshot?.() ?? [],
+    ackTraceOverflow: window.__benchWarmAckTraceOverflow ?? null,
+    rendererAtEnd: window.__mirrorRendererDiagnostics?.() ?? null,
+  }));
   const wall = (wallB - wallA) / 1000; // seconds
   const dTask = a.task !== null && b.task !== null ? b.task - a.task : null;
   const delta = {
@@ -4740,6 +6361,24 @@ async function runOnce(context, pageUrl, opts) {
     busyPct: dTask !== null && wall > 0 ? round((dTask / wall) * 100, 1) : null,
     nodesA,
     nodesB,
+    rendererWindow: {
+      before: markerOpen?.renderer ?? null,
+      after: markerClose?.renderer ?? null,
+      textCacheBefore: markerOpen?.canvasStats?.textCache ?? null,
+      textCacheAfter: markerClose?.canvasStats?.textCache ?? null,
+      staticBgBefore: markerOpen?.staticBg ?? null,
+      staticBgAfter: markerClose?.staticBg ?? null,
+      frameDelta:
+        typeof markerOpen?.renderer?.draw?.frames === "number" && typeof markerClose?.renderer?.draw?.frames === "number"
+          ? markerClose.renderer.draw.frames - markerOpen.renderer.draw.frames
+          : null,
+      textRasterizationDelta:
+        typeof markerOpen?.renderer?.draw?.textRasterizations === "number" && typeof markerClose?.renderer?.draw?.textRasterizations === "number"
+          ? markerClose.renderer.draw.textRasterizations - markerOpen.renderer.draw.textRasterizations
+          : null,
+    },
+    sameInstanceGrowth,
+    resourceWarmPass,
     // R7 W1-I1a — the RENDERER-process gauges at both ends of the measured bracket. Reported as both ends plus
     // the growth rather than as a single number: a heap that is 400MB at the open and 400MB at the close is a
     // different finding from one that got there during the window, and only the pair distinguishes them. MB, not
@@ -4768,11 +6407,18 @@ async function runOnce(context, pageUrl, opts) {
     sweepMoves: opts.hoverSweep ? sweepCount : null,
     layers,
     census,
+      effectiveSettings,
+      activeVisualReceipt,
+      activeWindowWitness: activeWindowResult,
+      startupObservation,
+    presentationCaptures: presentationCaptures ? `${opts.presentationCaptures}.json` : null,
     churnCensus,
     walkStats,
     handParity,
     flightLiveness,
     droppedCardFlights,
+    parityCapture,
+    installOverlay,
     idle,
     animAuditPath: opts.animAudit && opts.animAuditOut ? opts.animAuditOut : null,
     animAuditCounts: animAudit ? animAudit.counts : null,
@@ -4792,7 +6438,7 @@ async function runOnce(context, pageUrl, opts) {
     // --report only: this repeat's contribution to the shared perf-report/1 envelope. A `__discard` reason
     // (set here or by the presence guard / trace analyser above) EXCLUDES the repeat from `runs` and lists it
     // in `failures` — a required observation that could not be made is never serialised as a misleading zero.
-    report: opts.report ? buildRepeatReport() : null
+    report: opts.report && !opts.traceOnly ? buildRepeatReport() : null
   };
 
   function buildRepeatReport() {
@@ -4832,9 +6478,56 @@ async function runOnce(context, pageUrl, opts) {
       // provenance kept as extensions
       shotOverlayPath,
       shotRefused,
+      shotClockProof,
       tracePath,
       traceScope: markerTrace.scope?.phase ?? null,
       ...(traceMetrics ?? {}),
+      processIdentity: [...new Map([...(processStartsBeforeMarker ?? []), ...(processStartsAfterMarker ?? [])]
+        .map(row => [`${row.pid}:${row.tid}`, row])).values()].map((row) => {
+        const before = processStartsBeforeMarker?.find(p => p.pid === row.pid && p.tid === row.tid);
+        const after = processStartsAfterMarker?.find(p => p.pid === row.pid && p.tid === row.tid);
+        const trace = traceMetrics?.cpu?.byTid?.find(p => p.pid === row.pid && p.tid === row.tid);
+        return { pid: row.pid, tid: row.tid, role: trace ? trace.process + "/" + trace.thread : row.role + "/untraced",
+          startIdentity: before?.startIdentity && before.startIdentity === after?.startIdentity
+            ? before.startIdentity : null,
+          threadStartBefore: before?.startIdentity ?? null, threadStartAfter: after?.startIdentity ?? null,
+          processStartBefore: before?.processStartIdentity ?? null,
+          processStartAfter: after?.processStartIdentity ?? null,
+          cpuTicksBefore:before?.cpuTicks ?? null,cpuTicksAfter:after?.cpuTicks ?? null,
+          processCpuTicksBefore:before?.processCpuTicks ?? null,
+          processCpuTicksAfter:after?.processCpuTicks ?? null,
+          sampleBeforeEpochUs:before?.sampledEpochUs ?? null,sampleAfterEpochUs:after?.sampledEpochUs ?? null,
+          processReadBeforeStartMs:before?.processReadStartMs ?? null,
+          processReadBeforeEndMs:before?.processReadEndMs ?? null,
+          processReadAfterStartMs:after?.processReadStartMs ?? null,
+          processReadAfterEndMs:after?.processReadEndMs ?? null,
+          threadReadBeforeStartMs:before?.threadReadStartMs ?? null,
+          threadReadBeforeEndMs:before?.threadReadEndMs ?? null,
+          threadReadAfterStartMs:after?.threadReadStartMs ?? null,
+          threadReadAfterEndMs:after?.threadReadEndMs ?? null,
+          cpuMs:before?.startIdentity && before.startIdentity === after?.startIdentity &&
+            Number.isFinite(before.cpuTicks) && Number.isFinite(after.cpuTicks) && after.cpuTicks >= before.cpuTicks
+              ? 1000*(after.cpuTicks-before.cpuTicks)/PROC_HZ : null,
+          processCpuMs:before?.processStartIdentity && before.processStartIdentity === after?.processStartIdentity &&
+            Number.isFinite(before.processCpuTicks) && Number.isFinite(after.processCpuTicks) &&
+            after.processCpuTicks >= before.processCpuTicks
+              ? 1000*(after.processCpuTicks-before.processCpuTicks)/PROC_HZ : null,
+          sampleClockUncertaintyUs:1000,procClockTicksPerSecond:PROC_HZ,
+          cpuMethod:`/proc thread utime+stime; ${PROC_HZ} ticks/s; brackets active markers` };
+      }),
+      pageMarkerClock: { beginEpochUs: markerOpen?.markerEpochUs ?? null,
+        endEpochUs: markerClose?.markerEpochUs ?? null,
+        beginReplayMs:markerOpen?.replayElapsedMs ?? null,
+        endReplayMs:markerClose?.replayElapsedMs ?? null,
+        openCallStartMs,openCallEndMs,closeCallStartMs,closeCallEndMs,
+        ordering: "each page timestamp read immediately after console.timeStamp" },
+      gpuIdentity: markerOpen?.gpuIdentity ?? null,
+      gpuTimerCapability: markerOpen?.gpuTimerCapability ?? null,
+      rustGpuTimerCapability: markerOpen?.rustGpuTimerCapability ?? null,
+      replayDelivery: { before: markerOpen?.replayDelivered ?? null,
+        after: markerClose?.replayDelivered ?? null,
+        index: markerClose?.replayIndex ?? null, count: markerClose?.replayCount ?? null,
+        final:replayFinal },
       ...(discard ? { __discard: discard } : {})
     };
     if (bridgeStats.kind === "canvas") {
@@ -4854,6 +6547,19 @@ async function runOnce(context, pageUrl, opts) {
   // The next repeat blanks it on the way in; the last one is blanked by the caller.
   if (!opts.connectPage) await page.close();
   return delta;
+  } finally {
+    if (startupNavigation) page.off("framenavigated", onStartupFrameNavigated);
+    campaignAbort?.close();
+    if (campaignAbort && !page.isClosed()) {
+      let timer;
+      try {
+        await Promise.race([
+          page.evaluate(() => window.__benchCampaignContextLossOff?.()).catch(() => {}),
+          new Promise(resolve => { timer = setTimeout(resolve, 1500); })
+        ]);
+      } finally { clearTimeout(timer); }
+    }
+  }
 }
 
 // ---------------------------------------------------------------------------------------------------------
@@ -4893,13 +6599,27 @@ const handParityQuery = args.handParity ? "&handParity=1" : "";
 // static. Every number from such a cell is about a mode nobody selected. Merging by key makes the explicit
 // request win and keeps the harness's defaults for everything it did not mention.
 function buildPageQuery() {
-  const params = new URLSearchParams(`quality=${encodeURIComponent(args.quality)}`);
+  const params = new URLSearchParams();
+  if (!args.freshDefaults) params.set("quality", args.quality);
   for (const part of [effectsQuery, cullQuery.replace(/^&/, ""), handParityQuery.replace(/^&/, "")]) {
     if (!part) continue;
     for (const [k, v] of new URLSearchParams(part)) params.set(k, v);
   }
   if (args.query) {
     for (const [k, v] of new URLSearchParams(args.query)) params.set(k, v);
+  }
+  if (args.drawListDump) {
+    params.set("rendererCompare", "1");
+    params.set("stage", "pixi");
+    params.set("drawListDump", "1");
+  }
+  // Allow an explicit internal Rust stage for diagnostics/parity runs without forcing a
+  // 185 MB fixture export. DrawList dumping intentionally remains the Pixi reference arm.
+  if (!args.drawListDump && params.get("stage") === "rust") params.set("rendererCompare", "1");
+  if (args.rustExcerptDir) {
+    params.set("rendererCompare", "1");
+    params.set("stage", "rust");
+    params.set("rustFixtureDump", "1");
   }
   return params.toString();
 }
@@ -5000,6 +6720,36 @@ function sliceRecording(text, limitMs) {
 
 const sliced = sliceRecording(recordingText, args.limitMs);
 const replayText = sliced.text;
+const activeExpected = (args.activeWindowWitness || args.startupObservationOut) ? (() => {
+  const messages = replayText.split("\n").filter(Boolean).flatMap((line) => {
+    let obj;
+    try { obj = JSON.parse(line); } catch { return []; }
+    if (obj.meta || obj.dir === "out" || typeof obj.data !== "string" ||
+        obj.data.includes('"type":"server-reload"')) return [];
+    return [{ t: typeof obj.t === "number" ? obj.t : 0, data: obj.data }];
+  });
+  const prefix = (boundMs) => messages.filter((message) => message.t < boundMs);
+  const start = prefix(args.window.startMs);
+  const end = messages.filter((message) => message.t <= args.window.endMs);
+  const fullScenes = messages.filter((message) => message.data.includes('"type":"scene-delta"') &&
+    message.data.includes('"full":true'));
+  return { start: { boundMs: args.window.startMs, count: start.length,
+    hash: digestRecordedMessages(start) }, end: { boundMs: args.window.endMs,
+    count: end.length, hash: digestRecordedMessages(end), lastT: end.at(-1)?.t ?? null },
+    fullSceneT: fullScenes.length === 1 ? fullScenes[0].t : null,
+    fullSceneBefore: fullScenes.length === 1 ? {
+      count: messages.indexOf(fullScenes[0]),
+      hash: digestRecordedMessages(messages.slice(0, messages.indexOf(fullScenes[0]))),
+    } : null,
+    fullSceneCount: fullScenes.length, finalRevision: 172 };
+})() : null;
+if (args.startupObservationOut) {
+  const pinned = inspectStartupRecordingPin({ expectedRecordingSha256: args.startupExpectedRecordingSha256,
+    actualRecordingSha256: recordingSha256, expectedDeliveryCount: args.startupExpectedDeliveryCount,
+    expectedDeliveryHash: args.startupExpectedDeliveryHash,
+    actualDelivery: activeExpected.end });
+  if (!pinned.accepted) { console.error(`startup delivery pin rejected: ${pinned.failures.join(",")}`); process.exit(2); }
+}
 if (args.limitMs) {
   console.log(`  limit:      first ${args.limitMs}ms of the recording (${sliced.messages} messages replayed)`);
 }
@@ -5014,6 +6764,7 @@ if (args.window) {
 let browser;
 let context;
 let browserVersion = null;
+let browserBinaryIdentity = null;
 let connectPage = null;
 if (connectMode) {
   // ATTACH. `connectOverCDP` speaks the BROWSER endpoint (Chrome 151 broke the per-tab one), and the browser it
@@ -5041,8 +6792,15 @@ if (connectMode) {
   // 127.0.0.1 tab to worky.local, but preserves its port. Require exactly one HTTP(S) tab on --url's port; a
   // chrome-native://newtab target, any user tab, or a stale duplicate is a hard refusal before page.goto can touch it.
   try {
-    connectPage = pages[selectConnectBenchPageIndex(pages.map((p) => p.url()), args.url)];
-    pageUrl = effectiveConnectPageUrl(requestedPageUrl, connectPage.url());
+    if (args.connectBlankWebview) {
+      // The timing wrapper has a single blank CDP target. The replay socket must be installed before its
+      // first HTTP navigation; selecting it by URL would require starting the measured page too early.
+      connectPage = pages[selectBlankWebViewPageIndex(pages.map((p) => p.url()), requestedPageUrl)];
+      pageUrl = requestedPageUrl;
+    } else {
+      connectPage = pages[selectConnectBenchPageIndex(pages.map((p) => p.url()), args.url)];
+      pageUrl = effectiveConnectPageUrl(requestedPageUrl, connectPage.url());
+    }
   } catch (error) {
     console.error(`--connect-cdp ${args.connectCdp}: ${error.message}`);
     process.exit(2);
@@ -5071,7 +6829,9 @@ if (connectMode) {
   // `--headed` (see its help): a real window on a real compositor, which is the only arm whose frame cadence and
   // whose GPU are the ones a viewer gets. Everything else about the run is identical, so a headed/headless pair
   // is a clean A/B of exactly that.
-  browser = await chromium.launch({ headless: !args.headed, args: [...launchArgs(), ...EXTRA_CHROME_ARGS] });
+  browser = await chromium.launch({ headless: !args.headed,
+    ...(args.browserExecutable ? {executablePath:args.browserExecutable} : {}),
+    args: [...launchArgs(), ...EXTRA_CHROME_ARGS] });
   browserVersion = browser.version?.() ?? null;
   // R7 W1-I1e: --dpr. A host cell at dpr 1 and a phone cell at dpr 3.4876 are not the same experiment — every
   // backing store on the page is (dpr^2) times the area, which is the whole quantity a memory round is chasing.
@@ -5080,6 +6840,23 @@ if (connectMode) {
     viewport: args.viewport,
     ...(args.dpr ? { deviceScaleFactor: args.dpr } : {})
   });
+  // Pin the executable of the browser PID reported by this launched CDP
+  // session, while the process is alive. Playwright's default path alone does
+  // not prove which binary the measured process actually mapped.
+  try {
+    const rows = await captureBrowserProcessStarts(context);
+    const main = rows?.find(row => String(row.role).toLowerCase() === 'browser' && row.pid === row.tid);
+    if (!main?.pid || !main.processStartIdentity) throw new Error('CDP browser PID/start identity unavailable');
+    browserBinaryIdentity = {pid:main.pid,startIdentity:main.processStartIdentity,
+      binaryPath:readlinkSync(`/proc/${main.pid}/exe`),
+      binarySha256:createHash('sha256').update(readFileSync(`/proc/${main.pid}/exe`)).digest('hex'),
+      source:'CDP SystemInfo browser PID joined to /proc/PID/exe'};
+  } catch (error) { browserBinaryIdentity = {pid:null,binarySha256:null,
+    reason:`launched browser executable proof unavailable: ${error.message}`}; }
+  if (args.browserExecutable &&
+      (realpathSync(args.browserExecutable) !== browserBinaryIdentity?.binaryPath ||
+       args.browserExecutableSha256 !== browserBinaryIdentity?.binarySha256))
+    throw new Error('pinned browser executable path/hash differs from CDP and /proc/PID/exe');
 }
 
 // Connect mode: the recording (and, with --res-root/--asset-cache-root, assets) come off a real HTTP server instead of a
@@ -5092,6 +6869,11 @@ let benchServer = null;
 let recordingHits = 0;
 let resHits = 0;
 const resMisses = new Set();
+let resourceWarmPhase = args.resourceWarmPass ? "warm" : null;
+if (args.servedManifest) writeFileSync(args.servedManifest, "");
+const resourceRequestTimingPath = args.resourceWarmPass && args.resultJson
+  ? resolve(dirname(args.resultJson),'resource-request-timing.ndjson') : null;
+if (resourceRequestTimingPath) writeFileSync(resourceRequestTimingPath, "");
 const assetServingEnabled = !!args.resRoot || !!args.assetCacheRoot;
 const assetResolverOptions = {
   root: args.resRoot ?? DEFAULT_RES_ROOT,
@@ -5101,12 +6883,20 @@ function resolveBenchAsset(url) {
   const answer = resolveAssetRequest({ ...assetResolverOptions, url });
   if (answer.status === 200) resHits += 1;
   else resMisses.add(`${url.pathname}${url.search}`);
-  return answer;
+  return { ...answer, requestUrl:`${url.pathname}${url.search}` };
 }
-function assetBody(answer) {
-  return answer.filePath ? readFileSync(answer.filePath) : answer.body ?? "";
+function assetBody(answer, request = null) {
+  const bytes = answer.filePath ? readFileSync(answer.filePath) : Buffer.from(answer.body ?? "");
+  if (args.servedManifest && answer.status === 200) appendFileSync(args.servedManifest,
+    JSON.stringify({url:answer.requestUrl,source:answer.source,path:answer.filePath ?? null,
+      size:bytes.length,sha256:createHash("sha256").update(bytes).digest("hex"),complete:true,
+      ...(args.resourceWarmPass ? {phase:resourceWarmPhase,
+        requestStartNodeNs:request?.startNs ?? null, bodyReadyNodeNs:process.hrtime.bigint().toString(),
+        resourceType:request?.resourceType ?? null, frameUrl:request?.frameUrl ?? null} : {})})+"\n");
+  return bytes;
 }
 if (connectMode) {
+  console.error("[bench] campaign setup: recording server listen");
   benchServer = createServer((req, res) => {
     const url = new URL(req.url ?? "/", "http://127.0.0.1");
     const cors = {
@@ -5144,6 +6934,7 @@ if (connectMode) {
     console.error(`--serve-port ${args.servePort}: could not listen (${e}). Is another bench still running?`);
     process.exit(2);
   });
+  console.error("[bench] campaign setup: recording server ready");
 }
 
 // Serve the recording to the in-page fake WS (launched mode; connect mode uses the HTTP server above).
@@ -5162,59 +6953,136 @@ if (assetServingEnabled && !connectMode) {
   // it belongs to Vite's explicit on-disk fixture middleware and must never be synthesized by this harness.
   for (const assetFamily of BENCH_ASSET_FAMILIES) {
     await context.route(`**/${assetFamily}/**`, (route) => {
+      const request = args.resourceWarmPass ? {startNs:process.hrtime.bigint().toString(),
+        resourceType:route.request().resourceType(),frameUrl:route.request().frame().url()} : null;
       const answer = resolveBenchAsset(new URL(route.request().url()));
-      route.fulfill({ status: answer.status, contentType: answer.contentType, body: assetBody(answer) });
+      const body = assetBody(answer,request);
+      if (resourceRequestTimingPath) appendFileSync(resourceRequestTimingPath,JSON.stringify({
+        url:route.request().url(),phase:resourceWarmPhase,status:answer.status,
+        requestStartNodeNs:request.startNs,bodyReadyNodeNs:process.hrtime.bigint().toString(),
+        resourceType:request.resourceType,frameUrl:request.frameUrl,
+        size:body.length,sha256:createHash('sha256').update(body).digest('hex')})+'\n');
+      route.fulfill({ status: answer.status, contentType: answer.contentType, body });
     });
   }
 }
 // Where the in-page fake socket fetches the stream from. Launched mode keeps the relative path the context route
 // answers; connect mode hands it the bench server's ABSOLUTE loopback URL (see the server above).
 const recordingUrl = connectMode ? `http://127.0.0.1:${args.servePort}/recording` : "/__bench/recording";
-// In connect mode the init scripts go on the BENCH TAB only. A context-wide addInitScript is sent to every tab of
-// the attached browser — the phone owner's own tabs included — and one frozen background tab never answers, which
-// hangs the cell before warm-up (seen on the Moto G86: >20 s, never returns). Page-scoped scripts still cover every
-// navigation the run makes, because they all happen on the bench tab.
-const initTarget = connectMode && connectPage ? connectPage : context;
-await initTarget.addInitScript(fakeWebSocketInit, {
+const initScriptTarget = selectBenchInitScriptTarget({ connectMode, connectPage, context });
+const addBoundedInitScript = async (name, script, arg) => {
+  if (!connectMode) return initScriptTarget.addInitScript(script, arg);
+  console.error(`[bench] campaign setup: ${name} begin`);
+  let timer;
+  try {
+    await Promise.race([
+      initScriptTarget.addInitScript(script, arg),
+      new Promise((_, reject) => { timer = setTimeout(() => reject(new Error(`${name} init script timed out`)), 8000); })
+    ]);
+  } finally { clearTimeout(timer); }
+  console.error(`[bench] campaign setup: ${name} ready`);
+};
+if (args.freshDefaults) {
+  await addBoundedInitScript("fresh mirror defaults", () => {
+    const key = "couchcoop.mirrorSettings.v1";
+    const before = localStorage.getItem(key);
+    localStorage.removeItem(key);
+    window.__benchFreshDefaults = { key, hadSavedSettings: before !== null, cleared: localStorage.getItem(key) === null };
+  });
+}
+if (args.activeWindowWitness || args.startupObservationOut) await addBoundedInitScript("active window boundary",
+  installActiveWindowBoundary, { markBoundary: !args.startupObservationOut });
+if (args.startupObservationOut) await addBoundedInitScript("startup resource receipt", installStartupResourceReceipt,
+  { count: activeExpected.end.count, hash: activeExpected.end.hash, finalRevision: 172 });
+await addBoundedInitScript("socket", fakeWebSocketInit, {
   recordingUrl,
   pace: args.pace,
   ackPacedMs: args.ackPacedMs ?? 0,
   dropCardFlights: args.dropCardFlights,
   synthesizeDirectView: !hasRecordedDirectView,
-  window: args.window
+  synthesizedSession,
+  window: args.window,
+  diagnosticClock: replayDiagnosticClock(args),
+  activeWindowWitness: !!(args.activeWindowWitness || args.startupObservationOut),
+  startupObservation: !!args.startupObservationOut,
+  activeVisualReference: !!args.activeVisualReferenceOut,
+  busyStartupTimeline: !!args.busyStartupTimelineOut,
+  resourceWarmPass: args.resourceWarmPass,
+  resourceWarmRequired: args.resourceWarmRequired,
 });
-await initTarget.addInitScript(longTaskInit);
-await initTarget.addInitScript(tickSamplerInit);
+await addBoundedInitScript("long task", longTaskInit);
+await addBoundedInitScript("tick sampler", tickSamplerInit);
 if (args.flightLiveness) {
-  await initTarget.addInitScript(flightLivenessInit);
+  await addBoundedInitScript("flight liveness", flightLivenessInit);
 }
 if (args.census) {
-  await initTarget.addInitScript(censusInit);
+  await addBoundedInitScript("census", censusInit);
 }
 if (args.churnCensus) {
-  await initTarget.addInitScript(churnCensusInit);
+  await addBoundedInitScript("churn census", churnCensusInit);
 }
 
 const opts = {
+  freshDefaults: args.freshDefaults,
+  preIdleWitness: args.preIdleWitness,
+  postIdleWitness: args.postIdleWitness,
+  activeWindowWitness: args.activeWindowWitness,
+  startupObservationOut: args.startupObservationOut,
+  startupExpectedRecordingSha256: args.startupExpectedRecordingSha256,
+  startupExpectedDeliveryCount: args.startupExpectedDeliveryCount,
+  startupExpectedDeliveryHash: args.startupExpectedDeliveryHash,
+  activeVisualReferenceOut: args.activeVisualReferenceOut,
+  activeVisualReference: args.activeVisualReference,
+  activeSourceSha256: args.activeSourceSha256,
+  busyStartupTimelineOut: args.busyStartupTimelineOut,
+  activeExpected,
+  witnessBrowserPackage: args.witnessBrowserPackage,
+  witnessBrowserPid: args.witnessBrowserPid,
+  preIdleWitnessTimeoutMs: args.preIdleWitnessTimeoutMs,
   hoverSweep: args.hoverSweep,
+  coldStart: args.skipWarmup,
+  resourceWarmPass: args.resourceWarmPass,
+  resourceWarmRequired: args.resourceWarmRequired,
+  resourceWarmPhase: (phase) => { resourceWarmPhase = phase; },
+  pace: args.pace,
+  limitMs: args.limitMs,
   shot: null,
+  shotClockMs: args.shotClockMs,
+  presentationCaptures: args.presentationCaptures,
+  presentationCaptureCount: args.presentationCaptureCount,
+  presentationCaptureGapMs: args.presentationCaptureGapMs,
   // Carried so the post-settle parity dumps can stamp the conditions they were taken under (see --paint-dump).
   viewport: args.viewport,
   trace: args.trace,
+  jsProfile: args.jsProfile,
   traceGpu: args.traceGpu,
   layers: args.layers,
   layerDetail: args.layerDetail,
   census: args.census,
   churnCensus: args.churnCensus,
+  growthCycles: args.growthCycles,
+  allowUnmeasuredDecode: args.allowUnmeasuredDecode,
   handParity: args.handParity,
   flightLiveness: args.flightLiveness,
   idle: args.idle,
+  idleWarmup: args.idleWarmup,
+  textCacheProbe: args.textCacheProbe,
   idleShots: args.idleShots,
   idleShotGapMs: args.idleShotGapMs,
   animAudit: args.animAudit,
   animAuditOut: args.animAuditOut,
+  parityCapture: args.parityCapture,
+  parityAfterDrain: args.parityAfterDrain,
+  rustExcerptDir: args.rustExcerptDir,
+  adbShot: args.adbShot,
+  parityClockMs: args.parityClockMs,
+  parityPairedToggle: args.parityPairedToggle,
+  campaignAbortOnLoss: args.campaignAbortOnLoss,
+  parityAnimationSteps: args.parityAnimationSteps,
   window: args.window,
   report: !!args.report,
+  untracedReport:args.untracedReport,
+  traceOnly: args.reportTraceOnly,
   // --connect-cdp: the flag runOnce degrades on, and the ONE page every repeat reuses.
   connect: connectMode,
   connectPage
@@ -5230,13 +7098,17 @@ if (args.traceGpu && !args.trace && !args.report) {
   console.error("--trace-gpu needs a capture to widen: pass --trace <file> (or --report).");
   process.exit(2);
 }
+if (args.jsProfile && (!args.trace || args.idle !== null)) {
+  console.error("--js-profile requires explicit --trace <file> and an active replay (no --idle).");
+  process.exit(2);
+}
 const reportStem = args.report ? basename(args.report).replace(/\.json$/i, "") : null;
 opts.reportStem = reportStem;
 const explicitTrace = !!args.trace;
 opts.traceRawFull = explicitTrace;
 if (args.report) {
-  if (!args.trace) args.trace = `${reportStem}-trace.json`;
-  if (!args.shot && !args.noReportShot) {
+  if (!args.trace && !args.untracedReport) args.trace = `${reportStem}-trace.json`;
+  if (!args.startupObservationOut && !args.shot && !args.noReportShot) {
     const shotDir = resolve(REPO_ROOT, ".sts2/bench/shots");
     mkdirSync(shotDir, { recursive: true });
     args.shot = resolve(shotDir, `${reportStem}.png`);
@@ -5248,6 +7120,10 @@ if (args.report) {
     );
   }
 }
+if (args.untracedReport && (!args.report || args.trace || args.jsProfile || args.traceGpu)) {
+  console.error('--untraced-report requires --report and forbids trace, JS profile, and trace GPU');
+  process.exit(2);
+}
 
 // Warmup page load (discarded) so the dev server's first-request transform / cold module graph doesn't
 // inflate repeat #1 — keeps repeat-to-repeat spread tight.
@@ -5257,20 +7133,29 @@ if (args.report) {
 // rooted at our own pid reaches exactly the tree we own and nothing else on a shared box.
 const procMemSampler = args.procMem ? startProcMemSampler(process.pid, 500) : null;
 
-process.stdout.write("warmup... ");
-try {
-  await runOnce(context, pageUrl, {
-    hoverSweep: false,
-    trace: null,
-    layers: false,
-    layerDetail: false,
-    census: false,
-    connect: connectMode,
-    connectPage
-  });
-  process.stdout.write("done\n");
-} catch (e) {
-  process.stdout.write(`warmup failed: ${e}\n`);
+if (args.skipWarmup) {
+  process.stdout.write("warmup skipped: diagnostic cold-start run\n");
+} else {
+  process.stdout.write("warmup... ");
+  try {
+    await runOnce(context, pageUrl, {
+      hoverSweep: false,
+      trace: null,
+      layers: false,
+      layerDetail: false,
+      census: false,
+      busyStartupTimelineOut: args.busyStartupTimelineOut ? `${args.busyStartupTimelineOut}.warmup.json` : null,
+      busyStartupRunKind: "warmup",
+      activeSourceSha256: args.activeSourceSha256,
+      witnessBrowserPackage: args.witnessBrowserPackage,
+      witnessBrowserPid: args.witnessBrowserPid,
+      connect: connectMode,
+      connectPage
+    });
+    process.stdout.write("done\n");
+  } catch (e) {
+    process.stdout.write(`warmup failed: ${e}\n`);
+  }
 }
 
 // R7 W1-I1b — a repeat that dies outright still has to leave a record. `runOnce` already returns a partial delta
@@ -5278,7 +7163,7 @@ try {
 // guard cannot reach: navigation, context creation, a browser that went away entirely. The record is the delta's
 // shape with every measurement null — never a zero, which a median would happily average in as a real reading —
 // so the summary code below traverses it unchanged and the surviving repeats still produce medians.
-const crashedRunRecord = (reason) => ({
+const crashedRunRecord = (reason, witnessFailure = null) => ({
   wall: null,
   taskDuration: null,
   scriptDuration: null,
@@ -5313,9 +7198,10 @@ const crashedRunRecord = (reason) => ({
   pageErrorCount: 1,
   pageWarnings: [],
   pageWarningCount: 0,
-  pageCrashed: true,
+  pageCrashed: witnessFailure === null,
   pageCrashAtMs: null,
   crashReason: String(reason),
+  witnessFailure,
   responseErrors: [],
   report: null
 });
@@ -5331,13 +7217,27 @@ for (let i = 0; i < args.repeats; i++) {
       ...opts,
       repeatIndex: i,
       trace: i === 0 ? args.trace : null,
+      jsProfile: i === 0 ? args.jsProfile : null,
       shot: i === 0 ? (args.shot ?? null) : null,
+      presentationCaptures: i === 0 ? args.presentationCaptures : null,
       domStyles: i === 0 ? (args.domStyles ?? null) : null,
       paintDump: i === 0 ? (args.paintDump ?? null) : null,
+      drawListDump: i === 0 ? (args.drawListDump ?? null) : null,
       hitGrid: i === 0 ? (args.hitGrid ?? null) : null,
       hitGridStep: args.hitGridStep,
       raiseProbe: i === 0 ? (args.raiseProbe ?? null) : null,
+      parityCapture: i === 0 ? (args.parityCapture ?? null) : null,
+      parityClockMs: args.parityClockMs,
+      parityPairedToggle: i === 0 ? (args.parityPairedToggle ?? null) : null,
       idle: i === 0 ? args.idle : null,
+      preIdleWitness: i === 0 ? args.preIdleWitness : null,
+      postIdleWitness: i === 0 ? args.postIdleWitness : false,
+      activeWindowWitness: i === 0 ? args.activeWindowWitness : null,
+      startupObservationOut: i === 0 ? args.startupObservationOut : null,
+      activeVisualReferenceOut: i === 0 ? args.activeVisualReferenceOut : null,
+      busyStartupTimelineOut: i === 0 ? args.busyStartupTimelineOut : null,
+      busyStartupRunKind: "visual-repeat",
+      idleWarmup: i === 0 ? args.idleWarmup : 0,
       idleShots: i === 0 ? args.idleShots : null,
       animAudit: i === 0 ? args.animAudit : false,
       // Evidence, not a per-repeat measurement — and it mutates the page, so repeat #1 only (like --shot).
@@ -5350,7 +7250,12 @@ for (let i = 0; i < args.repeats; i++) {
     // The whole point of I1b: this used to be an unhandled rejection that ended the process, taking every cell
     // the matrix had not reached yet with it. Now it is one bad repeat.
     const reason = e?.message ?? String(e);
-    r = crashedRunRecord(reason);
+    const witnessFailure = e instanceof PostIdleWitnessError
+      ? { code: e.code, receiptPath: e.receiptPath, reason } : null;
+    r = crashedRunRecord(reason, witnessFailure);
+    if (e instanceof ActiveWindowWitnessError) {
+      r.activeWindowFailure = { code: e.code, receiptPath: e.receiptPath, reason };
+    }
     process.stdout.write(`REPEAT DIED: ${reason}\n`);
   }
   runs.push(r);
@@ -5438,7 +7343,24 @@ const spread = (k) => {
 const connectViewport = runs.find((r) => r.pageViewport)?.pageViewport ?? null;
 
 const result = {
+  browser: {version:browserVersion,mode:connectMode ? 'attached' : 'launched',
+    ...(browserBinaryIdentity ?? {binarySha256:null,reason:'browser executable identity unavailable'})},
+  effectiveSettings: runs.map((run) => run.effectiveSettings ?? null),
   config: {
+    freshDefaults: args.freshDefaults,
+    postIdleWitness: args.postIdleWitness,
+    activeWindowWitness: !!args.activeWindowWitness,
+    startupObservation: !!args.startupObservationOut,
+    startupFrozenRecordingPin: args.startupObservationOut ? {
+      sha256: args.startupExpectedRecordingSha256,
+      deliveredCount: args.startupExpectedDeliveryCount,
+      deliveredHash: args.startupExpectedDeliveryHash } : null,
+    comparisonEligibility: args.startupObservationOut ? { fps: false, equivalence: false } : null,
+    activeVisualReference: args.activeVisualReference ?? null,
+    activeSourceSha256: args.activeSourceSha256 ?? null,
+    coldStart: args.skipWarmup,
+    resourceWarmPass: args.resourceWarmPass,
+    resourceWarmRequired: args.resourceWarmRequired,
     url: pageUrl,
     requestedUrl: requestedPageUrl,
     effectiveUrl: pageUrl,
@@ -5467,6 +7389,7 @@ const result = {
   },
   recording: {
     path: recordingPath,
+    sha256: recordingSha256,
     messages: recMeta.messages ?? null,
     bytes: recMeta.bytes ?? null,
     durationMs: recMeta.durationMs ?? null,
@@ -5518,6 +7441,10 @@ const result = {
   perRepeatFrameGaps: runs.map((r) => r.frameGaps ?? null),
   // First acknowledgement after each delivered scene delta. See fakeWebSocketInit for coalescing semantics.
   perRepeatSceneAckLatency: runs.map((r) => r.sceneAckLatency ?? null),
+  installOverlay: {
+    absentAtAllMarkers: runs.length > 0 && runs.every((run) => run.installOverlay?.absentAtBothMarkers === true),
+    perRepeat: runs.map((run) => run.installOverlay ?? null),
+  },
   perRepeatWalks: runs.map((r) =>
     r.walkStats
       ? {
@@ -5538,9 +7465,12 @@ const result = {
   layers: runs.find((r) => r.layers)?.layers ?? null,
   census: runs.find((r) => r.census)?.census ?? null,
   churnCensus: args.churnCensus ? summarizeChurn(runs) : null,
+  sameInstanceGrowth: runs.find((r) => r.sameInstanceGrowth)?.sameInstanceGrowth ?? null,
+  sameInstanceGrowth: runs.find((r) => r.sameInstanceGrowth)?.sameInstanceGrowth ?? null,
   perRepeatFlightLiveness: args.flightLiveness ? runs.map((r) => r.flightLiveness) : null,
   droppedCardFlights: runs[runs.length - 1]?.droppedCardFlights ?? 0,
   idle: runs.find((r) => r.idle)?.idle ?? null,
+  presentationCaptures: runs.find((r) => r.presentationCaptures)?.presentationCaptures ?? null,
   animAuditPath: runs.find((r) => r.animAuditPath)?.animAuditPath ?? null,
   animAuditCounts: runs.find((r) => r.animAuditCounts)?.animAuditCounts ?? null,
   revealBurst: runs.find((r) => r.revealBurst)?.revealBurst ?? null,
@@ -5552,6 +7482,13 @@ const result = {
       r.pageCrashed ? { repeat: i + 1, atMs: r.pageCrashAtMs ?? null, reason: r.crashReason ?? "renderer crashed" } : null
     )
     .filter(Boolean),
+  rejectedRepeats: postIdleRejectedRepeats(runs, args.postIdleWitness),
+  rejectedActiveRepeats: activeWindowRejectedRepeats(runs, !!args.activeWindowWitness),
+  startupObservation: runs[0]?.startupObservation ?? null,
+  rejectedStartupObservations: args.startupObservationOut &&
+    runs[0]?.startupObservation?.accepted !== true ? [{ repeat: 1,
+      reason: runs[0]?.startupObservation?.failures ?? runs[0]?.crashReason ?? "startup receipt absent" }]
+    : [],
   // R7 W1-I1f — failed requests summed across repeats, still deduped by (status, pathname).
   responseErrors: mergeResponseErrors(runs),
   // R7 W1-I1d — per-process VmRSS of the launched Chrome tree (null in connect mode and off without --proc-mem).
@@ -5588,7 +7525,33 @@ const result = {
         samples: procMem.samples
       }
     : null,
-  perRepeat: runs.map((r) => ({ busyPct: r.busyPct, taskDuration: r.taskDuration, wall: r.wall }))
+  perRepeat: runs.map((r) => ({
+    busyPct: r.busyPct,
+    taskDuration: r.taskDuration,
+    wall: r.wall,
+    // Active-window admission evidence. Idle has its own rendererWindow block;
+    // the phone analyzer reads this matching per-repeat field for dense cells.
+    rendererWindow: r.rendererWindow ?? null,
+    // Existing boundary/cadence observations, with no extra in-window paint or poll.
+    window: r.window ?? null,
+    frameGaps: r.frameGaps ?? null,
+    sceneAckLatency: r.sceneAckLatency ?? null,
+    cpu: r.report?.cpu ?? null,
+    processIdentity: r.report?.processIdentity ?? null,
+    traceMarkers: r.report?.traceMarkers ?? null,
+    pageMarkerClock: r.report?.pageMarkerClock ?? null,
+    gpuIdentity: r.report?.gpuIdentity ?? null,
+    gpuTimerCapability: r.report?.gpuTimerCapability ?? null,
+    rustGpuTimerCapability: r.report?.rustGpuTimerCapability ?? null,
+    replayDelivery: r.report?.replayDelivery ?? null,
+    resourceWarmPass: r.resourceWarmPass ?? null,
+    presentationCandidate: r.report?.presentedFrames == null ? null : {
+      count: r.report.presentedFrames, source: r.report.presentedFramesSource,
+      note: "compositor pipeline evidence; physical display/content-layer identity not established",
+    },
+    outputWitness: r.report?.presented ?? null,
+    shotClockProof: r.report?.shotClockProof ?? null,
+  }))
 };
 
 console.log("");
@@ -6423,7 +8386,19 @@ if ((result.busyPctSpreadPct ?? 0) > 15) {
   console.log(`  WARN: busy% spread ${result.busyPctSpreadPct}% > 15% — investigate (cold dev-server transform? add a warmup / more repeats).`);
 }
 console.log("");
-console.log("BENCH_RESULT " + JSON.stringify(result));
+if (args.resourceWarmPass && args.resultJson) {
+  const proof = runs[0]?.resourceWarmPass ?? null;
+  writeFileSync(resolve(dirname(args.resultJson), 'resource-warm-pass.json'),
+    JSON.stringify({ schema:'mirror-resource-warm-pass/1', proof }, null, 2) + '\n');
+}
+emitBenchResult(result,args.resultJson);
+const witnessFailed = result.rejectedRepeats.length > 0 || result.rejectedActiveRepeats.length > 0 ||
+  result.rejectedStartupObservations.length > 0;
+if (witnessFailed && args.report && !args.reportTraceOnly) {
+  console.error(`--report: phone witness rejected — ${JSON.stringify([...result.rejectedRepeats,
+    ...result.rejectedActiveRepeats, ...result.rejectedStartupObservations])}`);
+  process.exit(1);
+}
 
 // ---------------------------------------------------------------------------------------------------------
 // shared cross-repo envelope (--report)
@@ -6432,7 +8407,7 @@ console.log("BENCH_RESULT " + JSON.stringify(result));
 // unit-level win measured there can be checked against this integration replay field-for-field. Coupling is the
 // JSON SHAPE only: no build dependency, no cross-repo import. Every value below is mapped from a measurement
 // this bench already takes; anything the trace did not carry stays null rather than being zero-filled.
-if (args.report) {
+if (args.report && !args.reportTraceOnly && !args.startupObservationOut) {
   // Split the repeats: `__discard` (set by the presence guard, the geometry lock, or a trace analyser that
   // could not make a required observation) EXCLUDES a repeat from `runs` and lists it in `failures`. A
   // crashed repeat has no `report` object at all.
@@ -6472,13 +8447,21 @@ if (args.report) {
     process.exit(1);
   }
 
+  if (args.untracedReport) {
+    const untraced = buildUntracedReport({result,accepted,failures,
+      recordingSha256,window:args.window,browser:browserVersion});
+    mkdirSync(dirname(args.report),{recursive:true});
+    writeFileSync(args.report,JSON.stringify(untraced,null,2)+"\n");
+    console.log(`UNTRACED_REPORT ${args.report}`);
+  } else {
+
   // Playwright's `browser.version()` is a bare version string ("143.0.7295.0"), CDP's is "HeadlessChrome/143…".
   const chromeMajor = /(?:^|\/)(\d+)\./.exec(browserVersion ?? "")?.[1] ?? null;
   const envLabel =
     args.reportLabel || (chromeMajor ? `${process.platform}-chrome-${chromeMajor}` : `${process.platform}-chrome`);
-  const traceArtifact =
+  const traceArtifact = args.untracedReport ? null : (
     runs.map((r) => r.report?.tracePath).find(Boolean) ??
-    relative(REPO_ROOT, resolve(REPO_ROOT, ".sts2/bench/traces", String(args.trace)));
+    relative(REPO_ROOT, resolve(REPO_ROOT, ".sts2/bench/traces", String(args.trace))));
 
   const envelope = buildPerfReport({
     runs: accepted,
@@ -6548,7 +8531,7 @@ if (args.report) {
       // `metrics.presented`, which is the screenshot presence guard — this one used to be (mis)named `presented`.
       presentedFrames: accepted.map((r) => r.presentedFrames ?? null),
       definitions: {
-        initialRenderMs: "page clock at >50 .mirror-node elements (navigation start -> first rendered mirror tree)",
+        initialRenderMs: "navigation start -> renderer ready with a completed frame, required resources settled, and requested static background decoded",
         readyMs: "page clock when the whole recorded stream is delivered and settled (the measured window's close)",
         windowMs: "cc-report-start -> cc-report-end, measured on the trace clock",
         contentUpdateHz: "ActivateLayerTree rate inside the window ((n-1)/span). NOT the swap rate.",
@@ -6576,14 +8559,30 @@ if (args.report) {
     }
   });
 
+  // perf-report/1 intentionally has no nullable representation for the
+  // decode family. The explicitly scoped warm-cache mode is therefore a
+  // bench-local report extension: retain nulls plus explicit admission
+  // metadata rather than fabricating zeros. Consumers must not submit this
+  // scoped report to the shared perf-report/1 validator.
+  if (args.allowUnmeasuredDecode && accepted.every((run) => run.decode?.provenance === "trace-unmeasured")) {
+    envelope.schema = "couchcoop-phone-perf-report/1";
+    envelope.params.decodeAdmission = {
+      status: "unmeasured",
+      provenance: "trace-unmeasured",
+      reason: accepted[0].decode.unmeasuredReason,
+      repeats: accepted.length,
+    };
+  }
+
   mkdirSync(dirname(args.report), { recursive: true });
   writeFileSync(args.report, JSON.stringify(envelope, null, 2) + "\n");
   console.log("");
   console.log(`PERF_REPORT ${args.report}`);
   console.log(JSON.stringify({ ...envelope, runs: `[${envelope.runs.length} runs]` }, null, 2));
+  }
 }
 
 // --flight-liveness (and its R14 discard-liveness sibling) are GATEs, not a report: a stalled replay must FAIL
 // the run, or an arm that got faster by not animating at all would pass. Everything else has already been
 // printed and written by here.
-process.exit(flightLivenessFailed || discardGateFailed ? 1 : 0);
+process.exit(flightLivenessFailed || discardGateFailed || witnessFailed ? 1 : 0);

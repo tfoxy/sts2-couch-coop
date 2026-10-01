@@ -5,7 +5,8 @@
 // reconciling runtime knows to re-trigger a one-shot burst (re-init that node's simulation) without resetting
 // unrelated systems. `_epoch` is an extra key gsw ignores; it only exists to vary the signature.
 
-import { particlesHardOff, renderQuality } from "@/render/quality";
+import { particlesHardOff } from "@/render/quality";
+import { effectiveMirrorQuality } from "@/mirror/mirrorSettings";
 import { bakedStillCoversNode } from "@/mirror/bakedEffects";
 import type { MirrorNode, MirrorShaderParam } from "@/mirror/sceneTree";
 
@@ -265,7 +266,7 @@ export function nodeParticleAttributes(node: MirrorNode): MirrorParticleBinding 
   // be the tier's `particlesEnabled`, which silently skipped stamping on the `very-low` tier a mid-range phone
   // auto-resolves to — so the settings panel's Particles select did nothing there no matter what the viewer
   // picked (no markers ⇒ nothing for the runtime to attach to). The panel decides now; the tier only seeds it.
-  if (!spec || particlesHardOff(renderQuality())) {
+  if (!spec || particlesHardOff(effectiveMirrorQuality())) {
     return null; // no particle node, or the hard-off lane (no usable GPU path at all)
   }
   // A BAKED STILL is standing in for this emitter (bakedEffects.ts): the two card rarity glows, while particles

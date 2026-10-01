@@ -125,6 +125,7 @@ import {
 import { buildPaintOrder, paintOrderAssertsOn, type PaintOrder, type PaintOrderCache } from "@/mirror/canvas/paintOrder";
 import {
   FX_QUAD_KINDS,
+  canvasBlend,
   classifyNode,
   createPaintScratch,
   emitFxQuad,
@@ -320,6 +321,10 @@ export interface DrawListBuild {
    * or turning the flag on would blank a label. That is what makes every refusal on this path safe.
    */
   textQuadIds: ReadonlySet<string>;
+  /** Exact executor commands emitted by either native-glyph or raster text paths. */
+  textCommands: ReadonlySet<number>;
+  /** Exact executor commands emitted by stage-owned static Spine stills. */
+  spineCommands: ReadonlySet<number>;
   /**
    * The view-scale stamps this build applied, in paint order — a PURE PER-BUILD index (native's R8 rule: no
    * cross-build stamp memory, which is what caused the event-option snap-back three rounds running).
@@ -365,6 +370,9 @@ export interface DrawListBuild {
    * approximated; see {@link LocalAnimFrame}.
    */
   localAnimFrames: ReadonlyMap<string, LocalAnimFrame>;
+  /** Canvas paint whose placed box entered the overlay coverage pass. */
+  coverPaintIds: readonly string[];
+  coverageRefreshCaptured: boolean;
   /** Nodes the view-scale pass resolved an entry for — the patcher's `viewScale` refusal. Empty as above. */
   viewScaleCandidates: ReadonlySet<string>;
   /** Overlay records resolved against a non-empty clip chain — the patcher's `overlayClip` refusal. As above. */
@@ -606,6 +614,19 @@ export interface CanvasTipScaleEnv {
 }
 
 export interface BuildDrawListOptions {
+  /** Optional coarse synchronous spans; absent from ordinary production builds. */
+  profilePhase?: <T>(phase: "paint-order" | "root-walk" | "overlay-coverage", run: () => T) => T;
+  /** Collect exact command ownership for default-off executor ablation diagnostics. */
+  diagnosticCommandRoles?: boolean;
+  /** One aggregate per successful build; times only outermost invisible/orphan subtree walks. */
+  hiddenWalkDiagnostic?: (summary: HiddenWalkSummary) => void;
+  semanticBegin?: () => void;
+  /** Backend-neutral node paint record collector for gated diagnostics. */
+  semanticNode?: (input: NodePaintInput, cls: NodeClass, start: number, end: number) => void;
+  /** Experimental semantic text consumer, called at the exact painter boundary before glyph/raster conversion. */
+  semanticText?: (input: NodePaintInput, record: OverlayRecord, insertionIndex: number) => boolean;
+  /** Experimental backend hook for non-text overlay pixels at their semantic painter position. */
+  semanticOverlay?: (input: NodePaintInput, record: OverlayRecord, insertionIndex: number) => void;
   /**
    * Wide-screen stage factor (`stageWidth / 1920`). 1 = no spread, and then the whole spread walk short-circuits:
    * every node's `dx` is 0, `mFinal === mGame`, and no context object is allocated.
@@ -738,6 +759,8 @@ export interface BuildDrawListOptions {
    * settings. That is why turning this on cannot move a single number in that gate.
    */
   textSource?: TextQuadSource | null;
+  /** Default-off same-context GPU label raster. Asked before analytic glyphs. */
+  gpuCacheSource?: TextQuadSource | null;
   /**
    * THE GLYPH SOURCE — see {@link TextGlyphSource}.
    *
@@ -785,6 +808,8 @@ export interface BuildDrawListOptions {
    * at its streamed pose, which is the offline gate's no-animation mode.
    */
   localAnims?: ReadonlyMap<string, LocalAnim> | null;
+  /** Retain painted-box identities for the optional reference-patch cover refresh. */
+  coverageRefresh?: boolean;
   /**
    * PER-NODE PAINT SUBSTITUTES (R6) — a shallow clone of the node carrying a DIFFERENT
    * frame's texture fields, used for this node's paint and for nothing else.
@@ -803,6 +828,8 @@ export interface BuildDrawListOptions {
   handRaiseChrome?: { emit(input: NodePaintInput, scratch: PaintScratch, sink: PaintSink): number } | null;
   /** Reused sibling sorts across builds. Optional; without one every parent is sorted every build. */
   paintOrderCache?: PaintOrderCache;
+  /** Comparison-only complete PaintOrder reuse; absent keeps the existing build path. */
+  structureReuse?: boolean;
   /**
    * Reused scene-identity / touch-owner walk cache. Optional; without one both walks run per node per build, as
    * they did before. RESET at the top of every build — see {@link HitMemo} for why the lifetime is exactly that.
@@ -812,6 +839,8 @@ export interface BuildDrawListOptions {
   scratch?: PaintScratch;
   /** Build hit entries (default true). Off is for a pure paint benchmark. */
   hitTest?: boolean;
+  /** Default-off Rust experiment: avoid the candidate predicate when the composed node is hidden. */
+  skipHiddenHitCandidates?: boolean;
   /** Dev/test invariant assertions (default: `paintOrderAssertsOn()`). */
   assert?: boolean;
   /** Texture page sizes; defaults to `textureCache.naturalSize`. See `paintSpec`'s `EmitOptions`. */
@@ -824,6 +853,27 @@ export interface BuildDrawListOptions {
    * retain a per-node map it would otherwise never need.
    */
   onNode?: (id: string, cls: NodeClass) => void;
+}
+
+/** Observational synchronous work under outermost invisible/orphan roots; no scene content or IDs. */
+export interface HiddenWalkSummary {
+  outerRoots: number;
+  visited: number;
+  descendants: number;
+  elapsedMs: number;
+  maxRootMs: number;
+  commands: number;
+  hits: number;
+  overlays: number;
+  captures: number;
+  paintInputs: number;
+  semanticNodes: number;
+  onNodes: number;
+  spreadWrites: number;
+  spreadComputations: number;
+  viewScaleStamps: number;
+  localAnimFrames: number;
+  hitCandidates: number;
 }
 
 const IDENTITY_TINT = { r: 1, g: 1, b: 1 } as const;
@@ -842,6 +892,7 @@ const NO_SPINE_QUAD_IDS: ReadonlySet<string> = new Set<string>();
 const NO_TRAIL_QUAD_IDS: ReadonlySet<string> = new Set<string>();
 /** …and its text twin (M4). */
 const NO_TEXT_QUAD_IDS: ReadonlySet<string> = new Set<string>();
+const NO_COMMAND_INDICES: ReadonlySet<number> = new Set<number>();
 
 // --- the COVER PASS scratch ------------------------------------------------------------------------------------
 //
@@ -894,8 +945,10 @@ function coverGrow(): void {
  * one, a spine record is measured on THAT box, which is what turns "the cover pass has no opinion about spine"
  * into the selectivity rule A2 is built on. Without one nothing here changes at all.
  */
-function markCoveredOverlays(records: OverlayRecord[], spine: SpineQuadSource | null): void {
-  const n = coverCount;
+function markCoveredOverlays(
+  records: OverlayRecord[], spine: SpineQuadSource | null,
+  orders: Int32Array = coverOrders, boxes: Float64Array = coverBoxes, n: number = coverCount,
+): void {
   if (n === 0) {
     return;
   }
@@ -903,10 +956,10 @@ function markCoveredOverlays(records: OverlayRecord[], spine: SpineQuadSource | 
   for (let i = n - 2; i >= 0; i--) {
     const at = i * 4;
     const next = at + 4;
-    if (coverBoxes[next] < coverBoxes[at]) coverBoxes[at] = coverBoxes[next];
-    if (coverBoxes[next + 1] < coverBoxes[at + 1]) coverBoxes[at + 1] = coverBoxes[next + 1];
-    if (coverBoxes[next + 2] > coverBoxes[at + 2]) coverBoxes[at + 2] = coverBoxes[next + 2];
-    if (coverBoxes[next + 3] > coverBoxes[at + 3]) coverBoxes[at + 3] = coverBoxes[next + 3];
+    if (boxes[next] < boxes[at]) boxes[at] = boxes[next];
+    if (boxes[next + 1] < boxes[at + 1]) boxes[at + 1] = boxes[next + 1];
+    if (boxes[next + 2] > boxes[at + 2]) boxes[at + 2] = boxes[next + 2];
+    if (boxes[next + 3] > boxes[at + 3]) boxes[at + 3] = boxes[next + 3];
   }
   for (const record of records) {
     const spineBox = spine !== null && record.kind === "spine" ? spine.boxFor(record.id) : null;
@@ -918,7 +971,7 @@ function markCoveredOverlays(records: OverlayRecord[], spine: SpineQuadSource | 
     let hi = n;
     while (lo < hi) {
       const mid = (lo + hi) >> 1;
-      if (coverOrders[mid] > record.order) {
+      if (orders[mid] > record.order) {
         hi = mid;
       } else {
         lo = mid + 1;
@@ -930,11 +983,41 @@ function markCoveredOverlays(records: OverlayRecord[], spine: SpineQuadSource | 
     const at = lo * 4;
     const box = spineBox === null ? recordAabb(record) : spineAabb(record, spineBox);
     record.coveredAbove =
-      coverBoxes[at] < box.maxX &&
-      coverBoxes[at + 2] > box.minX &&
-      coverBoxes[at + 1] < box.maxY &&
-      coverBoxes[at + 3] > box.minY;
+      boxes[at] < box.maxX &&
+      boxes[at + 2] > box.minX &&
+      boxes[at + 1] < box.maxY &&
+      boxes[at + 3] > box.minY;
   }
+}
+
+export interface CoverageRefreshScratch {
+  orders: Int32Array;
+  boxes: Float64Array;
+}
+
+export function createCoverageRefreshScratch(): CoverageRefreshScratch {
+  return { orders: new Int32Array(512), boxes: new Float64Array(512 * 4) };
+}
+
+/** Re-evaluate the builder's suffix cover test after locally animated placement changes. */
+export function refreshCoveredOverlays(
+  build: DrawListBuild,
+  translatedGlobalOf: (id: string, global: Affine) => Affine,
+  spine: SpineQuadSource | null,
+  scratch: CoverageRefreshScratch,
+): void {
+  const n = build.coverPaintIds.length;
+  if (scratch.orders.length < n) scratch.orders = new Int32Array(n);
+  if (scratch.boxes.length < n * 4) scratch.boxes = new Float64Array(n * 4);
+  let count = 0;
+  for (const id of build.coverPaintIds) {
+    const input = build.nodePaintInputs.get(id);
+    if (!input) continue;
+    if (!placedBoxAabbInto(input, scratch.boxes, count * 4, translatedGlobalOf(id, input.global))) continue;
+    scratch.orders[count++] = input.order;
+  }
+  for (const record of build.overlayRecords) record.coveredAbove = false;
+  markCoveredOverlays(build.overlayRecords, spine, scratch.orders, scratch.boxes, count);
 }
 
 /**
@@ -976,9 +1059,20 @@ export function buildDrawList(
   list: DrawList<string>,
   options: BuildDrawListOptions = {}
 ): DrawListBuild {
+  options.semanticBegin?.();
   const assert = options.assert ?? paintOrderAssertsOn();
-  const order = buildPaintOrder(state, options.paintOrderCache, { assert });
+  const profilePhase = options.profilePhase;
+  const paintOrder = () => buildPaintOrder(state, options.paintOrderCache, {
+    assert, reuseCompleteOrder: options.structureReuse === true
+  });
+  const order = profilePhase ? profilePhase("paint-order", paintOrder) : paintOrder();
   const nodes = state.nodes;
+  const hiddenWalk: HiddenWalkSummary | null = options.hiddenWalkDiagnostic ? {
+    outerRoots: 0, visited: 0, descendants: 0, elapsedMs: 0, maxRootMs: 0,
+    commands: 0, hits: 0, overlays: 0, captures: 0, paintInputs: 0, semanticNodes: 0,
+    onNodes: 0, spreadWrites: 0, spreadComputations: 0, viewScaleStamps: 0,
+    localAnimFrames: 0, hitCandidates: 0
+  } : null;
   const scratch = options.scratch ?? createPaintScratch();
   // CLEARED HERE, and this is the only place it may be: the memo's answers are properties of the node map as it
   // stands right now (an ancestor swap, or a change in how many event options are visible, moves them), so its
@@ -986,6 +1080,7 @@ export function buildDrawList(
   const hitMemo = options.hitMemo ?? null;
   hitMemo?.reset();
   const wantHits = options.hitTest !== false;
+  const skipHiddenHitCandidates = options.skipHiddenHitCandidates === true;
   const transformOverrides = options.transformOverrides ?? null;
   const renderWidthOverrides = options.renderWidthOverrides ?? null;
   const alphaOverrides = options.alphaOverrides ?? null;
@@ -998,17 +1093,21 @@ export function buildDrawList(
   const stageOwnedNoopIds = new Set<string>();
   const spineSource = options.spineSource ?? null;
   const spineQuadIds: Set<string> = spineSource === null ? (NO_SPINE_QUAD_IDS as Set<string>) : new Set();
+  const spineCommands = options.diagnosticCommandRoles ? new Set<number>() : (NO_COMMAND_INDICES as Set<number>);
   // Trail emission never changes CLASSIFICATION — a trail node stays an `overlay` node, so the union oracle the
   // offline gate asserts remains independent of whether a live trail source has points to emit.
   const trailSource = options.trailSource ?? null;
   const trailQuadIds: Set<string> = trailSource === null ? (NO_TRAIL_QUAD_IDS as Set<string>) : new Set();
   const textSource = options.textSource ?? null;
+  const gpuCacheSource = options.gpuCacheSource ?? null;
   const glyphSource = options.glyphSource ?? null;
+  const semanticText = options.semanticText ?? null;
   const glyphFloor = options.glyphFloor ?? null;
   // EITHER text source populates it — the glyph path publishes into the same set (its consumers ask whether the
   // canvas drew the label, not how), so the shared empty sentinel is only safe when NEITHER is installed.
   const textQuadIds: Set<string> =
-    textSource === null && glyphSource === null ? (NO_TEXT_QUAD_IDS as Set<string>) : new Set();
+    textSource === null && glyphSource === null && gpuCacheSource === null && semanticText === null ? (NO_TEXT_QUAD_IDS as Set<string>) : new Set();
+  const textCommands = options.diagnosticCommandRoles ? new Set<number>() : (NO_COMMAND_INDICES as Set<number>);
   // Guarded to a finite positive grid rather than taken as given: a NaN factor would put NaN in a quad matrix,
   // and a NaN matrix draws nothing at all — a whole screen of text lost to one bad number.
   const textSnap =
@@ -1205,6 +1304,7 @@ export function buildDrawList(
   // whole seam is three null checks per build.
   const trackingLocalAnims = localAnims !== null;
   const localAnimFrames = new Map<string, LocalAnimFrame>();
+  const coverPaintIds: string[] = [];
   /**
    * Every node the view-scale pass RESOLVED AN ENTRY FOR, whether or not it produced a stamp.
    *
@@ -1391,6 +1491,14 @@ export function buildDrawList(
     // R6 — the animating glyph's own frame, if this node has one. A shallow clone that differs only in its
     // texture fields, so every other answer below is the wire node's.
     const node = frameSubstitutes === null ? wireNode : (frameSubstitutes.get(id) ?? wireNode);
+    const diagnosticHidden = hiddenWalk !== null &&
+      (ancestorHidden || node.visible === false || (node.parentId != null && !nodes.has(node.parentId)));
+    const outerHidden = diagnosticHidden && !ancestorHidden;
+    const hiddenStarted = outerHidden ? performance.now() : 0;
+    const hiddenCommandStart = outerHidden ? list.count : 0;
+    const hiddenHitStart = outerHidden ? hitEntries.length : 0;
+    const hiddenOverlayStart = outerHidden ? overlayRecords.length : 0;
+    if (outerHidden) hiddenWalk!.outerRoots++;
     // GLOBAL — see the header. `gGame` is the TRUE 1920-space global the wire's coordinates live in; `gFinal` is
     // where it is DRAWN. The two diverge whenever a tween override, a cosmetic offset or the wide-screen spread is
     // in force.
@@ -1448,6 +1556,7 @@ export function buildDrawList(
     if (spreadCtx !== null && spreadEnv !== null && spreadScratch !== null) {
       const spreadBox = spreadDrawBox(node);
       computeSpread(id, node, spreadCtx, gGame, spreadBox, spreadFactor, spreadEnv, spreadScratch);
+      if (diagnosticHidden) hiddenWalk!.spreadComputations++;
       // …and, for a node something is ANIMATING, at the pose it is actually DRAWN at (R6 M2). The walk above
       // measures the field at `gGame` because that is where the GAME has the node; an override says where the
       // client is drawing it this frame, and a field claim is a function of the claimer's own rendered X. Only
@@ -1500,6 +1609,7 @@ export function buildDrawList(
       childSpread = takeSpreadCtx(gGame, spreadChildParentWidth(node, spreadCtx.parentWidth), spreadScratch);
       if (spreadDxOut) {
         spreadDxOut.set(id, spreadDx);
+        if (diagnosticHidden) hiddenWalk!.spreadWrites++;
       }
       if (spreadFieldModeOut) {
         spreadFieldModeOut.set(id, spreadScratch.fieldMode);
@@ -1600,6 +1710,7 @@ export function buildDrawList(
             spreadDx,
             isGroup: entry.isGroup
           });
+          if (diagnosticHidden) hiddenWalk!.viewScaleStamps++;
           const stamp = viewScaleStampMatrix(entry.scale, res);
           vsSelf = vsIn === null ? stamp : affineMul(vsIn, stamp);
           // The VIEW scale reaches the hit entries too — unchanged behaviour, and deliberate: the enlarged widget
@@ -1701,6 +1812,7 @@ export function buildDrawList(
         // under an ANCESTOR's transform override, which is exactly the case the patcher has to give up on.
         spreadRebased: spreadRebase && drawnMoved
       });
+      if (diagnosticHidden) hiddenWalk!.localAnimFrames++;
     }
 
     // The captured global is the node's DRAWN placement including its spread shift — the DOM twin reads the baked
@@ -1708,6 +1820,10 @@ export function buildDrawList(
     // lift) are Y-only, so at 16:9 this is the same value it always was.
     const orphan = node.parentId != null && !nodes.has(node.parentId);
     const hidden = ancestorHidden || node.visible === false || orphan;
+    if (diagnosticHidden) {
+      hiddenWalk!.visited++;
+      if (ancestorHidden) hiddenWalk!.descendants++;
+    }
     const alphaOverride = alphaOverrides?.get(id) ?? null;
     // Through the exported helper, so the patcher's copy of this rule IS this rule (see `streamedAlphasOf`).
     streamedAlphasOf(node, streamedScratch);
@@ -1740,8 +1856,10 @@ export function buildDrawList(
       nodes
     };
     nodePaintInputs.set(id, input);
+    if (diagnosticHidden) hiddenWalk!.paintInputs++;
     if (capture !== null && capture.ids.has(id)) {
       capture.out.set(id, { g: gSpread, parentTy: parentDrawTy, drawn: gFinal, modulate: [ownR, ownG, ownB, ownOpacity] });
+      if (diagnosticHidden) hiddenWalk!.captures++;
     }
 
     // CLIP — opened before the whole subtree (behind children included: they are inside the clipper's box in the
@@ -1790,6 +1908,7 @@ export function buildDrawList(
         if (placedBoxAabbInto(input, coverBoxes, coverCount * 4)) {
           coverOrders[coverCount] = input.order;
           coverCount++;
+          if (options.coverageRefresh) coverPaintIds.push(id);
         }
       }
     } else if (cls === "overlay") {
@@ -1801,6 +1920,7 @@ export function buildDrawList(
       if (record) {
         overlayRecords.push(record);
         overlayByKind[record.kind]++;
+        options.semanticOverlay?.(input, record, list.count);
         if (trackingLocalAnims && clipChain.length > 0) {
           // See `overlayClipped`: this record's crop is a function of WHERE its box lands inside the enclosing
           // intersection, so moving it can add or remove a crop the patcher has no way to recompute.
@@ -1834,6 +1954,7 @@ export function buildDrawList(
         //
         // Multi-frame clips are NOT reachable here at all: `overlay.spineQuads()` publishes only committed
         // single-frame stills, so `boxFor` answers null for an animating creature and it keeps its canvas.
+        const spineStart = list.count;
         if (spineSource !== null && record.kind === "spine" && spineSource.wanted(record.id)) {
           const meshes = node === undefined ? 0 : spineSource.emitMeshes?.(record, node) ?? 0;
           if (meshes === "pending") {
@@ -1850,6 +1971,7 @@ export function buildDrawList(
             }
           }
         }
+        if (options.diagnosticCommandRoles && record.kind === "spine") for (let command = spineStart; command < list.count; command++) spineCommands.add(command);
         // …and the CARD TRAIL (A4). Unlike the two above, this surface has no other way to reach the screen on
         // this backend at all: the overlay has never had an element for a trail, so before this the comet simply
         // was not drawn. The strip is the client's own integration of the card's motion (`cardTrailState`), and
@@ -1865,21 +1987,37 @@ export function buildDrawList(
         // build — the same "uploading happens where a budget can see it" rule the other three registries take.
         // Every null is safe by the same argument the spine branch makes: no quad means the DOM overlay keeps its
         // element and the label renders exactly as it does today.
+        const textStart = list.count;
         if (record.kind === "text") {
+          const semanticDrawn = semanticText?.(input, record, list.count) === true;
+          if (semanticDrawn) {
+            textQuadIds.add(record.id);
+          }
           // THE GLYPH PATH FIRST, WHEN THERE IS ONE, and only then the raster — see `glyphSource` for why the
           // two are exclusive per label (drawing both is double ink at a half-pixel offset, which reads as a
           // bolder, blurrier label rather than as a bug). `runs === 0` is every one of the glyph path's five
           // refusals plus "the pass drew nothing", and it falls straight through to the raster below.
           let runs = 0;
           let richPending = false;
-          if (glyphSource?.emitRich !== undefined && node !== undefined && node.richText) {
+          let cached = false;
+          const cacheEligible = node !== undefined && canvasBlend(node) === 0 && (!node.richText || glyphSource?.emitRich === undefined);
+          if (!semanticDrawn && gpuCacheSource !== null && !cacheEligible) gpuCacheSource.fallback?.("unsupported");
+          if (!semanticDrawn && gpuCacheSource !== null && cacheEligible) {
+            const box = gpuCacheSource.boxFor(record);
+            if (box !== null && emitTextQuad(record, box, node, scratch, sink, null) > 0) {
+              cached = true;
+              stats.textQuads++;
+              textQuadIds.add(record.id);
+            }
+          }
+          if (!semanticDrawn && !cached && glyphSource?.emitRich !== undefined && node !== undefined && node.richText) {
             const emitted = glyphSource.emitRich(input, record, scratch, sink);
             if (emitted === "pending") {
               richPending = true;
             } else {
               runs = emitted;
             }
-          } else if (glyphSource !== null) {
+          } else if (!semanticDrawn && !cached && glyphSource !== null) {
             const block = glyphSource.blockFor(record);
             if (block === "pending") {
               richPending = true;
@@ -1894,7 +2032,7 @@ export function buildDrawList(
             // "how" — the overlay drops its element on either answer, and a label drawn as outlines that kept a
             // hoisted element would render twice.
             textQuadIds.add(record.id);
-          } else if (!richPending && textSource !== null) {
+          } else if (!semanticDrawn && !cached && !richPending && textSource !== null) {
             const box = textSource.boxFor(record);
             if (box !== null && emitTextQuad(record, box, node, scratch, sink, textSnap) > 0) {
               stats.textQuads++;
@@ -1902,6 +2040,7 @@ export function buildDrawList(
             }
           }
         }
+        if (options.diagnosticCommandRoles && record.kind === "text") for (let command = textStart; command < list.count; command++) textCommands.add(command);
       }
     } else {
       stats.skip++;
@@ -1916,13 +2055,17 @@ export function buildDrawList(
     }
     if (onNode) {
       onNode(id, cls);
+      if (diagnosticHidden) hiddenWalk!.onNodes++;
     }
     const paintEnd = list.count;
+    options.semanticNode?.(input, cls, paintStart, paintEnd);
+    if (diagnosticHidden && options.semanticNode) hiddenWalk!.semanticNodes++;
     if (paintEnd > paintStart) {
       ranges.set(id, { start: paintStart, paintEnd });
     }
 
-    if (wantHits && isHitSurfaceCandidate(node)) {
+    if (wantHits && (!skipHiddenHitCandidates || !hidden) && isHitSurfaceCandidate(node)) {
+      if (diagnosticHidden) hiddenWalk!.hitCandidates++;
       const entry = buildHitEntry({
         node,
         nodes,
@@ -1957,9 +2100,17 @@ export function buildDrawList(
       // every path out of this frame, so the pool's cursor is always the walk's current depth.
       spreadDepth--;
     }
+    if (outerHidden) {
+      const elapsed = performance.now() - hiddenStarted;
+      hiddenWalk!.elapsedMs += elapsed;
+      hiddenWalk!.maxRootMs = Math.max(hiddenWalk!.maxRootMs, elapsed);
+      hiddenWalk!.commands += list.count - hiddenCommandStart;
+      hiddenWalk!.hits += hitEntries.length - hiddenHitStart;
+      hiddenWalk!.overlays += overlayRecords.length - hiddenOverlayStart;
+    }
   };
 
-  for (const id of order.rootIds) {
+  const walkRoots = () => { for (const id of order.rootIds) {
     walk(
       id,
       IDENTITY_AFFINE,
@@ -1980,18 +2131,21 @@ export function buildDrawList(
       false,
       false
     );
-  }
+  } };
+  if (profilePhase) profilePhase("root-walk", walkRoots);
+  else walkRoots();
 
-  markCoveredOverlays(overlayRecords, spineSource);
+  if (profilePhase) profilePhase("overlay-coverage", () => markCoveredOverlays(overlayRecords, spineSource));
+  else markCoveredOverlays(overlayRecords, spineSource);
 
   stats.commands = list.count;
   stats.textures = textures.size;
   stats.hitEntries = hitEntries.length;
   stats.maxClipDepth = list.maxClipDepth;
-
   if (assert && list.clipDepth !== 0) {
     throw new Error(`[buildDrawList] unbalanced clip stack: ${list.clipDepth} scope(s) left open`);
   }
+  if (hiddenWalk !== null) options.hiddenWalkDiagnostic!(hiddenWalk);
 
   return {
     order,
@@ -2007,11 +2161,15 @@ export function buildDrawList(
     spineQuadIds,
     trailQuadIds,
     textQuadIds,
+    textCommands,
+    spineCommands,
     viewScaleStamps,
     backstopOrder,
     backstopAlpha,
     backstopBlack,
     localAnimFrames,
+    coverPaintIds,
+    coverageRefreshCaptured: options.coverageRefresh === true,
     viewScaleCandidates,
     overlayClipped,
     stats

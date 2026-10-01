@@ -2,6 +2,10 @@
 
 Use this harness to compare the current mirror renderer against itself with the same recorded scene stream. It has two complementary gates:
 
+For results that must also describe a native or another browser graphics API, use the
+[renderer benchmark result contract](renderer-benchmark-contract.md). It keeps workload, CPU,
+presentation, and visual validity comparable while recording each API's attribution separately.
+
 | Gate | Command | Measures |
 | --- | --- | --- |
 | Offline walk cost | `COUCHCOOP_BENCH_RECORDING=<recording> npm --prefix frontend run bench:mirror` | Parse, apply, and reconcile cost plus `mirrorWalkStats`. |

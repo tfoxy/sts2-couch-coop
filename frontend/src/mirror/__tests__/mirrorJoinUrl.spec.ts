@@ -1,10 +1,13 @@
 import { mount } from "@vue/test-utils";
 import { afterEach, beforeEach, describe, expect, it, vi, type Mock } from "vitest";
-import { nextTick } from "vue";
+import { defineComponent, h, nextTick, onBeforeUnmount, type Component } from "vue";
 
 import MirrorApp from "@/mirror/MirrorApp.vue";
 import MirrorView from "@/mirror/MirrorView.vue";
 import { RECONNECT_BASE_DELAY_MS } from "@/mirror/reconnectPolicy";
+import { applyRendererComparisonConfig, rendererComparisonConfig, RENDERER_COMPARISON_PRESETS,
+  registerRendererComparisonApply } from "@/mirror/rendererComparison";
+import { setComparisonStageBackend } from "@/mirror/rendererFactory";
 
 // WS3 — the browser's join state lives in the page URL, and the page URL is NAVIGABLE.
 //
@@ -111,7 +114,7 @@ describe("MirrorApp — join state in the page URL", () => {
     await nextTick();
   };
   const latest = () => MockWebSocket.instances[MockWebSocket.instances.length - 1];
-  const mountAt = (search: string, stubScene = false) => {
+  const mountAt = (search: string, stubScene: boolean | Component = false) => {
     window.history.replaceState(null, "", `/${search}`);
     app = mount(MirrorApp, { props: { reloadPage }, global: { stubs: { MirrorView: stubScene } } });
     return app;
@@ -153,6 +156,54 @@ describe("MirrorApp — join state in the page URL", () => {
     app = null;
     (globalThis as unknown as { WebSocket: unknown }).WebSocket = realWebSocket;
     window.history.replaceState(null, "", "/");
+  });
+
+  it.each([false, true])("retains both seat sockets when applying comparison (in place: %s)", async (inPlace) => {
+    const previous = { ...rendererComparisonConfig };
+    let disposedViews = 0;
+    const ViewStub = defineComponent({
+      name: "MirrorView",
+      props: { state: { type: Object, required: true }, revision: { type: Number, required: true } },
+      setup(props) {
+        const unregister = inPlace ? registerRendererComparisonApply(() => true) : null;
+        onBeforeUnmount(() => { unregister?.(); disposedViews++; });
+        return () => h("div", { "data-testid": "retained-scene" }, String(props.revision));
+      },
+    });
+    try {
+      mountAt("?name=Alice&rendererCompare=1", ViewStub);
+      await settle();
+      const host = latest();
+      host.emit(sessionMessage());
+      await settle();
+      expect(host.sentOfType("join")).toHaveLength(1);
+      host.emit(sessionMessage({ headlessMirrorPort: 14000, connectionAttemptId: "join-1" }));
+      await settle();
+      const seat = latest();
+      seat.emit({ type: "scene-delta", full: true, screenType: "lobby", screenInstanceId: "lobby:1",
+        upserts: [{ id: "root", name: "Root", nodeType: "Control", visible: true }],
+        removedIds: [], orderedIds: ["root"] });
+      await settle();
+      const oldView = app!.findComponent(MirrorView);
+      expect(oldView.exists()).toBe(true);
+      const retainedState = oldView.props("state");
+      setComparisonStageBackend("canvas");
+      applyRendererComparisonConfig({ ...RENDERER_COMPARISON_PRESETS.canvas, animationReferenceReuse: inPlace });
+      await settle();
+      const newView = app!.findComponent(MirrorView);
+      expect(newView.exists()).toBe(true);
+      if (inPlace) expect(newView.vm).toBe(oldView.vm);
+      else expect(newView.vm).not.toBe(oldView.vm);
+      expect(newView.props("state")).toBe(retainedState);
+      expect(disposedViews).toBe(inPlace ? 0 : 1);
+      expect(MockWebSocket.instances).toEqual([host, seat]);
+      expect(host.readyState).toBe(MockWebSocket.OPEN);
+      expect(seat.readyState).toBe(MockWebSocket.OPEN);
+      expect(new URL(window.location.href).searchParams.get("name")).toBe("Alice");
+    } finally {
+      Object.assign(rendererComparisonConfig, previous);
+      setComparisonStageBackend(previous.backend);
+    }
   });
 
   it("reports a redirected view to the original host, and ignores receipts from an old attempt", async () => {

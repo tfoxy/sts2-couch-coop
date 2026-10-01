@@ -157,7 +157,7 @@ beforeEach(() => {
     restore: vi.fn(),
     scale: vi.fn(),
     translate: vi.fn()
-  } as unknown as CanvasRenderingContext2D);
+  } as never);
 });
 
 afterEach(() => {

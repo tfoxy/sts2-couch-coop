@@ -11,6 +11,7 @@ import {
   DEFAULT_QUALITY_CHOICE,
   DEFAULT_REFRESH_RATE,
   DEFAULT_SHADER_MODE,
+  effectiveMirrorRenderSettings,
   hasStoredMirrorSetting,
   MIRROR_SETTINGS_STORAGE_KEY,
   NEVER_PERSISTED_SETTING_KEYS,
@@ -532,6 +533,33 @@ describe("the persisted key set", () => {
     // stream rather than a truth about the instance — MirrorApp pushes them AFTER the session seed.
     expect(PERSISTED_SETTING_KEYS as readonly string[]).toContain("refreshRate");
     expect(PERSISTED_SETTING_KEYS as readonly string[]).toContain("tweenReplay");
+  });
+});
+
+describe("public renderer stage preference", () => {
+  it("layers the stage URL over a saved choice and defaults to DOM", () => {
+    expect(build().stage).toBe("dom");
+    expect(build(quality(), "", fakeStorage({ stage: "canvas" })).stage).toBe("canvas");
+    expect(build(quality(), "?stage=dom", fakeStorage({ stage: "canvas" })).stage).toBe("dom");
+    expect(build(quality(), "?stage=canvas", fakeStorage({ stage: "dom" })).stage).toBe("canvas");
+    expect(build(quality(), "?stage=rust", fakeStorage({ stage: "canvas" })).stage).toBe("canvas");
+  });
+
+  it("forces Rust canvas render values without changing saved DOM settings or host payload", () => {
+    const settings = build(quality(), "", fakeStorage({ stage: "canvas", quality: "high",
+      shaderMode: "dynamic", particleMode: "dynamic-half", staticBgEnabled: false }));
+    settings.runtimeStage = "canvas";
+    expect(effectiveMirrorRenderSettings(settings)).toMatchObject({
+      quality: "very-low", shaderMode: "off", particleMode: "off", staticBgEnabled: true
+    });
+    // The host still gets staticBg ON while Rust is displaying a static backdrop.
+    expect(serverSettingsPayload(settings).staticBg).toBe(true);
+
+    settings.runtimeStage = "dom";
+    expect(effectiveMirrorRenderSettings(settings)).toMatchObject({
+      quality: "high", shaderMode: "dynamic", particleMode: "dynamic-half", staticBgEnabled: false
+    });
+    expect(serverSettingsPayload(settings).staticBg).toBe(false);
   });
 });
 

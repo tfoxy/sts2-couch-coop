@@ -87,6 +87,8 @@ export interface ReconcilePull {
   pending(): boolean;
   /** Run it now, synchronously, and drop the booked rAF. Refused (no-op) while one is already running. */
   now(): void;
+  /** Optional completion result for the opt-in Rust pending-scene retry. */
+  retryNow?(): "presented" | "pending" | "reentrant";
 }
 
 export interface HandRaiseUiLayer {

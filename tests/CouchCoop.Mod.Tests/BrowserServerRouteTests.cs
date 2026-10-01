@@ -190,6 +190,13 @@ if (args is ["host-transport", ..])
     return;
 }
 
+if (args is ["static-spa", ..])
+{
+    await BrowserServerRouteTests.AssertStaticFileContainmentAsync();
+    Console.WriteLine("static SPA: ok");
+    return;
+}
+
 if (args is ["network", ..])
 {
     LanAddressRankingTests.Run();
@@ -1346,7 +1353,7 @@ internal sealed partial class BrowserServerRouteTests
         }
     }
 
-    private static async Task AssertStaticFileContainmentAsync()
+    internal static async Task AssertStaticFileContainmentAsync()
     {
         var parent = Path.Combine(Path.GetTempPath(), "couchcoop-static-boundary-" + Guid.NewGuid().ToString("N"));
         var realRoot = Path.Combine(parent, "frontend");
@@ -1357,6 +1364,7 @@ internal sealed partial class BrowserServerRouteTests
             Directory.CreateDirectory(realRoot);
             Directory.CreateDirectory(sibling);
             await File.WriteAllTextAsync(Path.Combine(realRoot, "index.html"), "safe-index");
+            await File.WriteAllBytesAsync(Path.Combine(realRoot, "rust_prototype_bg.wasm"), [0, 97, 115, 109]);
             await File.WriteAllTextAsync(Path.Combine(sibling, "secret.txt"), "sibling-secret");
             Directory.CreateSymbolicLink(configuredRoot, realRoot);
             File.CreateSymbolicLink(Path.Combine(realRoot, "escape.txt"), Path.Combine(sibling, "secret.txt"));
@@ -1368,6 +1376,10 @@ internal sealed partial class BrowserServerRouteTests
 
             var provider = new StaticSpaFileProvider(configuredRoot);
             Expect((await provider.TryOpenAsync("/index.html"))?.Bytes is { Length: > 0 }, "a configured root symlink remains supported");
+            var wasm = await provider.TryOpenAsync("/rust_prototype_bg.wasm");
+            Expect(wasm?.ContentType == "application/wasm", "Rust Wasm is served with the browser's streaming MIME type");
+            Expect(wasm?.Bytes.SequenceEqual(new byte[] { 0, 97, 115, 109 }) == true, "Rust Wasm is served unchanged");
+            Expect(await provider.TryOpenAsync("/missing-rust.wasm") is null, "missing Wasm never receives the SPA fallback");
             Expect(await provider.TryReadExactAsync("/../frontend-secret/secret.txt") is null, "a similarly-prefixed sibling is outside the static root");
             Expect(await provider.TryReadExactAsync("/escape.txt") is null, "a descendant symlink cannot escape the static root");
             Expect(await provider.TryReadExactAsync("/escape-dir/secret.txt") is null, "an exact read cannot escape through a descendant directory symlink");

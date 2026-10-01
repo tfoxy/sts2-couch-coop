@@ -14,6 +14,7 @@ export const IDLE_TRACE_WINDOW = Object.freeze({
 });
 
 export function traceWindowForOptions(opts) {
+  if (opts?.untracedReport) return null;
   if (!(opts?.trace || opts?.report)) return null;
   // An idle leg's only trace artifact is the quiet interval. Capturing its preceding replay would both make the
   // artifact lie about its scope and reintroduce the phone trace-buffer tail-loss this contract prevents.
