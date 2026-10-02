@@ -231,3 +231,12 @@ Vite dev build, with n=6 cells per arm alternated. Evidence:
 **Trap:** a worktree with a symlinked `.sts2/rust-prototype-web` 403s the Wasm, and the stage silently
 falls back to DOM. The first smoke of this round measured DOM at ~1.46 s. Gate every cell on
 `rendererWindow.backend === "rust"` (`MEM rust-wasm-worktree-dom-fallback`).
+
+## Oct 2 interactive aim attribution (Rust stage, phone)
+
+The Oct 1 numbers above come from a 1920x1080 replay with no touch input and no widescreen spread.
+This row covers the case that replay never exercised.
+
+| Date | Switch/name | Target | What it changed | Outcome | Key numbers | Evidence |
+| --- | --- | --- | --- | --- | --- | --- |
+| Oct 2 | widescreen spread / `?stretch=off`, plus a phone card-aim trace | full producer builds while dragging and aiming a card on a >16:9 phone | nothing (attribution); the A/B toggles only the user setting | DIAG | Moto g86 trace: full builds are 25.4% of 5.82 s (~23/s, ~13.5 ms each), triggered by animation 9.4% / wire 9.3% / touch `setHeldCard` 6.7%; hand-raise index rebuild 7.9%; all text 2.8%. Desktop replay ABAB at the phone viewport: build time 1,193/1,228 ms with stretch on vs 621/621 ms off, because `spreadFactor !== 1` disables the hidden-subtree memo and each build walks 2,928 hidden nodes | `MEM rust-interactive-spread-build-cost-oct2`; `.sts2/bench/interactive-cost-oct2/README.md` (main checkout) |
