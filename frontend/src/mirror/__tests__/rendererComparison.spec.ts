@@ -1,7 +1,7 @@
 import { describe, expect, it, vi } from "vitest";
 import {
   applyRendererComparisonConfig, comparisonUrl, normalizedComparisonConfig, readRendererComparisonConfig,
-  rendererBackendForPageLoad,
+  rendererBackendForPageLoad, remountViewerRenderer, applyViewerTextMethod,
   rendererComparisonConfig, rendererComparisonViewRevision, rendererRuntimeStatus, setRendererRuntimeStatus,
   RENDERER_COMPARISON_PRESETS, registerRendererComparisonApply
 } from "@/mirror/rendererComparison";
@@ -102,6 +102,49 @@ describe("renderer comparison URL", () => {
       expect(rendererRuntimeStatus.pixiText).not.toBe(first);
       expect(rendererRuntimeStatus.pixiText?.reasons.coverage).toBe(3);
     } finally { setRendererRuntimeStatus(before); }
+  });
+
+  it("remounts the scene view for a device text choice without changing backend or URL", () => {
+    const before = { ...rendererComparisonConfig }, status = { ...rendererRuntimeStatus };
+    const revision = rendererComparisonViewRevision.value;
+    const href = window.location.href;
+    try {
+      Object.assign(rendererComparisonConfig, { ...RENDERER_COMPARISON_PRESETS.rust });
+      setRendererRuntimeStatus({ phase: "active", actualBackend: "rust", reason: null });
+      remountViewerRenderer();
+      expect(rendererComparisonConfig.backend).toBe("rust");
+      expect(rendererComparisonViewRevision.value).toBe(revision + 1);
+      expect(rendererRuntimeStatus.phase).toBe("initializing");
+      expect(window.location.href).toBe(href);
+    } finally {
+      Object.assign(rendererComparisonConfig, before);
+      rendererComparisonViewRevision.value = revision;
+      setRendererRuntimeStatus(status);
+    }
+  });
+
+  it("clears a text URL override while retaining seat and other parameters", () => {
+    const beforeUrl = window.location.href;
+    const before = { ...rendererComparisonConfig }, status = { ...rendererRuntimeStatus };
+    const revision = rendererComparisonViewRevision.value;
+    try {
+      window.history.replaceState({ seat: "keep" }, "", "/?name=Ann&textMethod=bitmap&quality=high#game");
+      Object.assign(rendererComparisonConfig, { ...RENDERER_COMPARISON_PRESETS.rust });
+      applyViewerTextMethod();
+      const url = new URL(window.location.href);
+      expect(url.searchParams.has("textMethod")).toBe(false);
+      expect(url.searchParams.get("name")).toBe("Ann");
+      expect(url.searchParams.get("quality")).toBe("high");
+      expect(url.hash).toBe("#game");
+      expect(window.history.state).toEqual({ seat: "keep" });
+      expect(rendererComparisonConfig.backend).toBe("rust");
+      expect(rendererComparisonViewRevision.value).toBe(revision + 1);
+    } finally {
+      window.history.replaceState(null, "", beforeUrl);
+      Object.assign(rendererComparisonConfig, before);
+      rendererComparisonViewRevision.value = revision;
+      setRendererRuntimeStatus(status);
+    }
   });
 
   it("applies a text-mode change in place in the document and clears the prior admission report", () => {

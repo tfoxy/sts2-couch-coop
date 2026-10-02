@@ -131,6 +131,23 @@ export function applyViewerStage(stage: "dom" | "canvas", win = window): void {
   rendererComparisonViewRevision.value++;
 }
 
+/** Recreate only the scene view after a device-local renderer choice changes. */
+export function remountViewerRenderer(): void {
+  setRendererRuntimeStatus({ requested: { ...rendererComparisonConfig }, actualBackend: null, actualConfig: null,
+    phase: "initializing", reason: null, pixiText: null });
+  rendererComparisonViewRevision.value++;
+}
+
+/** A panel choice wins over a session URL override on this and later page loads. */
+export function applyViewerTextMethod(win = window): void {
+  const url = new URL(win.location.href);
+  if (url.searchParams.has("textMethod")) {
+    url.searchParams.delete("textMethod");
+    win.history.replaceState(win.history.state ?? null, "", url.toString());
+  }
+  remountViewerRenderer();
+}
+
 let applyInPlace: ((next: RendererComparisonConfig) => boolean) | null = null;
 /** A renderer may retain its animation owner for changes to compatible CPU policy. */
 export function registerRendererComparisonApply(handler: (next: RendererComparisonConfig) => boolean): () => void {

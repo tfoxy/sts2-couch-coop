@@ -2,7 +2,8 @@ import type { DrawList } from "@godot-scene-web/canvas";
 import type { PixiDrawListRenderer, PixiDrawListRendererStats, PixiScenePlan, PixiScenePatch, PixiTextOutcomes, PixiTextRecord } from "@godot-scene-web/canvas/pixi";
 import type { MirrorDrawExecutorFactory } from "./createPixiMirrorRenderer";
 import { offsetRustTextCarrierTransform } from "@/mirror/renderer/semanticTextLayout";
-import { drawRustTextRuns } from "./rustTextRaster";
+import { createBitmapTextMethod } from "./textMethods/bitmap";
+import type { TextInkRaster, CorpusInput, CorpusRow } from "./textMethods/types";
 import { emitBusyStartupEvent } from "./busyStartupEvent";
 import { ensureFontFace, loadMirrorFont, mirrorFontRegistration } from "@/mirror/fonts";
 import type { ProducerExecutorEvent } from "./producerBuildReasons";
@@ -23,7 +24,7 @@ type RustWasmRenderer = {
   present(): Promise<string>;
   dispose(): void;
 };
-type ResourcePixels = { key: string; width: number; height: number; pixels: Uint8Array };
+export type ResourcePixels = { key: string; width: number; height: number; pixels: Uint8Array };
 type RustSceneSnapshot = { version: 2; revision: number; width: number; height: number; designWidth: number; designHeight: number; resources: { key: string; width: number; height: number }[]; commands: Record<string, unknown>[] };
 type Serializer = {
   encodeRustScene(input: {
@@ -118,8 +119,6 @@ export const createRustDrawListExecutor: MirrorDrawExecutorFactory = async ({ ca
   const failures = new Map<string, string>();
   const uploaded = new Set<string>();
   const uploadedPixels = new Map<string, ResourcePixels>();
-  const textCache = new Map<string, ResourcePixels>();
-  const textPads = new Map<string, number>();
   const pixelRevisions = new Map<string, number>();
   let lastRevision = 0;
   let nextRevision = 0;
@@ -135,28 +134,12 @@ export const createRustDrawListExecutor: MirrorDrawExecutorFactory = async ({ ca
   let retainedPatchInFlight = false;
   let resizeFailure: string | null = null;
   let textCount = 0;
-  type TextInkRaster = {
-    recordKey: string; resourceKey: string; submissionRevision: number; sceneRevision: number | null;
-    startMs: number; endMs: number | null;
-    width: number; height: number; rgbaBytes: number; readbackMs: number; failed: boolean;
-    requestedInkWillReadFrequently: boolean; inkContextAttributes: CanvasRenderingContext2DSettings | null;
-    requestedScratchWillReadFrequently: boolean; scratchContextAttributes: CanvasRenderingContext2DSettings | null;
-    inkDrawMs: number | null; scratchConversionMs: number | null; scratchDrawMs: number | null;
-    getImageDataMs: number | null; pixelViewMs: number | null; outcome: string;
-  };
   type TextInkSubmission = { revision: number; sceneRevision: number | null; cacheMisses: number; rasters: TextInkRaster[] };
   const textInkDiagnosticEventLimit = 512;
   const textInkDiagnosticEvents: TextInkRaster[] = [];
   let textInkDiagnosticOverflow = false;
   let textInkCurrentSubmission: TextInkSubmission | null = null;
   let textInkLastMissSubmission: TextInkSubmission | null = null;
-  type CorpusInput = { record: PixiTextRecord; font: string; fontReady: boolean; fontSetStatus: string | null;
-    fontAsset: { family: string; url: string; weight: string | null; style: string | null } | null;
-    fontFaces: { family: string; style: string; weight: string; stretch: string; status: string }[] };
-  type CorpusMeasurements = { width: number; actualBoundingBoxAscent: number; actualBoundingBoxDescent: number;
-    fontBoundingBoxAscent: number; fontBoundingBoxDescent: number; runAdvances: number[] };
-  type CorpusRow = { input: CorpusInput; measurements: CorpusMeasurements | null; diagnostic: TextInkRaster | null;
-    width: number | null; height: number | null; rgba: Uint8Array | null };
   type PreparedFontAsset = { family: string; url: string; weight: string | null; style: string | null;
     sha256: string; bytes: number; registered: { url: string; weight: string | null; style: string | null;
       cssRule: string } };
@@ -502,6 +485,15 @@ export const createRustDrawListExecutor: MirrorDrawExecutorFactory = async ({ ca
     const revision = record.resourceRevision ?? record.contentKey ?? "";
     return `text:${record.key}:${revision}:${record.text}:${styleJson(record.style)}:${record.tint ?? 0xffffff}`;
   };
+  const bitmap = createBitmapTextMethod({
+    canvas, textResourceKey, readPixels,
+    get textInkDiagnostics() { return textInkDiagnostics; },
+    get textInkCurrentSubmission() { return textInkCurrentSubmission; },
+    textInkDiagnosticEvents, textInkDiagnosticEventLimit,
+    setDiagnosticOverflow: () => { textInkDiagnosticOverflow = true; },
+    setLastMissSubmission: (value) => { textInkLastMissSubmission = value; },
+    onRasterization: () => { stats.textRasterizations++; }
+  });
   type InlineImageRecord = PixiTextRecord & { inlineImage?: { url: string; width: number; height: number } };
   function rasterText(record: PixiTextRecord): { resource: { key: string; width: number; height: number }; pixels: Uint8Array; width: number; height: number; transform: readonly number[]; alpha?: number } | null {
     const inline = (record as InlineImageRecord).inlineImage;
@@ -512,7 +504,7 @@ export const createRustDrawListExecutor: MirrorDrawExecutorFactory = async ({ ca
         transform: record.localTransform ?? record.transform, alpha: record.alpha } : null;
     }
     let row: CorpusRow | null = null;
-    if (textInkCorpus && !corpusSealed && !textCache.has(textResourceKey(record))) {
+    if (textInkCorpus && !corpusSealed && !bitmap.hasCached(textResourceKey(record))) {
       if (corpusRows.length >= corpusLimit) { corpusOverflow = true; throw new Error(`Rust text corpus limit exceeded (${corpusLimit})`); }
       const input = { record: JSON.parse(canonical(record)) as PixiTextRecord, ...fontInfo(record) };
       corpusBytes += textBytes(canonical(input)).byteLength;
@@ -520,8 +512,7 @@ export const createRustDrawListExecutor: MirrorDrawExecutorFactory = async ({ ca
       row = { input, measurements: null, diagnostic: null, width: null, height: null, rgba: null };
       corpusRows.push(row);
     }
-    const result = rasterTextWithMode(record, textCache, textPads, textInkReadFrequently, zeroCopyPixels,
-      undefined, row ?? undefined);
+    const result = bitmap.prepare(record, { inkReadFrequently: textInkReadFrequently, zeroCopyPixels, corpusRow: row ?? undefined });
     if (row && result) {
       row.diagnostic = textInkDiagnosticEvents.at(-1) ?? null;
       row.width = result.width; row.height = result.height;
@@ -532,113 +523,6 @@ export const createRustDrawListExecutor: MirrorDrawExecutorFactory = async ({ ca
     return result;
   }
 
-  function rasterTextWithMode(record: PixiTextRecord, cache: Map<string, ResourcePixels>, pads: Map<string, number>,
-    inkReadFrequently: boolean, useZeroCopy: boolean, replayEvents?: TextInkRaster[], corpusRow?: CorpusRow):
-    { resource: { key: string; width: number; height: number }; pixels: Uint8Array; width: number; height: number; transform: readonly number[]; alpha?: number } | null {
-    const key = textResourceKey(record);
-    let image = cache.get(key);
-    let pad = pads.get(key) ?? 0;
-    if (!image) {
-      let raster: TextInkRaster | null = null;
-      if ((textInkDiagnostics && textInkCurrentSubmission && !replayEvents) || replayEvents) {
-        if (!replayEvents && textInkDiagnosticEvents.length >= textInkDiagnosticEventLimit) {
-          textInkDiagnosticOverflow = true;
-          throw new Error(`Rust text ink diagnostic event limit exceeded (${textInkDiagnosticEventLimit})`);
-        }
-        if (!replayEvents) {
-          textInkCurrentSubmission!.cacheMisses++;
-          textInkLastMissSubmission = textInkCurrentSubmission;
-        }
-        raster = { recordKey: record.key, resourceKey: key, submissionRevision: replayEvents ? 0 : textInkCurrentSubmission!.revision,
-          sceneRevision: null, startMs: performance.now(), endMs: null,
-          width: 0, height: 0, rgbaBytes: 0, readbackMs: 0, failed: true,
-          requestedInkWillReadFrequently: inkReadFrequently, inkContextAttributes: null,
-          requestedScratchWillReadFrequently: true, scratchContextAttributes: null,
-          inkDrawMs: null, scratchConversionMs: null, scratchDrawMs: null,
-          getImageDataMs: null, pixelViewMs: null, outcome: "pending" };
-        if (replayEvents) replayEvents.push(raster);
-        else { textInkCurrentSubmission!.rasters.push(raster); textInkDiagnosticEvents.push(raster); }
-      }
-      try {
-        const style = record.style as PixiTextRecord["style"] & Record<string, unknown>;
-        // The accepted producer emits one positioned record per line/run. Do not silently flatten Pixi-only
-        // typography that this Canvas2D carrier cannot reproduce.
-        if ((style.align ?? "left") !== "left" || style.wordWrap === true ||
-            Number(style.leading ?? 0) !== 0 || style.breakWords === true) {
-          if (raster) raster.outcome = "refused-style";
-          return null;
-        }
-        const size = Number(style.fontSize ?? 16);
-        const family = String(style.fontFamily ?? "sans-serif");
-        const font = [style.fontStyle, style.fontVariant, style.fontWeight, `${size}px`, family].filter(Boolean).join(" ");
-        const measure = canvas.ownerDocument.createElement("canvas").getContext("2d");
-        if (!measure) { if (raster) raster.outcome = "refused-measure-context"; return null; }
-        measure.font = font;
-        const letterSpacing = Number(style.letterSpacing ?? 0);
-        if (!Number.isFinite(letterSpacing)) return null;
-        if (letterSpacing && "letterSpacing" in measure) measure.letterSpacing = `${letterSpacing}px`;
-        const runs = record.runs?.length ? record.runs : [{ text: record.text }];
-        const text = runs.map((run) => run.text).join("");
-        const metrics = measure.measureText(text);
-        if (corpusRow) corpusRow.measurements = { width: metrics.width,
-          actualBoundingBoxAscent: metrics.actualBoundingBoxAscent,
-          actualBoundingBoxDescent: metrics.actualBoundingBoxDescent,
-          fontBoundingBoxAscent: metrics.fontBoundingBoxAscent,
-          fontBoundingBoxDescent: metrics.fontBoundingBoxDescent, runAdvances: [] };
-        const stroke = style.stroke && typeof style.stroke === "object" ? style.stroke as { color?: string; width?: number } : null;
-        const shadow = style.dropShadow && typeof style.dropShadow === "object" ? style.dropShadow as { color?: string; alpha?: number; angle?: number; distance?: number; blur?: number } : null;
-        const strokePad = Math.ceil((stroke?.width ?? 0) + 1);
-        const shadowBlur = Math.ceil(shadow?.blur ?? 0);
-        const shadowOffsetX = Math.ceil(Math.cos(shadow?.angle ?? 0) * (shadow?.distance ?? 0));
-        const shadowOffsetY = Math.ceil(Math.sin(shadow?.angle ?? 0) * (shadow?.distance ?? 0));
-        pad = Math.max(strokePad, shadowBlur + Math.max(Math.abs(shadowOffsetX), Math.abs(shadowOffsetY))) + 2;
-        const ascent = Math.max(metrics.actualBoundingBoxAscent, metrics.fontBoundingBoxAscent || size);
-        const descent = Math.max(metrics.actualBoundingBoxDescent, metrics.fontBoundingBoxDescent || size * 0.25);
-        const width = Math.max(1, Math.ceil(metrics.width + pad * 2));
-        const height = Math.max(1, Math.ceil(ascent + descent + pad * 2));
-        if (raster) { raster.width = width; raster.height = height; raster.rgbaBytes = width * height * 4; }
-        const ink = canvas.ownerDocument.createElement("canvas"); ink.width = width; ink.height = height;
-        const context = inkReadFrequently
-          ? ink.getContext("2d", { willReadFrequently: true }) : ink.getContext("2d");
-        if (!context) { if (raster) raster.outcome = "refused-ink-context"; return null; }
-        if (raster) raster.inkContextAttributes = context.getContextAttributes?.() ?? null;
-        context.font = font; context.textBaseline = "alphabetic"; context.textAlign = "left";
-        if (letterSpacing && "letterSpacing" in context) context.letterSpacing = `${letterSpacing}px`;
-        const x = pad, y = pad + ascent;
-        const inkDrawAt = raster ? performance.now() : 0;
-        const drawn = drawRustTextRuns(context, runs, {
-          fill: typeof style.fill === "string" ? style.fill : "#ffffff",
-          stroke: stroke && Number(stroke.width) > 0
-            ? { color: String(stroke.color ?? "#000000"), width: Number(stroke.width) }
-            : null,
-          shadow: shadow ? { color: String(shadow.color ?? "#000000"), alpha: Number(shadow.alpha ?? 1),
-            blur: Number(shadow.blur ?? 0), offsetX: shadowOffsetX, offsetY: shadowOffsetY } : null,
-        }, x, y, (value) => {
-          const advance = measure.measureText(value).width;
-          corpusRow?.measurements?.runAdvances.push(advance);
-          return advance;
-        });
-        if (raster) raster.inkDrawMs = performance.now() - inkDrawAt;
-        if (!drawn) { if (raster) raster.outcome = "refused-draw"; return null; }
-        try { image = readPixels(ink, key, width, height, raster ?? undefined, useZeroCopy, !replayEvents); }
-        catch (error) { if (raster) raster.outcome = "failed-readback"; throw error; }
-        const tint = record.tint ?? 0xffffff;
-        if (tint !== 0xffffff) {
-          for (let i = 0; i < image.pixels.length; i += 4) {
-            image.pixels[i] = Math.round(image.pixels[i] * ((tint >> 16 & 255) / 255));
-            image.pixels[i + 1] = Math.round(image.pixels[i + 1] * ((tint >> 8 & 255) / 255));
-            image.pixels[i + 2] = Math.round(image.pixels[i + 2] * ((tint & 255) / 255));
-          }
-        }
-        cache.set(key, image); if (!replayEvents) stats.textRasterizations++;
-        if (raster) { raster.failed = false; raster.outcome = "ready"; }
-        pads.set(key, pad);
-      } finally { if (raster) raster.endMs = performance.now(); }
-    }
-    return { resource: { key: image.key, width: image.width, height: image.height }, pixels: image.pixels,
-      width: image.width, height: image.height,
-      transform: offsetRustTextCarrierTransform(record.localTransform ?? record.transform, pad, pad), alpha: record.alpha };
-  }
 
   if (textInkCorpus) {
     const metadata = async (rows: CorpusRow[]) => Promise.all(rows.map(async (row) => {
@@ -781,7 +665,7 @@ export const createRustDrawListExecutor: MirrorDrawExecutorFactory = async ({ ca
               const events: TextInkRaster[] = [];
               const prepared: CorpusRow = { input: row.input, measurements: null, diagnostic: null,
                 width: null, height: null, rgba: null };
-              const result = rasterTextWithMode(row.input.record, new Map(), new Map(), false, false, events, prepared);
+              const result = bitmap.prepare(row.input.record, { inkReadFrequently: false, zeroCopyPixels: false, replayEvents: events, freshCache: true, corpusRow: prepared });
               if (!result) throw new Error(`Prepared Rust text raster refused: ${row.input.record.key}`);
               preparedBytes += result.pixels.byteLength;
               if (preparedBytes > corpusByteLimit) throw new Error("Prepared Rust text corpus byte limit exceeded");
@@ -848,7 +732,7 @@ export const createRustDrawListExecutor: MirrorDrawExecutorFactory = async ({ ca
           const replayRow: CorpusRow = { input: expected, measurements: null, diagnostic: null,
             width: null, height: null, rgba: null };
           // Every corpus row is a production cache miss, including a key rasterized again after invalidation.
-          const result = rasterTextWithMode(expected.record, new Map(), new Map(), inkReadFrequently, false, events, replayRow);
+          const result = bitmap.prepare(expected.record, { inkReadFrequently: inkReadFrequently, zeroCopyPixels: false, replayEvents: events, freshCache: true, corpusRow: replayRow });
           if (!result) throw new Error(`Rust text corpus raster refused: ${expected.record.key}`);
           const preparedRow = corpus.preparedRows[rowIndex];
           if (canonical(replayRow.measurements) !== canonical(preparedRow.measurements))
@@ -917,8 +801,7 @@ export const createRustDrawListExecutor: MirrorDrawExecutorFactory = async ({ ca
           const events: TextInkRaster[] = [];
           const replayRow: CorpusRow = { input: expected, measurements: null, diagnostic: null,
             width: null, height: null, rgba: null };
-          const result = rasterTextWithMode(expected.record, new Map(), new Map(), inkReadFrequently,
-            false, events, replayRow);
+          const result = bitmap.prepare(expected.record, { inkReadFrequently, zeroCopyPixels: false, replayEvents: events, freshCache: true, corpusRow: replayRow });
           if (!result || events.length !== 1 || events[0].outcome !== "ready")
             throw new Error(`Rust text phone corpus raster refused: ${expected.record.key}`);
           const rgba = new Uint8Array(result.pixels);
@@ -1043,7 +926,7 @@ export const createRustDrawListExecutor: MirrorDrawExecutorFactory = async ({ ca
     }
     const uploads: ResourcePixels[] = [];
     for (const resource of encoded.resources) {
-      const data = textures.get(resource.key) ?? textCache.get(resource.key);
+      const data = textures.get(resource.key) ?? bitmap.cachedResource(resource.key);
       if (!data) return { presented: false, reason: `resource bytes unavailable: ${resource.key}` };
       if (!uploaded.has(data.key)) uploads.push(data);
     }
@@ -1342,7 +1225,7 @@ export const createRustDrawListExecutor: MirrorDrawExecutorFactory = async ({ ca
     textureFailureDetails() { return [...failures].map(([key, reason]) => `${key}: ${reason}`); },
     textOutcomes(): PixiTextOutcomes { return { requested: "native", actual: "native", native: textCount, slug: 0, slugCached: 0, reasons: {} }; },
     armDiagnosticSkipGl() { return false; }, armDiagnosticSingleQuad() { return false; }, pollDiagnostics() {},
-    dispose() { if (disposed) return; disposed = true; if (fixtureEnabled) { delete globals.__mirrorRustFixture; delete globals.__mirrorRustFixtureChunk; } if (statsEnabled) delete globals.__mirrorRustStats; delete globals.__mirrorRustGpuTimerCapability; delete globals.__mirrorRustTextCorpus; delete globals.__mirrorRustRollbackProbe; delete (window as unknown as { __mirrorRustPixelControl?: boolean }).__mirrorRustPixelControl; engine.dispose(); textures.clear(); textCache.clear(); textPads.clear(); pixelRevisions.clear(); uploaded.clear(); uploadedPixels.clear(); pending.clear(); failures.clear(); committedResources = []; committedScene = null; committedTypedScene = null; committedCommandIndexes.clear(); committedResourceBuffer = null; committedRevision = null; },
+    dispose() { if (disposed) return; disposed = true; if (fixtureEnabled) { delete globals.__mirrorRustFixture; delete globals.__mirrorRustFixtureChunk; } if (statsEnabled) delete globals.__mirrorRustStats; delete globals.__mirrorRustGpuTimerCapability; delete globals.__mirrorRustTextCorpus; delete globals.__mirrorRustRollbackProbe; delete (window as unknown as { __mirrorRustPixelControl?: boolean }).__mirrorRustPixelControl; engine.dispose(); textures.clear(); bitmap.dispose(); pixelRevisions.clear(); uploaded.clear(); uploadedPixels.clear(); pending.clear(); failures.clear(); committedResources = []; committedScene = null; committedTypedScene = null; committedCommandIndexes.clear(); committedResourceBuffer = null; committedRevision = null; },
   } as unknown as PixiDrawListRenderer<string> & {
     render(list: DrawList<string>, text?: readonly PixiTextRecord[]): Promise<boolean>;
     admitScene(list: DrawList<string>, text: readonly PixiTextRecord[], plan: PixiScenePlan): Promise<{ presented: boolean; reason?: string }>;

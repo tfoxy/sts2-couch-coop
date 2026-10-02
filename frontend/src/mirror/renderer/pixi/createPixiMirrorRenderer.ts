@@ -614,7 +614,7 @@ if (isPromiseLike<PresentationResult>(result)) {
             (pixi?.textureFailureDetails().some((item) => item.startsWith(`${url}:`)) ? { width: 0, height: 0 } : null); });
       };
       const prepared = textPrepCache
-        ? textPrepCache.resolve(node, nodes, fontVersion, textMode, fast.verify, compute) : compute();
+        ? textPrepCache.resolve(node, nodes, fontVersion, backend === "rust" ? `${textMode}:${mirrorSettings.textMethod}` : textMode, fast.verify, compute) : compute();
       if ("refusal" in prepared) { semanticFailures.set(node.id, prepared.refusal); return false; }
       const losses = [...prepared.degradations ?? []];
       if (prepared.fallbackRoles?.length) losses.push(`font-role-fallback:${prepared.fallbackRoles.join(",")}`);

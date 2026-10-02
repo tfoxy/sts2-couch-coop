@@ -86,6 +86,26 @@ export const DEFAULT_QUALITY_CHOICE: QualityChoice = "auto";
 // single frame, ZERO per-frame cost) — distinct from the SERVER-side "Freeze particles/spines" host CPU savers.
 export type EffectMode = "dynamic" | "dynamic-half" | "dynamic-quarter" | "static" | "off";
 
+export interface TextMethodAvailability {
+  implemented: ReadonlySet<string>;
+}
+
+function textMethod<const Id extends string, const Label extends string, const Help extends string>(
+  id: Id, labelKey: Label, helpKey: Help
+) {
+  return { id, labelKey, helpKey, available: (ctx: TextMethodAvailability) => ctx.implemented.has(id) } as const;
+}
+
+export const TEXT_METHODS = [
+  textMethod("bitmap", "settings.textMethodBitmap", "settings.help.textMethodBitmap"),
+  textMethod("msdf", "settings.textMethodMsdf", "settings.help.textMethodMsdf")
+] as const;
+export type TextMethod = (typeof TEXT_METHODS)[number]["id"];
+export type TextMethodDescriptor = (typeof TEXT_METHODS)[number];
+export function parseTextMethod(raw: unknown): TextMethod | undefined {
+  return typeof raw === "string" ? TEXT_METHODS.find((method) => method.id === raw)?.id : undefined;
+}
+
 export const EFFECT_MODES: readonly EffectMode[] = [
   "dynamic",
   "dynamic-half",
@@ -164,6 +184,8 @@ export function parseSpineMode(raw: string | null): SpineMode {
 export interface MirrorSettings {
   /** Public stage choice; a fresh WebKit viewer starts on canvas, other viewers on DOM. */
   stage: "dom" | "canvas";
+  /** Device-local text rendering for the Rust canvas stage. */
+  textMethod: TextMethod;
   /** The live renderer request. A failed Rust canvas can use DOM without changing the saved choice. */
   runtimeStage: "dom" | "canvas";
   // CLIENT render (browser-only) — THE QUALITY ROW (see QualityChoice). `auto` (the default) leaves this device to
@@ -338,6 +360,7 @@ export { MIRROR_SETTINGS_STORAGE_KEY, type MirrorSettingsStorage };
 /** Fields a viewer can set IN THE PANEL — exactly the fields that are saved. */
 export type PersistedSettingKey =
   | "stage"
+  | "textMethod"
   | "quality"
   | "shaderMode"
   | "particleMode"
@@ -357,6 +380,7 @@ export type PersistedSettingKey =
 
 export const PERSISTED_SETTING_KEYS: readonly PersistedSettingKey[] = [
   "stage",
+  "textMethod",
   // PERSISTED, and load-bearing beyond the panel: quality.ts reads this same saved value to resolve the device
   // tier before auto-detection (see QualityChoice).
   "quality",
@@ -449,6 +473,7 @@ function refreshRateValue(raw: unknown): number | undefined {
 // the store a mode string the renderer doesn't know or an fps the host would refuse.
 const STORED_VALIDATORS: { [K in PersistedSettingKey]: (raw: unknown) => MirrorSettings[K] | undefined } = {
   stage: (raw) => raw === "dom" || raw === "canvas" ? raw : undefined,
+  textMethod: parseTextMethod,
   quality: qualityChoiceValue,
   shaderMode: effectModeValue,
   particleMode: effectModeValue,
@@ -703,6 +728,7 @@ export function createMirrorSettings(
     ? params.get("stage") as "dom" | "canvas" : saved.stage ?? (isWebKitBrowser(userAgent, maxTouchPoints) ? "canvas" : "dom");
   return reactive<MirrorSettings>({
     stage,
+    textMethod: parseTextMethod(params.get("textMethod")) ?? saved.textMethod ?? "bitmap",
     runtimeStage: stage,
     // THE QUALITY ROW. `?quality=` wins for the session so the panel tells the truth about the tier this page is
     // actually running (quality.ts resolved it from the same param), then the viewer's saved rung, then `auto`.

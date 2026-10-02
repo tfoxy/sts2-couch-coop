@@ -1,6 +1,8 @@
 import { computed, isReactive } from "vue";
 import { describe, expect, it } from "vitest";
 
+import { IMPLEMENTED_RUST_TEXT_METHODS } from "@/mirror/renderer/pixi/textMethods";
+
 import type { GpuInfo } from "@godot-scene-web/html";
 
 import { resolveRenderQuality, type RenderQuality, type RenderQualityTier } from "@/render/quality";
@@ -23,6 +25,8 @@ import {
   SERVER_SETTING_KEYS,
   serverSettingsPayload,
   staticBgWireValue,
+  TEXT_METHODS,
+  parseTextMethod,
   type MirrorSettings,
   type MirrorSettingsStorage
 } from "@/mirror/mirrorSettings";
@@ -533,6 +537,37 @@ describe("the persisted key set", () => {
     // stream rather than a truth about the instance — MirrorApp pushes them AFTER the session seed.
     expect(PERSISTED_SETTING_KEYS as readonly string[]).toContain("refreshRate");
     expect(PERSISTED_SETTING_KEYS as readonly string[]).toContain("tweenReplay");
+  });
+});
+
+describe("device-local Rust text method", () => {
+  it("defaults to Bitmap and derives valid ids from the registry", () => {
+    expect(build().textMethod).toBe("bitmap");
+    expect(TEXT_METHODS.map((method) => method.id)).toEqual(["bitmap", "msdf"]);
+    expect(TEXT_METHODS.filter((method) => method.available({ implemented: IMPLEMENTED_RUST_TEXT_METHODS })).map((method) => method.id)).toEqual(["bitmap"]);
+    for (const method of TEXT_METHODS) expect(parseTextMethod(method.id)).toBe(method.id);
+    expect(parseTextMethod("slug")).toBeUndefined();
+  });
+
+  it("layers a valid URL choice over storage and falls back from unknown values", () => {
+    expect(build(quality(), "", fakeStorage({ textMethod: "msdf" })).textMethod).toBe("msdf");
+    expect(build(quality(), "?textMethod=bitmap", fakeStorage({ textMethod: "msdf" })).textMethod).toBe("bitmap");
+    expect(build(quality(), "?textMethod=msdf", fakeStorage({ textMethod: "bitmap" })).textMethod).toBe("msdf");
+    expect(build(quality(), "?textMethod=slug", fakeStorage({ textMethod: "bitmap" })).textMethod).toBe("bitmap");
+    expect(build(quality(), "", fakeStorage({ textMethod: "slug" })).textMethod).toBe("bitmap");
+    expect(readStoredMirrorSettings(fakeStorage({ textMethod: "slug" }))).toEqual({});
+    const storage = fakeStorage();
+    persistMirrorSetting("textMethod", "msdf", storage);
+    expect(readStoredMirrorSettings(storage)).toEqual({ textMethod: "msdf" });
+  });
+
+  it("does not send text choice to the host or override it with Canvas quality", () => {
+    const settings = build(quality(), "?textMethod=msdf");
+    settings.runtimeStage = "canvas";
+    effectiveMirrorRenderSettings(settings);
+    expect(settings.textMethod).toBe("msdf");
+    expect(serverSettingsPayload(settings)).not.toHaveProperty("textMethod");
+    expect(SERVER_SETTING_KEYS as readonly string[]).not.toContain("textMethod");
   });
 });
 
