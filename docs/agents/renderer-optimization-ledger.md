@@ -273,8 +273,9 @@ raster/carrier boundary, not deterministic whole-scene presentation.
 | Oct 2 | Identical-input carrier and encoded-command probe | GO under amended gate | All 249 cold/warm/changed-transform-and-alpha carrier receipts and synthetic GSW commands matched byte-for-byte. In post-clock scene exports, 53/54 text commands matched; the animated `12` command's Y differed by 0.179 design pixels. |
 
 The two current recordings are ignored local files under `.sts2/bench/bitmap-phase1-oct02/` in the
-primary checkout. Raw audit receipts are under `.sts2/artifacts/text-phase1-{baseline-fa1d59c,
-candidate-9097eedd}/carrier-probe-all/` in the named audit worktrees. No derived game asset is committed.
+primary checkout. Raw carrier receipts are archived in the primary checkout under
+`.sts2/artifacts/text-methods-msdf/evidence/phase1-{baseline,candidate}-carriers/`. No derived
+game asset is committed.
 
 ## Oct 2 text methods Phase 2 (generic GSW glyph contract)
 
@@ -288,9 +289,10 @@ performance result. Bitmap remains the Couch default. GSW landed as `29e51470` a
 | Oct 2 | Revision `90340dad` | REVISE | Rust 15, encoder/atlas Vitest 27, TypeScript, WASM and browser pixels passed. Luna found that a pinned 2×3 page could still be replaced by 3×2 because the byte count stayed 24. |
 | Oct 2 | Final `95f48b6e` (squashed as `29e51470`) | GO | Luna independently passed Rust 15, Vitest 28, TypeScript, formatting, WASM, synthetic WebGL2 fill/outline/alpha differential/shadow at three scales, subrect/release, and focused Couch executor 22. The pinned same-byte reshape is rejected. Baseline/candidate Bitmap hashes matched for the 340-byte scene and 38-byte RSR1 upload. |
 
-The final independent images are in the `gsw-text-phase2-final-audit` worktree:
-`.sts2/msdf-phase2-web/msdf-{0_5x,1x,3x,1x-subrect}.png` and
-`.sts2/rust-webgl-proof/transparent-red-alpha.png`. These are synthetic shader probes; generated-font
+The final independent images are archived in the primary checkout under
+`.sts2/artifacts/text-methods-msdf/evidence/phase2-gsw/` as
+`msdf-phase2-web/msdf-{0_5x,1x,3x,1x-subrect}.png` and
+`rust-webgl-proof/transparent-red-alpha.png`. These are synthetic shader probes; generated-font
 contours and browser worker operation are Phase 3 gates.
 
 ## Oct 2 text methods Phase 3 (runtime generator attempts)
@@ -303,9 +305,9 @@ out of the tracked tree and no game font or atlas is committed.
 | Oct 2 | GSW worker/WASM candidate `c9a05df4` | REVISE | Real browser worker generated deterministic licensed Latin tiles and local CJK/Thai tiles; synthetic overlapping-contour union had 0/4,096 threshold mismatches. Luna independently passed Rust 3, canvas Vitest 427, TypeScript/build, WASM and licence manifest (40 compiled-target crates). The generic API lacked aggregate output and pending-request limits: 4,096 allowed 256×256 RGBA tiles could total 1 GiB per request, with conversion copies alive concurrently. Astra required ≤1 MiB output per batch and one outstanding request/result lease before transfer, with credit recovery and checked preallocation arithmetic. |
 | Oct 2 | Bounded revision `0ef2d901` (squashed as GSW `af1fddb4`) | GO | Rust checked-preflights ≤1 MiB/256 IDs; the TS API holds one result lease and rejects concurrent calls before transferring font bytes. Luna independently passed Rust 4, canvas Vitest 428, TypeScript/Biome/build, WASM/browser, oversized-request recovery, deterministic batches and 40-crate licence graph check. WASM: 213,400 B raw, 88,501 gzip, 75,504 Brotli. Latin/CJK/Thai worker heaps were 1.31/7.4/1.25 MiB, with font storage reported separately. The caller must release every result after upload/discard; integrated text quality remains Phase 4. |
 
-Sol's ignored proof images and JSON are under the `gsw-text-phase3` worktree
-`.sts2/msdf-generator-proof/`; Luna's independent browser proof is under
-`gsw-text-phase3-audit/.sts2/msdf-generator-proof/`. The RGB-median versus alpha-SDF comparison is an
+Sol's ignored proof images and JSON and Luna's independent browser proof are archived under the
+primary checkout's `.sts2/artifacts/text-methods-msdf/evidence/phase3-gsw/`. The RGB-median
+versus alpha-SDF comparison is an
 internal threshold check (all differences one 8-bit level), not independent raster parity. The
 revised local CJK/Thai receipts include font hashes and invocation fields, and label themselves as
 glyph-generation evidence rather than shaping proof. Couch release notices and the archive verifier
@@ -324,11 +326,38 @@ run. The generator and GSW glyph contract were landed before this adapter.
 | Oct 2 | Narrow Chinese fit revision `d627b3ad` | Isolated gate passed; integration pending | Rust-only admission accepts a complete single line when existing measured layout proves it fits. Phone Chinese reward pair at clock 11000 presented `搜刮！` and `锚` as glyph runs, with identical hits. Five long rich labels remain refused in both modes. |
 | Oct 2 | Combined candidate `c7403216`, replayed onto latest main as `bb75bf40` | GO | Independent clean-worktree Vue/Vitest: 5,366 passed/1 skipped; focused atlas/executor: 101 passed. GSW `53bbfff7` source-built WASM matched the pinned hash. Phone reward Bitmap/MSDF hit grids matched byte-for-byte; named `搜刮！` transitioned Bitmap pending → worker tile → glyph run → present. A moving combat `6` kept its glyph key and atlas through retained transforms. Latest-main replay passed Vue and 150 focused tests/1 skipped. One atomic upload exceeded the 1 ms target in one capture; a repeat had none, and the 256 KiB frame byte cap held. Direct moving glyph patches rebuild Rust geometry. |
 
-Independent Chinese reward images and transition receipt are under the
-`cc-phase4-integrate-independent-audit` worktree's `.sts2/phase4-independent-audit/` as
+Independent Chinese reward images and transition receipt are archived in the primary checkout under
+`.sts2/artifacts/text-methods-msdf/evidence/phase4-combined-audit/` as
 `zhs-{bitmap,msdf}-phone-11000*.png` and `zhs-transition-summary.json`; the full-frame pair differs
 at 16,507 pixels, mainly fuller MSDF strokes. English/Russian shop pairs are in the earlier
-`cc-phase4-independent-audit/.sts2/msdf-phase4-audit/` folder as
+`.sts2/artifacts/text-methods-msdf/evidence/phase4-original-audit/` folder as
 `shop-{eng,rus}-{739x281,1920x1080}-{bitmap,msdf}-11000-live.png`. Combat movement evidence is
 `combat-value6-transform-timeline.json` and `combat-msdf-phone-7600-transform3.png` in the combined
 audit folder. The synthetic black combat background limits those captures to foreground and text.
+
+## Oct 2 text methods Phase 5 (desktop Bitmap/MSDF ABAB)
+
+The short comparison used the same current `repro/1` combat card/damage recording, 1920×1080 DPR 1,
+headed NVIDIA RTX 2060 WebGL2 via Vulkan, and four fresh pages in Bitmap/MSDF/Bitmap/MSDF order.
+Bitmap remains the device default. These four single repeats are directional; no CPU-speedup claim
+qualified. No physical phone leg ran.
+
+| Date | Attempt | Outcome | Key evidence |
+| --- | --- | --- | --- |
+| Oct 2 | Initial `5500:7800` window, Bitmap A1 | MFAIL | The bench ran without page errors, but the active markers opened after the recording prefix had drained: zero scene deliveries and zero text rasterizations inside the window. The first post-check also used an absent `config.gpu` key; the actual NVIDIA Vulkan identity was nested under `perRepeat[0].gpuIdentity`. No timing baseline was taken from this result. |
+| Oct 2 | Exact ordinal `6000:8000` warm window, MSDF and Bitmap controls | MFAIL | Both methods rendered scene revision 88 with resources ready and kept presenting, but the warm harness's per-scene ACK serial stopped at 86 with one pending ACK; its strict gate timed out before measured markers. The same failure in Bitmap rules out an MSDF-specific inference from this attempt. |
+| Oct 2 | Ordinary `9600:12500` preflight, one of each method | Qualified workload | Both methods delivered scenes during the active bracket. Bitmap rasterized three text runs; MSDF presented 2,501 glyph runs and generated/uploaded more tiles. This later slice has sparse timer/animation text updates, unlike the original rich damage burst. |
+| Oct 2 | Fresh ordinary `9600:12500` ABAB | Switchable GO; default stays Bitmap; timing inconclusive | All four legs passed GPU, readiness, resource, delivery and text-work gates. Bitmap A1/A2: 42/35 actual presents, 3/3 text rasters, 27.0 Rust scene draws per present, CDP TaskDuration 0.5332/0.6069 s. MSDF B1/B2: 53/61 presents, 2,814/3,176 glyph-run presentations, 0/1 Bitmap fallback rasters, 20.0/20.21 draws per present, TaskDuration 0.4139/0.5558 s. The mean task gap (0.0852 s) is smaller than MSDF B/B spread (0.1419 s), so it does not establish a speed win. Opening marker snapshot work lies inside the task interval; its outer roundtrip was 136–164 ms and is not a pure CPU measure. |
+| Oct 2 | First profiled pair with `--report` | MFAIL | The benchmark's mandatory image-decode trace gate found no recognized decode event and rejected the Bitmap leg before producing a measured report. This says nothing about text raster cost. Raw failed trace/profile/result are retained. |
+| Oct 2 | Separate bounded text-ink profile on `9600:12500` | DIAG | With the unrelated decode report gate omitted, Bitmap had two active text raster events totaling 108.0 ms wall, including two `getImageData` calls totaling 105.1 ms and 2.1 ms ink/scratch drawing. MSDF had zero Bitmap text readbacks in its profiled leg and 2,737 glyph-run presentations. `scratchConversionMs` includes readback and is not additive. The diagnostic and DevTools sampling perturb timing; counts differed from headline (Bitmap 2 here versus 3 there), so these times are attribution samples, not ABAB speedup evidence. |
+| Oct 2 | First fixed-clock 7600 texture residency diagnostic | DIAG; GPU identity gap | A read-only WASM getter counted actual resident Rust scene-resource textures and checked nominal RGBA8 bytes outside timed ABAB: Bitmap 150 / 169,768,632 B, MSDF 148 / 173,924,920 B. Actual GPU identity was absent from these receipts, so a second diagnostic pair was required. |
+| Oct 2 | GPU-verified fixed-clock 7600 residency repeat | DIAG | Both captures named the actual mirror canvas as ANGLE NVIDIA Vulkan RTX 2060 at the same clock/revision with ready resources. Bitmap: 148 textures / 169,532,420 nominal B; MSDF: 140 / 173,849,608 B, 65 last-presented glyph runs and one 4 MiB atlas page. Observed MSDF byte difference: +4,317,188 B. Resource counts differ from the first pair, so this is a bounded resident snapshot, not an exact per-page delta. These totals exclude internal render targets/driver allocations and are not total GPU memory. |
+
+The attempt log, raw ABAB JSON/PNGs, and summary are archived in the primary checkout under
+`.sts2/artifacts/text-methods-msdf/evidence/phase5/`; the qualified four-leg result is
+`results-abab-9600-12500/summary.json`; the profiled pair is in
+`results-profile-9600-12500/`. The separate texture receipts are under
+`.sts2/artifacts/text-methods-msdf/evidence/phase5-diag/` as
+`residency-{bitmap,msdf}-7600.result.json` and
+`residency-gpu-{bitmap,msdf}-7600.result.json`. The texture getter was audit-only and never part of the
+timed build.
