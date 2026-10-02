@@ -240,3 +240,25 @@ This row covers the case that replay never exercised.
 | Date | Switch/name | Target | What it changed | Outcome | Key numbers | Evidence |
 | --- | --- | --- | --- | --- | --- | --- |
 | Oct 2 | widescreen spread / `?stretch=off`, plus a phone card-aim trace | full producer builds while dragging and aiming a card on a >16:9 phone | nothing (attribution); the A/B toggles only the user setting | DIAG | Moto g86 trace: full builds are 25.4% of 5.82 s (~23/s, ~13.5 ms each), triggered by animation 9.4% / wire 9.3% / touch `setHeldCard` 6.7%; hand-raise index rebuild 7.9%; all text 2.8%. Desktop replay ABAB at the phone viewport: build time 1,193/1,228 ms with stretch on vs 621/621 ms off, because `spreadFactor !== 1` disables the hidden-subtree memo and each build walks 2,928 hidden nodes | `MEM rust-interactive-spread-build-cost-oct2`; `.sts2/bench/interactive-cost-oct2/README.md` (main checkout) |
+
+## Oct 2 text methods Phase 1 (Bitmap preservation)
+
+The device-local text-method setting and Bitmap adapter have no performance claim. Phase 1 passed an
+**amended compositional gate**: 249 identical captured text inputs (61 combat, 188 deck) produced exact
+RGBA, measurements, cold/warm/changed-placement carriers, and encoded text commands in pinned baseline
+and candidate checkouts. All cache sequences were `[1,0,0]` rasterizations, and semantic hit grids
+matched. The candidate also replayed both complete baseline raster corpora (61/61 and 188/188).
+Full-stage byte identity was **not** established: the same revision itself varies at a pinned clock,
+and one animated damage number moves in the actual encoded scene. This gate proves the changed Bitmap
+raster/carrier boundary, not deterministic whole-scene presentation.
+
+| Date | Attempt | Outcome | Key evidence |
+| --- | --- | --- | --- |
+| Oct 2 | Older combat replay at clocks 6561 and 19000 | Whole-stage parity inconclusive | At 6561, baseline/candidate differed by 1,995 pixels, while baseline A/A differed by 2,880; at 19000 A/B differed by 2,431. The 106 captured Bitmap rasters had identical dimensions, metrics and RGBA hashes. |
+| Oct 2 | Current deck-view replay at clock 10500 | Whole-stage parity inconclusive | A/B differed by 2,890 pixels and candidate A/A by 5,219. Native timer input was `03:45` versus `03:46`; importing the baseline corpus into candidate matched all 188 prepared rasters. Hits matched across 220 samples. |
+| Oct 2 | Current quiet combat replay at clocks 10000 and 14000 | Whole-stage parity inconclusive | At 10000, A/B differed by 4,066 pixels; A/A differed by 1,478. At 14000 A/A differed by 1,864. All 61 baseline inputs replayed with exact candidate raster bytes and metrics; hits matched across 220 samples. |
+| Oct 2 | Identical-input carrier and encoded-command probe | GO under amended gate | All 249 cold/warm/changed-transform-and-alpha carrier receipts and synthetic GSW commands matched byte-for-byte. In post-clock scene exports, 53/54 text commands matched; the animated `12` command's Y differed by 0.179 design pixels. |
+
+The two current recordings are ignored local files under `.sts2/bench/bitmap-phase1-oct02/` in the
+primary checkout. Raw audit receipts are under `.sts2/artifacts/text-phase1-{baseline-fa1d59c,
+candidate-9097eedd}/carrier-probe-all/` in the named audit worktrees. No derived game asset is committed.

@@ -41,6 +41,7 @@ beforeEach(() => {
   localStorage.clear();
   setComparisonStageBackend("dom");
   mirrorSettings.stage = "dom";
+  mirrorSettings.textMethod = "bitmap";
   setRendererRuntimeStatus({ actualBackend: null, actualConfig: null, phase: "initializing", reason: null });
   mirrorSettings.panelOpen = true;
   mirrorSettings.quality = "auto";
@@ -81,6 +82,15 @@ describe("SettingsPanel — saving a viewer's choices", () => {
     expect(rendererRuntimeStatus.phase).toBe("initializing");
     expect(rendererComparisonViewRevision.value).toBe(revision + 1);
     expect(wrapper.find('[data-testid="mirror-stage-failure"]').exists()).toBe(false);
+    wrapper.unmount();
+  });
+
+  it("hides the text row while Bitmap is the only available method", async () => {
+    const wrapper = mountPanel();
+    expect(wrapper.find('[data-testid="mirror-text-method"]').exists()).toBe(false);
+    await wrapper.get('[data-testid="mirror-stage"]').setValue("canvas");
+    expect(wrapper.find('[data-testid="mirror-text-method"]').exists()).toBe(false);
+    expect(saved()).toEqual({ stage: "canvas" });
     wrapper.unmount();
   });
 

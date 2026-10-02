@@ -5,10 +5,12 @@ import { translate as t } from "@/i18n";
 import { REPRO_UI_ENABLED } from "@/mirror/buildFlags";
 import type { MirrorLatency } from "@/mirror/mirrorClient";
 import SettingsHelpTip from "@/mirror/SettingsHelpTip.vue";
-import { applyViewerStage, rendererRuntimeStatus } from "@/mirror/rendererComparison";
+import { applyViewerStage, applyViewerTextMethod, rendererRuntimeStatus } from "@/mirror/rendererComparison";
 import { setComparisonStageBackend } from "@/mirror/rendererFactory";
+import { IMPLEMENTED_RUST_TEXT_METHODS } from "@/mirror/renderer/pixi/textMethods";
 import {
   EFFECT_MODES,
+  TEXT_METHODS,
   effectiveMirrorRenderSettings,
   mirrorSettings,
   persistMirrorSetting,
@@ -16,6 +18,7 @@ import {
   REFRESH_RATE_MAX,
   REFRESH_RATE_MIN,
   type EffectMode,
+  type TextMethod,
   type MirrorSettings,
   type PersistedSettingKey,
   type QualityChoice
@@ -74,6 +77,7 @@ const props = withDefaults(
 
 const settings = mirrorSettings;
 const canvasActive = computed(() => settings.runtimeStage === "canvas");
+const availableTextMethods = computed(() => TEXT_METHODS.filter((method) => method.available({ implemented: IMPLEMENTED_RUST_TEXT_METHODS })));
 const failureReason = computed(() => settings.stage === "canvas" && rendererRuntimeStatus.requested.backend === "canvas" &&
   rendererRuntimeStatus.phase === "failed" ? rendererRuntimeStatus.reason : null);
 
@@ -135,6 +139,15 @@ const staticBgEnabled = computed<boolean>({
   get: () => effectiveMirrorRenderSettings(settings).staticBgEnabled,
   set: (value) => { if (!canvasActive.value) { settings.staticBgEnabled = value; persistMirrorSetting("staticBgEnabled", value); } }
 });
+const textMethod = computed<TextMethod>({
+  get: () => settings.textMethod,
+  set: (value) => {
+    if (value === settings.textMethod || !availableTextMethods.value.some((method) => method.id === value)) return;
+    settings.textMethod = value;
+    persistMirrorSetting("textMethod", value);
+    applyViewerTextMethod();
+  }
+});
 const stretchEnabled = bind("stretchEnabled");
 const raiseHeldCard = bind("raiseHeldCard");
 const unfocusOnRelease = bind("unfocusOnRelease");
@@ -189,6 +202,7 @@ const hostPerfNote = computed(() =>
 
 type HelpId =
   | "stage"
+  | "textMethod"
   | "quality"
   | "shaders"
   | "particles"
@@ -215,6 +229,7 @@ type HelpId =
 // row added without help text is obvious at review time.
 const HELP_KEYS: Record<HelpId, import("@/i18n").MessageKey> = {
   stage: "settings.help.stage",
+  textMethod: "settings.help.textMethod",
   quality: "settings.help.quality",
   shaders: "settings.help.shaders", particles: "settings.help.particles", staticBg: "settings.help.staticBg",
   stretch: "settings.help.stretch", raiseCard: "settings.help.raiseCard", unfocus: "settings.help.unfocus",
@@ -323,6 +338,15 @@ onBeforeUnmount(() => setHelpListeners(false));
           {{ t('settings.stageFailure', { reason: failureReason }) }}
           <button type="button" @click="retryCanvas">{{ t('boot.tryAgain') }}</button>
         </p>
+        <div v-if="canvasActive && availableTextMethods.length > 1" class="settings-item">
+          <label class="settings-row settings-row-select">
+            <span>{{ t('settings.textMethod') }}</span>
+            <select v-model="textMethod" data-testid="mirror-text-method">
+              <option v-for="method in availableTextMethods" :key="method.id" :value="method.id">{{ t(method.labelKey) }}</option>
+            </select>
+          </label>
+          <SettingsHelpTip v-bind="help('textMethod', t('settings.textMethod'))" />
+        </div>
         <!-- Quality sits below Stage and above the render rows whose preset it controls. -->
         <div class="settings-item">
           <label class="settings-row settings-row-select">
