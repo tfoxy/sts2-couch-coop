@@ -19,8 +19,10 @@ Luna's clean-worktree Phase 4 audit passed Vue/Vitest (5,366 passed, one skipped
 atlas/executor tests (101 passed), pinned GSW/WASM source checks, and paired browser captures.
 The Chinese reward `搜刮！` visibly replaced its Bitmap placeholder after tile completion while
 retaining the same hit grid. A moving combat `6` kept its atlas glyph across retained transforms.
-MSDF strokes appear modestly fuller and sharper; five long Chinese rich labels remain omitted by
-the common layout path in both methods. An atomic atlas upload exceeded 1 ms once in one audit
+MSDF strokes appear modestly fuller and sharper. The diagnostic reports five long Chinese rich
+labels refused by the common layout path in both methods, but their rows are below the visible
+scroll area in the paired screenshot; this capture does not prove a visible omission. An atomic
+atlas upload exceeded 1 ms once in one audit
 capture; the repeat had none and the per-frame 256 KiB byte cap held.
 
 The local [visual index](../../.sts2/artifacts/text-methods-msdf/PHASE4-VISUAL-INDEX.md) lists
@@ -40,6 +42,11 @@ Each leg delivered scene updates and performed the relevant text work inside its
 | Glyph-run presentations | 0 / 0 | 2,814 / 3,176 |
 | Rust scene draws per presentation | 27.0 / 27.0 | 20.0 / 20.21 |
 | CDP TaskDuration | 0.5332 / 0.6069 s | 0.4139 / 0.5558 s |
+
+The `0 / 1 fallback` cell counts **new Bitmap text rasters inside the measured windows** while MSDF
+was selected: zero in B1, one in B2. It does not count every run that temporarily used Bitmap;
+cached fallback images can be reused without another rasterization. B2 logged additional
+`glyph-pending` fallback uses while atlas tiles arrived.
 
 The mean TaskDuration gap is 0.0852 s, smaller than MSDF's own 0.1419 s repeat spread, with
 different presentation counts and marker-snapshot cost. The timing result is **inconclusive**.
