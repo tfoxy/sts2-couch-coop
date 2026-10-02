@@ -544,7 +544,7 @@ describe("device-local Rust text method", () => {
   it("defaults to Bitmap and derives valid ids from the registry", () => {
     expect(build().textMethod).toBe("bitmap");
     expect(TEXT_METHODS.map((method) => method.id)).toEqual(["bitmap", "msdf"]);
-    expect(TEXT_METHODS.filter((method) => method.available({ implemented: IMPLEMENTED_RUST_TEXT_METHODS })).map((method) => method.id)).toEqual(["bitmap"]);
+    expect(TEXT_METHODS.filter((method) => method.available({ implemented: IMPLEMENTED_RUST_TEXT_METHODS })).map((method) => method.id)).toEqual(["bitmap", "msdf"]);
     for (const method of TEXT_METHODS) expect(parseTextMethod(method.id)).toBe(method.id);
     expect(parseTextMethod("slug")).toBeUndefined();
   });

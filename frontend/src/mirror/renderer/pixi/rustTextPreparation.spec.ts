@@ -56,6 +56,59 @@ function assertPrepared(result: PreparedText | TextPrepRefusal): PreparedText {
 }
 
 describe("resolveSemanticTextSpec + buildPreparedText — the pure half", () => {
+  it("admits a complete measured CJK line on Rust while keeping the default refusal", () => {
+    const label = node("label", null, { text: { ...node("unused", null).text, text: "漢字甲" },
+      localRect: { x: 0, y: 0, width: 200, height: 60 } });
+    expect(resolveSemanticTextSpec(label, nodeMap([label]))).toEqual({ refusal: "unbreakable" });
+    const resolved = resolveSemanticTextSpec(label, nodeMap([label]), true, new Set(), (value) => value, true);
+    if ("refusal" in resolved) throw new Error(resolved.refusal);
+    const prepared = assertPrepared(buildPreparedText(resolved, 0, FONT, measure, measureLineMetrics));
+    expect(prepared.layout.lines).toHaveLength(1);
+    expect(prepared.layout.lines[0].text).toBe("漢字甲");
+    expect(prepared.spec.refusal).toBeNull();
+  });
+
+  it("keeps no-wrap CJK refusal when it overflows or contains a hard break", () => {
+    for (const [text, width] of [["漢字甲", 20], ["漢\n字甲", 200]] as const) {
+      const label = node("label", null, { text: { ...node("unused", null).text, text },
+        localRect: { x: 0, y: 0, width, height: 60 } });
+      const resolved = resolveSemanticTextSpec(label, nodeMap([label]), true, new Set(), (value) => value, true);
+      if ("refusal" in resolved) throw new Error(resolved.refusal);
+      expect(buildPreparedText(resolved, 0, FONT, measure, measureLineMetrics))
+        .toEqual({ refusal: "unbreakable" });
+    }
+  });
+
+  it("keeps ordered rich CJK roles, colours, and inline images only when the whole line fits", () => {
+    const root = node("root", null, { sceneFilePath: "res://scenes/ui/event_option_button.tscn" });
+    const label = node("label", "root", { richText: true,
+      richBoldFont: { ...FONT, family: "cjk_bold", url: "res://fonts/cjk_bold.ttf" },
+      text: { ...node("unused", null).text,
+        text: "[gold][b]甲乙[/b][/gold] [img]res://icons/energy.png[/img]" } });
+    expect(resolveSemanticTextSpec(label, nodeMap([root, label]), true))
+      .toEqual({ refusal: "rich:unbreakable" });
+    const resolveRich = (width: number) => {
+      const current = { ...label, localRect: { x: 0, y: 0, width, height: 60 } };
+      const resolved = resolveSemanticTextSpec(current, nodeMap([root, current]), true,
+        new Set(), (value) => value, true);
+      if ("refusal" in resolved) throw new Error(resolved.refusal);
+      return buildPreparedText(resolved, 0, FONT, measure, measureLineMetrics,
+        (face, value) => value.length * (face.font.family === "cjk_bold" ? 12 : 10),
+        () => ({ width: 24, height: 24 }));
+    };
+    const prepared = assertPrepared(resolveRich(200));
+    expect(prepared.layout.lines).toHaveLength(1);
+    expect(prepared.runs.map((run) => run.text)).toContain("甲乙");
+    expect(prepared.runs.find((run) => run.text === "甲乙")?.style.fill).toBe("#efc851");
+    expect(prepared.runs.some((run) => run.inlineImage?.width === 24)).toBe(true);
+    expect(resolveRich(20)).toEqual({ refusal: "rich:unbreakable" });
+    const unresolved = resolveSemanticTextSpec(label, nodeMap([root, label]), true,
+      new Set(), (value) => value, true);
+    if ("refusal" in unresolved) throw new Error(unresolved.refusal);
+    expect(buildPreparedText(unresolved, 0, FONT, measure, measureLineMetrics))
+      .toEqual({ refusal: "rich:unbreakable" });
+  });
+
   it("prepares mixed bold, coloured, and inline-image runs for Rust", () => {
     const root = node("root", null, { sceneFilePath: "res://scenes/ui/event_option_button.tscn" });
     const boldFont = { ...FONT, family: "kreon_bold", url: "res://fonts/kreon_bold.ttf" };
@@ -71,6 +124,8 @@ describe("resolveSemanticTextSpec + buildPreparedText — the pure half", () => 
     expect(prepared.layout.lines.map((line) => line.text)).toEqual(["Power", "Gain \uFFFC now"]);
     expect(prepared.runs.find((run) => run.text === "Power")?.style).toMatchObject({
       fontFamily: "kreon_bold", letterSpacing: 1, fill: "#efc851" });
+    expect(prepared.runs.find((run) => run.text === "Power")?.msdf.url).toBe("/res/fonts/kreon_bold.ttf");
+    expect(prepared.runs.find((run) => run.text === "Gain ")?.msdf.url).toBe("/res/fonts/kreon_regular.ttf");
     expect(prepared.runs.find((run) => run.text === "\uFFFC")?.inlineImage).toMatchObject({ width: 24, height: 24 });
     expect(composePreparedTextRecords(prepared, "label", 0,
       { transform: [1, 0, 0, 1, 0, 0], opacity: 1, tintR: 1, tintG: 1, tintB: 1 }, 0)
@@ -88,6 +143,13 @@ describe("resolveSemanticTextSpec + buildPreparedText — the pure half", () => 
       (face, value) => value.length * (face.font.family === "kreon_bold" ? 12 : 10)));
     expect(prepared.fallbackRoles).toEqual(["bold"]);
     expect(prepared.runs[0].style.fontFamily).toBe("kreon_regular");
+  });
+
+  it("preserves an already resolved face URL for MSDF fetches", () => {
+    const font = { ...FONT, url: "/res/fonts/kreon_regular.ttf?b=build" };
+    const label = node("label", null, { font });
+    const prepared = assertPrepared(resolve(label, nodeMap([label])));
+    expect(prepared.runs[0]?.msdf.url).toBe(font.url);
   });
 
   it("draws surrounding words while an image loads, then retries without caching the pending layout", () => {

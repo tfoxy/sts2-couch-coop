@@ -3,7 +3,12 @@ import type { PixiDrawListRenderer, PixiDrawListRendererStats, PixiScenePlan, Pi
 import type { ClipTranslatingScenePatch, MirrorDrawExecutorFactory } from "./createPixiMirrorRenderer";
 import { offsetRustTextCarrierTransform } from "@/mirror/renderer/semanticTextLayout";
 import { createBitmapTextMethod } from "./textMethods/bitmap";
+import { carrierForMsdfRun, createMsdfRuntime, msdfGlyphKey, type MsdfRunRecord } from "./textMethods/msdf";
+import { MsdfAtlas } from "./textMethods/msdfAtlas";
 import type { TextInkRaster, CorpusInput, CorpusRow } from "./textMethods/types";
+import { mirrorSettings } from "@/mirror/mirrorSettings";
+import type { RustTextCarrier, RustResourceUpdate } from "@godot-scene-web/canvas/rust-prototype";
+import { MsdfGenerator } from "@godot-scene-web/canvas/msdf-generator";
 import { emitBusyStartupEvent } from "./busyStartupEvent";
 import { ensureFontFace, loadMirrorFont, mirrorFontRegistration } from "@/mirror/fonts";
 import type { ProducerExecutorEvent } from "./producerBuildReasons";
@@ -30,13 +35,14 @@ type Serializer = {
   encodeRustScene(input: {
     drawList: DrawList<string>; revision: number; width: number; height: number; designWidth: number; designHeight: number;
     resolveTexture(texture: string): { key: string; width: number; height: number } | null;
-    texts: readonly PixiTextRecord[]; resolveText(record: PixiTextRecord): { resource: { key: string; width: number; height: number }; pixels: Uint8Array; width: number; height: number; transform: readonly number[]; alpha?: number } | null;
+    texts: readonly PixiTextRecord[]; resolveText(record: PixiTextRecord): RustTextCarrier | null;
     plan?: PixiScenePlan;
     /** rustFast `fastSerializer` (being added in parallel in GSW). Feature-detected by always being optional. */
     fast?: boolean;
   }): { bytes: Uint8Array; scene: RustSceneSnapshot; resources: { key: string; width: number; height: number }[]; textUploads: ResourcePixels[];
     unsupportedCommands: number; omittedKinds?: Record<string, number> };
   encodeRustResources(items: readonly ResourcePixels[]): Uint8Array;
+  encodeRustResourceUpdates(items: readonly RustResourceUpdate[]): Uint8Array;
   encodeRustPatch(previous: RustSceneSnapshot, next: RustSceneSnapshot, hint?: unknown, options?: { fast?: boolean }): Uint8Array | null;
   encodeRustRetainedPatch?(base: RustSceneSnapshot, revision: number,
     updates: readonly { id: string; command: Record<string, unknown>; localTransform?: readonly number[] }[],
@@ -109,7 +115,7 @@ export const createRustDrawListExecutor: MirrorDrawExecutorFactory = async ({ ca
   const compiledAt = performance.now();
   startupEvent?.("rust.wasmInitialized", { elapsedMs: compiledAt - startedAt });
   logRust("wasm initialized");
-  const engine = await wasmModule.RustRenderer.create(canvas);
+  let engine = await wasmModule.RustRenderer.create(canvas);
   // rustFast `drawStateDedupe`: set once, right after creation, never polled. The method itself is optional
   // (added in parallel on the GSW/wasm side), so a glue build that predates it is a silent no-op here.
   if (fast.drawStateDedupe) engine.set_draw_state_dedupe?.(true);
@@ -148,6 +154,74 @@ export const createRustDrawListExecutor: MirrorDrawExecutorFactory = async ({ ca
   let submissionTail: Promise<void> = Promise.resolve();
   let retainedPatchInFlight = false;
   let resizeFailure: string | null = null;
+  const msdfAtlas = new MsdfAtlas();
+  const msdfFallbackReasons: Record<string, number> = {};
+  let msdfGlyphRunsEncoded = 0, msdfGlyphRunPresentations = 0, msdfGlyphRunsLastPresented = 0;
+  const inFlightGlyphPages = new Map<string, number>();
+  let msdfFrameScheduled = false;
+  const msdfRuntime = mirrorSettings.textMethod === "msdf" ? (() => {
+    const wasmModuleUrl = import.meta.env.DEV
+      ? new URL("/app/msdf_generator.js", window.location.href).href
+      : new URL("./msdf_generator.js", import.meta.url).href;
+    return createMsdfRuntime(() => { scheduleMsdfFrame(); onInvalidate(); }, wasmModuleUrl,
+      { generator: new MsdfGenerator({ wasmModuleUrl,
+        createWorker: () => new Worker(new URL("./textMethods/msdfGeneratorWorker.ts", import.meta.url), { type: "module" }) }) });
+  })() : null;
+  const glyphPages = (scene: RustSceneSnapshot | null): string[] => scene?.commands
+    .filter((command) => command.kind === "glyphRun" && typeof command.atlas === "string")
+    .map((command) => command.atlas as string) ?? [];
+  function scheduleMsdfFrame(): void {
+    if (!msdfRuntime || disposed || msdfFrameScheduled) return;
+    msdfFrameScheduled = true;
+    requestAnimationFrame(() => {
+      if (disposed) { msdfFrameScheduled = false; return; }
+      const operation = submissionTail.then(() => {
+        const lease = msdfRuntime.takeGeneration();
+        if (lease) msdfAtlas.enqueue(lease.keys, lease.result.tiles,
+          () => msdfRuntime.finishGeneration(lease));
+        if (!msdfAtlas.hasWork()) return 0;
+        const pins = new Set([...glyphPages(committedTypedScene), ...inFlightGlyphPages.keys()]);
+        const result = msdfAtlas.flush((updates) => {
+          const batch = serializer.encodeRustResourceUpdates(updates);
+          engine.upload_rgba_batch(batch);
+          wasmUploadCalls++; wasmUploadBytes += batch.byteLength; wasmBytesSent += batch.byteLength;
+        }, pins);
+        return result.ready;
+      });
+      submissionTail = operation.then(() => undefined, () => undefined);
+      void operation.then((ready) => { if (ready) onInvalidate(); })
+        .catch((error) => { msdfFallbackReasons["atlas-upload"] = (msdfFallbackReasons["atlas-upload"] ?? 0) + 1;
+          logRust("MSDF atlas upload", error); })
+        .finally(() => { msdfFrameScheduled = false; if (msdfAtlas.hasWork()) scheduleMsdfFrame(); });
+    });
+  }
+  const contextLost = (event: Event) => {
+    event.preventDefault();
+    stats.contextReady = false;
+    msdfAtlas.resetResidency();
+    uploaded.clear(); uploadedPixels.clear();
+    committedTypedScene = null; committedScene = null; committedRevision = null;
+  };
+  const contextRestored = () => {
+    const operation = submissionTail.then(async () => {
+      if (disposed) return;
+      msdfAtlas.resetResidency();
+      uploaded.clear(); uploadedPixels.clear();
+      committedTypedScene = null; committedScene = null; committedRevision = null;
+      engine.dispose();
+      engine = await wasmModule.RustRenderer.create(canvas);
+      resizeFailure = null;
+      stats.contextReady = true;
+      onInvalidate();
+    });
+    submissionTail = operation.then(() => undefined, () => undefined);
+    void operation.catch((error) => {
+      stats.contextReady = false;
+      resizeFailure = String(error);
+    });
+  };
+  canvas.addEventListener("webglcontextlost", contextLost);
+  canvas.addEventListener("webglcontextrestored", contextRestored);
   let textCount = 0;
   type TextInkSubmission = { revision: number; sceneRevision: number | null; cacheMisses: number; rasters: TextInkRaster[] };
   const textInkDiagnosticEventLimit = 512;
@@ -330,6 +404,13 @@ export const createRustDrawListExecutor: MirrorDrawExecutorFactory = async ({ ca
     ...(phaseTimingEnabled ? { retainedPatchApplyMs, sceneEncodeMs, sceneDiffMs, scenePatchApplyMs } : {}),
     committedRevision, committedSceneBytes: committedScene?.byteLength ?? 0,
     zeroCopyPixels,
+    textRasterizations: stats.textRasterizations,
+    msdf: msdfRuntime ? { glyphRunsEncoded: msdfGlyphRunsEncoded,
+      glyphRunPresentations: msdfGlyphRunPresentations, glyphRunsLastPresented: msdfGlyphRunsLastPresented,
+      fallbackReasons: { ...msdfFallbackReasons },
+      atlas: msdfAtlas.stats(), generator: msdfRuntime.stats(),
+      gpuAtlasTextures: msdfAtlas.stats().pages,
+      gpuAtlasBytes: msdfAtlas.stats().bytes } : null,
     textInkReadFrequently,
     ...(textInkCorpus ? { textInkCorpus: true, textInkCorpusCount: corpusRows.length,
       textInkCorpusBytes: corpusBytes, textInkCorpusOverflow: corpusOverflow, textInkCorpusSealed: corpusSealed,
@@ -536,6 +617,38 @@ export const createRustDrawListExecutor: MirrorDrawExecutorFactory = async ({ ca
       if (corpusBytes > corpusByteLimit) { corpusOverflow = true; throw new Error("Rust text corpus byte limit exceeded"); }
     }
     return result;
+  }
+
+  function resolveText(record: PixiTextRecord): RustTextCarrier | null {
+    if (msdfRuntime && !(record as InlineImageRecord).inlineImage) {
+      const shaped = msdfRuntime.shape(record as MsdfRunRecord);
+      if ("run" in shaped) {
+        const placements = new Map<number, NonNullable<ReturnType<MsdfAtlas["placement"]>>>();
+        const missing: number[] = [];
+        let failed: string | undefined;
+        for (const glyph of shaped.run.glyphs) {
+          const key = msdfGlyphKey(shaped.face.url, shaped.run.range, glyph.glyphId);
+          const placement = msdfAtlas.placement(key);
+          if (placement) placements.set(glyph.glyphId, placement);
+          else if (!failed) {
+            failed = msdfAtlas.failure(key) ?? msdfRuntime.failureFor(key);
+            if (!failed) missing.push(glyph.glyphId);
+          }
+        }
+        if (!failed && !missing.length) {
+          const carrier = carrierForMsdfRun(record as MsdfRunRecord, shaped.run, placements);
+          if (carrier) { msdfGlyphRunsEncoded++; return carrier; }
+          failed = "carrier";
+        } else if (!failed) {
+          msdfRuntime.request(shaped.face, shaped.run.range, missing);
+          failed = "glyph-pending";
+        }
+        msdfFallbackReasons[failed] = (msdfFallbackReasons[failed] ?? 0) + 1;
+      } else {
+        msdfFallbackReasons[shaped.reason] = (msdfFallbackReasons[shaped.reason] ?? 0) + 1;
+      }
+    }
+    return rasterText(record);
   }
 
 
@@ -922,7 +1035,7 @@ export const createRustDrawListExecutor: MirrorDrawExecutorFactory = async ({ ca
     const encode = () => serializer.encodeRustScene({ drawList: list, revision, width: surfaceWidth, height: surfaceHeight,
       designWidth: sceneDesignWidth, designHeight: sceneDesignHeight,
       resolveTexture: (texture) => { const image = textures.get(texture); return image ? { key: image.key, width: image.width, height: image.height } : null; },
-      texts: text, resolveText: rasterText, plan, ...(fast.fastSerializer ? { fast: true } : {}) });
+      texts: text, resolveText, plan, ...(fast.fastSerializer ? { fast: true } : {}) });
     const encoded = profile && profileIdentity ? profile.span(profileIdentity, "couch.text-and-resource-prep", encode) : encode();
     if (profile && profileIdentity) { profile.counter(profileIdentity,
       { sceneBytes: encoded.bytes.byteLength, commands: list.count, textRecords: text.length }); }
@@ -941,12 +1054,15 @@ export const createRustDrawListExecutor: MirrorDrawExecutorFactory = async ({ ca
     }
     const uploads: ResourcePixels[] = [];
     for (const resource of encoded.resources) {
+      if (msdfAtlas.hasPage(resource.key)) continue;
       const data = textures.get(resource.key) ?? bitmap.cachedResource(resource.key);
       if (!data) return { presented: false, reason: `resource bytes unavailable: ${resource.key}` };
       if (!uploaded.has(data.key)) uploads.push(data);
     }
     for (const item of encoded.textUploads) if (!uploaded.has(item.key)) uploads.push(item);
     const uniqueUploads = [...new Map(uploads.map((row) => [row.key, row])).values()];
+    const sceneGlyphPages = glyphPages(encoded.scene);
+    for (const key of sceneGlyphPages) inFlightGlyphPages.set(key, (inFlightGlyphPages.get(key) ?? 0) + 1);
     const cardAtlasUpload = profileCardAtlas
       ? uniqueUploads.find((row) => isCardAtlas(row.key)) ?? null : null;
     if (profileCardAtlas) {
@@ -1040,6 +1156,8 @@ export const createRustDrawListExecutor: MirrorDrawExecutorFactory = async ({ ca
         pending: stats.resourcePending, draws: result.draws });
       logRust("present", result);
       if (result.presented) {
+        msdfGlyphRunsLastPresented = encoded.scene?.commands?.filter((command) => command.kind === "glyphRun").length ?? 0;
+        msdfGlyphRunPresentations += msdfGlyphRunsLastPresented;
         if (firstPresentMs === null) firstPresentMs = performance.now() - startedAt;
         committedScene = sceneBytes;
         committedTypedScene = encoded.scene;
@@ -1074,7 +1192,13 @@ export const createRustDrawListExecutor: MirrorDrawExecutorFactory = async ({ ca
       }
       return result;
     });
-    const settled = operation.finally(() => { if (profile && profileIdentity) setProfileIdentity(profileIdentity, 0); });
+    const settled = operation.finally(() => {
+      for (const key of sceneGlyphPages) {
+        const count = (inFlightGlyphPages.get(key) ?? 1) - 1;
+        if (count) inFlightGlyphPages.set(key, count); else inFlightGlyphPages.delete(key);
+      }
+      if (profile && profileIdentity) setProfileIdentity(profileIdentity, 0);
+    });
     submissionTail = settled.then(() => undefined, () => undefined);
     return settled;
   }
@@ -1090,20 +1214,26 @@ export const createRustDrawListExecutor: MirrorDrawExecutorFactory = async ({ ca
     for (const change of patch.primitives ?? []) {
       if (change.tint !== undefined) return null;
       const id = toRustId(change.id), commandIndex = committedCommandIndexes.get(id), old = commandIndex === undefined ? undefined : base.commands[commandIndex];
-      if (!old || (old.kind !== "quad" && old.kind !== "ninePatch" && old.kind !== "rasterText" && old.kind !== "stillImage")) return null;
+      if (!old || (old.kind !== "quad" && old.kind !== "ninePatch" && old.kind !== "rasterText" && old.kind !== "glyphRun" && old.kind !== "stillImage")) return null;
       const command: Record<string, unknown> = { ...old };
       const update: { id: string; command: Record<string, unknown>; localTransform?: readonly number[] } = { id, command };
       if (change.transform) {
-        if (old.kind === "rasterText") update.localTransform = change.transform;
+        if (old.kind === "rasterText" || old.kind === "glyphRun") update.localTransform = change.transform;
         else command.m = [...change.transform];
       }
       if (change.alpha !== undefined) {
-        const color = old.color;
-        if (!Array.isArray(color) || color.length !== 4 || !Number.isFinite(color[3]) || color[3] <= 0) return null;
-        const ratio = change.alpha / Number(color[3]);
-        command.color = color.map((channel) => Number(channel) * ratio);
+        if (old.kind === "glyphRun") {
+          if (!Number.isFinite(change.alpha) || change.alpha < 0 || change.alpha > 1) return null;
+          command.alpha = change.alpha;
+        } else {
+          const color = old.color;
+          if (!Array.isArray(color) || color.length !== 4 || !Number.isFinite(color[3]) || color[3] <= 0) return null;
+          const ratio = change.alpha / Number(color[3]);
+          command.color = color.map((channel) => Number(channel) * ratio);
+        }
       }
       if (change.source) {
+        if (old.kind === "glyphRun") return null;
         const source = change.source as { texture: string | null; x: number; y: number; w: number; h: number };
         if (source.texture !== null && !base.resources.some((resource) => resource.key === source.texture)) return null;
         command.resource = source.texture;
@@ -1175,6 +1305,8 @@ export const createRustDrawListExecutor: MirrorDrawExecutorFactory = async ({ ca
         operationId: encoded.scene.revision, mode: "scene-patch" });
       if (phaseTimingEnabled) retainedPatchPresentWaitMs += performance.now() - presentAt;
       if (result.presented && !disposed) {
+        msdfGlyphRunsLastPresented = encoded.scene?.commands?.filter((command) => command.kind === "glyphRun").length ?? 0;
+        msdfGlyphRunPresentations += msdfGlyphRunsLastPresented;
         committedTypedScene = encoded.scene;
         for (const index of encoded.changedIndexes) {
           const id = encoded.scene.commands[index]?.id;
@@ -1257,7 +1389,7 @@ export const createRustDrawListExecutor: MirrorDrawExecutorFactory = async ({ ca
     textureFailureDetails() { return [...failures].map(([key, reason]) => `${key}: ${reason}`); },
     textOutcomes(): PixiTextOutcomes { return { requested: "native", actual: "native", native: textCount, slug: 0, slugCached: 0, reasons: {} }; },
     armDiagnosticSkipGl() { return false; }, armDiagnosticSingleQuad() { return false; }, pollDiagnostics() {},
-    dispose() { if (disposed) return; disposed = true; if (fixtureEnabled) { delete globals.__mirrorRustFixture; delete globals.__mirrorRustFixtureChunk; } if (statsEnabled) delete globals.__mirrorRustStats; delete globals.__mirrorRustGpuTimerCapability; delete globals.__mirrorRustTextCorpus; delete globals.__mirrorRustRollbackProbe; delete (window as unknown as { __mirrorRustPixelControl?: boolean }).__mirrorRustPixelControl; engine.dispose(); textures.clear(); bitmap.dispose(); pixelRevisions.clear(); uploaded.clear(); uploadedPixels.clear(); pending.clear(); failures.clear(); committedResources = []; committedScene = null; committedTypedScene = null; committedCommandIndexes.clear(); committedResourceBuffer = null; committedRevision = null; },
+    dispose() { if (disposed) return; disposed = true; canvas.removeEventListener("webglcontextlost", contextLost); canvas.removeEventListener("webglcontextrestored", contextRestored); if (fixtureEnabled) { delete globals.__mirrorRustFixture; delete globals.__mirrorRustFixtureChunk; } if (statsEnabled) delete globals.__mirrorRustStats; delete globals.__mirrorRustGpuTimerCapability; delete globals.__mirrorRustTextCorpus; delete globals.__mirrorRustRollbackProbe; delete (window as unknown as { __mirrorRustPixelControl?: boolean }).__mirrorRustPixelControl; msdfAtlas.dispose(); msdfRuntime?.dispose(); engine.dispose(); textures.clear(); bitmap.dispose(); pixelRevisions.clear(); uploaded.clear(); uploadedPixels.clear(); pending.clear(); failures.clear(); committedResources = []; committedScene = null; committedTypedScene = null; committedCommandIndexes.clear(); committedResourceBuffer = null; committedRevision = null; },
   } as unknown as PixiDrawListRenderer<string> & {
     render(list: DrawList<string>, text?: readonly PixiTextRecord[]): Promise<boolean>;
     admitScene(list: DrawList<string>, text: readonly PixiTextRecord[], plan: PixiScenePlan): Promise<{ presented: boolean; reason?: string }>;

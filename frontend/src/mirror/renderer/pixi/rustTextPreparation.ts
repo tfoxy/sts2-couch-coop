@@ -43,6 +43,8 @@ export interface TextPrepRefusal {
 
 export interface ResolvedTextSpec {
   spec: TextSpec;
+  /** Rust-only candidate; admitted after measured layout proves the whole unbreakable line fits. */
+  fittingUnbreakableRefusal?: "unbreakable" | "rich:unbreakable";
   spans: readonly TextSpan[] | undefined;
   roles?: readonly TextRoleSpan[];
   roleFaces?: Partial<Record<TextFontRole, RoleFace>>;
@@ -81,7 +83,8 @@ export function resolveSemanticTextSpec(
   nodes: ReadonlyMap<string, MirrorNode>,
   allowFontRoles = false,
   failedRoleFamilies: ReadonlySet<string> = new Set(),
-  colorValidator: ColorValidator = (value) => value
+  colorValidator: ColorValidator = (value) => value,
+  allowFittingUnbreakable = false
 ): ResolvedTextSpec | TextPrepRefusal {
   const scene = resolveSceneInfo(node.id, nodes);
   const decls = resolveTextScaleDecls(scene?.file ?? null, scene?.relPath ?? null);
@@ -98,7 +101,8 @@ export function resolveSemanticTextSpec(
       inlineImages: allowFontRoles, ...(allowFontRoles ? { unsupported: "plain" as const } : {}) });
     if (!parsed.ok) return { refusal: `rich:${parsed.refusal}` };
     const plain = resolveTextSpec({ ...node, richText: false, text: { ...node.text!, text: parsed.value.text } }, decls);
-    if (!plain || plain.refusal) return { refusal: `rich:${plain?.refusal ?? "post-parse"}` };
+    if (!plain || (plain.refusal && !(allowFittingUnbreakable && plain.refusal === "unbreakable")))
+      return { refusal: `rich:${plain?.refusal ?? "post-parse"}` };
     spec = parsed.value.align === null ? plain : { ...plain, align: parsed.value.align };
     spans = parsed.value.spans.length ? parsed.value.spans : undefined;
     roles = parsed.value.roles.length ? parsed.value.roles : undefined;
@@ -115,8 +119,12 @@ export function resolveSemanticTextSpec(
       }
     }
   }
-  if (spec.refusal) return { refusal: spec.refusal };
-  return { spec, spans, roles, roleFaces, fallbackRoles, images, degradations };
+  if (spec.refusal && !(allowFittingUnbreakable && spec.refusal === "unbreakable"))
+    return { refusal: spec.refusal };
+  return { spec, spans, roles, roleFaces, fallbackRoles, images, degradations,
+    ...(spec.refusal === "unbreakable" ? {
+      fittingUnbreakableRefusal: node.richText ? "rich:unbreakable" as const : "unbreakable" as const
+    } : {}) };
 }
 
 /** One placed run, ready to be positioned by a live `record.transform` — see {@link composePreparedTextRecords}. */
@@ -133,6 +141,8 @@ export interface PreparedTextRun {
    * identity, so a fresh literal here would defeat it even with `fast.textPrepCache` on.
    */
   style: PixiTextRecord["style"];
+  /** The exact face and measured placement used by this run, independent of CSS family lookup. */
+  msdf: { url: string; faceKey: string; measuredAdvance: number; baselinePx: number };
   inlineImage?: { url: string; width: number; height: number };
 }
 
@@ -189,6 +199,14 @@ export function buildPreparedText(
     measure: (role, value) => roleMeasure ? roleMeasure(faceOf(role), value) : measure(value),
     pitch: (role) => faceOf(role).pitchPx,
   } : undefined);
+  if (resolved.fittingUnbreakableRefusal) {
+    const line = layout.lines[0];
+    if (imagePending || resolvedImages?.some((image) => image.width <= 0 || image.height <= 0) ||
+        spec.text.includes("\n") || spec.text.trimEnd() !== spec.text || layout.wrapped ||
+        layout.lines.length !== 1 || line?.text !== spec.text ||
+        !Number.isFinite(line.width) || line.width < 0 || line.width > spec.contentW)
+      return { refusal: resolved.fittingUnbreakableRefusal };
+  }
   const shadow = spec.shadow ? pixiShadowColor(spec.shadow.color) : null;
   if (spec.shadow && !shadow) return { refusal: "invalid-shadow-color" };
   const resourceRevision = `${fontVersion}:${JSON.stringify(roles || resolvedImages
@@ -224,6 +242,9 @@ export function buildPreparedText(
       const x = (1 - scale) * spec.boxW / 2 + (part.x + originCorrection.x) * scale;
       runs.push({
         lineIndex, runIndex, text: part.text, boxX: x, boxY: y,
+        msdf: { url: face.font.url.startsWith("res://") ? mirrorResourceUrl(face.font.url) : face.font.url,
+          faceKey: `${face.font.url}:${face.font.family}:${face.font.weight ?? ""}:${face.font.style ?? ""}`,
+          measuredAdvance: part.width, baselinePx: rasterBaseline },
         ...(part.image && part.image.width > 0 && part.image.height > 0
           ? { inlineImage: { url: part.image.url, width: part.image.width, height: part.image.height } } : {}),
         style: {
@@ -239,7 +260,8 @@ export function buildPreparedText(
       });
     }
   }
-  return { spec, spans, roleFaces, fallbackRoles, images: resolvedImages, layoutKey, layout, metrics, shadow,
+  return { spec: resolved.fittingUnbreakableRefusal ? { ...spec, refusal: null } : spec,
+    spans, roleFaces, fallbackRoles, images: resolvedImages, layoutKey, layout, metrics, shadow,
     resourceRevision, runs, degradations, imagePending };
 }
 
@@ -269,6 +291,7 @@ export function composePreparedTextRecords(
       key: `${nodeId}:${run.lineIndex}:${run.runIndex}`, insertionIndex, text: run.text, transform,
       labelId: nodeId, resourceRevision: prepared.resourceRevision, style: run.style,
       alpha: record.opacity, blend, tint,
+      msdf: run.msdf,
       ...(run.inlineImage ? { inlineImage: run.inlineImage } : {}),
     } as PixiTextRecord);
   }
