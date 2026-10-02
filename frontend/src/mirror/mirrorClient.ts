@@ -368,10 +368,10 @@ export function connectMirrorClient(options: {
   // viewer who never turns it on pays here.
   const nativeSend = socket.send.bind(socket);
   socket.send = (data: Parameters<typeof nativeSend>[0]): void => {
-    reproRecorder.tapWireOut(data);
+    reproRecorder.tapWireOut(data, diagnosticSocketRole);
     nativeSend(data);
   };
-  reproRecorder.tapWsLifecycle("ctor");
+  reproRecorder.tapWsLifecycle("ctor", diagnosticSocketRole);
 
   let joinSequence = 0;
   // Whether a `join` we sent is still unanswered. Gates the `action-result` backstop below so it only ever speaks
@@ -652,7 +652,7 @@ export function connectMirrorClient(options: {
 
   socket.addEventListener("open", () => {
     lifecycleEvent({ kind: "ws-open", role: diagnosticSocketRole });
-    reproRecorder.tapWsLifecycle("open");
+    reproRecorder.tapWsLifecycle("open", diagnosticSocketRole);
     client.status = "connected";
     // Flush a gate change made between construction and open (e.g. the first session already told us the host
     // isn't on a multiplayer screen while the socket was still connecting).
@@ -667,7 +667,7 @@ export function connectMirrorClient(options: {
     // JSON.parse (a malformed frame is evidence too) and ABOVE the `watching` gate below, so the stragglers a
     // gated viewer drops are in the file. "The client received it and ignored it" and "the host never sent it"
     // are different bugs, and this is the only place they can still be told apart.
-    reproRecorder.tapWireIn(data);
+    reproRecorder.tapWireIn(data, diagnosticSocketRole);
     let raw: unknown;
     try {
       raw = JSON.parse(data);
@@ -847,7 +847,7 @@ export function connectMirrorClient(options: {
     // omit it rather than making the strict diagnostics endpoint reject an otherwise valid final batch.
     if (event.code >= 1000 && event.code <= 4999) diagnosticClose.code = event.code;
     lifecycleEvent(diagnosticClose);
-    reproRecorder.tapWsLifecycle("close");
+    reproRecorder.tapWsLifecycle("close", diagnosticSocketRole);
     client.status = "disconnected";
     joinPending = false;
     joinRequestId = null;

@@ -572,7 +572,7 @@ describe("reproRecorder — the serialized file", () => {
     expect(parsed[0].meta.format).toBe(REPRO_FORMAT);
     expect(parsed[0].meta.format).toBe("repro/1");
     expect(parsed).toHaveLength(2);
-    expect(parsed[1]).toEqual({ t: 0, dir: "in", data: '{"type":"scene-delta"}' });
+    expect(parsed[1]).toEqual({ t: 0, dir: "in", data: '{"type":"scene-delta"}', sock: "host" });
   });
 
   it("measures `t` from the FIRST SURVIVING line, to 3 decimal places", () => {
@@ -621,7 +621,72 @@ describe("reproRecorder — the serialized file", () => {
     const inbound = lines()
       .slice(1)
       .filter((line) => line.dir !== "out" && typeof line.data === "string");
-    expect(inbound).toEqual([{ t: 0, dir: "in", data: '{"type":"scene-delta"}' }]);
+    expect(inbound).toEqual([{ t: 0, dir: "in", data: '{"type":"scene-delta"}', sock: "host" }]);
+  });
+
+  it("tags wire and lifecycle lines by which socket they came from", () => {
+    // `sock` defaults to "host" (the common case: a recording with no redirect, one socket) so every pre-
+    // existing call site that never passed it keeps working — see the two tests above.
+    reproRecorder.start();
+    reproRecorder.tapWsLifecycle("ctor", "host");
+    reproRecorder.tapWireIn('{"type":"scene-delta"}', "host");
+    reproRecorder.tapWsLifecycle("ctor", "seat");
+    reproRecorder.tapWireIn('{"type":"scene-delta","full":true}', "seat");
+    reproRecorder.tapWireOut('{"type":"input"}', "seat");
+    const body = lines().slice(1);
+    expect(body.map((l) => l.sock)).toEqual(["host", "host", "seat", "seat", "seat"]);
+  });
+
+  it("tags via mirrorClient's own host/seat role — an explicit `url` is what makes a connection a seat", () => {
+    // `diagnosticSocketRole` (mirrorClient.ts) is `lifecycleSocketRole(options.url !== undefined)`: the SAME
+    // rule that already drives its lifecycle telemetry, reused here so the recorder's tag can never disagree
+    // with what the rest of the client already calls this connection.
+    reproRecorder.start();
+    const host = connect(); // no explicit url -> host
+    host.socket.emit('{"type":"scene-delta","full":true}');
+    const { socket: seatSocket } = (() => {
+      MockWebSocket.instances = [];
+      connectMirrorClient({
+        url: "ws://localhost/ws",
+        WebSocketCtor: MockWebSocket as unknown as typeof WebSocket,
+        location: { href: "http://localhost/", protocol: "http:" }
+      });
+      return { socket: MockWebSocket.instances[0] };
+    })();
+    seatSocket.emit('{"type":"scene-delta","full":true}');
+    const tags = lines().slice(1).filter((l) => l.dir === "in").map((l) => l.sock);
+    expect(tags).toEqual(["host", "seat"]);
+  });
+});
+
+describe("reproRecorder — settings snapshot timing", () => {
+  it("meta.settingsAtArm is taken at start(), meta.settings (save-time) can disagree with it", () => {
+    // The bug this pins: `panelOpen` (or any client-local toggle) can change between arm and save, and a
+    // save-time-only snapshot has no way to say what it was when the recording's OWN first gesture ran against
+    // it. `settingsAtArm` is the fix; `settings` keeps meaning exactly what it always did (the save-time value),
+    // so nothing reading that field needs to change.
+    let panelOpen = true;
+    reproRecorder.setMetaSupplier(() => ({ settings: { panelOpen } }));
+    reproRecorder.start(); // snapshots panelOpen: true
+    panelOpen = false; // the player closes it mid-recording
+    reproRecorder.tapWireIn('{"type":"scene-delta"}');
+    expect(meta().settingsAtArm).toEqual({ panelOpen: true });
+    expect(meta().settings).toEqual({ panelOpen: false });
+  });
+
+  it("settingsAtArm is null when there is no supplier, or it throws — never the reason start() fails", () => {
+    reproRecorder.setMetaSupplier(null);
+    reproRecorder.start();
+    reproRecorder.tapWireIn("a");
+    expect(meta().settingsAtArm).toBeNull();
+
+    reproRecorder.__resetForTests();
+    reproRecorder.setMetaSupplier(() => {
+      throw new Error("stage is gone");
+    });
+    expect(() => reproRecorder.start()).not.toThrow();
+    reproRecorder.tapWireIn("a");
+    expect(meta().settingsAtArm).toBeNull();
   });
 });
 
