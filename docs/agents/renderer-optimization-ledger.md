@@ -364,3 +364,30 @@ The attempt log, raw ABAB JSON/PNGs, and summary are archived in the primary che
 `residency-{bitmap,msdf}-7600.result.json` and
 `residency-gpu-{bitmap,msdf}-7600.result.json`. The texture getter was audit-only and never part of the
 timed build.
+
+## Oct 2 focused-card text follow-up
+
+The card-target `repro/1` tape was replayed as a seat at 739×281 CSS pixels, DPR 3.49, on desktop
+NVIDIA Vulkan. Its 8700–14000 ms interval contains a selected-card aim, 272 recorded outgoing
+inputs, and 93 scene deltas. The stock replay harness starts the wire clock before waiting for
+the first rendered frame, then starts the input clock afterward. Two initial Bitmap/MSDF pairs
+were therefore **MFAIL** for this question: all scene revisions had drained before their input
+markers. An ignored scratch harness delivered the keyframe, waited for readiness, then advanced
+wire and input on one clock. Its first preflight overlapped a source commit and was excluded.
+The timed four-leg comparison pinned Couch `9f926c41` and GSW `b97a2490` on one Vite server;
+all legs advanced scene revision 6→98 and completed 274–276 Rust presentations. The four
+shared Spine resource failures limit the result to the foreground/card workload.
+
+| Date | Attempt | Outcome | Key evidence |
+| --- | --- | --- | --- |
+| Oct 2 | Stock replay spectator and seat pairs, 8700–14000 ms | MFAIL | The wire stream drained to revision 104 before both measurement markers while the gesture clock kept running. No timing inference. |
+| Oct 2 | Scratch aligned preflight | Excluded | Scene revision crossed 6→98, but the source may have changed during this cell; used only to validate clock alignment. |
+| Oct 2 | Pinned aligned Bitmap/MSDF/Bitmap/MSDF, 8700–14000 ms | Exploratory; no MSDF speedup shown | Bitmap: 274/275 presents, 11/11 new text rasters, 21.05/21.04 Rust draws per present, TaskDuration 1013.54/1120.28 ms. MSDF: 275/276 presents, 11/11 new Bitmap rasters, 6979/7004 glyph-run presentations, 19.98/19.97 draws per present, TaskDuration 1093.52/1223.92 ms, one 4 MiB atlas page. The observed mean task gap was 91.81 ms in Bitmap's favor, smaller than Bitmap's 106.74 ms and MSDF's 130.40 ms within-arm ranges; all four cells drifted upward in order. Input sends, scene span, GPU identity, and readiness matched. No continuous video or physical phone leg; this is not a formal renderer-contract pass. |
+| Oct 2 | Fixed-clock aimed card pair and raster diagnostic | DIAG | The `Neutralize` title crop was pixel-identical; its body differed at 2,086 pixels, with no clear sharpness benefit at the held size. Of the 11 new Bitmap rasters in the measured interval, none belonged to the selected card's title or body: six were timer labels, four a Weak tooltip, and one an enemy name. Transforming the card reused its text resources. The instrumented diagnostic was excluded from timing. The earlier enlarged `Bash` title was also pixel-identical between methods; its old timing window was invalid. |
+
+Raw results, the scratch alignment script, and the bounded report are under
+`.sts2/artifacts/text-methods-msdf/focused-card-followup/` (`PC1`–`PC4`, `VD.json`, and
+`REPORT.md`). The aimed-card images are `VC1-repro/marker-focus11000/p00000.png` and
+`VC2-repro/marker-focus11000/p00000.png`. The enlarged Bash pair is in the phase-4 audit
+folder as `combat-zoom-1920x1080-{bitmap,msdf}-6200.png`. Neither visual pair proves native
+game parity or a focused-card MSDF quality gain; Bitmap remains the default.
