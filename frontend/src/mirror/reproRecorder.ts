@@ -32,16 +32,24 @@
 // design width, stage rect) arrives through `setMetaSupplier`, which MirrorApp installs.
 //
 // FILE FORMAT — ndjson, `format: "repro/1"`:
-//   line 1   {"meta":{format,recordedAt,url,ua,viewport,dpr,…supplier fields…,bufCapBytes,droppedLines,
-//                     droppedBytes,markers,lines,durationMs,seedAtMs,seedKind,resyncRequests}}
-//   wire     {"t":<ms>,"dir":"in"|"out","data":"<raw frame verbatim>"}
+//   line 1   {"meta":{format,recordedAt,url,ua,viewport,dpr,…supplier fields (incl. settings, the SAVE-time
+//                     snapshot)…,settingsAtArm,bufCapBytes,droppedLines,droppedBytes,markers,lines,durationMs,
+//                     seedAtMs,seedKind,resyncRequests}}
+//   wire     {"t":<ms>,"dir":"in"|"out","data":"<raw frame verbatim>","sock":"host"|"seat"}
 //   input    {"t":<ms>,"kind":"pointer","type":"down"|"move"|"up"|"cancel","x","y","id","pt","button","buttons",
 //                     "primary"}
 //            {"t":<ms>,"kind":"wheel","x","y","dx","dy","mode"}
 //            {"t":<ms>,"kind":"key","code","alt","ctrl","meta","shift"}
 //   marks    {"t":<ms>,"kind":"marker","n",["note"]}
-//   session  {"t":<ms>,"kind":"ws","ev":"ctor"|"open"|"close",["url"]}
+//   session  {"t":<ms>,"kind":"ws","ev":"ctor"|"open"|"close","sock":"host"|"seat",["url"]}
 //            {"t":<ms>,"kind":"resize","w","h","dpr"}
+//
+// `sock` — "host" (the socket this page connected with first) or "seat" (the one it was redirected to after a
+// join) — is which CONNECTION a wire/lifecycle line came from. `mirrorClient.ts`'s own `diagnosticSocketRole`
+// supplies it; this module stays "zero mirror imports" (see below) by taking the label as a plain string rather
+// than importing its type. Offline tools use it to tell a host-socket line (quiet after redirect, in real play)
+// from a seat-socket one (the actual game stream) when both land in the same ring — `scripts/replay-repro.mjs
+// --as-seat` routes by it, falling back to "deliver everything on the seat socket" for an older, untagged file.
 //
 // `t` is milliseconds since THE FIRST LINE IN THE FILE (3 decimal places) — i.e. since the oldest line the ring
 // still holds, not since the recorder was armed, because after a drop the armed instant is no longer in the file
@@ -157,6 +165,14 @@ let droppedBytes = 0;
 let markers: ReproMarker[] = [];
 let startedAt = 0;
 let metaSupplier: ReproMetaSupplier | null = null;
+// The settings snapshot taken the MOMENT the recorder armed (see `start()`), kept alongside the save-time one
+// `buildMeta` already took from `metaSupplier()`. A toggle like `panelOpen` is pure client-local UI state with
+// no wire echo, so a save-time-only snapshot lies about any such field that changed DURING the recording — found
+// when an offline replay of a recording armed mid-session, with the settings panel already open, saw the
+// save-time snapshot report it closed (because the player closed it again before SAVE, after the ring's own
+// first recorded gesture — a tap on the gear button — had already toggled it, a transition only the ARM-time
+// value, not the save-time one, can explain).
+let armSettings: Record<string, unknown> | null = null;
 
 // ---- the keyframe seed (see ReproResyncRequester) --------------------------------------------------------
 //
@@ -295,6 +311,21 @@ function reset(): void {
   resyncRequests = 0;
   resyncPending = false;
   seedWanted = false;
+  armSettings = null;
+}
+
+/** The `settings` half of `metaSupplier()`, or null if there is no supplier (or it throws). Shared by the
+ *  arm-time snapshot (`start()`) and the save-time one (`buildMeta`) so the two can never disagree about what
+ *  "settings" means beyond WHEN they were taken. */
+function snapshotSettings(): Record<string, unknown> | null {
+  try {
+    const supplied = metaSupplier?.();
+    const settings = supplied && typeof supplied === "object" ? (supplied as { settings?: unknown }).settings : null;
+    return settings && typeof settings === "object" ? (settings as Record<string, unknown>) : null;
+  } catch {
+    // A meta snapshot must never be the reason a recording cannot be armed or saved.
+    return null;
+  }
 }
 
 // ---------------------------------------------------------------------------------------------------------
@@ -464,6 +495,10 @@ function buildMeta(live: ReproEntry[], origin: number): Record<string, unknown> 
       typeof window !== "undefined" ? { w: window.innerWidth, h: window.innerHeight } : null,
     dpr: typeof window !== "undefined" ? window.devicePixelRatio : null,
     ...supplied,
+    // The settings AS THEY WERE WHEN RECORDING ARMED (see `armSettings`'s own comment) — `null` only for a
+    // recording made before this field existed. `supplied.settings` above (now effectively `settingsAtSave`)
+    // stays for back-compat: anything reading `meta.settings` keeps getting the save-time value it always did.
+    settingsAtArm: armSettings,
     bufCapBytes: capBytes,
     droppedLines,
     droppedBytes,
@@ -518,9 +553,9 @@ export interface ReproRecorder {
   /** Install the "ask the host for a keyframe" closure (MirrorApp owns it — this module has no client). */
   setResyncRequester(requester: ReproResyncRequester | null): void;
   setBufferCapBytes(value: number): void;
-  tapWireIn(data: string): void;
-  tapWireOut(data: unknown): void;
-  tapWsLifecycle(ev: "ctor" | "open" | "close", url?: string): void;
+  tapWireIn(data: string, sock?: "host" | "seat"): void;
+  tapWireOut(data: unknown, sock?: "host" | "seat"): void;
+  tapWsLifecycle(ev: "ctor" | "open" | "close", sock?: "host" | "seat", url?: string): void;
   /** Attach a stage element's input listeners; returns the detach. Safe to call mid-recording (a renderer swap
    *  remounts MirrorView, and the new stage must be heard without restarting the recording). */
   attachStage(stage: HTMLElement): () => void;
@@ -538,6 +573,7 @@ export const reproRecorder: ReproRecorder = {
     reset();
     recording = true;
     startedAt = now();
+    armSettings = snapshotSettings();
     installListeners();
     // Arming mid-session (the settings toggle, `?repro=on` after connect) starts the ring between two keyframes,
     // so ask for one now. A recorder armed at page setup gets the CONNECT keyframe first and this want is
@@ -635,11 +671,17 @@ export const reproRecorder: ReproRecorder = {
   // The INCOMING half. Called from mirrorClient's one message listener with the raw frame string, BEFORE the
   // JSON.parse and before the watch gate — so a frame the gate drops (which is exactly the class of straggler a
   // "the client ignored it" bug is made of) is still in the file.
-  tapWireIn(data: string): void {
+  //
+  // `sock` — "host" or "seat" (mirrorClient's own `diagnosticSocketRole`, the same label its lifecycle telemetry
+  // already uses) — is which CONNECTION this line came from. `reproRecorder` is one singleton tapped by every
+  // `connectMirrorClient` instance on the page, so a session that redirects to a seat has TWO sockets feeding
+  // the same ring with no other way to tell their lines apart. Offline replay (`scripts/replay-repro.mjs
+  // --as-seat`) reads this to route recorded frames back onto the matching fake socket instead of guessing.
+  tapWireIn(data: string, sock: "host" | "seat" = "host"): void {
     if (!recording) {
       return;
     }
-    push(now(), data.length + WIRE_LINE_OVERHEAD, { dir: "in", data });
+    push(now(), data.length + WIRE_LINE_OVERHEAD, { dir: "in", data, sock });
     if (!isKeyframeFrame(data)) {
       return;
     }
@@ -657,18 +699,18 @@ export const reproRecorder: ReproRecorder = {
 
   // The OUTGOING half, from the wrapped socket `send`. The wire is JSON TEXT in both directions (the host rejects
   // binary), so a non-string argument is not something this client sends and is skipped rather than coerced.
-  tapWireOut(data: unknown): void {
+  tapWireOut(data: unknown, sock: "host" | "seat" = "host"): void {
     if (!recording || typeof data !== "string") {
       return;
     }
-    push(now(), data.length + WIRE_LINE_OVERHEAD, { dir: "out", data });
+    push(now(), data.length + WIRE_LINE_OVERHEAD, { dir: "out", data, sock });
   },
 
-  tapWsLifecycle(ev: "ctor" | "open" | "close", url?: string): void {
+  tapWsLifecycle(ev: "ctor" | "open" | "close", sock: "host" | "seat" = "host", url?: string): void {
     if (!recording) {
       return;
     }
-    push(now(), KIND_LINE_COST, { kind: "ws", ev, ...(url ? { url } : {}) });
+    push(now(), KIND_LINE_COST, { kind: "ws", ev, sock, ...(url ? { url } : {}) });
   },
 
   attachStage(stage: HTMLElement): () => void {
