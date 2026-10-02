@@ -113,6 +113,24 @@ describe("SettingsPanel — saving a viewer's choices", () => {
     wrapper.unmount();
   });
 
+  it("clears an incoming stage override without adding a stage query on panel changes", async () => {
+    const priorUrl = window.location.href;
+    try {
+      window.history.replaceState(null, "", "/?stage=canvas&name=Ann#game");
+      const wrapper = mountPanel();
+      await wrapper.get('[data-testid="mirror-stage"]').setValue("canvas");
+      expect(window.location.search).toBe("?name=Ann");
+      expect(window.location.hash).toBe("#game");
+      expect(saved()).toEqual({ stage: "canvas" });
+      await wrapper.get('[data-testid="mirror-stage"]').setValue("dom");
+      expect(window.location.search).toBe("?name=Ann");
+      expect(saved()).toEqual({ stage: "dom" });
+      wrapper.unmount();
+    } finally {
+      window.history.replaceState(null, "", priorUrl);
+    }
+  });
+
   it("saves a QUALITY rung together with the three rows it sets", async () => {
     // The quality row is the one control that writes more than its own field — and every one of those writes has
     // to be saved, or a reload would show the rung next to rows it does not imply.

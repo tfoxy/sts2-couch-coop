@@ -90,7 +90,7 @@ describe("resolveSemanticTextSpec + buildPreparedText — the pure half", () => 
     expect(prepared.runs[0].style.fontFamily).toBe("kreon_regular");
   });
 
-  it("retries an inline image after it loads instead of caching the pending refusal", () => {
+  it("draws surrounding words while an image loads, then retries without caching the pending layout", () => {
     const root = node("root", null, { sceneFilePath: "res://scenes/ui/event_option_button.tscn" });
     const label = node("label", "root", { richText: true,
       text: { ...node("unused", null).text, text: "Gain [img]res://icons/energy.png[/img]" } });
@@ -103,10 +103,32 @@ describe("resolveSemanticTextSpec + buildPreparedText — the pure half", () => 
       return buildPreparedText(resolved, 0, FONT, measure, measureLineMetrics,
         undefined, () => loaded ? { width: 24, height: 24 } : null);
     };
-    expect(cache.resolve(label, nodes, 0, "native", false, compute)).toEqual({ refusal: "image-pending" });
+    const pending = assertPrepared(cache.resolve(label, nodes, 0, "native", false, compute));
+    expect(pending.imagePending).toBe(true);
+    expect(pending.runs.map((run) => run.text).join("")).toContain("Gain ");
+    expect(composePreparedTextRecords(pending, "label", 0,
+      { transform: [1, 0, 0, 1, 0, 0], opacity: 1, tintR: 1, tintG: 1, tintB: 1 }, 0)
+      .some((record) => "inlineImage" in record)).toBe(false);
     loaded = true;
-    expect("refusal" in cache.resolve(label, nodes, 0, "native", false, compute)).toBe(false);
+    const ready = assertPrepared(cache.resolve(label, nodes, 0, "native", false, compute));
+    expect(ready.imagePending).toBe(false);
+    expect(ready.runs.some((run) => run.inlineImage)).toBe(true);
     expect(cache.stats().misses).toBe(2);
+  });
+
+  it("omits a permanently failed image but keeps words and a nonfatal degradation", () => {
+    const root = node("root", null, { sceneFilePath: "res://scenes/ui/event_option_button.tscn" });
+    const label = node("label", "root", { richText: true,
+      text: { ...node("unused", null).text, text: "Gain [img]res://icons/missing.png[/img] energy" } });
+    const resolved = resolveSemanticTextSpec(label, nodeMap([root, label]), true);
+    if ("refusal" in resolved) throw new Error(resolved.refusal);
+    const prepared = assertPrepared(buildPreparedText(resolved, 0, FONT, measure, measureLineMetrics,
+      undefined, () => ({ width: 0, height: 0 })));
+    expect(prepared.imagePending).toBe(false);
+    expect(prepared.degradations).toContain("rich:img:image-unavailable:/res/icons/missing.png");
+    expect(composePreparedTextRecords(prepared, "label", 0,
+      { transform: [1, 0, 0, 1, 0, 0], opacity: 1, tintR: 1, tintG: 1, tintB: 1 }, 0)
+      .map((record) => record.text).join("")).toBe("Gain  energy");
   });
 
   it("replays matching parsed breaks for a bold label and rejects stale breaks", () => {

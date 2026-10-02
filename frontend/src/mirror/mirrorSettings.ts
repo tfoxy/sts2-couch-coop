@@ -10,12 +10,12 @@
 //   UI — panel open/closed + the latency overlay toggle (both gate the latency probe's cadence; see MirrorApp).
 //
 // LAYERING (lowest to highest), applied once per page load in `createMirrorSettings`:
-//   1. built-in defaults — the product defaults below (quality Auto, shaders Static, particles Static, …). The
-//      SAME values on every device: a setting must mean the same thing on a phone and on a desktop (see
+//   1. built-in defaults — the product defaults below (quality Auto, shaders Static, particles Static, …). Render
+//      settings mean the same thing on a phone and on a desktop (see
 //      quality.ts — the one device-dependent part of a static mode is the backing-store scale it renders its
 //      single frame at). Note what this means for the QUALITY row: `auto` decides the device levers only and
 //      never pushes rows, so detection cannot silently change what a viewer sees.
-//   2. device seed — two things, and they are not the same kind of thing. The hard-off FLOOR (`?debug` /
+//   2. device seed — the WebKit first-visit canvas stage, plus two effect decisions. The hard-off FLOOR (`?debug` /
 //      `?quality=minimum` / a software-WebGL phone has no usable GPU path, so both effect modes read `off` there
 //      and the panel says so honestly), which layers 3 and 4 cannot lift; and the iOS EFFECT SEED (both families
 //      start `off` on iPhone/iPad — see DEFAULT_SHADER_MODE below), which they can and must. Everything else the
@@ -33,6 +33,7 @@
 // so it has nothing viewer-set to save.
 
 import { reactive } from "vue";
+import { isWebKitBrowser } from "@/platform";
 
 import { REPRO_UI_ENABLED } from "@/mirror/buildFlags";
 import {
@@ -161,7 +162,7 @@ export function parseSpineMode(raw: string | null): SpineMode {
 // it reports low-ppem glyph runs without changing the selected text path.
 
 export interface MirrorSettings {
-  /** Public stage choice; a fresh viewer starts on DOM. */
+  /** Public stage choice; a fresh WebKit viewer starts on canvas, other viewers on DOM. */
   stage: "dom" | "canvas";
   /** The live renderer request. A failed Rust canvas can use DOM without changing the saved choice. */
   runtimeStage: "dom" | "canvas";
@@ -679,6 +680,9 @@ export interface CreateMirrorSettingsOptions {
    * test can exercise the excluded build without a second bundle. See `reproRecorder`'s layering below.
    */
   reproUiEnabled?: boolean;
+  /** Injectable browser identity for the first-visit stage seed. */
+  userAgent?: string | null;
+  maxTouchPoints?: number;
 }
 
 // Build a fresh reactive store, layering defaults < tier floor < saved choices < URL query (see the module
@@ -691,8 +695,12 @@ export function createMirrorSettings(
   const params = new URLSearchParams(search);
   const saved = readStoredMirrorSettings(options.storage === undefined ? defaultSettingsStorage() : options.storage);
   const reproUiEnabled = options.reproUiEnabled ?? REPRO_UI_ENABLED;
+  const userAgent = options.userAgent === undefined
+    ? (typeof navigator === "undefined" ? null : navigator.userAgent) : options.userAgent;
+  const maxTouchPoints = options.maxTouchPoints === undefined
+    ? (typeof navigator === "undefined" ? 0 : navigator.maxTouchPoints) : options.maxTouchPoints;
   const stage = params.get("stage") === "dom" || params.get("stage") === "canvas"
-    ? params.get("stage") as "dom" | "canvas" : saved.stage ?? "dom";
+    ? params.get("stage") as "dom" | "canvas" : saved.stage ?? (isWebKitBrowser(userAgent, maxTouchPoints) ? "canvas" : "dom");
   return reactive<MirrorSettings>({
     stage,
     runtimeStage: stage,

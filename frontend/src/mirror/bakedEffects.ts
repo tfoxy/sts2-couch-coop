@@ -58,11 +58,9 @@
 // gets a still and WHERE it goes. The DOM renderer owns how it is mounted, and the two effect-binding builders
 // (`shaderAttributes` / `particleAttributes`) ask {@link bakedStillCoversNode} whether to build a binding at all.
 //
-// SCOPE: the DOM stage (`?stage=dom`, the shipping default). The opt-in `?stage=canvas` backend is deliberately
-// untouched — see `canvas/paintSpec.ts`'s note and `bakedEffects.spec.ts` — and that is enforced here rather than
-// only documented: on that stage the gsw binding IS what the draw list blits (`paintSpec.fxHostIsLive` is
-// literally "the builder returned a binding"), so suppressing one there would delete the effect outright instead
-// of substituting for it. Hence the `stageOwnsEffectPixelsNow()` term in {@link stillsCover}.
+// The DOM binding gate remains stage-aware: the legacy canvas path owns live effect pixels and must never have
+// them suppressed by a still. The Rust draw-list renderer asks for the mode-independent descriptor separately
+// and paints the image itself at the node's paint position.
 //
 // Self-contained per the mirror decoupling rule: `@/mirror/*` only.
 
@@ -93,6 +91,9 @@ export interface BakedStillBox {
 export interface BakedStill {
   /** The bundled image URL (Vite resolves it to a hashed `/app/…png`). */
   url: string;
+  /** The committed PNG's pixel dimensions, needed for a draw-list source rectangle before decode completes. */
+  sourceWidth: number;
+  sourceHeight: number;
   /**
    * The node-local rect the image covers, or `"localRect"` when the still was baked at the node's OWN box and the
    * element can simply paint it across itself. The ripple is the latter; a boxless emitter cannot be.
@@ -167,6 +168,8 @@ function bakedStillEntryFor(node: MirrorNode): BakedStillEntry | null {
       family: "shader",
       still: {
         url: cardRippleStill,
+        sourceWidth: 759,
+        sourceHeight: 951,
         // The bake captured the node's own 759x951 `localRect`, so the element paints it across itself 1:1.
         box: "localRect",
         // Declared by the shader's `render_mode blend_add`, which nothing streams — see the header.
@@ -186,11 +189,13 @@ function bakedStillEntryFor(node: MirrorNode): BakedStillEntry | null {
     // `canvasBlendMode: 1`, and `nodeStyle` maps that to `plus-lighter` for us.
     return {
       family: "particle",
-      still: { url: glowUncommonStill, box: UNCOMMON_GLOW_BOX, additive: false, opacityScale: 1 }
+      still: { url: glowUncommonStill, sourceWidth: 256, sourceHeight: 256,
+        box: UNCOMMON_GLOW_BOX, additive: false, opacityScale: 1 }
     };
   }
   if (node.nodeType === RARE_GLOW_NODE_TYPE) {
-    return { family: "particle", still: { url: glowRareStill, box: RARE_GLOW_BOX, additive: false, opacityScale: 1 } };
+    return { family: "particle", still: { url: glowRareStill, sourceWidth: 384, sourceHeight: 384,
+      box: RARE_GLOW_BOX, additive: false, opacityScale: 1 } };
   }
   return null;
 }
@@ -219,6 +224,11 @@ function stillsCover(family: "shader" | "particle"): boolean {
 export function bakedStillFor(node: MirrorNode): BakedStill | null {
   const entry = bakedStillEntryFor(node);
   return entry !== null && stillsCover(entry.family) ? entry.still : null;
+}
+
+/** Rust's draw-list image, independent of the DOM effect-mode and legacy-canvas binding gates. */
+export function bakedStillForRust(node: MirrorNode): BakedStill | null {
+  return bakedStillEntryFor(node)?.still ?? null;
 }
 
 /**

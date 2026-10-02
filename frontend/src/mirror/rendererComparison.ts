@@ -120,8 +120,10 @@ export const rendererComparisonViewRevision = ref(0);
 /** Change the public stage without enabling the developer comparison panel or reconnecting the seat. */
 export function applyViewerStage(stage: "dom" | "canvas", win = window): void {
   const url = new URL(win.location.href);
-  url.searchParams.set("stage", stage);
-  win.history.replaceState(win.history.state ?? null, "", url.toString());
+  if (url.searchParams.has("stage")) {
+    url.searchParams.delete("stage");
+    win.history.replaceState(win.history.state ?? null, "", url.toString());
+  }
   const next = normalizedComparisonConfig({ ...rendererComparisonConfig, backend: stage });
   Object.assign(rendererComparisonConfig, next);
   setRendererRuntimeStatus({ requested: { ...next }, actualBackend: null, actualConfig: null,

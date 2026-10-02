@@ -355,10 +355,14 @@ export function overlayKindOf(node: MirrorNode): OverlayKind | null {
 }
 
 /** The node's bucket. See the header; `canvas ∪ overlay` is the visible painting set. */
-export function classifyNode(node: MirrorNode, ownOpacity: number, hidden: boolean): NodeClass {
-  if (hidden || !nodeIsPainting(node, ownOpacity)) {
+export function classifyNode(node: MirrorNode, ownOpacity: number, hidden: boolean,
+  forceEffectOverlay: "shader" | "particles" | null = null): NodeClass {
+  if (hidden || ownOpacity <= 0.02) {
     return "skip";
   }
+  // A boxless particle emitter has no ordinary node paint, yet its baked image is visible.
+  if (forceEffectOverlay) return "overlay";
+  if (!nodeIsPainting(node, ownOpacity)) return "skip";
   return overlayKindOf(node) === null ? "canvas" : "overlay";
 }
 
@@ -372,9 +376,10 @@ export function classifyNode(node: MirrorNode, ownOpacity: number, hidden: boole
  */
 export function overlayRecordFor(
   input: NodePaintInput,
-  clipChain: readonly OverlayClipScope[] | null = null
+  clipChain: readonly OverlayClipScope[] | null = null,
+  forceEffectOverlay: "shader" | "particles" | null = null
 ): OverlayRecord | null {
-  const kind = overlayKindOf(input.node);
+  const kind = forceEffectOverlay ?? overlayKindOf(input.node);
   if (kind === null) {
     return null;
   }

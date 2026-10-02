@@ -47,7 +47,7 @@ import {
   setStaticStillGauge,
   type MirrorStaticStillCounters
 } from "@/mirror/renderer/walkStats";
-// WHICH backend draws the stage (DOM today, `?stage=canvas` for the single-canvas one) is the factory's decision,
+// WHICH backend draws the stage (WebKit first visits use Rust canvas; others use DOM) is the factory's decision,
 // never this component's — see rendererFactory. `requestedStageBackend` is read for ONE thing only: the canvas
 // backend needs its own untransformed host element in the template, and a template is built before any renderer
 // exists (see `canvasHostLayout`).

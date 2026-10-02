@@ -1,5 +1,6 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { mount } from "@vue/test-utils";
+import { createQuadView, type DrawList } from "@godot-scene-web/canvas";
 import { applySceneDelta, createMirrorState, parseSceneDelta } from "@/mirror/sceneTree";
 import { connectMirrorClient } from "@/mirror/mirrorClient";
 import MirrorView from "@/mirror/MirrorView.vue";
@@ -152,6 +153,37 @@ function animatedColorScene() {
       localRect: { position: { x: 0, y: 0 }, size: { x: 180, y: 110 } },
       fillColor: { r: 1, g: 1, b: 1, a: 1, html: "#ffffffff" }, pinnedLoopAnim: "mapPointPulse" }],
   })!);
+  return state;
+}
+
+function cardEffectScene(width = 0.075) {
+  const at = (x: number, y: number, sy = 1) => ({
+    xAxis: { x: 1, y: 0 }, yAxis: { x: 0, y: sy }, origin: { x, y }
+  });
+  const rect = (x: number, y: number, width: number, height: number) => ({
+    position: { x, y }, size: { x: width, y: height }
+  });
+  const state = createMirrorState();
+  applySceneDelta(state, parseSceneDelta({ type: "scene-delta", full: true, screenType: "run",
+    orderedIds: ["back", "ripple", "uncommon", "rare", "front"], upserts: [
+      { id: "back", parentId: null, name: "Back", nodeType: "ColorRect", visible: true,
+        transform: at(0, 0), localRect: rect(0, 0, 800, 800), fillColor: { html: "#101010ff" } },
+      { id: "ripple", parentId: null, name: "Highlight", nodeType: "NCardHighlight", visible: true,
+        mouseFilter: 0, transform: at(100, 50), localRect: rect(5, 7, 759, 951),
+        fillColor: { html: "#ffffffff" }, modulate: { html: "#4080c0cc" },
+        shader: { resourcePath: "res://shaders/card_ripple.gdshader" },
+        shaderParameters: [{ name: "width", kind: "number", number: width }] },
+      { id: "uncommon", parentId: null, name: "UncommonGlow",
+        nodeType: "MegaCrit.Sts2.Core.Nodes.Vfx.Cards.NCardUncommonGlow", visible: true,
+        transform: at(400, 300, 1.35), canvasBlendMode: 1, modulate: { html: "#80ffffff" },
+        particleSpec: { kind: "GPUParticles2D" } },
+      { id: "rare", parentId: null, name: "RareGlow",
+        nodeType: "MegaCrit.Sts2.Core.Nodes.Vfx.Cards.NCardRareGlow", visible: true,
+        transform: at(700, 500), canvasBlendMode: 1, modulate: { html: "#ffffff80" },
+        particleSpec: { kind: "GPUParticles2D" } },
+      { id: "front", parentId: null, name: "Front", nodeType: "ColorRect", visible: true,
+        transform: at(0, 0), localRect: rect(0, 0, 50, 50), fillColor: { html: "#ffffffff" } }
+    ] })!);
   return state;
 }
 
@@ -433,6 +465,67 @@ describe("Pixi composition initialization", () => {
     } finally { renderer.dispose(); }
   });
 
+  it.each(["rustFast=0", "rustFast=1"])("draws ripple and both boxless rarity glows in paint order (%s)", async (query) => {
+    window.history.replaceState(null, "", `/?stage=canvas&${query}`);
+    Object.assign(rendererComparisonConfig, readRendererComparisonConfig());
+    const state = cardEffectScene();
+    const adapter = fakeAdapter(true);
+    const renderer = createPixiMirrorRenderer(stage(), document.createElementNS("http://www.w3.org/2000/svg", "defs"), null,
+      undefined, { backend: "rust", createExecutor: async () => adapter as never });
+    try {
+      expect(renderer.reconcile(state)).toBe(false);
+      await vi.waitFor(() => expect(adapter.admitScene).toHaveBeenCalled());
+      const list = adapter.admitScene.mock.calls.at(-1)?.[0] as DrawList<string>;
+      const textures = Array.from({ length: list.count }, (_, i) => list.textureAt(i) ?? "");
+      const ripple = textures.findIndex((url) => url.includes("card-ripple"));
+      const uncommon = textures.findIndex((url) => url.includes("glow-uncommon"));
+      const rare = textures.findIndex((url) => url.includes("glow-rare"));
+      expect([ripple, uncommon, rare].every((index) => index >= 0)).toBe(true);
+      expect(ripple).toBeLessThan(uncommon);
+      expect(uncommon).toBeLessThan(rare);
+      expect(rare).toBeLessThan(list.count - 1); // the front fill paints over the effects
+      const rippleQuad = list.readQuad(ripple, createQuadView());
+      expect([...rippleQuad.m]).toEqual([1, 0, 0, 1, 105, 57]);
+      expect([rippleQuad.w, rippleQuad.h, rippleQuad.srcW, rippleQuad.srcH, rippleQuad.blend])
+        .toEqual([759, 951, 759, 951, 1]);
+      expect(rippleQuad.a).toBeCloseTo(0.8, 2);
+      expect(rippleQuad.r).toBeCloseTo((0x40 / 255) * (0xcc / 255), 3);
+      expect(rippleQuad.g).toBeCloseTo((0x80 / 255) * (0xcc / 255), 3);
+      expect(rippleQuad.b).toBeCloseTo((0xc0 / 255) * (0xcc / 255), 3);
+      const uncommonQuad = list.readQuad(uncommon, createQuadView());
+      expect([uncommonQuad.w, uncommonQuad.h, uncommonQuad.srcW, uncommonQuad.srcH, uncommonQuad.blend])
+        .toEqual([512, 512, 256, 256, 1]);
+      expect([...uncommonQuad.m].slice(0, 3)).toEqual([1, 0, 0]);
+      expect(uncommonQuad.m[3]).toBeCloseTo(1.35, 5);
+      expect(uncommonQuad.m[4]).toBe(144);
+      expect(uncommonQuad.m[5]).toBeCloseTo(300 - 256 * 1.35, 5);
+      expect(uncommonQuad.r).toBeCloseTo(0x80 / 255, 3);
+      const rareQuad = list.readQuad(rare, createQuadView());
+      expect([rareQuad.w, rareQuad.h, rareQuad.srcW, rareQuad.srcH, rareQuad.blend])
+        .toEqual([768, 768, 384, 384, 1]);
+      expect([...rareQuad.m]).toEqual([1, 0, 0, 1, 316, 116]);
+      expect(rareQuad.a).toBeCloseTo(0x80 / 255, 3);
+      expect(renderer.interactiveRects().some((rect) => rect.id === "ripple")).toBe(true);
+    } finally { renderer.dispose(); }
+  });
+
+  it("keeps hidden ripples dark while rarity glows still render", async () => {
+    window.history.replaceState(null, "", "/?stage=canvas&rustFast=1");
+    Object.assign(rendererComparisonConfig, readRendererComparisonConfig());
+    const adapter = fakeAdapter(true);
+    const renderer = createPixiMirrorRenderer(stage(), document.createElementNS("http://www.w3.org/2000/svg", "defs"), null,
+      undefined, { backend: "rust", createExecutor: async () => adapter as never });
+    try {
+      expect(renderer.reconcile(cardEffectScene(0))).toBe(false);
+      await vi.waitFor(() => expect(adapter.admitScene).toHaveBeenCalled());
+      const list = adapter.admitScene.mock.calls.at(-1)?.[0] as DrawList<string>;
+      const textures = Array.from({ length: list.count }, (_, i) => list.textureAt(i) ?? "");
+      expect(textures.some((url) => url.includes("card-ripple"))).toBe(false);
+      expect(textures.some((url) => url.includes("glow-uncommon"))).toBe(true);
+      expect(textures.some((url) => url.includes("glow-rare"))).toBe(true);
+    } finally { renderer.dispose(); }
+  });
+
   it.each(["rustFast=0", "rustFast=1"])("presents rich event options with their icon and hit target (%s)", async (query) => {
     window.history.replaceState(null, "", `/?stage=canvas&${query}`);
     Object.assign(rendererComparisonConfig, readRendererComparisonConfig());
@@ -462,6 +555,35 @@ describe("Pixi composition initialization", () => {
       expect(renderer.interactiveRects().some((rect) => rect.id === "label")).toBe(true);
       expect((window as unknown as { __mirrorRendererDiagnostics(): { omissions?: { nodes: Record<string, string> } } })
         .__mirrorRendererDiagnostics().omissions?.nodes?.label).toBeUndefined();
+    } finally { renderer.dispose(); }
+  });
+
+  it.each(["rustFast=0", "rustFast=1"])("keeps rich words and hits when styles are unavailable (%s)", async (query) => {
+    window.history.replaceState(null, "", `/?stage=canvas&${query}`);
+    Object.assign(rendererComparisonConfig, readRendererComparisonConfig());
+    const state = textScene();
+    const label = state.nodes.get("label")!;
+    label.richText = true;
+    label.nodeType = "RichTextLabel";
+    label.mouseFilter = 0;
+    label.text = { ...label.text!, text: "[u]Pick[/u] [shake]this[/shake][br][unknown]again" };
+    const adapter = fakeAdapter(true);
+    const renderer = createPixiMirrorRenderer(stage(), document.createElementNS("http://www.w3.org/2000/svg", "defs"), null,
+      undefined, { backend: "rust", createExecutor: async () => adapter as never });
+    try {
+      expect(renderer.reconcile(state)).toBe(false);
+      await vi.waitFor(() => expect(adapter.admitScene).toHaveBeenCalled());
+      const records = adapter.admitScene.mock.calls.at(-1)?.[1] as readonly (TestPixiText & { text: string })[];
+      const words = records.filter((record) => record.labelId === "label").map((record) => record.text).join(" ");
+      expect(words).toContain("Pick");
+      expect(words).toContain("this");
+      expect(words).toContain("[unknown]again");
+      expect(renderer.interactiveRects().some((rect) => rect.id === "label")).toBe(true);
+      const diagnostics = (window as unknown as { __mirrorRendererDiagnostics(): {
+        omissions?: { nodes: Record<string, string> }; degradations?: Record<string, string> } }).__mirrorRendererDiagnostics();
+      expect(diagnostics.omissions?.nodes?.label).toBeUndefined();
+      expect(diagnostics.degradations?.label).toContain("rich:font-swap");
+      expect(diagnostics.degradations?.label).toContain("rich:effect");
     } finally { renderer.dispose(); }
   });
 

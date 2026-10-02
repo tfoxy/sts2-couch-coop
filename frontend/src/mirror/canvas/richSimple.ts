@@ -1,20 +1,19 @@
-// SIMPLE RICH TEXT — the subset of bbcode our canvas raster can draw, and a LOUD refusal for everything else.
+// SIMPLE RICH TEXT — strict legacy parsing and a tolerant Rust mode that keeps the readable content.
 //
 // Treating every `RichTextLabel` as a refusal would be a large over-refusal, because `rich` is a wire boolean
 // (the node's type) rather than a statement about the string. Measured over the recorded corpus, most
 // rich strings carry no markup at all, and most of the rest carry only whole-string alignment and colour. Those
 // are drawable by a run list — one `fillText` per colour run instead of one per line — and nothing else about the
 // raster changes. Rust additionally enables streamed font roles and inline images; the legacy path keeps its
-// original subset.
+// original subset. Tolerant Rust parsing records lost styling instead of omitting a whole label.
 //
 // ---------------------------------------------------------------------------------------------------------------
-// WHY THE REFUSALS ARE THE FEATURE, and why they are per class rather than a boolean.
+// WHY STRICT REFUSALS ARE NAMED, and why tolerant mode preserves unknown tokens.
 //
 // gsw renders an unrecognised tag LITERALLY. So a tokenizer here that disagrees with gsw's does not produce a
 // slightly-wrong label — it produces the WRONG WORDS on screen, either by swallowing markup gsw would have shown
-// or by showing markup gsw would have consumed. That is the one failure mode a text path must never ship, and it
-// is strictly worse than refusing that one label. The legacy canvas path can keep its DOM element; the Rust
-// stage omits the label and continues to render the scene.
+// or by showing markup gsw would have consumed. The legacy canvas path can keep its DOM element on a refusal;
+// Rust instead consumes known tags, retains unknown ones literally, and records each lost visual feature.
 //
 // Each refusal is named, so a census can say WHICH construct is holding a screen back rather than how many labels
 // failed:
@@ -94,6 +93,8 @@ export interface RichSimple {
   images: Array<{ start: number; path: string; valign: "top" | "middle" | "bottom" }>;
   /** Whole-string alignment, or null when the string carried none. */
   align: "left" | "center" | "right" | "justify" | null;
+  /** Features deliberately flattened by the tolerant Rust path. */
+  losses?: Array<{ feature: RichRefusal; detail: string }>;
 }
 
 export type RichParseResult =
@@ -158,6 +159,149 @@ interface Frame {
 /** Matches one bbcode token. Mirrors what gsw's scanner accepts: a name, an optional `=value` or space-arguments. */
 const TAG_RE = /\[(\/?)([a-zA-Z_]+)((?:=|\s)[^\]]*)?\]/g;
 
+/** Rust keeps the readable content when a BBCode feature has no canvas equivalent. */
+function parseTolerantRich(
+  raw: string,
+  table: Record<string, GodotBbcodeTagDescriptor>,
+  validate: ColorValidator,
+  fontRoles: boolean,
+  inlineImages: boolean
+): RichSimple {
+  type TolerantFrame = { name: string; kind: string; color: string | null; align?: RichSimple["align"] };
+  const stack: TolerantFrame[] = [];
+  const spans: RichSpan[] = [];
+  const roles: RichSimple["roles"] = [];
+  const images: RichSimple["images"] = [];
+  const losses: NonNullable<RichSimple["losses"]> = [];
+  let out = "";
+  let align: RichSimple["align"] = null;
+  let alignStart = -1;
+  let alignEnd = -1;
+  let alignCount = 0;
+  const lose = (feature: RichRefusal, detail: string): void => {
+    if (!losses.some((loss) => loss.feature === feature && loss.detail === detail)) losses.push({ feature, detail });
+  };
+  const append = (value: string): void => {
+    if (!value) return;
+    const start = out.length;
+    out += value;
+    const color = [...stack].reverse().find((frame) => frame.color !== null)?.color;
+    if (color) {
+      const last = spans.at(-1);
+      if (last?.color === color && last.end === start) last.end = out.length;
+      else spans.push({ start, end: out.length, color });
+    }
+    if (fontRoles) {
+      const bold = stack.some((frame) => frame.name === "b");
+      const italic = stack.some((frame) => frame.name === "i");
+      const role = bold && italic ? "bold-italic" : bold ? "bold" : italic ? "italic" : null;
+      if (role) {
+        const last = roles.at(-1);
+        if (last?.role === role && last.end === start) last.end = out.length;
+        else roles.push({ start, end: out.length, role });
+      }
+    }
+  };
+
+  // Mirror gsw's scanner: malformed or unknown bracket sequences are ordinary text, while a recognized tag is
+  // consumed even when its visual feature cannot be represented. Its style pop first matches kind+id, then kind.
+  for (let cursor = 0; cursor < raw.length;) {
+    if (raw[cursor] !== "[") {
+      const next = raw.indexOf("[", cursor);
+      const end = next < 0 ? raw.length : next;
+      append(raw.slice(cursor, end));
+      cursor = end;
+      continue;
+    }
+    const end = raw.indexOf("]", cursor + 1);
+    const token = end < 0 ? null : raw.slice(cursor + 1, end);
+    const close = token?.startsWith("/") ?? false;
+    const body = (close ? token!.slice(1) : token ?? "").trim();
+    const match = /^([a-zA-Z_][\w-]*)(?:[=\s]+([\s\S]*))?$/.exec(body);
+    const name = match?.[1]?.toLowerCase();
+    const kind = name ? godotBbcodeTagKind(name, table) : undefined;
+    if (!name || !kind || (close && kind === "void")) {
+      // gsw consumes only the opening bracket, then resumes scanning. A later nested `[b]` can therefore still
+      // become a real tag even if the first `[` began malformed markup.
+      append("[");
+      lose("unknown", end < 0 ? "[" : raw.slice(cursor, end + 1));
+      cursor++;
+      continue;
+    }
+    cursor = end + 1;
+    if (kind === "image") {
+      if (close) continue;
+      const pathEnd = raw.indexOf("[", cursor);
+      const next = pathEnd < 0 ? raw.length : pathEnd;
+      const path = raw.slice(cursor, next).trim();
+      cursor = next;
+      const args = (match?.[2] ?? "").trim().toLowerCase();
+      const leading = args.split(/[\s,]/, 1)[0];
+      const valign = leading === "top" || leading === "t" ? "top"
+        : leading === "bottom" || leading === "b" ? "bottom" : "middle";
+      if (args && !["top", "t", "center", "c", "middle", "bottom", "b"].includes(args))
+        lose("img", `[img ${args}] options`);
+      if (!path || !inlineImages) { lose("img", path ? "inline image" : "empty image path"); continue; }
+      images.push({ start: out.length, path, valign });
+      append("\uFFFC");
+      continue;
+    }
+    if (kind === "void") {
+      append("\n");
+      if (name !== "br") lose("style", `[${name}] rule`);
+      continue;
+    }
+    if (close) {
+      let at = -1;
+      for (let i = stack.length - 1; i >= 0; i--) {
+        if (stack[i]?.name === name && stack[i]?.kind === kind) { at = i; break; }
+      }
+      if (at < 0) for (let i = stack.length - 1; i >= 0; i--) {
+        if (stack[i]?.kind === kind) { at = i; break; }
+      }
+      if (at < 0) lose("unbalanced", `[/${name}]`);
+      else {
+        const [frame] = stack.splice(at, 1);
+        if (frame?.align !== undefined) alignEnd = out.length;
+      }
+      continue;
+    }
+    let color: string | null = null;
+    if (kind === "color") {
+      if (name === "outline_color") lose("style", `[${name}]`);
+      else {
+        const descriptor = table[name];
+        const rawColor = name === "color" || name === "fgcolor" ? (match?.[2] ?? "")
+          : descriptor?.kind === "color" ? descriptor.value : "";
+        color = validate(rawColor);
+        if (color === null) lose("bad-color", `[${name}=${rawColor}]`);
+      }
+    } else if (kind === "align") {
+      const requested = name === "p" ? (/align\s*=\s*([a-zA-Z]+)/.exec(match?.[2] ?? "")?.[1]?.toLowerCase() ?? "left") : name;
+      if (requested === "left" || requested === "right" || requested === "center" || requested === "fill") {
+        alignCount++;
+        if (alignCount === 1) { align = alignFrom(requested); alignStart = out.length; }
+        else lose("nested-align", `[${name}]`);
+      } else lose("unknown", `[p align=${requested}]`);
+    } else if ((kind === "bold" || kind === "italic") && !fontRoles) lose("font-swap", `[${name}]`);
+    else if (kind === "underline" || kind === "strike" || kind === "code") lose("font-swap", `[${name}]`);
+    else if (kind === "effect") lose("effect", `[${name}]`);
+    else if (kind === "style" && table[name]?.kind === "style" && Object.keys(table[name].css ?? {}).length)
+      lose("style", `[${name}]`);
+    else if (kind === "bgcolor" || kind === "url" || kind === "font_size" || kind === "indent" ||
+      (kind === "structural" && name !== "lang" && name !== "hint")) lose("style", `[${name}]`);
+    stack.push({ name, kind, color, ...(kind === "align" ? { align } : {}) });
+  }
+  if (alignCount) {
+    if (alignEnd < 0) alignEnd = out.length;
+    if (alignCount !== 1 || out.slice(0, alignStart).trim() || out.slice(alignEnd).trim()) {
+      lose("non-wrapping-align", "alignment covers only part of the string");
+      align = null;
+    }
+  }
+  return { text: out, spans, roles, images, align, losses };
+}
+
 /**
  * Parse one rich string into plain text plus colour runs, or refuse and say which class refused it.
  *
@@ -166,10 +310,13 @@ const TAG_RE = /\[(\/?)([a-zA-Z_]+)((?:=|\s)[^\]]*)?\]/g;
  */
 export function parseSimpleRich(
   raw: string,
-  options: { tags?: Record<string, unknown>; color?: ColorValidator; fontRoles?: boolean; inlineImages?: boolean } = {}
+  options: { tags?: Record<string, unknown>; color?: ColorValidator; fontRoles?: boolean; inlineImages?: boolean;
+    unsupported?: "plain" } = {}
 ): RichParseResult {
   const table = (options.tags ?? DEFAULT_BBCODE_TAGS) as Record<string, GodotBbcodeTagDescriptor>;
   const validate = options.color ?? ((v: string) => v.trim() || null);
+  if (options.unsupported === "plain") return { ok: true, value: parseTolerantRich(raw, table, validate,
+    options.fontRoles ?? false, options.inlineImages ?? false) };
 
   let out = "";
   const spans: RichSpan[] = [];

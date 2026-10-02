@@ -16,7 +16,7 @@
 // pending/failed, pushing into `texts`/`textOwners`, and the `fast.textPrepCache` / `fast.fontCheckCache` on/off
 // switch itself. This module only has to be right about what a node's label looks like, not about when to ask it.
 
-import { parseSimpleRich } from "@/mirror/canvas/richSimple";
+import { parseSimpleRich, type ColorValidator } from "@/mirror/canvas/richSimple";
 import { resolveSceneInfo } from "@/mirror/canvas/hitTest";
 import {
   layoutText,
@@ -48,6 +48,7 @@ export interface ResolvedTextSpec {
   roleFaces?: Partial<Record<TextFontRole, RoleFace>>;
   fallbackRoles?: readonly TextFontRole[];
   images?: readonly { start: number; url: string; valign: "top" | "middle" | "bottom" }[];
+  degradations?: readonly string[];
 }
 
 export interface RoleFace { font: MirrorFont; cssFont: string; fontPx: number; spacingPx: number; pitchPx: number }
@@ -79,7 +80,8 @@ export function resolveSemanticTextSpec(
   node: MirrorNode,
   nodes: ReadonlyMap<string, MirrorNode>,
   allowFontRoles = false,
-  failedRoleFamilies: ReadonlySet<string> = new Set()
+  failedRoleFamilies: ReadonlySet<string> = new Set(),
+  colorValidator: ColorValidator = (value) => value
 ): ResolvedTextSpec | TextPrepRefusal {
   const scene = resolveSceneInfo(node.id, nodes);
   const decls = resolveTextScaleDecls(scene?.file ?? null, scene?.relPath ?? null);
@@ -90,9 +92,10 @@ export function resolveSemanticTextSpec(
   let roleFaces: ResolvedTextSpec["roleFaces"];
   let fallbackRoles: TextFontRole[] | undefined;
   let images: ResolvedTextSpec["images"];
+  let degradations: string[] | undefined;
   if (spec.refusal === "rich") {
-    const parsed = parseSimpleRich(spec.text, { color: (value) => value, fontRoles: allowFontRoles,
-      inlineImages: allowFontRoles });
+    const parsed = parseSimpleRich(spec.text, { color: colorValidator, fontRoles: allowFontRoles,
+      inlineImages: allowFontRoles, ...(allowFontRoles ? { unsupported: "plain" as const } : {}) });
     if (!parsed.ok) return { refusal: `rich:${parsed.refusal}` };
     const plain = resolveTextSpec({ ...node, richText: false, text: { ...node.text!, text: parsed.value.text } }, decls);
     if (!plain || plain.refusal) return { refusal: `rich:${plain?.refusal ?? "post-parse"}` };
@@ -101,6 +104,7 @@ export function resolveSemanticTextSpec(
     roles = parsed.value.roles.length ? parsed.value.roles : undefined;
     images = parsed.value.images.length ? parsed.value.images.map(({ start, path, valign }) =>
       ({ start, url: mirrorResourceUrl(path), valign })) : undefined;
+    degradations = parsed.value.losses?.map((loss) => `rich:${loss.feature}:${loss.detail}`);
     if (roles) {
       roleFaces = {};
       fallbackRoles = [];
@@ -112,7 +116,7 @@ export function resolveSemanticTextSpec(
     }
   }
   if (spec.refusal) return { refusal: spec.refusal };
-  return { spec, spans, roles, roleFaces, fallbackRoles, images };
+  return { spec, spans, roles, roleFaces, fallbackRoles, images, degradations };
 }
 
 /** One placed run, ready to be positioned by a live `record.transform` — see {@link composePreparedTextRecords}. */
@@ -138,6 +142,9 @@ export interface PreparedText {
   roleFaces?: ResolvedTextSpec["roleFaces"];
   fallbackRoles?: readonly TextFontRole[];
   images?: readonly { start: number; url: string; width: number; height: number; valign: "top" | "middle" | "bottom" }[];
+  degradations?: readonly string[];
+  /** Missing image resources keep the surrounding words visible; do not cache until they settle. */
+  imagePending?: boolean;
   /** `JSON.stringify([fontVersion, font, spec, spans])` — kept only as a cheap equality witness for `verify`. */
   layoutKey: string;
   layout: TextLayout;
@@ -162,12 +169,15 @@ export function buildPreparedText(
   imageSize?: (url: string) => { width: number; height: number } | null
 ): PreparedText | TextPrepRefusal {
   const { spec, spans, roles, roleFaces, fallbackRoles } = resolved;
+  let imagePending = false;
+  const degradations = [...resolved.degradations ?? []];
   const images = resolved.images?.map((image) => {
     const size = imageSize?.(image.url);
-    return size ? { ...image, width: size.width, height: size.height } : null;
+    if (!size) imagePending = true;
+    else if (size.width <= 0 || size.height <= 0) degradations.push(`rich:img:image-unavailable:${image.url}`);
+    return { ...image, width: size?.width ?? 0, height: size?.height ?? 0 };
   });
-  if (images?.some((image) => image === null)) return { refusal: "image-pending" };
-  const resolvedImages = images as Exclude<PreparedText["images"], undefined> | undefined;
+  const resolvedImages = images;
   const layoutKey = roles || resolvedImages
     ? JSON.stringify([fontVersion, font, spec, spans, roles, roleFaces, resolvedImages])
     : JSON.stringify([fontVersion, font, spec, spans]);
@@ -230,7 +240,7 @@ export function buildPreparedText(
     }
   }
   return { spec, spans, roleFaces, fallbackRoles, images: resolvedImages, layoutKey, layout, metrics, shadow,
-    resourceRevision, runs };
+    resourceRevision, runs, degradations, imagePending };
 }
 
 /**
@@ -319,8 +329,8 @@ function preparedResultsAgree(a: PreparedText | TextPrepRefusal, b: PreparedText
  * `WeakMap<MirrorNode, …>` keyed cache — valid only while every ancestor up to (and including) the node's scene
  * root is the SAME object as last time, `fontVersion` is unchanged, and `textMode` is unchanged. A node whose
  * ancestry was rebuilt (a reconciled scene swaps in new node objects) or whose owning scene re-resolved its
- * text-scale table (a `fontVersion` bump) misses and recomputes — cache SUCCESSES only, exactly like the design
- * calls for; a miss always falls through to `compute()`.
+ * text-scale table (a `fontVersion` bump) misses and recomputes. Pending image layouts are presented with their
+ * words but not cached, so the resource-ready wake can prepare the image without a node revision.
  */
 export function createTextPrepCache(): TextPrepCache {
   const store = new WeakMap<MirrorNode, { chain: readonly MirrorNode[]; fontVersion: number; textMode: string;
@@ -336,7 +346,7 @@ export function createTextPrepCache(): TextPrepCache {
           const fresh = compute();
           if (!preparedResultsAgree(cached.result, fresh)) {
             verifyMismatches++;
-            if (!("refusal" in fresh && fresh.refusal === "image-pending"))
+            if (!("imagePending" in fresh && fresh.imagePending))
               store.set(node, { chain, fontVersion, textMode, result: fresh });
             return fresh;
           }
@@ -345,7 +355,7 @@ export function createTextPrepCache(): TextPrepCache {
       }
       misses++;
       const result = compute();
-      if (!("refusal" in result && result.refusal === "image-pending"))
+      if (!("imagePending" in result && result.imagePending))
         store.set(node, { chain, fontVersion, textMode, result });
       return result;
     },
