@@ -288,9 +288,12 @@ out of the tracked tree and no game font or atlas is committed.
 | Date | Attempt | Outcome | Key evidence |
 | --- | --- | --- | --- |
 | Oct 2 | GSW worker/WASM candidate `c9a05df4` | REVISE | Real browser worker generated deterministic licensed Latin tiles and local CJK/Thai tiles; synthetic overlapping-contour union had 0/4,096 threshold mismatches. Luna independently passed Rust 3, canvas Vitest 427, TypeScript/build, WASM and licence manifest (40 compiled-target crates). The generic API lacked aggregate output and pending-request limits: 4,096 allowed 256×256 RGBA tiles could total 1 GiB per request, with conversion copies alive concurrently. Astra required ≤1 MiB output per batch and one outstanding request/result lease before transfer, with credit recovery and checked preallocation arithmetic. |
+| Oct 2 | Bounded revision `0ef2d901` (squashed as GSW `af1fddb4`) | GO | Rust checked-preflights ≤1 MiB/256 IDs; the TS API holds one result lease and rejects concurrent calls before transferring font bytes. Luna independently passed Rust 4, canvas Vitest 428, TypeScript/Biome/build, WASM/browser, oversized-request recovery, deterministic batches and 40-crate licence graph check. WASM: 213,400 B raw, 88,501 gzip, 75,504 Brotli. Latin/CJK/Thai worker heaps were 1.31/7.4/1.25 MiB, with font storage reported separately. The caller must release every result after upload/discard; integrated text quality remains Phase 4. |
 
 Sol's ignored proof images and JSON are under the `gsw-text-phase3` worktree
 `.sts2/msdf-generator-proof/`; Luna's independent browser proof is under
 `gsw-text-phase3-audit/.sts2/msdf-generator-proof/`. The RGB-median versus alpha-SDF comparison is an
 internal threshold check (all differences one 8-bit level), not independent raster parity. The
-local CJK/Thai receipts need font hashes and invocation fields on the revision.
+revised local CJK/Thai receipts include font hashes and invocation fields, and label themselves as
+glyph-generation evidence rather than shaping proof. Couch release notices and the archive verifier
+landed as `dd1b3d34`; they ship all 40 generator dependency licences from GSW's checked manifest.
