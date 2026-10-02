@@ -18,8 +18,12 @@ export interface RustFastFlags {
   snapshotReuse: boolean;
   drawStateDedupe: boolean;
   hiddenMemoCaptures: boolean;
+  hiddenMemoSpread: boolean;
   heldOverridePatch: boolean;
   sceneIndex: boolean;
+  raiseIndexCache: boolean;
+  coalescedBuilds: boolean;
+  offsetPatch: boolean;
   verify: boolean;
 }
 
@@ -34,8 +38,12 @@ export const RUST_FAST_SWITCHES = {
   snapshotReuse: "rustSnapshotReuse",
   drawStateDedupe: "rustDrawStateDedupe",
   hiddenMemoCaptures: "rustHiddenMemoCaptures",
+  hiddenMemoSpread: "rustHiddenMemoSpread",
   heldOverridePatch: "rustHeldOverridePatch",
   sceneIndex: "rustSceneIndex",
+  raiseIndexCache: "rustRaiseIndexCache",
+  coalescedBuilds: "rustCoalescedBuilds",
+  offsetPatch: "rustOffsetPatch",
 } as const satisfies Record<Exclude<keyof RustFastFlags, "verify">, string>;
 
 export function resolveRustFastFlags(query: URLSearchParams, backend: "pixi" | "rust"): RustFastFlags {

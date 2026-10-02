@@ -816,6 +816,11 @@ export interface BuildDrawListOptions {
    * at its streamed pose, which is the offline gate's no-animation mode.
    */
   localAnims?: ReadonlyMap<string, LocalAnim> | null;
+  /**
+   * Fill `viewScaleCandidates` even when nothing animates locally. The cosmetic-offset patch (`rustOffsetPatch`)
+   * reads it: a stamp is measured where the node is drawn, so a candidate cannot be re-posed by a translation.
+   */
+  trackViewScaleCandidates?: boolean;
   /** Retain painted-box identities for the optional reference-patch cover refresh. */
   coverageRefresh?: boolean;
   /**
@@ -856,6 +861,11 @@ export interface BuildDrawListOptions {
   hiddenSubtreeMemo?: HiddenSubtreeMemo | null;
   /** Walk memoized subtrees anyway and count where a replay would have differed. Costs the full walk. */
   hiddenSubtreeMemoVerify?: boolean;
+  /**
+   * Let the memo take part in a WIDENED build (`spreadFactor !== 1`, `rustHiddenMemoSpread`): recordings then carry
+   * the spread writes and the inherited spread context. Off: a widened build walks every hidden subtree, as before.
+   */
+  hiddenSubtreeMemoSpread?: boolean;
   /** Dev/test invariant assertions (default: `paintOrderAssertsOn()`). */
   assert?: boolean;
   /** Texture page sizes; defaults to `textureCache.naturalSize`. See `paintSpec`'s `EmitOptions`. */
@@ -1142,7 +1152,15 @@ export function buildDrawList(
   const spreadDxOut = options.spreadDxOut ?? null;
   const spreadFieldModeOut = options.spreadFieldModeOut ?? null;
   const spreadAudit = options.spreadAudit ?? null;
-  const spreadEnv: SpreadEnv | null = spreading ? spreadEnvFor(nodes, options.spreadRegistry ?? null, spreadFactor) : null;
+  /** The recording the walk is appending to, while it is inside an outermost hidden root being recorded. */
+  let memoRec: HiddenMemoRecording | null = null;
+  // A registry answer is a lookup into what OTHER nodes resolved, so a hidden subtree that asks one cannot be
+  // replayed from a recording (see `hiddenSubtreeMemo.ts`, THE WIDE-SCREEN SPREAD).
+  const spreadEnv: SpreadEnv | null = spreading
+    ? spreadEnvFor(nodes, options.spreadRegistry ?? null, spreadFactor, (reason) => {
+        if (memoRec !== null) memoRec.refuse = reason;
+      })
+    : null;
   // R6 M2 — re-base an ANIMATED node's field claim at the pose it is drawn at (`?spreadEndpoint`, shared with the
   // DOM writer, default ON). Hoisted per build like `spreading` itself, and false at 16:9 by construction.
   const spreadRebase = spreading;
@@ -1318,6 +1336,7 @@ export function buildDrawList(
   // structure that can never be asked a question. With nothing armed they stay empty and this
   // whole seam is three null checks per build.
   const trackingLocalAnims = localAnims !== null;
+  const trackingCandidates = trackingLocalAnims || options.trackViewScaleCandidates === true;
   const localAnimFrames = new Map<string, LocalAnimFrame>();
   const coverPaintIds: string[] = [];
   /**
@@ -1416,11 +1435,11 @@ export function buildDrawList(
   const emitOptions = { textureSize: options.textureSize };
 
   // HIDDEN-SUBTREE MEMO — see `hiddenSubtreeMemo.ts`. Null unless a memo is supplied AND this build is one it can
-  // be exact for: no stage spread, no hidden-walk timing and no spread audit (each publishes per node under a
-  // hidden root in ways a recording does not carry).
+  // be exact for: no hidden-walk timing and no spread audit (each publishes per node under a hidden root in ways a
+  // recording does not carry), and no stage spread unless the spread-aware memo is switched on.
   const hiddenMemo = options.hiddenSubtreeMemo
     ? beginHiddenMemoBuild(options.hiddenSubtreeMemo, {
-        eligible: hiddenWalk === null && spreadAudit === null && !spreading,
+        eligible: hiddenWalk === null && spreadAudit === null && (!spreading || options.hiddenSubtreeMemoSpread === true),
         verify: options.hiddenSubtreeMemoVerify === true,
         order,
         nodes,
@@ -1429,19 +1448,21 @@ export function buildDrawList(
         tipScaling,
         clipAxis: clipAxisOn(),
         trackingLocalAnims,
+        trackingCandidates,
         pinnedLocals,
+        spreadFactor,
+        spreadRegistry: options.spreadRegistry ?? null,
         taintKeys: [
           transformOverrides?.keys(), alphaOverrides?.keys(), localAnims?.keys(), frameSubstitutes?.keys(),
           cosmeticOffsets?.keys(), skipRoots, renderWidthOverrides?.keys()
         ],
         // A taint key set too, or recorded and replayed — the memo's `captures` switch decides.
         captureIds: capture?.ids ?? null,
-        sink: { nodePaintInputs, viewScaleStamps, viewScaleCandidates, stats, captureOut: capture?.out ?? null, onNode,
+        sink: { nodePaintInputs, viewScaleStamps, viewScaleCandidates, stats, captureOut: capture?.out ?? null,
+          spreadDxOut: spreading ? spreadDxOut : null, spreadFieldModeOut: spreading ? spreadFieldModeOut : null, onNode,
           semanticNode: options.semanticNode }
       })
     : null;
-  /** The recording the walk is appending to, while it is inside an outermost hidden root being recorded. */
-  let memoRec: HiddenMemoRecording | null = null;
 
   /**
    * THE TIP CHILD PRE-MEASURE: where the walk WOULD draw one direct child of a tip set, one step early.
@@ -1540,7 +1561,7 @@ export function buildDrawList(
     if (hiddenMemo !== null && !ancestorHidden &&
         (node.visible === false || (node.parentId != null && !nodes.has(node.parentId)))) {
       const entered = hiddenMemo.enter(id, node, parentGame, parentFinal, cascadeAlpha, tintR, tintG, tintB, offX,
-        offY, parentDrawTy, vsIn, vsHitIn, inCardReward, parentDrawnMoved, parentAnimMoved, list.count,
+        offY, parentDrawTy, vsIn, vsHitIn, inCardReward, parentDrawnMoved, parentAnimMoved, spreadCtx, list.count,
         hitEntries.length, overlayRecords.length);
       if (entered === true) {
         return;
@@ -1669,6 +1690,12 @@ export function buildDrawList(
       if (spreadFieldModeOut) {
         spreadFieldModeOut.set(id, spreadScratch.fieldMode);
       }
+      // Banked whether or not this build has the out maps: a later build that does may replay the recording.
+      if (memoRec !== null) {
+        memoRec.spreadIds.push(id);
+        memoRec.spreadDx.push(spreadDx);
+        memoRec.spreadModes.push(spreadScratch.fieldMode);
+      }
     }
     // The node's own DRAWN placement: its rendered global shifted onto the field. X only — the spread is entirely
     // horizontal, which is the whole reason the raise needs its own vertical inverse (raiseInverse.ts).
@@ -1722,7 +1749,7 @@ export function buildDrawList(
       childInCardReward = inCardReward || opensCardRewardScreen(leaf);
       const entry = resolveViewScaleForNode(id, node, leaf, inCardReward, viewScaleEnv);
       if (entry !== null && node.localRect != null) {
-        if (trackingLocalAnims) {
+        if (trackingCandidates) {
           // BEFORE the stamp is measured, so a node that would GAIN one by moving is in the set too — see
           // `viewScaleCandidates`.
           viewScaleCandidates.add(id);
@@ -1817,7 +1844,7 @@ export function buildDrawList(
         tipChildBoxes.clear();
         if (tipStamp !== null) {
           vsSelf = vsSelf === null ? tipStamp.matrix : affineMul(vsSelf, tipStamp.matrix);
-          if (trackingLocalAnims) {
+          if (trackingCandidates) {
             // The `viewScale` refusal, reused: a stamped tip is a node whose drawn pose carries a factor the
             // tier-3 patcher does not model, and its span must rebuild rather than be re-posed numerically.
             viewScaleCandidates.add(id);
@@ -2341,20 +2368,26 @@ function rgbOf(color: MirrorColor | null): { r: number; g: number; b: number } {
 function spreadEnvFor(
   nodes: Map<string, MirrorNode>,
   registry: SpreadRegistry | null,
-  spreadFactor: number
+  spreadFactor: number,
+  // Told before each registry lookup: the answer depends on state outside the asking node's subtree.
+  onRegistryRead: (reason: "spread-owner" | "spread-follower") => void
 ): SpreadEnv {
   return {
     ...spreadSceneIdentityEnv((id) => resolveSceneInfo(id, nodes)),
     // No registry ⇒ ride the parent, which is what the DOM walk does for a floater whose owner has no record yet.
-    ownerDx: (ownerId, fallbackDx) => (registry ? registry.ownerDx(ownerId, fallbackDx) : fallbackDx),
+    ownerDx: (ownerId, fallbackDx) => {
+      if (registry === null) return fallbackDx;
+      onRegistryRead("spread-owner");
+      return registry.ownerDx(ownerId, fallbackDx);
+    },
     // …and a follower with nothing resolvable under it takes a POSITIONAL claim at its own game X, which is
     // `hitTestShift`'s own no-painting-anchor fallback.
-    remoteFollowerDx: (node, gx, gy) =>
-      REMOTE_FOLLOWER_TYPES.has(nodeTypeLeaf(node.nodeType))
-        ? registry
-          ? registry.followerShift(gx, gy)
-          : fieldDxAtOriginX(gx, spreadFactor)
-        : null
+    remoteFollowerDx: (node, gx, gy) => {
+      if (!REMOTE_FOLLOWER_TYPES.has(nodeTypeLeaf(node.nodeType))) return null;
+      if (registry === null) return fieldDxAtOriginX(gx, spreadFactor);
+      onRegistryRead("spread-follower");
+      return registry.followerShift(gx, gy);
+    }
   };
 }
 

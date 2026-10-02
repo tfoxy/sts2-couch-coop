@@ -1,13 +1,14 @@
 import { createClipRectView, createDrawList, createNinePatchView, createPolylineView, createQuadView, createTexturedMeshView } from "@godot-scene-web/canvas";
 import type { PixiDrawListRenderer, PixiGlyphProvider, PixiTextOutcomes, PixiTextRecord } from "@godot-scene-web/canvas/pixi";
 import {
-  buildDrawList, streamedAlphasOf, type AlphaOverride, type BuildDrawListOptions, type CosmeticOffset, type DrawListBuild, type LocalAnim
+  buildDrawList, streamedAlphasOf, type AlphaOverride, type BuildDrawListOptions, type CapturedGlobal, type CosmeticOffset,
+  type DrawListBuild, type LocalAnim
 } from "@/mirror/canvas/buildDrawList";
 import { baselineOf, layoutText, resolveTextSpec, type TextSpan } from "@/mirror/canvas/textLayout";
 import { createColorValidator, parseSimpleRich } from "@/mirror/canvas/richSimple";
 import { createPaintOrderCache } from "@/mirror/canvas/paintOrder";
 import { createHiddenSubtreeMemo } from "@/mirror/canvas/hiddenSubtreeMemo";
-import { createHitMemo, resolveSceneInfo } from "@/mirror/canvas/hitTest";
+import { createHitMemo, resolveSceneInfo, type ClipScope, type HitEntry } from "@/mirror/canvas/hitTest";
 import { canvasBlend, createPaintScratch, nodeIsPainting, normalizeFlip, type NodePaintInput, type OverlayRecord } from "@/mirror/canvas/paintSpec";
 import { atlasFitAffine } from "@/mirror/nodeStyles";
 import { ensureNodeFonts, fontFaceInjectionVersion, loadMirrorFont } from "@/mirror/fonts";
@@ -23,10 +24,11 @@ import { mapPointerToGame } from "@/mirror/pointerMap";
 import { spineClipUrl } from "@/mirror/spineAttributes";
 import { loadSpineClip, type LoadedSpineClip } from "@/mirror/spineClip";
 import { isStaticBackgroundSuppressibleRoot, staticBgTargetPathOf } from "@/mirror/renderer/staticBackgroundPolicy";
-import { createCanvasInteractionRuntime } from "@/mirror/renderer/canvas/interactionRuntime";
+import { createCanvasInteractionRuntime, type OffsetPatchFrame } from "@/mirror/renderer/canvas/interactionRuntime";
+import { translatedSpanRefusal } from "./translatedSpan";
 import { CANVAS_IDLE_ANIMATION_FPS, type DrawnSceneSnapshot } from "@/mirror/renderer/canvas/frameRuntime";
-import { createCanvasVisualState, type LandingPresentation } from "@/mirror/renderer/canvas/visualState";
-import { CANVAS_FRAME_PARK_SLOP_MS, createCanvasFrameScheduler } from "@/mirror/renderer/canvas/frameScheduler";
+import { createCanvasVisualState, type LandingPresentation, type SampleMark } from "@/mirror/renderer/canvas/visualState";
+import { CANVAS_FRAME_PARK_SLOP_MS, createCanvasFrameScheduler, type CanvasPatchSubmission } from "@/mirror/renderer/canvas/frameScheduler";
 import { effectiveMirrorQuality, effectiveMirrorRenderSettings, mirrorSettings } from "@/mirror/mirrorSettings";
 import { emitWarmAckTrace, warmAckTraceEnabled } from "@/mirror/warmAckTrace";
 import { isShaderInputNode } from "@/mirror/shaderAttributes";
@@ -40,7 +42,7 @@ import { installSpreadAuditProbe } from "@/mirror/canvas/spreadAudit";
 import { affineInverse, affineMul, type Affine } from "@/mirror/affine";
 import { rendererComparisonConfig, setRendererRuntimeStatus } from "@/mirror/rendererComparison";
 import { SAMPLE_LOCAL_ANIM, SAMPLE_OPACITY, SAMPLE_SELF_OPACITY, SAMPLE_SOURCE } from "@/mirror/canvas/tweenLoop";
-import { createRetainedPixiComposition, type RetainedPixiPatch } from "./retainedComposition";
+import { createRetainedPixiComposition, isPureTranslation, type ClipTranslation, type RetainedPixiPatch } from "./retainedComposition";
 import { resolveRustFastFlags } from "./rustFastFlags";
 import { createSceneCandidateIndex } from "./sceneCandidateIndex";
 import { copyTransformOverrides, overrideAncestors, sameNodeExceptTransform, sameTransformOverrides, touchesOverrideLineage } from "./heldOverrides";
@@ -65,9 +67,18 @@ type MirrorDrawExecutor = Omit<PixiDrawListRenderer<string>, "render" | "admitSc
     profileIdentity?: ProfileIdentity): boolean | PresentationResult | Promise<boolean | PresentationResult>;
   admitScene(list: import("@godot-scene-web/canvas").DrawList<string>, text: readonly PixiTextRecord[], plan: import("@godot-scene-web/canvas/pixi").PixiScenePlan,
     diagnostic?: (event: ProducerExecutorEvent) => void, profileIdentity?: ProfileIdentity): PresentationResult | Promise<PresentationResult>;
-  patchScene(patch: import("@godot-scene-web/canvas/pixi").PixiScenePatch<string>,
+  patchScene(patch: ClipTranslatingScenePatch,
     diagnostic?: (event: ProducerExecutorEvent) => void, profileIdentity?: ProfileIdentity): PresentationResult | Promise<PresentationResult>;
   presentScene(diagnostic?: (event: ProducerExecutorEvent) => void, profileIdentity?: ProfileIdentity): PresentationResult | Promise<PresentationResult>;
+  /**
+   * `rustOffsetPatch`: `patchScene` honours `clips` (it moves a clip rect by translation). Absent or false: a patch
+   * must not carry a clip move, so a moved clipper rebuilds.
+   */
+  readonly translatesClips?: boolean;
+};
+/** A scene patch that may also translate clip rects (`ClipTranslation`, by `clipPush` index). */
+export type ClipTranslatingScenePatch = import("@godot-scene-web/canvas/pixi").PixiScenePatch<string> & {
+  readonly clips?: readonly ClipTranslation[];
 };
 export type MirrorDrawExecutorFactory = (options: ExecutorOptions) => Promise<MirrorDrawExecutor>;
 function isPromiseLike<T>(value: unknown): value is PromiseLike<T> {
@@ -321,6 +332,10 @@ export function createPixiMirrorRenderer(
   let committedTextureCount = -1;
   let resourceEpoch = 0;
   let retained = null as ReturnType<typeof createRetainedPixiComposition> | null;
+  // rustOffsetPatch: the committed build's stretch factor and its spread field claimers (mode 1/2), for the
+  // translated-span refusal. `spreadFieldModeByNode` is refilled by every build attempt, committed or not.
+  let committedSpread: { factor: number; claimers: ReadonlyMap<string, number>; shifted: ReadonlySet<string> } =
+    { factor: 1, claimers: new Map(), shifted: new Set() };
   const retainedDiagnosticFields = new Map<string, { alpha?: number; source?: { texture: string | null; x: number; y: number; w: number; h: number } }>();
   let retainedValid = false;
   // rustLazyComposition: a committed composition indexes its patch inputs on first use. `paintGeneration` moves
@@ -347,19 +362,43 @@ export function createPixiMirrorRenderer(
   type HeldPatchInputs = { overrides: Map<string, readonly number[]>; alphas: Map<string, AlphaOverride>;
     anims: Map<string, LocalAnim>; substitutes: Map<string, MirrorNode>; offsets: Map<string, CosmeticOffset> };
   const heldPatches = new WeakMap<RetainedPixiPatch, HeldPatchInputs | null>();
-  let heldOverridePatches = 0, heldOverrideVerifyRuns = 0, heldOverrideVerifyMismatches = 0, heldOverrideVerifyMaxError = 0;
-  let heldOverrideVerifyFirstMismatch: string | null = null;
+  let heldOverridePatches = 0;
+  // rustFastVerify accumulators, one per patch family that claims exactness (held overrides, cosmetic offsets).
+  // Each keeps its own ring of the builds and patches that led up to a run, so one family's log does not depend on
+  // the other's switch.
+  type VerifyStats = { runs: number; mismatches: number; maxError: number; firstMismatch: string | null; log: HeldVerifyEntry[];
+    recent: string[] };
+  const heldVerify: VerifyStats = { runs: 0, mismatches: 0, maxError: 0, firstMismatch: null, log: [], recent: [] };
+  const offsetVerify: VerifyStats = { runs: 0, mismatches: 0, maxError: 0, firstMismatch: null, log: [], recent: [] };
+  // rustOffsetPatch: what a translate patch publishes beyond its commands (the offsets and raise plan it drew and the
+  // captured globals it moved), plus its planned inputs under verify. A wire translation of captured nodes adds its
+  // recomputed entries to `captures` and sets `wireCaptured`.
+  type PatchSidecar = { frame?: OffsetPatchFrame; captures?: Map<string, CapturedGlobal>; moved?: ReadonlySet<string>;
+    verify?: HeldPatchInputs; wireCaptured?: boolean };
+  const patchSidecars = new WeakMap<RetainedPixiPatch, PatchSidecar>();
+  let offsetPatches = 0, offsetPatchedNodes = 0, wireCapturedPatches = 0;
+  const offsetDeclines: Record<string, number> = {};
+  // Which node types a refused translation tripped on (`offset-clip` / `offset-view-scale` / `offset-anim`).
+  const offsetDeclineTypes: Record<string, number> = {};
+  const noteDeclineType = (reason: string, node: MirrorNode | undefined) => {
+    const key = `${reason}:${node ? nodeTypeLeaf(node.nodeType) : "?"}:${node?.name ?? "?"}`;
+    offsetDeclineTypes[key] = (offsetDeclineTypes[key] ?? 0) + 1;
+  };
   const heldOverrideDeclines: Record<string, number> = {};
   // rustFastVerify: every verify run that found a mismatch, with all of its notes and the builds and patches that
   // led up to it (a short ring, recorded under verify only). Both bounded so a long session cannot grow them.
   type HeldVerifyEntry = { run: number; revision: number; clock: number | null; notes: string[]; recent: string[] };
-  const heldOverrideVerifyLog: HeldVerifyEntry[] = [];
-  const heldOverrideRecent: string[] = [];
   const noteHeldEvent = (event: () => string) => {
-    if (!fast.verify || !fast.heldOverridePatch) return;
-    heldOverrideRecent.push(event());
-    if (heldOverrideRecent.length > 24) heldOverrideRecent.shift();
+    if (!fast.verify || (!fast.heldOverridePatch && !fast.offsetPatch)) return;
+    const text = event();
+    for (const stats of [fast.heldOverridePatch ? heldVerify : null, fast.offsetPatch ? offsetVerify : null]) {
+      if (!stats) continue;
+      stats.recent.push(text);
+      if (stats.recent.length > 24) stats.recent.shift();
+    }
   };
+  // The scheduler's record of each submitted patch, handed back when the patch commits or is lost.
+  const patchSubmissions = new WeakMap<RetainedPixiPatch, CanvasPatchSubmission | null>();
   const retainedMode = rendererComparisonConfig.pixiScene === "retained";
   const textMode = backend === "rust" ? "native" : rendererComparisonConfig.pixiText;
   const asyncPresentation = createAsyncPresentationGate();
@@ -461,7 +500,12 @@ export function createPixiMirrorRenderer(
     isLandingTarget: (id) => interaction?.handHolderIds.has(id) ?? false,
     onTransformArm: (id, at) => interaction?.noteTransformArmPose(id, at), onNodePresent: (node) => interaction?.noteNodePresent(node),
     onNodeRemoved: (id) => interaction?.noteNodeRemoved(id), onRewrite: () => interaction?.noteRewrite(), onFlights: () => {},
-  }, { clockOriginMs: deterministicClock ?? performance.now(), now: () => deterministicClock ?? performance.now(), spreadAuditEnabled, noteIdlePeriod: () => {} });
+  }, { clockOriginMs: deterministicClock ?? performance.now(), now: () => deterministicClock ?? performance.now(), spreadAuditEnabled, noteIdlePeriod: () => {},
+    // rustCoalescedBuilds / rustOffsetPatch: a frame may sample an intent-frame swap or an opacity step and draw
+    // nothing (a yielding tick, a patch that never presents), so either stays open until a committed frame drew it.
+    retainSourceSwaps: fast.coalescedBuilds || fast.offsetPatch });
+  /** The open source swaps each submitted patch drew, settled when it commits. */
+  const patchSourceMarks = new WeakMap<RetainedPixiPatch, SampleMark | null>();
   let lastSampleClock: number | null = null;
   const sampleVisual = (at: number) => { lastSampleClock = at; visual.sample(at); };
   const spreadDxByNode = visual.spreadDxByNode;
@@ -472,8 +516,13 @@ export function createPixiMirrorRenderer(
     stage, stageScale: () => stage.getBoundingClientRect().width / Math.max(1, stage.clientWidth), designWidth: () => stage.clientWidth,
     spreadFactor: () => visual.spreadFactor, spreadDxByNode, spreadFieldModeByNode, loop: () => loop, streamedGlobalInto: visual.streamedGlobalInto,
     rebuildAndPaint: () => { if (state && readiness === "ready") paint(state, "local"); }, armAnimation: () => scheduler.armAnimation(performance.now()),
+    // rustCoalescedBuilds: client-only changes become one per-frame build request (see frameScheduler.ts).
+    // Before readiness a change is dropped exactly as `rebuildAndPaint` drops it: the first frame builds it anyway.
+    requestBuild: fast.coalescedBuilds
+      ? (urgent, offsetOnly) => state && readiness === "ready" ? scheduler.requestBuild(urgent, offsetOnly) : "deferred" : undefined,
     builds: () => buildEpoch, paintedFrames: () => pixi?.stats.completedFrames ?? 0,
     sceneIndex: fast.sceneIndex, sceneIndexVerify: fast.verify,
+    raiseIndexCache: fast.raiseIndexCache, raiseIndexCacheVerify: fast.verify,
   });
   const probeOwner = {};
   installHandPoseProbe(interaction.handPoses, probeOwner);
@@ -513,10 +562,44 @@ export function createPixiMirrorRenderer(
       noteIdleStageAdmission: visual.noteIdleStageAdmission,
       sampleVisual,
       noteTrailFlightHeads() {}, tickTrails() {}, mergeTrailLatches() {}, advanceVisual: visual.advance, tickSpine() {},
-      tryPatchAndPaint: (at) => tryRetainedPatch(at), runBuild: (next) => paint(next, "animation", retainedDecline), syncOverlay() {}, paintAction() {},
+      tryPatchAndPaint: (at) => tryRetainedPatch(at),
+      runBuild: (next, requested) => requested ? paint(next, "local", "coalesced-request") : paint(next, "animation", retainedDecline),
+      syncOverlay() {}, paintAction() {},
       settleLanding: () => {}, rebuildAndPaintTexture: () => state && readiness === "ready" ? deferredPaint(state) : false,
     },
+    // rustCoalescedBuilds decides; rustProducerReasons alone only counts work per frame for a switch-off arm.
+    // rustOffsetPatch: a moved ramp or an offset-only request may be presented by a translate patch.
+    rampPatchable: fast.offsetPatch && retainedMode,
+    coalesce: fast.coalescedBuilds || producerReasonMode ? {
+      enabled: fast.coalescedBuilds,
+      localBuild: () => {
+        if (!state || readiness !== "ready") return;
+        // An offset-only request is served by a translate patch when one plans (an async submission counts).
+        if (fast.offsetPatch && !scheduler.buildRequired && snapshot) {
+          const at = deterministicClock ?? performance.now();
+          if (tryRetainedPatch(at) || retainedDecline === "async-in-flight") return;
+        }
+        paint(state, "local");
+      },
+      buildBlocked: () => backend === "rust" && asyncSubmissionRevision !== null,
+    } : undefined,
   });
+  /**
+   * rustCoalescedBuilds: a presentation that settled without committing must not strand a request it blocked.
+   * Called on every settle path. It cannot become a retry loop: the build it re-arms consumes the request when it
+   * starts, so a second refusal finds no request to re-arm for (a resource wait then rests on that resource's wake).
+   */
+  const rearmHeldRequest = () => {
+    // rustOffsetPatch: a frame carried while the presentation was in flight waits for this settlement as well.
+    if (disposed || !(scheduler.buildRequested || scheduler.carryPending)) return;
+    scheduler.armAnimation(deterministicClock ?? performance.now());
+  };
+  /** A client-only change that needs a fresh list: one coalesced request, or (switch off) a build right here. */
+  const paintLocal = () => {
+    if (!state || readiness !== "ready") return;
+    if (fast.coalescedBuilds) scheduler.requestBuild(false);
+    else paint(state, "local");
+  };
   function deferredPaint(next: MirrorState, requestedSource?: ProducerBuildSource): boolean {
     beginLocalFrame("texture");
     const source = requestedSource ?? (presentedOnce && committedSizeEpoch !== asyncPresentationSizeEpoch ? "resize" : pendingTextureSource);
@@ -844,6 +927,8 @@ if (isPromiseLike<PresentationResult>(result)) {
       producerReasons?.noteNonBuild("full-build-deferred-in-flight");
       return false;
     }
+    // A full build of the current state serves any outstanding build request (rustCoalescedBuilds).
+    scheduler.noteFrameWork("build");
     if (startupEnabled && ++startupPrepares <= 5) startupEvent("renderer.framePrepare", { revision: next.revision,
       pending: pixi?.stats.resourcePending ?? null, failed: pixi?.stats.textureFailures ?? null });
     const candidateRevision = next.revision;
@@ -869,6 +954,7 @@ if (isPromiseLike<PresentationResult>(result)) {
     textDegradations.clear();
     const capturedGlobals = new Map(); const captureIds = new Set<string>(); interaction.collectCaptureIds(captureIds); visual.collectLandingCaptureIds(captureIds);
     visual.prepareBuild(next); interaction.prepareBuild(); spreadDxByNode.clear(); spreadFieldModeByNode.clear();
+    const candidateSourceMark = visual.sampleMark();
     list.reset();
     let skipRoots = new Set<string>();
     if (staticBackground) {
@@ -892,7 +978,9 @@ if (isPromiseLike<PresentationResult>(result)) {
       profilePhase: profileIdentity ? (phase, run) => profile!.span(profileIdentity, `couch.draw-${phase}`, run) : undefined,
       structureReuse: paintOrderReuse, hitMemo, skipRoots,
       skipHiddenHitCandidates: rustSkipHiddenHitCandidates,
-      hiddenSubtreeMemo: hiddenMemo, hiddenSubtreeMemoVerify: fast.verify,
+      hiddenSubtreeMemo: hiddenMemo, hiddenSubtreeMemoVerify: fast.verify, hiddenSubtreeMemoSpread: fast.hiddenMemoSpread,
+      // The wire-span refusal (`translatedSpan`) reads them in every configuration.
+      trackViewScaleCandidates: true,
       hiddenWalkDiagnostic: hiddenWalkMode ? (summary) => {
         if (hiddenWalkRows.length < 1024) hiddenWalkRows.push({ buildId: producerBuilds + 1, revision: next.revision, summary });
         else hiddenWalkOverflow = true;
@@ -943,12 +1031,17 @@ const producerStarted = rustPhaseTimingMode || producerReasonMode ? performance.
       textureCountChanged: committedTextureCount !== (pixi?.stats.textures ?? -1),
       resourcesPending: fontPending.size > 0 || spinePending.size > 0 || (pixi?.stats.resourcePending ?? 0) > 0,
       elapsedMs: producerElapsed,
-      sampleClock: lastSampleClock ?? candidateClock, buildEpoch, sizeEpoch: asyncPresentationSizeEpoch,
+      sampleClock: lastSampleClock ?? candidateClock, buildEpoch, frameTask: scheduler.frameTask, sizeEpoch: asyncPresentationSizeEpoch,
       fontEpoch: fontVersion, textureEpoch: pixi?.stats.textureLoads ?? 0, resourceEpoch,
       frameSampleMask: visual.frameSampleMask,
       windowPhase: typeof (window as unknown as { __benchWindowMark?: unknown }).__benchWindowMark === "number"
         ? (window as unknown as { __benchWindowMark: number }).__benchWindowMark : null });
     const frameBuild = build!;
+    const candidateSpread = { factor: visual.spreadFactor, claimers: new Map<string, number>(), shifted: new Set<string>() };
+    if (candidateSpread.factor !== 1) {
+      for (const [id, mode] of spreadFieldModeByNode) if (mode !== 0) candidateSpread.claimers.set(id, mode);
+      for (const [id, dx] of spreadDxByNode) if (dx !== 0) candidateSpread.shifted.add(id);
+    }
     // A pristine committed copy of this same live map at this revision is the map a fresh copy would produce:
     // only applySceneDelta edits the live map, and it always bumps the revision. A build's paint order and hit
     // list are never edited after it returns, so snapshot reuse publishes them without copies.
@@ -1016,6 +1109,7 @@ const producerStarted = rustPhaseTimingMode || producerReasonMode ? performance.
             retainedValid = false; committedOverrides = null;
             if (asyncAwaitingAckRevision === candidateRevision) asyncAwaitingAckRevision = null;
             scheduler.scheduleTexturePaint();
+            rearmHeldRequest();
             return;
           }
           if (!resultPresented(result)) {
@@ -1026,6 +1120,7 @@ const producerStarted = rustPhaseTimingMode || producerReasonMode ? performance.
             if (asyncSubmissionRevision === candidateRevision) asyncSubmissionRevision = null;
             if (reason && !/pending|resource/i.test(reason)) publishStatus("failed", reason);
             lifecycle?.finish("pending", completedDraws());
+            rearmHeldRequest();
             return;
           }
           publishCommittedFrame(result as PresentationResult);
@@ -1043,6 +1138,7 @@ const producerStarted = rustPhaseTimingMode || producerReasonMode ? performance.
             reconcilePull.now();
           }
           else scheduler.armAnimation(deterministicClock ?? performance.now());
+          rearmHeldRequest();
           startupCompletionHook?.();
         }).catch((error: unknown) => {
           if (profileIdentity) profile!.outcome(profileIdentity, "failed", error instanceof Error ? error.message : String(error));
@@ -1055,6 +1151,7 @@ const producerStarted = rustPhaseTimingMode || producerReasonMode ? performance.
           if (asyncSubmissionRevision === candidateRevision) asyncSubmissionRevision = null;
           publishStatus("failed", error instanceof Error ? error.message : String(error));
           lifecycle?.finish("failed", completedDraws());
+          rearmHeldRequest();
         });
         lifecycle?.finish("pending", completedDraws());
         return false;
@@ -1084,6 +1181,8 @@ const producerStarted = rustPhaseTimingMode || producerReasonMode ? performance.
     lifecycle?.startPhase("publish");
     if (!presentedOnce) { presentedOnce = true; publishStatus("ready"); }
     retained = candidate;
+    committedSpread = candidateSpread;
+    visual.settleSamples(candidateSourceMark);
     retainedValid = retainedMode;
     snapshotNodesSource = fast.snapshotReuse ? next.nodes : null;
     committedSizeEpoch = asyncPresentationSizeEpoch;
@@ -1131,6 +1230,7 @@ const producerStarted = rustPhaseTimingMode || producerReasonMode ? performance.
       if (gameMatrix) entry.mGame = gameMatrix;
     }
     retained!.commit(patch);
+    if (patch.clips?.length) translateHitClips(previous.hitEntries, patch.clips);
     for (const item of patch.primitives) if (item.alpha !== undefined || item.source !== undefined)
       retainedDiagnosticFields.set(item.id, { ...retainedDiagnosticFields.get(item.id), alpha: item.alpha, source: item.source });
     frameEpoch++;
@@ -1143,8 +1243,17 @@ const producerStarted = rustPhaseTimingMode || producerReasonMode ? performance.
         if (node) nodes.set(id, node); else nodes.delete(id);
       }
     }
-    snapshot = { ...previous, stateRevision: wire?.revision ?? previous.stateRevision };
-    interaction.publishPatch(previous, snapshot);
+    const sidecar = patchSidecars.get(patch);
+    visual.settleSamples(patchSourceMarks.get(patch) ?? null);
+    let capturedGlobals = previous.capturedGlobals;
+    if (sidecar?.captures?.size) {
+      // Replaced, never edited: the previous snapshot and any landing candidate keep the entries they read.
+      const moved = new Map(previous.capturedGlobals);
+      for (const [id, captured] of sidecar.captures) moved.set(id, captured);
+      capturedGlobals = moved;
+    }
+    snapshot = { ...previous, capturedGlobals, stateRevision: wire?.revision ?? previous.stateRevision };
+    interaction.publishPatch(previous, snapshot, sidecar?.frame);
     landingCandidate?.publish();
     refinementPending = refinementRaf !== null;
     refinementFailure = null;
@@ -1153,8 +1262,15 @@ const producerStarted = rustPhaseTimingMode || producerReasonMode ? performance.
     drawnClock = at;
     signalDiagnosticWake();
     noteHeldEvent(() => `patch r${snapshot!.stateRevision} held=${heldPatches.has(patch) ? 1 : 0} wire=${wire?.changedIds.size ?? 0} ` +
-      `primitives=${patch.primitives.length} alphas=${patch.primitives.filter((item) => item.alpha !== undefined).length} groups=${patch.groups.length}`);
-    if (heldPatches.has(patch)) { heldOverridePatches++; const inputs = heldPatches.get(patch); if (inputs) verifyHeldOverridePatch(inputs); }
+      `primitives=${patch.primitives.length} alphas=${patch.primitives.filter((item) => item.alpha !== undefined).length} groups=${patch.groups.length}` +
+      `${patch.rootTranslations?.size ? ` roots=${[...patch.rootTranslations].map(([id, [x, y]]) => `${id}@${x.toFixed(2)},${y.toFixed(2)}`).join(";")}` : ""}` +
+      `${sidecar?.moved?.size ? ` moved=${sidecar.moved.size}` : ""}`);
+    if (heldPatches.has(patch)) { heldOverridePatches++; const inputs = heldPatches.get(patch); if (inputs) verifyHeldOverridePatch(inputs, heldVerify, false, new Set()); }
+    // Counted on acceptance only: a plan that was refused or never presented moved nothing.
+    if (sidecar?.frame) { offsetPatches++; offsetPatchedNodes += sidecar.moved?.size ?? 0; }
+    if (sidecar?.verify) verifyHeldOverridePatch(sidecar.verify, offsetVerify, true, sidecar.moved ?? new Set());
+    if (sidecar?.wireCaptured) wireCapturedPatches++;
+    scheduler.settlePatch(patchSubmissions.get(patch) ?? null, true);
     retainedPatches++;
     retainedPatchObjects += patch.primitives.length;
     lifecycle?.endPhase("publish");
@@ -1166,14 +1282,18 @@ const producerStarted = rustPhaseTimingMode || producerReasonMode ? performance.
   }
 
   function submitRetainedPatch(patch: RetainedPixiPatch, traceId: string | null) {
-    const mode = patch.primitives.length || patch.groups.length ? "scene-patch" : "present-only";
+    patchSubmissions.set(patch, scheduler.noteFrameWork("patch"));
+    const moves = patch.primitives.length > 0 || patch.groups.length > 0 || (patch.clips?.length ?? 0) > 0;
+    const mode = moves ? "scene-patch" : "present-only";
     const profileIdentity = profile?.begin(mode === "scene-patch" ? "retained-patch" : "present-only", state?.revision);
     const phaseSubmissionId = rustExecutionPhaseMode
       ? producerReasons!.startRetained(state?.revision ?? null, mode) : undefined;
     const phaseEvent = phaseSubmissionId === undefined ? undefined
       : (event: ProducerExecutorEvent) => producerReasons!.retainedEvent(phaseSubmissionId, event);
-    const submit = () => patch.primitives.length || patch.groups.length
-      ? pixi!.patchScene({ primitives: patch.primitives, groups: patch.groups }, phaseEvent, profileIdentity) : pixi!.presentScene(phaseEvent, profileIdentity);
+    const scenePatch: ClipTranslatingScenePatch = { primitives: patch.primitives, groups: patch.groups,
+      ...(patch.clips?.length ? { clips: patch.clips } : {}) };
+    const submit = () => moves
+      ? pixi!.patchScene(scenePatch, phaseEvent, profileIdentity) : pixi!.presentScene(phaseEvent, profileIdentity);
     const tracedSubmit = traceId === null ? submit : () => tracePixi(traceId, submit);
     try { return { result: lifecycle ? lifecycle.phase("pixi", tracedSubmit) : tracedSubmit(), phaseSubmissionId }; }
     catch (error) {
@@ -1182,11 +1302,16 @@ const producerStarted = rustPhaseTimingMode || producerReasonMode ? performance.
     }
   }
 
+  /** A submitted patch that will never present gives back what its submission took (see `settlePatch`). */
+  const patchLost = (patch: RetainedPixiPatch, buildFollows = false) =>
+    scheduler.settlePatch(patchSubmissions.get(patch) ?? null, false, buildFollows);
+
   function trackAsyncRetainedPatch(result: Promise<PresentationResult>, patch: RetainedPixiPatch, at: number,
     wire?: MirrorState, phaseSubmissionId?: number, landingCandidate?: LandingPresentation): void {
     const revision = wire?.revision ?? state?.revision;
     if (revision === undefined || revision === null || asyncSubmissionRevision !== null) {
       if (phaseSubmissionId !== undefined) producerReasons!.finishRetainedIfOpen(phaseSubmissionId, "superseded");
+      patchLost(patch);
       return;
     }
     const ticket = asyncPresentation.begin(revision);
@@ -1196,15 +1321,17 @@ const producerStarted = rustPhaseTimingMode || producerReasonMode ? performance.
     asyncSubmissionRevision = revision;
     asyncPresentCompletion = Promise.resolve(result).then((outcome) => {
       if (!asyncPresentation.current(ticket)) { if (phaseSubmissionId !== undefined) producerReasons!.finishRetainedIfOpen(
-        phaseSubmissionId, disposed ? "disposed" : "superseded"); return; }
+        phaseSubmissionId, disposed ? "disposed" : "superseded"); patchLost(patch); return; }
       if (state?.revision !== revision || asyncPresentationSizeEpoch !== sizeEpoch ||
         visual.landingGeneration !== candidateLandingGeneration) {
         if (phaseSubmissionId !== undefined) producerReasons!.finishRetainedIfOpen(phaseSubmissionId, "superseded");
         producerReasons?.noteNonBuild("retained-presentation-stale");
         if (asyncSubmissionRevision === revision) asyncSubmissionRevision = null;
+        patchLost(patch);
         retainedValid = false; committedOverrides = null;
         if (asyncAwaitingAckRevision === revision) asyncAwaitingAckRevision = null;
         scheduler.scheduleTexturePaint();
+        rearmHeldRequest();
         return;
       }
       if (!resultPresented(outcome)) {
@@ -1213,6 +1340,7 @@ const producerStarted = rustPhaseTimingMode || producerReasonMode ? performance.
         retainedPatchFallbacks++;
         retainedValid = false; committedOverrides = null;
         if (asyncSubmissionRevision === revision) asyncSubmissionRevision = null;
+        patchLost(patch);
         const reason = outcome && typeof outcome === "object" ? (outcome as PresentationResult).reason : undefined;
         if (reason === "retained patch requires full scene admission") {
           if (asyncAwaitingAckRevision === revision && reconcilePull) {
@@ -1220,6 +1348,7 @@ const producerStarted = rustPhaseTimingMode || producerReasonMode ? performance.
             traceWarmRenderer("renderer-pull-recovery", revision);
             reconcilePull.now();
           } else if (state && readiness === "ready") paint(state, "recovery", "async-full-admission");
+          rearmHeldRequest();
           return;
         }
         if (reason && !/pending|resource|in flight/i.test(reason)) publishStatus("failed", reason);
@@ -1228,6 +1357,7 @@ const producerStarted = rustPhaseTimingMode || producerReasonMode ? performance.
           traceWarmRenderer("renderer-pull-refused", revision);
           reconcilePull.now();
         } else scheduler.scheduleTexturePaint();
+        rearmHeldRequest();
         return;
       }
       publishRetainedPatch(patch, at, wire, outcome, landingCandidate);
@@ -1245,17 +1375,20 @@ const producerStarted = rustPhaseTimingMode || producerReasonMode ? performance.
         traceWarmRenderer("renderer-pull", revision);
         reconcilePull.now();
       } else scheduler.armAnimation(deterministicClock ?? performance.now());
+      rearmHeldRequest();
       startupCompletionHook?.();
     }).catch((error: unknown) => {
       if (!asyncPresentation.current(ticket)) { if (phaseSubmissionId !== undefined) producerReasons!.finishRetainedIfOpen(
-        phaseSubmissionId, disposed ? "disposed" : "superseded"); return; }
+        phaseSubmissionId, disposed ? "disposed" : "superseded"); patchLost(patch); return; }
       if (phaseSubmissionId !== undefined) producerReasons!.finishRetainedIfOpen(phaseSubmissionId, "failed");
       producerReasons?.noteNonBuild("retained-presentation-error");
       retainedPatchFallbacks++;
       retainedValid = false; committedOverrides = null;
       if (asyncSubmissionRevision === revision) asyncSubmissionRevision = null;
+      patchLost(patch);
       publishStatus("failed", error instanceof Error ? error.message : String(error));
       scheduler.scheduleTexturePaint();
+      rearmHeldRequest();
     });
   }
 
@@ -1263,7 +1396,10 @@ const producerStarted = rustPhaseTimingMode || producerReasonMode ? performance.
     const refuse = (reason: string) => { retainedDecline = reason; return false; };
     if (!retainedMode || !retainedValid || !retained || !pixi || !snapshot) return refuse("invalid-retained-state");
     if (next.sceneRewrite) return refuse("scene-rewrite");
-    if (interaction.offsetPending || !interaction.cosmeticOffsetsMatch(snapshot)) return refuse("offset-pending");
+    // rustCoalescedBuilds: an outstanding client-only change needs the full build a patch would skip.
+    if (scheduler.buildRequired) return refuse("build-requested");
+    // rustOffsetPatch: the sample plan below translates moved offsets instead.
+    if (!fast.offsetPatch && (interaction.offsetPending || !interaction.cosmeticOffsetsMatch(snapshot))) return refuse("offset-pending");
     retainedDecline = "plan-unsupported";
 const traceId = nextTraceFrame();
     const planStarted = rustPhaseTimingMode ? performance.now() : 0;
@@ -1285,10 +1421,10 @@ const traceId = nextTraceFrame();
         const result = submitted.result;
         if (isPromiseLike<PresentationResult>(result)) { trackAsyncRetainedPatch(result, patch, at, next, phaseSubmissionId, landingCandidate); return refuse("async-in-flight"); }
         if (!result.presented) { if (phaseSubmissionId !== undefined) producerReasons!.finishRetainedIfOpen(phaseSubmissionId, "refused");
-          return refuse("presentation-refused"); }
+          patchLost(patch, true); return refuse("presentation-refused"); }
         committed = result;
       } catch { if (phaseSubmissionId !== undefined) producerReasons!.finishRetainedIfOpen(phaseSubmissionId, "failed");
-        return refuse("presentation-error"); }
+        patchLost(patch, true); return refuse("presentation-error"); }
       publishRetainedPatch(patch, at, next, committed, landingCandidate);
       if (rustExecutionPhaseMode) producerReasons!.finishRetainedIfOpen(phaseSubmissionId!, "committed");
       return true;
@@ -1320,12 +1456,58 @@ const traceId = nextTraceFrame();
       const span = snapshot.paintOrder.entries.get(id);
       if (!span || spans.some((other) => other.start < span.spanEnd && span.spanStart < other.end)) return refuse("wire-overlapping-span");
       spans.push({ start: span.spanStart, end: span.spanEnd });
-      for (const captured of snapshot.capturedGlobals.keys()) {
-        const entry = snapshot.paintOrder.entries.get(captured);
-        if (entry && entry.order >= span.spanStart && entry.order < span.spanEnd) return refuse("wire-captured-global");
+      let sidecar = patchSidecars.get(patch);
+      // rustOffsetPatch: an offset translation and a wire delta on one node would be two entries for one primitive.
+      if (sidecar?.moved) for (let order = span.spanStart; order < span.spanEnd; order++)
+        if (sidecar.moved.has(snapshot.paintOrder.ids[order])) return refuse("wire-offset-overlap");
+      // A pure translation moves every captured pose in the span by the same vector, which the patch can recompute
+      // (`rustOffsetPatch`); anything else would leave a captured global no patch can rebuild.
+      const translation = fast.offsetPatch && isPureTranslation(delta);
+      // The drawn picture must move by the streamed delta (see `translatedSpan`), which a view-scale stamp in or
+      // above the span, a clip only a rebuild can move, or (widened stage) a field claim inside it, breaks: a claim
+      // is measured at the node's own game X. Checked for every wire span, with or without the round's switches: a
+      // wire patch of a claimer (a selection reticle, a targeting arrow) drew it at its stale spread shift, which
+      // rustOffsetPatch exposed once offset frames stopped forcing builds.
+      {
+        const refusal = translatedSpanRefusal(id, delta, { build: snapshot.build, nodes: snapshot.scene.nodes,
+          spreadFactor: committedSpread.factor, fieldModes: committedSpread.claimers, shifted: committedSpread.shifted,
+          clipsMovable: clipsMovable() });
+        if (refusal) { offsetDeclines[refusal] = (offsetDeclines[refusal] ?? 0) + 1; return refuse(refusal); }
       }
-      const part = retained.patchWireTransform(id, delta);
+      for (const [captured, entryValue] of snapshot.capturedGlobals) {
+        const entry = snapshot.paintOrder.entries.get(captured);
+        if (!entry || entry.order < span.spanStart || entry.order >= span.spanEnd) continue;
+        if (!translation) return refuse("wire-captured-global");
+        const tx = delta[4], ty = delta[5];
+        const shift = (m: Affine): Affine => [m[0], m[1], m[2], m[3], m[4] + tx, m[5] + ty];
+        if (!sidecar) { sidecar = {}; patchSidecars.set(patch, sidecar); }
+        sidecar.wireCaptured = true;
+        // The changed root's parent is outside its span and did not move; every other parent moved with it.
+        (sidecar.captures ??= new Map()).set(captured, { ...entryValue, g: shift(entryValue.g), drawn: shift(entryValue.drawn),
+          parentTy: captured === id ? entryValue.parentTy : entryValue.parentTy + ty });
+        if (fast.verify) sidecar.verify ??= captureHeldInputs();
+      }
+      // rustOffsetPatch: a clip rect is baked from its clipper's drawn box, so a span with a clipper moves only by a
+      // translation the executor can apply to the clip as well.
+      let moveClips = false;
+      if (fast.offsetPatch) for (let order = span.spanStart; order < span.spanEnd; order++) {
+        if (!snapshot.build.clipRanges.has(snapshot.paintOrder.ids[order])) continue;
+        if (!translation || !clipsMovable()) return refuse("wire-clip");
+        moveClips = true;
+        break;
+      }
+      const part = retained.patchWireTransform(id, delta, { clips: moveClips });
       if (!part) return refuse("wire-transform-unsupported");
+      // A moving clipper whose clip did not come back would leave the clip behind its children.
+      if (moveClips && (delta[4] !== 0 || delta[5] !== 0) && !part.clips?.length) return refuse("wire-clip");
+      if (part.clips?.length) {
+        (patch.clips ??= []).push(...part.clips);
+        if (fast.verify) {
+          sidecar = patchSidecars.get(patch);
+          if (!sidecar) { sidecar = {}; patchSidecars.set(patch, sidecar); }
+          sidecar.verify ??= captureHeldInputs();
+        }
+      }
       patch.primitives.push(...part.primitives);
       patch.hits.push(...part.hits);
       patch.nodeMatrices.push(...part.nodeMatrices);
@@ -1339,15 +1521,34 @@ const traceId = nextTraceFrame();
       const result = submitted.result;
 if (isPromiseLike<PresentationResult>(result)) { trackAsyncRetainedPatch(result, patch, at, next, phaseSubmissionId, landingCandidate); return refuse("async-in-flight"); }
       if (!result.presented) { if (phaseSubmissionId !== undefined) producerReasons!.finishRetainedIfOpen(phaseSubmissionId, "refused");
-        return refuse("presentation-refused"); }
+        patchLost(patch, true); return refuse("presentation-refused"); }
       committed = result;
     } catch { if (phaseSubmissionId !== undefined) producerReasons!.finishRetainedIfOpen(phaseSubmissionId, "failed");
-      return refuse("presentation-error"); }
+      patchLost(patch, true); return refuse("presentation-error"); }
     publishRetainedPatch(patch, at, next, committed, landingCandidate);
     if (rustExecutionPhaseMode) producerReasons!.finishRetainedIfOpen(phaseSubmissionId!, "committed");
     return true;
   }
 
+  const IDENTITY_LINEAR = [1, 0, 0, 1] as const;
+  /** rustOffsetPatch: the executor moves a clip rect by translation, so a translated clipper can be patched. */
+  const clipsMovable = () => fast.offsetPatch && backend === "rust" && pixi?.translatesClips === true;
+  /** Each build's clippers' hit clip scopes, by clipper id (one scope object, shared by the hits under it). */
+  const hitClipScopes = new WeakMap<readonly HitEntry[], Map<string, ClipScope>>();
+  /** Move the hit clip scopes of the clips a committed patch translated: a tap clips against the drawn rect. */
+  function translateHitClips(entries: readonly HitEntry[], clips: readonly ClipTranslation[]): void {
+    let scopes = hitClipScopes.get(entries);
+    if (!scopes) {
+      scopes = new Map();
+      for (const entry of entries) for (const scope of entry.clipScopeChain) scopes.set(scope.id, scope);
+      hitClipScopes.set(entries, scopes);
+    }
+    for (const { id, dx, dy } of clips) {
+      const scope = scopes.get(id);
+      // Replaced, never edited in place.
+      if (scope) scope.spec = { ...scope.spec, x: scope.spec.x + dx, y: scope.spec.y + dy };
+    }
+  }
   function planRetainedSample(next: MirrorState): RetainedPixiPatch | null {
     const refuse = (reason: string) => { retainedDecline = reason; return null; };
     if (!retainedMode || !retainedValid || !snapshot || !retained || !pixi || readiness !== "ready") {
@@ -1367,9 +1568,30 @@ if (isPromiseLike<PresentationResult>(result)) { trackAsyncRetainedPatch(result,
       const ancestors = overrideAncestors(visual.transformOverrides, snapshot.scene.nodes);
       for (const root of snapshot.build.localAnimFrames.keys()) if (ancestors.has(root)) return refuse("anim-over-override");
     }
-    if (interaction.offsetPending || !interaction.cosmeticOffsetsMatch(snapshot)) { retainedDecline = "offset-pending"; return null; }
-    const patch = retained.patch(visual.localAnims);
+    let offsetPlan: OffsetTranslation | null = null;
+    const offsetsMoved = !interaction.cosmeticOffsetsMatch(snapshot);
+    if (interaction.offsetPending || offsetsMoved) {
+      if (!fast.offsetPatch) { retainedDecline = "offset-pending"; return null; }
+    }
+    if (offsetsMoved) {
+      const planned = planOffsetTranslation(snapshot);
+      if (typeof planned === "string") { offsetDeclines[planned] = (offsetDeclines[planned] ?? 0) + 1; return refuse(planned); }
+      offsetPlan = planned;
+    }
+    const sourceMark = visual.sampleMark();
+    const patch = retained.patch(visual.localAnims, offsetPlan?.rootShifts);
     if (!patch) { retainedDecline = "composition-refused"; return null; }
+    patchSourceMarks.set(patch, sourceMark);
+    if (offsetPlan) {
+      const part = retained.patchTranslate(offsetPlan.deltas, { clips: clipsMovable() });
+      if (!part) { offsetDeclines["offset-anim-span"] = (offsetDeclines["offset-anim-span"] ?? 0) + 1; return refuse("offset-anim-span"); }
+      if (part.clips?.length) (patch.clips ??= []).push(...part.clips);
+      patch.primitives.push(...part.primitives);
+      patch.hits.push(...part.hits);
+      patch.nodeMatrices.push(...part.nodeMatrices);
+      patchSidecars.set(patch, { frame: offsetPlan.frame, captures: offsetPlan.captures, moved: offsetPlan.moved,
+        verify: fast.verify ? captureHeldInputs() : undefined });
+    }
     if (held) heldPatches.set(patch, fast.verify ? captureHeldInputs() : null);
     const byId = new Map(patch.primitives.map((entry) => [entry.id, entry]));
     const update = (id: string) => {
@@ -1379,9 +1601,9 @@ if (isPromiseLike<PresentationResult>(result)) { trackAsyncRetainedPatch(result,
     };
     const base = snapshot;
     const quad = createQuadView(), nine = createNinePatchView(), mesh = createTexturedMeshView();
-    if (visual.opacitySampledIds.size) {
+    if (visual.opacityPatchIds.size) {
       const touched = new Set<string>();
-      for (const root of visual.opacitySampledIds) {
+      for (const root of visual.opacityPatchIds) {
         const span = base.paintOrder.entries.get(root);
         if (!span) return refuse("opacity-missing-span");
         for (let i = span.spanStart; i < span.spanEnd; i++) touched.add(base.paintOrder.ids[i]);
@@ -1472,6 +1694,101 @@ if (isPromiseLike<PresentationResult>(result)) { trackAsyncRetainedPatch(result,
     return patch;
   }
 
+  type OffsetTranslation = { deltas: Map<string, [number, number]>; captures: Map<string, CapturedGlobal>; frame: OffsetPatchFrame;
+    /** Outermost local-animation roots whose whole span moves by one translation, which the root's frame carries. */
+    rootShifts: Map<string, readonly [number, number]>;
+    /** Every node the patch moves, root spans included. */
+    moved: ReadonlySet<string> };
+
+  /**
+   * rustOffsetPatch: the design-space translation every drawn node owes the cosmetic offsets that changed since the
+   * committed build, or the reason a translation cannot express them.
+   *
+   * The walk adds an owner's offset to its drawn origin as `parentFinal.linear · offset · kIn`, and every
+   * descendant inherits it as a plain translation (`buildDrawList.ts`, COSMETIC OFFSET). Offsets never touch a
+   * linear part, so the parent's committed drawn linear IS the walk's `parentFinal` linear wherever no view-scale
+   * stamp sits above the owner (then `kIn` is 1); a stamped or candidate ancestor is refused. What a translation
+   * cannot carry is refused too: a clip rect (built from the drawn pose), a view-scale candidate in the moved set
+   * (its stamp is measured where it is drawn), a local-animation root (posed against its own reference), an open
+   * landing, and an offset owner the committed build did not capture.
+   */
+  function planOffsetTranslation(base: DrawnSceneSnapshot): OffsetTranslation | string {
+    const committed = interaction.cosmeticOffsetsFor(base), current = interaction.cosmeticOffsets;
+    const build = base.build, nodes = base.scene.nodes;
+    if (visual.landingArms.length > 0 || visual.hasOpenLanding()) return "offset-landing";
+    const deltas = new Map<string, [number, number]>();
+    const owners = new Set<string>([...committed.keys(), ...current.keys()]);
+    for (const id of owners) {
+      const was = committed.get(id), now = current.get(id);
+      const ddx = (now?.dx ?? 0) - (was?.dx ?? 0), ddy = (now?.dy ?? 0) - (was?.dy ?? 0);
+      if (ddx === 0 && ddy === 0) continue;
+      // A node the committed build never walked draws nothing an offset could move.
+      if (!build.nodePaintInputs.has(id)) continue;
+      const node = nodes.get(id), span = build.order.entries.get(id);
+      if (!node || !span) return "offset-missing-span";
+      if (now && !base.capturedGlobals.has(id)) return "offset-uncaptured";
+      let linear: ArrayLike<number> = IDENTITY_LINEAR;
+      if (node.parentId != null) {
+        const parent = build.nodePaintInputs.get(node.parentId);
+        if (!parent) return "offset-missing-parent";
+        linear = parent.global;
+      }
+      for (let up: string | null | undefined = node.parentId; up != null; up = nodes.get(up)?.parentId)
+        if (build.viewScaleCandidates.has(up) || build.viewScaleStamps.has(up)) return "offset-view-scale";
+      const dx = linear[0] * ddx + linear[2] * ddy, dy = linear[1] * ddx + linear[3] * ddy;
+      for (let order = span.spanStart; order < span.spanEnd; order++) {
+        const moved = build.order.ids[order], prior = deltas.get(moved);
+        if (prior) { prior[0] += dx; prior[1] += dy; } else deltas.set(moved, [dx, dy]);
+      }
+    }
+    for (const id of deltas.keys()) {
+      if (build.clipRanges.has(id) && !clipsMovable()) { noteDeclineType("offset-clip", nodes.get(id)); return "offset-clip"; }
+      if (build.viewScaleCandidates.has(id) || build.viewScaleStamps.has(id)) { noteDeclineType("offset-view-scale", nodes.get(id)); return "offset-view-scale"; }
+    }
+    // A moved local-animation root: its frame's `outer` carries the inherited cosmetic offset, so a span that moves
+    // as one translation re-poses as `T · outer · raw` (`retainedComposition.patch`). Only the outermost root of the
+    // span is shifted: a nested root's delta is composed under its outer root's, which already carries `T`. The
+    // span must move uniformly (no offset owner inside it), and hold no captured global (an animated node's
+    // captured pose is the admission phase, which no patch re-poses) and no clipper.
+    const moved = new Set(deltas.keys());
+    const rootShifts = new Map<string, readonly [number, number]>();
+    for (const root of build.localAnimFrames.keys()) {
+      const shift = deltas.get(root);
+      if (!shift) continue;
+      const span = build.order.entries.get(root)!;
+      let outermost = true;
+      for (const other of build.localAnimFrames.keys()) {
+        const enclosing = other === root ? undefined : build.order.entries.get(other);
+        if (enclosing && enclosing.spanStart <= span.spanStart && span.spanEnd <= enclosing.spanEnd) { outermost = false; break; }
+      }
+      if (!outermost) continue;
+      for (let order = span.spanStart; order < span.spanEnd; order++) {
+        const id = build.order.ids[order], own = deltas.get(id);
+        if (!own || own[0] !== shift[0] || own[1] !== shift[1]) { noteDeclineType("offset-anim", nodes.get(root)); return "offset-anim"; }
+        if (base.capturedGlobals.has(id)) { noteDeclineType("offset-anim-captured", nodes.get(id)); return "offset-anim-captured"; }
+        // The root's frame moves its commands and hits, not a clip rect or a hit clip scope.
+        if (build.clipRanges.has(id)) { noteDeclineType("offset-anim-clip", nodes.get(id)); return "offset-anim-clip"; }
+      }
+      rootShifts.set(root, [shift[0], shift[1]]);
+    }
+    for (const [root] of rootShifts) {
+      const span = build.order.entries.get(root)!;
+      for (let order = span.spanStart; order < span.spanEnd; order++) deltas.delete(build.order.ids[order]);
+    }
+    // A root still in `deltas` sits inside an unshifted root's span (moved by an owner between them): refused.
+    for (const id of deltas.keys())
+      if (build.localAnimFrames.has(id)) { noteDeclineType("offset-anim", nodes.get(id)); return "offset-anim"; }
+    const captures = new Map<string, CapturedGlobal>();
+    for (const [id, captured] of base.capturedGlobals) {
+      const own = deltas.get(id), parentId = nodes.get(id)?.parentId, ofParent = parentId == null ? undefined : deltas.get(parentId);
+      if (!own && !ofParent) continue;
+      const drawn = own ? [captured.drawn[0], captured.drawn[1], captured.drawn[2], captured.drawn[3],
+        captured.drawn[4] + own[0], captured.drawn[5] + own[1]] as Affine : captured.drawn;
+      captures.set(id, { ...captured, drawn, parentTy: captured.parentTy + (ofParent?.[1] ?? 0) });
+    }
+    return { deltas, captures, frame: interaction.captureOffsetFrame(), rootShifts, moved };
+  }
+
   // rustFastVerify: the visual inputs a held-override patch was planned from, by value, so the shadow build of its
   // picture sees the same sample even when the patch publishes asynchronously.
   function captureHeldInputs(): HeldPatchInputs {
@@ -1492,10 +1809,18 @@ if (isPromiseLike<PresentationResult>(result)) { trackAsyncRetainedPatch(result,
    * puts both back before returning. Tolerance is relative 1e-5: the list stores float32 while patches compose
    * in float64, so the two spellings of one pose differ in the last bits.
    */
-  function verifyHeldOverridePatch(inputs: HeldPatchInputs): void {
+  const poseText = (m: ArrayLike<number> | undefined) => m ? `[${Array.from(m, (v) => +v.toFixed(3)).join(",")}]` : "none";
+  /**
+   * `compareCaptures` is the offset family's verify (captured globals move too). `moved` is the set the patch
+   * translated (empty for a held-override patch); given, a mismatching command's note carries both poses and what
+   * drove the owner.
+   */
+  function verifyHeldOverridePatch(inputs: HeldPatchInputs, stats: VerifyStats, compareCaptures = false,
+    moved?: ReadonlySet<string>): void {
     const current = state, drawn = snapshot, composition = retained;
     if (!current || !drawn || !composition) return;
-    heldOverrideVerifyRuns++;
+    stats.runs++;
+    const shadowCaptures = new Map<string, CapturedGlobal>();
     const shadow = createDrawList<string>();
     const skipRoots = new Set<string>();
     if (staticBackground) for (const node of current.nodes.values())
@@ -1514,6 +1839,7 @@ if (isPromiseLike<PresentationResult>(result)) { trackAsyncRetainedPatch(result,
         localAnims: inputs.anims.size ? inputs.anims : null, frameSubstitutes: inputs.substitutes.size ? inputs.substitutes : null,
         viewScaleEnv: visual.viewScaleEnv, tipScaleEnv: visual.tipScaleEnv, pinnedLocals: visual.pinnedLocals,
         cosmeticOffsets: inputs.offsets, semanticText,
+        captureGlobals: compareCaptures ? { ids: new Set(drawn.capturedGlobals.keys()), out: shadowCaptures } : null,
         semanticOverlay: (input, record, index) => semanticOverlay(input, record, index, shadow),
         forceEffectStillOverlay, assert: false });
       if (semanticFailures.size !== liveFailures.length ||
@@ -1529,7 +1855,7 @@ if (isPromiseLike<PresentationResult>(result)) { trackAsyncRetainedPatch(result,
     }
     let mismatches = 0;
     const notes: string[] = [];
-    const note = (detail: string) => { mismatches++; heldOverrideVerifyFirstMismatch ??= detail; if (notes.length < 32) notes.push(detail); };
+    const note = (detail: string) => { mismatches++; stats.firstMismatch ??= detail; if (notes.length < 32) notes.push(detail); };
     // What a mismatching owner looked like on each side: its opacity and hidden state as drawn and as rebuilt.
     const ownerState = (id: string | undefined) => {
       if (!id) return "owner=?";
@@ -1543,7 +1869,7 @@ if (isPromiseLike<PresentationResult>(result)) { trackAsyncRetainedPatch(result,
       for (let i = 0; i < count; i++) {
         const error = Math.abs(expected[i] - actual[i]);
         if (!(error <= 1e-5 * Math.max(1, Math.abs(expected[i]), Math.abs(actual[i])))) within = false;
-        if (!(error <= heldOverrideVerifyMaxError)) heldOverrideVerifyMaxError = Number.isNaN(error) ? Infinity : error;
+        if (!(error <= stats.maxError)) stats.maxError = Number.isNaN(error) ? Infinity : error;
       }
       return within;
     };
@@ -1551,6 +1877,7 @@ if (isPromiseLike<PresentationResult>(result)) { trackAsyncRetainedPatch(result,
     else {
       const quad = createQuadView(), nine = createNinePatchView(), mesh = createTexturedMeshView();
       const clip = createClipRectView(), liveClip = createClipRectView(), line = createPolylineView(), liveLine = createPolylineView();
+      const liveQuad = createQuadView();
       for (const owner of drawn.build.ranges.keys())
         if (!reference.ranges.has(owner)) note(`commands drawn, not rebuilt: ${ownerState(owner)}`);
       for (const [owner, range] of reference.ranges) {
@@ -1562,9 +1889,21 @@ if (isPromiseLike<PresentationResult>(result)) { trackAsyncRetainedPatch(result,
           const kind = shadow.kindNameAt(index), key = `${owner}:${kind}:${ordinal}`;
           if (kind !== list.kindNameAt(liveIndex)) note(`${key}: kind`);
           else if (kind === "quad" || kind === "ninePatch" || kind === "texturedMesh") {
-            const m = kind === "quad" ? shadow.readQuad(index, quad).m
+            let m: ArrayLike<number> = kind === "quad" ? shadow.readQuad(index, quad).m
               : kind === "ninePatch" ? shadow.readNinePatch(index, nine).m : shadow.readTexturedMesh(index, mesh).m;
-            if (!matches(m, composition.logicalMatrix(key))) note(key);
+            let drawnMatrix: ArrayLike<number> | undefined = composition.logicalMatrix(key);
+            if (kind === "quad" && drawnMatrix) {
+              // A source patch re-expresses a new atlas frame in the admitted quad's box (a scaled matrix), where a
+              // rebuild draws the frame at its own size. Compare what is placed: the matrix times its box.
+              const live = list.readQuad(liveIndex, liveQuad);
+              const placed = (pose: ArrayLike<number>, w: number, h: number) =>
+                [pose[0] * w, pose[1] * w, pose[2] * h, pose[3] * h, pose[4], pose[5]];
+              drawnMatrix = placed(drawnMatrix, live.w, live.h);
+              m = placed(m, quad.w, quad.h);
+            }
+            if (!matches(m, drawnMatrix)) note(moved ? `${key} drawn=${poseText(drawnMatrix)} rebuilt=${poseText(m)}` +
+              `${moved.has(owner) ? " moved" : ""}${visual.sourceSampledIds.has(owner) ? " source" : ""}` +
+              `${visual.localAnims.has(owner) || drawn.build.localAnimFrames.has(owner) ? " anim" : ""}` : key);
           } else if (kind === "polyline") {
             // A polyline is baked in design space; its retained matrix is the delta applied since admission.
             const delta = composition.logicalMatrix(key);
@@ -1577,9 +1916,10 @@ if (isPromiseLike<PresentationResult>(result)) { trackAsyncRetainedPatch(result,
             }
             if (!within) note(key);
           } else if (kind === "clipPush") {
-            // Retained patches never move a clip rect, so the committed one must still be the rebuilt one.
+            // A clip rect moves only by a committed translation (`rustOffsetPatch`).
             const rebuilt = shadow.readClipRect(index, clip), committed = list.readClipRect(liveIndex, liveClip);
-            if (!matches([rebuilt.x, rebuilt.y, rebuilt.w, rebuilt.h], [committed.x, committed.y, committed.w, committed.h], 4)) note(key);
+            const [dx, dy] = composition.clipOffset(liveIndex);
+            if (!matches([rebuilt.x, rebuilt.y, rebuilt.w, rebuilt.h], [committed.x + dx, committed.y + dy, committed.w, committed.h], 4)) note(key);
           }
         }
       }
@@ -1590,23 +1930,46 @@ if (isPromiseLike<PresentationResult>(result)) { trackAsyncRetainedPatch(result,
         if (!drawnTexts.has(record.key)) note(`text rebuilt, not drawn: ${record.key} alpha ${record.alpha ?? 1} ${ownerState(record.labelId)}`);
         else if (!matches(record.transform, composition.logicalMatrix(`text:${record.key}`))) note(`text:${record.key}`);
       }
+      // Every clip rect, wherever its push sits: the drawn one (as admitted plus any committed translation) must be
+      // the rebuilt one.
+      for (const [owner, range] of reference.clipRanges) {
+        const committedRange = drawn.build.clipRanges.get(owner);
+        if (!committedRange) { note(`clip rebuilt, not drawn: ${owner}`); continue; }
+        const rebuilt = shadow.readClipRect(range.push, clip), committed = list.readClipRect(committedRange.push, liveClip);
+        const [dx, dy] = composition.clipOffset(committedRange.push);
+        if (!matches([rebuilt.x, rebuilt.y, rebuilt.w, rebuilt.h], [committed.x + dx, committed.y + dy, committed.w, committed.h], 4))
+          note(`clip:${owner}`);
+      }
+      for (const owner of drawn.build.clipRanges.keys()) if (!reference.clipRanges.has(owner)) note(`clip drawn, not rebuilt: ${owner}`);
+      const sameChain = (a: readonly ClipScope[], b: readonly ClipScope[]) => a.length === b.length && a.every((scope, i) =>
+        scope.id === b[i].id && matches([scope.spec.x, scope.spec.y, scope.spec.w, scope.spec.h],
+          [b[i].spec.x, b[i].spec.y, b[i].spec.w, b[i].spec.h], 4));
       if (reference.hitEntries.length !== drawn.hitEntries.length)
         note(`hit entries: ${drawn.hitEntries.length} drawn, ${reference.hitEntries.length} rebuilt`);
       else for (let i = 0; i < drawn.hitEntries.length; i++) {
         const rebuilt = reference.hitEntries[i], committed = drawn.hitEntries[i];
         if (rebuilt.nodeId !== committed.nodeId || !matches(rebuilt.mFinal, committed.mFinal) ||
           !matches(rebuilt.mGame, committed.mGame)) note(`hit:${committed.nodeId}${rebuilt.nodeId !== committed.nodeId ? ` vs ${rebuilt.nodeId}` : ""}`);
+        else if (!sameChain(rebuilt.clipScopeChain, committed.clipScopeChain)) note(`hit-clip:${committed.nodeId}`);
       }
     }
-    heldOverrideVerifyMismatches += mismatches;
-    if (notes.length && heldOverrideVerifyLog.length < 16)
-      heldOverrideVerifyLog.push({ run: heldOverrideVerifyRuns, revision: current.revision, clock: drawnClock, notes, recent: heldOverrideRecent.slice() });
+    // rustOffsetPatch moves captured globals at publication; the rebuilt captures are their ground truth.
+    if (compareCaptures && reference) for (const [id, committed] of drawn.capturedGlobals) {
+      const rebuilt = shadowCaptures.get(id);
+      if (!rebuilt) note(`captured drawn, not rebuilt: ${id}`);
+      else if (!matches(rebuilt.drawn, committed.drawn) || !matches(rebuilt.g, committed.g) ||
+        !matches([rebuilt.parentTy], [committed.parentTy], 1)) note(`captured:${id}`);
+    }
+    stats.mismatches += mismatches;
+    if (notes.length && stats.log.length < 16)
+      stats.log.push({ run: stats.runs, revision: current.revision, clock: drawnClock, notes, recent: stats.recent.slice() });
   }
 
   function tryRetainedPatch(at: number): boolean {
     if (!state || !snapshot || snapshot.stateRevision !== state.revision || !pixi) {
       retainedDecline = "invalid-retained-state"; return false;
     }
+    if (scheduler.buildRequired) { retainedDecline = "build-requested"; return false; }
     retainedDecline = "plan-unsupported";
 const traceId = nextTraceFrame();
     const planStarted = rustPhaseTimingMode ? performance.now() : 0;
@@ -1628,10 +1991,10 @@ const traceId = nextTraceFrame();
       const result = submitted.result;
       if (isPromiseLike<PresentationResult>(result)) { trackAsyncRetainedPatch(result, patch, at, undefined, phaseSubmissionId, landingCandidate); retainedDecline = "async-in-flight"; return false; }
       if (!result.presented) { if (phaseSubmissionId !== undefined) producerReasons!.finishRetainedIfOpen(phaseSubmissionId, "refused");
-        retainedPatchFallbacks++; retainedDecline = "presentation-refused"; return false; }
+        patchLost(patch, true); retainedPatchFallbacks++; retainedDecline = "presentation-refused"; return false; }
       committed = result;
     } catch { if (phaseSubmissionId !== undefined) producerReasons!.finishRetainedIfOpen(phaseSubmissionId, "failed");
-      retainedPatchFallbacks++; retainedDecline = "presentation-error"; return false; }
+      patchLost(patch, true); retainedPatchFallbacks++; retainedDecline = "presentation-error"; return false; }
     publishRetainedPatch(patch, at, undefined, committed, landingCandidate);
     if (rustExecutionPhaseMode) producerReasons!.finishRetainedIfOpen(phaseSubmissionId!, "committed");
     return true;
@@ -1754,6 +2117,7 @@ const traceId = nextTraceFrame();
       // rustSceneIndex: reward-focus candidates/the static-bg skip-root memo (both here) plus
       // interactionRuntime's own hand-present/cover-above candidates (item 3) share one counter.
       ...(fast.sceneIndex ? { sceneIndexVerifyMismatches: sceneIndexVerifyMismatches + interaction.sceneIndexVerifyMismatches } : {}),
+      ...(fast.raiseIndexCache ? { raiseIndexCacheVerifyMismatches: interaction.raiseIndexCacheVerifyMismatches } : {}),
       textures: pixi?.stats.textures ?? 0, frameTextures: pixi?.stats.frameTextures ?? 0, gpuTextures: pixi?.stats.gpuTextures ?? 0,
       textureLoads: pixi?.stats.textureLoads ?? 0, created: pixi?.stats.created ?? 0, updated: pixi?.stats.updated ?? 0,
       destroyed: pixi?.stats.destroyed ?? 0, textRasterizations: pixi?.stats.textRasterizations ?? 0,
@@ -1770,6 +2134,7 @@ const traceId = nextTraceFrame();
       designWidth: stage.clientWidth, designHeight: stage.clientHeight, backingWidth: backingW, backingHeight: backingH,
       dpr,
       ...(producerReasons ? { rustProducerReasons: producerReasons.snapshot() } : {}),
+      ...(scheduler.coalesceStats() ? { rustCoalescedBuilds: scheduler.coalesceStats() } : {}),
       ...(hiddenWalkMode ? { rustHiddenWalk: { rows: hiddenWalkRows.slice(), overflow: hiddenWalkOverflow } } : {}),
       webglVersion: (() => { const gl = (pixi?.app.renderer as unknown as { gl?: WebGLRenderingContext })?.gl; return gl ? gl.getParameter(gl.VERSION) : null; })(),
       renderer: (() => { const gl = (pixi?.app.renderer as unknown as { gl?: WebGLRenderingContext })?.gl; return gl ? gl.getParameter(gl.RENDERER) : null; })(),
@@ -1779,7 +2144,11 @@ const traceId = nextTraceFrame();
         rustStaticAdmissionPhase: rustStaticAdmissionPhaseMode, rustFast: { ...fast },
         rustTextPrepCache: { textPrep: textPrepCache?.stats() ?? null, fontCheck: fontCheckCache?.stats() ?? null } } : {}),
       ...(lazyCompositionVerifyFirstMismatch ? { lazyCompositionVerifyFirstMismatch } : {}),
-      ...(fast.heldOverridePatch ? { rustHeldOverride: { heldOverridePatches, heldOverrideDeclines: { ...heldOverrideDeclines }, ...(fast.verify ? { heldOverrideVerifyRuns, heldOverrideVerifyMismatches, heldOverrideVerifyMaxError, heldOverrideVerifyFirstMismatch, heldOverrideVerifyLog: heldOverrideVerifyLog.map((entry) => ({ ...entry, notes: [...entry.notes], recent: [...entry.recent] })) } : {}) } } : {}),
+      ...(fast.heldOverridePatch ? { rustHeldOverride: { heldOverridePatches, heldOverrideDeclines: { ...heldOverrideDeclines }, ...(fast.verify ? { heldOverrideVerifyRuns: heldVerify.runs, heldOverrideVerifyMismatches: heldVerify.mismatches, heldOverrideVerifyMaxError: heldVerify.maxError, heldOverrideVerifyFirstMismatch: heldVerify.firstMismatch, heldOverrideVerifyLog: heldVerify.log.map((entry) => ({ ...entry, notes: [...entry.notes], recent: [...entry.recent] })) } : {}) } } : {}),
+      ...(fast.offsetPatch ? { rustOffsetPatch: { offsetPatches, offsetPatchedNodes, wireCapturedPatches, offsetDeclines: { ...offsetDeclines },
+        offsetDeclineTypes: { ...offsetDeclineTypes },
+        ...(fast.verify ? { verifyRuns: offsetVerify.runs, verifyMismatches: offsetVerify.mismatches, verifyMaxError: offsetVerify.maxError,
+          verifyFirstMismatch: offsetVerify.firstMismatch, verifyLog: offsetVerify.log.map((entry) => ({ ...entry, notes: [...entry.notes], recent: [...entry.recent] })) } : {}) } } : {}),
       ...(rustExecutionPhaseMode ? { rustExecutionPhases: true } : {}),
       ...(profile ? { canvasProfile: profile.snapshot() } : {}),
       ...(hiddenMemo ? { rustHiddenMemo: { ...hiddenMemo.stats, missReasons: { ...hiddenMemo.stats.missReasons },
@@ -1981,7 +2350,10 @@ const traceId = nextTraceFrame();
       const completedAsync = asyncPresentedRevision === next.revision;
       if (completedAsync) asyncPresentedRevision = null;
       if (completedAsync) traceWarmRenderer("renderer-async-consumed", next.revision);
-      const presented = completedAsync || tryRetainedWire(next, at) || paint(next, "wire", retainedDecline); if (presented) {
+      // rustCoalescedBuilds: an open request is newer than any build that already presented this revision, so it
+      // builds here, unless it may wait for the next tick (not urgent, and this frame already built or patched).
+      const honourRequest = scheduler.buildRequested && !scheduler.buildRequestMayWait;
+      const presented = (completedAsync && !honourRequest) || tryRetainedWire(next, at) || paint(next, "wire", retainedDecline); if (presented) {
         next.changedIds.clear(); next.sceneRewrite = false;
         visual.advance(at);
         scheduler.armAnimation(deterministicClock ?? performance.now());
@@ -1995,9 +2367,9 @@ const traceId = nextTraceFrame();
       if (presented && rustPendingAckRetry) pendingViewRevision = null;
       return presented ? undefined : false; },
     setReconcilePull(pull) { reconcilePull = pull; scheduler.setReconcilePull(pull); }, markTextureDirty() {},
-    setStretch(factor) { stretch = factor; visual.setStretch(factor); if (state && readiness === "ready") paint(state, "local"); },
+    setStretch(factor) { stretch = factor; visual.setStretch(factor); paintLocal(); },
     setHeldCard(id, _x, y, mode) { interaction.setHeldCard(id, y, mode); }, setRaiseHandCards: interaction.setRaiseHandCards,
-    setHandRaiseChrome(next) { handRaiseChrome = next; if (state && readiness === "ready") paint(state, "local"); },
+    setHandRaiseChrome(next) { handRaiseChrome = next; paintLocal(); },
     setUiScaling(enabled) { setUiScalingEnabled(enabled); }, raiseInputStamps: interaction.raiseInputStamps,
     raisedHandVisualClaimAt: interaction.raisedHandVisualClaimAt, raisedHandTouchTargetClaim: interaction.raisedHandTouchTargetClaim,
     handPresent: interaction.handPresent, handRaiseUiLayer: interaction.handRaiseUiLayer,
@@ -2009,7 +2381,7 @@ const traceId = nextTraceFrame();
     viewScaleInputStamps: interaction.viewScaleInputStamps, endTurnBoxAt: interaction.endTurnBoxAt, eagerScrollTargets: interaction.eagerScrollTargets,
     isUnderNode: interaction.isUnderNode,
     consumeEffectsDirty: () => ({ shader: false, particle: false }), setStaticBackgroundShown() {},
-    setStaticBackgroundSource(source, ready) { staticBackground = source; staticBackgroundReady = ready; if (!source) ready?.(false); if (state && readiness === "ready") paint(state, "local"); },
+    setStaticBackgroundSource(source, ready) { staticBackground = source; staticBackgroundReady = ready; if (!source) ready?.(false); paintLocal(); },
     __drainDormantHatchForTest: () => false, __drainRevealStaggerForTest: () => 0,
     touchStackAt: interaction.touchStackAt, spreadPainterAt: interaction.spreadPainterAt,
     mapNodeAt: interaction.mapNodeAt, applyLocalOffset: interaction.applyLocalOffset, scrollRenderedY: interaction.scrollRenderedY,

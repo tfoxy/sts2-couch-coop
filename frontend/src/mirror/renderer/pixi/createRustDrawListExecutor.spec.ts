@@ -1,6 +1,6 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { webcrypto } from "node:crypto";
-import { createDrawList, createQuadView } from "@godot-scene-web/canvas";
+import { createClipRectView, createDrawList, createQuadView } from "@godot-scene-web/canvas";
 import type { PixiScenePlan, PixiTextRecord } from "@godot-scene-web/canvas/pixi";
 import type { ProducerExecutorEvent } from "./producerBuildReasons";
 import { createRustDrawListExecutor } from "./createRustDrawListExecutor";
@@ -786,6 +786,58 @@ describe("rustFast WP3 executor switches", () => {
     ));
     vi.stubEnv("VITE_RUST_SCENE_SERIALIZER_URL", moduleUrl(serializerSource));
   }
+
+  // rustOffsetPatch: a clip translation reaches the Rust wire as a `clipPush` replacement, through the real serializer.
+  it("encodes a clip translation as a clipPush replacement and advertises it only when the serializer can", async () => {
+    let acceptedRevision = 0;
+    const patches: unknown[] = [];
+    (globalThis as Record<string, unknown>).__rustProjectionTest = {
+      engine: { backend: "WebGL2", resize: () => {}, dispose: () => {}, upload_rgba_batch: () => 0,
+        admit_scene: (bytes: Uint8Array) => { acceptedRevision = JSON.parse(new TextDecoder().decode(bytes)).revision;
+          return JSON.stringify({ accepted: true, revision: acceptedRevision, unsupportedCommands: 0, resourcePending: 0 }); },
+        apply_patch: (bytes: Uint8Array) => { const patch = JSON.parse(new TextDecoder().decode(bytes)); patches.push(patch);
+          acceptedRevision = patch.revision;
+          return JSON.stringify({ accepted: true, revision: acceptedRevision, unsupportedCommands: 0, resourcePending: 0 }); },
+        present: async () => JSON.stringify({ presented: true, revision: acceptedRevision, draws: 1, resourcePending: 0, unsupportedCommands: 0 }) },
+    };
+    vi.stubEnv("VITE_RUST_PROTOTYPE_MODULE_URL", moduleUrl(
+      "export default async function init(){return {}};export class RustRenderer{static async create(){return globalThis.__rustProjectionTest.engine}}",
+    ));
+    const renderer = await createRustDrawListExecutor({ canvas: document.createElement("canvas"), width: 40, height: 40,
+      designWidth: 40, designHeight: 40, onInvalidate: () => {} });
+    expect(renderer.translatesClips).toBe(true);
+    const list = createDrawList<string>();
+    const clip = createClipRectView(); clip.x = 2; clip.y = 3; clip.w = 10; clip.h = 12; clip.cornerRadius = 1;
+    list.pushClipRect(clip);
+    const quad = createQuadView(); quad.w = quad.h = 4; list.pushQuad(quad);
+    list.popClip();
+    expect(await renderer.admitScene(list, [], { primitives: [{ id: "q", index: 1 }], groups: [] })).toMatchObject({ presented: true });
+    expect(await renderer.patchScene({ primitives: [{ id: "q", transform: [1, 0, 0, 1, 5, -2] }],
+      clips: [{ id: "clipper", index: 0, dx: 5, dy: -2, totalDx: 5, totalDy: -2 }] })).toMatchObject({ presented: true });
+    const [patch] = patches as Array<{ updates: Array<{ id: string; command: Record<string, unknown> }> }>;
+    expect(patch.updates.find((update) => update.id === "c0")!.command)
+      .toEqual({ id: "c0", kind: "clipPush", rect: [7, 1, 10, 12], radius: 1, outset: 0 });
+    // A second move places the clip at the admitted rect plus its total translation (never a running sum).
+    expect(await renderer.patchScene({ primitives: [], clips: [{ id: "clipper", index: 0, dx: 1, dy: 1, totalDx: 6, totalDy: -1 }] }))
+      .toMatchObject({ presented: true });
+    expect((patches[1] as typeof patch).updates).toEqual([{ id: "c0",
+      command: { id: "c0", kind: "clipPush", rect: [8, 2, 10, 12], radius: 1, outset: 0 } }]);
+    // A clip index the scene does not hold is a full admission, never a guess.
+    expect(await renderer.patchScene({ primitives: [], clips: [{ id: "clipper", index: 1, dx: 1, dy: 1, totalDx: 1, totalDy: 1 }] }))
+      .toMatchObject({ presented: false, reason: "retained patch requires full scene admission" });
+    renderer.dispose();
+
+    // A serializer that refuses a clip replacement (one that predates the clip translation) is not advertised.
+    stubEngineAndSerializer(
+      "export function encodeRustScene(){return {bytes:new Uint8Array([1]),scene:{version:2,revision:1,width:1,height:1,designWidth:1,designHeight:1,resources:[],commands:[]},resources:[],textUploads:[],unsupportedCommands:0}};" +
+      "export function encodeRustPatch(){return null};export function encodeRustResources(){return new Uint8Array(0)};" +
+      "export function encodeRustRetainedPatch(){return null}",
+    );
+    const older = await createRustDrawListExecutor({ canvas: document.createElement("canvas"), width: 1, height: 1,
+      designWidth: 1, designHeight: 1, onInvalidate: () => {} });
+    expect(older.translatesClips).toBe(false);
+    older.dispose();
+  });
 
   it("reuses one JSON.stringify of a style object shared by two text records when textPrepCache is on", async () => {
     window.history.replaceState({}, "", "/?rustTextPrepCache=1&rustDiagnostics=1");

@@ -5,7 +5,8 @@ import type { PixiTextRecord } from "@godot-scene-web/canvas/pixi";
 import type { DrawListBuild, LocalAnimFrame } from "@/mirror/canvas/buildDrawList";
 import type { PaintOrderEntry } from "@/mirror/canvas/paintOrder";
 import type { HitEntry } from "@/mirror/canvas/hitTest";
-import { createRetainedPixiComposition, type RetainedPixiComposition, type RetainedPixiCompositionOptions } from "./retainedComposition";
+import { createRetainedPixiComposition, isPureTranslation, type RetainedPixiComposition, type RetainedPixiCompositionOptions } from "./retainedComposition";
+import type { Affine } from "@/mirror/affine";
 
 const identity = (): [number, number, number, number, number, number] => [1, 0, 0, 1, 0, 0];
 const frame = (): LocalAnimFrame => ({ drawn: identity(), outer: identity(), base: identity(), wire: identity(), spreadDx: 0, spreadRebased: false });
@@ -391,6 +392,12 @@ function exercise(retained: RetainedPixiComposition, inputs: Inputs): unknown[] 
     out.push(wire);
     if (wire) retained.commit(wire);
   }
+  // rustOffsetPatch: a translation per node; null inside a local-animation root's span.
+  for (const id of nodeIds) {
+    const moved = retained.patchTranslate(new Map([[id, [3, -1] as const], ["missing-too", [0, 0] as const]]));
+    out.push(moved);
+    if (moved) retained.commit(moved);
+  }
   retained.commit({ primitives: [{ id: primitiveIds[0], transform: [1, 0, 0, 1, 9, 9] }], groups: [], hits: [],
     nodeMatrices: [{ id: nodeIds[0], matrix: [1, 0, 0, 1, 1, 1] }],
     sourceReferences: [{ id: primitiveIds[0], matrix: [1, 0, 0, 1, 6, 0] }], movedRoots: 0, rootPoses: new Map() });
@@ -401,6 +408,77 @@ function exercise(retained: RetainedPixiComposition, inputs: Inputs): unknown[] 
   read();
   return out;
 }
+
+describe("translate patch (rustOffsetPatch)", () => {
+  it("moves a node's commands, texts, hits and node matrix but never its game pose", () => {
+    const animated = mixedFixture(false);
+    const inputs = { ...animated, build: { ...animated.build, localAnimFrames: new Map() } as unknown as DrawListBuild };
+    const retained = createRetainedPixiComposition(inputs.list, inputs.build, inputs.texts, inputs.owners, inputs.spread);
+    const patch = retained.patchTranslate(new Map([["sprite", [7, -3] as const], ["mesh", [1, 2] as const], ["other", [0, 0] as const]]))!;
+    expect(patch.primitives).toEqual([
+      { id: "sprite:quad:0", transform: [0.5, 0, 0, 0.5, 27, 7] },
+      { id: "mesh:texturedMesh:0", transform: [1, 0, 0, 1, 8, 5] },
+      { id: "text:meshLabel", transform: [1, 0, 0, 1, 3, 4] },
+    ]);
+    expect(patch.hits.map(({ entry, matrix, gameMatrix }) => [entry.nodeId, matrix, gameMatrix]))
+      .toEqual([["sprite", [0.5, 0, 0, 0.5, 27, 7], undefined]]);
+    expect(patch.nodeMatrices).toEqual([{ id: "sprite", matrix: [1, 0, 0, 1, 10, -3] }, { id: "mesh", matrix: [1, 0, 0, 1, 3, 2] }]);
+    retained.commit(patch);
+    expect(retained.logicalMatrix("sprite:quad:0")).toEqual([0.5, 0, 0, 0.5, 27, 7]);
+    // Inside a local-animation root's span the primitives are posed against the root: refused.
+    const withRoots = createRetainedPixiComposition(animated.list, animated.build, animated.texts, animated.owners, animated.spread);
+    expect(withRoots.patchTranslate(new Map([["sprite", [1, 1] as const]]))).toBeNull();
+  });
+
+  it("translates an animated root's span through its frame, once for a nested root, and keeps the total", () => {
+    // `panel` is an animated root holding the nested animated root `sprite`.
+    const inputs = mixedFixture(true);
+    const retained = createRetainedPixiComposition(inputs.list, inputs.build, inputs.texts, inputs.owners, new Map());
+    const shifted = retained.patch(new Map(), new Map([["panel", [3, 4] as const]]))!;
+    expect(shifted.rootTranslations).toEqual(new Map([["panel", [3, 4]]]));
+    const byId = new Map(shifted.primitives.map((entry) => [entry.id, entry.transform]));
+    // Every primitive in the span moves by exactly T, the nested root's sprite included (not 2T).
+    expect(byId.get("mesh:texturedMesh:0")).toEqual([1, 0, 0, 1, 10, 7]);
+    expect(byId.get("sprite:quad:0")).toEqual([0.5, 0, 0, 0.5, 23, 14]);
+    expect(byId.has("other:quad:0")).toBe(false);
+    retained.commit(shifted);
+    // A later patch with no shift keeps the committed translation; a further shift adds to it.
+    expect(retained.patch(new Map())!.movedRoots).toBe(0);
+    expect(retained.patch(new Map(), new Map([["panel", [1, 0] as const]]))!.rootTranslations).toEqual(new Map([["panel", [4, 4]]]));
+    // Only an animated root can be shifted.
+    expect(retained.patch(new Map(), new Map([["other2", [1, 0] as const]]))).toBeNull();
+  });
+
+  // `panel` is a clipper (its clip push is list index 0 here) whose span holds every node but `other`.
+  const clippedInputs = () => {
+    const animated = mixedFixture(false);
+    const build = { ...animated.build, localAnimFrames: new Map(), clipRanges: new Map([["panel", { push: 0, pop: 4 }]]) };
+    return { ...animated, build: build as unknown as DrawListBuild };
+  };
+
+  it("moves a span's clips by one shared translation test, and refuses a clip move it cannot express", () => {
+    const inputs = clippedInputs();
+    const retained = createRetainedPixiComposition(inputs.list, inputs.build, inputs.texts, inputs.owners, inputs.spread);
+    // A linear part a rounding step off identity is still a translation, for the caller and here alike.
+    const nearly = [1 - Number.EPSILON / 2, 0, 0, 1 + 2 * Number.EPSILON, 4, 5] as Affine;
+    expect(isPureTranslation(nearly)).toBe(true);
+    const moved = retained.patchWireTransform("panel", nearly, { clips: true })!;
+    expect(moved.clips).toEqual([{ id: "panel", index: 0, dx: 4, dy: 5, totalDx: 4, totalDy: 5 }]);
+    retained.commit(moved);
+    expect(retained.clipOffset(0)).toEqual([4, 5]);
+    // The total is what an executor places the clip at: the admitted rect plus it, never a running sum of steps.
+    const again = retained.patchWireTransform("panel", [1, 0, 0, 1, 1, -1], { clips: true })!;
+    expect(again.clips).toEqual([{ id: "panel", index: 0, dx: 1, dy: -1, totalDx: 5, totalDy: 4 }]);
+    // A delta with a real linear part would move the children but not the clip: refused, never half-applied.
+    expect(retained.patchWireTransform("panel", [1.01, 0, 0, 1, 4, 5], { clips: true })).toBeNull();
+    // Without `clips` the old wire patch is unchanged and carries no clip.
+    expect(retained.patchWireTransform("panel", [1.01, 0, 0, 1, 4, 5])?.clips).toBeUndefined();
+    // The offset path refuses a moved clipper unless clips may move.
+    expect(retained.patchTranslate(new Map([["panel", [2, 2] as const]]))).toBeNull();
+    expect(retained.patchTranslate(new Map([["panel", [2, 2] as const]]), { clips: true })!.clips)
+      .toEqual([{ id: "panel", index: 0, dx: 2, dy: 2, totalDx: 6, totalDy: 7 }]);
+  });
+});
 
 describe("lazy retained composition index", () => {
   it.each(equivalenceFixtures)("matches the eager composition for %s", (_name, make) => {

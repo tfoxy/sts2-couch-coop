@@ -25,6 +25,40 @@
  * This is also the home of schedule/cadence diagnostics. Measuring the rAF
  * handoff and the actual idle-frame period beside the handle state means a
  * caller cannot accidentally omit a newly introduced wakeup from the census.
+ *
+ * ONE BUILD PER FRAME (`rustCoalescedBuilds`, opt-in through `ports.coalesce`).
+ * A client-only change (held-card lift, hand-raise toggle, stretch, chrome) used
+ * to build synchronously wherever it was raised, so a frame could build in the
+ * input lane, in the animation tick and again in the wire reconcile. With
+ * coalescing such a change is a *build request*, a demand source of its own:
+ *
+ * - a tick still booked ahead of this frame's paint serves it (no latency: the
+ *   browser runs that tick before it paints);
+ * - otherwise, if this frame already built or patched and the change is not
+ *   urgent, the next tick serves it (a ramp sample the tick redraws anyway);
+ * - otherwise it builds now, exactly where the synchronous build used to run.
+ *   An urgent change (a lift the player must see) therefore never presents later
+ *   than before; it is the only case that can add a second build to a frame.
+ *
+ * The tick obeys the same budget: when a wire reconcile (or a request) already
+ * built or patched in this rendered frame, after the frame began, the tick
+ * samples and settles but does not build again. Whatever it advanced (a ramp
+ * step, a tween sample) is carried: the next frame is booked and built or
+ * patched even if no other demand is left. Only an outstanding urgent request
+ * overrides the yield. The texture lane likewise skips its repaint when this
+ * frame already ran a full build that started after the texture arrived.
+ *
+ * rAF lanes run in booking order, so "this frame" cannot be read from lane
+ * order. It is a task epoch instead: all rAF callbacks of a display frame run in
+ * one task, and a one-shot posted task (never a timer loop) closes the epoch
+ * after any task that built, patched or raised a request. A close that runs
+ * late can only make a request build now, never later: the tick starts a new
+ * epoch itself when the open one holds only work from before this frame began
+ * (the rAF timestamp), so it never yields to a build from an earlier frame.
+ *
+ * A request survives an in-flight asynchronous presentation (`buildBlocked`):
+ * it is not attempted while blocked and is served once the presentation settles
+ * and re-arms the scheduler. Without `ports.coalesce` none of this exists.
  */
 
 import type { ReconcilePull } from "@/mirror/renderer/contracts";
@@ -50,6 +84,10 @@ export type CanvasIdleStageBypass = "offset" | "tween" | "settle" | "trail";
 
 /** Browser operations are injected so the state machine is directly testable. */
 export interface CanvasFrameSchedulerPlatform {
+  /** One-shot "after the current task" callback for the coalescing frame epoch. Defaults to a MessageChannel. */
+  readonly postTask?: ((callback: () => void) => void) | null;
+  /** The clock rAF timestamps are on (`performance.now()` in a browser). */
+  readonly now?: () => number;
   readonly requestAnimationFrame: ((callback: FrameRequestCallback) => number) | null;
   readonly cancelAnimationFrame: ((handle: number) => void) | null;
   readonly setTimeout: ((callback: () => void, delayMs: number) => ReturnType<typeof setTimeout>) | null;
@@ -93,7 +131,8 @@ export interface CanvasFrameSchedulerAnimationPorts<TState extends CanvasFrameSc
 
   /** A successful numeric patch presents through its own established port. */
   tryPatchAndPaint(at: number): boolean;
-  runBuild(state: TState): boolean;
+  /** `requested`: this build serves a coalesced build request (see `requestBuild`). */
+  runBuild(state: TState, requested?: boolean): boolean;
   syncOverlay(state: TState): void;
   /** An animation full build is synchronous, but never a scene acknowledgement. */
   /** True when the full build reached the display; legacy backends may not report it. */
@@ -104,6 +143,58 @@ export interface CanvasFrameSchedulerAnimationPorts<TState extends CanvasFrameSc
   /** A texture resource callback rebuilds and paints but never acknowledges a scene delta. */
   /** True only when the requested resource was included in a drawn frame. */
   rebuildAndPaintTexture(): boolean | void;
+}
+
+/** `rustCoalescedBuilds`: the build-request demand source and its per-frame accounting. */
+export interface CanvasFrameSchedulerCoalescePorts {
+  /** False keeps every decision as it was; only the per-frame work accounting runs (a bench's switch-off arm). */
+  readonly enabled: boolean;
+  /** Build and present the current state now: what a synchronous client-only repaint used to do. */
+  localBuild(): void;
+  /** True while a build cannot start (an asynchronous presentation in flight); its settlement re-arms. */
+  buildBlocked(): boolean;
+}
+
+/** Work per task epoch (≈ per display frame for the rAF phase). Counts builds plus patches. */
+export interface CanvasFrameCoalesceStats {
+  readonly enabled: boolean;
+  readonly requests: number;
+  readonly urgentRequests: number;
+  readonly immediate: number;
+  readonly deferred: number;
+  /** Urgent requests that built in a frame which had already built or patched. */
+  readonly urgentExtraBuilds: number;
+  readonly servedByTick: number;
+  readonly blockedRequests: number;
+  /** Ticks that found their epoch still open (the posted close ran late). */
+  readonly staleTaskCloses: number;
+  /** Ticks that sampled but did not build because their frame had already built or patched. */
+  readonly tickYields: number;
+  /** Texture repaints a full build earlier in the same frame had already drawn. */
+  readonly textureYields: number;
+  /** Ticks whose moved offset ramp alone forced a full build (no `rampPatchable`). */
+  readonly rampForcedBuilds: number;
+  /** Ticks with a moved offset ramp whose retained patch committed (counted at commit, not at submission). */
+  readonly rampPatches: number;
+  /** Submitted patches that never presented (refused, superseded or failed); their frame work was undone. */
+  readonly lostPatches: number;
+  /** Ticks that skipped a patch because an asynchronous presentation was in flight (`rampPatchable`). */
+  readonly blockedPatchYields: number;
+  readonly frameTask: number;
+  readonly framesWithWork: number;
+  readonly workPerFrame: Readonly<Record<"1" | "2" | "3+", number>>;
+  readonly buildsPerFrame: Readonly<Record<"1" | "2" | "3+", number>>;
+  readonly maxWorkPerFrame: number;
+}
+
+/** What one patch submission took from the scheduler, given back by `settlePatch` if it never presents. */
+export interface CanvasPatchSubmission {
+  readonly task: number;
+  /** Submitted by a tick whose offset ramp moved. */
+  readonly ramp: boolean;
+  /** It served (and cleared) an open offset-only request, urgent or not. */
+  readonly servedRequest: boolean;
+  readonly urgent: boolean;
 }
 
 export interface CanvasFrameSchedulerPorts<TState extends CanvasFrameSchedulerState> {
@@ -121,6 +212,13 @@ export interface CanvasFrameSchedulerPorts<TState extends CanvasFrameSchedulerSt
   readonly platform?: CanvasFrameSchedulerPlatform;
   /** Optional observer; it cannot change admission or scheduling. */
   readonly onFrameLifecycle?: (event: "offered" | "admitted" | "skipped" | "sample-start" | "sample-end", revision: number) => void;
+  /** Build-request coalescing; absent means no request path and no accounting at all. */
+  readonly coalesce?: CanvasFrameSchedulerCoalescePorts;
+  /**
+   * `rustOffsetPatch`: a moved cosmetic-offset ramp (and an offset-only build request) may be presented by a
+   * retained patch instead of forcing a full build. Absent: a moved ramp always builds.
+   */
+  readonly rampPatchable?: boolean;
 }
 
 export interface CanvasFrameScheduler {
@@ -138,6 +236,39 @@ export interface CanvasFrameScheduler {
   noteIdlePeriod(at: number): void;
   /** Cancels both rAF lanes and the timer; late callbacks become inert. */
   dispose(): void;
+  /**
+   * Ask for one full build of the current state (`ports.coalesce` enabled). `urgent` marks a change the player
+   * must see this frame. Returns whether it built now or was left to a tick (or to a settling presentation).
+   */
+  requestBuild(urgent: boolean, offsetOnly?: boolean): "immediate" | "deferred";
+  /**
+   * Every full build the renderer starts (it serves any request) and every patch it submits. A patch returns its
+   * submission, which the renderer hands back to `settlePatch` once it knows whether the patch presented.
+   */
+  noteFrameWork(kind: "build"): void;
+  noteFrameWork(kind: "patch"): CanvasPatchSubmission | null;
+  /**
+   * A submitted patch committed, or never will (refused, superseded, failed). A lost patch gives back what its
+   * submission took: its frame's work slot, an offset-only request it served and the frame a tick carried
+   * (`rampPatchable`), so a ramp's last step or a trailing offset is drawn by a later frame instead of lost.
+   * `buildFollows`: the caller builds the current state right after this (a synchronous refusal), which draws all
+   * of it, so no frame is booked.
+   */
+  settlePatch(submission: CanvasPatchSubmission | null, committed: boolean, buildFollows?: boolean): void;
+  /** A build request is outstanding. */
+  readonly buildRequested: boolean;
+  /** A yielding (or blocked) tick advanced visual state no build or patch has drawn yet. */
+  readonly carryPending: boolean;
+  /**
+   * An outstanding request needs a full build: a patch must not stand in for it. False for a request that only
+   * moved cosmetic offsets while the offset patch (`rampPatchable`) can carry them.
+   */
+  readonly buildRequired: boolean;
+  /** The outstanding request is not urgent and this frame already built or patched: the next tick serves it. */
+  readonly buildRequestMayWait: boolean;
+  /** The current task epoch; equal on every build of one frame. */
+  readonly frameTask: number;
+  coalesceStats(): CanvasFrameCoalesceStats | null;
 
   readonly animFrames: number;
   readonly armedRafs: number;
@@ -160,6 +291,42 @@ function browserPlatform(): CanvasFrameSchedulerPlatform {
     clearTimeout: (handle) => clearTimeout(handle),
     animationFrameAvailable: () => typeof requestAnimationFrame === "function",
     timerAvailable: () => typeof setTimeout === "function",
+    now: () => performance.now(),
+  };
+}
+
+/**
+ * A lazily created "after this task" poster. A user-blocking `scheduler.postTask` is preferred: a busy page runs
+ * it ahead of ordinary tasks, so the epoch closes before the next frame more often. A MessageChannel message is an
+ * ordinary task with no timer clamp; without either, a zero-delay timer is the same boundary, just possibly later.
+ */
+function createTaskPoster(platform: CanvasFrameSchedulerPlatform): { post(callback: () => void): void; dispose(): void } {
+  let channel: MessageChannel | null = null;
+  const queue: Array<() => void> = [];
+  return {
+    post(callback) {
+      if (platform.postTask) { platform.postTask(callback); return; }
+      const taskScheduler = (globalThis as { scheduler?: { postTask?: (task: () => void, options: { priority: string }) => Promise<unknown> } }).scheduler;
+      if (typeof taskScheduler?.postTask === "function") {
+        void taskScheduler.postTask(callback, { priority: "user-blocking" }).catch(() => {});
+        return;
+      }
+      if (channel === null && typeof MessageChannel === "function") {
+        channel = new MessageChannel();
+        channel.port1.onmessage = () => { queue.shift()?.(); };
+      }
+      if (channel !== null) { queue.push(callback); channel.port2.postMessage(null); return; }
+      if (platform.setTimeout !== null) platform.setTimeout(callback, 0);
+      else queueMicrotask(callback);
+    },
+    dispose() {
+      queue.length = 0;
+      if (channel === null) return;
+      channel.port1.onmessage = null;
+      channel.port1.close();
+      channel.port2.close();
+      channel = null;
+    },
   };
 }
 
@@ -208,6 +375,73 @@ export function createCanvasFrameScheduler<TState extends CanvasFrameSchedulerSt
   let reconcilePull: ReconcilePull | null = null;
   let schedulerDisposed = false;
 
+  // Build-request coalescing (see the module notes). `coalesce` present means accounting; `.enabled`, decisions.
+  const coalesce = ports.coalesce ?? null;
+  const taskPoster = coalesce === null ? null : createTaskPoster(platform);
+  let buildRequested = false;
+  let requestUrgent = false;
+  /** An open request includes a change only a full build can draw. */
+  let requestNeedsBuild = false;
+  let frameTask = 0;
+  let taskClosePosted = false;
+  let tickTask = -1;
+  let rafBookedTask = -1;
+  let taskBuilds = 0;
+  let taskPatches = 0;
+  /** Platform-clock time of the open epoch's latest build or patch, for the tick's frame-begin check. */
+  let taskWorkAt = Number.NEGATIVE_INFINITY;
+  /** A yielding tick advanced visual state that no build has drawn yet: the next frame must build or patch. */
+  let carryFrame = false;
+  let bookingFromSkippedTick = false;
+  const platformNow = platform.now ?? (() => performance.now());
+  /** Texture demand already resident when this task's latest full build started. */
+  let textureGenerationAtTaskBuild = 0;
+  const coalesceCounts = {
+    requests: 0, urgentRequests: 0, immediate: 0, deferred: 0, urgentExtraBuilds: 0, servedByTick: 0,
+    blockedRequests: 0, staleTaskCloses: 0, tickYields: 0, textureYields: 0, rampForcedBuilds: 0, rampPatches: 0, framesWithWork: 0, maxWorkPerFrame: 0,
+    lostPatches: 0, blockedPatchYields: 0,
+  };
+  /** Set by the tick around its patch attempt: a submission made inside it is a ramp step. */
+  let patchRampContext = false;
+  const workPerFrame = { "1": 0, "2": 0, "3+": 0 };
+  const buildsPerFrame = { "1": 0, "2": 0, "3+": 0 };
+  const bucket = (count: number): "1" | "2" | "3+" => count === 1 ? "1" : count === 2 ? "2" : "3+";
+
+  /** Something happened in the current task: make sure the epoch closes after it. */
+  function stampTask(): void {
+    if (taskPoster === null || taskClosePosted || schedulerDisposed) return;
+    taskClosePosted = true;
+    taskPoster.post(closeTask);
+  }
+
+  function closeTask(): void {
+    taskClosePosted = false;
+    endTask();
+  }
+
+  function endTask(): void {
+    const work = taskBuilds + taskPatches;
+    if (work > 0) {
+      coalesceCounts.framesWithWork++;
+      workPerFrame[bucket(work)]++;
+      if (taskBuilds > 0) buildsPerFrame[bucket(taskBuilds)]++;
+      if (work > coalesceCounts.maxWorkPerFrame) coalesceCounts.maxWorkPerFrame = work;
+    }
+    taskBuilds = 0;
+    taskPatches = 0;
+    taskWorkAt = Number.NEGATIVE_INFINITY;
+    frameTask++;
+  }
+
+  function buildBlocked(): boolean {
+    return coalesce?.buildBlocked() ?? false;
+  }
+
+  /** A request is live demand only while a build could start; a settling presentation re-arms otherwise. */
+  function buildDemand(): boolean {
+    return buildRequested && !buildBlocked();
+  }
+
   function stopped(): boolean {
     return schedulerDisposed || ports.disposed();
   }
@@ -232,6 +466,12 @@ export function createCanvasFrameScheduler<TState extends CanvasFrameSchedulerSt
     if (animationRaf !== null || !animationFrameAvailable() || stopped()) return false;
     rafBookedAt = ports.now();
     animationRaf = platform.requestAnimationFrame!(animationFrame);
+    if (coalesce !== null) {
+      rafBookedTask = frameTask;
+      // A tick that skipped re-books without a close: an idle chain posts nothing. A request in a later task that
+      // still sees this epoch takes the booking for its own task and builds now, which is the safe direction.
+      if (!bookingFromSkippedTick) stampTask();
+    }
     return true;
   }
 
@@ -270,6 +510,17 @@ export function createCanvasFrameScheduler<TState extends CanvasFrameSchedulerSt
     if (stopped() || animationRaf !== null || !animationFrameAvailable()) return;
 
     if (Number.isFinite(ports.deadlines.offsetRampDeadline())) {
+      cancelPark();
+      armedRafs++;
+      bookAnimationFrame();
+      return;
+    }
+
+    // A build request is per-frame demand of its own: a request-only frame must
+    // not be parked or skipped as "no demand".
+    // rustOffsetPatch: a carried frame waits out an in-flight presentation, whose settlement re-arms it (a tick
+    // now could neither patch nor build).
+    if (buildDemand() || (carryFrame && !(ports.rampPatchable === true && buildBlocked()))) {
       cancelPark();
       armedRafs++;
       bookAnimationFrame();
@@ -343,6 +594,11 @@ export function createCanvasFrameScheduler<TState extends CanvasFrameSchedulerSt
     parkTimer = platform.setTimeout!(onPark, Math.max(0, Math.ceil(due - CANVAS_FRAME_PARK_SLOP_MS - at)));
   }
 
+  function armFromSkippedTick(at: number): void {
+    bookingFromSkippedTick = true;
+    try { armAnimation(at); } finally { bookingFromSkippedTick = false; }
+  }
+
   /**
    * Run the established canvas animation sequence. No branch here
    * acknowledges a wire delta; the only path which can do so is a pulled
@@ -355,8 +611,20 @@ export function createCanvasFrameScheduler<TState extends CanvasFrameSchedulerSt
    * to perform the one build, paint and acknowledgement for this display
    * frame, so this callback must return immediately afterwards.
    */
-  function animationFrame(): void {
+  function animationFrame(frameTime?: number): void {
     animationRaf = null;
+    if (coalesce !== null) {
+      // The frame boundary is here when the open epoch cannot belong to this
+      // frame: a second tick in it (one tick per frame), or work that started
+      // before this frame began. Either way its posted close has not run yet.
+      const work = taskBuilds + taskPatches;
+      const begunEarlier = work > 0 && typeof frameTime === "number" && Number.isFinite(frameTime) && taskWorkAt < frameTime;
+      if (tickTask === frameTask || begunEarlier) {
+        if (work > 0) coalesceCounts.staleTaskCloses++;
+        endTask();
+      }
+      tickTask = frameTask;
+    }
     const at = ports.now();
     noteRafDelivered(at);
     // Delivery accounting belongs ahead of the disposed/state-null guard: a
@@ -376,6 +644,9 @@ export function createCanvasFrameScheduler<TState extends CanvasFrameSchedulerSt
       noteSample(frameMsSamples, ports.now() - at, FRAME_SAMPLE_WINDOW);
       return;
     }
+    // Consumed only by a tick that gets this far; a full build anywhere clears it.
+    const carried = carryFrame;
+    carryFrame = false;
 
     // Ramps write the visual-offset channel before passive admission and
     // before patch/full-build selection. Their own declarations stay outside
@@ -384,12 +655,14 @@ export function createCanvasFrameScheduler<TState extends CanvasFrameSchedulerSt
     const bypass = rampMoved ? "offset" : ports.deadlines.idleStageBypass(at);
     if (bypass !== null) idleStageBypasses[bypass]++;
     const passiveDue = ports.deadlines.passiveDeadline(at);
-    const idleOnlyFrame = bypass === null && Number.isFinite(passiveDue);
+    // A build request admits the frame on its own; it is never an idle frame.
+    const requested = coalesce?.enabled === true && buildDemand();
+    const idleOnlyFrame = !requested && !carried && bypass === null && Number.isFinite(passiveDue);
 
-    if (bypass === null && !Number.isFinite(passiveDue)) {
+    if (!requested && !carried && bypass === null && !Number.isFinite(passiveDue)) {
       ports.onFrameLifecycle?.("skipped", state.revision);
       ports.animation.noteIdleStageMissingPassive();
-      armAnimation(at);
+      armFromSkippedTick(at);
       return;
     }
     if (
@@ -398,7 +671,7 @@ export function createCanvasFrameScheduler<TState extends CanvasFrameSchedulerSt
     ) {
       ports.onFrameLifecycle?.("skipped", state.revision);
       ports.animation.noteIdleStageSkippedEarly();
-      armAnimation(at);
+      armFromSkippedTick(at);
       return;
     }
 
@@ -413,11 +686,43 @@ export function createCanvasFrameScheduler<TState extends CanvasFrameSchedulerSt
     ports.animation.tickSpine(at);
     ports.onFrameLifecycle?.("sample-end", state.revision);
 
-    if (rampMoved || ports.cpuIncremental === false || !ports.animation.tryPatchAndPaint(at)) {
-      const textureGenerationAtBuild = textureDemandGeneration;
-      if (ports.animation.runBuild(state)) {
-        ports.animation.syncOverlay(state);
-        if (ports.animation.paintAction() === true) noteTexturePresented(textureGenerationAtBuild);
+    // One build or patch per frame: a frame that already built or patched (a
+    // reconcile that ran first, from this frame's own sample) is not built
+    // again; any remaining demand re-arms below. An urgent request still builds.
+    const frameWorked = coalesce?.enabled === true && taskBuilds + taskPatches > 0;
+    if (frameWorked && !(requested && requestUrgent)) {
+      coalesceCounts.tickYields++;
+      // What this tick advanced (a ramp's last step deletes the ramp and with it
+      // the deadline) has not been drawn: carry it to the next frame.
+      carryFrame = true;
+      // The frame-lifecycle row closes here: this tick submits nothing.
+      ports.onFrameLifecycle?.("skipped", state.revision);
+    } else {
+      // A request that needs a full build cannot be stood in for by a patch of
+      // the sampled visuals, and nor can a moved ramp unless the offset patch is on.
+      const fullOnly = (requested && requestNeedsBuild) || (rampMoved && ports.rampPatchable !== true) ||
+        ports.cpuIncremental === false;
+      if (requested) coalesceCounts.servedByTick++;
+      if (rampMoved && ports.rampPatchable !== true && !(requested && requestNeedsBuild) && ports.cpuIncremental !== false)
+        coalesceCounts.rampForcedBuilds++;
+      if (!fullOnly && ports.rampPatchable === true && buildBlocked()) {
+        // rustOffsetPatch: an asynchronous presentation is in flight, so a patch would be superseded and a build
+        // deferred. Carry the frame; the presentation's settlement re-arms it.
+        coalesceCounts.blockedPatchYields++;
+        carryFrame = true;
+        ports.onFrameLifecycle?.("skipped", state.revision);
+      } else {
+        // A ramp patch is counted when it commits (`settlePatch`): an asynchronous patch answers false here.
+        patchRampContext = rampMoved;
+        let patched: boolean;
+        try { patched = !fullOnly && ports.animation.tryPatchAndPaint(at); } finally { patchRampContext = false; }
+        if (!patched) {
+          const textureGenerationAtBuild = textureDemandGeneration;
+          if (requested ? ports.animation.runBuild(state, true) : ports.animation.runBuild(state)) {
+            ports.animation.syncOverlay(state);
+            if (ports.animation.paintAction() === true) noteTexturePresented(textureGenerationAtBuild);
+          }
+        }
       }
     }
 
@@ -452,6 +757,13 @@ export function createCanvasFrameScheduler<TState extends CanvasFrameSchedulerSt
         reconcilePull.now();
         if (stopped() || texturePresentedGeneration >= textureDemandGeneration) return;
       }
+      // Only when that build started after every arrival this repaint is for: a
+      // texture resident later in the frame still gets its own repaint.
+      if (coalesce?.enabled === true && taskBuilds > 0 && textureGenerationAtTaskBuild >= textureDemandGeneration) {
+        coalesceCounts.textureYields++;
+        noteTexturePresented(textureGenerationAtTaskBuild);
+        return;
+      }
       const generation = textureDemandGeneration;
       if (ports.animation.rebuildAndPaintTexture() === true) noteTexturePresented(generation);
     });
@@ -472,9 +784,113 @@ export function createCanvasFrameScheduler<TState extends CanvasFrameSchedulerSt
     noteSample(idlePeriodSamples, period, DELIVERY_SAMPLE_WINDOW);
   }
 
+  /**
+   * Serve a build request as the module notes describe. Deferral needs a display
+   * frame to come; without one the request builds now.
+   */
+  function requestBuild(urgent: boolean, offsetOnly = false): "immediate" | "deferred" {
+    if (coalesce === null || !coalesce.enabled) {
+      coalesce?.localBuild();
+      return "immediate";
+    }
+    coalesceCounts.requests++;
+    if (urgent) coalesceCounts.urgentRequests++;
+    buildRequested = true;
+    if (urgent) requestUrgent = true;
+    if (!offsetOnly || ports.rampPatchable !== true) requestNeedsBuild = true;
+    stampTask();
+    if (stopped()) return "deferred";
+    if (buildBlocked()) {
+      // The settling presentation re-arms; a build attempted now would only be refused.
+      coalesceCounts.blockedRequests++;
+      coalesceCounts.deferred++;
+      return "deferred";
+    }
+    const tickAhead = animationRaf !== null && rafBookedTask !== frameTask;
+    const workDone = taskBuilds + taskPatches > 0;
+    if (animationFrameAvailable() && (tickAhead || (workDone && !urgent))) {
+      coalesceCounts.deferred++;
+      armAnimation(ports.now());
+      return "deferred";
+    }
+    coalesceCounts.immediate++;
+    // A booked scene reconcile is a strict superset of this build: run it now so
+    // it is the one build and its acknowledgement moves earlier, never later.
+    const state = ports.state();
+    if (state !== null && state.revision !== ports.revisionAtFrame() && reconcilePull?.pending()) {
+      pulledReconciles++;
+      reconcilePull.now();
+    }
+    if (buildDemand() && !stopped()) coalesce.localBuild();
+    return "immediate";
+  }
+
+  function noteFrameWork(kind: "build"): void;
+  function noteFrameWork(kind: "patch"): CanvasPatchSubmission | null;
+  function noteFrameWork(kind: "build" | "patch"): CanvasPatchSubmission | null {
+    if (coalesce === null) return null;
+    stampTask();
+    taskWorkAt = platformNow();
+    if (kind === "build") {
+      // The one case a frame may build twice: an urgent request served after the frame already built or patched.
+      if (buildRequested && requestUrgent && taskBuilds + taskPatches > 0) coalesceCounts.urgentExtraBuilds++;
+      // A full build of the current state draws whatever a yielding tick carried.
+      carryFrame = false;
+      taskBuilds++;
+      textureGenerationAtTaskBuild = textureDemandGeneration;
+      buildRequested = false;
+      requestUrgent = false;
+      requestNeedsBuild = false;
+    } else {
+      taskPatches++;
+      const submission = { task: frameTask, ramp: patchRampContext, servedRequest: false, urgent: requestUrgent };
+      // rustOffsetPatch: a patch is planned from the current offsets and samples, so it serves an offset-only
+      // request and draws whatever a yielding tick carried. `settlePatch` gives both back if it never presents.
+      if (ports.rampPatchable === true) {
+        carryFrame = false;
+        if (buildRequested && !requestNeedsBuild) {
+          submission.servedRequest = true;
+          buildRequested = false; requestUrgent = false;
+        }
+      }
+      return submission;
+    }
+    return null;
+  }
+
+  function settlePatch(submission: CanvasPatchSubmission | null, committed: boolean, buildFollows = false): void {
+    if (submission === null || coalesce === null) return;
+    if (committed) {
+      if (submission.ramp) coalesceCounts.rampPatches++;
+      return;
+    }
+    coalesceCounts.lostPatches++;
+    // Still the frame that submitted it (a synchronous refusal): the slot is free for the build that follows.
+    if (submission.task === frameTask && taskPatches > 0) taskPatches--;
+    if (ports.rampPatchable !== true || stopped()) return;
+    if (submission.servedRequest && !buildRequested) { buildRequested = true; requestUrgent = submission.urgent; }
+    carryFrame = true;
+    // Book the frame that redraws it, unless the caller's own build does (that build clears the carry). While a
+    // presentation is in flight a carry alone books nothing and its settlement re-arms; a live offset ramp still
+    // books its frame, whose tick then carries again (`blockedPatchYields`) instead of patching.
+    if (!buildFollows) armAnimation(ports.now());
+  }
+
+  function coalesceStats(): CanvasFrameCoalesceStats | null {
+    if (coalesce === null) return null;
+    return {
+      enabled: coalesce.enabled,
+      ...coalesceCounts,
+      frameTask,
+      workPerFrame: { ...workPerFrame },
+      buildsPerFrame: { ...buildsPerFrame },
+    };
+  }
+
   function dispose(): void {
     if (schedulerDisposed) return;
     schedulerDisposed = true;
+    taskPoster?.dispose();
     if (animationRaf !== null && platform.cancelAnimationFrame !== null) {
       platform.cancelAnimationFrame(animationRaf);
     }
@@ -497,6 +913,17 @@ export function createCanvasFrameScheduler<TState extends CanvasFrameSchedulerSt
     },
     noteIdlePeriod,
     dispose,
+    requestBuild,
+    noteFrameWork,
+    settlePatch,
+    get buildRequested() { return buildRequested; },
+    get carryPending() { return carryFrame; },
+    get buildRequired() { return buildRequested && requestNeedsBuild; },
+    get buildRequestMayWait() {
+      return buildRequested && !requestUrgent && coalesce?.enabled === true && taskBuilds + taskPatches > 0;
+    },
+    get frameTask() { return frameTask; },
+    coalesceStats,
     get animFrames() { return animationFrames; },
     get armedRafs() { return armedRafs; },
     get armedParks() { return armedParks; },

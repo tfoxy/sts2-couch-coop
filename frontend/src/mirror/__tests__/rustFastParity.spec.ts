@@ -135,6 +135,9 @@ function dumpList(list: DrawList<string>): unknown[] {
   });
 }
 
+/** Whether the recording executor advertises clip translation (`translatesClips`), as the Rust executor does. */
+let executorTranslatesClips = true;
+
 function recordingExecutor(log: Submission[]) {
   const stats = { completedFrames: 0, frames: 0, resourcePending: 0, textureFailures: 0, textures: 0,
     contextReady: true, presentationValid: false, objects: 0 };
@@ -157,6 +160,7 @@ function recordingExecutor(log: Submission[]) {
     },
     patchScene: (patch: unknown) => { log.push({ call: "patch", patch: structuredClone(patch) }); return settle(); },
     presentScene: () => { log.push({ call: "present" }); return settle(); },
+    translatesClips: executorTranslatesClips,
   };
 }
 
@@ -177,6 +181,8 @@ const clockAt = (ms: number) => (window as unknown as { __mirrorSetDiagnosticClo
 /** What a scenario script drives: the scene, plus one reconcile (`offer`) or one clock frame (`tick`) per step. */
 type ScenarioContext = { state: MirrorState; renderer: ReturnType<typeof createPixiMirrorRenderer>;
   offer(step: string): Promise<void>; tick(step: string, at: number): Promise<void> };
+type HiddenMemoDiagnostics = { builds: number; bypassedBuilds: number; hits: number; replayedNodes: number;
+  verified: number; verifyMismatches: number; missReasons: Record<string, number> };
 type HeldOverrideDiagnostics = { heldOverridePatches: number; heldOverrideDeclines: Record<string, number>;
   heldOverrideVerifyRuns?: number; heldOverrideVerifyMismatches?: number; heldOverrideVerifyMaxError?: number;
   heldOverrideVerifyFirstMismatch?: string | null };
@@ -218,7 +224,8 @@ async function runScenario(query: string, script?: (context: ScenarioContext) =>
     const final = diagnostics();
     expect(final.readiness).toBe("ready");
     expect(final.failure).toBeUndefined();
-    return { log, steps, draw: final.draw, held: final.effective.rustHeldOverride as HeldOverrideDiagnostics | undefined };
+    return { log, steps, draw: final.draw, held: final.effective.rustHeldOverride as HeldOverrideDiagnostics | undefined,
+      memo: final.effective.rustHiddenMemo as HiddenMemoDiagnostics | undefined, offsets: final.effective.rustOffsetPatch };
   };
   try {
     if (script) {
@@ -297,22 +304,31 @@ function effectiveFrames(log: Submission[]): unknown[] {
   let base: { list: Command[]; texts: Array<Record<string, unknown>>; byIndex: Map<number, PlanPrimitive> } | null = null;
   const patched = new Map<string, PatchPrimitive>();
   const groups = new Map<string, readonly number[]>();
+  /** Clip translations since the last admission, by `clipPush` index. */
+  const clipShift = new Map<number, [number, number]>();
   return log.map((entry) => {
     if (entry.call === "admit") {
       const plan = entry.plan as { primitives: PlanPrimitive[]; groups: Array<{ id: string; transform: number[] }> };
       base = { list: entry.list as Command[], texts: entry.texts as Array<Record<string, unknown>>,
         byIndex: new Map(plan.primitives.map((primitive) => [primitive.index, primitive])) };
-      patched.clear(); groups.clear();
+      patched.clear(); groups.clear(); clipShift.clear();
       for (const group of plan.groups) groups.set(group.id, group.transform);
     } else if (entry.call === "patch") {
       const patch = entry.patch as { primitives: PatchPrimitive[]; groups: Array<{ id: string; transform: number[] }> };
       for (const primitive of patch.primitives) patched.set(primitive.id, { ...patched.get(primitive.id), ...primitive });
       for (const group of patch.groups) groups.set(group.id, group.transform);
+      for (const clip of (entry.patch as { clips?: Array<{ index: number; dx: number; dy: number }> }).clips ?? []) {
+        const shift = clipShift.get(clip.index) ?? [0, 0];
+        clipShift.set(clip.index, [shift[0] + clip.dx, shift[1] + clip.dy]);
+      }
     }
     if (!base) return null;
     const place = (matrix: readonly number[], parentId: unknown) =>
       typeof parentId === "string" && groups.has(parentId) ? mul(groups.get(parentId)!, matrix) : [...matrix];
     const commands = base.list.map((command, index) => {
+      const shift = command.kind === "clipPush" && command.view ? clipShift.get(index) : undefined;
+      if (shift) return { kind: command.kind, texture: command.texture,
+        view: { ...command.view, x: (command.view!.x as number) + shift[0], y: (command.view!.y as number) + shift[1] } };
       const primitive = base!.byIndex.get(index);
       if (!primitive || !command.view) return { kind: command.kind, texture: command.texture, view: command.view };
       const view = { ...command.view };
@@ -663,6 +679,356 @@ describe("held transform overrides (rustHeldOverridePatch)", () => {
     if (flags.verify) {
       expect(candidate.held!.heldOverrideVerifyFirstMismatch).toBeNull();
       expect(candidate.held!.heldOverrideVerifyMismatches).toBe(0);
+    }
+  });
+});
+
+// A WIDENED stage (`rustHiddenMemoSpread`): the parity scene on an anchored stage root, plus a hidden drawer whose
+// subtree takes the anchor, box-child, pass-through and positional spread branches. The script stretches the stage
+// before the first frame, changes the drawer while it is hidden, shows and hides it, and turns the stretch off and on.
+const WIDE = 1.3125;
+
+function wideSceneNodes(): Array<Record<string, unknown>> {
+  const rows = sceneNodes(false).map((row) => row.id === "stage" ? { ...row, anchorLeft: 0, anchorRight: 1 } : row);
+  const node = (id: string, parentId: string, nodeType: string, transform: readonly number[], extra: Record<string, unknown> = {}) =>
+    ({ id, parentId, name: id, nodeType, visible: true, transform: xf(transform), ...extra });
+  rows.push(
+    node("drawer", "stage", "Control", I, { visible: false, anchorLeft: 0, anchorRight: 1, localRect: box(1920, 1080) }),
+    node("drawerRow", "drawer", "HBoxContainer", [1, 0, 0, 1, 200, 700], { anchorLeft: 0, anchorRight: 1,
+      containerLayout: "hbox-center", localRect: box(800, 120) }),
+    node("drawerA", "drawerRow", "ColorRect", I, { localRect: box(100, 100), fillColor: fill("#22aa88ff") }),
+    node("drawerB", "drawerRow", "ColorRect", [1, 0, 0, 1, 120, 0], { localRect: box(100, 100), fillColor: fill("#2288aaff") }),
+    node("drawerLabel", "drawerRow", "Label", [1, 0, 0, 1, 240, 0], { localRect: box(200, 40), ...label("Drawer") }),
+    node("drawerGroup", "drawer", "Node2D", [1, 0, 0, 1, 1300, 400]),
+    node("drawerDot", "drawerGroup", "Sprite2D", I, { localRect: box(40, 40), fillColor: fill("#ff8800ff") }),
+    node("drawerHit", "drawerGroup", "Control", I, { name: "Hitbox", anchorLeft: 0, anchorRight: 0, localRect: box(40, 40), mouseFilter: 0 }),
+  );
+  return rows;
+}
+
+async function wideScript({ state, renderer, offer, tick }: ScenarioContext): Promise<void> {
+  const rows = wideSceneNodes();
+  const rowOf = (id: string, over: Record<string, unknown>) => ({ ...rows.find((row) => row.id === id)!, ...over });
+  applySceneDelta(state, parseSceneDelta({ type: "scene-delta", full: true, screenType: "combat", upserts: rows,
+    orderedIds: rows.map((row) => row.id as string) })!);
+  renderer.setStretch(WIDE);
+  renderer.setStaticBackgroundSource!({ scenePath: BG_SCENE, url: "/bg/glade.png" }, () => {});
+  expect(renderer.reconcile(state)).toBe(false);
+  await turn();
+  await offer("startup");
+  for (const at of [1050, 1100]) await tick(`pulse@${at}`, at);
+  delta(state, [], [positionHint("mover", [1, 0, 0, 1, 760, 340], 200)]);
+  await offer("tween");
+  for (const at of [1150, 1200, 1250, 1300]) await tick(`tween@${at}`, at);
+  delta(state, [rowOf("mover", { transform: xf([1, 0, 0, 1, 760, 340]) })]);
+  await offer("tween-landed");
+  delta(state, [rowOf("drawerB", { transform: xf([1, 0, 0, 1, 130, 0]) })]);
+  await offer("hidden-change");
+  await tick("after-hidden-change@1350", 1350);
+  delta(state, [rowOf("drawer", { visible: true })]);
+  await offer("drawer-shown");
+  await tick("drawer-shown@1400", 1400);
+  delta(state, [rowOf("drawer", { visible: false })]);
+  await offer("drawer-hidden");
+  for (const at of [1450, 1500]) await tick(`drawer-hidden@${at}`, at);
+  renderer.setStretch(1);
+  await turn();
+  await offer("stretch-off");
+  for (const at of [1550, 1600]) await tick(`stretch-off@${at}`, at);
+  renderer.setStretch(WIDE);
+  await turn();
+  await offer("stretch-on");
+  for (const at of [1650, 1700]) await tick(`stretch-on@${at}`, at);
+  delta(state, [{ id: "orbit", parentId: "stage", visible: true, transform: xf([1, 0, 0, 1, 1520, 230]) }]);
+  await offer("wire");
+  await tick("after-wire@1750", 1750);
+}
+
+describe("hidden-subtree memo on a widened stage (rustHiddenMemoSpread)", () => {
+  beforeEach(() => { document.body.replaceChildren(); });
+  afterEach(() => {
+    window.history.replaceState(null, "", "/");
+    Object.assign(rendererComparisonConfig, readRendererComparisonConfig());
+  });
+
+  it.each(["", "rustFastVerify=1"])("submits the same stream with the switch on and off (%s)", async (query) => {
+    const extra = query ? `&${query}` : "";
+    const off = await runScenario(`rustHiddenMemoSpread=0${extra}`, wideScript);
+    const on = await runScenario(query, wideScript);
+    // The scene really is widened: the drawer's box child and the stage's anchored children carry shifts.
+    expect(on.steps.some((step) => (step as { rects: Array<{ spreadDx: number }> }).rects.some(({ spreadDx }) => spreadDx !== 0)))
+      .toBe(true);
+    expect(on.steps).toEqual(off.steps);
+    expect(on.log).toEqual(off.log);
+    // Off: every widened build sat the memo out. On: none did, and the drawer was replayed (or verified) under spread.
+    expect(off.memo!.bypassedBuilds).toBeGreaterThan(0);
+    expect(on.memo!.bypassedBuilds).toBe(0);
+    expect(on.memo!.missReasons.env).toBeGreaterThan(0);
+    if (query.includes("rustFastVerify=1")) {
+      expect(on.memo!.verified).toBeGreaterThan(off.memo!.verified);
+      expect(on.memo!.verifyMismatches).toBe(0);
+    } else {
+      expect(on.memo!.hits).toBeGreaterThan(off.memo!.hits);
+      expect(on.memo!.replayedNodes).toBeGreaterThan(off.memo!.replayedNodes);
+    }
+  });
+
+  it("draws the same picture as every control off", async () => {
+    const baseline = await runScenario("rustFast=0", wideScript);
+    // A submission-for-submission gate: `rustCoalescedBuilds` folds each `setStretch` build into the next
+    // reconcile, so it is held off here and gated by its own spec (rustCoalescedBuilds.spec.ts).
+    const candidate = await runScenario("rustCoalescedBuilds=0", wideScript);
+    expectSamePicture(candidate, baseline, true);
+  });
+
+  // The default configuration (coalescing on) on the same widened script: its submissions differ (a stretch build
+  // moves into the next reconcile), so it is compared on what each step leaves drawn and on the final picture
+  // rather than submission by submission.
+  it.each(["rustCoalescedBuilds=0", "rustFast=0"])("with coalesced builds, ends every step on the same picture as %s", async (query) => {
+    const baseline = await runScenario(query, wideScript);
+    const candidate = await runScenario("", wideScript);
+    // Per step: hit rects, reward focus, hand/cover answers and the drawn revision and clock, everything but the
+    // submission counters (and the reconcile's own return values, which differ by when a build settled).
+    expect(firstDifference(candidate.steps, baseline.steps,
+      new Set(["buildEpoch", "presentEpoch", "submissions", "result"]))).toBeNull();
+    expect(firstDifference(effectiveFrames(candidate.log).at(-1), effectiveFrames(baseline.log).at(-1))).toBeNull();
+    expect(candidate.log.length).toBeLessThanOrEqual(baseline.log.length);
+  });
+});
+
+// COSMETIC OFFSETS AS A RETAINED TRANSLATE PATCH (`rustOffsetPatch`). A held card lifts and drops, an ancestor of it
+// takes a client-side offset on top, a clipping group takes one (refused: a clip rect is built from the drawn pose),
+// and the producer streams a pure translation of the held card itself (captured, recomputed by the wire patch).
+function offsetSceneNodes(): Array<Record<string, unknown>> {
+  return [...sceneNodes(false),
+    heldNode("tray", "stage", "Control", I, { localRect: box(1920, 1080) }),
+    heldNode("card", "tray", "NCard", [1, 0, 0, 1, 600, 800], { localRect: box(160, 220) }),
+    heldNode("cardFace", "card", "ColorRect", I, { localRect: box(160, 220), fillColor: fill("#aa66ccff") }),
+    heldNode("cardLabel", "card", "Label", [1, 0, 0, 1, 10, 180], { localRect: box(140, 30), ...label("Strike") }),
+    heldNode("cardHit", "card", "Control", I, { name: "Hitbox", localRect: box(160, 220), mouseFilter: 0 }),
+    // A local-animation root under the offset owner `tray`: its whole span moves with the tray's offset.
+    heldNode("trayPulse", "tray", "ColorRect", [1, 0, 0, 1, 900, 500], { localRect: box(40, 40), fillColor: fill("#ffcc00ff"),
+      pinnedLoopAnim: "mapPointPulse" }),
+    heldNode("trayPulseDot", "trayPulse", "ColorRect", [1, 0, 0, 1, 10, 10], { localRect: box(10, 10), fillColor: fill("#ff0000ff") }),
+    heldNode("clipper", "stage", "Control", [1, 0, 0, 1, 1300, 700], { localRect: box(200, 200), clipContents: true }),
+    heldNode("clipped", "clipper", "ColorRect", [1, 0, 0, 1, 20, 20], { localRect: box(100, 100), fillColor: fill("#22aa88ff") }),
+  ];
+}
+
+async function offsetScript({ state, renderer, offer, tick }: ScenarioContext): Promise<void> {
+  const rows = offsetSceneNodes();
+  applySceneDelta(state, parseSceneDelta({ type: "scene-delta", full: true, screenType: "combat", upserts: rows,
+    orderedIds: rows.map((row) => row.id as string) })!);
+  renderer.setStaticBackgroundSource!({ scenePath: BG_SCENE, url: "/bg/glade.png" }, () => {});
+  expect(renderer.reconcile(state)).toBe(false);
+  await turn();
+  await offer("startup");
+  renderer.setHeldCard("card", 0, 900); // a pick-up: the next build captures the card
+  await tick("pickup@1050", 1050);
+  renderer.setHeldCard("card", 0, 300); // into the play zone: still lifted
+  await tick("aim@1100", 1100);
+  renderer.setHeldCard("card", 0, 1040); // back to the hand: the lift drops
+  await tick("drop@1150", 1150);
+  renderer.setHeldCard("card", 0, 300); // and lifts again
+  await tick("lift@1200", 1200);
+  renderer.applyLocalOffset!("tray", 25); // a new owner the committed build did not capture: one build
+  await tick("tray@1250", 1250);
+  renderer.applyLocalOffset!("tray", 40); // then nested under the held card's own lift
+  await tick("tray-again@1300", 1300);
+  renderer.applyLocalOffset!("clipper", 30);
+  await tick("clipper@1350", 1350);
+  renderer.applyLocalOffset!("clipper", 45);
+  await tick("clipper-again@1400", 1400);
+  const cardAt = (x: number, y: number) => ({ ...offsetSceneNodes().find((row) => row.id === "card")!, transform: xf([1, 0, 0, 1, x, y]) });
+  delta(state, [cardAt(640, 780)]); // the game moves the held card: a translation of a captured node
+  await offer("card-moves");
+  await tick("after-move@1450", 1450);
+  // The game moves the clipping group (a captured offset owner): its clip rect has to move with its children.
+  const clipperAt = (x: number, y: number) => ({ ...offsetSceneNodes().find((row) => row.id === "clipper")!,
+    transform: xf([1, 0, 0, 1, x, y]) });
+  delta(state, [clipperAt(1290, 720)]);
+  await offer("clipper-moves");
+  await tick("after-clipper@1475", 1475);
+  renderer.setHeldCard(null, 0, 0); // let go: a release builds
+  await tick("release@1500", 1500);
+}
+
+// A STREAMED TRANSLATION OF SEVERAL CAPTURED NODES AT ONCE: the hand container moves, and with it every hand holder
+// (each one a captured global) plus their faces, labels and hitboxes. Every holder's captured entry must move.
+function handSceneNodes(): Array<Record<string, unknown>> {
+  return [...sceneNodes(false),
+    heldNode("holder2", "hand", "NHandCardHolder", [1, 0, 0, 1, 920, 900], { localRect: box(200, 300) }),
+    heldNode("holder2Face", "holder2", "ColorRect", I, { localRect: box(200, 300), fillColor: fill("#6688aaff") }),
+    heldNode("holder2Label", "holder2", "Label", [1, 0, 0, 1, 10, 260], { localRect: box(180, 30), ...label("Defend") }),
+    heldNode("holder2Hit", "holder2", "Control", I, { name: "Hitbox", localRect: box(200, 300), mouseFilter: 0 }),
+    heldNode("holder3", "hand", "NHandCardHolder", [1, 0, 0, 1, 1140, 900], { localRect: box(200, 300) }),
+    heldNode("holder3Face", "holder3", "ColorRect", I, { localRect: box(200, 300), fillColor: fill("#aa8866ff") }),
+  ];
+}
+
+async function handScript({ state, renderer, offer, tick }: ScenarioContext): Promise<void> {
+  const rows = handSceneNodes();
+  applySceneDelta(state, parseSceneDelta({ type: "scene-delta", full: true, screenType: "combat", upserts: rows,
+    orderedIds: rows.map((row) => row.id as string) })!);
+  renderer.setStaticBackgroundSource!({ scenePath: BG_SCENE, url: "/bg/glade.png" }, () => {});
+  expect(renderer.reconcile(state)).toBe(false);
+  await turn();
+  await offer("startup");
+  await tick("settled@1050", 1050);
+  const handAt = (x: number, y: number) => ({ ...rows.find((row) => row.id === "hand")!, transform: xf([1, 0, 0, 1, x, y]) });
+  delta(state, [handAt(30, -20)]); // a pure translation of the hand: three captured holders move with it
+  await offer("hand-moves");
+  await tick("after-hand@1100", 1100);
+  delta(state, [handAt(10, -40)]);
+  await offer("hand-moves-again");
+  await tick("after-hand-again@1150", 1150);
+}
+
+// A STREAMED TRANSLATION OF A CLIPPER NOTHING CAPTURES: its clip moves with it on a 16:9 stage. On a widened stage
+// the clipper claims the spread field at its own X, which the translation changes: refused, rebuilt.
+function clipMoveScript(stretch: number) {
+  return async ({ state, renderer, offer, tick }: ScenarioContext): Promise<void> => {
+    // An anchored stage hands the widening down, so the clipper (a boxed, unanchored Control) claims the field.
+    const rows = offsetSceneNodes().map((row) => row.id === "stage" ? { ...row, anchorLeft: 0, anchorRight: 1 } : row);
+    applySceneDelta(state, parseSceneDelta({ type: "scene-delta", full: true, screenType: "combat", upserts: rows,
+      orderedIds: rows.map((row) => row.id as string) })!);
+    if (stretch !== 1) renderer.setStretch(stretch);
+    renderer.setStaticBackgroundSource!({ scenePath: BG_SCENE, url: "/bg/glade.png" }, () => {});
+    expect(renderer.reconcile(state)).toBe(false);
+    await turn();
+    await offer("startup");
+    await tick("settled@1050", 1050);
+    const clipperAt = (x: number, y: number) => ({ ...rows.find((row) => row.id === "clipper")!, transform: xf([1, 0, 0, 1, x, y]) });
+    delta(state, [clipperAt(1290, 720)]);
+    await offer("clipper-moves");
+    await tick("after-clipper@1100", 1100);
+  };
+}
+
+// A CLIPPER INSIDE A LOCAL-ANIMATION ROOT'S SPAN, under the offset owner `tray`: the root's frame shift would move the
+// clipped content but not the clip, so the shift refuses (`offset-anim-clip`) and the step builds.
+async function animClipScript({ state, renderer, offer, tick }: ScenarioContext): Promise<void> {
+  const rows = [...offsetSceneNodes(),
+    heldNode("pulseClip", "trayPulse", "Control", [1, 0, 0, 1, 2, 2], { localRect: box(30, 30), clipContents: true }),
+    heldNode("pulseClipped", "pulseClip", "ColorRect", [1, 0, 0, 1, 5, 5], { localRect: box(40, 40), fillColor: fill("#00ff88ff") })];
+  applySceneDelta(state, parseSceneDelta({ type: "scene-delta", full: true, screenType: "combat", upserts: rows,
+    orderedIds: rows.map((row) => row.id as string) })!);
+  renderer.setStaticBackgroundSource!({ scenePath: BG_SCENE, url: "/bg/glade.png" }, () => {});
+  expect(renderer.reconcile(state)).toBe(false);
+  await turn();
+  await offer("startup");
+  renderer.applyLocalOffset!("tray", 25); // a new owner: one build, which captures it
+  await tick("tray@1050", 1050);
+  renderer.applyLocalOffset!("tray", 40);
+  await tick("tray-again@1100", 1100);
+}
+
+describe("cosmetic offsets as a retained translate patch (rustOffsetPatch)", () => {
+  beforeEach(() => { document.body.replaceChildren(); });
+  afterEach(() => {
+    window.history.replaceState(null, "", "/");
+    Object.assign(rendererComparisonConfig, readRendererComparisonConfig());
+  });
+
+  type OffsetDiagnostics = { offsetPatches: number; offsetPatchedNodes: number; wireCapturedPatches: number;
+    offsetDeclines: Record<string, number>; verifyRuns?: number; verifyMismatches?: number; verifyFirstMismatch?: string | null };
+
+  // With an executor that moves clips (the Rust one), a translated clipper patches too; without one it rebuilds.
+  it.each([
+    ["", true], ["rustFastVerify=1", true], ["rustFastVerify=1", false],
+  ] as const)("draws the same picture as rustOffsetPatch=0, patching what it can (%s, clips %s)", async (query, clips) => {
+    executorTranslatesClips = clips;
+    try {
+      const extra = query ? `&${query}` : "";
+      const baseline = await runScenario(`rustOffsetPatch=0${extra}`, offsetScript);
+      const candidate = await runScenario(query, offsetScript);
+      const replaced = expectSamePicture(candidate, baseline, false);
+      // Full builds per step: a step's submissions run from the previous step's count to its own (a held-card
+      // request is served at once, then the clock frame submits its own present or patch).
+      const admitsIn = (result: ScenarioResult, step: string) => {
+        const index = result.steps.findIndex((entry) => (entry as { step: string }).step === step);
+        const from = index === 0 ? 0 : (result.steps[index - 1] as { submissions: number }).submissions;
+        const to = (result.steps[index] as { submissions: number }).submissions;
+        return result.log.slice(from, to).filter((entry) => entry.call === "admit").length;
+      };
+      const clipSteps = ["clipper-again@1400", "clipper-moves"];
+      const patched = ["drop@1150", "lift@1200", "tray-again@1300", "card-moves", ...(clips ? clipSteps : [])];
+      for (const step of patched) {
+        expect([step, admitsIn(baseline, step)]).toEqual([step, 1]);
+        expect([step, admitsIn(candidate, step)]).toEqual([step, 0]);
+      }
+      // A pick-up, an uncaptured new owner and a release still build, and so does a moved clip nothing can move.
+      for (const step of ["pickup@1050", "tray@1250", "clipper@1350", "release@1500", ...(clips ? [] : clipSteps)])
+        expect([step, admitsIn(candidate, step)]).toEqual([step, admitsIn(baseline, step)]);
+      expect(replaced.length).toBe(patched.length);
+      const offsets = candidate.offsets as OffsetDiagnostics | undefined;
+      expect(offsets).toBeDefined();
+      if (clips) expect(offsets!.offsetDeclines["offset-clip"]).toBeUndefined();
+      else expect(offsets!.offsetDeclines["offset-clip"]).toBeGreaterThanOrEqual(1);
+      expect(offsets!.offsetDeclines["offset-uncaptured"]).toBeGreaterThanOrEqual(1);
+      // The tray carries a local-animation root along: its frame moves, nothing refuses `offset-anim`.
+      expect(offsets!.offsetDeclines["offset-anim"]).toBeUndefined();
+      expect(offsets!.wireCapturedPatches).toBe(clips ? 2 : 1);
+      // The clip moves reach the executor as clip translations of the clipper's push.
+      const clipMoves = candidate.log.flatMap((entry) => entry.call === "patch"
+        ? ((entry.patch as { clips?: Array<{ id: string }> }).clips ?? []).map((clip) => clip.id) : []);
+      expect(clipMoves).toEqual(clips ? ["clipper", "clipper"] : []);
+      if (query) {
+        expect(offsets!.verifyFirstMismatch).toBeNull();
+        expect(offsets!.verifyMismatches).toBe(0);
+        expect(offsets!.verifyRuns).toBeGreaterThanOrEqual(patched.length);
+      }
+    } finally {
+      executorTranslatesClips = true;
+    }
+  });
+
+  // The shadow build is the reference: with `rustOffsetPatch=0` a clipper's wire move is a full build, so there is no
+  // patch to compare submission for submission.
+  it.each([[1, "patch"], [WIDE, "admit"]] as const)("moves an uncaptured clipper's clip only where the spread allows (stretch %s)", async (stretch, call) => {
+    const candidate = await runScenario("rustFastVerify=1", clipMoveScript(stretch));
+    const step = candidate.steps.findIndex((entry) => (entry as { step: string }).step === "clipper-moves");
+    const from = (candidate.steps[step - 1] as { submissions: number }).submissions;
+    const to = (candidate.steps[step] as { submissions: number }).submissions;
+    expect(candidate.log.slice(from, to).map((entry) => entry.call)).toEqual([call]);
+    const offsets = candidate.offsets as OffsetDiagnostics;
+    if (call === "admit") expect(offsets.offsetDeclines["wire-spread"]).toBe(1);
+    else expect((candidate.log[to - 1].patch as { clips?: Array<{ id: string; dx: number }> }).clips)
+      .toEqual([expect.objectContaining({ id: "clipper", dx: -10, dy: 20 })]);
+    // The drawn clip after the step is where a full build puts it.
+    const clipX = (picture: unknown) => ((picture as { commands: Array<{ kind: string; view: { x: number } }> }).commands
+      .find((command) => command.kind === "clipPush")!.view.x);
+    const final = effectiveFrames(candidate.log).at(-1);
+    const rebuilt = effectiveFrames(candidate.log.filter((entry) => entry.call === "admit")).at(-1);
+    if (call === "patch") expect(clipX(final)).toBeCloseTo(1290, 4);
+    else expect(clipX(final)).toBe(clipX(rebuilt));
+    expect(offsets.verifyMismatches).toBe(0);
+    expect(offsets.verifyRuns).toBe(call === "patch" ? 1 : 0);
+  });
+
+  it("refuses a local-animation root's shift over a clipper in its span", async () => {
+    const baseline = await runScenario("rustOffsetPatch=0&rustFastVerify=1", animClipScript);
+    const candidate = await runScenario("rustFastVerify=1", animClipScript);
+    expect(expectSamePicture(candidate, baseline, false)).toEqual([]);
+    const offsets = candidate.offsets as OffsetDiagnostics & { offsetDeclineTypes: Record<string, number> };
+    expect(offsets.offsetDeclines["offset-anim-clip"]).toBe(1);
+    expect(offsets.verifyMismatches).toBe(0);
+  });
+
+  it.each(["", "rustFastVerify=1"])("moves every captured node of a streamed translation (%s)", async (query) => {
+    const extra = query ? `&${query}` : "";
+    const baseline = await runScenario(`rustOffsetPatch=0${extra}`, handScript);
+    const candidate = await runScenario(query, handScript);
+    const replaced = expectSamePicture(candidate, baseline, false);
+    // Both hand moves were full builds before (`wire-captured-global`) and are wire patches now.
+    expect(replaced.length).toBe(2);
+    const offsets = candidate.offsets as OffsetDiagnostics;
+    expect(offsets.wireCapturedPatches).toBe(2);
+    if (query) {
+      // The shadow build compares every captured global, so a holder left at its old pose is a mismatch here.
+      expect(offsets.verifyFirstMismatch).toBeNull();
+      expect(offsets.verifyMismatches).toBe(0);
+      expect(offsets.verifyRuns).toBe(2);
     }
   });
 });

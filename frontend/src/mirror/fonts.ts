@@ -24,6 +24,13 @@ const diagnosticRegistrations = new Map<string, FontRegistration>();
 // Cached on `location.search` itself (R2-P3): this runs for every text node of every build via `semanticText` →
 // `ensureNodeFonts`, and the search string only ever changes on a navigation, never between two calls in the same
 // build. Exact by construction — a stale cache is impossible because the key IS the value being cached against.
+//
+// That cache only skips the `URLSearchParams` PARSE on an unchanged `search` — the native `Location.search`
+// GETTER itself still runs on every call, and was measured at 22 ms of the Oct 2 phone trace at this call volume
+// (`ensureNodeFonts` asked up to 8 times per node: up to 4 faces, this function asked twice per face). The getter
+// cannot be skipped altogether without missing a live `history.pushState`/`replaceState` (neither fires an event
+// this module could hook instead — see `fonts.spec.ts`'s "mid-test navigation" case), so `ensureNodeFonts` reads it
+// ONCE per node instead and threads the answer into `ensureFontFaceImpl` for all of that node's faces.
 let corpusDiagnosticCache: { search: string; enabled: boolean } | null = null;
 const corpusDiagnosticEnabled = (): boolean => {
   if (typeof window === "undefined") return false;
@@ -72,17 +79,22 @@ export function ensureNodeFonts(node: {
   richItalicFont: MirrorFont | null;
   richBoldItalicFont: MirrorFont | null;
 }): void {
+  // Read ONCE per node rather than once per face: `corpusDiagnosticEnabled`'s cache already skips the
+  // `URLSearchParams` parse on an unchanged `search`, but every call still touches the native
+  // `Location.search` getter, and a node can carry up to four faces here — up to 8 touches (`ensureFontFaceImpl`
+  // itself used to ask twice) measured as 22 ms of the Oct 2 phone trace at ~3,000 nodes/build.
+  const diagEnabled = corpusDiagnosticEnabled();
   if (node.font) {
-    ensureFontFace(node.font.family, node.font.url, node.font.weight, node.font.style);
+    ensureFontFaceImpl(node.font.family, node.font.url, node.font.weight, node.font.style, diagEnabled);
   }
   if (node.richBoldFont) {
-    ensureFontFace(node.richBoldFont.family, node.richBoldFont.url, null, null);
+    ensureFontFaceImpl(node.richBoldFont.family, node.richBoldFont.url, null, null, diagEnabled);
   }
   if (node.richItalicFont) {
-    ensureFontFace(node.richItalicFont.family, node.richItalicFont.url, null, null);
+    ensureFontFaceImpl(node.richItalicFont.family, node.richItalicFont.url, null, null, diagEnabled);
   }
   if (node.richBoldItalicFont) {
-    ensureFontFace(node.richBoldItalicFont.family, node.richBoldItalicFont.url, null, null);
+    ensureFontFaceImpl(node.richBoldItalicFont.family, node.richBoldItalicFont.url, null, null, diagEnabled);
   }
 }
 
@@ -110,7 +122,20 @@ export function ensureNodeFonts(node: {
  * Land it in its OWN commit and re-capture the text table, because the premise moves.
  */
 export function ensureFontFace(family: string, url: string, weight?: string | null, style?: string | null): void {
-  if (corpusDiagnosticEnabled()) {
+  ensureFontFaceImpl(family, url, weight, style, corpusDiagnosticEnabled());
+}
+
+// The shared body, split out so `ensureNodeFonts` can read `corpusDiagnosticEnabled()` ONCE for up to four faces
+// instead of once per face (see its own call site) — `ensureFontFace` above is still exactly one read per call
+// for any other caller, unchanged.
+function ensureFontFaceImpl(
+  family: string,
+  url: string,
+  weight: string | null | undefined,
+  style: string | null | undefined,
+  diagEnabled: boolean
+): void {
+  if (diagEnabled) {
     const row = diagnosticRegistrations.get(family);
     row?.attempts.push({ url, weight: weight ?? null, style: style ?? null });
   }
@@ -133,7 +158,7 @@ export function ensureFontFace(family: string, url: string, weight?: string | nu
   const styleDecl = style ? `font-style:${style};` : "";
   const cssRule = `@font-face{font-family:"${cssEscape(family)}";src:url("${url}");${weightDecl}${styleDecl}font-display:swap;}`;
   styleEl.appendChild(document.createTextNode(cssRule));
-  if (corpusDiagnosticEnabled()) diagnosticRegistrations.set(family, { family, url,
+  if (diagEnabled) diagnosticRegistrations.set(family, { family, url,
     weight: weight ?? null, style: style ?? null, cssRule,
     attempts: [{ url, weight: weight ?? null, style: style ?? null }], loads: [] });
 }

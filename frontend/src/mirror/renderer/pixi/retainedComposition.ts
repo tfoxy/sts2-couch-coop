@@ -15,7 +15,26 @@ export interface RetainedPixiPlan {
   groups: Array<{ id: string; firstIndex: number; endIndex: number; transform: Pose; renderGroup: boolean; cacheAsTexture?: boolean }>;
 }
 
+/**
+ * `rustOffsetPatch`: one clip rect moved by a design-space translation. `index` is the clip's `clipPush` in the
+ * admitted list; `id` is the clipper node, whose hit clip scope moves with it.
+ */
+export interface ClipTranslation {
+  id: string; index: number; dx: number; dy: number;
+  /** The clip's total translation since admission, this patch included, so an executor need not accumulate. */
+  totalDx: number; totalDy: number;
+}
+
+/** Linear-part tolerance under which a delta counts as a pure translation (shared by every clip-moving caller). */
+export const PURE_TRANSLATION_EPSILON = 1e-9;
+export function isPureTranslation(delta: ArrayLike<number>): boolean {
+  return Math.abs(delta[0] - 1) < PURE_TRANSLATION_EPSILON && Math.abs(delta[1]) < PURE_TRANSLATION_EPSILON &&
+    Math.abs(delta[2]) < PURE_TRANSLATION_EPSILON && Math.abs(delta[3] - 1) < PURE_TRANSLATION_EPSILON;
+}
+
 export interface RetainedPixiPatch {
+  /** Clip rects this patch translates. Only an executor that can move a clip may be handed one. */
+  clips?: ClipTranslation[];
   primitives: PrimitivePatch[];
   groups: GroupPatch[];
   hits: Array<{ entry: HitEntry; matrix: Affine; gameMatrix?: Affine }>;
@@ -23,6 +42,11 @@ export interface RetainedPixiPatch {
   sourceReferences: Array<{ id: string; matrix: Affine }>;
   movedRoots: number;
   rootPoses: ReadonlyMap<string, Affine>;
+  /**
+   * `rustOffsetPatch`: each local-animation root's total cosmetic-offset translation since admission, for the
+   * roots this patch translated. Committed with the patch.
+   */
+  rootTranslations?: ReadonlyMap<string, readonly [number, number]>;
 }
 
 export interface RetainedPixiCompositionOptions {
@@ -45,9 +69,28 @@ export interface RetainedPixiCompositionOptions {
 
 export interface RetainedPixiComposition {
   plan: RetainedPixiPlan;
-  patch(anims: ReadonlyMap<string, LocalAnim>): RetainedPixiPatch | null;
-  patchWireTransform(id: string, delta: Affine): RetainedPixiPatch | null;
+  /**
+   * `rootShifts` (`rustOffsetPatch`): a design-space translation of a local-animation root's whole span, on top of
+   * what committed patches already applied. The root's `outer` carries its inherited cosmetic offset as its
+   * translation, so the span re-poses as `T · outer · raw`: one left-multiplied translation, the animation untouched.
+   */
+  patch(anims: ReadonlyMap<string, LocalAnim>, rootShifts?: ReadonlyMap<string, readonly [number, number]>): RetainedPixiPatch | null;
+  /**
+   * `clips`: the delta also translates every clip rect in the span (the executor can move them). Null when it is not
+   * a pure translation (`isPureTranslation`); without `clips`, clip rects are left as admitted, as before.
+   */
+  patchWireTransform(id: string, delta: Affine, options?: { clips?: boolean }): RetainedPixiPatch | null;
+  /**
+   * `rustOffsetPatch`: translate each listed node's OWN commands, text records, hit poses (`mFinal` only, never
+   * `mGame`) and node matrix by its design-space delta. The caller accumulates a subtree's inherited offsets into
+   * each node's delta. Null when a listed node sits inside a local-animation root's span: those primitives are
+   * posed relative to their group, which a plain translation cannot express. A listed clipper's clip rect moves
+   * by its delta when `clips` is set (the executor can move one); without it a clipper is refused (null).
+   */
+  patchTranslate(deltas: ReadonlyMap<string, readonly [number, number]>, options?: { clips?: boolean }): RetainedPixiPatch | null;
   commit(patch: RetainedPixiPatch): void;
+  /** The translation committed patches have applied to the clip at `clipPush` index `index` since admission. */
+  clipOffset(index: number): readonly [number, number];
   logicalMatrix(id: string): Affine | undefined;
   logicalNodeMatrix(id: string, base: Affine): Affine;
   sourceTransform(id: string, referenceMatrix: Affine, sampledMatrix?: Pose): Affine | null;
@@ -217,6 +260,8 @@ export function createRetainedPixiComposition(
     options.onStaticAdmission?.("end");
   }
   const lastRootPoses = new Map<string, Affine>();
+  /** Committed `rootShifts` totals since admission, by root. */
+  const rootTranslations = new Map<string, readonly [number, number]>();
   const wireNodeMatrices = new Map<string, Affine>();
   for (const root of roots) lastRootPoses.set(root.id, [1, 0, 0, 1, 0, 0]);
 
@@ -229,6 +274,8 @@ export function createRetainedPixiComposition(
   const hitReferences = new Map<HitEntry, Affine>();
   const lastPrimitive = new Map<string, Affine>();
   const lastHit = new Map<HitEntry, Affine>();
+  /** The committed clip translations since admission, by `clipPush` index. */
+  const clipOffsets = new Map<number, [number, number]>();
   const indexGeneration = options.inputGeneration?.();
   const indexCommands = list.count, indexTexts = texts.length;
   let indexState: "pending" | "built" | "stale" = "pending";
@@ -284,9 +331,18 @@ export function createRetainedPixiComposition(
   }
   if (!options.lazyPatchIndex) buildIndex();
 
-  function patch(anims: ReadonlyMap<string, LocalAnim>): RetainedPixiPatch | null {
+  function patch(anims: ReadonlyMap<string, LocalAnim>, rootShifts?: ReadonlyMap<string, readonly [number, number]>): RetainedPixiPatch | null {
     if (!ensureIndex()) return null;
     if ([...anims.keys()].some((id) => !build.localAnimFrames.has(id))) return null;
+    let translations: Map<string, readonly [number, number]> | undefined;
+    if (rootShifts?.size) {
+      translations = new Map();
+      for (const [id, [dx, dy]] of rootShifts) {
+        if (!build.localAnimFrames.has(id)) return null;
+        const [x, y] = rootTranslations.get(id) ?? [0, 0];
+        translations.set(id, [x + dx, y + dy]);
+      }
+    }
     const deltas: Array<{ start: number; end: number; delta: Affine; rootDx: number; vx: number; vy: number }> = [];
     const rootPoses = new Map<string, Affine>();
     for (const root of roots) {
@@ -294,6 +350,8 @@ export function createRetainedPixiComposition(
       const anim = anims.get(root.id);
       const raw = composeLocalAnimGlobal(root.frame.base, root.frame.wire, null, anim?.pre ?? null, anim?.post ?? null);
       const outer: Affine = [...root.frame.outer] as Affine;
+      const shift = translations?.get(root.id) ?? rootTranslations.get(root.id);
+      if (shift) { outer[4] += shift[0]; outer[5] += shift[1]; }
       const draw = affineMul(outer, [raw[0], raw[1], raw[2], raw[3], raw[4] + root.frame.spreadDx, raw[5]]);
       const delta = affineMul(draw, root.inverse);
       rootPoses.set(root.id, delta);
@@ -302,7 +360,8 @@ export function createRetainedPixiComposition(
       deltas.push({ start: root.span.spanStart, end: root.span.spanEnd, delta, rootDx: root.frame.spreadDx, vx, vy });
     }
     if (roots.every((root) => rootPoses.get(root.id)!.every((value, i) => value === lastRootPoses.get(root.id)![i])))
-      return { primitives: [], groups: [], hits: [], nodeMatrices: [], sourceReferences: [], movedRoots: 0, rootPoses };
+      return { primitives: [], groups: [], hits: [], nodeMatrices: [], sourceReferences: [], movedRoots: 0, rootPoses,
+        ...(translations ? { rootTranslations: translations } : {}) };
     const primitiveMap = new Map<string, PrimitivePatch>();
     const primitiveDeltas = new Map<string, Affine>();
     const hitMap = new Map<HitEntry, { entry: HitEntry; matrix: Affine }>();
@@ -346,22 +405,43 @@ export function createRetainedPixiComposition(
       hits: [...hitMap.values()].filter(({ entry, matrix }) =>
         !matrix.every((value, i) => value === lastHit.get(entry)?.[i])),
       nodeMatrices: [], sourceReferences: [], movedRoots, rootPoses,
+      ...(translations ? { rootTranslations: translations } : {}),
     };
   }
   function commit(result: RetainedPixiPatch): void {
     // A committed patch came from patch() or patchWireTransform(), so its index already exists.
     if (!ensureIndex()) return;
     for (const [id, matrix] of result.rootPoses) lastRootPoses.set(id, matrix);
+    for (const [id, total] of result.rootTranslations ?? []) rootTranslations.set(id, total);
     for (const { id, transform } of result.primitives) if (transform) lastPrimitive.set(id, [...transform] as Affine);
     for (const { entry, matrix } of result.hits) lastHit.set(entry, matrix);
     for (const { id, matrix } of result.nodeMatrices) wireNodeMatrices.set(id, matrix);
+    for (const { index, dx, dy } of result.clips ?? []) {
+      const offset = clipOffsets.get(index) ?? [0, 0];
+      clipOffsets.set(index, [offset[0] + dx, offset[1] + dy]);
+    }
     for (const { id, matrix } of result.sourceReferences) {
       const owner = ownerByPrimitive.get(id);
       const ref = owner && byOwner.get(owner)?.find((item) => item.id === id);
       if (ref) ref.matrix = matrix;
     }
   }
-  function patchWireTransform(id: string, delta: Affine): RetainedPixiPatch | null {
+  /** The clip translations of the clippers among `owners`, each by its own vector. */
+  function clipTranslations(owners: Iterable<readonly [string, readonly [number, number]]>): ClipTranslation[] {
+    const clips: ClipTranslation[] = [];
+    // Hand-made test builds may omit the clip index; a build without clips has nothing to move.
+    if (!build.clipRanges?.size) return clips;
+    for (const [owner, [dx, dy]] of owners) {
+      const range = build.clipRanges.get(owner);
+      if (!range || (dx === 0 && dy === 0)) continue;
+      const [x, y] = clipOffsets.get(range.push) ?? [0, 0];
+      clips.push({ id: owner, index: range.push, dx, dy, totalDx: x + dx, totalDy: y + dy });
+    }
+    return clips;
+  }
+  function patchWireTransform(id: string, delta: Affine, options: { clips?: boolean } = {}): RetainedPixiPatch | null {
+    // A clip moves by the translation alone, so a delta with any other part would leave it behind its children.
+    if (options.clips && !isPureTranslation(delta)) return null;
     if (!ensureIndex()) return null;
     const span = build.order.entries.get(id);
     if (!span) return null;
@@ -384,7 +464,43 @@ export function createRetainedPixiComposition(
         if (current) hits.push({ entry, matrix: affineMul(delta, current), gameMatrix: affineMul(delta, entry.mGame) });
       }
     }
-    return { primitives, groups: [], hits, nodeMatrices, sourceReferences: [], movedRoots: 1, rootPoses: new Map() };
+    let clips: ClipTranslation[] | undefined;
+    if (options.clips) {
+      const step = [delta[4], delta[5]] as const;
+      clips = clipTranslations(build.order.ids.slice(span.spanStart, span.spanEnd).map((owner) => [owner, step] as const));
+    }
+    return { ...(clips?.length ? { clips } : {}), primitives, groups: [], hits, nodeMatrices, sourceReferences: [],
+      movedRoots: 1, rootPoses: new Map() };
+  }
+  function patchTranslate(deltas: ReadonlyMap<string, readonly [number, number]>, options: { clips?: boolean } = {}): RetainedPixiPatch | null {
+    if (!ensureIndex()) return null;
+    const clips = clipTranslations(deltas);
+    if (clips.length && !options.clips) return null;
+    const primitives: PrimitivePatch[] = [];
+    const hits: RetainedPixiPatch["hits"] = [];
+    const nodeMatrices: RetainedPixiPatch["nodeMatrices"] = [];
+    for (const [owner, [dx, dy]] of deltas) {
+      if (dx === 0 && dy === 0) continue;
+      const entry = build.order.entries.get(owner);
+      if (!entry) return null;
+      if (roots.some((root) => root.span && entry.order >= root.span.spanStart && entry.order < root.span.spanEnd)) return null;
+      const translate = (matrix: Affine): Affine => [matrix[0], matrix[1], matrix[2], matrix[3], matrix[4] + dx, matrix[5] + dy];
+      const input = build.nodePaintInputs.get(owner);
+      if (input) nodeMatrices.push({ id: owner, matrix: translate(wireNodeMatrices.get(owner) ?? input.global) });
+      for (const ref of byOwner.get(owner) ?? []) {
+        const current = lastPrimitive.get(ref.id);
+        if (current) primitives.push({ id: ref.id, transform: translate(current) });
+      }
+      for (const hit of hitsByOwner.get(owner) ?? []) {
+        const current = lastHit.get(hit);
+        if (current) hits.push({ entry: hit, matrix: translate(current) });
+      }
+    }
+    return { ...(clips.length ? { clips } : {}), primitives, groups: [], hits, nodeMatrices, sourceReferences: [],
+      movedRoots: 0, rootPoses: new Map() };
+  }
+  function clipOffset(index: number): readonly [number, number] {
+    return clipOffsets.get(index) ?? [0, 0];
   }
   function logicalMatrix(id: string): Affine | undefined {
     if (!ensureIndex()) return undefined;
@@ -427,7 +543,7 @@ export function createRetainedPixiComposition(
     const old = (sampledMatrix ?? lastPrimitive.get(id)) as Affine | undefined, inverse = affineInverse(ref.matrix);
     return old && inverse ? affineMul(affineMul(old, inverse), referenceMatrix) : null;
   }
-  return { plan, patch, patchWireTransform, commit, logicalMatrix, logicalNodeMatrix, sourceTransform };
+  return { plan, patch, patchWireTransform, patchTranslate, commit, clipOffset, logicalMatrix, logicalNodeMatrix, sourceTransform };
 }
 
 /**
@@ -455,8 +571,10 @@ function createVerifiedComposition(
   };
   return {
     plan: eager.plan,
-    patch: (anims) => check("patch", (composition) => composition.patch(anims)),
-    patchWireTransform: (id, delta) => check("patchWireTransform", (composition) => composition.patchWireTransform(id, delta)),
+    patch: (anims, rootShifts) => check("patch", (composition) => composition.patch(anims, rootShifts)),
+    patchWireTransform: (id, delta, options) => check("patchWireTransform", (composition) => composition.patchWireTransform(id, delta, options)),
+    patchTranslate: (deltas, options) => check("patchTranslate", (composition) => composition.patchTranslate(deltas, options)),
+    clipOffset: (index) => check("clipOffset", (composition) => composition.clipOffset(index)),
     commit(result) {
       eager.commit(result);
       try { lazy.commit(result); }

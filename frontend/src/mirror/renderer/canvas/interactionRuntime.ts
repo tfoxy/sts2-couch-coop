@@ -75,6 +75,8 @@ import type { ViewScaleInputStamp } from "@/mirror/viewScaleInverse";
 import {
   anyTargetingArrowVisible,
   canvasPaintedLocalY,
+  clearRaiseIndexCacheSlot,
+  createRaiseIndexCacheSlot,
   creatureHudMeasure,
   handRaiseDy,
   planCanvasHandRaise,
@@ -124,6 +126,13 @@ export interface CanvasInteractionRuntimePorts {
   readonly streamedGlobalInto: (state: MirrorState | null, id: string, out: number[]) => boolean;
   /** Immediate canvas presentation for client-only offset changes. */
   readonly rebuildAndPaint: () => void;
+  /**
+   * `rustCoalescedBuilds`: hand a client-only change to the frame scheduler as one build request instead of
+   * building here. `urgent` marks a change the player sees at once (a held card lifting, dropping, being picked up
+   * or let go), which the scheduler never presents later than the synchronous build did. Absent: every change
+   * calls `rebuildAndPaint` exactly as before.
+   */
+  readonly requestBuild?: (urgent: boolean, offsetOnly?: boolean) => "immediate" | "deferred";
   /** The scheduler owns the ordinary animation lane; this only asks it to re-evaluate demand. */
   readonly armAnimation: () => void;
   readonly builds: () => number;
@@ -132,6 +141,11 @@ export interface CanvasInteractionRuntimePorts {
    *  type/style candidates instead of a full node scan. Both default off — only the Rust backend ever sets them. */
   readonly sceneIndex?: boolean;
   readonly sceneIndexVerify?: boolean;
+  /** WP4 (`rustRaiseIndexCache`/`rustFastVerify`): cache `scanRaiseIndex`/`createChildIndex` per `(state,
+   *  revision)` instead of rebuilding them from scratch on every hand-raise pass. Both default off — only the
+   *  Rust backend ever sets them (see `canvas/handRaise.ts`'s cache block). */
+  readonly raiseIndexCache?: boolean;
+  readonly raiseIndexCacheVerify?: boolean;
 }
 
 export interface CanvasInteractionRuntime {
@@ -140,6 +154,9 @@ export interface CanvasInteractionRuntime {
   /** See `ports.sceneIndexVerify`: mismatches between the candidate-restricted and full-scan answers. Always 0
    *  off verify; used by `createPixiMirrorRenderer.ts` to fold into its own `sceneIndexVerifyMismatches`. */
   readonly sceneIndexVerifyMismatches: number;
+  /** See `ports.raiseIndexCacheVerify`: mismatches between a cached raise-index answer and a from-scratch
+   *  recompute, folded by `createPixiMirrorRenderer.ts` into its own raise-index diagnostics. */
+  readonly raiseIndexCacheVerifyMismatches: number;
   readonly cosmeticVersion: number;
   readonly cosmeticVersionAtBuild: number;
   readonly offsetPending: boolean;
@@ -155,8 +172,13 @@ export interface CanvasInteractionRuntime {
   publishBuild(snapshot: DrawnSceneSnapshot, candidate?: FrameData): void;
   cosmeticOffsetsFor(snapshot: DrawnSceneSnapshot): ReadonlyMap<string, CosmeticOffset>;
   cosmeticOffsetsMatch(snapshot: DrawnSceneSnapshot): boolean;
-  /** A patch retains build products; carry their exact interaction sidecar forward. */
-  publishPatch(previous: DrawnSceneSnapshot | null, snapshot: DrawnSceneSnapshot): void;
+  /**
+   * A patch retains build products; carry their exact interaction sidecar forward. A cosmetic-offset patch
+   * (`rustOffsetPatch`) passes the offsets and raise plan it drew, captured when it was planned.
+   */
+  publishPatch(previous: DrawnSceneSnapshot | null, snapshot: DrawnSceneSnapshot, offsetFrame?: OffsetPatchFrame): void;
+  /** `rustOffsetPatch`: the current offsets and raise plan, by value, for a patch that is about to be planned. */
+  captureOffsetFrame(): OffsetPatchFrame;
   invalidateInputCaches(): void;
   collectCaptureIds(out: Set<string>): void;
 
@@ -218,6 +240,12 @@ export interface CanvasInteractionRuntime {
   liveAncestorChainHidden(node: MirrorNode): boolean;
   liveEffectivelyVisible(node: MirrorNode): boolean;
   dispose(): void;
+}
+
+/** What a cosmetic-offset patch draws beyond its build: the offsets and the raise plan that produced them. */
+export interface OffsetPatchFrame {
+  readonly cosmeticOffsets: ReadonlyMap<string, CosmeticOffset>;
+  readonly raisePlan: HandRaisePlan;
 }
 
 interface FrameData {
@@ -356,6 +384,11 @@ export function createCanvasInteractionRuntime(ports: CanvasInteractionRuntimePo
   let targetingWorld: MirrorState | null = null;
   let targetingRevision = -1;
   let targetingActive = false;
+
+  // WP4 (`rustRaiseIndexCache`): one slot per RUNTIME INSTANCE, not a module global — see the slot's own doc in
+  // `canvas/handRaise.ts`. `dispose()` below clears it so this runtime's `MirrorState` reference does not outlive
+  // the runtime, and two runtimes (an A/B bench, or two mirror instances) never evict each other's cache.
+  const raiseIndexCacheSlot = createRaiseIndexCacheSlot();
 
   let raiseEnabled = false;
   let raisePlan: HandRaisePlan = EMPTY_HAND_RAISE_PLAN;
@@ -510,6 +543,8 @@ export function createCanvasInteractionRuntime(ports: CanvasInteractionRuntimePo
       ports.state(),
       { enabled: raiseEnabled, heldCardId, heldMode },
       raiseTweenEnv,
+      ports.raiseIndexCache ? raiseIndexCacheSlot : null,
+      ports.raiseIndexCacheVerify ?? false,
     );
     const liftChanged = raisePlan.liftPx !== lastRaiseLift;
     lastRaiseLift = raisePlan.liftPx;
@@ -678,7 +713,11 @@ export function createCanvasInteractionRuntime(ports: CanvasInteractionRuntimePo
     return true;
   }
 
-  function publishPatch(previous: DrawnSceneSnapshot | null, snapshot: DrawnSceneSnapshot): void {
+  function captureOffsetFrame(): OffsetPatchFrame {
+    return { cosmeticOffsets: new Map(cosmeticOffsets), raisePlan: copyPlan(raisePlan) };
+  }
+
+  function publishPatch(previous: DrawnSceneSnapshot | null, snapshot: DrawnSceneSnapshot, offsetFrame?: OffsetPatchFrame): void {
     const data = previous === null ? undefined : snapshotData.get(previous);
     if (data === undefined) {
       // This only covers standalone test seams. Production patches always
@@ -692,6 +731,8 @@ export function createCanvasInteractionRuntime(ports: CanvasInteractionRuntimePo
     // previous hit list or previous node map are rebuilt for this snapshot.
     snapshotData.set(snapshot, {
       ...data,
+      // A translate patch moved the drawn offsets (and the raise that set them) on: its hits are proved against them.
+      ...(offsetFrame ? { cosmeticOffsets: offsetFrame.cosmeticOffsets, raisePlan: offsetFrame.raisePlan } : {}),
       interactiveRects: null,
       viewScaleInputStamps: null,
       children: null,
@@ -1163,7 +1204,8 @@ export function createCanvasInteractionRuntime(ports: CanvasInteractionRuntimePo
       offsetPending = false;
       offsetBuildArmed = true;
       offsetBuilds++;
-      ports.rebuildAndPaint();
+      if (ports.requestBuild) ports.requestBuild(false, true);
+      else ports.rebuildAndPaint();
       armOffsetFrame();
     });
   }
@@ -1174,12 +1216,16 @@ export function createCanvasInteractionRuntime(ports: CanvasInteractionRuntimePo
     if (offsetBuildArmed) {
       offsetPending = true;
       offsetCoalesced++;
+      // The offset frame below asks for (or makes) the one trailing build, coalesced or not: a request here as
+      // well would build a quiet scene now and again from that frame.
       armOffsetFrame();
       return;
     }
     offsetBuildArmed = true;
     offsetBuilds++;
-    ports.rebuildAndPaint();
+    // The first offset of a burst keeps its immediate presentation.
+    if (ports.requestBuild) ports.requestBuild(true, true);
+    else ports.rebuildAndPaint();
     armOffsetFrame();
   }
 
@@ -1218,8 +1264,16 @@ export function createCanvasInteractionRuntime(ports: CanvasInteractionRuntimePo
 
   function setHeldCard(id: string | null, gameY: number, mode: "drag" | "peek" = "drag"): void {
     heldFingerY = gameY;
+    // Coalesced: the outgoing card's drop and the incoming card's lift are ONE request, not two builds.
+    let releasedDrawn = false;
+    // A pick-up or release changes which card the next build captures, so only a move of the same card can be
+    // carried by a translate patch.
+    const sameCard = id === heldCardId;
     if (id !== heldCardId) {
-      if (heldCardId !== null && setCosmeticOffset(heldCardId, 0, 0)) ports.rebuildAndPaint();
+      if (heldCardId !== null && setCosmeticOffset(heldCardId, 0, 0)) {
+        if (ports.requestBuild) releasedDrawn = true;
+        else ports.rebuildAndPaint();
+      }
       heldCardId = id;
       heldMode = mode;
       heldLifted = false;
@@ -1233,14 +1287,23 @@ export function createCanvasInteractionRuntime(ports: CanvasInteractionRuntimePo
     applyHeldLift();
     const after = cosmeticOffsets.get(id ?? "")?.dy ?? 0;
     const raiseMoved = applyHandRaisePass();
-    if (before !== after || raiseMoved) ports.rebuildAndPaint();
+    if (ports.requestBuild) {
+      // Urgent only for the held card's own lift/drop. A raise-pass change alone is a ramp step or a re-plan the
+      // animation tick draws anyway, so it may wait for the next frame's build.
+      const urgent = releasedDrawn || before !== after;
+      // Only cosmetic offsets moved: under `rustOffsetPatch` a translate patch may carry it.
+      if (urgent || raiseMoved) ports.requestBuild(urgent, sameCard);
+    } else if (before !== after || raiseMoved) ports.rebuildAndPaint();
     ports.armAnimation();
   }
 
   function setRaiseHandCards(enabled: boolean): void {
     if (enabled === raiseEnabled) return;
     raiseEnabled = enabled;
-    if (applyHandRaisePass()) ports.rebuildAndPaint();
+    if (applyHandRaisePass()) {
+      if (ports.requestBuild) ports.requestBuild(false);
+      else ports.rebuildAndPaint();
+    }
     ports.armAnimation();
   }
 
@@ -1433,12 +1496,14 @@ export function createCanvasInteractionRuntime(ports: CanvasInteractionRuntimePo
     snapshotGlobalChainScratch.length = 0;
     viewScaleRegistryNodes = EMPTY_NODES;
     viewScaleRegistryOrderedIds = EMPTY_ORDERED_IDS;
+    clearRaiseIndexCacheSlot(raiseIndexCacheSlot);
   }
 
   return {
     get cosmeticOffsets() { return cosmeticOffsets; },
     get handHolderIds() { return handHolderIds; },
     get sceneIndexVerifyMismatches() { return sceneIndexVerifyMismatches; },
+    get raiseIndexCacheVerifyMismatches() { return raiseIndexCacheSlot.verifyMismatches; },
     get cosmeticVersion() { return cosmeticVersion; },
     get cosmeticVersionAtBuild() { return cosmeticVersionAtBuild; },
     get offsetPending() { return offsetPending; },
@@ -1452,6 +1517,7 @@ export function createCanvasInteractionRuntime(ports: CanvasInteractionRuntimePo
     cosmeticOffsetsFor,
     cosmeticOffsetsMatch,
     publishPatch,
+    captureOffsetFrame,
     invalidateInputCaches: invalidateSnapshotInputCaches,
     collectCaptureIds,
     noteNodePresent,
