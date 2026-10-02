@@ -53,7 +53,7 @@
 // Self-contained per the mirror decoupling rule: `@/mirror/*` + `@/render/quality` only.
 
 import { affineInverse, affineMul, nodeMatrix, IDENTITY_AFFINE, type Affine } from "@/mirror/affine";
-import { mirrorSettings } from "@/mirror/mirrorSettings";
+import { rawSpineMode } from "@/mirror/mirrorSettings";
 import { CREATURE_SCENE_FILE_SUFFIX } from "@/mirror/raise/constants";
 import { isSpineClipNode } from "@/mirror/spineAttributes";
 import type { MirrorNode } from "@/mirror/sceneTree";
@@ -161,7 +161,7 @@ export function creaturePlaceholderKind(node: MirrorNode): CreaturePlaceholderKi
  * control, so someone who typed it asked for no spine role, stand-in included.
  */
 export function isCreaturePlaceholderNode(node: MirrorNode): boolean {
-  return mirrorSettings.spineMode !== "off" && creaturePlaceholderKind(node) !== null;
+  return rawSpineMode() !== "off" && creaturePlaceholderKind(node) !== null;
 }
 
 /**

@@ -32,7 +32,7 @@
 // per-session adaptive-controller flag; `spineMode` is a dev-only `?spineMode=` override with no panel control,
 // so it has nothing viewer-set to save.
 
-import { reactive } from "vue";
+import { reactive, toRaw } from "vue";
 import { isWebKitBrowser } from "@/platform";
 
 import { REPRO_UI_ENABLED } from "@/mirror/buildFlags";
@@ -797,3 +797,25 @@ export function createMirrorSettings(
 
 // The app-wide singleton the panel + MirrorView + MirrorApp all share.
 export const mirrorSettings = createMirrorSettings();
+
+// `spineMode` off the raw object, bypassing the reactive Proxy's `get` trap — PERF: `isCreaturePlaceholderNode`,
+// `isSpineClipNode`, `isSpineStillMode` and `isGeoclipPlaybackEnabled` (creaturePlaceholder.ts, spineAttributes.ts)
+// call this once per node on every producer build, and the dependency-tracking `get` trap `reactive()` installs
+// cost ~29ms of a phone trace there for a field nothing ever reassigns outside the parse above (`spineMode` has no
+// panel control and is never persisted — see NEVER_PERSISTED_SETTING_KEYS). `toRaw` returns the exact object the
+// Proxy writes through, so this is a live read of that object's CURRENT field, not a frozen snapshot: a direct
+// `mirrorSettings.spineMode = …` (a spec standing in for a `?spineMode=` reload) is visible here immediately,
+// same as reading the proxy — the only thing this skips is the trap itself.
+const mirrorSettingsRaw: MirrorSettings = toRaw(mirrorSettings);
+
+export function rawSpineMode(): SpineMode {
+  return mirrorSettingsRaw.spineMode;
+}
+
+// `effectiveMirrorRenderSettings(mirrorSettings).spineMode`, without the Proxy `get` trap on `spineMode` — same
+// canvas-forces-static rule (`RUST_RENDER_SETTINGS.spineMode` is always `"static"`), same result by construction.
+// `runtimeStage` stays a live Proxy read: unlike `spineMode` it DOES change after load (a failed Rust canvas
+// falls back to DOM — see the field), so only the field that is provably load-time-only moves off the proxy.
+export function effectiveSpineMode(): SpineMode {
+  return mirrorSettings.runtimeStage === "canvas" ? RUST_RENDER_SETTINGS.spineMode : rawSpineMode();
+}

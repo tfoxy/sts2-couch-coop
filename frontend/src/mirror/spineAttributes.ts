@@ -8,7 +8,7 @@
 // here — exactly like `mirrorResourceUrl` in sceneTree.ts builds `/res/…` — rather than importing
 // `spineClipRoute` from @/protocol.
 
-import { effectiveMirrorQuality, effectiveMirrorRenderSettings, mirrorSettings } from "@/mirror/mirrorSettings";
+import { effectiveMirrorQuality, effectiveSpineMode } from "@/mirror/mirrorSettings";
 import type { MirrorNode } from "@/mirror/sceneTree";
 import { assetVersionSuffix } from "@/join/assetVersion";
 import { hostUrl } from "@/join/hostBase";
@@ -31,7 +31,7 @@ export function isSpineClipNode(node: MirrorNode): boolean {
   if (node.spineSceneResPath == null || !node.spineCurrentAnim) {
     return false;
   }
-  const mode = effectiveMirrorRenderSettings(mirrorSettings).spineMode;
+  const mode = effectiveSpineMode();
   if (mode === "off") {
     return false;
   }
@@ -55,7 +55,7 @@ export function isSpineClipNode(node: MirrorNode): boolean {
 // tier (the dev asked for the animation); Off is moot (isSpineClipNode already returned false) but answers false
 // for a well-defined value.
 export function isSpineStillMode(): boolean {
-  const mode = effectiveMirrorRenderSettings(mirrorSettings).spineMode;
+  const mode = effectiveSpineMode();
   if (mode !== "auto") {
     return mode === "static";
   }
@@ -68,7 +68,7 @@ export function isSpineStillMode(): boolean {
 // tier-driven experiment without making ordinary viewers touch `/geoclips/`. Keeping this gate next to the spine
 // mode gates means both renderers make the same decision before a manifest probe can ask the host to bake one.
 export function isGeoclipPlaybackEnabled(): boolean {
-  const mode = effectiveMirrorRenderSettings(mirrorSettings).spineMode;
+  const mode = effectiveSpineMode();
   return mode === "dynamic" || mode === "auto";
 }
 
