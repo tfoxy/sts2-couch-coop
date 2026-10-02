@@ -2,7 +2,7 @@ import { createClipRectView, createDrawList, createNinePatchView, createPolyline
 import type { PixiDrawListRenderer, PixiGlyphProvider, PixiTextOutcomes, PixiTextRecord } from "@godot-scene-web/canvas/pixi";
 import {
   buildDrawList, streamedAlphasOf, type AlphaOverride, type BuildDrawListOptions, type CapturedGlobal, type CosmeticOffset,
-  type DrawListBuild, type LocalAnim
+  type DrawListBuild, type LocalAnim, type SpreadRegistry
 } from "@/mirror/canvas/buildDrawList";
 import { baselineOf, layoutText, resolveTextSpec, type TextSpan } from "@/mirror/canvas/textLayout";
 import { createColorValidator, parseSimpleRich } from "@/mirror/canvas/richSimple";
@@ -23,9 +23,10 @@ import { setUiScalingEnabled } from "@/mirror/uiScaling";
 import { mapPointerToGame } from "@/mirror/pointerMap";
 import { spineClipUrl } from "@/mirror/spineAttributes";
 import { loadSpineClip, type LoadedSpineClip } from "@/mirror/spineClip";
-import { isStaticBackgroundSuppressibleRoot, staticBgTargetPathOf } from "@/mirror/renderer/staticBackgroundPolicy";
+import { isStaticBackgroundSuppressibleRoot, spreadSceneIdentityEnv, staticBgTargetPathOf } from "@/mirror/renderer/staticBackgroundPolicy";
 import { createCanvasInteractionRuntime, type OffsetPatchFrame } from "@/mirror/renderer/canvas/interactionRuntime";
 import { translatedSpanRefusal } from "./translatedSpan";
+import { planWireSpread, type AncestorFrame, type WireSpreadPlan } from "./wireSpreadPlan";
 import { CANVAS_IDLE_ANIMATION_FPS, type DrawnSceneSnapshot } from "@/mirror/renderer/canvas/frameRuntime";
 import { createCanvasVisualState, type LandingPresentation, type SampleMark } from "@/mirror/renderer/canvas/visualState";
 import { CANVAS_FRAME_PARK_SLOP_MS, createCanvasFrameScheduler, type CanvasPatchSubmission } from "@/mirror/renderer/canvas/frameScheduler";
@@ -41,8 +42,9 @@ import { installLandingLogProbe } from "@/mirror/landingLog";
 import { installSpreadAuditProbe } from "@/mirror/canvas/spreadAudit";
 import { affineInverse, affineMul, type Affine } from "@/mirror/affine";
 import { rendererComparisonConfig, setRendererRuntimeStatus } from "@/mirror/rendererComparison";
-import { SAMPLE_LOCAL_ANIM, SAMPLE_OPACITY, SAMPLE_SELF_OPACITY, SAMPLE_SOURCE } from "@/mirror/canvas/tweenLoop";
+import { SAMPLE_LOCAL_ANIM, SAMPLE_OPACITY, SAMPLE_SELF_OPACITY, SAMPLE_SOURCE, SAMPLE_TRANSFORM } from "@/mirror/canvas/tweenLoop";
 import { createRetainedPixiComposition, isPureTranslation, type ClipTranslation, type RetainedPixiPatch } from "./retainedComposition";
+import { isCardTrailNode, isCardTrailRootNode } from "@/mirror/cardTrail";
 import { resolveRustFastFlags } from "./rustFastFlags";
 import { createSceneCandidateIndex } from "./sceneCandidateIndex";
 import { copyTransformOverrides, overrideAncestors, sameNodeExceptTransform, sameTransformOverrides, touchesOverrideLineage } from "./heldOverrides";
@@ -334,8 +336,24 @@ export function createPixiMirrorRenderer(
   let retained = null as ReturnType<typeof createRetainedPixiComposition> | null;
   // rustOffsetPatch: the committed build's stretch factor and its spread field claimers (mode 1/2), for the
   // translated-span refusal. `spreadFieldModeByNode` is refilled by every build attempt, committed or not.
-  let committedSpread: { factor: number; claimers: ReadonlyMap<string, number>; shifted: ReadonlySet<string> } =
-    { factor: 1, claimers: new Map(), shifted: new Set() };
+  // rustWireSpreadPatch (widened stage only): `dx` is the committed per-node spread shift, the build's value with every
+  // committed wire patch's moves applied (copy-on-write: the interaction frame data of each snapshot shares it), plus
+  // the floater owners and the follower lookups the committed build resolved through the registry.
+  type CommittedSpread = { factor: number; claimers: ReadonlyMap<string, number>; shifted: ReadonlySet<string>;
+    dx: ReadonlyMap<string, number> | null; modes: ReadonlyMap<string, number> | null; ownerReads: ReadonlySet<string>;
+    followerPoints: readonly number[] };
+  let committedSpread: CommittedSpread =
+    { factor: 1, claimers: new Map(), shifted: new Set(), dx: null, modes: null, ownerReads: new Set(), followerPoints: [] };
+  // Whether the live `spreadDxByNode`/`spreadFieldModeByNode` still hold the committed build's walk. A build attempt
+  // refills them before it is known to commit; a refused or superseded one leaves another walk's values behind.
+  let liveSpreadCommitted = true;
+  // rustWireSpreadPatch: ONE recording registry for the renderer's life — the hidden-subtree memo keys on the
+  // registry's identity, so a per-build wrapper would miss it every build. Each build points it at fresh sinks.
+  let registryReads: { owners: Set<string>; followers: number[] } | null = null;
+  const watchedRegistry: SpreadRegistry = {
+    ownerDx: (ownerId, fallbackDx) => { registryReads?.owners.add(ownerId); return visual.spreadRegistry.ownerDx(ownerId, fallbackDx); },
+    followerShift: (gx, gy) => { const dx = visual.spreadRegistry.followerShift(gx, gy); registryReads?.followers.push(gx, gy, dx); return dx; },
+  };
   const retainedDiagnosticFields = new Map<string, { alpha?: number; source?: { texture: string | null; x: number; y: number; w: number; h: number } }>();
   let retainedValid = false;
   // rustLazyComposition: a committed composition indexes its patch inputs on first use. `paintGeneration` moves
@@ -366,17 +384,35 @@ export function createPixiMirrorRenderer(
   // rustFastVerify accumulators, one per patch family that claims exactness (held overrides, cosmetic offsets).
   // Each keeps its own ring of the builds and patches that led up to a run, so one family's log does not depend on
   // the other's switch.
+  // `kinds` counts mismatches by what disagreed (a command kind, `text`, `hit`, `captured`, `spread`, ...).
   type VerifyStats = { runs: number; mismatches: number; maxError: number; firstMismatch: string | null; log: HeldVerifyEntry[];
-    recent: string[] };
-  const heldVerify: VerifyStats = { runs: 0, mismatches: 0, maxError: 0, firstMismatch: null, log: [], recent: [] };
-  const offsetVerify: VerifyStats = { runs: 0, mismatches: 0, maxError: 0, firstMismatch: null, log: [], recent: [] };
+    recent: string[]; kinds: Record<string, number> };
+  const verifyStats = (): VerifyStats => ({ runs: 0, mismatches: 0, maxError: 0, firstMismatch: null, log: [], recent: [], kinds: {} });
+  const heldVerify = verifyStats(), offsetVerify = verifyStats();
+  // rustWireSpreadPatch: its own family, so a run reports the spread re-poses apart from the offset translations.
+  const spreadVerify = verifyStats();
+  // rustTweenRootPatch: likewise its own family.
+  const tweenVerify = verifyStats();
   // rustOffsetPatch: what a translate patch publishes beyond its commands (the offsets and raise plan it drew and the
   // captured globals it moved), plus its planned inputs under verify. A wire translation of captured nodes adds its
   // recomputed entries to `captures` and sets `wireCaptured`.
+  // rustWireSpreadPatch: `spread` is set on every patch whose wire spans the switch re-posed (even with no shift
+  // change), and holds each span node's new spread shift where it moved along the field.
   type PatchSidecar = { frame?: OffsetPatchFrame; captures?: Map<string, CapturedGlobal>; moved?: ReadonlySet<string>;
-    verify?: HeldPatchInputs; wireCaptured?: boolean };
+    verify?: HeldPatchInputs; wireCaptured?: boolean; spread?: Map<string, number>; spreadSpans?: number;
+    // rustTweenRootPatch: the override bank the patch drew (committed on publication), how many roots it re-posed,
+    // and whether an open landing may ride it (no local animation or offset translation moved a landing node).
+    tween?: { overrides: Map<string, readonly number[]>; roots: number };
+    /** rustTweenRootPatch: an open landing may ride this patch (every landing node it moves was recomputed). */
+    landingPatchable?: boolean };
   const patchSidecars = new WeakMap<RetainedPixiPatch, PatchSidecar>();
   let offsetPatches = 0, offsetPatchedNodes = 0, wireCapturedPatches = 0;
+  let wireSpreadPatches = 0, wireSpreadSpans = 0, wireSpreadShifted = 0, wireSpreadVisited = 0;
+  // `rustPhaseTiming=1`: the wire reconcile's per-span planning loop and the spread bank's publication.
+  let wireSpanLoopMs = 0, wireSpreadPublishMs = 0;
+  const wireSpreadDeclines: Record<string, number> = {};
+  let tweenRootPatches = 0, tweenRootsPatched = 0, tweenRootVisited = 0;
+  const tweenDeclines: Record<string, number> = {};
   const offsetDeclines: Record<string, number> = {};
   // Which node types a refused translation tripped on (`offset-clip` / `offset-view-scale` / `offset-anim`).
   const offsetDeclineTypes: Record<string, number> = {};
@@ -389,9 +425,10 @@ export function createPixiMirrorRenderer(
   // led up to it (a short ring, recorded under verify only). Both bounded so a long session cannot grow them.
   type HeldVerifyEntry = { run: number; revision: number; clock: number | null; notes: string[]; recent: string[] };
   const noteHeldEvent = (event: () => string) => {
-    if (!fast.verify || (!fast.heldOverridePatch && !fast.offsetPatch)) return;
+    if (!fast.verify || (!fast.heldOverridePatch && !fast.offsetPatch && !fast.wireSpreadPatch && !fast.tweenRootPatch)) return;
     const text = event();
-    for (const stats of [fast.heldOverridePatch ? heldVerify : null, fast.offsetPatch ? offsetVerify : null]) {
+    for (const stats of [fast.heldOverridePatch ? heldVerify : null, fast.offsetPatch ? offsetVerify : null,
+      fast.wireSpreadPatch ? spreadVerify : null, fast.tweenRootPatch ? tweenVerify : null]) {
       if (!stats) continue;
       stats.recent.push(text);
       if (stats.recent.length > 24) stats.recent.shift();
@@ -954,6 +991,7 @@ if (isPromiseLike<PresentationResult>(result)) {
     textDegradations.clear();
     const capturedGlobals = new Map(); const captureIds = new Set<string>(); interaction.collectCaptureIds(captureIds); visual.collectLandingCaptureIds(captureIds);
     visual.prepareBuild(next); interaction.prepareBuild(); spreadDxByNode.clear(); spreadFieldModeByNode.clear();
+    liveSpreadCommitted = false;
     const candidateSourceMark = visual.sampleMark();
     list.reset();
     let skipRoots = new Set<string>();
@@ -973,6 +1011,17 @@ if (isPromiseLike<PresentationResult>(result)) {
     }
     lifecycle?.endPhase("prepare");
     if (traceId !== null) traceStamp!(`cc:frame:${traceId}:couch:prepare:end`);
+    // rustWireSpreadPatch: what this build resolved through the registry, which a later wire patch must not move.
+    const spreadWatch = fast.wireSpreadPatch && visual.spreadFactor !== 1;
+    const ownerReads = new Set<string>();
+    const followerPoints: number[] = [];
+    registryReads = spreadWatch ? { owners: ownerReads, followers: followerPoints } : null;
+    const buildRegistry: SpreadRegistry = spreadWatch ? watchedRegistry : visual.spreadRegistry;
+    // The build draws a BY-VALUE copy of the overrides, in every configuration. The walk keeps an override array as
+    // the node's `gRaw` (so its paint input's global, hit `mFinal` and captured globals ALIAS it), and the tween sweep
+    // rewrites that array in place every frame: the landing probe, the hand probe and a later patch would all read the
+    // next sample as the committed pose.
+    const builtOverrides = copyTransformOverrides(visual.transformOverrides);
     const buildScene = () => buildDrawList(next, list, { resetList: false, scratch, paintOrderCache,
       spreadAudit: visual.spreadAudit,
       profilePhase: profileIdentity ? (phase, run) => profile!.span(profileIdentity, `couch.draw-${phase}`, run) : undefined,
@@ -1002,8 +1051,8 @@ if (isPromiseLike<PresentationResult>(result)) {
         if (input.node.text) semanticCandidate[semanticCandidate.length - 1].placedText = semanticTextLayout(input.node, input.nodes!, measureContext);
       },
       spreadFactor: visual.spreadFactor,
-      spreadRegistry: visual.spreadRegistry, spreadDxOut: spreadDxByNode, spreadFieldModeOut: spreadFieldModeByNode,
-      transformOverrides: visual.transformOverrides.size ? visual.transformOverrides : null,
+      spreadRegistry: buildRegistry, spreadDxOut: spreadDxByNode, spreadFieldModeOut: spreadFieldModeByNode,
+      transformOverrides: builtOverrides.size ? builtOverrides : null,
       alphaOverrides: visual.alphaOverrides.size ? visual.alphaOverrides : null,
       localAnims: visual.localAnims.size ? visual.localAnims : null,
       frameSubstitutes: visual.frameSubstitutes.size ? visual.frameSubstitutes : null,
@@ -1012,7 +1061,7 @@ if (isPromiseLike<PresentationResult>(result)) {
       cosmeticOffsets: interaction.cosmeticOffsets, semanticText, semanticOverlay, forceEffectStillOverlay,
       assert: false });
     // rustHeldOverridePatch: the overrides this build applies, by value, banked when its frame publishes.
-    const appliedOverrides = fast.heldOverridePatch ? copyTransformOverrides(visual.transformOverrides) : null;
+    const appliedOverrides = fast.heldOverridePatch ? builtOverrides : null;
 const producerStarted = rustPhaseTimingMode || producerReasonMode ? performance.now() : 0;
     const tracedBuild = traceId === null ? buildScene : () => tracePhase(traceId, "build", buildScene);
     const phaseBuildId = producerBuilds + 1;
@@ -1037,11 +1086,6 @@ const producerStarted = rustPhaseTimingMode || producerReasonMode ? performance.
       windowPhase: typeof (window as unknown as { __benchWindowMark?: unknown }).__benchWindowMark === "number"
         ? (window as unknown as { __benchWindowMark: number }).__benchWindowMark : null });
     const frameBuild = build!;
-    const candidateSpread = { factor: visual.spreadFactor, claimers: new Map<string, number>(), shifted: new Set<string>() };
-    if (candidateSpread.factor !== 1) {
-      for (const [id, mode] of spreadFieldModeByNode) if (mode !== 0) candidateSpread.claimers.set(id, mode);
-      for (const [id, dx] of spreadDxByNode) if (dx !== 0) candidateSpread.shifted.add(id);
-    }
     // A pristine committed copy of this same live map at this revision is the map a fresh copy would produce:
     // only applySceneDelta edits the live map, and it always bumps the revision. A build's paint order and hit
     // list are never edited after it returns, so snapshot reuse publishes them without copies.
@@ -1050,6 +1094,17 @@ const producerStarted = rustPhaseTimingMode || producerReasonMode ? performance.
     const candidateNodes = reuseNodes ? snapshot!.scene.nodes : new Map(next.nodes);
     const candidateOrderedIds = fast.snapshotReuse ? frameBuild.order.ids : frameBuild.order.ids.slice();
     const interactionCandidate = interaction.captureBuild();
+    const candidateSpread: CommittedSpread = { factor: visual.spreadFactor, claimers: new Map<string, number>(),
+      shifted: new Set<string>(), dx: null, modes: null, ownerReads, followerPoints };
+    if (candidateSpread.factor !== 1) {
+      // rustWireSpreadPatch re-walks a moved span itself; the claim sets are the refusal's input when it is off. The
+      // interaction frame data already holds a by-value copy of this build's shifts: the bank shares it.
+      if (spreadWatch) { candidateSpread.dx = interactionCandidate.spreadDxByNode; candidateSpread.modes = interactionCandidate.spreadFieldModeByNode; }
+      else {
+        for (const [id, mode] of spreadFieldModeByNode) if (mode !== 0) (candidateSpread.claimers as Map<string, number>).set(id, mode);
+        for (const [id, dx] of spreadDxByNode) if (dx !== 0) (candidateSpread.shifted as Set<string>).add(id);
+      }
+    }
     const landingCandidate = visual.captureLandingPresentation(next, lastSampleClock ?? candidateClock ?? performance.now(),
       capturedGlobals, interactionCandidate.cosmeticOffsets);
     const candidateLandingGeneration = visual.landingGeneration;
@@ -1182,6 +1237,7 @@ const producerStarted = rustPhaseTimingMode || producerReasonMode ? performance.
     if (!presentedOnce) { presentedOnce = true; publishStatus("ready"); }
     retained = candidate;
     committedSpread = candidateSpread;
+    liveSpreadCommitted = true;
     visual.settleSamples(candidateSourceMark);
     retainedValid = retainedMode;
     snapshotNodesSource = fast.snapshotReuse ? next.nodes : null;
@@ -1225,9 +1281,10 @@ const producerStarted = rustPhaseTimingMode || producerReasonMode ? performance.
     presentation?: PresentationResult, landingCandidate?: LandingPresentation): void {
     lifecycle?.startPhase("publish");
     const previous = snapshot!;
-    for (const { entry, matrix, gameMatrix } of patch.hits) {
+    for (const { entry, matrix, gameMatrix, spreadDx } of patch.hits) {
       entry.mFinal = matrix;
       if (gameMatrix) entry.mGame = gameMatrix;
+      if (spreadDx !== undefined) entry.spreadDx = spreadDx;
     }
     retained!.commit(patch);
     if (patch.clips?.length) translateHitClips(previous.hitEntries, patch.clips);
@@ -1253,7 +1310,24 @@ const producerStarted = rustPhaseTimingMode || producerReasonMode ? performance.
       capturedGlobals = moved;
     }
     snapshot = { ...previous, capturedGlobals, stateRevision: wire?.revision ?? previous.stateRevision };
-    interaction.publishPatch(previous, snapshot, sidecar?.frame);
+    // rustWireSpreadPatch: the moved shifts become the committed bank (replaced, never edited: the previous snapshot's
+    // frame data keeps the map it was drawn with) and the live map the input side reads between builds.
+    let spreadBank: ReadonlyMap<string, number> | undefined;
+    const bankStarted = rustPhaseTimingMode ? performance.now() : 0;
+    if (sidecar?.spread?.size && committedSpread.dx) {
+      const moved = new Map(committedSpread.dx);
+      // A build attempt since the commit left its own walk in the live maps: put the committed one back first.
+      if (!liveSpreadCommitted) {
+        spreadDxByNode.clear(); for (const [id, dx] of committedSpread.dx) spreadDxByNode.set(id, dx);
+        spreadFieldModeByNode.clear(); for (const [id, mode] of committedSpread.modes ?? []) spreadFieldModeByNode.set(id, mode);
+        liveSpreadCommitted = true;
+      }
+      for (const [id, dx] of sidecar.spread) { moved.set(id, dx); spreadDxByNode.set(id, dx); }
+      committedSpread = { ...committedSpread, dx: moved };
+      spreadBank = moved;
+    }
+    interaction.publishPatch(previous, snapshot, sidecar?.frame, spreadBank);
+    if (rustPhaseTimingMode) wireSpreadPublishMs += performance.now() - bankStarted;
     landingCandidate?.publish();
     refinementPending = refinementRaf !== null;
     refinementFailure = null;
@@ -1268,7 +1342,13 @@ const producerStarted = rustPhaseTimingMode || producerReasonMode ? performance.
     if (heldPatches.has(patch)) { heldOverridePatches++; const inputs = heldPatches.get(patch); if (inputs) verifyHeldOverridePatch(inputs, heldVerify, false, new Set()); }
     // Counted on acceptance only: a plan that was refused or never presented moved nothing.
     if (sidecar?.frame) { offsetPatches++; offsetPatchedNodes += sidecar.moved?.size ?? 0; }
-    if (sidecar?.verify) verifyHeldOverridePatch(sidecar.verify, offsetVerify, true, sidecar.moved ?? new Set());
+    if (sidecar?.spreadSpans) { wireSpreadPatches++; wireSpreadSpans += sidecar.spreadSpans; wireSpreadShifted += sidecar.spread?.size ?? 0; }
+    if (sidecar?.tween) { tweenRootPatches++; tweenRootsPatched += sidecar.tween.roots; committedOverrides = sidecar.tween.overrides; }
+    // A patch carrying both an offset translation and a re-posed span reports to the offset family; a tween re-pose
+    // to its own (with a wire span beside it too).
+    if (sidecar?.verify) verifyHeldOverridePatch(sidecar.verify,
+      sidecar.tween ? tweenVerify : sidecar.spreadSpans && !sidecar.frame ? spreadVerify : offsetVerify,
+      true, sidecar.moved ?? new Set(), sidecar.spreadSpans || sidecar.tween ? sidecar.spread ?? new Map() : undefined);
     if (sidecar?.wireCaptured) wireCapturedPatches++;
     scheduler.settlePatch(patchSubmissions.get(patch) ?? null, true);
     retainedPatches++;
@@ -1408,10 +1488,11 @@ const traceId = nextTraceFrame();
     if (rustDiagnosticMode) retainedPlanCount++;
     if (rustPhaseTimingMode) retainedPlanMs += performance.now() - planStarted;
     if (!patch) return false;
-    if (visual.landingArms.length > 0 || (visual.hasOpenLanding() &&
+    if (visual.landingArms.length > 0 || (visual.hasOpenLanding() && !landingRidesPatch(patch) &&
       (patch.movedRoots > 0 || patch.hits.length > 0 || patch.nodeMatrices.length > 0)))
       return refuse("landing-requires-full-build");
-    const landingCandidate = visual.captureLandingPresentation(next, at, snapshot.capturedGlobals, interaction.cosmeticOffsetsFor(snapshot));
+    let landingCandidate = visual.captureLandingPresentation(next, at,
+      landingRidesPatch(patch) ? landingCapturesFor(patch, snapshot) : snapshot.capturedGlobals, landingLiftsFor(patch, snapshot));
     if (next.changedIds.size === 0) {
       let committed: PresentationResult;
       let phaseSubmissionId: number | undefined;
@@ -1437,10 +1518,15 @@ const traceId = nextTraceFrame();
       return pose;
     };
     const spans: Array<{ start: number; end: number }> = [];
+    // rustWireSpreadPatch: one scene-identity env and one ancestor re-walk cache per reconcile, shared by its spans.
+    let spreadScene: ReturnType<typeof spreadSceneIdentityEnv> | undefined;
+    let ancestorCache: Map<string, AncestorFrame | null> | undefined;
+    let followersStale: boolean | undefined;
     // rustHeldOverridePatch: a streamed delta is the drawn delta only away from held overrides. On or under one the
     // node draws through the override's absolute pose; above one, the span would carry the overridden node along.
     const heldLineage = fast.heldOverridePatch && visual.transformOverrides.size
       ? overrideAncestors(visual.transformOverrides, next.nodes) : null;
+    const spanLoopStarted = rustPhaseTimingMode ? performance.now() : 0;
     for (const id of next.changedIds) {
       const before = snapshot.scene.nodes.get(id), after = next.nodes.get(id);
       if (!before || !after || before.parentId !== after.parentId || !before.transform || !after.transform) return refuse("wire-structure");
@@ -1450,9 +1536,10 @@ const traceId = nextTraceFrame();
         if (heldLineage && touchesOverrideLineage(id, visual.transformOverrides, heldLineage, next.nodes)) return refuse("wire-under-override");
       } else for (const key of Object.keys(before) as Array<keyof typeof before>)
         if (key !== "transform" && before[key] !== after[key]) return refuse("wire-nontransform-change");
-      const inverse = affineInverse(global(snapshot.scene.nodes, id));
+      const gOld = global(snapshot.scene.nodes, id), gNew = global(next.nodes, id);
+      const inverse = affineInverse(gOld);
       if (!inverse) return refuse("wire-noninvertible");
-      const delta = affineMul(global(next.nodes, id), inverse);
+      const delta = affineMul(gNew, inverse);
       const span = snapshot.paintOrder.entries.get(id);
       if (!span || spans.some((other) => other.start < span.spanEnd && span.spanStart < other.end)) return refuse("wire-overlapping-span");
       spans.push({ start: span.spanStart, end: span.spanEnd });
@@ -1468,17 +1555,61 @@ const traceId = nextTraceFrame();
       // is measured at the node's own game X. Checked for every wire span, with or without the round's switches: a
       // wire patch of a claimer (a selection reticle, a targeting arrow) drew it at its stale spread shift, which
       // rustOffsetPatch exposed once offset frames stopped forcing builds.
+      // rustWireSpreadPatch takes the spread part of the refusal over: it re-poses each node by its own drawn delta.
+      const spreadAware = fast.wireSpreadPatch;
       {
+        let blamed: string | undefined;
         const refusal = translatedSpanRefusal(id, delta, { build: snapshot.build, nodes: snapshot.scene.nodes,
-          spreadFactor: committedSpread.factor, fieldModes: committedSpread.claimers, shifted: committedSpread.shifted,
-          clipsMovable: clipsMovable() });
-        if (refusal) { offsetDeclines[refusal] = (offsetDeclines[refusal] ?? 0) + 1; return refuse(refusal); }
+          spreadFactor: spreadAware ? 1 : committedSpread.factor, fieldModes: committedSpread.claimers, shifted: committedSpread.shifted,
+          clipsMovable: clipsMovable(), blame: (node) => { blamed = node; } });
+        if (refusal) {
+          offsetDeclines[refusal] = (offsetDeclines[refusal] ?? 0) + 1;
+          if (refusal === "wire-spread") noteDeclineType(refusal, blamed === undefined ? undefined : snapshot.scene.nodes.get(blamed));
+          return refuse(refusal);
+        }
+      }
+      let spreadPlan: WireSpreadPlan | null = null;
+      if (spreadAware) {
+        const committedNodes = snapshot.scene.nodes, committedHits = snapshot.hitEntries;
+        const declineSpread = (reason: string, node: string) => {
+          offsetDeclines[reason] = (offsetDeclines[reason] ?? 0) + 1;
+          wireSpreadDeclines[reason] = (wireSpreadDeclines[reason] ?? 0) + 1;
+          noteDeclineType(reason, committedNodes.get(node));
+          return refuse(reason);
+        };
+        // A stretch change since the committed build cleared the shifts this would read; the build it asked for redraws.
+        if (committedSpread.factor !== visual.spreadFactor || (committedSpread.factor !== 1 && !committedSpread.dx))
+          return declineSpread("wire-spread-factor", id);
+        const input = snapshot.build.nodePaintInputs.get(id);
+        const planned = planWireSpread({ rootId: id, before: snapshot.scene.nodes, after: next.nodes, order: snapshot.paintOrder,
+          gOld, gNew, delta, drawnRoot: input ? retained.logicalNodeMatrix(id, input.global) : null,
+          spreadFactor: committedSpread.factor, dx: committedSpread.dx ?? EMPTY_SPREAD, ownerReads: committedSpread.ownerReads,
+          followerPoints: committedSpread.followerPoints, hitsOf: (node) => spanHits(committedHits, node),
+          clipRanges: snapshot.build.clipRanges, sceneEnv: (spreadScene ??= spreadSceneIdentityEnv((node) => resolveSceneInfo(node, next.nodes))),
+          ancestorCache: (ancestorCache ??= new Map()) });
+        if ("reason" in planned) return declineSpread(planned.reason, planned.id);
+        // A follower resolves against the hits PUBLISHED before its build; once a later patch changed what lies under
+        // it, the next build moves it. Until that build, a span this switch re-poses would race it: refuse.
+        if (planned.reposed && (followersStale ??= followerAnswersMoved(committedSpread.followerPoints)))
+          return declineSpread("wire-spread-follower-stale", id);
+        spreadPlan = planned;
+        wireSpreadVisited += planned.visited;
+        // A span this switch re-posed (or admitted where the plain patch refused) is shadow-checked under verify.
+        if (planned.reposed) {
+          if (!sidecar) { sidecar = {}; patchSidecars.set(patch, sidecar); }
+          sidecar.spreadSpans = (sidecar.spreadSpans ?? 0) + 1;
+          const moves = (sidecar.spread ??= new Map());
+          for (const [node, dx] of planned.dx) moves.set(node, dx);
+          if (fast.verify) sidecar.verify ??= captureHeldInputs();
+        }
       }
       for (const [captured, entryValue] of snapshot.capturedGlobals) {
         const entry = snapshot.paintOrder.entries.get(captured);
         if (!entry || entry.order < span.spanStart || entry.order >= span.spanEnd) continue;
         if (!translation) return refuse("wire-captured-global");
-        const tx = delta[4], ty = delta[5];
+        // A captured node moved along the field draws (and was rendered pre-offset) at its own shift: its drawn delta.
+        const step = spreadPlan?.nodeDeltas?.get(captured) ?? delta;
+        const tx = step[4], ty = delta[5];
         const shift = (m: Affine): Affine => [m[0], m[1], m[2], m[3], m[4] + tx, m[5] + ty];
         if (!sidecar) { sidecar = {}; patchSidecars.set(patch, sidecar); }
         sidecar.wireCaptured = true;
@@ -1496,7 +1627,8 @@ const traceId = nextTraceFrame();
         moveClips = true;
         break;
       }
-      const part = retained.patchWireTransform(id, delta, { clips: moveClips });
+      const part = retained.patchWireTransform(id, delta, spreadPlan ? { clips: moveClips, nodeDeltas: spreadPlan.nodeDeltas,
+        uniformDrawn: spreadPlan.uniform, hitSpreadDx: spreadPlan.dx } : { clips: moveClips });
       if (!part) return refuse("wire-transform-unsupported");
       // A moving clipper whose clip did not come back would leave the clip behind its children.
       if (moveClips && (delta[4] !== 0 || delta[5] !== 0) && !part.clips?.length) return refuse("wire-clip");
@@ -1513,6 +1645,15 @@ const traceId = nextTraceFrame();
       patch.nodeMatrices.push(...part.nodeMatrices);
       patch.movedRoots++;
     }
+    if (rustPhaseTimingMode) wireSpanLoopMs += performance.now() - spanLoopStarted;
+    // A landing row reads the hand holder's DRAWN pose after this frame, which a wire span that moved a captured
+    // holder (`rustOffsetPatch`'s pure translation, or `rustWireSpreadPatch`'s re-pose) has just changed; the probe
+    // taken above still holds the committed pose, and a row read off it stays open (every later moving patch then
+    // rebuilds) until its timeout. Whichever patch moved the capture recomputed it exactly: probe the patched ones.
+    const movedCaptures = patchSidecars.get(patch)?.captures;
+    if (movedCaptures?.size && visual.hasOpenLanding())
+      landingCandidate = visual.captureLandingPresentation(next, at, landingCapturesFor(patch, snapshot),
+        landingLiftsFor(patch, snapshot));
     let committed: PresentationResult;
     let phaseSubmissionId: number | undefined;
     try {
@@ -1531,6 +1672,45 @@ if (isPromiseLike<PresentationResult>(result)) { trackAsyncRetainedPatch(result,
   }
 
   const IDENTITY_LINEAR = [1, 0, 0, 1] as const;
+  const EMPTY_SPREAD: ReadonlyMap<string, number> = new Map();
+  const IDENTITY_AFFINE: Affine = [1, 0, 0, 1, 0, 0];
+  /**
+   * rustTweenRootPatch: an open landing row reads the hand holder's drawn pose off the captured globals, which a tween
+   * re-pose recomputes exactly; it can ride the patch when nothing else in it moved a node (a local animation, an
+   * offset translation). The landing probe is then taken from the patched captures.
+   */
+  const landingRidesPatch = (patch: RetainedPixiPatch) => patchSidecars.get(patch)?.landingPatchable === true;
+  /**
+   * The lifts the landing probe subtracts from a drawn pose: the offsets this patch draws when it translates them
+   * (its patched captures already carry the new lift, as a full build's do), else the committed ones.
+   */
+  function landingLiftsFor(patch: RetainedPixiPatch, base: DrawnSceneSnapshot): ReadonlyMap<string, CosmeticOffset> {
+    return patchSidecars.get(patch)?.frame?.cosmeticOffsets ?? interaction.cosmeticOffsetsFor(base);
+  }
+  function landingCapturesFor(patch: RetainedPixiPatch, base: DrawnSceneSnapshot): ReadonlyMap<string, CapturedGlobal> {
+    const moved = patchSidecars.get(patch)?.captures;
+    if (!moved?.size) return base.capturedGlobals;
+    const captures = new Map(base.capturedGlobals);
+    for (const [id, captured] of moved) captures.set(id, captured);
+    return captures;
+  }
+  /** rustWireSpreadPatch: whether the current hits resolve any recorded remote follower to a different shift. */
+  function followerAnswersMoved(points: readonly number[]): boolean {
+    for (let i = 0; i < points.length; i += 3)
+      if (visual.spreadRegistry.followerShift(points[i], points[i + 1]) !== points[i + 2]) return true;
+    return false;
+  }
+  /** rustWireSpreadPatch: a hit list's entries by node, indexed on first use (only a follower check asks). */
+  const hitsByNode = new WeakMap<readonly HitEntry[], Map<string, HitEntry[]>>();
+  function spanHits(entries: readonly HitEntry[], id: string): readonly HitEntry[] | undefined {
+    let index = hitsByNode.get(entries);
+    if (!index) {
+      index = new Map();
+      for (const entry of entries) { const list = index.get(entry.nodeId); if (list) list.push(entry); else index.set(entry.nodeId, [entry]); }
+      hitsByNode.set(entries, index);
+    }
+    return index.get(id);
+  }
   /** rustOffsetPatch: the executor moves a clip rect by translation, so a translated clipper can be patched. */
   const clipsMovable = () => fast.offsetPatch && backend === "rust" && pixi?.translatesClips === true;
   /** Each build's clippers' hit clip scopes, by clipper id (one scope object, shared by the hits under it). */
@@ -1555,10 +1735,22 @@ if (isPromiseLike<PresentationResult>(result)) { trackAsyncRetainedPatch(result,
       retainedDecline = "invalid-retained-state"; return null;
     }
     // rustHeldOverridePatch admits overrides held unchanged since the committed build: the same keys, bitwise.
+    // rustTweenRootPatch (on top of it) also admits the same keys at new values: each moved override root's span is
+    // re-posed below (`planTweenRoots`).
+    const tweenOn = fast.tweenRootPatch && fast.heldOverridePatch;
+    let tweenRoots: string[] | null = null;
     if (fast.heldOverridePatch) {
-      if (!committedOverrides || !sameTransformOverrides(visual.transformOverrides, committedOverrides)) return refuse("transform-overrides");
+      if (!committedOverrides) return refuse("transform-overrides");
+      if (!sameTransformOverrides(visual.transformOverrides, committedOverrides)) {
+        if (!tweenOn) return refuse("transform-overrides");
+        tweenRoots = movedOverrideRoots(visual.transformOverrides, committedOverrides);
+        // A new or dropped override is not a tween root moving: the build it needs is the held lane's.
+        if (!tweenRoots) { declineTween("tween-root-keys", undefined); return refuse("transform-overrides"); }
+      }
     } else if (visual.transformOverrides.size) { retainedDecline = "transform-overrides"; return null; }
-    if ((visual.frameSampleMask & ~(SAMPLE_LOCAL_ANIM | SAMPLE_OPACITY | SAMPLE_SELF_OPACITY | SAMPLE_SOURCE)) !== 0) {
+    // A transform sample is a tween root's (patched below, or unchanged since the committed build).
+    if ((visual.frameSampleMask & ~(SAMPLE_LOCAL_ANIM | SAMPLE_OPACITY | SAMPLE_SELF_OPACITY | SAMPLE_SOURCE |
+      (tweenOn ? SAMPLE_TRANSFORM : 0))) !== 0) {
       retainedDecline = "unsupported-sample"; return null;
     }
     const held = fast.heldOverridePatch && visual.transformOverrides.size > 0;
@@ -1582,6 +1774,14 @@ if (isPromiseLike<PresentationResult>(result)) { trackAsyncRetainedPatch(result,
     const patch = retained.patch(visual.localAnims, offsetPlan?.rootShifts);
     if (!patch) { retainedDecline = "composition-refused"; return null; }
     patchSourceMarks.set(patch, sourceMark);
+    const animMovedRoots = patch.movedRoots;
+    // rustTweenRootPatch first: a tween span that this frame's offsets move uniformly takes their translation into its
+    // own deltas, and leaves the offset plan with the rest.
+    const tweenSpans: Array<{ start: number; end: number }> = [];
+    if (tweenRoots?.length) {
+      const refusal = planTweenRoots(snapshot, patch, tweenRoots, offsetPlan, tweenSpans);
+      if (refusal) return refuse(refusal);
+    } else if (held) heldPatches.set(patch, fast.verify ? captureHeldInputs() : null);
     if (offsetPlan) {
       const part = retained.patchTranslate(offsetPlan.deltas, { clips: clipsMovable() });
       if (!part) { offsetDeclines["offset-anim-span"] = (offsetDeclines["offset-anim-span"] ?? 0) + 1; return refuse("offset-anim-span"); }
@@ -1589,10 +1789,21 @@ if (isPromiseLike<PresentationResult>(result)) { trackAsyncRetainedPatch(result,
       patch.primitives.push(...part.primitives);
       patch.hits.push(...part.hits);
       patch.nodeMatrices.push(...part.nodeMatrices);
-      patchSidecars.set(patch, { frame: offsetPlan.frame, captures: offsetPlan.captures, moved: offsetPlan.moved,
-        verify: fast.verify ? captureHeldInputs() : undefined });
+      const sidecar = patchSidecars.get(patch);
+      // The tween planner's captures are the span's (it folded the offsets in): they win over the offset plan's.
+      const captures = new Map(offsetPlan.captures);
+      for (const [id, captured] of sidecar?.captures ?? []) captures.set(id, captured);
+      patchSidecars.set(patch, { ...sidecar, frame: offsetPlan.frame, captures, moved: offsetPlan.moved,
+        verify: sidecar?.verify ?? (fast.verify ? captureHeldInputs() : undefined) });
     }
-    if (held) heldPatches.set(patch, fast.verify ? captureHeldInputs() : null);
+    // rustTweenRootPatch: whether an open landing may ride this patch.
+    if ((tweenRoots?.length || offsetPlan) && fast.tweenRootPatch && fast.heldOverridePatch && visual.hasOpenLanding()) {
+      const safe = landingRidesSafely(snapshot, tweenSpans, offsetPlan, animMovedRoots);
+      if (!safe && offsetPlan) { offsetDeclines["offset-landing"] = (offsetDeclines["offset-landing"] ?? 0) + 1; return refuse("offset-landing"); }
+      const sidecar = patchSidecars.get(patch) ?? {};
+      sidecar.landingPatchable = safe;
+      patchSidecars.set(patch, sidecar);
+    }
     const byId = new Map(patch.primitives.map((entry) => [entry.id, entry]));
     const update = (id: string) => {
       let entry = byId.get(id);
@@ -1694,6 +1905,175 @@ if (isPromiseLike<PresentationResult>(result)) { trackAsyncRetainedPatch(result,
     return patch;
   }
 
+  /** rustTweenRootPatch: one refusal, counted and attributed to the node it tripped on. */
+  function declineTween(reason: string, id: string | undefined): string {
+    tweenDeclines[reason] = (tweenDeclines[reason] ?? 0) + 1;
+    noteDeclineType(reason, id === undefined ? undefined : snapshot?.scene.nodes.get(id));
+    return reason;
+  }
+
+  /** The override roots whose sample moved since the committed bank, or null when the key sets differ. */
+  function movedOverrideRoots(current: ReadonlyMap<string, readonly number[]>, committed: ReadonlyMap<string, readonly number[]>): string[] | null {
+    if (current.size !== committed.size) return null;
+    const moved: string[] = [];
+    for (const [id, matrix] of current) {
+      const banked = committed.get(id);
+      if (!banked || banked.length !== matrix.length) return null;
+      for (let i = 0; i < matrix.length; i++) if (!Object.is(matrix[i], banked[i])) { moved.push(id); break; }
+    }
+    return moved;
+  }
+
+  /** A node's streamed (game) global, composed root-first as the walk composes `gGame`. */
+  function streamedGameGlobal(nodes: ReadonlyMap<string, MirrorNode>, id: string): Affine {
+    const chain: MirrorNode[] = [];
+    for (let node = nodes.get(id); node; node = node.parentId ? nodes.get(node.parentId) : undefined) chain.push(node);
+    let pose: Affine = [1, 0, 0, 1, 0, 0];
+    for (let i = chain.length - 1; i >= 0; i--) if (chain[i].transform) pose = affineMul(pose, chain[i].transform as Affine);
+    return pose;
+  }
+
+  /**
+   * rustTweenRootPatch: re-pose the span of every override root whose sample moved (a hand holder's pick-up or release
+   * tween) and append it to `patch`, or say why it must build.
+   *
+   * An override is the root's ABSOLUTE rendered global (`gRaw`); its descendants compose through it, and the build
+   * re-bases every field claim in the span at the rendered pose. So the span's rendered globals move by
+   * `Δ = O_new·O_old⁻¹` while its game globals stay, and each node is re-posed by `T(O + s'ᵢ)·Δ·T(−O − sᵢ)` with `s'ᵢ`
+   * from the R2-C re-walk (`planWireSpread` with `rendered`). Hits keep `mGame`. Text needs no refusal: the Rust text
+   * path rasters at the style's size, keyed without the transform (`createRustDrawListExecutor.textResourceKey`), so
+   * a scaled record draws what a rebuild draws. Refused: a clip or polyline in the span (`Δ` scales), a view-scale
+   * stamp or candidate in or above it, a nested override, a local animation or source sample in it, a card trail, an
+   * overlap with this frame's offset translation, and everything `planWireSpread` refuses.
+   */
+  function planTweenRoots(base: DrawnSceneSnapshot, patch: RetainedPixiPatch, roots: readonly string[],
+    offsetPlan: OffsetTranslation | null, spans: Array<{ start: number; end: number }>): string | null {
+    const build = base.build, nodes = base.scene.nodes, current = visual.transformOverrides, committed = committedOverrides!;
+    if (committedSpread.factor !== visual.spreadFactor || (committedSpread.factor !== 1 && !committedSpread.dx))
+      return declineTween("tween-root-factor", roots[0]);
+    const sidecar = patchSidecars.get(patch) ?? {};
+    const sceneEnv = spreadSceneIdentityEnv((node) => resolveSceneInfo(node, nodes));
+    const ancestorCache = new Map<string, AncestorFrame | null>();
+    let followersStale: boolean | undefined;
+    const planned = new Map<string, readonly number[]>();
+    const moves = new Map<string, number>();
+    let patchedRoots = 0;
+    for (const id of roots) {
+      const span = build.order.entries.get(id), input = build.nodePaintInputs.get(id);
+      // A root the committed build never walked drew nothing to move.
+      if (!span || !input) continue;
+      if (spans.some((other) => other.start < span.spanEnd && span.spanStart < other.end)) return declineTween("tween-root-nested", id);
+      spans.push({ start: span.spanStart, end: span.spanEnd });
+      for (let order = span.spanStart; order < span.spanEnd; order++) {
+        const node = build.order.ids[order], wire = nodes.get(node);
+        if (node !== id && current.has(node)) return declineTween("tween-root-nested", node);
+        if (visual.localAnims.has(node) || build.localAnimFrames.has(node)) return declineTween("tween-root-anim", node);
+        if (visual.sourceSampledIds.has(node)) return declineTween("tween-root-source", node);
+        if (wire && (isCardTrailNode(wire) || isCardTrailRootNode(wire))) return declineTween("tween-root-trail", node);
+        const range = build.ranges.get(node);
+        if (range) for (let index = range.start; index < range.paintEnd; index++)
+          if (list.kindNameAt(index) === "polyline") return declineTween("tween-root-polyline", node);
+      }
+      for (const root of build.localAnimFrames.keys()) {
+        const other = build.order.entries.get(root);
+        if (other && other.spanStart < span.spanEnd && span.spanStart < other.spanEnd) return declineTween("tween-root-anim", root);
+      }
+      // This frame's offsets over the span: one translation `d` for every node (an owner at or above the root
+      // moved) folds into each drawn delta, `T(d)·Dᵢ`; an owner inside the span moving on its own does not.
+      let shift: readonly [number, number] | null = null;
+      if (offsetPlan) for (let order = span.spanStart; order < span.spanEnd; order++) {
+        const node = build.order.ids[order], own = offsetPlan.deltas.get(node) ?? null;
+        if (order === span.spanStart) { shift = own; continue; }
+        if ((own === null) !== (shift === null) || (own && shift && (own[0] !== shift[0] || own[1] !== shift[1])))
+          return declineTween("tween-root-offset-overlap", node);
+      }
+      const old = committed.get(id) as Affine, now = [...current.get(id)!] as Affine;
+      const inverse = affineInverse(old);
+      if (!inverse) return declineTween("tween-root-noninvertible", id);
+      const delta = affineMul(now, inverse);
+      {
+        let blamed: string | undefined;
+        const refusal = translatedSpanRefusal(id, delta, { build, nodes, spreadFactor: 1, fieldModes: committedSpread.claimers,
+          shifted: committedSpread.shifted, clipsMovable: false, blame: (node) => { blamed = node; } });
+        if (refusal) return declineTween(refusal.replace(/^wire-/, "tween-root-"), blamed ?? id);
+      }
+      const g = streamedGameGlobal(nodes, id);
+      const plan = planWireSpread({ rootId: id, before: nodes, after: nodes, order: build.order, gOld: g, gNew: g, delta,
+        rendered: { old, now }, gameDelta: IDENTITY_AFFINE, tag: "tween-root",
+        drawnRoot: retained!.logicalNodeMatrix(id, input.global), spreadFactor: committedSpread.factor,
+        dx: committedSpread.dx ?? EMPTY_SPREAD, ownerReads: committedSpread.ownerReads, followerPoints: committedSpread.followerPoints,
+        hitsOf: (node) => spanHits(base.hitEntries, node),
+        clipRanges: build.clipRanges, sceneEnv, ancestorCache });
+      if ("reason" in plan) return declineTween(plan.reason, plan.id);
+      if (plan.dx.size && (followersStale ??= followerAnswersMoved(committedSpread.followerPoints)))
+        return declineTween("tween-root-follower-stale", id);
+      const shifted = (m: Affine): Affine => shift ? [m[0], m[1], m[2], m[3], m[4] + shift[0], m[5] + shift[1]] : m;
+      const nodeDeltas = plan.nodeDeltas && shift ? new Map([...plan.nodeDeltas].map(([node, m]) => [node, shifted(m)])) : plan.nodeDeltas;
+      const uniform = shifted(plan.uniform);
+      const part = retained!.patchWireTransform(id, IDENTITY_AFFINE, { nodeDeltas, uniformDrawn: uniform, hitSpreadDx: plan.dx });
+      if (!part) return declineTween("tween-root-anim-span", id);
+      // Captured globals in the span: `g` is the pre-offset rendered pose `T(s)·gRaw`, `drawn` the drawn one, and
+      // `parentTy` the parent's drawn Y (the root's parent did not move).
+      const deltaOf = (node: string) => nodeDeltas?.get(node) ?? uniform;
+      for (const [captured, value] of base.capturedGlobals) {
+        const entry = build.order.entries.get(captured);
+        if (!entry || entry.order < span.spanStart || entry.order >= span.spanEnd) continue;
+        const s = committedSpread.factor === 1 ? 0 : committedSpread.dx?.get(captured) ?? 0, s2 = plan.dx.get(captured) ?? s;
+        const g2 = affineMul([1, 0, 0, 1, s2, 0], affineMul(delta, affineMul([1, 0, 0, 1, -s, 0], value.g)));
+        const parent = nodes.get(captured)?.parentId;
+        // The root's parent is outside the span: only this frame's offsets can move its drawn Y.
+        let parentTy = value.parentTy + (parent == null ? 0 : offsetPlan?.deltas.get(parent)?.[1] ?? 0);
+        if (captured !== id && parent != null) {
+          const parentInput = build.nodePaintInputs.get(parent);
+          if (!parentInput) return declineTween("tween-root-capture", captured);
+          const m = retained!.logicalNodeMatrix(parent, parentInput.global), d = deltaOf(parent);
+          parentTy = d[1] * m[4] + d[3] * m[5] + d[5];
+        }
+        (sidecar.captures ??= new Map()).set(captured, { ...value, g: g2, drawn: affineMul(deltaOf(captured), value.drawn), parentTy });
+      }
+      for (const [node, dx] of plan.dx) moves.set(node, dx);
+      // The span's offset translation is in its deltas now: the offset plan must not move it again.
+      if (shift) for (let order = span.spanStart; order < span.spanEnd; order++) offsetPlan!.deltas.delete(build.order.ids[order]);
+      patch.primitives.push(...part.primitives);
+      patch.hits.push(...part.hits);
+      patch.nodeMatrices.push(...part.nodeMatrices);
+      patch.movedRoots++;
+      patchedRoots++;
+      tweenRootVisited += plan.visited;
+      planned.set(id, now);
+    }
+    // Every override, moved or not, by value: the bank the next frame's deltas are measured against.
+    const bank = new Map<string, readonly number[]>();
+    for (const [id, matrix] of current) bank.set(id, planned.get(id) ?? [...matrix]);
+    if (moves.size) { const spread = (sidecar.spread ??= new Map()); for (const [node, dx] of moves) spread.set(node, dx); }
+    sidecar.tween = { overrides: bank, roots: patchedRoots };
+    if (fast.verify) sidecar.verify ??= captureHeldInputs();
+    patchSidecars.set(patch, sidecar);
+    return null;
+  }
+
+  /**
+   * rustTweenRootPatch: whether every open landing node this patch moves has its captured pose recomputed, so the
+   * landing probe can read the patched captures: a node in a tween span (re-posed above) or one this frame's offsets
+   * moved (the offset plan recomputes every captured node it moves; landing nodes are captured). A node a moving
+   * local animation carries is not.
+   */
+  function landingRidesSafely(base: DrawnSceneSnapshot, tweenSpans: ReadonlyArray<{ start: number; end: number }>,
+    offsetPlan: OffsetTranslation | null, animMovedRoots: number): boolean {
+    const build = base.build, landingIds = new Set<string>();
+    visual.collectLandingCaptureIds(landingIds);
+    for (const id of landingIds) {
+      const entry = build.order.entries.get(id);
+      if (!entry || tweenSpans.some((span) => entry.order >= span.start && entry.order < span.end)) continue;
+      if (offsetPlan?.deltas.has(id) && !offsetPlan.captures.has(id)) return false;
+      if (animMovedRoots > 0) for (const root of build.localAnimFrames.keys()) {
+        const span = build.order.entries.get(root);
+        if (span && entry.order >= span.spanStart && entry.order < span.spanEnd) return false;
+      }
+    }
+    return true;
+  }
+
   type OffsetTranslation = { deltas: Map<string, [number, number]>; captures: Map<string, CapturedGlobal>; frame: OffsetPatchFrame;
     /** Outermost local-animation roots whose whole span moves by one translation, which the root's frame carries. */
     rootShifts: Map<string, readonly [number, number]>;
@@ -1715,7 +2095,9 @@ if (isPromiseLike<PresentationResult>(result)) { trackAsyncRetainedPatch(result,
   function planOffsetTranslation(base: DrawnSceneSnapshot): OffsetTranslation | string {
     const committed = interaction.cosmeticOffsetsFor(base), current = interaction.cosmeticOffsets;
     const build = base.build, nodes = base.scene.nodes;
-    if (visual.landingArms.length > 0 || visual.hasOpenLanding()) return "offset-landing";
+    // rustTweenRootPatch: an open landing is checked once the whole patch is planned (`landingRidesSafely`).
+    if (visual.landingArms.length > 0 || (visual.hasOpenLanding() && !(fast.tweenRootPatch && fast.heldOverridePatch)))
+      return "offset-landing";
     const deltas = new Map<string, [number, number]>();
     const owners = new Set<string>([...committed.keys(), ...current.keys()]);
     for (const id of owners) {
@@ -1816,7 +2198,7 @@ if (isPromiseLike<PresentationResult>(result)) { trackAsyncRetainedPatch(result,
    * drove the owner.
    */
   function verifyHeldOverridePatch(inputs: HeldPatchInputs, stats: VerifyStats, compareCaptures = false,
-    moved?: ReadonlySet<string>): void {
+    moved?: ReadonlySet<string>, spreadMoves?: ReadonlyMap<string, number>): void {
     const current = state, drawn = snapshot, composition = retained;
     if (!current || !drawn || !composition) return;
     stats.runs++;
@@ -1830,6 +2212,7 @@ if (isPromiseLike<PresentationResult>(result)) { trackAsyncRetainedPatch(result,
     const liveDx = [...spreadDxByNode], liveModes = [...spreadFieldModeByNode], liveLayouts = nativeLayouts;
     texts.length = 0; textOwners.clear(); textKeysByOwner.clear(); semanticFailures.clear(); spreadDxByNode.clear(); spreadFieldModeByNode.clear();
     let reference: DrawListBuild | null = null, referenceTexts: PixiTextRecord[] = [], refused: string | null = null;
+    let shadowSpread: Map<string, number> | null = null;
     try {
       reference = buildDrawList(current, shadow, { scratch: createPaintScratch(), skipRoots,
         skipHiddenHitCandidates: rustSkipHiddenHitCandidates, handRaiseChrome: handRaiseChrome ? handRaiseChromePainter : null,
@@ -1848,6 +2231,8 @@ if (isPromiseLike<PresentationResult>(result)) { trackAsyncRetainedPatch(result,
     } catch (error) {
       refused = error instanceof Error ? error.message : String(error);
     } finally {
+      // rustWireSpreadPatch: the shifts the shadow walk banked, against the committed (patched) bank below.
+      if (spreadMoves) shadowSpread = new Map(spreadDxByNode);
       referenceTexts = texts.slice();
       texts.length = 0; for (const text of liveTexts) texts.push(text);
       refill(textOwners, liveOwners); refill(textKeysByOwner, liveKeys); refill(semanticFailures, liveFailures);
@@ -1855,7 +2240,11 @@ if (isPromiseLike<PresentationResult>(result)) { trackAsyncRetainedPatch(result,
     }
     let mismatches = 0;
     const notes: string[] = [];
-    const note = (detail: string) => { mismatches++; stats.firstMismatch ??= detail; if (notes.length < 32) notes.push(detail); };
+    const note = (detail: string) => {
+      mismatches++; stats.firstMismatch ??= detail; if (notes.length < 32) notes.push(detail);
+      const kind = verifyNoteKind(detail);
+      stats.kinds[kind] = (stats.kinds[kind] ?? 0) + 1;
+    };
     // What a mismatching owner looked like on each side: its opacity and hidden state as drawn and as rebuilt.
     const ownerState = (id: string | undefined) => {
       if (!id) return "owner=?";
@@ -1951,6 +2340,8 @@ if (isPromiseLike<PresentationResult>(result)) { trackAsyncRetainedPatch(result,
         if (rebuilt.nodeId !== committed.nodeId || !matches(rebuilt.mFinal, committed.mFinal) ||
           !matches(rebuilt.mGame, committed.mGame)) note(`hit:${committed.nodeId}${rebuilt.nodeId !== committed.nodeId ? ` vs ${rebuilt.nodeId}` : ""}`);
         else if (!sameChain(rebuilt.clipScopeChain, committed.clipScopeChain)) note(`hit-clip:${committed.nodeId}`);
+        else if (spreadMoves && (!matches([rebuilt.spreadDx, rebuilt.renderedWidth], [committed.spreadDx, committed.renderedWidth], 2)))
+          note(`spread-hit:${committed.nodeId} drawn=${committed.spreadDx} rebuilt=${rebuilt.spreadDx}`);
       }
     }
     // rustOffsetPatch moves captured globals at publication; the rebuilt captures are their ground truth.
@@ -1960,9 +2351,32 @@ if (isPromiseLike<PresentationResult>(result)) { trackAsyncRetainedPatch(result,
       else if (!matches(rebuilt.drawn, committed.drawn) || !matches(rebuilt.g, committed.g) ||
         !matches([rebuilt.parentTy], [committed.parentTy], 1)) note(`captured:${id}`);
     }
+    // rustWireSpreadPatch: every shift the shadow walk banked is the committed bank's, the patched ones included,
+    // and the live map the input side reads between builds holds the same.
+    if (shadowSpread && reference) {
+      const bank = committedSpread.dx ?? EMPTY_SPREAD;
+      if (shadowSpread.size !== bank.size) note(`spread-bank: ${bank.size} committed, ${shadowSpread.size} rebuilt`);
+      if (liveSpreadCommitted && shadowSpread.size !== spreadDxByNode.size)
+        note(`spread-live: ${spreadDxByNode.size} live, ${shadowSpread.size} rebuilt`);
+      for (const [id, dx] of shadowSpread) {
+        const committed = bank.get(id), live = spreadDxByNode.get(id);
+        if (committed === undefined || !matches([dx], [committed], 1))
+          note(`spread:${id} drawn=${committed ?? "none"} rebuilt=${dx}${spreadMoves?.has(id) ? " moved" : ""}`);
+        else if (liveSpreadCommitted && (live === undefined || !matches([dx], [live], 1)))
+          note(`spread-live:${id} live=${live ?? "none"} rebuilt=${dx}`);
+      }
+    }
     stats.mismatches += mismatches;
     if (notes.length && stats.log.length < 16)
       stats.log.push({ run: stats.runs, revision: current.revision, clock: drawnClock, notes, recent: stats.recent.slice() });
+  }
+
+  /** What a verify note disagreed about: its leading tag, or the command kind in an `owner:kind:ordinal` key. */
+  function verifyNoteKind(detail: string): string {
+    const tagged = /^(hit-clip|spread-hit|spread-bank|spread-live|spread|hit|text|captured|clip|shadow build|commands)\b/.exec(detail);
+    if (tagged) return tagged[1];
+    const keyed = /:(quad|ninePatch|texturedMesh|polyline|clipPush|kind):/.exec(detail + ":");
+    return keyed ? keyed[1] : /command count/.test(detail) ? "command-count" : "other";
   }
 
   function tryRetainedPatch(at: number): boolean {
@@ -1978,11 +2392,12 @@ const traceId = nextTraceFrame();
     if (rustDiagnosticMode) retainedPlanCount++;
     if (rustPhaseTimingMode) retainedPlanMs += performance.now() - planStarted;
     if (!patch) { retainedPatchFallbacks++; return false; }
-    if (visual.landingArms.length > 0 || (visual.hasOpenLanding() &&
+    if (visual.landingArms.length > 0 || (visual.hasOpenLanding() && !landingRidesPatch(patch) &&
       (patch.movedRoots > 0 || patch.hits.length > 0 || patch.nodeMatrices.length > 0))) {
       retainedDecline = "landing-requires-full-build"; retainedPatchFallbacks++; return false;
     }
-    const landingCandidate = visual.captureLandingPresentation(state, at, snapshot.capturedGlobals, interaction.cosmeticOffsetsFor(snapshot));
+    const landingCandidate = visual.captureLandingPresentation(state, at,
+      landingRidesPatch(patch) ? landingCapturesFor(patch, snapshot) : snapshot.capturedGlobals, landingLiftsFor(patch, snapshot));
     let committed: PresentationResult;
     let phaseSubmissionId: number | undefined;
     try {
@@ -2111,7 +2526,7 @@ const traceId = nextTraceFrame();
       ...(rustDiagnosticMode ? { retainedValid: retainedValid ? 1 : 0, transformOverrideCount: visual.transformOverrides.size,
         frameSampleMask: visual.frameSampleMask, localAnimationCount: visual.localAnims.size,
         opacitySampleCount: visual.opacitySampledIds.size, sourceSampleCount: visual.sourceSampledIds.size } : {}),
-      ...(rustPhaseTimingMode ? { retainedPlanMs, producerBuildMs } : {}),
+      ...(rustPhaseTimingMode ? { retainedPlanMs, producerBuildMs, wireSpanLoopMs, wireSpreadPublishMs } : {}),
       ...(fast.lazyComposition ? { lazyCompositionIndexBuilds, lazyCompositionVerifyMismatches } : {}),
       ...(fast.snapshotReuse ? { snapshotNodeReuses, staticSkipRootReuses, rewardFocusSkips } : {}),
       // rustSceneIndex: reward-focus candidates/the static-bg skip-root memo (both here) plus
@@ -2148,7 +2563,18 @@ const traceId = nextTraceFrame();
       ...(fast.offsetPatch ? { rustOffsetPatch: { offsetPatches, offsetPatchedNodes, wireCapturedPatches, offsetDeclines: { ...offsetDeclines },
         offsetDeclineTypes: { ...offsetDeclineTypes },
         ...(fast.verify ? { verifyRuns: offsetVerify.runs, verifyMismatches: offsetVerify.mismatches, verifyMaxError: offsetVerify.maxError,
-          verifyFirstMismatch: offsetVerify.firstMismatch, verifyLog: offsetVerify.log.map((entry) => ({ ...entry, notes: [...entry.notes], recent: [...entry.recent] })) } : {}) } } : {}),
+          verifyFirstMismatch: offsetVerify.firstMismatch, verifyKinds: { ...offsetVerify.kinds },
+          verifyLog: offsetVerify.log.map((entry) => ({ ...entry, notes: [...entry.notes], recent: [...entry.recent] })) } : {}) } } : {}),
+      ...(fast.tweenRootPatch && fast.heldOverridePatch ? { rustTweenRootPatch: { patches: tweenRootPatches, roots: tweenRootsPatched,
+        visited: tweenRootVisited, declines: { ...tweenDeclines },
+        ...(fast.verify ? { verifyRuns: tweenVerify.runs, verifyMismatches: tweenVerify.mismatches, verifyMaxError: tweenVerify.maxError,
+          verifyFirstMismatch: tweenVerify.firstMismatch, verifyKinds: { ...tweenVerify.kinds },
+          verifyLog: tweenVerify.log.map((entry) => ({ ...entry, notes: [...entry.notes], recent: [...entry.recent] })) } : {}) } } : {}),
+      ...(fast.wireSpreadPatch ? { rustWireSpreadPatch: { patches: wireSpreadPatches, spans: wireSpreadSpans, shifted: wireSpreadShifted,
+        visited: wireSpreadVisited, declines: { ...wireSpreadDeclines },
+        ...(fast.verify ? { verifyRuns: spreadVerify.runs, verifyMismatches: spreadVerify.mismatches, verifyMaxError: spreadVerify.maxError,
+          verifyFirstMismatch: spreadVerify.firstMismatch, verifyKinds: { ...spreadVerify.kinds },
+          verifyLog: spreadVerify.log.map((entry) => ({ ...entry, notes: [...entry.notes], recent: [...entry.recent] })) } : {}) } } : {}),
       ...(rustExecutionPhaseMode ? { rustExecutionPhases: true } : {}),
       ...(profile ? { canvasProfile: profile.snapshot() } : {}),
       ...(hiddenMemo ? { rustHiddenMemo: { ...hiddenMemo.stats, missReasons: { ...hiddenMemo.stats.missReasons },

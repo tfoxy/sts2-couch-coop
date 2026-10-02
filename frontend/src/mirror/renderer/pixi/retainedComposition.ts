@@ -37,7 +37,8 @@ export interface RetainedPixiPatch {
   clips?: ClipTranslation[];
   primitives: PrimitivePatch[];
   groups: GroupPatch[];
-  hits: Array<{ entry: HitEntry; matrix: Affine; gameMatrix?: Affine }>;
+  /** `spreadDx`: `rustWireSpreadPatch`'s new spread shift for the hit's node, published onto the entry. */
+  hits: Array<{ entry: HitEntry; matrix: Affine; gameMatrix?: Affine; spreadDx?: number }>;
   nodeMatrices: Array<{ id: string; matrix: Affine }>;
   sourceReferences: Array<{ id: string; matrix: Affine }>;
   movedRoots: number;
@@ -47,6 +48,20 @@ export interface RetainedPixiPatch {
    * roots this patch translated. Committed with the patch.
    */
   rootTranslations?: ReadonlyMap<string, readonly [number, number]>;
+}
+
+export interface WireTransformOptions {
+  /** Also translate every clip rect in the span by `delta` (a pure translation; the executor can move clips). */
+  clips?: boolean;
+  /**
+   * `rustWireSpreadPatch`: the DRAWN delta per node (`T(O + s'ᵢ)·D·T(−O − sᵢ)`, see `wireSpreadPlan.ts`), applied to
+   * that node's commands, texts, node matrix and hit `mFinal`; a node it does not list takes `uniformDrawn`, else
+   * `delta`. `delta` stays the GAME delta, which every hit's `mGame` takes. Neither combines with `clips`.
+   */
+  nodeDeltas?: ReadonlyMap<string, Affine> | null;
+  uniformDrawn?: Affine;
+  /** Each moved node's new spread shift, carried on its hits for publication. */
+  hitSpreadDx?: ReadonlyMap<string, number>;
 }
 
 export interface RetainedPixiCompositionOptions {
@@ -78,8 +93,10 @@ export interface RetainedPixiComposition {
   /**
    * `clips`: the delta also translates every clip rect in the span (the executor can move them). Null when it is not
    * a pure translation (`isPureTranslation`); without `clips`, clip rects are left as admitted, as before.
+   *
+   * `rustWireSpreadPatch`: see {@link WireTransformOptions}.
    */
-  patchWireTransform(id: string, delta: Affine, options?: { clips?: boolean }): RetainedPixiPatch | null;
+  patchWireTransform(id: string, delta: Affine, options?: WireTransformOptions): RetainedPixiPatch | null;
   /**
    * `rustOffsetPatch`: translate each listed node's OWN commands, text records, hit poses (`mFinal` only, never
    * `mGame`) and node matrix by its design-space delta. The caller accumulates a subtree's inherited offsets into
@@ -439,9 +456,11 @@ export function createRetainedPixiComposition(
     }
     return clips;
   }
-  function patchWireTransform(id: string, delta: Affine, options: { clips?: boolean } = {}): RetainedPixiPatch | null {
+  function patchWireTransform(id: string, delta: Affine, options: WireTransformOptions = {}): RetainedPixiPatch | null {
     // A clip moves by the translation alone, so a delta with any other part would leave it behind its children.
-    if (options.clips && !isPureTranslation(delta)) return null;
+    if (options.clips && (options.nodeDeltas || (options.uniformDrawn && options.uniformDrawn !== delta) ||
+      !isPureTranslation(delta))) return null;
+    const nodeDeltas = options.nodeDeltas, hitSpreadDx = options.hitSpreadDx, uniform = options.uniformDrawn ?? delta;
     if (!ensureIndex()) return null;
     const span = build.order.entries.get(id);
     if (!span) return null;
@@ -453,15 +472,18 @@ export function createRetainedPixiComposition(
     const nodeMatrices: RetainedPixiPatch["nodeMatrices"] = [];
     for (let order = span.spanStart; order < span.spanEnd; order++) {
       const owner = build.order.ids[order];
+      const drawn = nodeDeltas?.get(owner) ?? uniform;
       const input = build.nodePaintInputs.get(owner);
-      if (input) nodeMatrices.push({ id: owner, matrix: affineMul(delta, wireNodeMatrices.get(owner) ?? input.global) });
+      if (input) nodeMatrices.push({ id: owner, matrix: affineMul(drawn, wireNodeMatrices.get(owner) ?? input.global) });
       for (const ref of byOwner.get(owner) ?? []) {
         const current = lastPrimitive.get(ref.id);
-        if (current) primitives.push({ id: ref.id, transform: affineMul(delta, current) });
+        if (current) primitives.push({ id: ref.id, transform: affineMul(drawn, current) });
       }
+      const spreadDx = hitSpreadDx?.get(owner);
       for (const entry of hitsByOwner.get(owner) ?? []) {
         const current = lastHit.get(entry);
-        if (current) hits.push({ entry, matrix: affineMul(delta, current), gameMatrix: affineMul(delta, entry.mGame) });
+        if (current) hits.push({ entry, matrix: affineMul(drawn, current), gameMatrix: affineMul(delta, entry.mGame),
+          ...(spreadDx !== undefined ? { spreadDx } : {}) });
       }
     }
     let clips: ClipTranslation[] | undefined;

@@ -44,6 +44,20 @@ describe("resolveRustFastFlags", () => {
     expect(flags("rustFast=0&rustOffsetPatch=1").offsetPatch).toBe(true);
   });
 
+  it("turns the spread-aware wire patch off on its own", () => {
+    expect(flags("rustWireSpreadPatch=0").wireSpreadPatch).toBe(false);
+    expect(flags("rustWireSpreadPatch=0").offsetPatch).toBe(true);
+    expect(flags("rustFast=0&rustWireSpreadPatch=1").wireSpreadPatch).toBe(true);
+    expect(flags("rustFast=1", "pixi").wireSpreadPatch).toBe(false);
+  });
+
+  it("turns the tween-root patch off on its own", () => {
+    expect(flags("rustTweenRootPatch=0").tweenRootPatch).toBe(false);
+    expect(flags("rustTweenRootPatch=0").heldOverridePatch).toBe(true);
+    expect(flags("rustFast=0&rustTweenRootPatch=1").tweenRootPatch).toBe(true);
+    expect(flags("rustFast=1", "pixi").tweenRootPatch).toBe(false);
+  });
+
   it("enables one item without the umbrella", () => {
     const resolved = flags("rustFast=0&rustLazyComposition=1&rustFastVerify=1");
     expect(resolved.lazyComposition).toBe(true);

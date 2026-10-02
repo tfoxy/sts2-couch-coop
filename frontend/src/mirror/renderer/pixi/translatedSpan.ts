@@ -17,6 +17,8 @@ export interface TranslatedSpanContext {
   readonly shifted: ReadonlySet<string>;
   /** The executor can move a clip rect by the same vector (`rustOffsetPatch` with a clip-translating executor). */
   readonly clipsMovable: boolean;
+  /** Told the node a `wire-spread` refusal tripped on, for the decline-type diagnostics. */
+  readonly blame?: (id: string) => void;
 }
 
 /**
@@ -35,6 +37,8 @@ export interface TranslatedSpanContext {
  *     `D·T(s)·g`, which agree only for a pure translation `D`.
  *   A ride (mode 0) takes an ancestor's shift; with no claimer in the span, every ride reads an ancestor outside
  *   it, which did not move.
+ *   `rustWireSpreadPatch` re-poses such spans node by node instead (`wireSpreadPlan.ts`) and calls this with a
+ *   spread factor of 1, keeping only the view-scale and clip refusals.
  */
 export function translatedSpanRefusal(rootId: string, delta: ArrayLike<number>, context: TranslatedSpanContext): string | null {
   const { build, nodes } = context;
@@ -54,10 +58,12 @@ export function translatedSpanRefusal(rootId: string, delta: ArrayLike<number>, 
     if (stamped(id)) return "wire-view-scale";
     if (!context.clipsMovable && build.clipRanges.has(id)) return "wire-clip";
     if (!widened) continue;
-    if (movesX && (context.fieldModes.get(id) ?? 0) !== 0) return "wire-spread";
-    if (!pure && context.shifted.has(id)) return "wire-spread";
     const node = nodes.get(id);
-    if (node && REMOTE_FOLLOWER_TYPES.has(nodeTypeLeaf(node.nodeType))) return "wire-spread";
+    if ((movesX && (context.fieldModes.get(id) ?? 0) !== 0) || (!pure && context.shifted.has(id)) ||
+      (node && REMOTE_FOLLOWER_TYPES.has(nodeTypeLeaf(node.nodeType)))) {
+      context.blame?.(id);
+      return "wire-spread";
+    }
   }
   return null;
 }

@@ -137,6 +137,8 @@ function dumpList(list: DrawList<string>): unknown[] {
 
 /** Whether the recording executor advertises clip translation (`translatesClips`), as the Rust executor does. */
 let executorTranslatesClips = true;
+/** How many coming admissions the recording executor refuses (a pending resource), as a real executor may. */
+let executorRefusesAdmits = 0;
 
 function recordingExecutor(log: Submission[]) {
   const stats = { completedFrames: 0, frames: 0, resourcePending: 0, textureFailures: 0, textures: 0,
@@ -150,6 +152,8 @@ function recordingExecutor(log: Submission[]) {
     textOutcomes: () => ({ requested: "native", actual: "native", native: 0, slug: 0, slugCached: 0, reasons: {} }),
     render: () => { throw new Error("the retained Rust path never submits a legacy render"); },
     admitScene: (list: DrawList<string>, texts: readonly PixiTextRecord[], plan: unknown) => {
+      if (executorRefusesAdmits > 0) { executorRefusesAdmits--; log.push({ call: "admit", refused: true, list: [], texts: [], plan: { primitives: [], groups: [] } });
+        return Promise.resolve({ presented: false, reason: "pending resource" }); }
       const encoded = encodeRustScene({ drawList: list, revision: 1, width: 1920, height: 1080, designWidth: 1920,
         designHeight: 1080, resolveTexture: (texture: string) => ({ key: texture, width: 64, height: 64 }), texts, plan,
         resolveText: (record: PixiTextRecord) => ({ resource: { key: `text:${record.key}`, width: 4, height: 4 },
@@ -186,6 +190,11 @@ type HiddenMemoDiagnostics = { builds: number; bypassedBuilds: number; hits: num
 type HeldOverrideDiagnostics = { heldOverridePatches: number; heldOverrideDeclines: Record<string, number>;
   heldOverrideVerifyRuns?: number; heldOverrideVerifyMismatches?: number; heldOverrideVerifyMaxError?: number;
   heldOverrideVerifyFirstMismatch?: string | null };
+
+type TweenRootDiagnostics = { patches: number; roots: number; declines: Record<string, number>; verifyRuns?: number;
+  verifyMismatches?: number; verifyFirstMismatch?: string | null; verifyKinds?: Record<string, number> };
+type WireSpreadDiagnostics = { patches: number; spans: number; shifted: number; declines: Record<string, number>;
+  verifyRuns?: number; verifyMismatches?: number; verifyFirstMismatch?: string | null; verifyKinds?: Record<string, number> };
 
 async function runScenario(query: string, script?: (context: ScenarioContext) => Promise<void>) {
   window.history.replaceState(null, "", `/?rendererCompare=1&stage=rust&rustDiagnostics=1${query ? `&${query}` : ""}`);
@@ -225,7 +234,9 @@ async function runScenario(query: string, script?: (context: ScenarioContext) =>
     expect(final.readiness).toBe("ready");
     expect(final.failure).toBeUndefined();
     return { log, steps, draw: final.draw, held: final.effective.rustHeldOverride as HeldOverrideDiagnostics | undefined,
-      memo: final.effective.rustHiddenMemo as HiddenMemoDiagnostics | undefined, offsets: final.effective.rustOffsetPatch };
+      memo: final.effective.rustHiddenMemo as HiddenMemoDiagnostics | undefined, offsets: final.effective.rustOffsetPatch,
+      spread: final.effective.rustWireSpreadPatch as WireSpreadDiagnostics | undefined,
+      tween: final.effective.rustTweenRootPatch as TweenRootDiagnostics | undefined };
   };
   try {
     if (script) {
@@ -451,12 +462,18 @@ describe("Rust producer controls submit the same scene stream", () => {
     const admits = calls(candidate.log, "admit");
     if (flags.lazyComposition) {
       expect(candidate.draw.lazyCompositionIndexBuilds).toBeGreaterThan(0);
-      expect(candidate.draw.lazyCompositionIndexBuilds).toBeLessThan(admits);
+      // Tween-root patches index every composition they follow; with them fewer builds are admitted at all.
+      if (flags.tweenRootPatch && flags.heldOverridePatch) expect(candidate.draw.lazyCompositionIndexBuilds).toBeLessThanOrEqual(admits);
+      else expect(candidate.draw.lazyCompositionIndexBuilds).toBeLessThan(admits);
       expect(candidate.draw.lazyCompositionVerifyMismatches).toBe(0);
     }
     if (flags.snapshotReuse) {
-      expect(candidate.draw.snapshotNodeReuses).toBeGreaterThan(0);
-      expect(candidate.draw.staticSkipRootReuses).toBeGreaterThan(0);
+      // A same-revision rebuild is what reuses the committed node map; tween-root patches leave this script none
+      // (the `rustFast=0&rustSnapshotReuse=1` queries keep the reuse covered).
+      if (!(flags.tweenRootPatch && flags.heldOverridePatch)) {
+        expect(candidate.draw.snapshotNodeReuses).toBeGreaterThan(0);
+        expect(candidate.draw.staticSkipRootReuses).toBeGreaterThan(0);
+      }
       expect(candidate.draw.rewardFocusSkips).toBeGreaterThan(0);
     }
     if (flags.sceneIndex) {
@@ -559,7 +576,10 @@ describe("held transform overrides (rustHeldOverridePatch)", () => {
     Object.assign(rendererComparisonConfig, readRendererComparisonConfig());
   });
 
-  const HELD_QUERIES = ["rustFast=0&rustHeldOverridePatch=1", "rustFast=0&rustHeldOverridePatch=1&rustFastVerify=1", "", "rustFastVerify=1"];
+  // `rustTweenRootPatch` is held off: it also patches the tween frames this gate counts as rebuilds (its own suite
+  // below covers it on the same script).
+  const HELD_QUERIES = ["rustFast=0&rustHeldOverridePatch=1", "rustFast=0&rustHeldOverridePatch=1&rustFastVerify=1",
+    "rustTweenRootPatch=0", "rustTweenRootPatch=0&rustFastVerify=1"];
 
   it.each(HELD_QUERIES)("patch held overrides and match the full-build picture with %s", async (query) => {
     const baseline = await runScenario("rustFast=0", heldScript);
@@ -751,10 +771,12 @@ describe("hidden-subtree memo on a widened stage (rustHiddenMemoSpread)", () => 
     Object.assign(rendererComparisonConfig, readRendererComparisonConfig());
   });
 
+  // `rustWireSpreadPatch` is held off in both arms: it turns the script's last widened build (the orbit's wire move)
+  // into a patch, which is the build this gate needs the memo to replay into.
   it.each(["", "rustFastVerify=1"])("submits the same stream with the switch on and off (%s)", async (query) => {
     const extra = query ? `&${query}` : "";
-    const off = await runScenario(`rustHiddenMemoSpread=0${extra}`, wideScript);
-    const on = await runScenario(query, wideScript);
+    const off = await runScenario(`rustHiddenMemoSpread=0&rustWireSpreadPatch=0${extra}`, wideScript);
+    const on = await runScenario(`rustWireSpreadPatch=0${extra}`, wideScript);
     // The scene really is widened: the drawer's box child and the stage's anchored children carry shifts.
     expect(on.steps.some((step) => (step as { rects: Array<{ spreadDx: number }> }).rects.some(({ spreadDx }) => spreadDx !== 0)))
       .toBe(true);
@@ -771,6 +793,15 @@ describe("hidden-subtree memo on a widened stage (rustHiddenMemoSpread)", () => 
       expect(on.memo!.hits).toBeGreaterThan(off.memo!.hits);
       expect(on.memo!.replayedNodes).toBeGreaterThan(off.memo!.replayedNodes);
     }
+  });
+
+  // The spread-aware wire patch watches the registry through one wrapper for the renderer's life: the memo keys on
+  // the registry's identity, so a wrapper per build would miss (`env`) on every widened build.
+  it("keeps the memo's registry key stable under rustWireSpreadPatch", async () => {
+    const pinned = await runScenario("rustWireSpreadPatch=0", wideScript);
+    const watched = await runScenario("", wideScript);
+    expect(watched.memo!.missReasons.env).toBeLessThanOrEqual(pinned.memo!.missReasons.env);
+    expect(watched.memo!.hits).toBeGreaterThan(0);
   });
 
   it("draws the same picture as every control off", async () => {
@@ -985,14 +1016,17 @@ describe("cosmetic offsets as a retained translate patch (rustOffsetPatch)", () 
 
   // The shadow build is the reference: with `rustOffsetPatch=0` a clipper's wire move is a full build, so there is no
   // patch to compare submission for submission.
-  it.each([[1, "patch"], [WIDE, "admit"]] as const)("moves an uncaptured clipper's clip only where the spread allows (stretch %s)", async (stretch, call) => {
-    const candidate = await runScenario("rustFastVerify=1", clipMoveScript(stretch));
+  // The widened clipper claims the field, so its shift changes with the move: refused by the plain wire patch
+  // (`wire-spread`) and by the spread-aware one alike (`wire-spread-clip`: its clip and children would part).
+  it.each([[1, "patch", ""], [WIDE, "admit", "wire-spread-clip"], [WIDE, "admit", "wire-spread"]] as const)(
+    "moves an uncaptured clipper's clip only where the spread allows (stretch %s, %s)", async (stretch, call, decline) => {
+    const candidate = await runScenario(`rustFastVerify=1${decline === "wire-spread" ? "&rustWireSpreadPatch=0" : ""}`, clipMoveScript(stretch));
     const step = candidate.steps.findIndex((entry) => (entry as { step: string }).step === "clipper-moves");
     const from = (candidate.steps[step - 1] as { submissions: number }).submissions;
     const to = (candidate.steps[step] as { submissions: number }).submissions;
     expect(candidate.log.slice(from, to).map((entry) => entry.call)).toEqual([call]);
     const offsets = candidate.offsets as OffsetDiagnostics;
-    if (call === "admit") expect(offsets.offsetDeclines["wire-spread"]).toBe(1);
+    if (call === "admit") expect(offsets.offsetDeclines[decline]).toBe(1);
     else expect((candidate.log[to - 1].patch as { clips?: Array<{ id: string; dx: number }> }).clips)
       .toEqual([expect.objectContaining({ id: "clipper", dx: -10, dy: 20 })]);
     // The drawn clip after the step is where a full build puts it.
@@ -1030,5 +1064,343 @@ describe("cosmetic offsets as a retained translate patch (rustOffsetPatch)", () 
       expect(offsets.verifyMismatches).toBe(0);
       expect(offsets.verifyRuns).toBe(2);
     }
+  });
+});
+
+// WIRE DELTAS ON A WIDENED STAGE (`rustWireSpreadPatch`): a targeting arrow (a box-less group of sprite segments, each
+// a positional field claimer) and a creature's selection reticle (a boxed Control riding the creature's claim, its
+// borders under it). A seeded stream rotates, scales and moves them, across the field's clamp at 0 and 1920 too. A
+// plain wire patch refuses every such span (`wire-spread`) and rebuilds; the spread-aware patch re-poses each node by
+// its own drawn delta, and must draw the same picture and publish the same hits.
+function wireSpreadNodes(): Array<Record<string, unknown>> {
+  const rows = sceneNodes(false).map((row) => row.id === "stage" ? { ...row, anchorLeft: 0, anchorRight: 1 } : row);
+  rows.push(
+    heldNode("targets", "stage", "Node2D", I),
+    heldNode("arrow", "targets", "Node2D", I),
+    ...[0, 1, 2, 3].map((i) => heldNode(`seg${i}`, "arrow", "Sprite2D", [1, 0, 0, 1, 600 + 180 * i, 640 - 60 * i],
+      { localRect: { position: { x: -20, y: -10 }, size: { x: 40, y: 20 } }, fillColor: fill("#ffffffff") })),
+    heldNode("creature", "stage", "NCreature", [1, 0, 0, 1, 1450, 620]),
+    heldNode("reticle", "creature", "NSelectionReticle", [1, 0, 0, 1, -100, -100], { anchorLeft: 0, anchorRight: 0, mouseFilter: 0,
+      localRect: box(200, 200), fillColor: fill("#22000000") }),
+    ...[0, 1, 2, 3].map((i) => heldNode(`border${i}`, "reticle", "TextureRect", [1, 0, 0, 1, (i % 2) * 160, Math.floor(i / 2) * 160],
+      { anchorLeft: 0, anchorRight: 0, localRect: box(40, 40), fillColor: fill("#ff4444ff") })),
+    // A teammate's targeting indicator over the creature's starting point: it takes the shift of the hit under it,
+    // so a span whose hit covers that point (before or after its move) must rebuild.
+    heldNode("remoteTarget", "stage", "NRemoteTargetingIndicator", [1, 0, 0, 1, 1450, 620], { localRect: box(24, 24),
+      fillColor: fill("#44ccffff") }),
+  );
+  return rows;
+}
+
+/** mulberry32: a tiny seeded generator, so a failing stream can be replayed by its seed. */
+function seeded(seed: number): () => number {
+  let a = seed >>> 0;
+  return () => {
+    a = (a + 0x6d2b79f5) >>> 0;
+    let t = a;
+    t = Math.imul(t ^ (t >>> 15), t | 1);
+    t ^= t + Math.imul(t ^ (t >>> 7), t | 61);
+    return ((t ^ (t >>> 14)) >>> 0) / 4294967296;
+  };
+}
+
+function wireSpreadScript(seed: number, stretch: number, steps = 24) {
+  return async ({ state, renderer, offer, tick }: ScenarioContext): Promise<void> => {
+    const rows = wireSpreadNodes();
+    const rowOf = (id: string, transform: readonly number[]) => ({ ...rows.find((row) => row.id === id)!, transform: xf(transform) });
+    applySceneDelta(state, parseSceneDelta({ type: "scene-delta", full: true, screenType: "combat", upserts: rows,
+      orderedIds: rows.map((row) => row.id as string) })!);
+    if (stretch !== 1) renderer.setStretch(stretch);
+    renderer.setStaticBackgroundSource!({ scenePath: BG_SCENE, url: "/bg/glade.png" }, () => {});
+    expect(renderer.reconcile(state)).toBe(false);
+    await turn();
+    await offer("startup");
+    await tick("settled@1050", 1050);
+    const random = seeded(seed);
+    const between = (lo: number, hi: number) => lo + (hi - lo) * random();
+    const turnScale = (deg: number, k: number, x: number, y: number) => {
+      const r = (deg * Math.PI) / 180;
+      return [Math.cos(r) * k, Math.sin(r) * k, -Math.sin(r) * k, Math.cos(r) * k, x, y];
+    };
+    for (let step = 0; step < steps; step++) {
+      const pick = Math.floor(random() * 6);
+      let upsert: Record<string, unknown>;
+      if (pick < 4) {
+        // A segment anywhere on (and off) the field, turned and stretched; or the whole arrow group.
+        const id = pick === 3 ? "arrow" : `seg${Math.floor(random() * 4)}`;
+        upsert = id === "arrow"
+          ? rowOf(id, turnScale(between(-25, 25), between(0.8, 1.25), between(-300, 400), between(-150, 150)))
+          : rowOf(id, turnScale(between(-70, 70), between(0.6, 1.8), between(-60, 1990), between(200, 900)));
+      } else if (pick === 4) {
+        // The reticle's pulse: a uniform scale about its centre.
+        const k = between(0.9, 1.12);
+        upsert = rowOf("reticle", [k, 0, 0, k, -100 + 100 - k * 100, -100 + 100 - k * 100]);
+      } else {
+        upsert = rowOf("creature", [1, 0, 0, 1, between(900, 1700), between(560, 680)]);
+      }
+      delta(state, [upsert]);
+      await offer(`wire${step}`);
+      await tick(`after-wire${step}`, 1100 + 25 * step);
+    }
+  };
+}
+
+describe("wire deltas on a widened stage (rustWireSpreadPatch)", () => {
+  beforeEach(() => { document.body.replaceChildren(); });
+  afterEach(() => {
+    window.history.replaceState(null, "", "/");
+    Object.assign(rendererComparisonConfig, readRendererComparisonConfig());
+  });
+
+  it.each([[1, WIDE], [7, WIDE], [23, WIDE], [5, 1]] as const)("draws the same picture as the plain wire patch (seed %s, stretch %s)", async (seed, stretch) => {
+    const baseline = await runScenario("rustWireSpreadPatch=0&rustFastVerify=1", wireSpreadScript(seed, stretch));
+    const candidate = await runScenario("rustFastVerify=1", wireSpreadScript(seed, stretch));
+    const replaced = expectSamePicture(candidate, baseline, false);
+    const spread = candidate.spread!;
+    expect(spread.verifyFirstMismatch).toBeNull();
+    expect(spread.verifyMismatches).toBe(0);
+    expect(spread.verifyKinds).toEqual({});
+    if (stretch === 1) {
+      // Nothing is widened: every span patches as before, and nothing is the spread-aware patch's.
+      expect(replaced).toEqual([]);
+      expect(spread.patches).toBe(0);
+      return;
+    }
+    // Widened: the plain patch refused the moving claimers and rebuilt; most steps are now patches (a step whose span covers the teammate's indicator still builds).
+    expect((baseline.offsets as { offsetDeclines: Record<string, number> }).offsetDeclines["wire-spread"]).toBeGreaterThanOrEqual(16);
+    expect(replaced.length).toBeGreaterThanOrEqual(12);
+    expect(spread.patches).toBe(replaced.length);
+    expect(spread.shifted).toBeGreaterThan(0);
+    expect(spread.verifyRuns).toBe(spread.patches);
+    if (seed === 7) expect(spread.declines["wire-spread-follower-hit"]).toBeGreaterThan(0);
+  });
+
+  it("with the switch off, submits what every control off submits", async () => {
+    const off = await runScenario("rustWireSpreadPatch=0", wireSpreadScript(11, WIDE));
+    const baseline = await runScenario("rustFast=0", wireSpreadScript(11, WIDE));
+    expect(expectSamePicture(off, baseline, true)).toEqual([]);
+    expect(off.spread).toBeUndefined();
+  });
+});
+
+// TWEEN ROOTS AS A RETAINED PATCH (`rustTweenRootPatch`): the hand holder's wire-hinted pick-up and release (Expo
+// Out, the real `endTransform` shape: a 0.8 scale and a lift) re-pose its span every frame instead of rebuilding. The
+// holder carries a face, a label, a hitbox and a positional sprite (a field claimer that re-bases at the drawn pose
+// on a widened stage). The holder is a hand holder, so a landing row is open through each tween.
+type TweenExtra = Array<Record<string, unknown>>;
+function tweenSceneNodes(extra: TweenExtra = []): Array<Record<string, unknown>> {
+  return [...sceneNodes(false).map((row) => row.id === "stage" ? { ...row, anchorLeft: 0, anchorRight: 1 } : row),
+    heldNode("holderFace", "holder", "ColorRect", I, { localRect: box(200, 300), fillColor: fill("#aa66ccff") }),
+    heldNode("holderLabel", "holder", "Label", [1, 0, 0, 1, 10, 260], { localRect: box(180, 30), ...label("Neutralize") }),
+    heldNode("holderGem", "holder", "Sprite2D", [1, 0, 0, 1, 100, 40], { localRect: { position: { x: -12, y: -12 }, size: { x: 24, y: 24 } },
+      fillColor: fill("#ffee55ff") }),
+    ...extra];
+}
+
+const expoHint = (targetId: string, end: readonly number[], durationMs: number) =>
+  ({ targetId, property: "position", durationMs, trans: "Expo", ease: "Out", endTransform: [...end] });
+
+/** A cosmetic offset per pick-up tick: `(owner, tick index) => dy`, as the held-card lift ramps beside the tween. */
+type TweenLift = (index: number) => Array<[string, number]>;
+function tweenScript(stretch: number, extra: TweenExtra = [], extraHints: unknown[] = [], report?: { rows?: unknown },
+  lift?: TweenLift) {
+  return async ({ state, renderer, offer, tick }: ScenarioContext): Promise<void> => {
+    const rows = tweenSceneNodes(extra);
+    const holderAt = (m: readonly number[]) => ({ ...rows.find((row) => row.id === "holder")!, transform: xf(m) });
+    applySceneDelta(state, parseSceneDelta({ type: "scene-delta", full: true, screenType: "combat", upserts: rows,
+      orderedIds: rows.map((row) => row.id as string) })!);
+    if (stretch !== 1) renderer.setStretch(stretch);
+    renderer.setStaticBackgroundSource!({ scenePath: BG_SCENE, url: "/bg/glade.png" }, () => {});
+    expect(renderer.reconcile(state)).toBe(false);
+    await turn();
+    await offer("startup");
+    await tick("settled@1050", 1050);
+    const up = [0.8, 0, 0, 0.8, 760, 850], down = [1, 0, 0, 1, 700, 900];
+    delta(state, [], [expoHint("holder", up, 593), ...extraHints]);
+    await offer("pickup");
+    for (let at = 1100, index = 0; at <= 1700; at += 40, index++) {
+      for (const [owner, dy] of lift?.(index) ?? []) renderer.applyLocalOffset!(owner, dy);
+      await tick(`pickup@${at}`, at);
+    }
+    delta(state, [holderAt(up)]);
+    await offer("pickup-landed");
+    await tick("lifted@1750", 1750);
+    delta(state, [], [expoHint("holder", down, 457)]);
+    await offer("release");
+    for (let at = 1800; at <= 2300; at += 40) await tick(`release@${at}`, at);
+    delta(state, [holderAt(down)]);
+    await offer("release-landed");
+    await tick("dropped@2350", 2350);
+    if (report) report.rows = (window as unknown as { __mirrorLandingLog?: () => { rows: unknown } }).__mirrorLandingLog?.().rows;
+  };
+}
+
+/** A seeded stream of holder tweens (scale, a little turn, across and off the field) with wire deltas beside them. */
+function randomTweenScript(seed: number, stretch: number) {
+  return async ({ state, renderer, offer, tick }: ScenarioContext): Promise<void> => {
+    const rows = tweenSceneNodes();
+    const rowAt = (id: string, m: readonly number[]) => ({ ...rows.find((row) => row.id === id)!, transform: xf(m) });
+    applySceneDelta(state, parseSceneDelta({ type: "scene-delta", full: true, screenType: "combat", upserts: rows,
+      orderedIds: rows.map((row) => row.id as string) })!);
+    if (stretch !== 1) renderer.setStretch(stretch);
+    renderer.setStaticBackgroundSource!({ scenePath: BG_SCENE, url: "/bg/glade.png" }, () => {});
+    expect(renderer.reconcile(state)).toBe(false);
+    await turn();
+    await offer("startup");
+    const random = seeded(seed);
+    const between = (lo: number, hi: number) => lo + (hi - lo) * random();
+    let at = 1050;
+    for (let tween = 0; tween < 4; tween++) {
+      const k = between(0.7, 1.2), r = (between(-10, 10) * Math.PI) / 180;
+      const end = [Math.cos(r) * k, Math.sin(r) * k, -Math.sin(r) * k, Math.cos(r) * k, between(-80, 1950), between(700, 950)];
+      const duration = Math.round(between(300, 650));
+      delta(state, [], [expoHint("holder", end, duration)]);
+      await offer(`tween${tween}`);
+      for (const stop = at + duration + 80; at < stop;) {
+        at += Math.round(between(16, 60));
+        if (random() < 0.2) {
+          delta(state, [rowAt("orbit", [1, 0, 0, 1, between(1400, 1600), between(150, 250)])]);
+          await offer(`wire${tween}@${at}`);
+        }
+        await tick(`tween${tween}@${at}`, at);
+      }
+      if (random() < 0.7) {
+        delta(state, [rowAt("holder", end)]);
+        await offer(`landed${tween}`);
+      }
+      at += 50;
+      await tick(`rest${tween}@${at}`, at);
+    }
+  };
+}
+
+describe("tween roots as a retained patch (rustTweenRootPatch)", () => {
+  beforeEach(() => { document.body.replaceChildren(); });
+  afterEach(() => {
+    window.history.replaceState(null, "", "/");
+    Object.assign(rendererComparisonConfig, readRendererComparisonConfig());
+  });
+
+  it.each([[WIDE, ""], [WIDE, "rustFastVerify=1"], [1, "rustFastVerify=1"]] as const)(
+    "patches a hand holder's pick-up and release, drawing the full-build picture (stretch %s, %s)", async (stretch, query) => {
+    const extra = query ? `&${query}` : "";
+    const baselineRows: { rows?: unknown } = {}, candidateRows: { rows?: unknown } = {};
+    const baseline = await runScenario(`rustTweenRootPatch=0${extra}`, tweenScript(stretch, [], [], baselineRows));
+    const candidate = await runScenario(query, tweenScript(stretch, [], [], candidateRows));
+    const replaced = expectSamePicture(candidate, baseline, false);
+    // The open landing rows rode the patches: each closed on the drawn poses a rebuild records.
+    expect((baselineRows.rows as unknown[]).length).toBe(2);
+    expect(firstDifference(candidateRows.rows, baselineRows.rows)).toBeNull();
+    const tween = candidate.tween!;
+    // Nearly every tween frame of both tweens was a build and is now a patch.
+    expect(replaced.length).toBeGreaterThanOrEqual(24);
+    expect(tween.patches).toBe(replaced.length);
+    if (query) {
+      expect(tween.verifyFirstMismatch).toBeNull();
+      expect(tween.verifyMismatches).toBe(0);
+      expect(tween.verifyKinds).toEqual({});
+      expect(tween.verifyRuns).toBe(tween.patches);
+    }
+  });
+
+  // The held-card lift ramps on the holder (and once on the hand above it) through the pick-up, with the landing row
+  // open: the tween patch folds the offset translation into its own deltas, and the offset-only frames patch too.
+  it.each([[WIDE], [1]] as const)("folds the lift ramp into the pick-up patch (stretch %s)", async (stretch) => {
+    const lift: TweenLift = (index) => index < 16 ? [["holder", -4 * (index + 1)], ...(index === 4 ? [["hand", 3] as [string, number]] : [])] : [];
+    const baselineRows: { rows?: unknown } = {}, candidateRows: { rows?: unknown } = {};
+    const baseline = await runScenario("rustTweenRootPatch=0&rustFastVerify=1", tweenScript(stretch, [], [], baselineRows, lift));
+    const candidate = await runScenario("rustFastVerify=1", tweenScript(stretch, [], [], candidateRows, lift));
+    const replaced = expectSamePicture(candidate, baseline, false);
+    // The landing rows subtract the lift the frame was drawn with (a patched lift ramp, like a rebuilt one).
+    expect((baselineRows.rows as unknown[]).length).toBe(2);
+    expect(firstDifference(candidateRows.rows, baselineRows.rows)).toBeNull();
+    expect(replaced.length).toBeGreaterThanOrEqual(20);
+    expect(candidate.tween!.declines["tween-root-offset-overlap"]).toBeUndefined();
+    expect((candidate.offsets as { offsetDeclines: Record<string, number> }).offsetDeclines["offset-landing"]).toBeUndefined();
+    expect(candidate.tween!.verifyMismatches).toBe(0);
+    expect(candidate.tween!.verifyFirstMismatch).toBeNull();
+  });
+
+  it("refuses an offset owner inside the tween span moving on its own", async () => {
+    const lift: TweenLift = (index) => index < 4 ? [["holderFace", -5 * (index + 1)]] : [];
+    const baseline = await runScenario("rustTweenRootPatch=0&rustFastVerify=1", tweenScript(WIDE, [], [], undefined, lift));
+    const candidate = await runScenario("rustFastVerify=1", tweenScript(WIDE, [], [], undefined, lift));
+    expectSamePicture(candidate, baseline, false);
+    expect(candidate.tween!.declines["tween-root-offset-overlap"]).toBeGreaterThan(0);
+    expect(candidate.tween!.verifyMismatches).toBe(0);
+  });
+
+  it.each([[3, WIDE], [17, WIDE], [29, 1]] as const)("matches the full-build picture on a seeded tween stream (seed %s, stretch %s)", async (seed, stretch) => {
+    const baseline = await runScenario("rustTweenRootPatch=0&rustFastVerify=1", randomTweenScript(seed, stretch));
+    const candidate = await runScenario("rustFastVerify=1", randomTweenScript(seed, stretch));
+    const replaced = expectSamePicture(candidate, baseline, false);
+    expect(replaced.length).toBeGreaterThan(10);
+    expect(candidate.tween!.verifyMismatches).toBe(0);
+    expect(candidate.tween!.verifyFirstMismatch).toBeNull();
+  });
+
+  it("with the switch off, submits what every control off submits", async () => {
+    const off = await runScenario("rustTweenRootPatch=0&rustHeldOverridePatch=0", tweenScript(WIDE));
+    const baseline = await runScenario("rustFast=0", tweenScript(WIDE));
+    expect(firstDifference(effectiveFrames(off.log).at(-1), effectiveFrames(baseline.log).at(-1))).toBeNull();
+    expect(off.tween).toBeUndefined();
+    const offOnly = await runScenario("rustTweenRootPatch=0", tweenScript(WIDE));
+    expect(offOnly.tween).toBeUndefined();
+  });
+
+  // Each refusal draws the full-build picture and names itself. (The local-animation case runs at 16:9: on a
+  // widened stage the composition already refuses an animated root re-based under an override.)
+  it.each([
+    ["tween-root-clip", [heldNode("holderClip", "holder", "Control", [1, 0, 0, 1, 20, 20], { localRect: box(60, 60), clipContents: true }),
+      heldNode("holderClipped", "holderClip", "ColorRect", [1, 0, 0, 1, 5, 5], { localRect: box(80, 80), fillColor: fill("#22aa88ff") })], []],
+    ["tween-root-anim", [heldNode("holderPulse", "holder", "ColorRect", [1, 0, 0, 1, 150, 150], { localRect: box(20, 20),
+      fillColor: fill("#ffcc00ff"), pinnedLoopAnim: "mapPointPulse" })], []],
+    ["tween-root-nested", [], [expoHint("holderFace", [1, 0, 0, 1, 0, -30], 300)]],
+  ] as const)("refuses %s", async (reason, extra, hints) => {
+    const stretch = reason === "tween-root-anim" ? 1 : WIDE;
+    const baseline = await runScenario("rustTweenRootPatch=0&rustFastVerify=1", tweenScript(stretch, [...extra], [...hints]));
+    const candidate = await runScenario("rustFastVerify=1", tweenScript(stretch, [...extra], [...hints]));
+    expectSamePicture(candidate, baseline, false);
+    expect(candidate.tween!.declines[reason]).toBeGreaterThan(0);
+    expect(candidate.tween!.verifyMismatches ?? 0).toBe(0);
+  });
+});
+
+
+// A REFUSED FULL PRESENTATION refills the live spread maps with a walk that never committed. The next frame must
+// rebuild (no retained patch rides an uncommitted build), and every later spread patch must leave the live map,
+// the committed bank and a shadow rebuild in agreement (`rustFastVerify` compares all three).
+describe("spread shifts across a refused full presentation (rustWireSpreadPatch)", () => {
+  beforeEach(() => { document.body.replaceChildren(); });
+  afterEach(() => {
+    executorRefusesAdmits = 0;
+    window.history.replaceState(null, "", "/");
+    Object.assign(rendererComparisonConfig, readRendererComparisonConfig());
+  });
+
+  it("rebuilds after the refusal and keeps the live map on the committed walk", async () => {
+    const result = await runScenario("rustFastVerify=1", async (context) => {
+      const { state, offer, tick } = context;
+      await wireSpreadScript(5, WIDE, 6)(context);
+      const rows = wireSpreadNodes();
+      const panelA = rows.find((row) => row.id === "panelA")!;
+      executorRefusesAdmits = 1;
+      delta(state, [{ ...panelA, fillColor: fill("#aa0000ff") }]);
+      await offer("refused-then-rebuilt");
+      for (let step = 0; step < 6; step++) {
+        const k = 1 + 0.05 * step;
+        delta(state, [{ ...rows.find((row) => row.id === "seg1")!, transform: xf([k, 0, 0, k, 200 + 300 * step, 500]) }]);
+        await offer(`after-refusal-${step}`);
+        await tick(`after-refusal-${step}@${2000 + 25 * step}`, 2000 + 25 * step);
+      }
+    });
+    const refused = result.log.findIndex((entry) => (entry as { refused?: boolean }).refused);
+    expect(refused).toBeGreaterThan(0);
+    // The refused admission is followed by a full one before any patch.
+    expect(result.log.slice(refused + 1).find((entry) => entry.call !== "present")?.call).toBe("admit");
+    const spread = result.spread!;
+    expect(spread.patches).toBeGreaterThan(4);
+    expect(spread.verifyFirstMismatch).toBeNull();
+    expect(spread.verifyMismatches).toBe(0);
   });
 });

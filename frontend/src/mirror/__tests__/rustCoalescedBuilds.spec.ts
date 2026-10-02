@@ -95,11 +95,15 @@ function stage(): HTMLElement {
 type CoalesceStats = { requests: number; immediate: number; deferred: number; urgentExtraBuilds: number;
   workPerFrame: Record<string, number>; maxWorkPerFrame: number };
 type Diagnostics = { asyncSubmissionRevision: number | null; readiness: string;
-  effective: { rustCoalescedBuilds?: CoalesceStats; rustProducerReasons?: { bySource: Record<string, { count: number }> } } };
+  effective: { rustCoalescedBuilds?: CoalesceStats; rustProducerReasons?: { bySource: Record<string, { count: number }> };
+    rustTweenRootPatch?: { patches: number } } };
 const diagnostics = () => (window as unknown as { __mirrorRendererDiagnostics(): Diagnostics }).__mirrorRendererDiagnostics();
 
-async function setup(query: string, options: { sync?: boolean } = {}) {
-  window.history.replaceState(null, "", `/?rendererCompare=1&stage=rust&rustProducerReasons=1&${query}`);
+async function setup(query: string, options: { sync?: boolean; tweenPatch?: boolean } = {}) {
+  // `rustTweenRootPatch` is held off unless asked for: these specs use a long position tween as per-frame BUILD
+  // demand, which that switch turns into retained patches (the default-config case below covers the two together).
+  const tween = options.tweenPatch ? "" : "rustTweenRootPatch=0&";
+  window.history.replaceState(null, "", `/?rendererCompare=1&stage=rust&rustProducerReasons=1&${tween}${query}`);
   Object.assign(rendererComparisonConfig, readRendererComparisonConfig());
   const measureText = (value: string) => ({ width: value.length * 10, fontBoundingBoxAscent: 16, fontBoundingBoxDescent: 4,
     actualBoundingBoxAscent: 16, actualBoundingBoxDescent: 4 });
@@ -180,6 +184,29 @@ describe("one build per frame (rustCoalescedBuilds)", () => {
     // Off: the synchronous build plus the tick's own. On: the tick's build carries the lift.
     expect(results["rustCoalescedBuilds=0"].work.length).toBe(2);
     expect(results[""].work).toEqual([{ call: "admit", faceY: CARD_Y - HELD_CARD_DRAG_LIFT_PX }]);
+  });
+
+  // The default configuration: the tween's frames are tween-root patches, one per frame, and a lift with a streamed
+  // delta in one frame is still that frame's only work (one build carrying the lift).
+  it("with tween-root patches on, patches the tween and folds a lift into the frame's one build", async () => {
+    const h = await setup("", { tweenPatch: true });
+    await h.startTween();
+    const before = h.log.length;
+    for (let i = 0; i < 3; i++) await h.frame();
+    expect(h.log.slice(before).map((entry) => entry.call)).toEqual(["patch", "patch", "patch"]);
+    expect(diagnostics().effective.rustTweenRootPatch!.patches).toBeGreaterThanOrEqual(3);
+    const mark = h.log.length;
+    h.deltaArrives([{ id: "other", parentId: "stage", name: "other", nodeType: "ColorRect", visible: true,
+      transform: xf([1, 0, 0, 1, 210, 200]), localRect: box(50, 50), fillColor: fill("#33aa33ff") }]);
+    h.renderer.setHeldCard("card", 0, 900, "drag");
+    await drain();
+    await h.frame();
+    expect(h.log.slice(mark)).toEqual([{ call: "admit", faceY: CARD_Y - HELD_CARD_DRAG_LIFT_PX }]);
+    const markAfter = h.log.length;
+    await h.frame();
+    expect(h.log.slice(markAfter).map((entry) => entry.call)).toEqual(["patch"]);
+    expect(diagnostics().effective.rustCoalescedBuilds!.maxWorkPerFrame).toBe(1);
+    h.renderer.dispose();
   });
 
   it("folds a held-card lift, the animation tick and a streamed delta into one build", async () => {

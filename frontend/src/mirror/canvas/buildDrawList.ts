@@ -107,6 +107,7 @@ import {
   fieldDxAtOriginX,
   rootSpreadCtx,
   spreadDrawBox,
+  writeChildSpreadCtx,
   childParentWidth as spreadChildParentWidth,
   type SpreadAffine,
   type SpreadCtx,
@@ -1211,18 +1212,9 @@ export function buildDrawList(
       spreadPool.push(ctx);
     }
     spreadDepth++;
-    ctx.parentDx = out.childParentDx;
-    ctx.deltaParentWidth = out.childDeltaParentWidth;
-    ctx.anchorDelta = out.childAnchorDelta;
-    ctx.rideDx = out.childRideDx;
-    ctx.parentDxProp = out.childParentDxProp;
-    ctx.parentWidth = parentWidth;
     // The children's anchor algebra lifts its claim by the parent's TRUE x-basis, and a local-space child
     // composes against the true global — both unshifted, like the DOM's `childParentGlobal`.
-    ctx.parentGlobal = gGame;
-    ctx.containerChildAlign = out.childContainerAlign;
-    ctx.containerChildVertical = out.childContainerVertical;
-    return ctx;
+    return writeChildSpreadCtx(ctx, gGame, parentWidth, out);
   }
   if (spreading && spreadDxOut) {
     spreadDxOut.clear();
@@ -2365,8 +2357,8 @@ function rgbOf(color: MirrorColor | null): { r: number; g: number; b: number } {
  * the two stages can never disagree about which nodes re-centre) plus the two REGISTRY answers, which come from
  * the caller's retained state or fall back the way the DOM walk falls back when it cannot resolve them.
  */
-function spreadEnvFor(
-  nodes: Map<string, MirrorNode>,
+export function spreadEnvFor(
+  nodes: ReadonlyMap<string, MirrorNode>,
   registry: SpreadRegistry | null,
   spreadFactor: number,
   // Told before each registry lookup: the answer depends on state outside the asking node's subtree.

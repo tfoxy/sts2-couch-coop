@@ -176,7 +176,12 @@ export interface CanvasInteractionRuntime {
    * A patch retains build products; carry their exact interaction sidecar forward. A cosmetic-offset patch
    * (`rustOffsetPatch`) passes the offsets and raise plan it drew, captured when it was planned.
    */
-  publishPatch(previous: DrawnSceneSnapshot | null, snapshot: DrawnSceneSnapshot, offsetFrame?: OffsetPatchFrame): void;
+  /**
+   * `spreadDxByNode` (`rustWireSpreadPatch`): the committed per-node spread shift after a wire patch moved some of
+   * them along the widened field; the patch's hits were placed with it.
+   */
+  publishPatch(previous: DrawnSceneSnapshot | null, snapshot: DrawnSceneSnapshot, offsetFrame?: OffsetPatchFrame,
+    spreadDxByNode?: ReadonlyMap<string, number>): void;
   /** `rustOffsetPatch`: the current offsets and raise plan, by value, for a patch that is about to be planned. */
   captureOffsetFrame(): OffsetPatchFrame;
   invalidateInputCaches(): void;
@@ -717,7 +722,8 @@ export function createCanvasInteractionRuntime(ports: CanvasInteractionRuntimePo
     return { cosmeticOffsets: new Map(cosmeticOffsets), raisePlan: copyPlan(raisePlan) };
   }
 
-  function publishPatch(previous: DrawnSceneSnapshot | null, snapshot: DrawnSceneSnapshot, offsetFrame?: OffsetPatchFrame): void {
+  function publishPatch(previous: DrawnSceneSnapshot | null, snapshot: DrawnSceneSnapshot, offsetFrame?: OffsetPatchFrame,
+    spreadDxByNode?: ReadonlyMap<string, number>): void {
     const data = previous === null ? undefined : snapshotData.get(previous);
     if (data === undefined) {
       // This only covers standalone test seams. Production patches always
@@ -733,6 +739,7 @@ export function createCanvasInteractionRuntime(ports: CanvasInteractionRuntimePo
       ...data,
       // A translate patch moved the drawn offsets (and the raise that set them) on: its hits are proved against them.
       ...(offsetFrame ? { cosmeticOffsets: offsetFrame.cosmeticOffsets, raisePlan: offsetFrame.raisePlan } : {}),
+      ...(spreadDxByNode ? { spreadDxByNode } : {}),
       interactiveRects: null,
       viewScaleInputStamps: null,
       children: null,
