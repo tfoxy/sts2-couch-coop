@@ -85,12 +85,21 @@ describe("SettingsPanel — saving a viewer's choices", () => {
     wrapper.unmount();
   });
 
-  it("hides the text row while Bitmap is the only available method", async () => {
+  it("offers MSDF on Canvas and remounts after persisting the selection", async () => {
     const wrapper = mountPanel();
     expect(wrapper.find('[data-testid="mirror-text-method"]').exists()).toBe(false);
     await wrapper.get('[data-testid="mirror-stage"]').setValue("canvas");
-    expect(wrapper.find('[data-testid="mirror-text-method"]').exists()).toBe(false);
-    expect(saved()).toEqual({ stage: "canvas" });
+    const method = wrapper.get('[data-testid="mirror-text-method"]');
+    expect((method.element as HTMLSelectElement).value).toBe("bitmap");
+    const revision = rendererComparisonViewRevision.value;
+    await method.setValue("msdf");
+    expect(mirrorSettings.textMethod).toBe("msdf");
+    expect(rendererComparisonViewRevision.value).toBe(revision + 1);
+    expect((method.element as HTMLSelectElement).value).toBe("msdf");
+    expect(saved()).toEqual({ stage: "canvas", textMethod: "msdf" });
+    await method.setValue("bitmap");
+    expect(rendererComparisonViewRevision.value).toBe(revision + 2);
+    expect(saved()).toEqual({ stage: "canvas", textMethod: "bitmap" });
     wrapper.unmount();
   });
 

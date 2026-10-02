@@ -681,7 +681,7 @@ if (isPromiseLike<PresentationResult>(result)) {
       const nodes = input.nodes ?? state?.nodes ?? new Map();
       const compute = (): PreparedText | TextPrepRefusal => {
         const resolved = resolveSemanticTextSpec(node, nodes, backend === "rust", failedRoleFamilies,
-          richColorValidator);
+          richColorValidator, backend === "rust");
         if ("refusal" in resolved) return resolved;
         if (!measureContext) return { refusal: "no-measure-context" };
         nativeLayouts++;

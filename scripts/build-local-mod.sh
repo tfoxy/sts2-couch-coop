@@ -144,6 +144,7 @@ dotnet build "$repo_root/src/CouchCoop.Mod.HotReload/CouchCoop.Mod.HotReload.csp
   -p:CouchCoopEnableHotReload=true \
   -p:HotReloadDeployDir="$output_dir/hot-reload"
 
+"$repo_root/scripts/build-msdf-generator.sh"
 COUCHCOOP_FRONTEND_OUT_DIR="$output_dir/frontend" npm --prefix "$repo_root/frontend" run build
 
 # Last, because it stamps what was actually published: a dev manifest version that cannot lose the

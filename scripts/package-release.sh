@@ -270,6 +270,8 @@ mkdir -p "$sdk_root_dir" "$publish_root" "$references_dir" "$payload_dir" "$outp
 npm --prefix "$repo_root/frontend" ci
 npm --prefix "$repo_root/frontend" audit --omit=dev --audit-level=high
 
+COUCHCOOP_GSW_ROOT="$source_parent/godot-scene-web" "$repo_root/scripts/build-msdf-generator.sh"
+
 COUCHCOOP_RELEASE_BUILD=1 COUCHCOOP_FRONTEND_OUT_DIR="$payload_dir/frontend" \
   npm --prefix "$repo_root/frontend" run build
 

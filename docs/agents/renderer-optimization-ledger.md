@@ -310,3 +310,25 @@ internal threshold check (all differences one 8-bit level), not independent rast
 revised local CJK/Thai receipts include font hashes and invocation fields, and label themselves as
 glyph-generation evidence rather than shaping proof. Couch release notices and the archive verifier
 landed as `dd1b3d34`; they ship all 40 generator dependency licences from GSW's checked manifest.
+
+## Oct 2 text methods Phase 4 (Couch MSDF integration)
+
+Bitmap remains the default. This gate checks switchable text correctness; it is not a performance
+result or a reason to change the default. The Couch adapter shapes prepared runs through hb-gpu,
+places generated glyphs in Couch's measured boxes, retains bounded atlas pages, and falls back per
+run. The generator and GSW glyph contract were landed before this adapter.
+
+| Date | Attempt | Outcome | Key evidence |
+| --- | --- | --- | --- |
+| Oct 2 | Initial Couch candidate `046d2d00` | REVISE | English/Russian shop pairs qualified at 739×281 DPR 3.49 and 1920×1080 with matching hit grids and an MSDF atlas page. The Chinese reward tape omitted 15 one-line text nodes in both methods because its stream lacked `textWrap`; current Couch main also acquired retained-patch changes after the candidate branchpoint. |
+| Oct 2 | Narrow Chinese fit revision `d627b3ad` | Isolated gate passed; integration pending | Rust-only admission accepts a complete single line when existing measured layout proves it fits. Phone Chinese reward pair at clock 11000 presented `搜刮！` and `锚` as glyph runs, with identical hits. Five long rich labels remain refused in both modes. |
+| Oct 2 | Combined candidate `c7403216`, replayed onto latest main as `bb75bf40` | GO | Independent clean-worktree Vue/Vitest: 5,366 passed/1 skipped; focused atlas/executor: 101 passed. GSW `53bbfff7` source-built WASM matched the pinned hash. Phone reward Bitmap/MSDF hit grids matched byte-for-byte; named `搜刮！` transitioned Bitmap pending → worker tile → glyph run → present. A moving combat `6` kept its glyph key and atlas through retained transforms. Latest-main replay passed Vue and 150 focused tests/1 skipped. One atomic upload exceeded the 1 ms target in one capture; a repeat had none, and the 256 KiB frame byte cap held. Direct moving glyph patches rebuild Rust geometry. |
+
+Independent Chinese reward images and transition receipt are under the
+`cc-phase4-integrate-independent-audit` worktree's `.sts2/phase4-independent-audit/` as
+`zhs-{bitmap,msdf}-phone-11000*.png` and `zhs-transition-summary.json`; the full-frame pair differs
+at 16,507 pixels, mainly fuller MSDF strokes. English/Russian shop pairs are in the earlier
+`cc-phase4-independent-audit/.sts2/msdf-phase4-audit/` folder as
+`shop-{eng,rus}-{739x281,1920x1080}-{bitmap,msdf}-11000-live.png`. Combat movement evidence is
+`combat-value6-transform-timeline.json` and `combat-msdf-phone-7600-transform3.png` in the combined
+audit folder. The synthetic black combat background limits those captures to foreground and text.

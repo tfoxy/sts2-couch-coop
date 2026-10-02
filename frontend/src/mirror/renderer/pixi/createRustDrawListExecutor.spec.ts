@@ -1016,6 +1016,78 @@ describe("rustFast WP3 executor switches", () => {
     renderer.dispose();
   });
 
+  it("retains glyphRun transform and alpha without another resource upload", async () => {
+    let revision = 0;
+    const uploaded = vi.fn(() => 0);
+    const updates: Array<{ id: string; command: Record<string, unknown>; localTransform?: readonly number[] }> = [];
+    const scene = (next: number) => ({ version: 2 as const, revision: next, width: 1, height: 1,
+      designWidth: 1, designHeight: 1, resources: [], commands: [{ id: "tlabel", kind: "glyphRun",
+        atlas: "msdf:atlas:1", m: [1, 0, 0, 1, 0, 0], alpha: 1, glyphs: [], method: "msdf" }] });
+    (globalThis as Record<string, unknown>).__rustProjectionTest = {
+      engine: { backend: "WebGL2", resize: () => {}, dispose: () => {}, upload_rgba_batch: uploaded,
+        admit_scene: () => JSON.stringify({ accepted: true, revision: ++revision, resourcePending: 0 }),
+        apply_patch: () => JSON.stringify({ accepted: true, revision: ++revision, resourcePending: 0 }),
+        present: async () => JSON.stringify({ presented: true, revision, draws: 1, resourcePending: 0 }) },
+      encode: (input: { revision: number }) => ({ bytes: new Uint8Array([1]), scene: scene(input.revision),
+        resources: [], textUploads: [], unsupportedCommands: 0 }),
+      retained: (base: ReturnType<typeof scene>, next: number, changes: typeof updates) => {
+        updates.push(...changes);
+        return { bytes: new Uint8Array([2]), scene: { ...base, revision: next }, changedIndexes: [0] };
+      },
+    };
+    stubEngineAndSerializer(
+      "export function encodeRustScene(input){return globalThis.__rustProjectionTest.encode(input)};" +
+      "export function encodeRustPatch(){return null};export function encodeRustResources(){return new Uint8Array(0)};" +
+      "export function encodeRustRetainedPatch(a,b,c){return globalThis.__rustProjectionTest.retained(a,b,c)}",
+    );
+    const renderer = await createRustDrawListExecutor({ canvas: document.createElement("canvas"), width: 1,
+      height: 1, designWidth: 1, designHeight: 1, onInvalidate: () => {} });
+    const list = createDrawList<string>();
+    const quad = createQuadView(); quad.w = quad.h = quad.srcW = quad.srcH = 1; list.pushQuad(quad);
+    expect(await renderer.render(list)).toBe(true);
+    expect(await renderer.patchScene({ primitives: [{ id: "text:label", transform: [1, 0, 0, 1, 9, 2], alpha: 0.4 }] }))
+      .toMatchObject({ presented: true });
+    expect(updates).toHaveLength(1);
+    expect(updates[0].localTransform).toEqual([1, 0, 0, 1, 9, 2]);
+    expect(updates[0].command).toMatchObject({ kind: "glyphRun", alpha: 0.4 });
+    expect(uploaded).not.toHaveBeenCalled();
+    renderer.dispose();
+  });
+
+  it("recreates the Rust surface after context restoration and admits a fresh scene", async () => {
+    const canvas = document.createElement("canvas");
+    let creates = 0, admissions = 0;
+    (globalThis as Record<string, unknown>).__rustProjectionTest = { create: () => {
+      creates++;
+      return { backend: "WebGL2", resize: () => {}, dispose: () => {}, upload_rgba_batch: () => 0,
+        admit_scene: () => JSON.stringify({ accepted: true, revision: ++admissions, resourcePending: 0 }),
+        apply_patch: () => JSON.stringify({ accepted: true, revision: ++admissions, resourcePending: 0 }),
+        present: async () => JSON.stringify({ presented: true, revision: admissions, draws: 1, resourcePending: 0 }) };
+    } };
+    vi.stubEnv("VITE_RUST_PROTOTYPE_MODULE_URL", moduleUrl(
+      "export default async function init(){return {}};export class RustRenderer{static async create(){return globalThis.__rustProjectionTest.create()}}",
+    ));
+    vi.stubEnv("VITE_RUST_SCENE_SERIALIZER_URL", moduleUrl(
+      "export function encodeRustScene(input){return {bytes:new Uint8Array([1]),scene:{version:2,revision:input.revision,width:1,height:1,designWidth:1,designHeight:1,resources:[],commands:[{id:'c0',kind:'quad'}]},resources:[],textUploads:[],unsupportedCommands:0}};" +
+      "export function encodeRustPatch(){return null};export function encodeRustResources(){return new Uint8Array(0)}",
+    ));
+    const renderer = await createRustDrawListExecutor({ canvas, width: 1, height: 1, designWidth: 1,
+      designHeight: 1, onInvalidate: () => {} });
+    const list = createDrawList<string>();
+    const quad = createQuadView(); quad.w = quad.h = quad.srcW = quad.srcH = 1; list.pushQuad(quad);
+    expect(await renderer.render(list)).toBe(true);
+    const lost = new Event("webglcontextlost", { cancelable: true });
+    canvas.dispatchEvent(lost);
+    expect(lost.defaultPrevented).toBe(true);
+    expect(renderer.stats.contextReady).toBe(false);
+    canvas.dispatchEvent(new Event("webglcontextrestored"));
+    await vi.waitFor(() => expect(creates).toBe(2));
+    expect(renderer.stats.contextReady).toBe(true);
+    expect(await renderer.render(list)).toBe(true);
+    expect(admissions).toBe(2);
+    renderer.dispose();
+  });
+
   it("falls back to rebuilding its own command index when the serializer offers none", async () => {
     window.history.replaceState({}, "", "/?rustFastSerializer=1");
     let acceptedRevision = 0;
