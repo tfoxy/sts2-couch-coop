@@ -30,4 +30,6 @@ O som sai apenas do computador do host - quem joga pelo navegador não tem áudi
 
 Todos os clientes no navegador precisam conseguir se conectar ao host pela mesma rede local, normalmente o mesmo Wi-Fi. Use o CouchCoop somente em uma rede local compartilhada com pessoas em quem você confia.
 
+O suporte do CouchCoop não cobre configurações remotas ou pela internet.
+
 Código-fonte e suporte: https://github.com/tfoxy/sts2-couch-coop

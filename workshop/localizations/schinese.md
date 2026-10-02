@@ -30,4 +30,6 @@
 
 所有浏览器客户端都必须能通过同一个本地网络（通常是同一个 Wi-Fi）连接到主机。请只在与可信任的人共享的本地网络中使用 CouchCoop。
 
+远程联机或通过互联网进行的游戏不在 CouchCoop 的支持范围内。
+
 源代码与支持：https://github.com/tfoxy/sts2-couch-coop

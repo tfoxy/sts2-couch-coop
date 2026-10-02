@@ -30,4 +30,6 @@ Der Ton kommt nur aus dem Host-Computer - Browser-Spieler hören auf ihrem eigen
 
 Alle Browser-Clients müssen den Host im selben lokalen Netzwerk erreichen können, normalerweise im selben WLAN. Verwende CouchCoop nur in einem lokalen Netzwerk, das du mit Personen teilst, denen du vertraust.
 
+CouchCoop unterstützt keine Remote- oder Internet-Setups.
+
 Quellcode und Support: https://github.com/tfoxy/sts2-couch-coop

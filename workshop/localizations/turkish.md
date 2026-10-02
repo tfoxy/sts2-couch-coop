@@ -30,4 +30,6 @@ Ses yalnızca host bilgisayardan çıkar - tarayıcıdan oynayanlar kendi cihazl
 
 Tüm tarayıcı istemcileri aynı yerel ağ üzerinden, genellikle aynı Wi-Fi üzerinden, host bilgisayara ulaşabilmelidir. CouchCoop'u yalnızca güvendiğin kişilerle paylaştığın bir yerel ağda kullan.
 
+CouchCoop, uzaktan veya internet üzerinden oynama senaryolarını desteklemez.
+
 Kaynak kodu ve destek: https://github.com/tfoxy/sts2-couch-coop

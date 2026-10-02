@@ -30,4 +30,6 @@ Dźwięk wydobywa się tylko z komputera hosta - gracze w przeglądarce nie sły
 
 Wszystkie klienty przeglądarkowe muszą mieć dostęp do hosta w tej samej sieci lokalnej, zwykle w tej samej sieci Wi-Fi. Używaj CouchCoop wyłącznie w sieci lokalnej współdzielonej z osobami, którym ufasz.
 
+CouchCoop nie obejmuje wsparciem konfiguracji zdalnych ani przez internet.
+
 Kod źródłowy i pomoc: https://github.com/tfoxy/sts2-couch-coop
