@@ -123,6 +123,11 @@ make_valid_payload() { # make_valid_payload <root> [lane]...
     printf 'fixture\n' > "$root/licenses/$file"
   done
   printf 'fixture\n' > "$root/licenses/npm/vue.LICENSE"
+  mkdir -p "$root/licenses/msdf-generator"
+  printf 'fixture notice\n' > "$root/licenses/msdf-generator/THIRD_PARTY_NOTICES.md"
+  printf 'crate\tversion\tchosen_spdx\tlicense_filename\nexample\t1.0.0\tMIT\texample.LICENSE\n' \
+    > "$root/licenses/msdf-generator/manifest.tsv"
+  printf 'fixture license\n' > "$root/licenses/msdf-generator/example.LICENSE"
 }
 
 # A copy of the valid payload, ready to be broken one way.
@@ -159,6 +164,15 @@ for lane in "${known_lanes[@]}"; do all_lane_args+=(--lane "$lane"); done
 valid="$fixture_root/valid/couchcoop"
 make_valid_payload "$valid"
 "$verifier" --payload "$valid" --version 1.2.3 "${all_lane_args[@]}" --complete >/dev/null
+if [[ -n "${COUCHCOOP_TEST_MSDF_LICENSE_BUNDLE:-}" ]]; then
+  real_bundle="$(clone_payload real-msdf-license-bundle)"
+  rm -rf "$real_bundle/licenses/msdf-generator"
+  mkdir -p "$real_bundle/licenses/msdf-generator"
+  cp "$COUCHCOOP_TEST_MSDF_LICENSE_BUNDLE/THIRD_PARTY_NOTICES.md" \
+    "$real_bundle/licenses/msdf-generator/THIRD_PARTY_NOTICES.md"
+  cp "$COUCHCOOP_TEST_MSDF_LICENSE_BUNDLE/licenses/"* "$real_bundle/licenses/msdf-generator/"
+  "$verifier" --payload "$real_bundle" --version 1.2.3 "${all_lane_args[@]}" --complete >/dev/null
+fi
 
 for artifact in source-map.pdb source-map.map Spirectl.Sts2.dll sts2.dll Sentry.dll unexpected.bin \
   hot-reload/CouchCoop.Mod.HotReload.dll \
@@ -188,6 +202,16 @@ done
 missing_license="$(clone_payload missing-license)"
 rm "$missing_license/NOTICE"
 expect_reject missing-license "$verifier" --payload "$missing_license" --version 1.2.3 "${all_lane_args[@]}"
+
+missing_msdf_license="$(clone_payload missing-msdf-license)"
+rm "$missing_msdf_license/licenses/msdf-generator/example.LICENSE"
+expect_reject_saying missing-msdf-license 'MSDF generator license text is missing' \
+  "$verifier" --payload "$missing_msdf_license" --version 1.2.3 "${all_lane_args[@]}"
+
+unlisted_msdf_license="$(clone_payload unlisted-msdf-license)"
+printf 'extra\n' > "$unlisted_msdf_license/licenses/msdf-generator/extra.LICENSE"
+expect_reject_saying unlisted-msdf-license 'license files disagree with manifest' \
+  "$verifier" --payload "$unlisted_msdf_license" --version 1.2.3 "${all_lane_args[@]}"
 
 # ------------------------------------------------------------------------------------------------
 # The merged layout: one payload, one lane directory per game branch, named by that lane's floor.

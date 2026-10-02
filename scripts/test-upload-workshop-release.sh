@@ -65,13 +65,17 @@ mkdir -p "$assets" "$fixture/all-revisions" "$payload/frontend/icons" "$payload/
 for file in \
   LICENSE NOTICE THIRD_PARTY_NOTICES.md couchcoop.json build-info.txt couchcoop.dll \
   CouchCoop.Mod.Contracts.dll CouchCoop.MirrorProtocol.dll QRCoder.dll DeviceDetector.NET.dll LiteDB.dll Microsoft.Extensions.DependencyInjection.Abstractions.dll Microsoft.Extensions.Logging.Abstractions.dll System.Diagnostics.DiagnosticSource.dll YamlDotNet.dll \
-  frontend/index.html frontend/app-boot frontend/manifest.webmanifest frontend/icons/icon.svg frontend/.vite/manifest.json \
+  frontend/index.html frontend/app-boot frontend/manifest.webmanifest frontend/icons/icon.svg \
   licenses/QRCoder-1.6.0-MIT.txt licenses/DeviceDetector.NET-6.5.2-Apache-2.0.txt licenses/LiteDB-5.0.21-MIT.txt licenses/Microsoft.Extensions.DependencyInjection.Abstractions-10.0.10-MIT.txt licenses/Microsoft.Extensions.Logging.Abstractions-10.0.10-MIT.txt licenses/System.Diagnostics.DiagnosticSource-10.0.10-MIT.txt licenses/YamlDotNet-18.1.0-MIT.txt licenses/spirectl-LICENSE licenses/spirectl-NOTICE licenses/godot-scene-web-LICENSE \
   licenses/HarfBuzz-LICENSE licenses/Emscripten-LICENSE licenses/OpenSans-LICENSE licenses/npm-dependencies.tsv \
-  licenses/npm/example.LICENSE frontend/app/example.js; do
+  licenses/npm/example.LICENSE licenses/msdf-generator/THIRD_PARTY_NOTICES.md \
+  licenses/msdf-generator/manifest.tsv licenses/msdf-generator/example.LICENSE \
+  frontend/app/example.js; do
   mkdir -p "$(dirname "$payload/$file")"
   printf 'fixture %s\n' "$file" > "$payload/$file"
 done
+printf 'crate\tversion\tchosen_spdx\tlicense_filename\nexample\t1.0.0\tMIT\texample.LICENSE\n' \
+  > "$payload/licenses/msdf-generator/manifest.tsv"
 
 # One directory per lane, named after that lane's game floor, holding only the lane-varying
 # assemblies. A release payload carries EVERY lane -- that is the whole point of the merged shape --
