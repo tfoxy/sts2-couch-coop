@@ -129,6 +129,12 @@ export interface LandingPresentation {
   publish(): void;
 }
 
+/** Open sampled changes by serial (`retainSourceSwaps`). */
+export interface SampleMark {
+  readonly sources: ReadonlyMap<string, number>;
+  readonly opacity: ReadonlyMap<string, number>;
+}
+
 export interface CanvasVisualState {
   readonly loop: TweenLoop;
   readonly transformOverrides: Map<string, number[]>;
@@ -137,8 +143,23 @@ export interface CanvasVisualState {
   readonly alphaApplied: Map<string, AlphaOverride>;
   readonly localAnims: ReadonlyMap<string, LocalAnim>;
   readonly frameSubstitutes: ReadonlyMap<string, MirrorNode>;
+  /** This sample's opacity changes (idle sampling reads it as "set this sample"). */
   readonly opacitySampledIds: ReadonlySet<string>;
+  /**
+   * The opacity changes a patch must draw: `opacitySampledIds` normally. With `retainSourceSwaps`, every change since
+   * a committed frame last drew it (see `sourceSampledIds`).
+   */
+  readonly opacityPatchIds: ReadonlySet<string>;
+  /**
+   * Intent-frame swaps to draw. Normally this sample's swaps only. With `retainSourceSwaps` a swap stays here until
+   * `settleSources` says a committed frame drew it: a frame that samples a swap and draws nothing (a yielding tick,
+   * a patch that never presents) must not consume it.
+   */
   readonly sourceSampledIds: ReadonlySet<string>;
+  /** `retainSourceSwaps`: the open swaps and opacity changes by serial, captured when a frame starts drawing. */
+  sampleMark(): SampleMark | null;
+  /** `retainSourceSwaps`: a frame drawn from `mark` committed; what it drew is closed unless it changed again since. */
+  settleSamples(mark: SampleMark | null): void;
   readonly landingArms: readonly LandingArm[];
   /** Per-renderer map-stroke local latches; node ids are stream-local. */
   readonly mapStrokeLocals: ReadonlyMap<string, Affine>;
@@ -225,6 +246,8 @@ export function createCanvasVisualState(
     now(): number;
     spreadAuditEnabled: boolean;
     noteIdlePeriod(at: number): void;
+    /** Keep intent-frame swaps in `sourceSampledIds` until a committed frame drew them (see there). */
+    retainSourceSwaps?: boolean;
   },
 ): CanvasVisualState {
   const transformOverrides = new Map<string, number[]>();
@@ -233,6 +256,13 @@ export function createCanvasVisualState(
   const localAnims = new Map<string, IdleEntry>();
   const opacitySampledIds = new Set<string>();
   const sourceSampledIds = new Set<string>();
+  const retainSourceSwaps = options.retainSourceSwaps === true;
+  /** `retainSourceSwaps`: each open swap's serial, so a settle never clears a swap made after its mark. */
+  const sourceSwapSerials = new Map<string, number>();
+  let sourceSwapSerial = 0;
+  /** `retainSourceSwaps`: opacity changes no committed frame has drawn yet, by serial. */
+  const opacityPending = new Set<string>();
+  const opacitySerials = new Map<string, number>();
   const frameSubstitutes = new Map<string, MirrorNode>();
   const idleEntries = new Map<string, IdleEntry>();
   const intentEntries = new Map<string, IntentEntry>();
@@ -696,6 +726,8 @@ export function createCanvasVisualState(
     if (idleEntries.delete(id)) loop.applyPinnedLoop(id, null, at);
     intentEntries.delete(id);
     frameSubstitutes.delete(id);
+    // A removed node has no swap left to draw (`retainSourceSwaps`); an open one would only force a build.
+    if (retainSourceSwaps) { sourceSampledIds.delete(id); sourceSwapSerials.delete(id); opacityPending.delete(id); opacitySerials.delete(id); }
     transformParents.delete(id);
     active.delete(id);
     ports.onNodeRemoved(id);
@@ -818,14 +850,17 @@ export function createCanvasVisualState(
       }
       frameSampleMask |= SAMPLE_SOURCE;
       sourceSampledIds.add(id);
+      if (retainSourceSwaps) sourceSwapSerials.set(id, ++sourceSwapSerial);
     }
+    // Swaps no frame has drawn yet still need drawing.
+    if (retainSourceSwaps && sourceSampledIds.size) frameSampleMask |= SAMPLE_SOURCE;
   }
 
   function sweepTweens(at: number): void {
     active.clear();
     frameSampleMask = SAMPLE_NONE;
     opacitySampledIds.clear();
-    sourceSampledIds.clear();
+    if (!retainSourceSwaps) sourceSampledIds.clear();
     for (const id of loop.activeIds()) {
       active.add(id);
       const mask = loop.sampleInto(id, sampleTransform, sampleAlphas, at);
@@ -923,6 +958,10 @@ export function createCanvasVisualState(
       localAnims.clear();
       intentEntries.clear();
       frameSubstitutes.clear();
+      sourceSampledIds.clear();
+      sourceSwapSerials.clear();
+      opacityPending.clear();
+      opacitySerials.clear();
       idleActive = 0;
       ports.onRewrite();
     }
@@ -1065,6 +1104,21 @@ export function createCanvasVisualState(
     frameSubstitutes,
     opacitySampledIds,
     sourceSampledIds,
+    opacityPatchIds: retainSourceSwaps ? opacityPending : opacitySampledIds,
+    sampleMark: () => retainSourceSwaps ? { sources: new Map(sourceSwapSerials), opacity: new Map(opacitySerials) } : null,
+    settleSamples(mark) {
+      if (!mark) return;
+      for (const [id, serial] of mark.sources) {
+        if (sourceSwapSerials.get(id) !== serial) continue;
+        sourceSwapSerials.delete(id);
+        sourceSampledIds.delete(id);
+      }
+      for (const [id, serial] of mark.opacity) {
+        if (opacitySerials.get(id) !== serial) continue;
+        opacitySerials.delete(id);
+        opacityPending.delete(id);
+      }
+    },
     landingArms,
     mapStrokeLocals,
     get mapStrokePinReuses() {
@@ -1103,6 +1157,10 @@ export function createCanvasVisualState(
       sweepTweens(at);
       sweepIdle(at);
       tickIntents(at);
+      if (retainSourceSwaps) for (const id of opacitySampledIds) {
+        opacityPending.add(id);
+        opacitySerials.set(id, ++sourceSwapSerial);
+      }
     },
     advance(at) {
       loop.advance(at);

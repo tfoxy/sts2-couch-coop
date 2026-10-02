@@ -1,6 +1,6 @@
 import type { DrawList } from "@godot-scene-web/canvas";
 import type { PixiDrawListRenderer, PixiDrawListRendererStats, PixiScenePlan, PixiScenePatch, PixiTextOutcomes, PixiTextRecord } from "@godot-scene-web/canvas/pixi";
-import type { MirrorDrawExecutorFactory } from "./createPixiMirrorRenderer";
+import type { ClipTranslatingScenePatch, MirrorDrawExecutorFactory } from "./createPixiMirrorRenderer";
 import { offsetRustTextCarrierTransform } from "@/mirror/renderer/semanticTextLayout";
 import { createBitmapTextMethod } from "./textMethods/bitmap";
 import type { TextInkRaster, CorpusInput, CorpusRow } from "./textMethods/types";
@@ -88,6 +88,21 @@ export const createRustDrawListExecutor: MirrorDrawExecutorFactory = async ({ ca
     (wasmUrl ? import(/* @vite-ignore */ wasmUrl) : import("@couchcoop/rust-prototype-glue")) as Promise<{ default: () => Promise<{ memory?: WebAssembly.Memory }>; RustRenderer: { create(canvas: HTMLCanvasElement): Promise<RustWasmRenderer> } }>,
     (sceneUrl ? import(/* @vite-ignore */ sceneUrl) : import("@godot-scene-web/canvas/rust-prototype")) as Promise<Serializer>,
   ]);
+  // rustOffsetPatch: whether this serializer encodes a clip translation (a `clipPush` replacement that keeps the
+  // clip's size). An older one refuses it, which would turn every patch carrying a clip move into a full admission.
+  /** rustOffsetPatch: each clip push's rect as the last full admission placed it. */
+  let admittedClipRects = new Map<string, number[]>();
+  // Asked once, on first use.
+  let clipProbe: boolean | undefined;
+  const translatesClips = () => clipProbe ??= (() => {
+    const encode = serializer.encodeRustRetainedPatch;
+    if (!encode) return false;
+    const clip = { id: "c0", kind: "clipPush", rect: [0, 0, 1, 1], radius: 0, outset: 0 };
+    try {
+      return encode({ version: 2, revision: 1, width: 1, height: 1, designWidth: 1, designHeight: 1, resources: [],
+        commands: [clip, { id: "c1", kind: "clipPop" }] }, 2, [{ id: "c0", command: { ...clip, rect: [1, 0, 1, 1] } }]) !== null;
+    } catch { return false; }
+  })();
   const importedAt = performance.now();
   startupEvent?.("rust.moduleImported", { elapsedMs: importedAt - startedAt });
   const wasmExports = await wasmModule.default();
@@ -1028,6 +1043,12 @@ export const createRustDrawListExecutor: MirrorDrawExecutorFactory = async ({ ca
         if (firstPresentMs === null) firstPresentMs = performance.now() - startedAt;
         committedScene = sceneBytes;
         committedTypedScene = encoded.scene;
+        admittedClipRects = new Map();
+        for (const command of encoded.scene?.commands ?? []) {
+          const rect = command.rect;
+          if (command.kind === "clipPush" && Array.isArray(rect) && rect.length === 4 && rect.every(Number.isFinite))
+            admittedClipRects.set(String(command.id), rect.map(Number));
+        }
         // rustFast `fastSerializer`: reuse the serializer's own cached index when it offers one, instead of
         // walking `scene.commands` + `String(command.id)` ourselves. Copied into a fresh, OWNED `Map` either way
         // — `committedCommandIndexes` is mutated in place by `submitRetained` below, and a serializer-owned map
@@ -1058,7 +1079,7 @@ export const createRustDrawListExecutor: MirrorDrawExecutorFactory = async ({ ca
     return settled;
   }
 
-  function encodeRetainedPatch(patch: PixiScenePatch<string>): { bytes: Uint8Array; scene: RustSceneSnapshot; changedIndexes: readonly number[] } | null {
+  function encodeRetainedPatch(patch: ClipTranslatingScenePatch): { bytes: Uint8Array; scene: RustSceneSnapshot; changedIndexes: readonly number[] } | null {
     const started = phaseTimingEnabled ? performance.now() : 0;
     const base = committedTypedScene;
     const encode = serializer.encodeRustRetainedPatch;
@@ -1090,6 +1111,16 @@ export const createRustDrawListExecutor: MirrorDrawExecutorFactory = async ({ ca
       }
       updates.set(id, update);
     }
+    // rustOffsetPatch: a clip moved by translation. The serializer names an unplanned command `c<list index>`, and
+    // Couch never plans a clip push or places one under a group, so its rect is in design space and moves as is.
+    // The rect is recomputed from the admitted one plus the clip's total translation, never accumulated per patch.
+    for (const clip of patch.clips ?? []) {
+      const id = `c${clip.index}`, commandIndex = committedCommandIndexes.get(id);
+      const old = commandIndex === undefined ? undefined : base.commands[commandIndex];
+      const rect = admittedClipRects.get(id);
+      if (!old || old.kind !== "clipPush" || !rect || updates.has(id)) return null;
+      updates.set(id, { id, command: { ...old, rect: [rect[0] + clip.totalDx, rect[1] + clip.totalDy, rect[2], rect[3]] } });
+    }
     const groups = (patch.groups ?? []).filter((group): group is typeof group & { transform: readonly number[] } => group.transform !== undefined)
       .map(({ id, transform }) => ({ id, transform }));
     if ((patch.groups?.some((group) => group.alpha !== undefined) ?? false) || groups.some((group) => !group.transform)) return null;
@@ -1099,7 +1130,7 @@ export const createRustDrawListExecutor: MirrorDrawExecutorFactory = async ({ ca
     return result;
   }
 
-  function submitRetained(patch: PixiScenePatch<string>, diagnostic?: (event: ProducerExecutorEvent) => void,
+  function submitRetained(patch: ClipTranslatingScenePatch, diagnostic?: (event: ProducerExecutorEvent) => void,
     profileIdentity?: ProfileIdentity): Promise<{ presented: boolean; reason?: string }> {
     if (disposed) return Promise.resolve({ presented: false, reason: "disposed" });
     if (retainedPatchInFlight) return Promise.resolve({ presented: false, reason: "retained patch already in flight" });
@@ -1164,6 +1195,7 @@ export const createRustDrawListExecutor: MirrorDrawExecutorFactory = async ({ ca
 
   return {
     app, stats,
+    get translatesClips() { return translatesClips(); },
     resize(nextWidth: number, nextHeight: number, _resolution = 1, nextDesignWidth = nextWidth, nextDesignHeight = nextHeight) {
       surfaceWidth = nextWidth; surfaceHeight = nextHeight;
       sceneDesignWidth = nextDesignWidth; sceneDesignHeight = nextDesignHeight;
@@ -1184,7 +1216,7 @@ export const createRustDrawListExecutor: MirrorDrawExecutorFactory = async ({ ca
       return startupResourceEvent ? result : result.then((value) => value.presented); },
     admitScene(list: DrawList<string>, text: readonly PixiTextRecord[] = [], plan: PixiScenePlan,
       diagnostic?: (event: ProducerExecutorEvent) => void, profileIdentity?: ProfileIdentity) { stats.objects = list.count; return submit(list, text, plan, diagnostic, profileIdentity); },
-    patchScene(patch: PixiScenePatch<string>, diagnostic?: (event: ProducerExecutorEvent) => void, profileIdentity?: ProfileIdentity) {
+    patchScene(patch: ClipTranslatingScenePatch, diagnostic?: (event: ProducerExecutorEvent) => void, profileIdentity?: ProfileIdentity) {
       return submitRetained(patch, diagnostic, profileIdentity);
     },
     presentScene(diagnostic?: (event: ProducerExecutorEvent) => void, profileIdentity?: ProfileIdentity) {

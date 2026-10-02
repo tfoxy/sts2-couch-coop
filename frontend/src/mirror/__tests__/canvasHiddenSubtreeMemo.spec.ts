@@ -18,7 +18,8 @@ import {
   type CapturedGlobal,
   type CosmeticOffset,
   type DrawListBuild,
-  type LocalAnim
+  type LocalAnim,
+  type SpreadRegistry
 } from "@/mirror/canvas/buildDrawList";
 import { createHiddenSubtreeMemo, type HiddenSubtreeMemo } from "@/mirror/canvas/hiddenSubtreeMemo";
 import { createHitMemo, resolveSceneInfo } from "@/mirror/canvas/hitTest";
@@ -119,6 +120,9 @@ function mkNode(id: string, parentId: string | null, over: Partial<MirrorNode> =
 }
 
 const fill = (a = 1) => ({ r: 0.5, g: 0.25, b: 1, a, html: "#8040ff" });
+/** The phone's widened stage factor (designWidth 2520), and a full-frame box. */
+const WIDE = 1.3125;
+const FULL = { x: 0, y: 0, width: 1920, height: 1080 };
 
 /** Producer pre-order over a parent → children structure, the way the wire's `orderedIds` is built. */
 function flatten(roots: readonly string[], kids: ReadonlyMap<string, readonly string[]>): string[] {
@@ -194,17 +198,38 @@ interface Run {
 interface Builder {
   memo: HiddenSubtreeMemo | null;
   cache: PaintOrderCache | null;
+  /** This builder's own spread outputs, retained across builds and cleared before each, as the renderer does. */
+  spreadDx: Map<string, number>;
+  spreadModes: Map<string, number>;
   /** `compare: false` builds without collecting the plain data (`data` is then null). */
   run(state: MirrorState, options: BuildDrawListOptions, compare?: boolean): Run;
 }
+
+/**
+ * The live registry's shape over one builder's own spread map: an owner answer is whatever this build has banked
+ * for the owner so far (the renderer reads the map its build is filling), and a follower answer is a function of
+ * the game point. `OWN_REGISTRY` in the options selects it.
+ */
+function registryOver(spreadDx: Map<string, number>): SpreadRegistry {
+  return {
+    ownerDx: (ownerId, fallbackDx) => spreadDx.get(ownerId) ?? fallbackDx,
+    followerShift: (gx, gy) => gx * 0.125 + gy * 0.01
+  };
+}
+const OWN_REGISTRY = { ownerDx: () => 0, followerShift: () => 0 } as SpreadRegistry;
 
 function mkBuilder(memo: HiddenSubtreeMemo | null, opts: { reuse?: boolean; verify?: boolean } = {}): Builder {
   const list = createDrawList<string>();
   const cache = opts.reuse ? createPaintOrderCache() : null;
   const hitMemo = createHitMemo();
+  const spreadDx = new Map<string, number>();
+  const spreadModes = new Map<string, number>();
+  const ownRegistry = registryOver(spreadDx);
   return {
     memo,
     cache,
+    spreadDx,
+    spreadModes,
     run(state, options, compare = true) {
       if (cache !== null) {
         if (state.sceneRewrite) cache.invalidateAll();
@@ -215,8 +240,13 @@ function mkBuilder(memo: HiddenSubtreeMemo | null, opts: { reuse?: boolean; veri
       const capture = options.captureGlobals
         ? { ids: options.captureGlobals.ids, out: new Map<string, CapturedGlobal>() }
         : null;
+      spreadDx.clear();
+      spreadModes.clear();
       const build = buildDrawList(state, list, {
         ...options,
+        spreadDxOut: spreadDx,
+        spreadFieldModeOut: spreadModes,
+        spreadRegistry: options.spreadRegistry === OWN_REGISTRY ? ownRegistry : options.spreadRegistry,
         captureGlobals: capture,
         paintOrderCache: cache ?? undefined,
         structureReuse: opts.reuse === true,
@@ -239,7 +269,9 @@ function mkBuilder(memo: HiddenSubtreeMemo | null, opts: { reuse?: boolean; veri
           capture: capture?.out ?? null,
           list: listRows(list),
           semantic,
-          visited
+          visited,
+          spreadDx,
+          spreadModes
         },
         state
       );
@@ -488,17 +520,19 @@ describe("hidden-subtree memo", () => {
     expect(memo.stats.replayedNodes).toBe(0);
   });
 
-  it("sits out a widened stage and the hidden-walk diagnostic without dropping its entries", () => {
+  it("sits out a widened stage without the spread switch, and the hidden-walk diagnostic, keeping its entries", () => {
     const { state, memo, builders, options } = setup();
     buildAll(builders, state, options);
-    buildAll(builders, state, { ...options, spreadFactor: 1.3125, spreadDxOut: new Map() });
+    buildAll(builders, state, { ...options, spreadFactor: 1.3125 });
     buildAll(builders, state, { ...options, hiddenWalkDiagnostic: () => {} });
     expect(memo.stats.bypassedBuilds).toBe(2);
     buildAll(builders, state, options);
     expect(memo.stats.hits).toBe(2);
   });
 
-  it("stays exact through a randomized delta and option sequence", () => {
+  // The spread variant adds anchors, H/V boxes, owner floaters, remote followers and box-less groups to the nodes,
+  // and moves the stage between three factors (stretch off included) with the spread-aware memo on.
+  it.each([false, true])("stays exact through a randomized delta and option sequence (spread: %s)", (spread) => {
     let seed = 0x5eed1;
     const rand = (): number => {
       seed = (seed + 0x6d2b79f5) | 0;
@@ -513,6 +547,7 @@ describe("hidden-subtree memo", () => {
     const roots: string[] = [];
     const kids = new Map<string, string[]>();
     let serial = 0;
+    const spreadKinds = ["Godot.Node2D", "Godot.Sprite2D", "Test.NRemoteMouseCursor"];
     const fresh = (parentId: string | null): MirrorNode => mkNode(`n${serial++}`, parentId, {
       visible: rand() > 0.25,
       showBehindParent: rand() < 0.15,
@@ -521,9 +556,26 @@ describe("hidden-subtree memo", () => {
       modulate: rand() < 0.2 ? fill(rand()) : null,
       clipContents: rand() < 0.1,
       nodeType: pick(kinds),
-      transform: rand() < 0.1 ? null : [1 + rand(), 0, 0, 1 + rand(), rand() * 200, rand() * 200]
+      transform: rand() < 0.1 ? null : [1 + rand(), 0, 0, 1 + rand(), rand() * 200, rand() * 200],
+      ...(spread ? spreadExtras() : {})
     });
+    function spreadExtras(): Partial<MirrorNode> {
+      const anchored = rand() < 0.5;
+      const left = pick([0, 0, 0.5, 1]);
+      const ids = [...state.nodes.keys()];
+      return {
+        ...(rand() < 0.2 ? { nodeType: pick(spreadKinds) } : {}),
+        anchorLeft: anchored ? left : null,
+        anchorRight: anchored ? pick([left, 1]) : null,
+        containerLayout: rand() < 0.15 ? pick(["hbox-begin", "hbox-center", "hbox-end", "vbox"]) : null,
+        anchorOwnerId: ids.length > 0 && rand() < 0.05 ? pick(ids) : null,
+        localRect: rand() < 0.2 ? null : { x: 0, y: 0, width: pick([0, 40, 100, 1920]), height: 100 },
+        mouseFilter: rand() < 0.1 ? 0 : null
+      };
+    }
     const initial: MirrorNode[] = [];
+    // The node map the spread extras pick owner ids from; replaced by the real state once it exists.
+    let state = createMirrorState();
     for (let i = 0; i < 48; i++) {
       const parent = initial.length === 0 || rand() < 0.1 ? null : pick(initial).id;
       const node = fresh(parent);
@@ -531,7 +583,7 @@ describe("hidden-subtree memo", () => {
       if (parent === null) roots.push(node.id);
       else kids.set(parent, [...(kids.get(parent) ?? []), node.id]);
     }
-    const state = stateOf(initial, flatten(roots, kids));
+    state = stateOf(initial, flatten(roots, kids));
     const live = () => [...state.nodes.keys()];
     const subtree = (id: string): Set<string> => {
       const out = new Set<string>([id]);
@@ -558,7 +610,10 @@ describe("hidden-subtree memo", () => {
     const viewScaleEnv = viewScaleEnvFor(state, () => viewScaleOn);
     // One override array is mutated IN PLACE between builds, the way a sampler may reuse its output.
     const inPlace: number[] = [1, 0, 0, 1, 0, 0];
-    let options: BuildDrawListOptions = { viewScaleEnv };
+    let spreadFactor = WIDE;
+    const spreadOptions = (): BuildDrawListOptions =>
+      spread ? { spreadFactor, spreadRegistry: OWN_REGISTRY, hiddenSubtreeMemoSpread: true } : {};
+    let options: BuildDrawListOptions = { viewScaleEnv, ...spreadOptions() };
 
     for (let step = 0; step < 400; step++) {
       if (rand() < 0.1) inPlace[5] = rand() * 30;
@@ -609,6 +664,7 @@ describe("hidden-subtree memo", () => {
         const overrideIds = rand() < 0.5 ? some(2) : [];
         options = {
           viewScaleEnv,
+          ...spreadOptions(),
           transformOverrides: new Map<string, readonly number[]>([
             ...overrideIds.map((id) => [id, [1, 0, 0, 1, rand() * 40, 0]] as [string, number[]]),
             ...(ids.length > 0 && rand() < 0.5 ? [[pick(ids), inPlace] as [string, number[]]] : [])
@@ -622,6 +678,9 @@ describe("hidden-subtree memo", () => {
         };
       } else if (roll < 0.8) {
         viewScaleOn = !viewScaleOn;
+      } else if (spread && roll < 0.85) {
+        spreadFactor = pick([WIDE, WIDE, 1.2, 1]);
+        options = { ...options, ...spreadOptions() };
       }
       // …and the rest of the steps rebuild an unchanged state, which is where the memo answers.
       buildAll(builders, state, options);
@@ -635,6 +694,11 @@ describe("hidden-subtree memo", () => {
     expect(captureMemo.stats.missReasons.capture).toBeGreaterThan(0);
     expect(captureVerifyMemo.stats.verified).toBeGreaterThan(50);
     expect(captureVerifyMemo.stats.verifyMismatches).toBe(0);
+    if (spread) {
+      // The widened builds took part, and the factor changes were among the misses.
+      expect(memo.stats.bypassedBuilds).toBe(0);
+      expect(memo.stats.missReasons.env).toBeGreaterThan(0);
+    }
   }, 120_000);
 });
 
@@ -734,6 +798,132 @@ describe("hidden-subtree memo with captures", () => {
     for (let i = 0; i < 3; i++) buildAll(builders, state, options);
     expect(memo.stats.missReasons).toStrictEqual({ absent: 1, tainted: 3 });
     expect(memo.stats.hits).toBe(2); // the orphan only
+  });
+});
+
+// --- a widened stage (`rustHiddenMemoSpread`) ----------------------------------------------------------------------
+
+// Every spread branch a hidden subtree can take, under an anchored full-frame root that hands down a real widening:
+// an anchored span that widens and is an H-box (its children take the box-child branch), a box-less pass-through
+// group, a positional claimer under it (field mode 2), a boxed Control riding the group's claim, and a visible
+// positional claimer `panel` beside it. The orphan is a second hidden root, entered from the stage root context.
+function wideScene(): MirrorNode[] {
+  return [
+    mkNode("root", null, { anchorLeft: 0, anchorRight: 1, localRect: FULL }),
+    mkNode("panel", "root", { fillColor: fill(), transform: [1, 0, 0, 1, 700, 100] }),
+    mkNode("H", "root", { visible: false, anchorLeft: 0, anchorRight: 1, localRect: FULL }),
+    mkNode("hbox", "H", { anchorLeft: 0, anchorRight: 1, containerLayout: "hbox-center", localRect: { x: 0, y: 0, width: 600, height: 100 } }),
+    mkNode("hb1", "hbox", { fillColor: fill(), localRect: { x: 0, y: 0, width: 50, height: 50 } }),
+    mkNode("hb2", "hbox", { fillColor: fill(), transform: [1, 0, 0, 1, 60, 0], localRect: { x: 0, y: 0, width: 50, height: 50 } }),
+    mkNode("group", "H", { nodeType: "Godot.Node2D", localRect: null, transform: [1, 0, 0, 1, 1400, 300] }),
+    mkNode("g1", "group", { nodeType: "Godot.Sprite2D", fillColor: fill(), localRect: { x: -15, y: -15, width: 30, height: 30 } }),
+    mkNode("g2", "group", { anchorLeft: 0, anchorRight: 0, fillColor: fill(), localRect: { x: 0, y: 0, width: 20, height: 20 } }),
+    mkNode("tail", "root", { fillColor: fill(), transform: [1, 0, 0, 1, 50, 60] }),
+    mkNode("orphan", "ghost", { fillColor: fill(), transform: [1, 0, 0, 1, 1700, 7] }),
+    mkNode("orphanKid", "orphan", { fillColor: fill() })
+  ];
+}
+
+describe("hidden-subtree memo on a widened stage", () => {
+  const setup = (nodes: MirrorNode[] = wideScene()) => {
+    const state = stateOf(nodes);
+    const memo = createHiddenSubtreeMemo();
+    const verifyMemo = createHiddenSubtreeMemo();
+    const builders = [mkBuilder(null), mkBuilder(memo), mkBuilder(createHiddenSubtreeMemo(), { reuse: true }),
+      mkBuilder(verifyMemo, { verify: true })];
+    const options: BuildDrawListOptions = { viewScaleEnv: viewScaleEnvFor(state), spreadFactor: WIDE,
+      spreadRegistry: OWN_REGISTRY, hiddenSubtreeMemoSpread: true };
+    return { state, memo, verifyMemo, builders, options };
+  };
+
+  it("replays the subtree's spread shifts and field modes, in walk order, at the root's position", () => {
+    const { state, memo, verifyMemo, builders, options } = setup();
+    for (let i = 0; i < 3; i++) buildAll(builders, state, options);
+    const [reference, replayed] = builders;
+    // Every branch was taken under the hidden root, so the replayed maps carry real, distinct shifts.
+    expect([...reference.spreadDx.keys()]).toStrictEqual(state.orderedIds);
+    expect(reference.spreadDx.get("hb1")).toBeCloseTo(0.5 * 600 * (WIDE - 1) * 1920 / 600, 6);
+    expect(reference.spreadModes.get("group")).toBe(1);
+    expect(reference.spreadModes.get("g1")).toBe(2);
+    expect(reference.spreadDx.get("g2")).toBe(reference.spreadDx.get("group"));
+    expect(new Set([...reference.spreadDx.values()]).size).toBeGreaterThan(3);
+    expect([...replayed.spreadDx]).toStrictEqual([...reference.spreadDx]);
+    expect(memo.stats.bypassedBuilds).toBe(0);
+    expect(memo.stats.hits).toBe(4);
+    expect(memo.stats.replayedNodes).toBe(2 * (7 + 2));
+    expect(verifyMemo.stats.verified).toBe(4);
+    expect(verifyMemo.stats.verifyMismatches).toBe(0);
+  });
+
+  it("misses on a spread-factor change and on a stretch toggle, and replays each factor's own shifts", () => {
+    const { state, memo, verifyMemo, builders, options } = setup();
+    const factors = [WIDE, WIDE, 1.2, 1.2, 1, 1, WIDE, WIDE];
+    const dxOf = new Map<number, number>();
+    for (const spreadFactor of factors) {
+      buildAll(builders, state, { ...options, spreadFactor });
+      const dx = builders[1].spreadDx.get("g1") ?? 0;
+      if (dxOf.has(spreadFactor)) expect(dx).toBe(dxOf.get(spreadFactor));
+      dxOf.set(spreadFactor, dx);
+    }
+    expect(dxOf.get(1)).toBe(0);
+    expect(dxOf.get(1.2)).not.toBe(dxOf.get(WIDE));
+    // Two roots miss at each of the three flips, and hit on each repeat.
+    expect(memo.stats.missReasons).toStrictEqual({ absent: 2, env: 6 });
+    expect(memo.stats.hits).toBe(8);
+    expect(memo.stats.bypassedBuilds).toBe(0);
+    expect(verifyMemo.stats.verifyMismatches).toBe(0);
+  });
+
+  it("misses when only the inherited spread context changes", () => {
+    // H sits under an owner-anchored floater whose shift is `panel`'s: moving `panel` changes what H inherits while
+    // every node above and inside H, and every pose the walk hands H, stays the same.
+    const nodes = wideScene().map((node) => (node.id === "H" ? { ...node, parentId: "float" } : node));
+    nodes.splice(2, 0, mkNode("float", "root", { anchorOwnerId: "panel", localRect: null }));
+    const { state, memo, verifyMemo, builders, options } = setup(nodes);
+    buildAll(builders, state, options);
+    buildAll(builders, state, options);
+    const before = builders[1].spreadDx.get("hb1");
+    replace(state, "panel", { transform: [1, 0, 0, 1, 900, 100] });
+    buildAll(builders, state, options);
+    expect(builders[1].spreadDx.get("hb1")).not.toBe(before);
+    expect(memo.stats.missReasons.context).toBe(1);
+    buildAll(builders, state, options);
+    expect(memo.stats.hits).toBe(2 + 1 + 2); // H and the orphan, then the orphan, then both
+    expect(verifyMemo.stats.verifyMismatches).toBe(0);
+  });
+
+  it("refuses a subtree that asks the spread registry, and records it when there is no registry", () => {
+    const nodes = wideScene();
+    nodes.push(
+      mkNode("H2", "root", { visible: false, localRect: null }),
+      mkNode("tipLike", "H2", { anchorOwnerId: "panel", fillColor: fill() }),
+      mkNode("H3", "root", { visible: false, localRect: null }),
+      mkNode("cursor", "H3", { nodeType: "Test.NRemoteMouseCursor", fillColor: fill(), transform: [1, 0, 0, 1, 1000, 500] })
+    );
+    const { state, memo, verifyMemo, builders, options } = setup(nodes);
+    for (let i = 0; i < 4; i++) buildAll(builders, state, options);
+    expect(memo.stats.notRecorded["spread-owner"]).toBeGreaterThanOrEqual(1);
+    expect(memo.stats.notRecorded["spread-follower"]).toBeGreaterThanOrEqual(1);
+    expect(memo.stats.hits).toBe(3 * 2); // H and the orphan only
+    expect(verifyMemo.stats.verifyMismatches).toBe(0);
+    // With no registry both answers are the pure fallbacks, and all four roots replay.
+    const bare = setup(nodes);
+    for (let i = 0; i < 3; i++) buildAll(bare.builders, bare.state, { ...bare.options, spreadRegistry: null });
+    expect(bare.memo.stats.hits).toBe(2 * 4);
+    expect(bare.memo.stats.notRecorded).toStrictEqual({});
+  });
+
+  it("keeps recordings made without spread outputs replayable into a build that has them", () => {
+    const { state, memo, options } = setup();
+    const reference = mkBuilder(null);
+    const memoBuilder = mkBuilder(memo);
+    // The memo builder's first build publishes no spread maps; its recording must still carry the shifts.
+    const bare = { ...memoBuilder, run: (s: MirrorState, o: BuildDrawListOptions) =>
+      buildDrawList(s, createDrawList<string>(), { ...o, hiddenSubtreeMemo: memo, spreadRegistry: null }) };
+    bare.run(state, { ...options, spreadRegistry: null });
+    buildAll([reference, memoBuilder], state, { ...options, spreadRegistry: null });
+    expect(memo.stats.hits).toBe(2);
+    expect([...memoBuilder.spreadDx]).toStrictEqual([...reference.spreadDx]);
   });
 });
 

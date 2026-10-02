@@ -25,9 +25,11 @@ import {
   raiseModeOn,
   scanRaiseIndex,
   EMPTY_HAND_RAISE_PLAN,
+  type ChildrenOf,
   type HandRaiseInput,
   type HandRaisePlan,
-  type RaiseSceneIndex
+  type RaiseSceneIndex,
+  type RaiseSceneScan
 } from "@/mirror/raise/handRaisePlan";
 import { holderLocalY, holderPaintedLocalY, type HolderPoseEnv } from "@/mirror/raise/holderLocalY";
 import type { MirrorNode, MirrorState } from "@/mirror/sceneTree";
@@ -70,36 +72,50 @@ export interface HandRaiseTweenEnv {
  *
  * A pure function of the state plus the two live facts in `HandRaiseInput` — so a caller can run it, diff it
  * against the last one, and repaint only when it changed.
+ *
+ * `cache`/`verify` are WP4's `rustRaiseIndexCache`/`rustFastVerify` (see the cache block below): `cache` is the
+ * CALLER's own {@link RaiseIndexCacheSlot} (or `null` to run uncached), threaded through rather than read off a
+ * flags object here so this module stays free of any dependency on `rustFastFlags`.
+ * `renderer/canvas/interactionRuntime.ts` is the one caller — it owns one slot per runtime instance and clears it
+ * on `dispose()` (see the slot's own doc).
  */
 export function planCanvasHandRaise(
   state: MirrorState | null,
   input: HandRaiseInput,
-  tween: HandRaiseTweenEnv | null = null
+  tween: HandRaiseTweenEnv | null = null,
+  cache: RaiseIndexCacheSlot | null = null,
+  verify = false
 ): HandRaisePlan {
   // Asked before the SCAN, not after: with the mode off this backend must not walk the whole state to build an
   // index the planner would throw away. (The shared planner asks the same question again; it is one branch.)
   if (!raiseModeOn(input.enabled)) {
     return EMPTY_HAND_RAISE_PLAN;
   }
-  return planHandRaise(canvasRaiseIndex(state, tween), input);
+  return planHandRaise(canvasRaiseIndex(state, tween, cache, verify), input);
 }
 
 /** The scan + the pose read, as the shared planner's index. Exported so a probe can measure what the pass saw. */
-export function canvasRaiseIndex(state: MirrorState | null, tween: HandRaiseTweenEnv | null): RaiseSceneIndex {
+export function canvasRaiseIndex(
+  state: MirrorState | null,
+  tween: HandRaiseTweenEnv | null,
+  cache: RaiseIndexCacheSlot | null = null,
+  verify = false
+): RaiseSceneIndex {
   if (state === null) {
     return EMPTY_INDEX;
   }
   const nodes = state.nodes;
-  const scan = scanRaiseIndex(nodes);
+  const scan = cache ? cachedScanRaiseIndex(cache, state, verify) : scanRaiseIndex(nodes);
   // The child index is built ONCE per pass, and lazily: a scene with no creature on screen never pays for it (it
-  // is the creature walks, and only they, that need a parent → children map).
-  let children: ((id: string) => readonly string[]) | null = null;
+  // is the creature walks, and only they, that need a parent → children map). With the cache on, it is also built
+  // at most once per REVISION rather than once per pass — see the cache block below.
+  let children: ChildrenOf | null = null;
   // ONE env for the whole pass, not one per holder: this is called for every card in the hand on every frame the
   // plan is re-run, and the two ports it binds are the same two for all of them.
   const pose = canvasPoseEnv(nodes, state, tween);
   return {
     nodes,
-    childrenOf: (id) => (children ??= createChildIndex(state))(id),
+    childrenOf: (id) => (children ??= cache ? cachedCreateChildIndex(cache, state, verify) : createChildIndex(state))(id),
     holders: scan.holders,
     handRootId: scan.handRootId,
     handHitboxes: scan.handHitboxes,
@@ -108,6 +124,138 @@ export function canvasRaiseIndex(state: MirrorState | null, tween: HandRaiseTwee
     choicePrompt: scan.choicePrompt,
     holderLocalY: (id) => holderLocalY(pose, id)
   };
+}
+
+// --- WP4: the raise-index cache (`rustRaiseIndexCache`) ----------------------------------------------------------
+//
+// `scanRaiseIndex` walks every node and `createChildIndex` walks `orderedIds`; both are pure functions of the
+// state's own `nodes`/`orderedIds`, which `applySceneDelta` mutates IN PLACE and marks with a bumped `revision` on
+// every delta (`sceneTree.ts`). So `(state object, revision)` is an exact cache key for both — the same precedent
+// as `interactionRuntime.targetingArrowVisible`. Nothing about WHERE a holder is headed (`holderLocalY`) or this
+// client's own drag is cached here: those come from `HandRaiseInput`/`HandRaiseTweenEnv` and `canvasPoseEnv` reads
+// them fresh on every call, cache hit or not — see `planHandRaise`'s own `holderLocalY(id)` calls.
+//
+// Rust-only by construction: a non-null `cache` slot and `verify=true` only ever come from a caller that read them
+// off `rustFastFlags.resolveRustFastFlags`'s `rustRaiseIndexCache`/`rustFastVerify`, which it restricts to
+// `backend === "rust"` — the Pixi canvas backend always calls `canvasRaiseIndex`/`planCanvasHandRaise` with
+// `cache: null` (their default), so this cache never engages for it.
+
+/**
+ * Per-RUNTIME storage for the cache above — owned by the caller (one per `createCanvasInteractionRuntime`
+ * instance via `createRaiseIndexCacheSlot`), not a module global. A module global would (a) strongly hold the last
+ * `MirrorState` it saw — a ~3k-node map — for as long as the PAGE lives, well past the runtime that built it being
+ * disposed, and (b) let two live runtimes on different states (an A/B bench, or two mirror instances) evict each
+ * other's cache every call instead of each keeping its own. `clearRaiseIndexCacheSlot` is the runtime's `dispose()`
+ * calling this off, so neither survives the runtime.
+ */
+export interface RaiseIndexCacheSlot {
+  scanState: MirrorState | null;
+  scanRevision: number;
+  scan: RaiseSceneScan | null;
+  childrenState: MirrorState | null;
+  childrenRevision: number;
+  childrenOf: ChildrenOf | null;
+  /** Shadow-check seam for `rustFastVerify=1`: mismatches between a cached answer and a from-scratch recompute. */
+  verifyMismatches: number;
+}
+
+export function createRaiseIndexCacheSlot(): RaiseIndexCacheSlot {
+  return {
+    scanState: null, scanRevision: -1, scan: null,
+    childrenState: null, childrenRevision: -1, childrenOf: null,
+    verifyMismatches: 0
+  };
+}
+
+/** Drop everything the slot retains (its `MirrorState` reference included) and zero its counter. */
+export function clearRaiseIndexCacheSlot(slot: RaiseIndexCacheSlot): void {
+  slot.scanState = null;
+  slot.scanRevision = -1;
+  slot.scan = null;
+  slot.childrenState = null;
+  slot.childrenRevision = -1;
+  slot.childrenOf = null;
+  slot.verifyMismatches = 0;
+}
+
+function sameRaiseScan(a: RaiseSceneScan, b: RaiseSceneScan): boolean {
+  if (a.handRootId !== b.handRootId || a.targeting !== b.targeting || a.choicePrompt !== b.choicePrompt) {
+    return false;
+  }
+  if (a.holders.size !== b.holders.size) return false;
+  for (const id of a.holders) {
+    if (!b.holders.has(id)) return false;
+  }
+  if (a.handHitboxes.size !== b.handHitboxes.size) return false;
+  for (const [id, owner] of a.handHitboxes) {
+    if (b.handHitboxes.get(id) !== owner) return false;
+  }
+  if (a.creatureGroups.size !== b.creatureGroups.size) return false;
+  for (const [id, root] of a.creatureGroups) {
+    if (b.creatureGroups.get(id) !== root) return false;
+  }
+  return true;
+}
+
+// Compares every id `createChildIndex` could possibly have keyed its map on — the union of both sides' PARENT ids,
+// not `state.orderedIds` (a node's OWN id, not its parent's; checking that set instead would silently skip any
+// parent id that is referenced by a child but is not itself a tracked node, exactly the case a stale/wrong cache
+// could disagree on without either side ever being asked about it).
+function sameChildIndex(state: MirrorState, a: ChildrenOf, b: ChildrenOf): boolean {
+  const parentIds = new Set<string>();
+  for (const id of state.orderedIds) {
+    const parentId = state.nodes.get(id)?.parentId;
+    if (parentId != null) parentIds.add(parentId);
+  }
+  for (const parentId of parentIds) {
+    const ca = a(parentId);
+    const cb = b(parentId);
+    if (ca.length !== cb.length) return false;
+    for (let i = 0; i < ca.length; i++) {
+      if (ca[i] !== cb[i]) return false;
+    }
+  }
+  return true;
+}
+
+// Under verify, ALWAYS return the freshly recomputed ("trusted") answer, cache hit or not — the same rule
+// `interactionRuntime.handPresent`/`coverAbove` follow for `sceneIndexVerify`. A mismatch only increments the
+// counter; the cached answer never gets to reach a caller once it has been found (or merely not yet been checked
+// to be) wrong.
+function cachedScanRaiseIndex(slot: RaiseIndexCacheSlot, state: MirrorState, verify: boolean): RaiseSceneScan {
+  const hit = slot.scan !== null && slot.scanState === state && slot.scanRevision === state.revision;
+  if (!verify) {
+    if (hit) return slot.scan!;
+    const scan = scanRaiseIndex(state.nodes);
+    slot.scanState = state;
+    slot.scanRevision = state.revision;
+    slot.scan = scan;
+    return scan;
+  }
+  const trusted = scanRaiseIndex(state.nodes);
+  if (hit && !sameRaiseScan(slot.scan!, trusted)) slot.verifyMismatches++;
+  slot.scanState = state;
+  slot.scanRevision = state.revision;
+  slot.scan = trusted;
+  return trusted;
+}
+
+function cachedCreateChildIndex(slot: RaiseIndexCacheSlot, state: MirrorState, verify: boolean): ChildrenOf {
+  const hit = slot.childrenOf !== null && slot.childrenState === state && slot.childrenRevision === state.revision;
+  if (!verify) {
+    if (hit) return slot.childrenOf!;
+    const childrenOf = createChildIndex(state);
+    slot.childrenState = state;
+    slot.childrenRevision = state.revision;
+    slot.childrenOf = childrenOf;
+    return childrenOf;
+  }
+  const trusted = createChildIndex(state);
+  if (hit && !sameChildIndex(state, slot.childrenOf!, trusted)) slot.verifyMismatches++;
+  slot.childrenState = state;
+  slot.childrenRevision = state.revision;
+  slot.childrenOf = trusted;
+  return trusted;
 }
 
 /**

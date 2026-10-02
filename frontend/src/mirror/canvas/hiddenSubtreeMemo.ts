@@ -1,4 +1,4 @@
-// HIDDEN-SUBTREE MEMO for the canvas walk (`rustHiddenMemo`, default off).
+// HIDDEN-SUBTREE MEMO for the canvas walk (`rustHiddenMemo`; on by default under the `rustFast` umbrella).
 //
 // An invisible or orphaned subtree paints nothing, crops nothing and answers no tap, but `buildDrawList` still
 // walks every node in it, because the walk PUBLISHES things for hidden nodes that consumers read:
@@ -10,6 +10,9 @@
 //   * `onNode` / `semanticNode` — one call per node, class `skip`, in PAINT order (behind children first), at an
 //                           empty command interval `[list.count, list.count)`.
 //   * `stats.skip`        — one per node.
+//   * `spreadDxOut` / `spreadFieldModeOut` — on a widened stage, one shift and one field mode per node, in walk
+//                           (pre-)order. The next build's owner-anchored floaters, retained composition, the held-card
+//                           capture and the eager-scroll layout read them.
 //
 // Nothing else leaves a hidden subtree: `classifyNode` answers `skip` for every hidden node, so there are no
 // commands, overlay records, ranges or cover boxes; a hidden node opens no clip; `buildHitEntry` refuses a hidden
@@ -28,9 +31,10 @@
 //   3. every ancestor of the root is the same object (the scene-identity resolves climb through them) and the
 //      root's parent is equally present or absent (the orphan test);
 //   4. the walk context handed to the root is equal BY VALUE: parent globals, cascaded alpha and tint, inherited
-//      cosmetic offset, parent drawn Y, both view-scale products, the card-reward flag, and the two moved flags;
+//      cosmetic offset, parent drawn Y, both view-scale products, the card-reward flag, the two moved flags, and the
+//      inherited spread context (`SpreadCtx`: its scalars, the parent global and the box-child alignment);
 //   5. the per-build environment is the same: node map, view-scale switch and env, tip-scale switch, the clip-axis
-//      switch, whether local anims are tracked, and the pinned-local source.
+//      switch, whether local anims are tracked, the pinned-local source, the spread factor and the spread registry.
 //
 // The incoming clip chain is not compared: under a hidden root it reaches only overlay records and hit entries,
 // and a hidden node produces neither.
@@ -49,12 +53,20 @@
 // holds a different set of capture ids than the recording misses with `capture`. The eager-scroll ids are why
 // this matters: the map container is captured every build while its screen is hidden.
 //
+// THE WIDE-SCREEN SPREAD (`rustHiddenMemoSpread`). Spread runs on hidden nodes too, and everything it reads is
+// covered above: the node and its ancestors (the scene-identity answers), the incoming `SpreadCtx` (rule 4) and the
+// factor (rule 5). A recording keeps the `(id, dx, fieldMode)` triples its walk banked, in walk order, and a replay
+// writes them into the build's two spread maps at the root's position, which is where the walk would have. The two
+// spread answers that read OUTSIDE the subtree — an owner-anchored floater's `ownerDx` and a remote follower's
+// shift, both registry lookups into what other nodes resolved — refuse the recording (`spread-owner`,
+// `spread-follower`). Without the switch, a widened build sits the memo out as before.
+//
 // THE REFUSALS. A recording is discarded when its walk latched a map-stroke local (stateful, per stream), entered
 // the hover-tip branch (it asks the caller about nodes outside the subtree), banked a local-anim frame (tainted,
-// refused as a belt) or, with captures off, a capture (the same belt), classified a node as anything but `skip`,
-// pushed a command, hit entry or overlay record, walked a frame substitute, or visited a different node sequence
-// than the span. The whole memo sits out a build that spreads the stage, runs the hidden-walk diagnostic or the
-// spread audit, or whose paint order has duplicate child entries.
+// refused as a belt) or, with captures off, a capture (the same belt), asked the spread registry, classified a node
+// as anything but `skip`, pushed a command, hit entry or overlay record, walked a frame substitute, or visited a
+// different node sequence than the span. The whole memo sits out a build that runs the hidden-walk diagnostic or
+// the spread audit, spreads the stage without the spread switch, or whose paint order has duplicate child entries.
 //
 // BOUNDED: an entry not visited in a build is dropped at the end of it. A root whose recording keeps failing (on
 // anything but an environment flip) or keeps being refused stops recording for a doubling number of builds, up to
@@ -67,6 +79,7 @@ import type { Affine } from "@/mirror/affine";
 import type { PaintOrder, PaintOrderEntry } from "@/mirror/canvas/paintOrder";
 import type { NodeClass, NodePaintInput } from "@/mirror/canvas/paintSpec";
 import type { MirrorNode } from "@/mirror/sceneTree";
+import type { SpreadCtx } from "@/mirror/spreadLayout";
 import type { ViewScaleStamp } from "@/mirror/viewScaleLayout";
 
 /**
@@ -76,7 +89,7 @@ import type { ViewScaleStamp } from "@/mirror/viewScaleLayout";
 type CaptureValue = object;
 
 export interface HiddenSubtreeMemoStats {
-  /** Builds the memo took part in, and builds it sat out (spreading, diagnostics, duplicate order entries). */
+  /** Builds the memo took part in, and builds it sat out (spread without its switch, diagnostics, duplicate order entries). */
   builds: number;
   bypassedBuilds: number;
   /** Outermost hidden roots met, and how each was answered. */
@@ -119,6 +132,10 @@ export interface HiddenMemoRecording {
   /** `captureGlobals` writes, in walk order. */
   captureIds: string[];
   captures: CaptureValue[];
+  /** Spread writes (`spreadDxOut` / `spreadFieldModeOut`), in walk order: the id, its shift and its field mode. */
+  spreadIds: string[];
+  spreadDx: number[];
+  spreadModes: number[];
   /** Set by the walk when this subtree did something a recording cannot reproduce. */
   refuse: string | null;
 }
@@ -131,6 +148,9 @@ export interface HiddenMemoSink {
   stats: { skip: number };
   /** The build's `captureGlobals` output, when it has one. */
   captureOut: Map<string, CaptureValue> | null;
+  /** The build's spread outputs, when it has them. */
+  spreadDxOut: Map<string, number> | null;
+  spreadFieldModeOut: Map<string, number> | null;
   onNode?: (id: string, cls: NodeClass) => void;
   semanticNode?: (input: NodePaintInput, cls: NodeClass, start: number, end: number) => void;
 }
@@ -146,7 +166,11 @@ export interface HiddenMemoBuildInput {
   tipScaling: boolean;
   clipAxis: boolean;
   trackingLocalAnims: boolean;
+  trackingCandidates: boolean;
   pinnedLocals: unknown;
+  /** The stage's spread factor (1 = no spread) and the spread registry's identity. */
+  spreadFactor: number;
+  spreadRegistry: unknown;
   /** The per-id option key sets whose inclusive ancestors are tainted. */
   taintKeys: ReadonlyArray<Iterable<string> | null | undefined>;
   /** The build's `captureGlobals` ids: one more taint key set with captures off, validated membership with them on. */
@@ -173,6 +197,7 @@ export interface HiddenMemoBuild {
     inCardReward: boolean,
     drawnMoved: boolean,
     animMoved: boolean,
+    spreadCtx: SpreadCtx | null,
     listCount: number,
     hitCount: number,
     overlayCount: number
@@ -199,6 +224,9 @@ interface RecordedSubtree {
   emitIdx: readonly number[];
   captureIds: readonly string[];
   captures: readonly CaptureValue[];
+  spreadIds: readonly string[];
+  spreadDx: readonly number[];
+  spreadModes: readonly number[];
 }
 
 interface MemoEntry {
@@ -234,7 +262,7 @@ interface InternalMemo extends HiddenSubtreeMemo {
 }
 
 // The packed walk context — see `packContext`.
-const CTX_LEN = 37;
+const CTX_LEN = 53;
 /** Longest backoff, in builds, for a root whose recordings keep failing. */
 const MAX_HOLD = 16;
 
@@ -299,7 +327,7 @@ export function beginHiddenMemoBuild(memoIn: HiddenSubtreeMemo, input: HiddenMem
 
   // Identity and switch values; any change starts a new epoch and every older recording misses on it.
   const env = [nodes, input.viewScaling, input.viewScaleEnv, input.tipScaling, input.clipAxis,
-    input.trackingLocalAnims, input.pinnedLocals];
+    input.trackingLocalAnims, input.trackingCandidates, input.pinnedLocals, input.spreadFactor, input.spreadRegistry];
   if (memo.env === null || env.some((value, i) => value !== memo.env![i])) {
     memo.env = env;
     memo.envEpoch++;
@@ -383,6 +411,11 @@ export function beginHiddenMemoBuild(memoIn: HiddenSubtreeMemo, input: HiddenMem
     // Validation found these ids in the build's capture set, so it has an output map.
     for (let i = 0; i < data.captureIds.length; i++) sink.captureOut!.set(data.captureIds[i], data.captures[i]);
     stats.replayedCaptures += data.captureIds.length;
+    const { spreadDxOut, spreadFieldModeOut } = sink;
+    if (spreadDxOut !== null) for (let i = 0; i < data.spreadIds.length; i++) spreadDxOut.set(data.spreadIds[i], data.spreadDx[i]);
+    if (spreadFieldModeOut !== null) {
+      for (let i = 0; i < data.spreadIds.length; i++) spreadFieldModeOut.set(data.spreadIds[i], data.spreadModes[i]);
+    }
     if (onNode !== undefined || semanticNode !== undefined) {
       for (let k = 0; k < data.ids.length; k++) {
         onNode?.(data.ids[k], "skip");
@@ -394,7 +427,7 @@ export function beginHiddenMemoBuild(memoIn: HiddenSubtreeMemo, input: HiddenMem
 
   return {
     enter(id, node, parentGame, parentFinal, cascadeAlpha, tintR, tintG, tintB, offX, offY, parentDrawTy, vsIn,
-      vsHitIn, inCardReward, drawnMoved, animMoved, listCount, hitCount, overlayCount) {
+      vsHitIn, inCardReward, drawnMoved, animMoved, spreadCtx, listCount, hitCount, overlayCount) {
       stats.roots++;
       const span = order.entries.get(id);
       const spanLen = span === undefined ? 0 : span.spanEnd - span.spanStart;
@@ -410,7 +443,7 @@ export function beginHiddenMemoBuild(memoIn: HiddenSubtreeMemo, input: HiddenMem
         return null;
       }
       packContext(ctx, parentGame, parentFinal, cascadeAlpha, tintR, tintG, tintB, offX, offY, parentDrawTy, vsIn,
-        vsHitIn, inCardReward, drawnMoved, animMoved);
+        vsHitIn, inCardReward, drawnMoved, animMoved, spreadCtx);
       const ancestors = ancestorsOf(node, nodes);
       const data = entry.data;
       const reason = data === null ? "absent" : validate(data, span, ancestors);
@@ -437,7 +470,7 @@ export function beginHiddenMemoBuild(memoIn: HiddenSubtreeMemo, input: HiddenMem
       }
       const rec: ActiveRecording = {
         inputIds: [], inputs: [], stampIds: [], stamps: [], candidates: [], emitIds: [], emitIdx: [], captureIds: [],
-        captures: [], refuse: null, rootId: id, spanStart: span.spanStart, spanLen, ctx: ctx.slice(), ancestors,
+        captures: [], spreadIds: [], spreadDx: [], spreadModes: [], refuse: null, rootId: id, spanStart: span.spanStart, spanLen, ctx: ctx.slice(), ancestors,
         listCount, hitCount, overlayCount, verifyAgainst: reason === null ? data : null
       };
       return rec;
@@ -483,7 +516,10 @@ export function beginHiddenMemoBuild(memoIn: HiddenSubtreeMemo, input: HiddenMem
         candidates: rec.candidates,
         emitIdx: rec.emitIdx,
         captureIds: rec.captureIds,
-        captures: rec.captures
+        captures: rec.captures,
+        spreadIds: rec.spreadIds,
+        spreadDx: rec.spreadDx,
+        spreadModes: rec.spreadModes
       };
       if (rec.verifyAgainst === null) stats.recorded++;
     },
@@ -498,12 +534,14 @@ export function beginHiddenMemoBuild(memoIn: HiddenSubtreeMemo, input: HiddenMem
 /**
  * The walk context a root is entered with, as one flat row: parent game and drawn globals, cascaded alpha and
  * tint, inherited cosmetic offset, parent drawn Y, both view-scale products (presence, then value) and whether
- * they are one object, and the three flags. Compared with `Object.is`, so NaN equals NaN and 0 is not -0.
+ * they are one object, the three flags, and the inherited spread context (presence, its six scalars and flag, the
+ * parent global it carries, and the box-child alignment as a null flag plus value). Compared with `Object.is`, so
+ * NaN equals NaN and 0 is not -0.
  */
 function packContext(
   out: Float64Array, parentGame: Affine, parentFinal: Affine, cascadeAlpha: number, tintR: number, tintG: number,
   tintB: number, offX: number, offY: number, parentDrawTy: number, vsIn: Affine | null, vsHitIn: Affine | null,
-  inCardReward: boolean, drawnMoved: boolean, animMoved: boolean
+  inCardReward: boolean, drawnMoved: boolean, animMoved: boolean, spread: SpreadCtx | null
 ): void {
   for (let i = 0; i < 6; i++) {
     out[i] = parentGame[i];
@@ -526,6 +564,18 @@ function packContext(
   out[34] = inCardReward ? 1 : 0;
   out[35] = drawnMoved ? 1 : 0;
   out[36] = animMoved ? 1 : 0;
+  out[37] = spread === null ? 0 : 1;
+  out[38] = spread === null ? 0 : spread.parentDx;
+  out[39] = spread === null ? 0 : spread.deltaParentWidth;
+  out[40] = spread === null ? 0 : spread.anchorDelta;
+  out[41] = spread === null ? 0 : spread.rideDx;
+  out[42] = spread !== null && spread.parentDxProp ? 1 : 0;
+  out[43] = spread === null ? 0 : spread.parentWidth;
+  for (let i = 0; i < 6; i++) out[44 + i] = spread === null ? 0 : spread.parentGlobal[i];
+  const align = spread === null ? null : spread.containerChildAlign;
+  out[50] = align === null ? 0 : 1;
+  out[51] = align === null ? 0 : align;
+  out[52] = spread !== null && spread.containerChildVertical ? 1 : 0;
 }
 
 /** The root's parent chain as the scene-identity resolves climb it: live ancestors, then an absent parent if any. */
@@ -555,7 +605,10 @@ function sameRecording(walked: ActiveRecording, recorded: RecordedSubtree): bool
     sameValues(walked.emitIdx, recorded.emitIdx) &&
     sameValues(walked.captureIds, recorded.captureIds) &&
     walked.captures.length === recorded.captures.length &&
-    walked.captures.every((captured, i) => sameShallow(captured, recorded.captures[i]))
+    walked.captures.every((captured, i) => sameShallow(captured, recorded.captures[i])) &&
+    sameValues(walked.spreadIds, recorded.spreadIds) &&
+    sameValues(walked.spreadDx, recorded.spreadDx) &&
+    sameValues(walked.spreadModes, recorded.spreadModes)
   );
 }
 

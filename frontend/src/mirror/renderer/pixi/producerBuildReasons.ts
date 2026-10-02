@@ -16,6 +16,8 @@ export type ProducerBuildObservation = {
   windowPhase: number | null;
   sampleClock?: number | null;
   buildEpoch?: number;
+  /** The frame scheduler's task epoch (rustCoalescedBuilds accounting): equal on every build of one frame. */
+  frameTask?: number;
   sizeEpoch?: number;
   fontEpoch?: number;
   textureEpoch?: number;
