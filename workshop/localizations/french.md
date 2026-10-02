@@ -30,4 +30,6 @@ Le son sort uniquement de l'ordinateur hôte - les joueurs dans le navigateur n'
 
 Tous les clients dans le navigateur doivent pouvoir joindre l'hôte sur le même réseau local, généralement le même réseau Wi-Fi. N'utilisez CouchCoop que sur un réseau local partagé avec des personnes de confiance.
 
+Les configurations à distance ou via Internet ne sont pas prises en charge par CouchCoop.
+
 Code source et assistance : https://github.com/tfoxy/sts2-couch-coop

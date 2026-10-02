@@ -30,4 +30,6 @@ L'audio esce solo dal computer host - chi gioca dal browser non ha alcun suono s
 
 Tutti i client nel browser devono poter raggiungere l'host sulla stessa rete locale, di solito la stessa rete Wi-Fi. Usa CouchCoop solo su una rete locale condivisa con persone di cui ti fidi.
 
+Le configurazioni remote o tramite Internet non sono supportate da CouchCoop.
+
 Codice sorgente e supporto: https://github.com/tfoxy/sts2-couch-coop

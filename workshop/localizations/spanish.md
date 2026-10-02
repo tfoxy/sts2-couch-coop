@@ -30,4 +30,6 @@ El sonido sale únicamente del ordenador anfitrión: quienes juegan desde el nav
 
 Todos los clientes del navegador deben poder conectarse al anfitrión a través de la misma red local, normalmente la misma red Wi-Fi. Usa CouchCoop únicamente en una red local compartida con personas de confianza.
 
+Las partidas remotas o por internet quedan fuera del ámbito de soporte de CouchCoop.
+
 Código fuente y soporte: https://github.com/tfoxy/sts2-couch-coop
