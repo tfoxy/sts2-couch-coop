@@ -262,3 +262,20 @@ raster/carrier boundary, not deterministic whole-scene presentation.
 The two current recordings are ignored local files under `.sts2/bench/bitmap-phase1-oct02/` in the
 primary checkout. Raw audit receipts are under `.sts2/artifacts/text-phase1-{baseline-fa1d59c,
 candidate-9097eedd}/carrier-probe-all/` in the named audit worktrees. No derived game asset is committed.
+
+## Oct 2 text methods Phase 2 (generic GSW glyph contract)
+
+The GSW Rust stage now accepts glyph runs backed by bounded linear atlas pages, with subrectangle
+uploads and explicit release. This is a contract and rendering gate, **not** a generated-font quality or
+performance result. Bitmap remains the Couch default. GSW landed as `29e51470` after the audit.
+
+| Date | Attempt | Outcome | Key evidence |
+| --- | --- | --- | --- |
+| Oct 2 | Initial GSW candidate `d1dbe6fd` | REVISE | Synthetic WebGL2 MSDF fill, outline and shadow passed at 0.5×, 1× and 3×; existing Bitmap scene and RSR1 bytes matched. Astra required transactional atlas reservations, touched-key rather than whole-store resource staging, glyph source bounds, and a committed RGB-versus-alpha differential pixel case. |
+| Oct 2 | Revision `90340dad` | REVISE | Rust 15, encoder/atlas Vitest 27, TypeScript, WASM and browser pixels passed. Luna found that a pinned 2×3 page could still be replaced by 3×2 because the byte count stayed 24. |
+| Oct 2 | Final `95f48b6e` (squashed as `29e51470`) | GO | Luna independently passed Rust 15, Vitest 28, TypeScript, formatting, WASM, synthetic WebGL2 fill/outline/alpha differential/shadow at three scales, subrect/release, and focused Couch executor 22. The pinned same-byte reshape is rejected. Baseline/candidate Bitmap hashes matched for the 340-byte scene and 38-byte RSR1 upload. |
+
+The final independent images are in the `gsw-text-phase2-final-audit` worktree:
+`.sts2/msdf-phase2-web/msdf-{0_5x,1x,3x,1x-subrect}.png` and
+`.sts2/rust-webgl-proof/transparent-red-alpha.png`. These are synthetic shader probes; generated-font
+contours and browser worker operation are Phase 3 gates.
