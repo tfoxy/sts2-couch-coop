@@ -279,3 +279,18 @@ The final independent images are in the `gsw-text-phase2-final-audit` worktree:
 `.sts2/msdf-phase2-web/msdf-{0_5x,1x,3x,1x-subrect}.png` and
 `.sts2/rust-webgl-proof/transparent-red-alpha.png`. These are synthetic shader probes; generated-font
 contours and browser worker operation are Phase 3 gates.
+
+## Oct 2 text methods Phase 3 (runtime generator attempts)
+
+These are generator correctness and resource-bound gates, not an FPS measurement. Generated WASM remains
+out of the tracked tree and no game font or atlas is committed.
+
+| Date | Attempt | Outcome | Key evidence |
+| --- | --- | --- | --- |
+| Oct 2 | GSW worker/WASM candidate `c9a05df4` | REVISE | Real browser worker generated deterministic licensed Latin tiles and local CJK/Thai tiles; synthetic overlapping-contour union had 0/4,096 threshold mismatches. Luna independently passed Rust 3, canvas Vitest 427, TypeScript/build, WASM and licence manifest (40 compiled-target crates). The generic API lacked aggregate output and pending-request limits: 4,096 allowed 256×256 RGBA tiles could total 1 GiB per request, with conversion copies alive concurrently. Astra required ≤1 MiB output per batch and one outstanding request/result lease before transfer, with credit recovery and checked preallocation arithmetic. |
+
+Sol's ignored proof images and JSON are under the `gsw-text-phase3` worktree
+`.sts2/msdf-generator-proof/`; Luna's independent browser proof is under
+`gsw-text-phase3-audit/.sts2/msdf-generator-proof/`. The RGB-median versus alpha-SDF comparison is an
+internal threshold check (all differences one 8-bit level), not independent raster parity. The
+local CJK/Thai receipts need font hashes and invocation fields on the revision.
