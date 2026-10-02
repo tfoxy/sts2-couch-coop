@@ -400,6 +400,10 @@ cp "$source_parent/godot-scene-web/LICENSE" "$license_dir/godot-scene-web-LICENS
 cp "$source_parent/godot-scene-web/packages/hb-gpu/vendor/LICENSE-harfbuzz" "$license_dir/HarfBuzz-LICENSE"
 cp "$source_parent/godot-scene-web/packages/hb-gpu/vendor/LICENSE-emscripten" "$license_dir/Emscripten-LICENSE"
 cp "$source_parent/godot-scene-web/packages/html/vendor/LICENSE-OpenSans" "$license_dir/OpenSans-LICENSE"
+msdf_license_source="$source_parent/godot-scene-web/packages/canvas/msdf-generator"
+mkdir -p "$license_dir/msdf-generator"
+cp "$msdf_license_source/THIRD_PARTY_NOTICES.md" "$license_dir/msdf-generator/THIRD_PARTY_NOTICES.md"
+cp "$msdf_license_source/licenses/"* "$license_dir/msdf-generator/"
 
 npm_license_manifest="$license_dir/npm-dependencies.tsv"
 printf 'package\tversion\tdeclared-license\tlicense-file\n' > "$npm_license_manifest"

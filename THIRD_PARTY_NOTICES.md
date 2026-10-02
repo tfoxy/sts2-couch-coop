@@ -22,6 +22,7 @@ file.
 | HarfBuzz (embedded WASM) | version recorded by godot-scene-web | Old MIT |
 | Emscripten runtime portions (embedded WASM) | version recorded by godot-scene-web | MIT and University of Illinois/NCSA |
 | Open Sans Semibold (embedded font) | artifact recorded by godot-scene-web | Apache-2.0 |
+| MSDF generator Rust dependencies (runtime WASM) | versions pinned in godot-scene-web `packages/canvas/msdf-generator/Cargo.lock` | per-crate terms in `licenses/msdf-generator/manifest.tsv`; full texts and notices beside it |
 
 Slay the Spire 2, Godot, Spine, and FMOD names are used only for
 identification/interoperability as described in `NOTICE`. No game assembly or

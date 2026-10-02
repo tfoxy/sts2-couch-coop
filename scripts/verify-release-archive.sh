@@ -71,6 +71,11 @@ is_allowed_payload_file() {
       [[ "$leaf" != */* && -n "$leaf" ]]
       return
       ;;
+    licenses/msdf-generator/*)
+      leaf="${path#licenses/msdf-generator/}"
+      [[ "$leaf" =~ ^[A-Za-z0-9][A-Za-z0-9._+-]*$ ]]
+      return
+      ;;
     # Vite's bundle directory (`assetsDir: "app"`), one level deep, content-hashed names.
     frontend/app/*.js|frontend/app/*.css|frontend/app/*.wasm)
       leaf="${path#frontend/app/}"
@@ -131,12 +136,51 @@ required_files=(
   licenses/Emscripten-LICENSE
   licenses/OpenSans-LICENSE
   licenses/npm-dependencies.tsv
+  licenses/msdf-generator/THIRD_PARTY_NOTICES.md
+  licenses/msdf-generator/manifest.tsv
 )
 
 # The lane directory names present in a payload, one per line, sorted. Reads the payload's own file
 # list -- the lane table IS the directory layout, so there is nothing else to read it from.
 payload_lane_directories() {
   sed -n 's#^lanes/\([^/][^/]*\)/.*#\1#p' "$1" | LC_ALL=C sort -u
+}
+
+verify_msdf_license_bundle() {
+  local root="$1" manifest="$1/licenses/msdf-generator/manifest.tsv"
+  local crate version chosen_spdx license_filename header
+  local referenced="$tmp_dir/msdf-license-references.txt"
+  local shipped="$tmp_dir/msdf-license-shipped.txt"
+  header="$(head -n 1 "$manifest")"
+  [[ "$header" == $'crate\tversion\tchosen_spdx\tlicense_filename' ]] || {
+    echo "MSDF generator license manifest has an invalid header" >&2
+    return 1
+  }
+  : > "$referenced"
+  while IFS=$'\t' read -r crate version chosen_spdx license_filename; do
+    [[ -n "$crate" ]] || continue
+    [[ "$crate" =~ ^[A-Za-z0-9][A-Za-z0-9_-]*$ && "$version" =~ ^[0-9][A-Za-z0-9.+_-]*$ \
+      && -n "$chosen_spdx" && "$license_filename" =~ ^[A-Za-z0-9][A-Za-z0-9._+-]*$ ]] || {
+      echo "MSDF generator license manifest has an invalid row" >&2
+      return 1
+    }
+    [[ -s "$root/licenses/msdf-generator/$license_filename" ]] || {
+      echo "MSDF generator license text is missing or empty: $license_filename" >&2
+      return 1
+    }
+    printf '%s\n' "$license_filename" >> "$referenced"
+  done < <(tail -n +2 "$manifest")
+  [[ -s "$referenced" && -s "$root/licenses/msdf-generator/THIRD_PARTY_NOTICES.md" ]] || {
+    echo "MSDF generator license bundle is empty" >&2
+    return 1
+  }
+  find "$root/licenses/msdf-generator" -maxdepth 1 -type f -printf '%f\n' \
+    | sed '/^manifest\.tsv$/d; /^THIRD_PARTY_NOTICES\.md$/d' \
+    | LC_ALL=C sort > "$shipped"
+  diff <(LC_ALL=C sort -u "$referenced") "$shipped" >/dev/null || {
+    echo "MSDF generator license files disagree with manifest" >&2
+    return 1
+  }
 }
 
 verify_file_list() {
@@ -431,6 +475,7 @@ if [[ -n "$archive" ]]; then
     exit 1
   }
   payload_root="$extract_root/couchcoop"
+  verify_msdf_license_bundle "$payload_root"
   verify_loader_has_no_hot_reload_symbols "$payload_root/couchcoop.dll"
   verify_build_info_and_manifest \
     "$payload_root/build-info.txt" "$payload_root/couchcoop.json" "$version" "${payload_lanes[@]}"
@@ -467,6 +512,7 @@ release_list_files "$payload" > "$file_list"
 verify_file_list "$file_list"
 resolve_payload_lanes "$file_list"
 verify_lane_expectations
+verify_msdf_license_bundle "$payload"
 verify_loader_has_no_hot_reload_symbols "$payload/couchcoop.dll"
 verify_build_info_and_manifest \
   "$payload/build-info.txt" "$payload/couchcoop.json" "$version" "${payload_lanes[@]}"
