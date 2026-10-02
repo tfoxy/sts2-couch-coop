@@ -297,6 +297,25 @@ export function rootSpreadCtx(spreadFactor: number, parentGlobal: SpreadAffine):
 }
 
 /**
+ * The context a node's CHILDREN walk with, from the node's own {@link SpreadOut} — the one spelling of that hand-off,
+ * shared by the build walk (which pools `ctx`) and the wire patch's re-walk of a moved span (`rustWireSpreadPatch`),
+ * so the two can never disagree about what a child inherits. `gGame` is the node's TRUE global: the children's
+ * anchor algebra lifts its claim by the parent's true x-basis. `parentWidth` is {@link childParentWidth}.
+ */
+export function writeChildSpreadCtx(ctx: SpreadCtx, gGame: SpreadAffine, parentWidth: number, out: SpreadOut): SpreadCtx {
+  ctx.parentDx = out.childParentDx;
+  ctx.deltaParentWidth = out.childDeltaParentWidth;
+  ctx.anchorDelta = out.childAnchorDelta;
+  ctx.rideDx = out.childRideDx;
+  ctx.parentDxProp = out.childParentDxProp;
+  ctx.parentWidth = parentWidth;
+  ctx.parentGlobal = gGame;
+  ctx.containerChildAlign = out.childContainerAlign;
+  ctx.containerChildVertical = out.childContainerVertical;
+  return ctx;
+}
+
+/**
  * WHERE ONE NODE LANDS ON THE SQUEEZE FIELD, and what its children inherit.
  *
  * Writes into the caller-owned `out` (one scratch per walk — the caller consumes every field before it recurses)

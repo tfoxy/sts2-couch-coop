@@ -24,6 +24,8 @@ export interface RustFastFlags {
   raiseIndexCache: boolean;
   coalescedBuilds: boolean;
   offsetPatch: boolean;
+  wireSpreadPatch: boolean;
+  tweenRootPatch: boolean;
   verify: boolean;
 }
 
@@ -44,6 +46,8 @@ export const RUST_FAST_SWITCHES = {
   raiseIndexCache: "rustRaiseIndexCache",
   coalescedBuilds: "rustCoalescedBuilds",
   offsetPatch: "rustOffsetPatch",
+  wireSpreadPatch: "rustWireSpreadPatch",
+  tweenRootPatch: "rustTweenRootPatch",
 } as const satisfies Record<Exclude<keyof RustFastFlags, "verify">, string>;
 
 export function resolveRustFastFlags(query: URLSearchParams, backend: "pixi" | "rust"): RustFastFlags {

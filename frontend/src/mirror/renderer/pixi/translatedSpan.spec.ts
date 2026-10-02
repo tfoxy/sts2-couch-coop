@@ -72,6 +72,13 @@ describe("translatedSpanRefusal", () => {
     expect(translatedSpanRefusal("hand", [1, 0, 0, 1, 0, 3], context({ spreadFactor: 1.3, shifted: ["cardA"] }))).toBeNull();
   });
 
+  it("names the node a spread refusal tripped on", () => {
+    const blamed: string[] = [];
+    const base = context({ spreadFactor: 1.3, modes: { cardB: 2 } });
+    expect(translatedSpanRefusal("hand", MOVE, { ...base, blame: (id) => blamed.push(id) })).toBe("wire-spread");
+    expect(blamed).toEqual(["cardB"]);
+  });
+
   it("refuses nothing for a delta that moves nothing", () => {
     expect(translatedSpanRefusal("hand", [1, 0, 0, 1, 0, 0], context({ stamps: ["cardB"], clips: ["holderB"] }))).toBeNull();
   });
