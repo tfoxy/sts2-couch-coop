@@ -537,8 +537,17 @@ describe("the persisted key set", () => {
 });
 
 describe("public renderer stage preference", () => {
-  it("layers the stage URL over a saved choice and defaults to DOM", () => {
+  it("layers stage URL and storage over the browser-engine default", () => {
     expect(build().stage).toBe("dom");
+    const safari = { storage: fakeStorage(), userAgent:
+      "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.5 Safari/605.1.15" };
+    expect(createMirrorSettings(quality(), "", safari).stage).toBe("canvas");
+    expect(createMirrorSettings(quality(), "?stage=dom", safari).stage).toBe("dom");
+    expect(createMirrorSettings(quality(), "", { ...safari, storage: fakeStorage({ stage: "dom" }) }).stage).toBe("dom");
+    expect(createMirrorSettings(quality(), "", { storage: fakeStorage(), userAgent:
+      "Mozilla/5.0 (iPhone; CPU iPhone OS 17_5 like Mac OS X) AppleWebKit/605.1.15 CriOS/126.0 Mobile Safari/604.1" }).stage).toBe("canvas");
+    expect(createMirrorSettings(quality(), "", { ...safari, userAgent:
+      "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 Chrome/126.0 Safari/537.36", maxTouchPoints: 5 }).stage).toBe("canvas");
     expect(build(quality(), "", fakeStorage({ stage: "canvas" })).stage).toBe("canvas");
     expect(build(quality(), "?stage=dom", fakeStorage({ stage: "canvas" })).stage).toBe("dom");
     expect(build(quality(), "?stage=canvas", fakeStorage({ stage: "dom" })).stage).toBe("canvas");

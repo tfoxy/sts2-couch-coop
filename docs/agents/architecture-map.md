@@ -380,10 +380,11 @@ This map records current contracts, not retired implementation alternatives.
   `bakedEffects` asks for it explicitly. (2) No modulate is baked in — the ripple still is NEUTRAL and the
   mirror's existing per-node `#mtint-` multiply is what makes it cyan / gold / red. (3) The node-local rect in
   `bakedEffects.ts` is the rect the bake captured; `scripts/bake-effect-stills.py` prints it after every run.
-- **Scope: the DOM stage only**, enforced rather than documented — `bakedEffects.stillsCover` is vetoed by
-  `stageOwnsEffectPixelsNow()`. On `?stage=canvas` the gsw binding IS what the draw list blits
-  (`paintSpec.fxHostIsLive`), so suppressing one there would delete the effect instead of substituting for it.
-  That stage does not consult the stills either (pinned by a test).
+- **Stage split.** DOM uses the mode-gated `bakedStillFor`; its binding suppression remains vetoed while the
+  legacy canvas owns live effect pixels. Rust uses `bakedStillForRust` independent of effect mode, and inserts
+  ripple and boxless rarity-glow image quads at their node paint positions. The Rust-only draw-list admission
+  keeps these nodes visible even though its fixed quality disables shaders and particles; Pixi and legacy canvas
+  keep their existing paths.
 - **What a viewer sees change in STATIC**, and neither is a defect: the ripple's arbitrary phase (its shader
   reads `TIME`, so a frozen frame and a bake catch different ones) and which particles a stochastic emitter
   drew. Anything else that moves — colour, size, placement, brightness — is real, and the likeliest cause is a

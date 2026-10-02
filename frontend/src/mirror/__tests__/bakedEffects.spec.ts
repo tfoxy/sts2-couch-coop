@@ -7,6 +7,7 @@ import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import {
   bakedStillCoversNode,
   bakedStillFor,
+  bakedStillForRust,
   bakedStillNeedsOwnLayer,
   CARD_RIPPLE_SHOWN_WIDTH
 } from "@/mirror/bakedEffects";
@@ -240,12 +241,8 @@ describe("bakedStillNeedsOwnLayer", () => {
   });
 });
 
-// THE SCOPE, recorded so it does not read as an oversight. The baked stills are wired into the DOM stage only —
-// `?stage=dom`, the shipping default. The `?stage=canvas` backend is an opt-in experiment whose draw-list builder
-// deliberately does not consult this module, so on that stage an off-mode effect still paints nothing at all. If
-// the canvas stage ever ships as the default this test is the thing that should fail first.
 describe("canvas stage scope", () => {
-  it("does not consult the baked stills", () => {
+  it("keeps the legacy canvas paint spec independent of the stills", () => {
     const source = readFileSync(
       resolve(dirname(fileURLToPath(import.meta.url)), "../canvas/paintSpec.ts"),
       "utf8"
@@ -275,5 +272,23 @@ describe("canvas stage scope", () => {
       expect(bakedStillCoversNode(rippleNode(CARD_RIPPLE_SHOWN_WIDTH))).toBe(true);
       expect(bakedStillFor(glowNode(RARE_GLOW))).not.toBeNull();
     }
+  });
+
+  it("gives Rust the same images regardless of the DOM effect mode or legacy-canvas pixel owner", () => {
+    mirrorSettings.shaderMode = "dynamic";
+    mirrorSettings.particleMode = "dynamic";
+    setStageOwnsEffectPixels(true);
+    expect(bakedStillFor(rippleNode(CARD_RIPPLE_SHOWN_WIDTH))).toBeNull();
+    expect(bakedStillForRust(rippleNode(CARD_RIPPLE_SHOWN_WIDTH))).toMatchObject({
+      sourceWidth: 759, sourceHeight: 951, box: "localRect", additive: true
+    });
+    expect(bakedStillForRust(glowNode(UNCOMMON_GLOW))).toMatchObject({
+      sourceWidth: 256, sourceHeight: 256, box: { x: -256, y: -256, width: 512, height: 512 }
+    });
+    expect(bakedStillForRust(glowNode(RARE_GLOW))).toMatchObject({
+      sourceWidth: 384, sourceHeight: 384, box: { x: -384, y: -384, width: 768, height: 768 }
+    });
+    expect(bakedStillForRust(rippleNode(0))).toBeNull();
+    expect(bakedStillForRust(mkNode())).toBeNull();
   });
 });

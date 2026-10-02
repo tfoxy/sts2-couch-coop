@@ -25,3 +25,11 @@ export function isIosPlatform(userAgent: string | null | undefined, maxTouchPoin
   if (/iPad|iPhone|iPod/.test(userAgent)) return true;
   return userAgent.includes("Macintosh") && maxTouchPoints > 1;
 }
+
+/** WebKit browsers, including every iPhone/iPad browser regardless of its brand. */
+export function isWebKitBrowser(userAgent: string | null | undefined, maxTouchPoints = 0): boolean {
+  if (isIosPlatform(userAgent, maxTouchPoints)) return true;
+  if (typeof userAgent !== "string" || !userAgent.includes("AppleWebKit/")) return false;
+  // Blink keeps AppleWebKit in its compatibility UA. Its engine-specific tokens take precedence.
+  return !/\b(?:Chrome|Chromium|HeadlessChrome|Edg|OPR|SamsungBrowser|YaBrowser|Vivaldi|jsdom)\//i.test(userAgent);
+}

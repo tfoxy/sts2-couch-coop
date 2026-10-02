@@ -633,6 +633,8 @@ export interface BuildDrawListOptions {
   semanticText?: (input: NodePaintInput, record: OverlayRecord, insertionIndex: number) => boolean;
   /** Experimental backend hook for non-text overlay pixels at their semantic painter position. */
   semanticOverlay?: (input: NodePaintInput, record: OverlayRecord, insertionIndex: number) => void;
+  /** Let a backend place a baked effect at a shader or boxless particle node's own paint slot. */
+  forceEffectStillOverlay?: (node: MirrorNode) => "shader" | "particles" | null;
   /**
    * Wide-screen stage factor (`stageWidth / 1920`). 1 = no spread, and then the whole spread walk short-circuits:
    * every node's `dx` is 0, `mFinal === mGame`, and no context object is allocated.
@@ -1958,7 +1960,9 @@ export function buildDrawList(
     // SELF. `paintStart` is taken HERE, after the behind children: the range must be the node's own commands and
     // nothing else, or a parent's range would swallow its behind subtree and stop being splice-able.
     const paintStart = list.count;
-    const cls: NodeClass = classifyNode(node, ownOpacity, hidden);
+    const forcedEffectOverlay = node.shaderId != null || node.particleSpec != null
+      ? options.forceEffectStillOverlay?.(node) ?? null : null;
+    const cls: NodeClass = classifyNode(node, ownOpacity, hidden, forcedEffectOverlay);
     if (cls === "canvas") {
       stats.canvas++;
       if (emitNodePaint(input, scratch, sink, emitOptions) === 0) {
@@ -1990,7 +1994,7 @@ export function buildDrawList(
       // THE ENCLOSING CHAIN, not `childChain`: a node's own clip scope crops its own ink, which is the direction
       // that loses a label's outline (see `intersectOverlayClip`). This is the same chain `buildHitEntry` below
       // is handed for this node, so paint and touch crop on one rule.
-      const record = overlayRecordFor(input, clipChain);
+      const record = overlayRecordFor(input, clipChain, forcedEffectOverlay);
       if (record) {
         overlayRecords.push(record);
         overlayByKind[record.kind]++;

@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 
-import { isIosPlatform } from "@/platform";
+import { isIosPlatform, isWebKitBrowser } from "@/platform";
 
 // The UA strings two consumers depend on. `pwa/installPrompt` asks this to keep two install affordances from
 // overlapping; `render/quality` asks it to seed both effect families off on the engine that is being jetsam-killed
@@ -44,5 +44,23 @@ describe("isIosPlatform", () => {
     expect(isIosPlatform(null)).toBe(false);
     expect(isIosPlatform(undefined, 5)).toBe(false);
     expect(isIosPlatform("")).toBe(false);
+  });
+});
+
+describe("isWebKitBrowser", () => {
+  it("includes desktop Safari and every iPhone/iPad browser brand", () => {
+    expect(isWebKitBrowser(MAC_SHAPED_UA)).toBe(true);
+    expect(isWebKitBrowser(IPHONE_UA.replace("Version/17.5", "CriOS/126.0"))).toBe(true);
+    expect(isWebKitBrowser(IPAD_LEGACY_UA.replace("Version/12.1", "FxiOS/127.0"))).toBe(true);
+    expect(isWebKitBrowser(MAC_CHROME_UA, 5)).toBe(true); // iPadOS desktop-style UA
+    expect(isWebKitBrowser("Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17 Safari/605.1.15")).toBe(true);
+  });
+
+  it("excludes Blink and Gecko even though Blink advertises AppleWebKit", () => {
+    expect(isWebKitBrowser(MAC_CHROME_UA)).toBe(false);
+    expect(isWebKitBrowser(ANDROID_UA, 5)).toBe(false);
+    expect(isWebKitBrowser(MAC_CHROME_UA.replace("Chrome/", "Edg/"))).toBe(false);
+    expect(isWebKitBrowser("Mozilla/5.0 (Macintosh; Intel Mac OS X 10.15; rv:126.0) Gecko/20100101 Firefox/126.0")).toBe(false);
+    expect(isWebKitBrowser(null)).toBe(false);
   });
 });

@@ -4,7 +4,7 @@ import {
   buildDrawList, streamedAlphasOf, type AlphaOverride, type BuildDrawListOptions, type CosmeticOffset, type DrawListBuild, type LocalAnim
 } from "@/mirror/canvas/buildDrawList";
 import { baselineOf, layoutText, resolveTextSpec, type TextSpan } from "@/mirror/canvas/textLayout";
-import { parseSimpleRich } from "@/mirror/canvas/richSimple";
+import { createColorValidator, parseSimpleRich } from "@/mirror/canvas/richSimple";
 import { createPaintOrderCache } from "@/mirror/canvas/paintOrder";
 import { createHiddenSubtreeMemo } from "@/mirror/canvas/hiddenSubtreeMemo";
 import { createHitMemo, resolveSceneInfo } from "@/mirror/canvas/hitTest";
@@ -30,6 +30,7 @@ import { CANVAS_FRAME_PARK_SLOP_MS, createCanvasFrameScheduler } from "@/mirror/
 import { effectiveMirrorQuality, effectiveMirrorRenderSettings, mirrorSettings } from "@/mirror/mirrorSettings";
 import { emitWarmAckTrace, warmAckTraceEnabled } from "@/mirror/warmAckTrace";
 import { isShaderInputNode } from "@/mirror/shaderAttributes";
+import { bakedStillForRust } from "@/mirror/bakedEffects";
 import { emittedPrimitiveRows } from "@/mirror/renderer/semanticPaint";
 import { nativeTextOriginCorrection, pixiShadowColor, semanticTextLayout } from "@/mirror/renderer/semanticTextLayout";
 import { handRaiseChromeMatrix } from "@/mirror/handRaiseChrome";
@@ -164,6 +165,7 @@ export function createPixiMirrorRenderer(
   const textKeysByOwner = new Map<string, string[]>();
   const measureCanvas = stage.ownerDocument.createElement("canvas");
   const measureContext = measureCanvas.getContext("2d");
+  const richColorValidator = createColorValidator(measureContext);
   const textLayoutCache = new Map<string, { key: string; layout: ReturnType<typeof layoutText>; metrics: { ascent: number; descent: number } }>();
   // The replay clock waits for real renderer events. Its waiter is installed before a build so a
   // resource that settles during admission cannot be missed; normal scheduling is unchanged.
@@ -401,7 +403,7 @@ export function createPixiMirrorRenderer(
   const fontPending = new Set<string>();
   const fontFailed = new Set<string>();
   const failedRoleFamilies = new Set<string>();
-  const fontRoleDegradations = new Map<string, string>();
+  const textDegradations = new Map<string, string>();
   const spinePending = new Set<string>();
   const spineFailed = new Set<string>();
   const spineClips = new Map<string, LoadedSpineClip>();
@@ -595,7 +597,8 @@ if (isPromiseLike<PresentationResult>(result)) {
     if (backend === "rust" || textPrepCache) {
       const nodes = input.nodes ?? state?.nodes ?? new Map();
       const compute = (): PreparedText | TextPrepRefusal => {
-        const resolved = resolveSemanticTextSpec(node, nodes, backend === "rust", failedRoleFamilies);
+        const resolved = resolveSemanticTextSpec(node, nodes, backend === "rust", failedRoleFamilies,
+          richColorValidator);
         if ("refusal" in resolved) return resolved;
         if (!measureContext) return { refusal: "no-measure-context" };
         nativeLayouts++;
@@ -613,8 +616,9 @@ if (isPromiseLike<PresentationResult>(result)) {
       const prepared = textPrepCache
         ? textPrepCache.resolve(node, nodes, fontVersion, textMode, fast.verify, compute) : compute();
       if ("refusal" in prepared) { semanticFailures.set(node.id, prepared.refusal); return false; }
-      if (prepared.fallbackRoles?.length) fontRoleDegradations.set(node.id,
-        `font-role-fallback:${prepared.fallbackRoles.join(",")}`);
+      const losses = [...prepared.degradations ?? []];
+      if (prepared.fallbackRoles?.length) losses.push(`font-role-fallback:${prepared.fallbackRoles.join(",")}`);
+      if (losses.length) textDegradations.set(node.id, losses.join(" | "));
       const fontsToCheck = [{ cssFont: prepared.spec.cssFont, text: prepared.spec.text,
         family: prepared.spec.family, role: false },
         ...Object.values(prepared.roleFaces ?? {}).filter((face) => face !== undefined).map((face) =>
@@ -752,6 +756,26 @@ if (isPromiseLike<PresentationResult>(result)) {
 
   // `target` is the list being built: the live one, or a held-override verification shadow.
   function semanticOverlay(input: NodePaintInput, record: OverlayRecord, _insertionIndex?: number, target = list): void {
+    if (backend === "rust" && (record.kind === "shader" || record.kind === "particles")) {
+      const still = bakedStillForRust(input.node);
+      if (!still) return;
+      const box = still.box;
+      const x = box === "localRect" ? 0 : box.x;
+      const y = box === "localRect" ? 0 : box.y;
+      const m = record.transform;
+      const q = scratch.quad;
+      q.m[0]=m[0]; q.m[1]=m[1]; q.m[2]=m[2]; q.m[3]=m[3];
+      q.m[4]=m[0]*x+m[2]*y+m[4]; q.m[5]=m[1]*x+m[3]*y+m[5];
+      q.w=box === "localRect" ? record.w : box.width;
+      q.h=box === "localRect" ? record.h : box.height;
+      q.srcX=0; q.srcY=0; q.srcW=still.sourceWidth; q.srcH=still.sourceHeight;
+      const alpha=record.opacity*still.opacityScale;
+      q.a=alpha; q.r=record.tintR*alpha; q.g=record.tintG*alpha; q.b=record.tintB*alpha;
+      q.blend=still.additive ? 1 : canvasBlend(input.node);
+      q.flipH=false; q.flipV=false; q.hasColorMatrix=false;
+      target.pushQuad(q, still.url);
+      return;
+    }
     if (record.kind !== "spine") return;
     const url = spineClipUrl(input.node, { still: true });
     if (!url) { semanticFailures.set(input.node.id, "unresolved-spine-still"); return; }
@@ -776,6 +800,9 @@ if (isPromiseLike<PresentationResult>(result)) {
     q.r=record.tintR*record.opacity; q.g=record.tintG*record.opacity; q.b=record.tintB*record.opacity;
     q.blend=canvasBlend(input.node); q.flipH=false; q.flipV=false; q.hasColorMatrix=false; target.pushQuad(q, clip.stillUrl);
   }
+  const forceEffectStillOverlay: BuildDrawListOptions["forceEffectStillOverlay"] = backend === "rust"
+    ? (node) => bakedStillForRust(node) !== null ? (node.particleSpec != null ? "particles" : "shader") : null
+    : undefined;
 
   // See `staticBgSkipRootMemo` above for why this is a per-node-object memo rather than a changedIds-driven
   // candidate set. Under `fast.verify` a hit is recomputed and compared rather than trusted, so a stale entry
@@ -839,7 +866,7 @@ if (isPromiseLike<PresentationResult>(result)) {
     textOwners.clear();
     textKeysByOwner.clear();
     semanticFailures.clear();
-    fontRoleDegradations.clear();
+    textDegradations.clear();
     const capturedGlobals = new Map(); const captureIds = new Set<string>(); interaction.collectCaptureIds(captureIds); visual.collectLandingCaptureIds(captureIds);
     visual.prepareBuild(next); interaction.prepareBuild(); spreadDxByNode.clear(); spreadFieldModeByNode.clear();
     list.reset();
@@ -894,7 +921,8 @@ if (isPromiseLike<PresentationResult>(result)) {
       frameSubstitutes: visual.frameSubstitutes.size ? visual.frameSubstitutes : null,
       viewScaleEnv: visual.viewScaleEnv, tipScaleEnv: visual.tipScaleEnv, pinnedLocals: visual.pinnedLocals,
       captureGlobals: captureIds.size ? { ids: captureIds, out: capturedGlobals } : null,
-      cosmeticOffsets: interaction.cosmeticOffsets, semanticText, semanticOverlay, assert: false });
+      cosmeticOffsets: interaction.cosmeticOffsets, semanticText, semanticOverlay, forceEffectStillOverlay,
+      assert: false });
     // rustHeldOverridePatch: the overrides this build applies, by value, banked when its frame publishes.
     const appliedOverrides = fast.heldOverridePatch ? copyTransformOverrides(visual.transformOverrides) : null;
 const producerStarted = rustPhaseTimingMode || producerReasonMode ? performance.now() : 0;
@@ -1486,7 +1514,8 @@ if (isPromiseLike<PresentationResult>(result)) { trackAsyncRetainedPatch(result,
         localAnims: inputs.anims.size ? inputs.anims : null, frameSubstitutes: inputs.substitutes.size ? inputs.substitutes : null,
         viewScaleEnv: visual.viewScaleEnv, tipScaleEnv: visual.tipScaleEnv, pinnedLocals: visual.pinnedLocals,
         cosmeticOffsets: inputs.offsets, semanticText,
-        semanticOverlay: (input, record, index) => semanticOverlay(input, record, index, shadow), assert: false });
+        semanticOverlay: (input, record, index) => semanticOverlay(input, record, index, shadow),
+        forceEffectStillOverlay, assert: false });
       if (semanticFailures.size !== liveFailures.length ||
           [...semanticFailures].some(([id, reason]) => liveFailures.find(([liveId]) => liveId === id)?.[1] !== reason))
         refused = "semantic omissions changed during shadow build";
@@ -1704,8 +1733,8 @@ const traceId = nextTraceFrame();
     ...((failure || (backend !== "rust" && pixi?.textureFailureDetails().length)) ? { failure: failure ?? pixi?.textureFailureDetails().join(" | ") } : {}),
     ...(backend === "rust" && (semanticFailures.size || (pixi?.stats.textureFailures ?? 0) > 0)
       ? { omissions: { nodes: Object.fromEntries(semanticFailures), textures: pixi?.textureFailureDetails() ?? [] } } : {}),
-    ...(backend === "rust" && fontRoleDegradations.size
-      ? { degradations: Object.fromEntries(fontRoleDegradations) } : {}),
+    ...(backend === "rust" && textDegradations.size
+      ? { degradations: Object.fromEntries(textDegradations) } : {}),
     ...(refinementFailure ? { refinementFailure } : {}),
     admittedRevision: snapshot?.stateRevision,
     asyncSubmissionRevision, asyncPresentedRevision, asyncAwaitingAckRevision,

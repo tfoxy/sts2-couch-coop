@@ -191,6 +191,84 @@ describe("parseSimpleRich — what it refuses, and by which class", () => {
   });
 });
 
+describe("parseSimpleRich — tolerant Rust text", () => {
+  const tolerant = (raw: string) => parseSimpleRich(raw, {
+    color: accept, fontRoles: true, inlineImages: true, unsupported: "plain"
+  });
+
+  it("keeps supported nested role and color runs through unsupported decoration", () => {
+    const parsed = tolerant("[gold][b]Power [u]up[/u] [i]both[/i][/b][/gold]");
+    expect(parsed.ok).toBe(true);
+    if (!parsed.ok) return;
+    expect(parsed.value.text).toBe("Power up both");
+    expect(parsed.value.spans).toEqual([{ start: 0, end: 13, color: "#efc851" }]);
+    expect(parsed.value.roles).toEqual([
+      { start: 0, end: 9, role: "bold" },
+      { start: 9, end: 13, role: "bold-italic" }
+    ]);
+    expect(parsed.value.losses).toContainEqual({ feature: "font-swap", detail: "[u]" });
+  });
+
+  it("renders words through each unsupported visual feature and collects losses", () => {
+    const parsed = tolerant("[font_size=30]big[/font_size] [rainbow]color[/rainbow] [bgcolor=#000]box[/bgcolor]");
+    expect(parsed.ok).toBe(true);
+    if (!parsed.ok) return;
+    expect(parsed.value.text).toBe("big color box");
+    expect(parsed.value.losses?.map((loss) => loss.feature)).toEqual(["style", "effect", "style"]);
+  });
+
+  it("keeps unknown and malformed tokens literal, as the DOM scanner does", () => {
+    const parsed = tolerant("A [x-custom]B[/x-custom] [broken C");
+    expect(parsed.ok).toBe(true);
+    if (!parsed.ok) return;
+    expect(parsed.value.text).toBe("A [x-custom]B[/x-custom] [broken C");
+    expect(parsed.value.losses?.some((loss) => loss.feature === "unknown")).toBe(true);
+    const nested = tolerant("[oops [b]word[/b]");
+    expect(nested.ok && nested.value.text).toBe("[oops word");
+    expect(nested.ok && nested.value.roles).toEqual([{ start: 6, end: 10, role: "bold" }]);
+  });
+
+  it("turns a break into a newline, omits a rule, and keeps later words", () => {
+    const parsed = tolerant("first[br]second[hr]third");
+    expect(parsed.ok).toBe(true);
+    if (!parsed.ok) return;
+    expect(parsed.value.text).toBe("first\nsecond\nthird");
+    expect(parsed.value.losses).toContainEqual({ feature: "style", detail: "[hr] rule" });
+  });
+
+  it("keeps an inline image while dropping unsupported sizing options", () => {
+    const parsed = tolerant("Gain [img width=12]res://icons/energy.png[/img] now");
+    expect(parsed.ok).toBe(true);
+    if (!parsed.ok) return;
+    expect(parsed.value.text).toBe("Gain \uFFFC now");
+    expect(parsed.value.images).toEqual([{ start: 5, path: "res://icons/energy.png", valign: "middle" }]);
+    expect(parsed.value.losses).toContainEqual({ feature: "img", detail: "[img width=12] options" });
+  });
+
+  it("ignores invalid colors and partial alignment without hiding words", () => {
+    const parsed = tolerant("lead [center][color=nonsense]text[/color][/center] tail");
+    expect(parsed.ok).toBe(true);
+    if (!parsed.ok) return;
+    expect(parsed.value.text).toBe("lead text tail");
+    expect(parsed.value.spans).toEqual([]);
+    expect(parsed.value.align).toBeNull();
+    expect(parsed.value.losses?.map((loss) => loss.feature)).toContain("bad-color");
+    expect(parsed.value.losses?.map((loss) => loss.feature)).toContain("non-wrapping-align");
+  });
+
+  it("recovers from crossed close tags without discarding later text", () => {
+    const parsed = tolerant("[b]one[i]two[/b]three[/i] four");
+    expect(parsed.ok).toBe(true);
+    if (!parsed.ok) return;
+    expect(parsed.value.text).toBe("onetwothree four");
+    expect(parsed.value.roles).toEqual([
+      { start: 0, end: 3, role: "bold" },
+      { start: 3, end: 6, role: "bold-italic" },
+      { start: 6, end: 11, role: "italic" }
+    ]);
+  });
+});
+
 describe("createColorValidator", () => {
   it("answers null for a value the context rejects, which is CSS dropping the declaration", () => {
     // A stub context with the property's real semantics: an invalid assignment is a NO-OP.

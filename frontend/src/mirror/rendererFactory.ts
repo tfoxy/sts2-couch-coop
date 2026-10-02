@@ -1,4 +1,4 @@
-// Public stage selection: DOM is the fresh-viewer default; canvas means Rust WebGL.
+// Public stage selection: WebKit starts on canvas, other fresh viewers on DOM; canvas means Rust WebGL.
 // GPU failures leave the selected stage in place. The viewer may retry or select DOM explicitly.
 // The legacy canvas constructor is reachable only through the unit-test override.
 
