@@ -29,6 +29,8 @@ export interface RustFastFlags {
   textPatch: boolean;
   textEvict: boolean;
   idleScheduler: boolean;
+  /** Passive idle demand books a display rAF only for the frame it is due in (the park timer reaches it). */
+  idleDueFrame: boolean;
   /** GSW Rust renderer redraws only the damaged picture region and skips no-change presents. */
   damagePresent: boolean;
   verify: boolean;
@@ -56,6 +58,7 @@ export const RUST_FAST_SWITCHES = {
   textPatch: "rustTextPatch",
   textEvict: "rustTextEvict",
   idleScheduler: "rustIdleScheduler",
+  idleDueFrame: "rustIdleDueFrame",
   damagePresent: "rustDamagePresent",
 } as const satisfies Record<Exclude<keyof RustFastFlags, "verify">, string>;
 

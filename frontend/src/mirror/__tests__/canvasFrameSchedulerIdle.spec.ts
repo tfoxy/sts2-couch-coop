@@ -16,6 +16,8 @@ interface LoopOptions {
   work?: (frame: number) => number;
   /** The `idleCadence=display` comparison arm: passive demand is due on every display frame. */
   displayPacedPassive?: boolean;
+  /** `rustIdleDueFrame`: passive deadlines park to the due frame instead of folding. */
+  idleDueFrame?: boolean;
 }
 
 function createIdleLoop(options: LoopOptions) {
@@ -42,6 +44,8 @@ function createIdleLoop(options: LoopOptions) {
   let revisionAtFrame = 1;
   let reconcilePending = false;
   let onPatch: (() => void) | null = null;
+  /** A tween/flight (per-frame loop demand), as an input's ramp or a landing would start. */
+  let perFrame = false;
 
   function drainPosted() {
     while (posted.length) {
@@ -72,6 +76,7 @@ function createIdleLoop(options: LoopOptions) {
     revisionAtFrame: () => revisionAtFrame,
     idleAnimFps: () => 30,
     idleScheduler: options.idleScheduler,
+    idleDueFrame: options.idleDueFrame,
     displayPacedPassive: options.displayPacedPassive,
     platform: {
       requestAnimationFrame: (callback) => { const handle = nextHandle++; rafs.set(handle, callback); return handle; },
@@ -88,12 +93,12 @@ function createIdleLoop(options: LoopOptions) {
     deadlines: {
       offsetRampDeadline: () => Infinity,
       loopDeadline: () => Infinity,
-      loopHasPerFrameDemand: () => false,
+      loopHasPerFrameDemand: () => perFrame,
       trailDeadline: () => Infinity,
       // createPixiMirrorRenderer's passive deadline: the authored cadence, never ahead of the 60 Hz stage gate.
       passiveDeadline: (at) => !idleActive ? Infinity
         : options.displayPacedPassive ? at : Math.max(lastIdleAt + 1000 / 30, notBefore),
-      idleStageBypass: () => null,
+      idleStageBypass: () => perFrame ? "tween" : null,
       idleStageNotBefore: () => notBefore,
     },
     animation: {
@@ -162,6 +167,7 @@ function createIdleLoop(options: LoopOptions) {
     get vsync() { return vsyncIndex; },
     get now() { return now; },
     set idleActive(value: boolean) { idleActive = value; },
+    set perFrame(value: boolean) { perFrame = value; },
     /** Run once inside the next patch (a texture turning resident while the tick paints, say). */
     set onPatch(value: () => void) { onPatch = value; },
     /** A lane (flushHover, say) booked now: in the coming frame it runs after anything booked before it. */
@@ -408,4 +414,149 @@ describe("frame scheduler idle cadence (rustIdleScheduler)", () => {
     loop.runUntilVsync(23);
     expect(loop.buildsAt(23)).toEqual(["texture"]);
   });
+});
+
+// `rustIdleDueFrame`: the fold's skipped ticks are whole browser animation frames that draw nothing. With the switch
+// a passive deadline parks and the park wake books exactly the due frame, so the animation lane runs a callback only
+// on vsyncs it draws.
+describe("frame scheduler due-frame idle wake (rustIdleDueFrame)", () => {
+  const dueFrame = { idleScheduler: true, idleDueFrame: true } as const;
+
+  it("draws the 30 Hz cadence at 60 Hz with no callback on the vsyncs between: one rAF and one park per frame", () => {
+    const due = steadyIdle(dueFrame, 600);
+    const fold = steadyIdle({ idleScheduler: true }, 600);
+    // The same frames as the fold (and therefore as the timer path before it).
+    expect(due.presentedVsync).toEqual(fold.presentedVsync);
+    expect(due.presented).toEqual(fold.presented);
+    const gaps = due.presentedVsync.slice(1).map((vsync, i) => vsync - due.presentedVsync[i]);
+    expect(new Set(gaps)).toEqual(new Set([2]));
+    expect(due.presented.length).toBe(300);
+    // Every animation callback draws; the fold spends one skipped callback per drawn frame.
+    expect(due.census.rafTasks).toBe(due.presented.length);
+    const stats = due.scheduler.idleStats();
+    expect(stats).toMatchObject({ enabled: true, dueFrame: true, skippedTicks: 0, foldSkips: 0, folds: 0 });
+    expect(stats.rafCallbacks).toBe(due.presented.length);
+    expect(fold.census.rafTasks).toBeGreaterThanOrEqual(2 * fold.presented.length - 1);
+    expect(fold.scheduler.idleStats().foldSkips).toBeGreaterThanOrEqual(fold.presented.length - 1);
+    // The skipped callback became the park timer; still nothing posted, still one task per display frame.
+    expect(Math.abs(due.census.timerTasks - due.presented.length)).toBeLessThanOrEqual(1);
+    expect(due.census.postedTasks).toBe(0);
+    expect(Math.max(...due.tasksPerFrame.values())).toBe(1);
+    const coalesce = due.scheduler.coalesceStats()!;
+    expect(coalesce.maxWorkPerFrame).toBe(1);
+    expect(coalesce.parkEpochEnds).toBeGreaterThanOrEqual(due.presented.length - 1);
+    expect(coalesce.idleEpochEnds).toBe(0);
+  });
+
+  it("removes the fold's two skipped callbacks per frame at 90 Hz with phone-length work", () => {
+    const options = { periodMs: 1000 / 90, work: () => 9 };
+    const due = steadyIdle({ ...dueFrame, ...options }, 540);
+    const fold = steadyIdle({ idleScheduler: true, ...options }, 540);
+    expect(due.presentedVsync).toEqual(fold.presentedVsync);
+    expect(due.census.rafTasks).toBe(due.presented.length);
+    expect(due.scheduler.idleStats().skippedTicks).toBe(0);
+    expect(fold.scheduler.idleStats().foldSkips).toBeGreaterThanOrEqual(2 * (fold.presented.length - 1));
+  });
+
+  it("never admits an idle frame early or skips a callback under jittery callbacks and work", () => {
+    const jitter = (seed: number) => (frame: number) => ((frame * 7919 + seed) % 97) / 97;
+    const delay = (frame: number) => 0.2 + 3.5 * jitter(13)(frame);
+    const work = (frame: number) => 1 + 9 * jitter(29)(frame);
+    const due = steadyIdle({ ...dueFrame, delay, work }, 900);
+    const fold = steadyIdle({ idleScheduler: true, delay, work }, 900);
+    const minGap = (times: number[]) => Math.min(...times.slice(1).map((at, i) => at - times[i]));
+    expect(minGap(due.presented)).toBeGreaterThanOrEqual(1000 / 30 - CANVAS_FRAME_PARK_SLOP_MS);
+    const vsyncGaps = due.presentedVsync.slice(1).map((vsync, i) => vsync - due.presentedVsync[i]);
+    expect(Math.min(...vsyncGaps)).toBeGreaterThanOrEqual(2);
+    expect(due.presented.length).toBe(fold.presented.length);
+    expect(due.scheduler.idleStats().skippedTicks).toBe(0);
+    expect(due.census.rafTasks).toBe(due.presented.length);
+  });
+
+  it("gives an urgent input mid-park its build at once, presented at the next vsync", () => {
+    const loop = steadyIdle(dueFrame, 20);
+    expect(loop.timers.size).toBe(1); // parked for frame 22
+    let answer = "";
+    loop.taskAt(loop.now + 5, () => { answer = loop.scheduler.requestBuild(true); });
+    loop.runUntilVsync(21);
+    expect(answer).toBe("immediate");
+    // The build ran in the task between frames 20 and 21, so frame 21 paints it.
+    expect(loop.builds.filter((entry) => entry.source === "local").map((entry) => entry.vsync)).toEqual([20]);
+    // The park is untouched: the idle cadence still draws frame 22, its due frame, and nothing skips.
+    loop.runUntilVsync(22);
+    expect(loop.buildsAt(21)).toEqual([]);
+    expect(loop.buildsAt(22)).toEqual(["patch"]);
+    loop.runUntilVsync(60);
+    expect(loop.scheduler.idleStats().skippedTicks).toBe(0);
+  });
+
+  it("books the next vsync for a non-urgent input mid-park instead of waiting for the park", () => {
+    const loop = steadyIdle(dueFrame, 20);
+    let answer = "";
+    loop.taskAt(loop.now + 5, () => { answer = loop.scheduler.requestBuild(false); });
+    loop.runUntilVsync(21);
+    expect(answer).toBe("deferred");
+    // Frame 21 is not an idle-due frame, but the request owns it: the park was cancelled for it.
+    expect(loop.buildsAt(21)).toEqual(["tick:requested"]);
+    loop.runUntilVsync(60);
+    expect(loop.scheduler.coalesceStats()!.maxWorkPerFrame).toBe(1);
+    expect(loop.scheduler.idleStats().skippedTicks).toBe(0);
+  });
+
+  it("books the next vsync for per-frame demand an input starts mid-park, then parks again when it ends", () => {
+    const loop = steadyIdle(dueFrame, 20);
+    loop.taskAt(loop.now + 5, () => { loop.perFrame = true; loop.scheduler.armAnimation(loop.now); });
+    loop.runUntilVsync(20);
+    loop.runUntilVsync(21);
+    expect(loop.timers.size).toBe(0); // the park was cancelled, not left to wake a second rAF
+    expect(loop.buildsAt(21)).toEqual(["patch"]);
+    loop.runUntilVsync(26);
+    expect([22, 23, 24, 25, 26].map((vsync) => loop.buildsAt(vsync).length)).toEqual([1, 1, 1, 1, 1]);
+    loop.perFrame = false;
+    loop.resetCensus();
+    loop.runUntilVsync(120);
+    // Back on the parked 30 Hz cadence: every callback draws.
+    expect(loop.census.rafTasks).toBeLessThanOrEqual(48);
+    expect(loop.census.rafTasks).toBeGreaterThanOrEqual(46);
+    expect(loop.scheduler.idleStats().skippedTicks).toBe(0);
+  });
+
+  it("paints the clock tick's wire delta at the next vsync while the idle lane is parked", () => {
+    const loop = steadyIdle(dueFrame, 20);
+    // A once-a-second clock: one streamed delta per second, at an arbitrary phase between frames.
+    for (let second = 0; second < 4; second++) {
+      const at = loop.now + second * 1000 + 7;
+      loop.taskAt(at, () => loop.wireDelta());
+    }
+    loop.runUntilVsync(20 + 4 * 60 + 2);
+    const reconciles = loop.builds.filter((entry) => entry.source === "reconcile");
+    expect(reconciles).toHaveLength(4);
+    // Each tick lands on the vsync right after its message (the message is 7 ms into a 16.7 ms frame).
+    reconciles.forEach((entry, i) => {
+      const messageAt = 20 * loop.periodMs + 1 + 3 + i * 1000 + 7;
+      expect(entry.vsync).toBe(Math.ceil(messageAt / loop.periodMs));
+    });
+    expect(loop.maxWorkInAnyFrame()).toBe(1);
+    expect(loop.scheduler.idleStats().skippedTicks).toBe(0);
+  });
+
+  for (const display of [
+    { name: "60 Hz", periodMs: 1000 / 60, work: 3 },
+    { name: "90 Hz, phone-length work", periodMs: 1000 / 90, work: 9 },
+  ]) {
+    it(`keeps one build or patch per display frame with lanes the scheduler does not know of (${display.name})`, () => {
+      const loop = createIdleLoop({ ...dueFrame, periodMs: display.periodMs, work: () => display.work });
+      loop.task(() => loop.scheduler.armAnimation(loop.now));
+      for (let vsync = 13; vsync < 400; vsync += 7) {
+        const at = vsync * display.periodMs + display.periodMs * (0.3 + 0.1 * (vsync % 7));
+        loop.taskAt(at, () => loop.bookLane(() => { loop.scheduler.requestBuild(false, true); }));
+      }
+      loop.runUntilVsync(420);
+      expect(loop.maxWorkInAnyFrame()).toBe(1);
+      expect(loop.scheduler.buildRequested).toBe(false);
+      expect(loop.builds.filter((entry) => entry.source === "tick:requested" || entry.source === "local").length)
+        .toBeGreaterThan(40);
+      expect(loop.census.postedTasks).toBeLessThan(2 * 57 + 8);
+    });
+  }
 });
