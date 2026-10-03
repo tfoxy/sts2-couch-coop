@@ -48,6 +48,11 @@ export interface RetainedPixiPatch {
    * roots this patch translated. Committed with the patch.
    */
   rootTranslations?: ReadonlyMap<string, readonly [number, number]>;
+  /**
+   * `rustTextPatch`: text records whose label changed, re-prepared from the committed build's paint record. The
+   * executor re-emits each record's command; committing the patch makes each record's transform its reference.
+   */
+  texts?: PixiTextRecord[];
 }
 
 export interface WireTransformOptions {
@@ -106,6 +111,12 @@ export interface RetainedPixiComposition {
    */
   patchTranslate(deltas: ReadonlyMap<string, readonly [number, number]>, options?: { clips?: boolean }): RetainedPixiPatch | null;
   commit(patch: RetainedPixiPatch): void;
+  /**
+   * `rustTextPatch`: whether `owner`'s text records still sit exactly where the build placed them, so records
+   * re-prepared from that build's paint record land where a rebuild would put them. False when the owner is inside
+   * a local-animation root's span or any committed patch has moved its node or its text since admission.
+   */
+  textPatchable(owner: string): boolean;
   /** The translation committed patches have applied to the clip at `clipPush` index `index` since admission. */
   clipOffset(index: number): readonly [number, number];
   logicalMatrix(id: string): Affine | undefined;
@@ -442,6 +453,30 @@ export function createRetainedPixiComposition(
       const ref = owner && byOwner.get(owner)?.find((item) => item.id === id);
       if (ref) ref.matrix = matrix;
     }
+    // A text change re-places its records: each one's new transform is both its reference and its current pose
+    // (`textPatchable` admitted only records that had not moved since admission).
+    for (const record of result.texts ?? []) {
+      const id = `text:${record.key}`;
+      const owner = ownerByPrimitive.get(id);
+      const ref = owner && byOwner.get(owner)?.find((item) => item.id === id);
+      const matrix = [...record.transform] as Affine;
+      if (ref) ref.matrix = matrix;
+      lastPrimitive.set(id, matrix);
+    }
+  }
+  function textPatchable(owner: string): boolean {
+    if (!ensureIndex()) return false;
+    const entry = build.order.entries.get(owner);
+    if (!entry || wireNodeMatrices.has(owner)) return false;
+    if (roots.some((root) => root.span && entry.order >= root.span.spanStart && entry.order < root.span.spanEnd)) return false;
+    let texts = 0;
+    for (const ref of byOwner.get(owner) ?? []) {
+      if (!ref.id.startsWith("text:")) continue;
+      texts++;
+      const current = lastPrimitive.get(ref.id);
+      if (!current || !current.every((value, i) => value === ref.matrix[i])) return false;
+    }
+    return texts > 0;
   }
   /** The clip translations of the clippers among `owners`, each by its own vector. */
   function clipTranslations(owners: Iterable<readonly [string, readonly [number, number]]>): ClipTranslation[] {
@@ -565,7 +600,7 @@ export function createRetainedPixiComposition(
     const old = (sampledMatrix ?? lastPrimitive.get(id)) as Affine | undefined, inverse = affineInverse(ref.matrix);
     return old && inverse ? affineMul(affineMul(old, inverse), referenceMatrix) : null;
   }
-  return { plan, patch, patchWireTransform, patchTranslate, commit, clipOffset, logicalMatrix, logicalNodeMatrix, sourceTransform };
+  return { plan, patch, patchWireTransform, patchTranslate, commit, textPatchable, clipOffset, logicalMatrix, logicalNodeMatrix, sourceTransform };
 }
 
 /**
@@ -597,6 +632,7 @@ function createVerifiedComposition(
     patchWireTransform: (id, delta, options) => check("patchWireTransform", (composition) => composition.patchWireTransform(id, delta, options)),
     patchTranslate: (deltas, options) => check("patchTranslate", (composition) => composition.patchTranslate(deltas, options)),
     clipOffset: (index) => check("clipOffset", (composition) => composition.clipOffset(index)),
+    textPatchable: (owner) => check("textPatchable", (composition) => composition.textPatchable(owner)),
     commit(result) {
       eager.commit(result);
       try { lazy.commit(result); }

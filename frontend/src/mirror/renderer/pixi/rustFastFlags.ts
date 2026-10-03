@@ -26,7 +26,11 @@ export interface RustFastFlags {
   offsetPatch: boolean;
   wireSpreadPatch: boolean;
   tweenRootPatch: boolean;
+  textPatch: boolean;
   textEvict: boolean;
+  idleScheduler: boolean;
+  /** GSW Rust renderer redraws only the damaged picture region and skips no-change presents. */
+  damagePresent: boolean;
   verify: boolean;
 }
 
@@ -49,7 +53,10 @@ export const RUST_FAST_SWITCHES = {
   offsetPatch: "rustOffsetPatch",
   wireSpreadPatch: "rustWireSpreadPatch",
   tweenRootPatch: "rustTweenRootPatch",
+  textPatch: "rustTextPatch",
   textEvict: "rustTextEvict",
+  idleScheduler: "rustIdleScheduler",
+  damagePresent: "rustDamagePresent",
 } as const satisfies Record<Exclude<keyof RustFastFlags, "verify">, string>;
 
 export function resolveRustFastFlags(query: URLSearchParams, backend: "pixi" | "rust"): RustFastFlags {

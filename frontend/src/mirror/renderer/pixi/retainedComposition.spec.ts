@@ -568,3 +568,27 @@ describe("lazy retained composition index", () => {
     expect(mismatches.at(-1)).toMatch(/^patch: retained composition inputs changed/);
   });
 });
+
+describe("text patch (rustTextPatch)", () => {
+  it("admits a label untouched since admission, re-references its committed records, and refuses one a patch moved", () => {
+    const animated = mixedFixture(false);
+    const inputs = { ...animated, build: { ...animated.build, localAnimFrames: new Map() } as unknown as DrawListBuild };
+    const retained = createRetainedPixiComposition(inputs.list, inputs.build, inputs.texts, inputs.owners, inputs.spread);
+    expect(retained.textPatchable("mesh")).toBe(true);
+    expect(retained.textPatchable("sprite")).toBe(false); // draws no text
+    const label = inputs.texts.find((text) => text.key === "meshLabel")!;
+    const replaced = { ...label, text: "changed", transform: [1, 0, 0, 1, 9, 9] } as PixiTextRecord;
+    retained.commit({ primitives: [], groups: [], hits: [], nodeMatrices: [], sourceReferences: [], movedRoots: 0,
+      rootPoses: new Map(), texts: [replaced] });
+    expect(retained.logicalMatrix("text:meshLabel")).toEqual([1, 0, 0, 1, 9, 9]);
+    // Its new transform is also its reference: a later translation starts from it, and the label stays patchable.
+    expect(retained.textPatchable("mesh")).toBe(true);
+    const moved = retained.patchTranslate(new Map([["mesh", [1, 2] as const]]))!;
+    expect(moved.primitives).toContainEqual({ id: "text:meshLabel", transform: [1, 0, 0, 1, 10, 11] });
+    retained.commit(moved);
+    expect(retained.textPatchable("mesh")).toBe(false);
+    // Inside a local-animation root's span (`panel` animates over `mesh`) the label is posed by the root: refused.
+    const withRoots = createRetainedPixiComposition(animated.list, animated.build, animated.texts, animated.owners, animated.spread);
+    expect(withRoots.textPatchable("mesh")).toBe(false);
+  });
+});

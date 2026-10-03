@@ -12,8 +12,8 @@
  */
 export interface TextResourceEvictionTracker {
   /**
-   * Call once per committed full build, never for a retained patch (Bitmap resource keys cannot change via a
-   * retained patch today). `referenced` is every Bitmap resource key the just-committed scene uses; `cached` is
+   * Call once per committed full build, and per committed `rustTextPatch` patch that changed the resource list.
+   * `referenced` is every Bitmap resource key the just-committed scene uses; `cached` is
    * every key currently in the Bitmap JS cache. Returns the keys to evict right now, in the order they should be
    * released (oldest-unreferenced first).
    */

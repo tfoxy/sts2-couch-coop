@@ -51,6 +51,13 @@ describe("resolveRustFastFlags", () => {
     expect(flags("rustFast=1", "pixi").wireSpreadPatch).toBe(false);
   });
 
+  it("turns the damage present off on its own", () => {
+    expect(flags("rustDamagePresent=0").damagePresent).toBe(false);
+    expect(flags("rustDamagePresent=0").tweenRootPatch).toBe(true);
+    expect(flags("rustFast=0&rustDamagePresent=1").damagePresent).toBe(true);
+    expect(flags("rustFast=1", "pixi").damagePresent).toBe(false);
+  });
+
   it("turns the tween-root patch off on its own", () => {
     expect(flags("rustTweenRootPatch=0").tweenRootPatch).toBe(false);
     expect(flags("rustTweenRootPatch=0").heldOverridePatch).toBe(true);
@@ -63,6 +70,24 @@ describe("resolveRustFastFlags", () => {
     expect(flags("rustTextEvict=0").tweenRootPatch).toBe(true);
     expect(flags("rustFast=0&rustTextEvict=1").textEvict).toBe(true);
     expect(flags("rustFast=1", "pixi").textEvict).toBe(false);
+  });
+
+  it("turns the text-only patch off on its own", () => {
+    expect(flags("").textPatch).toBe(true);
+    expect(flags("rustTextPatch=0").textPatch).toBe(false);
+    expect(flags("rustTextPatch=0").textEvict).toBe(true);
+    expect(flags("rustFast=0").textPatch).toBe(false);
+    expect(flags("rustFast=0&rustTextPatch=1").textPatch).toBe(true);
+    expect(flags("rustFast=1", "pixi").textPatch).toBe(false);
+  });
+
+  it("turns the idle scheduler off on its own", () => {
+    expect(flags("").idleScheduler).toBe(true);
+    expect(flags("rustIdleScheduler=0").idleScheduler).toBe(false);
+    expect(flags("rustIdleScheduler=0").coalescedBuilds).toBe(true);
+    expect(flags("rustFast=0").idleScheduler).toBe(false);
+    expect(flags("rustFast=0&rustIdleScheduler=1").idleScheduler).toBe(true);
+    expect(flags("rustFast=1", "pixi").idleScheduler).toBe(false);
   });
 
   it("enables one item without the umbrella", () => {
