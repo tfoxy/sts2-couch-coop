@@ -96,6 +96,12 @@ type MirrorDrawExecutor = Omit<PixiDrawListRenderer<string>, "render" | "admitSc
   /** rustDamagePresent: the Rust renderer's cumulative damage-present counters; null while the switch is off. */
   readonly rustDamage?: { partialPresents: number; fullPresents: number; skippedPresents: number; partialPixels: number;
     partialDraws: number; verifyMismatches: number; verifyChecks: number; last: string | null } | null;
+  /** rustPresent: the mode this executor's Rust engine actually presents through ("surface" unless `rustPresent`
+   *  asked for another and the glue's `createWithPresent` honoured it). */
+  readonly rustPresentMode?: string;
+  /** rustPresent: cumulative pixels every present's blit wrote over this engine's lifetime, and the last
+   *  present's own count (both 0/null until the glue reports them). */
+  readonly rustBlitPixels?: { total: number; last: number | null };
 };
 /** A scene patch that may also translate clip rects (`ClipTranslation`, by `clipPush` index). */
 export type ClipTranslatingScenePatch = import("@godot-scene-web/canvas/pixi").PixiScenePatch<string> & {

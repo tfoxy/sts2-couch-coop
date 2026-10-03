@@ -1,8 +1,9 @@
 import { describe, expect, it } from "vitest";
-import { RUST_FAST_SWITCHES, resolveRustFastFlags } from "./rustFastFlags";
+import { RUST_FAST_SWITCHES, resolveRustFastFlags, resolveRustPresentMode } from "./rustFastFlags";
 
 const flags = (query: string, backend: "pixi" | "rust" = "rust") => resolveRustFastFlags(new URLSearchParams(query), backend);
 const items = Object.keys(RUST_FAST_SWITCHES) as Array<keyof typeof RUST_FAST_SWITCHES>;
+const presentMode = (query: string, backend: "pixi" | "rust" = "rust") => resolveRustPresentMode(new URLSearchParams(query), backend);
 
 describe("resolveRustFastFlags", () => {
   it("is all on by default for Rust, but never verify", () => {
@@ -103,5 +104,29 @@ describe("resolveRustFastFlags", () => {
     expect(pixi.paintOrderReuse).toBe(true);
     expect(pixi.lazyComposition).toBe(false);
     expect(pixi.verify).toBe(false);
+  });
+});
+
+describe("resolveRustPresentMode", () => {
+  it("defaults to direct and is unaffected by the rustFast umbrella", () => {
+    expect(presentMode("")).toBe("direct");
+    expect(presentMode("rustFast=1")).toBe("direct");
+    expect(presentMode("rustFast=0")).toBe("direct");
+  });
+
+  it("resolves each recognized mode for the Rust backend", () => {
+    for (const mode of ["surface", "direct", "preserved", "preserved-desync"]) expect(presentMode(`rustPresent=${mode}`)).toBe(mode);
+  });
+
+  it("falls back to direct on an unrecognized value", () => {
+    expect(presentMode("rustPresent=bogus")).toBe("direct");
+  });
+
+  it("stays surface for Pixi regardless of the query", () => {
+    expect(presentMode("rustPresent=direct", "pixi")).toBe("surface");
+  });
+
+  it("reads independently of rustFast=0, unlike the umbrella items", () => {
+    expect(presentMode("rustFast=0&rustPresent=preserved")).toBe("preserved");
   });
 });

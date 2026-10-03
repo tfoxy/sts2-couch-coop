@@ -76,3 +76,23 @@ export function resolveRustFastFlags(query: URLSearchParams, backend: "pixi" | "
 export function rustFastFlagsFromLocation(backend: "pixi" | "rust"): RustFastFlags {
   return resolveRustFastFlags(new URLSearchParams(window.location.search), backend);
 }
+
+/**
+ * `rustPresent=<mode>`: which present path the GSW Rust engine uses. Absent or unrecognized resolves to
+ * "direct" (one full-surface pass per frame instead of two; ledger rows for Oct 3). `surface` restores the
+ * wgpu Surface path. `preserved` and `preserved-desync` are play-test only: preserved showed no CPU change on
+ * the phone, and desynchronized changes how Chrome scales the canvas to the screen. Kept outside the
+ * `rustFast` umbrella so `rustFast=0` does not change the present path. Only the Rust backend reads it.
+ */
+export type RustPresentMode = "surface" | "direct" | "preserved" | "preserved-desync";
+const RUST_PRESENT_MODES = new Set<RustPresentMode>(["surface", "direct", "preserved", "preserved-desync"]);
+
+export function resolveRustPresentMode(query: URLSearchParams, backend: "pixi" | "rust"): RustPresentMode {
+  if (backend !== "rust") return "surface";
+  const value = query.get("rustPresent");
+  return RUST_PRESENT_MODES.has(value as RustPresentMode) ? value as RustPresentMode : "direct";
+}
+
+export function rustPresentModeFromLocation(backend: "pixi" | "rust"): RustPresentMode {
+  return resolveRustPresentMode(new URLSearchParams(window.location.search), backend);
+}

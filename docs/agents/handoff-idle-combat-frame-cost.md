@@ -242,6 +242,10 @@ is most of the 4.1 ms of Wasm per frame, and most of the GPU-process time.
   - WebGL's default `preserveDrawingBuffer: false` means the surface contents aren't kept between frames, so a
     scissored copy needs `preserveDrawingBuffer: true`, which has its own cost.
   - Measure both: full copy plus damaged picture, and preserved surface plus scissored copy. Pick the cheaper.
+  - **Outcome (Oct 3, follow-up round):** wgpu's `Surface` was the blocker, not WebGL. GSW 2cb5bd0f adds
+    `createWithPresent(canvas, mode)`, which owns the WebGL2 context and skips the `Surface`. `direct` (now couch's
+    default) halves the full-surface passes per frame; `preserved` scissors the canvas draw to the damage. See the
+    `rustPresent=` rows in the [renderer optimization ledger](renderer-optimization-ledger.md).
 - **No change at all:** when a frame has no change, skip the present entirely.
 
 **Exactness:**
