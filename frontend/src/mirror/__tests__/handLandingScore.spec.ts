@@ -277,6 +277,35 @@ describe("H11 phase 2 — the landing is the channel's endpoint, not a sample of
     expect(out.filter((row: { overruled: boolean }) => row.overruled)).toHaveLength(1);
   });
 
+  // h11-gpu-fast-off-a, touch-2400: the old channel ends on the first focused committed picture.
+  // Its y1041 endpoint still draws at y922 under the old lift; the next picture adopts y871 with lift zero.
+  it("does not score an old handoff against a focus that starts on its first unowned commit", () => {
+    const sampled = trace([
+      { t: 24406.8, drawn: [1582.5, 922], game: [1266, 1041], ep: [1191, 1041], sd: 316.5, rd: -119, live: true, z: 0, presentEpoch: 91 },
+      { t: 24599.8, drawn: [1489.9, 922], game: [1266, 1041], ep: [1191, 1041], sd: 298, rd: -119, live: true, z: 0, presentEpoch: 92 },
+      { t: 24805.2, drawn: [1488.8, 922], game: [1191, 871], ep: null, sd: 297.8, rd: -119, live: false, z: 1, presentEpoch: 93 },
+      { t: 25022.2, drawn: [1488.8, 871], game: [1191, 871], ep: null, sd: 297.8, rd: 0, live: false, z: 1, presentEpoch: 94 },
+      { t: 25235, drawn: [1488.8, 871], game: [1191, 871], ep: null, sd: 297.8, rd: 0, live: false, z: 1, presentEpoch: 95 }
+    ], { f: 1.25, stage: "canvas" });
+    const out = scoreCorrections(sampled);
+    expect(out.filter((row: { overruled: boolean }) => row.overruled)).toHaveLength(0);
+    expect(out.focusCatchups).toBe(1);
+    expect(out.distinctCanvasRestPairs).toBe(1);
+  });
+
+  it("still fails when the first focused adoption draws the wrong pose", () => {
+    const sampled = trace([
+      { t: 1000, drawn: [1488.75, 922], game: [1266, 1041], ep: [1191, 1041], sd: 297.75, rd: -119, live: true, z: 0, presentEpoch: 100 },
+      { t: 1100, drawn: [1488.75, 922], game: [1191, 871], ep: null, sd: 297.75, rd: -119, live: false, z: 1, presentEpoch: 101 },
+      { t: 1200, drawn: [1488.75, 900], game: [1191, 871], ep: null, sd: 297.75, rd: 0, live: false, z: 1, presentEpoch: 102 },
+      { t: 1300, drawn: [1488.75, 871], game: [1191, 871], ep: null, sd: 297.75, rd: 0, live: false, z: 1, presentEpoch: 103 },
+      { t: 1400, drawn: [1488.75, 871], game: [1191, 871], ep: null, sd: 297.75, rd: 0, live: false, z: 1, presentEpoch: 104 }
+    ], { f: 1.25, stage: "canvas" });
+    const out = scoreCorrections(sampled);
+    expect(out.focusCatchups).toBe(0);
+    expect(out.filter((row: { overruled: boolean }) => row.overruled)).toHaveLength(1);
+  });
+
   // THE LIFT RAMPING ACROSS THE HAND-OFF, with its real numbers: report-1789838330184's
   // canvas-touch-1920 `worstTrace` for @Control@611944, un-focusing while the readable-hand lift ramps back in
   // (rd −31 → −115.22 → −118.9 → −119). `worstTrace` does not carry the endpoint column, so it is stated here

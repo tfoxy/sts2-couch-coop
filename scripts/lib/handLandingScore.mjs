@@ -176,6 +176,31 @@ function focusCatchupExplainsRest(oldRows, rows, handoffIndex, restAt, settled, 
   return false;
 }
 
+/** A focus that begins in the first unowned picture is a new pose, not this channel's landing. */
+function focusAfterHandoffExplainsRest(rows, handoffIndex, restAt, settled, spreadFactor) {
+  const old = rows[handoffIndex - 1], first = rows[handoffIndex];
+  if (!old || !first || !Number.isFinite(old.z) || old.z === 1 || first.z !== 1 || first.live ||
+      !Number.isSafeInteger(first.presentEpoch) || first.presentEpoch <= old.presentEpoch ||
+      Math.abs(first.rd - old.rd) > MATCH_PX ||
+      Math.hypot(first.gx - old.gx, first.gy - old.gy) <= MATCH_PX) return false;
+  const oldShift = old.fm === 1 ? fieldDxAtOriginX(old.ex, first.f ?? spreadFactor) : first.sd;
+  if (Math.hypot(first.dx - (old.ex + oldShift), first.dy - (old.ey + first.rd)) > MATCH_PX) return false;
+  // The first committed lift/pose adoption must be correct. A later repair cannot hide a bad picture.
+  for (let j = handoffIndex + 1; j <= restAt; j++) {
+    const row = rows[j];
+    if (row.live || row.z !== 1 || row.fan !== first.fan) return false;
+    if (row.presentEpoch === first.presentEpoch) continue;
+    if (Math.abs(row.rd - first.rd) <= MATCH_PX &&
+        Math.hypot(row.dx - first.dx, row.dy - first.dy) <= MATCH_PX) continue;
+    const shift = row.fm === 1 ? fieldDxAtOriginX(row.gx, row.f ?? spreadFactor) : row.sd;
+    return Math.abs(row.rd - first.rd) > MATCH_PX &&
+      Math.hypot(row.gx - first.gx, row.gy - first.gy) <= MATCH_PX &&
+      Math.hypot(row.dx - (row.gx + shift), row.dy - (row.gy + row.rd)) <= MATCH_PX &&
+      Math.hypot(settled.dx - row.dx, settled.dy - row.dy) <= STILL_PX;
+  }
+  return false;
+}
+
 /**
  * The first frame at or after `from` on which the holder has STOPPED MOVING — two consecutive drawn poses
  * within {@link STILL_PX} — or null when it never does inside the deadline.
@@ -310,6 +335,10 @@ export function scoreCorrections(trace, landingRows = []) {
         focusCatchups++;
         continue;
       }
+      if (focusAfterHandoffExplainsRest(rows, i, restAt, settled, spreadFactor)) {
+        focusCatchups++;
+        continue;
+      }
       const want = predictedDrawn(landing, settled, spreadFactor);
       const dx = settled.dx - want.x;
       const dy = settled.dy - want.y;
@@ -373,6 +402,8 @@ export function scoreCorrections(trace, landingRows = []) {
           ep: r.ex === null || r.ex === undefined ? null : [r1(r.ex), r1(r.ey)],
           sd: r1(r.sd),
           rd: r.rd,
+          z: r.z,
+          presentEpoch: r.presentEpoch,
           live: r.live,
           fan: r.fan
         }))

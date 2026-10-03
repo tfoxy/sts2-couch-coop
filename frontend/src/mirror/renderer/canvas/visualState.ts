@@ -33,6 +33,7 @@ import { resolveSceneInfo } from "@/mirror/renderer/sceneIdentity";
 import { intentFrameIndex } from "@/mirror/renderer/intentPolicy";
 import { tipScaleOn } from "@/mirror/renderer/sharedFeatureFlags";
 import { type MirrorNode, type MirrorState } from "@/mirror/sceneTree";
+import { matrix6Equal } from "@/mirror/canvas/matrixLerp";
 import { placementBox } from "@/mirror/nodeStyles";
 import {
   planTweenHints,
@@ -1015,8 +1016,32 @@ export function createCanvasVisualState(
       }
     }
     if (next.pendingHints.length > 0) {
+      // A delayed scene packet can carry several endpoints for one holder after its streamed pose
+      // has already moved beyond all of them. None is a useful destination in that case.
+      const recentEndpoints = new Map<string, [readonly number[], readonly number[]]>();
+      for (const hint of next.pendingHints) {
+        const node = next.nodes.get(hint.targetId);
+        if (!node || !hint.endTransform || hint.endTransform.length !== 6 ||
+            hint.parentIdAtArrival !== node.parentId ||
+            !matrix6Equal(hint.transformAtArrival ?? null, node.transform ?? null)) continue;
+        const prior = recentEndpoints.get(hint.targetId);
+        recentEndpoints.set(hint.targetId, [prior?.[1] ?? hint.endTransform, hint.endTransform]);
+      }
+      const passedEndpoints = new Set<string>();
+      for (const [id, [previous, latest]] of recentEndpoints) {
+        if (previous === latest) continue;
+        const streamed = next.nodes.get(id)?.transform;
+        if (!streamed) continue;
+        const travelX = latest[4] - previous[4], travelY = latest[5] - previous[5];
+        const length = Math.hypot(travelX, travelY);
+        if (length <= 1.5) continue;
+        const pastX = streamed[4] - latest[4], pastY = streamed[5] - latest[5];
+        const along = (pastX * travelX + pastY * travelY) / length;
+        const across = Math.abs(pastX * travelY - pastY * travelX) / length;
+        if (along > 1.5 && across <= Math.max(12, along * 0.5)) passedEndpoints.add(id);
+      }
       const planned = planTweenHints(next.pendingHints, (hint) =>
-        targetFacts(next, hint),
+        targetFacts(next, hint, passedEndpoints),
       );
       // BEFORE the arm, and only for a node the loop is not already driving: the pose an un-owned node is drawn
       // at is the pose its ease will leave, and it stops being readable the instant the channel exists (see
@@ -1058,6 +1083,7 @@ export function createCanvasVisualState(
   function targetFacts(
     next: MirrorState,
     hint: Parameters<typeof planTweenHints>[0][number],
+    passedEndpoints: ReadonlySet<string>,
   ): TweenTargetFacts | null {
     const node = next.nodes.get(hint.targetId);
     if (node === undefined) {
@@ -1068,15 +1094,20 @@ export function createCanvasVisualState(
       return null;
     }
     const rebased = hint.parentIdAtArrival !== undefined && hint.parentIdAtArrival !== node.parentId;
+    // A later delta can replace the target pose before one coalesced reconcile drains this hint.
+    // Arming its older endpoint after that newer stream would leave a settled canvas override behind.
+    const superseded = passedEndpoints.has(hint.targetId) ||
+      (hint.transformAtArrival !== undefined &&
+        !matrix6Equal(hint.transformAtArrival, node.transform ?? null));
     if (rebased && hint.endTransform) hintTransformRebased++;
     return {
       hasChildren: ports.hasChildren(hint.targetId),
       modAlpha: modAlpha(node),
       selfAlpha: selfAlpha(node),
-      endTransformGlobal: rebased
+      endTransformGlobal: rebased || superseded
         ? null
         : liftEndpoint(next, node, hint.endTransform),
-      startTransformGlobal: rebased
+      startTransformGlobal: rebased || superseded
         ? null
         : liftEndpoint(next, node, hint.startTransform),
     };

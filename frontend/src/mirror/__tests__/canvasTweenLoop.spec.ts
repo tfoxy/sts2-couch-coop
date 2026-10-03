@@ -339,6 +339,32 @@ describe("canvas tween loop: where a tween starts", () => {
 // ---- pin catch-up ----------------------------------------------------------------------------------------------
 
 describe("canvas tween loop: pin catch-up", () => {
+  // h11-gpu-debug-15: two holders kept an older fan endpoint after their final streamed pose arrived
+  // on the expiry turn. The pending one-shot sample used to overwrite that newer pose.
+  it.each(["at expiry", "after expiry", "after advance"])("adopts a fresh streamed pose %s before sampling the pending handoff", (order) => {
+    const { loop, poses } = harness();
+    poses.set("h", translate(1266, 1041));
+    loop.applyHints([transformHint("h", translate(1191, 1041), 400)], 0);
+    sample(loop, "h", 200);
+    const at = order === "at expiry" ? 400 : 401;
+    if (order === "after advance") loop.advance(400);
+    loop.noteStreamedValue("h", "transform", translate(1191, 871), at);
+    const settled = sample(loop, "h", at);
+    expect(settled.mask & SAMPLE_TRANSFORM).toBeTruthy();
+    expect([tx(settled), ty(settled)]).toEqual([1191, 871]);
+    expect(sample(loop, "h", at + 1).mask & SAMPLE_TRANSFORM).toBeFalsy();
+  });
+
+  it("keeps the endpoint when the expiry-turn stream only repeats the pre-pin pose", () => {
+    const { loop, poses } = harness();
+    poses.set("h", translate(1266, 1041));
+    loop.applyHints([transformHint("h", translate(1191, 1041), 400)], 0);
+    sample(loop, "h", 200);
+    loop.noteStreamedValue("h", "transform", translate(1266, 1041), 400);
+    const settled = sample(loop, "h", 400);
+    expect([tx(settled), ty(settled)]).toEqual([1191, 1041]);
+  });
+
   it("DEFECT 2: the settle lands on the GAME's pose, not the stale endpoint", () => {
     const { loop, poses } = harness();
     poses.set("h", translate(-200));
