@@ -1236,7 +1236,7 @@ describe("rustPresent executor present modes", () => {
     "scene:{version:2,revision:1,resources:[],commands:[]},resources:[],textUploads:[],unsupportedCommands:0}};" +
     "export function encodeRustPatch(){return null};export function encodeRustResources(){return new Uint8Array(0)}";
 
-  it("creates through createWithPresent(direct) by default when the glue supports it", async () => {
+  it("creates through createWithPresent(preserved-desync) by default when the glue supports it", async () => {
     window.history.replaceState({}, "", "/");
     const calls: Array<{ method: string; mode?: string }> = [];
     const engine = presentEngine();
@@ -1252,8 +1252,8 @@ describe("rustPresent executor present modes", () => {
     vi.stubEnv("VITE_RUST_SCENE_SERIALIZER_URL", moduleUrl(serializerSource));
     const renderer = await createRustDrawListExecutor({ canvas: document.createElement("canvas"), width: 1, height: 1,
       designWidth: 1, designHeight: 1, onInvalidate: () => {} });
-    expect(calls).toEqual([{ method: "createWithPresent", mode: "direct" }]);
-    expect(asDiagnostics(renderer).rustPresentMode).toBe("direct");
+    expect(calls).toEqual([{ method: "createWithPresent", mode: "preserved-desync" }]);
+    expect(asDiagnostics(renderer).rustPresentMode).toBe("preserved-desync");
     renderer.dispose();
   });
 
