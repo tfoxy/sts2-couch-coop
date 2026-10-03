@@ -22,6 +22,11 @@ export interface BitmapEnvironment {
 export interface BitmapTextMethod extends RustTextMethod<BitmapTextCarrier> {
   hasCached(key: string): boolean;
   cachedResource(key: string): RustTextResource | undefined;
+  /** rustTextEvict: every key currently resident in the cache, for the executor's eviction decision. */
+  cachedKeys(): readonly string[];
+  /** rustTextEvict: drop these keys from the cache and their padding. A later `prepare` for the same key
+   *  re-rasterises from scratch, exactly like a first-ever request for it. */
+  evict(keys: Iterable<string>): void;
 }
 
 export function createBitmapTextMethod(env: BitmapEnvironment): BitmapTextMethod {
@@ -144,6 +149,8 @@ export function createBitmapTextMethod(env: BitmapEnvironment): BitmapTextMethod
     uploads(carrier, maxBytes) { return carrier.pixels.byteLength <= maxBytes ? [{ ...carrier.resource, pixels: carrier.pixels }] : []; },
     hasCached: (key) => cache.has(key),
     cachedResource: (key) => cache.get(key),
+    cachedKeys: () => [...cache.keys()],
+    evict(keys) { for (const key of keys) { cache.delete(key); pads.delete(key); } },
     stats: () => ({ rasterizations: rasters, resources: cache.size }),
     dispose() { cache.clear(); pads.clear(); }
   };

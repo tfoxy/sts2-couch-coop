@@ -77,6 +77,11 @@ type MirrorDrawExecutor = Omit<PixiDrawListRenderer<string>, "render" | "admitSc
    * must not carry a clip move, so a moved clipper rebuilds.
    */
   readonly translatesClips?: boolean;
+  /** rustTextEvict: lifetime count of Bitmap text keys released from the JS cache and Rust GPU texture. */
+  readonly rustTextEvictions?: number;
+  /** rustTextEvict diagnostics: the Bitmap JS cache's current size — flat while the switch is on, unbounded
+   *  growth while it is off. Always readable, regardless of the switch, so the two can be compared. */
+  readonly rustTextCacheResources?: number;
 };
 /** A scene patch that may also translate clip rects (`ClipTranslation`, by `clipPush` index). */
 export type ClipTranslatingScenePatch = import("@godot-scene-web/canvas/pixi").PixiScenePatch<string> & {
@@ -2557,7 +2562,10 @@ const traceId = nextTraceFrame();
       paintOrderReuse: paintOrderReuse ? 1 : 0,
       ...(backend === "rust" ? { rustOmitStaticPixelCaches, rustSkipHiddenHitCandidates,
         rustStaticAdmissionPhase: rustStaticAdmissionPhaseMode, rustFast: { ...fast },
-        rustTextPrepCache: { textPrep: textPrepCache?.stats() ?? null, fontCheck: fontCheckCache?.stats() ?? null } } : {}),
+        rustTextPrepCache: { textPrep: textPrepCache?.stats() ?? null, fontCheck: fontCheckCache?.stats() ?? null },
+        // Exposed unconditionally (not gated on fast.textEvict) so an ABAB against `rustTextEvict=0` can read
+        // `resources` in both arms: flat while the switch is on, growing without bound while it is off.
+        rustTextEvict: { evictions: pixi?.rustTextEvictions ?? 0, resources: pixi?.rustTextCacheResources ?? 0 } } : {}),
       ...(lazyCompositionVerifyFirstMismatch ? { lazyCompositionVerifyFirstMismatch } : {}),
       ...(fast.heldOverridePatch ? { rustHeldOverride: { heldOverridePatches, heldOverrideDeclines: { ...heldOverrideDeclines }, ...(fast.verify ? { heldOverrideVerifyRuns: heldVerify.runs, heldOverrideVerifyMismatches: heldVerify.mismatches, heldOverrideVerifyMaxError: heldVerify.maxError, heldOverrideVerifyFirstMismatch: heldVerify.firstMismatch, heldOverrideVerifyLog: heldVerify.log.map((entry) => ({ ...entry, notes: [...entry.notes], recent: [...entry.recent] })) } : {}) } } : {}),
       ...(fast.offsetPatch ? { rustOffsetPatch: { offsetPatches, offsetPatchedNodes, wireCapturedPatches, offsetDeclines: { ...offsetDeclines },
