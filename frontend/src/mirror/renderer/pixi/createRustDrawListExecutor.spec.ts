@@ -1220,6 +1220,128 @@ describe("rustFast WP3 executor switches", () => {
   });
 });
 
+describe("rustPresent executor present modes", () => {
+  type PresentDiagnostics = { rustPresentMode: string; rustBlitPixels: { total: number; last: number | null } };
+  const asDiagnostics = (renderer: unknown) => renderer as PresentDiagnostics;
+
+  function presentEngine(overrides: Partial<{ present: string; blitPixels: number }> = {}) {
+    return { backend: "WebGL2", resize: () => {}, dispose: () => {}, upload_rgba_batch: () => 0,
+      admit_scene: () => JSON.stringify({ accepted: true, revision: 1, unsupportedCommands: 0, resourcePending: 0 }),
+      apply_patch: () => "{}",
+      present: async () => JSON.stringify({ presented: true, revision: 1, draws: 1, resourcePending: 0,
+        unsupportedCommands: 0, ...overrides }) };
+  }
+
+  const serializerSource = "export function encodeRustScene(){return {bytes:new Uint8Array([1])," +
+    "scene:{version:2,revision:1,resources:[],commands:[]},resources:[],textUploads:[],unsupportedCommands:0}};" +
+    "export function encodeRustPatch(){return null};export function encodeRustResources(){return new Uint8Array(0)}";
+
+  it("creates through createWithPresent(direct) by default when the glue supports it", async () => {
+    window.history.replaceState({}, "", "/");
+    const calls: Array<{ method: string; mode?: string }> = [];
+    const engine = presentEngine();
+    (globalThis as Record<string, unknown>).__rustProjectionTest = {
+      create: () => { calls.push({ method: "create" }); return engine; },
+      createWithPresent: (_canvas: unknown, mode: string) => { calls.push({ method: "createWithPresent", mode }); return engine; },
+    };
+    vi.stubEnv("VITE_RUST_PROTOTYPE_MODULE_URL", moduleUrl(
+      "export default async function init(){return {}};export class RustRenderer{" +
+      "static async create(){return globalThis.__rustProjectionTest.create()}" +
+      "static async createWithPresent(canvas,mode){return globalThis.__rustProjectionTest.createWithPresent(canvas,mode)}}",
+    ));
+    vi.stubEnv("VITE_RUST_SCENE_SERIALIZER_URL", moduleUrl(serializerSource));
+    const renderer = await createRustDrawListExecutor({ canvas: document.createElement("canvas"), width: 1, height: 1,
+      designWidth: 1, designHeight: 1, onInvalidate: () => {} });
+    expect(calls).toEqual([{ method: "createWithPresent", mode: "direct" }]);
+    expect(asDiagnostics(renderer).rustPresentMode).toBe("direct");
+    renderer.dispose();
+  });
+
+  it("falls back to create, with a one-time console note, when the glue has no createWithPresent", async () => {
+    window.history.replaceState({}, "", "/?rustPresent=preserved");
+    const note = vi.spyOn(console, "info").mockImplementation(() => {});
+    const calls: string[] = [];
+    const engine = presentEngine();
+    (globalThis as Record<string, unknown>).__rustProjectionTest = {
+      create: () => { calls.push("create"); return engine; },
+      // deliberately no createWithPresent — simulates glue built before present modes existed
+    };
+    vi.stubEnv("VITE_RUST_PROTOTYPE_MODULE_URL", moduleUrl(
+      "export default async function init(){return {}};export class RustRenderer{" +
+      "static async create(){return globalThis.__rustProjectionTest.create()}}",
+    ));
+    vi.stubEnv("VITE_RUST_SCENE_SERIALIZER_URL", moduleUrl(serializerSource));
+    const canvas = document.createElement("canvas");
+    const renderer = await createRustDrawListExecutor({ canvas, width: 1, height: 1, designWidth: 1,
+      designHeight: 1, onInvalidate: () => {} });
+    expect(calls).toEqual(["create"]);
+    expect(asDiagnostics(renderer).rustPresentMode).toBe("surface");
+    expect(note).toHaveBeenCalledTimes(1);
+    // A later context restore (same unsupported glue) rebuilds without a second note.
+    canvas.dispatchEvent(new Event("webglcontextlost", { cancelable: true }));
+    canvas.dispatchEvent(new Event("webglcontextrestored"));
+    await vi.waitFor(() => expect(calls).toEqual(["create", "create"]));
+    expect(note).toHaveBeenCalledTimes(1);
+    renderer.dispose();
+  });
+
+  it("never calls createWithPresent when rustPresent=surface, even if the glue has it", async () => {
+    window.history.replaceState({}, "", "/?rustPresent=surface");
+    const note = vi.spyOn(console, "info").mockImplementation(() => {});
+    const calls: string[] = [];
+    const engine = presentEngine();
+    (globalThis as Record<string, unknown>).__rustProjectionTest = {
+      create: () => { calls.push("create"); return engine; },
+      createWithPresent: () => { calls.push("createWithPresent"); return engine; },
+    };
+    vi.stubEnv("VITE_RUST_PROTOTYPE_MODULE_URL", moduleUrl(
+      "export default async function init(){return {}};export class RustRenderer{" +
+      "static async create(){return globalThis.__rustProjectionTest.create()}" +
+      "static async createWithPresent(){return globalThis.__rustProjectionTest.createWithPresent()}}",
+    ));
+    vi.stubEnv("VITE_RUST_SCENE_SERIALIZER_URL", moduleUrl(serializerSource));
+    const renderer = await createRustDrawListExecutor({ canvas: document.createElement("canvas"), width: 1, height: 1,
+      designWidth: 1, designHeight: 1, onInvalidate: () => {} });
+    expect(calls).toEqual(["create"]);
+    expect(asDiagnostics(renderer).rustPresentMode).toBe("surface");
+    expect(note).not.toHaveBeenCalled();
+    renderer.dispose();
+  });
+
+  it("accumulates blitPixels across presents and keeps the last value", async () => {
+    window.history.replaceState({}, "", "/?rustPresent=preserved");
+    let call = 0;
+    const engine = { backend: "WebGL2", resize: () => {}, dispose: () => {}, upload_rgba_batch: () => 0,
+      admit_scene: () => JSON.stringify({ accepted: true, revision: 1, unsupportedCommands: 0, resourcePending: 0 }),
+      apply_patch: () => "{}",
+      present: async () => {
+        call++;
+        return JSON.stringify({ presented: true, revision: call, draws: 1, resourcePending: 0, unsupportedCommands: 0,
+          present: "preserved", blitPixels: call === 1 ? 100 : 40 });
+      } };
+    (globalThis as Record<string, unknown>).__rustProjectionTest = {
+      create: () => engine, createWithPresent: () => engine,
+    };
+    vi.stubEnv("VITE_RUST_PROTOTYPE_MODULE_URL", moduleUrl(
+      "export default async function init(){return {}};export class RustRenderer{" +
+      "static async create(){return globalThis.__rustProjectionTest.create()}" +
+      "static async createWithPresent(){return globalThis.__rustProjectionTest.createWithPresent()}}",
+    ));
+    vi.stubEnv("VITE_RUST_SCENE_SERIALIZER_URL", moduleUrl(serializerSource));
+    const renderer = await createRustDrawListExecutor({ canvas: document.createElement("canvas"), width: 1, height: 1,
+      designWidth: 1, designHeight: 1, onInvalidate: () => {} });
+    const diagnostics = asDiagnostics(renderer);
+    const list = createDrawList<string>();
+    const quad = createQuadView(); quad.w = quad.h = quad.srcW = quad.srcH = 1; list.pushQuad(quad);
+    expect(await renderer.render(list)).toBe(true);
+    expect(diagnostics.rustBlitPixels).toEqual({ total: 100, last: 100 });
+    expect(diagnostics.rustPresentMode).toBe("preserved");
+    expect(await renderer.presentScene()).toMatchObject({ presented: true });
+    expect(diagnostics.rustBlitPixels).toEqual({ total: 140, last: 40 });
+    renderer.dispose();
+  });
+});
+
 describe("rustFast WP1 bounded Bitmap text cache (rustTextEvict)", () => {
   function mockInkContext(): void {
     vi.spyOn(HTMLCanvasElement.prototype, "getContext").mockImplementation((function (this: HTMLCanvasElement) {

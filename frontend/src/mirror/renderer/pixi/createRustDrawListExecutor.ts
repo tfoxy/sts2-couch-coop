@@ -14,7 +14,7 @@ import { emitBusyStartupEvent } from "./busyStartupEvent";
 import { ensureFontFace, loadMirrorFont, mirrorFontRegistration } from "@/mirror/fonts";
 import type { ProducerExecutorEvent } from "./producerBuildReasons";
 import { requireSingleProfileMode, type ProfileIdentity } from "./couchCanvasProfile";
-import { rustFastFlagsFromLocation } from "./rustFastFlags";
+import { rustFastFlagsFromLocation, rustPresentModeFromLocation, type RustPresentMode } from "./rustFastFlags";
 
 type RustWasmRenderer = {
   backend: string;
@@ -32,6 +32,8 @@ type RustWasmRenderer = {
   set_damage_verify?(enabled: boolean): void;
   /** rustTextPatch capability: `apply_patch` accepts a patch `resources` list. Undefined on older glue. */
   readonly patch_resources?: boolean;
+  /** rustPresent: the mode this engine instance actually presents through. Undefined on glue built before present modes existed. */
+  readonly present_mode?: string;
   present(): Promise<string>;
   dispose(): void;
 };
@@ -88,6 +90,8 @@ export const createRustDrawListExecutor: MirrorDrawExecutorFactory = async ({ ca
   const startupResourceEvent = typeof startupResourceHook === "function"
     ? startupResourceHook as (name: string, detail: unknown) => void : null;
   const fast = rustFastFlagsFromLocation("rust");
+  // rustPresent: not part of `fast` — it must never turn on by default (see rustFastFlags.ts).
+  const presentMode = rustPresentModeFromLocation("rust");
   const zeroCopyPixels = new URLSearchParams(window.location.search).get("rustZeroCopyPixels") === "1";
   const textInkReadFrequently = new URLSearchParams(window.location.search).get("rustTextInkReadFrequently") === "1";
   const textInkCorpus = new URLSearchParams(window.location.search).get("rustTextInkCorpus") === "1";
@@ -105,7 +109,9 @@ export const createRustDrawListExecutor: MirrorDrawExecutorFactory = async ({ ca
   const wasmUrl = import.meta.env.VITE_RUST_PROTOTYPE_MODULE_URL;
   const sceneUrl = import.meta.env.VITE_RUST_SCENE_SERIALIZER_URL;
   const [wasmModule, serializer] = await Promise.all([
-    (wasmUrl ? import(/* @vite-ignore */ wasmUrl) : import("@couchcoop/rust-prototype-glue")) as Promise<{ default: () => Promise<{ memory?: WebAssembly.Memory }>; RustRenderer: { create(canvas: HTMLCanvasElement): Promise<RustWasmRenderer> } }>,
+    (wasmUrl ? import(/* @vite-ignore */ wasmUrl) : import("@couchcoop/rust-prototype-glue")) as Promise<{ default: () => Promise<{ memory?: WebAssembly.Memory }>; RustRenderer: { create(canvas: HTMLCanvasElement): Promise<RustWasmRenderer>;
+      /** rustPresent: optional in older glue, so its presence is the capability probe. */
+      createWithPresent?(canvas: HTMLCanvasElement, mode: RustPresentMode): Promise<RustWasmRenderer> } }>,
     (sceneUrl ? import(/* @vite-ignore */ sceneUrl) : import("@godot-scene-web/canvas/rust-prototype")) as Promise<Serializer>,
   ]);
   // rustOffsetPatch: whether this serializer encodes a clip translation (a `clipPush` replacement that keeps the
@@ -135,6 +141,30 @@ export const createRustDrawListExecutor: MirrorDrawExecutorFactory = async ({ ca
   let rustDamageStats: RustDamageStats | null = null;
   let rustLastDamage: string | null = null;
   let damagePresent = false;
+  // rustPresent diagnostics: `appliedPresentMode` is set synchronously at creation (so it is correct even before
+  // any present); `rustLastPresentMode`/blit counters are mirrored from each present result, same as damage above.
+  let appliedPresentMode: RustPresentMode = "surface";
+  let rustLastPresentMode: string | null = null;
+  let rustBlitPixelsTotal = 0;
+  let rustLastBlitPixels: number | null = null;
+  let presentModeFallbackNoted = false;
+  /**
+   * rustPresent: `createWithPresent` is newer glue — absent (or mode "surface") means the mode stays "surface",
+   * today's `create(canvas)` call, unchanged. A requested mode the glue can't honour falls back the same way,
+   * once, with a console note (never thrown: an experimental present mode must not block the stage from coming up).
+   */
+  const createEngine = (): Promise<RustWasmRenderer> => {
+    if (presentMode !== "surface" && wasmModule.RustRenderer.createWithPresent) {
+      appliedPresentMode = presentMode;
+      return wasmModule.RustRenderer.createWithPresent(canvas, presentMode);
+    }
+    if (presentMode !== "surface" && !presentModeFallbackNoted) {
+      presentModeFallbackNoted = true;
+      console.info(`[rust-prototype] rustPresent=${presentMode} unsupported by this glue; using surface present`);
+    }
+    appliedPresentMode = "surface";
+    return wasmModule.RustRenderer.create(canvas);
+  };
   /**
    * Every engine-level setting, applied to each engine this executor creates — at startup AND after a WebGL
    * context restore, which builds a fresh engine with default (off) settings. Each method is optional in the
@@ -153,8 +183,9 @@ export const createRustDrawListExecutor: MirrorDrawExecutorFactory = async ({ ca
       if (fast.verify) target.set_damage_verify?.(true);
     }
     rustDamageStats = null; rustLastDamage = null;
+    rustLastPresentMode = null; rustBlitPixelsTotal = 0; rustLastBlitPixels = null;
   };
-  let engine = await wasmModule.RustRenderer.create(canvas);
+  let engine = await createEngine();
   configureEngine(engine);
   const executionPhases = new URLSearchParams(window.location.search).get("rustExecutionPhases") === "1";
   requireSingleProfileMode(!!profile, executionPhases);
@@ -259,7 +290,7 @@ export const createRustDrawListExecutor: MirrorDrawExecutorFactory = async ({ ca
       uploaded.clear(); uploadedPixels.clear();
       committedTypedScene = null; committedScene = null; committedRevision = null;
       engine.dispose();
-      engine = await wasmModule.RustRenderer.create(canvas);
+      engine = await createEngine();
       configureEngine(engine);
       resizeFailure = null;
       stats.contextReady = true;
@@ -457,6 +488,8 @@ export const createRustDrawListExecutor: MirrorDrawExecutorFactory = async ({ ca
     rustAllocations: rustBufferCreations === null || rustTextureCreations === null ? null : rustBufferCreations + rustTextureCreations,
     rustUploadBytes, rustCompletedPresents, rustWasmCalls, rustInstanceUploadBytes, rustIncrementalPatches, rustGeometryRebuilds, rustMaxSampledTextures,
     rustDamagePresent: damagePresent, rustDamage: rustDamageStats && { ...rustDamageStats, last: rustLastDamage },
+    rustPresentMode: rustLastPresentMode ?? appliedPresentMode,
+    rustBlitPixels: { total: rustBlitPixelsTotal, last: rustLastBlitPixels },
     retainedPatchEncodes, retainedPatchEncodeMs, retainedPatchQueueWaitMs, retainedPatchPresentWaitMs,
     textPatchCommits, textPatchResourceChanges,
     ...(phaseTimingEnabled ? { retainedPatchApplyMs, sceneEncodeMs, sceneDiffMs, scenePatchApplyMs } : {}),
@@ -1089,7 +1122,7 @@ export const createRustDrawListExecutor: MirrorDrawExecutorFactory = async ({ ca
     const result = parse<{ presented: boolean; revision?: number | null; draws: number; resourcePending: number; unsupportedCommands: number; error?: string;
       drawCalls?: number; bufferCreations?: number; textureCreations?: number; uploadBytes?: number; completedPresents?: number; wasmCalls?: number;
       instanceUploadBytes?: number; incrementalPatches?: number; geometryRebuilds?: number; maxSampledTextures?: number;
-      damage?: string; damageStats?: RustDamageStats }>(await engine.present());
+      damage?: string; damageStats?: RustDamageStats; present?: string; blitPixels?: number }>(await engine.present());
     wasmPresentCalls++;
     if (result.drawCalls !== undefined) rustDrawCalls = result.drawCalls;
     if (result.bufferCreations !== undefined) rustBufferCreations = result.bufferCreations;
@@ -1103,6 +1136,10 @@ export const createRustDrawListExecutor: MirrorDrawExecutorFactory = async ({ ca
     if (result.maxSampledTextures !== undefined) rustMaxSampledTextures = result.maxSampledTextures;
     rustDamageStats = result.damageStats ?? null;
     rustLastDamage = result.damage ?? null;
+    // rustPresent: mirrors damage above — a present's own report of which mode ran and how many pixels its
+    // blit moved, accumulated across the engine's lifetime (reset on context restore, in configureEngine).
+    rustLastPresentMode = result.present ?? null;
+    if (result.blitPixels !== undefined) { rustBlitPixelsTotal += result.blitPixels; rustLastBlitPixels = result.blitPixels; }
     stats.frames++; stats.resourcePending = result.resourcePending;
     if (result.presented) { stats.completedFrames++; presentationValid = true; stats.presentationValid = true; lastRevision = result.revision ?? lastRevision;
       // A skipped damage present drew nothing because nothing changed: the frame on screen still holds the
@@ -1529,6 +1566,10 @@ export const createRustDrawListExecutor: MirrorDrawExecutorFactory = async ({ ca
     // rustDamagePresent diagnostics: the renderer's cumulative partial/full/skipped presents (null while off or
     // before the first present). `verifyMismatches` is the rustFastVerify shadow check and must stay 0.
     get rustDamage() { return damagePresent && rustDamageStats ? { ...rustDamageStats, last: rustLastDamage } : null; },
+    // rustPresent diagnostics: which mode this engine actually presents through, and the pixels its blits moved —
+    // a cumulative total across this engine's lifetime plus the last present's own count.
+    get rustPresentMode() { return rustLastPresentMode ?? appliedPresentMode; },
+    get rustBlitPixels() { return { total: rustBlitPixelsTotal, last: rustLastBlitPixels }; },
     resize(nextWidth: number, nextHeight: number, _resolution = 1, nextDesignWidth = nextWidth, nextDesignHeight = nextHeight) {
       surfaceWidth = nextWidth; surfaceHeight = nextHeight;
       sceneDesignWidth = nextDesignWidth; sceneDesignHeight = nextDesignHeight;
