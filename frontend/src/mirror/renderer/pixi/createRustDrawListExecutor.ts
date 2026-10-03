@@ -90,7 +90,7 @@ export const createRustDrawListExecutor: MirrorDrawExecutorFactory = async ({ ca
   const startupResourceEvent = typeof startupResourceHook === "function"
     ? startupResourceHook as (name: string, detail: unknown) => void : null;
   const fast = rustFastFlagsFromLocation("rust");
-  // rustPresent: not part of `fast` — it must never turn on by default (see rustFastFlags.ts).
+  // rustPresent: not part of `fast`, so `rustFast=0` never changes the present path (see rustFastFlags.ts).
   const presentMode = rustPresentModeFromLocation("rust");
   const zeroCopyPixels = new URLSearchParams(window.location.search).get("rustZeroCopyPixels") === "1";
   const textInkReadFrequently = new URLSearchParams(window.location.search).get("rustTextInkReadFrequently") === "1";

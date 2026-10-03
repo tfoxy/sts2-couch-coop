@@ -108,18 +108,18 @@ describe("resolveRustFastFlags", () => {
 });
 
 describe("resolveRustPresentMode", () => {
-  it("defaults to direct and is unaffected by the rustFast umbrella", () => {
-    expect(presentMode("")).toBe("direct");
-    expect(presentMode("rustFast=1")).toBe("direct");
-    expect(presentMode("rustFast=0")).toBe("direct");
+  it("defaults to preserved-desync and is unaffected by the rustFast umbrella", () => {
+    expect(presentMode("")).toBe("preserved-desync");
+    expect(presentMode("rustFast=1")).toBe("preserved-desync");
+    expect(presentMode("rustFast=0")).toBe("preserved-desync");
   });
 
   it("resolves each recognized mode for the Rust backend", () => {
     for (const mode of ["surface", "direct", "preserved", "preserved-desync"]) expect(presentMode(`rustPresent=${mode}`)).toBe(mode);
   });
 
-  it("falls back to direct on an unrecognized value", () => {
-    expect(presentMode("rustPresent=bogus")).toBe("direct");
+  it("falls back to preserved-desync on an unrecognized value", () => {
+    expect(presentMode("rustPresent=bogus")).toBe("preserved-desync");
   });
 
   it("stays surface for Pixi regardless of the query", () => {

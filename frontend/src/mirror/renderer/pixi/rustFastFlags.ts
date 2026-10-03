@@ -79,10 +79,12 @@ export function rustFastFlagsFromLocation(backend: "pixi" | "rust"): RustFastFla
 
 /**
  * `rustPresent=<mode>`: which present path the GSW Rust engine uses. Absent or unrecognized resolves to
- * "direct" (one full-surface pass per frame instead of two; ledger rows for Oct 3). `surface` restores the
- * wgpu Surface path. `preserved` and `preserved-desync` are play-test only: preserved showed no CPU change on
- * the phone, and desynchronized changes how Chrome scales the canvas to the screen. Kept outside the
- * `rustFast` umbrella so `rustFast=0` does not change the present path. Only the Rust backend reads it.
+ * "preserved-desync" (a preserved, desynchronized WebGL2 canvas: the only mode with a noise-clearing phone
+ * GPU-process saving, −17.6%; made the default by the maintainer after a live look, Oct 3 — Chrome scales a
+ * desynchronized canvas with a different filter, so edges are not pixel-identical to the other modes).
+ * `direct` (one full-surface pass, no wgpu Surface), `surface` (the wgpu Surface path) and `preserved` stay
+ * selectable for comparison. Kept outside the `rustFast` umbrella so `rustFast=0` does not change the present
+ * path. Only the Rust backend reads it.
  */
 export type RustPresentMode = "surface" | "direct" | "preserved" | "preserved-desync";
 const RUST_PRESENT_MODES = new Set<RustPresentMode>(["surface", "direct", "preserved", "preserved-desync"]);
@@ -90,7 +92,7 @@ const RUST_PRESENT_MODES = new Set<RustPresentMode>(["surface", "direct", "prese
 export function resolveRustPresentMode(query: URLSearchParams, backend: "pixi" | "rust"): RustPresentMode {
   if (backend !== "rust") return "surface";
   const value = query.get("rustPresent");
-  return RUST_PRESENT_MODES.has(value as RustPresentMode) ? value as RustPresentMode : "direct";
+  return RUST_PRESENT_MODES.has(value as RustPresentMode) ? value as RustPresentMode : "preserved-desync";
 }
 
 export function rustPresentModeFromLocation(backend: "pixi" | "rust"): RustPresentMode {
