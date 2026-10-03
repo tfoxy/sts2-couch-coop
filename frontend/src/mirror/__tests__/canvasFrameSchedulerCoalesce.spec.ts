@@ -1,7 +1,7 @@
 // `rustCoalescedBuilds`: the frame scheduler's build-request demand source. A fake browser runs rAF callbacks in
 // booking order, one display frame per task, and drains posted tasks between frames, so lane order inside a frame
 // (the animation tick vs. an input lane booked after it) is exactly what a test arranges.
-import { describe, expect, it } from "vitest";
+import { afterEach, beforeEach, describe, expect, it } from "vitest";
 
 import { createCanvasFrameScheduler, type CanvasPatchSubmission } from "@/mirror/renderer/canvas/frameScheduler";
 
@@ -30,6 +30,9 @@ function createBrowser() {
     },
   };
 }
+
+/** `rustIdleScheduler` for every harness of the current suite run: the epoch semantics must hold both ways. */
+let idleSchedulerArm = false;
 
 function createHarness(options: { enabled?: boolean; rampFrames?: number; rampPatchable?: boolean } = {}) {
   const browser = createBrowser();
@@ -111,6 +114,7 @@ function createHarness(options: { enabled?: boolean; rampFrames?: number; rampPa
       rebuildAndPaintTexture: () => build("texture"),
     },
     rampPatchable: options.rampPatchable,
+    idleScheduler: idleSchedulerArm,
     coalesce: {
       enabled: options.enabled ?? true,
       localBuild: () => { build("local"); },
@@ -149,7 +153,10 @@ function createHarness(options: { enabled?: boolean; rampFrames?: number; rampPa
   };
 }
 
-describe("frame scheduler build requests (rustCoalescedBuilds)", () => {
+for (const idleArm of [false, true]) describe(`frame scheduler build requests (rustCoalescedBuilds, rustIdleScheduler=${idleArm ? 1 : 0})`, () => {
+  beforeEach(() => { idleSchedulerArm = idleArm; });
+  afterEach(() => { idleSchedulerArm = false; });
+
   it("serves an input request, a ramp and a streamed delta with one build when the tick runs first", () => {
     const h = createHarness({ rampFrames: 10 });
     h.scheduler.armAnimation(0);

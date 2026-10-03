@@ -48,6 +48,7 @@ import { isCardTrailNode, isCardTrailRootNode } from "@/mirror/cardTrail";
 import { resolveRustFastFlags } from "./rustFastFlags";
 import { createSceneCandidateIndex } from "./sceneCandidateIndex";
 import { copyTransformOverrides, overrideAncestors, sameNodeExceptTransform, sameTransformOverrides, touchesOverrideLineage } from "./heldOverrides";
+import { planTextPatch, textOnlyChange } from "./textPatchPlan";
 import type { GlyphPassRegistry, GlyphPassStats } from "@/mirror/canvas/glyphPass";
 import { preparePixiGlyph } from "./pixiGlyphText";
 import {
@@ -77,15 +78,30 @@ type MirrorDrawExecutor = Omit<PixiDrawListRenderer<string>, "render" | "admitSc
    * must not carry a clip move, so a moved clipper rebuilds.
    */
   readonly translatesClips?: boolean;
+  /**
+   * `rustTextPatch`: `patchScene` honours `texts` (it re-emits each record's command, uploading a new raster first).
+   * Absent or false: a text change rebuilds.
+   */
+  readonly patchesText?: boolean;
+  /**
+   * `rustTextPatch` under `rustFastVerify`: compare each record's committed Rust command and resource with the one
+   * the executor emits for it now; returns one note per mismatch.
+   */
+  verifyTextCommands?(records: readonly PixiTextRecord[]): string[];
   /** rustTextEvict: lifetime count of Bitmap text keys released from the JS cache and Rust GPU texture. */
   readonly rustTextEvictions?: number;
   /** rustTextEvict diagnostics: the Bitmap JS cache's current size — flat while the switch is on, unbounded
    *  growth while it is off. Always readable, regardless of the switch, so the two can be compared. */
   readonly rustTextCacheResources?: number;
+  /** rustDamagePresent: the Rust renderer's cumulative damage-present counters; null while the switch is off. */
+  readonly rustDamage?: { partialPresents: number; fullPresents: number; skippedPresents: number; partialPixels: number;
+    partialDraws: number; verifyMismatches: number; verifyChecks: number; last: string | null } | null;
 };
 /** A scene patch that may also translate clip rects (`ClipTranslation`, by `clipPush` index). */
 export type ClipTranslatingScenePatch = import("@godot-scene-web/canvas/pixi").PixiScenePatch<string> & {
   readonly clips?: readonly ClipTranslation[];
+  /** `rustTextPatch`: re-prepared text records of labels whose text changed (only to an executor that `patchesText`). */
+  readonly texts?: readonly PixiTextRecord[];
 };
 export type MirrorDrawExecutorFactory = (options: ExecutorOptions) => Promise<MirrorDrawExecutor>;
 function isPromiseLike<T>(value: unknown): value is PromiseLike<T> {
@@ -181,6 +197,10 @@ export function createPixiMirrorRenderer(
   const texts: PixiTextRecord[] = [];
   const textOwners = new Map<string, string>();
   const textKeysByOwner = new Map<string, string[]>();
+  // rustTextPatch: each label's paint record and insertion index from the build that filled `texts`, and that
+  // build's `paintGeneration` once it published (a later build attempt rewrites `texts` and this map).
+  const textBuildInputs = new Map<string, { record: OverlayRecord; insertionIndex: number }>();
+  let committedTextGeneration = -1;
   const measureCanvas = stage.ownerDocument.createElement("canvas");
   const measureContext = measureCanvas.getContext("2d");
   const richColorValidator = createColorValidator(measureContext);
@@ -398,6 +418,10 @@ export function createPixiMirrorRenderer(
   const spreadVerify = verifyStats();
   // rustTweenRootPatch: likewise its own family.
   const tweenVerify = verifyStats();
+  // rustTextPatch: a text-only wire change re-prepared and patched in place, its own family too.
+  const textVerify = verifyStats();
+  let textPatches = 0, textPatchedRecords = 0;
+  const textPatchDeclines: Record<string, number> = {};
   // rustOffsetPatch: what a translate patch publishes beyond its commands (the offsets and raise plan it drew and the
   // captured globals it moved), plus its planned inputs under verify. A wire translation of captured nodes adds its
   // recomputed entries to `captures` and sets `wireCaptured`.
@@ -409,7 +433,9 @@ export function createPixiMirrorRenderer(
     // and whether an open landing may ride it (no local animation or offset translation moved a landing node).
     tween?: { overrides: Map<string, readonly number[]>; roots: number };
     /** rustTweenRootPatch: an open landing may ride this patch (every landing node it moves was recomputed). */
-    landingPatchable?: boolean };
+    landingPatchable?: boolean;
+    /** rustTextPatch: the labels whose re-prepared records this patch carries, and its verify inputs. */
+    textOwners?: ReadonlySet<string>; textVerify?: HeldPatchInputs };
   const patchSidecars = new WeakMap<RetainedPixiPatch, PatchSidecar>();
   let offsetPatches = 0, offsetPatchedNodes = 0, wireCapturedPatches = 0;
   let wireSpreadPatches = 0, wireSpreadSpans = 0, wireSpreadShifted = 0, wireSpreadVisited = 0;
@@ -430,10 +456,11 @@ export function createPixiMirrorRenderer(
   // led up to it (a short ring, recorded under verify only). Both bounded so a long session cannot grow them.
   type HeldVerifyEntry = { run: number; revision: number; clock: number | null; notes: string[]; recent: string[] };
   const noteHeldEvent = (event: () => string) => {
-    if (!fast.verify || (!fast.heldOverridePatch && !fast.offsetPatch && !fast.wireSpreadPatch && !fast.tweenRootPatch)) return;
+    if (!fast.verify || (!fast.heldOverridePatch && !fast.offsetPatch && !fast.wireSpreadPatch && !fast.tweenRootPatch &&
+      !fast.textPatch)) return;
     const text = event();
     for (const stats of [fast.heldOverridePatch ? heldVerify : null, fast.offsetPatch ? offsetVerify : null,
-      fast.wireSpreadPatch ? spreadVerify : null, fast.tweenRootPatch ? tweenVerify : null]) {
+      fast.wireSpreadPatch ? spreadVerify : null, fast.tweenRootPatch ? tweenVerify : null, fast.textPatch ? textVerify : null]) {
       if (!stats) continue;
       stats.recent.push(text);
       if (stats.recent.length > 24) stats.recent.shift();
@@ -612,6 +639,8 @@ export function createPixiMirrorRenderer(
     // rustCoalescedBuilds decides; rustProducerReasons alone only counts work per frame for a switch-off arm.
     // rustOffsetPatch: a moved ramp or an offset-only request may be presented by a translate patch.
     rampPatchable: fast.offsetPatch && retainedMode,
+    // rustIdleScheduler: a steady idle frame is one rAF task (no park timer, no posted epoch close).
+    idleScheduler: fast.idleScheduler,
     coalesce: fast.coalescedBuilds || producerReasonMode ? {
       enabled: fast.coalescedBuilds,
       localBuild: () => {
@@ -709,6 +738,73 @@ if (isPromiseLike<PresentationResult>(result)) {
     });
   };
 
+  /**
+   * The Rust/text-prep-cache half of `semanticText`: prepare one label's text records without publishing them. A
+   * refusal names why (the build records it as the node's semantic failure). `rustTextPatch` calls this for a
+   * label whose text changed, with the committed build's paint record, and publishes nothing on a refusal.
+   */
+  function prepareSemanticTextRecords(input: Pick<NodePaintInput, "node" | "nodes">, record: OverlayRecord,
+    insertionIndex: number): { records: PixiTextRecord[] } | { refusal: string } {
+    const node = input.node;
+    const fonts = document.fonts;
+    const fontReady = (cssFont: string, text: string): boolean =>
+      fontCheckCache ? fontCheckCache.check(cssFont, text, fontVersion, fast.verify) : fonts!.check(cssFont, text);
+    const nodes = input.nodes ?? state?.nodes ?? new Map();
+    const compute = (): PreparedText | TextPrepRefusal => {
+      const resolved = resolveSemanticTextSpec(node, nodes, backend === "rust", failedRoleFamilies,
+        richColorValidator, backend === "rust");
+      if ("refusal" in resolved) return resolved;
+      if (!measureContext) return { refusal: "no-measure-context" };
+      nativeLayouts++;
+      return buildPreparedText(resolved, fontVersion, node.font!,
+        (value) => measureContext.measureText(value).width,
+        (cssFont) => { measureContext.font = cssFont; measureContext.letterSpacing = "0px";
+          const sample = measureContext.measureText("Mg");
+          return { ascent: sample.fontBoundingBoxAscent || sample.actualBoundingBoxAscent,
+            descent: sample.fontBoundingBoxDescent || sample.actualBoundingBoxDescent }; },
+        (face, value) => { measureContext.font = face.cssFont;
+          measureContext.letterSpacing = `${face.spacingPx}px`; return measureContext.measureText(value).width; },
+        (url) => { pixi?.prefetch(url); return pixi?.textureSize(url) ??
+          (pixi?.textureFailureDetails().some((item) => item.startsWith(`${url}:`)) ? { width: 0, height: 0 } : null); });
+    };
+    const prepared = textPrepCache
+      ? textPrepCache.resolve(node, nodes, fontVersion, backend === "rust" ? `${textMode}:${mirrorSettings.textMethod}` : textMode, fast.verify, compute) : compute();
+    if ("refusal" in prepared) return { refusal: prepared.refusal };
+    const losses = [...prepared.degradations ?? []];
+    if (prepared.fallbackRoles?.length) losses.push(`font-role-fallback:${prepared.fallbackRoles.join(",")}`);
+    if (losses.length) textDegradations.set(node.id, losses.join(" | "));
+    const fontsToCheck = [{ cssFont: prepared.spec.cssFont, text: prepared.spec.text,
+      family: prepared.spec.family, role: false },
+      ...Object.values(prepared.roleFaces ?? {}).filter((face) => face !== undefined).map((face) =>
+        ({ cssFont: face.cssFont, text: prepared.spec.text, family: face.font.family, role: true }))];
+    let waitingForFont = false;
+    for (const face of fontsToCheck) {
+      if (!fonts || fontFailed.has(face.cssFont) || failedRoleFamilies.has(face.family)) continue;
+      if (fontPending.has(face.cssFont)) { waitingForFont = true; continue; }
+      if (fontReady(face.cssFont, face.text)) continue;
+      waitingForFont = true;
+      fontPending.add(face.cssFont);
+      void loadMirrorFont(fonts, face.cssFont, face.text, face.family)
+        .then(() => { if (!disposed) { fontVersion++; textLayoutCache.clear(); } })
+        .catch(() => { if (!disposed) {
+          if (face.role) failedRoleFamilies.add(face.family);
+          else fontFailed.add(face.cssFont);
+          fontVersion++; textLayoutCache.clear();
+        } })
+        .finally(() => { fontPending.delete(face.cssFont); wakeForResource(); });
+    }
+    if (fontFailed.has(prepared.spec.cssFont)) return { refusal: "font-load" };
+    if (backend === "rust" && waitingForFont) return { refusal: "font-pending" };
+    const nativeParts = composePreparedTextRecords(prepared, node.id, insertionIndex, record, canvasBlend(node));
+    if (textMode === "native" || nativeParts.length === 0) return { records: nativeParts };
+    const carrierKey = `${node.id}:glyph`;
+    const preparedGlyph = preparePixiGlyph(glyphRegistry, prepared.spec, prepared.layout, node.font!,
+      record.transform, dpr, prepared.layoutKey, canvasBlend(node) === 0);
+    return { records: [{ ...nativeParts[0], key: carrierKey, transform: [...record.transform],
+      text: prepared.spec.text, glyph: preparedGlyph.glyph, fallbackReason: preparedGlyph.fallbackReason,
+      nativeFallback: nativeParts.map((part) => ({ ...part, alpha: 1, tint: 0xffffff, blend: 0 })) }] };
+  }
+
   function semanticText(input: NodePaintInput, record: OverlayRecord, insertionIndex: number): boolean {
     const node = input.node;
     ensureNodeFonts(node);
@@ -720,64 +816,10 @@ if (isPromiseLike<PresentationResult>(result)) {
       fontCheckCache ? fontCheckCache.check(cssFont, text, fontVersion, fast.verify) : fonts!.check(cssFont, text);
 
     if (backend === "rust" || textPrepCache) {
-      const nodes = input.nodes ?? state?.nodes ?? new Map();
-      const compute = (): PreparedText | TextPrepRefusal => {
-        const resolved = resolveSemanticTextSpec(node, nodes, backend === "rust", failedRoleFamilies,
-          richColorValidator, backend === "rust");
-        if ("refusal" in resolved) return resolved;
-        if (!measureContext) return { refusal: "no-measure-context" };
-        nativeLayouts++;
-        return buildPreparedText(resolved, fontVersion, node.font!,
-          (value) => measureContext.measureText(value).width,
-          (cssFont) => { measureContext.font = cssFont; measureContext.letterSpacing = "0px";
-            const sample = measureContext.measureText("Mg");
-            return { ascent: sample.fontBoundingBoxAscent || sample.actualBoundingBoxAscent,
-              descent: sample.fontBoundingBoxDescent || sample.actualBoundingBoxDescent }; },
-          (face, value) => { measureContext.font = face.cssFont;
-            measureContext.letterSpacing = `${face.spacingPx}px`; return measureContext.measureText(value).width; },
-          (url) => { pixi?.prefetch(url); return pixi?.textureSize(url) ??
-            (pixi?.textureFailureDetails().some((item) => item.startsWith(`${url}:`)) ? { width: 0, height: 0 } : null); });
-      };
-      const prepared = textPrepCache
-        ? textPrepCache.resolve(node, nodes, fontVersion, backend === "rust" ? `${textMode}:${mirrorSettings.textMethod}` : textMode, fast.verify, compute) : compute();
+      const prepared = prepareSemanticTextRecords(input, record, insertionIndex);
       if ("refusal" in prepared) { semanticFailures.set(node.id, prepared.refusal); return false; }
-      const losses = [...prepared.degradations ?? []];
-      if (prepared.fallbackRoles?.length) losses.push(`font-role-fallback:${prepared.fallbackRoles.join(",")}`);
-      if (losses.length) textDegradations.set(node.id, losses.join(" | "));
-      const fontsToCheck = [{ cssFont: prepared.spec.cssFont, text: prepared.spec.text,
-        family: prepared.spec.family, role: false },
-        ...Object.values(prepared.roleFaces ?? {}).filter((face) => face !== undefined).map((face) =>
-          ({ cssFont: face.cssFont, text: prepared.spec.text, family: face.font.family, role: true }))];
-      let waitingForFont = false;
-      for (const face of fontsToCheck) {
-        if (!fonts || fontFailed.has(face.cssFont) || failedRoleFamilies.has(face.family)) continue;
-        if (fontPending.has(face.cssFont)) { waitingForFont = true; continue; }
-        if (fontReady(face.cssFont, face.text)) continue;
-        waitingForFont = true;
-        fontPending.add(face.cssFont);
-        void loadMirrorFont(fonts, face.cssFont, face.text, face.family)
-          .then(() => { if (!disposed) { fontVersion++; textLayoutCache.clear(); } })
-          .catch(() => { if (!disposed) {
-            if (face.role) failedRoleFamilies.add(face.family);
-            else fontFailed.add(face.cssFont);
-            fontVersion++; textLayoutCache.clear();
-          } })
-          .finally(() => { fontPending.delete(face.cssFont); wakeForResource(); });
-      }
-      if (fontFailed.has(prepared.spec.cssFont)) { semanticFailures.set(node.id, "font-load"); return false; }
-      if (backend === "rust" && waitingForFont) { semanticFailures.set(node.id, "font-pending"); return false; }
-      const nativeParts = composePreparedTextRecords(prepared, node.id, insertionIndex, record, canvasBlend(node));
       const textStart = texts.length;
-      if (textMode === "native" || nativeParts.length === 0) {
-        texts.push(...nativeParts);
-      } else {
-        const carrierKey = `${node.id}:glyph`;
-        const preparedGlyph = preparePixiGlyph(glyphRegistry, prepared.spec, prepared.layout, node.font!,
-          record.transform, dpr, prepared.layoutKey, canvasBlend(node) === 0);
-        texts.push({ ...nativeParts[0], key: carrierKey, transform: [...record.transform],
-          text: prepared.spec.text, glyph: preparedGlyph.glyph, fallbackReason: preparedGlyph.fallbackReason,
-          nativeFallback: nativeParts.map((part) => ({ ...part, alpha: 1, tint: 0xffffff, blend: 0 })) });
-      }
+      texts.push(...prepared.records);
       for (let i = textStart; i < texts.length; i++) {
         const text = texts[i];
         textOwners.set(text.key, node.id);
@@ -785,6 +827,9 @@ if (isPromiseLike<PresentationResult>(result)) {
         keys.push(text.key);
         textKeysByOwner.set(node.id, keys);
       }
+      // rustTextPatch: the paint record this label was prepared from, by value, for a later text-only change.
+      if (backend === "rust" && prepared.records.length)
+        textBuildInputs.set(node.id, { record: { ...record, transform: [...record.transform] as Affine }, insertionIndex });
       return true;
     }
 
@@ -988,10 +1033,11 @@ if (isPromiseLike<PresentationResult>(result)) {
       heldOverrideDeclines[decline] = (heldOverrideDeclines[decline] ?? 0) + 1;
     noteHeldEvent(() => `build r${next.revision} ${source}/${decline} overrides=[${[...visual.transformOverrides.keys()].join(",")}]`);
     committedOverrides = null;
-    paintGeneration++;
+    const buildGeneration = ++paintGeneration;
     texts.length = 0;
     textOwners.clear();
     textKeysByOwner.clear();
+    textBuildInputs.clear();
     semanticFailures.clear();
     textDegradations.clear();
     const capturedGlobals = new Map(); const captureIds = new Set<string>(); interaction.collectCaptureIds(captureIds); visual.collectLandingCaptureIds(captureIds);
@@ -1241,6 +1287,7 @@ const producerStarted = rustPhaseTimingMode || producerReasonMode ? performance.
     lifecycle?.startPhase("publish");
     if (!presentedOnce) { presentedOnce = true; publishStatus("ready"); }
     retained = candidate;
+    committedTextGeneration = buildGeneration;
     committedSpread = candidateSpread;
     liveSpreadCommitted = true;
     visual.settleSamples(candidateSourceMark);
@@ -1293,6 +1340,14 @@ const producerStarted = rustPhaseTimingMode || producerReasonMode ? performance.
     }
     retained!.commit(patch);
     if (patch.clips?.length) translateHitClips(previous.hitEntries, patch.clips);
+    // rustTextPatch: the re-prepared records become the committed ones (same keys, owners and order).
+    if (patch.texts?.length) {
+      const replaced = new Map(patch.texts.map((record) => [record.key, record]));
+      for (let i = 0; i < texts.length; i++) {
+        const record = replaced.get(texts[i].key);
+        if (record) texts[i] = record;
+      }
+    }
     for (const item of patch.primitives) if (item.alpha !== undefined || item.source !== undefined)
       retainedDiagnosticFields.set(item.id, { ...retainedDiagnosticFields.get(item.id), alpha: item.alpha, source: item.source });
     frameEpoch++;
@@ -1355,6 +1410,10 @@ const producerStarted = rustPhaseTimingMode || producerReasonMode ? performance.
       sidecar.tween ? tweenVerify : sidecar.spreadSpans && !sidecar.frame ? spreadVerify : offsetVerify,
       true, sidecar.moved ?? new Set(), sidecar.spreadSpans || sidecar.tween ? sidecar.spread ?? new Map() : undefined);
     if (sidecar?.wireCaptured) wireCapturedPatches++;
+    if (patch.texts?.length) {
+      textPatches++; textPatchedRecords += patch.texts.length;
+      if (sidecar?.textVerify) verifyHeldOverridePatch(sidecar.textVerify, textVerify, false, new Set(), undefined, sidecar.textOwners);
+    }
     scheduler.settlePatch(patchSubmissions.get(patch) ?? null, true);
     retainedPatches++;
     retainedPatchObjects += patch.primitives.length;
@@ -1368,7 +1427,8 @@ const producerStarted = rustPhaseTimingMode || producerReasonMode ? performance.
 
   function submitRetainedPatch(patch: RetainedPixiPatch, traceId: string | null) {
     patchSubmissions.set(patch, scheduler.noteFrameWork("patch"));
-    const moves = patch.primitives.length > 0 || patch.groups.length > 0 || (patch.clips?.length ?? 0) > 0;
+    const moves = patch.primitives.length > 0 || patch.groups.length > 0 || (patch.clips?.length ?? 0) > 0 ||
+      (patch.texts?.length ?? 0) > 0;
     const mode = moves ? "scene-patch" : "present-only";
     const profileIdentity = profile?.begin(mode === "scene-patch" ? "retained-patch" : "present-only", state?.revision);
     const phaseSubmissionId = rustExecutionPhaseMode
@@ -1376,7 +1436,7 @@ const producerStarted = rustPhaseTimingMode || producerReasonMode ? performance.
     const phaseEvent = phaseSubmissionId === undefined ? undefined
       : (event: ProducerExecutorEvent) => producerReasons!.retainedEvent(phaseSubmissionId, event);
     const scenePatch: ClipTranslatingScenePatch = { primitives: patch.primitives, groups: patch.groups,
-      ...(patch.clips?.length ? { clips: patch.clips } : {}) };
+      ...(patch.clips?.length ? { clips: patch.clips } : {}), ...(patch.texts?.length ? { texts: patch.texts } : {}) };
     const submit = () => moves
       ? pixi!.patchScene(scenePatch, phaseEvent, profileIdentity) : pixi!.presentScene(phaseEvent, profileIdentity);
     const tracedSubmit = traceId === null ? submit : () => tracePixi(traceId, submit);
@@ -1522,6 +1582,8 @@ const traceId = nextTraceFrame();
       for (let i = chain.length - 1; i >= 0; i--) if (chain[i].transform) pose = affineMul(pose, chain[i].transform as Affine);
       return pose;
     };
+    // rustTextPatch: a label whose only change is its text is re-prepared below instead of moved.
+    const textIds = fast.textPatch ? textOnlyChangedIds(next) : null;
     const spans: Array<{ start: number; end: number }> = [];
     // rustWireSpreadPatch: one scene-identity env and one ancestor re-walk cache per reconcile, shared by its spans.
     let spreadScene: ReturnType<typeof spreadSceneIdentityEnv> | undefined;
@@ -1533,6 +1595,7 @@ const traceId = nextTraceFrame();
       ? overrideAncestors(visual.transformOverrides, next.nodes) : null;
     const spanLoopStarted = rustPhaseTimingMode ? performance.now() : 0;
     for (const id of next.changedIds) {
+      if (textIds?.has(id)) continue;
       const before = snapshot.scene.nodes.get(id), after = next.nodes.get(id);
       if (!before || !after || before.parentId !== after.parentId || !before.transform || !after.transform) return refuse("wire-structure");
       // A volatile upsert rebuilds its colour objects, so the held-override lane compares small values by value.
@@ -1651,6 +1714,18 @@ const traceId = nextTraceFrame();
       patch.movedRoots++;
     }
     if (rustPhaseTimingMode) wireSpanLoopMs += performance.now() - spanLoopStarted;
+    if (textIds?.size) {
+      const planned = planRendererTextPatch(next, textIds, patch, spans);
+      if (typeof planned === "string") {
+        textPatchDeclines[planned] = (textPatchDeclines[planned] ?? 0) + 1;
+        return refuse(planned);
+      }
+      patch.texts = planned;
+      const sidecar = patchSidecars.get(patch) ?? {};
+      sidecar.textOwners = textIds;
+      if (fast.verify) sidecar.textVerify = captureHeldInputs();
+      patchSidecars.set(patch, sidecar);
+    }
     // A landing row reads the hand holder's DRAWN pose after this frame, which a wire span that moved a captured
     // holder (`rustOffsetPatch`'s pure translation, or `rustWireSpreadPatch`'s re-pose) has just changed; the probe
     // taken above still holds the committed pose, and a row read off it stays open (every later moving patch then
@@ -1674,6 +1749,48 @@ if (isPromiseLike<PresentationResult>(result)) { trackAsyncRetainedPatch(result,
     publishRetainedPatch(patch, at, next, committed, landingCandidate);
     if (rustExecutionPhaseMode) producerReasons!.finishRetainedIfOpen(phaseSubmissionId!, "committed");
     return true;
+  }
+
+  /** rustTextPatch: the changed ids whose only change is their label's text (`textOnlyChange`). */
+  function textOnlyChangedIds(next: MirrorState): Set<string> {
+    const ids = new Set<string>();
+    if (!snapshot) return ids;
+    for (const id of next.changedIds) {
+      // A label the committed build drew no text for keeps its old decline (`wire-nontransform-change`).
+      if (!textKeysByOwner.has(id)) continue;
+      const before = snapshot.scene.nodes.get(id), after = next.nodes.get(id);
+      if (before && after && textOnlyChange(before, after)) ids.add(id);
+    }
+    return ids;
+  }
+  /**
+   * rustTextPatch: re-prepare each changed label from the committed build's paint record, exactly as that build's
+   * `semanticText` would for the new text, or name why not (see `planTextPatch`). `movedSpans` are this frame's wire
+   * spans.
+   */
+  function planRendererTextPatch(next: MirrorState, ids: ReadonlySet<string>, patch: RetainedPixiPatch,
+    movedSpans: readonly { start: number; end: number }[]): PixiTextRecord[] | string {
+    if (backend !== "rust" || textMode !== "native" || !retained || !snapshot || pixi?.patchesText !== true) return "text-unsupported";
+    if (paintGeneration !== committedTextGeneration) return "text-build-moved";
+    const composition = retained, drawn = snapshot;
+    const lineage = visual.transformOverrides.size ? overrideAncestors(visual.transformOverrides, next.nodes) : null;
+    let committedByKey: Map<string, PixiTextRecord> | undefined;
+    return planTextPatch(ids, {
+      keysOf: (id) => textKeysByOwner.get(id),
+      committedText: (key) => (committedByKey ??= new Map(texts.map((text) => [text.key, text]))).get(key),
+      built: (id) => textBuildInputs.has(id) && next.nodes.has(id),
+      orderOf: (id) => drawn.paintOrder.entries.get(id)?.order,
+      movedSpans,
+      textPatchable: (id) => composition.textPatchable(id),
+      underOverride: (id) => !!lineage && touchesOverrideLineage(id, visual.transformOverrides, lineage, next.nodes),
+      sampled: new Set(patch.primitives.map((entry) => entry.id)),
+      committedAlpha: (key) => retainedDiagnosticFields.get(`text:${key}`)?.alpha !== undefined,
+      prepare: (id) => {
+        const node = next.nodes.get(id)!, built = textBuildInputs.get(id)!;
+        ensureNodeFonts(node);
+        return prepareSemanticTextRecords({ node, nodes: next.nodes }, built.record, built.insertionIndex);
+      },
+    });
   }
 
   const IDENTITY_LINEAR = [1, 0, 0, 1] as const;
@@ -2203,7 +2320,7 @@ if (isPromiseLike<PresentationResult>(result)) { trackAsyncRetainedPatch(result,
    * drove the owner.
    */
   function verifyHeldOverridePatch(inputs: HeldPatchInputs, stats: VerifyStats, compareCaptures = false,
-    moved?: ReadonlySet<string>, spreadMoves?: ReadonlyMap<string, number>): void {
+    moved?: ReadonlySet<string>, spreadMoves?: ReadonlyMap<string, number>, textContent?: ReadonlySet<string>): void {
     const current = state, drawn = snapshot, composition = retained;
     if (!current || !drawn || !composition) return;
     stats.runs++;
@@ -2214,8 +2331,9 @@ if (isPromiseLike<PresentationResult>(result)) { trackAsyncRetainedPatch(result,
       if (staticBgTargetPathOf(node, current.nodes) !== null && isStaticBackgroundSuppressibleRoot(node, current.nodes)) skipRoots.add(node.id);
     const refill = <K, V>(map: Map<K, V>, entries: ReadonlyArray<[K, V]>) => { map.clear(); for (const [k, v] of entries) map.set(k, v); };
     const liveTexts = texts.slice(), liveOwners = [...textOwners], liveKeys = [...textKeysByOwner], liveFailures = [...semanticFailures];
+    const liveTextInputs = [...textBuildInputs];
     const liveDx = [...spreadDxByNode], liveModes = [...spreadFieldModeByNode], liveLayouts = nativeLayouts;
-    texts.length = 0; textOwners.clear(); textKeysByOwner.clear(); semanticFailures.clear(); spreadDxByNode.clear(); spreadFieldModeByNode.clear();
+    texts.length = 0; textOwners.clear(); textKeysByOwner.clear(); textBuildInputs.clear(); semanticFailures.clear(); spreadDxByNode.clear(); spreadFieldModeByNode.clear();
     let reference: DrawListBuild | null = null, referenceTexts: PixiTextRecord[] = [], refused: string | null = null;
     let shadowSpread: Map<string, number> | null = null;
     try {
@@ -2241,6 +2359,7 @@ if (isPromiseLike<PresentationResult>(result)) { trackAsyncRetainedPatch(result,
       referenceTexts = texts.slice();
       texts.length = 0; for (const text of liveTexts) texts.push(text);
       refill(textOwners, liveOwners); refill(textKeysByOwner, liveKeys); refill(semanticFailures, liveFailures);
+      refill(textBuildInputs, liveTextInputs);
       refill(spreadDxByNode, liveDx); refill(spreadFieldModeByNode, liveModes); nativeLayouts = liveLayouts;
     }
     let mismatches = 0;
@@ -2323,7 +2442,26 @@ if (isPromiseLike<PresentationResult>(result)) { trackAsyncRetainedPatch(result,
       for (const record of referenceTexts) {
         if (!drawnTexts.has(record.key)) note(`text rebuilt, not drawn: ${record.key} alpha ${record.alpha ?? 1} ${ownerState(record.labelId)}`);
         else if (!matches(record.transform, composition.logicalMatrix(`text:${record.key}`))) note(`text:${record.key}`);
+        else if (textContent?.has(record.labelId ?? "")) {
+          // rustTextPatch: a re-prepared label must be the record a rebuild prepares, not just placed like one.
+          const drawnRecord = texts.find((entry) => entry.key === record.key);
+          // Every field the executor's resource key or command reads: rich runs, both revision keys, style, tint.
+          const content = (entry: PixiTextRecord | undefined) => {
+            const extra = entry as (PixiTextRecord & Record<string, unknown>) | undefined;
+            return entry && JSON.stringify([entry.text, entry.style, entry.alpha, entry.tint, entry.blend,
+              entry.resourceRevision, extra?.contentKey, extra?.runs, extra?.localTransform, entry.insertionIndex,
+              extra?.labelId, extra?.msdf, extra?.inlineImage]);
+          };
+          if (!drawnRecord || content(drawnRecord) !== content(record) || !matches(record.transform, drawnRecord.transform))
+            note(`text-content:${record.key} drawn=${JSON.stringify(drawnRecord?.text)} rebuilt=${JSON.stringify(record.text)}`);
+        }
       }
+      // rustTextPatch: the committed Rust command (and its resource) of each re-prepared label must be the one the
+      // executor emits for the rebuilt record, so a stale rich run or font revision cannot hide behind a matching
+      // record transform.
+      if (textContent?.size && typeof pixi?.verifyTextCommands === "function")
+        for (const detail of pixi.verifyTextCommands(referenceTexts.filter((record) => textContent.has(record.labelId ?? ""))))
+          note(`text-command:${detail}`);
       // Every clip rect, wherever its push sits: the drawn one (as admitted plus any committed translation) must be
       // the rebuilt one.
       for (const [owner, range] of reference.clipRanges) {
@@ -2555,6 +2693,7 @@ const traceId = nextTraceFrame();
       dpr,
       ...(producerReasons ? { rustProducerReasons: producerReasons.snapshot() } : {}),
       ...(scheduler.coalesceStats() ? { rustCoalescedBuilds: scheduler.coalesceStats() } : {}),
+      ...(backend === "rust" ? { rustIdleScheduler: scheduler.idleStats() } : {}),
       ...(hiddenWalkMode ? { rustHiddenWalk: { rows: hiddenWalkRows.slice(), overflow: hiddenWalkOverflow } } : {}),
       webglVersion: (() => { const gl = (pixi?.app.renderer as unknown as { gl?: WebGLRenderingContext })?.gl; return gl ? gl.getParameter(gl.VERSION) : null; })(),
       renderer: (() => { const gl = (pixi?.app.renderer as unknown as { gl?: WebGLRenderingContext })?.gl; return gl ? gl.getParameter(gl.RENDERER) : null; })(),
@@ -2566,6 +2705,7 @@ const traceId = nextTraceFrame();
         // Exposed unconditionally (not gated on fast.textEvict) so an ABAB against `rustTextEvict=0` can read
         // `resources` in both arms: flat while the switch is on, growing without bound while it is off.
         rustTextEvict: { evictions: pixi?.rustTextEvictions ?? 0, resources: pixi?.rustTextCacheResources ?? 0 } } : {}),
+      ...(fast.damagePresent && pixi?.rustDamage ? { rustDamage: pixi.rustDamage } : {}),
       ...(lazyCompositionVerifyFirstMismatch ? { lazyCompositionVerifyFirstMismatch } : {}),
       ...(fast.heldOverridePatch ? { rustHeldOverride: { heldOverridePatches, heldOverrideDeclines: { ...heldOverrideDeclines }, ...(fast.verify ? { heldOverrideVerifyRuns: heldVerify.runs, heldOverrideVerifyMismatches: heldVerify.mismatches, heldOverrideVerifyMaxError: heldVerify.maxError, heldOverrideVerifyFirstMismatch: heldVerify.firstMismatch, heldOverrideVerifyLog: heldVerify.log.map((entry) => ({ ...entry, notes: [...entry.notes], recent: [...entry.recent] })) } : {}) } } : {}),
       ...(fast.offsetPatch ? { rustOffsetPatch: { offsetPatches, offsetPatchedNodes, wireCapturedPatches, offsetDeclines: { ...offsetDeclines },
@@ -2578,6 +2718,13 @@ const traceId = nextTraceFrame();
         ...(fast.verify ? { verifyRuns: tweenVerify.runs, verifyMismatches: tweenVerify.mismatches, verifyMaxError: tweenVerify.maxError,
           verifyFirstMismatch: tweenVerify.firstMismatch, verifyKinds: { ...tweenVerify.kinds },
           verifyLog: tweenVerify.log.map((entry) => ({ ...entry, notes: [...entry.notes], recent: [...entry.recent] })) } : {}) } } : {}),
+      ...(fast.textPatch ? { rustTextPatch: { patches: textPatches, records: textPatchedRecords, declines: { ...textPatchDeclines },
+        executor: (pixi as { rustTextPatchStats?: unknown } | null)?.rustTextPatchStats ?? null,
+        ...(fast.verify ? { verifyRuns: textVerify.runs, verifyMismatches: textVerify.mismatches, verifyMaxError: textVerify.maxError,
+          verifyFirstMismatch: textVerify.firstMismatch, verifyKinds: { ...textVerify.kinds },
+          verifyLog: textVerify.log.map((entry) => ({ ...entry, notes: [...entry.notes], recent: [...entry.recent] })) } : {}) } } : {}),
+      ...(!fast.textPatch && backend === "rust" ? { rustTextPatchOff: { executor:
+        (pixi as { rustTextPatchStats?: unknown } | null)?.rustTextPatchStats ?? null } } : {}),
       ...(fast.wireSpreadPatch ? { rustWireSpreadPatch: { patches: wireSpreadPatches, spans: wireSpreadSpans, shifted: wireSpreadShifted,
         visited: wireSpreadVisited, declines: { ...wireSpreadDeclines },
         ...(fast.verify ? { verifyRuns: spreadVerify.runs, verifyMismatches: spreadVerify.mismatches, verifyMaxError: spreadVerify.maxError,

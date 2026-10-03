@@ -1157,6 +1157,51 @@ describe("rustFast WP3 executor switches", () => {
     renderer.dispose();
   });
 
+  it("re-applies every engine setting to the engine a context restore creates, and resets damage diagnostics", async () => {
+    window.history.replaceState({}, "", "/?rustFastVerify=1");
+    const canvas = document.createElement("canvas");
+    const engines: Array<{ calls: string[] }> = [];
+    let admissions = 0;
+    (globalThis as Record<string, unknown>).__rustProjectionTest = { create: () => {
+      const calls: string[] = [];
+      const index = engines.push({ calls }) - 1;
+      return { backend: "WebGL2", resize: () => {}, dispose: () => {}, upload_rgba_batch: () => 0,
+        set_draw_state_dedupe: (on: boolean) => calls.push(`dedupe:${on}`),
+        set_damage_present: (on: boolean) => calls.push(`damage:${on}`),
+        set_damage_verify: (on: boolean) => calls.push(`verify:${on}`),
+        admit_scene: () => JSON.stringify({ accepted: true, revision: ++admissions, resourcePending: 0 }),
+        apply_patch: () => JSON.stringify({ accepted: true, revision: ++admissions, resourcePending: 0 }),
+        present: async () => JSON.stringify({ presented: true, revision: admissions, draws: 3, resourcePending: 0,
+          damage: "full", damageStats: { partialPresents: 0, fullPresents: index + 1, skippedPresents: 0,
+            partialPixels: 0, partialDraws: 0, verifyMismatches: 0, verifyChecks: 0 } }) };
+    } };
+    vi.stubEnv("VITE_RUST_PROTOTYPE_MODULE_URL", moduleUrl(
+      "export default async function init(){return {}};export class RustRenderer{static async create(){return globalThis.__rustProjectionTest.create()}}",
+    ));
+    vi.stubEnv("VITE_RUST_SCENE_SERIALIZER_URL", moduleUrl(
+      "export function encodeRustScene(input){return {bytes:new Uint8Array([1]),scene:{version:2,revision:input.revision,width:1,height:1,designWidth:1,designHeight:1,resources:[],commands:[{id:'c0',kind:'quad'}]},resources:[],textUploads:[],unsupportedCommands:0}};" +
+      "export function encodeRustPatch(){return null};export function encodeRustResources(){return new Uint8Array(0)}",
+    ));
+    const renderer = await createRustDrawListExecutor({ canvas, width: 1, height: 1, designWidth: 1,
+      designHeight: 1, onInvalidate: () => {} });
+    const list = createDrawList<string>();
+    const quad = createQuadView(); quad.w = quad.h = quad.srcW = quad.srcH = 1; list.pushQuad(quad);
+    expect(await renderer.render(list)).toBe(true);
+    expect(renderer.rustDamage).toMatchObject({ fullPresents: 1, last: "full" });
+    canvas.dispatchEvent(new Event("webglcontextlost", { cancelable: true }));
+    canvas.dispatchEvent(new Event("webglcontextrestored"));
+    await vi.waitFor(() => expect(engines).toHaveLength(2));
+    await vi.waitFor(() => expect(renderer.stats.contextReady).toBe(true));
+    const expected = ["dedupe:true", "damage:true", "verify:true"];
+    expect(engines[0].calls).toEqual(expected);
+    expect(engines[1].calls).toEqual(expected);
+    // The restored engine has reported nothing yet: no stale counters from the lost one.
+    expect(renderer.rustDamage).toBeNull();
+    expect(await renderer.render(list)).toBe(true);
+    expect(renderer.rustDamage).toMatchObject({ fullPresents: 2, last: "full" });
+    renderer.dispose();
+  });
+
   it("does not throw when set_draw_state_dedupe is absent from the glue, even with the flag on", async () => {
     window.history.replaceState({}, "", "/?rustDrawStateDedupe=1");
     (globalThis as Record<string, unknown>).__rustProjectionTest = { engine: {
@@ -1326,5 +1371,107 @@ describe("rustFast WP1 bounded Bitmap text cache (rustTextEvict)", () => {
       // show up as 3 MORE calls than this.
       expect(getContextSpy.mock.calls.length).toBe(getContextBeforeOverlap + 3);
     } finally { renderer.dispose(); }
+  });
+});
+
+describe("rustTextPatch executor", () => {
+  function mockInkContext(): void {
+    vi.spyOn(HTMLCanvasElement.prototype, "getContext").mockImplementation((function (this: HTMLCanvasElement) {
+      return {
+        getContextAttributes() { return { alpha: true }; },
+        clearRect() {}, drawImage() {},
+        getImageData(_x: number, _y: number, width: number, height: number) {
+          return { data: new Uint8ClampedArray(Math.max(1, width) * Math.max(1, height) * 4) };
+        },
+        measureText(value: string) {
+          return { width: value.length * 8, actualBoundingBoxAscent: 10, actualBoundingBoxDescent: 3,
+            fontBoundingBoxAscent: 10, fontBoundingBoxDescent: 3 };
+        },
+        fillText() {}, strokeText() {},
+      } as unknown as CanvasRenderingContext2D;
+    }) as never);
+  }
+  const clock = (text: string): PixiTextRecord => ({ key: "clock:0:0", insertionIndex: 1, text, labelId: "clock",
+    runs: [{ text }], transform: [1, 0, 0, 1, 4, 4],
+    style: { fontFamily: "sans-serif", fontSize: 16, fill: "#ffffff" } } as PixiTextRecord);
+  // The real serializer; an engine that logs every call and accepts whatever it is handed.
+  async function setUp(engineExtras: Record<string, unknown> = { patch_resources: true }) {
+    const calls: Array<{ call: string; body?: Record<string, unknown>; bytes?: number }> = [];
+    let revision = 0;
+    (globalThis as Record<string, unknown>).__rustProjectionTest = {
+      engine: { backend: "WebGL2", resize: () => {}, dispose: () => {}, ...engineExtras,
+        upload_rgba_batch: (bytes: Uint8Array) => { calls.push({ call: "upload", bytes: bytes.byteLength,
+          body: { magic: new TextDecoder().decode(bytes.subarray(0, 4)) } }); return 0; },
+        admit_scene: (bytes: Uint8Array) => { const body = JSON.parse(new TextDecoder().decode(bytes)); revision = body.revision;
+          calls.push({ call: "admit", body });
+          return JSON.stringify({ accepted: true, revision, unsupportedCommands: 0, resourcePending: 0 }); },
+        apply_patch: (bytes: Uint8Array) => { const body = JSON.parse(new TextDecoder().decode(bytes)); revision = body.revision;
+          calls.push({ call: "patch", body });
+          return JSON.stringify({ accepted: true, revision, unsupportedCommands: 0, resourcePending: 0 }); },
+        present: async () => JSON.stringify({ presented: true, revision, draws: 1, resourcePending: 0, unsupportedCommands: 0 }) },
+    };
+    vi.stubEnv("VITE_RUST_PROTOTYPE_MODULE_URL", moduleUrl(
+      "export default async function init(){return {}};export class RustRenderer{static async create(){return globalThis.__rustProjectionTest.engine}}",
+    ));
+    const renderer = await createRustDrawListExecutor({ canvas: document.createElement("canvas"), width: 40, height: 40,
+      designWidth: 40, designHeight: 40, onInvalidate: () => {} });
+    const list = createDrawList<string>();
+    const quad = createQuadView(); quad.w = quad.h = 4; list.pushQuad(quad);
+    expect(await renderer.admitScene(list, [clock("04:00")], { primitives: [{ id: "q", index: 0 }], groups: [] }))
+      .toMatchObject({ presented: true });
+    return { renderer: renderer as typeof renderer & { patchesText?: boolean; rustTextCacheResources?: number;
+      rustTextEvictions?: number }, calls };
+  }
+
+  it("uploads the new raster, then patches the label with the next resource list, and evicts through the tracker", async () => {
+    window.history.replaceState({}, "", "/?rustFastVerify=1");
+    mockInkContext();
+    const { renderer, calls } = await setUp();
+    try {
+      expect(renderer.patchesText).toBe(true);
+      const admitted = calls.find((entry) => entry.call === "admit")!.body!;
+      const oldKey = (admitted.resources as Array<{ key: string }>).find((resource) => resource.key.startsWith("text:"))!.key;
+      calls.length = 0;
+      expect(await renderer.patchScene({ primitives: [], groups: [], texts: [clock("04:01")] }))
+        .toMatchObject({ presented: true });
+      expect(calls.map((entry) => entry.call)).toEqual(["upload", "patch"]);
+      const patch = calls[1].body as { updates: Array<{ id: string; command: Record<string, unknown> }>;
+        resources: Array<{ key: string }> };
+      expect(patch.updates).toHaveLength(1);
+      expect(patch.updates[0]).toMatchObject({ id: "tclock:0:0", command: { kind: "rasterText" } });
+      const newKey = patch.updates[0].command.resource as string;
+      expect(newKey).toContain(":04:01:");
+      // The verify hook, side-effect free: the committed command is the one the patch's own carrier produces, and
+      // a rebuilt record asking for anything else (here other text, hence another raster key) is reported.
+      const verify = (renderer as unknown as { verifyTextCommands(records: PixiTextRecord[]): string[] }).verifyTextCommands;
+      const uploadsBefore = calls.length;
+      expect(verify([clock("04:01")])).toEqual([]);
+      expect(verify([clock("04:59")])).toEqual(["tclock:0:0: patched record differs from the rebuilt one"]);
+      expect(verify([{ ...clock("04:01"), key: "nope:0:0" } as PixiTextRecord])).toEqual(["tnope:0:0: no command"]);
+      expect(calls.length).toBe(uploadsBefore);
+      expect(patch.resources.map((resource) => resource.key)).toContain(newKey);
+      expect(patch.resources.map((resource) => resource.key)).not.toContain(oldKey);
+      // A clock ticking well past the eviction pool keeps the Bitmap cache bounded: the patch path reports each
+      // commit to the same tracker a full build does, so replaced keys age out and the current one never does.
+      for (let i = 2; i < 130; i++)
+        expect(await renderer.patchScene({ primitives: [], groups: [], texts: [clock(`04:${String(i).padStart(3, "0")}`)] }))
+          .toMatchObject({ presented: true });
+      expect(renderer.rustTextEvictions).toBeGreaterThan(0);
+      expect(renderer.rustTextCacheResources).toBeLessThanOrEqual(97);
+      expect(calls.filter((entry) => entry.call === "admit")).toHaveLength(0);
+    } finally { renderer.dispose(); }
+  });
+
+  it("is not advertised, and a text patch refuses, without the renderer capability or with the switch off", async () => {
+    mockInkContext();
+    const older = await setUp({});
+    try {
+      expect(older.renderer.patchesText).toBe(false);
+      expect(await older.renderer.patchScene({ primitives: [], groups: [], texts: [clock("04:01")] }))
+        .toMatchObject({ presented: false, reason: "retained patch requires full scene admission" });
+    } finally { older.renderer.dispose(); }
+    window.history.replaceState({}, "", "/?rustTextPatch=0");
+    const off = await setUp();
+    try { expect(off.renderer.patchesText).toBe(false); } finally { off.renderer.dispose(); }
   });
 });

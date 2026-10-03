@@ -27,10 +27,20 @@ type RustWasmRenderer = {
   gpuTimerCapability?(): string;
   /** rustFast `drawStateDedupe` (being added in parallel): set once after `create`, never polled for support. */
   set_draw_state_dedupe?(enabled: boolean): void;
+  /** rustDamagePresent: optional in older glue, so its presence is the capability probe. */
+  set_damage_present?(enabled: boolean): void;
+  set_damage_verify?(enabled: boolean): void;
+  /** rustTextPatch capability: `apply_patch` accepts a patch `resources` list. Undefined on older glue. */
+  readonly patch_resources?: boolean;
   present(): Promise<string>;
   dispose(): void;
 };
 export type ResourcePixels = { key: string; width: number; height: number; pixels: Uint8Array };
+type RetainedPatchEncoding = { bytes: Uint8Array; scene: RustSceneSnapshot; changedIndexes: readonly number[];
+  /** rustTextPatch (newer GSW only): raster pixels the patched labels draw, and whether the resource list changed. */
+  textUploads?: readonly ResourcePixels[]; resourcesChanged?: boolean;
+  /** rustTextPatch: the records this patch re-emitted and the carriers it resolved for them (kept for verify). */
+  preparedTexts?: readonly { record: PixiTextRecord; carrier: RustTextCarrier }[] };
 type RustSceneSnapshot = { version: 2; revision: number; width: number; height: number; designWidth: number; designHeight: number; resources: { key: string; width: number; height: number }[]; commands: Record<string, unknown>[] };
 type Serializer = {
   encodeRustScene(input: {
@@ -47,7 +57,10 @@ type Serializer = {
   encodeRustPatch(previous: RustSceneSnapshot, next: RustSceneSnapshot, hint?: unknown, options?: { fast?: boolean }): Uint8Array | null;
   encodeRustRetainedPatch?(base: RustSceneSnapshot, revision: number,
     updates: readonly { id: string; command: Record<string, unknown>; localTransform?: readonly number[] }[],
-    groupTransforms?: readonly { id: string; transform: readonly number[] }[]): { bytes: Uint8Array; scene: RustSceneSnapshot; changedIndexes: readonly number[] } | null;
+    groupTransforms?: readonly { id: string; transform: readonly number[] }[], profile?: undefined,
+    options?: { texts?: readonly { record: PixiTextRecord; carrier: RustTextCarrier }[] }): RetainedPatchEncoding | null;
+  /** rustTextPatch: the serializer encodes `options.texts` (a re-prepared label). Absent on an older GSW. */
+  RUST_RETAINED_TEXT_PATCH?: boolean;
   /**
    * rustFast `fastSerializer` (being added in parallel in GSW): a cached command-id → command-index map for
    * `scene`, so the executor does not have to rebuild one by walking `scene.commands` itself. Optional and
@@ -116,10 +129,33 @@ export const createRustDrawListExecutor: MirrorDrawExecutorFactory = async ({ ca
   const compiledAt = performance.now();
   startupEvent?.("rust.wasmInitialized", { elapsedMs: compiledAt - startedAt });
   logRust("wasm initialized");
+  // rustDamagePresent diagnostics: the counters the CURRENT engine last reported (a restored engine starts at zero).
+  type RustDamageStats = { partialPresents: number; fullPresents: number; skippedPresents: number; partialPixels: number;
+    partialDraws: number; verifyMismatches: number; verifyChecks: number };
+  let rustDamageStats: RustDamageStats | null = null;
+  let rustLastDamage: string | null = null;
+  let damagePresent = false;
+  /**
+   * Every engine-level setting, applied to each engine this executor creates — at startup AND after a WebGL
+   * context restore, which builds a fresh engine with default (off) settings. Each method is optional in the
+   * glue, so a build that predates one is a silent no-op; settings are set once per engine, never polled.
+   */
+  const configureEngine = (target: RustWasmRenderer) => {
+    // rustFast `drawStateDedupe`.
+    if (fast.drawStateDedupe) target.set_draw_state_dedupe?.(true);
+    // rustDamagePresent: the renderer keeps its picture and redraws only what a patch changes; a present with
+    // nothing to change skips the GPU and leaves the canvas showing the previous frame.
+    damagePresent = fast.damagePresent && typeof target.set_damage_present === "function";
+    if (damagePresent) {
+      target.set_damage_present!(true);
+      // rustFastVerify: the renderer re-derives each partial plan by brute force (a miss is redrawn whole and
+      // counted). It shares the planner's bounds model, so it catches bookkeeping slips, not a wrong model.
+      if (fast.verify) target.set_damage_verify?.(true);
+    }
+    rustDamageStats = null; rustLastDamage = null;
+  };
   let engine = await wasmModule.RustRenderer.create(canvas);
-  // rustFast `drawStateDedupe`: set once, right after creation, never polled. The method itself is optional
-  // (added in parallel on the GSW/wasm side), so a glue build that predates it is a silent no-op here.
-  if (fast.drawStateDedupe) engine.set_draw_state_dedupe?.(true);
+  configureEngine(engine);
   const executionPhases = new URLSearchParams(window.location.search).get("rustExecutionPhases") === "1";
   requireSingleProfileMode(!!profile, executionPhases);
   if (executionPhases && typeof engine.set_phase_operation_id !== "function")
@@ -224,6 +260,7 @@ export const createRustDrawListExecutor: MirrorDrawExecutorFactory = async ({ ca
       committedTypedScene = null; committedScene = null; committedRevision = null;
       engine.dispose();
       engine = await wasmModule.RustRenderer.create(canvas);
+      configureEngine(engine);
       resizeFailure = null;
       stats.contextReady = true;
       onInvalidate();
@@ -274,6 +311,11 @@ export const createRustDrawListExecutor: MirrorDrawExecutorFactory = async ({ ca
   const omittedKinds: Record<string, number> = {};
   let wasmBytesSent = 0;
   let retainedPatchEncodes = 0, retainedPatchEncodeMs = 0, retainedPatchQueueWaitMs = 0, retainedPatchPresentWaitMs = 0;
+  // rustTextPatch: committed patches that re-emitted a label, and those that also changed the resource list.
+  let textPatchCommits = 0, textPatchResourceChanges = 0;
+  // rustTextPatch under rustFastVerify: the record and carrier each committed text patch emitted, by command id.
+  // A full admission re-emits every label, so it clears these.
+  const committedTextCarriers = new Map<string, { record: PixiTextRecord; carrier: RustTextCarrier }>();
   let retainedPatchApplyMs = 0, sceneEncodeMs = 0, sceneDiffMs = 0, scenePatchApplyMs = 0;
   // rustFast WP3 counters: style-string cache (`textPrepCache`) and prefetch-skip (`snapshotReuse`) hit counts.
   let styleCacheHits = 0, styleCacheMisses = 0, prefetchSkips = 0;
@@ -414,7 +456,9 @@ export const createRustDrawListExecutor: MirrorDrawExecutorFactory = async ({ ca
     rustDrawCalls, rustBufferCreations, rustTextureCreations,
     rustAllocations: rustBufferCreations === null || rustTextureCreations === null ? null : rustBufferCreations + rustTextureCreations,
     rustUploadBytes, rustCompletedPresents, rustWasmCalls, rustInstanceUploadBytes, rustIncrementalPatches, rustGeometryRebuilds, rustMaxSampledTextures,
+    rustDamagePresent: damagePresent, rustDamage: rustDamageStats && { ...rustDamageStats, last: rustLastDamage },
     retainedPatchEncodes, retainedPatchEncodeMs, retainedPatchQueueWaitMs, retainedPatchPresentWaitMs,
+    textPatchCommits, textPatchResourceChanges,
     ...(phaseTimingEnabled ? { retainedPatchApplyMs, sceneEncodeMs, sceneDiffMs, scenePatchApplyMs } : {}),
     committedRevision, committedSceneBytes: committedScene?.byteLength ?? 0,
     zeroCopyPixels,
@@ -633,10 +677,8 @@ export const createRustDrawListExecutor: MirrorDrawExecutorFactory = async ({ ca
     }
   }
   /**
-   * rustTextEvict: called only after a full build actually commits (never for a retained patch — a patch
-   * cannot change which Bitmap keys a scene uses today; WP5 adds that, and should fold its new keys into
-   * `inFlightTextKeys`/pass them as additionally-referenced into `textEvictionTracker.commit` the same way
-   * below, not bypass this tracker). `resources` is that same commit's `encoded.resources`, so a key still
+   * rustTextEvict: called after a full build actually commits, and after a `rustTextPatch` patch that changed the
+   * resource list commits (its new keys are pinned in `inFlightTextKeys` while it is in flight, like a build's). `resources` is that same commit's `encoded.resources`, so a key still
    * referenced by the just-committed scene is protected by construction, and so is a key a later retained
    * patch could diff against — its base IS this same committed scene.
    *
@@ -682,6 +724,18 @@ export const createRustDrawListExecutor: MirrorDrawExecutorFactory = async ({ ca
     return result;
   }
 
+  /**
+   * Which labels (node ids, at most 256) fell back from MSDF to a Bitmap raster, and why. Diagnostic only: kept only
+   * under `rustDiagnostics=1` (or the other stats modes).
+   */
+  const msdfFallbackLabels: Record<string, number> = {};
+  let msdfFallbackLabelCount = 0;
+  function noteMsdfFallbackLabel(reason: string, record: PixiTextRecord): void {
+    if (!statsEnabled) return;
+    const key = `${reason}:${record.labelId ?? record.key}`;
+    if (key in msdfFallbackLabels) msdfFallbackLabels[key]++;
+    else if (msdfFallbackLabelCount < 256) { msdfFallbackLabels[key] = 1; msdfFallbackLabelCount++; }
+  }
   function resolveText(record: PixiTextRecord): RustTextCarrier | null {
     if (msdfRuntime && !(record as InlineImageRecord).inlineImage) {
       const shaped = msdfRuntime.shape(record as MsdfRunRecord);
@@ -707,8 +761,10 @@ export const createRustDrawListExecutor: MirrorDrawExecutorFactory = async ({ ca
           failed = "glyph-pending";
         }
         msdfFallbackReasons[failed] = (msdfFallbackReasons[failed] ?? 0) + 1;
+        noteMsdfFallbackLabel(failed, record);
       } else {
         msdfFallbackReasons[shaped.reason] = (msdfFallbackReasons[shaped.reason] ?? 0) + 1;
+        noteMsdfFallbackLabel(shaped.reason, record);
       }
     }
     return rasterText(record);
@@ -1032,7 +1088,8 @@ export const createRustDrawListExecutor: MirrorDrawExecutorFactory = async ({ ca
     else if (executionPhases && operationId !== undefined) engine.set_phase_operation_id!(operationId);
     const result = parse<{ presented: boolean; revision?: number | null; draws: number; resourcePending: number; unsupportedCommands: number; error?: string;
       drawCalls?: number; bufferCreations?: number; textureCreations?: number; uploadBytes?: number; completedPresents?: number; wasmCalls?: number;
-      instanceUploadBytes?: number; incrementalPatches?: number; geometryRebuilds?: number; maxSampledTextures?: number }>(await engine.present());
+      instanceUploadBytes?: number; incrementalPatches?: number; geometryRebuilds?: number; maxSampledTextures?: number;
+      damage?: string; damageStats?: RustDamageStats }>(await engine.present());
     wasmPresentCalls++;
     if (result.drawCalls !== undefined) rustDrawCalls = result.drawCalls;
     if (result.bufferCreations !== undefined) rustBufferCreations = result.bufferCreations;
@@ -1044,8 +1101,13 @@ export const createRustDrawListExecutor: MirrorDrawExecutorFactory = async ({ ca
     if (result.incrementalPatches !== undefined) rustIncrementalPatches = result.incrementalPatches;
     if (result.geometryRebuilds !== undefined) rustGeometryRebuilds = result.geometryRebuilds;
     if (result.maxSampledTextures !== undefined) rustMaxSampledTextures = result.maxSampledTextures;
+    rustDamageStats = result.damageStats ?? null;
+    rustLastDamage = result.damage ?? null;
     stats.frames++; stats.resourcePending = result.resourcePending;
-    if (result.presented) { stats.completedFrames++; presentationValid = true; stats.presentationValid = true; lastRevision = result.revision ?? lastRevision; stats.objects = result.draws; }
+    if (result.presented) { stats.completedFrames++; presentationValid = true; stats.presentationValid = true; lastRevision = result.revision ?? lastRevision;
+      // A skipped damage present drew nothing because nothing changed: the frame on screen still holds the
+      // previous present's objects.
+      if (result.damage !== "skip") stats.objects = result.draws; }
     startupResourceEvent?.("present", { backendRevision: result.revision ?? null,
       documentNonce: (window as unknown as { __benchDocumentNonce?: string }).__benchDocumentNonce ?? null,
       rendererInstance: startupRendererInstance ?? null, presented: result.presented,
@@ -1229,6 +1291,7 @@ export const createRustDrawListExecutor: MirrorDrawExecutorFactory = async ({ ca
         if (firstPresentMs === null) firstPresentMs = performance.now() - startedAt;
         committedScene = sceneBytes;
         committedTypedScene = encoded.scene;
+        committedTextCarriers.clear();
         admittedClipRects = new Map();
         for (const command of encoded.scene?.commands ?? []) {
           const rect = command.rect;
@@ -1278,7 +1341,9 @@ export const createRustDrawListExecutor: MirrorDrawExecutorFactory = async ({ ca
     return settled;
   }
 
-  function encodeRetainedPatch(patch: ClipTranslatingScenePatch): { bytes: Uint8Array; scene: RustSceneSnapshot; changedIndexes: readonly number[] } | null {
+  /** rustTextPatch: whether this serializer and renderer can patch a re-prepared label (both probed, never polled). */
+  const patchesText = () => fast.textPatch && serializer.RUST_RETAINED_TEXT_PATCH === true && engine.patch_resources === true;
+  function encodeRetainedPatch(patch: ClipTranslatingScenePatch): RetainedPatchEncoding | null {
     const started = phaseTimingEnabled ? performance.now() : 0;
     const base = committedTypedScene;
     const encode = serializer.encodeRustRetainedPatch;
@@ -1329,7 +1394,22 @@ export const createRustDrawListExecutor: MirrorDrawExecutorFactory = async ({ ca
     const groups = (patch.groups ?? []).filter((group): group is typeof group & { transform: readonly number[] } => group.transform !== undefined)
       .map(({ id, transform }) => ({ id, transform }));
     if ((patch.groups?.some((group) => group.alpha !== undefined) ?? false) || groups.some((group) => !group.transform)) return null;
-    const result = encode(base, ++nextRevision, [...updates.values()], groups);
+    // rustTextPatch: each re-prepared label resolves through the full build's own text method (a Bitmap raster or an
+    // MSDF glyph run); the serializer then emits the command a full build would for it.
+    let texts: { record: PixiTextRecord; carrier: RustTextCarrier }[] | undefined;
+    if (patch.texts?.length) {
+      if (!patchesText()) return null;
+      texts = [];
+      for (const record of patch.texts) {
+        if (updates.has(toRustId(`text:${record.key}`))) return null;
+        const carrier = resolveText(record);
+        if (!carrier) return null;
+        texts.push({ record, carrier });
+      }
+    }
+    const result = texts ? encode(base, ++nextRevision, [...updates.values()], groups, undefined, { texts })
+      : encode(base, ++nextRevision, [...updates.values()], groups);
+    if (result && texts) result.preparedTexts = texts;
     retainedPatchEncodes++;
     if (phaseTimingEnabled) retainedPatchEncodeMs += performance.now() - started;
     return result;
@@ -1343,12 +1423,29 @@ export const createRustDrawListExecutor: MirrorDrawExecutorFactory = async ({ ca
     if (!encoded) return Promise.resolve({ presented: false, reason: "retained patch requires full scene admission" });
     diagnostic?.({ stage: "encoded", operationId: encoded.scene.revision, mode: "scene-patch" });
     retainedPatchInFlight = true;
+    // rustTextPatch: a patched label's glyph pages stay resident while the patch is in flight, as a build's do.
+    const patchGlyphPages = patch.texts?.length ? glyphPages(encoded.scene) : [];
+    for (const key of patchGlyphPages) inFlightGlyphPages.set(key, (inFlightGlyphPages.get(key) ?? 0) + 1);
+    // rustTextPatch + rustTextEvict: the raster keys a text patch names are pinned while it is in flight, exactly as
+    // a full build's are, so an eviction cannot release a patched-in key before the patch commits.
+    const patchTextKeys = fast.textEvict && encoded.resourcesChanged
+      ? encoded.scene.resources.filter((resource) => resource.key.startsWith("text:")).map((resource) => resource.key) : [];
+    for (const key of patchTextKeys) inFlightTextKeys.set(key, (inFlightTextKeys.get(key) ?? 0) + 1);
     const queuedAt = phaseTimingEnabled ? performance.now() : 0;
     if (profile && profileIdentity) profile.emit(profileIdentity, { eventType: "phase-edge", phase: "couch.submission-queue.wait", edge: "start" });
     const operation = submissionTail.then(async () => {
       if (profile && profileIdentity) profile.emit(profileIdentity, { eventType: "phase-edge", phase: "couch.submission-queue.wait", edge: "end" });
       if (phaseTimingEnabled) retainedPatchQueueWaitMs += performance.now() - queuedAt;
       if (resizeFailure || disposed) return { presented: false, reason: resizeFailure ? `resize failed: ${resizeFailure}` : "disposed" };
+      // rustTextPatch: a new raster is resident before the patch that names it, in the same ordered lane.
+      const textUploads = (encoded.textUploads ?? []).filter((item) => !uploaded.has(item.key));
+      if (textUploads.length) {
+        const unique = [...new Map(textUploads.map((item) => [item.key, item])).values()];
+        const batch = serializer.encodeRustResources(unique);
+        engine.upload_rgba_batch(batch);
+        wasmUploadCalls++; wasmUploadBytes += batch.byteLength; wasmBytesSent += batch.byteLength;
+        for (const item of unique) { uploaded.add(item.key); uploadedPixels.set(item.key, item); }
+      }
       const applyStarted = phaseTimingEnabled ? performance.now() : 0;
       diagnostic?.({ stage: "api-attempt", operationId: encoded.scene.revision, mode: "scene-patch" });
       if (profile && profileIdentity) setProfileIdentity(profileIdentity);
@@ -1391,10 +1488,32 @@ export const createRustDrawListExecutor: MirrorDrawExecutorFactory = async ({ ca
         lastRevision = encoded.scene.revision;
         committedScene = fixtureEnabled ? new TextEncoder().encode(JSON.stringify(encoded.scene)) : null;
         committedResourceBuffer = null;
+        if (encoded.resourcesChanged) {
+          textPatchResourceChanges++;
+          committedResources = encoded.scene.resources.map((resource) => uploadedPixels.get(resource.key)!).filter(Boolean);
+          committedResourceByteLength = 8 + committedResources.reduce((bytes, item) =>
+            bytes + 16 + new TextEncoder().encode(item.key).byteLength + item.pixels.byteLength, 0);
+        }
+        if (patch.texts?.length) textPatchCommits++;
+        if (fast.verify) for (const prepared of encoded.preparedTexts ?? []) committedTextCarriers.set(`t${prepared.record.key}`, prepared);
+        // MSDF: a glyph page this patch stops naming is released the same way as after a full build — never by
+        // reference count, only when the atlas needs room (`MsdfAtlas.flush`, pinned by the committed scene this
+        // assignment just updated and by in-flight submissions).
+        // rustTextEvict: the committed scene now names the patched-in key and no longer the replaced one, so the
+        // tracker sees the new key referenced and moves the old one into its recently-unreferenced pool.
+        if (encoded.resourcesChanged && fast.textEvict && !disposed) evictUnreferencedText(encoded.scene.resources);
       }
       return result;
     });
     const settled = operation.finally(() => { retainedPatchInFlight = false;
+      for (const key of patchGlyphPages) {
+        const count = (inFlightGlyphPages.get(key) ?? 1) - 1;
+        if (count) inFlightGlyphPages.set(key, count); else inFlightGlyphPages.delete(key);
+      }
+      for (const key of patchTextKeys) {
+        const count = (inFlightTextKeys.get(key) ?? 1) - 1;
+        if (count) inFlightTextKeys.set(key, count); else inFlightTextKeys.delete(key);
+      }
       if (profile && profileIdentity) setProfileIdentity(profileIdentity, 0); });
     submissionTail = settled.then(() => undefined, () => undefined);
     return settled;
@@ -1407,6 +1526,9 @@ export const createRustDrawListExecutor: MirrorDrawExecutorFactory = async ({ ca
     // plus whatever the committed scene currently references) and grows without bound while it is off.
     get rustTextEvictions() { return textEvictions; },
     get rustTextCacheResources() { return bitmap.stats().resources; },
+    // rustDamagePresent diagnostics: the renderer's cumulative partial/full/skipped presents (null while off or
+    // before the first present). `verifyMismatches` is the rustFastVerify shadow check and must stay 0.
+    get rustDamage() { return damagePresent && rustDamageStats ? { ...rustDamageStats, last: rustLastDamage } : null; },
     resize(nextWidth: number, nextHeight: number, _resolution = 1, nextDesignWidth = nextWidth, nextDesignHeight = nextHeight) {
       surfaceWidth = nextWidth; surfaceHeight = nextHeight;
       sceneDesignWidth = nextDesignWidth; sceneDesignHeight = nextDesignHeight;
@@ -1459,6 +1581,51 @@ export const createRustDrawListExecutor: MirrorDrawExecutorFactory = async ({ ca
       });
     },
     prefetch,
+    get patchesText() { return patchesText(); },
+    verifyTextCommands(records: readonly PixiTextRecord[]): string[] {
+      // Side-effect free: no resolve. The rebuilt record must ask for exactly what the patch's record asked for
+      // (the Bitmap resource key's inputs, MSDF shaping inputs, placement), and the committed command must be the
+      // one the patch's own carrier produces.
+      const scene = committedTypedScene, notes: string[] = [];
+      if (!scene) return ["no committed scene"];
+      const same = (a: unknown, b: unknown) => JSON.stringify(a) === JSON.stringify(b);
+      const asks = (record: PixiTextRecord) => {
+        const extra = record as PixiTextRecord & Record<string, unknown>;
+        return JSON.stringify([record.key, record.resourceRevision ?? record.contentKey ?? "", record.text, record.style,
+          record.tint ?? 0xffffff, record.alpha, extra.runs, extra.msdf, extra.inlineImage, record.transform,
+          extra.localTransform]);
+      };
+      for (const record of records) {
+        const id = `t${record.key}`, at = committedCommandIndexes.get(id);
+        const command = at === undefined ? undefined : scene.commands[at];
+        const prepared = committedTextCarriers.get(id);
+        if (!command || !prepared) { notes.push(`${id}: ${command ? "not patched" : "no command"}`); continue; }
+        if (asks(prepared.record) !== asks(record)) { notes.push(`${id}: patched record differs from the rebuilt one`); continue; }
+        const { carrier } = prepared;
+        if (carrier.kind === "glyphs") {
+          if (command.kind !== "glyphRun" || command.atlas !== carrier.atlas.key ||
+              !same(command.glyphs, carrier.glyphs.map(({ src, dst }) => ({ src, dst }))) ||
+              !same(command.fill, carrier.fill) || !same(command.outline, carrier.outline ?? null) ||
+              !same(command.shadow, carrier.shadow ?? null) || command.pxRange !== carrier.pxRange ||
+              command.alpha !== (carrier.alpha ?? record.alpha ?? 1))
+            notes.push(`${id}: glyph run differs from its carrier`);
+          continue;
+        }
+        const alpha = carrier.alpha ?? record.alpha ?? 1;
+        const listed = scene.resources.find((resource) => resource.key === carrier.resource.key);
+        if (command.kind !== "rasterText" || command.resource !== carrier.resource.key || command.w !== carrier.width ||
+            command.h !== carrier.height || !same(command.src, [0, 0, carrier.resource.width, carrier.resource.height]) ||
+            !same(command.color, [alpha, alpha, alpha, alpha]) || listed?.width !== carrier.resource.width ||
+            listed.height !== carrier.resource.height)
+          notes.push(`${id}: raster ${String(command.resource)} committed, ${carrier.resource.key} prepared`);
+      }
+      return notes;
+    },
+    /** rustTextPatch diagnostics: committed text patches against full admissions and Rust geometry work. */
+    get rustTextPatchStats() { return { textPatchCommits, textPatchResourceChanges, sceneAdmissions: wasmAdmissionCalls,
+      scenePatches: wasmPatchCalls, rustGeometryRebuilds, rustIncrementalPatches,
+      textRasterizations: stats.textRasterizations, msdfFallbackReasons: { ...msdfFallbackReasons },
+      msdfFallbackLabels: { ...msdfFallbackLabels } }; },
     bindPixelTexture(key: string, source: HTMLCanvasElement, revision: number) {
       if (pixelRevisions.get(key) === revision) return;
       pixelRevisions.set(key, revision);

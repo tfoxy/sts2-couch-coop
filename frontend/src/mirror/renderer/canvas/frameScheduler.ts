@@ -59,6 +59,46 @@
  * A request survives an in-flight asynchronous presentation (`buildBlocked`):
  * it is not attempted while blocked and is served once the presentation settles
  * and re-arms the scheduler. Without `ports.coalesce` none of this exists.
+ *
+ * ONE TASK PER IDLE FRAME (`rustIdleScheduler`, opt-in through `ports.idleScheduler`).
+ * A steady idle cadence (an intent bob at 30 Hz, nothing requested) used to cost
+ * a park timer, the rAF, and a posted epoch close after each of them. With the
+ * switch on:
+ *
+ * - a passive deadline at most two display frames away is not parked: the tick
+ *   books the next display rAF itself and a booked-by-fold tick skips until the
+ *   deadline the timer would have woken for (`due - CANVAS_FRAME_PARK_SLOP_MS`),
+ *   so the admitted frames are the same and no timer is armed. The display frame
+ *   is the shortest recent rAF-to-rAF gap of the chain; a farther deadline (a
+ *   long settle, a 120 Hz display, a 90 Hz one when the frame's work is short)
+ *   still parks as before;
+ * - an idle-only tick whose epoch held no other work and no request posts no
+ *   close. A lane of the scheduler's own still to run in this frame (the view's
+ *   reconcile, a texture repaint booked before the frame), a build in the tick,
+ *   or anything it left open keeps the posted close. Otherwise:
+ *   - a folded tick ends its epoch itself when it returns. Its booking stays in
+ *     the closed epoch, so a non-urgent request in a later task waits for that
+ *     tick (the next display frame, which is a skip frame the request admits: the
+ *     same paint an at-once build reaches). An urgent request does not wait (it
+ *     may be a lane after the tick in this frame), so a first lift still presents
+ *     at once; it never shares a paint with the tick's next patch, because the
+ *     chain's next frame is a skip frame;
+ *   - a parked tick (a 90/120 Hz display) leaves its epoch open, so any lane after
+ *     it in this frame, known to the scheduler or not, still sees its work; the
+ *     park wake, a task of its own after that frame, ends it;
+ *   - a plain booking (the display-paced arm, a late frame) posts as before;
+ * - a park wake ends its own booking's epoch on the spot (its timer task runs
+ *   nothing else) instead of posting a close.
+ *
+ * The per-frame census (`workPerFrame`, `maxWorkPerFrame`, `urgentExtraBuilds`)
+ * follows the epochs, except that a folded tick's early end keeps it open until
+ * the next display frame's callback, a park wake or a posted close. It can only
+ * over-count against the switch-off arm (a task between frames joins the frame
+ * before it), never under-count. The fold compares rAF timestamps with
+ * `ports.now()`; under a replay's deterministic clock a slowed replay over-counts
+ * skipped ticks.
+ *
+ * Off, every path above is exactly the previous one.
  */
 
 import type { ReconcilePull } from "@/mirror/renderer/contracts";
@@ -155,7 +195,7 @@ export interface CanvasFrameSchedulerCoalescePorts {
   buildBlocked(): boolean;
 }
 
-/** Work per task epoch (≈ per display frame for the rAF phase). Counts builds plus patches. */
+/** Work per display frame: per task epoch, kept open across an idle tick's own epoch end. Builds plus patches. */
 export interface CanvasFrameCoalesceStats {
   readonly enabled: boolean;
   readonly requests: number;
@@ -185,6 +225,31 @@ export interface CanvasFrameCoalesceStats {
   readonly workPerFrame: Readonly<Record<"1" | "2" | "3+", number>>;
   readonly buildsPerFrame: Readonly<Record<"1" | "2" | "3+", number>>;
   readonly maxWorkPerFrame: number;
+  /** Epoch closes posted as tasks (each one is a task of its own). */
+  readonly closesPosted: number;
+  /** Idle-only ticks that ended their epoch themselves instead of posting a close (`rustIdleScheduler`). */
+  readonly idleEpochEnds: number;
+  /** Park wakes that ended their own booking's epoch instead of posting a close (`rustIdleScheduler`). */
+  readonly parkEpochEnds: number;
+  /** Idle-only ticks that parked and left their epoch for the park wake to end (`rustIdleScheduler`). */
+  readonly parkedIdleEpochs: number;
+}
+
+/** Scheduler task census, both arms: what each idle frame cost in browser callbacks. */
+export interface CanvasIdleSchedulerStats {
+  readonly enabled: boolean;
+  /** Animation-lane rAF callbacks delivered, skipped ticks included. */
+  readonly rafCallbacks: number;
+  /** Animation rAF callbacks that skipped (not due, or no passive demand). */
+  readonly skippedTicks: number;
+  readonly parkTimers: number;
+  readonly parkWakeups: number;
+  /** Bookings that replaced a park timer with the display rAF chain. */
+  readonly folds: number;
+  /** Folded-chain ticks that skipped because the passive deadline was not yet within the park slop. */
+  readonly foldSkips: number;
+  /** Shortest recent rAF-to-rAF gap of the chain, the fold's display-frame estimate. */
+  readonly displayFrameMs: number;
 }
 
 /** What one patch submission took from the scheduler, given back by `settlePatch` if it never presents. */
@@ -219,6 +284,8 @@ export interface CanvasFrameSchedulerPorts<TState extends CanvasFrameSchedulerSt
    * retained patch instead of forcing a full build. Absent: a moved ramp always builds.
    */
   readonly rampPatchable?: boolean;
+  /** `rustIdleScheduler`: one browser task per steady idle frame (see the module notes). Absent: off. */
+  readonly idleScheduler?: boolean;
 }
 
 export interface CanvasFrameScheduler {
@@ -269,6 +336,7 @@ export interface CanvasFrameScheduler {
   /** The current task epoch; equal on every build of one frame. */
   readonly frameTask: number;
   coalesceStats(): CanvasFrameCoalesceStats | null;
+  idleStats(): CanvasIdleSchedulerStats;
 
   readonly animFrames: number;
   readonly armedRafs: number;
@@ -407,11 +475,48 @@ export function createCanvasFrameScheduler<TState extends CanvasFrameSchedulerSt
   const buildsPerFrame = { "1": 0, "2": 0, "3+": 0 };
   const bucket = (count: number): "1" | "2" | "3+" => count === 1 ? "1" : count === 2 ? "2" : "3+";
 
+  // rustIdleScheduler (see the module notes). Off, none of these change a decision; the census counts both arms.
+  const idleScheduler = ports.idleScheduler === true;
+  /** Stamps are withheld (an idle-only tick, or a park wake into an empty epoch, may end its epoch itself). */
+  let stampQuiet = false;
+  /** A stamp was withheld while quiet: the epoch holds something a close must end. */
+  let stampWithheld = false;
+  /** The pending tick was booked by an idle tick that then ended its own epoch: it is not known to run before the
+   *  current paint, so an urgent request does not wait for it. */
+  let eagerClosedBooking = false;
+  /** The pending tick replaced a park timer: it skips until the passive deadline the timer would have woken for. */
+  let foldBooking = false;
+  let inAnimationFrame = false;
+  let rafBookedInsideTick = false;
+  let previousTickFrameTime = Number.NaN;
+  const displayGaps: number[] = [];
+  let displayFrameMs = CANVAS_IDLE_STAGE_MIN_FRAME_MS;
+  const idleCounts = { rafCallbacks: 0, skippedTicks: 0, folds: 0, foldSkips: 0 };
+  let closesPosted = 0;
+  let idleEpochEnds = 0;
+  let parkEpochEnds = 0;
+  let parkedIdleEpochs = 0;
+  /** Per-frame census of builds and patches; equal to the epoch counters unless an idle tick deferred it. */
+  let censusBuilds = 0;
+  let censusPatches = 0;
+  let censusDeferred = false;
+  /** The pending texture rAF was booked inside the tick, so it runs in the next display frame, not this one. */
+  let textureBookedInTick = false;
+
   /** Something happened in the current task: make sure the epoch closes after it. */
   function stampTask(): void {
     if (taskPoster === null || taskClosePosted || schedulerDisposed) return;
+    if (stampQuiet) { stampWithheld = true; return; }
     taskClosePosted = true;
+    closesPosted++;
     taskPoster.post(closeTask);
+  }
+
+  /** A build or a request inside a quiet stretch: the epoch closes the usual way, after its task. */
+  function endQuiet(): void {
+    if (!stampQuiet) return;
+    stampQuiet = false;
+    if (stampWithheld) { stampWithheld = false; stampTask(); }
   }
 
   function closeTask(): void {
@@ -419,18 +524,31 @@ export function createCanvasFrameScheduler<TState extends CanvasFrameSchedulerSt
     endTask();
   }
 
-  function endTask(): void {
-    const work = taskBuilds + taskPatches;
-    if (work > 0) {
-      coalesceCounts.framesWithWork++;
-      workPerFrame[bucket(work)]++;
-      if (taskBuilds > 0) buildsPerFrame[bucket(taskBuilds)]++;
-      if (work > coalesceCounts.maxWorkPerFrame) coalesceCounts.maxWorkPerFrame = work;
-    }
+  /**
+   * `deferCensus`: an idle tick ending its own epoch (rustIdleScheduler) keeps the per-frame census open, so a lane
+   * after it in the same frame is still counted with it; the next animation callback (a new display frame), a park
+   * wake or a posted close closes the census. Off, the census closes with every epoch, exactly as before.
+   */
+  function endTask(deferCensus = false): void {
+    if (deferCensus) censusDeferred = true;
+    else flushCensus();
     taskBuilds = 0;
     taskPatches = 0;
     taskWorkAt = Number.NEGATIVE_INFINITY;
     frameTask++;
+  }
+
+  function flushCensus(): void {
+    const work = censusBuilds + censusPatches;
+    if (work > 0) {
+      coalesceCounts.framesWithWork++;
+      workPerFrame[bucket(work)]++;
+      if (censusBuilds > 0) buildsPerFrame[bucket(censusBuilds)]++;
+      if (work > coalesceCounts.maxWorkPerFrame) coalesceCounts.maxWorkPerFrame = work;
+    }
+    censusBuilds = 0;
+    censusPatches = 0;
+    censusDeferred = false;
   }
 
   function buildBlocked(): boolean {
@@ -462,10 +580,13 @@ export function createCanvasFrameScheduler<TState extends CanvasFrameSchedulerSt
   }
 
   /** Every animation rAF goes through this one booking point for delivery accounting. */
-  function bookAnimationFrame(): boolean {
+  function bookAnimationFrame(fold = false): boolean {
     if (animationRaf !== null || !animationFrameAvailable() || stopped()) return false;
     rafBookedAt = ports.now();
     animationRaf = platform.requestAnimationFrame!(animationFrame);
+    foldBooking = fold;
+    eagerClosedBooking = false;
+    rafBookedInsideTick = inAnimationFrame;
     if (coalesce !== null) {
       rafBookedTask = frameTask;
       // A tick that skipped re-books without a close: an idle chain posts nothing. A request in a later task that
@@ -489,6 +610,17 @@ export function createCanvasFrameScheduler<TState extends CanvasFrameSchedulerSt
     parkDue = Number.POSITIVE_INFINITY;
     if (stopped() || animationRaf !== null || !animationFrameAvailable()) return;
     parkWakeups++;
+    // rustIdleScheduler: this timer task runs nothing else and comes after the frame of the tick that parked it. It
+    // ends that tick's epoch (left open, see the tick), then ends its own booking's epoch here rather than in a posted
+    // task, so a request in a later task waits for the booked tick, as it would after the close.
+    if (idleScheduler && coalesce !== null && !taskClosePosted && !buildRequested) {
+      if (taskBuilds + taskPatches > 0) endTask();
+      stampQuiet = true;
+      let booked = false;
+      try { booked = bookAnimationFrame(); } finally { stampQuiet = false; stampWithheld = false; }
+      if (booked) { endTask(); parkEpochEnds++; }
+      return;
+    }
     bookAnimationFrame();
   }
 
@@ -581,6 +713,16 @@ export function createCanvasFrameScheduler<TState extends CanvasFrameSchedulerSt
       return;
     }
 
+    // rustIdleScheduler: a passive deadline at most two display frames out is reached by the display rAF chain
+    // instead of a timer whose wake only books that same rAF. The booked tick skips until the timer's wake time.
+    if (idleScheduler && passiveDue === due && due - CANVAS_FRAME_PARK_SLOP_MS - at <= 2 * displayFrameMs) {
+      cancelPark();
+      armedRafs++;
+      idleCounts.folds++;
+      bookAnimationFrame(true);
+      return;
+    }
+
     // A true future passive/settle deadline parks. Never re-arm later: the
     // earlier pending wake is already sufficient. Pre-empt only for earlier.
     // Subtracting the slop provides time to reach the browser's next display
@@ -613,6 +755,29 @@ export function createCanvasFrameScheduler<TState extends CanvasFrameSchedulerSt
    */
   function animationFrame(frameTime?: number): void {
     animationRaf = null;
+    idleCounts.rafCallbacks++;
+    const folded = foldBooking;
+    foldBooking = false;
+    eagerClosedBooking = false;
+    const timed = typeof frameTime === "number" && Number.isFinite(frameTime);
+    // The chain's display frame: a tick booked inside the previous tick's callback lands on the next display frame
+    // unless one was dropped, so the shortest recent gap is the display period.
+    if (idleScheduler && rafBookedInsideTick && timed && Number.isFinite(previousTickFrameTime)) {
+      const gap = frameTime - previousTickFrameTime;
+      if (gap > 3 && gap < 50) {
+        noteSample(displayGaps, gap, 8);
+        displayFrameMs = Math.min(...displayGaps);
+      }
+    }
+    rafBookedInsideTick = false;
+    previousTickFrameTime = timed ? frameTime : Number.NaN;
+    // A new display frame: an idle tick's deferred census (see `endTask`) is complete.
+    if (censusDeferred) flushCensus();
+    inAnimationFrame = true;
+    try { animationTick(frameTime, folded); } finally { inAnimationFrame = false; }
+  }
+
+  function animationTick(frameTime: number | undefined, folded: boolean): void {
     if (coalesce !== null) {
       // The frame boundary is here when the open epoch cannot belong to this
       // frame: a second tick in it (one tick per frame), or work that started
@@ -660,6 +825,7 @@ export function createCanvasFrameScheduler<TState extends CanvasFrameSchedulerSt
     const idleOnlyFrame = !requested && !carried && bypass === null && Number.isFinite(passiveDue);
 
     if (!requested && !carried && bypass === null && !Number.isFinite(passiveDue)) {
+      idleCounts.skippedTicks++;
       ports.onFrameLifecycle?.("skipped", state.revision);
       ports.animation.noteIdleStageMissingPassive();
       armFromSkippedTick(at);
@@ -669,12 +835,56 @@ export function createCanvasFrameScheduler<TState extends CanvasFrameSchedulerSt
       idleOnlyFrame && !ports.displayPacedPassive &&
       at + CANVAS_IDLE_STAGE_EARLY_ADMISSION_MS < ports.deadlines.idleStageNotBefore()
     ) {
+      idleCounts.skippedTicks++;
       ports.onFrameLifecycle?.("skipped", state.revision);
       ports.animation.noteIdleStageSkippedEarly();
       armFromSkippedTick(at);
       return;
     }
+    // rustIdleScheduler: a tick booked in place of a park timer runs no earlier than that timer would have woken.
+    if (folded && idleOnlyFrame && at < passiveDue - CANVAS_FRAME_PARK_SLOP_MS) {
+      idleCounts.skippedTicks++;
+      idleCounts.foldSkips++;
+      ports.onFrameLifecycle?.("skipped", state.revision);
+      armFromSkippedTick(at);
+      return;
+    }
 
+    // rustIdleScheduler: an idle-only tick alone in its epoch withholds its close (its patch and its re-booking).
+    const quietTick = idleScheduler && coalesce !== null && idleOnlyFrame && !taskClosePosted &&
+      taskBuilds + taskPatches === 0 && !buildRequested;
+    if (quietTick) { stampQuiet = true; stampWithheld = false; }
+    try {
+      admittedTick(state, at, rampMoved, requested, idleOnlyFrame);
+    } finally {
+      if (quietTick && stampQuiet) {
+        stampQuiet = false;
+        if (stampWithheld) {
+          stampWithheld = false;
+          // A lane of the scheduler's own still to run in this frame (the view's reconcile, a texture repaint
+          // booked before the frame) must see this tick's work, as must anything the tick left open: those keep the
+          // posted close. A texture rAF booked inside this tick runs next frame.
+          const sameFrameLane = (textureRaf !== null && !textureBookedInTick) || reconcilePull?.pending() === true;
+          const folded = animationRaf !== null && rafBookedTask === frameTask && foldBooking;
+          if (sameFrameLane || carryFrame || buildRequested || taskBuilds > 0) stampTask();
+          else if (folded) {
+            // The chain's next frame is a skip frame (the cadence is two or more display frames), so a request
+            // that builds before it never shares a paint with this tick's next patch. A lane after this tick in
+            // this frame still counts with it in the census.
+            endTask(true);
+            idleEpochEnds++;
+            eagerClosedBooking = true;
+          } else if (parkTimer !== null && animationRaf === null) {
+            // Parked (a 90/120 Hz display): the epoch stays open, so any lane after this tick in this frame (one
+            // the scheduler does not know of) still sees its work; the park wake, a task of its own, ends it.
+            parkedIdleEpochs++;
+          } else stampTask();
+        }
+      }
+    }
+  }
+
+  function admittedTick(state: TState, at: number, rampMoved: boolean, requested: boolean, idleOnlyFrame: boolean): void {
     ports.onFrameLifecycle?.("admitted", state.revision);
 
     ports.onFrameLifecycle?.("sample-start", state.revision);
@@ -748,6 +958,7 @@ export function createCanvasFrameScheduler<TState extends CanvasFrameSchedulerSt
     if (stopped()) return;
     textureDemandGeneration++;
     if (textureRaf !== null || !animationFrameAvailable()) return;
+    textureBookedInTick = inAnimationFrame;
     textureRaf = platform.requestAnimationFrame!(() => {
       textureRaf = null;
       if (stopped()) return;
@@ -798,6 +1009,7 @@ export function createCanvasFrameScheduler<TState extends CanvasFrameSchedulerSt
     buildRequested = true;
     if (urgent) requestUrgent = true;
     if (!offsetOnly || ports.rampPatchable !== true) requestNeedsBuild = true;
+    endQuiet();
     stampTask();
     if (stopped()) return "deferred";
     if (buildBlocked()) {
@@ -806,7 +1018,9 @@ export function createCanvasFrameScheduler<TState extends CanvasFrameSchedulerSt
       coalesceCounts.deferred++;
       return "deferred";
     }
-    const tickAhead = animationRaf !== null && rafBookedTask !== frameTask;
+    // rustIdleScheduler: a tick booked by an idle tick that ended its own epoch may be NEXT frame's (this request
+    // can be a lane after that tick, in its frame), so an urgent request builds now rather than wait for it.
+    const tickAhead = animationRaf !== null && rafBookedTask !== frameTask && !(urgent && eagerClosedBooking);
     const workDone = taskBuilds + taskPatches > 0;
     if (animationFrameAvailable() && (tickAhead || (workDone && !urgent))) {
       coalesceCounts.deferred++;
@@ -829,20 +1043,24 @@ export function createCanvasFrameScheduler<TState extends CanvasFrameSchedulerSt
   function noteFrameWork(kind: "patch"): CanvasPatchSubmission | null;
   function noteFrameWork(kind: "build" | "patch"): CanvasPatchSubmission | null {
     if (coalesce === null) return null;
+    // rustIdleScheduler: a build in a quiet stretch keeps its posted close; a patch is withheld with the rest.
+    if (kind === "build") endQuiet();
     stampTask();
     taskWorkAt = platformNow();
     if (kind === "build") {
       // The one case a frame may build twice: an urgent request served after the frame already built or patched.
-      if (buildRequested && requestUrgent && taskBuilds + taskPatches > 0) coalesceCounts.urgentExtraBuilds++;
+      if (buildRequested && requestUrgent && censusBuilds + censusPatches > 0) coalesceCounts.urgentExtraBuilds++;
       // A full build of the current state draws whatever a yielding tick carried.
       carryFrame = false;
       taskBuilds++;
+      censusBuilds++;
       textureGenerationAtTaskBuild = textureDemandGeneration;
       buildRequested = false;
       requestUrgent = false;
       requestNeedsBuild = false;
     } else {
       taskPatches++;
+      censusPatches++;
       const submission = { task: frameTask, ramp: patchRampContext, servedRequest: false, urgent: requestUrgent };
       // rustOffsetPatch: a patch is planned from the current offsets and samples, so it serves an offset-only
       // request and draws whatever a yielding tick carried. `settlePatch` gives both back if it never presents.
@@ -866,7 +1084,7 @@ export function createCanvasFrameScheduler<TState extends CanvasFrameSchedulerSt
     }
     coalesceCounts.lostPatches++;
     // Still the frame that submitted it (a synchronous refusal): the slot is free for the build that follows.
-    if (submission.task === frameTask && taskPatches > 0) taskPatches--;
+    if (submission.task === frameTask && taskPatches > 0) { taskPatches--; if (censusPatches > 0) censusPatches--; }
     if (ports.rampPatchable !== true || stopped()) return;
     if (submission.servedRequest && !buildRequested) { buildRequested = true; requestUrgent = submission.urgent; }
     carryFrame = true;
@@ -884,6 +1102,20 @@ export function createCanvasFrameScheduler<TState extends CanvasFrameSchedulerSt
       frameTask,
       workPerFrame: { ...workPerFrame },
       buildsPerFrame: { ...buildsPerFrame },
+      closesPosted,
+      idleEpochEnds,
+      parkEpochEnds,
+      parkedIdleEpochs,
+    };
+  }
+
+  function idleStats(): CanvasIdleSchedulerStats {
+    return {
+      enabled: idleScheduler,
+      ...idleCounts,
+      parkTimers: armedParks,
+      parkWakeups,
+      displayFrameMs,
     };
   }
 
@@ -924,6 +1156,7 @@ export function createCanvasFrameScheduler<TState extends CanvasFrameSchedulerSt
     },
     get frameTask() { return frameTask; },
     coalesceStats,
+    idleStats,
     get animFrames() { return animationFrames; },
     get armedRafs() { return armedRafs; },
     get armedParks() { return armedParks; },
