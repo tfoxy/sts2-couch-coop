@@ -15,6 +15,8 @@ import { ensureFontFace, loadMirrorFont, mirrorFontRegistration } from "@/mirror
 import type { ProducerExecutorEvent } from "./producerBuildReasons";
 import { requireSingleProfileMode, type ProfileIdentity } from "./couchCanvasProfile";
 import { rustFastFlagsFromLocation, rustPresentModeFromLocation, type RustPresentMode } from "./rustFastFlags";
+import { buildRustIdleSet, RUST_IDLE_BUSY, type IdleRootSpec, type RustIdleSetInput } from "./rustIdleDescriptor";
+import type { RetainedIdlePlan } from "./retainedComposition";
 
 type RustWasmRenderer = {
   backend: string;
@@ -34,6 +36,13 @@ type RustWasmRenderer = {
   readonly patch_resources?: boolean;
   /** rustPresent: the mode this engine instance actually presents through. Undefined on glue built before present modes existed. */
   readonly present_mode?: string;
+  /** rustIdleInRust capability: `set_idle_anims` / `present_idle` exist. Undefined on older glue. */
+  readonly idle_anims?: boolean;
+  set_idle_anims?(bytes: Uint8Array): number;
+  clear_idle_anims?(): void;
+  present_idle?(tMs: number): number;
+  idle_poses?(tMs: number): Float64Array;
+  idle_stats?(): string;
   present(): Promise<string>;
   dispose(): void;
 };
@@ -69,7 +78,14 @@ type Serializer = {
    * feature-detected; absent on a GSW build that predates it, in which case the executor rebuilds as before.
    */
   rustSceneCommandIndex?(scene: RustSceneSnapshot): ReadonlyMap<string, number>;
+  /** rustIdleInRust (newer GSW only): the `RIA1` encoder and the committed-scene placements it reads. */
+  encodeRustIdleAnims?(set: RustIdleSetInput): Uint8Array | null;
+  rustRetainedGroupMembers?(scene: RustSceneSnapshot, groupId: string):
+    { parentWorld: number[]; members: { id: string; index: number; local: number[] }[] } | null;
+  rustRetainedTextPlacement?(scene: RustSceneSnapshot, id: string): { index: number; parentWorld: number[]; inset: number[] } | null;
 };
+
+
 
 const blankStats = (): PixiDrawListRendererStats => ({ frames: 0, completedFrames: 0, objects: 0, created: 0, updated: 0, destroyed: 0,
   textures: 0, frameTextures: 0, gpuTextures: 0, gpuTextureSlots: 0, textureLoads: 0, textureFailures: 0, resourcePending: 0,
@@ -233,6 +249,17 @@ export const createRustDrawListExecutor: MirrorDrawExecutorFactory = async ({ ca
   let committedResources: ResourcePixels[] = [];
   let committedRevision: number | null = null;
   let submissionTail: Promise<void> = Promise.resolve();
+  /**
+   * rustIdleInRust: whether every operation queued on `submissionTail` has settled and no `present()` is awaited.
+   * `present_idle` borrows the engine synchronously, so it may only run when nothing else holds or will take it.
+   */
+  let tailSerial = 0, tailSettled = true, presentsInFlight = 0;
+  const setTail = (operation: Promise<unknown>) => {
+    const serial = ++tailSerial;
+    tailSettled = false;
+    submissionTail = operation.then(() => undefined, () => undefined);
+    void submissionTail.then(() => { if (serial === tailSerial) tailSettled = true; });
+  };
   let retainedPatchInFlight = false;
   let resizeFailure: string | null = null;
   const msdfAtlas = new MsdfAtlas();
@@ -269,7 +296,7 @@ export const createRustDrawListExecutor: MirrorDrawExecutorFactory = async ({ ca
         }, pins);
         return result.ready;
       });
-      submissionTail = operation.then(() => undefined, () => undefined);
+      setTail(operation);
       void operation.then((ready) => { if (ready) onInvalidate(); })
         .catch((error) => { msdfFallbackReasons["atlas-upload"] = (msdfFallbackReasons["atlas-upload"] ?? 0) + 1;
           logRust("MSDF atlas upload", error); })
@@ -296,7 +323,7 @@ export const createRustDrawListExecutor: MirrorDrawExecutorFactory = async ({ ca
       stats.contextReady = true;
       onInvalidate();
     });
-    submissionTail = operation.then(() => undefined, () => undefined);
+    setTail(operation);
     void operation.catch((error) => {
       stats.contextReady = false;
       resizeFailure = String(error);
@@ -541,7 +568,7 @@ export const createRustDrawListExecutor: MirrorDrawExecutorFactory = async ({ ca
           resumedPresented: resumed.presented, expectedRevision: committed.revision,
           observedRevision: lastRevision, committedRevision, retainedSceneBytes: committedScene?.byteLength ?? 0 };
       });
-      submissionTail = operation.then(() => undefined, () => undefined);
+      setTail(operation);
       return operation;
     };
   }
@@ -1119,10 +1146,13 @@ export const createRustDrawListExecutor: MirrorDrawExecutorFactory = async ({ ca
   async function presentResult(operationId?: number, identity?: ProfileIdentity): Promise<{ presented: boolean; reason?: string; revision?: number; draws?: number; completedFrames?: number }> {
     if (profile && identity) setProfileIdentity(identity);
     else if (executionPhases && operationId !== undefined) engine.set_phase_operation_id!(operationId);
+    presentsInFlight++;
+    let presentJson: string;
+    try { presentJson = await engine.present(); } finally { presentsInFlight--; }
     const result = parse<{ presented: boolean; revision?: number | null; draws: number; resourcePending: number; unsupportedCommands: number; error?: string;
       drawCalls?: number; bufferCreations?: number; textureCreations?: number; uploadBytes?: number; completedPresents?: number; wasmCalls?: number;
       instanceUploadBytes?: number; incrementalPatches?: number; geometryRebuilds?: number; maxSampledTextures?: number;
-      damage?: string; damageStats?: RustDamageStats; present?: string; blitPixels?: number }>(await engine.present());
+      damage?: string; damageStats?: RustDamageStats; present?: string; blitPixels?: number }>(presentJson);
     wasmPresentCalls++;
     if (result.drawCalls !== undefined) rustDrawCalls = result.drawCalls;
     if (result.bufferCreations !== undefined) rustBufferCreations = result.bufferCreations;
@@ -1374,8 +1404,96 @@ export const createRustDrawListExecutor: MirrorDrawExecutorFactory = async ({ ca
       }
       if (profile && profileIdentity) setProfileIdentity(profileIdentity, 0);
     });
-    submissionTail = settled.then(() => undefined, () => undefined);
+    setTail(settled);
     return settled;
+  }
+
+  // rustIdleInRust: one descriptor set per committed revision; each idle frame is one synchronous `present_idle`.
+  let idleInstalledRevision: number | null = null;
+  /** The installed set's target command indexes, in `idle_poses` order (verification only reads it). */
+  let idleTargetIndexes: number[] = [];
+  let idleInstalls = 0, idlePresents = 0, idleBusy = 0, idleRefusals = 0;
+  const idleAnimsSupported = () => engine.idle_anims === true && typeof engine.present_idle === "function" &&
+    typeof serializer.encodeRustIdleAnims === "function" && typeof serializer.rustRetainedGroupMembers === "function" &&
+    typeof serializer.rustRetainedTextPlacement === "function";
+  const idleBusyNow = () => !tailSettled || presentsInFlight > 0 || retainedPatchInFlight || disposed;
+  /**
+   * Install the idle set for the committed scene: `plan` is the committed composition's, `specs` the roots the
+   * current frame animates. Returns the target count, or why nothing was installed (the frame stays on the patch
+   * path). The engine refuses a set whose base revision is not the one it committed.
+   */
+  function installIdle(plan: RetainedIdlePlan | null, specs: ReadonlyMap<string, IdleRootSpec>):
+    { ok: true; targets: number; animated: number } | { ok: false; reason: string } {
+    idleInstalledRevision = null;
+    if (!idleAnimsSupported()) return { ok: false, reason: "unsupported" };
+    if (idleBusyNow()) return { ok: false, reason: "busy" };
+    const scene = committedTypedScene;
+    if (!scene || committedRevision === null || scene.revision !== committedRevision || base_mismatch(scene))
+      return { ok: false, reason: "no-committed-scene" };
+    const toRustId = (id: string) => id.startsWith("text:") ? `t${id.slice(5)}` : id;
+    const built = buildRustIdleSet({ plan, specs, scene, commandIndex: (id) => committedCommandIndexes.get(id), toRustId,
+      queries: { groupMembers: serializer.rustRetainedGroupMembers!, textPlacement: serializer.rustRetainedTextPlacement! } });
+    if ("refusal" in built) return { ok: false, reason: built.refusal };
+    const bytes = serializer.encodeRustIdleAnims!(built.set);
+    if (!bytes) return { ok: false, reason: "encode" };
+    try { engine.set_idle_anims!(bytes); }
+    catch (error) { logRust("idle install refused", error); return { ok: false, reason: "engine-refused" }; }
+    idleInstalls++;
+    idleInstalledRevision = committedRevision;
+    idleTargetIndexes = built.set.targets.map((target) => target.commandIndex);
+    return { ok: true, targets: built.set.targets.length, animated: built.animated };
+  }
+  /** The scene must be the surface's: a resize or design change since admission waits for the next build. */
+  function base_mismatch(scene: RustSceneSnapshot): boolean {
+    return scene.width !== surfaceWidth || scene.height !== surfaceHeight || scene.designWidth !== sceneDesignWidth ||
+      scene.designHeight !== sceneDesignHeight;
+  }
+  /**
+   * One idle frame at `tMs`: the `present_idle` bits, 0 on a refusal, or `RUST_IDLE_BUSY` when an operation is
+   * queued or a present is awaited (nothing was attempted). Synchronous: a presented frame is committed on return.
+   */
+  function presentIdle(tMs: number): number {
+    if (idleInstalledRevision === null || idleInstalledRevision !== committedRevision || !idleAnimsSupported()) return 0;
+    if (idleBusyNow() || resizeFailure) { idleBusy++; return RUST_IDLE_BUSY; }
+    const code = engine.present_idle!(tMs);
+    wasmPresentCalls++;
+    stats.frames++;
+    if (code === 0) { idleRefusals++; idleInstalledRevision = null; stats.scenePresentationFailures++; return 0; }
+    idlePresents++;
+    stats.completedFrames++; presentationValid = true; stats.presentationValid = true;
+    return code;
+  }
+
+  /**
+   * rustIdleInRust under rustFastVerify: encode `patch` (the composition's UNFILTERED patch for the same clock) the
+   * way the patch path would, and compare every command matrix it carries with the installed set's poses at `tMs`,
+   * bit for bit. The patch is never applied. Returns one note per mismatch.
+   */
+  function verifyIdle(patch: ClipTranslatingScenePatch, tMs: number): { checked: number; mismatches: string[] } {
+    if (idleInstalledRevision === null || idleInstalledRevision !== committedRevision || !engine.idle_poses)
+      return { checked: 0, mismatches: ["no installed set"] };
+    const poses = engine.idle_poses(tMs);
+    const encoded = encodeRetainedPatch(patch);
+    if (!encoded) return { checked: 0, mismatches: ["the patch path refused the frame"] };
+    const parsed = JSON.parse(new TextDecoder().decode(encoded.bytes)) as { updates: Array<{ id: string; command: { m?: number[] } }> };
+    const expected = new Map<number, number[] | undefined>();
+    for (const update of parsed.updates) {
+      const index = committedCommandIndexes.get(update.id);
+      if (index === undefined) return { checked: 0, mismatches: [`patch names unknown command ${update.id}`] };
+      expected.set(index, update.command.m);
+    }
+    const notes: string[] = [];
+    idleTargetIndexes.forEach((index, target) => {
+      const m = expected.get(index);
+      expected.delete(index);
+      if (!m) { notes.push(`target ${index} absent from the patch`); return; }
+      for (let i = 0; i < 6; i++) if (poses[target * 6 + i] !== m[i]) {
+        notes.push(`command ${index}: rust [${Array.from(poses.subarray(target * 6, target * 6 + 6)).join(",")}] patch [${m.join(",")}]`);
+        return;
+      }
+    });
+    for (const index of expected.keys()) notes.push(`patch command ${index} is not an idle target`);
+    return { checked: idleTargetIndexes.length, mismatches: notes };
   }
 
   /** rustTextPatch: whether this serializer and renderer can patch a re-prepared label (both probed, never polled). */
@@ -1552,7 +1670,7 @@ export const createRustDrawListExecutor: MirrorDrawExecutorFactory = async ({ ca
         if (count) inFlightTextKeys.set(key, count); else inFlightTextKeys.delete(key);
       }
       if (profile && profileIdentity) setProfileIdentity(profileIdentity, 0); });
-    submissionTail = settled.then(() => undefined, () => undefined);
+    setTail(settled);
     return settled;
   }
 
@@ -1583,7 +1701,7 @@ export const createRustDrawListExecutor: MirrorDrawExecutorFactory = async ({ ca
           stats.scenePresentationFailures++;
         }
       });
-      submissionTail = operation.then(() => undefined, () => undefined);
+      setTail(operation);
     },
     render(list: DrawList<string>, text: readonly PixiTextRecord[] = [], profileIdentity?: ProfileIdentity) { stats.objects = list.count;
       const result = submit(list, text, undefined, undefined, profileIdentity);
@@ -1607,7 +1725,7 @@ export const createRustDrawListExecutor: MirrorDrawExecutorFactory = async ({ ca
           return result;
         }).finally(() => { profile.emit(profileIdentity, { eventType: "phase-edge", phase: "couch.present.wait", edge: "end" });
           setProfileIdentity(profileIdentity, 0); });
-        submissionTail = operation.then(() => undefined, () => undefined);
+        setTail(operation);
         return operation;
       }
       if (!executionPhases || !diagnostic) return presentResult();
@@ -1623,6 +1741,14 @@ export const createRustDrawListExecutor: MirrorDrawExecutorFactory = async ({ ca
     },
     prefetch,
     get patchesText() { return patchesText(); },
+    /** rustIdleInRust: whether this engine and serializer can evaluate idle animations (both probed once, never polled). */
+    get idleAnims() { return idleAnimsSupported(); },
+    installIdle,
+    presentIdle,
+    verifyIdle,
+    idlePoses(tMs: number) { return idleInstalledRevision === committedRevision ? engine.idle_poses?.(tMs) ?? null : null; },
+    get rustIdleStats() { return idleAnimsSupported() ? { executor: { installs: idleInstalls, presents: idlePresents, busy: idleBusy,
+      refusals: idleRefusals }, engine: JSON.parse(engine.idle_stats?.() ?? "null") as unknown } : null; },
     verifyTextCommands(records: readonly PixiTextRecord[]): string[] {
       // Side-effect free: no resolve. The rebuilt record must ask for exactly what the patch's record asked for
       // (the Bitmap resource key's inputs, MSDF shaping inputs, placement), and the committed command must be the

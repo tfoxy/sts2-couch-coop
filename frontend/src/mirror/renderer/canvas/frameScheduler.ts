@@ -188,6 +188,11 @@ export interface CanvasFrameSchedulerAnimationPorts<TState extends CanvasFrameSc
 
   /** A successful numeric patch presents through its own established port. */
   tryPatchAndPaint(at: number): boolean;
+  /**
+   * `rustIdleInRust`: an idle-only frame (passive demand alone) may be presented whole by the renderer's idle
+   * lane. True: it was drawn, and neither the patch nor the build runs. Absent or false: the frame goes on as usual.
+   */
+  presentIdleFrame?(at: number): boolean;
   /** `requested`: this build serves a coalesced build request (see `requestBuild`). */
   runBuild(state: TState, requested?: boolean): boolean;
   syncOverlay(state: TState): void;
@@ -952,7 +957,10 @@ export function createCanvasFrameScheduler<TState extends CanvasFrameSchedulerSt
         // A ramp patch is counted when it commits (`settlePatch`): an asynchronous patch answers false here.
         patchRampContext = rampMoved;
         let patched: boolean;
-        try { patched = !fullOnly && ports.animation.tryPatchAndPaint(at); } finally { patchRampContext = false; }
+        try {
+          patched = !fullOnly && ((idleOnlyFrame && ports.animation.presentIdleFrame?.(at) === true) ||
+            ports.animation.tryPatchAndPaint(at));
+        } finally { patchRampContext = false; }
         if (!patched) {
           const textureGenerationAtBuild = textureDemandGeneration;
           if (requested ? ports.animation.runBuild(state, true) : ports.animation.runBuild(state)) {

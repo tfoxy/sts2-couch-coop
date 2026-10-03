@@ -228,6 +228,14 @@ export interface CanvasVisualState {
   noteIdleStageSkippedEarly(): void;
   noteIdleStageMissingPassive(): void;
   idleLoopCount(channel: "transform" | "alpha"): number;
+  /**
+   * `rustIdleInRust`: bumped whenever the idle set or any idle loop's plan or timing may have changed (an entry
+   * created, re-resolved or dropped, or the whole set cleared). Equal generations mean every `idlePlan` and loop
+   * timing an installed descriptor read is still current.
+   */
+  readonly idleGeneration: number;
+  /** `rustIdleInRust`: the plan `sweepIdle` samples for `id`, or null. */
+  idlePlan(id: string): IdleAnimPlan | null;
   stats(): {
     idleActive: number;
     idleFrames: number;
@@ -346,6 +354,7 @@ export function createCanvasVisualState(
   let idleStagePhaseResets = 0;
   let idleStageLastAdmittedAt = Number.NaN;
   let idleStageMinAdmittedGap = Number.POSITIVE_INFINITY;
+  let idleGeneration = 0;
   const idleStageAdmittedGaps: number[] = [];
 
   const modAlpha = (node: MirrorNode): number =>
@@ -737,7 +746,7 @@ export function createCanvasVisualState(
     transformOverrides.delete(id);
     alphaOverrides.delete(id);
     localAnims.delete(id);
-    if (idleEntries.delete(id)) loop.applyPinnedLoop(id, null, at);
+    if (idleEntries.delete(id)) { idleGeneration++; loop.applyPinnedLoop(id, null, at); }
     intentEntries.delete(id);
     frameSubstitutes.delete(id);
     // A removed node has no swap left to draw (`retainSourceSwaps`); an open one would only force a build.
@@ -789,6 +798,7 @@ export function createCanvasVisualState(
       phaseMsOverride,
     });
     if (spec === null) return;
+    idleGeneration++;
     if (existing === undefined) {
       idleEntries.set(id, {
         node,
@@ -806,6 +816,7 @@ export function createCanvasVisualState(
   }
 
   function dropIdle(id: string, at: number): void {
+    idleGeneration++;
     idleEntries.delete(id);
     localAnims.delete(id);
     loop.applyPinnedLoop(id, null, at);
@@ -998,6 +1009,7 @@ export function createCanvasVisualState(
       active.clear();
       transformParents.clear();
       for (const id of idleEntries.keys()) loop.applyPinnedLoop(id, null, at);
+      idleGeneration++;
       idleEntries.clear();
       localAnims.clear();
       intentEntries.clear();
@@ -1315,6 +1327,12 @@ export function createCanvasVisualState(
           count++;
       }
       return count;
+    },
+    get idleGeneration() {
+      return idleGeneration;
+    },
+    idlePlan(id) {
+      return idleEntries.get(id)?.plan ?? null;
     },
     stats() {
       return {

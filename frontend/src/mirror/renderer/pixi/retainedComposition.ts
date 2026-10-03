@@ -69,6 +69,18 @@ export interface WireTransformOptions {
   hitSpreadDx?: ReadonlyMap<string, number>;
 }
 
+/**
+ * `rustIdleInRust`: what `patch()` reads to re-pose every local-animation root, captured once so a renderer can
+ * evaluate the same poses itself. `roots` is `patch()`'s root order; each primitive (a command or text reference
+ * outside every root group) lists the roots whose deltas it composes, outermost first, with its spread offset from
+ * each, and the reference its pose is composed onto.
+ */
+export interface RetainedIdlePlan {
+  roots: Array<{ id: string; base: Affine; wire: readonly number[] | null; outer: Affine; spreadDx: number;
+    inverse: Affine; group: string | null }>;
+  primitives: Array<{ id: string; chain: Array<{ root: number; offset: number }>; reference: Affine }>;
+}
+
 export interface RetainedPixiCompositionOptions {
   includeStaticPixelCaches?: boolean;
   onStaticAdmission?: (edge: "start" | "end") => void;
@@ -103,7 +115,10 @@ export interface RetainedPixiComposition {
    * what committed patches already applied. The root's `outer` carries its inherited cosmetic offset as its
    * translation, so the span re-poses as `T · outer · raw`: one left-multiplied translation, the animation untouched.
    */
-  patch(anims: ReadonlyMap<string, LocalAnim>, rootShifts?: ReadonlyMap<string, readonly [number, number]>): RetainedPixiPatch | null;
+  patch(anims: ReadonlyMap<string, LocalAnim>, rootShifts?: ReadonlyMap<string, readonly [number, number]>,
+    options?: { unfiltered?: boolean }): RetainedPixiPatch | null;
+  /** `rustIdleInRust`: the inputs `patch()` would read right now (see {@link RetainedIdlePlan}); null where it refuses. */
+  idlePlan(): RetainedIdlePlan | null;
   /**
    * `clips`: the delta also translates every clip rect in the span (the executor can move them). Null when it is not
    * a pure translation (`isPureTranslation`); without `clips`, clip rects are left as admitted, as before.
@@ -368,7 +383,13 @@ export function createRetainedPixiComposition(
   }
   if (!options.lazyPatchIndex) buildIndex();
 
-  function patch(anims: ReadonlyMap<string, LocalAnim>, rootShifts?: ReadonlyMap<string, readonly [number, number]>): RetainedPixiPatch | null {
+  /**
+   * `patchOptions.unfiltered` (`rustIdleInRust` verification): every group and primitive pose, including those equal to
+   * the last committed one, and no early return for an unchanged frame. Never commit an unfiltered patch.
+   */
+  function patch(anims: ReadonlyMap<string, LocalAnim>, rootShifts?: ReadonlyMap<string, readonly [number, number]>,
+    patchOptions: { unfiltered?: boolean } = {}): RetainedPixiPatch | null {
+    const unfiltered = patchOptions.unfiltered === true;
     const refuse = (reason: PatchRefusal, id: string | null): null => { options.onPatchRefused?.(reason, id); return null; };
     if (!ensureIndex()) return refuse("index-stale", null);
     for (const id of anims.keys()) if (!build.localAnimFrames.has(id)) return refuse("anim-unknown", id);
@@ -399,7 +420,7 @@ export function createRetainedPixiComposition(
       const vy = outer[1] - (delta[1] * outer[0] + delta[3] * outer[1]);
       deltas.push({ start: root.span.spanStart, end: root.span.spanEnd, delta, rootDx: root.frame.spreadDx, vx, vy });
     }
-    if (roots.every((root) => rootPoses.get(root.id)!.every((value, i) => value === lastRootPoses.get(root.id)![i])))
+    if (!unfiltered && roots.every((root) => rootPoses.get(root.id)!.every((value, i) => value === lastRootPoses.get(root.id)![i])))
       return { primitives: [], groups: [], hits: [], nodeMatrices: [], sourceReferences: [], movedRoots: 0, rootPoses,
         ...(translations ? { rootTranslations: translations } : {}) };
     const primitiveMap = new Map<string, PrimitivePatch>();
@@ -437,16 +458,43 @@ export function createRetainedPixiComposition(
     }
     return {
       primitives: [...primitiveMap.values()].filter(({ id, transform }) =>
-        !transform?.every((value, i) => value === lastPrimitive.get(id)?.[i])),
+        unfiltered || !transform?.every((value, i) => value === lastPrimitive.get(id)?.[i])),
       groups: groups.filter(({ id, transform }) => {
         const rootId = id.slice("anim:".length);
-        return !transform.every((value, i) => value === lastRootPoses.get(rootId)?.[i]);
+        return unfiltered || !transform.every((value, i) => value === lastRootPoses.get(rootId)?.[i]);
       }),
       hits: [...hitMap.values()].filter(({ entry, matrix }) =>
         !matrix.every((value, i) => value === lastHit.get(entry)?.[i])),
       nodeMatrices: [], sourceReferences: [], movedRoots, rootPoses,
       ...(translations ? { rootTranslations: translations } : {}),
     };
+  }
+  function idlePlan(): RetainedIdlePlan | null {
+    if (!ensureIndex()) return null;
+    const plan: RetainedIdlePlan = { roots: [], primitives: [] };
+    const chains = new Map<string, RetainedIdlePlan["primitives"][number]>();
+    for (const root of roots) {
+      if (!root.span || !root.inverse || root.frame.spreadRebased) return null;
+      // Exactly `patch()`'s `outer`: the frame's, with the committed cosmetic shift folded into its translation.
+      const outer: Affine = [...root.frame.outer] as Affine;
+      const shift = rootTranslations.get(root.id);
+      if (shift) { outer[4] += shift[0]; outer[5] += shift[1]; }
+      const rootIndex = plan.roots.length;
+      const group = groupByRoot.get(root.id) ?? null;
+      plan.roots.push({ id: root.id, base: root.frame.base, wire: root.frame.wire, outer, spreadDx: root.frame.spreadDx,
+        inverse: root.inverse, group });
+      if (group) continue;
+      for (let order = root.span.spanStart; order < root.span.spanEnd; order++) {
+        const owner = build.order.ids[order];
+        const offset = (spreadDxByNode.get(owner) ?? 0) - root.frame.spreadDx;
+        for (const ref of byOwner.get(owner) ?? []) {
+          let entry = chains.get(ref.id);
+          if (!entry) { entry = { id: ref.id, chain: [], reference: ref.matrix }; chains.set(ref.id, entry); plan.primitives.push(entry); }
+          entry.chain.push({ root: rootIndex, offset });
+        }
+      }
+    }
+    return plan;
   }
   function commit(result: RetainedPixiPatch): void {
     // A committed patch came from patch() or patchWireTransform(), so its index already exists.
@@ -612,7 +660,8 @@ export function createRetainedPixiComposition(
     const old = (sampledMatrix ?? lastPrimitive.get(id)) as Affine | undefined, inverse = affineInverse(ref.matrix);
     return old && inverse ? affineMul(affineMul(old, inverse), referenceMatrix) : null;
   }
-  return { plan, patch, patchWireTransform, patchTranslate, commit, textPatchable, clipOffset, logicalMatrix, logicalNodeMatrix, sourceTransform };
+  return { plan, patch, idlePlan, patchWireTransform, patchTranslate, commit, textPatchable, clipOffset, logicalMatrix, logicalNodeMatrix,
+    sourceTransform };
 }
 
 /**
@@ -640,7 +689,8 @@ function createVerifiedComposition(
   };
   return {
     plan: eager.plan,
-    patch: (anims, rootShifts) => check("patch", (composition) => composition.patch(anims, rootShifts)),
+    patch: (anims, rootShifts, options) => check("patch", (composition) => composition.patch(anims, rootShifts, options)),
+    idlePlan: () => check("idlePlan", (composition) => composition.idlePlan()),
     patchWireTransform: (id, delta, options) => check("patchWireTransform", (composition) => composition.patchWireTransform(id, delta, options)),
     patchTranslate: (deltas, options) => check("patchTranslate", (composition) => composition.patchTranslate(deltas, options)),
     clipOffset: (index) => check("clipOffset", (composition) => composition.clipOffset(index)),
