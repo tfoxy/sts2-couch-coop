@@ -1404,3 +1404,89 @@ describe("spread shifts across a refused full presentation (rustWireSpreadPatch)
     expect(spread.verifyMismatches).toBe(0);
   });
 });
+
+// A SETTLED tween on a widened stage. The end-turn button slides in on a game tween whose endpoint is the pose the
+// wire already streams, so no landing delta follows; its glow then pulses (an idle loop) under it. The override the
+// settle left behind marked the glow's span as drawn-moved, so on a widened stage the glow's local-animation frame was
+// spread-rebased and the retained composition refused every patch: one full build per animation frame, until a
+// reload. Live, it was the idle combat after spending the last energy (`.sts2/bench/rust-rebuild-oct3/`).
+describe("a tween that settles on its streamed pose (widened stage)", () => {
+  beforeEach(() => { document.body.replaceChildren(); });
+  afterEach(() => {
+    window.history.replaceState(null, "", "/");
+    Object.assign(rendererComparisonConfig, readRendererComparisonConfig());
+  });
+
+  const REST = [1, 0, 0, 1, 1604, 846];
+  const IDLE = [1700, 1750, 1800, 1850, 1900, 1950, 2000];
+  function settleRows(): Array<Record<string, unknown>> {
+    return [...wideSceneNodes(),
+      heldNode("endTurn", "stage", "Control", REST, { localRect: box(250, 120) }),
+      heldNode("endTurnFace", "endTurn", "ColorRect", I, { localRect: box(250, 120), fillColor: fill("#335577ff") }),
+      heldNode("endTurnGlow", "endTurn", "ColorRect", [1, 0, 0, 1, 25, 10], { localRect: box(200, 100),
+        fillColor: fill("#ffdd88ff"), pinnedLoopAnim: "mapPointPulse" })];
+  }
+  const settleScript = (slideIn: boolean) => async ({ state, renderer, offer, tick }: ScenarioContext) => {
+    const rows = settleRows();
+    applySceneDelta(state, parseSceneDelta({ type: "scene-delta", full: true, screenType: "combat", upserts: rows,
+      orderedIds: rows.map((row) => row.id as string) })!);
+    renderer.setStretch(WIDE);
+    renderer.setStaticBackgroundSource!({ scenePath: BG_SCENE, url: "/bg/glade.png" }, () => {});
+    expect(renderer.reconcile(state)).toBe(false);
+    await turn();
+    await offer("startup");
+    if (slideIn) {
+      // Up from below the stage, onto the pose the wire already holds.
+      delta(state, [], [{ ...positionHint("endTurn", REST, 300), startTransform: [1, 0, 0, 1, 1604, 1100] }]);
+      await offer("slide-in");
+      for (const at of [1100, 1200, 1300, 1400]) await tick(`slide-in@${at}`, at);
+    } else for (const at of [1100, 1200, 1300, 1400]) await tick(`rest@${at}`, at);
+    for (const at of IDLE) await tick(`idle@${at}`, at);
+    // A full build of the last idle frame, at the same clock: the reference the patched picture must equal.
+    renderer.setStretch(WIDE);
+    await offer("rebuild");
+    await tick("rebuild", IDLE.at(-1)!);
+  };
+  const callsAt = (result: ScenarioResult, prefix: string) => result.steps
+    .filter((row) => (row as { step: string }).step.startsWith(prefix))
+    .map((row) => result.log[(row as { submissions: number }).submissions - 1].call);
+
+  it.each(["", "rustFastVerify=1"])("patches the idle loop under it, and draws what a reload draws, with %s", async (query) => {
+    const settled = await runScenario(query, settleScript(true));
+    const reloaded = await runScenario(query, settleScript(false));
+    // The reload never saw the tween: its idle frames are retained patches. So must the settled page's be.
+    expect(callsAt(reloaded, "idle@")).toEqual(IDLE.map(() => "patch"));
+    expect(callsAt(settled, "idle@")).toEqual(IDLE.map(() => "patch"));
+    expect(settled.draw.settledOverrideReleases).toBe(1);
+    expect(settled.draw.transformOverrideCount).toBe(0);
+    // The same picture at the same clock, whatever led there.
+    expect(firstDifference(effectiveFrames(settled.log).at(-1), effectiveFrames(reloaded.log).at(-1))).toBeNull();
+    // …and the patched picture is the one a full build of that frame admits.
+    for (const result of [settled, reloaded]) {
+      const pictures = effectiveFrames(result.log);
+      const at = (name: string) => ([...result.steps].reverse().find((row) => (row as { step: string }).step === name) as
+        { submissions: number }).submissions - 1;
+      expect(result.log[at("rebuild")].call).toBe("admit");
+      expect(firstDifference(pictures[at(`idle@${IDLE.at(-1)}`)], pictures[at("rebuild")])).toBeNull();
+    }
+  });
+
+  it("keeps an override the wire has not caught up with", async () => {
+    // The same slide, onto a pose the wire does not hold yet: the override is the only place the button is drawn.
+    const result = await runScenario("", async ({ state, renderer, offer, tick }) => {
+      const rows = settleRows();
+      applySceneDelta(state, parseSceneDelta({ type: "scene-delta", full: true, screenType: "combat", upserts: rows,
+        orderedIds: rows.map((row) => row.id as string) })!);
+      renderer.setStretch(WIDE);
+      renderer.setStaticBackgroundSource!({ scenePath: BG_SCENE, url: "/bg/glade.png" }, () => {});
+      expect(renderer.reconcile(state)).toBe(false);
+      await turn();
+      await offer("startup");
+      delta(state, [], [positionHint("endTurn", [1, 0, 0, 1, 1604, 800], 300)]);
+      await offer("slide");
+      for (const at of [1100, 1200, 1300, 1400, 1500]) await tick(`slide@${at}`, at);
+    });
+    expect(result.draw.settledOverrideReleases).toBe(0);
+    expect(result.draw.transformOverrideCount).toBe(1);
+  });
+});

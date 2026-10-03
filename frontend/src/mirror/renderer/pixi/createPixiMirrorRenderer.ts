@@ -395,6 +395,27 @@ export function createPixiMirrorRenderer(
     strictInputs: import.meta.env.MODE === "test" || fast.verify, onPatchIndex: () => { lazyCompositionIndexBuilds++; },
     verify: fast.verify ? { onMismatch: (method: string, detail: string) => {
       lazyCompositionVerifyMismatches++; lazyCompositionVerifyFirstMismatch ??= `${method}: ${detail}`; } } : undefined } : {};
+  // rustDiagnostics: why the composition refused a patch, and on which animated root (capped by id).
+  const compositionRefusals: Record<string, number> = {};
+  const compositionRefusalRoots: Record<string, { count: number; reason: string; node: string }> = {};
+  const noteCompositionRefusal = (reason: string, id: string | null) => {
+    compositionRefusals[reason] = (compositionRefusals[reason] ?? 0) + 1;
+    if (id === null) return;
+    const row = compositionRefusalRoots[id];
+    if (row) { row.count++; return; }
+    if (Object.keys(compositionRefusalRoots).length >= 32) return;
+    compositionRefusalRoots[id] = { count: 1, reason, node: describeNode(id) };
+  };
+  const describeNode = (id: string) => {
+    const node = state?.nodes.get(id);
+    const chain: string[] = [];
+    for (let at = node; at && chain.length < 12; at = at.parentId == null ? undefined : state!.nodes.get(at.parentId))
+      chain.push(`${at.name}${at.visible ? "" : "(hidden)"}${visual.transformOverrides.has(at.id) ? "[override]" : ""}`);
+    return node === undefined ? `${id} (absent)`
+      : `${id} ${node.nodeType ?? "?"} ${chain.join(" < ")}${node.parentId != null && !state!.nodes.has(node.parentId) ? " < (orphan)" : ""}` +
+        `${snapshot?.build.order.entries.has(id) ? "" : " [not-in-order]"}${snapshot?.build.localAnimFrames.has(id) ? " [frame]" : ""}` +
+        `${snapshot?.build.localAnimFrames.get(id)?.spreadRebased ? " [rebased]" : ""}`;
+  };
   // rustSnapshotReuse: the live node map a pristine committed copy was taken from (null once a wire patch edits
   // that copy), plus the static-background skip roots of one (node map, revision, background).
   let snapshotNodesSource: ReadonlyMap<string, MirrorNode> | null = null;
@@ -1193,7 +1214,8 @@ const producerStarted = rustPhaseTimingMode || producerReasonMode ? performance.
           backend === "rust" ? { includeStaticPixelCaches: !rustOmitStaticPixelCaches,
             onStaticAdmission: rustStaticAdmissionPhaseMode
               ? (edge) => console.timeStamp(`cc:couch-exec:static-admission:${buildId ?? 0}:${edge}`)
-              : undefined, ...compositionLaziness } : undefined);
+              : undefined, ...(rustDiagnosticMode ? { onPatchRefused: noteCompositionRefusal } : {}),
+            ...compositionLaziness } : undefined);
           candidate = profileIdentity ? profile!.span(profileIdentity, "couch.retained-composition", compose) : compose(); }
         finally { if (rustExecutionPhaseMode) rustExecutionStamp(`cc:couch-exec:composition:${buildId ?? 0}:end`); }
       }
@@ -2674,7 +2696,8 @@ const traceId = nextTraceFrame();
       ...(rustDiagnosticMode ? { producerBuilds, retainedPlanCount, retainedAsyncSubmitted, retainedAsyncPublished } : {}),
       ...(rustDiagnosticMode ? { retainedValid: retainedValid ? 1 : 0, transformOverrideCount: visual.transformOverrides.size,
         frameSampleMask: visual.frameSampleMask, localAnimationCount: visual.localAnims.size,
-        opacitySampleCount: visual.opacitySampledIds.size, sourceSampleCount: visual.sourceSampledIds.size } : {}),
+        opacitySampleCount: visual.opacitySampledIds.size, sourceSampleCount: visual.sourceSampledIds.size,
+        settledOverrideReleases: visual.stats().settledOverrideReleases } : {}),
       ...(rustPhaseTimingMode ? { retainedPlanMs, producerBuildMs, wireSpanLoopMs, wireSpreadPublishMs } : {}),
       ...(fast.lazyComposition ? { lazyCompositionIndexBuilds, lazyCompositionVerifyMismatches } : {}),
       ...(fast.snapshotReuse ? { snapshotNodeReuses, staticSkipRootReuses, rewardFocusSkips } : {}),
@@ -2698,6 +2721,14 @@ const traceId = nextTraceFrame();
       designWidth: stage.clientWidth, designHeight: stage.clientHeight, backingWidth: backingW, backingHeight: backingH,
       dpr,
       ...(producerReasons ? { rustProducerReasons: producerReasons.snapshot() } : {}),
+      ...(rustDiagnosticMode ? { rustCompositionRefusals: { reasons: { ...compositionRefusals },
+        roots: structuredClone(compositionRefusalRoots),
+        overrides: [...visual.transformOverrides.entries()].slice(0, 16).map(([id, m]) => {
+          const g: number[] = [1, 0, 0, 1, 0, 0];
+          const streamed = state && visual.streamedGlobalInto(state, id, g);
+          return `${describeNode(id)} override=${m.map((v) => +v.toFixed(3)).join(",")} streamed=${streamed ? g.map((v) => +v.toFixed(3)).join(",") : "none"}`;
+        }),
+        anims: [...visual.localAnims.keys()].slice(0, 16).map((id) => describeNode(id)) } } : {}),
       ...(scheduler.coalesceStats() ? { rustCoalescedBuilds: scheduler.coalesceStats() } : {}),
       ...(backend === "rust" ? { rustIdleScheduler: scheduler.idleStats() } : {}),
       ...(hiddenWalkMode ? { rustHiddenWalk: { rows: hiddenWalkRows.slice(), overflow: hiddenWalkOverflow } } : {}),
