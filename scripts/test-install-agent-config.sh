@@ -76,10 +76,13 @@ done
 # ---------------------------------------------------------------------------------------------
 # Fixtures the installer has to cope with.
 # ---------------------------------------------------------------------------------------------
-# Sibling repos live next to the checkout; $WT/../spirectl is $TMP/spirectl.
-mkdir -p "$TMP/spirectl/skills/spirectl" "$TMP/godot-qa/skills/godot-qa"
+# Sibling repos live next to the checkout; each EXTRA_SKILLS path resolves beside $WT.
+mkdir -p "$TMP/spirectl/skills/spirectl" "$TMP/godot-qa/skills/godot-qa" \
+  "$TMP/godot-scene-web/skills/gsw-wgpu-renderer"
 printf -- '---\nname: spirectl\ndescription: stub\n---\n' > "$TMP/spirectl/skills/spirectl/SKILL.md"
 printf -- '---\nname: godot-qa\ndescription: stub\n---\n' > "$TMP/godot-qa/skills/godot-qa/SKILL.md"
+printf -- '---\nname: gsw-wgpu-renderer\ndescription: stub\n---\n' \
+  > "$TMP/godot-scene-web/skills/gsw-wgpu-renderer/SKILL.md"
 
 # A locally installed skill is a REAL directory and must never be replaced by a symlink.
 mkdir -p "$WT/.claude/skills/godot-qa"
@@ -124,6 +127,12 @@ done
 ok "sibling skill .agents/skills/spirectl is a symlink"  test -L "$WT/.agents/skills/spirectl"
 ok "sibling skill .agents/skills/spirectl resolves"      test -e "$WT/.agents/skills/spirectl/SKILL.md"
 ok "sibling skill .agents/skills/godot-qa resolves"      test -e "$WT/.agents/skills/godot-qa/SKILL.md"
+ok "sibling skill .agents/skills/gsw-wgpu-renderer is a symlink" \
+  test -L "$WT/.agents/skills/gsw-wgpu-renderer"
+ok "sibling skill .agents/skills/gsw-wgpu-renderer resolves" \
+  test -e "$WT/.agents/skills/gsw-wgpu-renderer/SKILL.md"
+ok "sibling skill .claude/skills/gsw-wgpu-renderer resolves" \
+  test -e "$WT/.claude/skills/gsw-wgpu-renderer/SKILL.md"
 ok "a real skill dir is not replaced"                    test -f "$WT/.claude/skills/godot-qa/MARKER"
 ok "a real skill dir stays a real dir"                   test ! -L "$WT/.claude/skills/godot-qa"
 

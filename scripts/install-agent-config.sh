@@ -31,7 +31,7 @@ REPO="$PWD"
 
 # Skills owned by sibling repos, linked in when that sibling is checked out next to this one.
 # Paths are relative to $REPO.
-EXTRA_SKILLS=(../spirectl/skills/spirectl ../godot-qa/skills/godot-qa)
+EXTRA_SKILLS=(../spirectl/skills/spirectl ../godot-qa/skills/godot-qa ../godot-scene-web/skills/gsw-wgpu-renderer)
 
 DO_USER=0
 for arg in "$@"; do

@@ -13,6 +13,7 @@ that answers your question**, not the whole file.
 | about to make a viewer's tap *do* something in the game — especially if a spirectl semantic action looks like the shortcut | [architecture-map.md](architecture-map.md) "Real input, not semantic actions" | **ask the maintainer before using a semantic action** |
 | measuring a change, or comparing two rendering backends | [../mirror-combat-bench.md](../mirror-combat-bench.md) + [qa-recipes.md](qa-recipes.md) §5 | `mirror-bench` agent |
 | proposing or reviewing a renderer CPU/GPU optimization (canvas, Pixi, or Rust/wgpu) | [renderer-optimization-ledger.md](renderer-optimization-ledger.md) — check it before proposing, add a row after every attempt | `mirror-bench` agent for new measurements |
+| changing or reviewing the Rust/wgpu renderer implementation in godot-scene-web | sibling [GSW wgpu renderer skill](../../../godot-scene-web/skills/gsw-wgpu-renderer/SKILL.md) — local source/docs and backend-specific constraints | use the ledger and benchmark contract for optimization work |
 | profiling the Rust WebGL2 canvas path across browser, CPU, GPU, and phone display | [handoff-rust-webgl-profiling.md](handoff-rust-webgl-profiling.md) | Sol implementation worktrees, Luna fidelity audit, `mirror-bench` for measured comparisons |
 | continuing the Rust campaign with AMD uProf and NVIDIA Nsight while avoiding rejected approaches | [handoff-rust-native-profilers.md](handoff-rust-native-profilers.md) | Astra direction and final review, Sol captures and code, Luna history and evidence audit |
 | recording comparable WebGL, WebGPU, or native Vulkan benchmark evidence | [../renderer-benchmark-contract.md](../renderer-benchmark-contract.md) | `mirror-bench` agent |
@@ -78,8 +79,9 @@ the gitignored `/.mcp.json` at the main checkout's copy, so both CLIs get the sa
 | `release-notes` | turning `Changelog:` trailers into the player-facing `CHANGELOG.md` section |
 
 The installer also links the **sibling-repo** skills, but only when that sibling is checked out next to this
-repo: `spirectl` → [`../../../spirectl/skills/spirectl`](../../../spirectl/skills/spirectl) and `godot-qa` →
-`../../../godot-qa/skills/godot-qa`, each tracking its own repo. `playwright-cli` is *not* linked — it is a real
+repo: `spirectl` → [`../../../spirectl/skills/spirectl`](../../../spirectl/skills/spirectl), `godot-qa` →
+`../../../godot-qa/skills/godot-qa`, and `gsw-wgpu-renderer` →
+[`../../../godot-scene-web/skills/gsw-wgpu-renderer`](../../../godot-scene-web/skills/gsw-wgpu-renderer), each tracking its own repo. `playwright-cli` is *not* linked — it is a real
 directory installed locally, and the installer never replaces a real directory with a symlink.
 
 Project memory lives at `.agents/memory/` in the **main checkout**; every worktree gets a symlink to it, and
