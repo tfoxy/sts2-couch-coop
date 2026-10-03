@@ -3,6 +3,7 @@ import type { PixiDrawListRenderer, PixiDrawListRendererStats, PixiScenePlan, Pi
 import type { ClipTranslatingScenePatch, MirrorDrawExecutorFactory } from "./createPixiMirrorRenderer";
 import { offsetRustTextCarrierTransform } from "@/mirror/renderer/semanticTextLayout";
 import { createBitmapTextMethod } from "./textMethods/bitmap";
+import { createTextResourceEvictionTracker } from "./textMethods/textResourceEviction";
 import { carrierForMsdfRun, createMsdfRuntime, msdfGlyphKey, type MsdfRunRecord } from "./textMethods/msdf";
 import { MsdfAtlas } from "./textMethods/msdfAtlas";
 import type { TextInkRaster, CorpusInput, CorpusRow } from "./textMethods/types";
@@ -141,6 +142,19 @@ export const createRustDrawListExecutor: MirrorDrawExecutorFactory = async ({ ca
   const uploaded = new Set<string>();
   const uploadedPixels = new Map<string, ResourcePixels>();
   const pixelRevisions = new Map<string, number>();
+  // rustTextEvict: ~64-128 per the WP1 spec; the middle of that range gives label-toggle protection without
+  // letting the Bitmap cache run far ahead of what one screen's worth of text actually needs.
+  const TEXT_EVICTION_POOL_LIMIT = 96;
+  const textEvictionTracker = createTextResourceEvictionTracker(TEXT_EVICTION_POOL_LIMIT);
+  let textEvictions = 0;
+  // rustTextEvict: refcounted Bitmap keys an ENCODED-BUT-NOT-YET-SETTLED `submit()` call needs, the same
+  // pattern `inFlightGlyphPages` already uses for MSDF. A key's encode (and the upload-skip decision that goes
+  // with it: `uploaded.has(key)`) happens synchronously at call time, before that submission is even queued —
+  // so a second `submit()` can run its own encode, pin its keys, and queue behind the first, ALL before the
+  // first submission's continuation (including eviction) ever executes. Pinning here is what lets eviction see
+  // a key a still-in-flight sibling submission needs, independent of whatever ordering guarantee the caller
+  // above this executor does or doesn't provide.
+  const inFlightTextKeys = new Map<string, number>();
   let lastRevision = 0;
   let nextRevision = 0;
   let nextPresentOnlyPhaseId = 0x80000000; // Legacy rustExecutionPhases trace IDs only.
@@ -405,6 +419,7 @@ export const createRustDrawListExecutor: MirrorDrawExecutorFactory = async ({ ca
     committedRevision, committedSceneBytes: committedScene?.byteLength ?? 0,
     zeroCopyPixels,
     textRasterizations: stats.textRasterizations,
+    textEvictions, textCacheResources: bitmap.stats().resources,
     msdf: msdfRuntime ? { glyphRunsEncoded: msdfGlyphRunsEncoded,
       glyphRunPresentations: msdfGlyphRunPresentations, glyphRunsLastPresented: msdfGlyphRunsLastPresented,
       fallbackReasons: { ...msdfFallbackReasons },
@@ -590,6 +605,54 @@ export const createRustDrawListExecutor: MirrorDrawExecutorFactory = async ({ ca
     setLastMissSubmission: (value) => { textInkLastMissSubmission = value; },
     onRasterization: () => { stats.textRasterizations++; }
   });
+  // rustTextEvict: `encodeRustResourceUpdates` rejects a batch over 4096 entries; stay well under that even
+  // though a commit this round only ever overflows the pool by a handful of keys (closing a large,
+  // ~300-label screen is the realistic ceiling, around 200 — see the ledger row).
+  const RELEASE_BATCH_CHUNK_SIZE = 1024;
+  /** rustTextEvict: release these Bitmap keys from every place they are resident — the JS cache, the
+   *  executor's own upload bookkeeping, and the Rust GPU texture — via the same RSR2 `release` operation
+   *  `textMethods/msdfAtlas.ts` uses for atlas pages. */
+  function releaseTextResources(keys: readonly string[]): void {
+    if (!keys.length) return;
+    bitmap.evict(keys);
+    for (const key of keys) { uploaded.delete(key); uploadedPixels.delete(key); }
+    textEvictions += keys.length;
+    for (let offset = 0; offset < keys.length; offset += RELEASE_BATCH_CHUNK_SIZE) {
+      const chunk = keys.slice(offset, offset + RELEASE_BATCH_CHUNK_SIZE);
+      try {
+        const batch = serializer.encodeRustResourceUpdates(chunk.map((key): RustResourceUpdate => ({ operation: "release", key })));
+        engine.upload_rgba_batch(batch);
+        wasmUploadCalls++; wasmUploadBytes += batch.byteLength; wasmBytesSent += batch.byteLength;
+      } catch (error) {
+        // The key is already gone from every JS-side place a later build could find it (above, before this
+        // loop even starts), so a failed release only leaks Rust-side GPU memory for these keys — it must
+        // never throw back into `submit()`'s continuation and turn an already-presented frame into a
+        // rejected promise (mirrors MSDF's own `upload` try/catch in `textMethods/msdfAtlas.ts`).
+        logRust("rustTextEvict release failed", error);
+      }
+    }
+  }
+  /**
+   * rustTextEvict: called only after a full build actually commits (never for a retained patch — a patch
+   * cannot change which Bitmap keys a scene uses today; WP5 adds that, and should fold its new keys into
+   * `inFlightTextKeys`/pass them as additionally-referenced into `textEvictionTracker.commit` the same way
+   * below, not bypass this tracker). `resources` is that same commit's `encoded.resources`, so a key still
+   * referenced by the just-committed scene is protected by construction, and so is a key a later retained
+   * patch could diff against — its base IS this same committed scene.
+   *
+   * A key an ENCODED-BUT-NOT-YET-SETTLED sibling `submit()` call needs is also protected, via
+   * `inFlightTextKeys` — the caller above this executor is expected to serialize builds/patches
+   * (`asyncSubmissionRevision`), but that is the CALLER's invariant, not this executor's; a second `submit()`
+   * can still run its own synchronous encode (and its own upload-skip decision keyed on `uploaded.has`)
+   * before this commit's eviction runs, so eviction defends itself rather than trusting the caller.
+   */
+  function evictUnreferencedText(resources: readonly { key: string }[]): void {
+    const referenced: string[] = [];
+    for (const resource of resources) if (resource.key.startsWith("text:")) referenced.push(resource.key);
+    for (const key of inFlightTextKeys.keys()) referenced.push(key);
+    const evicted = textEvictionTracker.commit(referenced, bitmap.cachedKeys());
+    if (evicted.length) releaseTextResources(evicted);
+  }
   type InlineImageRecord = PixiTextRecord & { inlineImage?: { url: string; width: number; height: number } };
   function rasterText(record: PixiTextRecord): { resource: { key: string; width: number; height: number }; pixels: Uint8Array; width: number; height: number; transform: readonly number[]; alpha?: number } | null {
     const inline = (record as InlineImageRecord).inlineImage;
@@ -1063,6 +1126,11 @@ export const createRustDrawListExecutor: MirrorDrawExecutorFactory = async ({ ca
     const uniqueUploads = [...new Map(uploads.map((row) => [row.key, row])).values()];
     const sceneGlyphPages = glyphPages(encoded.scene);
     for (const key of sceneGlyphPages) inFlightGlyphPages.set(key, (inFlightGlyphPages.get(key) ?? 0) + 1);
+    // rustTextEvict: pin this submission's Bitmap keys for the same reason `inFlightGlyphPages` pins MSDF
+    // pages — see `inFlightTextKeys`'s own comment. No-op while the switch is off (nothing ever reads the pin).
+    const sceneTextKeys = fast.textEvict
+      ? encoded.resources.filter((resource) => resource.key.startsWith("text:")).map((resource) => resource.key) : [];
+    for (const key of sceneTextKeys) inFlightTextKeys.set(key, (inFlightTextKeys.get(key) ?? 0) + 1);
     const cardAtlasUpload = profileCardAtlas
       ? uniqueUploads.find((row) => isCardAtlas(row.key)) ?? null : null;
     if (profileCardAtlas) {
@@ -1189,6 +1257,9 @@ export const createRustDrawListExecutor: MirrorDrawExecutorFactory = async ({ ca
         }
         committedRevision = revision;
         lastRevision = revision;
+        // `!disposed`, mirroring `submitRetained`'s `result.presented && !disposed`: `dispose()` may have torn
+        // down `engine` while this continuation was awaiting `presentResult`, and a release must never touch it.
+        if (fast.textEvict && !disposed) evictUnreferencedText(encoded.resources);
       }
       return result;
     });
@@ -1196,6 +1267,10 @@ export const createRustDrawListExecutor: MirrorDrawExecutorFactory = async ({ ca
       for (const key of sceneGlyphPages) {
         const count = (inFlightGlyphPages.get(key) ?? 1) - 1;
         if (count) inFlightGlyphPages.set(key, count); else inFlightGlyphPages.delete(key);
+      }
+      for (const key of sceneTextKeys) {
+        const count = (inFlightTextKeys.get(key) ?? 1) - 1;
+        if (count) inFlightTextKeys.set(key, count); else inFlightTextKeys.delete(key);
       }
       if (profile && profileIdentity) setProfileIdentity(profileIdentity, 0);
     });
@@ -1328,6 +1403,10 @@ export const createRustDrawListExecutor: MirrorDrawExecutorFactory = async ({ ca
   return {
     app, stats,
     get translatesClips() { return translatesClips(); },
+    // rustTextEvict diagnostics: `resources` stays flat while the switch is on (bounded by the eviction pool
+    // plus whatever the committed scene currently references) and grows without bound while it is off.
+    get rustTextEvictions() { return textEvictions; },
+    get rustTextCacheResources() { return bitmap.stats().resources; },
     resize(nextWidth: number, nextHeight: number, _resolution = 1, nextDesignWidth = nextWidth, nextDesignHeight = nextHeight) {
       surfaceWidth = nextWidth; surfaceHeight = nextHeight;
       sceneDesignWidth = nextDesignWidth; sceneDesignHeight = nextDesignHeight;
@@ -1389,7 +1468,7 @@ export const createRustDrawListExecutor: MirrorDrawExecutorFactory = async ({ ca
     textureFailureDetails() { return [...failures].map(([key, reason]) => `${key}: ${reason}`); },
     textOutcomes(): PixiTextOutcomes { return { requested: "native", actual: "native", native: textCount, slug: 0, slugCached: 0, reasons: {} }; },
     armDiagnosticSkipGl() { return false; }, armDiagnosticSingleQuad() { return false; }, pollDiagnostics() {},
-    dispose() { if (disposed) return; disposed = true; canvas.removeEventListener("webglcontextlost", contextLost); canvas.removeEventListener("webglcontextrestored", contextRestored); if (fixtureEnabled) { delete globals.__mirrorRustFixture; delete globals.__mirrorRustFixtureChunk; } if (statsEnabled) delete globals.__mirrorRustStats; delete globals.__mirrorRustGpuTimerCapability; delete globals.__mirrorRustTextCorpus; delete globals.__mirrorRustRollbackProbe; delete (window as unknown as { __mirrorRustPixelControl?: boolean }).__mirrorRustPixelControl; msdfAtlas.dispose(); msdfRuntime?.dispose(); engine.dispose(); textures.clear(); bitmap.dispose(); pixelRevisions.clear(); uploaded.clear(); uploadedPixels.clear(); pending.clear(); failures.clear(); committedResources = []; committedScene = null; committedTypedScene = null; committedCommandIndexes.clear(); committedResourceBuffer = null; committedRevision = null; },
+    dispose() { if (disposed) return; disposed = true; canvas.removeEventListener("webglcontextlost", contextLost); canvas.removeEventListener("webglcontextrestored", contextRestored); if (fixtureEnabled) { delete globals.__mirrorRustFixture; delete globals.__mirrorRustFixtureChunk; } if (statsEnabled) delete globals.__mirrorRustStats; delete globals.__mirrorRustGpuTimerCapability; delete globals.__mirrorRustTextCorpus; delete globals.__mirrorRustRollbackProbe; delete (window as unknown as { __mirrorRustPixelControl?: boolean }).__mirrorRustPixelControl; msdfAtlas.dispose(); msdfRuntime?.dispose(); engine.dispose(); textures.clear(); bitmap.dispose(); pixelRevisions.clear(); uploaded.clear(); uploadedPixels.clear(); inFlightTextKeys.clear(); pending.clear(); failures.clear(); committedResources = []; committedScene = null; committedTypedScene = null; committedCommandIndexes.clear(); committedResourceBuffer = null; committedRevision = null; },
   } as unknown as PixiDrawListRenderer<string> & {
     render(list: DrawList<string>, text?: readonly PixiTextRecord[]): Promise<boolean>;
     admitScene(list: DrawList<string>, text: readonly PixiTextRecord[], plan: PixiScenePlan): Promise<{ presented: boolean; reason?: string }>;

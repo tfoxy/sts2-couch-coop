@@ -58,6 +58,13 @@ describe("resolveRustFastFlags", () => {
     expect(flags("rustFast=1", "pixi").tweenRootPatch).toBe(false);
   });
 
+  it("turns the bounded Bitmap text cache off on its own", () => {
+    expect(flags("rustTextEvict=0").textEvict).toBe(false);
+    expect(flags("rustTextEvict=0").tweenRootPatch).toBe(true);
+    expect(flags("rustFast=0&rustTextEvict=1").textEvict).toBe(true);
+    expect(flags("rustFast=1", "pixi").textEvict).toBe(false);
+  });
+
   it("enables one item without the umbrella", () => {
     const resolved = flags("rustFast=0&rustLazyComposition=1&rustFastVerify=1");
     expect(resolved.lazyComposition).toBe(true);

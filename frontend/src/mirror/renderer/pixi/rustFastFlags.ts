@@ -26,6 +26,7 @@ export interface RustFastFlags {
   offsetPatch: boolean;
   wireSpreadPatch: boolean;
   tweenRootPatch: boolean;
+  textEvict: boolean;
   verify: boolean;
 }
 
@@ -48,6 +49,7 @@ export const RUST_FAST_SWITCHES = {
   offsetPatch: "rustOffsetPatch",
   wireSpreadPatch: "rustWireSpreadPatch",
   tweenRootPatch: "rustTweenRootPatch",
+  textEvict: "rustTextEvict",
 } as const satisfies Record<Exclude<keyof RustFastFlags, "verify">, string>;
 
 export function resolveRustFastFlags(query: URLSearchParams, backend: "pixi" | "rust"): RustFastFlags {

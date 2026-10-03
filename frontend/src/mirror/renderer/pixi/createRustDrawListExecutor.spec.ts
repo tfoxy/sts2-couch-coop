@@ -1174,3 +1174,157 @@ describe("rustFast WP3 executor switches", () => {
     renderer.dispose();
   });
 });
+
+describe("rustFast WP1 bounded Bitmap text cache (rustTextEvict)", () => {
+  function mockInkContext(): void {
+    vi.spyOn(HTMLCanvasElement.prototype, "getContext").mockImplementation((function (this: HTMLCanvasElement) {
+      return {
+        getContextAttributes() { return { alpha: true }; },
+        clearRect() {}, drawImage() {},
+        getImageData(_x: number, _y: number, width: number, height: number) {
+          return { data: new Uint8ClampedArray(Math.max(1, width) * Math.max(1, height) * 4) };
+        },
+        measureText(value: string) {
+          return { width: value.length * 8, actualBoundingBoxAscent: 10, actualBoundingBoxDescent: 3,
+            fontBoundingBoxAscent: 10, fontBoundingBoxDescent: 3 };
+        },
+        fillText() {}, strokeText() {},
+      } as unknown as CanvasRenderingContext2D;
+    }) as never);
+  }
+
+  function stubEngineAndSerializer(serializerSource: string): void {
+    vi.stubEnv("VITE_RUST_PROTOTYPE_MODULE_URL", moduleUrl(
+      "export default async function init(){return {}};export class RustRenderer{static async create(){return globalThis.__rustProjectionTest.engine}}",
+    ));
+    vi.stubEnv("VITE_RUST_SCENE_SERIALIZER_URL", moduleUrl(serializerSource));
+  }
+
+  // A one-label scene whose `text` changes every commit, like the idle-combat clock: each commit's resource
+  // list carries only the CURRENT text's key, so the previous one becomes unreferenced one commit later.
+  const labelRecord = (text: string): PixiTextRecord => ({ key: "label", insertionIndex: 0, text,
+    runs: [{ text }], transform: [1, 0, 0, 1, 0, 0],
+    style: { fontFamily: "sans-serif", fontSize: 16, fill: "#ffffff" } } as PixiTextRecord);
+
+  function setUpRenderer(releaseCalls: Array<ReadonlyArray<{ operation: string; key: string }>>,
+    uploadCalls: string[][] = []) {
+    (globalThis as Record<string, unknown>).__rustProjectionTest = {
+      engine: { backend: "WebGL2", resize: () => {}, dispose: () => {},
+        upload_rgba_batch: () => 0,
+        admit_scene: () => JSON.stringify({ accepted: true, revision: 1, unsupportedCommands: 0, resourcePending: 0 }),
+        apply_patch: () => { throw new Error("unexpected patch"); },
+        present: async () => JSON.stringify({ presented: true, revision: 1, draws: 1, resourcePending: 0, unsupportedCommands: 0 }) },
+      encode: (input: { revision: number; texts: readonly PixiTextRecord[];
+        resolveText(record: PixiTextRecord): { resource: { key: string; width: number; height: number }; pixels: Uint8Array } | null }) => {
+        const resolved = input.resolveText(input.texts[0])!;
+        return { bytes: new Uint8Array([1]), scene: { version: 2, revision: input.revision, width: 1, height: 1,
+          designWidth: 1, designHeight: 1, commands: [], resources: [resolved.resource] },
+          resources: [resolved.resource], textUploads: [{ ...resolved.resource, pixels: resolved.pixels }], unsupportedCommands: 0 };
+      },
+      releaseCalls,
+      uploadCalls,
+    };
+    stubEngineAndSerializer(
+      "export function encodeRustScene(input){return globalThis.__rustProjectionTest.encode(input)};" +
+      "export function encodeRustPatch(){return null};" +
+      "export function encodeRustResources(items){globalThis.__rustProjectionTest.uploadCalls.push(items.map((item)=>item.key));return new Uint8Array(items.length)};" +
+      "export function encodeRustResourceUpdates(items){globalThis.__rustProjectionTest.releaseCalls.push(items);return new Uint8Array(0)}",
+    );
+    return createRustDrawListExecutor({ canvas: document.createElement("canvas"), width: 1, height: 1,
+      designWidth: 1, designHeight: 1, onInvalidate: () => {} });
+  }
+
+  it("bounds the Bitmap cache, releases Rust textures for keys the committed scene dropped, and re-rasterises AND re-uploads a released key on reuse", async () => {
+    mockInkContext();
+    const getContextSpy = vi.spyOn(HTMLCanvasElement.prototype, "getContext");
+    const releaseCalls: Array<ReadonlyArray<{ operation: string; key: string }>> = [];
+    const uploadCalls: string[][] = [];
+    const renderer = await setUpRenderer(releaseCalls, uploadCalls);
+    try {
+      // Drive enough distinct labels to overflow the ~96-key recently-unreferenced pool: each commit only
+      // references its OWN text, so the one before it becomes unreferenced one commit later.
+      for (let i = 0; i < 110; i++) expect(await renderer.render(createDrawList<string>(), [labelRecord(`T${i}`)])).toBe(true);
+      expect(renderer.rustTextEvictions).toBeGreaterThan(0);
+      // The Bitmap cache never grew past "the eviction pool, plus the one label currently on screen".
+      expect(renderer.rustTextCacheResources).toBeLessThanOrEqual(97);
+      const released = releaseCalls.flat().filter((op) => op.operation === "release").map((op) => op.key);
+      expect(released.some((key) => key.includes(":T0:"))).toBe(true); // the oldest label was released
+      // Re-submitting the released label re-rasterises (3 fresh getContext calls: measure, ink, readPixels'
+      // scratch canvas) rather than serving the evicted cache entry — AND the fresh bytes actually reach a
+      // new Rust upload batch, not just the JS cache (a re-raster that is never re-uploaded would leave the
+      // Rust texture released while the scene keeps referencing it).
+      const before = getContextSpy.mock.calls.length;
+      const uploadsBefore = uploadCalls.length;
+      expect(await renderer.render(createDrawList<string>(), [labelRecord("T0")])).toBe(true);
+      expect(getContextSpy.mock.calls.length).toBe(before + 3);
+      expect(uploadCalls.length).toBeGreaterThan(uploadsBefore);
+      expect(uploadCalls.at(-1)!.some((key) => key.includes(":T0:"))).toBe(true);
+    } finally { renderer.dispose(); }
+  });
+
+  it("does not re-rasterise a label still inside the recently-unreferenced pool", async () => {
+    mockInkContext();
+    const getContextSpy = vi.spyOn(HTMLCanvasElement.prototype, "getContext");
+    const renderer = await setUpRenderer([]);
+    try {
+      expect(await renderer.render(createDrawList<string>(), [labelRecord("steady")])).toBe(true);
+      expect(await renderer.render(createDrawList<string>(), [labelRecord("other")])).toBe(true);
+      const before = getContextSpy.mock.calls.length;
+      // "steady" dropped out of reference only once (one commit ago); the pool protects it from a re-raster.
+      expect(await renderer.render(createDrawList<string>(), [labelRecord("steady")])).toBe(true);
+      expect(getContextSpy.mock.calls.length).toBe(before);
+      expect(renderer.rustTextEvictions).toBe(0);
+    } finally { renderer.dispose(); }
+  });
+
+  it("never evicts or releases anything with the switch off, matching today's unbounded cache", async () => {
+    window.history.replaceState({}, "", "/?rustTextEvict=0");
+    mockInkContext();
+    const releaseCalls: Array<ReadonlyArray<{ operation: string; key: string }>> = [];
+    const renderer = await setUpRenderer(releaseCalls);
+    try {
+      for (let i = 0; i < 110; i++) expect(await renderer.render(createDrawList<string>(), [labelRecord(`T${i}`)])).toBe(true);
+      expect(releaseCalls).toHaveLength(0);
+      expect(renderer.rustTextEvictions).toBe(0);
+      expect(renderer.rustTextCacheResources).toBe(110); // every distinct label is still cached
+    } finally { renderer.dispose(); }
+  });
+
+  // The handoff's own spec list: "no eviction while a key is in flight." `asyncSubmissionRevision` (the
+  // mirror renderer above this executor) is expected to serialize builds, but this proves the EXECUTOR does
+  // not merely trust that: two `render()` calls fired back-to-back, with neither awaited before the other
+  // starts, race exactly the way a caller bug (or a future caller) could.
+  it("never evicts a key a still-encoding sibling submission needs, even when two renders overlap", async () => {
+    mockInkContext();
+    const getContextSpy = vi.spyOn(HTMLCanvasElement.prototype, "getContext");
+    const releaseCalls: Array<ReadonlyArray<{ operation: string; key: string }>> = [];
+    const renderer = await setUpRenderer(releaseCalls);
+    try {
+      // Fill the recently-unreferenced pool to EXACTLY its limit, no overflow yet: T0..T95 pooled, T96 the
+      // one currently-referenced key. 97 sequential (awaited) commits, so this part of the setup is race-free.
+      for (let i = 0; i <= 96; i++) expect(await renderer.render(createDrawList<string>(), [labelRecord(`T${i}`)])).toBe(true);
+      expect(releaseCalls).toHaveLength(0);
+      // Build A (references "T97") would normally push the pool one over its limit and evict the oldest
+      // pooled key, "T0". Build B (references "T0") is started here WITHOUT awaiting A first — both
+      // `render()` calls run their synchronous encode-and-pin prefix in this same synchronous stretch of
+      // code, before either's queued continuation (a microtask) gets a chance to run, so B's pin on "T0" is
+      // already recorded by the time A's continuation — including A's own eviction decision — executes.
+      const getContextBeforeOverlap = getContextSpy.mock.calls.length;
+      const pendingA = renderer.render(createDrawList<string>(), [labelRecord("T97")]);
+      const pendingB = renderer.render(createDrawList<string>(), [labelRecord("T0")]);
+      expect(await pendingA).toBe(true);
+      expect(await pendingB).toBe(true);
+      // "T0" must never be released, no matter how much ORDINARY pool churn the rest of the pair causes:
+      // once A settles, "T97" (A's own key, now abandoned by B's scene) becomes a fresh pool candidate and
+      // legitimately evicts something else on B's own commit — that is normal eviction, not the race this
+      // test exists to close, so this deliberately does not assert a total eviction count of zero.
+      const released = releaseCalls.flat().filter((op) => op.operation === "release").map((op) => op.key);
+      expect(released.some((key) => key.includes(":T0:"))).toBe(false);
+      // The strongest proof "T0" survived: exactly 3 fresh getContext calls happened (measure, ink,
+      // readPixels' scratch canvas) — ALL of them "T97"'s own first-ever raster (a brand new key). "T0"
+      // contributed none: B's encode found it still cached. A release followed by a forced re-raster would
+      // show up as 3 MORE calls than this.
+      expect(getContextSpy.mock.calls.length).toBe(getContextBeforeOverlap + 3);
+    } finally { renderer.dispose(); }
+  });
+});
