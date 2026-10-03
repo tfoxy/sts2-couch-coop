@@ -367,6 +367,8 @@ interface NodeState {
   lastStreamedSelfOpacity: number | null;
   // --- values a settle produced that the caller has not been handed yet. Delivered ONCE by `sampleInto`. ---
   pendingTransform: number[] | null;
+  /** Baseline of the expired pin until its one pending transform has been delivered. */
+  pendingTransformBaseline: readonly number[] | null;
   pendingOpacity: number | null;
   pendingSelfOpacity: number | null;
   /** A pending that has already survived one `advance` — see `advance` for the bound this puts on a bad caller. */
@@ -391,6 +393,7 @@ function createNodeState(id: string): NodeState {
     lastStreamedOpacity: null,
     lastStreamedSelfOpacity: null,
     pendingTransform: null,
+    pendingTransformBaseline: null,
     pendingOpacity: null,
     pendingSelfOpacity: null,
     pendingStale: false
@@ -717,6 +720,7 @@ export function createTweenLoop(options: TweenLoopOptions = {}): TweenLoop {
       // pre-tween pose paint the instant the pin lifted: the very teleport the catch-up exists to prevent.
       const catchup = tf.pinCatchup;
       node.pendingTransform = catchup !== null && !matrix6Equal(catchup, tf.endpoint) ? catchup : tf.endpoint;
+      node.pendingTransformBaseline = tf.pinBaseline;
       node.pendingStale = false;
     }
 
@@ -886,6 +890,7 @@ export function createTweenLoop(options: TweenLoopOptions = {}): TweenLoop {
     // replaying the stash on top of it would undo exactly the travel the producer just accounted for.
     ch.pinCatchup = null;
     node.pendingTransform = null;
+    node.pendingTransformBaseline = null;
   }
 
   function armAlpha(node: NodeState, hint: TweenLoopHint, channel: OpacityChannel, now: number): void {
@@ -970,6 +975,13 @@ export function createTweenLoop(options: TweenLoopOptions = {}): TweenLoop {
         }
         return 0;
       }
+      // `refreshNode` can expire the pin in this same call. Its pending endpoint has not been sampled yet;
+      // a newly streamed pose must replace it, or the next sweep reinstalls the older endpoint indefinitely.
+      // A repeated pre-pin baseline is still stale, just as it is while the pin is live.
+      if (node.pendingTransform !== null &&
+          (node.pendingTransformBaseline === null ||
+            !matrix6Equal(streamed, node.pendingTransformBaseline)))
+        copy6(streamed, node.pendingTransform);
       node.lastStreamedTransform = copy6(streamed, node.lastStreamedTransform ?? [0, 0, 0, 0, 0, 0]);
       return 0;
     }
@@ -1057,6 +1069,7 @@ export function createTweenLoop(options: TweenLoopOptions = {}): TweenLoop {
         // surviving to the flight's release and yanking the card somewhere the curve never went.
         node.transform = null;
         node.pendingTransform = null;
+        node.pendingTransformBaseline = null;
         // R5 T-DR4 — ARM THE COMET ROOT AS A FOLLOWER of this same flight.
         //
         // WHY THE ROOT NEEDS DRIVING AT ALL. A client that declares `trailDrive` tells the host it will place
@@ -1143,6 +1156,7 @@ export function createTweenLoop(options: TweenLoopOptions = {}): TweenLoop {
         copy6(node.pendingTransform, outTransform6);
         node.lastStreamedTransform = node.pendingTransform;
         node.pendingTransform = null;
+        node.pendingTransformBaseline = null;
         mask |= SAMPLE_TRANSFORM;
       }
 
@@ -1204,6 +1218,7 @@ export function createTweenLoop(options: TweenLoopOptions = {}): TweenLoop {
           // not be able to hold the scheduler awake forever, so one sweep is the bound.
           if (node.pendingStale) {
             node.pendingTransform = null;
+            node.pendingTransformBaseline = null;
             node.pendingOpacity = null;
             node.pendingSelfOpacity = null;
             node.pendingStale = false;
@@ -1368,6 +1383,7 @@ export function createTweenLoop(options: TweenLoopOptions = {}): TweenLoop {
       // Publish nothing (see the interface note): the endpoint has just been invalidated, and the caller's own
       // streamed pose — under the node's NEW parent — is the answer.
       node.pendingTransform = null;
+      node.pendingTransformBaseline = null;
       return true;
     },
 

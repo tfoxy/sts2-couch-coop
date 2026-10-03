@@ -175,7 +175,7 @@ import { BROWSER_PORT_RELATIVE, readInstanceMeta } from "./lib/instance-port.mjs
 import { acquireLease, releaseLease } from "./live-qa-lock.mjs";
 import { assessClientConfirm, selectMirrorModuleBundle } from "./lib/h17-client-confirm-readiness.mjs";
 import { CORRECTION_PX, scoreCorrections } from "./lib/handLandingScore.mjs";
-import { classifyRestCommit } from "./lib/handLandingRestFence.mjs";
+import { classifyProducerCatchup, classifyRestCommit, RESTING_TOLERANCE_PX } from "./lib/handLandingRestFence.mjs";
 import { h15CoordinateVerdict, h15FocusedGrabFailure, planH15FifthPlay } from "./lib/h15-plan.mjs";
 
 const REPO_ROOT = resolve(dirname(fileURLToPath(import.meta.url)), "..");
@@ -2300,7 +2300,7 @@ async function checkH10(ctx) {
 // check the holder's `worstTrace` for the game pose catching up to the drawn one before believing it.
 // The honest fix needs a seam that says whether the producer has SPOKEN about a holder since its last channel
 // closed; there is none today, and lengthening the wait is tuning, not a rule.
-const LANDING_TOLERANCE_PX = 1.5;
+const LANDING_TOLERANCE_PX = RESTING_TOLERANCE_PX;
 
 /** The shared seam, verbatim. Null when the page has no hand (or is an older build without the seam). */
 const readPoses = (page) =>
@@ -2349,7 +2349,7 @@ async function awaitPoseRest(page, { timeoutMs = 3000, requireWhole = true } = {
 }
 
 /** Score one resting state: the worst |drawn − game·field| over the holders that are still in the fan. */
-async function scoreLanding(page, label, { includeOutOfFan = false } = {}) {
+async function scoreLanding(page, label, { includeOutOfFan = false, capturePath = null } = {}) {
   // Read geometry and its committed-frame identity in one browser turn. A canvas pose reader may
   // retire a local channel before the next picture is committed; only that exact next picture can
   // resolve the apparent mismatch. A later favorable frame cannot erase a bad first commit.
@@ -2374,6 +2374,7 @@ async function scoreLanding(page, label, { includeOutOfFan = false } = {}) {
         id: h.id,
         name: h.name,
         inFan: h.inFan,
+        zIndex: h.zIndex,
         fieldMode: h.fieldMode,
         gameX: Math.round(h.mGame[4] * 10) / 10,
         gameY: Math.round(h.mGame[5] * 10) / 10,
@@ -2397,6 +2398,7 @@ async function scoreLanding(page, label, { includeOutOfFan = false } = {}) {
     stage: value.report?.stage ?? null,
     presentEpoch: value.frame?.presentEpoch ?? null,
     rendererInstance: value.rendererInstance,
+    spreadFactor: value.report?.spreadFactor ?? null,
     live: value.report?.holders.some((h) => h.channelLive) ?? false,
     mismatchPx: worstOf(measured)?.distPx ?? null,
     rows: measured,
@@ -2427,9 +2429,46 @@ async function scoreLanding(page, label, { includeOutOfFan = false } = {}) {
     if (outcome.status === "wait") outcome = classifyRestCommit(first, { ...current, deadlinePassed: true });
     restFence = { status: outcome.status, reason: outcome.reason ?? null, first, committed: current };
   }
+  let producerCatchup = null;
+  const scored = witness(sample, rows);
+  if (scored.stage === "canvas" && restFence?.status !== "fail" && !scored.live &&
+      (scored.mismatchPx ?? 0) > LANDING_TOLERANCE_PX) {
+    const deadline = now() + 2500;
+    let outcome = { status: "wait" };
+    let current = scored;
+    while (outcome.status === "wait" && now() < deadline) {
+      await sleep(80);
+      const next = await readSample();
+      if (!next.report) { outcome = { status: "stop", reason: "hand pose probe disappeared" }; break; }
+      const nextRows = rowsOf(next.report);
+      current = witness(next, nextRows);
+      outcome = classifyProducerCatchup(scored, current);
+      if (outcome.status === "adopt") { sample = next; rows = nextRows; }
+    }
+    producerCatchup = { status: outcome.status === "wait" ? "timeout" : outcome.status,
+      reason: outcome.reason ?? null, firstEpoch: scored.presentEpoch, lastEpoch: current.presentEpoch };
+  }
   const worst = rows.reduce((a, b) => (b.distPx > (a?.distPx ?? -1) ? b : a), null);
+  const landingRows = (worst?.distPx ?? 0) > LANDING_TOLERANCE_PX
+    ? await page.evaluate((ids) => (window.__mirrorLandingLog?.().rows ?? []).filter((row) => ids.includes(row.id)),
+      rows.filter((row) => row.distPx > LANDING_TOLERANCE_PX).map((row) => row.id))
+    : null;
+  let screenshot = null;
+  if (capturePath !== null && sample.report.stage === "canvas" &&
+      (worst?.distPx ?? 0) > LANDING_TOLERANCE_PX) {
+    await page.screenshot({ path: capturePath });
+    const after = await readSample();
+    screenshot = {
+      path: capturePath,
+      sampledEpoch: sample.frame?.presentEpoch ?? null,
+      afterEpoch: after.frame?.presentEpoch ?? null,
+      sameCommittedFrame: after.rendererInstance === sample.rendererInstance &&
+        after.frame?.presentEpoch === sample.frame?.presentEpoch
+    };
+  }
   return { label, stage: sample.report.stage, spreadFactor: sample.report.spreadFactor, rows,
-    worstPx: worst?.distPx ?? null, worst, restFence };
+    worstPx: worst?.distPx ?? null, worst, restFence, presentEpoch: sample.frame?.presentEpoch ?? null,
+    producerCatchup, landingRows, screenshot };
 }
 
 
@@ -2599,7 +2638,9 @@ async function checkH11(ctx) {
   if (!(await readPoses(page))) {
     return skip("this page has no __mirrorHandPoses seam (older build?)");
   }
-  const tour = await handGestureTour(ctx, (label, opts) => scoreLanding(page, label, opts));
+  const tour = await handGestureTour(ctx, (label, opts) => scoreLanding(page, label, {
+    ...opts, capturePath: `${ctx.outDir}/${ctx.combo.name}-H11-${label}-rest.png`
+  }));
   if (tour.skipped) return tour.skipped;
   const states = tour.states;
   const fail = (why, extra) => bad(why, { states, ...extra });
@@ -2614,7 +2655,9 @@ async function checkH11(ctx) {
   const phase2Evidence = {
     distinctCanvasRestPairs: corrections.distinctCanvasRestPairs,
     canvasRestPairEvidence: corrections.canvasRestPairEvidence,
-    invalidFrameIdentity: corrections.invalidFrameIdentity
+    invalidFrameIdentity: corrections.invalidFrameIdentity,
+    jumpLandingRows: jumps.length === 0 ? [] : (landingLog?.rows ?? []).filter((row) =>
+      jumps.some((jump) => jump.id === row.id))
   };
   if (corrections.invalidFrameIdentity.length > 0) {
     const first = corrections.invalidFrameIdentity[0];
@@ -2638,7 +2681,10 @@ async function checkH11(ctx) {
         `${corrections.unpredicted} with no endpoint published, ${corrections.unsettled} that never came to rest, ` +
         `${corrections.outOfFan} the game had taken out of the fan; ` +
         `${corrections.distinctCanvasRestPairs} canvas rest pairs used distinct committed pictures`,
-      { restFences: states.filter((state) => state.restFence !== null).map((state) => ({
+      { restStates: states.map((state) => ({ label: state.label,
+          presentEpoch: state.presentEpoch ?? null, worstPx: state.worstPx,
+          producerCatchup: state.producerCatchup })),
+        restFences: states.filter((state) => state.restFence !== null).map((state) => ({
           label: state.label, ...state.restFence
         })), superseded: corrections.superseded ?? 0, focusCatchups: corrections.focusCatchups ?? 0,
         phase2Evidence }
@@ -4571,6 +4617,30 @@ async function runCombo(browser, combo, outDir) {
   const pointer = await makePointer(page, combo.pointer);
   const ctx = { page, pointer, combo, outDir };
 
+  async function canvasRuntime() {
+    return page.evaluate(async () => {
+      const { rendererRuntimeStatus } = await import("/src/mirror/rendererComparison.ts");
+      const diagnostic = window.__mirrorRendererDiagnostics?.() ?? null;
+      return {
+        requested: rendererRuntimeStatus.requested.backend,
+        actual: rendererRuntimeStatus.actualBackend,
+        phase: rendererRuntimeStatus.phase,
+        reason: rendererRuntimeStatus.reason,
+        canvasCount: document.querySelectorAll("canvas.mirror-rust-stage").length,
+        diagnosticBackend: diagnostic?.backend ?? null,
+        ready: diagnostic?.ready ?? false,
+        failure: diagnostic?.failure ?? null,
+        effective: diagnostic?.effective ?? null,
+        presentEpoch: window.__mirrorFrameIdentity?.()?.presentEpoch ?? null
+      };
+    });
+  }
+
+  const runtimeIsRust = (runtime) => runtime.requested === "canvas" && runtime.actual === "rust" &&
+    runtime.phase === "active" && runtime.canvasCount === 1 &&
+    runtime.diagnosticBackend === "rust" && runtime.ready === true &&
+    Number.isSafeInteger(runtime.presentEpoch);
+
   for (const name of CHECK_ORDER) {
     if (!args.checks.includes(name)) continue;
     const started = now();
@@ -4585,7 +4655,29 @@ async function runCombo(browser, combo, outDir) {
     }
     try {
       if (NEEDS_PRISTINE_HAND.has(name)) await refreshCombat(page);
-      results[name] = await CHECKS[name](ctx);
+      let runtimeBefore = null;
+      if (combo.stage === "canvas") {
+        const deadline = now() + 30000;
+        do {
+          runtimeBefore = await canvasRuntime();
+          if (runtimeIsRust(runtimeBefore) || runtimeBefore.phase === "failed") break;
+          await sleep(250);
+        } while (now() < deadline);
+      }
+      if (runtimeBefore !== null && !runtimeIsRust(runtimeBefore)) {
+        results[name] = bad("canvas check did not start on a ready Rust stage", { runtimeBefore });
+      } else {
+        results[name] = await CHECKS[name](ctx);
+        if (runtimeBefore !== null) {
+          const runtimeAfter = await canvasRuntime();
+          results[name].detail = { ...(results[name].detail ?? {}), runtimeBefore, runtimeAfter };
+          if (!runtimeIsRust(runtimeAfter)) {
+            results[name] = bad("canvas check left the ready Rust stage", {
+              result: results[name], runtimeBefore, runtimeAfter
+            });
+          }
+        }
+      }
     } catch (err) {
       results[name] = bad(`the check threw: ${err && err.message}`, { stack: String(err && err.stack).split("\n").slice(0, 6) });
     }

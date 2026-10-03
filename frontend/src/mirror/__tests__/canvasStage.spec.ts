@@ -2264,6 +2264,79 @@ describe("a tween arms from the node's RENDERED GLOBAL, never from its local mat
     return { x: parts[4], y: parts[5] };
   }
 
+  it("does not replay an older fan hint over a newer coalesced holder transform", () => {
+    const { raf, tick } = mount();
+    const state = localScene(HAND);
+    renderer!.reconcile(state);
+    localScene([], [{ targetId: "Holder0", endTransform: [1, 0, 0, 1, 150, 0] }], state);
+    localScene([{ ...HAND[2], x: 200 }], [], state);
+    renderer!.reconcile(state);
+    tick(400);
+    raf.flush();
+    expect(drawnAt("Card0")).toEqual({ x: 600, y: 900 });
+  });
+
+  it("keeps a coalesced hint when the later upsert repeats the same holder transform", () => {
+    const { raf, tick } = mount();
+    const state = localScene(HAND);
+    renderer!.reconcile(state);
+    localScene([], [{ targetId: "Holder0", endTransform: [1, 0, 0, 1, 150, 0] }], state);
+    localScene([{ ...HAND[2] }], [], state);
+    renderer!.reconcile(state);
+    tick(400);
+    raf.flush();
+    expect(drawnAt("Card0")).toEqual({ x: 550, y: 900 });
+  });
+
+  it("keeps a newer stream when an older queued re-arm targets an active holder", () => {
+    const { raf, tick } = mount();
+    const state = localScene(HAND);
+    renderer!.reconcile(state);
+    renderer!.reconcile(localScene([], [{ targetId: "Holder0", endTransform: [1, 0, 0, 1, 150, 0] }], state));
+    tick(100);
+    raf.flush();
+    localScene([], [{ targetId: "Holder0", endTransform: [1, 0, 0, 1, 180, 0] }], state);
+    localScene([{ ...HAND[2], x: 200 }], [], state);
+    renderer!.reconcile(state);
+    tick(400);
+    raf.flush();
+    expect(drawnAt("Card0")).toEqual({ x: 600, y: 900 });
+  });
+
+  it("uses a streamed pose already past a queued batch of holder endpoints", () => {
+    const { raf, tick } = mount();
+    const state = localScene(HAND);
+    renderer!.reconcile(state);
+    renderer!.reconcile(localScene(
+      [{ ...HAND[2], x: 200 }],
+      [
+        { targetId: "Holder0", endTransform: [1, 0, 0, 1, 150, 0] },
+        { targetId: "Holder0", endTransform: [1, 0, 0, 1, 170, 0] }
+      ],
+      state
+    ));
+    tick(400);
+    raf.flush();
+    expect(drawnAt("Card0")).toEqual({ x: 600, y: 900 });
+  });
+
+  it("keeps the last queued endpoint when the streamed pose has not reached it", () => {
+    const { raf, tick } = mount();
+    const state = localScene(HAND);
+    renderer!.reconcile(state);
+    renderer!.reconcile(localScene(
+      [{ ...HAND[2], x: 200 }],
+      [
+        { targetId: "Holder0", endTransform: [1, 0, 0, 1, 210, 0] },
+        { targetId: "Holder0", endTransform: [1, 0, 0, 1, 220, 0] }
+      ],
+      state
+    ));
+    tick(400);
+    raf.flush();
+    expect(drawnAt("Card0")).toEqual({ x: 620, y: 900 });
+  });
+
   it("arms a start-less hint from the built global — NOT the local matrix, and nowhere near the origin", () => {
     const { raf, tick } = mount();
     // Both cards' own matrices are the identity, so a `from` taken off `node.transform` would be the viewport

@@ -428,6 +428,8 @@ export interface MirrorTweenHint {
    * mismatch.
    */
   parentIdAtArrival?: string | null;
+  /** Local target transform after this hint's delta, for detecting a later coalesced transform. */
+  transformAtArrival?: number[] | null;
 }
 
 // WS-3 — the discard→draw shuffle CARD FLIGHT, as a declarative description the client INTEGRATES per frame.
@@ -848,7 +850,9 @@ export function applySceneDelta(state: MirrorState, delta: MirrorDelta): void {
     // Stamp each hint with the parent its endpoints are relative to — this delta's, since the upserts above have
     // already landed. See `MirrorTweenHint.parentIdAtArrival` for why a drain-time read is not the same answer.
     for (const hint of delta.hints) {
-      hint.parentIdAtArrival = state.nodes.get(hint.targetId)?.parentId ?? null;
+      const target = state.nodes.get(hint.targetId);
+      hint.parentIdAtArrival = target?.parentId ?? null;
+      hint.transformAtArrival = target?.transform?.slice() ?? null;
     }
     state.pendingHints.push(...delta.hints);
     // Safety valve: the renderer drains this each reconcile, but bound it so a consumer that isn't wired yet
