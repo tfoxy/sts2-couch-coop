@@ -91,6 +91,15 @@ describe("resolveRustFastFlags", () => {
     expect(flags("rustFast=1", "pixi").idleScheduler).toBe(false);
   });
 
+  it("turns the due-frame idle wake off on its own", () => {
+    expect(flags("").idleDueFrame).toBe(true);
+    expect(flags("rustIdleDueFrame=0").idleDueFrame).toBe(false);
+    expect(flags("rustIdleDueFrame=0").idleScheduler).toBe(true);
+    expect(flags("rustFast=0").idleDueFrame).toBe(false);
+    expect(flags("rustFast=0&rustIdleDueFrame=1").idleDueFrame).toBe(true);
+    expect(flags("rustFast=1", "pixi").idleDueFrame).toBe(false);
+  });
+
   it("enables one item without the umbrella", () => {
     const resolved = flags("rustFast=0&rustLazyComposition=1&rustFastVerify=1");
     expect(resolved.lazyComposition).toBe(true);

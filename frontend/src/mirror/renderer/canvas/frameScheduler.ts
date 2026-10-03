@@ -90,6 +90,23 @@
  * - a park wake ends its own booking's epoch on the spot (its timer task runs
  *   nothing else) instead of posting a close.
  *
+ * ONLY THE DUE FRAME (`rustIdleDueFrame`, opt-in through `ports.idleDueFrame`; it
+ * changes nothing unless `idleScheduler` is on too). The fold above trades the park
+ * timer for a display rAF on every vsync up to the deadline, and each of those
+ * skipped ticks is a whole browser animation frame (BeginMainFrame, the callback,
+ * a commit) that draws nothing: at 30 Hz on a 60 Hz display, one per idle frame.
+ * With this switch a passive deadline never folds. It parks the timer at the
+ * deadline (`due - CANVAS_FRAME_PARK_SLOP_MS`), as a 90/120 Hz display already
+ * does, and the park wake books exactly the due frame; every epoch rule above
+ * still holds (the parked tick leaves its epoch open, the wake ends it, nothing is
+ * posted). The timer is that one deadline, not a poll: it is armed once per idle
+ * frame, re-armed only for an earlier deadline, and cancelled by any per-frame
+ * demand, so input arriving mid-park books the next display frame itself. As at
+ * 90/120 Hz, work in the next display frame before the wake (a clock tick's wire
+ * reconcile) joins the parked tick's open epoch: the census below over-counts that
+ * frame as two, and a non-urgent request raised in a lane of that frame waits one
+ * frame for the tick it books. Urgent requests and per-frame demand do not wait.
+ *
  * The per-frame census (`workPerFrame`, `maxWorkPerFrame`, `urgentExtraBuilds`)
  * follows the epochs, except that a folded tick's early end keeps it open until
  * the next display frame's callback, a park wake or a posted close. It can only
@@ -238,6 +255,8 @@ export interface CanvasFrameCoalesceStats {
 /** Scheduler task census, both arms: what each idle frame cost in browser callbacks. */
 export interface CanvasIdleSchedulerStats {
   readonly enabled: boolean;
+  /** `rustIdleDueFrame`: passive deadlines park instead of folding. */
+  readonly dueFrame: boolean;
   /** Animation-lane rAF callbacks delivered, skipped ticks included. */
   readonly rafCallbacks: number;
   /** Animation rAF callbacks that skipped (not due, or no passive demand). */
@@ -286,6 +305,8 @@ export interface CanvasFrameSchedulerPorts<TState extends CanvasFrameSchedulerSt
   readonly rampPatchable?: boolean;
   /** `rustIdleScheduler`: one browser task per steady idle frame (see the module notes). Absent: off. */
   readonly idleScheduler?: boolean;
+  /** `rustIdleDueFrame`: passive demand books a display rAF only for its due frame (see the module notes). Absent: off. */
+  readonly idleDueFrame?: boolean;
 }
 
 export interface CanvasFrameScheduler {
@@ -477,6 +498,8 @@ export function createCanvasFrameScheduler<TState extends CanvasFrameSchedulerSt
 
   // rustIdleScheduler (see the module notes). Off, none of these change a decision; the census counts both arms.
   const idleScheduler = ports.idleScheduler === true;
+  /** rustIdleDueFrame: no fold, so no display rAF is booked for a frame the passive deadline will not admit. */
+  const idleDueFrame = ports.idleDueFrame === true;
   /** Stamps are withheld (an idle-only tick, or a park wake into an empty epoch, may end its epoch itself). */
   let stampQuiet = false;
   /** A stamp was withheld while quiet: the epoch holds something a close must end. */
@@ -715,7 +738,8 @@ export function createCanvasFrameScheduler<TState extends CanvasFrameSchedulerSt
 
     // rustIdleScheduler: a passive deadline at most two display frames out is reached by the display rAF chain
     // instead of a timer whose wake only books that same rAF. The booked tick skips until the timer's wake time.
-    if (idleScheduler && passiveDue === due && due - CANVAS_FRAME_PARK_SLOP_MS - at <= 2 * displayFrameMs) {
+    // rustIdleDueFrame turns the fold off: the timer below books exactly the due frame instead.
+    if (idleScheduler && !idleDueFrame && passiveDue === due && due - CANVAS_FRAME_PARK_SLOP_MS - at <= 2 * displayFrameMs) {
       cancelPark();
       armedRafs++;
       idleCounts.folds++;
@@ -733,7 +757,10 @@ export function createCanvasFrameScheduler<TState extends CanvasFrameSchedulerSt
     }
     parkDue = due;
     armedParks++;
-    parkTimer = platform.setTimeout!(onPark, Math.max(0, Math.ceil(due - CANVAS_FRAME_PARK_SLOP_MS - at)));
+    // rustIdleDueFrame: this park replaces the fold's chain, so its wake rounds down rather than up; the timer then
+    // has the whole slop (not slop minus up to 1 ms of rounding) to book the due frame before that frame's callbacks.
+    const wakeMs = due - CANVAS_FRAME_PARK_SLOP_MS - at;
+    parkTimer = platform.setTimeout!(onPark, Math.max(0, idleDueFrame ? Math.floor(wakeMs) : Math.ceil(wakeMs)));
   }
 
   function armFromSkippedTick(at: number): void {
@@ -1112,6 +1139,7 @@ export function createCanvasFrameScheduler<TState extends CanvasFrameSchedulerSt
   function idleStats(): CanvasIdleSchedulerStats {
     return {
       enabled: idleScheduler,
+      dueFrame: idleDueFrame,
       ...idleCounts,
       parkTimers: armedParks,
       parkWakeups,

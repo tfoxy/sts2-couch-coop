@@ -668,6 +668,8 @@ export function createPixiMirrorRenderer(
     rampPatchable: fast.offsetPatch && retainedMode,
     // rustIdleScheduler: a steady idle frame is one rAF task (no park timer, no posted epoch close).
     idleScheduler: fast.idleScheduler,
+    // rustIdleDueFrame: no rAF on a vsync the passive deadline will not admit; the park timer books the due frame.
+    idleDueFrame: fast.idleDueFrame,
     coalesce: fast.coalescedBuilds || producerReasonMode ? {
       enabled: fast.coalescedBuilds,
       localBuild: () => {
