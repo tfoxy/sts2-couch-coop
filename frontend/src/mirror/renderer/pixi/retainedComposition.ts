@@ -85,7 +85,16 @@ export interface RetainedPixiCompositionOptions {
   onPatchIndex?: () => void;
   /** Shadow-check a lazy index against an eager twin. The twin's answers are returned. */
   verify?: { onMismatch(method: string, detail: string): void };
+  /**
+   * Why `patch()` returned null, and the animated root it refused on (null when the refusal is not about one root).
+   * Diagnostics only: called on the refusal path, never on a patch that plans.
+   */
+  onPatchRefused?: (reason: PatchRefusal, id: string | null) => void;
 }
+
+/** The reasons `patch()` can refuse. */
+export type PatchRefusal = "index-stale" | "anim-unknown" | "shift-unknown" | "root-unspanned" | "root-singular" |
+  "root-spread-rebased";
 
 export interface RetainedPixiComposition {
   plan: RetainedPixiPlan;
@@ -360,13 +369,14 @@ export function createRetainedPixiComposition(
   if (!options.lazyPatchIndex) buildIndex();
 
   function patch(anims: ReadonlyMap<string, LocalAnim>, rootShifts?: ReadonlyMap<string, readonly [number, number]>): RetainedPixiPatch | null {
-    if (!ensureIndex()) return null;
-    if ([...anims.keys()].some((id) => !build.localAnimFrames.has(id))) return null;
+    const refuse = (reason: PatchRefusal, id: string | null): null => { options.onPatchRefused?.(reason, id); return null; };
+    if (!ensureIndex()) return refuse("index-stale", null);
+    for (const id of anims.keys()) if (!build.localAnimFrames.has(id)) return refuse("anim-unknown", id);
     let translations: Map<string, readonly [number, number]> | undefined;
     if (rootShifts?.size) {
       translations = new Map();
       for (const [id, [dx, dy]] of rootShifts) {
-        if (!build.localAnimFrames.has(id)) return null;
+        if (!build.localAnimFrames.has(id)) return refuse("shift-unknown", id);
         const [x, y] = rootTranslations.get(id) ?? [0, 0];
         translations.set(id, [x + dx, y + dy]);
       }
@@ -374,7 +384,9 @@ export function createRetainedPixiComposition(
     const deltas: Array<{ start: number; end: number; delta: Affine; rootDx: number; vx: number; vy: number }> = [];
     const rootPoses = new Map<string, Affine>();
     for (const root of roots) {
-      if (!root.span || !root.inverse || root.frame.spreadRebased) return null;
+      if (!root.span) return refuse("root-unspanned", root.id);
+      if (!root.inverse) return refuse("root-singular", root.id);
+      if (root.frame.spreadRebased) return refuse("root-spread-rebased", root.id);
       const anim = anims.get(root.id);
       const raw = composeLocalAnimGlobal(root.frame.base, root.frame.wire, null, anim?.pre ?? null, anim?.post ?? null);
       const outer: Affine = [...root.frame.outer] as Affine;

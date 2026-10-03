@@ -8,7 +8,7 @@
  * policy (spread, readable stamps, landing diagnostics and global transforms);
  * its host supplies scene access and performs the build/paint/scheduling work.
  */
-import type { Affine } from "@/mirror/affine";
+import { affineMulInto, IDENTITY_AFFINE, type Affine } from "@/mirror/affine";
 import {
   createLandingLog,
   type LandingLogReport,
@@ -68,6 +68,14 @@ import type {
   PinnedLocalSource,
   SpreadRegistry,
 } from "@/mirror/canvas/buildDrawList";
+
+/**
+ * How close a settled tween pose must be to the node's composed wire pose for its override to be released
+ * (`settlesAtComposedPose`): the two are built by different multiplications of the same matrices, so they may
+ * differ in the last bits, and a thousandth of a design pixel is far below anything a frame can show.
+ */
+const SETTLE_BASIS_EPS = 1e-6;
+const SETTLE_TRANSLATION_EPS_PX = 1e-3;
 
 const IDLE_CANDIDATE_NAMES: ReadonlySet<string> = new Set([
   "IntentHolder",
@@ -229,6 +237,8 @@ export interface CanvasVisualState {
     intentCycles: number;
     intentSwaps: number;
     reparentDrops: number;
+    /** Settled tweens whose override was released because the node already composes to the settled pose. */
+    settledOverrideReleases: number;
     hintTransformRebased: number;
     idleStageAdmittedPassive: number;
     idleStageSkippedEarly: number;
@@ -315,6 +325,9 @@ export function createCanvasVisualState(
   const globalChainScratch: MirrorNode[] = [];
   const tipOwnerScratch: number[] = [1, 0, 0, 1, 0, 0];
   const landingScratch: number[] = [0, 0, 0, 0, 0, 0];
+  const settleScratch: number[] = [1, 0, 0, 1, 0, 0];
+  const settleComposed: Affine = [1, 0, 0, 1, 0, 0];
+  let settledOverrideReleases = 0;
   const idleSample = createIdleAnimSample();
   let frameSampleMask: SampleMask = SAMPLE_NONE;
   let idleActive = 0;
@@ -857,6 +870,32 @@ export function createCanvasVisualState(
     if (retainSourceSwaps && sourceSampledIds.size) frameSampleMask |= SAMPLE_SOURCE;
   }
 
+  /**
+   * Does a SETTLED transform sample put the node exactly where it composes without one — its streamed local under
+   * its parent's rendered global (that parent's own held override included)?
+   *
+   * Then the override says nothing the wire does not, and holding it is not free: an override marks the node's
+   * whole subtree as drawn-moved, so on a widened stage every field claim below it is re-derived from the drawn
+   * pose, and an idle loop under it (the end-turn glow under a tweened-in end-turn button) can no longer be
+   * re-posed by a retained patch. Nothing would ever release it either: an override is dropped when the node's
+   * streamed transform changes, and a tween that settles where the wire already has the node gets no such delta.
+   */
+  function settlesAtComposedPose(id: string, settled: readonly number[]): boolean {
+    const next = ports.state();
+    const node = next?.nodes.get(id);
+    if (!next || !node) return false;
+    const own = node.transform?.length === 6 ? node.transform : null;
+    let composed: readonly number[];
+    if (node.parentId == null) composed = own ?? IDENTITY_AFFINE;
+    else {
+      if (!composeGlobalInto(next, node.parentId, true, settleScratch)) return false;
+      composed = own === null ? settleScratch : affineMulInto(settleComposed, settleScratch as Affine, own as Affine);
+    }
+    for (let i = 0; i < 4; i++) if (Math.abs(composed[i] - settled[i]) > SETTLE_BASIS_EPS) return false;
+    return Math.abs(composed[4] - settled[4]) <= SETTLE_TRANSLATION_EPS_PX &&
+      Math.abs(composed[5] - settled[5]) <= SETTLE_TRANSLATION_EPS_PX;
+  }
+
   function sweepTweens(at: number): void {
     active.clear();
     frameSampleMask = SAMPLE_NONE;
@@ -867,7 +906,11 @@ export function createCanvasVisualState(
       const mask = loop.sampleInto(id, sampleTransform, sampleAlphas, at);
       if (mask === SAMPLE_NONE) continue;
       frameSampleMask |= mask;
-      if ((mask & SAMPLE_TRANSFORM) !== 0) {
+      // The channel has just let go (this sample was its settle) and the node is already where it composes: draw
+      // it from the wire from now on rather than holding a copy of the same pose. See `settlesAtComposedPose`.
+      if ((mask & SAMPLE_TRANSFORM) !== 0 && !loop.ownsTransform(id) && settlesAtComposedPose(id, sampleTransform)) {
+        if (transformOverrides.delete(id)) settledOverrideReleases++;
+      } else if ((mask & SAMPLE_TRANSFORM) !== 0) {
         const previous = transformOverrides.get(id);
         if (previous === undefined)
           transformOverrides.set(id, sampleTransform.slice());
@@ -1283,6 +1326,7 @@ export function createCanvasVisualState(
         intentCycles: intentEntries.size,
         intentSwaps,
         reparentDrops,
+        settledOverrideReleases,
         hintTransformRebased,
         idleStageAdmittedPassive,
         idleStageSkippedEarly,
