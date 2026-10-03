@@ -236,6 +236,19 @@ export function bobPhaseMs(periodMs: number, globalTx: number, designWidth = MIR
   return ((((globalTx / designWidth) * period) % period) + period) % period;
 }
 
+/** A running loop's resolved timing: the phase origin (the anchor already applied), offset and period, in ms. */
+export interface LoopTiming {
+  originMs: number;
+  phaseMs: number;
+  periodMs: number;
+}
+
+/** A loop's phase in [0, 1) at `nowMs`. `loopPhase` is exactly this; the Rust idle lane evaluates the same form. */
+export function loopPhaseAt(timing: LoopTiming, nowMs: number): number {
+  const raw = (nowMs - timing.originMs + timing.phaseMs) / timing.periodMs;
+  return ((raw % 1) + 1) % 1;
+}
+
 // ---- options ----------------------------------------------------------------------------------------------------
 
 export interface TweenLoopOptions {
@@ -463,6 +476,9 @@ export interface TweenLoop {
 
   /** The node's loop phase in [0, 1), or -1 when it has none. */
   loopPhase(nodeId: string, nowMs: number): number;
+
+  /** `rustIdleInRust`: the node's loop timing (`loopPhaseAt` reproduces `loopPhase` from it), or null. */
+  loopTiming(nodeId: string): LoopTiming | null;
 
   /** The wire `group` a node's channel was armed under, or null. Retained for the caller; never read here. */
   channelGroup(nodeId: string, channel: TweenChannel): string | null;
@@ -1194,8 +1210,19 @@ export function createTweenLoop(options: TweenLoopOptions = {}): TweenLoop {
         return -1;
       }
       const origin = live.anchor === "document" ? clockOriginMs : live.appliedAtMs;
-      const raw = (nowMs - origin + live.phaseMs) / live.periodMs;
-      return ((raw % 1) + 1) % 1;
+      return loopPhaseAt({ originMs: origin, phaseMs: live.phaseMs, periodMs: live.periodMs }, nowMs);
+    },
+
+    loopTiming(nodeId) {
+      const live = nodes.get(nodeId)?.loop;
+      if (!live) {
+        return null;
+      }
+      return {
+        originMs: live.anchor === "document" ? clockOriginMs : live.appliedAtMs,
+        phaseMs: live.phaseMs,
+        periodMs: live.periodMs
+      };
     },
 
     channelGroup(nodeId, channel) {

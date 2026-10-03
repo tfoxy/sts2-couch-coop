@@ -33,6 +33,8 @@ export interface RustFastFlags {
   idleDueFrame: boolean;
   /** GSW Rust renderer redraws only the damaged picture region and skips no-change presents. */
   damagePresent: boolean;
+  /** Pure idle-loop frames are one `present_idle(t)` in the GSW Rust renderer instead of a patch (`rustIdleLane.ts`). */
+  idleInRust: boolean;
   verify: boolean;
 }
 
@@ -60,6 +62,7 @@ export const RUST_FAST_SWITCHES = {
   idleScheduler: "rustIdleScheduler",
   idleDueFrame: "rustIdleDueFrame",
   damagePresent: "rustDamagePresent",
+  idleInRust: "rustIdleInRust",
 } as const satisfies Record<Exclude<keyof RustFastFlags, "verify">, string>;
 
 export function resolveRustFastFlags(query: URLSearchParams, backend: "pixi" | "rust"): RustFastFlags {

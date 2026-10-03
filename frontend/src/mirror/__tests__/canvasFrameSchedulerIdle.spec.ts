@@ -18,6 +18,8 @@ interface LoopOptions {
   displayPacedPassive?: boolean;
   /** `rustIdleDueFrame`: passive deadlines park to the due frame instead of folding. */
   idleDueFrame?: boolean;
+  /** `rustIdleInRust`: an idle lane that presents every idle-only frame it is offered. */
+  idleLane?: boolean;
 }
 
 function createIdleLoop(options: LoopOptions) {
@@ -37,6 +39,7 @@ function createIdleLoop(options: LoopOptions) {
   const presented: number[] = [];
   const presentedVsync: number[] = [];
   const builds: Array<{ source: string; vsync: number }> = [];
+  const idleLaneFrames: number[] = [];
   let lastIdleAt = 0;
   let notBefore = 0;
   let idleActive = true;
@@ -116,6 +119,17 @@ function createIdleLoop(options: LoopOptions) {
       mergeTrailLatches: () => {},
       advanceVisual: () => {},
       tickSpine: () => {},
+      // The renderer's idle lane: one patch-sized unit of frame work, presented synchronously.
+      presentIdleFrame: options.idleLane ? (at) => {
+        const submission = scheduler.noteFrameWork("patch");
+        now += work(vsyncIndex);
+        scheduler.settlePatch(submission, true);
+        presented.push(at);
+        presentedVsync.push(vsyncIndex);
+        idleLaneFrames.push(vsyncIndex);
+        builds.push({ source: "idle", vsync: vsyncIndex });
+        return true;
+      } : undefined,
       tryPatchAndPaint: (at) => {
         const submission = scheduler.noteFrameWork("patch");
         onPatch?.();
@@ -162,7 +176,7 @@ function createIdleLoop(options: LoopOptions) {
   }
 
   return {
-    scheduler, census, tasksPerFrame, presented, presentedVsync, builds, posted, timers,
+    scheduler, census, tasksPerFrame, presented, presentedVsync, builds, posted, timers, idleLaneFrames,
     runUntilVsync,
     get vsync() { return vsyncIndex; },
     get now() { return now; },
@@ -559,4 +573,34 @@ describe("frame scheduler due-frame idle wake (rustIdleDueFrame)", () => {
       expect(loop.census.postedTasks).toBeLessThan(2 * 57 + 8);
     });
   }
+});
+
+describe("frame scheduler idle lane port (rustIdleInRust)", () => {
+  it("offers every idle-only frame to the idle lane first and patches nothing then, at the same cadence", () => {
+    for (const idleDueFrame of [false, true]) {
+      const lane = steadyIdle({ idleScheduler: true, idleDueFrame, idleLane: true }, 600);
+      const patched = steadyIdle({ idleScheduler: true, idleDueFrame }, 600);
+      expect(lane.presented).toEqual(patched.presented);
+      expect(lane.idleLaneFrames).toEqual(lane.presentedVsync);
+      expect(lane.builds.every((entry) => entry.source === "idle")).toBe(true);
+      expect(lane.scheduler.coalesceStats()!.maxWorkPerFrame).toBe(1);
+    }
+  });
+
+  it("never offers a frame with per-frame demand or a wire delta to the idle lane", () => {
+    const loop = steadyIdle({ idleScheduler: true, idleLane: true }, 60);
+    const before = loop.idleLaneFrames.length;
+    loop.perFrame = true;
+    loop.runUntilVsync(90);
+    expect(loop.idleLaneFrames.length).toBe(before);
+    expect(loop.builds.filter((entry) => entry.vsync > 60).every((entry) => entry.source === "patch")).toBe(true);
+    loop.perFrame = false;
+    loop.runUntilVsync(120);
+    const resumed = loop.idleLaneFrames.length;
+    expect(resumed).toBeGreaterThan(before);
+    loop.wireDelta();
+    loop.runUntilVsync(121);
+    expect(loop.buildsAt(121)).toEqual(["reconcile"]);
+    expect(loop.idleLaneFrames.length).toBe(resumed);
+  });
 });

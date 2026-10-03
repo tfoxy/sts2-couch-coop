@@ -42,7 +42,8 @@ import { installLandingLogProbe } from "@/mirror/landingLog";
 import { installSpreadAuditProbe } from "@/mirror/canvas/spreadAudit";
 import { affineInverse, affineMul, type Affine } from "@/mirror/affine";
 import { rendererComparisonConfig, setRendererRuntimeStatus } from "@/mirror/rendererComparison";
-import { SAMPLE_LOCAL_ANIM, SAMPLE_OPACITY, SAMPLE_SELF_OPACITY, SAMPLE_SOURCE, SAMPLE_TRANSFORM } from "@/mirror/canvas/tweenLoop";
+import { SAMPLE_LOCAL_ANIM, SAMPLE_NONE, SAMPLE_OPACITY, SAMPLE_SELF_OPACITY, SAMPLE_SOURCE, SAMPLE_TRANSFORM } from "@/mirror/canvas/tweenLoop";
+import { createRustIdleLane, type RustIdleExecutor, type RustIdleLane } from "./rustIdleLane";
 import { createRetainedPixiComposition, isPureTranslation, type ClipTranslation, type RetainedPixiPatch } from "./retainedComposition";
 import { isCardTrailNode, isCardTrailRootNode } from "@/mirror/cardTrail";
 import { resolveRustFastFlags } from "./rustFastFlags";
@@ -358,6 +359,7 @@ export function createPixiMirrorRenderer(
   let retainedPatches = 0;
   let retainedPatchObjects = 0;
   let retainedPatchFallbacks = 0;
+  let idleRustFrames = 0;
   let retainedDecline = "not-attempted";
   let pendingTextureSource: "resource" | "resize" = "resource";
   let committedSizeEpoch = -1;
@@ -550,6 +552,12 @@ export function createPixiMirrorRenderer(
   const handRaiseChromeKey = "client://hand-raise";
   let staticBackgroundReady: ((ready: boolean) => void) | undefined;
   let interaction!: ReturnType<typeof createCanvasInteractionRuntime>;
+  // rustIdleInRust: the Rust renderer presents pure idle frames itself (`rustIdleLane.ts`). `commitSerial` moves on
+  // every published build or patch; the lane's installed descriptors belong to one.
+  let idleLane: RustIdleLane | null = null;
+  let commitSerial = 0;
+  /** The committed snapshot after the lane replays any pose Rust drew since (hit tests read its `mFinal`). */
+  const syncedSnapshot = () => { idleLane?.sync(); return snapshot; };
   const createdAt = performance.now();
   const effective = effectiveMirrorRenderSettings(mirrorSettings);
   const sliceSupported = effectiveMirrorQuality().tier === "very-low" && effective.shaderMode === "off" &&
@@ -590,7 +598,7 @@ export function createPixiMirrorRenderer(
 
   const visual = createCanvasVisualState({
     state: () => state, nodeOf: (id) => state?.nodes.get(id), hasChildren: (id) => snapshot?.build.order.childrenOf(id).length !== 0,
-    paintOrder: () => snapshot?.paintOrder ?? null, hitEntries: () => snapshot?.hitEntries ?? [], capturedGlobal: (id) => snapshot?.capturedGlobals.get(id),
+    paintOrder: () => snapshot?.paintOrder ?? null, hitEntries: () => syncedSnapshot()?.hitEntries ?? [], capturedGlobal: (id) => snapshot?.capturedGlobals.get(id),
     cosmeticOffsetDy: (id) => interaction?.cosmeticOffsets.get(id)?.dy ?? 0,
     effectivelyVisible: (node) => interaction?.liveEffectivelyVisible(node) ?? node.visible,
     isLandingTarget: (id) => interaction?.handHolderIds.has(id) ?? false,
@@ -608,7 +616,7 @@ export function createPixiMirrorRenderer(
   const spreadFieldModeByNode = visual.spreadFieldModeByNode;
   const loop = visual.loop;
   interaction = createCanvasInteractionRuntime({
-    state: () => state, snapshot: () => snapshot, now: () => deterministicClock ?? performance.now(), disposed: () => disposed,
+    state: () => state, snapshot: syncedSnapshot, now: () => deterministicClock ?? performance.now(), disposed: () => disposed,
     stage, stageScale: () => stage.getBoundingClientRect().width / Math.max(1, stage.clientWidth), designWidth: () => stage.clientWidth,
     spreadFactor: () => visual.spreadFactor, spreadDxByNode, spreadFieldModeByNode, loop: () => loop, streamedGlobalInto: visual.streamedGlobalInto,
     rebuildAndPaint: () => { if (state && readiness === "ready") paint(state, "local"); }, armAnimation: () => scheduler.armAnimation(performance.now()),
@@ -659,6 +667,7 @@ export function createPixiMirrorRenderer(
       sampleVisual,
       noteTrailFlightHeads() {}, tickTrails() {}, mergeTrailLatches() {}, advanceVisual: visual.advance, tickSpine() {},
       tryPatchAndPaint: (at) => tryRetainedPatch(at),
+      presentIdleFrame: backend === "rust" && retainedMode && fast.idleInRust ? (at) => presentIdleFrame(at) : undefined,
       runBuild: (next, requested) => requested ? paint(next, "local", "coalesced-request") : paint(next, "animation", retainedDecline),
       syncOverlay() {}, paintAction() {},
       settleLanding: () => {}, rebuildAndPaintTexture: () => state && readiness === "ready" ? deferredPaint(state) : false,
@@ -683,6 +692,22 @@ export function createPixiMirrorRenderer(
       },
       buildBlocked: () => backend === "rust" && asyncSubmissionRevision !== null,
     } : undefined,
+  });
+  if (backend === "rust" && retainedMode && fast.idleInRust) idleLane = createRustIdleLane({
+    visual, composition: () => retained,
+    executor: () => (pixi as unknown as Partial<RustIdleExecutor> | null)?.idleAnims ? pixi as unknown as RustIdleExecutor : null,
+    commitKey: () => commitSerial,
+    blocked: idleLaneBlocked,
+    begin: () => scheduler.noteFrameWork("patch"),
+    settle: (submission, committed) => scheduler.settlePatch(submission as CanvasPatchSubmission | null, committed, !committed),
+    publishHits(hits) {
+      for (const { entry, matrix } of hits) entry.mFinal = matrix;
+      const previous = snapshot!;
+      snapshot = { ...previous };
+      interaction.publishPatch(previous, snapshot);
+    },
+    invalidate(reason) { retainedValid = false; committedOverrides = null; producerReasons?.noteNonBuild(reason); scheduler.scheduleTexturePaint(); },
+    verify: fast.verify,
   });
   /**
    * rustCoalescedBuilds: a presentation that settled without committing must not strand a request it blocked.
@@ -1034,6 +1059,8 @@ if (isPromiseLike<PresentationResult>(result)) {
   };
 
   function paint(next: MirrorState, source: ProducerBuildSource, decline = "direct-build"): boolean {
+    // rustIdleInRust: the build reads the committed hit entries (tip scale); they must hold the drawn idle pose.
+    idleLane?.sync();
     const profileIdentity = profile?.begin("full-build", next.revision, ++profileBuildAttempts);
     const traceId = nextTraceFrame();
     // Rust presentation is asynchronous. Keep one scene in flight; newer state remains in `state` and is
@@ -1317,6 +1344,8 @@ const producerStarted = rustPhaseTimingMode || producerReasonMode ? performance.
     lifecycle?.startPhase("publish");
     if (!presentedOnce) { presentedOnce = true; publishStatus("ready"); }
     retained = candidate;
+    commitSerial++;
+    idleLane?.committed(true);
     committedTextGeneration = buildGeneration;
     committedSpread = candidateSpread;
     liveSpreadCommitted = true;
@@ -1369,6 +1398,8 @@ const producerStarted = rustPhaseTimingMode || producerReasonMode ? performance.
       if (spreadDx !== undefined) entry.spreadDx = spreadDx;
     }
     retained!.commit(patch);
+    commitSerial++;
+    idleLane?.committed(false);
     if (patch.clips?.length) translateHitClips(previous.hitEntries, patch.clips);
     // rustTextPatch: the re-prepared records become the committed ones (same keys, owners and order).
     if (patch.texts?.length) {
@@ -1568,6 +1599,8 @@ const producerStarted = rustPhaseTimingMode || producerReasonMode ? performance.
   }
 
   function tryRetainedWire(next: MirrorState, at: number): boolean {
+    // rustIdleInRust: plan against what Rust shows, not the last pose this side committed.
+    idleLane?.sync();
     const refuse = (reason: string) => { retainedDecline = reason; return false; };
     if (!retainedMode || !retainedValid || !retained || !pixi || !snapshot) return refuse("invalid-retained-state");
     if (next.sceneRewrite) return refuse("scene-rewrite");
@@ -2552,11 +2585,62 @@ if (isPromiseLike<PresentationResult>(result)) { trackAsyncRetainedPatch(result,
     return keyed ? keyed[1] : /command count/.test(detail) ? "command-count" : "other";
   }
 
+  /**
+   * rustIdleInRust: why this frame cannot be presented from the installed idle descriptors, or null. The patch path
+   * planning the same frame would draw nothing but the idle loops' poses: no tween, opacity, source or offset
+   * sample, no landing, the committed overrides, and nothing in flight.
+   */
+  function idleLaneBlocked(): string | null {
+    if (!retainedMode || !retainedValid || !retained || !pixi || !snapshot || readiness !== "ready") return "invalid-retained-state";
+    if (asyncSubmissionRevision !== null) return "in-flight";
+    const mask = visual.frameSampleMask;
+    if (mask !== SAMPLE_LOCAL_ANIM) {
+      if (mask === SAMPLE_NONE) return "no-anim";
+      if (mask & SAMPLE_TRANSFORM) return "tween";
+      if (mask & SAMPLE_SOURCE) return "source-swap";
+      if (mask & (SAMPLE_OPACITY | SAMPLE_SELF_OPACITY)) return "opacity";
+      return "unsupported-sample";
+    }
+    if (visual.opacityPatchIds.size || visual.sourceSampledIds.size) return "pending-samples";
+    if (visual.transformOverrides.size) {
+      if (!fast.heldOverridePatch || !committedOverrides || !sameTransformOverrides(visual.transformOverrides, committedOverrides))
+        return "transform-overrides";
+      const ancestors = overrideAncestors(visual.transformOverrides, snapshot.scene.nodes);
+      for (const root of snapshot.build.localAnimFrames.keys()) if (ancestors.has(root)) return "anim-over-override";
+    }
+    if (interaction.offsetPending || !interaction.cosmeticOffsetsMatch(snapshot) || Number.isFinite(interaction.offsetRampDeadline))
+      return "offsets";
+    if (visual.landingArms.length > 0 || visual.hasOpenLanding()) return "landing";
+    return null;
+  }
+  /**
+   * rustIdleInRust: present an idle-only frame through the idle lane (the scheduler's `presentIdleFrame` port, and
+   * the diagnostic clock). False: the caller patches or builds it as before.
+   */
+  function presentIdleFrame(at: number): boolean {
+    if (!idleLane || !state || !snapshot || snapshot.stateRevision !== state.revision || scheduler.buildRequired) return false;
+    const presented = lifecycle ? lifecycle.phase("pixi", () => idleLane!.tryFrame(at)) : idleLane.tryFrame(at);
+    if (presented) publishIdleFrame(at);
+    return presented;
+  }
+  /** rustIdleInRust: the bookkeeping of a frame Rust presented; the frame identity is the drawn clock. */
+  function publishIdleFrame(at: number): void {
+    frameEpoch++;
+    drawnClock = at;
+    idleRustFrames++;
+    signalDiagnosticWake();
+    lifecycle?.finish("completed", completedDraws());
+    if (contentTrace && snapshot) console.timeStamp(`cc:content:${snapshot.stateRevision}:${snapshot.buildEpoch}:${frameEpoch}`);
+    startupCompletionHook?.();
+  }
+
   function tryRetainedPatch(at: number): boolean {
     if (!state || !snapshot || snapshot.stateRevision !== state.revision || !pixi) {
       retainedDecline = "invalid-retained-state"; return false;
     }
     if (scheduler.buildRequired) { retainedDecline = "build-requested"; return false; }
+    // rustIdleInRust: plan against the pose Rust drew last, not the last one this side committed.
+    idleLane?.sync();
     retainedDecline = "plan-unsupported";
 const traceId = nextTraceFrame();
     const planStarted = rustPhaseTimingMode ? performance.now() : 0;
@@ -2589,6 +2673,7 @@ const traceId = nextTraceFrame();
   }
 
   function logicalPaintRows(): string[] {
+    idleLane?.sync();
     if (!build || !state) return [];
     const rows = semanticRows.map((row) => {
       if (!retainedMode || !retainedValid || !retained) return JSON.stringify(row);
@@ -2745,6 +2830,9 @@ const traceId = nextTraceFrame();
         // `resources` in both arms: flat while the switch is on, growing without bound while it is off.
         rustTextEvict: { evictions: pixi?.rustTextEvictions ?? 0, resources: pixi?.rustTextCacheResources ?? 0 } } : {}),
       ...(fast.damagePresent && pixi?.rustDamage ? { rustDamage: pixi.rustDamage } : {}),
+      ...(backend === "rust" ? { rustIdleInRust: idleLane ? { ...idleLane.stats(), rendererFrames: idleRustFrames,
+        executor: (pixi as unknown as { rustIdleStats?: unknown } | null)?.rustIdleStats ?? null }
+        : fast.idleInRust ? "unavailable" : "off" } : {}),
       ...(lazyCompositionVerifyFirstMismatch ? { lazyCompositionVerifyFirstMismatch } : {}),
       ...(fast.heldOverridePatch ? { rustHeldOverride: { heldOverridePatches, heldOverrideDeclines: { ...heldOverrideDeclines }, ...(fast.verify ? { heldOverrideVerifyRuns: heldVerify.runs, heldOverrideVerifyMismatches: heldVerify.mismatches, heldOverrideVerifyMaxError: heldVerify.maxError, heldOverrideVerifyFirstMismatch: heldVerify.firstMismatch, heldOverrideVerifyLog: heldVerify.log.map((entry) => ({ ...entry, notes: [...entry.notes], recent: [...entry.recent] })) } : {}) } } : {}),
       ...(fast.offsetPatch ? { rustOffsetPatch: { offsetPatches, offsetPatchedNodes, wireCapturedPatches, offsetDeclines: { ...offsetDeclines },
@@ -2873,7 +2961,7 @@ const traceId = nextTraceFrame();
         const at = deterministicClock ?? performance.now();
         if (lifecycle) lifecycle.phase("sample", () => { visual.applyInputs(current, at); interaction.applyHeldLift(); interaction.applyHandRaisePass(at); sampleVisual(at); });
         else { visual.applyInputs(current, at); interaction.applyHeldLift(); interaction.applyHandRaisePass(at); sampleVisual(at); }
-        if (!snapshot || !tryRetainedPatch(at)) paint(current, "clock", retainedDecline);
+        if (!snapshot || !(presentIdleFrame(at) || tryRetainedPatch(at))) paint(current, "clock", retainedDecline);
         const candidate = asyncSubmissionRevision !== null ? asyncPresentCompletion : null;
         if (candidate) await awaitCompletion(candidate);
         assertActive();
