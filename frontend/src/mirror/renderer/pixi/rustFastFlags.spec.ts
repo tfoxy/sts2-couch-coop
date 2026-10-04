@@ -52,6 +52,14 @@ describe("resolveRustFastFlags", () => {
     expect(flags("rustFast=1", "pixi").wireSpreadPatch).toBe(false);
   });
 
+  it("turns the direct-GL backend off on its own", () => {
+    expect(flags("rustGlBackend=0").glBackend).toBe(false);
+    expect(flags("rustGlBackend=0").damagePresent).toBe(true);
+    expect(flags("").glBackend).toBe(true);
+    expect(flags("rustFast=0&rustGlBackend=1").glBackend).toBe(true);
+    expect(flags("rustFast=1", "pixi").glBackend).toBe(false);
+  });
+
   it("turns the damage present off on its own", () => {
     expect(flags("rustDamagePresent=0").damagePresent).toBe(false);
     expect(flags("rustDamagePresent=0").tweenRootPatch).toBe(true);
