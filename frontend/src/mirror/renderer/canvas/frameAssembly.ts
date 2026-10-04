@@ -24,7 +24,6 @@ import type { CanvasInteractionRuntime } from "@/mirror/renderer/canvas/interact
 import type { createCanvasDiagnosticsRuntime } from "@/mirror/renderer/canvas/diagnostics";
 import {
   createCanvasFramePresentationRuntime,
-  CANVAS_IDLE_ANIMATION_FPS,
   type CanvasFramePresentationRuntime,
   type CanvasFrameRuntime,
 } from "@/mirror/renderer/canvas/frameRuntime";
@@ -130,15 +129,26 @@ export function createCanvasFrameAssembly(
   let presentation: CanvasFramePresentationRuntime<WireDeltaGraph> | null = null;
 
   const stateRevisionAtFrame = (): number => patchRuntime.revisionAtFrame();
-  const idleDeadline = (at: number): number =>
-    visual.idleDeadline(at, CANVAS_IDLE_ANIMATION_FPS, visual.idleStageNotBefore);
+  const idleDeadline = (at: number): number => visual.idleDeadline(at);
   function passiveStageDeadline(at: number): number {
-    const due = Math.min(
+    return Math.min(
       idleDeadline(at),
       overlay.nextSpineDeadline(at),
       fx?.nextDeadline(at) ?? Number.POSITIVE_INFINITY,
     );
-    return Number.isFinite(due) ? Math.max(due, visual.idleStageNotBefore) : due;
+  }
+  /**
+   * This stage has no pinned/deterministic-clock mode at all (unlike the Rust/Pixi stage's diagnostic clock):
+   * `ports.now()` is always the real `performance.now()`. `visualState.isIdleSampleStale`'s own contract
+   * requires `pinned` to be false on a real clock — even a browser-coarsened one, which CAN repeat `at`
+   * across genuinely distinct display frames (Tor/Firefox resistFingerprinting clamps resolution) — because
+   * treating a repeat as "nothing changed" there would freeze the idle chain (it does not re-arm once stale)
+   * until unrelated input woke it. So this always answers false; if this stage ever grows a pinned-clock
+   * testing mode, wire that signal through here instead of flipping the hardcoded `false`.
+   */
+  function isPassiveSampleStale(at: number): boolean {
+    void at;
+    return false;
   }
   function idleStageBypass(at: number) {
     if (Number.isFinite(interaction.offsetRampDeadline)) return "offset" as const;
@@ -299,7 +309,6 @@ export function createCanvasFrameAssembly(
     state,
     disposed,
     revisionAtFrame: stateRevisionAtFrame,
-    idleAnimFps: () => CANVAS_IDLE_ANIMATION_FPS,
     deadlines: {
       offsetRampDeadline: () => interaction.offsetRampDeadline,
       loopDeadline: (at) => loop.nextDeadline(at),
@@ -307,13 +316,13 @@ export function createCanvasFrameAssembly(
       trailDeadline: (at) => stageEffects.trailNextDeadline(at),
       passiveDeadline: passiveStageDeadline,
       idleStageBypass,
-      idleStageNotBefore: () => visual.idleStageNotBefore,
     },
     animation: {
       advanceOffsetRamps: interaction.advanceOffsetRamps,
       noteIdleStageMissingPassive: () => visual.noteIdleStageMissingPassive(),
-      noteIdleStageSkippedEarly: () => visual.noteIdleStageSkippedEarly(),
-      noteIdleStageAdmission: (at, minimumFrameMs) => visual.noteIdleStageAdmission(at, minimumFrameMs),
+      noteIdleStageAdmission: (at) => visual.noteIdleStageAdmission(at),
+      isIdleSampleStale: isPassiveSampleStale,
+      commitIdleSample: (at) => visual.commitIdleSample(at),
       sampleVisual: (at) => visual.sample(at),
       noteTrailFlightHeads: (at) => stageEffects.noteTrailFlightHeads(at),
       tickTrails: (at) => stageEffects.tickTrails(at),

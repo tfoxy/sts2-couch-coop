@@ -3,7 +3,6 @@ import { mirrorSettings } from "@/mirror/mirrorSettings";
 
 export type ComparisonBackend = "dom" | "canvas" | "pixi" | "rust";
 export type ComparisonPixels = "direct" | "dirty" | "dirty-preserved" | "dirty-copy" | "layers" | "surfaces";
-export type ComparisonIdleCadence = "authored" | "display";
 export type ComparisonPixiScene = "legacy" | "retained";
 export type ComparisonPixiText = "native" | "slug" | "slug-cached";
 
@@ -15,34 +14,32 @@ export interface RendererComparisonConfig {
   gpuCommands: boolean;
   textCache: "off" | "gpu";
   pixels: ComparisonPixels;
-  idleCadence: ComparisonIdleCadence;
   structureReuse: boolean;
   textPreparationReuse: boolean;
   sourceFrameReuse: boolean;
   animationReferenceReuse: boolean;
 }
 
-export type ComparisonPresetId = "dom" | "canvas" | "text" | "pixi" | "rust" | "full" | "cpu" | "gpu" | "dirty" | "layers" | "surfaces" | "display" | "preserved" | "copy" | "cpuPrep" | "sourceFrame" | "cpuBest";
+export type ComparisonPresetId = "dom" | "canvas" | "text" | "pixi" | "rust" | "full" | "cpu" | "gpu" | "dirty" | "layers" | "surfaces" | "preserved" | "copy" | "cpuPrep" | "sourceFrame" | "cpuBest";
 const canvasPreset = (changes: Partial<RendererComparisonConfig> = {}): RendererComparisonConfig => ({
-  backend: "canvas", cpuIncremental: true, gpuCommands: true, textCache: "off", pixels: "direct", idleCadence: "authored", structureReuse: false, textPreparationReuse: false, sourceFrameReuse: false, animationReferenceReuse: false, pixiScene: "retained", pixiText: "native", ...changes
+  backend: "canvas", cpuIncremental: true, gpuCommands: true, textCache: "off", pixels: "direct", structureReuse: false, textPreparationReuse: false, sourceFrameReuse: false, animationReferenceReuse: false, pixiScene: "retained", pixiText: "native", ...changes
 });
 export const RENDERER_COMPARISON_PRESETS: Record<ComparisonPresetId, RendererComparisonConfig> = {
-  dom: { backend: "dom", cpuIncremental: false, gpuCommands: false, textCache: "off", pixels: "direct", idleCadence: "authored", structureReuse: false, textPreparationReuse: false, sourceFrameReuse: false, animationReferenceReuse: false, pixiScene: "retained", pixiText: "native" },
+  dom: { backend: "dom", cpuIncremental: false, gpuCommands: false, textCache: "off", pixels: "direct", structureReuse: false, textPreparationReuse: false, sourceFrameReuse: false, animationReferenceReuse: false, pixiScene: "retained", pixiText: "native" },
   canvas: canvasPreset(), text: canvasPreset({ textCache: "gpu" }),
-  pixi: { backend: "pixi", cpuIncremental: false, gpuCommands: false, textCache: "off", pixels: "direct", idleCadence: "authored", structureReuse: false, textPreparationReuse: false, sourceFrameReuse: false, animationReferenceReuse: false, pixiScene: "retained", pixiText: "native" },
+  pixi: { backend: "pixi", cpuIncremental: false, gpuCommands: false, textCache: "off", pixels: "direct", structureReuse: false, textPreparationReuse: false, sourceFrameReuse: false, animationReferenceReuse: false, pixiScene: "retained", pixiText: "native" },
   // Exploratory adapter over the same DrawList producer; intentionally has no independent CPU/pixel switches.
-  rust: { backend: "rust", cpuIncremental: false, gpuCommands: false, textCache: "off", pixels: "direct", idleCadence: "authored", structureReuse: false, textPreparationReuse: false, sourceFrameReuse: false, animationReferenceReuse: false, pixiScene: "retained", pixiText: "native" },
+  rust: { backend: "rust", cpuIncremental: false, gpuCommands: false, textCache: "off", pixels: "direct", structureReuse: false, textPreparationReuse: false, sourceFrameReuse: false, animationReferenceReuse: false, pixiScene: "retained", pixiText: "native" },
   full: canvasPreset({ cpuIncremental: false, gpuCommands: false }),
   cpu: canvasPreset({ gpuCommands: false }), gpu: canvasPreset({ cpuIncremental: false }),
   dirty: canvasPreset({ pixels: "dirty" }), layers: canvasPreset({ pixels: "layers" }),
   surfaces: canvasPreset({ pixels: "surfaces" }),
-  display: canvasPreset({ textCache: "gpu", idleCadence: "display" }),
-  preserved: canvasPreset({ textCache: "gpu", pixels: "dirty-preserved", idleCadence: "display" }),
-  copy: canvasPreset({ textCache: "gpu", pixels: "dirty-copy", idleCadence: "display" }),
-  cpuPrep: canvasPreset({ textCache: "gpu", idleCadence: "display", structureReuse: true, textPreparationReuse: true }),
-  sourceFrame: canvasPreset({ textCache: "gpu", idleCadence: "display", structureReuse: true, textPreparationReuse: true, sourceFrameReuse: true }),
+  preserved: canvasPreset({ textCache: "gpu", pixels: "dirty-preserved" }),
+  copy: canvasPreset({ textCache: "gpu", pixels: "dirty-copy" }),
+  cpuPrep: canvasPreset({ textCache: "gpu", structureReuse: true, textPreparationReuse: true }),
+  sourceFrame: canvasPreset({ textCache: "gpu", structureReuse: true, textPreparationReuse: true, sourceFrameReuse: true }),
   // No campaign prototype has passed CPU acceptance yet. Retain the verified starting configuration.
-  cpuBest: canvasPreset({ textCache: "gpu", idleCadence: "display", structureReuse: true, textPreparationReuse: true, sourceFrameReuse: true })
+  cpuBest: canvasPreset({ textCache: "gpu", structureReuse: true, textPreparationReuse: true, sourceFrameReuse: true })
 };
 
 export type RendererPhase = "initializing" | "active" | "failed";
@@ -66,7 +63,7 @@ export interface RendererRuntimeStatus {
 }
 
 const DEFAULT_CONFIG: RendererComparisonConfig = {
-  backend: "dom", cpuIncremental: false, gpuCommands: false, textCache: "off", pixels: "direct", idleCadence: "authored", structureReuse: false, textPreparationReuse: false, sourceFrameReuse: false, animationReferenceReuse: false, pixiScene: "retained", pixiText: "native"
+  backend: "dom", cpuIncremental: false, gpuCommands: false, textCache: "off", pixels: "direct", structureReuse: false, textPreparationReuse: false, sourceFrameReuse: false, animationReferenceReuse: false, pixiScene: "retained", pixiText: "native"
 };
 
 export function comparisonEnabled(search = typeof window === "undefined" ? "" : window.location.search): boolean {
@@ -99,7 +96,8 @@ export function readRendererComparisonConfig(search = typeof window === "undefin
     gpuCommands: comparisonEnabled(search) ? params.get("cmpGpu") !== "off" : true,
     textCache: params.get("canvasTextCache") === "gpu" ? "gpu" : "off",
     pixels: comparisonEnabled(search) && (pixels === "dirty" || pixels === "dirty-preserved" || pixels === "dirty-copy" || pixels === "layers" || pixels === "surfaces") ? pixels : "direct",
-    idleCadence: comparisonEnabled(search) && params.get("cmpIdle") === "display" ? "display" : "authored",
+    // `cmpIdle` named which idle cadence to use (authored vs. display-paced). Idle animation is always
+    // display-paced now, so a bench config or URL still passing `cmpIdle=display` is silently ignored.
     structureReuse: comparisonEnabled(search) && params.get("cmpStructure") === "reuse",
     textPreparationReuse: comparisonEnabled(search) && params.get("cmpTextCpu") === "reuse",
     sourceFrameReuse: comparisonEnabled(search) && params.get("cmpSource") === "reuse",
@@ -186,18 +184,18 @@ function pixiTextMode(value: unknown): ComparisonPixiText {
 function sameConfig(a: RendererComparisonConfig | null, b: RendererComparisonConfig | null): boolean {
   return a === b || (a !== null && b !== null && a.backend === b.backend &&
     a.cpuIncremental === b.cpuIncremental && a.gpuCommands === b.gpuCommands &&
-    a.textCache === b.textCache && a.pixels === b.pixels && a.idleCadence === b.idleCadence &&
+    a.textCache === b.textCache && a.pixels === b.pixels &&
     a.structureReuse === b.structureReuse && a.textPreparationReuse === b.textPreparationReuse &&
     a.sourceFrameReuse === b.sourceFrameReuse && a.animationReferenceReuse === b.animationReferenceReuse && a.pixiScene === b.pixiScene && a.pixiText === b.pixiText);
 }
 
 export function normalizedComparisonConfig(config: RendererComparisonConfig): RendererComparisonConfig {
   if (config.backend === "pixi") {
-    return { ...DEFAULT_CONFIG, backend: "pixi", idleCadence: config.idleCadence,
+    return { ...DEFAULT_CONFIG, backend: "pixi",
       pixiScene: config.pixiScene === "legacy" ? "legacy" : "retained", pixiText: pixiTextMode(config.pixiText) };
   }
   if (config.backend === "rust") {
-    return { ...DEFAULT_CONFIG, backend: "rust", idleCadence: config.idleCadence };
+    return { ...DEFAULT_CONFIG, backend: "rust" };
   }
   if (config.backend === "dom") return { ...DEFAULT_CONFIG };
   return { ...config, pixiScene: "retained", pixiText: "native", sourceFrameReuse: config.cpuIncremental && config.sourceFrameReuse,
@@ -220,8 +218,8 @@ export function comparisonUrl(href: string, config: RendererComparisonConfig): s
   url.searchParams.set("cmpCpu", value.cpuIncremental ? "on" : "off");
   url.searchParams.set("cmpGpu", value.gpuCommands ? "on" : "off");
   url.searchParams.set("cmpPixels", value.pixels);
-  if (value.idleCadence === "display") url.searchParams.set("cmpIdle", "display");
-  else url.searchParams.delete("cmpIdle");
+  // Idle animation is always display-paced; `cmpIdle` is never written back to the URL anymore.
+  url.searchParams.delete("cmpIdle");
   if (value.textCache === "gpu") url.searchParams.set("canvasTextCache", "gpu");
   else url.searchParams.delete("canvasTextCache");
   if (value.structureReuse) url.searchParams.set("cmpStructure", "reuse");

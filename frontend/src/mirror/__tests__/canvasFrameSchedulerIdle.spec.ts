@@ -1,8 +1,12 @@
 // `rustIdleScheduler`: one browser task per steady idle frame. A small event loop drives the scheduler: display
 // frames at a fixed period run every booked rAF as ONE task (callbacks see the vsync timestamp, and `now` is a little
 // later), timers fire as tasks of their own at their due time, and a posted task runs right after the task that
-// posted it. The renderer model is the Rust stage's idle path: a 30 Hz authored cadence under the 60 Hz passive gate,
-// and every admitted frame presents through a retained patch.
+// posted it. This harness exercises the scheduler's generic park/fold/due-frame mechanics against a passive deadline
+// paced slower than the display (the default, `1000 / 30` — still a real production shape, e.g. a spine clip or an
+// intent bob's own authored fps, a trail): most of this file's tests model that case. `immediatePassive` instead
+// models the real post-WP7 idle path: no authored cadence cap, so `visualState.idleDeadline` reports an active idle
+// loop as due on every display frame, and the scheduler's generic immediate-admission path (not fold, not park)
+// books it every time — see the "production idle path" describe block below for that shape specifically.
 import { describe, expect, it } from "vitest";
 
 import { CANVAS_FRAME_PARK_SLOP_MS, createCanvasFrameScheduler } from "@/mirror/renderer/canvas/frameScheduler";
@@ -14,8 +18,11 @@ interface LoopOptions {
   delay?: (frame: number) => number;
   /** Patch cost on the scheduler clock. */
   work?: (frame: number) => number;
-  /** The `idleCadence=display` comparison arm: passive demand is due on every display frame. */
-  displayPacedPassive?: boolean;
+  /** No authored cadence cap (WP7): passive demand is due on every display frame instead of paced at `1000 / 30`,
+   *  matching `visualState.idleDeadline` for an active idle loop. This reaches the scheduler's unconditional
+   *  immediate-admission arm directly — never the fold or the park timer, both of which stay for a genuinely
+   *  slower passive source (the default this harness otherwise models). */
+  immediatePassive?: boolean;
   /** `rustIdleDueFrame`: passive deadlines park to the due frame instead of folding. */
   idleDueFrame?: boolean;
   /** `rustIdleInRust`: an idle lane that presents every idle-only frame it is offered. */
@@ -41,8 +48,9 @@ function createIdleLoop(options: LoopOptions) {
   const builds: Array<{ source: string; vsync: number }> = [];
   const idleLaneFrames: number[] = [];
   let lastIdleAt = 0;
-  let notBefore = 0;
   let idleActive = true;
+  let idleStale = false;
+  let idleCommits = 0;
   let revision = 1;
   let revisionAtFrame = 1;
   let reconcilePending = false;
@@ -77,10 +85,8 @@ function createIdleLoop(options: LoopOptions) {
     state: () => ({ revision }),
     disposed: () => false,
     revisionAtFrame: () => revisionAtFrame,
-    idleAnimFps: () => 30,
     idleScheduler: options.idleScheduler,
     idleDueFrame: options.idleDueFrame,
-    displayPacedPassive: options.displayPacedPassive,
     platform: {
       requestAnimationFrame: (callback) => { const handle = nextHandle++; rafs.set(handle, callback); return handle; },
       cancelAnimationFrame: (handle) => { rafs.delete(handle); },
@@ -98,21 +104,21 @@ function createIdleLoop(options: LoopOptions) {
       loopDeadline: () => Infinity,
       loopHasPerFrameDemand: () => perFrame,
       trailDeadline: () => Infinity,
-      // createPixiMirrorRenderer's passive deadline: the authored cadence, never ahead of the 60 Hz stage gate.
+      // See the file header: paced at 1000/30 by default (a generic slower-than-display passive source), or
+      // display-paced (due now, `immediatePassive`) — the real post-WP7 idle shape.
       passiveDeadline: (at) => !idleActive ? Infinity
-        : options.displayPacedPassive ? at : Math.max(lastIdleAt + 1000 / 30, notBefore),
+        : options.immediatePassive ? at : lastIdleAt + 1000 / 30,
       idleStageBypass: () => perFrame ? "tween" : null,
-      idleStageNotBefore: () => notBefore,
     },
     animation: {
       advanceOffsetRamps: () => false,
       noteIdleStageMissingPassive: () => {},
-      noteIdleStageSkippedEarly: () => {},
-      // visualState.noteIdleStageAdmission
-      noteIdleStageAdmission: (at, minFrameMs) => {
-        const nextPhase = notBefore + minFrameMs;
-        notBefore = notBefore > 0 && at < nextPhase ? nextPhase : at + minFrameMs;
-      },
+      // Diagnostic-only (visualState.noteIdleStageAdmission): no longer a gate, nothing to simulate.
+      noteIdleStageAdmission: () => {},
+      // A pinned diagnostic/bench clock: `idleStale` stands in for `visualState.isIdleSampleStale` reporting
+      // that this exact instant was already accepted.
+      isIdleSampleStale: () => idleStale,
+      commitIdleSample: () => { idleCommits++; },
       sampleVisual: (at) => { if (idleActive) lastIdleAt = at; },
       noteTrailFlightHeads: () => {},
       tickTrails: () => {},
@@ -181,6 +187,8 @@ function createIdleLoop(options: LoopOptions) {
     get vsync() { return vsyncIndex; },
     get now() { return now; },
     set idleActive(value: boolean) { idleActive = value; },
+    set idleStale(value: boolean) { idleStale = value; },
+    get idleCommits() { return idleCommits; },
     set perFrame(value: boolean) { perFrame = value; },
     /** Run once inside the next patch (a texture turning resident while the tick paints, say). */
     set onPatch(value: () => void) { onPatch = value; },
@@ -404,16 +412,6 @@ describe("frame scheduler idle cadence (rustIdleScheduler)", () => {
     expect(coalesce.workPerFrame["1"]).toBeGreaterThanOrEqual(loop.presented.length - 1);
   });
 
-  it("posts the close for a plain display booking (idleCadence=display), so a lift between frames waits for it", () => {
-    const loop = steadyIdle({ idleScheduler: true, displayPacedPassive: true }, 20);
-    let answer = "";
-    loop.taskAt(loop.now + 5, () => { answer = loop.scheduler.requestBuild(true); });
-    loop.runUntilVsync(30);
-    expect(answer).toBe("deferred");
-    expect(loop.maxWorkInAnyFrame()).toBe(1);
-    expect(loop.scheduler.coalesceStats()!.idleEpochEnds).toBe(0);
-  });
-
   it("ends the epoch of a folded tick that booked a texture repaint for the next frame", () => {
     const loop = steadyIdle({ idleScheduler: true }, 20);
     loop.runUntilVsync(21);
@@ -427,6 +425,110 @@ describe("frame scheduler idle cadence (rustIdleScheduler)", () => {
     expect(after.idleEpochEnds).toBe(before.idleEpochEnds + 1);
     loop.runUntilVsync(23);
     expect(loop.buildsAt(23)).toEqual(["texture"]);
+  });
+});
+
+// No authored cadence cap (WP7): `visualState.idleDeadline` reports an active idle loop as due on every display
+// frame, which reaches the scheduler's unconditional immediate-admission arm directly (`immediatePassive` here) —
+// never the fold, never a park timer. These are the frame-count guarantees that change must still hold: nothing is
+// booked without an installed, visible loop; an idle-only frame still costs exactly one present per tick; and the
+// chain keeps up with every display frame for as long as the loop stays active.
+describe("frame scheduler production idle path (no authored cadence)", () => {
+  it("never books an rAF or a timer when no idle loop is installed", () => {
+    const loop = createIdleLoop({ idleScheduler: true, immediatePassive: true });
+    loop.idleActive = false;
+    loop.task(() => loop.scheduler.armAnimation(loop.now));
+    loop.runUntilVsync(10);
+    expect(loop.census.rafTasks).toBe(0);
+    expect(loop.timers.size).toBe(0);
+    expect(loop.presented.length).toBe(0);
+  });
+
+  it("books an immediate rAF every tick, never a park timer, while an idle loop is active", () => {
+    const loop = steadyIdle({ idleScheduler: true, immediatePassive: true }, 240);
+    expect(loop.presented.length).toBe(240);
+    // One presented frame per display frame: the chain keeps up with the full display rate, not a paced subset.
+    expect(loop.presentedVsync).toEqual(Array.from({ length: 240 }, (_, i) => i + 1));
+    expect(loop.census.timerTasks).toBe(0);
+    expect(loop.scheduler.idleStats().parkTimers).toBe(0);
+    // Not folded either: due-now demand reaches the unconditional immediate-admission arm directly.
+    expect(loop.scheduler.idleStats().folds).toBe(0);
+    expect(loop.scheduler.coalesceStats()!.maxWorkPerFrame).toBe(1);
+  });
+
+  it("presents exactly one idle-lane frame per tick, with no doubling", () => {
+    const loop = steadyIdle({ idleScheduler: true, immediatePassive: true, idleLane: true }, 120);
+    expect(loop.idleLaneFrames).toEqual(loop.presentedVsync);
+    expect(loop.idleLaneFrames.length).toBe(120);
+    expect(loop.builds.every((entry) => entry.source === "idle")).toBe(true);
+    expect(loop.scheduler.coalesceStats()!.maxWorkPerFrame).toBe(1);
+  });
+
+  it("stops booking the instant the idle loop ends, and resumes immediately when it returns", () => {
+    const loop = steadyIdle({ idleScheduler: true, immediatePassive: true }, 20);
+    loop.idleActive = false;
+    loop.runUntilVsync(24);
+    const presentedWhileOff = loop.presented.length;
+    loop.runUntilVsync(60);
+    expect(loop.presented.length).toBe(presentedWhileOff);
+    expect(loop.timers.size).toBe(0);
+    loop.idleActive = true;
+    loop.scheduler.armAnimation(loop.now);
+    loop.runUntilVsync(62);
+    expect(loop.presented.length).toBeGreaterThan(presentedWhileOff);
+  });
+
+  // Distinct from the idleActive toggle above: here the loop stays installed and active throughout, but a
+  // pinned diagnostic/bench clock reports the exact same instant as already accepted. Booking an empty rAF
+  // forever while nothing can change would be a poll, so this must NOT re-arm on its own — it resumes only
+  // once something external (the diagnostic clock mover, in production) calls `armAnimation` again.
+  it("books no rAF after a stale tick, and resumes only once the diagnostic clock mover re-arms it", () => {
+    const loop = steadyIdle({ idleScheduler: true, immediatePassive: true }, 20);
+    const commitsBeforeStale = loop.idleCommits;
+    loop.idleStale = true;
+    loop.runUntilVsync(21); // this tick discovers staleness
+    const rafTasksAfterStale = loop.census.rafTasks;
+    const presentedAfterStale = loop.presented.length;
+    expect(loop.idleCommits).toBe(commitsBeforeStale); // no new accepted idle frame
+
+    // Nothing is booked: no further callback ever fires, no matter how many more display frames pass.
+    loop.runUntilVsync(60);
+    expect(loop.census.rafTasks).toBe(rafTasksAfterStale);
+    expect(loop.presented.length).toBe(presentedAfterStale);
+
+    // The clock genuinely moves: the mover re-arms explicitly, and the chain resumes at once.
+    loop.idleStale = false;
+    loop.scheduler.armAnimation(loop.now);
+    loop.runUntilVsync(61);
+    expect(loop.presented.length).toBeGreaterThan(presentedAfterStale);
+    expect(loop.idleCommits).toBeGreaterThan(commitsBeforeStale);
+  });
+
+  // Restored from the pre-WP7 suite (then keyed off the `displayPacedPassive`/`idleCadence=display` comparison
+  // arm, now the only cadence there is): a plain display-paced booking is never "eagerly closed" the way a
+  // folded tick is, so its posted close stays open — a non-urgent request raised between frames waits for the
+  // already-booked tick to serve it rather than forcing a build of its own.
+  it("posts the close for a plain display-paced booking, so a non-urgent request between frames waits for it", () => {
+    const loop = steadyIdle({ idleScheduler: true, immediatePassive: true }, 20);
+    let answer = "";
+    loop.taskAt(loop.now + 5, () => { answer = loop.scheduler.requestBuild(false); });
+    loop.runUntilVsync(30);
+    expect(answer).toBe("deferred");
+    expect(loop.maxWorkInAnyFrame()).toBe(1);
+    expect(loop.scheduler.coalesceStats()!.idleEpochEnds).toBe(0);
+  });
+
+  it("still serves an urgent request within the next display frame, one build or patch per frame", () => {
+    const loop = steadyIdle({ idleScheduler: true, immediatePassive: true }, 20);
+    const before = loop.builds.length;
+    loop.taskAt(loop.now + 1, () => { loop.scheduler.requestBuild(true); });
+    loop.runUntilVsync(21);
+    // A tick is already booked for every display frame at this cadence, so the request rides it rather than
+    // forcing a second one: still no later than the next frame, and never more than one build or patch in it.
+    expect(loop.builds.length).toBeGreaterThan(before);
+    expect(loop.buildsAt(21).length).toBe(1);
+    loop.runUntilVsync(40);
+    expect(loop.scheduler.coalesceStats()!.maxWorkPerFrame).toBe(1);
   });
 });
 

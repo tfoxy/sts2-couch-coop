@@ -27,7 +27,7 @@ describe("renderer comparison panel", () => {
     }
   });
 
-  it("reports the Pixi scene mode and permits its shared cadence without adding scene controls", async () => {
+  it("reports the Pixi scene mode without adding scene controls", () => {
     const before = { ...rendererComparisonConfig }, status = { ...rendererRuntimeStatus };
     const config = { ...RENDERER_COMPARISON_PRESETS.pixi, pixiScene: "legacy" as const };
     Object.assign(rendererComparisonConfig, config);
@@ -35,14 +35,20 @@ describe("renderer comparison panel", () => {
     const wrapper = mount(RendererComparisonPanel);
     try {
       expect(wrapper.find(".comparison-status").text()).toContain("PIXI · legacy");
-      expect(wrapper.find('[data-testid="renderer-idle-cadence"]').attributes("disabled")).toBeUndefined();
       expect(wrapper.find('[data-testid="renderer-scene"]').exists()).toBe(false);
       expect(wrapper.find('[data-testid="renderer-preset"]').element).toHaveProperty("value", "custom");
-      await wrapper.find('[data-testid="renderer-idle-cadence"]').setValue("display");
       expect(rendererComparisonConfig.pixiScene).toBe("legacy");
-      expect(rendererComparisonConfig.idleCadence).toBe("authored");
     } finally {
       wrapper.unmount(); Object.assign(rendererComparisonConfig, before); setRendererRuntimeStatus(status);
+    }
+  });
+
+  it("no longer offers an idle-cadence control: idle animation is always display-paced", () => {
+    const wrapper = mount(RendererComparisonPanel);
+    try {
+      expect(wrapper.find('[data-testid="renderer-idle-cadence"]').exists()).toBe(false);
+    } finally {
+      wrapper.unmount();
     }
   });
 

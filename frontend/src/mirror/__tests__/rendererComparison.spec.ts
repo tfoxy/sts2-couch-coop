@@ -44,21 +44,23 @@ describe("renderer comparison URL", () => {
   });
 
   it("keeps the Rust/WASM slice behind renderer comparison and normalizes it independently", () => {
+    // `cmpIdle=display` is a historical URL param: idle animation is always display-paced now, so it is
+    // accepted but ignored, and never written back to the URL.
     const rust = readRendererComparisonConfig("?rendererCompare=1&stage=rust&cmpIdle=display&pixiText=slug");
-    expect(rust).toMatchObject({ backend: "rust", idleCadence: "display", pixiText: "native",
+    expect(rust).toMatchObject({ backend: "rust", pixiText: "native",
       cpuIncremental: false, gpuCommands: false, textCache: "off", pixels: "direct" });
     expect(readRendererComparisonConfig("?stage=rust").backend).toBe("dom");
     const url = new URL(comparisonUrl("http://localhost/?name=Ann&pixiScene=legacy&pixiText=slug", rust));
     expect(url.searchParams.get("rendererCompare")).toBe("1");
     expect(url.searchParams.get("stage")).toBe("rust");
-    expect(url.searchParams.get("cmpIdle")).toBe("display");
+    expect(url.searchParams.has("cmpIdle")).toBe(false);
     expect(url.searchParams.has("pixiScene")).toBe(false);
     expect(url.searchParams.has("pixiText")).toBe(false);
     expect(url.searchParams.get("name")).toBe("Ann");
     expect(normalizedComparisonConfig({ ...RENDERER_COMPARISON_PRESETS.rust, cpuIncremental: true,
       gpuCommands: true, textCache: "gpu", pixels: "surfaces", structureReuse: true })).toMatchObject({
       backend: "rust", cpuIncremental: false, gpuCommands: false, textCache: "off", pixels: "direct",
-      structureReuse: false, idleCadence: "authored"
+      structureReuse: false
     });
   });
 
@@ -66,7 +68,7 @@ describe("renderer comparison URL", () => {
     for (const pixiScene of ["legacy", "retained"] as const) {
       for (const pixiText of ["native", "slug", "slug-cached"] as const) {
         const parsed = readRendererComparisonConfig(`?rendererCompare=1&stage=pixi&pixiScene=${pixiScene}&pixiText=${pixiText}&cmpIdle=display`);
-        expect(parsed).toMatchObject({ pixiText, pixiScene, idleCadence: "display", textCache: "off" });
+        expect(parsed).toMatchObject({ pixiText, pixiScene, textCache: "off" });
         const url = new URL(comparisonUrl("http://localhost/?name=001002&seat=two&other=a&other=b#game", parsed));
         expect(readRendererComparisonConfig(url.search)).toEqual(parsed);
         expect(url.searchParams.get("pixiText")).toBe(pixiText);
@@ -172,10 +174,10 @@ describe("renderer comparison URL", () => {
     }
   });
 
-  it("retains Pixi scene selection and shared cadence without enabling Canvas switches", () => {
+  it("retains Pixi scene selection without enabling Canvas switches", () => {
     for (const pixiScene of ["legacy", "retained"] as const) {
       const parsed = readRendererComparisonConfig(`?rendererCompare=1&stage=pixi&pixiScene=${pixiScene}&cmpIdle=display&canvasTextCache=gpu&cmpSource=reuse`);
-      expect(parsed).toMatchObject({ backend: "pixi", pixiScene, idleCadence: "display", textCache: "off", sourceFrameReuse: false });
+      expect(parsed).toMatchObject({ backend: "pixi", pixiScene, textCache: "off", sourceFrameReuse: false });
       const url = new URL(comparisonUrl("http://localhost/?name=001002&quality=very-low&other=a&other=b#game", parsed));
       expect(readRendererComparisonConfig(url.search)).toEqual(parsed);
       expect(url.searchParams.get("name")).toBe("001002");
@@ -200,7 +202,7 @@ describe("renderer comparison URL", () => {
     const before = "http://192.168.1.5:5178/?name=Ann%20Lee&quality=low&shaders=dynamic&sw=off#game";
     const after = new URL(comparisonUrl(before, {
       backend: "canvas", cpuIncremental: false, gpuCommands: true,
-      textCache: "gpu", pixels: "layers", idleCadence: "display", structureReuse: true, textPreparationReuse: true, sourceFrameReuse: true, animationReferenceReuse: true, pixiScene: "retained", pixiText: "native"
+      textCache: "gpu", pixels: "layers", structureReuse: true, textPreparationReuse: true, sourceFrameReuse: true, animationReferenceReuse: true, pixiScene: "retained", pixiText: "native"
     }));
     expect(after.origin).toBe("http://192.168.1.5:5178");
     expect(after.searchParams.get("name")).toBe("Ann Lee");
@@ -211,14 +213,14 @@ describe("renderer comparison URL", () => {
     expect(after.searchParams.has("cmpSource")).toBe(false);
     expect(readRendererComparisonConfig(after.search)).toEqual({
       backend: "canvas", cpuIncremental: false, gpuCommands: true,
-      textCache: "gpu", pixels: "layers", idleCadence: "display", structureReuse: true, textPreparationReuse: true, sourceFrameReuse: false, animationReferenceReuse: false, pixiScene: "retained" as const, pixiText: "native" as const
+      textCache: "gpu", pixels: "layers", structureReuse: true, textPreparationReuse: true, sourceFrameReuse: false, animationReferenceReuse: false, pixiScene: "retained" as const, pixiText: "native" as const
     });
   });
 
   it("ignores comparison toggles outside the explicit comparison page", () => {
     expect(readRendererComparisonConfig("?stage=canvas&cmpCpu=off&cmpGpu=off&cmpPixels=layers&cmpIdle=display&cmpStructure=reuse&cmpTextCpu=reuse&cmpSource=reuse")).toEqual({
       backend: "canvas", cpuIncremental: true, gpuCommands: true,
-      textCache: "off", pixels: "direct", idleCadence: "authored", structureReuse: false, textPreparationReuse: false, sourceFrameReuse: false, animationReferenceReuse: false, pixiScene: "retained" as const, pixiText: "native" as const
+      textCache: "off", pixels: "direct", structureReuse: false, textPreparationReuse: false, sourceFrameReuse: false, animationReferenceReuse: false, pixiScene: "retained" as const, pixiText: "native" as const
     });
   });
 
@@ -310,12 +312,12 @@ describe("renderer comparison URL", () => {
     }
   });
 
-  it("keeps historical presets authored while all GPU idle experiments use cached text and display pacing", () => {
+  it("keeps all GPU idle experiments on cached text", () => {
     for (const [id, preset] of Object.entries(RENDERER_COMPARISON_PRESETS)) {
-      if (id === "display" || id === "preserved" || id === "copy" || id === "cpuPrep" || id === "sourceFrame" || id === "cpuBest") {
+      if (id === "preserved" || id === "copy" || id === "cpuPrep" || id === "sourceFrame" || id === "cpuBest") {
         expect(preset).toMatchObject({ backend: "canvas", cpuIncremental: true,
-          gpuCommands: true, textCache: "gpu", idleCadence: "display" });
-      } else expect(preset.idleCadence).toBe("authored");
+          gpuCommands: true, textCache: "gpu" });
+      }
     }
     for (const [id, preset] of Object.entries(RENDERER_COMPARISON_PRESETS)) {
       expect(preset.structureReuse).toBe(id === "cpuPrep" || id === "sourceFrame" || id === "cpuBest");
@@ -328,7 +330,7 @@ describe("renderer comparison URL", () => {
 
   it("does not replace reactive actual config for identical paint reports", () => {
     const config = { backend: "canvas" as const, cpuIncremental: true, gpuCommands: true,
-      textCache: "off" as const, pixels: "dirty" as const, idleCadence: "authored" as const, structureReuse: false, textPreparationReuse: false, sourceFrameReuse: false, animationReferenceReuse: false, pixiScene: "retained" as const, pixiText: "native" as const };
+      textCache: "off" as const, pixels: "dirty" as const, structureReuse: false, textPreparationReuse: false, sourceFrameReuse: false, animationReferenceReuse: false, pixiScene: "retained" as const, pixiText: "native" as const };
     setRendererRuntimeStatus({ actualConfig: config });
     const first = rendererRuntimeStatus.actualConfig;
     setRendererRuntimeStatus({ actualConfig: { ...config } });
