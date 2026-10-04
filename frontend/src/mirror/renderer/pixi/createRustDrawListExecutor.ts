@@ -43,6 +43,8 @@ type RustWasmRenderer = {
   present_idle?(tMs: number): number;
   idle_poses?(tMs: number): Float64Array;
   idle_stats?(): string;
+  /** rustGlBackend: take a `webglcontextrestored` in place (GL renderer); false while still lost. Newer glue only. */
+  restore_context?(): boolean;
   present(): Promise<string>;
   dispose(): void;
 };
@@ -127,7 +129,9 @@ export const createRustDrawListExecutor: MirrorDrawExecutorFactory = async ({ ca
   const [wasmModule, serializer] = await Promise.all([
     (wasmUrl ? import(/* @vite-ignore */ wasmUrl) : import("@couchcoop/rust-prototype-glue")) as Promise<{ default: () => Promise<{ memory?: WebAssembly.Memory }>; RustRenderer: { create(canvas: HTMLCanvasElement): Promise<RustWasmRenderer>;
       /** rustPresent: optional in older glue, so its presence is the capability probe. */
-      createWithPresent?(canvas: HTMLCanvasElement, mode: RustPresentMode): Promise<RustWasmRenderer> } }>,
+      createWithPresent?(canvas: HTMLCanvasElement, mode: RustPresentMode): Promise<RustWasmRenderer>;
+      /** rustGlBackend: the direct-GL backend; optional in older glue (or builds without it), so its presence is the probe. */
+      createWithGl?(canvas: HTMLCanvasElement, mode: Exclude<RustPresentMode, "surface">): Promise<RustWasmRenderer> } }>,
     (sceneUrl ? import(/* @vite-ignore */ sceneUrl) : import("@godot-scene-web/canvas/rust-prototype")) as Promise<Serializer>,
   ]);
   // rustOffsetPatch: whether this serializer encodes a clip translation (a `clipPush` replacement that keeps the
@@ -164,12 +168,35 @@ export const createRustDrawListExecutor: MirrorDrawExecutorFactory = async ({ ca
   let rustBlitPixelsTotal = 0;
   let rustLastBlitPixels: number | null = null;
   let presentModeFallbackNoted = false;
+  // rustGlBackend: the GL backend's `backend` name, a latch set the first time the glue refuses GL (creation or an
+  // in-place restore) so later engines go straight to wgpu, and the refusals counted for diagnostics.
+  const GL_BACKEND_NAME = "webgl2-gl";
+  let glRefused = false;
+  const glRefusals = { create: 0, restore: 0 };
   /**
    * rustPresent: `createWithPresent` is newer glue — absent (or mode "surface") means the mode stays "surface",
    * today's `create(canvas)` call, unchanged. A requested mode the glue can't honour falls back the same way,
    * once, with a console note (never thrown: an experimental present mode must not block the stage from coming up).
    */
-  const createEngine = (): Promise<RustWasmRenderer> => {
+  const createEngine = async (): Promise<RustWasmRenderer> => {
+    // rustGlBackend: the same renderer on the direct-GL backend. It draws into the canvas, so it needs a canvas
+    // present mode. A glue without it falls back to wgpu silently (an optional method, like every other). A refusal
+    // is logged, counted and latched; the wgpu fallback reuses the canvas's context, which the GL backend created
+    // with the same mode's attributes and left in its default state.
+    if (fast.glBackend && !glRefused && presentMode !== "surface") {
+      const createWithGl = wasmModule.RustRenderer.createWithGl;
+      if (createWithGl) {
+        try {
+          const engine = await createWithGl.call(wasmModule.RustRenderer, canvas, presentMode);
+          appliedPresentMode = presentMode;
+          return engine;
+        } catch (error) {
+          glRefused = true;
+          glRefusals.create++;
+          console.info("[rust-prototype] rustGlBackend refused; using wgpu", error);
+        }
+      }
+    }
     if (presentMode !== "surface" && wasmModule.RustRenderer.createWithPresent) {
       appliedPresentMode = presentMode;
       return wasmModule.RustRenderer.createWithPresent(canvas, presentMode);
@@ -214,8 +241,9 @@ export const createRustDrawListExecutor: MirrorDrawExecutorFactory = async ({ ca
   const createdAt = performance.now();
   startupEvent?.("rust.surfaceCreated", { elapsedMs: createdAt - startedAt,
     width: canvas.width, height: canvas.height });
-  // Cache wasm-backed metadata before any async present can hold a mutable wasm borrow.
-  const backendName = engine.backend;
+  // Cache wasm-backed metadata before any async present can hold a mutable wasm borrow: read once per engine, when
+  // it is created (startup and every context-restore rebuild), so it always names the live engine's backend.
+  let backendName = engine.backend;
   logRust("surface created", backendName, canvas.width, canvas.height);
   const stats = blankStats();
   const textures = new Map<string, ResourcePixels>();
@@ -316,8 +344,23 @@ export const createRustDrawListExecutor: MirrorDrawExecutorFactory = async ({ ca
       msdfAtlas.resetResidency();
       uploaded.clear(); uploadedPixels.clear();
       committedTypedScene = null; committedScene = null; committedRevision = null;
+      // rustGlBackend: the GL renderer restores in place (it re-creates its GL objects; its settings stay), and the
+      // uploads and admission that follow refill it. A restore it cannot complete is logged and counted every time,
+      // latches GL off, and rebuilds on wgpu.
+      if (backendName === GL_BACKEND_NAME && typeof engine.restore_context === "function") {
+        if (engine.restore_context()) {
+          resizeFailure = null;
+          stats.contextReady = true;
+          onInvalidate();
+          return;
+        }
+        glRefused = true;
+        glRefusals.restore++;
+        console.info("[rust-prototype] rustGlBackend could not restore in place; rebuilding on wgpu");
+      }
       engine.dispose();
       engine = await createEngine();
+      backendName = engine.backend;
       configureEngine(engine);
       resizeFailure = null;
       stats.contextReady = true;
@@ -516,6 +559,7 @@ export const createRustDrawListExecutor: MirrorDrawExecutorFactory = async ({ ca
     rustUploadBytes, rustCompletedPresents, rustWasmCalls, rustInstanceUploadBytes, rustIncrementalPatches, rustGeometryRebuilds, rustMaxSampledTextures,
     rustDamagePresent: damagePresent, rustDamage: rustDamageStats && { ...rustDamageStats, last: rustLastDamage },
     rustPresentMode: rustLastPresentMode ?? appliedPresentMode,
+    rustGlBackend: backendName === GL_BACKEND_NAME, rustGlRefused: glRefused, rustGlRefusals: { ...glRefusals },
     rustBlitPixels: { total: rustBlitPixelsTotal, last: rustLastBlitPixels },
     retainedPatchEncodes, retainedPatchEncodeMs, retainedPatchQueueWaitMs, retainedPatchPresentWaitMs,
     textPatchCommits, textPatchResourceChanges,
@@ -1687,6 +1731,11 @@ export const createRustDrawListExecutor: MirrorDrawExecutorFactory = async ({ ca
     // rustPresent diagnostics: which mode this engine actually presents through, and the pixels its blits moved —
     // a cumulative total across this engine's lifetime plus the last present's own count.
     get rustPresentMode() { return rustLastPresentMode ?? appliedPresentMode; },
+    // rustGlBackend diagnostics: whether this engine runs on the direct-GL backend (false: wgpu).
+    get rustGlBackend() { return backendName === GL_BACKEND_NAME; },
+    // rustGlBackend: whether GL was refused (latched off for this executor) and how often, at creation or restore.
+    get rustGlRefused() { return glRefused; },
+    get rustGlRefusals() { return { ...glRefusals }; },
     get rustBlitPixels() { return { total: rustBlitPixelsTotal, last: rustLastBlitPixels }; },
     resize(nextWidth: number, nextHeight: number, _resolution = 1, nextDesignWidth = nextWidth, nextDesignHeight = nextHeight) {
       surfaceWidth = nextWidth; surfaceHeight = nextHeight;

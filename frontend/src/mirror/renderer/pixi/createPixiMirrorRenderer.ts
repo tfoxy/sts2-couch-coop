@@ -100,6 +100,11 @@ type MirrorDrawExecutor = Omit<PixiDrawListRenderer<string>, "render" | "admitSc
   /** rustPresent: the mode this executor's Rust engine actually presents through ("surface" unless `rustPresent`
    *  asked for another and the glue's `createWithPresent` honoured it). */
   readonly rustPresentMode?: string;
+  /** rustGlBackend: whether this executor's Rust engine runs on the direct-GL backend (false: wgpu). */
+  readonly rustGlBackend?: boolean;
+  /** rustGlBackend: GL was refused and is latched off for this executor; refusals at creation and at restore. */
+  readonly rustGlRefused?: boolean;
+  readonly rustGlRefusals?: { create: number; restore: number };
   /** rustPresent: cumulative pixels every present's blit wrote over this engine's lifetime, and the last
    *  present's own count (both 0/null until the glue reports them). */
   readonly rustBlitPixels?: { total: number; last: number | null };

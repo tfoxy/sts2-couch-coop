@@ -1342,6 +1342,105 @@ describe("rustPresent executor present modes", () => {
   });
 });
 
+describe("rustGlBackend executor backend choice", () => {
+  type GlDiagnostics = { rustPresentMode: string; rustGlBackend: boolean; rustGlRefused: boolean;
+    rustGlRefusals: { create: number; restore: number } };
+  const engine = (backend: string, extra: Record<string, unknown> = {}) => ({ backend, resize: () => {},
+    dispose: () => {}, upload_rgba_batch: () => 0,
+    admit_scene: () => JSON.stringify({ accepted: true, revision: 1, unsupportedCommands: 0, resourcePending: 0 }),
+    apply_patch: () => "{}",
+    present: async () => JSON.stringify({ presented: true, revision: 1, draws: 1, resourcePending: 0, unsupportedCommands: 0 }),
+    ...extra });
+  const serializerSource = "export function encodeRustScene(){return {bytes:new Uint8Array([1])," +
+    "scene:{version:2,revision:1,resources:[],commands:[]},resources:[],textUploads:[],unsupportedCommands:0}};" +
+    "export function encodeRustPatch(){return null};export function encodeRustResources(){return new Uint8Array(0)}";
+  async function createWith(query: string, glue: { createWithGl?: (mode: string) => unknown }) {
+    window.history.replaceState({}, "", query);
+    const calls: string[] = [];
+    (globalThis as Record<string, unknown>).__rustGlTest = {
+      create: () => { calls.push("create"); return engine("webgl2"); },
+      createWithPresent: (mode: string) => { calls.push(`createWithPresent:${mode}`); return engine("webgl2"); },
+      createWithGl: (mode: string) => { calls.push(`createWithGl:${mode}`); return glue.createWithGl!(mode); },
+    };
+    vi.stubEnv("VITE_RUST_PROTOTYPE_MODULE_URL", moduleUrl(
+      "export default async function init(){return {}};export class RustRenderer{" +
+      "static async create(){return globalThis.__rustGlTest.create()}" +
+      "static async createWithPresent(canvas,mode){return globalThis.__rustGlTest.createWithPresent(mode)}" +
+      (glue.createWithGl ? "static async createWithGl(canvas,mode){return globalThis.__rustGlTest.createWithGl(mode)}" : "") + "}",
+    ));
+    vi.stubEnv("VITE_RUST_SCENE_SERIALIZER_URL", moduleUrl(serializerSource));
+    const canvas = document.createElement("canvas");
+    const renderer = await createRustDrawListExecutor({ canvas, width: 1, height: 1,
+      designWidth: 1, designHeight: 1, onInvalidate: () => {} });
+    return { renderer, calls, canvas, diagnostics: renderer as unknown as GlDiagnostics };
+  }
+  const loseAndRestore = (canvas: HTMLCanvasElement) => {
+    canvas.dispatchEvent(new Event("webglcontextlost", { cancelable: true }));
+    canvas.dispatchEvent(new Event("webglcontextrestored"));
+  };
+
+  it("creates through createWithGl in the default present mode when the glue has it", async () => {
+    const { renderer, calls, diagnostics } = await createWith("/", { createWithGl: () => engine("webgl2-gl") });
+    expect(calls).toEqual(["createWithGl:preserved-desync"]);
+    expect(diagnostics.rustGlBackend).toBe(true);
+    expect(diagnostics.rustPresentMode).toBe("preserved-desync");
+    renderer.dispose();
+  });
+
+  it("stays on wgpu under rustGlBackend=0, and under rustPresent=surface", async () => {
+    for (const [query, expected] of [["/?rustGlBackend=0", "createWithPresent:preserved-desync"],
+      ["/?rustPresent=surface", "create"]] as const) {
+      const { renderer, calls, diagnostics } = await createWith(query, { createWithGl: () => engine("webgl2-gl") });
+      expect(calls).toEqual([expected]);
+      expect(diagnostics.rustGlBackend).toBe(false);
+      renderer.dispose();
+    }
+  });
+
+  it("falls back to wgpu when createWithGl is missing (silently) or refuses (logged, counted)", async () => {
+    const note = vi.spyOn(console, "info").mockImplementation(() => {});
+    const missing = await createWith("/?rustPresent=direct", {});
+    expect(missing.calls).toEqual(["createWithPresent:direct"]);
+    expect(missing.diagnostics.rustGlBackend).toBe(false);
+    expect(missing.diagnostics.rustGlRefused).toBe(false);
+    missing.renderer.dispose();
+    const refused = await createWith("/?rustPresent=direct", { createWithGl: () => { throw new Error("no context"); } });
+    expect(refused.calls).toEqual(["createWithGl:direct", "createWithPresent:direct"]);
+    expect(refused.diagnostics.rustGlBackend).toBe(false);
+    expect(refused.diagnostics.rustGlRefusals).toEqual({ create: 1, restore: 0 });
+    expect(note).toHaveBeenCalledTimes(1);
+    refused.renderer.dispose();
+  });
+
+  it("restores a GL engine in place on webglcontextrestored, without rebuilding or switching backend", async () => {
+    let restores = 0;
+    const gl = engine("webgl2-gl", { restore_context: () => { restores++; return true; } });
+    const { renderer, calls, canvas, diagnostics } = await createWith("/", { createWithGl: () => gl });
+    loseAndRestore(canvas);
+    await vi.waitFor(() => expect(restores).toBe(1));
+    expect(calls).toEqual(["createWithGl:preserved-desync"]);
+    expect(diagnostics.rustGlBackend).toBe(true);
+    expect(diagnostics.rustGlRefusals).toEqual({ create: 0, restore: 0 });
+    renderer.dispose();
+  });
+
+  it("latches GL off once refused: a refused in-place restore rebuilds on wgpu and later restores never retry GL", async () => {
+    const note = vi.spyOn(console, "info").mockImplementation(() => {});
+    const gl = engine("webgl2-gl", { restore_context: () => false });
+    const { renderer, calls, canvas, diagnostics } = await createWith("/", { createWithGl: () => gl });
+    loseAndRestore(canvas);
+    await vi.waitFor(() => expect(calls).toEqual(["createWithGl:preserved-desync", "createWithPresent:preserved-desync"]));
+    await vi.waitFor(() => expect(diagnostics.rustGlBackend).toBe(false));
+    expect(diagnostics.rustGlRefused).toBe(true);
+    expect(diagnostics.rustGlRefusals).toEqual({ create: 0, restore: 1 });
+    loseAndRestore(canvas);
+    await vi.waitFor(() => expect(calls).toHaveLength(3));
+    expect(calls[2]).toBe("createWithPresent:preserved-desync");
+    expect(note).toHaveBeenCalledTimes(1);
+    renderer.dispose();
+  });
+});
+
 describe("rustFast WP1 bounded Bitmap text cache (rustTextEvict)", () => {
   function mockInkContext(): void {
     vi.spyOn(HTMLCanvasElement.prototype, "getContext").mockImplementation((function (this: HTMLCanvasElement) {

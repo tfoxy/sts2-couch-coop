@@ -42,6 +42,12 @@ export interface RustFastFlags {
    * "applied"). The scheduler's own ticks keep drawing animation at their own times.
    */
   skipUndrawnWire: boolean;
+  /**
+   * The GSW Rust renderer issues WebGL2 through its direct-GL backend (`createWithGl`) instead of wgpu: the same
+   * renderer and pixels, without wgpu's validation and per-pass state resets. Needs a canvas present mode
+   * (`rustPresent` other than `surface`) and glue that has `createWithGl`; otherwise wgpu, as before.
+   */
+  glBackend: boolean;
   verify: boolean;
 }
 
@@ -71,6 +77,7 @@ export const RUST_FAST_SWITCHES = {
   damagePresent: "rustDamagePresent",
   idleInRust: "rustIdleInRust",
   skipUndrawnWire: "rustSkipUndrawnWire",
+  glBackend: "rustGlBackend",
 } as const satisfies Record<Exclude<keyof RustFastFlags, "verify">, string>;
 
 export function resolveRustFastFlags(query: URLSearchParams, backend: "pixi" | "rust"): RustFastFlags {
