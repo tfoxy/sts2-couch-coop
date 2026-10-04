@@ -88,8 +88,9 @@ present opens and pops a validation error scope (`renderer.rs:1932`).
    queue and encoder with direct WebGL2 calls through `glow`, issuing only the state changes a frame needs. That
    removes wgpu-core validation and tracking, and wgpu-hal's per-pass state resets.
 4. **Stay on WebGL2 `preserved-desync`.** Only the new direct-GL backend is in scope, not WebGPU.
-5. **Raise the cadence last.** Once the frame costs near the floor, idle can run at display rate (the user wants at
-   least 90 fps idle) for about DOM's CPU per second.
+5. **No authored cadence cap.** Idle animation runs at display rate, like DOM's compositor animations. The 30 fps
+   idle cap (`CANVAS_IDLE_ANIMATION_FPS`) goes in phase A (WP7). The user's decision on Oct 4: it should never have
+   existed.
 
 Out of scope this round:
 - rendering in a worker with `OffscreenCanvas` (only its floor is measured, in WP3);
@@ -97,7 +98,8 @@ Out of scope this round:
 
 ## 3. Success criteria
 
-Phone figures: Moto g86, Chrome Stable at default flags, panel pinned 90 Hz, ABBA, with the Oct 4 harness.
+Phone figures: Moto g86, Chrome Stable at default flags, panel pinned 90 Hz, ABBA, with the Oct 4 harness. Idle
+figures are display-paced: once WP7 lands that is simply the product, with no `cmpIdle` needed.
 
 | Measure | Now | Target |
 | --- | --- | --- |
@@ -130,14 +132,28 @@ bookkeeping. Read them. In short:
 - add a ledger row per attempt.
 
 Added for this round:
+- **Don't ask the user anything.** The user wants this round to run without questions. Proceed without asking on:
+  - phone sessions (with the lease, preflight and restore below);
+  - deploys through `couch-deploy`;
+  - merges and squash commits to `main`.
+
+  Where any rule says "ask the user", including the deploy rule in the idle-combat handoff's §3, decide yourself and
+  report the decision at the end. The only hard stops are the go-aheads `CLAUDE.md` reserves for the maintainer:
+  spirectl semantic actions, new polling, and a visible game window on the desktop. This round needs none of them,
+  so route around them rather than asking.
 - **Phone preflight.** The user flipped `#use-angle=vulkan`, `SkiaGraphite` and `Vulkan` in Chrome Stable on Oct 4.
   Before any phone cell, read `chrome://gpu`: it must show `Display type: ANGLE_OPENGLES` and no `--use-angle` on the
-  command line. If not, stop and ask the user to reset the flags.
+  command line. If not, reset the flags yourself:
+  1. open `chrome://flags` over CDP and use "Reset all";
+  2. relaunch Chrome (`adb shell am force-stop com.android.chrome`, then reopen);
+  3. read `chrome://gpu` again.
+
+  If it still isn't at default, record that session's phone cells as MFAIL and continue on desktop numbers.
   - Reuse the lease, panel-pin, rotation and restore steps in `.sts2/bench/webgl-floor-oct4/harness/`
     (`device-original.txt`, `floor-cell.sh`, `snooze.cjs`).
   - Restore the phone after every session.
-- **One phone session per phase.** Batch every phone cell of a phase into one `mirror-bench` run. Each session costs
-  the user their phone.
+- **One phone session per phase.** Batch every phone cell of a phase into one `mirror-bench` run, to keep the phone
+  free as much as possible.
 - **Exactness first.** A skipped frame must be provably pixel-identical to presenting it. Treat a changed resource or
   key with unchanged geometry as a change (memory `idle-combat-round-oct3`).
 - **Merge-tree integration.** WP5 and WP6 both touch `renderer.rs`. Before landing either, merge them in a scratch GSW
@@ -147,7 +163,7 @@ Added for this round:
 ## 5. Team, models and worktrees
 
 The coordinator is the main session on **Opus**. It owns this plan, creates the worktrees, reviews and merges, and
-talks to the user. Implementers are `round-implementer` with an explicit `model`. Each branch gets an Opus
+reports to the user at the end. Implementers are `round-implementer` with an explicit `model`. Each branch gets an Opus
 `general-purpose` reviewer running `code-review` at level high. Measurements go to `mirror-bench` on **Sonnet**.
 
 | WP | Owner (model) | Repo / main files | Switch |
@@ -158,7 +174,7 @@ talks to the user. Implementers are `round-implementer` with an explicit `model`
 | WP4 direct-GL spike | round-implementer (**Opus**) | GSW worktree, new `src/gl/` module beside `renderer.rs` | none (spike) |
 | WP5 direct-GL backend | round-implementer (**Opus**) | GSW `renderer.rs`, `present.rs`, `wasm.rs`, shader; couch executor wiring | `rustGlBackend` |
 | WP6 server motion in Rust | round-implementer (**Opus**) | GSW `idle.rs` + descriptor; couch `rustIdleLane.ts`, `rustIdleDescriptor.ts`, `visualState.ts` tween/flight hand-off | `rustMotionInRust` |
-| WP7 idle cadence switch | round-implementer (**Sonnet**) | couch `frameRuntime.ts:26`, `visualState.ts`, `rustFastFlags.ts` | `rustIdleCadence` |
+| WP7 remove the 30 fps idle cap | round-implementer (**Sonnet**) | couch `frameRuntime.ts:26`, `visualState.ts`, `createPixiMirrorRenderer.ts`, `frameAssembly.ts`, `diagnostics.ts`, `rendererComparison.ts` | none (removal) |
 | Touch harness | `touch-input-qa` (**Sonnet**) | read-only | — |
 
 **Worktrees:**
@@ -170,10 +186,13 @@ talks to the user. Implementers are `round-implementer` with an explicit `model`
 - Pass absolute paths in every brief. Don't rely on the Agent tool's bare `isolation: "worktree"`.
 
 **Phases:**
-- **A, in parallel:** WP1, WP2, WP3, WP4. Files are disjoint; WP3 owns the only phone session.
+- **A, in parallel:** WP7, WP1, WP2, WP3, WP4.
+  - WP7 is small and lands first.
+  - WP1 rebases onto it before review (both touch the scheduler and reconcile path).
+  - WP3 owns the phase's only phone session and measures with WP7 in place where it has landed.
 - **B:** WP5 if WP4 passes its gate; WP6 in parallel. WP6's GSW part touches `idle.rs` and `present_idle`, and WP5
   replaces the GPU layer under it, so cut WP6's GSW worktree after WP5's backend seam commit (WP5 step 1).
-- **C:** WP7, then one phone session measuring the whole round.
+- **C:** one phone session measuring the whole round.
 
 **Briefs** name the WP section, worktree path, branch and switch. Each asks for:
 - a diff on the branch;
@@ -225,8 +244,8 @@ This decides WP4's and WP5's scope. Desktop headless Chromium is fine: call coun
 One session with the §4 preflight:
 1. **Busy baseline.** Rust vs DOM on a busy combat recording (card plays, flights, targeting), during-replay windows,
    at 90 Hz. Record ms/frame, ms/s, presented fps, and frames by cause (wire patch, tween, flight, idle, build).
-   - Find a current recording under `.sts2/bench/` with card plays. If there is none, ask the user for one (Settings
-     → repro recorder; `docs/agents/repro-recorder.md`).
+   - Use the Oct 2 card-target recording named in [handoff-interactive-rebuild-cost.md](handoff-interactive-rebuild-cost.md)
+     §1 (repro/1, card pick-up, aim and play). Copy it under `.sts2/bench/wire-renderer/` and work from the copy.
 2. **Worker floor.** Raw WebGL2 1-quad rendered from a dedicated worker via `transferControlToOffscreen()` with
    `desynchronized` + `preserveDrawingBuffer`, against the main-thread page. This is a measurement only. It tells
    us whether a worker architecture could cut the renderer-process floor (3.55 ms/frame today) enough to plan it
@@ -299,12 +318,28 @@ Run only if WP4 passed its gate.
   - WP3's busy recording replayed through `bench-rust-ab.mjs` (desktop, phone viewport), before and after;
   - the touch harness in full: drag and aim touch the tween path.
 
-### WP7 — idle cadence switch (Sonnet) — switch `rustIdleCadence`
+### WP7 — remove the 30 fps idle cap (Sonnet, phase A, lands first) — no switch
 
-- **Goal:** turn the `cmpIdle=display` diagnostic into a viewer-facing switch: `rustIdleCadence=display|30`.
-- **Default:** keep it at 30 until the round's final phone session shows display-paced idle within the §3 per-second
-  target. Then ask the user whether to flip the default.
-- **Gates:** frontend gate; a desktop check that `rustIdleScheduler` and `rustIdleDueFrame` still book no empty frames.
+- **Goal:** delete `CANVAS_IDLE_ANIMATION_FPS` (`renderer/canvas/frameRuntime.ts:26`) and the deadline pacing built on
+  it, so idle loops are sampled every display frame on every canvas backend (Rust, Pixi, TS canvas). Find every use
+  with `grep -rn 'CANVAS_IDLE_ANIMATION_FPS\|idleCadence\|cmpIdle' frontend/src scripts`. Today that is
+  `frameRuntime.ts`, `frameAssembly.ts`, `diagnostics.ts`, `visualState.ts`, `createPixiMirrorRenderer.ts`, and
+  `rendererComparison.ts` plus `RendererComparisonPanel.vue`.
+- **Drop the `idleCadence` comparison field and the `cmpIdle` parameter,** since only one cadence remains. Bench
+  scripts or configs that still pass `cmpIdle=display` must keep working (the parameter is then ignored). Update any
+  doc that tells a bench to set it.
+- **No switch.** This is the user's explicit decision and is exempt from the §4 switch rule.
+- **Keep the frame-count guarantees:**
+  - no rAF is booked while no idle loop is installed and visible;
+  - an idle-only frame stays one `present_idle` call (`rustIdleScheduler`, `rustIdleDueFrame`);
+  - a hidden tab or a screen without loops presents nothing.
+- **Gates:**
+  - frontend gate (update `canvasFrameSchedulerIdle.spec.ts` and the comparison specs);
+  - a desktop replay showing idle presents at display rate with loops visible, and 0 per second on a static screen;
+  - narrowed touch harness (scheduler path).
+- **Commit** as `perf(mirror): animate idle loops at the display rate`, with `Changelog: Idle animations in combat
+  are smooth on the canvas renderer.`
+- **Afterwards:** update memory `rust-phone-authored-cadence-sep27`, which describes the cap as current.
 
 ## 7. Measurement and integration
 
@@ -315,7 +350,8 @@ Run only if WP4 passed its gate.
 - gate every cell on `rendererWindow.backend === "rust"`, and record the load average;
 - results under `.sts2/bench/wire-renderer/<wp>/`.
 
-**Phone, at the end of phase C:** one `mirror-bench` session, all round switches on vs off, ABBA, with the Oct 4
+**Phone, in phase C:** one `mirror-bench` session, all round switches on vs off (WP7 has no switch, so both arms run
+display-paced), ABBA, with the Oct 4
 cells repeated as controls (raw WebGL2, DOM idle) to show drift. Report ms/frame, ms/s, presented fps and cpufreq
 residency.
 
@@ -329,19 +365,21 @@ residency.
   - `perf(mirror): evaluate tweens and card flights in the Rust renderer` (WP6).
 - Add a player-facing `Changelog:` line on each `perf` commit, e.g. "Combat runs smoother and uses less battery on
   phones."
-- Ask the user before any redeploy.
+- Once the squash commits are on `main`, redeploy the installed mod through `couch-deploy` without asking, so the
+  user's next play-test runs the round.
 
 **Close-out:**
 - a ledger row for every attempt, including WP4's spike and any MFAIL;
 - update memory `topic-rust-stage`, and add per-WP memories where a trap was found;
 - remove the worktrees.
 
-## 8. Follow-ups needing a decision (do not start)
+## 8. Follow-ups for the next round (do not start in this one)
+
+The coordinator recommends which of these to run next, based on this round's numbers.
 
 - **Producer-side suppression** of transforms on subtrees with nothing visible, flushed when a descendant becomes
   visible. This saves host CPU and network as well. The scene watcher is in spirectl
-  (`Sts2RuntimeSceneWatcher.cs`), so it needs the maintainer's go-ahead and a check of which repo owns the emission
-  policy.
+  (`Sts2RuntimeSceneWatcher.cs`); check which repo owns the emission policy first.
 - **Rendering in a worker** (`OffscreenCanvas`), if WP3's worker floor is markedly lower. Input hit maps would need a
   main-thread mirror.
 - **DOM-side skip** of undrawn wire deltas.
@@ -355,18 +393,24 @@ residency.
 > 2. Create a worktree per WP: couch via `couch-worktree`, copying `.sts2/rust-prototype-web/`; GSW via
 >    `git worktree add` + `mise trust` + an offline `pnpm install`.
 > 3. **Phase A, in parallel:**
+>    - WP7 (round-implementer, Sonnet; remove the 30 fps idle cap; lands first, and WP1 rebases onto it);
 >    - WP1 (round-implementer, Sonnet);
 >    - WP2 (mirror-bench, Sonnet);
 >    - WP3 (mirror-bench, Sonnet; the only phone session; run the §4 preflight first);
 >    - WP4 (round-implementer, Opus).
 > 4. **Phase B:** if WP4 meets its gate, run WP5 (Opus) and land its seam commit first. Then run WP6 (Opus) from that
 >    seam. Merge WP5 and WP6 in a scratch GSW worktree and run every integration mode before landing either.
-> 5. **Phase C:** WP7 (Sonnet), then one final phone session.
+> 5. **Phase C:** one final phone session.
 >
 > Rules for every WP:
 > - Review each branch with an Opus `code-review` pass before merging.
 > - Add a ledger row per attempt.
 > - Never `npm run build`, push or tag; leave the siblings on clean `main`; land GSW first.
-> - Ask the user before any phone session and before any redeploy.
+> - Do not ask the user anything: run phone sessions, merges and the `couch-deploy` redeploy yourself, and decide
+>   where a rule would otherwise ask.
 >
-> Finish by giving the user switch URLs for an on/off phone play-test and the squash commits ready on `main`.
+> Finish with a report to the user:
+> - the squash commits on `main`;
+> - the deployed build;
+> - the measured results against §3;
+> - switch URLs for an on/off phone play-test.
