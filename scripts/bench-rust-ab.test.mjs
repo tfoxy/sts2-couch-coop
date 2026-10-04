@@ -81,6 +81,17 @@ test("buildCellBenchArgs maps a control-config shape onto bench-mirror-replay.mj
   ]);
 });
 
+test("buildCellBenchArgs carries --allow-missing-static-bg through config.benchArgs (no dedicated config key)", () => {
+  // A seat recording's static-bg waiver is a bench-mirror-replay.mjs flag, not a bench-rust-ab.mjs concept —
+  // config.benchArgs already passes any such flag through verbatim (see the control-config shape test above),
+  // so bench-rust-ab.mjs adds no dedicated config.allowMissingStaticBg key for it.
+  const argv = buildCellBenchArgs({
+    config: { recording: "/r.ndjson", resRoot: "/res-root", benchArgs: ["--allow-missing-static-bg"] },
+    url: "http://x/", passthrough: null, cellDir: "/out/0-OFF", extraBenchArgs: [], traced: false,
+  });
+  assert.ok(argv.includes("--allow-missing-static-bg"));
+});
+
 test("buildCellBenchArgs defaults quality to auto and effects off when the config omits them", () => {
   const argv = buildCellBenchArgs({ config: {}, url: "http://x/", passthrough: null, cellDir: "/out/0-OFF", extraBenchArgs: [], traced: false });
   assert.deepEqual(argv.slice(0, 6), ["scripts/bench-mirror-replay.mjs", "--url", "http://x/", "--quality", "auto", "--effects"]);

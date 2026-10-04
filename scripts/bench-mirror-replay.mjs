@@ -146,6 +146,20 @@ const DEFAULT_SERVE_PORT = 8123;
 
 // Browser callbacks passed directly to Playwright. Keep the marker window independent of renderer internals:
 // the harness only resets its own observations and brackets the page clock for trace correlation.
+// Installed once via addInitScript (so it reapplies on every navigation, warmup included) and called from BOTH
+// the renderer-readiness gate and the --parity-capture acceptance gate, which otherwise can't share a Node-side
+// function — they execute inside two separate in-page evaluations. ONE implementation instead of two copies.
+// FAILS CLOSED: a staticBg reader that could not be read at all (null) never counts as "no attempt was made" —
+// only an actually-observed attempts === 0 does, per --allow-missing-static-bg's contract.
+function installStaticBgWaiverInPage() {
+  window.__couchStaticBgWaiver = (allowMissingStaticBg, staticBg) => {
+    const decoded = staticBg?.latched === false && Number(staticBg?.decodes) > 0 &&
+      typeof staticBg?.lastUrl === "string" && staticBg.lastUrl.length > 0;
+    const waived = allowMissingStaticBg === true && staticBg !== null && staticBg.attempts === 0;
+    return { decoded, waived };
+  };
+}
+
 function beginActiveMarkerWindowInPage(input) {
   if (input.ordinal) {
     const ws = window.__benchWs;
@@ -310,6 +324,7 @@ function parseArgs(argv) {
     churnCensus: false,
     noReportShot: false,
     allowUnmeasuredDecode: false,
+    allowMissingStaticBg: false,
     handParity: false,
     quality: "high",
     freshDefaults: false,
@@ -429,6 +444,7 @@ function parseArgs(argv) {
       case "--churn-census": a.churnCensus = true; break;
       case "--no-report-shot": a.noReportShot = true; break;
       case "--allow-unmeasured-decode": a.allowUnmeasuredDecode = true; break;
+      case "--allow-missing-static-bg": a.allowMissingStaticBg = true; break;
       case "--hand-parity": a.handParity = true; break;
       case "--shot": a.shot = argv[++i]; break;
       case "--shot-clock-ms": a.shotClockMs = Number(val()); break;
@@ -580,6 +596,24 @@ if (args.help) {
   --allow-unmeasured-decode
                         report a missing trace decode family as null/unmeasured instead of discarding the
                         whole repeat; scoped to warm-cache A/B runs and never changes health/readiness gates
+  --allow-missing-static-bg
+                        for a SEAT recording whose static background is NEVER ATTEMPTED at all: treats the
+                        static-bg readiness/acceptance gate as satisfied once staticBg.attempts === 0 is
+                        observed, instead of waiting forever for a decode that can never arrive. A seat never
+                        gets a host-authored static-bg descriptor — the host socket stays quiet (memory
+                        static-bg-seat-host-authority-sep23) — so without this flag a seat replay on a backend
+                        that forces the static background on (the canvas/Rust stage always does) hits a 120s
+                        "renderer readiness timeout" no matter how long you wait. This is NOT for a recording
+                        that DOES attempt a static background: one that fetches /bg still needs
+                        COUCHCOOP_DEV_BG_FIXTURE (or a live game backing the proxy) to resolve it, and an
+                        attempt this flag observes (attempts > 0, at the gate or later in the same repeat) still
+                        has to finish decoding — this never masks a real decode failure, and a LATE attempt
+                        (one that starts only after the gate already passed on the waiver) fails that repeat
+                        outright rather than reporting numbers next to an unresolved race (staticBgLateAttempt).
+                        Off by default. Recorded per repeat as staticBgGateWaived (true only on the repeat that
+                        actually needed the waiver to pass; null for a crashed repeat, which reached no
+                        trustworthy verdict either way) and staticBgLateAttempt, plus allowMissingStaticBg in
+                        the result's config.
   --recording <path>    NDJSON recording (default: env COUCHCOOP_BENCH_RECORDING, else newest .sts2/bench/*.ndjson)
   --effects <on|off>    include WebGL shaders/particles (default off — SwiftShader fakes GPU cost as CPU).
                         ON means DYNAMIC: it is the worst case, not the shipping one (see --effect-mode).
@@ -5174,35 +5208,49 @@ if (opts.preIdleWitness || opts.activeWindowWitness || opts.startupObservationOu
   // the single-canvas backend (`?stage=canvas`) builds ONE canvas and would sit here for the full 120 s no matter
   // how well it was rendering. Its equivalent is its own painted-frame counter — a frame that really reached
   // `execute` carrying a scene's worth of quads — so the gate is the OR of the two.
+  // --allow-missing-static-bg: a SEAT recording never ATTEMPTS a static-bg decode at all — the host socket that
+  // would carry its descriptor stays quiet for a seat (memory static-bg-seat-host-authority-sep23) — so on a
+  // backend that forces the static background on (canvas/Rust always does), the decode-based staticBgReady
+  // check below can never become true no matter how long this waits. The flag treats that specific shape — NO
+  // attempt was ever made — as satisfied. A recording that DOES attempt one still has to finish it, waiver or
+  // not, so a real decode failure is never masked. See installStaticBgWaiverInPage for the shared verdict logic.
+  let staticBgGateWaived = false;
   if (!opts.activeWindowWitness && !opts.startupObservationOut) try {
-    await waitAbortably(() => page.waitForFunction(
-      () => {
+    const readyHandle = await waitAbortably(() => page.waitForFunction(
+      (allowMissingStaticBg) => {
         const readRenderer = window.__mirrorRendererDiagnostics;
         if (typeof readRenderer === "function") {
-        const renderer = readRenderer();
-        if (renderer?.failed || renderer?.status === "failed" || renderer?.readiness === "failed" || renderer?.failure) {
-          throw new Error(`renderer failed during warmup: ${renderer?.failure ?? renderer?.readiness ?? renderer?.status}`);
+          const renderer = readRenderer();
+          if (renderer?.failed || renderer?.status === "failed" || renderer?.readiness === "failed" || renderer?.failure) {
+            throw new Error(`renderer failed during warmup: ${renderer?.failure ?? renderer?.readiness ?? renderer?.status}`);
+          }
+          const staticBg = typeof window.__mirrorStaticBg === "function" ? window.__mirrorStaticBg() : null;
+          const { decoded, waived } = window.__couchStaticBgWaiver(allowMissingStaticBg, staticBg);
+          const staticBgReady = renderer?.effective?.staticBg !== 1 || decoded || waived;
+          const ok = staticBgReady && renderer?.ready === true && Number(renderer?.draw?.frames) > 0 &&
+            Number(renderer?.draw?.objects) > 0 && Number(renderer?.resources?.pending ?? 0) === 0 &&
+            Number(renderer?.resources?.failed ?? 0) === 0;
+          // The handle this resolves with carries the verdict straight out of the instant the gate actually
+          // passed — no second page.evaluate afterward, which would both cost an extra round trip and risk
+          // reading a STALE verdict if the page moved on between the wait resolving and that later read.
+          return ok ? { ready: true, waived } : false;
         }
-        const staticBg = typeof window.__mirrorStaticBg === "function" ? window.__mirrorStaticBg() : null;
-        const staticBgReady = renderer?.effective?.staticBg !== 1 ||
-          (staticBg?.latched === false && Number(staticBg?.decodes) > 0 && typeof staticBg?.lastUrl === "string" && staticBg.lastUrl.length > 0);
-        return staticBgReady && renderer?.ready === true && Number(renderer?.draw?.frames) > 0 &&
-          Number(renderer?.draw?.objects) > 0 && Number(renderer?.resources?.pending ?? 0) === 0 &&
-          Number(renderer?.resources?.failed ?? 0) === 0;
-      }
-      if (document.querySelectorAll(".mirror-node").length > 50) {
-        return true;
-      }
-      const readCanvasStats = window.__mirrorCanvasStats;
-      if (typeof readCanvasStats !== "function") {
-        return false;
-      }
-      const stats = readCanvasStats();
-      return stats.frames > 0 && stats.quads > 50;
-    },
-    null,
+        if (document.querySelectorAll(".mirror-node").length > 50) {
+          return { ready: true, waived: false };
+        }
+        const readCanvasStats = window.__mirrorCanvasStats;
+        if (typeof readCanvasStats !== "function") {
+          return false;
+        }
+        const stats = readCanvasStats();
+        return (stats.frames > 0 && stats.quads > 50) ? { ready: true, waived: false } : false;
+      },
+      opts.allowMissingStaticBg === true,
       { timeout: Number(process.env.COUCHCOOP_BENCH_READY_TIMEOUT_MS ?? 120_000) }
     ));
+    const readyVerdict = await readyHandle.jsonValue().catch(() => null);
+    await readyHandle.dispose().catch(() => {});
+    staticBgGateWaived = readyVerdict?.waived === true;
   } catch (error) {
     campaignAbort?.throwIfAborted();
     const readiness = await page.evaluate(() => ({
@@ -5404,6 +5452,23 @@ if (opts.preIdleWitness || opts.activeWindowWitness || opts.startupObservationOu
       })
     : null);
   const closeCallEndMs = ordinalBoundary?.close?.closeCallEndMs ?? performance.now();
+  // --allow-missing-static-bg, continued: the gate above can only vouch for the INSTANT it passed. An attempt
+  // can still START during the measured window (e.g. the seat's host socket catches up mid-replay), so re-read
+  // staticBg at the close of THIS repeat's own measurement — reusing markerClose's read when --report already
+  // took one (above), else a dedicated minimal evaluate, so this costs nothing unless the waiver was actually
+  // used. A late attempt means the waiver can no longer vouch for the repeat, so it fails the repeat outright
+  // rather than silently reporting numbers next to an unresolved static-bg race.
+  if (opts.allowMissingStaticBg && staticBgGateWaived) {
+    const lateStaticBg = markerClose !== null
+      ? markerClose.staticBg
+      : await page.evaluate(() => (typeof window.__mirrorStaticBg === "function" ? window.__mirrorStaticBg() : null)).catch(() => null);
+    if (lateStaticBg !== null && Number(lateStaticBg?.attempts ?? 0) > 0) {
+      throw new StaticBgLateAttemptError(
+        `a static-bg attempt (attempts=${lateStaticBg.attempts}) was observed after --allow-missing-static-bg ` +
+        "waived readiness on attempts===0; this repeat's waiver can no longer be trusted"
+      );
+    }
+  }
   const processStartsAfterMarker = ordinalBoundary?.close?.processStartsAfterMarker ??
     (opts.report ? await captureBrowserProcessStarts(context) : null);
   const readyMs = opts.report ? markerClose?.atMs ?? null : null;
@@ -5569,7 +5634,7 @@ if (opts.preIdleWitness || opts.activeWindowWitness || opts.startupObservationOu
     if (opts.parityAfterDrain) await page.waitForFunction(() => window.__benchDone === true, null, { timeout: 180_000 });
     const animationSteps = opts.parityAnimationSteps ? await page.evaluate(stepCanvasParityAnimationInPage, {
       clockMs: opts.parityClockMs, steps: opts.parityAnimationSteps }) : null;
-    const captureParity = async ({ stepped, forceBuild = false, actualCommands = stepped }) => probePage(async ({ clockMs, stepped, forceBuild, actualCommands }) => {
+    const captureParity = async ({ stepped, forceBuild = false, actualCommands = stepped }) => probePage(async ({ clockMs, stepped, forceBuild, actualCommands, allowMissingStaticBg }) => {
       if (typeof window.__mirrorSetDiagnosticClock !== "function") return {
         accepted: false, reason: "deterministicClockUnavailable",
         wsError: window.__benchWsError ?? null,
@@ -5616,11 +5681,11 @@ if (opts.preIdleWitness || opts.activeWindowWitness || opts.startupObservationOu
         for (let i = 0; i < text.length; i++) { hash ^= text.charCodeAt(i); hash = Math.imul(hash, 0x01000193); }
         stateFingerprint = (hash >>> 0).toString(16).padStart(8, "0");
       }
-      const staticBgReady = diagnostics?.effective?.staticBg !== 1 ||
-        (staticBg?.latched === false && Number(staticBg?.decodes) > 0 && typeof staticBg?.lastUrl === "string" && staticBg.lastUrl.length > 0);
+      const { decoded: staticBgDecoded, waived: staticBgWaived } = window.__couchStaticBgWaiver(allowMissingStaticBg, staticBg);
+      const staticBgReady = diagnostics?.effective?.staticBg !== 1 || staticBgDecoded || staticBgWaived;
       const accepted = identityBefore !== null && identityAfter !== null && diagnostics?.ready === true && diagnostics?.resources?.pending === 0 && diagnostics?.resources?.failed === 0 && staticBgReady && Array.isArray(logicalPaint) && logicalPaint.length > 0 && hits.every((row) => row.hit.available && row.productionMapping.available) && JSON.stringify(identityBefore) === JSON.stringify(identityAfter);
-      return { accepted, reason: accepted ? null : staticBgReady ? "identityResourcesOrSeams" : "staticBackgroundNotReady", clockMs, identityBefore, identityAfter, stateFingerprint, logicalPaint, hits, diagnostics, textCache, clockSeedAudit, staticBg, contextAttributes };
-    }, { clockMs: opts.parityClockMs, stepped, forceBuild, actualCommands });
+      return { accepted, reason: accepted ? null : staticBgReady ? "identityResourcesOrSeams" : "staticBackgroundNotReady", clockMs, identityBefore, identityAfter, stateFingerprint, logicalPaint, hits, diagnostics, textCache, clockSeedAudit, staticBg, contextAttributes, staticBgGateWaived: diagnostics?.effective?.staticBg === 1 && !staticBgDecoded && staticBgWaived };
+    }, { clockMs: opts.parityClockMs, stepped, forceBuild, actualCommands, allowMissingStaticBg: opts.allowMissingStaticBg === true });
     parityCapture = await captureParity({ stepped: !!animationSteps,
       forceBuild: !!opts.parityPairedToggle, actualCommands: !!animationSteps || !!opts.parityPairedToggle });
     if (animationSteps && parityCapture) parityCapture.animationSteps = animationSteps;
@@ -6709,6 +6774,10 @@ if (opts.preIdleWitness || opts.activeWindowWitness || opts.startupObservationOu
     busyPct: dTask !== null && wall > 0 ? round((dTask / wall) * 100, 1) : null,
     nodesA,
     nodesB,
+    staticBgGateWaived,
+    // Reaching this object means the repeat did not throw, so a late attempt (checked above, right after
+    // markerClose) was never observed — false, never the crashed path's null (see crashedRunRecord).
+    staticBgLateAttempt: false,
     rendererWindow: {
       before: markerOpen?.renderer ?? null,
       after: markerClose?.renderer ?? null,
@@ -7403,6 +7472,7 @@ await addBoundedInitScript("socket", fakeWebSocketInit, {
 });
 await addBoundedInitScript("long task", longTaskInit);
 await addBoundedInitScript("tick sampler", tickSamplerInit);
+await addBoundedInitScript("static-bg waiver", installStaticBgWaiverInPage);
 if (args.flightLiveness) {
   await addBoundedInitScript("flight liveness", flightLivenessInit);
 }
@@ -7453,6 +7523,7 @@ const opts = {
   churnCensus: args.churnCensus,
   growthCycles: args.growthCycles,
   allowUnmeasuredDecode: args.allowUnmeasuredDecode,
+  allowMissingStaticBg: args.allowMissingStaticBg,
   handParity: args.handParity,
   flightLiveness: args.flightLiveness,
   idle: args.idle,
@@ -7538,6 +7609,7 @@ if (args.skipWarmup) {
       census: false,
       busyStartupTimelineOut: args.busyStartupTimelineOut ? `${args.busyStartupTimelineOut}.warmup.json` : null,
       busyStartupRunKind: "warmup",
+      allowMissingStaticBg: args.allowMissingStaticBg,
       activeSourceSha256: args.activeSourceSha256,
       witnessBrowserPackage: args.witnessBrowserPackage,
       witnessBrowserPid: args.witnessBrowserPid,
@@ -7549,6 +7621,11 @@ if (args.skipWarmup) {
     process.stdout.write(`warmup failed: ${e}\n`);
   }
 }
+
+// A static-bg attempt observed AFTER --allow-missing-static-bg waived the readiness gate on attempts===0 means
+// the waiver can no longer vouch for this repeat (see runOnce, right after markerClose). Thrown, not returned,
+// so it goes through the SAME crashed-repeat path as every other mid-replay death below.
+class StaticBgLateAttemptError extends Error {}
 
 // R7 W1-I1b — a repeat that dies outright still has to leave a record. `runOnce` already returns a partial delta
 // when the RENDERER dies mid-replay (probePage), so the only way through here is a death somewhere the page-side
@@ -7564,6 +7641,10 @@ const crashedRunRecord = (reason, witnessFailure = null) => ({
   busyPct: null,
   nodesA: null,
   nodesB: null,
+  // null, not false: a crashed repeat never reached a trustworthy verdict either way, which is a different
+  // fact from "ran fine and didn't need the waiver" (false, on a completed repeat's delta).
+  staticBgGateWaived: null,
+  staticBgLateAttempt: false,
   blinkMemory: null,
   longTasks: null,
   tickMs: null,
@@ -7647,6 +7728,9 @@ for (let i = 0; i < args.repeats; i++) {
     r = crashedRunRecord(reason, witnessFailure);
     if (e instanceof ActiveWindowWitnessError) {
       r.activeWindowFailure = { code: e.code, receiptPath: e.receiptPath, reason };
+    }
+    if (e instanceof StaticBgLateAttemptError) {
+      r.staticBgLateAttempt = true;
     }
     process.stdout.write(`REPEAT DIED: ${reason}\n`);
   }
@@ -7778,7 +7862,8 @@ const result = {
     // it had been applied.
     cpuThrottleApplied: connectMode ? false : CPU_THROTTLE > 1,
     hoverSweep: args.hoverSweep,
-    traceScope: traceWindowForOptions(args)?.phase ?? null
+    traceScope: traceWindowForOptions(args)?.phase ?? null,
+    allowMissingStaticBg: args.allowMissingStaticBg ?? false
   },
   recording: {
     path: recordingPath,
@@ -7922,6 +8007,10 @@ const result = {
     busyPct: r.busyPct,
     taskDuration: r.taskDuration,
     wall: r.wall,
+    // No ?? fallback: both runOnce's delta and crashedRunRecord always set this field explicitly now, and a
+    // crashed repeat's null (no trustworthy verdict either way) must survive, not collapse into false.
+    staticBgGateWaived: r.staticBgGateWaived,
+    staticBgLateAttempt: r.staticBgLateAttempt,
     // Active-window admission evidence. Idle has its own rendererWindow block;
     // the phone analyzer reads this matching per-repeat field for dense cells.
     rendererWindow: r.rendererWindow ?? null,
