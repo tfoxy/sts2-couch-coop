@@ -11,7 +11,8 @@ export interface FrameLifecycleRow {
   completedAt: number | null;
   /** Browser presentation requires a separate content-surface trace join. */
   displayedAt: null;
-  outcome: "offered" | "skipped" | "pending" | "completed" | "failed";
+  /** `applied`: a reconcile applied and acknowledged its delta without presenting (`rustSkipUndrawnWire`). */
+  outcome: "offered" | "skipped" | "pending" | "completed" | "failed" | "applied";
   phaseMs: Partial<Record<FramePhase, number>>;
   completedDrawsBefore: number;
   completedDrawsAfter: number | null;
@@ -80,7 +81,7 @@ export function createFrameLifecycleDiagnostic(now: () => number) {
     active.phaseMs[name] = (active.phaseMs[name] ?? 0) + now() - start;
     mark(active, `${name}:end`);
   }
-  function finish(outcome: "skipped" | "pending" | "completed" | "failed", completedDraws: number): void {
+  function finish(outcome: "skipped" | "pending" | "completed" | "failed" | "applied", completedDraws: number): void {
     inFrame = false;
     phaseStarts.clear();
     if (!active) return;

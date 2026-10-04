@@ -26,7 +26,7 @@ import { loadSpineClip, type LoadedSpineClip } from "@/mirror/spineClip";
 import { isStaticBackgroundSuppressibleRoot, spreadSceneIdentityEnv, staticBgTargetPathOf } from "@/mirror/renderer/staticBackgroundPolicy";
 import { createCanvasInteractionRuntime, type OffsetPatchFrame } from "@/mirror/renderer/canvas/interactionRuntime";
 import { translatedSpanRefusal } from "./translatedSpan";
-import { planWireSpread, type AncestorFrame, type WireSpreadPlan } from "./wireSpreadPlan";
+import { nodesRelated, planWireSpread, type AncestorFrame, type WireSpreadPlan } from "./wireSpreadPlan";
 import { type DrawnSceneSnapshot } from "@/mirror/renderer/canvas/frameRuntime";
 import { createCanvasVisualState, type LandingPresentation, type SampleMark } from "@/mirror/renderer/canvas/visualState";
 import { CANVAS_FRAME_PARK_SLOP_MS, createCanvasFrameScheduler, type CanvasPatchSubmission } from "@/mirror/renderer/canvas/frameScheduler";
@@ -466,6 +466,22 @@ export function createPixiMirrorRenderer(
     /** rustTextPatch: the labels whose re-prepared records this patch carries, and its verify inputs. */
     textOwners?: ReadonlySet<string>; textVerify?: HeldPatchInputs };
   const patchSidecars = new WeakMap<RetainedPixiPatch, PatchSidecar>();
+  // rustSkipUndrawnWire: a wire delta whose every changed node draws nothing is applied and acknowledged without a
+  // patch, a frame or a present (`planUndrawnWireSkip`). `parts` are the pose replays into `retained` (node matrices
+  // only), `spread` the shifts the normal path would bank per re-posed span, `spanNodes` every node of those spans
+  // (filled under verify only).
+  type UndrawnWirePlan = { revision: number; nodes: ReadonlyMap<string, MirrorNode>; parts: ReadonlyMap<string, RetainedPixiPatch>;
+    spread: ReadonlyMap<string, ReadonlyMap<string, number>>; spanNodes: readonly string[] };
+  let skippedUndrawnWireFrames = 0;
+  const undrawnWireDeclines: Record<string, number> = {};
+  // Under rustFastVerify the plan is a shadow of the normal path, compared at its commit (`settleUndrawnWireShadow`):
+  // `runs` compared, `mismatches` that differed, `built` where the normal path built instead, `superseded` where a
+  // newer revision committed first (nothing to compare).
+  const undrawnWireVerify = { runs: 0, mismatches: 0, built: 0, superseded: 0, firstMismatch: null as string | null };
+  let undrawnWireShadow: { plan: UndrawnWirePlan; previousDx: ReadonlyMap<string, number> | null; faults: string[] } | null = null;
+  // `undrawnWireSpan`'s answers, valid for one committed build (`buildEpoch`): the facts it reads are build products.
+  let undrawnSpanEpoch = -1;
+  const undrawnSpanCache = new Map<string, boolean>();
   let offsetPatches = 0, offsetPatchedNodes = 0, wireCapturedPatches = 0;
   let wireSpreadPatches = 0, wireSpreadSpans = 0, wireSpreadShifted = 0, wireSpreadVisited = 0;
   // `rustPhaseTiming=1`: the wire reconcile's per-span planning loop and the spread bank's publication.
@@ -512,7 +528,7 @@ export function createPixiMirrorRenderer(
     if (!rustPendingAckRetry || disposed || pendingViewRevision !== revision || state?.revision !== revision ||
       asyncPresentedRevision !== revision || !reconcilePull?.retryNow) return false;
     const result = reconcilePull.retryNow();
-    if (result === "presented" && pendingViewRevision === revision) pendingViewRevision = null;
+    if ((result === "presented" || result === "applied") && pendingViewRevision === revision) pendingViewRevision = null;
     else if (result === "reentrant" && allowReentrantTurn && !reentrantRetryQueued) {
       reentrantRetryQueued = true;
       queueMicrotask(() => {
@@ -1378,6 +1394,7 @@ const producerStarted = rustPhaseTimingMode || producerReasonMode ? performance.
     publishTextOutcome();
     visual.bankAppliedAlphas();
     committedOverrides = appliedOverrides;
+    if (undrawnWireShadow) settleUndrawnWireShadow("build");
     staticBackgroundReady?.(true); staticBackgroundReady = undefined;
     if (startupEnabled) noteStartupReady(candidateRevision);
     lifecycle?.endPhase("publish");
@@ -1388,6 +1405,25 @@ const producerStarted = rustPhaseTimingMode || producerReasonMode ? performance.
     startupCompletionHook?.();
     return true;
     }
+  }
+
+  /**
+   * rustWireSpreadPatch: the moved shifts become the committed bank (replaced, never edited: the previous snapshot's
+   * frame data keeps the map it was drawn with) and the live map the input side reads between builds. Undefined: no
+   * bank to move (no shift, or not a spread-aware widened build).
+   */
+  function commitSpreadMoves(moves: ReadonlyMap<string, number>): ReadonlyMap<string, number> | undefined {
+    if (!moves.size || !committedSpread.dx) return undefined;
+    const moved = new Map(committedSpread.dx);
+    // A build attempt since the commit left its own walk in the live maps: put the committed one back first.
+    if (!liveSpreadCommitted) {
+      spreadDxByNode.clear(); for (const [id, dx] of committedSpread.dx) spreadDxByNode.set(id, dx);
+      spreadFieldModeByNode.clear(); for (const [id, mode] of committedSpread.modes ?? []) spreadFieldModeByNode.set(id, mode);
+      liveSpreadCommitted = true;
+    }
+    for (const [id, dx] of moves) { moved.set(id, dx); spreadDxByNode.set(id, dx); }
+    committedSpread = { ...committedSpread, dx: moved };
+    return moved;
   }
 
   function publishRetainedPatch(patch: RetainedPixiPatch, at: number, wire?: MirrorState,
@@ -1433,22 +1469,9 @@ const producerStarted = rustPhaseTimingMode || producerReasonMode ? performance.
       capturedGlobals = moved;
     }
     snapshot = { ...previous, capturedGlobals, stateRevision: wire?.revision ?? previous.stateRevision };
-    // rustWireSpreadPatch: the moved shifts become the committed bank (replaced, never edited: the previous snapshot's
-    // frame data keeps the map it was drawn with) and the live map the input side reads between builds.
-    let spreadBank: ReadonlyMap<string, number> | undefined;
+    // rustWireSpreadPatch: the moved shifts become the committed bank (`commitSpreadMoves`).
     const bankStarted = rustPhaseTimingMode ? performance.now() : 0;
-    if (sidecar?.spread?.size && committedSpread.dx) {
-      const moved = new Map(committedSpread.dx);
-      // A build attempt since the commit left its own walk in the live maps: put the committed one back first.
-      if (!liveSpreadCommitted) {
-        spreadDxByNode.clear(); for (const [id, dx] of committedSpread.dx) spreadDxByNode.set(id, dx);
-        spreadFieldModeByNode.clear(); for (const [id, mode] of committedSpread.modes ?? []) spreadFieldModeByNode.set(id, mode);
-        liveSpreadCommitted = true;
-      }
-      for (const [id, dx] of sidecar.spread) { moved.set(id, dx); spreadDxByNode.set(id, dx); }
-      committedSpread = { ...committedSpread, dx: moved };
-      spreadBank = moved;
-    }
+    const spreadBank = sidecar?.spread ? commitSpreadMoves(sidecar.spread) : undefined;
     interaction.publishPatch(previous, snapshot, sidecar?.frame, spreadBank);
     if (rustPhaseTimingMode) wireSpreadPublishMs += performance.now() - bankStarted;
     landingCandidate?.publish();
@@ -1478,6 +1501,7 @@ const producerStarted = rustPhaseTimingMode || producerReasonMode ? performance.
       if (sidecar?.textVerify) verifyHeldOverridePatch(sidecar.textVerify, textVerify, false, new Set(), undefined, sidecar.textOwners);
     }
     scheduler.settlePatch(patchSubmissions.get(patch) ?? null, true);
+    if (undrawnWireShadow && wire) settleUndrawnWireShadow("patch", sidecar?.captures);
     retainedPatches++;
     retainedPatchObjects += patch.primitives.length;
     lifecycle?.endPhase("publish");
@@ -1600,6 +1624,269 @@ const producerStarted = rustPhaseTimingMode || producerReasonMode ? performance.
     });
   }
 
+  /** `id`'s global affine composed by walking `nodes`' parent chain. Shared by `tryRetainedWire`'s own wire-span
+   * loop and `rustSkipUndrawnWire`'s planner, so there is exactly one copy of this walk. */
+  function global(nodes: ReadonlyMap<string, MirrorNode>, id: string): Affine {
+    const chain: MirrorNode[] = [];
+    for (let node = nodes.get(id); node; node = node.parentId ? nodes.get(node.parentId) : undefined) chain.push(node);
+    let pose: Affine = [1, 0, 0, 1, 0, 0];
+    for (let i = chain.length - 1; i >= 0; i--) if (chain[i].transform) pose = affineMul(pose, chain[i].transform as Affine);
+    return pose;
+  }
+
+  /**
+   * rustSkipUndrawnWire: does `id`'s committed paint-order span draw nothing? Read straight off the committed build,
+   * never re-derived: no node in the span pushed a command (`build.ranges`) or opened a clip (`build.clipRanges`),
+   * none has a hit entry, and no captured global (a remote follower's position, an eager-scroll bank, a landing's
+   * hand holder) resolves inside it. All four are products of the BUILD — a retained patch moves them but never adds
+   * one — so the answer is memoized per build epoch, across every patch and skip in between.
+   */
+  function undrawnWireSpan(id: string, drawn: DrawnSceneSnapshot): boolean {
+    if (undrawnSpanEpoch !== drawn.buildEpoch) { undrawnSpanEpoch = drawn.buildEpoch; undrawnSpanCache.clear(); }
+    const cached = undrawnSpanCache.get(id);
+    if (cached !== undefined) return cached;
+    const order = drawn.paintOrder;
+    const entry = order.entries.get(id);
+    let result = entry !== undefined;
+    if (entry) {
+      const { spanStart, spanEnd } = entry;
+      for (let i = spanStart; i < spanEnd && result; i++)
+        if (drawn.build.ranges.has(order.ids[i]) || drawn.build.clipRanges.has(order.ids[i])) result = false;
+      if (result) {
+        // `hitEntries` is pushed in the same ascending paint-order walk as every command, so it is sorted by
+        // `.order`: a binary search finds whether any entry falls in the span without scanning the whole list.
+        const hits = drawn.hitEntries;
+        let lo = 0, hi = hits.length;
+        while (lo < hi) { const mid = (lo + hi) >>> 1; if (hits[mid].order < spanStart) lo = mid + 1; else hi = mid; }
+        if (lo < hits.length && hits[lo].order < spanEnd) result = false;
+      }
+      if (result) for (const capturedId of drawn.capturedGlobals.keys()) {
+        const capturedOrder = order.entries.get(capturedId)?.order;
+        if (capturedOrder !== undefined && capturedOrder >= spanStart && capturedOrder < spanEnd) { result = false; break; }
+      }
+    }
+    undrawnSpanCache.set(id, result);
+    return result;
+  }
+
+  /**
+   * rustSkipUndrawnWire, before the delta's inputs land: the gates that `visual.applyInputs` would consume or that
+   * the normal reconcile resolves some other way (a keyframe, a tween hint or card flight to arm, a presentation in
+   * flight, a build somebody asked for). Null: a candidate for `planUndrawnWireSkip`.
+   */
+  function undrawnWireGate(next: MirrorState): string | null {
+    if (!fast.skipUndrawnWire || next.changedIds.size === 0) return "off";
+    if (readiness !== "ready" || !retainedMode || !retainedValid || !retained || !pixi || !snapshot) return "invalid-retained-state";
+    if (next.sceneRewrite || next.pendingHints.length > 0 || next.pendingCardFlights.length > 0) return "inputs";
+    if (asyncSubmissionRevision !== null || asyncPresentedRevision === next.revision) return "async";
+    if (scheduler.buildRequested) return "build-requested";
+    return null;
+  }
+
+  /**
+   * rustSkipUndrawnWire: a plan that applies this wire delta to the committed state without a patch, a frame or a
+   * present, or null (the normal path runs). Called once the delta's inputs have landed (held lift, hand raise) and
+   * BEFORE any visual is sampled: a skip samples nothing, so every tween step, settle, idle-loop phase and landing
+   * stays exactly where the last drawn frame left it, for the scheduler's own next tick to draw at its own time.
+   *
+   * Every changed node must qualify, or nothing is skipped (a delta that mixes drawn and undrawn nodes takes the
+   * normal path unchanged). Per node, the same refusals the normal per-id wire loop applies, so a node skips only
+   * where the normal path would have retained-patched it — never where it would have built:
+   * - structure: same parent, a transform before AND after (null↔set is the normal path's `wire-structure`), every
+   *   other field equal (a `visible` flip, a resource or key change counts as a change);
+   * - no held-override lineage, no overlap with another changed id's span, an invertible committed pose;
+   * - a committed span that draws nothing (`undrawnWireSpan`);
+   * - `translatedSpanRefusal`, and on a spread-aware stage `planWireSpread` itself, whose refusals include an owner
+   *   a floater was resolved against that is the node, an ancestor or a descendant of it (`related`) while any
+   *   shift in the span changes, and a follower hit under the span;
+   * - a pose replay into `retained` that adds no primitive, hit or clip.
+   * Outside the node: no landing, and the cosmetic offsets still the committed ones (no lift or raise to draw).
+   */
+  function planUndrawnWireSkip(next: MirrorState): UndrawnWirePlan | null {
+    const decline = (reason: string) => { undrawnWireDeclines[reason] = (undrawnWireDeclines[reason] ?? 0) + 1; return null; };
+    // The input pass (held lift, hand raise) can open a build request of its own; the normal path honours it.
+    if (scheduler.buildRequested) return decline("build-requested");
+    // rustIdleInRust: plan against what Rust shows, as `tryRetainedWire` does (it may publish a new snapshot wrapper).
+    idleLane?.sync();
+    const drawn = snapshot!, composition = retained!;
+    if (visual.landingArms.length > 0 || visual.hasOpenLanding()) return decline("landing");
+    if (interaction.offsetPending || !interaction.cosmeticOffsetsMatch(drawn)) return decline("offset-pending");
+    const spreadAware = fast.wireSpreadPatch;
+    if (spreadAware && (committedSpread.factor !== visual.spreadFactor || (committedSpread.factor !== 1 && !committedSpread.dx)))
+      return decline("wire-spread-factor");
+    const heldLineage = fast.heldOverridePatch && visual.transformOverrides.size
+      ? overrideAncestors(visual.transformOverrides, next.nodes) : null;
+    // Every id passes the cheap checks before any id is planned, so a later rejection wastes no spread re-walk or
+    // pose replay on the ids before it.
+    const candidates: Array<{ id: string; after: MirrorNode; spanStart: number; spanEnd: number; gOld: Affine; gNew: Affine; delta: Affine }> = [];
+    for (const id of next.changedIds) {
+      const before = drawn.scene.nodes.get(id), after = next.nodes.get(id);
+      if (!before || !after || before.parentId !== after.parentId || !before.transform || !after.transform) return decline("structure");
+      // Every field but the transform, across BOTH nodes' keys: a field only `after` carries is a change too.
+      if (fast.heldOverridePatch ? !sameNodeExceptTransform(before, after) : !sameFieldsByIdentity(before, after))
+        return decline("nontransform-change");
+      if (heldLineage && touchesOverrideLineage(id, visual.transformOverrides, heldLineage, next.nodes)) return decline("under-override");
+      const span = drawn.paintOrder.entries.get(id);
+      if (!span) return decline("unspanned");
+      if (candidates.some((other) => other.spanStart < span.spanEnd && span.spanStart < other.spanEnd)) return decline("overlapping-span");
+      if (!undrawnWireSpan(id, drawn)) return decline("drawn");
+      const gOld = global(drawn.scene.nodes, id), gNew = global(next.nodes, id);
+      const inverse = affineInverse(gOld);
+      if (!inverse) return decline("noninvertible");
+      const delta = affineMul(gNew, inverse);
+      if (translatedSpanRefusal(id, delta, { build: drawn.build, nodes: drawn.scene.nodes,
+        spreadFactor: spreadAware ? 1 : committedSpread.factor, fieldModes: committedSpread.claimers, shifted: committedSpread.shifted,
+        clipsMovable: clipsMovable() })) return decline("translated-span");
+      // Without the spread-aware planner no floater lookups are recorded (`ownerReads` is empty); were one there, a
+      // node related to its owner is refused outright, since nothing here knows whether a shift would change.
+      if (!spreadAware) for (const owner of committedSpread.ownerReads)
+        if (nodesRelated(owner, id, next.nodes)) return decline("spread-owner");
+      candidates.push({ id, after, spanStart: span.spanStart, spanEnd: span.spanEnd, gOld, gNew, delta });
+    }
+    const nodes = new Map<string, MirrorNode>(), parts = new Map<string, RetainedPixiPatch>();
+    const spread = new Map<string, ReadonlyMap<string, number>>();
+    const spanNodes: string[] = [];
+    let spreadScene: ReturnType<typeof spreadSceneIdentityEnv> | undefined;
+    let ancestorCache: Map<string, AncestorFrame | null> | undefined;
+    let followersStale: boolean | undefined;
+    for (const { id, after, spanStart, spanEnd, gOld, gNew, delta } of candidates) {
+      let spreadPlan: WireSpreadPlan | null = null;
+      if (spreadAware) {
+        const input = drawn.build.nodePaintInputs.get(id);
+        const committedHits = drawn.hitEntries;
+        const planned = planWireSpread({ rootId: id, before: drawn.scene.nodes, after: next.nodes, order: drawn.paintOrder,
+          gOld, gNew, delta, drawnRoot: input ? composition.logicalNodeMatrix(id, input.global) : null,
+          spreadFactor: committedSpread.factor, dx: committedSpread.dx ?? EMPTY_SPREAD, ownerReads: committedSpread.ownerReads,
+          followerPoints: committedSpread.followerPoints, hitsOf: (node) => spanHits(committedHits, node),
+          clipRanges: drawn.build.clipRanges, sceneEnv: (spreadScene ??= spreadSceneIdentityEnv((node) => resolveSceneInfo(node, next.nodes))),
+          ancestorCache: (ancestorCache ??= new Map()) });
+        if ("reason" in planned) return decline(planned.reason);
+        if (planned.reposed && (followersStale ??= followerAnswersMoved(committedSpread.followerPoints)))
+          return decline("wire-spread-follower-stale");
+        spreadPlan = planned;
+        // The shifts the normal path banks for a re-posed span (`sidecar.spread`), so the committed bank matches.
+        if (planned.reposed) spread.set(id, planned.dx);
+      }
+      const part = composition.patchWireTransform(id, delta, spreadPlan ? { clips: false, nodeDeltas: spreadPlan.nodeDeltas,
+        uniformDrawn: spreadPlan.uniform, hitSpreadDx: spreadPlan.dx } : { clips: false });
+      if (!part) return decline("wire-transform-unsupported");
+      if (part.primitives.length > 0 || part.hits.length > 0 || (part.clips?.length ?? 0) > 0) return decline("drawn-part");
+      nodes.set(id, after);
+      parts.set(id, part);
+      // Verify's spread-bank comparison only.
+      if (fast.verify) for (let order = spanStart; order < spanEnd; order++) spanNodes.push(drawn.paintOrder.ids[order]);
+    }
+    return { revision: next.revision, nodes, parts, spread, spanNodes };
+  }
+
+  /** Every field but the transform the same object or value, across both nodes' keys (the strict wire comparison). */
+  function sameFieldsByIdentity(before: MirrorNode, after: MirrorNode): boolean {
+    const left = before as unknown as Record<string, unknown>, right = after as unknown as Record<string, unknown>;
+    for (const key of new Set([...Object.keys(left), ...Object.keys(right)]))
+      if (key !== "transform" && left[key] !== right[key]) return false;
+    return true;
+  }
+
+  /**
+   * rustSkipUndrawnWire: commit a plan. Exactly the state half of `publishRetainedPatch` for a wire patch whose parts
+   * carry only node matrices — the pose replays into `retained`, the spread bank, the changed nodes merged into the
+   * committed map, a new snapshot wrapper at the new revision (and its interaction frame data carried forward) —
+   * and none of its frame half: no submission, no frame epoch, no drawn clock, no sample settlement, no frame
+   * work for the scheduler. The idle lane's installed descriptors stay valid: `patchWireTransform` refuses any span
+   * that overlaps a local-animation root, so no root, base or plan they were built from moved.
+   */
+  function applyUndrawnWireSkip(plan: UndrawnWirePlan): void {
+    const previous = snapshot!;
+    for (const part of plan.parts.values()) retained!.commit(part);
+    const moves = new Map<string, number>();
+    for (const dx of plan.spread.values()) for (const [id, value] of dx) moves.set(id, value);
+    const spreadBank = plan.spread.size ? commitSpreadMoves(moves) : undefined;
+    const nodes = previous.scene.nodes as Map<string, MirrorNode>;
+    snapshotNodesSource = null;
+    for (const [id, node] of plan.nodes) nodes.set(id, node);
+    snapshot = { ...previous, stateRevision: plan.revision };
+    // `interactionRuntime` keys its per-build geometry (spread shifts, cosmetic offsets, the raise plan) off the
+    // snapshot OBJECT; an unregistered wrapper would read back empty defaults. Carried forward as a patch does.
+    interaction.publishPatch(previous, snapshot, undefined, spreadBank);
+    skippedUndrawnWireFrames++;
+    retainedDecline = "skip-undrawn-wire";
+    producerReasons?.noteNonBuild("wire-skip-undrawn");
+    traceWarmRenderer("renderer-applied", plan.revision);
+    signalDiagnosticWake();
+  }
+
+  /** Relative-tolerance affine equality, as `wireSpreadPlan.ts`'s own `same` compares a recomposed pose against a
+   * committed one: patches compose in float64 against a list stored in float32. */
+  function posesClose(a: ArrayLike<number>, b: ArrayLike<number>): boolean {
+    for (let i = 0; i < 6; i++) if (Math.abs(a[i] - b[i]) > 1e-5 * Math.max(1, Math.abs(a[i]), Math.abs(b[i]))) return false;
+    return true;
+  }
+
+  /**
+   * rustSkipUndrawnWire under `rustFastVerify=1`: the delta is never skipped; the normal path runs for real and its
+   * commit is compared with the plan, held here as a shadow, once that commit lands (`settleUndrawnWireShadow`).
+   * `tryRetainedWire` records part faults while it plans the same ids (`noteUndrawnWirePart`).
+   */
+  function shadowUndrawnWireSkip(plan: UndrawnWirePlan): void {
+    if (undrawnWireShadow) undrawnWireVerify.superseded++;
+    undrawnWireShadow = { plan, previousDx: committedSpread.dx, faults: [] };
+  }
+
+  /**
+   * rustSkipUndrawnWire verify, part (i): the normal path's own wire part for a skipped id must add or change no
+   * drawn instance, hit or clip, re-pose the composition exactly as the shadow's replay does, and bank the same
+   * shifts. Instance bytes of drawn nodes change only through a part's primitives, so none means none changed.
+   */
+  function noteUndrawnWirePart(id: string, part: RetainedPixiPatch, spreadPlan: WireSpreadPlan | null): void {
+    const shadow = undrawnWireShadow;
+    const expected = shadow?.plan.parts.get(id);
+    if (!shadow || !expected) return;
+    if (part.primitives.length > 0) shadow.faults.push(`primitives:${id}`);
+    if (part.hits.length > 0) shadow.faults.push(`hits:${id}`);
+    if ((part.clips?.length ?? 0) > 0) shadow.faults.push(`clips:${id}`);
+    if (part.nodeMatrices.length !== expected.nodeMatrices.length ||
+      part.nodeMatrices.some(({ id: node, matrix }, i) => expected.nodeMatrices[i].id !== node || !posesClose(matrix, expected.nodeMatrices[i].matrix)))
+      shadow.faults.push(`replay:${id}`);
+    const banked = spreadPlan?.reposed ? spreadPlan.dx : undefined, planned = shadow.plan.spread.get(id);
+    if ((banked?.size ?? 0) !== (planned?.size ?? 0) || [...(banked ?? [])].some(([node, dx]) => planned?.get(node) !== dx))
+      shadow.faults.push(`spread:${id}`);
+  }
+
+  /**
+   * rustSkipUndrawnWire verify, part (ii), at the commit of the shadow's revision: the state the skip would have
+   * committed equals the state the normal commit left — the changed nodes in the committed map, the composition's
+   * node matrices for every replayed node, the committed spread bank (which the interaction frame data shares) for
+   * every node of a skipped span, and the revision. Read only for what a skip touches, so a sample patched in the
+   * same frame (an idle loop, a raised card's offset frame, a widened stage's other spans) cannot false-alarm.
+   * A build in place of the patch (the normal path refused after the planner admitted) is compared the same way.
+   */
+  function settleUndrawnWireShadow(kind: "patch" | "build", captures?: ReadonlyMap<string, unknown>): void {
+    const shadow = undrawnWireShadow;
+    if (!shadow || !snapshot || !retained || snapshot.stateRevision < shadow.plan.revision) return;
+    undrawnWireShadow = null;
+    if (snapshot.stateRevision > shadow.plan.revision) { undrawnWireVerify.superseded++; return; }
+    const { plan } = shadow;
+    const faults = shadow.faults;
+    if (kind === "build") undrawnWireVerify.built++;
+    for (const node of plan.spanNodes) if (captures?.has(node)) faults.push(`captured:${node}`);
+    for (const [id, node] of plan.nodes) if (snapshot.scene.nodes.get(id) !== node) faults.push(`scene:${id}`);
+    for (const part of plan.parts.values()) for (const { id, matrix } of part.nodeMatrices) {
+      const input = snapshot.build.nodePaintInputs.get(id);
+      if (input && !posesClose(retained.logicalNodeMatrix(id, input.global), matrix)) faults.push(`matrix:${id}`);
+    }
+    const bank = committedSpread.dx;
+    if (bank) {
+      const moves = new Map<string, number>();
+      for (const dx of plan.spread.values()) for (const [id, value] of dx) moves.set(id, value);
+      for (const node of plan.spanNodes) {
+        const expected = moves.get(node) ?? shadow.previousDx?.get(node), actual = bank.get(node);
+        if (expected !== undefined && actual !== undefined && Math.abs(expected - actual) > 1e-6) faults.push(`spread-bank:${node}`);
+      }
+    }
+    undrawnWireVerify.runs++;
+    if (faults.length) { undrawnWireVerify.mismatches++; undrawnWireVerify.firstMismatch ??= `r${plan.revision} ${kind} ${faults.join(" ")}`; }
+  }
+
   function tryRetainedWire(next: MirrorState, at: number): boolean {
     // rustIdleInRust: plan against what Rust shows, not the last pose this side committed.
     idleLane?.sync();
@@ -1640,13 +1927,6 @@ const traceId = nextTraceFrame();
       if (rustExecutionPhaseMode) producerReasons!.finishRetainedIfOpen(phaseSubmissionId!, "committed");
       return true;
     }
-    const global = (nodes: ReadonlyMap<string, MirrorNode>, id: string): Affine => {
-      const chain: MirrorNode[] = [];
-      for (let node = nodes.get(id); node; node = node.parentId ? nodes.get(node.parentId) : undefined) chain.push(node);
-      let pose: Affine = [1, 0, 0, 1, 0, 0];
-      for (let i = chain.length - 1; i >= 0; i--) if (chain[i].transform) pose = affineMul(pose, chain[i].transform as Affine);
-      return pose;
-    };
     // rustTextPatch: a label whose only change is its text is re-prepared below instead of moved.
     const textIds = fast.textPatch ? textOnlyChangedIds(next) : null;
     const spans: Array<{ start: number; end: number }> = [];
@@ -1763,6 +2043,8 @@ const traceId = nextTraceFrame();
       const part = retained.patchWireTransform(id, delta, spreadPlan ? { clips: moveClips, nodeDeltas: spreadPlan.nodeDeltas,
         uniformDrawn: spreadPlan.uniform, hitSpreadDx: spreadPlan.dx } : { clips: moveClips });
       if (!part) return refuse("wire-transform-unsupported");
+      // rustSkipUndrawnWire verify: this id's part, against the shadow's replay.
+      if (undrawnWireShadow) noteUndrawnWirePart(id, part, spreadPlan);
       // A moving clipper whose clip did not come back would leave the clip behind its children.
       if (moveClips && (delta[4] !== 0 || delta[5] !== 0) && !part.clips?.length) return refuse("wire-clip");
       if (part.clips?.length) {
@@ -2859,6 +3141,11 @@ const traceId = nextTraceFrame();
         ...(fast.verify ? { verifyRuns: spreadVerify.runs, verifyMismatches: spreadVerify.mismatches, verifyMaxError: spreadVerify.maxError,
           verifyFirstMismatch: spreadVerify.firstMismatch, verifyKinds: { ...spreadVerify.kinds },
           verifyLog: spreadVerify.log.map((entry) => ({ ...entry, notes: [...entry.notes], recent: [...entry.recent] })) } : {}) } } : {}),
+      ...(fast.skipUndrawnWire ? { rustSkipUndrawnWire: { skipped: skippedUndrawnWireFrames, appliedPulls: scheduler.appliedPulls,
+        declines: { ...undrawnWireDeclines },
+        ...(fast.verify ? { verifyRuns: undrawnWireVerify.runs, verifyMismatches: undrawnWireVerify.mismatches,
+          verifyBuilt: undrawnWireVerify.built, verifySuperseded: undrawnWireVerify.superseded,
+          verifyFirstMismatch: undrawnWireVerify.firstMismatch } : {}) } } : {}),
       ...(rustExecutionPhaseMode ? { rustExecutionPhases: true } : {}),
       ...(profile ? { canvasProfile: profile.snapshot() } : {}),
       ...(hiddenMemo ? { rustHiddenMemo: { ...hiddenMemo.stats, missReasons: { ...hiddenMemo.stats.missReasons },
@@ -3068,8 +3355,30 @@ const traceId = nextTraceFrame();
       }
       state = next; if (rustPendingAckRetry) pendingViewRevision = next.revision;
       const at = deterministicClock ?? performance.now();
-      if (lifecycle) lifecycle.phase("input", () => { visual.applyInputs(next, at); interaction.applyHeldLift(); interaction.applyHandRaisePass(at); sampleVisual(at); });
-      else { visual.applyInputs(next, at); interaction.applyHeldLift(); interaction.applyHandRaisePass(at); sampleVisual(at); }
+      // rustSkipUndrawnWire: gated before the inputs land (they drain the delta's hints and flights), classified
+      // after them and BEFORE any visual is sampled. A skip samples nothing: tweens, settles, idle loops and
+      // landings stay exactly as drawn, for the scheduler's own next tick to draw at its own time.
+      const gate = undrawnWireGate(next);
+      if (gate !== null && gate !== "off") undrawnWireDeclines[gate] = (undrawnWireDeclines[gate] ?? 0) + 1;
+      const input = (): UndrawnWirePlan | null => {
+        visual.applyInputs(next, at); interaction.applyHeldLift(); interaction.applyHandRaisePass(at);
+        const plan = gate === null ? planUndrawnWireSkip(next) : null;
+        if (!plan || fast.verify) sampleVisual(at);
+        return plan;
+      };
+      const skip = lifecycle ? lifecycle.phase("input", input) : input();
+      if (skip && !fast.verify) {
+        // Applied, not presented: the ack goes back, nothing else does. No `advance`/`commitIdleSample` (no idle
+        // instant was drawn), no frame booked (the scheduler's chain is already as armed as the drawn picture
+        // needs), and a tick that pulled this reconcile carries on with its own frame (`noteReconcileApplied`).
+        applyUndrawnWireSkip(skip);
+        next.changedIds.clear();
+        scheduler.noteReconcileApplied();
+        if (rustPendingAckRetry) pendingViewRevision = null;
+        lifecycle?.finish("applied", completedDraws());
+        return "applied";
+      }
+      if (skip) shadowUndrawnWireSkip(skip);
       if (readiness !== "ready") { producerReasons?.noteNonBuild("reconcile-not-ready"); lifecycle?.finish("pending", completedDraws()); return false; }
       const completedAsync = asyncPresentedRevision === next.revision;
       if (completedAsync) asyncPresentedRevision = null;

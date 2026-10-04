@@ -35,6 +35,13 @@ export interface RustFastFlags {
   damagePresent: boolean;
   /** Pure idle-loop frames are one `present_idle(t)` in the GSW Rust renderer instead of a patch (`rustIdleLane.ts`). */
   idleInRust: boolean;
+  /**
+   * A wire delta whose every changed node lies in a subtree the committed build drew nothing for (empty paint-order
+   * span, no hit entries, no captured global depending on it) is applied to the committed state and acknowledged
+   * without sampling a visual, a retained patch, a frame or a present (`planUndrawnWireSkip`; `reconcile` answers
+   * "applied"). The scheduler's own ticks keep drawing animation at their own times.
+   */
+  skipUndrawnWire: boolean;
   verify: boolean;
 }
 
@@ -63,6 +70,7 @@ export const RUST_FAST_SWITCHES = {
   idleDueFrame: "rustIdleDueFrame",
   damagePresent: "rustDamagePresent",
   idleInRust: "rustIdleInRust",
+  skipUndrawnWire: "rustSkipUndrawnWire",
 } as const satisfies Record<Exclude<keyof RustFastFlags, "verify">, string>;
 
 export function resolveRustFastFlags(query: URLSearchParams, backend: "pixi" | "rust"): RustFastFlags {
