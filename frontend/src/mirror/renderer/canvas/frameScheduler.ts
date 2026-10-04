@@ -61,8 +61,8 @@
  * and re-arms the scheduler. Without `ports.coalesce` none of this exists.
  *
  * ONE TASK PER IDLE FRAME (`rustIdleScheduler`, opt-in through `ports.idleScheduler`).
- * A steady idle cadence (an intent bob at 30 Hz, nothing requested) used to cost
- * a park timer, the rAF, and a posted epoch close after each of them. With the
+ * A steady passive cadence slower than the display (an intent bob's own authored fps, a spine clip settling,
+ * nothing requested) used to cost a park timer, the rAF, and a posted epoch close after each of them. With the
  * switch on:
  *
  * - a passive deadline at most two display frames away is not parked: the tick
@@ -86,7 +86,7 @@
  *   - a parked tick (a 90/120 Hz display) leaves its epoch open, so any lane after
  *     it in this frame, known to the scheduler or not, still sees its work; the
  *     park wake, a task of its own after that frame, ends it;
- *   - a plain booking (the display-paced arm, a late frame) posts as before;
+ *   - a plain booking (a late frame) posts as before;
  * - a park wake ends its own booking's epoch on the spot (its timer task runs
  *   nothing else) instead of posting a close.
  *
@@ -94,7 +94,7 @@
  * changes nothing unless `idleScheduler` is on too). The fold above trades the park
  * timer for a display rAF on every vsync up to the deadline, and each of those
  * skipped ticks is a whole browser animation frame (BeginMainFrame, the callback,
- * a commit) that draws nothing: at 30 Hz on a 60 Hz display, one per idle frame.
+ * a commit) that draws nothing: at a cadence of 30 Hz on a 60 Hz display, one per passive frame.
  * With this switch a passive deadline never folds. It parks the timer at the
  * deadline (`due - CANVAS_FRAME_PARK_SLOP_MS`), as a 90/120 Hz display already
  * does, and the park wake books exactly the due frame; every epoch rule above
@@ -122,12 +122,10 @@ import type { ReconcilePull } from "@/mirror/renderer/contracts";
 
 /** A timer wake this close is cheaper and safer as the next display rAF. */
 export const CANVAS_FRAME_PARK_SLOP_MS = 4;
-/** The only passive cadence which stays an rAF chain instead of timer parking. */
-export const CANVAS_IDLE_STAGE_MAX_FPS = 60;
-export const CANVAS_IDLE_STAGE_MIN_FRAME_MS = 1000 / CANVAS_IDLE_STAGE_MAX_FPS;
-export const CANVAS_IDLE_STAGE_EARLY_ADMISSION_MS = CANVAS_IDLE_STAGE_MIN_FRAME_MS / 2 - 0.01;
 
 const DELIVERY_SAMPLE_WINDOW = 24;
+/** The fold's starting guess at the display period, before any real rAF-to-rAF gap has been sampled. */
+const DEFAULT_DISPLAY_FRAME_MS = 1000 / 60;
 const IDLE_PERIOD_MAX_SAMPLE_MS = 5000;
 const FRAME_SAMPLE_WINDOW = 120;
 
@@ -167,7 +165,6 @@ export interface CanvasFrameSchedulerDeadlinePorts {
   passiveDeadline(at: number): number;
   /** Called only after a ramp did not move this callback. */
   idleStageBypass(at: number): CanvasIdleStageBypass | null;
-  readonly idleStageNotBefore: () => number;
 }
 
 /** The animation body remains imperative, but its order belongs to this runtime. */
@@ -175,8 +172,27 @@ export interface CanvasFrameSchedulerAnimationPorts<TState extends CanvasFrameSc
   /** Write the current cosmetic-ramp sample before a build can observe it. */
   advanceOffsetRamps(at: number): boolean;
   noteIdleStageMissingPassive(): void;
-  noteIdleStageSkippedEarly(): void;
-  noteIdleStageAdmission(at: number, minimumFrameMs: number): void;
+  /** Diagnostic-only: how often an idle-only frame is actually admitted, and how far apart. */
+  noteIdleStageAdmission(at: number): void;
+  /**
+   * No authored cadence cap: an idle-only tick is always booked at display rate (see the deadline port), but
+   * a PINNED diagnostic/bench clock can present the exact same instant on every tick. True here means this
+   * instant was already handled (see `commitIdleSample`): the tick does NOT re-arm (booking an empty rAF
+   * forever while nothing can change would be a poll), so the chain goes fully quiet until something external
+   * calls `armAnimation` again — the diagnostic clock mover does exactly that the instant it changes the
+   * clock. The scheduler has no notion of "pinned" itself: the renderer's own closure for this port must
+   * answer false whenever its clock is the real one (even a browser-coarsened `performance.now()` can repeat
+   * across genuinely distinct frames), or this would freeze real play instead of just quieting a bench replay.
+   * Required, not optional: a caller that forgets to wire this would silently reintroduce the retry-storm bug
+   * this exists to close, rather than failing a type check.
+   */
+  isIdleSampleStale(at: number): boolean;
+  /** Record that an idle-only tick at `at` genuinely attempted its contribution (never a mere sample, a yield
+   *  or a carry) — the only correct input to `isIdleSampleStale` above. Not gated on the attempt's own
+   *  success: a decline inside it can be for a reason that has nothing to do with idle and has its own
+   *  resource-wake path to retry it, not a per-display-frame idle loop. Also required, for the same reason
+   *  as `isIdleSampleStale`. */
+  commitIdleSample(at: number): void;
 
   /** Sample/tick/advance order is a rendering contract, not a caller choice. */
   sampleVisual(at: number): void;
@@ -295,9 +311,6 @@ export interface CanvasFrameSchedulerPorts<TState extends CanvasFrameSchedulerSt
   readonly cpuIncremental?: boolean;
   readonly deadlines: CanvasFrameSchedulerDeadlinePorts;
   readonly animation: CanvasFrameSchedulerAnimationPorts<TState>;
-  readonly idleAnimFps: () => number;
-  /** Comparison-only passive animation pacing. Finite demand uses one display rAF. */
-  readonly displayPacedPassive?: boolean;
   readonly platform?: CanvasFrameSchedulerPlatform;
   /** Optional observer; it cannot change admission or scheduling. */
   readonly onFrameLifecycle?: (event: "offered" | "admitted" | "skipped" | "sample-start" | "sample-end", revision: number) => void;
@@ -518,7 +531,7 @@ export function createCanvasFrameScheduler<TState extends CanvasFrameSchedulerSt
   let rafBookedInsideTick = false;
   let previousTickFrameTime = Number.NaN;
   const displayGaps: number[] = [];
-  let displayFrameMs = CANVAS_IDLE_STAGE_MIN_FRAME_MS;
+  let displayFrameMs = DEFAULT_DISPLAY_FRAME_MS;
   const idleCounts = { rafCallbacks: 0, skippedTicks: 0, folds: 0, foldSkips: 0 };
   let closesPosted = 0;
   let idleEpochEnds = 0;
@@ -656,15 +669,18 @@ export function createCanvasFrameScheduler<TState extends CanvasFrameSchedulerSt
    * Re-evaluate the five animation sources lazily.
    *
    * Offset ramps deliberately short-circuit before any other deadline read:
-   * their deadline is an end time, not a next-frame time. Loop per-frame and
-   * A passive 60 Hz gate is
-   * the one passive case that retains a display rAF chain.
+   * their deadline is an end time, not a next-frame time.
    *
    * A finite loop deadline alone does not imply per-frame work: it can be the
    * final settle point for a channel that is otherwise quiet. `loopHasPerFrameDemand`
    * is the separate mixed-semantics discriminator which keeps that case
    * parkable while keeping an active transform/flight smooth. The passive
-   * fold combines authored idle cadence, spine, FX and stage effects.
+   * deadline folds idle, spine, FX and stage effects into one number — no
+   * authored cadence cap means an active idle loop's own contribution to it is
+   * always "due now" (see `visualState.idleDeadline`), reaching the
+   * unconditional immediate-admission arm below directly; a genuinely future
+   * passive source (spine, trail, an intent animation's own authored fps)
+   * still folds or parks as before.
    */
   function armAnimation(at: number): void {
     if (stopped() || animationRaf !== null || !animationFrameAvailable()) return;
@@ -704,37 +720,17 @@ export function createCanvasFrameScheduler<TState extends CanvasFrameSchedulerSt
       cancelPark();
       return;
     }
-    if (ports.displayPacedPassive) {
-      cancelPark();
-      armedRafs++;
-      bookAnimationFrame();
-      return;
-    }
 
-    // Keep the expensive fast-passive predicate late. It may itself query
-    // action sources, none of which matter when an unconditional arm won.
-    // In particular, never turn a fresh per-frame loop into extra deadline
-    // reads just to prove that it was already a per-frame loop.
+    // Keep the expensive predicates late. They may themselves query action sources, none of which matter
+    // when an unconditional arm won. In particular, never turn a fresh per-frame loop into extra deadline
+    // reads just to prove that it was already a per-frame loop. No authored idle cadence cap means an
+    // active idle loop's own `passiveDeadline` already reports "due now" (see visualState.idleDeadline),
+    // so it reaches this unconditional arm directly; only a genuinely future passive source (spine, trail,
+    // an intent animation's own authored fps) falls through to the fold/park logic below.
     const immediateDemand =
       due <= at + CANVAS_FRAME_PARK_SLOP_MS ||
       !timerAvailable();
     if (immediateDemand) {
-      cancelPark();
-      armedRafs++;
-      bookAnimationFrame();
-      return;
-    }
-
-    // At 60 Hz, retain one display rAF instead of parking a passive deadline.
-    // Evaluate the bypass only after all unconditional cases above; it may
-    // need to ask the loop/trail/Fx sources again.
-    const idleStageNotBefore = ports.deadlines.idleStageNotBefore();
-    const fastPassiveDisplayArm =
-      ports.idleAnimFps() >= CANVAS_IDLE_STAGE_MAX_FPS &&
-      passiveDue === idleStageNotBefore &&
-      idleStageNotBefore > at + CANVAS_FRAME_PARK_SLOP_MS &&
-      ports.deadlines.idleStageBypass(at) === null;
-    if (fastPassiveDisplayArm) {
       cancelPark();
       armedRafs++;
       bookAnimationFrame();
@@ -863,14 +859,17 @@ export function createCanvasFrameScheduler<TState extends CanvasFrameSchedulerSt
       armFromSkippedTick(at);
       return;
     }
-    if (
-      idleOnlyFrame && !ports.displayPacedPassive &&
-      at + CANVAS_IDLE_STAGE_EARLY_ADMISSION_MS < ports.deadlines.idleStageNotBefore()
-    ) {
+    // No authored cadence cap: an idle-only tick is always booked (see armAnimation), so without this check a
+    // pinned diagnostic clock would resample and retry a blocked admission on every one of those bookings
+    // forever. This does NOT re-arm — booking an empty rAF forever while nothing can change is a poll, which
+    // this scheduler's contract forbids — so the chain goes fully quiet. `createPixiMirrorRenderer`'s
+    // diagnostic-clock mover calls `armAnimation` itself the instant it changes the clock, which is the hook
+    // that resumes it. `isIdleSampleStale`'s own contract keeps this inert on the renderer's real clock, even
+    // a browser-coarsened one that CAN repeat `at` across genuinely distinct frames (unlike a pinned one,
+    // that is not a "nothing changed" signal) — this scheduler has no way to tell the two apart itself.
+    if (idleOnlyFrame && ports.animation.isIdleSampleStale(at)) {
       idleCounts.skippedTicks++;
       ports.onFrameLifecycle?.("skipped", state.revision);
-      ports.animation.noteIdleStageSkippedEarly();
-      armFromSkippedTick(at);
       return;
     }
     // rustIdleScheduler: a tick booked in place of a park timer runs no earlier than that timer would have woken.
@@ -954,6 +953,15 @@ export function createCanvasFrameScheduler<TState extends CanvasFrameSchedulerSt
         carryFrame = true;
         ports.onFrameLifecycle?.("skipped", state.revision);
       } else {
+        // No authored cadence cap: this tick is genuinely attempting idle's contribution for `at` (not
+        // yielding or carrying it, both handled above by an earlier return), so this instant is accounted
+        // for either way. Commit BEFORE the attempt, not after: a decline here can be for a reason that has
+        // nothing to do with idle itself (the scene sits on a newer, not-yet-admitted revision, say) and its
+        // own resource-wake path owns retrying that — not a per-display-frame idle loop, which would retry it
+        // forever under a pinned clock (polling-shaped, and this scheduler's contract forbids it). A GENUINE
+        // idle-side block (an in-flight async submission) is caught above, before this branch, and still
+        // carries the frame instead of committing it.
+        if (idleOnlyFrame) ports.animation.commitIdleSample(at);
         // A ramp patch is counted when it commits (`settlePatch`): an asynchronous patch answers false here.
         patchRampContext = rampMoved;
         let patched: boolean;
@@ -973,9 +981,7 @@ export function createCanvasFrameScheduler<TState extends CanvasFrameSchedulerSt
 
     ports.animation.settleLanding(at);
     animationFrames++;
-    if (idleOnlyFrame && !ports.displayPacedPassive) {
-      ports.animation.noteIdleStageAdmission(at, CANVAS_IDLE_STAGE_MIN_FRAME_MS);
-    }
+    if (idleOnlyFrame) ports.animation.noteIdleStageAdmission(at);
     noteSample(frameMsSamples, ports.now() - at, FRAME_SAMPLE_WINDOW);
     armAnimation(ports.now());
   }

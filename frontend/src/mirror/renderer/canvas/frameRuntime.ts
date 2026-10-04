@@ -22,9 +22,6 @@ import { type PaintOrder } from "@/mirror/canvas/paintOrder";
 import { type PaintGuard } from "@/mirror/canvas/paintGuard";
 import { type MirrorNode, type MirrorState } from "@/mirror/sceneTree";
 
-/** Fixed canvas cadence for locally retained idle and intent animation. */
-export const CANVAS_IDLE_ANIMATION_FPS = 30;
-
 /**
  * The retained scene facts that produced a drawn frame.
  *

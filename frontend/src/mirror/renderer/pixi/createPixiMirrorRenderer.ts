@@ -27,7 +27,7 @@ import { isStaticBackgroundSuppressibleRoot, spreadSceneIdentityEnv, staticBgTar
 import { createCanvasInteractionRuntime, type OffsetPatchFrame } from "@/mirror/renderer/canvas/interactionRuntime";
 import { translatedSpanRefusal } from "./translatedSpan";
 import { planWireSpread, type AncestorFrame, type WireSpreadPlan } from "./wireSpreadPlan";
-import { CANVAS_IDLE_ANIMATION_FPS, type DrawnSceneSnapshot } from "@/mirror/renderer/canvas/frameRuntime";
+import { type DrawnSceneSnapshot } from "@/mirror/renderer/canvas/frameRuntime";
 import { createCanvasVisualState, type LandingPresentation, type SampleMark } from "@/mirror/renderer/canvas/visualState";
 import { CANVAS_FRAME_PARK_SLOP_MS, createCanvasFrameScheduler, type CanvasPatchSubmission } from "@/mirror/renderer/canvas/frameScheduler";
 import { effectiveMirrorQuality, effectiveMirrorRenderSettings, mirrorSettings } from "@/mirror/mirrorSettings";
@@ -531,7 +531,6 @@ export function createPixiMirrorRenderer(
     emitWarmAckTrace({ kind, revision, instance, presentEpoch: frameEpoch,
       asyncSubmissionRevision, asyncPresentedRevision, asyncAwaitingAckRevision, pullPending });
   };
-  const displayPaced = rendererComparisonConfig.idleCadence === "display";
   let deterministicClock: number | null = (() => { const value = (window as unknown as { __benchDiagnosticClockMs?: unknown }).__benchDiagnosticClockMs; return typeof value === "number" ? value : null; })();
   let drawnClock: number | null = null;
   let backingW = 1, backingH = 1, dpr = 1;
@@ -632,10 +631,7 @@ export function createPixiMirrorRenderer(
   installHandPoseProbe(interaction.handPoses, probeOwner);
   installLandingLogProbe(visual.passiveLandingLogReport, probeOwner);
   if (spreadAuditEnabled) installSpreadAuditProbe(() => visual.spreadAuditReport()!, probeOwner);
-  const passiveDeadline = (at: number): number => {
-    const due = visual.idleDeadline(at, CANVAS_IDLE_ANIMATION_FPS, visual.idleStageNotBefore, displayPaced);
-    return Number.isFinite(due) ? Math.max(due, visual.idleStageNotBefore) : due;
-  };
+  const passiveDeadline = (at: number): number => visual.idleDeadline(at);
   const idleStageBypass = (at: number) => {
     if (Number.isFinite(interaction.offsetRampDeadline)) return "offset" as const;
     if (loop.hasPerFrameDemand(at)) return "tween" as const;
@@ -644,8 +640,8 @@ export function createPixiMirrorRenderer(
   };
   const scheduler = createCanvasFrameScheduler({
     now: () => deterministicClock ?? performance.now(), state: () => state, disposed: () => disposed,
-    revisionAtFrame: () => snapshot?.stateRevision ?? -1, idleAnimFps: () => CANVAS_IDLE_ANIMATION_FPS,
-    cpuIncremental: retainedMode, displayPacedPassive: displayPaced,
+    revisionAtFrame: () => snapshot?.stateRevision ?? -1,
+    cpuIncremental: retainedMode,
     onFrameLifecycle: lifecycle ? (event, revision) => {
       if (event === "offered") lifecycle.begin("animation", revision, completedDraws());
       else if (event === "admitted") lifecycle.admit();
@@ -658,12 +654,18 @@ export function createPixiMirrorRenderer(
       loopDeadline: (at) => loop.nextDeadline(at), loopHasPerFrameDemand: (at) => loop.hasPerFrameDemand(at),
       trailDeadline: () => Number.POSITIVE_INFINITY,
       passiveDeadline, idleStageBypass,
-      idleStageNotBefore: () => visual.idleStageNotBefore,
     },
     animation: {
       advanceOffsetRamps: interaction.advanceOffsetRamps,
-      noteIdleStageMissingPassive: visual.noteIdleStageMissingPassive, noteIdleStageSkippedEarly: visual.noteIdleStageSkippedEarly,
+      noteIdleStageMissingPassive: visual.noteIdleStageMissingPassive,
       noteIdleStageAdmission: visual.noteIdleStageAdmission,
+      // This backend's passiveDeadline is idle-only (no spine/FX combination here), so the idle-level check
+      // is already the whole answer; frameAssembly.ts's canvas backend additionally folds in spine/FX.
+      // `pinned` MUST be false on the real clock: `deterministicClock` is only ever non-null while a
+      // diagnostic/bench caller has it pinned (`__mirrorSetDiagnosticClock`); normal play never sets it, so
+      // this stays permanently non-stale there, even if the browser coarsens `performance.now()`.
+      isIdleSampleStale: (at) => visual.isIdleSampleStale(at, deterministicClock !== null),
+      commitIdleSample: visual.commitIdleSample,
       sampleVisual,
       noteTrailFlightHeads() {}, tickTrails() {}, mergeTrailLatches() {}, advanceVisual: visual.advance, tickSpine() {},
       tryPatchAndPaint: (at) => tryRetainedPatch(at),
@@ -2821,7 +2823,7 @@ const traceId = nextTraceFrame();
       ...(hiddenWalkMode ? { rustHiddenWalk: { rows: hiddenWalkRows.slice(), overflow: hiddenWalkOverflow } } : {}),
       webglVersion: (() => { const gl = (pixi?.app.renderer as unknown as { gl?: WebGLRenderingContext })?.gl; return gl ? gl.getParameter(gl.VERSION) : null; })(),
       renderer: (() => { const gl = (pixi?.app.renderer as unknown as { gl?: WebGLRenderingContext })?.gl; return gl ? gl.getParameter(gl.RENDERER) : null; })(),
-      ageMs: performance.now() - createdAt, buildEpoch, commands: list.count, pixiScene: retainedMode ? "retained" : "legacy", idleCadence: displayPaced ? "display" : "authored",
+      ageMs: performance.now() - createdAt, buildEpoch, commands: list.count, pixiScene: retainedMode ? "retained" : "legacy",
       paintOrderReuse: paintOrderReuse ? 1 : 0,
       ...(backend === "rust" ? { rustOmitStaticPixelCaches, rustSkipHiddenHitCandidates,
         rustStaticAdmissionPhase: rustStaticAdmissionPhaseMode, rustFast: { ...fast },
@@ -2962,6 +2964,10 @@ const traceId = nextTraceFrame();
         if (lifecycle) lifecycle.phase("sample", () => { visual.applyInputs(current, at); interaction.applyHeldLift(); interaction.applyHandRaisePass(at); sampleVisual(at); });
         else { visual.applyInputs(current, at); interaction.applyHeldLift(); interaction.applyHandRaisePass(at); sampleVisual(at); }
         if (!snapshot || !(presentIdleFrame(at) || tryRetainedPatch(at))) paint(current, "clock", retainedDecline);
+        // Outside the scheduler (and so its own commitIdleSample call in admittedTick): a concurrent
+        // scheduler-driven idle tick at this SAME pinned `at` would otherwise not know it was already
+        // handled here and present it again.
+        visual.commitIdleSample(at);
         const candidate = asyncSubmissionRevision !== null ? asyncPresentCompletion : null;
         if (candidate) await awaitCompletion(candidate);
         assertActive();
@@ -2980,14 +2986,24 @@ const traceId = nextTraceFrame();
     }
   }
   globals.__mirrorSetDiagnosticClock = (ms: number | null) => {
+    // No authored cadence cap: the scheduler's own idle chain goes fully quiet once a tick finds the pinned
+    // clock unchanged (see frameScheduler's admission check) — it does not poll by re-arming itself. Update
+    // the clock BEFORE waking it, so the tick this books reads the NEW value when it fires; this one call,
+    // exactly once per actual clock change (never inside a retry loop waiting on something else), is the
+    // external event that wakes the chain back up.
+    deterministicClock = ms;
+    scheduler.armAnimation(ms ?? performance.now());
     if (backend === "rust") return setRustDiagnosticClock(ms);
-    deterministicClock = typeof ms === "number" ? ms : null;
     if (state && readiness === "ready") {
       beginLocalFrame("clock");
       const at = deterministicClock ?? performance.now();
       if (lifecycle) lifecycle.phase("sample", () => { visual.applyInputs(state!, at); interaction.applyHeldLift(); interaction.applyHandRaisePass(at); sampleVisual(at); });
       else { visual.applyInputs(state, at); interaction.applyHeldLift(); interaction.applyHandRaisePass(at); sampleVisual(at); }
       if (!tryRetainedPatch(at)) paint(state, "clock", retainedDecline);
+      // This present bypasses the scheduler (and so its own commitIdleSample call in admittedTick), so a
+      // later scheduler-driven idle tick at this SAME `at` would otherwise not know it was already handled
+      // and present it again.
+      visual.commitIdleSample(at);
     }
     const settle = () => new Promise((resolve) => requestAnimationFrame(() => resolve(diagnostics().frameIdentity)));
     return settle();
@@ -3064,6 +3080,10 @@ const traceId = nextTraceFrame();
       const presented = (completedAsync && !honourRequest) || tryRetainedWire(next, at) || paint(next, "wire", retainedDecline); if (presented) {
         next.changedIds.clear(); next.sceneRewrite = false;
         visual.advance(at);
+        // Outside the scheduler (and so its own commitIdleSample call in admittedTick): a wire reconcile
+        // presents at this `at` too, so a later scheduler-driven idle tick at the SAME pinned instant would
+        // otherwise not know it was already handled here and present it again.
+        visual.commitIdleSample(at);
         scheduler.armAnimation(deterministicClock ?? performance.now());
       } else {
         if (asyncSubmissionRevision === next.revision) {

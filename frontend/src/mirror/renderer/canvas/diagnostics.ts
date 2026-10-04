@@ -19,7 +19,6 @@ import { SPINE_KEY_PREFIX } from "@/mirror/canvas/spineSurfaces";
 import { TEXT_KEY_PREFIX } from "@/mirror/canvas/textSurfaces";
 import type { TextureBridge } from "@/mirror/canvas/textureBridge";
 import type { CanvasInteractionRuntime } from "@/mirror/renderer/canvas/interactionRuntime";
-import { CANVAS_IDLE_ANIMATION_FPS } from "@/mirror/renderer/canvas/frameRuntime";
 import type {
   CanvasFramePresentationRuntime,
   CanvasFrameRuntime,
@@ -190,7 +189,6 @@ function flattenCanvasStatsSnapshot(snapshot: CanvasStatsSnapshot) {
     glyphBlocks: text.glyphBlocks,
     glyphs: text.glyphs,
     hintTransformRebased: visualStats.hintTransformRebased,
-    idleAnimFps: CANVAS_IDLE_ANIMATION_FPS,
     idleEntries: { size: visualStats.idlePlans },
     idleFrames: visualStats.idleFrames,
     idleInvisible: visualStats.idleInvisible,
@@ -198,14 +196,11 @@ function flattenCanvasStatsSnapshot(snapshot: CanvasStatsSnapshot) {
     idlePatched: patch.execution.stats.idlePatched,
     idlePeriodSamples: schedule.idlePeriodSamples,
     idleRebuilds: visualStats.idleRebuilds,
-    idleStageAdmittedEarlySlack: visualStats.idleStageAdmittedEarlySlack,
     idleStageAdmittedGaps: visualStats.idleStageAdmittedGaps,
     idleStageAdmittedPassive: visualStats.idleStageAdmittedPassive,
     idleStageBypasses: schedule.idleStageBypasses,
     idleStageMinAdmittedGap: visualStats.idleStageMinAdmittedGap,
     idleStageMissingPassive: visualStats.idleStageMissingPassive,
-    idleStagePhaseResets: visualStats.idleStagePhaseResets,
-    idleStageSkippedEarly: visualStats.idleStageSkippedEarly,
     intentEntries: { size: visualStats.intentCycles },
     intentSwaps: visualStats.intentSwaps,
     loop: visual.loop,
@@ -295,7 +290,7 @@ function canvasFxStats(
 /** Formats the complete canvas diagnostics envelope without scheduling or acknowledging work. */
 export function canvasStats(snapshot: CanvasStatsSnapshot): unknown {
   const source = flattenCanvasStatsSnapshot(snapshot);
-  const { IDLE_PERIOD_MIN_SAMPLES, TEXTURE_PACE_BYTES_DEFAULT, TEXTURE_PACE_COUNT_DEFAULT, TEXTURE_TINY_BYTES_DEFAULT, animFrames, armedParks, armedRafs, backingH, backingSnapped, backingW, bridge, build, buildMsSamples, builds, canvasRendererCreatedAtMs, canvasRendererInstanceId, compiledList, contextLost, directPaintMsSamples, disposed, executor, frameMsSamples, fx, fxQuadBuilds, fxQuadPeak, fxScreenTexture, glyphBlocks, glyphs, hintTransformRebased, idleAnimFps, idleEntries, idleFrames, idleInvisible, idleLoopCount, idlePatched, idlePeriodSamples, idleRebuilds, idleStageAdmittedEarlySlack, idleStageAdmittedGaps, idleStageAdmittedPassive, idleStageBypasses, idleStageMinAdmittedGap, idleStageMissingPassive, idleStagePhaseResets, idleStageSkippedEarly, intentEntries, intentSwaps, loop, mapStrokeLocals, mapStrokePinReuses, offsetBuilds, offsetCoalesced, overlayCounts, overlayMsSamples, pace, paceTiny, paintGuard, paintMsSamples, paintedFrames, parkWakeups, patchBailouts, patchChainMax, patchMsSamples, patchedFrames, patchedNodes, patchedQuads, pulledReconciles, rafDeliverySamples, rampFrames, skippedPaints, sourcePatchedFrames, sourcePatchedNodes, sourcePatchedQuads, spine, spineHoisted, spineQuadPeak, stageRuntime, staticBgStageActive, staticBgStageCommand, staticBgStageFailures, staticBgStagePending, staticBgStageReady, textRuntime, texts, textures, trailStats, transformChainMax, transformCommands, transformFrames, transformHits, transformRecords, transformRoots, tweenReparentDropped, wireBuildCauses, wireChangedCommands, wireDirectPatches, wireNodesVisited, wireSourcePatches, withheldPeak } = source;
+  const { IDLE_PERIOD_MIN_SAMPLES, TEXTURE_PACE_BYTES_DEFAULT, TEXTURE_PACE_COUNT_DEFAULT, TEXTURE_TINY_BYTES_DEFAULT, animFrames, armedParks, armedRafs, backingH, backingSnapped, backingW, bridge, build, buildMsSamples, builds, canvasRendererCreatedAtMs, canvasRendererInstanceId, compiledList, contextLost, directPaintMsSamples, disposed, executor, frameMsSamples, fx, fxQuadBuilds, fxQuadPeak, fxScreenTexture, glyphBlocks, glyphs, hintTransformRebased, idleEntries, idleFrames, idleInvisible, idleLoopCount, idlePatched, idlePeriodSamples, idleRebuilds, idleStageAdmittedGaps, idleStageAdmittedPassive, idleStageBypasses, idleStageMinAdmittedGap, idleStageMissingPassive, intentEntries, intentSwaps, loop, mapStrokeLocals, mapStrokePinReuses, offsetBuilds, offsetCoalesced, overlayCounts, overlayMsSamples, pace, paceTiny, paintGuard, paintMsSamples, paintedFrames, parkWakeups, patchBailouts, patchChainMax, patchMsSamples, patchedFrames, patchedNodes, patchedQuads, pulledReconciles, rafDeliverySamples, rampFrames, skippedPaints, sourcePatchedFrames, sourcePatchedNodes, sourcePatchedQuads, spine, spineHoisted, spineQuadPeak, stageRuntime, staticBgStageActive, staticBgStageCommand, staticBgStageFailures, staticBgStagePending, staticBgStageReady, textRuntime, texts, textures, trailStats, transformChainMax, transformCommands, transformFrames, transformHits, transformRecords, transformRoots, tweenReparentDropped, wireBuildCauses, wireChangedCommands, wireDirectPatches, wireNodesVisited, wireSourcePatches, withheldPeak } = source;
   const p50 = (samples: readonly number[]): number => {
     if (samples.length === 0) return 0;
     const sorted = [...samples].sort((a, b) => a - b);
@@ -367,10 +362,11 @@ export function canvasStats(snapshot: CanvasStatsSnapshot): unknown {
         // is what the resolver found, `transformLoops`/`alphaLoops` split them by the channel they drive, and
         // `invisible` counts the samples an off-screen loop did NOT take.
         //
-        // `rebuilds` KEEPS ITS NAME AND ITS MEANING — frames on which a local anim MOVED a pose — because it is
-        // what the fps cap was sized against and half a dozen published numbers are in its units. What changed in
-        // R7 is that such a frame no longer has to rebuild: `patched` is the subtraction, so `rebuilds - patched`
-        // is the count that still costs a walk. On the `opacity` default `patched` is 0 by construction.
+        // `rebuilds` KEEPS ITS NAME AND ITS MEANING — frames on which a local anim MOVED a pose — because half a
+        // dozen published numbers are in its units (idle animation has no authored cadence cap anymore: it samples
+        // every display frame, like DOM's compositor animations). What changed in R7 is that such a frame no longer
+        // has to rebuild: `patched` is the subtraction, so `rebuilds - patched` is the count that still costs a
+        // walk. On the `opacity` default `patched` is 0 by construction.
         idle: {
           plans: idleEntries.size,
           transformLoops: idleLoopCount("transform"),
@@ -378,14 +374,12 @@ export function canvasStats(snapshot: CanvasStatsSnapshot): unknown {
           frames: idleFrames,
           rebuilds: idleRebuilds,
           patched: idlePatched,
-          fpsCap: idleAnimFps,
           displayBypasses: { ...idleStageBypasses },
-          displayGate: {
+          // No authored cadence cap, so there is no admission gate left to report on — only how often an
+          // idle-only frame is actually admitted, and how far apart, which should track the display period.
+          admission: {
             admittedPassive: idleStageAdmittedPassive,
-            skippedEarly: idleStageSkippedEarly,
             missingPassive: idleStageMissingPassive,
-            admittedEarlySlack: idleStageAdmittedEarlySlack,
-            phaseResets: idleStagePhaseResets,
             minAdmittedGapMs: Number.isFinite(idleStageMinAdmittedGap) ? idleStageMinAdmittedGap : null,
             admittedGapP50Ms: idleStageAdmittedGaps.length > 0 ? p50(idleStageAdmittedGaps) : null
           },

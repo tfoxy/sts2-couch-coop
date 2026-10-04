@@ -202,7 +202,18 @@ export interface CanvasVisualState {
   applyInputs(next: MirrorState, at: number): void;
   sample(at: number): void;
   advance(at: number): void;
-  idleDeadline(at: number, fps: number, phaseDeadline: number, displayPaced?: boolean): number;
+  idleDeadline(at: number): number;
+  /**
+   * True when an idle-only tick would resample the exact instant the last one already handled. `pinned`
+   * MUST be false for the caller's own real clock — a real `performance.now()` can be coarsened by the
+   * browser (resistFingerprinting clamps) and repeat across two genuinely distinct display frames, where
+   * treating that as stale would freeze the idle chain (it does not re-arm once stale) until unrelated input
+   * woke it. Only a genuinely pinned diagnostic/bench clock makes a repeat mean "nothing changed".
+   */
+  isIdleSampleStale(at: number, pinned: boolean): boolean;
+  /** Record that an idle-only tick at `at` genuinely attempted its contribution, never a mere sample, a yield
+   *  or a carry. See the implementation for why this is NOT gated on the attempt's own success. */
+  commitIdleSample(at: number): void;
   consumeLandingArms(): LandingArm[];
   /** Bank alpha overrides after a full build, never after an in-place patch. */
   bankAppliedAlphas(): void;
@@ -223,9 +234,8 @@ export interface CanvasVisualState {
   /** A diagnostic-only report; undefined when the audit was never armed. */
   spreadAuditReport(): ReturnType<typeof spreadAuditReport> | undefined;
   intentNode(id: string): MirrorNode | undefined;
-  readonly idleStageNotBefore: number;
-  noteIdleStageAdmission(at: number, minFrameMs: number): void;
-  noteIdleStageSkippedEarly(): void;
+  /** How often an idle-only frame is actually admitted — a diagnostic, not a gate. */
+  noteIdleStageAdmission(at: number): void;
   noteIdleStageMissingPassive(): void;
   idleLoopCount(channel: "transform" | "alpha"): number;
   /**
@@ -249,10 +259,7 @@ export interface CanvasVisualState {
     settledOverrideReleases: number;
     hintTransformRebased: number;
     idleStageAdmittedPassive: number;
-    idleStageSkippedEarly: number;
     idleStageMissingPassive: number;
-    idleStageAdmittedEarlySlack: number;
-    idleStagePhaseResets: number;
     idleStageMinAdmittedGap: number;
     idleStageAdmittedGaps: readonly number[];
   };
@@ -339,23 +346,24 @@ export function createCanvasVisualState(
   const idleSample = createIdleAnimSample();
   let frameSampleMask: SampleMask = SAMPLE_NONE;
   let idleActive = 0;
-  let lastIdleFrameAt = 0;
+  // NaN, not 0: a fake/replay clock can legitimately start at 0, and NaN is the only value nothing can equal,
+  // so the very first idle sample at `at === 0` is never mistaken for "nothing changed since last time".
+  let lastIdleFrameAt = Number.NaN;
   let idleFrames = 0;
   let idleRebuilds = 0;
   let idleInvisible = 0;
   let intentSwaps = 0;
   let reparentDrops = 0;
   let hintTransformRebased = 0;
-  let idleStageNotBefore = 0;
   let idleStageAdmittedPassive = 0;
-  let idleStageSkippedEarly = 0;
   let idleStageMissingPassive = 0;
-  let idleStageAdmittedEarlySlack = 0;
-  let idleStagePhaseResets = 0;
   let idleStageLastAdmittedAt = Number.NaN;
   let idleStageMinAdmittedGap = Number.POSITIVE_INFINITY;
   let idleGeneration = 0;
+  /** Ring buffer: avoids an O(n) `shift()` now that admission runs every display frame, not every ~33 ms. */
+  const IDLE_STAGE_ADMITTED_GAP_WINDOW = 120;
   const idleStageAdmittedGaps: number[] = [];
+  let idleStageAdmittedGapCursor = 0;
 
   const modAlpha = (node: MirrorNode): number =>
     node.modulate?.a ?? node.opacity;
@@ -988,7 +996,13 @@ export function createCanvasVisualState(
       idleFrames++;
       options.noteIdlePeriod(at);
       if (localAnims.size > 0) idleRebuilds++;
-      lastIdleFrameAt = at;
+      // `lastIdleFrameAt` is NOT set here: sampling happens even for a tick that only yields or carries this
+      // frame (another build or patch already spent it, or an async submission still has it blocked) without
+      // actually attempting idle's own contribution. See `commitIdleSample`, called once that attempt is
+      // genuinely made — whether through the scheduler's own admittedTick, or a present made outside it (a
+      // synchronous diagnostic-clock present, a wire reconcile) that this same instant must not be redrawn
+      // for. A carried frame must keep being retried at the same pinned instant, not be mistaken for an
+      // already-handled repeat.
     }
   }
 
@@ -1251,17 +1265,40 @@ export function createCanvasVisualState(
     advance(at) {
       loop.advance(at);
     },
-    idleDeadline(at, fps, phaseDeadline, displayPaced = false) {
-      return Math.min(
-        idleActive === 0
-          ? Number.POSITIVE_INFINITY
-          : displayPaced
-            ? at
-          : fps >= 60 && phaseDeadline > 0
-            ? phaseDeadline
-            : lastIdleFrameAt + 1000 / fps,
-        intentDeadline(at),
-      );
+    // No authored cadence cap: an active idle loop is due every display frame, like DOM's compositor
+    // animations. This must always book the next frame while active — a scheduling-level staleness check
+    // here would compare a tick's own immediate re-arm against the sample it just took in the same tick,
+    // which reads as "unchanged" under any pinned or test-mocked clock and would silently stop the chain
+    // for good (nothing left to wake it). `isIdleSampleStale` below instead refuses to re-sample an instant
+    // already ACCEPTED, at the point a NEW tick is admitted — never at the point this one re-arms itself —
+    // and the scheduler does not even re-arm once it reports stale (see frameScheduler's admission check):
+    // the chain goes fully quiet, and `__mirrorSetDiagnosticClock` re-arms explicitly once the clock moves.
+    // `intentDeadline` can only ever push the deadline later than "now", so it is skipped whenever the idle
+    // branch already answers "due now" — it cannot win that comparison.
+    idleDeadline(at) {
+      if (idleActive > 0) return at;
+      return intentDeadline(at);
+    },
+    // Read-only: true when an idle-only tick would resample the exact instant the last tick already handled.
+    // `pinned` must be false whenever the caller's own clock is the real one: a real `performance.now()` can
+    // be coarsened by the browser (Tor/Firefox resistFingerprinting clamp to 16.67-100 ms resolution), so two
+    // consecutive display frames reading the identical value is a real event, not just a pinned-clock one —
+    // treating it as stale there would freeze the idle chain (it does not re-arm once stale) until unrelated
+    // input woke it. Only a genuinely pinned diagnostic/bench clock (the caller's own `deterministicClock`,
+    // say) makes `at` repeating a reliable "nothing changed" signal. `lastIdleFrameAt` only moves in
+    // `commitIdleSample`, never here on a merely sampled frame, so a frame that only yielded or carried
+    // (never actually attempted idle's contribution) keeps retrying at the same pinned instant instead of
+    // being mistaken for an already-handled repeat.
+    isIdleSampleStale(at, pinned) {
+      return pinned && idleActive > 0 && at === lastIdleFrameAt;
+    },
+    // Called once an idle-only tick genuinely attempts its contribution for `at` (never on a tick that only
+    // yielded or carried the frame to a later one) — see `isIdleSampleStale`. Committed before the attempt's
+    // own result is known: a decline inside it can be for a reason that has nothing to do with idle (the
+    // scene sits on a newer, not-yet-admitted revision, say), and that has its own resource-wake path to
+    // retry it — not a per-display-frame idle loop, which would retry it forever under a pinned clock.
+    commitIdleSample(at) {
+      lastIdleFrameAt = at;
     },
     consumeLandingArms() {
       return landingArms.splice(0);
@@ -1284,32 +1321,23 @@ export function createCanvasVisualState(
     intentNode(id) {
       return intentEntries.get(id)?.node;
     },
-    get idleStageNotBefore() {
-      return idleStageNotBefore;
-    },
-    noteIdleStageAdmission(at, minFrameMs) {
-      if (idleStageNotBefore > 0 && at < idleStageNotBefore)
-        idleStageAdmittedEarlySlack++;
+    // No authored cadence cap: there is no admission gate left to drive (an idle-only frame is admitted
+    // whenever it is booked). This diagnostic-only count of how often that actually happens — and how far
+    // apart — still answers "are we really sampling every display frame now". A fixed-size ring avoids an
+    // O(n) `shift()` on a buffer this now writes every display frame instead of every ~33 ms.
+    noteIdleStageAdmission(at) {
       if (Number.isFinite(idleStageLastAdmittedAt)) {
-        idleStageMinAdmittedGap = Math.min(
-          idleStageMinAdmittedGap,
-          Math.max(0, at - idleStageLastAdmittedAt),
-        );
-        if (idleStageAdmittedGaps.length >= 120) idleStageAdmittedGaps.shift();
-        idleStageAdmittedGaps.push(Math.max(0, at - idleStageLastAdmittedAt));
+        const gap = Math.max(0, at - idleStageLastAdmittedAt);
+        idleStageMinAdmittedGap = Math.min(idleStageMinAdmittedGap, gap);
+        if (idleStageAdmittedGaps.length < IDLE_STAGE_ADMITTED_GAP_WINDOW) {
+          idleStageAdmittedGaps.push(gap);
+        } else {
+          idleStageAdmittedGaps[idleStageAdmittedGapCursor] = gap;
+          idleStageAdmittedGapCursor = (idleStageAdmittedGapCursor + 1) % IDLE_STAGE_ADMITTED_GAP_WINDOW;
+        }
       }
       idleStageLastAdmittedAt = at;
       idleStageAdmittedPassive++;
-      const nextPhase = idleStageNotBefore + minFrameMs;
-      if (idleStageNotBefore > 0 && at < nextPhase)
-        idleStageNotBefore = nextPhase;
-      else {
-        if (idleStageNotBefore > 0) idleStagePhaseResets++;
-        idleStageNotBefore = at + minFrameMs;
-      }
-    },
-    noteIdleStageSkippedEarly() {
-      idleStageSkippedEarly++;
     },
     noteIdleStageMissingPassive() {
       idleStageMissingPassive++;
@@ -1347,10 +1375,7 @@ export function createCanvasVisualState(
         settledOverrideReleases,
         hintTransformRebased,
         idleStageAdmittedPassive,
-        idleStageSkippedEarly,
         idleStageMissingPassive,
-        idleStageAdmittedEarlySlack,
-        idleStagePhaseResets,
         idleStageMinAdmittedGap,
         idleStageAdmittedGaps,
       };

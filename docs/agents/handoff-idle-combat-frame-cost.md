@@ -18,6 +18,10 @@ The trace was taken on a Moto g86 (Chrome, 739x281 @ DPR 3.49, stretch on) on th
 covers 4.4 s of idle combat: an intent bob, an orb spin, and the clock ticking once a second. That is 125 frames at
 the 30 Hz idle cadence (`CANVAS_IDLE_ANIMATION_FPS`, `renderer/canvas/frameRuntime.ts:26`) and 4 bursts.
 
+> **Update:** WP7 of the wire-shaped-renderer round (`handoff-wire-shaped-renderer.md`) removed
+> `CANVAS_IDLE_ANIMATION_FPS` and the 30 Hz idle cadence entirely; idle animation is now display-paced on every
+> canvas backend. The cadence figures below are historical, as measured at the time.
+
 **Steady frame: ~11.3 ms of sampled main thread, and every frame is a retained *patch*.**
 
 | Part | ms |
@@ -316,6 +320,7 @@ actually happened in that epoch.
 - a late epoch close starts a new epoch rather than inheriting work.
 
 The 30 Hz idle cadence (`CANVAS_IDLE_ANIMATION_FPS`) must stay exact, with no drift and no extra frames.
+(Superseded: WP7 of the wire-shaped-renderer round later removed this cadence cap entirely; see the note in §1.)
 
 **No polling** (CLAUDE.md): replace a timer, never add one.
 

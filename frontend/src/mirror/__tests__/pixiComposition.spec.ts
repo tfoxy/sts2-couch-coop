@@ -1088,9 +1088,19 @@ describe("Pixi composition initialization", () => {
       await vi.waitFor(() => expect(diagnostic().asyncSubmissionRevision).toBeNull());
       const clock = clockAt(500);
       await vi.waitFor(() => expect(adapter.admitScene.mock.calls.length).toBeGreaterThanOrEqual(3));
+      // Pinning the clock wakes the scheduler's own idle chain once (see createPixiMirrorRenderer's
+      // `__mirrorSetDiagnosticClock`), which settles back to stale/quiet after one more genuine attempt. Let
+      // that one-time transient finish before capturing the baseline the "no growth" check below compares
+      // against, so it is not mistaken for the start of a retry storm.
+      await new Promise((resolve) => setTimeout(resolve, 50));
       const admissionsWithoutWake = adapter.admitScene.mock.calls.length;
       await new Promise((resolve) => setTimeout(resolve, 180));
       expect(diagnostic().frameIdentity).toMatchObject({ revision: 40 });
+      // No authored cadence cap, but the diagnostic clock is pinned (`deterministicClock`): idle demand is
+      // due again only once its sample time actually moves (`visualState.idleDeadline`), so a blocked
+      // admission must NOT be retried every display frame while the clock sits still — this would fail if
+      // it were (a real regression this test exists to catch, not just the old 30 Hz cadence happening to
+      // leave no time for a retry in the window above).
       expect(adapter.admitScene).toHaveBeenCalledTimes(admissionsWithoutWake);
       textureReady = true;
       onInvalidate("resource");
@@ -1531,9 +1541,30 @@ describe("Pixi composition initialization", () => {
     const adapter = fakeAdapter(); control.pending!.resolve(adapter);
     await vi.waitFor(() => expect(adapter.admitScene).toHaveBeenCalled());
     schedulerControl.ports.deadlines.passiveDeadline = () => performance.now();
-    schedulerControl.ports.deadlines.idleStageNotBefore = () => 0;
     const before = adapter.stats.completedFrames;
     expect(renderer.reconcile(next)).toBeUndefined();
+    await vi.waitFor(() => expect(adapter.stats.completedFrames).toBeGreaterThan(before + 1));
+    renderer.dispose();
+  });
+
+  it("keeps booking the idle chain on a browser-coarsened real clock, with no pinned diagnostic clock", async () => {
+    // Tor/Firefox resistFingerprinting clamps performance.now() resolution (16.67-100 ms): consecutive
+    // display frames can read the exact identical value on a REAL, unpinned clock. Unlike a genuinely pinned
+    // diagnostic/bench clock (deterministicClock, set only by __mirrorSetDiagnosticClock), a repeat here must
+    // never be mistaken for "nothing changed" — isIdleSampleStale's `pinned` argument must stay false, or the
+    // idle chain would freeze for good (it does not re-arm once it reports stale) until unrelated input woke
+    // it, the exact bug this test exists to catch.
+    vi.spyOn(performance, "now").mockReturnValue(1000);
+    const renderer = createPixiMirrorRenderer(stage(), document.createElementNS("http://www.w3.org/2000/svg", "defs"));
+    const next = createMirrorState(); next.revision = 4;
+    renderer.reconcile(next);
+    await vi.waitFor(() => expect(control.pending).not.toBeNull());
+    const adapter = fakeAdapter(); control.pending!.resolve(adapter);
+    await vi.waitFor(() => expect(adapter.admitScene).toHaveBeenCalled());
+    schedulerControl.ports.deadlines.passiveDeadline = () => performance.now();
+    const before = adapter.stats.completedFrames;
+    expect(renderer.reconcile(next)).toBeUndefined();
+    // __mirrorSetDiagnosticClock is never called: deterministicClock stays null throughout.
     await vi.waitFor(() => expect(adapter.stats.completedFrames).toBeGreaterThan(before + 1));
     renderer.dispose();
   });
@@ -1661,7 +1692,10 @@ describe("Pixi composition initialization", () => {
     } finally { renderer.dispose(); }
   });
 
-  it.each(["legacy", "retained"])("uses display cadence for the %s scene control", async (scene) => {
+  // `cmpIdle=display` is a historical URL param (idle animation is always display-paced now, with no
+  // `idleCadence` config field to drive a scheduler toggle); this still proves it is accepted and ignored
+  // rather than breaking the mount.
+  it.each(["legacy", "retained"])("mounts the %s scene control with a historical cmpIdle param", async (scene) => {
     window.history.replaceState(null, "", `/?rendererCompare=1&stage=pixi&pixiScene=${scene}&cmpIdle=display`);
     Object.assign(rendererComparisonConfig, readRendererComparisonConfig());
     const renderer = createPixiMirrorRenderer(stage(), document.createElementNS("http://www.w3.org/2000/svg", "defs"));
@@ -1670,7 +1704,6 @@ describe("Pixi composition initialization", () => {
       const adapter = fakeAdapter(); control.pending!.resolve(adapter);
       await vi.waitFor(() => expect(adapter.resize).toHaveBeenCalled());
       await vi.waitFor(() => expect(diagnostic().effective.pixiScene).toBe(scene));
-      expect(schedulerControl.ports.displayPacedPassive).toBe(true);
       expect(renderer.reconcile(createMirrorState())).toBeUndefined();
       expect(scene === "legacy" ? adapter.render : adapter.admitScene).toHaveBeenCalledOnce();
     } finally { renderer.dispose(); }

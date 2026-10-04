@@ -17,7 +17,7 @@ interface ScheduledTimer {
 }
 
 /** A direct scheduler harness: no DOM, renderer, texture cache or Vue lifecycle. */
-function createHarness(cpuIncremental = true, displayPacedPassive = false) {
+function createHarness(cpuIncremental = true) {
   let now = 100;
   let nextHandle = 1;
   let state: TestState | null = { revision: 1 };
@@ -28,12 +28,11 @@ function createHarness(cpuIncremental = true, displayPacedPassive = false) {
   let loopPerFrame = false;
   let trailDue = Infinity;
   let passiveDue = Infinity;
-  let idleAnimFps = 30;
-  let idleNotBefore = 0;
   let bypass: CanvasIdleStageBypass | null = null;
   let patchPainted = false;
   let buildAccepted = true;
   let texturePainted = true;
+  let idleSampleStale = false;
   const log: string[] = [];
   const sampleTimes: number[] = [];
   const rafs = new Map<number, FrameRequestCallback>();
@@ -74,8 +73,6 @@ function createHarness(cpuIncremental = true, displayPacedPassive = false) {
     disposed: () => disposed,
     revisionAtFrame: () => revisionAtFrame,
     cpuIncremental,
-    idleAnimFps: () => idleAnimFps,
-    displayPacedPassive,
     platform,
     deadlines: {
       offsetRampDeadline: () => offsetRampDue,
@@ -90,7 +87,6 @@ function createHarness(cpuIncremental = true, displayPacedPassive = false) {
         log.push("bypass");
         return bypass;
       },
-      idleStageNotBefore: () => idleNotBefore,
     },
     animation: {
       advanceOffsetRamps: () => {
@@ -98,8 +94,9 @@ function createHarness(cpuIncremental = true, displayPacedPassive = false) {
         return false;
       },
       noteIdleStageMissingPassive: () => log.push("missingPassive"),
-      noteIdleStageSkippedEarly: () => log.push("skippedEarly"),
       noteIdleStageAdmission: () => log.push("admitPassive"),
+      isIdleSampleStale: () => idleSampleStale,
+      commitIdleSample: () => log.push("commitIdle"),
       sampleVisual: (at) => { log.push("sample"); sampleTimes.push(at); },
       noteTrailFlightHeads: () => log.push("trailHeads"),
       tickTrails: () => log.push("tickTrails"),
@@ -142,12 +139,11 @@ function createHarness(cpuIncremental = true, displayPacedPassive = false) {
     set loopPerFrame(value: boolean) { loopPerFrame = value; },
     set trailDue(value: number) { trailDue = value; },
     set passiveDue(value: number) { passiveDue = value; },
-    set idleAnimFps(value: number) { idleAnimFps = value; },
-    set idleNotBefore(value: number) { idleNotBefore = value; },
     set bypass(value: CanvasIdleStageBypass | null) { bypass = value; },
     set patchPainted(value: boolean) { patchPainted = value; },
     set buildAccepted(value: boolean) { buildAccepted = value; },
     set texturePainted(value: boolean) { texturePainted = value; },
+    set idleSampleStale(value: boolean) { idleSampleStale = value; },
     flushRafs(): void {
       const due = [...rafs.values()];
       rafs.clear();
@@ -232,55 +228,38 @@ describe("canvas frame scheduler", () => {
     expect(h.scheduler.armedRafs).toBe(1);
   });
 
-  it("keeps the 60 Hz passive display gate as an rAF chain and asks bypass late", () => {
-    const passive = createHarness();
-    passive.idleAnimFps = 60;
-    passive.passiveDue = 180;
-    passive.idleNotBefore = 180;
-    passive.scheduler.armAnimation(passive.now);
-
-    expect(passive.rafs.size).toBe(1);
-    expect(passive.timers.size).toBe(0);
-
-    const immediate = createHarness();
-    immediate.idleAnimFps = 60;
-    immediate.loopDue = immediate.now;
-    immediate.loopPerFrame = true;
-    immediate.passiveDue = 180;
-    immediate.idleNotBefore = 180;
-    immediate.scheduler.armAnimation(immediate.now);
-
-    // The loop's unconditional display demand wins before the fast-passive
-    // predicate can re-read loop/trail/Fx state through `idleStageBypass`.
-    expect(immediate.log).toEqual([]);
-  });
-
-  it("samples finite passive demand on every 90 Hz display frame and parks when it ends", () => {
-    const h = createHarness(true, true);
-    h.passiveDue = h.now + 1000; // a source-only deadline; no local idle loop or tween demand
-    h.idleNotBefore = h.now + 1000; // the authored 60 Hz phase must not reject these frames
-    h.patchPainted = true;
+  it("no authored cadence cap: a stale idle tick does not re-arm, and resumes only once the mover re-arms it", () => {
+    // A pinned diagnostic/bench clock: passive demand is always "due now" (immediate booking never stops on
+    // its own), but `isIdleSampleStale` reports that this exact instant was already accepted. Booking an
+    // empty rAF forever while nothing can change would be a poll, so the stale tick must NOT re-arm itself —
+    // `createPixiMirrorRenderer`'s diagnostic-clock mover calls `armAnimation` explicitly once the clock
+    // actually moves, which is the hook that resumes the chain.
+    const h = createHarness();
+    h.passiveDue = h.now;
+    h.idleSampleStale = true;
     h.scheduler.armAnimation(h.now);
-    for (let frame = 1; frame <= 90; frame++) {
-      h.now = 100 + frame * (1000 / 90);
-      h.flushRafs();
-    }
-    expect(h.scheduler.animFrames).toBe(90);
-    expect(h.sampleTimes).toHaveLength(90);
-    expect(h.sampleTimes[0]).toBeCloseTo(100 + 1000 / 90, 8);
-    expect(h.sampleTimes.at(-1)).toBeCloseTo(1100, 8);
-    expect(h.log.filter((entry) => entry === "sample")).toHaveLength(90);
-    expect(h.log).not.toContain("skippedEarly");
-    expect(h.log).not.toContain("admitPassive");
-    expect(h.timers.size).toBe(0);
     expect(h.rafs.size).toBe(1);
 
-    h.passiveDue = Infinity;
-    h.now += 1000 / 90;
     h.flushRafs();
+    // No re-arm: the chain goes fully quiet. Nothing was sampled, patched, built or committed either.
     expect(h.rafs.size).toBe(0);
-    expect(h.timers.size).toBe(0);
-    expect(h.log.filter((entry) => entry === "sample")).toHaveLength(90);
+    expect(h.log).not.toContain("sample");
+    expect(h.log).not.toContain("patch");
+    expect(h.log).not.toContain("build");
+    expect(h.log).not.toContain("commitIdle");
+    expect(h.scheduler.idleStats().skippedTicks).toBe(1);
+
+    // The clock genuinely moves: the mover (not the scheduler) re-arms, and this tick samples and presents.
+    h.idleSampleStale = false;
+    h.patchPainted = true;
+    h.now += 1;
+    h.scheduler.armAnimation(h.now);
+    expect(h.rafs.size).toBe(1);
+    h.flushRafs();
+    expect(h.log).toContain("sample");
+    expect(h.log).toContain("patch");
+    expect(h.log).toContain("commitIdle");
+    expect(h.rafs.size).toBe(1);
   });
 
   it("owns the full action-frame ordering without allocating a second build path", () => {

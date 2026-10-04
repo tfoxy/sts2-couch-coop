@@ -22,7 +22,7 @@ const rustSliceEligible = computed(() => renderQuality().tier === "very-low" &&
 function equal(a: RendererComparisonConfig, b: RendererComparisonConfig): boolean {
   return a.backend === b.backend && a.cpuIncremental === b.cpuIncremental &&
     a.gpuCommands === b.gpuCommands && a.textCache === b.textCache && a.pixels === b.pixels &&
-    a.idleCadence === b.idleCadence && a.structureReuse === b.structureReuse &&
+    a.structureReuse === b.structureReuse &&
     a.textPreparationReuse === b.textPreparationReuse && a.sourceFrameReuse === b.sourceFrameReuse &&
     a.animationReferenceReuse === b.animationReferenceReuse && a.pixiScene === b.pixiScene && a.pixiText === b.pixiText;
 }
@@ -40,8 +40,8 @@ const textFallbacks = computed(() => status.actualBackend === "pixi" && status.p
   ? Object.entries(status.pixiText.reasons).map(([reason, count]) => `${reason}: ${count}`).join(" · ") : "");
 
 function modeLabel(config: RendererComparisonConfig, actualText?: string): string {
-  if (config.backend === "pixi") return `PIXI · ${config.pixiScene} · ${actualText ?? config.pixiText} · ${t(`compare.idle.${config.idleCadence}`)}`;
-  if (config.backend === "rust") return `RUST/WASM · ${t(`compare.idle.${config.idleCadence}`)}`;
+  if (config.backend === "pixi") return `PIXI · ${config.pixiScene} · ${actualText ?? config.pixiText}`;
+  if (config.backend === "rust") return `RUST/WASM`;
   if (config.backend !== "canvas") return config.backend.toUpperCase();
   const parts = ["Canvas", t(`compare.pixels.${config.pixels}`)];
   if (config.cpuIncremental) parts.push(t("compare.cpu"));
@@ -51,7 +51,6 @@ function modeLabel(config: RendererComparisonConfig, actualText?: string): strin
   if (config.textPreparationReuse) parts.push(t("compare.textPreparationReuse"));
   if (config.sourceFrameReuse) parts.push(t("compare.sourceFrameReuse"));
   if (config.animationReferenceReuse) parts.push(t("compare.animationReferenceReuse"));
-  if (config.idleCadence === "display") parts.push(t("compare.idle.display"));
   return parts.join(" · ");
 }
 
@@ -131,13 +130,6 @@ function apply(): void {
       </select>
     </label>
     <p class="comparison-hint">{{ t('compare.pixelExclusive') }}</p>
-    <label class="comparison-row">{{ t('compare.idle') }}
-      <select v-model="draft.idleCadence" :disabled="draft.backend === 'dom'" data-testid="renderer-idle-cadence">
-        <option value="authored">{{ t('compare.idle.authored') }}</option>
-        <option value="display">{{ t('compare.idle.display') }}</option>
-      </select>
-    </label>
-    <p class="comparison-hint">{{ t('compare.idleHint') }}</p>
     <button type="button" :disabled="!canApply" data-testid="renderer-apply" @click="apply">{{ t('compare.apply') }}</button>
     <p class="comparison-hint">{{ t('compare.applyHint') }}</p>
     <button v-if="status.phase === 'failed'" type="button" data-testid="renderer-recover" @click="navigate(status.requested)">{{ t('boot.tryAgain') }}</button>

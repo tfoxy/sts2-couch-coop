@@ -263,16 +263,12 @@ interface StatsShape {
   instance: { id: number; createdAtMs: number; disposed: boolean };
   frames: number;
   animFrames: number;
-  /** Idle-only display cap observability; transient action sources stay outside it. */
+  /** Idle-only admission observability; transient action sources stay outside it. */
   idle: {
-    fpsCap: number;
     displayBypasses: { offset: number; tween: number; settle: number; trail: number };
-    displayGate: {
+    admission: {
       admittedPassive: number;
-      skippedEarly: number;
       missingPassive: number;
-      admittedEarlySlack: number;
-      phaseResets: number;
     };
   } | null;
   /**
@@ -3637,24 +3633,27 @@ describe("the animation scheduler's two arm modes (M3)", () => {
     expect(stats().idle?.displayBypasses).toEqual({ offset: 0, tween: 0, settle: 0, trail: 0 });
   });
 
-  it("continues parking the default 30 Hz idle cadence and lets a transient pre-empt that park", () => {
+  it("books an immediate rAF for idle demand — no authored cadence timer anymore", () => {
     let now = 1000;
     vi.spyOn(performance, "now").mockImplementation(() => now);
     const { raf, timers } = mount();
     const state = idlePulseScene();
     renderer!.reconcile(state);
 
+    // No authored cadence cap: an active idle loop is due on every display frame, like DOM's compositor
+    // animations, so it books an immediate rAF rather than parking a 30 Hz timer.
+    expect(raf.pending).toBe(1);
+    expect(timers.pending).toBe(0);
+
     now += 34;
-    expect(timers.fire()).toBe(1);
     raf.flush();
-    // The legacy/default authored cadence is not the display-rate arm.
-    expect(raf.pending).toBe(0);
-    expect(timers.pending).toBe(1);
+    // The idle tick re-arms itself the same way, frame after frame.
+    expect(raf.pending).toBe(1);
+    expect(timers.pending).toBe(0);
 
     state.pendingHints.push(tweenHint("Glow", 4000));
     renderer!.reconcile(state);
-    // A genuine action keeps the historical immediate rAF behavior and
-    // pre-empts the decorative timer rather than waiting for it.
+    // A genuine action keeps the historical immediate rAF behavior; there is no park left to pre-empt.
     expect(raf.pending).toBe(1);
     expect(timers.pending).toBe(0);
   });

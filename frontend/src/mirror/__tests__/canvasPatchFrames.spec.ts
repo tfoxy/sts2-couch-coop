@@ -203,13 +203,9 @@ interface IdleStats {
   frames: number;
   rebuilds: number;
   patched: number;
-  fpsCap: number;
-  displayGate: {
+  admission: {
     admittedPassive: number;
-    skippedEarly: number;
     missingPassive: number;
-    admittedEarlySlack: number;
-    phaseResets: number;
     minAdmittedGapMs: number | null;
     admittedGapP50Ms: number | null;
   };
@@ -480,12 +476,6 @@ describe("the frame-level patch refusals", () => {
     return ran;
   }
 
-  it("reports the fixed 30 Hz idle cadence", () => {
-    const r = mount();
-    r.reconcile(glowAndGlyphScene());
-    expect(idleStats().fpsCap).toBe(30);
-  });
-
   it("drops a stale passive rAF when a direct reconcile removes its only idle demand", () => {
     const r = mount();
     r.reconcile(glowOnlyScene());
@@ -502,7 +492,7 @@ describe("the frame-level patch refusals", () => {
     raf.flush();
 
     expect(frameStats().frames).toBe(before);
-    expect(idleStats().displayGate.missingPassive).toBe(1);
+    expect(idleStats().admission.missingPassive).toBe(1);
   });
 
   it("names a nonresident glyph source fallback, never misclassifying it as a transform", () => {
@@ -596,7 +586,7 @@ describe("the frame-level patch refusals", () => {
     expect(patch.transform!.frames).toBeGreaterThan(0);
     expect(patch.transform!.roots).toBeGreaterThan(0);
     expect(patch.transform!.commands).toBeGreaterThan(0);
-    // The subtraction from the number the fps cap was sized against.
+    // The subtraction from `rebuilds`, the count of frames a local anim moved a pose.
     expect(idleStats().patched).toBeGreaterThan(0);
   });
 
@@ -605,7 +595,6 @@ describe("the frame-level patch refusals", () => {
     r.reconcile(bobOnlyScene());
     runFrames(80, 40);
     const patch = patchStats();
-    expect(idleStats().fpsCap).toBe(30);
     expect(patch.transform?.chainLimit).toBe(15);
     expect(patch.transform?.chainMax).toBe(15);
     expect(patch.bailouts.chain).toBeGreaterThan(0);

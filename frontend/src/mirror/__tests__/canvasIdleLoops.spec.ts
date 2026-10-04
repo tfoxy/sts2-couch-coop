@@ -239,7 +239,6 @@ interface CanvasStats {
     alphaLoops: number;
     frames: number;
     rebuilds: number;
-    fpsCap: number;
     invisible: number;
   } | null;
 }
@@ -407,7 +406,6 @@ describe("the renderer's idle loops", () => {
     expect(idle.transformLoops).toBe(1);
     expect(idle.alphaLoops).toBe(0);
     expect(idle.frames).toBeGreaterThan(0);
-    expect(idle.fpsCap).toBe(30);
   });
 
   it("finds no loop on a screen that has none", () => {

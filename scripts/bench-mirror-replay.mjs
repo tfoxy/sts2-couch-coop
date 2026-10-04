@@ -8555,7 +8555,7 @@ if (result.census) {
       console.log(
         `    canvas idle:       ${i.plans} plans (${i.transformLoops} transform / ${i.alphaLoops} alpha), ` +
           `${i.frames} sampled frames, ${i.rebuilds} moved, ${i.patched ?? 0} of those PATCHED, ` +
-          `cap ${i.fpsCap}fps, invisible ${i.invisible}`
+          `invisible ${i.invisible}`
       );
     }
   }

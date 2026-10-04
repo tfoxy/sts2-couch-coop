@@ -39,8 +39,9 @@ function createHarness(options: { enabled?: boolean; rampFrames?: number; rampPa
   const log: string[] = [];
   let rampFramesLeft = options.rampFrames ?? 0;
   let blocked = false;
-  let idleChain = false;
   let patchWorks = false;
+  let passiveDue = Infinity;
+  let idleStale = false;
   /** How a submitted patch settles: at once (`commit`/`refuse`), or later through `settlePending` (`async`). */
   let patchMode: "commit" | "refuse" | "async" = "commit";
   const pending: Array<CanvasPatchSubmission | null> = [];
@@ -64,7 +65,6 @@ function createHarness(options: { enabled?: boolean; rampFrames?: number; rampPa
     state: () => ({ revision }),
     disposed: () => false,
     revisionAtFrame: () => revisionAtFrame,
-    idleAnimFps: () => idleChain ? 60 : 30,
     platform: {
       requestAnimationFrame: (callback) => browser.requestAnimationFrame(callback),
       cancelAnimationFrame: (handle) => browser.cancelAnimationFrame(handle),
@@ -78,9 +78,8 @@ function createHarness(options: { enabled?: boolean; rampFrames?: number; rampPa
       loopDeadline: () => Infinity,
       loopHasPerFrameDemand: () => false,
       trailDeadline: () => Infinity,
-      passiveDeadline: () => idleChain ? frame * 16 + 1000 : Infinity,
+      passiveDeadline: () => passiveDue,
       idleStageBypass: () => null,
-      idleStageNotBefore: () => idleChain ? frame * 16 + 1000 : 0,
     },
     animation: {
       advanceOffsetRamps: () => {
@@ -89,8 +88,9 @@ function createHarness(options: { enabled?: boolean; rampFrames?: number; rampPa
         return true;
       },
       noteIdleStageMissingPassive: () => log.push("skipped"),
-      noteIdleStageSkippedEarly: () => log.push("skippedEarly"),
       noteIdleStageAdmission: () => {},
+      isIdleSampleStale: () => idleStale,
+      commitIdleSample: () => { log.push("idle-committed"); },
       sampleVisual: () => {},
       noteTrailFlightHeads: () => {},
       tickTrails: () => {},
@@ -143,10 +143,10 @@ function createHarness(options: { enabled?: boolean; rampFrames?: number; rampPa
     /** The renderer's retained patch succeeds (it counts as the frame's one build-or-patch). */
     set patchWorks(value: boolean) { patchWorks = value; },
     set patchMode(value: "commit" | "refuse" | "async") { patchMode = value; },
+    set passiveDue(value: number) { passiveDue = value; },
+    set idleStale(value: boolean) { idleStale = value; },
     /** The asynchronous patches settle, in a later task (as the renderer's presentation completion does). */
     settlePending(committed: boolean) { for (const submission of pending.splice(0)) scheduler.settlePatch(submission, committed); },
-    /** A 60 Hz passive gate that is never due: a display rAF chain of ticks that skip as too early. */
-    set idleChain(value: boolean) { idleChain = value; },
     set rampFrames(value: number) { rampFramesLeft = value; },
     buildsInFrame(index: number) { return builds.filter((entry) => entry.frame === index).map((entry) => entry.source); },
     get frameIndex() { return frame; },
@@ -285,20 +285,6 @@ for (const idleArm of [false, true]) describe(`frame scheduler build requests (r
     h.frame();
     expect(h.buildsInFrame(2)).toEqual(["tick"]);
     expect(h.scheduler.coalesceStats()!.tickYields).toBe(0);
-  });
-
-  it("posts no epoch close for an idle chain of skipped ticks", () => {
-    const h = createHarness();
-    h.scheduler.requestBuild(false);
-    h.browser.drainTasks();
-    let posted = 0;
-    const push = h.browser.tasks.push.bind(h.browser.tasks);
-    h.browser.tasks.push = (...items) => { posted += items.length; return push(...items); };
-    h.idleChain = true;
-    h.scheduler.armAnimation(0);
-    for (let i = 0; i < 5; i++) h.frame();
-    expect(h.log.filter((entry) => entry === "skippedEarly").length).toBe(5);
-    expect(posted).toBe(1); // the test's own booking above, not the chain
   });
 
   it("lets a moved ramp and an offset-only request be patched under rustOffsetPatch, and nothing else", () => {
@@ -477,5 +463,27 @@ for (const idleArm of [false, true]) describe(`frame scheduler build requests (r
     expect(stats.enabled).toBe(false);
     expect(stats.requests).toBe(0);
     expect(stats.workPerFrame["1"]).toBe(2);
+  });
+
+  // No authored cadence cap (WP7): an idle-only tick is always booked, so a pinned diagnostic clock would
+  // otherwise resample and retry a blocked admission on every one of those bookings forever — an empty rAF
+  // booked every vsync is polling-shaped, and this scheduler's contract forbids it. A stale tick must post no
+  // epoch close and must NOT re-arm: the chain goes fully quiet until something external (the diagnostic
+  // clock mover, in production) calls `armAnimation` again.
+  it("a stale idle tick posts no epoch close and does not re-arm, so the chain goes fully quiet", () => {
+    const h = createHarness();
+    h.passiveDue = 0; // idle-only and due now
+    h.idleStale = true;
+    h.scheduler.armAnimation(0);
+    expect(h.browser.rafs.size).toBe(1); // booked: staleness is checked once the tick runs, not when it's booked
+    const closesBefore = h.scheduler.coalesceStats()!.closesPosted;
+    h.frame();
+    // Neither sampled, patched nor built, and not committed as an accepted idle frame either.
+    expect(h.log).toEqual([]);
+    expect(h.builds).toEqual([]);
+    // No re-arm: the chain is fully quiet, not retrying every display frame.
+    expect(h.browser.rafs.size).toBe(0);
+    // No close from this tick (only the bring-up booking's, already counted before it ran).
+    expect(h.scheduler.coalesceStats()!.closesPosted).toBe(closesBefore);
   });
 });
