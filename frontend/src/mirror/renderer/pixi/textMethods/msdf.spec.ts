@@ -55,7 +55,7 @@ describe("MSDF main-thread shaping", () => {
     if (!shaped.ok) return;
     const placement: MsdfPlacement = { glyphId: 4, pageKey: "page:g1", pageSize: 1024,
       src: [10, 20, 30, 40], left: -2, top: -10 };
-    const carrier = carrierForMsdfRun(input, shaped.run, new Map([[4, placement]]));
+    const carrier = carrierForMsdfRun(input, shaped.run, new Map([[4, placement]]), true);
     expect(carrier?.glyphs[0].src).toEqual([10, 20, 30, 40]);
     // outline 2 -> strokeHalf 1, added to the pen's x so an MSDF glyph lands at the same ink the Bitmap
     // carrier's strokeHalf-inset raster and the DOM/game both place it at (was 0.9333333333 before the fix).
@@ -75,12 +75,15 @@ describe("MSDF main-thread shaping", () => {
     const shaped = shapeMsdfRun(input, face([glyph(4, 500), glyph(3, 250), glyph(4, 500)]));
     expect(shaped.ok).toBe(true);
     if (!shaped.ok) return;
-    const carrier = carrierForMsdfRun(input, shaped.run, new Map([
+    const placements: ReadonlyMap<number, MsdfPlacement> = new Map([
       [4, { glyphId: 4, pageKey: "page:g1", pageSize: 1024,
         src: [10, 20, 30, 40], left: -2, top: -10 }],
       [3, { glyphId: 3, pageKey: "", pageSize: 0,
         src: [0, 0, 0, 0], left: 0, top: 0 }],
-    ]));
+    ]);
+    // gammaBlend=false (no `gamma_blend` getter, older glue): the renderer still blends tinted sRGB
+    // texels in linear light, so the carrier's floats must be pre-linearized.
+    const carrier = carrierForMsdfRun(input, shaped.run, placements, false);
     expect(carrier?.glyphs).toHaveLength(2);
     const linear = (value: number) => value <= 0.04045 ? value / 12.92 : ((value + 0.055) / 1.055) ** 2.4;
     expect(carrier?.fill).toEqual([1, linear(246 / 255), linear(226 / 255), 1]);
@@ -88,7 +91,30 @@ describe("MSDF main-thread shaping", () => {
     expect(carrier?.shadow?.color).toEqual([0, 0, 0, 0.25]);
   });
 
-  it("tints fill, outline, and shadow in sRGB before linear shader blending", () => {
+  it("leaves eight-digit fill untouched when the engine reports gamma_blend", () => {
+    const input = record(20, 2);
+    input.style.fill = "#FFF6E2FF";
+    input.style.stroke = { color: "#00000080", width: 2 };
+    input.style.dropShadow = { color: "#000000FF", alpha: 0.25, angle: 0, distance: 2, blur: 0 };
+    const shaped = shapeMsdfRun(input, face([glyph(4, 500), glyph(3, 250), glyph(4, 500)]));
+    expect(shaped.ok).toBe(true);
+    if (!shaped.ok) return;
+    const placements: ReadonlyMap<number, MsdfPlacement> = new Map([
+      [4, { glyphId: 4, pageKey: "page:g1", pageSize: 1024,
+        src: [10, 20, 30, 40], left: -2, top: -10 }],
+      [3, { glyphId: 3, pageKey: "", pageSize: 0,
+        src: [0, 0, 0, 0], left: 0, top: 0 }],
+    ]);
+    // gammaBlend=true: godot-scene-web's RGBA8/gamma-space renderer already blends plain sRGB bytes
+    // like DOM/Godot, so the tinted sRGB value is passed through unchanged.
+    const carrier = carrierForMsdfRun(input, shaped.run, placements, true);
+    expect(carrier?.glyphs).toHaveLength(2);
+    expect(carrier?.fill).toEqual([1, 246 / 255, 226 / 255, 1]);
+    expect(carrier?.outline?.color).toEqual([0, 0, 0, 128 / 255]);
+    expect(carrier?.shadow?.color).toEqual([0, 0, 0, 0.25]);
+  });
+
+  it("linearizes tinted fill, outline, and shadow when gamma_blend is absent", () => {
     const input = { ...record(20, 10), tint: 0xfb927f, alpha: 0.5 };
     input.style.fill = "#FFF6E2FF";
     input.style.stroke = { color: "#363430FF", width: 10 };
@@ -96,9 +122,10 @@ describe("MSDF main-thread shaping", () => {
     const shaped = shapeMsdfRun(input, face([glyph(4, 1250)]));
     expect(shaped.ok).toBe(true);
     if (!shaped.ok) return;
-    const carrier = carrierForMsdfRun(input, shaped.run, new Map([[4,
+    const placements: ReadonlyMap<number, MsdfPlacement> = new Map([[4,
       { glyphId: 4, pageKey: "page:g1", pageSize: 1024,
-        src: [10, 20, 30, 40], left: -2, top: -10 }]]));
+        src: [10, 20, 30, 40], left: -2, top: -10 }]]);
+    const carrier = carrierForMsdfRun(input, shaped.run, placements, false);
     const linear = (value: number) => value <= 0.04045 ? value / 12.92 : ((value + 0.055) / 1.055) ** 2.4;
     for (const [actual, expected] of [
       [carrier?.fill, [linear(251 / 255), linear(246 / 255 * 146 / 255),
@@ -107,6 +134,29 @@ describe("MSDF main-thread shaping", () => {
         linear(52 / 255 * 146 / 255), linear(48 / 255 * 127 / 255), 1]],
       [carrier?.shadow?.color, [linear(128 / 255 * 251 / 255),
         linear(128 / 255 * 146 / 255), linear(128 / 255 * 127 / 255), 0.25]],
+    ] as const) {
+      expect(actual).toBeDefined();
+      expected.forEach((value, index) => expect(actual?.[index]).toBeCloseTo(value));
+    }
+    expect(carrier?.alpha).toBe(0.5);
+  });
+
+  it("leaves tinted fill, outline, and shadow in plain sRGB when gamma_blend is true", () => {
+    const input = { ...record(20, 10), tint: 0xfb927f, alpha: 0.5 };
+    input.style.fill = "#FFF6E2FF";
+    input.style.stroke = { color: "#363430FF", width: 10 };
+    input.style.dropShadow = { color: "#808080", alpha: 0.25, angle: 0, distance: 2, blur: 0 };
+    const shaped = shapeMsdfRun(input, face([glyph(4, 1250)]));
+    expect(shaped.ok).toBe(true);
+    if (!shaped.ok) return;
+    const placements: ReadonlyMap<number, MsdfPlacement> = new Map([[4,
+      { glyphId: 4, pageKey: "page:g1", pageSize: 1024,
+        src: [10, 20, 30, 40], left: -2, top: -10 }]]);
+    const carrier = carrierForMsdfRun(input, shaped.run, placements, true);
+    for (const [actual, expected] of [
+      [carrier?.fill, [251 / 255, 246 / 255 * 146 / 255, 226 / 255 * 127 / 255, 1]],
+      [carrier?.outline?.color, [54 / 255 * 251 / 255, 52 / 255 * 146 / 255, 48 / 255 * 127 / 255, 1]],
+      [carrier?.shadow?.color, [128 / 255 * 251 / 255, 128 / 255 * 146 / 255, 128 / 255 * 127 / 255, 0.25]],
     ] as const) {
       expect(actual).toBeDefined();
       expected.forEach((value, index) => expect(actual?.[index]).toBeCloseTo(value));
@@ -123,7 +173,7 @@ describe("MSDF main-thread shaping", () => {
       ({ glyphId, pageKey, pageSize: 1024, src: [0, 0, 16, 16], left: 0, top: -12 });
     expect(carrierForMsdfRun(input, shaped.run, new Map([
       [4, placement(4, "page:a")], [5, placement(5, "page:b")],
-    ]))).toBeNull();
+    ]), true)).toBeNull();
   });
 
   it("keeps Bitmap eligible before font/glyph completion and returns worker credit after consume", async () => {
