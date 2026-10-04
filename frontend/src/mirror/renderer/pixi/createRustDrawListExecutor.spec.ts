@@ -51,6 +51,29 @@ describe("Rust execution phase diagnostic", () => {
     } finally { renderer.dispose(); }
   });
 
+  it("rasterizes Bitmap text on a CPU-backed ink canvas unless rustTextInkReadFrequently=0", async () => {
+    vi.stubEnv("VITE_RUST_PROTOTYPE_MODULE_URL", moduleUrl(
+      "export default async function init(){return {}};export class RustRenderer{static async create(){return globalThis.__rustProjectionTest.engine}}",
+    ));
+    vi.stubEnv("VITE_RUST_SCENE_SERIALIZER_URL", moduleUrl(
+      "export function encodeRustScene(){return {bytes:new Uint8Array([1]),scene:{version:2,revision:1,resources:[],commands:[]},resources:[],textUploads:[],unsupportedCommands:0}};" +
+      "export function encodeRustPatch(){return null};export function encodeRustResources(){return new Uint8Array(0)}",
+    ));
+    for (const [search, expected] of [["/?rustDiagnostics=1", true], ["/?rustDiagnostics=1&rustTextInkReadFrequently=0", false]] as const) {
+      window.history.replaceState({}, "", search);
+      (globalThis as Record<string, unknown>).__rustProjectionTest = { engine: {
+        backend: "WebGL2", resize: () => {}, dispose: () => {}, upload_rgba_batch: () => 0,
+        admit_scene: () => "{}", apply_patch: () => "{}", present: async () => "{}",
+      } };
+      const renderer = await createRustDrawListExecutor({ canvas: document.createElement("canvas"), width: 1,
+        height: 1, designWidth: 1, designHeight: 1, onInvalidate: () => {} });
+      try {
+        expect((window as unknown as { __mirrorRustStats: () => { textInkReadFrequently: boolean } }).__mirrorRustStats()
+          .textInkReadFrequently).toBe(expected);
+      } finally { renderer.dispose(); }
+    }
+  });
+
   it("presents supported content when the serializer omits two unsupported drawings", async () => {
     window.history.replaceState({}, "", "/?rustDiagnostics=1");
     const admit = vi.fn(() => JSON.stringify({ accepted: true, revision: 1, unsupportedCommands: 0, resourcePending: 0 }));
@@ -166,7 +189,7 @@ describe("Rust image byte ownership", () => {
     async (zeroCopy, inkReadFrequently) => {
     const query = new URLSearchParams({ rustDiagnostics: "1", rustTextInkDiagnostics: "1" });
     if (zeroCopy) query.set("rustZeroCopyPixels", "1");
-    if (inkReadFrequently) query.set("rustTextInkReadFrequently", "1");
+    query.set("rustTextInkReadFrequently", inkReadFrequently ? "1" : "0");
     if (!zeroCopy && !inkReadFrequently) query.set("rustTextInkCorpus", "1");
     window.history.replaceState({}, "", `/?${query}`);
     if (!zeroCopy && !inkReadFrequently) ensureFontFace("Test", "/font.ttf", "400", "normal");
@@ -1515,14 +1538,14 @@ describe("rustFast WP1 bounded Bitmap text cache (rustTextEvict)", () => {
       expect(renderer.rustTextCacheResources).toBeLessThanOrEqual(97);
       const released = releaseCalls.flat().filter((op) => op.operation === "release").map((op) => op.key);
       expect(released.some((key) => key.includes(":T0:"))).toBe(true); // the oldest label was released
-      // Re-submitting the released label re-rasterises (3 fresh getContext calls: measure, ink, readPixels'
-      // scratch canvas) rather than serving the evicted cache entry — AND the fresh bytes actually reach a
+      // Re-submitting the released label re-rasterises (2 fresh getContext calls: ink and readPixels' scratch
+      // canvas; the measuring context is reused) rather than serving the evicted cache entry — AND the fresh bytes actually reach a
       // new Rust upload batch, not just the JS cache (a re-raster that is never re-uploaded would leave the
       // Rust texture released while the scene keeps referencing it).
       const before = getContextSpy.mock.calls.length;
       const uploadsBefore = uploadCalls.length;
       expect(await renderer.render(createDrawList<string>(), [labelRecord("T0")])).toBe(true);
-      expect(getContextSpy.mock.calls.length).toBe(before + 3);
+      expect(getContextSpy.mock.calls.length).toBe(before + 2);
       expect(uploadCalls.length).toBeGreaterThan(uploadsBefore);
       expect(uploadCalls.at(-1)!.some((key) => key.includes(":T0:"))).toBe(true);
     } finally { renderer.dispose(); }
@@ -1586,11 +1609,11 @@ describe("rustFast WP1 bounded Bitmap text cache (rustTextEvict)", () => {
       // test exists to close, so this deliberately does not assert a total eviction count of zero.
       const released = releaseCalls.flat().filter((op) => op.operation === "release").map((op) => op.key);
       expect(released.some((key) => key.includes(":T0:"))).toBe(false);
-      // The strongest proof "T0" survived: exactly 3 fresh getContext calls happened (measure, ink,
-      // readPixels' scratch canvas) — ALL of them "T97"'s own first-ever raster (a brand new key). "T0"
+      // The strongest proof "T0" survived: exactly 2 fresh getContext calls happened (ink and readPixels'
+      // scratch canvas; the measuring context is reused) — ALL of them "T97"'s own first-ever raster (a brand new key). "T0"
       // contributed none: B's encode found it still cached. A release followed by a forced re-raster would
-      // show up as 3 MORE calls than this.
-      expect(getContextSpy.mock.calls.length).toBe(getContextBeforeOverlap + 3);
+      // show up as 2 MORE calls than this.
+      expect(getContextSpy.mock.calls.length).toBe(getContextBeforeOverlap + 2);
     } finally { renderer.dispose(); }
   });
 });

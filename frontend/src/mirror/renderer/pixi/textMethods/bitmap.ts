@@ -33,6 +33,7 @@ export function createBitmapTextMethod(env: BitmapEnvironment): BitmapTextMethod
   const cache = new Map<string, RustTextResource>();
   const pads = new Map<string, number>();
   let rasters = 0;
+  let measureContext: CanvasRenderingContext2D | null | undefined;
   function rasterTextWithMode(record: PixiTextRecord, cache: Map<string, RustTextResource>, pads: Map<string, number>,
     inkReadFrequently: boolean, useZeroCopy: boolean, replayEvents?: TextInkRaster[], corpusRow?: CorpusRow):
     { resource: { key: string; width: number; height: number }; pixels: Uint8Array; width: number; height: number; transform: readonly number[]; alpha?: number } | null {
@@ -72,12 +73,14 @@ export function createBitmapTextMethod(env: BitmapEnvironment): BitmapTextMethod
         const size = Number(style.fontSize ?? 16);
         const family = String(style.fontFamily ?? "sans-serif");
         const font = [style.fontStyle, style.fontVariant, style.fontWeight, `${size}px`, family].filter(Boolean).join(" ");
-        const measure = env.canvas.ownerDocument.createElement("canvas").getContext("2d");
+        // One CPU-backed measuring context per method: a fresh canvas per miss paid a context creation for measureText.
+        measureContext ??= env.canvas.ownerDocument.createElement("canvas").getContext("2d", { willReadFrequently: true });
+        const measure = measureContext;
         if (!measure) { if (raster) raster.outcome = "refused-measure-context"; return null; }
         measure.font = font;
         const letterSpacing = Number(style.letterSpacing ?? 0);
         if (!Number.isFinite(letterSpacing)) return null;
-        if (letterSpacing && "letterSpacing" in measure) measure.letterSpacing = `${letterSpacing}px`;
+        if ("letterSpacing" in measure) measure.letterSpacing = `${letterSpacing}px`;
         const runs = record.runs?.length ? record.runs : [{ text: record.text }];
         const text = runs.map((run) => run.text).join("");
         const metrics = measure.measureText(text);
@@ -152,6 +155,6 @@ export function createBitmapTextMethod(env: BitmapEnvironment): BitmapTextMethod
     cachedKeys: () => [...cache.keys()],
     evict(keys) { for (const key of keys) { cache.delete(key); pads.delete(key); } },
     stats: () => ({ rasterizations: rasters, resources: cache.size }),
-    dispose() { cache.clear(); pads.clear(); }
+    dispose() { cache.clear(); pads.clear(); measureContext = undefined; }
   };
 }

@@ -111,7 +111,9 @@ export const createRustDrawListExecutor: MirrorDrawExecutorFactory = async ({ ca
   // rustPresent: not part of `fast`, so `rustFast=0` never changes the present path (see rustFastFlags.ts).
   const presentMode = rustPresentModeFromLocation("rust");
   const zeroCopyPixels = new URLSearchParams(window.location.search).get("rustZeroCopyPixels") === "1";
-  const textInkReadFrequently = new URLSearchParams(window.location.search).get("rustTextInkReadFrequently") === "1";
+  // On unless `=0`: a GPU-backed ink canvas makes every Bitmap text miss a synchronous GPU readback queued behind the
+  // stage's own WebGL2 work (~14 ms each on the phone; a card play's ~9 labels cost a 293 ms frame). `=0` is the A/B.
+  const textInkReadFrequently = new URLSearchParams(window.location.search).get("rustTextInkReadFrequently") !== "0";
   const textInkCorpus = new URLSearchParams(window.location.search).get("rustTextInkCorpus") === "1";
   const textInkDiagnostics = new URLSearchParams(window.location.search).get("rustTextInkDiagnostics") === "1" || textInkCorpus;
   (window as unknown as { __mirrorRustPixelControl?: boolean }).__mirrorRustPixelControl = zeroCopyPixels;
