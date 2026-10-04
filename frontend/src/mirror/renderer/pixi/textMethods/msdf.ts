@@ -44,23 +44,33 @@ function rgba(value: unknown, alpha = 1): readonly [number, number, number, numb
     (digits.length === 8 ? parseInt(digits.slice(6, 8), 16) / 255 : 1) * alpha];
 }
 
-// Bitmap tints Canvas2D's sRGB bytes before uploading an sRGB texture. Glyph colors enter the
-// shader as floats, so convert the same tinted sRGB values to linear before blending.
-function tintedLinear(color: readonly [number, number, number, number], tint: number): readonly [number, number, number, number] {
-  const linear = (value: number) => value <= 0.04045 ? value / 12.92 : ((value + 0.055) / 1.055) ** 2.4;
-  return [linear(color[0] * ((tint >> 16 & 255) / 255)),
-    linear(color[1] * ((tint >> 8 & 255) / 255)),
-    linear(color[2] * ((tint & 255) / 255)), color[3]];
+// Bitmap tints Canvas2D's sRGB bytes directly and uploads them as a plain texture, so they ride
+// whatever light the renderer blends in. MSDF glyph colours skip that texture sample entirely —
+// they enter the shader as floats — so this is the one place that must match the renderer's blend
+// space by hand: linearize only when the engine does NOT report `gamma_blend` (older glue, which
+// blended tinted sRGB texels in linear light). `gamma_blend: true` (godot-scene-web's RGBA8 /
+// gamma-space fix) means the renderer already blends plain sRGB bytes like DOM/Godot, so the
+// tinted sRGB value is passed through unchanged.
+function tinted(color: readonly [number, number, number, number], tint: number,
+  linear: boolean): readonly [number, number, number, number] {
+  const toLinear = (value: number) => value <= 0.04045 ? value / 12.92 : ((value + 0.055) / 1.055) ** 2.4;
+  const channel = (value: number) => linear ? toLinear(value) : value;
+  return [channel(color[0] * ((tint >> 16 & 255) / 255)),
+    channel(color[1] * ((tint >> 8 & 255) / 255)),
+    channel(color[2] * ((tint & 255) / 255)), color[3]];
 }
 
-/** Compose a carrier only when every visible glyph lives on one resident page. */
+/** Compose a carrier only when every visible glyph lives on one resident page. `gammaBlend` is the
+ *  engine's `gamma_blend` capability probe (see `createRustDrawListExecutor.ts`); undefined/false
+ *  on older glue, which needs colours pre-linearized the same way this file always used to. */
 export function carrierForMsdfRun(record: MsdfRunRecord, run: ShapedMsdfRun,
-  placements: ReadonlyMap<number, MsdfPlacement>): RustGlyphTextCarrier | null {
+  placements: ReadonlyMap<number, MsdfPlacement>, gammaBlend: boolean): RustGlyphTextCarrier | null {
+  const linear = !gammaBlend;
   const style = record.style as PixiTextRecord["style"] & Record<string, unknown>;
   const fill = rgba(style.fill ?? "#ffffff");
   if (!fill) return null;
   const tint = record.tint ?? 0xffffff;
-  const tinted = tintedLinear(fill, tint);
+  const tintedFill = tinted(fill, tint, linear);
   const stroke = style.stroke && typeof style.stroke === "object"
     ? style.stroke as { color?: string; width?: number } : null;
   const outlineColor = stroke && run.outlinePx > 0 ? rgba(stroke.color ?? "#000000") : null;
@@ -87,9 +97,9 @@ export function carrierForMsdfRun(record: MsdfRunRecord, run: ShapedMsdfRun,
   }
   if (!pageKey || !glyphs.length) return null;
   return { kind: "glyphs", method: "msdf", atlas: { key: pageKey, width: pageSize, height: pageSize },
-    glyphs, transform: record.localTransform ?? record.transform, fill: tinted,
-    ...(outlineColor ? { outline: { color: tintedLinear(outlineColor, tint), width: run.outlinePx / 2 } } : {}),
-    ...(shadowColor && shadow ? { shadow: { color: tintedLinear(shadowColor, tint),
+    glyphs, transform: record.localTransform ?? record.transform, fill: tintedFill,
+    ...(outlineColor ? { outline: { color: tinted(outlineColor, tint, linear), width: run.outlinePx / 2 } } : {}),
+    ...(shadowColor && shadow ? { shadow: { color: tinted(shadowColor, tint, linear),
       offset: [Math.cos(shadow.angle ?? 0) * (shadow.distance ?? 0),
         Math.sin(shadow.angle ?? 0) * (shadow.distance ?? 0)] as const } } : {}),
     pxRange: run.range, alpha: record.alpha };

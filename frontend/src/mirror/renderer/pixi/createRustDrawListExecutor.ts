@@ -34,6 +34,10 @@ type RustWasmRenderer = {
   set_damage_verify?(enabled: boolean): void;
   /** rustTextPatch capability: `apply_patch` accepts a patch `resources` list. Undefined on older glue. */
   readonly patch_resources?: boolean;
+  /** godot-scene-web's RGBA8 / gamma-space fix: the renderer blends plain RGBA8 texels in gamma space,
+   *  like DOM/Godot, instead of tinting sRGB texels in linear light. Undefined on older glue, which
+   *  still needs MSDF glyph colours pre-linearized (see `textMethods/msdf.ts`'s `carrierForMsdfRun`). */
+  readonly gamma_blend?: boolean;
   /** rustPresent: the mode this engine instance actually presents through. Undefined on glue built before present modes existed. */
   readonly present_mode?: string;
   /** rustIdleInRust capability: `set_idle_anims` / `present_idle` exist. Undefined on older glue. */
@@ -864,7 +868,8 @@ export const createRustDrawListExecutor: MirrorDrawExecutorFactory = async ({ ca
           }
         }
         if (!failed && !missing.length) {
-          const carrier = carrierForMsdfRun(record as MsdfRunRecord, shaped.run, placements);
+          const carrier = carrierForMsdfRun(record as MsdfRunRecord, shaped.run, placements,
+            engine.gamma_blend === true);
           if (carrier) { msdfGlyphRunsEncoded++; return carrier; }
           failed = "carrier";
         } else if (!failed) {
