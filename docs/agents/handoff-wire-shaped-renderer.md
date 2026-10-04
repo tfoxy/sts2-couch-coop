@@ -377,7 +377,7 @@ residency.
 
 The coordinator recommends which of these to run next, based on this round's numbers.
 
-- **Producer-side suppression** of transforms on subtrees with nothing visible, flushed when a descendant becomes
+- **Producer-side suppression** (now its own round: [handoff-producer-invisible-suppression.md](handoff-producer-invisible-suppression.md)) of transforms on subtrees with nothing visible, flushed when a descendant becomes
   visible. This saves host CPU and network as well. The scene watcher is in spirectl
   (`Sts2RuntimeSceneWatcher.cs`); check which repo owns the emission policy first.
 - **Rendering in a worker** (`OffscreenCanvas`), if WP3's worker floor is markedly lower. Input hit maps would need a
