@@ -319,6 +319,55 @@ describe("canvas frame scheduler", () => {
     expect(h.scheduler.animFrames).toBe(0);
   });
 
+  // rustSkipUndrawnWire: a pulled reconcile that only APPLIED its delta drew nothing, so the tick goes on to draw
+  // this display frame's own animation work.
+  it("carries on with the frame's animation work after a pulled reconcile that only applied its delta", () => {
+    const h = createHarness();
+    h.state = { revision: 2 };
+    h.revisionAtFrame = 1;
+    h.loopDue = h.now;
+    h.loopPerFrame = true;
+    h.bypass = "tween";
+    let pending = true;
+    h.scheduler.setReconcilePull({
+      pending: () => pending,
+      now: () => { h.log.push("pull"); pending = false; h.revisionAtFrame = 2; h.scheduler.noteReconcileApplied(); },
+    });
+    h.scheduler.armAnimation(h.now);
+    h.log.length = 0;
+
+    h.flushRafs();
+
+    expect(h.log[0]).toBe("pull");
+    expect(h.log).toContain("sample");
+    expect(h.log).toContain("build");
+    expect(h.scheduler.pulledReconciles).toBe(1);
+    expect(h.scheduler.appliedPulls).toBe(1);
+    expect(h.scheduler.animFrames).toBe(1);
+  });
+
+  it("does not count an empty tick after an applied pull as an idle-stage skip", () => {
+    const h = createHarness();
+    h.state = { revision: 2 };
+    h.revisionAtFrame = 1;
+    // Booked by passive demand that is gone by the time the tick runs (the reconcile's frame, nothing left to draw).
+    h.passiveDue = h.now;
+    let pending = true;
+    h.scheduler.setReconcilePull({
+      pending: () => pending,
+      now: () => { pending = false; h.revisionAtFrame = 2; h.passiveDue = Infinity; h.scheduler.noteReconcileApplied(); },
+    });
+    h.scheduler.armAnimation(h.now);
+    h.log.length = 0;
+
+    h.flushRafs();
+
+    expect(h.scheduler.appliedPulls).toBe(1);
+    expect(h.log).not.toContain("missingPassive");
+    expect(h.scheduler.idleStats().skippedTicks).toBe(0);
+    expect(h.scheduler.animFrames).toBe(0);
+  });
+
   it("coalesces texture resource repaints into one independent non-action callback", () => {
     const h = createHarness();
     h.scheduler.scheduleTexturePaint();

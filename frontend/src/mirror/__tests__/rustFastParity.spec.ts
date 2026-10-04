@@ -236,7 +236,9 @@ async function runScenario(query: string, script?: (context: ScenarioContext) =>
     return { log, steps, draw: final.draw, held: final.effective.rustHeldOverride as HeldOverrideDiagnostics | undefined,
       memo: final.effective.rustHiddenMemo as HiddenMemoDiagnostics | undefined, offsets: final.effective.rustOffsetPatch,
       spread: final.effective.rustWireSpreadPatch as WireSpreadDiagnostics | undefined,
-      tween: final.effective.rustTweenRootPatch as TweenRootDiagnostics | undefined };
+      tween: final.effective.rustTweenRootPatch as TweenRootDiagnostics | undefined,
+      skip: final.effective.rustSkipUndrawnWire as { skipped: number; verifyRuns?: number; verifyMismatches?: number;
+        verifyFirstMismatch?: string | null } | undefined };
   };
   try {
     if (script) {
@@ -807,14 +809,48 @@ describe("hidden-subtree memo on a widened stage (rustHiddenMemoSpread)", () => 
   it("draws the same picture as every control off", async () => {
     const baseline = await runScenario("rustFast=0", wideScript);
     // A submission-for-submission gate: `rustCoalescedBuilds` folds each `setStretch` build into the next
-    // reconcile, so it is held off here and gated by its own spec (rustCoalescedBuilds.spec.ts).
-    const candidate = await runScenario("rustCoalescedBuilds=0", wideScript);
+    // reconcile, so it is held off here and gated by its own spec (rustCoalescedBuilds.spec.ts). `rustSkipUndrawnWire`
+    // is held off too: it removes the submission of the script's hidden `drawerB` move by design. The skip-ON gate
+    // below compares the same widened script with it on.
+    const candidate = await runScenario("rustCoalescedBuilds=0&rustSkipUndrawnWire=0", wideScript);
     expectSamePicture(candidate, baseline, true);
+  });
+
+  // `rustSkipUndrawnWire` on the widened script: the hidden `drawerB` move is applied without a submission. Against
+  // the same configuration with the switch off, every step leaves the same picture, hit rects, reward focus,
+  // hand/cover answers, revision and clock, and the submissions are the switch-off ones minus exactly those of the
+  // skipped steps. Under verify the normal path runs and the skip's shadow is proved against its commit.
+  it("with the undrawn-wire skip on, leaves every step as the switch-off arm does", async () => {
+    const off = await runScenario("rustCoalescedBuilds=0&rustSkipUndrawnWire=0", wideScript);
+    const on = await runScenario("rustCoalescedBuilds=0", wideScript);
+    type Step = { step: string; result: unknown; submissions: number };
+    const offSteps = off.steps as Step[], onSteps = on.steps as Step[];
+    const skippedSteps = onSteps.flatMap((step, index) => Array.isArray(step.result) && step.result.includes("applied") ? [index] : []);
+    expect(skippedSteps.map((index) => onSteps[index].step)).toEqual(["hidden-change"]);
+    expect(on.skip!.skipped).toBe(1);
+    expect(firstDifference(onSteps, offSteps, new Set(["buildEpoch", "presentEpoch", "submissions", "result"]))).toBeNull();
+    const pictureAt = (log: Submission[], steps: Step[], index: number) => effectiveFrames(log)[steps[index].submissions - 1];
+    onSteps.forEach((_, index) =>
+      expect([onSteps[index].step, firstDifference(pictureAt(on.log, onSteps, index), pictureAt(off.log, offSteps, index))])
+        .toEqual([onSteps[index].step, null]));
+    const removed = new Set<number>();
+    for (const index of skippedSteps)
+      for (let entry = offSteps[index - 1].submissions; entry < offSteps[index].submissions; entry++) removed.add(entry);
+    expect(removed.size).toBeGreaterThan(0);
+    expect(on.log).toEqual(off.log.filter((_, entry) => !removed.has(entry)));
+
+    const verified = await runScenario("rustCoalescedBuilds=0&rustFastVerify=1", wideScript);
+    expect(verified.skip!.skipped).toBe(0);
+    expect(verified.skip!.verifyRuns).toBe(1);
+    expect(verified.skip!.verifyFirstMismatch).toBeNull();
+    expect(verified.skip!.verifyMismatches).toBe(0);
+    expect(verified.log).toEqual(off.log);
   });
 
   // The default configuration (coalescing on) on the same widened script: its submissions differ (a stretch build
   // moves into the next reconcile), so it is compared on what each step leaves drawn and on the final picture
-  // rather than submission by submission.
+  // rather than submission by submission. `rustSkipUndrawnWire` stays on default here: a skipped step's revision and
+  // clock are the committed ones, and its picture is the previous step's.
   it.each(["rustCoalescedBuilds=0", "rustFast=0"])("with coalesced builds, ends every step on the same picture as %s", async (query) => {
     const baseline = await runScenario(query, wideScript);
     const candidate = await runScenario("", wideScript);

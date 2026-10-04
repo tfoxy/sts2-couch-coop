@@ -88,7 +88,7 @@ export interface ReconcilePull {
   /** Run it now, synchronously, and drop the booked rAF. Refused (no-op) while one is already running. */
   now(): void;
   /** Optional completion result for the opt-in Rust pending-scene retry. */
-  retryNow?(): "presented" | "pending" | "reentrant";
+  retryNow?(): "presented" | "applied" | "pending" | "reentrant";
 }
 
 export interface HandRaiseUiLayer {
@@ -122,8 +122,12 @@ export interface RewardFocusSnapshot {
 }
 
 export interface MirrorRenderer {
-  /** `false` means a strict stage-owned source is still loading: no frame or wire ack happened. */
-  reconcile(state: MirrorState, options?: { forceTextures?: boolean; reason?: FullWalkCause }): void | false;
+  /**
+   * `false` means a strict stage-owned source is still loading: no frame or wire ack happened. `"applied"` means the
+   * delta was applied to the renderer's committed state and may be acknowledged, but no frame was presented: nothing
+   * it changed draws (`rustSkipUndrawnWire`), so the post-frame pipeline has nothing to react to.
+   */
+  reconcile(state: MirrorState, options?: { forceTextures?: boolean; reason?: FullWalkCause }): void | false | "applied";
   // R6 P6-A — OPTIONAL, and absent on the DOM backend by design (see ReconcilePull). MirrorView hands this to the
   // renderer right after constructing it; a backend that keeps its own animation loop uses it to run the app's
   // pending reconcile in place of a build it would only have to throw away.

@@ -382,6 +382,13 @@ export interface CanvasFrameScheduler {
   readonly armedParks: number;
   readonly parkWakeups: number;
   readonly pulledReconciles: number;
+  /** Pulled reconciles that applied their delta without presenting (`noteReconcileApplied`). */
+  readonly appliedPulls: number;
+  /**
+   * `rustSkipUndrawnWire`: the reconcile running now applied and acknowledged its delta but presented nothing (every
+   * changed node draws nothing). A tick that pulled it still owes this display frame its own animation work.
+   */
+  noteReconcileApplied(): void;
   readonly frameMsSamples: readonly number[];
   readonly rafDeliverySamples: readonly number[];
   readonly idlePeriodSamples: readonly number[];
@@ -479,6 +486,9 @@ export function createCanvasFrameScheduler<TState extends CanvasFrameSchedulerSt
   let armedParks = 0;
   let parkWakeups = 0;
   let pulledReconciles = 0;
+  let appliedPulls = 0;
+  // Set by `noteReconcileApplied` while a pulled reconcile runs: it drew nothing, so the pulling tick carries on.
+  let reconcileApplied = false;
   let reconcilePull: ReconcilePull | null = null;
   let schedulerDisposed = false;
 
@@ -772,14 +782,17 @@ export function createCanvasFrameScheduler<TState extends CanvasFrameSchedulerSt
   /**
    * Run the established canvas animation sequence. No branch here
    * acknowledges a wire delta; the only path which can do so is a pulled
-   * reconcile, and it returns before this callback builds or paints anything.
+   * reconcile, which runs before this callback builds or paints anything.
    *
    * The pull sits before ramp sampling and passive admission intentionally. A
    * stale streamed revision has a pending reconciliation which is a strict
    * superset of this animation path; doing local animation work first would
    * build a list the reconcile immediately replaces. `pull.now()` is allowed
    * to perform the one build, paint and acknowledgement for this display
-   * frame, so this callback must return immediately afterwards.
+   * frame, so this callback returns immediately afterwards — unless the
+   * reconcile only applied its delta and presented nothing
+   * (`noteReconcileApplied`), in which case the frame's own animation work
+   * follows as if no delta had arrived.
    */
   function animationFrame(frameTime?: number): void {
     animationRaf = null;
@@ -824,18 +837,36 @@ export function createCanvasFrameScheduler<TState extends CanvasFrameSchedulerSt
     // callback delivered while teardown starts is still a delivered browser
     // frame, and dropping it biases the cadence window toward useful work.
     if (stopped()) return;
-    const state = ports.state();
+    let state = ports.state();
     if (state === null) return;
     ports.onFrameLifecycle?.("offered", state.revision);
 
     // A pending reconcile is a strict superset of an animation frame. Pull it
     // before any animation mutation/build work so it is the sole build, paint
     // and acknowledgement for this display frame.
+    //
+    // Unless that reconcile only APPLIED its delta (`rustSkipUndrawnWire`: nothing it changed draws): it sampled,
+    // built and presented nothing, so this frame's tweens, settles, idle loops and landings are still this tick's
+    // to draw, exactly as if no delta had arrived.
+    // Set once a pulled reconcile only applied its delta: this tick was the reconcile's, so finding no animation
+    // work after it is not an idle-stage anomaly (no skipped-tick or missing-passive count).
+    let afterAppliedPull = false;
     if (state.revision !== ports.revisionAtFrame() && reconcilePull !== null && reconcilePull.pending()) {
       pulledReconciles++;
+      reconcileApplied = false;
       reconcilePull.now();
-      noteSample(frameMsSamples, ports.now() - at, FRAME_SAMPLE_WINDOW);
-      return;
+      const applied = reconcileApplied;
+      reconcileApplied = false;
+      if (!applied) {
+        noteSample(frameMsSamples, ports.now() - at, FRAME_SAMPLE_WINDOW);
+        return;
+      }
+      appliedPulls++;
+      afterAppliedPull = true;
+      state = ports.state();
+      if (stopped() || state === null) return;
+      // The reconcile closed this tick's lifecycle row as it opened its own; the tick's work gets a fresh one.
+      ports.onFrameLifecycle?.("offered", state.revision);
     }
     // Consumed only by a tick that gets this far; a full build anywhere clears it.
     const carried = carryFrame;
@@ -853,9 +884,11 @@ export function createCanvasFrameScheduler<TState extends CanvasFrameSchedulerSt
     const idleOnlyFrame = !requested && !carried && bypass === null && Number.isFinite(passiveDue);
 
     if (!requested && !carried && bypass === null && !Number.isFinite(passiveDue)) {
-      idleCounts.skippedTicks++;
       ports.onFrameLifecycle?.("skipped", state.revision);
-      ports.animation.noteIdleStageMissingPassive();
+      if (!afterAppliedPull) {
+        idleCounts.skippedTicks++;
+        ports.animation.noteIdleStageMissingPassive();
+      }
       armFromSkippedTick(at);
       return;
     }
@@ -868,7 +901,7 @@ export function createCanvasFrameScheduler<TState extends CanvasFrameSchedulerSt
     // a browser-coarsened one that CAN repeat `at` across genuinely distinct frames (unlike a pinned one,
     // that is not a "nothing changed" signal) — this scheduler has no way to tell the two apart itself.
     if (idleOnlyFrame && ports.animation.isIdleSampleStale(at)) {
-      idleCounts.skippedTicks++;
+      if (!afterAppliedPull) idleCounts.skippedTicks++;
       ports.onFrameLifecycle?.("skipped", state.revision);
       return;
     }
@@ -1204,6 +1237,8 @@ export function createCanvasFrameScheduler<TState extends CanvasFrameSchedulerSt
     get armedParks() { return armedParks; },
     get parkWakeups() { return parkWakeups; },
     get pulledReconciles() { return pulledReconciles; },
+    get appliedPulls() { return appliedPulls; },
+    noteReconcileApplied() { reconcileApplied = true; },
     get frameMsSamples() { return frameMsSamples; },
     get rafDeliverySamples() { return rafDeliverySamples; },
     get idlePeriodSamples() { return idlePeriodSamples; },

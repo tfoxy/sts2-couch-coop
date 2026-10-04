@@ -479,7 +479,7 @@ function syncHandRaiseUi(): void {
  * second entry would ask for, and the caller that was refused still has its rAF (the pull cancels the booked
  * frame only AFTER this guard has let it through).
  */
-function runScheduledRender(): "presented" | "pending" | "reentrant" {
+function runScheduledRender(): "presented" | "applied" | "pending" | "reentrant" {
   if (renderRunning) {
     return "reentrant";
   }
@@ -500,12 +500,34 @@ function runScheduledRender(): "presented" | "pending" | "reentrant" {
     if (rendererRuntimeStatus.phase === "failed" && activeStageBackend() !== "dom") return "pending";
     const presented = renderer?.reconcile(props.state, force ? { forceTextures: true, reason: reasonForWalk } : undefined);
     if (warmAckTraceEnabled()) emitWarmAckTrace({kind: "view-reconcile-result", revision: props.state.revision,
-      result: !renderer ? "no-renderer" : presented === false ? "pending" : "presented"});
+      result: !renderer ? "no-renderer" : presented === false ? "pending" : presented === "applied" ? "applied" : "presented"});
     // Strict single-canvas sources may still be decoding into stage-owned
     // textures. Nothing has been presented in that state, so doing post-frame
     // composition or acknowledging the wire would falsely release a delta.
     if (!renderer || presented === false || rendererRuntimeStatus.phase === "failed") {
       return "pending";
+    }
+    // `rustSkipUndrawnWire`: the delta is applied but no frame exists — every node it changed draws nothing, and
+    // has no hit, clip or captured pose. So the post-frame pipeline below has nothing to react to: reward focus,
+    // the confirm button, the hand-raise layer and eager scroll read hits, rects and visibility, none of which
+    // moved; the effect runtimes, the adaptive-quality sampler and the encode pacing count rendered frames, and
+    // there was none. Only the ack goes back (flow control: the host releases the next delta), with its lifecycle
+    // checkpoint, whose ordinal stages (render-begin, frame-presented, ack-sent) must stay in sequence.
+    // One exception: a stage re-fit or spread re-layout (`pendingRuntimeForce`) that coalesced into this render
+    // moved every effect canvas box whatever the delta did, so its forced runtime pass still runs here.
+    if (presented === "applied") {
+      if (pendingRuntimeForce) {
+        pendingRuntimeForce = false;
+        reconcileRuntimes("change");
+        armRuntimeSafety();
+      }
+      sceneCheckpoint("frame-presented");
+      if (warmAckTraceEnabled()) emitWarmAckTrace({kind: "view-on-scene-rendered", revision: props.state.revision,
+        result: "before"});
+      props.onSceneRendered?.();
+      if (warmAckTraceEnabled()) emitWarmAckTrace({kind: "view-on-scene-rendered", revision: props.state.revision,
+        result: "after"});
+      return "applied";
     }
     rewardFocusCoordinator?.afterReconcile(
       renderer?.rewardFocusSnapshot() ?? { screenId: null, rows: [] }
@@ -580,7 +602,7 @@ function scheduleRender(forceTextures = false, reason?: FullWalkCause): void {
  *
  * The guard order matters: refuse re-entry BEFORE cancelling, so a refused pull cannot swallow the booked frame.
  */
-function reconcileNow(): "presented" | "pending" | "reentrant" {
+function reconcileNow(): "presented" | "applied" | "pending" | "reentrant" {
   if (renderRunning) {
     return "reentrant";
   }

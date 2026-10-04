@@ -100,6 +100,15 @@ describe("resolveRustFastFlags", () => {
     expect(flags("rustFast=1", "pixi").idleDueFrame).toBe(false);
   });
 
+  it("turns the undrawn-wire skip off on its own", () => {
+    expect(flags("").skipUndrawnWire).toBe(true);
+    expect(flags("rustSkipUndrawnWire=0").skipUndrawnWire).toBe(false);
+    expect(flags("rustSkipUndrawnWire=0").idleDueFrame).toBe(true);
+    expect(flags("rustFast=0").skipUndrawnWire).toBe(false);
+    expect(flags("rustFast=0&rustSkipUndrawnWire=1").skipUndrawnWire).toBe(true);
+    expect(flags("rustFast=1", "pixi").skipUndrawnWire).toBe(false);
+  });
+
   it("enables one item without the umbrella", () => {
     const resolved = flags("rustFast=0&rustLazyComposition=1&rustFastVerify=1");
     expect(resolved.lazyComposition).toBe(true);

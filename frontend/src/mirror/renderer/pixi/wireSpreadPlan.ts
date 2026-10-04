@@ -235,7 +235,7 @@ export function planWireSpread(input: WireSpreadInput): WireSpreadPlan | WireSpr
   }
   if (dx.size > 0) {
     for (const owner of input.ownerReads)
-      if (related(owner, rootId, after)) return { reason: `${tag}-owner`, id: owner };
+      if (nodesRelated(owner, rootId, after)) return { reason: `${tag}-owner`, id: owner };
     for (let order = span.spanStart; order < span.spanEnd; order++) {
       const id = input.order.ids[order];
       if (input.clipRanges.has(id)) return { reason: `${tag}-clip`, id };
@@ -295,7 +295,7 @@ function bankedEnv(scene: WireSpreadInput["sceneEnv"], banked: number | undefine
 }
 
 /** Whether `a` is `b`, an ancestor of it, or a descendant of it. */
-function related(a: string, b: string, nodes: ReadonlyMap<string, MirrorNode>): boolean {
+export function nodesRelated(a: string, b: string, nodes: ReadonlyMap<string, MirrorNode>): boolean {
   for (let id: string | null | undefined = a, steps = 0; id != null && steps <= nodes.size; id = nodes.get(id)?.parentId, steps++)
     if (id === b) return true;
   for (let id: string | null | undefined = b, steps = 0; id != null && steps <= nodes.size; id = nodes.get(id)?.parentId, steps++)
