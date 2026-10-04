@@ -990,6 +990,43 @@ async function animClipScript({ state, renderer, offer, tick }: ScenarioContext)
   await tick("tray-again@1100", 1100);
 }
 
+// AN EAGER-SCROLL ANCHOR (`applyLocalTarget`): a scroll container the player has dragged ahead of the host, which the
+// host's ease then moves in wire steps underneath. Every plan re-derives the offset against the base it draws, so a
+// wire step and the offset change that cancels it are one span's: the wire patch draws them folded, as one pose.
+function anchorSceneNodes(): Array<Record<string, unknown>> {
+  return [...sceneNodes(false),
+    heldNode("scroller", "stage", "Control", [1, 0, 0, 1, 0, -600], { localRect: box(1920, 2400) }),
+    heldNode("scrollerRow", "scroller", "ColorRect", [1, 0, 0, 1, 200, 900], { localRect: box(400, 80), fillColor: fill("#7755aaff") }),
+    heldNode("scrollerLabel", "scroller", "Label", [1, 0, 0, 1, 220, 1000], { localRect: box(200, 30), ...label("Floor") }),
+    heldNode("scrollerHit", "scrollerRow", "Control", I, { name: "Hitbox", localRect: box(400, 80), mouseFilter: 0 }),
+  ];
+}
+
+async function anchorScript({ state, renderer, offer, tick }: ScenarioContext): Promise<void> {
+  const rows = anchorSceneNodes();
+  applySceneDelta(state, parseSceneDelta({ type: "scene-delta", full: true, screenType: "combat", upserts: rows,
+    orderedIds: rows.map((row) => row.id as string) })!);
+  renderer.setStaticBackgroundSource!({ scenePath: BG_SCENE, url: "/bg/glade.png" }, () => {});
+  expect(renderer.reconcile(state)).toBe(false);
+  await turn();
+  // The drag already leads the host by 200 when the first frame is built, which captures the container.
+  renderer.applyLocalTarget!("scroller", -400);
+  await offer("startup");
+  const scrollerAt = (y: number) => ({ ...rows.find((row) => row.id === "scroller")!, transform: xf([1, 0, 0, 1, 0, y]) });
+  renderer.applyLocalTarget!("scroller", -350); // the finger moves on: an offset-only change
+  await tick("anchor-moves@1100", 1100);
+  for (const [step, y] of [[0, -520], [1, -440], [2, -380]] as const) {
+    delta(state, [scrollerAt(y)]); // the host eases toward it; the drawn container must not move
+    await offer(`ease${step}`);
+    renderer.applyLocalTarget!("scroller", -350); // the view's post-reconcile compose: unchanged
+    await tick(`after-ease${step}@${1150 + 50 * step}`, 1150 + 50 * step);
+  }
+  delta(state, [scrollerAt(-350)]); // the host arrives
+  await offer("arrived");
+  renderer.applyLocalTarget!("scroller", null); // the engine lets it go
+  await tick("released@1350", 1350);
+}
+
 describe("cosmetic offsets as a retained translate patch (rustOffsetPatch)", () => {
   beforeEach(() => { document.body.replaceChildren(); });
   afterEach(() => {
@@ -1083,6 +1120,24 @@ describe("cosmetic offsets as a retained translate patch (rustOffsetPatch)", () 
     const offsets = candidate.offsets as OffsetDiagnostics & { offsetDeclineTypes: Record<string, number> };
     expect(offsets.offsetDeclines["offset-anim-clip"]).toBe(1);
     expect(offsets.verifyMismatches).toBe(0);
+  });
+
+  it.each(["", "rustFastVerify=1"])("draws an eager-scroll anchor's wire steps as rustOffsetPatch=0 does (%s)", async (query) => {
+    const extra = query ? `&${query}` : "";
+    const baseline = await runScenario(`rustOffsetPatch=0${extra}`, anchorScript);
+    const candidate = await runScenario(query, anchorScript);
+    const replaced = expectSamePicture(candidate, baseline, false);
+    // The offset-only move patches, and so does each wire step, with the offset change that cancels it folded in —
+    // the last one included, where the host arrives and the offset drops to nothing.
+    expect(replaced.length).toBe(5);
+    const offsets = candidate.offsets as OffsetDiagnostics & { wireOffsetFolds: number };
+    expect(offsets.wireOffsetFolds).toBe(4);
+    expect(offsets.offsetDeclines["wire-offset-overlap"]).toBeUndefined();
+    if (query) {
+      expect(offsets.verifyFirstMismatch).toBeNull();
+      expect(offsets.verifyMismatches).toBe(0);
+      expect(offsets.verifyRuns).toBeGreaterThanOrEqual(4);
+    }
   });
 
   it.each(["", "rustFastVerify=1"])("moves every captured node of a streamed translation (%s)", async (query) => {

@@ -462,6 +462,8 @@ export function createPixiMirrorRenderer(
   // rustWireSpreadPatch: `spread` is set on every patch whose wire spans the switch re-posed (even with no shift
   // change), and holds each span node's new spread shift where it moved along the field.
   type PatchSidecar = { frame?: OffsetPatchFrame; captures?: Map<string, CapturedGlobal>; moved?: ReadonlySet<string>;
+    /** rustOffsetPatch: wire roots whose span's offset change the wire patch draws (`foldWireOffsets`), by shift. */
+    wireFolds?: ReadonlyMap<string, readonly [number, number]>;
     verify?: HeldPatchInputs; wireCaptured?: boolean; spread?: Map<string, number>; spreadSpans?: number;
     // rustTweenRootPatch: the override bank the patch drew (committed on publication), how many roots it re-posed,
     // and whether an open landing may ride it (no local animation or offset translation moved a landing node).
@@ -487,7 +489,7 @@ export function createPixiMirrorRenderer(
   // `undrawnWireSpan`'s answers, valid for one committed build (`buildEpoch`): the facts it reads are build products.
   let undrawnSpanEpoch = -1;
   const undrawnSpanCache = new Map<string, boolean>();
-  let offsetPatches = 0, offsetPatchedNodes = 0, wireCapturedPatches = 0;
+  let offsetPatches = 0, offsetPatchedNodes = 0, wireCapturedPatches = 0, wireOffsetFolds = 0;
   let wireSpreadPatches = 0, wireSpreadSpans = 0, wireSpreadShifted = 0, wireSpreadVisited = 0;
   // `rustPhaseTiming=1`: the wire reconcile's per-span planning loop and the spread bank's publication.
   let wireSpanLoopMs = 0, wireSpreadPublishMs = 0;
@@ -1501,6 +1503,7 @@ const producerStarted = rustPhaseTimingMode || producerReasonMode ? performance.
       sidecar.tween ? tweenVerify : sidecar.spreadSpans && !sidecar.frame ? spreadVerify : offsetVerify,
       true, sidecar.moved ?? new Set(), sidecar.spreadSpans || sidecar.tween ? sidecar.spread ?? new Map() : undefined);
     if (sidecar?.wireCaptured) wireCapturedPatches++;
+    if (sidecar?.wireFolds) wireOffsetFolds += sidecar.wireFolds.size;
     if (patch.texts?.length) {
       textPatches++; textPatchedRecords += patch.texts.length;
       if (sidecar?.textVerify) verifyHeldOverridePatch(sidecar.textVerify, textVerify, false, new Set(), undefined, sidecar.textOwners);
@@ -1905,7 +1908,7 @@ const producerStarted = rustPhaseTimingMode || producerReasonMode ? performance.
     retainedDecline = "plan-unsupported";
 const traceId = nextTraceFrame();
     const planStarted = rustPhaseTimingMode ? performance.now() : 0;
-    const plan = traceId === null ? () => planRetainedSample(next) : () => tracePhase(traceId, "patch", () => planRetainedSample(next));
+    const plan = traceId === null ? () => planRetainedSample(next, true) : () => tracePhase(traceId, "patch", () => planRetainedSample(next, true));
     const patch = lifecycle ? lifecycle.phase("patch", plan) : plan();
     if (rustDiagnosticMode) retainedPlanCount++;
     if (rustPhaseTimingMode) retainedPlanMs += performance.now() - planStarted;
@@ -1962,6 +1965,8 @@ const traceId = nextTraceFrame();
       if (!span || spans.some((other) => other.start < span.spanEnd && span.spanStart < other.end)) return refuse("wire-overlapping-span");
       spans.push({ start: span.spanStart, end: span.spanEnd });
       let sidecar = patchSidecars.get(patch);
+      // rustOffsetPatch: an offset change folded into this span (an anchored scroll container's), drawn by its patch.
+      const fold = sidecar?.wireFolds?.get(id);
       // rustOffsetPatch: an offset translation and a wire delta on one node would be two entries for one primitive.
       if (sidecar?.moved) for (let order = span.spanStart; order < span.spanEnd; order++)
         if (sidecar.moved.has(snapshot.paintOrder.ids[order])) return refuse("wire-offset-overlap");
@@ -2031,9 +2036,12 @@ const traceId = nextTraceFrame();
         const shift = (m: Affine): Affine => [m[0], m[1], m[2], m[3], m[4] + tx, m[5] + ty];
         if (!sidecar) { sidecar = {}; patchSidecars.set(patch, sidecar); }
         sidecar.wireCaptured = true;
+        // A folded span's captures were already moved by its offset change (`foldWireOffsets`): the wire moves them
+        // on from there, or the offset half of the fold would be lost from every captured pose.
+        const from = fold ? sidecar.captures?.get(captured) ?? entryValue : entryValue;
         // The changed root's parent is outside its span and did not move; every other parent moved with it.
-        (sidecar.captures ??= new Map()).set(captured, { ...entryValue, g: shift(entryValue.g), drawn: shift(entryValue.drawn),
-          parentTy: captured === id ? entryValue.parentTy : entryValue.parentTy + ty });
+        (sidecar.captures ??= new Map()).set(captured, { ...from, g: shift(from.g), drawn: shift(from.drawn),
+          parentTy: captured === id ? from.parentTy : from.parentTy + ty });
         if (fast.verify) sidecar.verify ??= captureHeldInputs();
       }
       // rustOffsetPatch: a clip rect is baked from its clipper's drawn box, so a span with a clipper moves only by a
@@ -2046,7 +2054,8 @@ const traceId = nextTraceFrame();
         break;
       }
       const part = retained.patchWireTransform(id, delta, spreadPlan ? { clips: moveClips, nodeDeltas: spreadPlan.nodeDeltas,
-        uniformDrawn: spreadPlan.uniform, hitSpreadDx: spreadPlan.dx } : { clips: moveClips });
+        uniformDrawn: spreadPlan.uniform, hitSpreadDx: spreadPlan.dx, ...(fold ? { drawnShift: fold } : {}) }
+        : { clips: moveClips, ...(fold ? { drawnShift: fold } : {}) });
       if (!part) return refuse("wire-transform-unsupported");
       // rustSkipUndrawnWire verify: this id's part, against the shadow's replay.
       if (undrawnWireShadow) noteUndrawnWirePart(id, part, spreadPlan);
@@ -2203,7 +2212,8 @@ if (isPromiseLike<PresentationResult>(result)) { trackAsyncRetainedPatch(result,
       if (scope) scope.spec = { ...scope.spec, x: scope.spec.x + dx, y: scope.spec.y + dy };
     }
   }
-  function planRetainedSample(next: MirrorState): RetainedPixiPatch | null {
+  /** `wire`: planned for `tryRetainedWire`, whose span loop poses `next.changedIds` (and so may take folded spans). */
+  function planRetainedSample(next: MirrorState, wire = false): RetainedPixiPatch | null {
     const refuse = (reason: string) => { retainedDecline = reason; return null; };
     if (!retainedMode || !retainedValid || !snapshot || !retained || !pixi || readiness !== "ready") {
       retainedDecline = "invalid-retained-state"; return null;
@@ -2227,6 +2237,8 @@ if (isPromiseLike<PresentationResult>(result)) { trackAsyncRetainedPatch(result,
       (tweenOn ? SAMPLE_TRANSFORM : 0))) !== 0) {
       retainedDecline = "unsupported-sample"; return null;
     }
+    // Every plan draws `next`: anchored offsets follow its bases (a no-op unless an anchored node's base moved).
+    interaction.rebaseLocalTargets(next);
     const held = fast.heldOverridePatch && visual.transformOverrides.size > 0;
     // An overridden node draws at its absolute pose whatever its ancestors do, so a local animation above it must
     // not carry it along. The build's frames never include a root that carries an override itself.
@@ -2256,6 +2268,8 @@ if (isPromiseLike<PresentationResult>(result)) { trackAsyncRetainedPatch(result,
       const refusal = planTweenRoots(snapshot, patch, tweenRoots, offsetPlan, tweenSpans);
       if (refusal) return refuse(refusal);
     } else if (held) heldPatches.set(patch, fast.verify ? captureHeldInputs() : null);
+    // Eager-scroll anchors: a scroll container's wire move and the offset change that cancels it are one span's.
+    const wireFolds = wire && offsetPlan && next.changedIds.size > 0 ? foldWireOffsets(next, offsetPlan, snapshot) : null;
     if (offsetPlan) {
       const part = retained.patchTranslate(offsetPlan.deltas, { clips: clipsMovable() });
       if (!part) { offsetDeclines["offset-anim-span"] = (offsetDeclines["offset-anim-span"] ?? 0) + 1; return refuse("offset-anim-span"); }
@@ -2268,7 +2282,7 @@ if (isPromiseLike<PresentationResult>(result)) { trackAsyncRetainedPatch(result,
       const captures = new Map(offsetPlan.captures);
       for (const [id, captured] of sidecar?.captures ?? []) captures.set(id, captured);
       patchSidecars.set(patch, { ...sidecar, frame: offsetPlan.frame, captures, moved: offsetPlan.moved,
-        verify: sidecar?.verify ?? (fast.verify ? captureHeldInputs() : undefined) });
+        ...(wireFolds ? { wireFolds } : {}), verify: sidecar?.verify ?? (fast.verify ? captureHeldInputs() : undefined) });
     }
     // rustTweenRootPatch: whether an open landing may ride this patch.
     if ((tweenRoots?.length || offsetPlan) && fast.tweenRootPatch && fast.heldOverridePatch && visual.hasOpenLanding()) {
@@ -2553,6 +2567,52 @@ if (isPromiseLike<PresentationResult>(result)) { trackAsyncRetainedPatch(result,
     rootShifts: Map<string, readonly [number, number]>;
     /** Every node the patch moves, root spans included. */
     moved: ReadonlySet<string> };
+
+  /**
+   * rustOffsetPatch, eager-scroll anchors: the wire spans this frame's offset translation folds into, by the shift
+   * each one's nodes owe it. Takes those spans out of `plan` (its deltas and `moved`); their captures stay in
+   * `plan.captures`, which the wire loop moves on by the wire delta.
+   *
+   * An anchored scroll container changes its offset by −Δ exactly when the wire moves it by +Δ (the renderer
+   * re-derives the offset against the state it is about to draw: `rebaseLocalTargets`), so one span owes both. Posed
+   * by both patches, the second pose would be composed from the committed one and drop the first, which is why the
+   * wire loop refuses such a span (`wire-offset-overlap`); folded, `patchWireTransform` poses it once with the
+   * offset change as its `drawnShift`. Admitted only for a span the offsets move uniformly (every node owes the same
+   * shift, none of it through a local-animation root's frame), vertically (an eager scroll; a horizontal one would
+   * have to be checked against the widened stage's field claims), under a wire delta that is a pure translation.
+   * Anything else stays an overlap and the reconcile builds.
+   */
+  function foldWireOffsets(next: MirrorState, plan: OffsetTranslation, base: DrawnSceneSnapshot):
+    ReadonlyMap<string, readonly [number, number]> | null {
+    const order = base.paintOrder;
+    let folds: Map<string, readonly [number, number]> | null = null;
+    for (const id of next.changedIds) {
+      const span = order.entries.get(id);
+      if (!span || !plan.moved.has(id)) continue;
+      let shift: readonly [number, number] | undefined;
+      for (let at = span.spanStart; at < span.spanEnd; at++) {
+        const own = plan.deltas.get(order.ids[at]);
+        if (!own || (shift && (own[0] !== shift[0] || own[1] !== shift[1]))) { shift = undefined; break; }
+        shift ??= own;
+      }
+      if (!shift || shift[0] !== 0) continue;
+      const before = base.scene.nodes.get(id), after = next.nodes.get(id);
+      // An unmoved node is not posed by the wire loop at all (a text-only change skips it), so it keeps its offset.
+      if (!before?.transform || !after?.transform || before.parentId !== after.parentId ||
+        before.transform.every((value, i) => value === after.transform![i])) continue;
+      const inverse = affineInverse(global(base.scene.nodes, id));
+      if (!inverse || !isPureTranslation(affineMul(global(next.nodes, id), inverse))) continue;
+      (folds ??= new Map()).set(id, [shift[0], shift[1]]);
+    }
+    if (!folds) return null;
+    const moved = new Set(plan.moved);
+    for (const id of folds.keys()) {
+      const span = order.entries.get(id)!;
+      for (let at = span.spanStart; at < span.spanEnd; at++) { plan.deltas.delete(order.ids[at]); moved.delete(order.ids[at]); }
+    }
+    plan.moved = moved;
+    return folds;
+  }
 
   /**
    * rustOffsetPatch: the design-space translation every drawn node owes the cosmetic offsets that changed since the
@@ -3124,7 +3184,7 @@ const traceId = nextTraceFrame();
         : fast.idleInRust ? "unavailable" : "off" } : {}),
       ...(lazyCompositionVerifyFirstMismatch ? { lazyCompositionVerifyFirstMismatch } : {}),
       ...(fast.heldOverridePatch ? { rustHeldOverride: { heldOverridePatches, heldOverrideDeclines: { ...heldOverrideDeclines }, ...(fast.verify ? { heldOverrideVerifyRuns: heldVerify.runs, heldOverrideVerifyMismatches: heldVerify.mismatches, heldOverrideVerifyMaxError: heldVerify.maxError, heldOverrideVerifyFirstMismatch: heldVerify.firstMismatch, heldOverrideVerifyLog: heldVerify.log.map((entry) => ({ ...entry, notes: [...entry.notes], recent: [...entry.recent] })) } : {}) } } : {}),
-      ...(fast.offsetPatch ? { rustOffsetPatch: { offsetPatches, offsetPatchedNodes, wireCapturedPatches, offsetDeclines: { ...offsetDeclines },
+      ...(fast.offsetPatch ? { rustOffsetPatch: { offsetPatches, offsetPatchedNodes, wireCapturedPatches, wireOffsetFolds, offsetDeclines: { ...offsetDeclines },
         offsetDeclineTypes: { ...offsetDeclineTypes },
         ...(fast.verify ? { verifyRuns: offsetVerify.runs, verifyMismatches: offsetVerify.mismatches, verifyMaxError: offsetVerify.maxError,
           verifyFirstMismatch: offsetVerify.firstMismatch, verifyKinds: { ...offsetVerify.kinds },
@@ -3187,6 +3247,8 @@ const traceId = nextTraceFrame();
   if (submitControl === "single-quad") globals.__pixiArmSingleQuad = () => pixi?.armDiagnosticSingleQuad() ?? false;
   if (lifecycle) globals.__mirrorFrameLifecycle = lifecycle.report;
   globals.__mirrorLogicalPaint = logicalPaintRows;
+  // scripts/probe-eager-scroll.mjs --stage canvas: the eager-scroll container's drawn base and offset (read on demand).
+  globals.__mirrorScrollProbe = interaction.scrollProbe;
   globals.__mirrorFrameIdentity = () => diagnostics().frameIdentity;
   async function setRustDiagnosticClock(ms: number | null): Promise<unknown> {
     // The replay transport delivers the next wire message only after this resolves. A presentation
@@ -3359,6 +3421,11 @@ const traceId = nextTraceFrame();
         rewardCandidateIndex.noteChanged(next.nodes, next.changedIds);
       }
       state = next; if (rustPendingAckRetry) pendingViewRevision = next.revision;
+      // Eager-scroll anchors: re-derive each anchored offset against the bases this reconcile is about to draw, so a
+      // wire move of a scroll container and the offset that cancels it go out in ONE submission (patch or build).
+      // The view re-composes after the reconcile (eagerScroll.afterReconcile), but only once an async present has
+      // settled — too late for the frame that drew the move.
+      interaction.rebaseLocalTargets(next);
       const at = deterministicClock ?? performance.now();
       // rustSkipUndrawnWire: gated before the inputs land (they drain the delta's hints and flights), classified
       // after them and BEFORE any visual is sampled. A skip samples nothing: tweens, settles, idle loops and
@@ -3426,11 +3493,12 @@ const traceId = nextTraceFrame();
     setStaticBackgroundSource(source, ready) { staticBackground = source; staticBackgroundReady = ready; if (!source) ready?.(false); paintLocal(); },
     __drainDormantHatchForTest: () => false, __drainRevealStaggerForTest: () => 0,
     touchStackAt: interaction.touchStackAt, spreadPainterAt: interaction.spreadPainterAt,
-    mapNodeAt: interaction.mapNodeAt, applyLocalOffset: interaction.applyLocalOffset, scrollRenderedY: interaction.scrollRenderedY,
+    mapNodeAt: interaction.mapNodeAt, applyLocalOffset: interaction.applyLocalOffset, applyLocalTarget: interaction.applyLocalTarget,
+    scrollRenderedY: interaction.scrollRenderedY,
     dispose() { if (disposed) return; disposed = true; cancelDiagnosticClock?.("renderer disposed"); producerReasons?.disposeOpen(); asyncPresentation.dispose(); asyncPresentedRevision = null; asyncSubmissionRevision = null; asyncAwaitingAckRevision = null; asyncPresentCompletion = null; pendingViewRevision = null; if (refinementRaf !== null) cancelAnimationFrame(refinementRaf); observer?.disconnect(); stage.ownerDocument.fonts?.removeEventListener?.("loadingdone", onFontsLoaded); fontCheckCache?.dispose(); pixi?.dispose(); canvas.remove(); setStageOwnsEffectPixels(false);
       installHandPoseProbe(null, probeOwner); installLandingLogProbe(null, probeOwner); installSpreadAuditProbe(null, probeOwner);
       scheduler.dispose(); interaction.dispose(); loop.reset(); for (const clip of spineClips.values()) clip.release(); spineClips.clear();
-      for (const key of ["__mirrorRendererDiagnostics", "__mirrorCanvasProfile", "__mirrorDrawListDump", "__pixiAttribution", "__pixiArmSkipGl", "__pixiArmSingleQuad", "__mirrorFrameLifecycle", "__mirrorLogicalPaint", "__mirrorFrameIdentity", "__mirrorSetDiagnosticClock", "__mirrorProductionMapProbe"]) delete globals[key]; },
+      for (const key of ["__mirrorRendererDiagnostics", "__mirrorCanvasProfile", "__mirrorDrawListDump", "__pixiAttribution", "__pixiArmSkipGl", "__pixiArmSingleQuad", "__mirrorFrameLifecycle", "__mirrorLogicalPaint", "__mirrorFrameIdentity", "__mirrorSetDiagnosticClock", "__mirrorProductionMapProbe", "__mirrorScrollProbe"]) delete globals[key]; },
   };
   return renderer;
 }

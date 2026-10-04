@@ -543,6 +543,97 @@ describe("eagerScroll — single-writer composition", () => {
   });
 });
 
+// THE ABSOLUTE-TARGET SEAM (canvas backends). The engine states where each node is to be DRAWN and the renderer
+// derives the offset from the base it is about to draw, so the write must not depend on the paint at all: the same
+// eager position goes out whatever the host has lerped to, and nothing is written through the relative seam.
+describe("eagerScroll — the absolute-target seam", () => {
+  function absoluteHarness(initial: EagerScrollTarget[]) {
+    const clock = { t: 1000 };
+    let list = initial;
+    const targets: Array<[string, number | null]> = [];
+    const offsets: Array<[string, number]> = [];
+    const engine = createEagerScroll({
+      targets: () => list,
+      send: () => undefined,
+      sendScroll: () => "r",
+      designPerClientPx: () => 1,
+      applyLocalOffset: (nodeId, dy) => offsets.push([nodeId, dy]),
+      applyLocalTarget: (nodeId, y) => targets.push([nodeId, y]),
+      scrollRenderedY: (nodeId) => fixtureTarget(list, nodeId)?.renderedY ?? null,
+      now: () => clock.t,
+      raf: () => 0,
+      caf: () => undefined
+    });
+    return {
+      engine, targets, offsets,
+      setTargets: (next: EagerScrollTarget[]) => { list = next; },
+      step: (ms: number) => { clock.t += ms; engine.__frameForTest(); },
+      last: (id: string) => targets.filter(([nodeId]) => nodeId === id).at(-1)?.[1]
+    };
+  }
+
+  it("states the eager position itself, whatever the paint underneath it", () => {
+    const target = mapTarget();
+    const h = absoluteHarness([target]);
+    h.engine.wheel(960, 540, -5 * WHEEL_NOTCH_PX, { coordX: 960, coordY: 540 }); // 5 notches UP
+    const eager = -600 + 5 * WHEEL_NOTCH_PX;
+    h.step(16);
+    expect(h.last("map")).toBe(eager);
+    // The host lerps underneath in ~138px steps; every compose, in either order, states the same position.
+    for (let y = -600 + 138; y < eager; y += 138) {
+      h.setTargets([{ ...target, streamedY: y, renderedY: y }]);
+      h.engine.afterReconcile();
+      expect(h.last("map")).toBe(eager);
+      h.step(16);
+      expect(h.last("map")).toBe(eager);
+    }
+    expect(h.offsets).toEqual([]);
+  });
+
+  it("lets the node go with a null target once the host has caught up", () => {
+    const target = mapTarget();
+    const h = absoluteHarness([target]);
+    h.engine.wheel(960, 540, -WHEEL_NOTCH_PX, { coordX: 960, coordY: 540 });
+    h.step(16);
+    h.step(ACTIVE_HOLD_MS + 1);
+    h.setTargets([{ ...target, streamedY: -600 + WHEEL_NOTCH_PX, renderedY: -600 + WHEEL_NOTCH_PX }]);
+    h.step(16);
+    expect(h.engine.__entryForTest("map")).toBeNull();
+    expect(h.targets.at(-1)).toEqual(["map", null]);
+    expect(h.offsets).toEqual([]);
+  });
+
+  it("releases through the same seam on a hard reset", () => {
+    const target = mapTarget();
+    const h = absoluteHarness([target]);
+    h.engine.wheel(960, 540, -WHEEL_NOTCH_PX, { coordX: 960, coordY: 540 });
+    h.step(16);
+    h.engine.reset();
+    expect(h.targets.at(-1)).toEqual(["map", null]);
+    expect(h.offsets).toEqual([]);
+  });
+
+  it("leads the scrollbar thumb with a target on the thumb's own local Y", () => {
+    // The thumb rides `handleY = -36 - offset * 0.34`: two rest samples while the host keeps up fit that line.
+    const thumb = (offset: number) => -36 - offset * 0.34;
+    const at = (offset: number, painted = offset) => gridTarget({ streamedY: painted, renderedY: painted,
+      bar: { id: "handle", el: document.createElement("div"), handleY: thumb(painted) } });
+    const h = absoluteHarness([at(0)]);
+    h.engine.wheel(960, 540, WHEEL_NOTCH_PX, { coordX: 960, coordY: 540 }); // scroll DOWN one notch
+    h.setTargets([at(-WHEEL_NOTCH_PX)]); // the host keeps up within the frame: a rest pair
+    h.step(16);
+    h.engine.wheel(960, 540, WHEEL_NOTCH_PX, { coordX: 960, coordY: 540 });
+    h.setTargets([at(-2 * WHEEL_NOTCH_PX)]); // a second rest pair: the line is fitted
+    h.step(16);
+    expect(h.last("handle")).toBeUndefined(); // nothing is led until the line is known
+    h.engine.wheel(960, 540, WHEEL_NOTCH_PX, { coordX: 960, coordY: 540 }); // now ahead of the host
+    h.step(16);
+    expect(h.last("grid")).toBe(-3 * WHEEL_NOTCH_PX);
+    expect(h.last("handle")).toBeCloseTo(thumb(-3 * WHEEL_NOTCH_PX), 6);
+    expect(h.offsets).toEqual([]);
+  });
+});
+
 // ---------------------------------------------------------------------------------------------------------------
 
 // R11 WS-S §3 — what a scrollable may claim.

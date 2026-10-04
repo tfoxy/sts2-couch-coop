@@ -404,6 +404,8 @@ export function createCanvasMirrorRenderer(
         return;
       }
       state = next;
+      // Eager-scroll anchors follow the bases this reconcile draws (see the Pixi renderer's reconcile).
+      interaction.rebaseLocalTargets(next);
       const at = nowMs();
 
       // STRUCTURAL DETECTION. `state.orderedIds` gets a new ARRAY REFERENCE exactly when the child structure
@@ -623,6 +625,7 @@ export function createCanvasMirrorRenderer(
     raisedHandTouchTargetClaim: interaction.raisedHandTouchTargetClaim,
     mapNodeAt: interaction.mapNodeAt,
     applyLocalOffset: interaction.applyLocalOffset,
+    applyLocalTarget: interaction.applyLocalTarget,
     scrollRenderedY: interaction.scrollRenderedY,
 
 

@@ -525,6 +525,16 @@ export interface EagerScrollDeps {
   // written (an inline `translate` or a draw-list entry) and what "where it is painted" means belong to whoever
   // drew the frame.
   applyLocalOffset: (nodeId: string, dy: number) => void;
+  // The ABSOLUTE form of the same seam (canvas backends; see MirrorRenderer.applyLocalTarget): "draw this node's
+  // local Y at `composedY`", null to let it go. When present every write goes through it instead of
+  // `applyLocalOffset`, and the renderer re-derives the offset against the streamed base it is about to draw — which
+  // is what keeps the composition exact across an ASYNCHRONOUS present, where `afterReconcile` only runs once the
+  // frame that drew the moved base is already on screen. The engine's own decisions still measure against the paint
+  // (`scrollRenderedY`), so the targets are the same numbers the relative path composes to: `eagerY` for the
+  // content, in the units `scrollRenderedY` reads (its local Y), and the inferred thumb Y for the bar, in
+  // `handleY`'s (the handle's local Y). Both are the node's local Y in its parent's basis, which is the space the
+  // renderer measures the base in.
+  applyLocalTarget?: (nodeId: string, composedY: number | null) => void;
   scrollRenderedY: (nodeId: string) => number | null;
   now?: () => number;
   raf?: (cb: () => void) => number;
@@ -666,6 +676,19 @@ export function createEagerScroll(deps: EagerScrollDeps): EagerScroll {
     if (id !== null) deps.applyLocalOffset(id, dy);
   }
 
+  // Put node `id` at local Y `composedY`, whose PAINTED base is `paintedY` right now. The absolute seam takes the
+  // target itself; the relative one takes the gap to the paint, which is the same number while nothing moves.
+  function writeTarget(id: string, composedY: number, paintedY: number): void {
+    if (deps.applyLocalTarget) deps.applyLocalTarget(id, composedY);
+    else writeOffset(id, composedY - paintedY);
+  }
+
+  // Let node `id` go: back to exactly where the walk draws it.
+  function clearWrite(id: string): void {
+    if (deps.applyLocalTarget) deps.applyLocalTarget(id, null);
+    else writeOffset(id, 0);
+  }
+
   // What the renderer has actually PAINTED this node's Y at (mirrorRenderer.scrollRenderedY) — the value every
   // compose/settle decision is measured against. A target can vanish between snapshots, in which case its last
   // snapshot value is the only current-frame value available while cleanup runs.
@@ -675,11 +698,11 @@ export function createEagerScroll(deps: EagerScrollDeps): EagerScroll {
 
   function clearEntryWrites(entry: ScrollEntry): void {
     if (entry.wroteId !== null) {
-      writeOffset(entry.wroteId, 0);
+      clearWrite(entry.wroteId);
       entry.wroteId = null;
     }
     if (entry.wroteBarId !== null) {
-      writeOffset(entry.wroteBarId, 0);
+      clearWrite(entry.wroteBarId);
       entry.wroteBarId = null;
     }
   }
@@ -705,11 +728,14 @@ export function createEagerScroll(deps: EagerScrollDeps): EagerScroll {
   // should be looking and the base transform the renderer has actually baked — so the composed position
   // (`base + translate`, CSS applies them in that order) is the eager one by construction. Re-asserted against the
   // current renderer node every call: the renderer recreates nodes (pool recycling, adoption, a structural rebuild).
+  //
+  // On the absolute seam (EagerScrollDeps.applyLocalTarget) the write is `eagerY` itself and the renderer keeps
+  // `base + translate === eagerY` at every plan — the same invariant, held on the renderer's side of an async present.
   function composeEntry(entry: ScrollEntry, target: EagerScrollTarget): void {
-    const delta = entry.eagerY - paintedYOf(target);
+    const painted = paintedYOf(target);
     entry.wroteId = target.id;
-    writeOffset(target.id, delta);
-    syncBar(entry, target, delta);
+    writeTarget(target.id, entry.eagerY, painted);
+    syncBar(entry, target, entry.eagerY - painted);
   }
 
   // See EagerScroll.afterReconcile. The invariant this restores is the whole fix for the SHAKE: before it, the
@@ -1338,7 +1364,7 @@ export function createEagerScroll(deps: EagerScrollDeps): EagerScroll {
     const bar = target.bar;
     if (!bar) {
       if (entry.wroteBarId !== null) {
-        writeOffset(entry.wroteBarId, 0);
+        clearWrite(entry.wroteBarId);
         entry.wroteBarId = null;
       }
       return;
@@ -1353,7 +1379,8 @@ export function createEagerScroll(deps: EagerScrollDeps): EagerScroll {
     }
     const wantY = barHandleYFor(entry.barMapping, entry.eagerY);
     entry.wroteBarId = bar.id;
-    writeOffset(bar.id, wantY - bar.handleY);
+    // `handleY` is the thumb's STREAMED local Y, which is also the base the absolute seam measures against.
+    writeTarget(bar.id, wantY, bar.handleY);
   }
 
   function reset(): void {

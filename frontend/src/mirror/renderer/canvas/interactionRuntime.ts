@@ -237,6 +237,14 @@ export interface CanvasInteractionRuntime {
   spreadPainterAt(clientX: number, clientY: number, backdropWidthPx: number): SpreadPainter | null | undefined;
   mapNodeAt(clientX: number, clientY: number): string | null;
   applyLocalOffset(nodeId: string, dy: number): void;
+  /** See `MirrorRenderer.applyLocalTarget`: an absolute eager-scroll anchor, re-derived at every plan. */
+  applyLocalTarget(nodeId: string, composedY: number | null): void;
+  /**
+   * Re-derive every anchored offset against `state`'s streamed bases, WITHOUT asking for a build: the caller is
+   * about to plan one (a wire reconcile, a build, a retained patch), and that plan draws the moved base and the
+   * offset that cancels it in the same submission. Drops the anchor of a node `state` no longer has.
+   */
+  rebaseLocalTargets(state: MirrorState | null): void;
   scrollRenderedY(nodeId: string): number | null;
   scrollProbe(nodeId?: string): Record<string, unknown>;
 
@@ -305,6 +313,18 @@ function effectiveVisible(nodes: ReadonlyMap<string, MirrorNode>, node: MirrorNo
 
 export function createCanvasInteractionRuntime(ports: CanvasInteractionRuntimePorts): CanvasInteractionRuntime {
   const cosmeticOffsets = new Map<string, CosmeticOffset>();
+  /**
+   * EAGER-SCROLL ANCHORS. Node id → the local Y the eager-scroll engine wants it DRAWN at (`applyLocalTarget`).
+   *
+   * Why absolute. The engine used to write a RELATIVE offset (`eagerY − painted base`) and re-compose it right after
+   * each reconcile (eagerScroll.afterReconcile). That holds only while the reconcile presents synchronously. The Rust
+   * stage presents asynchronously: a wire delta that moves the container is planned while the offset still cancels
+   * the OLD base, the reconcile reports "pending", and the re-compose waits for the present — so the frame on screen
+   * shows the container one wire step past the player's position, and the next one snaps it back (every step of a
+   * map drag). Holding the target here lets every plan re-derive `dy = target − base` against the very state it
+   * draws (see `rebaseLocalTargets`), so the base move and the offset that cancels it are one submission.
+   */
+  const localTargets = new Map<string, number>();
   const offsetRamps = createOffsetRamps();
   const rampSample: OffsetRampSample = { dx: 0, dy: 0 };
   const handHolderIds = new Set<string>();
@@ -677,6 +697,9 @@ export function createCanvasInteractionRuntime(ports: CanvasInteractionRuntimePo
   }
 
   function prepareBuild(): void {
+    // A build draws the state it is handed, so every anchored offset is re-derived against that state's bases
+    // first — even a build the scheduler runs ahead of the reconcile that would otherwise have rebased.
+    rebaseLocalTargets(ports.state());
     offsetPending = false;
     cosmeticVersionAtBuild = cosmeticVersion;
   }
@@ -1217,7 +1240,13 @@ export function createCanvasInteractionRuntime(ports: CanvasInteractionRuntimePo
     });
   }
 
+  /** A relative write supersedes an anchor on the same node (the last writer says where it is drawn). */
   function applyLocalOffset(nodeId: string, dy: number): void {
+    localTargets.delete(nodeId);
+    writeLocalOffset(nodeId, dy);
+  }
+
+  function writeLocalOffset(nodeId: string, dy: number): void {
     if (!ports.state()?.nodes.has(nodeId)) return;
     if (!setCosmeticOffset(nodeId, 0, Math.abs(dy) < 0.01 ? 0 : dy)) return;
     if (offsetBuildArmed) {
@@ -1234,6 +1263,52 @@ export function createCanvasInteractionRuntime(ports: CanvasInteractionRuntimePo
     if (ports.requestBuild) ports.requestBuild(true, true);
     else ports.rebuildAndPaint();
     armOffsetFrame();
+  }
+
+  /**
+   * The node's streamed LOCAL Y: its own wire translation, in its parent's basis. That is the space a cosmetic offset
+   * is applied in (`buildDrawList` maps it through the parent's linear part), the space the DOM's `scrollRenderedY`
+   * reads (the element's own matrix) and the space a scrollbar thumb's `handleY` is sampled in, so `target − base`
+   * is exact there for any parent transform. The canvas `scrollRenderedY` (`g[5] − parentTy`) is the same number
+   * whenever the parent's linear part is the identity in y, which is the case the relative path always assumed.
+   */
+  function streamedBaseY(state: MirrorState | null, id: string): number | null {
+    const transform = state?.nodes.get(id)?.transform;
+    return transform == null || transform.length !== 6 ? null : transform[5];
+  }
+
+  function anchoredDy(target: number, base: number): number {
+    const dy = target - base;
+    return Math.abs(dy) < 0.01 ? 0 : dy;
+  }
+
+  function applyLocalTarget(nodeId: string, composedY: number | null): void {
+    if (composedY === null) {
+      // A vanished node draws nothing, so its offset goes without a build (`applyLocalOffset` ignores unknown ids,
+      // which would leave it in the map for good).
+      if (localTargets.delete(nodeId) && !ports.state()?.nodes.has(nodeId)) setCosmeticOffset(nodeId, 0, 0);
+      else writeLocalOffset(nodeId, 0);
+      return;
+    }
+    const base = streamedBaseY(ports.state(), nodeId);
+    if (base === null) return;
+    localTargets.set(nodeId, composedY);
+    // Unchanged ⇒ returns before arming anything (the post-reconcile re-compose of a rebased anchor lands here on
+    // every frame of a drag).
+    writeLocalOffset(nodeId, anchoredDy(composedY, base));
+  }
+
+  function rebaseLocalTargets(state: MirrorState | null): void {
+    if (localTargets.size === 0) return;
+    for (const [id, target] of localTargets) {
+      const base = streamedBaseY(state, id);
+      if (base === null) {
+        localTargets.delete(id);
+        setCosmeticOffset(id, 0, 0);
+        continue;
+      }
+      setCosmeticOffset(id, 0, anchoredDy(target, base));
+    }
   }
 
   function scrollRenderedY(nodeId: string): number | null {
@@ -1253,13 +1328,17 @@ export function createCanvasInteractionRuntime(ports: CanvasInteractionRuntimePo
     const id = nodeId ?? candidates[0]?.id ?? null;
     const captured = id === null ? undefined : snapshot.capturedGlobals.get(id);
     const baseY = captured === undefined ? null : captured.g[5] - captured.parentTy;
-    const offsetY = id === null ? 0 : (cosmeticOffsets.get(id)?.dy ?? 0);
+    // The offset the PUBLISHED frame drew, not the live one: with an asynchronous present (the Rust stage) the live
+    // map is already rebased for a frame still in flight, and base + live offset would describe no frame at all.
+    const offsetY = id === null ? 0 : (cosmeticOffsetsFor(snapshot).get(id)?.dy ?? 0);
     return {
       backend: "canvas",
       id,
       targets: candidates.length,
       baseY,
       offsetY,
+      liveOffsetY: id === null ? 0 : (cosmeticOffsets.get(id)?.dy ?? 0),
+      anchorY: id === null ? null : (localTargets.get(id) ?? null),
       composedY: baseY === null ? null : baseY + offsetY,
       globalY: captured === undefined ? null : captured.g[5] + offsetY,
       builds: ports.builds(),
@@ -1496,6 +1575,7 @@ export function createCanvasInteractionRuntime(ports: CanvasInteractionRuntimePo
     if (offsetFrameRaf !== 0 && typeof cancelAnimationFrame === "function") cancelAnimationFrame(offsetFrameRaf);
     offsetFrameRaf = 0;
     offsetRamps.clear();
+    localTargets.clear();
     handHolderIds.clear();
     fillColorIds.clear();
     liveChildIds = null;
@@ -1563,6 +1643,8 @@ export function createCanvasInteractionRuntime(ports: CanvasInteractionRuntimePo
     spreadPainterAt,
     mapNodeAt,
     applyLocalOffset,
+    applyLocalTarget,
+    rebaseLocalTargets,
     scrollRenderedY,
     scrollProbe,
     liveChildIds: liveChildIdsOf,
