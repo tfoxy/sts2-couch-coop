@@ -67,6 +67,13 @@ export interface WireTransformOptions {
   uniformDrawn?: Affine;
   /** Each moved node's new spread shift, carried on its hits for publication. */
   hitSpreadDx?: ReadonlyMap<string, number>;
+  /**
+   * `rustOffsetPatch`: a design-space translation of every DRAWN pose in the span on top of its drawn delta — the
+   * change in the cosmetic offsets the span inherits, folded into the wire move so each primitive is posed once (a
+   * second `patchTranslate` entry for the same primitive would be composed from the same committed pose, not from
+   * this one). Game space is untouched: hit `mGame` takes `delta` alone. Clips move by `delta` plus this shift.
+   */
+  drawnShift?: readonly [number, number];
 }
 
 /**
@@ -555,7 +562,9 @@ export function createRetainedPixiComposition(
     // A clip moves by the translation alone, so a delta with any other part would leave it behind its children.
     if (options.clips && (options.nodeDeltas || (options.uniformDrawn && options.uniformDrawn !== delta) ||
       !isPureTranslation(delta))) return null;
-    const nodeDeltas = options.nodeDeltas, hitSpreadDx = options.hitSpreadDx, uniform = options.uniformDrawn ?? delta;
+    const nodeDeltas = options.nodeDeltas, hitSpreadDx = options.hitSpreadDx, shift = options.drawnShift;
+    const shifted = (m: Affine): Affine => shift ? [m[0], m[1], m[2], m[3], m[4] + shift[0], m[5] + shift[1]] : m;
+    const uniform = shifted(options.uniformDrawn ?? delta);
     if (!ensureIndex()) return null;
     const span = build.order.entries.get(id);
     if (!span) return null;
@@ -567,7 +576,8 @@ export function createRetainedPixiComposition(
     const nodeMatrices: RetainedPixiPatch["nodeMatrices"] = [];
     for (let order = span.spanStart; order < span.spanEnd; order++) {
       const owner = build.order.ids[order];
-      const drawn = nodeDeltas?.get(owner) ?? uniform;
+      const own = nodeDeltas?.get(owner);
+      const drawn = own ? shifted(own) : uniform;
       const input = build.nodePaintInputs.get(owner);
       if (input) nodeMatrices.push({ id: owner, matrix: affineMul(drawn, wireNodeMatrices.get(owner) ?? input.global) });
       for (const ref of byOwner.get(owner) ?? []) {
@@ -583,7 +593,7 @@ export function createRetainedPixiComposition(
     }
     let clips: ClipTranslation[] | undefined;
     if (options.clips) {
-      const step = [delta[4], delta[5]] as const;
+      const step = [delta[4] + (shift?.[0] ?? 0), delta[5] + (shift?.[1] ?? 0)] as const;
       clips = clipTranslations(build.order.ids.slice(span.spanStart, span.spanEnd).map((owner) => [owner, step] as const));
     }
     return { ...(clips?.length ? { clips } : {}), primitives, groups: [], hits, nodeMatrices, sourceReferences: [],

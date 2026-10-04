@@ -313,6 +313,14 @@ export interface MirrorRenderer {
   // local offset the eager-scroll engine composes on top of the streamed position. The renderer owns the write, so
   // the engine never has to hold an element (and a canvas backend has one to hold). Unknown id ⇒ no-op.
   applyLocalOffset(nodeId: string, dy: number): void;
+  // EAGER SCROLL, absolute write half (canvas backends only): draw node `nodeId` with its LOCAL Y at `composedY`
+  // design px, whatever its streamed base is; null drops the target and its offset. The renderer keeps the target
+  // and re-derives the offset (`composedY − streamed local Y`) every time it plans a submission, so a streamed move
+  // of the node and the offset that cancels it always reach the screen together — including when the presentation
+  // is asynchronous and the view's post-reconcile compose (eagerScroll.afterReconcile) only runs once it settles.
+  // The DOM writes base and offset in one task, so it has no such gap and keeps `applyLocalOffset`. Unknown id ⇒
+  // no-op.
+  applyLocalTarget?(nodeId: string, composedY: number | null): void;
   // EAGER SCROLL, read half: the Y translation the walk last BAKED into `nodeId` (baseTranslateY) — what is
   // PAINTED, which is what the eager offset must compose against. Null when the renderer cannot say (no record, or
   // nothing styled yet), so the caller keeps its own streamed fallback.

@@ -80,6 +80,7 @@ import { createHash } from "node:crypto";
 import { createServer, request as httpRequest } from "node:http";
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { requireReproHeader } from "./lib/repro-recording.mjs";
+import { replaySession } from "./lib/replay-session.mjs";
 import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 
@@ -521,6 +522,11 @@ function startHost({ port, rtt, keyframe, mapId, mapNode, grid, assets, log, aut
     req.pipe(proxied);
   });
 
+  // A COMPLETE directView session: the client's envelope parser refuses a bare `{type, directView}` (it requires
+  // the session, players, screen and host name), and the stage is never mounted without one. Same synthesized
+  // envelope the repro replay and the bench use (`replaySession`), with this host's own capability on top.
+  const session = (requestId) => ({ ...JSON.parse(replaySession([])), requestId, scrollAction: authority });
+
   server.on("upgrade", (req, socket) => {
     const key = req.headers["sec-websocket-key"];
     const accept = createHash("sha1").update(key + WS_GUID).digest("base64");
@@ -543,7 +549,7 @@ function startHost({ port, rtt, keyframe, mapId, mapNode, grid, assets, log, aut
           return;
         }
         if (msg.type === "join") {
-          send({ type: "session", requestId: msg.requestId, directView: true, scrollAction: authority });
+          send(session(msg.requestId));
           return;
         }
         if (msg.type === "input") setTimeout(() => handleInput(msg), half);
@@ -565,7 +571,7 @@ function startHost({ port, rtt, keyframe, mapId, mapNode, grid, assets, log, aut
 
     // A directView session (the recording is passive, so it carries none) then the keyframe. `scrollAction` is the
     // R19 WP5 capability the client gates its whole authority path on — false here IS an older host.
-    send({ type: "session", requestId: "session", directView: true, scrollAction: authority });
+    send(session("session"));
     send(keyframe);
     if (log) console.log(`[probe-eager] client connected; map=${mapId} at y=${state.position}`);
   });

@@ -827,6 +827,11 @@ function mountScene(): void {
         // M0 — the local offset is WRITTEN by whatever backend painted the node, and "where is it painted" is
         // asked of the same backend. The engine keeps the arithmetic and stops touching elements.
         applyLocalOffset: (nodeId, dy) => renderer?.applyLocalOffset(nodeId, dy),
+        // A canvas backend takes the eager position as an ABSOLUTE target instead (see the contract): its
+        // presentation can be asynchronous, so a relative offset re-composed after the reconcile would land a frame
+        // late. Chosen once — the renderer is created once per mount, before this engine.
+        ...(renderer.applyLocalTarget
+          ? { applyLocalTarget: (nodeId: string, y: number | null) => renderer?.applyLocalTarget?.(nodeId, y) } : {}),
         scrollRenderedY: (nodeId) => renderer?.scrollRenderedY(nodeId) ?? null,
         // The letterbox scale's reciprocal — the trackpad's 1:1 pixel mapping is measured in DESIGN px.
         designPerClientPx: () => (scale.value > 0 ? 1 / scale.value : 1),

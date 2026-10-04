@@ -32,9 +32,10 @@ const box = (w: number, h: number) => ({ position: { x: 0, y: 0 }, size: { x: w,
 const fill = (html: string) => ({ r: 1, g: 1, b: 1, a: 1, html });
 const CARD_Y = 800;
 
+const node = (id: string, parentId: string | null, nodeType: string, transform: readonly number[],
+  extra: Record<string, unknown> = {}) => ({ id, parentId, name: id, nodeType, visible: true, transform: xf(transform), ...extra });
+
 function sceneNodes(): Array<Record<string, unknown>> {
-  const node = (id: string, parentId: string | null, nodeType: string, transform: readonly number[],
-    extra: Record<string, unknown> = {}) => ({ id, parentId, name: id, nodeType, visible: true, transform: xf(transform), ...extra });
   return [
     node("stage", null, "Control", I, { localRect: box(1920, 1080) }),
     node("card", "stage", "NCard", [1, 0, 0, 1, 540, CARD_Y], { localRect: box(160, 220) }),
@@ -44,17 +45,33 @@ function sceneNodes(): Array<Record<string, unknown>> {
   ];
 }
 
-type Submission = { call: "admit" | "patch" | "present"; faceY: number | null };
+// An eager-scroll container: a box-less scroll root and the one cyan quad it carries.
+const MAP_Y = 200;
+const mapRow = (y: number) => node("map", "stage", "Control", [1, 0, 0, 1, 0, y], { localRect: box(1920, 1080) });
+const mapNodes = () => [mapRow(MAP_Y),
+  node("mapQuad", "map", "ColorRect", [1, 0, 0, 1, 300, 400], { localRect: box(60, 60), fillColor: { r: 0, g: 1, b: 1, a: 1, html: "#00ffffff" } })];
 
-/** The card face's drawn y in an admitted list: the one magenta quad. */
-function faceY(list: DrawList<string>): number | null {
+/**
+ * `faceY`: the card face's drawn y in an admitted list. `mapY`: the map quad's drawn y, in an admitted list or as a
+ * patch moved it (absent when the submission does not say).
+ */
+type Submission = { call: "admit" | "patch" | "present"; faceY: number | null; mapY?: number };
+
+/** The drawn y of the one quad of this colour in an admitted list. */
+function quadY(list: DrawList<string>, r: number, g: number, b: number): number | null {
   const view = createQuadView();
   for (let index = 0; index < list.count; index++) {
     if (list.kindNameAt(index) !== "quad") continue;
     list.readQuad(index, view);
-    if (view.r === 1 && view.g === 0 && view.b === 1) return view.m[5];
+    if (view.r === r && view.g === g && view.b === b) return view.m[5];
   }
   return null;
+}
+const faceY = (list: DrawList<string>) => quadY(list, 1, 0, 1);
+
+/** A patch's transform for the map quad's commands (its primitive ids are `mapQuad:<kind>:<ordinal>`). */
+function patchedMapY(patch: { primitives?: ReadonlyArray<{ id: string; transform?: readonly number[] }> } | undefined): number | undefined {
+  return patch?.primitives?.find((primitive) => primitive.id.startsWith("mapQuad:") && primitive.transform)?.transform?.[5];
 }
 
 type Control = { sync: boolean; hold: boolean; held: Array<(outcome?: "refused" | "error") => void> };
@@ -78,8 +95,16 @@ function recordingExecutor(log: Submission[], control: Control) {
     bindPixelTexture: () => {}, pollDiagnostics: () => {},
     textOutcomes: () => ({ requested: "native", actual: "native", native: 0, slug: 0, slugCached: 0, reasons: {} }),
     render: () => { throw new Error("the retained Rust path never submits a legacy render"); },
-    admitScene: (list: DrawList<string>) => { log.push({ call: "admit", faceY: faceY(list) }); return settle(); },
-    patchScene: () => { log.push({ call: "patch", faceY: null }); return settle(); },
+    admitScene: (list: DrawList<string>) => {
+      const mapY = quadY(list, 0, 1, 1);
+      log.push({ call: "admit", faceY: faceY(list), ...(mapY === null ? {} : { mapY }) });
+      return settle();
+    },
+    patchScene: (patch?: { primitives?: ReadonlyArray<{ id: string; transform?: readonly number[] }> }) => {
+      const mapY = patchedMapY(patch);
+      log.push({ call: "patch", faceY: null, ...(mapY === undefined ? {} : { mapY }) });
+      return settle();
+    },
     presentScene: () => { log.push({ call: "present", faceY: null }); return settle(); },
   };
 }
@@ -99,7 +124,8 @@ type Diagnostics = { asyncSubmissionRevision: number | null; readiness: string;
     rustTweenRootPatch?: { patches: number } } };
 const diagnostics = () => (window as unknown as { __mirrorRendererDiagnostics(): Diagnostics }).__mirrorRendererDiagnostics();
 
-async function setup(query: string, options: { sync?: boolean; tweenPatch?: boolean } = {}) {
+async function setup(query: string, options: { sync?: boolean; tweenPatch?: boolean;
+  extraNodes?: Array<Record<string, unknown>> } = {}) {
   // `rustTweenRootPatch` is held off unless asked for: these specs use a long position tween as per-frame BUILD
   // demand, which that switch turns into retained patches (the default-config case below covers the two together).
   const tween = options.tweenPatch ? "" : "rustTweenRootPatch=0&";
@@ -114,7 +140,7 @@ async function setup(query: string, options: { sync?: boolean; tweenPatch?: bool
   const renderer = createPixiMirrorRenderer(stage(), document.createElementNS("http://www.w3.org/2000/svg", "defs"), null,
     undefined, { backend: "rust", createExecutor: async () => recordingExecutor(log, control) as never });
   const state: MirrorState = createMirrorState();
-  const rows = sceneNodes();
+  const rows = [...sceneNodes(), ...(options.extraNodes ?? [])];
   applySceneDelta(state, parseSceneDelta({ type: "scene-delta", full: true, screenType: "combat", upserts: rows,
     orderedIds: rows.map((row) => row.id as string) })!);
   renderer.setStaticBackgroundSource!({ scenePath: "res://scenes/backgrounds/glade/glade_background.tscn", url: "/bg/glade.png" }, () => {});
@@ -371,6 +397,55 @@ describe("one build per frame (rustCoalescedBuilds)", () => {
     expect(stats.workPerFrame["3+"]).toBe(0);
     expect(stats.workPerFrame["2"]).toBeLessThanOrEqual(stats.urgentExtraBuilds);
     expect(h.log.filter((entry) => entry.call === "admit").at(-1)!.faceY).toBe(CARD_Y - HELD_CARD_DRAG_LIFT_PX);
+    h.renderer.dispose();
+  });
+  // EAGER-SCROLL ANCHORS. The eager-scroll engine states where a scroll container is to be DRAWN (`applyLocalTarget`),
+  // and the renderer keeps the cosmetic offset at `target - streamed base` whenever it plans a submission. A streamed
+  // move of the container therefore never draws on top of the offset composed for its old base while its presentation
+  // is in flight (the map jumping by the wire step, then snapping back), and settling it needs no correction.
+  // Default: the wire patch draws the move with the offset change folded in. `rustFastVerify=1`: the shadow build of
+  // that patch draws the same picture. `rustFast=0`: no patches, the move is a full build reading the rebased offset.
+  it.each(["", "rustFastVerify=1", "rustFast=0"])("keeps an anchored scroll container in place across an in-flight wire move (%s)", async (query) => {
+    const h = await setup(query, { extraNodes: mapNodes() });
+    const QUAD_Y = 400;
+    const anchor = (y: number) => h.renderer.applyLocalTarget!("map", y);
+    const drawnMapY = (log: readonly Submission[]) => log.reduce<number | undefined>((y, entry) => entry.mapY ?? y, undefined);
+    anchor(MAP_Y + 50);
+    await drain();
+    for (let i = 0; i < 3; i++) await h.frame();
+    expect(drawnMapY(h.log)).toBe(MAP_Y + QUAD_Y + 50);
+
+    h.control.hold = true;
+    const before = h.log.length;
+    h.deltaArrives([mapRow(MAP_Y + 30)]); // the game's ease catches up 30px under the player's eager position
+    await h.frame(); // the reconcile plans and submits the move; its presentation stays in flight
+    expect(h.log.slice(before).map((entry) => entry.call)).toEqual([query === "rustFast=0" ? "admit" : "patch"]);
+    expect(diagnostics().asyncSubmissionRevision).not.toBeNull();
+    // The submission in flight draws the container where the player put it, not one wire step further on.
+    expect(drawnMapY(h.log)).toBe(MAP_Y + QUAD_Y + 50);
+
+    // The presentation settles, and the view re-composes the eager position (eagerScroll.afterReconcile).
+    h.control.hold = false;
+    for (const release of h.control.held.splice(0)) release();
+    await drain();
+    anchor(MAP_Y + 50);
+    await drain();
+    for (let i = 0; i < 3; i++) await h.frame();
+    // No correction: nothing after the move was drawn again.
+    expect(h.log.slice(before + 1).filter((entry) => entry.call !== "present")).toEqual([]);
+    expect(drawnMapY(h.log)).toBe(MAP_Y + QUAD_Y + 50);
+    // The engine reads the moved base as painted (the capture moved with the wire), so its next compose is a no-op.
+    expect(h.renderer.scrollRenderedY("map")).toBe(MAP_Y + 30);
+    if (query !== "rustFast=0") {
+      const offsets = (diagnostics().effective as { rustOffsetPatch?: { wireOffsetFolds: number; verifyRuns?: number;
+        verifyMismatches?: number; verifyFirstMismatch?: string | null } }).rustOffsetPatch!;
+      expect(offsets.wireOffsetFolds).toBe(1);
+      if (query) {
+        expect(offsets.verifyFirstMismatch).toBeNull();
+        expect(offsets.verifyMismatches).toBe(0);
+        expect(offsets.verifyRuns).toBeGreaterThanOrEqual(1);
+      }
+    }
     h.renderer.dispose();
   });
 });
