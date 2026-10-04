@@ -1706,6 +1706,38 @@ describe("rustTextPatch executor", () => {
     } finally { renderer.dispose(); }
   });
 
+  it("includes msdf.baselinePx in the Bitmap resource key, so a baseline-only shift still re-rasterises", async () => {
+    mockInkContext();
+    const { renderer, calls } = await setUp();
+    try {
+      const admitted = calls.find((entry) => entry.call === "admit")!.body!;
+      const oldKey = (admitted.resources as Array<{ key: string }>).find((resource) => resource.key.startsWith("text:"))!.key;
+      // Same text, with an outline added this time; this alone already changes the resource key (the stroke
+      // is part of `record.style`), so this patch is only the setup for the real proof below.
+      const outlined = (text: string, baselinePx: number): PixiTextRecord => ({ ...clock(text),
+        style: { ...clock(text).style, stroke: { color: "#000000", width: 4 } },
+        msdf: { url: "/res/fixture.ttf", faceKey: "fixture", measuredAdvance: 40, baselinePx } } as PixiTextRecord);
+      calls.length = 0;
+      expect(await renderer.patchScene({ primitives: [], groups: [], texts: [outlined("04:00", 18)] }))
+        .toMatchObject({ presented: true });
+      const firstPatch = calls.find((entry) => entry.call === "patch")!.body as
+        { updates: Array<{ command: Record<string, unknown> }> };
+      const firstKey = firstPatch.updates[0].command.resource as string;
+      expect(firstKey).not.toBe(oldKey);
+      // SAME text, style and tint as the patch above — ONLY `msdf.baselinePx` differs (18 -> 26), exactly the
+      // shape of the real-world case: a sibling rich-text run on the same line changing the line's shared
+      // ascent/descent shifts THIS run's producer-computed baseline without touching its own text/style/tint.
+      // Without baselinePx in the key, this would silently keep serving the stale raster at the old baseline.
+      calls.length = 0;
+      expect(await renderer.patchScene({ primitives: [], groups: [], texts: [outlined("04:00", 26)] }))
+        .toMatchObject({ presented: true });
+      const secondPatch = calls.find((entry) => entry.call === "patch")!.body as
+        { updates: Array<{ command: Record<string, unknown> }> };
+      const secondKey = secondPatch.updates[0].command.resource as string;
+      expect(secondKey).not.toBe(firstKey);
+    } finally { renderer.dispose(); }
+  });
+
   it("is not advertised, and a text patch refuses, without the renderer capability or with the switch off", async () => {
     mockInkContext();
     const older = await setUp({});

@@ -744,7 +744,12 @@ export const createRustDrawListExecutor: MirrorDrawExecutorFactory = async ({ ca
   };
   const textResourceKey = (record: PixiTextRecord) => {
     const revision = record.resourceRevision ?? record.contentKey ?? "";
-    return `text:${record.key}:${revision}:${record.text}:${styleJson(record.style)}:${record.tint ?? 0xffffff}`;
+    // `record.msdf.baselinePx` can shift without touching anything else in this key: a SIBLING rich-text run on
+    // the same line changing face (e.g. a role falling back) moves the shared line box's `lineMetrics`, which
+    // shifts THIS run's `rasterBaseline` even though its own text/style/tint/resourceRevision are unchanged.
+    // Without the baseline in the key, Bitmap would keep serving the old raster at the old (now wrong) origin.
+    const baselinePx = (record as PixiTextRecord & { msdf?: { baselinePx?: number } }).msdf?.baselinePx;
+    return `text:${record.key}:${revision}:${record.text}:${styleJson(record.style)}:${record.tint ?? 0xffffff}:${baselinePx ?? ""}`;
   };
   const bitmap = createBitmapTextMethod({
     canvas, textResourceKey, readPixels,
