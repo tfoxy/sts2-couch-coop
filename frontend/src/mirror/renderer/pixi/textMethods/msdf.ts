@@ -122,13 +122,19 @@ export function shapeMsdfRun(record: MsdfRunRecord, font: HbGpuFont): MsdfShapeR
   if (!shaped || !shaped.length) return { ok: false, reason: "shape" };
   if (shaped.some((glyph) => !glyph.glyphId)) return { ok: false, reason: "coverage" };
   const toPx = fontPx / font.upem;
+  // Bitmap's pen starts at `strokeHalf` (Canvas2D centers a stroke on the glyph path, so the near half of an
+  // outline draws left of x=0) and the producer's `boxX` is pre-shifted left by that same `strokeHalf`
+  // (`nativeTextOriginCorrection`) so the two carriers land on the same ink. MSDF glyphs have no Canvas2D
+  // stroke to center, but they share that same `boxX`, so they need the matching `+ strokeHalf` to end up in
+  // the same place rather than `outline/2` left of it.
+  const strokeHalf = outline / 2;
   const glyphs: ShapedMsdfGlyph[] = [];
   let pen = 0;
   for (const glyph of shaped) {
     if (![glyph.xAdvance, glyph.yAdvance, glyph.xOffset, glyph.yOffset].every(Number.isFinite))
       return { ok: false, reason: "shape" };
     glyphs.push({ glyphId: glyph.glyphId,
-      xPx: (pen + glyph.xOffset) * toPx, yPx: meta.baselinePx - glyph.yOffset * toPx });
+      xPx: strokeHalf + (pen + glyph.xOffset) * toPx, yPx: meta.baselinePx - glyph.yOffset * toPx });
     pen += glyph.xAdvance;
   }
   const advancePx = pen * toPx;

@@ -57,7 +57,9 @@ describe("MSDF main-thread shaping", () => {
       src: [10, 20, 30, 40], left: -2, top: -10 };
     const carrier = carrierForMsdfRun(input, shaped.run, new Map([[4, placement]]));
     expect(carrier?.glyphs[0].src).toEqual([10, 20, 30, 40]);
-    expect(carrier?.glyphs[0].dst[0]).toBeCloseTo(0.9333333333);
+    // outline 2 -> strokeHalf 1, added to the pen's x so an MSDF glyph lands at the same ink the Bitmap
+    // carrier's strokeHalf-inset raster and the DOM/game both place it at (was 0.9333333333 before the fix).
+    expect(carrier?.glyphs[0].dst[0]).toBeCloseTo(1.9333333333);
     expect(carrier?.glyphs[0].dst[1]).toBeCloseTo(13.8666666667);
     expect(carrier?.glyphs[0].dst[2]).toBeCloseTo(10);
     expect(carrier?.glyphs[0].dst[3]).toBeCloseTo(13.3333333333);

@@ -4,6 +4,15 @@ import { offsetRustTextCarrierTransform } from "@/mirror/renderer/semanticTextLa
 import type { RustTextMethod, BitmapTextCarrier, RustTextResource } from "./RustTextMethod";
 import type { TextInkRaster, CorpusRow } from "./types";
 
+/**
+ * The producer's measured baseline for this run (`rustTextPreparation.ts`'s `PreparedTextRun.msdf.baselinePx`,
+ * the SAME field MSDF reads — see `msdf.ts`'s `MsdfRunRecord`). It already bakes in `strokeHalf` and the
+ * line's half-leading, so a record carrying it is placed by it directly rather than re-derived here.
+ */
+interface BitmapRunRecord extends PixiTextRecord {
+  msdf?: { baselinePx: number };
+}
+
 export interface BitmapEnvironment {
   canvas: HTMLCanvasElement;
   textResourceKey(record: PixiTextRecord): string;
@@ -34,7 +43,7 @@ export function createBitmapTextMethod(env: BitmapEnvironment): BitmapTextMethod
   const pads = new Map<string, number>();
   let rasters = 0;
   let measureContext: CanvasRenderingContext2D | null | undefined;
-  function rasterTextWithMode(record: PixiTextRecord, cache: Map<string, RustTextResource>, pads: Map<string, number>,
+  function rasterTextWithMode(record: BitmapRunRecord, cache: Map<string, RustTextResource>, pads: Map<string, number>,
     inkReadFrequently: boolean, useZeroCopy: boolean, replayEvents?: TextInkRaster[], corpusRow?: CorpusRow):
     { resource: { key: string; width: number; height: number }; pixels: Uint8Array; width: number; height: number; transform: readonly number[]; alpha?: number } | null {
     const key = env.textResourceKey(record);
@@ -91,15 +100,37 @@ export function createBitmapTextMethod(env: BitmapEnvironment): BitmapTextMethod
           fontBoundingBoxDescent: metrics.fontBoundingBoxDescent, runAdvances: [] };
         const stroke = style.stroke && typeof style.stroke === "object" ? style.stroke as { color?: string; width?: number } : null;
         const shadow = style.dropShadow && typeof style.dropShadow === "object" ? style.dropShadow as { color?: string; alpha?: number; angle?: number; distance?: number; blur?: number } : null;
-        const strokePad = Math.ceil((stroke?.width ?? 0) + 1);
+        // Matches `rustTextPreparation.ts`'s `spec.outlinePx / 2`: the record's `style.stroke.width` IS that
+        // same `outlinePx` (see `buildPreparedText`'s `stroke: { ..., width: spec.outlinePx }`), so this is the
+        // identical strokeHalf the producer already baked into `record.msdf.baselinePx` and `boxX`'s
+        // `nativeTextOriginCorrection`. Canvas2D centers a stroke on the glyph's path, so without this inset the
+        // outline's near half draws outside the ink the DOM/game place, shifting the whole glyph up-left.
+        const strokeWidth = Number(stroke?.width ?? 0);
+        const strokeHalf = strokeWidth / 2;
+        const strokePad = Math.ceil(strokeWidth + 1);
         const shadowBlur = Math.ceil(shadow?.blur ?? 0);
         const shadowOffsetX = Math.ceil(Math.cos(shadow?.angle ?? 0) * (shadow?.distance ?? 0));
         const shadowOffsetY = Math.ceil(Math.sin(shadow?.angle ?? 0) * (shadow?.distance ?? 0));
         pad = Math.max(strokePad, shadowBlur + Math.max(Math.abs(shadowOffsetX), Math.abs(shadowOffsetY))) + 2;
-        const ascent = Math.max(metrics.actualBoundingBoxAscent, metrics.fontBoundingBoxAscent || size);
-        const descent = Math.max(metrics.actualBoundingBoxDescent, metrics.fontBoundingBoxDescent || size * 0.25);
-        const width = Math.max(1, Math.ceil(metrics.width + pad * 2));
-        const height = Math.max(1, Math.ceil(ascent + descent + pad * 2));
+        // Ink metrics (ACTUAL glyph extent, used only to size the canvas tightly around this text's own shape).
+        const inkAscent = Math.max(metrics.actualBoundingBoxAscent, metrics.fontBoundingBoxAscent || size);
+        const inkDescent = Math.max(metrics.actualBoundingBoxDescent, metrics.fontBoundingBoxDescent || size * 0.25);
+        // `record.msdf.baselinePx` is the producer's authority on where this run's baseline sits in its line box
+        // (`rustTextPreparation.ts:231-237`'s `rasterBaseline`, in Pixi's `CanvasTextGenerator` convention): the
+        // pen starts at `strokeHalf` and the baseline is `strokeHalf + fontAscent + halfLeading` below it. The
+        // fallback (no `msdf`, e.g. a record built outside full text preparation) recomputes the same formula
+        // from THIS run's own face metrics — `fontBoundingBoxAscent || size`, the SAME ascent preparation's
+        // `measureLineMetrics` falls back to.
+        const fontAscent = metrics.fontBoundingBoxAscent || size;
+        const fontDescent = metrics.fontBoundingBoxDescent || size * 0.25;
+        const lineHeight = Number(style.lineHeight ?? 0);
+        const fallbackBaseline = strokeHalf + fontAscent + Math.max(0, (lineHeight - fontAscent - fontDescent) / 2);
+        const recordBaseline = record.msdf?.baselinePx;
+        const baseline = Number.isFinite(recordBaseline) ? recordBaseline! : fallbackBaseline;
+        const width = Math.max(1, Math.ceil(metrics.width + strokeWidth + pad * 2));
+        // Tall glyphs (an ascender well above the line box) or a wide stroke can reach above `baseline` itself;
+        // `inkAscent + strokeHalf` is the ink's own top edge, so the canvas must clear whichever is taller.
+        const height = Math.max(1, Math.ceil(Math.max(baseline, inkAscent + strokeHalf) + inkDescent + strokeHalf + pad * 2));
         if (raster) { raster.width = width; raster.height = height; raster.rgbaBytes = width * height * 4; }
         const ink = env.canvas.ownerDocument.createElement("canvas"); ink.width = width; ink.height = height;
         const context = inkReadFrequently
@@ -108,7 +139,7 @@ export function createBitmapTextMethod(env: BitmapEnvironment): BitmapTextMethod
         if (raster) raster.inkContextAttributes = context.getContextAttributes?.() ?? null;
         context.font = font; context.textBaseline = "alphabetic"; context.textAlign = "left";
         if (letterSpacing && "letterSpacing" in context) context.letterSpacing = `${letterSpacing}px`;
-        const x = pad, y = pad + ascent;
+        const x = pad + strokeHalf, y = pad + baseline;
         const inkDrawAt = raster ? performance.now() : 0;
         const drawn = drawRustTextRuns(context, runs, {
           fill: typeof style.fill === "string" ? style.fill : "#ffffff",
