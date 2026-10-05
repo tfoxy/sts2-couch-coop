@@ -43,9 +43,9 @@ internal interface IHeadlessProcessExitSignal
 
 /// <summary>
 /// Manages per-browser-player headless game instances. When a non-host browser player joins,
-/// the host mod spawns a headless Godot process for them (slot 2→port 13357, slot 3→13367, …).
+/// the host mod spawns a headless Godot process for them (slot 2, slot 3, …).
 /// Each headless runs the full CouchCoop mod stack and streams its own scene tree to that
-/// player's browser. Shared mode carries that stream through the host port; direct mode uses a seat port.
+/// player's browser through a relay on the host port. A direct seat-port path remains for standalone tests.
 ///
 /// Headless launch: <c>COUCHCOOP_HEADLESS_WRAPPER</c> env var (e.g.
 /// <c>"gamescope --backend headless -W 1280 -H 720 -w 1280 -h 720 -r 16 --"</c>) prefixes the
@@ -241,8 +241,6 @@ public sealed partial class HeadlessClientManager : IDisposable
     private readonly Func<bool>? _runInProgressProbe;
     private readonly Action<int, long>? _ownedSeatCountChanged;
     private int _publishedOwnedSeatCount;
-    /// <summary>Raised off the manager lock when the number of owned seat processes changes.</summary>
-    public event Action<int, long>? SeatProcessCountChanged;
     private long _ownedSeatDemandGeneration;
     private readonly string? _gameExe;
     private readonly string? _headlessWrapper;
@@ -1645,8 +1643,7 @@ public sealed partial class HeadlessClientManager : IDisposable
         _publishedOwnedSeatCount = count;
         var generation = ++_ownedSeatDemandGeneration;
         var callback = _ownedSeatCountChanged;
-        var changed = SeatProcessCountChanged;
-        if (callback is null && changed is null)
+        if (callback is null)
         {
             return;
         }
@@ -1655,8 +1652,7 @@ public sealed partial class HeadlessClientManager : IDisposable
         {
             try
             {
-                callback?.Invoke(count, generation);
-                changed?.Invoke(count, generation);
+                callback(count, generation);
             }
             catch (Exception exception)
             {

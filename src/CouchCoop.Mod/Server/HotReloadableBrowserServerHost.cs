@@ -208,12 +208,12 @@ public sealed class HotReloadableBrowserServerHost : IHotServerHost, IHotBrowser
         TcpListener listener;
         try
         {
-            if (!IsHeadlessClient && SeatBrowserRoutePreference.Read() == SeatBrowserRouteMode.Shared)
+            if (!IsHeadlessClient)
             {
-                // A shared host has exactly one browser address. Walking to another port would make the QR
+                // The host has exactly one browser address. Walking to another port would make the QR
                 // and configured firewall rule misleading, so a conflict is a startup error.
                 if (_preferredPort is <= 0 or > ushort.MaxValue)
-                    throw new InvalidOperationException($"Shared browser port {_preferredPort} is outside 1..65535.");
+                    throw new InvalidOperationException($"Browser port {_preferredPort} is outside 1..65535.");
                 cancellationToken.ThrowIfCancellationRequested();
                 listener = new TcpListener(_bindAddress, _preferredPort);
                 listener.Start();

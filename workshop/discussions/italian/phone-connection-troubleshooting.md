@@ -32,26 +32,15 @@ Avviare la partita di un giocatore può richiedere fino a un minuto, ed è norma
 
 Se quella riga continua a contare e cambia fase, sta funzionando: tieni aperta la pagina. Le sei fasi sono «Connessione all'host», «In attesa dell'host», «Avvio del gioco di questo giocatore», «Collegamento di questo giocatore alla partita», «Caricamento della vista di gioco» e «Quasi pronto».
 
-### 4. Se si blocca, ora la pagina ti dice PERCHÉ
+### 4. Se si blocca, copia quello che dice la pagina
 
-Quando qualcosa va davvero storto, il tuo dispositivo viene informato di quale tra diversi problemi non collegati tra loro si tratta - in due frasi, più una riga tecnica grigia. **Includi tutto in qualsiasi segnalazione.** Puoi riceverne tre, e richiedono soluzioni completamente diverse:
+La pagina per unirsi e la visuale di gioco di ogni giocatore usano la stessa porta del browser sul computer host (**13337** per impostazione predefinita). Aprire altre porte per il browser non risolve un errore durante l’accesso.
 
-- «**Il tuo gioco è in esecuzione sul computer host, ma questo dispositivo non è riuscito a raggiungerlo.**»\
-  È il percorso di rete tra il telefono e l'host - Wi-Fi ospite, una VPN o un router che tiene separati i dispositivi. Il gioco dell'host non ha nessun problema. Vedi le sezioni 2 e 6.
-- «**Un altro programma sul computer host sta usando la porta di cui ha bisogno il tuo gioco.**»\
-  Non c'è niente da cambiare sul tuo dispositivo. Sull'host, qualcos'altro sta occupando una delle porte di cui ha bisogno ogni giocatore - il più delle volte un processo di un giocatore rimasto da una sessione precedente. Chi ospita dovrebbe chiuderlo (riavviare Slay the Spire 2 lo elimina).
-- «**Il computer host sta bloccando la porta su cui viene servito il tuo gioco.**»\
-  Anche qui non c'è niente da cambiare sul tuo dispositivo. A bloccarla è il firewall o il software di sicurezza dell'host stesso - vedi la sezione 5.
+Se compare un errore durante *Unione…* o *Caricamento…*, riporta il testo esatto e l’eventuale riga tecnica grigia. Chi ospita può anche aprire il pannello **Connessioni** nella schermata del codice QR per vedere in quale passaggio si è verificato l’errore. Se la pagina non si apre affatto, controlla le indicazioni su rete e firewall nelle sezioni 2, 5 e 6.
 
-**Il caso di blocco più comune non mostra affatto *Unione alla partita…*.** Se il tuo dispositivo ha raggiunto l'host ma non riesce a raggiungere la porta assegnata al tuo giocatore, l'ingresso nella partita *riesce* - e poi la pagina passa a *Caricamento…* e resta lì. In quella schermata non c'è né una riga di avanzamento né un conto alla rovescia, perché dal punto di vista dell'host non è fallito nulla. La prima cosa utile che vedrai è il messaggio «**non è riuscito a raggiungerlo**» qui sopra, circa **20 secondi** dopo il cambio di pagina. Quindi, se sei bloccato su *Caricamento…*, aspetta mezzo minuto quel messaggio invece di ricaricare: ricaricare fa ripartire tutta l'attesa.
+Se la pagina resta su *Unione…* o *Caricamento…* senza mostrare un errore, indica quale schermata ha raggiunto e cosa diceva l’ultima riga di avanzamento. Tienila aperta finché la fase di avanzamento cambia.
 
-Se invece resta su *Unione alla partita…* e non cambia mai, l'host si arrende dopo 75 secondi con «*Impossibile avviare la visualizzazione del gioco: riprova.*» e una riga grigia sotto. È un errore diverso da quello descritto sopra. In entrambi i casi, copia quello che dice.
-
-### 5. Ogni giocatore usa la propria porta
-
-La lobby è sulla porta **13337**, poi ogni giocatore usa la **13357**, la **13367**, la **13377** e così via. Una regola del firewall che apre solo la 13337 ti permette di raggiungere l'elenco dei giocatori e poi fallisce al secondo passaggio. Se ne hai aggiunta una (da solo o seguendo una guida), rimuovila e consenti invece **il programma del gioco**: così sono coperte tutte le porte di cui ha bisogno.
-
-### 6. Windows: consenti il gioco attraverso il firewall
+### 5. Windows: consenti il gioco attraverso il firewall
 
 Per prima cosa controlla il tipo di rete, perché già questo blocca molte connessioni:
 
@@ -68,13 +57,13 @@ Se a un certo punto hai risposto «Annulla» a una richiesta del firewall di Win
 
 Seleziona **Pubblico** solo se la tua rete è impostata come pubblica e non puoi cambiarla. Selezionandolo, il gioco diventa raggiungibile su qualsiasi rete a cui ti colleghi, compresi bar e hotel.
 
-### 7. Il router
+### 6. Il router
 
 Alcuni router impediscono ai dispositivi sulla stessa rete Wi-Fi di raggiungersi a vicenda. Cerca un'impostazione chiamata **AP isolation**, **Client isolation** o **Wireless isolation** (in italiano spesso «isolamento AP») e disattivala.
 
 Buono a sapersi, inoltre: un ripetitore Wi-Fi o un adattatore powerline configurato in modalità **router** invece che **bridge** / **access point** mette il telefono su una rete separata da quella dell'host, anche se il nome del Wi-Fi sembra lo stesso.
 
-### 8. Impostazioni del browser che bloccano gli indirizzi semplici
+### 7. Impostazioni del browser che bloccano gli indirizzi semplici
 
 Alcuni browser cercano di forzare HTTPS su ogni indirizzo, e il semplice indirizzo numerico non lo usa. (La riga **Collegamento sicuro** nella schermata del codice QR è quella che lo usa: quindi, se il problema è l'HTTPS forzato, vale la pena provare anche quella riga.) Se la barra degli indirizzi mostra un avviso di sicurezza invece del gioco, disattiva queste opzioni e riprova:
 
@@ -83,11 +72,11 @@ Alcuni browser cercano di forzare HTTPS su ogni indirizzo, e il semplice indiriz
 
 Su iPhone, controlla anche **Impostazioni > *Il tuo nome* > iCloud > Relay privato**, e «Nascondi indirizzo IP» in **Impostazioni > App > Safari**.
 
-### 9. Antivirus con un proprio firewall
+### 8. Antivirus con un proprio firewall
 
 Le suite di sicurezza come ESET, Bitdefender, Norton, Kaspersky e Avast hanno un proprio firewall, separato da quello di Windows. Consentire il gioco in Windows non serve a nulla per quelle. Controlla le impostazioni di rete o del firewall della suite stessa, oppure metti brevemente in pausa il suo firewall per vedere se è quello a bloccare.
 
-### 10. Se prima funzionava e poi ha smesso
+### 9. Se prima funzionava e poi ha smesso
 
 L'indirizzo del computer host può cambiare quando si ricollega al Wi-Fi o dopo un riavvio del router. Apri di nuovo la schermata del codice QR e scansiona ancora: il nuovo indirizzo sarà lì.
 
@@ -109,7 +98,7 @@ Lascia un commento nella [discussione di Steam](https://steamcommunity.com/works
 - il browser non carica mai niente
 - la pagina si carica, ma l'elenco dei giocatori non compare mai
 - puoi scegliere un nome, ma resta su «Unione alla partita…» - dimmi cosa diceva la riga di avanzamento sotto, e quale messaggio hai ricevuto se hai aspettato
-- supera quel punto e resta invece su «**Caricamento…**» - questo è il caso porta/firewall, ed è il più comune. Dimmi se il messaggio «non è riuscito a raggiungerlo» è comparso dopo circa 20 secondi
+- supera quel punto e resta su «**Caricamento…**» - dimmi se compare un errore e copia il testo esatto e la riga tecnica grigia
 - si è connesso senza problemi, poi è caduto durante la partita
 
 ### Qualsiasi altra cosa puoi aggiungere

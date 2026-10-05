@@ -991,7 +991,8 @@ Verified live on a running seat (`/proc/<pid>/cmdline` is exactly `SlayTheSpire2
 | `COUCHCOOP_CLIENT_ID` | `1002` | the seat's netId (1000 + slot) |
 | `COUCHCOOP_HOST_NETID` | `1` | host's real netId; `Patches/HostNetIdPatch.cs` rewrites `ENetClient.HostNetId` when this is not 1, or heartbeat replies would throw every 200ms |
 | `COUCHCOOP_JOIN_HOST` | `127.0.0.1:33771` | explicit direct-connect host, honoured by any modded client |
-| `COUCHCOOP_HEADLESS_SLOT` / `COUCHCOOP_PREFERRED_PORT` | `2` / `13357` | per-slot user dir + browser port |
+| `COUCHCOOP_HEADLESS_SLOT` / `COUCHCOOP_PREFERRED_PORT` | `2` / `13357` | per-slot user dir and a legacy direct-port value; shared seats use the private browser pipe |
+| `COUCHCOOP_SEAT_BROWSER_PIPE` / `COUCHCOOP_SEAT_BROWSER_PIPE_TOKEN` | private pipe name / token | authenticated browser stream relay to the host's port |
 | `COUCHCOOP_HOST_MOD_BUILD` | `1.0.0+<sha>` | the HOST's own mod build; a seat whose build differs reports and exits at mod init |
 
 ### When a seat gets no user dir of its own

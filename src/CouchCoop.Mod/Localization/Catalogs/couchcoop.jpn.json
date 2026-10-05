@@ -1,10 +1,4 @@
 {
-  "couchcoop_route_title": "ブラウザー接続",
-  "couchcoop_route_shared": "共有ポート",
-  "couchcoop_route_direct": "直接ポート",
-  "couchcoop_route_explanation": "共有ポートでは、すべてのスマートフォンがホストの同じポートを使います。直接ポートの方が応答が速い場合もありますが、各席に開放されたポートが必要です。",
-  "couchcoop_route_locked": "この設定を変更するには、実行中のブラウザー席をすべて停止してください。",
-  "couchcoop_route_save_failed": "接続設定を保存できませんでした。この PC の設定保存先を確認してください。",
   "couchcoop_qr_button": "Couch Co-Op QRコード",
   "couchcoop_qr_button_hotkey": "QRコードを開く",
   "couchcoop_qr_title": "スキャンしてCouch Co-Opに参加",

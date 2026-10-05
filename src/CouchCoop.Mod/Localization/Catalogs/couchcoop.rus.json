@@ -1,10 +1,4 @@
 {
-  "couchcoop_route_title": "Подключение браузера",
-  "couchcoop_route_shared": "Общий порт",
-  "couchcoop_route_direct": "Отдельные порты",
-  "couchcoop_route_explanation": "При общем порте все телефоны используют один порт хоста. Отдельные порты могут отвечать быстрее, но каждому месту нужен свой открытый порт.",
-  "couchcoop_route_locked": "Остановите все запущенные места браузера, чтобы изменить эту настройку.",
-  "couchcoop_route_save_failed": "Не удалось сохранить выбор подключения. Проверьте хранилище настроек на этом ПК.",
   "couchcoop_qr_button": "QR-код Couch Co-Op",
   "couchcoop_qr_button_hotkey": "Открыть QR-код",
   "couchcoop_qr_title": "Отсканируйте, чтобы присоединиться к Couch Co-Op",

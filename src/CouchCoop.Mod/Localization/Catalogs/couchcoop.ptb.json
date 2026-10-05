@@ -1,10 +1,4 @@
 {
-  "couchcoop_route_title": "Conexão do navegador",
-  "couchcoop_route_shared": "Porta compartilhada",
-  "couchcoop_route_direct": "Portas diretas",
-  "couchcoop_route_explanation": "A porta compartilhada usa uma única porta do anfitrião para todos os celulares. As portas diretas podem responder mais rápido, mas cada lugar precisa de sua própria porta aberta.",
-  "couchcoop_route_locked": "Pare todos os lugares de navegador em execução para alterar esta opção.",
-  "couchcoop_route_save_failed": "Não foi possível salvar a escolha de conexão. Verifique o armazenamento de configurações deste PC.",
   "couchcoop_qr_button": "Código QR do Couch Co-Op",
   "couchcoop_qr_button_hotkey": "Abrir código QR",
   "couchcoop_qr_title": "Escaneie para entrar no Couch Co-Op",

@@ -1,10 +1,4 @@
 {
-  "couchcoop_route_title": "Browser-Verbindung",
-  "couchcoop_route_shared": "Gemeinsamer Port",
-  "couchcoop_route_direct": "Separate Ports",
-  "couchcoop_route_explanation": "Beim gemeinsamen Port nutzen alle Handys einen Host-Port. Separate Ports können schneller reagieren, aber jeder Platz braucht einen eigenen offenen Port.",
-  "couchcoop_route_locked": "Beende alle laufenden Browser-Plätze, um diese Einstellung zu ändern.",
-  "couchcoop_route_save_failed": "Die Verbindungsauswahl konnte nicht gespeichert werden. Prüfe den Einstellungsspeicher dieses PCs.",
   "couchcoop_qr_button": "Couch Co-Op-QR-Code",
   "couchcoop_qr_button_hotkey": "QR-Code öffnen",
   "couchcoop_qr_title": "Scanne, um Couch Co-Op beizutreten",

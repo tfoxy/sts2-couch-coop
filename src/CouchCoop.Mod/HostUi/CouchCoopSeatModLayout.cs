@@ -19,17 +19,9 @@ internal static class CouchCoopSeatModLayout
     public const float Padding = CouchCoopConnectionLayout.Padding;
     public const float InnerWidth = Width - Padding * 2;
 
-    public const float RouteTitleTop = 8f;
-    public const float RouteTitleHeight = 44f;
-    public const float SharedRouteTop = 64f;
-    public const float DirectRouteTop = 124f;
-    public const float RouteButtonHeight = 52f;
-    public const float RouteNoteTop = 188f;
-    public const float RouteNoteHeight = 84f;
-    public const float RouteOnlyHeight = 296f;
-    public const float TitleTop = 276f;
+    public const float TitleTop = 8f;
     public const float TitleHeight = 44f;
-    public const float ListTop = 328f;
+    public const float ListTop = 60f;
     public const float RowHeight = 68f;
 
     // The explanation box sits under the list and the confirm pair under that, pinned to the card floor. While

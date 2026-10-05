@@ -1,10 +1,4 @@
 {
-  "couchcoop_route_title": "Połączenie przeglądarki",
-  "couchcoop_route_shared": "Wspólny port",
-  "couchcoop_route_direct": "Osobne porty",
-  "couchcoop_route_explanation": "Przy wspólnym porcie wszystkie telefony korzystają z jednego portu hosta. Osobne porty mogą reagować szybciej, ale każde miejsce wymaga własnego otwartego portu.",
-  "couchcoop_route_locked": "Zatrzymaj wszystkie działające miejsca przeglądarkowe, aby zmienić to ustawienie.",
-  "couchcoop_route_save_failed": "Nie udało się zapisać wyboru połączenia. Sprawdź miejsce przechowywania ustawień na tym komputerze.",
   "couchcoop_qr_button": "Kod QR Couch Co-Op",
   "couchcoop_qr_button_hotkey": "Otwórz kod QR",
   "couchcoop_qr_title": "Zeskanuj, aby dołączyć do Couch Co-Op",

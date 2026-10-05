@@ -9,16 +9,15 @@ by hand. Discussion title: **Can't connect from a phone? Read this first**.
 
 - It leads with **switching rows in the QR host selector**, not with the firewall: that is the only fix
   which is one tap, needs no admin rights, and covers a whole class of causes at once.
-- The Windows advice says **allow the program, not a port**. Opening 13337 alone produces the
-  "stuck on Joining…" failure, because each player gets their own port (13357, 13367, 13377, …).
-  **Not 13347** — the first seat is slot 2 (`HeadlessClientManager.MinSlot`), so `SlotToPort` starts at
-  13357 and nothing ever binds 13347. Two drafts of this post named it; it is a port no player uses.
+- The Windows advice says **allow the program through the firewall**. Every browser connection,
+  including each player's game view, uses the host's configured port (13337 by default). A program
+  rule also covers the game's separate multiplayer transport. The old advice about opening a range
+  of player browser ports no longer applies.
 - The report section is ordered by how much each question narrows things down. The first one — how far it
   gets — is worth more than all the rest combined, because it maps onto a step in the join.
-- It asks for the **per-player (seat) log**, not only `godot.log`. The failure this post spends the most
-  words on — stuck on *Joining…*, then "Couldn't start your game view" at 75 s — happens inside the
-  seat's own process, and the host's log usually cannot show why. Sending a reporter to `godot.log`
-  alone for that case asks them for the one file that does not contain the answer.
+- It asks for the **per-player (seat) log**, not only `godot.log`. A player game that fails to start
+  or relay its view can leave the useful error in its own process log, while the host log may only
+  show the failed join. The connection report points to both files.
 - The log advice says what a log **contains** before asking anyone to paste one. A Workshop discussion is
   public, and a log carries the poster's SteamID64 and their computer's user name (it carries no
   passwords, and no other player's account — measured, see the table). Naming that is the difference
@@ -29,24 +28,18 @@ by hand. Discussion title: **Can't connect from a phone? Read this first**.
 - Two additions came from one field report (Windows 11, mod 0.2.3, zero inbound connections in 90 s, tried
   on a Samsung phone *and* an iPad). The iPad half of that report carried no information at all — the web
   link cannot work there — and the reporter had no way to know, so **section 1 now says so before anyone
-  spends an evening on their router**. The other is the self-test in section 6: everybody tries the address
+  spends an evening on their router**. The other is the self-test in section 5: everybody tries the address
   on the host PC, it always works, and it is the one check that passes *precisely* when the host's own
   firewall is the cause.
 
-## Deliberately NOT changed
-
-Section 4 says *"There are three you can get"*. That looks like an off-by-one against the four
-`SeatReadinessVerdict` codes, and is not: the seat-notice hub speaks only `networkPath`, `portConflict`
-and `hostBlock`. The fourth, `startup-timeout`, arrives as a `joinRejection` instead — which is exactly
-what the paragraph below that list already describes separately. Leave the count alone.
-
 ## What has been checked against the shipped build
 
-Re-checked claim by claim on Linux at `aa1384f0` against
+Earlier claims were checked on Linux at `aa1384f0` against
 `src/CouchCoop.Mod/Localization/Catalogs/couchcoop.en.json` and `frontend/src/i18n/messages.ts`, and
 earlier on screen in `.sts2/artifacts/conndiag-round2/p2-06-crop.png`. **The previous checkpoint
 (`36e466af`) covered only the copy keys, so seven claims that were never string-checked at all had gone
-stale or had always been wrong — see the commit for the list.** A claim belongs in this table only once
+stale or had always been wrong — see the commit for the list.** The browser-port and loading claims
+were revised after the shared-port route landed in `37e4cfe9`. A claim belongs in this table only once
 something in the tree has been cited for it.
 
 | the post says | the build says |
@@ -55,12 +48,10 @@ something in the tree has been cited for it.
 | failures live under **Connection problems (n)** | `couchcoop_connection_problems` — the value carries `({count})` |
 | the button is **Copy report** | `couchcoop_connection_copy_report` — *not* "Copy", which an earlier draft said |
 | **Show technical details** | `couchcoop_connection_show_technical` |
-| the three named causes, verbatim | `seat.notice.networkPath` / `portConflict` / `hostBlock`. Their `*Fix` twins are **paraphrased** in the post, not quoted |
+| the join page and every player's game view use the host's browser port | `HeadlessClientManager.Connections` issues `headlessMirrorPath` for the shared route; `mirrorClient.ts` follows that path on the existing host origin; `HotReloadableBrowserServerHost` handles the seat upgrade on its host listener |
 | the progress line, at **step 1 of 6** | `join.progress.line` plus its six stage keys; `ConnectionStageSteps.Current` maps `Connecting => 1` (an earlier draft said step 2, which the product cannot print) |
-| the blocked case shows **Loading…**, not Joining… | `MirrorApp.vue` clears `pendingName` on the seat redirect ("the wait from here is the headless streaming its first frame"); `SeatNoticeSpeaker` records that the browser's 90 s join timeout "is disarmed by the redirect, so a blocked viewer waits on Loading… indefinitely", and speaks at `NetworkPathSettlingDelay` = 20 s |
 | Linux log path, and the **`[couchcoop]`** prefix | `~/.local/share/SlayTheSpire2/logs/godot.log`; `CouchCoopLogLine.Prefix` is `[couchcoop]`, pinned by `CouchCoopLogPrefixTests`. The post said `[couch-coop]`, a spelling `86a87c6e` removed from the mod — it would have matched nothing |
 | home-screen icons survive a new host address only from the **Web link** row | `frontend/src/join/hostStore.ts` — a PWA installed from `http://<ip>:13337/` "captures that origin … and is dead the moment the router hands the PC a different address"; the stable public origin re-probes remembered hosts and recovers silently |
-| per-player ports **13357, 13367, 13377** | `HeadlessClientManager.MinSlot` is 2 and `SlotToPort` is `13337 + slot*10`; `SeatPortTruthTests` asserts the first player takes `SlotToPort(2)`, and a `--seats` run logs `slot=2 port=13357` / `slot=3 port=13367` / `slot=4 port=13377`. Earlier drafts said 13347, which nothing binds |
 | log lines look like **`[INFO] [couchcoop] …`**, and `[ERROR]` lines count too | `CouchCoopLogLine.Format` prepends `[couchcoop]` to the *message*; Godot's logger prepends the severity, so `[couchcoop]` is never at the start of the line. The post previously said "lines starting with `[couchcoop]`", which matches nothing |
 | the **per-player log** path, `couch-coop/headless-slots/slot-2/SlayTheSpire2/logs/godot.log` | `HeadlessUserDirSeeder.SlotBase` is `<userDir>/couch-coop/headless-slots/slot-N` and `SlotUserDir` appends `SlayTheSpire2` again (`Library/Application Support/SlayTheSpire2` on macOS); `HeadlessClientManager` launches the seat with `<SlotUserDir>/logs/godot.log`. **Confirmed on this Linux install**, doubled directory name and all. The `couch-coop/seat-logs/slot-N.log` fallback is `HeadlessClientManager.SeatLogPath`, used when per-slot isolation could not be prepared |
 | the **Copy report** names both log paths | `CaptureConnectionLogsLocked(slot, hostLog, seatLogPath)` — the host log and the seat log are both attached to the connection record the report is built from |

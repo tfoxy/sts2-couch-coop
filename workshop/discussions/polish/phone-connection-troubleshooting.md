@@ -32,26 +32,15 @@ Uruchomienie gry gracza może potrwać nawet minutę i jest to normalne, a nie u
 
 Jeśli licznik sekund w tym wierszu rośnie, a etapy się zmieniają, wszystko działa - nie zamykaj strony. Sześć etapów to: „Łączenie z hostem”, „Oczekiwanie na hosta”, „Uruchamianie gry tego gracza”, „Dołączanie tego gracza do gry”, „Wczytywanie widoku gry” i „Już prawie gotowe”.
 
-### 4. Jeśli się zatrzyma, strona mówi teraz DLACZEGO
+### 4. Jeśli się zatrzyma, skopiuj komunikat ze strony
 
-Gdy coś naprawdę pójdzie nie tak, twoje urządzenie dowiaduje się, która z kilku niezwiązanych ze sobą przyczyn za tym stoi - w dwóch zdaniach oraz szarym wierszu technicznym. **Dołącz to wszystko do każdego zgłoszenia.** Możesz dostać jeden z trzech komunikatów, a każdy wymaga zupełnie innego rozwiązania:
+Strona dołączania i widok gry każdego gracza używają tego samego portu przeglądarki na komputerze hosta (domyślnie **13337**). Otwieranie dodatkowych portów przeglądarki nie naprawi nieudanego dołączenia.
 
-- „**Twoja gra działa na komputerze hosta, ale to urządzenie nie mogło się z nią połączyć.**”\
-  Chodzi o ścieżkę sieciową między twoim telefonem a hostem - sieć Wi-Fi dla gości, VPN albo router, który izoluje urządzenia od siebie. Z grą na hoście wszystko jest w porządku. Zobacz sekcje 2 i 6.
-- „**Inny program na komputerze hosta używa portu, którego potrzebuje twoja gra.**”\
-  Na twoim urządzeniu nic nie trzeba zmieniać. Na hoście coś innego zajmuje jeden z portów potrzebnych każdemu graczowi - najczęściej pozostały proces gracza z wcześniejszej sesji. Osoba, która hostuje, powinna go zamknąć (ponowne uruchomienie Slay the Spire 2 to naprawia).
-- „**Komputer hosta blokuje port, na którym udostępniana jest twoja gra.**”\
-  Tu również nic nie trzeba zmieniać na twoim urządzeniu. Blokuje go zapora lub oprogramowanie zabezpieczające samego hosta - zobacz sekcję 5.
+Jeśli podczas *Dołączania…* lub *Wczytywania…* pojawi się błąd, podaj w zgłoszeniu jego dokładną treść i szary wiersz techniczny, jeśli jest widoczny. Host może też otworzyć panel **Połączenia** na ekranie kodu QR i sprawdzić, który krok się nie powiódł. Jeśli sama strona się nie otwiera, sprawdź porady dotyczące sieci i zapory w punktach 2, 5 i 6.
 
-**Najczęstszy przypadek blokady w ogóle nie pokazuje napisu *Dołączanie…*.** Jeśli twoje urządzenie dotarło do hosta, ale nie może połączyć się z portem przydzielonym twojemu graczowi, dołączenie się *udaje* - a strona przełącza się potem na *Wczytywanie…* i na tym utyka. Na tym ekranie nie ma wiersza postępu ani odliczania, bo z punktu widzenia hosta nic nie zawiodło. Pierwszą przydatną rzeczą, jaką zobaczysz, będzie powyższy komunikat „**nie mogło się z nią połączyć**”, około **20 sekund** po zmianie strony. Jeśli więc strona utknęła na *Wczytywanie…*, poczekaj pół minuty na ten komunikat zamiast odświeżać - odświeżenie rozpoczyna całe czekanie od nowa.
+Jeśli strona pozostaje na *Dołączaniu…* lub *Wczytywaniu…* bez komunikatu o błędzie, napisz, na którym ekranie stanęła i co pokazywał ostatni wiersz postępu. Zostaw stronę otwartą, dopóki etap postępu się zmienia.
 
-Jeśli natomiast strona stoi na *Dołączanie…* i nic się nie zmienia, host poddaje się po 75 sekundach z komunikatem „*Nie udało się uruchomić twojego widoku gry — spróbuj ponownie.*” i szarym wierszem pod nim. To inna awaria niż ta opisana wyżej. Tak czy inaczej, skopiuj to, co jest napisane.
-
-### 5. Każdy gracz używa własnego portu
-
-Lobby działa na porcie **13337**, a potem każdy gracz używa portu **13357**, **13367**, **13377** i tak dalej. Reguła zapory, która otwiera tylko 13337, pozwoli dotrzeć do listy graczy, a potem zawiedzie przy drugim kroku. Jeśli dodano taką regułę (samodzielnie albo według jakiegoś poradnika), usuń ją i zamiast tego zezwól na **program gry** - to obejmuje wszystkie porty, których potrzebuje.
-
-### 6. Windows: zezwól grze na dostęp przez zaporę
+### 5. Windows: zezwól grze na dostęp przez zaporę
 
 Najpierw sprawdź typ sieci, bo już samo to blokuje wiele połączeń:
 
@@ -68,13 +57,13 @@ Jeśli kiedyś w okienku zapory Windows kliknięto „Anuluj”, Windows zapami�
 
 Zaznaczaj **Publiczna** tylko wtedy, gdy twoja sieć jest ustawiona jako publiczna i nie możesz tego zmienić. Zaznaczenie tego pola sprawia, że gra jest dostępna w każdej sieci, do której się podłączysz, także w kawiarniach i hotelach.
 
-### 7. Router
+### 6. Router
 
 Niektóre routery nie pozwalają urządzeniom w tej samej sieci Wi-Fi łączyć się ze sobą. Poszukaj ustawienia o nazwie **AP isolation**, **Client isolation** lub **Wireless isolation** (po polsku często „izolacja AP”) i je wyłącz.
 
 Warto też wiedzieć: wzmacniacz Wi-Fi lub adapter PLC (powerline) skonfigurowany w trybie **routera** zamiast w trybie **mostu** (bridge) / **punktu dostępowego** (access point) umieszcza twój telefon w innej sieci niż host, nawet jeśli nazwa Wi-Fi wygląda tak samo.
 
-### 8. Ustawienia przeglądarki, które blokują zwykłe adresy
+### 7. Ustawienia przeglądarki, które blokują zwykłe adresy
 
 Niektóre przeglądarki próbują wymuszać HTTPS dla każdego adresu, a zwykły adres numeryczny z niego nie korzysta. (Korzysta z niego wiersz **Bezpieczny link** na ekranie kodu QR - więc jeśli problemem jest wymuszanie HTTPS, warto spróbować także tego wiersza.) Jeśli pasek adresu zamiast gry pokazuje ostrzeżenie o bezpieczeństwie, wyłącz te opcje i spróbuj ponownie:
 
@@ -83,11 +72,11 @@ Niektóre przeglądarki próbują wymuszać HTTPS dla każdego adresu, a zwykły
 
 Na iPhonie sprawdź też **Ustawienia > *Twoje imię i nazwisko* > iCloud > Przekazywanie prywatne**, a także opcję „Ukrywaj adres IP” w **Ustawienia > Aplikacje > Safari**.
 
-### 9. Antywirus z własną zaporą
+### 8. Antywirus z własną zaporą
 
 Pakiety zabezpieczające, takie jak ESET, Bitdefender, Norton, Kaspersky i Avast, mają własną zaporę, oddzielną od zapory Windows. Zezwolenie na grę w Windows nic dla nich nie zmienia. Sprawdź ustawienia sieci lub zapory w samym pakiecie albo na chwilę wstrzymaj jego zaporę, żeby zobaczyć, czy to ona blokuje połączenie.
 
-### 10. Jeśli wcześniej działało, a potem przestało
+### 9. Jeśli wcześniej działało, a potem przestało
 
 Adres komputera hosta może się zmienić, gdy ponownie łączy się z Wi-Fi lub po restarcie routera. Otwórz ponownie ekran kodu QR i zeskanuj kod jeszcze raz - znajdziesz tam nowy adres.
 
@@ -109,7 +98,7 @@ To najbardziej przydatna rzecz, jaką możesz mi przekazać, bo każda odpowied�
 - przeglądarka w ogóle niczego nie wczytuje
 - strona się wczytuje, ale lista graczy nigdy się nie pojawia
 - możesz wybrać nazwę, ale wszystko stoi na „Dołączanie…” - napisz mi, co pokazywał wiersz postępu pod spodem i jaki komunikat pojawił się po odczekaniu
-- udaje się przejść dalej, ale zamiast tego wszystko stoi na „**Wczytywanie…**” - to przypadek portu/zapory i jest najczęstszy. Napisz mi, czy po około 20 sekundach pojawił się komunikat „nie mogło się z nią połączyć”
+- udaje się przejść dalej, ale wszystko stoi na „**Wczytywanie…**” - napisz, czy pojawia się błąd, i skopiuj jego dokładną treść oraz szary wiersz techniczny
 - połączenie działało, a potem zerwało się w trakcie rozgrywki
 
 ### Co jeszcze możesz dodać

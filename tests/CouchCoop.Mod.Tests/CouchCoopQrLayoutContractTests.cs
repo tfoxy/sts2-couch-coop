@@ -304,19 +304,6 @@ internal static class CouchCoopQrLayoutContractTests
         Expect(MathF.Abs((left * scale - qrRight * scale) - CouchCoopConnectionLayout.Gap * scale) < 0.01f,
             "the scaled seat-mod card keeps the QR-card gap");
 
-        // The route choice stays visible even when there are no optional mods. Then the mod list,
-        // explanation box and confirm pair fit below it.
-        Expect(CouchCoopSeatModLayout.RouteTitleTop + CouchCoopSeatModLayout.RouteTitleHeight <= CouchCoopSeatModLayout.SharedRouteTop,
-            "the route title clears its first button");
-        Expect(CouchCoopSeatModLayout.SharedRouteTop + CouchCoopSeatModLayout.RouteButtonHeight <= CouchCoopSeatModLayout.DirectRouteTop,
-            "the route buttons do not overlap");
-        Expect(CouchCoopSeatModLayout.DirectRouteTop + CouchCoopSeatModLayout.RouteButtonHeight <= CouchCoopSeatModLayout.RouteNoteTop,
-            "the route note clears the buttons");
-        Expect(CouchCoopSeatModLayout.RouteNoteTop + CouchCoopSeatModLayout.RouteNoteHeight <= CouchCoopSeatModLayout.TitleTop,
-            "the mod title clears the route note");
-        Expect(CouchCoopSeatModLayout.RouteNoteTop + CouchCoopSeatModLayout.RouteNoteHeight <= CouchCoopSeatModLayout.RouteOnlyHeight
-            && CouchCoopSeatModLayout.RouteOnlyHeight < CouchCoopSeatModLayout.Height,
-            "a route-only companion keeps the note and omits the empty mod area");
         // The interior stack: title, list, explanation box, confirm pair — none overlapping, all inside the card
         // whichever way the box is sized.
         Expect(CouchCoopSeatModLayout.TitleTop + CouchCoopSeatModLayout.TitleHeight <= CouchCoopSeatModLayout.ListTop,

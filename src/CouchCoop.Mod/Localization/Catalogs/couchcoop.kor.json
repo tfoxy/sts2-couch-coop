@@ -1,10 +1,4 @@
 {
-  "couchcoop_route_title": "브라우저 연결",
-  "couchcoop_route_shared": "공유 포트",
-  "couchcoop_route_direct": "직접 포트",
-  "couchcoop_route_explanation": "공유 포트에서는 모든 휴대전화가 호스트 포트 하나를 사용합니다. 직접 포트가 더 빠르게 응답할 수 있지만 각 좌석마다 열린 포트가 필요합니다.",
-  "couchcoop_route_locked": "설정을 변경하려면 실행 중인 브라우저 좌석을 모두 중지하세요.",
-  "couchcoop_route_save_failed": "연결 선택을 저장하지 못했습니다. 이 PC의 설정 저장소를 확인하세요.",
   "couchcoop_qr_button": "Couch Co-Op QR 코드",
   "couchcoop_qr_button_hotkey": "QR 코드 열기",
   "couchcoop_qr_title": "스캔하여 Couch Co-Op에 참여하세요",
