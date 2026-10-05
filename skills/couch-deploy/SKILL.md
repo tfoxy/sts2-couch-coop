@@ -112,16 +112,26 @@ only your branch contains, and check **both directions**:
 find <modsDir> -name CouchCoop.Mod.dll -exec strings -a {} + | grep -c CouchCoopActivityPanel   # a type name from your own diff
 ```
 
-**Use `strings -a`, not `strings -el`, and this is not a style preference.** A .NET assembly keeps the two
-kinds of string in two different heaps with two different encodings: type, method and field names live in
-`#Strings` as UTF-8, while the literals in your source live in `#US` as UTF-16. `-el` scans for UTF-16 only, so
-it finds your log messages and **silently reports 0 for every type name** — verified on the installed DLL:
-`strings -el` says 0 for a type that `strings -a` finds. In this recipe a 0 is the proof signal, so the wrong
-flag does not merely fail to help, it certifies a stale build as a restored one. `-a` covers both heaps.
+**Match the `strings` encoding to the kind of string, and this is not a style preference.** A .NET assembly
+keeps the two kinds of string in two different heaps with two different encodings: type, method and field names
+live in `#Strings` as UTF-8, while the literals in your source (log messages, env var names) live in `#US` as
+UTF-16. Each flag sees only one heap:
+
+- `strings -a` (the default single-byte encoding) finds **type, method and field names** and silently reports
+  **0 for every literal**;
+- `strings -el` (UTF-16LE) finds **literals** and silently reports **0 for every type name**.
+
+Both were verified on an installed DLL: `strings -el` says 0 for a type that `strings -a` finds, and `strings -a`
+says 0 for an env var name that `strings -el` finds. In this recipe a 0 is the proof signal, so the wrong flag
+does not merely fail to help, it certifies a stale build as a restored one.
+
+```bash
+find <modsDir> -name CouchCoop.Spirectl.dll -exec strings -el {} + | grep -c SPIRECTL_SOME_NEW_SWITCH   # a literal
+```
 
 Positive count after deploying the branch, **0 after restoring main** — the 0 is what makes the string a
-discriminator rather than a coincidence. New type names and new literal log messages both work; pick one or two
-from your diff before you deploy.
+discriminator rather than a coincidence. New type names (`-a`) and new literals (`-el`) both work; pick one or
+two from your diff before you deploy, and use the flag that matches each.
 
 If the branch adds no new string at all (a pure behaviour tweak), you are down to freshness: note the mtime
 the `find` above prints right after your deploy and re-check it before each measurement. Do **not** try to `cmp`
