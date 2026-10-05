@@ -9,6 +9,42 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and
 
 ## [Unreleased]
 
+## [0.4.0] - 2026-10-04
+
+### Added
+
+- Mirror viewers can choose a Rust canvas stage in Settings while DOM remains the default, except for WebKit browsers (Safari on macOS and any browser in iOS).
+- Add an optional MSDF text setting for the canvas view.
+
+### Fixed
+
+- Canvas specific:
+  - Canvas keeps supported map content visible and offers retry on renderer failure.
+  - Fixed black reward screens on the canvas stage so reward text and taps work again.
+  - Event choices now show styled text and energy icons on the canvas stage.
+  - Canvas viewers can see selected-card ripples, rarity glows, and event text.
+  - Hand cards stay in the correct place on wide canvas screens.
+  - Phones no longer redraw the whole combat every frame once the end-turn button glows
+  - Canvas text no longer sits slightly up and to the left of where the game draws it.
+  - Fixed outlined/tinted label colours on the canvas renderer matching the game.
+  - Dragging the map on the canvas stage no longer makes it jump back and forth.
+
+### Changed
+
+- Canvas specific:
+  - The canvas renderer uses noticeably less CPU during busy combat.
+  - The canvas renderer uses far less CPU during busy combat.
+  - Dragging and aiming cards on wide phones is much smoother.
+  - Aiming and dragging cards on wide phones does less work per frame.
+  - The canvas renderer copies one fewer full screen per frame, so phones do less work.
+  - Phones spend less GPU time presenting each frame of the game view.
+  - Idle combat no longer wakes the browser for frames the game view does not draw
+  - Idle combat animations cost the browser less CPU on phones
+  - Idle animations in combat are smooth on the canvas renderer.
+  - Combat uses less battery on phones while nothing is happening.
+  - Combat uses less CPU on phones with the canvas renderer.
+  - Playing a card no longer makes the browser view stutter while its text redraws.
+
 ## [0.3.4] - 2026-09-26
 
 ### Fixed
@@ -159,7 +195,8 @@ First public release. Turn the phones, tablets and laptops on your network into 
 a local Slay the Spire 2 co-op session — no app to install on the other devices, and no `sts2` CLI
 needed to run the mod.
 
-[Unreleased]: https://github.com/tfoxy/sts2-couch-coop/compare/v0.3.4...HEAD
+[Unreleased]: https://github.com/tfoxy/sts2-couch-coop/compare/v0.4.0...HEAD
+[0.4.0]: https://github.com/tfoxy/sts2-couch-coop/releases/tag/v0.4.0
 [0.3.4]: https://github.com/tfoxy/sts2-couch-coop/releases/tag/v0.3.4
 [0.3.3]: https://github.com/tfoxy/sts2-couch-coop/releases/tag/v0.3.3
 [0.3.2]: https://github.com/tfoxy/sts2-couch-coop/releases/tag/v0.3.2
