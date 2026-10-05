@@ -43,6 +43,11 @@ jobs:
         working-directory: sources/couchcoop
         run: ./scripts/release-body.sh "${{ github.ref_name }}" > "$RUNNER_TEMP/release-notes.md"
 
+      - name: Set up Rust WASM tooling
+        run: |
+          rustup target add wasm32-unknown-unknown
+          cargo install wasm-bindgen-cli --version 0.2.129 --locked
+
       - name: Build release archive
         working-directory: sources/couchcoop
         env:
