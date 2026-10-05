@@ -30,26 +30,14 @@ Starting a player's game can take up to a minute, and that is normal rather than
 
 If that line is counting up and changing stage, it is working - keep the page open. The six stages are reaching the host, waiting for the host, starting this player's game, connecting this player to the game, loading the game view, almost ready.
 
-[h3]4. If it stops, the page now tells you WHY[/h3]
-When something actually goes wrong, your device is told which of several unrelated things it was - in two sentences, plus a grey technical line. [b]Please include all of it in any report.[/b] There are three you can get, and they need completely different fixes:
+[h3]4. If it stops, copy what the page says[/h3]
+The join page and every player's game view use the same browser port on the host ([b]13337[/b] by default). Opening extra browser ports will not fix a failed join.
 
-[list]
-[*][b]"Your game is running on the host computer, but this device couldn't reach it."[/b]
-This is the network path between your phone and the host - guest Wi-Fi, a VPN, or a router keeping devices apart. Nothing is wrong with the host's game. See sections 2 and 6.
-[*][b]"Another program on the host computer is using the port your game needs."[/b]
-Nothing to change on your device. On the host, something else is holding one of the ports each player needs - most often a leftover player process from an earlier session. Whoever is hosting should close it (restarting Slay the Spire 2 clears it).
-[*][b]"The host computer is blocking the port your game is served on."[/b]
-Also nothing to change on your device. The host's own firewall or security software is blocking it - see section 5.
-[/list]
+If an error appears during [i]Joining…[/i] or [i]Loading…[/i], include its exact wording and any grey technical line in your report. The host can also open the [b]Connections[/b] panel on the QR screen to see which step failed. If the page itself will not load, check the network and firewall advice in sections 2, 5 and 6.
 
-[b]The most common blocked case does not say [i]Joining…[/i] at all.[/b] If your device reached the host but cannot reach the port your own player was given, the join [i]succeeds[/i] - and the page then switches to [i]Loading…[/i] and stays there. There is no progress line and no countdown on that screen, because from the host's side nothing has failed. The first useful thing you will see is the [b]"couldn't reach it"[/b] message above, about [b]20 seconds[/b] after the page changes. So: if you are stuck on [i]Loading…[/i], wait half a minute for that message rather than reloading - reloading starts the whole wait again.
+If the page stays on [i]Joining…[/i] or [i]Loading…[/i] without an error, say which screen it reached and what the last progress line said. Keep it open while the progress stage is changing.
 
-If instead it sits on [i]Joining…[/i] and never changes, the host gives up at 75 seconds with [i]Couldn't start your game view - please try again[/i] and a grey line under it. That is a different failure from the one above. Either way, copy what it says.
-
-[h3]5. Each player uses their own port[/h3]
-The lobby is on [b]13337[/b], and then each player uses [b]13357[/b], [b]13367[/b], [b]13377[/b] and so on. A firewall rule that opens only 13337 lets you reach the player list and then fails at the second step. If you (or a guide you followed) added one, remove it and allow [b]the game program[/b] instead - that covers every port it needs.
-
-[h3]6. Windows: allow the game through the firewall[/h3]
+[h3]5. Windows: allow the game through the firewall[/h3]
 First check the network type, because this alone blocks a lot of connections:
 [list]
 [*][b]Settings > Network & Internet > Wi-Fi[/b] (or Ethernet) > click your network > set [b]Network profile type[/b] to [b]Private[/b].
@@ -65,12 +53,12 @@ If you answered "Cancel" on a Windows firewall prompt at some point, Windows rem
 
 Only tick [b]Public[/b] if your network is set to Public and you cannot change it. Ticking it makes the game reachable on any network you join, including cafes and hotels.
 
-[h3]7. The router[/h3]
+[h3]6. The router[/h3]
 Some routers stop devices on the same Wi-Fi from reaching each other. Look for a setting called [b]AP isolation[/b], [b]Client isolation[/b] or [b]Wireless isolation[/b] and turn it off.
 
 Also worth knowing: a Wi-Fi extender or powerline adapter set up in [b]router[/b] mode instead of [b]bridge[/b] / [b]access point[/b] mode puts your phone on a separate network from the host, even though the Wi-Fi name looks the same.
 
-[h3]8. Browser settings that block plain addresses[/h3]
+[h3]7. Browser settings that block plain addresses[/h3]
 Some browsers try to force every address to HTTPS, which the plain numeric address does not use. (The [b]Secure link[/b] row on the QR screen is the one that does - so if HTTPS-forcing is the problem, that row is also worth trying.) If the address bar shows a security warning instead of the game, turn these off and try again:
 [list]
 [*]Chrome: [b]Settings > Privacy and security > Security > Always use secure connections[/b]
@@ -78,10 +66,10 @@ Some browsers try to force every address to HTTPS, which the plain numeric addre
 [/list]
 On iPhone, also check [b]Settings > [i]your name[/i] > iCloud > Private Relay[/b], and "Hide IP Address" in [b]Settings > Apps > Safari[/b].
 
-[h3]9. Antivirus with its own firewall[/h3]
+[h3]8. Antivirus with its own firewall[/h3]
 Security suites such as ESET, Bitdefender, Norton, Kaspersky and Avast have their own firewall, separate from Windows. Allowing the game in Windows does nothing for those. Check the suite's own network or firewall settings, or pause its firewall briefly to see whether that is what is blocking it.
 
-[h3]10. If it used to work and then stopped[/h3]
+[h3]9. If it used to work and then stopped[/h3]
 The host computer's address can change when it reconnects to Wi-Fi or after a router restart. Open the QR screen again and rescan - the new address will be there.
 
 If you added the client to your home screen, what happens next depends on which row you installed it from:
@@ -101,7 +89,7 @@ This is the most useful thing you can tell me, because each answer points at a d
 [*]the browser never loads anything at all
 [*]the page loads, but the player list never appears
 [*]you can pick a name, but it sits on "Joining..." - tell me what the progress line under it said, and what message you got if you waited
-[*]it gets past that and sits on [b]"Loading..."[/b] instead - this one is the port/firewall case, and it is the most common. Tell me whether the "couldn't reach it" message appeared after about 20 seconds
+[*]it gets past that and stays on [b]"Loading..."[/b] - tell me whether an error appears, and copy its exact wording and grey technical line
 [*]it connected fine, then dropped during the run
 [/list]
 

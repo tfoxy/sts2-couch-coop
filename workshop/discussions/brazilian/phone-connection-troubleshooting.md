@@ -32,26 +32,15 @@ Iniciar o jogo de um jogador pode levar até um minuto, e isso é normal, não u
 
 Se essa linha estiver contando e mudando de etapa, está funcionando — mantenha a página aberta. As seis etapas são: conectando ao anfitrião, aguardando o anfitrião, iniciando o jogo deste jogador, conectando este jogador ao jogo, carregando a tela do jogo e quase pronto.
 
-### 4. Se parar, agora a página diz POR QUÊ
+### 4. Se parar, copie o que a página mostrar
 
-Quando algo realmente dá errado, o seu dispositivo fica sabendo qual de várias coisas sem relação entre si aconteceu — em duas frases, mais uma linha técnica em cinza. **Inclua tudo isso em qualquer relato.** Há três possibilidades, e cada uma precisa de uma solução completamente diferente:
+A página de entrada e a tela de jogo de cada jogador usam a mesma porta do navegador no computador anfitrião (**13337** por padrão). Abrir outras portas para o navegador não resolve uma falha ao entrar.
 
-- “**Seu jogo está rodando no computador anfitrião, mas este dispositivo não conseguiu chegar até ele.**”\
-  É o caminho de rede entre o seu celular e o host — Wi-Fi de convidados, uma VPN ou um roteador que mantém os dispositivos isolados. O jogo do host não tem nenhum problema. Veja as seções 2 e 6.
-- “**Outro programa no computador anfitrião está usando a porta de que seu jogo precisa.**”\
-  Não há nada para mudar no seu dispositivo. No host, outra coisa está ocupando uma das portas de que cada jogador precisa — na maioria das vezes, um processo de jogador que sobrou de uma sessão anterior. Quem estiver hospedando deve fechá-lo (reiniciar o Slay the Spire 2 resolve).
-- “**O computador anfitrião está bloqueando a porta em que seu jogo é servido.**”\
-  Também não há nada para mudar no seu dispositivo. O próprio firewall ou software de segurança do host está bloqueando — veja a seção 5.
+Se aparecer um erro durante *Entrando…* ou *Carregando…*, inclua no relato o texto exato e a linha técnica cinza, se houver. O anfitrião também pode abrir o painel **Conexões** na tela do QR para ver em qual etapa houve a falha. Se a página nem abrir, confira as orientações de rede e firewall nas seções 2, 5 e 6.
 
-**O caso de bloqueio mais comum nem chega a mostrar *Entrando…*.** Se o seu dispositivo chegou ao host, mas não consegue chegar à porta que o seu próprio jogador recebeu, a entrada *dá certo* — e então a página muda para *Carregando…* e fica parada ali. Não há linha de progresso nem contagem regressiva nessa tela, porque, do lado do host, nada falhou. A primeira coisa útil que você vai ver é a mensagem “**não conseguiu chegar até ele**” acima, cerca de **20 segundos** depois que a página mudar. Então, se estiver travado em *Carregando…*, espere meio minuto por essa mensagem em vez de recarregar — recarregar faz toda a espera começar de novo.
+Se a página ficar em *Entrando…* ou *Carregando…* sem mostrar um erro, diga em qual tela parou e qual foi a última linha de progresso. Mantenha a página aberta enquanto a etapa de progresso estiver mudando.
 
-Se, em vez disso, ficar parado em *Entrando…* sem nunca mudar, o host desiste depois de 75 segundos com *Não foi possível iniciar a sua tela do jogo — tente novamente.* e uma linha cinza abaixo. Essa é uma falha diferente da de cima. Em qualquer caso, copie o que aparecer.
-
-### 5. Cada jogador usa a sua própria porta
-
-A sala fica na **13337**, e depois cada jogador usa a **13357**, a **13367**, a **13377** e assim por diante. Uma regra de firewall que libera só a 13337 deixa você chegar à lista de jogadores e depois falha no segundo passo. Se você (ou um guia que você seguiu) criou uma regra assim, remova-a e, no lugar dela, libere **o programa do jogo** — isso cobre todas as portas de que ele precisa.
-
-### 6. Windows: libere o jogo no firewall
+### 5. Windows: libere o jogo no firewall
 
 Primeiro verifique o tipo de rede, porque só isso já bloqueia muitas conexões:
 
@@ -68,13 +57,13 @@ Se em algum momento você respondeu "Cancelar" a um aviso do firewall do Windows
 
 Só marque **Pública** se a sua rede estiver definida como pública e você não puder mudar isso. Marcar essa opção deixa o jogo acessível em qualquer rede em que você entrar, incluindo cafés e hotéis.
 
-### 7. O roteador
+### 6. O roteador
 
 Alguns roteadores impedem que dispositivos no mesmo Wi-Fi se comuniquem entre si. Procure uma configuração chamada **AP isolation**, **Client isolation** ou **Wireless isolation** (em português, "isolamento AP" ou "isolação de clientes") e desative-a.
 
 Também vale saber: um repetidor de Wi-Fi ou adaptador powerline configurado no modo **router** (roteador) em vez do modo **bridge** / **access point** (ponte / ponto de acesso) coloca o seu celular numa rede separada da do host, mesmo que o nome do Wi-Fi pareça o mesmo.
 
-### 8. Configurações do navegador que bloqueiam endereços simples
+### 7. Configurações do navegador que bloqueiam endereços simples
 
 Alguns navegadores tentam forçar HTTPS em todos os endereços, e o endereço numérico simples não usa HTTPS. (A opção **Link seguro** da tela do QR é a que usa — então, se o problema for o HTTPS forçado, também vale a pena testar essa opção.) Se a barra de endereço mostrar um aviso de segurança em vez do jogo, desative estas opções e tente de novo:
 
@@ -83,11 +72,11 @@ Alguns navegadores tentam forçar HTTPS em todos os endereços, e o endereço nu
 
 No iPhone, confira também **Ajustes > *seu nome* > iCloud > Retransmissão Privada** e a opção "Ocultar Endereço IP" em **Ajustes > Apps > Safari**.
 
-### 9. Antivírus com firewall próprio
+### 8. Antivírus com firewall próprio
 
 Pacotes de segurança como ESET, Bitdefender, Norton, Kaspersky e Avast têm o seu próprio firewall, separado do Windows. Liberar o jogo no Windows não adianta nada para eles. Confira as configurações de rede ou de firewall do próprio antivírus, ou pause o firewall dele por um instante para ver se é isso que está bloqueando.
 
-### 10. Se funcionava e parou de funcionar
+### 9. Se funcionava e parou de funcionar
 
 O endereço do computador do host pode mudar quando ele se reconecta ao Wi-Fi ou depois que o roteador é reiniciado. Abra a tela do QR de novo e escaneie outra vez — o novo endereço vai estar lá.
 
@@ -109,7 +98,7 @@ Essa é a coisa mais útil que você pode me contar, porque cada resposta aponta
 - o navegador nunca carrega nada
 - a página carrega, mas a lista de jogadores nunca aparece
 - dá para escolher um nome, mas fica parado em “Entrando…” — me diga o que a linha de progresso abaixo dizia e qual mensagem apareceu, se você esperou
-- passa disso e fica parado em “**Carregando…**” — este é o caso da porta/firewall, e é o mais comum. Me diga se a mensagem “não conseguiu chegar até ele” apareceu depois de uns 20 segundos
+- passa dessa etapa e fica em “**Carregando…**” — diga se aparece algum erro e copie o texto exato e a linha técnica cinza
 - conectou normalmente e depois caiu durante a partida
 
 ### Qualquer outra coisa que você puder acrescentar

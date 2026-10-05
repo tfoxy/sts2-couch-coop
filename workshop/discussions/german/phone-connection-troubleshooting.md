@@ -32,26 +32,15 @@ Das Spiel eines Spielers zu starten kann bis zu einer Minute dauern, und das ist
 
 Wenn diese Zeile hochzählt und die Phase wechselt, läuft alles - lass die Seite offen. Die sechs Phasen sind „Verbindung zum Host wird hergestellt“, „Warten auf den Host“, „Das Spiel dieses Spielers wird gestartet“, „Dieser Spieler tritt dem Spiel bei“, „Die Spielansicht wird geladen“ und „Fast fertig“.
 
-### 4. Wenn es hängen bleibt, sagt dir die Seite jetzt, WARUM
+### 4. Wenn es hängen bleibt, kopiere die Meldung der Seite
 
-Wenn tatsächlich etwas schiefgeht, erfährt dein Gerät, welche von mehreren voneinander unabhängigen Ursachen es war - in zwei Sätzen plus einer grauen technischen Zeile. **Bitte gib bei jeder Meldung alles davon an.** Es gibt drei mögliche Meldungen, und sie brauchen völlig unterschiedliche Lösungen:
+Die Beitrittsseite und die Spielansicht jedes Spielers nutzen denselben Browser-Port auf dem Host-Computer (standardmäßig **13337**). Zusätzliche Browser-Ports zu öffnen behebt keinen fehlgeschlagenen Beitritt.
 
-- „**Dein Spiel läuft auf dem Host-Computer, aber dieses Gerät konnte es nicht erreichen.**“\
-  Hier geht es um den Netzwerkweg zwischen deinem Handy und dem Host - Gast-WLAN, ein VPN oder ein Router, der Geräte voneinander trennt. Mit dem Spiel des Hosts ist alles in Ordnung. Siehe Abschnitte 2 und 6.
-- „**Ein anderes Programm auf dem Host-Computer belegt den Port, den dein Spiel benötigt.**“\
-  Auf deinem Gerät musst du nichts ändern. Auf dem Host belegt etwas anderes einen der Ports, die jeder Spieler braucht - meistens ein übrig gebliebener Spielerprozess aus einer früheren Sitzung. Wer hostet, sollte ihn beenden (ein Neustart von Slay the Spire 2 räumt ihn weg).
-- „**Der Host-Computer blockiert den Port, über den dein Spiel bereitgestellt wird.**“\
-  Auch hier musst du auf deinem Gerät nichts ändern. Die Firewall oder Sicherheitssoftware des Hosts selbst blockiert ihn - siehe Abschnitt 5.
+Wenn bei *Beitreten…* oder *Laden…* ein Fehler erscheint, gib den genauen Wortlaut und, falls vorhanden, die graue technische Zeile in deinem Bericht an. Der Host kann auf dem QR-Bildschirm auch das Panel **Verbindungen** öffnen und nachsehen, bei welchem Schritt es scheiterte. Wenn die Seite gar nicht lädt, prüfe die Netzwerk- und Firewall-Hinweise in den Abschnitten 2, 5 und 6.
 
-**Der häufigste Blockierfall zeigt überhaupt kein *Beitreten…* an.** Wenn dein Gerät den Host erreicht hat, aber nicht den Port, der deinem eigenen Spieler zugewiesen wurde, *gelingt* der Beitritt - und die Seite wechselt dann zu *Laden…* und bleibt dort stehen. Auf diesem Bildschirm gibt es weder eine Fortschrittszeile noch einen Countdown, weil aus Sicht des Hosts nichts fehlgeschlagen ist. Das Erste, was du Nützliches siehst, ist die obige Meldung „**konnte es nicht erreichen**“, etwa **20 Sekunden** nachdem die Seite gewechselt hat. Also: Wenn du bei *Laden…* hängst, warte eine halbe Minute auf diese Meldung, statt neu zu laden - ein Neuladen startet die ganze Wartezeit von vorn.
+Wenn die Seite ohne Fehlermeldung bei *Beitreten…* oder *Laden…* stehen bleibt, sag, welcher Bildschirm erreicht wurde und was die letzte Fortschrittszeile sagte. Lass die Seite offen, solange die Fortschrittsphase wechselt.
 
-Wenn die Seite dagegen bei *Beitreten…* stehen bleibt und sich nie ändert, gibt der Host nach 75 Sekunden mit „*Deine Spielansicht konnte nicht gestartet werden – bitte versuche es erneut.*“ und einer grauen Zeile darunter auf. Das ist ein anderer Fehler als der obige. So oder so: Kopiere, was dort steht.
-
-### 5. Jeder Spieler nutzt einen eigenen Port
-
-Die Lobby läuft auf **13337**, danach nutzt jeder Spieler **13357**, **13367**, **13377** und so weiter. Eine Firewall-Regel, die nur 13337 öffnet, lässt dich die Spielerliste erreichen und scheitert dann beim zweiten Schritt. Falls du (oder eine Anleitung, der du gefolgt bist) so eine Regel angelegt hast, entferne sie und erlaube stattdessen **das Spielprogramm** - das deckt alle Ports ab, die es braucht.
-
-### 6. Windows: Lass das Spiel durch die Firewall
+### 5. Windows: Lass das Spiel durch die Firewall
 
 Prüfe zuerst den Netzwerktyp, denn allein der blockiert viele Verbindungen:
 
@@ -68,13 +57,13 @@ Wenn du irgendwann bei einer Abfrage der Windows-Firewall auf „Abbrechen“ ge
 
 Hake **Öffentlich** nur an, wenn dein Netzwerk auf Öffentlich eingestellt ist und du das nicht ändern kannst. Damit wird das Spiel in jedem Netzwerk erreichbar, mit dem du dich verbindest, auch in Cafés und Hotels.
 
-### 7. Der Router
+### 6. Der Router
 
 Manche Router verhindern, dass sich Geräte im selben WLAN gegenseitig erreichen. Such nach einer Einstellung namens **AP isolation**, **Client isolation** oder **Wireless isolation** (auf Deutsch oft „AP-Isolierung“) und schalte sie aus.
 
 Auch gut zu wissen: Ein WLAN-Repeater oder Powerline-Adapter, der im **Router**-Modus statt im **Bridge**- / **Access-Point**-Modus eingerichtet ist, bringt dein Handy in ein anderes Netzwerk als den Host, auch wenn der WLAN-Name gleich aussieht.
 
-### 8. Browser-Einstellungen, die einfache Adressen blockieren
+### 7. Browser-Einstellungen, die einfache Adressen blockieren
 
 Manche Browser versuchen, jede Adresse auf HTTPS zu zwingen - und die einfache numerische Adresse nutzt kein HTTPS. (Die Zeile **Sicherer Link** auf dem QR-Bildschirm tut das - wenn also erzwungenes HTTPS das Problem ist, lohnt sich auch ein Versuch mit dieser Zeile.) Wenn die Adressleiste statt des Spiels eine Sicherheitswarnung zeigt, schalte diese Optionen aus und versuche es erneut:
 
@@ -83,11 +72,11 @@ Manche Browser versuchen, jede Adresse auf HTTPS zu zwingen - und die einfache n
 
 Prüfe auf dem iPhone außerdem **Einstellungen > *dein Name* > iCloud > Privat-Relay** und unter **Einstellungen > Apps > Safari** „IP-Adresse verbergen“.
 
-### 9. Antivirenprogramme mit eigener Firewall
+### 8. Antivirenprogramme mit eigener Firewall
 
 Sicherheitspakete wie ESET, Bitdefender, Norton, Kaspersky und Avast haben eine eigene Firewall, getrennt von der von Windows. Das Spiel in Windows zu erlauben, bringt für diese nichts. Prüfe die Netzwerk- oder Firewall-Einstellungen des Sicherheitspakets selbst oder pausiere dessen Firewall kurz, um zu sehen, ob sie die Ursache ist.
 
-### 10. Wenn es früher funktioniert hat und dann nicht mehr
+### 9. Wenn es früher funktioniert hat und dann nicht mehr
 
 Die Adresse des Host-Computers kann sich ändern, wenn er sich neu mit dem WLAN verbindet oder nachdem der Router neu gestartet wurde. Öffne den QR-Bildschirm erneut und scanne noch einmal - dort steht dann die neue Adresse.
 
@@ -109,7 +98,7 @@ Das ist das Nützlichste, was du mir sagen kannst, weil jede Antwort auf eine an
 - der Browser lädt überhaupt nichts
 - die Seite lädt, aber die Spielerliste erscheint nie
 - du kannst einen Namen wählen, aber es bleibt bei „Beitreten…“ stehen - sag mir, was die Fortschrittszeile darunter anzeigte und welche Meldung du bekommen hast, falls du gewartet hast
-- es kommt darüber hinaus und bleibt stattdessen bei „**Laden…**“ stehen - das ist der Port-/Firewall-Fall, und er ist der häufigste. Sag mir, ob nach etwa 20 Sekunden die Meldung „konnte es nicht erreichen“ erschienen ist
+- es kommt darüber hinaus und bleibt bei „**Laden…**“ stehen - sag mir, ob ein Fehler erscheint, und kopiere den genauen Wortlaut und die graue technische Zeile
 - die Verbindung klappte, brach dann aber während des Runs ab
 
 ### Was du sonst noch angeben kannst

@@ -1,10 +1,4 @@
 {
-  "couchcoop_route_title": "浏览器连接",
-  "couchcoop_route_shared": "共享端口",
-  "couchcoop_route_direct": "独立端口",
-  "couchcoop_route_explanation": "共享端口让所有手机使用主机的同一个端口。独立端口可能响应更快，但每个座位都需要各自开放的端口。",
-  "couchcoop_route_locked": "请先停止所有正在运行的浏览器座位，再更改此设置。",
-  "couchcoop_route_save_failed": "无法保存连接选项。请检查这台电脑的设置存储位置。",
   "couchcoop_qr_button": "Couch Co-Op 二维码",
   "couchcoop_qr_button_hotkey": "打开二维码",
   "couchcoop_qr_title": "扫描二维码加入 Couch Co-Op",

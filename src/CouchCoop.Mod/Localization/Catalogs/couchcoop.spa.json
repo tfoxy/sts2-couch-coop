@@ -1,10 +1,4 @@
 {
-  "couchcoop_route_title": "Conexión del navegador",
-  "couchcoop_route_shared": "Puerto compartido",
-  "couchcoop_route_direct": "Puertos directos",
-  "couchcoop_route_explanation": "Con el puerto compartido, todos los móviles usan un único puerto del anfitrión. Los puertos directos pueden responder más rápido, pero cada puesto necesita su propio puerto abierto.",
-  "couchcoop_route_locked": "Detén todos los puestos de navegador activos para cambiar este ajuste.",
-  "couchcoop_route_save_failed": "No se ha podido guardar la conexión elegida. Comprueba el almacenamiento de ajustes de este PC.",
   "couchcoop_qr_button": "Código QR de Couch Co-Op",
   "couchcoop_qr_button_hotkey": "Abrir código QR",
   "couchcoop_qr_title": "Escanea para unirte a Couch Co-Op",

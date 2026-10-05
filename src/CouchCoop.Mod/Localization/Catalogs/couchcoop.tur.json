@@ -1,10 +1,4 @@
 {
-  "couchcoop_route_title": "Tarayıcı bağlantısı",
-  "couchcoop_route_shared": "Ortak bağlantı noktası",
-  "couchcoop_route_direct": "Ayrı bağlantı noktaları",
-  "couchcoop_route_explanation": "Ortak bağlantı noktası tüm telefonlar için tek bir sunucu bağlantı noktası kullanır. Ayrı bağlantı noktaları daha hızlı yanıt verebilir, ancak her koltuk için açık bir bağlantı noktası gerekir.",
-  "couchcoop_route_locked": "Bu ayarı değiştirmek için çalışan tüm tarayıcı koltuklarını durdurun.",
-  "couchcoop_route_save_failed": "Bağlantı seçimi kaydedilemedi. Bu bilgisayarın ayar depolamasını kontrol edin.",
   "couchcoop_qr_button": "Couch Co-Op QR Kodu",
   "couchcoop_qr_button_hotkey": "QR Kodunu Aç",
   "couchcoop_qr_title": "Couch Co-Op'a katılmak için tara",

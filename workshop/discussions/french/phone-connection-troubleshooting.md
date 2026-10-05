@@ -32,26 +32,15 @@ Lancer la partie d'un joueur peut prendre jusqu'à une minute, et c'est normal, 
 
 Si cette ligne compte les secondes et change d'étape, tout fonctionne - gardez la page ouverte. Les six étapes sont « Connexion à l'hôte », « En attente de l'hôte », « Démarrage du jeu de ce joueur », « Connexion de ce joueur à la partie », « Chargement de la vue de jeu » et « Presque prêt ».
 
-### 4. Si ça bloque, la page vous dit désormais POURQUOI
+### 4. Si ça bloque, copiez ce que la page affiche
 
-Quand quelque chose tourne vraiment mal, votre appareil apprend de laquelle de plusieurs causes sans rapport entre elles il s'agit - en deux phrases, plus une ligne technique grise. **Merci de tout inclure dans votre signalement.** Il y a trois messages possibles, et ils demandent des solutions complètement différentes :
+La page de connexion et la vue de jeu de chaque joueur utilisent le même port du navigateur sur l’ordinateur hôte (**13337** par défaut). Ouvrir d’autres ports pour le navigateur ne corrigera pas un échec de connexion.
 
-- « **Votre jeu tourne sur l'ordinateur hôte, mais cet appareil n'a pas réussi à l'atteindre.** »\
-  C'est le chemin réseau entre votre téléphone et l'hôte - Wi-Fi invité, VPN ou routeur qui isole les appareils les uns des autres. La partie de l'hôte n'a aucun problème. Voir les sections 2 et 6.
-- « **Un autre programme de l'ordinateur hôte utilise le port dont votre jeu a besoin.** »\
-  Rien à changer sur votre appareil. Sur l'hôte, autre chose occupe l'un des ports dont chaque joueur a besoin - le plus souvent un processus de joueur resté d'une session précédente. La personne qui héberge doit le fermer (redémarrer Slay the Spire 2 suffit à le faire disparaître).
-- « **L'ordinateur hôte bloque le port sur lequel votre jeu est diffusé.** »\
-  Là non plus, rien à changer sur votre appareil. C'est le pare-feu ou le logiciel de sécurité de l'hôte lui-même qui le bloque - voir la section 5.
+Si une erreur apparaît pendant *Connexion…* ou *Chargement…*, indiquez son texte exact et la ligne technique grise, s’il y en a une. La personne qui héberge peut aussi ouvrir le panneau **Connexions** sur l’écran du code QR pour voir à quelle étape ça a échoué. Si la page ne s’ouvre pas du tout, consultez les conseils sur le réseau et le pare-feu aux sections 2, 5 et 6.
 
-**Le cas de blocage le plus courant n'affiche pas du tout *Connexion à la partie…*.** Si votre appareil a atteint l'hôte mais ne peut pas atteindre le port attribué à votre propre joueur, vous *parvenez* à rejoindre la partie - puis la page passe à *Chargement…* et y reste. Il n'y a ni ligne de progression ni compte à rebours sur cet écran, car du point de vue de l'hôte, rien n'a échoué. La première chose utile que vous verrez est le message « **n'a pas réussi à l'atteindre** » ci-dessus, environ **20 secondes** après le changement de page. Donc, si vous êtes bloqué sur *Chargement…*, attendez une demi-minute que ce message apparaisse plutôt que de recharger - recharger relance toute l'attente.
+Si la page reste sur *Connexion…* ou *Chargement…* sans erreur, dites à quel écran elle s’est arrêtée et ce qu’indiquait la dernière ligne de progression. Gardez la page ouverte tant que l’étape de progression change.
 
-Si au contraire la page reste sur *Connexion à la partie…* sans jamais changer, l'hôte abandonne au bout de 75 secondes avec « *Impossible de démarrer l'affichage du jeu. Veuillez réessayer.* » et une ligne grise en dessous. C'est un échec différent de celui ci-dessus. Dans les deux cas, copiez ce qui est affiché.
-
-### 5. Chaque joueur utilise son propre port
-
-La salle d'attente est sur le port **13337**, puis chaque joueur utilise **13357**, **13367**, **13377** et ainsi de suite. Une règle de pare-feu qui n'ouvre que le 13337 vous permet d'atteindre la liste des joueurs, puis échoue à la deuxième étape. Si vous (ou un guide que vous avez suivi) en avez ajouté une, supprimez-la et autorisez plutôt **le programme du jeu** - cela couvre tous les ports dont il a besoin.
-
-### 6. Windows : autorisez le jeu à travers le pare-feu
+### 5. Windows : autorisez le jeu à travers le pare-feu
 
 Vérifiez d'abord le type de réseau, car cela seul bloque beaucoup de connexions :
 
@@ -68,13 +57,13 @@ Si vous avez un jour répondu « Annuler » à une invite du pare-feu Windows, W
 
 Ne cochez **Public** que si votre réseau est configuré en Public et que vous ne pouvez pas le changer. Le cocher rend le jeu accessible sur n'importe quel réseau auquel vous vous connectez, y compris dans les cafés et les hôtels.
 
-### 7. Le routeur
+### 6. Le routeur
 
 Certains routeurs empêchent les appareils connectés au même Wi-Fi de communiquer entre eux. Cherchez un réglage appelé **AP isolation**, **Client isolation** ou **Wireless isolation** (souvent « isolation AP » ou « AP isolé » en français) et désactivez-le.
 
 À savoir aussi : un répéteur Wi-Fi ou un adaptateur CPL configuré en mode **routeur** plutôt qu'en mode **pont** (bridge) / **point d'accès** (access point) place votre téléphone sur un réseau distinct de celui de l'hôte, même si le nom du Wi-Fi semble identique.
 
-### 8. Réglages du navigateur qui bloquent les adresses simples
+### 7. Réglages du navigateur qui bloquent les adresses simples
 
 Certains navigateurs essaient d'imposer HTTPS pour toutes les adresses, ce que l'adresse numérique simple n'utilise pas. (La ligne **Lien sécurisé** de l'écran du code QR, elle, l'utilise - donc si le HTTPS forcé est en cause, cette ligne vaut aussi la peine d'être essayée.) Si la barre d'adresse affiche un avertissement de sécurité au lieu du jeu, désactivez ces options et réessayez :
 
@@ -83,11 +72,11 @@ Certains navigateurs essaient d'imposer HTTPS pour toutes les adresses, ce que l
 
 Sur iPhone, vérifiez aussi **Réglages > *votre nom* > iCloud > Relais privé**, ainsi que « Masquer l'adresse IP » dans **Réglages > Apps > Safari**.
 
-### 9. Antivirus avec son propre pare-feu
+### 8. Antivirus avec son propre pare-feu
 
 Les suites de sécurité comme ESET, Bitdefender, Norton, Kaspersky et Avast ont leur propre pare-feu, distinct de celui de Windows. Autoriser le jeu dans Windows ne change rien pour celles-ci. Vérifiez les réglages réseau ou pare-feu de la suite elle-même, ou mettez brièvement son pare-feu en pause pour voir si c'est lui qui bloque.
 
-### 10. Si ça fonctionnait avant et que ça ne marche plus
+### 9. Si ça fonctionnait avant et que ça ne marche plus
 
 L'adresse de l'ordinateur hôte peut changer quand il se reconnecte au Wi-Fi ou après un redémarrage du routeur. Rouvrez l'écran du code QR et scannez à nouveau - la nouvelle adresse y sera.
 
@@ -109,7 +98,7 @@ C'est l'information la plus utile que vous puissiez me donner, car chaque répon
 - le navigateur ne charge jamais rien du tout
 - la page se charge, mais la liste des joueurs n'apparaît jamais
 - vous pouvez choisir un nom, mais ça reste sur « Connexion à la partie… » - dites-moi ce qu'indiquait la ligne de progression en dessous, et quel message vous avez eu si vous avez attendu
-- ça passe cette étape et reste plutôt sur « **Chargement…** » - c'est le cas port/pare-feu, et c'est le plus courant. Dites-moi si le message « n'a pas réussi à l'atteindre » est apparu au bout d'environ 20 secondes
+- ça passe cette étape et reste sur « **Chargement…** » — dites-moi si une erreur apparaît et recopiez son texte exact ainsi que la ligne technique grise
 - la connexion a bien fonctionné, puis a été coupée pendant la partie
 
 ### Tout ce que vous pouvez ajouter d'autre

@@ -1,18 +1,18 @@
 using CouchCoop.Mod.Localization;
 using CouchCoop.Mod.Session;
-using CouchCoop.Mod.Runtime;
 using Godot;
 
 namespace CouchCoop.Mod.HostUi;
 
 /// <summary>
-/// The QR dialog's right-hand companion card: browser seat routing and optional seat mods.
+/// The QR dialog's right-hand companion card: the mods the host may turn off for the games it runs for browser
+/// players, for when one of those mods crashes them.
 /// </summary>
 /// <remarks>
 /// <para>
 /// The connection card's mirror image, built the same way for the same reasons: a sibling of the QR card
 /// rather than a row inside it, signals wired in <see cref="Install"/> because the host cannot be trusted to
-/// call Ready. The route choice stays visible even when there are no optional mods. Every mod decision — which rows, what each
+/// call Ready, and hidden outright when it has nothing to list. Every decision it draws — which rows, what each
 /// says, what a press does — comes from <see cref="SeatModPanelModel"/>, which is where the rules are tested.
 /// </para>
 /// <para>
@@ -32,12 +32,7 @@ internal sealed partial class CouchCoopSeatModPanel : Panel
     public const string DetailName = "CouchCoopSeatModDetail";
     public const string ConfirmName = "CouchCoopSeatModConfirm";
     public const string CancelName = "CouchCoopSeatModCancel";
-    public const string SharedRouteName = "CouchCoopSharedPortButton";
-    public const string DirectRouteName = "CouchCoopDirectPortsButton";
     private readonly StyleBoxFlat _style = new();
-    private readonly Label _routeTitle = new(), _routeNote = new();
-    private readonly Button _sharedRoute = new() { Name = SharedRouteName };
-    private readonly Button _directRoute = new() { Name = DirectRouteName };
     private readonly Label _title = new();
     private readonly ScrollContainer _scroll = new()
     {
@@ -72,9 +67,6 @@ internal sealed partial class CouchCoopSeatModPanel : Panel
     private ulong _lastPressFrame;
     private int _localeRevision = -1;
     private bool _installed, _hasAppeared;
-    private HeadlessClientManager? _seatManager;
-    private long _seatCountGeneration;
-    private long _seatSubscriptionVersion;
 
     /// <summary>Where the inventory and the host's choices come from. The dialog hands it the host's own.</summary>
     public ISeatModSelectionSource Source { get; set; } = SeatModSelectionService.Shared;
@@ -95,18 +87,6 @@ internal sealed partial class CouchCoopSeatModPanel : Panel
         _style.SetBorderWidthAll(3);
         _style.SetCornerRadiusAll(16);
         AddThemeStyleboxOverride("panel", _style);
-        ConfigureLabel(_routeTitle, CouchCoopGameUiTheme.ConnectionTitleFontSize, CouchCoopGameUiTheme.ConnectionPanelTitleGold);
-        _routeTitle.HorizontalAlignment = HorizontalAlignment.Center;
-        _routeTitle.Position = new Vector2(CouchCoopSeatModLayout.Padding, CouchCoopSeatModLayout.RouteTitleTop);
-        _routeTitle.Size = new Vector2(CouchCoopSeatModLayout.InnerWidth, CouchCoopSeatModLayout.RouteTitleHeight);
-        ConfigureButton(_sharedRoute);
-        ConfigureButton(_directRoute);
-        ConfigureRouteButton(_sharedRoute, CouchCoopSeatModLayout.SharedRouteTop);
-        ConfigureRouteButton(_directRoute, CouchCoopSeatModLayout.DirectRouteTop);
-        ConfigureLabel(_routeNote, CouchCoopGameUiTheme.ConnectionSubtitleFontSize, CouchCoopGameUiTheme.ConnectionSubtitleGold);
-        _routeNote.Position = new Vector2(CouchCoopSeatModLayout.Padding, CouchCoopSeatModLayout.RouteNoteTop);
-        _routeNote.Size = new Vector2(CouchCoopSeatModLayout.InnerWidth, CouchCoopSeatModLayout.RouteNoteHeight);
-        _routeNote.HorizontalAlignment = HorizontalAlignment.Center;
         ConfigureLabel(_title, CouchCoopGameUiTheme.ConnectionTitleFontSize, CouchCoopGameUiTheme.ConnectionPanelTitleGold);
         _title.HorizontalAlignment = HorizontalAlignment.Center;
         _title.Position = new Vector2(CouchCoopSeatModLayout.Padding, CouchCoopSeatModLayout.TitleTop);
@@ -128,10 +108,6 @@ internal sealed partial class CouchCoopSeatModPanel : Panel
         _cancel.Position = new Vector2(CouchCoopSeatModLayout.Width - CouchCoopSeatModLayout.Padding - CouchCoopSeatModLayout.ButtonWidth, CouchCoopSeatModLayout.ButtonTop);
         _cancel.Size = new Vector2(CouchCoopSeatModLayout.ButtonWidth, CouchCoopSeatModLayout.ButtonHeight);
         _confirm.Visible = _cancel.Visible = false;
-        AddChild(_routeTitle);
-        AddChild(_sharedRoute);
-        AddChild(_directRoute);
-        AddChild(_routeNote);
         AddChild(_title);
         AddChild(_scroll);
         AddChild(_detailScroll);
@@ -148,38 +124,6 @@ internal sealed partial class CouchCoopSeatModPanel : Panel
         _installed = true;
         _confirm.Pressed += OnConfirm;
         _cancel.Pressed += OnCancel;
-        _sharedRoute.Pressed += () => OnRoutePressed(SeatBrowserRouteMode.Shared);
-        _directRoute.Pressed += () => OnRoutePressed(SeatBrowserRouteMode.Direct);
-    }
-
-    /// <summary>Attach while the dialog is open; process changes push a main-thread repaint.</summary>
-    public void AttachSeatManager()
-    {
-        DetachSeatManager();
-        _seatManager = CouchCoopMod.HotServerHost?.HeadlessManager as HeadlessClientManager;
-        _seatCountGeneration = 0;
-        if (_seatManager is not null) _seatManager.SeatProcessCountChanged += OnSeatProcessCountChanged;
-        RenderRoute();
-    }
-
-    public void DetachSeatManager()
-    {
-        if (_seatManager is not null) _seatManager.SeatProcessCountChanged -= OnSeatProcessCountChanged;
-        _seatManager = null;
-        _seatSubscriptionVersion++;
-    }
-
-    private void OnSeatProcessCountChanged(int _, long generation)
-    {
-        var version = _seatSubscriptionVersion;
-        GameNextFrame.Schedule(() =>
-        {
-            if (!GodotObject.IsInstanceValid(this) || !IsInsideTree()
-                || version != _seatSubscriptionVersion || generation < _seatCountGeneration) return;
-            _seatCountGeneration = generation;
-            RenderRoute();
-            FocusChainChanged?.Invoke();
-        });
     }
 
     /// <summary>Re-read the inventory and the host's choices, and redraw from scratch. Called when the dialog opens.</summary>
@@ -193,11 +137,8 @@ internal sealed partial class CouchCoopSeatModPanel : Panel
         _view = SeatModPanelModel.Rows(_mods, _chosen);
         var hadRows = _rowControls.Count > 0;
         ClearRows();
-        Visible = true;
-        // With no optional mods, keep only the route section. The top stays aligned with the QR card;
-        // a full-height empty companion would leave most of the right side as an unexplained blank panel.
-        OffsetBottom = OffsetTop + (_view.Count == 0 ? CouchCoopSeatModLayout.RouteOnlyHeight : CouchCoopSeatModLayout.Height);
-        if (!_hasAppeared)
+        Visible = _view.Count > 0;
+        if (Visible && !_hasAppeared)
         {
             _hasAppeared = true;
             var final = Position;
@@ -205,13 +146,11 @@ internal sealed partial class CouchCoopSeatModPanel : Panel
             CreateTween().TweenProperty(this, "position", final, .16f);
         }
 
-        _title.Visible = _scroll.Visible = _detailScroll.Visible = _view.Count > 0;
-        if (_view.Count == 0)
+        if (!Visible)
         {
             _confirm.Visible = _cancel.Visible = false;
             if (hadRows)
                 FocusChainChanged?.Invoke();
-            RenderRoute();
             return;
         }
 
@@ -219,7 +158,6 @@ internal sealed partial class CouchCoopSeatModPanel : Panel
             AddRow(row);
         _scroll.ScrollVertical = 0;
         Render();
-        RenderRoute();
         FocusChainChanged?.Invoke();
     }
 
@@ -228,8 +166,6 @@ internal sealed partial class CouchCoopSeatModPanel : Panel
     {
         if (!Visible)
             return;
-        if (!_sharedRoute.Disabled) chain.Add(_sharedRoute);
-        if (!_directRoute.Disabled) chain.Add(_directRoute);
         foreach (var row in _view)
             if (_rowControls.TryGetValue(row.Id, out var button))
                 chain.Add(button);
@@ -246,9 +182,6 @@ internal sealed partial class CouchCoopSeatModPanel : Panel
             return;
         _localeRevision = CouchCoopLocalization.Revision;
         _title.Text = CouchCoopLocalization.Resolve(SeatModPanelModel.TitleKey);
-        _routeTitle.Text = CouchCoopLocalization.Resolve("couchcoop_route_title");
-        _sharedRoute.Text = CouchCoopLocalization.Resolve("couchcoop_route_shared");
-        _directRoute.Text = CouchCoopLocalization.Resolve("couchcoop_route_direct");
         _purpose.Text = CouchCoopLocalization.Resolve(SeatModPanelModel.PurposeKey);
         _visuals.Text = CouchCoopLocalization.Resolve(SeatModPanelModel.VisualsKey);
         _declared.Text = CouchCoopLocalization.Resolve(SeatModPanelModel.DeclaredKey);
@@ -256,10 +189,6 @@ internal sealed partial class CouchCoopSeatModPanel : Panel
         _cancel.Text = CouchCoopLocalization.Resolve(SeatModPanelModel.CancelKey);
         // Five locales swap Kreon for the game's substitute face, so the fonts follow the language as well.
         ApplyFont(_title, CouchCoopGameUiTheme.ConnectionTitleFontSize);
-        ApplyFont(_routeTitle, CouchCoopGameUiTheme.ConnectionTitleFontSize);
-        ApplyFont(_routeNote, CouchCoopGameUiTheme.ConnectionSubtitleFontSize);
-        CouchCoopGameUiTheme.ApplyFont(_sharedRoute, CouchCoopGameUiTheme.KreonBoldGlyphSpaceOne, CouchCoopGameUiTheme.ConnectionBodyFontSize);
-        CouchCoopGameUiTheme.ApplyFont(_directRoute, CouchCoopGameUiTheme.KreonBoldGlyphSpaceOne, CouchCoopGameUiTheme.ConnectionBodyFontSize);
         ApplyFont(_purpose, CouchCoopGameUiTheme.ConnectionHeadingFontSize);
         ApplyFont(_visuals, CouchCoopGameUiTheme.ConnectionSubtitleFontSize);
         ApplyFont(_declared, CouchCoopGameUiTheme.ConnectionSubtitleFontSize);
@@ -273,33 +202,6 @@ internal sealed partial class CouchCoopSeatModPanel : Panel
         }
 
         Render();
-        RenderRoute();
-    }
-
-    private void RenderRoute()
-    {
-        var mode = SeatBrowserRoutePreference.Read();
-        var locked = _seatManager?.CountLiveSeatProcesses() > 0;
-        _sharedRoute.Disabled = locked;
-        _directRoute.Disabled = locked;
-        _sharedRoute.FocusMode = locked ? FocusModeEnum.None : FocusModeEnum.All;
-        _directRoute.FocusMode = locked ? FocusModeEnum.None : FocusModeEnum.All;
-        _sharedRoute.SetPressedNoSignal(mode == SeatBrowserRouteMode.Shared);
-        _directRoute.SetPressedNoSignal(mode == SeatBrowserRouteMode.Direct);
-        _routeNote.Text = CouchCoopLocalization.Resolve(locked ? "couchcoop_route_locked" : "couchcoop_route_explanation");
-    }
-
-    private void OnRoutePressed(SeatBrowserRouteMode mode)
-    {
-        // A stale UI event may arrive after a process starts, before its pushed repaint lands.
-        if (_seatManager?.CountLiveSeatProcesses() > 0) { RenderRoute(); return; }
-        if (!SeatBrowserRoutePreference.Write(mode))
-        {
-            RenderRoute();
-            _routeNote.Text = CouchCoopLocalization.Resolve("couchcoop_route_save_failed");
-            return;
-        }
-        RenderRoute();
     }
 
     private void Read()
@@ -546,17 +448,5 @@ internal sealed partial class CouchCoopSeatModPanel : Panel
         button.FocusMode = FocusModeEnum.All;
         button.MouseFilter = MouseFilterEnum.Stop;
         CouchCoopGameUiTheme.ApplyFont(button, CouchCoopGameUiTheme.KreonBoldGlyphSpaceOne, CouchCoopGameUiTheme.ConnectionBodyFontSize);
-    }
-
-    private static void ConfigureRouteButton(Button button, float top)
-    {
-        button.ToggleMode = true;
-        button.Position = new Vector2(CouchCoopSeatModLayout.Padding, top);
-        button.Size = new Vector2(CouchCoopSeatModLayout.InnerWidth, CouchCoopSeatModLayout.RouteButtonHeight);
-        button.AddThemeStyleboxOverride("normal", CouchCoopGameUiTheme.CreateConnectionRowStyle(selected: false));
-        button.AddThemeStyleboxOverride("hover", CouchCoopGameUiTheme.CreateConnectionRowStyle(selected: true));
-        button.AddThemeStyleboxOverride("pressed", CouchCoopGameUiTheme.CreateConnectionRowStyle(selected: true));
-        button.AddThemeStyleboxOverride("hover_pressed", CouchCoopGameUiTheme.CreateConnectionRowStyle(selected: true));
-        button.AddThemeStyleboxOverride("focus", CouchCoopGameUiTheme.CreateConnectionRowStyle(selected: false, focused: true));
     }
 }

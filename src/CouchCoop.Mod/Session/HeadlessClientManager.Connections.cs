@@ -152,7 +152,7 @@ public sealed partial class HeadlessClientManager
             ? knownRun.RunInProgress
             : RunInProgress;
         // The standalone manager used by allocation tests has no game roster observer.
-        var routeMode = !_supportsSharedRelay ? SeatBrowserRouteMode.Direct : SeatBrowserRoutePreference.Read();
+        var routeMode = _supportsSharedRelay ? SeatBrowserRouteMode.Shared : SeatBrowserRouteMode.Direct;
         var occupiedSeatPorts = routeMode == SeatBrowserRouteMode.Direct
             ? await SurveySeatPortsAsync(maxSlot, displayName, targetNetId, ct).ConfigureAwait(false)
             : new Dictionary<int, string>();
@@ -512,7 +512,7 @@ public sealed partial class HeadlessClientManager
             if (_ownedConnections.TryGetValue(slot, out var owned))
                 return owned.RouteMode == SeatBrowserRouteMode.Shared;
         }
-        return _supportsSharedRelay && SeatBrowserRoutePreference.Read() == SeatBrowserRouteMode.Shared;
+        return _supportsSharedRelay;
     }
 
     public bool TryResolveSeatRelay(string routeId, out string pipeName, out string token)

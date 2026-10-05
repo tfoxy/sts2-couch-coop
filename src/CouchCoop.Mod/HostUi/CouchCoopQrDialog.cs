@@ -167,7 +167,7 @@ internal sealed partial class CouchCoopQrDialog : CouchCoopModalDialog
 
     /// <summary>
     /// What a d-pad walks in this dialog, top to bottom: the selector's closed row, the selectable option
-    /// rows while the list is expanded, the copy affordance under the QR, the route and seat-mod rows on the right-hand
+    /// rows while the list is expanded, the copy affordance under the QR, the seat-mod rows on the right-hand
     /// card, and then (appended by the base) the close button.
     /// </summary>
     /// <remarks>
@@ -191,7 +191,7 @@ internal sealed partial class CouchCoopQrDialog : CouchCoopModalDialog
         }
 
         // After the copy button, so a walk down from the QR crosses to the right-hand card before it reaches
-        // close. The card always declares the route choice; mod rows and the confirm pair appear as needed.
+        // close. The card declares nothing while it is hidden, and its confirm pair only while one is pending.
         _seatMods.AppendFocusChain(chain);
     }
 
@@ -248,7 +248,6 @@ internal sealed partial class CouchCoopQrDialog : CouchCoopModalDialog
         RefreshConnections();
         // Here and NOT in RefreshConnections, which the lobby scan calls four times a second: the inventory can
         // read manifests off disk, and the card applies its own presses while the dialog is up.
-        _seatMods.AttachSeatManager();
         _seatMods.Refresh();
         OpenModal();
     }
@@ -257,7 +256,6 @@ internal sealed partial class CouchCoopQrDialog : CouchCoopModalDialog
     // freeing it, so the game's own TreeExiting backstop for an owner's tip set never fires.
     protected override void OnClosing()
     {
-        _seatMods.DetachSeatManager();
         _select.Close();
         _copy.ResetFeedback();
         ClearTips();

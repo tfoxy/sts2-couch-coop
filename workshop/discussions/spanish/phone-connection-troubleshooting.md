@@ -32,26 +32,15 @@ Iniciar la partida de un jugador puede tardar hasta un minuto, y eso es normal, 
 
 Si esa línea va contando y cambiando de etapa, está funcionando: deja la página abierta. Las seis etapas son: conectando con el anfitrión, esperando al anfitrión, iniciando el juego de este jugador, conectando a este jugador con la partida, cargando la vista del juego y casi listo.
 
-### 4. Si se detiene, ahora la página te dice POR QUÉ
+### 4. Si se detiene, copia lo que dice la página
 
-Cuando algo falla de verdad, a tu dispositivo le llega un aviso que indica cuál de varios problemas sin relación entre sí ha sido, en dos frases más una línea técnica en gris. **Incluye todo eso en cualquier informe.** Hay tres posibles, y cada uno necesita una solución completamente distinta:
+La página para unirse y la vista de juego de cada jugador utilizan el mismo puerto del navegador en el equipo anfitrión (**13337** de forma predeterminada). Abrir otros puertos para el navegador no soluciona un fallo al unirse.
 
-- «**Tu juego está en marcha en el ordenador anfitrión, pero este dispositivo no ha podido conectarse a él.**»\
-  Es la ruta de red entre tu teléfono y el anfitrión: una red Wi-Fi de invitados, una VPN o un router que mantiene aislados los dispositivos. La partida del anfitrión no tiene ningún problema. Consulta las secciones 2 y 6.
-- «**Otro programa del ordenador anfitrión está usando el puerto que necesita tu juego.**»\
-  No hay nada que cambiar en tu dispositivo. En el anfitrión, otra cosa está ocupando uno de los puertos que necesita cada jugador; casi siempre es un proceso de jugador que se ha quedado abierto de una sesión anterior. Quien haga de anfitrión debe cerrarlo (reiniciar Slay the Spire 2 lo soluciona).
-- «**El ordenador anfitrión está bloqueando el puerto que usa tu juego.**»\
-  Tampoco hay nada que cambiar en tu dispositivo. Lo está bloqueando el propio firewall o el software de seguridad del anfitrión; consulta la sección 5.
+Si aparece un error durante *Uniéndote…* o *Cargando…*, incluye en el informe el texto exacto y la línea técnica gris, si la hay. Quien aloja la partida también puede abrir el panel **Conexiones** en la pantalla del QR para ver en qué paso falló. Si la página ni siquiera se abre, consulta los consejos de red y firewall de las secciones 2, 5 y 6.
 
-**El caso de bloqueo más habitual ni siquiera muestra *Uniéndote…*.** Si tu dispositivo ha llegado al anfitrión pero no puede llegar al puerto asignado a tu propio jugador, la unión *se completa*, y después la página pasa a *Cargando…* y se queda ahí. En esa pantalla no hay línea de progreso ni cuenta atrás, porque, desde el lado del anfitrión, no ha fallado nada. Lo primero útil que verás es el mensaje «**no ha podido conectarse a él**» de arriba, unos **20 segundos** después de que cambie la página. Así que, si te quedas atascado en *Cargando…*, espera medio minuto a que aparezca ese mensaje en lugar de recargar: al recargar, toda la espera vuelve a empezar.
+Si la página permanece en *Uniéndote…* o *Cargando…* sin mostrar ningún error, indica en qué pantalla se detuvo y qué decía la última línea de progreso. Mantenla abierta mientras siga cambiando la fase de progreso.
 
-Si, en cambio, se queda en *Uniéndote…* y no cambia nunca, el anfitrión se rinde a los 75 segundos con *No se pudo iniciar la vista del juego. Inténtalo de nuevo.* y una línea gris debajo. Es un fallo distinto del anterior. En cualquier caso, copia lo que diga.
-
-### 5. Cada jugador usa su propio puerto
-
-La sala está en el **13337**, y después cada jugador usa el **13357**, el **13367**, el **13377** y así sucesivamente. Una regla de firewall que solo abra el 13337 te deja llegar a la lista de jugadores y luego falla en el segundo paso. Si has añadido una (por tu cuenta o siguiendo una guía), elimínala y, en su lugar, permite **el programa del juego**: así quedan cubiertos todos los puertos que necesita.
-
-### 6. Windows: permite el juego en el firewall
+### 5. Windows: permite el juego en el firewall
 
 Primero comprueba el tipo de red, porque esto por sí solo bloquea muchas conexiones:
 
@@ -68,13 +57,13 @@ Si en algún momento respondiste «Cancelar» a un aviso del firewall de Windows
 
 Marca **Pública** solo si tu red está configurada como pública y no puedes cambiarlo. Si la marcas, el juego queda accesible en cualquier red a la que te conectes, incluidas las de cafeterías y hoteles.
 
-### 7. El router
+### 6. El router
 
 Algunos routers impiden que los dispositivos conectados a la misma red Wi-Fi se comuniquen entre sí. Busca un ajuste llamado **AP isolation**, **Client isolation** o **Wireless isolation** (en español, «aislamiento de AP») y desactívalo.
 
 También conviene saber que un repetidor Wi-Fi o un adaptador PLC configurado en modo **router** en lugar de en modo **bridge** / **access point** (puente / punto de acceso) pone tu teléfono en una red distinta de la del anfitrión, aunque el nombre de la red Wi-Fi parezca el mismo.
 
-### 8. Ajustes del navegador que bloquean las direcciones simples
+### 7. Ajustes del navegador que bloquean las direcciones simples
 
 Algunos navegadores intentan forzar HTTPS en todas las direcciones, y la dirección numérica simple no lo usa. (La opción **Enlace seguro** de la pantalla del QR sí lo usa, así que, si el problema es que se fuerza HTTPS, también merece la pena probarla). Si la barra de direcciones muestra una advertencia de seguridad en lugar del juego, desactiva estas opciones y vuelve a intentarlo:
 
@@ -83,11 +72,11 @@ Algunos navegadores intentan forzar HTTPS en todas las direcciones, y la direcci
 
 En iPhone, revisa también **Ajustes > *tu nombre* > iCloud > Relay privado** y «Ocultar dirección IP» en **Ajustes > Apps > Safari**.
 
-### 9. Antivirus con su propio firewall
+### 8. Antivirus con su propio firewall
 
 Los paquetes de seguridad como ESET, Bitdefender, Norton, Kaspersky y Avast tienen su propio firewall, independiente del de Windows. Permitir el juego en Windows no sirve de nada frente a ellos. Revisa los ajustes de red o de firewall del propio antivirus, o pausa su firewall un momento para ver si es eso lo que lo está bloqueando.
 
-### 10. Si antes funcionaba y ha dejado de hacerlo
+### 9. Si antes funcionaba y ha dejado de hacerlo
 
 La dirección del ordenador anfitrión puede cambiar cuando vuelve a conectarse a la red Wi-Fi o después de reiniciar el router. Abre de nuevo la pantalla del QR y vuelve a escanear: ahí estará la nueva dirección.
 
@@ -109,7 +98,7 @@ Es lo más útil que puedes decirme, porque cada respuesta apunta a una causa di
 - el navegador no llega a cargar nada
 - la página carga, pero la lista de jugadores no aparece nunca
 - puedes elegir un nombre, pero se queda en «Uniéndote…»: dime qué decía la línea de progreso de debajo y qué mensaje te salió si esperaste
-- pasa de ahí y se queda en «**Cargando…**»: este es el caso del puerto o del firewall, y es el más habitual. Dime si apareció el mensaje «no ha podido conectarse a él» al cabo de unos 20 segundos
+- pasa de ahí y se queda en «**Cargando…**»: dime si aparece algún error y copia el texto exacto y la línea técnica gris
 - se conectó bien y luego se desconectó durante la partida
 
 ### Cualquier otra cosa que puedas añadir

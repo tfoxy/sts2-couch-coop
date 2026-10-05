@@ -1,10 +1,4 @@
 {
-  "couchcoop_route_title": "Browser connection",
-  "couchcoop_route_shared": "Shared port",
-  "couchcoop_route_direct": "Direct ports",
-  "couchcoop_route_explanation": "Shared port uses one host port for every phone. Direct ports may respond faster, but each seat needs its own open port.",
-  "couchcoop_route_locked": "Stop all running browser seats to change this setting.",
-  "couchcoop_route_save_failed": "Could not save the connection choice. Check this PC’s settings storage.",
   "couchcoop_qr_button": "Couch Co-Op QR Code",
   "couchcoop_qr_button_hotkey": "Open QR Code",
   "couchcoop_qr_title": "Scan to join Couch Co-Op",

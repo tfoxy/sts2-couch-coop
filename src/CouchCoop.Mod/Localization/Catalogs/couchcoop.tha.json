@@ -1,10 +1,4 @@
 {
-  "couchcoop_route_title": "การเชื่อมต่อเบราว์เซอร์",
-  "couchcoop_route_shared": "พอร์ตร่วม",
-  "couchcoop_route_direct": "พอร์ตแยก",
-  "couchcoop_route_explanation": "พอร์ตร่วมให้โทรศัพท์ทุกเครื่องใช้พอร์ตเดียวของโฮสต์ พอร์ตแยกอาจตอบสนองเร็วกว่า แต่แต่ละที่นั่งต้องมีพอร์ตเปิดของตนเอง",
-  "couchcoop_route_locked": "หยุดที่นั่งเบราว์เซอร์ทั้งหมดที่กำลังทำงานเพื่อเปลี่ยนการตั้งค่านี้",
-  "couchcoop_route_save_failed": "บันทึกตัวเลือกการเชื่อมต่อไม่ได้ โปรดตรวจสอบที่เก็บการตั้งค่าของพีซีเครื่องนี้",
   "couchcoop_qr_button": "รหัส QR Couch Co-Op",
   "couchcoop_qr_button_hotkey": "เปิดรหัส QR",
   "couchcoop_qr_title": "สแกนเพื่อเข้าร่วม Couch Co-Op",

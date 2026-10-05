@@ -78,8 +78,8 @@ public static class QrHostOptions
     /// <param name="candidates">Raw OS candidates; filtered by <see cref="LanAddressRanking.IsEligible"/>.</param>
     /// <param name="port">
     /// ALWAYS the browser server's real listening port (<c>ListenerBaseUri.Port</c>), never the
-    /// preferred port: direct-port mode can still walk upward when 13337 is taken. Shared mode fails
-    /// startup on that conflict, so neither mode should advertise a port it did not bind.
+    /// configured port. The host fails startup if that port is occupied, so the QR never advertises
+    /// a port it did not bind.
     /// </param>
     /// <param name="webOrigin">
     /// The configured public origin (<see cref="CouchCoopWebOrigin.Resolve"/>). A value that cannot be

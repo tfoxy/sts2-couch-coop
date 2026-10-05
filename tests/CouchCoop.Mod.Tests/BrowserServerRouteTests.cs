@@ -405,7 +405,6 @@ if (args is ["host-ui", ..])
     // press writes), plus the geometry that makes it the connection card's mirror. Both pure — the card itself
     // is a Godot node this runner cannot construct. The layout half is also in the full contract suite below.
     SeatModPanelModelTests.Run();
-    SeatBrowserRoutePreferenceTests.Run();
     CouchCoopQrLayoutContractTests.RunCompanions();
     Console.WriteLine("host ui: ok");
     return;
@@ -643,7 +642,6 @@ CouchCoopModalFocusChainTests.Run();
 // The QR dialog's seat-mod card: what it lists and what a press writes. Pure C# over plain records, so it sits
 // up here with the other host-UI decisions. Also reachable alone as `-- host-ui`.
 SeatModPanelModelTests.Run();
-SeatBrowserRoutePreferenceTests.Run();
 // …and the seat rule that protects the player's SAVES rather than their session: the verdict a failed cloud
 // isolation becomes, its test lever and its copy. Pure strings, so it sits up here with the rest, above the
 // suite that can take this process down. Also reachable alone as `-- connections`.
@@ -3024,13 +3022,14 @@ internal sealed partial class BrowserServerRouteTests
         Expect(failed.Diagnostics.Any(diagnostic => diagnostic.Code == CouchCoopHostUiServices.BrowserServerUnavailableCode), "host UI service records structured startup diagnostic");
         Expect(failureLogs.Any(log => log.Contains(CouchCoopHostUiServices.BrowserServerUnavailableCode, StringComparison.Ordinal)), "host UI service logs diagnostic code");
 
-        // Shared mode may not walk away from the QR/firewall port when another process owns it.
-        var priorRoutePrefs = Environment.GetEnvironmentVariable(SeatBrowserRoutePreference.PathEnvironmentVariable);
+        // A stale Direct ports preference must not make the host walk away from its QR/firewall port.
+        const string legacyRoutePrefsVariable = "COUCHCOOP_SEAT_ROUTE_PREFS";
+        var priorRoutePrefs = Environment.GetEnvironmentVariable(legacyRoutePrefsVariable);
         var routePrefsPath = Path.Combine(Path.GetTempPath(), "couchcoop-route-bind-" + Guid.NewGuid().ToString("N") + ".json");
         try
         {
-            Environment.SetEnvironmentVariable(SeatBrowserRoutePreference.PathEnvironmentVariable, routePrefsPath);
-            Expect(SeatBrowserRoutePreference.Write(SeatBrowserRouteMode.Shared), "shared bind test writes its isolated route choice");
+            File.WriteAllText(routePrefsPath, "{\"mode\":\"direct\"}");
+            Environment.SetEnvironmentVariable(legacyRoutePrefsVariable, routePrefsPath);
             using var occupied = new TcpListener(IPAddress.Loopback, 0);
             occupied.Start();
             var occupiedPort = ((IPEndPoint)occupied.LocalEndpoint).Port;
@@ -3039,14 +3038,14 @@ internal sealed partial class BrowserServerRouteTests
                 rootPath, IPAddress.Loopback, preferredPort: occupiedPort);
             var exactFailure = await exactHost.StartAsync();
             Expect(!exactFailure.Available && exactFailure.ListenerBaseUri is null,
-                "shared host refuses its occupied configured port instead of walking to another one");
+                "host refuses its occupied configured port despite a stale Direct ports preference");
             Expect(ConnectionRegistry.Shared.Snapshot().Rows.Any(row => row.Issue?.Code == "host-browser-port-occupied"),
                 "occupied shared host port creates a specific host error");
         }
         finally
         {
             ConnectionRegistry.Shared.Clear();
-            Environment.SetEnvironmentVariable(SeatBrowserRoutePreference.PathEnvironmentVariable, priorRoutePrefs);
+            Environment.SetEnvironmentVariable(legacyRoutePrefsVariable, priorRoutePrefs);
             try { File.Delete(routePrefsPath); } catch (IOException) { }
         }
     }

@@ -32,26 +32,15 @@ Bir oyuncunun oyununu başlatmak bir dakikayı bulabilir; bu bir arıza değil, 
 
 Bu satırdaki süre artıyor ve aşama değişiyorsa işlem devam ediyordur — sayfayı açık tut. Altı aşama şunlardır: oda sahibine ulaşılıyor, oda sahibi bekleniyor, bu oyuncunun oyunu başlatılıyor, bu oyuncu oyuna bağlanıyor, oyun görünümü yükleniyor, neredeyse hazır.
 
-### 4. Durursa, sayfa artık NEDENİNİ söylüyor
+### 4. Durursa, sayfada yazanı kopyala
 
-Bir şey gerçekten ters gittiğinde, cihazına birbiriyle ilgisiz birkaç sorundan hangisinin yaşandığı söylenir — iki cümle ve gri bir teknik satırla. **Lütfen her raporda bunların hepsini ekle.** Karşılaşabileceğin üç mesaj var ve her biri tamamen farklı bir çözüm gerektirir:
+Katılma sayfası ve her oyuncunun oyun görüntüsü, ana bilgisayarda aynı tarayıcı portunu kullanır (varsayılan **13337**). Ek tarayıcı portları açmak başarısız bir katılma işlemini düzeltmez.
 
-- **“Oyunun, oda sahibinin bilgisayarında çalışıyor ama bu cihaz ona ulaşamadı.”**\
-  Sorun, telefonunla host bilgisayar arasındaki ağ yolundadır — misafir Wi-Fi, bir VPN ya da cihazları birbirinden ayıran bir yönlendirici. Host bilgisayardaki oyunda bir sorun yok. 2. ve 6. bölümlere bak.
-- **“Oda sahibinin bilgisayarındaki başka bir program, oyununun ihtiyaç duyduğu bağlantı noktasını kullanıyor.”**\
-  Cihazında değiştirilecek bir şey yok. Host bilgisayarda başka bir şey, oyuncuların ihtiyaç duyduğu portlardan birini tutuyor — çoğunlukla önceki bir oturumdan kalmış bir oyuncu işlemi. Oyunu barındıran kişi bunu kapatmalıdır (Slay the Spire 2'yi yeniden başlatmak sorunu giderir).
-- **“Oda sahibinin bilgisayarı, oyununun sunulduğu bağlantı noktasını engelliyor.”**\
-  Burada da cihazında değiştirilecek bir şey yok. Portu engelleyen, host bilgisayarın kendi güvenlik duvarı veya güvenlik yazılımıdır — 5. bölüme bak.
+*Katılıyor…* veya *Yükleniyor…* sırasında bir hata görünürse tam metnini ve varsa gri teknik satırı raporuna ekle. Oyunu barındıran kişi, hangi adımın başarısız olduğunu görmek için QR ekranındaki **Bağlantılar** panelini de açabilir. Sayfa hiç açılmıyorsa 2, 5 ve 6. bölümlerdeki ağ ve güvenlik duvarı önerilerine bak.
 
-**En yaygın engelleme durumunda *Katılıyor…* hiç görünmez.** Cihazın host bilgisayara ulaştıysa ama kendi oyuncuna verilen porta ulaşamıyorsa, katılma *başarılı olur* — ardından sayfa *Yükleniyor…* ekranına geçer ve orada kalır. Bu ekranda ne ilerleme satırı ne de geri sayım vardır, çünkü host tarafında hiçbir şey başarısız olmamıştır. Göreceğin ilk işe yarar şey, sayfa değiştikten yaklaşık **20 saniye** sonra çıkan, yukarıdaki **“bu cihaz ona ulaşamadı”** mesajıdır. Yani *Yükleniyor…* ekranında takıldıysan, sayfayı yenilemek yerine bu mesaj için yarım dakika bekle — yenilemek tüm bekleme süresini baştan başlatır.
+Sayfa hata göstermeden *Katılıyor…* veya *Yükleniyor…* ekranında kalırsa hangi ekrana ulaştığını ve son ilerleme satırında ne yazdığını söyle. İlerleme aşaması değişmeye devam ettiği sürece sayfayı açık tut.
 
-Sayfa bunun yerine *Katılıyor…* ekranında kalıp hiç değişmiyorsa, host 75 saniyede pes eder ve *Oyun görünümün başlatılamadı — lütfen tekrar dene.* mesajını, altında gri bir satırla gösterir. Bu, yukarıdakinden farklı bir hatadır. Her iki durumda da ekranda yazanları kopyala.
-
-### 5. Her oyuncu kendi portunu kullanır
-
-Lobi **13337** numaralı porttadır, ardından her oyuncu **13357**, **13367**, **13377** ve devamındaki portları kullanır. Yalnızca 13337'yi açan bir güvenlik duvarı kuralı oyuncu listesine ulaşmanı sağlar, ancak ikinci adımda başarısız olur. Sen (ya da izlediğin bir rehber) böyle bir kural eklediysen, onu kaldır ve bunun yerine **oyun programının kendisine** izin ver — bu, oyunun ihtiyaç duyduğu tüm portları kapsar.
-
-### 6. Windows: oyunun güvenlik duvarından geçmesine izin ver
+### 5. Windows: oyunun güvenlik duvarından geçmesine izin ver
 
 Önce ağ türünü kontrol et, çünkü tek başına bu bile pek çok bağlantıyı engeller:
 
@@ -68,13 +57,13 @@ Bir noktada Windows güvenlik duvarı uyarısında “İptal” düğmesine bast
 
 **Ortak** kutusunu yalnızca ağın Ortak ağ olarak ayarlıysa ve bunu değiştiremiyorsan işaretle. Bu kutuyu işaretlemek, oyunu kafeler ve oteller dahil bağlandığın her ağda erişilebilir kılar.
 
-### 7. Yönlendirici
+### 6. Yönlendirici
 
 Bazı yönlendiriciler aynı Wi-Fi'daki cihazların birbirine ulaşmasını engeller. **AP isolation**, **Client isolation** veya **Wireless isolation** adlı bir ayar ara (Türkçe arayüzlerde “AP İzolasyonu” olarak da geçebilir) ve kapat.
 
 Şunu da bilmekte fayda var: **bridge** (köprü) / **access point** (erişim noktası) modu yerine **router** (yönlendirici) modunda kurulmuş bir Wi-Fi genişletici veya powerline adaptörü, Wi-Fi adı aynı görünse bile telefonunu host bilgisayardan ayrı bir ağa koyar.
 
-### 8. Düz adresleri engelleyen tarayıcı ayarları
+### 7. Düz adresleri engelleyen tarayıcı ayarları
 
 Bazı tarayıcılar her adresi HTTPS'ye zorlamaya çalışır; düz sayısal adres ise HTTPS kullanmaz. (QR ekranında HTTPS kullanan satır **Güvenli bağlantı** satırıdır — yani sorun HTTPS zorlamasıysa bu satırı da denemeye değer.) Adres çubuğunda oyun yerine bir güvenlik uyarısı görünüyorsa şunları kapatıp yeniden dene:
 
@@ -83,11 +72,11 @@ Bazı tarayıcılar her adresi HTTPS'ye zorlamaya çalışır; düz sayısal adr
 
 iPhone'da ayrıca **Ayarlar > *adınız* > iCloud > Özel Geçiş** bölümünü ve **Ayarlar > Uygulamalar > Safari** bölümündeki “IP Adresini Gizle” ayarını kontrol et.
 
-### 9. Kendi güvenlik duvarı olan antivirüsler
+### 8. Kendi güvenlik duvarı olan antivirüsler
 
 ESET, Bitdefender, Norton, Kaspersky ve Avast gibi güvenlik paketlerinin Windows'unkinden ayrı, kendi güvenlik duvarı vardır. Oyuna Windows'ta izin vermek bunları hiç etkilemez. Paketin kendi ağ veya güvenlik duvarı ayarlarını kontrol et ya da engelleyenin bu olup olmadığını görmek için güvenlik duvarını kısa bir süreliğine duraklat.
 
-### 10. Önceden çalışıyorduysa ve sonra durduysa
+### 9. Önceden çalışıyorduysa ve sonra durduysa
 
 Host bilgisayarın adresi, Wi-Fi'a yeniden bağlandığında veya yönlendirici yeniden başlatıldıktan sonra değişebilir. QR ekranını yeniden aç ve tekrar tara — yeni adres orada olacaktır.
 
@@ -109,7 +98,7 @@ Bana söyleyebileceğin en faydalı şey budur, çünkü her yanıt farklı bir 
 - tarayıcı hiçbir şey yüklemiyor
 - sayfa yükleniyor ama oyuncu listesi hiç görünmüyor
 - bir isim seçebiliyorsun ama “Katılıyor…” ekranında kalıyor — altındaki ilerleme satırında ne yazdığını ve beklediysen hangi mesajı aldığını bana söyle
-- bu aşamayı geçiyor ama bu kez **“Yükleniyor…”** ekranında kalıyor — bu port/güvenlik duvarı durumudur ve en yaygın olanıdır. Yaklaşık 20 saniye sonra “bu cihaz ona ulaşamadı” mesajının çıkıp çıkmadığını bana söyle
+- bu aşamayı geçiyor ama **“Yükleniyor…”** ekranında kalıyor — hata görünüp görünmediğini söyle ve tam metnini, varsa gri teknik satırla birlikte kopyala
 - sorunsuz bağlandı, sonra koşu sırasında bağlantı koptu
 
 ### Ekleyebileceğin diğer her şey
