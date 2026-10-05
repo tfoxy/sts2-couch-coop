@@ -125,6 +125,8 @@ export interface BrowserSessionEnvelope extends BrowserEnvelopeBase {
   screen: BrowserScreenSummary;
   // Redirect target: this viewer's own per-player headless game view. The mirror reconnects its socket here.
   headlessMirrorPort?: number | null;
+  // Shared-port seat route on the host listener. Opaque to the client; takes precedence over the direct port.
+  headlessMirrorPath?: string | null;
   // Server-issued join generation on the original host socket; never a child control credential.
   connectionAttemptId?: string | null;
   // true → watch the HOST's own stream in place (no redirect). Set for a singleplayer run / host selection.
@@ -357,9 +359,9 @@ export interface BrowserSeatNotice {
  * fourth cause, "still starting" — that is the normal state of every healthy join for its whole 20-60 seconds and
  * is never announced. C# twin: `BrowserSeatNoticeCauses` (CouchCoop.MirrorProtocol).
  */
-export type SeatNoticeCause = "none" | "port-conflict" | "host-local-block" | "network-path";
+export type SeatNoticeCause = "none" | "port-conflict" | "host-local-block" | "network-path" | "relay-unavailable";
 
-const SEAT_NOTICE_CAUSES: readonly SeatNoticeCause[] = ["none", "port-conflict", "host-local-block", "network-path"];
+const SEAT_NOTICE_CAUSES: readonly SeatNoticeCause[] = ["none", "port-conflict", "host-local-block", "network-path", "relay-unavailable"];
 
 function isSeatNoticeCause(value: unknown): value is SeatNoticeCause {
   return typeof value === "string" && (SEAT_NOTICE_CAUSES as readonly string[]).includes(value);
@@ -504,6 +506,7 @@ export function parseBrowserEnvelopeValue(raw: unknown): BrowserEnvelope {
       players,
       screen: normalizeScreen(value.screen),
       headlessMirrorPort: typeof value.headlessMirrorPort === "number" ? value.headlessMirrorPort : null,
+      headlessMirrorPath: typeof value.headlessMirrorPath === "string" ? value.headlessMirrorPath : null,
       connectionAttemptId: typeof value.connectionAttemptId === "string" && value.connectionAttemptId.length <= 128
         ? value.connectionAttemptId : null,
       directView: value.directView === true,

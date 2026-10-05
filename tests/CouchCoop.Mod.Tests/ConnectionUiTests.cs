@@ -47,6 +47,9 @@ internal static class ConnectionUiTests
                      // lost its connection / reconnect this browser" — on a Host service row raised by a join
                      // that SUCCEEDED, which is wrong twice over.
                      CouchCoop.Mod.Session.HeadlessClientManager.SeatPortOccupiedCode,
+                     "seat-relay-unavailable",
+                     "seat-relay-not-ready",
+                     "host-browser-port-occupied",
                  })
         {
             var issue = new ConnectionIssue(code, "", "", null);
@@ -63,6 +66,16 @@ internal static class ConnectionUiTests
         {
             CouchCoopLocalization.SetLanguageForTests(language);
             var unmapped = new ConnectionIssue("something-nobody-mapped", "", "", null);
+            foreach (var code in new[] { "seat-relay-unavailable", "seat-relay-not-ready", "host-browser-port-occupied" })
+            {
+                var issue = new ConnectionIssue(code, "", "", null);
+                Assert(Copy("Summary", issue) != Copy("Summary", unmapped)
+                    && Copy("Action", issue) != Copy("Action", unmapped),
+                    $"{code} has its own summary and action in {language}");
+                Assert(!Copy("Summary", issue).StartsWith("couchcoop_", StringComparison.Ordinal)
+                    && !Copy("Action", issue).StartsWith("couchcoop_", StringComparison.Ordinal),
+                    $"{code} resolves to translated sentences in {language}");
+            }
             var occupied = new ConnectionIssue(CouchCoop.Mod.Session.HeadlessClientManager.SeatPortOccupiedCode, "", "", null);
             Assert(Copy("Summary", occupied) != Copy("Summary", unmapped) && Copy("Action", occupied) != Copy("Action", unmapped),
                 $"the stepped-around seat port has its own copy in {language}, not the join fallback");

@@ -29,7 +29,7 @@ internal static class QrRasterTests
     // The two payloads the mod actually produces. Not synthetic sizes: the whole point is that the
     // difference between THESE is what the player saw.
     private const string PlainLanUrl = "http://worky.local:13337/";
-    private const string SecureUrl = "https://192-168-0-89.my.local-ip.co:13338/";
+    private const string SecureUrl = "https://192-168-0-89.my.local-ip.co:13337/";
 
     public static void Run()
     {

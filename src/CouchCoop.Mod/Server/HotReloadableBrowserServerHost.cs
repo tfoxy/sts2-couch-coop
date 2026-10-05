@@ -19,11 +19,12 @@ public sealed class HotReloadableBrowserServerHost : IHotServerHost, IHotBrowser
     private readonly Action<int, long> _inputGuardDemand = RootWindowEmbeddingGuard.CreateBrowserDemandReporter();
     private readonly Action<int, long> _zeroClientSeatDemand = ZeroClientGuard.CreateOwnedSeatReporter();
     private TcpListener? _listener;
+    private SeatBrowserPipe? _seatPipe;
     private CancellationTokenSource? _stop;
     private Task? _acceptLoop;
     private ICouchCoopHotGeneration? _generation;
     private int _generationNumber;
-    private SecureBrowserListener? _secureListener;
+    private readonly SecureBrowserListener _secureListener;
     private CouchCoop.Mod.Connections.ConnectionHostingTracker? _connectionHosting;
     public NetworkAdmissionLimiter Admission { get; }
 
@@ -41,6 +42,7 @@ public sealed class HotReloadableBrowserServerHost : IHotServerHost, IHotBrowser
         _preferredPort = preferredPort;
         ResourceCacheRoot = resourceCacheRoot;
         _log = log ?? CouchCoopLog.Stderr;
+        _secureListener = new SecureBrowserListener(_log);
         var lobby = new CouchCoopLobbyParticipation(_runtime);
         _headlessManager = CouchCoopMod.IsHeadlessClient
             ? null
@@ -90,23 +92,20 @@ public sealed class HotReloadableBrowserServerHost : IHotServerHost, IHotBrowser
 
     public Uri? BaseUri { get; private set; }
 
-    public bool IsRunning => _listener is not null && BaseUri is not null;
+    public bool IsRunning => (_listener is not null || _seatPipe is not null) && BaseUri is not null;
 
     /// <summary>
-    /// The port the OPT-IN TLS listener actually bound, or <c>0</c> when the secure origin is not running.
+    /// The host browser port when TLS is enabled, or <c>0</c> before the certificate is ready.
     /// </summary>
     /// <remarks>
-    /// Callers must advertise THIS, never <see cref="SecureBrowserListener.PreferredPortOffset"/> applied to
-    /// the HTTP port — the secure listener port-walks exactly like the HTTP one, and the QR must carry the
-    /// port we bound, not the one we wanted.
+    /// HTTP and HTTPS share the port actually bound by the host's one TCP listener.
     /// </remarks>
-    public int SecurePort => _secureListener?.Port ?? 0;
+    public int SecurePort => _secureListener.IsRunning ? BaseUri?.Port ?? 0 : 0;
 
     public void Log(string message) => _log(message);
 
     /// <summary>
-    /// Bring up the opt-in TLS listener beside the running HTTP one. Best-effort and idempotent: returns
-    /// <see langword="false"/> without touching anything when there is no certificate or no free port.
+    /// Enable TLS on the running HTTP listener. Best-effort and idempotent.
     /// </summary>
     /// <remarks>
     /// Separate from <see cref="StartAsync"/> on purpose. Certificate acquisition is a network round-trip
@@ -117,55 +116,35 @@ public sealed class HotReloadableBrowserServerHost : IHotServerHost, IHotBrowser
     {
         ArgumentNullException.ThrowIfNull(certificates);
 
-        if (_secureListener?.IsRunning == true)
+        if (_secureListener.IsRunning)
         {
             return true;
         }
 
-        if (BaseUri is null || certificates.Certificate is null)
+        if (_listener is null || BaseUri is null || certificates.Certificate is null)
         {
             return false;
         }
 
-        var listener = new SecureBrowserListener(_bindAddress, DispatchSecureClientAsync, _log, Admission);
-        if (!listener.TryStart(
-                certificates.Certificate,
-                BaseUri.Port + SecureBrowserListener.PreferredPortOffset,
-                certificates.Intermediates,
-                cancellationToken))
+        if (cancellationToken.IsCancellationRequested ||
+            !_secureListener.TryEnable(certificates.Certificate, certificates.Intermediates))
         {
             return false;
         }
 
-        _secureListener = listener;
         // Published so the /secure-port route can report it: a HOST that redirects a TLS viewer to this
         // instance has no other way to learn the port we actually walked to.
-        SecureOriginEndpoint.Publish(listener.Port);
-        _log($"secure-origin listening port={listener.Port}");
+        SecureOriginEndpoint.Publish(BaseUri.Port);
+        _log($"secure-origin listening port={BaseUri.Port}");
         return true;
     }
 
-    // The TLS twin of DispatchClientAsync. The stream is already decrypted and the socket is owned by the
-    // secure listener, so this only has to find the live generation and hand the stream over.
+    // The stream is already decrypted; this finds the live generation and hands it the stream.
     //
     // A generation that predates the secure origin (any hot-reloaded logic assembly, whose
     // ICouchCoopHotGeneration comes from the shared contracts assembly and therefore cannot know about
     // streams) is answered honestly with 503 rather than being handed a socket it would try to re-read from
     // scratch. Hot-reload is a development path; the shipped built-in generation implements the stream seam.
-    private async Task DispatchSecureClientAsync(TcpClient client, Stream stream, CancellationToken cancellationToken)
-    {
-        // A served connection is demand for the zero-client tripwire from before its first byte is read.
-        ZeroClientGuard.ClientOpened();
-        try
-        {
-            await DispatchSecureClientCoreAsync(client, stream, cancellationToken).ConfigureAwait(false);
-        }
-        finally
-        {
-            ZeroClientGuard.ClientClosed();
-        }
-    }
-
     private async Task DispatchSecureClientCoreAsync(TcpClient client, Stream stream, CancellationToken cancellationToken)
     {
         ICouchCoopHotGeneration? generation;
@@ -211,20 +190,36 @@ public sealed class HotReloadableBrowserServerHost : IHotServerHost, IHotBrowser
     // not happen to anyone holding a connection.
     public async Task<Uri> StartAsync(CancellationToken cancellationToken = default)
     {
-        if (_listener is not null && BaseUri is not null)
+        if ((_listener is not null || _seatPipe is not null) && BaseUri is not null)
         {
+            return BaseUri;
+        }
+
+        if (IsHeadlessClient && Environment.GetEnvironmentVariable(SeatBrowserPipe.NameEnvironmentVariable) is not null)
+        {
+            _seatPipe = SeatBrowserPipe.StartFromEnvironment(DispatchPipeClientAsync)
+                ?? throw new InvalidOperationException("The seat browser pipe was not configured.");
+            BaseUri = new Uri("pipe://localhost/seat-browser");
+            // The built-in browser generation is installed by the constructor, so the pipe can answer now.
+            HeadlessConnectionReporter.PublishRelayReady();
             return BaseUri;
         }
 
         TcpListener listener;
         try
         {
-            // A HOST still walks upward when its preferred port is taken: several game instances share one
-            // machine, and `scripts/lib/instance-port.mjs` reads the walked port back out of BrowserPortFile for
-            // exactly that reason. A SEAT may NOT — the host hands the browser the port it assigned and probes
-            // that same port, so a walked seat serves an address nobody will ever ask for. See
-            // HeadlessSeatPortGuard, which owns both halves of that rule.
-            listener = HeadlessSeatPortGuard.Bind(_bindAddress, _preferredPort, IsHeadlessClient, cancellationToken);
+            if (!IsHeadlessClient && SeatBrowserRoutePreference.Read() == SeatBrowserRouteMode.Shared)
+            {
+                // A shared host has exactly one browser address. Walking to another port would make the QR
+                // and configured firewall rule misleading, so a conflict is a startup error.
+                if (_preferredPort is <= 0 or > ushort.MaxValue)
+                    throw new InvalidOperationException($"Shared browser port {_preferredPort} is outside 1..65535.");
+                cancellationToken.ThrowIfCancellationRequested();
+                listener = new TcpListener(_bindAddress, _preferredPort);
+                listener.Start();
+            }
+            else
+                listener = HeadlessSeatPortGuard.Bind(_bindAddress, _preferredPort, IsHeadlessClient, cancellationToken);
         }
         catch (SeatPortUnavailableException failure)
         {
@@ -232,6 +227,14 @@ public sealed class HotReloadableBrowserServerHost : IHotServerHost, IHotBrowser
             // Never returns; the rethrow exists so the compiler (and a future non-exiting variant) sees a path.
             HeadlessSeatPortGuard.ReportAndExit(failure);
             throw;
+        }
+        catch (SocketException failure) when (!IsHeadlessClient)
+        {
+            var detail = $"Browser port {_preferredPort} on {_bindAddress} is occupied: {failure.SocketErrorCode}.";
+            CouchCoop.Mod.Connections.ConnectionRegistry.Shared.ReportHostIssue(
+                "host-browser-port-occupied", "The shared browser port is already in use.",
+                "Free the configured browser port and restart the host.", detail, isWarning: false);
+            throw new InvalidOperationException(detail, failure);
         }
 
         _listener = listener;
@@ -250,6 +253,20 @@ public sealed class HotReloadableBrowserServerHost : IHotServerHost, IHotBrowser
         return BaseUri;
     }
 
+    private async Task DispatchPipeClientAsync(Stream stream, bool isSecure, IPAddress remoteAddress,
+        CancellationToken cancellationToken)
+    {
+        ICouchCoopHotGeneration? generation;
+        lock (_generationGate) generation = _generation;
+        if (generation is BuiltInBrowserServerGeneration builtIn)
+            await builtIn.ServeAsync(stream, isSecure, remoteAddress, cancellationToken).ConfigureAwait(false);
+        else if (generation is ICouchCoopStreamGeneration streamGeneration)
+            await streamGeneration.ServeAsync(stream, isSecure, cancellationToken).ConfigureAwait(false);
+        else
+            await HttpResponseWriter.WriteJsonErrorAsync(stream, HttpStatusCode.ServiceUnavailable,
+                "seat-generation-unavailable", "The player's game view is not ready.", cancellationToken).ConfigureAwait(false);
+    }
+
     public async Task ReplaceGenerationAsync(
         ICouchCoopHotGeneration generation,
         int generationNumber,
@@ -266,6 +283,8 @@ public sealed class HotReloadableBrowserServerHost : IHotServerHost, IHotBrowser
             _generation = generation;
             _generationNumber = generationNumber;
         }
+        // A generation swap keeps the pipe bound. Reassert readiness for the new browser generation.
+        if (_seatPipe is not null) HeadlessConnectionReporter.PublishRelayReady();
 
         if (previous is not null)
         {
@@ -312,11 +331,14 @@ public sealed class HotReloadableBrowserServerHost : IHotServerHost, IHotBrowser
         _zeroClientSeatDemand(0, long.MaxValue);
         _connectionHosting?.Dispose();
         _connectionHosting = null;
-        if (_secureListener is not null)
+        if (_seatPipe is not null)
         {
-            await _secureListener.DisposeAsync().ConfigureAwait(false);
-            _secureListener = null;
+            HeadlessConnectionReporter.PublishRelayStopped();
+            await _seatPipe.DisposeAsync().ConfigureAwait(false);
+            _seatPipe = null;
         }
+        SecureOriginEndpoint.Publish(0);
+        _secureListener.Disable();
 
         _stop?.Cancel();
         _listener?.Stop();
@@ -400,7 +422,7 @@ public sealed class HotReloadableBrowserServerHost : IHotServerHost, IHotBrowser
             Admission.AttachHttp(client, lease);
             try
             {
-                _ = Task.Run(() => DispatchClientAsync(client, cancellationToken), CancellationToken.None);
+                _ = Task.Run(() => DispatchAcceptedClientAsync(client, cancellationToken), CancellationToken.None);
             }
             catch
             {
@@ -411,11 +433,19 @@ public sealed class HotReloadableBrowserServerHost : IHotServerHost, IHotBrowser
         }
     }
 
-    private async Task DispatchClientAsync(TcpClient client, CancellationToken cancellationToken)
+    private async Task DispatchAcceptedClientAsync(TcpClient client, CancellationToken cancellationToken)
     {
-        // A served connection is demand for the zero-client tripwire from before its first byte is read, and stays
-        // demand for as long as its handler runs (a WebSocket's handler is its whole lifetime).
         ZeroClientGuard.ClientOpened();
+        try
+        {
+            await _secureListener.ClassifyAndServeAsync(client, Admission, DispatchClientCoreAsync,
+                DispatchSecureClientCoreAsync, cancellationToken).ConfigureAwait(false);
+        }
+        finally { ZeroClientGuard.ClientClosed(); }
+    }
+
+    private async Task DispatchClientCoreAsync(TcpClient client, CancellationToken cancellationToken)
+    {
         try
         {
             ICouchCoopHotGeneration? generation;
@@ -451,7 +481,6 @@ public sealed class HotReloadableBrowserServerHost : IHotServerHost, IHotBrowser
             // A generation normally takes ownership of the attached lease. If it failed before doing so (or no
             // generation was active), reclaim it here so the listener's bounded task slot cannot leak.
             Admission.TakeAttachedHttp(client)?.Dispose();
-            ZeroClientGuard.ClientClosed();
         }
     }
 

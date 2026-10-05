@@ -73,6 +73,12 @@ public sealed class CouchCoopHttpRequest
         => TryReadWithPrefixAsync(
             stream, ArrayPool<byte>.Shared, HeaderReadTimeout, HeaderReadChunkBytes, cancellationToken);
 
+    internal static Task<CouchCoopHttpReadResult?> TryReadWithPrefixAsync(
+        Stream stream, Func<CouchCoopHttpRequest, bool> retainHeader,
+        CancellationToken cancellationToken = default)
+        => TryReadWithPrefixAsync(stream, ArrayPool<byte>.Shared, HeaderReadTimeout,
+            HeaderReadChunkBytes, cancellationToken, retainHeader);
+
     internal static async Task<CouchCoopHttpReadResult?> TryReadWithPrefixAsync(
         Stream stream,
         ArrayPool<byte> bufferPool,
@@ -86,7 +92,8 @@ public sealed class CouchCoopHttpRequest
         ArrayPool<byte> bufferPool,
         TimeSpan timeout,
         int readChunkBytes,
-        CancellationToken cancellationToken)
+        CancellationToken cancellationToken,
+        Func<CouchCoopHttpRequest, bool>? retainHeader = null)
     {
         ArgumentNullException.ThrowIfNull(stream);
         ArgumentNullException.ThrowIfNull(bufferPool);
@@ -127,6 +134,9 @@ public sealed class CouchCoopHttpRequest
                         return null;
                     }
 
+                    var rawHeader = retainHeader?.Invoke(request) == true
+                        ? buffer.AsSpan(0, headerLength).ToArray()
+                        : null;
                     var prefixCount = count - headerLength;
                     var prefixBuffer = buffer;
                     var prefixOffset = headerLength;
@@ -151,7 +161,7 @@ public sealed class CouchCoopHttpRequest
                         prefixBuffer,
                         prefixOffset,
                         prefixCount);
-                    return new CouchCoopHttpReadResult(request, prefixed);
+                    return new CouchCoopHttpReadResult(request, prefixed, rawHeader);
                 }
             }
 
@@ -250,15 +260,19 @@ public sealed class CouchCoopHttpReadResult : IDisposable
 {
     private readonly PrefixPreservingStream _stream;
 
-    internal CouchCoopHttpReadResult(CouchCoopHttpRequest request, PrefixPreservingStream stream)
+    internal CouchCoopHttpReadResult(CouchCoopHttpRequest request, PrefixPreservingStream stream, byte[]? rawHeader)
     {
         Request = request;
         _stream = stream;
+        RawHeader = rawHeader;
     }
 
     public CouchCoopHttpRequest Request { get; }
 
     public Stream Stream => _stream;
+
+    /// <summary>The exact request header, retained only when the caller selected a relay route.</summary>
+    public ReadOnlyMemory<byte> RawHeader { get; }
 
     public void Dispose() => _stream.Dispose();
 }

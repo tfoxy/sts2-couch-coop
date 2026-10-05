@@ -401,7 +401,7 @@ describe("connectMirrorClient", () => {
 
   it("redirects to a headless game instance when the session carries headlessMirrorPort", async () => {
     MockWebSocket.instances = [];
-    let redirectPort: number | null = null;
+    let redirectPort: string | number | null = null;
     const client = connectMirrorClient({
       WebSocketCtor: MockWebSocket as unknown as typeof WebSocket,
       location: { href: "http://localhost/", protocol: "http:" },
@@ -418,10 +418,50 @@ describe("connectMirrorClient", () => {
     client.close();
   });
 
+  it("prefers the shared seat path when a join reply also carries a direct port", async () => {
+    MockWebSocket.instances = [];
+    let redirect: string | number | null = null;
+    const client = connectMirrorClient({
+      WebSocketCtor: MockWebSocket as unknown as typeof WebSocket,
+      location: { href: "http://localhost/", protocol: "http:" },
+      onHeadlessRedirect(target) { redirect = target; }
+    });
+    await Promise.resolve();
+    MockWebSocket.instances[0].emit(currentSession({
+      headlessMirrorPath: "/ws?seat=opaque-token",
+      headlessMirrorPort: 13347,
+      session: { joined: true }
+    }));
+    expect(redirect).toBe("/ws?seat=opaque-token");
+    expect(client.session?.headlessMirrorPath).toBe("/ws?seat=opaque-token");
+    client.close();
+  });
+
+  it("rejects an invalid shared route without falling back to the direct port", async () => {
+    MockWebSocket.instances = [];
+    let redirect: string | number | null = null;
+    const rejected: string[] = [];
+    const client = connectMirrorClient({
+      WebSocketCtor: MockWebSocket as unknown as typeof WebSocket,
+      location: { href: "http://localhost/", protocol: "http:" },
+      onHeadlessRedirect(target) { redirect = target; },
+      onJoinRejected(reason) { rejected.push(reason); }
+    });
+    await Promise.resolve();
+    MockWebSocket.instances[0].emit(currentSession({
+      headlessMirrorPath: "//another-host/ws?seat=stolen",
+      headlessMirrorPort: 13347,
+      session: { joined: true }
+    }));
+    expect(redirect).toBeNull();
+    expect(rejected).toEqual(["join-failed"]);
+    client.close();
+  });
+
   it("fires onDirectView (not redirect) when the session carries directView", async () => {
     MockWebSocket.instances = [];
     let directView = 0;
-    let redirectPort: number | null = null;
+    let redirectPort: string | number | null = null;
     const client = connectMirrorClient({
       WebSocketCtor: MockWebSocket as unknown as typeof WebSocket,
       location: { href: "http://localhost/", protocol: "http:" },
@@ -461,7 +501,7 @@ describe("connectMirrorClient", () => {
   it("fires onJoinRejected with the code when the join is refused", async () => {
     MockWebSocket.instances = [];
     let rejection: string | null = null;
-    let redirectPort: number | null = null;
+    let redirectPort: string | number | null = null;
     const client = connectMirrorClient({
       WebSocketCtor: MockWebSocket as unknown as typeof WebSocket,
       location: { href: "http://localhost/", protocol: "http:" },
@@ -494,7 +534,7 @@ describe("connectMirrorClient", () => {
     // a seat that was never coming. A rejection is terminal on its own.
     MockWebSocket.instances = [];
     let rejection: string | null = null;
-    let redirectPort: number | null = null;
+    let redirectPort: string | number | null = null;
     const client = connectMirrorClient({
       WebSocketCtor: MockWebSocket as unknown as typeof WebSocket,
       location: { href: "http://localhost/", protocol: "http:" },
@@ -523,7 +563,7 @@ describe("connectMirrorClient", () => {
     // stale/spurious rejection field beat an actual redirect.
     MockWebSocket.instances = [];
     let rejection: string | null = null;
-    let redirectPort: number | null = null;
+    let redirectPort: string | number | null = null;
     const client = connectMirrorClient({
       WebSocketCtor: MockWebSocket as unknown as typeof WebSocket,
       location: { href: "http://localhost/", protocol: "http:" },
@@ -645,7 +685,7 @@ describe("connectMirrorClient", () => {
   it("stops reporting join faults once the join has been granted", async () => {
     MockWebSocket.instances = [];
     const errors: string[] = [];
-    let redirectPort: number | null = null;
+    let redirectPort: string | number | null = null;
     const client = connectMirrorClient({
       WebSocketCtor: MockWebSocket as unknown as typeof WebSocket,
       location: { href: "http://localhost/", protocol: "http:" },

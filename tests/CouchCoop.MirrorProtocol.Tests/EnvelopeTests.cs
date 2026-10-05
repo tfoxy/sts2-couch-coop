@@ -18,7 +18,7 @@ internal static class EnvelopeTests
 
     private static void ParsesAFullSessionEnvelope()
     {
-        var json = TestFixtures.J(new Dictionary<string, object?>
+        var fields = new Dictionary<string, object?>
         {
             ["type"] = "session",
             ["session"] = new Dictionary<string, object?>
@@ -42,7 +42,8 @@ internal static class EnvelopeTests
             ["scrollAction"] = true,
             ["assetCacheToken"] = "cache",
             ["hostName"] = "host",
-        });
+        };
+        var json = TestFixtures.J(fields);
 
         var env = SessionEnvelope.Parse(json);
         Check.That(env is not null, "session parsed");
@@ -67,11 +68,19 @@ internal static class EnvelopeTests
         Check.Equal(env.Screen.MirrorMode, "mp-run", "screen.mirrorMode");
 
         Check.Equal(env.HeadlessMirrorPort, 41234, "headlessMirrorPort");
+        Check.Equal(env.HeadlessMirrorPath, null, "absent shared path");
         Check.Equal(env.DirectView, false, "directView");
         Check.Equal(env.JoinRejection, null, "joinRejection");
         Check.Equal(env.RefreshRate, 24, "refreshRate");
         Check.Equal(env.AssetCacheToken, "cache", "assetCacheToken");
         Check.Equal(env.HostName, "host", "hostName");
+
+        fields.Remove("headlessMirrorPort");
+        fields["headlessMirrorPath"] = "/ws?seat=opaque-token";
+        var shared = SessionEnvelope.Parse(TestFixtures.J(fields));
+        Check.That(shared is not null, "shared path parsed");
+        Check.Equal(shared!.HeadlessMirrorPath, "/ws?seat=opaque-token", "headlessMirrorPath");
+        Check.Equal(shared.HeadlessMirrorPort, null, "shared path has no direct port");
     }
 
     private static void RejectsMissingCurrentSessionFields()

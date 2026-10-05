@@ -5,7 +5,7 @@ namespace CouchCoop.MirrorProtocol.Envelopes;
 // PARSE-side subset of the `session` message the native Godot client consumes, matching EXACTLY what
 // frontend/src/protocol/browserEnvelope.ts's session branch reads (normalizeSession / normalizePlayers /
 // normalizeScreen + the mirror-directive fields). Everything the mirror needs for the shared join screen + the
-// three mutually-exclusive join-reply directives (directView / headlessMirrorPort / joinRejection), and nothing
+// join-reply directives (directView / headlessMirrorPath / headlessMirrorPort / joinRejection), and nothing
 // the stateful-only view uses.
 
 // The viewer's own assignment (TS BrowserSessionAssignment).
@@ -64,7 +64,8 @@ public sealed record SessionEnvelope(
     string AssetCacheToken,
     string HostName,
     bool ScrollAction,
-    string? ConnectionAttemptId = null)
+    string? ConnectionAttemptId = null,
+    string? HeadlessMirrorPath = null)
 {
     // Mirror-view screen discriminators (TS MirrorScreenKind).
     private static readonly string[] MirrorScreenKinds =
@@ -139,7 +140,8 @@ public sealed record SessionEnvelope(
             assetCacheToken,
             hostName,
             ScrollAction: true,
-            ConnectionAttemptId: AsStringOrNull(Get(root, "connectionAttemptId")));
+            ConnectionAttemptId: AsStringOrNull(Get(root, "connectionAttemptId")),
+            HeadlessMirrorPath: AsStringOrNull(Get(root, "headlessMirrorPath")));
     }
 
     private static SessionAssignment? NormalizeSession(JsonElement? raw)

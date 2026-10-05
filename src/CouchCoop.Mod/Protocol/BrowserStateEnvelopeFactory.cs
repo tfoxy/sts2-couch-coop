@@ -77,7 +77,8 @@ public sealed class BrowserStateEnvelopeFactory(
         string? connectionAttemptId = null,
         CancellationToken cancellationToken = default,
         // What a fan-out read once for all of its connections (see ReadSessionFacts). Null reads it here.
-        SessionFacts? facts = null)
+        SessionFacts? facts = null,
+        string? headlessMirrorPath = null)
     {
         cancellationToken.ThrowIfCancellationRequested();
 
@@ -179,6 +180,7 @@ public sealed class BrowserStateEnvelopeFactory(
             Screen: assignment.Screen,
             AssignmentNotices: assignment.Notices,
             HeadlessMirrorPort: headlessMirrorPort,
+            HeadlessMirrorPath: headlessMirrorPath,
             DirectView: directView,
             JoinRejection: joinRejection,
             // Detail is meaningless without a rejection to attach it to — drop a stray one rather than emitting a

@@ -150,7 +150,8 @@ export function mirrorJoinProgressLine(
 export const MIRROR_SEAT_NOTICE_KEYS = {
   "port-conflict": ["seat.notice.portConflict", "seat.notice.portConflictFix"],
   "host-local-block": ["seat.notice.hostBlock", "seat.notice.hostBlockFix"],
-  "network-path": ["seat.notice.networkPath", "seat.notice.networkPathFix"]
+  "network-path": ["seat.notice.networkPath", "seat.notice.networkPathFix"],
+  "relay-unavailable": ["join.failed", "seat.notice.portConflictFix"]
 } as const satisfies Partial<Record<SeatNoticeCause, readonly [string, string]>>;
 
 export type MirrorSeatNoticeKey = (typeof MIRROR_SEAT_NOTICE_KEYS)[keyof typeof MIRROR_SEAT_NOTICE_KEYS][number];

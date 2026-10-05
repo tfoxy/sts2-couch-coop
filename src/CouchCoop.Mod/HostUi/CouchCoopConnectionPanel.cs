@@ -499,6 +499,8 @@ internal sealed partial class CouchCoopConnectionPanel : Panel
         Session.SeatReadinessVerdict.PortTakenCode => "seat_port",
         Session.SeatReadinessVerdict.PortBlockedCode => "seat_port_blocked",
         Session.SeatReadinessVerdict.NetworkPathCode => "seat_network",
+        "seat-relay-unavailable" or "seat-relay-not-ready" => "seat_relay",
+        "host-browser-port-occupied" => "host_browser_port_occupied",
         "launch-exception" or "launch-refused" or "startup-timeout" or "process-monitor-failed" => "launch",
         // Split out of "launch" for the same reason seat_run_in_progress was: the launch copy says "try joining
         // again", and no retry can bind a port another process owns. This row is also raised against the HOST

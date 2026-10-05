@@ -151,9 +151,9 @@ public static class CouchCoopWebOrigin
     /// </summary>
     /// <remarks>
     /// <para>
-    /// <b>THE PORT IS DELIBERATELY IGNORED, and getting this wrong breaks co-op outright.</b> A joined seat
-    /// is redirected to its own headless instance, which is a separate process on a DIFFERENT port
-    /// (base + 10×slot). The page stays on the port it was loaded from, so the browser sends
+    /// <b>THE PORT IS DELIBERATELY IGNORED, and getting this wrong breaks direct-port co-op.</b> In direct mode,
+    /// a joined seat is redirected to its own headless process on a different port (base + 10×slot).
+    /// The page stays on the port it was loaded from, so the browser sends
     /// <c>Origin: http://worky.local:13337</c> to an instance whose <c>Host</c> is
     /// <c>worky.local:13357</c>. A port-sensitive comparison refuses that — i.e. refuses every headless
     /// seat, on every topology, including the plain LAN one that has always worked. This was written
@@ -161,8 +161,7 @@ public static class CouchCoopWebOrigin
     /// encoded the bug.
     /// </para>
     /// <para>
-    /// Ignoring the port is also the honest trust boundary. Every port in this range belongs to this mod —
-    /// the host server and the instances it spawns — so a page served by one of them may talk to another.
+    /// Ignoring the port keeps a page served by this mod's host able to talk to one of its direct seats.
     /// What the check is actually defending against is an unrelated PUBLIC site poking the LAN, and that
     /// is refused by the host comparison alone (and gated again by the browser's Local Network Access
     /// permission). The residual exposure is a different service on another port of this same machine,

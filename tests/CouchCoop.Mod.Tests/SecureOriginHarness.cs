@@ -75,29 +75,44 @@ internal static class SecureOriginHarness
             }
 
             const string body = "couch-coop-secure-origin";
-            await using var listener = new SecureBrowserListener(
-                advertised!,
-                async (_, stream, token) =>
-                {
-                    await stream.WriteAsync(Encoding.UTF8.GetBytes(body), token);
-                    await stream.FlushAsync(token);
-                },
-                Console.WriteLine);
-
-            if (!listener.TryStart(certificate, 13338, intermediates))
+            var transport = new SecureBrowserListener(Console.WriteLine);
+            if (!transport.TryEnable(certificate, intermediates))
             {
-                Console.WriteLine("[harness] FAIL: the secure listener did not start.");
+                Console.WriteLine("[harness] FAIL: TLS could not be enabled.");
                 return 1;
             }
 
-            Console.WriteLine($"[harness] listening port={listener.Port}");
+            using var listener = new TcpListener(advertised!, 0);
+            listener.Start();
+            var port = ((IPEndPoint)listener.LocalEndpoint).Port;
+            var admission = new CouchCoop.Mod.Contracts.NetworkAdmissionLimiter();
+            using var stop = new CancellationTokenSource(TimeSpan.FromSeconds(30));
+            var serving = Task.Run(async () =>
+            {
+                using var accepted = await listener.AcceptTcpClientAsync(stop.Token);
+                var lease = admission.TryAcquireHttp(advertised!);
+                if (lease is null) return;
+                admission.AttachHttp(accepted, lease);
+                await transport.ClassifyAndServeAsync(
+                    accepted,
+                    admission,
+                    (_, _) => Task.CompletedTask,
+                    async (_, stream, token) =>
+                    {
+                        await stream.WriteAsync(Encoding.UTF8.GetBytes(body), token);
+                        await stream.FlushAsync(token);
+                    },
+                    stop.Token);
+            });
+
+            Console.WriteLine($"[harness] listening port={port}");
 
             try
             {
                 using var client = new TcpClient();
                 // Dial the PUBLIC NAME, not the address: this is what exercises the provider's DNS wildcard
                 // and the certificate's hostname match together, which is the pair a phone depends on.
-                await client.ConnectAsync(hostName, listener.Port);
+                await client.ConnectAsync(hostName, port);
 
                 // No validation callback: this is the whole point. The default policy checks the chain against
                 // the machine's trust store AND verifies the hostname, exactly as a browser would.
@@ -114,7 +129,8 @@ internal static class SecureOriginHarness
                     return 1;
                 }
 
-                Console.WriteLine($"[harness] PASS: publicly-trusted TLS to https://{hostName}:{listener.Port}/ "
+                await serving;
+                Console.WriteLine($"[harness] PASS: publicly-trusted TLS to https://{hostName}:{port}/ "
                     + $"negotiated {tls.SslProtocol} and served the payload.");
                 return 0;
             }

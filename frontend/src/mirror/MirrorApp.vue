@@ -24,7 +24,7 @@ import { rendererComparisonViewRevision } from "@/mirror/rendererComparison";
 import StaticBackground from "@/mirror/StaticBackground.vue";
 import { designPx } from "@/mirror/stageFit";
 import {
-  buildHeadlessMirrorWebSocketUrl,
+  buildSeatMirrorWebSocketUrl,
   connectMirrorClient,
   emptyMirrorLatency,
   SCROLL_ELEMENT_ID_ARG,
@@ -151,7 +151,7 @@ const JOIN_TIMEOUT_MS = 90_000;
 //
 // The client mutates its retained Map in place and bumps `state.revision`; we mirror that into a `revision`
 // ref (and `status`/`session`) so Vue recomputes. On a co-op join, the host spawns a headless game instance
-// and replies with `headlessMirrorPort`; the app reconnects there so the player sees their own game view —
+// and replies with a shared path or a direct seat port; the app reconnects so the player sees their own view —
 // `activeClient` is replaced and `mirrorState` updated.
 
 // Independent warming waits for the first ACTIVE connection's resolved view. Static Neow uses a still and holds
@@ -416,7 +416,7 @@ let reconnectTimer: ReturnType<typeof setTimeout> | null = null;
 let unmounted = false;
 // ---- HOLDING A SEAT THE DEVICE CANNOT REACH (yet) ---------------------------------------------------------------
 //
-// The port the host last redirected us to, or null when this device holds no seat. It is what makes a seat socket
+// The route the host last redirected us to, or null when this device holds no seat. It makes a seat socket
 // RETRYABLE without restarting the join — and the reason it has to exist is the worst thing this app has been
 // measured doing.
 //
@@ -435,7 +435,7 @@ let unmounted = false;
 // stays open (it is also the ONLY channel the verdict arrives on; see `onSeatNotice`), the seat URL is retried on
 // the same backoff ladder, and the notice is left standing. Every other drop — a seat socket that opened and later
 // died, a headless announcing its exit, the host socket itself — is unchanged and still tears down.
-let seatViewPort: number | null = null;
+let seatViewTarget: string | number | null = null;
 // Which clients ever reached `connected`. Read off `mirrorClient.status` at the moment it says so, because by the
 // time a `disconnected` notification arrives the status has already been overwritten and "never opened" and "opened
 // then dropped" are indistinguishable — which is exactly the distinction the hold above rests on.
@@ -679,12 +679,12 @@ function makeClient(url?: string, watchStream = false): MirrorClient {
           target.source.sendClientViewError(target.attemptId, "The game-view WebSocket closed. The browser did not report a more specific cause.", "browser-transport-lost");
         }
         // A seat socket that NEVER OPENED, with the host still talking to us: hold the seat instead of tearing
-        // the join down (see `seatViewPort` for the loop this stops). Everything else falls through unchanged —
+        // the join down (see `seatViewTarget` for the loop this stops). Everything else falls through unchanged —
         // including a seat socket that opened and later dropped, which really is a view that was lost, and a drop
         // that finds the host socket gone too, where there is nothing left to hold onto.
-        if (seatViewPort !== null && c !== hostClient && !everConnected.has(c)
+        if (seatViewTarget !== null && c !== hostClient && !everConnected.has(c)
           && hostClient.status === "connected") {
-          holdSeatView(seatViewPort);
+          holdSeatView(seatViewTarget);
           return;
         }
         handleActiveClientDrop();
@@ -738,7 +738,7 @@ function makeClient(url?: string, watchStream = false): MirrorClient {
       if (activeClient !== c) return;
       latency.value = { ...c.latency };
     },
-    onHeadlessRedirect(port) {
+    onHeadlessRedirect(target) {
       if (activeClient !== c) return; // prevent double-redirect
       // The host accepted the join: persist the name (storage + a PUSHED `?name=`) so a reload auto-joins
       // straight in and Back leaves the seat. `rememberJoinedName`'s equality guard means the auto-join case
@@ -771,10 +771,10 @@ function makeClient(url?: string, watchStream = false): MirrorClient {
       // headless before the redirect lands) but it has no reason to keep receiving bytes — and dropping its
       // streaming registration is what lets a host whose viewers have all redirected away stop its producer.
       c.sendWatch(false);
-      // Remember the port BEFORE opening the socket: a connection that never opens is exactly the case the hold
+      // Remember the route BEFORE opening the socket: a connection that never opens is exactly the case the hold
       // exists for, and it needs somewhere to retry.
-      seatViewPort = port;
-      openSeatView(port);
+      seatViewTarget = target;
+      openSeatView(target);
       // Do NOT call c.close() here. Closing the host WS triggers Release() on the server,
       // which kills the headless process — before the browser has established the new WS.
       // The host connection is closed on unmount (via allClients) instead.
@@ -1200,7 +1200,7 @@ function submitJoin(name: string, playerId?: string): void {
   seatNotice.value = null;
   // …and with no seat held: this attempt will be answered with a port of its own, and a stale one would let a
   // retry ladder keep reaching for the seat the viewer just walked away from.
-  seatViewPort = null;
+  seatViewTarget = null;
   pendingName.value = trimmed;
   prefillName.value = trimmed;
   // Held until the host confirms with a redirect, which promotes it to the auto-rejoin target.
@@ -1212,7 +1212,7 @@ function submitJoin(name: string, playerId?: string): void {
     joined.value = true;
     pendingName.value = null;
     activeClient.sendWatch(false);
-    seatViewPort = syntheticPort;
+    seatViewTarget = syntheticPort;
     openSeatView(syntheticPort);
     return;
   }
@@ -1249,10 +1249,10 @@ watch(pendingName, (name) => {
 // touched: it stays open and gated off, because closing it is what makes the server Release() and kill the seat.
 // Shared by the redirect and by the hold's retry so the two cannot build a different URL — the query is rebuilt
 // from the CURRENT settings each time, so a viewer who changed one while waiting gets it honoured on the retry.
-function openSeatView(port: number): void {
+function openSeatView(target: string | number): void {
   activeClient = makeClient(
-    buildHeadlessMirrorWebSocketUrl(
-      port,
+    buildSeatMirrorWebSocketUrl(
+      target,
       undefined,
       staticBgWireValue(mirrorSettings),
       mirrorSettings.trailDriveCapable
@@ -1272,8 +1272,8 @@ function openSeatView(port: number): void {
   syncHostStaticBg();
 }
 
-// THE HOLD. This device's seat socket never opened; keep the seat and retry the port instead of restarting the
-// join (see `seatViewPort` for the 32-launch loop that teardown produced).
+// THE HOLD. This device's seat socket never opened; keep the seat and retry its route instead of restarting the
+// join (see `seatViewTarget` for the 32-launch loop that teardown produced).
 //
 // What is deliberately NOT done here, each line of it a thing the teardown does:
 //   * the HOST socket is not closed — it is what keeps the seat process alive AND the only channel the host's
@@ -1286,7 +1286,7 @@ function openSeatView(port: number): void {
 // The PHASE does advance, which is what puts the ordinary "Reconnecting…" + spinner under the notice: the honest
 // report is that the view is not here and we are still trying. Same `reconnectTimer` guard and same backoff ladder
 // as the teardown path, so the two signals one drop produces (`close`, then `error`) schedule exactly one retry.
-function holdSeatView(port: number): void {
+function holdSeatView(target: string | number): void {
   if (reconnectTimer !== null) return;
   // The socket that just died. Retired on the next attempt rather than left in `allClients`: a hold can legitimately
   // run for hours at the ladder's 10s cap, and every attempt that stayed on that list would keep a dead socket and
@@ -1297,11 +1297,11 @@ function holdSeatView(port: number): void {
     reconnectTimer = null;
     // The seat we were holding must still be the seat we hold — anything that let go of it (a full teardown, a
     // fresh join) already cleared the port, and reaching for it anyway would be this file's own stale-timer bug.
-    if (seatViewPort !== port) return;
+    if (seatViewTarget !== target) return;
     dead.close();
     const at = allClients.indexOf(dead);
     if (at >= 0) allClients.splice(at, 1);
-    openSeatView(port);
+    openSeatView(target);
   }, reconnectDelayMs);
   reconnectDelayMs = nextReconnectDelayMs(reconnectDelayMs);
 }
@@ -1335,7 +1335,7 @@ function handleActiveClientDrop(): void {
   hostSession.value = null;
   // And the seat itself is gone with it: `reconnectToHost` closes the host socket, which is what ends the seat
   // process, so there is no port left to hold. The host assigns a fresh one on the next redirect.
-  seatViewPort = null;
+  seatViewTarget = null;
   reconnectTimer = setTimeout(reconnectToHost, reconnectDelayMs);
   // Grow the ladder for the NEXT attempt; a successful open resets it (see onChange).
   reconnectDelayMs = nextReconnectDelayMs(reconnectDelayMs);

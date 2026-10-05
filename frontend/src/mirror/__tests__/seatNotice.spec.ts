@@ -235,6 +235,18 @@ describe("MirrorApp seat notice", () => {
     );
   });
 
+  it("shows a shared relay failure on the retained host socket", async () => {
+    await redirectToAnUnreachableSeat();
+    hostSocket().emit(noticeFrame({ cause: "relay-unavailable", detail: "The private browser pipe stopped." }));
+    await settle();
+    expect(summary()).toBe("Couldn't start your game view.");
+    expect(action()).toBe(
+      "Nothing to change on this device — ask whoever is hosting to restart Slay the Spire 2, then try again."
+    );
+    expect(app!.find('[data-testid="mirror-seat-notice-detail"]').text())
+      .toBe("The private browser pipe stopped.");
+  });
+
   it("reaches a viewer whose redirect already happened, on the socket the seat's own never replaced", async () => {
     await redirectToAnUnreachableSeat();
     // Nobody is joining any more (`pendingName` is cleared by the redirect) and this connection never asked for

@@ -203,17 +203,15 @@ public sealed class CouchCoopBrowserServer(
     public Uri? BaseUri { get; private set; }
     public bool IsRunning => _listener is not null && BaseUri is not null;
 
-    // The opt-in TLS twin of _listener. Null unless a caller supplied a certificate via
-    // TryStartSecureListener; the plain-HTTP listener above is always on and never depends on this.
-    private SecureBrowserListener? _secureListener;
+    // Optional TLS on the same TCP listener; inactive until a caller supplies a certificate.
+    private readonly SecureBrowserListener _secureListener = new(log);
 
-    /// <summary>The port the opt-in TLS listener bound, or <c>0</c> when it is not running.</summary>
-    public int SecurePort => _secureListener?.Port ?? 0;
+    /// <summary>The shared browser port when TLS is ready, or <c>0</c> otherwise.</summary>
+    public int SecurePort => _secureListener.IsRunning ? BaseUri?.Port ?? 0 : 0;
 
     /// <summary>
-    /// Bring up the opt-in TLS listener beside this server's HTTP one, port-walking from the HTTP port plus
-    /// <see cref="SecureBrowserListener.PreferredPortOffset"/>. Best-effort: returns <see langword="false"/>
-    /// when there is no certificate, no HTTP listener yet, or no free port.
+    /// Enable TLS on this server's existing HTTP listener. Returns <see langword="false"/>
+    /// when there is no certificate or HTTP listener yet.
     /// </summary>
     /// <remarks>
     /// This is the standalone-server and test path. The SHIPPED host does not come through here — it uses
@@ -227,7 +225,7 @@ public sealed class CouchCoopBrowserServer(
         System.Security.Cryptography.X509Certificates.X509Certificate2Collection? intermediates = null,
         CancellationToken cancellationToken = default)
     {
-        if (_secureListener?.IsRunning == true)
+        if (_secureListener.IsRunning)
         {
             return true;
         }
@@ -237,29 +235,15 @@ public sealed class CouchCoopBrowserServer(
             return false;
         }
 
-        var listener = new SecureBrowserListener(
-            _bindAddress,
-            (client, stream, token) => ServeAsync(
-                stream,
-                isSecure: true,
-                (client.Client.RemoteEndPoint as IPEndPoint)?.Address ?? IPAddress.None,
-                token),
-            _log,
-            _admission);
-        if (!listener.TryStart(
-                certificate,
-                BaseUri.Port + SecureBrowserListener.PreferredPortOffset,
-                intermediates,
-                cancellationToken))
+        if (cancellationToken.IsCancellationRequested || !_secureListener.TryEnable(certificate, intermediates))
         {
             return false;
         }
 
-        _secureListener = listener;
         // Published so the /secure-port route can report it: a HOST that redirects a TLS viewer to this
         // instance has no other way to learn the port we actually walked to.
-        SecureOriginEndpoint.Publish(listener.Port);
-        _log($"secure-origin listening port={listener.Port}");
+        SecureOriginEndpoint.Publish(BaseUri.Port);
+        _log($"secure-origin listening port={BaseUri.Port}");
         return true;
     }
 
@@ -1248,11 +1232,8 @@ public sealed class CouchCoopBrowserServer(
             _headlessManager?.Dispose();
         }
 
-        if (_secureListener is not null)
-        {
-            await _secureListener.DisposeAsync().ConfigureAwait(false);
-            _secureListener = null;
-        }
+        SecureOriginEndpoint.Publish(0);
+        _secureListener.Disable();
 
         _stop?.Cancel();
         _listener?.Stop();
@@ -1313,7 +1294,11 @@ public sealed class CouchCoopBrowserServer(
             _admission.AttachHttp(client, lease);
             try
             {
-                _ = Task.Run(() => HandleClientAsync(client, cancellationToken), CancellationToken.None);
+                _ = Task.Run(() => _secureListener.ClassifyAndServeAsync(
+                    client, _admission, HandleClientAsync,
+                    (accepted, stream, token) => ServeAsync(stream, isSecure: true,
+                        (accepted.Client.RemoteEndPoint as IPEndPoint)?.Address ?? IPAddress.None, token),
+                    cancellationToken), CancellationToken.None);
             }
             catch
             {
@@ -1430,7 +1415,9 @@ public sealed class CouchCoopBrowserServer(
         CouchCoopHttpReadResult? requestRead = null;
         try
         {
-            requestRead = await CouchCoopHttpRequest.TryReadWithPrefixAsync(stream, cancellationToken).ConfigureAwait(false);
+            requestRead = await CouchCoopHttpRequest.TryReadWithPrefixAsync(stream,
+                candidate => candidate.Path == "/ws" && candidate.QueryValues.ContainsKey("seat"),
+                cancellationToken).ConfigureAwait(false);
             request = requestRead?.Request;
             var requestStream = requestRead?.Stream ?? stream;
             NetworkAdmissionLimiter.Lease? webSocketLease = null;
@@ -1449,6 +1436,13 @@ public sealed class CouchCoopBrowserServer(
 
             using (webSocketLease)
             {
+                if (_headlessManager is not null && request?.Path == "/ws"
+                    && request.QueryValues.TryGetValue("seat", out var seatRoute))
+                {
+                    await RelaySeatWebSocketAsync(requestStream, request, requestRead!.RawHeader,
+                        seatRoute, isSecure, remoteAddress, cancellationToken).ConfigureAwait(false);
+                    return;
+                }
                 await HandleRequestAsync(requestStream, request, isSecure, remoteAddress, cancellationToken).ConfigureAwait(false);
             }
         }
@@ -1498,6 +1492,53 @@ public sealed class CouchCoopBrowserServer(
         finally
         {
             requestRead?.Dispose();
+        }
+    }
+
+    private async Task RelaySeatWebSocketAsync(Stream browser, CouchCoopHttpRequest request,
+        ReadOnlyMemory<byte> rawHeader, string routeId, bool isSecure, IPAddress remoteAddress,
+        CancellationToken cancellationToken)
+    {
+        if (!request.IsWebSocketUpgrade)
+        {
+            await HttpResponseWriter.WriteJsonErrorAsync(browser, HttpStatusCode.BadRequest,
+                "invalid-websocket-upgrade", "A seat route requires a WebSocket upgrade.", cancellationToken).ConfigureAwait(false);
+            return;
+        }
+        if (!CouchCoopWebOrigin.IsAllowedWebSocketOrigin(request.Header("Origin"), request.Header("Host")))
+        {
+            RecordWebSocketArrival(request, remoteAddress, ConnectionArrivalOutcome.OriginRefused);
+            await HttpResponseWriter.WriteJsonErrorAsync(browser, HttpStatusCode.Forbidden,
+                "origin-not-allowed", "This page's origin is not allowed to open the game socket.", cancellationToken).ConfigureAwait(false);
+            return;
+        }
+        if (_headlessManager is null || !_headlessManager.TryResolveSeatRelay(routeId, out var pipeName, out var token)
+            || rawHeader.IsEmpty)
+        {
+            await HttpResponseWriter.WriteJsonErrorAsync(browser, HttpStatusCode.Gone,
+                "seat-route-expired", "This player's game view is no longer available.", cancellationToken).ConfigureAwait(false);
+            return;
+        }
+        try
+        {
+            await SeatBrowserPipe.RelayAsync(pipeName, token, browser, rawHeader,
+                remoteAddress, isSecure, cancellationToken).ConfigureAwait(false);
+        }
+        catch (Exception error) when (error is TimeoutException or IOException or UnauthorizedAccessException
+            || error is OperationCanceledException && !cancellationToken.IsCancellationRequested)
+        {
+            await _headlessManager.ReportSeatRelayFailureAsync(routeId,
+                $"The seat's private browser pipe did not complete a WebSocket upgrade ({error.GetType().Name}).",
+                terminal: error is not SeatRelayResponseTimeoutException and not SeatRelayUpgradeRejectedException)
+                .ConfigureAwait(false);
+            _networkDiagnostics.Write("seat-relay-unavailable",
+                $"browser-server diagnostic code=seat-relay-unavailable detail={error.GetType().Name}: {error.Message}");
+            try
+            {
+                await HttpResponseWriter.WriteJsonErrorAsync(browser, HttpStatusCode.ServiceUnavailable,
+                    "seat-relay-unavailable", "The player's game view is not answering yet.", cancellationToken).ConfigureAwait(false);
+            }
+            catch (IOException) { }
         }
     }
 
@@ -1553,10 +1594,8 @@ public sealed class CouchCoopBrowserServer(
             return;
         }
 
-        // How a HOST learns this process's real secure port. A joined seat is redirected to its own headless
-        // instance — a separate process with its own port-walked listeners — so the host cannot derive the
-        // port and must ask. Always answers (0 means "no secure origin here"), and is deliberately plain
-        // HTTP-reachable: the caller is the host on loopback, before any TLS is involved.
+        // A direct-port host asks whether this seat has enabled TLS. Both schemes use this seat's same port;
+        // zero means the certificate is not ready. The host asks over plain loopback HTTP.
         if (string.Equals(request.Path, SecureOriginEndpoint.Route, StringComparison.Ordinal))
         {
             await HttpResponseWriter.WriteJsonAsync(

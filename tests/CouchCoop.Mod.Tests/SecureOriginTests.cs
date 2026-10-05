@@ -13,7 +13,7 @@ using CouchCoop.Mod.Server;
 internal static class SecureOriginTests
 {
     private const string Domain = "my.local-ip.co";
-    private const int SecurePort = 13338;
+    private const int SecurePort = 13337;
 
     public static void Run()
     {
@@ -83,7 +83,7 @@ internal static class SecureOriginTests
         var option = QrHostOptions.DescribeSecureFor(Adapter("192.168.1.5"), Domain, SecurePort, null);
         Expect(option.Enabled, "a routable IPv4 plus a domain plus a port yields a selectable row");
         Expect(option.Kind == QrHostOptionKind.Secure, "it is the Secure kind");
-        Expect(option.Port == SecurePort, "it carries the TLS listener's port, not the HTTP one");
+        Expect(option.Port == SecurePort, "it carries the shared browser listener's port");
         Expect(option.ToUri().ToString() == $"https://192-168-1-5.my.local-ip.co:{SecurePort}/",
             $"and encodes an https URL (got {option.ToUri()})");
         Expect(option.Adapter!.Address.ToString() == "192.168.1.5", "and remembers which adapter it is for");

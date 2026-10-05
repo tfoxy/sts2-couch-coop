@@ -34,7 +34,7 @@ namespace CouchCoop.Mod.HostUi;
 /// <para>
 /// A method that cannot work right now is still LISTED, disabled, with the blocker in its detail
 /// line — the same convention the old checkboxes used. Showing it teaches that the option exists
-/// (the secure listener usually lands seconds after startup); hiding it would make the list quietly
+/// (TLS usually becomes ready seconds after startup); hiding it would make the list quietly
 /// reshuffle between two opens.
 /// </para>
 /// </remarks>
@@ -61,7 +61,7 @@ public static class QrHostOptions
     public static string AddressNotEligibleReason => CouchCoopLocalization.Resolve("couchcoop_option_address_not_eligible");
     internal static CouchCoopText AddressNotEligibleText => new("couchcoop_option_address_not_eligible");
 
-    /// <summary>Blocker while the secure listener has not (yet) come up and no better reason is known.</summary>
+    /// <summary>Blocker while TLS is not yet ready and no better reason is known.</summary>
     public static string SecurePendingReason => CouchCoopLocalization.Resolve("couchcoop_option_secure_pending");
     internal static CouchCoopText SecurePendingText => CouchCoopSecureText.Pending;
 
@@ -78,8 +78,8 @@ public static class QrHostOptions
     /// <param name="candidates">Raw OS candidates; filtered by <see cref="LanAddressRanking.IsEligible"/>.</param>
     /// <param name="port">
     /// ALWAYS the browser server's real listening port (<c>ListenerBaseUri.Port</c>), never the
-    /// preferred port: the server port-walks upward when 13337 is taken, and a QR carrying the port we
-    /// WANTED rather than the one we GOT is a code that scans and then fails to connect.
+    /// preferred port: direct-port mode can still walk upward when 13337 is taken. Shared mode fails
+    /// startup on that conflict, so neither mode should advertise a port it did not bind.
     /// </param>
     /// <param name="webOrigin">
     /// The configured public origin (<see cref="CouchCoopWebOrigin.Resolve"/>). A value that cannot be
@@ -91,8 +91,7 @@ public static class QrHostOptions
     /// still show the host it WOULD encode.
     /// </param>
     /// <param name="securePort">
-    /// The TLS listener's REAL bound port, or <c>0</c> while it is not running — same discipline as
-    /// <paramref name="port"/>, and for the same reason: the secure listener port-walks too.
+    /// The HTTP listener's bound port once TLS is ready, or <c>0</c> while TLS is unavailable.
     /// </param>
     /// <param name="secureUnavailableReason">
     /// Why the secure origin is not on offer (snapshot's <c>SecureUnavailableReason</c>), rendered on
@@ -290,12 +289,12 @@ public static class QrHostOptions
 
     /// <summary>
     /// The <c>local-ip.co</c> HTTPS row for one adapter: THAT adapter's IPv4, dashed, under the
-    /// provider's wildcard. Disabled-with-reason while the TLS listener is not up or the address is one
+    /// provider's wildcard. Disabled-with-reason while TLS is unavailable or the address is one
     /// no phone could come back to.
     /// </summary>
     /// <remarks>
     /// Any eligible local IPv4 is a valid secure host: the wildcard certificate covers every dashed
-    /// quad and the TLS listener binds the same address the plain one does, so per-adapter rows need no
+    /// quad and both protocols share the same listener address, so per-adapter rows need no
     /// per-adapter listener. The <c>.local</c> name and an operator override are structurally excluded
     /// — the wildcard covers dashed ADDRESSES only.
     /// </remarks>
@@ -431,7 +430,7 @@ public enum QrHostOptionKind
     Interface,
 
     /// <summary>
-    /// The HTTPS origin <c>&lt;ip-with-dashes&gt;.&lt;provider&gt;</c> on the TLS listener's port — one row
+    /// The HTTPS origin <c>&lt;ip-with-dashes&gt;.&lt;provider&gt;</c> on the shared browser port — one row
     /// per adapter, derived from that adapter's address. See <see cref="QrHostOptions.DescribeSecureFor"/>.
     /// </summary>
     Secure,

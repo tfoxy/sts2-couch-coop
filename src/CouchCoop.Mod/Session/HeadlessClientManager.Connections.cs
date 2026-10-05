@@ -151,7 +151,11 @@ public sealed partial class HeadlessClientManager
         var runInProgress = hostFacts is { } knownRun && _runInProgressProbe is not null
             ? knownRun.RunInProgress
             : RunInProgress;
-        var occupiedSeatPorts = await SurveySeatPortsAsync(maxSlot, displayName, targetNetId, ct).ConfigureAwait(false);
+        // The standalone manager used by allocation tests has no game roster observer.
+        var routeMode = !_supportsSharedRelay ? SeatBrowserRouteMode.Direct : SeatBrowserRoutePreference.Read();
+        var occupiedSeatPorts = routeMode == SeatBrowserRouteMode.Direct
+            ? await SurveySeatPortsAsync(maxSlot, displayName, targetNetId, ct).ConfigureAwait(false)
+            : new Dictionary<int, string>();
         foreach (var (occupiedSlot, owner) in occupiedSeatPorts)
         {
             ConnectionRegistry.Shared.RecordDiagnostic(sessionId, $"seat port {SlotToPort(occupiedSlot)}", owner);
@@ -165,6 +169,7 @@ public sealed partial class HeadlessClientManager
         {
             allocation = AllocateHeadless(
                 sessionId, displayName, ct, maxSlot, occupiedSeatPorts, runInProgress, allowNewSlot, onSlotBound,
+                routeMode,
                 targetNetId);
         }
         catch
@@ -199,7 +204,11 @@ public sealed partial class HeadlessClientManager
             else
             {
                 _browserAttempts[sessionId] = new(slot, owned.Generation, ConnectionRegistry.Shared.AttemptId(sessionId));
-                if (!owned.MonitorStarted) { owned.MonitorStarted = true; _ = Task.Run(() => MonitorConnectionAsync(owned)); }
+                if (owned.RouteMode == SeatBrowserRouteMode.Direct && !owned.MonitorStarted)
+                {
+                    owned.MonitorStarted = true;
+                    _ = Task.Run(() => MonitorConnectionAsync(owned));
+                }
             }
         }
         if (unusable)
@@ -216,6 +225,8 @@ public sealed partial class HeadlessClientManager
         ConnectionRegistry.Shared.BindProcess(sessionId, owned.Process.Id, owned.Generation);
         ConnectionRegistry.Shared.BindLogs(sessionId, owned.Logs);
         ConnectionRegistry.Shared.RecordDiagnostic(sessionId, "process", $"pid={owned.Process.Id}; slot={slot}; generation={owned.Generation}; netId={SlotToNetId(slot)}");
+        if (owned.RouteMode == SeatBrowserRouteMode.Shared)
+            return await WaitForSharedReadyAsync(owned, sessionId, port.Value, ct).ConfigureAwait(false);
         var started = Stopwatch.GetTimestamp();
         var deadline = SeatReadyTimeout;
         // The second, much shorter deadline: not "is this seat usable yet" but "is OUR CODE in it at all". See
@@ -462,16 +473,93 @@ public sealed partial class HeadlessClientManager
             // host's own refusal pair. Nothing here touches the disk or the network.
             ControlChannel: DescribeControlChannel(status));
 
-    private void PrepareConnectionLocked(int slot, Guid sessionId)
+    private void PrepareConnectionLocked(int slot, Guid sessionId, SeatBrowserRouteMode routeMode)
     {
         if (_membershipProbe is null) return;
-        var owned = new OwnedConnection(slot, ++_processGeneration, Convert.ToHexString(RandomNumberGenerator.GetBytes(32)), _seatNoticeTime);
+        var owned = new OwnedConnection(slot, ++_processGeneration, Convert.ToHexString(RandomNumberGenerator.GetBytes(32)), _seatNoticeTime)
+        {
+            RouteMode = routeMode,
+            RouteId = Convert.ToHexString(RandomNumberGenerator.GetBytes(16)),
+            PipeName = "CCSeat" + Convert.ToHexString(RandomNumberGenerator.GetBytes(16)),
+        };
         _ownedConnections[slot] = owned;
         _browserAttempts[sessionId] = new(slot, owned.Generation, ConnectionRegistry.Shared.AttemptId(sessionId));
         HeadlessConnectionControl.Shared.Register(slot, owned.Generation, sessionId, owned.Token);
         ConnectionRegistry.Shared.BindProcess(sessionId, null, owned.Generation);
         ConnectionRegistry.Shared.ConfigureView(sessionId, requiresChild: true);
         ConnectionRegistry.Shared.Advance(sessionId, ConnectionStage.Initializing);
+    }
+
+    /// <summary>The browser route for a ready shared-mode seat; null for direct seats.</summary>
+    public string? SharedMirrorPathForPort(int port)
+    {
+        var slot = (port - HostPort) / PortStep;
+        if (slot < MinSlot || SlotToPort(slot) != port) return null;
+        lock (_lock)
+        {
+            if (!_ownedConnections.TryGetValue(slot, out var owned)
+                || owned.RouteMode != SeatBrowserRouteMode.Shared
+                || owned.Quarantined || owned.Process is null || ProcessExited(owned.Process)) return null;
+            return "/ws?seat=" + owned.RouteId;
+        }
+    }
+
+    public bool SharedRouteExpectedForPort(int port)
+    {
+        var slot = (port - HostPort) / PortStep;
+        lock (_lock)
+        {
+            if (_ownedConnections.TryGetValue(slot, out var owned))
+                return owned.RouteMode == SeatBrowserRouteMode.Shared;
+        }
+        return _supportsSharedRelay && SeatBrowserRoutePreference.Read() == SeatBrowserRouteMode.Shared;
+    }
+
+    public bool TryResolveSeatRelay(string routeId, out string pipeName, out string token)
+    {
+        pipeName = token = string.Empty;
+        if (routeId.Length != 32 || !routeId.All(Uri.IsHexDigit)) return false;
+        lock (_lock)
+        {
+            var owned = _ownedConnections.Values.FirstOrDefault(candidate =>
+                candidate.RouteMode == SeatBrowserRouteMode.Shared
+                && string.Equals(candidate.RouteId, routeId, StringComparison.Ordinal)
+                && !candidate.Quarantined && candidate.Process is not null
+                && !ProcessExited(candidate.Process));
+            if (owned is null) return false;
+            pipeName = owned.PipeName;
+            token = owned.Token;
+            return true;
+        }
+    }
+
+    /// <summary>Report a failed browser upgrade, stopping the seat only when its relay is broken.</summary>
+    public async Task ReportSeatRelayFailureAsync(string routeId, string detail, bool terminal = true)
+    {
+        OwnedConnection? owned;
+        Guid[] clients;
+        ConnectionIssue issue;
+        lock (_lock)
+        {
+            owned = _ownedConnections.Values.FirstOrDefault(candidate =>
+                candidate.RouteMode == SeatBrowserRouteMode.Shared
+                && string.Equals(candidate.RouteId, routeId, StringComparison.Ordinal));
+            if (owned is null || !IsCurrent(owned)) return;
+            issue = new ConnectionIssue("seat-relay-unavailable",
+                "This player's game view could not reach its private relay.",
+                "Retry the connection. If it happens again, restart the host game.", detail);
+            if (terminal) owned.Failure ??= issue;
+            clients = _browserAttempts.Where(pair => pair.Value.Slot == owned.Slot
+                && pair.Value.Generation == owned.Generation).Select(pair => pair.Key).ToArray();
+        }
+        foreach (var id in clients)
+        {
+            SeatNoticeHub.Shared.Publish(id, new SeatNotice(
+                CouchCoop.MirrorProtocol.Envelopes.BrowserSeatNoticeCauses.RelayUnavailable, detail));
+            ApplyToAttempt(id, owned, registry => registry.Fail(id, issue.Code,
+                issue.Summary, issue.Action, issue.Detail));
+        }
+        if (terminal) await StopFailedConnectionAsync(owned).ConfigureAwait(false);
     }
 
     private void ApplyConnectionEnvironmentLocked(int slot, ProcessStartInfo start)
@@ -482,6 +570,16 @@ public sealed partial class HeadlessClientManager
         start.Environment["COUCHCOOP_HEADLESS_CONTROL_URL"] = $"http://127.0.0.1:{port}/internal/client-status";
         start.Environment["COUCHCOOP_HEADLESS_CONTROL_TOKEN"] = owned.Token;
         start.Environment["COUCHCOOP_HEADLESS_CONTROL_GENERATION"] = owned.Generation.ToString(System.Globalization.CultureInfo.InvariantCulture);
+        if (owned.RouteMode == SeatBrowserRouteMode.Shared)
+        {
+            start.Environment[SeatBrowserPipe.NameEnvironmentVariable] = owned.PipeName;
+            start.Environment[SeatBrowserPipe.TokenEnvironmentVariable] = owned.Token;
+        }
+        else
+        {
+            start.Environment.Remove(SeatBrowserPipe.NameEnvironmentVariable);
+            start.Environment.Remove(SeatBrowserPipe.TokenEnvironmentVariable);
+        }
     }
 
     /// <summary>
@@ -881,6 +979,9 @@ public sealed partial class HeadlessClientManager
         public int Slot { get; } = slot;
         public long Generation { get; } = generation;
         public string Token { get; } = token;
+        public SeatBrowserRouteMode RouteMode;
+        public string RouteId = string.Empty;
+        public string PipeName = string.Empty;
         /// <summary>When this seat was claimed, for the elapsed figure the readiness verdict prints.</summary>
         public long StartedTicks { get; } = Stopwatch.GetTimestamp();
         public IHeadlessProcess? Process;

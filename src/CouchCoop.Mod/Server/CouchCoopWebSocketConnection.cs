@@ -117,9 +117,8 @@ public sealed class CouchCoopWebSocketConnection
     private WebSocket? _socket;
     private readonly HeadlessClientManager? _headlessManager;
     private readonly bool _isHeadlessClient;
-    // TRUE when this browser arrived on the opt-in TLS listener. Load-bearing for exactly one decision: an
-    // https page may only be handed a wss redirect target, so a joined seat must be sent its headless
-    // instance's SECURE port, never the plain-HTTP one (a browser blocks ws: from an https: page outright).
+    // TRUE when this browser arrived over TLS. A direct-port seat needs its own TLS-ready port for a wss
+    // redirect; a shared seat stays on the host's existing secure connection and route.
     private readonly bool _isSecure;
 
     // How long a TLS join waits for a freshly spawned headless instance to publish its secure port. The
@@ -542,6 +541,7 @@ public sealed class CouchCoopWebSocketConnection
         ConnectionRegistry.Shared.RecordDiagnostic(session.Id, "gameVersion", _envelopeFactory.RuntimeHost.Capabilities.GameVersion);
 
         int? headlessPort = null;
+        string? headlessPath = null;
         bool? directView = null;
         string? joinRejection = null;
         // Server-fault text carried to the viewer when the block below throws. Null on every ordinary path.
@@ -666,6 +666,13 @@ public sealed class CouchCoopWebSocketConnection
                         hostFacts: joinRead.Seats).ConfigureAwait(false);
                     if (headlessPort is int readyPort)
                     {
+                        headlessPath = _headlessManager.SharedMirrorPathForPort(readyPort);
+                        if (_headlessManager.SharedRouteExpectedForPort(readyPort) && headlessPath is null)
+                        {
+                            headlessPort = null;
+                            joinRejection = "spawn-failed";
+                            joinRejectionDetail = "The player's private browser relay stopped before the view opened.";
+                        }
                         // The headless's REAL ENet player IS this browser's player. Name that real netId
                         // so the host lobby AND the per-viewer mirror show the chosen display name instead
                         // of the raw netId ("1002"). No synthetic host-local seat is added (that produced
@@ -702,7 +709,7 @@ public sealed class CouchCoopWebSocketConnection
             // and accurate, since a retry moments later usually succeeds once the certificate has
             // landed. An unrecognised code would render as "That name is not from a session
             // player", which would be a lie.
-            if (_isSecure && headlessPort is int insecurePort && joinRejection is null)
+            if (_isSecure && headlessPath is null && headlessPort is int insecurePort && joinRejection is null)
             {
                 var securePort = await HeadlessClientManager
                     .TryResolveSecurePortAsync(insecurePort, SecurePortResolveTimeout, cancellationToken)
@@ -727,6 +734,7 @@ public sealed class CouchCoopWebSocketConnection
             // Shutdown is excluded by the filter above: a cancelled token means the socket is going away, which
             // is not a join failure and has no viewer left to tell.
             headlessPort = null;
+            headlessPath = null;
             directView = null;
             joinRejection = "join-failed";
             joinRejectionDetail = "The game could not complete the join. Try again.";
@@ -752,7 +760,7 @@ public sealed class CouchCoopWebSocketConnection
             ConnectionRegistry.Shared.Fail(session.Id, joinRejection,
                 "The game could not complete the connection.", "Try reconnecting this device.", joinRejectionDetail);
         }
-        else if (headlessPort is not null || directView == true)
+        else if (headlessPort is not null || headlessPath is not null || directView == true)
         {
             if (directView == true) ConnectionRegistry.Shared.UseShortPath(session.Id);
             ConnectionRegistry.Shared.Advance(session.Id, ConnectionStage.LoadingView);
@@ -764,12 +772,13 @@ public sealed class CouchCoopWebSocketConnection
             join.Name,
             requestId,
             session,
-            headlessPort,
+            headlessPath is null ? headlessPort : null,
             directView,
             joinRejection,
             joinRejectionDetail,
             connectionAttemptId,
-            cancellationToken).ConfigureAwait(false)).ConfigureAwait(false);
+            cancellationToken,
+            headlessMirrorPath: headlessPath).ConfigureAwait(false)).ConfigureAwait(false);
     }
 
     private async Task ReceiveLoopAsync(WebSocket socket, BrowserSessionHandle session, CancellationToken cancellationToken)
