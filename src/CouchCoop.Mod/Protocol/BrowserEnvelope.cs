@@ -80,7 +80,9 @@ public sealed record BrowserEnvelope(
     BrowserAtlasManifestDto? AtlasManifest = null,
     // Current hosts accept absolute scroll offsets.
     bool ScrollAction = true,
-    string? ConnectionAttemptId = null);
+    string? ConnectionAttemptId = null,
+    // Shared-port seat route, mutually exclusive with HeadlessMirrorPort. Opaque to the browser.
+    string? HeadlessMirrorPath = null);
 
 // The wire shape Stage B also consumes: { "scenePath": "res://scenes/backgrounds/<id>/<id>_background.tscn",
 // "url": "/bg/<id>?layers=<digest>&v=1" } (camelCased by BrowserJson).

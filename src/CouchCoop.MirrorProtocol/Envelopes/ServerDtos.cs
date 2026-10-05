@@ -195,6 +195,8 @@ public static class BrowserSeatNoticeCauses
     public const string HostLocalBlock = "host-local-block";
     /// <summary>The seat is up and the host can reach it; this viewer's device never got through to it.</summary>
     public const string NetworkPath = "network-path";
+    /// <summary>The seat's private browser relay failed before its view could open.</summary>
+    public const string RelayUnavailable = "relay-unavailable";
 }
 
 // Browser → host runtime settings (the mirror Settings panel). Every field optional; a null field means "leave

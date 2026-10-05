@@ -36,11 +36,16 @@ public interface IHeadlessProcess
     void Dispose();
 }
 
+internal interface IHeadlessProcessExitSignal
+{
+    Task WaitForExitAsync(CancellationToken cancellationToken);
+}
+
 /// <summary>
 /// Manages per-browser-player headless game instances. When a non-host browser player joins,
 /// the host mod spawns a headless Godot process for them (slot 2→port 13357, slot 3→13367, …).
 /// Each headless runs the full CouchCoop mod stack and streams its own scene tree to that
-/// player's browser. The browser is redirected to the headless port after the instance is ready.
+/// player's browser. Shared mode carries that stream through the host port; direct mode uses a seat port.
 ///
 /// Headless launch: <c>COUCHCOOP_HEADLESS_WRAPPER</c> env var (e.g.
 /// <c>"gamescope --backend headless -W 1280 -H 720 -w 1280 -h 720 -r 16 --"</c>) prefixes the
@@ -201,6 +206,7 @@ public sealed partial class HeadlessClientManager : IDisposable
     // the roster observer) or the game (Dispose); cleared when the browser reconnects and re-claims the slot.
     private readonly HashSet<int> _detachedSlots = [];
     private readonly Func<int, IHeadlessProcess?> _launcher;
+    private readonly bool _supportsSharedRelay;
     // Probe used by WaitForReadyAsync to decide when a freshly spawned headless is serving on its port.
     // Defaults to the real HTTP poll; the test ctor injects an instant probe so the slot bookkeeping
     // (dedup / reuse / reap / release) can be exercised without a real HTTP server.
@@ -235,6 +241,8 @@ public sealed partial class HeadlessClientManager : IDisposable
     private readonly Func<bool>? _runInProgressProbe;
     private readonly Action<int, long>? _ownedSeatCountChanged;
     private int _publishedOwnedSeatCount;
+    /// <summary>Raised off the manager lock when the number of owned seat processes changes.</summary>
+    public event Action<int, long>? SeatProcessCountChanged;
     private long _ownedSeatDemandGeneration;
     private readonly string? _gameExe;
     private readonly string? _headlessWrapper;
@@ -472,6 +480,7 @@ public sealed partial class HeadlessClientManager : IDisposable
     {
         _seatNoticeTime = seatNoticeTime;
         _launcher = launcher ?? throw new ArgumentNullException(nameof(launcher));
+        _supportsSharedRelay = false;
         _runInProgressProbe = runInProgressProbe;
         _readinessProbe = readinessProbe is null
             ? DefaultHttpReadinessAsync
@@ -505,6 +514,7 @@ public sealed partial class HeadlessClientManager : IDisposable
         _gameExe = gameExe;
         _headlessWrapper = string.IsNullOrWhiteSpace(headlessWrapper) ? null : headlessWrapper.Trim();
         _launcher = LaunchReal;
+        _supportsSharedRelay = true;
         _readinessProbe = DefaultHttpReadinessAsync;
         _evictStalePeer = evictStalePeer;
         _maxSeatsProbe = maxSeatsProbe;
@@ -613,6 +623,7 @@ public sealed partial class HeadlessClientManager : IDisposable
         bool runInProgress,
         bool allowNewSlot = true,
         Action<ulong, string?>? onSlotBound = null,
+        SeatBrowserRouteMode routeMode = SeatBrowserRouteMode.Direct,
         ulong? targetNetId = null)
     {
         var name = NormalizeName(displayName);
@@ -850,7 +861,7 @@ public sealed partial class HeadlessClientManager : IDisposable
             IHeadlessProcess? proc;
             try
             {
-                PrepareConnectionLocked(slot, sessionId);
+                PrepareConnectionLocked(slot, sessionId, routeMode);
                 proc = _launcher(slot);
             }
             catch (Exception launchError)
@@ -1634,7 +1645,8 @@ public sealed partial class HeadlessClientManager : IDisposable
         _publishedOwnedSeatCount = count;
         var generation = ++_ownedSeatDemandGeneration;
         var callback = _ownedSeatCountChanged;
-        if (callback is null)
+        var changed = SeatProcessCountChanged;
+        if (callback is null && changed is null)
         {
             return;
         }
@@ -1643,7 +1655,8 @@ public sealed partial class HeadlessClientManager : IDisposable
         {
             try
             {
-                callback(count, generation);
+                callback?.Invoke(count, generation);
+                changed?.Invoke(count, generation);
             }
             catch (Exception exception)
             {
@@ -2139,20 +2152,17 @@ public sealed partial class HeadlessClientManager : IDisposable
     }
 
     /// <summary>
-    /// Ask the headless instance serving <paramref name="httpPort"/> for the TLS port it actually bound, or
-    /// <see langword="null"/> when it has none within <paramref name="timeout"/>.
+    /// Ask a direct-port headless instance whether TLS is ready on its browser port, or
+    /// <see langword="null"/> when it is not ready within <paramref name="timeout"/>.
     /// </summary>
     /// <remarks>
     /// <para>
-    /// WHY WE ASK INSTEAD OF DERIVING. Each headless instance is a separate process that port-walks its own
-    /// listeners, so <c>httpPort + PreferredPortOffset</c> is a guess that is wrong exactly when a port was
-    /// taken — and a redirect to a port nothing is listening on hangs the phone with no error. The instance
-    /// is the only authority on the port it bound.
+    /// The instance owns certificate readiness. The host's certificate is not proof that a direct seat has
+    /// enabled TLS yet, even though both protocols now use that seat's one browser port.
     /// </para>
     /// <para>
-    /// WHY IT NEEDS A WINDOW RATHER THAN A SINGLE GET. A headless instance's secure listener comes up AFTER
-    /// its HTTP listener: certificate acquisition is deliberately detached so it can never delay startup.
-    /// Readiness therefore fires while the TLS port may still be seconds away. In practice the host has
+    /// Certificate acquisition is deliberately detached so it can never delay HTTP startup.
+    /// Readiness therefore fires while TLS may still be seconds away. In practice the host has
     /// already populated the shared certificate cache long before any seat is spawned, so this usually
     /// succeeds on the first poll; the window covers the cold case rather than defining it.
     /// </para>
@@ -2285,7 +2295,7 @@ internal readonly record struct SeatListenerProbeResult(
 /// sends SIGTERM (lets the headless run ENet leave + teardown so the host drops the peer); the hard
 /// <see cref="Kill"/> sends SIGKILL to the whole tree.
 /// </summary>
-internal sealed class OsHeadlessProcess(Process process) : IHeadlessProcess
+internal sealed class OsHeadlessProcess(Process process) : IHeadlessProcess, IHeadlessProcessExitSignal
 {
     private const int SIGTERM = 15;
 
@@ -2295,6 +2305,8 @@ internal sealed class OsHeadlessProcess(Process process) : IHeadlessProcess
     public int Id => process.Id;
     public bool HasExited => process.HasExited;
     public int ExitCode => process.ExitCode;
+    public Task WaitForExitAsync(CancellationToken cancellationToken)
+        => process.WaitForExitAsync(cancellationToken);
 
     public bool RequestGracefulStop()
     {

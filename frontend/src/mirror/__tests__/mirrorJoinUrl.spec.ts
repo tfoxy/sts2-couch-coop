@@ -26,6 +26,7 @@ import { setComparisonStageBackend } from "@/mirror/rendererFactory";
 class MockWebSocket extends EventTarget {
   static OPEN = 1;
   static instances: MockWebSocket[] = [];
+  static failSharedSeat = false;
   readyState = MockWebSocket.OPEN;
   sent: Record<string, unknown>[] = [];
   url: string;
@@ -34,7 +35,10 @@ class MockWebSocket extends EventTarget {
     super();
     this.url = url;
     MockWebSocket.instances.push(this);
-    queueMicrotask(() => this.dispatchEvent(new Event("open")));
+    queueMicrotask(() => {
+      if (MockWebSocket.failSharedSeat && new URL(url).searchParams.has("seat")) this.close();
+      else this.dispatchEvent(new Event("open"));
+    });
   }
 
   send(data: string) {
@@ -146,6 +150,7 @@ describe("MirrorApp — join state in the page URL", () => {
     window.history.replaceState(null, "", "/");
     globalThis.sessionStorage?.clear();
     MockWebSocket.instances = [];
+    MockWebSocket.failSharedSeat = false;
     realWebSocket = globalThis.WebSocket;
     (globalThis as unknown as { WebSocket: unknown }).WebSocket = MockWebSocket;
     reloadPage = vi.fn(() => {});
@@ -203,6 +208,37 @@ describe("MirrorApp — join state in the page URL", () => {
     } finally {
       Object.assign(rendererComparisonConfig, previous);
       setComparisonStageBackend(previous.backend);
+    }
+  });
+
+  it("opens and retries a shared seat on the host port while retaining the host socket", async () => {
+    vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout"] });
+    try {
+      MockWebSocket.failSharedSeat = true;
+      mountAt("");
+      await settle();
+      const host = latest();
+      host.emit(sessionMessage());
+      await settle();
+      await rows()[1].trigger("click");
+      const route = "/ws?seat=opaque-token";
+      host.emit(sessionMessage({ headlessMirrorPath: route, headlessMirrorPort: 14000 }));
+      await settle();
+      const firstSeat = latest();
+      expect(new URL(firstSeat.url).origin).toBe(new URL(host.url).origin);
+      expect(new URL(firstSeat.url).searchParams.get("seat")).toBe("opaque-token");
+      expect(host.readyState).toBe(MockWebSocket.OPEN);
+      expect(host.sentOfType("join")).toHaveLength(1);
+
+      vi.advanceTimersByTime(RECONNECT_BASE_DELAY_MS);
+      await settle();
+      const retriedSeat = latest();
+      expect(retriedSeat).not.toBe(firstSeat);
+      expect(retriedSeat.url).toBe(firstSeat.url);
+      expect(host.readyState).toBe(MockWebSocket.OPEN);
+      expect(host.sentOfType("join")).toHaveLength(1);
+    } finally {
+      vi.useRealTimers();
     }
   });
 

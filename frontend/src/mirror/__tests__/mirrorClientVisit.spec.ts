@@ -1,6 +1,6 @@
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 
-import { buildHeadlessMirrorWebSocketUrl, connectMirrorClient } from "@/mirror/mirrorClient";
+import { buildHeadlessMirrorWebSocketUrl, buildSeatMirrorWebSocketUrl, connectMirrorClient } from "@/mirror/mirrorClient";
 import { resetVisitIdCache, VISIT_META_NAME } from "@/join/visitId";
 
 // PROMOTION, NOT GHOSTS. The host records the `GET /` that served this page under a visit id it embedded in
@@ -96,6 +96,34 @@ describe("visit id on the wire", () => {
     // …and the rest of the connect contract is untouched.
     expect(url.searchParams.get("watch")).toBe("1");
     expect(url.searchParams.get("staticBg")).toBe("0");
+  });
+
+  it("keeps a shared seat route on the host port with its token and canonical selectors", () => {
+    embedVisit(VISIT);
+    const url = new URL(buildSeatMirrorWebSocketUrl("/ws?seat=opaque-token", location, true, true));
+    expect(url.origin).toBe("ws://host:13337");
+    expect([...url.searchParams.entries()]).toEqual([
+      ["seat", "opaque-token"], ["watch", "1"], ["staticBg", "1"],
+      ["cardFlight", "1"], ["handTween", "1"], ["trailDrive", "1"], ["visit", VISIT]
+    ]);
+  });
+
+  it("uses the host's HTTPS origin for a shared route on a remotely hosted page", () => {
+    const previous = globalThis.__couchCoopHostBase;
+    globalThis.__couchCoopHostBase = "https://lan-host:13337";
+    try {
+      const url = new URL(buildSeatMirrorWebSocketUrl(
+        "/ws?seat=opaque-token",
+        { href: "https://public.example/join", protocol: "https:" },
+        false,
+        false,
+        null
+      ));
+      expect(url.origin).toBe("wss://lan-host:13337");
+      expect(url.searchParams.get("seat")).toBe("opaque-token");
+    } finally {
+      globalThis.__couchCoopHostBase = previous;
+    }
   });
 
   it("leaves the seat URL unchanged when there is no visit id to carry", () => {

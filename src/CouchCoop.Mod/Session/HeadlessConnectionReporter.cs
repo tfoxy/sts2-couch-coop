@@ -116,6 +116,9 @@ public sealed class HeadlessConnectionReporter : IDisposable
     /// after it, depending on how far mod init has got. Whichever happens first, the other reads it.
     /// </summary>
     private static int _browserPort;
+    private static int _relayReady;
+
+    internal static bool IsRelayReadyForTests => Volatile.Read(ref _relayReady) != 0;
 
     /// <summary>
     /// The status sequence, for the WHOLE PROCESS rather than per reporter instance.
@@ -170,6 +173,7 @@ public sealed class HeadlessConnectionReporter : IDisposable
         lock (StaticGate)
         {
             _current?.Dispose();
+            Volatile.Write(ref _relayReady, 0);
             _current = new HeadlessConnectionReporter(runtime, endpoint, token, generation, requestShutdown);
         }
     }
@@ -189,12 +193,26 @@ public sealed class HeadlessConnectionReporter : IDisposable
         lock (StaticGate) _current?.QueueReport();
     }
 
+    /// <summary>Announce the seat's pipe listener as soon as it is accepting connections.</summary>
+    public static void PublishRelayReady()
+    {
+        Volatile.Write(ref _relayReady, 1);
+        lock (StaticGate) _current?.QueueReport();
+    }
+
+    public static void PublishRelayStopped()
+    {
+        Volatile.Write(ref _relayReady, 0);
+        lock (StaticGate) _current?.QueueReport();
+    }
+
     public static void Stop()
     {
         lock (StaticGate)
         {
             _current?.Dispose();
             _current = null;
+            Volatile.Write(ref _relayReady, 0);
         }
     }
 
@@ -298,7 +316,8 @@ public sealed class HeadlessConnectionReporter : IDisposable
                 // The seat's standing declaration that it is keeping out of the account's cloud saves. On every
                 // heartbeat rather than once at startup, because the host's check is "the last thing this seat
                 // said", and a fact stated once is a fact the host would have to remember on the seat's behalf.
-                HeadlessSeatCloudIsolationGuard.Installed);
+                HeadlessSeatCloudIsolationGuard.Installed,
+                Volatile.Read(ref _relayReady) != 0);
             if (Forced is { } forced)
             {
                 Report("control-status-failed", ForcedCause, started);

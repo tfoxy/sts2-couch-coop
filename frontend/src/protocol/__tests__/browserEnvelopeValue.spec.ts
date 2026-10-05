@@ -75,6 +75,7 @@ describe("parseBrowserEnvelopeValue — the string and object entry points agree
     expect(viaValue).toMatchObject({
       type: "session",
       headlessMirrorPort: 13401,
+      headlessMirrorPath: null,
       directView: false,
       scrollAction: true
     });
@@ -89,6 +90,15 @@ describe("parseBrowserEnvelopeValue — the string and object entry points agree
       "res://images/atlases/card_atlas_0.png",
       "res://images/atlases/card_atlas_1.png"
     ]);
+  });
+
+  it("normalizes the shared seat directive as an optional string", () => {
+    const withPath = parseBrowserEnvelopeValue({ ...SESSION, headlessMirrorPath: "/ws?seat=opaque-token" });
+    const withoutPath = parseBrowserEnvelopeValue({ ...SESSION, headlessMirrorPath: 42 });
+    expect((withPath as Extract<typeof withPath, { type: "session" }>).headlessMirrorPath)
+      .toBe("/ws?seat=opaque-token");
+    expect((withoutPath as Extract<typeof withoutPath, { type: "session" }>).headlessMirrorPath)
+      .toBeNull();
   });
 
   // The atlas manifest tells the idle prefetch which pages this host's build actually ships, so a half-formed one

@@ -42,6 +42,11 @@ internal static class CouchCoopLocalizationTests
             && QrHoverTipCopy.MethodMdnsDescription.Contains("最不可靠", StringComparison.Ordinal),
             "Chinese hover guidance retains permission, router, and reliability details");
         CouchCoopLocalization.SetLanguageForTests("eng");
+        Assert(CouchCoopLocalization.Resolve("couchcoop_route_shared") == "Shared port"
+            && CouchCoopLocalization.Resolve("couchcoop_route_direct") == "Direct ports",
+            "the route selector names both choices");
+        Assert(CouchCoopLocalization.Resolve("couchcoop_route_locked").Contains("running browser seats", StringComparison.Ordinal),
+            "the locked selector explains when the choice can change");
     }
 
     private static void CatalogsStayInParityAndUseSafePlaceholders()

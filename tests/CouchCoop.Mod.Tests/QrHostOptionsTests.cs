@@ -80,7 +80,7 @@ internal static class QrHostOptionsTests
         => Nic(name, address, NetworkInterfaceType.Ethernet, gateway);
 
     private const int Port = 13337;
-    private const int SecurePort = 13338;
+    private const int SecurePort = Port;
     private const string Origin = "https://sts2-couch.pages.dev";
 
     private static IReadOnlyList<QrHostOption> Build(
@@ -414,7 +414,7 @@ internal static class QrHostOptionsTests
     {
         // The server port-walks upward when 13337 is taken. A QR carrying the port we WANTED rather than
         // the one we GOT scans fine and then fails to connect, which is the worst possible failure mode.
-        var options = QrHostOptions.Build("box", "10.0.0.5", [Wifi()], 13339, Origin, null, SecurePort, null);
+        var options = QrHostOptions.Build("box", "10.0.0.5", [Wifi()], 13339, Origin, null, 13339, null);
 
         Expect(options.Where(option => option.Kind is QrHostOptionKind.Override or QrHostOptionKind.Interface or QrHostOptionKind.Mdns)
             .All(option => option.Port == 13339), "every host-shaped option carries the real listening port");
@@ -424,7 +424,7 @@ internal static class QrHostOptionsTests
         Expect(web.ToUri().Query == "?h=192.168.0.42:13339", "the web row's ?h= carries the PLAIN listener port");
 
         var secure = options.Single(option => option.Kind == QrHostOptionKind.Secure);
-        Expect(secure.Port == SecurePort, "while the secure row carries the TLS listener's own port");
+        Expect(secure.Port == 13339, "the secure row carries that same bound listener port");
     }
 
     // ---- selection restore ----------------------------------------------------------------------------------

@@ -109,6 +109,15 @@ public sealed class CouchCoopHostUiServices : IAsyncDisposable
         try
         {
             var listenerBaseUri = await _browserServer.StartAsync(cancellationToken).ConfigureAwait(false);
+            if (listenerBaseUri.Scheme == "pipe")
+            {
+                // A shared-mode seat serves browser streams only through its private pipe. It has no
+                // browser URL to advertise and no discovery or certificate listener to start. Keep the
+                // server alive for the relay and return before UriBuilder sees a URI with Port == -1.
+                _snapshot = new CouchCoopHostUiSnapshot(
+                    Available: false, JoinBaseUri: null, ListenerBaseUri: listenerBaseUri, Diagnostics: []);
+                return _snapshot;
+            }
             var joinBaseUri = TryCreateAdvertisedJoinBaseUri(listenerBaseUri);
             if (joinBaseUri is null)
             {
@@ -177,7 +186,7 @@ public sealed class CouchCoopHostUiServices : IAsyncDisposable
     /// </para>
     /// <para>
     /// Leaving the lobby for a run keeps discovery alive, including while seats are detached. Only the
-    /// end of hosting stops these services. The HTTP listener and any ready TLS listener remain available;
+    /// end of hosting stops these services. The browser listener remains available for HTTP and ready TLS;
     /// they have no periodic discovery work and may still serve browsers showing the connection screen.
     /// </para>
     /// <para>
@@ -290,8 +299,8 @@ public sealed class CouchCoopHostUiServices : IAsyncDisposable
     }
 
     /// <summary>
-    /// Acquire the published wildcard certificate and, if it lands, bring the TLS listener up beside the
-    /// HTTP one — then republish the snapshot so the QR dialog can offer the checkbox.
+    /// Acquire the published wildcard certificate and, if it lands, enable TLS on the browser listener —
+    /// then republish the snapshot so the QR dialog can offer the checkbox.
     /// </summary>
     /// <remarks>
     /// <para>
@@ -368,7 +377,7 @@ public sealed class CouchCoopHostUiServices : IAsyncDisposable
                     }
                     else
                     {
-                        _snapshot = _snapshot with { SecureUnavailableReason = CouchCoopSecureText.PortFailed };
+                        _snapshot = _snapshot with { SecureUnavailableReason = CouchCoopSecureText.SetupFailed };
                     }
                 }
             }
@@ -465,7 +474,7 @@ public sealed class CouchCoopHostUiServices : IAsyncDisposable
 
         if (_browserServer is not null)
         {
-            // Disposes the secure listener too — it is owned by the browser server host.
+            // Disables TLS too — its certificate context is owned by the browser server host.
             await _browserServer.DisposeAsync().ConfigureAwait(false);
             _browserServer = null;
         }
@@ -618,8 +627,7 @@ public sealed class CouchCoopHostUiServices : IAsyncDisposable
 }
 
 /// <param name="SecurePort">
-/// The opt-in TLS listener's REAL bound port, or <c>0</c> when the secure origin is not running. Never the
-/// preferred port — the secure listener port-walks just like the HTTP one.
+/// The HTTP listener's bound port once TLS is ready, or <c>0</c> while the secure origin is unavailable.
 /// </param>
 /// <param name="SecureDomain">The active certificate provider's DNS suffix, e.g. <c>my.local-ip.co</c>.</param>
 /// <param name="SecureUnavailableReason">

@@ -257,7 +257,8 @@ public sealed record HeadlessConnectionStatus(
     int ConnectedChildBrowserCount,
     int BrowserPort = 0,
     long? ViewerArrivalCount = null,
-    bool CloudSaveIsolated = false);
+    bool CloudSaveIsolated = false,
+    bool RelayReady = false);
 
 public sealed record HeadlessConnectionObserveResult(bool Accepted, bool ShutdownRequested)
 {

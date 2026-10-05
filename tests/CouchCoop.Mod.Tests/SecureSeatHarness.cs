@@ -98,7 +98,13 @@ internal static class SecureSeatHarness
                 return 1;
             }
 
-            Console.WriteLine($"[parent] PASS: a seat process brought up its own secure listener on port {securePort} "
+            if (securePort != httpPort)
+            {
+                Console.WriteLine($"[parent] FAIL: seat TLS port {securePort} differs from HTTP port {httpPort}.");
+                return 1;
+            }
+
+            Console.WriteLine($"[parent] PASS: a seat process enabled TLS on its HTTP port {securePort} "
                 + $"from the handed-down cache (no fetch of its own), and the host resolved it over /secure-port.");
             return 0;
         }

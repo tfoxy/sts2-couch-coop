@@ -179,7 +179,7 @@ export interface MirrorClient {
   latency: MirrorLatency;
   // The latest `session` envelope from this connection (roster + screen kind + this viewer's assignment),
   // used by the shared join screen. Null until the first session arrives. The redirect-bearing join reply
-  // (carrying `headlessMirrorPort`) also updates this, but by then the app has already redirected + joined.
+  // (carrying `headlessMirrorPath` or `headlessMirrorPort`) also updates this after the redirect.
   session: BrowserSessionEnvelope | null;
   // Send an upstream input message (no-op when the socket isn't open). Fire-and-forget: the host replies only
   // on error, which this receive-only client ignores.
@@ -216,7 +216,7 @@ export interface MirrorClient {
   // Whether this client currently wants the scene stream (the gate's live value).
   watching: boolean;
   // Send a co-op join request (name-choosing form). The host replies with a `session` message; if the server
-  // spawned a headless game instance for this player, the session carries `headlessMirrorPort` and
+  // spawned a headless game instance for this player, the session carries a seat route and
   // `options.onHeadlessRedirect` fires so the app can reconnect to the player's own game view.
   // `playerId` (the picked seat's "p:{netId}") is sent only when the join came from a roster BUTTON; it lets the
   // host resolve the exact seat instead of matching the label, which is what makes a rejoin land on the right netId.
@@ -245,17 +245,16 @@ function percentile(sorted: number[], p: number): number | null {
 
 export function connectMirrorClient(options: {
   // Explicit WebSocket URL. When provided, skips URL derivation from `location`; use this to reconnect to
-  // a headless game instance on a different port after `onHeadlessRedirect` fires.
+  // a headless game instance after `onHeadlessRedirect` fires.
   url?: string;
   // Called after the connection status changes OR a delta is applied (state.revision bumped).
   onChange?: () => void;
   // Called after a `pong` updates the rolling latency (kept separate from `onChange` so the render path
   // isn't woken by latency probes).
   onLatency?: () => void;
-  // Called when the host responds to a `join` request with a `session` carrying `headlessMirrorPort`.
-  // The app should reconnect to `<same-host>:<port>/ws` (via buildHeadlessMirrorWebSocketUrl) to get the
-  // player's own game view (served by the headless instance the host spawned for them).
-  onHeadlessRedirect?: (port: number) => void;
+  // Called when the host responds to a `join` request with a shared path or a direct seat port.
+  // The app reconnects to the same host through the given route to get its own game view.
+  onHeadlessRedirect?: (target: string | number) => void;
   // Called when the join reply directs the viewer to WATCH THE HOST's own stream in place (no redirect):
   // a singleplayer run, or the host seat was selected. The app renders the current (host) stream directly.
   onDirectView?: () => void;
@@ -758,7 +757,7 @@ export function connectMirrorClient(options: {
     }
 
     // `session` carries the roster + screen kind (for the shared join screen) and — on a join reply — one of
-    // three mutually-exclusive directives: `directView` (watch the host stream in place), `headlessMirrorPort`
+    // directives: `directView` (watch the host stream in place), `headlessMirrorPath` / `headlessMirrorPort`
     // (redirect to this player's own headless game view), or `joinRejection` (name not servable → show picker +
     // message). Parse + surface the session first (so the form updates), then act on the directive in order.
     if (raw && typeof raw === "object" && (raw as { type?: unknown }).type === "session") {
@@ -790,6 +789,14 @@ export function connectMirrorClient(options: {
         joinPending = false;
         joinRequestId = null;
         options.onDirectView?.();
+      } else if (typeof parsed?.headlessMirrorPath === "string") {
+        joinPending = false;
+        joinRequestId = null;
+        if (isValidSharedMirrorPath(parsed.headlessMirrorPath)) {
+          options.onHeadlessRedirect?.(parsed.headlessMirrorPath);
+        } else {
+          options.onJoinRejected?.("join-failed", "The host supplied an invalid shared seat route.");
+        }
       } else if (typeof parsed?.headlessMirrorPort === "number") {
         joinPending = false;
         joinRequestId = null;
@@ -956,11 +963,16 @@ export function buildMirrorWebSocketUrl(
   return wsUrl.toString();
 }
 
-// After the host assigns a headless game instance, reconnect to it on the SAME host the browser loaded from
-// (e.g. 192.168.1.123) — only the port changes. Deriving the host from `location` instead of hardcoding
-// 127.0.0.1 is what makes mirror co-op work from a phone/other machine on the LAN, not just localhost.
-export function buildHeadlessMirrorWebSocketUrl(
-  port: number,
+// A shared seat route is supplied by the host, but may never replace the host authority. A root-relative
+// path keeps the socket on the host even when the page was loaded from a public origin.
+function isValidSharedMirrorPath(path: string): boolean {
+  return path.startsWith("/") && !path.startsWith("//") && !path.includes("\\") && !path.includes("#");
+}
+
+// After assignment, open this seat on the HOST origin. A string target is the shared route on the host port;
+// a numeric target is the existing direct route on the seat's own port.
+export function buildSeatMirrorWebSocketUrl(
+  target: string | number,
   sourceLocation: Pick<Location, "href" | "protocol"> = window.location,
   staticBg = false,
   trailDrive = false,
@@ -970,11 +982,11 @@ export function buildHeadlessMirrorWebSocketUrl(
   // an absent `visit` is not a contract error, so an older client or a hand-built URL connects unchanged.
   visit: string | null = readVisitId()
 ): string {
-  // Same host-base derivation as buildMirrorWebSocketUrl; only the PORT differs for a headless instance.
-  // Deriving the authority from the host base (rather than `location`) is what keeps this pointing at the
-  // game machine when the page itself came from the public origin.
-  const wsUrl = new URL(hostWsUrl("/ws", sourceLocation.href));
-  wsUrl.port = String(port);
+  if (typeof target === "string" && !isValidSharedMirrorPath(target)) {
+    throw new Error("Invalid shared seat route.");
+  }
+  const wsUrl = new URL(hostWsUrl(typeof target === "string" ? target : "/ws", sourceLocation.href));
+  if (typeof target === "number") wsUrl.port = String(target);
   wsUrl.searchParams.set("watch", "1");
   wsUrl.searchParams.set("staticBg", staticBg ? "1" : "0");
   wsUrl.searchParams.set("cardFlight", "1");
@@ -984,4 +996,15 @@ export function buildHeadlessMirrorWebSocketUrl(
   const diagnosticVisit = lifecycleVisitNonce();
   if (diagnosticVisit) wsUrl.searchParams.set("diagnosticVisit", diagnosticVisit);
   return wsUrl.toString();
+}
+
+// Keep the public direct-port builder for callers and tests that still select the legacy route.
+export function buildHeadlessMirrorWebSocketUrl(
+  port: number,
+  sourceLocation: Pick<Location, "href" | "protocol"> = window.location,
+  staticBg = false,
+  trailDrive = false,
+  visit: string | null = readVisitId()
+): string {
+  return buildSeatMirrorWebSocketUrl(port, sourceLocation, staticBg, trailDrive, visit);
 }
