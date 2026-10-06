@@ -101,6 +101,8 @@ if (args is ["--seats"])
     // not see any of the four causes before.
     Console.WriteLine("seats: notice to the browser");
     SeatNoticeTests.Run();
+    Console.WriteLine("seats: refusal codes to the browser");
+    SeatRejectionCodeTests.Run();
     // The seat rule that is about the player's SAVES rather than their session: what a failed Steam Cloud
     // isolation becomes, the lever that forces it, and the copy the host shows for it.
     Console.WriteLine("seats: cloud save isolation guard");

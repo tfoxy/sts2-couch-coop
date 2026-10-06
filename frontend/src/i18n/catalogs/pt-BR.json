@@ -56,6 +56,7 @@
   "join.notSession": "Esse nome não é de nenhum jogador desta sessão.",
   "join.noFreeInstance": "Não há nenhuma vaga de jogo livre no momento.",
   "join.spawnFailed": "Não foi possível iniciar a sua tela do jogo — tente novamente.",
+  "join.hostTransportNotStarted": "O anfitrião não iniciou a conexão para os jogadores do CouchCoop. Peça a ele para sair desta sala e criar outra. Se continuar acontecendo, envie o relatório de conexão.",
   "join.seatUnavailable": "Não é possível entrar como esse jogador agora.",
   "join.failed": "Não foi possível iniciar a sua tela do jogo.",
   "join.hostNoAnswer": "O anfitrião não respondeu. Tente novamente.",

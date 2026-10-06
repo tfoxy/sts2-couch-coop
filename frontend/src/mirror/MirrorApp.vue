@@ -115,15 +115,16 @@ const forceReload = (): void => {
 // Maps a server `joinRejection` code to the message the picker shows. The default is the "wrong name" copy the
 // product spec calls for (covers a bad `?name=` and a mid-run newcomer picking a non-session player).
 //
-// THREE CODES NEVER REACH THIS TABLE. The host's named seat causes (`seat-port-taken` / `seat-port-blocked` /
-// `seat-network-path`) are rendered through the seat-notice surface instead — see `onJoinRejected` and
-// `seatNoticeForRejection`. They are the same three conditions that reach a REDIRECTED viewer on the `seat-notice`
-// channel, so they get the same words from the same catalogs rather than a second, vaguer translation of "try
-// again" here.
-const JOIN_REJECTION_MESSAGES: Record<string, "join.notSession" | "join.noFreeInstance" | "join.spawnFailed" | "join.seatUnavailable" | "join.failed"> = {
+// Named seat causes are rendered through the seat-notice surface instead — see `onJoinRejected` and
+// `seatNoticeForRejection`. Those conditions also reach a redirected viewer on the `seat-notice` channel,
+// so both paths use the same translated copy.
+const JOIN_REJECTION_MESSAGES: Record<string, "join.notSession" | "join.noFreeInstance" | "join.spawnFailed" | "join.seatUnavailable" | "join.failed" | "join.hostTransportNotStarted"> = {
   "not-a-session-player": "join.notSession",
   "no-free-instance": "join.noFreeInstance",
   "spawn-failed": "join.spawnFailed",
+  // The host opened a lobby without ever starting CouchCoop's player transport. Retrying this device cannot
+  // create that listener; the host must leave the lobby and try hosting again.
+  "host-transport-not-started": "join.hostTransportNotStarted",
   // The picked seat's server-derived seatStatus is not "ready". The picker disables those rows, so this only
   // surfaces when the roster was stale at the moment of the tap.
   "seat-unavailable": "join.seatUnavailable",

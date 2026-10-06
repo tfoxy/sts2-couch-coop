@@ -55,7 +55,10 @@ internal static class SeatRejectionCodeTests
                      // It reuses the port-conflict copy on the phone (MIRROR_REJECTION_SEAT_CAUSES) for the same
                      // reason `seat-control-blocked` reuses host-local-block: from this device the news is
                      // identical — nothing here is wrong, and only the host can fix it.
-                     CouchSeatAvailability.NoCouchListenerCode
+                     CouchSeatAvailability.NoCouchListenerCode,
+                     // The host never opened its couch transport. This is distinct from a failed port bind,
+                     // but it must also reach the viewer under its own code rather than become spawn-failed.
+                     CouchSeatAvailability.HostTransportNotStartedCode
                  })
         {
             var refused = CouchCoopWebSocketConnection.ClassifyFailedSpawn(

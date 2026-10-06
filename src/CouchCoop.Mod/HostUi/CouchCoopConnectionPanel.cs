@@ -506,6 +506,7 @@ internal sealed partial class CouchCoopConnectionPanel : Panel
         // again", and no retry can bind a port another process owns. This row is also raised against the HOST
         // itself at host start, where "try joining again" would be addressed to nobody.
         Session.CouchSeatAvailability.NoCouchListenerCode => "host_no_couch_seats",
+        Session.CouchSeatAvailability.HostTransportNotStartedCode => "host_transport_not_started",
         "native-join-rejected" or "native-disconnected" or "child-status-lost" => "join",
         // Split OUT of "join" deliberately. The generic join copy tells the host to check that game and mod
         // versions match, which is wrong twice over for a run already in progress: nothing is mismatched, and

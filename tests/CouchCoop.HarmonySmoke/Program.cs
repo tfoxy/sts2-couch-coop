@@ -7,5 +7,7 @@ if (!result.Succeeded)
     return 1;
 }
 
+HostReflectionDispatchTests.Run();
+
 Console.WriteLine("harmony smoke: ok");
 return 0;

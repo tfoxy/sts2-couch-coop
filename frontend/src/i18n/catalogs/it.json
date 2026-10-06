@@ -56,6 +56,7 @@
   "join.notSession": "Quel nome non corrisponde a nessun giocatore della partita.",
   "join.noFreeInstance": "Al momento non ci sono posti di gioco liberi.",
   "join.spawnFailed": "Impossibile avviare la visualizzazione del gioco: riprova.",
+  "join.hostTransportNotStarted": "L’host non ha avviato la connessione per i giocatori CouchCoop. Chiedigli di uscire da questa lobby e di crearne un’altra. Se il problema continua, invia il rapporto di connessione.",
   "join.seatUnavailable": "Impossibile unirsi a quel giocatore in questo momento.",
   "join.failed": "Impossibile avviare la visualizzazione del gioco.",
   "join.hostNoAnswer": "L'host non ha risposto: riprova.",
