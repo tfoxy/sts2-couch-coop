@@ -7,7 +7,8 @@
 # MCP has local FS paths
 /.mcp.json
 
-.ai/
+.ai
+.worktrees/
 
 # Local STS2 config, generated assets, screenshots, and validation evidence.
 # No trailing slash: in a git worktree these are SYMLINKS to the real checkout's copies, not a
