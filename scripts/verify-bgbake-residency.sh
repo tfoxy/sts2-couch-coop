@@ -37,6 +37,7 @@
 set -uo pipefail
 
 REPO="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+PRIMARY="$(dirname "$(git -C "$REPO" rev-parse --path-format=absolute --git-common-dir)")"
 GODOT="${GODOT:-$HOME/.local/godot-4.5.1-mono/Godot_v4.5.1-stable_mono_linux_x86_64/Godot_v4.5.1-stable_mono_linux.x86_64}"
 ASSETS="${ASSETS:-http://127.0.0.1:13337}"
 PORT="${PORT:-13462}"
@@ -55,7 +56,7 @@ OK()   { echo "  ok   $*"; }
 # ---- locate the recording (worktree first, then the primary repo root) --------------------------------------------
 find_rec() {
   local root
-  for root in "$REPO" "${REPO%/.claude/worktrees/*}"; do
+  for root in "$REPO" "$PRIMARY"; do
     if [ -f "$root/.sts2/bench/$REC" ]; then echo "$root/.sts2/bench/$REC"; return 0; fi
   done
   return 1

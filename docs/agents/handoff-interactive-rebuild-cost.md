@@ -115,8 +115,9 @@ launched with an explicit `model`.
 
 Frontend paths above are relative to `frontend/src/mirror/`.
 
-**Worktrees.** The coordinator creates one per WP with the `couch-worktree` skill (`cc-<wp>` on branch
-`round/irc-<wp>`, cut from current local `main`) and passes the absolute path in the brief. Do not rely on
+**Worktrees.** The coordinator creates one per WP with `scripts/create-worktree.sh cc-<wp>` (branch
+`worktree/cc-<wp>`, cut from current local `main`) and passes the absolute path in the brief. Pass dependency
+refs when a WP needs a specific Spirectl or Godot scene web revision. Do not rely on
 the Agent tool's bare `isolation: "worktree"`: it skips the node_modules symlink, the scratch mods dir and
 `install-agent-config.sh`. In addition:
 
