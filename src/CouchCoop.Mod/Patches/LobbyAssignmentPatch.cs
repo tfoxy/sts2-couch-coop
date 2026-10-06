@@ -1,6 +1,7 @@
 using System.Reflection;
 using CouchCoop.Mod.Contracts;
 using CouchCoop.Mod.HostUi;
+using CouchCoop.Mod.Runtime;
 using CouchCoop.Mod.Session;
 using HarmonyLib;
 using MegaCrit.Sts2.Core.Multiplayer.Game;
@@ -45,7 +46,7 @@ internal static class LobbyAssignmentPatch
     internal static IReadOnlyList<LobbyAssignmentBinding> Bindings { get; } =
     [
         new(typeof(NCharacterSelectScreen), nameof(NCharacterSelectScreen.InitializeMultiplayerAsHost),
-            [typeof(INetGameService), typeof(int)], Role: null, nameof(PostfixWake)),
+            [typeof(INetGameService), typeof(int)], Role: null, nameof(PostfixNewRunAsHost)),
         new(typeof(NCharacterSelectScreen), nameof(NCharacterSelectScreen.InitializeMultiplayerAsClient),
             [typeof(INetGameService), typeof(ClientLobbyJoinResponseMessage)], Role: null, nameof(PostfixWake)),
         new(typeof(NCharacterSelectScreen), nameof(NCharacterSelectScreen.InitializeSingleplayer),
@@ -155,16 +156,17 @@ internal static class LobbyAssignmentPatch
     // Postfixes. Each one records (or not) and wakes; see the remarks for why nothing else.
 
     private static void PostfixWake(object __instance) => Note(__instance, role: null);
+    private static void PostfixNewRunAsHost(object __instance) => Note(__instance, role: null, hostAssignment: true);
 
     // The second argument is taken by position (__1) and by type, so it is the one the game passes to the
     // initializer whatever its parameter is called; TargetsResolve pins that the type matches the target's own.
     private static void PostfixLoadRunAsHost(object __instance, SerializableRun __1)
-        => Note(__instance, NetTypeNames.Host, __1);
+        => Note(__instance, NetTypeNames.Host, __1, hostAssignment: true);
 
     private static void PostfixLoadRunAsClient(object __instance, ClientLoadJoinResponseMessage __1)
         => Note(__instance, NetTypeNames.Client, __1);
 
-    private static void Note(object screen, string? role, object? savedRun = null)
+    private static void Note(object screen, string? role, object? savedRun = null, bool hostAssignment = false)
     {
         try
         {
@@ -180,6 +182,17 @@ internal static class LobbyAssignmentPatch
             }
 
             CouchCoopQrHostPanelController.NoteLobbyAssigned();
+            if (hostAssignment)
+            {
+                // Hosting should already have started before the game assigns a host lobby. Defer this
+                // bookkeeping check to the next frame: no game or transport read belongs in the initializer.
+                GameNextFrame.Schedule(() =>
+                {
+                    if (screen is Godot.Node node && !Godot.GodotObject.IsInstanceValid(node)) return;
+                    CouchCoopHostTransport.NoteHostStartNotObserved();
+                    CouchCoopQrHostPanelController.NoteLobbyAssigned();
+                });
+            }
         }
         catch (Exception exception)
         {

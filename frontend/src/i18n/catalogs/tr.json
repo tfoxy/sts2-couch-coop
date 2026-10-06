@@ -56,6 +56,7 @@
   "join.notSession": "Bu isim bu oturumdaki bir oyuncuya ait değil.",
   "join.noFreeInstance": "Şu anda boş oyun yuvası yok.",
   "join.spawnFailed": "Oyun görünümün başlatılamadı — lütfen tekrar dene.",
+  "join.hostTransportNotStarted": "Ev sahibi CouchCoop oyuncuları için bağlantıyı başlatmadı. Ev sahibinden bu lobiden çıkıp yeniden kurmasını isteyin. Sorun devam ederse bağlantı raporunu gönderin.",
   "join.seatUnavailable": "Şu anda bu oyuncu olarak katılınamıyor.",
   "join.failed": "Oyun görünümün başlatılamadı.",
   "join.hostNoAnswer": "Oda sahibi yanıt vermedi — lütfen tekrar dene.",

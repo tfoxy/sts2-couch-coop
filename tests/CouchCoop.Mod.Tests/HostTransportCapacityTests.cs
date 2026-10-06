@@ -29,6 +29,7 @@ internal static class HostTransportCapacityTests
     {
         OnlyTheStartSteamHostPrefixMovesOffTheDefaultPriority();
         HarmonyOrdersOurReplacingPrefixLast();
+        BothAsyncHostCallSitesContainOneSteamStart();
         TheArgumentsWeConsumeStillCarryTheNamesHarmonyMatchesOn();
         AnAlreadyRaisedCapSurvivesAndIsStated();
         TheLobbyProbeOnlyEverRaises();
@@ -99,6 +100,30 @@ internal static class HostTransportCapacityTests
     /// <summary>A stand-in patch body: Harmony's ordering never looks at what a patch does.</summary>
     private static void Sink()
     {
+    }
+
+    private static void BothAsyncHostCallSitesContainOneSteamStart()
+    {
+        var dispatch = typeof(CouchCoopHostTransportPatch).GetMethod(
+            "DispatchStartSteamHost", BindingFlags.NonPublic | BindingFlags.Static);
+        Assert(dispatch is not null
+               && dispatch.GetMethodImplementationFlags().HasFlag(MethodImplAttributes.NoInlining),
+            "the call-site dispatch itself cannot be inlined");
+        var reflectionDispatch = typeof(HostReflectionDispatch).GetMethod(
+            nameof(HostReflectionDispatch.Invoke), BindingFlags.NonPublic | BindingFlags.Static);
+        Assert(reflectionDispatch is not null
+               && reflectionDispatch.GetMethodImplementationFlags().HasFlag(MethodImplAttributes.NoInlining),
+            "the reflection entry-point dispatch cannot be inlined");
+        Assert(CouchCoopHostTransportPatch.SteamHostCallerTypes.Count == 2,
+            "new-run and saved-run host callers are both guarded");
+        foreach (var callerType in CouchCoopHostTransportPatch.SteamHostCallerTypes)
+        {
+            var sites = CouchCoopHostTransportPatch.FindSteamHostCallSites(callerType);
+            Assert(sites.Count == 1,
+                $"{callerType.Name} has exactly one async state machine that starts a Steam host");
+            Assert(CouchCoopHostTransportPatch.CountSteamHostCalls(sites[0]) == 1,
+                $"{callerType.Name} state machine has exactly one host-start call to replace");
+        }
     }
 
     // Harmony maps a patch's parameters to the original's BY NAME, and throws at patch time when a name does not

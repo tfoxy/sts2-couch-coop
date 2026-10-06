@@ -56,6 +56,7 @@
   "join.notSession": "Ce nom ne correspond à aucun joueur de la partie.",
   "join.noFreeInstance": "Aucun emplacement de jeu libre n'est disponible pour le moment.",
   "join.spawnFailed": "Impossible de démarrer l'affichage du jeu. Veuillez réessayer.",
+  "join.hostTransportNotStarted": "L’hôte n’a pas démarré la connexion des joueurs CouchCoop. Demandez-lui de quitter ce salon et d’en créer un nouveau. Si le problème persiste, envoyez le rapport de connexion.",
   "join.seatUnavailable": "Ce joueur ne peut pas être rejoint pour le moment.",
   "join.failed": "Impossible de démarrer l'affichage du jeu.",
   "join.hostNoAnswer": "L'hôte n'a pas répondu. Veuillez réessayer.",

@@ -19,6 +19,29 @@ internal static class ConnectionRegistryTests
         SavedIssueTimingAndOutcomes();
         CloseDismissOverflowAndDedupe();
         HostingEndedKeepsTheEvidenceAndResetsTheLiveRow();
+        CouchSeatFactIsCapturedWhenTheIssueIsRecorded();
+    }
+
+    private static void CouchSeatFactIsCapturedWhenTheIssueIsRecorded()
+    {
+        var registry = new ConnectionRegistry(new FakeTime());
+        var id = Guid.NewGuid();
+        try
+        {
+            CouchCoop.Mod.Session.CouchSeatAvailability.Clear();
+            CouchCoop.Mod.Session.CouchSeatAvailability.NoteHostTransportNotStarted();
+            registry.Connected(id, "phone");
+            registry.BeginAttempt(id);
+            registry.Fail(id, "host-transport-not-started", "No host start", "Host again");
+            var issueId = registry.Snapshot().Rows.Single().Attempt!.IssueId!.Value;
+
+            CouchCoop.Mod.Session.CouchSeatAvailability.Clear();
+            Assert(registry.BuildReport(issueId)!.Contains(
+                    "couchSeats: " + CouchCoop.Mod.Session.CouchSeatAvailability.HostTransportNotStartedDetail,
+                    StringComparison.Ordinal),
+                "the copied report keeps the failure-time couch seat fact after hosting resets");
+        }
+        finally { CouchCoop.Mod.Session.CouchSeatAvailability.Clear(); }
     }
 
     /// <summary>

@@ -1,8 +1,10 @@
 using System.Reflection;
+using System.Runtime.CompilerServices;
 using CouchCoop.Mod.Session;
 using HarmonyLib;
 using MegaCrit.Sts2.Core.Entities.Multiplayer;
 using MegaCrit.Sts2.Core.Multiplayer;
+using MegaCrit.Sts2.Core.Nodes.Screens.MainMenu;
 
 namespace CouchCoop.Mod.Patches;
 
@@ -29,6 +31,15 @@ internal static class CouchCoopHostTransportPatch
         (typeof(NetHostGameService), "StartENetHost", [typeof(ushort), typeof(int)]),
         (typeof(NetHostGameService), "Disconnect", [typeof(NetError), typeof(bool)]),
     ];
+
+    // Both lobby entry points are async. Their calls are in compiler-generated MoveNext bodies, not in the
+    // methods that create the tasks. Keep the two screen types explicit so a new game path cannot accidentally
+    // satisfy one of these guards on behalf of the other.
+    internal static IReadOnlyList<Type> SteamHostCallerTypes { get; } =
+        [typeof(NMultiplayerHostSubmenu), typeof(NMultiplayerSubmenu)];
+
+    private static readonly MethodInfo? StartSteamHostMethod =
+        AccessTools.Method(typeof(NetHostGameService), "StartSteamHost", [typeof(int)]);
 
     /// <summary>
     /// The game-service identity is distinct from ENet's transport registration. The saved-run fallback must
@@ -83,13 +94,20 @@ internal static class CouchCoopHostTransportPatch
             // standing down.
             if (CouchCoopHostTransport.SeamsResolve)
             {
-                Patch(
+                var steamPrefixInstalled = Patch(
                     harmony,
                     typeof(NetHostGameService),
                     "StartSteamHost",
                     [typeof(int)],
                     prefix: nameof(PrefixStartSteamHost),
                     prefixPriority: StartSteamHostPrefixPriority);
+                if (steamPrefixInstalled)
+                {
+                    foreach (var callerType in SteamHostCallerTypes)
+                    {
+                        PatchSteamHostCaller(harmony, callerType);
+                    }
+                }
             }
             else
             {
@@ -135,6 +153,65 @@ internal static class CouchCoopHostTransportPatch
         __result = CouchCoopHostTransport.StartHostAsync(__instance, maxClients);
         return false;
     }
+
+    // A tiny host method can be inlined into an already-JITted async MoveNext before Harmony patches it. Replace
+    // the two call sites with a call that reflection must dispatch through the patched method's entry point.
+    // The same rewriter and reflection dispatch are exercised with a game-free Harmony target in the smoke test.
+    [MethodImpl(MethodImplOptions.NoInlining)]
+    private static Task<NetErrorInfo?> DispatchStartSteamHost(NetHostGameService service, int maxClients)
+        => HostReflectionDispatch.Invoke<Task<NetErrorInfo?>>(StartSteamHostMethod!, service, [maxClients]);
+
+    private static void PatchSteamHostCaller(Harmony harmony, Type callerType)
+    {
+        try
+        {
+            var candidates = FindSteamHostCallSites(callerType);
+            if (candidates.Count != 1 || CountSteamHostCalls(candidates[0]) != 1)
+            {
+                throw new InvalidOperationException(
+                    $"expected one async host call site with one StartSteamHost call; found {candidates.Count} "
+                    + $"site(s), with call counts [{string.Join(", ", candidates.Select(CountSteamHostCalls))}]");
+            }
+
+            harmony.Patch(candidates[0], transpiler: new HarmonyMethod(Local(nameof(TranspileSteamHostCall))));
+        }
+        catch (Exception exception)
+        {
+            CouchCoopPatchDiagnostics.PatchFailed(
+                nameof(CouchCoopHostTransportPatch),
+                $"{callerType.Name} Steam host call patch failed ({exception.GetType().Name}: {exception.Message}).",
+                costsCoop: true);
+        }
+    }
+
+    internal static IReadOnlyList<MethodInfo> FindSteamHostCallSites(Type callerType)
+    {
+        var sites = new List<MethodInfo>();
+        foreach (var caller in callerType.GetMethods(
+                     BindingFlags.Instance | BindingFlags.Static | BindingFlags.Public | BindingFlags.NonPublic
+                     | BindingFlags.DeclaredOnly))
+        {
+            var stateMachine = caller.GetCustomAttribute<AsyncStateMachineAttribute>()?.StateMachineType;
+            var moveNext = stateMachine?.GetMethod(nameof(IAsyncStateMachine.MoveNext),
+                BindingFlags.Instance | BindingFlags.Public | BindingFlags.NonPublic);
+            if (moveNext is not null && CountSteamHostCalls(moveNext) > 0)
+            {
+                sites.Add(moveNext);
+            }
+        }
+
+        return sites;
+    }
+
+    internal static int CountSteamHostCalls(MethodBase method)
+        => StartSteamHostMethod is null ? 0 : PatchProcessor.GetOriginalInstructions(method)
+            .Count(instruction => instruction.Calls(StartSteamHostMethod));
+
+    private static IEnumerable<CodeInstruction> TranspileSteamHostCall(IEnumerable<CodeInstruction> instructions)
+        => HostCallRewriter.ReplaceExactlyOne(
+            instructions,
+            StartSteamHostMethod ?? throw new MissingMethodException("StartSteamHost(int)"),
+            Local(nameof(DispatchStartSteamHost)));
 
     // Postfix on NetHostGameService.StartENetHost(ushort, int): a plain ENet host is running (the stock -fastmp
     // path, the debug multiplayer screen, or a Steam-uninitialized launch). Host netId is 1 and couch seats can
@@ -206,7 +283,10 @@ internal static class CouchCoopHostTransportPatch
         var target = AccessTools.Method(type, name, args);
         if (target is null)
         {
-            CouchCoopLog.Stderr($"CouchCoopHostTransportPatch: {label} not found — host transport bookkeeping skipped.");
+            CouchCoopPatchDiagnostics.PatchFailed(
+                nameof(CouchCoopHostTransportPatch),
+                $"{label} not found — host transport hook unavailable.",
+                costsCoop: true);
             return false;
         }
 

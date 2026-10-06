@@ -152,6 +152,26 @@ internal static class CouchCoopHostTransport
     /// for the other half of the room.
     /// </summary>
     internal static readonly Localization.CouchCoopText CouchSeatsUnavailableText = new("couchcoop_couch_seats_unavailable");
+    internal static readonly Localization.CouchCoopText HostTransportNotStartedText = new("couchcoop_host_transport_not_started");
+
+    /// <summary>
+    /// A host lobby was assigned, or a seat was refused, without an observed host start. Only the game event
+    /// and the actual refusal call this; neither adds a probe or a timer that repeatedly reads transport state.
+    /// </summary>
+    internal static void NoteHostStartNotObserved()
+    {
+        if (!BookkeepingInstalled || EnetAvailable || !CouchSeatAvailability.NoteHostTransportNotStarted()) return;
+
+        var detail = CouchSeatAvailability.HostTransportNotStartedDetail;
+        LogWarning($"host start was not observed for this lobby; no couch ENet listener on port {EnetPort}.");
+        HostUi.CouchCoopHostUiNotices.HostTransportNote = HostTransportNotStartedText;
+        Connections.ConnectionRegistry.Shared.ReportHostIssue(
+            CouchSeatAvailability.HostTransportNotStartedCode,
+            CouchSeatAvailability.HostTransportNotStartedSummary,
+            CouchSeatAvailability.HostTransportNotStartedAction,
+            detail,
+            isWarning: true);
+    }
 
     /// <summary>
     /// Say — everywhere — that this lobby cannot start couch seats. Called when the ENet side failed to bind,

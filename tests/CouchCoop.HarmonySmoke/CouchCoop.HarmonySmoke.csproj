@@ -14,5 +14,7 @@
          Harmony itself without loading a game, Godot, or any private assembly. -->
     <PackageReference Include="Lib.Harmony" Version="[2.4.2]" PrivateAssets="all" />
     <Compile Include="../../src/CouchCoop.Mod/Patches/CouchCoopHarmonyProbe.cs" Link="CouchCoopHarmonyProbe.cs" />
+    <Compile Include="../../src/CouchCoop.Mod/Patches/HostReflectionDispatch.cs" Link="HostReflectionDispatch.cs" />
+    <Compile Include="../../src/CouchCoop.Mod/Patches/HostCallRewriter.cs" Link="HostCallRewriter.cs" />
   </ItemGroup>
 </Project>

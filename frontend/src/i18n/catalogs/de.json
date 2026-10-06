@@ -56,6 +56,7 @@
   "join.notSession": "Dieser Name gehört zu keinem Spieler dieser Sitzung.",
   "join.noFreeInstance": "Im Moment ist kein freier Spiel-Slot verfügbar.",
   "join.spawnFailed": "Deine Spielansicht konnte nicht gestartet werden – bitte versuche es erneut.",
+  "join.hostTransportNotStarted": "Der Host hat die Verbindung für Couch-Spieler nicht gestartet. Bitte die Person, die hostet, diese Lobby zu verlassen und erneut ein Spiel zu hosten. Falls es wieder passiert, sende den Verbindungsbericht.",
   "join.seatUnavailable": "Als dieser Spieler kannst du gerade nicht beitreten.",
   "join.failed": "Deine Spielansicht konnte nicht gestartet werden.",
   "join.hostNoAnswer": "Der Host hat nicht geantwortet – bitte versuche es erneut.",

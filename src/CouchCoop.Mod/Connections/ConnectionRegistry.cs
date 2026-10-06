@@ -497,7 +497,8 @@ public sealed class ConnectionRegistry
                 // long before the attempt, so the log excerpt below — post-attempt errors only — structurally
                 // cannot show it. A report from a lobby with no couch transport otherwise looks like an
                 // ordinary launch failure.
-                ["couchSeats"] = Session.CouchSeatAvailability.UnavailableDetail ?? "available",
+                ["couchSeats"] = e.Facts.GetValueOrDefault("couchSeats")
+                    ?? Session.CouchSeatAvailability.DescribeForReport(),
                 ["gameVersion"] = e.Facts.GetValueOrDefault("gameVersion") ?? HostGameVersion ?? "unknown"
             };
             report = new ConnectionReportContent
@@ -606,6 +607,9 @@ public sealed class ConnectionRegistry
     }
     private void SaveIssue(Entry e)
     {
+        // A report can be copied after hosting ends or another lobby starts. Keep the transport answer from
+        // the moment this issue was first recorded instead of consulting the current lobby at copy time.
+        e.Facts.TryAdd("couchSeats", Session.CouchSeatAvailability.DescribeForReport());
         var firstReport = e.IssueId is null;
         if (firstReport) { e.IssueId = Guid.NewGuid(); _issueOrder.Enqueue(e.IssueId.Value); }
         _issues[e.IssueId!.Value] = e.CopyForIssue(_time.GetTimestamp());

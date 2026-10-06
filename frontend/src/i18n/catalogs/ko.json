@@ -56,6 +56,7 @@
   "join.notSession": "이 세션의 플레이어 이름이 아닙니다.",
   "join.noFreeInstance": "지금은 빈 게임 슬롯이 없습니다.",
   "join.spawnFailed": "게임 화면을 시작하지 못했습니다. 다시 시도해 주세요.",
+  "join.hostTransportNotStarted": "호스트가 CouchCoop 플레이어의 연결을 시작하지 않았습니다. 호스트에게 이 로비를 나간 뒤 다시 만들도록 요청하세요. 문제가 계속되면 연결 보고서를 보내 주세요.",
   "join.seatUnavailable": "지금은 그 플레이어로 참여할 수 없습니다.",
   "join.failed": "게임 화면을 시작하지 못했습니다.",
   "join.hostNoAnswer": "호스트가 응답하지 않았습니다. 다시 시도해 주세요.",

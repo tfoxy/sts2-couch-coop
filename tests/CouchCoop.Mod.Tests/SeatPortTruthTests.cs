@@ -29,6 +29,7 @@ internal static class SeatPortTruthTests
         await APinnedSeatFailsImmediatelyInsteadOfSpawning();
         await APinnedSeatFailureKeepsTheReconnectClaim();
         await ARefusedLaunchNamesTheCouchTransportWhenThatIsTheCause();
+        await ARefusedLaunchNamesTheMissingHostStart();
         await ARefusedLaunchWithNoKnownCauseKeepsTheGenericSentence();
         ASeatMayNotWalkOffItsAssignedPort();
         AHostStillWalks();
@@ -299,6 +300,43 @@ internal static class SeatPortTruthTests
                 "…and says so honestly rather than borrowing a cause that does not apply");
         }
         finally { ConnectionRegistry.Shared.Clear(); }
+    }
+
+    private static async Task ARefusedLaunchNamesTheMissingHostStart()
+    {
+        var installed = CouchCoopHostTransport.BookkeepingInstalled;
+        var available = CouchCoopHostTransport.EnetAvailable;
+        var harness = new SeatHarness(launchRefused: true);
+        var session = BeginAttempt();
+        try
+        {
+            CouchSeatAvailability.Clear();
+            CouchCoopHostTransport.BookkeepingInstalled = true;
+            CouchCoopHostTransport.EnetAvailable = false;
+            CouchCoopHostTransport.NoteHostStartNotObserved();
+            Assert(await harness.Manager.EnsureHeadlessAsync(session, "Ann", default) is null,
+                "the seat is refused when no listener was observed");
+
+            var row = ConnectionRegistry.Shared.Snapshot().Rows.Single(entry => entry.Id == session);
+            Assert(row.Issue?.Code == CouchSeatAvailability.HostTransportNotStartedCode,
+                "a missing host start has its own issue code");
+            Assert(row.Issue!.Action == CouchSeatAvailability.HostTransportNotStartedAction,
+                "the next step is to host again, not to free a port");
+            Assert(!row.Issue.Detail!.Contains("Another copy", StringComparison.Ordinal)
+                   && row.Issue.Detail.Contains("does not show", StringComparison.Ordinal),
+                "the detail does not turn an unseen host start into a port-conflict claim");
+            var english = CouchCoopLocalization.CatalogFor("eng");
+            Assert(english["couchcoop_connection_error_host_transport_not_started_summary"] == row.Issue.Summary
+                   && english["couchcoop_connection_error_host_transport_not_started_action"] == row.Issue.Action,
+                "the host report and localized panel agree word for word");
+        }
+        finally
+        {
+            CouchCoopHostTransport.BookkeepingInstalled = installed;
+            CouchCoopHostTransport.EnetAvailable = available;
+            CouchSeatAvailability.Clear();
+            ConnectionRegistry.Shared.Clear();
+        }
     }
 
     // ---- 4. the seat's own no-walk guard ----------------------------------------------------------------------
@@ -671,6 +709,9 @@ internal static class SeatPortTruthTests
             // The note the same condition raises on the HOST's own surfaces (the QR dialog's tip line and the
             // once-per-mount lobby modal), which is how a host learns before anybody's phone tries.
             "couchcoop_couch_seats_unavailable",
+            "couchcoop_host_transport_not_started",
+            "couchcoop_connection_error_host_transport_not_started_summary",
+            "couchcoop_connection_error_host_transport_not_started_action",
         ];
         Assert(CouchCoopLocalization.SupportedLanguages.Count == 14, "there are still fourteen catalogs to fill");
         foreach (var language in CouchCoopLocalization.SupportedLanguages)

@@ -880,16 +880,15 @@ public sealed partial class HeadlessClientManager : IDisposable
 
             if (proc is null)
             {
-                // A null launcher result is not always a mystery. The ONE condition that makes `LaunchReal`
-                // refuse before it does any work — this host having no couch ENet listener — has been known
-                // since the lobby started hosting, and used to be thrown away here: the player's report read
-                // "No further cause is available" while the host could have named the port and the likely
-                // process. Anything else (a genuine Process.Start returning null) keeps the generic sentence,
-                // which is honest, because for that there really is no further cause.
+                // A null launcher result is not always a mystery. When LaunchReal refused for a missing
+                // listener, CouchSeatAvailability names either the known bind failure or a host start that
+                // CouchCoop never observed. A genuine Process.Start null keeps the generic sentence.
                 var (code, summary, action, detail) = CouchSeatAvailability.UnavailableDetail is { } couchSeatRefusal
-                    ? (CouchSeatAvailability.NoCouchListenerCode,
-                        CouchSeatAvailability.IssueSummary,
-                        CouchSeatAvailability.IssueAction,
+                    ? (CouchSeatAvailability.UnavailableCode!,
+                        CouchSeatAvailability.UnavailableCode == CouchSeatAvailability.HostTransportNotStartedCode
+                            ? CouchSeatAvailability.HostTransportNotStartedSummary : CouchSeatAvailability.IssueSummary,
+                        CouchSeatAvailability.UnavailableCode == CouchSeatAvailability.HostTransportNotStartedCode
+                            ? CouchSeatAvailability.HostTransportNotStartedAction : CouchSeatAvailability.IssueAction,
                         couchSeatRefusal)
                     : ("launch-refused",
                         "The game process did not start.",
@@ -1871,6 +1870,7 @@ public sealed partial class HeadlessClientManager : IDisposable
         // Refuse loudly instead — the viewer gets the "no seat available" path immediately.
         if (!CouchCoopHostTransport.MaySpawnCouchSeat)
         {
+            CouchCoopHostTransport.NoteHostStartNotObserved();
             CouchCoopLog.Stderr(
                 $"headless launch refused slot={slot}: this host has no ENet listener for couch seats "
                 + $"(dual={CouchCoopHostTransport.IsDual}). A seat can only join a host that is running the ENet side "

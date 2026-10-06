@@ -52,7 +52,7 @@ internal static class HostReachabilityAcceptLoopTests
                     _ => { }),
                 root.Path,
                 IPAddress.Loopback,
-                preferredPort: 0,
+                preferredPort: ReserveEphemeralPort(),
                 log: _ => { });
 
             var baseUri = await host.StartAsync();
@@ -80,6 +80,13 @@ internal static class HostReachabilityAcceptLoopTests
         {
             HostReachabilityWatch.Shared.ResetForTests();
         }
+    }
+
+    private static int ReserveEphemeralPort()
+    {
+        using var listener = new TcpListener(IPAddress.Loopback, 0);
+        listener.Start();
+        return ((IPEndPoint)listener.LocalEndpoint).Port;
     }
 
     private sealed class TempSpaRoot : IDisposable

@@ -56,6 +56,7 @@
   "join.notSession": "Ta nazwa nie należy do żadnego gracza z tej sesji.",
   "join.noFreeInstance": "W tej chwili nie ma wolnego slotu na grę.",
   "join.spawnFailed": "Nie udało się uruchomić twojego widoku gry — spróbuj ponownie.",
+  "join.hostTransportNotStarted": "Host nie uruchomił połączenia dla graczy CouchCoop. Poproś hosta o opuszczenie tego lobby i ponowne utworzenie go. Jeśli problem się powtarza, wyślij raport połączenia.",
   "join.seatUnavailable": "Nie można teraz dołączyć jako ten gracz.",
   "join.failed": "Nie udało się uruchomić twojego widoku gry.",
   "join.hostNoAnswer": "Host nie odpowiedział — spróbuj ponownie.",

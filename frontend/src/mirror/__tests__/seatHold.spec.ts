@@ -420,6 +420,18 @@ describe("MirrorApp join rejection copy", () => {
     expect(joinMessage().exists()).toBe(false);
   });
 
+  it("names a host start that never opened the couch transport without blaming a port conflict", async () => {
+    await rejectAJoin({
+      joinRejection: "host-transport-not-started",
+      joinRejectionDetail: "The host lobby opened, but CouchCoop did not observe its player transport starting."
+    });
+
+    expect(joinMessage().text()).toContain("Ask the host to leave this lobby and host again");
+    expect(notice().exists()).toBe(false);
+    expect(app!.find('[data-testid="mirror-join-detail"]').text())
+      .toContain("did not observe its player transport starting");
+  });
+
   it("leaves every other code exactly as it was", async () => {
     await rejectAJoin({ joinRejection: "spawn-failed", joinRejectionDetail: "Join deadline expired." });
     expect(joinMessage().text()).toBe("Couldn't start your game view — please try again.");

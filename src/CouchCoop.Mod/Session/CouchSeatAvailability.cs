@@ -40,6 +40,7 @@ public static class CouchSeatAvailability
     /// <c>SeatReadinessVerdict.PortTakenCode</c>) because it travels the same paths they do.
     /// </summary>
     public const string NoCouchListenerCode = "host-no-couch-listener";
+    public const string HostTransportNotStartedCode = "host-transport-not-started";
 
     /// <summary>
     /// The English this condition reports under, at BOTH of its call sites — the host's own row raised at host
@@ -54,6 +55,18 @@ public static class CouchSeatAvailability
     public const string IssueAction =
         "Close any other copy of Slay the Spire 2 running on this computer, then host again.";
 
+    public const string HostTransportNotStartedSummary = "Players on this computer can't join this lobby.";
+    public const string HostTransportNotStartedAction =
+        "Return to the main menu and host again. If it still fails, copy this report.";
+    public const string HostTransportNotStartedDetail =
+        "CouchCoop did not observe the host transport start for this lobby. No couch ENet listener was registered. "
+        + "This does not show that UDP port 33771 is occupied.";
+
+    private static string? _unavailableCode;
+
+    /// <summary>The specific known cause, if the listener is unavailable.</summary>
+    public static string? UnavailableCode => UnavailableDetail is null ? null : _unavailableCode ?? NoCouchListenerCode;
+
     /// <summary>
     /// Why no couch seat can start right now, or <see langword="null"/> when they can. English, technical, and
     /// destined for a copyable report — the translated sentences a player and a host actually read are resolved
@@ -61,6 +74,27 @@ public static class CouchSeatAvailability
     /// </summary>
     public static string? UnavailableDetail { get; set; }
 
+    /// <summary>Record a missing host-start callback without replacing a known ENet bind failure.</summary>
+    public static bool NoteHostTransportNotStarted()
+    {
+        if (UnavailableDetail is not null) return false;
+        _unavailableCode = HostTransportNotStartedCode;
+        UnavailableDetail = HostTransportNotStartedDetail;
+        return true;
+    }
+
+    /// <summary>Capture the transport fact while recording a failure, not when someone later copies the report.</summary>
+    public static string DescribeForReport() => UnavailableDetail
+        ?? (!CouchCoopHostTransport.BookkeepingInstalled
+            ? "unknown (host transport bookkeeping is not installed)"
+            : !CouchCoopHostTransport.EnetAvailable
+            ? "unavailable (no couch ENet listener observed; host start has not been classified)"
+            : "available");
+
     /// <summary>Forget the current host's answer. Called from every transport reset path.</summary>
-    public static void Clear() => UnavailableDetail = null;
+    public static void Clear()
+    {
+        UnavailableDetail = null;
+        _unavailableCode = null;
+    }
 }
