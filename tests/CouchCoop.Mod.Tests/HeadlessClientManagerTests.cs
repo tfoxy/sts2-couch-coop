@@ -17,6 +17,9 @@ internal static class HeadlessClientManagerTests
         await SameNameReuseIsTrimAndCaseInsensitive();
         await ReleaseHardKillsFreesSlotAndReturnsFreedNetId();
         await ReleaseReturnsNullWhenNoSession();
+        await RepeatedLobbyRefreshEvictsBeforeRejoin();
+        await FailedLobbyEvictionBlocksSpawnUntilRetrySucceeds();
+        await InFlightLobbyEvictionBlocksAConcurrentRefresh();
         await ReuseTransfersOwnershipSoOldReleaseIsNoOp();
         await DeadOrphanIsReapedAndNameFreedOnNextEnsure();
         await SlotsAreCappedAtThree();
@@ -224,6 +227,92 @@ internal static class HeadlessClientManagerTests
         Assert(h.Spawned.Count == 0, "a Release with no matching session spawns/kills nothing");
     }
 
+    private static async Task RepeatedLobbyRefreshEvictsBeforeRejoin()
+    {
+        var spawned = new List<FakeProcess>();
+        var evicted = new List<ulong>();
+        using var manager = new HeadlessClientManager(
+            slot => { var child = new FakeProcess(slot, gracefulStopExits: false); spawned.Add(child); return child; },
+            (_, _) => Task.FromResult(true), evictStalePeer: evicted.Add);
+        for (var refresh = 0; refresh < 3; refresh++)
+        {
+            var session = Guid.NewGuid();
+            Assert(await manager.EnsureHeadlessAsync(session, "Ann", default) == HeadlessClientManager.SlotToPort(2),
+                "each saved-lobby refresh reclaims Ann's seat");
+            BrowserDisconnectSeat.Apply(manager, session, () => false, evicted.Add, _ => { });
+        }
+        Assert(spawned.Count == 3 && spawned.All(child => child.HardKilled),
+            "each lobby browser departure terminates only its owned child");
+        Assert(evicted.Count(id => id == HeadlessClientManager.SlotToNetId(2)) >= 3,
+            "the prior peer is evicted before each same-netId rejoin");
+    }
+
+    private static async Task FailedLobbyEvictionBlocksSpawnUntilRetrySucceeds()
+    {
+        var spawned = new List<FakeProcess>();
+        var allowEviction = false;
+        var evictions = 0;
+        void Evict(ulong netId)
+        {
+            Assert(netId == HeadlessClientManager.SlotToNetId(2), "retry targets the held peer");
+            evictions++;
+            if (!allowEviction) throw new InvalidOperationException("host service unavailable");
+        }
+        using var manager = new HeadlessClientManager(
+            slot => { var child = new FakeProcess(slot, gracefulStopExits: false); spawned.Add(child); return child; },
+            (_, _) => Task.FromResult(true), evictStalePeer: Evict);
+        var first = Guid.NewGuid();
+        Assert(await manager.EnsureHeadlessAsync(first, "Ann", default) == HeadlessClientManager.SlotToPort(2),
+            "initial join starts Ann's seat");
+        BrowserDisconnectSeat.Apply(manager, first, () => false, Evict, _ => { });
+        Assert(spawned[0].HardKilled, "browser disconnect terminates the old child even when eviction fails");
+
+        Assert(await manager.EnsureHeadlessAsync(Guid.NewGuid(), "Ann", default) is null,
+            "a failed peer cleanup refuses the same-seat retry");
+        Assert(spawned.Count == 1 && manager.HasNameClaim("Ann"),
+            "the refused retry launches no duplicate child and preserves Ann's seat claim");
+
+        allowEviction = true;
+        Assert(await manager.EnsureHeadlessAsync(Guid.NewGuid(), "Ann", default) == HeadlessClientManager.SlotToPort(2),
+            "the next join retries eviction and reopens Ann's seat");
+        Assert(spawned.Count == 2 && evictions >= 3, "exactly one replacement child is launched after cleanup succeeds");
+    }
+
+    private static async Task InFlightLobbyEvictionBlocksAConcurrentRefresh()
+    {
+        var spawned = 0;
+        var evictions = 0;
+        using var entered = new ManualResetEventSlim();
+        using var release = new ManualResetEventSlim();
+        void Evict(ulong _)
+        {
+            Interlocked.Increment(ref evictions);
+            entered.Set();
+            if (!release.Wait(TimeSpan.FromSeconds(5))) throw new TimeoutException("eviction did not resume");
+        }
+        using var manager = new HeadlessClientManager(
+            slot => { Interlocked.Increment(ref spawned); return new FakeProcess(slot, gracefulStopExits: false); },
+            (_, _) => Task.FromResult(true), evictStalePeer: Evict);
+        var first = Guid.NewGuid();
+        Assert(await manager.EnsureHeadlessAsync(first, "Ann", default) is not null, "first child launched");
+        var disconnect = Task.Run(() => BrowserDisconnectSeat.Apply(manager, first, () => false, Evict, _ => { }));
+        try
+        {
+            Assert(entered.Wait(TimeSpan.FromSeconds(2)), "browser cleanup reached the host callback");
+            Assert(await manager.EnsureHeadlessAsync(Guid.NewGuid(), "Ann", default) is null,
+                "a concurrent refresh waits for the in-flight eviction instead of launching");
+            Assert(Volatile.Read(ref spawned) == 1 && Volatile.Read(ref evictions) == 1,
+                "the in-flight peer is not evicted twice");
+        }
+        finally
+        {
+            release.Set();
+            await disconnect;
+        }
+        Assert(await manager.EnsureHeadlessAsync(Guid.NewGuid(), "Ann", default) is not null,
+            "the seat reopens after the first cleanup completes");
+    }
+
     private static async Task ReuseTransfersOwnershipSoOldReleaseIsNoOp()
     {
         var h = new Harness();
@@ -348,7 +437,10 @@ internal static class HeadlessClientManagerTests
         var first = Guid.NewGuid();
         await h.Manager.EnsureHeadlessAsync(first, "Ann", default);
         var proc = h.Spawned[0];
-        h.Manager.MarkDetached(first);
+        BrowserDisconnectSeat.Apply(h.Manager, first, () => true,
+            _ => throw new Exception("an in-run browser refresh must not evict its peer"),
+            _ => throw new Exception("an in-run browser refresh must not clear its name"));
+        Assert(!proc.Exited, "the browser refresh keeps its live in-run process");
 
         // Reconnect: same name, new session → reuse the LIVE process (no new spawn).
         var port = await h.Manager.EnsureHeadlessAsync(Guid.NewGuid(), "Ann", default);

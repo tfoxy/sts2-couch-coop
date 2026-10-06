@@ -151,6 +151,7 @@ public sealed partial class HeadlessClientManager
         var runInProgress = hostFacts is { } knownRun && _runInProgressProbe is not null
             ? knownRun.RunInProgress
             : RunInProgress;
+        RetryPendingPeerCleanup();
         // The standalone manager used by allocation tests has no game roster observer.
         var routeMode = _supportsSharedRelay ? SeatBrowserRouteMode.Shared : SeatBrowserRouteMode.Direct;
         var occupiedSeatPorts = routeMode == SeatBrowserRouteMode.Direct
@@ -971,6 +972,7 @@ public sealed partial class HeadlessClientManager
         {
             foreach (var slot in _processBySlot.Keys.ToArray()) ShutdownSlotLocked(slot, graceful: false);
             _sessionToSlot.Clear(); _nameToSlot.Clear(); _detachedSlots.Clear(); _browserAttempts.Clear();
+            _pendingPeerCleanup.Clear();
         }
     }
 

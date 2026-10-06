@@ -12,8 +12,8 @@ namespace CouchCoop.Mod.Session;
 /// the two per-peer actions a couch seat needs, evicting its ENet peer and overriding its display name. The seats
 /// are real networked clients, so there is no lobby player to add or remove here. There are NO direct
 /// Godot/Harmony calls and no game types in this type (it is source-linked into the hot-reload assembly): the reads go
-/// through <see cref="CouchCoopGameFacts"/>, CouchCoop's own typed reader, and the actions through spirectl's on the
-/// existing seam. None of them builds a full game-state snapshot.
+/// through <see cref="CouchCoopGameFacts"/>, CouchCoop's own typed reader, peer cleanup through the host runtime,
+/// and display-name changes through spirectl's existing seam. None builds a full game-state snapshot.
 /// </summary>
 public sealed class CouchCoopLobbyParticipation(CouchCoopRuntimeHost runtimeHost)
 {
@@ -48,28 +48,20 @@ public sealed class CouchCoopLobbyParticipation(CouchCoopRuntimeHost runtimeHost
     /// <summary>
     /// Force-disconnect a remote ENet peer by its netId when its browser/headless goes away. A SIGKILL'd
     /// headless leaves its peer registered in the host's net server, holding the netId, so the next headless
-    /// reusing it fails its ENet join. No-op without the semantic-actions capability.
+    /// reusing it fails its ENet join.
     /// </summary>
     public void DisconnectClient(ulong netId) => DisconnectClient(netId, requireSuccess: false);
 
     public void DisconnectClient(ulong netId, bool requireSuccess)
     {
-        if (!_runtimeHost.HasCapability(CouchCoopRuntimeHost.SemanticActionsCapability))
+        try
         {
-            if (requireSuccess) throw new InvalidOperationException("Peer cleanup is unavailable: the game action service is not ready.");
-            return;
+            _runtimeHost.DisconnectSeatPeer(netId);
         }
-
-        var result = _runtimeHost.ExecuteAction(new EmbeddableActionRequest(
-            RequestId: Guid.NewGuid().ToString("N"),
-            Kind: SemanticActionKind.DisconnectClient,
-            PlayerId: netId.ToString(System.Globalization.CultureInfo.InvariantCulture)));
-        // Surface only failures: a stale peer that isn't evicted would block a same-netId rejoin.
-        if (!result.Success)
+        catch (Exception exception)
         {
-            var cause = result.Result?.Message ?? result.Error?.Message ?? "No action error detail was supplied.";
-            if (requireSuccess) throw new InvalidOperationException($"Peer cleanup failed for {netId}: {cause}");
-            CouchCoopLog.Stderr($"DisconnectClient({netId}) failed: {cause}");
+            if (requireSuccess) throw new InvalidOperationException($"Peer cleanup failed for {netId}: {exception.Message}", exception);
+            CouchCoopLog.Stderr($"DisconnectClient({netId}) failed: {exception.Message}");
         }
     }
 

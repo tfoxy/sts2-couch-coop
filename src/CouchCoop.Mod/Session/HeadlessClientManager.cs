@@ -228,6 +228,10 @@ public sealed partial class HeadlessClientManager : IDisposable
     // isn't rejected (IdCollision → timeout). Null in tests / when no host net server is available. Idempotent
     // on the host side (no peer → no-op), so it's safe to call even when the peer was already evicted on Release.
     private readonly Action<ulong>? _evictStalePeer;
+    private readonly Dictionary<int, PeerCleanupPending> _pendingPeerCleanup = [];
+    private long _nextPeerCleanupTicket;
+    internal readonly record struct PeerCleanupTicket(ulong NetId, long Id);
+    private sealed record PeerCleanupPending(long Id, string Reason, bool InFlight = false);
     // How many couch seats the LIVE lobby has room for (its player cap minus the host's own seat). A probe, not a
     // constant, because the cap is not ours to choose: the stock game allows four players, and the multiplayer
     // limit mods raise that — see CouchCoopLobbyParticipation.MaxCouchSeats, which is what the host wires in here.
@@ -765,6 +769,18 @@ public sealed partial class HeadlessClientManager : IDisposable
                 slot = AllocateSlotForNewNameLocked(maxSlot, occupiedSeatPorts);
                 if (slot == 0)
                 {
+                    var pendingSeat = _pendingPeerCleanup
+                        .Where(entry => entry.Key >= MinSlot && entry.Key <= maxSlot
+                            && !_processBySlot.ContainsKey(entry.Key))
+                        .Select(entry => entry.Value)
+                        .FirstOrDefault();
+                    if (pendingSeat is not null)
+                    {
+                        ConnectionRegistry.Shared.Fail(sessionId, "seat-cleanup-pending",
+                            "A previous client still owns a network seat.",
+                            "Retry after the host removes that peer, or restart the host.",
+                            pendingSeat.Reason);
+                    }
                     // Every slot has a LIVE process. The one refusal a host can actually do something
                     // about: close a window, or raise the lobby cap.
                     return null;
@@ -834,6 +850,16 @@ public sealed partial class HeadlessClientManager : IDisposable
                 // Unwind exactly as the launch-refused path does: drop this session, and only forget the claim if
                 // WE just created it — a reconnect's pre-existing claim stays so the player can retry on the same
                 // netId once the port is freed.
+                _sessionToSlot.Remove(sessionId);
+                if (!reusingClaim) RemoveNameForSlotLocked(slot);
+                return null;
+            }
+
+            if (_pendingPeerCleanup.TryGetValue(slot, out var pendingCleanup))
+            {
+                ConnectionRegistry.Shared.Fail(sessionId, "seat-cleanup-pending",
+                    "A previous client still owns this network seat.",
+                    "Retry after the host removes that peer, or restart the host.", pendingCleanup.Reason);
                 _sessionToSlot.Remove(sessionId);
                 if (!reusingClaim) RemoveNameForSlotLocked(slot);
                 return null;
@@ -1146,11 +1172,11 @@ public sealed partial class HeadlessClientManager : IDisposable
     {
         if (occupiedPortSlots is { Count: > 0 })
         {
-            var free = PickSlotForNewNameLocked(maxSlot, slot => !occupiedPortSlots.ContainsKey(slot));
+            var free = PickSlotForNewNameLocked(maxSlot, slot => !_pendingPeerCleanup.ContainsKey(slot) && !occupiedPortSlots.ContainsKey(slot));
             if (free != 0) return free;
         }
 
-        return PickSlotForNewNameLocked(maxSlot, _ => true);
+        return PickSlotForNewNameLocked(maxSlot, slot => !_pendingPeerCleanup.ContainsKey(slot));
     }
 
     private int PickSlotForNewNameLocked(int maxSlot, Func<int, bool> acceptable)
@@ -1171,7 +1197,9 @@ public sealed partial class HeadlessClientManager : IDisposable
     /// a no-op: the session has no headless instance, or another session has since taken over the slot
     /// (same-name reconnect / reuse-transfer — that live instance must NOT be evicted).
     /// </summary>
-    public ulong? Release(Guid sessionId)
+    public ulong? Release(Guid sessionId) => ReleaseForBrowser(sessionId)?.NetId;
+
+    internal PeerCleanupTicket? ReleaseForBrowser(Guid sessionId)
     {
         lock (_lock)
         {
@@ -1193,7 +1221,65 @@ public sealed partial class HeadlessClientManager : IDisposable
             ConnectionRegistry.Shared.RecordDiagnostic(sessionId, "cleanup", stopped
                 ? "Owned game terminated after its last lobby browser disconnected."
                 : "Owned game could not be terminated; its seat remains reserved.");
-            return stopped ? SlotToNetId(slot) : null;
+            if (!stopped) return null;
+            // A retry may arrive before the host-side peer eviction finishes. Reserve this netId until
+            // eviction is confirmed; the callback itself must run outside _lock.
+            if (_evictStalePeer is null) return new PeerCleanupTicket(SlotToNetId(slot), 0);
+            var ticket = new PeerCleanupTicket(SlotToNetId(slot), ++_nextPeerCleanupTicket);
+            _pendingPeerCleanup[slot] = new(ticket.Id, "The previous peer has not yet been removed.");
+            return ticket;
+        }
+    }
+
+    internal void ConfirmPeerCleanup(PeerCleanupTicket ticket)
+    {
+        if (ticket.Id == 0 || !TryNetIdToSlot(ticket.NetId, SlotCeiling, out var slot)) return;
+        lock (_lock)
+            if (_pendingPeerCleanup.TryGetValue(slot, out var pending) && pending.Id == ticket.Id)
+                _pendingPeerCleanup.Remove(slot);
+    }
+
+    internal bool TryBeginPeerCleanup(PeerCleanupTicket ticket)
+    {
+        if (ticket.Id == 0) return true;
+        if (!TryNetIdToSlot(ticket.NetId, SlotCeiling, out var slot)) return false;
+        lock (_lock)
+        {
+            if (!_pendingPeerCleanup.TryGetValue(slot, out var pending)
+                || pending.Id != ticket.Id || pending.InFlight) return false;
+            _pendingPeerCleanup[slot] = pending with { InFlight = true };
+            return true;
+        }
+    }
+
+    internal void PeerCleanupFailed(PeerCleanupTicket ticket, Exception exception)
+    {
+        if (ticket.Id == 0 || !TryNetIdToSlot(ticket.NetId, SlotCeiling, out var slot)) return;
+        lock (_lock)
+            if (_pendingPeerCleanup.TryGetValue(slot, out var pending) && pending.Id == ticket.Id)
+                _pendingPeerCleanup[slot] = pending with { Reason = exception.Message, InFlight = false };
+    }
+
+    // A new join is the only retry trigger. This does not add a timer or a game-state poll.
+    private void RetryPendingPeerCleanup()
+    {
+        if (_evictStalePeer is null) return;
+        KeyValuePair<int, PeerCleanupPending>[] pending;
+        lock (_lock) pending = _pendingPeerCleanup.ToArray();
+        foreach (var (slot, state) in pending)
+        {
+            var ticket = new PeerCleanupTicket(SlotToNetId(slot), state.Id);
+            if (!TryBeginPeerCleanup(ticket)) continue;
+            try
+            {
+                _evictStalePeer(ticket.NetId);
+                ConfirmPeerCleanup(ticket);
+            }
+            catch (Exception exception)
+            {
+                PeerCleanupFailed(ticket, exception);
+                CouchCoopLog.Stderr($"peer cleanup still pending netId={ticket.NetId}: {exception.Message}");
+            }
         }
     }
 
@@ -1261,6 +1347,7 @@ public sealed partial class HeadlessClientManager : IDisposable
             _nameToSlot.Clear();
             _sessionToSlot.Clear();
             _detachedSlots.Clear();
+            _pendingPeerCleanup.Clear();
             // Host is going away: hard-kill is fine (and faster than waiting on each graceful stop).
             foreach (var slot in _processBySlot.Keys.ToList())
                 ShutdownSlotLocked(slot, graceful: false);

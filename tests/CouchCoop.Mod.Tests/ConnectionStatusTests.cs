@@ -13,7 +13,7 @@ internal static class ConnectionStatusTests
     {
         RetainsFailuresAndRemovesCleanDisconnects();
         RejectsStaleAttemptControls();
-        RequiredPeerCleanupSurfacesActionFailure();
+        RequiredPeerCleanupSurfacesFailure();
         return Task.CompletedTask;
     }
 
@@ -57,27 +57,33 @@ internal static class ConnectionStatusTests
             "matching readiness completes the current loading attempt");
     }
 
-    private static void RequiredPeerCleanupSurfacesActionFailure()
+    private static void RequiredPeerCleanupSurfacesFailure()
     {
         var source = new CleanupActionSource();
+        var calls = 0;
+        var refuse = true;
         using var runtime = new CouchCoopRuntimeHost(new CouchCoopRuntimeDependencies(
-            source, source, null!, null!, null!, null!, null!, source, null!));
+            source, source, null!, null!, null!, null!, null!, source, null!),
+            disconnectSeatPeer: netId =>
+            {
+                calls++;
+                Assert(netId == 1002, "cleanup receives the released seat's netId");
+                if (refuse) throw new InvalidOperationException("Peer removal was refused.");
+            });
         var lobby = new CouchCoopLobbyParticipation(runtime);
-        // An unsuccessful action is a returned result, not an exception from the transport.
-        source.Result = new(false, null, new("cleanup-refused", "Peer removal was refused."));
         try
         {
             lobby.DisconnectClient(1002, requireSuccess: true);
-            throw new Exception("A failed cleanup action incorrectly released the seat.");
+            throw new Exception("A failed cleanup incorrectly released the seat.");
         }
         catch (InvalidOperationException exception)
         {
             Assert(exception.Message.Contains("Peer removal was refused.", StringComparison.Ordinal),
-                "required cleanup retains the action's cause for the quarantine report");
+                "required cleanup retains the cause for the quarantine report");
         }
-        source.Result = new(true, null, null);
+        refuse = false;
         lobby.DisconnectClient(1002, requireSuccess: true);
-        Assert(source.Calls == 2, "successful idempotent cleanup remains usable after an action failure");
+        Assert(calls == 2, "successful idempotent cleanup remains usable after a failure");
     }
 
     private sealed class CleanupActionSource : IRuntimeCapabilitySource, ISemanticActionSource, IRuntimeAssetSource, ISpirectlAssetProvider
@@ -86,12 +92,10 @@ internal static class ConnectionStatusTests
         public EmbeddableAssetResult GetAsset(EmbeddableAssetRequest request) => throw new NotSupportedException();
         public EmbeddableAssetBatchResult GetAssets(EmbeddableAssetBatchRequest request) => throw new NotSupportedException();
         public EmbeddableAssetBatchResult GetPresentationAssets(PresentationAssetBatchRequest request) => throw new NotSupportedException();
-        public EmbeddableActionResult Result = new(true, null, null);
-        public int Calls;
         public EmbeddableRuntimeCapabilities GetCapabilities() => new("test", "test-game", "test-mod", "embedded",
             RuntimeAttachmentState.Attached, DataSourceKind.Stub, false,
             [new(CouchCoopRuntimeHost.SemanticActionsCapability, "actions", true, false, null)], []);
-        public EmbeddableActionResult ExecuteAction(EmbeddableActionRequest request) { Calls++; return Result; }
+        public EmbeddableActionResult ExecuteAction(EmbeddableActionRequest request) => throw new Exception("peer cleanup must not use a semantic action");
     }
 
     private static void Assert(bool condition, string message)

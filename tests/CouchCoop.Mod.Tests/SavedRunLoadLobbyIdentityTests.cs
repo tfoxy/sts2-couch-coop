@@ -18,6 +18,7 @@ internal static class SavedRunLoadLobbyIdentityTests
     {
         SavedSteamHostIsRegisteredByLoadLobby();
         PlainEnetAndUnboundServicesKeepNativeIdentity();
+        SavedLobbyPeerCleanupUsesItsHostService();
     }
 
     private static void SavedSteamHostIsRegisteredByLoadLobby()
@@ -66,6 +67,25 @@ internal static class SavedRunLoadLobbyIdentityTests
             "an unbound couch-seat identity is never remapped");
     }
 
+    private static void SavedLobbyPeerCleanupUsesItsHostService()
+    {
+        var service = new FallbackHostService(nativeNetId: 1UL);
+        Assert(CouchCoop.Mod.Runtime.GameSeatPeerCleanup.DisconnectFromService(
+                CouchCoop.Mod.Runtime.GameSeatPeerCleanup.Context.SavedRunLobby, service, 1002UL),
+            "saved-run lobby peer cleanup reaches the recorded host service");
+        Assert(service.EvictedPeers.SequenceEqual([1002UL]), "the saved-run seat peer is evicted");
+        Assert(!CouchCoop.Mod.Runtime.GameSeatPeerCleanup.DisconnectFromService(
+                CouchCoop.Mod.Runtime.GameSeatPeerCleanup.Context.None, null, 1002UL),
+            "leaving multiplayer needs no peer cleanup");
+        try
+        {
+            CouchCoop.Mod.Runtime.GameSeatPeerCleanup.DisconnectFromService(
+                CouchCoop.Mod.Runtime.GameSeatPeerCleanup.Context.SavedRunLobby, null, 1002UL);
+            throw new Exception("missing saved-run host service must fail closed");
+        }
+        catch (InvalidOperationException) { }
+    }
+
     /// <summary>
     /// Every netId the loaded lobby has registered, in registration order. v0.107.1 exposes them as a
     /// <c>HashSet</c> (<c>ConnectedPlayerIds</c>); v0.111.0 replaced that with a projection over the new
@@ -97,6 +117,7 @@ internal static class SavedRunLoadLobbyIdentityTests
 
     private sealed class FallbackHostService(ulong nativeNetId) : INetHostGameService
     {
+        public List<ulong> EvictedPeers { get; } = [];
         public ulong NativeNetId { get; } = nativeNetId;
         public ulong NetId => CouchCoopHostTransport.ResolveSavedRunFallbackHostNetId(this, NativeNetId);
         public bool IsConnected => true;
@@ -125,7 +146,10 @@ internal static class SavedRunLoadLobbyIdentityTests
         public void SetBufferMessages(bool bufferMessages) { }
         public string? GetRawLobbyIdentifier() => null;
         public void DisconnectClient(ulong peerId, NetError reason, bool now = false)
-            => ClientDisconnected?.Invoke(peerId, new NetErrorInfo(reason, selfInitiated: true));
+        {
+            EvictedPeers.Add(peerId);
+            ClientDisconnected?.Invoke(peerId, new NetErrorInfo(reason, selfInitiated: true));
+        }
         public void SetPeerReadyForBroadcasting(ulong peerId) { }
 #if STS2_API_V111
         // v0.111.0 widened both service interfaces with the peer-version handshake and a connection-FAILED
