@@ -398,7 +398,8 @@ public sealed class CouchCoopWebSocketConnection
             if (_headlessManager is not null)
             {
                 BrowserDisconnectSeat.Apply(
-                    _headlessManager, session.Id, _lobby.IsRunInProgress, _lobby.DisconnectClient, _lobby.ClearClientName);
+                    _headlessManager, session.Id, _lobby.IsRunInProgress,
+                    netId => _lobby.DisconnectClient(netId, requireSuccess: true), _lobby.ClearClientName);
             }
 
             // The browser identity's connection is released last, by `using var session` above

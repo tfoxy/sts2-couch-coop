@@ -47,9 +47,11 @@ public sealed class CouchCoopRuntimeHost : IDisposable, ICouchCoopCapabilityPoli
     private readonly IRuntimeMultiplayerConnectionSource _multiplayerConnection;
     private readonly IDisposable? _lifetime;
     private readonly Action<string> _log;
+    private readonly Action<ulong> _disconnectSeatPeer;
     private readonly Lazy<EmbeddableRuntimeCapabilities> _capabilities;
 
-    public CouchCoopRuntimeHost(CouchCoopRuntimeDependencies runtime, Action<string>? log = null)
+    public CouchCoopRuntimeHost(CouchCoopRuntimeDependencies runtime, Action<string>? log = null,
+        Action<ulong>? disconnectSeatPeer = null)
     {
         ArgumentNullException.ThrowIfNull(runtime);
         _capabilitiesSource = runtime.Capabilities;
@@ -64,6 +66,7 @@ public sealed class CouchCoopRuntimeHost : IDisposable, ICouchCoopCapabilityPoli
         _multiplayerConnection = runtime.MultiplayerConnection ?? EmptyMultiplayerConnectionSource.Instance;
         _lifetime = runtime.Lifetime;
         _log = log ?? CouchCoopLog.Stderr;
+        _disconnectSeatPeer = disconnectSeatPeer ?? GameSeatPeerCleanup.Disconnect;
         _capabilities = new Lazy<EmbeddableRuntimeCapabilities>(
             DiscoverCapabilities,
             LazyThreadSafetyMode.ExecutionAndPublication);
@@ -71,6 +74,8 @@ public sealed class CouchCoopRuntimeHost : IDisposable, ICouchCoopCapabilityPoli
     }
 
     public ISpirectlAssetProvider Assets { get; }
+    /// <summary>Host-side seat lifecycle operation, exposed to the source-linked hot-reload server.</summary>
+    public void DisconnectSeatPeer(ulong netId) => _disconnectSeatPeer(netId);
     public ISpineGeoClipBaker SpineGeoClipBaker => _spineGeoClipBaker;
     public EmbeddableAssetBatchResult GetPresentationAssets(PresentationAssetBatchRequest request)
         => _assetsSource.GetPresentationAssets(request);

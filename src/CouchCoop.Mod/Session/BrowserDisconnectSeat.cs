@@ -53,16 +53,28 @@ public static class BrowserDisconnectSeat
             return;
         }
 
-        var freedNetId = manager.Release(sessionId);
-        if (freedNetId is not ulong evictNetId)
+        var cleanup = manager.ReleaseForBrowser(sessionId);
+        if (cleanup is not { } ticket)
         {
             return;
         }
+        var evictNetId = ticket.NetId;
+        if (!manager.TryBeginPeerCleanup(ticket)) return; // another join already owns this eviction
 
         // The SIGKILL'd headless leaves its peer registered in the host's ENet server holding this netId until
         // ENet's ~20-40s timeout; evicting frees it immediately so a same-name rejoin isn't rejected at the
         // handshake (IdCollision -> timeout).
-        evictPeer(evictNetId);
+        try
+        {
+            evictPeer(evictNetId);
+            manager.ConfirmPeerCleanup(ticket);
+        }
+        catch (Exception exception)
+        {
+            manager.PeerCleanupFailed(ticket, exception);
+            CouchCoopLog.Stderr($"browser disconnect peer cleanup failed netId={evictNetId}: {exception.Message}");
+            return;
+        }
 
         // Drop the display-name override ONLY when this seat is genuinely gone, i.e. no name still CLAIMS the slot
         // behind this netId.

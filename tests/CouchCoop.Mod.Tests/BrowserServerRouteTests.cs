@@ -3960,6 +3960,7 @@ internal sealed partial class BrowserServerRouteTests
         var runtime = new RecordingSpirectlRuntime { Mode = RuntimeStateMode.Lobby };
         var roster = new CouchCoopRosterObserverTests.FakeRosterFeed();
         var seat = new SeatProcessStub();
+        var peerEvictions = 0;
         using var manager = new HeadlessClientManager(
             launcher: _ => seat,
             readinessProbe: (_, _) => Task.FromResult(true),
@@ -3970,7 +3971,7 @@ internal sealed partial class BrowserServerRouteTests
         await using var server = new CouchCoopBrowserServer(
             new StaticSpaFileProvider(rootPath),
             new CapturingAssetAdapter(),
-            runtime.NewEnvelopeFactory(),
+            runtime.NewEnvelopeFactory(disconnectSeatPeer: _ => Interlocked.Increment(ref peerEvictions)),
             headlessManager: manager,
             isHeadlessClient: false,
             preferredPort: ReserveEphemeralPort(),
@@ -4021,8 +4022,9 @@ internal sealed partial class BrowserServerRouteTests
         var actionsBefore = runtime.Calls.Count(call => call == "ExecuteAction");
         roster.Push(CouchCoopRosterObserverTests.Menu());
         Expect(await WaitForAsync(() => seat.Killed), "leaving to the menu reaps the detached seat");
-        Expect(await WaitForAsync(() => runtime.Calls.Count(call => call == "ExecuteAction") >= actionsBefore + 2),
-            "…evicts its peer and clears its name override through the host's actions");
+        Expect(await WaitForAsync(() => Volatile.Read(ref peerEvictions) == 1
+            && runtime.Calls.Count(call => call == "ExecuteAction") >= actionsBefore + 1),
+            "…evicts its peer through the host runtime and clears its name override");
         await CloseWebSocketSilentlyAsync(second);
         await server.StopAsync();
     }
@@ -5200,9 +5202,11 @@ internal sealed partial class BrowserServerRouteTests
         /// The envelope factory a route test hands its server: this runtime for everything the spirectl ports carry, and
         /// this fake game as the reader of the roster the session envelope is classified from.
         /// </summary>
-        public BrowserStateEnvelopeFactory NewEnvelopeFactory(MirrorSeatDirectory? mirrorSeats = null, Action<string>? hostLog = null)
+        public BrowserStateEnvelopeFactory NewEnvelopeFactory(MirrorSeatDirectory? mirrorSeats = null,
+            Action<string>? hostLog = null, Action<ulong>? disconnectSeatPeer = null)
             => new(
-                new CouchCoopRuntimeHost(new CouchCoopRuntimeDependencies(this, this, this, this, this, this, this, this, this), hostLog),
+                new CouchCoopRuntimeHost(new CouchCoopRuntimeDependencies(this, this, this, this, this, this, this, this, this),
+                    hostLog, disconnectSeatPeer),
                 mirrorSeats: mirrorSeats,
                 readSessionFacts: SessionFactsFor);
 
