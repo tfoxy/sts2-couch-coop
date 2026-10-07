@@ -64,6 +64,17 @@ Current limits:
 | Managed cache / free-space reserve | 4 GiB / 2 GiB |
 | Generated entry | 128 MiB |
 | Retained HTTP arrivals | 128 entries, 30 minutes, 128-character paths |
+| Host audio WebSocket inbound | Text only, 1 KiB/message; 64 messages/second with a burst of 128 |
+| Seat audio WebSocket inbound | Text only, 1 KiB/message; hello and acknowledgement only |
+| Audio outbound queue | 2 seconds/client; lane blocks are dropped before current sounds |
+| SFX take | One-shot SFX bus only; at most 10 seconds, with a fade at the cap |
+| SFX take memory cache | 64 MiB LRU; disk writes share the managed cache quota and free-space reserve |
+| TmpSfx MP3 | Flat `res://debug_audio/*.mp3` only; 2 MiB/file, 8 MiB and 16 entries in memory |
+
+Audio is opt-in for each browser viewer. The host serves only rendered PCM SFX takes and the small validated
+TmpSfx MP3 resources. It never serves `.bank` data. Music and ambience are live streams and are never stored.
+The private FMOD renderer uses `NOSOUND_NRT` and opens no output device. Rendering and its media clock stop
+when the last relevant audio subscriber leaves.
 
 The synthetic iPhone harness has a separate browser-lifecycle recorder for CI. It is absent during ordinary
 hosting: the route and page configuration are created only when the harness receives an explicit, validated

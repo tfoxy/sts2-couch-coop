@@ -69,11 +69,14 @@ const props = withDefaults(
   defineProps<{
     latency: MirrorLatency;
     directView?: boolean;
+    audioUnavailable?: boolean;
   }>(),
   {
-    directView: false
+    directView: false,
+    audioUnavailable: false
   }
 );
+const emit = defineEmits<{ audioGesture: [] }>();
 
 const settings = mirrorSettings;
 const canvasActive = computed(() => settings.runtimeStage === "canvas");
@@ -92,6 +95,15 @@ function selectStage(value: "dom" | "canvas"): void {
 const stage = computed<"dom" | "canvas">({ get: () => settings.stage, set: selectStage });
 
 function retryCanvas(): void { selectStage("canvas"); }
+
+function unlockAudioOnClick(event: MouseEvent): void {
+  const input = event.currentTarget as HTMLInputElement | null;
+  if (!input || props.directView) return;
+  // The trusted click itself is the unlock gesture. Read the checkbox's pre-activation value so the
+  // preference and AudioContext update in this gesture; let the browser complete the checkbox action.
+  audio.value = input.checked;
+  if (input.checked) emit("audioGesture");
+}
 
 // A two-way binding for a SAVED field: writes the store (as v-model always did) and remembers the new value for
 // the next page load. Deliberately a computed SETTER rather than a `@change` handler or a watch on the store: the
@@ -159,6 +171,8 @@ const backstopOcclusion = bind("backstopOcclusion");
 const refreshRate = bind("refreshRate");
 const tweenReplay = bind("tweenReplay");
 const latencyOverlay = bind("latencyOverlay");
+const audio = bind("audio");
+const audioUnavailable = computed(() => props.audioUnavailable);
 const reproRecorder = bind("reproRecorder");
 
 // Whether THIS BUILD ships the repro recorder's row at all (buildFlags). A published build sets
@@ -223,7 +237,8 @@ type HelpId =
   | "freezeDecor"
   | "networkRtt"
   | "gameRtt"
-  | "latencyOverlay";
+  | "latencyOverlay"
+  | "audio";
 
 // One description per row: what it does, and what it trades (performance vs fidelity). Kept in ONE object so a
 // row added without help text is obvious at review time.
@@ -238,7 +253,8 @@ const HELP_KEYS: Record<HelpId, import("@/i18n").MessageKey> = {
   refreshRate: "settings.help.refreshRate", tweenReplay: "settings.help.tweenReplay",
   freezeParticles: "settings.help.freezeParticles", freezeSpines: "settings.help.freezeSpines",
   freezeDecor: "settings.help.freezeDecor", networkRtt: "settings.help.networkRtt",
-  gameRtt: "settings.help.gameRtt", latencyOverlay: "settings.help.latencyOverlay"
+  gameRtt: "settings.help.gameRtt", latencyOverlay: "settings.help.latencyOverlay",
+  audio: "settings.help.audio"
 };
 
 // ONE tip open at a time — the panel owns the state, the tip component is controlled.
@@ -338,6 +354,15 @@ onBeforeUnmount(() => setHelpListeners(false));
           {{ t('settings.stageFailure', { reason: failureReason }) }}
           <button type="button" @click="retryCanvas">{{ t('boot.tryAgain') }}</button>
         </p>
+        <div class="settings-item">
+          <label class="settings-row">
+            <input type="checkbox" v-model="audio" :disabled="directView" data-testid="mirror-audio" @click="unlockAudioOnClick" />
+            <span>{{ t('settings.audio') }}</span>
+          </label>
+          <SettingsHelpTip v-bind="help('audio', t('settings.audio'))" />
+        </div>
+        <p v-if="audioUnavailable" role="status" data-testid="mirror-audio-unavailable">{{ t('settings.audioUnavailable') }}</p>
+        <p class="settings-group-note" data-testid="mirror-audio-credit">{{ t('settings.audioCredit') }}</p>
         <div v-if="canvasActive && availableTextMethods.length > 1" class="settings-item">
           <label class="settings-row settings-row-select">
             <span>{{ t('settings.textMethod') }}</span>
@@ -384,7 +409,7 @@ onBeforeUnmount(() => setHelpListeners(false));
         </div>
         <div class="settings-item">
           <label class="settings-row">
-            <input type="checkbox" v-model="stretchEnabled" />
+            <input type="checkbox" v-model="stretchEnabled" data-testid="mirror-stretch" />
             <span>{{ t('settings.stretch') }}</span>
           </label>
           <SettingsHelpTip v-bind="help('stretch', t('settings.stretch'))" />

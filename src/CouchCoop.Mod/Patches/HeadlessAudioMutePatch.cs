@@ -1,6 +1,7 @@
 using System;
 using System.Collections.Generic;
 using System.Reflection;
+using CouchCoop.Mod.Audio.Seat;
 using Godot;
 using HarmonyLib;
 using MegaCrit.Sts2.Core.Nodes.Audio;
@@ -233,11 +234,22 @@ internal static class HeadlessAudioMutePatch
         // SHAPE of the skip depends on that type: a bool-returning forward gets the explicit `false` (which is
         // also what it means — nothing was loaded), a void one gets the plain skip, and anything else is a
         // forward whose skipped value we have not reasoned about and must not invent.
-        var prefixName = target.ReturnType == typeof(void)
+        var prefixName = type == typeof(NAudioManager) ? (name, args.Length) switch
+        {
+            ("PlayOneShot", 3) => nameof(SkipOneShotWithParams),
+            ("PlayOneShot", 2) => nameof(SkipOneShot),
+            ("PlayLoop", _) => nameof(SkipLoopStart),
+            ("StopLoop", _) => nameof(SkipLoopStop),
+            ("StopAllLoops", _) => nameof(SkipAllLoops),
+            ("SetMasterVol", _) => nameof(SkipMasterVolume),
+            ("SetSfxVol", _) => nameof(SkipSfxVolume),
+            ("SetBgmVol", _) => nameof(SkipBgmVolume),
+            ("SetAmbienceVol", _) => nameof(SkipAmbienceVolume),
+            _ => null,
+        } : null;
+        prefixName ??= target.ReturnType == typeof(void)
             ? nameof(SkipOriginal)
-            : target.ReturnType == typeof(bool)
-                ? nameof(SkipOriginalReturningFalse)
-                : null;
+            : target.ReturnType == typeof(bool) ? nameof(SkipOriginalReturningFalse) : null;
         if (prefixName is null)
         {
             refused.Add($"{label} returns {target.ReturnType.Name}, which this patch has no skip value for");
@@ -255,6 +267,37 @@ internal static class HeadlessAudioMutePatch
             refused.Add($"Harmony patch of {label} failed ({ex.GetType().Name}: {ex.Message})");
         }
     }
+
+    // Typed prefixes check the volatile subscriber count before touching arguments or allocating.
+    private static bool SkipOneShotWithParams(string path, Dictionary<string, float> parameters, float volume)
+    {
+        if (SeatAudioFeed.HasSubscribers) SeatAudioFeed.Sfx(path, parameters, volume);
+        return false;
+    }
+    private static bool SkipOneShot(string path, float volume)
+    {
+        if (SeatAudioFeed.HasSubscribers) SeatAudioFeed.Sfx(path, null, volume);
+        return false;
+    }
+    private static bool SkipLoopStart(string path, bool usesLoopParam)
+    {
+        if (SeatAudioFeed.HasSubscribers) SeatAudioFeed.Loop(path, "start");
+        return false;
+    }
+    private static bool SkipLoopStop(string path)
+    {
+        if (SeatAudioFeed.HasSubscribers) SeatAudioFeed.Loop(path, "stop");
+        return false;
+    }
+    private static bool SkipAllLoops()
+    {
+        if (SeatAudioFeed.HasSubscribers) SeatAudioFeed.Loop("*", "stop-all");
+        return false;
+    }
+    private static bool SkipMasterVolume(float volume) { if (SeatAudioFeed.HasSubscribers && !SeatAudioReportPatch.InBackgroundMute) SeatAudioFeed.SetMaster(volume); return false; }
+    private static bool SkipSfxVolume(float volume) { if (SeatAudioFeed.HasSubscribers) SeatAudioFeed.SetSfx(volume); return false; }
+    private static bool SkipBgmVolume(float volume) { if (SeatAudioFeed.HasSubscribers) SeatAudioFeed.SetBgm(volume); return false; }
+    private static bool SkipAmbienceVolume(float volume) { if (SeatAudioFeed.HasSubscribers) SeatAudioFeed.SetAmbience(volume); return false; }
 
     // Harmony prefix: returning false skips the original body (and its FMOD-proxy forwarding call).
     private static bool SkipOriginal() => false;

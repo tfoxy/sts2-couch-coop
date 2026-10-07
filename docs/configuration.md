@@ -203,6 +203,24 @@ enough — a metadata gate cannot see a protocol step that was *added*.
 
 ## Browser asset and clip contracts
 
+### Seat audio
+
+The mirror's **Audio** setting starts off. When enabled, a seat viewer hears that seat's SFX, music,
+ambience, loops and debug MP3 sounds at its own in-game volumes. A host-view connection has no audio lane.
+`COUCHCOOP_AUDIO=off` disables the audio reporters and private renderer for the session while keeping the
+headless seat's existing FMOD mute and shutdown behavior. `COUCHCOOP_AUDIO_RENDER_WORKERS` selects one or two
+private SFX take workers (default one).
+
+The browser connects to the host's `/audio` render WebSocket and to the seat's relayed
+`/ws?seat=<route-id>&lane=audio` WebSocket. The seat route id is the same opaque id already used by the
+mirror connection; it is not the player's id or a seat port. The host serves immutable SFX takes at
+`/audio/take/<schema>/<bankset>/<keyId>.wav?b=<build-token>`, a ready-key index at
+`/audio/takes?b=<build-token>`, and validated debug MP3 bytes at
+`/audio/tmpsfx/<res-path>?b=<build-token>`. The build token qualifies browser cache URLs; it is never a
+server-side selector. SFX takes live in a 64 MiB memory LRU and, when quota permits, under
+`user://couch-coop/cache/<version>/audio/<schema>/<bankset>/`. Music and ambience are streamed and never
+written there.
+
 `/res/{path}` is the resource route. It accepts a path relative to `res://`, never a scheme-prefixed key.
 The only supported resource representations are `raw` (the default) and explicit `?format=png`; an
 unknown format is a client error. A `::{sub-resource-id}` request is extracted from its parent's raw

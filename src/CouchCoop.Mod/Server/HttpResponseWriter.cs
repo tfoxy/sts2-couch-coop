@@ -7,6 +7,12 @@ namespace CouchCoop.Mod.Server;
 
 internal static class HttpResponseWriter
 {
+    public static Task WriteAudioAsync(Stream stream, byte[] wav, CancellationToken cancellationToken = default)
+        => WriteBytesAsync(stream, 200, "OK", wav, "audio/wav",
+            new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase)
+            {
+                ["Cache-Control"] = "public, max-age=2592000, immutable"
+            }, cancellationToken);
     internal static readonly TimeSpan NetworkWriteTimeout = TimeSpan.FromSeconds(30);
     public static Task WriteBytesAsync(
         Stream stream,

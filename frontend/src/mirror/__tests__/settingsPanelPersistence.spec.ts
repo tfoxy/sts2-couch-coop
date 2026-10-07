@@ -209,14 +209,13 @@ describe("SettingsPanel — saving a viewer's choices", () => {
 
   it("saves each client-side checkbox the viewer flips", async () => {
     const wrapper = mountPanel();
-    const boxes = wrapper.findAll('input[type="checkbox"]');
-    // The client toggles, in DOM order: static background, stretch, raise, un-focus, tap-to-focus, confirm-tap,
+    // The client toggles: static background, stretch, raise, un-focus, tap-to-focus, confirm-tap,
     // raise-hand, enlarge-small-UI, backstop. Addressed by test id where one exists, so a row added in the middle
     // can't silently re-point an index at a different setting — which has now happened TWICE (when raise-hand
     // landed, and again when the enlarge-small-UI row went in above backstop and this test started saving it
-    // instead). The two index reads left are the first two rows, which nothing can be inserted above.
-    await boxes[0].setValue(false);
-    await boxes[1].setValue(false);
+    // instead). Use ids for every row now that the audio preference is another client toggle.
+    await wrapper.get('[data-testid="mirror-static-bg"]').setValue(false);
+    await wrapper.get('[data-testid="mirror-stretch"]').setValue(false);
     await wrapper.get('[data-testid="mirror-confirm-tap"]').setValue(false);
     // Raise-hand is the one DEVICE-defaulted toggle: jsdom is not a coarse-pointer device, so it starts OFF and
     // the flip that changes anything (and therefore saves anything) is the one that turns it ON.

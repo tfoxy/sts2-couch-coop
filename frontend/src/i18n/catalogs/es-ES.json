@@ -225,5 +225,9 @@
   "compare.preset.sourceFrame": "Cached text · animated-frame reuse",
   "compare.pixels.dirty-preserved": "Preserved WebGL dirty redraw",
   "compare.pixels.dirty-copy": "Single-canvas dirty copy",
-  "compare.preset.rust": "Rust/WASM renderer prototype"
+  "compare.preset.rust": "Rust/WASM renderer prototype",
+  "settings.audio": "Audio",
+  "settings.audioUnavailable": "Audio is unavailable on this host or in this browser.",
+  "settings.audioCredit": "Audio uses FMOD; FMOD is a registered trademark of Firelight Technologies Pty Ltd.",
+  "settings.help.audio": "Hear this player's game sounds in this browser at their in-game volume settings. Audio starts after your next tap."
 }

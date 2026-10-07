@@ -5,6 +5,7 @@ using CouchCoop.Mod.HostUi;
 using CouchCoop.Mod.Protocol;
 using CouchCoop.Mod.Runtime;
 using CouchCoop.Mod.Server;
+using CouchCoop.Mod.Session;
 using CouchCoop.MirrorProtocol.Discovery;
 using Spirectl.Sts2.Core.Actions;
 using Spirectl.Sts2.Core.Artifacts;
@@ -13,12 +14,11 @@ using Spirectl.Sts2.Core.Perspective;
 using Spirectl.Sts2.Core.Protocol;
 using Spirectl.Sts2.Core.Reference;
 using Spirectl.Sts2.Core.SceneInspection;
-using Spirectl.Sts2.Core.State;
 using Spirectl.Sts2.Embedding;
 
 var options = HarnessOptions.Parse(args);
 static CouchCoopRuntimeDependencies Dependencies(FakeSpirectlRuntime runtime)
-    => new(runtime, runtime, runtime, runtime, runtime, runtime, runtime, runtime, runtime, runtime);
+    => new(runtime, runtime, runtime, runtime, runtime, runtime, runtime, runtime, runtime);
 if (options.Mode == HarnessMode.IphoneBurstSelfTest)
 {
     FakeSpirectlRuntime.AssertIphoneBurstShape(IphoneBurstProfile.Baseline);
@@ -57,6 +57,9 @@ var diagnostics = options.ArtifactDirectory is null ? null : new BrowserLifecycl
 var runtime = new FakeSpirectlRuntime(options.Mode == HarnessMode.IphoneBurst
     ? HarnessMode.IphoneBurstControl
     : options.Mode, options.IphoneProfile);
+// The offline harness has no game transport. Give failure reports that fact directly instead of asking
+// CouchCoopHostTransport to inspect game assemblies, which are intentionally absent here.
+CouchSeatAvailability.UnavailableDetail = "Offline harness has no game transport.";
 // A browser join reads the game through CouchCoop's typed facts (roster, lobby cap, run presence), not through the runtime's
 // state snapshot. This harness has no game behind it, so the fake runtime's game is described to those facts here: without
 // it the join would see an empty game and refuse the host's own row, which is the one join this harness completes.
@@ -455,41 +458,20 @@ internal sealed class FakeAssetAdapter : ICouchCoopAssetHttpAdapter
 }
 
 /// <summary>
-/// CouchCoop's typed game facts over the fake runtime's game: the roster the typed reader would report for the state the
-/// runtime describes. The retired snapshot-to-roster projection the unit suites use as their parity oracle, kept small.
+/// CouchCoop's typed game facts over the fake runtime's game.
 /// </summary>
 internal sealed class HarnessGameFacts(FakeSpirectlRuntime runtime) : IGameFacts
 {
     public GateFacts? ReadGates(object? currentScreen) => null;
 
-    public bool? ReadRunInProgress() => State().Run is not null;
+    public bool? ReadRunInProgress() => runtime.ReadSessionFacts(false).Roster?.Run is not null;
 
     public int? ReadLobbyCap() => null;
 
-    public RosterFacts? ReadRoster()
-    {
-        var state = State();
-        var lobby = state.CharacterSelect?.Lobby is { } source
-            ? new RosterLobby(
-                source.NetGameType,
-                source.HostPlayerId,
-                IsSavedRun: source.SavedRun is not null,
-                [.. source.Players.Select(player => new RosterLobbySeat(player.Id, player.DisplayName, player.CharacterId, player.IsConnected))],
-                [.. source.SavedRun?.Players.Select(player => player.Id) ?? []])
-            : null;
-        var run = state.Run is { } sourceRun
-            ? new RosterRun(
-                sourceRun.NetGameType,
-                sourceRun.Players.FirstOrDefault(player => player.IsHost)?.Id,
-                [.. sourceRun.Players.Select(player => new RosterRunSeat(player.Id, player.DisplayName, player.CharacterId, player.IsHost, player.IsConnected))])
-            : null;
-        return new RosterFacts(state.RootScene ?? "", lobby, run);
-    }
-
-    private StateSnapshot State() => runtime.GetCurrentState(new CurrentStateRequest()).State!;
+    public RosterFacts? ReadRoster() => runtime.ReadSessionFacts(false).Roster;
 }
 
-internal sealed class FakeSpirectlRuntime : IRuntimeCapabilitySource, IRuntimeAssetSource, IRuntimeStateSource, IAnimationHintSource, IRuntimeSceneDeltaSource, IGameModelSource, ISpineCatalogSource, ISpineGeoClipBaker, ISemanticActionSource, IRuntimeSceneWatchControlSource
+internal sealed class FakeSpirectlRuntime : IRuntimeCapabilitySource, IRuntimeAssetSource, IAnimationHintSource, IRuntimeSceneDeltaSource, IGameModelSource, ISpineCatalogSource, ISpineGeoClipBaker, ISemanticActionSource, IRuntimeSceneWatchControlSource
 {
     private readonly HarnessMode _mode;
     private readonly IphoneBurstProfile _iphoneProfile;
@@ -568,61 +550,11 @@ internal sealed class FakeSpirectlRuntime : IRuntimeCapabilitySource, IRuntimeAs
             null);
     }
 
-    public CurrentStateResult GetCurrentState(CurrentStateRequest request)
-    {
-        var isControlLobby = _mode is HarnessMode.Lobby or HarnessMode.IphoneBurstControl;
-        return new(
-            true,
-            new StateSnapshot(
-                StateSnapshot.CurrentSchemaVersion,
-                "en",
-                isControlLobby ? "screens/character_select_screen" : "run",
-                isControlLobby ? CreateStateCharacterSelect() : null,
-                isControlLobby ? null : CreateStateRun(["Host", "Alice", "Bob"])),
-            null);
-    }
-
-    // Required by ISpirectlRuntime; unreachable from any route the harness serves.
+    // Unreachable from any route the harness serves.
     public EmbeddableAssetBatchResult GetPresentationAssets(PresentationAssetBatchRequest request) => new("ok", []);
 
     public EmbeddableActionResult ExecuteAction(EmbeddableActionRequest request)
         => new(true, ActionExecutionResult.Success("action:harness:end-turn", request.Kind, "harness semantic action accepted"), null);
-
-    public IDisposable SubscribeCurrentState(
-        CurrentStateSubscriptionRequest request,
-        Action<CurrentStateWatchEvent> onEvent,
-        Action<EmbeddableRuntimeError>? onError = null)
-    {
-        if (request.EmitInitial && GetCurrentState(new CurrentStateRequest()).State is { } state)
-        {
-            onEvent(new CurrentStateWatchEvent(
-                CurrentStateWatchEventType.Initial,
-                1,
-                DateTimeOffset.UnixEpoch,
-                "fingerprint",
-                1,
-                state,
-                null,
-                null));
-        }
-
-        return new NoopDisposable();
-    }
-
-    public async IAsyncEnumerable<CurrentStateWatchEvent> WatchCurrentStateAsync(
-        CurrentStateSubscriptionRequest request,
-        [System.Runtime.CompilerServices.EnumeratorCancellation] CancellationToken cancellationToken = default)
-    {
-        await Task.CompletedTask;
-        yield break;
-    }
-
-    // The offline harness never emits combat events; these satisfy the interface with inert no-ops.
-    public IDisposable SubscribeCombatEvents(
-        CombatEventSubscriptionRequest request,
-        Action<CombatWatchEvent> onEvent,
-        Action<EmbeddableRuntimeError>? onError = null)
-        => new NoopDisposable();
 
     // The offline harness has no live scene tree; the scene-delta watch is an inert no-op.
     public IDisposable SubscribeRuntimeSceneDelta(
@@ -871,15 +803,7 @@ internal sealed class FakeSpirectlRuntime : IRuntimeCapabilitySource, IRuntimeAs
         return parts.Length > 1 && int.TryParse(parts[1], out var value) ? value : 0;
     }
 
-    public async IAsyncEnumerable<CombatWatchEvent> WatchCombatEventsAsync(
-        CombatEventSubscriptionRequest request,
-        [System.Runtime.CompilerServices.EnumeratorCancellation] CancellationToken cancellationToken = default)
-    {
-        await Task.CompletedTask;
-        yield break;
-    }
-
-    // The offline harness never emits animation hints; inert no-ops mirroring the combat-event stubs.
+    // The offline harness never emits animation hints.
     public IDisposable SubscribeAnimationHints(
         AnimationHintSubscriptionRequest request,
         Action<TweenAnimationHint> onHint,
@@ -1026,73 +950,6 @@ internal sealed class FakeSpirectlRuntime : IRuntimeCapabilitySource, IRuntimeAs
 
     private static EmbeddableRuntimeCapability Capability(string id)
         => new(id, id, Supported: true, Provisional: false, UnsupportedReason: null);
-
-    private static StateCharacterSelectSnapshot CreateStateCharacterSelect()
-        => new(
-            new StateCharacterSelectLobbySnapshot(
-                "multiplayer",
-                "p:1",
-                "p:1",
-                ConnectingPlayerCount: 0,
-                Ascension: 0,
-                MaxAscension: 20,
-                Act1: "random",
-                Seed: null,
-                ModifierIds: [],
-                Players:
-                [
-                    new StateCharacterSelectPlayerSnapshot("p:1", 0, "ironclad", false, 20, "Host"),
-                    new StateCharacterSelectPlayerSnapshot("p:1002", 1, "silent", true, 20, "Alice", IsConnected: false)
-                ]),
-            CharacterButtons:
-            [
-                new StateCharacterButtonSnapshot("button:ironclad", "ironclad", false),
-                new StateCharacterButtonSnapshot("button:silent", "silent", false)
-            ],
-            View: new StateCharacterSelectViewSnapshot("Host", null));
-
-    private static StateRunSnapshot CreateStateRun(IReadOnlyList<string> playerIds)
-    {
-        var players = playerIds
-            .Select(playerId => new StateRunPlayerSnapshot(
-                playerId,
-                "test",
-                NetId: null,
-                DisplayName: playerId,
-                CharacterId: playerId == "Host" ? "ironclad" : "silent",
-                IsLocal: playerId == "Host",
-                IsHost: playerId == "Host",
-                IsRemote: playerId != "Host",
-                Creature: null,
-                Gold: 99,
-                Deck: null,
-                Relics: [],
-                InventoryComplete: true,
-                Notices: []))
-            .ToArray();
-
-        return new StateRunSnapshot(
-            "test",
-            "test",
-            "multiplayer",
-            "standard",
-            "seed:harness",
-            AscensionLevel: 0,
-            ActId: "act1",
-            CurrentActIndex: 0,
-            ActFloor: 0,
-            TotalFloor: 0,
-            BossEncounterId: null,
-            SecondBossEncounterId: null,
-            CurrentMapCoord: null,
-            CurrentMapPointId: null,
-            VisitedMapCoords: [],
-            Players: players,
-            Map: null,
-            CurrentRoom: null,
-            Notices: [],
-            View: new StateRunViewSnapshot("Host", null));
-    }
 
     private sealed class NoopDisposable : IDisposable
     {

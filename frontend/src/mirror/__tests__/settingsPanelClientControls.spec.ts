@@ -4,7 +4,7 @@ import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import SettingsPanel from "@/mirror/SettingsPanel.vue";
 import LatencyOverlay from "@/mirror/LatencyOverlay.vue";
 import { __resetComposerForTest, createBrowserI18n } from "@/i18n";
-import { createMirrorSettings, mirrorSettings } from "@/mirror/mirrorSettings";
+import { createMirrorSettings, mirrorSettings, readStoredMirrorSettings } from "@/mirror/mirrorSettings";
 import type { MirrorLatency } from "@/mirror/mirrorClient";
 import type { RenderQuality, RenderQualityTier } from "@/render/quality";
 
@@ -51,6 +51,7 @@ function quality(overrides: Partial<RenderQuality> = {}): RenderQuality {
 beforeEach(() => {
   mirrorSettings.panelOpen = true;
   mirrorSettings.latencyOverlay = false;
+  mirrorSettings.audio = false;
   mirrorSettings.quality = "auto";
   mirrorSettings.shaderMode = "static";
   mirrorSettings.particleMode = "static";
@@ -60,6 +61,7 @@ afterEach(() => {
   mirrorSettings.panelOpen = false;
   __resetComposerForTest();
   mirrorSettings.latencyOverlay = false;
+  mirrorSettings.audio = false;
   mirrorSettings.quality = "auto";
   localStorage.clear();
 });
@@ -136,6 +138,21 @@ describe("SettingsPanel — latency overlay toggle (R9 item 11)", () => {
     const wrapper = mountPanel();
     const group = wrapper.get('[data-testid="mirror-settings-latency"]');
     expect(group.find('[data-testid="mirror-latency-overlay"]').exists()).toBe(true);
+  });
+});
+
+describe("SettingsPanel — seat audio toggle", () => {
+  it("defaults off without a URL override and unlocks from the enabling trusted click", async () => {
+    expect(createMirrorSettings(quality(), "?audio=on", { storage: null }).audio).toBe(false);
+    const wrapper = mountPanel();
+    const box = wrapper.get('[data-testid="mirror-audio"]');
+    expect((box.element as HTMLInputElement).checked).toBe(false);
+    (box.element as HTMLInputElement).click();
+    await Promise.resolve();
+    expect(mirrorSettings.audio).toBe(true);
+    expect((box.element as HTMLInputElement).checked).toBe(true);
+    expect(wrapper.emitted("audioGesture")).toHaveLength(1);
+    expect(readStoredMirrorSettings().audio).toBe(true);
   });
 });
 

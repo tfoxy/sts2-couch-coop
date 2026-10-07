@@ -91,6 +91,10 @@ public static class ZeroClientEntries
     /// <summary>A subscription to the signals that say the lobby or run roster changed (the roster observer).</summary>
     public static readonly ZeroClientEntry RosterSubscribe = ZeroClientEntry.Register("roster.subscribe");
 
+    public static readonly ZeroClientEntry AudioTakeRendererStart = ZeroClientEntry.Register("audio.take-renderer.start");
+    public static readonly ZeroClientEntry AudioStreamRendererStart = ZeroClientEntry.Register("audio.stream-renderer.start");
+    public static readonly ZeroClientEntry AudioLaneSubscribe = ZeroClientEntry.Register("audio.lane.subscribe");
+
     public static IReadOnlyList<ZeroClientEntry> All => ZeroClientEntry.AllRegistered;
 }
 

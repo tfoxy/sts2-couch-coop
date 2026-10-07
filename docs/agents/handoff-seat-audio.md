@@ -1,6 +1,7 @@
 # Handoff: per-viewer game audio in the mirror (shape B)
 
-**Status:** planned and unstarted.
+**Status:** implemented. The shipped architecture and live QA procedure are in
+[`architecture-map.md`](architecture-map.md#seat-audio) and [`qa-recipes.md`](qa-recipes.md#seat-audio-live-matrix).
 
 This plan builds on the Oct 5–6 experiment programme (E0–E8). The measurements and the reasoning behind each
 decision live in the uncommittable research notes under `.sts2/research/audio/`: `e0-census.md`,
@@ -294,10 +295,10 @@ Source: `fmod-licensing-determination.md`. This is research, not legal advice.
   - **Why not hook the controllers in C#:** that would mean reconstructing the controller logic in committed
     code, and the no-game-code rule forbids it.
 - **Self-check.**
-  - A typed postfix on `NRunMusicController.UpdateMusic`, with a depth counter, confirms that at least one
-    proxy op was seen.
-  - If none was, the music, ambience and loops lanes switch off for the session with one log line. SFX
-    keeps working.
+  - A one-time call on a mod-owned Godot node verifies that the resolved native-call hook fires. Silence
+    during one music refresh is inconclusive, so it does not disable the lanes.
+  - If the probe fails, the music, ambience and loops lanes switch off for the session with one log line.
+    SFX keeps working.
 - **Files to add**
   - **`Audio/Host/HostAudioHooks.cs`.** The hook allocates nothing for calls that don't match; matching calls
     are rare (about 20 per session).

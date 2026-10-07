@@ -4,6 +4,8 @@ import { defineComponent, h, nextTick, onBeforeUnmount, type Component } from "v
 
 import MirrorApp from "@/mirror/MirrorApp.vue";
 import MirrorView from "@/mirror/MirrorView.vue";
+import * as audioEngineModule from "@/audio/audioEngine";
+import { mirrorSettings } from "@/mirror/mirrorSettings";
 import { RECONNECT_BASE_DELAY_MS } from "@/mirror/reconnectPolicy";
 import { applyRendererComparisonConfig, rendererComparisonConfig, RENDERER_COMPARISON_PRESETS,
   registerRendererComparisonApply } from "@/mirror/rendererComparison";
@@ -159,8 +161,59 @@ describe("MirrorApp — join state in the page URL", () => {
   afterEach(() => {
     app?.unmount();
     app = null;
+    mirrorSettings.audio = false;
     (globalThis as unknown as { WebSocket: unknown }).WebSocket = realWebSocket;
     window.history.replaceState(null, "", "/");
+  });
+
+  it.each([false, true])("does not start audio from an unlock that crosses a hidden tab (visible before resolve: %s)", async (showBeforeResolve) => {
+    let visibility = "visible";
+    const priorVisibility = Object.getOwnPropertyDescriptor(document, "visibilityState");
+    Object.defineProperty(document, "visibilityState", { configurable: true, get: () => visibility });
+    let resolveUnlock!: (ok: boolean) => void;
+    const firstUnlock = new Promise<boolean>(resolve => { resolveUnlock = resolve; });
+    const engine = {
+      unlock: vi.fn().mockReturnValueOnce(firstUnlock).mockResolvedValue(true),
+      start: vi.fn(), stop: vi.fn(), dispose: vi.fn(), setSeatUrl: vi.fn()
+    };
+    const createEngine = vi.spyOn(audioEngineModule, "createAudioEngine").mockReturnValue(engine);
+    try {
+      mirrorSettings.audio = true;
+      mountAt("?name=Alice", true);
+      await settle();
+      const host = MockWebSocket.instances[0];
+      host.emit(sessionMessage());
+      await settle();
+      host.emit(sessionMessage({ headlessMirrorPath: "/ws?seat=opaque-token" }));
+      await settle();
+      expect(createEngine).toHaveBeenCalledOnce();
+      const socketCount = MockWebSocket.instances.length;
+      document.dispatchEvent(new Event("pointerdown", { bubbles: true }));
+      expect(engine.unlock).toHaveBeenCalledTimes(1);
+      visibility = "hidden";
+      document.dispatchEvent(new Event("visibilitychange"));
+      expect(engine.stop).toHaveBeenCalled();
+      if (showBeforeResolve) {
+        visibility = "visible";
+        document.dispatchEvent(new Event("visibilitychange"));
+      }
+      resolveUnlock(true);
+      await settle();
+      expect(engine.start).not.toHaveBeenCalled();
+      expect(MockWebSocket.instances).toHaveLength(socketCount);
+      if (!showBeforeResolve) {
+        visibility = "visible";
+        document.dispatchEvent(new Event("visibilitychange"));
+      }
+      document.dispatchEvent(new Event("pointerdown", { bubbles: true }));
+      await settle();
+      expect(engine.unlock).toHaveBeenCalledTimes(2);
+      expect(engine.start).toHaveBeenCalledOnce();
+    } finally {
+      createEngine.mockRestore();
+      if (priorVisibility) Object.defineProperty(document, "visibilityState", priorVisibility);
+      else Reflect.deleteProperty(document, "visibilityState");
+    }
   });
 
   it.each([false, true])("retains both seat sockets when applying comparison (in place: %s)", async (inPlace) => {

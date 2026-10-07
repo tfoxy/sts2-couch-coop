@@ -240,6 +240,39 @@ node scripts/test-run-session-soak.mjs                                          
 - The mod's browser server refuses loopback for viewer routes, so seats join at the LAN address (`--lan-host`,
   detected by default).
 
+### Seat audio live matrix
+
+Run this after the audio contract, native renderer, host routes and browser engine pass their focused gates.
+Acquire the game, browser endpoint and phone leases with `couch-live-lock`; use `couch-deploy` to stage the
+candidate in a private farm install and verify the loaded mod identity in the host and both seat logs.
+Launch one host and two seats in the private network namespace on headless gamescope, checking that the
+compositor is alive on the NVIDIA GPU throughout. Keep the farm seed's host master volume at zero. Use
+Godot `--headless` only for legs that require no rendered graphics. Never use Xvfb or a desktop window.
+
+On a Moto G31 over Wi-Fi, enable the mirror Audio toggle and capture host play-call, wire-arrival and
+browser-output timestamps together with an acoustic recording. Repeat with a warm take, a cold key,
+and a decoded TmpSfx. Change each seat's master and bus volumes independently, including zero, and
+confirm that only that seat's browser changes. Switch seats and reload the page after warming takes;
+the reload should issue no take requests. Hold a live music lane for ten minutes, including silences
+of at least 15 seconds, then induce a network stall and measure recovery. Drive a 0→1→0 audio-subscriber
+cycle and compare host CPU, RSS, FMOD system count and `Timer.ActiveCount` with the baseline; check
+`godot.log` for `[idle-work]`. Use `pactl` to confirm that the private renderer opens no sink input.
+Keep the host game's own output behavior unchanged. Release every lease and stop owned processes.
+
+| Measurement | Target |
+| --- | --- |
+| Cached SFX, play call to speaker | predicted p50 ≤ 40 ms, p95 ≤ 45 ms; acoustic p50 ≤ 50 ms |
+| First-sight SFX | predicted p50 ≤ 50 ms, p95 ≤ 63 ms |
+| Decoded TmpSfx | p50 ≤ 40 ms, p95 ≤ 70 ms |
+| Music due to output | p50 ≤ 120 ms; recover to ≤ 120 ms within 2 seconds of a stall |
+| Fast output track | maintained for ten minutes, including 15-second silences |
+| Warm reload | zero take requests at the host |
+| Zero clients | CPU within ABBA noise; guard green; no FMOD system or audio timer remains |
+| Renderer output | no sink input from the private renderer |
+
+Keep timestamp logs, phone trace, acoustic file, `pactl` output and installed-build proof in the QA
+artifact directory. Any visual conclusion also needs the exact image paths in its report.
+
 ## 3. QA TCP channel (native godot-client)
 
 Full protocol + current verb table: **`godot-client/docs/qa-channel.md`** (read that file — verbs/settings

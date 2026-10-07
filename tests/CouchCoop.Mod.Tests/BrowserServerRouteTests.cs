@@ -24,6 +24,13 @@ using Spirectl.Sts2.Core.Reference;
 using Spirectl.Sts2.Core.SceneInspection;
 using Spirectl.Sts2.Embedding;
 
+if (args is ["audio-tmpsfx", ..])
+{
+    await AudioTmpSfxRouteTests.RunAsync();
+    Console.WriteLine("audio tmpsfx: ok");
+    return;
+}
+
 // WS8: `dotnet run --project tests/CouchCoop.Mod.Tests -- mdns-harness [seconds] [name]` runs ONLY the mDNS
 // responder, so it can be probed with a real resolver (`dig @224.0.0.251 -p 5353 <name> A`) alongside a live
 // avahi. It is a manual verification path — the suite below never opens port 5353. See MdnsResponderHarness.
@@ -72,6 +79,13 @@ if (args is [ManagedCacheProcessTests.ChildVerb, ..])
     Environment.Exit(await ManagedCacheProcessTests.RunChildAsync(args));
 }
 
+if (args is ["audio-host-state", ..])
+{
+    HostMusicStateTests.Run();
+    Console.WriteLine("audio host state: ok");
+    return;
+}
+
 if (args is [SeatBrowserPipeTests.HostUiChildVerb, ..])
 {
     Environment.Exit(await SeatBrowserPipeTests.RunHostUiChildAsync());
@@ -107,6 +121,15 @@ if (args is ["headless-input", ..])
 // actually compiles. Pure strings, no Godot types, no IO. Its own verb for the same reason every verb here
 // exists — the full sequence dies partway through on some machines — and because this is the seam that stands
 // between a third-party mod's FMOD call and a native SIGSEGV on the seat.
+if (args is ["audio", ..])
+{
+    AudioNativeLayerTests.Run();
+    StreamLaneSubscriptionTests.Run();
+    await AudioHostServiceTests.RunAsync();
+    Console.WriteLine("audio: ok");
+    return;
+}
+
 if (args is ["fmod-stub", ..])
 {
     FmodSingletonStubTests.Run();
@@ -537,6 +560,13 @@ if (args is ["static-bg", ..])
 //
 // Every leg is run even when an earlier one fails, and each is named on its own line: a game update typically
 // breaks several members at once, and stopping at the first would hide the rest behind another build+run cycle.
+if (args is ["audio", ..])
+{
+    await SeatAudioFeedTests.RunAsync();
+    await SeatAudioLaneConnectionTests.RunAsync();
+    return;
+}
+
 if (args is ["beta-targets", ..])
 {
     var failures = new List<string>();
@@ -568,6 +598,8 @@ if (args is ["beta-targets", ..])
     // lobby-screen mount points — in the same order the full sequence takes them.
     Leg(nameof(NetTransportPatchTargetsTests), NetTransportPatchTargetsTests.Run);
     Leg(nameof(HeadlessAudioMuteTargetsTests), HeadlessAudioMuteTargetsTests.Run);
+    Leg(nameof(HostMusicStateTests), HostMusicStateTests.TargetsResolve);
+    Leg(nameof(SeatAudioFeedTests), SeatAudioFeedTests.TargetsResolve);
     // The seat's Steam-Cloud write paths. Same standing as the FMOD forwards above, and the same consequence if
     // a member moves and nobody notices — except that here the damage lands in the player's own save storage.
     Leg(nameof(SeatCloudSaveIsolationTargetsTests), SeatCloudSaveIsolationTargetsTests.Run);

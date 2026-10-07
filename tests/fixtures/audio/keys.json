@@ -1,0 +1,126 @@
+{
+  "schema": 1,
+  "hashInput": "schema byte followed by UTF-8 canonical key",
+  "keys": [
+    {
+      "key": "tmp:card_deal.mp3",
+      "keyId": "1dddb6ca75be849182ee8d86759783d5"
+    },
+    {
+      "key": "event:/sfx/ui/clicks/ui_hover",
+      "keyId": "ac148f6ddbd27aba877991055c5a5431"
+    },
+    {
+      "key": "event:/sfx/ui/gain_energy",
+      "keyId": "342d64045864a06ddbd1776747e6923e"
+    },
+    {
+      "key": "event:/sfx/ui/cards/card_movement_B_into_discard",
+      "keyId": "9bfd2d710a9705a9d357ce5587e0cc9d"
+    },
+    {
+      "key": "event:/sfx/characters/ironclad/ironclad_attack",
+      "keyId": "d47b6ca23c27b54db93fd1ff513e159b"
+    },
+    {
+      "key": "event:/sfx/ui/clicks/ui_click",
+      "keyId": "e523fc5f82fcd80801475ff5f310a27d"
+    },
+    {
+      "key": "event:/sfx/ui/cards/card_movement_B_into_draw",
+      "keyId": "002cb706aef47aa2c38219cf81e53b94"
+    },
+    {
+      "key": "event:/sfx/block_gain",
+      "keyId": "d8677a96efa9920645ce1b566cf7b86c"
+    },
+    {
+      "key": "event:/sfx/heal",
+      "keyId": "7b8a94eaac4ba4e3bd0ec2c398ae6a37"
+    },
+    {
+      "key": "event:/sfx/enemy/enemy_impact_enemy_size/enemy_impact_slime|EnemyImpact_Intensity=2",
+      "keyId": "ec96e7dd3e5cac04ebf073b592723b59"
+    },
+    {
+      "key": "tmp:card_select.mp3",
+      "keyId": "6214a6f72eecfd4de6a00f637c5a1de4"
+    },
+    {
+      "key": "event:/sfx/ui/relic_activate_general",
+      "keyId": "503e8325732b3ab8e9f2789da026bdbd"
+    },
+    {
+      "key": "event:/sfx/block_hit",
+      "keyId": "8e693ec4a529f00072a6437a9c74c375"
+    },
+    {
+      "key": "tmp:player_turn.mp3",
+      "keyId": "8999babfe02c77ea6c76d74c1b49daec"
+    },
+    {
+      "key": "event:/sfx/debuff",
+      "keyId": "7615173406f39d405853ff48a6af5f91"
+    },
+    {
+      "key": "event:/sfx/block_break",
+      "keyId": "9536766a30526a13a0d97bd2e3d9840c"
+    },
+    {
+      "key": "tmp:gain_potion.mp3",
+      "keyId": "519353bc5a6a40eed5426589f26518d2"
+    },
+    {
+      "key": "tmp:enemy_turn.mp3",
+      "keyId": "aa3bd835fe9538980b1bf012ec3e9471"
+    },
+    {
+      "key": "event:/sfx/ui/map/map_open",
+      "keyId": "743bedf566090cfa5846266e27d5b5d2"
+    },
+    {
+      "key": "tmp:blunt_attack.mp3",
+      "keyId": "da46e7f3e2dd764e3f1d008fcd4022eb"
+    },
+    {
+      "key": "event:/sfx/ui/gold/gold_1",
+      "keyId": "23ace0f7df8723029df0cece39dde94f"
+    },
+    {
+      "key": "event:/sfx/enemy/enemy_impact_enemy_size/enemy_impact_armor|EnemyImpact_Intensity=2",
+      "keyId": "390905c2f4e44773a6082bc1f42a6eaa"
+    },
+    {
+      "key": "event:/sfx/enemy/enemy_impact_enemy_size/enemy_impact_insect|EnemyImpact_Intensity=2",
+      "keyId": "5385e6e45c63458ac76cb5f3a29f6d9b"
+    },
+    {
+      "key": "event:/sfx/enemy/enemy_attacks/toadpole/toadpole_attack",
+      "keyId": "cabe240a5e8dd282343329e5e6337abd"
+    },
+    {
+      "key": "event:/sfx/buff",
+      "keyId": "44a95dd01462c0f3471a547d0890f60b"
+    },
+    {
+      "key": "event:/sfx/ui/cards/card_movement_B_into_deck",
+      "keyId": "41039763337df80cd694d9ad8c66526f"
+    },
+    {
+      "key": "event:/sfx/enemy/enemy_attacks/skulking_colony/skulking_colony_hurt",
+      "keyId": "b4c7d3c9552ba812728d5e3227e5b9e9"
+    },
+    {
+      "key": "event:/sfx/enemy/enemy_impact_enemy_size/enemy_impact_stone|EnemyImpact_Intensity=2",
+      "keyId": "b603e1c9718d65925efc125df50a0a49"
+    },
+    {
+      "key": "event:/sfx/enemy/enemy_impact_enemy_size/enemy_impact_plant|EnemyImpact_Intensity=2",
+      "keyId": "1e2958a71121f7dc0424476dc6afb0b0"
+    },
+    {
+      "key": "event:/sfx/enemy/enemy_fade",
+      "keyId": "c3f21a0d3b3a8911c6a97220945192aa"
+    }
+  ]
+}

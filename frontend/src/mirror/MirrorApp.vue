@@ -17,6 +17,7 @@ import { emitWarmAckTrace, warmAckTraceEnabled } from "@/mirror/warmAckTrace";
 import LatencyOverlay from "@/mirror/LatencyOverlay.vue";
 import ReproBadge from "@/mirror/ReproBadge.vue";
 import SettingsPanel from "@/mirror/SettingsPanel.vue";
+import { createAudioEngine, type AudioEngineHandle } from "@/audio/audioEngine";
 import MirrorConfirmButton from "@/mirror/MirrorConfirmButton.vue";
 import MirrorHandRaiseButton from "@/mirror/MirrorHandRaiseButton.vue";
 import MirrorView from "@/mirror/MirrorView.vue";
@@ -25,6 +26,9 @@ import StaticBackground from "@/mirror/StaticBackground.vue";
 import { designPx } from "@/mirror/stageFit";
 import {
   buildSeatMirrorWebSocketUrl,
+  buildAudioRenderWebSocketUrl,
+  buildAudioSeatWebSocketUrl,
+  audioTakeIndexUrl,
   connectMirrorClient,
   emptyMirrorLatency,
   SCROLL_ELEMENT_ID_ARG,
@@ -252,6 +256,12 @@ const hostSession = shallowRef<BrowserSessionEnvelope | null>(null);
 // True only after the host assigns us a headless game instance and we've reconnected to it.
 // Prevents the host's scene stream from showing before the player has joined.
 const joined = ref(false);
+const audioUnavailable = ref(false);
+const audioRoute = ref<string | number | null>(null);
+let audioEngine: AudioEngineHandle | null = null;
+let audioGestureListener: (() => void) | null = null;
+let audioUnlockingEngine: AudioEngineHandle | null = null;
+let audioVisibilityGeneration = 0;
 // Direct-view (watch the HOST's own stream in place, no redirect): set by the server's `directView` directive
 // for a singleplayer run or a host/watch-only selection. Kept SEPARATE from `joined` because the two differ
 // everywhere else (no redirect, no `?name=` stamp, a SHARED host socket) — the server-settings channel is the one
@@ -1251,6 +1261,7 @@ watch(pendingName, (name) => {
 // Shared by the redirect and by the hold's retry so the two cannot build a different URL — the query is rebuilt
 // from the CURRENT settings each time, so a viewer who changed one while waiting gets it honoured on the retry.
 function openSeatView(target: string | number): void {
+  audioRoute.value = target;
   activeClient = makeClient(
     buildSeatMirrorWebSocketUrl(
       target,
@@ -1272,6 +1283,65 @@ function openSeatView(target: string | number): void {
   // that the host socket is the gated one this seat viewer keeps.
   syncHostStaticBg();
 }
+
+function stopAudioEngine(): void {
+  audioEngine?.dispose(); audioEngine = null;
+  audioUnlockingEngine = null;
+  if (audioGestureListener) document.removeEventListener("pointerdown", audioGestureListener, true);
+  audioGestureListener = null;
+}
+
+function armAudioGesture(): void {
+  if (audioGestureListener || typeof document === "undefined") return;
+  const unlockFromGesture = unlockAudioFromGesture;
+  audioGestureListener = unlockFromGesture;
+  document.addEventListener("pointerdown", unlockFromGesture, true);
+}
+
+watch([() => mirrorSettings.audio, joined, audioRoute], ([enabled, isJoined, target]) => {
+  audioUnavailable.value = false;
+  if (!enabled || !isJoined || target === null || directView.value || typeof document === "undefined") { stopAudioEngine(); return; }
+  if (typeof target !== "string") { stopAudioEngine(); audioUnavailable.value = true; return; }
+  const seatUrl = buildAudioSeatWebSocketUrl(target);
+  if (audioEngine) { audioEngine.setSeatUrl(seatUrl); return; }
+  audioEngine = createAudioEngine({
+    seatUrl, renderUrl: buildAudioRenderWebSocketUrl(), indexUrl: audioTakeIndexUrl(),
+    onUnavailable: () => { audioUnavailable.value = true; }
+  });
+  // Capture phase only starts WebAudio; it does not prevent or rewrite the viewer's gameplay gesture.
+  armAudioGesture();
+}, { flush: "sync" });
+
+function unlockAudioFromGesture(): void {
+  const engine = audioEngine;
+  if (!engine || audioUnlockingEngine === engine || document.visibilityState !== "visible") return;
+  const visibilityGeneration = audioVisibilityGeneration;
+  audioUnlockingEngine = engine;
+  audioUnavailable.value = false;
+  void (async () => {
+    try {
+      const ok = await engine.unlock();
+      if (audioEngine !== engine) return;
+      if (ok) {
+        if (document.visibilityState !== "visible" || visibilityGeneration !== audioVisibilityGeneration) return;
+        engine.start();
+        if (audioGestureListener) document.removeEventListener("pointerdown", audioGestureListener, true);
+        audioGestureListener = null;
+      } else audioUnavailable.value = true;
+    } catch {
+      if (audioEngine === engine) audioUnavailable.value = true;
+    } finally {
+      if (audioUnlockingEngine === engine) audioUnlockingEngine = null;
+    }
+  })();
+}
+
+function onAudioVisibilityChange(): void {
+  if (document.visibilityState !== "visible") { audioVisibilityGeneration++; audioEngine?.stop(); }
+  // A hidden-tab resume requires another user gesture to satisfy mobile autoplay policy.
+  else if (mirrorSettings.audio && joined.value && audioRoute.value !== null) armAudioGesture();
+}
+if (typeof document !== "undefined") document.addEventListener("visibilitychange", onAudioVisibilityChange);
 
 // THE HOLD. This device's seat socket never opened; keep the seat and retry its route instead of restarting the
 // join (see `seatViewTarget` for the 32-launch loop that teardown produced).
@@ -1471,6 +1541,8 @@ if (typeof window !== "undefined") {
 }
 
 onBeforeUnmount(() => {
+  stopAudioEngine();
+  if (typeof document !== "undefined") document.removeEventListener("visibilitychange", onAudioVisibilityChange);
   // Closing a socket can synchronously notify a disconnect; teardown must not start another connection.
   unmounted = true;
   stopClientVitals();
@@ -1654,7 +1726,7 @@ onBeforeUnmount(() => {
     <ReproBadge v-if="showReproBadge" />
     <!-- Browser-only chrome: settings panel + dual (network / game) latency readout. Fixed in browser space
          (a sibling of the letterboxed stage), visible regardless of join state. -->
-    <SettingsPanel :latency="latency" :direct-view="directView" />
+    <SettingsPanel :latency="latency" :direct-view="directView" :audio-unavailable="audioUnavailable" @audio-gesture="unlockAudioFromGesture" />
     <!-- WS1: armed by the seat tap, and self-gating on "iOS Safari, not already a home-screen app, not already
          dismissed" — so it renders nothing at all on Android, on desktop, and in the installed app.
          `openRequest` is the re-open pill's manual channel (@/components/IosInstallButton.vue), which lives in

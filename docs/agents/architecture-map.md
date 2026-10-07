@@ -20,6 +20,9 @@ This map records current contracts, not retired implementation alternatives.
   `frontend/src/mirror/mirrorClient.ts`. `watch=0` suppresses the connect keyframe until the client sends a
   `watch` message. Recorders, e2e tools, and diagnostic clients must send the complete selector set. The page's
   retired view selector is not a WebSocket parameter.
+- **Seat audio:** the seat's relayed `/ws?seat=<route-id>&lane=audio` reports play events and volumes; the host's
+  `/audio` WebSocket receives play and lane requests and returns PCM16 frames. `/audio/take/<schema>/<bankset>/<keyId>.wav`,
+  `/audio/takes`, and `/audio/tmpsfx/<res-path>` serve bounded, build-qualified HTTP audio resources.
 - **Scene transforms:** scene data uses local transforms and local rectangles. Each renderer composes the parent
   chain; a client must not treat a child transform as stage-global or add a second global conversion.
 - **Resources:** `/res/{path}` receives an unprefixed `res://` path. `raw` is the default and `?format=png` is
@@ -40,6 +43,44 @@ This map records current contracts, not retired implementation alternatives.
   it is spirectl's asset-payload version; do not hand-bump that half.
 - **Repros:** the browser flight recorder writes `repro/1` NDJSON. It records raw wire frames plus viewer input;
   `scripts/analyze-repro.mjs` and `scripts/replay-repro.mjs` are its consumers.
+
+## Seat audio
+
+Each mirror viewer has one Audio toggle, off by default. A seat's typed sound-call prefixes and debug MP3
+postfix publish event keys and a volume snapshot through a separate seat WebSocket. The seat dispatches
+`lane=audio` before normal mirror selector validation. The host relay still owns the opaque seat route id;
+the browser connects to the host's `/audio` render lane as well as the relayed seat lane. Host-view
+(`directView`) viewers do not subscribe to audio.
+
+`src/CouchCoop.Mod/Audio/` owns native FMOD handles, bank callbacks, take and stream renderers, caches and
+delivery. One unity-gain take is rendered per canonical SFX key, held in a bounded memory and disk cache,
+and sent in 48 kHz stereo PCM16 blocks. A separate private `NOSOUND_NRT` system follows live music,
+ambience and loops. Its 512-frame media clock exists only while a live lane has subscribers; it is a
+playback clock, not a game-state poll. Both renderers are released when their last subscriber leaves.
+Each take is fully metered before its first block is sent, so a late music or ambience contribution
+rejects the whole take.
+The per-client deadline sender releases frames at most 100 ms before due time and drops old lane blocks
+under pressure. The browser decodes takes, plays first-sight sounds while collecting them, and uses a
+60 ms jitter target for the three live lanes.
+
+The host's proxy hook resolves the generated Godot call helper from `GodotObject.Call` IL, then filters by
+the two audio proxy instance pointers before reading arguments. A one-time call on a mod-owned Godot node
+checks the hook route; a hook failure disables live lanes for the session. `HostMusicState` keeps a small current
+memo so a newly subscribed stream can start music, ambience and loops at an approximate point. The SFX
+lane stays available if the live-lane hook fails.
+
+| Browser output | Required seat setting | Applied gain |
+| --- | --- | --- |
+| SFX and loops | FMOD master and SFX both above zero | master² × SFX² |
+| Music | FMOD master and BGM both above zero | master² × BGM² |
+| Ambience | FMOD master and ambience both above zero | master² × ambience² |
+| TmpSfx MP3 | FMOD Master and SFX above zero; Godot Master and Debug bus above mute | reported dB values and per-event volume |
+
+The mirror toggle gates every row. With no audio subscribers, seat reporters return after a volatile
+subscriber read, renderers are absent and no audio timer is active. The host starts each renderer through
+`ZeroClientGuard`; `-- zero-client` drives the 0→1→0 lifecycle. Contract and rendering checks are in
+`CouchCoop.MirrorProtocol.Tests`, `CouchCoop.Mod.Tests -- audio`, and the separate
+`CouchCoop.Audio.NativeTests` process. Live procedures and latency targets are in `qa-recipes.md`.
 
 ## Gesture / input
 - Files: `src/CouchCoop.MirrorProtocol/Input/GestureMachine.cs` (1:1 twin `frontend/src/mirror/inputCapture.ts`),

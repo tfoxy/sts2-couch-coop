@@ -25,6 +25,7 @@ import { sceneAblation } from "@/mirror/sceneAblation";
 import { emitWarmAckTrace, warmAckTraceEnabled } from "@/mirror/warmAckTrace";
 import { publishAssetVersion } from "@/join/assetVersion";
 import { hostWsUrl } from "@/join/hostBase";
+import { hostUrl } from "@/join/hostBase";
 import { readVisitId } from "@/join/visitId";
 import {
   lifecycleEvent,
@@ -1008,3 +1009,25 @@ export function buildHeadlessMirrorWebSocketUrl(
 ): string {
   return buildSeatMirrorWebSocketUrl(port, sourceLocation, staticBg, trailDrive, visit);
 }
+
+/** Host-authoritative endpoints for the optional seat audio engine. */
+export function buildAudioRenderWebSocketUrl(pageHref: string = window.location.href): string {
+  return hostWsUrl("/audio", pageHref);
+}
+
+export function buildAudioSeatWebSocketUrl(
+  target: string | number,
+  pageLocation: Pick<Location, "href" | "protocol"> = window.location
+): string {
+  const url = new URL(buildSeatMirrorWebSocketUrl(target, pageLocation));
+  url.searchParams.set("lane", "audio");
+  // Keep the routed seat selector when the host supplied one; the audio relay is admitted by that same route.
+  url.searchParams.delete("watch");
+  url.searchParams.delete("staticBg");
+  url.searchParams.delete("cardFlight");
+  url.searchParams.delete("handTween");
+  url.searchParams.delete("trailDrive");
+  return url.toString();
+}
+
+export function audioTakeIndexUrl(): string { return hostUrl("/audio/takes"); }
