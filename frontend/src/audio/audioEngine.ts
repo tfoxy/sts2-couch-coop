@@ -13,6 +13,8 @@ import { hostUrl } from "@/join/hostBase";
 import { assetVersion } from "@/join/assetVersion";
 import { tmpSfxUrl } from "./audioRoutes";
 
+let nextAudioConnectionId = 0;
+
 export interface AudioEngineOptions {
   seatUrl: string; renderUrl: string; indexUrl: string;
   fetcher?: typeof fetch; WebSocketCtor?: typeof WebSocket;
@@ -43,18 +45,23 @@ export function createAudioEngine(options: AudioEngineOptions): AudioEngineHandl
   const audioDiagnosticsEnabled = new URLSearchParams(globalThis.location?.search ?? "").get("audioDiag") === "1";
   const diagnosticEvents: Array<Record<string, unknown>> = [];
   let diagnosticSeq = 0;
+  let diagnosticLost = 0;
+  let requestOrder = 0;
   const recordDiagnostic = (type: string, fields: Record<string, unknown> = {}): void => {
     if (!audioDiagnosticsEnabled) return;
-    const output = context?.getOutputTimestamp?.() ?? null;
-    diagnosticEvents.push({ seq: ++diagnosticSeq, type, performanceMs: performance.now(), contextTime: context?.currentTime ?? null,
-      outputTimestamp: output ? { contextTime: output.contextTime, performanceTime: output.performanceTime } : null, ...fields });
-    if (diagnosticEvents.length > 1024) diagnosticEvents.splice(0, diagnosticEvents.length - 1024);
+    const performanceMs = performance.now();
+    const includeOutput = type === "source-scheduled" || type === "lane-source-scheduled" || type === "host-clock-sample";
+    const output = includeOutput ? context?.getOutputTimestamp?.() ?? null : null;
+    diagnosticEvents.push({ seq: ++diagnosticSeq, type, performanceMs, contextTime: context?.currentTime ?? null,
+      ...(includeOutput ? { outputTimestamp: output ? { contextTime: output.contextTime, performanceTime: output.performanceTime } : null } : {}), ...fields });
+    if (diagnosticEvents.length > 1024) { diagnosticEvents.shift(); diagnosticLost++; }
   };
   installAudioDiagnostics(audioDiagnosticsEnabled, () => {
     const output = context?.getOutputTimestamp?.() ?? null;
     return {
       running, contextState: context?.state ?? "closed", visible: typeof document === "undefined" || document.visibilityState === "visible",
       performanceMs: performance.now(), performanceTimeOriginMs: performance.timeOrigin, lastSeq: diagnosticSeq,
+      firstSeq: diagnosticEvents[0]?.seq ?? diagnosticSeq + 1, lostEvents: diagnosticLost,
       voices: voices.count(), lanes: [...lanes.keys()], outputLeadMs: context ? outputLeadMs(context) : null,
       outputTimestamp: output ? { contextTime: output.contextTime, performanceTime: output.performanceTime } : null,
       events: diagnosticEvents.slice()
@@ -73,7 +80,7 @@ export function createAudioEngine(options: AudioEngineOptions): AudioEngineHandl
     recordDiagnostic("lane-subscription", { ...desiredLanes });
   };
   const playBuffer = (keyId: string, buffer: AudioBuffer, gainValue: number, pitch: number,
-    sourcePath: string, seatTUs: number): void => {
+    sourcePath: string, seatTUs: number, order?: number, connectionId?: number): void => {
     if (!context || !running || gainValue <= 0) return;
     const gain = context.createGain(); gain.gain.value = gainValue; gain.connect(context.destination);
     const source = context.createBufferSource(); source.buffer = buffer; source.playbackRate.value = Number.isFinite(pitch) ? Math.max(.25, Math.min(4, pitch)) : 1; source.connect(gain);
@@ -85,11 +92,13 @@ export function createAudioEngine(options: AudioEngineOptions): AudioEngineHandl
     const scheduledContextTime = context.currentTime;
     source.start(); recordDiagnostic("source-scheduled", { lane: "sfx", keyId,
       ...(sourcePath.includes("tmpsfx") ? { resPath: keyId } : {}), sourcePath, seatTUs,
-      scheduledContextTime, pitch });
+      scheduledContextTime, pitch, connectionId, ...(order ? { requestOrder: order } : {}) });
   };
-  const onSeatEvent = async (event: SeatAudioEvent): Promise<void> => {
+  const onSeatEvent = async (event: SeatAudioEvent, connectionId: number, callbackOrder?: number): Promise<void> => {
     const eventEpoch = seatEpoch;
-    recordDiagnostic("seat-event-received", { kind: event.kind, ...( "t" in event ? { seatTUs: event.t } : {}),
+    const order = audioDiagnosticsEnabled && (event.kind === "sfx" || event.kind === "tmpsfx") ? ++requestOrder : 0;
+    if (audioDiagnosticsEnabled) recordDiagnostic("seat-event-received", { connectionId, callbackOrder, kind: event.kind,
+      ...(order ? { requestOrder: order } : {}), ...( "t" in event ? { seatTUs: event.t } : {}),
       ...("keyId" in event ? { keyId: event.keyId } : {}), ...("resPath" in event ? { resPath: event.resPath } : {}),
       ...("pitch" in event ? { pitch: event.pitch, volume: event.volume } : {}) });
     if (!context || !running) return;
@@ -115,21 +124,24 @@ export function createAudioEngine(options: AudioEngineOptions): AudioEngineHandl
         } catch { return; }
       }
       if (eventEpoch !== seatEpoch || !running) return;
-      playBuffer(path, buffer, gain, event.pitch, decoded ? "decoded-tmpsfx" : "http-tmpsfx", event.t); return;
+      playBuffer(path, buffer, gain, event.pitch, decoded ? "decoded-tmpsfx" : "http-tmpsfx", event.t, order, connectionId); return;
     }
     if (event.kind === "sfx") {
       const decoded = store?.hasDecoded(event.keyId) ?? false;
       const buffer = await store?.get(event.keyId, seatWorkAbort.signal);
       if (eventEpoch !== seatEpoch || !running) return;
-      if (buffer) { playBuffer(event.keyId, buffer, gain, event.pitch, decoded ? "decoded-cache" : "http-take", event.t); return; }
+      if (buffer) { playBuffer(event.keyId, buffer, gain, event.pitch, decoded ? "decoded-cache" : "http-take", event.t, order, connectionId); return; }
       const queued = pendingEvents.get(event.keyId) ?? [];
-      queued.push({ gain, pitch: event.pitch, seatTUs: event.t }); pendingEvents.set(event.keyId, queued.slice(-4));
-      render?.request({ kind: "play", keyId: event.keyId, key: event.key });
+      queued.push({ gain, pitch: event.pitch, seatTUs: event.t, requestOrder: order, seatConnectionId: connectionId }); pendingEvents.set(event.keyId, queued.slice(-4));
+      render?.request({ kind: "play", keyId: event.keyId, key: event.key },
+        audioDiagnosticsEnabled ? { seatTUs: event.t, requestOrder: order } : undefined);
     }
   };
-  const onFrame = (frame: AudioFrame): void => {
-    recordDiagnostic("pcm-frame-received", { kind: frame.kind, lane: frame.lane, streamId: frame.streamId,
-      blockIndex: frame.blockIndex, dueUs: frame.dueUs.toString(), sentUs: frame.sentUs.toString(), frames: frame.frames, flags: frame.flags });
+  const onFrame = (frame: AudioFrame, connectionId: number, callbackOrder?: number): void => {
+    if (audioDiagnosticsEnabled && (frame.kind !== 2 || frame.blockIndex % 16 === 0))
+      recordDiagnostic("pcm-frame-received", { connectionId, callbackOrder, kind: frame.kind, lane: frame.lane,
+        streamId: frame.streamId, blockIndex: frame.blockIndex, dueUs: frame.dueUs.toString(),
+        sentUs: frame.sentUs.toString(), frames: frame.frames, flags: frame.flags });
     if (!context || !running) return;
     if (frame.kind === 2) {
       const lane = frame.lane;
@@ -138,25 +150,28 @@ export function createAudioEngine(options: AudioEngineOptions): AudioEngineHandl
         const gain = context.createGain(); gain.gain.value = laneGain(volumes, lane === 1 ? "music" : lane === 2 ? "ambience" : "loops"); gain.connect(context.destination);
         laneGainNodes.set(lane, gain);
         voice = new StreamVoice(context, gain, () => keepAlive?.update(), audioDiagnosticsEnabled
-          ? (block, decision, scheduledContextTime) => recordDiagnostic("lane-source-scheduled", {
+          ? (block, decision, scheduledContextTime) => {
+            if (block.blockIndex % 16 !== 0 && !decision.dropped && !decision.reanchored) return;
+            recordDiagnostic("lane-source-scheduled", { connectionId,
             sourcePath: "live-lane", lane: block.lane, streamId: block.streamId, blockIndex: block.blockIndex,
             dueUs: block.dueUs.toString(), sentUs: block.sentUs.toString(), scheduledContextTime,
             dropped: decision.dropped, reanchored: decision.reanchored
-          }) : undefined);
+            });
+          } : undefined);
         lanes.set(lane, voice);
       }
       if (!(frame.flags & 4)) voice.push(frame);
       else { voice.stop(); lanes.delete(lane); laneGainNodes.get(lane)?.disconnect(); laneGainNodes.delete(lane); }
       keepAlive?.update();
     } else {
-      playTakeFrame(frame);
+      playTakeFrame(frame, connectionId);
     }
   };
-  interface TakeStream { keyId: string; gain: number; pitch: number; seatTUs: number; frames: AudioFrame[]; gainNode: GainNode; sources: Set<AudioBufferSourceNode>; nextAt: number; voice: VoiceRecord; finished: boolean; ready: boolean; }
+  interface TakeStream { keyId: string; gain: number; pitch: number; seatTUs: number; requestOrder: number; seatConnectionId: number; frames: AudioFrame[]; gainNode: GainNode; sources: Set<AudioBufferSourceNode>; nextAt: number; voice: VoiceRecord; finished: boolean; ready: boolean; }
   const takeStreams = new Map<number, TakeStream>();
-  const pendingEvents = new Map<string, Array<{ gain: number; pitch: number; seatTUs: number }>>();
+  const pendingEvents = new Map<string, Array<{ gain: number; pitch: number; seatTUs: number; requestOrder: number; seatConnectionId: number }>>();
   const fallbackStarted = new Set<number>();
-  const playTakeFrame = (frame: AudioFrame): void => {
+  const playTakeFrame = (frame: AudioFrame, connectionId: number): void => {
     if (!context) return;
     const stream = takeStreams.get(frame.streamId);
     if (!stream || fallbackStarted.has(frame.streamId)) return;
@@ -175,8 +190,9 @@ export function createAudioEngine(options: AudioEngineOptions): AudioEngineHandl
       }
     };
     source.start(startAt); stream.nextAt = startAt + frame.frames / (48_000 * stream.pitch);
-    recordDiagnostic("source-scheduled", { lane: "take", sourcePath: "first-sight-stream", keyId: stream.keyId,
-      seatTUs: stream.seatTUs, streamId: frame.streamId,
+    recordDiagnostic("source-scheduled", { connectionId, lane: "take", sourcePath: "first-sight-stream", keyId: stream.keyId,
+      seatTUs: stream.seatTUs, requestOrder: stream.requestOrder, seatConnectionId: stream.seatConnectionId,
+      streamId: frame.streamId,
       blockIndex: frame.blockIndex, dueUs: frame.dueUs.toString(), sentUs: frame.sentUs.toString(),
       scheduledContextTime: startAt, pitch: stream.pitch, frames: frame.frames });
     if (frame.flags & 2) {
@@ -197,7 +213,10 @@ export function createAudioEngine(options: AudioEngineOptions): AudioEngineHandl
       if (running && currentStore === store && !signal.aborted) void currentStore?.fillHttpCache(signal);
     }, 0);
   };
-  const onRenderMessage = (message: RenderOutbound): void => {
+  const onRenderMessage = (message: RenderOutbound, connectionId: number, callbackOrder?: number): void => {
+    if (audioDiagnosticsEnabled) recordDiagnostic("render-message-received", { connectionId, callbackOrder,
+      kind: message.kind, ...( "keyId" in message ? { keyId: message.keyId } : {}),
+      ...( "streamId" in message ? { streamId: message.streamId } : {}) });
     if (message.kind === "clock") recordDiagnostic("host-clock-sample", {
       clockSeq: message.seq ?? null, clientSendPerfMs: message.clientPerfMs ?? null,
       hostReceiveUs: message.hostUs, hostSendUs: message.sentUs,
@@ -210,6 +229,7 @@ export function createAudioEngine(options: AudioEngineOptions): AudioEngineHandl
       if (!params || !context) return;
       const gainNode = context.createGain(); gainNode.gain.value = params.gain; gainNode.connect(context.destination);
       const stream = { keyId: message.keyId, gain: params.gain, pitch: params.pitch, seatTUs: params.seatTUs,
+        requestOrder: params.requestOrder, seatConnectionId: params.seatConnectionId,
         frames: [], gainNode, sources: new Set<AudioBufferSourceNode>(), nextAt: context.currentTime + 0.005,
         voice: undefined as unknown as VoiceRecord, finished: false, ready: false } satisfies TakeStream;
       const voice: VoiceRecord = { keyId: message.keyId, stop(fadeMs) {
@@ -235,22 +255,25 @@ export function createAudioEngine(options: AudioEngineOptions): AudioEngineHandl
         recordDiagnostic("take-ready-get-result", { keyId: message.keyId, streamId: message.streamId,
           decoded: !!buffer, readyEpoch, seatEpoch, running });
         if (buffer && readyEpoch === seatEpoch && running)
-          playBuffer(message.keyId, buffer, params.gain, params.pitch, "http-take", params.seatTUs);
+          playBuffer(message.keyId, buffer, params.gain, params.pitch, "http-take", params.seatTUs,
+            params.requestOrder, params.seatConnectionId);
       });
     } else if (message.kind === "unavailable") pendingEvents.delete(message.keyId);
   };
 
   const openLanes = (): void => {
     const epoch = seatEpoch;
-    seat = openSeatAudioLane(currentSeatUrl, event => {
-      if (epoch === seatEpoch) void onSeatEvent(event);
-    }, options.WebSocketCtor);
+    const seatConnectionId = ++nextAudioConnectionId;
+    const renderConnectionId = ++nextAudioConnectionId;
+    seat = openSeatAudioLane(currentSeatUrl, (event, callbackOrder) => {
+      if (epoch === seatEpoch) void onSeatEvent(event, seatConnectionId, callbackOrder);
+    }, options.WebSocketCtor, audioDiagnosticsEnabled ? recordDiagnostic : undefined, seatConnectionId);
     render = openRenderLane(options.renderUrl,
-      frame => { if (epoch === seatEpoch) onFrame(frame); },
-      message => { if (epoch === seatEpoch) onRenderMessage(message); },
+      (frame, callbackOrder) => { if (epoch === seatEpoch) onFrame(frame, renderConnectionId, callbackOrder); },
+      (message, callbackOrder) => { if (epoch === seatEpoch) onRenderMessage(message, renderConnectionId, callbackOrder); },
       options.WebSocketCtor, () => {
         if (epoch === seatEpoch) { options.onUnavailable?.(); stop(); }
-      });
+      }, audioDiagnosticsEnabled ? recordDiagnostic : undefined, renderConnectionId);
     render.request(desiredLanes);
   };
   const start = (): void => {

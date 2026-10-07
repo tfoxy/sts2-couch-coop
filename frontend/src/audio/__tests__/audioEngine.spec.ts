@@ -102,6 +102,7 @@ describe("audio engine cold take playback", () => {
     const lane = render.sent.map(s => JSON.parse(s)).filter(m => m.kind === "lanes").at(-1);
     expect(lane).toEqual({ kind: "lanes", music: false, ambience: false, loops: true });
     seat.emit("message", JSON.stringify({ kind: "sfx", keyId: "ac148f6ddbd27aba877991055c5a5431", key: "event:/sfx/ui/clicks/ui_hover", t: 4_000_000_000_000, pitch: 1.5, volume: .5 }));
+    seat.emit("message", JSON.stringify({ kind: "sfx", keyId: "ac148f6ddbd27aba877991055c5a5431", key: "event:/sfx/ui/clicks/ui_hover", t: 4_000_000_000_001, pitch: 1.5, volume: .5 }));
     await new Promise(resolve => setTimeout(resolve, 0));
     const play = render.sent.map(s => JSON.parse(s)).reverse().find(m => m.kind === "play");
     expect(play).toEqual({ kind: "play", keyId: "ac148f6ddbd27aba877991055c5a5431", key: "event:/sfx/ui/clicks/ui_hover" });
@@ -118,8 +119,21 @@ describe("audio engine cold take playback", () => {
     const diagnostic = window.__couchCoopAudioDiag?.();
     const rows = diagnostic?.events as Array<Record<string, unknown>>;
     expect(rows.find(row => row.type === "source-scheduled" && row.lane === "take")).toMatchObject({
-      sourcePath: "first-sight-stream", seatTUs: 4_000_000_000_000, keyId: play.keyId
+      sourcePath: "first-sight-stream", seatTUs: 4_000_000_000_000, keyId: play.keyId, requestOrder: 1
     });
+    const first = rows.find(row => row.type === "seat-parse-complete" && row.seatTUs === 4_000_000_000_000)!;
+    const event = rows.find(row => row.type === "seat-event-received" && row.seatTUs === first.seatTUs)!;
+    expect(first.connectionId).toBe(event.connectionId);
+    expect(first.callbackOrder).toBe(event.callbackOrder);
+    expect(first.seq as number).toBeLessThan(event.seq as number);
+    expect(rows.filter(row => row.type === "play-request-enqueued").map(row => row.requestOrder)).toEqual([1, 2]);
+    expect(rows.filter(row => row.type === "play-request-sent").map(row => row.seatTUs)).toEqual([4_000_000_000_000, 4_000_000_000_001]);
+    const decoded = rows.find(row => row.type === "render-frame-decoded" && row.streamId === 7)!;
+    const received = rows.find(row => row.type === "pcm-frame-received" && row.streamId === 7)!;
+    expect(decoded.callbackOrder).toBe(received.callbackOrder);
+    expect(decoded.seq as number).toBeLessThan(received.seq as number);
+    expect(diagnostic?.firstSeq).toBe(1);
+    expect(diagnostic?.lostEvents).toBe(0);
     expect(rows.every(row => typeof row.seq === "number")).toBe(true);
     expect(diagnostic?.performanceTimeOriginMs).toBeTypeOf("number");
     expect(window.__couchCoopAudioDiagProbe?.()).toBe(true);
@@ -130,6 +144,9 @@ describe("audio engine cold take playback", () => {
     expect(sockets[3].url).toBe("ws://host/audio");
     sockets[2].emit("open"); sockets[3].emit("open");
     sockets[2].emit("message", JSON.stringify({ kind: "volumes", snapshot: true, master: 1, sfx: 1, bgm: 0, ambience: 0, godotMasterDb: 0, godotSfxDb: 0 }));
+    const reconnected = window.__couchCoopAudioDiag?.().events as Array<Record<string, unknown>>;
+    const newSeat = reconnected.filter(row => row.type === "seat-parse-complete").at(-1)!;
+    expect(newSeat.connectionId).not.toBe(first.connectionId);
     seat.emit("message", JSON.stringify({ kind: "sfx", keyId: play.keyId, key: play.key, t: 1, pitch: 1, volume: 1 }));
     render.emit("message", laneFrame());
     await Promise.resolve();
@@ -139,6 +156,11 @@ describe("audio engine cold take playback", () => {
     expect(await engine.unlock()).toBe(true);
     engine.start();
     expect(sockets[4].url).toBe("ws://host/ws?seat=S&lane=audio");
+    for (let i = 0; i < 1030; i++) sockets[5].emit("message", JSON.stringify({ kind: "clock", hostUs: i, sentUs: i }));
+    const bounded = window.__couchCoopAudioDiag?.();
+    expect((bounded?.events as unknown[]).length).toBe(1024);
+    expect(bounded?.firstSeq).toBe((bounded?.lastSeq as number) - 1023);
+    expect(bounded?.lostEvents).toBe((bounded?.firstSeq as number) - 1);
     engine.dispose();
     history.replaceState({}, "", priorUrl);
   });

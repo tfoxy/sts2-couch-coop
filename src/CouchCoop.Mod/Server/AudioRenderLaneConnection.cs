@@ -32,13 +32,32 @@ internal static class AudioRenderLaneConnection
             new Dictionary<string, string> { ["Upgrade"] = "websocket", ["Connection"] = "Upgrade", ["Sec-WebSocket-Accept"] = accept },
             cancellationToken: token).ConfigureAwait(false);
         using var socket = WebSocket.CreateFromStream(stream, true, null, TimeSpan.FromSeconds(30));
+        long connectionId = AudioDiagnostics.ConnectionId();
         using var sendGate = new SemaphoreSlim(1, 1);
         using var stop = CancellationTokenSource.CreateLinkedTokenSource(token);
         async Task Send(byte[] bytes, WebSocketMessageType type, CancellationToken ct)
         {
+            AudioFrame frame = default;
+            bool traceFrame = AudioDiagnostics.Enabled && type == WebSocketMessageType.Binary
+                && AudioFrame.TryDecode(bytes, out frame) &&
+                (frame.Kind == AudioFrameKind.Take || frame.BlockIndex % 64 == 0);
+            AudioFrame diagnosticFrame = traceFrame ? frame : default;
+            void Mark(string stage)
+            {
+                if (traceFrame) AudioDiagnostics.Trace(new AudioDiagnostics.Mark(stage, AudioDiagnostics.NowUs(),
+                    Conn: connectionId, Stream: diagnosticFrame.StreamId, Lane: (int)diagnosticFrame.Lane,
+                    Block: diagnosticFrame.BlockIndex, DueUs: diagnosticFrame.DueUs, SentUs: diagnosticFrame.SentUs));
+            }
+            Mark("gate-wait");
             await sendGate.WaitAsync(ct).ConfigureAwait(false);
-            try { await socket.SendAsync(bytes.AsMemory(), type, true, ct).ConfigureAwait(false); }
-            finally { sendGate.Release(); }
+            Mark("gate-acquire");
+            try
+            {
+                Mark("render-send-start");
+                await socket.SendAsync(bytes.AsMemory(), type, true, ct).ConfigureAwait(false);
+                Mark("render-send-done");
+            }
+            finally { sendGate.Release(); AudioDiagnostics.RequestFlush(); }
         }
         Task SendControl(object message, CancellationToken ct) => Send(JsonSerializer.SerializeToUtf8Bytes(message,
             message.GetType(), WireJson), WebSocketMessageType.Text, ct);
@@ -54,7 +73,8 @@ internal static class AudioRenderLaneConnection
             }
             finally { sendGate.Release(); }
         }
-        await using var sender = new DeadlineSender((bytes, ct) => Send(bytes, WebSocketMessageType.Binary, ct));
+        await using var sender = new DeadlineSender((bytes, ct) => Send(bytes, WebSocketMessageType.Binary, ct),
+            connectionId: connectionId);
         await SendControl(new AudioHello(SoundKey.Schema, audio.Bankset), stop.Token).ConfigureAwait(false);
         for (int i = 0; i < 8; i++)
         {
@@ -65,6 +85,7 @@ internal static class AudioRenderLaneConnection
         double tokens = Burst;
         ulong last = DeadlineSender.HostMicroseconds();
         uint streamId = 0;
+        long requestOrder = 0;
         int outstanding = 0;
         var lanes = new Dictionary<AudioLane, IDisposable>();
         void SetLane(AudioLane lane, bool enabled)
@@ -134,9 +155,17 @@ internal static class AudioRenderLaneConnection
                             path.StartsWith("event:/ambience", StringComparison.OrdinalIgnoreCase))
                         { await ClosePolicy(socket, "invalid-sound-key"); return; }
                         uint id = ++streamId;
+                        long order = ++requestOrder;
+                        if (AudioDiagnostics.Enabled)
+                        {
+                            AudioDiagnostics.Trace(new AudioDiagnostics.Mark("request-recv", receivedUs,
+                                Conn: connectionId, KeyId: keyId, Stream: id, Order: order));
+                            AudioDiagnostics.Trace(new AudioDiagnostics.Mark("request-parse", AudioDiagnostics.NowUs(),
+                                Conn: connectionId, KeyId: keyId, Stream: id, Order: order));
+                        }
                         if (Interlocked.Increment(ref outstanding) > 8)
                         { Interlocked.Decrement(ref outstanding); await ClosePolicy(socket, "audio-play-capacity"); return; }
-                        _ = DeliverTakeAsync(audio, keyId, key, id, sender, SendControl, stop.Token)
+                        _ = DeliverTakeAsync(audio, keyId, key, id, connectionId, order, sender, SendControl, stop.Token)
                             .ContinueWith(_ => Interlocked.Decrement(ref outstanding), TaskScheduler.Default);
                         break;
                     }
@@ -167,14 +196,19 @@ internal static class AudioRenderLaneConnection
                 lanes.Clear();
             }
             stop.Cancel();
+            AudioDiagnostics.FlushFinal();
         }
     }
 
     private static async Task DeliverTakeAsync(AudioService audio, string keyId, string key, uint id,
+        long connectionId, long order,
         DeadlineSender sender, Func<object, CancellationToken, Task> control, CancellationToken token)
     {
         try
         {
+            if (AudioDiagnostics.Enabled)
+                AudioDiagnostics.Trace(new AudioDiagnostics.Mark("take-dispatch", AudioDiagnostics.NowUs(),
+                    Conn: connectionId, KeyId: keyId, Stream: id, Order: order));
             bool cold = audio.Cached(keyId) is null;
             ulong due = DeadlineSender.HostMicroseconds() + 100_000;
             if (cold)
@@ -190,7 +224,7 @@ internal static class AudioRenderLaneConnection
                 sender.Enqueue(new AudioFrame(AudioFrameKind.Take, AudioLane.Take, id, (uint)block,
                     (ushort)frames, flags, due + (ulong)(block * 512L * 1_000_000 / 48_000), 0), pcm);
             }
-            await audio.GetTakeAsync(keyId, key, cold ? OnBlock : null).ConfigureAwait(false);
+            await audio.GetTakeAsync(keyId, key, cold ? OnBlock : null, connectionId, id).ConfigureAwait(false);
             if (token.IsCancellationRequested) return;
             string url = $"/audio/take/{SoundKey.Schema}/{audio.Bankset}/{keyId}.wav" + CouchCoopAssetVersion.QuerySuffix(false);
             await control(new AudioTakeReady(keyId, id, url), token).ConfigureAwait(false);

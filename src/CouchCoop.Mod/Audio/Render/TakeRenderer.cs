@@ -17,7 +17,7 @@ public sealed class TakeRenderer : IDisposable
     private bool disposed;
 
     private readonly record struct Job(TakeRequest Request, TaskCompletionSource<RenderedTake> Completion,
-        Action<ReadOnlyMemory<byte>, int, bool>? OnBlock);
+        Action<ReadOnlyMemory<byte>, int, bool>? OnBlock, long ConnectionId, uint StreamId);
 
     public TakeRenderer(Func<IFmodRenderBackend> backendFactory)
     {
@@ -28,7 +28,8 @@ public sealed class TakeRenderer : IDisposable
 
     // Every caller for a cold key receives the same immutable completed take.
     public Task<RenderedTake> RenderAsync(TakeRequest request,
-        Action<ReadOnlyMemory<byte>, int, bool>? onBlock = null)
+        Action<ReadOnlyMemory<byte>, int, bool>? onBlock = null,
+        long diagnosticConnectionId = 0, uint diagnosticStreamId = 0)
     {
         lock (gate)
         {
@@ -37,7 +38,10 @@ public sealed class TakeRenderer : IDisposable
             if (pending.TryGetValue(request.KeyId, out var existing)) return existing.Task;
             var completion = new TaskCompletionSource<RenderedTake>(TaskCreationOptions.RunContinuationsAsynchronously);
             pending.Add(request.KeyId, completion);
-            queue.Add(new Job(request, completion, onBlock));
+            if (AudioDiagnostics.Enabled)
+                AudioDiagnostics.Trace(new AudioDiagnostics.Mark("take-enqueue", AudioDiagnostics.NowUs(),
+                    Conn: diagnosticConnectionId, KeyId: request.KeyId, Stream: diagnosticStreamId));
+            queue.Add(new Job(request, completion, onBlock, diagnosticConnectionId, diagnosticStreamId));
             return completion.Task;
         }
     }
@@ -53,8 +57,14 @@ public sealed class TakeRenderer : IDisposable
                 if (disposed) { job.Completion.TrySetCanceled(); continue; }
                 try
                 {
-                    var sink = new CollectingSink(job.OnBlock);
+                    if (AudioDiagnostics.Enabled)
+                        AudioDiagnostics.Trace(new AudioDiagnostics.Mark("take-render-start", AudioDiagnostics.NowUs(),
+                            Conn: job.ConnectionId, KeyId: job.Request.KeyId, Stream: job.StreamId));
+                    var sink = new CollectingSink(job.OnBlock, job.ConnectionId, job.StreamId, job.Request.KeyId);
                     TakeResult result = backend.Render(job.Request, sink);
+                    if (AudioDiagnostics.Enabled)
+                        AudioDiagnostics.Trace(new AudioDiagnostics.Mark("take-render-done", AudioDiagnostics.NowUs(),
+                            Conn: job.ConnectionId, KeyId: job.Request.KeyId, Stream: job.StreamId));
                     job.Completion.TrySetResult(new RenderedTake(result, sink.Written));
                 }
                 catch (Exception ex) { job.Completion.TrySetException(ex); }
@@ -73,12 +83,16 @@ public sealed class TakeRenderer : IDisposable
         finally { backend?.Dispose(); }
     }
 
-    private sealed class CollectingSink(Action<ReadOnlyMemory<byte>, int, bool>? onBlock) : IAudioBlockSink
+    private sealed class CollectingSink(Action<ReadOnlyMemory<byte>, int, bool>? onBlock,
+        long connectionId, uint streamId, string keyId) : IAudioBlockSink
     {
         private readonly ArrayBufferWriter<byte> writer = new();
         public byte[] Written => writer.WrittenSpan.ToArray();
         public void OnBlock(ReadOnlyMemory<byte> pcm, int blockIndex, bool last)
         {
+            if (blockIndex == 0 && AudioDiagnostics.Enabled)
+                AudioDiagnostics.Trace(new AudioDiagnostics.Mark("take-first-block", AudioDiagnostics.NowUs(),
+                    Conn: connectionId, KeyId: keyId, Stream: streamId, Block: 0));
             writer.Write(pcm.Span);
             onBlock?.Invoke(pcm, blockIndex, last);
         }
