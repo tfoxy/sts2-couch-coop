@@ -1,8 +1,8 @@
 # Handoff: attribute mirror SFX latency in combat
 
-**Status:** investigation needed after per-viewer audio landed. Diagnose the measured latency misses before
-changing the renderer, transport, cache or browser scheduler. The goal is an evidence-backed cause and, if the
-cause is in CouchCoop, a measured fix.
+**Status:** opt-in timing probes implemented. The private live evidence, stage tables and remaining gates are in
+`.sts2/research/audio/latency-20261007/verdict.md`. The completed traces did not isolate a changeable CouchCoop
+stage, so no audio behavior change was made.
 
 ## Why this exists
 

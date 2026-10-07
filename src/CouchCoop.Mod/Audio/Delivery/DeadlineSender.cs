@@ -17,10 +17,12 @@ public sealed class DeadlineSender : IAsyncDisposable
     private readonly Task worker;
     private readonly Func<ulong> now;
     private readonly Func<byte[], CancellationToken, Task> send;
+    private readonly long connectionId;
 
-    public DeadlineSender(Func<byte[], CancellationToken, Task> send, Func<ulong>? clock = null)
+    public DeadlineSender(Func<byte[], CancellationToken, Task> send, Func<ulong>? clock = null, long connectionId = 0)
     {
         this.send = send;
+        this.connectionId = connectionId;
         now = clock ?? HostMicroseconds;
         worker = Task.Run(RunAsync);
     }
@@ -32,12 +34,21 @@ public sealed class DeadlineSender : IAsyncDisposable
     }
     internal int Queued { get { lock (gate) return pending.Count; } }
 
+    private void Trace(string stage, AudioFrame frame, ulong? timestamp = null)
+    {
+        if (!AudioDiagnostics.Enabled || (frame.Kind == AudioFrameKind.Lane && frame.BlockIndex % 64 != 0)) return;
+        AudioDiagnostics.Trace(new AudioDiagnostics.Mark(stage, timestamp ?? AudioDiagnostics.NowUs(),
+            Conn: connectionId, Stream: frame.StreamId, Lane: (int)frame.Lane,
+            Block: frame.BlockIndex, DueUs: frame.DueUs, SentUs: frame.SentUs));
+    }
+
     public void Enqueue(AudioFrame frame, byte[] pcm)
     {
         lock (gate)
         {
             if (disposed || stop.IsCancellationRequested) return;
             pending.Add((frame, pcm));
+            Trace("deadline-enqueue", frame);
             queuedBytes += pcm.Length + AudioFrame.HeaderSize;
             pending.Sort((a, b) => a.Frame.DueUs.CompareTo(b.Frame.DueUs));
             // A stalled receiver cannot pin more than two seconds of media. Prefer preserving
@@ -47,6 +58,8 @@ public sealed class DeadlineSender : IAsyncDisposable
             {
                 int victim = pending.FindIndex(x => x.Frame.Kind == AudioFrameKind.Lane);
                 queuedBytes -= pending[victim < 0 ? 0 : victim].Pcm.Length + AudioFrame.HeaderSize;
+                var dropped = pending[victim < 0 ? 0 : victim].Frame;
+                Trace("deadline-drop", dropped);
                 pending.RemoveAt(victim < 0 ? 0 : victim);
             }
         }
@@ -74,10 +87,11 @@ public sealed class DeadlineSender : IAsyncDisposable
                     if (pending.Count == 0 || pending[0].Frame != next.Frame) continue;
                     pending.RemoveAt(0);
                     queuedBytes -= next.Pcm.Length + AudioFrame.HeaderSize;
+                    Trace("deadline-dequeue", next.Frame);
                 }
-                await send((next.Frame with { SentUs = now() }).Encode(next.Pcm), stop.Token).ConfigureAwait(false);
-                if (AudioDiagnostics.Enabled && next.Frame.Kind == AudioFrameKind.Lane)
-                    AudioDiagnostics.Emit($"lane-block lane={(int)next.Frame.Lane} index={next.Frame.BlockIndex} dueUs={next.Frame.DueUs} sentUs={now()}");
+                var stamped = next.Frame with { SentUs = now() };
+                Trace("deadline-stamp", stamped, stamped.SentUs);
+                await send(stamped.Encode(next.Pcm), stop.Token).ConfigureAwait(false);
             }
         }
         catch (OperationCanceledException) { }
@@ -89,6 +103,7 @@ public sealed class DeadlineSender : IAsyncDisposable
         stop.Cancel();
         Wake();
         try { await worker.ConfigureAwait(false); } catch (Exception) { /* connection teardown */ }
+        AudioDiagnostics.FlushFinal();
         stop.Dispose();
         changed.Dispose();
     }

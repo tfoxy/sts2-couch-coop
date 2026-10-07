@@ -155,7 +155,8 @@ public sealed class AudioService : IDisposable
         if (closing is not null) AudioDiagnostics.Emit("stream-worker-stop");
     }
 
-    public Task<byte[]> GetTakeAsync(string keyId, string key, Action<byte[], int, bool>? onBlock = null)
+    public Task<byte[]> GetTakeAsync(string keyId, string key, Action<byte[], int, bool>? onBlock = null,
+        long diagnosticConnectionId = 0, uint diagnosticStreamId = 0)
     {
         if (!SoundKey.IsId(keyId) || SoundKey.Id(key) != keyId || !TryParseKey(key, out var path, out var parameters))
             throw new ArgumentException("Invalid sound key");
@@ -165,7 +166,8 @@ public sealed class AudioService : IDisposable
             return Task.FromResult(hit);
         }
         var request = new TakeRequest(keyId, key, path, parameters);
-        var flight = pending.GetOrAdd(keyId, _ => new InflightTake(f => RenderAndStoreAsync(request, f)));
+        var flight = pending.GetOrAdd(keyId, _ => new InflightTake(f => RenderAndStoreAsync(request, f,
+            diagnosticConnectionId, diagnosticStreamId)));
         if (onBlock is not null) flight.Add(onBlock);
         return flight.Task;
     }
@@ -180,7 +182,8 @@ public sealed class AudioService : IDisposable
         }
     }
 
-    private async Task<byte[]> RenderAndStoreAsync(TakeRequest request, InflightTake flight)
+    private async Task<byte[]> RenderAndStoreAsync(TakeRequest request, InflightTake flight,
+        long diagnosticConnectionId, uint diagnosticStreamId)
     {
         try
         {
@@ -198,7 +201,8 @@ public sealed class AudioService : IDisposable
             }
             try
             {
-            var take = await active.RenderAsync(request, (pcm, index, last) => flight.OnBlock(pcm, index, last))
+            var take = await active.RenderAsync(request, (pcm, index, last) => flight.OnBlock(pcm, index, last),
+                diagnosticConnectionId, diagnosticStreamId)
                 .ConfigureAwait(false);
             AudioDiagnostics.TakeRendered(take.Result.Frames, take.Result.FirstBlockMicroseconds);
             byte[] wav = Wav(take.Pcm16);

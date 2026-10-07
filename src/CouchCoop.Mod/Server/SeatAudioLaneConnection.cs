@@ -4,6 +4,7 @@ using System.Security.Cryptography;
 using System.Text;
 using System.Text.Json;
 using CouchCoop.Mod.Audio.Seat;
+using CouchCoop.Mod.Audio;
 using CouchCoop.MirrorProtocol.Envelopes;
 
 namespace CouchCoop.Mod.Server;
@@ -31,7 +32,7 @@ internal static class SeatAudioLaneConnection
             }, cancellationToken: cancellationToken).ConfigureAwait(false);
         using var socket = WebSocket.CreateFromStream(stream, true, null, TimeSpan.FromSeconds(30));
         using var stop = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
-        await SendAsync(socket, subscription.Snapshot, stop.Token).ConfigureAwait(false);
+        await SendAsync(socket, subscription.Snapshot, subscription.ConnectionId, stop.Token).ConfigureAwait(false);
         var sender = SendLoopAsync(socket, subscription, stop.Token);
         try
         {
@@ -69,6 +70,7 @@ internal static class SeatAudioLaneConnection
             stop.Cancel();
             try { await sender.ConfigureAwait(false); }
             catch (Exception ex) when (ex is OperationCanceledException or WebSocketException or IOException) { }
+            AudioDiagnostics.FlushFinal();
         }
     }
 
@@ -78,12 +80,13 @@ internal static class SeatAudioLaneConnection
         {
             var message = await subscription.ReadAsync(token).ConfigureAwait(false);
             if (message is null) return;
-            await SendAsync(socket, message, token).ConfigureAwait(false);
+            await SendAsync(socket, message, subscription.ConnectionId, token).ConfigureAwait(false);
         }
     }
 
-    private static Task SendAsync(WebSocket socket, object message, CancellationToken token)
+    private static async Task SendAsync(WebSocket socket, object message, long connectionId, CancellationToken token)
     {
+        var (seatTUs, keyId, path) = AudioDiagnostics.Enabled ? SeatAudioFeed.Identity(message) : default;
         byte[] bytes = message switch
         {
             SeatAudioSfx sfx => JsonSerializer.SerializeToUtf8Bytes(sfx, ProtocolJsonContext.Default.SeatAudioSfx),
@@ -92,7 +95,17 @@ internal static class SeatAudioLaneConnection
             SeatAudioVolumes volumes => JsonSerializer.SerializeToUtf8Bytes(volumes, ProtocolJsonContext.Default.SeatAudioVolumes),
             _ => throw new InvalidOperationException("Unknown seat audio event"),
         };
-        return socket.SendAsync(bytes.AsMemory(), WebSocketMessageType.Text, true, token).AsTask();
+        if (AudioDiagnostics.Enabled)
+            AudioDiagnostics.Trace(new AudioDiagnostics.Mark("seat-send-start", AudioDiagnostics.NowUs(),
+                connectionId, seatTUs, keyId, path));
+        try
+        {
+            await socket.SendAsync(bytes.AsMemory(), WebSocketMessageType.Text, true, token).ConfigureAwait(false);
+            if (AudioDiagnostics.Enabled)
+                AudioDiagnostics.Trace(new AudioDiagnostics.Mark("seat-send-done", AudioDiagnostics.NowUs(),
+                    connectionId, seatTUs, keyId, path));
+        }
+        finally { AudioDiagnostics.RequestFlush(); }
     }
 
 }

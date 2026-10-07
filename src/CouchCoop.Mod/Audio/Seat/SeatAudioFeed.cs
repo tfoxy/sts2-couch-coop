@@ -124,7 +124,9 @@ public static class SeatAudioFeed
             try
             {
                 var key = SoundKey.Canonical(path, parameters);
-                PublishLocked(new SeatAudioSfx(SoundKey.Id(key), key, NowUs(), Volume: volume));
+                var sound = new SeatAudioSfx(SoundKey.Id(key), key, NowUs(), Volume: volume);
+                TraceCall(sound);
+                PublishLocked(sound);
             }
             catch (ArgumentException) { }
         }
@@ -139,13 +141,17 @@ public static class SeatAudioFeed
             if (!SfxEnabled()) return;
             if (action == "stop-all")
             {
-                PublishLocked(new SeatAudioLoop("", "", action, NowUs()));
+                var stop = new SeatAudioLoop("", "", action, NowUs());
+                TraceCall(stop);
+                PublishLocked(stop);
                 return;
             }
             try
             {
                 var key = SoundKey.Canonical(path);
-                PublishLocked(new SeatAudioLoop(SoundKey.Id(key), key, action, NowUs()));
+                var loop = new SeatAudioLoop(SoundKey.Id(key), key, action, NowUs());
+                TraceCall(loop);
+                PublishLocked(loop);
             }
             catch (ArgumentException) { }
         }
@@ -159,11 +165,29 @@ public static class SeatAudioFeed
         {
             if (!SfxEnabled() || _godotMasterDb == float.NegativeInfinity
                 || _godotSfxDb == float.NegativeInfinity) return;
-            PublishLocked(new SeatAudioTmpSfx(path, NowUs(), pitch, volume));
+            var sound = new SeatAudioTmpSfx(path, NowUs(), pitch, volume);
+            TraceCall(sound);
+            PublishLocked(sound);
         }
     }
 
     private static bool SfxEnabled() => _master != 0 && _sfx != 0;
+
+    private static void TraceCall(object message)
+    {
+        if (!AudioDiagnostics.Enabled) return;
+        var (seatTUs, keyId, path) = Identity(message);
+        AudioDiagnostics.Trace(new AudioDiagnostics.Mark("seat-call", AudioDiagnostics.NowUs(),
+            SeatTUs: seatTUs, KeyId: keyId, Path: path));
+    }
+
+    public static (long SeatTUs, string? KeyId, string? Path) Identity(object message) => message switch
+    {
+        SeatAudioSfx sfx => (sfx.T, sfx.KeyId, null),
+        SeatAudioLoop loop => (loop.T, loop.KeyId, null),
+        SeatAudioTmpSfx tmp => (tmp.T, null, tmp.ResPath),
+        _ => (0, null, null),
+    };
 
     private static void PublishLocked(object message)
     {
@@ -176,14 +200,30 @@ public static class SeatAudioFeed
         private readonly Queue<(object Message, long Stamp)> _queue = new();
         private readonly SemaphoreSlim _signal = new(0, 1);
         private bool _disposed;
+        public long ConnectionId { get; } = AudioDiagnostics.ConnectionId();
         public SeatAudioVolumes Snapshot { get; }
         internal Subscription(SeatAudioVolumes snapshot) => Snapshot = snapshot;
 
         internal void Enqueue(object message, long stamp)
         {
             if (_disposed) return;
-            while (_queue.Count >= Capacity) _queue.Dequeue();
+            while (_queue.Count >= Capacity)
+            {
+                var dropped = _queue.Dequeue().Message;
+                if (AudioDiagnostics.Enabled)
+                {
+                    var (t, key, path) = Identity(dropped);
+                    AudioDiagnostics.Trace(new AudioDiagnostics.Mark("seat-drop-capacity", AudioDiagnostics.NowUs(),
+                        ConnectionId, t, key, path, Depth: _queue.Count));
+                }
+            }
             _queue.Enqueue((message, stamp));
+            if (AudioDiagnostics.Enabled)
+            {
+                var (t, key, path) = Identity(message);
+                AudioDiagnostics.Trace(new AudioDiagnostics.Mark("seat-enqueue", AudioDiagnostics.NowUs(),
+                    ConnectionId, t, key, path, Depth: _queue.Count));
+            }
             if (_queue.Count == 1) _signal.Release();
         }
 
@@ -200,7 +240,21 @@ public static class SeatAudioFeed
                         var (message, stamp) = _queue.Dequeue();
                         if (_queue.Count > 0) _signal.Release();
                         if (Stopwatch.GetTimestamp() - stamp <= MaxAgeTicks || message is SeatAudioVolumes)
+                        {
+                            if (AudioDiagnostics.Enabled)
+                            {
+                                var (t, key, path) = Identity(message);
+                                AudioDiagnostics.Trace(new AudioDiagnostics.Mark("seat-dequeue", AudioDiagnostics.NowUs(),
+                                    ConnectionId, t, key, path, Depth: _queue.Count));
+                            }
                             return message;
+                        }
+                        if (AudioDiagnostics.Enabled)
+                        {
+                            var (t, key, path) = Identity(message);
+                            AudioDiagnostics.Trace(new AudioDiagnostics.Mark("seat-drop-age", AudioDiagnostics.NowUs(),
+                                ConnectionId, t, key, path, Depth: _queue.Count));
+                        }
                     }
                 }
             }
