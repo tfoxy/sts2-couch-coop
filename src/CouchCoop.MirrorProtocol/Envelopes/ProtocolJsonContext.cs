@@ -8,13 +8,27 @@ namespace CouchCoop.MirrorProtocol.Envelopes;
 // defensive parse path rather than generated metadata.
 [JsonSourceGenerationOptions(
     PropertyNamingPolicy = JsonKnownNamingPolicy.CamelCase,
-    DefaultIgnoreCondition = JsonIgnoreCondition.WhenWritingNull)]
+    DefaultIgnoreCondition = JsonIgnoreCondition.WhenWritingNull,
+    NumberHandling = JsonNumberHandling.AllowNamedFloatingPointLiterals)]
 [JsonSerializable(typeof(JoinMessage))]
 [JsonSerializable(typeof(InputMessage))]
 [JsonSerializable(typeof(SceneAckMessage))]
 [JsonSerializable(typeof(WatchMessage))]
 [JsonSerializable(typeof(PingMessage))]
 [JsonSerializable(typeof(SettingsMessage))]
+[JsonSerializable(typeof(SeatAudioSfx))]
+[JsonSerializable(typeof(SeatAudioTmpSfx))]
+[JsonSerializable(typeof(SeatAudioLoop))]
+[JsonSerializable(typeof(SeatAudioVolumes))]
+[JsonSerializable(typeof(SeatAudioHello))]
+[JsonSerializable(typeof(SeatAudioAck))]
+[JsonSerializable(typeof(AudioPlay))]
+[JsonSerializable(typeof(AudioLanes))]
+[JsonSerializable(typeof(AudioHello))]
+[JsonSerializable(typeof(AudioTakeStart))]
+[JsonSerializable(typeof(AudioTakeReady))]
+[JsonSerializable(typeof(AudioUnavailable))]
+[JsonSerializable(typeof(AudioClock))]
 public sealed partial class ProtocolJsonContext : JsonSerializerContext;
 
 // Convenience serialization for the client control messages: produces exactly the bytes the TS mirror client

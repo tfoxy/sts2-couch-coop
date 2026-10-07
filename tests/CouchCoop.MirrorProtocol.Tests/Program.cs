@@ -3,6 +3,7 @@ using CouchCoop.MirrorProtocol.Tests;
 // Custom Exe test runner (assert-or-throw), matching tests/CouchCoop.Mod.Tests. Any failing suite throws and the
 // process exits non-zero; a clean run prints a machine-readable success line last.
 AffineTests.Run();
+AudioWireTests.Run();
 WireDefaultsTests.Run();
 RoundTripFixtureTests.Run();
 StaticFieldsTests.Run();

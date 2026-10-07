@@ -250,10 +250,14 @@ public static class CouchCoopMod
             // NetServiceUpdateLoop from draining and discarding the handshake-ack before
             // SendAndWaitForNetIdAck can consume it (fixes headless join timeout).
             ENetHandshakePatch.Apply();
-            // Headless clients render sound to nobody. STS2 audio is FMOD (a native GDExtension), which Godot's
+            // Headless clients do not render to a local speaker. STS2 audio is FMOD (a native GDExtension), which Godot's
             // --headless does NOT silence, so mute it at the source. Host-only patch. This severs every game→FMOD
             // forward but does NOT stop FMOD's always-on native mixer/DSP thread — HeadlessFmodShutdown does that.
             if (IsHeadlessClient) HeadlessAudioMutePatch.Apply();
+            else if (Environment.GetEnvironmentVariable("COUCHCOOP_AUDIO") != "off")
+                Audio.Host.HostAudioHooks.Apply();
+            if (IsHeadlessClient && Environment.GetEnvironmentVariable("COUCHCOOP_AUDIO") != "off")
+                SeatAudioReportPatch.Apply();
             // The other half of the seat's pad isolation. The InputMap strip at the top of Init closes the engine
             // joypad route; Steam Input never consults the InputMap, so a host pad Steam reports still reached every
             // seat — and on Windows, where a seat has no engine joypad driver, it was the only route. Seat-only. Mod

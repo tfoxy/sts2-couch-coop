@@ -7,6 +7,7 @@ using System.Text.Json;
 using System.Text.Json.Nodes;
 using CouchCoop.Mod.Connections;
 using CouchCoop.Mod.Diagnostics;
+using CouchCoop.Mod.Audio;
 using CouchCoop.Mod.Contracts;
 using CouchCoop.Mod.Protocol;
 using CouchCoop.Mod.Runtime;
@@ -36,7 +37,8 @@ public sealed class CouchCoopBrowserServer(
     Func<Action, IDisposable?>? subscribeScreenUpdated = null,
     Action<int, long>? onBrowserDemandChanged = null,
     Action<int, long>? onSceneStreamingDemandChanged = null,
-    Func<Action<RosterFacts?>, IDisposable?>? subscribeRoster = null) : IAsyncDisposable
+    Func<Action<RosterFacts?>, IDisposable?>? subscribeRoster = null,
+    AudioService? injectedAudioService = null) : IAsyncDisposable
 {
     /// <summary>Harness-only synthetic seat port injected into the control document; null in product hosting.</summary>
     public int? SyntheticSeatPort { get; set; }
@@ -60,6 +62,31 @@ public sealed class CouchCoopBrowserServer(
     private readonly ConcurrentDictionary<Guid, CouchCoopWebSocketConnection> _connections = new();
     private readonly NetworkAdmissionLimiter _admission = admission ?? new NetworkAdmissionLimiter(
         () => envelopeFactory is null ? null : new CouchCoopLobbyParticipation(envelopeFactory.RuntimeHost).MaxLobbyPlayers());
+    private readonly AudioTmpSfxRoute _audioTmpSfxRoute = new(new GodotAudioTmpSfxSource());
+    private readonly object _audioGate = new();
+    private AudioService? _audioService = injectedAudioService;
+    private bool _audioUnavailable;
+
+    private AudioService? AudioService()
+    {
+        if (_isHeadlessClient || Environment.GetEnvironmentVariable("COUCHCOOP_AUDIO") == "off") return null;
+        lock (_audioGate)
+        {
+            if (_audioService is not null) return _audioService;
+            if (_audioUnavailable) return null;
+            string? executable = System.Diagnostics.Process.GetCurrentProcess().MainModule?.FileName;
+            if (executable is null) { _audioUnavailable = true; return null; }
+            string package = Path.Combine(Path.GetDirectoryName(executable)!, "SlayTheSpire2.pck");
+            if (!File.Exists(package)) { _audioUnavailable = true; return null; }
+            try { return _audioService = new AudioService(package); }
+            catch (Exception error)
+            {
+                _audioUnavailable = true;
+                _log($"audio-unavailable {error.GetType().Name}");
+                return null;
+            }
+        }
+    }
     private readonly object _observerGate = new();
     // The roster observer's subscription, held while a viewer is parked on the join picker (RefreshObserversLocked).
     // `subscribeRoster` is the test seam; production reads the game through CouchCoopRosterObserver.
@@ -1227,6 +1254,7 @@ public sealed class CouchCoopBrowserServer(
     public async Task StopAsync(CancellationToken cancellationToken = default)
     {
         await StopGenerationAsync("server-stop", cancellationToken).ConfigureAwait(false);
+        lock (_audioGate) { _audioService?.Dispose(); _audioService = null; }
         if (_ownsHeadlessManager)
         {
             _headlessManager?.Dispose();
@@ -1612,6 +1640,21 @@ public sealed class CouchCoopBrowserServer(
             return;
         }
 
+        if (Environment.GetEnvironmentVariable("COUCHCOOP_AUDIO") == "off"
+            && request.Path.StartsWith("/audio", StringComparison.Ordinal))
+        {
+            await HttpResponseWriter.WriteJsonErrorAsync(stream, HttpStatusCode.NotFound,
+                "not-found", "Route was not found.", cancellationToken).ConfigureAwait(false);
+            return;
+        }
+
+        if (string.Equals(request.Path, "/audio", StringComparison.Ordinal) && !request.IsWebSocketUpgrade)
+        {
+            await HttpResponseWriter.WriteJsonErrorAsync(stream, HttpStatusCode.BadRequest,
+                "invalid-websocket-upgrade", "Missing required WebSocket upgrade headers.", cancellationToken).ConfigureAwait(false);
+            return;
+        }
+
         if (string.Equals(request.Path, "/ws", StringComparison.Ordinal) && !request.IsWebSocketUpgrade)
         {
             RecordWebSocketArrival(request, remoteAddress, ConnectionArrivalOutcome.InvalidUpgrade);
@@ -1643,6 +1686,24 @@ public sealed class CouchCoopBrowserServer(
                     "origin-not-allowed",
                     "This page's origin is not allowed to open the game socket.",
                     cancellationToken).ConfigureAwait(false);
+                return;
+            }
+
+            if (_isHeadlessClient && Environment.GetEnvironmentVariable("COUCHCOOP_AUDIO") != "off"
+                && request.Path == "/ws" && request.QueryValues.GetValueOrDefault("lane") == "audio")
+            {
+                await SeatAudioLaneConnection.AcceptAsync(stream, request, cancellationToken).ConfigureAwait(false);
+                return;
+            }
+
+            if (request.Path == "/audio")
+            {
+                var audio = AudioService();
+                if (audio is null)
+                    await HttpResponseWriter.WriteJsonErrorAsync(stream, HttpStatusCode.ServiceUnavailable,
+                        "audio-unavailable", "Audio rendering is unavailable.", cancellationToken).ConfigureAwait(false);
+                else
+                    await AudioRenderLaneConnection.AcceptAsync(stream, request, audio, cancellationToken).ConfigureAwait(false);
                 return;
             }
 
@@ -1719,6 +1780,14 @@ public sealed class CouchCoopBrowserServer(
                 cancellationToken).ConfigureAwait(false);
             return;
         }
+
+        if (await _audioTmpSfxRoute.TryHandleAsync(stream, request, cancellationToken).ConfigureAwait(false))
+        {
+            return;
+        }
+
+        if (await new AudioHttpRoutes(AudioService).TryHandleAsync(stream, request, cancellationToken).ConfigureAwait(false))
+            return;
 
         if (request.RawPath.StartsWith("/res/", StringComparison.Ordinal))
         {

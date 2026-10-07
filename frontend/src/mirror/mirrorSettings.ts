@@ -300,6 +300,8 @@ export interface MirrorSettings {
   // param so the checkbox reads truthfully on load. NOTE the render gate is `?latency` OR this: the harness path
   // (scripts/measure-latency.mjs + window.__mirrorLatency) can never be switched off by a stray tap in the panel.
   latencyOverlay: boolean;
+  // CLIENT audio (browser-only) — opt in to this seat's game sounds. No URL override by design.
+  audio: boolean;
   // SERVER (game) — sent over the `settings` channel on change. The three freezes are RECONCILED with the serving
   // instance's own reported state before the first push (see seedServerSettingsFromSession): a headless seat
   // freezes by default, the host's own windowed game freezes nothing until asked, and the panel must show whichever
@@ -375,6 +377,7 @@ export type PersistedSettingKey =
   | "staticBgEnabled"
   | "reproRecorder"
   | "latencyOverlay"
+  | "audio"
   | "refreshRate"
   | "tweenReplay";
 
@@ -400,6 +403,7 @@ export const PERSISTED_SETTING_KEYS: readonly PersistedSettingKey[] = [
   // the intermittent bugs it exists to catch. The build flag is what takes it away again (see the field).
   "reproRecorder",
   "latencyOverlay",
+  "audio",
   "refreshRate",
   "tweenReplay"
 ] as const;
@@ -488,6 +492,7 @@ const STORED_VALIDATORS: { [K in PersistedSettingKey]: (raw: unknown) => MirrorS
   staticBgEnabled: boolValue,
   reproRecorder: boolValue,
   latencyOverlay: boolValue,
+  audio: boolValue,
   refreshRate: refreshRateValue,
   tweenReplay: boolValue
 };
@@ -774,6 +779,7 @@ export function createMirrorSettings(
     // `?latency` is a harness switch that only ever turns the overlay ON, so it can't be a tri-state flag; a saved
     // choice decides when the param is absent.
     latencyOverlay: params.has("latency") || (saved.latencyOverlay ?? false),
+    audio: saved.audio ?? false,
     // A saved refresh rate is this viewer's preference and outranks the host's reported baseline — MirrorApp skips
     // its session seed when one exists, so the on-connect push carries the saved value to the game.
     refreshRate: saved.refreshRate ?? DEFAULT_REFRESH_RATE,

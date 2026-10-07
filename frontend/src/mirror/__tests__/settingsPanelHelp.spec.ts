@@ -47,7 +47,8 @@ const HELP_IDS = [
   "freezeDecor",
   "networkRtt",
   "gameRtt",
-  "latencyOverlay"
+  "latencyOverlay",
+  "audio"
 ] as const;
 
 function mountPanel(): VueWrapper {
@@ -217,7 +218,7 @@ describe("SettingsPanel — the inline notes it replaced", () => {
     expect(text).not.toContain("Lower = less CPU");
     expect(text).not.toContain("While the map, deck or a reward screen is open, stop animating");
     // Exactly ONE note element survives — the dynamic host-performance one.
-    expect(wrapper.findAll(".settings-group-note")).toHaveLength(1);
+    expect(wrapper.findAll(".settings-group-note")).toHaveLength(2);
     wrapper.unmount();
   });
 

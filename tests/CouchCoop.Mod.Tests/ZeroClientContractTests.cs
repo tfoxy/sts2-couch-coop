@@ -323,6 +323,9 @@ internal static class ZeroClientContractTests
             [ZeroClientEntries.MainThreadDispatch] = (_ => new RogueMainThreadWaker(), "ZeroClientContractTests.Wake"),
             [ZeroClientEntries.HostFactsRead] = (_ => new RogueHostFactsReader(), "ZeroClientContractTests.Read"),
             [ZeroClientEntries.RosterSubscribe] = (_ => new RogueRosterSubscriber(), "ZeroClientContractTests.SubscribeRoster"),
+            [ZeroClientEntries.AudioTakeRendererStart] = (_ => new RogueAudioTakeRenderer(), "ZeroClientContractTests.StartAudioTake"),
+            [ZeroClientEntries.AudioStreamRendererStart] = (_ => new RogueAudioStreamRenderer(), "ZeroClientContractTests.StartAudioStream"),
+            [ZeroClientEntries.AudioLaneSubscribe] = (_ => new RogueAudioSubscriber(), "ZeroClientContractTests.SubscribeAudio"),
         };
 
         foreach (var entry in ZeroClientEntries.All)
@@ -493,6 +496,30 @@ internal static class ZeroClientContractTests
         private static IDisposable SubscribeRoster() => CouchCoopRosterObserver.Subscribe(_ => { });
 
         public void Dispose() => _subscription.Dispose();
+    }
+
+    private sealed class RogueAudioTakeRenderer : IDisposable
+    {
+        public RogueAudioTakeRenderer() => StartAudioTake();
+        [MethodImpl(MethodImplOptions.NoInlining)]
+        private static void StartAudioTake() => ZeroClientGuard.Enter(ZeroClientEntries.AudioTakeRendererStart);
+        public void Dispose() { }
+    }
+
+    private sealed class RogueAudioStreamRenderer : IDisposable
+    {
+        public RogueAudioStreamRenderer() => StartAudioStream();
+        [MethodImpl(MethodImplOptions.NoInlining)]
+        private static void StartAudioStream() => ZeroClientGuard.Enter(ZeroClientEntries.AudioStreamRendererStart);
+        public void Dispose() { }
+    }
+
+    private sealed class RogueAudioSubscriber : IDisposable
+    {
+        public RogueAudioSubscriber() => SubscribeAudio();
+        [MethodImpl(MethodImplOptions.NoInlining)]
+        private static void SubscribeAudio() => ZeroClientGuard.Enter(ZeroClientEntries.AudioLaneSubscribe);
+        public void Dispose() { }
     }
 
     // The next poller of the lobby and run roster: reads it through the CouchCoop front from its own method.

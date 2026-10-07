@@ -26,6 +26,7 @@ You can also use CouchCoop by yourself and play from your phone. Slay the Spire 
 - **Readable phone layout:** important text and controls are enlarged, and the game layout can spread horizontally across a landscape screen.
 - **Easier hand reading:** on phones, cards can remain raised so their descriptions are visible at a glance. Creature health, powers, and intents remain visible above the hand.
 - **Lower bandwidth than video streaming:** the client receives scene updates and reusable assets instead of a continuous video stream.
+- **Optional seat audio:** enable Audio in the mirror settings to hear your seat's game sounds at your own in-game volumes.
 
 ## Requirements
 
@@ -124,6 +125,8 @@ Code contributions and pull requests are not currently accepted. Reviewing untru
 ## License and disclaimers
 
 CouchCoop is licensed under Apache 2.0. See [LICENSE](LICENSE), [NOTICE](NOTICE), and [third-party notices](THIRD_PARTY_NOTICES.md).
+
+Audio rendering uses FMOD Studio from the player's game installation. FMOD is a product of Firelight Technologies Pty Ltd; no FMOD SDK or bank files are bundled with CouchCoop.
 
 This project is not affiliated with or endorsed by Mega Crit. It requires your own legitimately obtained copy of Slay the Spire 2. No game assets are bundled or redistributed; game content is read at runtime from your local installation and served only during your LAN session.
 

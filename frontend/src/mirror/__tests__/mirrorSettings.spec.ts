@@ -239,6 +239,14 @@ describe("createMirrorSettings — the quality row", () => {
 });
 
 describe("createMirrorSettings — URL overrides", () => {
+  it("keeps seat audio opt-in saved and ignores audio URL parameters", () => {
+    expect(build(quality(), "?audio=on", fakeStorage()).audio).toBe(false);
+    const storage = fakeStorage({ audio: true });
+    expect(build(quality(), "?audio=off", storage).audio).toBe(true);
+    persistMirrorSetting("audio", false, storage);
+    expect(readStoredMirrorSettings(storage).audio).toBe(false);
+  });
+
   it("accepts only canonical ?shaders= modes", () => {
     expect(build(quality(), "?shaders=dynamic").shaderMode).toBe("dynamic");
     expect(build(quality(), "?shaders=dynamic-half").shaderMode).toBe("dynamic-half");
@@ -388,6 +396,7 @@ describe("createMirrorSettings — persistence layering", () => {
       backstopOcclusion: false,
       staticBgEnabled: false,
       latencyOverlay: true,
+      audio: true,
       refreshRate: 40,
       tweenReplay: false
     });
@@ -402,6 +411,7 @@ describe("createMirrorSettings — persistence layering", () => {
     expect(s.backstopOcclusion).toBe(false);
     expect(s.staticBgEnabled).toBe(false);
     expect(s.latencyOverlay).toBe(true);
+    expect(s.audio).toBe(true);
     expect(s.refreshRate).toBe(40);
     expect(s.tweenReplay).toBe(false);
   });
