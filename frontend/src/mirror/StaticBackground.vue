@@ -40,6 +40,7 @@ import { MIRROR_RENDERER_KEY } from "@/mirror/rendererKey";
 import { mirrorSettings, staticBgWireValue } from "@/mirror/mirrorSettings";
 import { requestedStageBackend } from "@/mirror/rendererFactory";
 import { decodeStill } from "@/mirror/stillDecode";
+import { wirePhase } from "@/mirror/wirePhaseTrace";
 // Image failures are deliberately silent in the UI, so the report is the evidence that a request failed.
 import {
   noteStaticBgAttempt,
@@ -85,55 +86,70 @@ const BG_HEIGHT = 1080;
 // deterministic /bg/ URL (`/bg/<id>?v=1` — the same grammar the server route parses; v=1 pins the key policy,
 // and MUST match CouchCoopStaticBackgroundProvider.KeyVersion or this fallback asks for a namespace the host no
 // longer serves). No file extension: the host picks the encoder (jpg@0.9 today) and Content-Type names it.
-// Rescanned only when orderedIds changes identity (structure moved), never per volatile revision.
+//
+// R-WPC: rescanned only when `state.sceneRootEpoch` moves — bumped by applySceneDelta ONLY when a node this scan
+// actually reads (sceneFilePath / a BgContainer-SceneContainer-CombatSceneContainer chain link) was added,
+// removed, reparented or had its sceneFilePath changed; see MirrorState.sceneRootEpoch's comment. This used to
+// key on `orderedIds` identity instead, which gets a new array reference on almost every structural delta (an
+// orderPatch mints one via applyOrderPatch on nearly every card move/reorder), so an ordinary hand reshuffle with
+// zero bg-relevant nodes re-walked every node in `state.nodes` through two regexes and a parent-chain lookup —
+// exactly the main-thread work this round exists to trim. `lastScanState` guards a `state` prop SWAP (a
+// reconnect replaces it with a fresh MirrorState whose epoch restarts at 0, which would otherwise collide with a
+// stale cached epoch from the PREVIOUS state object and skip a rescan that is actually required).
 const COMBAT_BG_SCENE_RE = /^res:\/\/scenes\/backgrounds\/([a-z0-9_]+)\/\1_background\.tscn$/;
-let lastScanOrderedIds: readonly string[] | null = null;
+let lastScanState: MirrorState | null = null;
+let lastScanEpoch = -1;
 let lastScanResult: BrowserStaticBackgroundDescriptor | null = null;
 const wireFallback = computed<BrowserStaticBackgroundDescriptor | null>(() => {
   void props.revision; // reactivity anchor — the retained map mutates in place
-  const orderedIds = props.state.orderedIds;
-  if (orderedIds === lastScanOrderedIds) {
+  if (props.state === lastScanState && props.state.sceneRootEpoch === lastScanEpoch) {
     return lastScanResult;
   }
-  lastScanOrderedIds = orderedIds;
+  lastScanState = props.state;
+  lastScanEpoch = props.state.sceneRootEpoch;
   lastScanResult = null;
-  // COMBAT WINS when both families are mounted (EventRoom-WRAPPED combat mounts an event backdrop AND a combat
-  // background, and the combat one is what the viewer is looking at) — the same priority the tracker's probe
-  // applies. So an event candidate is only remembered, never breaks the scan.
-  let familyCandidate: BrowserStaticBackgroundDescriptor | null = null;
-  for (const [, node] of props.state.nodes) {
-    const path = node.sceneFilePath;
-    if (path) {
-      const match = COMBAT_BG_SCENE_RE.exec(path);
-      if (match && isCombatBackgroundSceneRoot(node, props.state.nodes)) {
-        // Same host-origin treatment the envelope descriptor gets in normalizeStaticBackground, so the two
-        // sources of a bg URL stay directly comparable (`next.url === shownUrl.value` below).
-        lastScanResult = { scenePath: path, url: hostUrl(`/bg/${match[1]}?v=1`) };
-        break;
+  // R-WPC: the expensive part — a full walk of state.nodes with a regex + parent-chain lookup per candidate —
+  // wrapped so a bench/live trace can see its cost by name (see wirePhaseTrace.ts; zero cost with no bench
+  // observing this client).
+  wirePhase("wire-fallback-scan", () => {
+    // COMBAT WINS when both families are mounted (EventRoom-WRAPPED combat mounts an event backdrop AND a combat
+    // background, and the combat one is what the viewer is looking at) — the same priority the tracker's probe
+    // applies. So an event candidate is only remembered, never breaks the scan.
+    let familyCandidate: BrowserStaticBackgroundDescriptor | null = null;
+    for (const [, node] of props.state.nodes) {
+      const path = node.sceneFilePath;
+      if (path) {
+        const match = COMBAT_BG_SCENE_RE.exec(path);
+        if (match && isCombatBackgroundSceneRoot(node, props.state.nodes)) {
+          // Same host-origin treatment the envelope descriptor gets in normalizeStaticBackground, so the two
+          // sources of a bg URL stay directly comparable (`next.url === shownUrl.value` below).
+          lastScanResult = { scenePath: path, url: hostUrl(`/bg/${match[1]}?v=1`) };
+          break;
+        }
+        if (familyCandidate === null && isEventBackgroundSceneRoot(node)) {
+          // The event grammar is fixed (no layer variants), so the wire can mint the exact digest-less URL the
+          // host serves — descriptor-less resilience parity with combat. The frame-QUALIFIED descriptor swaps in
+          // (decode-before-swap) the moment it lands.
+          familyCandidate = {
+            scenePath: path,
+            url: hostUrl(`/bg/events/${tryParseEventBackgroundSceneId(path)}?v=1`)
+          };
+        }
+        continue;
       }
-      if (familyCandidate === null && isEventBackgroundSceneRoot(node)) {
-        // The event grammar is fixed (no layer variants), so the wire can mint the exact digest-less URL the
-        // host serves — descriptor-less resilience parity with combat. The frame-QUALIFIED descriptor swaps in
-        // (decode-before-swap) the moment it lands.
+      if (familyCandidate === null && isRoomBackgroundSubtreeRoot(node, props.state.nodes)) {
+        // Room backdrops key on the ROOM scene path (the subtree node itself carries none). Rooms ride their own
+        // v=2 (CouchCoopStaticBackgroundProvider.RoomsKeyVersion): the v=1 URL may still answer from a browser's
+        // year-long cache with a mis-anchored render.
+        const roomPath = staticBgTargetPathOf(node, props.state.nodes)!;
         familyCandidate = {
-          scenePath: path,
-          url: hostUrl(`/bg/events/${tryParseEventBackgroundSceneId(path)}?v=1`)
+          scenePath: roomPath,
+          url: hostUrl(`/bg/rooms/${tryParseRoomBackgroundSceneId(roomPath)}?v=2`)
         };
       }
-      continue;
     }
-    if (familyCandidate === null && isRoomBackgroundSubtreeRoot(node, props.state.nodes)) {
-      // Room backdrops key on the ROOM scene path (the subtree node itself carries none). Rooms ride their own
-      // v=2 (CouchCoopStaticBackgroundProvider.RoomsKeyVersion): the v=1 URL may still answer from a browser's
-      // year-long cache with a mis-anchored render.
-      const roomPath = staticBgTargetPathOf(node, props.state.nodes)!;
-      familyCandidate = {
-        scenePath: roomPath,
-        url: hostUrl(`/bg/rooms/${tryParseRoomBackgroundSceneId(roomPath)}?v=2`)
-      };
-    }
-  }
-  lastScanResult ??= familyCandidate;
+    lastScanResult ??= familyCandidate;
+  });
   return lastScanResult;
 });
 

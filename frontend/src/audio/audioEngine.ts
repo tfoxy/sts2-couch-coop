@@ -1,346 +1,302 @@
-import type { SeatAudioEvent, AudioFrame, RenderOutbound } from "./audioWire";
-import type { AudioContextLike, AudioUnlockEnv } from "./audioUnlock";
-import { browserAudioEnv, createAudioUnlock } from "./audioUnlock";
-import { applyVolumeSnapshot, DEFAULT_SEAT_VOLUMES, hasVolumeSnapshot, laneGain, sfxEventGain, type SeatVolumes } from "./audioGains";
-import { openRenderLane, type RenderLaneHandle } from "./renderLane";
-import { openSeatAudioLane, type SeatLaneHandle } from "./seatAudioLane";
-import { TakeStore } from "./takeStore";
-import { StreamVoice } from "./streamVoice";
-import { VoiceCap, type VoiceRecord } from "./voiceCap";
-import { createKeepAlive, type KeepAliveHandle } from "./keepAlive";
+// The per-tab audio engine MirrorApp creates. A facade over three playback paths, chosen once per engine by
+// `resolveAudioPath` (audioPath.ts) — `main` unless `?audioPath=` asks otherwise while
+// AUDIO_PATH_AUTO_DEFAULT is off:
+//
+//   main    — mainEngine.ts, today's engine, unchanged (sockets, decode and scheduling on the main thread).
+//   worker  — a dedicated Worker (audioTransportCore.ts) owns both audio sockets, JSON parse, PCM decode
+//             and all bookkeeping, and posts ready SinkCommands to a main-thread MainSink (mainSink.ts).
+//   worklet — the same Worker, posting SinkCommands straight to the AudioWorklet mixer (workletSink.ts)
+//             over a transferred MessagePort; the main thread is off the audio path entirely.
+//
+// Whatever the path, the rules mainEngine.ts keeps stay true here: no context, socket or fetch before the
+// viewer unlocks (the Worker is spawned at unlock, and opens sockets only on `start`); hidden tabs do not
+// start; a seat switch or stop silences everything immediately — the main thread fences the sink itself
+// rather than waiting for the Worker to notice.
+//
+// FALLBACK. A Worker that cannot be constructed (e.g. the remote-hosted web-link page, where the script is
+// cross-origin), that fails to load, or that reports `fallback` hands the viewer to mainEngine for the rest
+// of the engine's life, reusing the already-unlocked context. A worklet sink that cannot be created at
+// first unlock degrades to the worker path; one that cannot be recreated after a FAST-track context
+// recreate falls back to main. Each records `audio-path-fallback`.
+import { createMainAudioEngine, type AudioEngineHandle, type AudioEngineOptions } from "./mainEngine";
+import { detectAudioPathEnv, resolveAudioCoalesce, resolveAudioPath, type AudioPath, type AudioPathEnv, type ResolveAudioPathResult } from "./audioPath";
+import type { AudioDiagEventWire, AudioSinkMode, AudioSinkPcmFormat, MainToWorker, SinkCommand, WorkerToMain } from "./audioSinkProtocol";
+import { browserAudioEnv, createAudioUnlock, type AudioContextLike } from "./audioUnlock";
 import { installAudioDiagnostics, outputLeadMs } from "./fastTrackProbe";
-import { hostUrl } from "@/join/hostBase";
-import { assetVersion } from "@/join/assetVersion";
-import { tmpSfxUrl } from "./audioRoutes";
+import { MainSink } from "./mainSink";
+import { createWorkletSink, type WorkletSinkHandle } from "./workletSink";
+import { AudioDiagRing } from "./audioDiagRing";
+import { hostBase, isRemoteHosted } from "@/join/hostBase";
+import { assetVersion, whenAssetVersion } from "@/join/assetVersion";
 
-let nextAudioConnectionId = 0;
+export type { AudioEngineHandle, AudioEngineOptions } from "./mainEngine";
 
-export interface AudioEngineOptions {
-  seatUrl: string; renderUrl: string; indexUrl: string;
-  fetcher?: typeof fetch; WebSocketCtor?: typeof WebSocket;
-  audioEnv?: AudioUnlockEnv;
-  onUnavailable?: () => void;
+/** The slice of `Worker` the facade uses — a seam so specs can wire the transport core in-process. */
+export interface AudioWorkerLike {
+  postMessage(msg: MainToWorker, transfer?: Transferable[]): void;
+  addEventListener(type: "message" | "error", fn: (event: MessageEvent) => void): void;
+  terminate(): void;
 }
-export interface AudioEngineHandle { unlock(): Promise<boolean>; start(): void; setSeatUrl(url: string): void; stop(): void; dispose(): void; }
 
-/** Per-tab audio lifecycle. No context, sockets or fetches are created until the viewer opts in and unlocks. */
-export function createAudioEngine(options: AudioEngineOptions): AudioEngineHandle {
+export interface AudioEngineFacadeOptions extends AudioEngineOptions {
+  /** Test seam: the environment `resolveAudioPath` reads. Default: the live page. */
+  pathEnv?: AudioPathEnv;
+  /** Test seam: spawns the transport Worker. Default: Vite's worker-URL form below. */
+  createWorker?: () => AudioWorkerLike;
+  /** Test seam: creates the worklet mixer sink. Default: workletSink.ts. */
+  createWorkletSink?: (context: AudioContext) => Promise<WorkletSinkHandle>;
+}
+
+/** Vite's worker-URL form — it is what makes the worker its own emitted chunk. Must stay a literal. */
+const defaultWorkerFactory = (): AudioWorkerLike =>
+  new Worker(new URL("./audioTransport.worker.ts", import.meta.url), { type: "module" }) as unknown as AudioWorkerLike;
+
+export function createAudioEngine(options: AudioEngineFacadeOptions): AudioEngineHandle {
+  const env = options.pathEnv ?? detectAudioPathEnv();
+  const resolved = resolveAudioPath(env);
+  if (resolved.path === "main") return createMainAudioEngine({ ...options, audioPath: "main",
+    audioPathRequested: resolved.requested, audioPathReason: resolved.reason });
+  return createOffThreadAudioEngine(options, resolved, env);
+}
+
+type WorkletWithDiag = WorkletSinkHandle & { onDiag?: (events: AudioDiagEventWire[]) => void };
+
+function createOffThreadAudioEngine(options: AudioEngineFacadeOptions, resolved: ResolveAudioPathResult,
+  env: AudioPathEnv): AudioEngineHandle {
   const unlocker = createAudioUnlock(options.audioEnv ?? browserAudioEnv());
-  const voices = new VoiceCap(4);
-  const lanes = new Map<number, StreamVoice>();
-  let seat: SeatLaneHandle | null = null, render: RenderLaneHandle | null = null;
-  let context: AudioContextLike | null = null, store: TakeStore | null = null;
-  let volumes: SeatVolumes = { ...DEFAULT_SEAT_VOLUMES };
-  let volumesKnown = false;
+  const diagEnabled = new URLSearchParams(globalThis.location?.search ?? "").get("audioDiag") === "1";
+  const ring = new AudioDiagRing(diagEnabled);
+  let path: Exclude<AudioPath, "main"> = resolved.path === "worklet" ? "worklet" : "worker";
+  let delegate: AudioEngineHandle | null = null;
+  let worker: AudioWorkerLike | null = null;
+  let initSent = false;
+  let sinkMode: AudioSinkMode | null = null;
+  let context: AudioContextLike | null = null;
+  let mainSink: MainSink | null = null;
+  let worklet: WorkletWithDiag | null = null;
+  let epoch = 0;
   let running = false, disposed = false;
-  let keepAlive: KeepAliveHandle | null = null;
-  let cacheFillTimer: ReturnType<typeof setTimeout> | null = null;
-  let cacheFillAbort: AbortController | null = null;
-  let seatWorkAbort = new AbortController();
-  let bankset = "";
-  let desiredLanes = { kind: "lanes" as const, music: true, ambience: true, loops: true };
-  const tmpsfx = new Map<string, AudioBuffer>();
   let currentSeatUrl = options.seatUrl;
-  let seatEpoch = 0;
-  const audioDiagnosticsEnabled = new URLSearchParams(globalThis.location?.search ?? "").get("audioDiag") === "1";
-  const diagnosticEvents: Array<Record<string, unknown>> = [];
-  let diagnosticSeq = 0;
-  let diagnosticLost = 0;
-  let requestOrder = 0;
-  const recordDiagnostic = (type: string, fields: Record<string, unknown> = {}): void => {
-    if (!audioDiagnosticsEnabled) return;
-    const performanceMs = performance.now();
+  let seatWork = new AbortController();
+  let sentAssetToken = assetVersion() ?? "";
+  const tmpsfx = new Map<string, AudioBuffer>();
+  const hidden = (): boolean => typeof document !== "undefined" && document.visibilityState !== "visible";
+
+  const record = (type: string, fields: Record<string, unknown> = {}): void => {
+    if (!diagEnabled) return;
     const includeOutput = type === "source-scheduled" || type === "lane-source-scheduled" || type === "host-clock-sample";
     const output = includeOutput ? context?.getOutputTimestamp?.() ?? null : null;
-    diagnosticEvents.push({ seq: ++diagnosticSeq, type, performanceMs, contextTime: context?.currentTime ?? null,
-      ...(includeOutput ? { outputTimestamp: output ? { contextTime: output.contextTime, performanceTime: output.performanceTime } : null } : {}), ...fields });
-    if (diagnosticEvents.length > 1024) { diagnosticEvents.shift(); diagnosticLost++; }
+    ring.push(type, performance.now(), { contextTime: context?.currentTime ?? null,
+      ...(includeOutput ? { outputTimestamp: output ? { contextTime: output.contextTime, performanceTime: output.performanceTime } : null } : {}),
+      ...fields });
   };
-  installAudioDiagnostics(audioDiagnosticsEnabled, () => {
+  installAudioDiagnostics(diagEnabled, () => {
     const output = context?.getOutputTimestamp?.() ?? null;
     return {
-      running, contextState: context?.state ?? "closed", visible: typeof document === "undefined" || document.visibilityState === "visible",
-      performanceMs: performance.now(), performanceTimeOriginMs: performance.timeOrigin, lastSeq: diagnosticSeq,
-      firstSeq: diagnosticEvents[0]?.seq ?? diagnosticSeq + 1, lostEvents: diagnosticLost,
-      voices: voices.count(), lanes: [...lanes.keys()], outputLeadMs: context ? outputLeadMs(context) : null,
+      running, contextState: context?.state ?? "closed", visible: !hidden(),
+      performanceMs: performance.now(), performanceTimeOriginMs: performance.timeOrigin, lastSeq: ring.lastSeq,
+      firstSeq: ring.firstSeq, lostEvents: ring.lostEvents,
+      voices: mainSink?.voiceCount() ?? 0, lanes: mainSink?.laneKeys() ?? [], outputLeadMs: context ? outputLeadMs(context) : null,
       outputTimestamp: output ? { contextTime: output.contextTime, performanceTime: output.performanceTime } : null,
-      events: diagnosticEvents.slice()
+      events: ring.events.slice(), audioPath: path, audioPathRequested: resolved.requested, audioPathReason: resolved.reason,
+      sinkMode
     };
   }, () => {
-    if (!running || !render) return false;
-    render.probeClock(); return true;
+    if (!running || !worker) return false;
+    post({ kind: "probe-clock" }); return true;
   });
 
-  const closeLanes = (): void => { seat?.close(); render?.close(); seat = render = null; };
-  const laneGainNodes = new Map<number, GainNode>();
-  const updateLaneGains = (): void => {
-    for (const [lane, node] of laneGainNodes) node.gain.setTargetAtTime(laneGain(volumes, lane === 1 ? "music" : lane === 2 ? "ambience" : "loops"), context!.currentTime, 0.015);
-    desiredLanes = { kind: "lanes", music: volumesKnown && laneGain(volumes, "music") > 0, ambience: volumesKnown && laneGain(volumes, "ambience") > 0, loops: volumesKnown && laneGain(volumes, "loops") > 0 };
-    render?.request(desiredLanes);
-    recordDiagnostic("lane-subscription", { ...desiredLanes });
+  const post = (msg: MainToWorker, transfer: Transferable[] = []): void => { worker?.postMessage(msg, transfer); };
+
+  const syncAssetToken = (): void => {
+    const token = assetVersion() ?? "";
+    if (!initSent || token === sentAssetToken) return;
+    sentAssetToken = token; post({ kind: "asset-token", token });
   };
-  const playBuffer = (keyId: string, buffer: AudioBuffer, gainValue: number, pitch: number,
-    sourcePath: string, seatTUs: number, order?: number, connectionId?: number): void => {
-    if (!context || !running || gainValue <= 0) return;
-    const gain = context.createGain(); gain.gain.value = gainValue; gain.connect(context.destination);
-    const source = context.createBufferSource(); source.buffer = buffer; source.playbackRate.value = Number.isFinite(pitch) ? Math.max(.25, Math.min(4, pitch)) : 1; source.connect(gain);
-    const record: VoiceRecord = { keyId, stop(fadeMs) {
-      const now = context?.currentTime ?? 0; gain.gain.cancelScheduledValues(now); gain.gain.setTargetAtTime(0, now, fadeMs / 3000);
-      try { source.stop(now + fadeMs / 1000); } catch { /* ended */ }
-    } };
-    voices.add(record); keepAlive?.update(); source.onended = () => { voices.remove(record); source.disconnect(); gain.disconnect(); keepAlive?.update(); };
-    const scheduledContextTime = context.currentTime;
-    source.start(); recordDiagnostic("source-scheduled", { lane: "sfx", keyId,
-      ...(sourcePath.includes("tmpsfx") ? { resPath: keyId } : {}), sourcePath, seatTUs,
-      scheduledContextTime, pitch, connectionId, ...(order ? { requestOrder: order } : {}) });
-  };
-  const onSeatEvent = async (event: SeatAudioEvent, connectionId: number, callbackOrder?: number): Promise<void> => {
-    const eventEpoch = seatEpoch;
-    const order = audioDiagnosticsEnabled && (event.kind === "sfx" || event.kind === "tmpsfx") ? ++requestOrder : 0;
-    if (audioDiagnosticsEnabled) recordDiagnostic("seat-event-received", { connectionId, callbackOrder, kind: event.kind,
-      ...(order ? { requestOrder: order } : {}), ...( "t" in event ? { seatTUs: event.t } : {}),
-      ...("keyId" in event ? { keyId: event.keyId } : {}), ...("resPath" in event ? { resPath: event.resPath } : {}),
-      ...("pitch" in event ? { pitch: event.pitch, volume: event.volume } : {}) });
-    if (!context || !running) return;
-    if (event.kind === "volumes") { volumes = applyVolumeSnapshot(volumes, event); volumesKnown ||= hasVolumeSnapshot(event); updateLaneGains(); return; }
-    if (event.kind === "loop") { updateLaneGains(); return; }
-    if (!volumesKnown) return;
-    const gain = sfxEventGain(volumes, event);
-    if (gain <= 0) return;
-    if (event.kind === "tmpsfx") {
-      const path = event.resPath;
-      const url = tmpSfxUrl(path, assetVersion());
-      if (!url) return;
-      let buffer = tmpsfx.get(path);
-      const decoded = buffer !== undefined;
-      if (!buffer) {
-        try {
-          const response = await (options.fetcher ?? fetch).call(globalThis, url, { signal: seatWorkAbort.signal });
-          if (!response.ok || Number(response.headers.get("content-length") ?? 0) > 2 * 1024 * 1024) return;
-          const data = await response.arrayBuffer();
-          buffer = await context.decodeAudioData(data);
-          if (eventEpoch !== seatEpoch || !running) return;
-          tmpsfx.set(path, buffer);
-        } catch { return; }
-      }
-      if (eventEpoch !== seatEpoch || !running) return;
-      playBuffer(path, buffer, gain, event.pitch, decoded ? "decoded-tmpsfx" : "http-tmpsfx", event.t, order, connectionId); return;
-    }
-    if (event.kind === "sfx") {
-      const decoded = store?.hasDecoded(event.keyId) ?? false;
-      const buffer = await store?.get(event.keyId, seatWorkAbort.signal);
-      if (eventEpoch !== seatEpoch || !running) return;
-      if (buffer) { playBuffer(event.keyId, buffer, gain, event.pitch, decoded ? "decoded-cache" : "http-take", event.t, order, connectionId); return; }
-      const queued = pendingEvents.get(event.keyId) ?? [];
-      queued.push({ gain, pitch: event.pitch, seatTUs: event.t, requestOrder: order, seatConnectionId: connectionId }); pendingEvents.set(event.keyId, queued.slice(-4));
-      render?.request({ kind: "play", keyId: event.keyId, key: event.key },
-        audioDiagnosticsEnabled ? { seatTUs: event.t, requestOrder: order } : undefined);
-    }
-  };
-  const onFrame = (frame: AudioFrame, connectionId: number, callbackOrder?: number): void => {
-    if (audioDiagnosticsEnabled && (frame.kind !== 2 || frame.blockIndex % 16 === 0))
-      recordDiagnostic("pcm-frame-received", { connectionId, callbackOrder, kind: frame.kind, lane: frame.lane,
-        streamId: frame.streamId, blockIndex: frame.blockIndex, dueUs: frame.dueUs.toString(),
-        sentUs: frame.sentUs.toString(), frames: frame.frames, flags: frame.flags });
-    if (!context || !running) return;
-    if (frame.kind === 2) {
-      const lane = frame.lane;
-      let voice = lanes.get(lane);
-      if (!voice) {
-        const gain = context.createGain(); gain.gain.value = laneGain(volumes, lane === 1 ? "music" : lane === 2 ? "ambience" : "loops"); gain.connect(context.destination);
-        laneGainNodes.set(lane, gain);
-        voice = new StreamVoice(context, gain, () => keepAlive?.update(), audioDiagnosticsEnabled
-          ? (block, decision, scheduledContextTime) => {
-            if (block.blockIndex % 16 !== 0 && !decision.dropped && !decision.reanchored) return;
-            recordDiagnostic("lane-source-scheduled", { connectionId,
-            sourcePath: "live-lane", lane: block.lane, streamId: block.streamId, blockIndex: block.blockIndex,
-            dueUs: block.dueUs.toString(), sentUs: block.sentUs.toString(), scheduledContextTime,
-            dropped: decision.dropped, reanchored: decision.reanchored
-            });
-          } : undefined);
-        lanes.set(lane, voice);
-      }
-      if (!(frame.flags & 4)) voice.push(frame);
-      else { voice.stop(); lanes.delete(lane); laneGainNodes.get(lane)?.disconnect(); laneGainNodes.delete(lane); }
-      keepAlive?.update();
-    } else {
-      playTakeFrame(frame, connectionId);
-    }
-  };
-  interface TakeStream { keyId: string; gain: number; pitch: number; seatTUs: number; requestOrder: number; seatConnectionId: number; frames: AudioFrame[]; gainNode: GainNode; sources: Set<AudioBufferSourceNode>; nextAt: number; voice: VoiceRecord; finished: boolean; ready: boolean; }
-  const takeStreams = new Map<number, TakeStream>();
-  const pendingEvents = new Map<string, Array<{ gain: number; pitch: number; seatTUs: number; requestOrder: number; seatConnectionId: number }>>();
-  const fallbackStarted = new Set<number>();
-  const playTakeFrame = (frame: AudioFrame, connectionId: number): void => {
-    if (!context) return;
-    const stream = takeStreams.get(frame.streamId);
-    if (!stream || fallbackStarted.has(frame.streamId)) return;
-    stream.frames.push(frame);
-    const now = context.currentTime, startAt = Math.max(now + 0.005, stream.nextAt);
-    const buffer = context.createBuffer(2, frame.frames, 48_000), left = buffer.getChannelData(0), right = buffer.getChannelData(1);
-    for (let i = 0; i < frame.frames; i++) { left[i] = frame.pcm[i * 2] / 32768; right[i] = frame.pcm[i * 2 + 1] / 32768; }
-    const source = context.createBufferSource(); source.buffer = buffer; source.playbackRate.value = stream.pitch;
-    const blockGain = context.createGain();
-    if (stream.nextAt < now + 0.001) { blockGain.gain.setValueAtTime(0, startAt); blockGain.gain.linearRampToValueAtTime(1, startAt + 0.005); }
-    source.connect(blockGain); blockGain.connect(stream.gainNode); stream.sources.add(source);
-    source.onended = () => {
-      stream.sources.delete(source); source.disconnect(); blockGain.disconnect();
-      if (stream.finished && stream.sources.size === 0) {
-        voices.remove(stream.voice); stream.gainNode.disconnect(); if (stream.ready) takeStreams.delete(frame.streamId); keepAlive?.update();
-      }
-    };
-    source.start(startAt); stream.nextAt = startAt + frame.frames / (48_000 * stream.pitch);
-    recordDiagnostic("source-scheduled", { connectionId, lane: "take", sourcePath: "first-sight-stream", keyId: stream.keyId,
-      seatTUs: stream.seatTUs, requestOrder: stream.requestOrder, seatConnectionId: stream.seatConnectionId,
-      streamId: frame.streamId,
-      blockIndex: frame.blockIndex, dueUs: frame.dueUs.toString(), sentUs: frame.sentUs.toString(),
-      scheduledContextTime: startAt, pitch: stream.pitch, frames: frame.frames });
-    if (frame.flags & 2) {
-      stream.finished = true;
-      const count = stream.frames.reduce((sum, block) => sum + block.frames, 0), pcm = new Int16Array(count * 2);
-      let offset = 0; for (const block of stream.frames) { pcm.set(block.pcm, offset * 2); offset += block.frames; }
-      const take = context.createBuffer(2, count, 48_000), l = take.getChannelData(0), r = take.getChannelData(1);
-      for (let i = 0; i < count; i++) { l[i] = pcm[i * 2] / 32768; r[i] = pcm[i * 2 + 1] / 32768; }
-      store?.setBuffer(stream.keyId, take);
-    }
-    keepAlive?.update();
-  };
-  const scheduleCacheFill = (): void => {
-    if (!running || cacheFillTimer !== null || !cacheFillAbort || cacheFillAbort.signal.aborted) return;
-    const currentStore = store, signal = cacheFillAbort.signal;
-    cacheFillTimer = setTimeout(() => {
-      cacheFillTimer = null;
-      if (running && currentStore === store && !signal.aborted) void currentStore?.fillHttpCache(signal);
-    }, 0);
-  };
-  const onRenderMessage = (message: RenderOutbound, connectionId: number, callbackOrder?: number): void => {
-    if (audioDiagnosticsEnabled) recordDiagnostic("render-message-received", { connectionId, callbackOrder,
-      kind: message.kind, ...( "keyId" in message ? { keyId: message.keyId } : {}),
-      ...( "streamId" in message ? { streamId: message.streamId } : {}) });
-    if (message.kind === "clock") recordDiagnostic("host-clock-sample", {
-      clockSeq: message.seq ?? null, clientSendPerfMs: message.clientPerfMs ?? null,
-      hostReceiveUs: message.hostUs, hostSendUs: message.sentUs,
-      clientReceivePerfMs: performance.now()
-    });
-    else if (message.kind === "hello") { bankset = message.bankset; void store?.warm(options.indexUrl); render?.request(desiredLanes); }
-    else if (message.kind === "take-start") {
-      const queued = pendingEvents.get(message.keyId) ?? [], params = queued.shift();
-      if (queued.length) pendingEvents.set(message.keyId, queued); else pendingEvents.delete(message.keyId);
-      if (!params || !context) return;
-      const gainNode = context.createGain(); gainNode.gain.value = params.gain; gainNode.connect(context.destination);
-      const stream = { keyId: message.keyId, gain: params.gain, pitch: params.pitch, seatTUs: params.seatTUs,
-        requestOrder: params.requestOrder, seatConnectionId: params.seatConnectionId,
-        frames: [], gainNode, sources: new Set<AudioBufferSourceNode>(), nextAt: context.currentTime + 0.005,
-        voice: undefined as unknown as VoiceRecord, finished: false, ready: false } satisfies TakeStream;
-      const voice: VoiceRecord = { keyId: message.keyId, stop(fadeMs) {
-        const now = context?.currentTime ?? 0; gainNode.gain.cancelScheduledValues(now); gainNode.gain.setTargetAtTime(0, now, fadeMs / 3000);
-        for (const source of stream.sources) { try { source.stop(now + fadeMs / 1000); } catch { /* ended */ } }
-      } };
-      stream.voice = voice;
-      voices.add(voice); keepAlive?.update(); takeStreams.set(message.streamId, stream);
-    }
-    else if (message.kind === "take-ready") {
-      const stream = takeStreams.get(message.streamId);
-      recordDiagnostic("take-ready-received", { keyId: message.keyId, streamId: message.streamId,
-        url: message.url, streamTracked: !!stream, streamFrames: stream?.frames.length ?? 0,
-        pendingCount: pendingEvents.get(message.keyId)?.length ?? 0, seatEpoch, running });
-      if (store?.setUrl(message.keyId, hostUrl(message.url))) scheduleCacheFill();
-      if (stream) { stream.ready = true; if (stream.finished && stream.sources.size === 0) takeStreams.delete(message.streamId); return; }
-      const queued = pendingEvents.get(message.keyId) ?? [], params = queued.shift();
-      if (queued.length) pendingEvents.set(message.keyId, queued); else pendingEvents.delete(message.keyId);
-      if (!params) { recordDiagnostic("take-ready-no-pending", { keyId: message.keyId, streamId: message.streamId }); return; }
-      fallbackStarted.add(message.streamId);
-      const readyEpoch = seatEpoch;
-      void store?.get(message.keyId, seatWorkAbort.signal, "take-ready").then(buffer => {
-        recordDiagnostic("take-ready-get-result", { keyId: message.keyId, streamId: message.streamId,
-          decoded: !!buffer, readyEpoch, seatEpoch, running });
-        if (buffer && readyEpoch === seatEpoch && running)
-          playBuffer(message.keyId, buffer, params.gain, params.pitch, "http-take", params.seatTUs,
-            params.requestOrder, params.seatConnectionId);
-      });
-    } else if (message.kind === "unavailable") pendingEvents.delete(message.keyId);
+  if (assetVersion() === null) whenAssetVersion(syncAssetToken);
+
+  const fenceSink = (): void => {
+    mainSink?.fence(epoch);
+    worklet?.post({ kind: "fence", epoch });
   };
 
-  const openLanes = (): void => {
-    const epoch = seatEpoch;
-    const seatConnectionId = ++nextAudioConnectionId;
-    const renderConnectionId = ++nextAudioConnectionId;
-    seat = openSeatAudioLane(currentSeatUrl, (event, callbackOrder) => {
-      if (epoch === seatEpoch) void onSeatEvent(event, seatConnectionId, callbackOrder);
-    }, options.WebSocketCtor, audioDiagnosticsEnabled ? recordDiagnostic : undefined, seatConnectionId);
-    render = openRenderLane(options.renderUrl,
-      (frame, callbackOrder) => { if (epoch === seatEpoch) onFrame(frame, renderConnectionId, callbackOrder); },
-      (message, callbackOrder) => { if (epoch === seatEpoch) onRenderMessage(message, renderConnectionId, callbackOrder); },
-      options.WebSocketCtor, () => {
-        if (epoch === seatEpoch) { options.onUnavailable?.(); stop(); }
-      }, audioDiagnosticsEnabled ? recordDiagnostic : undefined, renderConnectionId);
-    render.request(desiredLanes);
+  const teardownOffThread = (): void => {
+    if (worker) { post({ kind: "dispose" }); worker.terminate(); worker = null; }
+    mainSink?.dispose(); mainSink = null;
+    worklet?.dispose(); worklet = null;
   };
-  const start = (): void => {
-    if (disposed || !context || context.state !== "running" ||
-        (typeof document !== "undefined" && document.visibilityState !== "visible")) return;
-    seatEpoch++;
-    if (seatWorkAbort.signal.aborted) seatWorkAbort = new AbortController();
-    running = true; closeLanes(); lanes.clear(); laneGainNodes.clear();
-    keepAlive?.dispose();
-    keepAlive = createKeepAlive(context as unknown as AudioContext, () => voices.count() === 0 && [...lanes.values()].every(lane => lane.activeCount() === 0));
-    store = new TakeStore(context, options.fetcher ?? fetch, recordDiagnostic);
-    cacheFillAbort = new AbortController();
-    const currentStore = store;
-    void store.warm(options.indexUrl).then(() => {
-      if (running && currentStore === store) scheduleCacheFill();
-    });
-    desiredLanes = { kind: "lanes", music: volumesKnown && laneGain(volumes, "music") > 0, ambience: volumesKnown && laneGain(volumes, "ambience") > 0, loops: volumesKnown && laneGain(volumes, "loops") > 0 };
-    openLanes();
-  };
-  const stop = (): void => {
-    seatEpoch++;
-    running = false; keepAlive?.dispose(); keepAlive = null;
-    if (cacheFillTimer !== null) clearTimeout(cacheFillTimer); cacheFillTimer = null;
-    cacheFillAbort?.abort(); cacheFillAbort = null;
-    seatWorkAbort.abort();
-    closeLanes(); voices.stopAll();
-    for (const lane of lanes.values()) lane.stop(); lanes.clear(); laneGainNodes.clear();
-    for (const stream of takeStreams.values()) { for (const source of stream.sources) { try { source.stop(); } catch { /* ended */ } } stream.gainNode.disconnect(); }
-    takeStreams.clear(); pendingEvents.clear(); fallbackStarted.clear();
-    if (context?.state === "running") void context.suspend();
-  };
-  const resetSeatPlayback = (): void => {
-    voices.stopAll();
-    for (const stream of takeStreams.values()) {
-      for (const source of stream.sources) { try { source.stop(); } catch { /* already ended */ } }
-      stream.gainNode.disconnect();
+
+  const switchToMain = (reason: string): AudioEngineHandle => {
+    if (delegate) return delegate;
+    const from = path, wasRunning = running;
+    record("audio-path-fallback", { from, reason, to: "main" });
+    running = false;
+    teardownOffThread();
+    delegate = createMainAudioEngine({ ...options, seatUrl: currentSeatUrl, unlocker, audioPath: "main", fallback: { from, reason },
+      audioPathRequested: resolved.requested, audioPathReason: `fallback: ${reason}` });
+    if (wasRunning && !disposed && context?.state === "running" && !hidden()) {
+      const target = delegate;
+      void target.unlock().then(ok => { if (ok && delegate === target && !disposed) target.start(); });
     }
-    takeStreams.clear(); pendingEvents.clear(); fallbackStarted.clear();
-    for (const lane of lanes.values()) lane.stop();
-    lanes.clear(); for (const node of laneGainNodes.values()) node.disconnect(); laneGainNodes.clear();
-    keepAlive?.update();
+    return delegate;
   };
-  return {
+
+  const onSinkCommand = (cmd: SinkCommand): void => {
+    if (diagEnabled && "postMs" in cmd && (cmd.kind !== "lane-blocks" || cmd.blocks.some(block => block.blockIndex % 16 === 0))) {
+      const receiptMs = performance.now();
+      record("main-receipt", { kind: cmd.kind, postMs: cmd.postMs, waitMs: receiptMs - cmd.postMs,
+        ...("key" in cmd ? { keyId: cmd.key } : {}), ...("streamId" in cmd ? { streamId: cmd.streamId } : {}) });
+    }
+    mainSink?.apply(cmd);
+  };
+
+  const decodeTmpSfx = async (msg: Extract<WorkerToMain, { kind: "tmpsfx-decode" }>): Promise<void> => {
+    if (msg.epoch !== epoch || !running || !context) return;
+    const ctx = context, signal = seatWork.signal;
+    let buffer = tmpsfx.get(msg.path);
+    const decoded = buffer !== undefined;
+    if (!buffer) {
+      try {
+        const response = await (options.fetcher ?? fetch).call(globalThis, msg.url, { signal });
+        if (!response.ok || Number(response.headers.get("content-length") ?? 0) > 2 * 1024 * 1024) throw new Error("tmpsfx response");
+        buffer = await ctx.decodeAudioData(await response.arrayBuffer());
+        tmpsfx.set(msg.path, buffer);
+      } catch {
+        if (msg.epoch === epoch) post({ kind: "tmpsfx-failed", epoch: msg.epoch, path: msg.path });
+        return;
+      }
+    }
+    if (msg.epoch !== epoch || !running) return;
+    const play: Extract<SinkCommand, { kind: "play" }> = { kind: "play", epoch: msg.epoch, key: msg.path, sourcePath: "tmpsfx",
+      postMs: performance.now(), ...msg.cue };
+    if (mainSink) {
+      mainSink.loadBuffer(msg.path, buffer);
+      mainSink.apply(play, decoded ? "decoded-tmpsfx" : "http-tmpsfx");
+    } else if (worklet) {
+      const channels: Float32Array[] = [];
+      for (let c = 0; c < buffer.numberOfChannels; c++) channels.push(buffer.getChannelData(c).slice());
+      worklet.post({ kind: "load", epoch: msg.epoch, key: msg.path, rate: buffer.sampleRate,
+        pcm: { format: "f32-planar", channels, frames: buffer.length } }, channels.map(plane => plane.buffer as ArrayBuffer));
+      worklet.post({ ...play, diagSourcePath: decoded ? "decoded-tmpsfx" : "http-tmpsfx" });
+    } else return;
+    post({ kind: "tmpsfx-resident", epoch: msg.epoch, path: msg.path });
+  };
+
+  const onWorkerMessage = (event: MessageEvent): void => {
+    if (disposed || delegate) return;
+    const msg = event.data as WorkerToMain;
+    switch (msg.kind) {
+      case "sink": return onSinkCommand(msg.cmd);
+      case "diag": ring.ingest(msg.events); return;
+      case "unavailable": if (msg.epoch === epoch) { options.onUnavailable?.(); handle.stop(); } return;
+      case "fallback": switchToMain(msg.reason); return;
+      case "tmpsfx-decode": void decodeTmpSfx(msg); return;
+      case "ready": record("worker-ready"); return;
+    }
+  };
+
+  const spawnWorker = (): boolean => {
+    try { worker = (options.createWorker ?? defaultWorkerFactory)(); }
+    catch (error) { record("worker-spawn-failed", { error: error instanceof Error ? error.message : String(error) }); return false; }
+    worker.addEventListener("message", onWorkerMessage);
+    worker.addEventListener("error", () => { if (!disposed) switchToMain("worker-error"); });
+    return true;
+  };
+
+  const sendInit = (mode: AudioSinkMode, pcm: AudioSinkPcmFormat): void => {
+    if (initSent) return;
+    initSent = true; sinkMode = mode; sentAssetToken = assetVersion() ?? "";
+    post({ kind: "init", mainTimeOrigin: performance.timeOrigin, diag: diagEnabled,
+      hostBase: isRemoteHosted() ? hostBase() : "", assetToken: sentAssetToken,
+      indexUrl: options.indexUrl, renderUrl: options.renderUrl, sinkMode: mode, pcm, coalesce: resolveAudioCoalesce(env.search) });
+  };
+
+  /** Creates (or, after a context recreate, rebuilds) the sink for `ctx`, then makes sure `init` went out. */
+  const ensureSink = async (ctx: AudioContextLike, recreated: boolean): Promise<void> => {
+    if (path === "worklet") {
+      if (worklet && !recreated) return;
+      if (worklet) { worklet.dispose(); worklet = null; }
+      try {
+        const sink = await (options.createWorkletSink ?? createWorkletSink)(ctx as unknown as AudioContext) as WorkletWithDiag;
+        if (disposed || delegate || context !== ctx) { sink.dispose(); return; }
+        worklet = sink;
+        // `ready` rejects on a processor error (or our own dispose); only a live, current sink falls back.
+        sink.ready?.catch(() => { if (worklet === sink && !disposed && !delegate) switchToMain("worklet-processor-error"); });
+        if ("onDiag" in sink) sink.onDiag = events => ring.ingest(events);
+        sendInit("port", "s16");
+        const sampleRate = (ctx as unknown as { sampleRate?: number }).sampleRate ?? 48_000;
+        post({ kind: "port", port: sink.workerPort, sampleRate }, [sink.workerPort]);
+        return;
+      } catch (error) {
+        const reason = `worklet-sink: ${error instanceof Error ? error.message : String(error)}`;
+        if (initSent) { switchToMain(reason); return; }
+        record("audio-path-fallback", { from: "worklet", reason, to: "worker" });
+        path = "worker";
+      }
+    }
+    if (!mainSink) mainSink = new MainSink(ctx, { diag: diagEnabled ? record : undefined });
+    else if (recreated) mainSink.setContext(ctx);
+    sendInit("post", "f32-planar");
+  };
+
+  const handle: AudioEngineHandle = {
     async unlock() {
-      const unlockEpoch = seatEpoch;
+      if (delegate) return delegate.unlock();
+      if (disposed) return false;
+      const unlockEpoch = epoch;
+      // Spawned before the prelude so the worker script loads in parallel; it opens nothing until `start`.
+      if (!worker && !spawnWorker()) return switchToMain("worker-ctor").unlock();
+      const prior = context;
       const unlocked = await unlocker.unlock();
+      if (delegate) return (delegate as AudioEngineHandle).unlock();
       context = unlocked;
       if (!unlocked) { options.onUnavailable?.(); return false; }
-      if (unlockEpoch !== seatEpoch ||
-          (typeof document !== "undefined" && document.visibilityState !== "visible")) {
+      if (unlockEpoch !== epoch || hidden()) {
         try { await unlocked.suspend(); } catch { /* a later gesture can retry */ }
       }
-      recordDiagnostic("context-unlocked", { state: unlocked.state }); return true;
-    }, start,
-    setSeatUrl(url) {
-      if (url === currentSeatUrl) return;
-      seatEpoch++;
-      seatWorkAbort.abort(); seatWorkAbort = new AbortController();
-      resetSeatPlayback();
-      currentSeatUrl = url; volumes = { ...DEFAULT_SEAT_VOLUMES }; volumesKnown = false;
-      if (running && context?.state === "running") {
-        closeLanes();
-        openLanes();
-        updateLaneGains();
-      }
+      await ensureSink(unlocked, prior !== null && prior !== unlocked);
+      if (delegate) return (delegate as AudioEngineHandle).unlock();
+      record("context-unlocked", { state: unlocked.state }); return true;
     },
-    stop,
-    dispose() { if (disposed) return; disposed = true; stop(); unlocker.dispose(); context = null; }
+    start() {
+      if (delegate) return delegate.start();
+      if (disposed || !context || context.state !== "running" || hidden() || !worker || !initSent) return;
+      epoch++;
+      if (seatWork.signal.aborted) seatWork = new AbortController();
+      running = true;
+      fenceSink();
+      mainSink?.startKeepAlive();
+      syncAssetToken();
+      post({ kind: "start", epoch, seatUrl: currentSeatUrl });
+    },
+    setSeatUrl(url) {
+      if (delegate) return delegate.setSeatUrl(url);
+      if (url === currentSeatUrl) return;
+      epoch++;
+      seatWork.abort(); seatWork = new AbortController();
+      fenceSink();
+      currentSeatUrl = url;
+      syncAssetToken();
+      post({ kind: "seat", epoch, seatUrl: url });
+    },
+    stop() {
+      if (delegate) return delegate.stop();
+      epoch++;
+      running = false;
+      fenceSink();
+      mainSink?.stopKeepAlive();
+      seatWork.abort();
+      post({ kind: "stop", epoch });
+      if (context?.state === "running") void context.suspend();
+    },
+    dispose() {
+      if (disposed) return;
+      if (delegate) { disposed = true; delegate.dispose(); context = null; return; }
+      handle.stop();
+      disposed = true;
+      teardownOffThread();
+      unlocker.dispose(); context = null;
+    }
   };
+  return handle;
 }

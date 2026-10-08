@@ -1221,6 +1221,103 @@ describe("StaticBackground.vue — decode gate + shown-signal ordering", () => {
     wrapper.unmount();
   });
 
+  // ============================================================================================================
+  // R-WPC: the wire fallback now caches on `state.sceneRootEpoch` instead of `orderedIds` identity (see
+  // sceneTree.ts's comment on the field and StaticBackground.vue's wireFallback). These pin that the SAME
+  // decisions still get made — the scan still reacts to a real removal/reparent/reset — while an unrelated
+  // structural reorder (an orderPatch that mints a new `orderedIds` array but never touches a bg-relevant node)
+  // no longer re-triggers it at all.
+  // ============================================================================================================
+  it("REGRESSION: unrelated reorders never re-decode; a real room change still does", async () => {
+    const decoded: string[] = [];
+    __setStillDecoderForTest((url, ready) => { decoded.push(url); ready(true); });
+    const calls: ShownCall[] = [];
+    const state = createMirrorState();
+    full(state, combatNodes(), COMBAT_ORDER);
+    const wrapper = mountBg(calls, null, state);
+    await wrapper.vm.$nextTick();
+    expect(decoded).toEqual(["/bg/underdocks?v=1"]);
+
+    // Ten incremental deltas shaped exactly like the traced watch stream (a volatile upsert + an orderPatch):
+    // each mints a NEW orderedIds array (applyOrderPatch always allocates) but touches only "hero", which the
+    // wire scan never reads. The resolved picture must not move and the decoder must not be re-asked.
+    for (let i = 0; i < 10; i++) {
+      applySceneDelta(
+        state,
+        parseSceneDelta({
+          type: "scene-delta",
+          full: false,
+          screenType: "run",
+          upserts: [rawNode("hero", "room", { opacity: i % 2 })],
+          removedIds: [],
+          orderPatch: { roots: null, parents: [{ p: "room", c: i % 2 === 0 ? ["csc", "hero"] : ["hero", "csc"] }] }
+        })!
+      );
+      await wrapper.setProps({ revision: state.revision });
+    }
+    expect(decoded).toEqual(["/bg/underdocks?v=1"]); // still exactly one decode
+    expect(calls[calls.length - 1]).toEqual({ scenePath: UNDERDOCKS_BG });
+
+    // A REAL room change must still be detected despite the ten no-op reorders in between.
+    full(state, combatNodes("bg", SPIRE_BG, "res://scenes/backgrounds/spire/layers/spire_bg_00_c.tscn"), COMBAT_ORDER);
+    await wrapper.setProps({ revision: state.revision });
+    await wrapper.vm.$nextTick();
+    expect(decoded).toEqual(["/bg/underdocks?v=1", "/bg/spire?v=1"]);
+    expect(calls[calls.length - 1]).toEqual({ scenePath: SPIRE_BG });
+    wrapper.unmount();
+  });
+
+  it("REGRESSION: removing the bg root (no replacement) still clears the shown picture", async () => {
+    __setStillDecoderForTest((_url, ready) => ready(true));
+    const calls: ShownCall[] = [];
+    const state = createMirrorState();
+    full(state, combatNodes(), COMBAT_ORDER);
+    const wrapper = mountBg(calls, null, state);
+    await wrapper.vm.$nextTick();
+    expect(calls[calls.length - 1]).toEqual({ scenePath: UNDERDOCKS_BG });
+
+    applySceneDelta(
+      state,
+      parseSceneDelta({
+        type: "scene-delta",
+        full: false,
+        screenType: "run",
+        upserts: [],
+        removedIds: ["bg", "layer0"],
+        orderPatch: { roots: null, parents: [{ p: "bgc", c: [] }] }
+      })!
+    );
+    await wrapper.setProps({ revision: state.revision });
+    expect(calls[calls.length - 1]).toEqual({ scenePath: null });
+    wrapper.unmount();
+  });
+
+  it("REGRESSION: reparenting BgContainer out of the CombatSceneContainer chain blanks the picture", async () => {
+    __setStillDecoderForTest((_url, ready) => ready(true));
+    const calls: ShownCall[] = [];
+    const state = createMirrorState();
+    full(state, combatNodes(), COMBAT_ORDER);
+    const wrapper = mountBg(calls, null, state);
+    await wrapper.vm.$nextTick();
+    expect(calls[calls.length - 1]).toEqual({ scenePath: UNDERDOCKS_BG });
+
+    // "bgc" moves from under "csc" directly under "room" — breaks the required CombatSceneContainer
+    // grandparent link, so the chain predicate must now refuse the bg root.
+    applySceneDelta(
+      state,
+      parseSceneDelta({
+        type: "scene-delta",
+        full: false,
+        screenType: "run",
+        upserts: [rawNode("bgc", "room", { name: "BgContainer" })],
+        removedIds: [],
+        orderPatch: { roots: null, parents: [{ p: "room", c: ["csc", "bgc", "hero"] }, { p: "csc", c: [] }] }
+      })!
+    );
+    await wrapper.setProps({ revision: state.revision });
+    expect(calls[calls.length - 1]).toEqual({ scenePath: null });
+    wrapper.unmount();
+  });
 });
 
 // ================================================================================================================

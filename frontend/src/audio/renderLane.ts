@@ -1,11 +1,22 @@
-import { decodeAudioFrame, type RenderInbound, type RenderOutbound } from "./audioWire";
+import { decodeAudioFrame, type AudioFrame, type RenderInbound, type RenderOutbound } from "./audioWire";
 import type { AudioLaneMark } from "./seatAudioLane";
 
 export interface PlayRequestMark { seatTUs: number; requestOrder: number; }
 export interface RenderLaneHandle { request(message: RenderInbound, correlation?: PlayRequestMark): void; probeClock(): void; close(): void; }
-export function openRenderLane(url: string, onFrame: (frame: ReturnType<typeof decodeAudioFrame>, callbackOrder?: number) => void,
+/**
+ * Transport seams for a lane owner off the main thread: a zero-copy frame decoder (`decodeAudioFrameView`)
+ * and a clock aligned to the page's `performance.now()` (a Worker's own clock has a different origin, and
+ * `clientPerfMs` on a clock probe must be comparable with main-thread marks). Absent, both are today's.
+ */
+export interface RenderLaneOptions<F extends AudioFrame> {
+  decode?: (data: ArrayBuffer) => F;
+  now?: () => number;
+}
+export function openRenderLane<F extends AudioFrame = AudioFrame>(url: string, onFrame: (frame: F, callbackOrder?: number) => void,
   onMessage: (message: RenderOutbound, callbackOrder?: number) => void, WebSocketCtor: typeof WebSocket = WebSocket,
-  onUnavailable?: () => void, mark?: AudioLaneMark, connectionId?: number): RenderLaneHandle {
+  onUnavailable?: () => void, mark?: AudioLaneMark, connectionId?: number, laneOptions: RenderLaneOptions<F> = {}): RenderLaneHandle {
+  const decode = laneOptions.decode ?? (decodeAudioFrame as unknown as (data: ArrayBuffer) => F);
+  const now = laneOptions.now ?? (() => performance.now());
   const socket = new WebSocketCtor(url); socket.binaryType = "arraybuffer";
   const queue: RenderInbound[] = [];
   const correlations = mark ? new WeakMap<RenderInbound, PlayRequestMark>() : null;
@@ -23,7 +34,7 @@ export function openRenderLane(url: string, onFrame: (frame: ReturnType<typeof d
     }
   };
   const probeClock = (): void => {
-    if (!closed) request({ kind: "clock", seq: ++clockSeq, clientPerfMs: performance.now() });
+    if (!closed) request({ kind: "clock", seq: ++clockSeq, clientPerfMs: now() });
   };
   socket.addEventListener("open", () => {
     flush();
@@ -33,7 +44,7 @@ export function openRenderLane(url: string, onFrame: (frame: ReturnType<typeof d
   socket.addEventListener("close", () => { if (!closed) onUnavailable?.(); });
   socket.addEventListener("message", event => {
     if (closed) return;
-    const entryMs = mark ? performance.now() : 0;
+    const entryMs = mark ? now() : 0;
     const order = mark ? ++callbackOrder : 0;
     const binary = event.data instanceof ArrayBuffer;
     const sampled = !mark || !binary || event.data.byteLength < 16 || (() => {
@@ -44,7 +55,7 @@ export function openRenderLane(url: string, onFrame: (frame: ReturnType<typeof d
       payloadKind: binary ? "frame" : "control" });
     if (binary) {
       try {
-        const frame = decodeAudioFrame(event.data);
+        const frame = decode(event.data);
         if (mark && sampled)
           mark("render-frame-decoded", { connectionId, callbackOrder: order, kind: frame.kind,
             lane: frame.lane, streamId: frame.streamId, blockIndex: frame.blockIndex,

@@ -277,6 +277,124 @@ describe("applySceneDelta", () => {
   });
 });
 
+// R-WPC: `sceneRootEpoch` is the signal StaticBackground.vue's wireFallback scan caches against instead of
+// `orderedIds` identity (see sceneTree.ts's comment on the field). These pin WHEN it is allowed to move: never on
+// an ordinary volatile tick or a pure reorder of unrelated nodes (that was the whole point — an orderPatch mints
+// a new `orderedIds` array on almost every structural delta, so caching on that re-walked the full node map on
+// nearly every message), but always when a node the scan actually reads (sceneFilePath, or a
+// BgContainer/SceneContainer/CombatSceneContainer name) is added, removed, reparented, or changes.
+describe("sceneRootEpoch", () => {
+  it("bumps on a full keyframe even with no scan-relevant content", () => {
+    const state = createMirrorState();
+    expect(state.sceneRootEpoch).toBe(0);
+    applySceneDelta(state, parseSceneDelta(delta({ full: true, upserts: [node("1"), node("2")], orderedIds: ["1", "2"] }))!);
+    expect(state.sceneRootEpoch).toBe(1);
+  });
+
+  it("does NOT bump on a volatile-only upsert of an unrelated node", () => {
+    const state = createMirrorState();
+    applySceneDelta(state, parseSceneDelta(delta({ full: true, upserts: [node("1")], orderedIds: ["1"] }))!);
+    const epochAfterFull = state.sceneRootEpoch;
+    applySceneDelta(state, parseSceneDelta(delta({ upserts: [node("1", { name: "", opacity: 0.4 })] }))!);
+    expect(state.sceneRootEpoch).toBe(epochAfterFull);
+  });
+
+  it("does NOT bump when an orderPatch reorders unrelated nodes (the bug this round fixes)", () => {
+    // This is exactly the shape the background trace flagged: a volatile upsert batch + an orderPatch, no
+    // bg-relevant node anywhere. `orderedIds` still gets a NEW array reference (applyOrderPatch always
+    // allocates), which is why the old orderedIds-identity cache re-scanned on every one of these.
+    const state = createMirrorState();
+    applySceneDelta(
+      state,
+      parseSceneDelta(delta({ full: true, upserts: [node("a"), node("b"), node("c")], orderedIds: ["a", "b", "c"] }))!
+    );
+    const epochAfterFull = state.sceneRootEpoch;
+    const beforeOrderedIds = state.orderedIds;
+    applySceneDelta(
+      state,
+      parseSceneDelta(
+        delta({
+          upserts: [node("a", { name: "", opacity: 0.9 })],
+          orderPatch: { roots: ["c", "b", "a"], parents: [] }
+        })
+      )!
+    );
+    expect(state.orderedIds).not.toBe(beforeOrderedIds); // orderedIds DID change identity…
+    expect(state.sceneRootEpoch).toBe(epochAfterFull); // …but the epoch correctly did not move.
+  });
+
+  it("bumps when a combat background root is introduced", () => {
+    const state = createMirrorState();
+    applySceneDelta(state, parseSceneDelta(delta({ full: true, upserts: [node("unrelated")], orderedIds: ["unrelated"] }))!);
+    const epochBefore = state.sceneRootEpoch;
+    applySceneDelta(
+      state,
+      parseSceneDelta(
+        delta({
+          upserts: [node("bg", { sceneFilePath: "res://scenes/backgrounds/underdocks/underdocks_background.tscn" })]
+        })
+      )!
+    );
+    expect(state.sceneRootEpoch).toBeGreaterThan(epochBefore);
+  });
+
+  it("bumps when a scan-relevant node is removed", () => {
+    const state = createMirrorState();
+    applySceneDelta(
+      state,
+      parseSceneDelta(
+        delta({
+          full: true,
+          upserts: [node("bg", { sceneFilePath: "res://scenes/backgrounds/underdocks/underdocks_background.tscn" })],
+          orderedIds: ["bg"]
+        })
+      )!
+    );
+    const epochBefore = state.sceneRootEpoch;
+    applySceneDelta(state, parseSceneDelta(delta({ removedIds: ["bg"] }))!);
+    expect(state.sceneRootEpoch).toBeGreaterThan(epochBefore);
+  });
+
+  it("does NOT bump when an unrelated node is removed", () => {
+    const state = createMirrorState();
+    applySceneDelta(state, parseSceneDelta(delta({ full: true, upserts: [node("card")], orderedIds: ["card"] }))!);
+    const epochBefore = state.sceneRootEpoch;
+    applySceneDelta(state, parseSceneDelta(delta({ removedIds: ["card"] }))!);
+    expect(state.sceneRootEpoch).toBe(epochBefore);
+  });
+
+  it("bumps when a BgContainer-named node is reparented (chain membership can change)", () => {
+    const state = createMirrorState();
+    applySceneDelta(
+      state,
+      parseSceneDelta(
+        delta({
+          full: true,
+          upserts: [node("root1"), node("root2"), node("bg", { name: "BgContainer", parentId: "root1" })],
+          orderedIds: ["root1", "root2", "bg"]
+        })
+      )!
+    );
+    const epochBefore = state.sceneRootEpoch;
+    // Volatile-only upsert (blank name) that only moves the parent — reparenting rides every upsert, static or not.
+    applySceneDelta(state, parseSceneDelta(delta({ upserts: [node("bg", { name: "", parentId: "root2" })] }))!);
+    expect(state.sceneRootEpoch).toBeGreaterThan(epochBefore);
+  });
+
+  it("does NOT bump when a plain card is reparented", () => {
+    const state = createMirrorState();
+    applySceneDelta(
+      state,
+      parseSceneDelta(
+        delta({ full: true, upserts: [node("root1"), node("root2"), node("card", { parentId: "root1" })], orderedIds: ["root1", "root2", "card"] })
+      )!
+    );
+    const epochBefore = state.sceneRootEpoch;
+    applySceneDelta(state, parseSceneDelta(delta({ upserts: [node("card", { name: "", parentId: "root2" })] }))!);
+    expect(state.sceneRootEpoch).toBe(epochBefore);
+  });
+});
+
 describe("local scene transforms", () => {
   it("uses local composition without a transform-space wire selector", () => {
     const state = createMirrorState();

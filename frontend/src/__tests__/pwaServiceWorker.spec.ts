@@ -264,6 +264,8 @@ describe("service worker: pure decisions", () => {
     expect(classify("/?name=Ann", { mode: "navigate" })).toBe("navigate");
     expect(classify("/res/images/packed/common_ui/cursor_default.png")).toBe("asset");
     expect(classify("/app/index-BQz1a9.js")).toBe("asset");
+    // Vite emits module workers (the audio transport) as hashed chunks under the same /app/ prefix.
+    expect(classify("/app/audioTransport.worker-C7x2Lm9q.js")).toBe("asset");
     expect(classify("/icons/icon-192.png")).toBe("asset");
 
     // Live game/session data must never be served from a cache.
@@ -272,6 +274,9 @@ describe("service worker: pure decisions", () => {
     expect(classify("/model-res/x.png")).toBe("bypass");
     expect(classify("/spines")).toBe("bypass");
     expect(classify("/manifest.webmanifest")).toBe("bypass");
+    // The audio take index and WAVs a worker fetches are host-owned, versioned by URL; never SW-cached.
+    expect(classify("/audio/takes")).toBe("bypass");
+    expect(classify("/audio/take/1/b/0123456789abcdef0123456789abcdef.wav")).toBe("bypass");
   });
 
   it("never touches the game socket, non-GET, ranged or cross-origin requests", () => {
