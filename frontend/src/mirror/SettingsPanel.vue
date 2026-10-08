@@ -85,6 +85,7 @@ const availableTextMethods = computed(() => TEXT_METHODS.filter((method) => meth
 const failureReason = computed(() => settings.stage === "canvas" && rendererRuntimeStatus.requested.backend === "canvas" &&
   rendererRuntimeStatus.phase === "failed" ? rendererRuntimeStatus.reason : null);
 const audioUsesHttp = computed(() => hostBase().startsWith("http://"));
+const audioHelpText = computed(() => `${t("settings.help.audio")}${audioUsesHttp.value ? t("settings.help.audioHttp") : ""}`);
 
 function selectStage(value: "dom" | "canvas"): void {
   settings.stage = value;
@@ -399,7 +400,7 @@ onBeforeUnmount(() => setHelpListeners(false));
             <span>{{ t('settings.audio') }}</span>
           </label>
           <SettingsHelpTip
-            v-bind="help('audio', t('settings.audio'), 'below', t(audioUsesHttp ? 'settings.help.audioHttp' : 'settings.help.audio'))"
+            v-bind="help('audio', t('settings.audio'), 'below', audioHelpText)"
           />
         </div>
         <p v-if="audioUnavailable" role="status" data-testid="mirror-audio-unavailable">{{ t('settings.audioUnavailable') }}</p>

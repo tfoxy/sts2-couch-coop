@@ -229,5 +229,5 @@
   "settings.audio": "Audio (Beta)",
   "settings.audioUnavailable": "Audio is unavailable on this host or in this browser.",
   "settings.help.audio": "Hear this player's game audio in your browser. Audio adds work on both the host and this device, and starts after your next tap.",
-  "settings.help.audioHttp": "Hear this player's game audio in your browser. Audio adds work on both the host and this device, and starts after your next tap. It currently works best with HTTPS; HTTP can feel laggy. Change the option above the QR button to use HTTPS."
+  "settings.help.audioHttp": " It currently works best with HTTPS; HTTP can feel laggy. Change the option above the QR button to use HTTPS."
 }
