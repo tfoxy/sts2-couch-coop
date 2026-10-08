@@ -226,8 +226,8 @@
   "compare.pixels.dirty-preserved": "Preserved WebGL dirty redraw",
   "compare.pixels.dirty-copy": "Single-canvas dirty copy",
   "compare.preset.rust": "Rust/WASM renderer prototype",
-  "settings.audio": "Audio",
+  "settings.audio": "Audio (Beta)",
   "settings.audioUnavailable": "Audio is unavailable on this host or in this browser.",
-  "settings.audioCredit": "Audio uses FMOD; FMOD is a registered trademark of Firelight Technologies Pty Ltd.",
-  "settings.help.audio": "Hear this player's game sounds in this browser at their in-game volume settings. Audio starts after your next tap."
+  "settings.help.audio": "Hear this player's game audio in your browser. Audio adds work on both the host and this device, and starts after your next tap.",
+  "settings.help.audioHttp": "Hear this player's game audio in your browser. Audio adds work on both the host and this device, and starts after your next tap. It currently works best with HTTPS; HTTP can feel laggy. Change the option above the QR button to use HTTPS."
 }
