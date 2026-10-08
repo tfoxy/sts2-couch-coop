@@ -16,6 +16,7 @@
   "couchcoop_option_server_not_listening": "El servidor para navegadores aún no está escuchando.",
   "couchcoop_option_address_not_eligible": "Necesita una dirección de red normal en este PC.",
   "couchcoop_option_secure_pending": "Aún se está configurando: la dirección simple sigue funcionando.",
+  "couchcoop_secure_idle": "Selecciona para configurar el enlace HTTPS. Puede que se necesite conexión a internet.",
   "couchcoop_secure_checking": "Comprobando si hay un enlace instalable…",
   "couchcoop_secure_disabled": "Desactivado por {setting}.",
   "couchcoop_secure_address_ineligible": "Necesita una dirección de red normal en este PC.",

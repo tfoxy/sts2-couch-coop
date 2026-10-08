@@ -23,6 +23,9 @@ public static class SecureOriginEndpoint
     /// <summary>The route a peer reads to learn this process's real secure port.</summary>
     public const string Route = "/secure-port";
 
+    /// <summary>Loopback-only POST that asks a headless seat to prepare its TLS listener.</summary>
+    public const string EnableRoute = "/internal/secure-origin/enable";
+
     private static int _port;
 
     /// <summary>The shared browser port when TLS is ready, or <c>0</c> otherwise.</summary>

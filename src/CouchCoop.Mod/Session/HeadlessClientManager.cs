@@ -2244,10 +2244,8 @@ public sealed partial class HeadlessClientManager : IDisposable
     /// enabled TLS yet, even though both protocols now use that seat's one browser port.
     /// </para>
     /// <para>
-    /// Certificate acquisition is deliberately detached so it can never delay HTTP startup.
-    /// Readiness therefore fires while TLS may still be seconds away. In practice the host has
-    /// already populated the shared certificate cache long before any seat is spawned, so this usually
-    /// succeeds on the first poll; the window covers the cold case rather than defining it.
+    /// The host explicitly requests TLS preparation before it starts this readiness check. The seat loads
+    /// the host-shared cache and fetches only when the secure viewer's request has made that necessary.
     /// </para>
     /// <para>
     /// Only ever called for a TLS viewer. A plain-HTTP join never reaches here, which is what keeps that path
@@ -2305,6 +2303,39 @@ public sealed partial class HeadlessClientManager : IDisposable
             }
 
             await Task.Delay(250, ct).ConfigureAwait(false);
+        }
+    }
+
+    /// <summary>
+    /// Ask a headless seat, over loopback, to prepare its secure listener. This is called only for a TLS
+    /// viewer; plain-HTTP joins never trigger certificate loading or provider traffic in the seat.
+    /// </summary>
+    public static async Task<bool> RequestSecureOriginAsync(int httpPort, CancellationToken ct)
+    {
+        if (httpPort <= 0)
+        {
+            return false;
+        }
+
+        try
+        {
+            using var http = new HttpClient { Timeout = TimeSpan.FromSeconds(2) };
+            using var request = new HttpRequestMessage(
+                HttpMethod.Post,
+                $"http://127.0.0.1:{httpPort.ToString(CultureInfo.InvariantCulture)}{CouchCoop.Mod.Server.SecureOriginEndpoint.EnableRoute}")
+            {
+                Content = new ByteArrayContent([]),
+            };
+            using var response = await http.SendAsync(request, ct).ConfigureAwait(false);
+            return response.IsSuccessStatusCode;
+        }
+        catch (HttpRequestException)
+        {
+            return false;
+        }
+        catch (OperationCanceledException) when (!ct.IsCancellationRequested)
+        {
+            return false;
         }
     }
 

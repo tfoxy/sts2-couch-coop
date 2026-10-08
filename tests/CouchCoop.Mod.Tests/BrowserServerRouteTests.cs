@@ -235,6 +235,9 @@ if (args is ["network", ..])
 {
     LanAddressRankingTests.Run();
     QrHostOptionsTests.Run();
+    SecureOriginTests.Run();
+    QrHoverTipCopyTests.Run();
+    SecureHeadlessRedirectTests.RunAsync();
     MdnsResponderTests.Run();
     await HostDiscoveryResponderTests.RunAsync();
     await NetworkHardeningTests.RunAsync();
@@ -258,6 +261,7 @@ if (args is ["idle-host", ..])
     try
     {
         await IdleHostCostTests.DeferredHostUiKeepsTheListenerButNotTheNetworkAsync(idleRoot);
+        await IdleHostCostTests.DeferredSecureOriginContractsAsync(idleRoot);
         await IdleHostCostTests.PendingDiscoveryCannotPublishAfterStopAsync(idleRoot);
         // With nobody served the roster observer does not exist: no listener, no subscription, no timer.
         CouchCoopRosterObserverTests.RosterIsDormantWithoutDemand();

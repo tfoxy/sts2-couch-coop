@@ -1,5 +1,6 @@
 using Godot;
 using CouchCoop.Mod.Localization;
+using CouchCoop.Mod.Server;
 using CouchCoop.Mod.Session;
 
 namespace CouchCoop.Mod.HostUi;
@@ -94,6 +95,7 @@ internal sealed partial class CouchCoopQrDialog : CouchCoopModalDialog
     private readonly CouchCoopSeatModPanel _seatMods = new() { Source = SeatModSelectionService.Shared };
 
     private string? _qrCacheKey;
+    private CouchCoopHostUiSnapshot? _lastSnapshot;
     // The row a live hover-tip set hangs off, if any. Tracked so the set can be taken down on paths
     // where the row itself never reports a hover-leave (dialog close, list collapse, row rebuild).
     private Control? _tipOwner;
@@ -203,6 +205,7 @@ internal sealed partial class CouchCoopQrDialog : CouchCoopModalDialog
 
     public void RefreshLocalization(CouchCoopHostUiSnapshot snapshot)
     {
+        _lastSnapshot = snapshot;
         DismissText = CloseButtonText;
         _title.Text = TitleText;
         // The copy button is wordless, so its title is the only thing a screen reader has to go on.
@@ -243,6 +246,7 @@ internal sealed partial class CouchCoopQrDialog : CouchCoopModalDialog
     public void Open(CouchCoopHostUiSnapshot snapshot)
     {
         ArgumentNullException.ThrowIfNull(snapshot);
+        _lastSnapshot = snapshot;
         ApplyLayout();
         RefreshOptions(snapshot);
         RefreshConnections();
@@ -263,6 +267,7 @@ internal sealed partial class CouchCoopQrDialog : CouchCoopModalDialog
 
     private void RefreshOptions(CouchCoopHostUiSnapshot snapshot)
     {
+        _lastSnapshot = snapshot;
         var options = QrHostOptions.Build(
             System.Environment.MachineName,
             LanAddressRanking.ReadAdvertisedHostOverride(),
@@ -274,7 +279,8 @@ internal sealed partial class CouchCoopQrDialog : CouchCoopModalDialog
             snapshot.SecureUnavailableReason,
             // Read per OPEN, not once: the self-check completes a couple of seconds after the responder
             // starts, which can easily be after this dialog was first constructed.
-            CouchCoopHostUiNotices.MdnsRowTrusted());
+            CouchCoopHostUiNotices.MdnsRowTrusted(),
+            secureOriginEnabled: SecureOriginCertificates.Enabled);
 
         // Keep the player's pick across a reopen when it is still on offer (so re-scanning after a
         // failed attempt does not silently switch them back to the default), falling back to the pick
@@ -291,7 +297,33 @@ internal sealed partial class CouchCoopQrDialog : CouchCoopModalDialog
         // Persist first, then re-render: the persisted pick is what the NEXT open restores, and
         // writing it before the render means a crash mid-render cannot lose the choice.
         CouchCoopQrSelectionPreference.Write(option);
+        if (option.Kind == QrHostOptionKind.Secure && !option.Enabled)
+        {
+            CouchCoop.Mod.CouchCoopMod.RequestSecureOrigin();
+            RefreshSecureAvailability(CouchCoop.Mod.CouchCoopMod.HostUiSnapshot);
+            return;
+        }
+
         RenderSelection();
+    }
+
+    /// <summary>Refresh an open dialog only when the asynchronous secure-origin state changes.</summary>
+    public void RefreshSecureAvailability(CouchCoopHostUiSnapshot snapshot)
+    {
+        ArgumentNullException.ThrowIfNull(snapshot);
+        var previous = _lastSnapshot;
+        _lastSnapshot = snapshot;
+        if (!IsOpen || previous is null)
+        {
+            return;
+        }
+
+        if (previous.SecurePort != snapshot.SecurePort
+            || previous.SecureDomain != snapshot.SecureDomain
+            || previous.SecureUnavailableReason != snapshot.SecureUnavailableReason)
+        {
+            RefreshOptions(snapshot);
+        }
     }
 
     private void RenderSelection()

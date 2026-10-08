@@ -16,6 +16,7 @@
   "couchcoop_option_server_not_listening": "The browser server is not listening yet.",
   "couchcoop_option_address_not_eligible": "Needs a normal network address on this PC.",
   "couchcoop_option_secure_pending": "Still setting up — the plain address still works.",
+  "couchcoop_secure_idle": "Select to set up the HTTPS link. Internet access may be needed.",
   "couchcoop_secure_checking": "Checking for the installable link…",
   "couchcoop_secure_disabled": "Turned off by {setting}.",
   "couchcoop_secure_address_ineligible": "Needs a normal network address on this PC.",

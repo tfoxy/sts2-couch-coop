@@ -16,6 +16,7 @@
   "couchcoop_option_server_not_listening": "ブラウザサーバーはまだ接続を受け付けていません。",
   "couchcoop_option_address_not_eligible": "このPCに通常のネットワークアドレスが必要です。",
   "couchcoop_option_secure_pending": "まだセットアップ中です。通常のアドレスは引き続き使えます。",
+  "couchcoop_secure_idle": "HTTPSリンクを設定するには選択してください。インターネット接続が必要な場合があります。",
   "couchcoop_secure_checking": "インストール可能なリンクを確認しています…",
   "couchcoop_secure_disabled": "{setting}によりオフになりました。",
   "couchcoop_secure_address_ineligible": "このPCに通常のネットワークアドレスが必要です。",

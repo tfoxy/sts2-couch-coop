@@ -3,6 +3,7 @@ namespace CouchCoop.Mod.Localization;
 public static class CouchCoopSecureText
 {
     public static CouchCoopText Pending => new("couchcoop_option_secure_pending");
+    public static CouchCoopText Idle => new("couchcoop_secure_idle");
     public static CouchCoopText Checking => new("couchcoop_secure_checking");
     public static CouchCoopText Disabled(string setting) => CouchCoopText.Create("couchcoop_secure_disabled", ("setting", setting));
     public static CouchCoopText AddressIneligible => new("couchcoop_secure_address_ineligible");

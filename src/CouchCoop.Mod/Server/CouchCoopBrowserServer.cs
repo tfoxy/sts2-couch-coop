@@ -38,7 +38,8 @@ public sealed class CouchCoopBrowserServer(
     Action<int, long>? onBrowserDemandChanged = null,
     Action<int, long>? onSceneStreamingDemandChanged = null,
     Func<Action<RosterFacts?>, IDisposable?>? subscribeRoster = null,
-    AudioService? injectedAudioService = null) : IAsyncDisposable
+    AudioService? injectedAudioService = null,
+    Action? requestSecureOrigin = null) : IAsyncDisposable
 {
     /// <summary>Harness-only synthetic seat port injected into the control document; null in product hosting.</summary>
     public int? SyntheticSeatPort { get; set; }
@@ -54,6 +55,7 @@ public sealed class CouchCoopBrowserServer(
         : null;
     private readonly Action? _onSceneAck = onSceneAck;
     private readonly Action<int, long>? _onBrowserDemandChanged = onBrowserDemandChanged;
+    private readonly Action? _requestSecureOrigin = requestSecureOrigin;
     private readonly Action<int, long> _onSceneStreamingDemandChanged =
         onSceneStreamingDemandChanged ?? CouchCoopHeadlessVisualSuspender.CreateStreamingDemandReporter();
     private readonly bool _isHeadlessClient = isHeadlessClient ?? CouchCoopMod.IsHeadlessClient;
@@ -1613,6 +1615,24 @@ public sealed class CouchCoopBrowserServer(
             || string.Equals(request.Path, BrowserLifecycleDiagnostics.Route + "/summary", StringComparison.Ordinal))
         {
             await HandleLifecycleDiagnosticsAsync(stream, request, cancellationToken).ConfigureAwait(false);
+            return;
+        }
+
+        if (string.Equals(request.Path, SecureOriginEndpoint.EnableRoute, StringComparison.Ordinal))
+        {
+            if (!_isHeadlessClient
+                || !string.Equals(request.Method, "POST", StringComparison.OrdinalIgnoreCase)
+                || !IPAddress.IsLoopback(remoteAddress)
+                || _requestSecureOrigin is null)
+            {
+                await HttpResponseWriter.WriteJsonErrorAsync(
+                    stream, HttpStatusCode.NotFound, "not-found", "Route was not found.", cancellationToken).ConfigureAwait(false);
+                return;
+            }
+
+            _requestSecureOrigin();
+            await HttpResponseWriter.WriteJsonAsync(
+                stream, HttpStatusCode.Accepted, new { accepted = true }, cancellationToken).ConfigureAwait(false);
             return;
         }
 

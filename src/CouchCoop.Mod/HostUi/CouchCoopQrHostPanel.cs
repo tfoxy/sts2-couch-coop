@@ -195,6 +195,7 @@ internal sealed partial class CouchCoopQrHostPanel : Control
         ArgumentNullException.ThrowIfNull(snapshot);
         _snapshot = snapshot;
         RefreshLocalization();
+        _dialog.RefreshSecureAvailability(snapshot);
         // Registry snapshots are memory-only and do not enumerate adapters or touch the browser server.
         // Refreshing here lets an open dialog advance its elapsed timers without a second controller tick.
         _dialog.RefreshConnections();

@@ -32,10 +32,9 @@ namespace CouchCoop.Mod.HostUi;
 /// and still owns the advertised host.
 /// </para>
 /// <para>
-/// A method that cannot work right now is still LISTED, disabled, with the blocker in its detail
-/// line — the same convention the old checkboxes used. Showing it teaches that the option exists
-/// (TLS usually becomes ready seconds after startup); hiding it would make the list quietly
-/// reshuffle between two opens.
+/// A method that cannot work right now is still LISTED with its blocker in the detail line. The secure
+/// method is the one exception to disabled-row interaction: while idle or retryable it remains selectable,
+/// and choosing it is the explicit request that starts certificate setup.
 /// </para>
 /// </remarks>
 public static class QrHostOptions
@@ -61,7 +60,7 @@ public static class QrHostOptions
     public static string AddressNotEligibleReason => CouchCoopLocalization.Resolve("couchcoop_option_address_not_eligible");
     internal static CouchCoopText AddressNotEligibleText => new("couchcoop_option_address_not_eligible");
 
-    /// <summary>Blocker while TLS is not yet ready and no better reason is known.</summary>
+    /// <summary>Idle explanation while TLS is not yet ready and no better reason is known.</summary>
     public static string SecurePendingReason => CouchCoopLocalization.Resolve("couchcoop_option_secure_pending");
     internal static CouchCoopText SecurePendingText => CouchCoopSecureText.Pending;
 
@@ -94,8 +93,8 @@ public static class QrHostOptions
     /// The HTTP listener's bound port once TLS is ready, or <c>0</c> while TLS is unavailable.
     /// </param>
     /// <param name="secureUnavailableReason">
-    /// Why the secure origin is not on offer (snapshot's <c>SecureUnavailableReason</c>), rendered on
-    /// the disabled secure rows; null/blank falls back to <see cref="SecurePendingReason"/>.
+    /// Why the secure origin is not ready (snapshot's <c>SecureUnavailableReason</c>), rendered on
+    /// the secure rows; null/blank falls back to the idle explanation.
     /// </param>
     /// <param name="mdnsNameResolves">
     /// Whether the <c>.local</c> name is believed to actually resolve on this LAN
@@ -112,7 +111,8 @@ public static class QrHostOptions
         string? secureDomain,
         int securePort,
         CouchCoopText? secureUnavailableReason,
-        bool mdnsNameResolves = true)
+        bool mdnsNameResolves = true,
+        bool secureOriginEnabled = true)
     {
         var options = new List<QrHostOption>();
         var seenKeys = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
@@ -154,7 +154,7 @@ public static class QrHostOptions
                 TryAdd(webRow);
             }
 
-            TryAdd(DescribeSecureFor(adapter, secureDomain, securePort, secureUnavailableReason));
+            TryAdd(DescribeSecureFor(adapter, secureDomain, securePort, secureUnavailableReason, secureOriginEnabled));
         }
 
         // ALWAYS LAST, never capped away: the slot TryAdd reserves (MaxOptions - 1) is this row's. Last
@@ -172,20 +172,20 @@ public static class QrHostOptions
 
     /// <summary>
     /// Which row a (re)built list should select: an exact <see cref="QrHostOption.SelectionKey"/>
-    /// match, else the default — the first ENABLED option, else the first row so the dialog still renders
-    /// something explainable.
+    /// match that is selectable, else the default — the first ENABLED option, else the first row so the
+    /// dialog still renders something explainable.
     /// </summary>
     /// <remarks>
     /// Pure and here rather than in the select so "which row lights up after a refresh" is testable
-    /// without Godot. A disabled row never satisfies a preference: restoring a pick the player cannot
-    /// re-make by clicking would render a QR the row itself refuses.
+    /// without Godot. An unavailable row satisfies a preference only when the player can activate it;
+    /// restoring the idle HTTPS row remembers the choice but does not itself start setup.
     /// </remarks>
     public static QrHostOption? RestoreSelection(IReadOnlyList<QrHostOption> options, string? preferredKey)
     {
         ArgumentNullException.ThrowIfNull(options);
         if (preferredKey is { Length: > 0 })
         {
-            var exact = options.FirstOrDefault(option => option.Enabled
+            var exact = options.FirstOrDefault(option => option.Selectable
                 && string.Equals(option.SelectionKey, preferredKey, StringComparison.OrdinalIgnoreCase));
             if (exact is not null)
             {
@@ -302,7 +302,8 @@ public static class QrHostOptions
         QrAdapterInfo adapter,
         string? secureDomain,
         int securePort,
-        CouchCoopText? unavailableReason)
+        CouchCoopText? unavailableReason,
+        bool secureOriginEnabled = true)
     {
         ArgumentNullException.ThrowIfNull(adapter);
         var domain = string.IsNullOrWhiteSpace(secureDomain)
@@ -324,7 +325,10 @@ public static class QrHostOptions
         {
             return new QrHostOption(displayHost, 0, QrHostOptionKind.Secure, adapter,
                 Enabled: false,
-                DisabledReason: unavailableReason ?? SecurePendingText);
+                DisabledReason: unavailableReason ?? (secureOriginEnabled
+                    ? CouchCoopSecureText.Idle
+                    : CouchCoopSecureText.Disabled(SecureOriginCertificates.EnabledEnvironmentVariable)),
+                CanSelectWhenUnavailable: secureOriginEnabled);
         }
 
         return new QrHostOption(displayHost, securePort, QrHostOptionKind.Secure, adapter);
@@ -452,9 +456,13 @@ public enum QrHostOptionKind
 /// the safety property (see <see cref="ToUri"/>).
 /// </param>
 /// <param name="Enabled">
-/// Whether the row may be selected. A disabled row still renders — greyed, with
-/// <paramref name="DisabledReason"/> in its detail slot — and is skipped when the dialog picks its
-/// default ("first AVAILABLE option").
+/// Whether the row currently has a usable URL and may be copied. An unavailable row still renders —
+/// greyed, with <paramref name="DisabledReason"/> in its detail slot — and is skipped when the dialog
+/// picks its default ("first AVAILABLE option").
+/// </param>
+/// <param name="CanSelectWhenUnavailable">
+/// The secure row can be activated while it has no port: activation requests certificate setup. It is
+/// distinct from <paramref name="Enabled"/>, which says a URL can currently be shown and copied.
 /// </param>
 /// <param name="MdnsTrusted">
 /// Mdns rows only: whether the startup self-check saw the name answer. False swaps the detail line for
@@ -468,8 +476,12 @@ public sealed record QrHostOption(
     string? AbsoluteUri = null,
     bool Enabled = true,
     CouchCoopText? DisabledReason = null,
-    bool MdnsTrusted = true)
+    bool MdnsTrusted = true,
+    bool CanSelectWhenUnavailable = false)
 {
+    /// <summary>Whether the row can be activated, including secure setup and retry states.</summary>
+    public bool Selectable => Enabled || CanSelectWhenUnavailable;
+
     /// <summary>
     /// The exact payload the QR encodes and the URL label prints. Built the same way
     /// <see cref="OfflineQrCode"/> normalises a payload, so the scanned code and the typed fallback can

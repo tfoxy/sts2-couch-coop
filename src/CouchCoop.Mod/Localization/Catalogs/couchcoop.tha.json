@@ -16,6 +16,7 @@
   "couchcoop_option_server_not_listening": "เซิร์ฟเวอร์สำหรับเบราว์เซอร์ยังไม่พร้อมรับการเชื่อมต่อ",
   "couchcoop_option_address_not_eligible": "ต้องมีที่อยู่เครือข่ายปกติบนพีซีเครื่องนี้",
   "couchcoop_option_secure_pending": "กำลังตั้งค่าอยู่ — ระหว่างนี้ใช้ที่อยู่ธรรมดาได้",
+  "couchcoop_secure_idle": "เลือกเพื่อตั้งค่าลิงก์ HTTPS อาจต้องใช้อินเทอร์เน็ต",
   "couchcoop_secure_checking": "กำลังตรวจสอบลิงก์ที่ติดตั้งได้...",
   "couchcoop_secure_disabled": "ปิดโดย {setting}",
   "couchcoop_secure_address_ineligible": "ต้องมีที่อยู่เครือข่ายปกติบนพีซีเครื่องนี้",

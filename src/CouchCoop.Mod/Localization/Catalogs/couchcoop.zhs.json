@@ -16,6 +16,7 @@
   "couchcoop_option_server_not_listening": "浏览器服务器尚未开始监听。",
   "couchcoop_option_address_not_eligible": "需要此电脑上的正常网络地址。",
   "couchcoop_option_secure_pending": "仍在设置中——普通地址仍可使用。",
+  "couchcoop_secure_idle": "选择以设置 HTTPS 链接。可能需要互联网连接。",
   "couchcoop_secure_checking": "正在检查可安装链接…",
   "couchcoop_secure_disabled": "已由 {setting} 关闭。",
   "couchcoop_secure_address_ineligible": "需要此电脑上的正常网络地址。",

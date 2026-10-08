@@ -18,6 +18,7 @@ public sealed class HotReloadableBrowserServerHost : IHotServerHost, IHotBrowser
     private readonly CouchCoop.Mod.Connections.BrowserDemandLedger _browserDemand;
     private readonly Action<int, long> _inputGuardDemand = RootWindowEmbeddingGuard.CreateBrowserDemandReporter();
     private readonly Action<int, long> _zeroClientSeatDemand = ZeroClientGuard.CreateOwnedSeatReporter();
+    private readonly Action? _requestSecureOrigin;
     private TcpListener? _listener;
     private SeatBrowserPipe? _seatPipe;
     private CancellationTokenSource? _stop;
@@ -34,7 +35,8 @@ public sealed class HotReloadableBrowserServerHost : IHotServerHost, IHotBrowser
         IPAddress? bindAddress = null,
         int preferredPort = 13337,
         string? resourceCacheRoot = null,
-        Action<string>? log = null)
+        Action<string>? log = null,
+        Action? requestSecureOrigin = null)
     {
         _runtime = runtime ?? throw new ArgumentNullException(nameof(runtime));
         StaticRoot = string.IsNullOrWhiteSpace(staticRoot) ? throw new ArgumentException("Static root is required.", nameof(staticRoot)) : staticRoot;
@@ -42,6 +44,7 @@ public sealed class HotReloadableBrowserServerHost : IHotServerHost, IHotBrowser
         _preferredPort = preferredPort;
         ResourceCacheRoot = resourceCacheRoot;
         _log = log ?? CouchCoopLog.Stderr;
+        _requestSecureOrigin = requestSecureOrigin;
         _secureListener = new SecureBrowserListener(_log);
         var lobby = new CouchCoopLobbyParticipation(_runtime);
         _headlessManager = CouchCoopMod.IsHeadlessClient
@@ -511,7 +514,8 @@ public sealed class HotReloadableBrowserServerHost : IHotServerHost, IHotBrowser
             isHeadlessClient: host.IsHeadlessClient,
             log: host.Log,
             admission: host.Admission,
-            onBrowserDemandChanged: host.CreateBrowserDemandReporter());
+            onBrowserDemandChanged: host.CreateBrowserDemandReporter(),
+            requestSecureOrigin: host._requestSecureOrigin);
 
         public string DescribeOverlayLayoutJson()
             => string.Empty;

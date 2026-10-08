@@ -61,12 +61,12 @@ public sealed class CouchCoopHostUiServices : IAsyncDisposable
 
     /// <param name="deferDiscoveryServices">
     /// When <see langword="true"/>, <see cref="StartAsync"/> brings up ONLY the browser listener and leaves
-    /// the LAN discovery responder, the mDNS name and the secure-origin fetch for
+    /// the LAN discovery responder and the mDNS name for
     /// <see cref="StartDiscoveryServices"/>. See that method for why.
     /// <para>
     /// Defaults to <see langword="false"/> so every existing caller — the test suites, the hosted harness,
-    /// and a headless SEAT, which is spawned only when co-op is already in use and must have its secure
-    /// listener up before the browser is redirected to it — keeps the original all-at-once startup.
+    /// and a headless SEAT, which is spawned only when co-op is already in use and enables its secure
+    /// listener on demand when a TLS viewer needs it.
     /// </para>
     /// </param>
     public CouchCoopHostUiServices(
@@ -104,7 +104,8 @@ public sealed class CouchCoopHostUiServices : IAsyncDisposable
             _staticRoot,
             _bindAddress,
             _preferredPort,
-            log: _log);
+            log: _log,
+            requestSecureOrigin: RequestSecureOrigin);
 
         try
         {
@@ -166,16 +167,17 @@ public sealed class CouchCoopHostUiServices : IAsyncDisposable
     }
 
     /// <summary>
-    /// Bring up the LAN discovery responder, the <c>.local</c> mDNS name and the secure-origin fetch. Safe to
-    /// call repeatedly and from any thread; each hosting session starts the services once.
+    /// Bring up the LAN discovery responder and the <c>.local</c> mDNS name. Certificate acquisition is
+    /// deliberately deferred until a player selects the secure QR method or a TLS viewer needs a seat.
+    /// Safe to call repeatedly and from any thread; each hosting session starts the services once.
     /// </summary>
     /// <remarks>
     /// <para>
-    /// WHY THIS IS NOT PART OF <see cref="StartAsync"/> ANY MORE. These three are the only things the mod
-    /// does to the machine's NETWORK, and until now every one of them started at mod init — so a player who
+    /// WHY THIS IS NOT PART OF <see cref="StartAsync"/> ANY MORE. These network services used to start at
+    /// mod init — so a player who
     /// installed the mod and never opened a co-op lobby still had a multicast socket parsing every mDNS
-    /// datagram on their LAN, a UDP responder, a 30s interface re-enumeration for the whole session, and one
-    /// outbound WAN request to the certificate provider on every single launch. None of that is needed until
+    /// datagram on their LAN, a UDP responder, and a 30s interface re-enumeration for the whole session. None
+    /// of that is needed until
     /// somebody is actually about to hand out a join address, and that moment has a name: a HOST lobby on
     /// screen. <c>CouchCoopQrHostPanelController.HostLobbyPresented</c> is the trigger.
     /// </para>
@@ -271,13 +273,27 @@ public sealed class CouchCoopHostUiServices : IAsyncDisposable
                 : null,
             _log);
 
-        // WS6: the OPT-IN secure origin. Started DETACHED and after everything above, because acquiring the
-        // certificate is a WAN round-trip and this feature must never delay — let alone fail — the thing that
-        // actually serves the game. A host with no internet reaches "unavailable" a few seconds later and
-        // nothing else here ever notices: the plain-HTTP listener, the discovery responder and the mDNS name
-        // are all already up and are untouched by the outcome. The QR dialog already renders a Pending
-        // "checking…" state, which is what makes arriving at the lobby (rather than at launch) invisible.
-        _secureOriginTask = StartSecureOriginAsync(joinBaseUri, generation, _discoveryStop.Token);
+        // Keep the secure link visible, but do not acquire its certificate until its row is explicitly
+        // selected. The host's browser listener and the LAN-only discovery paths are already available.
+        if (_browserServer?.SecurePort > 0 && _secureCertificates is not null)
+        {
+            _snapshot = _snapshot with
+            {
+                SecurePort = _browserServer.SecurePort,
+                SecureDomain = _secureCertificates.Domain,
+                SecureUnavailableReason = null,
+            };
+        }
+        else
+        {
+            _snapshot = _snapshot with
+            {
+                SecureDomain = LocalIpCoCertificateProvider.DefaultDomain,
+                SecureUnavailableReason = SecureOriginCertificates.Enabled
+                    ? CouchCoopSecureText.Idle
+                    : CouchCoopSecureText.Disabled(SecureOriginCertificates.EnabledEnvironmentVariable),
+            };
+        }
 
         // WS4 macOS: start the "bound but unreachable" clock HERE and nowhere else. The listener itself came up
         // at mod init and stays up for the whole process, so a threshold measured from the bind would warn every
@@ -290,7 +306,7 @@ public sealed class CouchCoopHostUiServices : IAsyncDisposable
             Connections.HostReachabilityWatch.Shared.Arm(joinBaseUri?.ToString() ?? listenerBaseUri.ToString());
         }
 
-        _log("host discovery services started (lan discovery + mdns + secure origin)");
+        _log("host discovery services started (lan discovery + mdns)");
     }
 
     public async ValueTask DisposeAsync()
@@ -299,26 +315,61 @@ public sealed class CouchCoopHostUiServices : IAsyncDisposable
     }
 
     /// <summary>
-    /// Acquire the published wildcard certificate and, if it lands, enable TLS on the browser listener —
-    /// then republish the snapshot so the QR dialog can offer the checkbox.
+    /// Acquire the published wildcard certificate on explicit demand and enable TLS on the browser listener.
     /// </summary>
     /// <remarks>
     /// <para>
-    /// Fire-and-forget by design. This is the only part of host startup that talks to the internet, and the
-    /// requirement is that LAN-only play is completely unaffected by it: nothing awaits this task, no caller
-    /// can observe it failing, and the only trace of a failure is a diagnostic line plus a disabled checkbox
-    /// carrying <see cref="SecureOriginStatus.Text"/>.
+    /// Fire-and-forget by design when called by the UI or the internal seat route. LAN-only play never calls
+    /// this method, and failure only affects the secure QR row; the plain listener remains available.
     /// </para>
     /// <para>
-    /// The snapshot is REPLACED rather than mutated when the certificate lands, so a dialog opened before it
-    /// arrived simply reads the old value (checkbox disabled, "checking…") and a dialog opened afterwards
-    /// reads the new one. The dialog recomputes on every open, so no invalidation is needed.
+    /// The snapshot is replaced as the request moves through checking, ready and unavailable. An open QR
+    /// dialog observes those secure-origin changes and updates the selected row when setup completes.
     /// </para>
     /// </remarks>
+    public Task RequestSecureOriginAsync()
+    {
+        lock (_discoveryGate)
+        {
+            if (_browserServer?.SecurePort > 0 && _secureCertificates is not null)
+            {
+                return Task.CompletedTask;
+            }
+
+            if (!SecureOriginCertificates.Enabled)
+            {
+                _snapshot = _snapshot with
+                {
+                    SecureUnavailableReason = CouchCoopSecureText.Disabled(SecureOriginCertificates.EnabledEnvironmentVariable),
+                };
+                return Task.CompletedTask;
+            }
+
+            if (!_discoveryStarted || _discoveryStop is null)
+            {
+                _snapshot = _snapshot with { SecureUnavailableReason = CouchCoopSecureText.SetupFailed };
+                return Task.CompletedTask;
+            }
+
+            if (!_secureOriginTask.IsCompleted)
+            {
+                return _secureOriginTask;
+            }
+
+            var generation = _discoveryGeneration;
+            var cancellationToken = _discoveryStop.Token;
+            _snapshot = _snapshot with
+            {
+                SecureDomain = LocalIpCoCertificateProvider.DefaultDomain,
+                SecureUnavailableReason = CouchCoopSecureText.Checking,
+            };
+            _secureOriginTask = StartSecureOriginAsync(_joinBaseUri, generation, cancellationToken);
+            return _secureOriginTask;
+        }
+    }
+
     private Task StartSecureOriginAsync(Uri? joinBaseUri, long generation, CancellationToken cancellationToken)
     {
-        if (_browserServer?.SecurePort > 0 && _secureCertificates is not null)
-            return Task.CompletedTask;
         if (!SecureOriginCertificates.Enabled)
         {
             _snapshot = _snapshot with
@@ -344,14 +395,19 @@ public sealed class CouchCoopHostUiServices : IAsyncDisposable
             return Task.CompletedTask;
         }
 
-        var certificates = _createCertificates();
-        _snapshot = _snapshot with { SecureDomain = certificates.Domain };
-
         return Task.Run(async () =>
         {
+            SecureOriginCertificates? certificates = null;
             var retained = false;
             try
             {
+                certificates = _createCertificates();
+                lock (_discoveryGate)
+                {
+                    if (generation != _discoveryGeneration || !_discoveryStarted || cancellationToken.IsCancellationRequested)
+                        return;
+                    _snapshot = _snapshot with { SecureDomain = certificates.Domain };
+                }
                 await certificates.StartAsync(cancellationToken).ConfigureAwait(false);
                 lock (_discoveryGate)
                 {
@@ -393,12 +449,17 @@ public sealed class CouchCoopHostUiServices : IAsyncDisposable
             }
             finally
             {
-                if (!retained) certificates.Dispose();
+                if (!retained) certificates?.Dispose();
             }
         });
     }
 
     public IHotServerHost? HotServerHost => _browserServer;
+
+    private void RequestSecureOrigin()
+    {
+        _ = RequestSecureOriginAsync();
+    }
 
     public Task ActivateHotReloadGenerationAsync(
         ICouchCoopHotGeneration generation,

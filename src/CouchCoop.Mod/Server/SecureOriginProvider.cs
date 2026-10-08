@@ -38,8 +38,8 @@ namespace CouchCoop.Mod.Server;
 /// often from a DIFFERENT CA (the default provider below has already moved from Sectigo to GlobalSign,
 /// which is why <see cref="LocalIpCoCertificateProvider"/> refuses to trust the chain file it publishes;
 /// see the remarks there). An interface plus a runtime fetch means swapping or adding a provider is a
-/// small, testable change rather than a re-architecture, and a dead provider degrades to "the checkbox
-/// is disabled with a reason" instead of a broken host.
+/// small, testable change rather than a re-architecture, and a dead provider leaves the HTTPS row
+/// unavailable with a reason instead of breaking the host.
 /// </para>
 /// </remarks>
 public interface ISecureOriginCertificateProvider
