@@ -141,6 +141,7 @@ describe("SettingsPanel — per-row help tips", () => {
     const httpHelp = httpWrapper.get('[data-testid="mirror-help-bubble-audio"]').text();
     expect(httpHelp).toContain("both the host and this device");
     expect(httpHelp).toContain("above the QR button");
+    expect(httpHelp.match(/Hear this player's game audio/g)).toHaveLength(1);
     httpWrapper.unmount();
 
     globalThis.__couchCoopHostBase = "https://lan-host:13337";
