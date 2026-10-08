@@ -21,6 +21,8 @@ internal static class SecureHeadlessRedirectTests
 
     private static async Task RunAsyncCore()
     {
+        OnlySecureDirectSeatRedirectsRequestTls();
+        await SecureSetupRouteIsLoopbackAndHeadlessOnly();
         await RouteReportsZeroWhenThereIsNoSecureListener();
         await RouteReportsThePublishedPort();
         await HostResolvesAHeadlessSecurePortOverLoopback();
@@ -29,6 +31,60 @@ internal static class SecureHeadlessRedirectTests
         CacheRootIsHandedToSeatsRatherThanRediscovered();
 
         Console.WriteLine("SecureHeadlessRedirectTests: ok");
+    }
+
+    private static void OnlySecureDirectSeatRedirectsRequestTls()
+    {
+        Expect(!CouchCoopWebSocketConnection.ShouldRequestSecureOriginForSeat(
+                isSecure: false, headlessPath: null, headlessPort: 13357, joinRejection: null),
+            "a plain HTTP seat join does not request TLS setup");
+        Expect(CouchCoopWebSocketConnection.ShouldRequestSecureOriginForSeat(
+                isSecure: true, headlessPath: null, headlessPort: 13357, joinRejection: null),
+            "an HTTPS direct-seat redirect requests TLS setup");
+        Expect(!CouchCoopWebSocketConnection.ShouldRequestSecureOriginForSeat(
+                isSecure: true, headlessPath: "pipe://seat", headlessPort: null, joinRejection: null),
+            "a shared seat path already inherits the host's secure connection");
+        Expect(!CouchCoopWebSocketConnection.ShouldRequestSecureOriginForSeat(
+                isSecure: true, headlessPath: null, headlessPort: 13357, joinRejection: "spawn-failed"),
+            "a rejected seat spawn does not request TLS setup");
+    }
+
+    private static async Task SecureSetupRouteIsLoopbackAndHeadlessOnly()
+    {
+        var requested = 0;
+        await using (var seat = new CouchCoopBrowserServer(
+            new StaticSpaFileProvider(Path.Combine(Path.GetTempPath(), "couchcoop-missing-static")),
+            new NullAssetHttpAdapter(),
+            bindAddress: IPAddress.Loopback,
+            preferredPort: PickFreePort(),
+            isHeadlessClient: true,
+            requestSecureOrigin: () => Interlocked.Increment(ref requested),
+            log: _ => { }))
+        {
+            var baseUri = await seat.StartAsync();
+            var accepted = await HeadlessClientManager.RequestSecureOriginAsync(baseUri.Port, CancellationToken.None);
+            Expect(accepted && requested == 1,
+                "a loopback POST asks a headless seat to prepare TLS");
+
+            using var http = new HttpClient();
+            using var get = await http.GetAsync(
+                $"http://127.0.0.1:{baseUri.Port}{SecureOriginEndpoint.EnableRoute}");
+            Expect(get.StatusCode == System.Net.HttpStatusCode.NotFound && requested == 1,
+                "the setup route does not accept GET or repeat its action");
+        }
+
+        await using var host = new CouchCoopBrowserServer(
+            new StaticSpaFileProvider(Path.Combine(Path.GetTempPath(), "couchcoop-missing-static")),
+            new NullAssetHttpAdapter(),
+            bindAddress: IPAddress.Loopback,
+            preferredPort: PickFreePort(),
+            isHeadlessClient: false,
+            requestSecureOrigin: () => Interlocked.Increment(ref requested),
+            log: _ => { });
+        var hostUri = await host.StartAsync();
+        Expect(!await HeadlessClientManager.RequestSecureOriginAsync(hostUri.Port, CancellationToken.None)
+            && requested == 1,
+            "a non-seat browser server does not expose the seat-only setup action");
     }
 
     // The honest answer for an instance with no secure origin is 0 — not a 404, which the caller could not
@@ -60,7 +116,7 @@ internal static class SecureHeadlessRedirectTests
     private static async Task HostResolvesAHeadlessSecurePortOverLoopback()
     {
         const int pretendSecurePort = 13358;
-        SecureOriginEndpoint.Publish(pretendSecurePort);
+        SecureOriginEndpoint.Publish(0);
         try
         {
             await using var server = new CouchCoopBrowserServer(
@@ -70,9 +126,13 @@ internal static class SecureHeadlessRedirectTests
                 // A REAL preferred port, not 0: StartAsync builds BaseUri from the loop variable, so an
                 // ephemeral bind would advertise port 0 and the resolver would short-circuit on it.
                 preferredPort: PickFreePort(),
+                isHeadlessClient: true,
+                requestSecureOrigin: () => SecureOriginEndpoint.Publish(pretendSecurePort),
                 log: _ => { });
 
             var baseUri = await server.StartAsync();
+            var requested = await HeadlessClientManager.RequestSecureOriginAsync(baseUri.Port, CancellationToken.None);
+            Expect(requested, "the host explicitly asks the headless seat to prepare secure setup");
 
             var reported = await HeadlessClientManager.TryResolveSecurePortAsync(
                 baseUri.Port, TimeSpan.FromSeconds(3), CancellationToken.None);

@@ -122,7 +122,9 @@ public static class QrHoverTipCopy
 
         if (!option.Enabled && option.DisabledReason is { } disabled)
         {
-            description += DisabledReasonPrefix + disabled.Resolve();
+            description += option.CanSelectWhenUnavailable
+                ? "\n" + disabled.Resolve()
+                : DisabledReasonPrefix + disabled.Resolve();
         }
 
         return (titleKey, description);

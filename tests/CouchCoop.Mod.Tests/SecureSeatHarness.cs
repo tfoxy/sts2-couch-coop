@@ -16,9 +16,9 @@ using CouchCoop.Mod.Session;
 //      hands COUCHCOOP_SECURE_CERT_CACHE down to it?
 //
 // The parent fetches once, then spawns itself as a "seat" with a deliberately isolated data home and the
-// handed-down cache, and resolves the child's secure port exactly as CouchCoopWebSocketConnection does.
-// The child is told to REFUSE to fetch, so a cache miss is a visible failure rather than a silent
-// round-trip — which is what makes this a test of the hand-down and not just of the listener.
+// handed-down cache. It explicitly requests TLS over loopback, as a secure viewer redirect does. The child
+// is told to REFUSE to fetch, so a cache miss is a visible failure rather than a silent round-trip — which
+// makes this a test of deferred setup, the cache hand-down, and the listener.
 internal static class SecureSeatHarness
 {
     public const string Verb = "secure-seat-harness";
@@ -36,7 +36,7 @@ internal static class SecureSeatHarness
         var cacheRoot = Path.Combine(Path.GetTempPath(), "couchcoop-secure-harness-" + Guid.NewGuid().ToString("N"));
         Console.WriteLine($"[parent] cache={cacheRoot}");
 
-        // 1. Host-role acquisition: exactly what CouchCoopHostUiServices does at game start.
+        // 1. Host-role acquisition: the harness stands in for a player selecting the HTTPS QR row.
         var certificates = new SecureOriginCertificates(cacheRoot: cacheRoot, log: Console.WriteLine);
         await certificates.StartAsync();
         if (!certificates.Status.IsReady)
@@ -88,7 +88,15 @@ internal static class SecureSeatHarness
 
             Console.WriteLine($"[parent] seat http port={httpPort}");
 
-            // 3. The production resolve: ask the seat for the TLS port it actually bound.
+            // 3. Explicitly request setup on the seat, then resolve its TLS port as the secure redirect does.
+            var requested = await HeadlessClientManager.RequestSecureOriginAsync(
+                httpPort.Value, CancellationToken.None);
+            if (!requested)
+            {
+                Console.WriteLine("[parent] FAIL: the seat refused the loopback secure-setup request.");
+                return 1;
+            }
+
             var securePort = await HeadlessClientManager.TryResolveSecurePortAsync(
                 httpPort.Value, TimeSpan.FromSeconds(15), CancellationToken.None);
 
@@ -118,38 +126,53 @@ internal static class SecureSeatHarness
 
     private static async Task<int> RunChildAsync()
     {
-        // Prove the cache is shared: load ONLY from cache. With the hand-down this succeeds; without it the
-        // isolated data home yields an empty cache and this fails, which is the whole point of the check.
+        // Do not touch the cache at startup. The loopback setup route below loads it only when the host asks.
         var cacheRoot = Environment.GetEnvironmentVariable(SecureOriginCertificates.CacheRootEnvironmentVariable);
-        var certificates = new SecureOriginCertificates(
-            provider: Environment.GetEnvironmentVariable(ChildNoFetchVariable) == "1"
-                ? new RefusingProvider()
-                : null,
-            cacheRoot: cacheRoot,
-            log: message => Console.WriteLine($"[seat] {message}"));
+        SecureOriginCertificates? certificates = null;
+        CouchCoopBrowserServer? server = null;
+        var requestStarted = 0;
 
-        await certificates.StartAsync();
-        if (!certificates.Status.IsReady)
+        async Task EnableSecureOriginAsync()
         {
-            Console.WriteLine($"[seat] FAIL: no certificate from the handed-down cache ({certificates.Status.Reason}).");
-            return 1;
+            if (Interlocked.Exchange(ref requestStarted, 1) != 0) return;
+            var setup = new SecureOriginCertificates(
+                provider: Environment.GetEnvironmentVariable(ChildNoFetchVariable) == "1"
+                    ? new RefusingProvider()
+                    : null,
+                cacheRoot: cacheRoot,
+                log: message => Console.WriteLine($"[seat] {message}"));
+            certificates = setup;
+            await setup.StartAsync();
+            if (!setup.Status.IsReady)
+            {
+                Console.WriteLine($"[seat] FAIL: no certificate from the handed-down cache ({setup.Status.Reason}).");
+                return;
+            }
+
+            if (server?.TryStartSecureListener(setup.Certificate, setup.Intermediates) != true)
+            {
+                Console.WriteLine("[seat] FAIL: the secure listener did not start.");
+            }
         }
 
-        await using var server = new CouchCoopBrowserServer(
+        var browserServer = new CouchCoopBrowserServer(
             new StaticSpaFileProvider(Path.Combine(Path.GetTempPath(), "couchcoop-harness-static")),
             new NoAssets(),
             bindAddress: IPAddress.Loopback,
             preferredPort: 13500,
+            isHeadlessClient: true,
+            requestSecureOrigin: () => _ = Task.Run(EnableSecureOriginAsync),
             log: _ => { });
+        server = browserServer;
 
-        var baseUri = await server.StartAsync();
-        server.TryStartSecureListener(certificates.Certificate, certificates.Intermediates);
+        var baseUri = await browserServer.StartAsync();
 
         Console.WriteLine($"SEAT-HTTP {baseUri.Port}");
         Console.Out.Flush();
 
         await Task.Delay(TimeSpan.FromSeconds(60));
-        certificates.Dispose();
+        certificates?.Dispose();
+        await browserServer.DisposeAsync();
         return 0;
     }
 

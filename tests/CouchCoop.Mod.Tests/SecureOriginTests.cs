@@ -117,15 +117,20 @@ internal static class SecureOriginTests
     private static void RowIsDisabledWithoutATlsListener()
     {
         var pending = QrHostOptions.DescribeSecureFor(Adapter("192.168.1.5"), Domain, securePort: 0, null);
-        Expect(!pending.Enabled, "no bound TLS port means the row cannot be picked");
-        Expect(pending.DisabledReason?.Resolve() == QrHostOptions.SecurePendingReason,
-            "with the pending blocker when no better reason is known");
+        Expect(!pending.Enabled && pending.Selectable, "the idle row can be picked to start setup, but has no URL yet");
+        Expect(pending.DisabledReason?.Resolve() == CouchCoop.Mod.Localization.CouchCoopSecureText.Idle.Resolve(),
+            "with an explicit selection hint while setup has not started");
         Expect(pending.Host == "192-168-1-5.my.local-ip.co", "while the label still names the host it WOULD encode");
 
         var reasoned = QrHostOptions.DescribeSecureFor(Adapter("192.168.1.5"), Domain, securePort: 0,
             "No internet, or the certificate service is down.");
         Expect(reasoned.DisabledReason?.Resolve() == "No internet, or the certificate service is down.",
             "the provider's own one-line reason is passed through verbatim");
+        Expect(reasoned.Selectable, "a failed secure setup can be selected again to retry");
+
+        var disabled = QrHostOptions.DescribeSecureFor(Adapter("192.168.1.5"), Domain, securePort: 0, null,
+            secureOriginEnabled: false);
+        Expect(!disabled.Selectable, "the global secure-origin kill switch leaves the row unselectable");
     }
 
     private static void RowIsDisabledWithoutARoutableIpv4()
@@ -133,6 +138,7 @@ internal static class SecureOriginTests
         // APIPA means "DHCP failed" — public DNS mapping the dashed name back to it buys nothing.
         var option = QrHostOptions.DescribeSecureFor(Adapter("169.254.3.4"), Domain, SecurePort, null);
         Expect(!option.Enabled, "a link-local adapter cannot carry a secure origin");
+        Expect(!option.Selectable, "an ineligible address cannot start secure setup");
         Expect(option.DisabledReason?.Resolve() == QrHostOptions.AddressNotEligibleReason, "with the address blocker");
     }
 

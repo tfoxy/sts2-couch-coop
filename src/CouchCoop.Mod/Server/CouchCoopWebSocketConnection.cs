@@ -121,11 +121,9 @@ public sealed class CouchCoopWebSocketConnection
     // redirect; a shared seat stays on the host's existing secure connection and route.
     private readonly bool _isSecure;
 
-    // How long a TLS join waits for a freshly spawned headless instance to publish its secure port. The
-    // instance has already passed its HTTP readiness gate by this point and the certificate is normally warm
-    // in the shared cache, so this is the cold-start tail, not the expected cost. Short enough that a
-    // genuinely certificate-less instance rejects promptly instead of leaving the picker spinning.
-    private static readonly TimeSpan SecurePortResolveTimeout = TimeSpan.FromSeconds(8);
+    // A secure seat normally loads the shared cache immediately. Allow one provider fetch (10 seconds in
+    // SecureOriginCertificates) plus listener startup if a seat cache is missing or no longer valid.
+    private static readonly TimeSpan SecurePortResolveTimeout = TimeSpan.FromSeconds(12);
     // The live session handle + last viewer name, retained so the server can RE-SEND this connection's session
     // envelope when the lobby roster / run status changes (keeps the shared join screen live without the full
     // state). Set in AcceptCoreAsync; _viewerName updated on a successful join.
@@ -708,8 +706,11 @@ public sealed class CouchCoopWebSocketConnection
             // and accurate, since a retry moments later usually succeeds once the certificate has
             // landed. An unrecognised code would render as "That name is not from a session
             // player", which would be a lie.
-            if (_isSecure && headlessPath is null && headlessPort is int insecurePort && joinRejection is null)
+            if (ShouldRequestSecureOriginForSeat(_isSecure, headlessPath, headlessPort, joinRejection)
+                && headlessPort is int insecurePort)
             {
+                await HeadlessClientManager.RequestSecureOriginAsync(insecurePort, cancellationToken)
+                    .ConfigureAwait(false);
                 var securePort = await HeadlessClientManager
                     .TryResolveSecurePortAsync(insecurePort, SecurePortResolveTimeout, cancellationToken)
                     .ConfigureAwait(false);
@@ -779,6 +780,13 @@ public sealed class CouchCoopWebSocketConnection
             cancellationToken,
             headlessMirrorPath: headlessPath).ConfigureAwait(false)).ConfigureAwait(false);
     }
+
+    internal static bool ShouldRequestSecureOriginForSeat(
+        bool isSecure,
+        string? headlessPath,
+        int? headlessPort,
+        string? joinRejection)
+        => isSecure && headlessPath is null && headlessPort.HasValue && joinRejection is null;
 
     private async Task ReceiveLoopAsync(WebSocket socket, BrowserSessionHandle session, CancellationToken cancellationToken)
     {

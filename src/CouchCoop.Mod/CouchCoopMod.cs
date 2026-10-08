@@ -419,6 +419,21 @@ public static class CouchCoopMod
         }
     }
 
+    /// <summary>Explicitly request the optional HTTPS origin after the player picks its QR method.</summary>
+    internal static void RequestSecureOrigin()
+    {
+        CouchCoopHostUiServices? hostUi;
+        lock (Gate)
+        {
+            hostUi = _hostUi;
+        }
+
+        if (hostUi is not null)
+        {
+            _ = hostUi.RequestSecureOriginAsync();
+        }
+    }
+
     /// <summary>
     /// Reflection target for the hot-reload shell (<c>CouchCoopHotReloadProtocol.RefreshOverlayLayout</c>)
     /// after a new layout is accepted. Renaming this REQUIRES updating the method-name string there.
@@ -807,14 +822,13 @@ public static class CouchCoopMod
                 : runtime.Capabilities.GameVersion;
         try
         {
-            // A windowed/display HOST defers the LAN discovery responder, the `.local` mDNS name and the
-            // secure-origin WAN fetch until a HOST LOBBY is actually on screen — see
+            // A windowed/display HOST defers the LAN discovery responder and the `.local` mDNS name until
+            // a HOST LOBBY is actually on screen — see
             // CouchCoopHostUiServices.StartDiscoveryServices. Only the browser listener comes up here, which
             // is the idle server the product accepts and which every QA harness expects at launch.
             //
-            // A headless SEAT is NOT deferred: it has no lobby screen and no panel controller to raise the
-            // trigger, it is spawned only once co-op is already in use (so there is no idle cost to save),
-            // and its secure listener must be up before the host redirects a browser to it.
+            // A headless SEAT starts its HTTP listener immediately. Its secure listener is prepared only
+            // when the host explicitly asks for TLS as part of redirecting a secure viewer.
             _hostUi = new CouchCoopHostUiServices(
                 runtime,
                 preferredPort: ResolvePreferredPort(),

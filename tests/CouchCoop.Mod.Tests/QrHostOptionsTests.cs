@@ -371,11 +371,11 @@ internal static class QrHostOptionsTests
         // Secure listener not up yet (securePort 0): the secure rows are LISTED, disabled, explained.
         var pending = QrHostOptions.Build("box", null, [Wifi("192.168.1.7")], Port, Origin, null, 0, null);
         var secure = pending.Single(option => option.Kind == QrHostOptionKind.Secure);
-        Expect(!secure.Enabled, "a secure row without a TLS listener is not selectable");
-        Expect(secure.Detail == QrHostOptions.SecurePendingReason, "and its detail slot carries the blocker");
+        Expect(!secure.Enabled && secure.Selectable, "a secure row without a TLS listener can be selected to start setup");
+        Expect(secure.Detail == CouchCoop.Mod.Localization.CouchCoopSecureText.Idle.Resolve(), "and its detail slot invites explicit setup");
         Expect(secure.Host == "192-168-1-7.my.local-ip.co", "while the label still shows the host it WOULD encode");
 
-        // A better reason from the snapshot (cert fetch failed, kill switch...) is passed through.
+        // A setup failure is passed through and stays retryable.
         var reasoned = QrHostOptions.Build("box", null, [Wifi("192.168.1.7")], Port, Origin, null, 0,
             "No internet, or the certificate service is down.");
         Expect(reasoned.Single(option => option.Kind == QrHostOptionKind.Secure).Detail
@@ -454,14 +454,16 @@ internal static class QrHostOptionsTests
 
     private static void RestoreSkipsDisabledRowsAndDefaultsToFirstEnabled()
     {
-        // Secure rows disabled (no TLS listener): a remembered secure pick must not select a row the
-        // player could not click, and the default must skip the disabled rows too.
+        // Secure rows idle (no TLS listener): a remembered secure pick remains selected but does not
+        // activate setup by itself, and the default still chooses the plain address.
         var options = QrHostOptions.Build("box", null, [Wifi("192.168.1.7")], Port, Origin, null, 0, null);
 
         var restored = QrHostOptions.RestoreSelection(options, "secure|192.168.1.7");
-        Expect(restored!.Enabled, "a preference naming a disabled row does not restore it");
-        Expect(restored.Kind == QrHostOptionKind.Interface, "the first ENABLED option wins instead");
-        Expect(QrHostOptions.RestoreSelection(options, null) == restored, "which is also the no-preference default");
+        Expect(restored!.Kind == QrHostOptionKind.Secure && !restored.Enabled && restored.Selectable,
+            "a remembered secure preference may be shown without starting setup");
+        var defaultOption = QrHostOptions.RestoreSelection(options, null);
+        Expect(defaultOption!.Kind == QrHostOptionKind.Interface, "the first ENABLED option remains the default");
+        Expect(defaultOption != restored, "restoring a saved secure choice does not change the default");
     }
 
     // ---- mDNS name derivation -------------------------------------------------------------------------------

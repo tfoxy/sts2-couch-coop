@@ -27,11 +27,10 @@ namespace CouchCoop.Mod.HostUi;
 /// row after the adapter's address changed under a new DHCP lease.
 /// </para>
 /// <para>
-/// <b>Disabled rows stay hoverable.</b> A disabled option renders greyed with its blocker in the
-/// detail slot, refuses selection and drops out of controller navigation — but keeps
-/// <see cref="Control.MouseFilter"/>.Stop so its hover tips (the "why is this greyed out" answer)
-/// still fire. This is deliberately NOT the old toggle's <c>MouseFilter = Ignore</c> pattern, which
-/// made "disabled" also mean "unexplained".
+/// <b>Unavailable rows stay hoverable.</b> An unavailable option renders with its reason in the detail
+/// slot and normally refuses selection and drops out of controller navigation. The HTTPS row remains
+/// selectable while idle or retryable. Every row keeps <see cref="Control.MouseFilter"/>.Stop so its
+/// hover tips still fire, including the answer to why an option is unavailable.
 /// </para>
 /// </remarks>
 internal sealed partial class CouchCoopQrHostSelect : Control
@@ -182,7 +181,7 @@ internal sealed partial class CouchCoopQrHostSelect : Control
                 row.Size = new Vector2(RowWidth, RowHeight);
                 row.CustomMinimumSize = new Vector2(RowWidth, RowHeight);
                 row.SetOption(option);
-                if (option.Enabled)
+                if (option.Selectable)
                 {
                     row.Activated = () => Choose(option);
                 }
@@ -193,7 +192,7 @@ internal sealed partial class CouchCoopQrHostSelect : Control
                 _list.AddChild(row);
                 row.Install();
                 // After Install: Install() forces FocusMode.All, and an unselectable row must end up None.
-                row.SetSelectable(option.Enabled);
+                row.SetSelectable(option.Selectable);
             }
 
             _listBackground.Size = new Vector2(RowWidth, MathF.Max(options.Count * RowHeight, 1f));
@@ -284,13 +283,19 @@ internal sealed partial class CouchCoopQrHostSelect : Control
     private void Choose(QrHostOption option)
     {
         Close();
-        if (!option.Enabled)
+        if (!option.Selectable)
         {
             return;
         }
 
         if (Selected is not null && string.Equals(Selected.SelectionKey, option.SelectionKey, StringComparison.Ordinal))
         {
+            // The secure row remains the current choice while it is checking or after a failure. Let
+            // selecting it again retry; setup itself coalesces concurrent requests.
+            if (option.Kind == QrHostOptionKind.Secure && !option.Enabled)
+            {
+                SelectionChanged?.Invoke(option);
+            }
             return;
         }
 

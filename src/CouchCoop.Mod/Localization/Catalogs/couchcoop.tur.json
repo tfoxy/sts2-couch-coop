@@ -16,6 +16,7 @@
   "couchcoop_option_server_not_listening": "Tarayıcı sunucusu henüz bağlantı kabul etmiyor.",
   "couchcoop_option_address_not_eligible": "Bu bilgisayarda normal bir ağ adresine ihtiyaç var.",
   "couchcoop_option_secure_pending": "Kurulum hâlâ devam ediyor; düz adres hâlâ çalışıyor.",
+  "couchcoop_secure_idle": "HTTPS bağlantısını kurmak için seç. İnternet erişimi gerekebilir.",
   "couchcoop_secure_checking": "Yüklenebilir bağlantı kontrol ediliyor…",
   "couchcoop_secure_disabled": "{setting} tarafından kapatıldı.",
   "couchcoop_secure_address_ineligible": "Bu bilgisayarda normal bir ağ adresine ihtiyaç var.",

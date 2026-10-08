@@ -10,7 +10,7 @@ public enum SecureOriginState
     /// <summary>The kill-switch turned the whole feature off.</summary>
     Disabled,
 
-    /// <summary>Acquisition has not finished yet. The dialog shows the checkbox disabled and says so.</summary>
+    /// <summary>Acquisition has not finished yet. The secure row shows its checking reason.</summary>
     Pending,
 
     /// <summary>A usable certificate is loaded and the secure listener is (or can be) up.</summary>
@@ -37,20 +37,18 @@ public sealed record SecureOriginStatus(SecureOriginState State, CouchCoopText T
 /// <remarks>
 /// <para>
 /// SAFETY. Modelled on <see cref="CouchCoop.Mod.HostUi.MdnsResponder"/>'s discipline, and for the same
-/// reason: this is a convenience feature sitting next to the thing that actually serves the game. It
-/// NEVER blocks startup (acquisition runs detached; <see cref="Status"/> reports
-/// <see cref="SecureOriginState.Pending"/> until it lands), it never throws out of
-/// <see cref="StartAsync"/>, and every failure — no internet, DNS poisoned, provider 404, key/leaf
-/// mismatch, revoked, expired, unreadable cache — resolves to "no certificate", which makes the secure
-/// listener simply not start and the dialog's checkbox disabled with <see cref="SecureOriginStatus.Text"/>.
-/// The plain-HTTP LAN listener is untouched by all of it and remains the default QR, so a host with no
-/// WAN at all behaves exactly as it did before this feature existed.
+/// reason: this is a convenience feature sitting next to the thing that actually serves the game. Setup
+/// runs only after explicit HTTPS use, never throws out of <see cref="StartAsync"/>, and every failure —
+/// no internet, DNS poisoned, provider 404, key/leaf mismatch, revoked, expired, unreadable cache —
+/// resolves to "no certificate", which makes the secure listener simply not start and leaves the HTTPS
+/// row unavailable with <see cref="SecureOriginStatus.Text"/>. The plain-HTTP LAN listener is untouched
+/// by all of it and remains the default QR, so ordinary HTTP play makes no provider request.
 /// </para>
 /// <para>
-/// CACHING. The bundle is written to a local cache directory so a later session starts secure without a
-/// round-trip, and — more importantly — so a host that is offline TODAY can still serve the origin it
-/// fetched yesterday. The cache is re-validated on load (dates + key match), so an expired or corrupt
-/// entry degrades to Unavailable rather than to a listener that every phone refuses.
+/// CACHING. The bundle is written to a local cache directory so later explicit HTTPS setup can start
+/// secure without a round-trip, and — more importantly — so a host that is offline TODAY can still serve
+/// the origin it fetched yesterday. The cache is re-validated on load (dates + key match), so an expired
+/// or corrupt entry is fetched again and never reaches a listener that every phone refuses.
 /// </para>
 /// <para>
 /// WHERE THE CACHE LIVES. Under the same per-user application-data root the other two runtime caches in
@@ -200,8 +198,8 @@ public sealed class SecureOriginCertificates : IDisposable
         }
         catch (Exception exception)
         {
-            // Deliberately catch-all: an unexpected crypto/IO/platform failure here must cost the player a
-            // disabled checkbox, never the host UI or the browser server. Same rule as MdnsResponder.
+            // Deliberately catch-all: an unexpected crypto/IO/platform failure here must leave the HTTPS
+            // row unavailable, never take down the host UI or browser server. Same rule as MdnsResponder.
             Fail(CouchCoopSecureText.SetupException(exception.GetType().Name));
         }
     }

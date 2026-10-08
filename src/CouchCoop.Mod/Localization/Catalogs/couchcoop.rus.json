@@ -16,6 +16,7 @@
   "couchcoop_option_server_not_listening": "Сервер для браузеров ещё не принимает подключения.",
   "couchcoop_option_address_not_eligible": "Нужен обычный сетевой адрес на этом ПК.",
   "couchcoop_option_secure_pending": "Настройка ещё идёт — простой адрес уже работает.",
+  "couchcoop_secure_idle": "Выберите, чтобы настроить HTTPS-ссылку. Возможно, потребуется доступ к интернету.",
   "couchcoop_secure_checking": "Проверка ссылки для установки…",
   "couchcoop_secure_disabled": "Отключено параметром {setting}.",
   "couchcoop_secure_address_ineligible": "Нужен обычный сетевой адрес на этом ПК.",

@@ -27,14 +27,16 @@ internal static class QrHoverTipCopyTests
     private static readonly QrAdapterKind[] AdapterKinds =
         [QrAdapterKind.Ethernet, QrAdapterKind.Wifi, QrAdapterKind.Other];
 
-    private static QrHostOption OptionOf(QrHostOptionKind kind, bool enabled = true, string? reason = null, bool mdnsTrusted = true)
+    private static QrHostOption OptionOf(QrHostOptionKind kind, bool enabled = true, string? reason = null,
+        bool mdnsTrusted = true, bool canSelectWhenUnavailable = false)
         => new("host.example", 13337, kind,
             kind is QrHostOptionKind.Override or QrHostOptionKind.Mdns
                 ? null
                 : new QrAdapterInfo("Wi-Fi", QrAdapterKind.Wifi, IPAddress.Parse("192.168.1.5")),
             Enabled: enabled,
             DisabledReason: reason is null ? (CouchCoopText?)null : CouchCoopText.FromLiteral(reason),
-            MdnsTrusted: mdnsTrusted);
+            MdnsTrusted: mdnsTrusted,
+            CanSelectWhenUnavailable: canSelectWhenUnavailable);
 
     private static IEnumerable<string> AllDescriptions()
     {
@@ -206,9 +208,10 @@ internal static class QrHoverTipCopyTests
     private static void MethodTipFoldsInTheLiveState()
     {
         var disabled = QrHoverTipCopy.MethodTipFor(OptionOf(QrHostOptionKind.Secure,
-            enabled: false, reason: QrHostOptions.SecurePendingReason)).Description;
-        Expect(disabled.EndsWith(QrHoverTipCopy.DisabledReasonPrefix + QrHostOptions.SecurePendingReason, StringComparison.Ordinal),
-            "a disabled row's tip ends with its blocker, so hovering the greyed row answers 'why'");
+            enabled: false, reason: QrHostOptions.SecurePendingReason,
+            canSelectWhenUnavailable: true)).Description;
+        Expect(disabled.EndsWith("\n" + QrHostOptions.SecurePendingReason, StringComparison.Ordinal),
+            "the selectable idle HTTPS row explains setup without claiming it cannot be selected");
 
         var untrusted = QrHoverTipCopy.MethodTipFor(OptionOf(QrHostOptionKind.Mdns, mdnsTrusted: false)).Description;
         Expect(untrusted.Contains("didn't answer", StringComparison.Ordinal),

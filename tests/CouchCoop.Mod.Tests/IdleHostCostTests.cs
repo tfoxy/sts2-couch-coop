@@ -1,4 +1,6 @@
 using System.Net;
+using System.Security.Cryptography;
+using System.Security.Cryptography.X509Certificates;
 using CouchCoop.Mod.HostUi;
 using CouchCoop.Mod.Patches;
 using CouchCoop.Mod.Runtime;
@@ -10,9 +12,9 @@ using CouchCoop.Mod.Server;
 //   1. The QR/activity panel controller found its screens by recursively walking the WHOLE scene tree, four
 //      times a second, forever, on the game main thread. It ran in combat, on the map and on the main menu,
 //      with a browser client connected or with none ever connected.
-//   2. The LAN discovery responder, the `.local` mDNS name and the secure-origin certificate fetch all started
-//      at mod init — so a player who never opened a co-op lobby still had a multicast socket parsing their
-//      whole LAN's mDNS traffic and made one outbound WAN request on every single launch.
+//   2. The LAN discovery responder and `.local` mDNS name started at mod init, and the secure-origin
+//      certificate fetch ran on every launch — so an ordinary player paid for discovery sockets and an
+//      outbound WAN request without ever opening a co-op lobby or choosing HTTPS.
 //
 // Both are now gated: screens arrive by Harmony (LobbyScreenMountPatch → LobbyScreenRegistry) and the tick
 // exists only while that registry is occupied; the network services wait for a HOST lobby to be on screen.
@@ -43,6 +45,7 @@ internal static class IdleHostCostTests
         // listener, no subscription and no timer, and a raised signal reaches nobody.
         CouchCoopRosterObserverTests.RosterIsDormantWithoutDemand();
         await DeferredHostUiKeepsTheListenerButNotTheNetworkAsync(rootPath);
+        await DeferredSecureOriginContractsAsync(rootPath);
         await PendingDiscoveryCannotPublishAfterStopAsync(rootPath);
 
         Console.WriteLine("IdleHostCostTests: ok");
@@ -346,13 +349,20 @@ internal static class IdleHostCostTests
     public static async Task DeferredHostUiKeepsTheListenerButNotTheNetworkAsync(string rootPath)
     {
         var logs = new List<string>();
+        var certificateFactoryCalls = 0;
         await using var services = new CouchCoopHostUiServices(
             new CouchCoopRuntimeHost(new CouchCoopRuntimeDependencies(new AssetCacheTokenEnvelopeTests.StubRuntime("idle-host-test"), new AssetCacheTokenEnvelopeTests.StubRuntime("idle-host-test"), new AssetCacheTokenEnvelopeTests.StubRuntime("idle-host-test"), new AssetCacheTokenEnvelopeTests.StubRuntime("idle-host-test"), new AssetCacheTokenEnvelopeTests.StubRuntime("idle-host-test"), new AssetCacheTokenEnvelopeTests.StubRuntime("idle-host-test"), new AssetCacheTokenEnvelopeTests.StubRuntime("idle-host-test"), new AssetCacheTokenEnvelopeTests.StubRuntime("idle-host-test"), new AssetCacheTokenEnvelopeTests.StubRuntime("idle-host-test")), logs.Add),
             rootPath,
             IPAddress.Loopback,
             preferredPort: ReserveEphemeralPort(),
             logs.Add,
-            deferDiscoveryServices: true);
+            deferDiscoveryServices: true,
+            createCertificates: () =>
+            {
+                Interlocked.Increment(ref certificateFactoryCalls);
+                return new SecureOriginCertificates(new DelayedProvider("unused.example"),
+                    Path.Combine(rootPath, "unused-secure-cache"), _ => { });
+            });
 
         var snapshot = await services.StartAsync();
         Expect(snapshot.ListenerBaseUri is not null, "a deferred host UI still binds the browser listener at startup");
@@ -363,6 +373,8 @@ internal static class IdleHostCostTests
 
         // …and the arm, which is what CouchCoopQrHostPanelController.HostLobbyPresented calls.
         services.StartDiscoveryServices();
+        Expect(certificateFactoryCalls == 0,
+            "opening a host lobby starts discovery but does not even construct the certificate manager");
         Expect(
             logs.Count(log => log.Contains("host discovery services started", StringComparison.Ordinal)) == 1,
             "the first host lobby starts the discovery services");
@@ -403,6 +415,13 @@ internal static class IdleHostCostTests
         Expect(!await DiscoveryRepliesAsync(port), "repeated stop is idempotent");
     }
 
+    public static async Task DeferredSecureOriginContractsAsync(string rootPath)
+    {
+        await HeadlessSeatStartupDoesNotAcquireCertificateAsync(rootPath);
+        await ExplicitSecureSetupUsesValidCacheAsync(rootPath);
+        await FailedSecureOriginCanBeRetriedAsync(rootPath);
+    }
+
     public static async Task PendingDiscoveryCannotPublishAfterStopAsync(string rootPath)
     {
         var oldEnabled = Environment.GetEnvironmentVariable(SecureOriginCertificates.EnabledEnvironmentVariable);
@@ -425,11 +444,16 @@ internal static class IdleHostCostTests
                     Path.Combine(rootPath, "certificate-cache-" + Guid.NewGuid().ToString("N")), _ => { }));
             await services.StartAsync();
             services.StartDiscoveryServices();
+            Expect(attempts == 0, "starting the lobby does not construct or call the certificate provider");
+            _ = services.RequestSecureOriginAsync();
             await oldProvider.Entered.Task.WaitAsync(TimeSpan.FromSeconds(5));
             var stopping = services.StopDiscoveryServicesAsync().AsTask();
             Expect(oldProvider.Cancellation.IsCancellationRequested, "ending hosting cancels its pending certificate fetch");
             services.StartDiscoveryServices();
             await services.DiscoveryServicesReady.WaitAsync(TimeSpan.FromSeconds(5));
+            Expect(attempts == 1 && !newProvider.Entered.Task.IsCompleted,
+                "reopening the host lobby alone does not fetch again");
+            var newRequest = services.RequestSecureOriginAsync();
             await newProvider.Entered.Task.WaitAsync(TimeSpan.FromSeconds(5));
             Expect(attempts == 2 && !stopping.IsCompleted,
                 "the next session starts without waiting for an old WAN request to finish");
@@ -441,6 +465,7 @@ internal static class IdleHostCostTests
                 && await DiscoveryRepliesAsync(services.Snapshot.ListenerBaseUri!.Port),
                 "the new discovery generation survives delayed old completion");
             newProvider.Complete.TrySetResult(null);
+            await newRequest.WaitAsync(TimeSpan.FromSeconds(5));
             await services.StopDiscoveryServicesAsync();
         }
         finally
@@ -450,6 +475,147 @@ internal static class IdleHostCostTests
             Environment.SetEnvironmentVariable(SecureOriginCertificates.EnabledEnvironmentVariable, oldEnabled);
             Environment.SetEnvironmentVariable(LanAddressRanking.AdvertisedHostEnvironmentVariable, oldHost);
             if (services is not null) await services.DisposeAsync();
+        }
+    }
+
+    private static async Task HeadlessSeatStartupDoesNotAcquireCertificateAsync(string rootPath)
+    {
+        var oldEnabled = Environment.GetEnvironmentVariable(SecureOriginCertificates.EnabledEnvironmentVariable);
+        var oldHost = Environment.GetEnvironmentVariable(LanAddressRanking.AdvertisedHostEnvironmentVariable);
+        CouchCoopHostUiServices? services = null;
+        try
+        {
+            Environment.SetEnvironmentVariable(SecureOriginCertificates.EnabledEnvironmentVariable, "1");
+            Environment.SetEnvironmentVariable(LanAddressRanking.AdvertisedHostEnvironmentVariable, "192.168.50.21");
+            var stub = new AssetCacheTokenEnvelopeTests.StubRuntime("idle-headless-seat-test");
+            var runtime = new CouchCoopRuntimeHost(new CouchCoopRuntimeDependencies(
+                stub, stub, stub, stub, stub, stub, stub, stub, stub), _ => { });
+            var constructions = 0;
+            services = new CouchCoopHostUiServices(runtime, rootPath, IPAddress.Loopback,
+                ReserveEphemeralPort(), _ => { },
+                createCertificates: () =>
+                {
+                    constructions++;
+                    return new SecureOriginCertificates(
+                        new DelayedProvider("unused.example"),
+                        Path.Combine(rootPath, "seat-certificate-cache-" + Guid.NewGuid().ToString("N")), _ => { });
+                });
+
+            await services.StartAsync();
+            Expect(services.DiscoveryServicesRunning, "a headless seat starts its HTTP and discovery services");
+            Expect(constructions == 0, "ordinary HTTP seat startup does not construct the certificate provider");
+        }
+        finally
+        {
+            if (services is not null) await services.DisposeAsync();
+            Environment.SetEnvironmentVariable(SecureOriginCertificates.EnabledEnvironmentVariable, oldEnabled);
+            Environment.SetEnvironmentVariable(LanAddressRanking.AdvertisedHostEnvironmentVariable, oldHost);
+        }
+    }
+
+    private static async Task FailedSecureOriginCanBeRetriedAsync(string rootPath)
+    {
+        var oldEnabled = Environment.GetEnvironmentVariable(SecureOriginCertificates.EnabledEnvironmentVariable);
+        var oldHost = Environment.GetEnvironmentVariable(LanAddressRanking.AdvertisedHostEnvironmentVariable);
+        var providers = new[] { new DelayedProvider("first.example"), new DelayedProvider("second.example") };
+        CouchCoopHostUiServices? services = null;
+        var attempts = 0;
+        try
+        {
+            Environment.SetEnvironmentVariable(SecureOriginCertificates.EnabledEnvironmentVariable, "1");
+            Environment.SetEnvironmentVariable(LanAddressRanking.AdvertisedHostEnvironmentVariable, "192.168.50.22");
+            var stub = new AssetCacheTokenEnvelopeTests.StubRuntime("idle-host-secure-retry-test");
+            var runtime = new CouchCoopRuntimeHost(new CouchCoopRuntimeDependencies(
+                stub, stub, stub, stub, stub, stub, stub, stub, stub), _ => { });
+            services = new CouchCoopHostUiServices(runtime, rootPath, IPAddress.Loopback,
+                ReserveEphemeralPort(), _ => { }, deferDiscoveryServices: true,
+                createCertificates: () => new SecureOriginCertificates(
+                    providers[Math.Min(attempts++, providers.Length - 1)],
+                    Path.Combine(rootPath, "retry-certificate-cache-" + Guid.NewGuid().ToString("N")), _ => { }));
+
+            await services.StartAsync();
+            services.StartDiscoveryServices();
+            Expect(attempts == 0, "restoring the host without selecting HTTPS leaves setup idle");
+
+            var first = services.RequestSecureOriginAsync();
+            await providers[0].Entered.Task.WaitAsync(TimeSpan.FromSeconds(5));
+            providers[0].Complete.TrySetResult(null);
+            await first.WaitAsync(TimeSpan.FromSeconds(5));
+            Expect(attempts == 1 && services.Snapshot.SecurePort == 0,
+                "the first provider failure leaves HTTPS unavailable and retryable");
+
+            var retry = services.RequestSecureOriginAsync();
+            await providers[1].Entered.Task.WaitAsync(TimeSpan.FromSeconds(5));
+            Expect(attempts == 2, "an explicit second selection starts a fresh setup attempt");
+            providers[1].Complete.TrySetResult(null);
+            await retry.WaitAsync(TimeSpan.FromSeconds(5));
+        }
+        finally
+        {
+            providers[0].Complete.TrySetResult(null);
+            providers[1].Complete.TrySetResult(null);
+            if (services is not null) await services.DisposeAsync();
+            Environment.SetEnvironmentVariable(SecureOriginCertificates.EnabledEnvironmentVariable, oldEnabled);
+            Environment.SetEnvironmentVariable(LanAddressRanking.AdvertisedHostEnvironmentVariable, oldHost);
+        }
+    }
+
+    private static async Task ExplicitSecureSetupUsesValidCacheAsync(string rootPath)
+    {
+        var oldEnabled = Environment.GetEnvironmentVariable(SecureOriginCertificates.EnabledEnvironmentVariable);
+        var oldHost = Environment.GetEnvironmentVariable(LanAddressRanking.AdvertisedHostEnvironmentVariable);
+        var cacheRoot = Path.Combine(rootPath, "valid-secure-cache-" + Guid.NewGuid().ToString("N"));
+        CouchCoopHostUiServices? services = null;
+        try
+        {
+            Environment.SetEnvironmentVariable(SecureOriginCertificates.EnabledEnvironmentVariable, "1");
+            Environment.SetEnvironmentVariable(LanAddressRanking.AdvertisedHostEnvironmentVariable, "192.168.50.23");
+            Directory.CreateDirectory(cacheRoot);
+            using (var key = RSA.Create(2048))
+            {
+                var request = new CertificateRequest("CN=*.my.local-ip.co", key,
+                    HashAlgorithmName.SHA256, RSASignaturePadding.Pkcs1);
+                var names = new SubjectAlternativeNameBuilder();
+                names.AddDnsName("*.my.local-ip.co");
+                request.CertificateExtensions.Add(names.Build());
+                using var certificate = request.CreateSelfSigned(
+                    DateTimeOffset.UtcNow.AddDays(-1), DateTimeOffset.UtcNow.AddDays(30));
+                File.WriteAllText(Path.Combine(cacheRoot, "server.pem"), certificate.ExportCertificatePem());
+                File.WriteAllText(Path.Combine(cacheRoot, "server.key"), key.ExportPkcs8PrivateKeyPem());
+            }
+
+            var stub = new AssetCacheTokenEnvelopeTests.StubRuntime("idle-host-valid-secure-cache-test");
+            var runtime = new CouchCoopRuntimeHost(new CouchCoopRuntimeDependencies(
+                stub, stub, stub, stub, stub, stub, stub, stub, stub), _ => { });
+            var providerCalls = 0;
+            var managerConstructions = 0;
+            services = new CouchCoopHostUiServices(runtime, rootPath, IPAddress.Loopback,
+                ReserveEphemeralPort(), _ => { }, deferDiscoveryServices: true,
+                createCertificates: () =>
+                {
+                    managerConstructions++;
+                    return new SecureOriginCertificates(
+                        new CountingUnavailableProvider(() => Interlocked.Increment(ref providerCalls)),
+                        cacheRoot, _ => { });
+                });
+
+            await services.StartAsync();
+            services.StartDiscoveryServices();
+            Expect(managerConstructions == 0 && providerCalls == 0,
+                "host startup does not inspect or fetch the certificate cache");
+
+            await services.RequestSecureOriginAsync();
+            Expect(managerConstructions == 1 && providerCalls == 0,
+                "an explicit HTTPS selection uses the valid cache without contacting the provider");
+            Expect(services.Snapshot.SecurePort == services.Snapshot.ListenerBaseUri?.Port,
+                "the HTTPS QR becomes available only after the secure listener has bound");
+        }
+        finally
+        {
+            if (services is not null) await services.DisposeAsync();
+            try { Directory.Delete(cacheRoot, recursive: true); } catch { }
+            Environment.SetEnvironmentVariable(SecureOriginCertificates.EnabledEnvironmentVariable, oldEnabled);
+            Environment.SetEnvironmentVariable(LanAddressRanking.AdvertisedHostEnvironmentVariable, oldHost);
         }
     }
 
@@ -466,6 +632,18 @@ internal static class IdleHostCostTests
             Entered.TrySetResult();
             // Deliberately complete after cancellation to exercise stale asynchronous publication.
             return Complete.Task;
+        }
+    }
+
+    private sealed class CountingUnavailableProvider(Action onFetch) : ISecureOriginCertificateProvider
+    {
+        public string Id => "counting-unavailable-test";
+        public string Domain => "my.local-ip.co";
+
+        public Task<SecureCertificateBundle?> FetchAsync(HttpClient http, CancellationToken cancellationToken)
+        {
+            onFetch();
+            return Task.FromResult<SecureCertificateBundle?>(null);
         }
     }
 

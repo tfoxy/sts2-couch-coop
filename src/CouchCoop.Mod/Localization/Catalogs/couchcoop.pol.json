@@ -16,6 +16,7 @@
   "couchcoop_option_server_not_listening": "Serwer dla przeglądarek jeszcze nie przyjmuje połączeń.",
   "couchcoop_option_address_not_eligible": "Wymaga zwykłego adresu sieciowego na tym komputerze.",
   "couchcoop_option_secure_pending": "Trwa konfiguracja — zwykły adres nadal działa.",
+  "couchcoop_secure_idle": "Wybierz, aby skonfigurować link HTTPS. Może być potrzebny dostęp do internetu.",
   "couchcoop_secure_checking": "Sprawdzam link do instalacji…",
   "couchcoop_secure_disabled": "Wyłączone przez {setting}.",
   "couchcoop_secure_address_ineligible": "Wymaga zwykłego adresu sieciowego na tym komputerze.",
