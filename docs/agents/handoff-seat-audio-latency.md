@@ -1,8 +1,15 @@
 # Handoff: attribute mirror SFX latency in combat
 
-**Status:** opt-in timing probes implemented. The private live evidence, stage tables and remaining gates are in
-`.sts2/research/audio/latency-20261007/verdict.md`. The completed traces did not isolate a changeable CouchCoop
-stage, so no audio behavior change was made.
+**Status:** the combat tail was main-thread contention: a cue's WebSocket message waited behind mirror
+rendering and scene-delta tasks, and cached cues start when their message is handled. Secure pages now
+run the Worker + AudioWorklet path (see [architecture-map.md](architecture-map.md#seat-audio)). On the Moto
+G31 it held cached SFX at 30.5/45.2 ms p50/p95 in combat, where the main-thread engine measured
+47.7/140.8 ms. Plain-HTTP pages keep the main-thread engine, because AudioWorklet needs a secure context and the
+worker-only path did not beat it in combat. The live and bench evidence is in the ignored
+`.sts2/research/audio/main-thread-decouple-20261008/`. `npm run bench:audio` (frontend) measures every
+path under synthetic main-thread load without a game. Still open: FAST is lost after a tab visibility
+round trip on every path (~100 ms output lead after the resume tap), and intermittent
+`ERR_CONTENT_LENGTH_MISMATCH` on `/audio/take/*.wav` and other HTTP responses.
 
 ## Why this exists
 

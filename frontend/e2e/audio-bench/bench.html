@@ -1,0 +1,14 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <title>CouchCoop audio latency bench</title>
+  </head>
+  <body>
+    <!-- Playwright clicks this for a REAL pointer gesture — the prelude/AudioContext unlock needs one,
+         and `--autoplay-policy=no-user-gesture-required` does not substitute for it (see audioUnlock.ts). -->
+    <button id="unlock" style="font-size: 24px; padding: 16px 24px;">Unlock audio</button>
+    <pre id="status">idle</pre>
+    <script type="module" src="./bench.ts"></script>
+  </body>
+</html>

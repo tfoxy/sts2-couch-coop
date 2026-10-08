@@ -1,39 +1,7 @@
 import { describe, expect, it, vi } from "vitest";
 import { createAudioEngine } from "../audioEngine";
 import type { AudioContextLike } from "../audioUnlock";
-
-class Param { value = 1; setTargetAtTime(value: number): void { this.value = value; } setValueAtTime(value: number): void { this.value = value; } linearRampToValueAtTime(value: number): void { this.value = value; } cancelScheduledValues(): void {} }
-class Gain { gain = new Param(); connect(): void {} disconnect(): void {} }
-class Buffer { channels: Float32Array[]; constructor(readonly length: number) { this.channels = [new Float32Array(length), new Float32Array(length)]; } getChannelData(channel: number): Float32Array { return this.channels[channel]; } }
-class Source {
-  playbackRate = new Param(); buffer: Buffer | null = null; onended: (() => void) | null = null;
-  starts: number[] = []; stopped = false; connect(): void {} disconnect(): void {} start(at = 0): void { this.starts.push(at); } stop(): void { this.stopped = true; this.onended?.(); }
-}
-class ConstantSource extends Source { offset = new Param(); }
-class FakeContext {
-  state = "suspended"; currentTime = 12; destination = {} as AudioNode; sources: Source[] = []; gains: Gain[] = [];
-  createBuffer(_channels: number, length: number): Buffer { return new Buffer(length); }
-  createBufferSource(): Source { const source = new Source(); this.sources.push(source); return source; }
-  createGain(): Gain { const gain = new Gain(); this.gains.push(gain); return gain; }
-  createConstantSource(): ConstantSource { return new ConstantSource(); }
-  async decodeAudioData(): Promise<Buffer> { return new Buffer(1); }
-  async resume(): Promise<void> { this.state = "running"; }
-  async suspend(): Promise<void> { this.state = "suspended"; }
-  async close(): Promise<void> { this.state = "closed"; }
-}
-class FakeSocket {
-  static CONNECTING = 0; static OPEN = 1;
-  readyState = 0; binaryType = ""; sent: string[] = [];
-  private listeners = new Map<string, Array<(event: MessageEvent) => void>>();
-  constructor(readonly url: string) {}
-  addEventListener(type: string, fn: (event: MessageEvent) => void): void { this.listeners.set(type, [...(this.listeners.get(type) ?? []), fn]); }
-  send(data: string): void { this.sent.push(data); }
-  close(): void { this.readyState = 3; }
-  emit(type: string, data?: unknown): void {
-    if (type === "open") this.readyState = 1;
-    for (const fn of this.listeners.get(type) ?? []) fn({ data } as MessageEvent);
-  }
-}
+import { FakeContext, FakeSocket } from "./fakes";
 
 function takeFrame(): ArrayBuffer {
   const bytes = new Uint8Array(36 + 8), d = new DataView(bytes.buffer);

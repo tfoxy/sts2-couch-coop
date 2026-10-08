@@ -23,6 +23,7 @@ import { publishAtlasManifest } from "@/mirror/imagePrefetch";
 import { reproRecorder } from "@/mirror/reproRecorder";
 import { sceneAblation } from "@/mirror/sceneAblation";
 import { emitWarmAckTrace, warmAckTraceEnabled } from "@/mirror/warmAckTrace";
+import { wirePhase, wirePhaseFlushTail } from "@/mirror/wirePhaseTrace";
 import { publishAssetVersion } from "@/join/assetVersion";
 import { hostWsUrl } from "@/join/hostBase";
 import { hostUrl } from "@/join/hostBase";
@@ -670,7 +671,7 @@ export function connectMirrorClient(options: {
     reproRecorder.tapWireIn(data, diagnosticSocketRole);
     let raw: unknown;
     try {
-      raw = JSON.parse(data);
+      raw = wirePhase("json-parse", () => JSON.parse(data));
     } catch {
       return;
     }
@@ -824,7 +825,7 @@ export function connectMirrorClient(options: {
 
     let delta;
     try {
-      delta = parseSceneDelta(raw);
+      delta = wirePhase("parse-scene-delta", () => parseSceneDelta(raw));
     } catch {
       // A frame that is not a scene delta (session/error/anything a future host adds) — ignored.
       return;
@@ -832,11 +833,11 @@ export function connectMirrorClient(options: {
 
     if (delta) {
       sceneCheckpoint("scene-received");
-      applySceneDelta(state, delta);
+      wirePhase("apply-scene-delta", () => applySceneDelta(state, delta));
       sceneAblationRuntime.noteSceneDelta(data);
       // The host spent a send credit on this delta; the next rendered frame owes it an ack (see sendSceneAck).
       deltasSinceAck += 1;
-      notify();
+      wirePhaseFlushTail("notify", notify);
     }
   });
 

@@ -15,6 +15,7 @@
     "test": "vitest run",
     "bench:mirror": "vitest run --config vitest.bench.config.ts",
     "test:e2e": "playwright test",
+    "bench:audio": "playwright test --config=playwright.audio-bench.config.ts",
     "test:iphone-webkit": "node ./iphone-webkit/run.mjs",
     "build:pages": "vue-tsc --noEmit && vite build --config vite.pages.config.ts",
     "preview:pages": "vite preview --config vite.pages.config.ts --host 127.0.0.1 --port 4173"

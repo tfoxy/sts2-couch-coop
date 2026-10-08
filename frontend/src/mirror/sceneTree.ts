@@ -557,6 +557,14 @@ export interface MirrorState {
   pendingHints: MirrorTweenHint[];
   // WS-3: one-shot declarative card flights, same accumulate/drain lifecycle as `pendingHints`.
   pendingCardFlights: MirrorCardFlightHint[];
+  // R-WPC: bumped ONLY when a node the static-background wire scan cares about (StaticBackground.vue's
+  // `wireFallback`, see isSceneRootScanRelevant below) was added, removed, reparented, or had its sceneFilePath
+  // changed. `revision` bumps on EVERY delta (including a pure transform/tint tick), and `orderedIds` gets a new
+  // array reference on almost every structural delta (any orderPatch mints one via applyOrderPatch) — neither is
+  // a usable "does the wire scan's answer need to change" signal, which is why the scan used to re-walk the whole
+  // node map on every reorder. This counter IS that signal: a consumer caches its last-seen value and re-scans
+  // only when it moved.
+  sceneRootEpoch: number;
 }
 
 export function createMirrorState(): MirrorState {
@@ -569,7 +577,38 @@ export function createMirrorState(): MirrorState {
     sceneRewrite: false,
     pendingHints: [],
     pendingCardFlights: [],
+    sceneRootEpoch: 0,
   };
+}
+
+// R-WPC: the names StaticBackground.vue's wireFallback scan matches as a possible chain link (BgContainer /
+// SceneContainer under a combat or room scene root) — see staticBackgroundPolicy.ts's isCombatBackgroundSceneRoot
+// / isRoomBackgroundSubtreeRoot for the authoritative predicate. sceneTree.ts cannot import that module (it
+// imports sceneTree's MirrorNode type, so the reverse import would cycle), so this is a SAFE SUPERSET duplicate:
+// it only has to decide "could this change flip the scan's verdict", never has to agree on the final verdict
+// itself. Over-firing (bumping the epoch for an unrelated node that happens to share a watched name) only costs
+// an extra rescan; under-firing would let the static-background picture go stale, so this stays deliberately
+// generous.
+const SCENE_ROOT_SCAN_NAMES = new Set(["BgContainer", "SceneContainer", "CombatSceneContainer"]);
+
+function isSceneRootScanRelevant(node: MirrorNode | undefined): boolean {
+  return node != null && (node.sceneFilePath != null || SCENE_ROOT_SCAN_NAMES.has(node.name));
+}
+
+// Whether replacing `prev` (the retained node before this upsert, or undefined on a fresh add) with `next` (the
+// merged node after it) could change the wire scan's verdict for ANY node — not just this one, since the scan
+// also reads a node's PARENT/GRANDPARENT by name. `sceneFilePath`/`name` are STATIC (mergeNode only ever changes
+// them on the `return upsert` full-replace branch), but `parentId` rides every upsert (volatile or not), so a
+// reparent is the one field that can move on a tick that looks otherwise ordinary.
+function sceneRootScanChanged(prev: MirrorNode | undefined, next: MirrorNode): boolean {
+  if (!isSceneRootScanRelevant(prev) && !isSceneRootScanRelevant(next)) {
+    return false;
+  }
+  return (
+    (prev?.sceneFilePath ?? null) !== next.sceneFilePath ||
+    (prev?.name ?? "") !== next.name ||
+    (prev?.parentId ?? null) !== next.parentId
+  );
 }
 
 export function parseSceneDelta(raw: unknown): MirrorDelta | null {
@@ -799,6 +838,10 @@ function normalizeTweenHint(entry: unknown): MirrorTweenHint | null {
 // Apply a delta to the retained map in place. Static fields merge forward (an add/keyframe carries the
 // static styling block; a later volatile-only upsert leaves them defaulted and must not erase them).
 export function applySceneDelta(state: MirrorState, delta: MirrorDelta): void {
+  // R-WPC: a keyframe wipes and re-establishes the whole map — always a candidate for the wire scan's verdict
+  // to change (the previous bg root, if any, is gone either way).
+  let sceneRootScanDirty = delta.full;
+
   if (delta.full) {
     state.nodes.clear();
     state.orderedIds = [];
@@ -809,6 +852,9 @@ export function applySceneDelta(state: MirrorState, delta: MirrorDelta): void {
   }
 
   for (const id of delta.removedIds) {
+    if (!sceneRootScanDirty && isSceneRootScanRelevant(state.nodes.get(id))) {
+      sceneRootScanDirty = true;
+    }
     state.nodes.delete(id);
     state.changedIds.add(id);
   }
@@ -820,7 +866,11 @@ export function applySceneDelta(state: MirrorState, delta: MirrorDelta): void {
     if (!existing) {
       introducedNode = true;
     }
-    state.nodes.set(upsert.id, existing ? mergeNode(existing, upsert) : upsert);
+    const merged = existing ? mergeNode(existing, upsert) : upsert;
+    if (!sceneRootScanDirty && sceneRootScanChanged(existing, merged)) {
+      sceneRootScanDirty = true;
+    }
+    state.nodes.set(upsert.id, merged);
     state.changedIds.add(upsert.id);
   }
 
@@ -873,6 +923,9 @@ export function applySceneDelta(state: MirrorState, delta: MirrorDelta): void {
 
   state.screenType = delta.screenType;
   state.revision += 1;
+  if (sceneRootScanDirty) {
+    state.sceneRootEpoch += 1;
+  }
 }
 
 // An ORPHAN: the node names a `parentId` that is NOT live in the current map. A TRUE producer root (parentId

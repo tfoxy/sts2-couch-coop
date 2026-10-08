@@ -63,6 +63,22 @@ The per-client deadline sender releases frames at most 100 ms before due time an
 under pressure. The browser decodes takes, plays first-sight sounds while collecting them, and uses a
 60 ms jitter target for the three live lanes.
 
+The browser engine (`frontend/src/audio/audioEngine.ts`) runs one of three paths, chosen by
+`audioPath.ts` and overridable with `?audioPath=main|worker|worklet`:
+
+- **worklet** (auto on a secure page): a dedicated Worker owns both audio sockets, parses events and PCM,
+  and posts sink commands (`audioSinkProtocol.ts`) over a `MessagePort` straight to an AudioWorklet mixer
+  (`mixerCore.ts`). No per-cue or per-block work touches the page main thread, so mirror rendering cannot
+  delay a cue. The main thread only fences the sink on stop/seat switch and decodes TmpSfx MP3 once.
+- **main** (auto on plain HTTP, remote-hosted pages, or without Worker/AudioWorklet): the original
+  engine (`mainEngine.ts`); every message and `source.start()` runs on the main thread.
+- **worker** (opt-in): the same Worker transport feeding a main-thread sink (`mainSink.ts`). It drains
+  the sockets off-thread, but cue scheduling still waits for the main thread.
+
+AudioWorklet requires a secure context, so the default plain-HTTP QR stays on `main`; the HTTPS QR row
+gets the worklet. A worklet that fails to load degrades to `worker`, and a processor error after loading
+falls back to `main`. Sinks never drop a `load` as stale, because buffers survive fences.
+
 The host's proxy hook resolves the generated Godot call helper from `GodotObject.Call` IL, then filters by
 the two audio proxy instance pointers before reading arguments. A one-time call on a mod-owned Godot node
 checks the hook route; a hook failure disables live lanes for the session. `HostMusicState` keeps a small current
