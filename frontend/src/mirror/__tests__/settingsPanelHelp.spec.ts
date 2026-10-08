@@ -1,8 +1,9 @@
 import { mount, type VueWrapper } from "@vue/test-utils";
-import { afterEach, beforeEach, describe, expect, it } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import SettingsPanel from "@/mirror/SettingsPanel.vue";
 import { __resetComposerForTest, createBrowserI18n } from "@/i18n";
+import { hostBase } from "@/join/hostBase";
 import { mirrorSettings } from "@/mirror/mirrorSettings";
 import type { MirrorLatency } from "@/mirror/mirrorClient";
 
@@ -30,6 +31,7 @@ const HELP_IDS = [
   "quality",
   "shaders",
   "particles",
+  "audio",
   "staticBg",
   "stretch",
   "raiseCard",
@@ -47,8 +49,7 @@ const HELP_IDS = [
   "freezeDecor",
   "networkRtt",
   "gameRtt",
-  "latencyOverlay",
-  "audio"
+  "latencyOverlay"
 ] as const;
 
 function mountPanel(): VueWrapper {
@@ -65,10 +66,14 @@ function bubbleExists(wrapper: VueWrapper, id: string): boolean {
 
 beforeEach(() => {
   mirrorSettings.panelOpen = true;
+  delete globalThis.__couchCoopHostBase;
 });
 
 afterEach(() => {
   mirrorSettings.panelOpen = false;
+  vi.unstubAllGlobals();
+  delete globalThis.__couchCoopHostBase;
+  hostBase(); // invalidate the memoized remote origin for the next test
   __resetComposerForTest();
 });
 
@@ -115,6 +120,44 @@ describe("SettingsPanel — per-row help tips", () => {
       expect(text.length).toBeGreaterThan(40); // never a placeholder or a bare label echo
       expect(text).toMatch(/\.$/);
     }
+    wrapper.unmount();
+  });
+
+  it("labels Audio as beta and places it immediately after Particles", () => {
+    const wrapper = mountPanel();
+    const rowOrder = wrapper.findAll(".settings-item").map((row) => row.text());
+    const particlesIndex = rowOrder.findIndex((row) => row.includes("Particles"));
+    const audioIndex = rowOrder.findIndex((row) => row.includes("Audio (Beta)"));
+    expect(audioIndex).toBe(particlesIndex + 1);
+    expect(wrapper.text()).not.toContain("registered trademark");
+    expect(wrapper.find('[data-testid="mirror-audio-credit"]').exists()).toBe(false);
+    wrapper.unmount();
+  });
+
+  it("shows the HTTPS recommendation only when the host uses HTTP", async () => {
+    globalThis.__couchCoopHostBase = "http://lan-host:13337";
+    const httpWrapper = mountPanel();
+    await tip(httpWrapper, "audio").trigger("click");
+    const httpHelp = httpWrapper.get('[data-testid="mirror-help-bubble-audio"]').text();
+    expect(httpHelp).toContain("both the host and this device");
+    expect(httpHelp).toContain("above the QR button");
+    httpWrapper.unmount();
+
+    globalThis.__couchCoopHostBase = "https://lan-host:13337";
+    const httpsWrapper = mountPanel();
+    await tip(httpsWrapper, "audio").trigger("click");
+    const httpsHelp = httpsWrapper.get('[data-testid="mirror-help-bubble-audio"]').text();
+    expect(httpsHelp).toContain("both the host and this device");
+    expect(httpsHelp).not.toContain("above the QR button");
+    httpsWrapper.unmount();
+  });
+
+  it("uses the host scheme for a remote HTTPS page connected to an HTTP host", async () => {
+    globalThis.__couchCoopHostBase = "http://lan-host:13337";
+    vi.stubGlobal("location", new URL("https://public.example/join"));
+    const wrapper = mountPanel();
+    await tip(wrapper, "audio").trigger("click");
+    expect(wrapper.get('[data-testid="mirror-help-bubble-audio"]').text()).toContain("above the QR button");
     wrapper.unmount();
   });
 
@@ -218,7 +261,7 @@ describe("SettingsPanel — the inline notes it replaced", () => {
     expect(text).not.toContain("Lower = less CPU");
     expect(text).not.toContain("While the map, deck or a reward screen is open, stop animating");
     // Exactly ONE note element survives — the dynamic host-performance one.
-    expect(wrapper.findAll(".settings-group-note")).toHaveLength(2);
+    expect(wrapper.findAll(".settings-group-note")).toHaveLength(1);
     wrapper.unmount();
   });
 

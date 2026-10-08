@@ -5,6 +5,7 @@ import { translate as t } from "@/i18n";
 import { REPRO_UI_ENABLED } from "@/mirror/buildFlags";
 import type { MirrorLatency } from "@/mirror/mirrorClient";
 import SettingsHelpTip from "@/mirror/SettingsHelpTip.vue";
+import { hostBase } from "@/join/hostBase";
 import { applyViewerStage, applyViewerTextMethod, rendererRuntimeStatus } from "@/mirror/rendererComparison";
 import { setComparisonStageBackend } from "@/mirror/rendererFactory";
 import { IMPLEMENTED_RUST_TEXT_METHODS } from "@/mirror/renderer/pixi/textMethods";
@@ -83,6 +84,7 @@ const canvasActive = computed(() => settings.runtimeStage === "canvas");
 const availableTextMethods = computed(() => TEXT_METHODS.filter((method) => method.available({ implemented: IMPLEMENTED_RUST_TEXT_METHODS })));
 const failureReason = computed(() => settings.stage === "canvas" && rendererRuntimeStatus.requested.backend === "canvas" &&
   rendererRuntimeStatus.phase === "failed" ? rendererRuntimeStatus.reason : null);
+const audioUsesHttp = computed(() => hostBase().startsWith("http://"));
 
 function selectStage(value: "dom" | "canvas"): void {
   settings.stage = value;
@@ -271,11 +273,11 @@ function closeHelp(): void {
 // The props for one row's tip, including its toggle handler. A template of 15 rows × 5 attributes is a worse
 // place to hide a typo than one helper. `placement` flips the bubble upward for the bottom-most group, whose
 // downward bubble the panel's own scroll box would clip.
-function help(id: HelpId, label: string, placement: "below" | "above" = "below") {
+function help(id: HelpId, label: string, placement: "below" | "above" = "below", textOverride?: string) {
   return {
     tipId: id,
     label,
-    text: t(HELP_KEYS[id]),
+    text: textOverride ?? t(HELP_KEYS[id]),
     open: openHelp.value === id,
     placement,
     onToggle: () => toggleHelp(id)
@@ -354,15 +356,6 @@ onBeforeUnmount(() => setHelpListeners(false));
           {{ t('settings.stageFailure', { reason: failureReason }) }}
           <button type="button" @click="retryCanvas">{{ t('boot.tryAgain') }}</button>
         </p>
-        <div class="settings-item">
-          <label class="settings-row">
-            <input type="checkbox" v-model="audio" :disabled="directView" data-testid="mirror-audio" @click="unlockAudioOnClick" />
-            <span>{{ t('settings.audio') }}</span>
-          </label>
-          <SettingsHelpTip v-bind="help('audio', t('settings.audio'))" />
-        </div>
-        <p v-if="audioUnavailable" role="status" data-testid="mirror-audio-unavailable">{{ t('settings.audioUnavailable') }}</p>
-        <p class="settings-group-note" data-testid="mirror-audio-credit">{{ t('settings.audioCredit') }}</p>
         <div v-if="canvasActive && availableTextMethods.length > 1" class="settings-item">
           <label class="settings-row settings-row-select">
             <span>{{ t('settings.textMethod') }}</span>
@@ -400,6 +393,16 @@ onBeforeUnmount(() => setHelpListeners(false));
           </label>
           <SettingsHelpTip v-bind="help('particles', t('settings.particles'))" />
         </div>
+        <div class="settings-item">
+          <label class="settings-row">
+            <input type="checkbox" v-model="audio" :disabled="directView" data-testid="mirror-audio" @click="unlockAudioOnClick" />
+            <span>{{ t('settings.audio') }}</span>
+          </label>
+          <SettingsHelpTip
+            v-bind="help('audio', t('settings.audio'), 'below', t(audioUsesHttp ? 'settings.help.audioHttp' : 'settings.help.audio'))"
+          />
+        </div>
+        <p v-if="audioUnavailable" role="status" data-testid="mirror-audio-unavailable">{{ t('settings.audioUnavailable') }}</p>
         <div class="settings-item">
           <label class="settings-row">
             <input type="checkbox" v-model="staticBgEnabled" :disabled="canvasActive" data-testid="mirror-static-bg" />
