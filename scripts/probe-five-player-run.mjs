@@ -61,6 +61,10 @@
 //  * Seat browser ports come from HeadlessClientManager.SlotToPort = 13337 + slot*10, using the COMPILED
 //    constant, not the host's actually-bound port -- which can differ when the host port-walked. Both
 //    bases are tried (slotForPort) and the one that matched is recorded.
+//  * A seat behind the SHARED SEAT RELAY never redirects: the page stays on the host port and opens
+//    `/ws?seat=<route>`, an opaque random id. Its slot comes from the host's per-connection `session`
+//    envelope instead (`session.playerId` = p:<1000+slot>), read off the page's own WebSocket frames
+//    (resolveSeatSlot). Either way the seat's own ENet log then has to prove that slot joined.
 //  * Every couch seat runs its own spirectl bridge at /tmp/spirectl-bridge-slot-<N>.sock. A seat-owned
 //    semantic action refused by the HOST bridge is retried there, and each seat's own view of the run is
 //    captured as evidence -- "the host thinks there is one player, what does seat 3 think?" is exactly
@@ -754,7 +758,7 @@ export function checkSeatRecords(joined, expected) {
       continue;
     }
     if (!Number.isInteger(seat.slot) || !Number.isInteger(seat.port)) {
-      problems.push(`${label}: reported ok but resolved no seat port (slot=${seat.slot}, port=${seat.port})`);
+      problems.push(`${label}: reported ok but resolved no seat slot/port (slot=${seat.slot}, port=${seat.port})`);
       continue;
     }
     if (!Array.isArray(seat.enetEvidence) || seat.enetEvidence.length === 0) {
@@ -1357,15 +1361,32 @@ export async function joinSeats(targets, evidence) {
 
 async function joinOneSeat(targets, name, evidence) {
   const started = Date.now();
-  const seat = { name, ok: false, detail: null, slot: null, port: null, portBase: null, playerId: null, logPath: null, socketUrls: [], screenshots: [], ms: 0 };
+  const seat = { name, ok: false, detail: null, slot: null, port: null, portBase: null, route: null, playerId: null, logPath: null, socketUrls: [], sessionFrames: [], screenshots: [], ms: 0 };
   const context = await browser.newContext({ viewport: targets.viewport ?? { width: 960, height: 600 } });
   openContexts.push(context);
   const page = await context.newPage();
   openSeatPages.push({ name, context, page });
-  // The seat redirect happens INSIDE the page (a WebSocket reconnect to the headless instance's port),
-  // never in the page URL -- so the socket URLs are the only client-side evidence of which port the
-  // host handed this seat.
-  page.on("websocket", socket => seat.socketUrls.push(socket.url()));
+  // The seat redirect happens INSIDE the page (a WebSocket reconnect to the headless instance's port, or
+  // to the host's own `/ws?seat=` relay route), never in the page URL -- so the sockets are the only
+  // client-side evidence of which seat the host handed this page. A direct seat is told apart by the
+  // port it reconnects to; a relayed one by the player id the host's `session` envelopes assign it.
+  // Frames are only inspected until the join resolves: a soak keeps this page open for hours.
+  const frameListeners = [];
+  // Settled by the frame listener itself (never re-read on a timer) when a session frame assigns a seat id.
+  let sessionAssigned = null;
+  const nextSeatAssignment = new Promise(resolve => { sessionAssigned = resolve; });
+  page.on("websocket", socket => {
+    const url = socket.url();
+    seat.socketUrls.push(url);
+    const onFrame = ({ payload }) => {
+      const facts = sessionFrameFacts(payload, url);
+      if (!facts) return;
+      seat.sessionFrames.push(facts);
+      if (facts.joined && seatForPlayerId(facts.playerId)) sessionAssigned();
+    };
+    socket.on("framereceived", onFrame);
+    frameListeners.push(() => socket.off("framereceived", onFrame));
+  });
   page.on("console", message => { if (message.type() === "error") note(`[${name}] console error: ${message.text()}`); });
 
   const shot = async label => {
@@ -1400,13 +1421,25 @@ async function joinOneSeat(targets, name, evidence) {
     }
     await shot("joined");
 
-    const seatPort = resolveSeatPort(seat.socketUrls, targets);
-    assert(seatPort, `could not tell which seat port ${name} was redirected to; sockets seen: ${seat.socketUrls.join(", ") || "none"}`);
-    seat.port = seatPort.port;
-    seat.slot = seatPort.slot;
-    seat.portBase = seatPort.base;
-    seat.playerId = seatPort.playerId;
-    seat.logPath = seatLogPathFor(targets.userDir, seatPort.slot);
+    let seatSlot = resolveSeatSlot(seat, targets);
+    // The redirect-bearing reply can name the viewer before the host's roster has bound it; the next
+    // session push does. Wait for THAT frame (event-driven, bounded by what is left of the seat timeout)
+    // rather than re-reading anything.
+    if (!seatSlot.ok && seat.socketUrls.some(isSeatRelaySocket)) {
+      const remainingMs = Math.max(0, deadline - Date.now());
+      let timer = null;
+      await Promise.race([nextSeatAssignment, new Promise(resolve => { timer = setTimeout(resolve, remainingMs); })]);
+      clearTimeout(timer);
+      seatSlot = resolveSeatSlot(seat, targets);
+    }
+    for (const detach of frameListeners.splice(0)) detach();
+    assert(seatSlot.ok, `could not tell which seat ${name} joined: ${seatSlot.problem}; sockets seen: ${seat.socketUrls.join(", ") || "none"}`);
+    seat.port = seatSlot.port;
+    seat.slot = seatSlot.slot;
+    seat.portBase = seatSlot.base;
+    seat.route = seatSlot.via;
+    seat.playerId = seatSlot.playerId;
+    seat.logPath = seatLogPathFor(targets.userDir, seatSlot.slot);
 
     // The REAL ENet join, in that seat's own process log. A browser that shows a scene proves the
     // mirror is up; only these two lines prove the seat actually joined the host's lobby over ENet.
@@ -1417,30 +1450,107 @@ async function joinOneSeat(targets, name, evidence) {
     seat.enetEvidence = await waitForLogSignatures(
       seat.logPath,
       [
-        { pattern: `Sending handshake with net ID ${seatPort.netId}`, hint: "Sending handshake with net ID" },
+        { pattern: `Sending handshake with net ID ${seatSlot.netId}`, hint: "Sending handshake with net ID" },
         { pattern: "ClientLobbyJoinResponseMessage Players:", hint: "ClientLobbyJoinResponseMessage" }
       ],
       Math.max(30_000, targets.seatTimeoutMs / 2)
     );
     seat.ok = true;
-    seat.detail = `slot ${seat.slot}, port ${seat.port}`;
+    seat.detail = seatSlot.via === "relay"
+      ? `slot ${seat.slot} via host-port relay (seat port ${seat.port})`
+      : `slot ${seat.slot}, port ${seat.port}`;
   } catch (error) {
     seat.detail = error instanceof ProbeError ? error.message : `${error?.name}: ${error?.message}`;
   } finally {
+    for (const detach of frameListeners.splice(0)) detach();
     seat.ms = Date.now() - started;
   }
   return seat;
 }
 
-/** The redirect port is the last WebSocket the page opened that is NOT the host's own base port. */
-function resolveSeatPort(socketUrls, targets) {
+/**
+ * What one received WebSocket frame says about this viewer's seat, or null when it is not a `session`
+ * envelope. The envelope serializes `type` first, so a frame is only parsed when its head says
+ * `session` -- scene deltas are never parsed here.
+ */
+export function sessionFrameFacts(payload, url = null) {
+  if (typeof payload !== "string" || !/^\{\s*"type"\s*:\s*"session"/.test(payload.slice(0, 40))) return null;
+  let value;
+  try {
+    value = JSON.parse(payload);
+  } catch {
+    return null;
+  }
+  if (value?.type !== "session") return null;
+  return {
+    url,
+    joined: value.session?.joined === true,
+    playerId: typeof value.session?.playerId === "string" ? value.session.playerId : null,
+    relayRoute: typeof value.headlessMirrorPath === "string"
+  };
+}
+
+/** True for the shared seat relay's socket: `/ws` with a `seat=` route, on the page's own (host) origin. */
+function isSeatRelaySocket(url) {
+  try {
+    const parsed = new URL(url);
+    return parsed.pathname === "/ws" && parsed.searchParams.has("seat");
+  } catch {
+    return false;
+  }
+}
+
+/** `p:<netId>` -> the couch seat it names, or null when the id is not in the seat band. */
+function seatForPlayerId(playerId) {
+  const netId = Number(/^p:(\d+)$/.exec(String(playerId ?? ""))?.[1]);
+  const slot = netId - SEAT_BASE_NET_ID;
+  if (!Number.isInteger(slot) || slot < SEAT_MIN_SLOT || slot > SEAT_MAX_SLOT) return null;
+  return { slot, netId, playerId: `p:${netId}` };
+}
+
+/**
+ * Which seat a joined page got, from what its own sockets saw: `{socketUrls, sessionFrames}`.
+ *
+ *  - REDIRECT (a direct seat): the last socket the page opened on a seat-grid port other than the host's.
+ *  - RELAY (the shared seat relay): the page stayed on the host port and opened `/ws?seat=<route>`. The
+ *    route is opaque, so the slot is the one the host's `session` envelopes assign this viewer
+ *    (`session.joined` with a `p:<1000+slot>` player id). Every assigned seat id must agree; two different
+ *    ones is a page this probe cannot attribute, not a guess. The seat still binds its own grid port, so
+ *    `port` is that port (SlotToPort uses the compiled base), and `pagePort` is where the page really is.
+ *
+ * Returns `{ok:true, via, slot, port, base, netId, playerId}` or `{ok:false, problem}`. Neither path is
+ * proof of an ENet join on its own -- the caller still demands that seat's own log evidence.
+ */
+export function resolveSeatSlot({ socketUrls = [], sessionFrames = [] }, targets) {
   for (let index = socketUrls.length - 1; index >= 0; index -= 1) {
     const port = portFromUrl(socketUrls[index]);
     if (!Number.isInteger(port) || port === targets.browserPort) continue;
     const resolved = slotForPort(port, targets.portBases);
-    if (resolved) return { port, ...resolved };
+    if (resolved) return { ok: true, via: "redirect", port, ...resolved };
   }
-  return null;
+  if (!socketUrls.some(isSeatRelaySocket)) {
+    return { ok: false, problem: "no redirect to a seat port and no `/ws?seat=` relay socket" };
+  }
+  const assigned = [...new Set(sessionFrames.filter(frame => frame?.joined && frame.playerId).map(frame => frame.playerId))];
+  const seats = assigned.map(seatForPlayerId).filter(Boolean);
+  if (seats.length === 0) {
+    return {
+      ok: false,
+      problem: `relay socket opened but no session frame naming a seat player (assigned: ${assigned.join(", ") || "none"})`
+    };
+  }
+  if (new Set(seats.map(seat => seat.slot)).size > 1) {
+    return { ok: false, problem: `session frames name more than one seat player (${seats.map(seat => seat.playerId).join(", ")})` };
+  }
+  const [seat] = seats;
+  return {
+    ok: true,
+    via: "relay",
+    port: DEFAULT_HOST_PORT + seat.slot * SEAT_PORT_STEP,
+    base: DEFAULT_HOST_PORT,
+    pagePort: targets.browserPort,
+    ...seat
+  };
 }
 
 /**

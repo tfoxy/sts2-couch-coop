@@ -1003,7 +1003,14 @@ test("argument parsing: dash-valued launch args, validation, and defaults", () =
 // one whole session, game-free
 // =================================================================================================
 
-async function fullSession({ noSeatEcho = false, launchMode = "direct", routeSteps, extensions = null }) {
+// What the injected join reports by default: a RELAY join, as the current client does it -- the page stayed on the
+// host port, so the slot came from the host's session player id and the port is the seat's own grid port.
+const RELAY_JOINED_SEAT = Object.freeze({
+  name: "Ann", ok: true, slot: 2, port: 13357, portBase: 13337, route: "relay", playerId: "p:1002",
+  detail: "slot 2 via host-port relay (seat port 13357)", enetEvidence: [{ pattern: "handshake" }], logPath: null, screenshots: [], ms: 1
+});
+
+async function fullSession({ noSeatEcho = false, launchMode = "direct", routeSteps, extensions = null, seatRecords = [RELAY_JOINED_SEAT] }) {
   const bin = fakeBin();
   const logs = tmp("logs");
   const sockets = socketDir();
@@ -1041,7 +1048,7 @@ async function fullSession({ noSeatEcho = false, launchMode = "direct", routeSte
       joinSeats: async (targets, evidence) => {
         joins.push(targets);
         evidence.screenshots.push("none");
-        return [{ name: "Ann", ok: true, slot: 2, port: 13357, playerId: "p:1002", enetEvidence: [{ pattern: "handshake" }], logPath: null, screenshots: [], ms: 1 }];
+        return seatRecords.map(seat => ({ ...seat }));
       },
       closeBrowsers: async () => {},
       seatPages: () => [],
@@ -1189,6 +1196,18 @@ test("a console step that a seat never echoes fails the route, and teardown stil
   assert.deepEqual(replication.missing, ["seat-2"]);
   assert.ok(!session.stream.some(line => line.kind === "mark" && line.label === "never"));
   assert.deepEqual(session.receipt.replicationLedger, [{ line: "room MONSTER", peers: { "host-godot": 1, "seat-slot-2-godot": 0 } }]);
+  assertTornDown(session);
+});
+
+test("a seat with no proof it joined fails the session at the join, and teardown still runs", async () => {
+  // What a relayed page looks like when the host never assigned it a seat: no redirect, no session player id.
+  const unjoined = { name: "Ann", ok: false, slot: null, port: null, route: null, playerId: null, enetEvidence: [], screenshots: [], ms: 1,
+    detail: "could not tell which seat Ann joined: relay socket opened but no session frame naming a seat player (assigned: none)" };
+  const session = await fullSession({ seatRecords: [unjoined], routeSteps: [{ kind: "mark", label: "never" }] });
+  assert.equal(session.exitCode, 1);
+  assert.equal(session.receipt.failure.code, "seats", JSON.stringify(session.receipt.failure));
+  assert.match(session.receipt.failure.message, /1 of 1 seats have no proof they joined: .*no session frame naming a seat player/);
+  assert.ok(!session.stream.some(line => line.kind === "mark" && line.label === "never"), "nothing after a failed join runs");
   assertTornDown(session);
 });
 

@@ -239,6 +239,10 @@ node scripts/test-run-session-soak.mjs                                          
   `--config <run-dir>/sts2.<instance>.yaml --instance <instance>`.
 - The mod's browser server refuses loopback for viewer routes, so seats join at the LAN address (`--lan-host`,
   detected by default).
+- **Seat slots under the shared seat relay.** A relayed seat's page stays on the host port (`/ws?seat=<route>`, an
+  opaque id), so `joinSeats()` takes its slot from the host's `session` envelope (`session.playerId` =
+  `p:<1000+slot>`) and a direct seat's from its redirect port; either way the seat's own `godot.log` must show the
+  ENet handshake for that netId, and the rig matches the slot to a seat process under the host.
 
 ### Seat audio live matrix
 

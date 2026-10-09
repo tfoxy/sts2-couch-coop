@@ -33,7 +33,7 @@ import {
   DEFAULT_HOST_PORT,
   ProbeUsageError,
   parseProbeArgs, parseBringupRecord, resolveTargets, lockResourcesFor,
-  slotForPort, seatLogPathFor, seatBridgeSocketFor, seatNameFor,
+  slotForPort, seatLogPathFor, seatBridgeSocketFor, seatNameFor, resolveSeatSlot, sessionFrameFacts,
   evaluateModGate, assignCharacters, runPlayerAliveness,
   scanLogSignatures, splitLogLines, buildResult, mapWithConcurrency, checkSeatRecords,
   captureLogBaselines, archiveEvidence, waitForLogSignatures, checkEvidenceConsistency
@@ -281,6 +281,52 @@ test("seat paths follow the documented layout", () => {
   assert.equal(seatNameFor(0), "Ann");
   assert.notEqual(seatNameFor(0), seatNameFor(1));
   assert.equal(seatNameFor(500), "Seat501", "names never run out");
+});
+
+// =================================================================================================
+// which seat a joined page got: redirect (direct seat) or session player id (shared seat relay)
+// =================================================================================================
+
+const HOST_TARGETS = { browserPort: 13337, portBases: [13337] };
+const HOST_WS = "ws://10.0.0.5:13337/ws";
+const RELAY_WS = "ws://10.0.0.5:13337/ws?seat=0123456789ABCDEF0123456789ABCDEF";
+const sessionFrame = (playerId, { joined = true, path = null } = {}) => JSON.stringify({
+  type: "session", requestId: "r1", session: { name: "Ann", status: joined ? "joined" : "unassigned", joined, playerId, connectionCount: 1 },
+  ...(path ? { headlessMirrorPath: path } : {})
+});
+const framesOf = (...payloads) => payloads.map(payload => sessionFrameFacts(payload, HOST_WS)).filter(Boolean);
+
+test("sessionFrameFacts reads session envelopes and skips everything else", () => {
+  assert.deepEqual(sessionFrameFacts(sessionFrame("p:1003", { path: "/ws?seat=AB" }), HOST_WS),
+    { url: HOST_WS, joined: true, playerId: "p:1003", relayRoute: true });
+  assert.equal(sessionFrameFacts(JSON.stringify({ type: "scene-delta", revision: 4, session: { joined: true, playerId: "p:1003" } })), null);
+  assert.equal(sessionFrameFacts('{"type":"session",'), null, "a truncated frame is not a session");
+  assert.equal(sessionFrameFacts(Buffer.from(sessionFrame("p:1003"))), null, "binary frames are not the JSON wire");
+});
+
+test("resolveSeatSlot attributes a relay join from the host's session player id", () => {
+  const resolved = resolveSeatSlot({ socketUrls: [HOST_WS, RELAY_WS], sessionFrames: framesOf(sessionFrame(null, { joined: false }), sessionFrame("p:1003", { path: "/ws?seat=AB" })) }, HOST_TARGETS);
+  assert.deepEqual(resolved, { ok: true, via: "relay", port: 13367, base: 13337, pagePort: 13337, slot: 3, netId: 1003, playerId: "p:1003" });
+});
+
+test("resolveSeatSlot still resolves a direct seat from its redirect, ahead of any session id", () => {
+  const resolved = resolveSeatSlot({ socketUrls: [HOST_WS, "ws://10.0.0.5:13357/ws"], sessionFrames: framesOf(sessionFrame("p:1004")) }, HOST_TARGETS);
+  assert.deepEqual(resolved, { ok: true, via: "redirect", port: 13357, slot: 2, base: 13337, netId: 1002, playerId: "p:1002" });
+});
+
+test("resolveSeatSlot refuses a page it cannot attribute to exactly one seat", () => {
+  const refused = (input, pattern) => {
+    const result = resolveSeatSlot(input, HOST_TARGETS);
+    assert.equal(result.ok, false, JSON.stringify(result));
+    assert.match(result.problem, pattern);
+  };
+  refused({ socketUrls: [HOST_WS], sessionFrames: framesOf(sessionFrame("p:1003")) }, /no `\/ws\?seat=` relay socket/);
+  refused({ socketUrls: [HOST_WS, RELAY_WS], sessionFrames: [] }, /no session frame naming a seat player \(assigned: none\)/);
+  refused({ socketUrls: [HOST_WS, RELAY_WS], sessionFrames: framesOf(sessionFrame("p:1003", { joined: false })) }, /assigned: none/);
+  refused({ socketUrls: [HOST_WS, RELAY_WS], sessionFrames: framesOf(sessionFrame("p:1")) }, /assigned: p:1\)/);
+  refused({ socketUrls: [HOST_WS, RELAY_WS], sessionFrames: framesOf(sessionFrame("p:1001"), sessionFrame("p:1100")) }, /no session frame naming a seat player/);
+  refused({ socketUrls: [HOST_WS, RELAY_WS], sessionFrames: framesOf(sessionFrame("p:1002"), sessionFrame("p:1003")) }, /more than one seat player \(p:1002, p:1003\)/);
+  refused({ socketUrls: [], sessionFrames: [] }, /no redirect to a seat port/);
 });
 
 // =================================================================================================
@@ -835,6 +881,15 @@ test("checkSeatRecords passes only when every seat carries slot, port and ENet e
   assert.deepEqual(checkSeatRecords([okSeat("Ann", 2), okSeat("Bo", 3)], 2), []);
 });
 
+test("checkSeatRecords passes a relay-joined seat and still fails one that never joined", () => {
+  const relayed = { ...okSeat("Ann", 2), route: "relay", detail: "slot 2 via host-port relay (seat port 13357)" };
+  assert.deepEqual(checkSeatRecords([relayed], 1), []);
+  const unjoined = { name: "Ann", ok: false, slot: null, port: null, detail: "could not tell which seat Ann joined: relay socket opened but no session frame naming a seat player (assigned: none)" };
+  const problems = checkSeatRecords([unjoined], 1);
+  assert.equal(problems.length, 1);
+  assert.match(problems[0], /no session frame naming a seat player/);
+});
+
 test("checkSeatRecords fails a SPARSE array rather than skipping its holes", () => {
   const sparse = new Array(4);
   const problems = checkSeatRecords(sparse, 4);
@@ -858,7 +913,7 @@ test("checkSeatRecords reports a seat that tried and failed with its own detail"
 
 test("checkSeatRecords does not take ok at its word without slot/port and ENet evidence", () => {
   const noPort = checkSeatRecords([{ ...okSeat("Ann", 2), slot: null, port: null }], 1);
-  assert.ok(/resolved no seat port/.test(noPort[0]), noPort[0]);
+  assert.ok(/resolved no seat slot\/port/.test(noPort[0]), noPort[0]);
   const noEnet = checkSeatRecords([{ ...okSeat("Ann", 2), enetEvidence: [] }], 1);
   assert.ok(/no ENet handshake evidence/.test(noEnet[0]), noEnet[0]);
 });
