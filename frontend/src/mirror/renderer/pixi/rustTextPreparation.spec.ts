@@ -261,6 +261,64 @@ describe("resolveSemanticTextSpec + buildPreparedText — the pure half", () => 
     expect(prepared.layout.lines.map((line) => line.text)).toEqual([parsed]);
   });
 
+  it("prepares Chinese card and tooltip text with native breaks around an energy icon", () => {
+    const root = node("root", null, { sceneFilePath: "res://scenes/ui/x.tscn" });
+    const icon = "[img]res://icons/energy.png[/img]";
+    const cases = [
+      { id: "card", markup: `[center]启程。\n[purple]获得${icon}。[/purple][/center]`,
+        native: "启程。\n获得 。", ranges: [{ start: 0, end: 3 }, { start: 4, end: 8 }] },
+      { id: "tooltip", markup: `初次使用时，获得${icon}。`,
+        native: "初次使用时，获得 。", ranges: [{ start: 0, end: 6 }, { start: 6, end: 10 }] },
+    ];
+    for (const sample of cases) {
+      const label = node(sample.id, "root", { richText: true,
+        localRect: { x: 0, y: 0, width: 200, height: 80 },
+        text: { ...node("unused", null).text, text: sample.markup },
+        textWrap: { basis: "parsed", parsedText: sample.native, sourceLength: sample.native.length,
+          sourceHash: fnv1a32(sample.native), lines: sample.ranges } });
+      expect(resolveSemanticTextSpec({ ...label, textWrap: null }, nodeMap([root, label]), true))
+        .toEqual({ refusal: "rich:unbreakable" });
+      const resolved = resolveSemanticTextSpec(label, nodeMap([root, label]), true);
+      if ("refusal" in resolved) throw new Error(`${sample.id}: ${resolved.refusal}`);
+      const prepared = assertPrepared(buildPreparedText(resolved, 0, FONT, measure, measureLineMetrics,
+        (_face, value) => measure(value), () => ({ width: 24, height: 24 })));
+      expect(prepared.spec.refusal).toBeNull();
+      expect(prepared.layout.lines).toHaveLength(2);
+      expect(prepared.layout.lines.map((line) => line.text).join("")).toContain("\uFFFC");
+      expect(prepared.runs.some((run) => run.text === "\uFFFC" && run.inlineImage?.width === 24)).toBe(true);
+      expect(prepared.runs.map((run) => run.text).join("").replace("\uFFFC", " "))
+        .toBe(sample.native.replace("\n", ""));
+    }
+  });
+
+  it("keeps native breaks for upgraded Chinese descriptions without inline images", () => {
+    const root = node("root", null, { sceneFilePath: "res://scenes/ui/x.tscn" });
+    const cases = [
+      { id: "attack-upgrade", markup: "[center]造成[green]4[/green]点攻击伤害。\n施加[green]2[/green]层[gold]虚弱[/gold]。[/center]",
+        native: "造成4点攻击伤害。\n施加2层虚弱。", ranges: [{ start: 0, end: 10 }, { start: 10, end: 17 }] },
+      { id: "skill-upgrade", markup: "[center]获得[green]11[/green]点[gold]护盾[/gold]。\n抽1张牌。[/center]",
+        native: "获得11点护盾。\n抽1张牌。", ranges: [{ start: 0, end: 9 }, { start: 9, end: 14 }] },
+    ];
+    for (const sample of cases) {
+      const label = node(sample.id, "root", { richText: true,
+        localRect: { x: 0, y: 0, width: 240, height: 136 },
+        text: { ...node("unused", null).text, text: sample.markup },
+        textWrap: { basis: "parsed", parsedText: sample.native, sourceLength: sample.native.length,
+          sourceHash: fnv1a32(sample.native), lines: sample.ranges } });
+      const resolved = resolveSemanticTextSpec(label, nodeMap([root, label]), true);
+      if ("refusal" in resolved) throw new Error(`${sample.id}: ${resolved.refusal}`);
+      const prepared = assertPrepared(buildPreparedText(resolved, 0, FONT, measure, measureLineMetrics,
+        (_face, value) => measure(value), () => ({ width: 24, height: 24 })));
+      expect(prepared.spec.refusal).toBeNull();
+      expect(prepared.layout.lines.map((line) => line.text)).toEqual([
+        sample.native.slice(sample.ranges[0].start, sample.ranges[0].end),
+        sample.native.slice(sample.ranges[1].start, sample.ranges[1].end),
+      ]);
+      expect(prepared.runs.map((run) => run.text).join("")).toBe(sample.native);
+      expect(prepared.runs.every((run) => run.inlineImage === undefined)).toBe(true);
+    }
+  });
+
   it("resolves a plain label to a spec with no spans and one run per line", () => {
     const root = node("root", null, { sceneFilePath: "res://scenes/ui/x.tscn" });
     const label = node("label", "root");

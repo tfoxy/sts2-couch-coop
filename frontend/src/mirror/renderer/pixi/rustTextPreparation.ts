@@ -17,6 +17,7 @@
 // switch itself. This module only has to be right about what a node's label looks like, not about when to ask it.
 
 import { parseSimpleRich, type ColorValidator } from "@/mirror/canvas/richSimple";
+import { godotRichImageLines } from "@/mirror/textWrap";
 import { resolveSceneInfo } from "@/mirror/canvas/hitTest";
 import {
   layoutText,
@@ -101,9 +102,16 @@ export function resolveSemanticTextSpec(
       inlineImages: allowFontRoles, ...(allowFontRoles ? { unsupported: "plain" as const } : {}) });
     if (!parsed.ok) return { refusal: `rich:${parsed.refusal}` };
     const plain = resolveTextSpec({ ...node, richText: false, text: { ...node.text!, text: parsed.value.text } }, decls);
-    if (!plain || (plain.refusal && !(allowFittingUnbreakable && plain.refusal === "unbreakable")))
-      return { refusal: `rich:${plain?.refusal ?? "post-parse"}` };
-    spec = parsed.value.align === null ? plain : { ...plain, align: parsed.value.align };
+    // Godot's parsed text uses a space where the Canvas parser keeps an image placeholder. Both are one code
+    // unit, but the native wrap is safe only after every parser-reported substitution and every other word match.
+    const imageLines = plain && plain.whiteSpace !== "normal"
+      ? godotRichImageLines(node.textWrap, parsed.value.text, parsed.value.images) : null;
+    const drawable = plain && imageLines
+      ? { ...plain, godotLines: imageLines,
+          refusal: plain.refusal === "unbreakable" ? null : plain.refusal } : plain;
+    if (!drawable || (drawable.refusal && !(allowFittingUnbreakable && drawable.refusal === "unbreakable")))
+      return { refusal: `rich:${drawable?.refusal ?? "post-parse"}` };
+    spec = parsed.value.align === null ? drawable : { ...drawable, align: parsed.value.align };
     spans = parsed.value.spans.length ? parsed.value.spans : undefined;
     roles = parsed.value.roles.length ? parsed.value.roles : undefined;
     images = parsed.value.images.length ? parsed.value.images.map(({ start, path, valign }) =>
