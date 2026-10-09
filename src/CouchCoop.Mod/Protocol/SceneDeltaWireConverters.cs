@@ -13,6 +13,35 @@ namespace CouchCoop.Mod.Protocol;
 // bypassed for them) — an accepted trade for the wire reduction; serialization runs on a background drain task,
 // never the game thread.
 
+// JSON has no NaN or Infinity, and Utf8JsonWriter THROWS on one rather than writing it, so a single node whose
+// transform became non-finite used to fail the whole frame it rode in. The two numeric leaf converters below write
+// 0 for such a channel instead and count it here, so the caller can tell that a frame was sanitized and go find
+// which node did it (SceneDeltaSafeSerializer). [ThreadStatic] because a serialize is synchronous on one thread and
+// several connections' drains serialize concurrently. The finite path costs one float.IsFinite and no allocation.
+internal static class SceneWireNonFinite
+{
+    [ThreadStatic]
+    private static int t_count;
+
+    // Non-finite channels written as 0 on this thread since the last Reset.
+    internal static int Count => t_count;
+
+    internal static void Reset() => t_count = 0;
+
+    // A double outside float range also lands here: the `(float)` cast turns it into Infinity.
+    [System.Runtime.CompilerServices.MethodImpl(System.Runtime.CompilerServices.MethodImplOptions.AggressiveInlining)]
+    internal static float Sanitize(float value)
+    {
+        if (float.IsFinite(value))
+        {
+            return value;
+        }
+
+        t_count++;
+        return 0f;
+    }
+}
+
 // Color: the client reads only #RRGGBBAA (or derives the linear channels from it — Godot's ToHtml is a direct
 // round(channel*255), the exact granularity the producer change-detects colors at). So ship `{"html":...}` alone
 // and drop the four full-double channels (~90 → ~20 bytes/color). Defensive fallback: if a color somehow lacks its
@@ -32,10 +61,10 @@ public sealed class SceneWireColorConverter : JsonConverter<RuntimeSceneColorSna
         }
         else
         {
-            writer.WriteNumber("r", (float)value.R);
-            writer.WriteNumber("g", (float)value.G);
-            writer.WriteNumber("b", (float)value.B);
-            writer.WriteNumber("a", (float)value.A);
+            writer.WriteNumber("r", SceneWireNonFinite.Sanitize((float)value.R));
+            writer.WriteNumber("g", SceneWireNonFinite.Sanitize((float)value.G));
+            writer.WriteNumber("b", SceneWireNonFinite.Sanitize((float)value.B));
+            writer.WriteNumber("a", SceneWireNonFinite.Sanitize((float)value.A));
         }
 
         writer.WriteEndObject();
@@ -55,8 +84,8 @@ public sealed class SceneWireVector2Converter : JsonConverter<RuntimeSceneVector
     public override void Write(Utf8JsonWriter writer, RuntimeSceneVector2Snapshot value, JsonSerializerOptions options)
     {
         writer.WriteStartObject();
-        writer.WriteNumber("x", (float)value.X);
-        writer.WriteNumber("y", (float)value.Y);
+        writer.WriteNumber("x", SceneWireNonFinite.Sanitize((float)value.X));
+        writer.WriteNumber("y", SceneWireNonFinite.Sanitize((float)value.Y));
         writer.WriteEndObject();
     }
 }

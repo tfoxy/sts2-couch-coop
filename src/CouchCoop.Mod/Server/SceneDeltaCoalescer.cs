@@ -142,6 +142,48 @@ internal sealed class SceneDeltaCoalescer
         HasPending = true;
     }
 
+    // Re-mark nodes a send could NOT carry (SceneDeltaSafeSerializer quarantined them after Take had already cleared
+    // their ids) as pending upserts, so the next Take re-resolves each from the retained map — its latest state, which
+    // may by then serialize. The per-id flags are derived from the node exactly as Fold derives them from an upsert,
+    // so a quarantined add still goes out FULL. The usual precedence holds: a pending Full re-sends everything
+    // anyway, and an id removed since the Take stays removed (a later removal drops it through Fold, as for any
+    // pending upsert). Leaves order, hints and screen identity alone: none of them were lost.
+    public void Requeue(IEnumerable<RuntimeSceneNodeDelta> nodes)
+    {
+        if (_full)
+        {
+            return;
+        }
+
+        foreach (var node in nodes)
+        {
+            if (_removedIds.Contains(node.Id))
+            {
+                continue;
+            }
+
+            _upserts.TryGetValue(node.Id, out var pending);
+            pending.NeedsStatic |= node.Name is not null;
+            pending.IntentDirty |= node.IntentFrames is not null;
+            pending.LineDirty |= node.LinePoints is not null;
+            _upserts[node.Id] = pending;
+            HasPending = true;
+        }
+    }
+
+    // Make the next Take a fresh keyframe, as a folded Full would. The recovery for a frame that was taken but could
+    // not be sent at all: whatever it carried (removals, order, upserts) is re-established by the whole-tree re-seed.
+    public void RequestKeyframe()
+    {
+        _full = true;
+        _upserts.Clear();
+        _removedIds.Clear();
+        _orderedIds = null;
+        _hints = null;
+        _cardFlights = null;
+        HasPending = true;
+    }
+
     // Produce the coalesced delta to send and clear the accumulator. A pending Full → a fresh keyframe from
     // `buildKeyframe`; otherwise an incremental delta whose upserts are resolved via `resolve` — FULL for ids that
     // need the static block, a VOLATILE projection otherwise. When the structure changed this window, `buildIndexes`
