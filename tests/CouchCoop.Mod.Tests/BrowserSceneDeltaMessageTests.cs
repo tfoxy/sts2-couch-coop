@@ -1,4 +1,5 @@
 using System.Text;
+using System.Text.Json;
 using CouchCoop.Mod.Protocol;
 using CouchCoop.Mod.Server;
 using Spirectl.Sts2.Core.SceneInspection;
@@ -22,6 +23,7 @@ internal static class BrowserSceneDeltaMessageTests
         MeaningfulNonDefaultsAreWritten();
         ContentKeyReachesTheWire();
         RichRoleFontsReachTheWire();
+        JapaneseRichTextWrapReachesTheWire();
         ClipContentsReachesTheWire();
         FocusedReachesTheWire();
         RoundTripFixtureMatches();
@@ -614,6 +616,34 @@ internal static class BrowserSceneDeltaMessageTests
         var plain = Serialize(Delta(Node("a")));
         Assert(!plain.Contains("\"richBold", StringComparison.Ordinal) && !plain.Contains("\"richItalic", StringComparison.Ordinal),
             "all nine role fields omitted for a node the producer streamed none for (wire unchanged off rich scenes)");
+    }
+
+    private static void JapaneseRichTextWrapReachesTheWire()
+    {
+        const string parsed = "星のしおり\n山道で光を見つける。";
+        var node = Node("option") with
+        {
+            RichText = true,
+            TextLineRanges = [0, 5, 6, parsed.Length],
+            TextLineBasis = "parsed",
+            TextParsedText = parsed,
+            TextLineSourceLength = parsed.Length,
+            TextLineSourceHash = 12345,
+        };
+        using var document = JsonDocument.Parse(BrowserSceneDeltaMessage.Serialize(Delta(node)));
+        var wire = document.RootElement.GetProperty("upserts")[0];
+        Assert(wire.GetProperty("textLineRanges").EnumerateArray().Select(value => value.GetInt32())
+                .SequenceEqual(new[] { 0, 5, 6, parsed.Length }),
+            "Japanese line ranges projected onto the wire");
+        Assert(wire.GetProperty("textLineBasis").GetString() == "parsed", "parsed range basis on wire");
+        Assert(wire.GetProperty("textParsedText").GetString() == parsed, "parsed Japanese text on wire");
+        Assert(wire.GetProperty("textLineSourceLength").GetInt32() == parsed.Length, "range length on wire");
+        Assert(wire.GetProperty("textLineSourceHash").GetInt32() == 12345, "range hash on wire");
+
+        var plain = Serialize(Delta(Node("plain")));
+        Assert(!plain.Contains("\"textLine", StringComparison.Ordinal)
+                && !plain.Contains("\"textParsedText\"", StringComparison.Ordinal),
+            "line-wrap block omitted for nodes without ranges");
     }
 
     // R19 WP-4 CLIP CONTENTS: same lesson as ContentKey / the role fonts — WireNodeDelta is an EXPLICIT
