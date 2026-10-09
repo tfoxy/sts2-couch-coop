@@ -90,10 +90,42 @@ export function godotLines(wrap: MirrorTextWrap | null | undefined, text: string
     return null;
   }
   const out: GodotLine[] = [];
+  let previousEnd = 0;
   for (const line of wrap.lines) {
-    // `sceneTree.normalizeTextWrap` already refused any range outside [0, sourceLength] or out of order, and the
-    // length check above ties that bound to THIS string — so the slice cannot run off the end.
+    // Scene normalization checks this on the wire. Keep the pure helper safe for synthetic and replay callers too.
+    if (!Number.isInteger(line.start) || !Number.isInteger(line.end) ||
+        line.start < previousEnd || line.end < line.start || line.end > source.length) return null;
     out.push({ text: source.slice(line.start, line.end), start: line.start, end: line.end });
+    previousEnd = line.end;
   }
   return out;
+}
+
+/**
+ * Replay native rich-text ranges against the string Canvas will draw when it contains inline images.
+ * Godot's parsed-text query writes one space for each image; our parser writes one U+FFFC so layout can place
+ * the image. They have identical offsets only when every other code unit agrees and each substitution occurs at
+ * a parser-reported image position. Validate that exact relationship before slicing the drawable string.
+ */
+export function godotRichImageLines(
+  wrap: MirrorTextWrap | null | undefined,
+  drawableText: string,
+  images: readonly { start: number }[]
+): GodotLine[] | null {
+  if (!wrap || wrap.basis !== "parsed" || wrap.parsedText === null || images.length === 0 ||
+      drawableText.length !== wrap.parsedText.length) return null;
+  const nativeLines = godotLines(wrap, drawableText);
+  if (nativeLines === null) return null;
+
+  const canonical = drawableText.split("");
+  let previousStart = -1;
+  for (const image of images) {
+    const at = image.start;
+    if (!Number.isInteger(at) || at <= previousStart || at >= canonical.length || canonical[at] !== "\uFFFC")
+      return null;
+    canonical[at] = " ";
+    previousStart = at;
+  }
+  if (canonical.join("") !== wrap.parsedText) return null;
+  return nativeLines.map((line) => ({ ...line, text: drawableText.slice(line.start, line.end) }));
 }

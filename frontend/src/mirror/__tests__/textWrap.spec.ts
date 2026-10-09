@@ -13,7 +13,7 @@
 import { describe, expect, it } from "vitest";
 
 import type { MirrorTextWrap } from "@/mirror/sceneTree";
-import { fnv1a32, godotLines } from "@/mirror/textWrap";
+import { fnv1a32, godotLines, godotRichImageLines } from "@/mirror/textWrap";
 
 function wrapFor(source: string, ranges: [number, number][], over: Partial<MirrorTextWrap> = {}): MirrorTextWrap {
   return {
@@ -93,5 +93,32 @@ describe("godotLines — what may be drawn from a streamed wrap", () => {
   it("answers null for a node with no streamed wrap, which is most of them", () => {
     expect(godotLines(null, TEXT)).toBeNull();
     expect(godotLines(undefined, TEXT)).toBeNull();
+  });
+
+  it("refuses malformed ranges even when a pure caller bypasses scene normalization", () => {
+    expect(godotLines(wrapFor(TEXT, [[0, TEXT.length + 1]]), TEXT)).toBeNull();
+    expect(godotLines(wrapFor(TEXT, [[5, 8], [7, 10]]), TEXT)).toBeNull();
+  });
+});
+
+describe("godotRichImageLines — native spaces and drawable image placeholders", () => {
+  const drawable = "旅途 \uFFFC中再获\uFFFC。";
+  const native = "旅途  中再获 。";
+  const images = [{ start: 3 }, { start: 7 }];
+  const wrap = wrapFor(native, [[0, 5], [5, native.length]], { basis: "parsed", parsedText: native });
+
+  it("replays native ranges against drawable text without losing either icon", () => {
+    expect(godotRichImageLines(wrap, drawable, images)?.map((line) => line.text))
+      .toEqual(["旅途 \uFFFC中", "再获\uFFFC。"]);
+  });
+
+  it("rejects changed words, moved icons, stale hashes and invalid ranges", () => {
+    expect(godotRichImageLines(wrap, "旅程 \uFFFC中再获\uFFFC。", images)).toBeNull();
+    expect(godotRichImageLines(wrap, drawable, [{ start: 2 }, { start: 7 }])).toBeNull();
+    expect(godotRichImageLines(wrap, drawable, [{ start: 3 }])).toBeNull();
+    expect(godotRichImageLines({ ...wrap, sourceHash: 0 }, drawable, images)).toBeNull();
+    expect(godotRichImageLines({ ...wrap, lines: [{ start: 0, end: native.length + 1 }] },
+      drawable, images)).toBeNull();
+    expect(godotRichImageLines({ ...wrap, basis: "text" }, drawable, images)).toBeNull();
   });
 });
