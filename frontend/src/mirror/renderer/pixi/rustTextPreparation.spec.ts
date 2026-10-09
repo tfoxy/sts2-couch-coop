@@ -209,6 +209,58 @@ describe("resolveSemanticTextSpec + buildPreparedText — the pure half", () => 
     expect(render(label)).toEqual(["Alpha Beta", "Gamma"]);
     expect(render({ ...label, textWrap: { ...wrap, parsedText: "stale" } })).not.toEqual(["Alpha Beta", "Gamma"]);
   });
+
+  it("prepares a Japanese Ancient option with streamed rich-text lines", () => {
+    const root = node("root", null, { sceneFilePath: "res://scenes/ui/event_option_button.tscn" });
+    const parsed = "星のしおり\n山道で光を見つける。";
+    const label = node("option", "root", {
+      richText: true,
+      richBoldFont: { ...FONT, family: "cjk_bold", url: "res://fonts/cjk_bold.ttf" },
+      localRect: { x: 0, y: 0, width: 200, height: 80 },
+      text: { ...node("unused", null).text,
+        text: "[gold][b]星のしおり[/b][/gold]\n山道で光を見つける。" },
+    });
+    expect(resolveSemanticTextSpec(label, nodeMap([root, label]), true))
+      .toEqual({ refusal: "rich:unbreakable" });
+
+    const wrapped = { ...label, textWrap: {
+      basis: "parsed" as const,
+      parsedText: parsed,
+      sourceLength: parsed.length,
+      sourceHash: fnv1a32(parsed),
+      lines: [{ start: 0, end: 5 }, { start: 6, end: parsed.length }],
+    } };
+    const resolved = resolveSemanticTextSpec(wrapped, nodeMap([root, wrapped]), true);
+    if ("refusal" in resolved) throw new Error(resolved.refusal);
+    const prepared = assertPrepared(buildPreparedText(resolved, 0, FONT, measure, measureLineMetrics,
+      (_face, value) => measure(value)));
+    expect(prepared.layout.lines.map((line) => line.text))
+      .toEqual(["星のしおり", "山道で光を見つける。"]);
+    expect(prepared.spec.refusal).toBeNull();
+  });
+
+  it("prepares Japanese Ancient dialogue whose native range includes trailing space", () => {
+    const root = node("root", null, { sceneFilePath: "res://scenes/ui/ancient_event.tscn" });
+    const parsed = "星のしおり ";
+    const label = node("dialogue", "root", {
+      richText: true,
+      localRect: { x: 0, y: 0, width: 200, height: 60 },
+      text: { ...node("unused", null).text, text: "[sine]星のしおり [/sine]" },
+      textWrap: {
+        basis: "parsed",
+        parsedText: parsed,
+        sourceLength: parsed.length,
+        sourceHash: fnv1a32(parsed),
+        lines: [{ start: 0, end: parsed.length }],
+      },
+    });
+    const resolved = resolveSemanticTextSpec(label, nodeMap([root, label]), true);
+    if ("refusal" in resolved) throw new Error(resolved.refusal);
+    const prepared = assertPrepared(buildPreparedText(resolved, 0, FONT, measure, measureLineMetrics,
+      (_face, value) => measure(value)));
+    expect(prepared.layout.lines.map((line) => line.text)).toEqual([parsed]);
+  });
+
   it("resolves a plain label to a spec with no spans and one run per line", () => {
     const root = node("root", null, { sceneFilePath: "res://scenes/ui/x.tscn" });
     const label = node("label", "root");
