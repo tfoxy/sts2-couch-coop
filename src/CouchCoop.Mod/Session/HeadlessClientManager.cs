@@ -2020,9 +2020,17 @@ public sealed partial class HeadlessClientManager : IDisposable
         }
         ApplyConnectionEnvironmentLocked(slot, psi);
         ApplyMemoryTuning(psi);
-        // Give each headless its OWN spirectl bridge endpoint so it doesn't steal the host's default endpoint.
-        // Unix-like hosts use a Unix socket; Windows uses spirectl's named-pipe transport.
-        foreach (var kv in SpirectlBridgeEndpointEnvironment(slot, RuntimeInformation.IsOSPlatform(OSPlatform.Windows)))
+        // Give each headless its OWN spirectl bridge endpoint so it doesn't steal the host's default endpoint, or
+        // another host's seat of the same slot. Unix-like hosts use a Unix socket; Windows uses spirectl's
+        // named-pipe transport.
+        var bridgeEndpoint = SpirectlBridgeEndpointEnvironment(
+            slot,
+            RuntimeInformation.IsOSPlatform(OSPlatform.Windows),
+            preparedUserDir?.HostUserDir ?? HeadlessUserDirSeeder.ResolveHostUserDir(),
+            Environment.GetEnvironmentVariable(SeatBridgeSocketDirEnvironmentVariable));
+        CouchCoopLog.Stderr($"headless bridge slot={slot} endpoint="
+            + (bridgeEndpoint["SPIRECTL_BRIDGE_SOCKET_PATH"] ?? bridgeEndpoint["SPIRECTL_BRIDGE_PIPE_NAME"]));
+        foreach (var kv in bridgeEndpoint)
         {
             if (kv.Value is null)
             {
@@ -2122,21 +2130,85 @@ public sealed partial class HeadlessClientManager : IDisposable
         }
     }
 
-    internal static IReadOnlyDictionary<string, string?> SpirectlBridgeEndpointEnvironment(int slot, bool isWindows)
+    /// <summary>
+    /// Puts a seat's spirectl bridge Unix socket in an explicit directory, as <c>spirectl-bridge-slot-N.sock</c>.
+    /// Unset by default, so each seat gets an instance-scoped name in <c>/tmp</c> (see
+    /// <see cref="SpirectlBridgeEndpointEnvironment"/>). Setting it to <c>/tmp</c> restores the legacy shared path.
+    /// Ignored on Windows, whose bridge is a named pipe.
+    /// </summary>
+    internal const string SeatBridgeSocketDirEnvironmentVariable = "COUCHCOOP_SEAT_BRIDGE_SOCKET_DIR";
+
+    // sockaddr_un.sun_path is 104 bytes on macOS and 108 on Linux, NUL included. Keep the smaller one.
+    private const int MaxUnixSocketPathBytes = 103;
+
+    /// <summary>
+    /// The bridge endpoint a seat of <paramref name="slot"/> is launched with: a Unix socket, or a named pipe on
+    /// Windows. The name carries an id derived from the HOST's own Godot user dir, so two hosts on one machine
+    /// (an operator's game next to an isolated QA instance, say) never hand their slot-N seats the same endpoint.
+    /// A bound socket is unlinked and rebound by whoever starts next, so a shared path does not fail loudly:
+    /// it silently takes the other host's seat bridge.
+    /// </summary>
+    /// <remarks>
+    /// The socket stays in <c>/tmp</c> rather than inside the slot's directory because a QA instance's user dir
+    /// is already ~80 bytes deep, and a socket under it would not fit in <c>sun_path</c>. With no resolvable host
+    /// user dir there is nothing to scope by, and the legacy per-slot names are kept.
+    /// </remarks>
+    internal static IReadOnlyDictionary<string, string?> SpirectlBridgeEndpointEnvironment(
+        int slot,
+        bool isWindows,
+        string? hostUserDir,
+        string? socketDirOverride = null)
     {
-        return isWindows
-            ? new Dictionary<string, string?>(StringComparer.Ordinal)
+        var instance = SeatBridgeInstanceId(hostUserDir);
+        var name = instance is null
+            ? $"spirectl-bridge-slot-{slot}"
+            : $"spirectl-bridge-{instance}-slot-{slot}";
+        if (isWindows)
+        {
+            return new Dictionary<string, string?>(StringComparer.Ordinal)
             {
                 ["SPIRECTL_BRIDGE_SOCKET_PATH"] = null,
-                ["SPIRECTL_BRIDGE_PIPE_NAME"] = $"spirectl-bridge-slot-{slot}",
-                ["SPIRECTL_BRIDGE_TCP_ADDRESS"] = null,
-            }
-            : new Dictionary<string, string?>(StringComparer.Ordinal)
-            {
-                ["SPIRECTL_BRIDGE_SOCKET_PATH"] = $"/tmp/spirectl-bridge-slot-{slot}.sock",
-                ["SPIRECTL_BRIDGE_PIPE_NAME"] = null,
+                ["SPIRECTL_BRIDGE_PIPE_NAME"] = name,
                 ["SPIRECTL_BRIDGE_TCP_ADDRESS"] = null,
             };
+        }
+
+        var socketPath = $"/tmp/{name}.sock";
+        if (!string.IsNullOrWhiteSpace(socketDirOverride))
+        {
+            var overridden = Path.Combine(socketDirOverride.Trim(), $"spirectl-bridge-slot-{slot}.sock");
+            if (System.Text.Encoding.UTF8.GetByteCount(overridden) <= MaxUnixSocketPathBytes)
+            {
+                socketPath = overridden;
+            }
+            else
+            {
+                CouchCoopLog.Stderr(
+                    $"headless bridge socket override ignored slot={slot}: {overridden} is longer than "
+                    + $"{MaxUnixSocketPathBytes} bytes; using {socketPath}");
+            }
+        }
+
+        return new Dictionary<string, string?>(StringComparer.Ordinal)
+        {
+            ["SPIRECTL_BRIDGE_SOCKET_PATH"] = socketPath,
+            ["SPIRECTL_BRIDGE_PIPE_NAME"] = null,
+            ["SPIRECTL_BRIDGE_TCP_ADDRESS"] = null,
+        };
+    }
+
+    /// <summary>
+    /// The first 12 hex digits of SHA-256 over the host user dir, normalised (<c>./</c> segments and trailing
+    /// separators removed), or null when there is none. <c>scripts/probe-five-player-run.mjs</c>
+    /// <c>seatBridgeSocketFor</c> computes the same id from outside the game; both suites pin one vector.
+    /// </summary>
+    internal static string? SeatBridgeInstanceId(string? hostUserDir)
+    {
+        if (string.IsNullOrWhiteSpace(hostUserDir)) return null;
+        var normalized = Path.IsPathRooted(hostUserDir) ? Path.GetFullPath(hostUserDir) : hostUserDir;
+        normalized = Path.TrimEndingDirectorySeparator(normalized);
+        var digest = System.Security.Cryptography.SHA256.HashData(System.Text.Encoding.UTF8.GetBytes(normalized));
+        return Convert.ToHexString(digest, 0, 6).ToLowerInvariant();
     }
 
     /// <summary>

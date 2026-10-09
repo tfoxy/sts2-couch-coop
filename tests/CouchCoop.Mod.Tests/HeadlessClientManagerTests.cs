@@ -1027,26 +1027,54 @@ internal static class HeadlessClientManagerTests
         Assert(identityReads == 0, "the identity probe is not run for a pid that does not exist");
     }
 
+    // Pinned in scripts/test-probe-five-player-run.mjs too: the QA scripts derive the same path from outside.
+    private const string PinnedHostUserDir = "/data/xdg/SlayTheSpire2";
+    private const string PinnedInstanceId = "810729f44747";
+
     private static void WindowsBridgeEndpointUsesNamedPipe()
     {
-        var env = HeadlessClientManager.SpirectlBridgeEndpointEnvironment(2, isWindows: true);
-        Assert(env.TryGetValue("SPIRECTL_BRIDGE_PIPE_NAME", out var pipe) && pipe == "spirectl-bridge-slot-2",
-            "windows headless bridge uses a per-slot named pipe");
+        var env = HeadlessClientManager.SpirectlBridgeEndpointEnvironment(2, isWindows: true, PinnedHostUserDir);
+        Assert(env.TryGetValue("SPIRECTL_BRIDGE_PIPE_NAME", out var pipe) && pipe == $"spirectl-bridge-{PinnedInstanceId}-slot-2",
+            $"windows headless bridge uses an instance-scoped per-slot named pipe (got {pipe})");
         Assert(env.TryGetValue("SPIRECTL_BRIDGE_SOCKET_PATH", out var socket) && socket is null,
             "windows headless bridge clears the Unix socket endpoint");
         Assert(env.TryGetValue("SPIRECTL_BRIDGE_TCP_ADDRESS", out var tcp) && tcp is null,
             "windows headless bridge clears the TCP endpoint");
+        var overridden = HeadlessClientManager.SpirectlBridgeEndpointEnvironment(2, isWindows: true, PinnedHostUserDir, "/tmp");
+        Assert(overridden["SPIRECTL_BRIDGE_PIPE_NAME"] == pipe, "the socket-dir override does not apply to a named pipe");
     }
 
     private static void UnixBridgeEndpointUsesSocket()
     {
-        var env = HeadlessClientManager.SpirectlBridgeEndpointEnvironment(3, isWindows: false);
-        Assert(env.TryGetValue("SPIRECTL_BRIDGE_SOCKET_PATH", out var socket) && socket == "/tmp/spirectl-bridge-slot-3.sock",
-            "unix headless bridge uses a per-slot Unix socket");
+        static string? SocketFor(int slot, string? hostUserDir, string? overrideDir = null)
+            => HeadlessClientManager.SpirectlBridgeEndpointEnvironment(slot, isWindows: false, hostUserDir, overrideDir)["SPIRECTL_BRIDGE_SOCKET_PATH"];
+
+        var env = HeadlessClientManager.SpirectlBridgeEndpointEnvironment(3, isWindows: false, PinnedHostUserDir);
+        Assert(env.TryGetValue("SPIRECTL_BRIDGE_SOCKET_PATH", out var socket) && socket == $"/tmp/spirectl-bridge-{PinnedInstanceId}-slot-3.sock",
+            $"unix headless bridge uses an instance-scoped per-slot Unix socket (got {socket})");
         Assert(env.TryGetValue("SPIRECTL_BRIDGE_PIPE_NAME", out var pipe) && pipe is null,
             "unix headless bridge clears the named pipe endpoint");
         Assert(env.TryGetValue("SPIRECTL_BRIDGE_TCP_ADDRESS", out var tcp) && tcp is null,
             "unix headless bridge clears the TCP endpoint");
+
+        Assert(SocketFor(3, "/data/other/SlayTheSpire2") == "/tmp/spirectl-bridge-eb5067067bda-slot-3.sock",
+            "a second host's slot-3 seat gets a different socket");
+        Assert(SocketFor(3, "/data/./xdg/SlayTheSpire2/") == socket,
+            "the same user dir spelt with ./ and a trailing slash is the same instance");
+        Assert(SocketFor(4, PinnedHostUserDir) != socket, "slots stay distinct within one instance");
+        Assert(SocketFor(3, null) == "/tmp/spirectl-bridge-slot-3.sock",
+            "with no host user dir to scope by, the legacy name is kept");
+
+        Assert(SocketFor(3, PinnedHostUserDir, "/tmp") == "/tmp/spirectl-bridge-slot-3.sock",
+            "the override set to /tmp restores the legacy shared path exactly");
+        Assert(SocketFor(3, PinnedHostUserDir, "/run/qa ") == "/run/qa/spirectl-bridge-slot-3.sock",
+            "the override puts the socket in that directory");
+        Assert(SocketFor(3, PinnedHostUserDir, "  ") == socket, "a blank override is no override");
+        var deep = "/" + new string('d', 90);
+        Assert(SocketFor(3, PinnedHostUserDir, deep) == socket,
+            "an override too long for sun_path falls back to the scoped default instead of an unbindable socket");
+        Assert(HeadlessClientManager.SeatBridgeSocketDirEnvironmentVariable == "COUCHCOOP_SEAT_BRIDGE_SOCKET_DIR",
+            "the override's name is documented in qa-recipes.md");
     }
 
     // ---- host connectivity log: the seat channel ---------------------------------------------------------

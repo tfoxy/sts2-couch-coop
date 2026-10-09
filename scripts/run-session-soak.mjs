@@ -56,7 +56,7 @@ import { pathToFileURL } from "node:url";
 import {
   DEFAULT_ENET_PORT, DEFAULT_LOBBY_FIXTURE, LOCK_FLAG, STOCK_LOBBY_SEATS, RigError, SessionRig,
   checkLiveLockGate, checkPlacement, checkoutIdentity, configuredLiveGamePaths, cpuListIsValid, detectLanHost,
-  mandatoryLeases, parseEnvPair, preflight, readLocalGameConfig, runProcess
+  instanceUserDir, mandatoryLeases, parseEnvPair, preflight, readLocalGameConfig, runProcess
 } from "./lib/session-rig.mjs";
 import { NdjsonStream, ProcessSampler, parseMeminfo, summarizeForeignLoad } from "./lib/process-sampler.mjs";
 import { LogTail, drain, hostConsoleProof, replicationLedger, scanDesync, waitForConsoleEcho } from "./lib/peer-logs.mjs";
@@ -381,7 +381,7 @@ export async function runSession(options, route, {
     receipt.guard = { pre: await runGuard(options.guardCmd, "pre", options.runDir, { timeoutSeconds: options.guardTimeoutSeconds }), post: null };
     if (receipt.guard.pre && receipt.guard.pre.exitCode !== 0) throw new RigError("guard", `--guard-cmd before the session ${guardVerdict(receipt.guard.pre)}`, 3);
 
-    receipt.preflight = preflightFn({ seats: options.seats, lobbySeats: options.lobbySeats, enetPort: options.enetPort });
+    receipt.preflight = preflightFn({ seats: options.seats, userDir: instanceUserDir(options), lobbySeats: options.lobbySeats, enetPort: options.enetPort });
     stream.write({ kind: "check", check: "preflight", ok: receipt.preflight.problems.length === 0, problems: receipt.preflight.problems });
     if (receipt.preflight.problems.length > 0) throw new RigError("preflight", receipt.preflight.problems.join("\n"), 3);
 
@@ -556,7 +556,7 @@ export async function main(argv, { routeKinds = {}, extensions = null } = {}) {
   const placement = checkPlacement({ gameRoot: options.gameRoot, runDir: options.runDir, liveGamePaths: options.liveGamePaths });
 
   if (options.plan) {
-    const plan = buildPlan(options, route, { preflightResult: preflight({ seats: options.seats, lobbySeats: options.lobbySeats, enetPort: options.enetPort }) });
+    const plan = buildPlan(options, route, { preflightResult: preflight({ seats: options.seats, userDir: instanceUserDir(options), lobbySeats: options.lobbySeats, enetPort: options.enetPort }) });
     plan.placementProblems = placement;
     console.log(JSON.stringify(plan, null, 2));
     for (const problem of [...placement, ...plan.preflight.problems]) console.error(`run-session-soak: plan WARNING: ${problem}`);

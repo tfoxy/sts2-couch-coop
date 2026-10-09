@@ -223,8 +223,9 @@ node scripts/test-run-session-soak.mjs                                          
   `SlayTheSpire2/`). `--launch-mode cli` uses `sts2 --instance … game launch` instead — which also repairs the bridge
   inside `<game-root>/mods` and matches running games by executable, so never point it at a shared farm.
 - **Embark** readies every player through its OWN bridge with `sts2 act ready` — the only semantic action the
-  harness sends. A seat's bridge path (`/tmp/spirectl-bridge-slot-<N>.sock`) is the same for every host on the
-  machine, so the socket is proved to be held by that seat's pid, and nothing else, before it is used.
+  harness sends. A seat's bridge path is the one its host launched it with (`SPIRECTL_BRIDGE_SOCKET_PATH` in the
+  seat's own environment, `/tmp/spirectl-bridge-<instance>-slot-<N>.sock` by default, `<instance>` derived from the
+  host's user dir), and the socket is proved to be held by that seat's pid, and nothing else, before it is used.
 - **Routes in a hosted run.** Networked console commands replicate to every peer. Prefer `room MONSTER|ELITE|BOSS`
   to `fight <id>`: `fight` can compose some encounters differently per peer. Issue `room`/`fight`/`act` outside
   combat or after `win`. Each console step must be proven: the host answers `Enqueued …` and every peer's own
@@ -243,6 +244,30 @@ node scripts/test-run-session-soak.mjs                                          
   opaque id), so `joinSeats()` takes its slot from the host's `session` envelope (`session.playerId` =
   `p:<1000+slot>`) and a direct seat's from its redirect port; either way the seat's own `godot.log` must show the
   ENet handshake for that netId, and the rig matches the slot to a seat process under the host.
+- **Next to the operator's own co-op session**, run the whole harness in a private user + network + mount
+  namespace. The game hardcodes ENet UDP 33771 (the preflight refuses while the operator's lobby holds it), and the
+  namespace also gets a PRIVATE `/tmp`: seat bridge sockets are instance-scoped, but Unix sockets are per-netns in
+  `/proc/net/unix`, so a preflight inside cannot see what the operator's processes hold in a shared `/tmp`. Only the
+  live-QA lease dir is bound back, so leases still coordinate with everyone else:
+
+  ```sh
+  LEASES=/tmp/couchcoop-liveqa.leases          # with COUCHCOOP_LIVEQA_LEASE_ROOT outside /tmp, no bind is needed
+  NSTMP=$(mktemp -d "<run-dir parent>/nstmp.XXXXXX"); chmod 1777 "$NSTMP"
+  mkdir -p "$LEASES" "$NSTMP/couchcoop-liveqa.leases"
+  unshare -rnm sh -c '
+    set -eu
+    mount --bind "$2" "$1/couchcoop-liveqa.leases"     # the REAL lease dir, inside the private /tmp
+    mount --rbind "$1" /tmp                             # private /tmp; --rbind carries the lease bind along
+    mkdir -p /tmp/.X11-unix; mount -t tmpfs -o mode=1777 tmpfs /tmp/.X11-unix   # else XWayland: "not owned by root or us"
+    ip link set lo up
+    ip link add qalan type dummy; ip addr add 10.77.0.1/24 dev qalan; ip link set qalan up
+    shift 2; exec "$@"' netns-run "$NSTMP" "$LEASES" \
+    node scripts/live-qa-lock.mjs with ... -- node scripts/run-session-soak.mjs ... --lan-host 10.77.0.1 --i-hold-the-live-lock
+  ```
+
+  Headless gamescope and the RTX 2060 work inside. A loopback port inside the namespace is unreachable from
+  outside, so put any control socket you drive the session through on a shared filesystem path (under the run
+  dir), not in `/tmp`. Never stop or wait on the operator's game.
 
 ### Seat audio live matrix
 
@@ -1009,7 +1034,10 @@ works. Things worth knowing before reading its output:
 - **There is no `start-run` verb.** Readying every seat is what embarks.
 - **`run.players[]` has no alive/isDead field** — aliveness is derived from `creature.currentHp > 0`, and a
   null creature is reported `unknown`, never assumed alive.
-- **Every couch seat has its own bridge** at `/tmp/spirectl-bridge-slot-<N>.sock`. The probe retries a
+- **Every couch seat has its own bridge** at `/tmp/spirectl-bridge-<instance>-slot-<N>.sock`, `<instance>` the
+  first 12 hex of SHA-256 over the host's `<XDG data home>/SlayTheSpire2` (`seatBridgeSocketFor`). A host started
+  with `COUCHCOOP_SEAT_BRIDGE_SOCKET_DIR=<dir>` puts it at `<dir>/spirectl-bridge-slot-<N>.sock` instead (`/tmp` is
+  the pre-Oct-8 shared path); the probe reads that variable from its own environment. The probe retries a
   host-refused seat action there and captures each seat's own view of the run, which is what answers "the host
   says one player — did seat 3 even enter a run?".
 - **Cheap inner loop, not the gate:** `sts2 act join-lobby-player --display-name <name>` builds a 5-player
