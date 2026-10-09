@@ -213,6 +213,7 @@ if (args is ["host-transport", ..])
 {
     await NetworkHardeningTests.RunAsync();
     BrowserSceneDeltaMessageTests.Run();
+    SceneDeltaQuarantineTests.Run();
     await BrowserServerRouteTests.RunInboundWebSocketLimitsAsync();
     Console.WriteLine("host transport: ok");
     return;
@@ -774,6 +775,8 @@ PadInputMappingTests.Run();
 SceneDeltaCoalescerTests.Run();
 CouchCoopSceneObserverTests.Run();
 BrowserSceneDeltaMessageTests.Run();
+// A scene node with numbers JSON cannot carry costs that node, never the frame: sanitize, quarantine, re-queue.
+SceneDeltaQuarantineTests.Run();
 // S9/S10 perf instruments: the scene-delta wire recorder (exact bytes, inert when disarmed, order-byte
 // attribution) and the /bg render-time recorder, plus the shared perf-report/1 envelope both emit.
 SceneDeltaWireMetricsTests.Run();

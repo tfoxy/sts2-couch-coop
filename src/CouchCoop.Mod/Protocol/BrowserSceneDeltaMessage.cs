@@ -16,8 +16,12 @@ public static class BrowserSceneDeltaMessage
 {
     // `orderPatch` (Stage 4), when non-null, replaces the full `orderedIds` array on the wire with the compact
     // dirty-parents/roots patch. Null → the delta's own OrderedIds (full array) is emitted, or none when unchanged.
+    // Throws when a value has no JSON form (a non-finite double outside the Vector2/colour converters); the drain and
+    // keyframe paths go through SceneDeltaSafeSerializer instead, which isolates the node responsible. Resets the
+    // SceneWireNonFinite count first, so the count read after a return covers exactly this frame.
     public static byte[] Serialize(RuntimeSceneDelta delta, SceneOrderPatch? orderPatch = null)
     {
+        SceneWireNonFinite.Reset();
         var wire = WireSceneDelta.FromDelta(delta, orderPatch);
         var result = JsonSerializer.SerializeToUtf8Bytes(wire, SceneDeltaJsonContext.Default.WireSceneDelta);
         // S9 instrument (disarmed by default — one volatile read): per-frame wire bytes + upsert/removal counts,

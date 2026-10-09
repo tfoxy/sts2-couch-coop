@@ -264,6 +264,36 @@ public sealed class CouchCoopSceneObserver(CouchCoopRuntimeHost runtimeHost) : I
         }
     }
 
+    // Diagnostic only (the scene-serialize log): the retained node's name path, root first, or null when the id is
+    // not retained. One lock acquisition and a walk up the parent chain; called at most once per rate-limited line.
+    internal string? DescribeNodePath(string id)
+    {
+        lock (_gate)
+        {
+            return DescribeNodePath(_nodes, id);
+        }
+    }
+
+    internal static string? DescribeNodePath(IReadOnlyDictionary<string, RuntimeSceneNodeDelta> nodes, string id)
+    {
+        const int maxDepth = 64;
+        var names = new List<string>();
+        var current = id;
+        while (names.Count < maxDepth && current is not null && nodes.TryGetValue(current, out var node))
+        {
+            names.Add(node.Name ?? node.Id);
+            current = node.ParentId;
+        }
+
+        if (names.Count == 0)
+        {
+            return null;
+        }
+
+        names.Reverse();
+        return string.Join('/', names);
+    }
+
     // Build the parent→children / roots structure index for one draw order, MIRRORING the client's
     // rebuildStructure (mirrorRenderer.ts) and applySceneDelta order build: skip an id whose node isn't live, and
     // an id is a child of its parent only when the parent is ALSO a live node (else it's a root). Both the

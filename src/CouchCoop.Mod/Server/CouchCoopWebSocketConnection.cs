@@ -90,6 +90,9 @@ public sealed class CouchCoopWebSocketConnection
     private bool _sceneCredit = true;
     private long _lastSceneSendMs;
     private const long SceneAckTimeoutMs = 500;
+    // Consecutive unexpected (non-transport) drain failures since the last successful send. Only the first one
+    // re-kicks the pump immediately; see DrainSceneAsync. Guarded by `_sceneLock`.
+    private int _sceneDrainFaults;
     // Per-connection INPUT drain (the fix for the residual client→server lag). The receive loop must NOT inject
     // inline: `_inputExecutor.Execute` marshals to the game thread and blocks for up to a frame, and the loop
     // reads strictly serially — so the browser's continuous hover stream (one input per animation frame while
@@ -343,7 +346,7 @@ public sealed class CouchCoopWebSocketConnection
             var keyframe = cachedSceneObserver?.BuildKeyframe();
             if (keyframe is not null)
             {
-                await SendStateBytesAsync(BrowserSceneDeltaMessage.Serialize(keyframe)).ConfigureAwait(false);
+                await SendSceneKeyframeAsync(keyframe).ConfigureAwait(false);
             }
 
             // Release the coalescing scene pump: any incremental deltas that arrived during connect were
@@ -1493,10 +1496,45 @@ public sealed class CouchCoopWebSocketConnection
         var keyframe = _getSceneObserver()?.BuildKeyframe();
         if (keyframe is not null)
         {
-            await SendStateBytesAsync(BrowserSceneDeltaMessage.Serialize(keyframe)).ConfigureAwait(false);
+            await SendSceneKeyframeAsync(keyframe).ConfigureAwait(false);
         }
 
         EnableScenePump();
+    }
+
+    // Send a connect / watch:on keyframe through the quarantining serializer. A node that cannot be serialized costs
+    // only itself: the rest of the tree is sent, and the node is re-queued into the (just reset) coalescer, so the
+    // pump that EnableScenePump releases next resolves it again. Before this, one such node made the keyframe throw,
+    // and EnableScenePump never ran, so a viewer reconnecting while it existed got no stream at all.
+    private async Task SendSceneKeyframeAsync(RuntimeSceneDelta keyframe)
+    {
+        var result = SceneDeltaSafeSerializer.Serialize(keyframe);
+        ReportSceneSerializeFaults(result, keyframe: true);
+        if (result.HasRequeue)
+        {
+            lock (_sceneLock)
+            {
+                if (_sceneStreaming)
+                {
+                    _sceneCoalescer.Requeue(result.Requeue);
+                    _scenePending = true;
+                }
+            }
+        }
+
+        if (result.Bytes is not null)
+        {
+            await SendStateBytesAsync(result.Bytes).ConfigureAwait(false);
+        }
+    }
+
+    private void ReportSceneSerializeFaults(SceneDeltaSerializeResult result, bool keyframe)
+    {
+        if (result.HasFaults)
+        {
+            var observer = _getSceneObserver();
+            SceneSerializeDiagnostics.Shared.Report(result, keyframe, id => observer?.DescribeNodePath(id));
+        }
     }
 
     // Report this connection's CURRENT streaming state to the server, at most once per real transition (the count
@@ -1602,27 +1640,64 @@ public sealed class CouchCoopWebSocketConnection
                     continue;
                 }
 
-                byte[] bytes;
-                try
+                // Take has already cleared these ids and spent the credit, so a frame that cannot be serialized
+                // must give both back rather than drop them: the quarantining serializer sends what it can and
+                // names the nodes it could not carry, which go back into the coalescer.
+                var result = SceneDeltaSafeSerializer.Serialize(toSend.Delta, toSend.OrderPatch);
+                ReportSceneSerializeFaults(result, toSend.Delta.Full);
+                if (result.HasFaults || result.Bytes is null)
                 {
-                    bytes = BrowserSceneDeltaMessage.Serialize(toSend.Delta, toSend.OrderPatch);
-                }
-                catch (Exception exception) when (exception is JsonException or NotSupportedException)
-                {
-                    continue;
+                    lock (_sceneLock)
+                    {
+                        // Deltas folded while this frame was serializing are new work; a re-queue alone is not.
+                        var foldedMeanwhile = _scenePending;
+                        if (_sceneStreaming && result.HasRequeue)
+                        {
+                            _sceneCoalescer.Requeue(result.Requeue);
+                            _scenePending = true;
+                        }
+
+                        // Nothing of an incremental frame could be sent: re-seed with a keyframe at once rather than
+                        // leave the client missing its removals or order. A keyframe that fails outright is not
+                        // retried, so this recovery runs at most once per failed delta.
+                        var reseed = _sceneStreaming && result.Failure is not null && !toSend.Delta.Full;
+                        if (reseed)
+                        {
+                            _sceneCoalescer.RequestKeyframe();
+                            _scenePending = true;
+                        }
+
+                        if (result.Bytes is null)
+                        {
+                            // Nothing went on the wire, so no ack will come back for it: restore the credit.
+                            _sceneCredit = true;
+                            if (!foldedMeanwhile && !reseed)
+                            {
+                                // Only re-queued work is pending. Resolving it again right now would fail the same
+                                // way, so park the pump with credit and work in hand: the next delta from the
+                                // producer (the signal that the scene changed) restarts it.
+                                _scenePumpRunning = false;
+                                return;
+                            }
+                        }
+                    }
                 }
 
                 // Last check before the wire: the gate can shut while this frame was being resolved/serialized,
                 // and a gated connection must not receive it (the loop's top check then parks the pump).
-                if (!_sceneStreaming)
+                if (result.Bytes is not { } bytes || !_sceneStreaming)
                 {
                     continue;
                 }
 
                 await SendBytesAsync(bytes).ConfigureAwait(false);
+                lock (_sceneLock)
+                {
+                    _sceneDrainFaults = 0;
+                }
             }
         }
-        catch
+        catch (Exception exception) when (IsSceneTransportEnd(exception))
         {
             // Socket closing/closed mid-drain; teardown removes this connection.
             lock (_sceneLock)
@@ -1630,7 +1705,42 @@ public sealed class CouchCoopWebSocketConnection
                 _scenePumpRunning = false;
             }
         }
+        catch (Exception exception)
+        {
+            // Anything else is a bug in resolving or sending a frame, not the socket going away, and it used to end
+            // the pump silently with the credit spent — the stream then stayed dark until the 500 ms self-heal AND
+            // a later delta happened to coincide. Say so, give the credit back, and re-seed the client with a
+            // keyframe (the failed frame's ids are already out of the coalescer). Re-kick at once only for the first
+            // failure in a row; a repeat waits for the next delta, so a fault that recurs cannot spin this loop.
+            SceneSerializeDiagnostics.Shared.Write("drain", () =>
+                $"[scene] scene pump failed: {exception.GetType().Name}: {exception.Message}");
+            var restart = false;
+            lock (_sceneLock)
+            {
+                _scenePumpRunning = false;
+                _sceneCredit = true;
+                if (_sceneStreaming)
+                {
+                    _sceneCoalescer.RequestKeyframe();
+                    _scenePending = true;
+                    if (_sceneReady && _sceneDrainFaults++ == 0)
+                    {
+                        _scenePumpRunning = true;
+                        restart = true;
+                    }
+                }
+            }
+
+            if (restart)
+            {
+                _ = Task.Run(DrainSceneAsync, CancellationToken.None);
+            }
+        }
     }
+
+    private bool IsSceneTransportEnd(Exception exception)
+        => exception is WebSocketException or OperationCanceledException or ObjectDisposedException
+           || _socket is not { State: WebSocketState.Open };
 
     private Task SendEnvelopeAsync(BrowserEnvelope envelope)
         => SendBytesAsync(Encoding.UTF8.GetBytes(BrowserJson.Serialize(envelope)));
