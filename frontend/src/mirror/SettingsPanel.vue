@@ -394,7 +394,7 @@ onBeforeUnmount(() => setHelpListeners(false));
           </label>
           <SettingsHelpTip v-bind="help('particles', t('settings.particles'))" />
         </div>
-        <div class="settings-item">
+        <div class="settings-item audio-setting-item">
           <label class="settings-row">
             <input type="checkbox" v-model="audio" :disabled="directView" data-testid="mirror-audio" @click="unlockAudioOnClick" />
             <span>{{ t('settings.audio') }}</span>
@@ -654,6 +654,10 @@ onBeforeUnmount(() => setHelpListeners(false));
   display: flex;
   align-items: center;
   gap: 4px;
+}
+
+.audio-setting-item {
+  display: none;
 }
 
 /* Multi-line rows (the refresh slider) keep the "?" on the LABEL's line rather than centred on the whole block. */
