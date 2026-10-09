@@ -697,18 +697,17 @@ onBeforeUnmount(() => setHelpListeners(false));
   cursor: pointer;
 }
 
-/* WebKit paints enabled selects with its light native control surface unless appearance is reset. Keep the
-   selected value readable against the settings panel, and draw the chevron ourselves once the native one is gone. */
+/* WebKit paints selects with its native control surface unless appearance is reset. Keep every select consistent
+   with the settings panel, including disabled controls, and draw the chevron once the native one is gone. */
 @supports (-webkit-appearance: none) {
-  .settings-row-select select:enabled {
+  .settings-row-select select {
     -webkit-appearance: none;
     appearance: none;
-    min-height: 40px;
     padding-right: 24px;
     background-color: rgba(20, 24, 32, 0.9);
     background-image:
-      linear-gradient(45deg, transparent 50%, #eee 50%),
-      linear-gradient(135deg, #eee 50%, transparent 50%);
+      linear-gradient(45deg, transparent 50%, var(--settings-select-chevron, #eee) 50%),
+      linear-gradient(135deg, var(--settings-select-chevron, #eee) 50%, transparent 50%);
     background-position:
       calc(100% - 11px) 50%,
       calc(100% - 6px) 50%;
@@ -717,7 +716,14 @@ onBeforeUnmount(() => setHelpListeners(false));
     color: #eee;
   }
 
-  .settings-row-select select:enabled option {
+  .settings-row-select select:disabled {
+    --settings-select-chevron: rgba(238, 238, 238, 0.55);
+    background-color: rgba(20, 24, 32, 0.65);
+    color: rgba(238, 238, 238, 0.55);
+    cursor: not-allowed;
+  }
+
+  .settings-row-select select option {
     background-color: #141820;
     color: #eee;
   }
