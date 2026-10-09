@@ -7,12 +7,10 @@
 // ---------------------------------------------------------------------------------------------------------------
 // WHY A VALIDATOR AND NOT A PLAIN SLICE.
 //
-// The wrap rides the producer's STATIC path (add / keyframe / re-describe) and a label's words ride its PER-TICK
-// path. So a label whose text changes without a re-describe carries ranges that describe the string it used to
-// hold. Slicing the new text at the old offsets does not produce a misplaced line — it produces DIFFERENT WORDS,
-// silently, in a label the player is reading. That is the one failure a text path must never ship, and it is
-// strictly worse than the alternative, which is that the renderer breaks the lines itself exactly as it does
-// today.
+// The producer refreshes a label's wrap when its words change, but a metrics probe can fail or lag behind that
+// change. So the new text can still arrive with ranges describing the string it used to hold. Slicing the new
+// text at the old offsets produces DIFFERENT WORDS, silently, in a label the player is reading. That is the one
+// failure a text path must never ship.
 //
 // So the wrap is treated as a CLAIM about a specific string, and `godotLines` is where the claim is checked. It
 // answers null far more readily than it answers lines, and every null is a renderer falling back to what it

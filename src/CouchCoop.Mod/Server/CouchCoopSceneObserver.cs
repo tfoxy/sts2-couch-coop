@@ -190,9 +190,9 @@ public sealed class CouchCoopSceneObserver(CouchCoopRuntimeHost runtimeHost) : I
             LineWidth = upsert.LineWidth ?? existing.LineWidth,
             LineColor = upsert.LineColor ?? existing.LineColor,
             // Godot's own line breaking for this label. STICKY on the IntentFrames/LinePoints policy rather than
-            // plain-static, and the five fields ride as ONE unit: the producer computes them on the static path,
-            // so a volatile-only upsert carries null and the retained wrap must survive — but a fresh non-null
-            // upsert (the label was re-described, possibly with different words) must REPLACE the whole set.
+            // plain-static, and the five fields ride as ONE unit: the producer computes them on add/keyframe and
+            // refreshes them when text changes. Other volatile upserts carry null and retain the previous wrap;
+            // a fresh non-null block must REPLACE the whole set.
             //
             // Merging them FIELD-WISE would be the bug here. A retained hash next to fresh ranges, or vice versa,
             // is a block that validates against a string it does not describe — which is precisely the stale-wrap
