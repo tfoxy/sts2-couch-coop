@@ -25,6 +25,7 @@ internal static class CouchCoopSceneObserverTests
         ToVolatileRestoresOutlineAndGatesIntentFrames();
         ContentKeyIsStaticAcrossTheVolatileMerge();
         LineGeometryIsStickyAcrossTheVolatileMerge();
+        CardPreviewWrapReplacesTheWholeBlock();
         ToVolatileGatesLineGeometryOnLineDirty();
         KeyframeOrderNamesOnlyNodesTheKeyframeCarries();
         KeyframeOrderKeepsTheRetainedSequence();
@@ -244,6 +245,44 @@ internal static class CouchCoopSceneObserverTests
         var merged = CouchCoopSceneObserver.MergeVolatile(existing, upsert);
         Assert(merged.SpineCurrentAnim == "attack", "current anim is the fresh volatile value, not the retained one");
         Assert(merged.Spine is not null && merged.Spine!.Animations.Count == 2, "anim LIST is static and retained");
+    }
+
+    private static void CardPreviewWrapReplacesTheWholeBlock()
+    {
+        var regular = Node("description") with
+        {
+            RichText = true,
+            TextLineRanges = [0, 2],
+            TextLineBasis = "parsed",
+            TextParsedText = "一二",
+            TextLineSourceLength = 2,
+            TextLineSourceHash = 11,
+        };
+        var upgraded = Node("description", name: null) with
+        {
+            Name = null,
+            TextLineRanges = [0, 1, 1, 2],
+            TextLineBasis = "parsed",
+            TextParsedText = "三四",
+            TextLineSourceLength = 2,
+            TextLineSourceHash = 22,
+        };
+
+        var preview = CouchCoopSceneObserver.MergeVolatile(regular, upgraded);
+        Assert(preview.RichText == true, "rich-text styling survives an upgrade-preview delta");
+        Assert(preview.TextLineRanges!.SequenceEqual([0, 1, 1, 2]), "upgraded line ranges replace regular ranges");
+        Assert(preview.TextLineBasis == "parsed" && preview.TextParsedText == "三四"
+            && preview.TextLineSourceLength == 2 && preview.TextLineSourceHash == 22,
+            "upgraded parsed text and witness replace the regular wrap as one block");
+
+        var restored = CouchCoopSceneObserver.MergeVolatile(preview, upgraded with
+        {
+            TextLineRanges = [0, 2],
+            TextParsedText = "一二",
+            TextLineSourceHash = 11,
+        });
+        Assert(restored.TextLineRanges!.SequenceEqual([0, 2]) && restored.TextParsedText == "一二"
+            && restored.TextLineSourceHash == 11, "regular text replaces the preview wrap on the reverse toggle");
     }
 
     // FIXTURE LOCKSTEP (C# side): every wire static field named in static-fields.json is KEPT from `existing` by
