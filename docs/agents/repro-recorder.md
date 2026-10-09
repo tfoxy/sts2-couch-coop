@@ -52,9 +52,14 @@ Everything the pill does is also a function on `window`, so a devtools session n
 __mirrorRepro.start();            // arm (the settings toggle does this)
 __mirrorRepro.marker("card jumped");  // an optional note rides into the file
 __mirrorRepro.save();             // → { name, bytes, lines }
+__mirrorRepro.serialize();        // → the same ndjson as a string, no download (for automation)
 __mirrorRepro.stats();            // { recording, lines, bytes, fill, droppedLines, markers, … }
 __mirrorRepro.stop();
 ```
+
+A headless harness (Playwright, CDP) cannot easily collect a download, so it takes the file with
+`await page.evaluate(() => window.__mirrorRepro.serialize())` and writes the string itself. Recording continues
+after either call.
 
 ### URL levers
 

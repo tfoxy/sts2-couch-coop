@@ -746,3 +746,28 @@ export const reproRecorder: ReproRecorder = {
     startedAt = 0;
   }
 };
+
+/** What `window.__mirrorRepro` exposes: the recorder's console/harness surface, and nothing it does not need. */
+export interface ReproConsoleSeam {
+  start(): void;
+  stop(): void;
+  marker(note?: string): number;
+  /** Download the recording (a human at devtools); returns what it wrote. */
+  save(): ReproSaveResult;
+  /** The NDJSON `save()` would download, as a string: the way automation (a headless Playwright harness, which
+   *  cannot easily collect a download) takes the recording off the page. Recording continues. */
+  serialize(): string;
+  stats(): ReproStats;
+}
+
+/** Builds the `window.__mirrorRepro` seam over `recorder`. Function-per-call, so a reload re-binds nothing. */
+export function reproConsoleSeam(recorder: ReproRecorder = reproRecorder): ReproConsoleSeam {
+  return {
+    start: () => recorder.start(),
+    stop: () => recorder.stop(),
+    marker: (note?: string) => recorder.marker(note),
+    save: () => recorder.save(),
+    serialize: () => recorder.serialize(),
+    stats: () => recorder.stats()
+  };
+}
