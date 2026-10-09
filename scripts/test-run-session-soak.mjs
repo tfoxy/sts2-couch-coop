@@ -9,7 +9,8 @@
 //     the shape the kernel exposes);
 //   * `sts2` and `gamescope` are FAKE executables on PATH that record every call. The fake `sts2 game launch`
 //     starts a fake "game" (a node process) that publishes a port file and spawns a fake "seat" listening on a unix
-//     socket in a temp dir — never on a real `/tmp/spirectl-bridge-slot-N.sock`, which a live seat may own;
+//     socket in a temp dir (handed to it as SPIRECTL_BRIDGE_SOCKET_PATH, as the mod does) — never on a real
+//     `/tmp/spirectl-bridge-*.sock`, which a live seat may own;
 //   * teardown is exercised on REAL processes this test spawned, next to a "foreign" process it must not touch.
 //
 // Covered: /proc parsing and CPU/main-thread/RSS/threads accounting, identity pinning, the foreign channel, the
@@ -45,6 +46,7 @@ import {
   terminateOwnedTree, verifyDisplayOwnership, verifyUnixSocketOwner
 } from "./lib/session-rig.mjs";
 import { RECEIPT_SCHEMA, UsageError, parseSoakArgs, resolveSoakOptions, runGuard, runSession } from "./run-session-soak.mjs";
+import { seatBridgeSocketFor } from "./probe-five-player-run.mjs";
 import { acquireLease, releaseLease } from "./live-qa-lock.mjs";
 
 const REPO_ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
@@ -196,13 +198,15 @@ fs.appendFileSync(path.join(data, "logs", "godot.log"), "[INFO] Loading assembly
 const seatHome = path.join(data, "couch-coop", "headless-slots", "slot-2");
 fs.mkdirSync(path.join(seatHome, "SlayTheSpire2", "logs"), { recursive: true });
 fs.appendFileSync(path.join(seatHome, "SlayTheSpire2", "logs", "godot.log"), "[INFO] Loading assembly DLL fake/mods/couchcoop/CouchCoop.Mod.dll\n");
-spawn(process.execPath, [process.env.FAKE_SEAT, "--headless"], { stdio: "ignore", env: { ...process.env, XDG_DATA_HOME: seatHome, COUCHCOOP_HEADLESS_SLOT: "2" } });
+// Like the mod, the host hands its seat its OWN bridge path (here in a temp dir, never a live seat's /tmp path).
+const seatBridge = path.join(process.env.FAKE_SEAT_SOCKET_DIR, "bridge-slot-2.sock");
+spawn(process.execPath, [process.env.FAKE_SEAT, "--headless"], { stdio: "ignore", env: { ...process.env, XDG_DATA_HOME: seatHome, COUCHCOOP_HEADLESS_SLOT: "2", SPIRECTL_BRIDGE_SOCKET_PATH: seatBridge } });
 setTimeout(() => fs.writeFileSync(path.join(data, "couch-coop", "browser-port"), JSON.stringify({ port: 45678, pid: process.pid })), 200);
 setInterval(() => {}, 1e6);
 `;
 
-const FAKE_SEAT = String.raw`// Fake headless "seat": holds its bridge socket (in a temp dir) like a real seat holds its own.
-require("node:net").createServer().listen(require("node:path").join(process.env.FAKE_SEAT_SOCKET_DIR, "bridge-slot-" + process.env.COUCHCOOP_HEADLESS_SLOT + ".sock"));
+const FAKE_SEAT = String.raw`// Fake headless "seat": holds the bridge socket its host launched it with, like a real seat's bridge does.
+require("node:net").createServer().listen(process.env.SPIRECTL_BRIDGE_SOCKET_PATH);
 `;
 
 const FAKE_GAMESCOPE = `#!/bin/sh
@@ -666,17 +670,31 @@ test("preflight names what another session already holds", () => {
   writeProcNet(root, {
     udp: [{ port: 33771, state: "07", inode: 5001 }],
     tcp: [{ port: 13337, state: "0A", inode: 5002 }, { port: 13357, state: "0A", inode: 5003 }, { port: 13367, state: "01", inode: 5004 }],
-    unix: [{ inode: 5003, path: "/tmp/spirectl-bridge-slot-2.sock" }]
+    unix: [{ inode: 5003, path: seatBridgeSocketFor(2, "/r/instances/soak/user") }]
   });
-  const result = preflight({ procRoot: root, seats: 3 });
+  const result = preflight({ procRoot: root, seats: 3, userDir: "/r/instances/soak/user" });
   assert.deepEqual(result.enet.owners, [{ pid: 855, comm: "SlayTheSpire2" }]);
   assert.deepEqual(result.availableSlots, [3, 4], "an ESTABLISHED socket on 13367 is not a listener");
   assert.equal(result.problems.length, 2);
   assert.match(result.problems[0], /UDP 33771/);
   assert.match(result.problems[1], /at most 2 can join/);
-  assert.deepEqual(preflight({ procRoot: root, seats: 2 }).problems.length, 1, "two seats fit around the taken slot");
+  assert.deepEqual(preflight({ procRoot: root, seats: 2, userDir: "/r/instances/soak/user" }).problems.length, 1, "two seats fit around the taken slot");
   const quiet = fakeProcRoot();
-  assert.deepEqual(preflight({ procRoot: quiet, seats: 3 }).problems, []);
+  assert.deepEqual(preflight({ procRoot: quiet, seats: 3, userDir: "/r/instances/soak/user" }).problems, []);
+});
+
+test("preflight checks THIS instance's seat bridge paths, not another host's", () => {
+  const userDir = "/r/instances/soak/user";
+  const root = fakeProcRoot();
+  writeProc(root, { pid: 856, comm: "SlayTheSpire2", fds: { 12: "socket:[6003]" } });
+  writeProc(root, { pid: 857, comm: "SlayTheSpire2", fds: { 13: "socket:[6004]" } });
+  // The operator's own seat on the legacy shared path, and a stale seat of this instance on its scoped path.
+  writeProcNet(root, { unix: [{ inode: 6003, path: "/tmp/spirectl-bridge-slot-2.sock" }, { inode: 6004, path: seatBridgeSocketFor(3, userDir) }] });
+  const result = preflight({ procRoot: root, seats: 3, userDir });
+  assert.deepEqual(result.seatSlots.map(row => row.bridgeSocket), [2, 3, 4].map(slot => seatBridgeSocketFor(slot, userDir)));
+  assert.deepEqual(result.seatSlots[0].bridgeSocketOwners, [], "another host's legacy slot-2 socket is not this instance's");
+  assert.equal(result.problems.length, 1, JSON.stringify(result.problems));
+  assert.match(result.problems[0], /spirectl-bridge-[0-9a-f]{12}-slot-3\.sock is already held by \[\{"pid":857/);
 });
 
 test("the host's display must be served by the compositor's own X server", () => {
@@ -710,13 +728,15 @@ test("seats are the host's descendants carrying a slot and this instance's data 
   const seatHome = slot => `${userDir}/SlayTheSpire2/couch-coop/headless-slots/slot-${slot}`;
   writeProc(root, { pid: 700, comm: "SlayTheSpire2", startTicks: 1 });
   writeProc(root, { pid: 702, ppid: 700, comm: "sh", env: { COUCHCOOP_HEADLESS_SLOT: "2", XDG_DATA_HOME: seatHome(2) }, argv: ["sh", "wrapper.sh"] });
-  writeProc(root, { pid: 703, ppid: 702, comm: "SlayTheSpire2", startTicks: 9, env: { COUCHCOOP_HEADLESS_SLOT: "2", XDG_DATA_HOME: seatHome(2) }, argv: ["SlayTheSpire2", "--headless"] });
+  writeProc(root, { pid: 703, ppid: 702, comm: "SlayTheSpire2", startTicks: 9, env: { COUCHCOOP_HEADLESS_SLOT: "2", XDG_DATA_HOME: seatHome(2), SPIRECTL_BRIDGE_SOCKET_PATH: "/tmp/spirectl-bridge-0123456789ab-slot-2.sock" }, argv: ["SlayTheSpire2", "--headless"] });
   writeProc(root, { pid: 704, ppid: 700, comm: "SlayTheSpire2", env: { COUCHCOOP_HEADLESS_SLOT: "3", XDG_DATA_HOME: seatHome(3) }, argv: ["SlayTheSpire2", "--headless"] });
   writeProc(root, { pid: 705, ppid: 700, comm: "crashpad" });
   writeProc(root, { pid: 800, comm: "SlayTheSpire2", env: { COUCHCOOP_HEADLESS_SLOT: "4", XDG_DATA_HOME: "/elsewhere/slot-4" }, argv: ["SlayTheSpire2", "--headless"] });
   const seats = discoverSeatProcesses({ hostPid: 700, userDir, procRoot: root });
   assert.deepEqual(seats.map(seat => [seat.slot, seat.pid, seat.playerId]), [[2, 703, "p:1002"], [3, 704, "p:1003"]]);
   assert.equal(seats[0].startTicks, 9);
+  assert.equal(seats[0].bridgeSocket, "/tmp/spirectl-bridge-0123456789ab-slot-2.sock", "the seat's own bridge path, from its environment");
+  assert.equal(seats[1].bridgeSocket, null, "no path in the environment is null, never a guess");
   assert.deepEqual([...descendantsOf(readProcessTable({ procRoot: root }), 700)].sort(), [702, 703, 704, 705]);
 });
 
@@ -1044,7 +1064,9 @@ async function fullSession({ noSeatEcho = false, launchMode = "direct", routeSte
     reassertLease: () => ({ stub: true }),
     rigDeps: {
       env,
-      seatSocketFor: slot => path.join(sockets, `bridge-slot-${slot}.sock`),
+      // Only consulted when a seat's own SPIRECTL_BRIDGE_SOCKET_PATH is unreadable; the fake seat's env is not,
+      // so a session that readies through THIS path has re-derived the socket instead of reading the seat's.
+      seatSocketFor: slot => path.join(sockets, `derived-slot-${slot}.sock`),
       joinSeats: async (targets, evidence) => {
         joins.push(targets);
         evidence.screenshots.push("none");

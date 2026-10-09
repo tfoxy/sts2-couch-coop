@@ -19,8 +19,8 @@
 //     seed's files win), and `seedExclusive` to stop the CLI layering the operator's profile on top;
 //   * a read-only PREFLIGHT for the three ways another session on this machine silently breaks a hosted run:
 //     the ENet port already bound, seat ports already listening (the host skips them and the lobby runs short of
-//     slots), and seat bridge sockets already held (a seat's bridge path is `/tmp/spirectl-bridge-slot-<N>.sock`
-//     for EVERY host on the box);
+//     slots), and seat bridge sockets already held (a seat's bridge path is scoped to its host's user dir,
+//     `/tmp/spirectl-bridge-<instance>-slot-<N>.sock`, so a holder is a stale seat of THIS instance);
 //   * seat discovery from the host's own process tree, confirmed by each seat's environment;
 //   * an embark that readies every player through ITS OWN bridge with `sts2 act ready` — the one semantic action
 //     the maintainer approved for embarking a QA run. Before a seat's bridge is used, the socket is proved to be
@@ -396,8 +396,9 @@ export function socketOwners(inodes, { procRoot = "/proc", fs = nodeFs, table = 
 }
 
 /**
- * Proves `socketPath` is listened on by `pid` and by NOTHING else. Every host on this machine gives its slot-N
- * seat the same bridge path, so "something answers there" is not evidence it is our seat.
+ * Proves `socketPath` is listened on by `pid` and by NOTHING else. Seat bridge paths are scoped to their host's
+ * user dir, but an older mod or a COUCHCOOP_SEAT_BRIDGE_SOCKET_DIR override can still share one between hosts,
+ * so "something answers there" is not evidence it is our seat.
  */
 export function verifyUnixSocketOwner({ socketPath, pid, procRoot = "/proc", fs = nodeFs }) {
   const listeners = parseProcNetUnix(readProcNet(procRoot, fs, "unix")).filter(row => row.listening && row.path === socketPath);
@@ -420,7 +421,7 @@ export function verifyUnixSocketOwner({ socketPath, pid, procRoot = "/proc", fs 
  * Read-only preflight: what else on this machine already holds what this session is about to need. Nothing here
  * is ours yet, so every owner found is foreign.
  */
-export function preflight({ procRoot = "/proc", fs = nodeFs, seats, lobbySeats = STOCK_LOBBY_SEATS, enetPort = DEFAULT_ENET_PORT, hostPort = DEFAULT_HOST_PORT }) {
+export function preflight({ procRoot = "/proc", fs = nodeFs, seats, userDir, lobbySeats = STOCK_LOBBY_SEATS, enetPort = DEFAULT_ENET_PORT, hostPort = DEFAULT_HOST_PORT }) {
   const table = readProcessTable({ procRoot, fs });
   const udp = [...parseProcNetInet(readProcNet(procRoot, fs, "udp")), ...parseProcNetInet(readProcNet(procRoot, fs, "udp6"))]
     .filter(row => row.localPort === enetPort);
@@ -431,7 +432,7 @@ export function preflight({ procRoot = "/proc", fs = nodeFs, seats, lobbySeats =
   const slots = Array.from({ length: lobbySeats }, (_, index) => SEAT_MIN_SLOT + index);
   const seatRows = slots.map(slot => {
     const port = hostPort + slot * SEAT_PORT_STEP;
-    const socket = seatBridgeSocketFor(slot);
+    const socket = seatBridgeSocketFor(slot, userDir);
     return { slot, port, socket, tcp: tcpListen.filter(row => row.localPort === port), unix: unixListen.filter(row => row.path === socket) };
   });
   const owners = socketOwners([...udp, ...seatRows.flatMap(row => [...row.tcp, ...row.unix])].map(row => row.inode), { procRoot, fs, table });
@@ -578,6 +579,11 @@ export async function terminateOwnedTree(root, options = {}) {
 // seats
 // =================================================================================================
 
+/** The host's XDG data home for an instance: where its Godot user dir, and every seat's slot dir, live. */
+export function instanceUserDir({ instancesDir, instance }) {
+  return path.join(instancesDir, instance, "user");
+}
+
 /**
  * Seat processes under the host: descendants of the host pid whose environment carries a couch seat slot and a
  * data dir inside this instance's user dir. Both conditions are identity, not guesswork: the operator's seats run
@@ -594,7 +600,9 @@ export function discoverSeatProcesses({ hostPid, userDir, procRoot = "/proc", fs
     const dataHome = env?.get("XDG_DATA_HOME") ?? "";
     if (!Number.isInteger(slot) || slot < SEAT_MIN_SLOT || !dataHome.startsWith(`${userDir}/`)) continue;
     const argv = readCmdline(procRoot, pid, fs) ?? [];
-    const candidate = { slot, pid, startTicks: rows.get(pid).startTicks, comm: rows.get(pid).comm, headless: argv.includes("--headless") };
+    // The bridge path this seat was actually launched with: the authority, over re-deriving the mod's naming rule.
+    const bridgeSocket = env.get("SPIRECTL_BRIDGE_SOCKET_PATH") || null;
+    const candidate = { slot, pid, startTicks: rows.get(pid).startTicks, comm: rows.get(pid).comm, bridgeSocket, headless: argv.includes("--headless") };
     const prior = bySlot.get(slot);
     if (!prior || (candidate.headless && !prior.headless)) bySlot.set(slot, candidate);
   }
@@ -777,8 +785,9 @@ export function createSts2({ bin = "sts2", configPath, seatConfigPath = configPa
  *
  * Deps (injectable for the self-test): spawn, run, procRoot, fs, sleep, log, kill, runnerPid, sts2Bin,
  *   gamescopeBin, joinSeats, closeBrowsers, seatPages, verifyDisplay, portIsOpen, env, signal (an AbortSignal the
- *   bring-up polling loops honour; teardown never does), seatSocketFor (slot -> bridge socket path; the real one is
- *   fixed by the mod, the self-test points it at a temp dir so it never touches a live seat's path)
+ *   bring-up polling loops honour; teardown never does), seatSocketFor ((slot, userDir) -> bridge socket path, used
+ *   only when a seat's own SPIRECTL_BRIDGE_SOCKET_PATH is unreadable; the real one mirrors the mod's naming rule, the
+ *   self-test points it at a temp dir so it never touches a live seat's path)
  */
 export class SessionRig {
   constructor(options, deps = {}) {
@@ -796,7 +805,7 @@ export class SessionRig {
     this.configPath = path.join(runDir, `sts2.${instance}.yaml`);
     this.seatConfigPath = path.join(runDir, "sts2.seats.yaml");
     this.xdgRoot = path.join(instancesDir, instance);
-    this.userDir = path.join(this.xdgRoot, "user");
+    this.userDir = instanceUserDir(options);
     this.bridgeSocket = this.launchMode === "direct" ? hostBridgeSocketPath(runDir, instance) : null;
     this.compositorLog = path.join(runDir, "gamescope.log");
     this.sts2 = createSts2({
@@ -894,7 +903,7 @@ export class SessionRig {
       seats: { count: this.options.seats, viewport: this.options.viewport, baseUrl: `http://${this.options.lanHost ?? "<lan-host>"}:<published port>`, viewerCpus: this.options.viewerCpus ?? null },
       embark: {
         host: [this.deps.sts2Bin, ...this.sts2.hostArgv(["act", "ready", "--player-id", "<lobby.hostPlayerId>"])],
-        seat: { env: { SPIRECTL_BRIDGE_SOCKET_PATH: seatBridgeSocketFor("<slot>") }, argv: [this.deps.sts2Bin, ...this.sts2.socketArgv(["act", "ready", "--player-id", "p:<1000+slot>"])], precondition: "socket held by that seat's pid and nothing else" }
+        seat: { env: { SPIRECTL_BRIDGE_SOCKET_PATH: "<the seat's own SPIRECTL_BRIDGE_SOCKET_PATH>" }, argv: [this.deps.sts2Bin, ...this.sts2.socketArgv(["act", "ready", "--player-id", "p:<1000+slot>"])], precondition: "socket held by that seat's pid and nothing else" }
       },
       devConsole: [this.deps.sts2Bin, ...this.sts2.hostArgv(["dev", "console", "<command>", "<args...>"])],
       teardown: "SIGTERM then SIGKILL by pid+start ticks: browsers, host tree (seats included), seats seen earlier, compositor tree"
@@ -1202,6 +1211,11 @@ export class SessionRig {
     return this.seatProcesses.find(seat => seat.slot === slot) ?? null;
   }
 
+  /** A discovered seat's bridge socket: from its own environment, else derived from this instance's user dir. */
+  #seatSocket(seat) {
+    return seat.bridgeSocket ?? this.deps.seatSocketFor(seat.slot, this.userDir);
+  }
+
   /**
    * Embarks: every player readies through its OWN bridge (`sts2 act ready`, approved for embarking a QA run and
    * for nothing else). A seat's bridge socket is used only once it is proved to be that seat's and no one else's.
@@ -1230,7 +1244,7 @@ export class SessionRig {
     await this.#refreshSeatProcesses(this.seats.map(seat => seat.slot));
     for (const seat of [...this.seats].sort((a, b) => a.slot - b.slot)) {
       const proc = this.#seatProcess(seat.slot);
-      const socket = this.deps.seatSocketFor(seat.slot);
+      const socket = this.#seatSocket(proc);
       const owner = verifyUnixSocketOwner({ socketPath: socket, pid: proc.pid, ...this.procOptions });
       if (!owner.ok) throw new RigError("embark", `refusing to ready ${seat.playerId} through ${socket}: ${owner.problem}`);
       const ready = await this.sts2.atSocket(socket, ["act", "ready", "--player-id", seat.playerId]);
@@ -1413,7 +1427,7 @@ export class SessionRig {
     fs.writeFileSync(path.join(dir, "host.json"), host.value ? `${JSON.stringify(host.value, null, 2)}\n` : "");
     peers.push({ peer: "host", ok: host.ok, file: path.join(dir, "host.json"), summary: host.ok ? summarizeRunState(host.value) : null });
     for (const seat of this.seatProcesses) {
-      const socket = this.deps.seatSocketFor(seat.slot);
+      const socket = this.#seatSocket(seat);
       const owner = verifyUnixSocketOwner({ socketPath: socket, pid: seat.pid, ...this.procOptions });
       if (!owner.ok) {
         peers.push({ peer: `seat-${seat.slot}`, ok: false, skipped: owner.problem, summary: null });

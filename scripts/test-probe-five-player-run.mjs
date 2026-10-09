@@ -277,7 +277,13 @@ test("seat paths follow the documented layout", () => {
     seatLogPathFor("/tmp/xdg", 3),
     "/tmp/xdg/SlayTheSpire2/couch-coop/headless-slots/slot-3/SlayTheSpire2/logs/godot.log"
   );
-  assert.equal(seatBridgeSocketFor(3), "/tmp/spirectl-bridge-slot-3.sock");
+  // Pinned in tests/CouchCoop.Mod.Tests/HeadlessClientManagerTests.cs too (PinnedInstanceId): the mod names
+  // the socket from the host's user dir, and this side has to arrive at the same path from outside.
+  assert.equal(seatBridgeSocketFor(3, "/data/xdg"), "/tmp/spirectl-bridge-810729f44747-slot-3.sock");
+  assert.equal(seatBridgeSocketFor(3, "/data/./xdg/"), "/tmp/spirectl-bridge-810729f44747-slot-3.sock", "the same dir spelt differently");
+  assert.equal(seatBridgeSocketFor(3, "/data/other"), "/tmp/spirectl-bridge-eb5067067bda-slot-3.sock", "another host, another socket");
+  assert.equal(seatBridgeSocketFor(3, "/data/xdg", "/tmp"), "/tmp/spirectl-bridge-slot-3.sock", "COUCHCOOP_SEAT_BRIDGE_SOCKET_DIR=/tmp is the legacy path");
+  assert.throws(() => seatBridgeSocketFor(3), /needs the host's user dir/);
   assert.equal(seatNameFor(0), "Ann");
   assert.notEqual(seatNameFor(0), seatNameFor(1));
   assert.equal(seatNameFor(500), "Seat501", "names never run out");

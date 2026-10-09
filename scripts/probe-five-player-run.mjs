@@ -65,7 +65,8 @@
 //    `/ws?seat=<route>`, an opaque random id. Its slot comes from the host's per-connection `session`
 //    envelope instead (`session.playerId` = p:<1000+slot>), read off the page's own WebSocket frames
 //    (resolveSeatSlot). Either way the seat's own ENet log then has to prove that slot joined.
-//  * Every couch seat runs its own spirectl bridge at /tmp/spirectl-bridge-slot-<N>.sock. A seat-owned
+//  * Every couch seat runs its own spirectl bridge at /tmp/spirectl-bridge-<instance>-slot-<N>.sock, the
+//    instance id derived from the host's user dir (seatBridgeSocketFor). A seat-owned
 //    semantic action refused by the HOST bridge is retried there, and each seat's own view of the run is
 //    captured as evidence -- "the host thinks there is one player, what does seat 3 think?" is exactly
 //    the question this bug asks.
@@ -83,6 +84,7 @@
 
 import { mkdir, readFile, writeFile, rm, stat, readdir } from "node:fs/promises";
 import { existsSync } from "node:fs";
+import { createHash } from "node:crypto";
 import { createRequire } from "node:module";
 import { homedir } from "node:os";
 import { resolve as resolvePath } from "node:path";
@@ -268,8 +270,18 @@ export function seatLogPathFor(userDir, slot) {
   return `${userDir}/SlayTheSpire2/couch-coop/headless-slots/slot-${slot}/SlayTheSpire2/logs/godot.log`;
 }
 
-export function seatBridgeSocketFor(slot) {
-  return `/tmp/spirectl-bridge-slot-${slot}.sock`;
+/**
+ * The spirectl bridge socket a couch seat of `slot` listens on, for the host whose XDG data home is `userDir`
+ * -- the same rule as HeadlessClientManager.SpirectlBridgeEndpointEnvironment: `/tmp/spirectl-bridge-<id>-slot-N.sock`,
+ * `<id>` the first 12 hex of SHA-256 over the host's normalised `<userDir>/SlayTheSpire2`. A host started with
+ * COUCHCOOP_SEAT_BRIDGE_SOCKET_DIR puts it at `<dir>/spirectl-bridge-slot-N.sock` instead; pass that dir as
+ * `socketDir`. A seat's own environment (SPIRECTL_BRIDGE_SOCKET_PATH) is the authority when it can be read.
+ */
+export function seatBridgeSocketFor(slot, userDir, socketDir = null) {
+  if (socketDir) return resolvePath(socketDir, `spirectl-bridge-slot-${slot}.sock`);
+  if (!userDir) throw new ProbeError("seatBridgeSocketFor needs the host's user dir: the socket name is scoped to it");
+  const id = createHash("sha256").update(resolvePath(userDir, "SlayTheSpire2")).digest("hex").slice(0, 12);
+  return `/tmp/spirectl-bridge-${id}-slot-${slot}.sock`;
 }
 
 /**
@@ -320,6 +332,11 @@ export function resolveTargets({ args, record = null, env = {}, home = homedir()
     ["env", env.XDG_DATA_HOME],
     ["default", `${home}/.local/share`]);
 
+  // Only when the HOST was launched with it; otherwise seat sockets carry the instance-scoped default name.
+  const seatBridgeSocketDir = pick("seatBridgeSocketDir",
+    ["env", env.COUCHCOOP_SEAT_BRIDGE_SOCKET_DIR],
+    ["default", null]);
+
   const seatLogGlob = pick("seatLogGlob",
     ["record", record?.seatLogGlob],
     ["default", seatLogPathFor(userDir, "*")]);
@@ -359,6 +376,7 @@ export function resolveTargets({ args, record = null, env = {}, home = homedir()
     portBases,
     instance,
     userDir,
+    seatBridgeSocketDir,
     seatLogGlob,
     hostStdoutPath,
     hostStderrPath,
@@ -813,8 +831,8 @@ export async function actForPlayer(playerId, args, seatsByPlayerId) {
   }
 
   const seat = seatsByPlayerId.get(playerId);
-  if (seat?.slot) {
-    const socket = seatBridgeSocketFor(seat.slot);
+  if (seat?.bridgeSocket) {
+    const socket = seat.bridgeSocket;
     const outcome = await sts2AtSocket(socket, ["act", ...args, "--player-id", playerId]);
     attempts.push({
       via: `seat-bridge:${socket}`,
@@ -1361,7 +1379,7 @@ export async function joinSeats(targets, evidence) {
 
 async function joinOneSeat(targets, name, evidence) {
   const started = Date.now();
-  const seat = { name, ok: false, detail: null, slot: null, port: null, portBase: null, route: null, playerId: null, logPath: null, socketUrls: [], sessionFrames: [], screenshots: [], ms: 0 };
+  const seat = { name, ok: false, detail: null, slot: null, port: null, portBase: null, route: null, playerId: null, logPath: null, bridgeSocket: null, socketUrls: [], sessionFrames: [], screenshots: [], ms: 0 };
   const context = await browser.newContext({ viewport: targets.viewport ?? { width: 960, height: 600 } });
   openContexts.push(context);
   const page = await context.newPage();
@@ -1440,6 +1458,7 @@ async function joinOneSeat(targets, name, evidence) {
     seat.route = seatSlot.via;
     seat.playerId = seatSlot.playerId;
     seat.logPath = seatLogPathFor(targets.userDir, seatSlot.slot);
+    seat.bridgeSocket = seatBridgeSocketFor(seatSlot.slot, targets.userDir, targets.seatBridgeSocketDir);
 
     // The REAL ENet join, in that seat's own process log. A browser that shows a scene proves the
     // mirror is up; only these two lines prove the seat actually joined the host's lobby over ENet.
@@ -1705,7 +1724,7 @@ async function probeSeatMirrors(seats) {
 async function captureSeatRunViews(seats) {
   const views = [];
   for (const seat of seats) {
-    const socket = seatBridgeSocketFor(seat.slot);
+    const socket = seat.bridgeSocket;
     const outcome = await sts2AtSocket(socket, ["state"]);
     views.push({
       name: seat.name,
