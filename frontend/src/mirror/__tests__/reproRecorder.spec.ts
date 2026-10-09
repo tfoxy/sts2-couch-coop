@@ -1,7 +1,7 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import { connectMirrorClient } from "@/mirror/mirrorClient";
-import { DEFAULT_REPRO_BUFFER_BYTES, REPRO_FORMAT, reproRecorder } from "@/mirror/reproRecorder";
+import { DEFAULT_REPRO_BUFFER_BYTES, REPRO_FORMAT, reproConsoleSeam, reproRecorder } from "@/mirror/reproRecorder";
 
 // THE REPRO RECORDER (reproRecorder.ts). What is pinned here is everything a recording is only trustworthy
 // because of:
@@ -753,6 +753,52 @@ describe("reproRecorder — save", () => {
       expect(result.name).toMatch(/\.ndjson$/);
     } finally {
       vi.unstubAllGlobals();
+    }
+  });
+});
+
+describe("reproRecorder — the window.__mirrorRepro seam", () => {
+  it("serialize() hands automation the exact file a save downloads, without downloading anything", async () => {
+    const blobs: Blob[] = [];
+    const nativeCreate = URL.createObjectURL;
+    const nativeRevoke = URL.revokeObjectURL;
+    URL.createObjectURL = vi.fn((blob: Blob) => {
+      blobs.push(blob);
+      return "blob:repro";
+    }) as unknown as typeof URL.createObjectURL;
+    URL.revokeObjectURL = vi.fn() as unknown as typeof URL.revokeObjectURL;
+    const clickSpy = vi.spyOn(HTMLAnchorElement.prototype, "click").mockImplementation(() => {});
+
+    try {
+      const seam = reproConsoleSeam();
+      expect(Object.keys(seam).sort()).toEqual(["marker", "save", "serialize", "start", "stats", "stop"]);
+      seam.start();
+      reproRecorder.tapWireIn('{"type":"scene-delta","n":1}', "seat");
+      seam.marker("jumped");
+
+      const text = seam.serialize();
+      expect(typeof text).toBe("string");
+      expect(blobs).toHaveLength(0);
+      expect(clickSpy).not.toHaveBeenCalled();
+      const lines = text.split("\n").filter(Boolean);
+      expect(JSON.parse(lines[0]).meta).toMatchObject({ format: REPRO_FORMAT, lines: 2 });
+      expect(lines.slice(1).map((line) => JSON.parse(line))).toMatchObject([
+        { dir: "in", sock: "seat", data: '{"type":"scene-delta","n":1}' },
+        { kind: "marker", n: 1, note: "jumped" }
+      ]);
+      expect(seam.stats().recording).toBe(true);
+
+      // The human path is unchanged: save() still downloads, and the download carries the same body lines.
+      const result = seam.save();
+      expect(clickSpy).toHaveBeenCalledTimes(1);
+      expect(blobs).toHaveLength(1);
+      const written = (await blobs[0].text()).split("\n").filter(Boolean);
+      expect(written.slice(1)).toEqual(lines.slice(1));
+      expect(result.lines).toBe(2);
+    } finally {
+      clickSpy.mockRestore();
+      URL.createObjectURL = nativeCreate;
+      URL.revokeObjectURL = nativeRevoke;
     }
   });
 });

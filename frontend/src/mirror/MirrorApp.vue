@@ -12,7 +12,7 @@ import BrowserAdvisory from "@/join/BrowserAdvisory.vue";
 import GamepadAdvisory from "@/join/GamepadAdvisory.vue";
 import IosInstallOverlay from "@/join/IosInstallOverlay.vue";
 import { REPRO_UI_ENABLED } from "@/mirror/buildFlags";
-import { reproRecorder } from "@/mirror/reproRecorder";
+import { reproConsoleSeam, reproRecorder } from "@/mirror/reproRecorder";
 import { emitWarmAckTrace, warmAckTraceEnabled } from "@/mirror/warmAckTrace";
 import LatencyOverlay from "@/mirror/LatencyOverlay.vue";
 import ReproBadge from "@/mirror/ReproBadge.vue";
@@ -230,16 +230,10 @@ watch(
 );
 
 // Console/harness seam, same function-per-call idiom as `__mirrorSendInput` and `__mirrorShaderStats`: a desktop
-// session can drive the whole recorder from devtools without the badge, and the offline replayer reads
-// `stats()` to confirm a page really is (or is NOT) recording.
+// session can drive the whole recorder from devtools without the badge, the offline replayer reads `stats()` to
+// confirm a page really is (or is NOT) recording, and a headless harness takes the file with `serialize()`.
 if (typeof window !== "undefined") {
-  (window as unknown as { __mirrorRepro?: unknown }).__mirrorRepro = {
-    start: () => reproRecorder.start(),
-    stop: () => reproRecorder.stop(),
-    marker: (note?: string) => reproRecorder.marker(note),
-    save: () => reproRecorder.save(),
-    stats: () => reproRecorder.stats()
-  };
+  (window as unknown as { __mirrorRepro?: unknown }).__mirrorRepro = reproConsoleSeam();
 }
 
 const status = ref<MirrorClientStatus>("connecting");
