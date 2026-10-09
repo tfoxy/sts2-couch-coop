@@ -9,6 +9,24 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and
 
 ## [Unreleased]
 
+## [0.4.1] - 2026-10-09
+
+### Added
+
+- Browser players can join through the host's one browser port, with direct seat ports available when preferred.
+- Players can turn on game audio in the mirror settings (hidden until stable enough); it follows their own in-game volume settings.
+  - Game sounds on the secure (HTTPS) phone link no longer lag during busy combat turns.
+  - Clarify the beta audio setting and its performance and HTTPS tradeoffs.
+
+### Fixed
+
+- Card descriptions, Ancient text and tooltips with inline icons now appear in Canvas across languages.
+- Fixed the web client freezing mid-animation (rewards not appearing) after an enemy dies to Doom.
+- Fixed browser refresh preventing players from rejoining a saved multiplayer lobby.
+- Couch players can join saved multiplayer runs without changing .NET JIT settings, and connection reports explain when the host transport did not start.
+- HTTPS setup starts only after its QR option is selected.
+- Fixed unreadable Stage and text rendering choices in WebKit.
+
 ## [0.4.0] - 2026-10-04
 
 ### Added
@@ -195,7 +213,8 @@ First public release. Turn the phones, tablets and laptops on your network into 
 a local Slay the Spire 2 co-op session — no app to install on the other devices, and no `sts2` CLI
 needed to run the mod.
 
-[Unreleased]: https://github.com/tfoxy/sts2-couch-coop/compare/v0.4.0...HEAD
+[Unreleased]: https://github.com/tfoxy/sts2-couch-coop/compare/v0.4.1...HEAD
+[0.4.1]: https://github.com/tfoxy/sts2-couch-coop/releases/tag/v0.4.1
 [0.4.0]: https://github.com/tfoxy/sts2-couch-coop/releases/tag/v0.4.0
 [0.3.4]: https://github.com/tfoxy/sts2-couch-coop/releases/tag/v0.3.4
 [0.3.3]: https://github.com/tfoxy/sts2-couch-coop/releases/tag/v0.3.3
