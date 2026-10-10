@@ -91,6 +91,11 @@ if (args is [SeatBrowserPipeTests.HostUiChildVerb, ..])
     Environment.Exit(await SeatBrowserPipeTests.RunHostUiChildAsync());
 }
 
+if (args is [SeatBrowserPipeTests.RootedChildVerb, ..])
+{
+    Environment.Exit(await SeatBrowserPipeTests.RunRootedChildAsync());
+}
+
 // Runs both halves of the headless seat's pad isolation alone: the joypad InputMap strip (the engine route) and the
 // Steam Input patch's targets (the route that never consults the InputMap). Both are pure — type metadata and
 // ordinary collections only — so they are safe without an engine and stay independently green of the later

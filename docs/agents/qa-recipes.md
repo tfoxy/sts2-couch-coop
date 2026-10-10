@@ -1040,6 +1040,11 @@ works. Things worth knowing before reading its output:
   the pre-Oct-8 shared path); the probe reads that variable from its own environment. The probe retries a
   host-refused seat action there and captures each seat's own view of the run, which is what answers "the host
   says one player — did seat 3 even enter a run?".
+- **Every Linux/macOS couch seat has its own `TMPDIR`**, `<host temp dir>/cc<first 6 hex of that instance><slot>`
+  (mode 0700; logged as `headless seat temp dir refused …` when it falls back to the host's). Attaching
+  `dotnet-trace`/`dotnet-counters`/`dotnet-dump collect` to a seat needs `TMPDIR=<that seat's temp dir>` in the
+  tool's environment, because the runtime's diagnostics socket is there; `dotnet-dump analyze` of a core file is
+  unaffected.
 - **Cheap inner loop, not the gate:** `sts2 act join-lobby-player --display-name <name>` builds a 5-player
   LOBBY inside one process with no browsers and no ENet. Good for bisecting game-side logic fast; it does not
   exercise the real join path this defect lives on.

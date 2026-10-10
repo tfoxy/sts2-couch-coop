@@ -15,6 +15,13 @@ internal sealed class SeatBrowserPipe : IAsyncDisposable
 {
     internal const string NameEnvironmentVariable = "COUCHCOOP_SEAT_BROWSER_PIPE";
     internal const string TokenEnvironmentVariable = "COUCHCOOP_SEAT_BROWSER_PIPE_TOKEN";
+
+    // The file name .NET gives a named pipe's Unix socket. A rooted name is used verbatim by both pipe streams.
+    private const string UnixPipeFilePrefix = "CoreFxPipe_";
+    private const int MaxWindowsPipeNameLength = 120;
+    // sockaddr_un.sun_path, as HeadlessUserDirSeeder.MaxUnixSocketPathBytes; this file is also compiled into
+    // the hot-reload assembly, which cannot see the session types.
+    private const int MaxUnixSocketPathBytes = 103;
     private const int MaxPreludeBytes = 1024;
     private const int MaxUpgradeStatusBytes = 1024;
     private static readonly TimeSpan UpgradeResponseTimeout = TimeSpan.FromSeconds(30);
@@ -40,11 +47,42 @@ internal sealed class SeatBrowserPipe : IAsyncDisposable
         var name = Environment.GetEnvironmentVariable(NameEnvironmentVariable);
         var token = Environment.GetEnvironmentVariable(TokenEnvironmentVariable);
         if (string.IsNullOrWhiteSpace(name) || string.IsNullOrWhiteSpace(token)) return null;
-        if (name.Length > 120 || !name.All(char.IsAsciiLetterOrDigit)
+        if (!IsValidEndpoint(name, OperatingSystem.IsWindows())
             || token.Length != 64 || !token.All(Uri.IsHexDigit))
             throw new InvalidOperationException("The seat browser pipe configuration is invalid.");
         return Start(name, token, serve);
     }
+
+    /// <summary>
+    /// The endpoint the host hands a seat for the pipe <paramref name="name"/>, and later relays to: the bare
+    /// name on Windows, where a pipe is a kernel object; elsewhere the absolute path of the pipe's socket in the
+    /// HOST's temp dir. Left bare on Unix, .NET would resolve it against each process's OWN temp dir, so a seat
+    /// with a private TMPDIR would listen where the host never looks.
+    /// </summary>
+    internal static string EndpointFor(string name)
+        => EndpointFor(name, OperatingSystem.IsWindows(), Path.GetTempPath());
+
+    internal static string EndpointFor(string name, bool isWindows, string hostTempPath)
+        => isWindows ? name : Path.Combine(hostTempPath, UnixPipeFilePrefix + name);
+
+    /// <summary>
+    /// What a seat accepts from its environment: an ASCII alphanumeric pipe name on Windows; elsewhere only the
+    /// rooted form <see cref="EndpointFor(string, bool, string)"/> produces, short enough to bind.
+    /// </summary>
+    internal static bool IsValidEndpoint(string endpoint, bool isWindows)
+    {
+        if (isWindows)
+            return endpoint.Length is > 0 and <= MaxWindowsPipeNameLength && endpoint.All(char.IsAsciiLetterOrDigit);
+        if (!Path.IsPathRooted(endpoint)
+            || Encoding.UTF8.GetByteCount(endpoint) > MaxUnixSocketPathBytes) return false;
+        var fileName = Path.GetFileName(endpoint);
+        return fileName.Length > UnixPipeFilePrefix.Length
+            && fileName.StartsWith(UnixPipeFilePrefix, StringComparison.Ordinal)
+            && fileName.AsSpan(UnixPipeFilePrefix.Length).IndexOfAnyExcept(AsciiAlphanumerics) < 0;
+    }
+
+    private static readonly SearchValues<char> AsciiAlphanumerics =
+        SearchValues.Create("0123456789ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz");
 
     internal static SeatBrowserPipe Start(string name, string token,
         Func<Stream, bool, IPAddress, CancellationToken, Task> serve)

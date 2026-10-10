@@ -16,26 +16,40 @@ internal static class HeadlessUserDirSeederTests
         UnsupportedPlatformReturnsNull();
         MacOsPolicyBuildsAnIsolatedFakeHomeFarm();
         MacOsRequiresHomeAndLogsTheFallback();
+        UnixPolicyGivesEachSeatAShortPerHostTempDir();
+        SeatTempDirAndItsSocketsFitSunPath();
+        SeatTempDirIsNarrowedToOwnerOnly();
+        SeatTempDirRefusesASymlinkAndKeepsTheRestOfTheIsolation();
+        SeatTempDirRefusesAnotherUsersDirectory();
+        UnixPathInspectionDoesNotFollowLinks();
     }
 
     private static void LinuxPolicyUsesXdgDataHome()
     {
         using var root = new TempDir();
         var xdg = Path.Combine(root.Path, "xdg");
+        var hostTemp = HostTemp(root);
         var result = HeadlessUserDirSeeder.Prepare(
             2,
             HeadlessUserDirPlatform.Linux,
             Env(("XDG_DATA_HOME", xdg)),
-            _ => Path.Combine(root.Path, "home"));
+            _ => Path.Combine(root.Path, "home"),
+            hostTempPath: hostTemp);
 
         var expectedSlotBase = Path.Combine(xdg, "SlayTheSpire2", "couch-coop", "headless-slots", "slot-2");
+        var expectedTemp = HeadlessUserDirSeeder.SeatTempDir(hostTemp, Path.Combine(xdg, "SlayTheSpire2"), 2);
         Assert(result is not null, "linux prepare succeeds");
         Assert(result!.SlotBase == expectedSlotBase, "linux slot base is under XDG_DATA_HOME/SlayTheSpire2");
         Assert(result.SlotUserDir == Path.Combine(expectedSlotBase, "SlayTheSpire2"), "linux slot user dir nests SlayTheSpire2");
         Assert(result.EnvironmentVariables.TryGetValue("XDG_DATA_HOME", out var childXdg) && childXdg == expectedSlotBase,
             "linux child gets XDG_DATA_HOME=slot base");
-        Assert(result.EnvironmentVariables.Count == 1, "linux child environment is exactly XDG_DATA_HOME");
+        // Two since the seat got its own temp dir: the same isolation Windows has through TEMP/TMP.
+        Assert(result.EnvironmentVariables.Count == 2
+               && result.EnvironmentVariables.TryGetValue("TMPDIR", out var childTemp)
+               && expectedTemp is not null && childTemp == expectedTemp,
+            "linux child environment is exactly XDG_DATA_HOME and its own TMPDIR");
         Assert(Directory.Exists(Path.Combine(result.SlotUserDir, "logs")), "linux prepare creates logs dir");
+        AssertOwnerOnlyDirectory(expectedTemp!, "linux prepare creates the seat temp dir owner-only");
     }
 
     private static void WindowsPolicyUsesAppData()
@@ -388,28 +402,39 @@ internal static class HeadlessUserDirSeederTests
             Path.Combine(SlotLibrary(slotBase), "Preferences"),
             Path.Combine(root.Path, "stale-preferences"));
 
+        var hostTemp = HostTemp(root);
         var policy = HeadlessUserDirSeeder.ResolvePolicy(
             4,
             HeadlessUserDirPlatform.MacOs,
             Env(("HOME", home)),
-            _ => Path.Combine(root.Path, "unused"));
+            _ => Path.Combine(root.Path, "unused"),
+            hostTemp);
         Assert(policy is not null, "macOS policy resolves with HOME");
         Assert(policy!.HostUserDir == hostUserDir, "macOS host user dir is HOME/Library/Application Support/SlayTheSpire2");
         Assert(policy.SlotBase == slotBase, "macOS slot base remains under the host user dir");
         Assert(policy.SlotUserDir == slotUserDir, "macOS slot user dir is inside the fake home");
-        Assert(policy.EnvironmentVariables.Count == 1
+        Assert(policy.EnvironmentVariables.Count == 2
                && policy.EnvironmentVariables.TryGetValue("HOME", out var childHome)
-               && childHome == slotBase,
-            "macOS child environment is exactly HOME=slot base");
+               && childHome == slotBase
+               && policy.EnvironmentVariables.TryGetValue("TMPDIR", out var policyTemp)
+               && policyTemp == policy.SeatTempDir
+               && policyTemp == HeadlessUserDirSeeder.SeatTempDir(hostTemp, hostUserDir, 4),
+            "macOS child environment is exactly HOME=slot base and its own TMPDIR");
 
         var result = HeadlessUserDirSeeder.Prepare(
             4,
             HeadlessUserDirPlatform.MacOs,
             Env(("HOME", home)),
-            _ => Path.Combine(root.Path, "unused"));
+            _ => Path.Combine(root.Path, "unused"),
+            hostTempPath: hostTemp);
         Assert(result is not null, "macOS fake-home prepare succeeds");
         Assert(result!.SlotBase == slotBase && result.SlotUserDir == slotUserDir,
             "macOS prepare returns the resolved fake-home paths");
+        Assert(result.EnvironmentVariables.TryGetValue("TMPDIR", out var preparedTemp) && preparedTemp == policy.SeatTempDir,
+            "macOS prepare keeps the seat's own TMPDIR beside the fake HOME");
+        AssertOwnerOnlyDirectory(policy.SeatTempDir!, "macOS prepare creates the seat temp dir owner-only");
+        Assert(!Directory.Exists(Path.Combine(slotBase, Path.GetFileName(policy.SeatTempDir!))),
+            "the seat temp dir is not part of the fake-home farm");
 
         Assert(new DirectoryInfo(Path.Combine(slotBase, "Library")).LinkTarget is null,
             "fake-home Library is a real first exclusion layer");
@@ -489,6 +514,209 @@ internal static class HeadlessUserDirSeederTests
         {
             HeadlessUserDirSeeder.LogSink = null;
         }
+    }
+
+    private static void UnixPolicyGivesEachSeatAShortPerHostTempDir()
+    {
+        var linux = HeadlessUserDirSeeder.ResolvePolicy(
+            3, HeadlessUserDirPlatform.Linux, Env(("XDG_DATA_HOME", "/home/alice/.local/share")), _ => "/unused", "/tmp/")!;
+        var instance = HeadlessUserDirSeeder.HostInstanceId("/home/alice/.local/share/SlayTheSpire2");
+        Assert(instance is { Length: 12 }, "the host instance id is 12 hex digits");
+        Assert(linux.SeatTempDir == "/tmp/cc" + instance![..6] + "3"
+               && linux.EnvironmentVariables["TMPDIR"] == linux.SeatTempDir,
+            "a linux seat's TMPDIR is <host temp>/cc<6 hex of the host instance><slot>");
+        Assert(System.Text.RegularExpressions.Regex.IsMatch(Path.GetFileName(linux.SeatTempDir!), "^cc[0-9a-f]{6}3$"),
+            "the seat temp dir name is short, lowercase hex and slot-suffixed");
+
+        var otherHost = HeadlessUserDirSeeder.ResolvePolicy(
+            3, HeadlessUserDirPlatform.Linux, Env(("XDG_DATA_HOME", "/srv/qa/xdg")), _ => "/unused", "/tmp/");
+        var otherSlot = HeadlessUserDirSeeder.ResolvePolicy(
+            4, HeadlessUserDirPlatform.Linux, Env(("XDG_DATA_HOME", "/home/alice/.local/share")), _ => "/unused", "/tmp/");
+        Assert(otherHost?.SeatTempDir is { } a && a != linux.SeatTempDir
+               && otherSlot?.SeatTempDir is { } b && b != linux.SeatTempDir,
+            "two hosts on one machine, and two slots of one host, never share a seat temp dir");
+
+        var macTemp = "/var/folders/qh/" + new string('x', 30) + "/T/";
+        var mac = HeadlessUserDirSeeder.ResolvePolicy(
+            2, HeadlessUserDirPlatform.MacOs, Env(("HOME", "/Users/alice")), _ => "/unused", macTemp);
+        Assert(mac?.SeatTempDir is { } macSeat && macSeat.StartsWith(macTemp + "cc", StringComparison.Ordinal)
+               && mac.EnvironmentVariables["TMPDIR"] == macSeat && mac.EnvironmentVariables.ContainsKey("HOME"),
+            "a macOS seat's TMPDIR sits in the host's per-user temp dir, beside its fake HOME");
+
+        var windows = HeadlessUserDirSeeder.ResolvePolicy(
+            2, HeadlessUserDirPlatform.Windows, Env(("APPDATA", @"C:\Users\a\AppData\Roaming")), _ => "/unused", @"C:\Temp\");
+        Assert(windows is not null && windows.SeatTempDir is null && !windows.EnvironmentVariables.ContainsKey("TMPDIR"),
+            "windows keeps its own TEMP/TMP isolation and gets no TMPDIR");
+
+        var noHostTemp = HeadlessUserDirSeeder.ResolvePolicy(
+            2, HeadlessUserDirPlatform.Linux, Env(("XDG_DATA_HOME", "/home/alice/.local/share")), _ => "/unused");
+        var relativeHostTemp = HeadlessUserDirSeeder.ResolvePolicy(
+            2, HeadlessUserDirPlatform.Linux, Env(("XDG_DATA_HOME", "/home/alice/.local/share")), _ => "/unused", "tmp/");
+        Assert(noHostTemp is { SeatTempDir: null } && !noHostTemp.EnvironmentVariables.ContainsKey("TMPDIR")
+               && relativeHostTemp is { SeatTempDir: null },
+            "without a rooted host temp dir the seat keeps the host's");
+    }
+
+    private static void SeatTempDirAndItsSocketsFitSunPath()
+    {
+        // A representative macOS per-user temp dir (/var/folders/<2>/<30>/T/) and Linux's /tmp/, at the highest
+        // slot two digits allow. The runtime's diagnostics socket is the longest thing created inside it.
+        var cases = new[]
+        {
+            (HeadlessUserDirPlatform.MacOs, Env(("HOME", "/Users/alice")), "/var/folders/qh/" + new string('x', 30) + "/T/"),
+            (HeadlessUserDirPlatform.Linux, Env(("XDG_DATA_HOME", "/home/alice/.local/share")), "/tmp/"),
+        };
+        foreach (var (platform, env, hostTemp) in cases)
+        {
+            foreach (var slot in new[] { 2, 99 })
+            {
+                var seatTemp = HeadlessUserDirSeeder.ResolvePolicy(slot, platform, env, _ => "/unused", hostTemp)!.SeatTempDir!;
+                var socket = seatTemp + "/" + new string('d', HeadlessUserDirSeeder.DiagnosticsSocketNameBytes(platform));
+                Assert(System.Text.Encoding.UTF8.GetByteCount(socket) <= HeadlessUserDirSeeder.MaxUnixSocketPathBytes,
+                    $"{platform} slot {slot}: the diagnostics socket in {seatTemp} fits sun_path");
+            }
+        }
+
+        Assert($"dotnet-diagnostic-{99998}-{1760000000}-socket".Length
+                   == HeadlessUserDirSeeder.DiagnosticsSocketNameBytes(HeadlessUserDirPlatform.MacOs)
+               && $"dotnet-diagnostic-{4194304}-{9999999999}-socket".Length
+                   == HeadlessUserDirSeeder.DiagnosticsSocketNameBytes(HeadlessUserDirPlatform.Linux),
+            "the diagnostics socket budget matches the runtime's longest names");
+    }
+
+    private static void SeatTempDirIsNarrowedToOwnerOnly()
+    {
+        if (OperatingSystem.IsWindows()) return;
+        using var root = new TempDir();
+        var xdg = Path.Combine(root.Path, "xdg");
+        var hostTemp = HostTemp(root);
+        var seatTemp = HeadlessUserDirSeeder.SeatTempDir(hostTemp, Path.Combine(xdg, "SlayTheSpire2"), 2)!;
+        Directory.CreateDirectory(seatTemp);
+        File.SetUnixFileMode(seatTemp, UnixFileMode.UserRead | UnixFileMode.UserWrite | UnixFileMode.UserExecute
+            | UnixFileMode.GroupRead | UnixFileMode.GroupExecute | UnixFileMode.OtherRead | UnixFileMode.OtherExecute);
+        File.WriteAllText(Path.Combine(seatTemp, "left-by-a-previous-seat"), "x");
+
+        var result = HeadlessUserDirSeeder.Prepare(
+            2, HeadlessUserDirPlatform.Linux, Env(("XDG_DATA_HOME", xdg)), _ => "/unused", hostTempPath: hostTemp);
+        Assert(result?.EnvironmentVariables.TryGetValue("TMPDIR", out var childTemp) == true && childTemp == seatTemp,
+            "an existing seat temp dir of ours is reused");
+        AssertOwnerOnlyDirectory(seatTemp, "a reused seat temp dir is narrowed to owner-only");
+        Assert(File.Exists(Path.Combine(seatTemp, "left-by-a-previous-seat")), "reusing the seat temp dir does not empty it");
+    }
+
+    private static void SeatTempDirRefusesASymlinkAndKeepsTheRestOfTheIsolation()
+    {
+        if (OperatingSystem.IsWindows()) return;
+        using var root = new TempDir();
+        var xdg = Path.Combine(root.Path, "xdg");
+        var hostTemp = HostTemp(root);
+        var seatTemp = HeadlessUserDirSeeder.SeatTempDir(hostTemp, Path.Combine(xdg, "SlayTheSpire2"), 2)!;
+        var elsewhere = Path.Combine(root.Path, "elsewhere");
+        Directory.CreateDirectory(elsewhere);
+        var openMode = UnixFileMode.UserRead | UnixFileMode.UserWrite | UnixFileMode.UserExecute
+            | UnixFileMode.GroupRead | UnixFileMode.GroupExecute | UnixFileMode.OtherRead | UnixFileMode.OtherExecute;
+        File.SetUnixFileMode(elsewhere, openMode);
+        Directory.CreateSymbolicLink(seatTemp, elsewhere);
+
+        var (result, lines) = PrepareCapturingLog(() => HeadlessUserDirSeeder.Prepare(
+            2, HeadlessUserDirPlatform.Linux, Env(("XDG_DATA_HOME", xdg)), _ => "/unused", hostTempPath: hostTemp));
+        Assert(result is not null && result.EnvironmentVariables.ContainsKey("XDG_DATA_HOME")
+               && !result.EnvironmentVariables.ContainsKey("TMPDIR"),
+            "a symlink at the seat temp dir drops TMPDIR only; the user-dir isolation stays");
+        Assert(lines.Count == 1 && lines[0].Contains("seat temp dir refused", StringComparison.Ordinal)
+               && lines[0].Contains("symbolic link", StringComparison.Ordinal),
+            "the refusal is one visible line naming the reason");
+        Assert(new DirectoryInfo(seatTemp).LinkTarget == elsewhere && File.GetUnixFileMode(elsewhere) == openMode,
+            "the link is left alone and its target is never chmod-ed through it");
+
+        Directory.Delete(seatTemp);
+        File.WriteAllText(seatTemp, "not a directory");
+        var (fileResult, fileLines) = PrepareCapturingLog(() => HeadlessUserDirSeeder.Prepare(
+            2, HeadlessUserDirPlatform.Linux, Env(("XDG_DATA_HOME", xdg)), _ => "/unused", hostTempPath: hostTemp));
+        Assert(fileResult is not null && !fileResult.EnvironmentVariables.ContainsKey("TMPDIR")
+               && fileLines.Count == 1 && fileLines[0].Contains("not a directory", StringComparison.Ordinal),
+            "a plain file at the seat temp dir is refused the same way");
+    }
+
+    private static void SeatTempDirRefusesAnotherUsersDirectory()
+    {
+        if (OperatingSystem.IsWindows()) return;
+        using var root = new TempDir();
+        var xdg = Path.Combine(root.Path, "xdg");
+        var hostTemp = HostTemp(root);
+        var seatTemp = HeadlessUserDirSeeder.SeatTempDir(hostTemp, Path.Combine(xdg, "SlayTheSpire2"), 2)!;
+        // A directory another user owns cannot be made without root; the inspector stands in for one.
+        var inspected = new List<string>();
+        var (result, lines) = PrepareCapturingLog(() => HeadlessUserDirSeeder.Prepare(
+            2, HeadlessUserDirPlatform.Linux, Env(("XDG_DATA_HOME", xdg)), _ => "/unused", hostTempPath: hostTemp,
+            inspectTempDir: path =>
+            {
+                inspected.Add(path);
+                return new UnixPathStatus(Exists: true, IsSymbolicLink: false, IsDirectory: true,
+                    OwnedByCurrentUser: false, Mode: 0x41C0);
+            }));
+        Assert(inspected.SequenceEqual([seatTemp]), "only the seat temp dir is inspected");
+        Assert(result is not null && result.EnvironmentVariables.ContainsKey("XDG_DATA_HOME")
+               && !result.EnvironmentVariables.ContainsKey("TMPDIR"),
+            "another user's directory at the seat temp dir drops TMPDIR only");
+        Assert(lines.Count == 1 && lines[0].Contains("owned by another user", StringComparison.Ordinal),
+            "the foreign-owner refusal is one visible line");
+        Assert(!Directory.Exists(seatTemp), "nothing is created in place of a refused seat temp dir");
+    }
+
+    private static void UnixPathInspectionDoesNotFollowLinks()
+    {
+        if (OperatingSystem.IsWindows()) return;
+        using var root = new TempDir();
+        var dir = Path.Combine(root.Path, "dir");
+        Directory.CreateDirectory(dir);
+        var link = Path.Combine(root.Path, "link");
+        Directory.CreateSymbolicLink(link, dir);
+
+        var real = HeadlessUserDirSeeder.InspectUnixPath(dir);
+        var linked = HeadlessUserDirSeeder.InspectUnixPath(link);
+        var dangling = Path.Combine(root.Path, "dangling");
+        Directory.CreateSymbolicLink(dangling, Path.Combine(root.Path, "missing"));
+        var missing = HeadlessUserDirSeeder.InspectUnixPath(Path.Combine(root.Path, "missing"));
+        Assert(real is { Exists: true, IsDirectory: true, IsSymbolicLink: false, OwnedByCurrentUser: true }
+               && (real.Mode & 0x1FF) == (int)File.GetUnixFileMode(dir),
+            "a directory of ours reads as ours, with its permission bits");
+        Assert(linked is { Exists: true, IsSymbolicLink: true, IsDirectory: false },
+            "a link to a directory reads as a link, not as its target");
+        Assert(HeadlessUserDirSeeder.InspectUnixPath(dangling) is { Exists: true, IsSymbolicLink: true }
+               && missing is { Exists: false },
+            "a dangling link exists; a missing path does not");
+    }
+
+    private static (HeadlessUserDirPrepareResult? Result, List<string> Lines) PrepareCapturingLog(
+        Func<HeadlessUserDirPrepareResult?> prepare)
+    {
+        var lines = new List<string>();
+        HeadlessUserDirSeeder.LogSink = lines.Add;
+        try
+        {
+            return (prepare(), lines);
+        }
+        finally
+        {
+            HeadlessUserDirSeeder.LogSink = null;
+        }
+    }
+
+    // The host temp dir a test hands the seeder: inside its own fixture, so nothing lands in the real /tmp.
+    private static string HostTemp(TempDir root)
+    {
+        var hostTemp = Path.Combine(root.Path, "t") + Path.DirectorySeparatorChar;
+        Directory.CreateDirectory(hostTemp);
+        return hostTemp;
+    }
+
+    private static void AssertOwnerOnlyDirectory(string path, string label)
+    {
+        if (OperatingSystem.IsWindows()) return;
+        Assert(new DirectoryInfo(path) is { Exists: true, LinkTarget: null }
+               && File.GetUnixFileMode(path) == (UnixFileMode.UserRead | UnixFileMode.UserWrite | UnixFileMode.UserExecute),
+            label);
     }
 
     private static string SlotLibrary(string slotBase) => Path.Combine(slotBase, "Library");

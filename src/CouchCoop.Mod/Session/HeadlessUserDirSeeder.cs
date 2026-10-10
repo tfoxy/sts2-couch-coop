@@ -1,5 +1,8 @@
+using System.Globalization;
 using System.IO;
 using System.Runtime.InteropServices;
+using System.Security.Cryptography;
+using System.Text;
 
 namespace CouchCoop.Mod.Session;
 
@@ -106,6 +109,34 @@ internal static class HeadlessUserDirSeeder
 
     private const string UserDataDirName = "SlayTheSpire2";
 
+    /// <summary>The temp-dir variable .NET, Godot and native libraries all read on Linux and macOS.</summary>
+    internal const string TempDirEnvironmentVariable = "TMPDIR";
+
+    // A seat's private temp dir is "<host temp dir>/cc<6 hex><slot>": deliberately SHORT. The .NET runtime binds
+    // its diagnostics socket in the temp dir (see DiagnosticsSocketNameBytes), and macOS's per-user temp dir
+    // is already ~49 bytes deep, so a slot-dir-style name would push that socket past sun_path.
+    private const string SeatTempDirPrefix = "cc";
+    private const int SeatTempDirInstanceHexDigits = 6;
+
+    /// <summary>
+    /// The longest Unix socket path this mod hands out or creates: <c>sockaddr_un.sun_path</c> is 104 bytes on
+    /// macOS and 108 on Linux, NUL included. Keep the smaller one.
+    /// </summary>
+    internal const int MaxUnixSocketPathBytes = 103;
+
+    /// <summary>
+    /// Bytes of the longest name the .NET runtime gives its diagnostics IPC socket inside the temp dir:
+    /// <c>dotnet-diagnostic-{pid}-{start key}-socket</c> with a 7-digit Linux pid (5 on macOS) and a 10-digit
+    /// start key. Only <c>dotnet-trace</c>/<c>dotnet-counters</c>/<c>dotnet-dump collect</c> attach through it;
+    /// a runtime that cannot bind it starts normally.
+    /// </summary>
+    internal static int DiagnosticsSocketNameBytes(HeadlessUserDirPlatform platform)
+        => "dotnet-diagnostic-".Length + (platform == HeadlessUserDirPlatform.MacOs ? 5 : 7) + "-".Length + 10
+            + "-socket".Length;
+
+    private const UnixFileMode OwnerOnlyDirectoryMode =
+        UnixFileMode.UserRead | UnixFileMode.UserWrite | UnixFileMode.UserExecute;
+
     /// <summary>
     /// An extra sink for the lines this type — and <c>HostProfileBackup</c>, which narrates through the
     /// same <see cref="Log"/> — emit. <c>CouchCoopMod.Init</c> points it at
@@ -149,7 +180,8 @@ internal static class HeadlessUserDirSeeder
             Environment.GetEnvironmentVariable,
             Environment.GetFolderPath,
             HeadlessSeatModSelection.SourceToDisableForThisHost(),
-            hostChosenSeatModRows);
+            hostChosenSeatModRows,
+            Path.GetTempPath());
 
     /// <param name="seatModSourceToDisable">
     /// The <c>couchcoop</c> mod-list row source the seeded profiles must disable, so the seat loads the same copy
@@ -161,17 +193,24 @@ internal static class HeadlessUserDirSeeder
     /// See the public overload. <see langword="null"/> (the pure seeding tests) applies no host choice and
     /// writes no per-seat line.
     /// </param>
+    /// <param name="hostTempPath">See <see cref="ResolvePolicy"/>.</param>
+    /// <param name="inspectTempDir">
+    /// How the seat temp dir is examined (no-follow) before it is trusted. Null means the real filesystem;
+    /// the suite injects one to stand in for a directory another user owns, which it cannot create.
+    /// </param>
     internal static HeadlessUserDirPrepareResult? Prepare(
         int slot,
         HeadlessUserDirPlatform platform,
         Func<string, string?> getEnvironmentVariable,
         Func<Environment.SpecialFolder, string> getFolderPath,
         string? seatModSourceToDisable = null,
-        IReadOnlyCollection<SeatModRowKey>? hostChosenSeatModRows = null)
+        IReadOnlyCollection<SeatModRowKey>? hostChosenSeatModRows = null,
+        string? hostTempPath = null,
+        Func<string, UnixPathStatus>? inspectTempDir = null)
     {
         try
         {
-            var policy = ResolvePolicy(slot, platform, getEnvironmentVariable, getFolderPath);
+            var policy = ResolvePolicy(slot, platform, getEnvironmentVariable, getFolderPath, hostTempPath);
             if (policy is null)
             {
                 // Was silent, and it is the one return in this file a player can be affected by without any
@@ -199,8 +238,27 @@ internal static class HeadlessUserDirSeeder
             }
             Directory.CreateDirectory(slotUserDir);
             Directory.CreateDirectory(Path.Combine(slotUserDir, "logs"));
-            foreach (var dir in policy.EnvironmentVariables.Values)
+
+            // The seat temp dir has its own creation path: it sits in a directory every user can write to, so
+            // it is trusted only as a real, owner-only directory of ours. Refused, the seat keeps the host's
+            // temp dir — the behaviour before it had one — rather than losing the rest of its isolation.
+            var childEnvironment = policy.EnvironmentVariables;
+            if (policy.SeatTempDir is { } seatTempDir
+                && !TryPrepareSeatTempDir(slot, seatTempDir, platform, inspectTempDir ?? InspectUnixPath))
             {
+                childEnvironment = policy.EnvironmentVariables
+                    .Where(pair => !string.Equals(pair.Key, TempDirEnvironmentVariable, StringComparison.Ordinal))
+                    .ToDictionary(pair => pair.Key, pair => pair.Value, StringComparer.Ordinal);
+            }
+
+            foreach (var (name, dir) in policy.EnvironmentVariables)
+            {
+                if (policy.SeatTempDir is not null
+                    && string.Equals(name, TempDirEnvironmentVariable, StringComparison.Ordinal))
+                {
+                    continue;
+                }
+
                 Directory.CreateDirectory(dir);
             }
 
@@ -278,7 +336,7 @@ internal static class HeadlessUserDirSeeder
                 HeadlessSeatModSelection.ApplyToSeat(slotUserDir, seatModSourceToDisable, hostChosenSeatModRows, slot);
             }
 
-            return new HeadlessUserDirPrepareResult(slotBase, slotUserDir, policy.EnvironmentVariables, hostUserDir);
+            return new HeadlessUserDirPrepareResult(slotBase, slotUserDir, childEnvironment, hostUserDir);
         }
         catch (Exception ex)
         {
@@ -304,11 +362,17 @@ internal static class HeadlessUserDirSeeder
         return HeadlessUserDirPlatform.Unsupported;
     }
 
+    /// <param name="hostTempPath">
+    /// The HOST's temp dir (<see cref="Path.GetTempPath"/>), under which a Linux or macOS seat gets its own.
+    /// <see langword="null"/> leaves the seat on the host's temp dir; the pure seeding tests that do not care
+    /// pass nothing, so they never create anything outside their own fixture.
+    /// </param>
     internal static HeadlessUserDirPolicy? ResolvePolicy(
         int slot,
         HeadlessUserDirPlatform platform,
         Func<string, string?> getEnvironmentVariable,
-        Func<Environment.SpecialFolder, string> getFolderPath)
+        Func<Environment.SpecialFolder, string> getFolderPath,
+        string? hostTempPath = null)
     {
         // The data root does not depend on the slot — see ResolveDataRoot, which is also how a caller with no
         // slot at all reaches the HOST's user dir. Only the per-slot names below do.
@@ -354,8 +418,163 @@ internal static class HeadlessUserDirSeeder
         var slotUserDir = platform == HeadlessUserDirPlatform.MacOs
             ? Path.Combine(resolvedSlotBase, "Library", "Application Support", UserDataDirName)
             : Path.Combine(resolvedSlotBase, UserDataDirName);
-        return new HeadlessUserDirPolicy(hostUserDir, resolvedSlotBase, slotUserDir, environment, hostHome);
+
+        // TMPDIR on Linux and macOS, for the reason TEMP/TMP is set on Windows above. The failure differs but is
+        // no better: an overwrite there is not refused, it truncates a file the host has mapped, and the host
+        // crashes the next time it touches the part of that library it has not read yet. Two of our own
+        // host<->seat rendezvous used to live in the temp dir: the seat browser pipe now travels as an absolute
+        // path in the host's temp dir (SeatBrowserPipe.EndpointFor), and the spirectl bridge socket is an
+        // explicit path (SpirectlBridgeEndpointEnvironment). The runtime's named-mutex files sit under /tmp
+        // whatever TMPDIR says, so the cache gates the host and its seats share still meet.
+        string? seatTempDir = null;
+        if (platform is HeadlessUserDirPlatform.Linux or HeadlessUserDirPlatform.MacOs
+            && SeatTempDir(hostTempPath, hostUserDir, slot) is { } resolvedSeatTempDir)
+        {
+            seatTempDir = resolvedSeatTempDir;
+            environment[TempDirEnvironmentVariable] = seatTempDir;
+        }
+
+        return new HeadlessUserDirPolicy(hostUserDir, resolvedSlotBase, slotUserDir, environment, hostHome, seatTempDir);
     }
+
+    /// <summary>
+    /// <c>&lt;host temp dir&gt;/cc&lt;6 hex&gt;&lt;slot&gt;</c>: scoped by <see cref="HostInstanceId"/> so two hosts on one
+    /// machine never share a seat's temp dir, and kept short for the diagnostics socket. Null with no rooted
+    /// host temp dir.
+    /// </summary>
+    internal static string? SeatTempDir(string? hostTempPath, string hostUserDir, int slot)
+    {
+        if (string.IsNullOrWhiteSpace(hostTempPath) || !Path.IsPathRooted(hostTempPath)
+            || HostInstanceId(hostUserDir) is not { } instance)
+        {
+            return null;
+        }
+
+        return Path.Combine(
+            hostTempPath,
+            SeatTempDirPrefix + instance[..SeatTempDirInstanceHexDigits] + slot.ToString(CultureInfo.InvariantCulture));
+    }
+
+    /// <summary>
+    /// The first 12 hex digits of SHA-256 over the host user dir, normalised (<c>./</c> segments and trailing
+    /// separators removed), or null when there is none. Names this host's per-seat endpoints: see
+    /// <c>HeadlessClientManager.SeatBridgeInstanceId</c> and <see cref="SeatTempDir"/>.
+    /// </summary>
+    internal static string? HostInstanceId(string? hostUserDir)
+    {
+        if (string.IsNullOrWhiteSpace(hostUserDir)) return null;
+        var normalized = Path.IsPathRooted(hostUserDir) ? Path.GetFullPath(hostUserDir) : hostUserDir;
+        normalized = Path.TrimEndingDirectorySeparator(normalized);
+        var digest = SHA256.HashData(Encoding.UTF8.GetBytes(normalized));
+        return Convert.ToHexString(digest, 0, 6).ToLowerInvariant();
+    }
+
+    // Create, or re-accept, a seat's temp dir. It lives in a world-writable parent (/tmp on Linux), so anything
+    // already at that name is trusted only if it is a real directory this user owns; it is then narrowed to
+    // owner-only. Anything else — a symlink, a file, another user's directory, an error — refuses the override.
+    private static bool TryPrepareSeatTempDir(
+        int slot,
+        string path,
+        HeadlessUserDirPlatform platform,
+        Func<string, UnixPathStatus> inspect)
+    {
+        string? refusal;
+        try
+        {
+            if (OperatingSystem.IsWindows())
+            {
+                return false;
+            }
+
+            var status = inspect(path);
+            if (!status.Exists)
+            {
+                Directory.CreateDirectory(path, OwnerOnlyDirectoryMode);
+                status = inspect(path);
+            }
+
+            refusal = status switch
+            {
+                { Exists: false } => "it could not be created",
+                { IsSymbolicLink: true } => "it is a symbolic link",
+                { IsDirectory: false } => "it is not a directory",
+                { OwnedByCurrentUser: false } => "it is owned by another user",
+                _ => null,
+            };
+            if (refusal is null && (status.Mode & UnixPermissionMask) != (int)OwnerOnlyDirectoryMode)
+            {
+                File.SetUnixFileMode(path, OwnerOnlyDirectoryMode);
+            }
+        }
+        catch (Exception ex) when (ex is IOException or UnauthorizedAccessException or DllNotFoundException
+            or EntryPointNotFoundException or PlatformNotSupportedException)
+        {
+            refusal = $"{ex.GetType().Name}: {ex.Message}";
+        }
+
+        if (refusal is not null)
+        {
+            Log($"headless seat temp dir refused slot={slot} path={path} — {refusal}; this seat keeps the "
+                + "host's temp directory.");
+            return false;
+        }
+
+        var diagnosticsSocketBytes = Encoding.UTF8.GetByteCount(path) + 1 + DiagnosticsSocketNameBytes(platform);
+        if (diagnosticsSocketBytes > MaxUnixSocketPathBytes)
+        {
+            CouchCoopLog.Stderr($"headless seat temp dir slot={slot} path={path} leaves no room for the .NET "
+                + $"diagnostics socket ({diagnosticsSocketBytes} > {MaxUnixSocketPathBytes} bytes); diagnostic "
+                + "tools cannot attach to this seat.");
+        }
+
+        return true;
+    }
+
+    private const int UnixPermissionMask = 0x1FF; // 0777
+    private const int UnixFileTypeMask = 0xF000; // S_IFMT
+    private const int UnixDirectoryType = 0x4000; // S_IFDIR
+    private const int UnixSymbolicLinkType = 0xA000; // S_IFLNK
+
+    /// <summary>
+    /// <c>lstat</c> of <paramref name="path"/>: never follows a final symlink. Through the runtime's own
+    /// System.Native shim, whose status record has begun Flags, Mode, Uid since .NET Core 1.0, because the BCL
+    /// exposes no file owner and the libc <c>stat</c> layout differs per OS and architecture.
+    /// </summary>
+    internal static UnixPathStatus InspectUnixPath(string path)
+    {
+        if (NativeLStat(path, out var status) != 0)
+        {
+            var errno = Marshal.GetLastPInvokeError();
+            if (errno == 2) // ENOENT, the same value on Linux and macOS
+            {
+                return new UnixPathStatus(false, false, false, false, 0);
+            }
+
+            throw new IOException($"lstat failed for {path}: errno {errno}.");
+        }
+
+        var type = status.Mode & UnixFileTypeMask;
+        return new UnixPathStatus(
+            Exists: true,
+            IsSymbolicLink: type == UnixSymbolicLinkType,
+            IsDirectory: type == UnixDirectoryType,
+            OwnedByCurrentUser: status.Uid == NativeGetEUid(),
+            Mode: status.Mode);
+    }
+
+    // Only the leading fields are read; the record is far smaller than Size on every runtime.
+    [StructLayout(LayoutKind.Explicit, Size = 512)]
+    private struct NativeFileStatus
+    {
+        [FieldOffset(4)] public int Mode;
+        [FieldOffset(8)] public uint Uid;
+    }
+
+    [DllImport("libSystem.Native", EntryPoint = "SystemNative_LStat", SetLastError = true)]
+    private static extern int NativeLStat([MarshalAs(UnmanagedType.LPUTF8Str)] string path, out NativeFileStatus status);
+
+    [DllImport("libSystem.Native", EntryPoint = "SystemNative_GetEUid")]
+    private static extern uint NativeGetEUid();
 
     /// <summary>
     /// WHERE THE GAME'S OWN USER DIRECTORY IS ON THIS MACHINE — the host's, with no slot involved.
@@ -719,4 +938,13 @@ internal sealed record HeadlessUserDirPolicy(
     string SlotBase,
     string SlotUserDir,
     IReadOnlyDictionary<string, string> EnvironmentVariables,
-    string? HostHome = null);
+    string? HostHome = null,
+    string? SeatTempDir = null);
+
+/// <summary>What a no-follow look at a path found. <see cref="Mode"/> is the raw <c>st_mode</c>.</summary>
+internal readonly record struct UnixPathStatus(
+    bool Exists,
+    bool IsSymbolicLink,
+    bool IsDirectory,
+    bool OwnedByCurrentUser,
+    int Mode);

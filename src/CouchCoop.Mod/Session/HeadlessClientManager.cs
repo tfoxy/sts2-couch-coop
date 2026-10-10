@@ -2138,8 +2138,7 @@ public sealed partial class HeadlessClientManager : IDisposable
     /// </summary>
     internal const string SeatBridgeSocketDirEnvironmentVariable = "COUCHCOOP_SEAT_BRIDGE_SOCKET_DIR";
 
-    // sockaddr_un.sun_path is 104 bytes on macOS and 108 on Linux, NUL included. Keep the smaller one.
-    private const int MaxUnixSocketPathBytes = 103;
+    private const int MaxUnixSocketPathBytes = HeadlessUserDirSeeder.MaxUnixSocketPathBytes;
 
     /// <summary>
     /// The bridge endpoint a seat of <paramref name="slot"/> is launched with: a Unix socket, or a named pipe on
@@ -2202,14 +2201,8 @@ public sealed partial class HeadlessClientManager : IDisposable
     /// separators removed), or null when there is none. <c>scripts/probe-five-player-run.mjs</c>
     /// <c>seatBridgeSocketFor</c> computes the same id from outside the game; both suites pin one vector.
     /// </summary>
-    internal static string? SeatBridgeInstanceId(string? hostUserDir)
-    {
-        if (string.IsNullOrWhiteSpace(hostUserDir)) return null;
-        var normalized = Path.IsPathRooted(hostUserDir) ? Path.GetFullPath(hostUserDir) : hostUserDir;
-        normalized = Path.TrimEndingDirectorySeparator(normalized);
-        var digest = System.Security.Cryptography.SHA256.HashData(System.Text.Encoding.UTF8.GetBytes(normalized));
-        return Convert.ToHexString(digest, 0, 6).ToLowerInvariant();
-    }
+    /// <remarks>Computed by <see cref="HeadlessUserDirSeeder.HostInstanceId"/>, which also scopes each seat's temp dir.</remarks>
+    internal static string? SeatBridgeInstanceId(string? hostUserDir) => HeadlessUserDirSeeder.HostInstanceId(hostUserDir);
 
     /// <summary>
     /// <see cref="SeatReadyTimeoutEnvironmentVariable"/> resolved to a timeout: unset / blank / unparseable ⇒

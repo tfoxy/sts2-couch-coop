@@ -481,7 +481,7 @@ public sealed partial class HeadlessClientManager
         {
             RouteMode = routeMode,
             RouteId = Convert.ToHexString(RandomNumberGenerator.GetBytes(16)),
-            PipeName = "CCSeat" + Convert.ToHexString(RandomNumberGenerator.GetBytes(16)),
+            PipeName = SeatBrowserPipe.EndpointFor("CCSeat" + Convert.ToHexString(RandomNumberGenerator.GetBytes(16))),
         };
         _ownedConnections[slot] = owned;
         _browserAttempts[sessionId] = new(slot, owned.Generation, ConnectionRegistry.Shared.AttemptId(sessionId));
