@@ -7,6 +7,20 @@ namespace CouchCoop.Mod.Session;
 
 public sealed partial class HeadlessClientManager
 {
+    /// <summary>
+    /// The injected-launcher harness, routed the way the real manager routes every seat: through the host's
+    /// shared browser relay. The other test constructor leaves the relay off, which is what the direct-port
+    /// suites are written against.
+    /// </summary>
+    internal HeadlessClientManager(
+        Func<int, IHeadlessProcess?> launcher,
+        Func<int, CancellationToken, Task<bool>>? readinessProbe,
+        bool sharedRelay)
+        : this(launcher, readinessProbe)
+    {
+        _supportsSharedRelay = sharedRelay;
+    }
+
     private async Task<int?> WaitForSharedReadyAsync(
         OwnedConnection owned, Guid sessionId, int logicalPort, CancellationToken cancellationToken)
     {
@@ -59,9 +73,11 @@ public sealed partial class HeadlessClientManager
             }
             else if (elapsed >= contact)
             {
-                owned.Failure ??= member
-                    ? SeatSilentAfterJoinIssue("The seat joined the host lobby but sent no authenticated status before the contact deadline.")
-                    : SeatCloudIsolationIssue("The seat sent no authenticated cloud-isolation status before the contact deadline.");
+                // The same verdict, and the same evidence, as the direct path: a member is a seat CouchCoop ran
+                // in; a non-member is cleared only by its own port record; every answer carries the control
+                // channel's counts. See ClassifySilentSeatAsync for what is (and is not) asked of a relay seat.
+                owned.Failure ??= await ClassifySilentSeatAsync(owned, logicalPort, member, contact, cancellationToken)
+                    .ConfigureAwait(false);
             }
             if (elapsed >= ready)
                 owned.Failure ??= new ConnectionIssue("seat-relay-not-ready",

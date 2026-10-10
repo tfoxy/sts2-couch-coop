@@ -1187,7 +1187,11 @@ public sealed partial class HeadlessClientManager
     {
         var record = BrowserPortFile.Read(owned.SeatPortFilePath);
         SeatListenerProbeResult? probe = null;
-        if (member)
+        // A relay seat serves its view over the host's private pipe and binds no port, so a request to the
+        // logical port would be asking a question about a listener that is not supposed to exist — and an
+        // unrelated program answering on it would read as this seat serving. It is not asked.
+        var sharedRelay = owned.RouteMode == SeatBrowserRouteMode.Shared;
+        if (member && !sharedRelay)
         {
             var answer = await _readinessProbe(expectedPort, cancellationToken).ConfigureAwait(false);
             owned.ListenerResponding = answer.Responding;
@@ -1204,7 +1208,8 @@ public sealed partial class HeadlessClientManager
             probe,
             DescribeControlChannel(HeadlessConnectionControl.Shared.Snapshot(owned.Slot, owned.Generation)),
             deadline,
-            member);
+            member,
+            sharedRelay);
     }
 
     /// <summary>
@@ -1220,6 +1225,8 @@ public sealed partial class HeadlessClientManager
     /// made — see <see cref="ClassifySilentSeatAsync"/> for why a seat outside the lobby is not probed.</param>
     /// <param name="member">Whether the host's lobby lists this seat. See <see cref="SeatSilentAfterJoinCode"/>
     /// for what that proves, and the non-member arm below for what its absence does not.</param>
+    /// <param name="sharedRelay">Whether the seat serves its view through the host's private relay rather than a
+    /// port of its own. The verdicts are the same; only the evidence sentences say what was not asked, and why.</param>
     internal static ConnectionIssue ClassifySilentSeat(
         int slot,
         int expectedPort,
@@ -1228,13 +1235,14 @@ public sealed partial class HeadlessClientManager
         SeatListenerProbeResult? probe,
         string controlChannel,
         TimeSpan deadline,
-        bool member)
+        bool member,
+        bool sharedRelay = false)
     {
         // Believed only when the record is THIS process's: it outlives a killed seat by design, so a stale one
         // must never read as a live listener. See BrowserPortFile.
         var ours = portRecord is { } written && seatProcessId > 0 && written.Pid == seatProcessId;
         var boundHere = ours && portRecord!.Value.Port == expectedPort;
-        var evidence = SilentSeatEvidence(portRecord, ours, boundHere, expectedPort, probe, controlChannel);
+        var evidence = SilentSeatEvidence(portRecord, ours, boundHere, expectedPort, probe, controlChannel, sharedRelay);
 
         // A PORT DISAGREEMENT, from the seat's own record rather than from its heartbeat. The readiness verdict
         // already treats "the seat bound a port that is not the one we hand the browser" as a port conflict
@@ -1268,7 +1276,7 @@ public sealed partial class HeadlessClientManager
 
         return probe is { Responding: true } || boundHere
             ? SeatControlBlockedIssue(ControlBlockedDetail(deadline, expectedPort, member: true) + " " + evidence)
-            : SeatSilentAfterJoinIssue(SilentAfterJoinDetail(deadline, slot) + " " + evidence);
+            : SeatSilentAfterJoinIssue(SilentAfterJoinDetail(deadline, slot, viewProbed: !sharedRelay) + " " + evidence);
     }
 
     /// <summary>
@@ -1281,7 +1289,8 @@ public sealed partial class HeadlessClientManager
         bool boundHere,
         int expectedPort,
         SeatListenerProbeResult? probe,
-        string controlChannel)
+        string controlChannel,
+        bool sharedRelay)
     {
         var port = expectedPort.ToString(System.Globalization.CultureInfo.InvariantCulture);
         // THREE readings of one record, because two of them are opposite findings. A record from OUR process on
@@ -1300,11 +1309,16 @@ public sealed partial class HeadlessClientManager
                         + " under process "
                         + written.Pid.ToString(System.Globalization.CultureInfo.InvariantCulture)
                         + ", which is not the process this host started for this player")
-            : "this player's game has recorded no bound port of its own";
+            : sharedRelay
+                ? "this player's game serves its view through the host's private relay and has recorded no bound "
+                    + "port of its own"
+                : "this player's game has recorded no bound port of its own";
         return "Observed: " + file
             + "; this computer's own request to port " + port + ": "
             + (probe is not { } asked
-                ? "not made (a game outside the host's lobby is judged on its own port record alone)"
+                ? sharedRelay
+                    ? "not made (a game on the host's private relay has no port of its own to ask)"
+                    : "not made (a game outside the host's lobby is judged on its own port record alone)"
                 : asked.Responding
                     ? "answered"
                     : $"no answer ({asked.Failure ?? "no failure detail was captured"})")
@@ -1419,12 +1433,17 @@ public sealed partial class HeadlessClientManager
     /// and the saves were protected) is stated plainly. The seat that is provably still serving gets
     /// <see cref="ControlBlockedDetail"/> instead, which is what this used to be printed for as well.
     /// </remarks>
-    internal static string SilentAfterJoinDetail(TimeSpan deadline, int slot)
+    /// <param name="viewProbed">Whether this host asked the seat's own port and got no answer. A seat on the
+    /// shared relay has no port to ask, so its text claims nothing about reaching the view.</param>
+    internal static string SilentAfterJoinDetail(TimeSpan deadline, int slot, bool viewProbed = true)
         => "This player's game joined the host's lobby, so CouchCoop started inside it and your Steam Cloud "
             + "saves were protected, but it then reported nothing to the host within "
             + ((long)deadline.TotalSeconds).ToString(System.Globalization.CultureInfo.InvariantCulture)
-            + " seconds of being started, and this host could not reach its game view either. Everything "
-            + "between joining and serving that view is setup only that player's game does — so the host's own "
+            + (viewProbed
+                ? " seconds of being started, and this host could not reach its game view either. Everything "
+                    + "between joining and serving that view"
+                : " seconds of being started. Everything between joining and serving its game view")
+            + " is setup only that player's game does — so the host's own "
             + "game is unaffected, and another installed mod failing in it is the most common reason. The "
             + "reason, if there is one, is in slot "
             + slot.ToString(System.Globalization.CultureInfo.InvariantCulture)

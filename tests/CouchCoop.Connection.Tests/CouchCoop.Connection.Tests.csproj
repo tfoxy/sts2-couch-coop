@@ -56,6 +56,8 @@
     <Compile Include="../CouchCoop.Mod.Tests/HeadlessDisconnectExitTests.cs" Link="HeadlessDisconnectExitTests.cs" />
     <Compile Include="../CouchCoop.Mod.Tests/HeadlessClientManagerTests.cs" Link="HeadlessClientManagerTests.cs" />
     <Compile Include="../CouchCoop.Mod.Tests/HeadlessConnectionLifecycleTests.cs" Link="HeadlessConnectionLifecycleTests.cs" />
+    <!-- Compiled for its IGameFacts fake, which the lifecycle tests' shared-relay legs feed the roster through. -->
+    <Compile Include="../CouchCoop.Mod.Tests/CouchCoopGameFactsTests.cs" Link="CouchCoopGameFactsTests.cs" />
     <Compile Include="../CouchCoop.Mod.Tests/SeatModBuildTests.cs" Link="SeatModBuildTests.cs" />
     <Compile Include="../CouchCoop.Mod.Tests/SeatPortTruthTests.cs" Link="SeatPortTruthTests.cs" />
     <Compile Include="../CouchCoop.Mod.Tests/SeatArrivalEvidenceTests.cs" Link="SeatArrivalEvidenceTests.cs" />
