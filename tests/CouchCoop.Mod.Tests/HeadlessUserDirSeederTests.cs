@@ -34,6 +34,7 @@ internal static class HeadlessUserDirSeederTests
         Assert(result.SlotUserDir == Path.Combine(expectedSlotBase, "SlayTheSpire2"), "linux slot user dir nests SlayTheSpire2");
         Assert(result.EnvironmentVariables.TryGetValue("XDG_DATA_HOME", out var childXdg) && childXdg == expectedSlotBase,
             "linux child gets XDG_DATA_HOME=slot base");
+        Assert(result.EnvironmentVariables.Count == 1, "linux child environment is exactly XDG_DATA_HOME");
         Assert(Directory.Exists(Path.Combine(result.SlotUserDir, "logs")), "linux prepare creates logs dir");
     }
 
@@ -56,6 +57,13 @@ internal static class HeadlessUserDirSeederTests
         Assert(result.EnvironmentVariables.TryGetValue("LOCALAPPDATA", out var childLocalAppData)
                && childLocalAppData == Path.Combine(expectedSlotBase, "LocalAppData"),
             "windows child gets LOCALAPPDATA beside slot base");
+        var expectedTemp = Path.Combine(expectedSlotBase, "Temp");
+        Assert(result.EnvironmentVariables.TryGetValue("TEMP", out var childTemp) && childTemp == expectedTemp
+               && result.EnvironmentVariables.TryGetValue("TMP", out var childTmp) && childTmp == expectedTemp,
+            "windows child gets its own TEMP and TMP under the slot base, not the host's temp dir");
+        Assert(result.EnvironmentVariables.ContainsKey("tmp") && result.EnvironmentVariables.ContainsKey("Temp"),
+            "windows temp variables match the parent's spelling case-insensitively");
+        Assert(Directory.Exists(expectedTemp), "windows prepare creates the seat temp dir");
         Assert(!result.EnvironmentVariables.ContainsKey("XDG_DATA_HOME"), "windows child does not get XDG_DATA_HOME");
         Assert(Directory.Exists(Path.Combine(result.SlotUserDir, "logs")), "windows prepare creates logs dir");
     }
