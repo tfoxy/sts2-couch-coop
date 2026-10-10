@@ -513,6 +513,11 @@ internal sealed partial class CouchCoopConnectionPanel : Panel
         // the only thing that helps is reloading the save. Both ends of the same refusal share this code — the
         // host declining to launch a seat into a running run, and a seat the host's netcode turned away.
         Session.HeadlessDisconnectReason.RunInProgressCode => "seat_run_in_progress",
+        // Also split out of "join", whose copy says the connection was lost: the host's game turned this seat away
+        // at its join handshake because the two processes loaded different content or mods, and the fix is in the
+        // player's own log. NOT the existing "mod_mismatch" key — that one is two copies of CouchCoop installed.
+        Session.HeadlessDisconnectReason.GameContentMismatchCode => "seat_content_mismatch",
+        Session.HeadlessDisconnectReason.ModMismatchCode => "seat_mod_mismatch",
         "browser-view-slow" => "slow",
         "browser-render-failed" or "browser-transport-lost" => "browser",
         "host-service-failed" or "host-service-stopped" => "service",

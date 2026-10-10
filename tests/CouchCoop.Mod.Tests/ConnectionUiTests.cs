@@ -43,6 +43,10 @@ internal static class ConnectionUiTests
                      // the join copy ("check that game and mod versions match"), which is wrong advice for a run
                      // the player simply is not in.
                      CouchCoop.Mod.Session.HeadlessDisconnectReason.RunInProgressCode,
+                     // The join handshake's two refusals. Unmapped they would render "the player game lost its
+                     // connection / reconnect this browser" for a seat whose fix is in its own log.
+                     CouchCoop.Mod.Session.HeadlessDisconnectReason.GameContentMismatchCode,
+                     CouchCoop.Mod.Session.HeadlessDisconnectReason.ModMismatchCode,
                      // The stepped-around seat port. Unmapped it would render the join copy — "the player game
                      // lost its connection / reconnect this browser" — on a Host service row raised by a join
                      // that SUCCEEDED, which is wrong twice over.
@@ -66,7 +70,12 @@ internal static class ConnectionUiTests
         {
             CouchCoopLocalization.SetLanguageForTests(language);
             var unmapped = new ConnectionIssue("something-nobody-mapped", "", "", null);
-            foreach (var code in new[] { "seat-relay-unavailable", "seat-relay-not-ready", "host-browser-port-occupied" })
+            foreach (var code in new[]
+                     {
+                         "seat-relay-unavailable", "seat-relay-not-ready", "host-browser-port-occupied",
+                         CouchCoop.Mod.Session.HeadlessDisconnectReason.GameContentMismatchCode,
+                         CouchCoop.Mod.Session.HeadlessDisconnectReason.ModMismatchCode,
+                     })
             {
                 var issue = new ConnectionIssue(code, "", "", null);
                 Assert(Copy("Summary", issue) != Copy("Summary", unmapped)
@@ -75,6 +84,20 @@ internal static class ConnectionUiTests
                 Assert(!Copy("Summary", issue).StartsWith("couchcoop_", StringComparison.Ordinal)
                     && !Copy("Action", issue).StartsWith("couchcoop_", StringComparison.Ordinal),
                     $"{code} resolves to translated sentences in {language}");
+            }
+            // The handshake's mod refusal must not borrow the two-copies-of-CouchCoop sentence ("mod_mismatch"):
+            // that one is fixed by removing a copy, this one by reading the player's log.
+            var twoCopies = new ConnectionIssue(CouchCoop.Mod.Session.HeadlessClientManager.SeatBuildMismatchCode, "", "", null);
+            foreach (var code in new[]
+                     {
+                         CouchCoop.Mod.Session.HeadlessDisconnectReason.GameContentMismatchCode,
+                         CouchCoop.Mod.Session.HeadlessDisconnectReason.ModMismatchCode,
+                     })
+            {
+                var refusal = new ConnectionIssue(code, "", "", null);
+                Assert(Copy("Summary", refusal) != Copy("Summary", twoCopies)
+                        && Copy("Action", refusal) != Copy("Action", twoCopies),
+                    $"{code} does not reuse the two-copies-of-CouchCoop copy in {language}");
             }
             var occupied = new ConnectionIssue(CouchCoop.Mod.Session.HeadlessClientManager.SeatPortOccupiedCode, "", "", null);
             Assert(Copy("Summary", occupied) != Copy("Summary", unmapped) && Copy("Action", occupied) != Copy("Action", unmapped),
