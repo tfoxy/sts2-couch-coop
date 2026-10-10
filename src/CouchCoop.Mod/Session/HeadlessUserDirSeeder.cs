@@ -329,10 +329,18 @@ internal static class HeadlessUserDirSeeder
             },
             // OrdinalIgnoreCase because Windows environment names are case-insensitive and the launch path
             // merges these into a dictionary that already holds the parent process's own spelling of them.
+            //
+            // TEMP/TMP too: a mod that unpacks a DLL to a fixed path under the temp dir and then loads it finds
+            // that file locked by the HOST, which loaded the same path first. Windows refuses the overwrite, the
+            // mod fails to initialise in the seat only, and the seat then carries different game content than
+            // the host, so the game's own handshake refuses its join. Nothing of ours needs the seat's temp dir
+            // to match the host's: named pipes are kernel objects on Windows, not files under it.
             HeadlessUserDirPlatform.Windows => new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase)
             {
                 ["APPDATA"] = resolvedSlotBase,
                 ["LOCALAPPDATA"] = Path.Combine(resolvedSlotBase, "LocalAppData"),
+                ["TEMP"] = Path.Combine(resolvedSlotBase, "Temp"),
+                ["TMP"] = Path.Combine(resolvedSlotBase, "Temp"),
             },
             HeadlessUserDirPlatform.MacOs => new Dictionary<string, string>(StringComparer.Ordinal)
             {
