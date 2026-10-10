@@ -32,6 +32,8 @@ internal static class HeadlessConnectionLifecycleTests
         await ASilentSeatOutsideTheLobbyThatRecordedItsPortIsNotBlamedOnCloudSaves();
         await ASilentSeatThatJoinedIsNotBlamedOnCloudSaves();
         await ASilentSeatThatIsStillServingBlamesTheControlChannel();
+        await ASilentSeatOnTheSharedRelayOutsideTheLobbyCarriesItsEvidence();
+        await ASilentSeatOnTheSharedRelayThatJoinedKeepsTheAfterJoinIssue();
         await ASeatWhoseReportIsBlockedStillJoinsThroughItsStatusFile();
         await EarlyProcessExitFailsTheAttempt();
         await StalledShutdownIsForcedBeforeEnsureReturns();
@@ -651,6 +653,97 @@ internal static class HeadlessConnectionLifecycleTests
             CleanupControl(id);
             ConnectionRegistry.Shared.Clear();
             try { Directory.Delete(dir, recursive: true); } catch (IOException) { }
+        }
+    }
+
+    // THE SHARED RELAY IS THE PATH EVERY REAL SEAT TAKES (since the Oct-5 shared browser port), and it used to skip
+    // the classifier above: a silent seat got a bare sentence with no evidence, so a field report could not say
+    // whether CouchCoop had even run in it. Same two arms here — membership decides — with the control channel's
+    // counts in the tail. The relay seat binds no port, so nothing is probed and the tail says why.
+    private static async Task ASilentSeatOnTheSharedRelayOutsideTheLobbyCarriesItsEvidence()
+    {
+        var (row, probes) = await AssertSilentSharedSeatAtContactDeadline(member: false);
+        Assert(row.Issue?.Code == HeadlessClientManager.SeatCloudIsolationCode,
+            $"a silent relay seat the lobby never listed is the cloud-isolation issue (got {row.Issue?.Code})");
+        var detail = row.Issue!.Detail!;
+        Assert(detail.Contains("cannot confirm CouchCoop is running", StringComparison.Ordinal),
+            "…with the classifier's wording, which says what the host cannot confirm rather than that it is absent");
+        Assert(detail.Contains("Observed:", StringComparison.Ordinal)
+                && detail.Contains("status reports this host refused from any process", StringComparison.Ordinal)
+                && detail.Contains("by either the direct report", StringComparison.Ordinal),
+            "…and the evidence tail with the control channel's counts and channels");
+        Assert(detail.Contains("private relay", StringComparison.Ordinal), "…which says the seat is on the relay");
+        Assert(probes == 0, "a seat outside the lobby is not probed");
+    }
+
+    private static async Task ASilentSeatOnTheSharedRelayThatJoinedKeepsTheAfterJoinIssue()
+    {
+        var (row, probes) = await AssertSilentSharedSeatAtContactDeadline(member: true);
+        Assert(row.Issue?.Code == HeadlessClientManager.SeatSilentAfterJoinCode,
+            $"a silent relay seat the lobby lists keeps the after-join issue (got {row.Issue?.Code})");
+        var detail = row.Issue!.Detail!;
+        Assert(detail.Contains("joined the host's lobby", StringComparison.Ordinal)
+                && detail.Contains("Observed:", StringComparison.Ordinal)
+                && detail.Contains("status reports this host refused from any process", StringComparison.Ordinal),
+            "…with the classifier's detail and the evidence tail");
+        Assert(!detail.Contains("could not reach its game view", StringComparison.Ordinal)
+                && detail.Contains("no port of its own to ask", StringComparison.Ordinal),
+            "…and it claims no probe of a port the relay seat never binds");
+        Assert(probes == 0, "a relay seat's logical port is never probed");
+        Assert(!row.Issue.Summary.Contains("Steam Cloud", StringComparison.Ordinal),
+            "…and a seat that joined is never accused of touching the account's Steam Cloud saves");
+    }
+
+    private static async Task<(ConnectionStatusRow Row, int Probes)> AssertSilentSharedSeatAtContactDeadline(bool member)
+    {
+        var priorContact = Environment.GetEnvironmentVariable(HeadlessClientManager.SeatContactTimeoutEnvironmentVariable);
+        var priorReady = Environment.GetEnvironmentVariable(HeadlessClientManager.SeatReadyTimeoutEnvironmentVariable);
+        Environment.SetEnvironmentVariable(HeadlessClientManager.SeatContactTimeoutEnvironmentVariable, "1");
+        Environment.SetEnvironmentVariable(HeadlessClientManager.SeatReadyTimeoutEnvironmentVariable, "60");
+        // The relay path learns membership from the roster observer, not from the injected probe, so the roster
+        // is what the test controls. Every slot is listed so the test does not depend on which one is allocated.
+        var seats = member
+            ? Enumerable.Range(2, 3).Select(slot => new CouchCoop.Mod.Contracts.RosterLobbySeat(
+                CouchCoop.MirrorProtocol.Envelopes.MirrorSeatNetIds.ToPlayerId(HeadlessClientManager.SlotToNetId(slot)),
+                "silent", null, true)).ToArray()
+            : [];
+        var facts = new CouchCoopGameFactsTests.FakeFacts
+        {
+            RosterRead = () => new CouchCoop.Mod.Contracts.RosterFacts(
+                CouchCoop.Mod.Contracts.RosterRootScenes.CharacterSelect,
+                new CouchCoop.Mod.Contracts.RosterLobby("host", "p:1", false, seats, []),
+                null),
+        };
+        var id = BeginAttempt();
+        var process = new FakeProcess(44);
+        var probes = 0;
+        using var manager = new HeadlessClientManager(
+            _ => process,
+            (_, _) => { Interlocked.Increment(ref probes); return Task.FromResult(true); },
+            sharedRelay: true);
+        manager.ConfigureConnectionMonitoring(_ => member, () => 12345);
+        ConnectionStatusRow? row = null;
+        try
+        {
+            await CouchCoopGameFactsTests.WithSourceAsync(facts, async () =>
+            {
+                var started = Stopwatch.GetTimestamp();
+                var result = await manager.EnsureHeadlessAsync(id, "silent-relay", CancellationToken.None)
+                    .WaitAsync(TimeSpan.FromSeconds(20));
+                Assert(result is null, "a relay seat that never says anything is not redirected to");
+                Assert(Stopwatch.GetElapsedTime(started) < TimeSpan.FromSeconds(30),
+                    "…and dies on the contact deadline rather than the readiness one");
+            });
+            row = ConnectionRegistry.Shared.Snapshot().Rows.Single(entry => entry.Id == id);
+            Assert(process.Killed, "the silent relay seat is actually terminated");
+            return (row, Volatile.Read(ref probes));
+        }
+        finally
+        {
+            Environment.SetEnvironmentVariable(HeadlessClientManager.SeatContactTimeoutEnvironmentVariable, priorContact);
+            Environment.SetEnvironmentVariable(HeadlessClientManager.SeatReadyTimeoutEnvironmentVariable, priorReady);
+            CleanupControl(id);
+            ConnectionRegistry.Shared.Clear();
         }
     }
 
