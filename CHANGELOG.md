@@ -9,6 +9,15 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and
 
 ## [Unreleased]
 
+## [0.4.2] - 2026-10-10
+
+### Fixed
+
+- Fixed Windows players failing to join when another mod unpacks files to the temp folder
+- Fixed Linux and macOS seats crashing the host or failing to join over shared temp files
+- When a player's game is refused because a mod failed to load in it, the connections panel now says so and points at that player's log, instead of reporting a lost connection.
+- Connection reports for a player's game that never answers now say what the host observed, which makes the cause easier to find.
+
 ## [0.4.1] - 2026-10-09
 
 ### Added
@@ -213,7 +222,8 @@ First public release. Turn the phones, tablets and laptops on your network into 
 a local Slay the Spire 2 co-op session — no app to install on the other devices, and no `sts2` CLI
 needed to run the mod.
 
-[Unreleased]: https://github.com/tfoxy/sts2-couch-coop/compare/v0.4.1...HEAD
+[Unreleased]: https://github.com/tfoxy/sts2-couch-coop/compare/v0.4.2...HEAD
+[0.4.2]: https://github.com/tfoxy/sts2-couch-coop/releases/tag/v0.4.2
 [0.4.1]: https://github.com/tfoxy/sts2-couch-coop/releases/tag/v0.4.1
 [0.4.0]: https://github.com/tfoxy/sts2-couch-coop/releases/tag/v0.4.0
 [0.3.4]: https://github.com/tfoxy/sts2-couch-coop/releases/tag/v0.3.4
