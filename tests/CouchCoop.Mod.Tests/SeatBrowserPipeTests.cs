@@ -3,6 +3,7 @@ using System.Diagnostics;
 using System.IO.Pipes;
 using System.Net;
 using System.Net.Sockets;
+using System.Security.Cryptography;
 using System.Text;
 using CouchCoop.Mod;
 using CouchCoop.Mod.Server;
@@ -14,10 +15,13 @@ using CouchCoop.Mod.Tests;
 internal static class SeatBrowserPipeTests
 {
     public const string HostUiChildVerb = "seat-pipe-hostui-child";
+    public const string RootedChildVerb = "seat-pipe-rooted-child";
     private static readonly TimeSpan TestDeadline = TimeSpan.FromSeconds(10);
 
     public static async Task RunAsync()
     {
+        EndpointsAreRootedInTheHostTempDirOnUnix();
+        await RootedEndpointCrossesDifferentTempDirsAsync();
         await TwoSeatsShareOneBrowserListenerAsync();
         await WrongTokenCannotReachSeatAsync();
         await RejectedUpgradeIsReportedAsync();
@@ -60,6 +64,128 @@ internal static class SeatBrowserPipeTests
         }
     }
 
+    /// <summary>
+    /// The seat half of <see cref="RootedEndpointCrossesDifferentTempDirsAsync"/>: binds from its environment
+    /// exactly as a seat does, reports its own temp dir, and serves until the parent closes stdin.
+    /// </summary>
+    public static async Task<int> RunRootedChildAsync()
+    {
+        try
+        {
+            var observed = new ConcurrentBag<(string Seat, string Header, bool Secure, IPAddress Address)>();
+            await using var seat = SeatBrowserPipe.StartFromEnvironment(
+                    (stream, secure, address, cancellation) => ServeSeatAsync("R", stream, secure, address, observed, cancellation))
+                ?? throw new InvalidOperationException("The seat browser pipe environment was not set.");
+            Console.WriteLine("seat-pipe-ready " + Path.GetTempPath());
+            await Console.In.ReadLineAsync();
+            return 0;
+        }
+        catch (Exception error)
+        {
+            Console.Error.WriteLine(error);
+            return 1;
+        }
+    }
+
+    private static void EndpointsAreRootedInTheHostTempDirOnUnix()
+    {
+        var name = "CCSeat" + new string('A', 32);
+        Expect(SeatBrowserPipe.EndpointFor(name, isWindows: true, @"C:\Temp\") == name,
+            "windows keeps the bare pipe name: a pipe there is a kernel object, not a file in the temp dir");
+        Expect(SeatBrowserPipe.EndpointFor(name, isWindows: false, "/tmp/") == "/tmp/CoreFxPipe_" + name,
+            "unix roots the pipe exactly where .NET put the bare name in the host's temp dir");
+
+        // A representative macOS per-user temp dir (/var/folders/<2>/<30>/T/) and Linux's /tmp/.
+        foreach (var hostTemp in new[] { "/var/folders/qh/" + new string('x', 30) + "/T/", "/tmp/" })
+        {
+            var endpoint = SeatBrowserPipe.EndpointFor(name, isWindows: false, hostTemp);
+            Expect(Encoding.UTF8.GetByteCount(endpoint) <= HeadlessUserDirSeeder.MaxUnixSocketPathBytes
+                   && SeatBrowserPipe.IsValidEndpoint(endpoint, isWindows: false),
+                $"the rooted pipe in {hostTemp} fits sun_path and is accepted");
+        }
+
+        Expect(!SeatBrowserPipe.IsValidEndpoint(name, isWindows: false),
+            "a unix seat refuses a bare name, which it would resolve against its own temp dir");
+        foreach (var refused in new[]
+                 {
+                     "/tmp/" + name, "/tmp/CoreFxPipe_", "/tmp/CoreFxPipe_../x", "/tmp/CoreFxPipe_A-B",
+                     "tmp/CoreFxPipe_" + name, "/" + new string('t', 90) + "/CoreFxPipe_" + name,
+                 })
+        {
+            Expect(!SeatBrowserPipe.IsValidEndpoint(refused, isWindows: false), $"unix refuses {refused}");
+        }
+
+        Expect(SeatBrowserPipe.IsValidEndpoint(name, isWindows: true)
+               && !SeatBrowserPipe.IsValidEndpoint("/tmp/CoreFxPipe_" + name, isWindows: true)
+               && !SeatBrowserPipe.IsValidEndpoint(new string('a', 121), isWindows: true),
+            "windows accepts only a bare alphanumeric name of at most 120 characters");
+    }
+
+    private static async Task RootedEndpointCrossesDifferentTempDirsAsync()
+    {
+        if (OperatingSystem.IsWindows()) return;
+        var seatTemp = Path.Combine(Path.GetTempPath(), "couchcoop-seat-tmp-" + Guid.NewGuid().ToString("N")[..8]);
+        Directory.CreateDirectory(seatTemp);
+        var endpoint = SeatBrowserPipe.EndpointFor("CCSeat" + Convert.ToHexString(RandomNumberGenerator.GetBytes(16)));
+        var token = new string('9', 64);
+        Expect(Path.GetDirectoryName(endpoint) == Path.TrimEndingDirectorySeparator(Path.GetTempPath()),
+            "the host's endpoint lives in the host's own temp dir");
+
+        var start = new ProcessStartInfo("dotnet")
+        {
+            UseShellExecute = false,
+            RedirectStandardInput = true,
+            RedirectStandardOutput = true,
+            RedirectStandardError = true,
+        };
+        start.ArgumentList.Add(typeof(SeatBrowserPipeTests).Assembly.Location);
+        start.ArgumentList.Add(RootedChildVerb);
+        start.Environment["TMPDIR"] = seatTemp;
+        start.Environment[SeatBrowserPipe.NameEnvironmentVariable] = endpoint;
+        start.Environment[SeatBrowserPipe.TokenEnvironmentVariable] = token;
+        using var child = Process.Start(start) ?? throw new InvalidOperationException("Could not start the seat pipe child.");
+        using var deadline = new CancellationTokenSource(TestDeadline);
+        try
+        {
+            string? childTemp = null;
+            while (childTemp is null)
+            {
+                var line = await child.StandardOutput.ReadLineAsync(deadline.Token)
+                    ?? throw new InvalidOperationException(
+                        "The seat pipe child exited early: " + await child.StandardError.ReadToEndAsync(deadline.Token));
+                if (line.StartsWith("seat-pipe-ready ", StringComparison.Ordinal)) childTemp = line["seat-pipe-ready ".Length..];
+            }
+
+            Expect(Path.TrimEndingDirectorySeparator(childTemp) == seatTemp,
+                "the seat runs with a temp dir of its own, as a seat with a private TMPDIR does");
+            Expect(File.Exists(endpoint), "the seat bound its pipe at the host's rooted path");
+            Expect(!Directory.EnumerateFileSystemEntries(seatTemp, "CoreFxPipe_*").Any(),
+                "nothing was bound in the seat's own temp dir");
+
+            using var listener = new TcpListener(IPAddress.Loopback, 0);
+            listener.Start();
+            var relay = Task.Run(async () =>
+            {
+                using var accepted = await listener.AcceptTcpClientAsync(deadline.Token);
+                var stream = accepted.GetStream();
+                var header = await ReadHeaderAsync(stream, deadline.Token);
+                await SeatBrowserPipe.RelayAsync(endpoint, token, stream, header, IPAddress.Loopback, false, deadline.Token);
+            });
+            var reply = await BrowserRoundTripAsync(((IPEndPoint)listener.LocalEndpoint).Port, "R", "abc", deadline.Token);
+            Expect(reply == "R:abc", "the host relays a browser to a seat whose temp dir differs from its own");
+            await relay;
+        }
+        finally
+        {
+            try { child.StandardInput.Close(); } catch (IOException) { }
+            try { await child.WaitForExitAsync(deadline.Token); }
+            catch (OperationCanceledException) { child.Kill(entireProcessTree: true); }
+            try { Directory.Delete(seatTemp, recursive: true); } catch (IOException) { }
+        }
+
+        Expect(child.ExitCode == 0, "the seat pipe child shut down cleanly");
+    }
+
     private static async Task HeadlessHostUiKeepsPipeAliveAsync()
     {
         var assembly = typeof(SeatBrowserPipeTests).Assembly.Location;
@@ -74,10 +200,15 @@ internal static class SeatBrowserPipeTests
         start.Environment["COUCHCOOP_HEADLESS_CLIENT"] = "1";
         start.Environment[SeatBrowserPipe.NameEnvironmentVariable] = PipeName();
         start.Environment[SeatBrowserPipe.TokenEnvironmentVariable] = new string('f', 64);
+        // A different temp dir from this process's: the seat must still bind where the host would relay to.
+        var seatTemp = Path.Combine(Path.GetTempPath(), "couchcoop-seat-tmp-" + Guid.NewGuid().ToString("N")[..8]);
+        Directory.CreateDirectory(seatTemp);
+        start.Environment["TMPDIR"] = seatTemp;
         using var child = Process.Start(start) ?? throw new InvalidOperationException("Could not start seat host-UI child.");
         using var deadline = new CancellationTokenSource(TestDeadline);
         await child.WaitForExitAsync(deadline.Token);
         var stderr = await child.StandardError.ReadToEndAsync(deadline.Token);
+        try { Directory.Delete(seatTemp, recursive: true); } catch (IOException) { }
         Expect(child.ExitCode == 0, "headless host-UI startup keeps the pipe alive: " + stderr);
     }
 
@@ -325,7 +456,8 @@ internal static class SeatBrowserPipeTests
         throw new InvalidDataException("The upgrade header exceeded the test limit.");
     }
 
-    private static string PipeName() => "CouchSeatTest" + Guid.NewGuid().ToString("N");
+    // The production shape: rooted in this (host) process's temp dir on Unix, bare on Windows.
+    private static string PipeName() => SeatBrowserPipe.EndpointFor("CouchSeatTest" + Guid.NewGuid().ToString("N"));
 
     private static string BrowserHeader(string seat)
         => $"GET /ws?seat={seat} HTTP/1.1\r\nHost: localhost\r\nUpgrade: websocket\r\nConnection: Upgrade\r\n\r\n";
