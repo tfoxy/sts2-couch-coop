@@ -230,6 +230,8 @@ internal static class ConnectionRegistryTests
                      CouchCoop.Mod.Session.HeadlessClientManager.SeatBuildMismatchCode,
                      CouchCoop.Mod.Session.HeadlessClientManager.SeatCloudIsolationCode,
                      CouchCoop.Mod.Session.HeadlessDisconnectReason.RunInProgressCode,
+                     CouchCoop.Mod.Session.HeadlessDisconnectReason.GameContentMismatchCode,
+                     CouchCoop.Mod.Session.HeadlessDisconnectReason.ModMismatchCode,
                  })
         {
             var failed = Complete();
@@ -256,6 +258,23 @@ internal static class ConnectionRegistryTests
         Assert(registry.Snapshot().Rows.Any(row => row.Id == refined
                 && row.Issue?.Code == CouchCoop.Mod.Session.HeadlessDisconnectReason.RunInProgressCode),
             "…and nothing generic takes it back");
+
+        // The join handshake's two refusals are the same kind of answer: the specific reason behind a generic drop.
+        foreach (var code in new[]
+                 {
+                     CouchCoop.Mod.Session.HeadlessDisconnectReason.GameContentMismatchCode,
+                     CouchCoop.Mod.Session.HeadlessDisconnectReason.ModMismatchCode,
+                 })
+        {
+            var handshake = Complete();
+            registry.Fail(handshake, "native-join-rejected", "Native rejection", "Retry", "the socket went away");
+            registry.Fail(handshake, code, "Mismatch", "Check the log", "ConnectionFailureReason refusal");
+            Assert(registry.Snapshot().Rows.Any(row => row.Id == handshake && row.Issue?.Code == code),
+                $"a late {code} refusal replaces the generic native cause recorded before it");
+            registry.Fail(handshake, "native-disconnected", "Disconnected", "Retry", "a later generic report");
+            Assert(registry.Snapshot().Rows.Any(row => row.Id == handshake && row.Issue?.Code == code),
+                $"…and nothing generic takes {code} back");
+        }
     }
 
     /// <summary>

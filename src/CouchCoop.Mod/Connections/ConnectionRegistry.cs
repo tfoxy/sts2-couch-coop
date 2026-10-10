@@ -573,7 +573,8 @@ public sealed class ConnectionRegistry
             // first (its transport saw the socket go) and specifically a beat later (the game's own handler
             // knows what the host said). The generic report gets here first and would otherwise pin the row to
             // "check that game and mod versions match" — wrong advice for a run the player simply is not in.
-            // So a run-in-progress refusal may replace a generic cause; nothing may replace IT.
+            // So a run-in-progress refusal may replace a generic cause; nothing may replace IT. The join
+            // handshake's content and mod mismatches are the same kind of answer and are treated the same way.
             if ((e.Issue.Code == "browser-transport-lost"
                     && issue.Code is "process-exited" or "native-join-rejected" or "native-disconnected"
                         or Session.HeadlessClientManager.SeatBuildMismatchCode
@@ -582,7 +583,7 @@ public sealed class ConnectionRegistry
                         // socket closing is downstream of the cause, and "reconnect this device" would point
                         // at the device when the answer is in the seat's own log.
                         or Session.HeadlessClientManager.SeatSilentAfterJoinCode)
-                || (issue.Code == Session.HeadlessDisconnectReason.RunInProgressCode
+                || (Session.HeadlessDisconnectReason.IsJoinRefusal(issue.Code)
                     && e.Issue.Code is "browser-transport-lost" or "native-join-rejected" or "native-disconnected"))
             {
                 Trace(e, $"Earlier browser symptom: {e.Issue.Code}: {e.Issue.Detail ?? e.Issue.Summary}");

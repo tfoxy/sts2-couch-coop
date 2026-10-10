@@ -1480,18 +1480,58 @@ public sealed partial class HeadlessClientManager
     private static bool IsGenericNativeFailure(string? code)
         => code is "native-join-rejected" or "native-disconnected";
 
+    /// <summary>
+    /// Which of the host game's own refusals <paramref name="status"/> reports, if any.
+    /// </summary>
+    /// <remarks>
+    /// Two shapes reach here. A seat that was connected and then dropped classifies the reason itself and sends
+    /// the code (<see cref="HeadlessDisconnectReason.IsJoinRefusal"/>). A seat the join HANDSHAKE turned away never
+    /// gets that far: its only report is the generic network error, with the game's rendered reason as the
+    /// detail — so the host reads the detail too. A status that already names a cause of ours is left alone.
+    /// </remarks>
+    private static string? JoinRefusalOf(HeadlessConnectionStatus? status)
+    {
+        if (status is null) return null;
+        if (HeadlessDisconnectReason.IsJoinRefusal(status.ErrorCode)) return status.ErrorCode;
+        return status.ErrorCode is null || !HeadlessDisconnectReason.IsSpecific(status.ErrorCode)
+            ? HeadlessDisconnectReason.TryClassify(status.ErrorDetail)
+            : null;
+    }
+
+    /// <summary>
+    /// The issue for one of the host game's own refusals. The detail stays the seat's raw report, which is what
+    /// names the refusal in the game's own words.
+    /// </summary>
+    private static ConnectionIssue JoinRefusalIssue(string code, string? detail) => code switch
+    {
+        HeadlessDisconnectReason.GameContentMismatchCode => new(
+            code,
+            "This player's game loaded different game content than the host.",
+            "A mod failed to load, or loaded differently, in this player's game. Check that player's own log (its "
+                + "path is in this report) for mod errors, then try again.",
+            detail ?? "The host's game refused the connection because the game content did not match."),
+        HeadlessDisconnectReason.ModMismatchCode => new(
+            code,
+            "This player's game loaded a different set of mods than the host.",
+            "A mod failed to load, or is missing, in this player's game. Check that player's own log (its path is "
+                + "in this report) for mod errors, then try again.",
+            detail ?? "The host's game refused the connection because the loaded mods did not match."),
+        _ => new(
+            HeadlessDisconnectReason.RunInProgressCode,
+            "The run was already in progress, so the host refused this player's game.",
+            "The host has to reload the saved run to let this player back in.",
+            detail ?? "The host's game refused the connection with RunInProgress."),
+    };
+
     private static bool SetTerminalFailure(OwnedConnection owned, HeadlessConnectionStatus? status)
     {
-        // The seat's late, specific word on a drop the host has already written down generically. Checked ahead
-        // of the phase arms below because it is the one case that must be allowed to REPLACE a recorded failure.
-        if (status?.ErrorCode == HeadlessDisconnectReason.RunInProgressCode
+        // The seat's specific word on a drop the host has already written down generically — or will, from the
+        // same report. Checked ahead of the phase arms below because it is the one case that must be allowed to
+        // REPLACE a recorded failure.
+        if (JoinRefusalOf(status) is { } refusal
             && (owned.Failure is null || IsGenericNativeFailure(owned.Failure.Code)))
         {
-            owned.Failure = new(
-                HeadlessDisconnectReason.RunInProgressCode,
-                "The run was already in progress, so the host refused this player's game.",
-                "The host has to reload the saved run to let this player back in.",
-                status.ErrorDetail ?? "The host's game refused the connection with RunInProgress.");
+            owned.Failure = JoinRefusalIssue(refusal, status!.ErrorDetail);
             return true;
         }
 

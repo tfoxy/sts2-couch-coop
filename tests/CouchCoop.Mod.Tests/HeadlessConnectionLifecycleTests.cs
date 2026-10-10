@@ -23,6 +23,8 @@ internal static class HeadlessConnectionLifecycleTests
         await HealthyChildDoesNotCompleteBeforeBrowserAcknowledgement();
         await NativeFailureRetainsItsCauseWhenChildExits();
         await ALateRunInProgressReasonRefinesTheGenericRejection();
+        await AHandshakeRefusalInTheGenericReportIsNamed();
+        await ALateModMismatchReasonRefinesTheGenericRejection();
         await SeatBuildMismatchIsItsOwnIssueWithItsOwnRemedy();
         await ASeatThatCannotIsolateCloudSavesIsItsOwnIssue();
         await AHeartbeatWithoutTheCloudDeclarationStopsTheSeat();
@@ -303,6 +305,71 @@ internal static class HeadlessConnectionLifecycleTests
                 "…and carries the only remedy there is");
             Assert(!row.Issue.Action.Contains("versions match", StringComparison.Ordinal),
                 "…not the version advice that fits a mismatch and nothing else");
+        }
+        finally { CleanupControl(id); ConnectionRegistry.Shared.Clear(); }
+    }
+
+    // The Windows field shape (game v0.111): a mod failed to initialise in the seat, and the host's game refused
+    // it at the join handshake. The seat never connected, so the only report is the GENERIC network error, with
+    // the game's rendered reason as its detail. The host has to read the detail to name the cause, or the panel
+    // says "the player game lost its connection" about a seat that never had one.
+    private static async Task AHandshakeRefusalInTheGenericReportIsNamed()
+    {
+        var id = BeginAttempt();
+        var process = new FakeProcess(39);
+        using var manager = NewManager(_ => process, () => false, () => true);
+        try
+        {
+            const string rendered = "ConnectionFailureReason VersionMismatch False";
+            var pending = manager.EnsureHeadlessAsync(id, "content-mismatch", CancellationToken.None);
+            var control = await WaitForControlAsync(id);
+            RegisterKnown(control, id, "content-mismatch-token");
+            HeadlessConnectionControl.Shared.Observe("content-mismatch-token", control.Generation,
+                new HeadlessConnectionStatus(1, "Failed", HeadlessDisconnectReason.NativeNetworkErrorCode, rendered, 0,
+                    CloudSaveIsolated: true));
+            process.Exit();
+
+            Assert(await pending.WaitAsync(TimeSpan.FromSeconds(2)) is null, "the refused seat refuses a redirect");
+            var row = ConnectionRegistry.Shared.Snapshot().Rows.Single(entry => entry.Id == id);
+            Assert(row.Issue?.Code == HeadlessDisconnectReason.GameContentMismatchCode,
+                $"a generic report whose detail names the handshake refusal is that refusal (got {row.Issue?.Code})");
+            Assert(row.Issue!.Detail == rendered, "…and keeps the seat's raw detail as its evidence");
+            Assert(row.Issue.Action.Contains("own log", StringComparison.Ordinal)
+                    && !row.Issue.Summary.Contains("lost its connection", StringComparison.Ordinal),
+                "…and points at the player's log, not at a lost connection");
+        }
+        finally { CleanupControl(id); ConnectionRegistry.Shared.Clear(); }
+    }
+
+    // The same refinement as the run-in-progress one above, for the handshake's mod refusal: the generic drop is
+    // recorded first, and the specific reason must still be allowed to replace it.
+    private static async Task ALateModMismatchReasonRefinesTheGenericRejection()
+    {
+        var id = BeginAttempt();
+        var process = new FakeProcess(40);
+        using var manager = NewManager(_ => process, () => false, () => true);
+        try
+        {
+            var pending = manager.EnsureHeadlessAsync(id, "late-mod-mismatch", CancellationToken.None);
+            var control = await WaitForControlAsync(id);
+            RegisterKnown(control, id, "late-mod-token");
+
+            HeadlessConnectionControl.Shared.Observe("late-mod-token", control.Generation,
+                new HeadlessConnectionStatus(1, "Failed", "native-network-error", "the socket went away", 0, CloudSaveIsolated: true));
+            var generic = ConnectionRegistry.Shared.Snapshot().Rows.Single(entry => entry.Id == id).Issue;
+            Assert(generic?.Code == "native-join-rejected", "the generic drop lands first");
+
+            HeadlessConnectionControl.Shared.Observe("late-mod-token", control.Generation,
+                new HeadlessConnectionStatus(2, "Failed", HeadlessDisconnectReason.ModMismatchCode,
+                    "ConnectionFailureReason ModMismatch False", 0, CloudSaveIsolated: true));
+            process.Exit();
+
+            Assert(await pending.WaitAsync(TimeSpan.FromSeconds(2)) is null, "the refused seat still refuses a redirect");
+            var row = ConnectionRegistry.Shared.Snapshot().Rows.Single(entry => entry.Id == id);
+            Assert(row.Issue?.Code == HeadlessDisconnectReason.ModMismatchCode,
+                "the mod refusal REPLACES the generic one the host had already written down");
+            Assert(!row.Issue!.Action.Contains("versions match", StringComparison.Ordinal),
+                "…and does not carry the generic version advice");
         }
         finally { CleanupControl(id); ConnectionRegistry.Shared.Clear(); }
     }

@@ -25,6 +25,7 @@ internal static class HeadlessDisconnectExitTests
         await QuitFailureLeavesTheBackstopToFinishTheJob();
         await ScheduledBackstopForceExits();
         ARunInProgressRefusalIsClassified();
+        TheJoinHandshakeRefusalsAreClassified();
         await ASpecificReasonRefinesTheGenericOneThatStartedTheShutdown();
         await AGenericSecondReasonNeverDisplacesASpecificOne();
         await RefinementHappensAtMostOnceAndNeverThrows();
@@ -45,6 +46,35 @@ internal static class HeadlessDisconnectExitTests
         Assert(HeadlessDisconnectReason.IsSpecific(HeadlessDisconnectReason.RunInProgressCode)
                 && !HeadlessDisconnectReason.IsSpecific(HeadlessDisconnectReason.NativeNetworkErrorCode),
             "'the socket is gone' is generic; 'the run had already begun' is not");
+    }
+
+    // The two refusals the game's join handshake can answer with. A seat runs the host's own executable, so either
+    // one means the two processes ended up with different content or mods loaded — not a version to update — and
+    // the generic join copy ("the player game lost its connection") said nothing about it.
+    private static void TheJoinHandshakeRefusalsAreClassified()
+    {
+        Assert(HeadlessDisconnectReason.Classify("ConnectionFailureReason VersionMismatch False")
+                == HeadlessDisconnectReason.GameContentMismatchCode,
+            "a rendered VersionMismatch refusal classifies to the game-content mismatch code");
+        Assert(HeadlessDisconnectReason.Classify("ConnectionFailureReason ModMismatch False")
+                == HeadlessDisconnectReason.ModMismatchCode,
+            "a rendered ModMismatch refusal classifies to the mod mismatch code");
+        Assert(HeadlessDisconnectReason.TryClassify("ConnectionFailureReason UnknownNetworkError False") is null
+                && HeadlessDisconnectReason.TryClassify(null) is null,
+            "TryClassify names nothing it has no sentence for");
+        foreach (var code in new[]
+                 {
+                     HeadlessDisconnectReason.RunInProgressCode,
+                     HeadlessDisconnectReason.GameContentMismatchCode,
+                     HeadlessDisconnectReason.ModMismatchCode,
+                 })
+        {
+            Assert(HeadlessDisconnectReason.IsSpecific(code) && HeadlessDisconnectReason.IsJoinRefusal(code),
+                $"{code} is a specific join refusal");
+        }
+        Assert(!HeadlessDisconnectReason.IsJoinRefusal(HeadlessDisconnectReason.NativeNetworkErrorCode)
+                && !HeadlessDisconnectReason.IsJoinRefusal(null),
+            "the generic drop is not a refusal");
     }
 
     // THE RACE THAT LOST THE DIAGNOSIS. The transport publishes a generic drop first and starts the shutdown; the
