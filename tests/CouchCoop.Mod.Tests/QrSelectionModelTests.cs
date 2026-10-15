@@ -16,8 +16,15 @@ internal static class QrSelectionModelTests
         var model = new QrSelectionModel();
         model.Refresh(options, null);
         Expect(model.Network == direct && model.Method == "ipv4", "default remains the direct interface address");
+        Expect(model.PreviewUrlFor("ipv4") == direct.ToUri() && model.PreviewUrlFor("web") == web.ToUri(),
+            "method subtitles use the exact direct and Website destinations, including the Website host query");
+        Expect(model.PreviewUrlFor("secure")?.ToString() == "https://192-168-1-5.local-ip.co:13337/",
+            "pending HTTPS preview uses the selected interface and actual shared listener port");
         Expect(model.ChooseMethod("web") && model.Url == web.ToUri(), "Website uses the selected adapter URL");
         model.ChooseNetwork("mdns");
+        Expect(model.PreviewUrlFor("ipv4") == mdns.ToUri()
+            && model.PreviewUrlFor("web") is null && model.PreviewUrlFor("secure") is null,
+            "changing networks refreshes previews and never displays a stale or invented unsupported URL");
         Expect(model.Method == "web" && model.Url is null, "switching to PC name retains Website without a QR");
         Expect(!model.ChooseMethod("web") && !model.ChooseMethod("secure"), "unsupported methods reject activation");
         Expect(model.UnavailableMessage.Resolve().Contains("Website") && model.UnavailableMessage.Resolve().Contains("PC name"),
@@ -33,6 +40,7 @@ internal static class QrSelectionModelTests
         var ready = secure with { Enabled = true, Port = 13337, CanSelectWhenUnavailable = false, DisabledReason = null };
         model.Refresh([direct, web, ready, mdns], model.Memory);
         Expect(model.Url?.Scheme == "https", "a readiness event restores the selected domain without another pick");
+        Expect(model.PreviewUrlFor("secure") == model.Url, "ready HTTPS preview and QR payload agree");
         model.Refresh(options, new QrSelectionMemory("web", "10.1.2.3"));
         Expect(model.Network == direct && model.Method == "web", "missing adapter falls back while retaining method");
         model.Refresh(options, new QrSelectionMemory("mdns", null));

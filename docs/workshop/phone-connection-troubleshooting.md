@@ -46,11 +46,12 @@ something in the tree has been cited for it.
 | --- | --- |
 | the QR screen has a network selector on the left and a method selector on the right | `CouchCoopQrDialog` places two `CouchCoopQrHostSelect` controls in the original row; `QrSelectionModel` resolves their pair |
 | **PC name (.local)** is a network choice; **Direct address**, **Website**, and **Domain name** are methods | native `couchcoop_qr_method_*_title` catalog keys; `QrSelectionModel.Networks` and `Methods` |
+| **PC name (.local)** supports only **Direct address** | `QrSelectionModel.Resolve` rejects other methods for non-interface choices; the localized reason asks for an interface with an eligible IP address |
+| method rows show destinations for the selected interface | `QrSelectionModel.PreviewUrlFor` reuses the URL builders, including the Website host query and the actual listener port for pending HTTPS; unavailable pairs have no URL preview |
 | an unsupported method remains selected after an interface change, with a reason replacing the QR | `QrSelectionModel.ChooseNetwork` retains `Method`; `CouchCoopQrDialog.RenderSelection` clears the URL/copy and fills the unchanged QR bounds with `UnavailableMessage` |
 | unsupported methods are focusable but cannot activate, and have an additional **Unavailable** tip | `CouchCoopQrHostRow.SetSelectable` retains focus; activation guards in the row, picker, and selection model; `CouchCoopQrHoverTips.OptionTipSpecsFor` adds a separate reason |
 | **Website** and **Domain name** provide HTTPS for browser performance features | their existing URL builders remain unchanged; `frontend/src/audio/audioPath.ts` and the secure-context audio selection documented in `docs/agents/handoff-seat-audio-latency.md`; native method descriptions retain the performance guidance |
 | a supported **Domain name** method can start setup or retry | `QrHostOptions.DescribeSecureFor` retains `CanSelectWhenUnavailable`; `CouchCoopQrDialog.OnSelectionChanged` requests setup only for a selectable pending domain |
-
 | panel is called **Connections**, reached from the **Couch Co-Op QR Code** screen | `couchcoop_connection_title`; the panel is a child of `CouchCoopQrDialog` (`AddChild(_connections)`), and the lobby's own control is `couchcoop_qr_button` |
 | failures live under **Connection problems (n)** | `couchcoop_connection_problems` — the value carries `({count})` |
 | the button is **Copy report** | `couchcoop_connection_copy_report` — *not* "Copy", which an earlier draft said |

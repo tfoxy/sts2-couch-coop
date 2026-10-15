@@ -156,7 +156,7 @@
   "couchcoop_qr_method_selector_title": "Método de conexão",
   "couchcoop_qr_method_selector_description": "Escolha como os celulares se conectam a este PC. Site e Nome de domínio oferecem HTTPS, que libera recursos do navegador para melhorar o desempenho e a duração da bateria.",
   "couchcoop_qr_unavailable_title": "Indisponível",
-  "couchcoop_qr_method_requires_interface": "Este método precisa de uma interface de rede com um endereço IP compatível. Escolha uma interface em vez de Nome do PC ou Endereço fixo.",
+  "couchcoop_qr_method_requires_interface": "Escolha uma interface de rede com um endereço IP compatível para usar este método.",
   "couchcoop_qr_website_unconfigured": "Nenhum site está configurado para este método.",
   "couchcoop_qr_pair_unavailable": "{method} está indisponível para {network}.\n\n{reason}"
 }

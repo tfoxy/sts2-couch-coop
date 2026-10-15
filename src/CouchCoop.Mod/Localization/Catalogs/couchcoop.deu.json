@@ -156,7 +156,7 @@
   "couchcoop_qr_method_selector_title": "Verbindungsmethode",
   "couchcoop_qr_method_selector_description": "Wähle, wie sich Handys mit diesem PC verbinden. Website und Domainname ermöglichen HTTPS und damit Browserfunktionen für bessere Leistung und längere Akkulaufzeit.",
   "couchcoop_qr_unavailable_title": "Nicht verfügbar",
-  "couchcoop_qr_method_requires_interface": "Diese Methode benötigt eine Netzwerkschnittstelle mit einer geeigneten IP-Adresse. Wähle eine Schnittstelle statt PC-Name oder Feste Adresse.",
+  "couchcoop_qr_method_requires_interface": "Wähle eine Netzwerkschnittstelle mit einer geeigneten IP-Adresse, um diese Methode zu verwenden.",
   "couchcoop_qr_website_unconfigured": "Für diese Methode ist keine Website eingerichtet.",
   "couchcoop_qr_pair_unavailable": "{method} ist für {network} nicht verfügbar.\n\n{reason}"
 }

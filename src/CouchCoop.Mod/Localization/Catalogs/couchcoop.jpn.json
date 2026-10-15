@@ -156,7 +156,7 @@
   "couchcoop_qr_method_selector_title": "接続方法",
   "couchcoop_qr_method_selector_description": "スマートフォンからこのPCへの接続方法を選びます。「ウェブサイト」または「ドメイン名」に切り替えるとHTTPSが使われ、パフォーマンスとバッテリー持ちを改善するブラウザー機能が利用できます。",
   "couchcoop_qr_unavailable_title": "利用不可",
-  "couchcoop_qr_method_requires_interface": "この方法には、対応するIPアドレスを持つネットワークインターフェースが必要です。PC名や固定アドレスではなく、インターフェースを選んでください。",
+  "couchcoop_qr_method_requires_interface": "この方法を使うには、対応するIPアドレスを持つネットワークインターフェースを選んでください。",
   "couchcoop_qr_website_unconfigured": "この方法で使うウェブサイトが設定されていません。",
   "couchcoop_qr_pair_unavailable": "{network} では {method} を利用できません。\n\n{reason}"
 }

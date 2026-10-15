@@ -156,7 +156,7 @@
   "couchcoop_qr_method_selector_title": "Bağlantı yöntemi",
   "couchcoop_qr_method_selector_description": "Telefonların bu bilgisayara nasıl bağlanacağını seçin. Web sitesi veya Alan adı seçeneğine geçmek HTTPS sağlar; bu da daha iyi performans ve pil ömrü için tarayıcı özelliklerini açar.",
   "couchcoop_qr_unavailable_title": "Kullanılamıyor",
-  "couchcoop_qr_method_requires_interface": "Bu yöntem, uygun bir IP adresine sahip ağ arayüzü gerektirir. Bilgisayar adı veya Sabit adres yerine bir arayüz seçin.",
+  "couchcoop_qr_method_requires_interface": "Bu yöntemi kullanmak için uygun bir IP adresine sahip bir ağ arayüzü seçin.",
   "couchcoop_qr_website_unconfigured": "Bu yöntem için bir web sitesi yapılandırılmamış.",
   "couchcoop_qr_pair_unavailable": "{method}, {network} için kullanılamıyor.\n\n{reason}"
 }

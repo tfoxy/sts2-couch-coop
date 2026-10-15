@@ -156,7 +156,7 @@
   "couchcoop_qr_method_selector_title": "连接方式",
   "couchcoop_qr_method_selector_description": "选择手机连接这台电脑的方式。切换到“网站”或“域名”会使用 HTTPS，从而启用可提升性能和延长电池续航的浏览器功能。",
   "couchcoop_qr_unavailable_title": "不可用",
-  "couchcoop_qr_method_requires_interface": "此方式需要具有受支持 IP 地址的网络接口。请选择网络接口，而不是电脑名称或固定地址。",
+  "couchcoop_qr_method_requires_interface": "请选择具有受支持 IP 地址的网络接口以使用此方式。",
   "couchcoop_qr_website_unconfigured": "尚未为此方式配置网站。",
   "couchcoop_qr_pair_unavailable": "{network} 无法使用{method}。\n\n{reason}"
 }

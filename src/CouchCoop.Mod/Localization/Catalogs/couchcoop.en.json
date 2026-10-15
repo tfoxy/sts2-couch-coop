@@ -156,7 +156,7 @@
   "couchcoop_qr_method_selector_title": "Connection method",
   "couchcoop_qr_method_selector_description": "Choose how phones connect to this PC. Switching to Website or Domain name provides HTTPS, which unlocks browser features for better performance and battery life.",
   "couchcoop_qr_unavailable_title": "Unavailable",
-  "couchcoop_qr_method_requires_interface": "This method needs a network interface with an eligible IP address. Choose an interface instead of PC name or Fixed address.",
+  "couchcoop_qr_method_requires_interface": "Select a network interface with an eligible IP address to use this method.",
   "couchcoop_qr_website_unconfigured": "No website is configured for this method.",
   "couchcoop_qr_pair_unavailable": "{method} is unavailable for {network}.\n\n{reason}"
 }
