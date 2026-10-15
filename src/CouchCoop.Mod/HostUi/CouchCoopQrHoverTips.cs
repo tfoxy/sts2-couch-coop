@@ -55,6 +55,16 @@ internal static class CouchCoopQrHoverTips
     public static bool ShowSelector(Control owner)
         => ShowSpecs(owner, SelectorTipSpecs);
 
+    public static bool ShowMethodSelector(Control owner, QrHostOption? option)
+        => ShowSpecs(owner, MethodSelectorTipSpecsFor(option));
+
+    internal static IReadOnlyList<(string TitleKey, string Description)> MethodSelectorTipSpecsFor(QrHostOption? option)
+    {
+        var tips = new List<(string TitleKey, string Description)> { QrHoverTipCopy.MethodSelectorTip };
+        if (QrHoverTipCopy.UnavailableTipFor(option) is { } unavailable) tips.Add(unavailable);
+        return tips;
+    }
+
     /// <summary>Show the tip that explains the faint copy affordance beside the printed address.</summary>
     public static bool ShowCopyLink(Control owner)
         => ShowSpecs(owner, CopyLinkTipSpecs);
@@ -85,6 +95,7 @@ internal static class CouchCoopQrHoverTips
             tips.Add((adapterKey, adapterDescription));
         }
 
+        if (QrHoverTipCopy.UnavailableTipFor(option) is { } unavailable) tips.Add(unavailable);
         return tips;
     }
 

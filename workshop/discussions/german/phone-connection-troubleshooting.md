@@ -12,11 +12,13 @@ Die meisten Verbindungsprobleme lassen sich auf eine Handvoll Ursachen zurückf�
 
 ### 1. Wähle auf dem QR-Bildschirm eine andere Adresse
 
-Der QR-Bildschirm hat eine Auswahl mit mehreren Wegen, den Host zu erreichen. Wenn der gescannte nicht funktioniert, wähle einen anderen und scanne erneut.
+Der QR-Bildschirm hat zwei Auswahllisten in derselben Zeile: links die Netzwerkschnittstelle, rechts die Verbindungsmethode. **PC-Name (.local)** steht links. Wähle zur Fehlersuche deine WLAN- oder Ethernet-Schnittstelle mit einer numerischen Adresse und **Direkte Adresse**, und scanne erneut. Die Adresse sieht beispielsweise wie **192.168.1.5:13337** aus; diese Methode hat die wenigsten Abhängigkeiten und braucht kein Internet.
 
-Nimm am besten die einfache numerische Adresse (etwa **192.168.1.5:13337**). Bei ihr kann am wenigsten schiefgehen. Der **.local**-Name und der Weblink hängen beide von Dingen außerhalb der Mod ab - deinem Router, einer Internetverbindung, Browser-Berechtigungen - und können deshalb in einem Netzwerk scheitern, in dem die numerische Adresse einwandfrei funktioniert.
+**Website** lädt den Client aus dem Internet und verbindet ihn dann mit dem PC; das Handy braucht Internet und die Browser-Berechtigung für den Zugriff auf dein lokales Netzwerk. **Domainname** verbindet sich über den erzeugten Domainnamen direkt mit dem PC und braucht ebenfalls Internet; manche Router oder Internetanbieter blockieren diese Adresse. Beide ermöglichen HTTPS und damit Browserfunktionen für bessere Leistung und längere Akkulaufzeit. Der **.local**-Name hängt von der Namensauflösung im Netzwerk ab und kann scheitern, obwohl eine numerische Adresse funktioniert.
 
-**Überspringe auf einem iPhone oder iPad die Zeile *Weblink* komplett.** Safari - und jeder andere Browser unter iOS, weil sie alle im Kern Safari sind - lässt eine aus dem Internet geladene Seite nichts in deinem Heimnetzwerk erreichen. Das ist eine Regel des Browsers, keine Einstellung, es gibt also nichts zu erlauben und nichts zu ändern: Die Seite lädt und meldet dann, dass das Spiel nicht geantwortet hat - in jedem Netzwerk, egal wie deine Firewall eingestellt ist. Nutze auf einem iPhone oder iPad **Einfache Adresse** oder **Sicherer Link**. (Die Seite sagt das inzwischen selbst, falls du so weit kommst.)
+Beim Wechsel der Schnittstelle bleibt die gewählte Methode erhalten. Unterstützt die neue Schnittstelle sie nicht, erscheint statt des QR-Codes eine Erklärung. Nicht unterstützte Methoden sind ausgegraut und lassen sich nicht auswählen; fahre mit der Maus darüber oder fokussiere sie per Tastatur/Controller, um den zusätzlichen Hinweis **Nicht verfügbar** zu lesen. Wähle eine andere Schnittstelle oder unterstützte Methode, damit der QR-Code wieder erscheint. **PC-Name (.local)** und Feste Adresse unterstützen nur **Direkte Adresse**. Benötigt **Domainname** die erste Einrichtung oder einen erneuten Versuch, bleibt die Methode bei einer unterstützten Schnittstelle auswählbar.
+
+**Überspringe auf einem iPhone oder iPad die Zeile *Website* komplett.** Safari - und jeder andere Browser unter iOS, weil sie alle im Kern Safari sind - lässt eine aus dem Internet geladene Seite nichts in deinem Heimnetzwerk erreichen. Das ist eine Regel des Browsers, keine Einstellung, es gibt also nichts zu erlauben und nichts zu ändern: Die Seite lädt und meldet dann, dass das Spiel nicht geantwortet hat - in jedem Netzwerk, egal wie deine Firewall eingestellt ist. Nutze auf einem iPhone oder iPad **Direkte Adresse** oder **Domainname**. (Die Seite sagt das inzwischen selbst, falls du so weit kommst.)
 
 ### 2. Stelle sicher, dass das Handy wirklich im selben Netzwerk ist
 
@@ -63,9 +65,9 @@ Manche Router verhindern, dass sich Geräte im selben WLAN gegenseitig erreichen
 
 Auch gut zu wissen: Ein WLAN-Repeater oder Powerline-Adapter, der im **Router**-Modus statt im **Bridge**- / **Access-Point**-Modus eingerichtet ist, bringt dein Handy in ein anderes Netzwerk als den Host, auch wenn der WLAN-Name gleich aussieht.
 
-### 7. Browser-Einstellungen, die einfache Adressen blockieren
+### 7. Browser-Einstellungen, die direkte Adressen blockieren
 
-Manche Browser versuchen, jede Adresse auf HTTPS zu zwingen - und die einfache numerische Adresse nutzt kein HTTPS. (Die Zeile **Sicherer Link** auf dem QR-Bildschirm tut das - wenn also erzwungenes HTTPS das Problem ist, lohnt sich auch ein Versuch mit dieser Zeile.) Wenn die Adressleiste statt des Spiels eine Sicherheitswarnung zeigt, schalte diese Optionen aus und versuche es erneut:
+Manche Browser versuchen, jede Adresse auf HTTPS zu zwingen - und die einfache numerische Adresse nutzt kein HTTPS. (Die Zeile **Domainname** auf dem QR-Bildschirm tut das - wenn also erzwungenes HTTPS das Problem ist, lohnt sich auch ein Versuch mit dieser Zeile.) Wenn die Adressleiste statt des Spiels eine Sicherheitswarnung zeigt, schalte diese Optionen aus und versuche es erneut:
 
 - Chrome: **Einstellungen > Datenschutz und Sicherheit > Sicherheit > Immer verschlüsselte Verbindungen verwenden**
 - Firefox: **Einstellungen > Datenschutz & Sicherheit > Verbindungs- und Softwaresicherheit > Erweiterte Einstellungen > Nur-HTTPS-Modus**
@@ -82,8 +84,8 @@ Die Adresse des Host-Computers kann sich ändern, wenn er sich neu mit dem WLAN 
 
 Wenn du den Client zu deinem Home-Bildschirm hinzugefügt hast, hängt das Weitere davon ab, aus welcher Zeile du ihn installiert hast:
 
-- Aus der Zeile **Weblink** installiert: Er funktioniert weiter und findet die neue Adresse von selbst. Einfach öffnen - kein erneutes Scannen nötig.
-- Aus der **numerischen Adresse** oder der Zeile **Sicherer Link** installiert: Das Symbol zeigt auf die alte Adresse und kann sich davon nicht erholen. Lösche es und füge es nach dem erneuten Scannen wieder hinzu. (Unter Android vermeidest du das dauerhaft, wenn du stattdessen aus der Zeile **Weblink** installierst. Auf einem iPhone oder iPad kann diese Zeile nicht funktionieren - siehe Abschnitt 1 -, dort bleibt also nur, das Symbol neu hinzuzufügen.)
+- Aus der Zeile **Website** installiert: Er funktioniert weiter und findet die neue Adresse von selbst. Einfach öffnen - kein erneutes Scannen nötig.
+- Aus der **numerischen Adresse** oder der Zeile **Domainname** installiert: Das Symbol zeigt auf die alte Adresse und kann sich davon nicht erholen. Lösche es und füge es nach dem erneuten Scannen wieder hinzu. (Unter Android vermeidest du das dauerhaft, wenn du stattdessen aus der Zeile **Website** installierst. Auf einem iPhone oder iPad kann diese Zeile nicht funktionieren - siehe Abschnitt 1 -, dort bleibt also nur, das Symbol neu hinzuzufügen.)
 
 ---
 
@@ -104,7 +106,7 @@ Das ist das Nützlichste, was du mir sagen kannst, weil jede Antwort auf eine an
 ### Was du sonst noch angeben kannst
 
 - Die genaue Meldung, die das Handy anzeigt, einschließlich der grauen Zeile darunter. Ein Foto des Bildschirms ist perfekt.
-- Welche Adresse du gescannt hast - die numerische, den **.local**-Namen oder den Weblink.
+- Welche Netzwerkschnittstelle und Verbindungsmethode du in den beiden Listen gewählt hast und welche genaue Erklärung gegebenenfalls statt des QR-Codes erscheint.
 - Betriebssystem des Hosts sowie Modell und Browser des Handys bzw. Tablets.
 - Schlägt es auf **jedem** Gerät fehl oder nur auf einem? Wenn ein Handy funktioniert und ein anderes nicht, schließt das schon viel aus.
 - Hat es früher schon einmal funktioniert, und hat sich seitdem etwas geändert?

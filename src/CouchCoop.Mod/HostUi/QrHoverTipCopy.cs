@@ -41,6 +41,8 @@ public static class QrHoverTipCopy
     public const string MethodMdnsTitleKey = TitleKeyPrefix + "method_mdns";
     public const string MethodOverrideTitleKey = TitleKeyPrefix + "method_override";
     public const string NetworkConnectionTitleKey = TitleKeyPrefix + "network_connection";
+    public const string MethodSelectorTitleKey = TitleKeyPrefix + "method_selector";
+    public const string UnavailableTitleKey = TitleKeyPrefix + "unavailable";
     public const string CopyLinkTitleKey = TitleKeyPrefix + "copy_link";
 
     /// <summary>Key → active-locale title for consumers that require an explicit title map.</summary>
@@ -51,10 +53,19 @@ public static class QrHoverTipCopy
         [MethodWebTitleKey] = L("couchcoop_qr_method_web_title"), [MethodSecureTitleKey] = L("couchcoop_qr_method_secure_title"),
         [MethodMdnsTitleKey] = L("couchcoop_qr_method_mdns_title"), [MethodOverrideTitleKey] = L("couchcoop_qr_method_override_title"),
         [NetworkConnectionTitleKey] = L("couchcoop_qr_network_connection_title"),
+        [MethodSelectorTitleKey] = L("couchcoop_qr_method_selector_title"),
+        [UnavailableTitleKey] = L("couchcoop_qr_unavailable_title"),
         [CopyLinkTitleKey] = L("couchcoop_qr_copy_link_title"),
     };
 
     public static string NetworkConnectionDescription => L("couchcoop_qr_network_connection_description");
+
+    public static (string TitleKey, string Description) MethodSelectorTip
+        => (MethodSelectorTitleKey, L("couchcoop_qr_method_selector_description"));
+
+    public static (string TitleKey, string Description)? UnavailableTipFor(QrHostOption? option)
+        => option is { Selectable: false, DisabledReason: { } reason }
+            ? (UnavailableTitleKey, reason.Resolve()) : null;
 
     public static string CopyLinkDescription => L("couchcoop_qr_copy_link_description");
 
@@ -100,8 +111,8 @@ public static class QrHoverTipCopy
     };
 
     /// <summary>
-    /// The method half of an option's tip pair, with the option's live state folded in: the blocker
-    /// line while the row is disabled, the self-check warning on an untested-negative mDNS name.
+    /// The method explanation, with setup status or the PC-name self-check warning.
+    /// Unselectable methods carry their blocker in a separate Unavailable tip.
     /// </summary>
     public static (string TitleKey, string Description) MethodTipFor(QrHostOption option)
     {
@@ -120,11 +131,9 @@ public static class QrHoverTipCopy
             description += MdnsUntrustedSuffix;
         }
 
-        if (!option.Enabled && option.DisabledReason is { } disabled)
+        if (!option.Enabled && option.CanSelectWhenUnavailable && option.DisabledReason is { } disabled)
         {
-            description += option.CanSelectWhenUnavailable
-                ? "\n" + disabled.Resolve()
-                : DisabledReasonPrefix + disabled.Resolve();
+            description += "\n" + disabled.Resolve();
         }
 
         return (titleKey, description);

@@ -5,33 +5,7 @@ using CouchCoop.Mod.Session;
 
 namespace CouchCoop.Mod.HostUi;
 
-/// <summary>
-/// The full-screen join dialog: pick how a phone joins (one select — adapter × method, mdns last),
-/// show a large QR for the pick, print the URL as a typeable fallback, close.
-/// </summary>
-/// <remarks>
-/// <para>
-/// The scrim/card/close-button chrome, Escape handling and focus parking all live in
-/// <see cref="CouchCoopModalDialog"/>; this type is the BODY. The four structural node names it passes
-/// up (<see cref="NodeName"/>, <see cref="ScrimName"/>, <see cref="PanelName"/>,
-/// <see cref="CouchCoopSkipButton.NodeName"/>) are the published QA contract and must not change.
-/// </para>
-/// <para>
-/// <b>One select, no modes.</b> The pre-redesign dialog had a host select plus two mutually exclusive
-/// checkboxes whose link URLs ignored the selected row (both were derived from the machine-picked
-/// advertised address). Now every option IS a row — each adapter's plain address, web link and secure
-/// link are separate, per-adapter entries (see <see cref="QrHostOptions.Build"/>) — so "what does the
-/// QR encode" and "what is selected" are the same question, and the old mode plumbing, select dimming
-/// and offer state are gone. Hovering or focusing a row shows the game-native tip pair explaining the
-/// adapter and the method (see <see cref="CouchCoopQrHoverTips"/>). The closed selector itself has a separate
-/// explanatory tip so it does not appear to describe the currently selected row.
-/// </para>
-/// <para>
-/// <b>Cost discipline.</b> The host list is recomputed in <see cref="Open"/> ONLY. Enumerating network
-/// interfaces is a syscall walk, and the controller's scan runs four times a second — doing it there
-/// would put an OS enumeration on every lobby frame budget for a dialog that is usually closed.
-/// </para>
-/// </remarks>
+/// <summary>Choose a network and connection method, then show their QR or an explanation in place.</summary>
 internal sealed partial class CouchCoopQrDialog : CouchCoopModalDialog
 {
     public const string NodeName = "CouchCoopQrDialog";
@@ -45,7 +19,6 @@ internal sealed partial class CouchCoopQrDialog : CouchCoopModalDialog
 
     public static string TitleText => CouchCoopLocalization.Resolve("couchcoop_qr_title");
     public static string CloseButtonText => CouchCoopLocalization.Resolve("couchcoop_qr_close");
-    private static string NoAddressText => CouchCoopLocalization.Resolve("couchcoop_qr_no_address");
 
     // Dialog card geometry, design units. Sized around the QR's constant 592-unit extent plus the
     // title, select, URL, notice and close rows.
@@ -73,6 +46,7 @@ internal sealed partial class CouchCoopQrDialog : CouchCoopModalDialog
     internal const float TitleTop = 12f;
     internal const float TitleHeight = 52f;
     internal const float SelectTop = 72f;
+    internal const float SelectWidth = CouchCoopQrHostSelect.RowWidth * 2f;
     internal const float QrTop = 152f;
     internal const float UrlGap = 6f;
     internal const float UrlHeight = 32f;
@@ -91,6 +65,9 @@ internal sealed partial class CouchCoopQrDialog : CouchCoopModalDialog
     private readonly TextureRect _qr = new() { Name = QrTextureName };
     private readonly CouchCoopQrCopyButton _copy = new();
     private readonly CouchCoopQrHostSelect _select = new();
+    private readonly CouchCoopQrHostSelect _methodSelect = new("CouchCoopQrMethodSelect");
+    private readonly QrSelectionModel _selection = new();
+    private readonly Label _unavailable = new() { Name = "CouchCoopQrUnavailable" };
     private readonly CouchCoopConnectionPanel _connections = new();
     private readonly CouchCoopSeatModPanel _seatMods = new() { Source = SeatModSelectionService.Shared };
 
@@ -114,13 +91,35 @@ internal sealed partial class CouchCoopQrDialog : CouchCoopModalDialog
         _title.Position = new Vector2(0f, TitleTop);
         _title.Size = new Vector2(PanelWidth, TitleHeight);
 
-        _select.Position = new Vector2((PanelWidth - CouchCoopQrHostSelect.RowWidth) / 2f, SelectTop);
-        _select.Size = new Vector2(CouchCoopQrHostSelect.RowWidth, CouchCoopQrHostSelect.RowHeight);
-        _select.SelectionChanged = OnSelectionChanged;
-        _select.RowHover = OnRowHover;
+        _select.Position = new Vector2((PanelWidth - SelectWidth) / 2f, SelectTop);
+        _methodSelect.Position = _select.Position + new Vector2(CouchCoopQrHostSelect.RowWidth, 0f);
+        foreach (var select in new[] { _select, _methodSelect })
+        {
+            select.Size = new Vector2(CouchCoopQrHostSelect.RowWidth, CouchCoopQrHostSelect.RowHeight);
+            select.RowHover = (row, entry, hovered) =>
+            {
+                if (entry.Option is { } option) OnRowHover(row, option, hovered);
+            };
+            select.OptionsHidden = ClearTips;
+            select.FocusChainChanged = RefreshFocusChain;
+        }
+        _select.SelectionChanged = entry =>
+        {
+            if (_selection.ChooseNetwork(entry.Key)) OnSelectionChanged();
+        };
+        _methodSelect.SelectionChanged = entry =>
+        {
+            if (_selection.ChooseMethod(entry.Key)) OnSelectionChanged();
+        };
         _select.SelectorHover = OnSelectorHover;
-        _select.OptionsHidden = ClearTips;
-        _select.FocusChainChanged = RefreshFocusChain;
+        _methodSelect.SelectorHover = (row, hovered) => ShowTip(row, hovered,
+            owner => CouchCoopQrHoverTips.ShowMethodSelector(owner, _selection.Selected));
+        _select.Opening = _methodSelect.Close;
+        _methodSelect.Opening = _select.Close;
+        ConfigureLabel(_unavailable, HorizontalAlignment.Center, CouchCoopGameUiTheme.ButtonFontColor);
+        _unavailable.AutowrapMode = TextServer.AutowrapMode.WordSmart;
+        _unavailable.VerticalAlignment = VerticalAlignment.Center;
+        _unavailable.Visible = false;
 
         // Nearest filtering plus the raster's whole-pixel module grid is what keeps module edges hard.
         // Stop: the code itself is a dialog ELEMENT, so clicking it must not dismiss the dialog — a
@@ -139,16 +138,18 @@ internal sealed partial class CouchCoopQrDialog : CouchCoopModalDialog
         _copy.Visible = false;
         // The selected option stays the single source of truth for what gets copied, exactly as it is for
         // what the QR encodes and what the label prints — the button holds no address of its own.
-        _copy.Payload = () => _select.Selected is { Enabled: true, Port: > 0 } option ? option.ToUri().ToString() : null;
+        _copy.Payload = () => _selection.Url?.ToString();
         _copy.Engaged = engaged => ShowTip(_copy, engaged, CouchCoopQrHoverTips.ShowCopyLink);
 
         Card.AddChild(_title);
         Card.AddChild(_qr);
+        Card.AddChild(_unavailable);
         Card.AddChild(_url);
         Card.AddChild(_copy);
         Card.AddChild(_notice);
         // Added last so the expanded option list draws over the QR rather than under it.
         Card.AddChild(_select);
+        Card.AddChild(_methodSelect);
         _connections.FocusChainChanged = RefreshFocusChain;
         // A sibling of the central card, deliberately: its fixed left edge clears the QR card rather
         // than competing for the QR, URL or close-button vertical budget.
@@ -162,6 +163,7 @@ internal sealed partial class CouchCoopQrDialog : CouchCoopModalDialog
     protected override void InstallBody()
     {
         _select.Install();
+        _methodSelect.Install();
         _copy.Install();
         _connections.Install();
         _seatMods.Install();
@@ -183,11 +185,12 @@ internal sealed partial class CouchCoopQrDialog : CouchCoopModalDialog
     {
         _connections.AppendFocusChain(chain);
         _select.AppendFocusChain(chain);
+        _methodSelect.AppendFocusChain(chain);
 
         // Not declared while the option list is expanded over it: the rows draw on top of this row, so a
         // walk onto the copy button would light a focus ring nobody can see. Both the expand and the
         // collapse already re-pin the chain through _select.FocusChainChanged.
-        if (_copy.Visible && !_select.IsOpen)
+        if (_copy.Visible && !_select.IsOpen && !_methodSelect.IsOpen)
         {
             chain.Add(_copy);
         }
@@ -213,6 +216,7 @@ internal sealed partial class CouchCoopQrDialog : CouchCoopModalDialog
         CouchCoopGameUiTheme.ApplyFont(_title, CouchCoopGameUiTheme.KreonBoldGlyphSpaceOne, Layout.TitleFontSize + 16);
         CouchCoopGameUiTheme.ApplyFont(_url, CouchCoopGameUiTheme.KreonBoldGlyphSpaceOne, Layout.UrlFontSize);
         CouchCoopGameUiTheme.ApplyFont(_notice, CouchCoopGameUiTheme.KreonBoldGlyphSpaceOne, Math.Max(Layout.UrlFontSize - 8, 8));
+        CouchCoopGameUiTheme.ApplyFont(_unavailable, CouchCoopGameUiTheme.KreonBoldGlyphSpaceOne, Layout.UrlFontSize);
         RefreshDialogFont();
         _seatMods.RefreshLocalization();
         if (IsOpen)
@@ -222,6 +226,7 @@ internal sealed partial class CouchCoopQrDialog : CouchCoopModalDialog
         else
         {
             _select.RefreshLocalization();
+            _methodSelect.RefreshLocalization();
         }
         RenderSelection();
     }
@@ -230,6 +235,7 @@ internal sealed partial class CouchCoopQrDialog : CouchCoopModalDialog
     {
         _title.AddThemeFontSizeOverride("font_size", next.TitleFontSize + 16);
         _url.AddThemeFontSizeOverride("font_size", next.UrlFontSize);
+        _unavailable.AddThemeFontSizeOverride("font_size", next.UrlFontSize);
         _notice.AddThemeFontSizeOverride("font_size", Math.Max(next.UrlFontSize - 8, 8));
 
         var qrChanged = next.QuietZoneModules != previous.QuietZoneModules
@@ -261,6 +267,7 @@ internal sealed partial class CouchCoopQrDialog : CouchCoopModalDialog
     protected override void OnClosing()
     {
         _select.Close();
+        _methodSelect.Close();
         _copy.ResetFeedback();
         ClearTips();
     }
@@ -285,26 +292,37 @@ internal sealed partial class CouchCoopQrDialog : CouchCoopModalDialog
         // Keep the player's pick across a reopen when it is still on offer (so re-scanning after a
         // failed attempt does not silently switch them back to the default), falling back to the pick
         // remembered from earlier sessions.
-        var preferredKey = _select.Selected?.SelectionKey
-            ?? CouchCoopQrSelectionPreference.Read()?.PreferredSelectionKey;
-        _select.SetOptions(options, preferredKey);
-
+        var preference = _selection.Network is null ? CouchCoopQrSelectionPreference.Read() : _selection.Memory;
+        _selection.Refresh(options, preference);
+        RefreshSelectors();
         RenderSelection();
     }
 
-    private void OnSelectionChanged(QrHostOption option)
+    private void RefreshSelectors()
     {
-        // Persist first, then re-render: the persisted pick is what the NEXT open restores, and
-        // writing it before the render means a crash mid-render cannot lose the choice.
-        CouchCoopQrSelectionPreference.Write(option);
-        if (option.Kind == QrHostOptionKind.Secure && !option.Enabled)
+        _select.SetOptions(_selection.Networks.Select(network => new QrSelectEntry(
+            network.SelectionKey, QrSelectionModel.NetworkLabel(network),
+            CouchCoopText.FromLiteral(network.Host), network)).ToArray(), _selection.Network?.SelectionKey);
+        _methodSelect.SetOptions(QrSelectionModel.Methods.Select(method =>
+        {
+            var option = _selection.Resolve(method);
+            return new QrSelectEntry(method, QrSelectionModel.MethodLabel(method),
+                new CouchCoopText("couchcoop_qr_method_selector_title"), option, option?.Selectable == true);
+        }).ToArray(), _selection.Method);
+        _select.AccessibilityName = CouchCoopLocalization.Resolve("couchcoop_qr_network_connection_title");
+        _methodSelect.AccessibilityName = CouchCoopLocalization.Resolve("couchcoop_qr_method_selector_title");
+    }
+
+    private void OnSelectionChanged()
+    {
+        CouchCoopQrSelectionPreference.Write(_selection.Memory);
+        RefreshSelectors();
+        RenderSelection();
+        if (_selection.Selected is { Kind: QrHostOptionKind.Secure, Enabled: false, Selectable: true })
         {
             CouchCoop.Mod.CouchCoopMod.RequestSecureOrigin();
             RefreshSecureAvailability(CouchCoop.Mod.CouchCoopMod.HostUiSnapshot);
-            return;
         }
-
-        RenderSelection();
     }
 
     /// <summary>Refresh an open dialog only when the asynchronous secure-origin state changes.</summary>
@@ -335,9 +353,11 @@ internal sealed partial class CouchCoopQrDialog : CouchCoopModalDialog
         // ONE code, whose payload is the selected row and nothing else. The URL label and the QR
         // texture are both built from this one value, so the scanned code and the typed fallback
         // cannot disagree even in principle.
-        if (_select.Selected is not { Enabled: true } option || option.Port <= 0)
+        if (_selection.Url is not { } uri)
         {
-            _url.Text = NoAddressText;
+            _url.Text = string.Empty;
+            _unavailable.Text = _selection.UnavailableMessage.Resolve();
+            _unavailable.Visible = true;
             _qr.Texture = null;
             _qr.Visible = false;
             // There is no address to put on a clipboard, so the affordance is not merely disabled: it is
@@ -350,7 +370,7 @@ internal sealed partial class CouchCoopQrDialog : CouchCoopModalDialog
             return;
         }
 
-        var uri = option.ToUri();
+        _unavailable.Visible = false;
         _url.Text = uri.ToString();
         _qr.Visible = true;
         _copy.Visible = true;
@@ -447,7 +467,9 @@ internal sealed partial class CouchCoopQrDialog : CouchCoopModalDialog
         _qr.CustomMinimumSize = new Vector2(extent, extent);
         _qr.Size = new Vector2(extent, extent);
 
-        var urlTop = QrTop + (_qr.Visible ? extent : 0f) + UrlGap;
+        _unavailable.Position = _qr.Position;
+        _unavailable.Size = new Vector2(extent, extent);
+        var urlTop = QrTop + extent + UrlGap;
         _url.Position = new Vector2(padding, urlTop);
         _url.Size = new Vector2(textWidth, UrlHeight);
 
@@ -497,16 +519,21 @@ internal sealed partial class CouchCoopQrDialog : CouchCoopModalDialog
     // dialog, so changing your mind about the address does not cost you the QR.
     protected override bool OnScrimPressed()
     {
-        if (!_select.IsOpen)
+        if (!_select.IsOpen && !_methodSelect.IsOpen)
         {
             return false;
         }
 
         _select.Close();
+        _methodSelect.Close();
         return true;
     }
 
     // The card is NOT a close surface: only the scrim and the close button dismiss the dialog. A click on
     // the card background at most collapses the open option list.
-    protected override void OnCardPressed() => _select.Close();
+    protected override void OnCardPressed()
+    {
+        _select.Close();
+        _methodSelect.Close();
+    }
 }

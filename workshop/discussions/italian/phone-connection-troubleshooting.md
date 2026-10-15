@@ -12,11 +12,13 @@ La maggior parte dei problemi di connessione si riduce a una manciata di cause. 
 
 ### 1. Scegli un altro indirizzo nella schermata del codice QR
 
-La schermata del codice QR ha un selettore con diversi modi per raggiungere l'host. Se quello che hai scansionato non funziona, scegline un altro e scansiona di nuovo.
+La schermata del QR ha due selettori sulla stessa riga: interfaccia di rete a sinistra e metodo di connessione a destra. **Nome del PC (.local)** è nell’elenco di sinistra. Per diagnosticare un problema di connessione, scegli la tua interfaccia Wi-Fi o Ethernet con un indirizzo numerico e **Indirizzo diretto**, poi scansiona di nuovo. L’indirizzo risultante può essere **192.168.1.5:13337**: questo metodo ha meno elementi che possono fallire e non richiede Internet.
 
-Preferisci il semplice indirizzo numerico (qualcosa come **192.168.1.5:13337**). È quello con meno elementi che possono andare storti. Il nome **.local** e il collegamento web dipendono entrambi da cose esterne alla mod - il tuo router, una connessione a Internet, i permessi del browser - quindi possono non funzionare su una rete in cui l'indirizzo numerico funziona benissimo.
+**Sito web** carica il client da Internet e poi si connette al PC; richiede Internet sul telefono e il permesso del browser di accedere alla rete locale. **Nome di dominio** si connette direttamente al PC tramite il suo dominio generato e richiede anch’esso Internet; alcuni router o provider bloccano questo indirizzo. Entrambi offrono HTTPS, che sblocca funzioni del browser per migliorare prestazioni e autonomia. Il nome **.local** dipende dalla risoluzione dei nomi sulla rete e può fallire dove un indirizzo numerico funziona.
 
-**Su iPhone o iPad, salta del tutto la riga *Collegamento Web*.** Safari - e ogni altro browser su iOS, perché sotto sono tutti Safari - non permette a una pagina caricata da Internet di raggiungere nulla sulla tua rete di casa. È una regola del browser, non un'impostazione, quindi non c'è niente da consentire e niente da cambiare: la pagina si caricherà e poi ti dirà che il gioco non ha risposto, su qualsiasi rete e comunque sia configurato il firewall. Su iPhone o iPad usa **Indirizzo semplice** o **Collegamento sicuro**. (Ora è la pagina stessa a dirlo, se arrivi fin lì.)
+Cambiando interfaccia mantieni il metodo scelto. Se la nuova interfaccia non lo supporta, una spiegazione sostituisce il QR. I metodi non supportati sono grigi e non selezionabili; passa il puntatore sopra di essi o raggiungili con tastiera/controller per leggere il suggerimento aggiuntivo **Non disponibile**. Scegli un’altra interfaccia o un metodo supportato per ripristinare il QR. **Nome del PC (.local)** e Indirizzo fisso supportano solo **Indirizzo diretto**. Se **Nome di dominio** richiede la configurazione iniziale o un nuovo tentativo, rimane selezionabile su un’interfaccia compatibile.
+
+**Su iPhone o iPad, salta del tutto la riga *Sito web*.** Safari - e ogni altro browser su iOS, perché sotto sono tutti Safari - non permette a una pagina caricata da Internet di raggiungere nulla sulla tua rete di casa. È una regola del browser, non un'impostazione, quindi non c'è niente da consentire e niente da cambiare: la pagina si caricherà e poi ti dirà che il gioco non ha risposto, su qualsiasi rete e comunque sia configurato il firewall. Su iPhone o iPad usa **Indirizzo diretto** o **Nome di dominio**. (Ora è la pagina stessa a dirlo, se arrivi fin lì.)
 
 ### 2. Assicurati che il telefono sia davvero sulla stessa rete
 
@@ -65,7 +67,7 @@ Buono a sapersi, inoltre: un ripetitore Wi-Fi o un adattatore powerline configur
 
 ### 7. Impostazioni del browser che bloccano gli indirizzi semplici
 
-Alcuni browser cercano di forzare HTTPS su ogni indirizzo, e il semplice indirizzo numerico non lo usa. (La riga **Collegamento sicuro** nella schermata del codice QR è quella che lo usa: quindi, se il problema è l'HTTPS forzato, vale la pena provare anche quella riga.) Se la barra degli indirizzi mostra un avviso di sicurezza invece del gioco, disattiva queste opzioni e riprova:
+Alcuni browser cercano di forzare HTTPS su ogni indirizzo, e il semplice indirizzo numerico non lo usa. (La riga **Nome di dominio** nella schermata del codice QR è quella che lo usa: quindi, se il problema è l'HTTPS forzato, vale la pena provare anche quella riga.) Se la barra degli indirizzi mostra un avviso di sicurezza invece del gioco, disattiva queste opzioni e riprova:
 
 - Chrome: **Impostazioni > Privacy e sicurezza > Sicurezza > Utilizza sempre connessioni sicure**
 - Firefox: **Impostazioni > Privacy e sicurezza > Sicurezza connessione e software > Impostazioni avanzate > Modalità solo HTTPS**
@@ -82,8 +84,8 @@ L'indirizzo del computer host può cambiare quando si ricollega al Wi-Fi o dopo 
 
 Se hai aggiunto il client alla schermata Home, cosa succede dipende dalla riga da cui l'hai installato:
 
-- Installato dalla riga **Collegamento Web**: continua a funzionare e trova da solo il nuovo indirizzo. Basta aprirlo, senza scansionare di nuovo.
-- Installato dall'**indirizzo numerico** o dalla riga **Collegamento sicuro**: l'icona punta al vecchio indirizzo e non può ripristinarsi. Eliminala e aggiungila di nuovo dopo aver scansionato ancora. (Su Android, installarlo invece dalla riga **Collegamento Web** evita il problema una volta per tutte. Su iPhone o iPad quella riga non può funzionare - vedi la sezione 1 - quindi lì l'unico modo è aggiungere di nuovo l'icona.)
+- Installato dalla riga **Sito web**: continua a funzionare e trova da solo il nuovo indirizzo. Basta aprirlo, senza scansionare di nuovo.
+- Installato dall'**indirizzo numerico** o dalla riga **Nome di dominio**: l'icona punta al vecchio indirizzo e non può ripristinarsi. Eliminala e aggiungila di nuovo dopo aver scansionato ancora. (Su Android, installarlo invece dalla riga **Sito web** evita il problema una volta per tutte. Su iPhone o iPad quella riga non può funzionare - vedi la sezione 1 - quindi lì l'unico modo è aggiungere di nuovo l'icona.)
 
 ---
 
@@ -104,7 +106,7 @@ Lascia un commento nella [discussione di Steam](https://steamcommunity.com/works
 ### Qualsiasi altra cosa puoi aggiungere
 
 - Il messaggio esatto che mostra il telefono, compresa la riga grigia sotto. Una foto dello schermo è perfetta.
-- Quale indirizzo hai scansionato: quello numerico, il nome **.local** o il collegamento web.
+- Quale interfaccia di rete e quale metodo di connessione hai scelto nei due selettori, e l’eventuale spiegazione esatta mostrata al posto del QR.
 - Sistema operativo dell'host, e modello e browser del telefono o tablet.
 - Non funziona su **tutti** i dispositivi o solo su uno? Se un telefono funziona e un altro no, si escludono molte cause.
 - Ha mai funzionato prima, ed è cambiato qualcosa da allora?

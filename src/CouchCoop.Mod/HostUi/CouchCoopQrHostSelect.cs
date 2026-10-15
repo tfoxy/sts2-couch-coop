@@ -3,312 +3,139 @@ using CouchCoop.Mod.Localization;
 
 namespace CouchCoop.Mod.HostUi;
 
-/// <summary>
-/// The QR dialog's option picker: a closed "current" row that expands into a list of
-/// <see cref="QrHostOption"/> rows (adapter × method, mdns last — see <see cref="QrHostOptions"/>).
-/// </summary>
-/// <remarks>
-/// <para>
-/// <b>Why not <c>OptionButton</c> or the game's <c>NDropdown</c>.</b> <c>OptionButton</c> opens a
-/// <c>PopupMenu</c>, which Godot renders in a separate embedded subwindow — invisible to
-/// <c>dev scene tree</c>, so the QA probe could neither see the options nor click one, and a feature
-/// whose whole point is picking the right address would have been untestable. <c>NDropdown</c> is
-/// hard-wired to unique-name children of its own scene and cannot be instanced standalone. So the
-/// list is plain in-tree <c>Control</c>s, styled after <c>scenes/ui/dropdown_item.tscn</c>.
-/// </para>
-/// <para>
-/// Rows are ordinary children, so everything is probeable by node name and driveable by a real click
-/// at a real screen position.
-/// </para>
-/// <para>
-/// <b>Identity is <see cref="QrHostOption.SelectionKey"/>, never the host.</b> Every adapter's web
-/// row shares the public origin's host, so host-keyed matching would treat three different QRs as one
-/// row. The key also carries the method, which is what lets a remembered "web" preference find a web
-/// row after the adapter's address changed under a new DHCP lease.
-/// </para>
-/// <para>
-/// <b>Unavailable rows stay hoverable.</b> An unavailable option renders with its reason in the detail
-/// slot and normally refuses selection and drops out of controller navigation. The HTTPS row remains
-/// selectable while idle or retryable. Every row keeps <see cref="Control.MouseFilter"/>.Stop so its
-/// hover tips still fire, including the answer to why an option is unavailable.
-/// </para>
-/// </remarks>
+/// <summary>An in-tree, focusable picker shared by the network and method controls.</summary>
 internal sealed partial class CouchCoopQrHostSelect : Control
 {
     public const string NodeName = "CouchCoopQrHostSelect";
     public const string CurrentRowName = "CouchCoopQrHostSelectCurrent";
     public const string ListName = "CouchCoopQrHostSelectList";
-
-    /// <summary>Option rows are <c>CouchCoopQrHostOption0</c>, <c>...1</c>, in displayed order.</summary>
     public const string OptionNamePrefix = "CouchCoopQrHostOption";
-
-    /// <summary>Design size of one row, sized to be comfortably tappable from a couch.</summary>
-    public const float RowWidth = 760f;
+    public const float RowWidth = 380f;
     public const float RowHeight = 64f;
 
     private readonly CouchCoopQrHostRow _current;
-    private readonly Panel _currentBackground = new() { Name = "CouchCoopQrHostSelectBackground" };
-    private readonly Control _list = new() { Name = ListName };
-    private readonly Panel _listBackground = new() { Name = "CouchCoopQrHostSelectListBackground" };
+    private readonly Control _list;
+    private readonly Panel _listBackground = new();
     private readonly List<CouchCoopQrHostRow> _rows = [];
-    private IReadOnlyList<QrHostOption> _options = [];
+    private readonly string _prefix;
     private bool _rebuilding;
 
-    /// <summary>Raised when the player picks a DIFFERENT option (never for a re-pick of the current one).</summary>
-    public Action<QrHostOption>? SelectionChanged { get; set; }
-
-    /// <summary>
-    /// Hover/focus entered or left an expanded option row. The dialog hangs that row's method/interface
-    /// hover-tip pair off this callback.
-    /// </summary>
-    public Action<Control, QrHostOption, bool>? RowHover { get; set; }
-
-    /// <summary>Hover/focus entered or left the closed selector row, which has its own generic tip.</summary>
+    public Action<QrSelectEntry>? SelectionChanged { get; set; }
+    public Action<Control, QrSelectEntry, bool>? RowHover { get; set; }
     public Action<Control, bool>? SelectorHover { get; set; }
-
-    /// <summary>
-    /// Raised whenever rows stop being visible or valid (list collapsed, options replaced). The dialog
-    /// uses it to take down any hover tips — a hidden or freed row does not reliably deliver its own
-    /// mouse-exit.
-    /// </summary>
     public Action? OptionsHidden { get; set; }
-
-    /// <summary>
-    /// Raised whenever the set of controls a d-pad can walk changes shape: the list expanded or
-    /// collapsed, the options were rebuilt, or a row's selectability changed. The dialog re-pins its
-    /// focus chain from this — driven from where the rows are (re)built rather than from a scan, so the
-    /// pinned neighbours can never name a row that has been freed or greyed out since.
-    /// </summary>
+    public Action? Opening { get; set; }
     public Action? FocusChainChanged { get; set; }
-
-    public QrHostOption? Selected { get; private set; }
-
     public bool IsOpen => _list.Visible;
 
-    public CouchCoopQrHostSelect()
+    public CouchCoopQrHostSelect(string name = NodeName)
     {
-        Name = NodeName;
-        // Ignore, not Stop: the root's rect is only the closed row, but the expanded list hangs BELOW
-        // it and Godot does not clip children to the parent rect. A Stop root would swallow clicks in
-        // its own band while the rows handled theirs, which reads as a dead strip. The rows are Stop,
-        // so every click that matters is still consumed.
+        Name = name;
+        _prefix = name == NodeName ? OptionNamePrefix : name + "Option";
         MouseFilter = MouseFilterEnum.Ignore;
         CustomMinimumSize = new Vector2(RowWidth, RowHeight);
-
-        _current = new CouchCoopQrHostRow(CurrentRowName, showChevron: true)
-        {
-            Activated = Toggle,
-        };
-        _current.SetAnchorsPreset(LayoutPreset.TopLeft);
+        _current = new CouchCoopQrHostRow(name + "Current", showChevron: true) { Activated = Toggle };
         _current.Size = new Vector2(RowWidth, RowHeight);
-        _current.CustomMinimumSize = new Vector2(RowWidth, RowHeight);
+        _current.CustomMinimumSize = _current.Size;
         _current.HoverChanged = hovered => SelectorHover?.Invoke(_current, hovered);
-
-        // The closed row gets the same backing as the expanded list, always visible: a row that only
-        // shows a color on hover reads as a label, and this control's whole job is to look pressable.
-        _currentBackground.MouseFilter = MouseFilterEnum.Ignore;
-        _currentBackground.Size = new Vector2(RowWidth, RowHeight);
-        _currentBackground.AddThemeStyleboxOverride("panel", CreateBackingStyle());
-
-        _list.Visible = false;
-        _list.MouseFilter = MouseFilterEnum.Ignore;
-        _list.Position = new Vector2(0f, RowHeight);
-
-        // Opaque backing so the list stays readable where it overlaps the QR code.
+        var background = new Panel { Name = name + "Background", MouseFilter = MouseFilterEnum.Ignore, Size = _current.Size };
+        background.AddThemeStyleboxOverride("panel", CreateBackingStyle());
+        _list = new Control { Name = name + "List", Visible = false, MouseFilter = MouseFilterEnum.Ignore,
+            Position = new Vector2(0f, RowHeight) };
         _listBackground.MouseFilter = MouseFilterEnum.Ignore;
         _listBackground.AddThemeStyleboxOverride("panel", CreateBackingStyle());
-
         _list.AddChild(_listBackground);
-        AddChild(_currentBackground);
+        AddChild(background);
         AddChild(_current);
         AddChild(_list);
     }
 
-    public void Install()
-    {
-        _current.Install();
-        foreach (var row in _rows)
-        {
-            row.Install();
-        }
-    }
+    public void Install() => _current.Install();
 
-    /// <summary>Reapplies locale-sensitive fonts to retained rows without changing the open/selection state.</summary>
     public void RefreshLocalization()
     {
         _current.RefreshLocalization();
-        foreach (var row in _rows)
-        {
-            row.RefreshLocalization();
-        }
+        foreach (var row in _rows) row.RefreshLocalization();
     }
 
-    /// <summary>
-    /// Replace the offered options. <paramref name="preferredSelectionKey"/> keeps a pick selected
-    /// across a refresh: an exact <see cref="QrHostOption.SelectionKey"/> match wins, else the default —
-    /// the first ENABLED option.
-    /// </summary>
-    public void SetOptions(IReadOnlyList<QrHostOption> options, string? preferredSelectionKey = null)
+    public void SetOptions(IReadOnlyList<QrSelectEntry> options, string? selectedKey)
     {
-        ArgumentNullException.ThrowIfNull(options);
-        _options = options;
-
-        // Tips down BEFORE the rows they hang off are freed: QueueFree defers the free, so the game's
-        // own TreeExiting backstop fires a frame later than the rows disappear from view.
         OptionsHidden?.Invoke();
-
-        // One focus-chain notification for the whole rebuild, at the end. Half-built intermediate states
-        // (rows freed, none added yet) are not worth pinning, and the collapse below would raise one.
-        // finally, not a plain assignment: a rebuild that threw part-way must still let the dialog re-pin,
-        // or the chain would be frozen against rows that no longer exist for the life of the panel.
         _rebuilding = true;
         try
         {
+            Close();
             foreach (var row in _rows)
             {
+                _list.RemoveChild(row);
                 row.QueueFree();
             }
-
             _rows.Clear();
-            Close();
-
             for (var index = 0; index < options.Count; index++)
             {
-                var option = options[index];
-                var row = new CouchCoopQrHostRow($"{OptionNamePrefix}{index.ToString(System.Globalization.CultureInfo.InvariantCulture)}");
-                row.SetAnchorsPreset(LayoutPreset.TopLeft);
-                row.Position = new Vector2(0f, index * RowHeight);
-                row.Size = new Vector2(RowWidth, RowHeight);
-                row.CustomMinimumSize = new Vector2(RowWidth, RowHeight);
-                row.SetOption(option);
-                if (option.Selectable)
+                var entry = options[index];
+                var row = new CouchCoopQrHostRow(_prefix + index.ToString(System.Globalization.CultureInfo.InvariantCulture))
                 {
-                    row.Activated = () => Choose(option);
-                }
-
-                row.HoverChanged = hovered => RowHover?.Invoke(row, option, hovered);
-                row.SelectableChanged = NotifyFocusChainChanged;
+                    Position = new Vector2(0f, index * RowHeight),
+                    Size = new Vector2(RowWidth, RowHeight),
+                    CustomMinimumSize = new Vector2(RowWidth, RowHeight),
+                };
+                row.SetOption(entry);
+                row.Activated = () => Choose(entry);
+                row.HoverChanged = hovered => RowHover?.Invoke(row, entry, hovered);
                 _rows.Add(row);
                 _list.AddChild(row);
                 row.Install();
-                // After Install: Install() forces FocusMode.All, and an unselectable row must end up None.
-                row.SetSelectable(option.Selectable);
+                row.SetSelectable(entry.Selectable);
             }
-
             _listBackground.Size = new Vector2(RowWidth, MathF.Max(options.Count * RowHeight, 1f));
-
-            Selected = QrHostOptions.RestoreSelection(options, preferredSelectionKey);
-            _current.SetOption(Selected);
+            var selected = options.FirstOrDefault(o => o.Key == selectedKey);
+            _current.SetOption(selected);
+            // The closed control always opens, even when its retained selection cannot activate.
         }
-        finally
-        {
-            _rebuilding = false;
-        }
-
-        // Controller navigation: the dialog's focus chain owns up/down for the closed row, the ENABLED
-        // rows and the dismiss button as ONE closed ring. It is deliberately not wired here any more —
-        // a chain that runs only between the rows leaves the first row's up and the last row's down
-        // unset, and an unset neighbour is exactly how Godot's viewport-wide geometric search hands
-        // focus to a lobby control behind the scrim.
+        finally { _rebuilding = false; }
         NotifyFocusChainChanged();
     }
 
     public void Toggle()
     {
-        if (IsOpen)
-        {
-            Close();
-            return;
-        }
-
-        if (_rows.Count > 0)
-        {
-            _list.Visible = true;
-            NotifyFocusChainChanged();
-        }
+        if (IsOpen) { Close(); return; }
+        if (_rows.Count == 0) return;
+        Opening?.Invoke();
+        _list.Visible = true;
+        NotifyFocusChainChanged();
     }
 
     public void Close()
     {
-        if (_list.Visible)
-        {
-            _list.Visible = false;
-            // Rows just vanished under the cursor; Godot does not reliably deliver their mouse-exit.
-            OptionsHidden?.Invoke();
-            // ...and Godot releases focus from a control it has just hidden, so a controller host who
-            // activated a row is left with focus nowhere until the dialog re-parks it.
-            NotifyFocusChainChanged();
-        }
+        if (!IsOpen) return;
+        _list.Visible = false;
+        OptionsHidden?.Invoke();
+        NotifyFocusChainChanged();
     }
 
-    /// <summary>
-    /// The controls a d-pad can walk in this select right now: the closed row always, plus the
-    /// selectable option rows while the list is expanded.
-    /// </summary>
     public void AppendFocusChain(List<Control> chain)
     {
-        ArgumentNullException.ThrowIfNull(chain);
         chain.Add(_current);
-
-        if (!IsOpen)
-        {
-            return;
-        }
-
-        foreach (var row in _rows)
-        {
-            if (GodotObject.IsInstanceValid(row) && row.IsSelectable)
-            {
-                chain.Add(row);
-            }
-        }
+        if (IsOpen) chain.AddRange(_rows.Where(GodotObject.IsInstanceValid));
     }
 
     private void NotifyFocusChainChanged()
     {
-        if (!_rebuilding)
-        {
-            FocusChainChanged?.Invoke();
-        }
+        if (!_rebuilding) FocusChainChanged?.Invoke();
     }
 
-    // One style per surface: the closed row and the expanded list must stay visually one control,
-    // and a theme stylebox cannot be shared between two Panels without them fighting over it.
+    private void Choose(QrSelectEntry entry)
+    {
+        if (!entry.Selectable) return;
+        Close();
+        SelectionChanged?.Invoke(entry);
+    }
+
     private static StyleBox CreateBackingStyle() => CouchCoopGameUiTheme.CreateFallbackStyle(
         new Color(0.043f, 0.055f, 0.078f, 0.97f), new Color(1f, 1f, 1f, 0.2f), cornerRadius: 8, borderWidth: 2);
-
-    /// <summary>Height the expanded list occupies below the closed row, for the dialog's hit testing.</summary>
-    public float ExpandedHeight => RowHeight + (IsOpen ? _rows.Count * RowHeight : 0f);
-
-    private void Choose(QrHostOption option)
-    {
-        Close();
-        if (!option.Selectable)
-        {
-            return;
-        }
-
-        if (Selected is not null && string.Equals(Selected.SelectionKey, option.SelectionKey, StringComparison.Ordinal))
-        {
-            // The secure row remains the current choice while it is checking or after a failure. Let
-            // selecting it again retry; setup itself coalesces concurrent requests.
-            if (option.Kind == QrHostOptionKind.Secure && !option.Enabled)
-            {
-                SelectionChanged?.Invoke(option);
-            }
-            return;
-        }
-
-        Selected = option;
-        _current.SetOption(option);
-        SelectionChanged?.Invoke(option);
-    }
 }
 
-/// <summary>
-/// One option row, styled after <c>scenes/ui/dropdown_item.tscn</c>: a hidden <c>Highlight</c> ColorRect
-/// revealed on hover/controller focus, over a two-line label.
-/// </summary>
 internal sealed partial class CouchCoopQrHostRow : CouchCoopTextureButton
 {
     public const string HighlightName = "Highlight";
@@ -317,18 +144,11 @@ internal sealed partial class CouchCoopQrHostRow : CouchCoopTextureButton
     private readonly ColorRect _highlight = new() { Name = HighlightName };
     private readonly Label _detail = new() { Name = DetailLabelName };
     private readonly Label? _chevron;
-    private QrHostOption? _option;
+    private QrSelectEntry? _option;
     private bool _selectable = true;
 
     /// <summary>Raised on hover/focus enter (true) and leave (false), selectable or not.</summary>
     public Action<bool>? HoverChanged { get; set; }
-
-    /// <summary>
-    /// Raised when <see cref="SetSelectable"/> changes the answer. A row that stops being selectable
-    /// stops being focusable with it, so anything holding a focus chain that names this row has to
-    /// re-pin — leaving a walk that steps onto an unfocusable row is a dead end in the ring.
-    /// </summary>
-    public Action? SelectableChanged { get; set; }
 
     public CouchCoopQrHostRow(string name, bool showChevron = false)
         : base(name, texture: null, TextureRect.ExpandModeEnum.IgnoreSize, useFallbackPanel: false)
@@ -340,18 +160,25 @@ internal sealed partial class CouchCoopQrHostRow : CouchCoopTextureButton
         Visuals.AddChild(_highlight);
         Visuals.MoveChild(_highlight, 0);
 
-        // Host on the left, source on the right — the address is what the player reads, the detail is
-        // only how they tell two rows apart (which adapter, which blocker).
+        // Two lines fit the half-width control: name above, address or control role below.
         ButtonLabel.HorizontalAlignment = HorizontalAlignment.Left;
         ButtonLabel.AutowrapMode = TextServer.AutowrapMode.Off;
         ButtonLabel.OffsetLeft = 20f;
-        ButtonLabel.OffsetRight = -220f;
-        CouchCoopGameUiTheme.ApplyFont(ButtonLabel, CouchCoopGameUiTheme.KreonBoldGlyphSpaceOne, 30);
+        ButtonLabel.OffsetRight = showChevron ? -52f : -20f;
+        ButtonLabel.AnchorBottom = 0f;
+        ButtonLabel.OffsetTop = 2f;
+        ButtonLabel.OffsetBottom = 37f;
+        ButtonLabel.TextOverrunBehavior = TextServer.OverrunBehavior.TrimEllipsis;
+        CouchCoopGameUiTheme.ApplyFont(ButtonLabel, CouchCoopGameUiTheme.KreonBoldGlyphSpaceOne, 26);
         StyleLabel(ButtonLabel, CouchCoopGameUiTheme.DropdownFontColor);
 
         _detail.SetAnchorsPreset(LayoutPreset.FullRect);
         _detail.MouseFilter = MouseFilterEnum.Ignore;
-        _detail.HorizontalAlignment = HorizontalAlignment.Right;
+        _detail.HorizontalAlignment = HorizontalAlignment.Left;
+        _detail.AnchorTop = 0f;
+        _detail.OffsetTop = 36f;
+        _detail.AutowrapMode = TextServer.AutowrapMode.Off;
+        _detail.TextOverrunBehavior = TextServer.OverrunBehavior.TrimEllipsis;
         _detail.VerticalAlignment = VerticalAlignment.Center;
         _detail.OffsetRight = showChevron ? -52f : -20f;
         _detail.OffsetLeft = 20f;
@@ -374,18 +201,18 @@ internal sealed partial class CouchCoopQrHostRow : CouchCoopTextureButton
         }
     }
 
-    public void SetOption(QrHostOption? option)
+    public void SetOption(QrSelectEntry? option)
     {
         _option = option;
-        Text = option?.Label ?? CouchCoopLocalization.Resolve("couchcoop_option_no_address");
-        _detail.Text = option?.Detail ?? string.Empty;
+        Text = option?.Label.Resolve() ?? CouchCoopLocalization.Resolve("couchcoop_option_no_address");
+        _detail.Text = option?.Detail.Resolve() ?? string.Empty;
     }
 
     /// <summary>Reapplies the current locale's font while retaining row content and interaction state.</summary>
     public void RefreshLocalization()
     {
         SetOption(_option);
-        CouchCoopGameUiTheme.ApplyFont(ButtonLabel, CouchCoopGameUiTheme.KreonBoldGlyphSpaceOne, 30);
+        CouchCoopGameUiTheme.ApplyFont(ButtonLabel, CouchCoopGameUiTheme.KreonBoldGlyphSpaceOne, 26);
         CouchCoopGameUiTheme.ApplyFont(_detail, CouchCoopGameUiTheme.KreonBoldGlyphSpaceOne, 20);
         if (_chevron is not null)
         {
@@ -395,33 +222,20 @@ internal sealed partial class CouchCoopQrHostRow : CouchCoopTextureButton
 
     /// <summary>
     /// Grey and de-activate the row without deafening it: hover (and therefore the explanatory tips)
-    /// keeps working, clicks and controller focus do not. Call AFTER <see cref="CouchCoopTextureButton.Install"/>,
+    /// keeps working, activation does not. Call AFTER <see cref="CouchCoopTextureButton.Install"/>,
     /// which forces <see cref="Control.FocusMode"/> back to All.
     /// </summary>
     public void SetSelectable(bool selectable)
     {
-        var changed = _selectable != selectable;
         _selectable = selectable;
-        FocusMode = selectable ? FocusModeEnum.All : FocusModeEnum.None;
-        Modulate = new Color(1f, 1f, 1f, selectable ? 1f : 0.45f);
-
-        if (changed)
-        {
-            SelectableChanged?.Invoke();
-        }
+        FocusMode = FocusModeEnum.All;
+        Visuals.Modulate = new Color(1f, 1f, 1f, selectable ? 1f : 0.45f);
     }
 
-    public bool IsSelectable => _selectable;
-
-    // An unselectable row must not light up, click or play SFX — but its hover must still be
-    // observable, so the base is skipped rather than the whole handler.
+    // Focus remains visible on disabled rows so keyboard/controller users can read the reason.
     protected override void OnFocus()
     {
-        if (_selectable)
-        {
-            base.OnFocus();
-        }
-
+        base.OnFocus();
         HoverChanged?.Invoke(true);
     }
 

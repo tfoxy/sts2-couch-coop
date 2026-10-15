@@ -10,11 +10,13 @@ Most connection problems come down to a handful of causes. This list is roughly 
 [h1]Things to try[/h1]
 
 [h3]1. Pick a different address on the QR screen[/h3]
-The QR screen has a selector with several ways to reach the host. If the one you scanned does not work, choose another and scan again.
+The QR screen has two selectors in the same row: network interface on the left, connection method on the right. [b]PC name (.local)[/b] is in the left list. For basic connection troubleshooting, choose your Wi-Fi or Ethernet interface with a numeric address and [b]Direct address[/b], then scan again. A resulting address might look like [b]192.168.1.5:13337[/b]; this method has the fewest moving parts and needs no internet.
 
-Prefer the plain numeric address (something like [b]192.168.1.5:13337[/b]). It has the fewest moving parts. The [b].local[/b] name and the web link both depend on things outside the mod - your router, an internet connection, browser permissions - so they can fail on a network where the numeric address works fine.
+[b]Website[/b] loads the client from the internet, then connects to the PC; it needs internet on the phone and browser permission to reach your local network. [b]Domain name[/b] connects directly to the PC through its generated domain and also needs internet; some routers or internet providers block that address. Both provide HTTPS, which unlocks browser features for better performance and battery life. The [b].local[/b] name depends on name resolution on your network and can fail where a numeric interface address works.
 
-[b]On an iPhone or iPad, skip the [i]Web link[/i] row entirely.[/b] Safari - and every other browser on iOS, because they are all Safari underneath - refuses to let a page loaded from the internet reach anything on your home network. That is a rule in the browser, not a setting, so there is nothing to allow and nothing to change: the page will load and then tell you the game didn't answer, on any network, however your firewall is set up. Use [b]Plain address[/b] or [b]Secure link[/b] on an iPhone or iPad. (The page says so itself now, if you get that far.)
+Changing the interface keeps your chosen method. If the new interface does not support it, an explanation replaces the QR code. Unsupported methods are greyed out and cannot be selected; hover over them or focus them with a keyboard/controller to read the additional [b]Unavailable[/b] tip. Choose another interface or a supported method to restore the QR. [b]PC name (.local)[/b] and Fixed address support only [b]Direct address[/b]. If [b]Domain name[/b] needs initial setup or a retry, it remains selectable on a supported interface.
+
+[b]On an iPhone or iPad, skip the [i]Website[/i] row entirely.[/b] Safari - and every other browser on iOS, because they are all Safari underneath - refuses to let a page loaded from the internet reach anything on your home network. That is a rule in the browser, not a setting, so there is nothing to allow and nothing to change: the page will load and then tell you the game didn't answer, on any network, however your firewall is set up. Use [b]Direct address[/b] or [b]Domain name[/b] on an iPhone or iPad. (The page says so itself now, if you get that far.)
 
 [h3]2. Make sure the phone is really on the same network[/h3]
 [list]
@@ -58,8 +60,8 @@ Some routers stop devices on the same Wi-Fi from reaching each other. Look for a
 
 Also worth knowing: a Wi-Fi extender or powerline adapter set up in [b]router[/b] mode instead of [b]bridge[/b] / [b]access point[/b] mode puts your phone on a separate network from the host, even though the Wi-Fi name looks the same.
 
-[h3]7. Browser settings that block plain addresses[/h3]
-Some browsers try to force every address to HTTPS, which the plain numeric address does not use. (The [b]Secure link[/b] row on the QR screen is the one that does - so if HTTPS-forcing is the problem, that row is also worth trying.) If the address bar shows a security warning instead of the game, turn these off and try again:
+[h3]7. Browser settings that block Direct addresses[/h3]
+Some browsers try to force every address to HTTPS, which the plain numeric address does not use. (The [b]Domain name[/b] row on the QR screen is the one that does - so if HTTPS-forcing is the problem, that row is also worth trying.) If the address bar shows a security warning instead of the game, turn these off and try again:
 [list]
 [*]Chrome: [b]Settings > Privacy and security > Security > Always use secure connections[/b]
 [*]Firefox: [b]Settings > Privacy and security > Connection and software security > Advanced settings > HTTPS-Only Mode[/b]
@@ -74,8 +76,8 @@ The host computer's address can change when it reconnects to Wi-Fi or after a ro
 
 If you added the client to your home screen, what happens next depends on which row you installed it from:
 [list]
-[*]Installed from the [b]Web link[/b] row: it keeps working and finds the new address by itself. Just open it - no rescan needed.
-[*]Installed from the [b]numeric address[/b] or the [b]Secure link[/b]: the icon points at the old address and cannot recover. Delete it and add it again after rescanning. (On Android, installing from the [b]Web link[/b] row instead avoids this for good. On an iPhone or iPad that row cannot work - see section 1 - so re-adding the icon is the only way there.)
+[*]Installed from the [b]Website[/b] row: it keeps working and finds the new address by itself. Just open it - no rescan needed.
+[*]Installed from the [b]numeric address[/b] or the [b]Domain name[/b]: the icon points at the old address and cannot recover. Delete it and add it again after rescanning. (On Android, installing from the [b]Website[/b] row instead avoids this for good. On an iPhone or iPad that row cannot work - see section 1 - so re-adding the icon is the only way there.)
 [/list]
 
 [hr][/hr]
@@ -96,7 +98,7 @@ This is the most useful thing you can tell me, because each answer points at a d
 [h3]Anything else you can add[/h3]
 [list]
 [*]The exact message the phone shows, including the grey line under it. A photo of the screen is perfect.
-[*]Which address you scanned - the numeric one, the [b].local[/b] name, or the web link.
+[*]Which network interface and connection method you selected in the two selectors, and the exact explanation shown instead of the QR code, if any.
 [*]Host operating system, and phone/tablet model and browser.
 [*]Does it fail on [b]every[/b] device, or just one? If one phone works and another does not, that rules out a lot.
 [*]Did it ever work before, and did anything change since?

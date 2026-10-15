@@ -35,7 +35,7 @@ internal static class CouchCoopLocalizationTests
         var blocker = QrHostOptions.DescribeSecureFor(new QrAdapterInfo("Wi-Fi", QrAdapterKind.Wifi, System.Net.IPAddress.Parse("127.0.0.1")), null, 0, CouchCoopSecureText.Pending);
         Assert(blocker.Detail.Contains("网络地址", StringComparison.Ordinal), "localized QR blocker detail resolves late");
         var tip = QrHoverTipCopy.MethodTipFor(new QrHostOption("host", 1, QrHostOptionKind.Secure, null));
-        Assert(QrHoverTipCopy.TitleEntries[tip.TitleKey].Contains("安全", StringComparison.Ordinal)
+        Assert(QrHoverTipCopy.TitleEntries[tip.TitleKey] == "域名"
             && tip.Description.Contains("安全", StringComparison.Ordinal), "tooltip titles and descriptions follow Chinese");
         Assert(QrHoverTipCopy.MethodWebDescription.Contains("明确接受", StringComparison.Ordinal)
             && QrHoverTipCopy.MethodSecureDescription.Contains("路由器", StringComparison.Ordinal)

@@ -1,16 +1,19 @@
 namespace CouchCoop.Mod.HostUi;
 
-/// <summary>A remembered pick: which method, and (for per-adapter methods) which address it was for.</summary>
+/// <summary>A remembered method and network, stored independently even when the pair is unsupported.</summary>
 /// <remarks>
 /// The host is the ADAPTER's IPv4, not the row's display host — a web row's display host is the public
 /// origin, which every adapter's web row shares. Null for the methods that have no adapter (mdns,
 /// override).
 /// </remarks>
-public sealed record QrSelectionMemory(string Method, string? Host)
+public sealed record QrSelectionMemory(string Method, string? Host, string? Network = null)
 {
     /// <summary>
     /// The exact <see cref="QrHostOption.SelectionKey"/> this memory names.
     /// </summary>
+    public string? NetworkKey => Network ?? (Method is "mdns" or "override" ? Method
+        : Host is { Length: > 0 } ? $"ipv4|{Host}" : null);
+
     public string PreferredSelectionKey => Host is { Length: > 0 } ? $"{Method}|{Host}" : Method;
 }
 
@@ -48,6 +51,8 @@ public static class CouchCoopQrSelectionPreference
         TryWrite(ResolvePath(), new QrSelectionMemory(option.MethodToken, option.Adapter?.Address.ToString()));
     }
 
+    public static void Write(QrSelectionMemory memory) => TryWrite(ResolvePath(), memory);
+
     internal static QrSelectionMemory? TryRead(string? path)
     {
         if (string.IsNullOrWhiteSpace(path) || !File.Exists(path))
@@ -82,7 +87,10 @@ public static class CouchCoopQrSelectionPreference
                     && hostProperty.ValueKind == System.Text.Json.JsonValueKind.String
                         ? hostProperty.GetString()
                         : null;
-                return new QrSelectionMemory(methodValue, string.IsNullOrWhiteSpace(host) ? null : host);
+                var network = selection.TryGetProperty("network", out var networkProperty)
+                    && networkProperty.ValueKind == System.Text.Json.JsonValueKind.String
+                        ? networkProperty.GetString() : null;
+                return new QrSelectionMemory(methodValue, string.IsNullOrWhiteSpace(host) ? null : host, network);
             }
 
             return null;
@@ -113,6 +121,7 @@ public static class CouchCoopQrSelectionPreference
             writer.WriteStartObject();
             writer.WriteStartObject("selection");
             writer.WriteString("method", memory.Method);
+            if (memory.Network is { Length: > 0 }) writer.WriteString("network", memory.Network);
             if (memory.Host is { Length: > 0 })
             {
                 writer.WriteString("host", memory.Host);
