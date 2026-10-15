@@ -156,7 +156,7 @@
   "couchcoop_qr_method_selector_title": "วิธีเชื่อมต่อ",
   "couchcoop_qr_method_selector_description": "เลือกวิธีที่โทรศัพท์เชื่อมต่อกับพีซีเครื่องนี้ การเปลี่ยนเป็นเว็บไซต์หรือชื่อโดเมนจะใช้ HTTPS ซึ่งเปิดใช้ฟีเจอร์เบราว์เซอร์ที่ช่วยเพิ่มประสิทธิภาพและยืดอายุแบตเตอรี่",
   "couchcoop_qr_unavailable_title": "ไม่พร้อมใช้งาน",
-  "couchcoop_qr_method_requires_interface": "วิธีนี้ต้องใช้อินเทอร์เฟซเครือข่ายที่มีที่อยู่ IP ที่รองรับ โปรดเลือกอินเทอร์เฟซแทนชื่อพีซีหรือที่อยู่คงที่",
+  "couchcoop_qr_method_requires_interface": "เลือกอินเทอร์เฟซเครือข่ายที่มีที่อยู่ IP ที่รองรับเพื่อใช้วิธีนี้",
   "couchcoop_qr_website_unconfigured": "ยังไม่ได้ตั้งค่าเว็บไซต์สำหรับวิธีนี้",
   "couchcoop_qr_pair_unavailable": "{method} ใช้กับ {network} ไม่ได้\n\n{reason}"
 }

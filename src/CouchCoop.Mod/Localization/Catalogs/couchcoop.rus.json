@@ -156,7 +156,7 @@
   "couchcoop_qr_method_selector_title": "Способ подключения",
   "couchcoop_qr_method_selector_description": "Выберите способ подключения телефонов к этому ПК. Веб-сайт и Доменное имя используют HTTPS, открывая функции браузера для повышения производительности и экономии заряда.",
   "couchcoop_qr_unavailable_title": "Недоступно",
-  "couchcoop_qr_method_requires_interface": "Для этого способа нужен сетевой интерфейс с подходящим IP-адресом. Выберите интерфейс вместо имени ПК или фиксированного адреса.",
+  "couchcoop_qr_method_requires_interface": "Чтобы использовать этот способ, выберите сетевой интерфейс с подходящим IP-адресом.",
   "couchcoop_qr_website_unconfigured": "Для этого способа не настроен веб-сайт.",
   "couchcoop_qr_pair_unavailable": "{method} недоступен для {network}.\n\n{reason}"
 }

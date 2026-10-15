@@ -156,7 +156,7 @@
   "couchcoop_qr_method_selector_title": "Metodo di connessione",
   "couchcoop_qr_method_selector_description": "Scegli come i telefoni si connettono a questo PC. Sito web e Nome di dominio usano HTTPS, che sblocca funzioni del browser per migliorare prestazioni e autonomia.",
   "couchcoop_qr_unavailable_title": "Non disponibile",
-  "couchcoop_qr_method_requires_interface": "Questo metodo richiede un’interfaccia di rete con un indirizzo IP compatibile. Scegli un’interfaccia invece di Nome del PC o Indirizzo fisso.",
+  "couchcoop_qr_method_requires_interface": "Scegli un’interfaccia di rete con un indirizzo IP compatibile per usare questo metodo.",
   "couchcoop_qr_website_unconfigured": "Nessun sito web è configurato per questo metodo.",
   "couchcoop_qr_pair_unavailable": "{method} non è disponibile per {network}.\n\n{reason}"
 }

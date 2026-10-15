@@ -156,7 +156,7 @@
   "couchcoop_qr_method_selector_title": "Metoda połączenia",
   "couchcoop_qr_method_selector_description": "Wybierz, jak telefony łączą się z tym komputerem. Witryna i Nazwa domeny zapewniają HTTPS, co odblokowuje funkcje przeglądarki poprawiające wydajność i czas pracy na baterii.",
   "couchcoop_qr_unavailable_title": "Niedostępne",
-  "couchcoop_qr_method_requires_interface": "Ta metoda wymaga interfejsu sieciowego z obsługiwanym adresem IP. Wybierz interfejs zamiast nazwy komputera lub stałego adresu.",
+  "couchcoop_qr_method_requires_interface": "Aby użyć tej metody, wybierz interfejs sieciowy z obsługiwanym adresem IP.",
   "couchcoop_qr_website_unconfigured": "Nie skonfigurowano witryny dla tej metody.",
   "couchcoop_qr_pair_unavailable": "{method} jest niedostępne dla {network}.\n\n{reason}"
 }

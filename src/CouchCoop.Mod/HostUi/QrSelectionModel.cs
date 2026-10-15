@@ -1,4 +1,5 @@
 using CouchCoop.Mod.Localization;
+using CouchCoop.Mod.Server;
 
 namespace CouchCoop.Mod.HostUi;
 
@@ -13,6 +14,22 @@ public sealed class QrSelectionModel
     public QrHostOption? Selected => Resolve(Method);
     public Uri? Url => Selected is { Enabled: true, Port: > 0 } option ? option.ToUri() : null;
     public QrSelectionMemory Memory => new(Method, Network?.Adapter?.Address.ToString(), Network?.SelectionKey);
+
+    /// <summary>The method row's destination; a pending HTTPS preview is not yet a usable QR URL.</summary>
+    public Uri? PreviewUrlFor(string method)
+    {
+        var option = Resolve(method);
+        if (option is { Enabled: true, Port: > 0 }) return option.ToUri();
+
+        // HTTPS shares the browser listener's actual port, even before certificate setup completes.
+        // Only preview a real per-interface option, never the synthetic unsupported pair.
+        if (option is { Kind: QrHostOptionKind.Secure, Adapter: { } adapter }
+            && Network is { Port: > 0 } && _options.Contains(option)
+            && SecureOriginHost.IsSecureOriginEligible(adapter.Address))
+            return (option with { Port = Network.Port }).ToUri();
+
+        return null;
+    }
 
     public void Refresh(IReadOnlyList<QrHostOption> options, QrSelectionMemory? preference)
     {

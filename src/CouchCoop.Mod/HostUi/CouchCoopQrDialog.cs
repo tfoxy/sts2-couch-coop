@@ -307,7 +307,10 @@ internal sealed partial class CouchCoopQrDialog : CouchCoopModalDialog
         {
             var option = _selection.Resolve(method);
             return new QrSelectEntry(method, QrSelectionModel.MethodLabel(method),
-                new CouchCoopText("couchcoop_qr_method_selector_title"), option, option?.Selectable == true);
+                _selection.PreviewUrlFor(method) is { } preview
+                    ? CouchCoopText.FromLiteral(preview.ToString())
+                    : new CouchCoopText("couchcoop_qr_unavailable_title"),
+                option, option?.Selectable == true);
         }).ToArray(), _selection.Method);
         _select.AccessibilityName = CouchCoopLocalization.Resolve("couchcoop_qr_network_connection_title");
         _methodSelect.AccessibilityName = CouchCoopLocalization.Resolve("couchcoop_qr_method_selector_title");
