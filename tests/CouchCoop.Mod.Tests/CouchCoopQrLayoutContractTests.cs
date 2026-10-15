@@ -232,6 +232,10 @@ internal static class CouchCoopQrLayoutContractTests
         // The expanded option list hangs below the closed select row and draws over the QR; at the
         // decision layer's hard cap it must still bottom out inside the card, because the select has no
         // scrolling — the cap IS the fit guarantee.
+        Expect(CouchCoopQrDialog.SelectWidth == 760f && CouchCoopQrHostSelect.RowWidth * 2 == CouchCoopQrDialog.SelectWidth,
+            "equal selector halves retain the original 760-unit row");
+        Expect(CouchCoopQrDialog.SelectTop == 72f && CouchCoopQrDialog.QrTop == 152f,
+            "selectors and QR retain their original vertical positions");
         const float selectTop = CouchCoopQrDialog.SelectTop;
         const float rowHeight = CouchCoopQrHostSelect.RowHeight;
         var listBottom = selectTop + rowHeight + (QrHostOptions.MaxOptions * rowHeight);

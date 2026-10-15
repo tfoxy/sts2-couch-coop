@@ -12,11 +12,13 @@ La plupart des problèmes de connexion se résument à une poignée de causes. C
 
 ### 1. Choisissez une autre adresse sur l'écran du code QR
 
-L'écran du code QR propose un sélecteur avec plusieurs façons de joindre l'hôte. Si celle que vous avez scannée ne fonctionne pas, choisissez-en une autre et scannez à nouveau.
+L’écran du code QR propose deux sélecteurs sur la même ligne : l’interface réseau à gauche et la méthode de connexion à droite. **Nom du PC (.local)** se trouve dans la liste de gauche. Pour diagnostiquer un problème de connexion, choisissez votre interface Wi-Fi ou Ethernet avec une adresse numérique et **Adresse directe**, puis scannez à nouveau. L’adresse obtenue peut ressembler à **192.168.1.5:13337** ; cette méthode dépend du moins d’éléments et ne nécessite pas Internet.
 
-Privilégiez l'adresse numérique simple (quelque chose comme **192.168.1.5:13337**). C'est celle qui dépend du moins d'éléments. Le nom en **.local** et le lien web dépendent tous deux de choses extérieures au mod - votre routeur, une connexion Internet, les autorisations du navigateur - et peuvent donc échouer sur un réseau où l'adresse numérique fonctionne très bien.
+**Site web** charge le client depuis Internet, puis se connecte au PC ; il faut Internet sur le téléphone et l’autorisation du navigateur d’accéder au réseau local. **Nom de domaine** se connecte directement au PC via son domaine généré et nécessite aussi Internet ; certains routeurs ou fournisseurs d’accès bloquent cette adresse. Les deux utilisent HTTPS, qui débloque des fonctions du navigateur améliorant les performances et l’autonomie. Le nom en **.local** dépend de la résolution des noms sur votre réseau et peut échouer là où une adresse numérique fonctionne.
 
-**Sur un iPhone ou un iPad, ignorez complètement la ligne *Lien web*.** Safari - et tous les autres navigateurs sur iOS, puisqu'ils reposent tous sur Safari - refuse qu'une page chargée depuis Internet accède à quoi que ce soit sur votre réseau domestique. C'est une règle du navigateur, pas un réglage : il n'y a donc rien à autoriser et rien à modifier. La page se chargera, puis vous dira que le jeu n'a pas répondu, sur n'importe quel réseau et quelle que soit la configuration de votre pare-feu. Sur un iPhone ou un iPad, utilisez **Adresse simple** ou **Lien sécurisé**. (La page le dit désormais elle-même, si vous allez jusque-là.)
+Changer d’interface conserve la méthode choisie. Si la nouvelle interface ne la prend pas en charge, une explication remplace le code QR. Les méthodes non prises en charge sont grisées et ne peuvent pas être sélectionnées ; survolez-les ou placez le focus dessus au clavier ou à la manette pour lire l’infobulle supplémentaire **Indisponible**. Choisissez une autre interface ou une méthode compatible pour retrouver le code QR. **Nom du PC (.local)** et Adresse fixe prennent uniquement en charge **Adresse directe**. Si **Nom de domaine** nécessite une configuration initiale ou une nouvelle tentative, cette méthode reste sélectionnable sur une interface compatible.
+
+**Sur un iPhone ou un iPad, ignorez complètement la ligne *Site web*.** Safari - et tous les autres navigateurs sur iOS, puisqu'ils reposent tous sur Safari - refuse qu'une page chargée depuis Internet accède à quoi que ce soit sur votre réseau domestique. C'est une règle du navigateur, pas un réglage : il n'y a donc rien à autoriser et rien à modifier. La page se chargera, puis vous dira que le jeu n'a pas répondu, sur n'importe quel réseau et quelle que soit la configuration de votre pare-feu. Sur un iPhone ou un iPad, utilisez **Adresse directe** ou **Nom de domaine**. (La page le dit désormais elle-même, si vous allez jusque-là.)
 
 ### 2. Vérifiez que le téléphone est vraiment sur le même réseau
 
@@ -65,7 +67,7 @@ Certains routeurs empêchent les appareils connectés au même Wi-Fi de communiq
 
 ### 7. Réglages du navigateur qui bloquent les adresses simples
 
-Certains navigateurs essaient d'imposer HTTPS pour toutes les adresses, ce que l'adresse numérique simple n'utilise pas. (La ligne **Lien sécurisé** de l'écran du code QR, elle, l'utilise - donc si le HTTPS forcé est en cause, cette ligne vaut aussi la peine d'être essayée.) Si la barre d'adresse affiche un avertissement de sécurité au lieu du jeu, désactivez ces options et réessayez :
+Certains navigateurs essaient d'imposer HTTPS pour toutes les adresses, ce que l'adresse numérique simple n'utilise pas. (La ligne **Nom de domaine** de l'écran du code QR, elle, l'utilise - donc si le HTTPS forcé est en cause, cette ligne vaut aussi la peine d'être essayée.) Si la barre d'adresse affiche un avertissement de sécurité au lieu du jeu, désactivez ces options et réessayez :
 
 - Chrome : **Paramètres > Confidentialité et sécurité > Sécurité > Toujours utiliser une connexion sécurisée**
 - Firefox : **Paramètres > Vie privée et sécurité > Sécurité logicielle et des connexions > Paramètres avancés > Mode HTTPS uniquement**
@@ -82,8 +84,8 @@ L'adresse de l'ordinateur hôte peut changer quand il se reconnecte au Wi-Fi ou 
 
 Si vous avez ajouté le client à votre écran d'accueil, la suite dépend de la ligne depuis laquelle vous l'avez installé :
 
-- Installé depuis la ligne **Lien web** : il continue de fonctionner et trouve la nouvelle adresse tout seul. Ouvrez-le simplement - pas besoin de scanner à nouveau.
-- Installé depuis l'**adresse numérique** ou la ligne **Lien sécurisé** : l'icône pointe vers l'ancienne adresse et ne peut pas s'en remettre. Supprimez-la et ajoutez-la à nouveau après avoir scanné de nouveau. (Sur Android, installer plutôt depuis la ligne **Lien web** évite définitivement ce problème. Sur un iPhone ou un iPad, cette ligne ne peut pas fonctionner - voir la section 1 -, donc rajouter l'icône est la seule solution.)
+- Installé depuis la ligne **Site web** : il continue de fonctionner et trouve la nouvelle adresse tout seul. Ouvrez-le simplement - pas besoin de scanner à nouveau.
+- Installé depuis l'**adresse numérique** ou la ligne **Nom de domaine** : l'icône pointe vers l'ancienne adresse et ne peut pas s'en remettre. Supprimez-la et ajoutez-la à nouveau après avoir scanné de nouveau. (Sur Android, installer plutôt depuis la ligne **Site web** évite définitivement ce problème. Sur un iPhone ou un iPad, cette ligne ne peut pas fonctionner - voir la section 1 -, donc rajouter l'icône est la seule solution.)
 
 ---
 
@@ -104,7 +106,7 @@ C'est l'information la plus utile que vous puissiez me donner, car chaque répon
 ### Tout ce que vous pouvez ajouter d'autre
 
 - Le message exact affiché par le téléphone, y compris la ligne grise en dessous. Une photo de l'écran, c'est parfait.
-- L'adresse que vous avez scannée - l'adresse numérique, le nom en **.local** ou le lien web.
+- L’interface réseau et la méthode de connexion choisies dans les deux sélecteurs, ainsi que le texte exact affiché à la place du code QR, le cas échéant.
 - Le système d'exploitation de l'hôte, ainsi que le modèle et le navigateur du téléphone ou de la tablette.
 - Est-ce que ça échoue sur **tous** les appareils, ou sur un seul ? Si un téléphone fonctionne et pas un autre, cela élimine beaucoup de pistes.
 - Est-ce que ça a déjà fonctionné, et est-ce que quelque chose a changé depuis ?

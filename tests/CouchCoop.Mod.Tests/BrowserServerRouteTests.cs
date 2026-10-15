@@ -241,6 +241,7 @@ if (args is ["network", ..])
 {
     LanAddressRankingTests.Run();
     QrHostOptionsTests.Run();
+    QrSelectionModelTests.Run();
     SecureOriginTests.Run();
     QrHoverTipCopyTests.Run();
     SecureHeadlessRedirectTests.RunAsync();
@@ -411,6 +412,11 @@ if (args is ["lanes", ..])
 // HeadlessAudioMuteTargetsTests).
 if (args is ["host-ui", ..])
 {
+    QrHostOptionsTests.Run();
+    QrSelectionModelTests.Run();
+    SecureOriginTests.Run();
+    QrHoverTipCopyTests.Run();
+    CouchCoopQrLayoutContractTests.Run();
     CouchCoopButtonActivationTests.Run();
     CouchCoopModalFocusTests.Run();
     CouchCoopModalFocusChainTests.Run();
@@ -438,7 +444,6 @@ if (args is ["host-ui", ..])
     // press writes), plus the geometry that makes it the connection card's mirror. Both pure — the card itself
     // is a Godot node this runner cannot construct. The layout half is also in the full contract suite below.
     SeatModPanelModelTests.Run();
-    CouchCoopQrLayoutContractTests.RunCompanions();
     Console.WriteLine("host ui: ok");
     return;
 }
@@ -861,6 +866,7 @@ LanAddressRankingTests.Run();
 // mdns always last, per-adapter link rows, disabled-with-blocker availability, selection restore, .local
 // derivation, payload parity).
 QrHostOptionsTests.Run();
+QrSelectionModelTests.Run();
 // WS6 secure origin: the pure half — dashed-host derivation, the https scheme, the per-adapter secure ROW
 // (enabled or disabled-with-reason), and the persisted selection preference incl. its checkbox-era reads.
 SecureOriginTests.Run();

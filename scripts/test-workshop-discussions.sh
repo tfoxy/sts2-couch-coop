@@ -60,6 +60,13 @@ check_tree() {
           grep -Fq -- "]($other.md)" "$file" || { echo "$language/$post.md does not link its sibling $other.md"; return 1; }
         fi
       done
+      if [[ "$post" == phone-connection-troubleshooting ]]; then
+        for key in couchcoop_qr_method_ipv4_title couchcoop_qr_method_web_title couchcoop_qr_method_secure_title couchcoop_qr_method_mdns_title; do
+          label="$(jq -er --arg key "$key" '.[$key] | strings | select(length > 0)' \
+            "$repo_root/src/CouchCoop.Mod/Localization/Catalogs/couchcoop.$catalog.json")" || return 1
+          grep -Fq -- "$label" "$file" || { echo "$language/$post.$extension does not quote its current $key"; return 1; }
+        done
+      fi
       if [[ "$language" == english ]]; then
         for other in "${languages[@]:1}"; do
           grep -Fq -- "[url=$repository/workshop/discussions/$other/$post.md]" "$file" ||
@@ -106,6 +113,10 @@ expect_refusal missing-steam-link 'french/reporting-a-problem.md does not link i
 qr_label="$(jq -r '.couchcoop_qr_button' "$repo_root/src/CouchCoop.Mod/Localization/Catalogs/couchcoop.deu.json")"
 break_copy stale-label german/phone-connection-troubleshooting.md "$qr_label"
 expect_refusal stale-label 'german/phone-connection-troubleshooting.md does not quote its current couchcoop_qr_button'
+
+method_label="$(jq -r '.couchcoop_qr_method_web_title' "$repo_root/src/CouchCoop.Mod/Localization/Catalogs/couchcoop.en.json")"
+break_copy stale-method english/phone-connection-troubleshooting.bbcode "$method_label"
+expect_refusal stale-method 'english/phone-connection-troubleshooting.bbcode does not quote its current couchcoop_qr_method_web_title'
 
 break_copy missing-translation-link english/reporting-a-problem.bbcode "/thai/reporting-a-problem.md]"
 expect_refusal missing-translation-link 'english/reporting-a-problem.bbcode does not link its thai translation'

@@ -12,11 +12,13 @@ La mayoría de los problemas de conexión se deben a un puñado de causas. Esta 
 
 ### 1. Elige otra dirección en la pantalla del QR
 
-La pantalla del QR tiene un selector con varias formas de conectarse al anfitrión. Si la que has escaneado no funciona, elige otra y vuelve a escanear.
+La pantalla del QR tiene dos selectores en la misma fila: interfaz de red a la izquierda y método de conexión a la derecha. **Nombre del PC (.local)** está en la lista de la izquierda. Para diagnosticar problemas de conexión, elige tu interfaz Wi-Fi o Ethernet con una dirección numérica y **Dirección directa**, y vuelve a escanear. La dirección resultante puede ser **192.168.1.5:13337**; este método tiene menos elementos que puedan fallar y no necesita internet.
 
-Es preferible la dirección numérica simple (algo como **192.168.1.5:13337**). Es la que menos piezas tiene que puedan fallar. El nombre **.local** y el enlace web dependen de cosas ajenas al mod (tu router, una conexión a internet, los permisos del navegador), así que pueden fallar en una red en la que la dirección numérica funciona perfectamente.
+**Sitio web** carga el cliente desde internet y luego se conecta al PC; necesita internet en el móvil y permiso del navegador para acceder a tu red local. **Nombre de dominio** se conecta directamente al PC mediante su dominio generado y también necesita internet; algunos routers o proveedores bloquean esa dirección. Ambos ofrecen HTTPS, que habilita funciones del navegador para mejorar el rendimiento y la autonomía. El nombre **.local** depende de la resolución de nombres de tu red y puede fallar donde una dirección numérica funciona.
 
-**En un iPhone o iPad, olvídate por completo de la opción *Enlace web*.** Safari (y cualquier otro navegador de iOS, porque por dentro todos son Safari) no permite que una página cargada desde internet acceda a nada de tu red doméstica. Es una norma del navegador, no un ajuste, así que no hay nada que permitir ni nada que cambiar: la página cargará y después te dirá que el juego no ha respondido, en cualquier red y tengas el firewall como lo tengas. En un iPhone o iPad, usa **Dirección simple** o **Enlace seguro**. (Ahora la propia página te lo advierte, si llegas hasta ahí).
+Cambiar la interfaz conserva el método elegido. Si la nueva interfaz no lo admite, una explicación sustituye al QR. Los métodos no compatibles aparecen en gris y no se pueden seleccionar; pasa el cursor por encima o enfócalos con el teclado o mando para leer la ayuda adicional **No disponible**. Elige otra interfaz o un método compatible para recuperar el QR. **Nombre del PC (.local)** y Dirección fija solo admiten **Dirección directa**. Si **Nombre de dominio** necesita la configuración inicial o un nuevo intento, sigue siendo seleccionable en una interfaz compatible.
+
+**En un iPhone o iPad, olvídate por completo de la opción *Sitio web*.** Safari (y cualquier otro navegador de iOS, porque por dentro todos son Safari) no permite que una página cargada desde internet acceda a nada de tu red doméstica. Es una norma del navegador, no un ajuste, así que no hay nada que permitir ni nada que cambiar: la página cargará y después te dirá que el juego no ha respondido, en cualquier red y tengas el firewall como lo tengas. En un iPhone o iPad, usa **Dirección directa** o **Nombre de dominio**. (Ahora la propia página te lo advierte, si llegas hasta ahí).
 
 ### 2. Comprueba que el teléfono está de verdad en la misma red
 
@@ -65,7 +67,7 @@ También conviene saber que un repetidor Wi-Fi o un adaptador PLC configurado en
 
 ### 7. Ajustes del navegador que bloquean las direcciones simples
 
-Algunos navegadores intentan forzar HTTPS en todas las direcciones, y la dirección numérica simple no lo usa. (La opción **Enlace seguro** de la pantalla del QR sí lo usa, así que, si el problema es que se fuerza HTTPS, también merece la pena probarla). Si la barra de direcciones muestra una advertencia de seguridad en lugar del juego, desactiva estas opciones y vuelve a intentarlo:
+Algunos navegadores intentan forzar HTTPS en todas las direcciones, y la dirección numérica simple no lo usa. (La opción **Nombre de dominio** de la pantalla del QR sí lo usa, así que, si el problema es que se fuerza HTTPS, también merece la pena probarla). Si la barra de direcciones muestra una advertencia de seguridad en lugar del juego, desactiva estas opciones y vuelve a intentarlo:
 
 - Chrome: **Configuración > Privacidad y seguridad > Seguridad > Usar siempre conexiones seguras**
 - Firefox: **Ajustes > Privacidad & Seguridad > Seguridad de la conexión y del software > Configuración avanzada > Modo solo-HTTPS**
@@ -82,8 +84,8 @@ La dirección del ordenador anfitrión puede cambiar cuando vuelve a conectarse 
 
 Si añadiste el cliente a la pantalla de inicio, lo que pase a continuación depende de la opción desde la que lo instalaste:
 
-- Instalado desde la opción **Enlace web**: sigue funcionando y encuentra la nueva dirección por sí solo. Solo tienes que abrirlo, sin volver a escanear.
-- Instalado desde la **dirección numérica** o desde **Enlace seguro**: el icono apunta a la dirección antigua y no puede recuperarse. Bórralo y vuelve a añadirlo después de escanear de nuevo. (En Android, instalarlo desde la opción **Enlace web** evita esto para siempre. En un iPhone o iPad esa opción no puede funcionar, como se explica en la sección 1, así que volver a añadir el icono es la única solución).
+- Instalado desde la opción **Sitio web**: sigue funcionando y encuentra la nueva dirección por sí solo. Solo tienes que abrirlo, sin volver a escanear.
+- Instalado desde la **dirección numérica** o desde **Nombre de dominio**: el icono apunta a la dirección antigua y no puede recuperarse. Bórralo y vuelve a añadirlo después de escanear de nuevo. (En Android, instalarlo desde la opción **Sitio web** evita esto para siempre. En un iPhone o iPad esa opción no puede funcionar, como se explica en la sección 1, así que volver a añadir el icono es la única solución).
 
 ---
 
@@ -104,7 +106,7 @@ Es lo más útil que puedes decirme, porque cada respuesta apunta a una causa di
 ### Cualquier otra cosa que puedas añadir
 
 - El mensaje exacto que muestra el teléfono, incluida la línea gris de debajo. Una foto de la pantalla es perfecta.
-- Qué dirección escaneaste: la numérica, el nombre **.local** o el enlace web.
+- Qué interfaz de red y método de conexión has elegido en los dos selectores, y el texto exacto que aparece en lugar del QR, si lo hay.
 - El sistema operativo del anfitrión, y el modelo y el navegador del teléfono o la tableta.
 - ¿Falla en **todos** los dispositivos o solo en uno? Si un teléfono funciona y otro no, eso descarta muchas cosas.
 - ¿Ha funcionado alguna vez, y ha cambiado algo desde entonces?

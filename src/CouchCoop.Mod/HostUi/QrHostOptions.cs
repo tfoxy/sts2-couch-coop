@@ -447,7 +447,7 @@ public enum QrHostOptionKind
     Web,
 }
 
-/// <summary>One row of the QR dialog's single select.</summary>
+/// <summary>A resolved connection option for one network and method pair.</summary>
 /// <param name="Adapter">The adapter the row is derived from; null for the override and mdns rows.</param>
 /// <param name="AbsoluteUri">
 /// An explicit payload, for the one kind whose URL is not derivable from host+port:

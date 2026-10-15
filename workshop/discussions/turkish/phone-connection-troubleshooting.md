@@ -12,11 +12,13 @@ Bağlantı sorunlarının çoğu birkaç nedenden birine dayanır. Bu liste kaba
 
 ### 1. QR ekranında farklı bir adres seç
 
-QR ekranında, host bilgisayara ulaşmanın birkaç yolunu sunan bir seçici var. Taradığın adres çalışmıyorsa başka birini seçip yeniden tara.
+QR ekranında aynı satırda iki seçici var: solda ağ arayüzü, sağda bağlantı yöntemi. **PC adı (.local)** soldaki listede. Temel bağlantı sorunlarını araştırmak için sayısal adresi olan Wi-Fi veya Ethernet arayüzünü ve **Doğrudan adres** seçeneğini seçip yeniden tara. Adres **192.168.1.5:13337** gibi görünebilir; bu yöntem en az bileşene dayanır ve internet gerektirmez.
 
-Mümkünse düz sayısal adresi tercih et (**192.168.1.5:13337** gibi bir şey). En az bileşene dayanan seçenek budur. **.local** adı ve web bağlantısı, modun dışındaki şeylere bağlıdır — yönlendiricin, internet bağlantısı, tarayıcı izinleri — bu yüzden sayısal adresin sorunsuz çalıştığı bir ağda bile başarısız olabilirler.
+**Web sitesi** istemciyi internetten yükler, ardından bilgisayara bağlanır; telefonda internet ve yerel ağa erişmek için tarayıcı izni gerekir. **Alan adı**, oluşturulan alan adı üzerinden bilgisayara doğrudan bağlanır ve o da internet gerektirir; bazı yönlendiriciler veya sağlayıcılar bu adresi engeller. İkisi de HTTPS sağlayarak daha iyi performans ve pil ömrü için tarayıcı özelliklerini açar. **.local** adı ağındaki ad çözümlemesine bağlıdır ve sayısal adresin çalıştığı yerde başarısız olabilir.
 
-**iPhone veya iPad'de *Web bağlantısı* satırını hiç kullanma.** Safari — ve iOS'taki diğer tüm tarayıcılar, çünkü hepsinin altında aslında Safari vardır — internetten yüklenen bir sayfanın ev ağındaki hiçbir şeye ulaşmasına izin vermez. Bu bir ayar değil, tarayıcının kuralıdır; yani izin verilecek ya da değiştirilecek bir şey yoktur: sayfa yüklenir ve ardından, hangi ağda olursan ol ve güvenlik duvarın nasıl ayarlanmış olursa olsun, oyunun yanıt vermediğini söyler. iPhone veya iPad'de **Düz adres** ya da **Güvenli bağlantı** satırını kullan. (O noktaya kadar gelirsen sayfa artık bunu kendisi de söylüyor.)
+Arayüzü değiştirmek seçtiğin yöntemi korur. Yeni arayüz bunu desteklemiyorsa QR yerine bir açıklama görünür. Desteklenmeyen yöntemler gri gösterilir ve seçilemez; fareyle üzerlerine gelerek veya klavye/kontrolcüyle odaklanarak ek **Kullanılamıyor** ipucunu okuyabilirsin. QR kodunu geri getirmek için başka bir arayüz veya desteklenen bir yöntem seç. **PC adı (.local)** ve Sabit adres yalnızca **Doğrudan adres** seçeneğini destekler. **Alan adı** ilk kurulum veya yeniden deneme gerektiriyorsa desteklenen bir arayüzde seçilebilir kalır.
+
+**iPhone veya iPad'de *Web sitesi* satırını hiç kullanma.** Safari — ve iOS'taki diğer tüm tarayıcılar, çünkü hepsinin altında aslında Safari vardır — internetten yüklenen bir sayfanın ev ağındaki hiçbir şeye ulaşmasına izin vermez. Bu bir ayar değil, tarayıcının kuralıdır; yani izin verilecek ya da değiştirilecek bir şey yoktur: sayfa yüklenir ve ardından, hangi ağda olursan ol ve güvenlik duvarın nasıl ayarlanmış olursa olsun, oyunun yanıt vermediğini söyler. iPhone veya iPad'de **Doğrudan adres** ya da **Alan adı** satırını kullan. (O noktaya kadar gelirsen sayfa artık bunu kendisi de söylüyor.)
 
 ### 2. Telefonun gerçekten aynı ağda olduğundan emin ol
 
@@ -63,11 +65,11 @@ Bazı yönlendiriciler aynı Wi-Fi'daki cihazların birbirine ulaşmasını enge
 
 Şunu da bilmekte fayda var: **bridge** (köprü) / **access point** (erişim noktası) modu yerine **router** (yönlendirici) modunda kurulmuş bir Wi-Fi genişletici veya powerline adaptörü, Wi-Fi adı aynı görünse bile telefonunu host bilgisayardan ayrı bir ağa koyar.
 
-### 7. Düz adresleri engelleyen tarayıcı ayarları
+### 7. Doğrudan adresleri engelleyen tarayıcı ayarları
 
-Bazı tarayıcılar her adresi HTTPS'ye zorlamaya çalışır; düz sayısal adres ise HTTPS kullanmaz. (QR ekranında HTTPS kullanan satır **Güvenli bağlantı** satırıdır — yani sorun HTTPS zorlamasıysa bu satırı da denemeye değer.) Adres çubuğunda oyun yerine bir güvenlik uyarısı görünüyorsa şunları kapatıp yeniden dene:
+Bazı tarayıcılar her adresi HTTPS'ye zorlamaya çalışır; düz sayısal adres ise HTTPS kullanmaz. (QR ekranında HTTPS kullanan satır **Alan adı** satırıdır — yani sorun HTTPS zorlamasıysa bu satırı da denemeye değer.) Adres çubuğunda oyun yerine bir güvenlik uyarısı görünüyorsa şunları kapatıp yeniden dene:
 
-- Chrome: **Ayarlar > Gizlilik ve güvenlik > Güvenlik > Her zaman güvenli bağlantılar kullan**
+- Chrome: **Ayarlar > Gizlilik ve güvenlik > Güvenlik > Her zaman Alan adılar kullan**
 - Firefox: **Ayarlar > Gizlilik ve güvenlik > Bağlantı ve yazılım güvenliği > Gelişmiş ayarlar > Yalnızca HTTPS modu**
 
 iPhone'da ayrıca **Ayarlar > *adınız* > iCloud > Özel Geçiş** bölümünü ve **Ayarlar > Uygulamalar > Safari** bölümündeki “IP Adresini Gizle” ayarını kontrol et.
@@ -82,8 +84,8 @@ Host bilgisayarın adresi, Wi-Fi'a yeniden bağlandığında veya yönlendirici 
 
 İstemciyi ana ekranına eklediysen, bundan sonra ne olacağı onu hangi satırdan yüklediğine bağlıdır:
 
-- **Web bağlantısı** satırından yüklendiyse: çalışmaya devam eder ve yeni adresi kendisi bulur. Sadece aç — yeniden taramaya gerek yok.
-- **Sayısal adresten** veya **Güvenli bağlantı** satırından yüklendiyse: simge eski adresi gösterir ve kendini düzeltemez. Simgeyi sil ve yeniden taradıktan sonra tekrar ekle. (Android'de bunun yerine **Web bağlantısı** satırından yüklemek bu sorunu kalıcı olarak önler. iPhone veya iPad'de bu satır çalışamaz — 1. bölüme bak — bu yüzden orada tek yol simgeyi yeniden eklemektir.)
+- **Web sitesi** satırından yüklendiyse: çalışmaya devam eder ve yeni adresi kendisi bulur. Sadece aç — yeniden taramaya gerek yok.
+- **Sayısal adresten** veya **Alan adı** satırından yüklendiyse: simge eski adresi gösterir ve kendini düzeltemez. Simgeyi sil ve yeniden taradıktan sonra tekrar ekle. (Android'de bunun yerine **Web sitesi** satırından yüklemek bu sorunu kalıcı olarak önler. iPhone veya iPad'de bu satır çalışamaz — 1. bölüme bak — bu yüzden orada tek yol simgeyi yeniden eklemektir.)
 
 ---
 
@@ -104,7 +106,7 @@ Bana söyleyebileceğin en faydalı şey budur, çünkü her yanıt farklı bir 
 ### Ekleyebileceğin diğer her şey
 
 - Telefonun gösterdiği mesajın tam metni, altındaki gri satır dahil. Ekranın bir fotoğrafı mükemmel olur.
-- Hangi adresi taradığın — sayısal adresi mi, **.local** adını mı, yoksa web bağlantısını mı.
+- İki seçicide hangi ağ arayüzünü ve bağlantı yöntemini seçtiğin ve varsa QR yerine gösterilen açıklamanın tam metni.
 - Host bilgisayarın işletim sistemi, ayrıca telefon/tablet modeli ve tarayıcı.
 - **Her** cihazda mı başarısız oluyor, yoksa yalnızca birinde mi? Bir telefon çalışıp diğeri çalışmıyorsa bu pek çok olasılığı eler.
 - Daha önce hiç çalıştı mı ve o zamandan beri bir şey değişti mi?

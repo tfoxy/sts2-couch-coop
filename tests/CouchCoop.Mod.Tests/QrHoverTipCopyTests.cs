@@ -20,6 +20,7 @@ internal static class QrHoverTipCopyTests
         DescriptionsAreRichTextSafeAndTipSized();
         EnglishDescriptionsPreserveTheFullGuidance();
         MethodTipFoldsInTheLiveState();
+        DisabledMethodHasSeparateTip();
 
         Console.WriteLine("QrHoverTipCopyTests: ok");
     }
@@ -183,7 +184,7 @@ internal static class QrHoverTipCopyTests
     {
         CouchCoopLocalization.SetLanguageForTests("eng");
         Expect(QrHoverTipCopy.NetworkConnectionDescription
-            == "Choose which network connection and link type phones use to join. Change this if a phone cannot connect, or if you want to try a faster, more reliable option.",
+            == "Choose the network this PC uses to reach your phone. PC name (.local) uses the computer’s name instead of an interface address.",
             "the selector tip explains what the input changes and when to change it");
         Expect(QrHoverTipCopy.AdapterOtherDescription
             == "A VPN or virtual network (a work VPN, a virtual machine, and the like). Only phones on that same network can use this address — on normal home Wi-Fi, pick one of the options above instead.",
@@ -203,6 +204,24 @@ internal static class QrHoverTipCopyTests
         Expect(QrHoverTipCopy.CopyLinkDescription
             == "Copies this address to your clipboard, so you can paste it into a chat message or type it into a phone's browser.",
             "the copy tip names both things a copied address is actually for");
+    }
+
+    private static void DisabledMethodHasSeparateTip()
+    {
+        var option = OptionOf(QrHostOptionKind.Web, enabled: false, reason: "Choose a network interface.");
+        var tips = CouchCoopQrHoverTips.OptionTipSpecsFor(option);
+        Expect(tips.Count == 3 && tips[2].TitleKey == QrHoverTipCopy.UnavailableTitleKey,
+            "a disabled method adds a distinct third tip after method and interface");
+        Expect(tips[2].Description == "Choose a network interface.", "the added tip carries the reason");
+        Expect(!tips[0].Description.Contains(tips[2].Description), "the reason is not duplicated inside the method tip");
+        var closed = CouchCoopQrHoverTips.MethodSelectorTipSpecsFor(option);
+        Expect(closed.Count == 2 && closed[1] == tips[2], "closed unsupported selection also explains the blocker");
+        Expect(closed[0].Description == "Choose how phones connect to this PC. Switching to Website or Domain name provides HTTPS, which unlocks browser features for better performance and battery life.",
+            "method selector retains the approved performance explanation");
+        Expect(CouchCoopQrHoverTips.MethodSelectorTipSpecsFor(OptionOf(QrHostOptionKind.Web)).Count == 1,
+            "usable methods have no unavailable tip");
+        Expect(QrHoverTipCopy.UnavailableTipFor(OptionOf(QrHostOptionKind.Secure, enabled: false,
+            reason: "Preparing", canSelectWhenUnavailable: true)) is null, "setup is selectable, not disabled");
     }
 
     private static void MethodTipFoldsInTheLiveState()

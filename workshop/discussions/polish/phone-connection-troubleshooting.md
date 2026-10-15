@@ -12,11 +12,13 @@ Większość problemów z połączeniem sprowadza się do kilku przyczyn. Ta lis
 
 ### 1. Wybierz inny adres na ekranie kodu QR
 
-Ekran kodu QR ma przełącznik z kilkoma sposobami połączenia z hostem. Jeśli zeskanowany adres nie działa, wybierz inny i zeskanuj go ponownie.
+Ekran QR ma dwa pola wyboru w jednym wierszu: interfejs sieciowy po lewej i metodę połączenia po prawej. **Nazwa komputera (.local)** znajduje się na lewej liście. Przy diagnozowaniu połączenia wybierz interfejs Wi-Fi lub Ethernet z adresem numerycznym i **Adres bezpośredni**, a następnie zeskanuj ponownie. Adres może wyglądać jak **192.168.1.5:13337**; ta metoda ma najmniej zależności i nie wymaga internetu.
 
-Najlepiej wybierz zwykły adres numeryczny (coś w rodzaju **192.168.1.5:13337**). Ma najmniej elementów, które mogą zawieść. Nazwa **.local** i link internetowy zależą od rzeczy spoza modyfikacji - twojego routera, połączenia z internetem, uprawnień przeglądarki - więc mogą nie działać w sieci, w której adres numeryczny działa bez zarzutu.
+**Witryna** wczytuje klienta z internetu, a potem łączy się z komputerem; wymaga internetu w telefonie i zgody przeglądarki na dostęp do sieci lokalnej. **Nazwa domeny** łączy się bezpośrednio z komputerem przez wygenerowaną domenę i również wymaga internetu; niektóre routery lub dostawcy blokują ten adres. Obie metody zapewniają HTTPS, co odblokowuje funkcje przeglądarki poprawiające wydajność i czas pracy na baterii. Nazwa **.local** zależy od rozpoznawania nazw w sieci i może nie działać tam, gdzie adres numeryczny działa.
 
-**Na iPhonie lub iPadzie całkowicie pomiń wiersz *Link internetowy*.** Safari - i każda inna przeglądarka na iOS, bo pod spodem wszystkie są Safari - nie pozwala stronie wczytanej z internetu łączyć się z czymkolwiek w twojej sieci domowej. To zasada przeglądarki, a nie ustawienie, więc nie ma na co zezwalać ani czego zmieniać: strona się wczyta, a potem poinformuje, że gra nie odpowiedziała - w każdej sieci i niezależnie od ustawień zapory. Na iPhonie lub iPadzie używaj opcji **Zwykły adres** lub **Bezpieczny link**. (Strona sama o tym teraz mówi, jeśli do tego dojdziesz.)
+Zmiana interfejsu zachowuje wybraną metodę. Jeśli nowy interfejs jej nie obsługuje, zamiast kodu QR pojawia się wyjaśnienie. Nieobsługiwane metody są wyszarzone i nie można ich wybrać; najedź na nie kursorem lub ustaw na nich fokus klawiaturą/kontrolerem, aby przeczytać dodatkową podpowiedź **Niedostępne**. Wybierz inny interfejs lub obsługiwaną metodę, aby przywrócić QR. **Nazwa komputera (.local)** i Stały adres obsługują tylko **Adres bezpośredni**. Jeśli **Nazwa domeny** wymaga pierwszej konfiguracji lub ponownej próby, nadal można wybrać tę metodę na obsługiwanym interfejsie.
+
+**Na iPhonie lub iPadzie całkowicie pomiń wiersz *Witryna*.** Safari - i każda inna przeglądarka na iOS, bo pod spodem wszystkie są Safari - nie pozwala stronie wczytanej z internetu łączyć się z czymkolwiek w twojej sieci domowej. To zasada przeglądarki, a nie ustawienie, więc nie ma na co zezwalać ani czego zmieniać: strona się wczyta, a potem poinformuje, że gra nie odpowiedziała - w każdej sieci i niezależnie od ustawień zapory. Na iPhonie lub iPadzie używaj opcji **Adres bezpośredni** lub **Nazwa domeny**. (Strona sama o tym teraz mówi, jeśli do tego dojdziesz.)
 
 ### 2. Upewnij się, że telefon naprawdę jest w tej samej sieci
 
@@ -65,7 +67,7 @@ Warto też wiedzieć: wzmacniacz Wi-Fi lub adapter PLC (powerline) skonfigurowan
 
 ### 7. Ustawienia przeglądarki, które blokują zwykłe adresy
 
-Niektóre przeglądarki próbują wymuszać HTTPS dla każdego adresu, a zwykły adres numeryczny z niego nie korzysta. (Korzysta z niego wiersz **Bezpieczny link** na ekranie kodu QR - więc jeśli problemem jest wymuszanie HTTPS, warto spróbować także tego wiersza.) Jeśli pasek adresu zamiast gry pokazuje ostrzeżenie o bezpieczeństwie, wyłącz te opcje i spróbuj ponownie:
+Niektóre przeglądarki próbują wymuszać HTTPS dla każdego adresu, a Adres bezpośredni numeryczny z niego nie korzysta. (Korzysta z niego wiersz **Nazwa domeny** na ekranie kodu QR - więc jeśli problemem jest wymuszanie HTTPS, warto spróbować także tego wiersza.) Jeśli pasek adresu zamiast gry pokazuje ostrzeżenie o bezpieczeństwie, wyłącz te opcje i spróbuj ponownie:
 
 - Chrome: **Ustawienia > Prywatność i bezpieczeństwo > Bezpieczeństwo > Zawsze używaj bezpiecznych połączeń**
 - Firefox: **Ustawienia > Prywatność i bezpieczeństwo > Bezpieczeństwo połączeń i oprogramowania > Ustawienia zaawansowane > Tryb używania wyłącznie protokołu HTTPS**
@@ -82,8 +84,8 @@ Adres komputera hosta może się zmienić, gdy ponownie łączy się z Wi-Fi lub
 
 Jeśli klient został dodany do ekranu głównego, dalszy ciąg zależy od tego, z którego wiersza go zainstalowano:
 
-- Zainstalowany z wiersza **Link internetowy**: dalej działa i sam znajduje nowy adres. Po prostu go otwórz - ponowne skanowanie nie jest potrzebne.
-- Zainstalowany z **adresu numerycznego** lub z wiersza **Bezpieczny link**: ikona wskazuje stary adres i nie potrafi się naprawić. Usuń ją i dodaj ponownie po ponownym zeskanowaniu kodu. (Na Androidzie instalacja z wiersza **Link internetowy** raz na zawsze pozwala tego uniknąć. Na iPhonie lub iPadzie ten wiersz nie może działać - zobacz sekcję 1 - więc tam jedynym wyjściem jest ponowne dodanie ikony.)
+- Zainstalowany z wiersza **Witryna**: dalej działa i sam znajduje nowy adres. Po prostu go otwórz - ponowne skanowanie nie jest potrzebne.
+- Zainstalowany z **adresu numerycznego** lub z wiersza **Nazwa domeny**: ikona wskazuje stary adres i nie potrafi się naprawić. Usuń ją i dodaj ponownie po ponownym zeskanowaniu kodu. (Na Androidzie instalacja z wiersza **Witryna** raz na zawsze pozwala tego uniknąć. Na iPhonie lub iPadzie ten wiersz nie może działać - zobacz sekcję 1 - więc tam jedynym wyjściem jest ponowne dodanie ikony.)
 
 ---
 
@@ -104,7 +106,7 @@ To najbardziej przydatna rzecz, jaką możesz mi przekazać, bo każda odpowied�
 ### Co jeszcze możesz dodać
 
 - Dokładny komunikat wyświetlany przez telefon, razem z szarym wierszem pod nim. Zdjęcie ekranu będzie idealne.
-- Który adres zeskanowano - numeryczny, nazwę **.local** czy link internetowy.
+- Który interfejs sieciowy i metodę połączenia wybrano w obu polach oraz dokładne wyjaśnienie wyświetlane zamiast QR, jeśli się pojawiło.
 - System operacyjny hosta oraz model i przeglądarka telefonu/tabletu.
 - Czy nie działa na **każdym** urządzeniu, czy tylko na jednym? Jeśli jeden telefon działa, a inny nie, to wyklucza wiele przyczyn.
 - Czy kiedykolwiek wcześniej działało i czy od tego czasu coś się zmieniło?
