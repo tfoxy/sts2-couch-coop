@@ -1361,32 +1361,51 @@ async function checkH2(ctx) {
 }
 
 /**
- * Find a hand card whose drag raises the game's targeting arrow.
- *
- * ALWAYS ends with the gesture CANCELLED (dragged back to the press point, then released), whatever it
- * found. The caller then starts its own clean press. That costs one extra grab cycle and buys the thing
- * that matters: the measured drag begins from a settled hand rather than from wherever the probe left
- * the pointer — a sweep that restarts near the fan while a card is still held drops the card back into
- * the hand, and every sample after that is a plain hover being scored as a targeting drag.
+ * Qualify the actual held card by its targeting arrow, then restore a whole, settled hand.
+ * H3 measures tracking; the probe's return gesture is not a cancellation assertion (H9 owns that).
+ * Use the existing native-input cancellation when needed and fail setup if a card was consumed or
+ * remains selected. Never turn an unmeasured drag into a skip or silently qualify another card.
  */
 async function findTargetedCard(page, pointer, hand) {
   const named = hand.cards.filter((c) => /STRIKE|BASH|ANGER/i.test(c.name ?? ""));
   const candidates = [...named, ...hand.cards.filter((c) => !named.includes(c))].filter((c) => c.centre.onStage !== false);
+  const attempts = [];
   for (const c of candidates.slice(0, 4)) {
     await pointer.press(c.centre.cx, c.centre.cy);
     let sawArrow = false;
+    const heldIds = new Set();
     for (let i = 1; i <= 5; i++) {
       await pointer.drag(c.centre.cx, c.centre.cy - i * 60);
       await sleep(80);
-      if ((await readFocus(page, FOCUS_POSE_RISE_PX)).arrows > 0) sawArrow = true;
+      const focus = await readFocus(page, FOCUS_POSE_RISE_PX);
+      if (focus.arrows > 0) {
+        sawArrow = true;
+        for (const id of focus.outOfFan) heldIds.add(id);
+      }
     }
     await pointer.drag(c.centre.cx, c.centre.cy);
     await sleep(150);
     await pointer.release(c.centre.cx, c.centre.cy);
     await sleep(600);
-    if (sawArrow) return c;
+    const beforeCleanup = await readFocus(page, FOCUS_POSE_RISE_PX);
+    const explicitCancel = await cancelArmedSelection(page, pointer);
+    const rested = await awaitFanRest(page);
+    const restored = await readHand(page);
+    const afterCleanup = await readFocus(page, FOCUS_POSE_RISE_PX);
+    const inFanIds = restored?.cards.map((card) => card.holderId) ?? [];
+    const missingIds = hand.cards.map((card) => card.holderId).filter((id) => !inFanIds.includes(id));
+    attempts.push({ requestedHolder: c.holderId, sawArrow, heldIds: [...heldIds], beforeCleanup,
+      explicitCancel, rested, afterCleanup, inFanIds, missingIds });
+    if (!rested || afterCleanup.arrows > 0 || afterCleanup.outOfFan.length > 0 || missingIds.length > 0) {
+      return { card: null, attempts, error: "targeting qualification did not restore the same whole, settled hand" };
+    }
+    if (sawArrow) {
+      const card = heldIds.size === 1 ? hand.cards.find((candidate) => heldIds.has(candidate.holderId)) : null;
+      if (!card) return { card: null, attempts, error: "the targeting arrow did not identify exactly one held hand card" };
+      return { card, attempts };
+    }
   }
-  return null;
+  return { card: null, attempts };
 }
 
 /**
@@ -1417,14 +1436,19 @@ async function checkH3(ctx) {
   const { page, pointer, combo, outDir } = ctx;
   const hand = await handAtRest(page);
   if (!hand || hand.cards.length < 3) return skip("no hand to drag from");
-  const probe = await findTargetedCard(page, pointer, hand);
+  const qualification = await findTargetedCard(page, pointer, hand);
+  if (qualification.error) return bad(qualification.error, { qualification: qualification.attempts });
+  const probe = qualification.card;
   if (!probe) return skip("no hand card raised a targeting arrow (fixture has no targeted attack in hand?)");
   // Re-resolve through the aim guard, not just through a rested read: the probe's own grab moved the fan, and
   // the press has to start from where the card IS — with the hit surface it is computed from agreeing with the
   // pose the game has for it. Pressing through a lagging one lands on a NEIGHBOUR, which is exactly how this
   // check used to report "the targeting arrow was gone" while dragging an untargeted card.
   const centre = await livePoint(page, [probe.holderId], "centre");
-  if (centre === null) return skip("the qualified card left the hand before the measured drag");
+  if (centre === null) return bad("the qualified card was absent after setup restored the hand", {
+    qualification: qualification.attempts, qualifiedHolder: probe.holderId, hand: await readHand(page),
+    focus: await readFocus(page, FOCUS_POSE_RISE_PX)
+  });
   if (centre.aimStale) {
     return bad(`the qualified card's hit surface never agreed with the game's pose for it, so the press could not be aimed`, { aimStale: centre.aimStale, card: { holder: probe.holderId, name: probe.name } });
   }
@@ -1496,6 +1520,7 @@ async function checkH3(ctx) {
     screenshot: shot,
     spreadFactor,
     qualifiedCard: { holder: probe.holderId, name: probe.name },
+    qualification: qualification.attempts,
     heldDuringDrag: heldDuring,
     arrowsPerFarSample: arrowsFar,
     arrowsAtScreenshot: f.arrows,
@@ -1521,7 +1546,7 @@ async function checkH3(ctx) {
       detail
     );
   }
-  return ok(`"${probe.name}" held throughout, arrow up for all ${far.length} far samples, coordinate within (${worst.errX}, ${worst.errY}) px; ${shot}`);
+  return ok(`"${probe.name}" held throughout, arrow up for all ${far.length} far samples, coordinate within (${worst.errX}, ${worst.errY}) px; ${shot}`, detail);
 }
 
 /**
@@ -2656,12 +2681,17 @@ async function checkH11(ctx) {
     distinctCanvasRestPairs: corrections.distinctCanvasRestPairs,
     canvasRestPairEvidence: corrections.canvasRestPairEvidence,
     invalidFrameIdentity: corrections.invalidFrameIdentity,
+    cancellationEvidence: corrections.cancellationEvidence,
+    invalidCancellations: corrections.invalidCancellations,
     jumpLandingRows: jumps.length === 0 ? [] : (landingLog?.rows ?? []).filter((row) =>
       jumps.some((jump) => jump.id === row.id))
   };
   if (corrections.invalidFrameIdentity.length > 0) {
     const first = corrections.invalidFrameIdentity[0];
     return fail(`invalid canvas frame identity at trace frame ${first.frame} (${first.reason})`, { phase2Evidence });
+  }
+  if (corrections.invalidCancellations.length > 0) {
+    return fail("a cancelled transform did not adopt its authoritative pose", { phase2Evidence });
   }
   const failedFence = states.find((state) => state.restFence?.status === "fail");
   if (failedFence) return fail(`no valid committed rest frame for ${failedFence.label}: ${failedFence.restFence.reason}`,

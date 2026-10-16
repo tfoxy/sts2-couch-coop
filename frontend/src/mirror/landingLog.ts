@@ -111,7 +111,7 @@ export interface LandingArm {
 }
 
 /** How a row stopped being open. */
-export type LandingClose = "settle" | "superseded" | "timeout" | "gone";
+export type LandingClose = "settle" | "superseded" | "timeout" | "gone" | "cancelled";
 
 /** One closed arm→settle pair: what the client decided, and what it turned out to be. */
 export interface LandingRow {
@@ -123,6 +123,11 @@ export interface LandingRow {
   settleAt: number;
   durationMs: number;
   closedBy: LandingClose;
+  cancellationAt: number | null;
+  cancellationPose: Affine | null;
+  cancellationDrawn: Affine | null;
+  cancellationDriftPx: number | null;
+  cancellationBasisDelta: number | null;
   endpointGame: Affine;
   endpointDrawn: Affine;
   /** The drawn pose read off the frame at close, with the cosmetic lift TAKEN BACK OUT so it matches `endpointDrawn`. */
@@ -201,6 +206,7 @@ export interface LandingProbe {
 
 /** An arm still in flight. */
 interface OpenRow {
+  cancellation?: { atMs: number; pose: Affine; drawn: Affine };
   seq: number;
   arm: LandingArm;
   /** Filled by the first tick after the arm — the lift the raise pass computed for the new endpoint. */
@@ -231,6 +237,7 @@ export interface LandingLog {
   noteArm(arm: LandingArm): void;
   /** A tracked node left the scene — close its row unmeasured rather than leaking it. */
   noteGone(id: string): void;
+  noteCancellation(id: string, atMs: number, pose: Affine, drawn: Affine): void;
   /** Close whatever is ready. Call at the end of a completed frame, and before a read. */
   tick(atMs: number, probe: LandingProbe): void;
   /** The closed rows, oldest first. */
@@ -303,6 +310,13 @@ export function createLandingLog(capacity = LANDING_LOG_CAPACITY): LandingLog {
       settleAt: atMs,
       durationMs: row.arm.durationMs,
       closedBy,
+      cancellationAt: row.cancellation?.atMs ?? null,
+      cancellationPose: row.cancellation?.pose ?? null,
+      cancellationDrawn: row.cancellation?.drawn ?? null,
+      cancellationDriftPx: row.cancellation
+        ? Math.hypot(settled[4] - row.cancellation.drawn[4], settled[5] - row.cancellation.drawn[5]) : null,
+      cancellationBasisDelta: row.cancellation
+        ? Math.max(...settled.slice(0, 4).map((value, i) => Math.abs(value - row.cancellation!.drawn[i]))) : null,
       endpointGame: row.arm.endpointGame,
       endpointDrawn: row.arm.endpointDrawn,
       settledDrawn: settled,
@@ -355,6 +369,11 @@ export function createLandingLog(capacity = LANDING_LOG_CAPACITY): LandingLog {
       });
     },
 
+    noteCancellation(id, atMs, pose, drawn) {
+      const row = open.get(id);
+      if (row) row.cancellation = { atMs, pose: [...pose], drawn: [...drawn] };
+    },
+
     noteGone(id) {
       const row = open.get(id);
       if (row !== undefined) {
@@ -374,6 +393,11 @@ export function createLandingLog(capacity = LANDING_LOG_CAPACITY): LandingLog {
           row.raiseDyAtArm = probe.raiseDy(id);
         }
         const channelLive = probe.channelLive(id);
+        if (row.cancellation && !channelLive) {
+          close(row, atMs, "cancelled", probe.drawnGlobal(id), probe.raiseDy(id), null,
+            row.cancellation.pose, row.lastDrawn, row.lastRaiseDy);
+          continue;
+        }
         const windowEnd = row.arm.atMs + row.arm.durationMs;
         if (atMs < windowEnd) {
           // INSIDE THE WINDOW, and a re-emit here is one of two completely different events.
@@ -494,6 +518,11 @@ export const LANDING_UNSCORED: readonly LandingCause[] = ["gone", "superseded", 
 export function classifyLanding(row: LandingRow, spreadFactor: number): LandingCause {
   if (row.closedBy === "gone") {
     return "gone";
+  }
+  if (row.closedBy === "cancelled") {
+    if ((row.cancellationDriftPx ?? Infinity) > LANDING_EPS_PX) return "endpoint-pose";
+    if ((row.cancellationBasisDelta ?? Infinity) > LANDING_EPS_BASIS) return "endpoint-basis";
+    return "game-moved";
   }
   if (row.supersededBy !== null) {
     return "superseded";

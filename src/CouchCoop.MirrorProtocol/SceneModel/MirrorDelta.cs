@@ -14,7 +14,8 @@ public sealed record MirrorTweenHint(
     double? EndOpacity,
     string? Group,
     IReadOnlyList<double>? StartTransform,
-    double? StartOpacity);
+    double? StartOpacity,
+    IReadOnlyList<double>? CancelTransform = null);
 
 // WS-3: a declarative CARD FLIGHT the client integrates locally (TS MirrorCardFlightHint) — the discard→draw
 // shuffle sweep, or (`Kind`) the hand→discard fly that carries the card the player just played.

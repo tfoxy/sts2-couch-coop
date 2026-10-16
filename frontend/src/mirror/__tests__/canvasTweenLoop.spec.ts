@@ -1173,3 +1173,16 @@ describe("canvas tween loop: transformEndpointInto", () => {
     expect(loop.advance(1200)).toBe(1400);
   });
 });
+
+
+it("releasing a transform keeps independent element and self opacity channels running", () => {
+  const { loop, poses, alphaOf } = harness();
+  poses.set("n", translate(0)); alphaOf.set("n", 1);
+  loop.applyHints([linear(transformHint("n", translate(100), 200)),
+    linear(opacityHint("n", 0, 200)), linear(selfOpacityHint("n", 0.2, 200))], 0);
+  expect(loop.releaseTransform("n")).toBe(true);
+  const current = sample(loop, "n", 100);
+  expect(current.mask & SAMPLE_TRANSFORM).toBe(0);
+  expect(current.opacity).toBeCloseTo(0.5);
+  expect(current.selfOpacity).toBeCloseTo(0.6);
+});

@@ -259,6 +259,38 @@ function invalidCanvasFrameIdentities(trace) {
   return errors;
 }
 
+/** Legacy recordings carry the cancellation close time; new logs retain the actual signal time. */
+const cancellationAt = (row) => row.cancellationAt ?? row.settleAt;
+
+/** Score every explicit cancellation independently, including one that arrives after natural expiry. */
+function scoreCancellations(holders, landingRows, trace) {
+  const evidence = [], invalid = [];
+  for (const cancel of landingRows) {
+    if (cancel.closedBy !== "cancelled") continue;
+    const at = cancellationAt(cancel);
+    if (trace.length === 0 || at < trace[0].t || at > trace.at(-1).t) continue;
+    const rows = holders.get(cancel.id) ?? [];
+    const before = rows.findLast((row) => row.t <= at);
+    const first = rows.findIndex((row) => row.stage === "canvas"
+      ? row.t > at && Number.isSafeInteger(row.presentEpoch) && row.presentEpoch > (before?.presentEpoch ?? -1)
+      : row.t >= at);
+    const rest = first < 0 ? -1 : findRestEvidence(rows, first, at);
+    const samples = rest === -1 ? [] : rows.slice(first, rest.index + 1).map((row) => {
+      const shift = row.fm === 1 ? fieldDxAtOriginX(row.gx, row.f ?? 1) : row.sd;
+      return { t: row.t, presentEpoch: row.presentEpoch,
+        errorPx: Math.hypot(row.dx - row.gx - shift, row.dy - row.gy - row.rd) };
+    });
+    const item = { id: cancel.id, atMs: at, samples,
+      worstPx: Math.max(cancel.cancellationDriftPx ?? Infinity, ...samples.map((row) => row.errorPx)),
+      basisDelta: cancel.cancellationBasisDelta ?? Infinity, pose: cancel.cancellationPose ?? null,
+      restMissing: rest === -1 };
+    evidence.push(item);
+    if (item.restMissing || !Array.isArray(item.pose) || item.worstPx > CORRECTION_PX || item.basisDelta > 1e-4)
+      invalid.push(item);
+  }
+  return { evidence, invalid };
+}
+
 /**
  * Score every hand-off in a trace.
  *
@@ -285,6 +317,7 @@ export function scoreCorrections(trace, landingRows = []) {
   let outOfFan = 0;
   let superseded = 0;
   let focusCatchups = 0;
+  const { evidence: cancellationEvidence, invalid: invalidCancellations } = scoreCancellations(holders, landingRows, trace);
   let distinctCanvasRestPairs = 0;
   const canvasRestPairEvidence = [];
   const invalidFrameIdentity = invalidCanvasFrameIdentities(trace);
@@ -327,6 +360,11 @@ export function scoreCorrections(trace, landingRows = []) {
       const spreadFactor = settled.f ?? landing.f ?? 1;
       const logged = matchingLandingRows(landingRows, landing).filter((row) =>
         row.armAt <= landing.t && row.settleAt >= landing.t);
+      // Only a cancellation received by this hand-off can retire its endpoint. A later cancellation
+      // owns a separate adoption event; it cannot rewrite a natural expiry that already reached rest.
+      const cancelled = logged.find((row) => row.closedBy === "cancelled"
+        && cancellationAt(row) >= landing.t && cancellationAt(row) <= rows[i].t);
+      if (cancelled) continue;
       if (successorExplainsRest(logged, landingRows, landing, rows[i], settled)) {
         superseded++;
         continue;
@@ -418,6 +456,8 @@ export function scoreCorrections(trace, landingRows = []) {
   corrections.outOfFan = outOfFan;
   corrections.superseded = superseded;
   corrections.focusCatchups = focusCatchups;
+  corrections.cancellationEvidence = cancellationEvidence;
+  corrections.invalidCancellations = invalidCancellations;
   corrections.distinctCanvasRestPairs = distinctCanvasRestPairs;
   corrections.canvasRestPairEvidence = canvasRestPairEvidence;
   corrections.invalidFrameIdentity = invalidFrameIdentity;

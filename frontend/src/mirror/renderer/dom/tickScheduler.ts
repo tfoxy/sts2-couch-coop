@@ -32,6 +32,7 @@ const TICK_SLOP_MS = 1;
  */
 export function createTickScheduler(callbacks: TickSchedulerCallbacks): TickScheduler {
   let tickRaf = 0;
+  let ticking = false;
   let tickTimer: ReturnType<typeof setTimeout> | null = null;
   let tickTimerAt = Infinity;
   let tickParkedAt = -1;
@@ -82,7 +83,7 @@ export function createTickScheduler(callbacks: TickSchedulerCallbacks): TickSche
 
   function schedule(): void {
     const now = callbacks.now();
-    if (tickRaf !== 0) return;
+    if (tickRaf !== 0 || ticking) return;
     refreshAnimDeadlines(now);
     const due = Math.min(spineDueAt, intentDueAt, tweenDueAt, trailDueAt, flightDueAt);
     if (due === Infinity || typeof requestAnimationFrame !== "function") {
@@ -129,21 +130,28 @@ export function createTickScheduler(callbacks: TickSchedulerCallbacks): TickSche
   }
 
   function runScheduledTick(): void {
-    mirrorWalkStats.tickWakeups++;
-    noteMirrorFrame();
-    const now = callbacks.now();
-    const period = callbacks.animationPeriodMs();
-    if (callbacks.hasActiveSpine() && (period <= 0 || now + TICK_SLOP_MS >= spineDueAt)) {
-      callbacks.tickSpine(now, false);
-      spineDueAt = period > 0 ? animGridNext(now, period) : now;
+    // An animator can reconcile geometry during its tick. Its schedule request must wait until all
+    // returned deadlines replace the expired ones, or it would queue a redundant immediate frame.
+    ticking = true;
+    try {
+      mirrorWalkStats.tickWakeups++;
+      noteMirrorFrame();
+      const now = callbacks.now();
+      const period = callbacks.animationPeriodMs();
+      if (callbacks.hasActiveSpine() && (period <= 0 || now + TICK_SLOP_MS >= spineDueAt)) {
+        callbacks.tickSpine(now, false);
+        spineDueAt = period > 0 ? animGridNext(now, period) : now;
+      }
+      if (callbacks.hasActiveIntents() && (period <= 0 || now + TICK_SLOP_MS >= intentDueAt)) {
+        callbacks.tickIntent(now, false);
+        intentDueAt = period > 0 ? animGridNext(now, period) : now;
+      }
+      if (callbacks.hasActiveTweens() && now + TICK_SLOP_MS >= tweenDueAt) tweenDueAt = callbacks.tickTweens(now);
+      if (callbacks.hasActiveTrails() && now + TICK_SLOP_MS >= trailDueAt) trailDueAt = callbacks.tickTrails(now);
+      if (callbacks.hasActiveFlights() && now + TICK_SLOP_MS >= flightDueAt) flightDueAt = callbacks.tickFlights(now);
+    } finally {
+      ticking = false;
     }
-    if (callbacks.hasActiveIntents() && (period <= 0 || now + TICK_SLOP_MS >= intentDueAt)) {
-      callbacks.tickIntent(now, false);
-      intentDueAt = period > 0 ? animGridNext(now, period) : now;
-    }
-    if (callbacks.hasActiveTweens() && now + TICK_SLOP_MS >= tweenDueAt) tweenDueAt = callbacks.tickTweens(now);
-    if (callbacks.hasActiveTrails() && now + TICK_SLOP_MS >= trailDueAt) trailDueAt = callbacks.tickTrails(now);
-    if (callbacks.hasActiveFlights() && now + TICK_SLOP_MS >= flightDueAt) flightDueAt = callbacks.tickFlights(now);
     schedule();
   }
 

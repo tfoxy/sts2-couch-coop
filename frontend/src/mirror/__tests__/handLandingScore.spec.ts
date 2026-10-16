@@ -499,3 +499,88 @@ describe("H11 phase 2 — the landing is the channel's endpoint, not a sample of
     });
   });
 });
+
+
+describe("explicit cancelled landings still gate the first adopted pose", () => {
+  const rows: Row[] = [
+    { t: 100, drawn: [1006.25, 1030], game: [830, 1030], ep: [805, 1030], sd: 207.5, rd: 0, live: true },
+    { t: 120, drawn: [1197.5, 1030], game: [958, 1030], ep: null, sd: 239.5, rd: 0, live: false },
+    { t: 140, drawn: [1197.5, 1030], game: [958, 1030], ep: null, sd: 239.5, rd: 0, live: false },
+  ];
+  const cancelled = { id: "H", armAt: 0, settleAt: 110, endpointGame: [1, 0, 0, 1, 805, 1030],
+    closedBy: "cancelled", cancellationPose: [1, 0, 0, 1, 958, 1030],
+    cancellationDriftPx: 0, cancellationBasisDelta: 0 };
+  it("scores explicit cancellation adoption separately from the abandoned prediction", () => {
+    const out = scoreCorrections(trace(rows, { f: 1.25 }), [cancelled]);
+    expect(out).toHaveLength(0);
+    expect(out.cancellationEvidence).toHaveLength(1);
+    expect(out.invalidCancellations).toEqual([]);
+  });
+  it("does not excuse the same jump without a producer cancellation", () => {
+    const out = scoreCorrections(trace(rows, { f: 1.25 }));
+    expect(out.filter((row: { overruled: boolean }) => row.overruled)).toHaveLength(1);
+  });
+  it("rejects a wrong first adopted picture even when the later resting pose is correct", () => {
+    const wrong = rows.map((row, i) => i === 1 ? { ...row, drawn: [1150, 1030] as [number, number] } : row);
+    wrong.push({ ...rows[2], t: 160 });
+    const out = scoreCorrections(trace(wrong, { f: 1.25 }), [cancelled]);
+    expect(out.invalidCancellations).toHaveLength(1);
+    expect(out.invalidCancellations[0].worstPx).toBe(47.5);
+  });
+  it("rejects a wrong native adoption recorded between trace samples", () => {
+    const out = scoreCorrections(trace(rows, { f: 1.25 }), [{ ...cancelled, cancellationDriftPx: 12 }]);
+    expect(out.invalidCancellations).toHaveLength(1);
+  });
+});
+
+describe("cancellation follows its event, not an earlier natural expiry", () => {
+  const rows: Row[] = [
+    { t: 26890.3, presentEpoch: 401, drawn: [1582.5, 922], game: [1266, 1041], ep: [1191, 1041], sd: 316.5, rd: -119, live: true },
+    { t: 27038.8, presentEpoch: 402, drawn: [1491.324674, 922], game: [1266, 1041], ep: [1191, 1041], sd: 298.264935, rd: -119, live: false },
+    { t: 27147.7, presentEpoch: 403, drawn: [1488.75, 922], game: [1266, 1041], ep: null, sd: 297.75, rd: -119, live: false },
+    { t: 27213.2, presentEpoch: 404, drawn: [1488.75, 922], game: [1266, 1041], ep: null, sd: 297.75, rd: -119, live: false },
+    { t: 27381.2, presentEpoch: 407, drawn: [1488.75, 922], game: [1266, 1041], ep: null, sd: 297.75, rd: -119, live: false },
+    { t: 27511.2, presentEpoch: 408, drawn: [1488.75, 871], game: [1191, 871], ep: null, sd: 297.75, rd: 0, live: false },
+    { t: 27616.1, presentEpoch: 409, drawn: [1488.75, 871], game: [1191, 871], ep: null, sd: 297.75, rd: 0, live: false },
+    { t: 27732.8, presentEpoch: 410, drawn: [1488.75, 871], game: [1191, 871], ep: null, sd: 297.75, rd: 0, live: false },
+  ];
+  const cancel = { id: "H", armAt: 26747, durationMs: 279, settleAt: 27400,
+    cancellationAt: 27381.200000047684, closedBy: "cancelled", endpointGame: [1, 0, 0, 1, 1191, 1041],
+    cancellationPose: [1, 0, 0, 1, 1191, 871], cancellationDriftPx: 0, cancellationBasisDelta: 0 };
+  const score = (samples = rows) => scoreCorrections(trace(samples, { f: 1.25, stage: "canvas" }), [cancel]);
+
+  it("scores the old endpoint at rest and separately checks the later committed adoption", () => {
+    const out = score();
+    expect(out.filter((row: { overruled: boolean }) => row.overruled)).toEqual([]);
+    expect(out.invalidCancellations).toEqual([]);
+    expect(out.cancellationEvidence).toHaveLength(1);
+    expect(out.cancellationEvidence[0].samples.map((row: { t: number }) => row.t)).toEqual([27511.2, 27616.1]);
+    expect(out.cancellationEvidence[0].atMs).toBe(cancel.cancellationAt);
+  });
+
+  it("still rejects a genuinely wrong first adoption that later corrects itself", () => {
+    const wrong = rows.map((row) => row.t === 27511.2 ? { ...row, drawn: [1493.75, 871] as [number, number] } : row);
+    expect(score(wrong).invalidCancellations[0].worstPx).toBe(5);
+  });
+
+  it("cannot excuse an earlier wrong resting endpoint with a future cancellation", () => {
+    const wrong = rows.map((row) => row.t === 27147.7 || row.t === 27213.2
+      ? { ...row, drawn: [1493.75, 922] as [number, number] } : row);
+    expect(score(wrong).filter((row: { overruled: boolean }) => row.overruled)).toHaveLength(1);
+  });
+
+  it("checks cancellation even when the trace never sampled its former live channel", () => {
+    expect(score(rows.slice(1)).cancellationEvidence).toHaveLength(1);
+  });
+
+  it("does not treat a repeated pre-event committed picture as cancellation adoption", () => {
+    const repeated = [...rows.slice(0, 5), { ...rows[4], t: 27450 }, ...rows.slice(5)];
+    const out = score(repeated);
+    expect(out.invalidCancellations).toEqual([]);
+    expect(out.cancellationEvidence[0].samples[0].presentEpoch).toBe(408);
+  });
+
+  it("fails incomplete cancellation evidence instead of silently dropping its obligation", () => {
+    expect(score(rows.slice(0, 6)).invalidCancellations[0].restMissing).toBe(true);
+  });
+});

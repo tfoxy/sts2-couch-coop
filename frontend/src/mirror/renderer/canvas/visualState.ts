@@ -1109,30 +1109,33 @@ export function createCanvasVisualState(
         const across = Math.abs(pastX * travelY - pastY * travelX) / length;
         if (along > 1.5 && across <= Math.max(12, along * 0.5)) passedEndpoints.add(id);
       }
-      const planned = planTweenHints(next.pendingHints, (hint) =>
-        targetFacts(next, hint, passedEndpoints),
-      );
-      // BEFORE the arm, and only for a node the loop is not already driving: the pose an un-owned node is drawn
-      // at is the pose its ease will leave, and it stops being readable the instant the channel exists (see
-      // `onTransformArm`). Planned hints rather than wire hints, so a refused or rebased one never reports an arm
-      // that does not happen.
-      for (const hint of planned) {
-        if (hint.channel === "transform" && !loop.ownsTransform(hint.nodeId)) ports.onTransformArm(hint.nodeId, at);
-      }
-      loop.applyHints(planned, at);
-      for (const hint of planned) {
-        if (hint.channel === "transform" && hint.endTransform !== null) {
-          transformParents.set(
-            hint.nodeId,
-            next.nodes.get(hint.nodeId)?.parentId ?? null,
-          );
-          if (ports.isLandingTarget(hint.nodeId))
-            landingArms.push({
-              nodeId: hint.nodeId,
-              end: hint.endTransform,
-              durationMs: hint.durationMs,
-              atMs: at,
+      for (const wire of next.pendingHints) {
+        if (wire.cancelTransform?.length === 6) {
+          // The retained state has already selected the newest authoritative pose. Release only replay
+          // ownership; opacity and a separately owned card flight keep their own lifetimes.
+          flushLandingArms(next);
+          loop.releaseTransform(wire.targetId);
+          transformOverrides.delete(wire.targetId);
+          transformParents.delete(wire.targetId);
+          if (streamedGlobalInto(next, wire.targetId, streamedGlobal)) {
+            loop.noteStreamedValue(wire.targetId, "transform", streamedGlobal, at);
+            const priced = priceLandingArms(next, [{ nodeId: wire.targetId, end: [...streamedGlobal], atMs: at, durationMs: 0 }])[0];
+            if (priced) landingLog.noteCancellation(wire.targetId, at, priced.endpointGame, priced.endpointDrawn);
+          }
+          continue;
+        }
+        const planned = planTweenHints([wire], (hint) => targetFacts(next, hint, passedEndpoints));
+        for (const hint of planned) {
+          if (hint.channel === "transform" && !loop.ownsTransform(hint.nodeId)) ports.onTransformArm(hint.nodeId, at);
+        }
+        loop.applyHints(planned, at);
+        for (const hint of planned) {
+          if (hint.channel === "transform" && hint.endTransform !== null) {
+            transformParents.set(hint.nodeId, next.nodes.get(hint.nodeId)?.parentId ?? null);
+            if (ports.isLandingTarget(hint.nodeId)) landingArms.push({
+              nodeId: hint.nodeId, end: hint.endTransform, durationMs: hint.durationMs, atMs: at,
             });
+          }
         }
       }
       next.pendingHints.length = 0;
