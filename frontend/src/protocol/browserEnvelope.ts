@@ -118,8 +118,30 @@ export interface BrowserEnvelopeBase {
 
 // The one-time per-client `session` message: identity + capabilities/notices + the lobby/run assignment.
 // The mirror-directive fields (below) ride the join reply.
+export type BrowserHostAccessReason = "allowed" | "unavailable" | "outside-multiplayer" | "menu-open" | "transitioning";
+
+export interface BrowserHostAccess {
+  allowed: boolean;
+  reason: BrowserHostAccessReason;
+  generation: number;
+}
+
+/** Missing, malformed or future permissions never grant control. */
+export function normalizeHostAccess(raw: unknown): BrowserHostAccess {
+  const value = raw as Partial<BrowserHostAccess> | null;
+  if (value && typeof value.allowed === "boolean"
+    && ["allowed", "unavailable", "outside-multiplayer", "menu-open", "transitioning"].includes(value.reason ?? "")
+    && Number.isSafeInteger(value.generation) && value.generation! >= 0
+    && value.allowed === (value.reason === "allowed")) {
+    return { allowed: value.allowed, reason: value.reason!, generation: value.generation! };
+  }
+  return { allowed: false, reason: "unavailable",
+    generation: Number.isSafeInteger(value?.generation) && value!.generation! >= 0 ? value!.generation! : 0 };
+}
+
 export interface BrowserSessionEnvelope extends BrowserEnvelopeBase {
   type: "session";
+  hostAccess?: BrowserHostAccess;
   session: BrowserSessionAssignment;
   players: BrowserPlayerOption[];
   screen: BrowserScreenSummary;
@@ -129,7 +151,7 @@ export interface BrowserSessionEnvelope extends BrowserEnvelopeBase {
   headlessMirrorPath?: string | null;
   // Server-issued join generation on the original host socket; never a child control credential.
   connectionAttemptId?: string | null;
-  // true → watch the HOST's own stream in place (no redirect). Set for a singleplayer run / host selection.
+  // true → watch the HOST's own permitted multiplayer stream in place (no redirect).
   directView?: boolean;
   // Rejection code when the requested name isn't servable (mirror shows the picker + a mapped message):
   // "not-a-session-player" | "no-free-instance" | "spawn-failed" | "seat-unavailable" (the picked seat's
@@ -503,6 +525,7 @@ export function parseBrowserEnvelopeValue(raw: unknown): BrowserEnvelope {
       notices: normalizeNotices(value.notices),
       assignmentNotices: normalizeNotices(value.assignmentNotices),
       session,
+      hostAccess: normalizeHostAccess(value.hostAccess),
       players,
       screen: normalizeScreen(value.screen),
       headlessMirrorPort: typeof value.headlessMirrorPort === "number" ? value.headlessMirrorPort : null,

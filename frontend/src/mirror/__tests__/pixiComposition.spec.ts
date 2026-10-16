@@ -736,6 +736,7 @@ describe("Pixi composition initialization", () => {
     const client = connectMirrorClient({ watch: true, WebSocketCtor: TestSocket as unknown as typeof WebSocket,
       location: { href: "http://localhost/", protocol: "http:" } });
     const socket = TestSocket.instance;
+    socket.emit({ type: "host-access", hostAccess: { allowed: true, reason: "allowed", generation: 0 } });
     socket.emit({ type: "scene-delta", full: true, screenType: "run", screenInstanceId: "screen:test",
       upserts: [{ id: "root", name: "Root", nodeType: "Control", visible: true }], removedIds: [], orderedIds: ["root"] });
     const adapter = fakeAdapter(true);

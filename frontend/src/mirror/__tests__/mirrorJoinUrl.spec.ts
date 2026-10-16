@@ -98,6 +98,7 @@ function sessionMessage(over: Record<string, unknown> = {}) {
     players: [HOST_ROW, SEAT_ROW],
     screen: { kind: "run", type: "Run", title: "Run", mirrorMode: "mp-run" },
     hostName: "host",
+    hostAccess: { allowed: true, reason: "allowed", generation: 0 },
     scrollAction: true,    ...over
   };
 }
@@ -164,6 +165,47 @@ describe("MirrorApp — join state in the page URL", () => {
     mirrorSettings.audio = false;
     (globalThis as unknown as { WebSocket: unknown }).WebSocket = realWebSocket;
     window.history.replaceState(null, "", "/");
+  });
+
+  it("replaces a revoked host view, ignores stragglers, and resumes only with a fresh full scene", async () => {
+    mountAt("?name=", true);
+    await settle();
+    const socket = latest();
+    socket.emit(sessionMessage({ directView: true }));
+    await settle();
+    const frame = { type: "scene-delta", full: true, screenType: "run",
+      upserts: [{ id: "root", name: "Root", nodeType: "Control", visible: true }],
+      removedIds: [], orderedIds: ["root"] };
+    socket.emit(frame);
+    await settle();
+    expect(app!.findComponent(MirrorView).exists()).toBe(true);
+    const retiredInput = app!.findComponent(MirrorView).props("sendInput")!;
+    socket.emit({ type: "host-access", hostAccess: { allowed: false, reason: "menu-open", generation: 1 } });
+    socket.emit(frame);
+    await settle();
+    expect(app!.findComponent(MirrorView).exists()).toBe(false);
+    expect(app!.get('[data-testid="host-access-notice"]').text()).toContain("host opened a menu");
+    socket.emit({ type: "host-access", hostAccess: { allowed: true, reason: "allowed", generation: 2 } });
+    socket.emit({ ...frame, full: false });
+    await settle();
+    expect(app!.findComponent(MirrorView).exists()).toBe(false);
+    socket.emit(frame);
+    await settle();
+    expect(app!.findComponent(MirrorView).exists()).toBe(true);
+    retiredInput({ kind: "click", pressed: false });
+    expect(socket.sentOfType("input")).toEqual([]);
+    app!.findComponent(MirrorView).props("sendInput")!({ kind: "click", pressed: true });
+    expect(socket.sentOfType("input")).toHaveLength(1);
+  });
+
+  it("never automatically requests singleplayer host admission", async () => {
+    mountAt("", true);
+    await settle();
+    latest().emit(sessionMessage({ screen: spRun,
+      hostAccess: { allowed: false, reason: "outside-multiplayer", generation: 1 } }));
+    await settle();
+    expect(latest().sentOfType("join")).toEqual([]);
+    expect(app!.get('[data-testid="host-access-notice"]').text()).toContain("multiplayer lobby or run");
   });
 
   it.each([false, true])("does not start audio from an unlock that crosses a hidden tab (visible before resolve: %s)", async (showBeforeResolve) => {
@@ -238,6 +280,7 @@ describe("MirrorApp — join state in the page URL", () => {
       host.emit(sessionMessage({ headlessMirrorPort: 14000, connectionAttemptId: "join-1" }));
       await settle();
       const seat = latest();
+      seat.emit(sessionMessage());
       seat.emit({ type: "scene-delta", full: true, screenType: "lobby", screenInstanceId: "lobby:1",
         upserts: [{ id: "root", name: "Root", nodeType: "Control", visible: true }],
         removedIds: [], orderedIds: ["root"] });
@@ -305,6 +348,7 @@ describe("MirrorApp — join state in the page URL", () => {
     host.emit(sessionMessage({ headlessMirrorPort: 14000, connectionAttemptId: "join-1" }));
     await settle();
     const child = latest();
+    child.emit(sessionMessage());
     child.emit({
       type: "scene-delta", full: true, screenType: "lobby", screenInstanceId: "lobby:1",
       upserts: [{ id: "root", name: "Root", nodeType: "Control", visible: true }],

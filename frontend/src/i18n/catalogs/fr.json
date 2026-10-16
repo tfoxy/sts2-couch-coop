@@ -1,4 +1,7 @@
 {
+  "hostAccess.title": "Vue de l’hôte temporairement indisponible",
+  "hostAccess.menu": "L’hôte a ouvert un menu. L’accès reprendra automatiquement à sa fermeture.",
+  "hostAccess.wait": "L’accès reprendra automatiquement lorsque l’hôte reviendra dans un salon ou une partie multijoueur.",
   "app.mirror": "Miroir",
   "common.working": "En cours",
   "common.host": "Hôte",

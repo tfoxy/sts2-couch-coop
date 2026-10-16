@@ -83,6 +83,7 @@ describe("MirrorApp join-failure drills", () => {
       ],
       screen: { kind: "run", type: "Run", title: "Run", mirrorMode: "mp-run" },
       hostName: "host",
+      hostAccess: { allowed: true, reason: "allowed", generation: 0 },
       scrollAction: true,      ...over
     };
   }

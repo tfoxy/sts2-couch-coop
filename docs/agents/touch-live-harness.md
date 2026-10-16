@@ -8,11 +8,13 @@ that loop.
 ## Run
 
 ```bash
-node scripts/validate-touch-live.mjs
-node scripts/validate-touch-live.mjs --stage canvas
-node scripts/validate-touch-live.mjs --checks H3,H11 --combos mouse-2400
+node scripts/validate-touch-live.mjs --asset-origin http://127.0.0.1:13437
+node scripts/validate-touch-live.mjs --asset-origin http://127.0.0.1:13437 --stage canvas
+node scripts/validate-touch-live.mjs --asset-origin http://127.0.0.1:13437 --checks H3,H11 --combos mouse-2400
 node scripts/validate-touch-live.mjs --list
 ```
+
+Replace the asset origin above with the owned isolated rendered host's address; see prerequisites below.
 
 The matrix is pointer `{mouse, touch}` × viewport `{1920×1080, 2400×1080}`: `mouse-1920`,
 `mouse-2400`, `touch-1920`, and `touch-2400`. Every selected cell gates the exit status; do not treat a
@@ -140,7 +142,20 @@ improvement.
 ## Fixtures and prerequisites
 
 The harness needs `sts2` on `PATH`, root `sts2.local.yaml`, and an already deployed mod. It starts its own Vite
-server and loads the committed touch, hand-choice, rest/reward, five-card, and shop-removal fixtures. H17 reloads
-its shop fixture and page before every irreversible route, records the freshly loaded module bundle URL in its
+server and loads the committed touch, hand-choice, rest/reward, five-card, and shop-removal fixtures.
+Its isolated game runs as a separate player process, and the browser joins the local player reported by that
+process. The singleplayer fixtures cannot run through the restricted host view. Do not load them into a joined
+multiplayer seat: replacing its session disconnects it and triggers normal seat shutdown. Use generated QA
+profiles and the scratch routing options described in the script; an existing host instance must be closed by
+its owner before the harness can replace it. A scene that never streams fails readiness rather than skipping
+the gesture checks.
+
+Separate players serve cached assets only. Pass `--asset-origin http://127.0.0.1:<private-host-port>` for an
+isolated rendered host that can supply cache misses. The harness keeps the player's WebSocket and sends asset
+HTTP requests to that origin, matching the normal browser arrangement. A streamed scene with missing textures
+is not a valid touch baseline. The harness does not launch or stop the asset host; its owner retains the lease
+and lifecycle responsibility.
+
+H17 reloads its shop fixture and page before every irreversible route, records the freshly loaded module bundle URL in its
 report, and never presses the game's deck-picker confirm button. Run from the repository root or let the script locate it; for the full live setup and lease protocol, read
 [qa-recipes.md](qa-recipes.md).

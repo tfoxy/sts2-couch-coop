@@ -1,4 +1,7 @@
 {
+  "hostAccess.title": "ホストの画面は一時的に表示できません",
+  "hostAccess.menu": "ホストがメニューを開いています。閉じると自動的にアクセスが再開されます。",
+  "hostAccess.wait": "ホストがマルチプレイのロビーまたはランに戻ると、自動的にアクセスが再開されます。",
   "app.mirror": "ミラー",
   "common.working": "処理中",
   "common.host": "ホスト",

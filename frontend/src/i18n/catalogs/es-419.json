@@ -1,4 +1,7 @@
 {
+  "hostAccess.title": "Vista del anfitrión no disponible temporalmente",
+  "hostAccess.menu": "El anfitrión abrió un menú. El acceso se restablecerá automáticamente cuando lo cierre.",
+  "hostAccess.wait": "El acceso se restablecerá automáticamente cuando el anfitrión vuelva a una sala o partida multijugador.",
   "app.mirror": "Espejo",
   "common.working": "Procesando",
   "common.host": "Anfitrión",

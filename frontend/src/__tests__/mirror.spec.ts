@@ -479,6 +479,7 @@ describe("connectMirrorClient", () => {
     await Promise.resolve();
     expect(client.status).toBe("connected");
 
+    socket.emit({ type: "host-access", hostAccess: { allowed: true, reason: "allowed", generation: 0 } });
     // A frame that is not a scene delta — an envelope type this client does not handle — is ignored.
     socket.emit({ type: "state", rootScene: "run" });
     expect(client.state.nodes.size).toBe(0);

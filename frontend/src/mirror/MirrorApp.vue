@@ -384,12 +384,6 @@ function handlePopState(): void {
 if (typeof window !== "undefined") {
   window.addEventListener("popstate", handlePopState);
 }
-// A singleplayer run (and host-watch) can't be joined through a form — the server grants `directView` only in
-// REPLY to a join. Without one, a solo-run watcher stays an unassigned observer whose Settings-panel server
-// controls (refresh rate / freezes / tween replay) forward NOWHERE. We proactively send one empty-name join per
-// SP-run entry so the server replies `directView` and the settings channel activates. Reset when we leave the
-// SP-run screen so a later run re-requests.
-let directViewRequested = false;
 // The panel's Refresh-rate label seeds from a hardcoded default (24); the host reports its REAL baseline on the
 // `session` envelope. Seed the store from it ONCE (first session carrying it) so the label is truthful AND the
 // on-connect settings push echoes the host's own value (idempotent → connecting never throttles the host).
@@ -737,7 +731,6 @@ function makeClient(url?: string, watchStream = false): MirrorClient {
       maybeAutoRejoin();
       maybeAutoJoin();
       maybeAutoHostView();
-      maybeRequestDirectView();
     },
     onLatency() {
       if (activeClient !== c) return;
@@ -979,8 +972,13 @@ const wantsHostStream = computed(() =>
     urlSeatIntent.value
   )
 );
+const hostAccess = computed(() => joinSession.value?.hostAccess);
+const hostAccessBlocked = computed(() => !hostAccess.value?.allowed);
+// Keep the picker usable for other seats; privacy replaces only the host view/waiting surface.
+const showHostAccessNotice = computed(() => status.value === "connected" && joinSession.value !== null && !joined.value
+  && hostAccessBlocked.value && (directView.value || joinMode.value === "title-only" || showHostWaiting.value));
 const showScene = computed(() =>
-  sceneAblation.rendersScene && revision.value >= 0 && hasScene() && wantsHostStream.value
+  !hostAccessBlocked.value && sceneAblation.rendersScene && revision.value >= 0 && hasScene() && wantsHostStream.value
 );
 
 // DROP THE SURFACE GRADIENT WHILE IT IS COVERED (see `.game-surface.surface-covered` in @/styles.css for the
@@ -1110,27 +1108,28 @@ function onControlHost(): void {
   forceReload();
 }
 
-// Stable proxies so MirrorView's props don't change reference on client redirect.
-const sendInput = (msg: MirrorInputMessage) => activeClient.sendInput(msg);
-// R11 WS-M: the semantic-action channel, same stable-proxy treatment — it must follow the redirect to the seat's own
-// headless connection, since that is the game process whose map the viewer is tapping.
-const sendAction = (msg: MirrorActionMessage) => {
-  activeClient.sendAction(msg);
-};
-const sendSceneAck = () => {
-  if (warmAckTraceEnabled()) emitWarmAckTrace({ kind: "app-ack-proxy", revision: activeClient.state.revision,
-    activeClientId: activeClient.diagnosticTraceId ?? null });
-  activeClient.sendSceneAck();
-};
-
-// R19 WP5 — SCROLL AUTHORITY. Same stable-proxy rule, and for the same reason as the action channel: the surface
-// being scrolled belongs to whichever game process this viewer is currently watching. Returns the requestId so the
-// eager engine can tell its own latest send's answer from a stale one.
-const sendScroll = (elementId: string, offsetY: number): string | null =>
-  activeClient.sendAction({
-    semanticActionId: SET_SCROLL_OFFSET_ACTION_ID,
-    args: { [SCROLL_ELEMENT_ID_ARG]: elementId, [SCROLL_OFFSET_ARG]: offsetY }
-  });
+// A renderer's callbacks belong to the access generation that mounted it. Its asynchronous teardown
+// may run after permission resumes; old callbacks must never send input or credit into the new scene.
+const viewControls = computed(() => {
+  const generation = hostAccess.value?.generation;
+  const state = mirrorState.value;
+  const client = activeClient;
+  const current = () => client === activeClient && state === mirrorState.value
+    && client.hostAccess.allowed && generation === client.hostAccess.generation;
+  return {
+    sendInput: (message: MirrorInputMessage) => { if (current()) client.sendInput(message); },
+    sendAction: (message: MirrorActionMessage) => { if (current()) client.sendAction(message); },
+    sendScroll: (elementId: string, offsetY: number): string | null => current()
+      ? client.sendAction({ semanticActionId: SET_SCROLL_OFFSET_ACTION_ID,
+        args: { [SCROLL_ELEMENT_ID_ARG]: elementId, [SCROLL_OFFSET_ARG]: offsetY } }) : null,
+    sendSceneAck: () => {
+      if (!current()) return;
+      if (warmAckTraceEnabled()) emitWarmAckTrace({ kind: "app-ack-proxy", revision: client.state.revision,
+        activeClientId: client.diagnosticTraceId ?? null });
+      client.sendSceneAck();
+    }
+  };
+});
 // The latest ack, republished as a fresh object so MirrorView's identity watch sees every one (two acks carrying
 // the same clamped offset are two different facts — the second says the game re-confirmed a later send).
 const scrollAck = shallowRef<MirrorScrollAck | null>(null);
@@ -1394,7 +1393,6 @@ function handleActiveClientDrop(): void {
   // from a game that is gone, and re-running the dance from scratch is what makes the fallback self-healing.
   joined.value = false;
   directView.value = false;
-  directViewRequested = false;
   pendingName.value = null;
   joinSession.value = null;
   hostSession.value = null;
@@ -1498,28 +1496,6 @@ function maybeAutoHostView(): void {
   submitJoin(host.name, host.playerId);
 }
 
-// Activate direct-view for a singleplayer run: send ONE empty-name join so the server (which checks
-// `IsSingleplayerRun` before the name) replies `directView` — no spawn, no lobby seat, no `?name=` stamp. This is
-// what turns the Settings panel's server controls live for a solo-run watcher; without it they're cosmetic. Not
-// used for the actionable picker modes (mp-run / character-select / load-game) — those join through the picker — nor
-// for main-menu (nothing per-viewer to configure). Reset off the SP-run screen so a fresh run re-arms.
-function maybeRequestDirectView(): void {
-  // Read the raw session (not the `mirrorScreen` computed) so an early synchronous onChange can't hit its TDZ.
-  if (joinSession.value?.screen?.mirrorMode !== "singleplayer-run") {
-    directViewRequested = false;
-    return;
-  }
-  // F3 — NOT for a viewer whose URL names a seat. This request is answered with a `directView` grant, and that
-  // grant is the FIRST branch of the stream gate: it would hand a waiting player the host's singleplayer run,
-  // which is precisely the screen the `?name=` rules exist to keep them off. A solo-run watcher is a viewer with
-  // no seat intent (no param, or the empty host marker), and they still get the settings channel this activates.
-  if (urlSeatIntent.value) return;
-  if (directViewRequested || joined.value || directView.value || pendingName.value) return;
-  if (status.value !== "connected") return;
-  directViewRequested = true;
-  activeClient.sendJoin(""); // empty name → SP-run direct-view (see the server's join gating)
-}
-
 // Expose a latency snapshot for the measurement harness (scripts/measure-latency.mjs) to poll.
 if (latencyEnabled && typeof window !== "undefined") {
   (window as unknown as { __mirrorLatency?: () => MirrorLatency }).__mirrorLatency = () => ({
@@ -1572,14 +1548,14 @@ onBeforeUnmount(() => {
   >
     <MirrorView
       v-if="showScene"
-      :key="rendererComparisonViewRevision"
+      :key="`${rendererComparisonViewRevision}:${hostAccess?.generation ?? 0}`"
       :state="mirrorState"
       :revision="revision"
-      :send-input="sendInput"
-      :send-action="sendAction"
-      :send-scroll="sendScroll"
+      :send-input="viewControls.sendInput"
+      :send-action="viewControls.sendAction"
+      :send-scroll="viewControls.sendScroll"
       :scroll-ack="scrollAck"
-      :on-scene-rendered="sendSceneAck"
+      :on-scene-rendered="viewControls.sendSceneAck"
       :connection-attempt-id="presentationTarget?.attemptId"
       :connected="status === 'connected'"
       :on-first-scene-frame-presented="onFirstSceneFramePresented"
@@ -1668,8 +1644,12 @@ onBeforeUnmount(() => {
            scene is being pulled (the stream gate is shut for the same reason), and the only choice left is to stop
            being a player and control the host instead. Carries `mirror-status` exactly as the picker does — the
            diag/e2e scripts wait on that testid to disappear, and a viewer that is still waiting has not joined. -->
+      <section v-if="showHostAccessNotice" class="mirror-access-notice" data-testid="host-access-notice" role="status">
+        <h2>{{ t('hostAccess.title') }}</h2>
+        <p>{{ t(hostAccess?.reason === 'menu-open' ? 'hostAccess.menu' : 'hostAccess.wait') }}</p>
+      </section>
       <MirrorHostWaiting
-        v-if="showHostWaiting"
+        v-else-if="showHostWaiting"
         data-testid="mirror-status"
         :seat-name="urlSeatName"
         :message="joinNotice"
@@ -1807,4 +1787,8 @@ onBeforeUnmount(() => {
   left: calc(50% + 28px);
   z-index: 2147483645;
 }
+</style>
+
+<style scoped>
+.mirror-access-notice { text-align: center; max-width: 42rem; margin: auto; padding: 2rem; }
 </style>

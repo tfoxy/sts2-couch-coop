@@ -1,4 +1,5 @@
 #!/usr/bin/env node
+import { localFixturePlayerId, installLocalFixtureJoin } from "./lib/touch-live-identity.mjs";
 // =====================================================================================================
 // LIVE CLOSED-LOOP VALIDATION FOR THE MIRROR'S HAND TOUCH/MOUSE INPUT  (checks H1-H17)
 // =====================================================================================================
@@ -70,6 +71,10 @@
 //   * A working tree that builds under vite (this harness serves the UNDEPLOYED client on purpose).
 //   * `sts2` on PATH and `sts2.local.yaml` present at the repo root (run from anywhere; the script cds).
 //   * The mod already deployed in the game install. This harness NEVER builds or deploys anything.
+//   * The named game is an isolated manual player process. Solo fixtures cannot use host browser access;
+//     a connected multiplayer seat cannot load them either, because fixture replacement disconnects it.
+//   * Pass --asset-origin with a rendered host's loopback origin for cold assets. Without it the player
+//     must have a fully warmed asset cache; a headless player cannot extract missing resources.
 //
 // HOW TO RUN
 // ----------
@@ -275,6 +280,7 @@ function parseArgs(argv) {
     checkPort: false,
     sts2Config: null,
     sts2Cwd: null,
+    assetOrigin: null,
     out: `${REPO_ROOT}/.sts2/artifacts/touch-harness`,
     launchTimeoutMs: 240000,
     stage: "dom",
@@ -301,6 +307,7 @@ function parseArgs(argv) {
       case "--check-port": a.checkPort = true; break;
       case "--sts2-config": a.sts2Config = next(); break;
       case "--sts2-cwd": a.sts2Cwd = next(); break;
+      case "--asset-origin": a.assetOrigin = next(); break;
       case "--list": a.list = true; break;
       case "-h": case "--help": a.list = true; break;
       default: throw new Error(`unknown flag ${arg}`);
@@ -319,6 +326,14 @@ function parseArgs(argv) {
   if (unknownCheck) throw new Error(`unknown check ${unknownCheck} (known: ${ALL_CHECKS.join(",")})`);
   const unknownCombo = a.combos.find((c) => !COMBOS.some((x) => x.name === c));
   if (unknownCombo) throw new Error(`unknown combo ${unknownCombo} (known: ${COMBOS.map((c) => c.name).join(",")})`);
+  if (a.assetOrigin !== null) {
+    const url = new URL(a.assetOrigin);
+    if (!["http:", "https:"].includes(url.protocol) || !["localhost", "127.0.0.1", "[::1]"].includes(url.hostname)
+        || url.username || url.password || url.pathname !== "/" || url.search || url.hash) {
+      throw new Error("--asset-origin must be an http(s) loopback origin without credentials, path, query, or fragment");
+    }
+    a.assetOrigin = url.origin;
+  }
   if ((a.sts2Config === null) !== (a.sts2Cwd === null)) {
     throw new Error("--sts2-config and --sts2-cwd must be supplied together");
   }
@@ -350,6 +365,24 @@ const FIXTURES = {
   shopRemoval: "scripts/fixtures/touch-live-shop-removal.sts2.fixture.yaml"
 };
 
+// A manual player has its own profile/socket, but no parent host to join, report to, or watch.
+// Never inherit another seat's authenticated control channel or relay when launching this QA instance.
+const PARENT_SEAT_ENV = [
+  "COUCHCOOP_HOST_PID", "COUCHCOOP_HOST_NETID", "COUCHCOOP_HOST_MOD_BUILD",
+  "COUCHCOOP_CLIENT_ID", "COUCHCOOP_JOIN_HOST", "COUCHCOOP_HEADLESS_SLOT",
+  "COUCHCOOP_HEADLESS_CONTROL_URL", "COUCHCOOP_HEADLESS_CONTROL_TOKEN", "COUCHCOOP_HEADLESS_CONTROL_GENERATION",
+  "COUCHCOOP_SEAT_BROWSER_PIPE", "COUCHCOOP_SEAT_BROWSER_PIPE_TOKEN", "COUCHCOOP_HEADLESS_PIPE"
+];
+
+function manualPlayerEnvironment() {
+  const env = { ...process.env };
+  for (const key of PARENT_SEAT_ENV) delete env[key];
+  env.COUCHCOOP_HEADLESS_CLIENT = "1";
+  env.COUCHCOOP_PREFERRED_PORT = String(args.gamePort);
+  env.COUCHCOOP_HEADLESS_IDLE_FPS = "0";
+  return env;
+}
+
 function sts2Invocation(commandArgs) {
   return {
     command: "sts2",
@@ -368,10 +401,11 @@ if (args.plan) {
     instance: args.instance,
     instanceRecordRoot: args.sts2Cwd ?? REPO_ROOT,
     gameLaunch: sts2Invocation(["game", "launch", "--timeout-ms", String(args.launchTimeoutMs), "--", "--headless"]),
+    gameLaunchIdentity: { COUCHCOOP_HEADLESS_CLIENT: "1", clearedEnvironment: PARENT_SEAT_ENV },
     fixtureLoad: sts2Invocation(["--mode", "dangerous", "dev", "fixture", "load", resolve(REPO_ROOT, FIXTURES.combat)]),
     gameState: sts2Invocation(["--json", "state"]),
     gameClose: sts2Invocation(["game", "close"]),
-    vite: { cwd: `${REPO_ROOT}/frontend`, gswRoot: process.env.COUCHCOOP_GSW_ROOT ?? null }
+    vite: { cwd: `${REPO_ROOT}/frontend`, gswRoot: process.env.COUCHCOOP_GSW_ROOT ?? null, assetOrigin: args.assetOrigin }
   }, null, 2));
   process.exit(0);
 }
@@ -380,6 +414,7 @@ if (args.list) {
   console.log("checks:", ALL_CHECKS.join(", "));
   console.log("combos:", COMBOS.map((c) => c.name).join(", "));
   console.log("\n--observe: bring-up only — the first selected combo, no gestures, no checks. Prints the page url,");
+  console.log("--asset-origin http://127.0.0.1:<port>: fetch assets from an already running rendered host; /ws stays on the isolated player.");
   console.log("           readiness ms, the streamed node count, the __mirrorHandRaise digest, the interactive-rect");
   console.log("           count and sentInputs (0, measured). Honours --keep. Use it to hand a live page to another");
   console.log("           tool without this harness driving any input at all.");
@@ -426,6 +461,7 @@ async function ownedInstancePort() {
     // the harness to drive that game. The writer must be running from THIS instance's isolated user directory.
     const env = readFileSync(`/proc/${record.pid}/environ`, "utf8").split("\0");
     if (!env.includes(`XDG_DATA_HOME=${meta.userDir}`)) return null;
+    if (!env.includes("COUCHCOOP_HEADLESS_CLIENT=1")) return null;
     return await portOpen(record.port) ? record.port : null;
   } catch {
     return null;
@@ -465,20 +501,15 @@ async function ensureGame() {
     return;
   }
   if (await portOpen(args.gamePort)) {
-    throw new Error(`preferred game port :${args.gamePort} belongs to an unverified process`);
+    throw new Error(`preferred game port :${args.gamePort} is not a verified isolated manual player; an existing host must be closed by its owner`);
   }
-  log(`[setup] launching instance '${args.instance}' headless, browser server on :${args.gamePort} ...`);
+  log(`[setup] launching isolated manual player '${args.instance}' headless, browser server on :${args.gamePort} ...`);
   const res = runSts2(
     ["game", "launch", "--timeout-ms", String(args.launchTimeoutMs), "--", "--headless"],
     {
       encoding: "utf8",
       timeout: args.launchTimeoutMs + 30000,
-      env: {
-        ...process.env,
-        COUCHCOOP_PREFERRED_PORT: String(args.gamePort),
-        // Keep the closed loop responsive: the headless idle suspender otherwise caps Engine.MaxFps at 8.
-        COUCHCOOP_HEADLESS_IDLE_FPS: "0"
-      }
+      env: manualPlayerEnvironment()
     }
   );
   if (res.status !== 0) {
@@ -506,7 +537,8 @@ async function ensureVite() {
   // (`process.kill(-pid)`), and lets `--keep` walk away from a server that stays up.
   const child = spawn("npx", ["vite", "--port", String(args.vitePort), "--strictPort"], {
     cwd: `${REPO_ROOT}/frontend`,
-    env: { ...process.env, COUCHCOOP_DEV_PROXY_TARGET: `http://127.0.0.1:${args.gamePort}` },
+    env: { ...process.env, COUCHCOOP_DEV_PROXY_TARGET: `http://127.0.0.1:${args.gamePort}`,
+      COUCHCOOP_DEV_ASSET_TARGET: args.assetOrigin ?? `http://127.0.0.1:${args.gamePort}` },
     stdio: ["ignore", "pipe", "pipe"],
     detached: true
   });
@@ -515,6 +547,21 @@ async function ensureVite() {
   spawned.vite = child;
   await waitForPort(args.vitePort, 60000, "the vite dev server");
   log(`[setup] vite up on :${args.vitePort}`);
+}
+
+async function verifyAssetSource() {
+  // These are the real hand-control sprite and its atlas, required by H14. Scene nodes alone can stream
+  // from a standalone player while every image fails: refuse that incomplete setup before driving input.
+  for (const path of ["images/atlases/ui_atlas.sprites/peek_button.tres", "images/atlases/ui_atlas_0.png"]) {
+    const response = await fetch(`http://127.0.0.1:${args.vitePort}/res/${path}`, { signal: AbortSignal.timeout(60000) });
+    if (!response.ok) {
+      await response.body?.cancel();
+      throw new Error(`asset setup failed: /res/${path} returned HTTP ${response.status}; ` +
+        "headless players cannot extract cold assets. Supply --asset-origin for a rendered host or prewarm the player's cache.");
+    }
+    await response.arrayBuffer();
+  }
+  log("[setup] hand-control sprite and atlas are available through the asset proxy");
 }
 
 function shutdown() {
@@ -4522,6 +4569,9 @@ async function runCombo(browser, combo, outDir) {
   const results = {};
   loadFixture("combat", { force: true });
   await sleep(1500);
+  const state = runSts2(["--json", "state"], { encoding: "utf8", timeout: 15000, maxBuffer: 2 * 1024 * 1024 });
+  if (state.status !== 0) throw new Error(`Could not read the isolated fixture player's identity: ${state.error ?? state.stderr}`);
+  const localPlayerId = localFixturePlayerId(JSON.parse(state.stdout));
 
   const context = await browser.newContext({
     viewport: { width: combo.width, height: combo.height },
@@ -4532,6 +4582,7 @@ async function runCombo(browser, combo, outDir) {
     deviceScaleFactor: 1
   });
   const page = await context.newPage();
+  await page.addInitScript(installLocalFixtureJoin, { localPlayerId });
   // Record — never drop — the input envelopes. The closed loop is the measurement; see the header.
   await page.addInitScript(() => {
     window.__sentInputs = [];
@@ -4594,7 +4645,10 @@ async function runCombo(browser, combo, outDir) {
     readyMs = now() - gotoAt;
   } catch {
     await context.close();
-    for (const name of args.checks) results[name] = skip("the scene never streamed (join gate? game not in a run?)");
+    for (const name of args.checks) results[name] = bad(
+      "the scene never streamed; verify the selected game is accessible and the browser has joined " +
+      "a separate player instance (singleplayer host access is blocked)"
+    );
     return results;
   }
   await sleep(3500);
@@ -4613,6 +4667,7 @@ async function runCombo(browser, combo, outDir) {
       // MEASURED, not asserted. The recorder above is installed and live; it simply has nothing to record.
       sentInputs: Array.isArray(window.__sentInputs) ? window.__sentInputs.length : null
     }));
+    await page.screenshot({ path: `${outDir}/${combo.name}-observe.png` });
     const digest = raise
       ? {
           enabled: raise.enabled,
@@ -4760,6 +4815,7 @@ async function main() {
     ]
   });
   await ensureVite();
+  await verifyAssetSource();
 
   // A HEADLESS BROWSER DOES NOT ANIMATE AT DISPLAY RATE unless it is told to. Chromium throttles
   // `requestAnimationFrame` hard when nothing is on screen (measured here: ~3.7 fps, ~270ms between frames), and

@@ -71,7 +71,12 @@ public sealed record BrowserInputRequestEnvelope(
     // one that drifts.
     //
     // Absent on every non-pad message, so the wire stays byte-identical for every existing client.
-    string? Input = null);
+    string? Input = null)
+{
+    // Stamped at receipt. A peer cannot revive input admitted before host access was revoked.
+    [System.Text.Json.Serialization.JsonIgnore]
+    public long AccessGeneration { get; init; }
+}
 
 public static class BrowserInputKinds
 {

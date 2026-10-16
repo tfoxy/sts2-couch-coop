@@ -249,3 +249,8 @@ public static class BrowserServerReloadReasons
     /// </summary>
     public const string HeadlessHostDisconnected = "headless-host-disconnected";
 }
+
+// Server-owned permission for the game instance serving this connection.
+public sealed record BrowserHostAccess(bool Allowed, string Reason, long Generation);
+
+public sealed record BrowserHostAccessEnvelope(string Type, BrowserHostAccess HostAccess);

@@ -74,6 +74,12 @@ public sealed class CouchCoopRuntimeHost : IDisposable, ICouchCoopCapabilityPoli
     }
 
     public ISpirectlAssetProvider Assets { get; }
+    public void CancelInjectedInput()
+    {
+        if (_actionSource is not IInjectedInputControlSource input)
+            throw new NotSupportedException("The runtime cannot safely cancel injected input.");
+        input.CancelInjectedInput();
+    }
     /// <summary>Host-side seat lifecycle operation, exposed to the source-linked hot-reload server.</summary>
     public void DisconnectSeatPeer(ulong netId) => _disconnectSeatPeer(netId);
     public ISpineGeoClipBaker SpineGeoClipBaker => _spineGeoClipBaker;

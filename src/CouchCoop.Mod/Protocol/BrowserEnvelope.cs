@@ -14,12 +14,13 @@ public sealed record BrowserEnvelope(
     BrowserSessionDto? Session = null,
     IReadOnlyList<BrowserPlayerOption>? Players = null,
     BrowserScreenDto? Screen = null,
+    BrowserHostAccess? HostAccess = null,
     IReadOnlyList<BrowserAssignmentNotice>? AssignmentNotices = null,
     // Present when this player's game view is served by a per-player headless instance rather
     // than the host. The browser should reconnect its mirror WebSocket to this port.
     int? HeadlessMirrorPort = null,
     // Mirror directive: true → the viewer watches the HOST's own stream in place (no headless, no redirect).
-    // Set for a singleplayer run and for a host/watch-only selection. Mutually exclusive with HeadlessMirrorPort.
+    // Set for a multiplayer host/watch-only selection. Mutually exclusive with HeadlessMirrorPort.
     bool? DirectView = null,
     // Mirror join rejection code when the requested name is not servable: "not-a-session-player" (rules 2 & 5) |
     // "no-free-instance" (slot pool full) | "spawn-failed" | "seat-unavailable" (the picked seat's server-derived

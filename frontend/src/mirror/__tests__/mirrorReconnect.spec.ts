@@ -348,6 +348,7 @@ describe("MirrorApp drop drills", () => {
       screen: { kind: "run", type: "Run", title: "Run", mirrorMode: "mp-run" },
       androidApkUrl: "/couchcoop-client.apk",
       hostName: "host",
+      hostAccess: { allowed: true, reason: "allowed", generation: 0 },
       scrollAction: true,      ...over
     };
   }

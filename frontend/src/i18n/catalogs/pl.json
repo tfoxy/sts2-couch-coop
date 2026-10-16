@@ -1,4 +1,7 @@
 {
+  "hostAccess.title": "Widok gospodarza jest chwilowo niedostępny",
+  "hostAccess.menu": "Gospodarz otworzył menu. Dostęp zostanie automatycznie przywrócony po jego zamknięciu.",
+  "hostAccess.wait": "Dostęp zostanie automatycznie przywrócony, gdy gospodarz wróci do lobby lub rozgrywki wieloosobowej.",
   "app.mirror": "Lustro",
   "common.working": "Proszę czekać",
   "common.host": "Host",

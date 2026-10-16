@@ -1,4 +1,7 @@
 {
+  "hostAccess.title": "Vista dell’host temporaneamente non disponibile",
+  "hostAccess.menu": "L’host ha aperto un menu. L’accesso riprenderà automaticamente quando lo chiuderà.",
+  "hostAccess.wait": "L’accesso riprenderà automaticamente quando l’host tornerà in una lobby o partita multigiocatore.",
   "app.mirror": "Specchio",
   "common.working": "In corso",
   "common.host": "Host",

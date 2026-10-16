@@ -39,7 +39,8 @@ public sealed class CouchCoopBrowserServer(
     Action<int, long>? onSceneStreamingDemandChanged = null,
     Func<Action<RosterFacts?>, IDisposable?>? subscribeRoster = null,
     AudioService? injectedAudioService = null,
-    Action? requestSecureOrigin = null) : IAsyncDisposable
+    Action? requestSecureOrigin = null,
+    IHostBrowserAccess? hostBrowserAccess = null) : IAsyncDisposable
 {
     /// <summary>Harness-only synthetic seat port injected into the control document; null in product hosting.</summary>
     public int? SyntheticSeatPort { get; set; }
@@ -59,6 +60,11 @@ public sealed class CouchCoopBrowserServer(
     private readonly Action<int, long> _onSceneStreamingDemandChanged =
         onSceneStreamingDemandChanged ?? CouchCoopHeadlessVisualSuspender.CreateStreamingDemandReporter();
     private readonly bool _isHeadlessClient = isHeadlessClient ?? CouchCoopMod.IsHeadlessClient;
+    private readonly Lazy<IHostBrowserAccess> _hostBrowserAccess = new(() => hostBrowserAccess
+        ?? new HostBrowserAccessMonitor(() => envelopeFactory?.RuntimeHost.CancelInjectedInput()));
+    private readonly object _accessDemandGate = new();
+    private long _accessDemandGeneration;
+    private IHostBrowserAccess? HostBrowserAccess => _isHeadlessClient ? null : _hostBrowserAccess.Value;
     private readonly bool _ownsHeadlessManager = headlessManager is null;
     private readonly BrowserSessionRegistry _sessionRegistry = new();
     private readonly ConcurrentDictionary<Guid, CouchCoopWebSocketConnection> _connections = new();
@@ -96,6 +102,7 @@ public sealed class CouchCoopBrowserServer(
         subscribeRoster ?? (handler => CouchCoopRosterObserver.Subscribe(handler));
     private IDisposable? _rosterSubscription;
     private CouchCoopSceneObserver? _sceneObserver;
+    private long _sceneAccessGeneration = -1;
     // Encounter-load geoclip prerender (OFF by default — COUCHCOOP_PRERENDER_ENCOUNTER_GEOCLIPS=1). Its lifetime is
     // deliberately the scene observer's: it reads the observer's retained keyframe for its roster, and the observer
     // exists only while a mirror client is STREAMING, which is also the only condition under which anything would
@@ -351,6 +358,15 @@ public sealed class CouchCoopBrowserServer(
 
     private void PublishBrowserDemand(int count, long generation)
     {
+        lock (_accessDemandGate)
+        {
+            if (generation > _accessDemandGeneration)
+            {
+                _accessDemandGeneration = generation;
+                if (count > 0) HostBrowserAccess?.Start();
+                else if (_hostBrowserAccess.IsValueCreated) _hostBrowserAccess.Value.Stop();
+            }
+        }
         try
         {
             _onBrowserDemandChanged?.Invoke(count, generation);
@@ -399,6 +415,17 @@ public sealed class CouchCoopBrowserServer(
 
     private void RefreshObserversLocked()
     {
+        var access = HostBrowserAccess?.State;
+        var accessGeneration = access?.Generation ?? 0;
+        var sceneAllowed = _isHeadlessClient || access is { Allowed: true };
+        // Multiple viewers can stop and restart at different times, keeping demand above zero throughout
+        // a revoke/resume. Retained scene and hints still belong to the old permission generation.
+        if (!sceneAllowed || _sceneAccessGeneration != accessGeneration)
+        {
+            StopSceneObserverLocked();
+            StopMirrorHintCollectorLocked();
+            _sceneAccessGeneration = accessGeneration;
+        }
         // A GATED mirror viewer is the ONLY thing that keeps the ROSTER observer alive, and it must:
         // the roster observer is what re-sends a `session` when the roster changes, and a re-sent `session` is the ONLY
         // way a viewer sitting on the picker learns the host left the multiplayer screen (its `screen.mirrorMode` is what
@@ -415,7 +442,7 @@ public sealed class CouchCoopBrowserServer(
         }
 
         // STREAMING mirror connections — not merely connected ones — drive the scene producer.
-        if (_streamingMirrorConnectionCount > 0)
+        if (_streamingMirrorConnectionCount > 0 && sceneAllowed)
         {
             // Collector BEFORE the scene observer: it must be subscribed — which enables the producer's lite
             // tween capture — before deltas start flowing so hints aren't missed.
@@ -1035,7 +1062,13 @@ public sealed class CouchCoopBrowserServer(
         }
 
         var observer = new CouchCoopSceneObserver(envelopeFactory.RuntimeHost);
-        observer.SceneDeltaChanged += BroadcastSceneDelta;
+        var accessGeneration = _sceneAccessGeneration;
+        observer.SceneDeltaChanged += delta =>
+        {
+            if (!ReferenceEquals(_sceneObserver, observer)
+                || (!_isHeadlessClient && HostBrowserAccess?.IsAllowed(accessGeneration) != true)) return;
+            BroadcastSceneDelta(delta, accessGeneration);
+        };
         _sceneObserver = observer;
 
         // Rides the observer, and is INERT unless an operator armed it. Started before observer.Start() so it
@@ -1089,7 +1122,7 @@ public sealed class CouchCoopBrowserServer(
     // in-flight send) and serializes its own coalesced delta in its drain. Coalescing per-connection — rather
     // than one shared pre-serialized frame fired fire-and-forget — is what stops a slow client building an
     // unbounded send backlog (which made a click's resulting delta land ~1s late).
-    private void BroadcastSceneDelta(RuntimeSceneDelta delta)
+    private void BroadcastSceneDelta(RuntimeSceneDelta delta, long accessGeneration)
     {
         // Drain the tween hints buffered since the last scene emit and ATTACH them to this delta (identical for
         // every mirror connection), so a fire-and-forget decorative tween arrives with the frame that froze/started
@@ -1103,7 +1136,7 @@ public sealed class CouchCoopBrowserServer(
             // no fold, no queue, no bytes.
             if (connection.WantsSceneStream)
             {
-                connection.QueueSceneDelta(withHints);
+                connection.QueueSceneDelta(withHints, accessGeneration);
             }
         }
 
@@ -1775,7 +1808,8 @@ public sealed class CouchCoopBrowserServer(
                         _isHeadlessClient,
                         _arrivals,
                         _onSceneAck,
-                        cancellationToken).ConfigureAwait(false);
+                        cancellationToken,
+                        HostBrowserAccess).ConfigureAwait(false);
             }
             catch
             {

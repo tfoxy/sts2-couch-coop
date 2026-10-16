@@ -1,4 +1,7 @@
 {
+  "hostAccess.title": "Host-Ansicht vorübergehend nicht verfügbar",
+  "hostAccess.menu": "Der Host hat ein Menü geöffnet. Der Zugriff wird automatisch fortgesetzt, sobald es geschlossen wird.",
+  "hostAccess.wait": "Der Zugriff wird automatisch fortgesetzt, sobald der Host in eine Mehrspieler-Lobby oder einen Mehrspieler-Durchlauf zurückkehrt.",
   "app.mirror": "Spiegel",
   "common.working": "Bitte warten",
   "common.host": "Host",

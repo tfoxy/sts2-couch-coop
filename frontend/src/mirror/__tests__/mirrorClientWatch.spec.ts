@@ -55,6 +55,7 @@ function connect(watch?: boolean) {
     WebSocketCtor: MockWebSocket as unknown as typeof WebSocket,
     location: { href: "http://localhost/", protocol: "http:" }
   });
+  MockWebSocket.instances[0]!.emit({ type: "host-access", hostAccess: { allowed: true, reason: "allowed", generation: 0 } });
   return { client, socket: MockWebSocket.instances[0] };
 }
 
@@ -303,6 +304,7 @@ describe("stream gate", () => {
     const { client, socket } = connect();
     await Promise.resolve();
 
+    socket.emit(keyframe);
     client.sendAction({ semanticActionId: "select-map-node", args: { elementId: "669410934510" } });
     client.sendAction({ semanticActionId: "select-map-node", args: { elementId: "42" } });
     expect(socket.sentOfType("action")).toEqual([
@@ -315,6 +317,7 @@ describe("stream gate", () => {
     const { client, socket } = connect();
     await Promise.resolve();
 
+    socket.emit(keyframe);
     client.sendAction({ semanticActionId: "back-from-map" });
     expect(socket.sentOfType("action")).toEqual([
       { type: "action", requestId: "action:1", semanticActionId: "back-from-map" }

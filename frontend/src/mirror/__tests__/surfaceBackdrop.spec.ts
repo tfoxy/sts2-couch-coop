@@ -61,13 +61,15 @@ class MockWebSocket extends EventTarget {
 }
 
 // The host sitting on its MAIN MENU: nothing to join, so the stream gate opens on the "title-only" branch and the
-// viewer is shown the host's own screen. The shortest honest route to a mounted scene — no seat, no redirect.
+// renderer fixture explicitly grants access so these layout tests can use its minimal scene.
+// Product host policy is covered separately by hostAccess.spec.ts.
 const MAIN_MENU_SESSION = {
   type: "session",
   session: { name: null, status: "unassigned", joined: false, playerId: null, connectionCount: 0 },
   players: [],
   screen: { kind: "menu", type: "Menu", title: "Menu", mirrorMode: "main-menu" },
   hostName: "host",
+  hostAccess: { allowed: true, reason: "allowed", generation: 0 },
   scrollAction: true
 };
 

@@ -9,6 +9,8 @@ import {
   parseBrowserEnvelopeValue,
   parseJoinProgress,
   parseSeatNotice,
+  normalizeHostAccess,
+  type BrowserHostAccess,
   type BrowserJoinProgress,
   type BrowserSeatNotice,
   type BrowserSessionEnvelope
@@ -176,6 +178,7 @@ function publishAssetCacheToken(token: string | null): void {
 export interface MirrorClient {
   /** Opaque, opt-in harness correlation only. */
   diagnosticTraceId?: number;
+  hostAccess: BrowserHostAccess;
   status: MirrorClientStatus;
   state: MirrorState;
   latency: MirrorLatency;
@@ -258,7 +261,7 @@ export function connectMirrorClient(options: {
   // The app reconnects to the same host through the given route to get its own game view.
   onHeadlessRedirect?: (target: string | number) => void;
   // Called when the join reply directs the viewer to WATCH THE HOST's own stream in place (no redirect):
-  // a singleplayer run, or the host seat was selected. The app renders the current (host) stream directly.
+  // the host seat was selected. The app renders the permitted host stream directly.
   onDirectView?: () => void;
   // Called when the join reply rejects the requested name (`joinRejection` code). The app shows the picker
   // with a mapped message instead of redirecting. `detail` is the host's own fault text, present only for the
@@ -327,6 +330,7 @@ export function connectMirrorClient(options: {
   let watching = options.watch !== false;
   let hostWatching = watching;
   const client: MirrorClient = {
+    hostAccess: normalizeHostAccess(null),
     status: "connecting",
     state,
     latency,
@@ -480,7 +484,7 @@ export function connectMirrorClient(options: {
   }
 
   function sendInput(message: MirrorInputMessage): void {
-    if (socket.readyState !== WebSocketCtor.OPEN) {
+    if (!client.hostAccess.allowed || socket.readyState !== WebSocketCtor.OPEN) {
       return;
     }
     inputSequence += 1;
@@ -492,7 +496,7 @@ export function connectMirrorClient(options: {
   }
 
   function sendAction(message: MirrorActionMessage): string | null {
-    if (socket.readyState !== WebSocketCtor.OPEN) {
+    if (!client.hostAccess.allowed || socket.readyState !== WebSocketCtor.OPEN) {
       return null;
     }
     actionSequence += 1;
@@ -643,6 +647,12 @@ export function connectMirrorClient(options: {
     if (socket.readyState !== WebSocketCtor.OPEN) {
       return;
     }
+    // Connection capabilities remain available while the shared host is private.
+    if (!client.hostAccess.allowed) {
+      payload = Object.fromEntries(Object.entries(payload).filter(([key]) =>
+        key === "staticBg" || key === "trailDrive" || key === "tweenReplay"));
+      if (Object.keys(payload).length === 0) return;
+    }
     settingsSequence += 1;
     try {
       socket.send(JSON.stringify({ type: "settings", requestId: `settings:${settingsSequence}`, ...payload }));
@@ -662,6 +672,22 @@ export function connectMirrorClient(options: {
     startPing();
   });
 
+  let awaitingFullScene = true;
+
+  function updateHostAccess(access: BrowserHostAccess): void {
+    if (access.generation < client.hostAccess.generation) return;
+    if (access.generation !== client.hostAccess.generation || !access.allowed) {
+      // Preserve the object identity held by the app, but retire every retained node and hint.
+      const revision = state.revision + 1;
+      const epoch = state.sceneRootEpoch + 1;
+      Object.assign(state, createMirrorState(), { revision, sceneRootEpoch: epoch, sceneRewrite: true });
+      awaitingFullScene = true;
+      deltasSinceAck = 0;
+    }
+    client.hostAccess = access;
+    if (client.session) client.session = { ...client.session, hostAccess: access };
+  }
+
   socket.addEventListener("message", (event) => {
     const data = String((event as MessageEvent).data);
     // REPRO RECORDER — the INCOMING tap, deliberately the first statement after the string coercion: ABOVE the
@@ -673,6 +699,12 @@ export function connectMirrorClient(options: {
     try {
       raw = wirePhase("json-parse", () => JSON.parse(data));
     } catch {
+      return;
+    }
+
+    if (raw && typeof raw === "object" && (raw as { type?: unknown }).type === "host-access") {
+      updateHostAccess(normalizeHostAccess((raw as { hostAccess?: unknown }).hostAccess));
+      notify();
       return;
     }
 
@@ -770,7 +802,8 @@ export function connectMirrorClient(options: {
         const envelope = parseBrowserEnvelopeValue(raw);
         if (envelope.type === "session") {
           parsed = envelope;
-          client.session = envelope;
+          updateHostAccess(envelope.hostAccess ?? normalizeHostAccess(null));
+          client.session = { ...envelope, hostAccess: client.hostAccess };
           // The host's game build, latched for the two clients of it: every asset URL this page mints from
           // here on (`?b=` — @/join/assetVersion), and the service worker's durable /res/ store, which drops
           // the entries stranded under the previous build's URLs. Both from the one envelope field, so the
@@ -819,7 +852,7 @@ export function connectMirrorClient(options: {
 
     // Stream gate: while off the host sends no scene-delta at all — drop any in-flight straggler rather than
     // parsing/applying it, so a gated viewer schedules NO mirror render work (and never acks a frame).
-    if (!watching) {
+    if (!watching || !client.hostAccess.allowed) {
       return;
     }
 
@@ -832,6 +865,8 @@ export function connectMirrorClient(options: {
     }
 
     if (delta) {
+      if (awaitingFullScene && !delta.full) return;
+      awaitingFullScene = false;
       sceneCheckpoint("scene-received");
       wirePhase("apply-scene-delta", () => applySceneDelta(state, delta));
       sceneAblationRuntime.noteSceneDelta(data);

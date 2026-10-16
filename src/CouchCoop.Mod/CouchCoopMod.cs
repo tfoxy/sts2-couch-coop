@@ -245,7 +245,11 @@ public static class CouchCoopMod
             // browser gets the join URL back — the lobby button is gone once the run embarks. Host-only for the
             // same reason as the line above: a headless seat renders this for nobody. Its absence costs a
             // convenience, not co-op, so it reports `costsCoop: false`.
-            if (!IsHeadlessClient) PauseMenuMountPatch.Apply();
+            if (!IsHeadlessClient)
+            {
+                PauseMenuMountPatch.Apply();
+                HostBrowserAccessMonitor.Prepare();
+            }
             // Patch ENetClient.Update() to skip while _isConnected == false, preventing the
             // NetServiceUpdateLoop from draining and discarding the handshake-ack before
             // SendAndWaitForNetIdAck can consume it (fixes headless join timeout).
@@ -1059,6 +1063,7 @@ public static class CouchCoopMod
         try
         {
             PauseMenuMountPatch.Apply();
+            HostBrowserAccessMonitor.Prepare();
         }
         catch (Exception exception)
         {

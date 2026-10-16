@@ -41,6 +41,7 @@ function connect() {
     WebSocketCtor: MockWebSocket as unknown as typeof WebSocket,
     location: { href: "http://localhost/", protocol: "http:" }
   });
+  MockWebSocket.instances[0]!.emit({ type: "host-access", hostAccess: { allowed: true, reason: "allowed", generation: 0 } });
   return { client, socket: MockWebSocket.instances[0] };
 }
 
