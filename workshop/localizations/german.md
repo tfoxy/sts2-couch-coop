@@ -26,8 +26,6 @@ Der grundlegende Spielablauf ist spielbar, aber einige Bildschirme und Aktionen 
 Einen Fehler gefunden, oder funktioniert etwas nicht? Siehe [url=https://github.com/tfoxy/sts2-couch-coop/blob/main/workshop/discussions/german/reporting-a-problem.md]Hast du ein Problem? Poste es in der Steam-Diskussion[/url].
 
 [h2]Bevor du loslegst[/h2]
-Der Ton kommt nur aus dem Host-Computer - Browser-Spieler hören auf ihrem eigenen Gerät nichts.
-
 Alle Browser-Clients müssen den Host im selben lokalen Netzwerk erreichen können, normalerweise im selben WLAN. Verwende CouchCoop nur in einem lokalen Netzwerk, das du mit Personen teilst, denen du vertraust.
 
 CouchCoop unterstützt keine Remote- oder Internet-Setups.

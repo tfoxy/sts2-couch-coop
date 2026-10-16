@@ -26,8 +26,6 @@ El ciclo de juego principal ya se puede jugar, pero algunas pantallas y acciones
 ¿Has encontrado un error o hay algo que no funciona? Consulta [url=https://github.com/tfoxy/sts2-couch-coop/blob/main/workshop/discussions/spanish/reporting-a-problem.md]¿Tienes algún problema? Publícalo en la discusión de Steam[/url].
 
 [h2]Antes de jugar[/h2]
-El sonido sale únicamente del ordenador anfitrión: quienes juegan desde el navegador no tienen audio en su propio dispositivo.
-
 Todos los clientes del navegador deben poder conectarse al anfitrión a través de la misma red local, normalmente la misma red Wi-Fi. Usa CouchCoop únicamente en una red local compartida con personas de confianza.
 
 Las partidas remotas o por internet quedan fuera del ámbito de soporte de CouchCoop.

@@ -26,8 +26,6 @@ The core game loop is playable, but some screens and actions still have bugs, vi
 Found a bug, or something not working? Report it in [url=https://steamcommunity.com/workshop/filedetails/discussion/3799476240/563668239243120957/]Having a problem? Post it here[/url].
 
 [h2]Before you play[/h2]
-Sound comes out of the host computer only - browser players get no audio on their own device.
-
 All browser clients must be able to reach the host on the same local network, usually the same Wi-Fi. Only use CouchCoop on a local network shared with people you trust.
 
 Remote/internet setups are outside the supported scope of CouchCoop.

@@ -26,8 +26,6 @@
 发现了错误，或者有什么功能不正常？请参阅 [url=https://github.com/tfoxy/sts2-couch-coop/blob/main/workshop/discussions/schinese/reporting-a-problem.md]遇到问题？请到 Steam 讨论帖留言[/url]。
 
 [h2]开始游戏前[/h2]
-声音只从主机电脑发出 —— 通过浏览器游玩的玩家在自己的设备上听不到声音。
-
 所有浏览器客户端都必须能通过同一个本地网络（通常是同一个 Wi-Fi）连接到主机。请只在与可信任的人共享的本地网络中使用 CouchCoop。
 
 远程联机或通过互联网进行的游戏不在 CouchCoop 的支持范围内。
