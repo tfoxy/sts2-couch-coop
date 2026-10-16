@@ -50,7 +50,6 @@ internal sealed partial class CouchCoopQrDialog : CouchCoopModalDialog
     private readonly CouchCoopQrHostSelect _methodSelect = new("CouchCoopQrMethodSelect");
     private readonly QrSelectionModel _selection = new();
     private readonly CouchCoopSetupButton _setupAction = new("CouchCoopQrSetupButton");
-    private readonly Label _setupTitle = new() { Name = "CouchCoopQrSetupTitle" };
     private readonly Label _unavailable = new() { Name = "CouchCoopQrUnavailable" };
     private readonly CouchCoopConnectionPanel _connections = new();
     private readonly CouchCoopSeatModPanel _seatMods = new() { Source = SeatModSelectionService.Shared };
@@ -122,10 +121,6 @@ internal sealed partial class CouchCoopQrDialog : CouchCoopModalDialog
         _unavailable.VerticalAlignment = VerticalAlignment.Center;
         _unavailable.ClipText = true;
         _unavailable.Visible = false;
-        ConfigureLabel(_setupTitle, HorizontalAlignment.Center, CouchCoopGameUiTheme.ButtonFontColor);
-        _setupTitle.AutowrapMode = TextServer.AutowrapMode.WordSmart;
-        _setupTitle.Visible = false;
-        CouchCoopGameUiTheme.ApplyFont(_setupTitle, CouchCoopGameUiTheme.KreonBoldGlyphSpaceOne, 32);
         _setupAction.Visible = false;
         _setupAction.Activated = OpenSetup;
 
@@ -152,7 +147,6 @@ internal sealed partial class CouchCoopQrDialog : CouchCoopModalDialog
         Card.AddChild(_title);
         Card.AddChild(_qr);
         Card.AddChild(_unavailable);
-        Card.AddChild(_setupTitle);
         Card.AddChild(_setupAction);
         Card.AddChild(_url);
         Card.AddChild(_copy);
@@ -245,7 +239,6 @@ internal sealed partial class CouchCoopQrDialog : CouchCoopModalDialog
         _seatMods.RefreshLocalization();
         _directIpSetup.RefreshText();
         _setupAction.RefreshLocalization();
-        CouchCoopGameUiTheme.ApplyFont(_setupTitle, CouchCoopGameUiTheme.KreonBoldGlyphSpaceOne, 32);
         if (IsOpen)
         {
             RefreshOptions(snapshot);
@@ -394,8 +387,6 @@ internal sealed partial class CouchCoopQrDialog : CouchCoopModalDialog
         _setupAction.Visible = presentation.ShowsSetup;
         _setupAction.Text = presentation.SetupAction?.Resolve() ?? string.Empty;
         _setupAction.AccessibilityName = _setupAction.Text;
-        _setupTitle.Visible = presentation.UsesSetupPlaceholder;
-        _setupTitle.Text = CouchCoopLocalization.Resolve("couchcoop_https_qr_setup_title");
         _copy.ResetFeedback();
 
         // ONE code, whose payload is the selected row and nothing else. The URL label and the QR
@@ -519,10 +510,8 @@ internal sealed partial class CouchCoopQrDialog : CouchCoopModalDialog
 
         _unavailable.Position = _qr.Position;
         _unavailable.Size = new Vector2(extent, extent);
-        if (_setupTitle.Visible)
+        if (_setupAction.Visible && !_qr.Visible)
         {
-            _setupTitle.Position = new Vector2(padding, QrTop + 100f);
-            _setupTitle.Size = new Vector2(textWidth, 64f);
             _unavailable.Position = new Vector2(padding, QrTop + 180f);
             _unavailable.Size = new Vector2(textWidth, 190f);
         }
