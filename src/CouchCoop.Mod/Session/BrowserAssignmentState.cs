@@ -372,6 +372,8 @@ public static class BrowserAssignmentClassifier
         => screenType switch
         {
             "screens/character_select_screen" => "Character Select",
+            RosterRootScenes.DailyRun => "Daily Challenge",
+            RosterRootScenes.CustomRun => "Custom Mode",
             "main-menu" => "Main Menu",
             "run" => "Run",
             null => null,

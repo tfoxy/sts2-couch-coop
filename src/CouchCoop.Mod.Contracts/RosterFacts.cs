@@ -1,8 +1,8 @@
 namespace CouchCoop.Mod.Contracts;
 
 /// <summary>
-/// The root screen names the roster reports. They are the four strings the old full state snapshot used for its
-/// root scene, kept spelled the same so the join screen's title and kind (which are derived from them) do not change.
+/// The root screen names the roster reports. Existing names retain their wire spelling; daily and custom setup
+/// have distinct names while sharing the existing multiplayer-lobby mirror mode.
 /// </summary>
 public static class RosterRootScenes
 {
@@ -17,6 +17,9 @@ public static class RosterRootScenes
 
     /// <summary>Anything else: the main menu and every screen that is neither a run nor a lobby.</summary>
     public const string MainMenu = "screens/main_menu";
+
+    public const string DailyRun = "screens/daily_run/daily_run_screen";
+    public const string CustomRun = "screens/custom_run/custom_run_screen";
 }
 
 /// <summary>

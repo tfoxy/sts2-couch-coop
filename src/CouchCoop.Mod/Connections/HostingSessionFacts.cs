@@ -12,7 +12,7 @@ internal interface IHostingSessionFacts
     /// <summary>The local game is inside a run — stays true through the end-of-run death/Architect summary.</summary>
     bool IsRunInProgress();
 
-    /// <summary>The screen on top is a registered lobby screen (new-run character select, or load-run).</summary>
+    /// <summary>The screen on top is a registered lobby screen (standard, daily, custom, or load-run).</summary>
     bool IsOnLobbyScreen();
 }
 

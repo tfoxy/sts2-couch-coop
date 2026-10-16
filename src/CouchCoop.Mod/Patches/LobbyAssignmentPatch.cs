@@ -7,6 +7,8 @@ using HarmonyLib;
 using MegaCrit.Sts2.Core.Multiplayer.Game;
 using MegaCrit.Sts2.Core.Multiplayer.Messages.Lobby;
 using MegaCrit.Sts2.Core.Nodes.Screens.CharacterSelect;
+using MegaCrit.Sts2.Core.Nodes.Screens.CustomRun;
+using MegaCrit.Sts2.Core.Nodes.Screens.DailyRun;
 using MegaCrit.Sts2.Core.Saves;
 
 namespace CouchCoop.Mod.Patches;
@@ -55,6 +57,20 @@ internal static class LobbyAssignmentPatch
             [typeof(INetGameService), typeof(SerializableRun)], NetTypeNames.Host, nameof(PostfixLoadRunAsHost)),
         new(typeof(NMultiplayerLoadGameScreen), nameof(NMultiplayerLoadGameScreen.InitializeAsClient),
             [typeof(INetGameService), typeof(ClientLoadJoinResponseMessage)], NetTypeNames.Client, nameof(PostfixLoadRunAsClient)),
+        new(typeof(NCustomRunScreen), nameof(NCustomRunScreen.InitializeMultiplayerAsHost),
+            [typeof(INetGameService), typeof(int)], Role: null, nameof(PostfixNewRunAsHost)),
+        new(typeof(NCustomRunScreen), nameof(NCustomRunScreen.InitializeMultiplayerAsClient),
+            [typeof(INetGameService), typeof(ClientLobbyJoinResponseMessage)], Role: null, nameof(PostfixWake)),
+        new(typeof(NCustomRunScreen), nameof(NCustomRunScreen.InitializeSingleplayer),
+            [], Role: null, nameof(PostfixWake)),
+        new(typeof(NDailyRunScreen), nameof(NDailyRunScreen.InitializeMultiplayerAsHost),
+            [typeof(INetGameService)], Role: null, nameof(PostfixNewRunAsHost), ClearLobbyBefore: true),
+        new(typeof(NDailyRunScreen), nameof(NDailyRunScreen.InitializeMultiplayerAsClient),
+            [typeof(INetGameService), typeof(ClientLobbyJoinResponseMessage)], Role: null, nameof(PostfixWake), ClearLobbyBefore: true),
+        new(typeof(NDailyRunScreen), nameof(NDailyRunScreen.InitializeSingleplayer),
+            [], Role: null, nameof(PostfixWake), ClearLobbyBefore: true),
+        new(typeof(NDailyRunScreen), nameof(NDailyRunScreen.OnSubmenuClosed),
+            [], Role: null, nameof(PostfixDailyClosed)),
     ];
 
     private static readonly object Sync = new();
@@ -68,7 +84,8 @@ internal static class LobbyAssignmentPatch
         string MethodName,
         Type[] Parameters,
         string? Role,
-        string Postfix)
+        string Postfix,
+        bool ClearLobbyBefore = false)
     {
         internal string Key => $"{Type.FullName}.{MethodName}/{Parameters.Length}";
     }
@@ -129,7 +146,10 @@ internal static class LobbyAssignmentPatch
 
         try
         {
-            (_harmony ??= new Harmony("com.couchcoop.lobby-assignment")).Patch(target, postfix: new HarmonyMethod(postfix));
+            var prefix = binding.ClearLobbyBefore
+                ? new HarmonyMethod(typeof(LobbyAssignmentPatch).GetMethod(nameof(PrefixClearDailyLobby), BindingFlags.NonPublic | BindingFlags.Static)!)
+                : null;
+            (_harmony ??= new Harmony("com.couchcoop.lobby-assignment")).Patch(target, prefix: prefix, postfix: new HarmonyMethod(postfix));
             return true;
         }
         catch (Exception exception)
@@ -154,6 +174,15 @@ internal static class LobbyAssignmentPatch
     }
 
     // Postfixes. Each one records (or not) and wakes; see the remarks for why nothing else.
+
+    private static void PrefixClearDailyLobby(object __instance) => LobbyAssignmentRecord.ClearLobby(__instance);
+
+    private static void PostfixDailyClosed(object __instance)
+    {
+        LobbyAssignmentRecord.ClearLobby(__instance);
+        Note(__instance, role: null);
+        CouchCoopRosterSignals.Raise();
+    }
 
     private static void PostfixWake(object __instance) => Note(__instance, role: null);
     private static void PostfixNewRunAsHost(object __instance) => Note(__instance, role: null, hostAssignment: true);

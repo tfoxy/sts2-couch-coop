@@ -3,6 +3,8 @@ using CouchCoop.Mod.HostUi;
 using MegaCrit.Sts2.Core.Entities.Multiplayer;
 using MegaCrit.Sts2.Core.Multiplayer.Game;
 using MegaCrit.Sts2.Core.Nodes.Screens.CharacterSelect;
+using MegaCrit.Sts2.Core.Nodes.Screens.CustomRun;
+using MegaCrit.Sts2.Core.Nodes.Screens.DailyRun;
 using MegaCrit.Sts2.Core.Runs;
 
 namespace CouchCoop.Mod.Runtime;
@@ -23,16 +25,12 @@ internal static class GameSeatPeerCleanup
     private static bool DisconnectOnMainThread(ulong netId)
     {
         var screen = GameScreenContext.GetCurrent();
-        var context = screen switch
-        {
-            NCharacterSelectScreen => Context.NewRunLobby,
-            NMultiplayerLoadGameScreen => Context.SavedRunLobby,
-            _ when RunManager.Instance is { IsInProgress: true, NetService: not null } => Context.Run,
-            _ => Context.None,
-        };
+        var context = LobbyContextOf(screen?.GetType());
+        if (context == Context.None && RunManager.Instance is { IsInProgress: true, NetService: not null })
+            context = Context.Run;
         object? service = context switch
         {
-            Context.NewRunLobby => ((NCharacterSelectScreen)screen!).Lobby?.NetService,
+            Context.NewRunLobby => GameFactsReader.StartRunLobbyOfScreen(screen)?.NetService,
             Context.SavedRunLobby => LobbyAssignmentRecord.TryGetLobby(screen!, out var lobby)
                 && lobby is MegaCrit.Sts2.Core.Multiplayer.Game.Lobby.LoadRunLobby loaded
                     ? loaded.NetService : null,
@@ -40,6 +38,17 @@ internal static class GameSeatPeerCleanup
             _ => null,
         };
         return DisconnectFromService(context, service, netId);
+    }
+
+    internal static Context LobbyContextOf(Type? screenType)
+    {
+        if (screenType is null) return Context.None;
+        if (typeof(NCharacterSelectScreen).IsAssignableFrom(screenType)
+            || typeof(NDailyRunScreen).IsAssignableFrom(screenType)
+            || typeof(NCustomRunScreen).IsAssignableFrom(screenType))
+            return Context.NewRunLobby;
+        return typeof(NMultiplayerLoadGameScreen).IsAssignableFrom(screenType)
+            ? Context.SavedRunLobby : Context.None;
     }
 
     // Kept game-free at the call boundary so tests can cover the saved-lobby selection and failure contract.

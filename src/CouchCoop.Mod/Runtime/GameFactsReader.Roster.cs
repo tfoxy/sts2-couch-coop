@@ -7,6 +7,8 @@ using MegaCrit.Sts2.Core.Multiplayer;
 using MegaCrit.Sts2.Core.Multiplayer.Game;
 using MegaCrit.Sts2.Core.Multiplayer.Game.Lobby;
 using MegaCrit.Sts2.Core.Nodes.Screens.CharacterSelect;
+using MegaCrit.Sts2.Core.Nodes.Screens.CustomRun;
+using MegaCrit.Sts2.Core.Nodes.Screens.DailyRun;
 using MegaCrit.Sts2.Core.Platform;
 using MegaCrit.Sts2.Core.Runs;
 
@@ -43,7 +45,7 @@ internal sealed partial class GameFactsReader
         var run = ReadRun(manager, screen);
         var lobby = screen switch
         {
-            NCharacterSelectScreen characterSelect => ReadStartRunLobby(characterSelect),
+            _ when StartRunLobbyOfScreen(screen) is { } startLobby => ReadStartRunLobby(startLobby),
             NMultiplayerLoadGameScreen loadRun => ReadLoadRunLobby(loadRun),
             _ => null,
         };
@@ -56,6 +58,8 @@ internal sealed partial class GameFactsReader
             {
                 NCharacterSelectScreen => RosterRootScenes.CharacterSelect,
                 NMultiplayerLoadGameScreen => RosterRootScenes.LoadGame,
+                NDailyRunScreen => RosterRootScenes.DailyRun,
+                NCustomRunScreen => RosterRootScenes.CustomRun,
                 _ => RosterRootScenes.MainMenu,
             };
         return new RosterFacts(rootScene, lobby, run);
@@ -91,7 +95,7 @@ internal sealed partial class GameFactsReader
         var hostPlayerId = HostPlayerId(service, localNetId);
         // Connectedness comes from the host's peer list. The run's own service is preferred; a run that has none yet
         // borrows the new-run lobby's, when that lobby is what is on screen.
-        var peers = ReadPeerNetIds(service ?? (screen as NCharacterSelectScreen)?.Lobby?.NetService, localNetId);
+        var peers = ReadPeerNetIds(service ?? StartRunLobbyOfScreen(screen)?.NetService, localNetId);
         var platform = service?.Platform;
 
         var seats = new List<RosterRunSeat>();
@@ -118,10 +122,9 @@ internal sealed partial class GameFactsReader
 
     // ---- the lobbies -----------------------------------------------------------------------------------------
 
-    /// <summary>The new-run lobby. Its screen exposes it, so the seats are read straight off the lobby.</summary>
-    private static RosterLobby? ReadStartRunLobby(NCharacterSelectScreen screen)
+    /// <summary>Read seats from the resolved new-run lobby for any supported setup screen.</summary>
+    private static RosterLobby? ReadStartRunLobby(StartRunLobby lobby)
     {
-        var lobby = screen.Lobby;
         if (lobby is null)
         {
             return null;

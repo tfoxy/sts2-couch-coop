@@ -147,6 +147,7 @@ if (args is ["host-guards", ..])
     NetTransportPatchTargetsTests.Run();
     HostPeerRoutingTests.Run();
     HostTransportCapacityTests.Run();
+    SavedRunLoadLobbyIdentityTests.PeerCleanupRoutes();
     // The lobby mount patch's RETRY contract — pure, no Harmony install and no game, same standing as the
     // legs above. Registered here as well as in the full sequence: the sequence reaches IdleHostCostTests
     // again, but the regression it guards (one failed patch attempt costing the lobby its QR button for the
@@ -170,6 +171,7 @@ if (args is ["host-guards", ..])
     // silently leaves the join picker stale. Same standing: pure metadata reflection.
     CouchCoopRosterObserverTests.TargetsResolve();
     LobbySupportCheckpointsTests.Run();
+    DailyCustomLobbyTests.Run();
     Console.WriteLine("host guards: ok");
     return;
 }
@@ -612,6 +614,8 @@ if (args is ["beta-targets", ..])
     // WS-1 networking/hosting seams, the headless FMOD forwards, the clean-exit popup suppression, and the two
     // lobby-screen mount points — in the same order the full sequence takes them.
     Leg(nameof(NetTransportPatchTargetsTests), NetTransportPatchTargetsTests.Run);
+    Leg("HostTransportCapacityTests.HostCallTargets", HostTransportCapacityTests.HostCallTargetsResolve);
+    Leg("SavedRunLoadLobbyIdentityTests.PeerCleanupRoutes", SavedRunLoadLobbyIdentityTests.PeerCleanupRoutes);
     Leg(nameof(HeadlessAudioMuteTargetsTests), HeadlessAudioMuteTargetsTests.Run);
     Leg(nameof(HostMusicStateTests), HostMusicStateTests.TargetsResolve);
     Leg(nameof(SeatAudioFeedTests), SeatAudioFeedTests.TargetsResolve);
@@ -899,6 +903,7 @@ MdnsResponderTests.Run();
 // until now the full sequence never reached it, so the grammar a support snapshot is allowlisted against was
 // only proven by the macOS suite and by an argument nobody passes by default.
 LobbySupportCheckpointsTests.Run();
+DailyCustomLobbyTests.Run();
 // WS-2 QR dialog: when the "Couch Co-Op QR Code" button exists (and, just as importantly, when it does not).
 CouchCoopLobbyHostGateTests.Run();
 // …and its mid-run twin, which decides the same thing for the pause menu's row. Beside the lobby gate on

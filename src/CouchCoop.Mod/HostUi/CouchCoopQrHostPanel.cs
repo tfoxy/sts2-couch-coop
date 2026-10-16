@@ -60,7 +60,8 @@ internal sealed partial class CouchCoopQrHostPanel : Control
     public static readonly string HotkeyAction = MegaInput.topPanel;
 
     private readonly CouchCoopEventButton _button;
-    private readonly CouchCoopQrHotkeyHint _hint = new(HotkeyAction);
+    private readonly CouchCoopQrHotkeyHint _hint;
+    private readonly string _hotkeyAction;
     private readonly Label _connectionNotice = new();
     private readonly TextureRect _connectionBadge = new();
     private readonly Label _connectionCount = new();
@@ -74,8 +75,14 @@ internal sealed partial class CouchCoopQrHostPanel : Control
     private int _localeRevision = -1;
     private readonly CouchCoopConnectionAttention _attention = new();
 
-    public CouchCoopQrHostPanel()
+    private readonly bool _compactLobby;
+
+    public CouchCoopQrHostPanel(LobbyCheckpointScreenKind? screenKind = null)
     {
+        _compactLobby = screenKind is LobbyCheckpointScreenKind.DailyRun or LobbyCheckpointScreenKind.CustomRun;
+        // Custom mode reserves the standard shortcut for its modifiers. Keep that control reachable.
+        _hotkeyAction = screenKind == LobbyCheckpointScreenKind.CustomRun ? MegaInput.viewDrawPile : HotkeyAction;
+        _hint = new CouchCoopQrHotkeyHint(_hotkeyAction);
         Name = NodeName;
         SetAnchorsPreset(LayoutPreset.FullRect);
         MouseFilter = MouseFilterEnum.Ignore;
@@ -168,6 +175,7 @@ internal sealed partial class CouchCoopQrHostPanel : Control
     public void ApplyLayout()
     {
         _layout = HostLobbyQrOverlayLayoutProvider.Current();
+        if (_compactLobby) _layout = _layout.ForCompactLobby();
 
         _button.AnchorLeft = _layout.AnchorLeft;
         _button.AnchorTop = _layout.AnchorTop;
@@ -179,6 +187,19 @@ internal sealed partial class CouchCoopQrHostPanel : Control
         _button.OffsetBottom = _layout.OffsetBottom;
         _button.CustomMinimumSize = _layout.ButtonSize;
         _button.ApplyFontSize(_layout.ButtonFontSize);
+        if (_compactLobby)
+        {
+            _button.ApplyCompactLayout(_layout.ButtonSize);
+            _hint.ApplyCompactLayout();
+            _connectionNotice.AnchorLeft = _connectionNotice.AnchorRight = 1;
+            _connectionNotice.OffsetLeft = 12;
+            _connectionNotice.OffsetRight = 200;
+            _connectionNotice.OffsetTop = 0;
+            _connectionNotice.OffsetBottom = 64;
+            _connectionNotice.VerticalAlignment = VerticalAlignment.Center;
+            _connectionBadge.OffsetTop = 4;
+            _connectionBadge.OffsetBottom = 60;
+        }
 
         _dialog.ApplyLayout();
         _alert.ApplyLayout();
@@ -278,7 +299,7 @@ internal sealed partial class CouchCoopQrHostPanel : Control
 
         try
         {
-            NHotkeyManager.Instance?.PushHotkeyPressedBinding(HotkeyAction, _openAction);
+            NHotkeyManager.Instance?.PushHotkeyPressedBinding(_hotkeyAction, _openAction);
             _hotkeyBound = NHotkeyManager.Instance is not null;
         }
         catch (Exception exception)
@@ -298,7 +319,7 @@ internal sealed partial class CouchCoopQrHostPanel : Control
         _hotkeyBound = false;
         try
         {
-            NHotkeyManager.Instance?.RemoveHotkeyPressedBinding(HotkeyAction, _openAction);
+            NHotkeyManager.Instance?.RemoveHotkeyPressedBinding(_hotkeyAction, _openAction);
         }
         catch (Exception exception)
         {

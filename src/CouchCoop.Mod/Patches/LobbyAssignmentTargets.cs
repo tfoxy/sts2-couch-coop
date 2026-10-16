@@ -10,7 +10,7 @@ internal readonly record struct LobbyAssignmentTarget(string TypeName, string Me
 }
 
 /// <summary>
-/// The game methods that assign a lobby to one of the two lobby screens. The QR panel hooks each one: the saved-run
+/// The game methods that assign a lobby to a supported lobby screen. The QR panel hooks each one: the saved-run
 /// screen's two methods also RECORD which role the lobby got and which save it was given (its player count is the
 /// lobby's player cap), because that screen exposes no lobby to read, and every method WAKES the evaluation,
 /// because an assignment on a screen that is already current is a change the screen event alone would not announce.
@@ -27,6 +27,9 @@ internal static class LobbyAssignmentTargets
     internal const string CharacterSelectScreen = "MegaCrit.Sts2.Core.Nodes.Screens.CharacterSelect.NCharacterSelectScreen";
     internal const string LoadRunScreen = "MegaCrit.Sts2.Core.Nodes.Screens.CharacterSelect.NMultiplayerLoadGameScreen";
 
+    internal const string DailyRunScreen = "MegaCrit.Sts2.Core.Nodes.Screens.DailyRun.NDailyRunScreen";
+    internal const string CustomRunScreen = "MegaCrit.Sts2.Core.Nodes.Screens.CustomRun.NCustomRunScreen";
+
     internal static IReadOnlyList<LobbyAssignmentTarget> Targets { get; } =
     [
         new(CharacterSelectScreen, "InitializeMultiplayerAsHost", 2, Role: null),
@@ -34,5 +37,12 @@ internal static class LobbyAssignmentTargets
         new(CharacterSelectScreen, "InitializeSingleplayer", 0, Role: null),
         new(LoadRunScreen, "InitializeAsHost", 2, Role: "host"),
         new(LoadRunScreen, "InitializeAsClient", 2, Role: "client"),
+        new(CustomRunScreen, "InitializeMultiplayerAsHost", 2, Role: null),
+        new(CustomRunScreen, "InitializeMultiplayerAsClient", 2, Role: null),
+        new(CustomRunScreen, "InitializeSingleplayer", 0, Role: null),
+        new(DailyRunScreen, "InitializeMultiplayerAsHost", 1, Role: null),
+        new(DailyRunScreen, "InitializeMultiplayerAsClient", 2, Role: null),
+        new(DailyRunScreen, "InitializeSingleplayer", 0, Role: null),
+        new(DailyRunScreen, "OnSubmenuClosed", 0, Role: null),
     ];
 }
