@@ -18,7 +18,7 @@ internal static class SavedRunLoadLobbyIdentityTests
     {
         SavedSteamHostIsRegisteredByLoadLobby();
         PlainEnetAndUnboundServicesKeepNativeIdentity();
-        SavedLobbyPeerCleanupUsesItsHostService();
+        PeerCleanupRoutes();
     }
 
     private static void SavedSteamHostIsRegisteredByLoadLobby()
@@ -67,13 +67,41 @@ internal static class SavedRunLoadLobbyIdentityTests
             "an unbound couch-seat identity is never remapped");
     }
 
-    private static void SavedLobbyPeerCleanupUsesItsHostService()
+    internal static void PeerCleanupRoutes()
     {
         var service = new FallbackHostService(nativeNetId: 1UL);
         Assert(CouchCoop.Mod.Runtime.GameSeatPeerCleanup.DisconnectFromService(
                 CouchCoop.Mod.Runtime.GameSeatPeerCleanup.Context.SavedRunLobby, service, 1002UL),
             "saved-run lobby peer cleanup reaches the recorded host service");
         Assert(service.EvictedPeers.SequenceEqual([1002UL]), "the saved-run seat peer is evicted");
+        foreach (var screenType in new[]
+        {
+            typeof(MegaCrit.Sts2.Core.Nodes.Screens.CharacterSelect.NCharacterSelectScreen),
+            typeof(MegaCrit.Sts2.Core.Nodes.Screens.DailyRun.NDailyRunScreen),
+            typeof(MegaCrit.Sts2.Core.Nodes.Screens.CustomRun.NCustomRunScreen),
+        })
+        {
+            var context = CouchCoop.Mod.Runtime.GameSeatPeerCleanup.LobbyContextOf(screenType);
+            Assert(context == CouchCoop.Mod.Runtime.GameSeatPeerCleanup.Context.NewRunLobby,
+                $"{screenType.Name} reconnect must evict the old seat instead of skipping cleanup");
+            Assert(CouchCoop.Mod.Runtime.GameSeatPeerCleanup.DisconnectFromService(context, service, 1003UL),
+                "new-run lobby cleanup reaches its host service");
+            try
+            {
+                CouchCoop.Mod.Runtime.GameSeatPeerCleanup.DisconnectFromService(context, null, 1003UL);
+                throw new Exception("missing new-run host service must fail closed");
+            }
+            catch (InvalidOperationException) { }
+        }
+        Assert(service.EvictedPeers.SequenceEqual([1002UL, 1003UL, 1003UL, 1003UL]),
+            "all three setup modes release the reconnecting identity");
+        Assert(CouchCoop.Mod.Runtime.GameSeatPeerCleanup.LobbyContextOf(
+                typeof(MegaCrit.Sts2.Core.Nodes.Screens.CharacterSelect.NMultiplayerLoadGameScreen))
+            == CouchCoop.Mod.Runtime.GameSeatPeerCleanup.Context.SavedRunLobby,
+            "saved-run cleanup keeps its recorded-lobby path");
+        Assert(CouchCoop.Mod.Runtime.GameSeatPeerCleanup.LobbyContextOf(null)
+            == CouchCoop.Mod.Runtime.GameSeatPeerCleanup.Context.None,
+            "a closed screen does not retain a lobby context");
         Assert(!CouchCoop.Mod.Runtime.GameSeatPeerCleanup.DisconnectFromService(
                 CouchCoop.Mod.Runtime.GameSeatPeerCleanup.Context.None, null, 1002UL),
             "leaving multiplayer needs no peer cleanup");

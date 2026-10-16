@@ -12,8 +12,11 @@ internal static class HostReflectionDispatch
     {
         try
         {
-            return (TResult)(method.Invoke(instance, arguments)
-                ?? throw new InvalidOperationException($"{method.Name} returned null."));
+            var result = method.Invoke(instance, arguments);
+            // ENet reports a successful start as a nullable error with no value.
+            if (result is null && Nullable.GetUnderlyingType(typeof(TResult)) is not null)
+                return default!;
+            return (TResult)(result ?? throw new InvalidOperationException($"{method.Name} returned null."));
         }
         catch (TargetInvocationException exception) when (exception.InnerException is not null)
         {

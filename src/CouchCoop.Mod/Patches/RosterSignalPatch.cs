@@ -6,6 +6,8 @@ using HarmonyLib;
 using MegaCrit.Sts2.Core.Multiplayer.Game;
 using MegaCrit.Sts2.Core.Multiplayer.Game.Lobby;
 using MegaCrit.Sts2.Core.Nodes.Screens.CharacterSelect;
+using MegaCrit.Sts2.Core.Nodes.Screens.CustomRun;
+using MegaCrit.Sts2.Core.Nodes.Screens.DailyRun;
 using MegaCrit.Sts2.Core.Runs;
 using MegaCrit.Sts2.Core.Saves;
 using MegaCrit.Sts2.Core.Entities.Multiplayer;
@@ -51,6 +53,18 @@ internal static class RosterSignalPatch
             [typeof(StartRunLobbyPlayer), typeof(bool)], nameof(PostfixWake)),
         new(typeof(NCharacterSelectScreen), nameof(NCharacterSelectScreen.RemotePlayerDisconnected),
             [typeof(StartRunLobbyPlayer)], nameof(PostfixWake)),
+        new(typeof(NDailyRunScreen), nameof(NDailyRunScreen.PlayerConnected),
+            [typeof(StartRunLobbyPlayer)], nameof(PostfixWake)),
+        new(typeof(NDailyRunScreen), nameof(NDailyRunScreen.PlayerChanged),
+            [typeof(StartRunLobbyPlayer), typeof(bool)], nameof(PostfixWake)),
+        new(typeof(NDailyRunScreen), nameof(NDailyRunScreen.RemotePlayerDisconnected),
+            [typeof(StartRunLobbyPlayer)], nameof(PostfixWake)),
+        new(typeof(NCustomRunScreen), nameof(NCustomRunScreen.PlayerConnected),
+            [typeof(StartRunLobbyPlayer)], nameof(PostfixWake)),
+        new(typeof(NCustomRunScreen), nameof(NCustomRunScreen.PlayerChanged),
+            [typeof(StartRunLobbyPlayer), typeof(bool)], nameof(PostfixWake)),
+        new(typeof(NCustomRunScreen), nameof(NCustomRunScreen.RemotePlayerDisconnected),
+            [typeof(StartRunLobbyPlayer)], nameof(PostfixWake)),
         new(typeof(NMultiplayerLoadGameScreen), nameof(NMultiplayerLoadGameScreen.PlayerConnected),
             [typeof(LoadRunLobbyPlayer)], nameof(PostfixWake)),
 #else
@@ -60,6 +74,18 @@ internal static class RosterSignalPatch
             [typeof(LobbyPlayer), typeof(bool)], nameof(PostfixWake)),
         new(typeof(NCharacterSelectScreen), nameof(NCharacterSelectScreen.RemotePlayerDisconnected),
             [typeof(LobbyPlayer)], nameof(PostfixWake)),
+        new(typeof(NDailyRunScreen), nameof(NDailyRunScreen.PlayerConnected),
+            [typeof(LobbyPlayer)], nameof(PostfixWake)),
+        new(typeof(NDailyRunScreen), nameof(NDailyRunScreen.PlayerChanged),
+            [typeof(LobbyPlayer), typeof(bool)], nameof(PostfixWake)),
+        new(typeof(NDailyRunScreen), nameof(NDailyRunScreen.RemotePlayerDisconnected),
+            [typeof(LobbyPlayer)], nameof(PostfixWake)),
+        new(typeof(NCustomRunScreen), nameof(NCustomRunScreen.PlayerConnected),
+            [typeof(LobbyPlayer)], nameof(PostfixWake)),
+        new(typeof(NCustomRunScreen), nameof(NCustomRunScreen.PlayerChanged),
+            [typeof(LobbyPlayer), typeof(bool)], nameof(PostfixWake)),
+        new(typeof(NCustomRunScreen), nameof(NCustomRunScreen.RemotePlayerDisconnected),
+            [typeof(LobbyPlayer)], nameof(PostfixWake)),
         new(typeof(NMultiplayerLoadGameScreen), nameof(NMultiplayerLoadGameScreen.PlayerConnected),
             [typeof(ulong)], nameof(PostfixWake)),
 #endif
@@ -67,7 +93,7 @@ internal static class RosterSignalPatch
             [typeof(ulong)], nameof(PostfixWake)),
         new(typeof(StartRunLobby), RosterSignalTargets.Constructor,
             [typeof(GameMode), typeof(INetGameService), typeof(IStartRunLobbyListener), typeof(int)],
-            nameof(PostfixStartRunLobbyCreated)),
+            nameof(PostfixStartRunLobbyCreated), CostsCoop: true),
         new(typeof(LoadRunLobby), RosterSignalTargets.Constructor,
             [typeof(INetGameService), typeof(ILoadRunLobbyListener), typeof(SerializableRun)],
             nameof(PostfixLoadRunLobbyCreated), CostsCoop: true),
@@ -169,8 +195,17 @@ internal static class RosterSignalPatch
 
     private static void PostfixWake() => Note(record: null);
 
-    private static void PostfixStartRunLobbyCreated(StartRunLobby __instance)
-        => Note(() => RosterHostService.Note(__instance.NetService));
+    private static void PostfixStartRunLobbyCreated(StartRunLobby __instance, INetGameService __1, IStartRunLobbyListener __2)
+        => Note(() =>
+        {
+            RosterHostService.Note(__1);
+            if (__2 is NDailyRunScreen)
+            {
+                LobbyAssignmentRecord.RecordLobby(__2, __instance);
+                // Construction can complete after screen initialization. The controller reads next frame.
+                CouchCoopQrHostPanelController.NoteLobbyAssigned();
+            }
+        });
 
     private static void PostfixLoadRunLobbyCreated(LoadRunLobby __instance)
         => Note(() =>

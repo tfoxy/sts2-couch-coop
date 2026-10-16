@@ -616,7 +616,7 @@ internal static class CouchCoopRosterObserverTests
     {
         var data = RosterSignalTargets.Targets;
         var bindings = RosterSignalPatch.Bindings;
-        Expect(data.Count == 8 && bindings.Count == data.Count, "eight roster methods are hooked");
+        Expect(data.Count == 14 && bindings.Count == data.Count, "all lobby roster callbacks are hooked");
 
         for (var index = 0; index < data.Count; index++)
         {

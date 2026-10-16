@@ -29,7 +29,7 @@ internal static class HostTransportCapacityTests
     {
         OnlyTheStartSteamHostPrefixMovesOffTheDefaultPriority();
         HarmonyOrdersOurReplacingPrefixLast();
-        BothAsyncHostCallSitesContainOneSteamStart();
+        HostCallTargetsResolve();
         TheArgumentsWeConsumeStillCarryTheNamesHarmonyMatchesOn();
         AnAlreadyRaisedCapSurvivesAndIsStated();
         TheLobbyProbeOnlyEverRaises();
@@ -102,13 +102,18 @@ internal static class HostTransportCapacityTests
     {
     }
 
-    private static void BothAsyncHostCallSitesContainOneSteamStart()
+    internal static void HostCallTargetsResolve()
     {
         var dispatch = typeof(CouchCoopHostTransportPatch).GetMethod(
             "DispatchStartSteamHost", BindingFlags.NonPublic | BindingFlags.Static);
         Assert(dispatch is not null
                && dispatch.GetMethodImplementationFlags().HasFlag(MethodImplAttributes.NoInlining),
             "the call-site dispatch itself cannot be inlined");
+        var enetDispatch = typeof(CouchCoopHostTransportPatch).GetMethod(
+            "DispatchStartENetHost", BindingFlags.NonPublic | BindingFlags.Static);
+        Assert(enetDispatch is not null
+               && enetDispatch.GetMethodImplementationFlags().HasFlag(MethodImplAttributes.NoInlining),
+            "ENet bookkeeping dispatch cannot be inlined");
         var reflectionDispatch = typeof(HostReflectionDispatch).GetMethod(
             nameof(HostReflectionDispatch.Invoke), BindingFlags.NonPublic | BindingFlags.Static);
         Assert(reflectionDispatch is not null
@@ -123,6 +128,8 @@ internal static class HostTransportCapacityTests
                 $"{callerType.Name} has exactly one async state machine that starts a Steam host");
             Assert(CouchCoopHostTransportPatch.CountSteamHostCalls(sites[0]) == 1,
                 $"{callerType.Name} state machine has exactly one host-start call to replace");
+            Assert(CouchCoopHostTransportPatch.CountENetHostCalls(sites[0]) == 1,
+                $"{callerType.Name} state machine has exactly one ENet host-start call to replace");
         }
     }
 

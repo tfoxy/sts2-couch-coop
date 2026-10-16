@@ -41,6 +41,9 @@ internal static class CouchCoopHostTransportPatch
     private static readonly MethodInfo? StartSteamHostMethod =
         AccessTools.Method(typeof(NetHostGameService), "StartSteamHost", [typeof(int)]);
 
+    private static readonly MethodInfo? StartENetHostMethod =
+        AccessTools.Method(typeof(NetHostGameService), "StartENetHost", [typeof(ushort), typeof(int)]);
+
     /// <summary>
     /// The game-service identity is distinct from ENet's transport registration. The saved-run fallback must
     /// override this getter as well, because <c>LoadRunLobby</c> uses it to add the local player and to find that
@@ -154,22 +157,27 @@ internal static class CouchCoopHostTransportPatch
         return false;
     }
 
-    // A tiny host method can be inlined into an already-JITted async MoveNext before Harmony patches it. Replace
-    // the two call sites with a call that reflection must dispatch through the patched method's entry point.
+    // Tiny host methods can be inlined before Harmony patches them. Route both transport starts through
+    // reflection so their prefixes and bookkeeping postfixes run under normal JIT settings.
     // The same rewriter and reflection dispatch are exercised with a game-free Harmony target in the smoke test.
     [MethodImpl(MethodImplOptions.NoInlining)]
     private static Task<NetErrorInfo?> DispatchStartSteamHost(NetHostGameService service, int maxClients)
         => HostReflectionDispatch.Invoke<Task<NetErrorInfo?>>(StartSteamHostMethod!, service, [maxClients]);
+
+    [MethodImpl(MethodImplOptions.NoInlining)]
+    private static NetErrorInfo? DispatchStartENetHost(NetHostGameService service, ushort port, int maxClients)
+        => HostReflectionDispatch.Invoke<NetErrorInfo?>(StartENetHostMethod!, service, [port, maxClients]);
 
     private static void PatchSteamHostCaller(Harmony harmony, Type callerType)
     {
         try
         {
             var candidates = FindSteamHostCallSites(callerType);
-            if (candidates.Count != 1 || CountSteamHostCalls(candidates[0]) != 1)
+            if (candidates.Count != 1 || CountSteamHostCalls(candidates[0]) != 1
+                || CountENetHostCalls(candidates[0]) != 1)
             {
                 throw new InvalidOperationException(
-                    $"expected one async host call site with one StartSteamHost call; found {candidates.Count} "
+                    $"expected one async host call site with one Steam and one ENet start; found {candidates.Count} "
                     + $"site(s), with call counts [{string.Join(", ", candidates.Select(CountSteamHostCalls))}]");
             }
 
@@ -179,7 +187,7 @@ internal static class CouchCoopHostTransportPatch
         {
             CouchCoopPatchDiagnostics.PatchFailed(
                 nameof(CouchCoopHostTransportPatch),
-                $"{callerType.Name} Steam host call patch failed ({exception.GetType().Name}: {exception.Message}).",
+                $"{callerType.Name} host call patch failed ({exception.GetType().Name}: {exception.Message}).",
                 costsCoop: true);
         }
     }
@@ -207,11 +215,18 @@ internal static class CouchCoopHostTransportPatch
         => StartSteamHostMethod is null ? 0 : PatchProcessor.GetOriginalInstructions(method)
             .Count(instruction => instruction.Calls(StartSteamHostMethod));
 
+    internal static int CountENetHostCalls(MethodBase method)
+        => StartENetHostMethod is null ? 0 : PatchProcessor.GetOriginalInstructions(method)
+            .Count(instruction => instruction.Calls(StartENetHostMethod));
+
     private static IEnumerable<CodeInstruction> TranspileSteamHostCall(IEnumerable<CodeInstruction> instructions)
         => HostCallRewriter.ReplaceExactlyOne(
-            instructions,
-            StartSteamHostMethod ?? throw new MissingMethodException("StartSteamHost(int)"),
-            Local(nameof(DispatchStartSteamHost)));
+            HostCallRewriter.ReplaceExactlyOne(
+                instructions,
+                StartSteamHostMethod ?? throw new MissingMethodException("StartSteamHost(int)"),
+                Local(nameof(DispatchStartSteamHost))),
+            StartENetHostMethod ?? throw new MissingMethodException("StartENetHost(ushort, int)"),
+            Local(nameof(DispatchStartENetHost)));
 
     // Postfix on NetHostGameService.StartENetHost(ushort, int): a plain ENet host is running (the stock -fastmp
     // path, the debug multiplayer screen, or a Steam-uninitialized launch). Host netId is 1 and couch seats can

@@ -150,6 +150,18 @@ internal sealed partial class CouchCoopQrHotkeyHint : Control
 
     public override void _Ready() => Install();
 
+    internal void ApplyCompactLayout()
+    {
+        AnchorLeft = AnchorRight = 0;
+        AnchorTop = 0;
+        AnchorBottom = 1;
+        OffsetLeft = 8;
+        OffsetRight = 48;
+        OffsetTop = OffsetBottom = 0;
+        _label.Visible = false;
+        TooltipText = HintText;
+    }
+
     public void RefreshLocalization()
     {
         _label.Text = HintText;

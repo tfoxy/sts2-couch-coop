@@ -31,6 +31,13 @@ cat > "$log" <<'EOF'
 [ERROR] [couchcoop] live-host-runtime result=unsupported reason=not-live-adapter
 [ERROR] [couchcoop] live-host-runtime result=unsupported reason=unreported
 [ERROR] [couchcoop] live-host-runtime result=unsupported reason=unknown
+[couchcoop] lobby-patch-attempt phase=initial pending=4 total=4
+[couchcoop] lobby-patch-attempt phase=retry pending=3 total=4
+[couchcoop] lobby-patch-complete targets=4 total=4
+[couchcoop] lobby-patch-incomplete targets=3 total=4 retry=pending
+[couchcoop] lobby-screen-mounted kind=daily-run
+[couchcoop] host-lobby-evaluated kind=custom-run result=host
+[couchcoop] qr-panel-install-complete kind=daily-run
 [couchcoop] lobby-patch-attempt phase=initial pending=2 total=2
 [couchcoop] lobby-patch-attempt phase=retry pending=0 total=2
 [couchcoop] lobby-patch-complete targets=2 total=2
@@ -85,6 +92,13 @@ done <<'EOF'
 [ERROR] [couchcoop] live-host-runtime result=unsupported reason=not-live-adapter
 [ERROR] [couchcoop] live-host-runtime result=unsupported reason=unreported
 [ERROR] [couchcoop] live-host-runtime result=unsupported reason=unknown
+[couchcoop] lobby-patch-attempt phase=initial pending=4 total=4
+[couchcoop] lobby-patch-attempt phase=retry pending=3 total=4
+[couchcoop] lobby-patch-complete targets=4 total=4
+[couchcoop] lobby-patch-incomplete targets=3 total=4 retry=pending
+[couchcoop] lobby-screen-mounted kind=daily-run
+[couchcoop] host-lobby-evaluated kind=custom-run result=host
+[couchcoop] qr-panel-install-complete kind=daily-run
 [couchcoop] lobby-patch-attempt phase=initial pending=2 total=2
 [couchcoop] lobby-patch-complete targets=2 total=2
 [ERROR] [couchcoop] lobby-patch-incomplete targets=0 total=2 retry=exhausted

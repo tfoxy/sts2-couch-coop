@@ -1229,7 +1229,7 @@ The always-on QR overlay is gone. A game-styled button opens a dialog instead.
   (persisted pick, `qr-prefs.json`), `QrRaster.cs`, `CouchCoopStreamSkip.cs`.
 - **Gate**: `ShouldShow(listenerBaseUri, facts)` = browser server bound AND
   `facts is { RunInProgress: false, CurrentLobbyNetType: "host" }` (`CouchCoopLobbyHostGate`, pure). That single
-  predicate covers BOTH `NCharacterSelectScreen` and `NMultiplayerLoadGameScreen`; a singleplayer/client lobby is
+  predicate covers standard, daily, custom, and standard saved-run setup; a singleplayer/client lobby is
   refused, and `null` facts (the read failed) refuse too and are recorded as `Unavailable`, not `NotHost`.
 - **The gate facts are CouchCoop's own typed read, not a spirectl state snapshot** (WP3 path 1; the maintainer's
   granted design: a CouchCoop-owned typed reader, no spirectl state read). `IGameFacts` and the `GateFacts` DTO
@@ -1303,7 +1303,7 @@ Host transport). A fact is never learned by polling: the screen handed to the re
   (`-- host-guards`); `Spirectl.Sts2.Live.Sts2ScreenContext` is pinned in
   `SpirectlEmbeddedAssemblyBoundaryTests`.
 - **Node contract** (what the probes assert): `CouchCoopQrHostPanel` (FullRect, `Ignore`) →
-  `CouchCoopQrButton` (rect **226,732 → 578,868**, design space, on BOTH lobby screens; label
+  `CouchCoopQrButton` (rect **226,732 → 578,868**, design space, on standard/new and saved-run lobbies; label
   "Couch Co-Op QR Code") and `CouchCoopQrDialog` (hidden) → `CouchCoopQrDialogScrim` (`Stop`, closes),
   `CouchCoopQrDialogPanel` (1000×936 centred, `Stop`, does NOT close) → `CouchCoopQrDialogTitleLabel`,
   `CouchCoopQrDialogQrTexture` (`Stop`, does NOT close), `CouchCoopQrDialogUrlLabel`,
@@ -1328,6 +1328,12 @@ Host transport). A fact is never learned by polling: the screen handed to the re
   remote-player container). `topPanel` is also controller-ONLY — no default key, and absent from the
   game's remappable-keyboard list — so it cannot swallow a key from a mouse-and-keyboard host. This is
   the Steam Deck / Game Mode fix; the button's own `Hotkeys` stays empty.
+- **Daily/custom setup**: the host gate, roster, capacity and seat launcher share the standard new-run path.
+  Daily lobby availability is recorded and pushed after construction, then cleared on reinitialization/closure;
+  no new polling is used. The compact QR button is **220,920 → 740,984**, with a horizontally sliced background,
+  a single-line localized 28-point label and an inline controller glyph. Connection attention sits beside it.
+  Custom uses `viewDrawPile` for QR (default LT), preserving its modifier-list shortcut; Daily keeps `topPanel`.
+  Both reuse the existing multiplayer-lobby wire mode. Daily/custom saved-run loading is not covered.
 - **`CouchCoopQrHotkeyHint`**: child of `CouchCoopQrButton`, anchored below it → `Row` →
   `CouchCoopQrHotkeyGlyph` + `CouchCoopQrHotkeyLabel` (`couchcoop_qr_button_hotkey`). Visible only while
   `NControllerManager.Instance.IsUsingController`; the glyph comes from

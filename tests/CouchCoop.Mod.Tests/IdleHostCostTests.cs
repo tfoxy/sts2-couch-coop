@@ -298,7 +298,7 @@ internal static class IdleHostCostTests
     // game build, and it must run THIS leg rather than a second copy of it.
     internal static void MountTargetsResolve()
     {
-        Expect(LobbyScreenMountPatch.ScreenTypeNames.Count == 2, "both lobby screens are patch targets");
+        Expect(LobbyScreenMountPatch.ScreenTypeNames.Count == 4, "all four lobby screens are patch targets");
 
         foreach (var typeName in LobbyScreenMountPatch.ScreenTypeNames)
         {

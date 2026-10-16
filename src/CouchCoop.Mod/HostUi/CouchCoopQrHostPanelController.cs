@@ -1071,7 +1071,7 @@ public static class CouchCoopQrHostPanelController
 
             try
             {
-                panel = new CouchCoopQrHostPanel();
+                panel = new CouchCoopQrHostPanel(CheckpointKind(screen));
             }
             catch
             {
@@ -1171,6 +1171,8 @@ public static class CouchCoopQrHostPanelController
         {
             "NCharacterSelectScreen" => LobbyCheckpointScreenKind.CharacterSelect,
             "NMultiplayerLoadGameScreen" => LobbyCheckpointScreenKind.LoadGame,
+            "NDailyRunScreen" => LobbyCheckpointScreenKind.DailyRun,
+            "NCustomRunScreen" => LobbyCheckpointScreenKind.CustomRun,
             _ => null,
         };
 
@@ -1240,7 +1242,7 @@ public static class CouchCoopQrHostPanelController
     private static bool IsLobbyScreen(Node node)
     {
         var type = node.GetType();
-        return type.Name is "NCharacterSelectScreen" or "NMultiplayerLoadGameScreen"
+        return type.Name is "NCharacterSelectScreen" or "NMultiplayerLoadGameScreen" or "NDailyRunScreen" or "NCustomRunScreen"
             || type.FullName is "MegaCrit.Sts2.Core.Nodes.Screens.CharacterSelect.NCharacterSelectScreen"
                 or "MegaCrit.Sts2.Core.Nodes.Screens.CharacterSelect.NMultiplayerLoadGameScreen";
     }

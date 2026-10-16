@@ -7,6 +7,7 @@ internal static class HostReflectionDispatchTests
 {
     private static int _limitCalls;
     private static int _transportCalls;
+    private static int _enetCalls;
 
     internal static void Run()
     {
@@ -21,8 +22,17 @@ internal static class HostReflectionDispatchTests
         harmony.Patch(target, prefix: new HarmonyMethod(limit, Priority.Normal));
         harmony.Patch(target, prefix: new HarmonyMethod(transport, Priority.Last));
         harmony.Patch(caller, transpiler: new HarmonyMethod(transpiler));
+        var enet = typeof(Fixture).GetMethod(nameof(Fixture.StartEnet))!;
+        harmony.Patch(enet, postfix: new HarmonyMethod(typeof(HostReflectionDispatchTests)
+            .GetMethod(nameof(ObserveEnet), BindingFlags.NonPublic | BindingFlags.Static)!));
         try
         {
+            _enetCalls = 0;
+            Assert(HostReflectionDispatch.Invoke<int?>(enet, new Fixture(), [false]) is null,
+                "successful ENet-style nullable result stays null");
+            Assert(HostReflectionDispatch.Invoke<int?>(enet, new Fixture(), [true]) == 7,
+                "failed ENet-style result is preserved");
+            Assert(_enetCalls == 2, "reflection dispatch observes both ENet postfix calls");
             var task = new Fixture().Caller(4);
             Assert(task.GetAwaiter().GetResult() == 12,
                 "rewritten caller returns the replacing prefix's task with the adjusted cap");
@@ -44,6 +54,8 @@ internal static class HostReflectionDispatchTests
     [MethodImpl(MethodImplOptions.NoInlining)]
     private static Task<int> Dispatch(Fixture fixture, int cap)
         => HostReflectionDispatch.Invoke<Task<int>>(typeof(Fixture).GetMethod(nameof(Fixture.Start))!, fixture, [cap]);
+
+    private static void ObserveEnet() => _enetCalls++;
 
     private static void RaiseCap(ref int cap)
     {
@@ -67,6 +79,9 @@ internal static class HostReflectionDispatchTests
     {
         [MethodImpl(MethodImplOptions.NoInlining)]
         public Task<int> Start(int cap) => Task.FromResult(cap);
+
+        [MethodImpl(MethodImplOptions.NoInlining)]
+        public int? StartEnet(bool fail) => fail ? 7 : null;
 
         [MethodImpl(MethodImplOptions.NoInlining)]
         public Task<int> Caller(int cap) => Start(cap);

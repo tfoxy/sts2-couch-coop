@@ -7,7 +7,7 @@ internal readonly record struct GodotNodeMountTarget(string TypeName, string Met
 }
 
 /// <summary>
-/// The two game-owned lobby controls that provide the narrow, declared lifecycle seam used by the host panel.
+/// The game-owned lobby controls that provide the narrow, declared lifecycle seam used by the host panel.
 /// Kept as data so a metadata-only reference lane can verify the contract without loading a game assembly.
 /// </summary>
 internal static class LobbyScreenMountTargets
@@ -18,6 +18,8 @@ internal static class LobbyScreenMountTargets
     [
         new("MegaCrit.Sts2.Core.Nodes.Screens.CharacterSelect.NCharacterSelectScreen", ReadyMethodName),
         new("MegaCrit.Sts2.Core.Nodes.Screens.CharacterSelect.NMultiplayerLoadGameScreen", ReadyMethodName),
+        new(LobbyAssignmentTargets.DailyRunScreen, ReadyMethodName),
+        new(LobbyAssignmentTargets.CustomRunScreen, ReadyMethodName),
     ];
 
     internal static IReadOnlyList<string> TypeNames { get; } = Targets.Select(target => target.TypeName).ToArray();

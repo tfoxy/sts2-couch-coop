@@ -130,9 +130,7 @@ internal sealed partial class GameFactsReader : IGameFacts
     private static string? LobbyNetType(object? screen)
         => screen switch
         {
-            NCharacterSelectScreen characterSelect => characterSelect.Lobby is { } lobby
-                ? NetTypeName(lobby.NetService?.Type)
-                : null,
+            _ when StartRunLobbyOfScreen(screen) is { } lobby => NetTypeName(lobby.NetService?.Type),
             NMultiplayerLoadGameScreen loadRun => LobbyAssignmentRecord.TryGet(loadRun, out var role) ? role : null,
             _ => null,
         };

@@ -15,7 +15,7 @@ namespace CouchCoop.Mod.HostUi;
 /// gate reads it back only when it evaluates a screen that is current.
 /// </para>
 /// <para>
-/// STALENESS IS NOT TRACKED, ON PURPOSE. The game clears a lobby by leaving the screen, and no screen on top means
+/// SAVED-RUN ROLES DO NOT TRACK STALENESS. The game clears a lobby by leaving the screen, and no screen on top means
 /// no QR panel and nothing to decide, so a role left over from a finished lobby is never read as an answer. Do not
 /// build invalidation for it.
 /// </para>
@@ -82,7 +82,7 @@ internal static class LobbyAssignmentRecord
     }
 
     /// <summary>
-    /// Remember (or replace) the saved-run LOBBY OBJECT the game built for <paramref name="screen"/>, as its constructor
+    /// Remember (or replace) the daily or saved-run LOBBY OBJECT the game built for <paramref name="screen"/>, as its constructor
     /// hook (<see cref="Patches.RosterSignalPatch"/>) saw it. Not inspected here.
     /// </summary>
     /// <remarks>
@@ -97,7 +97,10 @@ internal static class LobbyAssignmentRecord
         Lobbies.AddOrUpdate(screen, lobby);
     }
 
-    /// <summary>The lobby object last recorded for the saved-run <paramref name="screen"/>, or false when none was.</summary>
+    /// <summary>Forget a setup screen's lobby before reinitialization or after closure.</summary>
+    internal static void ClearLobby(object screen) => Lobbies.Remove(screen);
+
+    /// <summary>The lobby object last recorded for <paramref name="screen"/>, or false when none was.</summary>
     internal static bool TryGetLobby(object screen, [NotNullWhen(true)] out object? lobby)
     {
         if (screen is not null && Lobbies.TryGetValue(screen, out var found))

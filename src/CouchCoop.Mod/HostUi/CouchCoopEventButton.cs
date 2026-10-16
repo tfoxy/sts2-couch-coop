@@ -46,6 +46,37 @@ internal sealed partial class CouchCoopEventButton : CouchCoopTextureButton
     public void ApplyFontSize(int fontSize)
         => CouchCoopGameUiTheme.ApplyFont(ButtonLabel, CouchCoopGameUiTheme.KreonBoldGlyphSpaceOne, fontSize);
 
+    private NinePatchRect? _compactBackground;
+
+    internal void ApplyCompactLayout(Vector2 size)
+    {
+        ButtonLabel.AutowrapMode = TextServer.AutowrapMode.Off;
+        ButtonLabel.OffsetLeft = 56;
+        ButtonLabel.OffsetRight = -56;
+        if (Image.Texture is not { } texture) return;
+
+        if (_compactBackground is null)
+        {
+            _compactBackground = new NinePatchRect
+            {
+                Name = "CompactBackground",
+                Texture = texture,
+                Material = Hsv,
+                MouseFilter = MouseFilterEnum.Ignore,
+                PatchMarginLeft = texture.GetHeight() / 2,
+                PatchMarginRight = texture.GetHeight() / 2,
+            };
+            Visuals.AddChild(_compactBackground);
+            Visuals.MoveChild(_compactBackground, 0);
+            Image.Visible = false;
+        }
+
+        // Preserve the artwork's end caps at the compact height; only the middle grows horizontally.
+        var scale = size.Y / texture.GetHeight();
+        _compactBackground.Scale = new Vector2(scale, scale);
+        _compactBackground.Size = size / scale;
+    }
+
     // Instant, like the scene: the pop must feel attached to the cursor crossing the edge.
     protected override void ApplyFocusVisual()
     {

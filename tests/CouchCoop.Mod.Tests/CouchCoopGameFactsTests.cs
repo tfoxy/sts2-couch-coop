@@ -331,7 +331,7 @@ internal static class CouchCoopGameFactsTests
     {
         var data = LobbyAssignmentTargets.Targets;
         var bindings = LobbyAssignmentPatch.Bindings;
-        Expect(data.Count == 5 && bindings.Count == data.Count, "five assignment methods are hooked");
+        Expect(data.Count == 12 && bindings.Count == data.Count, "all lobby assignment and daily-close methods are hooked");
 
         for (var index = 0; index < data.Count; index++)
         {

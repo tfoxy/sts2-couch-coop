@@ -94,7 +94,7 @@ internal sealed partial class GameFactsReader
     internal static int? LobbyCapOfScreen(object? screen)
         => screen switch
         {
-            NCharacterSelectScreen characterSelect => characterSelect.Lobby is { } lobby ? StartRunLobbyCap(lobby) : null,
+            _ when StartRunLobbyOfScreen(screen) is { } lobby => StartRunLobbyCap(lobby),
             NMultiplayerLoadGameScreen loadRun => LobbyAssignmentRecord.TryGetSavedRun(loadRun, out var payload)
                 ? SavedRunPlayerCount(payload)
                 : null,

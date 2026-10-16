@@ -121,6 +121,12 @@ internal sealed record HostLobbyQrOverlayLayout(
         PanelColor: DefaultPanelColorHtml,
         PanelBorderColor: DefaultPanelBorderColorHtml);
 
+    public HostLobbyQrOverlayLayout ForCompactLobby() => this with
+    {
+        Left = 220f, Top = 920f, Right = 740f, Bottom = 984f,
+        ButtonFontScale = 1.75f,
+    };
+
     // The rect is absolute in design space, so the button anchors to the parent's top-left origin
     // and the offsets carry the full coordinates.
     public float AnchorLeft => 0f;
