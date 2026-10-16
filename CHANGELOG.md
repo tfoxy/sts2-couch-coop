@@ -9,6 +9,20 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and
 
 ## [Unreleased]
 
+## [0.5.0] - 2026-10-16
+
+### Added
+
+- You can now invite couch co-op players from Daily Challenge and Custom Mode using the QR button.
+- Host browser access now pauses outside multiplayer play and while native menus are open.
+- Connect directly by IP over HTTPS after installing your host's public certificate.
+- Audio (Beta) is now visible in mirror settings.
+
+### Fixed
+
+- Choose your network and connection method separately, with clearer explanations when an option is unavailable.
+- Connection methods now show their URLs, with clearer guidance for unavailable choices.
+
 ## [0.4.2] - 2026-10-10
 
 ### Fixed
@@ -222,7 +236,8 @@ First public release. Turn the phones, tablets and laptops on your network into 
 a local Slay the Spire 2 co-op session — no app to install on the other devices, and no `sts2` CLI
 needed to run the mod.
 
-[Unreleased]: https://github.com/tfoxy/sts2-couch-coop/compare/v0.4.2...HEAD
+[Unreleased]: https://github.com/tfoxy/sts2-couch-coop/compare/v0.5.0...HEAD
+[0.5.0]: https://github.com/tfoxy/sts2-couch-coop/releases/tag/v0.5.0
 [0.4.2]: https://github.com/tfoxy/sts2-couch-coop/releases/tag/v0.4.2
 [0.4.1]: https://github.com/tfoxy/sts2-couch-coop/releases/tag/v0.4.1
 [0.4.0]: https://github.com/tfoxy/sts2-couch-coop/releases/tag/v0.4.0
