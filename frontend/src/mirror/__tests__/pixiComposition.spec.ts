@@ -4,6 +4,7 @@ import { createQuadView, type DrawList } from "@godot-scene-web/canvas";
 import { applySceneDelta, createMirrorState, parseSceneDelta } from "@/mirror/sceneTree";
 import { connectMirrorClient } from "@/mirror/mirrorClient";
 import MirrorView from "@/mirror/MirrorView.vue";
+import { handRaiseUi, __resetHandRaiseUiForTest } from "@/mirror/handRaiseUi";
 import * as rendererFactory from "@/mirror/rendererFactory";
 import { applyKeyframe, holderId, holderSpec, positionHint, slot, update } from "./handStageHarness";
 
@@ -619,7 +620,7 @@ describe("Pixi composition initialization", () => {
     }
   });
 
-  it("reproduces a pending newer revision that publishes without an ack pull", async () => {
+  it("does not synthesize a view completion when no retry callback is installed", async () => {
     window.history.replaceState(null, "", "/?rendererCompare=1&stage=rust&pixiScene=retained");
     Object.assign(rendererComparisonConfig, readRendererComparisonConfig());
     measureStub();
@@ -654,8 +655,8 @@ describe("Pixi composition initialization", () => {
     } finally { renderer.dispose(); }
   });
 
-  it("retries the pending Rust view after a newer async publication only when opted in", async () => {
-    window.history.replaceState(null, "", "/?rendererCompare=1&stage=rust&rustPendingAckRetry=1");
+  it("retries the pending Rust view after a newer async publication by default", async () => {
+    window.history.replaceState(null, "", "/?rendererCompare=1&stage=rust");
     Object.assign(rendererComparisonConfig, readRendererComparisonConfig());
     measureStub();
     const renderer = createPixiMirrorRenderer(stage(), document.createElementNS("http://www.w3.org/2000/svg", "defs"), null,
@@ -684,8 +685,40 @@ describe("Pixi composition initialization", () => {
     } finally { renderer.dispose(); }
   });
 
+  it("synchronizes hand controls after the first frame waits for executor startup", async () => {
+    window.history.replaceState(null, "", "/?stage=rust&raiseHand=off");
+    Object.assign(rendererComparisonConfig, readRendererComparisonConfig());
+    measureStub();
+    __resetHandRaiseUiForTest();
+    vi.stubGlobal("ResizeObserver", class { observe() {} disconnect() {} });
+    const state = createMirrorState();
+    applyKeyframe(state, 5);
+    update(state, [{ id: "piles", parentId: "root", name: "Piles", nodeType: "NCombatPilesContainer" }],
+      undefined, ["root", "piles", ...state.orderedIds.filter((id) => id !== "root")]);
+    const adapter = fakeAdapter(true);
+    let release!: (value: typeof adapter) => void;
+    const executor = new Promise<typeof adapter>((resolve) => { release = resolve; });
+    vi.spyOn(rendererFactory, "createMirrorRendererFor").mockImplementation((host, defs, canvasHost) =>
+      createPixiMirrorRenderer(host, defs, canvasHost, undefined,
+        { backend: "rust", createExecutor: () => executor as never }));
+    const ack = vi.fn();
+    const wrapper = mount(MirrorView, { props: { state, revision: state.revision, onSceneRendered: ack } });
+    try {
+      expect(ack).not.toHaveBeenCalled();
+      expect(handRaiseUi.handPresent).toBe(false);
+      release(adapter);
+      await vi.waitFor(() => expect(adapter.admitScene).toHaveBeenCalled());
+      await clockAt(3036);
+      await vi.waitFor(() => expect(ack).toHaveBeenCalledOnce());
+      expect(handRaiseUi.handPresent).toBe(true);
+      expect(handRaiseUi.layer?.anchorId).not.toBeNull();
+      await clockAt(3052);
+      expect(ack).toHaveBeenCalledOnce();
+    } finally { wrapper.unmount(); __resetHandRaiseUiForTest(); }
+  });
+
   it("re-enters the real view and sends the real client scene ack after publication", async () => {
-    window.history.replaceState(null, "", "/?rendererCompare=1&stage=rust&rustPendingAckRetry=1");
+    window.history.replaceState(null, "", "/?rendererCompare=1&stage=rust");
     Object.assign(rendererComparisonConfig, readRendererComparisonConfig());
     measureStub();
     vi.stubGlobal("ResizeObserver", class { observe() {} disconnect() {} });
@@ -734,7 +767,7 @@ describe("Pixi composition initialization", () => {
   });
 
   it("does not retry a superseded or disposed Rust view obligation", async () => {
-    window.history.replaceState(null, "", "/?rendererCompare=1&stage=rust&rustPendingAckRetry=1");
+    window.history.replaceState(null, "", "/?rendererCompare=1&stage=rust");
     Object.assign(rendererComparisonConfig, readRendererComparisonConfig());
     measureStub();
     const renderer = createPixiMirrorRenderer(stage(), document.createElementNS("http://www.w3.org/2000/svg", "defs"), null,
@@ -767,7 +800,7 @@ describe("Pixi composition initialization", () => {
   });
 
   it("drops an old view obligation on dispose while a remount owns its own ack", async () => {
-    window.history.replaceState(null, "", "/?rendererCompare=1&stage=rust&rustPendingAckRetry=1");
+    window.history.replaceState(null, "", "/?rendererCompare=1&stage=rust");
     Object.assign(rendererComparisonConfig, readRendererComparisonConfig());
     measureStub();
     const oldAdapter = fakeAdapter(true);
@@ -807,7 +840,7 @@ describe("Pixi composition initialization", () => {
   });
 
   it("defers a reentrant Rust pull once without acknowledging twice", async () => {
-    window.history.replaceState(null, "", "/?rendererCompare=1&stage=rust&rustPendingAckRetry=1");
+    window.history.replaceState(null, "", "/?rendererCompare=1&stage=rust");
     Object.assign(rendererComparisonConfig, readRendererComparisonConfig());
     measureStub();
     const renderer = createPixiMirrorRenderer(stage(), document.createElementNS("http://www.w3.org/2000/svg", "defs"), null,

@@ -8,6 +8,8 @@
 // frame is O(changed nodes), not O(whole tree). Volatile fields are LOCAL (the renderer composes
 // effective visibility/opacity/tint down the parent chain), which is what keeps the producer cheap.
 
+import { affineInverse, affineMul, IDENTITY_AFFINE, type Affine } from "@/mirror/affine";
+
 import { normalizeParticleSpecConfig, type ParticleSpecConfig } from "@godot-scene-web/html/runtime";
 
 // `@/join/*` is the shell's own join layer (see joinModel.ts); hostBase and assetVersion have no dependencies
@@ -397,6 +399,8 @@ export interface MirrorNode {
 // (`"position"`/`"scale"`/`"modulate:a"`/`"rotation"`); `to` is the target value as compact JSON or null;
 // `trans`/`ease` are raw Godot enum names the client maps to a CSS timing function.
 export interface MirrorTweenHint {
+  /** Explicitly release only the transform replay, adopting this GLOBAL design-space pose. */
+  cancelTransform?: number[] | null;
   targetId: string;
   property: string;
   to: string | null;
@@ -821,6 +825,7 @@ function normalizeTweenHint(entry: unknown): MirrorTweenHint | null {
         : 0,
     trans: typeof r.trans === "string" ? r.trans : null,
     ease: typeof r.ease === "string" ? r.ease : null,
+    cancelTransform: asTransform6(r.cancelTransform),
     endTransform: asTransform6(r.endTransform),
     endOpacity:
       typeof r.endOpacity === "number" && Number.isFinite(r.endOpacity)
@@ -837,6 +842,27 @@ function normalizeTweenHint(entry: unknown): MirrorTweenHint | null {
 
 // Apply a delta to the retained map in place. Static fields merge forward (an add/keyframe carries the
 // static styling block; a later volatile-only upsert leaves them defaulted and must not erase them).
+function cancellationLocalPose(state: MirrorState, target: MirrorNode, global: number[]): Affine | null {
+  const chain: MirrorNode[] = [];
+  const seen = new Set<string>([target.id]);
+  let id = target.parentId;
+  while (id !== null) {
+    if (seen.has(id)) return null;
+    seen.add(id);
+    const parent = state.nodes.get(id);
+    if (!parent) return null;
+    chain.push(parent);
+    id = parent.parentId;
+  }
+  let composed = IDENTITY_AFFINE;
+  for (let i = chain.length - 1; i >= 0; i--) {
+    const transform = chain[i].transform;
+    if (transform) composed = affineMul(composed, transform as Affine);
+  }
+  const inverse = affineInverse(composed);
+  return inverse ? affineMul(inverse, global as Affine) : null;
+}
+
 export function applySceneDelta(state: MirrorState, delta: MirrorDelta): void {
   // R-WPC: a keyframe wipes and re-establishes the whole map — always a candidate for the wire scan's verdict
   // to change (the previous bg root, if any, is gone either way).
@@ -900,7 +926,18 @@ export function applySceneDelta(state: MirrorState, delta: MirrorDelta): void {
     // Stamp each hint with the parent its endpoints are relative to — this delta's, since the upserts above have
     // already landed. See `MirrorTweenHint.parentIdAtArrival` for why a drain-time read is not the same answer.
     for (const hint of delta.hints) {
-      const target = state.nodes.get(hint.targetId);
+      let target = state.nodes.get(hint.targetId);
+      if (target && hint.cancelTransform &&
+          !delta.upserts.some((upsert) => upsert.id === target!.id && upsert.transform !== null)) {
+        // A capture in this delta is newer than its queued cancellation signal. Otherwise the signal supplies
+        // the authoritative pose, localized against the current emitted parent, including reparenting.
+        const local = cancellationLocalPose(state, target, hint.cancelTransform);
+        if (local) {
+          target = { ...target, transform: local };
+          state.nodes.set(target.id, target);
+          state.changedIds.add(target.id);
+        }
+      }
       hint.parentIdAtArrival = target?.parentId ?? null;
       hint.transformAtArrival = target?.transform?.slice() ?? null;
     }

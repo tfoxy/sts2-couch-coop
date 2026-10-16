@@ -917,7 +917,8 @@ public static class SceneDeltaReader
             Get(r, "endOpacity") is { ValueKind: JsonValueKind.Number } eo ? eo.GetDouble() : null,
             Get(r, "group") is { ValueKind: JsonValueKind.String } gr ? gr.GetString() : null,
             AsTransform6(Get(r, "startTransform")),
-            Get(r, "startOpacity") is { ValueKind: JsonValueKind.Number } so ? so.GetDouble() : null);
+            Get(r, "startOpacity") is { ValueKind: JsonValueKind.Number } so ? so.GetDouble() : null,
+            AsTransform6(Get(r, "cancelTransform")));
     }
 
     // WS-3 declarative card flight. STRICT on the geometry (a flight the client cannot integrate must be dropped

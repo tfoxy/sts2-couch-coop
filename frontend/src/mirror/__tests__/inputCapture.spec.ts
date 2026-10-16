@@ -392,6 +392,69 @@ describe("createInputCapture — five-to-four raised-hand settlement", () => {
     expect(sent.at(-1)).toMatchObject({ kind: "hover", coordX: 1438.1473, coordY: 725.4943 });
   });
 
+  it.each([
+    { dy: -119, painterProp: true },
+    { dy: -119, painterProp: false },
+    { dy: 0, painterProp: true },
+  ])("keeps a proved top-band hand owner when another painter supplies its field ($dy, $painterProp)", ({ dy, painterProp }) => {
+    capture.dispose();
+    sent = [];
+    const card = {
+      transform: [0.7506432050643131, -0.11889021188902, 0.11889021188902, 0.7506432050643131,
+        422.317691166588, 925.4477845314123] as [number, number, number, number, number, number],
+      localRect: { x: 0, y: 0, width: 300, height: 422 },
+      spreadDx: 140, dy, ownerId: "hand-owner",
+    };
+    const raw = { x: 677.9244995117188, y: 926.6205444335938 + dy };
+    capture = createInputCapture(stage, (message) => sent.push(message), () => 2400,
+      undefined, undefined, {}, undefined, undefined, undefined, () => [card], {
+        touchStackAt: () => ({ ids: [], blocked: false, blockKind: null, topStamp: null }),
+        spreadPainterAt: () => ({ dx: 261.66748, prop: painterProp, widthPx: 100 }),
+        raisedHandVisualClaimAt: () => ({ ownerId: "hand-owner" }),
+      });
+    const clientX = raw.x / 2400 * 960;
+    const clientY = raw.y / 1080 * 540;
+    stage.dispatchEvent(new MouseEvent("pointermove", { clientX, clientY, bubbles: true }));
+    flushFrames();
+    stage.dispatchEvent(new MouseEvent("pointerdown", { clientX, clientY, button: 0, bubbles: true }));
+    for (const message of sent) {
+      expect(message.coordX).toBeCloseTo(raw.x - card.spreadDx, 6);
+      expect(message.coordY).toBeCloseTo(raw.y - dy, 6);
+      expect(pointInPlacedRect(card.transform, card.localRect, message.coordX!, message.coordY!)).toBe(true);
+      expect(message).not.toHaveProperty("ownerId");
+    }
+    // Correcting the source painter is not a cosmetic offset to fade during the drag. The held gesture must
+    // keep the hand's proportional field even if the disagreeing painter was anchored elsewhere.
+    stage.dispatchEvent(new MouseEvent("pointermove", { clientX, clientY: clientY - 55, bubbles: true }));
+    flushFrames();
+    expect(sent.at(-1)?.coordX).toBeCloseTo(raw.x * 1920 / 2400, 6);
+    stage.dispatchEvent(new MouseEvent("pointerup", { clientX, clientY, button: 0, bubbles: true }));
+    expect(sent.at(-1)).toMatchObject({ kind: "click", pressed: false });
+    expect(sent.at(-1)?.coordX).toBeCloseTo(raw.x - card.spreadDx, 6);
+  });
+
+  it.each([null, { ownerId: "different-owner" }])("does not replace a painter without matching hand ownership (%s)", (proof) => {
+    capture.dispose();
+    sent = [];
+    const card = {
+      transform: [0.7506432050643131, -0.11889021188902, 0.11889021188902, 0.7506432050643131,
+        422.317691166588, 925.4477845314123] as [number, number, number, number, number, number],
+      localRect: { x: 0, y: 0, width: 300, height: 422 },
+      spreadDx: 140, dy: -119, ownerId: "hand-owner",
+    };
+    capture = createInputCapture(stage, (message) => sent.push(message), () => 2400,
+      undefined, undefined, {}, undefined, undefined, undefined, () => [card], {
+        touchStackAt: () => ({ ids: [], blocked: false, blockKind: null, topStamp: null }),
+        spreadPainterAt: () => ({ dx: 261.66748, prop: true, widthPx: 100 }),
+        raisedHandVisualClaimAt: () => proof,
+      });
+    stage.dispatchEvent(new MouseEvent("pointerdown", {
+      clientX: 677.9244995117188 / 2400 * 960, clientY: 807.6205444335938 / 2, button: 0, bubbles: true,
+    }));
+    expect(sent.at(-1)?.coordX).toBeCloseTo(416.25701951171874, 6);
+    expect(sent.at(-1)?.coordY).toBeCloseTo(807.6205444335938, 6);
+  });
+
   it("uses renderer ownership to correct the exact pre-canonical fourth-card point after near-miss X canonicalization", () => {
     capture.dispose();
     sent = [];

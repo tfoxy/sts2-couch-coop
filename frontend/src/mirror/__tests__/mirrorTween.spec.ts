@@ -175,6 +175,22 @@ describe("mirror declarative tween replay (Part C, Stage 1)", () => {
     cb?.(atMs);
   }
 
+  it("cancels only transform ownership while the independent opacity tween continues", () => {
+    const { stage, renderer } = harness();
+    const state = createMirrorState();
+    full(state, [node("n", null, 0, 0)], ["n"]);
+    renderer.reconcile(state);
+    hintsOnly(state, [transformHint("n", [1, 0, 0, 1, 200, 0], 600), opacityHint("n", 0.25, 600)]);
+    renderer.reconcile(state);
+    clock = 50;
+    hintsOnly(state, [{ targetId: "n", property: "position", durationMs: 0, cancelTransform: [1, 0, 0, 1, 70, 0] }]);
+    renderer.reconcile(state);
+    expect(tx(el(stage, "n"))).toBe(70);
+    expect(el(stage, "n").style.opacity).toBe("0.25");
+    expect(el(stage, "n").style.transition).toContain("opacity 600ms");
+    expect(el(stage, "n").style.transition).not.toContain("transform");
+  });
+
   it("parses the endTransform / endOpacity / group wire fields", () => {
     const delta = parseSceneDelta({
       type: "scene-delta",
@@ -1397,6 +1413,37 @@ describe("mirror declarative tween replay (Part C, Stage 1)", () => {
   //
   // `markGeometryDirty()` cannot cover this: it invalidates the caches that key on the geometry epoch, while the
   // walk's skip gate is independent of it. The pin's end has to ask for the node itself to be walked again.
+  it("leaves incoming hint ownership to the scheduled presentation when an older pin expires first", () => {
+    const { stage, renderer } = harness();
+    const state = createMirrorState();
+    full(state, [{ ...node("holder", null, 0, 100), mouseFilter: 2 },
+      { ...node("hitbox", "holder", 0, 0), mouseFilter: 0 }], ["holder", "hitbox"]);
+    renderer.reconcile(state);
+    clock = 10;
+    hintsOnly(state, [transformHint("holder", [1, 0, 0, 1, 0, 500], 200)]);
+    renderer.reconcile(state);
+    clock = 100;
+    volatile(state, [node("holder", null, 0, 500)]);
+    renderer.reconcile(state);
+
+    // The network has applied the next packet, but its presentation callback has not run yet.
+    clock = 205;
+    hintsOnly(state, [transformHint("holder", [1, 0, 0, 1, 0, 800], 400)]);
+    flushRaf(260);
+    expect(state.pendingHints).toHaveLength(1);
+    expect(ty(el(stage, "holder"))).toBe(500);
+
+    renderer.reconcile(state);
+    expect(state.pendingHints).toHaveLength(0);
+    expect(el(stage, "holder").style.transition).toContain("transform 400ms");
+    clock = 350;
+    volatile(state, [node("holder", null, 0, 800)]);
+    renderer.reconcile(state);
+    flushRaf(700);
+    expect(el(stage, "holder").style.transition).not.toContain("transform");
+    expect(renderer.interactiveRects().find((r) => r.id === "hitbox")!.transform[5]).toBe(800);
+  });
+
   it("re-bases the hit boxes under a pin once the tween ends, even if the target's stream has gone quiet", () => {
     const { renderer } = harness();
     const state = createMirrorState();
@@ -1426,6 +1473,9 @@ describe("mirror declarative tween replay (Part C, Stage 1)", () => {
 
     // The tween runs out…
     flushRaf(260);
+
+    // A quiet producer owes no further delta. The expiry itself must repair the hit surface.
+    expect(hitY()).toBe(500);
 
     // …and the next delta touches something else entirely, which is exactly the case that used to strand it: the
     // holder is unchanged, so the walk has no reason of its own to visit it.

@@ -83,6 +83,7 @@ export interface ReconcileController {
   readonly geometryDirty: () => boolean;
   markGeomDirty(): void;
   markGeomRebase(id: string): void;
+  flushGeomRebases(): void;
   noteRevealBuilt(): void;
   reconcile(
     state: MirrorState,
@@ -111,6 +112,7 @@ export function createReconcileController(
   let lastOrderedIds: string[] | null = null;
   let walkOrderedIds: string[] = [];
   let firstBuild = true;
+  let lastState: MirrorState | null = null;
   let spreadFactor = 1;
   let geometryEpoch = 1;
   let geomDirty = false;
@@ -213,6 +215,7 @@ export function createReconcileController(
         current = state.nodes.get(current)?.parentId ?? null;
       }
     }
+    pendingGeomRebase.clear();
     for (const id of p.sceneAblationChangedIds()) {
       let current: string | null = id;
       while (current != null && !dirty.has(current)) {
@@ -445,7 +448,6 @@ export function createReconcileController(
     p.stats.spinePromotedNodes = p.spineTimeline.promotedCount;
     state.changedIds.clear();
     pendingTextureDirty.clear();
-    pendingGeomRebase.clear();
     textureDirtySelf = null;
     state.sceneRewrite = false;
     p.svgDefs.syncHsvDefs();
@@ -459,6 +461,7 @@ export function createReconcileController(
     state: MirrorState,
     options: { forceTextures?: boolean; reason?: FullWalkCause } = {},
   ): void {
+    lastState = state;
     const full = firstBuild || options.forceTextures === true;
     const orderChanged = state.orderedIds !== lastOrderedIds;
     const mode: WalkMode = full
@@ -473,6 +476,7 @@ export function createReconcileController(
     p.cardFlights.drainDirty(pendingTextureDirty);
     revealBuiltThisWalk = false;
     doWalk(state, mode, cause);
+    if (pendingGeomRebase.size > 0) doWalk(state, "update", null);
     p.scheduleTick();
     const duration = p.now() - started;
     p.stats.lastWalkMs = duration;
@@ -502,6 +506,13 @@ export function createReconcileController(
     /** Re-base this record's subtree on the next walk — see `pendingGeomRebase`. */
     markGeomRebase(id: string) {
       pendingGeomRebase.add(id);
+    },
+    flushGeomRebases() {
+      // Pin expiry is itself a geometry change; a quiet producer may never send another delta.
+      // Drain once after the expiry batch, using the normal walk's structural and dirty-subtree rules.
+      if (!inWalk && pendingGeomRebase.size > 0 && lastState !== null &&
+          lastState.changedIds.size === 0 && lastState.pendingHints.length === 0 &&
+          lastState.pendingCardFlights.length === 0 && lastState.orderedIds === lastOrderedIds) reconcile(lastState);
     },
     noteRevealBuilt() {
       revealBuiltThisWalk = true;
@@ -546,6 +557,8 @@ export function createReconcileController(
       }
     },
     beginDispose() {
+      lastState = null;
+      pendingGeomRebase.clear();
       changedParents.clear();
       orderDirtyParents.clear();
       p.nodeController.clearPendingReorders();

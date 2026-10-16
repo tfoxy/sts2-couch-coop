@@ -40,6 +40,7 @@ export interface TweenControllerPorts {
     transform: string | undefined,
   ) => [number, number, number, number] | null;
   handHolderIds: Set<string>;
+  flightOwnsTransform: (record: RenderRecord) => boolean;
   applyHandRaise: () => void;
   /**
    * A transform ease is about to be armed on this hand holder and its channel was NOT already live, so the element
@@ -60,6 +61,7 @@ export interface TweenControllerPorts {
    * pose the node really has. See `pendingGeomRebase` in reconcileController for what goes wrong without it.
    */
   markGeomRebase: (id: string) => void;
+  flushGeomRebases: () => void;
   noteReparentDrop: () => void;
   noteHintRebased: () => void;
   beginTransformArmBatch: () => void;
@@ -69,6 +71,7 @@ export interface TweenControllerPorts {
     needsPrimeBarrier: boolean;
     raiseWrites: Array<() => void>;
   };
+  noteCancellation?: (record: RenderRecord, pose: readonly number[], placed: Placement) => void;
   noteLanding?: (
     record: RenderRecord,
     endpoint: readonly number[],
@@ -403,6 +406,29 @@ export function createTweenController(
     const primes: Array<() => void> = [];
     const arms: Array<(at: number) => void> = [];
     for (const hint of hints) {
+      if (hint.cancelTransform?.length === 6) {
+        const target = p.records.get(hint.targetId);
+        const current = p.nodeOf(hint.targetId)?.transform;
+        if (!target || p.flightOwnsTransform(target)) continue;
+        // Fence both armed replay and a prime whose deferred arm has not run yet.
+        ++target.tweenTransformArmGeneration;
+        releaseTransform(target);
+        if (current && target.el) {
+          const pose = p.liftEndpoint(target, current);
+          const placed = p.placement(target, pose);
+          if (placed.transform !== null) {
+            target.el.style.transform = placed.transform;
+            target.style.set("transform", placed.transform);
+            if (placed.transformOrigin != null) {
+              target.el.style.transformOrigin = placed.transformOrigin;
+              target.style.set("transformOrigin", placed.transformOrigin);
+            }
+            p.noteCancellation?.(target, pose, placed);
+          }
+        }
+        p.markGeomRebase(target.id);
+        continue;
+      }
       const hasTransform = hint.endTransform?.length === 6;
       const hasOpacity = hint.endOpacity != null;
       if (!hasTransform && !hasOpacity) continue;
@@ -420,8 +446,11 @@ export function createTweenController(
           hint.startTransform?.length === 6
             ? p.liftEndpoint(target, hint.startTransform)
             : null;
-        if (start) primes.push(() => primeTransform(target, start));
         const generation = ++target.tweenTransformArmGeneration;
+        if (start) primes.push(() => {
+          if (target.tweenTransformArmGeneration === generation && transformGuard(hint.targetId, target, parentId))
+            primeTransform(target, start);
+        });
         arms.push((at) => {
           if (
             target.tweenTransformArmGeneration === generation &&
@@ -600,6 +629,8 @@ export function createTweenController(
       ])
         if (due && due < next) next = due;
     }
+    // Repair descendant geometry before dropping the settle endpoint used by the hand's lift pass.
+    p.flushGeomRebases();
     if (settledHands) {
       p.applyHandRaise();
       for (const r of endpoints ?? []) r.tweenTransformSettleEndG6 = null;

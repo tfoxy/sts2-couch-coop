@@ -1014,7 +1014,21 @@ export function createInputCapture(
     // the hand — design (1091, 1010) went out as game (280, 1010), so the game focused nothing. `compensated.coordY`
     // stays the pointer's own design Y and is handed to the pass separately for its RENDERED test.
     const visualClaim = touchClaim ?? probes.raisedHandVisualClaimAt?.(clientX, clientY) ?? null;
-    const raised = applyRaiseInverse(compensated.coordX, compensated.coordY, m.designX, null, visualClaim);
+    // A touch owner captured on its down edge can outlive a reflow; only a fresh pixel proof may replace
+    // the source painter. Captured touch claims still participate in the existing post-canonical settlement.
+    const handStamps = touchClaim == null && visualClaim && raiseInputStamps ? raiseInputStamps() : null;
+    const handOwner = handStamps?.find((stamp) => stamp.ownerId === visualClaim?.ownerId);
+    if (handOwner && pointInPlacedRect(handOwner.transform, handOwner.localRect,
+      m.designX, compensated.coordY, handOwner.spreadDx, handOwner.dy)) {
+      // A generic painter can have a different field from the hand card independently proved at this pixel.
+      // When that owner's exact rendered hitbox agrees, its translation is the source map. Keep the repair
+      // before raise-offset measurement so it cannot become a spurious horizontal offset during a held drag.
+      // Reflow/art-overhang pixels outside the retained box keep the existing post-canonical arbitration.
+      compensated.coordX = Math.min(Math.max(m.designX - handOwner.spreadDx, 0), MIRROR_DESIGN_WIDTH);
+      m.affine = { a: MIRROR_DESIGN_WIDTH / dw, b: 0 };
+      m.squeezed = false;
+    }
+    const raised = applyRaiseInverse(compensated.coordX, compensated.coordY, m.designX, handStamps, visualClaim);
     const designY = compensated.coordY;
     let coordX = raised.coordX;
     // The near-miss pass vets EVERY fresh resolve — exact painter hits included. That's safe for the painter's own

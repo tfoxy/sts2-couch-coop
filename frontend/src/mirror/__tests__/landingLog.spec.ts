@@ -380,3 +380,20 @@ describe("the landing log — reading it", () => {
     expect(log.openCount()).toBe(0);
   });
 });
+
+
+it("does not exclude a cancelled channel whose replacement pose was drawn incorrectly", () => {
+  const log = createLandingLog();
+  const stage = new FakeStage();
+  log.noteArm(arm());
+  log.noteCancellation("holder-1", 1100, at(900, -209), at(1125, -209));
+  stage.drawn.set("holder-1", at(1110, -209));
+  stage.emit("holder-1", 900, -209);
+  log.tick(1101, stage);
+  expect(log.rows()[0].closedBy).toBe("cancelled");
+  expect(log.rows()[0].cancellationAt).toBe(1100);
+  expect(log.rows()[0].settleAt).toBe(1101);
+  expect(log.rows()[0].cancellationDriftPx).toBe(15);
+  expect(classifyLanding(log.rows()[0], F)).toBe("endpoint-pose");
+  expect(scoredLandings(log.rows(), F)).toHaveLength(1);
+});

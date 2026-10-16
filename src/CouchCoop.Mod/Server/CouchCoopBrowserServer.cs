@@ -1220,7 +1220,7 @@ public sealed class CouchCoopBrowserServer(
 
             // Only REPLAYABLE hints (those carrying a declarative endpoint) are useful to the mirror — it ignores
             // timing-only ones — so dropping the rest keeps mirror bandwidth minimal (Part C).
-            if (hint.EndTransform is null && hint.EndOpacity is null)
+            if (hint.EndTransform is null && hint.EndOpacity is null && hint.CancelTransform is null)
             {
                 continue;
             }
@@ -1237,7 +1237,8 @@ public sealed class CouchCoopBrowserServer(
                 EndOpacity: hint.EndOpacity,
                 Group: hint.Group,
                 StartTransform: hint.StartTransform,
-                StartOpacity: hint.StartOpacity));
+                StartOpacity: hint.StartOpacity,
+                CancelTransform: hint.CancelTransform));
         }
 
         if (hints is null && cardFlights is null)

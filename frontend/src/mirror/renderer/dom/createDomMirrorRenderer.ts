@@ -626,6 +626,7 @@ function createMirrorRenderer(
       record.lastNode
         ? nodeTransformForGlobal(record, record.lastNode, g6, parentInv)
         : { transform: null },
+    flightOwnsTransform: (record) => cardFlights.isFlightOwned(record),
     liftEndpoint: liftEndpointToGlobal,
     cssLinear: cssLinear2x2,
     handHolderIds,
@@ -639,6 +640,7 @@ function createMirrorRenderer(
     derasterNeeded: derasterNeededOnSettle,
     markGeometryDirty: () => reconcileController.markGeomDirty(),
     markGeomRebase: (id) => reconcileController.markGeomRebase(id),
+    flushGeomRebases: () => reconcileController.flushGeomRebases(),
     noteReparentDrop: () => {
       mirrorWalkStats.tweenReparentDropped++;
     },
@@ -661,6 +663,9 @@ function createMirrorRenderer(
     takeTransformArmBatch: () => {
       const current = transformArmBatch;
       return current ?? { needsPrimeBarrier: false, raiseWrites: [] };
+    },
+    noteCancellation: (record, pose, placed) => {
+      if (placed.gShifted) landingLog.noteCancellation(record.id, nowMs(), pose as Affine, placed.gShifted as Affine);
     },
     noteLanding: (record, endpoint, placed, until) => {
       if (!handHolderIds.has(record.id) || !record.lastNode || !placed.gShifted)

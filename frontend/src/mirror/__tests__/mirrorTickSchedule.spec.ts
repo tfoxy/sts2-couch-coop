@@ -455,9 +455,15 @@ describe("mirror animation-loop scheduling (WS-B)", () => {
     expect(el(stage, "fast").style.transition).toBe("");
     expect(el(stage, "slow").style.transition).toBe("transform 500ms cubic-bezier(0.33, 1, 0.68, 1)");
 
+    // The expiry's geometry repair must leave only the surviving deadline (integer timer delay rounded up).
+    expect(timers).toHaveLength(1);
+    expect(timers[0].at).toBeGreaterThanOrEqual(500);
+    expect(timers[0].at).toBeLessThan(501);
     // The long tween is still armed, and its own (later) deadline survived the replacement.
     run(400); // → t=600
+    expect(wakeups()).toBe(2);
     expect(el(stage, "slow").style.transition).toBe("");
+    expect(timers).toHaveLength(0);
     renderer.dispose();
   });
 

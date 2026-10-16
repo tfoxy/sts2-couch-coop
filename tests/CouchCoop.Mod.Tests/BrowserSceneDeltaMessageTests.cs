@@ -35,6 +35,7 @@ internal static class BrowserSceneDeltaMessageTests
         LineGeometryReachesTheWire();
         ShaderParamsNodeFixtureMatches();
         TweenHintsDeltaFixtureMatches();
+        TransformCancellationReachesTheWire();
         CardFlightsDeltaFixtureMatches();
         CardFlightDiscardDeltaFixtureMatches();
         OrderPatchFixturesMatch();
@@ -257,6 +258,19 @@ internal static class BrowserSceneDeltaMessageTests
         };
         var delta = new RuntimeSceneDelta(false, "run", "screen:run:live", [], [], null, hints);
         AssertOrWriteFixture("tween-hints-delta.json", Serialize(delta));
+    }
+
+    private static void TransformCancellationReachesTheWire()
+    {
+        var hint = new TweenHintDelta("card", "position", null, 0, null, null,
+            CancelTransform: [1, 0, 0, 1, 958, 1030]);
+        var delta = new RuntimeSceneDelta(false, "run", "screen:run:live", [], [], null, [hint]);
+        using var document = JsonDocument.Parse(Serialize(delta));
+        var wire = document.RootElement.GetProperty("hints")[0];
+        Assert(wire.GetProperty("cancelTransform")[4].GetDouble() == 958, "cancellation global pose survives serialization");
+        Assert(!wire.TryGetProperty("endOpacity", out _), "transform cancellation does not touch opacity");
+        var parsed = CouchCoop.MirrorProtocol.SceneModel.SceneDeltaReader.Parse(Serialize(delta));
+        Assert(parsed?.Hints[0].CancelTransform?[4] == 958, "protocol reader preserves explicit cancellation");
     }
 
     // WS-3: a delta carrying declarative card flights — the shuffle case (one per shuffled card) with a trail, plus
