@@ -67,6 +67,7 @@ type Readiness = "initializing" | "ready" | "failed";
 type PresentationResult = { presented: boolean; reason?: string; revision?: number; completedFrames?: number };
 type ExecutorOptions = { canvas: HTMLCanvasElement; width: number; height: number; designWidth: number; designHeight: number; startupRendererInstance?: number; onInvalidate: (reason?: "resource" | "present") => void; profile?: ReturnType<typeof createCouchCanvasProfile> };
 type MirrorDrawExecutor = Omit<PixiDrawListRenderer<string>, "render" | "admitScene" | "patchScene" | "presentScene"> & {
+  invalidatePendingPresentations?(): void;
   render(list: import("@godot-scene-web/canvas").DrawList<string>, text?: readonly PixiTextRecord[],
     profileIdentity?: ProfileIdentity): boolean | PresentationResult | Promise<boolean | PresentationResult>;
   admitScene(list: import("@godot-scene-web/canvas").DrawList<string>, text: readonly PixiTextRecord[], plan: import("@godot-scene-web/canvas/pixi").PixiScenePlan,
@@ -356,6 +357,7 @@ export function createPixiMirrorRenderer(
   }
   let disposed = false;
   let state: MirrorState | null = null;
+  let transientEpoch = 0;
   let build: DrawListBuild | null = null;
   let stretch = 1;
   let reconcilePull: ReconcilePull | null = null;
@@ -765,11 +767,12 @@ export function createPixiMirrorRenderer(
     if (pixi) setRendererRuntimeStatus({ pixiText: pixi.textOutcomes() });
   };
   const scheduleRefinement = () => {
-    if (refinementRaf !== null || disposed) return;
+    if (refinementRaf !== null || disposed || state === null) return;
+    const epoch = transientEpoch;
     refinementPending = true;
     refinementRaf = requestAnimationFrame(() => {
       refinementRaf = null;
-      if (disposed || readiness !== "ready" || !pixi || !snapshot) return;
+      if (disposed || epoch !== transientEpoch || state === null || readiness !== "ready" || !pixi || !snapshot) return;
       refinementPending = false;
       beginLocalFrame("refinement");
       const phaseSubmissionId = rustExecutionPhaseMode
@@ -784,7 +787,7 @@ export function createPixiMirrorRenderer(
         const result = lifecycle ? lifecycle.phase("pixi", present) : present();
 if (isPromiseLike<PresentationResult>(result)) {
           void Promise.resolve(result).then((settled) => {
-            if (disposed || !snapshot) { if (phaseSubmissionId !== undefined) producerReasons!.finishRetainedIfOpen(phaseSubmissionId,
+            if (disposed || epoch !== transientEpoch || !snapshot) { if (phaseSubmissionId !== undefined) producerReasons!.finishRetainedIfOpen(phaseSubmissionId,
               disposed ? "disposed" : "superseded"); return; }
             if (!settled.presented) { if (phaseSubmissionId !== undefined) producerReasons!.finishRetainedIfOpen(phaseSubmissionId, "refused");
               lifecycle?.finish("pending", completedDraws()); refinementPending = true; refinementFailure = settled.reason ?? "refinement presentation failed"; return; }
@@ -792,7 +795,7 @@ if (isPromiseLike<PresentationResult>(result)) {
             if (phaseSubmissionId !== undefined) producerReasons!.finishRetainedIfOpen(phaseSubmissionId, "committed");
             if (startupEnabled) noteStartupReady(snapshot?.stateRevision ?? null);
           }).catch((error: unknown) => { if (phaseSubmissionId !== undefined) producerReasons!.finishRetainedIfOpen(phaseSubmissionId, disposed ? "disposed" : "failed");
-            if (disposed) return; lifecycle?.finish("failed", completedDraws()); refinementPending = true; refinementFailure = error instanceof Error ? error.message : String(error); });
+            if (disposed || epoch !== transientEpoch) return; lifecycle?.finish("failed", completedDraws()); refinementPending = true; refinementFailure = error instanceof Error ? error.message : String(error); });
           return;
         }
         if (!result.presented) {
@@ -3413,6 +3416,25 @@ const traceId = nextTraceFrame();
   };
 
   const renderer: MirrorRenderer = {
+    resetTransientState() {
+      ++transientEpoch;
+      state = null;
+      asyncPresentation.invalidate();
+      pixi?.invalidatePendingPresentations?.();
+      asyncPresentedRevision = null;
+      asyncSubmissionRevision = null;
+      asyncAwaitingAckRevision = null;
+      asyncPresentCompletion = null;
+      pendingViewRevision = null;
+      if (refinementRaf !== null) cancelAnimationFrame(refinementRaf);
+      refinementRaf = null;
+      refinementPending = false;
+      refinementFailure = null;
+      visual.resetTransientState();
+      interaction.resetTransientState();
+      lastSampleClock = null;
+      lifecycle?.finish("skipped", completedDraws());
+    },
     reconcile(next) { lifecycle?.finish("skipped", completedDraws()); lifecycle?.begin("reconcile", next.revision, completedDraws()); lifecycle?.admit();
       if (next.sceneRewrite) paintOrderCache.invalidateAll();
       paintOrderCache.noteChanged(next, next.changedIds);

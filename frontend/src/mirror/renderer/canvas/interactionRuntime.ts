@@ -252,6 +252,7 @@ export interface CanvasInteractionRuntime {
   liveChildIds(id: string): readonly string[] | undefined;
   liveAncestorChainHidden(node: MirrorNode): boolean;
   liveEffectivelyVisible(node: MirrorNode): boolean;
+  resetTransientState(): void;
   dispose(): void;
 }
 
@@ -1587,6 +1588,16 @@ export function createCanvasInteractionRuntime(ports: CanvasInteractionRuntimePo
   }
 
   return {
+    resetTransientState() {
+      dispose();
+      heldCardId = null;
+      heldLifted = false;
+      heldEnteredPlayZone = false;
+      targetingWorld = null;
+      cosmeticOffsets.clear();
+      cosmeticVersion++;
+      raisePlan = EMPTY_HAND_RAISE_PLAN;
+    },
     get cosmeticOffsets() { return cosmeticOffsets; },
     get handHolderIds() { return handHolderIds; },
     get sceneIndexVerifyMismatches() { return sceneIndexVerifyMismatches; },

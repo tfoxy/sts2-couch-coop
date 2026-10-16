@@ -179,6 +179,8 @@ export interface MirrorClient {
   /** Opaque, opt-in harness correlation only. */
   diagnosticTraceId?: number;
   hostAccess: BrowserHostAccess;
+  /** Access generation whose fresh full scene has been accepted, not necessarily presented yet. */
+  sceneGeneration: number | null;
   status: MirrorClientStatus;
   state: MirrorState;
   latency: MirrorLatency;
@@ -331,6 +333,7 @@ export function connectMirrorClient(options: {
   let hostWatching = watching;
   const client: MirrorClient = {
     hostAccess: normalizeHostAccess(null),
+    sceneGeneration: null,
     status: "connecting",
     state,
     latency,
@@ -484,7 +487,7 @@ export function connectMirrorClient(options: {
   }
 
   function sendInput(message: MirrorInputMessage): void {
-    if (!client.hostAccess.allowed || socket.readyState !== WebSocketCtor.OPEN) {
+    if (!watching || !client.hostAccess.allowed || socket.readyState !== WebSocketCtor.OPEN) {
       return;
     }
     inputSequence += 1;
@@ -496,7 +499,7 @@ export function connectMirrorClient(options: {
   }
 
   function sendAction(message: MirrorActionMessage): string | null {
-    if (!client.hostAccess.allowed || socket.readyState !== WebSocketCtor.OPEN) {
+    if (!watching || !client.hostAccess.allowed || socket.readyState !== WebSocketCtor.OPEN) {
       return null;
     }
     actionSequence += 1;
@@ -600,6 +603,13 @@ export function connectMirrorClient(options: {
   }
 
   function sendWatch(on: boolean): void {
+    if (on !== watching) {
+      awaitingFullScene = true;
+      client.sceneGeneration = null;
+      deltasSinceAck = 0;
+      state.pendingHints.length = 0;
+      state.pendingCardFlights.length = 0;
+    }
     watching = on;
     client.watching = on;
     flushWatch();
@@ -676,12 +686,20 @@ export function connectMirrorClient(options: {
 
   function updateHostAccess(access: BrowserHostAccess): void {
     if (access.generation < client.hostAccess.generation) return;
-    if (access.generation !== client.hostAccess.generation || !access.allowed) {
-      // Preserve the object identity held by the app, but retire every retained node and hint.
+    const changed = access.generation !== client.hostAccess.generation;
+    const clear = access.sceneResetGeneration !== client.hostAccess.sceneResetGeneration
+      || (!access.allowed && access.reason !== "transitioning");
+    if (clear) {
+      // A sticky reset epoch also catches a protected screen hidden by coalesced status updates.
       const revision = state.revision + 1;
       const epoch = state.sceneRootEpoch + 1;
       Object.assign(state, createMirrorState(), { revision, sceneRootEpoch: epoch, sceneRewrite: true });
+    }
+    if (changed || clear || !access.allowed) {
+      state.pendingHints.length = 0;
+      state.pendingCardFlights.length = 0;
       awaitingFullScene = true;
+      client.sceneGeneration = null;
       deltasSinceAck = 0;
     }
     client.hostAccess = access;
@@ -867,6 +885,7 @@ export function connectMirrorClient(options: {
     if (delta) {
       if (awaitingFullScene && !delta.full) return;
       awaitingFullScene = false;
+      client.sceneGeneration = client.hostAccess.generation;
       sceneCheckpoint("scene-received");
       wirePhase("apply-scene-delta", () => applySceneDelta(state, delta));
       sceneAblationRuntime.noteSceneDelta(data);

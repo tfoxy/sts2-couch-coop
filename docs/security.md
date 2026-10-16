@@ -19,11 +19,20 @@ transmission and rejects browser input, browser actions, and settings that chang
 Queued work is invalidated on revocation, held injected controls are cancelled, and an allowed screen resumes with
 a fresh snapshot. Browser watch flags and claimed player identities cannot override this policy.
 
-The browser shows an unavailable message during the restriction. A host playing through a browser must close a
-blocked native menu on the game machine. Separate player instances retain their own controls; shared assets,
+Maps, decks, ordinary multiplayer dialogs, and roster updates preserve access. During known run loading, the
+browser retains its last permitted view while input and scene transmission are suspended. Control returns only
+after a fresh authorized snapshot is presented. Protected or unknown destinations clear the view and show an
+unavailable message; a separate monotonic scene-reset generation preserves that clear across rapid updates.
+A host playing through a browser must close a blocked native menu on the game machine. Separate player instances retain their own controls; shared assets,
 seat audio, joining, and session coordination remain available. A frame whose transmission began before revocation
 may finish arriving, and previously received frames cannot be erased from a client. This restriction does not add
 passwords, kick controls, or protection against interference during permitted multiplayer play.
+
+Access monitoring runs only while a browser requests the host view, including a temporarily blocked viewer.
+Join-only and separate-player coordination connections do not keep it active. Without host watchers there are
+no access-policy evaluations, subscriptions, or scheduled updates; small event-hook checks and bounded loading
+bookkeeping remain. Watch requests never grant permission. Each connection also has a watch epoch so queued
+input or scene work cannot survive its watch-off/on cycle while another viewer remains connected.
 
 The join page itself is served with `Cache-Control: no-store` and carries a per-response **visit id** — 16 random
 bytes, embedded in the document as `<meta name="couchcoop-visit">`. It is a diagnostic correlation id, not a

@@ -560,13 +560,17 @@ function seedHostPerf(c: MirrorClient): void {
 // any other repeat — the host applies each field verbatim, so a duplicate is only wire noise, but a duplicate
 // arriving while the game is mid-freeze-walk is noise worth not making.)
 const lastSettingsSent = new WeakMap<MirrorClient, string>();
-function pushServerSettings(c: MirrorClient): void {
+function pushServerSettings(c: MirrorClient): boolean {
+  // A direct-view grant requests watching before it authorizes host mutations. Do not consume the
+  // initial push (or its deduplication entry) until the watch acknowledgement permits it.
+  if (c === hostClient && (!c.watching || !c.hostAccess.allowed)) return false;
   const payload = serverSettingsPayload(mirrorSettings);
   const encoded = JSON.stringify(payload);
-  if (lastSettingsSent.get(c) === encoded) return;
+  if (lastSettingsSent.get(c) === encoded) return true;
   lastSettingsSent.set(c, encoded);
   staticBgDeclared.set(c, payload.staticBg ?? false);
   c.sendSettings(payload);
+  return true;
 }
 
 // The `staticBg` value each connection was last told — its connect URL's, then any `settings` message since.
@@ -714,8 +718,7 @@ function makeClient(url?: string, watchStream = false): MirrorClient {
       // connection's values. That briefly un-froze every freshly spawned headless seat (the host socket's
       // "nothing frozen" landing on an instance that freezes by default) until the seeded re-push corrected it.
       if ((joined.value || directView.value) && c.status === "connected" && c.session && !settingsPushed.has(c)) {
-        settingsPushed.add(c);
-        pushServerSettings(c);
+        if (pushServerSettings(c)) settingsPushed.add(c);
       }
       // ESCALATION RULE (b): the reconnect SUCCEEDED (live socket + a fresh roster) but the host still refuses the
       // seat we're reclaiming (`offline` mid-run / `stuck`). No number of further attempts can fix that — the host
@@ -816,8 +819,7 @@ function makeClient(url?: string, watchStream = false): MirrorClient {
       // this is the path where the stale hardcoded defaults used to claim three freezes the host does not have.
       seedHostPerf(c);
       if (c.status === "connected" && !settingsPushed.has(c)) {
-        settingsPushed.add(c);
-        pushServerSettings(c);
+        if (pushServerSettings(c)) settingsPushed.add(c);
       }
     },
     onJoinRejected(reason, detail) {
@@ -976,9 +978,9 @@ const hostAccess = computed(() => joinSession.value?.hostAccess);
 const hostAccessBlocked = computed(() => !hostAccess.value?.allowed);
 // Keep the picker usable for other seats; privacy replaces only the host view/waiting surface.
 const showHostAccessNotice = computed(() => status.value === "connected" && joinSession.value !== null && !joined.value
-  && hostAccessBlocked.value && (directView.value || joinMode.value === "title-only" || showHostWaiting.value));
+  && hostAccessBlocked.value && hostAccess.value?.reason !== "transitioning" && (directView.value || joinMode.value === "title-only" || showHostWaiting.value));
 const showScene = computed(() =>
-  !hostAccessBlocked.value && sceneAblation.rendersScene && revision.value >= 0 && hasScene() && wantsHostStream.value
+  sceneAblation.rendersScene && revision.value >= 0 && hasScene() && wantsHostStream.value
 );
 
 // DROP THE SURFACE GRADIENT WHILE IT IS COVERED (see `.game-surface.surface-covered` in @/styles.css for the
@@ -1548,9 +1550,11 @@ onBeforeUnmount(() => {
   >
     <MirrorView
       v-if="showScene"
-      :key="`${rendererComparisonViewRevision}:${hostAccess?.generation ?? 0}`"
+      :key="`${rendererComparisonViewRevision}:${hostAccess?.sceneResetGeneration ?? 0}`"
       :state="mirrorState"
       :revision="revision"
+      :access-generation="hostAccess?.generation"
+      :scene-ready="!hostAccessBlocked && activeClient.sceneGeneration === hostAccess?.generation"
       :send-input="viewControls.sendInput"
       :send-action="viewControls.sendAction"
       :send-scroll="viewControls.sendScroll"

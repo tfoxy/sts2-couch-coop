@@ -629,6 +629,11 @@ export function createCanvasMirrorRenderer(
     scrollRenderedY: interaction.scrollRenderedY,
 
 
+    resetTransientState(): void {
+      state = null;
+      visual.resetTransientState();
+      interaction.resetTransientState();
+    },
     dispose(): void {
       if (disposed) {
         return;

@@ -274,6 +274,7 @@ export const createRustDrawListExecutor: MirrorDrawExecutorFactory = async ({ ca
   const inFlightTextKeys = new Map<string, number>();
   let lastRevision = 0;
   let nextRevision = 0;
+  let presentationEpoch = 0;
   let nextPresentOnlyPhaseId = 0x80000000; // Legacy rustExecutionPhases trace IDs only.
   let committedScene: Uint8Array | null = null;
   let committedTypedScene: RustSceneSnapshot | null = null;
@@ -1245,6 +1246,7 @@ export const createRustDrawListExecutor: MirrorDrawExecutorFactory = async ({ ca
   async function submit(list: DrawList<string>, text: readonly PixiTextRecord[], plan?: PixiScenePlan,
     diagnostic?: (event: ProducerExecutorEvent) => void, profileIdentity?: ProfileIdentity): Promise<{ presented: boolean; reason?: string }> {
     if (disposed) return { presented: false, reason: "disposed" };
+    const epoch = presentationEpoch;
     // wgpu forbids mapping/consuming a zero-sized instance buffer. More importantly, an empty pre-scene
     // reconcile must not erase the last successfully presented image or its matching hit geometry.
     if (list.count === 0 && text.length === 0) return { presented: false, reason: "empty scene pending" };
@@ -1326,6 +1328,7 @@ export const createRustDrawListExecutor: MirrorDrawExecutorFactory = async ({ ca
     }
     if (profile && profileIdentity) profile.emit(profileIdentity, { eventType: "phase-edge", phase: "couch.submission-queue.wait", edge: "start" });
     const operation = submissionTail.then(async () => {
+      if (disposed || epoch !== presentationEpoch) return { presented: false, reason: "presentation superseded" };
       if (profile && profileIdentity) profile.emit(profileIdentity, { eventType: "phase-edge", phase: "couch.submission-queue.wait", edge: "end" });
       if (resizeFailure) return { presented: false, reason: `resize failed: ${resizeFailure}` };
       if (profile && profileIdentity) setProfileIdentity(profileIdentity);
@@ -1401,6 +1404,7 @@ export const createRustDrawListExecutor: MirrorDrawExecutorFactory = async ({ ca
       let result: Awaited<ReturnType<typeof presentResult>>;
       try { result = await presentResult(profileIdentity?.operationId ?? revision, profileIdentity); }
       finally { if (profile && profileIdentity) profile.emit(profileIdentity, { eventType: "phase-edge", phase: "couch.present.wait", edge: "end" }); }
+      if (disposed || epoch !== presentationEpoch) return { presented: false, reason: "presentation superseded" };
       if (profile && profileIdentity) profile.outcome(profileIdentity, result.presented ? "completed" : "refused", result.reason);
       diagnostic?.({ stage: result.presented ? "presented" : "present-refused", operationId: revision,
         mode: patch ? "scene-patch" : "full-scene" });
@@ -1630,6 +1634,7 @@ export const createRustDrawListExecutor: MirrorDrawExecutorFactory = async ({ ca
     profileIdentity?: ProfileIdentity): Promise<{ presented: boolean; reason?: string }> {
     if (disposed) return Promise.resolve({ presented: false, reason: "disposed" });
     if (retainedPatchInFlight) return Promise.resolve({ presented: false, reason: "retained patch already in flight" });
+    const epoch = presentationEpoch;
     const encoded = encodeRetainedPatch(patch);
     if (!encoded) return Promise.resolve({ presented: false, reason: "retained patch requires full scene admission" });
     diagnostic?.({ stage: "encoded", operationId: encoded.scene.revision, mode: "scene-patch" });
@@ -1645,6 +1650,7 @@ export const createRustDrawListExecutor: MirrorDrawExecutorFactory = async ({ ca
     const queuedAt = phaseTimingEnabled ? performance.now() : 0;
     if (profile && profileIdentity) profile.emit(profileIdentity, { eventType: "phase-edge", phase: "couch.submission-queue.wait", edge: "start" });
     const operation = submissionTail.then(async () => {
+      if (disposed || epoch !== presentationEpoch) return { presented: false, reason: "presentation superseded" };
       if (profile && profileIdentity) profile.emit(profileIdentity, { eventType: "phase-edge", phase: "couch.submission-queue.wait", edge: "end" });
       if (phaseTimingEnabled) retainedPatchQueueWaitMs += performance.now() - queuedAt;
       if (resizeFailure || disposed) return { presented: false, reason: resizeFailure ? `resize failed: ${resizeFailure}` : "disposed" };
@@ -1683,6 +1689,7 @@ export const createRustDrawListExecutor: MirrorDrawExecutorFactory = async ({ ca
       let result: Awaited<ReturnType<typeof presentResult>>;
       try { result = await presentResult(profileIdentity?.operationId ?? encoded.scene.revision, profileIdentity); }
       finally { if (profile && profileIdentity) profile.emit(profileIdentity, { eventType: "phase-edge", phase: "couch.present.wait", edge: "end" }); }
+      if (disposed || epoch !== presentationEpoch) return { presented: false, reason: "presentation superseded" };
       if (profile && profileIdentity) profile.outcome(profileIdentity, result.presented ? "completed" : "refused", result.reason);
       diagnostic?.({ stage: result.presented ? "presented" : "present-refused",
         operationId: encoded.scene.revision, mode: "scene-patch" });
@@ -1731,6 +1738,15 @@ export const createRustDrawListExecutor: MirrorDrawExecutorFactory = async ({ ca
   }
 
   return {
+    invalidatePendingPresentations() {
+      ++presentationEpoch;
+      committedScene = null;
+      committedTypedScene = null;
+      committedCommandIndexes.clear();
+      committedTextCarriers.clear();
+      committedRevision = null;
+      idleInstalledRevision = null;
+    },
     app, stats,
     get translatesClips() { return translatesClips(); },
     // rustTextEvict diagnostics: `resources` stays flat while the switch is on (bounded by the eviction pool

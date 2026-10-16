@@ -181,6 +181,7 @@ import { acquireLease, releaseLease } from "./live-qa-lock.mjs";
 import { assessClientConfirm, selectMirrorModuleBundle } from "./lib/h17-client-confirm-readiness.mjs";
 import { CORRECTION_PX, scoreCorrections } from "./lib/handLandingScore.mjs";
 import { classifyProducerCatchup, classifyRestCommit, RESTING_TOLERANCE_PX } from "./lib/handLandingRestFence.mjs";
+import { createH15NativeArrivalProbe } from "./lib/h15-native-arrival.mjs";
 import { h15CoordinateVerdict, h15FocusedGrabFailure, planH15FifthPlay } from "./lib/h15-plan.mjs";
 
 const REPO_ROOT = resolve(dirname(fileURLToPath(import.meta.url)), "..");
@@ -3191,7 +3192,7 @@ const H15_FOCUS_OBSERVE_MS = 4000;
 // This must exceed that observed stall and deliberately does NOT use page.waitForFunction's rAF default.
 const H15_GRAB_OBSERVE_MS = 5000;
 const H15_GRAB_POLL_MS = 25;
-// The fifth's semantic play is staged: cross slop, wait for the holder to leave the fan, then commit at the board.
+// The fifth's play is staged: cross slop, wait for the holder to leave the fan, then confirm native board arrival.
 // This deliberately has a longer deadline than the survivor grab because a canvas CDP acknowledgement can stall.
 const H15_PLAY_OVER_SLOP_CSS_PX = 32;
 const H15_PLAY_GRAB_OBSERVE_MS = 12000;
@@ -3449,6 +3450,7 @@ async function playH15FocusedFifth(page, pointer, holderId, retainedTouch = null
   // input edge (or the fully settled touch batch), check the budget and retract through the product's known-safe
   // grab-point cancellation path.
   const cancel = async (reason) => {
+    await page.evaluate(() => window.__h15NativeArrival?.cancel());
     let retract = null;
     if (position.cx !== from.cx || position.cy !== from.cy) {
       const dispatchedAt = now();
@@ -3514,6 +3516,7 @@ async function playH15FocusedFifth(page, pointer, holderId, retainedTouch = null
     grabbed = await observeH15GrabLeavesFan(page, holderId, H15_PLAY_GRAB_OBSERVE_MS);
     if (!grabbed.leftFan) return cancel("fifth holder never left the fan after the over-slop stage");
 
+    await page.evaluate(({ id, name }) => window.__h15NativeArrival.arm(id, name), { id: holderId, name: fifth.name });
     const boardDispatchedAt = now();
     await pointer.drag(to.cx, to.cy);
     const boardAcknowledgedAt = now();
@@ -3528,9 +3531,14 @@ async function playH15FocusedFifth(page, pointer, holderId, retainedTouch = null
   } catch (error) {
     return cancel(`staged fifth-card play failed: ${String(error?.message ?? error)}`);
   }
+  // CDP acknowledges dispatch, not native arrival. This promise advances only on raw scene updates,
+  // using the actual emitted board hover after widescreen input mapping. It never samples cosmetic poses.
+  const nativeBoard = await page.evaluate(() => window.__h15NativeArrival.wait());
+  if (!nativeBoard?.ready) return { ...await cancel("native fifth holder did not reach the board"), nativeBoard };
   const releaseDispatchedAt = now();
   await pointer.release(to.cx, to.cy);
   return {
+    nativeBoard,
     card: fifth,
     from,
     to,
@@ -3857,6 +3865,8 @@ async function checkH15(ctx) {
   // press precondition.
   const afterPositiveRelease = await readHand(page);
   const detail = {
+    fifthFocus,
+    play,
     targetId,
     targetRaisedBeforeDead,
     targetRaisedAfterDead: target,
@@ -4583,6 +4593,7 @@ async function runCombo(browser, combo, outDir) {
   });
   const page = await context.newPage();
   await page.addInitScript(installLocalFixtureJoin, { localPlayerId });
+  await page.addInitScript(`window.__h15NativeArrival = (${createH15NativeArrivalProbe.toString()})();`);
   // Record — never drop — the input envelopes. The closed loop is the measurement; see the header.
   await page.addInitScript(() => {
     window.__sentInputs = [];
@@ -4593,7 +4604,10 @@ async function runCombo(browser, combo, outDir) {
       if (typeof msg === "string") {
         try {
           const parsed = JSON.parse(msg);
-          if (parsed && parsed.type === "input") window.__sentInputs.push({ t: performance.now(), ...parsed });
+          if (parsed && parsed.type === "input") {
+            window.__sentInputs.push({ t: performance.now(), ...parsed });
+            window.__h15NativeArrival.sent(this, parsed);
+          }
           if (parsed && (parsed.type === "input" || parsed.type === "action")) {
             window.__touchQaSent.push({ t: performance.now(), ...parsed });
           }
@@ -4608,6 +4622,7 @@ async function runCombo(browser, combo, outDir) {
         origAdd.call(this, "message", (event) => {
           try {
             const parsed = JSON.parse(String(event.data));
+            window.__h15NativeArrival.receive(this, parsed);
             if (parsed?.type === "session") {
               window.__touchQaReceived.push({
                 t: performance.now(),
@@ -4616,7 +4631,7 @@ async function runCombo(browser, combo, outDir) {
                 scrollAction: parsed.scrollAction ?? null,
                 screen: parsed.screen ?? null
               });
-            } else if (parsed?.type === "action-result") {
+            } else if (parsed?.type === "action-result" || parsed?.type === "input-result") {
               window.__touchQaReceived.push({ t: performance.now(), ...parsed });
             }
           } catch { /* not a JSON envelope */ }

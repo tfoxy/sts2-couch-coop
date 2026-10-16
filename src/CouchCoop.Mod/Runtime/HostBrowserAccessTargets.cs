@@ -18,5 +18,7 @@ internal static class HostBrowserAccessTargets
         new("MegaCrit.Sts2.Core.Nodes.NTransition", "FadeOut", 3),
         new("MegaCrit.Sts2.Core.Nodes.NTransition", "RoomFadeIn", 1),
         new("MegaCrit.Sts2.Core.Nodes.NTransition", "RoomFadeOut", 0),
+        new("MegaCrit.Sts2.Core.Nodes.NSceneContainer", "SetCurrentScene", 1),
+        new("MegaCrit.Sts2.Core.Runs.RunManager", "CleanUp", 1),
     ];
 }

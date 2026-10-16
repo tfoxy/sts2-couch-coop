@@ -51,6 +51,7 @@ export interface CardFlightControllerPorts {
 
 export interface CardFlightController {
   readonly activeCount: number;
+  clear(): void;
   apply(flights: MirrorCardFlightHint[]): void;
   tick(now: number): number;
   onTrailActivity(): void;
@@ -441,6 +442,16 @@ export function createCardFlightController(
   }
 
   return {
+    clear() {
+      for (const flight of activeFlights) retire(flight, "done");
+      flightOwnedTrails.clear();
+      flightOwnedStrokes.clear();
+      flightDietIds.clear();
+      trailSurfaceBlendIds.clear();
+      flightDietArmed = false;
+      surfaceBlendSuppressed = false;
+      batch = null;
+    },
     get activeCount() {
       return activeFlights.size;
     },

@@ -13,12 +13,31 @@ internal static class InputCoalescerTests
         DragSequenceKeepsPressAndRelease();
         NonHoverNeverDrops();
         EmptyTakeIsNull();
+        GenerationsAndWatchEpochsNeverCoalesce();
         // R10 WS-E — coalesced wheel runs.
         AdjacentSameDirectionWheelTicksMerge();
         OppositeWheelDirectionsNeverMerge();
         AnythingBetweenTicksBreaksTheRun();
         WheelPressReleaseEdgesNeverMerge();
         WheelRunStopsAtTheHostClamp();
+    }
+
+    private static void GenerationsAndWatchEpochsNeverCoalesce()
+    {
+        foreach (var sample in new[] { Hover(1), Wheel("wheel-down") })
+        {
+            var queue = new InputCoalescer();
+            queue.Enqueue(sample with { AccessGeneration = 1, WatchEpoch = 1 });
+            Assert(!queue.WouldCoalesce(sample with { AccessGeneration = 1, WatchEpoch = 2 }), "watch epochs cannot merge");
+            queue.Enqueue(sample with { AccessGeneration = 1, WatchEpoch = 2 });
+            Assert(!queue.WouldCoalesce(sample with { AccessGeneration = 2, WatchEpoch = 2 }), "access generations cannot merge");
+            queue.Enqueue(sample with { AccessGeneration = 2, WatchEpoch = 2 });
+            Assert(queue.Count == 3, "each input lifetime remains distinct");
+        }
+        var forged = System.Text.Json.JsonSerializer.Deserialize<BrowserInputRequestEnvelope>(
+            "{\"type\":\"input\",\"requestId\":\"forge\",\"kind\":\"hover\",\"accessGeneration\":17,\"watchEpoch\":19}",
+            CouchCoop.Mod.Protocol.BrowserJson.Options)!;
+        Assert(forged.AccessGeneration == 0 && forged.WatchEpoch == 0, "wire cannot stamp server-only input lifetime");
     }
 
     private static BrowserInputRequestEnvelope Wheel(string button, int? count = null, bool? pressed = null) =>

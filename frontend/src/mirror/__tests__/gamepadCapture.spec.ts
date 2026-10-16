@@ -85,7 +85,7 @@ interface Harness {
   pendingFrames(): number;
 }
 
-function harness(options: { pads?: Array<PadSnapshot | null>; api?: boolean } = {}): Harness {
+function harness(options: { pads?: Array<PadSnapshot | null>; api?: boolean; neutralizeHeldOnStart?: boolean } = {}): Harness {
   const sent: MirrorInputMessage[] = [];
   let queue: Array<{ handle: number; callback: () => void }> = [];
   let nextHandle = 1;
@@ -99,6 +99,7 @@ function harness(options: { pads?: Array<PadSnapshot | null>; api?: boolean } = 
   const capture = createGamepadCapture({
     send: (message) => sent.push(message),
     enabled: () => state.enabled,
+    neutralizeHeldOnStart: options.neutralizeHeldOnStart,
     getGamepads: options.api === false ? null : () => state.pads,
     requestAnimationFrame: (callback) => {
       const handle = nextHandle++;
@@ -449,5 +450,77 @@ describe("createGamepadCapture", () => {
     rig.pads = [pad()];
     rig.frame();
     expect(rig.take()).toEqual(everything.map((token) => `${token}:up`));
+  });
+});
+
+
+describe("capture after host access resumes", () => {
+  it("neutralizes held buttons and axes independently until released, preserving hysteresis", () => {
+    const h = harness({ neutralizeHeldOnStart: true,
+      pads: [pad({ buttons: buttons({ 0: true }), axes: [0.8, 0] })] });
+    h.frame();
+    h.pads = [pad({ buttons: buttons({ 0: true }), axes: [0.45, 0] })];
+    h.frames(3);
+    expect(h.take()).toEqual([]);
+    h.pads = [pad({ axes: [0.45, 0] })];
+    h.frame();
+    expect(h.take()).toEqual([]);
+    h.pads = [pad({ buttons: buttons({ 0: true }), axes: [0.45, 0] })];
+    h.frame();
+    expect(h.take()).toEqual(["faceSouth:down"]);
+    h.pads = [pad({ buttons: buttons({ 0: true }), axes: [0, 0] })];
+    h.frame();
+    expect(h.take()).toEqual([]);
+    h.pads = [pad({ buttons: buttons({ 0: true }), axes: [0.8, 0] })];
+    h.frame();
+    expect(h.take()).toEqual(["dpadRight:down"]);
+    h.capture.dispose();
+    expect(h.take()).toEqual(["faceSouth:up", "dpadRight:up"]);
+  });
+
+  it("requires analogue controls initially inside the hysteresis band to reach neutral", () => {
+    const h = harness({ neutralizeHeldOnStart: true,
+      pads: [pad({ buttons: buttons({ 6: 0.45 }), axes: [0.45, 0] })] });
+    h.frame();
+    h.pads = [pad({ buttons: buttons({ 6: 0.8 }), axes: [0.8, 0] })];
+    h.frame();
+    expect(h.take()).toEqual([]);
+    h.pads = [pad()];
+    h.frame();
+    h.pads = [pad({ buttons: buttons({ 6: 0.8 }), axes: [0.8, 0] })];
+    h.frame();
+    expect(h.take()).toEqual(["leftTrigger:down", "dpadRight:down"]);
+    h.capture.dispose();
+  });
+
+  it("waits for the first usable pad when the browser initially exposes none", () => {
+    const h = harness({ neutralizeHeldOnStart: true, pads: [null] });
+    h.frame();
+    expect(h.capture.polling()).toBe(false);
+    h.pads = [pad({ buttons: buttons({ 0: true }), axes: [-0.8, 0] })];
+    h.events.fire("gamepadconnected");
+    h.frames(2);
+    expect(h.take()).toEqual([]);
+    h.pads = [pad()];
+    h.frame();
+    h.pads = [pad({ buttons: buttons({ 0: true }), axes: [-0.8, 0] })];
+    h.frame();
+    expect(h.take()).toEqual(["faceSouth:down", "dpadLeft:down"]);
+    h.capture.dispose();
+  });
+
+  it("disposes suppressed holds without emitting orphan release edges", () => {
+    const h = harness({ neutralizeHeldOnStart: true,
+      pads: [pad({ buttons: buttons({ 0: true }), axes: [0.8, 0] })] });
+    h.frame();
+    h.capture.dispose();
+    expect(h.take()).toEqual([]);
+  });
+
+  it("keeps immediate held-control admission for an ordinary initial mount", () => {
+    const h = harness({ pads: [pad({ buttons: buttons({ 0: true }), axes: [0.8, 0] })] });
+    h.frame();
+    expect(h.take()).toEqual(["faceSouth:down", "dpadRight:down"]);
+    h.capture.dispose();
   });
 });

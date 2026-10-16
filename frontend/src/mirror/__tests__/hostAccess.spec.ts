@@ -31,7 +31,8 @@ describe("host access", () => {
   it("fails closed on absent, malformed and unknown permissions", () => {
     for (const value of [null, {}, { allowed: true, reason: "future", generation: 1 },
       { allowed: true, reason: "menu-open", generation: 1 },
-      { allowed: true, reason: "allowed", generation: -1 }]) {
+      { allowed: true, reason: "allowed", generation: -1 },
+      { allowed: true, reason: "allowed", generation: 1, sceneResetGeneration: -1 }]) {
       expect(normalizeHostAccess(value).allowed).toBe(false);
     }
     const { client, socket } = connect();
@@ -83,6 +84,39 @@ describe("host access", () => {
       socket.emit(frame);
       expect(client.state.nodes.size).toBe(1);
     }
+  });
+
+  it("retains the displayed tree through loading, rejects deltas until a fresh full scene, and preserves ordinary refreshes", () => {
+    const { client, socket } = connect();
+    const access = (allowed: boolean, generation: number, reason = allowed ? "allowed" : "transitioning", sceneResetGeneration = 0) =>
+      socket.emit({ type: "host-access", hostAccess: { allowed, reason, generation, sceneResetGeneration } });
+    access(true, 1);
+    socket.emit(frame);
+    const node = client.state.nodes.get("root");
+    const revision = client.state.revision;
+    access(true, 1); // map/deck/roster refresh with unchanged permission
+    expect(client.state.revision).toBe(revision);
+    expect(client.sceneGeneration).toBe(1);
+    access(false, 2);
+    expect(client.state.nodes.get("root")).toBe(node);
+    expect(client.sceneGeneration).toBeNull();
+    socket.emit(frame);
+    expect(client.state.revision).toBe(revision);
+    client.sendInput({ kind: "key", key: "Enter", pressed: false });
+    client.sendSceneAck();
+    expect(socket.sent).toEqual([]);
+    access(true, 3);
+    socket.emit({ ...frame, full: false });
+    expect(client.sceneGeneration).toBeNull();
+    expect(client.state.nodes.get("root")).toBe(node);
+    socket.emit(frame);
+    expect(client.sceneGeneration).toBe(3);
+    // A menu-open update may be coalesced away; its reset epoch must still clear the displayed scene.
+    access(true, 6, "allowed", 1);
+    expect(client.state.nodes.size).toBe(0);
+    expect(client.sceneGeneration).toBeNull();
+    access(false, 7, "transitioning", 1);
+    expect(client.state.nodes.size).toBe(0);
   });
 
   it("keeps a separate allowed instance live while the host control socket is denied", () => {

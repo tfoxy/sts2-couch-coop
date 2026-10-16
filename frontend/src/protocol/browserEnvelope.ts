@@ -124,6 +124,7 @@ export interface BrowserHostAccess {
   allowed: boolean;
   reason: BrowserHostAccessReason;
   generation: number;
+  sceneResetGeneration: number;
 }
 
 /** Missing, malformed or future permissions never grant control. */
@@ -132,10 +133,15 @@ export function normalizeHostAccess(raw: unknown): BrowserHostAccess {
   if (value && typeof value.allowed === "boolean"
     && ["allowed", "unavailable", "outside-multiplayer", "menu-open", "transitioning"].includes(value.reason ?? "")
     && Number.isSafeInteger(value.generation) && value.generation! >= 0
-    && value.allowed === (value.reason === "allowed")) {
-    return { allowed: value.allowed, reason: value.reason!, generation: value.generation! };
+    && value.allowed === (value.reason === "allowed")
+    && (value.sceneResetGeneration === undefined ||
+      (Number.isSafeInteger(value.sceneResetGeneration) && value.sceneResetGeneration >= 0))) {
+    return { allowed: value.allowed, reason: value.reason!, generation: value.generation!,
+      sceneResetGeneration: value.sceneResetGeneration ?? value.generation! };
   }
   return { allowed: false, reason: "unavailable",
+    sceneResetGeneration: Number.isSafeInteger(value?.sceneResetGeneration) && value!.sceneResetGeneration! >= 0
+      ? value!.sceneResetGeneration! : 0,
     generation: Number.isSafeInteger(value?.generation) && value!.generation! >= 0 ? value!.generation! : 0 };
 }
 

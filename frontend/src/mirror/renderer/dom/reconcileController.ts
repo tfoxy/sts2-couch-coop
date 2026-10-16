@@ -90,6 +90,7 @@ export interface ReconcileController {
     options?: { forceTextures?: boolean; reason?: FullWalkCause },
   ): void;
   markTextureDirty(ids: Iterable<string>): void;
+  resetTransientState(): void;
   setStretch(factor: number): void;
   beginDormancyHatch(started: number, dirty: Set<string>): void;
   finishDormancyHatch(): void;
@@ -518,6 +519,11 @@ export function createReconcileController(
       revealBuiltThisWalk = true;
     },
     reconcile,
+    resetTransientState() {
+      lastState = null;
+      pendingGeomRebase.clear();
+      pendingTextureDirty.clear();
+    },
     markTextureDirty(ids) {
       for (const id of ids) {
         pendingTextureDirty.add(id);
