@@ -20,10 +20,10 @@ internal sealed partial class CouchCoopQrDialog : CouchCoopModalDialog
     public static string TitleText => CouchCoopLocalization.Resolve("couchcoop_qr_title");
     public static string CloseButtonText => CouchCoopLocalization.Resolve("couchcoop_qr_close");
 
-    // Preserve the constant QR extent; the extra row beneath its URL keeps device setup reachable.
+    // Only direct-IP HTTPS trades QR space for its device-setup row.
     // Constants are shared with the game-free geometry contracts.
     internal const float PanelWidth = 1000f;
-    internal const float PanelHeight = 1024f;
+    internal const float PanelHeight = 936f;
     internal const float TitleTop = 12f;
     internal const float TitleHeight = 52f;
     internal const float SelectTop = 72f;
@@ -31,7 +31,7 @@ internal sealed partial class CouchCoopQrDialog : CouchCoopModalDialog
     internal const float QrTop = 152f;
     internal const float UrlGap = 6f;
     internal const float UrlHeight = 32f;
-    internal const float SetupRowHeight = 88f;
+    internal const float SetupRowHeight = QrMethodLayout.DirectIpSetupRowHeight;
     internal const float NoticeGap = 2f;
     internal const float NoticeHeight = 40f;
 
@@ -329,7 +329,7 @@ internal sealed partial class CouchCoopQrDialog : CouchCoopModalDialog
         {
             var option = _selection.Resolve(method);
             return new QrSelectEntry(method, QrSelectionModel.MethodLabel(method),
-                QrMethodPresentation.For(option, _lastSnapshot?.DirectIpHttps).Subtitle,
+                QrMethodPresentation.For(option, _lastSnapshot?.DirectIpHttps, _selection.PreviewUrlFor(method)).Subtitle,
                 option, option?.Selectable == true);
         }).ToArray(), _selection.Method);
         _select.AccessibilityName = CouchCoopLocalization.Resolve("couchcoop_qr_network_connection_title");
@@ -420,14 +420,15 @@ internal sealed partial class CouchCoopQrDialog : CouchCoopModalDialog
         _qr.Visible = true;
         _copy.Visible = true;
 
-        var cacheKey = $"{uri}|quiet={Layout.QuietZoneModules}|extent={Layout.ResolvedQrDialogExtent}";
+        var methodLayout = QrMethodLayout.For(Layout, _selection.Method);
+        var cacheKey = methodLayout.CacheKeyFor(uri);
         if (!string.Equals(_qrCacheKey, cacheKey, StringComparison.Ordinal))
         {
             // The payload's length still decides the module COUNT (37 for a plain LAN URL, 41 for the
             // longer secure one) but no longer the on-screen size: the raster plan packs whichever grid it
             // gets onto one fixed canvas and pads the remainder with white quiet zone. See QrRasterPlan.
             var code = OfflineQrCode.EncodeJoinUrl(uri, Layout.QuietZoneModules);
-            _qr.Texture = QrCodeTextureFactory.Create(code, Layout.RasterPlanFor(code.Size));
+            _qr.Texture = QrCodeTextureFactory.Create(code, methodLayout.RasterPlanFor(code.Size));
             _qrCacheKey = cacheKey;
         }
 
@@ -497,14 +498,13 @@ internal sealed partial class CouchCoopQrDialog : CouchCoopModalDialog
         _title.Position = new Vector2(padding, TitleTop);
         _title.Size = new Vector2(textWidth, TitleHeight);
 
-        // Constant for every payload now (HostLobbyQrOverlayLayout.QrDisplayExtent), which is also why
-        // the URL and notice rows below no longer shift when the encoded host changes length.
-        var extent = Layout.QrDisplayExtent;
+        // Only direct-IP HTTPS reserves a setup row. Payload length never changes QR size.
+        var methodLayout = QrMethodLayout.For(Layout, _selection.Method);
+        var extent = methodLayout.Extent;
         _qr.Position = new Vector2((PanelWidth - extent) / 2f, QrTop);
         // Minimum first: Godot clamps Size against the CURRENT minimum, so assigning Size while a larger
         // minimum is still in place would silently keep the old extent -- and `CustomMinimumSize = _qr.Size`
-        // would then latch that clamped value forever. The extent no longer varies, so the two can no
-        // longer disagree, but the order is kept because it is the correct order.
+        // would then latch that clamped value forever when switching to direct-IP HTTPS.
         _qr.CustomMinimumSize = new Vector2(extent, extent);
         _qr.Size = new Vector2(extent, extent);
 
@@ -536,7 +536,7 @@ internal sealed partial class CouchCoopQrDialog : CouchCoopModalDialog
         _setupAction.Position = new Vector2((PanelWidth - CouchCoopSkipButton.DesignWidth) / 2f,
             _qr.Visible ? urlTop + UrlHeight + 6f : QrTop + 390f);
         _setupAction.Size = CouchCoopSkipButton.DesignSize;
-        _notice.Position = new Vector2(padding, urlTop + UrlHeight + SetupRowHeight + NoticeGap);
+        _notice.Position = new Vector2(padding, urlTop + UrlHeight + methodLayout.SetupRowHeight + NoticeGap);
         _notice.Size = new Vector2(textWidth, NoticeHeight);
     }
 

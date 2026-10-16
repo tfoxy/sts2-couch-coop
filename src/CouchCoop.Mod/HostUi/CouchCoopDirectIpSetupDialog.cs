@@ -9,7 +9,7 @@ internal sealed partial class CouchCoopDirectIpSetupDialog : CouchCoopModalDialo
 {
     private readonly DirectIpSetupFlow _flow = new();
     private readonly Label _title = new();
-    private readonly HBoxContainer _progress = new();
+    private readonly DirectIpSetupProgressStrip _progress = new();
     private readonly ScrollContainer _scroll = new()
     {
         Name = "CouchCoopDirectIpSetupInstructions", FocusMode = FocusModeEnum.All,
@@ -20,12 +20,11 @@ internal sealed partial class CouchCoopDirectIpSetupDialog : CouchCoopModalDialo
     private readonly VBoxContainer _device = Stack();
     private readonly VBoxContainer _deviceInstructions = Stack();
     private readonly VBoxContainer _connect = Stack();
-    private readonly VBoxContainer _advanced = Stack();
+    private readonly DirectIpSetupHelpView _advanced;
     private readonly VBoxContainer _resetConfirmation = Stack();
     private readonly VBoxContainer _verification = Stack();
     private readonly Label _status = new();
     private readonly Label _filePath = new();
-    private readonly Label _expiry = new();
     private readonly Label _verifyInstructions = new();
     private readonly Label _installInstructions = new();
     private readonly Label _deviceHeading = new();
@@ -40,7 +39,6 @@ internal sealed partial class CouchCoopDirectIpSetupDialog : CouchCoopModalDialo
     private readonly Dictionary<CouchCoopSetupButton, string> _buttonCopy = [];
     private readonly Dictionary<DirectIpSetupDevice, CouchCoopSetupButton> _deviceButtons = [];
     private readonly List<CouchCoopSetupButton> _bodyButtons = [];
-    private readonly List<Label> _steps = [];
     private readonly CouchCoopSetupButton _advancedButton;
     private readonly CouchCoopSetupButton _verificationButton;
     private string? _fileOpenError;
@@ -52,15 +50,6 @@ internal sealed partial class CouchCoopDirectIpSetupDialog : CouchCoopModalDialo
         new Vector2(DirectIpSetupLayout.CardWidth, DirectIpSetupLayout.CardHeight), dismissFontSize: 22)
     {
         ConfigureLabel(_title, HorizontalAlignment.Center, CouchCoopGameUiTheme.ButtonFontColor);
-        _progress.MouseFilter = MouseFilterEnum.Ignore;
-        _progress.AddThemeConstantOverride("separation", 20);
-        foreach (var key in new[] { "progress_prepare", "progress_device", "progress_connect" })
-        {
-            var label = Copy(_progress, key, 24, heading: true);
-            label.SizeFlagsHorizontal = SizeFlags.ExpandFill;
-            label.HorizontalAlignment = HorizontalAlignment.Center;
-            _steps.Add(label);
-        }
         Card.AddChild(_title);
         Card.AddChild(_progress);
         Card.AddChild(_scroll);
@@ -88,6 +77,7 @@ internal sealed partial class CouchCoopDirectIpSetupDialog : CouchCoopModalDialo
                 RefreshText();
                 Callable.From(() => { if (GodotObject.IsInstanceValid(this) && IsOpen) _scroll.EnsureControlVisible(_deviceHeading); }).CallDeferred();
             });
+            _deviceButtons[choice].SetPlatformIcon(DirectIpSetupCopy.DeviceKey(choice));
         }
         _device.AddChild(_deviceInstructions);
         AddDynamic(_deviceInstructions, _deviceHeading, 30, true);
@@ -113,12 +103,29 @@ internal sealed partial class CouchCoopDirectIpSetupDialog : CouchCoopModalDialo
         AddDynamic(_content, _status, 23);
         _status.AddThemeColorOverride("font_color", CouchCoopGameUiTheme.ConnectionFailureRed);
         _content.MoveChild(_status, 0);
-        _advancedButton = Button(_content, "advanced", () => { _flow.ToggleAdvanced(); RefreshText(); });
+        _advancedButton = Button(_content, "advanced", () =>
+        {
+            _flow.ToggleAdvanced();
+            RefreshText();
+            if (_flow.ShowAdvanced) Reveal(_advanced.Start);
+            else Reveal(_advancedButton);
+        });
+        _advanced = new DirectIpSetupHelpView(L, (label, size, heading) =>
+        {
+            Style(label, size, heading);
+            label.AddThemeColorOverride("font_color", heading ? CouchCoopGameUiTheme.ConnectionGroupGold : CouchCoopGameUiTheme.ConnectionExplanationCream);
+        }, (label, size) =>
+        {
+            CouchCoopGameUiTheme.ApplyBodyRichFont(label, size);
+            label.AddThemeColorOverride("default_color", CouchCoopGameUiTheme.ConnectionDeviceCream);
+        }, (parent, key, action) => Button(parent, key, action), () =>
+        {
+            _flow.ReviewDeviceSetup();
+            RefreshText();
+            _scroll.ScrollVertical = 0;
+            if (_installed && _flow.Device is { } device) _deviceButtons[device].GrabFocus();
+        }, () => { _flow.RequestReset(); RefreshText(); Reveal(_resetConfirmation); });
         _content.AddChild(_advanced);
-        AddDynamic(_advanced, _expiry, 22);
-        Copy(_advanced, "ca_explanation", 22);
-        Copy(_advanced, "remove_help", 22);
-        Button(_advanced, "reset", () => { _flow.RequestReset(); RefreshText(); Reveal(_resetConfirmation); });
         _advanced.AddChild(_resetConfirmation);
         Copy(_resetConfirmation, "reset_warning", 24).AddThemeColorOverride("font_color", CouchCoopGameUiTheme.ConnectionWarningOrange);
         var resetActions = new HBoxContainer { MouseFilter = MouseFilterEnum.Ignore };
@@ -156,6 +163,7 @@ internal sealed partial class CouchCoopDirectIpSetupDialog : CouchCoopModalDialo
         DismissButton.GuiInput += ScrollInput;
         _scroll.GuiInput += ScrollInput;
         _fingerprint.GuiInput += ScrollInput;
+        _advanced.Verification.GuiInput += ScrollInput;
         RefreshText();
     }
 
@@ -187,12 +195,11 @@ internal sealed partial class CouchCoopDirectIpSetupDialog : CouchCoopModalDialo
             Style(label, value.Size, value.Heading);
         }
         foreach (var (button, key) in _buttonCopy) { button.Text = L(key); button.RefreshLocalization(); }
-        for (var i = 0; i < _steps.Count; i++)
-            _steps[i].AddThemeColorOverride("font_color", i == (int)_flow.Stage
-                ? CouchCoopGameUiTheme.ConnectionGroupGold : CouchCoopGameUiTheme.ConnectionProgressMuted);
+        _progress.Refresh([L("progress_prepare"), L("progress_device"), L("progress_connect")],
+            (int)_flow.Stage, label => Style(label, 24, true),
+            CouchCoopGameUiTheme.ConnectionGroupGold, CouchCoopGameUiTheme.ConnectionProgressMuted);
         Style(_status, 23, false);
         Style(_filePath, 21, false);
-        Style(_expiry, 22, false);
         Style(_verifyInstructions, 23, false);
         Style(_installInstructions, 24, false);
         Style(_deviceHeading, 30, true);
@@ -223,8 +230,12 @@ internal sealed partial class CouchCoopDirectIpSetupDialog : CouchCoopModalDialo
         _advanced.Visible = _flow.ShowAdvanced;
         _advancedButton.Text = L(_flow.ShowAdvanced ? "hide_advanced" : "advanced");
         _resetConfirmation.Visible = _flow.ConfirmReset;
-        _expiry.Visible = _flow.State?.CaExpiresAt is not null;
-        _expiry.Text = CouchCoopText.Create("couchcoop_https_expiry", ("expiry", _flow.State?.CaExpiresAt?.ToString("d") ?? string.Empty)).Resolve();
+        _advanced.Refresh(_flow.Stage.ToString().ToLowerInvariant(),
+            _flow.State?.CaExpiresAt is { } expiry
+                ? CouchCoopText.Create("couchcoop_https_expiry", ("expiry", expiry.ToString("d"))).Resolve() : null,
+            _flow.State?.CaFingerprint, _flow.HostReady);
+        _advanced.Verification.FocusMode = _advanced.Visible && _advanced.Verification.Visible
+            ? FocusModeEnum.All : FocusModeEnum.None;
         _primary.Text = L(_flow.IsBusy ? "busy" : _flow.Stage switch
         {
             DirectIpSetupStage.Prepare => _flow.Error is null ? "create_file" : "retry",
@@ -339,6 +350,7 @@ internal sealed partial class CouchCoopDirectIpSetupDialog : CouchCoopModalDialo
         foreach (var button in _bodyButtons)
             if (IsBodyVisible(button) && button.IsEnabled) chain.Add(button);
         if (_fingerprint.FocusMode != FocusModeEnum.None) chain.Add(_fingerprint);
+        if (_advanced.Verification.FocusMode != FocusModeEnum.None) chain.Add(_advanced.Verification);
         if (_back.Visible && _back.IsEnabled) chain.Add(_back);
         if (_primary.Visible && _primary.IsEnabled) chain.Add(_primary);
     }
@@ -353,7 +365,7 @@ internal sealed partial class CouchCoopDirectIpSetupDialog : CouchCoopModalDialo
     protected override void ApplyBodyLayout(HostLobbyQrOverlayLayout previous, HostLobbyQrOverlayLayout next) => RefreshText();
     protected override void LayoutBody(float padding, float textWidth)
     {
-        var layout = DirectIpSetupLayout.Calculate(padding);
+        var layout = DirectIpSetupLayout.Calculate(padding, DefaultDismissBottomInset);
         Place(_title, layout.Title);
         Place(_progress, layout.Progress);
         Place(_scroll, layout.Content);

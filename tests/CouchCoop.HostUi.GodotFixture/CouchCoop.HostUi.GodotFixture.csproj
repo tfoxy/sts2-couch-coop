@@ -1,0 +1,19 @@
+<Project Sdk="Godot.NET.Sdk/4.5.1">
+  <PropertyGroup>
+    <TargetFramework>net8.0</TargetFramework>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <Nullable>enable</Nullable>
+    <LangVersion>latest</LangVersion>
+    <EnableDynamicLoading>true</EnableDynamicLoading>
+    <RestorePackagesWithLockFile>true</RestorePackagesWithLockFile>
+    <RestoreLockedMode>true</RestoreLockedMode>
+  </PropertyGroup>
+  <ItemGroup>
+    <Compile Include="../../src/CouchCoop.Mod/HostUi/DirectIpSetupProgressStrip.cs" Link="Production/DirectIpSetupProgressStrip.cs" />
+    <Compile Include="../../src/CouchCoop.Mod/HostUi/DirectIpSetupHelpView.cs" Link="Production/DirectIpSetupHelpView.cs" />
+    <Compile Include="../../src/CouchCoop.Mod/HostUi/DirectIpSetupLayout.cs" Link="Production/DirectIpSetupLayout.cs" />
+    <Compile Include="../../src/CouchCoop.Mod/HostUi/DirectIpPlatformIcons.cs" Link="Production/DirectIpPlatformIcons.cs" />
+    <EmbeddedResource Include="../../src/CouchCoop.Mod/HostUi/Resources/PlatformIcons/*.svg" LogicalName="CouchCoop.Mod.HostUi.PlatformIcons.%(Filename)%(Extension)" WithCulture="false" />
+    <EmbeddedResource Include="../../src/CouchCoop.Mod/Localization/Catalogs/*.json" LogicalName="Catalogs.%(Filename)%(Extension)" WithCulture="false" />
+  </ItemGroup>
+</Project>

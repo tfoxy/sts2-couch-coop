@@ -38,6 +38,11 @@ internal static class DirectIpSetupFlowTests
         }
         flow.ChooseDevice(DirectIpSetupDevice.Windows);
         Assert(flow.AcknowledgeInstallation() && flow.Stage == DirectIpSetupStage.Connect, "acknowledgment advances to connect");
+        flow.ToggleAdvanced();
+        flow.ReviewDeviceSetup();
+        Assert(flow.Stage == DirectIpSetupStage.Device && flow.Device == DirectIpSetupDevice.Windows && !flow.ShowAdvanced,
+            "warning help returns to the selected platform without resetting host setup");
+        flow.AcknowledgeInstallation();
         flow.Refresh(Ready with { LeafExpiresAt = DateTimeOffset.UtcNow.AddDays(90) });
         Assert(flow.Stage == DirectIpSetupStage.Connect, "ordinary renewal does not reset acknowledgment");
         flow.Open(Ready);

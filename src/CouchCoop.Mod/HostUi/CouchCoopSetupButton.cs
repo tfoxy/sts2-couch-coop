@@ -5,6 +5,8 @@ namespace CouchCoop.Mod.HostUi;
 /// <summary>Guide-only button: artwork and input bounds remain the same size inside wider layout slots.</summary>
 internal sealed partial class CouchCoopSetupButton : CouchCoopTextureButton
 {
+    private Control? _platformIcon;
+    private string? _platformKey;
     public CouchCoopSetupButton(string name) : base(name, CouchCoopGameUiTheme.RewardSkipButtonTexture,
         TextureRect.ExpandModeEnum.IgnoreSize)
     {
@@ -22,6 +24,24 @@ internal sealed partial class CouchCoopSetupButton : CouchCoopTextureButton
         ButtonLabel.AddThemeColorOverride("font_outline_color", CouchCoopGameUiTheme.SkipOutlineColor);
         ButtonLabel.AddThemeConstantOverride("outline_size", 3);
         RefreshLocalization();
+    }
+
+    public void SetPlatformIcon(string platformKey)
+    {
+        if (_platformKey == platformKey) return;
+        var icon = DirectIpPlatformIcons.Create(platformKey);
+        if (_platformIcon is { } previous)
+        {
+            Visuals.RemoveChild(previous);
+            previous.QueueFree();
+        }
+        icon.Position = new Vector2(24, 20.5f);
+        icon.Modulate = CouchCoopGameUiTheme.SkipFontColor;
+        Visuals.AddChild(icon);
+        _platformIcon = icon;
+        _platformKey = platformKey;
+        ButtonLabel.OffsetLeft = 84;
+        ButtonLabel.OffsetRight = -24;
     }
 
     public void RefreshLocalization() => CouchCoopGameUiTheme.ApplyFont(ButtonLabel,

@@ -37,6 +37,18 @@ internal static class QrSelectionModelTests
         Expect(model.ChooseMethod("secure") && model.Selected is { CanSelectWhenUnavailable: true } && model.Url is null,
             "an eligible pending domain is selectable to request setup");
         Expect(model.ChooseMethod("secure"), "the selected pending domain can be reselected for retry");
+        foreach (var reason in new CouchCoopText?[] { null, CouchCoopSecureText.Checking, CouchCoopSecureText.SetupFailed })
+        {
+            var unavailableDomain = secure with { DisabledReason = reason };
+            model.Refresh([direct with { Port = 14444 }, web, unavailableDomain, mdns], model.Memory);
+            var preview = model.PreviewUrlFor("secure");
+            var display = QrMethodPresentation.For(model.Selected, previewUrl: preview);
+            Expect(display.Subtitle.Resolve() == "https://192-168-1-5.local-ip.co:14444/",
+                "domain subtitle retains its actual-port URL during idle, checking, and retry states");
+            Expect(display.State != QrMethodReadiness.Ready && !display.ShowsSetup && model.Url is null,
+                "domain preview neither enables copying/QR nor advertises direct-IP device setup");
+        }
+        model.Refresh(options, model.Memory);
         var ready = secure with { Enabled = true, Port = 13337, CanSelectWhenUnavailable = false, DisabledReason = null };
         model.Refresh([direct, web, ready, mdns], model.Memory);
         Expect(model.Url?.Scheme == "https", "a readiness event restores the selected domain without another pick");
@@ -80,7 +92,7 @@ internal static class QrSelectionModelTests
 
     private static void DirectIpSelectionAndCopy()
     {
-        Expect(QrSelectionModel.Methods.SequenceEqual(["ipv4", "direct-https", "web", "secure"]), "direct HTTPS immediately follows plain direct");
+        Expect(QrSelectionModel.Methods.SequenceEqual(["ipv4", "web", "secure", "direct-https"]), "direct HTTPS is last because it requires device trust setup");
         var adapter = new QrAdapterInfo("Wi-Fi", QrAdapterKind.Wifi, IPAddress.Parse("192.168.1.7"));
         var direct = new QrHostOption("192.168.1.7", 13337, QrHostOptionKind.Interface, adapter);
         var pending = QrHostOptions.DescribeDirectIpSecureFor(adapter, 13337, null);

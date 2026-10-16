@@ -6,7 +6,7 @@ internal static class DirectIpSetupLayoutTests
     {
         foreach (var padding in new[] { 16f, 24f, 48f, 80f })
         {
-            var geometry = DirectIpSetupLayout.Calculate(padding);
+            var geometry = DirectIpSetupLayout.Calculate(padding, CouchCoopModalDialog.DefaultDismissBottomInset);
             var regions = new[] { geometry.Title, geometry.Progress, geometry.Content, geometry.Back, geometry.Primary, geometry.Dismiss };
             foreach (var (width, height) in new[] { (1920f, 1080f), (1280f, 800f) })
             {

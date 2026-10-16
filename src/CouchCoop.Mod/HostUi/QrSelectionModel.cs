@@ -6,7 +6,7 @@ namespace CouchCoop.Mod.HostUi;
 /// <summary>Independent network and method choices, including a retained unsupported pair.</summary>
 public sealed class QrSelectionModel
 {
-    public static IReadOnlyList<string> Methods { get; } = ["ipv4", "direct-https", "web", "secure"];
+    public static IReadOnlyList<string> Methods { get; } = ["ipv4", "web", "secure", "direct-https"];
     private IReadOnlyList<QrHostOption> _options = [];
     public IReadOnlyList<QrHostOption> Networks { get; private set; } = [];
     public QrHostOption? Network { get; private set; }

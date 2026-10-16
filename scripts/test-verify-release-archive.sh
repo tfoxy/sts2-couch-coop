@@ -115,6 +115,7 @@ make_valid_payload() { # make_valid_payload <root> [lane]...
     printf 'fixture\n' > "$root/frontend/app/$file"
   done
   for file in \
+    FontAwesome-Free-6.7.2-LICENSE.txt FontAwesome-CC-BY-4.0.txt \
     QRCoder-1.6.0-MIT.txt DeviceDetector.NET-6.5.2-Apache-2.0.txt LiteDB-5.0.21-MIT.txt \
     Microsoft.Extensions.DependencyInjection.Abstractions-10.0.10-MIT.txt Microsoft.Extensions.Logging.Abstractions-10.0.10-MIT.txt \
     System.Diagnostics.DiagnosticSource-10.0.10-MIT.txt YamlDotNet-18.1.0-MIT.txt spirectl-LICENSE spirectl-NOTICE \
@@ -202,6 +203,13 @@ done
 missing_license="$(clone_payload missing-license)"
 rm "$missing_license/NOTICE"
 expect_reject missing-license "$verifier" --payload "$missing_license" --version 1.2.3 "${all_lane_args[@]}"
+
+for icon_license in FontAwesome-Free-6.7.2-LICENSE.txt FontAwesome-CC-BY-4.0.txt; do
+  missing_icon_license="$(clone_payload "missing-$icon_license")"
+  rm "$missing_icon_license/licenses/$icon_license"
+  expect_reject_saying "missing-$icon_license" "release payload is missing: licenses/$icon_license" \
+    "$verifier" --payload "$missing_icon_license" --version 1.2.3 "${all_lane_args[@]}"
+done
 
 missing_msdf_license="$(clone_payload missing-msdf-license)"
 rm "$missing_msdf_license/licenses/msdf-generator/example.LICENSE"

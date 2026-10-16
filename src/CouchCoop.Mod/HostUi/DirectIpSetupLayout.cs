@@ -28,11 +28,11 @@ internal static class DirectIpSetupLayout
 
     internal readonly record struct Geometry(Box Title, Box Progress, Box Content, Box Back, Box Primary, Box Dismiss);
 
-    public static Geometry Calculate(float padding)
+    public static Geometry Calculate(float padding, float dismissBottomInset)
     {
 
         var width = CardWidth - padding * 2;
-        var footerY = CardHeight - padding - ButtonHeight - CouchCoopModalDialog.DefaultDismissBottomInset;
+        var footerY = CardHeight - padding - ButtonHeight - dismissBottomInset;
         return new(new(padding, 24, width, 62), new(padding, 100, width, 72),
             new(padding, 192, width, footerY - 192 - 24),
             new(padding, footerY, ButtonWidth, ButtonHeight),
