@@ -243,7 +243,36 @@ public sealed class CouchCoopBrowserServer(
     private readonly SecureBrowserListener _secureListener = new(log);
 
     /// <summary>The shared browser port when TLS is ready, or <c>0</c> otherwise.</summary>
-    public int SecurePort => _secureListener.IsRunning ? BaseUri?.Port ?? 0 : 0;
+    public int SecurePort => _secureListener.IsHostnameRunning ? BaseUri?.Port ?? 0 : 0;
+
+    public int DirectIpSecurePort => _secureListener.IsDirectIpRunning ? BaseUri?.Port ?? 0 : 0;
+    public Func<IPAddress, CancellationToken, Task<DirectIpCertificateMaterial?>>? DirectIpCertificateRefresh
+    {
+        get => _secureListener.DirectIpCertificateRefresh;
+        set => _secureListener.DirectIpCertificateRefresh = value;
+    }
+    public bool DirectIpRefreshOnEveryHandshake
+    {
+        get => _secureListener.DirectIpRefreshOnEveryHandshake;
+        set => _secureListener.DirectIpRefreshOnEveryHandshake = value;
+    }
+    public Func<int, IPAddress, CancellationToken, Task<int?>>? PrepareDirectIpSeatAsync { get; set; }
+    public Func<DirectIpSeatPreparation, CancellationToken, Task<int?>>? EnableDirectIpSeatAsync { get; set; }
+    public Func<DirectIpSeatPreparation, CancellationToken, Task<bool>>? RefreshDirectIpSeatMaterialAsync { get; set; }
+
+    public bool TryStartDirectIpListener(DirectIpCertificateMaterial material)
+    {
+        if (BaseUri is null || !_secureListener.TryEnableDirectIp(material)) return false;
+        SecureOriginEndpoint.PublishDirectIp(BaseUri.Port);
+        return true;
+    }
+
+    public void DisableDirectIpListener()
+    {
+        _secureListener.DisableDirectIp();
+        SecureOriginEndpoint.PublishDirectIp(0);
+    }
+
 
     /// <summary>
     /// Enable TLS on this server's existing HTTP listener. Returns <see langword="false"/>
@@ -261,7 +290,7 @@ public sealed class CouchCoopBrowserServer(
         System.Security.Cryptography.X509Certificates.X509Certificate2Collection? intermediates = null,
         CancellationToken cancellationToken = default)
     {
-        if (_secureListener.IsRunning)
+        if (_secureListener.IsHostnameRunning)
         {
             return true;
         }
@@ -1297,6 +1326,7 @@ public sealed class CouchCoopBrowserServer(
         }
 
         SecureOriginEndpoint.Publish(0);
+        SecureOriginEndpoint.PublishDirectIp(0);
         _secureListener.Disable();
 
         _stop?.Cancel();
@@ -1652,6 +1682,44 @@ public sealed class CouchCoopBrowserServer(
             return;
         }
 
+        if (string.Equals(request.Path, SecureOriginEndpoint.EnableDirectIpRoute, StringComparison.Ordinal)
+            || string.Equals(request.Path, SecureOriginEndpoint.RefreshDirectIpRoute, StringComparison.Ordinal))
+        {
+            // This endpoint authorizes no new identity: it accepts only a locally provisioned leaf bundle.
+            var refresh = string.Equals(request.Path, SecureOriginEndpoint.RefreshDirectIpRoute, StringComparison.Ordinal);
+            if ((refresh ? _isHeadlessClient || RefreshDirectIpSeatMaterialAsync is null : !_isHeadlessClient || EnableDirectIpSeatAsync is null)
+                || !string.Equals(request.Method, "POST", StringComparison.OrdinalIgnoreCase)
+                || !IPAddress.IsLoopback(remoteAddress) || request.Header("Origin") is not null)
+            {
+                await HttpResponseWriter.WriteJsonErrorAsync(stream, HttpStatusCode.NotFound, "not-found", "Route was not found.", cancellationToken).ConfigureAwait(false);
+                return;
+            }
+            var preparation = new DirectIpSeatPreparation(
+                request.QueryValues.GetValueOrDefault("bundle") ?? "",
+                request.QueryValues.GetValueOrDefault("address") ?? "",
+                request.QueryValues.GetValueOrDefault("ca") ?? "",
+                int.TryParse(request.QueryValues.GetValueOrDefault("hostPort"), out var hostPort) ? hostPort : -1);
+            if (!preparation.IsValid || refresh && preparation.HostPort <= 0)
+            {
+                await HttpResponseWriter.WriteJsonErrorAsync(stream, HttpStatusCode.BadRequest, "invalid-request", "Invalid certificate identity.", cancellationToken).ConfigureAwait(false);
+                return;
+            }
+            using var deadline = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
+            deadline.CancelAfter(TimeSpan.FromSeconds(10));
+            int? readyPort = null;
+            try
+            {
+                readyPort = refresh
+                    ? await RefreshDirectIpSeatMaterialAsync!(preparation, deadline.Token).WaitAsync(deadline.Token).ConfigureAwait(false) ? preparation.HostPort : null
+                    : await EnableDirectIpSeatAsync!(preparation, deadline.Token).WaitAsync(deadline.Token).ConfigureAwait(false);
+            }
+            catch (Exception exception) when (!cancellationToken.IsCancellationRequested
+                && exception is OperationCanceledException or IOException or System.Security.Cryptography.CryptographicException or InvalidOperationException or UnauthorizedAccessException or ArgumentException) { }
+            await HttpResponseWriter.WriteJsonAsync(stream, readyPort is > 0 ? HttpStatusCode.OK : HttpStatusCode.ServiceUnavailable,
+                new { securePort = readyPort ?? 0, address = preparation.Address, caFingerprint = preparation.CaFingerprint }, cancellationToken).ConfigureAwait(false);
+            return;
+        }
+
         if (string.Equals(request.Path, SecureOriginEndpoint.EnableRoute, StringComparison.Ordinal))
         {
             if (!_isHeadlessClient
@@ -1809,7 +1877,8 @@ public sealed class CouchCoopBrowserServer(
                         _arrivals,
                         _onSceneAck,
                         cancellationToken,
-                        HostBrowserAccess).ConfigureAwait(false);
+                        HostBrowserAccess,
+                        PrepareDirectIpSeatAsync).ConfigureAwait(false);
             }
             catch
             {

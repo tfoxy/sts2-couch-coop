@@ -107,3 +107,17 @@ refusal receipt. The supported Spine retry selector is `retry=1`; material and p
 These controls reduce file disclosure, privileged browser commands, and unbounded memory or disk use. They do not
 make the LAN service private, prevent all gameplay interference, or promise uninterrupted play during an active
 network attack. Files and networks outside the configured service boundaries remain the operator's responsibility.
+
+## Direct-IP HTTPS trust
+
+The optional **Direct address (HTTPS)** method uses a persistent local CA per host installation. It is
+explicitly configured through the native host UI; a remembered preference does not create an authority.
+Clients install and trust the public root through verified local transfer. There is no HTTP root-download
+bootstrap and no browser certificate-error bypass. Root trust authorizes this host beyond the game URL;
+the setup UI states that scope and provides removal and replacement instructions.
+
+CA signing keys remain in protected per-user storage and never enter browser routes, frontend roots,
+seat processes, exports or diagnostics. Only public DER certificates are exported; seats may receive
+protected leaf credentials. IP SANs, independent hostname/IP readiness, and certificate selection preserve
+identity validation. Address changes and leaf renewal retain the root; root expiry or invalidity requires
+explicit replacement and trust installation on every client. See [setup and lifecycle](direct-ip-https.md).

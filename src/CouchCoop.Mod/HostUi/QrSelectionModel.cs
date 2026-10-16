@@ -6,7 +6,7 @@ namespace CouchCoop.Mod.HostUi;
 /// <summary>Independent network and method choices, including a retained unsupported pair.</summary>
 public sealed class QrSelectionModel
 {
-    public static IReadOnlyList<string> Methods { get; } = ["ipv4", "web", "secure"];
+    public static IReadOnlyList<string> Methods { get; } = ["ipv4", "direct-https", "web", "secure"];
     private IReadOnlyList<QrHostOption> _options = [];
     public IReadOnlyList<QrHostOption> Networks { get; private set; } = [];
     public QrHostOption? Network { get; private set; }
@@ -37,7 +37,7 @@ public sealed class QrSelectionModel
         Networks = options.Where(o => o.Kind is QrHostOptionKind.Interface or QrHostOptionKind.Mdns or QrHostOptionKind.Override).ToArray();
         var initial = QrHostOptions.RestoreSelection(options, null);
         var preferredMethod = preference?.Method ?? initial?.MethodToken;
-        Method = preferredMethod is "web" or "secure" ? preferredMethod : "ipv4";
+        Method = preferredMethod is "direct-https" or "web" or "secure" ? preferredMethod : "ipv4";
         var networkKey = preference?.NetworkKey;
         Network = Networks.FirstOrDefault(o => string.Equals(o.SelectionKey, networkKey, StringComparison.OrdinalIgnoreCase));
         if (Network is null)
@@ -66,11 +66,20 @@ public sealed class QrSelectionModel
         if (Network is null || !Methods.Contains(method)) return null;
         if (method == "ipv4")
             return Network.Port > 0 ? Network : Network with { Enabled = false, DisabledReason = QrHostOptions.ServerNotListeningText };
-        var kind = method == "web" ? QrHostOptionKind.Web : QrHostOptionKind.Secure;
+        var kind = method switch { "web" => QrHostOptionKind.Web, "direct-https" => QrHostOptionKind.DirectIpSecure, _ => QrHostOptionKind.Secure };
         if (Network.Adapter is { } adapter)
         {
             var option = _options.FirstOrDefault(o => o.Kind == kind && o.Adapter == adapter);
             if (option is not null) return option;
+        }
+        // A pinned local IP replaces its plain interface row, but still has a certificate-backed
+        // direct-HTTPS row. Do not turn arbitrary overrides or names into certificate identities.
+        if (method == "direct-https" && Network.Kind == QrHostOptionKind.Override
+            && System.Net.IPAddress.TryParse(Network.Host, out var pinnedAddress))
+        {
+            var coveredInterface = _options.FirstOrDefault(o => o.Kind == QrHostOptionKind.DirectIpSecure
+                && o.Adapter?.Address.Equals(pinnedAddress) == true);
+            if (coveredInterface is not null) return coveredInterface;
         }
         return new QrHostOption(Network.Host, 0, kind, Network.Adapter, Enabled: false,
             DisabledReason: new CouchCoopText(Network.Adapter is null
@@ -82,6 +91,7 @@ public sealed class QrSelectionModel
 
     public static CouchCoopText MethodLabel(string method) => new(method switch
     {
+        "direct-https" => "couchcoop_qr_method_direct_https_title",
         "web" => "couchcoop_qr_method_web_title",
         "secure" => "couchcoop_qr_method_secure_title",
         _ => "couchcoop_qr_method_ipv4_title",

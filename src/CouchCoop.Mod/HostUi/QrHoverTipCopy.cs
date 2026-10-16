@@ -36,6 +36,7 @@ public static class QrHoverTipCopy
     public const string AdapterWifiTitleKey = TitleKeyPrefix + "adapter_wifi";
     public const string AdapterOtherTitleKey = TitleKeyPrefix + "adapter_other";
     public const string MethodIpv4TitleKey = TitleKeyPrefix + "method_ipv4";
+    public const string MethodDirectHttpsTitleKey = TitleKeyPrefix + "method_direct_https";
     public const string MethodWebTitleKey = TitleKeyPrefix + "method_web";
     public const string MethodSecureTitleKey = TitleKeyPrefix + "method_secure";
     public const string MethodMdnsTitleKey = TitleKeyPrefix + "method_mdns";
@@ -50,6 +51,7 @@ public static class QrHoverTipCopy
     {
         [AdapterEthernetTitleKey] = L("couchcoop_qr_adapter_ethernet_title"), [AdapterWifiTitleKey] = L("couchcoop_qr_adapter_wifi_title"),
         [AdapterOtherTitleKey] = L("couchcoop_qr_adapter_other_title"), [MethodIpv4TitleKey] = L("couchcoop_qr_method_ipv4_title"),
+        [MethodDirectHttpsTitleKey] = L("couchcoop_qr_method_direct_https_title"),
         [MethodWebTitleKey] = L("couchcoop_qr_method_web_title"), [MethodSecureTitleKey] = L("couchcoop_qr_method_secure_title"),
         [MethodMdnsTitleKey] = L("couchcoop_qr_method_mdns_title"), [MethodOverrideTitleKey] = L("couchcoop_qr_method_override_title"),
         [NetworkConnectionTitleKey] = L("couchcoop_qr_network_connection_title"),
@@ -121,6 +123,7 @@ public static class QrHoverTipCopy
         {
             QrHostOptionKind.Override => (MethodOverrideTitleKey, MethodOverrideDescription),
             QrHostOptionKind.Mdns => (MethodMdnsTitleKey, MethodMdnsDescription),
+            QrHostOptionKind.DirectIpSecure => (MethodDirectHttpsTitleKey, L("couchcoop_qr_method_direct_https_description")),
             QrHostOptionKind.Web => (MethodWebTitleKey, MethodWebDescription),
             QrHostOptionKind.Secure => (MethodSecureTitleKey, MethodSecureDescription),
             _ => (MethodIpv4TitleKey, MethodIpv4Description),

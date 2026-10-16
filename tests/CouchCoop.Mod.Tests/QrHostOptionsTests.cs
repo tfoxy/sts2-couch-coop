@@ -21,7 +21,7 @@ internal static class QrHostOptionsTests
     {
         OverrideTakesTheDefaultSlot();
         PlainIpv4OfTheBestAdapterIsTheDefault();
-        MethodOrderWithinAnAdapterIsIpv4ThenWebThenSecure();
+        MethodOrderWithinAnAdapterIncludesDirectHttps();
         MdnsIsAlwaysLastAndNeverTheDefault();
         AnUnresolvableMdnsNameStaysLastWithAWarning();
         OverrideStaysFirstWhateverTheMdnsSelfCheckSays();
@@ -58,6 +58,8 @@ internal static class QrHostOptionsTests
 
         PayloadMatchesTheEncodedQrPayload();
         EmptyMachineAndNoNicsStillDegradesCleanly();
+        DirectIpHttpsRequiresMatchingCertificateAndPort();
+        AllAdapterMethodsSurviveTheOptionCap();
 
         Console.WriteLine("QrHostOptionsTests: ok");
     }
@@ -100,7 +102,7 @@ internal static class QrHostOptionsTests
         Expect(options[0].Enabled, "and is selectable");
         // The rest of the mod advertises the override; a dialog that defaulted elsewhere would hand out a
         // different address than the discovery reply and the availability log for the same session.
-        Expect(options.Count == 5, "the adapter triple and the mdns row still follow");
+        Expect(options.Count == 6, "the adapter group and the mdns row still follow");
         Expect(options[^1].Kind == QrHostOptionKind.Mdns, "with mdns last");
     }
 
@@ -114,17 +116,18 @@ internal static class QrHostOptionsTests
         Expect(QrHostOptions.RestoreSelection(options, null) == options[0], "RestoreSelection agrees");
     }
 
-    private static void MethodOrderWithinAnAdapterIsIpv4ThenWebThenSecure()
+    private static void MethodOrderWithinAnAdapterIncludesDirectHttps()
     {
         var options = Build("box", null, Wifi("192.168.1.7"));
 
-        Expect(options.Count == 4, "one adapter yields its triple plus the mdns row");
+        Expect(options.Count == 5, "one adapter yields four methods plus the mdns row");
         Expect(options[0].Kind == QrHostOptionKind.Interface, "plain address first");
-        Expect(options[1].Kind == QrHostOptionKind.Web, "web link second");
-        Expect(options[2].Kind == QrHostOptionKind.Secure, "secure link third");
-        Expect(options[3].Kind == QrHostOptionKind.Mdns, "mdns last");
-        Expect(options.Take(3).All(option => option.Adapter?.Address.ToString() == "192.168.1.7"),
-            "and all three rows belong to the same adapter");
+        Expect(options[1].Kind == QrHostOptionKind.DirectIpSecure, "direct HTTPS second");
+        Expect(options[2].Kind == QrHostOptionKind.Web, "web link third");
+        Expect(options[3].Kind == QrHostOptionKind.Secure, "hostname HTTPS fourth");
+        Expect(options[4].Kind == QrHostOptionKind.Mdns, "mdns last");
+        Expect(options.Take(4).All(option => option.Adapter?.Address.ToString() == "192.168.1.7"),
+            "and all four rows belong to the same adapter");
     }
 
     private static void MdnsIsAlwaysLastAndNeverTheDefault()
@@ -304,7 +307,7 @@ internal static class QrHostOptionsTests
         // Two NICs reporting the same address (a bridged/aliased setup) must not produce two groups that
         // scan to the identical URLs — the player would have no way to tell them apart.
         var options = Build("box", null, Ethernet("192.168.0.9"), Wifi("192.168.0.9"));
-        Expect(options.Count == 4, "a repeated address collapses to a single group (3 rows) plus mdns");
+        Expect(options.Count == 5, "a repeated address collapses to a single group (4 rows) plus mdns");
 
         // An override that equals the mDNS name collapses too, keeping the override's label.
         var pinned = Build("box", "box.local", Wifi("192.168.0.9"));
@@ -317,7 +320,7 @@ internal static class QrHostOptionsTests
         var options = Build("box", "192.168.0.9", Wifi("192.168.0.9"));
 
         Expect(options[0].Kind == QrHostOptionKind.Override, "the override owns the plain row");
-        Expect(options.Count(option => option.Host == "192.168.0.9") == 1, "so the adapter's own plain row is dropped");
+        Expect(options.Count(option => option.Host == "192.168.0.9" && option.Kind != QrHostOptionKind.DirectIpSecure) == 1, "so the adapter's own plain row is dropped");
         Expect(options.Any(option => option.Kind == QrHostOptionKind.Web), "but its web row survives");
         Expect(options.Any(option => option.Kind == QrHostOptionKind.Secure), "and so does its secure row");
     }
@@ -529,6 +532,29 @@ internal static class QrHostOptionsTests
         var options = QrHostOptions.Build(null, null, null, Port, Origin, null, SecurePort, null);
         Expect(options.Count == 0, "no machine name and no NICs yields an empty list, not an exception");
         Expect(QrHostOptions.RestoreSelection(options, "ipv4|192.168.0.1") is null, "and restore has nothing to answer");
+    }
+
+    private static void DirectIpHttpsRequiresMatchingCertificateAndPort()
+    {
+        var adapter = new QrAdapterInfo("Wi-Fi", QrAdapterKind.Wifi, IPAddress.Parse("192.168.1.7"));
+        var idle = QrHostOptions.DescribeDirectIpSecureFor(adapter, 14444, null);
+        Expect(!idle.Enabled && idle.Selectable, "idle direct HTTPS can open setup but cannot advertise a QR");
+        var state = new CouchCoop.Mod.Server.DirectIpHttpsState(14444, ["192.168.1.7"]);
+        var ready = QrHostOptions.DescribeDirectIpSecureFor(adapter, 14444, state);
+        Expect(ready.Enabled && ready.ToUri().ToString() == "https://192.168.1.7:14444/", "direct HTTPS uses exact covered IP and actual bound port");
+        Expect(OfflineQrCode.EncodeJoinUrl(ready.ToUri(), 0).Payload == ready.ToUri().ToString(), "IP QR and copied URL agree");
+        Expect(!QrHostOptions.DescribeDirectIpSecureFor(adapter, 13337, state).Enabled, "stale bound port cannot advertise a URL");
+        Expect(!QrHostOptions.DescribeDirectIpSecureFor(adapter, 14444, state with { Addresses = ["192.168.1.8"] }).Enabled,
+            "an uncovered new IP remains unavailable even if another IP is ready");
+        Expect(!QrHostOptions.DescribeDirectIpSecureFor(adapter, 0, state).Selectable, "no listener means no setup selection");
+    }
+
+    private static void AllAdapterMethodsSurviveTheOptionCap()
+    {
+        var options = Build("host", "fixed.example", Ethernet(), Wifi(), Wifi("10.1.1.2", name: "extra"));
+        Expect(options.Count == 14 && options[^1].Kind == QrHostOptionKind.Mdns, "override, all twelve adapter methods and mDNS survive");
+        foreach (var group in options.Where(o => o.Adapter is not null).GroupBy(o => o.Adapter))
+            Expect(group.Select(o => o.MethodToken).SequenceEqual(["ipv4", "direct-https", "web", "secure"]), "each complete adapter group preserves method order");
     }
 
     private static void Expect(bool condition, string because)

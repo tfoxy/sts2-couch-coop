@@ -48,6 +48,8 @@
          stream-skip helper, which lives in HostUi/ — include just that file (the Session single-file idiom). -->
     <Compile Include="../CouchCoop.Mod/HostUi/CouchCoopStreamSkip.cs" Link="HostUi/CouchCoopStreamSkip.cs" />
     <Compile Remove="../CouchCoop.Mod/Server/HotReloadableBrowserServerHost.cs" />
+    <!-- Stream capabilities must retain their host assembly identity across generation swaps. -->
+    <Compile Remove="../CouchCoop.Mod/Server/ICouchCoopStreamGeneration.cs" />
     <Compile Include="../CouchCoop.Mod/Session/BrowserAssignmentState.cs" Link="Session/BrowserAssignmentState.cs" />
     <Compile Include="../CouchCoop.Mod/Session/BrowserSessionRegistry.cs" Link="Session/BrowserSessionRegistry.cs" />
     <Compile Include="../CouchCoop.Mod/Session/CouchCoopLobbyParticipation.cs" Link="Session/CouchCoopLobbyParticipation.cs" />

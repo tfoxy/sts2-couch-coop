@@ -39,7 +39,7 @@ public static class CouchCoopQrSelectionPreference
 
     private const string FileName = "qr-prefs.json";
 
-    private static readonly string[] KnownMethods = ["ipv4", "web", "secure", "mdns", "override"];
+    private static readonly string[] KnownMethods = ["ipv4", "direct-https", "web", "secure", "mdns", "override"];
 
     /// <summary>Read the remembered pick. Any failure or unknown content answers <see langword="null"/>.</summary>
     public static QrSelectionMemory? Read() => TryRead(ResolvePath());

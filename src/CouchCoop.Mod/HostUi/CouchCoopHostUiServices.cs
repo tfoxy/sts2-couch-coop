@@ -9,7 +9,7 @@ using CouchCoop.Mod.Session;
 
 namespace CouchCoop.Mod.HostUi;
 
-public sealed class CouchCoopHostUiServices : IAsyncDisposable
+public sealed partial class CouchCoopHostUiServices : IAsyncDisposable
 {
     public const string BrowserServerUnavailableCode = "browser-server-unavailable";
     public const string HostUiStartupFailedCode = "host-ui-startup-failed";
@@ -89,7 +89,7 @@ public sealed class CouchCoopHostUiServices : IAsyncDisposable
         _createCertificates = createCertificates ?? (() => new SecureOriginCertificates(log: _log));
     }
 
-    public CouchCoopHostUiSnapshot Snapshot => _snapshot;
+    public CouchCoopHostUiSnapshot Snapshot => _snapshot with { DirectIpHttps = _directIpService?.State };
 
     public async Task<CouchCoopHostUiSnapshot> StartAsync(CancellationToken cancellationToken = default)
     {
@@ -136,6 +136,7 @@ public sealed class CouchCoopHostUiServices : IAsyncDisposable
 
             _listenerBaseUri = listenerBaseUri;
             _joinBaseUri = joinBaseUri;
+            InitializeDirectIpHttps();
             _checkpoints?.HostBrowserListener(available: true);
 
             if (!_deferDiscoveryServices)
@@ -526,6 +527,13 @@ public sealed class CouchCoopHostUiServices : IAsyncDisposable
 
     private async ValueTask DisposeBrowserServerAsync()
     {
+        if (_directIpService is not null)
+        {
+            if (ReferenceEquals(DirectIpHttpsSetup.Current, _directIpService)) DirectIpHttpsSetup.Current = null;
+            await _directIpService.DisposeAsync().ConfigureAwait(false);
+            _directIpService = null;
+            _directIpAuthority = null;
+        }
         lock (_discoveryGate)
         {
             _listenerBaseUri = null;
@@ -702,7 +710,8 @@ public sealed record CouchCoopHostUiSnapshot(
     IReadOnlyList<CouchCoopHostUiDiagnostic> Diagnostics,
     int SecurePort = 0,
     string? SecureDomain = null,
-    CouchCoopText? SecureUnavailableReason = null)
+    CouchCoopText? SecureUnavailableReason = null,
+    DirectIpHttpsState? DirectIpHttps = null)
 {
     public static CouchCoopHostUiSnapshot Unavailable(IReadOnlyList<CouchCoopHostUiDiagnostic> diagnostics)
         => new(Available: false, JoinBaseUri: null, ListenerBaseUri: null, Diagnostics: diagnostics);

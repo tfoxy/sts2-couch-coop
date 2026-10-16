@@ -73,7 +73,51 @@ internal static class QrSelectionModelTests
             Expect(model.Network == mdns && model.Method == "web" && model.Url is null, "reopening restores the unsupported pair");
         }
         finally { File.Delete(path); }
+        DirectIpSelectionAndCopy();
         Console.WriteLine("QrSelectionModelTests: ok");
+    }
+
+    private static void DirectIpSelectionAndCopy()
+    {
+        Expect(QrSelectionModel.Methods.SequenceEqual(["ipv4", "direct-https", "web", "secure"]), "direct HTTPS immediately follows plain direct");
+        var adapter = new QrAdapterInfo("Wi-Fi", QrAdapterKind.Wifi, IPAddress.Parse("192.168.1.7"));
+        var direct = new QrHostOption("192.168.1.7", 13337, QrHostOptionKind.Interface, adapter);
+        var pending = QrHostOptions.DescribeDirectIpSecureFor(adapter, 13337, null);
+        var model = new QrSelectionModel();
+        model.Refresh([direct, pending], new QrSelectionMemory("direct-https", "192.168.1.7"));
+        Expect(model.Method == "direct-https" && model.Url is null && model.PreviewUrlFor("direct-https") is null,
+            "restoring pending preference retains method without a usable or preview URL");
+        Expect(model.ChooseMethod("direct-https"), "explicit re-selection can open setup");
+        var ready = QrHostOptions.DescribeDirectIpSecureFor(adapter, 13337,
+            new CouchCoop.Mod.Server.DirectIpHttpsState(13337, ["192.168.1.7"]));
+        model.Refresh([direct, ready], model.Memory);
+        Expect(model.Url?.ToString() == "https://192.168.1.7:13337/" && model.PreviewUrlFor("direct-https") == model.Url,
+            "ready preference uses identical HTTPS IP URL for preview, QR and copy");
+        var pinned = new QrHostOption("192.168.1.7", 13337, QrHostOptionKind.Override, null);
+        model.Refresh([pinned, ready], new QrSelectionMemory("direct-https", null, "override"));
+        Expect(model.Network == pinned && model.Url == ready.ToUri(), "pinned local IP resolves its retained certificate-backed row");
+        model.Refresh([pinned with { Host = "other.example" }, ready], new QrSelectionMemory("direct-https", null, "override"));
+        Expect(model.Url is null && !model.ChooseMethod("direct-https"), "hostname overrides cannot borrow IP certificate identity");
+        model.Refresh([pinned with { Host = "192.168.1.99" }, ready], new QrSelectionMemory("direct-https", null, "override"));
+        Expect(model.Url is null && !model.ChooseMethod("direct-https"), "nonlocal IP overrides cannot borrow another interface certificate");
+        model.Refresh([pinned, ready], new QrSelectionMemory("direct-https", null, "override"));
+        var path = Path.Combine(Path.GetTempPath(), "cc-direct-https-pref-" + Guid.NewGuid() + ".json");
+        try
+        {
+            CouchCoopQrSelectionPreference.TryWrite(path, model.Memory);
+            Expect(CouchCoopQrSelectionPreference.TryRead(path) == model.Memory, "direct-https preference round trips");
+        }
+        finally { File.Delete(path); }
+        var state = new CouchCoop.Mod.Server.DirectIpHttpsState(CaFingerprint: new string('A', 64),
+            CaExpiresAt: DateTimeOffset.Parse("2031-01-02T00:00:00Z"));
+        var body = DirectIpSetupCopy.Body(state);
+        Expect(body.Contains(new string('A', 64)) && body.Contains("2031-01-02"), "full fingerprint and expiry are visible");
+        Expect(body.Contains("other websites") && body.Contains("authenticated") && body.Contains("Certificate Trust Settings"),
+            "native setup includes trust scope, authenticated transfer and explicit iOS trust");
+        Expect(DirectIpSetupCopy.Status(state with { ErrorCode = "authority-expired" }).Key == "couchcoop_direct_https_authority_expired",
+            "expiry requires explicit authority replacement");
+        Expect(DirectIpSetupCopy.Status(state with { ErrorCode = "unknown" }).Key == "couchcoop_direct_https_failed",
+            "unrecognized errors map to safe localized copy");
     }
 
     private static void Expect(bool value, string reason)

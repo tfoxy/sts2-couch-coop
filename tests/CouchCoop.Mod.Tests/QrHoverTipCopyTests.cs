@@ -163,6 +163,10 @@ internal static class QrHoverTipCopyTests
         {
             foreach (var word in banned)
             {
+                // Manual root installation is a player action in direct-IP HTTPS. Naming the
+                // certificate is necessary to explain its trust prerequisite honestly.
+                if (word == "certificate" && description == QrHoverTipCopy.MethodTipFor(OptionOf(QrHostOptionKind.DirectIpSecure)).Description)
+                    continue;
                 Expect(!description.Contains(word, StringComparison.OrdinalIgnoreCase),
                     $"'{word}' does not appear in player-facing copy: {description[..Math.Min(60, description.Length)]}…");
             }

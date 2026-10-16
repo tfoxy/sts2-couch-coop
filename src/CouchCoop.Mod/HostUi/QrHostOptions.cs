@@ -16,8 +16,8 @@ namespace CouchCoop.Mod.HostUi;
 /// <para>
 /// <b>The list is the cross product of adapter × method, in a fixed order.</b> One entry group per
 /// network adapter (ethernet first, then wifi, then everything else — tunnels, docker, VPNs), and
-/// inside each group the three ways a phone can reach that adapter's IPv4: the plain address, the
-/// public web link carrying it in <c>?h=</c>, and the <c>local-ip.co</c> HTTPS name derived from it.
+/// inside each group the four ways a phone can reach that adapter's IPv4: the plain address, direct
+/// IP HTTPS with local trust, the public web link carrying it in <c>?h=</c>, and the <c>local-ip.co</c> HTTPS name derived from it.
 /// The <c>.local</c> name is always the LAST row: it is the only option that regularly fails outright
 /// (many phones and routers cannot resolve mDNS), so it must never win the default, however well the
 /// self-check went. The FIRST ENABLED entry is the dialog's default selection.
@@ -32,18 +32,18 @@ namespace CouchCoop.Mod.HostUi;
 /// and still owns the advertised host.
 /// </para>
 /// <para>
-/// A method that cannot work right now is still LISTED with its blocker in the detail line. The secure
-/// method is the one exception to disabled-row interaction: while idle or retryable it remains selectable,
-/// and choosing it is the explicit request that starts certificate setup.
+/// A method that cannot work right now is still LISTED with its blocker in the detail line. HTTPS
+/// methods remain selectable for setup. Direct-IP selection opens native instructions; preparation
+/// remains an explicit action inside that dialog.
 /// </para>
 /// </remarks>
 public static class QrHostOptions
 {
-    /// <summary>Longest list the dialog will render; beyond this the select stops being scannable.</summary>
-    public const int MaxOptions = 12;
+    /// <summary>Complete adapter × method data cap, including override and mDNS rows.</summary>
+    public const int MaxOptions = 14;
 
     /// <summary>
-    /// At most this many adapter groups (each up to three rows). Three covers the realistic couch
+    /// At most this many adapter groups (each up to four rows). Three covers the realistic couch
     /// topology (ethernet + wifi + one virtual adapter); beyond that the extra groups are ever-worse
     /// candidates by the same score that ordered them.
     /// </summary>
@@ -112,7 +112,8 @@ public static class QrHostOptions
         int securePort,
         CouchCoopText? secureUnavailableReason,
         bool mdnsNameResolves = true,
-        bool secureOriginEnabled = true)
+        bool secureOriginEnabled = true,
+        DirectIpHttpsState? directIpHttps = null)
     {
         var options = new List<QrHostOption>();
         var seenKeys = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
@@ -148,6 +149,8 @@ public static class QrHostOptions
                     Enabled: port > 0,
                     DisabledReason: port > 0 ? (CouchCoopText?)null : ServerNotListeningText));
             }
+
+            TryAdd(DescribeDirectIpSecureFor(adapter, port, directIpHttps));
 
             if (DescribeWebFor(adapter, port, webOrigin) is { } webRow)
             {
@@ -246,6 +249,17 @@ public static class QrHostOptions
         }
 
         return result;
+    }
+
+    public static QrHostOption DescribeDirectIpSecureFor(QrAdapterInfo adapter, int port, DirectIpHttpsState? state)
+    {
+        var eligible = SecureOriginHost.IsSecureOriginEligible(adapter.Address);
+        var ready = eligible && port > 0 && state?.Port == port && state.Covers(adapter.Address);
+        return new QrHostOption(adapter.Address.ToString(), port, QrHostOptionKind.DirectIpSecure, adapter,
+            Enabled: ready,
+            DisabledReason: ready ? (CouchCoopText?)null : port <= 0 ? ServerNotListeningText
+                : !eligible ? AddressNotEligibleText : DirectIpSetupCopy.Status(state),
+            CanSelectWhenUnavailable: eligible && port > 0);
     }
 
     /// <summary>
@@ -439,6 +453,9 @@ public enum QrHostOptionKind
     /// </summary>
     Secure,
 
+    /// <summary>HTTPS by literal IPv4, trusted through a per-host local authority.</summary>
+    DirectIpSecure,
+
     /// <summary>
     /// The "web link": a PUBLIC HTTPS origin that carries one adapter's LAN address in <c>?h=</c>, and
     /// reaches it by literal IPv4 under the browser's Local Network Access permission — one row per
@@ -497,7 +514,7 @@ public sealed record QrHostOption(
     public Uri ToUri() => AbsoluteUri is { Length: > 0 } explicitUri
         ? new Uri(explicitUri)
         : new UriBuilder(
-            Kind == QrHostOptionKind.Secure ? Uri.UriSchemeHttps : Uri.UriSchemeHttp,
+            Kind is QrHostOptionKind.Secure or QrHostOptionKind.DirectIpSecure ? Uri.UriSchemeHttps : Uri.UriSchemeHttp,
             Host,
             Port) { Path = "/" }.Uri;
 
@@ -515,6 +532,7 @@ public sealed record QrHostOption(
         QrHostOptionKind.Mdns => "mdns",
         QrHostOptionKind.Web => "web",
         QrHostOptionKind.Secure => "secure",
+        QrHostOptionKind.DirectIpSecure => "direct-https",
         _ => "ipv4",
     };
 
@@ -548,7 +566,7 @@ public sealed record QrHostOption(
                     ? CouchCoopLocalization.Resolve("couchcoop_option_pc_name")
                     : CouchCoopLocalization.Resolve("couchcoop_option_mdns_untrusted"),
                 QrHostOptionKind.Web => $"{Adapter?.Address} · {AdapterDetail}",
-                QrHostOptionKind.Secure => $"https · {AdapterDetail}",
+                QrHostOptionKind.Secure or QrHostOptionKind.DirectIpSecure => $"https · {AdapterDetail}",
                 _ => AdapterDetail,
             };
         }

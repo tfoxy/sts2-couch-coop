@@ -26,8 +26,8 @@ internal sealed partial class CouchCoopQrDialog : CouchCoopModalDialog
     // The card once carried two link-toggle rows between the select and the QR and stood at 1064 —
     // two units shy of what a 1080-tall design space allows. The single-select redesign folded the
     // toggles into the option list, so the QR moved up to 152 and the card shrank to 936, which clears
-    // the design space by 72 on each side. The expanded option list (at most QrHostOptions.MaxOptions
-    // rows of 64 under a 64 closed row at 72) bottoms out at 904, still inside the card.
+    // the design space by 72 on each side. The network and method pickers now expand separately;
+    // each list fits inside the card without counting the adapter × method cross product as rows.
     //
     // The stack is TIGHT AT THE BOTTOM and slack below the close button, which is why this dialog asks
     // for a smaller DismissBottomInset (see the base constructor call) rather than moving a row: when the
@@ -70,6 +70,17 @@ internal sealed partial class CouchCoopQrDialog : CouchCoopModalDialog
     private readonly Label _unavailable = new() { Name = "CouchCoopQrUnavailable" };
     private readonly CouchCoopConnectionPanel _connections = new();
     private readonly CouchCoopSeatModPanel _seatMods = new() { Source = SeatModSelectionService.Shared };
+
+    private readonly CouchCoopDirectIpSetupDialog _directIpSetup = new();
+    public new bool IsOpen => base.IsOpen || _directIpSetup.IsOpen;
+    private bool _closingSetup;
+
+    public new void Close()
+    {
+        _closingSetup = true;
+        try { _directIpSetup.Close(); base.Close(); }
+        finally { _closingSetup = false; }
+    }
 
     private string? _qrCacheKey;
     private CouchCoopHostUiSnapshot? _lastSnapshot;
@@ -162,6 +173,12 @@ internal sealed partial class CouchCoopQrDialog : CouchCoopModalDialog
 
     protected override void InstallBody()
     {
+        GetParent().AddChild(_directIpSetup);
+        _directIpSetup.Install();
+        _directIpSetup.Closed = () =>
+        {
+            if (!_closingSetup && GodotObject.IsInstanceValid(this)) Open(CouchCoopMod.HostUiSnapshot);
+        };
         _select.Install();
         _methodSelect.Install();
         _copy.Install();
@@ -219,6 +236,7 @@ internal sealed partial class CouchCoopQrDialog : CouchCoopModalDialog
         CouchCoopGameUiTheme.ApplyFont(_unavailable, CouchCoopGameUiTheme.KreonBoldGlyphSpaceOne, Layout.UrlFontSize);
         RefreshDialogFont();
         _seatMods.RefreshLocalization();
+        _directIpSetup.RefreshText();
         if (IsOpen)
         {
             RefreshOptions(snapshot);
@@ -252,6 +270,7 @@ internal sealed partial class CouchCoopQrDialog : CouchCoopModalDialog
     public void Open(CouchCoopHostUiSnapshot snapshot)
     {
         ArgumentNullException.ThrowIfNull(snapshot);
+        if (_directIpSetup.IsOpen) Close();
         _lastSnapshot = snapshot;
         ApplyLayout();
         RefreshOptions(snapshot);
@@ -287,7 +306,8 @@ internal sealed partial class CouchCoopQrDialog : CouchCoopModalDialog
             // Read per OPEN, not once: the self-check completes a couple of seconds after the responder
             // starts, which can easily be after this dialog was first constructed.
             CouchCoopHostUiNotices.MdnsRowTrusted(),
-            secureOriginEnabled: SecureOriginCertificates.Enabled);
+            secureOriginEnabled: SecureOriginCertificates.Enabled,
+            directIpHttps: snapshot.DirectIpHttps);
 
         // Keep the player's pick across a reopen when it is still on offer (so re-scanning after a
         // failed attempt does not silently switch them back to the default), falling back to the pick
@@ -321,6 +341,11 @@ internal sealed partial class CouchCoopQrDialog : CouchCoopModalDialog
         CouchCoopQrSelectionPreference.Write(_selection.Memory);
         RefreshSelectors();
         RenderSelection();
+        if (_selection.Selected is { Kind: QrHostOptionKind.DirectIpSecure, Selectable: true })
+        {
+            base.Close();
+            _directIpSetup.Open(CouchCoopMod.HostUiSnapshot.DirectIpHttps);
+        }
         if (_selection.Selected is { Kind: QrHostOptionKind.Secure, Enabled: false, Selectable: true })
         {
             CouchCoop.Mod.CouchCoopMod.RequestSecureOrigin();
@@ -332,6 +357,8 @@ internal sealed partial class CouchCoopQrDialog : CouchCoopModalDialog
     public void RefreshSecureAvailability(CouchCoopHostUiSnapshot snapshot)
     {
         ArgumentNullException.ThrowIfNull(snapshot);
+        _directIpSetup.Refresh(snapshot.DirectIpHttps);
+        _directIpSetup.ReassertWhileOpen();
         var previous = _lastSnapshot;
         _lastSnapshot = snapshot;
         if (!IsOpen || previous is null)
@@ -341,7 +368,8 @@ internal sealed partial class CouchCoopQrDialog : CouchCoopModalDialog
 
         if (previous.SecurePort != snapshot.SecurePort
             || previous.SecureDomain != snapshot.SecureDomain
-            || previous.SecureUnavailableReason != snapshot.SecureUnavailableReason)
+            || previous.SecureUnavailableReason != snapshot.SecureUnavailableReason
+            || previous.DirectIpHttps != snapshot.DirectIpHttps)
         {
             RefreshOptions(snapshot);
         }

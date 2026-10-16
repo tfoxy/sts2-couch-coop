@@ -22,6 +22,8 @@ internal static class SecureHeadlessRedirectTests
     private static async Task RunAsyncCore()
     {
         OnlySecureDirectSeatRedirectsRequestTls();
+        await DirectIpSetupWaitsForSpecificIdentity();
+        await DirectIpRefreshIsBoundToHostIdentity();
         await SecureSetupRouteIsLoopbackAndHeadlessOnly();
         await RouteReportsZeroWhenThereIsNoSecureListener();
         await RouteReportsThePublishedPort();
@@ -85,6 +87,103 @@ internal static class SecureHeadlessRedirectTests
         Expect(!await HeadlessClientManager.RequestSecureOriginAsync(hostUri.Port, CancellationToken.None)
             && requested == 1,
             "a non-seat browser server does not expose the seat-only setup action");
+    }
+
+    private static async Task DirectIpSetupWaitsForSpecificIdentity()
+    {
+        var request = new DirectIpSeatPreparation(new string('A', 64), "192.168.1.5", new string('B', 64));
+        var entered = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        var release = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        var requests = 0;
+        await using var seat = new CouchCoopBrowserServer(
+            new StaticSpaFileProvider(Path.Combine(Path.GetTempPath(), "couchcoop-missing-static")),
+            new NullAssetHttpAdapter(), bindAddress: IPAddress.Loopback, preferredPort: PickFreePort(),
+            isHeadlessClient: true, log: _ => { });
+        var baseUri = await seat.StartAsync();
+        seat.EnableDirectIpSeatAsync = async (preparation, token) =>
+        {
+            Expect(preparation == request, "seat receives exact bundle, IP and authority identity");
+            Interlocked.Increment(ref requests);
+            entered.TrySetResult();
+            await release.Task.WaitAsync(token);
+            return baseUri.Port;
+        };
+        var pending = HeadlessClientManager.RequestDirectIpOriginAsync(baseUri.Port, request, CancellationToken.None);
+        await entered.Task.WaitAsync(TimeSpan.FromSeconds(3));
+        Expect(!pending.IsCompleted && requests == 1, "host awaits a single readiness request without polling");
+        release.TrySetResult();
+        Expect(await pending == baseUri.Port && requests == 1, "prepared IP identity returns actual seat port");
+        using var http = new HttpClient(new HttpClientHandler { UseProxy = false });
+        var url = $"http://127.0.0.1:{baseUri.Port}{SecureOriginEndpoint.EnableDirectIpRoute}?bundle={request.BundleId}&address={request.Address}&ca={request.CaFingerprint}&hostPort=0";
+        using var get = await http.GetAsync(url);
+        Expect(get.StatusCode == HttpStatusCode.NotFound, "GET cannot prepare an identity");
+        using (var remote = new MemoryStream())
+        {
+            var requestBytes = Encoding.ASCII.GetBytes($"POST {new Uri(url).PathAndQuery} HTTP/1.1\r\nHost: 192.168.1.5\r\nContent-Length: 0\r\n\r\n");
+            remote.Write(requestBytes);
+            remote.Position = 0;
+            await seat.ServeAsync(remote, false, IPAddress.Parse("192.168.1.20"), CancellationToken.None);
+            Expect(Encoding.UTF8.GetString(remote.ToArray()).Contains("HTTP/1.1 404 ", StringComparison.Ordinal)
+                && requests == 1, "LAN callers cannot activate a seat certificate");
+        }
+        using var forged = new HttpRequestMessage(HttpMethod.Post, url);
+        forged.Headers.Add("Origin", "https://unrelated.example");
+        using var forgedResult = await http.SendAsync(forged);
+        Expect(forgedResult.StatusCode == HttpStatusCode.NotFound && requests == 1, "browser-origin POST cannot prepare an identity");
+        Expect(await HeadlessClientManager.RequestDirectIpOriginAsync(baseUri.Port,
+            request with { BundleId = "../../authority" }, CancellationToken.None) is null && requests == 1,
+            "filesystem paths cannot be passed as opaque bundles");
+        seat.EnableDirectIpSeatAsync = (_, _) => Task.FromResult<int?>(baseUri.Port + 1);
+        Expect(await HeadlessClientManager.RequestDirectIpOriginAsync(baseUri.Port, request, CancellationToken.None) is null,
+            "readiness cannot redirect to an unrelated port");
+        seat.EnableDirectIpSeatAsync = (_, _) => Task.FromResult<int?>(null);
+        Expect(await HeadlessClientManager.RequestDirectIpOriginAsync(baseUri.Port, request, CancellationToken.None) is null,
+            "missing leaf material fails closed without HTTP fallback");
+        using var cancel = new CancellationTokenSource(); cancel.Cancel();
+        try
+        {
+            await HeadlessClientManager.RequestDirectIpOriginAsync(baseUri.Port, request, cancel.Token);
+            throw new InvalidOperationException("cancelled preparation unexpectedly completed");
+        }
+        catch (OperationCanceledException) { }
+        Expect(CouchCoopWebSocketConnection.DirectIpAddressFromRequest(true, "192.168.1.5:13337")?.ToString() == request.Address,
+            "secure IP request selects the direct-IP seat path");
+        Expect(CouchCoopWebSocketConnection.DirectIpAddressFromRequest(true, "192-168-1-5.my.local-ip.co:13337") is null
+            && CouchCoopWebSocketConnection.DirectIpAddressFromRequest(false, "192.168.1.5:13337") is null,
+            "hostname and HTTP requests retain their existing paths");
+    }
+
+    private static async Task DirectIpRefreshIsBoundToHostIdentity()
+    {
+        await using var host = new CouchCoopBrowserServer(
+            new StaticSpaFileProvider(Path.Combine(Path.GetTempPath(), "couchcoop-missing-static")),
+            new NullAssetHttpAdapter(), bindAddress: IPAddress.Loopback, preferredPort: PickFreePort(),
+            isHeadlessClient: false, log: _ => { });
+        var uri = await host.StartAsync();
+        var expected = new DirectIpSeatPreparation(new string('A', 64), "192.168.1.5", new string('B', 64), uri.Port);
+        var requests = 0;
+        host.RefreshDirectIpSeatMaterialAsync = (request, _) =>
+        {
+            requests++;
+            return Task.FromResult(request == expected);
+        };
+        Expect(await HeadlessClientManager.RequestDirectIpRefreshAsync(uri.Port, expected, CancellationToken.None),
+            "seat can request one host refresh for its authorized IP and root");
+        Expect(requests == 1, "renewal is one bounded request");
+        Expect(!await HeadlessClientManager.RequestDirectIpRefreshAsync(uri.Port,
+            expected with { CaFingerprint = new string('C', 64) }, CancellationToken.None),
+            "host rejects a stale or unrecognized authority");
+        Expect(!await HeadlessClientManager.RequestDirectIpRefreshAsync(uri.Port,
+            expected with { HostPort = uri.Port + 1 }, CancellationToken.None) && requests == 2,
+            "wrong host port fails before sending");
+        Expect(await HeadlessClientManager.RequestDirectIpOriginAsync(uri.Port, expected, CancellationToken.None) is null,
+            "host cannot load a seat bundle through the seat-only endpoint");
+        using var http = new HttpClient(new HttpClientHandler { UseProxy = false });
+        using var requestWithOrigin = new HttpRequestMessage(HttpMethod.Post,
+            $"http://127.0.0.1:{uri.Port}{SecureOriginEndpoint.RefreshDirectIpRoute}?bundle={expected.BundleId}&address={expected.Address}&ca={expected.CaFingerprint}&hostPort={uri.Port}");
+        requestWithOrigin.Headers.Add("Origin", "https://unrelated.example");
+        using var response = await http.SendAsync(requestWithOrigin);
+        Expect(response.StatusCode == HttpStatusCode.NotFound && requests == 2, "browser-origin refresh is refused");
     }
 
     // The honest answer for an instance with no secure origin is 0 — not a 404, which the caller could not
