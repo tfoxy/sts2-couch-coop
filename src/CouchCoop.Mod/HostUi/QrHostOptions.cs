@@ -16,8 +16,9 @@ namespace CouchCoop.Mod.HostUi;
 /// <para>
 /// <b>The list is the cross product of adapter × method, in a fixed order.</b> One entry group per
 /// network adapter (ethernet first, then wifi, then everything else — tunnels, docker, VPNs), and
-/// inside each group the four ways a phone can reach that adapter's IPv4: the plain address, direct
-/// IP HTTPS with local trust, the public web link carrying it in <c>?h=</c>, and the <c>local-ip.co</c> HTTPS name derived from it.
+/// inside each group the four ways a phone can reach that adapter's IPv4: the plain address, the public web
+/// link carrying it in <c>?h=</c>, the <c>local-ip.co</c> HTTPS name derived from it, and direct
+/// IP HTTPS with local trust.
 /// The <c>.local</c> name is always the LAST row: it is the only option that regularly fails outright
 /// (many phones and routers cannot resolve mDNS), so it must never win the default, however well the
 /// self-check went. The FIRST ENABLED entry is the dialog's default selection.
@@ -150,14 +151,13 @@ public static class QrHostOptions
                     DisabledReason: port > 0 ? (CouchCoopText?)null : ServerNotListeningText));
             }
 
-            TryAdd(DescribeDirectIpSecureFor(adapter, port, directIpHttps));
-
             if (DescribeWebFor(adapter, port, webOrigin) is { } webRow)
             {
                 TryAdd(webRow);
             }
 
             TryAdd(DescribeSecureFor(adapter, secureDomain, securePort, secureUnavailableReason, secureOriginEnabled));
+            TryAdd(DescribeDirectIpSecureFor(adapter, port, directIpHttps));
         }
 
         // ALWAYS LAST, never capped away: the slot TryAdd reserves (MaxOptions - 1) is this row's. Last

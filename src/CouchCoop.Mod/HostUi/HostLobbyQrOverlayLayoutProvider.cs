@@ -67,11 +67,10 @@ internal static class HostLobbyQrOverlayLayoutProvider
 /// sub-module slack on the raster canvas, not extra whole modules in the matrix.)
 /// </para>
 /// <para>
-/// <paramref name="QrDialogExtent"/> is the QR's EXACT on-screen extent, not a budget it fits inside:
-/// every code renders at this size (see <see cref="QrDisplayExtent"/>). 592 is what the shipped card's
-/// row stack has room for between the secure-toggle row and the URL/notice/close rows, and it is also
-/// what the common 37-module code already rendered at under the old whole-number-scale scheme — so
-/// nothing in the card moved when the extent became constant.
+/// <paramref name="QrDialogExtent"/> is the base on-screen extent, independent of payload length.
+/// Direct address, Website and Domain name use the full 592-unit default. The direct-IP HTTPS method
+/// reserves space for its device-setup action through <see cref="QrMethodLayout"/>, which supplies
+/// the reduced extent to both the displayed rectangle and its raster canvas.
 /// </para>
 /// </remarks>
 internal sealed record HostLobbyQrOverlayLayout(
@@ -156,7 +155,7 @@ internal sealed record HostLobbyQrOverlayLayout(
     public Color ResolvedPanelBorderColor => ParseColor(PanelBorderColor, DefaultPanelBorderColorHtml);
 
     /// <summary>
-    /// The QR's on-screen extent. A CONSTANT — deliberately not a function of the module count.
+    /// The base QR extent before method-specific setup space. Never a function of module count.
     /// </summary>
     /// <remarks>
     /// <para>

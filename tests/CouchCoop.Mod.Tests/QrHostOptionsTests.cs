@@ -122,9 +122,9 @@ internal static class QrHostOptionsTests
 
         Expect(options.Count == 5, "one adapter yields four methods plus the mdns row");
         Expect(options[0].Kind == QrHostOptionKind.Interface, "plain address first");
-        Expect(options[1].Kind == QrHostOptionKind.DirectIpSecure, "direct HTTPS second");
-        Expect(options[2].Kind == QrHostOptionKind.Web, "web link third");
-        Expect(options[3].Kind == QrHostOptionKind.Secure, "hostname HTTPS fourth");
+        Expect(options[1].Kind == QrHostOptionKind.Web, "web link second");
+        Expect(options[2].Kind == QrHostOptionKind.Secure, "hostname HTTPS third");
+        Expect(options[3].Kind == QrHostOptionKind.DirectIpSecure, "direct HTTPS last");
         Expect(options[4].Kind == QrHostOptionKind.Mdns, "mdns last");
         Expect(options.Take(4).All(option => option.Adapter?.Address.ToString() == "192.168.1.7"),
             "and all four rows belong to the same adapter");
@@ -554,7 +554,7 @@ internal static class QrHostOptionsTests
         var options = Build("host", "fixed.example", Ethernet(), Wifi(), Wifi("10.1.1.2", name: "extra"));
         Expect(options.Count == 14 && options[^1].Kind == QrHostOptionKind.Mdns, "override, all twelve adapter methods and mDNS survive");
         foreach (var group in options.Where(o => o.Adapter is not null).GroupBy(o => o.Adapter))
-            Expect(group.Select(o => o.MethodToken).SequenceEqual(["ipv4", "direct-https", "web", "secure"]), "each complete adapter group preserves method order");
+            Expect(group.Select(o => o.MethodToken).SequenceEqual(["ipv4", "web", "secure", "direct-https"]), "each complete adapter group preserves method order");
     }
 
     private static void Expect(bool condition, string because)

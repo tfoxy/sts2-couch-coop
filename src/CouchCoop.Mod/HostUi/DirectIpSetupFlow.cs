@@ -110,6 +110,13 @@ internal sealed class DirectIpSetupFlow
         Stage = HostReady ? DirectIpSetupStage.Device : DirectIpSetupStage.Prepare;
     }
 
+    public void ReviewDeviceSetup()
+    {
+        if (IsBusy || !HostReady) return;
+        Stage = DirectIpSetupStage.Device;
+        ShowAdvanced = ConfirmReset = false;
+    }
+
     public void Back()
     {
         if (IsBusy) return;

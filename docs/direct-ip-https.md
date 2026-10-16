@@ -1,7 +1,8 @@
 # Direct address (HTTPS)
 
-Choose **Direct address (HTTPS)** immediately after **Direct address** in the in-game connection-method
-selector. This connects directly to an IPv4 URL such as `https://192.168.0.123:13337/`. It does not use a
+Choose **Direct address (HTTPS)**, the last option in the in-game connection-method selector, after
+**Direct address**, **Website**, and **Domain name**. This connects directly to an IPv4 URL such as
+`https://192.168.0.123:13337/`. It does not use a
 hostname, public DNS, or an internet certificate service. The original HTTP Direct address, Website,
 and hostname HTTPS methods remain available.
 
@@ -48,7 +49,13 @@ means the PC has a usable certificate, not that the player's device installed tr
 shows a certificate warning, return through **Device setup** and check the appropriate instructions.
 Choose **Set up another device** to repeat the device steps for another player.
 
-**Help & advanced** contains certificate expiry, removal guidance and **Reset setup**. Reset needs a
+**Help & advanced** opens inline, without losing your current step or selected device. Its **First time
+here?** section explains what to do next on the host PC and on the player's device. **The browser shows
+a warning** includes **Review device setup**, which returns to the device instructions. Installation and
+trust can be separate steps; a warning must be resolved before connecting, never bypassed.
+
+The remaining help sections explain the public file, removing trust per device, address changes, and
+certificate details. Expiry, the full verification code, and **Reset setup** appear last. Reset needs a
 separate confirmation because every device must remove the old certificate and install the new one.
 
 For the exported DER `.cer`, the file's SHA-256 hash equals the certificate fingerprint. Windows can
@@ -94,6 +101,51 @@ prove another browser uses it. Remove the root from every store where it was imp
 
 The game-free desktop checks do not establish physical iOS/Android compatibility. Certificate installation,
 OS settings, permissions and managed-device restrictions require verification on the actual device.
+
+## Remove trust
+
+Use these steps if you stop trusting the host or before installing a replacement setup file. Remove only
+the certificate named **CouchCoop Local Authority** followed by this host's identifier. If several hosts
+appear, compare the certificate's verification code with the code on the relevant host. Do not remove
+unrelated certificates. If the host is no longer available, use the original public file's details to
+identify the certificate you installed.
+
+### iPhone / iPad
+
+1. On the player's device, open Settings → General → VPN & Device Management.
+2. Select this host's certificate profile and choose **Remove Profile**. Enter the device passcode if asked.
+
+Removing a profile removes its associated settings. Select the profile you installed for this host.
+[Apple's profile removal guidance](https://support.apple.com/guide/iphone/install-or-remove-configuration-profiles-iph6c493b19/ios)
+
+### Android
+
+1. Open the security settings and find Encryption & credentials → Trusted credentials → User, or the
+   equivalent list of user-installed CA certificates. Names vary by vendor and Android release.
+2. Select this host's certificate and remove it. Do **not** use **Clear credentials**, which also removes
+   other certificates. [Google's certificate removal guidance](https://support.google.com/pixelphone/answer/2844832?hl=en)
+
+### Windows
+
+1. Press Windows + R, enter `certmgr.msc`, and open **Certificates - Current User**.
+2. Open **Trusted Root Certification Authorities → Certificates**.
+3. Select this host's certificate, check its identity, and delete only that certificate.
+
+The guide installs into the current user's store. If you deliberately installed into another store,
+remove that copy too. [Microsoft's certificate-manager guidance](https://learn.microsoft.com/en-us/dotnet/framework/wcf/feature-details/how-to-view-certificates-with-the-mmc-snap-in)
+
+### macOS
+
+1. Open Keychain Access and select the keychain where you imported the certificate, normally **login**.
+2. Find this host's certificate under **Certificates** and delete it. Authenticate if asked.
+
+### Linux / Firefox
+
+1. In Firefox settings, find **Certificates → View Certificates → Authorities**. Select this host's
+   certificate and choose **Delete or Distrust**.
+2. If you also installed it in another browser or a Linux system trust store, remove it there using that
+   browser's or distribution's certificate tools. Different browsers may use different stores;
+   removing one copy does not remove the others.
 
 ## Address changes and renewal
 

@@ -27,7 +27,8 @@ internal static class CouchCoopQrLayoutContractTests
         DefaultLayoutPassesItsOwnValidator();
         ValidatorRejectsOutOfBounds();
         DisplayExtentIsConstant();
-        TheCardStillHasRoomForTheConstantExtent();
+        MethodSpecificRasterAndCache();
+        foreach (var method in QrSelectionModel.Methods) TheCardStillHasRoomForTheConstantExtent(method);
         ButtonRectMatchesTheAgreedGeometry();
         ConnectionCompanionClearsTheQrCard();
         SeatModCompanionMirrorsTheConnectionCard();
@@ -181,6 +182,42 @@ internal static class CouchCoopQrLayoutContractTests
             "an absurd extent floors at one version-1 code at 4px per module");
     }
 
+    private static void MethodSpecificRasterAndCache()
+    {
+        var layout = HostLobbyQrOverlayLayout.Default;
+        Expect(CouchCoopQrDialog.PanelHeight == 936f, "every method retains the original card height");
+        var uri = new Uri("https://192.168.1.7:13337/");
+        var code = OfflineQrCode.EncodeJoinUrl(uri, layout.QuietZoneModules);
+        foreach (var method in QrSelectionModel.Methods)
+        {
+            var sizing = QrMethodLayout.For(layout, method);
+            var expected = method == "direct-https" ? 504 : 592;
+            Expect(sizing.Extent == expected && sizing.SetupRowHeight == (method == "direct-https" ? 88f : 0f),
+                "only direct HTTPS reserves QR space for its setup row");
+            var plan = sizing.RasterPlanFor(code.Size);
+            Expect(plan.CanvasPixels == expected && plan.PixelsPerModule > 0,
+                "raster canvas and visible extent agree, preserving whole source pixels per module");
+            var pixels = QrRaster.RenderRgba8(code, plan);
+            Expect(pixels.Length == expected * expected * QrRaster.BytesPerPixel,
+                "raster dimensions use the selected method's effective extent");
+            for (var y = 0; y < code.Size; y++)
+            for (var x = 0; x < code.Size; x++)
+            {
+                var offset = ((plan.PadLeading + y * plan.PixelsPerModule) * expected
+                    + plan.PadLeading + x * plan.PixelsPerModule) * QrRaster.BytesPerPixel;
+                Expect((pixels[offset] == 0) == code.IsDark(x, y), "every QR module survives method-specific rasterization");
+            }
+            Expect(sizing.CacheKeyFor(uri).Contains($"extent={expected}"), "cache identity includes the effective extent");
+        }
+        var normal = QrMethodLayout.For(layout, "ipv4");
+        var direct = QrMethodLayout.For(layout, "direct-https");
+        Expect(normal.CacheKeyFor(uri) != direct.CacheKeyFor(uri),
+            "switching methods cannot reuse a differently sized texture even for the same URI");
+        var custom = QrMethodLayout.For(layout with { QrDialogExtent = 550f }, "direct-https");
+        Expect(custom.Extent == 462f && custom.RasterPlanFor(code.Size).CanvasPixels == 462,
+            "hot-reloaded extent changes remain shared by the rectangle and raster");
+    }
+
     // The card's rows are stacked by hand, so the extent is not free to grow: the QR has to clear the URL,
     // notice and close rows underneath it. This is why the constant is 592 rather than the 620 the old
     // budget carried.
@@ -199,7 +236,7 @@ internal static class CouchCoopQrLayoutContractTests
     // negative gap is discovered by a player, not by this suite.
     private const float MinimumRowClearance = 4f;
 
-    private static void TheCardStillHasRoomForTheConstantExtent()
+    private static void TheCardStillHasRoomForTheConstantExtent(string method)
     {
         var layout = HostLobbyQrOverlayLayout.Default;
 
@@ -213,16 +250,17 @@ internal static class CouchCoopQrLayoutContractTests
         const float closeHeight = CouchCoopSkipButton.DesignHeight;
         const float closeInset = CouchCoopQrDialog.DismissBottomInset;
 
-        var setupTop = qrTop + layout.QrDisplayExtent + urlGap + urlHeight + 6f;
-        var noticeTop = qrTop + layout.QrDisplayExtent + urlGap + urlHeight + CouchCoopQrDialog.SetupRowHeight + noticeGap;
+        var methodLayout = QrMethodLayout.For(layout, method);
+        var setupTop = qrTop + methodLayout.Extent + urlGap + urlHeight + 6f;
+        var noticeTop = qrTop + methodLayout.Extent + urlGap + urlHeight + methodLayout.SetupRowHeight + noticeGap;
         var noticeBottom = noticeTop + noticeHeight;
-        Expect(noticeTop - (setupTop + CouchCoopSkipButton.DesignHeight) >= MinimumRowClearance,
+        Expect(methodLayout.SetupRowHeight == 0f || noticeTop - (setupTop + CouchCoopSkipButton.DesignHeight) >= MinimumRowClearance,
             "the device-setup action has its own row below the URL and clears the notice");
         foreach (var viewport in new[] { (1920f, 1080f), (1280f, 800f) })
         {
             var scale = Math.Min(viewport.Item1 / 1920f, viewport.Item2 / 1080f);
-            Expect(panelHeight * scale < viewport.Item2, "the expanded QR card fits both supported viewports");
-            Expect((noticeTop - setupTop - CouchCoopSkipButton.DesignHeight) * scale > 0f,
+            Expect(panelHeight * scale < viewport.Item2, "the original QR card fits both supported viewports");
+            Expect(methodLayout.SetupRowHeight == 0f || (noticeTop - setupTop - CouchCoopSkipButton.DesignHeight) * scale > 0f,
                 "setup artwork remains separate from the notice at viewport scale");
         }
         var closeTop = panelHeight - layout.ResolvedPanelPadding - closeHeight - closeInset;

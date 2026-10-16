@@ -1305,7 +1305,7 @@ Host transport). A fact is never learned by polling: the screen handed to the re
 - **Node contract** (what the probes assert): `CouchCoopQrHostPanel` (FullRect, `Ignore`) →
   `CouchCoopQrButton` (rect **226,732 → 578,868**, design space, on standard/new and saved-run lobbies; label
   "Couch Co-Op QR Code") and `CouchCoopQrDialog` (hidden) → `CouchCoopQrDialogScrim` (`Stop`, closes),
-  `CouchCoopQrDialogPanel` (1000×1024 centred, `Stop`, does NOT close) → `CouchCoopQrDialogTitleLabel`,
+  `CouchCoopQrDialogPanel` (1000×936 centred, `Stop`, does NOT close) → `CouchCoopQrDialogTitleLabel`,
   `CouchCoopQrDialogQrTexture` (`Stop`, does NOT close), `CouchCoopQrDialogUrlLabel`,
   `CouchCoopQrDialogCopyButton` (inside the URL row, right of the rendered address; hidden when there is
   no address), `CouchCoopQrDialogNoticeLabel` (hidden unless Steam-offline), `CouchCoopQrCloseButton`,
@@ -1375,8 +1375,8 @@ Host transport). A fact is never learned by polling: the screen handed to the re
     `tree_exiting` signal, because the lobby can be torn down with a modal still open.
 - **Options** (separate network and connection-method selectors):
   `QrHostOptions.Build` orders advertised-override → per-ADAPTER groups (best IPv4 per NIC, adapters
-  tier-sorted ethernet → wifi → other; inside each: plain ipv4 → direct-IP HTTPS → `sts2-couch.pages.dev/?h=<ip>:<port>` →
-  `https://<dashed-ip>.my.local-ip.co:<securePort>/`) → mDNS `<machine>.local` ALWAYS LAST (the
+  tier-sorted ethernet → wifi → other; inside each: plain ipv4 → `sts2-couch.pages.dev/?h=<ip>:<port>` →
+  `https://<dashed-ip>.my.local-ip.co:<securePort>/` → direct-IP HTTPS) → mDNS `<machine>.local` ALWAYS LAST (the
   self-check no longer reorders it, it only badges "didn't answer when tested"). Default = first
   ENABLED row; unavailable methods render disabled with their blocker and stay hoverable. Identity is
   `SelectionKey` (`method|adapterIp`), never Host — every web row shares the public host. The port is
@@ -1393,17 +1393,15 @@ Host transport). A fact is never learned by polling: the screen handed to the re
   The created `NHoverTipSet` parents under the GAME's tips container, so `CouchCoopQrHoverTips`
   stamps it `spirectl_stream_skip` synchronously — the mirror probe scans tip TEXT while a tip is
   held open to prove it.
-- **The QR is ALWAYS the same size on screen** (`qrDialogExtent`, 592 design units — an exact size, not a
-  budget). It used to be `modules * 4 * K` for the largest whole K that fit, so the plain LAN URL (37
-  modules, K=4, 592) and the secure URL (41 modules, K=3, 492) rendered visibly differently and picking
-  a secure row resized the code. The whole-number rule still holds — a fractional scale resamples the
-  module grid and can make a code unscannable — but it moved into `QrRasterPlan`: every module gets
-  `floor(592 / modules)` source pixels and the leftover becomes **centred white padding**, i.e. extra
-  quiet zone, which is always legal. Result: 592 vs 574 in one fixed 592 box (3%) instead of 592 vs 492
-  (17%). The canvas is 1:1 with the extent, so `QrRaster` writes a byte buffer for one
-  `Image.CreateFromData` — the old per-pixel `Image.SetPixel` loop is why the raster had to stay tiny.
-  Specs: `QrRasterTests` (both real URLs, uniform module pixels, lossless module round-trip, white-only
-  padding, pathological degradation) and `CouchCoopQrLayoutContractTests`.
+- **QR size depends only on the method, never payload length.** The card remains 1000×936. Direct
+  address, Website and Domain name retain the configured `qrDialogExtent` (592 design units by
+  default); only Direct address (HTTPS) reserves 88 units for its device-setup row, yielding 504.
+  `QrMethodLayout` supplies the same effective extent to the rectangle, raster canvas and texture
+  cache key. `QrRasterPlan` uses whole source pixels per module and centres leftover white padding,
+  preserving quiet zones without making longer URLs shrink the display. Domain name subtitles use
+  `PreviewUrlFor` and the actual browser-server port during preparation; the preview never enables
+  QR generation or copying before readiness. Specs: `QrRasterTests`, `QrSelectionModelTests`, and
+  `CouchCoopQrLayoutContractTests`.
 - **Steam-offline alert**: on entering the host lobby with `CouchCoopHostUiNotices.HostTransportNote` set,
   `CouchCoopHostTransportAlertDialog` pops with the note as its BODY (the QR dialog's tip line is
   invisible to a host who never opens that dialog). **Once per MOUNT**, decided by the pure
@@ -1425,7 +1423,7 @@ Host transport). A fact is never learned by polling: the screen handed to the re
 
 ### Host connection status
 
-The QR dialog owns a 420×936 companion card to the left of its 1000×1024 centered card, separated
+The QR dialog owns a 420×936 companion card to the left of its 1000×936 centered card, separated
 by 24 design units. It appears when a WebSocket client or retained issue exists. The old lobby activity
 panel is no longer mounted; its internal narration remains available for diagnostics.
 

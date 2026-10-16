@@ -803,6 +803,7 @@ this recipe uses.
 | --- | --- | --- |
 | C# protocol/scene-model | `dotnet run --project tests/CouchCoop.MirrorProtocol.Tests` | custom `Exe` runner, **not** `dotnet test` — suites self-register in `Program.cs` |
 | C# mod/browser-server | `dotnet run --project tests/CouchCoop.Mod.Tests` | same custom-runner pattern |
+| Native HTTPS guide layout | See [standalone Godot fixture](../../tests/CouchCoop.HostUi.GodotFixture/README.md) | game-free resolved rectangles, all native locales, help scrolling and icon input; stock fonts/buttons do not establish in-game/controller behavior |
 | C# macOS fake-home farm | `dotnet run --project tests/CouchCoop.MacOs.Tests -c Release` | game-assembly-free custom `Exe`; source-links the shipping seeder and its filesystem suite |
 | godot-client build | `dotnet build godot-client/CouchCoop.GodotClient.csproj` | run before EVERY godot-client launch — Godot's CLI runs the last-built assembly, not a fresh JIT |
 | frontend typecheck+unit | `cd frontend && npx vue-tsc --noEmit && npx vitest run` | **never** `npm run build` in a branch/worktree — its `vite build` outDir deploys straight into the installed mod dir |

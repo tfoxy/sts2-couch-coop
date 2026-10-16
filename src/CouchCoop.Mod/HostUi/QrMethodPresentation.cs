@@ -12,7 +12,18 @@ internal sealed record QrMethodPresentation(QrMethodReadiness State, CouchCoopTe
     public bool ShowsSetup => SetupAction is not null;
     public bool UsesSetupPlaceholder => ShowsSetup && State != QrMethodReadiness.Ready;
 
-    public static QrMethodPresentation For(QrHostOption? option, DirectIpHttpsState? directState = null)
+    public static QrMethodPresentation For(QrHostOption? option, DirectIpHttpsState? directState = null,
+        Uri? previewUrl = null)
+    {
+        var presentation = Describe(option, directState);
+        // The domain's destination remains useful while certificate preparation runs. A preview
+        // changes only the subtitle, never readiness, copyability, or the QR payload.
+        return option?.Kind == QrHostOptionKind.Secure && previewUrl is not null
+            ? presentation with { Subtitle = CouchCoopText.FromLiteral(previewUrl.ToString()) }
+            : presentation;
+    }
+
+    private static QrMethodPresentation Describe(QrHostOption? option, DirectIpHttpsState? directState)
     {
         if (option is { Enabled: true, Port: > 0 })
             return new(QrMethodReadiness.Ready, CouchCoopText.FromLiteral(option.ToUri().ToString()),

@@ -11,6 +11,7 @@ internal static class CouchCoopLocalizationTests
         ShippedCatalogsDoNotTranslateThePlaceholdersThemselves();
         LocaleSelectionFallsBackToEnglish();
         GuidedSetupCopyPreservesTrustAndPlatformSteps();
+        GuidedHelpHasLocalizedHeadingsAndNumberedRemovalSteps();
         SemanticMappingsAndFontPredicateUseTheLocale();
         Console.WriteLine("CouchCoopLocalizationTests: ok");
     }
@@ -90,6 +91,50 @@ internal static class CouchCoopLocalizationTests
                 ("path", CouchCoopTextArgument.Value("/test/public.cer"))).ResolveForLanguage(language);
             Assert(expiry.Contains("2030-01-01") && path.Contains("/test/public.cer"),
                 $"{language} preserves identity details without translating placeholders");
+        }
+    }
+
+    private static void GuidedHelpHasLocalizedHeadingsAndNumberedRemovalSteps()
+    {
+        var english = RawCatalog("en");
+        var helpKeys = english.Keys.Where(key => key.StartsWith("couchcoop_https_help_", StringComparison.Ordinal)).ToArray();
+        Assert(helpKeys.Length == 20, "guided help provides separate headings, stage guidance and platform removal blocks");
+        Assert(english["couchcoop_https_help_remove_intro"].Contains("CouchCoop Local Authority")
+            && english["couchcoop_https_help_remove_intro"].Contains("do not remove other certificates"),
+            "removal identifies this host and protects unrelated certificates");
+        Assert(english["couchcoop_https_help_remove_windows"].Contains("Certificates - Current User")
+            && english["couchcoop_https_help_remove_android"].Contains("Do not use Clear credentials"),
+            "removal keeps Windows user scope and avoids Android's remove-all action");
+        Assert(english["couchcoop_https_help_warning_body"].Contains("enable full trust")
+            && english["couchcoop_https_help_warning_body"].Contains("Do not bypass"),
+            "warning recovery distinguishes trust from installation without bypassing validation");
+        foreach (var stem in CatalogFileStems.Prepend("en"))
+        {
+            var catalog = RawCatalog(stem);
+            foreach (var key in helpKeys)
+            {
+                Assert(catalog.TryGetValue(key, out var value) && !string.IsNullOrWhiteSpace(value),
+                    $"{stem} ships {key} without relying on fallback");
+                if (stem != "en")
+                    Assert(value != english[key], $"{stem} translates {key} rather than shipping an English placeholder");
+                if (key.EndsWith("_title", StringComparison.Ordinal))
+                    Assert(!value!.Contains('\n'), $"{stem} keeps {key} as an independent heading");
+            }
+            foreach (var device in Enum.GetValues<DirectIpSetupDevice>())
+            {
+                var suffix = DirectIpSetupCopy.DeviceKey(device);
+                var steps = catalog["couchcoop_https_help_remove_" + suffix].Split('\n');
+                Assert(steps.Length >= 2 && steps.Select((step, index) =>
+                        step.StartsWith($"{index + 1}. ", StringComparison.Ordinal)).All(valid => valid),
+                    $"{stem} provides separately numbered {suffix} removal steps");
+            }
+            Assert(catalog["couchcoop_https_help_remove_intro"].Contains("CouchCoop Local Authority")
+                && catalog["couchcoop_https_help_remove_windows"].Contains("certmgr.msc"),
+                $"{stem} preserves the certificate name and Windows command");
+            Assert(catalog["couchcoop_https_help_first_prepare"].Contains(catalog["couchcoop_https_create_file"])
+                && catalog["couchcoop_https_help_first_device"].Contains(catalog["couchcoop_https_show_file"])
+                && catalog["couchcoop_https_help_first_connect"].Contains(catalog["couchcoop_https_another_device"]),
+                $"{stem} points first-time users to the actual translated button labels");
         }
     }
 

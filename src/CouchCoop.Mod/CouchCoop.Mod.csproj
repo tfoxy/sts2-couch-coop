@@ -34,6 +34,10 @@
     <EmbeddedResource Include="Localization/Catalogs/couchcoop.tha.json" LogicalName="CouchCoop.Mod.Localization.Catalogs.couchcoop.tha.json" WithCulture="false" />
     <EmbeddedResource Include="Localization/Catalogs/couchcoop.tur.json" LogicalName="CouchCoop.Mod.Localization.Catalogs.couchcoop.tur.json" WithCulture="false" />
 
+    <EmbeddedResource Include="HostUi/Resources/PlatformIcons/*.svg"
+                      LogicalName="CouchCoop.Mod.HostUi.PlatformIcons.%(Filename)%(Extension)"
+                      WithCulture="false" />
+
     <Reference Include="0Harmony">
       <HintPath>$(Sts2AssembliesDir)/0Harmony.dll</HintPath>
       <Private>false</Private>

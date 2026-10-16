@@ -65,7 +65,7 @@ is_allowed_payload_file() {
     frontend/index.html|frontend/offline.html|frontend/sw.js|frontend/app-boot) return 0 ;;
     frontend/manifest.webmanifest|frontend/manifest.*.webmanifest) return 0 ;;
     frontend/icons/icon.svg|frontend/icons/icon-*.png) return 0 ;;
-    licenses/QRCoder-1.6.0-MIT.txt|licenses/DeviceDetector.NET-6.5.2-Apache-2.0.txt|licenses/LiteDB-5.0.21-MIT.txt|licenses/Microsoft.Extensions.DependencyInjection.Abstractions-10.0.10-MIT.txt|licenses/Microsoft.Extensions.Logging.Abstractions-10.0.10-MIT.txt|licenses/System.Diagnostics.DiagnosticSource-10.0.10-MIT.txt|licenses/YamlDotNet-18.1.0-MIT.txt|licenses/spirectl-LICENSE|licenses/spirectl-NOTICE|licenses/godot-scene-web-LICENSE|licenses/HarfBuzz-LICENSE|licenses/Emscripten-LICENSE|licenses/OpenSans-LICENSE|licenses/npm-dependencies.tsv) return 0 ;;
+    licenses/FontAwesome-Free-6.7.2-LICENSE.txt|licenses/FontAwesome-CC-BY-4.0.txt|licenses/QRCoder-1.6.0-MIT.txt|licenses/DeviceDetector.NET-6.5.2-Apache-2.0.txt|licenses/LiteDB-5.0.21-MIT.txt|licenses/Microsoft.Extensions.DependencyInjection.Abstractions-10.0.10-MIT.txt|licenses/Microsoft.Extensions.Logging.Abstractions-10.0.10-MIT.txt|licenses/System.Diagnostics.DiagnosticSource-10.0.10-MIT.txt|licenses/YamlDotNet-18.1.0-MIT.txt|licenses/spirectl-LICENSE|licenses/spirectl-NOTICE|licenses/godot-scene-web-LICENSE|licenses/HarfBuzz-LICENSE|licenses/Emscripten-LICENSE|licenses/OpenSans-LICENSE|licenses/npm-dependencies.tsv) return 0 ;;
     licenses/npm/*.LICENSE)
       leaf="${path#licenses/npm/}"
       [[ "$leaf" != */* && -n "$leaf" ]]
@@ -122,6 +122,8 @@ required_files=(
   YamlDotNet.dll
   frontend/index.html
   frontend/app-boot
+  licenses/FontAwesome-Free-6.7.2-LICENSE.txt
+  licenses/FontAwesome-CC-BY-4.0.txt
   licenses/QRCoder-1.6.0-MIT.txt
   licenses/DeviceDetector.NET-6.5.2-Apache-2.0.txt
   licenses/LiteDB-5.0.21-MIT.txt
