@@ -6,6 +6,16 @@ namespace CouchCoop.Mod.HostUi;
 /// <summary>Localized native setup instructions; no trust material is downloaded by a browser.</summary>
 internal static class DirectIpSetupCopy
 {
+    public static string DeviceKey(DirectIpSetupDevice device) => device switch
+    {
+        DirectIpSetupDevice.Iphone => "iphone",
+        DirectIpSetupDevice.Android => "android",
+        DirectIpSetupDevice.Windows => "windows",
+        DirectIpSetupDevice.MacOs => "macos",
+        DirectIpSetupDevice.LinuxFirefox => "linux",
+        _ => throw new ArgumentOutOfRangeException(nameof(device)),
+    };
+
     public static CouchCoopText Status(DirectIpHttpsState? state) => new(state switch
     {
         { Preparing: true } => "couchcoop_direct_https_preparing",
@@ -16,25 +26,4 @@ internal static class DirectIpSetupCopy
         _ => "couchcoop_direct_https_pending",
     });
 
-    public static string Body(DirectIpHttpsState? state)
-    {
-        var paragraphs = new List<string>
-        {
-            Status(state).Resolve(),
-            L("couchcoop_direct_https_warning"),
-            L("couchcoop_direct_https_transfer"),
-            L("couchcoop_direct_https_platforms"),
-            L("couchcoop_direct_https_remove"),
-        };
-        if (state?.CaFingerprint is { Length: > 0 } fingerprint)
-        {
-            paragraphs.Add(CouchCoopText.Create("couchcoop_direct_https_identity",
-                ("fingerprint", CouchCoopTextArgument.Value(fingerprint)),
-                ("expiry", CouchCoopTextArgument.Value(state.CaExpiresAt?.UtcDateTime.ToString("yyyy-MM-dd") ?? "—")))
-                .Resolve());
-        }
-        return string.Join("\n\n", paragraphs);
-    }
-
-    private static string L(string key) => CouchCoopLocalization.Resolve(key);
 }

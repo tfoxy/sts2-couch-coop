@@ -213,7 +213,18 @@ internal static class CouchCoopQrLayoutContractTests
         const float closeHeight = CouchCoopSkipButton.DesignHeight;
         const float closeInset = CouchCoopQrDialog.DismissBottomInset;
 
-        var noticeBottom = qrTop + layout.QrDisplayExtent + urlGap + urlHeight + noticeGap + noticeHeight;
+        var setupTop = qrTop + layout.QrDisplayExtent + urlGap + urlHeight + 6f;
+        var noticeTop = qrTop + layout.QrDisplayExtent + urlGap + urlHeight + CouchCoopQrDialog.SetupRowHeight + noticeGap;
+        var noticeBottom = noticeTop + noticeHeight;
+        Expect(noticeTop - (setupTop + CouchCoopSkipButton.DesignHeight) >= MinimumRowClearance,
+            "the device-setup action has its own row below the URL and clears the notice");
+        foreach (var viewport in new[] { (1920f, 1080f), (1280f, 800f) })
+        {
+            var scale = Math.Min(viewport.Item1 / 1920f, viewport.Item2 / 1080f);
+            Expect(panelHeight * scale < viewport.Item2, "the expanded QR card fits both supported viewports");
+            Expect((noticeTop - setupTop - CouchCoopSkipButton.DesignHeight) * scale > 0f,
+                "setup artwork remains separate from the notice at viewport scale");
+        }
         var closeTop = panelHeight - layout.ResolvedPanelPadding - closeHeight - closeInset;
 
         Expect(closeTop - noticeBottom >= MinimumRowClearance,
@@ -264,7 +275,7 @@ internal static class CouchCoopQrLayoutContractTests
         const float qrLeft = (1920f - 1000f) / 2f;
         var companionRight = CouchCoopConnectionLayout.Left + CouchCoopConnectionLayout.Width;
         Expect(CouchCoopConnectionLayout.Top == 72f && CouchCoopConnectionLayout.Height == 936f,
-            "the connection companion shares the QR card's vertical extent");
+            "the connection companion retains its own vertical extent");
         Expect(companionRight + CouchCoopConnectionLayout.Gap == qrLeft,
             "the connection companion leaves a fixed gap before the unchanged QR card");
         Expect(CouchCoopConnectionLayout.Left >= 0f,

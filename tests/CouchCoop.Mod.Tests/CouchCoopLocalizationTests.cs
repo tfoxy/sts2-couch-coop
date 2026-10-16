@@ -10,6 +10,7 @@ internal static class CouchCoopLocalizationTests
         CatalogsStayInParityAndUseSafePlaceholders();
         ShippedCatalogsDoNotTranslateThePlaceholdersThemselves();
         LocaleSelectionFallsBackToEnglish();
+        GuidedSetupCopyPreservesTrustAndPlatformSteps();
         SemanticMappingsAndFontPredicateUseTheLocale();
         Console.WriteLine("CouchCoopLocalizationTests: ok");
     }
@@ -36,18 +37,60 @@ internal static class CouchCoopLocalizationTests
         Assert(blocker.Detail.Contains("网络地址", StringComparison.Ordinal), "localized QR blocker detail resolves late");
         var tip = QrHoverTipCopy.MethodTipFor(new QrHostOption("host", 1, QrHostOptionKind.Secure, null));
         Assert(QrHoverTipCopy.TitleEntries[tip.TitleKey] == "域名"
-            && tip.Description.Contains("安全", StringComparison.Ordinal), "tooltip titles and descriptions follow Chinese");
+            && tip.Description.Contains("浏览器", StringComparison.Ordinal), "tooltip titles and descriptions follow Chinese");
         Assert(QrHoverTipCopy.MethodWebDescription.Contains("明确接受", StringComparison.Ordinal)
             && QrHoverTipCopy.MethodSecureDescription.Contains("路由器", StringComparison.Ordinal)
             && QrHoverTipCopy.MethodMdnsDescription.Contains("最不可靠", StringComparison.Ordinal),
             "Chinese hover guidance retains permission, router, and reliability details");
         Assert(QrSelectionModel.MethodLabel("direct-https").Resolve() == "直接地址（HTTPS）",
             "direct-IP method label follows Chinese");
-        var directBody = DirectIpSetupCopy.Body(new DirectIpHttpsState(CaFingerprint: new string('B', 64),
-            CaExpiresAt: DateTimeOffset.Parse("2030-01-01T00:00:00Z")));
-        Assert(directBody.Contains("证书信任设置") && directBody.Contains(new string('B', 64))
-            && directBody.Contains("2030-01-01"), "translated setup preserves platform instructions and exact identity values");
+        Assert(CouchCoopLocalization.Resolve("couchcoop_https_install_iphone").Contains("证书信任设置")
+            && CouchCoopLocalization.Resolve("couchcoop_https_install_windows").Contains("当前用户"),
+            "structured device instructions retain localized trust settings and Windows user scope");
         CouchCoopLocalization.SetLanguageForTests("eng");
+    }
+
+    private static void GuidedSetupCopyPreservesTrustAndPlatformSteps()
+    {
+        var english = CouchCoopLocalization.CatalogFor("eng");
+        Assert(english["couchcoop_https_ca_explanation"].Contains("certificate authority (CA)")
+            && english["couchcoop_https_trust_notice"].Contains("beyond this game"),
+            "guide explains CA and the broader trust consequence");
+        Assert(english["couchcoop_https_install_windows"].Contains("Current User")
+            && english["couchcoop_https_install_windows"].Contains("Trusted Root Certification Authorities"),
+            "Windows guide names the user-scoped trusted-root store");
+        Assert(english["couchcoop_https_install_iphone"].Contains("enable full trust")
+            && english["couchcoop_https_install_iphone"].Contains("alone is not enough"),
+            "iOS installation and full trust are distinct steps");
+        Assert(english["couchcoop_https_verify_iphone"].Contains("authenticated transfer")
+            && english["couchcoop_https_verify_android"].Contains("filename alone"),
+            "phone verification fallback preserves an authenticated transfer requirement");
+        Assert(english["couchcoop_https_certificate_warning"].Contains("Do not bypass")
+            && english["couchcoop_https_connect_body"].Contains("cannot check"),
+            "guide never substitutes acknowledgment for trust or bypasses warnings");
+        foreach (var language in CouchCoopLocalization.SupportedLanguages)
+        {
+            var catalog = CouchCoopLocalization.CatalogFor(language);
+            Assert(catalog["couchcoop_https_ca_explanation"].Contains("CA"), $"{language} explains the CA acronym");
+            foreach (var device in Enum.GetValues<DirectIpSetupDevice>())
+            {
+                var suffix = DirectIpSetupCopy.DeviceKey(device);
+                Assert(catalog["couchcoop_https_install_" + suffix].Contains('\n'),
+                    $"{language} separates {suffix} installation steps");
+                Assert(!string.IsNullOrWhiteSpace(catalog["couchcoop_https_verify_" + suffix]),
+                    $"{language} provides {suffix} file verification instructions");
+            }
+            Assert(catalog["couchcoop_https_verify_windows"].Contains("certutil -hashfile \"PATH\" SHA256")
+                && catalog["couchcoop_https_verify_macos"].Contains("shasum -a 256 \"PATH\"")
+                && catalog["couchcoop_https_verify_linux"].Contains("sha256sum \"PATH\""),
+                $"{language} keeps verification commands intact");
+            var expiry = CouchCoopText.Create("couchcoop_https_expiry",
+                ("expiry", CouchCoopTextArgument.Value("2030-01-01"))).ResolveForLanguage(language);
+            var path = CouchCoopText.Create("couchcoop_https_file_location",
+                ("path", CouchCoopTextArgument.Value("/test/public.cer"))).ResolveForLanguage(language);
+            Assert(expiry.Contains("2030-01-01") && path.Contains("/test/public.cer"),
+                $"{language} preserves identity details without translating placeholders");
+        }
     }
 
     private static void CatalogsStayInParityAndUseSafePlaceholders()

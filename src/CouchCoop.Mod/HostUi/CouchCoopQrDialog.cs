@@ -20,29 +20,10 @@ internal sealed partial class CouchCoopQrDialog : CouchCoopModalDialog
     public static string TitleText => CouchCoopLocalization.Resolve("couchcoop_qr_title");
     public static string CloseButtonText => CouchCoopLocalization.Resolve("couchcoop_qr_close");
 
-    // Dialog card geometry, design units. Sized around the QR's constant 592-unit extent plus the
-    // title, select, URL, notice and close rows.
-    //
-    // The card once carried two link-toggle rows between the select and the QR and stood at 1064 —
-    // two units shy of what a 1080-tall design space allows. The single-select redesign folded the
-    // toggles into the option list, so the QR moved up to 152 and the card shrank to 936, which clears
-    // the design space by 72 on each side. The network and method pickers now expand separately;
-    // each list fits inside the card without counting the adapter × method cross product as rows.
-    //
-    // The stack is TIGHT AT THE BOTTOM and slack below the close button, which is why this dialog asks
-    // for a smaller DismissBottomInset (see the base constructor call) rather than moving a row: when the
-    // notice row grew 26 -> 40 to fit the longer localized instructions, its bottom (784 + 40 = 824)
-    // landed one unit INSIDE a close button whose top was 823, while the button still floated 40 above
-    // the card floor. Taking 8 of that slack gives the notice row 7 units of clearance and leaves the
-    // button 32 above the floor. The QR's 592 extent is NOT the adjustable dimension here: it is one
-    // whole 16-unit module per pixel for the 37-module LAN code (QrRasterTests) and it lives in four
-    // contract copies (HostLobbyQrOverlayLayout, CouchCoopHotLogic, the loader shell, its validator).
-    //
-    // These are `internal const` so CouchCoopQrLayoutContractTests can READ them: it used to re-type
-    // them, and a mirror that drifts turns a layout contract into a test of itself. A const is inlined
-    // at compile time, so the suite never loads this Godot-derived type.
+    // Preserve the constant QR extent; the extra row beneath its URL keeps device setup reachable.
+    // Constants are shared with the game-free geometry contracts.
     internal const float PanelWidth = 1000f;
-    internal const float PanelHeight = 936f;
+    internal const float PanelHeight = 1024f;
     internal const float TitleTop = 12f;
     internal const float TitleHeight = 52f;
     internal const float SelectTop = 72f;
@@ -50,6 +31,7 @@ internal sealed partial class CouchCoopQrDialog : CouchCoopModalDialog
     internal const float QrTop = 152f;
     internal const float UrlGap = 6f;
     internal const float UrlHeight = 32f;
+    internal const float SetupRowHeight = 88f;
     internal const float NoticeGap = 2f;
     internal const float NoticeHeight = 40f;
 
@@ -67,6 +49,8 @@ internal sealed partial class CouchCoopQrDialog : CouchCoopModalDialog
     private readonly CouchCoopQrHostSelect _select = new();
     private readonly CouchCoopQrHostSelect _methodSelect = new("CouchCoopQrMethodSelect");
     private readonly QrSelectionModel _selection = new();
+    private readonly CouchCoopSetupButton _setupAction = new("CouchCoopQrSetupButton");
+    private readonly Label _setupTitle = new() { Name = "CouchCoopQrSetupTitle" };
     private readonly Label _unavailable = new() { Name = "CouchCoopQrUnavailable" };
     private readonly CouchCoopConnectionPanel _connections = new();
     private readonly CouchCoopSeatModPanel _seatMods = new() { Source = SeatModSelectionService.Shared };
@@ -107,30 +91,43 @@ internal sealed partial class CouchCoopQrDialog : CouchCoopModalDialog
         foreach (var select in new[] { _select, _methodSelect })
         {
             select.Size = new Vector2(CouchCoopQrHostSelect.RowWidth, CouchCoopQrHostSelect.RowHeight);
-            select.RowHover = (row, entry, hovered) =>
-            {
-                if (entry.Option is { } option) OnRowHover(row, option, hovered);
-            };
             select.OptionsHidden = ClearTips;
-            select.FocusChainChanged = RefreshFocusChain;
+            select.FocusChainChanged = RefreshPickerFocus;
         }
+        _select.RowHover = (row, entry, hovered) =>
+        {
+            if (entry.Option is { } option)
+                ShowTip(row, hovered, owner => CouchCoopQrHoverTips.ShowNetworkOption(owner, option));
+        };
+        _methodSelect.RowHover = (row, entry, hovered) =>
+        {
+            ShowTip(row, hovered, owner => CouchCoopQrHoverTips.ShowOption(owner, entry.Option, entry.Key));
+        };
         _select.SelectionChanged = entry =>
         {
             if (_selection.ChooseNetwork(entry.Key)) OnSelectionChanged();
         };
         _methodSelect.SelectionChanged = entry =>
         {
-            if (_selection.ChooseMethod(entry.Key)) OnSelectionChanged();
+            if (_selection.ChooseMethod(entry.Key)) OnSelectionChanged(explicitMethodSelection: true);
         };
-        _select.SelectorHover = OnSelectorHover;
-        _methodSelect.SelectorHover = (row, hovered) => ShowTip(row, hovered,
+        _select.SelectorHover = (row, hovered) => ShowTip(row, hovered && !_select.IsOpen, CouchCoopQrHoverTips.ShowSelector);
+        _methodSelect.SelectorHover = (row, hovered) => ShowTip(row, hovered && !_methodSelect.IsOpen,
             owner => CouchCoopQrHoverTips.ShowMethodSelector(owner, _selection.Selected));
-        _select.Opening = _methodSelect.Close;
-        _methodSelect.Opening = _select.Close;
+        _select.Opening = () => { ClearTips(); _methodSelect.Close(); };
+        _methodSelect.Opening = () => { ClearTips(); _select.Close(); };
         ConfigureLabel(_unavailable, HorizontalAlignment.Center, CouchCoopGameUiTheme.ButtonFontColor);
+        CouchCoopGameUiTheme.ApplyBodyFont(_unavailable, 24);
         _unavailable.AutowrapMode = TextServer.AutowrapMode.WordSmart;
         _unavailable.VerticalAlignment = VerticalAlignment.Center;
+        _unavailable.ClipText = true;
         _unavailable.Visible = false;
+        ConfigureLabel(_setupTitle, HorizontalAlignment.Center, CouchCoopGameUiTheme.ButtonFontColor);
+        _setupTitle.AutowrapMode = TextServer.AutowrapMode.WordSmart;
+        _setupTitle.Visible = false;
+        CouchCoopGameUiTheme.ApplyFont(_setupTitle, CouchCoopGameUiTheme.KreonBoldGlyphSpaceOne, 32);
+        _setupAction.Visible = false;
+        _setupAction.Activated = OpenSetup;
 
         // Nearest filtering plus the raster's whole-pixel module grid is what keeps module edges hard.
         // Stop: the code itself is a dialog ELEMENT, so clicking it must not dismiss the dialog — a
@@ -150,11 +147,13 @@ internal sealed partial class CouchCoopQrDialog : CouchCoopModalDialog
         // The selected option stays the single source of truth for what gets copied, exactly as it is for
         // what the QR encodes and what the label prints — the button holds no address of its own.
         _copy.Payload = () => _selection.Url?.ToString();
-        _copy.Engaged = engaged => ShowTip(_copy, engaged, CouchCoopQrHoverTips.ShowCopyLink);
+        _copy.Engaged = engaged => ShowTip(_copy, engaged && !_select.IsOpen && !_methodSelect.IsOpen, CouchCoopQrHoverTips.ShowCopyLink);
 
         Card.AddChild(_title);
         Card.AddChild(_qr);
         Card.AddChild(_unavailable);
+        Card.AddChild(_setupTitle);
+        Card.AddChild(_setupAction);
         Card.AddChild(_url);
         Card.AddChild(_copy);
         Card.AddChild(_notice);
@@ -177,11 +176,16 @@ internal sealed partial class CouchCoopQrDialog : CouchCoopModalDialog
         _directIpSetup.Install();
         _directIpSetup.Closed = () =>
         {
-            if (!_closingSetup && GodotObject.IsInstanceValid(this)) Open(CouchCoopMod.HostUiSnapshot);
+            if (!_closingSetup && GodotObject.IsInstanceValid(this))
+            {
+                Open(CouchCoopMod.HostUiSnapshot);
+                if (_setupAction.Visible) _setupAction.GrabFocus();
+            }
         };
         _select.Install();
         _methodSelect.Install();
         _copy.Install();
+        _setupAction.Install();
         _connections.Install();
         _seatMods.Install();
     }
@@ -212,6 +216,9 @@ internal sealed partial class CouchCoopQrDialog : CouchCoopModalDialog
             chain.Add(_copy);
         }
 
+        if (_setupAction.Visible && !_select.IsOpen && !_methodSelect.IsOpen)
+            chain.Add(_setupAction);
+
         // After the copy button, so a walk down from the QR crosses to the right-hand card before it reaches
         // close. The card declares nothing while it is hidden, and its confirm pair only while one is pending.
         _seatMods.AppendFocusChain(chain);
@@ -233,10 +240,12 @@ internal sealed partial class CouchCoopQrDialog : CouchCoopModalDialog
         CouchCoopGameUiTheme.ApplyFont(_title, CouchCoopGameUiTheme.KreonBoldGlyphSpaceOne, Layout.TitleFontSize + 16);
         CouchCoopGameUiTheme.ApplyFont(_url, CouchCoopGameUiTheme.KreonBoldGlyphSpaceOne, Layout.UrlFontSize);
         CouchCoopGameUiTheme.ApplyFont(_notice, CouchCoopGameUiTheme.KreonBoldGlyphSpaceOne, Math.Max(Layout.UrlFontSize - 8, 8));
-        CouchCoopGameUiTheme.ApplyFont(_unavailable, CouchCoopGameUiTheme.KreonBoldGlyphSpaceOne, Layout.UrlFontSize);
+        CouchCoopGameUiTheme.ApplyBodyFont(_unavailable, Layout.UrlFontSize);
         RefreshDialogFont();
         _seatMods.RefreshLocalization();
         _directIpSetup.RefreshText();
+        _setupAction.RefreshLocalization();
+        CouchCoopGameUiTheme.ApplyFont(_setupTitle, CouchCoopGameUiTheme.KreonBoldGlyphSpaceOne, 32);
         if (IsOpen)
         {
             RefreshOptions(snapshot);
@@ -327,30 +336,33 @@ internal sealed partial class CouchCoopQrDialog : CouchCoopModalDialog
         {
             var option = _selection.Resolve(method);
             return new QrSelectEntry(method, QrSelectionModel.MethodLabel(method),
-                _selection.PreviewUrlFor(method) is { } preview
-                    ? CouchCoopText.FromLiteral(preview.ToString())
-                    : new CouchCoopText("couchcoop_qr_unavailable_title"),
+                QrMethodPresentation.For(option, _lastSnapshot?.DirectIpHttps).Subtitle,
                 option, option?.Selectable == true);
         }).ToArray(), _selection.Method);
         _select.AccessibilityName = CouchCoopLocalization.Resolve("couchcoop_qr_network_connection_title");
         _methodSelect.AccessibilityName = CouchCoopLocalization.Resolve("couchcoop_qr_method_selector_title");
     }
 
-    private void OnSelectionChanged()
+    private void OnSelectionChanged(bool explicitMethodSelection = false)
     {
         CouchCoopQrSelectionPreference.Write(_selection.Memory);
         RefreshSelectors();
         RenderSelection();
-        if (_selection.Selected is { Kind: QrHostOptionKind.DirectIpSecure, Selectable: true })
-        {
-            base.Close();
-            _directIpSetup.Open(CouchCoopMod.HostUiSnapshot.DirectIpHttps);
-        }
+        if (QrMethodPresentation.OpensSetup(_selection.Selected, explicitMethodSelection)) OpenSetup();
         if (_selection.Selected is { Kind: QrHostOptionKind.Secure, Enabled: false, Selectable: true })
         {
             CouchCoop.Mod.CouchCoopMod.RequestSecureOrigin();
             RefreshSecureAvailability(CouchCoop.Mod.CouchCoopMod.HostUiSnapshot);
         }
+    }
+
+    private void OpenSetup()
+    {
+        if (_selection.Selected is not { Kind: QrHostOptionKind.DirectIpSecure, Selectable: true }
+            || _select.IsOpen || _methodSelect.IsOpen) return;
+        ClearTips();
+        base.Close();
+        _directIpSetup.Open(CouchCoopMod.HostUiSnapshot.DirectIpHttps);
     }
 
     /// <summary>Refresh an open dialog only when the asynchronous secure-origin state changes.</summary>
@@ -378,7 +390,12 @@ internal sealed partial class CouchCoopQrDialog : CouchCoopModalDialog
     private void RenderSelection()
     {
         // A tick left over from the previous address would claim the clipboard holds THIS one.
-        var couldCopy = _copy.Visible;
+        var presentation = QrMethodPresentation.For(_selection.Selected, _lastSnapshot?.DirectIpHttps);
+        _setupAction.Visible = presentation.ShowsSetup;
+        _setupAction.Text = presentation.SetupAction?.Resolve() ?? string.Empty;
+        _setupAction.AccessibilityName = _setupAction.Text;
+        _setupTitle.Visible = presentation.UsesSetupPlaceholder;
+        _setupTitle.Text = CouchCoopLocalization.Resolve("couchcoop_https_qr_setup_title");
         _copy.ResetFeedback();
 
         // ONE code, whose payload is the selected row and nothing else. The URL label and the QR
@@ -387,7 +404,13 @@ internal sealed partial class CouchCoopQrDialog : CouchCoopModalDialog
         if (_selection.Url is not { } uri)
         {
             _url.Text = string.Empty;
-            _unavailable.Text = _selection.UnavailableMessage.Resolve();
+            _unavailable.Text = presentation.UsesSetupPlaceholder
+                ? CouchCoopLocalization.Resolve("couchcoop_https_qr_setup_body")
+                    + (presentation.State is QrMethodReadiness.Preparing or QrMethodReadiness.NeedsAttention
+                        ? "\n\n" + presentation.Subtitle.Resolve() : string.Empty)
+                : presentation.State == QrMethodReadiness.Unavailable
+                    ? _selection.UnavailableMessage.Resolve()
+                    : _selection.Selected?.DisabledReason?.Resolve() ?? presentation.Subtitle.Resolve();
             _unavailable.Visible = true;
             _qr.Texture = null;
             _qr.Visible = false;
@@ -397,7 +420,7 @@ internal sealed partial class CouchCoopQrDialog : CouchCoopModalDialog
             _qrCacheKey = null;
             ApplyNotice();
             LayoutContent();
-            RefreshCopyReach(couldCopy);
+            RefreshPickerFocus();
             return;
         }
 
@@ -419,24 +442,20 @@ internal sealed partial class CouchCoopQrDialog : CouchCoopModalDialog
 
         ApplyNotice();
         LayoutContent();
-        RefreshCopyReach(couldCopy);
+        RefreshPickerFocus();
     }
 
-    /// <summary>Re-pin the focus ring when the copy affordance came or went; it is a stop on that ring.</summary>
-    private void RefreshCopyReach(bool couldCopy)
+    private void RefreshPickerFocus()
     {
-        if (couldCopy != _copy.Visible)
+        var optionsOpen = _select.IsOpen || _methodSelect.IsOpen;
+        foreach (var action in new Control[] { _copy, _setupAction })
         {
-            RefreshFocusChain();
+            var reachable = action.Visible && !optionsOpen;
+            if (!reachable && action.HasFocus()) action.ReleaseFocus();
+            action.FocusMode = reachable ? FocusModeEnum.All : FocusModeEnum.None;
         }
+        RefreshFocusChain();
     }
-
-    private void OnRowHover(Control row, QrHostOption option, bool hovered)
-        => ShowTip(row, hovered, owner => CouchCoopQrHoverTips.ShowOption(owner, option));
-
-    // The closed row describes the selector as a control, not the option currently displayed in it.
-    private void OnSelectorHover(Control row, bool hovered)
-        => ShowTip(row, hovered, CouchCoopQrHoverTips.ShowSelector);
 
     /// <summary>
     /// Put <paramref name="owner"/>'s tip set up on hover-enter and take it down on hover-leave.
@@ -455,7 +474,7 @@ internal sealed partial class CouchCoopQrDialog : CouchCoopModalDialog
             _tipOwner = null;
         }
 
-        if (!hovered)
+        if (!hovered || !base.IsOpen || !owner.IsVisibleInTree())
         {
             return;
         }
@@ -500,6 +519,13 @@ internal sealed partial class CouchCoopQrDialog : CouchCoopModalDialog
 
         _unavailable.Position = _qr.Position;
         _unavailable.Size = new Vector2(extent, extent);
+        if (_setupTitle.Visible)
+        {
+            _setupTitle.Position = new Vector2(padding, QrTop + 100f);
+            _setupTitle.Size = new Vector2(textWidth, 64f);
+            _unavailable.Position = new Vector2(padding, QrTop + 180f);
+            _unavailable.Size = new Vector2(textWidth, 190f);
+        }
         var urlTop = QrTop + extent + UrlGap;
         _url.Position = new Vector2(padding, urlTop);
         _url.Size = new Vector2(textWidth, UrlHeight);
@@ -518,7 +544,10 @@ internal sealed partial class CouchCoopQrDialog : CouchCoopModalDialog
         _copy.Position = new Vector2(placement.X, placement.Y);
         _copy.Size = new Vector2(CouchCoopQrCopyButton.IconEdge, CouchCoopQrCopyButton.IconEdge);
 
-        _notice.Position = new Vector2(padding, urlTop + UrlHeight + NoticeGap);
+        _setupAction.Position = new Vector2((PanelWidth - CouchCoopSkipButton.DesignWidth) / 2f,
+            _qr.Visible ? urlTop + UrlHeight + 6f : QrTop + 390f);
+        _setupAction.Size = CouchCoopSkipButton.DesignSize;
+        _notice.Position = new Vector2(padding, urlTop + UrlHeight + SetupRowHeight + NoticeGap);
         _notice.Size = new Vector2(textWidth, NoticeHeight);
     }
 

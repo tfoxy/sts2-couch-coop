@@ -177,6 +177,39 @@ internal static class CouchCoopGameUiTheme
         label.AddThemeFontSizeOverride("normal_font_size", fontSize);
     }
 
+    /// <summary>Regular-weight body copy, independent of the game's bold button and heading theme.</summary>
+    public static void ApplyBodyFont(Label label, int fontSize)
+    {
+        ArgumentNullException.ThrowIfNull(label);
+        label.AddThemeFontOverride("font", ResolveBodyFont());
+        label.AddThemeFontSizeOverride("font_size", fontSize);
+        label.AddThemeConstantOverride("outline_size", 0);
+        label.AddThemeConstantOverride("shadow_outline_size", 0);
+        label.AddThemeConstantOverride("shadow_offset_x", 0);
+        label.AddThemeConstantOverride("shadow_offset_y", 0);
+    }
+
+    public static void ApplyBodyRichFont(RichTextLabel label, int fontSize)
+    {
+        ArgumentNullException.ThrowIfNull(label);
+        label.AddThemeFontOverride("normal_font", ResolveBodyFont());
+        label.AddThemeFontSizeOverride("normal_font_size", fontSize);
+        label.AddThemeConstantOverride("outline_size", 0);
+        label.AddThemeConstantOverride("shadow_outline_size", 0);
+        label.AddThemeConstantOverride("shadow_offset_x", 0);
+        label.AddThemeConstantOverride("shadow_offset_y", 0);
+    }
+
+    private static Font ResolveBodyFont()
+    {
+        try
+        {
+            return FontManager.GetSubstituteFont(CouchCoopLocalization.Language, FontType.Regular)
+                ?? ThemeDB.FallbackFont;
+        }
+        catch { return ThemeDB.FallbackFont; }
+    }
+
     /// <summary>Locales outside Kreon's Latin coverage use the game's matching substitute bold font.</summary>
     private static Font? ResolveBoldFont(Font? fallback)
     {

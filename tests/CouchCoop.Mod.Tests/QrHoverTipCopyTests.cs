@@ -14,13 +14,13 @@ internal static class QrHoverTipCopyTests
         EveryAdapterAndMethodHasATitleAndADescription();
         SelectorTipIsRegisteredAndDistinct();
         CopyLinkTipIsRegisteredAndDistinct();
-        OptionTipsPutTheMethodFirst();
+        OptionTipsHaveOneContext();
         TitleKeysCarryTheNamespacePrefix();
         DescriptionsStayInTheGamerRegister();
         DescriptionsAreRichTextSafeAndTipSized();
         EnglishDescriptionsPreserveTheFullGuidance();
         MethodTipFoldsInTheLiveState();
-        DisabledMethodHasSeparateTip();
+        DisabledMethodKeepsBlockerInline();
 
         Console.WriteLine("QrHoverTipCopyTests: ok");
     }
@@ -73,8 +73,7 @@ internal static class QrHoverTipCopyTests
             Expect(description.Length > 0, $"method {kind} has a description");
         }
 
-        // The two tips of a pair must keep distinct title keys: the game dedupes a set by an Id derived
-        // from the title's table.key, so a shared key would silently drop one tip of the pair.
+        // Network and method rows keep distinct identities.
         foreach (var kind in AdapterKinds)
         {
             var adapterKey = QrHoverTipCopy.AdapterTipFor(kind).TitleKey;
@@ -140,33 +139,54 @@ internal static class QrHoverTipCopyTests
             "the copy affordance shows exactly one tip");
     }
 
-    private static void OptionTipsPutTheMethodFirst()
+    private static void OptionTipsHaveOneContext()
     {
-        var specs = CouchCoopQrHoverTips.OptionTipSpecsFor(OptionOf(QrHostOptionKind.Web));
-        Expect(specs.Count == 2, "an adapter-backed option keeps both tips");
-        Expect(specs[0].TitleKey == QrHoverTipCopy.MethodWebTitleKey,
-            "the method tip is first");
-        Expect(specs[1].TitleKey == QrHoverTipCopy.AdapterWifiTitleKey,
-            "the network-interface tip is second");
-
-        var methodOnly = CouchCoopQrHoverTips.OptionTipSpecsFor(OptionOf(QrHostOptionKind.Mdns));
-        Expect(methodOnly.Count == 1 && methodOnly[0].TitleKey == QrHoverTipCopy.MethodMdnsTitleKey,
-            "options without an interface keep only their method tip");
+        foreach (var kind in Enum.GetValues<QrHostOptionKind>())
+        {
+            var option = OptionOf(kind);
+            var method = CouchCoopQrHoverTips.OptionTipSpecsFor(option);
+            Expect(method.Count == 1 && method[0] == QrHoverTipCopy.MethodTipFor(option),
+                $"{kind} method row has only its method tip");
+            var network = CouchCoopQrHoverTips.NetworkOptionTipSpecsFor(option);
+            Expect(network.Count == 1, $"{kind} network row has exactly one tip");
+            Expect(network[0].TitleKey == (option.Adapter is null
+                ? QrHoverTipCopy.MethodTipFor(option).TitleKey : QrHoverTipCopy.AdapterWifiTitleKey),
+                $"{kind} network row describes only the network");
+        }
+        foreach (var method in QrSelectionModel.Methods)
+        {
+            var absentNetwork = CouchCoopQrHoverTips.OptionTipSpecsFor(null, method);
+            Expect(absentNetwork.Count == 1 && absentNetwork[0].Description.EndsWith(
+                CouchCoopLocalization.Resolve("couchcoop_qr_no_address"), StringComparison.Ordinal),
+                $"{method} still has one explanatory tip when no network exists");
+        }
+        foreach (var kind in AdapterKinds)
+        {
+            var option = OptionOf(QrHostOptionKind.Interface) with
+            {
+                Adapter = new QrAdapterInfo("adapter", kind, IPAddress.Parse("192.168.1.5")),
+            };
+            var network = CouchCoopQrHoverTips.NetworkOptionTipSpecsFor(option);
+            Expect(network.Count == 1 && network[0] == QrHoverTipCopy.AdapterTipFor(kind),
+                $"{kind} network shows its own adapter guidance without method content");
+        }
+        foreach (var kind in new[] { QrHostOptionKind.Mdns, QrHostOptionKind.Override })
+        {
+            var direct = CouchCoopQrHoverTips.OptionTipSpecsFor(OptionOf(kind), "ipv4");
+            Expect(direct.Count == 1 && direct[0].TitleKey == QrHoverTipCopy.MethodIpv4TitleKey,
+                "Direct method describes Direct even when its network is a PC name or override");
+        }
     }
 
     private static void DescriptionsStayInTheGamerRegister()
     {
         // The words the guidance explicitly bans (players should hear "speed features", not API names),
         // plus the protocol jargon this feature is soaked in internally.
-        string[] banned = ["WebGPU", "SharedArrayBuffer", "mDNS", "IPv4", "IPv6", "TLS", "certificate", "DNS", "origin"];
+        string[] banned = ["WebGPU", "SharedArrayBuffer", "mDNS", "IPv4", "IPv6", "TLS", "DNS", "origin"];
         foreach (var description in AllDescriptions())
         {
             foreach (var word in banned)
             {
-                // Manual root installation is a player action in direct-IP HTTPS. Naming the
-                // certificate is necessary to explain its trust prerequisite honestly.
-                if (word == "certificate" && description == QrHoverTipCopy.MethodTipFor(OptionOf(QrHostOptionKind.DirectIpSecure)).Description)
-                    continue;
                 Expect(!description.Contains(word, StringComparison.OrdinalIgnoreCase),
                     $"'{word}' does not appear in player-facing copy: {description[..Math.Min(60, description.Length)]}…");
             }
@@ -193,15 +213,19 @@ internal static class QrHoverTipCopyTests
         Expect(QrHoverTipCopy.AdapterOtherDescription
             == "A VPN or virtual network (a work VPN, a virtual machine, and the like). Only phones on that same network can use this address — on normal home Wi-Fi, pick one of the options above instead.",
             "the other-network tip retains its examples — kinds of network, never a named product — and its home-Wi-Fi advice");
-        Expect(QrHoverTipCopy.MethodIpv4Description
-            == "The simplest link, and the only one that needs no internet at all. The phone runs a bit slower on it — a secure (https) link lets the browser use extra speed features, which means better fps and battery. Can't be installed as an app (except on iPhone).",
-            "the plain-address tip retains performance and install caveats");
-        Expect(QrHoverTipCopy.MethodWebDescription
-            == "Loads from the internet, then connects straight to this PC. The phone will ask permission for the site to reach your local network — that only lets it reach programs that explicitly accept connections from this site, like this game. Best fps and battery. Needs internet on the phone, and doesn't work on iPhone yet.",
-            "the web-link tip retains the permission scope and performance guidance");
-        Expect(QrHoverTipCopy.MethodSecureDescription
-            == "A secure (https) link straight to this PC — better fps and battery than the plain address, and the phone can install it like a real app. Some routers or internet providers block this kind of address; if it won't load, pick another option. Needs internet.",
-            "the secure-link tip retains comparison, install, router, and fallback guidance");
+        Expect(!QrHoverTipCopy.MethodIpv4Description.Contains("only one", StringComparison.OrdinalIgnoreCase),
+            "plain direct no longer claims to be the only offline method");
+        foreach (var description in new[] { QrHoverTipCopy.MethodIpv4Description,
+            QrHoverTipCopy.MethodWebDescription, QrHoverTipCopy.MethodSecureDescription,
+            QrHoverTipCopy.MethodSelectorTip.Description })
+        {
+            Expect(!description.Contains("better fps", StringComparison.OrdinalIgnoreCase)
+                && !description.Contains("best fps", StringComparison.OrdinalIgnoreCase)
+                && !description.Contains("better performance and battery", StringComparison.OrdinalIgnoreCase),
+                "HTTPS feature availability does not promise performance or battery gains");
+        }
+        Expect(QrHoverTipCopy.MethodSelectorTip.Description.Contains("Direct address (HTTPS)", StringComparison.Ordinal),
+            "the selector explains the new direct HTTPS method");
         Expect(QrHoverTipCopy.MethodMdnsDescription
             == "Uses this PC's name instead of numbers — easy to remember and type by hand. But many phones and routers can't find these names, so it's the least reliable option. If it won't load, use one of the addresses above.",
             "the PC-name tip retains hand-entry, reliability, and address fallback guidance");
@@ -210,22 +234,22 @@ internal static class QrHoverTipCopyTests
             "the copy tip names both things a copied address is actually for");
     }
 
-    private static void DisabledMethodHasSeparateTip()
+    private static void DisabledMethodKeepsBlockerInline()
     {
         var option = OptionOf(QrHostOptionKind.Web, enabled: false, reason: "Choose a network interface.");
         var tips = CouchCoopQrHoverTips.OptionTipSpecsFor(option);
-        Expect(tips.Count == 3 && tips[2].TitleKey == QrHoverTipCopy.UnavailableTitleKey,
-            "a disabled method adds a distinct third tip after method and interface");
-        Expect(tips[2].Description == "Choose a network interface.", "the added tip carries the reason");
-        Expect(!tips[0].Description.Contains(tips[2].Description), "the reason is not duplicated inside the method tip");
+        Expect(tips.Count == 1 && tips[0].TitleKey == QrHoverTipCopy.MethodWebTitleKey,
+            "a disabled method still has exactly one method tip");
+        Expect(tips[0].Description.EndsWith("\nChoose a network interface.", StringComparison.Ordinal),
+            "the same tip includes the blocker");
         var closed = CouchCoopQrHoverTips.MethodSelectorTipSpecsFor(option);
-        Expect(closed.Count == 2 && closed[1] == tips[2], "closed unsupported selection also explains the blocker");
-        Expect(closed[0].Description == "Choose how phones connect to this PC. Switching to Website or Domain name provides HTTPS, which unlocks browser features for better performance and battery life.",
-            "method selector retains the approved performance explanation");
-        Expect(CouchCoopQrHoverTips.MethodSelectorTipSpecsFor(OptionOf(QrHostOptionKind.Web)).Count == 1,
-            "usable methods have no unavailable tip");
-        Expect(QrHoverTipCopy.UnavailableTipFor(OptionOf(QrHostOptionKind.Secure, enabled: false,
-            reason: "Preparing", canSelectWhenUnavailable: true)) is null, "setup is selectable, not disabled");
+        Expect(closed.Count == 1 && closed[0].TitleKey == QrHoverTipCopy.MethodSelectorTitleKey
+            && closed[0].Description.EndsWith("\nChoose a network interface.", StringComparison.Ordinal),
+            "the closed selector folds the blocker into its one control tip");
+        var network = CouchCoopQrHoverTips.NetworkOptionTipSpecsFor(option);
+        Expect(network.Count == 1 && network[0].TitleKey == QrHoverTipCopy.AdapterWifiTitleKey
+            && network[0].Description.EndsWith("\nChoose a network interface.", StringComparison.Ordinal),
+            "network blockers are inline too");
     }
 
     private static void MethodTipFoldsInTheLiveState()
