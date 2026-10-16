@@ -146,7 +146,11 @@ public partial class FixtureRoot : Control
             _platforms.Add(button); button.Visible = false;
         }
         MakeButton(_body, "advanced", () => SetHelp(!_help.Visible));
-        _help = new DirectIpSetupHelpView(T, Style, (label, size) =>
+        _help = new DirectIpSetupHelpView(T, (label, size, role) =>
+        {
+            Style(label, size, role != DirectIpSetupHelpView.TextRole.Body);
+            label.AddThemeColorOverride("font_color", role == DirectIpSetupHelpView.TextRole.Heading ? Gold : Cream);
+        }, (label, size) =>
         {
             label.AddThemeFontOverride("normal_font", _regular);
             label.AddThemeFontSizeOverride("normal_font_size", size);
@@ -174,7 +178,9 @@ public partial class FixtureRoot : Control
             AutowrapMode = TextServer.AutowrapMode.WordSmart, ClipText = true, MaxLinesVisible = 2 };
         caption.SetAnchorsAndOffsetsPreset(LayoutPreset.FullRect);
         caption.OffsetLeft = 24; caption.OffsetRight = -24; caption.OffsetTop = 8.5f; caption.OffsetBottom = -8.5f;
-        Style(caption, 22, true); button.AddChild(caption);
+        Style(caption, 22, true);
+        caption.AddThemeColorOverride("font_color", Cream);
+        button.AddChild(caption);
         if (slot)
         {
             var holder = new CenterContainer { MouseFilter = MouseFilterEnum.Ignore, SizeFlagsHorizontal = SizeFlags.ExpandFill };

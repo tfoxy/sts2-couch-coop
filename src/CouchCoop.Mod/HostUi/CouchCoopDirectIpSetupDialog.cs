@@ -110,10 +110,10 @@ internal sealed partial class CouchCoopDirectIpSetupDialog : CouchCoopModalDialo
             if (_flow.ShowAdvanced) Reveal(_advanced.Start);
             else Reveal(_advancedButton);
         });
-        _advanced = new DirectIpSetupHelpView(L, (label, size, heading) =>
+        _advanced = new DirectIpSetupHelpView(L, (label, size, role) =>
         {
-            Style(label, size, heading);
-            label.AddThemeColorOverride("font_color", heading ? CouchCoopGameUiTheme.ConnectionGroupGold : CouchCoopGameUiTheme.ConnectionExplanationCream);
+            Style(label, size, role != DirectIpSetupHelpView.TextRole.Body);
+            label.AddThemeColorOverride("font_color", role == DirectIpSetupHelpView.TextRole.Heading ? CouchCoopGameUiTheme.ConnectionGroupGold : CouchCoopGameUiTheme.ConnectionExplanationCream);
         }, (label, size) =>
         {
             CouchCoopGameUiTheme.ApplyBodyRichFont(label, size);
