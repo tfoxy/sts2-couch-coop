@@ -228,6 +228,9 @@ export interface MirrorClient {
   // `playerId` (the picked seat's "p:{netId}") is sent only when the join came from a roster BUTTON; it lets the
   // host resolve the exact seat instead of matching the label, which is what makes a rejoin land on the right netId.
   sendJoin(name: string, playerId?: string): void;
+  // Retire a local join attempt after timeout/rollback. Late replies cannot reopen its view.
+  // This does not cancel a server-side spawn or alter the connection's watch request.
+  cancelPendingJoin(): void;
   // Send a SERVER-side settings change (refresh rate / freeze toggles / tween-replay / FMOD) over the `settings`
   // control channel. Fire-and-forget; no-op when the socket isn't open. Only the JOINED (headless) connection
   // should be sent to — the caller gates on that so the shared host game is never mutated. Absent fields are
@@ -346,6 +349,7 @@ export function connectMirrorClient(options: {
     sendClientViewError,
     sendClientVitals,
     sendJoin,
+    cancelPendingJoin,
     sendSettings,
     sendWatch,
     setPingInterval,
@@ -653,6 +657,11 @@ export function connectMirrorClient(options: {
     }
   }
 
+  function cancelPendingJoin(): void {
+    joinPending = false;
+    joinRequestId = null;
+  }
+
   function sendSettings(payload: MirrorSettingsPayload): void {
     if (socket.readyState !== WebSocketCtor.OPEN) {
       return;
@@ -761,9 +770,10 @@ export function connectMirrorClient(options: {
     // the join picker has the scene stream turned OFF, which is precisely when this needs to fire.
     if (raw && typeof raw === "object" && (raw as { type?: unknown }).type === "action-result") {
       const code = (raw as { code?: unknown }).code;
-      if (joinPending && typeof code === "string" && code.length > 0) {
-        joinPending = false;
-        joinRequestId = null;
+      const requestId = (raw as { requestId?: unknown }).requestId;
+      if (joinPending && (requestId == null || requestId === joinRequestId)
+        && typeof code === "string" && code.length > 0) {
+        cancelPendingJoin();
         const message = (raw as { message?: unknown }).message;
         options.onActionError?.(typeof message === "string" && message ? message : code);
         return;
@@ -819,6 +829,17 @@ export function connectMirrorClient(options: {
         // doubled the JSON cost of every session envelope for nothing.
         const envelope = parseBrowserEnvelopeValue(raw);
         if (envelope.type === "session") {
+          // Join replies carry the request id we sent. A timeout, retry, completed join or rollback
+          // retires that id; reject its entire reply before it can replace the current assignment.
+          // Roster pushes and explicit watch replies are independent session updates.
+          if (envelope.requestId?.startsWith("join:") && envelope.requestId !== joinRequestId) return;
+          const hasJoinDirective = envelope.directView === true
+            || typeof envelope.headlessMirrorPath === "string"
+            || typeof envelope.headlessMirrorPort === "number"
+            || typeof envelope.joinRejection === "string";
+          // Legacy replies may omit ids. Once an attempt is retired they cannot reopen it; an active
+          // join still accepts these replies, as does initial unsolicited direct-view bootstrap.
+          if (!envelope.requestId && hasJoinDirective && !joinPending && joinSequence > 0) return;
           parsed = envelope;
           updateHostAccess(envelope.hostAccess ?? normalizeHostAccess(null));
           client.session = { ...envelope, hostAccess: client.hostAccess };
@@ -839,24 +860,20 @@ export function connectMirrorClient(options: {
       }
 
       if (parsed?.directView === true) {
-        joinPending = false;
-        joinRequestId = null;
+        cancelPendingJoin();
         options.onDirectView?.();
       } else if (typeof parsed?.headlessMirrorPath === "string") {
-        joinPending = false;
-        joinRequestId = null;
+        cancelPendingJoin();
         if (isValidSharedMirrorPath(parsed.headlessMirrorPath)) {
           options.onHeadlessRedirect?.(parsed.headlessMirrorPath);
         } else {
           options.onJoinRejected?.("join-failed", "The host supplied an invalid shared seat route.");
         }
       } else if (typeof parsed?.headlessMirrorPort === "number") {
-        joinPending = false;
-        joinRequestId = null;
+        cancelPendingJoin();
         options.onHeadlessRedirect?.(parsed.headlessMirrorPort);
       } else if (typeof parsed?.joinRejection === "string") {
-        joinPending = false;
-        joinRequestId = null;
+        cancelPendingJoin();
         // A rejection is TERMINAL on its own — it is not cross-checked against `session.joined`. It used to be,
         // and that was the "the join screen spins forever" bug: the host derives `session` from the name→roster
         // assignment, which happily reports `joined: true` for a name it just refused to serve, so the guard
@@ -912,8 +929,7 @@ export function connectMirrorClient(options: {
     lifecycleEvent(diagnosticClose);
     reproRecorder.tapWsLifecycle("close", diagnosticSocketRole);
     client.status = "disconnected";
-    joinPending = false;
-    joinRequestId = null;
+    cancelPendingJoin();
     stopPing();
     notify();
   });

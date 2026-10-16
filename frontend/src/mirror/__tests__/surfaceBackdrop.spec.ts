@@ -60,14 +60,13 @@ class MockWebSocket extends EventTarget {
   }
 }
 
-// The host sitting on its MAIN MENU: nothing to join, so the stream gate opens on the "title-only" branch and the
-// renderer fixture explicitly grants access so these layout tests can use its minimal scene.
-// Product host policy is covered separately by hostAccess.spec.ts.
-const MAIN_MENU_SESSION = {
+// Explicit host admission supplies the minimal scene for these layout tests.
+const HOST_VIEW_SESSION = {
   type: "session",
+  directView: true,
   session: { name: null, status: "unassigned", joined: false, playerId: null, connectionCount: 0 },
   players: [],
-  screen: { kind: "menu", type: "Menu", title: "Menu", mirrorMode: "main-menu" },
+  screen: { kind: "run", type: "Run", title: "Run", mirrorMode: "mp-run" },
   hostName: "host",
   hostAccess: { allowed: true, reason: "allowed", generation: 0 },
   scrollAction: true
@@ -104,11 +103,11 @@ const settle = async () => {
 const latest = () => MockWebSocket.instances[MockWebSocket.instances.length - 1];
 
 /** Mount the mirror and drive it all the way to a rendered scene. */
-async function mountWithScene(search = ""): Promise<ReturnType<typeof mount>> {
+async function mountWithScene(search = "?name="): Promise<ReturnType<typeof mount>> {
   window.history.replaceState(null, "", `/${search}`);
   app = mount(MirrorApp);
   await settle();
-  latest().emit(MAIN_MENU_SESSION);
+  latest().emit(HOST_VIEW_SESSION);
   await settle();
   latest().emit(SCENE_DELTA);
   await settle();
@@ -195,7 +194,7 @@ describe("MirrorApp — the gradient is dropped exactly while it is covered", ()
     window.history.replaceState(null, "", "/");
     app = mount(MirrorApp);
     await settle();
-    latest().emit(MAIN_MENU_SESSION);
+    latest().emit(HOST_VIEW_SESSION);
     await settle();
 
     // The stream gate is open (this viewer WILL be shown the host's screen) but no node has arrived, so there is
@@ -208,29 +207,10 @@ describe("MirrorApp — the gradient is dropped exactly while it is covered", ()
     const wrapper = await mountWithScene();
     expect(surface(wrapper).classes()).toContain("surface-covered");
 
-    // The host leaves the main menu for a screen this viewer must PICK a seat on: the gate shuts, the picker
-    // returns, and the cover unmounts with it.
-    latest().emit({
-      ...MAIN_MENU_SESSION,
-      screen: { kind: "lobby", type: "lobby", title: "Character Select", mirrorMode: "mp-character-select" },
-      players: [
-        { playerId: "p:1", name: "Hosty", isHost: true, isRunPlayer: true, connectionCount: 1, disconnected: false, isLocal: false, netId: null, isMirrorSeat: false, seatStatus: "ready", seatStatusReason: null, characterId: null },
-        {
-          playerId: "p:2",
-          name: "Alice",
-          isHost: false,
-          isRunPlayer: true,
-          connectionCount: 0,
-          disconnected: false,
-          isLocal: false,
-          netId: 2,
-          isMirrorSeat: true,
-          seatStatus: "ready",
-          seatStatusReason: null,
-          characterId: null
-        }
-      ]
-    });
+    // A protected menu revokes the displayed scene, exposing the surface again.
+    latest().emit({ type: "host-access", hostAccess: {
+      allowed: false, reason: "menu-open", generation: 1, sceneResetGeneration: 1
+    } });
     await settle();
 
     expect(wrapper.find(".mirror-frame").exists()).toBe(false);

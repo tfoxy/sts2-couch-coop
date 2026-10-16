@@ -104,6 +104,21 @@ describe("mirrorClient join-progress routing", () => {
     expect(seen).toHaveLength(1);
   });
 
+  it("retires progress on cancellation while allowing a subsequent join", () => {
+    const { client, socket, seen } = connectWithGateClosed();
+    client.sendJoin("Alice");
+    client.cancelPendingJoin();
+    socket.emit(progressFrame());
+    expect(seen).toEqual([]);
+    client.sendJoin("Bob");
+    socket.emit(progressFrame());
+    expect(seen).toEqual([]);
+    socket.emit(progressFrame({ requestId: "join:2" }));
+    expect(seen).toHaveLength(1);
+    expect(seen[0].requestId).toBe("join:2");
+    client.close();
+  });
+
   it("ignores progress once the join has resolved, and after the socket closes", () => {
     const { client, socket, seen } = connectWithGateClosed();
     client.sendJoin("Alice", "p:1003");
