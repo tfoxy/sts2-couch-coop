@@ -20,7 +20,7 @@ const { shaderRt, particleRt, createWebglShaderRuntime, createParticleRuntime, c
       if (options.particleOptions?.enableParticles) particles ??= createParticleRuntime(); else { particles?.dispose(); particles = null; }
     }, reconcile() { shaders?.reconcile(); particles?.reconcile(); }, dispose() { shaders?.dispose(); particles?.dispose(); shaders = null; particles = null; } };
   });
-  return { shaderRt, particleRt, createWebglShaderRuntime, createParticleRuntime, createHtmlEffectsHost, applied: { on: false } };
+  return { shaderRt, particleRt, createWebglShaderRuntime, createParticleRuntime, createHtmlEffectsHost, applied: { on: false, pending: false, creates: 0 } };
 });
 
 vi.mock("@godot-scene-web/html/runtime", async (importOriginal) => {
@@ -31,10 +31,11 @@ vi.mock("@godot-scene-web/html/runtime", async (importOriginal) => {
 vi.mock("@/mirror/rendererFactory", async (importOriginal) => {
   const actual = await importOriginal<typeof import("@/mirror/rendererFactory")>();
   return { ...actual, createMirrorRendererFor: (...args: Parameters<typeof actual.createMirrorRendererFor>) => {
+    applied.creates++;
     const renderer = actual.createMirrorRendererFor(...args);
     if (!renderer) return renderer;
     const reconcile = renderer.reconcile.bind(renderer);
-    renderer.reconcile = (state, options) => { const result = reconcile(state, options); return applied.on ? "applied" : result; };
+    renderer.reconcile = (state, options) => { const result = reconcile(state, options); return applied.pending ? false : applied.on ? "applied" : result; };
     return renderer;
   } };
 });
@@ -74,6 +75,8 @@ beforeEach(() => {
   document.body.innerHTML = "";
   resizeObserverCallbacks = [];
   applied.on = false;
+  applied.pending = false;
+  applied.creates = 0;
   mirrorSettings.shaderMode = "static";
   mirrorSettings.particleMode = "static";
   mirrorSettings.effectModePinned = true;
@@ -114,4 +117,42 @@ describe("MirrorView × an applied (not presented) reconcile", () => {
     expect(shaderRt.reconcile).not.toHaveBeenCalled();
     wrapper.unmount();
   });
+  it("silently detaches held input during loading and reattaches only after the fresh scene is presented", async () => {
+    mirrorSettings.keyboard = true;
+    const oldSend = vi.fn(), newSend = vi.fn(), ack = vi.fn();
+    const state = sceneState();
+    const wrapper = mount(MirrorView, { props: { state, revision: 1, accessGeneration: 1,
+      sceneReady: true, sendInput: oldSend, onSceneRendered: ack }, attachTo: document.body });
+    vi.advanceTimersByTime(RAF_TICK);
+    const stage = wrapper.get('[data-testid="mirror-frame"]').element;
+    const key = (type: string) => window.dispatchEvent(new KeyboardEvent(type, { code: "KeyM" }));
+    key("keydown");
+    expect(oldSend).toHaveBeenCalledWith(expect.objectContaining({ kind: "key", pressed: true }));
+    oldSend.mockClear();
+    ack.mockClear();
+    await wrapper.setProps({ sceneReady: false, accessGeneration: 2, sendInput: newSend });
+    key("keyup"); key("keydown"); key("keyup");
+    vi.advanceTimersByTime(RAF_TICK * 3);
+    expect(oldSend).not.toHaveBeenCalled(); // disposal never forwards release coordinates or edges
+    expect(newSend).not.toHaveBeenCalled();
+    expect(ack).not.toHaveBeenCalled();
+    expect(wrapper.get('[data-testid="mirror-frame"]').element).toBe(stage);
+    expect(applied.creates).toBe(1);
+    applied.pending = true;
+    await wrapper.setProps({ sceneReady: true, accessGeneration: 3, revision: 2 });
+    vi.advanceTimersByTime(RAF_TICK);
+    key("keydown"); key("keyup");
+    expect(newSend).not.toHaveBeenCalled();
+    expect(ack).not.toHaveBeenCalled();
+    applied.pending = false;
+    await wrapper.setProps({ revision: 3 });
+    vi.advanceTimersByTime(RAF_TICK);
+    key("keydown"); key("keyup");
+    expect(newSend).toHaveBeenCalledTimes(2);
+    expect(oldSend).not.toHaveBeenCalled();
+    expect(applied.creates).toBe(1);
+    wrapper.unmount();
+    mirrorSettings.keyboard = false;
+  });
+
 });

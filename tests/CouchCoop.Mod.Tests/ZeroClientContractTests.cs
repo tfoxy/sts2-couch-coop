@@ -258,6 +258,14 @@ internal static class ZeroClientContractTests
 
         // 4. A 0 -> 1 -> 0 VIEWER CYCLE. While the viewers are connected the doubles MUST count (a contract that
         //    cannot see work is vacuous); once they are gone the host returns to exactly nothing.
+        await using (var coordination = await rig.ConnectViewerAsync(watch: false, staticBackground: true))
+        {
+            Expect(rig.AccessSubscriptions == 0 && rig.AccessReads == 0 && rig.AccessSchedules == 0,
+                "coordination-only connection never starts access monitoring");
+            for (var i = 0; i < 10; i++) rig.Screens.Fire();
+            Expect(rig.AccessSubscriptions == 0 && rig.AccessReads == 0 && rig.AccessSchedules == 0,
+                "coordination-only screen events schedule no access work");
+        }
         await using (var picker = await rig.ConnectViewerAsync(watch: false, staticBackground: true))
         await using (var streaming = await rig.ConnectViewerAsync(watch: true, staticBackground: false))
         {
@@ -274,7 +282,7 @@ internal static class ZeroClientContractTests
             rig.Screens.Fire();
             Expect(await rig.WaitAsync(() => rig.Runtime.SceneLive == 0 && rig.Runtime.HintLive == 0),
                 "revoking host access parks scene and hint producers while browsers remain connected");
-            Expect(rig.Screens.Live >= 1, "the access observer stays subscribed while the host menu is blocked");
+            Expect(rig.Screens.Live >= 1 && rig.AccessLive == 1, "the access observer stays subscribed while the host menu is blocked");
             Expect(rig.Runtime.InputCancellations >= 1, "revocation reaches the runtime input cancellation port");
             rig.Screens.AccessAllowed = true;
             rig.Screens.Fire();
@@ -289,6 +297,10 @@ internal static class ZeroClientContractTests
             "every timer the viewers caused is gone within seconds of the last viewer leaving");
         rig.AssertQuiet("after a 0-1-0 viewer cycle", rig.Snapshot(), QuietWindow);
         Expect(!rig.Server.IsHostingSupervisionActive, "hosting supervision stops with the last viewer");
+        Expect(rig.AccessLive == 0 && rig.AccessSubscriptions == rig.AccessDisposals,
+            "last watcher releases every access subscription");
+        var accessReadsAfterWatchers = rig.AccessReads;
+        var accessSchedulesAfterWatchers = rig.AccessSchedules;
 
         // 5. A SEAT DETACHES MID-RUN. Its process stays owned, and supervising it is the one thing the dormancy rule
         //    lets a client-less host keep doing: the tracker listens to the screen event and ticks once a second.
@@ -304,6 +316,8 @@ internal static class ZeroClientContractTests
             allowedDispatches: 3,
             allowedTimers: 1);
         Expect(rig.Screens.Live == 1, "exactly one screen subscription, the tracker's, supervises the detached seat");
+        Expect(rig.AccessLive == 0 && rig.AccessReads == accessReadsAfterWatchers && rig.AccessSchedules == accessSchedulesAfterWatchers,
+            "owned seat supervision does not retain host access monitoring");
         rig.Server.ReportOwnedSeatDemand(0, generation: 2);
         Expect(await rig.WaitAsync(rig.IsFullyParked), "reaping the seat releases supervision");
         rig.Clock.Advance(ZeroClientGuard.ReleaseGrace + TimeSpan.FromSeconds(1));
@@ -597,6 +611,11 @@ internal static class ZeroClientContractTests
             Services = services;
         }
 
+        public int AccessSubscriptions;
+        public int AccessDisposals;
+        public int AccessReads;
+        public int AccessSchedules;
+        public int AccessLive => AccessSubscriptions - AccessDisposals;
         public CountingRuntime Runtime { get; }
         public FakeScreens Screens { get; }
         public FakeMainThread MainThread { get; }
@@ -642,14 +661,28 @@ internal static class ZeroClientContractTests
             GameScreenContext.Source = screens;
             GameMainThread.Source = mainThread;
             HostBrowserAccessMonitor.SourceFactoryOverride = () => new HostBrowserAccessMonitor.Source(
-                Subscribe: callback => GameScreenContext.SubscribeUpdated(callback),
+                Subscribe: callback =>
+                {
+                    Interlocked.Increment(ref rig.AccessSubscriptions);
+                    var subscription = GameScreenContext.SubscribeUpdated(callback);
+                    return new Release(() =>
+                    {
+                        subscription?.Dispose();
+                        Interlocked.Increment(ref rig.AccessDisposals);
+                    });
+                },
                 ReadReason: () =>
                 {
+                    Interlocked.Increment(ref rig.AccessReads);
                     _ = GameScreenContext.GetCurrent();
                     return runtime.Mode == "run" && screens.AccessAllowed
                         ? HostBrowserAccessReasons.Allowed : HostBrowserAccessReasons.MenuOpen;
                 },
-                Schedule: GameNextFrame.Schedule);
+                Schedule: callback =>
+                {
+                    Interlocked.Increment(ref rig.AccessSchedules);
+                    GameNextFrame.Schedule(callback);
+                });
 
             if (compose is not null)
             {

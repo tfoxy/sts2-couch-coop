@@ -288,6 +288,8 @@ export interface GamepadCaptureOptions {
    * flip back on restarts it without waiting for a reconnect.
    */
   enabled?: () => boolean;
+  /** On access resume, ignore controls already held in the first usable sample until each is released. */
+  neutralizeHeldOnStart?: boolean;
   /**
    * `navigator.getGamepads`, already bound. `null`/absent ⇒ this browser has no Gamepad API (a plain-HTTP origin,
    * an engine that never had one) and the whole capture is inert.
@@ -345,6 +347,9 @@ export function createGamepadCapture(options: GamepadCaptureOptions): GamepadCap
     options.visibility === undefined ? (typeof document === "undefined" ? null : document) : options.visibility;
 
   let held = new Set<PadToken>();
+  let initialSamplePending = options.neutralizeHeldOnStart === true;
+  let neutralized: Set<PadToken> | null = null;
+  let sampledHeld: ReadonlySet<PadToken> = held;
   let rafHandle: number | null = null;
   let disposed = false;
 
@@ -423,10 +428,31 @@ export function createGamepadCapture(options: GamepadCaptureOptions): GamepadCap
     }
     if (!usable) {
       // No pad left to read. Release whatever the vanished pad held and park — `gamepadconnected` restarts us.
+      // A browser may hide pads until the next gesture; keep the initial-sample guard armed until one exists.
+      neutralized = null;
       releaseAll();
       return;
     }
-    emitEdges(padTokensFrom(pads, held));
+    // The prior capture may have latched an analogue control inside the hysteresis band. Its first
+    // resumed sample must reach the release floor before it can become a fresh press.
+    const previousSample = initialSamplePending ? new Set(PAD_TOKENS) : neutralized ? sampledHeld : held;
+    let next = padTokensFrom(pads, previousSample);
+    sampledHeld = next;
+    if (initialSamplePending) {
+      initialSamplePending = false;
+      neutralized = new Set(next);
+    }
+    if (neutralized) {
+      for (const token of neutralized) {
+        if (!next.has(token)) neutralized.delete(token);
+      }
+      if (neutralized.size === 0) neutralized = null;
+      else {
+        const suppressed = neutralized;
+        next = new Set([...next].filter((token) => !suppressed.has(token)));
+      }
+    }
+    emitEdges(next);
     rafHandle = raf?.(poll) ?? null;
   }
 

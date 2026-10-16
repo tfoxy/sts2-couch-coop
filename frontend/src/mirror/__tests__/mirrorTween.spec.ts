@@ -1606,6 +1606,32 @@ describe("tween hints whose endpoint SPACE is gone (S2/D2)", () => {
     expect(el(stage, "card").style.opacity).toBe("0.5");
   });
 
+  it("retires a deferred arm across suspension while preserving the element for a fresh scene", () => {
+    const { stage, renderer } = harness();
+    const state = createMirrorState();
+    handScene(state);
+    renderer.reconcile(state);
+    const card = el(stage, "card");
+    let deferredArm: FrameRequestCallback | null = null;
+    vi.stubGlobal("requestAnimationFrame", (cb: FrameRequestCallback) => { deferredArm = cb; return 91; });
+    const cancel = vi.fn();
+    vi.stubGlobal("cancelAnimationFrame", cancel);
+    hintsOnly(state, [{ ...transformHint("card", [1, 0, 0, 1, 0, -200], 200),
+      startTransform: [1, 0, 0, 1, 0, -100] }]);
+    renderer.reconcile(state);
+    expect(ty(card)).toBe(-100);
+    renderer.resetTransientState?.();
+    expect(cancel).toHaveBeenCalledWith(91);
+    fullLocal(state, [node("root", null, 0, 0), node("holder", "root", 100, 100),
+      node("play", "root", 0, 0), node("card", "holder", 30, 40)], ["root", "holder", "play", "card"]);
+    renderer.reconcile(state);
+    expect(el(stage, "card")).toBe(card);
+    expect([tx(card), ty(card)]).toEqual([30, 40]);
+    deferredArm!(16);
+    expect([tx(card), ty(card)]).toEqual([30, 40]);
+    expect(channels(card)).not.toContain("transform");
+  });
+
   it("does not re-arm a primed local endpoint after its target moves house before rAF", () => {
     const { stage, renderer } = harness();
     const state = createMirrorState();

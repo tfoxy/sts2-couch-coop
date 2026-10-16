@@ -111,12 +111,15 @@ const props = withDefaults(defineProps<{
   // Called after each rendered frame so the client can ack the host (scene-delta flow control). Absent → no ack
   // (the host's self-heal timeout still drives updates).
   onSceneRendered?: () => void;
+  accessGeneration?: number;
+  sceneReady?: boolean;
   connectionAttemptId?: string | null;
   connected?: boolean;
   onFirstSceneFramePresented?: (attemptId: string) => void;
   onSceneRenderError?: (attemptId: string, error: unknown) => void;
 }>(), {
   // Render-only mounts do not accept input. The application always supplies the current semantic sender.
+  sceneReady: true,
   sendScroll: () => () => null
 });
 
@@ -480,6 +483,7 @@ function syncHandRaiseUi(): void {
  * frame only AFTER this guard has let it through).
  */
 function runScheduledRender(): "presented" | "applied" | "pending" | "reentrant" {
+  if (props.sceneReady === false) return "pending";
   if (renderRunning) {
     return "reentrant";
   }
@@ -529,6 +533,7 @@ function runScheduledRender(): "presented" | "applied" | "pending" | "reentrant"
         result: "after"});
       return "applied";
     }
+    attachInput();
     rewardFocusCoordinator?.afterReconcile(
       renderer?.rewardFocusSnapshot() ?? { screenId: null, rows: [] }
     );
@@ -617,6 +622,23 @@ watch(() => rendererRuntimeStatus.phase, (phase) => {
   if (phase !== "failed" || activeStageBackend() === "dom") return;
   // A failed or lost GPU stage can no longer prove where a touch lands. Release held inputs now;
   // retry remounts the view and installs fresh capture without reconnecting its seat.
+  detachInput();
+}, { flush: "sync" });
+
+onMounted(() => {
+  try {
+    mountScene();
+  } catch (error) {
+    firstPresentation.failed(error);
+    throw error;
+  }
+});
+
+// Captures own a local epoch as well as their generation-bound network callbacks. Disposal during
+// suspension must retire holds silently, including keyboard/gamepad releases and eager-scroll work.
+let inputEpoch = 0;
+function detachInput(silent = false): void {
+  if (silent) inputEpoch++;
   hideConfirmTap();
   unsubscribePressModality?.();
   unsubscribePressModality = null;
@@ -630,15 +652,142 @@ watch(() => rendererRuntimeStatus.phase, (phase) => {
   keyboardCapture = null;
   eagerScroll?.dispose();
   eagerScroll = null;
+  delete (window as unknown as Record<string, unknown>).__mirrorRewardFocus;
+}
+
+function attachInput(): void {
+  if (props.sendInput && renderer && stage.value && !inputCapture) {
+    // R10 WS-E — EAGER SCROLLING. Built before inputCapture because the capture takes it as a collaborator: it
+    // gets first refusal on a wheel tick over the map / a card grid, owns the one-finger pan there, and
+    // compensates every resolved coordinate while the local offset runs ahead of the host's.
+    const sender = props.sendInput;
+    const actionSender = props.sendAction;
+    const scrollSender = props.sendScroll;
+    const epoch = inputEpoch;
+    const live = () => epoch === inputEpoch && props.sceneReady !== false;
+    const sendInput = (message: MirrorInputMessage) => { if (live()) sender(message); };
+    eagerScroll = createEagerScroll({
+      targets: () => renderer?.eagerScrollTargets() ?? [],
+      send: (message) => sendInput(message),
+      // M0 — the local offset is WRITTEN by whatever backend painted the node, and "where is it painted" is
+      // asked of the same backend. The engine keeps the arithmetic and stops touching elements.
+      applyLocalOffset: (nodeId, dy) => renderer?.applyLocalOffset(nodeId, dy),
+      // A canvas backend takes the eager position as an ABSOLUTE target instead (see the contract): its
+      // presentation can be asynchronous, so a relative offset re-composed after the reconcile would land a frame
+      // late. Chosen once — the renderer is created once per mount, before this engine.
+      ...(renderer.applyLocalTarget
+        ? { applyLocalTarget: (nodeId: string, y: number | null) => renderer?.applyLocalTarget?.(nodeId, y) } : {}),
+      scrollRenderedY: (nodeId) => renderer?.scrollRenderedY(nodeId) ?? null,
+      // The letterbox scale's reciprocal — the trackpad's 1:1 pixel mapping is measured in DESIGN px.
+      designPerClientPx: () => (scale.value > 0 ? 1 / scale.value : 1),
+      // The current session contract always supports the absolute channel.
+      sendScroll: (id, offset) => live() ? scrollSender(id, offset) : null,
+    });
+    // Pass the LIVE widened design width so pointer coords map onto the actual stage width (up to 2520 on an
+    // ultra-wide screen) and invert each node's anchor shift — see designCoord. The renderer's interactive-rects
+    // provider is handed in for the input side's hit-consistency pass (agent B wires its consumption). The
+    // onHeldCard callback feeds the renderer's cosmetic touch-drag card lift (setHeldCard) — forced to null
+    // while the viewer has the setting off, so a disabled toggle never lifts anything even mid-drag.
+    inputCapture = createInputCapture(
+      stage.value,
+      sendInput,
+      () => design.value.w,
+      renderer.interactiveRects,
+      (id, x, y, mode) => renderer?.setHeldCard(mirrorSettings.raiseHeldCard ? id : null, x, y, mode),
+      {
+        raiseHeldCard: () => mirrorSettings.raiseHeldCard,
+        unfocusOnRelease: () => mirrorSettings.unfocusOnRelease,
+        tapToFocus: () => mirrorSettings.tapToFocus,
+        isFocused: (id) => props.state.nodes.get(id)?.focused === true,
+        noteTouchTarget: (id) => rewardFocusCoordinator?.noteTouchTarget(id),
+        isCard: (id) => renderer?.isCardTouchTarget(id) ?? false,
+        isHandCard: (id) => renderer?.isHandCard(id) ?? false,
+        // Below-line drag-drop cancel: a HAND card dropped below its play-zone floor de-selects (right-click).
+        playZoneThreshold: (d) => playZoneThreshold(MIRROR_DESIGN_HEIGHT, d),
+        // End-turn below-button un-hover (R4 change 2): resolved release point → the button's game-space box.
+        endTurnBoxAt: (x, y) => renderer?.endTurnBoxAt(x, y) ?? null,
+        // #12: a from-hand card-choice dialog (Survivor discard / exhaust / enchant) → single-tap selection.
+        handChoiceActive: () => renderer?.handChoiceActive() ?? false,
+        // CONFIRM TAP (confirmTap.ts): on the widgets whose tap spends a run reward, a tap only focuses and the
+        // client-side confirm button commits. Both read live, so a settings flip lands on the next tap.
+        confirmTap: () => mirrorSettings.confirmTap,
+        confirmTapAt: (x, y) => renderer?.confirmTapAt(x, y) ?? null
+      },
+      // FIX 3 (R7): the live GAME-space view-scale input registry, so a hover/tap over an enlarged view-scale item
+      // (an ancient-event option, a reward/shop item) maps back onto its true hit box (viewScaleInverse). Empty off
+      // a view-scale screen ⇒ the inverse is identity ⇒ input byte-identical.
+      () => renderer?.viewScaleInputStamps() ?? [],
+      eagerScroll,
+      // R11 WS-M — map-node travel. Wired only when the action channel exists (a receive-only mirror keeps plain
+      // coordinate clicks); the router itself refuses while a drawing tool is armed.
+      actionSender
+        ? createMapNodeTapRouter({
+            sendAction: (message) => { if (live()) actionSender(message); },
+            drawingToolActive: () => renderer?.mapDrawingToolActive() ?? false,
+            // M0 — WHICH map point is under the finger is the renderer's answer, not a DOM walk of this module's.
+            mapNodeAt: (x, y) => renderer?.mapNodeAt(x, y) ?? null
+          })
+        : undefined,
+      // READABLE-HAND MODE: the hit surfaces the renderer draws away from where the game has them, so a tap on a
+      // raised card reaches the card. Empty whenever the mode is off / the hand is down ⇒ input untouched.
+      () => renderer?.raiseInputStamps() ?? [],
+      // M0 — the renderer's own input probes (touchStackAt / spreadPainterAt). The DOM backend answers them with
+      // the same z-stack walks the input modules used to run inline, so this is byte-identical there; a canvas
+      // stage answers from its draw list, where there are no elements to walk.
+      renderer
+    );
+    // BROWSER GAMEPAD. No stage, no renderer, no coordinate — a pad token is not a place — so it takes only the
+    // send path and the live setting. Construction is safe everywhere: without the Gamepad API (every plain-HTTP
+    // origin) it attaches nothing and polls nothing.
+    gamepadCapture = createGamepadCapture({
+      send: (message) => sendInput(message),
+      enabled: () => mirrorSettings.gamepad,
+      neutralizeHeldOnStart: inputEpoch > 0
+    });
+    // BROWSER KEYBOARD. Same deal: the send path and the live setting, nothing else — a key names no place on
+    // the stage, and the GAME maps it onto its own shortcut.
+    keyboardCapture = createKeyboardCapture({
+      send: (message) => sendInput(message),
+      enabled: () => mirrorSettings.keyboard
+    });
+    rewardFocusCoordinator = createRewardFocusCoordinator({
+      modality: lastPressModality,
+      canControl: () => props.sendInput !== undefined,
+      input: inputCapture
+    });
+    // A mouse/pen press changes modality without waiting for another scene delta. Only the coordinator's narrow
+    // programmatic readiness is cleared; the user's ordinary tap-to-focus arm remains intact. Asked of the
+    // coordinator, not of InputCapture directly, so that latch has exactly one owner.
+    unsubscribePressModality = onPressModalityChange((modality) => {
+      if (modality === "pointer") rewardFocusCoordinator?.releaseReady();
+    });
+    rewardFocusCoordinator.afterReconcile(renderer.rewardFocusSnapshot());
+    (window as unknown as Record<string, unknown>).__mirrorRewardFocus = () => ({
+      modality: lastPressModality(),
+      ...renderer?.rewardFocusSnapshot()
+    });
+    // CONFIRM TAP: resolve the button's three sprites now, not on the first tap — a tap that finds them missing
+    // falls back to the ordinary two-step, and the whole point is that the reward screens never behave that way.
+    // Only a CONTROLLING client needs them (a receive-only mirror has no gestures), and only while the setting is
+    // on; flipping it on later primes then. Idempotent, so both callers can be unconditional.
+    if (mirrorSettings.confirmTap) {
+      void primeConfirmSprites();
+    }
+  }
+}
+
+watch(() => [props.accessGeneration, props.sceneReady] as const, () => {
+  detachInput(true);
+  renderer?.resetTransientState?.();
+  if (renderRaf) cancelAnimationFrame(renderRaf);
+  renderRaf = 0;
+  // The old tree remains displayed. Only a fresh full scene may enter the reconcile/ACK pipeline.
+  if (props.sceneReady !== false) scheduleRender();
 }, { flush: "sync" });
 
-onMounted(() => {
-  try {
-    mountScene();
-  } catch (error) {
-    firstPresentation.failed(error);
-    throw error;
-  }
+watch(() => mirrorSettings.confirmTap, (on) => {
+  if (on && inputCapture) void primeConfirmSprites();
+  else if (!on) hideConfirmTap();
 });
 
 function mountScene(): void {
@@ -816,132 +965,9 @@ function mountScene(): void {
     applyShaderMode(effectiveShaderMode.value);
     applyParticleMode(effectiveParticleMode.value);
     reconcileRuntimes("change");
-    if (props.sendInput) {
-      // R10 WS-E — EAGER SCROLLING. Built before inputCapture because the capture takes it as a collaborator: it
-      // gets first refusal on a wheel tick over the map / a card grid, owns the one-finger pan there, and
-      // compensates every resolved coordinate while the local offset runs ahead of the host's.
-      const sendInput = props.sendInput;
-      eagerScroll = createEagerScroll({
-        targets: () => renderer?.eagerScrollTargets() ?? [],
-        send: (message) => sendInput(message),
-        // M0 — the local offset is WRITTEN by whatever backend painted the node, and "where is it painted" is
-        // asked of the same backend. The engine keeps the arithmetic and stops touching elements.
-        applyLocalOffset: (nodeId, dy) => renderer?.applyLocalOffset(nodeId, dy),
-        // A canvas backend takes the eager position as an ABSOLUTE target instead (see the contract): its
-        // presentation can be asynchronous, so a relative offset re-composed after the reconcile would land a frame
-        // late. Chosen once — the renderer is created once per mount, before this engine.
-        ...(renderer.applyLocalTarget
-          ? { applyLocalTarget: (nodeId: string, y: number | null) => renderer?.applyLocalTarget?.(nodeId, y) } : {}),
-        scrollRenderedY: (nodeId) => renderer?.scrollRenderedY(nodeId) ?? null,
-        // The letterbox scale's reciprocal — the trackpad's 1:1 pixel mapping is measured in DESIGN px.
-        designPerClientPx: () => (scale.value > 0 ? 1 / scale.value : 1),
-        // The current session contract always supports the absolute channel.
-        sendScroll: props.sendScroll,
-      });
-      // Pass the LIVE widened design width so pointer coords map onto the actual stage width (up to 2520 on an
-      // ultra-wide screen) and invert each node's anchor shift — see designCoord. The renderer's interactive-rects
-      // provider is handed in for the input side's hit-consistency pass (agent B wires its consumption). The
-      // onHeldCard callback feeds the renderer's cosmetic touch-drag card lift (setHeldCard) — forced to null
-      // while the viewer has the setting off, so a disabled toggle never lifts anything even mid-drag.
-      inputCapture = createInputCapture(
-        stage.value,
-        props.sendInput,
-        () => design.value.w,
-        renderer.interactiveRects,
-        (id, x, y, mode) => renderer?.setHeldCard(mirrorSettings.raiseHeldCard ? id : null, x, y, mode),
-        {
-          raiseHeldCard: () => mirrorSettings.raiseHeldCard,
-          unfocusOnRelease: () => mirrorSettings.unfocusOnRelease,
-          tapToFocus: () => mirrorSettings.tapToFocus,
-          isFocused: (id) => props.state.nodes.get(id)?.focused === true,
-          noteTouchTarget: (id) => rewardFocusCoordinator?.noteTouchTarget(id),
-          isCard: (id) => renderer?.isCardTouchTarget(id) ?? false,
-          isHandCard: (id) => renderer?.isHandCard(id) ?? false,
-          // Below-line drag-drop cancel: a HAND card dropped below its play-zone floor de-selects (right-click).
-          playZoneThreshold: (d) => playZoneThreshold(MIRROR_DESIGN_HEIGHT, d),
-          // End-turn below-button un-hover (R4 change 2): resolved release point → the button's game-space box.
-          endTurnBoxAt: (x, y) => renderer?.endTurnBoxAt(x, y) ?? null,
-          // #12: a from-hand card-choice dialog (Survivor discard / exhaust / enchant) → single-tap selection.
-          handChoiceActive: () => renderer?.handChoiceActive() ?? false,
-          // CONFIRM TAP (confirmTap.ts): on the widgets whose tap spends a run reward, a tap only focuses and the
-          // client-side confirm button commits. Both read live, so a settings flip lands on the next tap.
-          confirmTap: () => mirrorSettings.confirmTap,
-          confirmTapAt: (x, y) => renderer?.confirmTapAt(x, y) ?? null
-        },
-        // FIX 3 (R7): the live GAME-space view-scale input registry, so a hover/tap over an enlarged view-scale item
-        // (an ancient-event option, a reward/shop item) maps back onto its true hit box (viewScaleInverse). Empty off
-        // a view-scale screen ⇒ the inverse is identity ⇒ input byte-identical.
-        () => renderer?.viewScaleInputStamps() ?? [],
-        eagerScroll,
-        // R11 WS-M — map-node travel. Wired only when the action channel exists (a receive-only mirror keeps plain
-        // coordinate clicks); the router itself refuses while a drawing tool is armed.
-        props.sendAction
-          ? createMapNodeTapRouter({
-              sendAction: props.sendAction,
-              drawingToolActive: () => renderer?.mapDrawingToolActive() ?? false,
-              // M0 — WHICH map point is under the finger is the renderer's answer, not a DOM walk of this module's.
-              mapNodeAt: (x, y) => renderer?.mapNodeAt(x, y) ?? null
-            })
-          : undefined,
-        // READABLE-HAND MODE: the hit surfaces the renderer draws away from where the game has them, so a tap on a
-        // raised card reaches the card. Empty whenever the mode is off / the hand is down ⇒ input untouched.
-        () => renderer?.raiseInputStamps() ?? [],
-        // M0 — the renderer's own input probes (touchStackAt / spreadPainterAt). The DOM backend answers them with
-        // the same z-stack walks the input modules used to run inline, so this is byte-identical there; a canvas
-        // stage answers from its draw list, where there are no elements to walk.
-        renderer
-      );
-      // BROWSER GAMEPAD. No stage, no renderer, no coordinate — a pad token is not a place — so it takes only the
-      // send path and the live setting. Construction is safe everywhere: without the Gamepad API (every plain-HTTP
-      // origin) it attaches nothing and polls nothing.
-      gamepadCapture = createGamepadCapture({
-        send: (message) => sendInput(message),
-        enabled: () => mirrorSettings.gamepad
-      });
-      // BROWSER KEYBOARD. Same deal: the send path and the live setting, nothing else — a key names no place on
-      // the stage, and the GAME maps it onto its own shortcut.
-      keyboardCapture = createKeyboardCapture({
-        send: (message) => sendInput(message),
-        enabled: () => mirrorSettings.keyboard
-      });
-      rewardFocusCoordinator = createRewardFocusCoordinator({
-        modality: lastPressModality,
-        canControl: () => props.sendInput !== undefined,
-        input: inputCapture
-      });
-      // A mouse/pen press changes modality without waiting for another scene delta. Only the coordinator's narrow
-      // programmatic readiness is cleared; the user's ordinary tap-to-focus arm remains intact. Asked of the
-      // coordinator, not of InputCapture directly, so that latch has exactly one owner.
-      unsubscribePressModality = onPressModalityChange((modality) => {
-        if (modality === "pointer") rewardFocusCoordinator?.releaseReady();
-      });
-      if (initialPresented !== false) {
-        rewardFocusCoordinator.afterReconcile(renderer.rewardFocusSnapshot());
-      }
-      (window as unknown as Record<string, unknown>).__mirrorRewardFocus = () => ({
-        modality: lastPressModality(),
-        ...renderer?.rewardFocusSnapshot()
-      });
-      // CONFIRM TAP: resolve the button's three sprites now, not on the first tap — a tap that finds them missing
-      // falls back to the ordinary two-step, and the whole point is that the reward screens never behave that way.
-      // Only a CONTROLLING client needs them (a receive-only mirror has no gestures), and only while the setting is
-      // on; flipping it on later primes then. Idempotent, so both callers can be unconditional.
-      if (mirrorSettings.confirmTap) {
-        void primeConfirmSprites();
-      }
-      watch(
-        () => mirrorSettings.confirmTap,
-        (on) => {
-          if (on) {
-            void primeConfirmSprites();
-          } else {
-            hideConfirmTap();
-          }
-        }
-      );
-    }
     startAdaptiveQuality();
     if (initialPresented !== false) {
+      if (props.sceneReady !== false && initialPresented !== "applied") attachInput();
       sceneCheckpoint("frame-presented");
       if (warmAckTraceEnabled()) emitWarmAckTrace({kind: "view-on-scene-rendered", revision: props.state.revision,
         result: "before"});
@@ -1368,22 +1394,7 @@ onBeforeUnmount(() => {
   detachReproStage = null;
   adaptiveController?.stop();
   adaptiveController = null;
-  unsubscribePressModality?.();
-  unsubscribePressModality = null;
-  rewardFocusCoordinator?.dispose();
-  rewardFocusCoordinator = null;
-  delete (window as unknown as Record<string, unknown>).__mirrorRewardFocus;
-  inputCapture?.dispose();
-  inputCapture = null;
-  // Releases anything the pad is still holding on its way out — an unmount mid-press must not leave the seat
-  // holding a button.
-  gamepadCapture?.dispose();
-  gamepadCapture = null;
-  // Same symmetry for the keyboard: an unmount mid-press releases the key rather than leaving the seat holding it.
-  keyboardCapture?.dispose();
-  keyboardCapture = null;
-  eagerScroll?.dispose();
-  eagerScroll = null;
+  detachInput();
   if (renderRaf) {
     cancelAnimationFrame(renderRaf);
     renderRaf = 0;

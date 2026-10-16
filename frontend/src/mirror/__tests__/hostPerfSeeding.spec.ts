@@ -136,7 +136,15 @@ describe("MirrorApp — Host performance seeding", () => {
     }
 
     send(data: string) {
-      this.sent.push(JSON.parse(data));
+      const message = JSON.parse(data);
+      this.sent.push(message);
+      // The real server acknowledges a requested watch with the current access state. Settings must
+      // wait for this boundary instead of being counted as sent during the direct-view join callback.
+      if (message.type === "watch" && message.on === true) {
+        queueMicrotask(() => this.emit({ type: "host-access", hostAccess: {
+          allowed: true, reason: "allowed", generation: 0, sceneResetGeneration: 0
+        } }));
+      }
     }
 
     close() {

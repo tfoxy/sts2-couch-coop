@@ -1254,6 +1254,19 @@ function createMirrorRenderer(
 
   return {
     reconcile,
+    resetTransientState() {
+      reconcileController.resetTransientState();
+      cardFlights.clear();
+      tweens.clear();
+      trails.dispose();
+      handController.setHeldCard(null, 0, 0);
+      for (const record of records.values()) {
+        trails.releaseFrame(record);
+        handController.clearCosmetics(record);
+      }
+      landingLog.clear();
+      scheduleTick();
+    },
     markTextureDirty,
     setStretch,
     setHeldCard: (...args) => handController.setHeldCard(...args),

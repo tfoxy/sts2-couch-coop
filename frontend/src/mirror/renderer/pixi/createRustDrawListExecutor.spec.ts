@@ -20,6 +20,41 @@ afterEach(() => {
 });
 
 describe("Rust execution phase diagnostic", () => {
+  it("drops queued submissions across suspension and retains the engine for a fresh full frame", async () => {
+    let release!: (value: string) => void;
+    const result = JSON.stringify({ presented: true, revision: 1, draws: 1, resourcePending: 0, unsupportedCommands: 0 });
+    const engine = {
+      backend: "WebGL2", resize: () => {}, dispose: vi.fn(), upload_rgba_batch: () => 0,
+      admit_scene: vi.fn(() => JSON.stringify({ accepted: true, revision: 1, unsupportedCommands: 0, resourcePending: 0 })),
+      apply_patch: () => "{}", present: vi.fn().mockImplementationOnce(() => new Promise<string>(resolve => { release = resolve; }))
+        .mockResolvedValue(result),
+    };
+    (globalThis as Record<string, unknown>).__rustProjectionTest = { engine };
+    vi.stubEnv("VITE_RUST_PROTOTYPE_MODULE_URL", moduleUrl(
+      "export default async function init(){return {}};export class RustRenderer{static async create(){return globalThis.__rustProjectionTest.engine}}",
+    ));
+    vi.stubEnv("VITE_RUST_SCENE_SERIALIZER_URL", moduleUrl(
+      "export function encodeRustScene(){return {bytes:new Uint8Array([1]),scene:{version:2,revision:1,resources:[],commands:[]},resources:[],textUploads:[],unsupportedCommands:0}};export function encodeRustPatch(){return null};export function encodeRustResources(){return new Uint8Array(0)}",
+    ));
+    const renderer = await createRustDrawListExecutor({ canvas: document.createElement("canvas"), width: 1,
+      height: 1, designWidth: 1, designHeight: 1, onInvalidate: () => {} });
+    try {
+      const list = createDrawList<string>(); const quad = createQuadView(); quad.w = quad.h = 1; list.pushQuad(quad);
+      const active = renderer.render(list, []);
+      await vi.waitFor(() => expect(engine.present).toHaveBeenCalledOnce());
+      const queued = renderer.render(list, []);
+      renderer.invalidatePendingPresentations?.();
+      const fresh = renderer.render(list, []);
+      release(result);
+      expect(await active).toBe(false);
+      expect(await queued).toBe(false);
+      expect(await fresh).toBe(true);
+      expect(engine.admit_scene).toHaveBeenCalledTimes(2);
+      expect(engine.present).toHaveBeenCalledTimes(2);
+      expect(engine.dispose).not.toHaveBeenCalled();
+    } finally { renderer.dispose(); }
+  });
+
   it("presents supported drawings after another drawing's texture fails", async () => {
     window.history.replaceState({}, "", "/?rustDiagnostics=1");
     vi.stubGlobal("fetch", vi.fn().mockResolvedValue({ ok: false, status: 404, statusText: "Not Found" }));

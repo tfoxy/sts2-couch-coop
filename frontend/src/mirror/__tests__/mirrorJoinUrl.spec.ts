@@ -198,6 +198,65 @@ describe("MirrorApp — join state in the page URL", () => {
     expect(socket.sentOfType("input")).toHaveLength(1);
   });
 
+  it("keeps the same view and connection through loading without a privacy notice", async () => {
+    mountAt("?name=", true);
+    await settle();
+    const socket = latest();
+    socket.emit(sessionMessage({ directView: true }));
+    await settle();
+    const frame = { type: "scene-delta", full: true, screenType: "run",
+      upserts: [{ id: "root", name: "Root", nodeType: "Control", visible: true }],
+      removedIds: [], orderedIds: ["root"] };
+    socket.emit(frame);
+    await settle();
+    const view = app!.findComponent(MirrorView).vm;
+    const retiredInput = app!.findComponent(MirrorView).props("sendInput")!;
+    const connections = MockWebSocket.instances.length;
+    for (const [allowed, generation] of [[false, 1], [true, 2]] as const) {
+      socket.emit({ type: "host-access", hostAccess: { allowed,
+        reason: allowed ? "allowed" : "transitioning", generation, sceneResetGeneration: 0 } });
+      await settle();
+      expect(app!.findComponent(MirrorView).vm).toBe(view);
+      expect(app!.findComponent(MirrorView).props("sceneReady")).toBe(false);
+      expect(app!.find('[data-testid="host-access-notice"]').exists()).toBe(false);
+    }
+    socket.emit(frame);
+    await settle();
+    expect(app!.findComponent(MirrorView).vm).toBe(view);
+    expect(app!.findComponent(MirrorView).props("sceneReady")).toBe(true);
+    expect(MockWebSocket.instances).toHaveLength(connections);
+    retiredInput({ kind: "click", pressed: false });
+    expect(socket.sentOfType("input")).toEqual([]);
+    // A rapid menu/loading/resume sequence may arrive as only its final status.
+    socket.emit({ type: "host-access", hostAccess: { allowed: true,
+      reason: "allowed", generation: 5, sceneResetGeneration: 1 } });
+    await settle();
+    expect(app!.findComponent(MirrorView).exists()).toBe(false);
+  });
+
+  it.each([false, true])("defers initial host settings until this viewer requests an authorized watch (already allowed: %s)", async (alreadyAllowed) => {
+    mountAt("?name=", true);
+    await settle();
+    const socket = latest();
+    socket.emit(sessionMessage({ directView: true, refreshRate: 37,
+      hostAccess: { allowed: alreadyAllowed, reason: alreadyAllowed ? "allowed" : "unavailable",
+        generation: 1, sceneResetGeneration: 0 } }));
+    // onDirectView runs before the Vue watch that requests the host stream.
+    expect(socket.sentOfType("settings").filter((message) => "refreshRate" in message)).toEqual([]);
+    await settle();
+    expect(watchOnTheWire(socket)).toBe(true);
+    if (!alreadyAllowed) {
+      expect(socket.sentOfType("settings").filter((message) => "refreshRate" in message)).toEqual([]);
+    }
+    for (let i = 0; i < 2; i++) {
+      socket.emit({ type: "host-access", hostAccess: { allowed: true, reason: "allowed",
+        generation: 2, sceneResetGeneration: 0 } });
+      await settle();
+    }
+    expect(socket.sentOfType("settings").filter((message) => "refreshRate" in message))
+      .toEqual([expect.objectContaining({ refreshRate: 37 })]);
+  });
+
   it("never automatically requests singleplayer host admission", async () => {
     mountAt("", true);
     await settle();

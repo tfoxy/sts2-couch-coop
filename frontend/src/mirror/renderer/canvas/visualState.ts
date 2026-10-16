@@ -200,6 +200,7 @@ export interface CanvasVisualState {
     endpoint: readonly number[] | null | undefined,
   ): readonly number[] | null;
   applyInputs(next: MirrorState, at: number): void;
+  resetTransientState(): void;
   sample(at: number): void;
   advance(at: number): void;
   idleDeadline(at: number): number;
@@ -1006,6 +1007,32 @@ export function createCanvasVisualState(
     }
   }
 
+  function resetTransientState(): void {
+    loop.reset();
+    inputsSeeded = false;
+    landingGeneration++;
+    landingArms.length = 0;
+    landingLog.clear();
+    transformOverrides.clear();
+    alphaOverrides.clear();
+    alphaApplied.clear();
+    active.clear();
+    transformParents.clear();
+    idleGeneration++;
+    idleEntries.clear();
+    localAnims.clear();
+    intentEntries.clear();
+    frameSubstitutes.clear();
+    sourceSampledIds.clear();
+    sourceSwapSerials.clear();
+    opacitySampledIds.clear();
+    opacityPending.clear();
+    opacitySerials.clear();
+    mapStrokeLocals.clear();
+    idleActive = 0;
+    ports.onRewrite();
+  }
+
   function applyInputs(next: MirrorState, at: number): void {
     const inputIds = inputsSeeded ? next.changedIds : [...next.nodes.keys()];
     inputsSeeded = true;
@@ -1199,6 +1226,7 @@ export function createCanvasVisualState(
   }
 
   return {
+    resetTransientState,
     loop,
     transformOverrides,
     alphaOverrides,

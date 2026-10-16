@@ -76,6 +76,8 @@ public sealed record BrowserInputRequestEnvelope(
     // Stamped at receipt. A peer cannot revive input admitted before host access was revoked.
     [System.Text.Json.Serialization.JsonIgnore]
     public long AccessGeneration { get; init; }
+    [System.Text.Json.Serialization.JsonIgnore]
+    public long WatchEpoch { get; init; }
 }
 
 public static class BrowserInputKinds

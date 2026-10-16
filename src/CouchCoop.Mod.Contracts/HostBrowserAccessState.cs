@@ -1,7 +1,7 @@
 namespace CouchCoop.Mod.Contracts;
 
 /// <summary>The server's permission to expose this process's host screen and accept browser input.</summary>
-public sealed record HostBrowserAccessState(bool Allowed, string Reason, long Generation);
+public sealed record HostBrowserAccessState(bool Allowed, string Reason, long Generation, long SceneResetGeneration = 0);
 
 public static class HostBrowserAccessReasons
 {

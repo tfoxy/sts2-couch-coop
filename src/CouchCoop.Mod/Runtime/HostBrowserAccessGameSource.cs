@@ -15,21 +15,21 @@ internal sealed class HostBrowserAccessGameSource
     private IDisposable? _hooks;
     private IDisposable? _roster;
 
-    internal IDisposable? Subscribe(Action wake)
+    internal IDisposable? Subscribe(Action<HostBrowserAccessSignal> wake)
     {
         if (!CouchCoopMod.EngineAvailable) return null;
         try
         {
             _hooks = HostBrowserAccessHooks.Listen(wake);
             if (_hooks is null) return null;
-            _screen = GameScreenContext.SubscribeUpdated(wake);
+            _screen = GameScreenContext.SubscribeUpdated(() => wake(HostBrowserAccessSignal.Refresh));
             if (_screen is null)
             {
                 _hooks.Dispose();
                 _hooks = null;
                 return null;
             }
-            _roster = CouchCoopRosterSignals.Listen(wake);
+            _roster = CouchCoopRosterSignals.Listen(() => wake(HostBrowserAccessSignal.Refresh));
             return new Subscription(this);
         }
         catch
@@ -45,8 +45,15 @@ internal sealed class HostBrowserAccessGameSource
     [MethodImpl(MethodImplOptions.NoInlining)]
     private string ReadGameReason()
     {
-        var screen = GameScreenContext.GetCurrent();
         var game = NGame.Instance;
+        if (game is null || !GodotObject.IsInstanceValid(game)) return HostBrowserAccessReasons.Unavailable;
+        if (game.RootSceneContainer is { } root && GodotObject.IsInstanceValid(root))
+            HostBrowserAccessHooks.CacheRoot(root);
+        // A known loading boundary can temporarily have no readable screen. Authorization stays denied.
+        var transitioning = HostBrowserAccessHooks.HasPendingTransition || game.Transition?.InTransition == true;
+        HostBrowserAccessHooks.CacheTransition(transitioning);
+        if (transitioning) return HostBrowserAccessReasons.Transition;
+        var screen = GameScreenContext.GetCurrent();
         if (game is null || !GodotObject.IsInstanceValid(game) || screen is not Node node
             || !GodotObject.IsInstanceValid(node) || !node.IsInsideTree() || game.Transition is null)
             return HostBrowserAccessReasons.Unavailable;

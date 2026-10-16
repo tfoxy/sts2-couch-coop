@@ -767,6 +767,39 @@ describe("Pixi composition initialization", () => {
     } finally { wrapper.unmount(); client.close(); }
   });
 
+  it("keeps the canvas but retires old asynchronous scene credit on suspension", async () => {
+    window.history.replaceState(null, "", "/?rendererCompare=1&stage=rust");
+    Object.assign(rendererComparisonConfig, readRendererComparisonConfig());
+    measureStub();
+    const host = stage();
+    const adapter = Object.assign(fakeAdapter(), { invalidatePendingPresentations: vi.fn() });
+    const renderer = createPixiMirrorRenderer(host, document.createElementNS("http://www.w3.org/2000/svg", "defs"), null,
+      undefined, { backend: "rust", createExecutor: async () => adapter as never });
+    const retry = vi.fn(() => "pending" as const);
+    renderer.setReconcilePull?.({ pending: () => false, now: retry, retryNow: retry });
+    try {
+      await Promise.resolve(); await Promise.resolve();
+      const initial = animatedColorScene(); initial.revision = 40;
+      renderer.reconcile(initial);
+      const canvas = host.querySelector("canvas");
+      let release!: (result: { presented: boolean }) => void;
+      adapter.admitScene.mockImplementationOnce(() => new Promise(resolve => { release = resolve; }) as never);
+      const old = animatedColorScene(); old.revision = 41;
+      expect(renderer.reconcile(old)).toBe(false);
+      renderer.resetTransientState?.();
+      expect(adapter.invalidatePendingPresentations).toHaveBeenCalledOnce();
+      expect(host.querySelector("canvas")).toBe(canvas);
+      const fresh = animatedColorScene(); fresh.revision = 42;
+      expect(renderer.reconcile(fresh)).not.toBe(false);
+      const calls = retry.mock.calls.length;
+      release({ presented: true });
+      await Promise.resolve(); await Promise.resolve();
+      expect(retry).toHaveBeenCalledTimes(calls);
+      expect(host.querySelector("canvas")).toBe(canvas);
+      expect(adapter.dispose).not.toHaveBeenCalled();
+    } finally { renderer.dispose(); }
+  });
+
   it("does not retry a superseded or disposed Rust view obligation", async () => {
     window.history.replaceState(null, "", "/?rendererCompare=1&stage=rust");
     Object.assign(rendererComparisonConfig, readRendererComparisonConfig());

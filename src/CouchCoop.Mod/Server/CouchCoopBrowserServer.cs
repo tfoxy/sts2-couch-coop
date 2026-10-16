@@ -63,7 +63,7 @@ public sealed class CouchCoopBrowserServer(
     private readonly Lazy<IHostBrowserAccess> _hostBrowserAccess = new(() => hostBrowserAccess
         ?? new HostBrowserAccessMonitor(() => envelopeFactory?.RuntimeHost.CancelInjectedInput()));
     private readonly object _accessDemandGate = new();
-    private long _accessDemandGeneration;
+    private int _requestedHostWatchCount;
     private IHostBrowserAccess? HostBrowserAccess => _isHeadlessClient ? null : _hostBrowserAccess.Value;
     private readonly bool _ownsHeadlessManager = headlessManager is null;
     private readonly BrowserSessionRegistry _sessionRegistry = new();
@@ -387,15 +387,6 @@ public sealed class CouchCoopBrowserServer(
 
     private void PublishBrowserDemand(int count, long generation)
     {
-        lock (_accessDemandGate)
-        {
-            if (generation > _accessDemandGeneration)
-            {
-                _accessDemandGeneration = generation;
-                if (count > 0) HostBrowserAccess?.Start();
-                else if (_hostBrowserAccess.IsValueCreated) _hostBrowserAccess.Value.Stop();
-            }
-        }
         try
         {
             _onBrowserDemandChanged?.Invoke(count, generation);
@@ -403,6 +394,21 @@ public sealed class CouchCoopBrowserServer(
         catch (Exception exception)
         {
             _log($"browser demand callback failed: {exception.GetType().Name}: {exception.Message}");
+        }
+    }
+
+    // Requested watch demand survives permission blocks; coordination sockets never start the policy.
+    // Connections attach their listener before acquiring demand and detach before releasing it.
+    private void RegisterHostWatch(bool requested)
+    {
+        if (_isHeadlessClient) return;
+        lock (_accessDemandGate)
+        {
+            if (_generationStopped) return;
+            var previous = _requestedHostWatchCount;
+            _requestedHostWatchCount = requested ? previous + 1 : Math.Max(0, previous - 1);
+            if (previous == 0 && _requestedHostWatchCount > 0) HostBrowserAccess?.Start();
+            else if (previous > 0 && _requestedHostWatchCount == 0) HostBrowserAccess?.Stop();
         }
     }
 
@@ -1428,6 +1434,11 @@ public sealed class CouchCoopBrowserServer(
             StopScreenProbeLocked();
             browserDemandGeneration = ++_browserDemandGeneration;
         }
+        lock (_accessDemandGate)
+        {
+            _requestedHostWatchCount = 0;
+            if (_hostBrowserAccess.IsValueCreated) _hostBrowserAccess.Value.Stop();
+        }
         PublishSceneStreamingDemand(0, sceneStreamingDemandGeneration);
         PublishBrowserDemand(0, browserDemandGeneration);
 
@@ -1878,7 +1889,7 @@ public sealed class CouchCoopBrowserServer(
                         _onSceneAck,
                         cancellationToken,
                         HostBrowserAccess,
-                        PrepareDirectIpSeatAsync).ConfigureAwait(false);
+                        PrepareDirectIpSeatAsync, RegisterHostWatch).ConfigureAwait(false);
             }
             catch
             {

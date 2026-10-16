@@ -96,16 +96,19 @@ describe("warm ack guard observation", () => {
     client.close();
   });
 
-  it("distinguishes watch-off and closed-socket guards with a pending delta", () => {
+  it("retires credit on watch-off and distinguishes a closed socket after a fresh full scene", () => {
     const events: WarmAckTraceEvent[] = [];
     traceGlobal.__benchWarmAckTrace = event => events.push(event);
     const { client, socket } = connect(true);
     socket.emit(keyframe);
     client.sendWatch(false);
     client.sendSceneAck();
-    expect(events.at(-1)).toMatchObject({kind:"ack-guard",guard:"watch-off",deltasSinceAck:1,
+    expect(events.at(-1)).toMatchObject({kind:"ack-guard",guard:"empty",deltasSinceAck:0,
       watching:false,readyState:MockWebSocket.OPEN});
     client.sendWatch(true);
+    client.sendSceneAck();
+    expect(socket.sentOfType("scene-ack")).toHaveLength(0);
+    socket.emit(keyframe);
     socket.readyState = 3;
     client.sendSceneAck();
     expect(events.at(-1)).toMatchObject({kind:"ack-guard",guard:"socket-not-open",deltasSinceAck:1,

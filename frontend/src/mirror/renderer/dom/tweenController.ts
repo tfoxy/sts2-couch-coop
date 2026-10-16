@@ -110,6 +110,7 @@ export function createTweenController(
   const active = new Set<RenderRecord>();
   let pending: Array<(at: number) => void> = [];
   let armRaf = 0;
+  let armEpoch = 0;
   let batch: { writes: Array<() => void> } | null = null;
 
   const composeTransition = (r: RenderRecord): string =>
@@ -394,7 +395,9 @@ export function createTweenController(
       if (armRaf === 0) runDeferred();
       return;
     }
+    const epoch = armEpoch;
     armRaf = requestAnimationFrame(() => {
+      if (epoch !== armEpoch) return;
       armRaf = 0;
       runDeferred();
     });
@@ -684,7 +687,33 @@ export function createTweenController(
     },
     has: (r) => active.has(r),
     forget: (r) => active.delete(r),
-    clear: () => active.clear(),
+    clear() {
+      ++armEpoch;
+      if (armRaf !== 0 && typeof cancelAnimationFrame === "function") cancelAnimationFrame(armRaf);
+      armRaf = 0;
+      pending = [];
+      batch = null;
+      p.clearTransformArmBatch();
+      for (const record of p.records.values()) {
+        ++record.tweenTransformArmGeneration;
+        releaseTransform(record);
+        record.tweenTransformSettleEndG6 = null;
+        record.tweenOpacity = null;
+        record.tweenOpacityUntil = 0;
+        record.tweenOpacityTransition = null;
+        record.tweenSelfOpacity = null;
+        record.tweenSelfOpacityUntil = 0;
+        record.tweenSelfOpacityTransition = null;
+        record.tweenGroup = null;
+        record.hideLatchedUntil = 0;
+        record.hideLatchRestingSig = null;
+        record.hideLatchHeldAt = 0;
+        record.hideLatchStreamedOpacity = null;
+        if (record.el) record.el.style.transition = composeTransition(record);
+        if (record.selfLayer) record.selfLayer.style.transition = "";
+      }
+      active.clear();
+    },
     composeTransition,
     pin,
     applyHints,

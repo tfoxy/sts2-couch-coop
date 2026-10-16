@@ -3,11 +3,13 @@ using CouchCoop.Mod.Session;
 
 namespace CouchCoop.Mod.Runtime;
 
-/// <summary>Revokes synchronously on game signals and evaluates permission once on the next frame.</summary>
+internal enum HostBrowserAccessSignal { Refresh, Transition, ProtectedMenu, Unsafe }
+
+/// <summary>Revokes synchronously at unsafe boundaries; ordinary notifications only refresh deferred facts.</summary>
 public sealed class HostBrowserAccessMonitor : IHostBrowserAccess
 {
     private readonly object _gate = new();
-    private readonly Func<Action, IDisposable?> _subscribe;
+    private readonly Func<Action<HostBrowserAccessSignal>, IDisposable?> _subscribe;
     private readonly Func<string> _readReason;
     private readonly Action<Action> _schedule;
     private readonly Action _cancelInjectedInput;
@@ -17,6 +19,7 @@ public sealed class HostBrowserAccessMonitor : IHostBrowserAccess
     private bool _disposed;
     private bool _pending;
     private long _lifetime;
+    private long _signalVersion;
     private bool _signalsAvailable;
     private bool _cancellationFailed;
 
@@ -36,7 +39,7 @@ public sealed class HostBrowserAccessMonitor : IHostBrowserAccess
         if (SourceFactoryOverride is { } factory)
         {
             var testSource = factory();
-            _subscribe = testSource.Subscribe;
+            _subscribe = signal => testSource.Subscribe(() => signal(HostBrowserAccessSignal.Unsafe));
             _readReason = testSource.ReadReason;
             _schedule = testSource.Schedule;
             _cancelInjectedInput = cancelInjectedInput;
@@ -49,7 +52,7 @@ public sealed class HostBrowserAccessMonitor : IHostBrowserAccess
         _cancelInjectedInput = cancelInjectedInput;
     }
 
-    internal HostBrowserAccessMonitor(Func<Action, IDisposable?> subscribe, Func<string> readReason,
+    internal HostBrowserAccessMonitor(Func<Action<HostBrowserAccessSignal>, IDisposable?> subscribe, Func<string> readReason,
         Action<Action> schedule, Action cancelInjectedInput)
     {
         _subscribe = subscribe;
@@ -73,7 +76,7 @@ public sealed class HostBrowserAccessMonitor : IHostBrowserAccess
         }
 
         IDisposable? subscription = null;
-        try { subscription = _subscribe(() => Wake(lifetime)); }
+        try { subscription = _subscribe(signal => Wake(lifetime, signal)); }
         catch (Exception exception) { Report("subscribe", exception); }
         lock (_gate)
         {
@@ -86,45 +89,58 @@ public sealed class HostBrowserAccessMonitor : IHostBrowserAccess
         }
         try { subscription?.Dispose(); }
         catch (Exception exception) { Report("detach", exception); }
-        Wake(lifetime);
+        Wake(lifetime, HostBrowserAccessSignal.Refresh);
     }
 
-    private void Wake(long lifetime)
+    private void Wake(long lifetime, HostBrowserAccessSignal signal)
     {
-        HostBrowserAccessState next;
+        HostBrowserAccessState? next = null;
         bool cancel;
         bool schedule;
         lock (_gate)
         {
             if (!_started || _lifetime != lifetime) return;
-            cancel = _state.Allowed || _cancellationFailed;
-            next = _state = new(false, HostBrowserAccessReasons.Transition, _state.Generation + 1);
+            ++_signalVersion;
+            cancel = (signal != HostBrowserAccessSignal.Refresh && _state.Allowed) || _cancellationFailed;
+            if (signal != HostBrowserAccessSignal.Refresh)
+            {
+                var hard = signal != HostBrowserAccessSignal.Transition;
+                var reason = signal switch
+                {
+                    HostBrowserAccessSignal.Transition => HostBrowserAccessReasons.Transition,
+                    HostBrowserAccessSignal.ProtectedMenu => HostBrowserAccessReasons.MenuOpen,
+                    _ => HostBrowserAccessReasons.Unavailable,
+                };
+                next = _state = new(false, reason, _state.Generation + 1,
+                    _state.SceneResetGeneration + (hard ? 1 : 0));
+            }
             schedule = !_pending;
             _pending = true;
         }
-        if (cancel)
-        {
-            CancelInput();
-        }
-        Publish(next);
+        if (cancel) CancelInput();
+        if (next is not null) Publish(State);
         if (!schedule) return;
         try { _schedule(() => Evaluate(lifetime)); }
         catch (Exception exception)
         {
             lock (_gate) { if (_lifetime == lifetime) _pending = false; }
+            // Without a deferred read, even an ordinary refresh can no longer establish permission.
+            var cancelOnFailure = State.Allowed;
+            DenyUnavailable();
+            if (cancelOnFailure) CancelInput();
             Report("schedule", exception);
         }
     }
 
     private void Evaluate(long lifetime)
     {
-        long generation;
+        long version;
         bool readable;
         lock (_gate)
         {
             if (!_started || _lifetime != lifetime) return;
             _pending = false;
-            generation = _state.Generation;
+            version = _signalVersion;
             readable = _signalsAvailable && !_cancellationFailed;
         }
         var reason = HostBrowserAccessReasons.Unavailable;
@@ -134,14 +150,21 @@ public sealed class HostBrowserAccessMonitor : IHostBrowserAccess
             catch (Exception exception) { Report("read", exception); }
         }
         HostBrowserAccessState next;
+        bool cancel;
         lock (_gate)
         {
             // A signal during the read owns the next evaluation. Never publish an old allowance over it.
-            if (!_started || _lifetime != lifetime || _state.Generation != generation) return;
+            if (!_started || _lifetime != lifetime || _signalVersion != version) return;
             if (_cancellationFailed) reason = HostBrowserAccessReasons.Unavailable;
-            next = _state = new(reason == HostBrowserAccessReasons.Allowed, reason, generation);
+            var allowed = reason == HostBrowserAccessReasons.Allowed;
+            if (_state.Allowed == allowed && _state.Reason == reason) return;
+            cancel = !allowed && _state.Allowed;
+            var hard = !allowed && reason != HostBrowserAccessReasons.Transition;
+            next = _state = new(allowed, reason, _state.Generation + 1,
+                _state.SceneResetGeneration + (hard ? 1 : 0));
         }
-        Publish(next);
+        if (cancel) CancelInput();
+        Publish(State);
     }
 
     public void Stop()
@@ -159,7 +182,7 @@ public sealed class HostBrowserAccessMonitor : IHostBrowserAccess
             subscription = _subscription;
             _subscription = null;
             cancel = _state.Allowed || _cancellationFailed;
-            next = _state = new(false, HostBrowserAccessReasons.Unavailable, _state.Generation + 1);
+            next = _state = new(false, HostBrowserAccessReasons.Unavailable, _state.Generation + 1, _state.SceneResetGeneration + 1);
         }
         try { subscription?.Dispose(); }
         catch (Exception exception) { Report("detach", exception); }
@@ -186,8 +209,18 @@ public sealed class HostBrowserAccessMonitor : IHostBrowserAccess
         catch (Exception exception)
         {
             lock (_gate) _cancellationFailed = true;
+            DenyUnavailable();
             Report("cancel input", exception);
         }
+    }
+
+    private void DenyUnavailable()
+    {
+        HostBrowserAccessState next;
+        lock (_gate)
+            next = _state = new(false, HostBrowserAccessReasons.Unavailable,
+                _state.Generation + 1, _state.SceneResetGeneration + 1);
+        Publish(next);
     }
 
     private void Publish(HostBrowserAccessState state)
@@ -203,9 +236,9 @@ public sealed class HostBrowserAccessMonitor : IHostBrowserAccess
 
     internal static string Decide(GateFacts? facts, bool screenAvailable, bool inTransition, bool protectedMenuOpen)
     {
-        if (!screenAvailable || facts is null) return HostBrowserAccessReasons.Unavailable;
-        if (inTransition) return HostBrowserAccessReasons.Transition;
         if (protectedMenuOpen) return HostBrowserAccessReasons.MenuOpen;
+        if (inTransition) return HostBrowserAccessReasons.Transition;
+        if (!screenAvailable || facts is null) return HostBrowserAccessReasons.Unavailable;
         var netType = facts.Value.RunInProgress ? facts.Value.RunNetType : facts.Value.CurrentLobbyNetType;
         return netType is NetTypeNames.Host or NetTypeNames.Client
             ? HostBrowserAccessReasons.Allowed : HostBrowserAccessReasons.MultiplayerRequired;

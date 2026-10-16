@@ -325,6 +325,8 @@ export interface MirrorRenderer {
   // PAINTED, which is what the eager offset must compose against. Null when the renderer cannot say (no record, or
   // nothing styled yet), so the caller keeps its own streamed fallback.
   scrollRenderedY(nodeId: string): number | null;
+  /** Retire transient input/tween ownership while retaining the displayed tree and renderer assets. */
+  resetTransientState?(): void;
   dispose(): void;
 }
 

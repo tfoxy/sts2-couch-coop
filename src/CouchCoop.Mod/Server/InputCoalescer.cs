@@ -23,7 +23,7 @@ internal sealed class InputCoalescer
     public bool Enqueue(BrowserInputRequestEnvelope input)
     {
         if (IsHover(input) && _queue.Last is { } tail && IsHover(tail.Value)
-            && tail.Value.AccessGeneration == input.AccessGeneration)
+            && tail.Value.AccessGeneration == input.AccessGeneration && tail.Value.WatchEpoch == input.WatchEpoch)
         {
             tail.Value = input;
             return false;
@@ -42,7 +42,7 @@ internal sealed class InputCoalescer
 
     public bool WouldCoalesce(BrowserInputRequestEnvelope input)
         => (IsHover(input) && _queue.Last is { } tail && IsHover(tail.Value)
-            && tail.Value.AccessGeneration == input.AccessGeneration)
+            && tail.Value.AccessGeneration == input.AccessGeneration && tail.Value.WatchEpoch == input.WatchEpoch)
             || (_queue.Last is { } wheelTail && TryMergeWheel(wheelTail.Value, input, out _));
 
     // R10 WS-E — WHEEL RUN MERGE. A wheel notch is a QUANTITY, not an edge: N consecutive same-direction ticks at the
@@ -61,7 +61,7 @@ internal sealed class InputCoalescer
         out BrowserInputRequestEnvelope merged)
     {
         merged = next;
-        if (tail.AccessGeneration != next.AccessGeneration || !IsFullWheelClick(tail) || !IsFullWheelClick(next))
+        if (tail.AccessGeneration != next.AccessGeneration || tail.WatchEpoch != next.WatchEpoch || !IsFullWheelClick(tail) || !IsFullWheelClick(next))
         {
             return false;
         }
