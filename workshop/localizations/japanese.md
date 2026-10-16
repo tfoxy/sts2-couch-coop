@@ -26,8 +26,6 @@
 不具合を見つけた、または何かがうまく動かない場合は、[url=https://github.com/tfoxy/sts2-couch-coop/blob/main/workshop/discussions/japanese/reporting-a-problem.md]問題が起きましたか？ Steam のディスカッションに投稿してください[/url] をご覧ください。
 
 [h2]遊ぶ前に[/h2]
-音が出るのはホストPCだけです。ブラウザで参加するプレイヤーの端末からは音は出ません。
-
 すべてのブラウザクライアントから、同じローカルネットワーク（通常は同じWi-Fi）上のホストに接続できる必要があります。CouchCoop は、信頼できる人だけが共有するローカルネットワークで使用してください。
 
 リモート接続やインターネット経由での利用は、CouchCoopのサポート対象外です。

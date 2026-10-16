@@ -26,8 +26,6 @@ Temel oyun döngüsü oynanabilir durumda, ancak bazı ekranlarda ve eylemlerde 
 Bir hata mı buldun ya da bir şey çalışmıyor mu? [url=https://github.com/tfoxy/sts2-couch-coop/blob/main/workshop/discussions/turkish/reporting-a-problem.md]Bir sorun mu yaşıyorsun? Steam tartışmasına yaz[/url] sayfasına bak.
 
 [h2]Oynamadan önce[/h2]
-Ses yalnızca host bilgisayardan çıkar - tarayıcıdan oynayanlar kendi cihazlarında ses duymaz.
-
 Tüm tarayıcı istemcileri aynı yerel ağ üzerinden, genellikle aynı Wi-Fi üzerinden, host bilgisayara ulaşabilmelidir. CouchCoop'u yalnızca güvendiğin kişilerle paylaştığın bir yerel ağda kullan.
 
 CouchCoop, uzaktan veya internet üzerinden oynama senaryolarını desteklemez.

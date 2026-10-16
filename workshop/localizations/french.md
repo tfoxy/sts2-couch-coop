@@ -26,8 +26,6 @@ La boucle de jeu principale est jouable, mais certains écrans et certaines acti
 Vous avez trouvé un bug, ou quelque chose ne fonctionne pas ? Consultez [url=https://github.com/tfoxy/sts2-couch-coop/blob/main/workshop/discussions/french/reporting-a-problem.md]Un problème ? Signalez-le dans la discussion Steam[/url].
 
 [h2]Avant de jouer[/h2]
-Le son sort uniquement de l'ordinateur hôte - les joueurs dans le navigateur n'ont aucun son sur leur propre appareil.
-
 Tous les clients dans le navigateur doivent pouvoir joindre l'hôte sur le même réseau local, généralement le même réseau Wi-Fi. N'utilisez CouchCoop que sur un réseau local partagé avec des personnes de confiance.
 
 Les configurations à distance ou via Internet ne sont pas prises en charge par CouchCoop.

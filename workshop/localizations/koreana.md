@@ -26,8 +26,6 @@
 버그를 발견했거나 무언가 제대로 작동하지 않나요? [url=https://github.com/tfoxy/sts2-couch-coop/blob/main/workshop/discussions/koreana/reporting-a-problem.md]문제가 생겼나요? Steam 토론에 올려 주세요[/url] 문서를 참고하세요.
 
 [h2]플레이하기 전에[/h2]
-소리는 호스트 컴퓨터에서만 나옵니다. 브라우저로 참가하는 플레이어의 기기에서는 소리가 나지 않습니다.
-
 모든 브라우저 클라이언트는 같은 로컬 네트워크(보통 같은 Wi-Fi)에서 호스트에 연결할 수 있어야 합니다. CouchCoop은 신뢰할 수 있는 사람들과 공유하는 로컬 네트워크에서만 사용하세요.
 
 원격 또는 인터넷 연결 구성은 CouchCoop의 지원 범위에 포함되지 않습니다.
