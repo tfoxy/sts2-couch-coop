@@ -93,11 +93,9 @@ import {
   joinInfoFromSession,
   mirrorRosterFor,
   readStoredName,
-  readUrlName,
   readUrlNameState,
   rememberJoinedName,
   shouldReloadForUrlNameChange,
-  shouldWatchHostStream,
   trimName,
   urlNameStateFor,
   writeUrlNameParam,
@@ -326,40 +324,22 @@ const joinProgress = ref<BrowserJoinProgress | null>(null);
 // what the host debounces against, so when it goes both sides forget together and the next one is told afresh.
 const seatNotice = ref<BrowserSeatNotice | null>(null);
 
-// Name memory + `?name=` auto-join. `urlName` (if present) auto-joins on
-// connect; `prefillName` only pre-fills the form. `pendingName` is the in-flight join target (null = idle).
-const urlName = readUrlName();
-const prefillName = ref(urlName ?? readStoredName(globalThis.sessionStorage) ?? "");
-const pendingName = ref<string | null>(null);
-let autoJoinSent = false;
-// An EMPTY `?name=` (present, no value) is the HOST player's own browser: the marker this app stamps when it
-// enters a multiplayer direct view. `readUrlName` trims it to null, so it can never be mistaken for a seat —
-// the two are told apart by `hasNameParam`, and only here.
-const urlWantsHostView = hasNameParam() && urlName === null;
-// One attempt per connection, exactly like `autoJoinSent` (and re-armed by the same reconnect rule).
-let hostViewRequested = false;
-// What the page URL SHOULD say for the join state this page currently holds — the yardstick every `popstate` is
-// judged against. Seeded from the URL we LOADED with (that URL is what the auto-join / auto-host-view below act
-// on, so they agree by construction) and updated at every stamp. Nothing else writes `?name=`.
+// Intent is chosen before admission; joined/directView describe server-confirmed ownership.
+type ViewIntent = "unassigned" | "host" | "player";
 let expectedUrlName: UrlNameState = readUrlNameState();
-// F3 — the seat this page's URL names RIGHT NOW, or null for "no seat" (no param at all, or the empty host
-// marker). Reactive, and deliberately not the load-time `urlName` constant, because the answer MOVES within one
-// page life: a viewer that joins from the picker stamps a seat name it never loaded with, and one that presses
-// "Control host" replaces a seat name with the marker.
 const urlSeatName = ref(expectedUrlName.name);
-// …and the predicate the F3 rules actually read: "this browser is a PLAYER waiting for a game, not a spectator of
-// the host's screen." It pulls no scene bytes on a screen it cannot join (the stream gate's 6th argument), shows
-// the waiting screen instead of the picker, and never asks for a singleplayer direct view. Derived rather than
-// stored, so it cannot disagree with the name it is supposed to describe.
-const urlSeatIntent = computed(() => urlSeatName.value !== null);
+const viewIntent = ref<ViewIntent>(expectedUrlName.name !== null ? "player" : hasNameParam() ? "host" : "unassigned");
+const prefillName = ref(expectedUrlName.name ?? readStoredName(globalThis.sessionStorage) ?? "");
+const pendingName = ref<string | null>(null);
+const urlSeatIntent = computed(() => viewIntent.value === "player");
+let autoJoinSent = false;
+let hostViewRequested = false;
+let grantedSelection: UrlNameState | null = null;
 
-// The ONE place the two facts above are updated, so they cannot drift apart. Drift is not cosmetic:
-// `expectedUrlName` alone decides whether a popstate reloads, `urlSeatName` alone decides whether the host's
-// stream is pulled — so a stamp that moved one without the other would leave a viewer who dropped out of their
-// seat silently watching the host's game from a URL that says otherwise.
 function rememberUrlName(value: string | null): void {
   expectedUrlName = urlNameStateFor(value);
   urlSeatName.value = expectedUrlName.name;
+  viewIntent.value = value === null ? "unassigned" : value === "" ? "host" : "player";
 }
 
 // Stamp `?name=` and remember what we stamped. `push` (the join / host-view stamps) makes the change a real
@@ -741,17 +721,11 @@ function makeClient(url?: string, watchStream = false): MirrorClient {
     },
     onHeadlessRedirect(target) {
       if (activeClient !== c) return; // prevent double-redirect
-      // The host accepted the join: persist the name (storage + a PUSHED `?name=`) so a reload auto-joins
-      // straight in and Back leaves the seat. `rememberJoinedName`'s equality guard means the auto-join case
-      // (which read that very name out of the URL) adds no second entry.
-      if (pendingName.value) {
-        rememberJoinedName(pendingName.value);
-        // Through the SAME helper `setUrlNameParam` uses (`rememberJoinedName` did the writing, so only the
-        // bookkeeping is left): this is the stamp that makes a seat viewer's `urlSeatIntent` true for the rest of
-        // the session, which is what puts them on the waiting screen — not back on the host's stream — if the run
-        // later ends under them.
-        rememberUrlName(pendingName.value);
-      }
+      // Selection already stamped the URL. Persist only after the host grants the view;
+      // the URL equality guard prevents adding another history entry.
+      if (pendingName.value) rememberJoinedName(pendingName.value);
+      viewIntent.value = "player";
+      grantedSelection = expectedUrlName;
       // The host CONFIRMED this seat, so it is the one to reclaim if the view later drops. Recorded here (not at
       // submit time) so a refused join never arms an auto-rejoin loop.
       rejoinTarget = lastJoinAttempt ?? (pendingName.value ? { name: pendingName.value } : rejoinTarget);
@@ -783,6 +757,7 @@ function makeClient(url?: string, watchStream = false): MirrorClient {
     onDirectView() {
       if (activeClient !== c) return;
       bindPresentation(c, c);
+      viewIntent.value = "host";
       // Watch the host's own stream in place: no redirect, stay on THIS (host) socket. `directView` unlocks
       // showScene. Never `rememberJoinedName` here — this viewer holds no seat and no name, so the seat form of
       // `?name=` would be a lie (and would auto-join a seat on the next reload).
@@ -806,6 +781,7 @@ function makeClient(url?: string, watchStream = false): MirrorClient {
       if (isMultiplayerMirrorMode(mode) && !hasNameParam()) {
         setUrlNameParam("", "push");
       }
+      grantedSelection = expectedUrlName;
       // Same restoration as the redirect path: a granted direct-view IS the view coming back, so the drop phase
       // (and any escalated notice) ends here too.
       reconnectState.value = reconnectStateAfterViewRestored();
@@ -825,6 +801,7 @@ function makeClient(url?: string, watchStream = false): MirrorClient {
     onJoinRejected(reason, detail) {
       if (activeClient !== c) return;
       presentationTarget.value = null;
+      retireJoinIntent(c);
       // Name isn't servable → drop the pending join (recomputes back to the picker) and surface the message.
       pendingName.value = null;
       joinProgress.value = null;
@@ -850,6 +827,7 @@ function makeClient(url?: string, watchStream = false): MirrorClient {
     onActionError(message) {
       if (activeClient !== c) return;
       presentationTarget.value = null;
+      retireJoinIntent(c);
       // The backstop (see mirrorClient.onActionError): the host faulted on our join and answered on the channel
       // this client otherwise ignores. Treated exactly like a "join-failed" rejection — the difference is only
       // which envelope carried it, and the viewer should not have to care.
@@ -950,35 +928,19 @@ const joinMode = computed(() =>
     : computeMirrorJoinMode(joinInfo.value, pendingName.value, mirrorScreen.value)
 );
 
-// Render the live scene whenever one is available AND we're either joined (our own headless stream) OR the
-// screen isn't actionable to join ("title-only": main menu / loading / waiting). In the title-only case we
-// fall through to the HOST connection's scene stream so the mirror shows the REAL current screen (e.g. the
-// main menu) instead of the raw `screens/<x>` placeholder title. The actionable join modes (lobby-join /
-// run-picker) still show the picker so the viewer can join — and we deliberately DON'T show the host's stream
-// there, since a run/lobby view is per-player-divergent before the viewer gets their own headless instance.
-// `revision` in the expression makes this recompute as the retained scene map fills in. Pre-join we only fall
-// through when actually connected and idle (no pending join) so the transient "Joining…"/"Disconnected"
-// placeholders still show their feedback instead of a stale host frame.
-// WS-B: the render rule above, factored out — because it is ALSO the wire rule. The stream gate sends this exact
-// answer to the host (`watch`), so the bytes we receive and the frames we show can never disagree: a viewer the
-// picker is up for pulls nothing, and a viewer that would render the host stream asks for it.
+// Only a granted view requests scene bytes. Unassigned and joining connections are
+// coordination-only, even when the host is on a non-multiplayer screen.
 const wantsHostStream = computed(() =>
-  sceneAblation.streamsScene && shouldWatchHostStream(
-    joinInfo.value,
-    pendingName.value,
-    mirrorScreen.value,
-    joined.value,
-    directView.value,
-    // F3: a URL that names a seat is an intent to PLAY. Until that seat is actually granted this viewer pulls
-    // nothing at all — not even the host's main menu, which the gate would otherwise hand it as "title-only".
-    urlSeatIntent.value
-  )
+  sceneAblation.streamsScene && (joined.value || directView.value)
 );
 const hostAccess = computed(() => joinSession.value?.hostAccess);
 const hostAccessBlocked = computed(() => !hostAccess.value?.allowed);
 // Keep the picker usable for other seats; privacy replaces only the host view/waiting surface.
-const showHostAccessNotice = computed(() => status.value === "connected" && joinSession.value !== null && !joined.value
-  && hostAccessBlocked.value && hostAccess.value?.reason !== "transitioning" && (directView.value || joinMode.value === "title-only" || showHostWaiting.value));
+const showHostAccessNotice = computed(() =>
+  viewIntent.value === "host" && status.value === "connected" && joinSession.value !== null
+  && !joined.value && !pendingName.value && !joinMessage.value && !seatNotice.value
+  && hostAccessBlocked.value && hostAccess.value?.reason !== "transitioning"
+);
 const showScene = computed(() =>
   sceneAblation.rendersScene && revision.value >= 0 && hasScene() && wantsHostStream.value
 );
@@ -1016,9 +978,7 @@ const showFixedChrome = computed(() =>
 // fighting over one `panelAnchorTop`) nor both vanish.
 const showStageChrome = computed(() => showScene.value && !showFixedChrome.value);
 
-// Push the gate to the ACTIVE connection whenever the answer moves. `immediate` so the very first evaluation
-// (right after the first session lands) opens the stream on a non-multiplayer host without waiting for a second
-// change. The client no-ops when the socket isn't open yet and flushes on open.
+// Push the requested watch state to the active connection after admission.
 watch(wantsHostStream, (on) => activeClient.sendWatch(on), { immediate: true });
 // The pre-game LIFECYCLE state (rules + copy in @/mirror/loadingState): "Connecting…" / "Reconnecting…" /
 // "Joining…" / "Loading…", or null when the screen is steady. Non-null also means the picker shows a spinner,
@@ -1097,11 +1057,10 @@ const showHostWaiting = computed(
 // "Control host" — the waiting screen's one control, and the ONLY writer of the empty host marker on a
 // non-multiplayer screen (`onDirectView` still stamps it MP-only). It converts `?name=Ann` into `?name=`: from
 // "I am a player waiting for a seat" to "I am the browser controlling the host", which is precisely the state
-// whose stream gate is open on these screens.
+// that can request a host view when multiplayer is available.
 //
-// A RELOAD, not an in-place unwind. Half this app's setup is URL-keyed and read exactly once (the load-time
-// `urlName`, `urlWantsHostView`, the one-shot latches, every module that parses `location.search` on first
-// access), so re-deriving that state by hand here would be the same partial reset the popstate rule already
+// A RELOAD, not an in-place unwind. Several modules parse `location.search` on first
+// access, so re-deriving that state by hand here would be the same partial reset the popstate rule already
 // refuses to do. The reload lands on the new URL and re-runs the whole join dance from it; Back then restores
 // `?name=Ann`, popstate reloads again, and the viewer is on the waiting screen once more — self-consistent in
 // both directions. `forceReload` is the injectable seam (jsdom cannot stub `location.reload`).
@@ -1207,6 +1166,16 @@ function submitJoin(name: string, playerId?: string): void {
   // …and with no seat held: this attempt will be answered with a port of its own, and a stale one would let a
   // retry ladder keep reaching for the seat the viewer just walked away from.
   seatViewTarget = null;
+  const hostSelection = playerId !== undefined
+    && joinSession.value?.players?.some((player) => player.playerId === playerId && player.isHost);
+  if (hostSelection) {
+    // Preserve a shared named-host link, but give a picker selection the host marker.
+    if (urlSeatName.value !== trimmed) setUrlNameParam("", "push");
+    viewIntent.value = "host";
+  } else {
+    setUrlNameParam(trimmed, "push");
+  }
+  autoJoinSent = true;
   pendingName.value = trimmed;
   prefillName.value = trimmed;
   // Held until the host confirms with a redirect, which promotes it to the auto-rejoin target.
@@ -1225,6 +1194,15 @@ function submitJoin(name: string, playerId?: string): void {
   activeClient.sendJoin(trimmed, playerId);
 }
 
+// Retiring an initial attempt also undoes its URL selection. A previously granted
+// identity survives reconnect failures so a reload can still reclaim that view.
+function retireJoinIntent(client: MirrorClient): void {
+  client.cancelPendingJoin();
+  if (grantedSelection === null || shouldReloadForUrlNameChange(grantedSelection, expectedUrlName)) {
+    setUrlNameParam(null, "replace");
+  }
+}
+
 // ONE place that owns the join timeout, keyed off the in-flight marker itself rather than off each of the six
 // call sites that set or clear it (submit, redirect, direct view, rejection, backstop, socket drop). Every
 // resolution path already writes `pendingName`, so arming here is automatically disarmed by all of them — which
@@ -1240,6 +1218,7 @@ watch(pendingName, (name) => {
     // Re-check: a resolution racing the timer would already have cleared `pendingName`, and failing a join the
     // host actually granted would drop a viewer out of a seat they hold.
     if (!pendingName.value) return;
+    retireJoinIntent(activeClient);
     pendingName.value = null;
     joinMessage.value = t("join.hostNoAnswer");
     joinDetail.value = null;
@@ -1443,7 +1422,7 @@ function maybeAutoRejoin(): void {
 
 // `?name=` in the page URL is an auto-join: once connected (and not already joined/pending), join straight in.
 function maybeAutoJoin(): void {
-  if (joined.value || pendingName.value || !urlName) return;
+  if (joined.value || directView.value || pendingName.value || viewIntent.value !== "player" || !urlSeatName.value) return;
   if (status.value !== "connected") return;
   // F3 — NOT on a screen the host says nobody can join (main menu, singleplayer character select, singleplayer
   // run, unclassifiable). Sending the join anyway is not merely useless: the host answers `not-a-session-player`,
@@ -1467,7 +1446,7 @@ function maybeAutoJoin(): void {
   if (isNonJoinableMirrorMode(session.screen?.mirrorMode ?? null)) return;
   if (autoJoinSent) return;
   autoJoinSent = true;
-  submitJoin(urlName);
+  submitJoin(urlSeatName.value);
 }
 
 // The auto-join's twin for the EMPTY `?name=` marker: this browser was on the host's own view when it was last
@@ -1483,11 +1462,10 @@ function maybeAutoJoin(): void {
 // the durable "I am the machine controlling the host" — the answer to "which browser is the TV's own?" — and the
 // host-row gap it was deleting itself on is usually a transient one (a session mid-rebuild, a roster that has not
 // caught up with a lobby the host just entered). Deleting it there cost the host player their own view for the
-// rest of the session, recoverable only by knowing to press "Control host". Nothing is lost by waiting: on a
-// non-multiplayer screen the empty marker already streams the host's screen (it is no seat intent, so the gate
-// falls through to title-only), which is exactly what the marker is for.
+// rest of the session, recoverable only by knowing to press "Control host". The marker retains host intent
+// while waiting for a supported multiplayer screen.
 function maybeAutoHostView(): void {
-  if (!urlWantsHostView || hostViewRequested) return;
+  if (viewIntent.value !== "host" || hostViewRequested) return;
   if (joined.value || directView.value || pendingName.value) return;
   if (status.value !== "connected") return;
   const session = joinSession.value;

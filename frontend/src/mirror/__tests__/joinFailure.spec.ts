@@ -3,6 +3,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { nextTick } from "vue";
 
 import MirrorApp from "@/mirror/MirrorApp.vue";
+import { connectMirrorClient } from "@/mirror/mirrorClient";
 import { __resetComposerForTest, createBrowserI18n } from "@/i18n";
 import { reproRecorder } from "@/mirror/reproRecorder";
 
@@ -310,5 +311,135 @@ describe("MirrorApp join-failure drills", () => {
     vi.advanceTimersByTime(90_001);
     await settle();
     expect(notice().text()).toBe("The host didn't answer — please try again.");
+  });
+});
+
+
+describe("mirrorClient join request retirement", () => {
+  afterEach(() => { MockWebSocket.instances = []; });
+
+  function connect() {
+    const onChange = vi.fn();
+    const onDirectView = vi.fn();
+    const onHeadlessRedirect = vi.fn();
+    const onJoinRejected = vi.fn();
+    const onActionError = vi.fn();
+    const client = connectMirrorClient({
+      watch: false,
+      onChange, onDirectView, onHeadlessRedirect, onJoinRejected, onActionError,
+      WebSocketCtor: MockWebSocket as unknown as typeof WebSocket,
+      location: { href: "http://localhost/", protocol: "http:" }
+    });
+    return { client, socket: MockWebSocket.instances.at(-1)!,
+      onChange, onDirectView, onHeadlessRedirect, onJoinRejected, onActionError };
+  }
+
+  function reply(over: Record<string, unknown> = {}) {
+    return {
+      type: "session", requestId: "join:1", hostName: "Host", scrollAction: true,
+      session: { name: "Alice", status: "joined", joined: true, playerId: "p:1003", connectionCount: 1 },
+      players: [], screen: { kind: "run", type: "Run", title: "Run", mirrorMode: "mp-run" },
+      hostAccess: { allowed: false, reason: "unavailable", generation: 0 },
+      ...over
+    };
+  }
+
+  it.each([
+    { directView: true },
+    { headlessMirrorPath: "/seat/13500/ws" },
+    { headlessMirrorPort: 13500 },
+    { joinRejection: "spawn-failed" }
+  ])("ignores a retired reply before it can mutate the current session: %j", (directive) => {
+    const c = connect();
+    c.socket.emit(reply({ requestId: "session", session: { name: null, status: "unassigned", joined: false, playerId: null, connectionCount: 0 } }));
+    const session = c.client.session;
+    expect(session).not.toBeNull();
+    c.client.sendJoin("Alice");
+    c.client.cancelPendingJoin();
+    c.onChange.mockClear();
+    c.socket.emit(reply(directive));
+    expect(c.client.session).toBe(session);
+    expect(c.onChange).not.toHaveBeenCalled();
+    expect(c.onDirectView).not.toHaveBeenCalled();
+    expect(c.onHeadlessRedirect).not.toHaveBeenCalled();
+    expect(c.onJoinRejected).not.toHaveBeenCalled();
+    expect(c.client.watching).toBe(false);
+
+    c.client.sendJoin("Bob");
+    c.socket.emit(reply(directive));
+    expect(c.client.session).toBe(session);
+    expect(c.onChange).not.toHaveBeenCalled();
+    expect(c.onDirectView).not.toHaveBeenCalled();
+    expect(c.onHeadlessRedirect).not.toHaveBeenCalled();
+    expect(c.onJoinRejected).not.toHaveBeenCalled();
+    c.client.close();
+  });
+
+  it.each([
+    { headlessMirrorPath: "/seat/13500/ws" },
+    { headlessMirrorPort: 13500 }
+  ])("accepts the current redirected reply once after a retired attempt: %j", (directive) => {
+    const c = connect();
+    c.client.sendJoin("Alice");
+    c.client.cancelPendingJoin();
+    c.client.sendJoin("Bob");
+    c.socket.emit(reply({ requestId: "join:2", ...directive }));
+    expect(c.onHeadlessRedirect).toHaveBeenCalledTimes(1);
+    expect(c.onJoinRejected).not.toHaveBeenCalled();
+    c.socket.emit(reply({ requestId: "join:2", ...directive }));
+    expect(c.onHeadlessRedirect).toHaveBeenCalledTimes(1);
+    c.client.close();
+  });
+
+  it("accepts a matching host grant or rejection after cancellation", () => {
+    const c = connect();
+    c.client.sendJoin("Alice");
+    c.client.cancelPendingJoin();
+    c.client.sendJoin("Host");
+    c.socket.emit(reply({ requestId: "join:2", directView: true }));
+    expect(c.onDirectView).toHaveBeenCalledTimes(1);
+    c.client.sendJoin("Bob");
+    c.socket.emit(reply({ requestId: "join:3", joinRejection: "spawn-failed" }));
+    expect(c.onJoinRejected).toHaveBeenCalledExactlyOnceWith("spawn-failed", null);
+    c.client.close();
+  });
+
+  it("preserves ordinary roster updates and explicit watch replies after retirement", () => {
+    const c = connect();
+    c.client.sendJoin("Alice");
+    c.client.cancelPendingJoin();
+    c.socket.emit(reply({ requestId: "session", hostName: "New host" }));
+    expect(c.client.session?.hostName).toBe("New host");
+    c.socket.emit(reply({ requestId: "watch", directView: true }));
+    expect(c.onDirectView).toHaveBeenCalledTimes(1);
+    c.client.close();
+  });
+
+  it("does not let retired or unrelated action errors fail a new join", () => {
+    const c = connect();
+    c.client.sendJoin("Alice");
+    c.client.cancelPendingJoin();
+    c.client.sendJoin("Bob");
+    for (const requestId of ["join:1", "settings:1", "action:1"]) {
+      c.socket.emit({ type: "action-result", requestId, code: "failed", message: "old failure" });
+    }
+    expect(c.onActionError).not.toHaveBeenCalled();
+    c.socket.emit({ type: "action-result", requestId: "join:2", code: "failed", message: "current failure" });
+    expect(c.onActionError).toHaveBeenCalledExactlyOnceWith("current failure");
+    c.socket.emit(reply({ requestId: "join:2", directView: true }));
+    expect(c.onDirectView).not.toHaveBeenCalled();
+    c.client.close();
+  });
+
+  it("accepts legacy replies for an active join but not after its cancellation", () => {
+    const c = connect();
+    c.client.sendJoin("Alice");
+    c.client.cancelPendingJoin();
+    c.socket.emit(reply({ requestId: undefined, headlessMirrorPort: 13500 }));
+    expect(c.onHeadlessRedirect).not.toHaveBeenCalled();
+    c.client.sendJoin("Bob");
+    c.socket.emit(reply({ requestId: undefined, headlessMirrorPort: 13501 }));
+    expect(c.onHeadlessRedirect).toHaveBeenCalledExactlyOnceWith(13501);
+    c.client.close();
   });
 });

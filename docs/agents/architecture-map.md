@@ -631,36 +631,27 @@ subscriber read, renderers are absent and no audio timer is active. The host sta
 
 - Written ONLY by the browser — the host never reads the param (`CouchCoopHttpRequest.Name` is dead code), which
   is what makes an EMPTY value usable as a client-side marker.
-- THREE states, all of them in `frontend/src/join/joinModel.ts`: absent (`/`) = picker, empty (`/?name=`) = the
-  host player's own browser (a multiplayer direct view), value (`/?name=Ann`) = **seat intent** — auto-join that
-  seat, and until it is granted behave as a player waiting for a game, not a spectator (see the two rules below).
-  `readUrlName` trims the empty form to null, so it CANNOT tell absent from empty — use `hasNameParam` /
-  `readUrlNameState` (and `urlNameStateFor` for a value you are about to write).
-- **Seat intent (`?name=<value>`).** Two consequences, both client-side because the host never sees the
-  param: (1) the stream gate is SHUT until the seat is actually granted (`shouldWatchHostStream`'s `seatIntent`
-  argument — see the watch-gate section); (2) on a screen the host says has no seat, MirrorApp renders
-  `mirror/MirrorHostWaiting.vue` in the picker's place ("Waiting for host to start game" + "Control host"). The
-  screen test is `isNonJoinableMirrorMode(mode)` — true for `main-menu | sp-character-select | singleplayer-run |
-  unsupported`. MirrorApp holds the live answer in `urlSeatName` (a ref) + `urlSeatIntent`
-  (derived), updated through ONE helper (`rememberUrlName`) shared by `setUrlNameParam` and the
-  `onHeadlessRedirect` stamp — drift there = a viewer whose seat ended silently regains the host's stream.
-- `maybeAutoJoin` waits for the FIRST `session` before firing (it used to fire on socket open, which is before
-  anything is known about the host's screen) and re-checks the screen on every one, with the non-joinable guard
-  ABOVE the `autoJoinSent` latch: the guard is "not yet", so the single attempt is still there to spend when the
-  host reaches a multiplayer screen. `maybeRequestDirectView` is suppressed under seat intent — the `directView`
-  grant it asks for is the gate's FIRST branch and would hand a waiting player the host's solo run.
-- "Control host" (`onControlHost`) is the only writer of the empty marker on a NON-multiplayer screen: it pushes
-  `?name=` and forces a reload rather than unwinding in place, because most of this app's setup is URL-keyed and
-  read once. `onDirectView`'s stamp stays multiplayer-only.
-- One writer for both clients: `writeUrlNameParam(value, "push"|"replace", {history, location})`. Everything
-  PUSHES (a join is a navigation the player must be able to reverse); `replace` is only for silently dropping a
-  marker nobody navigated to. Its equality guard is load-bearing — the auto-join path re-stamps the name it just
-  read out of the URL.
-- Callers: `rememberJoinedName` (mirror, on `onHeadlessRedirect`) and MirrorApp's `setUrlNameParam` for the
-  host marker. The marker is stamped only when
-  `isMultiplayerMirrorMode(mirrorMode)` AND no param is present — an existing `?name=<value>` that produced the
-  direct view is left alone (it already reloads to the same view and may be a shared link; e2e `smoke.spec.ts`
-  "preserves join URL usability with query params" is the regression gate).
+- Three URL states: absent (`/`) = unassigned picker, empty (`/?name=`) = explicit host intent,
+  value (`/?name=Ann`) = player intent. MirrorApp keeps reactive `viewIntent` separate from server-confirmed
+  `joined` / `directView` ownership. `readUrlNameState` distinguishes absent from empty.
+- Selecting a player pushes its name before sending `join`, preserving other query parameters. Admission
+  persists the successful name without adding a history entry. Selecting the host row uses the empty marker;
+  existing named-host links retain their alias, including across reconnects.
+- Player intent keeps the coordinator at `watch:false` throughout joining and after redirection. The existing
+  Joining/Loading screens describe admission and the seat's first scene respectively. An unsolicited session
+  reporting `joined:true` does not grant a view. Only explicit host intent may display the host privacy notice.
+- On non-joinable screens, a named player sees `mirror/MirrorHostWaiting.vue`. `maybeAutoJoin` reads current
+  reactive intent and waits for a session on a joinable screen before spending its one-attempt latch.
+- Terminal initial rejection or timeout removes `name` with `replaceState`, restores the picker, and keeps
+  the attempted name as form prefill. Recoverable transport retries retain intent. A failed reclaim retains
+  the previously granted selection; that grant does not exempt a different new selection from rollback.
+  `MirrorClient.cancelPendingJoin()` retires the request ID locally so late progress/admission cannot undo
+  rollback. It does not cancel a server-side seat spawn.
+- `writeUrlNameParam(value, "push"|"replace", {history, location})` owns URL changes. Its equality guard
+  prevents duplicate history entries on auto-join and admission. MirrorApp updates its reactive intent and
+  expected URL state in the same operation.
+- "Control host" pushes the empty marker and reloads because several modules read URL settings once.
+  Host access still requires a supported multiplayer context and server authorization.
 - BACK/FORWARD is a full `location.reload()` (`MirrorApp.handlePopState`), fired only when the URL's param state
   differs from the one the page holds (`shouldReloadForUrlNameChange`) — that inequality IS the loop guard. A
   reload is the only reset consistent with every module's lazy `window.location` read; do not hot-unwind the
@@ -746,20 +737,13 @@ runner with no native Godot that is a **SIGSEGV that kills the process silently 
 statics set; any new standalone host of this server needs the same two lines.
 
 ## Mirror stream gate (`watch`)
-- Product rule: a viewer must NOT have the host's game streamed (or rendered) behind the join picker while the
-  host has multiplayer active — lobby, saved multiplayer game, or multiplayer run. It streams only once the
-  viewer chose a seat (`joined`) or the host itself (`directView`), or when the host is off the multiplayer
-  screens entirely.
-- The decision is CLIENT-side and shared: `JoinModel.ShouldWatchHostStream` / `shouldWatchHostStream`
-  (`frontend/src/join/joinModel.ts`) — the same predicate both clients use to decide whether to show the scene,
-  so wire and screen can't disagree.
-- **`seatIntent`** ("this page's URL names a seat"; see the `?name=` section) is required in
-  both twins so neither client can forget it, and its POSITION is the contract: strictly BELOW `joined ||
-  directView` (a granted view outranks a URL marker — the URL still names the seat after the host serves it, so an
-  arm above these would black out every joined viewer) and ABOVE everything else (a title-only host screen must no
-  longer open the gate for a viewer that named a seat). The native client has no page URL and passes
-  `seatIntent: false` (`godot-client/src/App/ConnectionCoordinator.cs`, which is NOT in `CouchCoop.sln` — build
-  `godot-client/CouchCoop.GodotClient.csproj` explicitly after touching this signature).
+- The browser requests scene streaming only after a seat (`joined`) or host view (`directView`) is granted.
+  Unassigned and joining sockets remain coordination-only. After a seat redirect, the host socket stays open
+  at `watch:false` while the seat socket streams its own instance.
+- MirrorApp uses the same `wantsHostStream` predicate for display and watch requests. Host intent alone does
+  not authorize input or scene delivery; the server's host-access policy remains authoritative.
+- The older `JoinModel.ShouldWatchHostStream` / `shouldWatchHostStream` helpers retain the native client's
+  screen-based policy. MirrorApp no longer uses their non-multiplayer fallback.
 - Wire: the initial value rides the complete canonical connection query because only the query is known early
   enough to suppress the host's connect-time keyframe; later flips ride `{"type":"watch","on":bool}`.
   Tooling must send all five selectors, including `watch`.
