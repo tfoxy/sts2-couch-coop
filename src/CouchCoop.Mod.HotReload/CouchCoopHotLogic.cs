@@ -54,7 +54,7 @@ public static class CouchCoopHotLogic
     private static JsonSerializerOptions JsonOptions { get; } = new(JsonSerializerDefaults.Web);
 }
 
-public sealed class CouchCoopHotServerGeneration : ICouchCoopHotGeneration
+public sealed class CouchCoopHotServerGeneration : ICouchCoopHotGeneration, ICouchCoopAddressedStreamGeneration
 {
     private readonly CouchCoopBrowserServer _server;
 
@@ -76,12 +76,26 @@ public sealed class CouchCoopHotServerGeneration : ICouchCoopHotGeneration
             log: host.Log,
             admission: (host as HotReloadableBrowserServerHost)?.Admission,
             onBrowserDemandChanged: (host as IHotBrowserDemandHost)?.CreateBrowserDemandReporter());
+        if (host is IHotDirectIpHttpsHost directIp)
+        {
+            _server.PrepareDirectIpSeatAsync = (port, address, token) => directIp.PrepareDirectIpSeatAsync(port, address.ToString(), token);
+            _server.EnableDirectIpSeatAsync = (request, token) => directIp.EnableDirectIpSeatAsync(
+                request.BundleId, request.Address, request.CaFingerprint, request.HostPort, token);
+            _server.RefreshDirectIpSeatMaterialAsync = (request, token) => directIp.RefreshDirectIpSeatMaterialAsync(
+                request.BundleId, request.Address, request.CaFingerprint, request.HostPort, token);
+        }
     }
 
     public string DescribeOverlayLayoutJson() => CouchCoopHotLogic.DescribeOverlayLayoutJson();
 
     public Task HandleClientAsync(TcpClient client, CancellationToken cancellationToken)
         => _server.HandleClientAsync(client, cancellationToken);
+
+    public Task ServeAsync(Stream stream, bool isSecure, CancellationToken cancellationToken)
+        => _server.ServeAsync(stream, isSecure, cancellationToken);
+
+    public Task ServeAsync(Stream stream, bool isSecure, System.Net.IPAddress remoteAddress, CancellationToken cancellationToken)
+        => _server.ServeAsync(stream, isSecure, remoteAddress, cancellationToken);
 
     public Task StopAsync(HotReloadShutdownContext context, CancellationToken cancellationToken)
         => _server.StopGenerationAsync(context.Reason, cancellationToken);

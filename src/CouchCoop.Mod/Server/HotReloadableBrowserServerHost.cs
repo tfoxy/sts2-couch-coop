@@ -7,7 +7,7 @@ using CouchCoop.Mod.Session;
 
 namespace CouchCoop.Mod.Server;
 
-public sealed class HotReloadableBrowserServerHost : IHotServerHost, IHotBrowserDemandHost, IAsyncDisposable
+public sealed class HotReloadableBrowserServerHost : IHotServerHost, IHotBrowserDemandHost, IHotDirectIpHttpsHost, IAsyncDisposable
 {
     private readonly CouchCoopRuntimeHost _runtime;
     private readonly IPAddress _bindAddress;
@@ -103,7 +103,45 @@ public sealed class HotReloadableBrowserServerHost : IHotServerHost, IHotBrowser
     /// <remarks>
     /// HTTP and HTTPS share the port actually bound by the host's one TCP listener.
     /// </remarks>
-    public int SecurePort => _secureListener.IsRunning ? BaseUri?.Port ?? 0 : 0;
+    public int SecurePort => _secureListener.IsHostnameRunning ? BaseUri?.Port ?? 0 : 0;
+
+    public int DirectIpSecurePort => _secureListener.IsDirectIpRunning ? BaseUri?.Port ?? 0 : 0;
+    public Func<IPAddress, CancellationToken, Task<DirectIpCertificateMaterial?>>? DirectIpCertificateRefresh
+    {
+        get => _secureListener.DirectIpCertificateRefresh;
+        set => _secureListener.DirectIpCertificateRefresh = value;
+    }
+    public bool DirectIpRefreshOnEveryHandshake
+    {
+        get => _secureListener.DirectIpRefreshOnEveryHandshake;
+        set => _secureListener.DirectIpRefreshOnEveryHandshake = value;
+    }
+    public Func<int, IPAddress, CancellationToken, Task<int?>>? PrepareDirectIpSeatAsync { get; set; }
+    public Func<DirectIpSeatPreparation, CancellationToken, Task<int?>>? EnableDirectIpSeatAsync { get; set; }
+    public Func<DirectIpSeatPreparation, CancellationToken, Task<bool>>? RefreshDirectIpSeatMaterialAsync { get; set; }
+
+    Task<int?> IHotDirectIpHttpsHost.PrepareDirectIpSeatAsync(int port, string address, CancellationToken token)
+        => IPAddress.TryParse(address, out var ip)
+            ? PrepareDirectIpSeatAsync?.Invoke(port, ip, token) ?? Task.FromResult<int?>(null)
+            : Task.FromResult<int?>(null);
+    Task<int?> IHotDirectIpHttpsHost.EnableDirectIpSeatAsync(string bundle, string address, string ca, int hostPort, CancellationToken token)
+        => EnableDirectIpSeatAsync?.Invoke(new(bundle, address, ca, hostPort), token) ?? Task.FromResult<int?>(null);
+    Task<bool> IHotDirectIpHttpsHost.RefreshDirectIpSeatMaterialAsync(string bundle, string address, string ca, int hostPort, CancellationToken token)
+        => RefreshDirectIpSeatMaterialAsync?.Invoke(new(bundle, address, ca, hostPort), token) ?? Task.FromResult(false);
+
+    public bool TryStartDirectIpListener(DirectIpCertificateMaterial material)
+    {
+        if (BaseUri is null || !_secureListener.TryEnableDirectIp(material)) return false;
+        SecureOriginEndpoint.PublishDirectIp(BaseUri.Port);
+        return true;
+    }
+
+    public void DisableDirectIpListener()
+    {
+        _secureListener.DisableDirectIp();
+        SecureOriginEndpoint.PublishDirectIp(0);
+    }
+
 
     public void Log(string message) => _log(message);
 
@@ -119,7 +157,7 @@ public sealed class HotReloadableBrowserServerHost : IHotServerHost, IHotBrowser
     {
         ArgumentNullException.ThrowIfNull(certificates);
 
-        if (_secureListener.IsRunning)
+        if (_secureListener.IsHostnameRunning)
         {
             return true;
         }
@@ -163,6 +201,13 @@ public sealed class HotReloadableBrowserServerHost : IHotServerHost, IHotBrowser
                 isSecure: true,
                 (client.Client.RemoteEndPoint as IPEndPoint)?.Address ?? IPAddress.None,
                 cancellationToken).ConfigureAwait(false);
+            return;
+        }
+
+        if (generation is ICouchCoopAddressedStreamGeneration addressedGeneration)
+        {
+            await addressedGeneration.ServeAsync(stream, true,
+                (client.Client.RemoteEndPoint as IPEndPoint)?.Address ?? IPAddress.None, cancellationToken).ConfigureAwait(false);
             return;
         }
 
@@ -263,6 +308,8 @@ public sealed class HotReloadableBrowserServerHost : IHotServerHost, IHotBrowser
         lock (_generationGate) generation = _generation;
         if (generation is BuiltInBrowserServerGeneration builtIn)
             await builtIn.ServeAsync(stream, isSecure, remoteAddress, cancellationToken).ConfigureAwait(false);
+        else if (generation is ICouchCoopAddressedStreamGeneration addressedGeneration)
+            await addressedGeneration.ServeAsync(stream, isSecure, remoteAddress, cancellationToken).ConfigureAwait(false);
         else if (generation is ICouchCoopStreamGeneration streamGeneration)
             await streamGeneration.ServeAsync(stream, isSecure, cancellationToken).ConfigureAwait(false);
         else
@@ -341,6 +388,7 @@ public sealed class HotReloadableBrowserServerHost : IHotServerHost, IHotBrowser
             _seatPipe = null;
         }
         SecureOriginEndpoint.Publish(0);
+        SecureOriginEndpoint.PublishDirectIp(0);
         _secureListener.Disable();
 
         _stop?.Cancel();
@@ -515,7 +563,12 @@ public sealed class HotReloadableBrowserServerHost : IHotServerHost, IHotBrowser
             log: host.Log,
             admission: host.Admission,
             onBrowserDemandChanged: host.CreateBrowserDemandReporter(),
-            requestSecureOrigin: host._requestSecureOrigin);
+            requestSecureOrigin: host._requestSecureOrigin)
+        {
+            PrepareDirectIpSeatAsync = (port, address, token) => host.PrepareDirectIpSeatAsync?.Invoke(port, address, token) ?? Task.FromResult<int?>(null),
+            RefreshDirectIpSeatMaterialAsync = (request, token) => host.RefreshDirectIpSeatMaterialAsync?.Invoke(request, token) ?? Task.FromResult(false),
+            EnableDirectIpSeatAsync = (request, token) => host.EnableDirectIpSeatAsync?.Invoke(request, token) ?? Task.FromResult<int?>(null),
+        };
 
         public string DescribeOverlayLayoutJson()
             => string.Empty;

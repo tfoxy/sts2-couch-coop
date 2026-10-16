@@ -30,3 +30,9 @@ public interface ICouchCoopStreamGeneration
     /// </param>
     Task ServeAsync(Stream stream, bool isSecure, CancellationToken cancellationToken);
 }
+
+/// <summary>Preserves peer identity when a shared listener dispatches a decrypted or relayed stream.</summary>
+public interface ICouchCoopAddressedStreamGeneration : ICouchCoopStreamGeneration
+{
+    Task ServeAsync(Stream stream, bool isSecure, System.Net.IPAddress remoteAddress, CancellationToken cancellationToken);
+}

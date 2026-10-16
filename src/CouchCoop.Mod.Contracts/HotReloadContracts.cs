@@ -32,6 +32,14 @@ public interface IHotBrowserDemandHost
     Action<int, long> CreateBrowserDemandReporter();
 }
 
+// Optional capability; all arguments are shared BCL types across reload assembly boundaries.
+public interface IHotDirectIpHttpsHost
+{
+    Task<int?> PrepareDirectIpSeatAsync(int port, string address, CancellationToken token);
+    Task<int?> EnableDirectIpSeatAsync(string bundleId, string address, string caFingerprint, int hostPort, CancellationToken token);
+    Task<bool> RefreshDirectIpSeatMaterialAsync(string bundleId, string address, string caFingerprint, int hostPort, CancellationToken token);
+}
+
 public sealed record HotReloadActivationContext(
     int Generation,
     string ModDirectory,

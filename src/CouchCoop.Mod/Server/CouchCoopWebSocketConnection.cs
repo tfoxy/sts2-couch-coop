@@ -136,6 +136,8 @@ public sealed class CouchCoopWebSocketConnection
     // TRUE when this browser arrived over TLS. A direct-port seat needs its own TLS-ready port for a wss
     // redirect; a shared seat stays on the host's existing secure connection and route.
     private readonly bool _isSecure;
+    private readonly Func<int, IPAddress, CancellationToken, Task<int?>>? _prepareDirectIpSeat;
+    private IPAddress? _directIpAddress;
 
     // A secure seat normally loads the shared cache immediately. Allow one provider fetch (10 seconds in
     // SecureOriginCertificates) plus listener startup if a seat cache is missing or no longer valid.
@@ -165,7 +167,8 @@ public sealed class CouchCoopWebSocketConnection
         bool isSecure,
         ConnectionArrivalLog arrivals,
         Action? onSceneAck,
-        IHostBrowserAccess? hostAccess)
+        IHostBrowserAccess? hostAccess,
+        Func<int, IPAddress, CancellationToken, Task<int?>>? prepareDirectIpSeat)
     {
         _envelopeFactory = envelopeFactory ?? throw new ArgumentNullException(nameof(envelopeFactory));
         _connections = connections ?? throw new ArgumentNullException(nameof(connections));
@@ -180,6 +183,7 @@ public sealed class CouchCoopWebSocketConnection
         _watchRequested = sceneStreaming;
         _wantsStaticBg = wantsStaticBg;
         _isSecure = isSecure;
+        _prepareDirectIpSeat = prepareDirectIpSeat;
         _arrivals = arrivals ?? throw new ArgumentNullException(nameof(arrivals));
         _onSceneAck = onSceneAck;
         _actionExecutor = new BrowserActionExecutor(envelopeFactory.RuntimeHost);
@@ -233,7 +237,8 @@ public sealed class CouchCoopWebSocketConnection
         ConnectionArrivalLog? arrivals = null,
         Action? onSceneAck = null,
         CancellationToken cancellationToken = default,
-        IHostBrowserAccess? hostAccess = null)
+        IHostBrowserAccess? hostAccess = null,
+        Func<int, IPAddress, CancellationToken, Task<int?>>? prepareDirectIpSeat = null)
     {
         if (request.QueryValues.ContainsKey("view"))
         {
@@ -276,7 +281,8 @@ public sealed class CouchCoopWebSocketConnection
                 isSecure,
                 arrivals ?? ConnectionArrivalLog.Shared,
                 onSceneAck,
-                hostAccess)
+                hostAccess,
+                prepareDirectIpSeat)
             .AcceptCoreAsync(stream, request, cancellationToken)
             .ConfigureAwait(false);
     }
@@ -286,6 +292,7 @@ public sealed class CouchCoopWebSocketConnection
         CouchCoopHttpRequest request,
         CancellationToken cancellationToken)
     {
+        _directIpAddress = DirectIpAddressFromRequest(_isSecure, request.Header("Host"));
         if (!string.Equals(request.Path, "/ws", StringComparison.Ordinal))
         {
             await HttpResponseWriter.WriteJsonErrorAsync(
@@ -706,11 +713,22 @@ public sealed class CouchCoopWebSocketConnection
             if (ShouldRequestSecureOriginForSeat(_isSecure, headlessPath, headlessPort, joinRejection)
                 && headlessPort is int insecurePort)
             {
-                await HeadlessClientManager.RequestSecureOriginAsync(insecurePort, cancellationToken)
-                    .ConfigureAwait(false);
-                var securePort = await HeadlessClientManager
-                    .TryResolveSecurePortAsync(insecurePort, SecurePortResolveTimeout, cancellationToken)
-                    .ConfigureAwait(false);
+                int? securePort;
+                if (_directIpAddress is { } address)
+                {
+                    // One bounded readiness operation for the exact address/CA; never poll or downgrade.
+                    using var deadline = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
+                    deadline.CancelAfter(SecurePortResolveTimeout);
+                    securePort = _prepareDirectIpSeat is null ? null
+                        : await _prepareDirectIpSeat(insecurePort, address, deadline.Token).WaitAsync(deadline.Token).ConfigureAwait(false);
+                }
+                else
+                {
+                    await HeadlessClientManager.RequestSecureOriginAsync(insecurePort, cancellationToken).ConfigureAwait(false);
+                    // Existing hostname preparation poll remains unchanged.
+                    securePort = await HeadlessClientManager.TryResolveSecurePortAsync(
+                        insecurePort, SecurePortResolveTimeout, cancellationToken).ConfigureAwait(false);
+                }
 
                 if (securePort is int resolved)
                 {
@@ -777,6 +795,11 @@ public sealed class CouchCoopWebSocketConnection
             cancellationToken,
             headlessMirrorPath: headlessPath).ConfigureAwait(false)).ConfigureAwait(false);
     }
+
+    internal static IPAddress? DirectIpAddressFromRequest(bool isSecure, string? host)
+        => isSecure && Uri.TryCreate($"https://{host}/", UriKind.Absolute, out var uri)
+            && IPAddress.TryParse(uri.Host, out var address)
+            && address.AddressFamily == System.Net.Sockets.AddressFamily.InterNetwork ? address : null;
 
     internal static bool ShouldRequestSecureOriginForSeat(
         bool isSecure,

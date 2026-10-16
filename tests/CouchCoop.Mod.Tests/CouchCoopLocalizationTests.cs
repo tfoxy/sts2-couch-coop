@@ -41,6 +41,12 @@ internal static class CouchCoopLocalizationTests
             && QrHoverTipCopy.MethodSecureDescription.Contains("路由器", StringComparison.Ordinal)
             && QrHoverTipCopy.MethodMdnsDescription.Contains("最不可靠", StringComparison.Ordinal),
             "Chinese hover guidance retains permission, router, and reliability details");
+        Assert(QrSelectionModel.MethodLabel("direct-https").Resolve() == "直接地址（HTTPS）",
+            "direct-IP method label follows Chinese");
+        var directBody = DirectIpSetupCopy.Body(new DirectIpHttpsState(CaFingerprint: new string('B', 64),
+            CaExpiresAt: DateTimeOffset.Parse("2030-01-01T00:00:00Z")));
+        Assert(directBody.Contains("证书信任设置") && directBody.Contains(new string('B', 64))
+            && directBody.Contains("2030-01-01"), "translated setup preserves platform instructions and exact identity values");
         CouchCoopLocalization.SetLanguageForTests("eng");
     }
 

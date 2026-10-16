@@ -24,6 +24,12 @@ using Spirectl.Sts2.Core.Reference;
 using Spirectl.Sts2.Core.SceneInspection;
 using Spirectl.Sts2.Embedding;
 
+if (args is ["direct-ip-host", ..])
+{
+    await DirectIpHttpsHostServiceTests.RunAsync();
+    return;
+}
+
 if (args is ["host-access-routes", ..])
 {
     await BrowserServerRouteTests.RunHostAccessRoutesAsync();
@@ -245,12 +251,26 @@ if (args is ["static-spa", ..])
     return;
 }
 
+if (args is ["direct-ip-certificate-child", var certificateRoot])
+{
+    await DirectIpCertificatesTests.RunChildAsync(certificateRoot);
+    return;
+}
+
+if (args is ["direct-ip-certificates", ..])
+{
+    await DirectIpCertificatesTests.RunAsync();
+    return;
+}
+
 if (args is ["network", ..])
 {
     LanAddressRankingTests.Run();
     QrHostOptionsTests.Run();
     QrSelectionModelTests.Run();
     SecureOriginTests.Run();
+    await DirectIpCertificatesTests.RunAsync();
+    await DirectIpHttpsHostServiceTests.RunAsync();
     QrHoverTipCopyTests.Run();
     SecureHeadlessRedirectTests.RunAsync();
     MdnsResponderTests.Run();
@@ -889,6 +909,8 @@ QrSelectionModelTests.Run();
 // WS6 secure origin: the pure half — dashed-host derivation, the https scheme, the per-adapter secure ROW
 // (enabled or disabled-with-reason), and the persisted selection preference incl. its checkbox-era reads.
 SecureOriginTests.Run();
+await DirectIpCertificatesTests.RunAsync();
+await DirectIpHttpsHostServiceTests.RunAsync();
 // The "web link" option: the public-origin client that reaches this PC by literal IPv4 under the browser's
 // Local Network Access permission. The pure half — origin parsing, the per-adapter web row, that the QR
 // encodes the PUBLIC origin with the adapter's address in ?h= (and that ?h= survives the payload

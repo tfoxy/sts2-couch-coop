@@ -526,3 +526,16 @@ Missing reusable STS2 support belongs in ../spirectl; do not hide gaps with Couc
 
 Subsystem-level documentation for agents lives under [docs/agents/](./agents/) — start at its
 [README](./agents/README.md).
+
+## Direct-IP HTTPS
+
+Select **Direct address (HTTPS)** in the native QR dialog, then **Prepare host**. This optional method
+uses a persistent per-user local CA and a certificate for the selected IPv4 address. Export the public
+root and install trust on each client using [the platform setup instructions](direct-ip-https.md).
+No hostname, public DNS, certificate-provider download, or internet access is required. It uses the
+browser server's actual bound port, shared with HTTP, and leaves hostname HTTPS independently available.
+
+The `direct-https` QR preference remembers the method without creating identity. Re-selecting the method
+opens native setup, including the full CA fingerprint, expiry, public export and confirmed CA replacement.
+Trust storage is deliberately separate from disposable caches and mod files; do not delete or copy its
+private contents as part of normal mod updates. There is no custom certificate-import configuration.

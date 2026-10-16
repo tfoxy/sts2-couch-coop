@@ -937,6 +937,16 @@ the mDNS wire codec and its three-way mode decision, the discovery responder and
 loopback sockets, listener hardening, and the reachability watch. It is engine-free and opens nothing on port
 5353. Like the other verbs it exists because the full Mod.Tests sequence dies before reaching any of it.
 
+Direct-IP HTTPS additionally has a game-free Linux Chromium trust-store proof. Build
+`tests/CouchCoop.HostedServerHarness` with `CouchCoopBuildToLocalMods=false` and a scratch
+`COUCHCOOP_GAME_MODS_DIR`, then run `scripts/test-direct-ip-https-browser.mjs --address <local-ipv4>
+--port <unused-port> --log <evidence-path>` under `live-qa-lock.mjs with` holding
+`exclusive:port:<unused-port>`. It needs Playwright Chromium and NSS `certutil`; it never invokes
+`npm run build`. The script creates a temporary HOME/profile/NSS store, proves unknown-root rejection,
+imports only the public root into that store, and verifies HTTPS, WSS, resources, ServiceWorker and
+AudioWorklet with certificate bypass disabled. It removes its temporary identity and trust store on
+exit. This is Linux browser evidence, not verification of phone installation or Windows/macOS trust UI.
+
 Frontend coverage includes `firstScenePresentation.spec.ts`, receipt messages, MirrorApp redirects, and
 DOM/canvas mounting. Run the frontend typecheck and Vitest without `npm run build` (which deploys).
 For live QA, verify the installed DLL and parser dependency closure, then use an isolated lobby and

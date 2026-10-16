@@ -254,3 +254,14 @@ Safari** — and as of 2026-09-17 that is measured rather than inferred: WebKit 
 private-IP subresource of an https page outright, so there is no LNA permission to implement and nothing
 a player can allow. iPhones and iPads keep the `local-ip.co` and plain-LAN paths; all QR options stay, and
 the bootstrap tells an iOS visitor which ones they are.
+
+## Direct-IP HTTPS alternative
+
+**Direct address (HTTPS)** serves the application and all host traffic over trusted HTTPS/WSS at the
+literal IPv4 address. It does not use the public Website bootstrap or rely on its mixed-content/LNA
+exceptions. It also avoids the DNS-rebinding problems of hostname HTTPS. Its tradeoff is manual client
+trust: a per-host local CA must be transferred through an authenticated channel and explicitly trusted
+on each device. Downloading a self-signed certificate does not accomplish that. See
+[direct-IP setup, platform steps and lifecycle](../direct-ip-https.md). Existing plain Direct address,
+Website and hostname HTTPS methods remain available. Device CA policy and actual device verification
+still bound platform support; these instructions are not a claim of physical iPhone or Android QA.

@@ -2109,6 +2109,17 @@ public sealed partial class HeadlessClientManager : IDisposable
                 secureCertCache;
         }
 
+        // A seat receives only the protected leaf-bundle directory, never the signing identity.
+        try
+        {
+            psi.EnvironmentVariables[CouchCoop.Mod.Server.DirectIpCertificates.SeatMaterialRootEnvironmentVariable] =
+                CouchCoop.Mod.Server.DirectIpCertificates.DefaultSeatMaterialRoot();
+        }
+        catch (Exception exception) when (exception is IOException or UnauthorizedAccessException)
+        {
+            CouchCoopLog.Stderr("direct-ip-https seat storage unavailable: " + exception.GetType().Name);
+        }
+
         // Prevent the headless child from inheriting the host's port so if it tried to spawn
         // sub-headless instances (it won't, but defensive) they'd start at the right base.
         psi.EnvironmentVariables.Remove("COUCHCOOP_HEADLESS_WRAPPER");
@@ -2402,6 +2413,58 @@ public sealed partial class HeadlessClientManager : IDisposable
         {
             return false;
         }
+    }
+
+    /// <summary>Prepare an authorized leaf bundle once and await IP-specific readiness, without polling.</summary>
+    public static Task<int?> RequestDirectIpOriginAsync(
+        int httpPort, CouchCoop.Mod.Server.DirectIpSeatPreparation preparation, CancellationToken ct)
+        => RequestDirectIpIdentityAsync(httpPort, preparation, refresh: false, ct);
+
+    public static async Task<bool> RequestDirectIpRefreshAsync(
+        int hostPort, CouchCoop.Mod.Server.DirectIpSeatPreparation preparation, CancellationToken ct)
+        => preparation.HostPort == hostPort && hostPort > 0
+            && await RequestDirectIpIdentityAsync(hostPort, preparation, refresh: true, ct).ConfigureAwait(false) == hostPort;
+
+    private static async Task<int?> RequestDirectIpIdentityAsync(
+        int httpPort, CouchCoop.Mod.Server.DirectIpSeatPreparation preparation, bool refresh, CancellationToken ct)
+    {
+        if (httpPort is <= 0 or > 65535 || !preparation.IsValid) return null;
+        using var deadline = CancellationTokenSource.CreateLinkedTokenSource(ct);
+        deadline.CancelAfter(TimeSpan.FromSeconds(12));
+        var token = deadline.Token;
+        try
+        {
+            using var http = new HttpClient(new HttpClientHandler { UseProxy = false, AllowAutoRedirect = false })
+            { Timeout = TimeSpan.FromSeconds(12) };
+            var query = $"?bundle={Uri.EscapeDataString(preparation.BundleId)}&address={Uri.EscapeDataString(preparation.Address)}&ca={Uri.EscapeDataString(preparation.CaFingerprint)}&hostPort={preparation.HostPort.ToString(CultureInfo.InvariantCulture)}";
+            var route = refresh ? CouchCoop.Mod.Server.SecureOriginEndpoint.RefreshDirectIpRoute : CouchCoop.Mod.Server.SecureOriginEndpoint.EnableDirectIpRoute;
+            using var request = new HttpRequestMessage(HttpMethod.Post,
+                $"http://127.0.0.1:{httpPort.ToString(CultureInfo.InvariantCulture)}{route}{query}")
+            { Content = new ByteArrayContent([]) };
+            using var response = await http.SendAsync(request, HttpCompletionOption.ResponseHeadersRead, token).ConfigureAwait(false);
+            if (!response.IsSuccessStatusCode) return null;
+            // Never redirect on the strength of a generic TLS-ready flag or another authority's response.
+            if (response.Content.Headers.ContentLength is > 4096) return null;
+            await using var responseStream = await response.Content.ReadAsStreamAsync(token).ConfigureAwait(false);
+            using var boundedBody = new MemoryStream();
+            var buffer = new byte[4097];
+            int count;
+            while ((count = await responseStream.ReadAsync(buffer.AsMemory(0, Math.Min(buffer.Length, 4097 - (int)boundedBody.Length)), token).ConfigureAwait(false)) > 0)
+            {
+                boundedBody.Write(buffer, 0, count);
+                if (boundedBody.Length > 4096) return null;
+            }
+            var bytes = boundedBody.ToArray();
+            using var document = JsonDocument.Parse(bytes);
+            var root = document.RootElement;
+            return root.TryGetProperty("securePort", out var port) && port.TryGetInt32(out var value)
+                && value == httpPort
+                && root.TryGetProperty("address", out var address) && address.GetString() == preparation.Address
+                && root.TryGetProperty("caFingerprint", out var ca) && ca.GetString() == preparation.CaFingerprint
+                ? value : null;
+        }
+        catch (Exception exception) when (exception is HttpRequestException or JsonException or InvalidOperationException
+            || exception is OperationCanceledException && !ct.IsCancellationRequested) { return null; }
     }
 
     // Real readiness probe: any HTTP response (2xx/4xx/5xx) means the headless's browser server is

@@ -27,10 +27,25 @@ public static class SecureOriginEndpoint
     public const string EnableRoute = "/internal/secure-origin/enable";
 
     private static int _port;
+    private static int _directIpPort;
+    public const string RefreshDirectIpRoute = "/internal/direct-ip-https/refresh";
+    public const string EnableDirectIpRoute = "/internal/direct-ip-https/enable";
+    public static int LocalDirectIpSecurePort => Volatile.Read(ref _directIpPort);
+    public static void PublishDirectIp(int port) => Volatile.Write(ref _directIpPort, Math.Max(0, port));
 
     /// <summary>The shared browser port when TLS is ready, or <c>0</c> otherwise.</summary>
     public static int LocalSecurePort => Volatile.Read(ref _port);
 
     /// <summary>Called when TLS becomes ready. <c>0</c> clears it on teardown.</summary>
     public static void Publish(int port) => Volatile.Write(ref _port, port < 0 ? 0 : port);
+}
+
+/// <summary>An opaque leaf bundle identifier, never a path or CA signing credential.</summary>
+public sealed record DirectIpSeatPreparation(string BundleId, string Address, string CaFingerprint, int HostPort = 0)
+{
+    public bool IsValid => HostPort is >= 0 and <= 65535 && IsFingerprint(BundleId) && IsFingerprint(CaFingerprint)
+        && System.Net.IPAddress.TryParse(Address, out var ip)
+        && ip.AddressFamily == System.Net.Sockets.AddressFamily.InterNetwork;
+
+    private static bool IsFingerprint(string value) => value is { Length: 64 } && value.All(Uri.IsHexDigit);
 }

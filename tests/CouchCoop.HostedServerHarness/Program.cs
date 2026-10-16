@@ -68,7 +68,7 @@ await using var server = new CouchCoopBrowserServer(
     new StaticSpaFileProvider(options.StaticRoot),
     new FakeAssetAdapter(),
     new BrowserStateEnvelopeFactory(new CouchCoopRuntimeHost(Dependencies(runtime)), readSessionFacts: runtime.ReadSessionFacts),
-    bindAddress: IPAddress.Loopback,
+    bindAddress: options.BindAddress,
     preferredPort: options.Port,
     resourceCacheRoot: Environment.GetEnvironmentVariable("COUCHCOOP_CACHE_ROOT"),
     lifecycleDiagnostics: diagnostics,
@@ -77,6 +77,14 @@ await using var server = new CouchCoopBrowserServer(
     hostBrowserAccess: new HarnessHostBrowserAccess(runtime));
 
 var baseUri = await server.StartAsync(stop.Token).ConfigureAwait(false);
+using var directIpAuthority = options.DirectIpRoot is null ? null : new DirectIpCertificates(options.DirectIpRoot);
+string? exportedRoot = null;
+if (directIpAuthority is not null)
+{
+    using var material = await directIpAuthority.PrepareAsync([options.BindAddress], cancellationToken: stop.Token);
+    if (!server.TryStartDirectIpListener(material)) throw new InvalidOperationException("Harness TLS setup failed.");
+    exportedRoot = directIpAuthority.ExportPublicRoot();
+}
 // iphone-burst deliberately owns TWO real browser servers. The control remains alive when the browser enters the
 // seat-shaped scene server, matching the production host/seat socket lifetime without launching a game process.
 var seatRuntime = options.Mode == HarnessMode.IphoneBurst ? new FakeSpirectlRuntime(HarnessMode.IphoneBurst, options.IphoneProfile) : null;
@@ -92,7 +100,7 @@ await using var seatServer = options.Mode == HarnessMode.IphoneBurst
     : null;
 var seatUri = seatServer is null ? null : await seatServer.StartAsync(stop.Token).ConfigureAwait(false);
 if (seatUri is not null) server.SyntheticSeatPort = seatUri.Port;
-Console.WriteLine(JsonSerializer.Serialize(new { baseUrl = baseUri.ToString(), seatBaseUrl = seatUri?.ToString(), mode = options.Mode.ToString().ToLowerInvariant(), iphoneProfile = options.IphoneProfile.ToString().ToLowerInvariant(), artifactDirectory = options.ArtifactDirectory }));
+Console.WriteLine(JsonSerializer.Serialize(new { baseUrl = baseUri.ToString(), exportedRoot, seatBaseUrl = seatUri?.ToString(), mode = options.Mode.ToString().ToLowerInvariant(), iphoneProfile = options.IphoneProfile.ToString().ToLowerInvariant(), artifactDirectory = options.ArtifactDirectory }));
 Console.Out.Flush();
 
 // M3 WS-T host-discovery leg: also answer UDP discovery probes on the same port the TCP server chose, so a
@@ -128,7 +136,8 @@ catch (OperationCanceledException)
 await server.StopAsync(CancellationToken.None).ConfigureAwait(false);
 if (seatServer is not null) await seatServer.StopAsync(CancellationToken.None).ConfigureAwait(false);
 
-internal sealed record HarnessOptions(string StaticRoot, int Port, HarnessMode Mode, IphoneBurstProfile IphoneProfile, string? ArtifactDirectory)
+internal sealed record HarnessOptions(string StaticRoot, int Port, HarnessMode Mode, IphoneBurstProfile IphoneProfile, string? ArtifactDirectory,
+    IPAddress BindAddress, string? DirectIpRoot)
 {
     public static HarnessOptions Parse(string[] args)
     {
@@ -137,13 +146,15 @@ internal sealed record HarnessOptions(string StaticRoot, int Port, HarnessMode M
         var mode = HarnessMode.Run;
         var iphoneProfile = IphoneBurstProfile.Baseline;
         string? artifactDirectory = null;
+        var bindAddress = IPAddress.Loopback;
+        string? directIpRoot = null;
 
         for (var index = 0; index < args.Length; index++)
         {
             switch (args[index])
             {
                 case "--help":
-                    Console.WriteLine("HostedServerHarness: --mode iphone-burst --iphone-profile baseline|field-repro --artifact-dir PATH [--static-root PATH] [--port PORT]");
+                    Console.WriteLine("HostedServerHarness: --mode MODE [--static-root PATH] [--port PORT] [--bind-address IPv4 --direct-ip-root PATH] [--iphone-profile baseline|field-repro --artifact-dir PATH]");
                     Environment.Exit(0);
                     break;
                 // The real game launcher passes these headless/bootstrap flags. The harness does not need
@@ -172,6 +183,12 @@ internal sealed record HarnessOptions(string StaticRoot, int Port, HarnessMode M
                 case "--port":
                     port = int.Parse(RequireValue(args, ref index, "--port"));
                     break;
+                case "--bind-address":
+                    bindAddress = IPAddress.Parse(RequireValue(args, ref index, "--bind-address"));
+                    break;
+                case "--direct-ip-root":
+                    directIpRoot = Path.GetFullPath(RequireValue(args, ref index, "--direct-ip-root"));
+                    break;
                 case "--mode":
                     mode = ParseMode(RequireValue(args, ref index, "--mode"));
                     break;
@@ -188,8 +205,10 @@ internal sealed record HarnessOptions(string StaticRoot, int Port, HarnessMode M
 
         if (mode == HarnessMode.IphoneBurst && string.IsNullOrWhiteSpace(artifactDirectory))
             throw new ArgumentException("--mode iphone-burst requires --artifact-dir PATH.");
+        if (directIpRoot is not null && !SecureOriginHost.IsSecureOriginEligible(bindAddress))
+            throw new ArgumentException("--direct-ip-root requires --bind-address with a usable non-loopback IPv4.");
         return new HarnessOptions(Path.GetFullPath(staticRoot), port, mode, iphoneProfile,
-            artifactDirectory is null ? null : Path.GetFullPath(artifactDirectory));
+            artifactDirectory is null ? null : Path.GetFullPath(artifactDirectory), bindAddress, directIpRoot);
     }
 
     private static string RequireValue(string[] args, ref int index, string name)
