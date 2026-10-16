@@ -5,10 +5,12 @@ namespace CouchCoop.Mod.HostUi;
 /// <summary>Structured help shared by the host guide and the stock-Godot layout fixture.</summary>
 internal sealed partial class DirectIpSetupHelpView : VBoxContainer
 {
+    internal enum TextRole { Body, Heading, Subheading }
+
     private readonly Func<string, string> _text;
-    private readonly Action<Label, int, bool> _style;
+    private readonly Action<Label, int, TextRole> _style;
     private readonly Action<RichTextLabel, int> _richStyle;
-    private readonly Dictionary<Label, (string Key, bool Heading)> _copy = [];
+    private readonly Dictionary<Label, (string Key, TextRole Role)> _copy = [];
     private readonly Label _first = new();
     private readonly Label _expiry = new();
     private readonly Label _codeTitle;
@@ -21,7 +23,7 @@ internal sealed partial class DirectIpSetupHelpView : VBoxContainer
         FocusMode = FocusModeEnum.All,
     };
 
-    public DirectIpSetupHelpView(Func<string, string> text, Action<Label, int, bool> style,
+    public DirectIpSetupHelpView(Func<string, string> text, Action<Label, int, TextRole> style,
         Action<RichTextLabel, int> richStyle, Func<Node, string, Action, Control> button,
         Action reviewDevice, Action reset)
     {
@@ -32,25 +34,25 @@ internal sealed partial class DirectIpSetupHelpView : VBoxContainer
         MouseFilter = MouseFilterEnum.Ignore;
         SizeFlagsHorizontal = SizeFlags.ExpandFill;
         AddThemeConstantOverride("separation", 20);
-        Start = AddCopy("help_first_title", true);
+        Start = AddCopy("help_first_title", TextRole.Heading);
         AddBody(_first);
-        AddCopy("help_file_title", true);
+        AddCopy("help_file_title", TextRole.Heading);
         AddCopy("help_file_body");
-        AddCopy("help_warning_title", true);
+        AddCopy("help_warning_title", TextRole.Heading);
         AddCopy("help_warning_body");
         _review = button(this, "help_review_device", reviewDevice);
-        AddCopy("help_remove_title", true);
+        AddCopy("help_remove_title", TextRole.Heading);
         AddCopy("help_remove_intro");
         foreach (var device in new[] { "iphone", "android", "windows", "macos", "linux" })
         {
-            AddCopy("device_" + device, true);
+            AddCopy("device_" + device, TextRole.Subheading);
             AddCopy("help_remove_" + device);
         }
-        AddCopy("help_address_title", true);
+        AddCopy("help_address_title", TextRole.Heading);
         AddCopy("help_address_body");
-        AddCopy("help_details_title", true);
+        AddCopy("help_details_title", TextRole.Heading);
         AddBody(_expiry);
-        _codeTitle = AddCopy("code_label", true);
+        _codeTitle = AddCopy("code_label", TextRole.Heading);
         AddChild(Verification);
         AddCopy("help_reset_body");
         button(this, "reset", reset);
@@ -61,24 +63,24 @@ internal sealed partial class DirectIpSetupHelpView : VBoxContainer
         foreach (var (label, copy) in _copy)
         {
             label.Text = _text(copy.Key);
-            _style(label, copy.Heading ? 28 : 23, copy.Heading);
+            _style(label, copy.Role switch { TextRole.Heading => 28, TextRole.Subheading => 24, _ => 23 }, copy.Role);
         }
         _first.Text = _text("help_first_" + stage);
-        _style(_first, 23, false);
+        _style(_first, 23, TextRole.Body);
         _expiry.Text = expiry ?? string.Empty;
         _expiry.Visible = !string.IsNullOrEmpty(expiry);
-        _style(_expiry, 23, false);
+        _style(_expiry, 23, TextRole.Body);
         _codeTitle.Visible = Verification.Visible = !string.IsNullOrEmpty(fingerprint);
         Verification.Text = fingerprint ?? string.Empty;
         _richStyle(Verification, 23);
         _review.Visible = canReview;
     }
 
-    private Label AddCopy(string key, bool heading = false)
+    private Label AddCopy(string key, TextRole role = TextRole.Body)
     {
         var label = new Label { Name = key };
         AddBody(label);
-        _copy[label] = (key, heading);
+        _copy[label] = (key, role);
         return label;
     }
 
