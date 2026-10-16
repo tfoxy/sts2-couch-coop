@@ -73,7 +73,8 @@ await using var server = new CouchCoopBrowserServer(
     resourceCacheRoot: Environment.GetEnvironmentVariable("COUCHCOOP_CACHE_ROOT"),
     lifecycleDiagnostics: diagnostics,
     lifecycleSocketRole: options.Mode == HarnessMode.IphoneBurst ? "host" : null,
-    onSceneAck: runtime.ReleaseIphoneBurst);
+    onSceneAck: runtime.ReleaseIphoneBurst,
+    hostBrowserAccess: new HarnessHostBrowserAccess(runtime));
 
 var baseUri = await server.StartAsync(stop.Token).ConfigureAwait(false);
 // iphone-burst deliberately owns TWO real browser servers. The control remains alive when the browser enters the
@@ -86,7 +87,8 @@ await using var seatServer = options.Mode == HarnessMode.IphoneBurst
         bindAddress: IPAddress.Loopback, preferredPort: 0,
         resourceCacheRoot: Environment.GetEnvironmentVariable("COUCHCOOP_CACHE_ROOT"),
         lifecycleDiagnostics: diagnostics, lifecycleSocketRole: "seat",
-        onSceneAck: seatRuntime!.ReleaseIphoneBurst)
+        onSceneAck: seatRuntime!.ReleaseIphoneBurst,
+        isHeadlessClient: true)
     : null;
 var seatUri = seatServer is null ? null : await seatServer.StartAsync(stop.Token).ConfigureAwait(false);
 if (seatUri is not null) server.SyntheticSeatPort = seatUri.Port;
@@ -469,6 +471,24 @@ internal sealed class HarnessGameFacts(FakeSpirectlRuntime runtime) : IGameFacts
     public int? ReadLobbyCap() => null;
 
     public RosterFacts? ReadRoster() => runtime.ReadSessionFacts(false).Roster;
+}
+
+// Each offline scenario has immutable game facts. Production authorization always uses native signals;
+// this explicit source gives the game-free harness the permission those fixture facts describe.
+internal sealed class HarnessHostBrowserAccess : IHostBrowserAccess
+{
+    public HarnessHostBrowserAccess(FakeSpirectlRuntime runtime)
+    {
+        var roster = runtime.ReadSessionFacts(false).Roster;
+        var allowed = roster?.Lobby?.NetType == "multiplayer" || roster?.Run?.NetType == "multiplayer";
+        State = new(allowed, allowed ? HostBrowserAccessReasons.Allowed : HostBrowserAccessReasons.MultiplayerRequired, 0);
+    }
+    public HostBrowserAccessState State { get; }
+    public event Action<HostBrowserAccessState>? Changed { add { } remove { } }
+    public bool IsAllowed(long generation) => State.Allowed && generation == State.Generation;
+    public void Start() { }
+    public void Stop() { }
+    public void Dispose() { }
 }
 
 internal sealed class FakeSpirectlRuntime : IRuntimeCapabilitySource, IRuntimeAssetSource, IAnimationHintSource, IRuntimeSceneDeltaSource, IGameModelSource, ISpineCatalogSource, ISpineGeoClipBaker, ISemanticActionSource, IRuntimeSceneWatchControlSource

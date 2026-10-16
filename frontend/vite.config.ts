@@ -30,14 +30,14 @@ function defaultOutDir(): string {
   return localModsDir ? resolve(localModsDir, "couchcoop/frontend") : "dist";
 }
 
-function devProxyTarget(): string {
-  const target = process.env.COUCHCOOP_DEV_PROXY_TARGET ?? "http://127.0.0.1:13337";
+function devProxyTarget(environmentKey = "COUCHCOOP_DEV_PROXY_TARGET"): string {
+  const target = process.env[environmentKey] ?? process.env.COUCHCOOP_DEV_PROXY_TARGET ?? "http://127.0.0.1:13337";
   const url = new URL(target);
   const loopbackHosts = new Set(["127.0.0.1", "localhost", "::1", "[::1]"]);
 
   if (!["http:", "https:"].includes(url.protocol) || !loopbackHosts.has(url.hostname)) {
     throw new Error(
-      "COUCHCOOP_DEV_PROXY_TARGET must be an http(s) loopback URL, such as http://127.0.0.1:13337"
+      `${environmentKey} must be an http(s) loopback URL, such as http://127.0.0.1:13337`
     );
   }
 
@@ -68,6 +68,11 @@ function resilientProxy(extra: Record<string, unknown> = {}) {
       });
     }
   };
+}
+
+// Standalone player QA still fetches cold assets from a rendered host, as ordinary relayed clients do.
+function resilientAssetProxy() {
+  return resilientProxy({ target: devProxyTarget("COUCHCOOP_DEV_ASSET_TARGET") });
 }
 
 // Sibling source checkouts of the shipped renderer, aliased to TS source so library edits
@@ -348,16 +353,17 @@ export default defineConfig({
     },
     host: "127.0.0.1",
     proxy: {
-      "/favicon.ico": resilientProxy(),
+      "/favicon.ico": resilientAssetProxy(),
       // NOTE: `/bg` (the host-rendered static combat background) proxies to the game like `/res` —
       // unless COUCHCOOP_DEV_BG_FIXTURE is set, in which case `devBgFromFs()` serves it from disk
       // and this entry is omitted so the middleware wins. See that plugin for why dev needs either.
-      ...(devBgFixtureDir ? {} : { "/bg": resilientProxy() }),
+      ...(devBgFixtureDir ? {} : { "/bg": resilientAssetProxy() }),
       // `/models/<model-asset-path>` — the seat picker's character icons (joinModel.seatCharacterIconUrl
       // → modelAssetRoute). Live game data like `/res`, so it proxies rather than being served from disk.
-      "/models": resilientProxy(),
-      "/res": resilientProxy(),
-      "/spines": resilientProxy(),
+      "/models": resilientAssetProxy(),
+      "/res": resilientAssetProxy(),
+      "/spines": resilientAssetProxy(),
+      "/geoclips": resilientAssetProxy(),
       "/ws": resilientProxy({ ws: true })
     }
   }

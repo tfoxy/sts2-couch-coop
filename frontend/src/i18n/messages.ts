@@ -15,6 +15,9 @@ import tr from "./catalogs/tr.json";
 // English is the typed source catalogue. Keep strings flat: component ownership is clearer at call sites and
 // parity is checked below rather than relying on a runtime fallback to hide an untranslated key.
 export const en = {
+  "hostAccess.title": "Host view temporarily unavailable",
+  "hostAccess.menu": "The host opened a menu. Access resumes automatically when they close it.",
+  "hostAccess.wait": "Access resumes automatically when the host returns to a multiplayer lobby or run.",
   "app.mirror": "Mirror",
   "common.working": "Working",
   "common.host": "Host",
@@ -245,6 +248,9 @@ function preservePlaceholders(catalog: LocaleCatalog): LocaleCatalog {
 }
 
 export const zhHans: LocaleCatalog = {
+  "hostAccess.title": "暂时无法查看主机画面",
+  "hostAccess.menu": "主机打开了菜单。关闭菜单后将自动恢复访问。",
+  "hostAccess.wait": "主机返回多人大厅或多人游戏后将自动恢复访问。",
   "app.mirror": "镜像",
   "common.working": "正在处理",
   "common.host": "房主",

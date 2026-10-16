@@ -18,6 +18,7 @@
     <Compile Include="MetadataOnlyProgram.cs" />
     <Compile Include="MetadataOnlyLobbyScreenMountTests.cs" />
     <Compile Include="MetadataOnlyFixtures.cs" />
+    <Compile Include="../../src/CouchCoop.Mod/Runtime/HostBrowserAccessTargets.cs" Link="HostBrowserAccessTargets.cs" />
     <Compile Include="../../src/CouchCoop.Mod/Patches/LobbyScreenMountTargets.cs" Link="LobbyScreenMountTargets.cs" />
     <Compile Include="../../src/CouchCoop.Mod/Patches/PauseMenuMountTargets.cs" Link="PauseMenuMountTargets.cs" />
     <Compile Include="../../src/CouchCoop.Mod/Patches/LobbyAssignmentTargets.cs" Link="LobbyAssignmentTargets.cs" />

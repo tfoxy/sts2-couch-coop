@@ -24,6 +24,12 @@ using Spirectl.Sts2.Core.Reference;
 using Spirectl.Sts2.Core.SceneInspection;
 using Spirectl.Sts2.Embedding;
 
+if (args is ["host-access-routes", ..])
+{
+    await BrowserServerRouteTests.RunHostAccessRoutesAsync();
+    return;
+}
+
 if (args is ["audio-tmpsfx", ..])
 {
     await AudioTmpSfxRouteTests.RunAsync();
@@ -344,6 +350,13 @@ if (args is ["connections", ..])
 // Pure — temp directories and strings, no game, no process, no port — so it stands on its own like
 // host-guards above, and it is also registered in `connections` (the guard's failure is a connection issue)
 // and in the full sequence below.
+if (args is ["host-access-policy", ..])
+{
+    HostBrowserAccessPolicyTests.Run();
+    HostBrowserAccessPolicyTests.AssertHookTargets();
+    return;
+}
+
 if (args is ["seat-build", ..])
 {
     SeatModBuildTests.Run();
@@ -439,6 +452,7 @@ if (args is ["host-ui", ..])
     RosterFactsTests.Run();
     CouchCoopRosterObserverTests.Run();
     // The roster and the lobby cap one `session` envelope is built from, read in one hop.
+    HostBrowserAccessPolicyTests.Run();
     SessionFactsTests.Run();
     // The session envelope's classifier over that roster, held to the retired classifier over the snapshot.
     BrowserAssignmentClassifierTests.Run();
@@ -638,6 +652,7 @@ if (args is ["beta-targets", ..])
     // …and the seven methods the roster observer is told by: the join and leave callbacks of both lobby screens, both
     // lobby constructors (which also name the host's net service) and the run's clean-up.
     Leg("CouchCoopRosterObserverTests.RosterSignalTargets", CouchCoopRosterObserverTests.TargetsResolve);
+    Leg("HostBrowserAccessPolicyTests.HookTargets", HostBrowserAccessPolicyTests.AssertHookTargets);
 
     Console.WriteLine(failures.Count == 0
         ? "beta-targets: every patch target resolves"
@@ -928,6 +943,7 @@ await JoinFactsTests.RunAsync();
 // it: the QR gate and the mirror kind are two readings of the same lobby shape.
 BrowserAssignmentClassifierTests.Run();
 // The roster and the lobby cap one `session` envelope is built from, read together in one hop.
+HostBrowserAccessPolicyTests.Run();
 SessionFactsTests.Run();
 // …and that classifier over CouchCoop's own roster instead of the snapshot: identical on every fixture, by the retired
 // classifier kept as the oracle (delete both with the last WP3 read path).
@@ -961,6 +977,7 @@ StaticBackgroundHostProbeTests.Run();
 // (accept parse, live flips, disconnects, valve) rides BrowserServerRouteTests below.
 WalkSkipUnanimityTests.Run();
 var tests = new BrowserServerRouteTests();
+await BrowserServerRouteTests.RunHostAccessRoutesAsync();
 await tests.RunAsync();
 await SeatBrowserPipeTests.RunAsync();
 await HeadlessClientManagerTests.RunAsync();
@@ -1017,7 +1034,7 @@ internal sealed partial class BrowserServerRouteTests
             runtime.NewEnvelopeFactory(),
             preferredPort: port,
             headlessManager: manager,
-            isHeadlessClient: false);
+            isHeadlessClient: false, hostBrowserAccess: new TestHostBrowserAccess());
 
         var baseUri = await server.StartAsync();
         Console.WriteLine($"join-fault-harness listening on {baseUri} (every join throws: {faultText})");
@@ -1055,7 +1072,7 @@ internal sealed partial class BrowserServerRouteTests
                     Interlocked.Increment(ref callbacksInsideObserverGate);
                 }
                 streamingReporter(count, generation);
-            });
+            }, hostBrowserAccess: new TestHostBrowserAccess());
         serverForCallback = server;
         var baseUri = await server.StartAsync();
         Expect(baseUri.Host == "127.0.0.1", "server binds to loopback");
@@ -1898,7 +1915,7 @@ internal sealed partial class BrowserServerRouteTests
                 new StaticSpaFileProvider(staticRoot),
                 new CapturingAssetAdapter(),
                 envelopeFactory,
-                resourceCacheRoot: cacheRoot.Path);
+                resourceCacheRoot: cacheRoot.Path, hostBrowserAccess: new TestHostBrowserAccess());
             var baseUri = await server.StartAsync();
 
             var unknown = await GetAsync(baseUri, "/perf/nope.json");
@@ -2127,7 +2144,7 @@ internal sealed partial class BrowserServerRouteTests
             resourceCacheRoot: cacheRoot.Path,
             isHeadlessClient: false,
             log: _ => { },
-            subscribeScreenUpdated: Subscribe);
+            subscribeScreenUpdated: Subscribe, hostBrowserAccess: new TestHostBrowserAccess());
         var baseUri = await server.StartAsync();
 
         Expect(
@@ -2256,7 +2273,7 @@ internal sealed partial class BrowserServerRouteTests
             {
                 seatSubscribes++;
                 return null;
-            });
+            }, hostBrowserAccess: new TestHostBrowserAccess());
         var seatUri = await seatServer.StartAsync();
         using var seatSocket = new ClientWebSocket();
         await seatSocket.ConnectAsync(
@@ -2299,7 +2316,7 @@ internal sealed partial class BrowserServerRouteTests
                 new StaticSpaFileProvider(staticRoot),
                 new CapturingAssetAdapter(),
                 envelopeFactory,
-                resourceCacheRoot: cacheRoot.Path);
+                resourceCacheRoot: cacheRoot.Path, hostBrowserAccess: new TestHostBrowserAccess());
             var baseUri = await server.StartAsync();
 
             int AssetCalls() => runtime.Calls.Count(call => call == "Assets.GetAsset");
@@ -2365,7 +2382,7 @@ internal sealed partial class BrowserServerRouteTests
                 new StaticSpaFileProvider(staticRoot),
                 new CapturingAssetAdapter(),
                 coldRuntime.NewEnvelopeFactory(),
-                resourceCacheRoot: cacheRoot.Path))
+                resourceCacheRoot: cacheRoot.Path, hostBrowserAccess: new TestHostBrowserAccess()))
             {
                 var coldBase = await coldServer.StartAsync();
                 var hit = await GetRawAsync(coldBase, "/bg/underdocks?v=1");
@@ -2538,7 +2555,7 @@ internal sealed partial class BrowserServerRouteTests
             new ThrowingAssetAdapter(),
             envelopeFactory,
             resourceCacheRoot: cacheRoot.Path,
-            log: logs.Add);
+            log: logs.Add, hostBrowserAccess: new TestHostBrowserAccess());
         var baseUri = await server.StartAsync();
 
         var response = await GetAsync(baseUri, "/res/images/boom.png");
@@ -2571,7 +2588,7 @@ internal sealed partial class BrowserServerRouteTests
             new RefusingAssetAdapter(),
             envelopeFactory: null,
             resourceCacheRoot: cacheRoot.Path,
-            log: logs.Add);
+            log: logs.Add, hostBrowserAccess: new TestHostBrowserAccess());
         var baseUri = await server.StartAsync();
 
         var icon = await GetAsync(baseUri, "/icons/icon-512.png");
@@ -2692,7 +2709,7 @@ internal sealed partial class BrowserServerRouteTests
             new CapturingAssetAdapter(),
             envelopeFactory,
             headlessManager: manager,
-            isHeadlessClient: false);
+            isHeadlessClient: false, hostBrowserAccess: new TestHostBrowserAccess());
         var baseUri = await server.StartAsync();
 
         using var mirror = new ClientWebSocket();
@@ -3027,7 +3044,7 @@ internal sealed partial class BrowserServerRouteTests
             new StaticSpaFileProvider(rootPath),
             new CapturingAssetAdapter(),
             new RecordingSpirectlRuntime().NewEnvelopeFactory(),
-            preferredPort: preferred);
+            preferredPort: preferred, hostBrowserAccess: new TestHostBrowserAccess());
         var baseUri = await server.StartAsync();
         Expect(baseUri.Port > preferred, "server advances when preferred port is unavailable");
         await server.StopAsync();
@@ -3328,7 +3345,7 @@ internal sealed partial class BrowserServerRouteTests
             new StaticSpaFileProvider(root.Path),
             new CapturingAssetAdapter(),
             envelopeFactory,
-            resourceCacheRoot: cacheRoot.Path);
+            resourceCacheRoot: cacheRoot.Path, hostBrowserAccess: new TestHostBrowserAccess());
         var baseUri = await server.StartAsync();
         await AssertInboundWebSocketLimitsAsync(baseUri, runtime);
         await server.StopAsync();
@@ -3353,7 +3370,7 @@ internal sealed partial class BrowserServerRouteTests
             new StaticSpaFileProvider(root.Path),
             new CapturingAssetAdapter(),
             envelopeFactory,
-            resourceCacheRoot: cacheRoot.Path);
+            resourceCacheRoot: cacheRoot.Path, hostBrowserAccess: new TestHostBrowserAccess());
         var baseUri = await server.StartAsync();
         await AssertClientVitalsReceiptAsync(baseUri);
         await server.StopAsync();
@@ -3818,7 +3835,7 @@ internal sealed partial class BrowserServerRouteTests
             new CapturingAssetAdapter(),
             runtime.NewEnvelopeFactory(),
             preferredPort: ReserveEphemeralPort(),
-            subscribeRoster: roster.Subscribe);
+            subscribeRoster: roster.Subscribe, hostBrowserAccess: new TestHostBrowserAccess());
         var baseUri = await server.StartAsync();
 
         Expect(!roster.Active, "no clients → no roster observer");
@@ -3913,7 +3930,7 @@ internal sealed partial class BrowserServerRouteTests
             headlessManager: manager,
             isHeadlessClient: false,
             preferredPort: ReserveEphemeralPort(),
-            subscribeRoster: rosterFeed.Subscribe);
+            subscribeRoster: rosterFeed.Subscribe, hostBrowserAccess: new TestHostBrowserAccess());
         var baseUri = await server.StartAsync();
 
         // Measure the reply envelope with the same seat directory so the manager's own probes can be attributed
@@ -4030,7 +4047,7 @@ internal sealed partial class BrowserServerRouteTests
             headlessManager: manager,
             isHeadlessClient: false,
             preferredPort: ReserveEphemeralPort(),
-            subscribeRoster: roster.Subscribe);
+            subscribeRoster: roster.Subscribe, hostBrowserAccess: new TestHostBrowserAccess());
         var baseUri = await server.StartAsync();
 
         using var gated = new ClientWebSocket();
@@ -4942,7 +4959,7 @@ internal sealed partial class BrowserServerRouteTests
             new CapturingAssetAdapter(),
             envelopeFactory,
             headlessManager: manager,
-            isHeadlessClient: false);
+            isHeadlessClient: false, hostBrowserAccess: new TestHostBrowserAccess());
 
         // Deliberately NO StartAsync: this is the shipped hot-reload generation's lifecycle.
         var statuses = server.MirrorSeats().Evaluate(new HashSet<ulong>(), MirrorSeatDirectory.RunMirrorMode);

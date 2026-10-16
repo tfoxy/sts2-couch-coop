@@ -2,6 +2,7 @@ using System.Net;
 using System.Net.Sockets;
 using System.Runtime.CompilerServices;
 using System.Text;
+using CouchCoop.Mod.Contracts;
 using CouchCoop.Mod.HostUi;
 using CouchCoop.Mod.Runtime;
 using CouchCoop.Mod.Server;
@@ -269,6 +270,16 @@ internal static class ZeroClientContractTests
             Expect(await rig.WaitAsync(() => rig.MainThread.Dispatches >= 1), "the tracker's first evaluation is a main-thread dispatch");
             Expect(ZeroClientGuard.Violations == 0, "all of that work was demanded, so the tripwire says nothing");
             Expect(rig.Server.IsHostingSupervisionActive, "hosting supervision runs while a viewer is served");
+            rig.Screens.AccessAllowed = false;
+            rig.Screens.Fire();
+            Expect(await rig.WaitAsync(() => rig.Runtime.SceneLive == 0 && rig.Runtime.HintLive == 0),
+                "revoking host access parks scene and hint producers while browsers remain connected");
+            Expect(rig.Screens.Live >= 1, "the access observer stays subscribed while the host menu is blocked");
+            Expect(rig.Runtime.InputCancellations >= 1, "revocation reaches the runtime input cancellation port");
+            rig.Screens.AccessAllowed = true;
+            rig.Screens.Fire();
+            Expect(await rig.WaitAsync(() => rig.Runtime.SceneLive >= 1 && rig.Runtime.HintLive >= 1),
+                "a permitted game signal resumes scene and hint producers without reconnecting");
         }
 
         Expect(await rig.WaitAsync(rig.IsFullyParked, timeoutMs: 15_000),
@@ -630,6 +641,15 @@ internal static class ZeroClientContractTests
             ZeroClientGuard.LogSink = line => { lock (rig._tripwire) rig._tripwire.Add(line); };
             GameScreenContext.Source = screens;
             GameMainThread.Source = mainThread;
+            HostBrowserAccessMonitor.SourceFactoryOverride = () => new HostBrowserAccessMonitor.Source(
+                Subscribe: callback => GameScreenContext.SubscribeUpdated(callback),
+                ReadReason: () =>
+                {
+                    _ = GameScreenContext.GetCurrent();
+                    return runtime.Mode == "run" && screens.AccessAllowed
+                        ? HostBrowserAccessReasons.Allowed : HostBrowserAccessReasons.MenuOpen;
+                },
+                Schedule: GameNextFrame.Schedule);
 
             if (compose is not null)
             {
@@ -646,6 +666,7 @@ internal static class ZeroClientContractTests
         {
             _rogue?.Dispose();
             await Services.DisposeAsync();
+            HostBrowserAccessMonitor.SourceFactoryOverride = null;
             GameScreenContext.Source = SpirectlGameScreenSource.Instance;
             GameMainThread.Source = SpirectlGameMainThread.Instance;
             ZeroClientGuard.ResetForTests();
@@ -898,6 +919,7 @@ internal static class ZeroClientContractTests
         private long _subscribes;
         private long _reads;
 
+        public bool AccessAllowed { get; set; } = true;
         public long Subscribes => Interlocked.Read(ref _subscribes);
         public long Reads => Interlocked.Read(ref _reads);
         public int Live { get { lock (_gate) return _handlers.Count; } }
@@ -966,13 +988,17 @@ internal static class ZeroClientContractTests
     /// </summary>
     private sealed class CountingRuntime : IRuntimeCapabilitySource, IRuntimeAssetSource,
         IAnimationHintSource, IRuntimeSceneDeltaSource, IGameModelSource, ISpineCatalogSource, ISpineGeoClipBaker,
-        ISemanticActionSource, IRuntimeSceneWatchControlSource, IRuntimeMultiplayerConnectionSource
+        ISemanticActionSource, IInjectedInputControlSource, IRuntimeSceneWatchControlSource, IRuntimeMultiplayerConnectionSource
     {
         private long _sceneSubscribes;
         private long _hintSubscribes;
         private long _connectionUses;
         private int _sceneLive;
         private int _hintLive;
+
+        private int _inputCancellations;
+        public int InputCancellations => Volatile.Read(ref _inputCancellations);
+        public void CancelInjectedInput() => Interlocked.Increment(ref _inputCancellations);
 
         public string Mode { get; set; } = "main-menu";
         public long SceneSubscribes => Interlocked.Read(ref _sceneSubscribes);

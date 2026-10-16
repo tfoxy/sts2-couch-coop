@@ -10,6 +10,7 @@ using System.Threading.Channels;
 using CouchCoop.Mod.Connections;
 using CouchCoop.Mod.Contracts;
 using CouchCoop.Mod.Protocol;
+using CouchCoop.Mod.Runtime;
 using CouchCoop.Mod.Session;
 using CouchCoop.MirrorProtocol.Envelopes;
 using Spirectl.Sts2.Core.SceneInspection;
@@ -120,6 +121,18 @@ public sealed class CouchCoopWebSocketConnection
     private WebSocket? _socket;
     private readonly HeadlessClientManager? _headlessManager;
     private readonly bool _isHeadlessClient;
+    private readonly IHostBrowserAccess? _hostAccess;
+    private volatile bool _watchRequested;
+    private readonly SemaphoreSlim _accessTransitionGate = new(1, 1);
+    private long _streamAccessGeneration = -1;
+    private volatile bool _accessReady;
+    private volatile bool _closing;
+    private static readonly HostBrowserAccessState SeatAccess = new(true, "allowed", 0);
+    private static readonly HostBrowserAccessState UnavailableAccess = new(false, "unavailable", 0);
+    private HostBrowserAccessState AccessState => _isHeadlessClient
+        ? SeatAccess : _hostAccess?.State ?? UnavailableAccess;
+    private bool AllowsAccess(long generation) => _isHeadlessClient
+        || _hostAccess?.IsAllowed(generation) == true;
     // TRUE when this browser arrived over TLS. A direct-port seat needs its own TLS-ready port for a wss
     // redirect; a shared seat stays on the host's existing secure connection and route.
     private readonly bool _isSecure;
@@ -151,7 +164,8 @@ public sealed class CouchCoopWebSocketConnection
         bool wantsStaticBg,
         bool isSecure,
         ConnectionArrivalLog arrivals,
-        Action? onSceneAck)
+        Action? onSceneAck,
+        IHostBrowserAccess? hostAccess)
     {
         _envelopeFactory = envelopeFactory ?? throw new ArgumentNullException(nameof(envelopeFactory));
         _connections = connections ?? throw new ArgumentNullException(nameof(connections));
@@ -162,7 +176,8 @@ public sealed class CouchCoopWebSocketConnection
         _onStaticBgChanged = onStaticBgChanged;
         _headlessManager = headlessManager;
         _isHeadlessClient = isHeadlessClient;
-        _sceneStreaming = sceneStreaming;
+        _hostAccess = hostAccess;
+        _watchRequested = sceneStreaming;
         _wantsStaticBg = wantsStaticBg;
         _isSecure = isSecure;
         _arrivals = arrivals ?? throw new ArgumentNullException(nameof(arrivals));
@@ -185,7 +200,7 @@ public sealed class CouchCoopWebSocketConnection
     /// True when this connection currently wants the `scene-delta` stream (the WS-B watch gate). The scene fan-out
     /// consults this per connection, so a viewer parked on the join picker receives ZERO scene bytes.
     /// </summary>
-    public bool WantsSceneStream => _sceneStreaming;
+    public bool WantsSceneStream => !_closing && _sceneStreaming && AllowsAccess(_streamAccessGeneration);
 
     /// <summary>
     /// Stage-B walk skip: true when this viewer declared through the required `?staticBg=1` connect selector or a
@@ -217,7 +232,8 @@ public sealed class CouchCoopWebSocketConnection
         bool isHeadlessClient = false,
         ConnectionArrivalLog? arrivals = null,
         Action? onSceneAck = null,
-        CancellationToken cancellationToken = default)
+        CancellationToken cancellationToken = default,
+        IHostBrowserAccess? hostAccess = null)
     {
         if (request.QueryValues.ContainsKey("view"))
         {
@@ -259,7 +275,8 @@ public sealed class CouchCoopWebSocketConnection
                 staticBg,
                 isSecure,
                 arrivals ?? ConnectionArrivalLog.Shared,
-                onSceneAck)
+                onSceneAck,
+                hostAccess)
             .AcceptCoreAsync(stream, request, cancellationToken)
             .ConfigureAwait(false);
     }
@@ -315,8 +332,10 @@ public sealed class CouchCoopWebSocketConnection
         // arrives on the `join` message below), so a seat can bind its arrival to this socket immediately.
         PromoteVisit(session, request.QueryValues.GetValueOrDefault(CouchCoopBrowserServer.MirrorVisitSelector));
         _connections[_id] = this;
+        if (_hostAccess is not null) _hostAccess.Changed += OnHostAccessChanged;
         try
         {
+            _onConnectionOpened();
             // `/ws` carries no `?name=`: the client connects anonymously and joins explicitly. Send a
             // one-time `session` reply (identity + capabilities/notices). Roster / run-status changes arrive
             // as later `session` re-sends; the scene itself arrives as `scene-delta` frames.
@@ -327,35 +346,8 @@ public sealed class CouchCoopWebSocketConnection
                 cancellationToken: cancellationToken).ConfigureAwait(false)).ConfigureAwait(false);
             ConnectionRegistry.Shared.Advance(session.Id, ConnectionStage.Choosing);
 
-            var cachedSceneObserver = _sceneStreaming ? _getSceneObserver() : null;
-            _onConnectionOpened();
-            // Count this connection as STREAMING before the keyframe below, mirroring the "register first, then
-            // keyframe, then release the pump" discipline: the fan-out must already be reaching us so a delta
-            // emitted between the keyframe and EnableScenePump is folded (and drained after it), never lost.
-            // A `?watch=0` connection reports nothing here, so a host whose every viewer is on the join picker
-            // never starts the scene producer at all.
-            SyncStreamingRegistration();
-
-            // Mirror clients render off the `scene-delta` stream; send a FULL keyframe of the retained scene
-            // on connect (when the scene-watch capability is present) so a fresh mirror client has the whole
-            // tree before incremental deltas arrive. Sent AFTER registering in `_connections` so any delta
-            // broadcast in between is also delivered (idempotent on the client). SKIPPED ENTIRELY for a
-            // `?watch=0` connection: suppressing
-            // this keyframe is the whole reason the gate rides the query string rather than a post-connect
-            // message — by the time a message could arrive, the (multi-MB) keyframe is already on the wire.
-            var keyframe = cachedSceneObserver?.BuildKeyframe();
-            if (keyframe is not null)
-            {
-                await SendSceneKeyframeAsync(keyframe).ConfigureAwait(false);
-            }
-
-            // Release the coalescing scene pump: any incremental deltas that arrived during connect were
-            // buffered (not sent) and now drain — coalesced — strictly AFTER the keyframe above. A gated
-            // connection leaves the pump shut; `watch:on` opens it (with its own fresh keyframe) later.
-            if (_sceneStreaming)
-            {
-                EnableScenePump();
-            }
+            _accessReady = true;
+            await RefreshHostAccessAsync().ConfigureAwait(false);
 
             await ReceiveLoopAsync(socket, session, cancellationToken).ConfigureAwait(false);
         }
@@ -366,6 +358,8 @@ public sealed class CouchCoopWebSocketConnection
         }
         finally
         {
+            _closing = true;
+            if (_hostAccess is not null) _hostAccess.Changed -= OnHostAccessChanged;
             await _joinOperation.CancelAndWaitAsync().ConfigureAwait(false);
             _joinOperation.Dispose();
             if (CouchCoopMod.IsHeadlessClient) HeadlessConnectionReporter.BrowserClosed();
@@ -567,7 +561,7 @@ public sealed class CouchCoopWebSocketConnection
             {
                 // No manager (this process IS a headless client, or the host couldn't resolve its exe):
                 // there is nothing to spawn — the current connection already serves a game stream.
-                directView = true;
+                directView = _isHeadlessClient || AccessState.Allowed;
             }
             else
             {
@@ -601,8 +595,8 @@ public sealed class CouchCoopWebSocketConnection
 
                 if (ctx.IsSingleplayerRun)
                 {
-                    // Rule 1: a true singleplayer run — nothing can join it. Enter directly (host stream).
-                    directView = true;
+                    // The host's singleplayer game is private.
+                    directView = false;
                 }
                 else if (string.IsNullOrWhiteSpace(trimmedName))
                 {
@@ -964,7 +958,7 @@ public sealed class CouchCoopWebSocketConnection
                     // A malformed/absent `on` is read as false: a client that asks to watch says so explicitly.
                     var on = document.RootElement.TryGetProperty("on", out var onElement)
                         && onElement.ValueKind == JsonValueKind.True;
-                    if (on && !CouchCoopMod.IsHeadlessClient && ConnectionRegistry.Shared.AttemptId(session.Id) is null)
+                    if (on && AccessState.Allowed && !_isHeadlessClient && ConnectionRegistry.Shared.AttemptId(session.Id) is null)
                     {
                         var attemptId = ConnectionRegistry.Shared.BeginAttempt(session.Id);
                         ConnectionRegistry.Shared.ConfigureView(session.Id, requiresChild: false);
@@ -973,7 +967,8 @@ public sealed class CouchCoopWebSocketConnection
                         await SendEnvelopeAsync(await _envelopeFactory.CreateSessionEnvelope(_viewerName, "watch", session,
                             directView: true, connectionAttemptId: attemptId, cancellationToken: cancellationToken).ConfigureAwait(false)).ConfigureAwait(false);
                     }
-                    await SetSceneStreamingAsync(on).ConfigureAwait(false);
+                    _watchRequested = on;
+                    await RefreshHostAccessAsync().ConfigureAwait(false);
                     continue;
                 }
 
@@ -1025,7 +1020,8 @@ public sealed class CouchCoopWebSocketConnection
                             _onStaticBgChanged?.Invoke(staticBg);
                         }
 
-                        ApplyBrowserSettings(settings);
+                        var generation = AccessState.Generation;
+                        ExecuteWithAccess(generation, () => { ApplyBrowserSettings(settings); return true; }, false);
                     }
 
                     continue;
@@ -1071,7 +1067,10 @@ public sealed class CouchCoopWebSocketConnection
                 {
                     // Every connection here is a MIRROR connection: it holds no bound browser identity (see the executor's
                     // note), and the game process this socket serves IS its seat.
-                    response = await _actionExecutor.ExecuteAsync(action, cancellationToken).ConfigureAwait(false);
+                    var generation = AccessState.Generation;
+                    response = ExecuteWithAccess(generation,
+                        () => _actionExecutor.ExecuteAsync(action, cancellationToken).GetAwaiter().GetResult(),
+                        AccessDenied(action.RequestId, "action-result"));
                 }
 
                 await SendResultAsync(response).ConfigureAwait(false);
@@ -1117,6 +1116,46 @@ public sealed class CouchCoopWebSocketConnection
             BrowserActionErrorCodes.InvalidMessage,
             message);
 
+    private static BrowserActionResultEnvelope AccessDenied(string? requestId, string type)
+        => new(type, requestId ?? "", "host-access-denied",
+            "Host access is temporarily unavailable. Return to multiplayer play and close the host menu.");
+
+    private T ExecuteWithAccess<T>(long generation, Func<T> action, T denied)
+    {
+        if (!AllowsAccess(generation)) return denied;
+        // Admission and execution share one game-thread turn. In particular, a queued click must never use
+        // the permission that was true when its network message arrived.
+        return GameMainThread.Invoke(() => AllowsAccess(generation) ? action() : denied);
+    }
+
+    private void OnHostAccessChanged(HostBrowserAccessState state)
+    {
+        // The authoritative state has already changed synchronously. Do no scene/game reads in this callback.
+        if (_accessReady && !_closing) _ = Task.Run(RefreshHostAccessAsync);
+    }
+
+    private async Task RefreshHostAccessAsync()
+    {
+        await _accessTransitionGate.WaitAsync().ConfigureAwait(false);
+        try
+        {
+            if (_closing) return;
+            var state = AccessState;
+            // Even a revoke/reopen that completed before this worker ran invalidates the old retained scene.
+            if (!state.Allowed || _streamAccessGeneration != state.Generation || !_watchRequested)
+                await SetSceneStreamingAsync(false, state.Generation).ConfigureAwait(false);
+            await SendBytesAsync([], CancellationToken.None, accessUpdate: true).ConfigureAwait(false);
+            if (_watchRequested && AllowsAccess(state.Generation))
+                await SetSceneStreamingAsync(true, state.Generation).ConfigureAwait(false);
+        }
+        catch (Exception exception)
+        {
+            MessageDiagnostics.Write("host-access-update", $"host access update failed: {exception.GetType().Name}");
+            _socket?.Abort();
+        }
+        finally { _accessTransitionGate.Release(); }
+    }
+
     // Apply a browser Settings-panel change to the game instance THIS SERVER runs in. Each field is optional; a null
     // field leaves that lever unchanged. All Godot touches are marshalled onto the main thread inside the suspender
     // setters, so this is safe to call from the receive loop's thread.
@@ -1124,7 +1163,7 @@ public sealed class CouchCoopWebSocketConnection
     // WHICH instance (the panel copy depends on this):
     //   * a JOINED mirror seat is redirected to its own headless instance, whose server handles its settings — one
     //     viewer, one game, invisible to everyone else;
-    //   * a DIRECT-VIEW viewer (singleplayer run, or the [Host] row) stays on the HOST socket, so these levers apply
+    //   * a DIRECT-VIEW viewer (the [Host] row) stays on the HOST socket, so these levers apply
     //     to the host's OWN game — the one on the TV. Freezing there is VISIBLE, and the host socket is SHARED by
     //     every direct-view watcher, so the last writer wins for all of them. Both are acceptable and fully
     //     reversible (the freezes resume their nodes on the way back off), and the panel labels the direct-view case
@@ -1246,20 +1285,6 @@ public sealed class CouchCoopWebSocketConnection
         }
     }
 
-    // Fire-and-forget frame send used by the scene keyframe path: a send failure means the socket is gone, and
-    // the receive loop's teardown unregisters this connection.
-    public async Task SendStateBytesAsync(byte[] bytes)
-    {
-        try
-        {
-            await SendBytesAsync(bytes).ConfigureAwait(false);
-        }
-        catch
-        {
-            // Socket closing/closed mid-broadcast; teardown removes this connection.
-        }
-    }
-
     // Re-send this connection's `session` envelope (identity + roster + run status). The server calls it when
     // the lobby roster / run status changes so the shared join screen stays live. Best-effort: no-op if the session handle isn't set yet or the socket is gone.
     // `facts` is what the server's fan-out read ONCE for every connection (CouchCoopBrowserServer.ResendSessions); this
@@ -1324,6 +1349,13 @@ public sealed class CouchCoopWebSocketConnection
     private async Task QueueInputAsync(BrowserInputRequestEnvelope input, CancellationToken cancellationToken)
     {
         var startPump = false;
+        var access = AccessState;
+        if (!AllowsAccess(access.Generation))
+        {
+            await SendResultAsync(AccessDenied(input.RequestId, "input-result")).ConfigureAwait(false);
+            return;
+        }
+        input = input with { AccessGeneration = access.Generation };
         await _inputQueue.EnqueueAsync(input, cancellationToken).ConfigureAwait(false);
         lock (_inputLock)
         {
@@ -1365,7 +1397,8 @@ public sealed class CouchCoopWebSocketConnection
                 // The slow part (game-thread injection) runs here, OFF the receive loop. Fire-and-forget on
                 // success; surface an injection failure as an input-result so a controller can diagnose.
                 if (!ConnectionInputAvailability.IsAvailable) continue;
-                var inputResult = _inputExecutor.Execute(input);
+                var inputResult = ExecuteWithAccess(input.AccessGeneration, () => _inputExecutor.Execute(input),
+                    AccessDenied(input.RequestId, "input-result"));
                 if (inputResult is not null)
                 {
                     await SendResultAsync(inputResult).ConfigureAwait(false);
@@ -1394,7 +1427,7 @@ public sealed class CouchCoopWebSocketConnection
     // Broadcast entry point for a scene delta (the mirror transport). Coalescing + non-blocking: fold the
     // delta's changed/removed ids into the pending accumulator and (once the keyframe is sent) kick the drain
     // if it isn't already running. The producer runs on the game thread and must not stall on a slow client.
-    public void QueueSceneDelta(RuntimeSceneDelta delta)
+    public void QueueSceneDelta(RuntimeSceneDelta delta, long? accessGeneration = null)
     {
         var startPump = false;
         lock (_sceneLock)
@@ -1402,7 +1435,7 @@ public sealed class CouchCoopWebSocketConnection
             // Closes the fan-out race: BroadcastSceneDelta reads WantsSceneStream without a lock, so a delta can
             // still arrive here microseconds after the gate shut. Dropping it under the lock guarantees a gated
             // connection accumulates NOTHING (no fold, no queue, no send) — the "zero scene bytes" invariant.
-            if (!_sceneStreaming)
+            if (!WantsSceneStream || (accessGeneration is { } generation && generation != _streamAccessGeneration))
             {
                 return;
             }
@@ -1454,7 +1487,7 @@ public sealed class CouchCoopWebSocketConnection
     /// </list>
     /// </para>
     /// </summary>
-    private async Task SetSceneStreamingAsync(bool on)
+    private async Task SetSceneStreamingAsync(bool on, long generation)
     {
         if (!on)
         {
@@ -1477,6 +1510,7 @@ public sealed class CouchCoopWebSocketConnection
 
         lock (_sceneLock)
         {
+            if (!AllowsAccess(generation)) return;
             if (_sceneStreaming)
             {
                 return;
@@ -1488,6 +1522,7 @@ public sealed class CouchCoopWebSocketConnection
             // isn't stalled until the 500ms self-heal.
             _sceneCredit = true;
             _sceneReady = false;
+            _streamAccessGeneration = generation;
             _sceneStreaming = true;
         }
 
@@ -1496,7 +1531,7 @@ public sealed class CouchCoopWebSocketConnection
         var keyframe = _getSceneObserver()?.BuildKeyframe();
         if (keyframe is not null)
         {
-            await SendSceneKeyframeAsync(keyframe).ConfigureAwait(false);
+            await SendSceneKeyframeAsync(keyframe, generation).ConfigureAwait(false);
         }
 
         EnableScenePump();
@@ -1506,7 +1541,7 @@ public sealed class CouchCoopWebSocketConnection
     // only itself: the rest of the tree is sent, and the node is re-queued into the (just reset) coalescer, so the
     // pump that EnableScenePump releases next resolves it again. Before this, one such node made the keyframe throw,
     // and EnableScenePump never ran, so a viewer reconnecting while it existed got no stream at all.
-    private async Task SendSceneKeyframeAsync(RuntimeSceneDelta keyframe)
+    private async Task SendSceneKeyframeAsync(RuntimeSceneDelta keyframe, long generation)
     {
         var result = SceneDeltaSafeSerializer.Serialize(keyframe);
         ReportSceneSerializeFaults(result, keyframe: true);
@@ -1514,7 +1549,7 @@ public sealed class CouchCoopWebSocketConnection
         {
             lock (_sceneLock)
             {
-                if (_sceneStreaming)
+                if (_sceneStreaming && AllowsAccess(generation) && _streamAccessGeneration == generation)
                 {
                     _sceneCoalescer.Requeue(result.Requeue);
                     _scenePending = true;
@@ -1524,7 +1559,7 @@ public sealed class CouchCoopWebSocketConnection
 
         if (result.Bytes is not null)
         {
-            await SendStateBytesAsync(result.Bytes).ConfigureAwait(false);
+            await SendBytesAsync(result.Bytes, CancellationToken.None, sceneGeneration: generation).ConfigureAwait(false);
         }
     }
 
@@ -1610,11 +1645,13 @@ public sealed class CouchCoopWebSocketConnection
             while (true)
             {
                 CoalescedSceneDelta? toSend;
+                long generation;
                 lock (_sceneLock)
                 {
+                    generation = _streamAccessGeneration;
                     // Stop when the stream is gated off, nothing is pending, OR the client hasn't acked the last
                     // frame (flow control) — an ack (or the self-heal timeout) re-kicks the pump.
-                    if (!_sceneStreaming || !_scenePending || !_sceneCredit)
+                    if (!WantsSceneStream || !_sceneReady || !_scenePending || !_sceneCredit)
                     {
                         _scenePumpRunning = false;
                         return;
@@ -1651,7 +1688,7 @@ public sealed class CouchCoopWebSocketConnection
                     {
                         // Deltas folded while this frame was serializing are new work; a re-queue alone is not.
                         var foldedMeanwhile = _scenePending;
-                        if (_sceneStreaming && result.HasRequeue)
+                        if (WantsSceneStream && generation == _streamAccessGeneration && result.HasRequeue)
                         {
                             _sceneCoalescer.Requeue(result.Requeue);
                             _scenePending = true;
@@ -1660,7 +1697,7 @@ public sealed class CouchCoopWebSocketConnection
                         // Nothing of an incremental frame could be sent: re-seed with a keyframe at once rather than
                         // leave the client missing its removals or order. A keyframe that fails outright is not
                         // retried, so this recovery runs at most once per failed delta.
-                        var reseed = _sceneStreaming && result.Failure is not null && !toSend.Delta.Full;
+                        var reseed = WantsSceneStream && generation == _streamAccessGeneration && result.Failure is not null && !toSend.Delta.Full;
                         if (reseed)
                         {
                             _sceneCoalescer.RequestKeyframe();
@@ -1690,7 +1727,7 @@ public sealed class CouchCoopWebSocketConnection
                     continue;
                 }
 
-                await SendBytesAsync(bytes).ConfigureAwait(false);
+                await SendBytesAsync(bytes, CancellationToken.None, sceneGeneration: generation).ConfigureAwait(false);
                 lock (_sceneLock)
                 {
                     _sceneDrainFaults = 0;
@@ -1743,7 +1780,7 @@ public sealed class CouchCoopWebSocketConnection
            || _socket is not { State: WebSocketState.Open };
 
     private Task SendEnvelopeAsync(BrowserEnvelope envelope)
-        => SendBytesAsync(Encoding.UTF8.GetBytes(BrowserJson.Serialize(envelope)));
+        => SendBytesAsync([], CancellationToken.None, sessionEnvelope: envelope);
 
     private Task SendResultAsync(BrowserActionResultEnvelope envelope)
         => SendBytesAsync(Encoding.UTF8.GetBytes(BrowserJson.Serialize(envelope)));
@@ -1751,7 +1788,8 @@ public sealed class CouchCoopWebSocketConnection
     private Task SendBytesAsync(byte[] bytes)
         => SendBytesAsync(bytes, CancellationToken.None);
 
-    private async Task SendBytesAsync(byte[] bytes, CancellationToken cancellationToken)
+    private async Task SendBytesAsync(byte[] bytes, CancellationToken cancellationToken,
+        long? sceneGeneration = null, BrowserEnvelope? sessionEnvelope = null, bool accessUpdate = false)
     {
         var socket = _socket;
         if (socket is null || socket.State != WebSocketState.Open)
@@ -1762,6 +1800,16 @@ public sealed class CouchCoopWebSocketConnection
         await _sendGate.WaitAsync(cancellationToken).ConfigureAwait(false);
         try
         {
+            if (sceneGeneration is { } generation
+                && (!WantsSceneStream || generation != _streamAccessGeneration || !AllowsAccess(generation))) return;
+            if (sessionEnvelope is not null || accessUpdate)
+            {
+                var state = AccessState;
+                var access = new BrowserHostAccess(state.Allowed, state.Reason, state.Generation);
+                bytes = sessionEnvelope is not null
+                    ? Encoding.UTF8.GetBytes(BrowserJson.Serialize(sessionEnvelope with { HostAccess = access }))
+                    : Encoding.UTF8.GetBytes(BrowserJson.Serialize(new BrowserHostAccessEnvelope("host-access", access)));
+            }
             if (socket.State == WebSocketState.Open)
             {
                 const int fragmentBytes = 64 * 1024;

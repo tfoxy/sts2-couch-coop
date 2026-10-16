@@ -55,6 +55,7 @@ function connect(watch?: boolean) {
     WebSocketCtor: MockWebSocket as unknown as typeof WebSocket,
     location: { href: "http://localhost/", protocol: "http:" }
   });
+  client.hostAccess = { allowed: true, reason: "allowed", generation: 0 };
   return { client, socket: MockWebSocket.instances[0] };
 }
 

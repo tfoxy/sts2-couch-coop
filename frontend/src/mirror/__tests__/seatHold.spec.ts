@@ -81,6 +81,7 @@ function sessionMessage(over: Record<string, unknown> = {}) {
     ],
     screen: { kind: "run", type: "Run", title: "Run", mirrorMode: "mp-run" },
     hostName: "host",
+    hostAccess: { allowed: true, reason: "allowed", generation: 0 },
     scrollAction: true,
     // The attempt this connection's receipts are about. Load-bearing for the `client-view-error` assertions:
     // `sendConnectionReceipt` drops anything with no attempt id, so a fixture without one would make "the

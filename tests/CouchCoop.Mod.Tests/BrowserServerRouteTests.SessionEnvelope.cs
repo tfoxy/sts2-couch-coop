@@ -135,7 +135,7 @@ internal sealed partial class BrowserServerRouteTests
                 headlessManager: Manager,
                 isHeadlessClient: headlessClient,
                 preferredPort: ReserveEphemeralPort(),
-                subscribeRoster: Feed.Subscribe);
+                subscribeRoster: Feed.Subscribe, hostBrowserAccess: new TestHostBrowserAccess());
         }
 
         public RecordingSpirectlRuntime Runtime { get; }

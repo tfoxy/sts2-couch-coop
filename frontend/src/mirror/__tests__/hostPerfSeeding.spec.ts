@@ -188,6 +188,7 @@ describe("MirrorApp — Host performance seeding", () => {
       ],
       screen: { kind: "run", type: "Run", title: "Run", mirrorMode: "mp-run" },
       hostName: "host",
+      hostAccess: { allowed: true, reason: "allowed", generation: 0 },
       scrollAction: true,      ...over
     };
   }
@@ -247,19 +248,19 @@ describe("MirrorApp — Host performance seeding", () => {
     app = mount(MirrorApp);
     await settle();
 
-    // A singleplayer run: the app asks for direct view itself (one empty-name join).
+    // An explicitly selected multiplayer host view seeds its native settings.
     latest().emit(
       sessionMessage({
-        screen: { kind: "run", type: "Run", title: "Run", mirrorMode: "singleplayer-run" },
+        screen: { kind: "run", type: "Run", title: "Run", mirrorMode: "mp-run" },
         ...HOST_FREEZES
       })
     );
     await settle();
-    expect(latest().sentOfType("join")).toHaveLength(1);
+    expect(latest().sentOfType("join")).toHaveLength(0);
 
     latest().emit(
       sessionMessage({
-        screen: { kind: "run", type: "Run", title: "Run", mirrorMode: "singleplayer-run" },
+        screen: { kind: "run", type: "Run", title: "Run", mirrorMode: "mp-run" },
         directView: true,
         ...HOST_FREEZES
       })
@@ -290,14 +291,14 @@ describe("MirrorApp — Host performance seeding", () => {
     await settle();
     latest().emit(
       sessionMessage({
-        screen: { kind: "run", type: "Run", title: "Run", mirrorMode: "singleplayer-run" },
+        screen: { kind: "run", type: "Run", title: "Run", mirrorMode: "mp-run" },
         ...HOST_FREEZES
       })
     );
     await settle();
     latest().emit(
       sessionMessage({
-        screen: { kind: "run", type: "Run", title: "Run", mirrorMode: "singleplayer-run" },
+        screen: { kind: "run", type: "Run", title: "Run", mirrorMode: "mp-run" },
         directView: true,
         ...HOST_FREEZES
       })
@@ -348,12 +349,12 @@ describe("MirrorApp — Host performance seeding", () => {
     app = mount(MirrorApp);
     await settle();
     latest().emit(
-      sessionMessage({ screen: { kind: "run", type: "Run", title: "Run", mirrorMode: "singleplayer-run" } })
+      sessionMessage({ screen: { kind: "run", type: "Run", title: "Run", mirrorMode: "mp-run" } })
     );
     await settle();
     latest().emit(
       sessionMessage({
-        screen: { kind: "run", type: "Run", title: "Run", mirrorMode: "singleplayer-run" },
+        screen: { kind: "run", type: "Run", title: "Run", mirrorMode: "mp-run" },
         directView: true
       })
     );
@@ -376,7 +377,7 @@ describe("MirrorApp — Host performance seeding", () => {
   async function directViewWith(refreshRate: number) {
     app = mount(MirrorApp);
     await settle();
-    const sp = { kind: "run", type: "Run", title: "Run", mirrorMode: "singleplayer-run" };
+    const sp = { kind: "run", type: "Run", title: "Run", mirrorMode: "mp-run" };
     latest().emit(sessionMessage({ screen: sp, refreshRate, ...HOST_FREEZES }));
     await settle();
     latest().emit(sessionMessage({ screen: sp, directView: true, refreshRate, ...HOST_FREEZES }));

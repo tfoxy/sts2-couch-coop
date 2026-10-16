@@ -10,8 +10,20 @@ validates decoded resource paths before cache lookup or extraction, resolves fil
 file, and confines static and geoclip reads to their configured roots. `/res/{path}` accepts only an unprefixed,
 validated `res://` path and only `raw` (default) or `?format=png`; unsupported formats and resource aliases are
 rejected. Browser semantic actions are limited to the two actions used by the shipped client, and their acting
-player comes from the served game process or the server-owned connection identity. Raw pointer and keyboard input
-and ordinary client settings remain available.
+player comes from the served game process or the server-owned connection identity.
+
+Browser access to the host's screen is permitted only in a multiplayer lobby or multiplayer run,
+with the native pause menu, Settings, and their submenus closed. Singleplayer, the main menu, loading transitions,
+and unreadable game state deny access. Multiplayer run summaries remain accessible. The server stops host scene
+transmission and rejects browser input, browser actions, and settings that change the host process while blocked.
+Queued work is invalidated on revocation, held injected controls are cancelled, and an allowed screen resumes with
+a fresh snapshot. Browser watch flags and claimed player identities cannot override this policy.
+
+The browser shows an unavailable message during the restriction. A host playing through a browser must close a
+blocked native menu on the game machine. Separate player instances retain their own controls; shared assets,
+seat audio, joining, and session coordination remain available. A frame whose transmission began before revocation
+may finish arriving, and previously received frames cannot be erased from a client. This restriction does not add
+passwords, kick controls, or protection against interference during permitted multiplayer play.
 
 The join page itself is served with `Cache-Control: no-store` and carries a per-response **visit id** — 16 random
 bytes, embedded in the document as `<meta name="couchcoop-visit">`. It is a diagnostic correlation id, not a

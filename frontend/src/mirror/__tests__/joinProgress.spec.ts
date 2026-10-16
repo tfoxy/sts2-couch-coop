@@ -113,6 +113,7 @@ describe("mirrorClient join-progress routing", () => {
       players: [],
       screen: { kind: "run", type: "Run", title: "Run", mirrorMode: "mp-run" },
       hostName: "host",
+      hostAccess: { allowed: true, reason: "allowed", generation: 0 },
       scrollAction: true,
       headlessMirrorPort: 13401
     });
@@ -158,6 +159,7 @@ describe("MirrorApp join-progress line", () => {
       ],
       screen: { kind: "run", type: "Run", title: "Run", mirrorMode: "mp-run" },
       hostName: "host",
+      hostAccess: { allowed: true, reason: "allowed", generation: 0 },
       scrollAction: true,
       ...over
     };

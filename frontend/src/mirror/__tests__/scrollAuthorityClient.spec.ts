@@ -69,6 +69,7 @@ describe("session envelope — the absolute-scroll contract", () => {
       players: [],
       screen: { kind: "unsupported", type: null, title: null, mirrorMode: "unsupported" },
       hostName: "host",
+      hostAccess: { allowed: true, reason: "allowed", generation: 0 },
       scrollAction: true,      ...extra
     };
   }
@@ -124,12 +125,14 @@ describe("mirrorClient — the absolute-scroll channel", () => {
       onScrollAck,
       onActionError
     });
-    return { client, socket: MockWebSocket.instances[0] };
+    MockWebSocket.instances[0]!.emit({ type: "host-access", hostAccess: { allowed: true, reason: "allowed", generation: 0 } });
+  return { client, socket: MockWebSocket.instances[0] };
   }
 
   it("sends the action and RETURNS the requestId it went out under", async () => {
     const { client, socket } = connect();
     await Promise.resolve();
+    socket.emit({ type: "scene-delta", full: true, screenType: "run", upserts: [], orderedIds: [] });
     const requestId = client.sendAction({
       semanticActionId: SET_SCROLL_OFFSET_ACTION_ID,
       args: { [SCROLL_ELEMENT_ID_ARG]: "43704649279", [SCROLL_OFFSET_ARG]: -1800 }
