@@ -35,7 +35,7 @@ namespace CouchCoop.Mod.HostUi;
 /// <para>
 /// One set per owner is the game's invariant (<c>_activeHoverTips.Add</c> THROWS on a duplicate), and
 /// hover-enter can arrive twice without a leave (mouse enter + controller focus), so
-/// <see cref="Show"/> always removes before creating.
+/// <see cref="ShowSpecs"/> always removes before creating.
 /// </para>
 /// </remarks>
 internal static class CouchCoopQrHoverTips
@@ -43,15 +43,13 @@ internal static class CouchCoopQrHoverTips
     private static readonly Dictionary<string, string> TitleTable = new();
     private static bool _warned;
 
-    /// <summary>
-    /// Show the method/interface tip pair for <paramref name="option"/> beside <paramref name="owner"/>.
-    /// The method is deliberately first because it explains the link type before the adapter explains
-    /// which network path carries it. Returns whether a set is actually on screen.
-    /// </summary>
-    public static bool ShowOption(Control owner, QrHostOption option)
-        => ShowSpecs(owner, OptionTipSpecsFor(option));
+    /// <summary>Each picker row explains exactly its own choice.</summary>
+    public static bool ShowOption(Control owner, QrHostOption? option, string? method = null)
+        => ShowSpecs(owner, OptionTipSpecsFor(option, method));
 
-    /// <summary>Show the generic tip for the closed network-connection selector.</summary>
+    public static bool ShowNetworkOption(Control owner, QrHostOption option)
+        => ShowSpecs(owner, NetworkOptionTipSpecsFor(option));
+
     public static bool ShowSelector(Control owner)
         => ShowSpecs(owner, SelectorTipSpecs);
 
@@ -59,13 +57,8 @@ internal static class CouchCoopQrHoverTips
         => ShowSpecs(owner, MethodSelectorTipSpecsFor(option));
 
     internal static IReadOnlyList<(string TitleKey, string Description)> MethodSelectorTipSpecsFor(QrHostOption? option)
-    {
-        var tips = new List<(string TitleKey, string Description)> { QrHoverTipCopy.MethodSelectorTip };
-        if (QrHoverTipCopy.UnavailableTipFor(option) is { } unavailable) tips.Add(unavailable);
-        return tips;
-    }
+        => [QrHoverTipCopy.WithBlocker(QrHoverTipCopy.MethodSelectorTip, option)];
 
-    /// <summary>Show the tip that explains the faint copy affordance beside the printed address.</summary>
     public static bool ShowCopyLink(Control owner)
         => ShowSpecs(owner, CopyLinkTipSpecs);
 
@@ -75,29 +68,11 @@ internal static class CouchCoopQrHoverTips
     internal static IReadOnlyList<(string TitleKey, string Description)> CopyLinkTipSpecs
         => [QrHoverTipCopy.CopyLinkTip];
 
-    /// <summary>
-    /// Builds the option tip order without touching Godot, so the method-before-interface contract is
-    /// testable independently of the native hover-tip widgets.
-    /// </summary>
-    internal static IReadOnlyList<(string TitleKey, string Description)> OptionTipSpecsFor(QrHostOption option)
-    {
-        ArgumentNullException.ThrowIfNull(option);
+    internal static IReadOnlyList<(string TitleKey, string Description)> OptionTipSpecsFor(QrHostOption? option, string? method = null)
+        => [QrHoverTipCopy.MethodTipFor(option, method)];
 
-        var (methodKey, methodDescription) = QrHoverTipCopy.MethodTipFor(option);
-        var tips = new List<(string TitleKey, string Description)>(2)
-        {
-            (methodKey, methodDescription),
-        };
-
-        if (option.Adapter is { } adapter)
-        {
-            var (adapterKey, adapterDescription) = QrHoverTipCopy.AdapterTipFor(adapter.Kind);
-            tips.Add((adapterKey, adapterDescription));
-        }
-
-        if (QrHoverTipCopy.UnavailableTipFor(option) is { } unavailable) tips.Add(unavailable);
-        return tips;
-    }
+    internal static IReadOnlyList<(string TitleKey, string Description)> NetworkOptionTipSpecsFor(QrHostOption option)
+        => [QrHoverTipCopy.NetworkTipFor(option)];
 
     private static bool ShowSpecs(Control owner, IReadOnlyList<(string TitleKey, string Description)> specs)
     {

@@ -74,6 +74,7 @@ internal static class QrSelectionModelTests
         }
         finally { File.Delete(path); }
         DirectIpSelectionAndCopy();
+        PresentationSeparatesSetupFromAvailability();
         Console.WriteLine("QrSelectionModelTests: ok");
     }
 
@@ -110,14 +111,56 @@ internal static class QrSelectionModelTests
         finally { File.Delete(path); }
         var state = new CouchCoop.Mod.Server.DirectIpHttpsState(CaFingerprint: new string('A', 64),
             CaExpiresAt: DateTimeOffset.Parse("2031-01-02T00:00:00Z"));
-        var body = DirectIpSetupCopy.Body(state);
-        Expect(body.Contains(new string('A', 64)) && body.Contains("2031-01-02"), "full fingerprint and expiry are visible");
-        Expect(body.Contains("other websites") && body.Contains("authenticated") && body.Contains("Certificate Trust Settings"),
-            "native setup includes trust scope, authenticated transfer and explicit iOS trust");
         Expect(DirectIpSetupCopy.Status(state with { ErrorCode = "authority-expired" }).Key == "couchcoop_direct_https_authority_expired",
             "expiry requires explicit authority replacement");
         Expect(DirectIpSetupCopy.Status(state with { ErrorCode = "unknown" }).Key == "couchcoop_direct_https_failed",
             "unrecognized errors map to safe localized copy");
+    }
+
+    private static void PresentationSeparatesSetupFromAvailability()
+    {
+        var adapter = new QrAdapterInfo("Wi-Fi", QrAdapterKind.Wifi, IPAddress.Parse("192.168.1.7"));
+        var pending = QrHostOptions.DescribeDirectIpSecureFor(adapter, 13337, null);
+        var presentation = QrMethodPresentation.For(pending);
+        Expect(presentation.State == QrMethodReadiness.SetupRequired
+            && presentation.Subtitle.Key == "couchcoop_https_setup_required"
+            && presentation.SetupAction?.Key == "couchcoop_https_setup_action" && presentation.UsesSetupPlaceholder,
+            "an eligible unprepared host offers explicit setup, never Unavailable");
+        Expect(QrMethodPresentation.OpensSetup(pending, explicitMethodSelection: true),
+            "explicit direct HTTPS selection and reselection open setup");
+        Expect(!QrMethodPresentation.OpensSetup(pending, explicitMethodSelection: false),
+            "network changes, preference restoration and status refresh cannot open setup");
+        var preparing = new CouchCoop.Mod.Server.DirectIpHttpsState(Preparing: true);
+        presentation = QrMethodPresentation.For(pending, preparing);
+        Expect(presentation.State == QrMethodReadiness.Preparing && presentation.SetupAction?.Key == "couchcoop_https_view_action",
+            "in-progress work remains accessible through View setup");
+        presentation = QrMethodPresentation.For(pending, preparing with { Preparing = false, ErrorCode = "storage" });
+        Expect(presentation.State == QrMethodReadiness.NeedsAttention && presentation.SetupAction?.Key == "couchcoop_https_fix_action",
+            "recoverable failures offer Fix setup");
+        var ready = pending with { Enabled = true, DisabledReason = null };
+        presentation = QrMethodPresentation.For(ready);
+        Expect(presentation.State == QrMethodReadiness.Ready && presentation.Subtitle.Resolve() == ready.ToUri().ToString()
+            && presentation.SetupAction?.Key == "couchcoop_https_device_action" && !presentation.UsesSetupPlaceholder,
+            "ready host uses the exact QR/copy URL while retaining Device setup");
+        var blocked = QrHostOptions.DescribeDirectIpSecureFor(adapter, 0, null);
+        presentation = QrMethodPresentation.For(blocked);
+        Expect(presentation.State == QrMethodReadiness.Unavailable && !presentation.ShowsSetup
+            && !QrMethodPresentation.OpensSetup(blocked, true), "a missing listener is a real blocker");
+        var hostname = QrHostOptions.DescribeSecureFor(adapter, "local-ip.co", 0, null);
+        Expect(QrMethodPresentation.For(hostname).State == QrMethodReadiness.SetupRequired,
+            "hostname HTTPS awaiting selection is setup-required rather than unavailable");
+        Expect(QrMethodPresentation.For(hostname with { DisabledReason = CouchCoopSecureText.Checking }).State == QrMethodReadiness.Preparing,
+            "hostname HTTPS preparation is distinguished from failure");
+        Expect(QrMethodPresentation.For(hostname with { DisabledReason = CouchCoopSecureText.SetupFailed }).State == QrMethodReadiness.NeedsAttention,
+            "hostname HTTPS errors retain retry availability");
+        Expect(QrMethodPresentation.For(hostname with { CanSelectWhenUnavailable = false }).State == QrMethodReadiness.Unavailable,
+            "disabled hostname HTTPS remains genuinely unavailable");
+        foreach (var option in new[] { hostname, hostname with { DisabledReason = CouchCoopSecureText.Checking },
+            hostname with { DisabledReason = CouchCoopSecureText.SetupFailed },
+            hostname with { Enabled = true, Port = 13337 },
+            ready with { Kind = QrHostOptionKind.Interface }, ready with { Kind = QrHostOptionKind.Web } })
+            Expect(!QrMethodPresentation.For(option).ShowsSetup,
+                "non-direct HTTPS choices never receive a direct-IP setup action or empty literal action");
     }
 
     private static void Expect(bool value, string reason)

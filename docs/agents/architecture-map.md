@@ -1225,7 +1225,7 @@ The always-on QR overlay is gone. A game-styled button opens a dialog instead.
   `CouchCoopLobbyHostGate.cs`, `LobbyGateFactsCache.cs` (the remembered gate facts), `LobbyAssignmentRecord.cs`,
   `Patches/LobbyAssignmentPatch.cs` + `LobbyAssignmentTargets.cs`, `QrHostOptions.cs`,
   `QrHoverTipCopy.cs` + `CouchCoopQrHoverTips.cs`
-  (per-option hover-tip pair through the game's `NHoverTipSet`), `CouchCoopQrSelectionPreference.cs`
+  (one context-specific hover tip through the game's `NHoverTipSet`), `CouchCoopQrSelectionPreference.cs`
   (persisted pick, `qr-prefs.json`), `QrRaster.cs`, `CouchCoopStreamSkip.cs`.
 - **Gate**: `ShouldShow(listenerBaseUri, facts)` = browser server bound AND
   `facts is { RunInProgress: false, CurrentLobbyNetType: "host" }` (`CouchCoopLobbyHostGate`, pure). That single
@@ -1305,7 +1305,7 @@ Host transport). A fact is never learned by polling: the screen handed to the re
 - **Node contract** (what the probes assert): `CouchCoopQrHostPanel` (FullRect, `Ignore`) →
   `CouchCoopQrButton` (rect **226,732 → 578,868**, design space, on standard/new and saved-run lobbies; label
   "Couch Co-Op QR Code") and `CouchCoopQrDialog` (hidden) → `CouchCoopQrDialogScrim` (`Stop`, closes),
-  `CouchCoopQrDialogPanel` (1000×936 centred, `Stop`, does NOT close) → `CouchCoopQrDialogTitleLabel`,
+  `CouchCoopQrDialogPanel` (1000×1024 centred, `Stop`, does NOT close) → `CouchCoopQrDialogTitleLabel`,
   `CouchCoopQrDialogQrTexture` (`Stop`, does NOT close), `CouchCoopQrDialogUrlLabel`,
   `CouchCoopQrDialogCopyButton` (inside the URL row, right of the rendered address; hidden when there is
   no address), `CouchCoopQrDialogNoticeLabel` (hidden unless Steam-offline), `CouchCoopQrCloseButton`,
@@ -1373,17 +1373,21 @@ Host transport). A fact is never learned by polling: the screen handed to the re
     `AcceptEvent()`s a select-driven activation so A on a dismiss button cannot ALSO fire the lobby's
     embark through `_UnhandledInput`. Both the binding and the signal hookups are dropped from the native
     `tree_exiting` signal, because the lobby can be torn down with a modal still open.
-- **Options** (single select — the two link checkboxes are gone, their methods are rows now):
-  `QrHostOptions.Build` orders advertised-override → per-ADAPTER triples (best IPv4 per NIC, adapters
-  tier-sorted ethernet → wifi → other; inside each: plain ipv4 → `sts2-couch.pages.dev/?h=<ip>:<port>` →
+- **Options** (separate network and connection-method selectors):
+  `QrHostOptions.Build` orders advertised-override → per-ADAPTER groups (best IPv4 per NIC, adapters
+  tier-sorted ethernet → wifi → other; inside each: plain ipv4 → direct-IP HTTPS → `sts2-couch.pages.dev/?h=<ip>:<port>` →
   `https://<dashed-ip>.my.local-ip.co:<securePort>/`) → mDNS `<machine>.local` ALWAYS LAST (the
   self-check no longer reorders it, it only badges "didn't answer when tested"). Default = first
   ENABLED row; unavailable methods render disabled with their blocker and stay hoverable. Identity is
   `SelectionKey` (`method|adapterIp`), never Host — every web row shares the public host. The port is
-  always the port each listener actually bound. The pick persists as `{method, host}` in
+  always the port each listener actually bound. Direct-IP HTTPS remains selectable before host
+  readiness: explicit method selection opens its guide, and a dedicated setup button reopens it.
+  Restoring preferences and refreshing status never open the guide. The pick persists as `{method, host}` in
   `qr-prefs.json` (`CouchCoopQrSelectionPreference`).
 - **Hover tips**: hovering/focusing any row (incl. the closed current row and disabled rows) shows a
-  game-native tip PAIR — adapter pros/cons + method pros/cons (`QrHoverTipCopy`, average-gamer
+  single game-native tip for that selector: method rows describe the method, network rows describe
+  the interface, and closed selectors describe their control. Blockers appear in the same card
+  (`QrHoverTipCopy`, average-gamer
   register, no protocol jargon; pinned by `QrHoverTipCopyTests`). Titles merge into the game's
   `static_hover_tips` loc table per show (`SetLanguage` wipes merges); descriptions are raw strings.
   The created `NHoverTipSet` parents under the GAME's tips container, so `CouchCoopQrHoverTips`
@@ -1421,7 +1425,7 @@ Host transport). A fact is never learned by polling: the screen handed to the re
 
 ### Host connection status
 
-The QR dialog owns a 420×936 companion card to the left of its unchanged centered card, separated
+The QR dialog owns a 420×936 companion card to the left of its 1000×1024 centered card, separated
 by 24 design units. It appears when a WebSocket client or retained issue exists. The old lobby activity
 panel is no longer mounted; its internal narration remains available for diagnostics.
 

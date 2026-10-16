@@ -268,6 +268,8 @@ if (args is ["network", ..])
     LanAddressRankingTests.Run();
     QrHostOptionsTests.Run();
     QrSelectionModelTests.Run();
+    DirectIpSetupFlowTests.Run();
+    DirectIpSetupLayoutTests.Run();
     SecureOriginTests.Run();
     await DirectIpCertificatesTests.RunAsync();
     await DirectIpHttpsHostServiceTests.RunAsync();
@@ -449,6 +451,8 @@ if (args is ["host-ui", ..])
 {
     QrHostOptionsTests.Run();
     QrSelectionModelTests.Run();
+    DirectIpSetupFlowTests.Run();
+    DirectIpSetupLayoutTests.Run();
     SecureOriginTests.Run();
     QrHoverTipCopyTests.Run();
     CouchCoopQrLayoutContractTests.Run();
@@ -906,6 +910,8 @@ LanAddressRankingTests.Run();
 // derivation, payload parity).
 QrHostOptionsTests.Run();
 QrSelectionModelTests.Run();
+DirectIpSetupFlowTests.Run();
+DirectIpSetupLayoutTests.Run();
 // WS6 secure origin: the pure half — dashed-host derivation, the https scheme, the per-adapter secure ROW
 // (enabled or disabled-with-reason), and the persisted selection preference incl. its checkbox-era reads.
 SecureOriginTests.Run();

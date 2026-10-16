@@ -20,7 +20,8 @@ existing `static_hover_tips` table and uses `LocString` when that game table is 
 catalog as a safe fallback. Locale changes increment its revision and request native panels to refresh.
 
 `CouchCoopGameUiTheme` asks the game's bold substitute-font API for `zhs`, `jpn`, `kor`, `rus`, and `tha`; all other locales retain
-the supplied Kreon font or Godot's default. Native panels use the revision to repaint retained activity
+the supplied Kreon font or Godot's default. The HTTPS guide uses regular substitute fonts for body copy, falling back to Godot’s regular font;
+headings and buttons retain the bold theme. Native panels use the revision to repaint retained activity
 rows, dialogs, QR options, hover-title aliases, and fonts without changing an open/collapsed state.
 
 Developer diagnostics stay English: use `CouchCoopText.ResolveForLanguage(CouchCoopLocalization.EnglishLanguage)`

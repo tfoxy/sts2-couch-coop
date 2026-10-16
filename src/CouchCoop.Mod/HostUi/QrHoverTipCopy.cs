@@ -13,11 +13,8 @@ using CouchCoop.Mod.Localization;
 /// <c>[</c> — the description lands in a rich-text label that would eat it as markup).
 /// </para>
 /// <para>
-/// Each option shows a PAIR of tips: first one about the join method, then one about the network adapter
-/// the row's address belongs to. The two answer different questions ("is this the right kind of link" /
-/// "is this the right network") and a player may need either. Rows without an adapter (the operator
-/// override, the <c>.local</c> name) show only the method tip. The closed selector has its own generic
-/// tip because its job is to explain what changing the input does, not to describe the current option.
+/// Each picker row shows only its method or network explanation. Closed selectors explain
+/// what changing that control does. Blockers belong inside the relevant explanation.
 /// </para>
 /// <para>
 /// Title keys are prefixed <c>couchcoop_qr_</c> and merged into an existing game table by the native
@@ -104,7 +101,7 @@ public static class QrHoverTipCopy
     /// </summary>
     public static (string TitleKey, string Description) CopyLinkTip => (CopyLinkTitleKey, CopyLinkDescription);
 
-    /// <summary>The adapter half of an option's tip pair.</summary>
+    /// <summary>The network explanation for an adapter.</summary>
     public static (string TitleKey, string Description) AdapterTipFor(QrAdapterKind kind) => kind switch
     {
         QrAdapterKind.Ethernet => (AdapterEthernetTitleKey, AdapterEthernetDescription),
@@ -114,12 +111,19 @@ public static class QrHoverTipCopy
 
     /// <summary>
     /// The method explanation, with setup status or the PC-name self-check warning.
-    /// Unselectable methods carry their blocker in a separate Unavailable tip.
+    /// Unselectable methods carry their blocker in the same tip.
     /// </summary>
-    public static (string TitleKey, string Description) MethodTipFor(QrHostOption option)
+    public static (string TitleKey, string Description) MethodTipFor(QrHostOption? option, string? method = null)
     {
-        ArgumentNullException.ThrowIfNull(option);
-        var (titleKey, description) = option.Kind switch
+        var kind = method switch
+        {
+            "ipv4" => QrHostOptionKind.Interface,
+            "direct-https" => QrHostOptionKind.DirectIpSecure,
+            "web" => QrHostOptionKind.Web,
+            "secure" => QrHostOptionKind.Secure,
+            _ => option?.Kind ?? QrHostOptionKind.Interface,
+        };
+        var (titleKey, description) = kind switch
         {
             QrHostOptionKind.Override => (MethodOverrideTitleKey, MethodOverrideDescription),
             QrHostOptionKind.Mdns => (MethodMdnsTitleKey, MethodMdnsDescription),
@@ -129,18 +133,34 @@ public static class QrHoverTipCopy
             _ => (MethodIpv4TitleKey, MethodIpv4Description),
         };
 
-        if (option.Kind == QrHostOptionKind.Mdns && !option.MdnsTrusted)
+        if (kind == QrHostOptionKind.Mdns && option is { MdnsTrusted: false })
         {
             description += MdnsUntrustedSuffix;
         }
 
-        if (!option.Enabled && option.CanSelectWhenUnavailable && option.DisabledReason is { } disabled)
+        if (option is null)
+            description += "\n" + L("couchcoop_qr_no_address");
+        else if (!option.Enabled && option.DisabledReason is { } disabled)
         {
             description += "\n" + disabled.Resolve();
         }
 
         return (titleKey, description);
     }
+
+    public static (string TitleKey, string Description) NetworkTipFor(QrHostOption option)
+    {
+        ArgumentNullException.ThrowIfNull(option);
+        // Fixed addresses and PC names have their own guidance; do not mislabel them as adapters.
+        return option.Adapter is { } adapter
+            ? WithBlocker(AdapterTipFor(adapter.Kind), option)
+            : MethodTipFor(option);
+    }
+
+    internal static (string TitleKey, string Description) WithBlocker(
+        (string TitleKey, string Description) tip, QrHostOption? option)
+        => option is { Enabled: false, DisabledReason: { } reason }
+            ? (tip.TitleKey, tip.Description + "\n" + reason.Resolve()) : tip;
 
     private static string L(string key) => CouchCoopLocalization.Resolve(key);
 }

@@ -5,29 +5,51 @@ selector. This connects directly to an IPv4 URL such as `https://192.168.0.123:1
 hostname, public DNS, or an internet certificate service. The original HTTP Direct address, Website,
 and hostname HTTPS methods remain available.
 
-Each host installation creates its own local certificate authority (CA). Each client must explicitly
-install and trust the host's public root certificate. **Downloading or installing a certificate alone
-does not necessarily make a browser trust it.** Do not bypass certificate-error pages.
+A **certificate authority (CA)** issues security certificates. Here, your PC acts as that authority.
+Installing its public certificate tells each player's device to trust certificates issued by this PC.
+**Only do this for a PC you control and trust:** it can approve secure connections beyond this game.
+Downloading or installing the certificate alone does not necessarily establish browser trust.
+Never bypass a browser's certificate warning.
 
-## Set up trust
+## Follow the setup guide
 
-Only trust a host you control. Installing its root grants that host the ability to certify other
-websites too; the trust is not limited to the game. Managed devices may prohibit this setup.
+Selecting **Direct address (HTTPS)** opens the guide automatically. Closing it returns to the QR dialog,
+where **Set up HTTPS** reopens it. Once the PC is ready, that button becomes **Device setup**. You do not
+need to select the same connection method again. Restoring a saved preference or refreshing status does
+not open the guide or create a certificate automatically.
 
-1. Select the host's network interface and **Direct address (HTTPS)**. This opens native setup instructions,
-   which remain accessible even when the browser refuses the HTTPS page. Restoring a remembered method
-   does not create a CA automatically.
-2. Select **Prepare host**. The native dialog shows the complete SHA-256 CA fingerprint and expiry date.
-3. Select **Export public certificate**. This exports a public-only `.cer` and opens its local folder.
-   The CA private key never belongs in this file. The dialog displays the export path if opening the
-   folder fails.
-4. Transfer the file by cable or an authenticated file-transfer mechanism. Compare the complete SHA-256
-   certificate fingerprint with the host's in-game value. Do not obtain trust material from an unverified
-   HTTP page, email attachment, or QR pointing to an unauthenticated download. An attacker replacing the
-   root during setup would become trusted.
-5. Install and explicitly trust the CA using the platform steps below. Return to the QR dialog and scan
-   the HTTPS address. “Host ready” means that the host has a usable certificate, not that the phone has
-   installed trust. Re-select this connection method to reopen its setup instructions.
+### 1. Prepare this PC
+
+Choose **Create setup file**. This prepares the PC and exports a public-only `.cer` file, reusing an
+existing valid certificate. The private signing key is never part of this file. If creation fails,
+use **Try again**; ordinary failures do not require resetting the authority.
+
+### 2. Set up a device
+
+Choose **iPhone / iPad**, **Android**, **Windows**, **macOS**, or **Linux / Firefox**. The guide shows
+only that device's instructions; the host PC's operating system does not select the player's device.
+
+1. Use **Show file** to open the exported file's folder. Its path remains visible if the folder cannot
+   open. Transfer the file by cable or an authenticated file-transfer connection.
+2. Use **Show verification code** and follow the device's instructions to compare the received file
+   with the PC's complete SHA-256 code. A matching filename does not verify the file. On phones that
+   cannot show the full code, rely on the verified cable/authenticated transfer channel, not a browser
+   warning or an unverified download.
+3. Install and explicitly trust the certificate using the platform instructions below. Then choose
+   **I've installed it**. This is your acknowledgment; the PC cannot verify that a device trusts it.
+
+Do not obtain the file from an unverified HTTP page, email attachment, or QR linking to an
+unauthenticated download. Someone replacing the file during setup could become trusted instead.
+
+### 3. Connect
+
+Choose **Show QR code**, then scan it with the device you just configured. A ready host or visible QR
+means the PC has a usable certificate, not that the player's device installed trust. If the browser
+shows a certificate warning, return through **Device setup** and check the appropriate instructions.
+Choose **Set up another device** to repeat the device steps for another player.
+
+**Help & advanced** contains certificate expiry, removal guidance and **Reset setup**. Reset needs a
+separate confirmation because every device must remove the old certificate and install the new one.
 
 For the exported DER `.cer`, the file's SHA-256 hash equals the certificate fingerprint. Windows can
 show it with `certutil -hashfile "CouchCoop-root.cer" SHA256`; macOS with
@@ -57,10 +79,12 @@ managed roots for TCP TLS; this does not imply that arbitrary Android apps trust
 **Windows Chrome/Edge:** import the certificate into the current user's **Trusted Root Certification
 Authorities** store. Inspect the certificate before confirming trust. Remove it through the same store
 (`certmgr.msc`). Administrative policy can restrict user-managed roots.
+[Microsoft’s certificate-store guidance](https://learn.microsoft.com/en-us/windows-hardware/drivers/install/trusted-root-certification-authorities-certificate-store)
 
 **macOS Safari/Chrome:** import into Keychain Access, open the certificate, expand Trust, and enable
 trust for Secure Sockets Layer (SSL), authenticating if requested. Remove the root from that keychain to
 revoke trust. Firefox may require its own import or platform-root setting.
+[Apple’s Keychain trust settings](https://support.apple.com/guide/keychain-access/change-the-trust-settings-of-a-certificate-kyca11871/mac)
 
 **Linux and Firefox:** use the browser's certificate manager to import the certificate under
 **Authorities** and enable website trust, or configure the browser to use an appropriate system trust
@@ -82,10 +106,11 @@ and TLS demand. A QR is available only when its selected IP and bound port are r
 network changes, rescan the new QR; the existing root still establishes trust. Browser storage, cached
 origins and installed shortcuts belong to the old address and may need recreating. IPv6 is not included.
 
-A corrupt or expired CA is never silently replaced. Select **Replace certificate authority**, read the
-warning, and confirm replacement. Remove the old root and install the new public root on every client.
-Existing trust and links cannot survive a root replacement. If a host is lost or its private keys may
-have been exposed, remove that CA from all client devices before trusting a replacement.
+A corrupt or expired CA is never silently replaced. Open **Help & advanced → Reset setup**, read the
+warning, and select **Confirm reset**. Remove the old root and install the new public root on every client.
+Existing trust stops working after replacement, even when the game address stays the same. If a host
+is lost or its private keys may have been exposed, remove that CA from all client devices before
+trusting a replacement.
 
 ## Storage and transport
 
