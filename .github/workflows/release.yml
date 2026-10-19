@@ -71,6 +71,6 @@ jobs:
           --notes-file "$RUNNER_TEMP/release-notes.md"
 
       - name: Attest release archive
-        uses: actions/attest@1e69f48acb82d1966a394da916b4c1698aa569d6 # v4
+        uses: actions/attest@1e69f48acb82d1966a394da916b4c1698aa569d6 # v4.2.2
         with:
           subject-path: sources/couchcoop/dist/*.zip
