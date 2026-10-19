@@ -120,7 +120,7 @@ I wrote the original README and used AI to improve its English, structure, and c
 - [Request a feature](https://github.com/tfoxy/sts2-couch-coop/issues/new?template=feature_request.yml)
 - [Ask a question or start a discussion](https://github.com/tfoxy/sts2-couch-coop/discussions)
 
-Code contributions and pull requests are not currently accepted. Reviewing untrusted changes safely in an agent-assisted workflow requires more maintainer time than I can currently provide.
+Small, focused bug-fix PRs are welcome. Please discuss features and substantial changes in an issue first. See [CONTRIBUTING.md](CONTRIBUTING.md) for scope, licensing, credit, and review expectations.
 
 ## License and disclaimers
 
