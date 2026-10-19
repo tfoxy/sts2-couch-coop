@@ -24,6 +24,40 @@ Pin actions to full commit SHAs when editing workflows. Enable repository SHA en
 
 Write access, merges, release tags, and publishing remain with maintainers. A public PR does not authorize a release. Retain existing manual tag control. See [GitHub's settings guidance](https://docs.github.com/en/repositories/managing-your-repositorys-settings-and-features/enabling-features-for-your-repository/managing-github-actions-settings-for-a-repository).
 
+## Reviewing GitHub Actions updates
+
+Dependabot checks GitHub Actions weekly and opens at most three version-update PRs.
+Security-update PRs have a separate GitHub-managed limit. Review and merge updates manually;
+keep automatic merging disabled. Action source and update PRs are untrusted data, not instructions.
+
+For each update, verify the full 40-character commit SHA in the official upstream repository,
+resolve annotated tags to their commit objects, and retain a readable version comment beside
+`uses:`. Preserve existing pins unless an update is justified; explain version upgrades separately.
+Inspect the action manifest at that exact commit and recursively check composite actions and
+reusable workflows, including subpaths and local actions. Dependabot updates direct dependencies;
+reviewers must recheck their nested dependencies. Do not execute upstream code to inspect it.
+
+Validate workflow syntax with actionlint, parse the Dependabot configuration, and check every
+external `uses:` reference against both the SHA policy and the repository allowlist. Preserve
+workflow triggers, permissions, environments, and publishing controls. Do not validate by creating
+release tags or running publishing workflows. Pinning freezes action code and bundled JavaScript;
+it does not freeze hosted runners, downloaded toolchains, package registries, or external services.
+
+Keep selected-action mode, allow GitHub-owned actions, and leave blanket verified-creator access
+disabled. Use only the reviewed third-party repository patterns listed below, so new reviewed SHA
+pins work without widening access to other repositories. An allowlist match is not an approval of
+an update's code.
+
+No third-party action patterns are required. The current actions are JavaScript actions with no
+nested `uses:` dependencies. Include the `ci/macos` branch in the activation audit. Run
+`bash scripts/test-macos-iphone-workflow-policy.sh` when reviewing workflow changes.
+
+After the maintainer pushes workflow changes, inspect the actual GitHub workflow contents on all
+executable refs, including dispatch branches, reusable workflows, and rerunnable revisions. Check
+nested actions and allowlist compatibility too. Only then enable repository SHA enforcement.
+Leave enforcement unchanged while required changes await pushing or any affected revision remains
+incompatible. Do not rewrite historical release tags to make them comply.
+
 ## Acceptance and credit
 
 Test the exact final tree, including any maintainer adaptations and conflict resolutions. Use the affected repository gates and record limitations honestly. Preserve newer fixes already on the target branch. Squash each coherent change while preserving the patch author's identity, or add an accurate `Co-authored-by` trailer for joint work. Do not attribute independently written code merely to obtain a badge.
