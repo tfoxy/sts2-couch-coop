@@ -34,6 +34,7 @@ After the first three external PRs, review the time spent, safety of the process
 
 ## Linux runner inputs
 
+The runner requires Linux, bubblewrap, util-linux (`unshare` and `setpriv`), and iproute2.
 Run `python3 scripts/test-review-sandbox.py` from the trusted checkout first. Create a fresh export directory with `git archive` from the pinned, reviewed revisions; copy only required reviewed dependencies. Do not copy a working checkout or its ignored files. Add an empty `.disposable-review-export` marker only after checking the export. Keep the runner outside it.
 
 ```sh
@@ -43,4 +44,4 @@ Run `python3 scripts/test-review-sandbox.py` from the trusted checkout first. Cr
   > /path/to/review-log.txt 2>&1
 ```
 
-The export is writable at `/workspace`; tool and package inputs are read-only at `/opt/node`, `/packages`, and `/game-refs`. Use empty directories for unused inputs. Only these directories and the system `/usr` toolchain are exposed; `/home`, `/tmp`, networking, and process namespaces are private. The runner clears the environment, drops capabilities, disables nested user namespaces, disconnects stdin, and stops after twenty minutes. It does not impose a disk or aggregate memory quota: provision disposable storage with a quota and appropriate resource limits, or use a VM when resource exhaustion is a concern. Do not pass additional mount flags or host credentials in the test command. Never execute emitted scripts on the host.
+The export is writable at `/workspace`; tool and package inputs are read-only at `/opt/node`, `/packages`, and `/game-refs`. Use empty directories for unused inputs. Only these directories and the system `/usr` toolchain are exposed; `/home`, `/tmp`, networking, and process namespaces are private. A synthetic `192.0.2.1` address exists only inside the private network for non-loopback route tests; there is no external route. Setup capabilities are dropped before the submitted command runs. The runner clears the environment, drops capabilities, disables nested user namespaces, disconnects stdin, and stops after twenty minutes. It does not impose a disk or aggregate memory quota: provision disposable storage with a quota and appropriate resource limits, or use a VM when resource exhaustion is a concern. Do not pass additional mount flags or host credentials in the test command. Never execute emitted scripts on the host.
