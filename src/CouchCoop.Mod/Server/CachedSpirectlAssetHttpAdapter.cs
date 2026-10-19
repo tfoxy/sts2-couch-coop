@@ -1,3 +1,5 @@
+using System.Collections.Concurrent;
+
 namespace CouchCoop.Mod.Server;
 
 // Decorates the spirectl asset seam with the on-disk binary cache: a disk HIT serves bytes straight from
@@ -13,6 +15,7 @@ public sealed class CachedSpirectlAssetHttpAdapter(
     public const string ExtractionUnavailableCode = "asset-extraction-unavailable";
 
     private readonly bool _isHeadlessClient = isHeadlessClient ?? CouchCoopMod.IsHeadlessClient;
+    private readonly ConcurrentDictionary<string, Lazy<Task<CouchCoopAssetHttpResponse>>> _inFlight = new(StringComparer.Ordinal);
 
     public async Task<CouchCoopAssetHttpResponse> TryGetAssetAsync(
         string opaqueKey,
@@ -20,6 +23,7 @@ public sealed class CachedSpirectlAssetHttpAdapter(
         CouchCoopAssetRenderSize renderSize = default,
         CancellationToken cancellationToken = default)
     {
+        cancellationToken.ThrowIfCancellationRequested();
         // Raster variants of the same res:// key map to different bytes, so the cache key carries the format.
         var cacheKey = CacheKey(opaqueKey, format, renderSize);
         var cached = await cache.TryReadAsync(cacheKey, cancellationToken).ConfigureAwait(false);
@@ -50,18 +54,43 @@ public sealed class CachedSpirectlAssetHttpAdapter(
                 opaqueKey));
         }
 
-        var response = await inner.TryGetAssetAsync(opaqueKey, format, renderSize, cancellationToken).ConfigureAwait(false);
-        if (response.Error is null && response.Bytes is not null)
-        {
-            // Write-through (small, local-disk write — negligible next to the main-thread extraction).
-            await cache.WriteAsync(cacheKey, response.Bytes, response.ContentType, cancellationToken).ConfigureAwait(false);
-            return CouchCoopAssetHttpResponse.Found(
-                response.Bytes,
-                response.ContentType ?? "application/octet-stream",
-                ImmutableHeaders("MISS", response.Headers));
-        }
+        cancellationToken.ThrowIfCancellationRequested();
+        // The inner seam can block synchronously on the game thread. Start it once on the pool, so each
+        // caller can cancel its own wait without cancelling the extraction or removing another caller's flight.
+        var flight = _inFlight.GetOrAdd(cacheKey, _ => new Lazy<Task<CouchCoopAssetHttpResponse>>(
+            () => Task.Run(() => ExtractAndCacheAsync(opaqueKey, format, renderSize, cacheKey)),
+            LazyThreadSafetyMode.ExecutionAndPublication));
+        return await flight.Value.WaitAsync(cancellationToken).ConfigureAwait(false);
+    }
 
-        return response;
+    private async Task<CouchCoopAssetHttpResponse> ExtractAndCacheAsync(
+        string opaqueKey, CouchCoopResourceFormat format, CouchCoopAssetRenderSize renderSize, string cacheKey)
+    {
+        try
+        {
+            // A preceding flight may have filled the cache after this caller's initial lookup.
+            var cached = await cache.TryReadAsync(cacheKey).ConfigureAwait(false);
+            if (cached is not null)
+                return CouchCoopAssetHttpResponse.Found(cached.Bytes, cached.ContentType, ImmutableHeaders("HIT"));
+
+            var response = await inner.TryGetAssetAsync(opaqueKey, format, renderSize).ConfigureAwait(false);
+            if (response.Error is null && response.Bytes is not null)
+            {
+                await cache.WriteAsync(cacheKey, response.Bytes, response.ContentType).ConfigureAwait(false);
+                return CouchCoopAssetHttpResponse.Found(
+                    response.Bytes,
+                    response.ContentType ?? "application/octet-stream",
+                    ImmutableHeaders("MISS", response.Headers));
+            }
+
+            return response;
+        }
+        finally
+        {
+            // Only the shared producer removes its entry, before its task settles. Cancelled waiters cannot
+            // admit duplicate work, failures can retry, and a disabled/refusing disk cache gains no memory cache.
+            _inFlight.TryRemove(cacheKey, out _);
+        }
     }
 
     // Qualify the cache key with the format for the non-default variants only; the raw variant keeps the bare key
