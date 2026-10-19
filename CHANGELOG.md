@@ -9,6 +9,16 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and
 
 ## [Unreleased]
 
+### Fixed
+
+- Keep the game clear of phone cutouts and home indicators.
+- Avoid duplicate asset extraction when several browsers join together.
+- Reconnect phones after sleep or interrupted connections without immediately restarting their game.
+- Keep loading work active and avoid delaying healthy connection reports behind another player's launch.
+- Preserve player names across restarts and saved-run joins.
+
+Thanks to [KyleJKistner](https://github.com/KyleJKistner) for the reports, patches, and macOS/device testing behind these fixes.
+
 ## [0.5.0] - 2026-10-16
 
 ### Added
