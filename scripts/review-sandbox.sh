@@ -1,5 +1,6 @@
 #!/usr/bin/env bash
-# Run this TRUSTED copy, never the submitted version. Linux + bubblewrap required.
+# Run this TRUSTED copy, never the submitted version. Linux, bubblewrap,
+# util-linux (unshare/setpriv), and iproute2 required.
 # Inputs must be disposable exports, a trusted Node installation, a packages-only
 # NuGet cache, and a directory containing only game reference assemblies.
 # No credentials, .git, machine configs, sockets, personal files, or game saves.
@@ -27,8 +28,18 @@ fi
 # logs should go to a regular file outside the export, then be read as data.
 ulimit -c 0
 ulimit -n 1024
-exec timeout --kill-after=10s 20m bwrap \
-  --unshare-all --unshare-user --disable-userns --die-with-parent --new-session \
+# Configure a private network using only trusted system tools, then discard all
+# setup capabilities before entering bubblewrap. Its --share-net retains THIS
+# new namespace, never the host network. The synthetic address supports tests
+# that require a non-loopback IPv4 address without adding any external route.
+exec timeout --kill-after=10s 20m \
+  unshare --user --map-current-user --keep-caps --net -- /bin/sh -ec '
+    /usr/sbin/ip address add 192.0.2.1/32 dev lo
+    /usr/sbin/ip link set lo up
+    exec /usr/bin/setpriv --no-new-privs --bounding-set=-all \
+      --inh-caps=-all --ambient-caps=-all "$@"
+  ' review-network /usr/bin/bwrap \
+  --unshare-all --share-net --unshare-user --disable-userns --die-with-parent --new-session \
   --cap-drop ALL --clearenv \
   --ro-bind /usr /usr --symlink usr/bin /bin \
   --symlink usr/lib /lib --symlink usr/lib64 /lib64 \
