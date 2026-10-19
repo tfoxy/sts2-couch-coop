@@ -195,6 +195,65 @@ describe("createMirrorSettings — unified effect defaults (mobile == desktop)",
   });
 });
 
+describe("safe-area padding preference", () => {
+  const iphone = "Mozilla/5.0 (iPhone; CPU iPhone OS 18_0 like Mac OS X) AppleWebKit/605.1.15";
+  const android = "Mozilla/5.0 (Linux; Android 14; Pixel 7) AppleWebKit/537.36 Chrome/126.0.0.0";
+  const browsers = [
+    { name: "iPhone", userAgent: iphone, maxTouchPoints: 5, expected: true },
+    { name: "Android", userAgent: android, maxTouchPoints: 5, expected: false },
+    { name: "iPad", userAgent: "Mozilla/5.0 (iPad; CPU OS 18_0 like Mac OS X)", maxTouchPoints: 5, expected: false },
+    { name: "desktop-style iPad", userAgent: "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7)", maxTouchPoints: 5, expected: false },
+    { name: "desktop", userAgent: "Mozilla/5.0 (Windows NT 10.0; Win64; x64)", maxTouchPoints: 0, expected: false },
+    { name: "unknown", userAgent: null, maxTouchPoints: 0, expected: false }
+  ];
+
+  it.each(browsers)("defaults correctly for $name without persisting a device guess", (browser) => {
+    const storage = fakeStorage({ stretchEnabled: false });
+    const settings = createMirrorSettings(quality(), "", { ...browser, storage });
+    expect(settings.safeAreaPaddingEnabled).toBe(browser.expected);
+    expect(storage.raw()).toBe(JSON.stringify({ stretchEnabled: false }));
+  });
+
+  it.each(browsers)("honors either saved boolean on $name", (browser) => {
+    for (const saved of [true, false]) {
+      const settings = createMirrorSettings(quality(), "", {
+        ...browser, storage: fakeStorage({ safeAreaPaddingEnabled: saved })
+      });
+      expect(settings.safeAreaPaddingEnabled).toBe(saved);
+    }
+  });
+
+  it.each(browsers)("uses the $name default when the stored value is invalid", (browser) => {
+    for (const invalid of ["true", "false", "on", 0, 1, null, [], {}]) {
+      const storage = fakeStorage({ safeAreaPaddingEnabled: invalid, stretchEnabled: false });
+      const settings = createMirrorSettings(quality(), "", { ...browser, storage });
+      expect(settings.safeAreaPaddingEnabled).toBe(browser.expected);
+      expect(settings.stretchEnabled).toBe(false);
+      expect(readStoredMirrorSettings(storage)).toEqual({ stretchEnabled: false });
+    }
+  });
+
+  it("persists only explicit changes under the current key and preserves unrelated choices", () => {
+    const storage = fakeStorage({ audio: false, stretchEnabled: true });
+    for (const choice of [true, false]) {
+      persistMirrorSetting("safeAreaPaddingEnabled", choice, storage);
+      expect(JSON.parse(storage.raw()!)).toEqual({ audio: false, stretchEnabled: true, safeAreaPaddingEnabled: choice });
+      const reloaded = createMirrorSettings(quality(), "", { userAgent: iphone, storage });
+      expect(reloaded.safeAreaPaddingEnabled).toBe(choice);
+    }
+    persistMirrorSetting("stretchEnabled", false, storage);
+    expect(readStoredMirrorSettings(storage)).toEqual({ audio: false, stretchEnabled: false, safeAreaPaddingEnabled: false });
+  });
+
+  it("stays browser-only when toggled", () => {
+    const settings = createMirrorSettings(quality(), "", { userAgent: iphone, storage: null });
+    const before = serverSettingsPayload(settings);
+    settings.safeAreaPaddingEnabled = false;
+    expect(serverSettingsPayload(settings)).toEqual(before);
+    expect(before).not.toHaveProperty("safeAreaPaddingEnabled");
+  });
+});
+
 describe("createMirrorSettings — the quality row", () => {
   it("defaults to `auto`: an untouched device is the one auto-detection decides", () => {
     expect(build().quality).toBe("auto");

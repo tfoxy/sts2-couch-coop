@@ -1,6 +1,7 @@
 <script setup lang="ts">
 import { computed, onBeforeUnmount, ref, watch, type WritableComputedRef } from "vue";
 import { translate as t } from "@/i18n";
+import { useSafeArea } from "@/composables/useSafeArea";
 
 import { REPRO_UI_ENABLED } from "@/mirror/buildFlags";
 import type { MirrorLatency } from "@/mirror/mirrorClient";
@@ -80,6 +81,7 @@ const props = withDefaults(
 const emit = defineEmits<{ audioGesture: [] }>();
 
 const settings = mirrorSettings;
+const { hasSafeArea } = useSafeArea();
 const canvasActive = computed(() => settings.runtimeStage === "canvas");
 const availableTextMethods = computed(() => TEXT_METHODS.filter((method) => method.available({ implemented: IMPLEMENTED_RUST_TEXT_METHODS })));
 const failureReason = computed(() => settings.stage === "canvas" && rendererRuntimeStatus.requested.backend === "canvas" &&
@@ -164,6 +166,7 @@ const textMethod = computed<TextMethod>({
   }
 });
 const stretchEnabled = bind("stretchEnabled");
+const safeAreaPaddingEnabled = bind("safeAreaPaddingEnabled");
 const raiseHeldCard = bind("raiseHeldCard");
 const unfocusOnRelease = bind("unfocusOnRelease");
 const tapToFocus = bind("tapToFocus");
@@ -225,6 +228,7 @@ type HelpId =
   | "particles"
   | "staticBg"
   | "stretch"
+  | "safeAreaPadding"
   | "raiseCard"
   | "unfocus"
   | "tapFocus"
@@ -251,6 +255,7 @@ const HELP_KEYS: Record<HelpId, import("@/i18n").MessageKey> = {
   quality: "settings.help.quality",
   shaders: "settings.help.shaders", particles: "settings.help.particles", staticBg: "settings.help.staticBg",
   stretch: "settings.help.stretch", raiseCard: "settings.help.raiseCard", unfocus: "settings.help.unfocus",
+  safeAreaPadding: "settings.help.safeAreaPadding",
   tapFocus: "settings.help.tapFocus", confirmTap: "settings.help.confirmTap", raiseHand: "settings.help.raiseHand",
   uiScaling: "settings.help.uiScaling", backstop: "settings.help.backstop", repro: "settings.help.repro",
   refreshRate: "settings.help.refreshRate", tweenReplay: "settings.help.tweenReplay",
@@ -410,6 +415,13 @@ onBeforeUnmount(() => setHelpListeners(false));
             <span>{{ t('settings.staticBg') }}</span>
           </label>
           <SettingsHelpTip v-bind="help('staticBg', t('settings.staticBg'))" />
+        </div>
+        <div v-if="hasSafeArea" class="settings-item">
+          <label class="settings-row">
+            <input type="checkbox" v-model="safeAreaPaddingEnabled" data-testid="mirror-safe-area-padding" />
+            <span>{{ t('settings.safeAreaPadding') }}</span>
+          </label>
+          <SettingsHelpTip v-bind="help('safeAreaPadding', t('settings.safeAreaPadding'))" />
         </div>
         <div class="settings-item">
           <label class="settings-row">

@@ -9,6 +9,7 @@ import {
   DEFAULT_QUALITY_CHOICE,
   DEFAULT_SHADER_MODE,
   MIRROR_SETTINGS_STORAGE_KEY,
+  persistMirrorSetting,
   readStoredMirrorSettings,
   type MirrorSettings,
   type MirrorSettingsStorage
@@ -86,6 +87,19 @@ describe("QUALITY_PRESETS — the table", () => {
 });
 
 describe("applyQualityChoice", () => {
+  it("preserves either safe-area preference through every quality choice", () => {
+    for (const enabled of [true, false]) {
+      const storage = fakeStorage();
+      persistMirrorSetting("safeAreaPaddingEnabled", enabled, storage);
+      const settings = store(storage);
+      for (const choice of [...RENDER_QUALITY_TIERS, "auto"] as const) {
+        applyQualityChoice(settings, choice, storage);
+        expect(settings.safeAreaPaddingEnabled).toBe(enabled);
+        expect(readStoredMirrorSettings(storage).safeAreaPaddingEnabled).toBe(enabled);
+      }
+    }
+  });
+
   it("writes the rung's rows into the store", () => {
     const storage = fakeStorage();
     const settings = store(storage);

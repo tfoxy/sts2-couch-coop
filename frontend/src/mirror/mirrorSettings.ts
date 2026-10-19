@@ -15,7 +15,8 @@
 //      quality.ts — the one device-dependent part of a static mode is the backing-store scale it renders its
 //      single frame at). Note what this means for the QUALITY row: `auto` decides the device levers only and
 //      never pushes rows, so detection cannot silently change what a viewer sees.
-//   2. device seed — the WebKit first-visit canvas stage, plus two effect decisions. The hard-off FLOOR (`?debug` /
+//   2. device seed — the WebKit first-visit canvas stage, iPhone safe-area padding, and two effect decisions.
+//      The hard-off FLOOR (`?debug` /
 //      `?quality=minimum` / a software-WebGL phone has no usable GPU path, so both effect modes read `off` there
 //      and the panel says so honestly), which layers 3 and 4 cannot lift; and the iOS EFFECT SEED (both families
 //      start `off` on iPhone/iPad — see DEFAULT_SHADER_MODE below), which they can and must. Everything else the
@@ -33,7 +34,7 @@
 // so it has nothing viewer-set to save.
 
 import { reactive, toRaw } from "vue";
-import { isWebKitBrowser } from "@/platform";
+import { isIphonePlatform, isWebKitBrowser } from "@/platform";
 
 import { REPRO_UI_ENABLED } from "@/mirror/buildFlags";
 import {
@@ -206,6 +207,9 @@ export interface MirrorSettings {
   // CLIENT render (browser-only) — set true the moment the viewer picks an effect mode in the panel, so the
   // auto adaptive-quality controller stops fighting a deliberate panel selection (see adaptiveQuality/MirrorView).
   effectModePinned: boolean;
+  // CLIENT layout (browser-only) — keep the mirror clear of screen cutouts and the home indicator.
+  // Defaults on only for iPhone; a saved explicit choice overrides the device default.
+  safeAreaPaddingEnabled: boolean;
   // CLIENT layout (browser-only) — the wider-than-16:9 stage widening + proportional re-layout (see MirrorView's
   // `design`). Off = classic letterboxed 16:9. Seeded from `?stretch` (on unless the param says otherwise).
   stretchEnabled: boolean;
@@ -366,6 +370,7 @@ export type PersistedSettingKey =
   | "quality"
   | "shaderMode"
   | "particleMode"
+  | "safeAreaPaddingEnabled"
   | "stretchEnabled"
   | "raiseHeldCard"
   | "unfocusOnRelease"
@@ -389,6 +394,7 @@ export const PERSISTED_SETTING_KEYS: readonly PersistedSettingKey[] = [
   "quality",
   "shaderMode",
   "particleMode",
+  "safeAreaPaddingEnabled",
   "stretchEnabled",
   "raiseHeldCard",
   "unfocusOnRelease",
@@ -481,6 +487,7 @@ const STORED_VALIDATORS: { [K in PersistedSettingKey]: (raw: unknown) => MirrorS
   quality: qualityChoiceValue,
   shaderMode: effectModeValue,
   particleMode: effectModeValue,
+  safeAreaPaddingEnabled: boolValue,
   stretchEnabled: boolValue,
   raiseHeldCard: boolValue,
   unfocusOnRelease: boolValue,
@@ -710,7 +717,7 @@ export interface CreateMirrorSettingsOptions {
    * test can exercise the excluded build without a second bundle. See `reproRecorder`'s layering below.
    */
   reproUiEnabled?: boolean;
-  /** Injectable browser identity for the first-visit stage seed. */
+  /** Injectable browser identity for first-visit renderer and layout defaults. */
   userAgent?: string | null;
   maxTouchPoints?: number;
 }
@@ -753,6 +760,7 @@ export function createMirrorSettings(
       ? "off"
       : (effectModeOverride(search, "particles") ?? saved.particleMode ?? seededParticleMode(quality)),
     effectModePinned: false,
+    safeAreaPaddingEnabled: saved.safeAreaPaddingEnabled ?? isIphonePlatform(userAgent),
     stretchEnabled: urlOffFlag(params, "stretch") ?? saved.stretchEnabled ?? true,
     raiseHeldCard: urlOffFlag(params, "raiseCard") ?? saved.raiseHeldCard ?? true,
     unfocusOnRelease: urlOffFlag(params, "unfocus") ?? saved.unfocusOnRelease ?? true,

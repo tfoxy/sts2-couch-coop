@@ -144,16 +144,18 @@ afterEach(() => {
 // ---- 1. the premise ------------------------------------------------------------------------------------------
 
 describe("the cover the optimization depends on", () => {
-  it("MirrorView fits inside the same safe-area values that pad the panels", () => {
+  it("MirrorView optionally uses the safe-area values that always pad the panels", () => {
     const rule = /\.mirror-frame\s*\{([^}]*)\}/.exec(mirrorViewSource);
     expect(rule).not.toBeNull();
     const body = rule![1];
     expect(body).toMatch(/position:\s*absolute/);
+    expect(body).toMatch(/inset:\s*0\s*;/);
+    const safeAreaRule = /\.mirror-frame-safe-area\s*\{([^}]*)\}/.exec(mirrorViewSource)![1];
     const surfaceRule = /\.game-surface\s*\{([^}]*)\}/.exec(surfaceCss)![1];
     for (const side of ["top", "right", "bottom", "left"]) {
       expect(surfaceRule).toContain(`--surface-inset-${side}: env(safe-area-inset-${side}, 0px)`);
       expect(surfaceRule).toContain(`var(--surface-inset-${side})`);
-      expect(body).toContain(`var(--surface-inset-${side}, 0px)`);
+      expect(safeAreaRule).toContain(`var(--surface-inset-${side}, 0px)`);
     }
     // Browser-provided safe areas matter in Safari tabs too, not just installed display modes.
     expect(surfaceCss).not.toMatch(/@media\s*\(display-mode:/);

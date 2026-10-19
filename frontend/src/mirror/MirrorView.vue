@@ -1493,7 +1493,12 @@ const underlayStyle = computed(() => ({
 </script>
 
 <template>
-  <div ref="frame" class="mirror-frame" data-testid="mirror-frame">
+  <div
+    ref="frame"
+    class="mirror-frame"
+    :class="{ 'mirror-frame-safe-area': mirrorSettings.safeAreaPaddingEnabled }"
+    data-testid="mirror-frame"
+  >
     <svg class="mirror-defs" aria-hidden="true" focusable="false">
       <defs ref="defs"></defs>
     </svg>
@@ -1552,16 +1557,20 @@ const underlayStyle = computed(() => ({
 <style scoped>
 .mirror-frame {
   position: absolute;
-  /* Fit the entire stage inside the safe area. Parent padding alone does not constrain an absolute child;
-     measuring this inset frame keeps the canvas, DOM overlays and input rect on the same fitted box. */
-  inset:
-    var(--surface-inset-top, 0px) var(--surface-inset-right, 0px)
-    var(--surface-inset-bottom, 0px) var(--surface-inset-left, 0px);
+  inset: 0;
   overflow: hidden;
   background: #000;
   display: flex;
   align-items: center;
   justify-content: center;
+}
+
+.mirror-frame-safe-area {
+  /* ResizeObserver keeps the stage, canvas, overlays and input aligned when this preference changes.
+     The parent's padding still protects browser controls when the mirror uses the full screen. */
+  inset:
+    var(--surface-inset-top, 0px) var(--surface-inset-right, 0px)
+    var(--surface-inset-bottom, 0px) var(--surface-inset-left, 0px);
 }
 
 .mirror-defs {
