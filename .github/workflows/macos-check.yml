@@ -139,7 +139,7 @@ jobs:
       - name: Upload staged synthetic diagnostics
         timeout-minutes: 3
         if: ${{ always() && steps.validate_webkit_artifacts.outcome == 'success' }}
-        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: iphone-webkit-synthetic-${{ github.run_id }}
           path: sources/sts2-couch-coop/.ci-artifacts/iphone-webkit
@@ -403,7 +403,7 @@ jobs:
       - name: Upload staged ARM Simulator diagnostics
         timeout-minutes: 3
         if: ${{ always() && steps.validate_arm_artifacts.outcome == 'success' }}
-        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: iphone-safari-arm-synthetic-${{ github.run_id }}
           path: sources/sts2-couch-coop/.ci-artifacts/iphone-safari-arm
