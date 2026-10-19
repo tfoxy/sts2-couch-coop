@@ -1,10 +1,13 @@
+using System.Diagnostics;
 using System.Net;
 using System.Net.Http.Headers;
 using System.Net.NetworkInformation;
 using System.Net.Sockets;
 using System.Text;
+using System.Text.Json;
 using CouchCoop.Mod.Connections;
 using CouchCoop.Mod.Server;
+using CouchCoop.Mod.Session;
 
 namespace CouchCoop.Mod.Tests;
 
@@ -15,6 +18,151 @@ internal static class ConnectionControlRouteTests
         await AcceptsOnlyBoundLoopbackReports();
         await RefusesNonLoopbackReports();
         await EveryRefusalIsCounted();
+        await HealthyHeartbeatDoesNotWaitForAnotherSeatLaunch();
+        await TerminalStatusIsAppliedBeforeReply();
+    }
+
+    private static async Task HealthyHeartbeatDoesNotWaitForAnotherSeatLaunch()
+    {
+        using var root = new TempStaticSpa();
+        await using var server = new CouchCoopBrowserServer(
+            new StaticSpaFileProvider(root.Path), new UnusedAssetAdapter(), envelopeFactory: null,
+            bindAddress: IPAddress.Loopback, preferredPort: 0, isHeadlessClient: true);
+        using var client = new HttpClient { BaseAddress = await server.StartAsync() };
+        var firstId = HeadlessConnectionLifecycleTests.BeginAttempt();
+        var secondId = Guid.NewGuid();
+        var launchEntered = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        using var releaseLaunch = new ManualResetEventSlim();
+        using var secondStop = new CancellationTokenSource();
+        using var manager = new HeadlessClientManager(slot =>
+        {
+            if (slot != 2)
+            {
+                launchEntered.TrySetResult();
+                if (!releaseLaunch.Wait(TimeSpan.FromSeconds(10)))
+                    throw new TimeoutException("The test did not release the second seat's launch.");
+            }
+            return new HeadlessConnectionLifecycleTests.FakeProcess(800 + slot);
+        }, (_, _) => Task.FromResult(true));
+        manager.ConfigureConnectionMonitoring(_ => true, () => 12345);
+        Task<int?>? secondJoin = null;
+        try
+        {
+            var firstJoin = manager.EnsureHeadlessAsync(firstId, "first-seat", CancellationToken.None);
+            var control = await HeadlessConnectionLifecycleTests.WaitForControlAsync(firstId);
+            HeadlessConnectionLifecycleTests.RegisterKnown(control, firstId, "launch-concurrency-token");
+            var status = new HeadlessConnectionStatus(1, "Connecting", null, null, 1,
+                CloudSaveIsolated: true, RelayReady: true);
+            using var initial = await SendAsync(client, "launch-concurrency-token", control.Generation,
+                JsonSerializer.Serialize(status));
+            Assert(initial.StatusCode == HttpStatusCode.OK, "the first seat's initial heartbeat is accepted");
+            Assert(await firstJoin.WaitAsync(TimeSpan.FromSeconds(2)) is not null,
+                "the first seat has joined before another begins launching");
+
+            ConnectionRegistry.Shared.Connected(secondId, null);
+            ConnectionRegistry.Shared.BeginAttempt(secondId);
+            // A dedicated thread holds the real allocation lock in the injected launcher. The request's
+            // result must not depend on that launch, or on thread-pool growth accommodating a blocked test.
+            secondJoin = Task.Factory.StartNew(
+                () => manager.EnsureHeadlessAsync(secondId, "second-seat", secondStop.Token),
+                CancellationToken.None, TaskCreationOptions.LongRunning, TaskScheduler.Default).Unwrap();
+            await launchEntered.Task.WaitAsync(TimeSpan.FromSeconds(2));
+
+            var received = 0;
+            void ObserveSignal(HeadlessConnectionControlSnapshot snapshot)
+            {
+                if (snapshot.SourceSessionId == firstId && snapshot.Status?.Sequence > 1)
+                    Interlocked.Increment(ref received);
+            }
+            HeadlessConnectionControl.Shared.StatusChanged += ObserveSignal;
+            try
+            {
+                var started = Stopwatch.GetTimestamp();
+                HttpResponseMessage heartbeatResponse;
+                try
+                {
+                    heartbeatResponse = await SendAsync(client, "launch-concurrency-token", control.Generation,
+                        JsonSerializer.Serialize(status with { Sequence = 2, ConnectedChildBrowserCount = 0 }))
+                        .WaitAsync(TimeSpan.FromSeconds(1));
+                }
+                catch (TimeoutException)
+                {
+                    Console.WriteLine($"control heartbeat blocked behind seat launch for {Stopwatch.GetElapsedTime(started).TotalMilliseconds:F1} ms");
+                    throw;
+                }
+                using var heartbeat = heartbeatResponse;
+                var elapsed = Stopwatch.GetElapsedTime(started);
+                Console.WriteLine($"control heartbeat during blocked seat launch: {elapsed.TotalMilliseconds:F1} ms");
+                Assert(heartbeat.StatusCode == HttpStatusCode.OK && !releaseLaunch.IsSet,
+                    "a healthy Connecting heartbeat is answered while another seat's launch is still blocked");
+                var observed = HeadlessConnectionControl.Shared.Snapshot(control.Slot, control.Generation)!;
+                Assert(observed.Status?.Sequence == 2 && observed.Status.ConnectedChildBrowserCount == 0,
+                    "the heartbeat still refreshes authenticated seat and browser state");
+                Assert(Volatile.Read(ref received) == 1,
+                    "status signals still wake the shared-relay monitor before the HTTP reply");
+            }
+            finally { HeadlessConnectionControl.Shared.StatusChanged -= ObserveSignal; }
+        }
+        finally
+        {
+            secondStop.Cancel();
+            releaseLaunch.Set();
+            if (secondJoin is not null)
+            {
+                try { await secondJoin.WaitAsync(TimeSpan.FromSeconds(3)); }
+                catch (OperationCanceledException) { }
+            }
+            manager.Dispose();
+            HeadlessConnectionLifecycleTests.CleanupControl(firstId);
+            HeadlessConnectionLifecycleTests.CleanupControl(secondId);
+            ConnectionRegistry.Shared.Clear();
+        }
+    }
+
+    private static async Task TerminalStatusIsAppliedBeforeReply()
+    {
+        using var root = new TempStaticSpa();
+        await using var server = new CouchCoopBrowserServer(
+            new StaticSpaFileProvider(root.Path), new UnusedAssetAdapter(), envelopeFactory: null,
+            bindAddress: IPAddress.Loopback, preferredPort: 0, isHeadlessClient: true);
+        using var client = new HttpClient { BaseAddress = await server.StartAsync() };
+        foreach (var (status, expectedCode) in new[]
+        {
+            (new HeadlessConnectionStatus(1, "mod-init", null, null, 0), HeadlessClientManager.SeatCloudIsolationCode),
+            (new HeadlessConnectionStatus(1, "FAILED", null, null, 0, CloudSaveIsolated: true), "native-join-rejected"),
+            (new HeadlessConnectionStatus(1, "disconnected", null, null, 0, CloudSaveIsolated: true), "native-disconnected"),
+            (new HeadlessConnectionStatus(1, "Connecting", HeadlessDisconnectReason.RunInProgressCode, null, 0,
+                CloudSaveIsolated: true), HeadlessDisconnectReason.RunInProgressCode),
+            (new HeadlessConnectionStatus(1, "Connecting", null, "RunInProgress", 0,
+                CloudSaveIsolated: true), HeadlessDisconnectReason.RunInProgressCode),
+        })
+        {
+            var id = HeadlessConnectionLifecycleTests.BeginAttempt();
+            using var stop = new CancellationTokenSource();
+            using var manager = new HeadlessClientManager(
+                _ => new HeadlessConnectionLifecycleTests.FakeProcess(890), (_, _) => Task.FromResult(true));
+            manager.ConfigureConnectionMonitoring(_ => true, () => 12345);
+            var pending = manager.EnsureHeadlessAsync(id, "terminal-seat", stop.Token);
+            try
+            {
+                var control = await HeadlessConnectionLifecycleTests.WaitForControlAsync(id);
+                HeadlessConnectionLifecycleTests.RegisterKnown(control, id, "terminal-route-token");
+                using var response = await SendAsync(client, "terminal-route-token", control.Generation,
+                    JsonSerializer.Serialize(status));
+                Assert(response.StatusCode == HttpStatusCode.OK, "the terminal status itself is accepted");
+                Assert(ConnectionRegistry.Shared.Snapshot().Rows.Single(row => row.Id == id).Issue?.Code == expectedCode,
+                    $"{expectedCode} reaches the host's report before the child receives its response");
+            }
+            finally
+            {
+                stop.Cancel();
+                manager.Dispose();
+                try { await pending.WaitAsync(TimeSpan.FromSeconds(3)); }
+                catch (OperationCanceledException) { }
+                HeadlessConnectionLifecycleTests.CleanupControl(id);
+                ConnectionRegistry.Shared.Clear();
+            }
+        }
     }
 
     /// <summary>

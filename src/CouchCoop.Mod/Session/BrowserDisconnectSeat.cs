@@ -1,3 +1,5 @@
+using CouchCoop.Mod.Runtime;
+
 namespace CouchCoop.Mod.Session;
 
 /// <summary>
@@ -20,8 +22,8 @@ public static class BrowserDisconnectSeat
     /// </item>
     /// <item>
     /// <description>
-    /// IN THE LOBBY (or at the main menu, or when run presence cannot be read): kill it now and evict its ENet peer,
-    /// which frees the netId and removes the phantom lobby player.
+    /// IN THE LOBBY: retain the live seat for two minutes so a phone screen lock or browser refresh can reconnect
+    /// without loading another game. On expiry, keep it if a run has started; otherwise kill it and evict its peer.
     /// </description>
     /// </item>
     /// </list>
@@ -30,8 +32,8 @@ public static class BrowserDisconnectSeat
     /// <param name="sessionId">The browser session that just disconnected.</param>
     /// <param name="runInProgress">
     /// Whether the game is in a run right now (<see cref="CouchCoopLobbyParticipation.IsRunInProgress"/>), read
-    /// exactly once, before anything is changed. It is a plain typed read with no state snapshot, so it costs a
-    /// disconnect nothing measurable and is safe on the socket's own thread.
+    /// before the disconnect decision and checked again before grace cleanup. It is a plain typed read with no
+    /// state snapshot and is safe on the socket's own thread.
     /// </param>
     /// <param name="evictPeer">Force-disconnects the seat's ENet peer by netId from the host's net server.</param>
     /// <param name="clearClientName">Drops the display-name override registered for a netId.</param>
@@ -53,7 +55,38 @@ public static class BrowserDisconnectSeat
             return;
         }
 
-        var cleanup = manager.ReleaseForBrowser(sessionId);
+        if (manager.RetainForBrowserReconnect(sessionId,
+                ticket => ApplyAfterGrace(manager, sessionId, runInProgress, evictPeer, clearClientName, ticket))) return;
+        ApplyAfterGrace(manager, sessionId, runInProgress, evictPeer, clearClientName);
+    }
+
+    // The expiry uses the same cleanup contract as an explicit immediate release. Kept separate so the
+    // deadline cannot schedule another deadline, and the existing peer-eviction failure tests stay focused.
+    internal static void ApplyAfterGrace(
+        HeadlessClientManager manager, Guid sessionId, Func<bool> runInProgress,
+        Action<ulong> evictPeer, Action<ulong> clearClientName, long? reconnectTicket = null)
+    {
+        // Serialize the run read AND the release with run transitions on the game thread. Reading on the
+        // timer thread before waiting for the manager lock can otherwise kill a seat after a run starts.
+        // No game read occurs under the manager lock; the reconnect ticket is still checked there.
+        GameMainThread.Invoke(() =>
+        {
+            CompleteGrace(manager, sessionId, runInProgress, evictPeer, clearClientName, reconnectTicket);
+            return true;
+        });
+    }
+
+    private static void CompleteGrace(
+        HeadlessClientManager manager, Guid sessionId, Func<bool> runInProgress,
+        Action<ulong> evictPeer, Action<ulong> clearClientName, long? reconnectTicket)
+    {
+        if (runInProgress())
+        {
+            manager.MarkDetached(sessionId, reconnectTicket);
+            return;
+        }
+
+        var cleanup = manager.ReleaseForBrowser(sessionId, reconnectTicket);
         if (cleanup is not { } ticket)
         {
             return;

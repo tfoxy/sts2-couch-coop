@@ -24,6 +24,35 @@ using Spirectl.Sts2.Core.Reference;
 using Spirectl.Sts2.Core.SceneInspection;
 using Spirectl.Sts2.Embedding;
 
+if (args is [MultiplayerNameStoreTests.ReadChildVerb, ..])
+{
+    MultiplayerNameStoreTests.RunReadChild();
+    return;
+}
+
+if (args is ["connection-control-routes", ..])
+{
+    await ConnectionControlRouteTests.RunAsync();
+    Console.WriteLine("connection control routes: ok");
+    return;
+}
+
+if (args is ["player-names", ..])
+{
+    MultiplayerNameStoreTests.Run();
+    MirrorSeatRosterTests.Run();
+    PlayerNameRosterTests.Run();
+    Console.WriteLine("player names: ok");
+    return;
+}
+
+if (args is ["headless-loading", ..])
+{
+    await HeadlessAssetLoadingActivityTests.RunAsync();
+    Console.WriteLine("headless loading: ok");
+    return;
+}
+
 if (args is ["direct-ip-host", ..])
 {
     await DirectIpHttpsHostServiceTests.RunAsync();
@@ -365,6 +394,7 @@ if (args is ["connections", ..])
     await ConnectionReportFormatterTests.Run();
     await ConnectionAttemptLogsTests.Run();
     await ConnectionControlTests.RunAsync();
+    await ConnectionControlRouteTests.RunAsync();
     SeatModBuildTests.Run();
     // "A seat that cannot guarantee Steam Cloud save isolation must not keep running": the pure verdict, the
     // test lever, and the player-facing copy. Registered here because its failure IS a connection issue — the
@@ -665,6 +695,7 @@ if (args is ["beta-targets", ..])
     Leg("HostTransportCapacityTests.HostCallTargets", HostTransportCapacityTests.HostCallTargetsResolve);
     Leg("SavedRunLoadLobbyIdentityTests.PeerCleanupRoutes", SavedRunLoadLobbyIdentityTests.PeerCleanupRoutes);
     Leg(nameof(HeadlessAudioMuteTargetsTests), HeadlessAudioMuteTargetsTests.Run);
+    Leg(nameof(HeadlessAssetLoadingActivityTests), HeadlessAssetLoadingActivityTests.TargetsResolve);
     Leg(nameof(HostMusicStateTests), HostMusicStateTests.TargetsResolve);
     Leg(nameof(SeatAudioFeedTests), SeatAudioFeedTests.TargetsResolve);
     // The seat's Steam-Cloud write paths. Same standing as the FMOD forwards above, and the same consequence if
@@ -812,6 +843,7 @@ HeadlessParticleFreezeExemptionTests.Run();
 // WS-3 idle wire: the spine freeze re-asserts on every scan — its dedup set is a reporting set, never the gate
 // (a node whose ProcessMode came back used to be skipped forever; see the file header).
 HeadlessSpineFreezeTests.Run();
+await HeadlessAssetLoadingActivityTests.RunAsync();
 // Geoclip round: all three freeze walks skip an OFF-SCREEN EXTRACTION subtree (they DFS from SceneTree.Root, so
 // they otherwise freeze the detached rig a bake is posing and it returns one pose repeated) — and skip nothing
 // else, so a non-marked SubViewport's spine children stay frozen.
@@ -829,6 +861,7 @@ ClientVitalsReceiptTests.Run();
 await ConnectionReportFormatterTests.Run();
 await ConnectionAttemptLogsTests.Run();
 await ConnectionControlTests.RunAsync();
+await ConnectionControlRouteTests.RunAsync();
     await HeadlessConnectionLifecycleTests.RunAsync();
 InputMappingTests.Run();
 // …and the gamepad half of the same translation (`kind: "pad"`): token + edge onto spirectl's controller-input
@@ -914,6 +947,7 @@ MirrorSeatRosterTests.Run();
 // Player names on a seat: what the host publishes (itself + remote Steam players, which a seat cannot resolve),
 // how that merges into the durable mp_names.json roster, and how a running seat picks up later joiners.
 PlayerNameRosterTests.Run();
+MultiplayerNameStoreTests.Run();
 // WS-F: advertised LAN IPv4 ranking (tunnel/docker/APIPA demotion) + the COUCHCOOP_ADVERTISED_HOST override.
 LanAddressRankingTests.Run();
 // WS-2 QR dialog: the option list the dialog offers (adapter x method cross product, tier-first grouping,

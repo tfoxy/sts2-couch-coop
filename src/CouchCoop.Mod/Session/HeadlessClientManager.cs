@@ -200,10 +200,8 @@ public sealed partial class HeadlessClientManager : IDisposable
     // seats), pushed in by PublishRosterNames and republished to the seats through mp_names.json. Separate from
     // _nameToSlot because it is not a slot allocation: these netIds are mostly NOT ours to spawn.
     private readonly Dictionary<ulong, string> _publishedNames = [];
-    // Slots whose browser disconnected DURING A RUN: the headless is intentionally KEPT ALIVE (still ENet-joined
-    // to the host's run as its netId) so the browser reconnects instantly to the live run instead of re-spawning
-    // and rejoining. Reaped (killed) once the host has left both the run and any lobby (ReapDetachedSlots, driven by
-    // the roster observer) or the game (Dispose); cleared when the browser reconnects and re-claims the slot.
+    // Seats retained after a browser disconnect: for the run's duration, or a bounded lobby reconnect grace.
+    // Reaped once the host has left both run and lobby, or quits; cleared when the browser reclaims the seat.
     private readonly HashSet<int> _detachedSlots = [];
     private readonly Func<int, IHeadlessProcess?> _launcher;
     private readonly bool _supportsSharedRelay;
@@ -452,11 +450,8 @@ public sealed partial class HeadlessClientManager : IDisposable
     // returned. (port − 13337) / 10 = slot; netId = 1000 + slot.
     public static ulong NetIdForPort(int port) => SlotToNetId((port - HostPort) / PortStep);
 
-    // The game's NullPlatformUtilStrategy reads "./mp_names.json" (netId→display name) ONCE at construction and
-    // otherwise renders a remote player's nameplate as its raw netId ("1002"). We write the active co-op roster to
-    // this file before spawning each headless so the freshly-launched instance (and thus its browser mirror) shows
-    // every player's chosen name. Read relative to the process working directory, which the spawned headless
-    // inherits from the host. See memory: headless naming via mp_names.json.
+    // The durable roster lives in the host's user://couch-coop directory. Its absolute path is passed to each
+    // isolated seat; direct launches use that containing directory for native startup name compatibility too.
     //
     // DURABLE BY DESIGN — do NOT "clean up" / blank this file at startup. It is the ONLY persistent netId→name
     // store: the game's save carries a run's NetIds but no player names at all, so labelling the seats of a
@@ -467,7 +462,7 @@ public sealed partial class HeadlessClientManager : IDisposable
     // override exists — exactly the saved-seat case we want it for. WriteMultiplayerNamesFileLocked keeps it
     // accurate by republishing the roster before every spawn.
     // Internal so the seat-side HeadlessClientNameSync can stat the same path it reads.
-    internal const string MultiplayerNamesFile = "mp_names.json";
+    internal const string MultiplayerNamesFile = MultiplayerNameStore.FileName;
 
     // Internal so the test project (which references this assembly) can inject a fake launcher + probe.
     internal HeadlessClientManager(
@@ -478,9 +473,11 @@ public sealed partial class HeadlessClientManager : IDisposable
         Func<int, CancellationToken, Task<string?>>? seatPortProbe = null,
         Func<bool>? runInProgressProbe = null,
         TimeProvider? seatNoticeTime = null,
-        Action<int, long>? ownedSeatCountChanged = null)
+        Action<int, long>? ownedSeatCountChanged = null,
+        TimeProvider? browserReconnectTime = null)
     {
         _seatNoticeTime = seatNoticeTime;
+        _browserReconnectTime = browserReconnectTime ?? TimeProvider.System;
         _launcher = launcher ?? throw new ArgumentNullException(nameof(launcher));
         _supportsSharedRelay = false;
         _runInProgressProbe = runInProgressProbe;
@@ -644,7 +641,11 @@ public sealed partial class HeadlessClientManager : IDisposable
             // connection and must actually be re-bound, not silently handed their previous instance.
             if (_sessionToSlot.TryGetValue(sessionId, out slot)
                 && (targetNetId is null || SlotToNetId(slot) == targetNetId.Value))
+            {
+                CancelBrowserReconnectGraceLocked(slot);
+                _detachedSlots.Remove(slot);
                 return new(SlotToPort(slot), NewProcess: false);
+            }
 
             // Drop dead PROCESS handles for orphaned/crashed headless (Release never ran). KEEPS each slot's
             // name claim so a same-name reconnect re-spawns on the same slot/netId (see ReapDeadSlotsLocked).
@@ -679,6 +680,7 @@ public sealed partial class HeadlessClientManager : IDisposable
                 foreach (var sk in _sessionToSlot.Where(p => p.Value == slot && p.Key != sessionId).Select(p => p.Key).ToList())
                     _sessionToSlot.Remove(sk);
                 _sessionToSlot[sessionId] = slot;
+                CancelBrowserReconnectGraceLocked(slot);
                 _detachedSlots.Remove(slot);
 
                 // Whether this counts as consuming a NEW slot: an already-claimed seat is a reconnect (always
@@ -720,6 +722,7 @@ public sealed partial class HeadlessClientManager : IDisposable
                 foreach (var sk in _sessionToSlot.Where(p => p.Value == slot && p.Key != sessionId).Select(p => p.Key).ToList())
                     _sessionToSlot.Remove(sk);
                 _sessionToSlot[sessionId] = slot;
+                CancelBrowserReconnectGraceLocked(slot);
                 // The browser is back: this slot is no longer "browser-gone, kept alive mid-run".
                 _detachedSlots.Remove(slot);
 
@@ -1199,12 +1202,14 @@ public sealed partial class HeadlessClientManager : IDisposable
     /// </summary>
     public ulong? Release(Guid sessionId) => ReleaseForBrowser(sessionId)?.NetId;
 
-    internal PeerCleanupTicket? ReleaseForBrowser(Guid sessionId)
+    internal PeerCleanupTicket? ReleaseForBrowser(Guid sessionId, long? reconnectTicket = null)
     {
         lock (_lock)
         {
+            if (reconnectTicket is { } ticket && !IsBrowserReconnectCurrentLocked(sessionId, ticket)) return null;
             _browserAttempts.Remove(sessionId);
             if (!_sessionToSlot.TryGetValue(sessionId, out var slot)) return null;
+            CancelBrowserReconnectGraceLocked(slot);
             _sessionToSlot.Remove(sessionId);
             // Only kill the process if no other session has taken over this slot.
             if (_sessionToSlot.ContainsValue(slot))
@@ -1225,9 +1230,9 @@ public sealed partial class HeadlessClientManager : IDisposable
             // A retry may arrive before the host-side peer eviction finishes. Reserve this netId until
             // eviction is confirmed; the callback itself must run outside _lock.
             if (_evictStalePeer is null) return new PeerCleanupTicket(SlotToNetId(slot), 0);
-            var ticket = new PeerCleanupTicket(SlotToNetId(slot), ++_nextPeerCleanupTicket);
-            _pendingPeerCleanup[slot] = new(ticket.Id, "The previous peer has not yet been removed.");
-            return ticket;
+            var cleanupTicket = new PeerCleanupTicket(SlotToNetId(slot), ++_nextPeerCleanupTicket);
+            _pendingPeerCleanup[slot] = new(cleanupTicket.Id, "The previous peer has not yet been removed.");
+            return cleanupTicket;
         }
     }
 
@@ -1290,12 +1295,16 @@ public sealed partial class HeadlessClientManager : IDisposable
     /// process and name→slot claim are preserved. No-op if another session still owns the slot (e.g. a second tab)
     /// or the slot has no live process. Called instead of <see cref="Release"/> on a mid-run disconnect.
     /// </summary>
-    public void MarkDetached(Guid sessionId)
+    public void MarkDetached(Guid sessionId) => MarkDetached(sessionId, reconnectTicket: null);
+
+    internal void MarkDetached(Guid sessionId, long? reconnectTicket)
     {
         lock (_lock)
         {
+            if (reconnectTicket is { } ticket && !IsBrowserReconnectCurrentLocked(sessionId, ticket)) return;
             _browserAttempts.Remove(sessionId);
             if (!_sessionToSlot.TryGetValue(sessionId, out var slot)) return;
+            CancelBrowserReconnectGraceLocked(slot);
             _sessionToSlot.Remove(sessionId);
             ConnectionRegistry.Shared.RecordDiagnostic(sessionId, "cleanup", "Healthy game retained during the run so this browser can reconnect.");
             // Another live session still owns this slot → it's not detached; leave it owned.
@@ -1328,6 +1337,8 @@ public sealed partial class HeadlessClientManager : IDisposable
                 RemoveNameForSlotLocked(slot);
                 if (ShutdownSlotLocked(slot, graceful: false))
                 {
+                    foreach (var session in _sessionToSlot.Where(pair => pair.Value == slot).Select(pair => pair.Key).ToList())
+                        _sessionToSlot.Remove(session);
                     freed.Add(SlotToNetId(slot));
                 }
             }
@@ -1348,6 +1359,7 @@ public sealed partial class HeadlessClientManager : IDisposable
             _sessionToSlot.Clear();
             _detachedSlots.Clear();
             _pendingPeerCleanup.Clear();
+            foreach (var slot in _browserReconnectPending.Keys.ToList()) CancelBrowserReconnectGraceLocked(slot);
             // Host is going away: hard-kill is fine (and faster than waiting on each graceful stop).
             foreach (var slot in _processBySlot.Keys.ToList())
                 ShutdownSlotLocked(slot, graceful: false);
@@ -1434,7 +1446,7 @@ public sealed partial class HeadlessClientManager : IDisposable
     }
 
     /// <summary>
-    /// Write the active co-op name roster to <see cref="MultiplayerNamesFile"/> in the working directory, in the
+    /// Write the active co-op name roster to <see cref="MultiplayerNamesFile"/> in the host's user directory, in the
     /// game's <c>mp_names.json</c> format (<c>[{"net_id":1002,"name":"tess"}]</c>). Real-launcher only (skipped
     /// under the test launcher, which leaves <c>_gameExe</c> null, so unit tests never touch the filesystem;
     /// <see cref="BuildMultiplayerNameEntries"/> is where the content itself is tested). Caller holds
@@ -1455,9 +1467,10 @@ public sealed partial class HeadlessClientManager : IDisposable
             return;
         }
 
-        var path = Path.Combine(Directory.GetCurrentDirectory(), MultiplayerNamesFile);
         try
         {
+            var path = MultiplayerNameStore.ResolveWritePath();
+            if (path is null) return;
             var entries = BuildMultiplayerNameEntries(
                 joiningNetId: newSlot >= MinSlot ? SlotToNetId(newSlot) : null,
                 joiningName: newName,
@@ -1465,17 +1478,11 @@ public sealed partial class HeadlessClientManager : IDisposable
                 publishedNames: _publishedNames,
                 existingEntries: ReadMultiplayerNames());
 
-            // Write + RENAME rather than writing in place: every live seat reads this file (the game once at
-            // startup, our name sync on every change), and a truncate-then-write is observable half-done. A seat
-            // whose ONE startup read lands mid-write would show raw netIds for its whole life. Rename is atomic on
-            // the same filesystem, so a reader sees either the old file or the new one.
-            var temp = path + ".tmp";
-            File.WriteAllText(temp, JsonSerializer.Serialize(entries));
-            File.Move(temp, path, overwrite: true);
+            MultiplayerNameStore.Write(path, entries);
         }
         catch (Exception ex)
         {
-            CouchCoopLog.Stderr($"failed writing {MultiplayerNamesFile}: {ex.GetType().Name}: {ex.Message}");
+            CouchCoopLog.Warn($"failed writing {MultiplayerNamesFile}: {ex.GetType().Name}: {ex.Message}");
         }
     }
 
@@ -1545,48 +1552,15 @@ public sealed partial class HeadlessClientManager : IDisposable
         [JsonPropertyName("name")] public string name { get; set; } = "";
     }
 
-    private static readonly IReadOnlyDictionary<ulong, string> EmptyNames = new Dictionary<ulong, string>();
-
     /// <summary>
     /// Read the shared <c>mp_names.json</c> roster (host-written before spawning each headless) into a
-    /// netId→display-name map. Empty on a missing/unreadable/malformed file. Static + side-effect-free: a running
+    /// netId→display-name map. Empty on a missing/unreadable/malformed file. Existing legacy files migrate to
+    /// the host's user directory only when its canonical map is absent. A running
     /// headless instance (which has no <see cref="HeadlessClientManager"/> of its own) calls this to re-apply a
     /// LATER joiner's name as a local <c>SetClientName</c> override — the game itself only reads the file once at
     /// startup, so an already-running headless would otherwise render a newcomer as their raw netId.
     /// </summary>
-    public static IReadOnlyDictionary<ulong, string> ReadMultiplayerNames()
-    {
-        try
-        {
-            var path = Path.Combine(Directory.GetCurrentDirectory(), MultiplayerNamesFile);
-            if (!File.Exists(path))
-            {
-                return EmptyNames;
-            }
-
-            var entries = JsonSerializer.Deserialize<List<MultiplayerNameEntry>>(File.ReadAllText(path));
-            if (entries is null || entries.Count == 0)
-            {
-                return EmptyNames;
-            }
-
-            var map = new Dictionary<ulong, string>();
-            foreach (var entry in entries)
-            {
-                var name = entry.name?.Trim();
-                if (!string.IsNullOrEmpty(name))
-                {
-                    map[entry.net_id] = name;
-                }
-            }
-
-            return map;
-        }
-        catch (Exception ex) when (ex is IOException or JsonException or UnauthorizedAccessException)
-        {
-            return EmptyNames;
-        }
-    }
+    public static IReadOnlyDictionary<ulong, string> ReadMultiplayerNames() => MultiplayerNameStore.Read();
 
     /// <summary>
     /// The display name currently CLAIMING <paramref name="slot"/>, or null when it is unclaimed. Caller
@@ -1652,6 +1626,7 @@ public sealed partial class HeadlessClientManager : IDisposable
     /// </summary>
     private bool ShutdownSlotLocked(int slot, bool graceful)
     {
+        CancelBrowserReconnectGraceLocked(slot);
         if (!_processBySlot.TryGetValue(slot, out var proc)) return false;
         if (_ownedConnections.TryGetValue(slot, out var owned) && owned.Quarantined)
         {
@@ -1706,6 +1681,7 @@ public sealed partial class HeadlessClientManager : IDisposable
             return false;
         }
         _processBySlot.Remove(slot);
+        _detachedSlots.Remove(slot);
         QueueOwnedSeatCountChangedLocked();
         ForgetConnectionLocked(slot);
         proc.Dispose();
@@ -2123,6 +2099,7 @@ public sealed partial class HeadlessClientManager : IDisposable
         // Prevent the headless child from inheriting the host's port so if it tried to spawn
         // sub-headless instances (it won't, but defensive) they'd start at the right base.
         psi.EnvironmentVariables.Remove("COUCHCOOP_HEADLESS_WRAPPER");
+        MultiplayerNameStore.ConfigureSeatLaunch(psi, hasWrapper: _headlessWrapper is not null);
 
         try
         {

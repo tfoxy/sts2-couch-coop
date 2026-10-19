@@ -756,6 +756,19 @@ public sealed partial class HeadlessClientManager
 
     private void OnChildStatus(HeadlessConnectionControlSnapshot snapshot)
     {
+        var status = snapshot.Status;
+        // Observe has already refreshed authenticated liveness, and the shared-relay subscriber still wakes
+        // its monitor. Healthy reports need no synchronous manager work: both readiness paths already advance
+        // Joining. Taking _lock here makes every ordinary heartbeat wait for another seat's profile seeding
+        // and process launch, delaying its HTTP reply past the control deadline. Keep failures synchronous so
+        // their cause is retained before the reporting child can exit.
+        if (status is { CloudSaveIsolated: true }
+            && string.IsNullOrEmpty(status.ErrorCode)
+            && string.IsNullOrEmpty(status.ErrorDetail)
+            && !status.NativePhase.Equals("Failed", StringComparison.OrdinalIgnoreCase)
+            && !status.NativePhase.Equals("Disconnected", StringComparison.OrdinalIgnoreCase))
+            return;
+
         OwnedConnection? owned;
         Guid[] clients;
         lock (_lock)
@@ -764,7 +777,6 @@ public sealed partial class HeadlessClientManager
             if (owned is null || owned.Generation != snapshot.Generation) return;
             clients = _browserAttempts.Where(p => p.Value.Slot == owned.Slot && p.Value.Generation == owned.Generation).Select(p => p.Key).ToArray();
         }
-        var status = snapshot.Status;
         if (SetTerminalFailure(owned, status))
         {
             var failure = owned.Failure!;

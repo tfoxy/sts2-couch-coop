@@ -5,6 +5,7 @@ import { nextTick } from "vue";
 import MirrorApp from "@/mirror/MirrorApp.vue";
 import { __resetComposerForTest } from "@/i18n";
 import { RECONNECT_BASE_DELAY_MS } from "@/mirror/reconnectPolicy";
+import { WAKE_PING_TIMEOUT_MS } from "@/mirror/mirrorClient";
 
 // HOLDING A SEAT THE DEVICE CANNOT REACH — and the rejection that already has copy.
 //
@@ -193,6 +194,52 @@ describe("MirrorApp seat hold", () => {
     vi.advanceTimersByTime(RECONNECT_BASE_DELAY_MS * 2);
     await settle();
     expect(hostSocket().sentOfType("client-view-error")).toHaveLength(0);
+  });
+
+  it("replaces a pending seat-only retry when the owning host drops", async () => {
+    await tapASeat();
+    MockWebSocket.blocked = [`:${SEAT_PORT}`];
+    hostSocket().emit(sessionMessage({ headlessMirrorPort: SEAT_PORT }));
+    await settle();
+    expect(seatSockets()).toHaveLength(1);
+
+    hostSocket().close();
+    await settle();
+    MockWebSocket.blocked = [];
+    vi.advanceTimersByTime(RECONNECT_BASE_DELAY_MS * 2);
+    await settle();
+    expect(seatSockets()).toHaveLength(1);
+    expect(latest().url).toBe(hostSocket().url);
+    expect(latest()).not.toBe(hostSocket());
+    latest().emit(sessionMessage());
+    await settle();
+    expect(latest().sentOfType("join")).toEqual([
+      expect.objectContaining({ name: "Alice", playerId: "p:1003" })
+    ]);
+  });
+
+  it.each([false, true])("does not blame the healthy view retired after host wake failure (delayed close: %s)", async (delayed) => {
+    await tapASeat();
+    hostSocket().emit(sessionMessage({ headlessMirrorPort: SEAT_PORT }));
+    await settle();
+    const view = latest();
+    const close = view.close.bind(view);
+    if (delayed) view.close = () => {
+      view.readyState = 3;
+      setTimeout(() => view.dispatchEvent(new Event("close")), 250);
+    };
+    try {
+      window.dispatchEvent(new Event("pageshow"));
+      view.emit({ type: "pong", t0: view.sentOfType("ping")[0].t0 });
+      vi.advanceTimersByTime(WAKE_PING_TIMEOUT_MS);
+      await settle();
+      expect(heading()).toBe("Reconnecting…");
+      expect(hostSocket().sentOfType("client-view-error")).toHaveLength(0);
+      vi.advanceTimersByTime(250);
+      await settle();
+      expect(heading()).toBe("Reconnecting…");
+      expect(hostSocket().sentOfType("client-view-error")).toHaveLength(0);
+    } finally { view.close = close; }
   });
 
   // The other side of the same rule: a view socket that OPENED and then died really is a lost transport, which
