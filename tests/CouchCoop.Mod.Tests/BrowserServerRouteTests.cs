@@ -36,6 +36,14 @@ if (args is ["host-access-routes", ..])
     return;
 }
 
+if (args is ["asset-single-flight", ..])
+{
+    await AssetSingleFlightTests.RunAsync();
+    HeadlessAssetExtractionGuardTests.Run();
+    Console.WriteLine("asset single-flight: ok");
+    return;
+}
+
 if (args is ["audio-tmpsfx", ..])
 {
     await AudioTmpSfxRouteTests.RunAsync();
@@ -900,6 +908,7 @@ await EncounterGeoclipPrerenderTests.RunAsync();
 // Memory round: a headless seat serves assets from disk or errors, and NEVER extracts — the belt that stops an
 // evicted (1x1) texture from being written through into the asset cache the host shares.
 HeadlessAssetExtractionGuardTests.Run();
+await AssetSingleFlightTests.RunAsync();
 // WS-3 rejoin: per-seat status derivation (grace window + zombie reap) and the mp-load-game saved-run union.
 MirrorSeatRosterTests.Run();
 // Player names on a seat: what the host publishes (itself + remote Steam players, which a seat cannot resolve),
