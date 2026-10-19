@@ -31,6 +31,7 @@ internal static class MirrorSeatRosterTests
 
         LoadGameLobbyUnionsSavedRunSeats();
         SavedSeatNameFallsBackToTheDurableRoster();
+        LoadedLobbyRawNamesUseTheDurableRoster();
         LiveLobbyEntryWinsOverTheSavedSeat();
         RunRosterStampsSeatsAndConnectedness();
         RosterCarriesEachSeatsCharacter();
@@ -411,6 +412,32 @@ internal static class MirrorSeatRosterTests
         Assert(Find(remembered, "p:1003").Name == "Bea", "a remembered name wins over the synthesized one");
     }
 
+    private static void LoadedLobbyRawNamesUseTheDurableRoster()
+    {
+        var state = LoadGameLobby(
+            lobby:
+            [
+                LobbyPlayer("p:1", "Hosty", connected: true),
+                LobbyPlayer("p:1002", "1002", connected: false),
+                LobbyPlayer("p:1003", "1003", connected: false),
+                LobbyPlayer("p:1004", "Live name", connected: true),
+                LobbyPlayer("p:1005", "1006", connected: true),
+            ],
+            saved: ["p:1", "p:1002", "p:1003", "p:1004", "p:1005"]);
+
+        var players = WithNames(new Dictionary<ulong, string>
+        {
+            [1002] = "Dad", [1003] = "Mamsha", [1004] = "Old name", [1005] = "Old numeric name",
+        }, () => ClassifyState(state).Players);
+
+        Assert(Find(players, "p:1002").Name == "Dad", "a loaded lobby's raw 1002 label uses its persisted name");
+        Assert(Find(players, "p:1003").Name == "Mamsha", "a loaded lobby's raw 1003 label uses its persisted name");
+        Assert(Find(players, "p:1002").Disconnected && Find(players, "p:1003").Disconnected,
+            "restoring labels preserves the saved seats' disconnected state");
+        Assert(Find(players, "p:1004").Name == "Live name", "a real current display name still outranks persisted names");
+        Assert(Find(players, "p:1005").Name == "1006", "only the seat's exact raw netId is treated as a placeholder");
+    }
+
     private static void LiveLobbyEntryWinsOverTheSavedSeat()
     {
         // The same netId in both lists: the live entry has the real name and the live connected flag, so it wins.
@@ -455,24 +482,24 @@ internal static class MirrorSeatRosterTests
     private static BrowserAssignmentState ClassifyState(RosterFacts? roster)
         => BrowserAssignmentClassifier.Classify(roster, new BrowserSessionRegistry(), requestedName: null);
 
-    // Run `body` with a throwaway working directory containing the given mp_names.json roster, so the classifier's
-    // ReadMultiplayerNames() call resolves against it instead of whatever is next to the test binary. The tests run
-    // sequentially, so swapping the process CWD is safe; it is always restored.
+    // Keep the classifier's persisted roster isolated from the process CWD and the user's real game data.
+    // These tests run sequentially; restore the explicit path even if the assertion inside body fails.
     internal static T WithNames<T>(IReadOnlyDictionary<ulong, string> names, Func<T> body)
     {
-        var previous = System.IO.Directory.GetCurrentDirectory();
+        var previous = Environment.GetEnvironmentVariable(MultiplayerNameStore.PathEnvironmentVariable);
         var temp = Path.Combine(Path.GetTempPath(), "couchcoop-mpnames-" + Guid.NewGuid().ToString("N"));
         System.IO.Directory.CreateDirectory(temp);
         try
         {
-            var entries = names.Select(kv => $"{{\"net_id\":{kv.Key},\"name\":\"{kv.Value}\"}}");
-            File.WriteAllText(Path.Combine(temp, "mp_names.json"), "[" + string.Join(",", entries) + "]");
-            System.IO.Directory.SetCurrentDirectory(temp);
+            var path = Path.Combine(temp, MultiplayerNameStore.FileName);
+            var entries = names.Select(kv => new HeadlessClientManager.MultiplayerNameEntry { net_id = kv.Key, name = kv.Value });
+            File.WriteAllText(path, System.Text.Json.JsonSerializer.Serialize(entries));
+            Environment.SetEnvironmentVariable(MultiplayerNameStore.PathEnvironmentVariable, path);
             return body();
         }
         finally
         {
-            System.IO.Directory.SetCurrentDirectory(previous);
+            Environment.SetEnvironmentVariable(MultiplayerNameStore.PathEnvironmentVariable, previous);
             try { System.IO.Directory.Delete(temp, recursive: true); } catch { }
         }
     }

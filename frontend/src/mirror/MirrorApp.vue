@@ -393,6 +393,7 @@ let lastJoinAttempt: RejoinTarget | null = null;
 let reconnectDelayMs = RECONNECT_BASE_DELAY_MS;
 let reconnectTimer: ReturnType<typeof setTimeout> | null = null;
 let unmounted = false;
+const retiredClients = new WeakSet<MirrorClient>();
 // ---- HOLDING A SEAT THE DEVICE CANNOT REACH (yet) ---------------------------------------------------------------
 //
 // The route the host last redirected us to, or null when this device holds no seat. It makes a seat socket
@@ -601,7 +602,7 @@ function makeClient(url?: string, watchStream = false): MirrorClient {
     trailDrive: mirrorSettings.trailDriveCapable,
     pingIntervalMs: desiredPingIntervalMs(),
     onChange() {
-      if (unmounted) return;
+      if (unmounted || retiredClients.has(c)) return;
       // ABOVE the staleness guard on purpose: "did this socket ever open?" is a fact about the CLIENT, not about
       // whether it happens to be the active one when it is asked. See `everConnected`.
       if (c.status === "connected") everConnected.add(c);
@@ -609,6 +610,22 @@ function makeClient(url?: string, watchStream = false): MirrorClient {
       // what a seat viewer's static background comes from. A host session that lets a pending seat view resolve
       // its picture also resolves the prefetch gate (a no-op until the seat socket has a session of its own).
       if (c === hostClient) {
+        // This socket still owns the seat and carries its roster/notices after the view redirect. Recover it
+        // even when the separate view socket survives a phone wake, before its server-side grace expires.
+        if (c.status === "disconnected" && activeClient !== c) {
+          status.value = "disconnected";
+          // A pending view-only retry belongs to this host. Replace that hold with recovery of the owning pair.
+          if (seatViewTarget !== null && reconnectTimer !== null) {
+            clearTimeout(reconnectTimer);
+            reconnectTimer = null;
+          }
+          handleActiveClientDrop();
+          // Retire its surviving view too: further frames from that old pair must not overwrite recovery state.
+          presentationTarget.value = null;
+          retiredClients.add(activeClient);
+          activeClient.close();
+          return;
+        }
         hostSession.value = c.session;
         if (activeClient !== c) resolveInitialView();
       }
@@ -1343,6 +1360,7 @@ function holdSeatView(target: string | number): void {
     // The seat we were holding must still be the seat we hold — anything that let go of it (a full teardown, a
     // fresh join) already cleared the port, and reaching for it anyway would be this file's own stale-timer bug.
     if (seatViewTarget !== target) return;
+    retiredClients.add(dead);
     dead.close();
     const at = allClients.indexOf(dead);
     if (at >= 0) allClients.splice(at, 1);
@@ -1377,8 +1395,8 @@ function handleActiveClientDrop(): void {
   pendingName.value = null;
   joinSession.value = null;
   hostSession.value = null;
-  // And the seat itself is gone with it: `reconnectToHost` closes the host socket, which is what ends the seat
-  // process, so there is no port left to hold. The host assigns a fresh one on the next redirect.
+  // Re-run the host handshake to obtain a current view route. The host may retain this seat during its reconnect
+  // grace or the run, in which case the next join reuses the same live game.
   seatViewTarget = null;
   reconnectTimer = setTimeout(reconnectToHost, reconnectDelayMs);
   // Grow the ladder for the NEXT attempt; a successful open resets it (see onChange).
@@ -1386,11 +1404,14 @@ function handleActiveClientDrop(): void {
 }
 
 // Re-open a fresh HOST connection (no `url` → the page's own origin, i.e. the address the viewer loaded from) and
-// hand the app over to it. Every previous client is closed first: keeping the source-host socket open exists
-// only to protect the redirect handoff, and by now there is no headless left to protect.
+// hand the app over to it. Close the previous transports first so the new join can reclaim a retained seat
+// through one current host connection.
 function reconnectToHost(): void {
   reconnectTimer = null;
   presentationTarget.value = null;
+  // Retire the old pair before closing either socket. Even delayed close callbacks belong to our teardown and
+  // must not schedule another retry or report a healthy view as lost after its replacement is already live.
+  allClients.forEach((c) => retiredClients.add(c));
   allClients.forEach((c) => c.close());
   allClients.length = 0;
   // A remembered seat supersedes the `?name=` auto-join (it carries the exact playerId); with no seat to reclaim

@@ -316,12 +316,14 @@ public static class BrowserAssignmentClassifier
         string? displayName,
         IReadOnlyDictionary<ulong, string> persistedNames)
     {
-        if (NullIfBlank(displayName) is { } live)
+        var hasNetId = MirrorSeatNetIds.TryParsePlayerId(playerId, out var netId);
+        if (NullIfBlank(displayName) is { } live
+            && (!hasNetId || !string.Equals(live, netId.ToString(CultureInfo.InvariantCulture), StringComparison.Ordinal)))
         {
             return live;
         }
 
-        if (!MirrorSeatNetIds.TryParsePlayerId(playerId, out var netId))
+        if (!hasNetId)
         {
             return playerId;
         }

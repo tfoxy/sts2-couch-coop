@@ -10,7 +10,8 @@ using Spirectl.Sts2.Embedding;
 //     (null), not "no run";
 //   * every caller keeps the failure semantics it always had: an unreadable state read as "not in a run" for the
 //     disconnect decision and the launch gate, and made the hosting tracker skip the evaluation;
-//   * a disconnect and a launch refusal cost ZERO state snapshots and never marshal to the game's main thread;
+//   * initial disconnect retention and launch refusal cost ZERO state snapshots and no main-thread hop;
+//     eventual destructive grace cleanup serializes its run read and release on the game's main thread;
 //   * the answer equals the retired snapshot predicate on every fixture the suites already share.
 //
 // The production reader needs an engine, which a test process must never reach (it faults in native code), so the
@@ -25,8 +26,10 @@ internal static class RunPresenceTests
         UnavailableReadsAsNoRunForTheDisconnectAndLaunchCallers();
         HostingTrackerSkipsAnEvaluationItCannotRead();
         await DisconnectInARunKeepsTheSeatDetached();
-        await DisconnectInTheLobbyReleasesTheSeatAndEvictsItsPeer();
-        await DisconnectWhenTheReadIsUnavailableReleasesTheSeat();
+        await DisconnectInTheLobbyReleasesTheSeatAndEvictsItsPeerAfterGrace();
+        await DisconnectWhenTheReadIsUnavailableReleasesTheSeatAfterGrace();
+        await RunStartingBeforeDispatchedExpiryKeepsTheSeat();
+        await GraceExpiryReleasesInsideTheDispatchedAction();
         await DisconnectWithoutASeatEvictsNothing();
         await LaunchIsRefusedInARunAndAllowedOtherwise();
         await ALaunchAfterAnUnreadableAnswerIsNotRefused();
@@ -138,6 +141,7 @@ internal static class RunPresenceTests
         public readonly List<ulong> NamesCleared = [];
         public readonly CouchCoopGameFactsTests.FakeFacts Facts = new() { RunRead = () => false };
         public readonly BrowserServerRouteTests.RecordingSpirectlRuntime Runtime = new();
+        public readonly HeadlessClientManagerTests.ReconnectClock ReconnectTime = new();
         public readonly CouchCoopRuntimeHost Host;
         public readonly HeadlessClientManager Manager;
 
@@ -154,7 +158,8 @@ internal static class RunPresenceTests
                 },
                 readinessProbe: (_, _) => Task.FromResult(true),
                 maxSeatsProbe: () => 3,
-                runInProgressProbe: Lobby.IsRunInProgress);
+                runInProgressProbe: Lobby.IsRunInProgress,
+                browserReconnectTime: ReconnectTime);
         }
 
         public CouchCoopLobbyParticipation Lobby => new(Host);
@@ -177,6 +182,7 @@ internal static class RunPresenceTests
         public int Slot { get; } = slot;
         public bool Exited { get; private set; }
         public bool HardKilled { get; private set; }
+        public Action? OnKill { get; set; }
         public int Id => 20000 + Slot;
         public bool HasExited => Exited;
         public int ExitCode => 0;
@@ -191,6 +197,7 @@ internal static class RunPresenceTests
 
         public void Kill()
         {
+            OnKill?.Invoke();
             HardKilled = true;
             Exited = true;
         }
@@ -222,7 +229,7 @@ internal static class RunPresenceTests
         });
     }
 
-    private static async Task DisconnectInTheLobbyReleasesTheSeatAndEvictsItsPeer()
+    private static async Task DisconnectInTheLobbyReleasesTheSeatAndEvictsItsPeerAfterGrace()
     {
         using var rig = new Rig();
         var manager = rig.Manager;
@@ -234,7 +241,10 @@ internal static class RunPresenceTests
 
             rig.Disconnect(session);
 
-            Expect(process.HardKilled, "a disconnect in the lobby kills the seat process");
+            Expect(!process.Exited && rig.Evicted.Count == 0, "the lobby seat remains live during reconnect grace");
+            rig.ReconnectTime.Advance(HeadlessClientManager.BrowserReconnectGrace);
+
+            Expect(process.HardKilled, "a disconnect in the lobby kills the absent seat after reconnect grace");
             Expect(rig.Evicted.SequenceEqual([HeadlessClientManager.SlotToNetId(2)]),
                 "and evicts its peer so a same-name rejoin is not refused as a duplicate netId");
             Expect(rig.NamesCleared.Count == 0,
@@ -243,7 +253,7 @@ internal static class RunPresenceTests
         });
     }
 
-    private static async Task DisconnectWhenTheReadIsUnavailableReleasesTheSeat()
+    private static async Task DisconnectWhenTheReadIsUnavailableReleasesTheSeatAfterGrace()
     {
         using var rig = new Rig();
         var manager = rig.Manager;
@@ -254,9 +264,89 @@ internal static class RunPresenceTests
             rig.RunPresence = null;
 
             rig.Disconnect(session);
+            Expect(!rig.Spawned[0].Exited, "an unreadable run state still permits reconnect grace");
+            rig.ReconnectTime.Advance(HeadlessClientManager.BrowserReconnectGrace);
 
             Expect(rig.Spawned[0].HardKilled && rig.Evicted.Count == 1,
-                "a disconnect that cannot tell whether a run exists releases the seat, as an unreadable state always did");
+                "an unreadable run state follows lobby cleanup semantics when reconnect grace expires");
+        });
+    }
+
+    private sealed class BeforeGraceDispatch(Action before) : IGameMainThread
+    {
+        public int Calls { get; private set; }
+        public bool Inside { get; private set; }
+        public T Invoke<T>(Func<T> action)
+        {
+            Calls++;
+            before(); // A run starts while the timer's cleanup waits for the game thread.
+            Inside = true;
+            try { return action(); }
+            finally { Inside = false; }
+        }
+        public Task<T> InvokeAsync<T>(Func<Task<T>> action) => throw new NotSupportedException();
+    }
+
+    private static async Task RunStartingBeforeDispatchedExpiryKeepsTheSeat()
+    {
+        using var rig = new Rig();
+        var session = Guid.NewGuid();
+        await CouchCoopGameFactsTests.WithSourceAsync(rig.Facts, async () =>
+        {
+            await rig.Manager.EnsureHeadlessAsync(session, "Ann", default);
+            rig.Disconnect(session);
+            var runStarted = false;
+            var dispatcher = new BeforeGraceDispatch(() => runStarted = true);
+            var previous = GameMainThread.Source;
+            GameMainThread.Source = dispatcher;
+            rig.Facts.RunRead = () =>
+            {
+                Expect(dispatcher.Inside, "expiry reads run presence inside the serialized game-thread action");
+                return runStarted;
+            };
+            try
+            {
+                rig.ReconnectTime.Advance(HeadlessClientManager.BrowserReconnectGrace);
+                Expect(dispatcher.Calls == 1, "expiry dispatches one atomic run-check and cleanup action");
+                Expect(!rig.Spawned[0].Exited && rig.Evicted.Count == 0,
+                    "a run started before the queued cleanup retains its seat and peer");
+                rig.Facts.RunRead = () => true;
+                var reused = await rig.Manager.EnsureHeadlessAsync(Guid.NewGuid(), "Ann", default);
+                Expect(reused == HeadlessClientManager.SlotToPort(2) && rig.Spawned.Count == 1,
+                    "the retained seat is reclaimable without respawning");
+            }
+            finally { GameMainThread.Source = previous; }
+        });
+    }
+
+    private static async Task GraceExpiryReleasesInsideTheDispatchedAction()
+    {
+        using var rig = new Rig();
+        var session = Guid.NewGuid();
+        await CouchCoopGameFactsTests.WithSourceAsync(rig.Facts, async () =>
+        {
+            await rig.Manager.EnsureHeadlessAsync(session, "Ann", default);
+            rig.Disconnect(session);
+            var dispatcher = new BeforeGraceDispatch(() => { });
+            var previous = GameMainThread.Source;
+            var readInsideDispatch = false;
+            var killedInsideDispatch = false;
+            rig.Facts.RunRead = () =>
+            {
+                readInsideDispatch = dispatcher.Inside;
+                return false;
+            };
+            rig.Spawned[0].OnKill = () => killedInsideDispatch = dispatcher.Inside;
+            GameMainThread.Source = dispatcher;
+            try
+            {
+                rig.ReconnectTime.Advance(HeadlessClientManager.BrowserReconnectGrace);
+                Expect(dispatcher.Calls == 1 && readInsideDispatch && killedInsideDispatch,
+                    "expiry reads run presence and terminates the seat within the same dispatched action");
+                Expect(rig.Spawned[0].HardKilled && rig.Evicted.Count == 1,
+                    "an expired lobby seat is terminated and its peer evicted");
+            }
+            finally { GameMainThread.Source = previous; }
         });
     }
 

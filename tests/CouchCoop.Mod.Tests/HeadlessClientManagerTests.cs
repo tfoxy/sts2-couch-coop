@@ -17,7 +17,12 @@ internal static class HeadlessClientManagerTests
         await SameNameReuseIsTrimAndCaseInsensitive();
         await ReleaseHardKillsFreesSlotAndReturnsFreedNetId();
         await ReleaseReturnsNullWhenNoSession();
-        await RepeatedLobbyRefreshEvictsBeforeRejoin();
+        await RepeatedLobbyRefreshReusesDuringGrace();
+        await LobbyGraceExpiresAndEvictsOnlyItsOwnSeat();
+        await RunStartingDuringLobbyGraceKeepsItsSeat();
+        await LeavingHostOrDisposingCancelsLobbyGrace();
+        await ReconnectDuringGraceExpiryPreservesTheSeat(reuseSession: false);
+        await ReconnectDuringGraceExpiryPreservesTheSeat(reuseSession: true);
         await FailedLobbyEvictionBlocksSpawnUntilRetrySucceeds();
         await InFlightLobbyEvictionBlocksAConcurrentRefresh();
         await ReuseTransfersOwnershipSoOldReleaseIsNoOp();
@@ -227,24 +232,182 @@ internal static class HeadlessClientManagerTests
         Assert(h.Spawned.Count == 0, "a Release with no matching session spawns/kills nothing");
     }
 
-    private static async Task RepeatedLobbyRefreshEvictsBeforeRejoin()
+    private static async Task RepeatedLobbyRefreshReusesDuringGrace()
     {
+        var time = new ReconnectClock();
         var spawned = new List<FakeProcess>();
         var evicted = new List<ulong>();
         using var manager = new HeadlessClientManager(
             slot => { var child = new FakeProcess(slot, gracefulStopExits: false); spawned.Add(child); return child; },
-            (_, _) => Task.FromResult(true), evictStalePeer: evicted.Add);
+            (_, _) => Task.FromResult(true), evictStalePeer: evicted.Add, browserReconnectTime: time);
         for (var refresh = 0; refresh < 3; refresh++)
         {
             var session = Guid.NewGuid();
             Assert(await manager.EnsureHeadlessAsync(session, "Ann", default) == HeadlessClientManager.SlotToPort(2),
                 "each saved-lobby refresh reclaims Ann's seat");
             BrowserDisconnectSeat.Apply(manager, session, () => false, evicted.Add, _ => { });
+            Assert(time.ActiveCount == 1 && manager.DescribeSeats().Single(seat => seat.NetId == 1002).Detached,
+                "the disconnected lobby browser owns one bounded reconnect grace");
+            time.Advance(HeadlessClientManager.BrowserReconnectGrace - TimeSpan.FromSeconds(1));
         }
-        Assert(spawned.Count == 3 && spawned.All(child => child.HardKilled),
-            "each lobby browser departure terminates only its owned child");
-        Assert(evicted.Count(id => id == HeadlessClientManager.SlotToNetId(2)) >= 3,
-            "the prior peer is evicted before each same-netId rejoin");
+        Assert(await manager.EnsureHeadlessAsync(Guid.NewGuid(), "Ann", default) == HeadlessClientManager.SlotToPort(2),
+            "the phone unlocks onto the original seat");
+        Assert(spawned.Count == 1 && !spawned[0].HardKilled && evicted.Count == 0 && time.ActiveCount == 0,
+            "repeated refreshes reuse one game without eviction, cold launch, or remaining deadline");
+    }
+
+    private static async Task LobbyGraceExpiresAndEvictsOnlyItsOwnSeat()
+    {
+        var time = new ReconnectClock();
+        var children = new List<FakeProcess>();
+        var evicted = new List<ulong>();
+        using var manager = new HeadlessClientManager(
+            slot => { var child = new FakeProcess(slot, false); children.Add(child); return child; },
+            (_, _) => Task.FromResult(true), browserReconnectTime: time);
+        var first = Guid.NewGuid();
+        await manager.EnsureHeadlessAsync(first, "Ann", default);
+        await manager.EnsureHeadlessAsync(Guid.NewGuid(), "Bob", default);
+        BrowserDisconnectSeat.Apply(manager, first, () => false, evicted.Add, _ => { });
+        var oldTimer = time.Timers.Single();
+        time.Advance(HeadlessClientManager.BrowserReconnectGrace - TimeSpan.FromMilliseconds(1));
+        Assert(!children[0].Exited && evicted.Count == 0, "a brief phone lock keeps the lobby game and peer alive");
+        time.Advance(TimeSpan.FromMilliseconds(1));
+        Assert(children[0].HardKilled && children[0].Disposed && !children[1].Exited
+            && evicted.SequenceEqual(new[] { 1002UL }) && time.ActiveCount == 0,
+            "expiry removes only the absent player's process and peer, exactly once");
+        Assert(manager.HasNameClaim("Ann"), "expiry keeps reconnect identity for the next lobby join");
+
+        var replacement = Guid.NewGuid();
+        await manager.EnsureHeadlessAsync(replacement, "Ann", default);
+        BrowserDisconnectSeat.Apply(manager, replacement, () => false, evicted.Add, _ => { });
+        oldTimer.FireQueuedCallback();
+        Assert(!children[2].Exited && time.ActiveCount == 1 && evicted.Count == 1,
+            "a stale deadline cannot kill a replacement game on the same slot");
+        time.Advance(HeadlessClientManager.BrowserReconnectGrace);
+        Assert(children[2].HardKilled && evicted.Count == 2, "the replacement keeps its own bounded deadline");
+    }
+
+    private static async Task RunStartingDuringLobbyGraceKeepsItsSeat()
+    {
+        var time = new ReconnectClock();
+        var run = false;
+        var child = new FakeProcess(2, false);
+        using var manager = new HeadlessClientManager(_ => child, (_, _) => Task.FromResult(true),
+            runInProgressProbe: () => run, browserReconnectTime: time);
+        var first = Guid.NewGuid();
+        await manager.EnsureHeadlessAsync(first, "Ann", default);
+        BrowserDisconnectSeat.Apply(manager, first, () => run,
+            _ => throw new Exception("starting a run must not evict a retained seat"), _ => { });
+        run = true;
+        time.Advance(HeadlessClientManager.BrowserReconnectGrace + TimeSpan.FromHours(1));
+        Assert(!child.Exited && time.ActiveCount == 0 && manager.DescribeSeats().Single(s => s.NetId == 1002).Detached,
+            "a run begun during the lobby grace retains the seat until run end");
+        Assert(await manager.EnsureHeadlessAsync(Guid.NewGuid(), "Ann", default) == HeadlessClientManager.SlotToPort(2),
+            "unlocking rejoins the existing game even though new seats cannot launch mid-run");
+        Assert(manager.ReapDetachedSlots().Count == 0 && !child.Exited,
+            "the reconnected run seat is no longer eligible for detached cleanup");
+    }
+
+    private static async Task LeavingHostOrDisposingCancelsLobbyGrace()
+    {
+        foreach (var dispose in new[] { false, true })
+        {
+            var time = new ReconnectClock();
+            var children = new List<FakeProcess>();
+            using var manager = new HeadlessClientManager(
+                slot => { var child = new FakeProcess(slot, false); children.Add(child); return child; },
+                (_, _) => Task.FromResult(true), browserReconnectTime: time);
+            var first = Guid.NewGuid();
+            await manager.EnsureHeadlessAsync(first, "Ann", default);
+            BrowserDisconnectSeat.Apply(manager, first, () => false,
+                _ => throw new Exception("a cancelled deadline must not evict another peer"), _ => { });
+            var timer = time.Timers.Single();
+            if (dispose) manager.Dispose();
+            else Assert(manager.ReapDetachedSlots().SequenceEqual(new[] { 1002UL }),
+                "leaving both run and lobby immediately reaps its retained seat");
+            Assert(children[0].HardKilled && time.ActiveCount == 0,
+                "host teardown frees the process and cancels the pending timer");
+            timer.FireQueuedCallback();
+            if (!dispose)
+            {
+                await manager.EnsureHeadlessAsync(first, "Ann", default);
+                Assert(children.Count == 2, "menu cleanup removes the old session binding as well as its process");
+            }
+        }
+    }
+
+    private static async Task ReconnectDuringGraceExpiryPreservesTheSeat(bool reuseSession)
+    {
+        var time = new ReconnectClock();
+        var child = new FakeProcess(2, false);
+        using var manager = new HeadlessClientManager(_ => child, (_, _) => Task.FromResult(true),
+            browserReconnectTime: time);
+        using var expiryEntered = new ManualResetEventSlim();
+        using var resumeExpiry = new ManualResetEventSlim();
+        var probingExpiry = false;
+        bool RunProbe()
+        {
+            if (probingExpiry)
+            {
+                expiryEntered.Set();
+                if (!resumeExpiry.Wait(TimeSpan.FromSeconds(5))) throw new TimeoutException("expiry probe blocked");
+            }
+            return false;
+        }
+        var first = Guid.NewGuid();
+        await manager.EnsureHeadlessAsync(first, "Ann", default);
+        BrowserDisconnectSeat.Apply(manager, first, RunProbe,
+            _ => throw new Exception("the old disconnect must not evict a reconnected player"), _ => { });
+        probingExpiry = true;
+        var expiry = Task.Run(() => time.Advance(HeadlessClientManager.BrowserReconnectGrace));
+        try
+        {
+            Assert(expiryEntered.Wait(TimeSpan.FromSeconds(2)), "deadline reached its run-presence check");
+            Assert(await manager.EnsureHeadlessAsync(reuseSession ? first : Guid.NewGuid(), "Ann", default) == HeadlessClientManager.SlotToPort(2),
+                "reconnect does not block behind the deadline's game-state read");
+        }
+        finally { resumeExpiry.Set(); await expiry; }
+        Assert(!child.Exited && !manager.DescribeSeats().Single(s => s.NetId == 1002).Detached,
+            "a deadline already in flight cannot retire the transferred seat");
+    }
+
+    internal sealed class ReconnectClock : TimeProvider
+    {
+        private TimeSpan _now;
+        internal List<ManualTimer> Timers { get; } = [];
+        internal int ActiveCount => Timers.Count(timer => !timer.Disposed && timer.Due is not null);
+        public override ITimer CreateTimer(TimerCallback callback, object? state, TimeSpan dueTime, TimeSpan period)
+        {
+            var timer = new ManualTimer(this, callback, state);
+            timer.Change(dueTime, period);
+            Timers.Add(timer);
+            return timer;
+        }
+        internal void Advance(TimeSpan elapsed)
+        {
+            _now += elapsed;
+            foreach (var timer in Timers.ToArray())
+            {
+                if (timer.Disposed || timer.Due is not { } due || due > _now) continue;
+                timer.Due = null;
+                timer.FireQueuedCallback();
+            }
+        }
+        internal sealed class ManualTimer(ReconnectClock clock, TimerCallback callback, object? state) : ITimer
+        {
+            internal TimeSpan? Due;
+            internal bool Disposed;
+            internal void FireQueuedCallback() => callback(state);
+            public bool Change(TimeSpan dueTime, TimeSpan period)
+            {
+                Assert(period == Timeout.InfiniteTimeSpan, "reconnect cleanup uses one deadline, never polling");
+                if (Disposed) return false;
+                Due = dueTime == Timeout.InfiniteTimeSpan ? null : clock._now + dueTime;
+                return true;
+            }
+            public void Dispose() { Disposed = true; Due = null; }
+            public ValueTask DisposeAsync() { Dispose(); return ValueTask.CompletedTask; }
+        }
     }
 
     private static async Task FailedLobbyEvictionBlocksSpawnUntilRetrySucceeds()
@@ -264,7 +427,7 @@ internal static class HeadlessClientManagerTests
         var first = Guid.NewGuid();
         Assert(await manager.EnsureHeadlessAsync(first, "Ann", default) == HeadlessClientManager.SlotToPort(2),
             "initial join starts Ann's seat");
-        BrowserDisconnectSeat.Apply(manager, first, () => false, Evict, _ => { });
+        BrowserDisconnectSeat.ApplyAfterGrace(manager, first, () => false, Evict, _ => { });
         Assert(spawned[0].HardKilled, "browser disconnect terminates the old child even when eviction fails");
 
         Assert(await manager.EnsureHeadlessAsync(Guid.NewGuid(), "Ann", default) is null,
@@ -295,7 +458,7 @@ internal static class HeadlessClientManagerTests
             (_, _) => Task.FromResult(true), evictStalePeer: Evict);
         var first = Guid.NewGuid();
         Assert(await manager.EnsureHeadlessAsync(first, "Ann", default) is not null, "first child launched");
-        var disconnect = Task.Run(() => BrowserDisconnectSeat.Apply(manager, first, () => false, Evict, _ => { }));
+        var disconnect = Task.Run(() => BrowserDisconnectSeat.ApplyAfterGrace(manager, first, () => false, Evict, _ => { }));
         try
         {
             Assert(entered.Wait(TimeSpan.FromSeconds(2)), "browser cleanup reached the host callback");

@@ -16,7 +16,7 @@ namespace CouchCoop.Mod.Session;
 /// energy orb off-position). Once applied, all three freezes remain until scene teardown. Periodic scans for
 /// new nodes run only while a browser mirror streams. The remaining idle-gated lever is the frame-rate throttle:
 /// after <see cref="IdleThresholdMs"/> of no activity it drops <see cref="Engine.MaxFps"/> and restores it on
-/// the next input/scene-delta.
+/// the next input/scene-delta. Pending asset loads keep the normal frame rate until their completion tasks finish.
 ///
 /// Why this reclaims CPU: the profiler proved the live <c>--headless</c> flow spends its per-frame budget on the
 /// game's SCRIPT simulation — spine skeletal mesh deformation (which spine-godot runs in
@@ -117,6 +117,10 @@ public static class CouchCoopHeadlessVisualSuspender
     // ENet client tolerates low-fps servicing by a huge margin (host peer timeout ~20s, 500ms pings). 8fps keeps
     // the 0.2s check timer near-nominal and ENet servicing brisk.
     private const int DefaultIdleMaxFps = 8;
+
+    // Loading is work even before a browser starts streaming. Track each load's existing completion task,
+    // so a quiet startup or scene transition cannot be mistaken for an idle seat.
+    private static readonly PendingAssetLoads AssetLoads = new();
 
     private static readonly object Gate = new();
     // Written under Gate, read from any thread (the effective-state accessor the session envelope calls, and the
@@ -338,6 +342,10 @@ public static class CouchCoopHeadlessVisualSuspender
         // player's own on-screen frame rate — dropping it to 8fps because the game went quiet would be a visible
         // stutter on the TV, and it is not what the viewer asked for by ticking "Freeze particles".
         _idleFps = rescanOnly ? 0 : DefaultIdleMaxFps;
+        if (!rescanOnly)
+        {
+            Patches.HeadlessAssetLoadingActivityPatch.Apply();
+        }
         CouchCoopLog.Stderr(
             $"[suspend] {(rescanOnly ? "on-demand freeze rescan enabling (browser Settings toggle on a non-headless instance)" : "headless idle visual suspend enabling")}; "
             + $"idle fps cap={(_idleFps > 0 ? _idleFps.ToString() : "off")}");
@@ -540,7 +548,7 @@ public static class CouchCoopHeadlessVisualSuspender
             return;
         }
 
-        var idle = HeadlessIdleActivity.MsSinceActivity() >= IdleThresholdMs;
+        var idle = !AssetLoads.HasPendingLoads && HeadlessIdleActivity.MsSinceActivity() >= IdleThresholdMs;
 
         if (!idle)
         {
@@ -1035,6 +1043,15 @@ public static class CouchCoopHeadlessVisualSuspender
 
         // Engine.MaxFps must be set on the main thread; CallDeferred marshals there regardless of caller thread.
         Callable.From(RestoreFps).CallDeferred();
+    }
+
+    internal static void TrackAssetLoading(Task task)
+    {
+        if (!_started || _rescanOnly || task.IsCompleted) return;
+
+        _ = AssetLoads.Track(task);
+        HeadlessIdleActivity.Mark();
+        NotifyMainThreadActivity();
     }
 
     // Runs on the main thread. Drop the frame rate to the idle cap (linearly cuts every per-frame cost).

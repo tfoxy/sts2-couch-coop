@@ -43,6 +43,7 @@ import {
 // RETAINED node map (applying deltas in place) and bumps `state.revision` so the renderer recomputes.
 
 export type MirrorClientStatus = "connecting" | "connected" | "disconnected";
+export const WAKE_PING_TIMEOUT_MS = 3000;
 let nextWarmTraceClientId = 0;
 
 // Upstream raw-input replay this (controlling) client sends to the host. Pointer input is COORDINATE-ONLY: a
@@ -416,6 +417,71 @@ export function connectMirrorClient(options: {
   // Mutable probe interval (ms; 0 = off). Seeded from options; changed live via setPingInterval.
   let pingIntervalMs = options.pingIntervalMs ?? 0;
   const PING_TIMEOUT_MS = 2000;
+  let closed = false;
+  let wakeSequence = 0;
+  let wakeToken: number | null = null;
+  let wakeTimer: ReturnType<typeof setTimeout> | null = null;
+  const wakeDocument = typeof document === "undefined" ? null : document;
+  const wakeWindow = typeof window === "undefined" ? null : window;
+
+  // A suspended phone may resume with an OPEN socket that never produces close/error. Validate the round trip
+  // once when the page returns or the network comes back; ordinary connected time adds no recurring probe.
+  // Negative echo tokens cannot collide with the optional latency probe's performance.now() timestamps.
+  function checkConnectionAfterWake(): void {
+    if (closed || client.status !== "connected" || wakeDocument?.visibilityState === "hidden") return;
+    if (socket.readyState !== WebSocketCtor.OPEN) {
+      failWakeConnection();
+      return;
+    }
+    if (wakeTimer !== null) return; // pageshow, visibility and online can describe the same wake
+    wakeToken = --wakeSequence;
+    wakeTimer = setTimeout(() => {
+      cancelWakeProbe();
+      if (wakeDocument?.visibilityState !== "hidden") failWakeConnection();
+    }, WAKE_PING_TIMEOUT_MS);
+    try { socket.send(JSON.stringify({ type: "ping", t0: wakeToken })); }
+    catch { failWakeConnection(); }
+  }
+
+  function cancelWakeProbe(): void {
+    if (wakeTimer !== null) clearTimeout(wakeTimer);
+    wakeTimer = null;
+    wakeToken = null;
+  }
+
+  function onWakeVisibilityChange(): void {
+    if (wakeDocument?.visibilityState === "hidden") cancelWakeProbe();
+    else checkConnectionAfterWake();
+  }
+
+  function stopWakeChecks(): void {
+    cancelWakeProbe();
+    wakeDocument?.removeEventListener("visibilitychange", onWakeVisibilityChange);
+    wakeWindow?.removeEventListener("pageshow", checkConnectionAfterWake);
+    wakeWindow?.removeEventListener("online", checkConnectionAfterWake);
+    wakeWindow?.removeEventListener("pagehide", cancelWakeProbe);
+  }
+
+  function finishConnection(): void {
+    closed = true;
+    stopWakeChecks();
+    stopPing();
+    cancelPendingJoin();
+    const changed = client.status !== "disconnected";
+    client.status = "disconnected";
+    if (changed) notify();
+  }
+
+  function failWakeConnection(): void {
+    // Publish the drop before asking the browser to close: a stale transport may never deliver onclose.
+    finishConnection();
+    try { socket.close(); } catch { /* The app's ordinary reconnect ladder already owns recovery. */ }
+  }
+
+  wakeDocument?.addEventListener("visibilitychange", onWakeVisibilityChange);
+  wakeWindow?.addEventListener("pageshow", checkConnectionAfterWake);
+  wakeWindow?.addEventListener("online", checkConnectionAfterWake);
+  wakeWindow?.addEventListener("pagehide", cancelWakeProbe);
 
   function recordRtt(bucket: LatencyBucket, mainThread: boolean, rtt: number): void {
     bucket.outstanding = false;
@@ -681,6 +747,7 @@ export function connectMirrorClient(options: {
   }
 
   socket.addEventListener("open", () => {
+    if (closed) return;
     lifecycleEvent({ kind: "ws-open", role: diagnosticSocketRole });
     reproRecorder.tapWsLifecycle("open", diagnosticSocketRole);
     client.status = "connected";
@@ -716,6 +783,7 @@ export function connectMirrorClient(options: {
   }
 
   socket.addEventListener("message", (event) => {
+    if (closed) return;
     const data = String((event as MessageEvent).data);
     // REPRO RECORDER — the INCOMING tap, deliberately the first statement after the string coercion: ABOVE the
     // JSON.parse (a malformed frame is evidence too) and ABOVE the `watching` gate below, so the stragglers a
@@ -742,15 +810,17 @@ export function connectMirrorClient(options: {
       const t0 = (raw as { t0?: unknown }).t0;
       if (typeof t0 === "number") {
         const mainThread = (raw as { mainThread?: unknown }).mainThread === true;
+        if (t0 < 0) {
+          if (!mainThread && t0 === wakeToken) cancelWakeProbe();
+          return;
+        }
         recordRtt(mainThread ? gameBucket : networkBucket, mainThread, performance.now() - t0);
       }
       return;
     }
 
     if (raw && typeof raw === "object" && (raw as { type?: unknown }).type === "server-reload") {
-      client.status = "disconnected";
-      stopPing();
-      notify();
+      finishConnection();
       // A HEADLESS instance's last gasp before it exits (its host game connection is permanently gone) is NOT a
       // "the server is coming back, reload" — the port this socket points at is going away. Hand it to the app,
       // which falls back to the original host, instead of reloading the page against a dying instance.
@@ -928,10 +998,7 @@ export function connectMirrorClient(options: {
     if (event.code >= 1000 && event.code <= 4999) diagnosticClose.code = event.code;
     lifecycleEvent(diagnosticClose);
     reproRecorder.tapWsLifecycle("close", diagnosticSocketRole);
-    client.status = "disconnected";
-    cancelPendingJoin();
-    stopPing();
-    notify();
+    finishConnection();
   });
 
   socket.addEventListener("error", () => lifecycleEvent({
@@ -941,12 +1008,12 @@ export function connectMirrorClient(options: {
   }));
 
   socket.addEventListener("error", () => {
-    client.status = "disconnected";
-    stopPing();
-    notify();
+    finishConnection();
   });
 
   function close() {
+    closed = true;
+    stopWakeChecks();
     stopPing();
     socket.close();
   }

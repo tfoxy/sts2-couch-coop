@@ -161,7 +161,9 @@ internal sealed class HeadlessClientNameSync
     {
         try
         {
-            var info = new FileInfo(Path.Combine(Directory.GetCurrentDirectory(), HeadlessClientManager.MultiplayerNamesFile));
+            var path = MultiplayerNameStore.ResolveReadPath();
+            if (path is null) return null;
+            var info = new FileInfo(path);
             return info.Exists ? (info.LastWriteTimeUtc, info.Length) : null;
         }
         catch (Exception exception) when (exception is IOException or UnauthorizedAccessException)
