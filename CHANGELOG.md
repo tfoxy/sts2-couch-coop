@@ -11,7 +11,7 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and
 
 ### Fixed
 
-- Keep the game clear of phone cutouts and home indicators.
+- Choose whether the game stays clear of screen cutouts and the home indicator with Safe-area padding, on by default for iPhone.
 - Avoid duplicate asset extraction when several browsers join together.
 - Reconnect phones after sleep or interrupted connections without immediately restarting their game.
 - Keep loading work active and avoid delaying healthy connection reports behind another player's launch.

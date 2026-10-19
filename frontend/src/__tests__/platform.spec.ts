@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 
-import { isIosPlatform, isWebKitBrowser } from "@/platform";
+import { isIphonePlatform, isIosPlatform, isWebKitBrowser } from "@/platform";
 
 // The UA strings two consumers depend on. `pwa/installPrompt` asks this to keep two install affordances from
 // overlapping; `render/quality` asks it to seed both effect families off on the engine that is being jetsam-killed
@@ -44,6 +44,21 @@ describe("isIosPlatform", () => {
     expect(isIosPlatform(null)).toBe(false);
     expect(isIosPlatform(undefined, 5)).toBe(false);
     expect(isIosPlatform("")).toBe(false);
+  });
+});
+
+describe("isIphonePlatform", () => {
+  it("recognizes iPhone across browser brands", () => {
+    for (const ua of [IPHONE_UA, IPHONE_26_UA, IPHONE_UA.replace("Version/17.5", "CriOS/126.0")]) {
+      expect(isIphonePlatform(ua)).toBe(true);
+    }
+  });
+
+  it("excludes iPad, desktop-style iPad, iPod, Android, desktop, and absent identity", () => {
+    for (const ua of [IPAD_LEGACY_UA, MAC_SHAPED_UA, MAC_CHROME_UA, ANDROID_UA,
+      IPHONE_UA.replaceAll("iPhone", "iPod"), "", null, undefined]) {
+      expect(isIphonePlatform(ua)).toBe(false);
+    }
   });
 });
 

@@ -36,6 +36,8 @@ let origRect: typeof Element.prototype.getBoundingClientRect;
 let origRAF: typeof globalThis.requestAnimationFrame;
 let origCAF: typeof globalThis.cancelAnimationFrame;
 let backendAtStart: StageBackend;
+let safeAreaPaddingAtStart: boolean;
+const frameResizeCallbacks = new Map<Element, () => void>();
 
 function emptyState(): MirrorState {
   return createMirrorState();
@@ -43,9 +45,20 @@ function emptyState(): MirrorState {
 
 beforeAll(() => {
   (globalThis as unknown as { ResizeObserver: unknown }).ResizeObserver = class {
-    observe(): void {}
-    unobserve(): void {}
-    disconnect(): void {}
+    private targets = new Set<Element>();
+    constructor(private callback: () => void) {}
+    observe(target: Element): void {
+      this.targets.add(target);
+      frameResizeCallbacks.set(target, this.callback);
+    }
+    unobserve(target: Element): void {
+      this.targets.delete(target);
+      frameResizeCallbacks.delete(target);
+    }
+    disconnect(): void {
+      for (const target of this.targets) frameResizeCallbacks.delete(target);
+      this.targets.clear();
+    }
   };
   origRAF = globalThis.requestAnimationFrame;
   origCAF = globalThis.cancelAnimationFrame;
@@ -74,6 +87,8 @@ afterAll(() => {
 
 beforeEach(() => {
   backendAtStart = requestedStageBackend();
+  safeAreaPaddingAtStart = mirrorSettings.safeAreaPaddingEnabled;
+  frameResizeCallbacks.clear();
   frameBox = { width: 0, height: 0 };
   mirrorSettings.stretchEnabled = true;
   // The canvas backend cannot be built in jsdom (no WebGL2), so this view stays blank.
@@ -82,6 +97,7 @@ beforeEach(() => {
 
 afterEach(() => {
   __setStageBackendForTest(backendAtStart);
+  mirrorSettings.safeAreaPaddingEnabled = safeAreaPaddingAtStart;
   setRendererRuntimeStatus({ actualBackend: null, actualConfig: null, phase: "initializing", reason: null });
   window.history.replaceState({}, "", "/");
   vi.restoreAllMocks();
@@ -101,57 +117,91 @@ const hostEl = () => document.querySelector<HTMLElement>(".mirror-canvas-host");
 const stageEl = () => document.querySelector<HTMLElement>(".mirror-stage");
 const underlayEl = () => document.querySelector<HTMLElement>(".mirror-stage-underlay");
 
-describe.each(["dom", "canvas"] as const)("%s stage inside the device safe area", (backend) => {
-  it.each([
-    { name: "landscape home indicator", width: 844, height: 390, top: 0, right: 47, bottom: 21, left: 47 },
-    { name: "portrait notch", width: 390, height: 844, top: 47, right: 0, bottom: 34, left: 0 },
-    { name: "asymmetric landscape cutout", width: 932, height: 430, top: 0, right: 0, bottom: 21, left: 59 },
-    { name: "desktop without insets", width: 1440, height: 810, top: 0, right: 0, bottom: 0, left: 0 }
-  ])("keeps the fitted stage and bottom-card input aligned: $name", async (viewport) => {
-    __setStageBackendForTest(backend);
-    mirrorSettings.stretchEnabled = false;
-    frameBox = {
-      width: viewport.width - viewport.left - viewport.right,
-      height: viewport.height - viewport.top - viewport.bottom
-    };
-    // jsdom cannot resolve env() or perform layout. surfaceBackdrop.spec pins the real CSS binding; here the
-    // frame reports the resulting safe rectangle and the component supplies the actual stage/host dimensions.
-    const measured = Element.prototype.getBoundingClientRect;
-    vi.spyOn(Element.prototype, "getBoundingClientRect").mockImplementation(function (this: HTMLElement) {
-      if (!this.classList.contains("mirror-stage")) return measured.call(this);
-      const fit = Number(/scale\(([^)]+)\)/.exec(this.style.transform)?.[1] ?? 1);
-      const width = parseFloat(this.style.width) * fit;
-      const height = parseFloat(this.style.height) * fit;
-      const left = viewport.left + (frameBox.width - width) / 2;
-      const top = viewport.top + (frameBox.height - height) / 2;
-      return { x: left, y: top, left, top, width, height, right: left + width, bottom: top + height,
-        toJSON: () => ({}) } as DOMRect;
+describe.each(["dom", "canvas"] as const)("%s stage with optional safe-area padding", (backend) => {
+  describe.each([false, true])("stretch %s", (stretchEnabled) => {
+    it.each([
+      { name: "landscape home indicator", width: 844, height: 390, top: 0, right: 47, bottom: 21, left: 47 },
+      { name: "portrait notch", width: 390, height: 844, top: 47, right: 0, bottom: 34, left: 0 },
+      { name: "asymmetric landscape cutout", width: 932, height: 430, top: 0, right: 0, bottom: 21, left: 59 },
+      { name: "desktop without insets", width: 1440, height: 810, top: 0, right: 0, bottom: 0, left: 0 }
+    ])("keeps the fitted stage and input aligned across padding toggles: $name", async (viewport) => {
+      __setStageBackendForTest(backend);
+      mirrorSettings.stretchEnabled = stretchEnabled;
+      mirrorSettings.safeAreaPaddingEnabled = true;
+      const updateFrameBox = () => {
+        const padded = mirrorSettings.safeAreaPaddingEnabled;
+        frameBox = {
+          width: viewport.width - (padded ? viewport.left + viewport.right : 0),
+          height: viewport.height - (padded ? viewport.top + viewport.bottom : 0)
+        };
+      };
+      updateFrameBox();
+      // jsdom cannot resolve env() or perform layout. surfaceBackdrop.spec pins the CSS binding; this mock
+      // supplies the resulting frame rectangle. Actual component styles supply the fitted stage/host dimensions.
+      const measured = Element.prototype.getBoundingClientRect;
+      vi.spyOn(Element.prototype, "getBoundingClientRect").mockImplementation(function (this: HTMLElement) {
+        if (!this.classList.contains("mirror-stage")) return measured.call(this);
+        const fit = Number(/scale\(([^)]+)\)/.exec(this.style.transform)?.[1] ?? 1);
+        const width = parseFloat(this.style.width) * fit;
+        const height = parseFloat(this.style.height) * fit;
+        const padded = mirrorSettings.safeAreaPaddingEnabled;
+        const left = (padded ? viewport.left : 0) + (frameBox.width - width) / 2;
+        const top = (padded ? viewport.top : 0) + (frameBox.height - height) / 2;
+        return { x: left, y: top, left, top, width, height, right: left + width, bottom: top + height,
+          toJSON: () => ({}) } as DOMRect;
+      });
+      // Exercise real input capture on both layout branches without needing a GPU in jsdom.
+      const createRenderer = vi.spyOn(rendererFactory, "createMirrorRendererFor")
+        .mockImplementation((stage, defs) => createMirrorRenderer(stage, defs));
+      const sendInput = vi.fn();
+      const wrapper = mount(MirrorView, {
+        props: { state: emptyState(), revision: 1, sendInput }, attachTo: document.body
+      });
+      await nextTick();
+      const frame = wrapper.get('[data-testid="mirror-frame"]');
+      const stage = stageEl()!;
+      const checkLayoutAndInput = () => {
+        const padded = mirrorSettings.safeAreaPaddingEnabled;
+        expect(frame.classes().includes("mirror-frame-safe-area")).toBe(padded);
+        const rect = stage.getBoundingClientRect();
+        const designWidth = stretchEnabled
+          ? Math.min(2520, Math.max(1920, Math.round(frameBox.width / frameBox.height * 1080)))
+          : 1920;
+        const fit = Math.min(frameBox.width / designWidth, frameBox.height / 1080);
+        expect(parseFloat(stage.style.width)).toBe(designWidth);
+        expect(rect.width).toBeCloseTo(designWidth * fit);
+        expect(rect.height).toBeCloseTo(1080 * fit);
+        expect(rect.left).toBeGreaterThanOrEqual((padded ? viewport.left : 0) - 1e-8);
+        expect(rect.top).toBeGreaterThanOrEqual((padded ? viewport.top : 0) - 1e-8);
+        expect(rect.right).toBeLessThanOrEqual(viewport.width - (padded ? viewport.right : 0) + 1e-8);
+        expect(rect.bottom).toBeLessThanOrEqual(viewport.height - (padded ? viewport.bottom : 0) + 1e-8);
+        if (backend === "canvas") {
+          expect(parseFloat(hostEl()!.style.width)).toBeCloseTo(rect.width);
+          expect(parseFloat(hostEl()!.style.height)).toBeCloseTo(rect.height);
+          expect(hostEl()!.style.transform).toBe("");
+        }
+        // Seed the cached input rectangle before toggling; the existing frame observer must invalidate it.
+        sendInput.mockClear();
+        const point = { clientX: rect.left + rect.width * 960 / designWidth, clientY: rect.top + rect.height * 1040 / 1080 };
+        stage.dispatchEvent(new MouseEvent("pointerdown", { ...point, button: 0, bubbles: true }));
+        stage.dispatchEvent(new MouseEvent("pointerup", { ...point, button: 0, bubbles: true }));
+        expect(sendInput).toHaveBeenCalledWith(expect.objectContaining({ kind: "click", pressed: true, coordX: expect.closeTo(960, 5), coordY: expect.closeTo(1040, 5) }));
+        expect(sendInput).toHaveBeenCalledWith(expect.objectContaining({ kind: "click", pressed: false, coordX: expect.closeTo(960, 5), coordY: expect.closeTo(1040, 5) }));
+      };
+      checkLayoutAndInput();
+      for (const padded of [false, true]) {
+        mirrorSettings.safeAreaPaddingEnabled = padded;
+        await nextTick();
+        updateFrameBox();
+        const resize = frameResizeCallbacks.get(frame.element);
+        expect(resize).toBeTypeOf("function");
+        resize!();
+        await nextTick();
+        checkLayoutAndInput();
+      }
+      expect(createRenderer).toHaveBeenCalledTimes(1);
+      wrapper.unmount();
     });
-    // Exercise the real input capture on both layout branches without needing a GPU in jsdom.
-    vi.spyOn(rendererFactory, "createMirrorRendererFor").mockImplementation((stage, defs) => createMirrorRenderer(stage, defs));
-    const sendInput = vi.fn();
-    const wrapper = mount(MirrorView, {
-      props: { state: emptyState(), revision: 1, sendInput }, attachTo: document.body
-    });
-    await nextTick();
-    const stage = stageEl()!;
-    const rect = stage.getBoundingClientRect();
-    expect(rect.width / rect.height).toBeCloseTo(16 / 9);
-    expect(rect.left).toBeGreaterThanOrEqual(viewport.left - 1e-8);
-    expect(rect.top).toBeGreaterThanOrEqual(viewport.top - 1e-8);
-    expect(rect.right).toBeLessThanOrEqual(viewport.width - viewport.right + 1e-8);
-    expect(rect.bottom).toBeLessThanOrEqual(viewport.height - viewport.bottom + 1e-8);
-    if (backend === "canvas") {
-      expect(parseFloat(hostEl()!.style.width)).toBeCloseTo(rect.width);
-      expect(parseFloat(hostEl()!.style.height)).toBeCloseTo(rect.height);
-      expect(hostEl()!.style.transform).toBe("");
-    }
-    const point = { clientX: rect.left + rect.width / 2, clientY: rect.top + rect.height * 1040 / 1080 };
-    stage.dispatchEvent(new MouseEvent("pointerdown", { ...point, button: 0, bubbles: true }));
-    stage.dispatchEvent(new MouseEvent("pointerup", { ...point, button: 0, bubbles: true }));
-    expect(sendInput).toHaveBeenCalledWith(expect.objectContaining({ kind: "click", pressed: true, coordX: 960, coordY: 1040 }));
-    expect(sendInput).toHaveBeenCalledWith(expect.objectContaining({ kind: "click", pressed: false, coordX: 960, coordY: 1040 }));
-    wrapper.unmount();
   });
 });
 

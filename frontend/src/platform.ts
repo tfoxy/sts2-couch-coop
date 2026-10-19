@@ -26,6 +26,11 @@ export function isIosPlatform(userAgent: string | null | undefined, maxTouchPoin
   return userAgent.includes("Macintosh") && maxTouchPoints > 1;
 }
 
+/** iPhone only: layout defaults must not include iPads, including their desktop-style user agents. */
+export function isIphonePlatform(userAgent: string | null | undefined): boolean {
+  return typeof userAgent === "string" && /\biPhone\b/.test(userAgent);
+}
+
 /** WebKit browsers, including every iPhone/iPad browser regardless of its brand. */
 export function isWebKitBrowser(userAgent: string | null | undefined, maxTouchPoints = 0): boolean {
   if (isIosPlatform(userAgent, maxTouchPoints)) return true;
