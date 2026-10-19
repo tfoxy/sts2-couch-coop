@@ -101,6 +101,60 @@ const hostEl = () => document.querySelector<HTMLElement>(".mirror-canvas-host");
 const stageEl = () => document.querySelector<HTMLElement>(".mirror-stage");
 const underlayEl = () => document.querySelector<HTMLElement>(".mirror-stage-underlay");
 
+describe.each(["dom", "canvas"] as const)("%s stage inside the device safe area", (backend) => {
+  it.each([
+    { name: "landscape home indicator", width: 844, height: 390, top: 0, right: 47, bottom: 21, left: 47 },
+    { name: "portrait notch", width: 390, height: 844, top: 47, right: 0, bottom: 34, left: 0 },
+    { name: "asymmetric landscape cutout", width: 932, height: 430, top: 0, right: 0, bottom: 21, left: 59 },
+    { name: "desktop without insets", width: 1440, height: 810, top: 0, right: 0, bottom: 0, left: 0 }
+  ])("keeps the fitted stage and bottom-card input aligned: $name", async (viewport) => {
+    __setStageBackendForTest(backend);
+    mirrorSettings.stretchEnabled = false;
+    frameBox = {
+      width: viewport.width - viewport.left - viewport.right,
+      height: viewport.height - viewport.top - viewport.bottom
+    };
+    // jsdom cannot resolve env() or perform layout. surfaceBackdrop.spec pins the real CSS binding; here the
+    // frame reports the resulting safe rectangle and the component supplies the actual stage/host dimensions.
+    const measured = Element.prototype.getBoundingClientRect;
+    vi.spyOn(Element.prototype, "getBoundingClientRect").mockImplementation(function (this: HTMLElement) {
+      if (!this.classList.contains("mirror-stage")) return measured.call(this);
+      const fit = Number(/scale\(([^)]+)\)/.exec(this.style.transform)?.[1] ?? 1);
+      const width = parseFloat(this.style.width) * fit;
+      const height = parseFloat(this.style.height) * fit;
+      const left = viewport.left + (frameBox.width - width) / 2;
+      const top = viewport.top + (frameBox.height - height) / 2;
+      return { x: left, y: top, left, top, width, height, right: left + width, bottom: top + height,
+        toJSON: () => ({}) } as DOMRect;
+    });
+    // Exercise the real input capture on both layout branches without needing a GPU in jsdom.
+    vi.spyOn(rendererFactory, "createMirrorRendererFor").mockImplementation((stage, defs) => createMirrorRenderer(stage, defs));
+    const sendInput = vi.fn();
+    const wrapper = mount(MirrorView, {
+      props: { state: emptyState(), revision: 1, sendInput }, attachTo: document.body
+    });
+    await nextTick();
+    const stage = stageEl()!;
+    const rect = stage.getBoundingClientRect();
+    expect(rect.width / rect.height).toBeCloseTo(16 / 9);
+    expect(rect.left).toBeGreaterThanOrEqual(viewport.left - 1e-8);
+    expect(rect.top).toBeGreaterThanOrEqual(viewport.top - 1e-8);
+    expect(rect.right).toBeLessThanOrEqual(viewport.width - viewport.right + 1e-8);
+    expect(rect.bottom).toBeLessThanOrEqual(viewport.height - viewport.bottom + 1e-8);
+    if (backend === "canvas") {
+      expect(parseFloat(hostEl()!.style.width)).toBeCloseTo(rect.width);
+      expect(parseFloat(hostEl()!.style.height)).toBeCloseTo(rect.height);
+      expect(hostEl()!.style.transform).toBe("");
+    }
+    const point = { clientX: rect.left + rect.width / 2, clientY: rect.top + rect.height * 1040 / 1080 };
+    stage.dispatchEvent(new MouseEvent("pointerdown", { ...point, button: 0, bubbles: true }));
+    stage.dispatchEvent(new MouseEvent("pointerup", { ...point, button: 0, bubbles: true }));
+    expect(sendInput).toHaveBeenCalledWith(expect.objectContaining({ kind: "click", pressed: true, coordX: 960, coordY: 1040 }));
+    expect(sendInput).toHaveBeenCalledWith(expect.objectContaining({ kind: "click", pressed: false, coordX: 960, coordY: 1040 }));
+    wrapper.unmount();
+  });
+});
+
 describe("MirrorView's canvas host (`?stage=canvas`)", () => {
   beforeEach(() => {
     __setStageBackendForTest("canvas");

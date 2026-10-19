@@ -58,6 +58,10 @@ body {
    bars. Non-scene panels (assignment/title) still center via `place-items: center`; the
    scene surface is 100%×100%, so centered == filled. */
 .game-surface {
+  --surface-inset-top: env(safe-area-inset-top, 0px);
+  --surface-inset-right: env(safe-area-inset-right, 0px);
+  --surface-inset-bottom: env(safe-area-inset-bottom, 0px);
+  --surface-inset-left: env(safe-area-inset-left, 0px);
   position: relative;
   display: grid;
   flex: none;
@@ -65,6 +69,9 @@ body {
   width: var(--zoom-stable-width, 100%);
   height: var(--zoom-stable-height, 100%);
   margin: auto;
+  padding:
+    var(--surface-inset-top) var(--surface-inset-right)
+    var(--surface-inset-bottom) var(--surface-inset-left);
   overflow: hidden;
   /* Disable double-tap-to-zoom and the legacy ~300ms tap delay so the touch two-phase
      tap (tap to focus, tap again to press) registers two distinct taps. Pinch-zoom and
@@ -73,28 +80,15 @@ body {
   background: linear-gradient(135deg, #10151a 0%, #1d242b 52%, #121111 100%);
 }
 
-/* MirrorView's opaque, full-bleed `.mirror-frame` covers this surface whenever a scene is mounted. Avoid painting
-   a gradient beneath it; pre-join and loading states retain the backdrop. A class avoids per-frame `:has()` work. */
+/* The scene covers the safe rectangle; the remaining device gutters should be black too. Avoid painting a
+   gradient beneath it; pre-join and loading states retain the backdrop. A class avoids per-frame `:has()` work. */
 .game-surface.surface-covered {
-  background: none;
+  background: #000;
 }
 
-/* Home-screen PWA (Add-to-Home-Screen) safe-area handling. On a notched iPhone in standalone
-   landscape the page runs edge-to-edge (index.html viewport-fit=cover), so pad CouchCoop's OWN
-   letterbox surface by the device safe-area insets. This keeps our centered join panels AND the
-   letterboxed mirror stage clear of the notch and the home indicator: with `box-sizing:
-   border-box` the padding shrinks the inner content box, so the stage fits the scene into
-   the inset area and `place-items: center` centers the panels within it. This styles CouchCoop's
-   own chrome (the gradient letterbox container), never the godot-scene-web scene DOM inside it. Scoped to the standalone/fullscreen display mode so the normal in-browser experience
-   (desktop, Android tab, iPhone Safari tab) is byte-for-byte unchanged; the insets are 0 anywhere
-   without a display cutout regardless. */
-@media (display-mode: standalone), (display-mode: fullscreen) {
-  .game-surface {
-    padding:
-      env(safe-area-inset-top) env(safe-area-inset-right)
-      env(safe-area-inset-bottom) env(safe-area-inset-left);
-  }
-}
+/* Safe-area values apply in tabs, installed apps and element fullscreen whenever the browser exposes them.
+   Padding protects the in-flow join panels. MirrorView must ALSO use these values as its frame's insets:
+   an absolutely positioned inset:0 child fills the parent's padding box and would ignore this padding. */
 
 .assignment-panel,
 .title-only-view {

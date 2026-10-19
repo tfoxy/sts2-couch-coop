@@ -1552,7 +1552,11 @@ const underlayStyle = computed(() => ({
 <style scoped>
 .mirror-frame {
   position: absolute;
-  inset: 0;
+  /* Fit the entire stage inside the safe area. Parent padding alone does not constrain an absolute child;
+     measuring this inset frame keeps the canvas, DOM overlays and input rect on the same fitted box. */
+  inset:
+    var(--surface-inset-top, 0px) var(--surface-inset-right, 0px)
+    var(--surface-inset-bottom, 0px) var(--surface-inset-left, 0px);
   overflow: hidden;
   background: #000;
   display: flex;

@@ -9,16 +9,11 @@ import MirrorApp from "@/mirror/MirrorApp.vue";
 
 // R21 B5 — DON'T RASTERIZE A FULL-SCREEN GRADIENT NOBODY CAN SEE.
 //
-// `.game-surface` paints a 135deg linear-gradient (styles.css). It is the app's backdrop: the thing seen AROUND
-// the content — behind the join panels, in the letterbox bars, while a scene is loading. It is also, whenever the
-// mirror has a scene up, completely hidden: MirrorView's ROOT element `.mirror-frame` is
-// `position: absolute; inset: 0; background: #000`, a direct child of the surface, and an absolutely positioned
-// child resolves `inset: 0` against its containing block's PADDING box — so it covers the standalone safe-area
-// padding too. Firefox's software WebRender re-rasterizes the covered gradient anyway: 1.60 ms of a 42.5 ms
-// composite, every frame, in the Sep-03 near-idle-combat profile.
+// `.game-surface` paints a gradient behind the join panels and loading view. Once the mirror is mounted,
+// its inset frame covers the safe rectangle and the surface paints the remaining device gutters black.
 //
 // WHAT THIS FILE PINS, because the optimization is only correct while all of it is true:
-//   1. the cover really is opaque and full-bleed (the PREMISE — break it and the class becomes a visual bug);
+//   1. the frame and device gutters are both opaque black;
 //   2. the class goes on EXACTLY when the cover is mounted, and comes off with it;
 //   3. every state where the gradient is genuinely visible still gets it — the mirror picker and the loading
 //      gap before a scene exists;
@@ -149,21 +144,26 @@ afterEach(() => {
 // ---- 1. the premise ------------------------------------------------------------------------------------------
 
 describe("the cover the optimization depends on", () => {
-  // If `.mirror-frame` ever stops being an opaque full-bleed fill, dropping the gradient beneath it stops being
-  // free and starts being a hole in the app. This is the one assertion that must fail LOUDLY in that commit.
-  it("MirrorView's root is an opaque, full-bleed, inset-0 fill", () => {
+  it("MirrorView fits inside the same safe-area values that pad the panels", () => {
     const rule = /\.mirror-frame\s*\{([^}]*)\}/.exec(mirrorViewSource);
     expect(rule).not.toBeNull();
     const body = rule![1];
     expect(body).toMatch(/position:\s*absolute/);
-    expect(body).toMatch(/inset:\s*0/);
+    const surfaceRule = /\.game-surface\s*\{([^}]*)\}/.exec(surfaceCss)![1];
+    for (const side of ["top", "right", "bottom", "left"]) {
+      expect(surfaceRule).toContain(`--surface-inset-${side}: env(safe-area-inset-${side}, 0px)`);
+      expect(surfaceRule).toContain(`var(--surface-inset-${side})`);
+      expect(body).toContain(`var(--surface-inset-${side}, 0px)`);
+    }
+    // Browser-provided safe areas matter in Safari tabs too, not just installed display modes.
+    expect(surfaceCss).not.toMatch(/@media\s*\(display-mode:/);
     // Opaque, and opaque BLACK specifically: the mirror's letterbox bars are this colour, never the gradient.
     expect(body).toMatch(/background:\s*#000\b/);
   });
 
   it("the surface paints the gradient, and the covered rule is what cancels it", () => {
     expect(surfaceCss).toMatch(/\.game-surface\s*\{[^}]*background:\s*linear-gradient\(/);
-    expect(surfaceCss).toMatch(/\.game-surface\.surface-covered\s*\{[^}]*background:\s*none/);
+    expect(surfaceCss).toMatch(/\.game-surface\.surface-covered\s*\{[^}]*background:\s*#000\b/);
   });
 });
 
@@ -173,8 +173,7 @@ describe("MirrorApp — the gradient is dropped exactly while it is covered", ()
   it("drops it once a scene is mounted, and the cover is really there", async () => {
     const wrapper = await mountWithScene();
 
-    // The cover exists AND is a direct child of the surface — `inset: 0` only spans the surface because the
-    // surface is its containing block (`.mirror-surface { position: relative }`).
+    // The surface is the frame's containing block and supplies its safe-area variables.
     expect(wrapper.find('[data-testid="mirror-surface"] > .mirror-frame').exists()).toBe(true);
     expect(surface(wrapper).classes()).toContain("surface-covered");
   });
