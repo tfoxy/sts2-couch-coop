@@ -9,13 +9,19 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and
 
 ## [Unreleased]
 
-### Fixed
+## [0.5.1] - 2026-10-19
+
+### Added
 
 - Choose whether the game stays clear of screen cutouts and the home indicator with Safe-area padding, on by default for iPhone.
-- Avoid duplicate asset extraction when several browsers join together.
-- Reconnect phones after sleep or interrupted connections without immediately restarting their game.
-- Keep loading work active and avoid delaying healthy connection reports behind another player's launch.
-- Preserve player names across restarts and saved-run joins.
+
+### Fixed
+
+- Keep the game clear of phone cutouts and home indicators (thanks KyleJKistner).
+- Avoid duplicate asset extraction when several browsers join together (thanks KyleJKistner).
+- Reconnect phones after sleep or interrupted connections without immediately restarting their game (thanks KyleJKistner).
+- Keep loading work active and avoid delaying healthy connection reports behind another player's launch (thanks KyleJKistner).
+- Preserve player names across restarts and saved-run joins (thanks KyleJKistner).
 
 Thanks to [KyleJKistner](https://github.com/KyleJKistner) for the reports, patches, and macOS/device testing behind these fixes.
 
@@ -246,7 +252,8 @@ First public release. Turn the phones, tablets and laptops on your network into 
 a local Slay the Spire 2 co-op session — no app to install on the other devices, and no `sts2` CLI
 needed to run the mod.
 
-[Unreleased]: https://github.com/tfoxy/sts2-couch-coop/compare/v0.5.0...HEAD
+[Unreleased]: https://github.com/tfoxy/sts2-couch-coop/compare/v0.5.1...HEAD
+[0.5.1]: https://github.com/tfoxy/sts2-couch-coop/releases/tag/v0.5.1
 [0.5.0]: https://github.com/tfoxy/sts2-couch-coop/releases/tag/v0.5.0
 [0.4.2]: https://github.com/tfoxy/sts2-couch-coop/releases/tag/v0.4.2
 [0.4.1]: https://github.com/tfoxy/sts2-couch-coop/releases/tag/v0.4.1
