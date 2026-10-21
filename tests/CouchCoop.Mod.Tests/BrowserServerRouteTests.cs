@@ -1558,6 +1558,38 @@ internal sealed partial class BrowserServerRouteTests
             Directory.CreateSymbolicLink(nestedParentLink, nestedRealParent);
             var nestedProvider = new StaticSpaFileProvider(Path.Combine(nestedParentLink, "frontend"));
             Expect((await nestedProvider.TryOpenAsync("/index.html"))?.Bytes is { Length: > 0 }, "a configured root beneath a symlinked parent remains supported");
+
+            // A mod manager's link farm (Vortex symlink deployment, issue #11): real directories in the install,
+            // every file a symlink into the manager's staging copy of the same layout.
+            var staging = Path.Combine(parent, "staging", "couchcoop", "frontend");
+            Directory.CreateDirectory(Path.Combine(staging, "app"));
+            await File.WriteAllTextAsync(Path.Combine(staging, "index.html"), "farm-index");
+            await File.WriteAllTextAsync(Path.Combine(staging, "app", "main.js"), "farm-main");
+            var farm = Path.Combine(parent, "install", "frontend");
+            Directory.CreateDirectory(Path.Combine(farm, "app"));
+            File.CreateSymbolicLink(Path.Combine(farm, "index.html"), Path.Combine(staging, "index.html"));
+            File.CreateSymbolicLink(Path.Combine(farm, "app", "main.js"), Path.Combine(staging, "app", "main.js"));
+            File.CreateSymbolicLink(Path.Combine(farm, "escape.txt"), Path.Combine(sibling, "secret.txt"));
+            var farmProvider = new StaticSpaFileProvider(farm);
+            Expect(await farmProvider.TryOpenAsync("/") is { } farmIndex && Encoding.UTF8.GetString(farmIndex.Bytes) == "farm-index",
+                "a link-farm install serves its index");
+            Expect(await farmProvider.TryOpenAsync("/app/main.js") is { } farmMain && Encoding.UTF8.GetString(farmMain.Bytes) == "farm-main",
+                "a link-farm install serves its nested assets");
+            Expect(await farmProvider.TryOpenAsync("/join") is { } farmRoute && Encoding.UTF8.GetString(farmRoute.Bytes) == "farm-index",
+                "a link-farm install keeps the SPA fallback");
+            Expect(await farmProvider.TryReadExactAsync("/escape.txt") is null, "a link-farm file cannot escape the staging layout");
+
+            // An index linked into a directory that does not mirror the shipped layout earns no trust at all.
+            var stray = Path.Combine(parent, "stray");
+            Directory.CreateDirectory(stray);
+            await File.WriteAllTextAsync(Path.Combine(stray, "index.html"), "stray-index");
+            await File.WriteAllTextAsync(Path.Combine(stray, "secret.txt"), "stray-secret");
+            var strayFarm = Path.Combine(parent, "stray-install", "frontend");
+            Directory.CreateDirectory(strayFarm);
+            File.CreateSymbolicLink(Path.Combine(strayFarm, "index.html"), Path.Combine(stray, "index.html"));
+            File.CreateSymbolicLink(Path.Combine(strayFarm, "secret.txt"), Path.Combine(stray, "secret.txt"));
+            var strayProvider = new StaticSpaFileProvider(strayFarm);
+            Expect(await strayProvider.TryReadExactAsync("/secret.txt") is null, "an index linked outside the shipped layout trusts nothing beside it");
         }
         finally
         {

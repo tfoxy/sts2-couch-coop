@@ -11,6 +11,38 @@ public sealed class StaticSpaFileProvider(string staticRoot)
 
     private readonly string _staticRoot = Path.GetFullPath(staticRoot);
     private readonly string _resolvedStaticRoot = ResolveExistingPath(Path.GetFullPath(staticRoot));
+    private readonly string? _deployedStaticRoot = ResolveDeployedRoot(Path.GetFullPath(staticRoot));
+
+    /// <summary>
+    /// Where the files of a link-farm install really live, or null when the install is not one.
+    /// </summary>
+    /// <remarks>
+    /// A mod manager that cannot hardlink across drives (Vortex's symlink deployment) installs real
+    /// directories whose every FILE is a symlink into its staging copy, so each resolved target lies outside
+    /// the resolved root and the containment check would refuse the whole SPA. The staging directory holding
+    /// <c>index.html</c> is trusted as a second root only when it mirrors the shipped layout: the link still
+    /// lands on an <c>index.html</c>, inside a directory named like the configured root.
+    /// </remarks>
+    private static string? ResolveDeployedRoot(string staticRoot)
+    {
+        try
+        {
+            var index = Path.Combine(staticRoot, "index.html");
+            if (!File.Exists(index)) return null;
+            var resolved = ResolveExistingPath(index);
+            var directory = Path.GetDirectoryName(resolved);
+            var comparison = OperatingSystem.IsWindows() ? StringComparison.OrdinalIgnoreCase : StringComparison.Ordinal;
+            return directory is not null
+                   && string.Equals(Path.GetFileName(resolved), "index.html", comparison)
+                   && string.Equals(Path.GetFileName(directory), Path.GetFileName(staticRoot.TrimEnd(Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar)), comparison)
+                ? directory
+                : null;
+        }
+        catch (Exception exception) when (exception is IOException or UnauthorizedAccessException)
+        {
+            return null;
+        }
+    }
 
     public string? TryResolveAndroidApkPath()
     {
@@ -164,7 +196,10 @@ public sealed class StaticSpaFileProvider(string staticRoot)
         try
         {
             var resolved = ResolveExistingPath(candidateUnderResolvedRoot);
-            return IsUnderResolvedRoot(_resolvedStaticRoot, resolved) ? resolved : null;
+            return IsUnderResolvedRoot(_resolvedStaticRoot, resolved)
+                   || _deployedStaticRoot is not null && IsUnderResolvedRoot(_deployedStaticRoot, resolved)
+                ? resolved
+                : null;
         }
         catch (Exception exception) when (exception is IOException or UnauthorizedAccessException)
         {
