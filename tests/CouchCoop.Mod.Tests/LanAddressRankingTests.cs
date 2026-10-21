@@ -28,6 +28,10 @@ internal static class LanAddressRankingTests
         MacFullTunnelVpnLosesToWifi();
         MacWiredBeatsWifiJustLikeEverywhereElse();
 
+        VirtualAdapterLosesTheEthernetTier();
+        DescriptionWordsNameVirtualAdapters();
+        WindowsInterfaceFlagsLayout();
+
         OverrideAcceptsIpLiteralAndHostname();
         OverrideRejectsGarbage();
 
@@ -358,6 +362,74 @@ internal static class LanAddressRankingTests
             candidate.Status == OperationalStatus.Up
             && candidate.InterfaceType != NetworkInterfaceType.Loopback
             && !IPAddress.IsLoopback(candidate.Address))?.Address.ToString();
+
+    // Issue #11: a VPN with a gateway that Windows types as Ethernet beat the gatewayed wifi on the tier. Once it
+    // is recognised as virtual it is "other", and the wifi is the advertised address.
+    private static void VirtualAdapterLosesTheEthernetTier()
+    {
+        var vpn = Nic("ZeroTier One", "192.168.193.165", gateway: true) with { Virtual = VirtualAdapterSignal.Description };
+        var wifi = Wifi("192.168.1.17");
+        Expect(LanAddressRanking.Best([vpn, wifi]) == wifi, "the wifi beats a recognised VPN even when the VPN has a gateway");
+        Expect(LanAddressRanking.TierOf(vpn) == 0, "a virtual adapter is tier 0 whatever type it reports");
+        Expect(LanAddressRanking.Describe(vpn).EndsWith("virtual=desc", StringComparison.Ordinal), "and the log line says why");
+        Expect(LanAddressRanking.Describe(wifi).EndsWith("virtual=0", StringComparison.Ordinal), "while a real NIC logs virtual=0");
+    }
+
+    private static void DescriptionWordsNameVirtualAdapters()
+    {
+        string[] virtualAdapters =
+        [
+            "ZeroTier Virtual Port",
+            "Radmin VPN Ethernet Adapter",
+            "VirtualBox Host-Only Ethernet Adapter",
+            "Hyper-V Virtual Ethernet Adapter",
+            "TAP-Windows Adapter V9",
+            "WireGuard Tunnel",
+            "LogMeIn Hamachi Virtual Ethernet Adapter",
+            "Microsoft KM-TEST Loopback Adapter",
+        ];
+        foreach (var description in virtualAdapters)
+        {
+            Expect(LanAddressRanking.DescriptionNamesVirtualAdapter(description), $"recognised as virtual: {description}");
+        }
+
+        string[] realAdapters =
+        [
+            "Intel(R) Wi-Fi 6 AX201 160MHz",
+            "Realtek PCIe GbE Family Controller",
+            "Red Hat VirtIO Ethernet Adapter",
+            "Killer(R) Wi-Fi 6E AX1675x 160MHz Wireless Network Adapter (211NGW)",
+            "eth0",
+        ];
+        foreach (var description in realAdapters)
+        {
+            Expect(!LanAddressRanking.DescriptionNamesVirtualAdapter(description), $"recognised as real: {description}");
+        }
+
+        Expect(!LanAddressRanking.DescriptionNamesVirtualAdapter(null), "no description is no verdict");
+    }
+
+    // MIB_IF_ROW2 is 1352 bytes on x64 with the flags byte at 1152. A wrong layout would read some other field as
+    // the flags and silently demote, or keep, every adapter.
+    private static void WindowsInterfaceFlagsLayout()
+    {
+        var size = System.Runtime.InteropServices.Marshal.SizeOf<LanAddressRanking.MibIfRow2>();
+        Expect(size == 1352, $"MIB_IF_ROW2 is 1352 bytes, not {size}");
+        var flagsOffset = System.Runtime.InteropServices.Marshal.OffsetOf<LanAddressRanking.MibIfRow2>(
+            nameof(LanAddressRanking.MibIfRow2.InterfaceAndOperStatusFlags));
+        Expect(flagsOffset == 1152, $"the interface flags byte sits at 1152, not {flagsOffset}");
+        var mediumOffset = System.Runtime.InteropServices.Marshal.OffsetOf<LanAddressRanking.MibIfRow2>(
+            nameof(LanAddressRanking.MibIfRow2.PhysicalMediumType));
+        Expect(mediumOffset == 1140, $"the physical medium sits at 1140, not {mediumOffset}");
+
+        const uint ethernet = 14, wifi = 9, unspecified = 0;
+        Expect(LanAddressRanking.IsPhysicalByWindowsFlags(0b0000_0101, ethernet), "hardware + connector + 802.3 is a real NIC");
+        Expect(LanAddressRanking.IsPhysicalByWindowsFlags(0b0000_0101, wifi), "and so is native 802.11");
+        Expect(!LanAddressRanking.IsPhysicalByWindowsFlags(0b0000_0001, ethernet), "hardware without a connector is virtual");
+        Expect(!LanAddressRanking.IsPhysicalByWindowsFlags(0b0000_0100, ethernet), "a connector without hardware is virtual");
+        Expect(!LanAddressRanking.IsPhysicalByWindowsFlags(0b0000_0101, unspecified),
+            "the KM-TEST loopback shape (hardware + connector, no medium; measured on the win11 VM) is virtual");
+    }
 
     private static void Expect(bool condition, string because)
     {
