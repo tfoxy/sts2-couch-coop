@@ -1,6 +1,7 @@
 using System.Net;
 using System.Net.NetworkInformation;
 using System.Net.Sockets;
+using System.Runtime.InteropServices;
 
 namespace CouchCoop.Mod.HostUi;
 
@@ -23,7 +24,20 @@ public sealed record LanAddressCandidate(
     bool IsLoopbackInterface,
     IPAddress Address,
     PrefixOrigin PrefixOrigin,
-    bool HasIpv4Gateway);
+    bool HasIpv4Gateway,
+    VirtualAdapterSignal Virtual = VirtualAdapterSignal.None);
+
+// Why an adapter counts as virtual (a VPN tunnel, a VM host-only network, a bridge), if it does. Windows reports
+// most of these as NetworkInterfaceType.Ethernet, so without this a VPN outranks the wifi a phone is actually on.
+public enum VirtualAdapterSignal
+{
+    None,
+    // The OS says so: Windows interface flags (no hardware interface, no connector or no physical medium), or no
+    // Linux device node.
+    OsFlags,
+    // The adapter's description names it ("ZeroTier Virtual Port", "Radmin VPN Ethernet Adapter").
+    Description,
+}
 
 public static class LanAddressRanking
 {
@@ -63,17 +77,18 @@ public static class LanAddressRanking
 
     public static int ScoreOf(LanAddressCandidate candidate)
         => (candidate.HasIpv4Gateway ? GatewayWeight : 0)
-            + (TypeTier(candidate.InterfaceType) * TypeTierWeight)
+            + (TierOf(candidate) * TypeTierWeight)
             + (IsPenalisedRange(candidate.Address) ? 0 : UnpenalisedRangeWeight)
             + (IsRfc1918(candidate.Address) ? Rfc1918Weight : 0)
             + (candidate.PrefixOrigin == PrefixOrigin.Dhcp ? DhcpWeight : 0);
 
+    // Rule 2 for one candidate: a virtual adapter is "other" whatever type it reports, so a gatewayed VPN tunnel
+    // can no longer beat the gatewayed wifi on the Ethernet tier.
+    public static int TierOf(LanAddressCandidate candidate)
+        => candidate.Virtual == VirtualAdapterSignal.None ? TypeTier(candidate.InterfaceType) : 0;
+
     // Rule 1 is carried by HasIpv4Gateway on the descriptor itself (dominant signal — a tunnel/bridge adapter has
-    // no default gateway, a real LAN NIC does). Rule 2 is the interface-type tier.
-    //
-    // Public so the QR dialog's own grouping (QrHostOptions.BestPerAdapter) can order its adapter groups by the
-    // same tiers without a second copy of this table. That grouping leads with the tier where Rank leads with the
-    // gateway — see the remarks on QrHostOptions for why the two orderings deliberately differ.
+    // no default gateway, a real LAN NIC does). Rule 2 is the interface-type tier, see TierOf.
     public static int TypeTier(NetworkInterfaceType type) => type switch
     {
         NetworkInterfaceType.Ethernet
@@ -120,9 +135,10 @@ public static class LanAddressRanking
     // wrong IP", this log is the evidence: it names every candidate and why it lost.
     public static string Describe(LanAddressCandidate candidate)
         => $"{candidate.Address} if={candidate.InterfaceName} type={candidate.InterfaceType} "
-            + $"score={ScoreOf(candidate)} gw={(candidate.HasIpv4Gateway ? 1 : 0)} tier={TypeTier(candidate.InterfaceType)} "
+            + $"score={ScoreOf(candidate)} gw={(candidate.HasIpv4Gateway ? 1 : 0)} tier={TierOf(candidate)} "
             + $"range={(IsPenalisedRange(candidate.Address) ? "penalised" : IsRfc1918(candidate.Address) ? "rfc1918" : "public")} "
-            + $"origin={candidate.PrefixOrigin}";
+            + $"origin={candidate.PrefixOrigin} "
+            + $"virtual={candidate.Virtual switch { VirtualAdapterSignal.OsFlags => "os", VirtualAdapterSignal.Description => "desc", _ => "0" }}";
 
     // Impure half. Never throws: NetworkInformationException (and a transient adapter disappearing between the
     // enumeration and the property read) used to escape all the way out of CouchCoopHostUiServices.StartAsync and
@@ -178,6 +194,7 @@ public static class LanAddressRanking
             && address.AddressFamily == AddressFamily.InterNetwork
             && !IPAddress.Any.Equals(address));
 
+        VirtualAdapterSignal? virtualSignal = null;
         foreach (var unicast in properties.UnicastAddresses)
         {
             if (unicast.Address?.AddressFamily != AddressFamily.InterNetwork)
@@ -185,6 +202,7 @@ public static class LanAddressRanking
                 continue;
             }
 
+            virtualSignal ??= ClassifyVirtual(networkInterface, properties);
             candidates.Add(new LanAddressCandidate(
                 networkInterface.Name,
                 networkInterface.NetworkInterfaceType,
@@ -192,8 +210,161 @@ public static class LanAddressRanking
                 networkInterface.NetworkInterfaceType == NetworkInterfaceType.Loopback,
                 unicast.Address,
                 ReadPrefixOrigin(unicast),
-                hasIpv4Gateway));
+                hasIpv4Gateway,
+                virtualSignal.Value));
         }
+    }
+
+    // The OS verdict first; the description words catch what it misses, including a VPN driver that claims to be
+    // hardware. Never throws: an adapter we cannot classify is treated as real, which is the old behaviour.
+    private static VirtualAdapterSignal ClassifyVirtual(NetworkInterface networkInterface, IPInterfaceProperties properties)
+    {
+        try
+        {
+            if (IsVirtualByOs(networkInterface, properties) == true)
+            {
+                return VirtualAdapterSignal.OsFlags;
+            }
+
+            return DescriptionNamesVirtualAdapter(networkInterface.Description)
+                ? VirtualAdapterSignal.Description
+                : VirtualAdapterSignal.None;
+        }
+        catch (Exception exception) when (exception is NetworkInformationException
+            or PlatformNotSupportedException
+            or IOException
+            or UnauthorizedAccessException
+            or DllNotFoundException
+            or EntryPointNotFoundException)
+        {
+            return VirtualAdapterSignal.None;
+        }
+    }
+
+    // null = no verdict (unsupported OS, failed call), never "virtual".
+    private static bool? IsVirtualByOs(NetworkInterface networkInterface, IPInterfaceProperties properties)
+    {
+        if (OperatingSystem.IsWindows())
+        {
+            var index = properties.GetIPv4Properties()?.Index;
+            return index is int value ? IsVirtualByWindowsFlags(value) : null;
+        }
+
+        if (OperatingSystem.IsLinux())
+        {
+            // Every NIC backed by a bus device (PCI, USB, SDIO, virtio) has a `device` link in sysfs; bridges,
+            // tunnels and VPN taps do not.
+            var node = Path.Combine("/sys/class/net", networkInterface.Name);
+            return Directory.Exists(node) ? !Directory.Exists(Path.Combine(node, "device")) : null;
+        }
+
+        return null;
+    }
+
+    private static bool? IsVirtualByWindowsFlags(int interfaceIndex)
+    {
+        var row = new MibIfRow2 { InterfaceIndex = (uint)interfaceIndex };
+        if (GetIfEntry2(ref row) != 0)
+        {
+            return null;
+        }
+
+        return !IsPhysicalByWindowsFlags(row.InterfaceAndOperStatusFlags, row.PhysicalMediumType);
+    }
+
+    // Bit 0 HardwareInterface, bit 2 ConnectorPresent (MIB_IF_ROW2.InterfaceAndOperStatusFlags), and a physical
+    // medium other than NdisPhysicalMediumUnspecified (0). A real NIC has all three (802.3 is 14, native 802.11 is
+    // 9). Windows' own KM-TEST loopback driver claims hardware and a connector but reports no medium, so the
+    // medium is what catches it.
+    public static bool IsPhysicalByWindowsFlags(byte flags, uint physicalMediumType)
+        => (flags & 0b101) == 0b101 && physicalMediumType != 0;
+
+    private static readonly string[] VirtualDescriptionWords = ["virtual", "vpn", "tunnel", "loopback", "tap"];
+
+    // Generic words only, matched as whole words, so "TAP-Windows Adapter V9" matches and "Realtek ... Adapter"
+    // does not. Product names would be a list that every new VPN outdates.
+    public static bool DescriptionNamesVirtualAdapter(string? description)
+    {
+        if (string.IsNullOrWhiteSpace(description))
+        {
+            return false;
+        }
+
+        var lower = description.ToLowerInvariant();
+        if (lower.Contains("host-only", StringComparison.Ordinal))
+        {
+            return true;
+        }
+
+        var start = -1;
+        for (var index = 0; index <= lower.Length; index++)
+        {
+            if (index < lower.Length && char.IsAsciiLetterOrDigit(lower[index]))
+            {
+                if (start < 0) start = index;
+                continue;
+            }
+
+            if (start >= 0 && VirtualDescriptionWords.Contains(lower[start..index]))
+            {
+                return true;
+            }
+
+            start = -1;
+        }
+
+        return false;
+    }
+
+    [DllImport("iphlpapi.dll", ExactSpelling = true)]
+    private static extern int GetIfEntry2(ref MibIfRow2 row);
+
+    // MIB_IF_ROW2 from netioapi.h, declared in full so the flags byte sits at its real offset (1152 of 1352 on
+    // x64; pinned by LanAddressRankingTests).
+    [StructLayout(LayoutKind.Sequential)]
+    public unsafe struct MibIfRow2
+    {
+        public ulong InterfaceLuid;
+        public uint InterfaceIndex;
+        public Guid InterfaceGuid;
+        public fixed char Alias[257];
+        public fixed char Description[257];
+        public uint PhysicalAddressLength;
+        public fixed byte PhysicalAddress[32];
+        public fixed byte PermanentPhysicalAddress[32];
+        public uint Mtu;
+        public uint Type;
+        public uint TunnelType;
+        public uint MediaType;
+        public uint PhysicalMediumType;
+        public uint AccessType;
+        public uint DirectionType;
+        public byte InterfaceAndOperStatusFlags;
+        public uint OperStatus;
+        public uint AdminStatus;
+        public uint MediaConnectState;
+        public Guid NetworkGuid;
+        public uint ConnectionType;
+        public ulong TransmitLinkSpeed;
+        public ulong ReceiveLinkSpeed;
+        public ulong InOctets;
+        public ulong InUcastPkts;
+        public ulong InNUcastPkts;
+        public ulong InDiscards;
+        public ulong InErrors;
+        public ulong InUnknownProtos;
+        public ulong InUcastOctets;
+        public ulong InMulticastOctets;
+        public ulong InBroadcastOctets;
+        public ulong OutOctets;
+        public ulong OutUcastPkts;
+        public ulong OutNUcastPkts;
+        public ulong OutDiscards;
+        public ulong OutErrors;
+        public ulong OutUcastOctets;
+        public ulong OutMulticastOctets;
+        public ulong OutBroadcastOctets;
+        public ulong OutQLen;
     }
 
     // PrefixOrigin is a Windows-only property: on Linux/macOS the BCL throws PlatformNotSupportedException for it.

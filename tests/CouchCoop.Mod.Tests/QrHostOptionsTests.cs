@@ -8,8 +8,8 @@ using CouchCoop.Mod.HostUi;
 // actually hard, and it must be falsifiable without launching a game.
 //
 // The headline invariants:
-//  * Order: override → per-adapter [plain ipv4, web link, secure link] with adapters grouped
-//    ethernet → wifi → other → mdns LAST. The mdns self-check no longer moves the row, it only
+//  * Order: override → per-adapter [plain ipv4, web link, secure link] with adapters ordered by the
+//    advertised-address score (gateway, then ethernet → wifi → other) → mdns LAST. The mdns self-check no longer moves the row, it only
 //    badges it.
 //  * Per-adapter links: each adapter's web/secure row carries THAT adapter's address, so two adapters
 //    yield two different `?h=` payloads and two different dashed hosts.
@@ -26,12 +26,13 @@ internal static class QrHostOptionsTests
         AnUnresolvableMdnsNameStaysLastWithAWarning();
         OverrideStaysFirstWhateverTheMdnsSelfCheckSays();
 
-        TierBeatsGatewayUnlikeRank();
+        GatewayLeadsTheDialogLikeRank();
+        VpnAndVmAdaptersNeverHideTheWifi();
         MacAdapterShapesGroupAndLabelCorrectly();
         ScoreBreaksTiesInsideATier();
         TiesKeepEnumerationOrder();
         OneGroupPerAdapterUsesItsBestScoredIpv4();
-        AdapterGroupsAreCappedAtThree();
+        AdapterGroupsAreCapped();
         IneligibleCandidatesAreFiltered();
         Ipv6CandidatesNeverProduceARow();
         DuplicateAdaptersCollapseByAddress();
@@ -72,8 +73,10 @@ internal static class QrHostOptionsTests
         NetworkInterfaceType type = NetworkInterfaceType.Ethernet,
         bool gateway = true,
         OperationalStatus status = OperationalStatus.Up,
-        bool loopback = false)
-        => new(name, type, status, loopback, IPAddress.Parse(address), PrefixOrigin.Manual, gateway);
+        bool loopback = false,
+        VirtualAdapterSignal virtualSignal = VirtualAdapterSignal.None,
+        PrefixOrigin origin = PrefixOrigin.Manual)
+        => new(name, type, status, loopback, IPAddress.Parse(address), origin, gateway, virtualSignal);
 
     private static LanAddressCandidate Wifi(string address = "192.168.0.42", bool gateway = true, string name = "Wi-Fi")
         => Nic(name, address, NetworkInterfaceType.Wireless80211, gateway);
@@ -169,20 +172,57 @@ internal static class QrHostOptionsTests
 
     // ---- adapter grouping -----------------------------------------------------------------------------------
 
-    // THE divergence. Ethernet without a gateway vs wifi with one: Rank prefers the gatewayed wifi
-    // (routability is what an unattended pick needs), the dialog prefers the ethernet (kind is what a
-    // human scans a list by). Both are asserted here so neither can drift into the other.
-    private static void TierBeatsGatewayUnlikeRank()
+    // Ethernet without a gateway vs wifi with one: the dialog and Rank agree on the gatewayed wifi, so the
+    // default QR is the address the rest of the mod advertises. The ethernet is still listed below it.
+    private static void GatewayLeadsTheDialogLikeRank()
     {
         var gatewaylessEthernet = Ethernet("192.168.5.10", gateway: false);
         var gatewayedWifi = Wifi("192.168.5.20", gateway: true);
-        LanAddressCandidate[] nics = [gatewayedWifi, gatewaylessEthernet];
+        LanAddressCandidate[] nics = [gatewaylessEthernet, gatewayedWifi];
 
         var dialog = QrHostOptions.BestPerAdapter(nics);
-        Expect(dialog[0].Address.ToString() == "192.168.5.10", "the dialog leads with the ethernet NIC (tier first)");
+        Expect(dialog[0].Address.ToString() == "192.168.5.20", "the dialog leads with the gatewayed wifi");
+        Expect(dialog[1].Address.ToString() == "192.168.5.10", "and still lists the gateway-less ethernet");
+        Expect(LanAddressRanking.Rank(nics)[0].Address.ToString() == "192.168.5.20", "exactly as Rank does");
 
-        var advertised = LanAddressRanking.Rank(nics);
-        Expect(advertised[0].Address.ToString() == "192.168.5.20", "while Rank still leads with the gatewayed wifi");
+        var gatewayedEthernet = Ethernet("192.168.5.11", gateway: true);
+        Expect(QrHostOptions.BestPerAdapter([gatewayedWifi, gatewayedEthernet])[0].Address.ToString() == "192.168.5.11",
+            "between two routable adapters the wired one still leads");
+    }
+
+    // Issue #11, the reporter's own log: two VPNs and two VM host-only networks that Windows types as Ethernet,
+    // and the home wifi. Tier-first ordering under a three-group cap listed ZeroTier, Radmin and a VM network,
+    // never the wifi.
+    private static void VpnAndVmAdaptersNeverHideTheWifi()
+    {
+        LanAddressCandidate[] Topology(bool detected) =>
+        [
+            Nic("ZeroTier One [network]", "192.168.193.165", gateway: true,
+                virtualSignal: detected ? VirtualAdapterSignal.Description : VirtualAdapterSignal.None),
+            Nic("Radmin VPN", "26.191.166.222", gateway: true,
+                virtualSignal: detected ? VirtualAdapterSignal.Description : VirtualAdapterSignal.None),
+            Nic("Wi-Fi", "192.168.1.17", NetworkInterfaceType.Wireless80211, gateway: true, origin: PrefixOrigin.Dhcp),
+            Nic("Ethernet 2", "192.168.56.3", gateway: false,
+                virtualSignal: detected ? VirtualAdapterSignal.OsFlags : VirtualAdapterSignal.None),
+            Nic("Ethernet 4", "192.168.56.4", gateway: false,
+                virtualSignal: detected ? VirtualAdapterSignal.OsFlags : VirtualAdapterSignal.None),
+        ];
+
+        var nics = Topology(detected: true);
+        var order = QrHostOptions.BestPerAdapter(nics).Select(candidate => candidate.InterfaceName).ToArray();
+        Expect(order.SequenceEqual(["Wi-Fi", "ZeroTier One [network]", "Radmin VPN", "Ethernet 2", "Ethernet 4"]),
+            $"the wifi leads, the VPNs follow and the VM networks come last: {string.Join(", ", order)}");
+
+        var options = Build("laptop", null, nics);
+        Expect(options[0].Host == "192.168.1.17", "the default QR is the wifi");
+        Expect(options[^1].Kind == QrHostOptionKind.Mdns, "and mdns is still last");
+        Expect(options.First(option => option.Host == "192.168.193.165").Adapter?.Kind == QrAdapterKind.Other,
+            "a VPN that Windows types as Ethernet is grouped and labelled as Other");
+        Expect(LanAddressRanking.Best(nics)?.InterfaceName == "Wi-Fi", "the unattended address is the wifi too");
+
+        var undetected = QrHostOptions.BestPerAdapter(Topology(detected: false));
+        Expect(undetected.Any(candidate => candidate.InterfaceName == "Wi-Fi"),
+            "even when no adapter is recognised as virtual, the cap no longer cuts the wifi");
     }
 
     /// <summary>
@@ -223,12 +263,12 @@ internal static class QrHostOptionsTests
             "utun is grouped as Other, which is what its VPN-shaped hover copy is for");
         Expect(options[0].Host == "192.168.1.64", "and the dialog defaults to the wifi row");
 
-        // The trap, pinned rather than fixed. See the remarks.
+        // The old trap: a gateway-less bridge led the dialog on tier. Gateway-first ordering fixes it.
         var withBridge = Build("macbook", null, en0, bridge);
-        Expect(withBridge[0].Host == "192.168.2.1",
-            "a virtualisation bridge leads the DIALOG on tier (deliberate; same as virbr0 on Linux)");
+        Expect(withBridge[0].Host == "192.168.1.64",
+            "the routable wifi leads the dialog, not the virtualisation bridge (same for virbr0 on Linux)");
         Expect(LanAddressRanking.Best([en0, bridge])?.Address.ToString() == "192.168.1.64",
-            "…while the address the rest of the mod actually advertises is still the wifi one");
+            "…which is also the address the rest of the mod advertises");
     }
 
     private static void ScoreBreaksTiesInsideATier()
@@ -265,9 +305,9 @@ internal static class QrHostOptionsTests
         Expect(options[0].Host == "192.168.0.9", "and the row carries the best-scored one");
     }
 
-    private static void AdapterGroupsAreCappedAtThree()
+    private static void AdapterGroupsAreCapped()
     {
-        var nics = Enumerable.Range(1, 8).Select(index => Wifi($"192.168.7.{index}", name: $"wl{index}")).ToArray();
+        var nics = Enumerable.Range(1, QrHostOptions.MaxAdapterGroups + 2).Select(index => Wifi($"192.168.7.{index}", name: $"wl{index}")).ToArray();
         var options = QrHostOptions.Build("box", null, nics, Port, Origin, null, SecurePort, null);
 
         Expect(options.Count(option => option.Kind == QrHostOptionKind.Interface) == QrHostOptions.MaxAdapterGroups,
@@ -551,8 +591,11 @@ internal static class QrHostOptionsTests
 
     private static void AllAdapterMethodsSurviveTheOptionCap()
     {
-        var options = Build("host", "fixed.example", Ethernet(), Wifi(), Wifi("10.1.1.2", name: "extra"));
-        Expect(options.Count == 14 && options[^1].Kind == QrHostOptionKind.Mdns, "override, all twelve adapter methods and mDNS survive");
+        var nics = Enumerable.Range(1, QrHostOptions.MaxAdapterGroups)
+            .Select(index => Wifi($"192.168.8.{index}", name: $"wl{index}")).ToArray();
+        var options = Build("host", "fixed.example", nics);
+        Expect(options.Count == QrHostOptions.MaxOptions && options[^1].Kind == QrHostOptionKind.Mdns,
+            "override, every method of every adapter group and mDNS survive");
         foreach (var group in options.Where(o => o.Adapter is not null).GroupBy(o => o.Adapter))
             Expect(group.Select(o => o.MethodToken).SequenceEqual(["ipv4", "web", "secure", "direct-https"]), "each complete adapter group preserves method order");
     }

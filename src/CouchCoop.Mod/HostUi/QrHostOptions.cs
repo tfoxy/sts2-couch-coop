@@ -15,8 +15,8 @@ namespace CouchCoop.Mod.HostUi;
 /// </para>
 /// <para>
 /// <b>The list is the cross product of adapter × method, in a fixed order.</b> One entry group per
-/// network adapter (ethernet first, then wifi, then everything else — tunnels, docker, VPNs), and
-/// inside each group the four ways a phone can reach that adapter's IPv4: the plain address, the public web
+/// network adapter (routable adapters first, then ethernet before wifi before everything else —
+/// tunnels, docker, VPNs, VM networks), and inside each group the four ways a phone can reach that adapter's IPv4: the plain address, the public web
 /// link carrying it in <c>?h=</c>, the <c>local-ip.co</c> HTTPS name derived from it, and direct
 /// IP HTTPS with local trust.
 /// The <c>.local</c> name is always the LAST row: it is the only option that regularly fails outright
@@ -24,13 +24,11 @@ namespace CouchCoop.Mod.HostUi;
 /// self-check went. The FIRST ENABLED entry is the dialog's default selection.
 /// </para>
 /// <para>
-/// The ordering is NOT <see cref="LanAddressRanking.Rank"/>. That ranker answers a different
-/// question — "which single IPv4 do we advertise unattended" — and is therefore GATEWAY-first, since
-/// a machine-picked address that cannot route is worse than one that merely looks odd. Here a human
-/// is reading a list and picking, so the list is grouped by the thing a human recognises: the
-/// interface KIND. Gateway and range signals survive as the within-tier tiebreak via
-/// <see cref="LanAddressRanking.ScoreOf"/>. <see cref="LanAddressRanking.Rank"/> itself is untouched
-/// and still owns the advertised host.
+/// The ordering is <see cref="LanAddressRanking.ScoreOf"/>, the same one
+/// <see cref="LanAddressRanking.Rank"/> uses for the address advertised unattended: GATEWAY first,
+/// then the adapter tier, then range. So the default QR is always the advertised address. It used to
+/// lead with the tier, which let a gateway-less VM bridge, or a VPN that Windows reports as Ethernet,
+/// take the default and push a reachable wifi off the list (issue #11).
 /// </para>
 /// <para>
 /// A method that cannot work right now is still LISTED with its blocker in the detail line. HTTPS
@@ -41,14 +39,14 @@ namespace CouchCoop.Mod.HostUi;
 public static class QrHostOptions
 {
     /// <summary>Complete adapter × method data cap, including override and mDNS rows.</summary>
-    public const int MaxOptions = 14;
+    public const int MaxOptions = (MaxAdapterGroups * 4) + 2;
 
     /// <summary>
-    /// At most this many adapter groups (each up to four rows). Three covers the realistic couch
-    /// topology (ethernet + wifi + one virtual adapter); beyond that the extra groups are ever-worse
-    /// candidates by the same score that ordered them.
+    /// At most this many adapter groups (each up to four rows). Ten plus the override and mDNS rows
+    /// is what the network picker can show inside the card without scrolling. Three was too few: a PC
+    /// with two VPNs and two VM networks never listed its wifi.
     /// </summary>
-    public const int MaxAdapterGroups = 3;
+    public const int MaxAdapterGroups = 10;
 
     /// <summary>Suffix a machine is published under on the local link by mDNS.</summary>
     public const string MdnsSuffix = ".local";
@@ -201,8 +199,8 @@ public static class QrHostOptions
     }
 
     /// <summary>
-    /// One winner per adapter: the best-scored eligible IPv4 of each interface, groups ordered
-    /// ethernet → wifi → other, then score, then OS enumeration order (stable), duplicate addresses
+    /// One winner per adapter: the best-scored eligible IPv4 of each interface, groups ordered by
+    /// <see cref="LanAddressRanking.ScoreOf"/>, then OS enumeration order (stable), duplicate addresses
     /// collapsed, capped at <see cref="MaxAdapterGroups"/>.
     /// </summary>
     /// <remarks>
@@ -233,9 +231,7 @@ public static class QrHostOptions
 
         var seenAddresses = new HashSet<string>(StringComparer.Ordinal);
         var result = new List<LanAddressCandidate>();
-        foreach (var winner in winners
-            .OrderByDescending(candidate => LanAddressRanking.TypeTier(candidate.InterfaceType))
-            .ThenByDescending(LanAddressRanking.ScoreOf))
+        foreach (var winner in winners.OrderByDescending(LanAddressRanking.ScoreOf))
         {
             if (result.Count >= MaxAdapterGroups)
             {
@@ -349,7 +345,7 @@ public static class QrHostOptions
     }
 
     private static QrAdapterKind AdapterKindOf(LanAddressCandidate candidate)
-        => LanAddressRanking.TypeTier(candidate.InterfaceType) switch
+        => LanAddressRanking.TierOf(candidate) switch
         {
             2 => QrAdapterKind.Ethernet,
             1 => QrAdapterKind.Wifi,
