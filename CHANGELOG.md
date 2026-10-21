@@ -9,6 +9,12 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and
 
 ## [Unreleased]
 
+## [0.5.2] - 2026-10-21
+
+### Fixed
+
+- Support serving frontend files when Vortex mod-manager symlinks the install dir.
+
 ## [0.5.1] - 2026-10-19
 
 ### Added
@@ -252,7 +258,8 @@ First public release. Turn the phones, tablets and laptops on your network into 
 a local Slay the Spire 2 co-op session — no app to install on the other devices, and no `sts2` CLI
 needed to run the mod.
 
-[Unreleased]: https://github.com/tfoxy/sts2-couch-coop/compare/v0.5.1...HEAD
+[Unreleased]: https://github.com/tfoxy/sts2-couch-coop/compare/v0.5.2...HEAD
+[0.5.2]: https://github.com/tfoxy/sts2-couch-coop/releases/tag/v0.5.2
 [0.5.1]: https://github.com/tfoxy/sts2-couch-coop/releases/tag/v0.5.1
 [0.5.0]: https://github.com/tfoxy/sts2-couch-coop/releases/tag/v0.5.0
 [0.4.2]: https://github.com/tfoxy/sts2-couch-coop/releases/tag/v0.4.2
