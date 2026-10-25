@@ -2099,6 +2099,8 @@ public sealed partial class HeadlessClientManager : IDisposable
         // Prevent the headless child from inheriting the host's port so if it tried to spawn
         // sub-headless instances (it won't, but defensive) they'd start at the right base.
         psi.EnvironmentVariables.Remove("COUCHCOOP_HEADLESS_WRAPPER");
+        // The streaming-seat flag marks the one process it is set on; a seat never inherits it from its host.
+        StreamingSeatRole.ClearInheritedRole(psi);
         MultiplayerNameStore.ConfigureSeatLaunch(psi, hasWrapper: _headlessWrapper is not null);
 
         try

@@ -191,6 +191,17 @@ if (args is ["fmod-stub", ..])
     return;
 }
 
+// `dotnet run --project tests/CouchCoop.Mod.Tests -- streaming-seat` runs the streaming seat role ALONE: which
+// headless savers an instance installs, whether it loads the render capture or refuses to start, and the source
+// pins that mod init and the seat launcher ask the role. Pure, no engine.
+if (args is [StreamingSeatRoleTests.Verb, ..])
+{
+    RenderCaptureExtensionLoaderTests.Run();
+    StreamingSeatRoleTests.Run();
+    Console.WriteLine("streaming seat: ok");
+    return;
+}
+
 if (args is ["host-guards", ..])
 {
     NetTransportPatchTargetsTests.Run();
@@ -823,6 +834,11 @@ NetTransportPatchTargetsTests.Run();
 // WS-1: the env-gated CommandLineHelper override table — EMPTY on a host (so it hosts normally, Steam included),
 // fastmp=join + clientId on a headless couch seat launched with no CLI args at all.
 CommandLineOverrideTests.Run();
+// The render-capture extension path (a malformed one is refused unloaded) and the streaming seat role that loads
+// it: unflagged installs both headless savers as before and loads nothing; flagged skips both and needs the capture.
+// Also reachable alone as `-- streaming-seat`.
+RenderCaptureExtensionLoaderTests.Run();
+StreamingSeatRoleTests.Run();
 // WS-1: the composite Steam+ENet host — its shape (a missed override silently makes a message type Steam-only)
 // and its peer routing (unknown ids must reach ENet, never Steam, which throws on an unknown peer).
 DualNetHostShapeTests.Run();

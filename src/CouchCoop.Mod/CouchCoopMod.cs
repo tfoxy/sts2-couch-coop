@@ -205,6 +205,11 @@ public static class CouchCoopMod
             // with no protection installed. Nothing above it here but EnsureMonoModCanPatch(), which it needs;
             // everything that can fail belongs below the protection, not above it.
             if (IsHeadlessClient) HeadlessSeatCloudIsolationGuard.EnforceOrExit();
+            // The streaming seat (COUCHCOOP_STREAMING_SEAT=1) loads godot-scene-web's render-capture GDExtension
+            // here, and refuses to start when it cannot: below the seat's cloud guard, above the override that lets
+            // a seat join. Unflagged, it loads nothing and logs nothing (one warning if the extension is named
+            // anyway). See StreamingSeatRole for the role, including the two savers below that it skips.
+            StreamingSeatRole.StartCaptureOrExit();
             // Feed the game an env-gated override table through CommandLineHelper. EMPTY on a host (it hosts
             // normally, Steam included — the old FastmpPatch forced ENet on everyone and made a real Steam
             // session impossible); on a headless couch seat it re-materializes "fastmp=join" + "clientId=<netId>"
@@ -301,8 +306,9 @@ public static class CouchCoopMod
             // uploads to the GPU and frees it), which measured 456MB across 1,491 images on a live 1374MB seat
             // against 227MB in the drawing host. Releases the VRAM-compressed tier, which nothing in a process
             // that never draws can consume. Headless CLIENT only — a `--headless` dev HOST still serves asset
-            // extraction from those very images (see the /res guard in CouchCoopBrowserServer).
-            if (IsHeadlessClient)
+            // extraction from those very images (see the /res guard in CouchCoopBrowserServer). Not on the streaming
+            // seat: the render capture adopts textures from exactly those images.
+            if (StreamingSeatRole.InstallsTextureEvictor(StreamingSeatRole.IsStreamingSeat, IsHeadlessClient))
             {
                 HeadlessTextureImageEvictor.Install();
             }
@@ -312,8 +318,13 @@ public static class CouchCoopMod
             // while idle — all CPU the mirror never consumes (the browser reproduces the motion on its own rAF
             // clock). Runs for a spawned headless CLIENT and for a `--headless` dev/server HOST alike: both are
             // windowless (no human watching their own screen) and both serve the browser mirror, which is the sole
-            // consumer. A WINDOWED display host is excluded — its own on-screen animators must keep running.
-            if (IsHeadlessClient || IsHeadlessDisplay()) CouchCoopHeadlessVisualSuspender.Install();
+            // consumer. A WINDOWED display host is excluded — its own on-screen animators must keep running. So is
+            // the streaming seat, whose consumer is the render capture: a suspended scene draws nothing to stream.
+            if (StreamingSeatRole.InstallsVisualSuspender(
+                    StreamingSeatRole.IsStreamingSeat, IsHeadlessClient || IsHeadlessDisplay()))
+            {
+                CouchCoopHeadlessVisualSuspender.Install();
+            }
             // Deadlock backstop for the same freeze, WINDOWLESS ONLY (positive COUCHCOOP_HEADLESS_DEATH_DELAY_CAP
             // overrides the safe default):
             // A dying creature waits on every death delayer attached to it and nothing bounds that wait; the one
