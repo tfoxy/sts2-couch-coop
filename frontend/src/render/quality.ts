@@ -713,7 +713,7 @@ export function __resetDetectedTierForTest(): void {
  * back at full size, where a lower resolution costs a soft glow some sharpness nobody can name), but it may NEVER
  * scale the stage. Those are different pixels answering different questions, and only one of them is text.
  *
- * WHY IT IS SPELLED OUT INSTEAD OF ASSUMED: the (paused) godot client shipped a "Half-res stage" quality lever and
+ * HISTORICAL PITFALL: the retired native client shipped a "Half-res stage" quality lever and
  * it blurred every glyph on the screen — the whole readable surface, in exchange for fill-rate the effect targets
  * were already the right place to buy. Keeping the stage's backing store on this ONE function, with no tier
  * argument to reach for, excludes that class of bug by construction: there is nowhere for a tier to enter.

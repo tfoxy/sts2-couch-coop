@@ -65,18 +65,17 @@ describe("joinInfoFromSession", () => {
     expect(info.unaffiliated).toBe(false);
   });
 
+  it("does not expose a retired native APK field from an older session", () => {
+    const olderSession = { ...session(), androidApkUrl: "/couchcoop-client.apk" };
+    const info = joinInfoFromSession(olderSession, "connected");
+    expect(info).not.toHaveProperty("androidApkUrl");
+  });
+
   it("falls back to a null session (mirror before its first session) as title-less + empty roster", () => {
     const info = joinInfoFromSession(null, "connecting");
     expect(info.screenKind).toBeNull();
     expect(info.players).toEqual([]);
     expect(info.joined).toBe(false);
-    expect(info.androidApkUrl).toBeNull();
-  });
-
-  it("lifts the host-served Android APK url when present, null otherwise", () => {
-    expect(joinInfoFromSession(session({ androidApkUrl: "/couchcoop-client.apk" }), "connected").androidApkUrl)
-      .toBe("/couchcoop-client.apk");
-    expect(joinInfoFromSession(session(), "connected").androidApkUrl).toBeNull();
   });
 });
 
@@ -564,10 +563,6 @@ describe("iOS Add-to-Home-Screen install hint", () => {
     expect(shouldShowIosInstallHint({ userAgent: null })).toBe(false);
   });
 });
-
-// The Android APK hint is gone (the native client is paused), and with it `isAndroid`/`androidInstallUrl`. The
-// ENVELOPE field stays — the host still serves the route for side-loading a dev build — so `joinInfoFromSession`
-// keeps lifting `androidApkUrl` (covered above); nothing in either view renders it.
 
 // R19 WP-2c — the multiplayer lobby picker's copy.
 //

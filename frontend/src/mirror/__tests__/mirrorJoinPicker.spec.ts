@@ -466,9 +466,8 @@ describe("MirrorJoinPicker — transient lifecycle states", () => {
     expect(wrapper.find('[data-testid="mirror-join-message"]').text()).toContain("can't be joined");
   });
 
-  // The Android APK hint is GONE from every pre-game state (the native client is paused, so pointing phones at it
-  // would advertise an app nobody maintains). The host still serves the route + envelope field for side-loading;
-  // nothing renders it. Asserted on a phone-shaped navigator, which is the only UA that ever showed it.
+  // The retired native client has no install hint. Asserted on an Android navigator, which is the only UA
+  // that previously showed it.
   it.each(["picker", "picker-with-name", "title-only"] as const)(
     "never renders an Android APK hint on %s, even on an Android UA",
     (mode) => {

@@ -66,10 +66,8 @@ export interface RenderItem {
 // this the stroke renders ~2× too thick. We don't capture the MSDF flag yet, so default to the non-MSDF rule.
 //
 // EXPORTED for the canvas text rasterizer (M4, `canvas/textLayout.ts`), which needs the same number and must not
-// restate it. It applies there for the same reason it applies here and NOT for the reason the native client's
-// TextBuilder gives for refusing it: `-webkit-text-stroke` and canvas2D `strokeText` are the same primitive, a
-// CENTRED stroke straddling the glyph edge, so half the declared width lands outside. Godot's outline grows
-// entirely OUTWARD, which is why the native port keeps the full width — a different renderer, a different rule.
+// restate it. `-webkit-text-stroke` and canvas2D `strokeText` are the same primitive, a CENTRED stroke straddling
+// the glyph edge, so half the declared width lands outside. Godot's outline grows entirely OUTWARD.
 export const OUTLINE_SCALE = 0.5;
 
 // The one-axis exception applies only while readability scaling is active, because the outset exists only to
@@ -676,10 +674,6 @@ export function nodeStyle(item: RenderItem): Record<string, string> {
       // Scoped to RICH text specifically, not "all text": a plain `Label` defaults to clip_contents = false, so it
       // never reached here anyway, and a `ScrollContainer`'s clip is legitimate and must keep working — it is not a
       // rich-text node, so it takes the `overflow: hidden` fall-through below.
-      //
-      // The native godot-client twin does exactly this and names the same victims: `rtl.ClipContents = false` in
-      // godot-client/src/Scene/TextBuilder.cs (ConfigureRich). So this re-converges the two clients rather than
-      // introducing a web-only rule.
     } else if (clipAxisOn() && item.clipAxisOutsetX != null) {
       // (2) ONE-AXIS CLIP (clipAxis.ts): this scene identity's clip must bound the VERTICAL axis only, because a
       // readability transform in THIS repo makes its subtree wider than the container the game sized for it.
@@ -923,10 +917,9 @@ export function textStyle(node: MirrorNode): Record<string, string> {
   //     players...", the rest-site Smith description, event/merchant descriptions).
   //   * WRAPPED plain text — a wrapping item is stretched to the container width, so today its lines are left-packed
   //     inside a "centred" block. Godot centres EACH line.
-  // `text-align` fixes both, and is the exact web analog of the native client's `HorizontalAlignment = MapHalign(...)`
-  // (godot-client/src/Scene/TextBuilder.cs — applied on BOTH the Label and the RichTextLabel path, which is why this
-  // is emitted unconditionally here too). Inner `[center]`/`[right]` bbcode still wins: gsw stamps its own inline
-  // `text-align` on the `.godot-rich-align` paragraph it builds for an aligned region, exactly like Godot's
+  // `text-align` fixes both and is applied on both the plain-label and rich-text paths. Inner `[center]`/`[right]`
+  // bbcode still wins: gsw stamps its own inline `text-align` on the `.godot-rich-align` paragraph it builds for an
+  // aligned region, exactly like Godot's
   // PushParagraph overrides the label's default alignment.
   //
   // LEFT (and an unstreamed alignment) deliberately emits NOTHING rather than `text-align: left`: left is already the

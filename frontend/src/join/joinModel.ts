@@ -1,9 +1,8 @@
 // The join/lobby model: the data shape and the decisions behind the join screen — per-seat buttons in a
 // picker, a name field where a new player may be added, plus name memory and `?name=` auto-join. It is kept
 // out of the components so the rules are written once, unit-testable, and so the C# twins in
-// src/CouchCoop.MirrorProtocol/Join/JoinModel.cs (which the native client renders from) have something to be
-// in lockstep WITH. Everything here reads off the `session` envelope alone — the join screen never needs the
-// scene.
+// src/CouchCoop.MirrorProtocol/Join/JoinModel.cs have something to be in lockstep WITH. Everything here reads
+// off the `session` envelope alone — the join screen never needs the scene.
 
 import type {
   BrowserPlayerOption,
@@ -27,8 +26,6 @@ export interface JoinInfo {
   joined: boolean;
   /** `session.joined === false` (explicitly unassigned) — the viewer is present but not assigned. */
   unaffiliated: boolean;
-  /** Host-served native Android APK URL ("/couchcoop-client.apk"), or null when none is deployed. */
-  androidApkUrl: string | null;
 }
 
 export function joinInfoFromSession(
@@ -42,8 +39,7 @@ export function joinInfoFromSession(
     screenKind: screen?.kind ?? null,
     screenTitle: screen?.title ?? null,
     joined: session?.session?.joined === true,
-    unaffiliated: session?.session?.joined === false,
-    androidApkUrl: session?.androidApkUrl ?? null
+    unaffiliated: session?.session?.joined === false
   };
 }
 
@@ -742,12 +738,6 @@ export function readGamepadAdvisoryEnv(seams: LiveEnvSeams = {}): GamepadAdvisor
     dismissed: readDismissedFlag(liveStorage(seams), GAMEPAD_ADVISORY_DISMISSED_STORAGE_KEY)
   };
 }
-
-// NO ANDROID HINT. The join screens used to offer "Android: install the native app for smoother play" (gated by an
-// `isAndroid` UA sniff + an `androidInstallUrl` helper). Both are gone: the native Godot client is paused, so
-// advertising it sends phones to an app nobody is maintaining. The HOST-side plumbing is deliberately kept —
-// `androidApkUrl` still rides the session envelope and the mod still serves the route — so a dev build can be
-// side-loaded by URL and the hint can come back as pure UI if the native client ever resumes.
 
 // ---- the `?name=` page-URL param ---------------------------------------------------------------------------
 //

@@ -35,7 +35,7 @@ def init_repo(path: Path, *, files: dict[str, str] | None = None) -> Path:
     git(path, "config", "user.email", "fixture@example.invalid")
     (path / ".gitignore").write_text(
         ".worktrees\nnode_modules\nfrontend/node_modules\n.godot\n"
-        "godot-client/.godot\n.ai\n.agents\n.claude\n.codex\n.sts2\n"
+        ".ai\n.agents\n.claude\n.codex\n.sts2\n"
         "sts2.local.yaml\ntarget\n.vscode\npresentation/web/node_modules\nignored.fixture\n.fixture-installed\n",
         encoding="utf-8",
     )
@@ -125,8 +125,6 @@ def test_migration_fixtures(base: Path) -> None:
     )
     couch = repos["sts2-couch-coop"]
     (couch / "sts2.local.yaml").write_text("game:\n  path: fixture\n", encoding="utf-8")
-    (couch / "godot-client/.godot/imported").mkdir(parents=True)
-    (couch / "godot-client/.godot/imported/cache.fixture").write_text("cache\n", encoding="utf-8")
     (couch / "frontend/node_modules").mkdir(parents=True)
     (couch / "frontend/node_modules/package.fixture").write_text("shared\n", encoding="utf-8")
     (couch / ".ai").mkdir()
@@ -167,7 +165,7 @@ def test_migration_fixtures(base: Path) -> None:
     assert (new_couch / "untracked.fixture").read_text(encoding="utf-8") == "also survives\n"
     assert (new_couch / "ignored.fixture").read_text(encoding="utf-8") == "ignored survives\n"
     assert (new_couch / "sts2.local.yaml").read_text(encoding="utf-8") == "game:\n  path: fixture\n"
-    assert (new_couch / "godot-client/.godot/imported/cache.fixture").read_text(encoding="utf-8") == "cache\n"
+    assert not (new_couch / "godot-client").exists()
     assert os.readlink(new_couch / "frontend/node_modules") == os.path.relpath(couch / "frontend/node_modules", new_couch / "frontend")
     assert os.readlink(new_couch / ".ai") == os.path.relpath(couch / ".ai", new_couch)
     assert (new_couch / ".sts2").is_dir() and not (new_couch / ".sts2").is_symlink()
@@ -199,8 +197,6 @@ def test_couch_creator(base: Path) -> None:
     (couch / "sts2.local.yaml").write_text("game:\n  path: fixture\n", encoding="utf-8")
     (couch / "frontend/node_modules").mkdir(parents=True)
     (couch / "frontend/node_modules/package.fixture").write_text("shared\n", encoding="utf-8")
-    (couch / "godot-client/.godot/imported").mkdir(parents=True)
-    (couch / "godot-client/.godot/imported/cache.fixture").write_text("cache\n", encoding="utf-8")
     (couch / ".ai").mkdir()
     (couch / ".ai/shared.fixture").write_text("shared notes\n", encoding="utf-8")
     deps = {
@@ -225,7 +221,7 @@ def test_couch_creator(base: Path) -> None:
     assert git(flat, "branch", "--show-current") == "worktree/flat"
     assert git(flat, "rev-parse", "HEAD") == git(couch, "rev-parse", "main")
     assert (flat / "sts2.local.yaml").read_text(encoding="utf-8") == "game:\n  path: fixture\n"
-    assert (flat / "godot-client/.godot/imported/cache.fixture").read_text(encoding="utf-8") == "cache\n"
+    assert not (flat / "godot-client").exists()
     assert os.readlink(flat / "frontend/node_modules") == os.path.relpath(couch / "frontend/node_modules", flat / "frontend")
     assert os.readlink(flat / ".ai") == os.path.relpath(couch / ".ai", flat)
     assert (flat / ".sts2").is_dir() and not (flat / ".sts2").is_symlink()
@@ -244,6 +240,7 @@ def test_couch_creator(base: Path) -> None:
     assert git(bundled_spirectl, "rev-parse", "HEAD") == git(deps["spirectl"], "rev-parse", "main")
     assert os.readlink(bundle / "godot-scene-web") == "../godot-scene-web"
     assert (bundle / "godot-scene-web").resolve() == deps["godot-scene-web"]
+    assert not (bundled_couch / "godot-client").exists()
     assert not (bundle / "sts2-couch-coop/.sts2/shared.fixture").exists()
 
 

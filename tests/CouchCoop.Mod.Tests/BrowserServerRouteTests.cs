@@ -295,6 +295,7 @@ if (args is ["seat-pipe", ..])
 if (args is ["static-spa", ..])
 {
     await BrowserServerRouteTests.AssertStaticFileContainmentAsync();
+    await BrowserServerRouteTests.AssertRetiredNativeApkRouteAsync();
     Console.WriteLine("static SPA: ok");
     return;
 }
@@ -1140,6 +1141,7 @@ internal sealed partial class BrowserServerRouteTests
     {
         await SeatDirectoryIsLiveOnTheConnectionPathWithoutStartAsync();
         await AssertStaticFileContainmentAsync();
+        await AssertRetiredNativeApkRouteAsync();
 
         using var root = new TempStaticRoot();
         using var cacheRoot = new TempResourceCacheRoot();
@@ -3608,6 +3610,55 @@ internal sealed partial class BrowserServerRouteTests
         return session.RootElement.Clone();
     }
 
+    internal static async Task AssertRetiredNativeApkRouteAsync()
+    {
+        using var root = new TempStaticRoot();
+        var frontend = Path.Combine(root.Path, "frontend");
+        Directory.CreateDirectory(frontend);
+        File.WriteAllText(Path.Combine(frontend, "index.html"), "<!doctype html><div>spa-index</div>");
+        var runtime = new RecordingSpirectlRuntime();
+        using var facts = runtime.InstallGameFacts();
+        await using var server = new CouchCoopBrowserServer(
+            new StaticSpaFileProvider(frontend),
+            new CapturingAssetAdapter(),
+            runtime.NewEnvelopeFactory(),
+            hostBrowserAccess: new TestHostBrowserAccess());
+        var baseUri = await server.StartAsync();
+
+        await AssertMissingApkAsync();
+        var apkDirectory = Path.Combine(root.Path, "apk");
+        Directory.CreateDirectory(apkDirectory);
+        File.WriteAllText(Path.Combine(apkDirectory, "couchcoop-client.apk"), "stale-native-apk");
+        await AssertMissingApkAsync();
+
+        using var socket = new ClientWebSocket();
+        using var deadline = new CancellationTokenSource(TimeSpan.FromSeconds(5));
+        await socket.ConnectAsync(new UriBuilder(baseUri)
+        {
+            Scheme = "ws",
+            Path = "/ws",
+            Query = "watch=0&staticBg=0&cardFlight=1&handTween=1&trailDrive=0"
+        }.Uri, deadline.Token);
+        using var session = JsonDocument.Parse(await ReadWsMessageAsync(socket, deadline.Token));
+        Expect(session.RootElement.GetProperty("type").GetString() == "session", "APK retirement fixture receives a session");
+        Expect(!session.RootElement.TryGetProperty("androidApkUrl", out _),
+            "sessions omit the retired APK URL even when an old APK remains installed");
+        await socket.CloseAsync(WebSocketCloseStatus.NormalClosure, "done", deadline.Token);
+
+        async Task AssertMissingApkAsync()
+        {
+            var response = await GetAsync(baseUri, "/couchcoop-client.apk");
+            Expect(response.StatusLine.Contains("404 NotFound", StringComparison.Ordinal),
+                "the retired native APK URL returns the static missing-file 404");
+            using var error = JsonDocument.Parse(response.Body);
+            Expect(error.RootElement.GetProperty("code").GetString() == "not-found",
+                "the retired APK route uses the ordinary missing-file response");
+            Expect(!response.Body.Contains("spa-index", StringComparison.Ordinal)
+                   && !response.Body.Contains("stale-native-apk", StringComparison.Ordinal),
+                "the retired APK URL serves neither the SPA fallback nor a stale APK");
+        }
+    }
+
     private static void AssertAnonymousConnectSession(JsonElement root)
     {
         Expect(root.GetProperty("type").GetString() == "session", "connect emits a one-time session reply");
@@ -3623,11 +3674,13 @@ internal sealed partial class BrowserServerRouteTests
         Expect(root.GetProperty("notices")[0].GetProperty("capabilityId").GetString() == CouchCoopRuntimeHost.StateCapability, "session includes structured notices");
         Expect(root.GetProperty("screen").GetProperty("kind").GetString() == "run", "session classifies the current screen");
         Expect(!root.TryGetProperty("lobbyState", out _), "session message omits the redundant lobbyState re-encoding");
+        Expect(!root.TryGetProperty("androidApkUrl", out _), "session message omits the retired native APK URL");
     }
 
     private static void AssertJoinedRunSession(JsonElement root)
     {
         Expect(root.GetProperty("type").GetString() == "session", "join emits an updated session reply");
+        Expect(!root.TryGetProperty("androidApkUrl", out _), "joined sessions omit the retired native APK URL");
         Expect(root.GetProperty("session").GetProperty("name").GetString() == "Alice", "session exposes trimmed public browser name");
         Expect(root.GetProperty("session").GetProperty("playerId").GetString() == "Alice", "session exposes assigned internal player id");
         Expect(root.GetProperty("screen").GetProperty("kind").GetString() == "run", "run state is classified");

@@ -119,8 +119,7 @@ const DRAG_THRESHOLD_DESIGN = 8;
 // tap-side guard (confirm tap included). The TOUCH classifier therefore floors the threshold at this much REAL
 // on-screen travel (≈ Android's 8dp touch slop), converted through the stage scale per gesture; on a desktop-sized
 // stage the design constant still governs (10 CSS px ≈ 11 design px there). Mouse paths keep the design constant
-// (a cursor has no contact patch). `?tapSlopCss=0` restores the pure design-px threshold. Native twin: none yet —
-// the godot client is paused; GestureTypes.DefaultDragThresholdDesign stays 8 until it resumes.
+// (a cursor has no contact patch). `?tapSlopCss=0` restores the pure design-px threshold.
 const TOUCH_TAP_SLOP_CSS_PX = 10;
 // Two-finger movement (DESIGN px) past which the gesture is a pinch/scroll, not a right-click tap → emit nothing.
 const TWO_FINGER_CANCEL_DESIGN = 24;

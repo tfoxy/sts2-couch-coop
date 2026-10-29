@@ -30,11 +30,7 @@
 // ENTRIES and mirrorRenderer's isDrawingTools / isMenuReticle matchers key on.
 //
 // This module is PURE (no DOM, no query reads), like viewScale.ts. The consumer applies its result only while
-// readability scaling is enabled; see nodeStyles.ts, which owns the `clip_contents` branch this feeds. There is no
-// native C# twin:
-// `MirrorProtocol.MirrorNode.ClipContents` rides the wire, but the native godot-client never applies it as a clip
-// (its only use is `TextBuilder.ConfigureRich`, which switches Godot's RichTextLabel default OFF), so there is
-// nothing on that side to keep in lockstep.
+// readability scaling is enabled; see nodeStyles.ts, which owns the `clip_contents` branch this feeds.
 
 export interface ClipAxisEntry {
   /** Owning instanced scene, matched EXACTLY against `computeSceneInfo().file`. */

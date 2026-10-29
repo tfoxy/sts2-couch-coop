@@ -186,9 +186,6 @@ export interface BrowserSessionEnvelope extends BrowserEnvelopeBase {
   // so identical BBCode reaches the browser whichever way the setting is set. null/absent = UNKNOWN (a Godot-less
   // host, an older one) ⇒ the client keeps its own default of ENABLED, which is the game's default too.
   textEffects?: boolean | null;
-  // Relative URL of the host-served native Android client APK ("/couchcoop-client.apk"). Present only when the
-  // locally-built APK is deployed on the host; the join screens render an install link from it on Android.
-  androidApkUrl?: string | null;
   // The host machine name, stamped on every current session.
   hostName: string;
   // The host's asset-cache identity: it changes exactly when the bytes behind a given /res/ url can have
@@ -548,7 +545,6 @@ export function parseBrowserEnvelopeValue(raw: unknown): BrowserEnvelope {
       freezeParticles: typeof value.freezeParticles === "boolean" ? value.freezeParticles : null,
       freezeSpines: typeof value.freezeSpines === "boolean" ? value.freezeSpines : null,
       freezeDecor: typeof value.freezeDecor === "boolean" ? value.freezeDecor : null,
-      androidApkUrl: typeof value.androidApkUrl === "string" ? value.androidApkUrl : null,
       hostName: requiredString(value.hostName, "hostName"),
       assetCacheToken: typeof value.assetCacheToken === "string" ? value.assetCacheToken : null,
       staticBackground: normalizeStaticBackground(value.staticBackground),

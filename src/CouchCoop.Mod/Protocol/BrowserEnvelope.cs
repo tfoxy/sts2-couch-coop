@@ -56,15 +56,11 @@ public sealed record BrowserEnvelope(
     // be read at all — a Godot-less host, e.g. the hosted-server test harness — and the client then keeps its own
     // default of enabled, which is the game's default too.
     bool? TextEffects = null,
-    // Relative URL of the host-served native Android client APK ("/couchcoop-client.apk"), present only when the
-    // locally-built APK is deployed next to the SPA. The browser join page renders an install link from it; the
-    // native client's SessionEnvelope.Parse ignores it (unknown fields are tolerated).
-    string? AndroidApkUrl = null,
-    // The native client's disk asset-cache invalidation token. Every current host stamps it.
+    // The clients' asset-cache invalidation token. Every current host stamps it.
     string AssetCacheToken = "",
     // The HOST MACHINE's name (Environment.MachineName), stamped in BrowserStateEnvelopeFactory. Purely
-    // informational: the native join dialog renders "<machine>  ·  <ip>:<port>" so a viewer can identify the
-    // host on the LAN. This is the value the LAN-discovery responder advertises.
+    // informational, so a viewer can identify the host on the LAN. This is the value the
+    // LAN-discovery responder advertises.
     string HostName = "",
     // Static background (Stage A): the CURRENT combat room's background image descriptor — the live bg scene
     // root's res:// path plus a ready-to-fetch /bg/ URL (digest-qualified when the tracker read the mounted layer

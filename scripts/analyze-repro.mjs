@@ -21,8 +21,7 @@
 // frontend/src/mirror/sceneTree.ts, so the tree this walks is the tree the browser built — not a
 // re-implementation that can drift from it. They are loaded through `scripts/lib/mirror-probe.mjs`'s
 // `loadSceneTree`, which owns the `registerHooks` alias/stub shim that makes a Vue-era `@/…` module tree
-// importable under bare Node. (Not `compare-replay-final-state.mjs`'s bare `import()`: that predates
-// sceneTree.ts gaining runtime imports and no longer resolves — see the note in mirror-probe.mjs.)
+// importable under bare Node. A bare `import()` cannot resolve these frontend aliases.
 //
 // WHAT IT DOES NOT DO: judge. It prints the timeline and flags the two things that are unambiguously wrong (a
 // send with no answer, a marker with no input near it). Deciding which of those is the bug is the reader's job.

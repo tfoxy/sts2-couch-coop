@@ -1860,9 +1860,6 @@ public sealed class CouchCoopBrowserServer(
             var connectionEnvelopeFactory = new BrowserStateEnvelopeFactory(
                 envelopeFactory.RuntimeHost,
                 _sessionRegistry,
-                androidApkUrl: () => staticFiles.TryResolveAndroidApkPath() is null
-                    ? null
-                    : "/" + StaticSpaFileProvider.AndroidApkFileName,
                 // The host's ONE seat directory (see _mirrorSeats): its grace-window bookkeeping must outlive any
                 // single connection, so the same instance is shared rather than one built per socket.
                 mirrorSeats: MirrorSeats(),
@@ -2197,35 +2194,6 @@ public sealed class CouchCoopBrowserServer(
         if (request.Path.StartsWith("/perf/", StringComparison.Ordinal))
         {
             await HandlePerfReportRequestAsync(stream, request, cancellationToken).ConfigureAwait(false);
-            return;
-        }
-
-        // The locally-built native Android client, deployed under the mod dir (see scripts/build-android-apk.sh).
-        // Dedicated branch: the static SPA provider must not handle this path — it would buffer the ~97MB body
-        // in memory per request, and its index.html fallback would serve HTML at 200 when the APK is absent.
-        if (string.Equals(request.RawPath, "/" + StaticSpaFileProvider.AndroidApkFileName, StringComparison.Ordinal))
-        {
-            var apkPath = staticFiles.TryResolveAndroidApkPath();
-            if (apkPath is null)
-            {
-                await HttpResponseWriter.WriteJsonErrorAsync(
-                    stream,
-                    HttpStatusCode.NotFound,
-                    "apk-not-available",
-                    "No Android client APK is deployed on this host.",
-                    cancellationToken).ConfigureAwait(false);
-                return;
-            }
-
-            await HttpResponseWriter.WriteFileAsync(
-                stream,
-                apkPath,
-                "application/vnd.android.package-archive",
-                new Dictionary<string, string>
-                {
-                    ["Content-Disposition"] = $"attachment; filename=\"{StaticSpaFileProvider.AndroidApkFileName}\""
-                },
-                cancellationToken).ConfigureAwait(false);
             return;
         }
 

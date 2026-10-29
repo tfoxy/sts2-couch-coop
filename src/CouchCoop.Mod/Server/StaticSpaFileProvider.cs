@@ -2,13 +2,6 @@ namespace CouchCoop.Mod.Server;
 
 public sealed class StaticSpaFileProvider(string staticRoot)
 {
-    // The locally-built Android client APK, deployed by scripts/build-android-apk.sh --deploy into
-    // <modDir>/apk/ — a SIBLING of the SPA's frontend/ dir, NOT inside it: the frontend deploy (vite)
-    // wipes its outDir on every build and would delete an APK stored there. Presence of the file IS the
-    // opt-in to serve it (no config flag); served by a dedicated streaming route, NOT this provider
-    // (a 97MB APK must not ride the read-whole-file-into-memory path below).
-    public const string AndroidApkFileName = "couchcoop-client.apk";
-
     private readonly string _staticRoot = Path.GetFullPath(staticRoot);
     private readonly string _resolvedStaticRoot = ResolveExistingPath(Path.GetFullPath(staticRoot));
     private readonly string? _deployedStaticRoot = ResolveDeployedRoot(Path.GetFullPath(staticRoot));
@@ -42,12 +35,6 @@ public sealed class StaticSpaFileProvider(string staticRoot)
         {
             return null;
         }
-    }
-
-    public string? TryResolveAndroidApkPath()
-    {
-        var candidate = Path.GetFullPath(Path.Combine(_staticRoot, "..", "apk", AndroidApkFileName));
-        return File.Exists(candidate) ? candidate : null;
     }
 
     public async Task<StaticSpaFile?> TryOpenAsync(string path, CancellationToken cancellationToken = default)

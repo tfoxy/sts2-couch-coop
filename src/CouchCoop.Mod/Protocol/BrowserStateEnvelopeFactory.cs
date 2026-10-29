@@ -10,10 +10,6 @@ namespace CouchCoop.Mod.Protocol;
 public sealed class BrowserStateEnvelopeFactory(
     CouchCoopRuntimeHost runtimeHost,
     BrowserSessionRegistry? sessions = null,
-    // Resolves the host-served Android APK's relative URL, or null when no APK is deployed. Evaluated per
-    // session envelope (the APK can be deployed/removed while the host runs). Wired by the server from
-    // StaticSpaFileProvider; null (the default) omits the field from the wire entirely.
-    Func<string?>? androidApkUrl = null,
     // Derives the per-mirror-seat joinability stamped onto the roster (and auto-reaps a zombie instance). SHARED
     // across connections — it carries the grace-window bookkeeping a per-connection instance would keep resetting —
     // so the server owns one and hands the same reference to every connection factory. Null on a headless client
@@ -27,7 +23,6 @@ public sealed class BrowserStateEnvelopeFactory(
 {
     private readonly CouchCoopRuntimeHost _runtimeHost = runtimeHost ?? throw new ArgumentNullException(nameof(runtimeHost));
     private readonly BrowserSessionRegistry _sessions = sessions ?? new();
-    private readonly Func<string?>? _androidApkUrl = androidApkUrl;
     private readonly MirrorSeatDirectory? _mirrorSeats = mirrorSeats;
     private readonly Func<bool, SessionFacts>? _readSessionFacts = readSessionFacts;
 
@@ -191,15 +186,14 @@ public sealed class BrowserStateEnvelopeFactory(
             FreezeSpines: freezeSpines,
             FreezeDecor: freezeDecor,
             TextEffects: textEffects,
-            AndroidApkUrl: _androidApkUrl?.Invoke(),
-            // WS-U: clients key their asset caches by this token — the native client its disk cache namespace, the
-            // browser the `?b=` on every asset url it mints (plus its service-worker /res/ store) — and it changes
+            // WS-U: browsers key their asset caches by this token — the `?b=` on every asset url they mint
+            // (plus the service-worker /res/ store) — and it changes
             // iff the bytes a given asset url maps to can change. Composed ONCE, in CouchCoopAssetVersion, from
             // the SAME identity CouchCoopCacheRoot keys the host's own disk on, and shared with the /bg/ urls this
             // host mints so the two can never name different builds.
             AssetCacheToken: CouchCoopAssetVersion.Token,
-            // The host machine's name, so the native join dialog can name the host it is connecting to alongside
-            // its address. Same source as the LAN-discovery reply (CouchCoopHostUiServices), so a discovered host
+            // The host machine's name, so clients can name the host they connect to alongside its address.
+            // Same source as the LAN-discovery reply (CouchCoopHostUiServices), so a discovered host
             // and a hand-typed one show the same label. Cheap (a cached OS string) — no need to hoist it.
             HostName: Environment.MachineName,
             // Static background (Stage A): the tracker's published volatile — the current combat bg image the

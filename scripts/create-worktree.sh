@@ -55,7 +55,6 @@ done
 
 [[ -f "$repo_root/sts2.local.yaml" ]] || die "missing $repo_root/sts2.local.yaml"
 [[ -d "$repo_root/frontend/node_modules" ]] || die "missing $repo_root/frontend/node_modules; install frontend dependencies first"
-[[ -d "$repo_root/godot-client/.godot" ]] || die "missing $repo_root/godot-client/.godot; open/build the Godot client once first"
 
 has_spirectl=0
 has_gsw=0
@@ -161,14 +160,13 @@ if (( bundle )); then
   fi
 fi
 
-# Worktree-local CouchCoop state: copy machine config and Godot's import cache, share npm and
-# local agent/tool notes, and leave .sts2 empty and independent.
+# Worktree-local CouchCoop state: copy machine config, share npm and local agent/tool notes,
+# and leave .sts2 empty and independent.
 cp "$repo_root/sts2.local.yaml" "$couch_path/sts2.local.yaml"
-mkdir -p "$couch_path/frontend" "$couch_path/godot-client" "$couch_path/.sts2"
+mkdir -p "$couch_path/frontend" "$couch_path/.sts2"
 node_modules_link="$couch_path/frontend/node_modules"
 node_modules_rel="$(realpath --relative-to="$(dirname "$node_modules_link")" "$repo_root/frontend/node_modules")"
 ln -s "$node_modules_rel" "$node_modules_link"
-cp -a "$repo_root/godot-client/.godot" "$couch_path/godot-client/.godot"
 if [[ -d "$repo_root/.ai" ]]; then
   ai_rel="$(realpath --relative-to="$couch_path" "$repo_root/.ai")"
   ln -s "$ai_rel" "$couch_path/.ai"

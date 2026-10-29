@@ -346,7 +346,6 @@ describe("MirrorApp drop drills", () => {
         }
       ],
       screen: { kind: "run", type: "Run", title: "Run", mirrorMode: "mp-run" },
-      androidApkUrl: "/couchcoop-client.apk",
       hostName: "host",
       hostAccess: { allowed: true, reason: "allowed", generation: 0 },
       scrollAction: true,      ...over
@@ -365,9 +364,7 @@ describe("MirrorApp drop drills", () => {
     latest().emit(sessionMessage());
     await settle();
     // Steady picker: no heading at all and no spinner. (R19 WP-2 dropped the game's own screen name from a
-    // steady picker — the <h1> is now reserved for the lifecycle words asserted below. The Android APK hint that
-    // used to sit here is gone too; the native client is paused, the host still serves the route, nothing
-    // renders it.)
+    // steady picker — the <h1> is now reserved for the lifecycle words asserted below.)
     expect(app.find("h1").exists()).toBe(false);
     expect(spinner().exists()).toBe(false);
     expect(app.find('[data-testid="android-install-hint"]').exists()).toBe(false);

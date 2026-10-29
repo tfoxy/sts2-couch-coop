@@ -8,8 +8,8 @@ import { describe, expect, it } from "vitest";
 //
 // A repro file (frontend/src/mirror/reproRecorder.ts, "repro/1") is deliberately a SUPERSET of a passive
 // recording: its `dir:"in"` lines are byte-identical in shape to what scripts/record-mirror-stream.mjs writes,
-// which is what lets the replay server, the bench and the state comparator eat one without a new code path. The
-// price of that reuse is exactly one rule, and it is the rule this spec exists to keep: a line the CLIENT sent
+// which is what lets the replay server and the bench eat one without a new code path. The price of that reuse
+// is exactly one rule, and it is the rule this spec exists to keep: a line the CLIENT sent
 // is not a line the HOST sent. Replay one and the mirror is handed its own `input` envelope as if it had come
 // down the wire — a self-driving recording that reproduces nothing.
 //
@@ -27,10 +27,6 @@ const READERS: { file: string; anchors: string[] }[] = [
   {
     file: "scripts/replay-ws-server.mjs",
     anchors: ['if (typeof obj.data !== "string") continue;']
-  },
-  {
-    file: "scripts/compare-replay-final-state.mjs",
-    anchors: ['if (typeof obj?.data !== "string") continue;']
   },
   {
     // Three separate loaders: the meta/discard scan, buildRevealMessage, and the in-page fake socket.

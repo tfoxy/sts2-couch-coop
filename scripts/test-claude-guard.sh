@@ -82,13 +82,13 @@ expect deny 'Xvfb :68 -screen 0 1920x1080x24'
 expect deny 'env -u WAYLAND_DISPLAY /usr/bin/Xvfb :68'
 expect deny 'xvfb-run -a sts2 --instance qa game launch'
 expect deny 'xvfb-run -a /tmp/gameroot/SlayTheSpire2'
-expect deny 'scripts/run-gpu.sh godot --path godot-client --shot /tmp/shot.png'
-expect deny 'scripts/run-gpu.sh /opt/Godot_v4.5-mono --path godot-client'
+expect deny 'scripts/run-gpu.sh godot --path tests/CouchCoop.HostUi.GodotFixture --shot /tmp/shot.png'
+expect deny 'scripts/run-gpu.sh /opt/Godot_v4.5-mono --path tests/CouchCoop.HostUi.GodotFixture'
 if [ -n "$WORKTREE" ]; then
   expect deny 'dotnet build CouchCoop.sln' "$WORKTREE"
   # The rule has to fire from a SUBDIRECTORY of the worktree too — that is where a Codex hook runs.
   expect deny 'dotnet build CouchCoop.sln' "$WORKTREE/frontend"
-  expect deny 'dotnet run --project tests/CouchCoop.Mod.Tests' "$WORKTREE/godot-client"
+  expect deny 'dotnet run --project tests/CouchCoop.Mod.Tests' "$WORKTREE/scripts"
 else
   echo "  (skipped worktree rule: no linked worktree on this machine)" >&2
 fi
@@ -110,7 +110,7 @@ expect allow 'cd frontend && npm run build:pages'
 expect allow 'cd frontend && npm run preview:pages'
 expect allow 'COUCHCOOP_FRONTEND_OUT_DIR=/tmp/cc-build npm run build'
 expect allow 'dotnet run --project tests/CouchCoop.MirrorProtocol.Tests'
-expect allow 'dotnet build godot-client/CouchCoop.GodotClient.csproj'
+expect allow 'dotnet build tests/CouchCoop.HostUi.GodotFixture/CouchCoop.HostUi.GodotFixture.csproj'
 expect allow 'scripts/build-local-mod.sh'
 expect allow 'sts2 --instance touchqa game close'
 expect allow "pkill -f 'SlayTheSpire2 --headless'"
@@ -124,7 +124,7 @@ expect allow 'COUCHCOOP_GAME_MODS_DIR=/tmp/scratch dotnet build CouchCoop.sln' "
 expect allow 'bash scripts/install-agent-config.sh'
 expect allow 'env -u DISPLAY -u WAYLAND_DISPLAY gamescope --backend headless -- sleep infinity'
 expect allow '/tmp/gameroot/SlayTheSpire2 --headless'
-expect allow 'godot --headless --path godot-client --dump-final-state'
+expect allow 'godot --headless --path scripts/transcode-godot --script res://transcode.gd -- --manifest /tmp/transcode.json'
 expect allow 'xvfb-run -a npx vitest run browser.test.ts'
 expect allow 'rg -n Xvfb agents docs'
 expect allow 'cat docs/agents/qa-recipes.md'

@@ -42,7 +42,6 @@ const SESSION = {
   refreshRate: 24,
   freezeParticles: true,
   freezeSpines: false,
-  androidApkUrl: "/couchcoop-client.apk",
   hostName: "living-room-pc",
   staticBackground: { scenePath: "res://scenes/bg.tscn", url: "/bg/combat" },
   atlasManifest: {
@@ -90,6 +89,16 @@ describe("parseBrowserEnvelopeValue — the string and object entry points agree
       "res://images/atlases/card_atlas_0.png",
       "res://images/atlases/card_atlas_1.png"
     ]);
+  });
+
+  it("accepts older sessions containing the retired native APK field", () => {
+    const parsed = parseBrowserEnvelopeValue({ ...SESSION, androidApkUrl: "/couchcoop-client.apk" });
+    expect(parsed).toMatchObject({
+      type: "session",
+      hostName: SESSION.hostName,
+      session: SESSION.session,
+      scrollAction: true
+    });
   });
 
   it("normalizes the shared seat directive as an optional string", () => {

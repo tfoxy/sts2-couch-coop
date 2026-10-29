@@ -287,7 +287,6 @@ describe("nodeStyle one-axis clip", () => {
 // `.mirror-text` 1.24x about its centre and says so literally
 // ("Overflow beyond the card bg is ACCEPTABLE (cropping is not)" — generated text-scale declarations), so
 // the enlarged glyphs are MEANT to spill past the label rect. Same for hover_tip.tscn's Description.
-// Native twin: godot-client/src/Scene/TextBuilder.cs ConfigureRich sets `rtl.ClipContents = false`.
 describe("nodeStyle never clips RICH TEXT", () => {
   const richLabel = (over: Partial<MirrorNode> = {}) =>
     mkNode({
@@ -907,7 +906,7 @@ describe("textStyle outline", () => {
 // Issue #20b — `justify-content` only places the flex ITEM, which does nothing for RICH text (gsw's
 // `.godot-rich-stack` is width:100%, so the item fills the box and the glyphs stay left) and nothing for a WRAPPED
 // plain label (a stretched item left-packs its lines inside a "centred" block). `textStyle` therefore also emits
-// `text-align` from the streamed halign, matching the native client's `HorizontalAlignment = MapHalign(...)`.
+// `text-align` from the streamed halign for both plain labels and rich text.
 describe("textStyle horizontal alignment", () => {
   const alignedNode = (halign: string | null, over: Partial<MirrorNode> = {}) =>
     mkNode({

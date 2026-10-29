@@ -332,7 +332,6 @@ def checkout_setup_actions(wt: Worktree, couch_root: Path) -> list[str]:
     actions: list[str] = []
     for source, destination, label in (
         (couch_root / "sts2.local.yaml", wt.path / "sts2.local.yaml", "copy sts2.local.yaml"),
-        (couch_root / "godot-client/.godot", wt.path / "godot-client/.godot", "copy Godot cache"),
     ):
         if source.exists() and not destination.exists():
             actions.append(label)
@@ -391,7 +390,6 @@ def setup_checkout(wt: Worktree, couch_root: Path) -> list[str]:
         completed.append(label)
 
     copy_missing(couch_root / "sts2.local.yaml", wt.path / "sts2.local.yaml", "copied sts2.local.yaml")
-    copy_missing(couch_root / "godot-client/.godot", wt.path / "godot-client/.godot", "copied Godot cache")
 
     def link_missing(source: Path, destination: Path, label: str) -> None:
         if destination.exists() or not source.exists():

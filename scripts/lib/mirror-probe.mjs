@@ -6,9 +6,9 @@
 // single-canvas renderer needs answered before it is written (draw-batch runs, atlas VRAM, text occlusion,
 // animation concurrency).
 //
-// WHY A LOADER HOOK. sceneTree.ts used to have zero runtime imports (see compare-replay-final-state.mjs's note,
-// now stale): it imports `@/join/hostBase` and `@/mirror/particleAttributes`, and the latter reaches
-// `@/render/quality` → `@godot-scene-web/html`. Node cannot resolve either alias on its own. `registerHooks` (Node
+// WHY A LOADER HOOK. sceneTree.ts imports `@/join/hostBase` and `@/mirror/particleAttributes`,
+// and the latter reaches `@/render/quality` → `@godot-scene-web/html`. Node cannot resolve these aliases
+// on its own. `registerHooks` (Node
 // >= 22.15 / 23.5, synchronous, in-thread) maps `@/…` onto frontend/src and resolves
 // `@godot-scene-web/*` through the sibling packages' `node` + `development` exports. tsx handles the .ts
 // transform and extensionless imports. The two small remaining stubs are graph-bound imports whose code a replay
