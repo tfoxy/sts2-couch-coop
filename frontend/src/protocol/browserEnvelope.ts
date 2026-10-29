@@ -205,6 +205,12 @@ export interface BrowserSessionEnvelope extends BrowserEnvelopeBase {
   // a client asking a repacked build for a page it no longer has. Absent on an older host and on any host that
   // could not enumerate — the prefetch then walks its own list unchanged, exactly as it always did.
   atlasManifest?: BrowserAtlasManifestDescriptor | null;
+  // "Use new renderer (Beta)": where THIS connection's instance streams its render-stream (MIR-3, the streaming
+  // seat). Present only on the streaming seat's own connection, and only for a page origin the hub allows; absent
+  // ⇒ the new renderer is unavailable here. Mirrors `@godot-scene-web/render-stream-client`'s endpoint descriptor
+  // and is validated by it before use (mirror/renderStreamAvailability.ts). The token is a credential: never log
+  // it, never put it in a URL. Nothing sends this yet.
+  renderStream?: BrowserRenderStreamDescriptor | null;
   // Current hosts always accept an absolute scroll offset (`set-scroll-offset`).
   scrollAction: true;
 }
@@ -213,6 +219,19 @@ export interface BrowserSessionEnvelope extends BrowserEnvelopeBase {
 export interface BrowserStaticBackgroundDescriptor {
   scenePath: string;
   url: string;
+}
+
+// The `renderStream` descriptor (handoff-mirror-new-renderer.md §3 Q2).
+export interface BrowserRenderStreamDescriptor {
+  /** ws(s) URL of the hub's `/render-stream`, absolute or page-relative. */
+  url: string;
+  /** Prefix of the resource GETs, no trailing slash ("" = the page's origin). */
+  resourceBase: string;
+  /** 64 lowercase hex, sent in the hello and as `Authorization: Bearer`; null when the hub needs none. */
+  token: string | null;
+  /** The seat's `GRC_STREAM_VERSION`. */
+  protocol: 11 | 12;
+  presentation?: [number, number];
 }
 
 // The `atlasManifest` wire shape (BrowserAtlasManifestDto server-side). `directory` says what the page list
@@ -549,6 +568,10 @@ export function parseBrowserEnvelopeValue(raw: unknown): BrowserEnvelope {
       assetCacheToken: typeof value.assetCacheToken === "string" ? value.assetCacheToken : null,
       staticBackground: normalizeStaticBackground(value.staticBackground),
       atlasManifest: normalizeAtlasManifest(value.atlasManifest),
+      // Shape-checked where it is used (renderStreamAvailability's sessionRenderStreamEndpoint), which refuses
+      // anything the client could not connect with.
+      renderStream: value.renderStream !== null && typeof value.renderStream === "object"
+        ? value.renderStream as BrowserRenderStreamDescriptor : null,
       scrollAction: requiredTrue(value.scrollAction, "scrollAction")
     };
   }

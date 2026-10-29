@@ -1,0 +1,15 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>CouchCoop — new renderer probe (dev only)</title>
+  </head>
+  <body style="margin: 0; background: #000">
+    <!-- DEV ONLY (never part of `vite build`, whose only input is index.html): mounts the new renderer's stage and
+         the real settings panel WITHOUT a couch host, for the MIR-2 live check. Open it as
+         /render-stream-probe.html?renderer=stream&renderStream=ws://127.0.0.1:<port>/render-stream -->
+    <div id="app"></div>
+    <script type="module" src="/src/mirror/renderStreamProbe.ts"></script>
+  </body>
+</html>

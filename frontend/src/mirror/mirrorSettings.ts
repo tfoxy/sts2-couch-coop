@@ -27,6 +27,9 @@
 //      shared debug link must not silently redefine the phone's saved preference. Change the setting in the panel
 //      afterwards and THAT is saved, as always.
 //   5. The Rust canvas runtime overrides incompatible render values without changing the DOM preferences.
+//   6. The NEW RENDERER (Beta, `runtimeRenderer === "stream"`) overrides every row it does not support yet with a
+//      forced value (STREAM_RENDER_OVERRIDES), again without writing a saved preference. It outranks layer 5:
+//      while the stream draws, neither DOM nor canvas stage is mounted.
 //
 // NEVER PERSISTED (see NEVER_PERSISTED_SETTING_KEYS): the three `freeze*` fields are HOST truth, re-seeded per
 // connection from the serving instance; `panelOpen`/`panelAnchorTop` are momentary UI; `effectModePinned` is a
@@ -182,6 +185,12 @@ export function parseSpineMode(raw: string | null): SpineMode {
 // back to raster text, which preserves browser fallback coverage. The fidelity-floor census is observational;
 // it reports low-ppem glyph runs without changing the selected text path.
 
+/** Which renderer draws the game: the node-geometry mirror, or the render-stream (the "new renderer", Beta). */
+export type MirrorRenderer = "mirror" | "stream";
+/** The render-stream protocol versions the client speaks (`@godot-scene-web/render-stream-client`'s 11 | 12). */
+export type RenderStreamWireVersion = 11 | 12;
+export const DEFAULT_RENDER_STREAM_PROTOCOL: RenderStreamWireVersion = 12;
+
 export interface MirrorSettings {
   /** Public stage choice; a fresh WebKit viewer starts on canvas, other viewers on DOM. */
   stage: "dom" | "canvas";
@@ -189,6 +198,27 @@ export interface MirrorSettings {
   textMethod: TextMethod;
   /** The live renderer request. A failed Rust canvas can use DOM without changing the saved choice. */
   runtimeStage: "dom" | "canvas";
+  /**
+   * "Use new renderer (Beta)": draw the game through godot-scene-web's render-stream client (the game's own draw
+   * calls) instead of the node-geometry mirror. The SAVED choice, layered `?renderer=stream|mirror` for the
+   * session. It applies only while the feature is available (renderStreamAvailability.ts); a saved `stream` on an
+   * instance that does not stream stays saved and applies when the seat next streams.
+   */
+  renderer: MirrorRenderer;
+  /**
+   * What actually renders now. `stream` only while `renderer` asks for it AND the feature is available AND it has
+   * not stopped this session (a failed stream drops this to `mirror` and keeps `renderer`) — the
+   * `stage`/`runtimeStage` pattern. Every forced row in STREAM_RENDER_OVERRIDES keys off this field.
+   */
+  runtimeRenderer: MirrorRenderer;
+  /**
+   * The QA endpoint (`?renderStream=<ws url>`), session-only. Until the host hands a seat's descriptor out in its
+   * `session` envelope (MIR-3) this is the only way to point the new renderer at a stream. Validated at parse:
+   * anything but an absolute ws(s) URL is dropped.
+   */
+  renderStreamUrl: string | null;
+  /** The wire version of the stream in use (`?rsProtocol=11|12`, default 12): decides the Particles row's forced value. */
+  renderStreamProtocol: RenderStreamWireVersion;
   // CLIENT render (browser-only) — THE QUALITY ROW (see QualityChoice). `auto` (the default) leaves this device to
   // auto-detection and leaves every row below at its product default; a rung is this device's tier AND a preset
   // over the three rows it implies (shaders, particles, static background — qualityPreset.ts). The rows stay
@@ -365,6 +395,7 @@ export { MIRROR_SETTINGS_STORAGE_KEY, type MirrorSettingsStorage };
 
 /** Fields a viewer can set IN THE PANEL — exactly the fields that are saved. */
 export type PersistedSettingKey =
+  | "renderer"
   | "stage"
   | "textMethod"
   | "quality"
@@ -387,6 +418,8 @@ export type PersistedSettingKey =
   | "tweenReplay";
 
 export const PERSISTED_SETTING_KEYS: readonly PersistedSettingKey[] = [
+  // The new-renderer checkbox. A new key in the existing versioned blob needs no bump: older builds ignore it.
+  "renderer",
   "stage",
   "textMethod",
   // PERSISTED, and load-bearing beyond the panel: quality.ts reads this same saved value to resolve the device
@@ -425,8 +458,14 @@ export const PERSISTED_SETTING_KEYS: readonly PersistedSettingKey[] = [
 //                      there is no viewer-set value to remember. It moves to the saved set the day the panel
 //                      grows a checkbox for it.
 //   keyboard         — the keyboard capture's twin of `gamepad`, for the same reason and on the same terms.
+//   runtimeRenderer  — the live renderer; it drops to `mirror` when a stream fails, and `renderer` stays saved.
+//   renderStream*    — the QA endpoint is per session (`?renderStream=`), like every endpoint: a stream address
+//                      describes one host's seat, never this viewer.
 export const NEVER_PERSISTED_SETTING_KEYS = [
   "runtimeStage",
+  "runtimeRenderer",
+  "renderStreamUrl",
+  "renderStreamProtocol",
   "effectModePinned",
   "spineMode",
   "gamepad",
@@ -446,6 +485,26 @@ export const NEVER_PERSISTED_SETTING_KEYS = [
 ] as const;
 
 export type StoredMirrorSettings = Partial<Pick<MirrorSettings, PersistedSettingKey>>;
+
+export function parseMirrorRenderer(raw: unknown): MirrorRenderer | undefined {
+  return raw === "mirror" || raw === "stream" ? raw : undefined;
+}
+
+/** `?renderStream=`: an absolute ws(s) URL, or null. Anything else is dropped rather than half-used. */
+export function parseRenderStreamUrl(raw: string | null): string | null {
+  if (!raw) return null;
+  try {
+    const url = new URL(raw);
+    return url.protocol === "ws:" || url.protocol === "wss:" ? url.href : null;
+  } catch {
+    return null;
+  }
+}
+
+/** `?rsProtocol=11|12`; anything else is the default. */
+export function parseRenderStreamProtocol(raw: string | null): RenderStreamWireVersion {
+  return raw === "11" ? 11 : raw === "12" ? 12 : DEFAULT_RENDER_STREAM_PROTOCOL;
+}
 
 function boolValue(raw: unknown): boolean | undefined {
   return typeof raw === "boolean" ? raw : undefined;
@@ -482,6 +541,7 @@ function refreshRateValue(raw: unknown): number | undefined {
 // Per-key validation, so a hand-edited / half-written / older-schema blob can only ever DROP fields — never feed
 // the store a mode string the renderer doesn't know or an fps the host would refuse.
 const STORED_VALIDATORS: { [K in PersistedSettingKey]: (raw: unknown) => MirrorSettings[K] | undefined } = {
+  renderer: parseMirrorRenderer,
   stage: (raw) => raw === "dom" || raw === "canvas" ? raw : undefined,
   textMethod: parseTextMethod,
   quality: qualityChoiceValue,
@@ -647,8 +707,86 @@ export function adoptGameTextEffects(
 }
 
 // Rust canvas requires a host static background. Image failures do not change the value sent to the host.
+// The new renderer draws the live background from the stream, so it never asks for the host's stills.
 export function staticBgWireValue(settings: MirrorSettings): boolean {
+  if (streamRendererActive(settings)) return false;
   return settings.runtimeStage === "canvas" || settings.staticBgEnabled;
+}
+
+// ---------------------------------------------------------------------------------------------------------
+// The new renderer (Beta) — forced rows
+// ---------------------------------------------------------------------------------------------------------
+//
+// THE ONE TABLE of what the render-stream does not support yet (handoff-mirror-new-renderer.md §3 Q4). While
+// `runtimeRenderer === "stream"` each row here is disabled in the panel and SHOWS the value below, which may differ
+// from the old renderer's default; its setter refuses. Nothing is ever written: un-checking the beta (or a stream
+// failing back to the old renderer) shows every row as the viewer left it. When a feature lands, its row leaves
+// this table (and its spec), and the panel binds it normally again.
+//
+// Rows NOT here are supported as saved: Audio, Safe-area padding, Refresh rate, Show overlay (and the network RTT).
+// Stage is disabled but keeps its saved value — see STREAM_DISABLED_ROWS.
+export type StreamForcedKey =
+  | "quality" | "shaderMode" | "particleMode" | "staticBgEnabled" | "stretchEnabled"
+  | "raiseHeldCard" | "unfocusOnRelease" | "tapToFocus" | "confirmTap" | "raiseHandCards" | "uiScaling"
+  | "backstopOcclusion" | "reproRecorder" | "tweenReplay" | "freezeParticles" | "freezeSpines" | "freezeDecor";
+
+export const STREAM_RENDER_OVERRIDES: { readonly [K in StreamForcedKey]: (protocol: RenderStreamWireVersion) => MirrorSettings[K] } = {
+  // No client lever: the stream draws what the game draws.
+  quality: () => "high",
+  // The game's own shaders run every frame.
+  shaderMode: () => "dynamic",
+  // `/12` simulates emitters on the client (PM6b); `/11` carries none.
+  particleMode: (protocol) => (protocol >= 12 ? "dynamic" : "off"),
+  // The live background is in the stream.
+  staticBgEnabled: () => false,
+  // One presentation size per session (GRC_ROOT_SIZE=presentation:1920x1080): letterboxed 16:9.
+  stretchEnabled: () => false,
+  // View-only: no input reaches the game, so every input and held-card feature is off.
+  raiseHeldCard: () => false,
+  unfocusOnRelease: () => false,
+  tapToFocus: () => false,
+  confirmTap: () => false,
+  // STS2 client transforms: they return as opt-in render-stream extension modules.
+  raiseHandCards: () => false,
+  uiScaling: () => false,
+  // A DOM-mirror compositing optimization.
+  backstopOcclusion: () => false,
+  // Records the node-geometry wire and input, neither of which exists here.
+  reproRecorder: () => false,
+  // Node-mirror wire only.
+  tweenReplay: () => false,
+  // A freeze on the streaming seat would freeze what is streamed.
+  freezeParticles: () => false,
+  freezeSpines: () => false,
+  freezeDecor: () => false
+};
+
+/** Rows disabled under the new renderer that keep showing their saved value (they choose between old backends). */
+export const STREAM_DISABLED_ROWS = ["stage"] as const;
+
+/** Whether the new renderer is what draws the game now (the forced rows apply). */
+export function streamRendererActive(settings: MirrorSettings): boolean {
+  return settings.runtimeRenderer === "stream";
+}
+
+/** The forced value of one row while the new renderer draws, or undefined when the row is the viewer's. */
+export function streamForcedValue<K extends StreamForcedKey>(settings: MirrorSettings, key: K): MirrorSettings[K] | undefined {
+  return streamRendererActive(settings) ? STREAM_RENDER_OVERRIDES[key](settings.renderStreamProtocol) : undefined;
+}
+
+/**
+ * What the settings panel SHOWS for a row: the new renderer's forced value, else the Rust canvas overlay (for
+ * the render rows it owns), else the store. A read-only overlay — never a write.
+ *
+ * Deliberately separate from `effectiveMirrorRenderSettings`, which is the DOM/canvas renderer's own input: the
+ * stream unmounts that renderer, and flipping its inputs on the way out would only make it rebuild effect
+ * runtimes it is about to dispose.
+ */
+export function effectivePanelSetting<K extends StreamForcedKey>(settings: MirrorSettings, key: K): MirrorSettings[K] {
+  const forced = streamForcedValue(settings, key);
+  if (forced !== undefined) return forced;
+  const canvasOverlay: Partial<MirrorSettings> = effectiveMirrorRenderSettings(settings);
+  return key in RUST_RENDER_SETTINGS ? canvasOverlay[key] as MirrorSettings[K] : settings[key];
 }
 
 /** Rust's supported scene contract is an overlay, never a write to DOM preferences. */
@@ -680,12 +818,18 @@ export function effectiveMirrorQuality(settings: MirrorSettings = mirrorSettings
 // Extract just the SERVER-side fields as a `settings` payload (drops the client-only render toggles + UI state).
 // Two entries' payload keys differ from their store keys: `staticBgEnabled` is sent as `staticBg`, and
 // `trailDriveCapable` is sent as `trailDrive`.
+//
+// Under the new renderer the three freezes go out OFF (a frozen streaming seat streams a frozen game) and
+// `staticBg` off (see staticBgWireValue); every other field is sent as saved — `refreshRate` is the one that
+// matters, since the capture publishes per host frame. The store is untouched, so the next push after the beta
+// is switched off restores the instance's freezes.
 export function serverSettingsPayload(settings: MirrorSettings): MirrorSettingsPayload {
+  const stream = streamRendererActive(settings);
   return {
     refreshRate: settings.refreshRate,
-    freezeParticles: settings.freezeParticles,
-    freezeSpines: settings.freezeSpines,
-    freezeDecor: settings.freezeDecor,
+    freezeParticles: stream ? false : settings.freezeParticles,
+    freezeSpines: stream ? false : settings.freezeSpines,
+    freezeDecor: stream ? false : settings.freezeDecor,
     tweenReplay: settings.tweenReplay,
     staticBg: staticBgWireValue(settings),
     trailDrive: settings.trailDriveCapable
@@ -738,7 +882,14 @@ export function createMirrorSettings(
     ? (typeof navigator === "undefined" ? 0 : navigator.maxTouchPoints) : options.maxTouchPoints;
   const stage = params.get("stage") === "dom" || params.get("stage") === "canvas"
     ? params.get("stage") as "dom" | "canvas" : saved.stage ?? (isWebKitBrowser(userAgent, maxTouchPoints) ? "canvas" : "dom");
+  // `?renderer=` wins for the session, then the saved checkbox. `runtimeRenderer` starts on the old renderer and is
+  // promoted by `syncRuntimeRenderer` (renderStreamAvailability.ts) once the feature is known to be available.
+  const renderer = parseMirrorRenderer(params.get("renderer")) ?? saved.renderer ?? "mirror";
   return reactive<MirrorSettings>({
+    renderer,
+    runtimeRenderer: "mirror",
+    renderStreamUrl: parseRenderStreamUrl(params.get("renderStream")),
+    renderStreamProtocol: parseRenderStreamProtocol(params.get("rsProtocol")),
     stage,
     textMethod: parseTextMethod(params.get("textMethod")) ?? saved.textMethod ?? "bitmap",
     runtimeStage: stage,

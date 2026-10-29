@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed, onBeforeUnmount, ref, shallowRef, watch } from "vue";
+import { computed, defineAsyncComponent, onBeforeUnmount, ref, shallowRef, watch } from "vue";
 import { translate as t } from "@/i18n";
 
 import FullscreenButton from "@/components/FullscreenButton.vue";
@@ -21,6 +21,14 @@ import { createAudioEngine, type AudioEngineHandle } from "@/audio/audioEngine";
 import MirrorConfirmButton from "@/mirror/MirrorConfirmButton.vue";
 import MirrorHandRaiseButton from "@/mirror/MirrorHandRaiseButton.vue";
 import MirrorView from "@/mirror/MirrorView.vue";
+import {
+  renderStreamAvailability,
+  renderStreamContext,
+  sessionRenderStreamEndpoint,
+  stopRenderStream,
+  syncRuntimeRenderer
+} from "@/mirror/renderStreamAvailability";
+import { renderStreamCoreConfig } from "@/mirror/renderStreamCore";
 import { rendererComparisonViewRevision } from "@/mirror/rendererComparison";
 import StaticBackground from "@/mirror/StaticBackground.vue";
 import { designPx } from "@/mirror/stageFit";
@@ -189,7 +197,10 @@ if (Number.isFinite(reproBufMb) && reproBufMb > 0) {
 // making can never leave the device. Same tri-state reading as the setting's own layering (present and not
 // "off" ⇒ armed), so the two can't disagree about what the URL said.
 const reproArmedByUrl = reproParams !== null && reproParams.has("repro") && reproParams.get("repro") !== "off";
-const showReproBadge = computed(() => mirrorSettings.reproRecorder && (REPRO_UI_ENABLED || reproArmedByUrl));
+// The new renderer forces the recorder off (it records the node-geometry wire and input, neither of which exists
+// there), so the badge and the arming below read the EFFECTIVE value, not the saved one.
+const reproRecorderOn = () => mirrorSettings.reproRecorder && mirrorSettings.runtimeRenderer !== "stream";
+const showReproBadge = computed(() => reproRecorderOn() && (REPRO_UI_ENABLED || reproArmedByUrl));
 
 // This is the URL of the module the browser actually executed, not a Git revision inferred by the person
 // reading the recording. It catches the useful distinction when a device had an old emitted chunk or a dev server
@@ -222,7 +233,7 @@ reproRecorder.setMetaSupplier(() => {
 // frame rather than after the first change. The setting is the ONLY arming path: the URL param and the build
 // flag both act by deciding what that setting is (see mirrorSettings' layering).
 watch(
-  () => mirrorSettings.reproRecorder,
+  reproRecorderOn,
   (on) => (on ? reproRecorder.start() : reproRecorder.stop()),
   { immediate: true }
 );
@@ -575,14 +586,13 @@ function syncHostStaticBg(): void {
 }
 
 function makeClient(url?: string, watchStream = false): MirrorClient {
-  if (!sceneAblation.streamsScene) {
-    watchStream = false;
-    // Seat redirects carry an explicit watched URL; the app-shell gate must cover the first handshake too.
-    if (url) {
-      const gated = new URL(url);
-      gated.searchParams.set("watch", "0");
-      url = gated.toString();
-    }
+  if (!sceneAblation.streamsScene) watchStream = false;
+  // Seat redirects carry an explicit watched URL; a gate (the app-shell ablation, or the new renderer, which shows
+  // no node-geometry scene) must cover the first handshake too, or the seat ships a connect keyframe nobody draws.
+  if (url && !watchStream) {
+    const gated = new URL(url);
+    gated.searchParams.set("watch", "0");
+    url = gated.toString();
   }
   const c = connectMirrorClient({
     url,
@@ -945,10 +955,39 @@ const joinMode = computed(() =>
     : computeMirrorJoinMode(joinInfo.value, pendingName.value, mirrorScreen.value)
 );
 
+// ---- "Use new renderer (Beta)" -------------------------------------------------------------------------------
+//
+// While the render-stream draws (`runtimeRenderer === "stream"`, renderStreamAvailability.ts) this app shows
+// RenderStreamStage instead of MirrorView: the node-geometry scene is not watched (its producer idles), MirrorView
+// is unmounted (so no input, keyboard or gamepad capture exists — the stream is VIEW ONLY), and the `/ws` socket
+// keeps carrying the session, settings and audio. The two renderers are never both live.
+const streamRendererOn = computed(() => mirrorSettings.runtimeRenderer === "stream");
+// Loaded on first use: a viewer who never switches the beta on never downloads the client.
+const RenderStreamStage = defineAsyncComponent(() => import("@/mirror/RenderStreamStage.vue"));
+// The stream's endpoint and core, while it is available. `core` is the served wasm (renderStreamCore.ts).
+const renderStreamCore = renderStreamCoreConfig().core;
+const renderStreamEndpoint = computed(() => {
+  const availability = renderStreamAvailability.value;
+  return availability.available ? availability.endpoint : null;
+});
+// Availability's facts that live here: whether this view is the host's own game, and the descriptor in THIS
+// viewer's own seat envelope (MIR-3 sends it; absent means "not streaming"). Only a joined seat's session counts.
+watch(directView, (on) => { renderStreamContext.directView = on; }, { immediate: true });
+watch(
+  () => (joined.value ? joinSession.value?.renderStream ?? null : null),
+  (raw) => { renderStreamContext.sessionEndpoint = sessionRenderStreamEndpoint(raw); },
+  { immediate: true }
+);
+
 // Only a granted view requests scene bytes. Unassigned and joining connections are
-// coordination-only, even when the host is on a non-multiplayer screen.
+// coordination-only, even when the host is on a non-multiplayer screen. The new renderer watches nothing here.
 const wantsHostStream = computed(() =>
-  sceneAblation.streamsScene && (joined.value || directView.value)
+  sceneAblation.streamsScene && (joined.value || directView.value) && !streamRendererOn.value
+);
+// The stream shows where the scene would: on a granted view, once it has somewhere to connect.
+const showStream = computed(() =>
+  streamRendererOn.value && (joined.value || directView.value) && renderStreamEndpoint.value !== null
+  && renderStreamCore !== null
 );
 const hostAccess = computed(() => joinSession.value?.hostAccess);
 const hostAccessBlocked = computed(() => !hostAccess.value?.allowed);
@@ -968,7 +1007,7 @@ const showScene = computed(() =>
 // class and the cover it depends on can never be one render apart. Nothing here is backend-specific — the DOM arm
 // is covered by that same frame.
 //
-const surfaceCovered = computed(() => showScene.value);
+const surfaceCovered = computed(() => showScene.value || showStream.value);
 
 // ---- WHERE THE BROWSER CHROME LIVES (R19 WP-2) ----------------------------------------------------------------
 //
@@ -994,6 +1033,27 @@ const showFixedChrome = computed(() =>
 // …and the in-stage pair is exactly the complement, so the two can never both render (two gears, two panels
 // fighting over one `panelAnchorTop`) nor both vanish.
 const showStageChrome = computed(() => showScene.value && !showFixedChrome.value);
+
+// THE RENDERER SWITCH, in the design's order (handoff-mirror-new-renderer.md §3 Q5): the server overlay goes out
+// FIRST (freezes and static background off under the stream, the saved values back without it), then the watch
+// gate below flips, then MirrorView unmounts / the stage mounts and connects. `flush: "sync"` is what puts the push
+// ahead of the pre-flush watch gate and the render; the store watch further down then sees an identical payload and
+// sends nothing more.
+watch(
+  () => mirrorSettings.runtimeRenderer,
+  () => { if (joined.value || directView.value) pushServerSettings(activeClient); },
+  { flush: "sync" }
+);
+// What renders follows the saved choice, availability and this session's stop (renderStreamAvailability.ts).
+watch(
+  [() => mirrorSettings.renderer, renderStreamAvailability, () => renderStreamContext.stopped],
+  () => syncRuntimeRenderer(mirrorSettings),
+  { immediate: true }
+);
+// A stopped stream (failed, ended, refused) falls back to the old renderer for the session; `renderer` stays saved.
+function onRenderStreamFailed(reason: string): void {
+  stopRenderStream(reason, mirrorSettings);
+}
 
 // Push the requested watch state to the active connection after admission.
 watch(wantsHostStream, (on) => activeClient.sendWatch(on), { immediate: true });
@@ -1128,8 +1188,8 @@ watch(
 // Watching the value list fires exactly when one of the fields changes; the client no-ops if the socket isn't
 // open yet (values are held; the on-connect push in makeClient carries them once connected).
 watch(
-  () => SERVER_SETTING_KEYS.map((key) => key === "staticBgEnabled"
-    ? staticBgWireValue(mirrorSettings) : mirrorSettings[key]),
+  () => [mirrorSettings.runtimeRenderer, ...SERVER_SETTING_KEYS.map((key) => key === "staticBgEnabled"
+    ? staticBgWireValue(mirrorSettings) : mirrorSettings[key])],
   () => {
     if (joined.value || directView.value) {
       pushServerSettings(activeClient);
@@ -1260,7 +1320,8 @@ function openSeatView(target: string | number): void {
       staticBgWireValue(mirrorSettings),
       mirrorSettings.trailDriveCapable
     ),
-    true
+    // Ours to watch by definition — unless the new renderer draws, which watches nothing here.
+    !streamRendererOn.value
   );
   bindPresentation(hostClient, activeClient);
   mirrorState.value = activeClient.state;
@@ -1624,6 +1685,15 @@ onBeforeUnmount(() => {
            while a combat hand is on screen. -->
       <MirrorHandRaiseButton />
     </MirrorView>
+    <!-- "Use new renderer (Beta)": the game's own draw calls through the render-stream client. View only — no
+         input path exists here, and the gear/fullscreen pair uses the fixed browser-space chrome (no scaled DOM
+         stage hosts it). A stop falls back to MirrorView above for the session. -->
+    <RenderStreamStage
+      v-else-if="showStream && renderStreamEndpoint && renderStreamCore"
+      :endpoint="renderStreamEndpoint"
+      :core="renderStreamCore"
+      @failed="onRenderStreamFailed"
+    />
     <!-- Pre-join screen: mirror player picker (host badged [Host]) + a name field only in MP
          character-select. The stack (not the picker itself) is the centered grid item of `.game-surface`, so
          the WS4 browser advisory can sit directly ABOVE the seat list without the two competing for the same
@@ -1715,7 +1785,7 @@ onBeforeUnmount(() => {
     />
     <!-- WS3: only over the LIVE GAME (a portrait picker reads fine), and never when WS2's landscape lock was
          granted — the browser is holding the phone for us then. -->
-    <PortraitNagOverlay :active="showScene" :suppressed="isOrientationLocked" />
+    <PortraitNagOverlay :active="showScene || showStream" :suppressed="isOrientationLocked" />
   </main>
 </template>
 

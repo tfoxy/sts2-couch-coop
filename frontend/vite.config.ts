@@ -6,6 +6,7 @@ import vue from "@vitejs/plugin-vue";
 import { defineConfig, type Plugin } from "vite";
 
 import { freshSiblingSources } from "./vite-plugins/freshSiblingSources";
+import { renderStreamClientAssets } from "./vite-plugins/renderStreamClientAssets";
 
 function yamlValue(text: string, key: string): string | undefined {
   const pattern = new RegExp(`^\\s*${key}\\s*:\\s*(?:"([^"]*)"|'([^']*)'|([^#\\r\\n]+))\\s*(?:#.*)?$`, "m");
@@ -246,6 +247,9 @@ export default defineConfig({
   plugins: [
     vue(),
     msdfGeneratorAssets(),
+    // The new renderer's (Beta) core: three static files, plus `virtual:couch-render-stream-core`, which says
+    // whether that build matches the aliased gsw sources. See the plugin header.
+    renderStreamClientAssets({ dir: fromHere("../.sts2/render-stream-client-web"), gswRoot: godotSceneWebRoot }),
     couchCoopBootManifest(),
     // Opt-in only; when set it TAKES PRECEDENCE over the `/bg` proxy entry below (which is omitted in that case).
     ...(devBgFixtureDir ? [devBgFromFs(devBgFixtureDir)] : []),
@@ -289,6 +293,10 @@ export default defineConfig({
       // `server.fs.allow` below already covers the gsw root, which is what lets DEV serve those two vendor files
       // from outside this project. That is not enough on its own: `?url` is what also makes a production `vite
       // build` emit the 417 KB binary as an asset instead of leaving a dangling absolute path in the bundle.
+      // The new renderer (Beta): the lean render-stream client. Above the bare gsw aliases like every gsw entry;
+      // it imports `@godot-scene-web/effects/{shaders,particles}`, aliased below. Its wasm is NOT aliased — it is
+      // served by URL (renderStreamClientAssets).
+      "@godot-scene-web/render-stream-client": gsw("render-stream-client/src/index.ts"),
       "@godot-scene-web/canvas/glyphs": gsw("canvas/src/glyph-pass-hbgpu.ts"),
       "@godot-scene-web/canvas/rust-prototype": gsw("canvas/src/rust-prototype-scene.ts"),
       "@godot-scene-web/canvas/msdf-generator": gsw("canvas/src/msdf-generator.ts"),

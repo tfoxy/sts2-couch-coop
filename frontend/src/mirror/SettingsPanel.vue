@@ -13,18 +13,27 @@ import { IMPLEMENTED_RUST_TEXT_METHODS } from "@/mirror/renderer/pixi/textMethod
 import {
   EFFECT_MODES,
   TEXT_METHODS,
-  effectiveMirrorRenderSettings,
+  effectivePanelSetting,
   mirrorSettings,
   persistMirrorSetting,
   QUALITY_CHOICES,
   REFRESH_RATE_MAX,
   REFRESH_RATE_MIN,
+  streamRendererActive,
   type EffectMode,
   type TextMethod,
   type MirrorSettings,
   type PersistedSettingKey,
-  type QualityChoice
+  type QualityChoice,
+  type StreamForcedKey
 } from "@/mirror/mirrorSettings";
+import {
+  renderStreamAvailability,
+  renderStreamContext,
+  retryRenderStream,
+  syncRuntimeRenderer,
+  type RenderStreamUnavailableReason
+} from "@/mirror/renderStreamAvailability";
 import { applyQualityChoice } from "@/mirror/qualityPreset";
 import { detectedRenderQualityTier, type RenderQualityTier } from "@/render/quality";
 
@@ -83,13 +92,46 @@ const emit = defineEmits<{ audioGesture: [] }>();
 const settings = mirrorSettings;
 const { hasSafeArea } = useSafeArea();
 const canvasActive = computed(() => settings.runtimeStage === "canvas");
+// "Use new renderer (Beta)" is drawing: every row it does not support yet is disabled and shows its forced value
+// (mirrorSettings' STREAM_RENDER_OVERRIDES), and Stage is disabled on its saved value.
+const streamActive = computed(() => streamRendererActive(settings));
 const availableTextMethods = computed(() => TEXT_METHODS.filter((method) => method.available({ implemented: IMPLEMENTED_RUST_TEXT_METHODS })));
 const failureReason = computed(() => settings.stage === "canvas" && rendererRuntimeStatus.requested.backend === "canvas" &&
   rendererRuntimeStatus.phase === "failed" ? rendererRuntimeStatus.reason : null);
 const audioUsesHttp = computed(() => hostBase().startsWith("http://"));
 const audioHelpText = computed(() => `${t("settings.help.audio")}${audioUsesHttp.value ? t("settings.help.audioHttp") : ""}`);
 
+// THE NEW-RENDERER CHECKBOX. It shows the SAVED choice (like Stage), and is the only writer of it. It can be
+// switched ON only while the feature is available; a saved `on` can always be switched off, so a viewer whose seat
+// does not stream is never stuck with a choice they cannot clear. What renders follows from the saved choice and
+// availability (syncRuntimeRenderer), so checking it while available is what starts the stream.
+const NEW_RENDERER_REASON_KEYS: Record<RenderStreamUnavailableReason, import("@/i18n").MessageKey> = {
+  "core-build": "settings.newRendererCoreBuild",
+  "no-webgl2": "settings.newRendererNoWebgl2",
+  "host-view": "settings.newRendererHostView",
+  "needs-proxy": "settings.newRendererNeedsProxy",
+  "not-streaming": "settings.newRendererNotStreaming"
+};
+const newRenderer = computed<boolean>({
+  get: () => settings.renderer === "stream",
+  set: (on) => {
+    if (on && !renderStreamAvailability.value.available) return;
+    settings.renderer = on ? "stream" : "mirror";
+    persistMirrorSetting("renderer", settings.renderer);
+    // A deliberate switch is a fresh start: forget this session's stop, then derive what renders.
+    renderStreamContext.stopped = null;
+    syncRuntimeRenderer(settings);
+  }
+});
+const newRendererDisabled = computed(() => !renderStreamAvailability.value.available && settings.renderer !== "stream");
+const newRendererReason = computed(() => {
+  const reason = renderStreamAvailability.value.reason;
+  return reason === null ? null : t(NEW_RENDERER_REASON_KEYS[reason]);
+});
+const newRendererStopped = computed(() => settings.renderer === "stream" ? renderStreamContext.stopped : null);
+
 function selectStage(value: "dom" | "canvas"): void {
+  if (streamActive.value) return;
   settings.stage = value;
   settings.runtimeStage = value;
   persistMirrorSetting("stage", value);
@@ -130,8 +172,8 @@ function bind<K extends PersistedSettingKey>(key: K): WritableComputedRef<Mirror
 // who then changes one of those rows sees the quality they picked stay put — it is this device's tier, not a
 // summary of the rows.
 const quality = computed<QualityChoice>({
-  get: () => effectiveMirrorRenderSettings(settings).quality,
-  set: (value) => { if (!canvasActive.value) applyQualityChoice(settings, value); }
+  get: () => effectivePanelSetting(settings, "quality"),
+  set: (value) => { if (!canvasActive.value && !streamActive.value) applyQualityChoice(settings, value); }
 });
 
 // The rung auto-detection makes of THIS device, for the Auto entry's label ("Auto (Medium)"). Read once —
@@ -144,17 +186,19 @@ function qualityLabel(choice: QualityChoice): string {
     : t(QUALITY_TIER_LABELS[choice]);
 }
 
+// The render rows the Rust canvas (and the new renderer) force: the effective value is shown, a write is refused.
+const renderBlocked = computed(() => canvasActive.value || streamActive.value);
 const shaderMode = computed<EffectMode>({
-  get: () => effectiveMirrorRenderSettings(settings).shaderMode,
-  set: (value) => { if (!canvasActive.value) { settings.shaderMode = value; persistMirrorSetting("shaderMode", value); } }
+  get: () => effectivePanelSetting(settings, "shaderMode"),
+  set: (value) => { if (!renderBlocked.value) { settings.shaderMode = value; persistMirrorSetting("shaderMode", value); } }
 });
 const particleMode = computed<EffectMode>({
-  get: () => effectiveMirrorRenderSettings(settings).particleMode,
-  set: (value) => { if (!canvasActive.value) { settings.particleMode = value; persistMirrorSetting("particleMode", value); } }
+  get: () => effectivePanelSetting(settings, "particleMode"),
+  set: (value) => { if (!renderBlocked.value) { settings.particleMode = value; persistMirrorSetting("particleMode", value); } }
 });
 const staticBgEnabled = computed<boolean>({
-  get: () => effectiveMirrorRenderSettings(settings).staticBgEnabled,
-  set: (value) => { if (!canvasActive.value) { settings.staticBgEnabled = value; persistMirrorSetting("staticBgEnabled", value); } }
+  get: () => effectivePanelSetting(settings, "staticBgEnabled"),
+  set: (value) => { if (!renderBlocked.value) { settings.staticBgEnabled = value; persistMirrorSetting("staticBgEnabled", value); } }
 });
 const textMethod = computed<TextMethod>({
   get: () => settings.textMethod,
@@ -165,21 +209,38 @@ const textMethod = computed<TextMethod>({
     applyViewerTextMethod();
   }
 });
-const stretchEnabled = bind("stretchEnabled");
+// `bind` for a row the new renderer may force: it SHOWS the forced value while the stream draws and refuses the
+// write, so nothing the viewer saved is touched (un-checking the beta shows it again). `persist` is false for the
+// host-truth freezes, which are never saved.
+function forcedBind<K extends StreamForcedKey>(key: K, persist = true): WritableComputedRef<MirrorSettings[K]> {
+  return computed({
+    get: () => effectivePanelSetting(settings, key),
+    set: (value) => {
+      if (streamActive.value) return;
+      settings[key] = value;
+      if (persist) persistMirrorSetting(key as K & PersistedSettingKey, value as MirrorSettings[K & PersistedSettingKey]);
+    }
+  });
+}
+
+const stretchEnabled = forcedBind("stretchEnabled");
 const safeAreaPaddingEnabled = bind("safeAreaPaddingEnabled");
-const raiseHeldCard = bind("raiseHeldCard");
-const unfocusOnRelease = bind("unfocusOnRelease");
-const tapToFocus = bind("tapToFocus");
-const confirmTap = bind("confirmTap");
-const raiseHandCards = bind("raiseHandCards");
-const uiScaling = bind("uiScaling");
-const backstopOcclusion = bind("backstopOcclusion");
+const raiseHeldCard = forcedBind("raiseHeldCard");
+const unfocusOnRelease = forcedBind("unfocusOnRelease");
+const tapToFocus = forcedBind("tapToFocus");
+const confirmTap = forcedBind("confirmTap");
+const raiseHandCards = forcedBind("raiseHandCards");
+const uiScaling = forcedBind("uiScaling");
+const backstopOcclusion = forcedBind("backstopOcclusion");
 const refreshRate = bind("refreshRate");
-const tweenReplay = bind("tweenReplay");
+const tweenReplay = forcedBind("tweenReplay");
 const latencyOverlay = bind("latencyOverlay");
 const audio = bind("audio");
 const audioUnavailable = computed(() => props.audioUnavailable);
-const reproRecorder = bind("reproRecorder");
+const reproRecorder = forcedBind("reproRecorder");
+const freezeParticles = forcedBind("freezeParticles", false);
+const freezeSpines = forcedBind("freezeSpines", false);
+const freezeDecor = forcedBind("freezeDecor", false);
 
 // Whether THIS BUILD ships the repro recorder's row at all (buildFlags). A published build sets
 // `VITE_REPRO_UI=off` and the row below — and its help tip — are compiled out, because a developer tool in an end
@@ -206,7 +267,8 @@ function fmt(value: number | null): string {
 const REFRESH_PRESETS = [24, 30, 40, 60] as const;
 
 const networkOk = computed(() => props.latency.p95 !== null && props.latency.p95 <= TARGET_MS);
-const hasGame = computed(() => props.latency.gameCount > 0);
+// Input-to-frame does not exist while the new renderer is view-only, so its row reads "—" there.
+const hasGame = computed(() => props.latency.gameCount > 0 && !streamActive.value);
 
 // The "Host performance" section acts on whichever game serves this connection, and that changes what the freezes
 // MEAN: on a per-seat headless instance nobody is looking at the frozen animation (the browser re-runs it), while
@@ -221,6 +283,7 @@ const hostPerfNote = computed(() =>
 // ---------------------------------------------------------------------------------------------------------
 
 type HelpId =
+  | "newRenderer"
   | "stage"
   | "textMethod"
   | "quality"
@@ -250,6 +313,7 @@ type HelpId =
 // One description per row: what it does, and what it trades (performance vs fidelity). Kept in ONE object so a
 // row added without help text is obvious at review time.
 const HELP_KEYS: Record<HelpId, import("@/i18n").MessageKey> = {
+  newRenderer: "settings.help.newRenderer",
   stage: "settings.help.stage",
   textMethod: "settings.help.textMethod",
   quality: "settings.help.quality",
@@ -348,21 +412,34 @@ onBeforeUnmount(() => setHelpListeners(false));
 
       <div class="settings-group">
         <p class="settings-group-label">{{ t('settings.thisDevice') }}</p>
+        <!-- FIRST in the group, before Stage: the new renderer replaces what every row below configures. -->
+        <div class="settings-item">
+          <label class="settings-row">
+            <input type="checkbox" v-model="newRenderer" :disabled="newRendererDisabled" data-testid="mirror-renderer" />
+            <span>{{ t('settings.newRenderer') }}</span>
+          </label>
+          <SettingsHelpTip v-bind="help('newRenderer', t('settings.newRenderer'))" />
+        </div>
+        <p v-if="newRendererReason" class="settings-note" role="status" data-testid="mirror-renderer-reason">{{ newRendererReason }}</p>
+        <p v-if="newRendererStopped" role="status" data-testid="mirror-renderer-stopped">
+          {{ t('settings.newRendererStopped', { reason: newRendererStopped }) }}
+          <button type="button" @click="retryRenderStream()">{{ t('boot.tryAgain') }}</button>
+        </p>
         <div class="settings-item">
           <label class="settings-row settings-row-select">
             <span>{{ t('settings.stage') }}</span>
-            <select v-model="stage" data-testid="mirror-stage">
+            <select v-model="stage" :disabled="streamActive" data-testid="mirror-stage">
               <option value="dom">{{ t('settings.stageDom') }}</option>
               <option value="canvas">{{ t('settings.stageCanvas') }}</option>
             </select>
           </label>
-          <SettingsHelpTip v-bind="help('stage', t('settings.stage'))" />
+          <SettingsHelpTip v-bind="help('stage', t('settings.stage'), 'below', streamActive ? t('settings.help.stageStream') : undefined)" />
         </div>
         <p v-if="failureReason" role="status" data-testid="mirror-stage-failure">
           {{ t('settings.stageFailure', { reason: failureReason }) }}
           <button type="button" @click="retryCanvas">{{ t('boot.tryAgain') }}</button>
         </p>
-        <div v-if="canvasActive && availableTextMethods.length > 1" class="settings-item">
+        <div v-if="canvasActive && !streamActive && availableTextMethods.length > 1" class="settings-item">
           <label class="settings-row settings-row-select">
             <span>{{ t('settings.textMethod') }}</span>
             <select v-model="textMethod" data-testid="mirror-text-method">
@@ -375,7 +452,7 @@ onBeforeUnmount(() => setHelpListeners(false));
         <div class="settings-item">
           <label class="settings-row settings-row-select">
             <span>{{ t('settings.quality') }}</span>
-            <select v-model="quality" :disabled="canvasActive" data-testid="mirror-quality">
+            <select v-model="quality" :disabled="renderBlocked" data-testid="mirror-quality">
               <option v-for="choice in QUALITY_CHOICES" :key="choice" :value="choice">{{ qualityLabel(choice) }}</option>
             </select>
           </label>
@@ -384,7 +461,7 @@ onBeforeUnmount(() => setHelpListeners(false));
         <div class="settings-item">
           <label class="settings-row settings-row-select">
             <span>{{ t('settings.shaders') }}</span>
-            <select v-model="shaderMode" :disabled="canvasActive" data-testid="mirror-shader-mode">
+            <select v-model="shaderMode" :disabled="renderBlocked" data-testid="mirror-shader-mode">
               <option v-for="mode in EFFECT_MODES" :key="mode" :value="mode">{{ t(EFFECT_MODE_LABELS[mode]) }}</option>
             </select>
           </label>
@@ -393,7 +470,7 @@ onBeforeUnmount(() => setHelpListeners(false));
         <div class="settings-item">
           <label class="settings-row settings-row-select">
             <span>{{ t('settings.particles') }}</span>
-            <select v-model="particleMode" :disabled="canvasActive" data-testid="mirror-particle-mode">
+            <select v-model="particleMode" :disabled="renderBlocked" data-testid="mirror-particle-mode">
               <option v-for="mode in EFFECT_MODES" :key="mode" :value="mode">{{ t(EFFECT_MODE_LABELS[mode]) }}</option>
             </select>
           </label>
@@ -411,7 +488,7 @@ onBeforeUnmount(() => setHelpListeners(false));
         <p v-if="audioUnavailable" role="status" data-testid="mirror-audio-unavailable">{{ t('settings.audioUnavailable') }}</p>
         <div class="settings-item">
           <label class="settings-row">
-            <input type="checkbox" v-model="staticBgEnabled" :disabled="canvasActive" data-testid="mirror-static-bg" />
+            <input type="checkbox" v-model="staticBgEnabled" :disabled="renderBlocked" data-testid="mirror-static-bg" />
             <span>{{ t('settings.staticBg') }}</span>
           </label>
           <SettingsHelpTip v-bind="help('staticBg', t('settings.staticBg'))" />
@@ -425,49 +502,49 @@ onBeforeUnmount(() => setHelpListeners(false));
         </div>
         <div class="settings-item">
           <label class="settings-row">
-            <input type="checkbox" v-model="stretchEnabled" data-testid="mirror-stretch" />
+            <input type="checkbox" v-model="stretchEnabled" :disabled="streamActive" data-testid="mirror-stretch" />
             <span>{{ t('settings.stretch') }}</span>
           </label>
           <SettingsHelpTip v-bind="help('stretch', t('settings.stretch'))" />
         </div>
         <div class="settings-item">
           <label class="settings-row">
-            <input type="checkbox" v-model="raiseHeldCard" />
+            <input type="checkbox" v-model="raiseHeldCard" :disabled="streamActive" data-testid="mirror-raise-card" />
             <span>{{ t('settings.raiseCard') }}</span>
           </label>
           <SettingsHelpTip v-bind="help('raiseCard', t('settings.raiseCard'))" />
         </div>
         <div class="settings-item">
           <label class="settings-row">
-            <input type="checkbox" v-model="unfocusOnRelease" />
+            <input type="checkbox" v-model="unfocusOnRelease" :disabled="streamActive" data-testid="mirror-unfocus" />
             <span>{{ t('settings.unfocus') }}</span>
           </label>
           <SettingsHelpTip v-bind="help('unfocus', t('settings.unfocus'))" />
         </div>
         <div class="settings-item">
           <label class="settings-row">
-            <input type="checkbox" v-model="tapToFocus" />
+            <input type="checkbox" v-model="tapToFocus" :disabled="streamActive" data-testid="mirror-tap-focus" />
             <span>{{ t('settings.tapFocus') }}</span>
           </label>
           <SettingsHelpTip v-bind="help('tapFocus', t('settings.tapFocus'))" />
         </div>
         <div class="settings-item">
           <label class="settings-row">
-            <input type="checkbox" v-model="confirmTap" data-testid="mirror-confirm-tap" />
+            <input type="checkbox" v-model="confirmTap" :disabled="streamActive" data-testid="mirror-confirm-tap" />
             <span>{{ t('settings.confirmTap') }}</span>
           </label>
           <SettingsHelpTip v-bind="help('confirmTap', t('settings.confirmTap'))" />
         </div>
         <div class="settings-item">
           <label class="settings-row">
-            <input type="checkbox" v-model="raiseHandCards" data-testid="mirror-raise-hand" />
+            <input type="checkbox" v-model="raiseHandCards" :disabled="streamActive" data-testid="mirror-raise-hand" />
             <span>{{ t('settings.raiseHand') }}</span>
           </label>
           <SettingsHelpTip v-bind="help('raiseHand', t('settings.raiseHand'))" />
         </div>
         <div class="settings-item">
           <label class="settings-row">
-            <input type="checkbox" v-model="uiScaling" data-testid="mirror-ui-scaling" />
+            <input type="checkbox" v-model="uiScaling" :disabled="streamActive" data-testid="mirror-ui-scaling" />
             <span>{{ t('settings.uiScaling') }}</span>
           </label>
           <SettingsHelpTip v-bind="help('uiScaling', t('settings.uiScaling'))" />
@@ -477,6 +554,7 @@ onBeforeUnmount(() => setHelpListeners(false));
             <input
               type="checkbox"
               v-model="backstopOcclusion"
+              :disabled="streamActive"
               data-testid="mirror-backstop-occlusion"
             />
             <span>{{ t('settings.backstop') }}</span>
@@ -487,7 +565,7 @@ onBeforeUnmount(() => setHelpListeners(false));
              whole row (and its tip) is compiled out of a build with VITE_REPRO_UI=off — see `reproUiEnabled`. -->
         <div v-if="reproUiEnabled" class="settings-item">
           <label class="settings-row">
-            <input type="checkbox" v-model="reproRecorder" data-testid="mirror-repro-recorder" />
+            <input type="checkbox" v-model="reproRecorder" :disabled="streamActive" data-testid="mirror-repro-recorder" />
             <span>{{ t('settings.repro') }}</span>
           </label>
           <SettingsHelpTip v-bind="help('repro', t('settings.repro'))" />
@@ -505,6 +583,7 @@ onBeforeUnmount(() => setHelpListeners(false));
               :max="REFRESH_RATE_MAX"
               step="1"
               v-model.number="refreshRate"
+              data-testid="mirror-refresh-rate"
             />
             <span class="settings-value">{{ settings.refreshRate }} fps</span>
           </label>
@@ -528,7 +607,7 @@ onBeforeUnmount(() => setHelpListeners(false));
         </div>
         <div class="settings-item">
           <label class="settings-row">
-            <input type="checkbox" v-model="tweenReplay" data-testid="mirror-tween-replay" />
+            <input type="checkbox" v-model="tweenReplay" :disabled="streamActive" data-testid="mirror-tween-replay" />
             <span>{{ t('settings.tweenReplay') }}</span>
           </label>
           <SettingsHelpTip v-bind="help('tweenReplay', t('settings.tweenReplay'))" />
@@ -542,21 +621,21 @@ onBeforeUnmount(() => setHelpListeners(false));
         <p class="settings-group-note" data-testid="mirror-host-perf-note">{{ hostPerfNote }}</p>
         <div class="settings-item">
           <label class="settings-row">
-            <input type="checkbox" v-model="settings.freezeParticles" data-testid="mirror-freeze-particles" />
+            <input type="checkbox" v-model="freezeParticles" :disabled="streamActive" data-testid="mirror-freeze-particles" />
             <span>{{ t('settings.freezeParticles') }}</span>
           </label>
           <SettingsHelpTip v-bind="help('freezeParticles', t('settings.freezeParticles'))" />
         </div>
         <div class="settings-item">
           <label class="settings-row">
-            <input type="checkbox" v-model="settings.freezeSpines" data-testid="mirror-freeze-spines" />
+            <input type="checkbox" v-model="freezeSpines" :disabled="streamActive" data-testid="mirror-freeze-spines" />
             <span>{{ t('settings.freezeSpines') }}</span>
           </label>
           <SettingsHelpTip v-bind="help('freezeSpines', t('settings.freezeSpines'))" />
         </div>
         <div class="settings-item">
           <label class="settings-row settings-row-advanced">
-            <input type="checkbox" v-model="settings.freezeDecor" data-testid="mirror-freeze-decor" />
+            <input type="checkbox" v-model="freezeDecor" :disabled="streamActive" data-testid="mirror-freeze-decor" />
             <span>{{ t('settings.freezeDecor') }} <em>{{ t('settings.advancedSuffix') }}</em></span>
           </label>
           <SettingsHelpTip v-bind="help('freezeDecor', t('settings.freezeDecor'))" />
@@ -574,7 +653,7 @@ onBeforeUnmount(() => setHelpListeners(false));
           <SettingsHelpTip v-bind="help('networkRtt', t('settings.networkRtt'), 'above')" />
         </div>
         <div class="settings-item">
-          <div class="settings-latency-row">
+          <div class="settings-latency-row" data-testid="mirror-game-rtt">
             <span class="settings-latency-name">{{ t('settings.gameEndToEnd') }}</span>
             <template v-if="hasGame">
               <span class="settings-latency-stat">p50 {{ fmt(latency.gameP50) }}</span>
@@ -649,6 +728,13 @@ onBeforeUnmount(() => setHelpListeners(false));
   text-transform: uppercase;
   letter-spacing: 0.06em;
   opacity: 0.6;
+}
+
+.settings-note {
+  margin: 0 0 4px;
+  font-size: 11px;
+  line-height: 1.25;
+  opacity: 0.7;
 }
 
 .settings-group-note {
