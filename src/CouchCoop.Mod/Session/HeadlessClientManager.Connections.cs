@@ -119,9 +119,14 @@ public sealed partial class HeadlessClientManager
     /// manager's own probes, which is what every caller without a join in hand (a test, a standalone server) uses. A
     /// manager that was given no probe stays unprobed either way: the stock three seats and no run refusal.
     /// </param>
+    /// <param name="wantsStreamingSeat">
+    /// The viewer's join asked for the new renderer (<c>renderer: "stream"</c>). A seat LAUNCHED for it becomes this
+    /// host's streaming seat when the host is configured for one and no other live seat streams
+    /// (<see cref="StreamingSeatLaunch"/>); a seat that is reused keeps the role it started with.
+    /// </param>
     public async Task<int?> EnsureHeadlessAsync(Guid sessionId, string? displayName, CancellationToken ct,
         bool allowNewSlot = true, Action<ulong, string?>? onSlotBound = null, ulong? targetNetId = null,
-        JoinSeatFacts? hostFacts = null)
+        JoinSeatFacts? hostFacts = null, bool wantsStreamingSeat = false)
     {
         Task[] cleanup;
         lock (_lock) cleanup = _connectionCleanup.Values.ToArray();
@@ -171,7 +176,8 @@ public sealed partial class HeadlessClientManager
             allocation = AllocateHeadless(
                 sessionId, displayName, ct, maxSlot, occupiedSeatPorts, runInProgress, allowNewSlot, onSlotBound,
                 routeMode,
-                targetNetId);
+                targetNetId,
+                wantsStreamingSeat);
         }
         catch
         {

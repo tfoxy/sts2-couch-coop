@@ -819,10 +819,11 @@ export function effectiveMirrorQuality(settings: MirrorSettings = mirrorSettings
 // Two entries' payload keys differ from their store keys: `staticBgEnabled` is sent as `staticBg`, and
 // `trailDriveCapable` is sent as `trailDrive`.
 //
-// Under the new renderer the three freezes go out OFF (a frozen streaming seat streams a frozen game) and
-// `staticBg` off (see staticBgWireValue); every other field is sent as saved — `refreshRate` is the one that
-// matters, since the capture publishes per host frame. The store is untouched, so the next push after the beta
-// is switched off restores the instance's freezes.
+// Under the new renderer the three freezes go out OFF (a frozen streaming seat streams a frozen game), `staticBg`
+// off (see staticBgWireValue) and `tweenReplay` off (it only feeds the node-mirror wire, which nobody watches while
+// the stream draws); every other field is sent as saved — `refreshRate` is the one that matters, since the capture
+// publishes per host frame. The store is untouched, so the next push after the beta is switched off restores the
+// instance's freezes and its tween replay.
 export function serverSettingsPayload(settings: MirrorSettings): MirrorSettingsPayload {
   const stream = streamRendererActive(settings);
   return {
@@ -830,7 +831,7 @@ export function serverSettingsPayload(settings: MirrorSettings): MirrorSettingsP
     freezeParticles: stream ? false : settings.freezeParticles,
     freezeSpines: stream ? false : settings.freezeSpines,
     freezeDecor: stream ? false : settings.freezeDecor,
-    tweenReplay: settings.tweenReplay,
+    tweenReplay: stream ? STREAM_RENDER_OVERRIDES.tweenReplay(settings.renderStreamProtocol) : settings.tweenReplay,
     staticBg: staticBgWireValue(settings),
     trailDrive: settings.trailDriveCapable
   };

@@ -459,6 +459,9 @@ export interface BrowserJoinRequestEnvelope {
   // remembered name for is labelled with a synthesized "Player 1003", so matching that label back to a netId is
   // ambiguous. The host binds the spawned headless to the netId parsed out of this.
   playerId?: string;
+  // "Use new renderer (Beta)": ask for this viewer's seat to be launched as the host's streaming seat. Omitted
+  // otherwise (MIR-3).
+  renderer?: "stream";
 }
 
 export interface BrowserValidationErrorEnvelope {

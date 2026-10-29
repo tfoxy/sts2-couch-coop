@@ -189,7 +189,7 @@ internal static class SeatPortAvailability
     /// The socket error a test bind on <paramref name="bindAddress"/> hit, or <see langword="null"/> when the
     /// bind succeeded (and was immediately released again).
     /// </summary>
-    private static string? TestBindRefusal(int port, IPAddress bindAddress)
+    internal static string? TestBindRefusal(int port, IPAddress bindAddress)
     {
         TcpListener? listener = null;
         try

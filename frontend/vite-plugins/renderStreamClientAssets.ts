@@ -8,7 +8,11 @@
 //   rs_gsw_wasm_bg.wasm     the module
 //   build.json              `rs_core_tree` (the source tree it was built from), the wasm's sha256, …
 //
-// Dev serves them under `/app/render-stream/`; a build emits them as `app/render-stream/<name>`. They are never
+// Dev serves them under `/app/render-stream/`; a build emits them as `app/render-stream/<name>` — except that
+// `build.json` is served and emitted as the EXTENSIONLESS `core-build` (RENDER_STREAM_CORE_SERVED). A built frontend
+// lives inside the mod's folder, and the game reads every `*.json` under `mods/` as a mod manifest: a `build.json`
+// there logs "Mod manifest … is missing the 'id' field!" on every launch (the same reason `app-boot` has no
+// extension). The client is told the URL (`core.buildUrl`). They are never
 // imported through an alias or the bundler: the client imports the glue BY URL, which is what lets each mount's
 // 0.5 GB heap be given back when it is disposed.
 //
@@ -28,6 +32,12 @@ import { resolve } from "node:path";
 import type { Plugin, ViteDevServer } from "vite";
 
 export const RENDER_STREAM_CORE_FILES = ["rs_gsw_wasm_client.js", "rs_gsw_wasm_bg.wasm", "build.json"] as const;
+/** The name each file is served (dev) and emitted (build) under, beside the app's chunks. */
+export const RENDER_STREAM_CORE_SERVED: Readonly<Record<string, (typeof RENDER_STREAM_CORE_FILES)[number]>> = {
+  "rs_gsw_wasm_client.js": "rs_gsw_wasm_client.js",
+  "rs_gsw_wasm_bg.wasm": "rs_gsw_wasm_bg.wasm",
+  "core-build": "build.json"
+};
 export const RENDER_STREAM_CORE_MODULE = "virtual:couch-render-stream-core";
 const RESOLVED_MODULE = `\0${RENDER_STREAM_CORE_MODULE}`;
 
@@ -93,10 +103,12 @@ export function renderStreamClientAssets(options: RenderStreamClientAssetsOption
       dev.middlewares.use((req, res, next) => {
         const path = new URL(req.url ?? "/", "http://localhost").pathname;
         const match = /^\/app\/render-stream\/([^/]+)$/.exec(path);
-        const name = match?.[1];
-        if (!name || !RENDER_STREAM_CORE_FILES.some((file) => file === name)) return next();
+        const served = match?.[1];
+        const name = served !== undefined && Object.hasOwn(RENDER_STREAM_CORE_SERVED, served)
+          ? RENDER_STREAM_CORE_SERVED[served] : undefined;
+        if (!name) return next();
         const file = resolve(options.dir, name);
-        if (!existsSync(file)) { res.statusCode = 404; res.end(name); return; }
+        if (!existsSync(file)) { res.statusCode = 404; res.end(served); return; }
         res.setHeader("Content-Type", name.endsWith(".wasm") ? "application/wasm"
           : name.endsWith(".json") ? "application/json" : "text/javascript");
         // A rebuild replaces all three at once; never let the browser pair a cached glue with a new build.json.
@@ -117,8 +129,8 @@ export function renderStreamClientAssets(options: RenderStreamClientAssetsOption
           + "in this build (scripts/build-render-stream-client.sh builds it)");
         return;
       }
-      for (const name of RENDER_STREAM_CORE_FILES) {
-        this.emitFile({ type: "asset", fileName: `app/render-stream/${name}`, source: readFileSync(resolve(options.dir, name)) });
+      for (const [served, name] of Object.entries(RENDER_STREAM_CORE_SERVED)) {
+        this.emitFile({ type: "asset", fileName: `app/render-stream/${served}`, source: readFileSync(resolve(options.dir, name)) });
       }
     }
   };

@@ -31,7 +31,11 @@ public sealed record BrowserJoinRequestEnvelope(
     // connection's row instead of leaving an ownerless arrival beside it. NOT a credential and never trusted as
     // one: it selects nothing and authorises nothing, and a value outside the minted shape is dropped. Omitted
     // by a client that has none (a dev-server page, a non-browser client), which joins exactly as before.
-    string? Visit = null);
+    string? Visit = null,
+    // "Use new renderer (Beta)": `"stream"` asks for this viewer's seat to be launched as the host's streaming seat
+    // (HeadlessClientManager / StreamingSeatLaunch). Only the exact value counts; omitted otherwise, so every other
+    // join is byte-identical to before.
+    string? Renderer = null);
 
 // Upstream raw-input replay from a controlling mirror client (single-controller foundation). `Kind` selects
 // the injection; element-addressed pointer input carries `ElementId` (+ optional normalized 0..1 offset),

@@ -9,9 +9,11 @@
 //   needs-proxy    no descriptor, and this page's origin is not one a loopback stream can serve (LAN / HTTPS)
 //   not-streaming  joined, but this seat has no descriptor; it applies when the seat next starts
 //
-// The ENDPOINT comes from the `session` envelope of this viewer's own seat (MIR-3; typed, nothing sends it yet) or,
-// for QA, from `?renderStream=` (source `qa-override`, info only). Until MIR-3 a normal session therefore reads
-// `not-streaming`, `host-view` or `core-build`.
+// The ENDPOINT comes from the `session` envelope of this viewer's own seat (MIR-3: the host's streaming seat sends
+// it to a page origin its hub allows) or, for QA, from `?renderStream=` (source `qa-override`, info only).
+//
+// The join asks for a streaming seat (`renderer: "stream"`, `joinRendererRequest`) when the viewer chose the new
+// renderer and this page could run it. The host launches at most one per host, and only at a seat's start.
 //
 // The live renderer (`runtimeRenderer`) is derived, never chosen: `stream` exactly while the viewer's choice is
 // `stream`, the feature is available, and the stream has not stopped this session. A stopped stream falls back to
@@ -134,6 +136,32 @@ export const renderStreamAvailability = computed<RenderStreamAvailability>(() =>
   sessionEndpoint: renderStreamContext.sessionEndpoint,
   pageLoopback: renderStreamContext.pageLoopback ?? isLoopbackHttpPage()
 }));
+
+/**
+ * What a join asks the host for: `"stream"` (launch this viewer's seat as the streaming seat) when the viewer chose
+ * the new renderer and THIS page could draw it — the core is here, WebGL2 works and the page is on a loopback http
+ * origin a host-side hub can serve. Otherwise nothing, so a seat never pays for a stream nobody can watch. A QA
+ * endpoint brings its own hub and asks for nothing either.
+ */
+export function joinRendererRequest(
+  inputs: Pick<RenderStreamAvailabilityInputs, "coreProblem" | "coreLoadFailed" | "webgl2" | "pageLoopback" | "qaEndpoint">
+    & { renderer: MirrorSettings["renderer"] }
+): "stream" | undefined {
+  return inputs.renderer === "stream" && inputs.coreProblem === null && !inputs.coreLoadFailed && inputs.webgl2
+    && inputs.pageLoopback && inputs.qaEndpoint === null ? "stream" : undefined;
+}
+
+/** `joinRendererRequest` for this page, now. */
+export function currentJoinRendererRequest(settings: MirrorSettings = mirrorSettings): "stream" | undefined {
+  return joinRendererRequest({
+    renderer: settings.renderer,
+    coreProblem: renderStreamContext.coreProblem === undefined ? renderStreamCoreConfig().problem : renderStreamContext.coreProblem,
+    coreLoadFailed: renderStreamContext.coreLoadFailed,
+    webgl2: renderStreamContext.webgl2 ?? probeWebgl2(),
+    pageLoopback: renderStreamContext.pageLoopback ?? isLoopbackHttpPage(),
+    qaEndpoint: qaRenderStreamEndpoint(settings)
+  });
+}
 
 /** The rule for the live renderer (see the header). */
 export function resolveRuntimeRenderer(

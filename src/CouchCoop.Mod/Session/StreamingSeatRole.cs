@@ -27,7 +27,7 @@ namespace CouchCoop.Mod.Session;
 /// THE ROLE IS NOT INHERITED. Spawned seats copy the host's environment, so a flag set on a host would turn every
 /// seat it spawns into a streaming seat, all arming one capture listener. <see cref="ClearInheritedRole"/> removes
 /// it from every seat launch: the flag marks the one process it is set on. Choosing a spawned seat to stream is
-/// the host's decision to make explicitly, and it does not make it yet.
+/// the host's explicit decision (<see cref="StreamingSeatLaunch"/>, MIR-3): it sets the flag on exactly one launch.
 /// </para>
 /// <para>
 /// The capture loads at mod init, below the seat's cloud-save guard and above the command-line override that lets
@@ -39,7 +39,7 @@ namespace CouchCoop.Mod.Session;
 /// </remarks>
 internal static class StreamingSeatRole
 {
-    internal const string EnvironmentVariable = "COUCHCOOP_STREAMING_SEAT";
+    internal const string EnvironmentVariable = Protocol.StreamingSeatDescriptor.RoleEnvironmentVariable;
 
     /// <summary>This process is the streaming seat. Read once; the role cannot change while the process runs.</summary>
     public static bool IsStreamingSeat { get; } = IsRequested(Environment.GetEnvironmentVariable(EnvironmentVariable));
@@ -57,10 +57,13 @@ internal static class StreamingSeatRole
 
     internal enum CaptureOutcomeKind
     {
-        /// <summary>Not a streaming seat and no extension named: nothing happens and nothing is logged.</summary>
+        /// <summary>
+        /// Not a streaming seat and no extension named — or the HOST, for which the variable is the operator's
+        /// configuration of its streaming seat (StreamingSeatLaunch logs it): nothing happens and nothing is logged.
+        /// </summary>
         Off,
 
-        /// <summary>Not a streaming seat but an extension named: not loaded, with a warning.</summary>
+        /// <summary>A seat that is not the streaming seat, with an extension named: not loaded, with a warning.</summary>
         IgnoredExtension,
 
         /// <summary>The streaming seat loaded its capture.</summary>
@@ -74,17 +77,19 @@ internal static class StreamingSeatRole
 
     /// <summary>
     /// What mod init does about the capture. Pure apart from <paramref name="load"/>, which is called at most once,
-    /// and only for the streaming seat with a valid extension path.
+    /// and only for the streaming seat with a valid extension path. <paramref name="isHeadlessClient"/> false is the
+    /// host, whose extension variable configures the seat it may launch to stream.
     /// </summary>
     internal static CaptureOutcome StartCapture(
         bool streamingSeat,
         string? extensionValue,
         Func<string, bool> fileExists,
-        Func<string, RenderCaptureExtensionLoader.LoadResult> load)
+        Func<string, RenderCaptureExtensionLoader.LoadResult> load,
+        bool isHeadlessClient = true)
     {
         if (!streamingSeat)
         {
-            return string.IsNullOrWhiteSpace(extensionValue)
+            return string.IsNullOrWhiteSpace(extensionValue) || !isHeadlessClient
                 ? new CaptureOutcome(CaptureOutcomeKind.Off, null)
                 : new CaptureOutcome(
                     CaptureOutcomeKind.IgnoredExtension,
@@ -120,7 +125,8 @@ internal static class StreamingSeatRole
             IsStreamingSeat,
             Environment.GetEnvironmentVariable(RenderCaptureExtensionLoader.EnvironmentVariable),
             File.Exists,
-            RenderCaptureExtensionLoader.Load);
+            RenderCaptureExtensionLoader.Load,
+            CouchCoopMod.IsHeadlessClient);
         switch (outcome.Kind)
         {
             case CaptureOutcomeKind.Off:

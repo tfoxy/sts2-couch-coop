@@ -228,7 +228,12 @@ export interface MirrorClient {
   // `options.onHeadlessRedirect` fires so the app can reconnect to the player's own game view.
   // `playerId` (the picked seat's "p:{netId}") is sent only when the join came from a roster BUTTON; it lets the
   // host resolve the exact seat instead of matching the label, which is what makes a rejoin land on the right netId.
-  sendJoin(name: string, playerId?: string): void;
+  // `renderer: "stream"` asks the host to launch this viewer's seat as its streaming seat ("Use new renderer
+  // (Beta)", renderStreamAvailability's `joinRendererRequest`); omitted otherwise, so the bytes are as before.
+  sendJoin(name: string, playerId?: string, renderer?: "stream"): void;
+  // Ask the connected instance to send its `session` envelope again (`{type:"session-refresh"}`). The new renderer
+  // asks once when its hub refused the token, to learn the seat's current descriptor. No-op when not open.
+  requestSession(): void;
   // Retire a local join attempt after timeout/rollback. Late replies cannot reopen its view.
   // This does not cancel a server-side spawn or alter the connection's watch request.
   cancelPendingJoin(): void;
@@ -350,6 +355,7 @@ export function connectMirrorClient(options: {
     sendClientViewError,
     sendClientVitals,
     sendJoin,
+    requestSession,
     cancelPendingJoin,
     sendSettings,
     sendWatch,
@@ -698,7 +704,7 @@ export function connectMirrorClient(options: {
     }
   }
 
-  function sendJoin(name: string, playerId?: string): void {
+  function sendJoin(name: string, playerId?: string, renderer?: "stream"): void {
     if (socket.readyState !== WebSocketCtor.OPEN) {
       return;
     }
@@ -714,12 +720,24 @@ export function connectMirrorClient(options: {
         name: name.trim(),
         // Omitted (not null) when there is no picked seat, so a free-text join's bytes are exactly as before.
         ...(playerId ? { playerId } : {}),
-        ...(visit ? { visit } : {})
+        ...(visit ? { visit } : {}),
+        ...(renderer ? { renderer } : {})
       }));
       joinPending = true;
       joinRequestId = requestId;
     } catch {
       // Racing close — drop it.
+    }
+  }
+
+  function requestSession(): void {
+    if (socket.readyState !== WebSocketCtor.OPEN) {
+      return;
+    }
+    try {
+      socket.send(JSON.stringify({ type: "session-refresh" }));
+    } catch {
+      // Racing close — drop it; a reconnect sends a fresh session anyway.
     }
   }
 

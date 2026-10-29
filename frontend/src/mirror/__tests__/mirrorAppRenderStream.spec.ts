@@ -225,6 +225,20 @@ describe("MirrorApp — the new renderer's stream branch", () => {
     expect(seat.sent[1]).toEqual({ type: "watch", on: true });
   });
 
+  it("pushes tween replay off under the stream and restores it after", async () => {
+    mirrorSettings.tweenReplay = true;
+    const seat = await joinSeat();
+    seat.sent.length = 0;
+    streamAvailable();
+    mirrorSettings.renderer = "stream";
+    await settle();
+    expect(seat.ofType("settings")[0]).toMatchObject({ tweenReplay: false });
+    fail({ kind: "failed", reason: "host-error", detail: "bye" });
+    await settle();
+    expect(seat.ofType("settings")[1]).toMatchObject({ tweenReplay: true });
+    expect(mirrorSettings.tweenReplay).toBe(true);
+  });
+
   it("stays on the old renderer when the saved choice is on but nothing streams", async () => {
     Object.assign(renderStreamContext, { coreProblem: null, webgl2: true, pageLoopback: true });
     mirrorSettings.renderer = "stream";
@@ -233,5 +247,96 @@ describe("MirrorApp — the new renderer's stream branch", () => {
     expect(seat.url).not.toContain("watch=0");
     expect(fake.clients).toHaveLength(0);
     expect(seat.ofType("settings")[0]).toMatchObject(HEADLESS_FREEZES);
+  });
+});
+
+// MIR-3: the host launches and pairs the streaming seat. The join asks for it; the seat's own `session` carries the
+// descriptor; the stage's `unauthorized` ask is a `session-refresh` on the seat socket; a descriptor that goes away
+// while drawing stops the stream with a reason.
+describe("MirrorApp — pairing with the host's streaming seat", () => {
+  const SEAT_TOKEN = "c".repeat(64);
+  const descriptor = { url: "ws://127.0.0.1:13366/render-stream", resourceBase: "http://127.0.0.1:13366",
+    token: SEAT_TOKEN, protocol: 12, presentation: [1920, 1080] };
+  const seatSession = (over: Record<string, unknown> = {}) => sessionMessage({
+    session: { joined: true, name: "Alice", status: "assigned", playerId: "p:1003", connectionCount: 1 },
+    ...HEADLESS_FREEZES, ...over
+  });
+
+  function canStream(): void {
+    Object.assign(renderStreamContext, { coreProblem: null, webgl2: true, pageLoopback: true, stopped: null,
+      coreLoadFailed: false });
+  }
+
+  async function joinStreamingSeat(): Promise<MockWebSocket> {
+    canStream();
+    mirrorSettings.renderer = "stream";
+    app = mount(MirrorApp);
+    await settle();
+    latest().emit(sessionMessage());
+    await settle();
+    await app.findAll('[data-testid="player-picker"] button')[1].trigger("click");
+    await settle();
+    latest().emit(sessionMessage({ headlessMirrorPort: 14000 }));
+    await settle();
+    const seat = latest();
+    seat.emit(seatSession({ renderStream: descriptor }));
+    await settle();
+    return seat;
+  }
+
+  it("asks the host for a streaming seat in the join, only when the viewer chose it and this page can draw it", async () => {
+    canStream();
+    mirrorSettings.renderer = "stream";
+    app = mount(MirrorApp);
+    await settle();
+    const host = latest();
+    host.emit(sessionMessage());
+    await settle();
+    await app.findAll('[data-testid="player-picker"] button')[1].trigger("click");
+    await settle();
+    expect(host.ofType("join")[0]).toMatchObject({ name: "Alice", playerId: "p:1003", renderer: "stream" });
+  });
+
+  it("joins exactly as before with the old renderer", async () => {
+    canStream();
+    app = mount(MirrorApp);
+    await settle();
+    const host = latest();
+    host.emit(sessionMessage());
+    await settle();
+    await app.findAll('[data-testid="player-picker"] button')[1].trigger("click");
+    await settle();
+    expect(host.ofType("join")[0]).not.toHaveProperty("renderer");
+  });
+
+  it("streams from the seat's own descriptor, token included", async () => {
+    await joinStreamingSeat();
+    expect(mirrorSettings.runtimeRenderer).toBe("stream");
+    expect(fake.clients).toHaveLength(1);
+    expect(fake.clients[0].options.endpoint).toMatchObject({ url: descriptor.url, token: SEAT_TOKEN, protocol: 12 });
+  });
+
+  it("answers the stage's unauthorized ask with a session-refresh on the seat socket", async () => {
+    const seat = await joinStreamingSeat();
+    seat.sent.length = 0;
+    fail({ kind: "failed", reason: "live-connect-failed", detail: "unauthorized" });
+    await settle();
+    expect(seat.sent).toEqual([{ type: "session-refresh" }]);
+    expect(mirrorSettings.runtimeRenderer).toBe("stream");
+
+    seat.emit(seatSession({ renderStream: { ...descriptor, token: "d".repeat(64) } }));
+    await settle();
+    expect(mirrorSettings.runtimeRenderer).toBe("stream");
+    expect(renderStreamContext.stopped).toBeNull();
+  });
+
+  it("stops with \"descriptor gone\" when the seat's session drops the descriptor while drawing", async () => {
+    const seat = await joinStreamingSeat();
+    seat.emit(seatSession());
+    await settle();
+    expect(renderStreamContext.stopped).toBe("descriptor gone");
+    expect(mirrorSettings.runtimeRenderer).toBe("mirror");
+    expect(mirrorSettings.renderer).toBe("stream");
+    expect(fake.clients[0].disposed).toBe(true);
   });
 });

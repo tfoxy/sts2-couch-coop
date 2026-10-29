@@ -202,6 +202,22 @@ if (args is [StreamingSeatRoleTests.Verb, ..])
     return;
 }
 
+// `dotnet run --project tests/CouchCoop.Mod.Tests -- render-stream-pairing` runs the new renderer's host half ALONE:
+// the streaming seat's launch environment, one streaming seat per host, and the seat's descriptor (pure), then the
+// descriptor over a real seat socket relayed through the seat pipe (a child process that IS the streaming seat).
+if (args is [RenderStreamPairingTests.Verb, ..])
+{
+    await RenderStreamPairingTests.RunAsync();
+    await BrowserServerRouteTests.RunRenderStreamDescriptorRoutesAsync();
+    Console.WriteLine("render-stream pairing: ok");
+    return;
+}
+
+if (args is [BrowserServerRouteTests.RenderStreamSeatChildVerb, ..])
+{
+    Environment.Exit(await BrowserServerRouteTests.RunRenderStreamSeatChildAsync(args[1..]));
+}
+
 if (args is ["host-guards", ..])
 {
     NetTransportPatchTargetsTests.Run();
@@ -840,6 +856,8 @@ CommandLineOverrideTests.Run();
 // Also reachable alone as `-- streaming-seat`.
 RenderCaptureExtensionLoaderTests.Run();
 StreamingSeatRoleTests.Run();
+await RenderStreamPairingTests.RunAsync();
+await BrowserServerRouteTests.RunRenderStreamDescriptorRoutesAsync();
 // WS-1: the composite Steam+ENet host — its shape (a missed override silently makes a message type Steam-only)
 // and its peer routing (unknown ids must reach ENet, never Steam, which throws on an unknown peer).
 DualNetHostShapeTests.Run();

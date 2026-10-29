@@ -37,7 +37,9 @@ export function renderStreamCoreConfig(): RenderStreamCoreConfig {
     core: {
       glueUrl: new URL("rs_gsw_wasm_client.js", base).href,
       wasmUrl: new URL("rs_gsw_wasm_bg.wasm", base).href,
-      buildUrl: new URL("build.json", base).href,
+      // Served without an extension: a built frontend sits inside the mod's folder, where the game would read any
+      // `*.json` as a mod manifest (vite-plugins/renderStreamClientAssets.ts).
+      buildUrl: new URL("core-build", base).href,
       expectedTree: coreStatus.expectedTree
     },
     problem: null

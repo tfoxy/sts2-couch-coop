@@ -997,6 +997,28 @@ internal static class HeadlessClientManagerTests
             + "multiplayer test path) and no --clientId (argv is unreliable in the embedded host)");
         Assert(HeadlessClientManager.SeatGameArguments("   ") == "--headless",
             "a blank log path adds nothing — the argument list stays what it was");
+
+        // A host started off Steam keeps its seats off Steam: a seat alone on Steam, with an empty steam profile,
+        // overwrote the account's remote store and loaded no mods (2026-10-29).
+        Assert(HeadlessClientManager.SeatGameArguments(null, "off") == "--headless --force-steam off",
+            "the host's --force-steam value is handed on");
+        Assert(HeadlessClientManager.SeatGameArguments("/tmp/s.log", "off") == "--headless --force-steam off --log-file \"/tmp/s.log\"",
+            "before the log file");
+        foreach (var bad in new[] { "", " ", "off --log-file x", "o\"ff", new string('a', 17) })
+        {
+            Assert(HeadlessClientManager.SeatGameArguments(null, bad) == "--headless",
+                $"a value that is not one plain token ('{bad}') is not passed on");
+        }
+        var launcher = File.ReadAllText(Path.Combine(RepoRootForSeatArgs(), "src", "CouchCoop.Mod", "Session", "HeadlessClientManager.cs"));
+        Assert(launcher.Contains("SeatGameArguments(preparedUserDir is null ? seatLogPath : null, _hostForceSteam.Value)", StringComparison.Ordinal),
+            "LaunchReal hands the host's value to every seat");
+    }
+
+    private static string RepoRootForSeatArgs()
+    {
+        var dir = new DirectoryInfo(AppContext.BaseDirectory);
+        while (dir is not null && !File.Exists(Path.Combine(dir.FullName, "CouchCoop.sln"))) dir = dir.Parent;
+        return dir?.FullName ?? throw new Exception("repo root not found");
     }
 
     // A seat launched with no user-dir isolation is handed its OWN log file, because Godot truncates the log it

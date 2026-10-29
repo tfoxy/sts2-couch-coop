@@ -50,4 +50,30 @@ describe("renderStreamCoreStatus", () => {
     expect(load(id!)).toBe('export default {"expectedTree":"abc","problem":null};\n');
     expect(resolveId("@/mirror/renderStreamCore")).toBeUndefined();
   });
+
+  it("emits the build record without a .json extension, so the game never reads it as a mod manifest", () => {
+    const plugin = renderStreamClientAssets({ dir: buildDir("abc"), gswRoot: "/gsw", coreTree: () => "abc" });
+    const emitted: string[] = [];
+    const generateBundle = plugin.generateBundle as (this: unknown) => void;
+    generateBundle.call({ emitFile: (file: { fileName: string }) => { emitted.push(file.fileName); }, warn: () => {} });
+    expect(emitted.sort()).toEqual(["app/render-stream/core-build", "app/render-stream/rs_gsw_wasm_bg.wasm",
+      "app/render-stream/rs_gsw_wasm_client.js"]);
+    expect(emitted.some((name) => name.endsWith(".json"))).toBe(false);
+  });
+
+  it("serves the build record as core-build in dev", () => {
+    const plugin = renderStreamClientAssets({ dir: buildDir("abc"), gswRoot: "/gsw", coreTree: () => "abc" });
+    let middleware: ((req: { url: string }, res: Record<string, unknown>, next: () => void) => void) | null = null;
+    (plugin.configureServer as (dev: unknown) => void)({ middlewares: { use: (fn: typeof middleware) => { middleware = fn; } } });
+    const headers: Record<string, string> = {};
+    let body: unknown = null;
+    const res = { statusCode: 200, setHeader: (k: string, v: string) => { headers[k] = v; }, end: (b: unknown) => { body = b; } };
+    let passed = false;
+    middleware!({ url: "/app/render-stream/core-build" }, res, () => { passed = true; });
+    expect(passed).toBe(false);
+    expect(headers["Content-Type"]).toBe("application/json");
+    expect(JSON.parse(String(body))).toEqual({ rs_core_tree: "abc" });
+    middleware!({ url: "/app/render-stream/build.json" }, res, () => { passed = true; });
+    expect(passed).toBe(true);
+  });
 });

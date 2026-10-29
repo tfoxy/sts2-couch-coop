@@ -136,6 +136,63 @@ describe("RenderStreamStage", () => {
     expect(clients[1].options.canvas).toBe(clients[0].options.canvas);
   });
 
+  describe("unauthorized: one ask for the seat's current descriptor", () => {
+    const unauthorized: RenderStreamStatus = { kind: "failed", reason: "live-connect-failed", detail: "unauthorized" };
+    const fresh = { ...endpoint, url: "ws://127.0.0.1:11/render-stream", token: "b".repeat(64) };
+
+    it("asks once, then reconnects the same client with a different descriptor", async () => {
+      mountStage();
+      clients[0].emit(unauthorized);
+      await nextTick();
+      expect(wrapper!.emitted("refresh-endpoint")).toHaveLength(1);
+      expect(wrapper!.emitted("failed")).toBeUndefined();
+      expect(clients[0].disposed).toBe(false);
+      expect(status().text()).toBe("Connecting…");
+
+      await wrapper!.setProps({ endpoint: fresh });
+      expect(clients[0].setEndpoint).toHaveBeenCalledWith(fresh);
+      expect(clients[0].connects).toBe(2);
+      expect(clients).toHaveLength(1);
+
+      // Asked once: a second refusal before anything drew is a stop.
+      clients[0].emit(unauthorized);
+      await nextTick();
+      expect(wrapper!.emitted("refresh-endpoint")).toHaveLength(1);
+      expect(wrapper!.emitted("failed")).toEqual([["live-connect-failed: unauthorized"]]);
+    });
+
+    it("stops when the seat answers with the same descriptor", async () => {
+      mountStage();
+      clients[0].emit(unauthorized);
+      await nextTick();
+      await wrapper!.setProps({ endpoint: { ...endpoint } });
+      expect(wrapper!.emitted("failed")).toEqual([["live-connect-failed: unauthorized"]]);
+      expect(clients[0].connects).toBe(1);
+      expect(clients[0].disposed).toBe(true);
+    });
+
+    it("stops when no descriptor arrives in time", async () => {
+      vi.useFakeTimers();
+      mountStage({ refreshTimeoutMs: 5_000 });
+      clients[0].emit(unauthorized);
+      await vi.advanceTimersByTimeAsync(4_999);
+      expect(wrapper!.emitted("failed")).toBeUndefined();
+      await vi.advanceTimersByTimeAsync(1);
+      expect(wrapper!.emitted("failed")).toEqual([["live-connect-failed: unauthorized"]]);
+    });
+
+    it("asks again after a drawn frame", async () => {
+      mountStage();
+      clients[0].emit(unauthorized);
+      await wrapper!.setProps({ endpoint: fresh });
+      clients[0].emit({ kind: "streaming", firstFrame: true });
+      clients[0].emit(unauthorized);
+      await nextTick();
+      expect(wrapper!.emitted("refresh-endpoint")).toHaveLength(2);
+      expect(wrapper!.emitted("failed")).toBeUndefined();
+    });
+  });
+
   it("hands a changed descriptor to the client", async () => {
     mountStage();
     const next = { ...endpoint, url: "ws://127.0.0.1:10/render-stream" };

@@ -10,6 +10,9 @@
 //   * the loading line until the first drawn transaction, and "Reconnecting…" while the package backs off;
 //   * the hidden tab: rAF stops by itself (so no credit returns and the hub stops publishing to us); after
 //     60 s hidden the client is disposed outright, and a visible tab reconnects as a fresh join;
+//   * `unauthorized` (the hub refused the token: the seat restarted with a new one): ask MirrorApp ONCE for the
+//     seat's current descriptor (`refresh-endpoint`); a different one arriving reconnects with it, the same one (or
+//     none within `refreshTimeoutMs`) is a stop;
 //   * the fallback: a `failed` or `ended` status is emitted as `failed(reason)` for MirrorApp to fall back on.
 //
 // VIEW ONLY. Nothing here listens for input or sends anything to the game.
@@ -35,15 +38,20 @@ const props = withDefaults(defineProps<{
   /** Injectable for specs; the package's factory otherwise. */
   createClient?: (options: RenderStreamClientOptions) => RenderStreamClient;
   hiddenDisposeMs?: number;
+  /** How long an `unauthorized` stream waits for the seat's current descriptor before it stops. */
+  refreshTimeoutMs?: number;
 }>(), {
   createClient: undefined,
-  hiddenDisposeMs: RENDER_STREAM_HIDDEN_DISPOSE_MS
+  hiddenDisposeMs: RENDER_STREAM_HIDDEN_DISPOSE_MS,
+  refreshTimeoutMs: 10_000
 });
 
 const emit = defineEmits<{
   /** The stream stopped for good this session (`<reason>: <detail>`, or `ended`). */
   failed: [reason: string];
   status: [status: RenderStreamStatus];
+  /** The hub refused our token: send the seat's current descriptor (a new `endpoint` prop), once. */
+  "refresh-endpoint": [];
 }>();
 
 type Phase = "connecting" | "loading" | "streaming" | "reconnecting" | "suspended" | "failed";
@@ -53,6 +61,16 @@ const phase = ref<Phase>("connecting");
 let client: RenderStreamClient | null = null;
 let hiddenTimer: ReturnType<typeof setTimeout> | null = null;
 let stopped = false;
+// The `unauthorized` refresh: asked at most once per stream (re-armed by a drawn frame), and while it is pending
+// the descriptor the client was refused with and the timer that gives up on a new one.
+let refreshAsked = false;
+let refreshPending: { refused: RenderStreamEndpoint; timer: ReturnType<typeof setTimeout> } | null = null;
+
+const UNAUTHORIZED = "live-connect-failed: unauthorized";
+
+function sameDescriptor(a: RenderStreamEndpoint, b: RenderStreamEndpoint): boolean {
+  return a.url === b.url && a.resourceBase === b.resourceBase && a.token === b.token && a.protocol === b.protocol;
+}
 
 const overlayText = computed(() => {
   switch (phase.value) {
@@ -72,11 +90,16 @@ function onStatus(status: RenderStreamStatus): void {
     case "streaming":
       // The session arrived first (`firstFrame: false`); the loading line stays up until something has drawn.
       phase.value = status.firstFrame ? "streaming" : "loading";
+      if (status.firstFrame) refreshAsked = false;
       break;
     case "reconnecting":
       phase.value = "reconnecting";
       break;
     case "failed":
+      if (status.reason === "live-connect-failed" && status.detail === "unauthorized" && !refreshAsked && client) {
+        askForCurrentDescriptor();
+        break;
+      }
       stop(`${status.reason}: ${status.detail}`);
       break;
     case "ended":
@@ -85,8 +108,31 @@ function onStatus(status: RenderStreamStatus): void {
   }
 }
 
+// The hub refused the token we were given. The seat may have restarted with a new one, so ask for its current
+// descriptor once and wait for it (the `endpoint` watch below decides).
+function askForCurrentDescriptor(): void {
+  refreshAsked = true;
+  phase.value = "connecting";
+  refreshPending = {
+    refused: props.endpoint,
+    timer: setTimeout(() => {
+      refreshPending = null;
+      stop(UNAUTHORIZED);
+    }, props.refreshTimeoutMs)
+  };
+  emit("refresh-endpoint");
+}
+
+function clearRefresh(): void {
+  if (refreshPending !== null) {
+    clearTimeout(refreshPending.timer);
+    refreshPending = null;
+  }
+}
+
 function stop(reason: string): void {
   if (stopped) return;
+  clearRefresh();
   stopped = true;
   phase.value = "failed";
   disposeClient();
@@ -137,8 +183,25 @@ function onVisibilityChange(): void {
   if (!client && !stopped) mountClient();
 }
 
-// A later descriptor (a seat restarted with a new port or token) reconnects in place.
+// A later descriptor (a seat restarted with a new port or token) reconnects in place. While an `unauthorized` refresh
+// is pending, the next descriptor is its answer: a different one reconnects (the failed client starts a fresh
+// session on `connect()`), the same one means the token really is refused.
 watch(() => props.endpoint, (endpoint) => {
+  if (refreshPending !== null) {
+    const refused = refreshPending.refused;
+    clearRefresh();
+    if (sameDescriptor(endpoint, refused)) {
+      stop(UNAUTHORIZED);
+      return;
+    }
+    try {
+      client?.setEndpoint(endpoint);
+      client?.connect();
+    } catch (error) {
+      stop(`receiver-error: ${error instanceof Error ? error.message : String(error)}`);
+    }
+    return;
+  }
   try {
     client?.setEndpoint(endpoint);
   } catch (error) {
@@ -159,6 +222,7 @@ onMounted(() => {
 onBeforeUnmount(() => {
   document.removeEventListener("visibilitychange", onVisibilityChange);
   clearHiddenTimer();
+  clearRefresh();
   stopped = true;
   disposeClient();
 });

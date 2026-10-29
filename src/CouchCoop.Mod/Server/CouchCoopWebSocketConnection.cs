@@ -121,6 +121,7 @@ public sealed class CouchCoopWebSocketConnection
     private WebSocket? _socket;
     private readonly HeadlessClientManager? _headlessManager;
     private readonly bool _isHeadlessClient;
+    private string? _requestOrigin;
     private readonly IHostBrowserAccess? _hostAccess;
     private volatile bool _watchRequested;
     private bool _watchCounted;
@@ -303,6 +304,8 @@ public sealed class CouchCoopWebSocketConnection
         CancellationToken cancellationToken)
     {
         _directIpAddress = DirectIpAddressFromRequest(_isSecure, request.Header("Host"));
+        // The page's Origin, which decides whether this connection is handed the streaming seat's descriptor.
+        _requestOrigin = request.Header("Origin");
         if (!string.Equals(request.Path, "/ws", StringComparison.Ordinal))
         {
             await HttpResponseWriter.WriteJsonErrorAsync(
@@ -675,7 +678,9 @@ public sealed class CouchCoopWebSocketConnection
                         // Bind the instance to the PICKED seat's netId rather than letting the allocator
                         // choose by name. Null for a free-text name submit (no seat yet).
                         targetNetId: targetNetId,
-                        hostFacts: joinRead.Seats).ConfigureAwait(false);
+                        hostFacts: joinRead.Seats,
+                        // The new renderer: this viewer's seat, if launched now, may become the streaming seat.
+                        wantsStreamingSeat: string.Equals(join.Renderer, "stream", StringComparison.Ordinal)).ConfigureAwait(false);
                     if (headlessPort is int readyPort)
                     {
                         headlessPath = _headlessManager.SharedMirrorPathForPort(readyPort);
@@ -980,6 +985,15 @@ public sealed class CouchCoopWebSocketConnection
                     // Flow control: the client finished rendering the last scene delta → release the next one.
                     GrantSceneCredit();
                     _onSceneAck?.Invoke();
+                    continue;
+                }
+
+                if (string.Equals(type, "session-refresh", StringComparison.Ordinal))
+                {
+                    // `{type:"session-refresh"}`: send this connection's `session` again. The new renderer asks once
+                    // when the hub refused its token (the seat restarted with a new one), to learn the current
+                    // descriptor. Read-only and cheap: one roster read, no game state.
+                    await ResendSessionAsync(null, cancellationToken).ConfigureAwait(false);
                     continue;
                 }
 
@@ -1851,7 +1865,16 @@ public sealed class CouchCoopWebSocketConnection
            || _socket is not { State: WebSocketState.Open };
 
     private Task SendEnvelopeAsync(BrowserEnvelope envelope)
-        => SendBytesAsync([], CancellationToken.None, sessionEnvelope: envelope);
+        => SendBytesAsync([], CancellationToken.None, sessionEnvelope: WithRenderStream(envelope));
+
+    // Every `session` this connection sends carries the streaming seat's descriptor when this process IS that seat
+    // and the page's Origin is one its hub allows; null (omitted) everywhere else. One place, so no send path can
+    // forget it.
+    private BrowserEnvelope WithRenderStream(BrowserEnvelope envelope)
+        => string.Equals(envelope.Type, "session", StringComparison.Ordinal)
+            && StreamingSeatDescriptor.ForOrigin(_requestOrigin) is { } descriptor
+                ? envelope with { RenderStream = descriptor }
+                : envelope;
 
     private Task SendResultAsync(BrowserActionResultEnvelope envelope)
         => SendBytesAsync(Encoding.UTF8.GetBytes(BrowserJson.Serialize(envelope)));

@@ -15,6 +15,7 @@ import {
 import {
   computeRenderStreamAvailability,
   isLoopbackHttpPage,
+  joinRendererRequest,
   qaRenderStreamEndpoint,
   renderStreamAvailability,
   renderStreamContext,
@@ -90,7 +91,7 @@ describe("mirrorSettings — the renderer keys", () => {
     expect(at("").renderStreamProtocol).toBe(12);
   });
 
-  it("overlays the server payload under the stream: freezes and static background off, the rest as saved", () => {
+  it("overlays the server payload under the stream: freezes, static background and tween replay off, the rest as saved", () => {
     const settings = createMirrorSettings(undefined, "", { storage: null });
     Object.assign(settings, { refreshRate: 40, tweenReplay: true, freezeParticles: true, freezeSpines: true,
       freezeDecor: true, staticBgEnabled: true, runtimeStage: "canvas" });
@@ -99,12 +100,13 @@ describe("mirrorSettings — the renderer keys", () => {
 
     settings.runtimeRenderer = "stream";
     expect(serverSettingsPayload(settings)).toEqual({
-      refreshRate: 40, freezeParticles: false, freezeSpines: false, freezeDecor: false, tweenReplay: true,
+      refreshRate: 40, freezeParticles: false, freezeSpines: false, freezeDecor: false, tweenReplay: false,
       staticBg: false, trailDrive: true
     });
     expect(staticBgWireValue(settings)).toBe(false);
     // The store itself is untouched, so switching back sends the instance's own values again.
     expect(settings.freezeParticles).toBe(true);
+    expect(settings.tweenReplay).toBe(true);
     settings.runtimeRenderer = "mirror";
     expect(serverSettingsPayload(settings)).toEqual(old);
   });
@@ -156,6 +158,20 @@ describe("renderStreamAvailability", () => {
     expect(sessionRenderStreamEndpoint(null)).toBeNull();
     expect(sessionRenderStreamEndpoint({ url: "ws://x/render-stream", resourceBase: "", token: "short", protocol: 12 })).toBeNull();
     expect(sessionRenderStreamEndpoint({ url: "ws://x/render-stream", resourceBase: "", token: null, protocol: 9 })).toBeNull();
+  });
+
+  it("asks the host for a streaming seat only when the viewer chose it and this page can draw it", () => {
+    const ask = { renderer: "stream" as const, coreProblem: null, coreLoadFailed: false, webgl2: true, pageLoopback: true,
+      qaEndpoint: null };
+    expect(joinRendererRequest(ask)).toBe("stream");
+    expect(joinRendererRequest({ ...ask, renderer: "mirror" })).toBeUndefined();
+    expect(joinRendererRequest({ ...ask, coreProblem: "missing" })).toBeUndefined();
+    expect(joinRendererRequest({ ...ask, coreLoadFailed: true })).toBeUndefined();
+    expect(joinRendererRequest({ ...ask, webgl2: false })).toBeUndefined();
+    // A LAN or HTTPS page cannot reach a loopback hub: the seat would stream for nobody.
+    expect(joinRendererRequest({ ...ask, pageLoopback: false })).toBeUndefined();
+    // A QA endpoint brings its own hub.
+    expect(joinRendererRequest({ ...ask, qaEndpoint: qa })).toBeUndefined();
   });
 
   it("knows a loopback http page", () => {

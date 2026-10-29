@@ -79,7 +79,21 @@ public sealed record BrowserEnvelope(
     bool ScrollAction = true,
     string? ConnectionAttemptId = null,
     // Shared-port seat route, mutually exclusive with HeadlessMirrorPort. Opaque to the browser.
-    string? HeadlessMirrorPath = null);
+    string? HeadlessMirrorPath = null,
+    // "Use new renderer (Beta)": where THIS instance's render-stream hub listens. Only the streaming seat sends it,
+    // and only on a connection whose page Origin the hub allows (Session/StreamingSeatDescriptor.cs). The token is a
+    // credential: it travels on this already-authorized socket only, never in a log line or a URL.
+    BrowserRenderStreamDto? RenderStream = null);
+
+// The `renderStream` wire shape, @godot-scene-web/render-stream-client's endpoint descriptor:
+// { "url": "ws://127.0.0.1:13366/render-stream", "resourceBase": "http://127.0.0.1:13366", "token": "<64 hex>",
+//   "protocol": 12, "presentation": [1920, 1080] } (camelCased by BrowserJson).
+public sealed record BrowserRenderStreamDto(
+    string Url,
+    string ResourceBase,
+    string? Token,
+    int Protocol,
+    IReadOnlyList<int>? Presentation = null);
 
 // The wire shape Stage B also consumes: { "scenePath": "res://scenes/backgrounds/<id>/<id>_background.tscn",
 // "url": "/bg/<id>?layers=<digest>&v=1" } (camelCased by BrowserJson).

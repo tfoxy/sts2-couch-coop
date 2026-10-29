@@ -246,7 +246,19 @@ public sealed partial class HeadlessClientManager : IDisposable
     private long _ownedSeatDemandGeneration;
     private readonly string? _gameExe;
     private readonly string? _headlessWrapper;
+    // The host's own `--force-steam` value, handed on to every seat it launches (HostForceSteamValue). Read on the
+    // first real launch, never at construction: the game's command-line helper is an engine call, and a Godot-less
+    // process (the unit suite, the hosted-server harness) that builds a real manager would crash on it.
+    private readonly Lazy<string?> _hostForceSteam = new(HostForceSteamValue);
     private bool _disposed;
+
+    // "Use new renderer (Beta)" (StreamingSeatLaunch): what the operator configured for a streaming seat (null: no
+    // seat on this host ever streams), the ONE slot whose current process was launched as the streaming seat, and
+    // the slot of the launch in progress that is to become it (read by LaunchReal, which may drop it). All under
+    // _lock.
+    private readonly StreamingSeatLaunch.Config? _streamingConfig;
+    private int? _streamingSlot;
+    private int? _streamingLaunchSlot;
 
     public static int SlotToPort(int slot) => HostPort + slot * PortStep;
     public static ulong SlotToNetId(int slot) => BaseNetId + (ulong)slot;
@@ -474,8 +486,10 @@ public sealed partial class HeadlessClientManager : IDisposable
         Func<bool>? runInProgressProbe = null,
         TimeProvider? seatNoticeTime = null,
         Action<int, long>? ownedSeatCountChanged = null,
-        TimeProvider? browserReconnectTime = null)
+        TimeProvider? browserReconnectTime = null,
+        StreamingSeatLaunch.Config? streamingConfig = null)
     {
+        _streamingConfig = streamingConfig;
         _seatNoticeTime = seatNoticeTime;
         _browserReconnectTime = browserReconnectTime ?? TimeProvider.System;
         _launcher = launcher ?? throw new ArgumentNullException(nameof(launcher));
@@ -519,6 +533,16 @@ public sealed partial class HeadlessClientManager : IDisposable
         _maxSeatsProbe = maxSeatsProbe;
         _seatPortProbe = SeatPortAvailability.DescribeOwnerAsync;
         _ownedSeatCountChanged = ownedSeatCountChanged;
+        var streaming = StreamingSeatLaunch.ResolveConfigFromEnvironment();
+        _streamingConfig = streaming.Config;
+        if (streaming.Config is { } config)
+        {
+            CouchCoopLog.Info($"streaming seat available: capture={config.Extension} calibration={config.Calibration}");
+        }
+        else if (streaming.Refusal is { } refusal)
+        {
+            CouchCoopLog.Warn($"streaming seat unavailable: {refusal}");
+        }
     }
 
     /// <summary>
@@ -623,7 +647,8 @@ public sealed partial class HeadlessClientManager : IDisposable
         bool allowNewSlot = true,
         Action<ulong, string?>? onSlotBound = null,
         SeatBrowserRouteMode routeMode = SeatBrowserRouteMode.Direct,
-        ulong? targetNetId = null)
+        ulong? targetNetId = null,
+        bool wantsStreamingSeat = false)
     {
         var name = NormalizeName(displayName);
         int slot;
@@ -886,6 +911,10 @@ public sealed partial class HeadlessClientManager : IDisposable
             // exercises both failure shapes — a null return and a throw — which is where the interesting
             // behaviour is.
             IHeadlessProcess? proc;
+            // The streaming seat is decided per LAUNCH: this viewer asked for it, the host is configured for it,
+            // and no other live seat already streams. A running seat keeps the role it started with.
+            _streamingLaunchSlot = wantsStreamingSeat && _streamingConfig is not null && !StreamingSeatTakenLocked(slot)
+                ? slot : null;
             try
             {
                 PrepareConnectionLocked(slot, sessionId, routeMode);
@@ -893,6 +922,7 @@ public sealed partial class HeadlessClientManager : IDisposable
             }
             catch (Exception launchError)
             {
+                _streamingLaunchSlot = null;
                 CouchCoop.Mod.Connections.ConnectionRegistry.Shared.Fail(sessionId, "launch-exception",
                     "The game process could not be launched.", "Check the game installation and retry. Copy this report if it fails again.", launchError.ToString());
                 ForgetConnectionLocked(slot);
@@ -909,6 +939,7 @@ public sealed partial class HeadlessClientManager : IDisposable
 
             if (proc is null)
             {
+                _streamingLaunchSlot = null;
                 // A null launcher result is not always a mystery. When LaunchReal refused for a missing
                 // listener, CouchSeatAvailability names either the known bind failure or a host start that
                 // CouchCoop never observed. A genuine Process.Start null keeps the generic sentence.
@@ -932,6 +963,18 @@ public sealed partial class HeadlessClientManager : IDisposable
                 return null;
             }
             _processBySlot[slot] = proc;
+            // LaunchReal may have dropped the role (the hub port was taken); what is left is the truth.
+            if (_streamingLaunchSlot == slot)
+            {
+                _streamingSlot = slot;
+                ConnectionRegistry.Shared.RecordDiagnostic(sessionId, "renderer",
+                    $"streaming seat (render-stream hub 127.0.0.1:{StreamingSeatLaunch.HubPortForSlot(slot).ToString(CultureInfo.InvariantCulture)})");
+            }
+            else if (_streamingSlot == slot)
+            {
+                _streamingSlot = null;
+            }
+            _streamingLaunchSlot = null;
             QueueOwnedSeatCountChangedLocked();
             if (_ownedConnections.TryGetValue(slot, out var owned))
             {
@@ -965,6 +1008,36 @@ public sealed partial class HeadlessClientManager : IDisposable
     /// abort a join.
     /// </para>
     /// </summary>
+    /// <summary>
+    /// The slot whose live process is this host's streaming seat, or null. At most one, ever (StreamingSeatLaunch).
+    /// </summary>
+    internal int? StreamingSlot
+    {
+        get
+        {
+            lock (_lock) return StreamingSeatTakenLocked(exceptSlot: null) ? _streamingSlot : null;
+        }
+    }
+
+    /// <summary>
+    /// Whether the launch of <paramref name="slot"/> now in progress is the streaming seat's. Asked from inside the
+    /// launcher (under <c>_lock</c>, which it already holds): what <c>LaunchReal</c> decides on, and what a test's fake
+    /// launcher records.
+    /// </summary>
+    internal bool IsStreamingLaunch(int slot)
+    {
+        lock (_lock) return _streamingLaunchSlot == slot;
+    }
+
+    /// <summary>Whether a live process OTHER than <paramref name="exceptSlot"/>'s already streams.</summary>
+    /// <remarks>
+    /// The launch about to replace <paramref name="exceptSlot"/>'s process (a respawn) frees that slot's role, so a
+    /// returning viewer gets it back. A streaming seat that exited frees it for the next viewer who asks.
+    /// </remarks>
+    private bool StreamingSeatTakenLocked(int? exceptSlot)
+        => _streamingSlot is int streaming && streaming != exceptSlot
+            && _processBySlot.TryGetValue(streaming, out var process) && !ProcessExited(process);
+
     private static void ReportSlotBound(Action<ulong, string?>? onSlotBound, int slot, string? name)
     {
         if (onSlotBound is null) return;
@@ -1785,10 +1858,56 @@ public sealed partial class HeadlessClientManager : IDisposable
     /// behaviour we already had, while a mis-split command line would be a seat that does not launch.
     /// </para>
     /// </remarks>
-    internal static string SeatGameArguments(string? seatLogPath)
-        => string.IsNullOrWhiteSpace(seatLogPath) || seatLogPath.Contains('"', StringComparison.Ordinal)
-            ? SeatHeadlessArgument
-            : $"{SeatHeadlessArgument} --log-file \"{seatLogPath}\"";
+    internal static string SeatGameArguments(string? seatLogPath, string? hostForceSteam = null)
+    {
+        var arguments = SeatHeadlessArgument;
+        if (hostForceSteam is { } steam && ForceSteamValue.IsMatch(steam))
+        {
+            arguments += $" --force-steam {steam}";
+        }
+
+        return string.IsNullOrWhiteSpace(seatLogPath) || seatLogPath.Contains('"', StringComparison.Ordinal)
+            ? arguments
+            : $"{arguments} --log-file \"{seatLogPath}\"";
+    }
+
+    /// <summary>
+    /// The host's own <c>--force-steam</c> value, or null when it was launched without one (every normal launch).
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// A SEAT RUNS ON THE PLATFORM ITS HOST RUNS ON. A seat is launched with <c>--headless</c> and nothing else, so it
+    /// takes the game's default and initialises Steam. Under a host that was started with <c>--force-steam off</c>
+    /// (a test or QA host, or a player who runs without the Steam client's overlay) that seat is the only process on
+    /// the machine talking to Steam, with a profile seeded from the host's <c>default/</c> one and an EMPTY
+    /// <c>steam/&lt;id&gt;/</c>: the game then treats its empty local saves as newer and overwrites the account's
+    /// Steam remote store with them — and with no "mods warning seen" in that empty profile it loads no mods, so
+    /// nothing of CouchCoop (its cloud isolation guard included) is there to stop it. Observed on a QA host,
+    /// 2026-10-29. Handing the host's value on keeps the seat on the host's profile and off the cloud.
+    /// </para>
+    /// <para>
+    /// Read through the game's own <c>CommandLineHelper</c>, i.e. exactly the value the host's game acted on (the
+    /// override table is empty on a host, so the lookup falls through to its real command line). Never throws: a
+    /// Godot-less host gets null, which is the launch that shipped.
+    /// </para>
+    /// </remarks>
+    internal static string? HostForceSteamValue()
+    {
+        try
+        {
+            return MegaCrit.Sts2.Core.Helpers.CommandLineHelper.TryGetValue("force-steam", out var value)
+                ? value?.Trim()
+                : null;
+        }
+        catch (Exception exception) when (exception is not OutOfMemoryException)
+        {
+            return null;
+        }
+    }
+
+    // A value is passed on only if it is one plain token; anything else would be a command line we did not mean.
+    private static readonly System.Text.RegularExpressions.Regex ForceSteamValue = new(
+        "^[A-Za-z0-9_-]{1,16}$", System.Text.RegularExpressions.RegexOptions.CultureInvariant);
 
     /// <summary>
     /// True once any seat on this host has been launched WITHOUT user-dir isolation, i.e. into the host's own
@@ -1962,7 +2081,7 @@ public sealed partial class HeadlessClientManager : IDisposable
         var seatLogPath = preparedUserDir is null
             ? PrepareSeatLogPath(slot)
             : Path.Combine(preparedUserDir.SlotUserDir, "logs", "godot.log");
-        var gameArgs = SeatGameArguments(preparedUserDir is null ? seatLogPath : null);
+        var gameArgs = SeatGameArguments(preparedUserDir is null ? seatLogPath : null, _hostForceSteam.Value);
         CouchCoopLog.Stderr($"headless launching slot={slot} port={port} netId={netId} hostNetId={hostNetId} exe={_gameExe}");
 
         ProcessStartInfo psi;
@@ -2099,8 +2218,14 @@ public sealed partial class HeadlessClientManager : IDisposable
         // Prevent the headless child from inheriting the host's port so if it tried to spawn
         // sub-headless instances (it won't, but defensive) they'd start at the right base.
         psi.EnvironmentVariables.Remove("COUCHCOOP_HEADLESS_WRAPPER");
-        // The streaming-seat flag marks the one process it is set on; a seat never inherits it from its host.
+        // The streaming-seat flag marks the one process it is set on; a seat never inherits it from its host, nor
+        // the capture's variables. The one seat chosen to stream gets its role and GRC_* table back explicitly.
         StreamingSeatRole.ClearInheritedRole(psi);
+        StreamingSeatLaunch.ClearInherited(psi);
+        if (_streamingLaunchSlot == slot)
+        {
+            ApplyStreamingSeatLocked(slot, psi, preparedUserDir?.HostUserDir ?? HeadlessUserDirSeeder.ResolveHostUserDir());
+        }
         MultiplayerNameStore.ConfigureSeatLaunch(psi, hasWrapper: _headlessWrapper is not null);
 
         try
@@ -2118,6 +2243,52 @@ public sealed partial class HeadlessClientManager : IDisposable
             CouchCoopLog.Stderr($"headless launch failed slot={slot}: {ex.GetType().Name}: {ex.Message}");
             throw;
         }
+    }
+
+    /// <summary>
+    /// Make this launch the streaming seat: its private evidence directory (with any previous process's token
+    /// removed, so a stale one can never be handed out), and <see cref="StreamingSeatLaunch.Environment"/>. Drops
+    /// the role instead — the seat then launches as a normal one, and the viewer sees "not streaming" — when the
+    /// hub's port is taken or the evidence directory cannot be prepared.
+    /// </summary>
+    private void ApplyStreamingSeatLocked(int slot, ProcessStartInfo psi, string? hostUserDir)
+    {
+        var hubPort = StreamingSeatLaunch.HubPortForSlot(slot);
+        string? refusal = null;
+        string? evidence = null;
+        if (_streamingConfig is null) refusal = "no capture is configured";
+        else if (hostUserDir is null) refusal = "the host user dir is unresolved";
+        else if (SeatPortAvailability.TestBindRefusal(hubPort, System.Net.IPAddress.Loopback) is { } bindError)
+        {
+            refusal = $"render-stream hub port {hubPort.ToString(CultureInfo.InvariantCulture)} is in use ({bindError})";
+        }
+        else
+        {
+            try
+            {
+                evidence = StreamingSeatLaunch.EvidenceDirectory(hostUserDir, slot);
+                Directory.CreateDirectory(evidence);
+                File.Delete(Path.Combine(evidence, Protocol.StreamingSeatDescriptor.TokenFileName));
+            }
+            catch (Exception exception) when (exception is IOException or UnauthorizedAccessException)
+            {
+                refusal = $"evidence dir unavailable ({exception.GetType().Name})";
+            }
+        }
+
+        if (refusal is not null || evidence is null)
+        {
+            _streamingLaunchSlot = null;
+            CouchCoopLog.Stderr($"streaming seat not launched slot={slot}: {refusal}; launching a normal seat");
+            return;
+        }
+
+        var hostPort = _controlPort?.Invoke() ?? 0;
+        var origins = StreamingSeatLaunch.AllowedOrigins(
+            hostPort, Environment.GetEnvironmentVariable(StreamingSeatLaunch.ExtraOriginsEnvironmentVariable));
+        StreamingSeatLaunch.Apply(psi, StreamingSeatLaunch.Environment(_streamingConfig!, hubPort, evidence, origins));
+        CouchCoopLog.Stderr($"streaming seat launching slot={slot} hub=127.0.0.1:{hubPort.ToString(CultureInfo.InvariantCulture)} "
+            + $"origins={string.Join(',', origins)} evidence={evidence}");
     }
 
     /// <summary>

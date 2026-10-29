@@ -22,6 +22,7 @@ import MirrorConfirmButton from "@/mirror/MirrorConfirmButton.vue";
 import MirrorHandRaiseButton from "@/mirror/MirrorHandRaiseButton.vue";
 import MirrorView from "@/mirror/MirrorView.vue";
 import {
+  currentJoinRendererRequest,
   renderStreamAvailability,
   renderStreamContext,
   sessionRenderStreamEndpoint,
@@ -975,9 +976,23 @@ const renderStreamEndpoint = computed(() => {
 watch(directView, (on) => { renderStreamContext.directView = on; }, { immediate: true });
 watch(
   () => (joined.value ? joinSession.value?.renderStream ?? null : null),
-  (raw) => { renderStreamContext.sessionEndpoint = sessionRenderStreamEndpoint(raw); },
+  (raw) => {
+    const next = sessionRenderStreamEndpoint(raw);
+    // The seat's descriptor went away while its stream was drawing (the seat stopped streaming, or restarted as a
+    // normal seat): say so ("New renderer stopped: descriptor gone") instead of falling back silently. Only while
+    // joined: a /ws reconnect that has no session yet is not the seat withdrawing anything.
+    if (next === null && joined.value && renderStreamContext.sessionEndpoint !== null
+      && mirrorSettings.runtimeRenderer === "stream" && renderStreamAvailability.value.source === "session") {
+      stopRenderStream("descriptor gone", mirrorSettings);
+    }
+    renderStreamContext.sessionEndpoint = next;
+  },
   { immediate: true }
 );
+// The stage's one ask after `unauthorized`: this seat's current descriptor, in a fresh `session`.
+function onRenderStreamRefresh(): void {
+  activeClient.requestSession();
+}
 
 // Only a granted view requests scene bytes. Unassigned and joining connections are
 // coordination-only, even when the host is on a non-multiplayer screen. The new renderer watches nothing here.
@@ -1268,7 +1283,9 @@ function submitJoin(name: string, playerId?: string): void {
     openSeatView(syntheticPort);
     return;
   }
-  activeClient.sendJoin(trimmed, playerId);
+  // "Use new renderer (Beta)": ask for this seat to be launched as the host's streaming seat when the viewer chose
+  // the new renderer and this page can draw it (renderStreamAvailability's joinRendererRequest).
+  activeClient.sendJoin(trimmed, playerId, currentJoinRendererRequest(mirrorSettings));
 }
 
 // Retiring an initial attempt also undoes its URL selection. A previously granted
@@ -1693,6 +1710,7 @@ onBeforeUnmount(() => {
       :endpoint="renderStreamEndpoint"
       :core="renderStreamCore"
       @failed="onRenderStreamFailed"
+      @refresh-endpoint="onRenderStreamRefresh"
     />
     <!-- Pre-join screen: mirror player picker (host badged [Host]) + a name field only in MP
          character-select. The stack (not the picker itself) is the centered grid item of `.game-surface`, so
