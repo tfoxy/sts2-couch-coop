@@ -31,6 +31,7 @@ import {
   renderStreamAvailability,
   renderStreamContext,
   retryRenderStream,
+  streamingSeatRequestable,
   syncRuntimeRenderer,
   type RenderStreamUnavailableReason
 } from "@/mirror/renderStreamAvailability";
@@ -104,18 +105,30 @@ const audioHelpText = computed(() => `${t("settings.help.audio")}${audioUsesHttp
 // THE NEW-RENDERER CHECKBOX. It shows the SAVED choice (like Stage), and is the only writer of it. It can be
 // switched ON only while the feature is available; a saved `on` can always be switched off, so a viewer whose seat
 // does not stream is never stuck with a choice they cannot clear. What renders follows from the saved choice and
-// availability (syncRuntimeRenderer), so checking it while available is what starts the stream.
+// availability (syncRuntimeRenderer), so checking it while available is what starts the stream. It can ALSO be
+// switched on while this viewer's own seat runs without streaming (MIR-4): MirrorApp then asks the host to restart
+// that seat as the streaming seat, and the reason line follows the host's answer.
 const NEW_RENDERER_REASON_KEYS: Record<RenderStreamUnavailableReason, import("@/i18n").MessageKey> = {
   "core-build": "settings.newRendererCoreBuild",
   "no-webgl2": "settings.newRendererNoWebgl2",
   "host-view": "settings.newRendererHostView",
   "needs-proxy": "settings.newRendererNeedsProxy",
-  "not-streaming": "settings.newRendererNotStreaming"
+  "not-streaming": "settings.newRendererNotStreaming",
+  "seat-restarting": "settings.newRendererSeatRestarting",
+  "seat-restart-pending": "settings.newRendererSeatRestartPending",
+  "seat-restart-refused": "settings.newRendererSeatRestartRefused",
+  "seat-restart-failed": "settings.newRendererSeatRestartFailed"
+};
+// The host's refusal/failure codes this page has its own sentence for; any other shows the host's English detail.
+const SEAT_RESTART_CAUSE_KEYS: Record<string, import("@/i18n").MessageKey> = {
+  "another-seat-streaming": "settings.newRendererAnotherSeatStreaming",
+  "no-capture": "settings.newRendererNoCapture",
+  "capture-not-started": "settings.newRendererCaptureNotStarted"
 };
 const newRenderer = computed<boolean>({
   get: () => settings.renderer === "stream",
   set: (on) => {
-    if (on && !renderStreamAvailability.value.available) return;
+    if (on && !renderStreamAvailability.value.available && !streamingSeatRequestable.value) return;
     settings.renderer = on ? "stream" : "mirror";
     persistMirrorSetting("renderer", settings.renderer);
     // A deliberate switch is a fresh start: forget this session's stop, then derive what renders.
@@ -123,10 +136,23 @@ const newRenderer = computed<boolean>({
     syncRuntimeRenderer(settings);
   }
 });
-const newRendererDisabled = computed(() => !renderStreamAvailability.value.available && settings.renderer !== "stream");
+const newRendererDisabled = computed(() => !renderStreamAvailability.value.available && settings.renderer !== "stream"
+  && !streamingSeatRequestable.value);
 const newRendererReason = computed(() => {
   const reason = renderStreamAvailability.value.reason;
-  return reason === null ? null : t(NEW_RENDERER_REASON_KEYS[reason]);
+  if (reason === null) return null;
+  if (reason === "seat-restart-refused" || reason === "seat-restart-failed") {
+    const restart = renderStreamContext.seatRestart;
+    const causeKey = restart?.reason ? SEAT_RESTART_CAUSE_KEYS[restart.reason] : undefined;
+    const cause = causeKey ? t(causeKey) : (restart?.detail ?? restart?.reason ?? "").replace(/[.\s]+$/, "");
+    return t(NEW_RENDERER_REASON_KEYS[reason], { reason: cause });
+  }
+  // A seat that does not stream yet, with the checkbox off: switching it on restarts the seat, so say that instead
+  // of "it applies when the seat next starts".
+  if (reason === "not-streaming" && settings.renderer !== "stream" && streamingSeatRequestable.value) {
+    return t("settings.newRendererRestartsSeat");
+  }
+  return t(NEW_RENDERER_REASON_KEYS[reason]);
 });
 const newRendererStopped = computed(() => settings.renderer === "stream" ? renderStreamContext.stopped : null);
 

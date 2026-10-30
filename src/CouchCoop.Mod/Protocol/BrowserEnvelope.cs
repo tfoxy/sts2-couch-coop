@@ -83,7 +83,18 @@ public sealed record BrowserEnvelope(
     // "Use new renderer (Beta)": where THIS instance's render-stream hub listens. Only the streaming seat sends it,
     // and only on a connection whose page Origin the hub allows (Session/StreamingSeatDescriptor.cs). The token is a
     // credential: it travels on this already-authorized socket only, never in a log line or a URL.
-    BrowserRenderStreamDto? RenderStream = null);
+    BrowserRenderStreamDto? RenderStream = null,
+    // "Use new renderer (Beta)" turned on mid-session (MIR-4): what the HOST did with this viewer's request to restart
+    // their seat as the streaming seat. Only the host's own connection for a bound seat carries it, and only while
+    // there is something to say (Session/HeadlessClientManager.StreamingRestart.cs); null (omitted) otherwise.
+    BrowserRendererSeatDto? RendererSeat = null);
+
+// The `rendererSeat` wire shape: { "state": "restarting" | "pending" | "refused" | "failed", "reason": "<code>",
+// "detail": "<English evidence>" } (camelCased by BrowserJson; reason and detail omitted when null).
+public sealed record BrowserRendererSeatDto(
+    string State,
+    string? Reason = null,
+    string? Detail = null);
 
 // The `renderStream` wire shape, @godot-scene-web/render-stream-client's endpoint descriptor:
 // { "url": "ws://127.0.0.1:13366/render-stream", "resourceBase": "http://127.0.0.1:13366", "token": "<64 hex>",

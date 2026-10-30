@@ -102,6 +102,15 @@ describe("RenderStreamStage", () => {
     expect(clients[0].disposed).toBe(true);
   });
 
+  it("still falls back when the failed client's dispose throws", async () => {
+    mountStage();
+    clients[0].dispose = () => { throw new Error("null pointer passed to rust"); };
+    expect(() => clients[0].emit({ kind: "failed", reason: "receiver-error", detail: "lost context" })).toThrow();
+    await nextTick();
+    expect(wrapper!.emitted("failed")).toEqual([["receiver-error: lost context"]]);
+    expect(wrapper!.get('[data-testid="render-stream-stage"]').attributes("data-stream-phase")).toBe("failed");
+  });
+
   it("treats an end record as a stop", async () => {
     mountStage();
     clients[0].emit({ kind: "ended" });
@@ -131,9 +140,15 @@ describe("RenderStreamStage", () => {
     expect(wrapper!.get('[data-testid="render-stream-stage"]').attributes("data-stream-phase")).toBe("suspended");
 
     setVisibility("visible");
+    await nextTick();
     expect(clients).toHaveLength(2);
     expect(clients[1].connects).toBe(1);
-    expect(clients[1].options.canvas).toBe(clients[0].options.canvas);
+    // A NEW canvas: the disposed client lost the old one's WebGL context for good, and a client on it drew nothing
+    // (MIR-4's real hidden page: the reconnect opened, then the stage stayed blank).
+    expect(clients[1].options.canvas).not.toBe(clients[0].options.canvas);
+    const canvases = wrapper!.findAll('[data-testid="render-stream-canvas"]');
+    expect(canvases).toHaveLength(1);
+    expect(canvases[0].element).toBe(clients[1].options.canvas);
   });
 
   describe("unauthorized: one ask for the seat's current descriptor", () => {

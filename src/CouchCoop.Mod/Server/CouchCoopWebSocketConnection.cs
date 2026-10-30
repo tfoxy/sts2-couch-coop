@@ -988,6 +988,40 @@ public sealed class CouchCoopWebSocketConnection
                     continue;
                 }
 
+                if (string.Equals(type, "set-renderer", StringComparison.Ordinal))
+                {
+                    // `{type:"set-renderer", renderer:"stream"|"mirror"}`: the viewer switched "Use new renderer
+                    // (Beta)" after their seat started (MIR-4). On the host, for this session's own seat only: ON
+                    // restarts it as the streaming seat (or stages that mid-run), OFF withdraws a staged request. The
+                    // answer is this connection's next `session` (`rendererSeat`), sent now and on every change.
+                    var renderer = document.RootElement.TryGetProperty("renderer", out var rendererElement)
+                        && rendererElement.ValueKind == JsonValueKind.String ? rendererElement.GetString() : null;
+                    if (_headlessManager is { } seats && renderer is "stream" or "mirror")
+                    {
+                        if (renderer == "stream")
+                        {
+                            _ = Task.Run(async () =>
+                            {
+                                try
+                                {
+                                    await seats.RequestStreamingSeatAsync(session.Id, CancellationToken.None).ConfigureAwait(false);
+                                }
+                                catch (Exception exception)
+                                {
+                                    CouchCoopLog.Stderr($"streaming seat request failed: {exception.GetType().Name}: {exception.Message}");
+                                }
+                                await ResendSessionAsync(null, CancellationToken.None).ConfigureAwait(false);
+                            }, CancellationToken.None);
+                        }
+                        else
+                        {
+                            seats.CancelStreamingSeatRequest(session.Id);
+                            await ResendSessionAsync(null, cancellationToken).ConfigureAwait(false);
+                        }
+                    }
+                    continue;
+                }
+
                 if (string.Equals(type, "session-refresh", StringComparison.Ordinal))
                 {
                     // `{type:"session-refresh"}`: send this connection's `session` again. The new renderer asks once
@@ -1874,6 +1908,14 @@ public sealed class CouchCoopWebSocketConnection
         => string.Equals(envelope.Type, "session", StringComparison.Ordinal)
             && StreamingSeatDescriptor.ForOrigin(_requestOrigin) is { } descriptor
                 ? envelope with { RenderStream = descriptor }
+                : WithRendererSeat(envelope);
+
+    // On the HOST, the session of a viewer whose seat has a renderer request in hand carries what became of it (MIR-4).
+    private BrowserEnvelope WithRendererSeat(BrowserEnvelope envelope)
+        => string.Equals(envelope.Type, "session", StringComparison.Ordinal)
+            && _session is { } session
+            && _headlessManager?.SeatRendererStateFor(session.Id) is { } seat
+                ? envelope with { RendererSeat = new BrowserRendererSeatDto(seat.State, seat.Reason, seat.Detail) }
                 : envelope;
 
     private Task SendResultAsync(BrowserActionResultEnvelope envelope)

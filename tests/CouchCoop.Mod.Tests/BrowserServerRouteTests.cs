@@ -205,6 +205,14 @@ if (args is [StreamingSeatRoleTests.Verb, ..])
 // `dotnet run --project tests/CouchCoop.Mod.Tests -- render-stream-pairing` runs the new renderer's host half ALONE:
 // the streaming seat's launch environment, one streaming seat per host, and the seat's descriptor (pure), then the
 // descriptor over a real seat socket relayed through the seat pipe (a child process that IS the streaming seat).
+// `-- streaming-seat-restart`: the new renderer turned on mid-session restarts the viewer's own seat (MIR-4).
+if (args is [StreamingSeatRestartTests.Verb, ..])
+{
+    await StreamingSeatRestartTests.RunAsync();
+    Console.WriteLine("streaming seat restart: ok");
+    return;
+}
+
 if (args is [RenderStreamPairingTests.Verb, ..])
 {
     await RenderStreamPairingTests.RunAsync();
@@ -857,6 +865,7 @@ CommandLineOverrideTests.Run();
 RenderCaptureExtensionLoaderTests.Run();
 StreamingSeatRoleTests.Run();
 await RenderStreamPairingTests.RunAsync();
+await StreamingSeatRestartTests.RunAsync();
 await BrowserServerRouteTests.RunRenderStreamDescriptorRoutesAsync();
 // WS-1: the composite Steam+ENet host — its shape (a missed override silently makes a message type Steam-only)
 // and its peer routing (unknown ids must reach ENet, never Steam, which throws on an unknown peer).

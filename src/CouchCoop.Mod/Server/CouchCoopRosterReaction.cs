@@ -5,7 +5,8 @@ namespace CouchCoop.Mod.Server;
 
 /// <summary>
 /// What the browser server does with each roster the roster observer reads: on a change, republish the names and re-send
-/// every connection's session; once the game has left both the run and any lobby, reap the detached seats.
+/// every connection's session; once the game has left both the run and any lobby, reap the detached seats; and on a
+/// lobby with no run, start the streaming-seat restarts that were staged while a run was in progress (MIR-4).
 /// </summary>
 /// <remarks>
 /// The effects are injected so the decisions are testable without a server, a game or a seat process. Not thread-safe
@@ -16,7 +17,8 @@ public sealed class CouchCoopRosterReaction(
     Action<IReadOnlyList<(ulong NetId, string Name)>>? publishNames,
     Action resendSessions,
     Action? reapDetachedSeats,
-    Action<string>? log = null)
+    Action<string>? log = null,
+    Action? applyStagedStreamingSeats = null)
 {
     private readonly Action<string> _log = log ?? CouchCoopLog.Stderr;
     private readonly object _gate = new();
@@ -42,6 +44,13 @@ public sealed class CouchCoopRosterReaction(
         if (reapDetachedSeats is not null && CouchCoopRosterChange.HasLeftRunAndLobby(roster))
         {
             reapDetachedSeats();
+        }
+
+        // The run is over and a lobby is up (a fresh one, or the load-saved-run lobby): a seat whose viewer asked for
+        // the new renderer mid-run can be restarted now. A no-op unless something is staged.
+        if (applyStagedStreamingSeats is not null && CouchCoopRosterChange.IsLobbyWithoutRun(roster))
+        {
+            applyStagedStreamingSeats();
         }
     }
 

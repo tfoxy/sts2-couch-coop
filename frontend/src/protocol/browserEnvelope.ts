@@ -211,6 +211,10 @@ export interface BrowserSessionEnvelope extends BrowserEnvelopeBase {
   // and is validated by it before use (mirror/renderStreamAvailability.ts). The token is a credential: never log
   // it, never put it in a URL. Nothing sends this yet.
   renderStream?: BrowserRenderStreamDescriptor | null;
+  // "Use new renderer (Beta)" turned on mid-session (MIR-4): on the HOST's connection only, what became of this
+  // viewer's request to restart their seat as the streaming seat. Absent when there is nothing to say. Parsed where
+  // it is used (renderStreamAvailability's parseSeatRestart).
+  rendererSeat?: unknown;
   // Current hosts always accept an absolute scroll offset (`set-scroll-offset`).
   scrollAction: true;
 }
@@ -575,6 +579,7 @@ export function parseBrowserEnvelopeValue(raw: unknown): BrowserEnvelope {
       // anything the client could not connect with.
       renderStream: value.renderStream !== null && typeof value.renderStream === "object"
         ? value.renderStream as BrowserRenderStreamDescriptor : null,
+      rendererSeat: value.rendererSeat !== null && typeof value.rendererSeat === "object" ? value.rendererSeat : null,
       scrollAction: requiredTrue(value.scrollAction, "scrollAction")
     };
   }

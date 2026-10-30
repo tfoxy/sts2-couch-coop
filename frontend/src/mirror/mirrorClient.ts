@@ -234,6 +234,10 @@ export interface MirrorClient {
   // Ask the connected instance to send its `session` envelope again (`{type:"session-refresh"}`). The new renderer
   // asks once when its hub refused the token, to learn the seat's current descriptor. No-op when not open.
   requestSession(): void;
+  // "Use new renderer (Beta)" switched after this viewer's seat started (MIR-4): `{type:"set-renderer", renderer}` on
+  // the HOST socket. "stream" asks the host to restart this viewer's own seat as the streaming seat; "mirror"
+  // withdraws a staged request. The answer comes back as the host session's `rendererSeat`. No-op when not open.
+  sendRendererRequest(renderer: "stream" | "mirror"): void;
   // Retire a local join attempt after timeout/rollback. Late replies cannot reopen its view.
   // This does not cancel a server-side spawn or alter the connection's watch request.
   cancelPendingJoin(): void;
@@ -356,6 +360,7 @@ export function connectMirrorClient(options: {
     sendClientVitals,
     sendJoin,
     requestSession,
+    sendRendererRequest,
     cancelPendingJoin,
     sendSettings,
     sendWatch,
@@ -738,6 +743,17 @@ export function connectMirrorClient(options: {
       socket.send(JSON.stringify({ type: "session-refresh" }));
     } catch {
       // Racing close — drop it; a reconnect sends a fresh session anyway.
+    }
+  }
+
+  function sendRendererRequest(renderer: "stream" | "mirror"): void {
+    if (socket.readyState !== WebSocketCtor.OPEN) {
+      return;
+    }
+    try {
+      socket.send(JSON.stringify({ type: "set-renderer", renderer }));
+    } catch {
+      // Racing close — drop it; the checkbox still shows the saved choice, and the next seat start honours it.
     }
   }
 

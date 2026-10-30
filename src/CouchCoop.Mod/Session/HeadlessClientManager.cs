@@ -214,6 +214,9 @@ public sealed partial class HeadlessClientManager : IDisposable
     // the test ctor injects a decided answer so the allocator's slot-skip can be exercised without sockets — and
     // one test deliberately uses the REAL probe against a live blackhole listener. See SeatPortAvailability.
     private readonly Func<int, CancellationToken, Task<string?>> _seatPortProbe;
+    // Whether a streaming seat's capture hub accepts on its port (HeadlessClientManager.StreamingRestart.cs). Defaults
+    // to a loopback connect; the test ctor injects a decided answer.
+    private readonly Func<int, CancellationToken, Task<bool>> _streamingHubProbe = DefaultStreamingHubProbeAsync;
     /// <summary>
     /// The clock each seat's <see cref="SeatNoticeSpeaker"/> measures its settling delay on, or
     /// <see langword="null"/> for the system clock. A test seam, and the only one available for that delay: the
@@ -487,9 +490,11 @@ public sealed partial class HeadlessClientManager : IDisposable
         TimeProvider? seatNoticeTime = null,
         Action<int, long>? ownedSeatCountChanged = null,
         TimeProvider? browserReconnectTime = null,
-        StreamingSeatLaunch.Config? streamingConfig = null)
+        StreamingSeatLaunch.Config? streamingConfig = null,
+        Func<int, CancellationToken, Task<bool>>? streamingHubProbe = null)
     {
         _streamingConfig = streamingConfig;
+        if (streamingHubProbe is not null) _streamingHubProbe = streamingHubProbe;
         _seatNoticeTime = seatNoticeTime;
         _browserReconnectTime = browserReconnectTime ?? TimeProvider.System;
         _launcher = launcher ?? throw new ArgumentNullException(nameof(launcher));
@@ -648,7 +653,8 @@ public sealed partial class HeadlessClientManager : IDisposable
         Action<ulong, string?>? onSlotBound = null,
         SeatBrowserRouteMode routeMode = SeatBrowserRouteMode.Direct,
         ulong? targetNetId = null,
-        bool wantsStreamingSeat = false)
+        bool wantsStreamingSeat = false,
+        bool relaunch = false)
     {
         var name = NormalizeName(displayName);
         int slot;
@@ -664,7 +670,9 @@ public sealed partial class HeadlessClientManager : IDisposable
             // Already assigned to this session (e.g. caller re-entered). A netId-BOUND request short-circuits only
             // when the session is already on THAT seat — otherwise the viewer picked a different seat on the same
             // connection and must actually be re-bound, not silently handed their previous instance.
-            if (_sessionToSlot.TryGetValue(sessionId, out slot)
+            // A RELAUNCH (the streaming-seat restart) has just stopped this session's own seat and must launch it
+            // again, so it goes on to the netId-bound path below instead.
+            if (!relaunch && _sessionToSlot.TryGetValue(sessionId, out slot)
                 && (targetNetId is null || SlotToNetId(slot) == targetNetId.Value))
             {
                 CancelBrowserReconnectGraceLocked(slot);
@@ -723,6 +731,9 @@ public sealed partial class HeadlessClientManager : IDisposable
                 reusingClaim = seatAlreadyClaimed;
                 if (name is not null)
                 {
+                    // Another player taking this seat does not inherit its holder's renderer request.
+                    if (ClaimedNameForSlotLocked(slot) is { } holder && !string.Equals(holder, name, StringComparison.OrdinalIgnoreCase))
+                        ForgetSeatRendererForClaimLocked(slot);
                     // Re-point the claim: drop any OTHER slot this name held, and any OTHER name holding this slot,
                     // so the name↔slot map stays a bijection (RemoveNameForSlotLocked / the dictionary do one each).
                     _nameToSlot.Remove(name);
@@ -815,6 +826,8 @@ public sealed partial class HeadlessClientManager : IDisposable
                 }
                 _sessionToSlot[sessionId] = slot;
                 if (name is not null) _nameToSlot[name] = slot;
+                // A new player on this slot does not inherit an earlier holder's renderer request.
+                ForgetSeatRendererForClaimLocked(slot);
             }
 
             // THE MID-RUN LAUNCH GATE. Every branch above that could hand back a LIVE process has already
@@ -911,9 +924,11 @@ public sealed partial class HeadlessClientManager : IDisposable
             // exercises both failure shapes — a null return and a throw — which is where the interesting
             // behaviour is.
             IHeadlessProcess? proc;
-            // The streaming seat is decided per LAUNCH: this viewer asked for it, the host is configured for it,
-            // and no other live seat already streams. A running seat keeps the role it started with.
-            _streamingLaunchSlot = wantsStreamingSeat && _streamingConfig is not null && !StreamingSeatTakenLocked(slot)
+            // The streaming seat is decided per LAUNCH: this viewer asked for it (in the join, or mid-session — see
+            // SlotWantsStreamingLocked), the host is configured for it, and no other live seat already streams. A
+            // running seat keeps the role it started with.
+            _streamingLaunchSlot = (wantsStreamingSeat || SlotWantsStreamingLocked(slot))
+                && _streamingConfig is not null && !StreamingSeatTakenLocked(slot)
                 ? slot : null;
             try
             {
@@ -967,6 +982,7 @@ public sealed partial class HeadlessClientManager : IDisposable
             if (_streamingLaunchSlot == slot)
             {
                 _streamingSlot = slot;
+                SettleStagedWishLocked(slot);
                 ConnectionRegistry.Shared.RecordDiagnostic(sessionId, "renderer",
                     $"streaming seat (render-stream hub 127.0.0.1:{StreamingSeatLaunch.HubPortForSlot(slot).ToString(CultureInfo.InvariantCulture)})");
             }

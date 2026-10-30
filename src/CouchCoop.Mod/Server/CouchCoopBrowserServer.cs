@@ -879,6 +879,13 @@ public sealed class CouchCoopBrowserServer(
 
         var generation = Interlocked.Increment(ref _rosterGeneration);
         _rosterReaction ??= CreateRosterReaction();
+        // A seat's renderer request (MIR-4) rides the session envelope of its viewer's host socket, which is a gated
+        // connection, so the same viewers that keep this observer alive are the ones told when it changes.
+        if (_headlessManager is { } seats && _seatRendererChanged is null)
+        {
+            _seatRendererChanged = ResendSessions;
+            seats.SeatRendererChanged += _seatRendererChanged;
+        }
         try
         {
             _rosterSubscription = _subscribeRoster(roster => OnRosterRead(generation, roster));
@@ -892,6 +899,11 @@ public sealed class CouchCoopBrowserServer(
 
     private void StopRosterObserverLocked()
     {
+        if (_headlessManager is { } seats && _seatRendererChanged is { } changed)
+        {
+            seats.SeatRendererChanged -= changed;
+            _seatRendererChanged = null;
+        }
         var subscription = _rosterSubscription;
         if (subscription is null)
         {
@@ -939,6 +951,7 @@ public sealed class CouchCoopBrowserServer(
     }
 
     private long _rosterGeneration;
+    private Action? _seatRendererChanged;
     private readonly object _rosterWorkGate = new();
     private Task _rosterWork = Task.CompletedTask;
     private CouchCoopRosterReaction? _rosterReaction;
@@ -996,7 +1009,8 @@ public sealed class CouchCoopBrowserServer(
             publishNames: _headlessManager is { } manager ? manager.PublishRosterNames : null,
             resendSessions: ResendSessions,
             reapDetachedSeats: _headlessManager is not null && envelopeFactory is not null ? ReapDetachedHeadless : null,
-            log: _log);
+            log: _log,
+            applyStagedStreamingSeats: _headlessManager is { } staged ? staged.ApplyStagedStreamingSeats : null);
 
     // Reaps kept-alive (detached) headless instances. The HeadlessClientManager only holds detached slots after a mid-run
     // browser disconnect; a reconnect clears them, so this frees only browsers that never came back. The caller decides

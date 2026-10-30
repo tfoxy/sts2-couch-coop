@@ -36,7 +36,7 @@ vi.mock("@/mirror/renderStreamCore", () => ({
 
 import MirrorApp from "@/mirror/MirrorApp.vue";
 import { DEFAULT_REFRESH_RATE, mirrorSettings } from "@/mirror/mirrorSettings";
-import { renderStreamContext } from "@/mirror/renderStreamAvailability";
+import { renderStreamAvailability, renderStreamContext } from "@/mirror/renderStreamAvailability";
 
 class MockWebSocket extends EventTarget {
   static OPEN = 1;
@@ -148,7 +148,7 @@ afterEach(() => {
   app = null;
   Object.assign(mirrorSettings, { renderer: "mirror", runtimeRenderer: "mirror", renderStreamUrl: null });
   Object.assign(renderStreamContext, { directView: false, sessionEndpoint: null, coreLoadFailed: false, stopped: null,
-    coreProblem: undefined, webgl2: undefined, pageLoopback: undefined });
+    coreProblem: undefined, webgl2: undefined, pageLoopback: undefined, seatJoined: false, seatRestart: null });
   globalThis.localStorage?.clear();
   (globalThis as unknown as { WebSocket: unknown }).WebSocket = realWebSocket;
 });
@@ -328,6 +328,90 @@ describe("MirrorApp — pairing with the host's streaming seat", () => {
     await settle();
     expect(mirrorSettings.runtimeRenderer).toBe("stream");
     expect(renderStreamContext.stopped).toBeNull();
+  });
+
+  // MIR-4: the checkbox switched on after the seat started asks the HOST socket to restart the seat as the streaming
+  // seat; the host's answer rides its own session, and the restarted seat's descriptor switches the stream on.
+  async function joinNormalSeat(): Promise<{ host: MockWebSocket; seat: MockWebSocket }> {
+    canStream();
+    app = mount(MirrorApp);
+    await settle();
+    const host = latest();
+    host.emit(sessionMessage());
+    await settle();
+    await app.findAll('[data-testid="player-picker"] button')[1].trigger("click");
+    await settle();
+    host.emit(sessionMessage({ headlessMirrorPort: 14000 }));
+    await settle();
+    const seat = latest();
+    seat.emit(seatSession());
+    await settle();
+    return { host, seat };
+  }
+
+  it("asks the host to restart the seat when switched on mid-session, and withdraws when switched off", async () => {
+    const { host, seat } = await joinNormalSeat();
+    expect(renderStreamContext.seatJoined).toBe(true);
+    mirrorSettings.renderer = "stream";
+    await settle();
+    expect(host.ofType("set-renderer")).toEqual([{ type: "set-renderer", renderer: "stream" }]);
+    expect(seat.ofType("set-renderer")).toHaveLength(0);
+    expect(mirrorSettings.runtimeRenderer).toBe("mirror");
+
+    host.emit(sessionMessage({ rendererSeat: { state: "pending" } }));
+    await settle();
+    expect(renderStreamContext.seatRestart).toEqual({ state: "pending", reason: null, detail: null });
+    expect(renderStreamAvailability.value.reason).toBe("seat-restart-pending");
+
+    mirrorSettings.renderer = "mirror";
+    await settle();
+    expect(host.ofType("set-renderer").at(-1)).toEqual({ type: "set-renderer", renderer: "mirror" });
+    host.emit(sessionMessage());
+    await settle();
+    expect(renderStreamContext.seatRestart).toBeNull();
+  });
+
+  it("asks nothing when the page could not draw the stream, or the seat already streams", async () => {
+    const { host } = await joinNormalSeat();
+    renderStreamContext.pageLoopback = false;
+    mirrorSettings.renderer = "stream";
+    await settle();
+    expect(host.ofType("set-renderer")).toHaveLength(0);
+  });
+
+  it("switches to the stream when the restarted seat's descriptor arrives, and a pre-join session keeps the wait", async () => {
+    const { host, seat } = await joinNormalSeat();
+    mirrorSettings.renderer = "stream";
+    await settle();
+    host.emit(sessionMessage({ rendererSeat: { state: "restarting" } }));
+    await settle();
+    expect(renderStreamAvailability.value.reason).toBe("seat-restarting");
+
+    // The old seat is stopped and its socket drops: after the backoff the app opens a fresh host socket, whose first
+    // sessions carry nothing about a seat it has not re-joined yet. The page keeps showing the restart meanwhile.
+    seat.close();
+    await settle();
+    expect(renderStreamContext.seatRestart?.state).toBe("restarting");
+    await new Promise((resolve) => setTimeout(resolve, 1100));
+    await settle();
+    const fresh = latest();
+    expect(fresh).not.toBe(host);
+    fresh.emit(sessionMessage());
+    await settle();
+    expect(renderStreamContext.seatRestart?.state).toBe("restarting");
+    // The re-join (by the remembered seat) is answered with the restarted seat's port, and that seat streams.
+    expect(fresh.ofType("join")[0]).toMatchObject({ playerId: "p:1003", renderer: "stream" });
+    // The host finished first (MIR-4's live leg: the seat was ready before the browser re-joined), so its reply
+    // carries nothing; until the restarted seat itself speaks, the page still says it is restarting.
+    fresh.emit(sessionMessage({ headlessMirrorPort: 14000 }));
+    await settle();
+    expect(renderStreamContext.seatRestart?.state).toBe("restarting");
+    const restarted = latest();
+    restarted.emit(seatSession({ renderStream: descriptor }));
+    await settle();
+    expect(renderStreamAvailability.value.available).toBe(true);
+    expect(mirrorSettings.runtimeRenderer).toBe("stream");
+    expect(renderStreamContext.seatRestart).toBeNull();
   });
 
   it("stops with \"descriptor gone\" when the seat's session drops the descriptor while drawing", async () => {

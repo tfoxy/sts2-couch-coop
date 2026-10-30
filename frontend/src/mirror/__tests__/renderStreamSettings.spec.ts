@@ -13,9 +13,11 @@ import {
   type MirrorSettingsStorage
 } from "@/mirror/mirrorSettings";
 import {
+  canRequestStreamingSeat,
   computeRenderStreamAvailability,
   isLoopbackHttpPage,
   joinRendererRequest,
+  parseSeatRestart,
   qaRenderStreamEndpoint,
   renderStreamAvailability,
   renderStreamContext,
@@ -23,7 +25,8 @@ import {
   sessionRenderStreamEndpoint,
   stopRenderStream,
   syncRuntimeRenderer,
-  type RenderStreamAvailabilityInputs
+  type RenderStreamAvailabilityInputs,
+  type RenderStreamSeatRestart
 } from "@/mirror/renderStreamAvailability";
 
 // MIR-2's unit checks (handoff-mirror-new-renderer.md §6): the `renderer` key persists and `runtimeRenderer` does
@@ -142,6 +145,45 @@ describe("renderStreamAvailability", () => {
     expect(reason({ qaEndpoint: null, pageLoopback: false })).toBe("needs-proxy");
     expect(reason({ qaEndpoint: null })).toBe("not-streaming");
     expect(reason({})).toBeNull();
+  });
+
+  it("puts the host's answer to a mid-session restart in place of not-streaming (MIR-4)", () => {
+    const withRestart = (state: RenderStreamSeatRestart["state"], over: Partial<RenderStreamAvailabilityInputs> = {}) =>
+      computeRenderStreamAvailability({ ...base, seatRestart: { state, reason: null, detail: null }, ...over }).reason;
+    expect(withRestart("restarting")).toBe("seat-restarting");
+    expect(withRestart("pending")).toBe("seat-restart-pending");
+    expect(withRestart("refused")).toBe("seat-restart-refused");
+    expect(withRestart("failed")).toBe("seat-restart-failed");
+    // Everything that outranks not-streaming outranks the restart too, and the seat's descriptor wins over a stale one.
+    expect(withRestart("restarting", { pageLoopback: false })).toBe("needs-proxy");
+    expect(withRestart("restarting", { directView: true })).toBe("host-view");
+    const seat = sessionRenderStreamEndpoint({ url: "ws://127.0.0.1:1/render-stream", resourceBase: "http://127.0.0.1:1",
+      token: "a".repeat(64), protocol: 12 });
+    expect(computeRenderStreamAvailability({ ...base, sessionEndpoint: seat,
+      seatRestart: { state: "restarting", reason: null, detail: null } })).toMatchObject({ available: true, source: "session" });
+  });
+
+  it("parses the host session's rendererSeat, refusing what it does not understand", () => {
+    expect(parseSeatRestart({ state: "failed", reason: "capture-not-started", detail: "no hub" }))
+      .toEqual({ state: "failed", reason: "capture-not-started", detail: "no hub" });
+    expect(parseSeatRestart({ state: "pending" })).toEqual({ state: "pending", reason: null, detail: null });
+    expect(parseSeatRestart(null)).toBeNull();
+    expect(parseSeatRestart(undefined)).toBeNull();
+    expect(parseSeatRestart({ state: "exploded" })).toBeNull();
+    expect(parseSeatRestart("restarting")).toBeNull();
+  });
+
+  it("lets a joined seat that does not stream ask for a restart, and only then", () => {
+    const at = (over: Partial<RenderStreamAvailabilityInputs>) => computeRenderStreamAvailability({ ...base, ...over });
+    expect(canRequestStreamingSeat(at({}), true)).toBe(true);
+    expect(canRequestStreamingSeat(at({}), false)).toBe(false);
+    expect(canRequestStreamingSeat(at({ seatRestart: { state: "refused", reason: "another-seat-streaming", detail: null } }), true)).toBe(true);
+    expect(canRequestStreamingSeat(at({ seatRestart: { state: "failed", reason: null, detail: null } }), true)).toBe(true);
+    expect(canRequestStreamingSeat(at({ seatRestart: { state: "restarting", reason: null, detail: null } }), true)).toBe(false);
+    expect(canRequestStreamingSeat(at({ seatRestart: { state: "pending", reason: null, detail: null } }), true)).toBe(false);
+    expect(canRequestStreamingSeat(at({ pageLoopback: false }), true)).toBe(false);
+    expect(canRequestStreamingSeat(at({ directView: true }), true)).toBe(false);
+    expect(canRequestStreamingSeat(at({ webgl2: false }), true)).toBe(false);
   });
 
   it("prefers the QA endpoint, then the seat's own descriptor", () => {

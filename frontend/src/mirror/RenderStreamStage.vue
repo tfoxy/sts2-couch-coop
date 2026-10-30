@@ -9,14 +9,16 @@
 //   * the client's lifetime: created and connected on mount, disposed on unmount (heap, socket, GL context);
 //   * the loading line until the first drawn transaction, and "Reconnecting…" while the package backs off;
 //   * the hidden tab: rAF stops by itself (so no credit returns and the hub stops publishing to us); after
-//     60 s hidden the client is disposed outright, and a visible tab reconnects as a fresh join;
+//     60 s hidden the client is disposed outright, and a visible tab reconnects as a fresh join ON A NEW CANVAS:
+//     the package's `dispose()` loses the canvas's WebGL context for good (`WEBGL_lose_context`), and a canvas keeps
+//     that lost context, so a client given the old one connects and then draws nothing (MIR-4);
 //   * `unauthorized` (the hub refused the token: the seat restarted with a new one): ask MirrorApp ONCE for the
 //     seat's current descriptor (`refresh-endpoint`); a different one arriving reconnects with it, the same one (or
 //     none within `refreshTimeoutMs`) is a stop;
 //   * the fallback: a `failed` or `ended` status is emitted as `failed(reason)` for MirrorApp to fall back on.
 //
 // VIEW ONLY. Nothing here listens for input or sends anything to the game.
-import { computed, onBeforeUnmount, onMounted, ref, watch } from "vue";
+import { computed, nextTick, onBeforeUnmount, onMounted, ref, watch } from "vue";
 
 import {
   createRenderStreamClient,
@@ -57,6 +59,9 @@ const emit = defineEmits<{
 type Phase = "connecting" | "loading" | "streaming" | "reconnecting" | "suspended" | "failed";
 
 const canvasEl = ref<HTMLCanvasElement | null>(null);
+// Bumped whenever a client has been disposed and another may follow: the <canvas> is keyed on it, so every client gets
+// a canvas whose WebGL context nobody has lost yet.
+const canvasGeneration = ref(0);
 const phase = ref<Phase>("connecting");
 let client: RenderStreamClient | null = null;
 let hiddenTimer: ReturnType<typeof setTimeout> | null = null;
@@ -135,8 +140,14 @@ function stop(reason: string): void {
   clearRefresh();
   stopped = true;
   phase.value = "failed";
-  disposeClient();
-  emit("failed", reason);
+  // The fallback is emitted whatever the teardown does: this runs inside the client's own status callback, which
+  // swallows a throw, so a dispose that threw here used to leave the stage on "failed" over a blank canvas with
+  // MirrorApp never told (MIR-4's real hidden-page repro).
+  try {
+    disposeClient();
+  } finally {
+    emit("failed", reason);
+  }
 }
 
 function mountClient(): void {
@@ -156,7 +167,10 @@ function mountClient(): void {
 function disposeClient(): void {
   const current = client;
   client = null;
-  current?.dispose();
+  if (current) {
+    canvasGeneration.value += 1;
+    current.dispose();
+  }
 }
 
 function clearHiddenTimer(): void {
@@ -180,7 +194,8 @@ function onVisibilityChange(): void {
     return;
   }
   clearHiddenTimer();
-  if (!client && !stopped) mountClient();
+  // After the key bump the fresh <canvas> exists only once Vue has rendered it.
+  if (!client && !stopped) void nextTick(mountClient);
 }
 
 // A later descriptor (a seat restarted with a new port or token) reconnects in place. While an `unauthorized` refresh
@@ -243,7 +258,14 @@ defineExpose({
     :data-stream-phase="phase"
   >
     <div class="render-stream-box">
-      <canvas ref="canvasEl" class="render-stream-canvas" width="1920" height="1080" data-testid="render-stream-canvas" />
+      <canvas
+        :key="canvasGeneration"
+        ref="canvasEl"
+        class="render-stream-canvas"
+        width="1920"
+        height="1080"
+        data-testid="render-stream-canvas"
+      />
     </div>
     <p v-if="overlayText" class="render-stream-status" role="status" data-testid="render-stream-status">{{ overlayText }}</p>
   </div>

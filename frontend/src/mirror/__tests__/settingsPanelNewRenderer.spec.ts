@@ -84,7 +84,8 @@ afterEach(() => {
   clearStoredMirrorSettings();
   Object.assign(mirrorSettings, { renderer: "mirror", runtimeRenderer: "mirror", renderStreamUrl: null,
     renderStreamProtocol: 12, panelOpen: false, reproRecorder: false, latencyOverlay: false, audio: false });
-  Object.assign(renderStreamContext, { coreProblem: undefined, webgl2: undefined, pageLoopback: undefined, stopped: null });
+  Object.assign(renderStreamContext, { coreProblem: undefined, webgl2: undefined, pageLoopback: undefined, stopped: null,
+    seatJoined: false, seatRestart: null });
 });
 
 describe("SettingsPanel — Use new renderer (Beta)", () => {
@@ -211,6 +212,45 @@ describe("SettingsPanel — Use new renderer (Beta)", () => {
     expect(el("mirror-stretch").disabled).toBe(false);
     await wrapper!.get('[data-testid="mirror-renderer"]').setValue(false);
     expect(mirrorSettings.renderer).toBe("mirror");
+  });
+
+  // MIR-4: on a joined seat that does not stream, the checkbox can be switched ON — that asks the host to restart the
+  // seat as the streaming seat (MirrorApp sends it) — and the reason line follows the host's answer.
+  it("can be switched on for a joined seat that does not stream, and says it restarts the seat", async () => {
+    renderStreamContext.seatJoined = true;
+    mountPanel();
+    await nextTick();
+    expect(el("mirror-renderer").disabled).toBe(false);
+    expect(wrapper!.get('[data-testid="mirror-renderer-reason"]').text()).toContain("restarts your player");
+    await wrapper!.get('[data-testid="mirror-renderer"]').setValue(true);
+    expect(mirrorSettings.renderer).toBe("stream");
+    expect(mirrorSettings.runtimeRenderer).toBe("mirror");
+    expect(wrapper!.get('[data-testid="mirror-renderer-reason"]').text())
+      .toBe("This player's seat isn't streaming. It applies when the seat next starts.");
+  });
+
+  it.each([
+    [{ state: "restarting", reason: null, detail: null }, "Restarting your player so it can stream…", false],
+    [{ state: "pending", reason: null, detail: null }, "Starts when the current run ends.", false],
+    [{ state: "refused", reason: "another-seat-streaming", detail: "Slot 3 streams." },
+      "Your player can't stream right now: another player's seat is streaming", true],
+    [{ state: "refused", reason: "no-capture", detail: null }, "Your player can't stream right now: this host isn't set up to stream", true],
+    [{ state: "failed", reason: "capture-not-started", detail: "no hub" },
+      "Couldn't restart your player to stream: the stream didn't start. It's back on the old renderer.", true],
+    [{ state: "failed", reason: "launch-failed", detail: "The game process did not start." },
+      "Couldn't restart your player to stream: The game process did not start. It's back on the old renderer.", true]
+  ] as const)("shows the host's answer %o", async (restart, text, canAskAgain) => {
+    renderStreamContext.seatJoined = true;
+    renderStreamContext.seatRestart = { ...restart };
+    mirrorSettings.renderer = "stream";
+    mountPanel();
+    await nextTick();
+    expect(el("mirror-renderer").checked).toBe(true);
+    expect(wrapper!.get('[data-testid="mirror-renderer-reason"]').text()).toBe(text);
+    // Off is always possible; on again only once the host has given up on the request.
+    await wrapper!.get('[data-testid="mirror-renderer"]').setValue(false);
+    expect(mirrorSettings.renderer).toBe("mirror");
+    expect(el("mirror-renderer").disabled).toBe(!canAskAgain);
   });
 
   it("says the stream stopped, falls back, and Try again resumes it", async () => {
