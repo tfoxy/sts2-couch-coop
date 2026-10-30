@@ -187,9 +187,9 @@ export function parseSpineMode(raw: string | null): SpineMode {
 
 /** Which renderer draws the game: the node-geometry mirror, or the render-stream (the "new renderer", Beta). */
 export type MirrorRenderer = "mirror" | "stream";
-/** The render-stream protocol versions the client speaks (`@godot-scene-web/render-stream-client`'s 11 | 12). */
+/** The render-stream protocol versions the client speaks (`@godot-scene-web/render-stream-client`'s 11 | 12 | 13). */
 export type RenderStreamWireVersion = 11 | 12 | 13;
-export const DEFAULT_RENDER_STREAM_PROTOCOL: RenderStreamWireVersion = 12;
+export const DEFAULT_RENDER_STREAM_PROTOCOL: RenderStreamWireVersion = 13;
 
 export interface MirrorSettings {
   /** Public stage choice; a fresh WebKit viewer starts on canvas, other viewers on DOM. */

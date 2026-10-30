@@ -62,7 +62,7 @@ internal static class StreamingSeatDescriptor
         if (listen is null || !LoopbackListen.IsMatch(listen)) return null;
 
         if (!int.TryParse(environment("GRC_STREAM_VERSION"), NumberStyles.None, CultureInfo.InvariantCulture, out var protocol)
-            || protocol is not (11 or 12))
+            || protocol is not (11 or 12 or 13))
         {
             return null;
         }

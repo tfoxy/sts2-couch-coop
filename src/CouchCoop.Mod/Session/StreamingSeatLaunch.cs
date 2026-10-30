@@ -61,8 +61,12 @@ internal static class StreamingSeatLaunch
     /// </summary>
     internal const string PerfTimelineMaxBytes = "8388608";
 
-    /// <summary>The wire version the seat speaks (GPU particles simulated on the client).</summary>
-    internal const int StreamVersion = 12;
+    /// <summary>
+    /// The wire version the seat speaks: render-stream/13, /12 (GPU particles simulated on the client) with
+    /// dynamic mesh and multimesh blocks predicted from the two previous transactions (about half /12's coded
+    /// bytes in combat). The listener also offers /12, so an older client still connects.
+    /// </summary>
+    internal const int StreamVersion = 13;
 
     /// <summary>
     /// The hub listens on the last port of the seat's 10-port band (<see cref="HeadlessClientManager.SlotToPort"/>

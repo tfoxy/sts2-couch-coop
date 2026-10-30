@@ -53,7 +53,7 @@ internal sealed partial class BrowserServerRouteTests
         start.Environment["COUCHCOOP_STREAMING_SEAT"] = "1";
         start.Environment["GRC_LIVE_ALLOWED_ORIGINS"] = $"{AllowedPageOrigin},http://localhost:13337";
         start.Environment["GRC_LIVE_LISTEN"] = "127.0.0.1:13366";
-        start.Environment["GRC_STREAM_VERSION"] = "12";
+        start.Environment["GRC_STREAM_VERSION"] = "13";
         start.Environment["GRC_LIVE_AUTH"] = "token";
         start.Environment["GRC_EVIDENCE_DIR"] = child.Path;
         start.Environment["GRC_ROOT_SIZE"] = "presentation:1920x1080";
@@ -123,7 +123,7 @@ internal sealed partial class BrowserServerRouteTests
         Expect(rs.GetProperty("url").GetString() == "ws://127.0.0.1:13366/render-stream", $"{where}: hub url");
         Expect(rs.GetProperty("resourceBase").GetString() == "http://127.0.0.1:13366", $"{where}: resource base");
         Expect(rs.GetProperty("token").GetString() == RenderStreamSeatToken, $"{where}: the capture's token");
-        Expect(rs.GetProperty("protocol").GetInt32() == 12, $"{where}: /12");
+        Expect(rs.GetProperty("protocol").GetInt32() == 13, $"{where}: /13");
         Expect(rs.GetProperty("presentation").EnumerateArray().Select(e => e.GetInt32()).SequenceEqual([1920, 1080]),
             $"{where}: 1920x1080");
     }

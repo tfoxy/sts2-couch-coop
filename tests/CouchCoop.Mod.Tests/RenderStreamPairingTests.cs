@@ -107,7 +107,7 @@ internal static class RenderStreamPairingTests
             ["GRC_MODE"] = "arm",
             ["GRC_CALIBRATION"] = Calibration,
             ["GRC_LIVE_LISTEN"] = "127.0.0.1:13366",
-            ["GRC_STREAM_VERSION"] = "12",
+            ["GRC_STREAM_VERSION"] = "13",
             ["GRC_LIVE_AUTH"] = "token",
             ["GRC_EVIDENCE_DIR"] = "/home/p/couch-coop/render-stream/slot-2",
             ["GRC_LIVE_ALLOWED_ORIGINS"] = "http://127.0.0.1:13337,http://localhost:13337",
@@ -226,8 +226,8 @@ internal static class RenderStreamPairingTests
         string? Token_(string _) => Token;
         var ok = StreamingSeatDescriptor.Build(true, "http://127.0.0.1:13337", env.GetValueOrDefault, Token_);
         Assert(ok is not null && ok.Url == "ws://127.0.0.1:13366/render-stream" && ok.ResourceBase == "http://127.0.0.1:13366"
-               && ok.Token == Token && ok.Protocol == 12 && ok.Presentation is [1920, 1080],
-            "the streaming seat's own connection from the host page gets the hub, the token, /12 and 1920x1080");
+               && ok.Token == Token && ok.Protocol == 13 && ok.Presentation is [1920, 1080],
+            "the streaming seat's own connection from the host page gets the hub, the token, /13 and 1920x1080");
         Assert(StreamingSeatDescriptor.Build(true, "http://localhost:13337", env.GetValueOrDefault, Token_) is not null,
             "the localhost spelling of the host page too");
 
@@ -246,7 +246,10 @@ internal static class RenderStreamPairingTests
             "a non-loopback listener is never described");
         var v8 = new Dictionary<string, string>(env) { ["GRC_STREAM_VERSION"] = "8" };
         Assert(StreamingSeatDescriptor.Build(true, "http://127.0.0.1:13337", v8.GetValueOrDefault, Token_) is null,
-            "only the wire versions the client speaks (11, 12)");
+            "only the wire versions the client speaks (11, 12, 13)");
+        var v12 = new Dictionary<string, string>(env) { ["GRC_STREAM_VERSION"] = "12" };
+        Assert(StreamingSeatDescriptor.Build(true, "http://127.0.0.1:13337", v12.GetValueOrDefault, Token_) is { Protocol: 12 },
+            "a seat configured at /12 is still described, at /12");
 
         var open = SeatEnvironment(auth: "none");
         var none = StreamingSeatDescriptor.Build(true, "http://127.0.0.1:13337", open.GetValueOrDefault,
@@ -315,7 +318,7 @@ internal static class RenderStreamPairingTests
     {
         ["GRC_LIVE_ALLOWED_ORIGINS"] = "http://127.0.0.1:13337, http://localhost:13337",
         ["GRC_LIVE_LISTEN"] = "127.0.0.1:13366",
-        ["GRC_STREAM_VERSION"] = "12",
+        ["GRC_STREAM_VERSION"] = "13",
         ["GRC_LIVE_AUTH"] = auth,
         ["GRC_EVIDENCE_DIR"] = "/home/p/ev",
         ["GRC_ROOT_SIZE"] = "presentation:1920x1080",

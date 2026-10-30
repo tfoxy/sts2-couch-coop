@@ -256,7 +256,7 @@ describe("MirrorApp — the new renderer's stream branch", () => {
 describe("MirrorApp — pairing with the host's streaming seat", () => {
   const SEAT_TOKEN = "c".repeat(64);
   const descriptor = { url: "ws://127.0.0.1:13366/render-stream", resourceBase: "http://127.0.0.1:13366",
-    token: SEAT_TOKEN, protocol: 12, presentation: [1920, 1080] };
+    token: SEAT_TOKEN, protocol: 13, presentation: [1920, 1080] };
   const seatSession = (over: Record<string, unknown> = {}) => sessionMessage({
     session: { joined: true, name: "Alice", status: "assigned", playerId: "p:1003", connectionCount: 1 },
     ...HEADLESS_FREEZES, ...over
@@ -313,7 +313,7 @@ describe("MirrorApp — pairing with the host's streaming seat", () => {
     await joinStreamingSeat();
     expect(mirrorSettings.runtimeRenderer).toBe("stream");
     expect(fake.clients).toHaveLength(1);
-    expect(fake.clients[0].options.endpoint).toMatchObject({ url: descriptor.url, token: SEAT_TOKEN, protocol: 12 });
+    expect(fake.clients[0].options.endpoint).toMatchObject({ url: descriptor.url, token: SEAT_TOKEN, protocol: 13 });
   });
 
   it("answers the stage's unauthorized ask with a session-refresh on the seat socket", async () => {

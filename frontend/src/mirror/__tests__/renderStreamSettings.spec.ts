@@ -90,8 +90,9 @@ describe("mirrorSettings — the renderer keys", () => {
     expect(at("?renderStream=http://127.0.0.1:1/render-stream").renderStreamUrl).toBeNull();
     expect(at("?renderStream=/render-stream").renderStreamUrl).toBeNull();
     expect(at("?renderStream=wss://h.example:9/render-stream").renderStreamUrl).toBe("wss://h.example:9/render-stream");
-    expect(at("?rsProtocol=8").renderStreamProtocol).toBe(12);
-    expect(at("").renderStreamProtocol).toBe(12);
+    expect(at("?rsProtocol=8").renderStreamProtocol).toBe(13);
+    expect(at("").renderStreamProtocol).toBe(13);
+    expect(at("?rsProtocol=12").renderStreamProtocol).toBe(12);
   });
 
   it("overlays the server payload under the stream: freezes, static background and tween replay off, the rest as saved", () => {
